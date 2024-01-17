@@ -1,4 +1,4 @@
-# Copyright 2023 The JAX Authors.
+# Copyright 2024 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,11 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ruff: noqa: F403
+# ruff: noqa
 
-import warnings
-warnings.warn("jax.extend.mlir.dialects.mhlo is deprecated and will be removed "
-              "from a future release of JAX. Use stablehlo instead.",
-              DeprecationWarning)
+from typing import Any
 
-from jaxlib.mlir.dialects.mhlo import *
+compat: Any = None
+dialect: Any = None
+try:
+  from jaxlib.triton import compat  # pytype: disable=import-error
+  from jaxlib.triton import dialect  # pytype: disable=import-error
+except ImportError:
+  # TODO(slebedev): Switch to a jaxlib version guard, once Triton bindings
+  # are bundled with jaxlib.
+  pass

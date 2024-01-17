@@ -30,7 +30,7 @@ from jax.scipy.special import expit
 from jax import config
 config.parse_flags_with_absl()
 
-scipy_version = tuple(map(int, scipy.version.version.split('.')[:3]))
+scipy_version = jtu.parse_version(scipy.version.version)
 
 all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]
 one_and_two_dim_shapes = [(4,), (3, 4), (3, 1), (1, 4)]
@@ -1043,6 +1043,36 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
                               tol=1e-4)
       self._CompileAndCheck(lax_fun, args_maker)
 
+  @genNamedParametersNArgs(3)
+  def testUniformCdf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.uniform.cdf
+    lax_fun = lsp_stats.uniform.cdf
+
+    def args_maker():
+      x, loc, scale = map(rng, shapes, dtypes)
+      return [x, loc, np.abs(scale)]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-5)
+      self._CompileAndCheck(lax_fun, args_maker)
+
+  @genNamedParametersNArgs(3)
+  def testUniformPpf(self, shapes, dtypes):
+    rng = jtu.rand_default(self.rng())
+    scipy_fun = osp_stats.uniform.ppf
+    lax_fun = lsp_stats.uniform.ppf
+
+    def args_maker():
+      q, loc, scale = map(rng, shapes, dtypes)
+      return [q, loc, np.abs(scale)]
+
+    with jtu.strict_promotion_if_dtypes_match(dtypes):
+      self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                              tol=1e-5)
+      self._CompileAndCheck(lax_fun, args_maker)
+
   @genNamedParametersNArgs(4)
   def testChi2LogPdf(self, shapes, dtypes):
     rng = jtu.rand_positive(self.rng())
@@ -1057,6 +1087,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                               tol=5e-4)
       self._CompileAndCheck(lax_fun, args_maker)
+
 
   @genNamedParametersNArgs(4)
   def testChi2LogCdf(self, shapes, dtypes):
@@ -1584,6 +1615,28 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
                             tol=tol)
     self._CompileAndCheck(lax_fun, args_maker, rtol=tol)
+
+  @jtu.sample_product(
+    [dict(shape=shape, axis=axis, ddof=ddof, nan_policy=nan_policy)
+      for shape in [(5,), (5, 6), (5, 6, 7)]
+      for axis in [None, *range(len(shape))]
+      for ddof in [0, 1, 2, 3]
+      for nan_policy in ["propagate", "omit"]
+    ],
+    dtype=jtu.dtypes.integer + jtu.dtypes.floating,
+  )
+  def testSEM(self, shape, dtype, axis, ddof, nan_policy):
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+
+    scipy_fun = partial(osp_stats.sem, axis=axis, ddof=ddof, nan_policy=nan_policy)
+    lax_fun = partial(lsp_stats.sem, axis=axis, ddof=ddof, nan_policy=nan_policy)
+    tol_spec = {np.float32: 2e-4, np.float64: 5e-6}
+    tol = jtu.tolerance(dtype, tol_spec)
+    self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, check_dtypes=False,
+                            atol=tol)
+    self._CompileAndCheck(lax_fun, args_maker, atol=tol)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

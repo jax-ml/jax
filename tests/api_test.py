@@ -1129,21 +1129,18 @@ class JitTest(jtu.BufferDonationTestCase):
     f = jit(lambda x: x + 4).lower(1.)
     self.assertIsInstance(f.as_text(), str)
     self.assertIsInstance(f.as_text(dialect='hlo'), str)
-    self.assertIsInstance(f.as_text(dialect='mhlo'), str)
     self.assertIsInstance(f.as_text(dialect="stablehlo"), str)
 
   def test_jit_lower_compiler_ir(self):
     f = jit(lambda x: x + 4).lower(1.)
     self.assertIsNotNone(f.compiler_ir())
     self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
-    self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
     self.assertIsNotNone(f.compiler_ir(dialect="stablehlo"))
 
   def test_jit_lower_trivial_compiler_ir(self):
     f = jit(lambda x: x).lower(1.)
     self.assertIsNotNone(f.compiler_ir())
     self.assertIsNotNone(f.compiler_ir(dialect='hlo'))
-    self.assertIsNotNone(f.compiler_ir(dialect='mhlo'))
     self.assertIsNotNone(f.compiler_ir(dialect="stablehlo"))
 
   def test_jit_replica_attributes(self):
@@ -1216,13 +1213,13 @@ class JitTest(jtu.BufferDonationTestCase):
       return y['hi'] + args[1] + sum(kwargs.values())
 
     lowered = jax.jit(f).lower({'hi': 1.}, {'hi': 2.}, 3., 4., z=5., w=6.)
-    mhlo_str = mlir.module_to_string(lowered.compiler_ir('mhlo'))
-    self.assertNotIn("\"x\"", mhlo_str)
-    self.assertIn("y['hi']", mhlo_str)
-    self.assertNotIn("args[0]", mhlo_str)
-    self.assertIn("args[1]", mhlo_str)
-    self.assertIn("kwargs['z']", mhlo_str)
-    self.assertIn("kwargs['w']", mhlo_str)
+    hlo_str = mlir.module_to_string(lowered.compiler_ir('stablehlo'))
+    self.assertNotIn("\"x\"", hlo_str)
+    self.assertIn("y['hi']", hlo_str)
+    self.assertNotIn("args[0]", hlo_str)
+    self.assertIn("args[1]", hlo_str)
+    self.assertIn("kwargs['z']", hlo_str)
+    self.assertIn("kwargs['w']", hlo_str)
 
   @parameterized.parameters([0, 2, [(0, 2)]])
   def test_jit_lower_arg_info_static_argnums(self, static_argnums):
@@ -1230,14 +1227,14 @@ class JitTest(jtu.BufferDonationTestCase):
       return y['hi'] + args[1] + sum(kwargs.values())
 
     ir = jax.jit(f, static_argnums=static_argnums).lower(
-        (1.,), {'hi': 2.}, 3., 4., z=5., w=6.).compiler_ir('mhlo')
-    mhlo_str = mlir.module_to_string(ir)
-    self.assertNotIn("\"x\"", mhlo_str)
-    self.assertIn("y['hi']", mhlo_str)
-    self.assertNotIn("args[0]", mhlo_str)
-    self.assertIn("args[1]", mhlo_str)
-    self.assertIn("kwargs['z']", mhlo_str)
-    self.assertIn("kwargs['w']", mhlo_str)
+        (1.,), {'hi': 2.}, 3., 4., z=5., w=6.).compiler_ir('stablehlo')
+    hlo_str = mlir.module_to_string(ir)
+    self.assertNotIn("\"x\"", hlo_str)
+    self.assertIn("y['hi']", hlo_str)
+    self.assertNotIn("args[0]", hlo_str)
+    self.assertIn("args[1]", hlo_str)
+    self.assertIn("kwargs['z']", hlo_str)
+    self.assertIn("kwargs['w']", hlo_str)
 
   @parameterized.parameters(['a', 'b', [('a', 'b')]])
   def test_jit_lower_arg_info_static_argnames(self, static_argnames):
@@ -1245,25 +1242,25 @@ class JitTest(jtu.BufferDonationTestCase):
       return y['hi'] + args[1] + kwargs['z'] + kwargs['w']
 
     ir = jax.jit(f, static_argnames=static_argnames).lower(
-        (1.,), {'hi': 2.}, 3., 4., z=5., w=6., a=7., b=8.).compiler_ir('mhlo')
-    mhlo_str = mlir.module_to_string(ir)
-    self.assertNotIn("\"x\"", mhlo_str)
-    self.assertIn("y['hi']", mhlo_str)
-    self.assertNotIn("args[0]", mhlo_str)
-    self.assertIn("args[1]", mhlo_str)
-    self.assertIn("kwargs['z']", mhlo_str)
-    self.assertIn("kwargs['w']", mhlo_str)
-    self.assertNotIn("kwargs['a']", mhlo_str)
-    self.assertNotIn("kwargs['b']", mhlo_str)
+        (1.,), {'hi': 2.}, 3., 4., z=5., w=6., a=7., b=8.).compiler_ir('stablehlo')
+    hlo_str = mlir.module_to_string(ir)
+    self.assertNotIn("\"x\"", hlo_str)
+    self.assertIn("y['hi']", hlo_str)
+    self.assertNotIn("args[0]", hlo_str)
+    self.assertIn("args[1]", hlo_str)
+    self.assertIn("kwargs['z']", hlo_str)
+    self.assertIn("kwargs['w']", hlo_str)
+    self.assertNotIn("kwargs['a']", hlo_str)
+    self.assertNotIn("kwargs['b']", hlo_str)
 
   def test_jit_lower_result_info(self):
     def f(x, y, z):
       return {'a': x, 'b': [y]}
 
-    ir = jax.jit(f).lower(1., (2,), [3]).compiler_ir('mhlo')
-    mhlo_str = mlir.module_to_string(ir)
-    self.assertIn("jax.result_info = \"['a']\"", mhlo_str)
-    self.assertIn("jax.result_info = \"['b'][0][0]\"", mhlo_str)
+    ir = jax.jit(f).lower(1., (2,), [3]).compiler_ir('stablehlo')
+    hlo_str = mlir.module_to_string(ir)
+    self.assertIn("jax.result_info = \"['a']\"", hlo_str)
+    self.assertIn("jax.result_info = \"['b'][0][0]\"", hlo_str)
 
   def test_jit_lower_compile_with_compiler_options(self):
     def f(x):
@@ -2786,9 +2783,6 @@ class APITest(jtu.JaxTestCase):
     hlo = api.jit(e).lower(2.).compiler_ir(dialect="hlo").as_hlo_text()
     self.assertIn(' cosine', hlo)
     self.assertIn(' sine', hlo)
-    mhlo = str(api.jit(e).lower(2.).compiler_ir(dialect="mhlo"))
-    self.assertIn('mhlo.cosine', mhlo)
-    self.assertIn('mhlo.sine', mhlo)
     stablehlo = str(api.jit(e).lower(2.).compiler_ir(dialect="stablehlo"))
     self.assertIn("stablehlo.cosine", stablehlo)
     self.assertIn("stablehlo.sine", stablehlo)

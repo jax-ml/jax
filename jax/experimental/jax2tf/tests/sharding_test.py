@@ -107,7 +107,7 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
   def log_jax_hlo(self, f_jax, args: Sequence[Any], *,
                   num_replicas=1, num_partitions=2):
     """Log the HLO generated from JAX before and after optimizations"""
-    jax_comp = f_jax.lower(*args).compiler_ir(dialect="mhlo")
+    jax_comp = f_jax.lower(*args).compiler_ir(dialect="stablehlo")
     jax_hlo = str(jax_comp)
     logging.info("[%s] got JAX HLO %s", self._testMethodName, jax_hlo)
 

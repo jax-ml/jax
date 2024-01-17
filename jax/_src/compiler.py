@@ -254,7 +254,7 @@ def compile_or_get_cached(
   supported_platforms = ["tpu", "gpu"]
   if xla_extension_version >= 230:
     supported_platforms.append("cpu")
-  use_compilation_cache = (compilation_cache.is_initialized() and
+  use_compilation_cache = (config.enable_compilation_cache.value and
                            backend.platform in supported_platforms)
 
   if not use_compilation_cache:

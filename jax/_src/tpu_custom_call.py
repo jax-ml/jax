@@ -83,6 +83,7 @@ class CustomCallBackendConfig:
   cost_estimate: CostEstimate | None
   needs_hlo_passes: bool
   needs_layout_passes: bool
+  vmem_limit_bytes: int | None
   flags: dict[str, bool | int | float] | None
 
   # We omit the body while printing, because primitive params get embedded
@@ -118,6 +119,13 @@ class CustomCallBackendConfig:
       config.write(
           ('"DEVICE_TYPE_' + self.device_type.upper() + '"').encode("ascii")
       )
+    if self.vmem_limit_bytes is not None:
+      config.write(
+          b', "scoped_memory_configs": [{"memory_space":1, "offset": 0,'
+          b' "size": '
+      )
+      config.write(str(self.vmem_limit_bytes).encode("ascii"))
+      config.write(b'}]')
     if self.flags is not None:
       config.write(b', "flag_configs": [')
       for i, (flag, value) in enumerate(self.flags.items()):
@@ -234,6 +242,7 @@ def as_tpu_kernel(
     device_type: str | None = None,
     kernel_name: str | None = None,
     kernel_regeneration_metadata: bytes | None = None,
+    vmem_limit_bytes: int | None = None,
     flags: dict[str, bool | int | float] | None = None,
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
@@ -242,6 +251,11 @@ def as_tpu_kernel(
   device_kind = some_tpu.device_kind
   if not device_kind.startswith("TPU v"):
     raise ValueError(f"Unrecognized TPU device kind: {device_kind}.")
+  if vmem_limit_bytes is not None and not isinstance(vmem_limit_bytes, int):
+    raise ValueError(
+        "vmem_limit_bytes must be an int: provided with a"
+        f" {type(vmem_limit_bytes)}."
+    )
   hardware_generation = int(device_kind[len("TPU v")])
   has_communication, has_custom_barrier = tpu.private_has_communication(
       module.operation
@@ -264,6 +278,7 @@ def as_tpu_kernel(
       kernel_name=kernel_name,
       kernel_regeneration_metadata=kernel_regeneration_metadata,
       cost_estimate=cost_estimate,
+      vmem_limit_bytes=vmem_limit_bytes,
       flags=flags,
   )
 
@@ -280,6 +295,7 @@ def _lowered_as_tpu_kernel(
     has_custom_barrier: bool = False,
     kernel_name: str | None = None,
     kernel_regeneration_metadata: bytes | None = None,
+    vmem_limit_bytes: int | None = None,
     flags: dict[str, bool | int | float] | None = None,
 ):
   """Turns a low-level MLIR Mosaic kernel into a JAX-compatible function."""
@@ -307,6 +323,7 @@ def _lowered_as_tpu_kernel(
         cost_estimate,
         needs_hlo_passes,
         needs_layout_passes,
+        vmem_limit_bytes,
         flags,
     )
     result = tpu_custom_call_p.bind(

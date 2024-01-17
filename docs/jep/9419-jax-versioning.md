@@ -7,7 +7,7 @@ Python wheel, and `jaxlib`, which is a mostly-C++ wheel that contains libraries
 such as:
 * XLA,
 * pieces of LLVM used by XLA,
-* MLIR infrastructure, such as the MHLO Python bindings.
+* MLIR infrastructure, such as the StableHLO Python bindings.
 * JAX-specific C++ libraries for fast JIT and PyTree manipulation.
 
 We distribute separate `jax` and `jaxlib` packages because it makes it easy to

@@ -670,7 +670,7 @@ def diff(a: ArrayLike, n: int = 1, axis: int = -1,
   combined: list[Array] = []
   if prepend is not None:
     util.check_arraylike("diff", prepend)
-    if isscalar(prepend):
+    if not ndim(prepend):
       shape = list(arr.shape)
       shape[axis] = 1
       prepend = broadcast_to(prepend, tuple(shape))
@@ -680,7 +680,7 @@ def diff(a: ArrayLike, n: int = 1, axis: int = -1,
 
   if append is not None:
     util.check_arraylike("diff", append)
-    if isscalar(append):
+    if not ndim(append):
       shape = list(arr.shape)
       shape[axis] = 1
       append = broadcast_to(append, tuple(shape))
@@ -1869,10 +1869,10 @@ def concatenate(arrays: np.ndarray | Array | Sequence[ArrayLike],
   util.check_arraylike("concatenate", *arrays)
   if not len(arrays):
     raise ValueError("Need at least one array to concatenate.")
-  if ndim(arrays[0]) == 0:
-    raise ValueError("Zero-dimensional arrays cannot be concatenated.")
   if axis is None:
     return concatenate([ravel(a) for a in arrays], axis=0, dtype=dtype)
+  if ndim(arrays[0]) == 0:
+    raise ValueError("Zero-dimensional arrays cannot be concatenated.")
   axis = _canonicalize_axis(axis, ndim(arrays[0]))
   if dtype is None:
     arrays_out = util.promote_dtypes(*arrays)
@@ -1886,6 +1886,12 @@ def concatenate(arrays: np.ndarray | Array | Sequence[ArrayLike],
     arrays_out = [lax.concatenate(arrays_out[i:i+k], axis)
                   for i in range(0, len(arrays_out), k)]
   return arrays_out[0]
+
+
+@util._wraps(getattr(np, "concat", None))
+def concat(arrays: Sequence[ArrayLike], /, *, axis: int | None = 0) -> Array:
+  util.check_arraylike("concat", *arrays)
+  return jax.numpy.concatenate(arrays, axis=axis)
 
 
 @util._wraps(np.vstack)

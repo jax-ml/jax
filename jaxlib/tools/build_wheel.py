@@ -76,7 +76,10 @@ pyext = "pyd" if build_utils.is_windows() else "so"
 
 
 def exists(src_file):
-  return r.Rlocation(src_file) is not None
+  path = r.Rlocation(src_file)
+  if path is None:
+    return False
+  return os.path.exists(path)
 
 
 def patch_copy_mlir_import(src_file, dst_dir):
@@ -327,6 +330,24 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, include_gpu_plugin_extensi
           f"__main__/jaxlib/mlir/_mlir_libs/_stablehlo.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/register_jax_dialects.{pyext}",
       ],
+  )
+
+  triton_dir = jaxlib_dir / "triton"
+  copy_runfiles(
+      dst_dir=triton_dir,
+      src_files=[
+          "__main__/jaxlib/triton/__init__.py",
+          "__main__/jaxlib/triton/compat.py",
+          "__main__/jaxlib/triton/dialect.py",
+          f"__main__/jaxlib/triton/_triton_ext.{pyext}",
+          "__main__/jaxlib/triton/_triton_ext.pyi",
+      ],
+  )
+  patch_copy_mlir_import(
+      "__main__/jaxlib/triton/_triton_enum_gen.py", dst_dir=triton_dir
+  )
+  patch_copy_mlir_import(
+      "__main__/jaxlib/triton/_triton_ops_gen.py", dst_dir=triton_dir
   )
 
 

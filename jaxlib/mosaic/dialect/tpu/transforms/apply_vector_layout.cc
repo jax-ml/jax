@@ -285,38 +285,48 @@ FailureOr<std::pair<Value, SmallVector<int64_t>>> sliceRef(
     ArrayRef<int64_t> slice_shape, ValueRange indices,
     ArrayRef<int64_t> tiling) {
   IntegerType i32 = builder.getI32Type();
+  MemRefType ref_ty = base_ref.getType();
 
   // MemRefSliceOp only allows tile-aligned slices. We pad the shape up
-  // accordingly with the padding, and we don't include the tiled indices
-  // in the slice since they can be arbitrary.
-  // TODO(apaszke): Allow tile-aligned dynamic slicing on tiled dimensions.
+  // accordingly with the padding. We don't include the static tiled indices
+  // in the slice when they can be arbitrary. But we do include dynamic tiled
+  // indices under the condition that they are divisible by the tile size.
   SmallVector<int64_t> pad_slice_shape(slice_shape);
   CHECK_LE(tiling.size(), slice_shape.size());
   for (int i = 1; i <= tiling.size(); ++i) {
     auto &dim = *(pad_slice_shape.end() - i);
     dim = xla::RoundUpTo(dim, *(tiling.end() - i));
   }
-  MemRefType ref_ty = base_ref.getType();
+
   SmallVector<Value> slice_base_indices;
   slice_base_indices.reserve(ref_ty.getRank());
   for (auto idx : indices.drop_back(tiling.size())) {
     slice_base_indices.push_back(builder.create<arith::IndexCastOp>(i32, idx));
   }
-  slice_base_indices.append(
-      tiling.size(),
-      builder.create<arith::ConstantOp>(i32, builder.getI32IntegerAttr(0)));
+
+  Value c0 = nullptr;
+  SmallVector<int64_t> indices_within_slice(indices.size() - tiling.size(), 0);
+  for (auto tiled_idx : indices.take_back(tiling.size())) {
+    if (auto cst = getIntConst(tiled_idx, /*silent=*/true); succeeded(cst)) {
+      indices_within_slice.push_back(*cst);
+      if (!c0) {
+        c0 = builder.create<arith::ConstantOp>(i32,
+                                               builder.getI32IntegerAttr(0));
+      }
+      slice_base_indices.push_back(c0);
+    } else {
+      indices_within_slice.push_back(0);
+      // TODO: Check divisibility!
+      slice_base_indices.push_back(
+          builder.create<arith::IndexCastOp>(i32, tiled_idx));
+    }
+  }
+
+  // TODO(apaszke): Allow tile-aligned dynamic slicing on tiled dimensions.
   Value sliced_ref = builder.create<tpu::MemRefSliceOp>(
       MemRefType::get(pad_slice_shape, ref_ty.getElementType(),
                       ref_ty.getLayout(), ref_ty.getMemorySpace()),
       base_ref, slice_base_indices);
-
-  FAILUREOR_ASSIGN_OR_RETURN(
-      auto const_tiling_indices,
-      getIntConstsFromOperandRange(indices.take_back(tiling.size()),
-                                   /*silent=*/false));
-  SmallVector<int64_t> indices_within_slice(indices.size() - tiling.size(), 0);
-  indices_within_slice.append(const_tiling_indices.begin(),
-                              const_tiling_indices.end());
 
   return std::make_pair(sliced_ref, indices_within_slice);
 }

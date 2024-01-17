@@ -253,40 +253,27 @@ class PrngTest(jtu.JaxTestCase):
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
   def testRngRandomBits(self, make_key):
     # Test specific outputs to ensure consistent random values between JAX versions.
-
-    def random_bits(key, width, shape):
-      # TODO(frostig): Use random.bits, as in:
-      #
-      #   def random_bits(key, width, shape):
-      #     dtype = jnp.dtype(f'uint{width}')
-      #     return jax.random.bits(key, shape, dtype)
-      #
-      # Doing so doesn't work in width 64 at present due to
-      # normalization in random.bits.
-      key, _ = jax_random._check_prng_key(key)
-      return jax_random._random_bits(key, width, shape)
-
     key = make_key(1701)
 
-    bits8 = random_bits(key, 8, (3,))
+    bits8 = random.bits(key, (3,), 'uint8')
     expected8 = np.array([216, 115,  43], dtype=np.uint8)
     self.assertArraysEqual(bits8, expected8)
 
-    bits16 = random_bits(key, 16, (3,))
+    bits16 = random.bits(key, (3,), 'uint16')
     expected16 = np.array([41682,  1300, 55017], dtype=np.uint16)
     self.assertArraysEqual(bits16, expected16)
 
-    bits32 = random_bits(key, 32, (3,))
+    bits32 = random.bits(key, (3,), 'uint32')
     expected32 = np.array([56197195, 4200222568, 961309823], dtype=np.uint32)
     self.assertArraysEqual(bits32, expected32)
 
     with jtu.ignore_warning(category=UserWarning, message="Explicitly requested dtype.*"):
-      bits64 = random_bits(key, 64, (3,))
+      bits64 = random.bits(key, (3,), 'uint64')
     if config.enable_x64.value:
       expected64 = np.array([3982329540505020460, 16822122385914693683,
                              7882654074788531506], dtype=np.uint64)
     else:
-      expected64 = np.array([676898860, 3164047411, 4010691890], dtype=np.uint32)
+      expected64 = np.array([56197195, 4200222568, 961309823], dtype=np.uint32)
     self.assertArraysEqual(bits64, expected64)
 
   @jtu.sample_product(prng_name=[name for name, _ in PRNG_IMPLS],

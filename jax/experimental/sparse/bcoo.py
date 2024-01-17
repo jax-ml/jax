@@ -1453,6 +1453,9 @@ def _unique_indices_unbatched(indices, *, shape, return_inverse=False,
   # TODO: check if `indices_sorted` is True.
   out = _unique(indices, axis=0, return_inverse=return_inverse, return_index=return_index,
                 return_true_size=return_true_size, size=props.nse, fill_value=fill_value)
+  if return_inverse:
+    idx = 2 if return_index else 1
+    out = (*out[:idx], out[idx].ravel(), *out[idx + 1:])
   if return_true_size:
     nse = out[-1]
     nse = nse - (indices == fill_value).any().astype(nse.dtype)

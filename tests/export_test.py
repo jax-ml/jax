@@ -311,17 +311,15 @@ class JaxExportTest(jtu.JaxTestCase):
   @jtu.parameterized_filterable(
     testcase_name=lambda kw: kw["dialect"],
     kwargs=[dict(dialect=dialect)
-            for dialect in ("mhlo", "stablehlo")]
+            for dialect in ("stablehlo",)]
   )
   def test_error_disallowed_custom_call(self, dialect):
-    # If we use hlo.custom_call or mhlo.custom_call we detect
-    # invalid custom call targets.
+    # If we use hlo.custom_call we detect invalid custom call targets.
     # Set up a primitive with custom lowering rules
     test_primitive = core.Primitive("_test_primitive_disallowed_custom_call")
     test_primitive.def_abstract_eval(lambda in_aval: in_aval)
     def test_primitive_lowering(ctx, arg):
-      from jax._src.lib.mlir.dialects import mhlo
-      op = dict(stablehlo=hlo.CustomCallOp, mhlo=mhlo.CustomCallOp)[dialect]
+      op = dict(stablehlo=hlo.CustomCallOp)[dialect]
       return op([arg.type], [arg], "disallowed_call_target").results
     mlir.register_lowering(test_primitive, test_primitive_lowering)
     self.addCleanup(lambda: mlir.register_lowering(test_primitive, None))

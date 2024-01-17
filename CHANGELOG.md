@@ -44,6 +44,13 @@ Remember to align the itemized text with the first line of an item within a list
     `from jax.experimental.export import export` you should use now
     `from jax.experimental import export`. The old way of importing will
     continue to work for a deprecation period of 3 months.
+  * Added {func}`jax.scipy.stats.sem`.
+  * {func}`jax.numpy.unique` with `return_inverse = True` returns inverse indices
+    reshaped to the dimension of the input, following a similar change to
+    {func}`numpy.unique` in NumPy 2.0.
+  * {func}`jax.scipy.special.logsumexp` with `return_sign=True` now uses the NumPy 2.0
+    convention for the complex sign, `x / abs(x)`. This is consistent with the behavior
+    of the function in SciPy v1.13.
 
 * Deprecations & Removals
   * A number of previously deprecated functions have been removed, following a
@@ -66,6 +73,9 @@ Remember to align the itemized text with the first line of an item within a list
     removed. Use {func}`jax.random.key_data` instead.
   * `bool(empty_array)` now raises an error rather than returning `False`. This
     previously raised a deprecation warning, and follows a similar change in NumPy.
+  * Support for the mhlo MLIR dialect has been deprecated. JAX no longer uses
+    the mhlo dialect, in favor of stablehlo. APIs that refer to "mhlo" will be
+    removed in the future. Use the "stablehlo" dialect instead.
 
 ## jaxlib 0.4.24
 

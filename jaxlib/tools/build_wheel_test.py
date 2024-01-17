@@ -1,4 +1,4 @@
-# Copyright 2023 The JAX Authors.
+# Copyright 2024 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,11 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ruff: noqa: F403
+# This test verifies that the build_wheel.py runs successfully.
 
-import warnings
-warnings.warn("jax.extend.mlir.dialects.mhlo is deprecated and will be removed "
-              "from a future release of JAX. Use stablehlo instead.",
-              DeprecationWarning)
+import platform
+import subprocess
+import sys
+import tempfile
 
-from jaxlib.mlir.dialects.mhlo import *
+from bazel_tools.tools.python.runfiles import runfiles
+
+r = runfiles.Create()
+
+with tempfile.TemporaryDirectory(prefix="jax_build_wheel_test") as tmpdir:
+  subprocess.run([
+    sys.executable, r.Rlocation("__main__/jaxlib/tools/build_wheel.py"),
+    f"--cpu={platform.machine()}",
+    f"--output_path={tmpdir}",
+    "--jaxlib_git_hash=12345678"
+  ], check=True)

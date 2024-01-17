@@ -14,6 +14,7 @@
 
 import os
 import warnings
+from jax._src import hardware_utils
 
 running_in_cloud_tpu_vm: bool = False
 
@@ -66,6 +67,8 @@ def cloud_tpu_init() -> None:
   os.environ.setdefault('GRPC_VERBOSITY', 'ERROR')
   os.environ.setdefault('JAX_PLATFORMS', 'tpu,cpu')
   os.environ['TPU_ML_PLATFORM'] = 'JAX'
+  if hardware_utils.tpu_enhanced_barrier_supported():
+    os.environ["LIBTPU_INIT_ARGS"] = os.environ.get("LIBTPU_INIT_ARGS","") + " --xla_tpu_use_enhanced_launch_barrier=true"
 
   # TODO(skyewm): remove this warning at some point, say around Sept 2023.
   use_pjrt_c_api = os.environ.get('JAX_USE_PJRT_C_API_ON_TPU', None)

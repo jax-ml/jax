@@ -121,6 +121,7 @@ namespace; they are listed below.
     complexfloating
     ComplexWarning
     compress
+    concat
     concatenate
     conj
     conjugate

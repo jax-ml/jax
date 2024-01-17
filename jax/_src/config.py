@@ -144,7 +144,25 @@ class Config:
       update_hook(default)
 
   def config_with_absl(self):
-    # Run this before calling `app.run(main)` etc
+    """Registers absl flags for the JAX configs.
+
+    E.g., for each JAX config defined using define_bool_state(), this method
+    registers an absl boolean flag, with the same name.
+
+    This is the recommended method to call if you use `app.run(main)` and you
+    need JAX flags.  Example:
+
+    ```python
+    from absl import app
+    import jax
+    ...
+
+    if __name__ == '__main__':
+      jax.config.config_with_absl()
+      app.run(main)
+    ```
+
+    """
     import absl.flags as absl_FLAGS  # noqa: F401  # pytype: disable=import-error
     from absl import app, flags as absl_flags  # pytype: disable=import-error
 
@@ -162,6 +180,8 @@ class Config:
     app.call_after_init(lambda: self.complete_absl_config(absl_flags))
 
   def complete_absl_config(self, absl_flags):
+    # NOTE: avoid calling from outside this module. Instead, use
+    # `config_with_absl()`, and (in rare cases) `parse_flags_with_absl()`.
     for name, _ in self.values.items():
       try:
         flag = absl_flags.FLAGS[name]
@@ -176,6 +196,17 @@ class Config:
         self.update(name, flag.value)
 
   def parse_flags_with_absl(self):
+    """Parses command-line args that start with --jax.
+
+    This method should be used only by advanced users. Most users should use
+    :meth:`config_with_absl` instead.
+
+    This method has serious limitations: e.g., although it parses only the
+    --jax* command-line args, it runs the validators of all registered absl
+    flags, even non-JAX ones that have not been set yet; as such, for the
+    non-JAX flags, the validators run on the default flag values, not on the
+    values indicated by the command-line args.
+    """
     global already_configured_with_absl
     if not already_configured_with_absl:
       # Extract just the --jax... flags (before the first --) from argv. In some
@@ -216,7 +247,7 @@ class Config:
             self.jax_enable_memories,
             self.jax_disable_jit,
             self.jax_xla_profile_version,
-            # Technically this affects jaxpr->MHLO lowering, not tracing.
+            # Technically this affects jaxpr->stablehlo lowering, not tracing.
             self.jax_hlo_source_file_canonicalization_regex)
 
 
@@ -1034,9 +1065,9 @@ enable_compilation_cache = define_bool_state(
     name='jax_enable_compilation_cache',
     default=True,
     help=('If set to False, the compilation cache will be disabled regardless '
-          'of whether initialize_cache() was called. If set to True, the '
+          'of whether set_cache_dir() was called. If set to True, the '
           'path could be set to a default value or via a call to '
-          'initialize_cache().'),
+          'set_cache_dir().'),
 )
 
 compilation_cache_dir = define_string_state(
@@ -1044,7 +1075,7 @@ compilation_cache_dir = define_string_state(
     default=None,
     help=('Path for the cache. '
           'Precedence: '
-          '1. A call to compilation_cache.initialize_cache(). '
+          '1. A call to compilation_cache.set_cache_dir(). '
           '2. The value of this flag set in the command line or by default.'),
 )
 

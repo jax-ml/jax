@@ -346,6 +346,14 @@ def TPU_CreateSubelementMaskOp : TPU_Op<"create_subelement_mask", [Pure]> {
   }];
 }
 
+def TPU_AssumeMultipleOp : TPU_Op<"assume_multiple", [Pure, SameOperandsAndResultType]> {
+  let arguments = (ins
+    AnyTypeOf<[Index, AnyInteger]>:$value,
+    I32Attr:$multiple
+  );
+  let results = (outs AnyTypeOf<[Index, AnyInteger]>:$result);
+}
+
 def TPU_MemRefSliceOp : TPU_Op<"memref_slice", [Pure]> {
   let arguments = (ins
     AnyMemRef:$mem_ref,

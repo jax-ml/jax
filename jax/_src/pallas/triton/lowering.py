@@ -38,9 +38,9 @@ from jax._src import util
 from jax._src.lax.control_flow import for_loop
 from jax._src.lib import gpu_triton as triton_kernel_call_lib
 from jax._src.lib import hlo_helpers
-from jax._src.lib import triton_compat
-from jax._src.lib import triton_dialect
 from jax._src.lib.mlir import ir
+from jax._src.lib.triton import compat as tc
+from jax._src.lib.triton import dialect as tt_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
@@ -62,20 +62,17 @@ from jax_triton.triton_lib import get_triton_type
 import numpy as np
 from triton.compiler import code_generator as code_gen
 import triton.compiler.backends.cuda as cb
+from triton._C.libtriton import ir as tl_ir
 
 # TODO(sharadmv): Enable type checking.
 # mypy: ignore-errors
 
-if triton_compat is None or triton_dialect is None:
+if tc is None or tt_dialect is None:
   raise RuntimeError(
       "Cannot import the Triton bindings. You may need a newer version of"
-      " jaxlib. Try installing a nightly wheel from:"
-      " https://storage.googleapis.com/jax-releases/jaxlib_nightly_cuda_releases.html"
-      " or https://storage.googleapis.com/jax-releases/jaxlib_nightly_cuda12_releases.html"
+      " jaxlib. Try installing a nightly wheel following instructions in"
+      " https://jax.readthedocs.io/en/latest/installation.html#nightly-installation"
   )
-
-tc = triton_compat
-tt_dialect = triton_dialect
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -1503,6 +1500,9 @@ def compile_jaxpr(
           debug=debug,
       )
   )
+  context = tl_ir.context()
+  tl_ir.load_dialects(context)
+  cuda_backend.load_dialects(context)
 
   lowering_result = lower_jaxpr_to_triton_module(
       jaxpr, in_shapes, grid_mapping, name, cuda_options
@@ -1511,6 +1511,7 @@ def compile_jaxpr(
   ttir = str(lowering_result.module)
   ptx, name, shared_mem_bytes, compute_capability = compile_ttir_to_ptx_inplace(
       lowering_result.module,
+      context,
       cuda_backend,
       cuda_options,
       device=device,

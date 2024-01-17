@@ -392,7 +392,7 @@ For a worked-out example, we recommend reading through
 Benchmarking JAX code
 ---------------------
 
-You just ported a tricky function from NumPy/SciPy to JAX. Did that actuallly
+You just ported a tricky function from NumPy/SciPy to JAX. Did that actually
 speed things up?
 
 Keep in mind these important differences from NumPy when measuring the
@@ -729,7 +729,7 @@ Why is this? Remember that what differentiation is measuring the change in ``f``
 given an infinitesimal change in ``x``. For ``x=1.0``, ``f`` returns ``1.0``.
 If we perturb ``x`` to make it slightly larger or smaller, this does not change
 the output, so by definition, :code:`grad(f)(1.0)` should be zero.
-This same logic holds for all values of ``f`` greater than zero: infinitessimally
+This same logic holds for all values of ``f`` greater than zero: infinitesimally
 perturbing the input does not change the output, so the gradient is zero.
 Similarly, for all values of ``x`` less than zero, the output is zero.
 Perturbing ``x`` does not change this output, so the gradient is zero.

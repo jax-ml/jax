@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import warnings
 import zlib
 
 import numpy as np
@@ -66,11 +67,26 @@ def get_file_cache(path: str) -> CacheInterface:
   return GFileCache(path)
 
 
+def set_cache_dir(path) -> None:
+  """
+  Sets the persistent compilation cache directory.
+
+  After calling this, jit-compiled functions are saved to `path`, so they
+  do not need be recompiled if the process is restarted or otherwise run again.
+  This also tells Jax where to look for compiled functions before compiling.
+  """
+  config.config.update("jax_compilation_cache_dir", path)
+
+
 def initialize_cache(path) -> None:
   """
+  This API is deprecated; use set_cache_dir instead.
+
   Set the path. To take effect, should be called prior to any calls to
   get_executable_and_time() and put_executable_and_time().
   """
+  warnings.warn("initialize_cache is deprecated; use set_cache_dir instead",
+                DeprecationWarning, stacklevel=2)
   config.config.update("jax_compilation_cache_dir", path)
 
 
@@ -207,10 +223,14 @@ def get_cache_key(module: ir.Module, devices: np.ndarray, compile_options,
 
 def is_initialized() -> bool:
   """
+  Deprecated.
+
   Return whether the cache is enabled. Initialization can be deferred, so
   initialized status is not checked. The name is retained for backwards
   compatibility.
   """
+  warnings.warn("is_initialized is deprecated; do not use",
+                DeprecationWarning, stacklevel=2)
   return _is_cache_enabled()
 
 

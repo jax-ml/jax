@@ -92,6 +92,15 @@ TiledLayoutAttr getMemRefLayout(Value ref) {
   return cast<TiledLayoutAttr>(cast<MemRefType>(ref.getType()).getLayout());
 }
 
+LogicalResult verifyDivisibleIndex(Value tiled_index, int64_t tiling, int dim,
+                                   Operation *op) {
+  if (!isGuaranteedDivisible(tiled_index, tiling)) {
+    return op->emitOpError("cannot statically prove that index in dimension ")
+           << dim << " is a multiple of " << tiling;
+  }
+  return success();
+}
+
 // TODO(apaszke): Test that this pass fills in NoLayout for all operations that
 // have corresponding native instructions.
 class VectorLayoutInferer {
@@ -951,23 +960,18 @@ class VectorLayoutInferer {
     SmallVector<Layout, 4> in_layout(op->getNumOperands(), kNoLayout);
     CHECK_EQ(op->getNumOperands(), op.getIndices().size() + 1);
     SmallVector<int64_t, 2> tile_indices;
-    for (int i = rank - 1; i >= 0; --i) {
-      auto cst_op = op.getIndices()[i].getDefiningOp<arith::ConstantOp>();
-      if (cst_op) {
-        int64_t idx = cast<IntegerAttr>(cst_op.getValue()).getInt();
-        TPU_CHECK_OP(idx + res_ty.getDimSize(i) <= src_ty.getDimSize(i),
-                     "Loading elements out of bounds");
-        if (tile_indices.size() < 2) {
-          tile_indices.push_back(idx);
-        }
+    for (int i = 0; i < tiling.size(); ++i) {
+      int dim = rank - tiling.size() + i;
+      Value tiled_index = op.getIndices()[dim];
+      if (auto cst_op = tiled_index.getDefiningOp<arith::ConstantOp>()) {
+        tile_indices.push_back(cast<IntegerAttr>(cst_op.getValue()).getInt());
       } else {
-        TPU_CHECK_OP(
-            tile_indices.size() == 2,
-            "Dynamic indices are not supported in the last two dimensions");
+        if (failed(verifyDivisibleIndex(tiled_index, tiling[0], dim, op))) {
+          return failure();
+        }
+        tile_indices.push_back(0);
       }
     }
-    // We pushed the indices in reverse.
-    std::reverse(tile_indices.begin(), tile_indices.end());
 
     if (rank == 0) {
       op.emitOpError("rank 0 vectors unsupported");
@@ -1298,23 +1302,18 @@ class VectorLayoutInferer {
     auto tiling = *maybe_tiling;
 
     SmallVector<int64_t, 2> tile_indices;
-    for (int i = rank - 1; i >= 0; --i) {
-      auto cst_op = op.getIndices()[i].getDefiningOp<arith::ConstantOp>();
-      if (cst_op) {
-        int64_t idx = cast<IntegerAttr>(cst_op.getValue()).getInt();
-        TPU_CHECK_OP(idx + store_ty.getDimSize(i) <= ref_ty.getDimSize(i),
-                     "Loading elements out of bounds");
-        if (tile_indices.size() < 2) {
-          tile_indices.push_back(idx);
-        }
+    for (int i = 0; i < tiling.size(); ++i) {
+      int dim = rank - tiling.size() + i;
+      Value tiled_index = op.getIndices()[dim];
+      if (auto cst_op = tiled_index.getDefiningOp<arith::ConstantOp>()) {
+        tile_indices.push_back(cast<IntegerAttr>(cst_op.getValue()).getInt());
       } else {
-        TPU_CHECK_OP(
-            tile_indices.size() == 2,
-            "Dynamic indices are not supported in the last two dimensions");
+        if (failed(verifyDivisibleIndex(tiled_index, tiling[0], dim, op))) {
+          return failure();
+        }
+        tile_indices.push_back(0);
       }
     }
-    // We pushed the indices in reverse.
-    std::reverse(tile_indices.begin(), tile_indices.end());
 
     Layout store_layout;
     if (rank == 0) {

@@ -180,6 +180,7 @@ jax.scipy.stats
 
    mode
    rankdata
+   sem
 
 jax.scipy.stats.bernoulli
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -424,6 +425,8 @@ jax.scipy.stats.uniform
 
    logpdf
    pdf
+   cdf
+   ppf
 
 jax.scipy.stats.gaussian_kde
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~

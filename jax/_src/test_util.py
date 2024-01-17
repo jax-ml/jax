@@ -275,7 +275,7 @@ def count_jit_and_pmap_compiles():
 
 
 @contextmanager
-def count_subjaxpr_to_mhlo_conversion(fun_name: str):
+def count_subjaxpr_to_hlo_conversion(fun_name: str):
   # No need to clear any caches since we generally jit and pmap fresh callables
   # in tests.
 
@@ -898,7 +898,7 @@ def promote_like_jnp(fun, inexact=False):
   """Decorator that promotes the arguments of `fun` to `jnp.result_type(*args)`.
 
   jnp and np have different type promotion semantics; this decorator allows
-  tests make an np reference implementation act more like an jnp
+  tests make an np reference implementation act more like a jnp
   implementation.
   """
   _promote = promote_dtypes_inexact if inexact else promote_dtypes
@@ -955,9 +955,8 @@ class JaxTestCase(parameterized.TestCase):
       stack.enter_context(config.persistent_cache_min_entry_size_bytes(0))
 
       tmp_dir = stack.enter_context(tempfile.TemporaryDirectory())
-      compilation_cache.initialize_cache(tmp_dir)
-      stack.callback(lambda: compilation_cache.reset_cache()
-                     if compilation_cache.is_initialized() else None)
+      compilation_cache.set_cache_dir(tmp_dir)
+      stack.callback(lambda: compilation_cache.reset_cache())
 
   @classmethod
   def tearDownClass(cls):
@@ -1268,14 +1267,14 @@ def strict_promotion_if_dtypes_match(dtypes):
   return jax.numpy_dtype_promotion('standard')
 
 _version_regex = re.compile(r"([0-9]+(?:\.[0-9]+)*)(?:(rc|dev).*)?")
-def _parse_version(v: str) -> tuple[int, ...]:
+def parse_version(v: str) -> tuple[int, ...]:
   m = _version_regex.match(v)
   if m is None:
     raise ValueError(f"Unable to parse version '{v}'")
   return tuple(int(x) for x in m.group(1).split('.'))
 
 def numpy_version():
-  return _parse_version(np.__version__)
+  return parse_version(np.__version__)
 
 def parameterized_filterable(*,
     kwargs: Sequence[dict[str, Any]],

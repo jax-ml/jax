@@ -350,9 +350,9 @@ out and end-to-end compile a `shmap`ped function, just put a `jit` around it. A
 consequence is that `shmap` doesn't have its own dispatch and compilation paths
 like `xmap` and `pmap` currently do; it's just the `jit` path.
 
-When it's staged out by e.g. an enclosing `jit`, the lowering of `shmap` to MHLO
-is trivial: it just involves switching into 'manual SPMD mode' on the inputs,
-and switching back on the outputs. (We don't currently plan to support
+When it's staged out by e.g. an enclosing `jit`, the lowering of `shmap` to
+StableHLO is trivial: it just involves switching into 'manual SPMD mode' on the
+inputs, and switching back on the outputs. (We don't currently plan to support
 partially-manual-partially-automatic modes.)
 
 The interaction with effects is the same as with `pmap`.

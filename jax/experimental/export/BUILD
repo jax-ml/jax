@@ -32,9 +32,9 @@ py_library(
     srcs = [
         "__init__.py",
         "_export.py",
-        "serialization.py",
+        "_serialization.py",
+        "_shape_poly.py",
         "serialization_generated.py",
-        "shape_poly.py",
     ],
     srcs_version = "PY3",
     # TODO: b/255503696: enable pytype

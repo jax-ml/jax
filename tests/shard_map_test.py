@@ -909,7 +909,7 @@ class ShardMapTest(jtu.JaxTestCase):
                                      in_specs=P(), out_specs=P())())(2.0)
     self.assertAllClose(g, jnp.cos(2.0), check_dtypes=False)
 
-  def test_sharding_metadata_in_mhlo_attrs(self):
+  def test_sharding_metadata_in_hlo_attrs(self):
     mesh = Mesh(jax.devices(), ('i',))
     x = jnp.arange(len(jax.devices()), dtype='float32')
     y = jnp.array([3.], dtype='float32')
@@ -922,14 +922,14 @@ class ShardMapTest(jtu.JaxTestCase):
                     in_specs=P('i'), out_specs=P('i'))(x)
       return x
 
-    mhlo_str = mlir.module_to_string(jax.jit(foo).lower(x).compiler_ir('mhlo'))
-    self.assertIn("call @shmap_body", mhlo_str)
-    self.assertIn("call @shmap_body_0", mhlo_str)
-    self.assertIn("%arg0: tensor<1xf32>", mhlo_str)
-    self.assertIn("\"[None]\"", mhlo_str)
-    self.assertIn("%arg1: tensor<1xf32>", mhlo_str)
-    self.assertIn("\"[('i',)]\"", mhlo_str)
-    self.assertIn("-> (tensor<1xf32> {jax.result_info = \"[('i',)]\"})", mhlo_str)
+    hlo_str = mlir.module_to_string(jax.jit(foo).lower(x).compiler_ir('stablehlo'))
+    self.assertIn("call @shmap_body", hlo_str)
+    self.assertIn("call @shmap_body_0", hlo_str)
+    self.assertIn("%arg0: tensor<1xf32>", hlo_str)
+    self.assertIn("\"[None]\"", hlo_str)
+    self.assertIn("%arg1: tensor<1xf32>", hlo_str)
+    self.assertIn("\"[('i',)]\"", hlo_str)
+    self.assertIn("-> (tensor<1xf32> {jax.result_info = \"[('i',)]\"})", hlo_str)
 
   def test_rewrite_process_call(self):
     def f(x):
@@ -1367,6 +1367,12 @@ class ShardMapTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(Exception, r"check_rep=False"):
       jax.grad(lambda x: g(x).sum())(jnp.ones(4))
+
+  def test_approx_top_k(self):
+    mesh = Mesh(np.array(jax.devices()[:2]), ('i',))
+
+    x = jnp.array([3.0, 1.0, 4.0, 2.0])
+    _ = shard_map(lambda x: lax.approx_max_k(x, 2), mesh, P('i'), P('i'))(x)
 
 
 class FunSpec(NamedTuple):

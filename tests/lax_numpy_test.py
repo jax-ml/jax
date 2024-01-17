@@ -87,6 +87,23 @@ python_scalar_dtypes = [jnp.bool_, jnp.int_, jnp.float_, jnp.complex_]
 # uint64 is problematic because with any uint type it promotes to float:
 int_dtypes_no_uint64 = [d for d in int_dtypes + unsigned_dtypes if d != np.uint64]
 
+def np_unique_backport(ar, return_index=False, return_inverse=False, return_counts=False,
+                       axis=None, **kwds):
+  # Wrapper for np.unique, handling the change to inverse_indices in numpy 2.0
+  result = np.unique(ar, return_index=return_index, return_inverse=return_inverse,
+                     return_counts=return_counts, axis=axis, **kwds)
+  if jtu.numpy_version() >= (2, 0, 0) or np.ndim(ar) == 1 or not return_inverse:
+    return result
+
+  idx = 2 if return_index else 1
+  inverse_indices = result[idx]
+  if axis is None:
+    inverse_indices = inverse_indices.reshape(np.shape(ar))
+  else:
+    inverse_indices = np.expand_dims(inverse_indices, [i for i in range(np.ndim(ar)) if i != axis])
+  return (*result[:idx], inverse_indices, *result[idx + 1:])
+
+
 def _indexer_with_default_outputs(indexer, use_defaults=True):
   """Like jtu.with_jax_dtype_defaults, but for __getitem__ APIs"""
   class Indexer:
@@ -1471,7 +1488,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jtu.sample_product(
     [dict(base_shape=base_shape, axis=axis)
       for base_shape in [(4,), (3, 4), (2, 3, 4)]
-      for axis in range(-len(base_shape)+1, len(base_shape))
+      for axis in (None, *range(-len(base_shape)+1, len(base_shape)))
     ],
     arg_dtypes=[
       arg_dtypes
@@ -1482,7 +1499,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   )
   def testConcatenate(self, axis, dtype, base_shape, arg_dtypes):
     rng = jtu.rand_default(self.rng())
-    wrapped_axis = axis % len(base_shape)
+    wrapped_axis = 0 if axis is None else axis % len(base_shape)
     shapes = [base_shape[:wrapped_axis] + (size,) + base_shape[wrapped_axis+1:]
               for size, _ in zip(itertools.cycle([3, 1, 4]), arg_dtypes)]
     @jtu.promote_like_jnp
@@ -1520,6 +1537,34 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     a = jnp.array([[1, 2], [3, 4]])
     b = jnp.array([[5]])
     jnp.concatenate((a, b), axis=None)
+
+  def testConcatenateScalarAxisNone(self):
+    arrays = [np.int32(0), np.int32(1)]
+    self.assertArraysEqual(jnp.concatenate(arrays, axis=None),
+                           np.concatenate(arrays, axis=None))
+
+  @jtu.sample_product(
+    [dict(base_shape=base_shape, axis=axis)
+      for base_shape in [(), (4,), (3, 4), (2, 3, 4)]
+      for axis in (None, *range(-len(base_shape)+1, len(base_shape)))
+    ],
+    dtype=default_dtypes,
+  )
+  def testConcat(self, axis, base_shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    wrapped_axis = 0 if axis is None else axis % len(base_shape)
+    shapes = [base_shape[:wrapped_axis] + (size,) + base_shape[wrapped_axis+1:]
+              for size in [3, 1, 4]]
+    @jtu.promote_like_jnp
+    def np_fun(*args):
+      if jtu.numpy_version() >= (2, 0, 0):
+        return np.concat(args, axis=axis)
+      else:
+        return np.concatenate(args, axis=axis)
+    jnp_fun = lambda *args: jnp.concat(args, axis=axis)
+    args_maker = lambda: [rng(shape, dtype) for shape in shapes]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
     [dict(base_shape=base_shape, axis=axis)
@@ -1790,7 +1835,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, dtype)]
     extra_args = (return_index, return_inverse, return_counts)
     use_defaults =  (False, *(True for arg in extra_args if arg)) if any(extra_args) else False
-    np_fun = jtu.with_jax_dtype_defaults(lambda x: np.unique(x, *extra_args, axis=axis), use_defaults)
+    np_fun = jtu.with_jax_dtype_defaults(lambda x: np_unique_backport(x, *extra_args, axis=axis), use_defaults)
     jnp_fun = lambda x: jnp.unique(x, *extra_args, axis=axis)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
@@ -1799,10 +1844,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rng = jtu.rand_some_equal(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     if jtu.numpy_version() < (2, 0, 0):
-      def np_fun(x):
-        values, indices, inverse_indices, counts = np.unique(
-          x, return_index=True, return_inverse=True, return_counts=True)
-        return values, indices, inverse_indices.reshape(np.shape(x)), counts
+      np_fun = partial(np_unique_backport, return_index=True, return_inverse=True, return_counts=True)
     else:
       np_fun = np.unique_all
     self._CheckAgainstNumpy(jnp.unique_all, np_fun, args_maker)
@@ -1822,9 +1864,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rng = jtu.rand_some_equal(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     if jtu.numpy_version() < (2, 0, 0):
-      def np_fun(x):
-        values, inverse_indices = np.unique(x, return_inverse=True)
-        return values, inverse_indices.reshape(np.shape(x))
+      np_fun = partial(np_unique_backport, return_inverse=True)
     else:
       np_fun = np.unique_inverse
     self._CheckAgainstNumpy(jnp.unique_inverse, np_fun, args_maker)
@@ -1860,7 +1900,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     @partial(jtu.with_jax_dtype_defaults, use_defaults=(False, True, True, True))
     def np_fun(x, fill_value=fill_value):
-      u, ind, inv, counts = np.unique(x, **kwds)
+      u, ind, inv, counts = np_unique_backport(x, **kwds)
       axis = kwds['axis']
       if axis is None:
         x = x.ravel()
@@ -2520,10 +2560,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     if config.enable_x64.value:
       out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
       self.assertEqual(out_int64.dtype, np.int64)
-    else:
+    elif jtu.numpy_version() < (2, 0, 0):
       with self.assertWarnsRegex(UserWarning, "Explicitly requested dtype int64"):
         with jtu.ignore_warning(category=DeprecationWarning,
                                 message="NumPy will stop allowing conversion.*"):
+          out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
+    else:
+      with self.assertWarnsRegex(UserWarning, "Explicitly requested dtype int64"):
+        with self.assertRaisesRegex(OverflowError, "Python integer 2147483648 out of bounds.*"):
           out_int64 = jax.eval_shape(jnp.searchsorted, a_int64, v)
 
   @jtu.sample_product(
@@ -2715,6 +2759,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_fun = lambda x: jnp.diff(x, n=n, axis=axis, prepend=prepend, append=append)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
+
+  def testDiffPrepoendScalar(self):
+    # Regression test for https://github.com/google/jax/issues/19362
+    x = jnp.arange(10)
+    result_jax = jnp.diff(x, prepend=x[0], append=x[-1])
+
+    x = np.array(x)
+    result_numpy = np.diff(x, prepend=x[0], append=x[-1])
+
+    self.assertArraysEqual(result_jax, result_numpy)
 
   @jtu.sample_product(
     op=["zeros", "ones"],

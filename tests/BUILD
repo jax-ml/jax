@@ -214,6 +214,9 @@ jax_test(
     name = "xmap_test",
     srcs = ["xmap_test.py"],
     backend_tags = {
+        "gpu": [
+            "noasan",  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
+        ],
         "tpu": [
             "noasan",  # Times out.
             "nomsan",  # Times out.
@@ -244,6 +247,7 @@ jax_test(
     srcs = ["pjit_test.py"],
     backend_tags = {
         "tpu": ["notsan"],  # Times out under tsan.
+        "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
     shard_count = {
         "cpu": 5,
@@ -273,6 +277,9 @@ jax_test(
 jax_test(
     name = "pgle_test",
     srcs = ["pgle_test.py"],
+    backend_tags = {
+        "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
+    },
     disable_backends = [
         "cpu",
         "tpu",
@@ -330,6 +337,7 @@ jax_test(
         "tpu": 10,
         "iree": 10,
     },
+    tags = ["noasan"],  # Linking TF causes a linker OOM.
     deps = py_deps("pil") + py_deps("tensorflow_core"),
 )
 
@@ -1143,6 +1151,7 @@ jax_test(
 jax_test(
     name = "host_callback_to_tf_test",
     srcs = ["host_callback_to_tf_test.py"],
+    tags = ["noasan"],  # Linking TF causes a linker OOM.
     deps = [
         "//jax:experimental_host_callback",
         "//jax:ode",
@@ -1191,6 +1200,9 @@ jax_test(
 jax_test(
     name = "jaxpr_effects_test",
     srcs = ["jaxpr_effects_test.py"],
+    backend_tags = {
+        "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
+    },
     enable_configs = [
         "gpu",
         "cpu",
@@ -1210,6 +1222,9 @@ jax_test(
 jax_test(
     name = "python_callback_test",
     srcs = ["python_callback_test.py"],
+    backend_tags = {
+        "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
+    },
     tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
