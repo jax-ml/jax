@@ -38,6 +38,8 @@ from jax.scipy import cluster as lsp_cluster
 from jax import config
 config.parse_flags_with_absl()
 
+scipy_version = jtu.parse_version(scipy.version.version)
+
 all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]
 compatible_shapes = [[(), ()],
                      [(4,), (3, 4)],
@@ -111,6 +113,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testLogSumExp(self, shapes, dtype, axis,
                     keepdims, return_sign, use_b):
+    if jnp.issubdtype(dtype, jnp.complexfloating) and scipy_version < (1, 13, 0):
+      self.skipTest("logsumexp of complex input uses scipy 1.13.0 semantics.")
     if not jtu.test_device_matches(["cpu"]):
       rng = jtu.rand_some_inf_and_nan(self.rng())
     else:
@@ -150,6 +154,17 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, rtol=tol, atol=tol)
     tol = {np.float32: 1E-6, np.float64: 1E-14}
     self._CompileAndCheck(lax_fun, args_maker, rtol=tol, atol=tol)
+
+  def testLogSumExpComplexSign(self):
+    # Tests behavior of complex sign, which changed in SciPy 1.13
+    x = jnp.array([1 + 1j, 2 - 1j, -2 + 3j])
+    logsumexp, sign = lsp_special.logsumexp(x, return_sign=True)
+    expected_sumexp = jnp.exp(x).sum()
+    expected_sign = expected_sumexp / abs(expected_sumexp).astype(x.dtype)
+    self.assertEqual(logsumexp.dtype, sign.real.dtype)
+    tol = 1E-4 if jtu.test_device_matches(['tpu']) else 1E-6
+    self.assertAllClose(sign, expected_sign, rtol=tol)
+    self.assertAllClose(sign * np.exp(logsumexp).astype(x.dtype), expected_sumexp, rtol=tol)
 
   def testLogSumExpZeros(self):
     # Regression test for https://github.com/google/jax/issues/5370

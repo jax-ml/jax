@@ -48,6 +48,9 @@ Remember to align the itemized text with the first line of an item within a list
   * {func}`jax.numpy.unique` with `return_inverse = True` returns inverse indices
     reshaped to the dimension of the input, following a similar change to
     {func}`numpy.unique` in NumPy 2.0.
+  * {func}`jax.scipy.special.logsumexp` with `return_sign=True` now uses the NumPy 2.0
+    convention for the complex sign, `x / abs(x)`. This is consistent with the behavior
+    of the function in SciPy v1.13.
 
 * Deprecations & Removals
   * A number of previously deprecated functions have been removed, following a
