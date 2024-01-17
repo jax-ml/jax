@@ -1917,7 +1917,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
       # non-partitionable), and unsafe_rbg.
       [
         PolyHarness("random_gamma", f"{flags_name}",
-                    lambda key, a: jax.random.gamma(
+                    lambda key, a: jax.vmap(jax.random.gamma)(
                       jax.random.wrap_key_data(key), a),
                     arg_descriptors=[RandArg((3, key_size), np.uint32),
                                      RandArg((3, 4, 5), _f32)],

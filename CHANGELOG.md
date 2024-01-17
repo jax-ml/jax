@@ -81,6 +81,9 @@ Remember to align the itemized text with the first line of an item within a list
   * Support for the mhlo MLIR dialect has been deprecated. JAX no longer uses
     the mhlo dialect, in favor of stablehlo. APIs that refer to "mhlo" will be
     removed in the future. Use the "stablehlo" dialect instead.
+  * {mod}`jax.random`: passing batched keys directly to random number generation functions,
+    such as {func}`~jax.random.bits`, {func}`~jax.random.gamma`, and others, is deprecated
+    and will emit a `FutureWarning`.  Use `jax.vmap` for explicit batching.
 
 ## jaxlib 0.4.24
 
