@@ -237,7 +237,7 @@ class VectorLayout {
   const LayoutOffsets &offsets() const { return offsets_; }
   const std::array<int64_t, 2> &tiling() const { return tiling_; }
   ImplicitDim implicit_dim() const { return implicit_dim_; }
-  int packing() const { return 32 / bitwidth_; }
+  int packing() const { return bitwidth_ == 1 ? 1 : 32 / bitwidth_; }
   // The number of minormost dimensions tiled by this layout.
   int layout_rank() const { return 1 + (implicit_dim_ == ImplicitDim::kNone); }
 

@@ -584,6 +584,8 @@ LogicalResult elementwise_op_rule(RewriteContext &ctx, Operation &op,
         new_broadcasted_shape));
     broadcasted_shape = std::move(new_broadcasted_shape);
   }
+
+  // http://shortn/_tZQthkDitS
   CHECK(broadcasted_shape ==
         layout_out.tileArrayShape(out_ty.getShape(), ctx.target_shape));
 
