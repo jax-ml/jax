@@ -23,7 +23,6 @@ import jax
 import jax.numpy as jnp
 from jax.sharding import Mesh
 from jax.sharding import PartitionSpec, NamedSharding
-from jax.experimental.pjit import pjit
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.cudnn.fused_attention_stablehlo import dot_product_attention
@@ -168,24 +167,27 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     devices = devices.reshape((2, 2))
     with Mesh(devices, ('dp', 'tp')) as mesh:
       qkv_spec = PartitionSpec('dp', None, 'tp', None)
+      qkv_sharding = NamedSharding(mesh, qkv_spec)
       if bias is not None:
         bias_spec = PartitionSpec('dp', 'tp', None, None)
       else:
-        bias_spec = None
-      query = jax.device_put(query, NamedSharding(mesh, qkv_spec))
-      key = jax.device_put(key, NamedSharding(mesh, qkv_spec))
-      value = jax.device_put(value, NamedSharding(mesh, qkv_spec))
+        bias_spec = PartitionSpec()
+      bias_sharding = NamedSharding(mesh, bias_spec)
+      replicated = NamedSharding(mesh, PartitionSpec())
+      query = jax.device_put(query, qkv_sharding)
+      key = jax.device_put(key, qkv_sharding)
+      value = jax.device_put(value, qkv_sharding)
       if bias is not None:
-        bias = jax.device_put(bias, NamedSharding(mesh, bias_spec))
-      grad = jax.device_put(grad, NamedSharding(mesh, qkv_spec))
-      in_shardings = (qkv_spec, qkv_spec, qkv_spec, qkv_spec, bias_spec, None)
-      out_shardings = (None, (qkv_spec, qkv_spec, qkv_spec))
-      pjitted_f_train = pjit(jitted_f_train,
+        bias = jax.device_put(bias, bias_sharding)
+      grad = jax.device_put(grad, qkv_sharding)
+      in_shardings = (qkv_sharding, qkv_sharding, qkv_sharding, qkv_sharding, bias_sharding, replicated)
+      out_shardings = (replicated, (qkv_sharding, qkv_sharding, qkv_sharding))
+      pjitted_f_train = jax.jit(jitted_f_train,
         in_shardings=in_shardings,
         out_shardings=out_shardings
       )
 
-      pjitted_g_train = pjit(jitted_g_train,
+      pjitted_g_train = jax.jit(jitted_g_train,
         in_shardings=in_shardings,
         out_shardings=out_shardings
       )
