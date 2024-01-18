@@ -1430,6 +1430,19 @@ jax_test(
     ],
 )
 
+jax_test(
+    name = "fused_attention_stablehlo_test",
+    srcs = ["fused_attention_stablehlo_test.py"],
+    disable_backends = [
+        "tpu",
+        "cpu",
+    ],
+    shard_count = 4,
+    deps = [
+        "//jax:fused_attention_stablehlo",
+    ],
+)
+
 exports_files(
     [
         "api_test.py",

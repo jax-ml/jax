@@ -16,6 +16,8 @@ from functools import partial
 from absl.testing import absltest
 from typing import Any, Optional
 import os
+os.environ['XLA_FLAGS'] = '--xla_dump_disable_metadata --xla_gpu_enable_triton_gemm=false --xla_dump_hlo_as_text --xla_dump_to=./scratch/hlo --xla_dump_hlo_module_re=.*pjit__unnamed_function.* --xla_dump_hlo_pass_re=.* --xla_gpu_enable_cudnn_fmha=true --xla_gpu_fused_attention_use_cudnn_rng=true'
+
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -24,40 +26,40 @@ from jax.sharding import PartitionSpec, NamedSharding
 from jax.experimental.pjit import pjit
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.cudnn.fused_attention_stableHLO import dot_product_attention
+from jax._src.cudnn.fused_attention_stablehlo import dot_product_attention
 
 config.parse_flags_with_absl()
 Array = jnp.ndarray
 
 def f(query: Array,
-        key: Array,
-        value: Array,
-        bias: Optional[Array] = None,
-        mask: Optional[Array] = None,
-        causal_mask: bool = False,
-        scale: float = 0.5,
-        dropout_rate: float = 0.1) -> Array:
-
-  output = dot_product_attention(
-      query,
-      key,
-      value,
-      scale=scale,
-      bias=bias,
-      mask=mask,
-      is_causal_mask=causal_mask,
-      dropout_rate=dropout_rate)
-  return output
-
-def f_train(query: Array,
       key: Array,
       value: Array,
-      grad: Array,
       bias: Optional[Array] = None,
       mask: Optional[Array] = None,
       causal_mask: bool = False,
       scale: float = 0.5,
       dropout_rate: float = 0.1) -> Array:
+
+  output = dot_product_attention(
+    query,
+    key,
+    value,
+    scale=scale,
+    bias=bias,
+    mask=mask,
+    is_causal_mask=causal_mask,
+    dropout_rate=dropout_rate)
+  return output
+
+def f_train(query: Array,
+            key: Array,
+            value: Array,
+            grad: Array,
+            bias: Optional[Array] = None,
+            mask: Optional[Array] = None,
+            causal_mask: bool = False,
+            scale: float = 0.5,
+            dropout_rate: float = 0.1) -> Array:
 
   out, f_vjp = jax.vjp(
     partial(f, scale=scale, causal_mask=causal_mask, dropout_rate=dropout_rate),
@@ -101,33 +103,27 @@ def g(query: Array,
   attn_weights = jax.nn.softmax(attn_weights)
   if dropout_rate > 0.:
     keep_prob = 1.0 - dropout_rate
-    dropout_shape = list(attn_weights.shape)
-    dropout_shape[-2] = 1
-    dropout_rng = jax.random.PRNGKey(0)
-    keep = jax.random.bernoulli(dropout_rng, keep_prob, dropout_shape)
-    keep = jnp.broadcast_to(keep, attn_weights.shape)
-    multiplier = (
-        keep.astype(attn_weights.dtype) / jnp.asarray(keep_prob, dtype=attn_weights.dtype))
-    attn_weights = attn_weights * multiplier
+    dropout_rng = jax.random.key(0)
+    keep = jax.random.bernoulli(dropout_rng, keep_prob, attn_weights.shape)
+    attn_weights = jax.lax.select(keep, attn_weights / keep_prob, jnp.zeros_like(attn_weights))
 
   return jnp.einsum('bhqk,bkhd->bqhd', attn_weights, value)
 
 def g_train(query: Array,
-      key: Array,
-      value: Array,
-      grad: Array,
-      bias: Optional[Array] = None,
-      mask: Optional[Array] = None,
-      causal_mask: bool = False,
-      scale: float = 0.5,
-      dropout_rate: float = 0.1) -> Array:
+            key: Array,
+            value: Array,
+            grad: Array,
+            bias: Optional[Array] = None,
+            mask: Optional[Array] = None,
+            causal_mask: bool = False,
+            scale: float = 0.5,
+            dropout_rate: float = 0.1) -> Array:
   out_ref, g_vjp = jax.vjp(
     partial(g, scale=scale, causal_mask=causal_mask, dropout_rate=dropout_rate),
     query, key, value, bias, None)
   query_grad_ref, key_grad_ref, value_grad_ref, _, _ = g_vjp(grad)
   return out_ref, (query_grad_ref, key_grad_ref, value_grad_ref)
 
-@jtu.with_config(jax_legacy_prng_key='allow')
 class DotProductAttentionTest(jtu.JaxTestCase):
   @jtu.sample_product(
       batch_size=[4],
@@ -136,7 +132,7 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       head_dim=[64, 128],
       use_bias=[True],
       is_causal_mask=[False],
-      dropout_rate=[0],
+      dropout_rate=[0, 0.5],
       scale=[0.5],
       dtype=[jnp.float16, jnp.bfloat16]
   )
@@ -144,15 +140,14 @@ class DotProductAttentionTest(jtu.JaxTestCase):
   def test_sdpa(self, batch_size: int, seq_len: int, num_heads: int,
                 head_dim: int, use_bias: bool, is_causal_mask: bool,
                 dropout_rate: float, scale: float, dtype: jnp.dtype):
-    if (seq_len == 256 and is_causal_mask):
+    if seq_len == 256 and is_causal_mask:
       self.skipTest("Fused attention does not support mask generation.")
-    if (seq_len == 256 and head_dim == 128):
-      self.skipTest("Fused attention does not head dim = 128.")
+    if seq_len == 256 and head_dim == 128:
+      self.skipTest("Fused attention does not support head dim = 128.")
     if len(jax.local_devices()) <= 4:
       self.skipTest("Require at least 4 devices to run sharding tests.")
-    os.environ['XLA_FLAGS'] = '--xla_gpu_enable_cudnn_fmha=true --xla_gpu_fused_attention_use_cudnn_rng=true'
 
-    k1, k2, k3, k4, k5 = jax.random.split(jax.random.PRNGKey(0), 5)
+    k1, k2, k3, k4, k5 = jax.random.split(jax.random.key(0), 5)
     query = jax.random.normal(
         k1, (batch_size, seq_len, num_heads, head_dim), dtype=dtype)
     key = jax.random.normal(
@@ -197,14 +192,14 @@ class DotProductAttentionTest(jtu.JaxTestCase):
 
       out, (query_grad, key_grad, value_grad) = pjitted_f_train(query, key, value, grad, bias, None)
       out_ref, (query_grad_ref, key_grad_ref, value_grad_ref) = pjitted_g_train(query, key, value, grad, bias, None)
-      assert jnp.allclose(out_ref, out, rtol=1e-5, atol=1e-5)
+      self.assertArraysAllClose(out_ref, out, rtol=1e-5, atol=1e-5)
       if seq_len > 512:
         # query_grad in flash attention is not deterministic
-        assert jnp.allclose(query_grad_ref, query_grad, rtol=1e-2, atol=1e-2)
+        self.assertArraysAllClose(query_grad_ref, query_grad, rtol=1e-2, atol=1e-2)
       else:
-        assert jnp.allclose(query_grad_ref, query_grad, rtol=1e-5, atol=1e-5)
-      assert jnp.allclose(key_grad_ref, key_grad, rtol=1e-5, atol=1e-5)
-      assert jnp.allclose(value_grad_ref, value_grad, rtol=1e-5, atol=1e-5)
+        self.assertArraysAllClose(query_grad_ref, query_grad, rtol=1e-5, atol=1e-5)
+      self.assertArraysAllClose(key_grad_ref, key_grad, rtol=1e-5, atol=1e-5)
+      self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-5, atol=1e-5)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
