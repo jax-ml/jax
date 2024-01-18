@@ -350,6 +350,21 @@ def _pjit_explicit_sharding(in_shardings, out_shardings, device,
           any(not is_unspecified(i) for i in out_shardings_flat))
 
 
+def get_wrapped_fun(api_name, fun, args, kwargs, static_argnums, static_argnames):
+  dbg = debug_info(api_name, fun, args, kwargs, static_argnums, static_argnames)
+  f = lu.wrap_init(fun)
+  f, res_paths = result_paths(f)
+  f, dyn_args = argnums_partial_except(f, static_argnums, args,
+                                       allow_invalid=True)
+  del args
+
+  f, dyn_kwargs = argnames_partial_except(f, static_argnames, kwargs)
+  explicit_args, in_tree = tree_flatten((dyn_args, dyn_kwargs))
+  flat_fun, out_tree = flatten_fun(f, in_tree)
+  return (flat_fun, dbg, res_paths, explicit_args, in_tree, out_tree, dyn_args,
+          dyn_kwargs)
+
+
 class PjitInfo(NamedTuple):
   fun: Callable
   in_shardings: Any
@@ -391,16 +406,10 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
   axes_specs = _flat_axes_specs(abstracted_axes, *args, **kwargs)
 
   jit_name = 'jit' if resource_env is None else 'pjit'
-  dbg = debug_info(jit_name, fun, args, kwargs, static_argnums, static_argnames)
-  f = lu.wrap_init(fun)
-  f, res_paths = result_paths(f)
-  f, dyn_args = argnums_partial_except(f, static_argnums, args,
-                                       allow_invalid=True)
-  del args
 
-  f, dyn_kwargs = argnames_partial_except(f, static_argnames, kwargs)
-  explicit_args, in_tree = tree_flatten((dyn_args, dyn_kwargs))
-  flat_fun, out_tree = flatten_fun(f, in_tree)
+  (flat_fun, dbg, res_paths, explicit_args, in_tree, out_tree, dyn_args,
+   dyn_kwargs) = get_wrapped_fun(
+       jit_name, fun, args, kwargs, static_argnums, static_argnames)
 
   if (donate_argnums or donate_argnames) and not config.debug_nans.value:
     donated_invars = donation_vector(

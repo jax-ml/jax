@@ -2835,12 +2835,16 @@ def eval_shape(fun: Callable, *args, **kwargs):
   >>> print(out.dtype)
   float32
   """
-  args_flat, in_tree = tree_flatten((args, kwargs))
-  wrapped_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
-  debug_info = pe.debug_info(fun, in_tree, out_tree, True, "eval_shape")
-  out = pe.abstract_eval_fun(wrapped_fun.call_wrapped,
-                             *map(shaped_abstractify, args_flat),
-                             debug_info=debug_info)
+  # The traced_for name is `jit` so as to get maximum tracing cache hits.
+  # Eventually, we should deprecate `eval_shape` and expose it like AOT style.
+  f, dbg, res_paths, args_flat, _, out_tree, _, _ = pjit.get_wrapped_fun(
+      "jit", fun, args, kwargs, (), ())
+  in_avals = tuple(shaped_abstractify(a) for a in args_flat)
+  # Create jaxpr via pjit's function to share cache and not retrace.
+  # TODO(yashkatariya): Rename this function and put it in partial_eval.
+  _, _, out = pjit._create_pjit_jaxpr(
+      f, in_avals, dbg, pjit.HashableFunction(res_paths, closure=()),
+      pjit.IgnoreKey(True))
   out = [ShapeDtypeStruct(x.shape, x.dtype, x.named_shape) for x in out]
   return tree_unflatten(out_tree(), out)
 

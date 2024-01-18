@@ -2502,6 +2502,19 @@ class APITest(jtu.JaxTestCase):
 
     self.assertRaises(TypeError, lambda: api.eval_shape(fun, x, y))
 
+  def test_eval_shape_trace_cache_share(self):
+    def f(x):
+      return x * 2
+
+    inp = np.arange(8)
+
+    with jtu.count_jit_tracing_cache_miss() as count:
+      jax.eval_shape(f, inp)
+      jax.jit(f)(inp)
+
+    # one for `f` and another for mul (`x * 2`) which is jitted.
+    self.assertEqual(count[0], 2)
+
   def test_eval_shape_duck_typing(self):
     def fun(A, b, x):
       return jnp.dot(A, x) + b
@@ -3443,7 +3456,7 @@ class APITest(jtu.JaxTestCase):
       _ = self._saved_tracer+1
 
     with self.assertRaisesRegex(UnexpectedTracerError,
-                                "for eval_shape"):
+                                "for jit"):
       jax.eval_shape(self.helper_save_tracer, 1)
       _ = self._saved_tracer+1
 

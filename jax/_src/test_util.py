@@ -45,6 +45,7 @@ from jax._src import pjit as pjit_lib
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
+from jax._src import linear_util as lu
 from jax._src import dtypes as _dtypes
 from jax._src import monitoring
 from jax._src import stages
@@ -237,6 +238,23 @@ def count_pjit_cpp_cache_miss():
     yield count
   finally:
     pjit_lib._pjit_lower = original_pjit_lower
+
+
+@contextmanager
+def count_jit_tracing_cache_miss():
+  original_create_pjit_jaxpr = pjit_lib._create_pjit_jaxpr
+  count = [0]
+
+  @lu.cache
+  def create_pjit_jaxpr_and_count(*args):
+    count[0] += 1
+    return original_create_pjit_jaxpr(*args)
+
+  pjit_lib._create_pjit_jaxpr = create_pjit_jaxpr_and_count
+  try:
+    yield count
+  finally:
+    pjit_lib._create_pjit_jaxpr = original_create_pjit_jaxpr
 
 
 @contextmanager
