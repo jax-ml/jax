@@ -19,8 +19,8 @@
 
 
 # pylint: disable=g-bad-import-order
-from ._tpu_gen import *  # pylint: disable=wildcard-import
-from ._tpu_gen import _Dialect
+from jaxlib.mosaic.python._tpu_gen import *  # pylint: disable=wildcard-import
+from jaxlib.mosaic.python._tpu_gen import _Dialect
 from jaxlib.mlir._mlir_libs._tpu_ext import *  # pylint: disable=wildcard-import
 try:
   from jaxlib.mlir.dialects._ods_common import _cext

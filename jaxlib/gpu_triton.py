@@ -39,7 +39,8 @@ if _cuda_triton:
   get_serialized_metadata = _cuda_triton.get_serialized_metadata
 
 try:
-  from .rocm import _triton as _hip_triton # pytype: disable=import-error
+  from jax.jaxlib.rocm import _triton as _hip_triton  # pytype: disable=import-error
+
   xla_client.register_custom_call_target(
       "triton_kernel_call", _hip_triton.get_custom_call(),
       platform='ROCM')

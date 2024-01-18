@@ -16,10 +16,10 @@
 
 """Python bindings for the MLIR Triton dialect."""
 
-from ._triton_enum_gen import *  # pylint: disable=wildcard-import
-from ._triton_ext import (
-    register_dialect,
+from jax.jaxlib.triton._triton_enum_gen import *  # pylint: disable=wildcard-import
+from jax.jaxlib.triton._triton_ext import (
     PointerType,
     infer_reduce_op_encoding,
+    register_dialect,
 )
-from ._triton_ops_gen import *  # pylint: disable=wildcard-import
+from jax.jaxlib.triton._triton_ops_gen import *  # pylint: disable=wildcard-import

@@ -23,15 +23,14 @@ from collections.abc import Sequence
 from functools import partial, wraps
 import threading
 
+from jax.jaxlib.triton import dialect as tt_dialect
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith as arith_dialect
 from jaxlib.mlir.dialects import math as math_dialect
 from jaxlib.mlir.dialects import scf as scf_dialect
 import numpy as np
-import triton.compiler.backends.cuda as cb
-import triton.language as tl
-
-from . import dialect as tt_dialect
+from triton import language as tl
+from triton.compiler.backends import cuda as cb
 
 
 _tls = threading.local()

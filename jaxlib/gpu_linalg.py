@@ -17,10 +17,9 @@ from functools import partial
 import importlib
 import operator
 
-import jaxlib.mlir.ir as ir
-
-from .hlo_helpers import custom_call
-from .gpu_common_utils import GpuLibNotLinkedError
+from jax.jaxlib.gpu_common_utils import GpuLibNotLinkedError
+from jax.jaxlib.hlo_helpers import custom_call
+from mlir import ir
 
 from jaxlib import xla_client
 

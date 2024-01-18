@@ -20,12 +20,11 @@ import importlib
 import itertools
 import operator
 
-import jaxlib.mlir.ir as ir
+from jax.jaxlib.gpu_common_utils import GpuLibNotLinkedError
+from jax.jaxlib.hlo_helpers import custom_call
+from mlir import ir
 
 from jaxlib import xla_client
-
-from .hlo_helpers import custom_call
-from .gpu_common_utils import GpuLibNotLinkedError
 
 for cuda_module_name in [".cuda", "jax_cuda12_plugin", "jax_cuda11_plugin"]:
   try:

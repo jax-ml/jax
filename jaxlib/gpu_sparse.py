@@ -11,21 +11,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""
-cusparse wrappers for performing sparse matrix computations in JAX
-"""
+"""cusparse wrappers for performing sparse matrix computations in JAX"""
 
-import math
 from functools import partial
 import importlib
+import math
 
-import jaxlib.mlir.ir as ir
-
+from jax.jaxlib.hlo_helpers import custom_call, mk_result_types_and_shapes
+from mlir import ir
 import numpy as np
 
 from jaxlib import xla_client
-
-from .hlo_helpers import custom_call, mk_result_types_and_shapes
 
 for cuda_module_name in [".cuda", "jax_cuda12_plugin", "jax_cuda11_plugin"]:
   try:
@@ -42,7 +38,7 @@ if _cusparse:
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 
 try:
-  from .rocm import _sparse as _hipsparse  # pytype: disable=import-error
+  from jax.jaxlib.rocm import _sparse as _hipsparse  # pytype: disable=import-error
 except ImportError:
   _hipsparse = None
 else:

@@ -17,21 +17,24 @@ from functools import partial
 import importlib
 import math
 
-import jaxlib.mlir.ir as ir
-import jaxlib.mlir.dialects.stablehlo as hlo
-
+from jax.jaxlib.gpu_common_utils import GpuLibNotLinkedError
+from jax.jaxlib.hlo_helpers import (
+    DimensionSize,
+    ShapeTypePair,
+    custom_call,
+    dense_int_array,
+    ensure_hlo_s32,
+    hlo_s32,
+    mk_result_types_and_shapes,
+)
+from mlir import ir
+from mlir.dialects import stablehlo as hlo
 import numpy as np
-
-from .gpu_common_utils import GpuLibNotLinkedError
 
 from jaxlib import xla_client
 
-from .hlo_helpers import (
-    DimensionSize, ShapeTypePair, mk_result_types_and_shapes,
-    custom_call, ensure_hlo_s32, hlo_s32, dense_int_array)
-
 try:
-  from .cuda import _blas as _cublas  # pytype: disable=import-error
+  from jax.jaxlib.cuda import _blas as _cublas  # pytype: disable=import-error
 except ImportError:
   for cuda_module_name in ["jax_cuda12_plugin", "jax_cuda11_plugin"]:
     try:
@@ -61,14 +64,16 @@ if _cusolver:
 
 
 try:
-  from .rocm import _blas as _hipblas  # pytype: disable=import-error
+  from jax.jaxlib.rocm import _blas as _hipblas  # pytype: disable=import-error
+
   for _name, _value in _hipblas.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="ROCM")
 except ImportError:
   _hipblas = None
 
 try:
-  from .rocm import _solver as _hipsolver  # pytype: disable=import-error
+  from jax.jaxlib.rocm import _solver as _hipsolver  # pytype: disable=import-error
+
   for _name, _value in _hipsolver.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="ROCM")
 except ImportError:

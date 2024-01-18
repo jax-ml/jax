@@ -14,13 +14,12 @@
 
 import importlib
 
-import jaxlib.mlir.ir as ir
-import jaxlib.mlir.dialects.stablehlo as hlo
-
+from jax.jaxlib.gpu_common_utils import GpuLibNotLinkedError
+from mlir import ir
+from mlir.dialects import stablehlo as hlo
 import numpy as np
 
 from jaxlib import xla_client
-from .gpu_common_utils import GpuLibNotLinkedError
 
 for cuda_module_name in [".cuda", "jax_cuda12_plugin", "jax_cuda11_plugin"]:
   try:

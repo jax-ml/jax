@@ -17,19 +17,23 @@
 
 from collections.abc import Sequence
 
+from jaxlib.cpu import _lapack
+from jaxlib.hlo_helpers import (
+    DimensionSize,
+    ShapeTypePair,
+    custom_call,
+    ensure_hlo_s32,
+    hlo_add,
+    hlo_min,
+    hlo_s32,
+    hlo_u8,
+    mk_result_types_and_shapes,
+)
+from mlir import ir
+from mlir.dialects import stablehlo as hlo
 import numpy as np
 
-import jaxlib.mlir.ir as ir
-import jaxlib.mlir.dialects.stablehlo as hlo
-
 from jaxlib import xla_client
-
-from .hlo_helpers import (
-    custom_call, hlo_u8, hlo_s32,
-    ensure_hlo_s32, hlo_add, hlo_min,
-    DimensionSize, ShapeTypePair, mk_result_types_and_shapes,
-)
-from .cpu import _lapack
 
 for _name, _value in _lapack.registrations().items():
   xla_client.register_custom_call_target(_name, _value, platform="cpu")

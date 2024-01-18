@@ -12,12 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import jaxlib.mlir.ir as ir
-import jaxlib.mlir.dialects.stablehlo as hlo
-
-
-from .hlo_helpers import custom_call
-from .cpu import _ducc_fft
+from jax.jaxlib.cpu import _ducc_fft
+from jax.jaxlib.hlo_helpers import custom_call
+from mlir import ir
+from mlir.dialects import stablehlo as hlo
 import numpy as np
 
 from jaxlib import xla_client
