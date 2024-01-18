@@ -7115,7 +7115,7 @@ class CustomJVPTest(jtu.JaxTestCase):
   def test_hard_stuff2(self):
     @jax.custom_jvp
     def f(x):
-      return lax.tie_in(x, np.zeros(x.shape, x.dtype))
+      return np.zeros(x.shape, x.dtype)
 
     @f.defjvp
     def f_jvp(primals, tangents):

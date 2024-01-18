@@ -4568,15 +4568,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                           7.66067839e-174], np.float64)
     self.assertAllClose(f(x), expected, check_dtypes=False)
 
-  def testIssue776(self):
-    """Tests that the scatter-add transpose rule instantiates symbolic zeros."""
-    def f(u):
-      y = jnp.ones_like(u, shape=10).at[np.array([2, 4, 5])].add(u)
-      # The transpose rule for lax.tie_in returns a symbolic zero for its first
-      # argument.
-      return lax.tie_in(y, 7.)
+  # Test removed because tie_in is deprecated.
+  # def testIssue776(self):
+  #   """Tests that the scatter-add transpose rule instantiates symbolic zeros."""
+  #   def f(u):
+  #     y = jnp.ones_like(u, shape=10).at[np.array([2, 4, 5])].add(u)
+  #     # The transpose rule for lax.tie_in returns a symbolic zero for its first
+  #     # argument.
+  #     return lax.tie_in(y, 7.)
 
-    self.assertAllClose(np.zeros(3,), jax.grad(f)(np.ones(3,)))
+  #   self.assertAllClose(np.zeros(3,), jax.grad(f)(np.ones(3,)))
 
   # NOTE(mattjj): I disabled this test when removing lax._safe_mul because this
   # is a numerical stability issue that should be solved with a custom jvp rule
