@@ -298,6 +298,10 @@ class Mesh(contextlib.ContextDecorator):
   def _flat_devices_set(self):
     return set(self.devices.flat)
 
+  def __str__(self):
+    mesh_str = ", ".join(f"'{k}': {v}" for k, v in self.shape.items())
+    return f"Mesh({mesh_str})"
+
   @functools.cached_property
   def _repr(self):
     if self.empty:

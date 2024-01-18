@@ -1153,6 +1153,10 @@ class ShardingTest(jtu.JaxTestCase):
 
     self.assertIs(mesh1, mesh2)
 
+  def test_mesh_str(self):
+    mesh = jtu.create_global_mesh((2, 2, 2), ('x', 'y', 'z'))
+    self.assertEqual(str(mesh), "Mesh('x': 2, 'y': 2, 'z': 2)")
+
 
 class RngShardingTest(jtu.JaxTestCase):
   # tests that the PRNGs are automatically sharded as expected
