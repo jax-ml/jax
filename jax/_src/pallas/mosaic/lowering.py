@@ -1630,6 +1630,7 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
       )
       args = jaxpr_subcomp(lowering_context, jaxpr, *consts, *args)
     return args
+
   if num_steps == unroll:
     # No need for an scf.For. We can just unroll completely
     for i in range(start, start + num_steps):
@@ -1641,9 +1642,7 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
   if unroll != 1:
     raise NotImplementedError(
         f"Only unroll={num_steps=} and unroll=1 supported. Got {unroll=}.")
-  if len(args) > 0:
-    raise NotImplementedError("Rolled loops don't support arguments")
-  lbd = ir_constant(0, mlir_type=_dtype_to_ir_type(jnp.dtype("int32")))
+  lbd = ir_constant(0, mlir_type=mlir.dtype_to_ir_type(jnp.dtype("int32")))
   ubd = ir_constant(
       num_steps, mlir_type=_dtype_to_ir_type(jnp.dtype("int32"))
   )
@@ -1703,10 +1702,14 @@ def _scan_lowering_rule(
       pallas_utils.pattern_match_scan_to_fori_loop(jaxpr, num_consts, num_carry)
       )
   consts, args = split_list(args, [num_consts])
+  consts_avals, args_avals = split_list(ctx.avals_in, [num_consts])
   if has_loop_index:
     loop_index_start, *args = args
+    args_avals = args_avals[1:]
   else:
     loop_index_start = 0
+  consts = map(_ensure_mlir_value, consts, consts_avals)
+  args = map(_ensure_mlir_value, args, args_avals)
   out = _lower_jaxpr_to_for_loop(
       ctx, jaxpr, loop_index_start, length,
       consts, *args, has_loop_index=has_loop_index,

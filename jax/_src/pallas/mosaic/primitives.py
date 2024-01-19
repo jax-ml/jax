@@ -203,7 +203,7 @@ def _semaphore_signal_pp_eqn(eqn: jax_core.JaxprEqn,
     flat_device_ids = tree_util.tree_leaves(device_ids)
     if not flat_device_ids:
       return out
-    device_ids_pp = [flat_device_ids[0]]
+    device_ids_pp = [pp.text(jax_core.pp_var(flat_device_ids[0], context))]
     for device_id in flat_device_ids[1:]:
       device_ids_pp.append(pp.text(" "))
       device_ids_pp.append(pp.text(jax_core.pp_var(device_id, context)))

@@ -37,6 +37,7 @@ py_library_providing_imports_info(
         ":kernel_regeneration_util",
         ":lowering",
         ":pallas_call_registration",
+        ":pipeline",
         ":primitives",
     ],
 )
@@ -97,5 +98,18 @@ py_library(
     srcs = ["kernel_regeneration_util.py"],
     deps = [
         "//third_party/py/mlir:ir",
+    ],
+)
+
+py_library(
+    name = "pipeline",
+    srcs = ["pipeline.py"],
+    deps = [
+        ":core",
+        ":primitives",
+        "//jax",
+        "//jax:api_util",
+        "//jax:util",
+        "//jax/_src/pallas",
     ],
 )

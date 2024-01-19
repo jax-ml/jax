@@ -104,6 +104,10 @@ class RefView:
     return self.indexers[-1].get_indexer_shape()
 
   @property
+  def dtype(self):
+    return self.ref.dtype
+
+  @property
   def at(self) -> RefIndexer:
     return RefIndexer(self)
 

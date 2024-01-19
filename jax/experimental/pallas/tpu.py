@@ -25,6 +25,10 @@ from jax._src.pallas.mosaic import async_copy
 from jax._src.pallas.mosaic import async_remote_copy
 from jax._src.pallas.mosaic import dma_semaphore
 from jax._src.pallas.mosaic import device_id
+from jax._src.pallas.mosaic import emit_pipeline_with_allocations
+from jax._src.pallas.mosaic import emit_pipeline
+from jax._src.pallas.mosaic import PipelineCallbackArgs
+from jax._src.pallas.mosaic import PipelinePrefetchArgs
 from jax._src.pallas.mosaic import encode_kernel_regeneration_metadata
 from jax._src.pallas.mosaic import extract_kernel_regeneration_metadata
 from jax._src.pallas.mosaic import get_barrier_semaphore
