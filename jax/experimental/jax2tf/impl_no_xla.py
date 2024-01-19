@@ -547,6 +547,7 @@ def _validate_reduce_window_inputs(operand_shape, computation_name, dtype,
     # tf.math.reduce_min.
     raise _reduce_error(f"Min pool does not support operands of type {dtype}")
   if computation_name == "add" and dtype not in [
+      tf.bfloat16,
       tf.float16,
       tf.float32,
       tf.float64,

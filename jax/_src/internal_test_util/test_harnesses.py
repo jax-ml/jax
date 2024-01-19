@@ -2521,7 +2521,9 @@ def requires_xla_for_reduce(name, dtype):
     return True
   if name == "min" and dtype in [np.uint8, np.uint16]:
     return True
-  if name == "add" and dtype not in [np.float16, np.float32, np.float64]:
+  if name == "add" and dtype not in [
+      dtypes.bfloat16, np.float16, np.float32, np.float64
+  ]:
     return True
   return False
 

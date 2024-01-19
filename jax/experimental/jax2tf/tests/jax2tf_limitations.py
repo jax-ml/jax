@@ -1076,7 +1076,7 @@ class Jax2TfLimitation(test_harnesses.Limitation):
             tol=3e-5),
         Jax2TfLimitation(
             "Large deviations on TPU for enable_xla=False",
-            dtypes=[np.float16, np.float32],
+            dtypes=[dtypes.bfloat16, np.float16, np.float32],
             devices="tpu",
             modes=("eager", "graph", "compiled"),
             expect_tf_error=False,
@@ -1086,6 +1086,8 @@ class Jax2TfLimitation(test_harnesses.Limitation):
                      modes=("eager", "graph", "compiled",), tol=1e-5),
       custom_numeric(devices=("cpu", "gpu"), dtypes=[np.float16],
                      modes=("eager", "graph", "compiled",), tol=5e-3),
+      custom_numeric(devices=("cpu", "gpu"), dtypes=[dtypes.bfloat16],
+                     modes=("eager", "graph", "compiled",), tol=5e-1),
     ]
 
   @classmethod
