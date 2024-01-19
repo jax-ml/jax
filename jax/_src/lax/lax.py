@@ -62,6 +62,7 @@ from jax._src.lax.utils import (
   standard_primitive)
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -1375,7 +1376,14 @@ def full_like(x: ArrayLike | DuckTypedArray,
   # TODO(yashkatariya): Use shard_like in tracing mode too i.e. remove the
   # ArrayImpl check.
   if shape is None and isinstance(x, array.ArrayImpl):
-    return shard_alike.shard_alike(x, val)[1]
+    if xla_extension_version < 227:
+      sharding = x.sharding  # type: ignore[union-attr]
+      if (not dispatch.is_single_device_sharding(sharding) and
+          not isinstance(sharding, PmapSharding)):
+        return array.make_array_from_callback(
+            type_cast(array.Shape, fill_shape), sharding, lambda idx: val[idx])
+    else:
+      return shard_alike.shard_alike(x, val)[1]
   return val
 
 
