@@ -24,7 +24,9 @@ class ModuleImage;
 class Kernel {
  public:
   Kernel(std::string kernel_name, uint32_t num_warps, uint32_t shared_mem_bytes,
-         std::string ptx, std::string ttir, int compute_capability);
+         std::string ptx, std::string ttir, int compute_capability,
+         uint32_t cluster_dim_0, uint32_t cluster_dim_1,
+         uint32_t cluster_dim_2);
 
   absl::Status Launch(gpuStream_t stream, uint32_t grid[3], void** params);
 
@@ -38,6 +40,7 @@ class Kernel {
   std::string ptx_;
   std::string ttir_;
   int compute_capability_;
+  uint32_t cluster_dims_[3];
 
   ModuleImage* module_image_ = nullptr;
 };

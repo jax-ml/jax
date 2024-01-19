@@ -1509,12 +1509,14 @@ def compile_jaxpr(
   )
 
   ttir = str(lowering_result.module)
-  ptx, name, shared_mem_bytes, compute_capability = compile_ttir_to_ptx_inplace(
-      lowering_result.module,
-      context,
-      cuda_backend,
-      cuda_options,
-      device=device,
+  ptx, name, shared_mem_bytes, compute_capability, _ = (
+      compile_ttir_to_ptx_inplace(
+          lowering_result.module,
+          context,
+          cuda_backend,
+          cuda_options,
+          device=device,
+      )
   )
   return TritonCompilationResult(
       name, ttir, ptx, shared_mem_bytes, compute_capability, lowering_result
@@ -1571,9 +1573,9 @@ def pallas_call_lowering(
       num_stages,
       debug=debug,
   )
-  #Triton returns a tuple for ROCm. We just want file path to be passed
+  # Triton returns a tuple for ROCm. We just want file path to be passed
   if ctx.module_context.platforms[0] == 'rocm':
-      compilation_result.ptx = compilation_result.ptx[1]
+    compilation_result.ptx = compilation_result.ptx[1]
 
   if debug:
     compilation_result.lowering_result.module.dump()
@@ -1585,6 +1587,9 @@ def pallas_call_lowering(
       compilation_result.ptx,
       compilation_result.ttir,
       compilation_result.compute_capability,
+      1,
+      1,
+      1,  # TODO(giorgioa): Add support for clustering on H100s on Pallas.
   )
 
   grid = triton_lib.normalize_grid(
