@@ -72,6 +72,23 @@ class PallasCallScalarPrefetchTest(jtu.JaxTestCase):
     )(s, x)
     np.testing.assert_allclose(out, x.reshape((8, 8, -1))[s].reshape(x.shape))
 
+  def test_trivial_scalar_prefetch_with_windowless_args(self):
+    def body(_, x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    s = jnp.array([4, 3, 2, 5, 3, 5, 2, 7], jnp.int32)
+    x = jnp.arange(8 * 8 * 128, dtype=jnp.int32).reshape((8 * 8, 128))
+
+    out = pl.pallas_call(
+        body,
+        out_shape=jax.ShapeDtypeStruct(x.shape, jnp.int32),
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=1,
+        ),
+        interpret=self.interpret,
+    )(s, x)
+    np.testing.assert_array_equal(out, x)
+
   def test_vmap_scalar_prefetch(self):
     def body(_, x_ref, o_ref):
       o_ref[...] = x_ref[...]
