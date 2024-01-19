@@ -150,7 +150,7 @@ def jit(
   backend: str | None = None,
   inline: bool = False,
   abstracted_axes: Any | None = None,
-) -> stages.Wrapped:
+) -> pjit.JitWrapped:
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
   Args:
@@ -2835,21 +2835,9 @@ def eval_shape(fun: Callable, *args, **kwargs):
   >>> print(out.dtype)
   float32
   """
-  # Workaround to support unhashable callables.
   try: hash(fun)
   except TypeError: fun = partial(fun)
-  # The traced_for name is `jit` so as to get maximum tracing cache hits.
-  # Eventually, we should deprecate `eval_shape` and expose it like AOT style.
-  f, dbg, res_paths, args_flat, _, out_tree, _, _ = pjit.get_wrapped_fun(
-      "jit", fun, args, kwargs, (), ())
-  in_avals = tuple(shaped_abstractify(a) for a in args_flat)
-  # Create jaxpr via pjit's function to share cache and not retrace.
-  # TODO(yashkatariya): Rename this function and put it in partial_eval.
-  _, _, out = pjit._create_pjit_jaxpr(
-      f, in_avals, dbg, pjit.HashableFunction(res_paths, closure=()),
-      pjit.IgnoreKey(True))
-  out = [ShapeDtypeStruct(x.shape, x.dtype, x.named_shape) for x in out]
-  return tree_unflatten(out_tree(), out)
+  return jit(fun).eval_shape(*args, **kwargs)
 
 
 def named_call(

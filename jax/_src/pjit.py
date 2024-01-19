@@ -336,7 +336,16 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
         lowering, in_tree, flat_global_in_avals, donate_argnums,
         out_tree)
 
+  @api_boundary
+  def eval_shape(*args, **kwargs):
+    _, _, params, _, out_tree, _, _, _, _ = infer_params_fn(
+        *args, **kwargs, _in_layouts=None, _out_layouts=None)
+    out = [api.ShapeDtypeStruct(x.shape, x.dtype, x.named_shape)
+           for x in params['jaxpr'].out_avals]
+    return tree_unflatten(out_tree, out)
+
   wrapped.lower = lower
+  wrapped.eval_shape = eval_shape
   return wrapped
 
 
@@ -348,21 +357,6 @@ def _pjit_explicit_sharding(in_shardings, out_shardings, device,
           backend is not None or
           any(not is_unspecified(i) for i in in_shardings_flat) or
           any(not is_unspecified(i) for i in out_shardings_flat))
-
-
-def get_wrapped_fun(api_name, fun, args, kwargs, static_argnums, static_argnames):
-  dbg = debug_info(api_name, fun, args, kwargs, static_argnums, static_argnames)
-  f = lu.wrap_init(fun)
-  f, res_paths = result_paths(f)
-  f, dyn_args = argnums_partial_except(f, static_argnums, args,
-                                       allow_invalid=True)
-  del args
-
-  f, dyn_kwargs = argnames_partial_except(f, static_argnames, kwargs)
-  explicit_args, in_tree = tree_flatten((dyn_args, dyn_kwargs))
-  flat_fun, out_tree = flatten_fun(f, in_tree)
-  return (flat_fun, dbg, res_paths, explicit_args, in_tree, out_tree, dyn_args,
-          dyn_kwargs)
 
 
 class PjitInfo(NamedTuple):
@@ -407,9 +401,16 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
 
   jit_name = 'jit' if resource_env is None else 'pjit'
 
-  (flat_fun, dbg, res_paths, explicit_args, in_tree, out_tree, dyn_args,
-   dyn_kwargs) = get_wrapped_fun(
-       jit_name, fun, args, kwargs, static_argnums, static_argnames)
+  dbg = debug_info(jit_name, fun, args, kwargs, static_argnums, static_argnames)
+  f = lu.wrap_init(fun)
+  f, res_paths = result_paths(f)
+  f, dyn_args = argnums_partial_except(f, static_argnums, args,
+                                       allow_invalid=True)
+  del args
+
+  f, dyn_kwargs = argnames_partial_except(f, static_argnames, kwargs)
+  explicit_args, in_tree = tree_flatten((dyn_args, dyn_kwargs))
+  flat_fun, out_tree = flatten_fun(f, in_tree)
 
   if (donate_argnums or donate_argnames) and not config.debug_nans.value:
     donated_invars = donation_vector(
@@ -538,6 +539,13 @@ def _flat_axes_specs(abstracted_axes, *args, **kwargs
   return broadcast_prefix(abstracted_axes, args, ax_leaf)
 
 
+class JitWrapped(stages.Wrapped):
+
+  def eval_shape(self, *args, **kwargs):
+    """See ``jax.eval_shape``."""
+    raise NotImplementedError
+
+
 # in_shardings and out_shardings can't be None as the default value
 # because `None` means that the input is fully replicated.
 def pjit(
@@ -553,7 +561,7 @@ def pjit(
     backend: str | None = None,
     inline: bool = False,
     abstracted_axes: Any | None = None,
-) -> stages.Wrapped:
+) -> JitWrapped:
   """Makes ``fun`` compiled and automatically partitioned across multiple devices.
 
   NOTE: This function is now equivalent to jax.jit please use that instead.
