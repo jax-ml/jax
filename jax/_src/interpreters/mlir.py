@@ -2539,10 +2539,10 @@ def emit_python_callback(
     token, *results = results
   return results, token, ifrt_callback
 
-def build_xla_computation_helper(
+def build_mlir_module_helper(
     closed_jaxpr: core.ClosedJaxpr, *, name: str,
     platforms: Sequence[str],
-    backend_or_name: str, axis_context: AxisContext) -> xc.XlaComputation:
+    backend_or_name: str, axis_context: AxisContext) -> ir.Module:
   """Helper to generate pmap-style XLA computations for custom partitioners."""
   if closed_jaxpr.effects:
     raise NotImplementedError
@@ -2552,9 +2552,7 @@ def build_xla_computation_helper(
       donated_args=[False] * len(closed_jaxpr.jaxpr.invars),
       axis_context=axis_context, platforms=platforms,
       lowering_parameters=LoweringParameters())
-  return xc._xla.mlir.mlir_module_to_xla_computation(
-      module_to_string(lowering_result.module), use_tuple_args=False,
-      return_tuple=False)
+  return lowering_result.module
 
 def custom_call(
     call_target_name: str,

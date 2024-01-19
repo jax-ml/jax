@@ -33,6 +33,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.sharding_impls import _op_sharding_to_pos_sharding
 from jax._src import custom_api_util
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.api_util import flatten_fun_nokwargs, argnums_partial
 
 
@@ -180,7 +181,7 @@ def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
         % (repr(closed_jaxpr.out_avals), repr(tiled_results))
     )
   axis_context = sharding_impls.SPMDAxisContext(mesh)
-  built = mlir.build_xla_computation_helper(
+  module = mlir.build_mlir_module_helper(
       closed_jaxpr,
       name="tmp_xla_computation",
       platforms=module_context.platforms,
@@ -188,7 +189,11 @@ def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
       axis_context=axis_context.extend_manual(frozenset(mesh.axis_names)),
   )
   result_sharding = _pack_result_sharding(result_shape, result_shardings)
-  return built, arg_shardings, result_sharding
+  if xla_extension_version < 232:
+    built = xc._xla.mlir.mlir_module_to_xla_computation(
+        mlir.module_to_string(module), use_tuple_args=False, return_tuple=False)
+    return built, arg_shardings, result_sharding
+  return mlir.module_to_bytecode(module), arg_shardings, result_sharding
 
 
 def _custom_partitioning_infer_sharding_from_operands(arg_shapes, arg_shardings,
