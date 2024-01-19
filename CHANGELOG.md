@@ -84,6 +84,7 @@ Remember to align the itemized text with the first line of an item within a list
   * {mod}`jax.random`: passing batched keys directly to random number generation functions,
     such as {func}`~jax.random.bits`, {func}`~jax.random.gamma`, and others, is deprecated
     and will emit a `FutureWarning`.  Use `jax.vmap` for explicit batching.
+  * {func}`jax.lax.tie_in` is deprecated: it has been a no-op since JAX v0.2.0.
 
 ## jaxlib 0.4.24
 

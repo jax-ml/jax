@@ -218,7 +218,7 @@ from jax._src.lax.lax import (
   tan_p as tan_p,
   tanh as tanh,
   tanh_p as tanh_p,
-  tie_in as tie_in,
+  tie_in as _deprecated_tie_in,
   top_k as top_k,
   top_k_p as top_k_p,
   transpose as transpose,
@@ -426,6 +426,11 @@ _deprecations = {
     "jax.lax.unop_dtype_rule is an internal API and has been deprecated.",
     _deprecated_unop_dtype_rule,
   ),
+  # Added January 18 2023
+  "tie_in": (
+    "jax.lax.tie_in is deprecated: it has been a no-op since JAX v0.2.0. "
+    "Replace z = tie_in(x, y) with z = y.", _deprecated_tie_in,
+  ),
 }
 
 import typing as _typing
@@ -438,6 +443,7 @@ if _typing.TYPE_CHECKING:
   standard_naryop = _deprecated_standard_naryop,
   standard_primitive = _deprecated_standard_primitive,
   standard_unop = _deprecated_standard_unop,
+  tie_in = _deprecated_tie_in
   unop = _deprecated_unop,
   unop_dtype_rule = _deprecated_unop_dtype_rule,
 else:
