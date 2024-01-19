@@ -1845,7 +1845,7 @@ def _gather_lower(ctx, operand, indices, *,
         operand,
         indices,
         dnums,
-        mlir.dense_int_elements(slice_sizes),
+        mlir.dense_int_array_v6(slice_sizes),
         indices_are_sorted=ir.BoolAttr.get(indices_are_sorted))]
 
 mlir.register_lowering(gather_p, _gather_lower)
