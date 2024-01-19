@@ -28,6 +28,7 @@ from functools import partial
 import inspect
 import math
 import typing
+import warnings
 from typing import (Any, Callable, Literal, NamedTuple, TypeVar, overload,
                     cast)
 import weakref
@@ -509,6 +510,11 @@ def xla_computation(fun: Callable,
     ROOT tuple.18 = (f32[], f32[], f32[]) tuple(all-reduce.7, all-reduce.12, all-reduce.17)
   }
   """
+  warnings.warn(
+      "jax.xla_computation is deprecated. Use the AOT API"
+      " (https://jax.readthedocs.io/en/latest/aot.html) instead.",
+      DeprecationWarning, stacklevel=2)
+
   if instantiate_const_outputs is not None:
     raise ValueError(
         "instantiate_const_outputs has been deprecated. Please use the ahead of"
