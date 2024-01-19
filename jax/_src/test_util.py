@@ -355,6 +355,20 @@ def pjrt_c_api_version_at_least(major_version: int, minor_version: int):
     return True
   return pjrt_c_api_versions >= (major_version, minor_version)
 
+def get_tpu_version() -> int:
+  if device_under_test() != "tpu":
+    raise ValueError("Device is not TPU")
+  kind = jax.devices()[0].device_kind
+  if kind.endswith(' lite'):
+    kind = kind[:-len(' lite')]
+  assert kind[:-1] == "TPU v", kind
+  return int(kind[-1])
+
+def is_device_tpu_at_least(version: int) -> bool:
+  if device_under_test() != "tpu":
+    return False
+  return get_tpu_version() >= version
+
 def is_device_tpu(version: int | None = None, variant: str = "") -> bool:
   if device_under_test() != "tpu":
     return False

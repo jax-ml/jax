@@ -115,3 +115,17 @@ jax_test(
         "//third_party/py/jax:pallas_tpu_ops",
     ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("hypothesis"),
 )
+
+jax_test(
+    name = "pallas_call_tpu_test",
+    srcs = ["pallas_call_tpu_test.py"],
+    disable_backends = [
+        "gpu",
+    ],
+    main = "pallas_call_tpu_test.py",
+    deps = [
+        "//third_party/py/jax:extend",
+        "//third_party/py/jax:pallas_tpu",
+        "//third_party/py/jax:pallas_tpu_ops",
+    ],
+)

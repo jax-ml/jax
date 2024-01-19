@@ -63,6 +63,7 @@ def _maybe_dynamic_slice(start_idx, block_shape, value, is_indexing):
     assert is_indexing is None
     return value
   assert is_indexing is not None
+  start_idx = tuple(jnp.asarray(s, dtype=jnp.int32) for s in start_idx)
   output = lax.dynamic_slice(value, start_idx, slice_sizes=block_shape)
   squeeze_dims = tuple(np.arange(len(is_indexing))[np.array(is_indexing,
                                                             dtype=np.bool_)])
@@ -74,6 +75,7 @@ def _maybe_dynamic_update_slice(start_idx, block_shape, value, update,
     assert is_indexing is None
     return update
   assert is_indexing is not None
+  start_idx = tuple(jnp.asarray(s, dtype=jnp.int32) for s in start_idx)
   broadcast_dims = tuple(i for i, b in enumerate(is_indexing)
                          if not b)
   update = lax.broadcast_in_dim(update, block_shape, broadcast_dims)
@@ -101,7 +103,8 @@ def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
     discharged_jaxpr, consts = state_discharge.discharge_state(jaxpr, ())
     if debug:
       print(discharged_jaxpr)
-    loop_indices = jnp.array(list(it.product(*(range(g) for g in grid))))
+    loop_indices = jnp.array(list(it.product(*(range(g) for g in grid))),
+                             dtype=jnp.int32)
     oi_map = {v: k for k, v in input_output_aliases}
     out = []
     for i, out_shape in enumerate(out_shapes):
@@ -173,7 +176,7 @@ def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
       carry = map(_maybe_dynamic_update_slice, start_indices, block_shapes,
                   carry, blocks, is_indexing_dim)
       return (i + 1, *carry, *out_scratch)
-    (_, *carry) = lax.while_loop(cond, body, (0, *carry))
+    (_, *carry) = lax.while_loop(cond, body, (jnp.int32(0), *carry))
     _, out, _ = split_list(carry, [len(args), len(out)])
     return out
   return xla.apply_primitive(pallas_call_p, *args, jaxpr=jaxpr, name=name,
