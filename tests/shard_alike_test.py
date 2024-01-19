@@ -50,6 +50,16 @@ def tearDownModule():
   xla_bridge.get_backend.cache_clear()
 
 
+class ShardAlikeDownstreamTest(jtu.JaxTestCase):
+
+  def test_full_like(self):
+    x = jnp.arange(16, dtype='float32').reshape(8, 2)
+    mesh = jtu.create_global_mesh((8,), ("i",))
+    x = jax.device_put(x, NamedSharding(mesh, P('i', None)))
+    y = jnp.full_like(x, 1)
+    self.assertEqual(x.sharding, y.sharding)
+
+
 class ShardAlikeTest(jtu.JaxTestCase):
 
   def setUp(self):
