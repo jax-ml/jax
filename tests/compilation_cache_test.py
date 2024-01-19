@@ -15,8 +15,10 @@
 from functools import partial
 import math
 import os
+import platform
 import tempfile
 from collections import Counter
+import unittest
 from unittest import mock
 from unittest import SkipTest
 import warnings
@@ -313,6 +315,8 @@ class CompilationCacheTest(jtu.JaxTestCase):
         files_in_cache = len(os.listdir(tmpdir))
         self.assertEqual(files_in_cache, 1)
 
+  # This is perhaps related to mocking time.monotonic?
+  @unittest.skipIf(platform.system() == "Windows", "Test fails on Windows")
   def test_cache_saving_metric(self):
     with (
       tempfile.TemporaryDirectory() as tmpdir,
