@@ -1089,12 +1089,32 @@ def _dot_general_lowering_rule(
 
 lowering_rules[lax.dot_general_p] = _dot_general_lowering_rule
 
-_INT_DTYPES = {
-    8: np.dtype(np.int8),
-    16: np.dtype(np.int16),
-    32: np.dtype(np.int32),
-}
-
+def _convert_helper(x, *, to_dtype):
+  # Helper function for dtype conversion
+  from_dtype = x.dtype
+  if jnp.issubdtype(from_dtype, jnp.dtype("bool")):
+    x = x.astype(jnp.int32)
+    return _convert_helper(x, to_dtype=to_dtype)
+  if jnp.issubdtype(from_dtype, jnp.integer):
+    if from_dtype.itemsize < 4:
+      x = x.astype(jnp.int32)
+    if jnp.issubdtype(to_dtype, jnp.floating) and to_dtype.itemsize < 4:
+      x = x.astype(jnp.float32)
+    return x.astype(to_dtype)
+  if jnp.issubdtype(from_dtype, jnp.floating):
+    if jnp.issubdtype(to_dtype, jnp.integer):
+      if from_dtype.itemsize < 4:
+        x = x.astype(jnp.float32)
+      if to_dtype.itemsize < 4:
+        # Need to clip values to match XLA
+        minval, maxval = jnp.iinfo(to_dtype).min, jnp.iinfo(to_dtype).max
+        x = jnp.clip(x, minval, maxval)
+        return x.astype(jnp.int32).astype(to_dtype)
+      return x.astype(to_dtype)
+    elif jnp.issubdtype(to_dtype, np.dtype("bool")):
+      x = x.astype(jnp.int32)
+    return x.astype(jnp.float32)
+  raise NotImplementedError(f"Unsupported cast: {from_dtype} -> {to_dtype}")
 
 def _convert_element_type_lowering_rule(
     ctx: LoweringRuleContext, x, *, new_dtype, weak_type
@@ -1108,38 +1128,39 @@ def _convert_element_type_lowering_rule(
   if jnp.issubdtype(old_dtype, jnp.floating) and jnp.issubdtype(
       new_dtype, jnp.floating
   ):
-    if old_dtype.itemsize < new_dtype.itemsize:
+    if old_dtype.itemsize < new_dtype.itemsize and new_dtype.itemsize == 4:
       return arith.ExtFOp(out_type, x).result
-    else:
+    elif old_dtype.itemsize > new_dtype.itemsize and old_dtype.itemsize == 4:
       return arith.TruncFOp(out_type, x).result
-  elif old_dtype == jnp.bool_ and jnp.issubdtype(new_dtype, jnp.integer):
-    return arith.ExtUIOp(out_type, x).result
-  elif jnp.issubdtype(old_dtype, jnp.signedinteger) and jnp.issubdtype(
-      new_dtype, jnp.floating
-  ):
-    # TODO(sharadmv,apaszke): remove this when Mosaic handles SIToFP with
-    #                         differing element bitwidths
-    if old_dtype.itemsize < new_dtype.itemsize:
-      ext_dtype = _INT_DTYPES[new_dtype.itemsize * 8]
-      ext_type = aval_to_ir_type(out_aval.update(dtype=ext_dtype))
-      x = arith.ExtSIOp(ext_type, x).result
-    elif old_dtype.itemsize > new_dtype.itemsize:
-      ext_dtype = _INT_DTYPES[new_dtype.itemsize * 8]
-      ext_type = aval_to_ir_type(out_aval.update(dtype=ext_dtype))
-      x = arith.TruncIOp(ext_type, x).result
-    return arith.SIToFPOp(out_type, x).result
   elif jnp.issubdtype(old_dtype, jnp.signedinteger) and jnp.issubdtype(
       new_dtype, jnp.signedinteger
   ):
-    if old_dtype.itemsize < new_dtype.itemsize:
+    if old_dtype.itemsize < new_dtype.itemsize and new_dtype.itemsize == 4:
       return arith.ExtSIOp(out_type, x).result
-    else:
+    elif old_dtype.itemsize > new_dtype.itemsize and old_dtype.itemsize == 4:
       return arith.TruncIOp(out_type, x).result
   elif jnp.issubdtype(old_dtype, jnp.floating) and jnp.issubdtype(
       new_dtype, jnp.signedinteger
-  ):
+  ) and old_dtype.itemsize == new_dtype.itemsize == 4:
     return arith.FPToSIOp(out_type, x).result
-  raise NotImplementedError(f"Unsupported cast: {old_dtype} -> {new_dtype}")
+  elif jnp.issubdtype(old_dtype, jnp.signedinteger) and jnp.issubdtype(
+      new_dtype, jnp.floating
+  ) and old_dtype.itemsize == new_dtype.itemsize == 4:
+    return arith.SIToFPOp(out_type, x).result
+  elif (
+      old_dtype == jnp.bool_
+      and jnp.issubdtype(new_dtype, jnp.integer)
+      and new_dtype.itemsize == 4
+  ):
+    return arith.extui(out_type, x)
+  elif (
+      jnp.issubdtype(old_dtype, jnp.integer)
+      and new_dtype == jnp.bool_
+      and old_dtype.itemsize == 4
+  ):
+    return arith.TruncIOp(out_type, x).result
+  return lower_fun(functools.partial(_convert_helper, to_dtype=new_dtype),
+                   multiple_results=False)(ctx, x)
 
 
 lowering_rules[lax.convert_element_type_p] = _convert_element_type_lowering_rule
