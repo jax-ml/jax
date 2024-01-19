@@ -40,6 +40,12 @@ parser.add_argument(
     help="Path to which the output wheel should be written. Required.",
 )
 parser.add_argument(
+    "--jaxlib_git_hash",
+    default="",
+    required=True,
+    help="Git hash. Empty if unknown. Optional.",
+)
+parser.add_argument(
     "--cpu", default=None, required=True, help="Target CPU architecture. Required."
 )
 parser.add_argument(
@@ -115,7 +121,12 @@ try:
   if args.editable:
     build_utils.build_editable(sources_path, args.output_path, package_name)
   else:
-    build_utils.build_wheel(sources_path, args.output_path, package_name)
+    build_utils.build_wheel(
+        sources_path,
+        args.output_path,
+        package_name,
+        git_hash=args.jaxlib_git_hash,
+    )
 finally:
   if tmpdir:
     tmpdir.cleanup()
