@@ -50,8 +50,8 @@ else:
     xla_client.register_custom_call_target(_name, _value, platform="ROCM")
 
 
-cuda_is_supported : bool = _cusparse and _cusparse.sparse_supported
-rocm_is_supported : bool = _hipsparse and _hipsparse.sparse_supported
+cuda_is_supported = bool(_cusparse and _cusparse.sparse_supported)
+rocm_is_supported = bool(_hipsparse and _hipsparse.sparse_supported)
 
 
 def _validate_csr_hlo(data, indices, indptr, shape):
