@@ -155,29 +155,30 @@ def create_dot_product_attention_backend_config(batch,
   backend_config = json.dumps(backend_config)
   return backend_config
 
-def get_custom_call_name(has_bias, has_mask, has_dropout, is_bwd):
-  index = is_bwd << 3 | has_dropout << 2 | has_mask << 1 | has_bias
-  _custom_name_maps = [
-    # fMHA forward call targets.
-    "__cudnn$fhmaSoftmax",
-    "__cudnn$fhmaScaleBiasSoftmax",
-    "__cudnn$fhmaScaleMaskSoftmax",
-    "__cudnn$fhmaScaleBiasMaskSoftmax",
-    "__cudnn$fhmaSoftmaxDropout",
-    "__cudnn$fhmaScaleBiasSoftmaxDropout",
-    "__cudnn$fhmaScaleMaskSoftmaxDropout",
-    "__cudnn$fhmaScaleBiasMaskSoftmaxDropout",
+# mapping from (is_bwd, has_dropout, has_mask, has_bias) to custom call name
+_custom_name_maps = {
+  # fMHA forward call targets.
+  (False, False, False, False): "__cudnn$fhmaSoftmax",
+  (False, False, False, True): "__cudnn$fhmaScaleBiasSoftmax",
+  (False, False, True, False): "__cudnn$fhmaScaleMaskSoftmax",
+  (False, False, True, True): "__cudnn$fhmaScaleBiasMaskSoftmax",
+  (False, True, False, False): "__cudnn$fhmaSoftmaxDropout",
+  (False, True, False, True): "__cudnn$fhmaScaleBiasSoftmaxDropout",
+  (False, True, True, False): "__cudnn$fhmaScaleMaskSoftmaxDropout",
+  (False, True, True, True): "__cudnn$fhmaScaleBiasMaskSoftmaxDropout",
     # fMHA backward call targets.
-    "__cudnn$fhmaSoftmaxBackward",
-    "__cudnn$fhmaScaleBiasSoftmaxBackward",
-    "__cudnn$fhmaScaleMaskSoftmaxBackward",
-    "__cudnn$fhmaScaleBiasMaskSoftmaxBackward",
-    "__cudnn$fhmaSoftmaxDropoutBackward",
-    "__cudnn$fhmaScaleBiasSoftmaxDropoutBackward",
-    "__cudnn$fhmaScaleMaskSoftmaxDropoutBackward",
-    "__cudnn$fhmaScaleBiasMaskSoftmaxDropoutBackward"
-  ]
-  return _custom_name_maps[index]
+  (True, False, False, False): "__cudnn$fhmaSoftmaxBackward",
+  (True, False, False, True): "__cudnn$fhmaScaleBiasSoftmaxBackward",
+  (True, False, True, False): "__cudnn$fhmaScaleMaskSoftmaxBackward",
+  (True, False, True, True): "__cudnn$fhmaScaleBiasMaskSoftmaxBackward",
+  (True, True, False, False): "__cudnn$fhmaSoftmaxDropoutBackward",
+  (True, True, False, True): "__cudnn$fhmaScaleBiasSoftmaxDropoutBackward",
+  (True, True, True, False): "__cudnn$fhmaScaleMaskSoftmaxDropoutBackward",
+  (True, True, True, True): "__cudnn$fhmaScaleBiasMaskSoftmaxDropoutBackward"
+}
+
+def get_custom_call_name(has_bias, has_mask, has_dropout, is_bwd):
+  return _custom_name_maps[(is_bwd, has_dropout, has_mask, has_bias)]
 
 def check_qkv_layout(query, key, value):
   assert len(query.shape) == len(key.shape) == len(value.shape) == 4, \
@@ -673,9 +674,9 @@ _dot_product_attention.defvjp(_dot_product_attention_fwd_rule, _dot_product_atte
 def dot_product_attention(query: Array,
                           key: Array,
                           value: Array,
-                          scale: float = 1.0,
                           bias: Optional[Array] = None,
                           mask: Optional[Array] = None,
+                          scale: float = 1.0,
                           is_causal_mask: bool = False,
                           seed: int = 42,
                           dropout_rate: float = 0.):
@@ -709,7 +710,8 @@ def dot_product_attention(query: Array,
   is_flash_attention, is_cross_attention = check_is_flash_attention(query, key)
   # check if cuDNN is installed and if cuDNN version is sufficient 
   check_cudnn_version(is_flash_attention, is_cross_attention)
-
+  if mask is not None and is_causal_mask:
+    raise ValueError("can not apply a mask and generate a causal_mask at the same time.")
   variadic_args = (bias is not None, mask is not None)
   if bias is None:
     bias = jnp.zeros(0, dtype=query.dtype)

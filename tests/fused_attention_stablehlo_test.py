@@ -16,7 +16,7 @@ from functools import partial
 from absl.testing import absltest
 from typing import Any, Optional
 import os
-os.environ['XLA_FLAGS'] = '--xla_dump_disable_metadata --xla_gpu_enable_triton_gemm=false --xla_dump_hlo_as_text --xla_dump_to=./scratch/hlo --xla_dump_hlo_module_re=.*pjit__unnamed_function.* --xla_dump_hlo_pass_re=.* --xla_gpu_enable_cudnn_fmha=true --xla_gpu_fused_attention_use_cudnn_rng=true'
+os.environ['XLA_FLAGS'] = '--xla_gpu_enable_cudnn_fmha=true --xla_gpu_fused_attention_use_cudnn_rng=true'
 
 import numpy as np
 import jax
@@ -30,72 +30,49 @@ from jax._src.cudnn.fused_attention_stablehlo import dot_product_attention
 config.parse_flags_with_absl()
 Array = jnp.ndarray
 
-def f(query: Array,
-      key: Array,
-      value: Array,
-      bias: Optional[Array] = None,
-      mask: Optional[Array] = None,
-      causal_mask: bool = False,
-      scale: float = 0.5,
-      dropout_rate: float = 0.1) -> Array:
-
-  output = dot_product_attention(
-    query,
-    key,
-    value,
-    scale=scale,
-    bias=bias,
-    mask=mask,
-    is_causal_mask=causal_mask,
-    dropout_rate=dropout_rate)
-  return output
-
-def f_train(query: Array,
+def sdpa_train(query: Array,
             key: Array,
             value: Array,
             grad: Array,
             bias: Optional[Array] = None,
             mask: Optional[Array] = None,
-            causal_mask: bool = False,
             scale: float = 0.5,
+            is_causal_mask: bool = False,
             dropout_rate: float = 0.1) -> Array:
-
-  out, f_vjp = jax.vjp(
-    partial(f, scale=scale, causal_mask=causal_mask, dropout_rate=dropout_rate),
+  out, sdpa_vjp = jax.vjp(
+    partial(dot_product_attention, scale=scale, is_causal_mask=is_causal_mask, dropout_rate=dropout_rate),
     query, key, value, bias, None)
-  query_grad, key_grad, value_grad, _, _ = f_vjp(grad)
+  query_grad, key_grad, value_grad, _, _ = sdpa_vjp(grad)
   return out, (query_grad, key_grad, value_grad)
 
-def g(query: Array,
+def sdpa_ref(query: Array,
       key: Array,
       value: Array,
       bias: Optional[Array] = None,
       mask: Optional[Array] = None,
-      causal_mask: bool = False,
       scale: float = 0.5,
+      is_causal_mask: bool = False,
       dropout_rate: float = 0.1) -> Array:
 
-  def get_large_negative_number(dtype):
-    if jnp.issubdtype(dtype, jnp.inexact):
-        dtype_max = jnp.finfo(dtype).max
-    elif jnp.issubdtype(dtype, jnp.integer):
-        dtype_max = jnp.iinfo(dtype).max
-    else:
-        raise ValueError('Unsupported dtype for inputs.')
-    return jnp.asarray(-0.7 * dtype_max, dtype=dtype)
-
   def get_causal_mask(input_t):
-    large_negative_number = get_large_negative_number(input_t.dtype)
+    dtype = input_t.dtype
+    if jnp.issubdtype(dtype, jnp.inexact):
+      dtype_max = jnp.finfo(dtype).max
+    elif jnp.issubdtype(dtype, jnp.integer):
+      dtype_max = jnp.iinfo(dtype).max
+    else:
+      raise ValueError('Unsupported dtype for inputs.')
+    large_negative_number = jnp.asarray(-0.7 * dtype_max, dtype=dtype)
     t = input_t.shape[2]
-    col_idx = jnp.tile(jnp.arange(t)[jnp.newaxis, :], [t, 1])
-    row_idx = jnp.tile(jnp.arange(t)[:, jnp.newaxis], [1, t])
+    col_idx = jax.lax.broadcasted_iota(np.int32, (t, t), 1)
+    row_idx = jax.lax.broadcasted_iota(np.int32, (t, t), 0)
     mask = (row_idx < col_idx).astype(input_t.dtype) * large_negative_number
     return mask[jnp.newaxis, jnp.newaxis, :, :]
 
   if scale != 1.0:
     query = query * scale
   attn_weights = jnp.einsum('bqhd,bkhd->bhqk', query, key)
-  if causal_mask:
+  if is_causal_mask:
     bias = get_causal_mask(attn_weights)
   if bias is not None:
     attn_weights = attn_weights + bias.astype(attn_weights.dtype)
@@ -108,19 +85,19 @@ def g(query: Array,
 
   return jnp.einsum('bhqk,bkhd->bqhd', attn_weights, value)
 
-def g_train(query: Array,
+def sdpa_train_ref(query: Array,
             key: Array,
             value: Array,
             grad: Array,
             bias: Optional[Array] = None,
             mask: Optional[Array] = None,
-            causal_mask: bool = False,
             scale: float = 0.5,
+            is_causal_mask: bool = False,
             dropout_rate: float = 0.1) -> Array:
-  out_ref, g_vjp = jax.vjp(
-    partial(g, scale=scale, causal_mask=causal_mask, dropout_rate=dropout_rate),
+  out_ref, sdpa_vjp_ref = jax.vjp(
+    partial(sdpa_ref, scale=scale, is_causal_mask=is_causal_mask, dropout_rate=dropout_rate),
     query, key, value, bias, None)
-  query_grad_ref, key_grad_ref, value_grad_ref, _, _ = g_vjp(grad)
+  query_grad_ref, key_grad_ref, value_grad_ref, _, _ = sdpa_vjp_ref(grad)
   return out_ref, (query_grad_ref, key_grad_ref, value_grad_ref)
 
 class DotProductAttentionTest(jtu.JaxTestCase):
@@ -161,8 +138,6 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     else:
       bias = None
 
-    jitted_f_train = jax.jit(partial(f_train, causal_mask=is_causal_mask, scale=scale, dropout_rate=dropout_rate))
-    jitted_g_train = jax.jit(partial(g_train, causal_mask=is_causal_mask, scale=scale, dropout_rate=dropout_rate))
     devices = np.array(jax.local_devices()[:4])
     devices = devices.reshape((2, 2))
     with Mesh(devices, ('dp', 'tp')) as mesh:
@@ -182,18 +157,20 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       grad = jax.device_put(grad, qkv_sharding)
       in_shardings = (qkv_sharding, qkv_sharding, qkv_sharding, qkv_sharding, bias_sharding, replicated)
       out_shardings = (replicated, (qkv_sharding, qkv_sharding, qkv_sharding))
-      pjitted_f_train = jax.jit(jitted_f_train,
+      jitted_sdpa_train = jax.jit(
+        partial(sdpa_train, scale=scale, is_causal_mask=is_causal_mask, dropout_rate=dropout_rate),
         in_shardings=in_shardings,
         out_shardings=out_shardings
       )
 
-      pjitted_g_train = jax.jit(jitted_g_train,
+      jitted_sdpa_train_ref = jax.jit(
+        partial(sdpa_train_ref, scale=scale, is_causal_mask=is_causal_mask, dropout_rate=dropout_rate),
         in_shardings=in_shardings,
         out_shardings=out_shardings
       )
 
-      out, (query_grad, key_grad, value_grad) = pjitted_f_train(query, key, value, grad, bias, None)
-      out_ref, (query_grad_ref, key_grad_ref, value_grad_ref) = pjitted_g_train(query, key, value, grad, bias, None)
+      out, (query_grad, key_grad, value_grad) = jitted_sdpa_train(query, key, value, grad, bias, None)
+      out_ref, (query_grad_ref, key_grad_ref, value_grad_ref) = jitted_sdpa_train_ref(query, key, value, grad, bias, None)
       self.assertArraysAllClose(out_ref, out, rtol=1e-5, atol=1e-5)
       if seq_len > 512:
         # query_grad in flash attention is not deterministic
