@@ -726,6 +726,7 @@ pytype_strict_library(
     name = "sharding_specs",
     srcs = ["_src/sharding_specs.py"],
     deps = [
+        ":config",
         ":op_shardings",
         ":util",
         "//jax/_src/lib",

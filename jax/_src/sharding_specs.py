@@ -36,6 +36,7 @@ from typing import Union
 
 import numpy as np
 
+from jax._src import config
 from jax._src import util
 from jax._src.lib import pmap_lib
 
@@ -188,9 +189,14 @@ def pmap_sharding_spec(nrep, axis_size, sharded_shape: Sequence[int],
       return a
     # replication_factor represents the product of inner pmaps, so it goes
     # after the outer pmapped axis at index 0
+    if config.pmap_no_rank_reduction.value:
+      sharding = util.tuple_update(
+          pspec.sharding, map_axis, Chunked([axis_size]))
+    else:
+      sharding = util.tuple_insert(
+          pspec.sharding, map_axis, Unstacked(axis_size))
     return ShardingSpec(
-      sharding=util.tuple_insert(
-          pspec.sharding, map_axis, Unstacked(axis_size)),
+      sharding=sharding,
       mesh_mapping=itertools.chain(
           [ShardedAxis(sharded_in_axis)], maybe_replicate,
           map(shift_sharded_axis, pspec.mesh_mapping)))
@@ -203,7 +209,10 @@ def pmap_sharding_spec(nrep, axis_size, sharded_shape: Sequence[int],
 def create_pmap_sharding_spec(shape: tuple[int, ...], sharded_dim: int = 0,
                               sharded_dim_size: int | None = None):
   if sharded_dim is not None:
-    sharded_shape = shape[:sharded_dim] + shape[sharded_dim+1:]
+    if config.pmap_no_rank_reduction.value:
+      sharded_shape = util.tuple_update(shape, sharded_dim, 1)
+    else:
+      sharded_shape = util.tuple_delete(shape, sharded_dim)
     if sharded_dim_size is None:
       sharded_dim_size = shape[sharded_dim]
   else:

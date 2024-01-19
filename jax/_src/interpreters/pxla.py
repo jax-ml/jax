@@ -72,7 +72,8 @@ from jax._src.sharding_impls import (
     is_unspecified, is_unspecified_or_auto, array_mapping_to_axis_resources
 )
 from jax._src.util import (safe_map, safe_zip, partition_list,
-                           wrap_name, tuple_delete, distributed_debug_log,
+                           wrap_name, tuple_update, tuple_delete,
+                           distributed_debug_log,
                            unzip2, HashableFunction, weakref_lru_cache)
 
 
@@ -171,12 +172,13 @@ def batched_device_put(aval: core.ShapedArray,
         aval, sharding, bufs, committed=committed, _skip_checks=True)
   return xc.batched_device_put(aval, sharding, xs, list(devices), committed)  # type: ignore
 
-def shard_aval(size, axis: int, aval):
+def _shard_aval(size, axis: int, aval):
   try:
-    return shard_aval_handlers[type(aval)](size, axis, aval)
+    return _shard_aval_handlers[type(aval)](size, axis, aval)
   except KeyError as err:
-    raise TypeError(f"No shard_aval handler for type: {type(aval)}") from err
-shard_aval_handlers: dict[type[core.AbstractValue], Callable[[int, int, Any], Any]] = {}
+    raise TypeError(f"No _shard_aval handler for type: {type(aval)}") from err
+_shard_aval_handlers: dict[type[core.AbstractValue], Callable[[int, int, Any], Any]] = {}
+
 def _shard_abstract_array(size, axis: int, x):
   try:
     if x.shape[axis] != size:
@@ -184,8 +186,11 @@ def _shard_abstract_array(size, axis: int, x):
                        f"shape {x.shape}")
   except IndexError:
     raise ValueError("Cannot split a {x.dim}D value along axis {axis}") from None
-  return x.update(shape=tuple_delete(x.shape, axis))
-shard_aval_handlers[ShapedArray] = _shard_abstract_array
+  if config.pmap_no_rank_reduction.value:
+    return x.update(shape=tuple_update(x.shape, axis, 1))
+  else:
+    return x.update(shape=tuple_delete(x.shape, axis))
+_shard_aval_handlers[ShapedArray] = _shard_abstract_array
 
 
 def local_aval_to_result_handler(
@@ -620,21 +625,39 @@ def find_replicas(
   num_global_replicas = global_axis_size * jaxpr_replicas
   return ReplicaInfo(jaxpr_replicas, num_local_replicas, num_global_replicas)
 
+@lu.transformation
+def _change_argument_ranks(in_axes, out_axes_thunk, *args):
+  args = tuple(
+      arg if in_axis is None else jax.lax.squeeze(arg, dimensions=(in_axis,))
+      for in_axis, arg in zip(in_axes, args)
+  )
+  results = yield (args, {})
+  out_axes = out_axes_thunk()
+  yield tuple(
+      x if axis is None else jax.lax.expand_dims(x, dimensions=(axis,))
+      for x, axis in zip(results, out_axes)
+  )
+
 
 def stage_parallel_callable(
     pci: ParallelCallableInfo, fun: lu.WrappedFun
 ) -> tuple[core.Jaxpr, list[Any], ReplicaInfo, ShardInfo]:
   sharded_avals = tuple(
-      shard_aval(pci.axis_size, axis, aval) if axis is not None else aval
+      _shard_aval(pci.axis_size, axis, aval) if axis is not None else aval
       for axis, aval in safe_zip(pci.in_axes, pci.avals))
 
+  orig_fun = fun
+  if config.pmap_no_rank_reduction.value:
+    fun = _change_argument_ranks(fun, pci.in_axes, pci.out_axes_thunk)
+  else:
+    fun = orig_fun
   with core.extend_axis_env(pci.axis_name, pci.global_axis_size, None):  # type: ignore
     with dispatch.log_elapsed_time(
         "Finished tracing + transforming {fun_name} for pmap in {elapsed_time} sec",
         fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
       jaxpr, out_sharded_avals, consts = pe.trace_to_jaxpr_final(
           fun, sharded_avals, pe.debug_info_final(fun, "pmap"))
-  jaxpr = api_util.jaxpr_debug_info(jaxpr, fun.debug_info)
+  jaxpr = api_util.jaxpr_debug_info(jaxpr, orig_fun.debug_info)
   jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
 
   assert len(out_sharded_avals) == len(pci.out_axes), (
@@ -666,7 +689,7 @@ def lower_parallel_callable(
     is_explicit_global_axis_size: bool,
     avals: Sequence[core.AbstractValue],
     *,
-    lowering_parameters: mlir.LoweringParameters):
+    lowering_parameters: mlir.LoweringParameters) -> PmapComputation:
   # Determine global_axis_size for use in AxisEnv.
   # TODO(mattjj,skyewm): revive this check (inner_pmap always False now)
   # if xb.process_count() > 1 and global_axis_size is None and inner_pmap:
@@ -780,6 +803,35 @@ def lower_parallel_callable(
                          keepalive=lowering_result.keepalive,
                          host_callbacks=lowering_result.host_callbacks,
                          jaxpr_debug_info=closed_jaxpr.jaxpr.debug_info)
+
+
+def _pmap_unmap_shaped_array(
+    size: int, axis_name: core.AxisName, axis: int | None, aval: ShapedArray
+  ) -> ShapedArray:
+  named_shape = dict(aval.named_shape)
+  named_shape.pop(axis_name, None)  # TODO: make this mandatory
+  if axis is None: return aval.update(named_shape=named_shape)
+  elif type(axis) is int:
+    return ShapedArray(tuple_update(aval.shape, axis, size), aval.dtype,
+                       named_shape=named_shape, weak_type=aval.weak_type)
+  else: raise TypeError(axis)
+
+
+AvalMapHandlerPair = tuple[Any, Callable]
+_pmap_aval_mapping_handlers: dict[type, AvalMapHandlerPair] = {
+    ShapedArray:   (Any, _pmap_unmap_shaped_array),
+}
+
+def _pmap_unmapped_aval(size: core.AxisSize, axis_name, axis: int | None,
+                       aval: core.AbstractValue) -> core.AbstractValue:
+  if not config.pmap_no_rank_reduction.value:
+    return core.unmapped_aval(size, axis_name, axis, aval)
+
+  _, handler = _pmap_aval_mapping_handlers.get(type(aval), (None, None))
+  if handler is not None:
+    return handler(size, axis_name, axis, aval)
+  else:
+    raise TypeError(f"no unmapping handler for {aval} of type {type(aval)}")
 
 
 class PmapComputation(stages.XlaLowering):
@@ -938,7 +990,7 @@ class UnloadedPmapExecutable:
 
     local_unmapped_avals = [
         _cast_to_shaped_array(
-            core.unmapped_aval(pci.axis_size, pci.axis_name, out_axis, aval))
+            _pmap_unmapped_aval(pci.axis_size, pci.axis_name, out_axis, aval))
         if out_axis is not None else aval
         for aval, out_axis in safe_zip(shards.out_sharded_avals, pci.out_axes)]
     out_specs = [

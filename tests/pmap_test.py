@@ -3073,7 +3073,10 @@ class ArrayPmapTest(jtu.JaxTestCase):
     self.assertEqual(out2.shape, (dc, dc, 2))
     for i, (s1, s2) in enumerate(safe_zip(out1.addressable_shards, out2.addressable_shards)):
       self.assertArraysEqual(s1.data, input_data[i])
-      self.assertArraysEqual(s2.data, input_data)
+      if config.pmap_no_rank_reduction.value:
+        self.assertArraysEqual(s2.data, input_data[None])
+      else:
+        self.assertArraysEqual(s2.data, input_data)
 
   def test_pmap_array_sharding_mismatch(self):
     input_shape = (jax.device_count(), 2)
@@ -3105,7 +3108,7 @@ class ArrayPmapTest(jtu.JaxTestCase):
 
     def amap(f, xs):
       ys = [f(jax.device_put(x, list(x.devices())[0])) for x in xs]
-      return jax.device_put_sharded(ys, [list(y.devices())[0] for y in ys])
+      return jax.device_put_sharded(ys, jax.local_devices()[:2])
 
     # leading axis is batch dim (i.e. mapped/parallel dim), of size 2
     x = jnp.array([[1., 0., 0.],

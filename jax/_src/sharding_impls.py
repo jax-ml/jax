@@ -541,7 +541,16 @@ class PmapSharding(XLACompatibleSharding):
     num_ways_sharded = None
     for s in sharding_spec.sharding:
       if isinstance(s, sharding_specs.Unstacked):
+        assert num_ways_sharded is None
         num_ways_sharded = s.size
+      elif isinstance(s, sharding_specs.Chunked):
+        assert num_ways_sharded is None
+        if len(s.chunks) == 1:
+          num_ways_sharded = s.chunks[0]
+        else:
+          raise NotImplementedError(
+              'Multiple chunks in Chunked dimension not supported.')
+
     if num_ways_sharded is None:
       raise NotImplementedError(
           '`None` to sharded_dim is not supported. Please file a jax '
@@ -581,7 +590,7 @@ class PmapSharding(XLACompatibleSharding):
   @functools.cached_property
   def is_fully_replicated(self) -> bool:
     for s in self.sharding_spec.sharding:
-      if isinstance(s, sharding_specs.Unstacked):
+      if isinstance(s, (sharding_specs.Unstacked, sharding_specs.Chunked)):
         return False
     return True
 
@@ -596,6 +605,13 @@ class PmapSharding(XLACompatibleSharding):
       if isinstance(s, sharding_specs.Unstacked):
         sharded_dim = i
         sharded_dim_size = s.size
+        sharded_shape = util.tuple_delete(global_shape, sharded_dim)
+        break
+      elif isinstance(s, sharding_specs.Chunked):
+        sharded_dim = i
+        assert len(s.chunks) == 1, s.chunks
+        sharded_dim_size = s.chunks[0]
+        sharded_shape = util.tuple_update(global_shape, sharded_dim, 1)
         break
     if sharded_dim is None:
       return global_shape
@@ -605,7 +621,7 @@ class PmapSharding(XLACompatibleSharding):
           f'devices passed to PmapSharding. Got sharded dimension {sharded_dim} '
           f'with value {global_shape[sharded_dim]} in shape {global_shape} and '
           f'the number of devices={len(self._device_assignment)}')
-    return global_shape[:sharded_dim] + global_shape[sharded_dim+1:]
+    return sharded_shape
 
 
 def _op_sharding_to_pos_sharding(

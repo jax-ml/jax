@@ -414,6 +414,10 @@ def tuple_delete(t, idx):
   assert 0 <= idx < len(t), (idx, len(t))
   return t[:idx] + t[idx + 1:]
 
+def tuple_update(t, idx, val):
+  assert 0 <= idx < len(t), (idx, len(t))
+  return t[:idx] + (val,) + t[idx+1:]
+
 class HashableFunction:
   """Decouples function equality and hash from its identity.
 

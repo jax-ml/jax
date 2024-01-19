@@ -1422,3 +1422,11 @@ define_string_state(
           '"jax._src.xla_bridge,jax._src.dispatch") to enable debug logging '
           'for.'),
     update_global_hook=_update_debug_log_modules)
+
+pmap_no_rank_reduction = define_bool_state(
+    name='jax_pmap_no_rank_reduction',
+    default=False,
+    help=(
+        "If True, pmap shards have a the same rank as their enclosing array."
+    )
+)

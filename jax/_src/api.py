@@ -46,6 +46,7 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import effects
 from jax._src import array
+from jax._src import basearray
 from jax._src import dtypes
 from jax._src import sharding_impls
 from jax._src import sharding_specs
@@ -1641,6 +1642,7 @@ def _get_global_axis_size(local_axis_size: int, in_devices, backend_name: str,
           for pi in range(xb.process_count(backend)))
   return global_axis_size
 
+
 def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
                   donate_tuple, in_devices, backend_name,
                   axis_size, args, kwargs):
@@ -2603,7 +2605,15 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
     sharding = PmapSharding(np.array(devices), sharding_spec)
     if dtypes.issubdtype(stacked_aval.dtype, dtypes.extended):
       return stacked_aval.dtype._rules.device_put_sharded(xs, stacked_aval, sharding, devices)
-    return pxla.batched_device_put(stacked_aval, sharding, xs, list(devices))
+    if config.pmap_no_rank_reduction.value:
+      ys = []
+      for x in xs:
+        if not isinstance(x, (np.ndarray, basearray.Array)):
+          x = np.asarray(x)
+        ys.append(x[None])
+    else:
+      ys = xs
+    return pxla.batched_device_put(stacked_aval, sharding, ys, list(devices))
 
 
   with config.explicit_device_put_scope():
@@ -2649,7 +2659,13 @@ def device_put_replicated(x: Any, devices: Sequence[xc.Device]):  # noqa: F811
                               core.raise_to_shaped(core.get_aval(x)))
     assert isinstance(aval, ShapedArray)
     sharding_spec = sharding_specs.create_pmap_sharding_spec(aval.shape)
-    buf = device_put(x, devices[0])
+    if config.pmap_no_rank_reduction.value:
+      if isinstance(x, (np.ndarray, basearray.Array)):
+        buf = device_put(x[None], devices[0])
+      else:
+        buf = device_put(x, devices[0])[None]
+    else:
+      buf = device_put(x, devices[0])
     sharding = PmapSharding(np.array(devices), sharding_spec)
     if dtypes.issubdtype(aval.dtype, dtypes.extended):
       return aval.dtype._rules.device_put_replicated(buf, aval, sharding, devices)
