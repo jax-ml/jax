@@ -210,10 +210,10 @@ Nested Pipeline with Output Accumulation
       matmul_kernel,
       out_shape=jax.ShapeDtypeStruct((512, 512), jnp.float32),
       in_specs=[
-          pl.BlockSpec(memory_space=memory_space),
-          pl.BlockSpec(memory_space=memory_space),
+          pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+          pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
       ],
-      out_specs=pl.BlockSpec(memory_space=memory_space),
+      out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
   )(x, y)
 
 Fusing Nested Pipelines (Realistic AG Matmul)
@@ -441,9 +441,9 @@ Here is a full realistic example:
           + [pltpu.SemaphoreType.DMA] * 4
           + [
               make_pipeline_allocations(
-                memory_space((), x.dtype),
-                memory_space((), y.dtype),
-                memory_space((), out_dtype),
+                pltpu.TPUMemorySpace.ANY((), x.dtype),
+                pltpu.TPUMemorySpace.ANY((), y.dtype),
+                pltpu.TPUMemorySpace.ANY((), out_dtype),
               )
             ],
       ),
