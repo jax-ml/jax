@@ -33,6 +33,7 @@ from jax._src.state import indexing
 from jax._src.state import primitives as sp
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.pallas import core as pl_core
 from jax._src.pallas.mosaic import core as tpu_core
 import jax.numpy as jnp
 
@@ -458,7 +459,7 @@ get_barrier_semaphore_p = jax_core.Primitive('get_barrier_semaphore')
 
 @get_barrier_semaphore_p.def_abstract_eval
 def _get_barrier_semaphore_abstract_eval():
-  return tpu_core.AbstractMemoryRef(
+  return pl_core.AbstractMemoryRef(
       jax_core.ShapedArray((), tpu_core.BarrierSemaphoreTy()),
       tpu_core.TPUMemorySpace.SEMAPHORE,
   )

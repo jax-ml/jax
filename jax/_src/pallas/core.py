@@ -43,6 +43,47 @@ map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
 
+class AbstractMemoryRef(state.AbstractRef):
+  __slots__ = ["inner_aval", "memory_space"]
+
+  def __init__(self, inner_aval: jax_core.AbstractValue,
+               memory_space: Any):
+    assert isinstance(inner_aval, jax_core.ShapedArray)
+    self.inner_aval = inner_aval
+    self.memory_space = memory_space
+
+  def __repr__(self) -> str:
+    return f'MemRef<{self.memory_space}>{{{self.inner_aval.str_short()}}}'
+
+  def join(self, other):
+    assert isinstance(other, AbstractMemoryRef)
+    return AbstractMemoryRef(self.inner_aval.join(other.inner_aval),
+                             self.memory_space)
+
+  def update(self, inner_aval=None, memory_space=None):
+    inner_aval = self.inner_aval if inner_aval is None else inner_aval
+    memory_space = self.memory_space if memory_space is None else memory_space
+    return AbstractMemoryRef(inner_aval, memory_space)
+
+  def at_least_vspace(self):
+    return AbstractMemoryRef(
+        self.inner_aval.at_least_vspace(), self.memory_space)
+
+  def __eq__(self, other):
+    return (type(self) is type(other) and self.inner_aval == other.inner_aval
+            and self.memory_space == other.memory_space)
+
+  def __hash__(self):
+    return hash((self.__class__, self.inner_aval, self.memory_space))
+
+
+def _ref_raise_to_shaped(ref_aval: AbstractMemoryRef, weak_type):
+  return AbstractMemoryRef(
+      jax_core.raise_to_shaped(ref_aval.inner_aval, weak_type),
+      ref_aval.memory_space)
+jax_core.raise_to_shaped_mappings[AbstractMemoryRef] = _ref_raise_to_shaped
+
+
 @dataclasses.dataclass
 class GridEnv:
   axis_index: Any
@@ -100,7 +141,6 @@ class BlockSpec:
 class BlockMapping:
   block_shape: tuple[Mapped | int, ...]
   index_map_jaxpr: jax_core.ClosedJaxpr
-  memory_space: Any
 
   def compute_start_indices(self, loop_idx, *args):
     discharged_jaxpr, discharged_consts = state_discharge.discharge_state(
@@ -153,20 +193,29 @@ def _convert_block_spec_to_block_mapping(
       mapped if s is None else s for s in block_shape)
   flat_fun, _ = api_util.flatten_fun(lu.wrap_init(compute_index), in_tree)
   jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
-  return BlockMapping(block_shape, jax_core.ClosedJaxpr(jaxpr, consts),
-                      block_spec.memory_space)
+  return BlockMapping(block_shape, jax_core.ClosedJaxpr(jaxpr, consts))
 
 def _tile_ref(ref: state.AbstractRef, block_shape: tuple[int, ...] | None
              ) -> state.AbstractRef:
   if block_shape is None:
     return ref
   shape = tuple(s for s in block_shape if s is not None)
-  return state.shaped_array_ref(shape, ref.dtype)
+  return ref.update(inner_aval=ref.inner_aval.update(shape=shape))
 
 
 def _get_ref_avals(grid, in_avals, in_specs, out_avals, out_specs):
-  in_ref_avals = map(state.AbstractRef, in_avals)
-  out_ref_avals = map(state.AbstractRef, out_avals)
+  def _get_memory_space(spec):
+    if spec is no_block_spec:
+      return None
+    return spec.memory_space
+  in_ref_avals = [
+      AbstractMemoryRef(aval, _get_memory_space(in_spec))
+      for aval, in_spec in zip(in_avals, in_specs)
+  ]
+  out_ref_avals = [
+      AbstractMemoryRef(aval, _get_memory_space(out_spec))
+      for aval, out_spec in zip(out_avals, out_specs)
+  ]
   if grid is None:
     in_specs = [None] * len(in_avals)
     out_specs = [None] * len(out_avals)

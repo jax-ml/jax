@@ -264,8 +264,7 @@ def _batch_block_mapping(grid: tuple[int, ...], aval: jax_core.ShapedArray,
     new_block_shape = tuple_insert(shape, dim, pallas_core.mapped)
   jaxpr = jax_core.ClosedJaxpr(block_mapping_jaxpr, consts)
   if block_mapping is None:
-    return BlockMapping(block_shape=new_block_shape, index_map_jaxpr=jaxpr,
-                        memory_space=None)
+    return BlockMapping(block_shape=new_block_shape, index_map_jaxpr=jaxpr)
   return block_mapping.replace(block_shape=new_block_shape,
                                index_map_jaxpr=jaxpr)
 

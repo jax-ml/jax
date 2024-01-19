@@ -23,7 +23,6 @@ from typing import Any
 
 from jax._src import core as jax_core
 from jax._src import dtypes
-from jax._src import state
 from jax._src import tree_util
 from jax._src import util
 import jax.numpy as jnp
@@ -40,6 +39,7 @@ Grid = pallas_core.Grid
 BlockSpec = pallas_core.BlockSpec
 GridMapping = pallas_core.GridMapping
 NoBlockSpec = pallas_core.NoBlockSpec
+AbstractMemoryRef = pallas_core.AbstractMemoryRef
 no_block_spec = pallas_core.no_block_spec
 _preprocess_grid = pallas_core._preprocess_grid
 _convert_block_spec_to_block_mapping = pallas_core._convert_block_spec_to_block_mapping
@@ -107,47 +107,6 @@ class SemaphoreType(enum.Enum):
 
   def get_aval(self) -> "AbstractMemoryRef":
     return self(()).get_aval()
-
-class AbstractMemoryRef(state.AbstractRef):
-  __slots__ = ["inner_aval", "memory_space"]
-
-  def __init__(self, inner_aval: jax_core.AbstractValue,
-               memory_space: TPUMemorySpace):
-    assert isinstance(inner_aval, jax_core.ShapedArray)
-    self.inner_aval = inner_aval
-    self.memory_space = memory_space
-
-  def __repr__(self) -> str:
-    return f'MemRef<{self.memory_space}>{{{self.inner_aval.str_short()}}}'
-
-  def join(self, other):
-    assert isinstance(other, AbstractMemoryRef)
-    return AbstractMemoryRef(self.inner_aval.join(other.inner_aval),
-                             self.memory_space)
-
-  def update(self, inner_aval=None, memory_space=None):
-    inner_aval = self.inner_aval if inner_aval is None else inner_aval
-    memory_space = self.memory_space if memory_space is None else memory_space
-    return AbstractMemoryRef(inner_aval, memory_space)
-
-  def at_least_vspace(self):
-    return AbstractMemoryRef(
-        self.inner_aval.at_least_vspace(), self.memory_space)
-
-  def __eq__(self, other):
-    return (type(self) is type(other) and self.inner_aval == other.inner_aval
-            and self.memory_space == other.memory_space)
-
-  def __hash__(self):
-    return hash((self.__class__, self.inner_aval, self.memory_space))
-
-
-def _ref_raise_to_shaped(ref_aval: AbstractMemoryRef, weak_type):
-  return AbstractMemoryRef(
-      jax_core.raise_to_shaped(ref_aval.inner_aval, weak_type),
-      ref_aval.memory_space)
-jax_core.raise_to_shaped_mappings[AbstractMemoryRef] = _ref_raise_to_shaped
-
 
 @dataclasses.dataclass(frozen=True)
 class AbstractSemaphore(jax_core.AbstractValue):
@@ -229,7 +188,8 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
             self.grid, in_avals, flat_in_specs,
             out_avals, flat_out_specs))
     scalar_ref_avals = [
-        state.shaped_array_ref(aval.shape, aval.dtype)
+        AbstractMemoryRef(jax_core.ShapedArray(aval.shape, aval.dtype),
+                          TPUMemorySpace.SMEM)
         for aval in flat_scalar_avals]
     grid_avals = [jax_core.ShapedArray((), jnp.dtype("int32"))] * len(self.grid)
     # Create args, kwargs pytree def
