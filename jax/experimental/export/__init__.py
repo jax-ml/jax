@@ -35,3 +35,4 @@ from jax.experimental.export._serialization import (
     serialize,
     deserialize,
 )
+from jax.experimental.export import _shape_poly_decision

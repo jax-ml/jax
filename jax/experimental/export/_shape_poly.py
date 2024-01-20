@@ -25,7 +25,7 @@ This enables many JAX programs to be traced with symbolic dimensions
 in some dimensions. A priority has been to enable the batch
 dimension in neural network examples to be polymorphic.
 
-This was built initially for jax2tf, but it is now customizable to be
+This was built initially for jax2tf, but it is now
 independent of TF. The best documentation at the moment is in the
 jax2tf.convert docstring, and the
 [README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md).
@@ -210,48 +210,6 @@ class _DimAtom:
     """Lexicographic comparison"""
     return self._syntactic_cmp(other) >= 0
 
-  def bounds(self) -> tuple[float, float]:
-    """Returns the lower and upper bounds, or -+ inf."""
-    if self.var is not None:
-      return (1, np.inf)  # variables are assumed to be >= 1
-    opnd_bounds = [opnd.bounds() for opnd in self.operands]
-    if self.operation == _DimAtom.FLOORDIV:  #  a // b
-      (a_l, a_u), (b_l, b_u) = opnd_bounds
-      def math_floor_with_inf(a: float, b: float):  # math.floor, but aware of inf
-        assert b != 0
-        if not np.isinf(b):  # divisor is finite
-          return math.floor(a / b) if not np.isinf(a) else -np.inf if (a >= 0) != (b >= 0) else np.inf
-        elif not np.isinf(a):  # dividend is finite and divisor is infinite
-          return -1 if (a >= 0) != (b >= 0) else 0
-        else:  # both dividend and divisor are infinite
-          return -np.inf if (a >= 0) != (b >= 0) else np.inf
-
-      # Same reasoning as for multiplication: the bounds are among the cross-product
-      # of the bounds.
-      bound_candidates = [math_floor_with_inf(a_l, b_l), math_floor_with_inf(a_l, b_u),
-                          math_floor_with_inf(a_u, b_l), math_floor_with_inf(a_u, b_u)]
-      return (min(*bound_candidates), max(*bound_candidates))
-
-    elif self.operation == _DimAtom.MOD:
-      _, (b_l, b_u) = opnd_bounds
-      if b_l > 0:  # positive divisor
-        return (0, b_u - 1)
-      elif b_u < 0:  # negative divisor
-        return (b_l + 1, 0)
-      else:
-        return (-np.inf, np.inf)
-
-    elif self.operation == _DimAtom.MAX:
-      (a_l, a_h), (b_l, b_h) = opnd_bounds
-      return (max(a_l, b_l), max(a_h, b_h))
-
-    elif self.operation == _DimAtom.MIN:
-      (a_l, a_h), (b_l, b_h) = opnd_bounds
-      return (min(a_l, b_l), min(a_h, b_h))
-
-    else:
-      assert False
-
   def evaluate(self, env: DimVarEnv):
     if self.var is not None:
       try:
@@ -401,21 +359,6 @@ class _DimMon(dict):
       elif diff > 0: d[key] = diff
     return _DimMon(d)
 
-  def bounds(self, scope: SymbolicScope) -> tuple[float, float]:
-    """Returns the lower and upper bounds, or -+inf."""
-    # The bounds of a product are among the product of bounds.
-    bounds = []
-    for a, exp in self.items():
-      a_l, a_u = a.bounds()
-      assert a_l <= a_u
-      bounds.append((a_l ** exp, a_u ** exp))
-
-    candidates = [math.prod(atom_bounds) for atom_bounds in itertools.product(*bounds)]
-    calculated_bounds = (min(*candidates), max(*candidates))  # type: ignore
-    constrained_bounds = scope._monomial_bounds.get(self, (- np.inf, np.inf))
-    return (max(calculated_bounds[0], constrained_bounds[0]),
-            min(calculated_bounds[1], constrained_bounds[1]))
-
   def evaluate(self, env: DimVarEnv):
     prod = lambda xs: functools.reduce(_evaluate_multiply, xs) if xs else core.dim_constant(1)
     def pow_opt(v, p: int):
@@ -442,7 +385,7 @@ class _DimExpr():
                scope: SymbolicScope):
     # Do not construct _DimExpr directly, unless you are sure that coeffs is
     # normalized; Use _DimExpr.normalize.
-    # Takes ownership of coeffs
+    # Takes ownership of coeffs.
     self._coeffs = coeffs or {_DimMon(): 0}
     self._scope = scope
     self._monomials_sorted = tuple(sorted(self._coeffs.items(), reverse=True))
@@ -462,12 +405,31 @@ class _DimExpr():
 
   @property
   def leading_term(self) -> tuple[_DimMon, int]:
-    """Returns the highest degree term that comes first lexicographically."""
+    """Returns the highest degree term that comes last lexicographically."""
     return self._monomials_sorted[0]
+
+  def to_single_term(self) -> tuple[int, int, _DimMon] | None:
+    """Extracts the single term: k + c * term.
+    Returns None if the expression is not a single term, or (k, c, term)
+    """
+    n1 = 0
+    n2 = 0
+    mon = None
+    for m, c in self.monomials():
+      if m.degree == 0:
+        n1 = c
+        continue
+      if mon is None:
+        mon = m
+        n2 = c
+        continue
+      return None
+    assert mon is not None
+    return (n1, n2, mon)
 
   @classmethod
   def _add_coeffs(cls, coeffs: dict[_DimMon, int], mon: _DimMon, coeff: int):
-    """Do `coeffs[mon] += coeff` but remove 0 coefficients."""
+    """Computes `coeffs[mon] += coeff` while removing 0 coefficients."""
     old_c = coeffs.get(mon)
     if old_c is None:
       if coeff != 0: coeffs[mon] = coeff
@@ -503,24 +465,6 @@ class _DimExpr():
       return _DimExpr(new_coeffs, scope)
     else:
       return int(free_const)
-
-  @classmethod
-  def normalize_floordiv_times_divisor(cls, coeffs: dict[_DimMon, int],
-                                       scope: SymbolicScope) -> DimSize:
-    # Look for floordiv(E, M) * M and turn into E - mod(E, M). This comes
-    # up when handling strided convolution.
-    for dec in _decompose_expr(_DimExpr(coeffs, scope), _DimAtom.FLOORDIV,
-                               with_exp=1):
-      # e = factor * floordiv(operands)^exp * rest_monomial + rest_expr
-      if dec.rest_monomial == 1 and dec.factor == 1:
-        continue
-      m_trimmed, m_remainder = divmod(dec.factor * dec.rest_monomial, dec.operands[1])
-      if m_remainder == 0:
-        return m_trimmed * (
-            dec.operands[0] -
-            _DimExpr.from_operation(_DimAtom.MOD, *dec.operands,
-                                    scope=scope)) + dec.rest_expr
-    return _DimExpr.normalize(coeffs, scope)
 
   @classmethod
   def from_constant(cls, c: int, scope: SymbolicScope):
@@ -570,21 +514,57 @@ class _DimExpr():
     mon = self.to_atom()
     return mon.to_var() if mon is not None else None
 
-  def to_constant(self) -> int | None:
+  @classmethod
+  def to_constant(cls, e: DimSize) -> int | None:
     """Extract the constant from a symbolic expression.
     Returns None if the expression is not a single constant."""
-    m, m_c = self.leading_term
+    if not isinstance(e, _DimExpr):
+      return int(e)
+    m, m_c = e.leading_term
     return m_c if m.degree == 0 else None
 
   @property
   def is_constant(self):
-    return self.to_constant() is not None
+    return _DimExpr.to_constant(self) is not None
 
   def get_vars(self) -> set[str]:
     """The variables that appear in a symbolic dimension."""
     acc = set()
     for mon, _ in self.monomials():
       acc.update(mon.get_vars())
+    return acc
+
+  @classmethod
+  def _merge_sorted_terms(
+      cls,
+      e1: Sequence[tuple[_DimMon, int]], i1: int, f1: int,
+      e2: Sequence[tuple[_DimMon, int]], i2: int, f2: int) -> Sequence[tuple[_DimMon, int]]:
+    """Computes e1[i1:] * f1 + e2[i2:] * f2.
+
+    e1, e2, and the result are sorted with largest term first.
+    This is an optimization for a common operation. The unoptimized code would
+    compute each subexpression in term.
+    """
+    acc = []
+    while i1 < len(e1) and i2 < len(e2):
+      m1, m1_c = e1[i1]
+      m2, m2_c = e2[i2]
+      cmp = m1._syntactic_cmp(m2)  # Pick the largest monomial
+      if cmp < 0:
+        acc.append((m2, m2_c * f2))
+        i2 += 1
+      elif cmp > 0:
+        acc.append((m1, m1_c * f1))
+        i1 += 1
+      else:  # They are equal, combine them
+        i1 += 1
+        i2 += 1
+        m1_c = m1_c * f1 + m2_c * f2
+        if m1_c == 0: continue
+        acc.append((m1, m1_c))
+
+    acc.extend((m1, m1_c * f1) for m1, m1_c in itertools.islice(e1, i1, len(e1)))
+    acc.extend((m2, m2_c * f2) for m2, m2_c in itertools.islice(e2, i2, len(e2)))
     return acc
 
   def _syntactic_cmp(self, other: _DimExpr) -> int:
@@ -594,6 +574,7 @@ class _DimExpr():
     """
     s_mons = self._monomials_sorted
     o_mons = other._monomials_sorted
+    if c := cmp_comparable(self._size, other._size): return c
     def cmp_mon(s_mon: tuple[_DimMon, int], o_mon: tuple[_DimMon, int]) -> int:
       if c := s_mon[0]._syntactic_cmp(o_mon[0]): return c
       return cmp_comparable(s_mon[1], o_mon[1])
@@ -617,79 +598,6 @@ class _DimExpr():
       return False
 
     return diff == 0
-
-  def ge(self, other: DimSize,
-         cmp_str: Callable[[], str] | None = None) -> bool:
-    """Implements `self >= other`.
-
-    Raises InconclusiveDimensionOperation if the result is not conclusive.
-    Uses `cmp_str()` as a description of the comparison in the exception
-    string.
-    """
-    self_minus_other = _ensure_poly(self - other, "ge", self.scope)
-    lb, ub = self_minus_other.bounds()
-    if lb >= 0:
-      return True
-    if ub < 0:
-      return False
-    # Attempt to handle max. For the decomposition
-    #    e = factor * max(op1, op2) + rest_expr
-    # use the rule
-    #    e >= 0 IF (factor > 0 AND
-    #                (factor * op1 + rest_expr >= 0 OR
-    #                 factor * op2 + rest_expr >= 0))
-    #              OR
-    #              (factor < 0 AND
-    #                (factor * op1 + rest_expr >= 0 AND
-    #                 factor * op2 + rest_expr >= 0))
-    for dec in _decompose_expr(self_minus_other, _DimAtom.MAX,
-                               with_exp=1, with_rest_monomial=1):
-      op1, op2 = dec.operands
-      if dec.factor > 0:
-        if (definitely_geq_0(dec.factor * op1 + dec.rest_expr) or
-            definitely_geq_0(dec.factor * op2 + dec.rest_expr)):
-          return True
-      else:
-        if (definitely_geq_0(dec.factor * op1 + dec.rest_expr) and
-            definitely_geq_0(dec.factor * op2 + dec.rest_expr)):
-          return True
-
-    # Attempt to handle min. For the decomposition
-    #    e = factor * min(op1, op2) + rest_expr
-    # use the same rule as for
-    #    e = max(factor * op1, factor * op2) + rest_expr
-    for dec in _decompose_expr(self_minus_other, _DimAtom.MIN,
-                               with_exp=1, with_rest_monomial=1):
-      op1, op2 = dec.operands
-      if dec.factor > 0:
-        if (definitely_geq_0(dec.factor * op1 + dec.rest_expr) and
-            definitely_geq_0(dec.factor * op2 + dec.rest_expr)):
-          return True
-      else:
-        if (definitely_geq_0(dec.factor * op1 + dec.rest_expr) or
-            definitely_geq_0(dec.factor * op2 + dec.rest_expr)):
-          return True
-
-    # Attempt to handle floordiv >= 0
-    for dec in _decompose_expr(self_minus_other, _DimAtom.FLOORDIV,
-                               with_exp=1, with_rest_monomial=1,
-                               with_rest_expr=0):
-      # e = factor * floordiv(op0, op1)^1 * 1 + 0
-      if dec.factor > 0:
-        if definitely_geq_0(dec.operands[0]) and definitely_geq_0(dec.operands[1]):
-          return True
-
-    if cmp_str is not None:
-      msg = cmp_str()
-    else:
-      msg = f"'{self}' >= '{other}'"
-
-    if self.scope._explicit_constraints:
-      describe_scope = f"\nUsing symbolic scope {self.scope}"
-    else:
-      describe_scope = ""
-    raise InconclusiveDimensionOperation(
-      f"Symbolic dimension comparison {msg} is inconclusive.{describe_scope}")
 
   def __hash__(self):
     return self._hash
@@ -719,7 +627,7 @@ class _DimExpr():
     coeffs = self._coeffs.copy()
     for mon, coeff in other.monomials():
       _DimExpr._add_coeffs(coeffs, mon, coeff)
-    return _DimExpr.normalize_floordiv_times_divisor(coeffs, self.scope)
+    return _DimExpr.normalize(coeffs, self.scope)
 
   def __radd__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
@@ -749,7 +657,7 @@ class _DimExpr():
       for mon2, coeff2 in other.monomials():
         mon = mon1.mul(mon2)
         _DimExpr._add_coeffs(coeffs, mon, coeff1 * coeff2)
-    return _DimExpr.normalize_floordiv_times_divisor(coeffs, self.scope)
+    return _DimExpr.normalize(coeffs, self.scope)
 
   def __rmul__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
@@ -815,28 +723,39 @@ class _DimExpr():
         return False
     elif not core.is_constant_dim(other):
       return False
-    else:
-      other = _ensure_poly(other, "eq", self.scope)
-    return self.eq(other)
+
+    # Equality is used very frequently because expressions are cached. We could
+    # implement a more precise version based on `(self - other).bounds() = (0, 0)`
+    # but that would be too expensive. It would also have the unfortunate drawback
+    # that we cannot then cache `e.bounds()` because hashing invokes equality
+    # which would lead to infinite recursion.
+    diff = self - other
+
+    # We look for `self - other == k`, and we rely on the fact that when we
+    # normalize _DimExpr that represent integers as ints.
+    if is_symbolic_dim(diff):
+      # Here we really ought to raise InconclusiveDimensionOperation, but __eq__
+      # cannot raise exceptions, because it is used indirectly when hashing.
+      # So, we say that the expressions are disequal, which is really unsound.
+      # See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison-of-symbolic-dimensions-is-partially-supported
+      return False
+
+    return diff == 0
 
   def __ne__(self, other: Any) -> bool:
     return not self.__eq__(other)
 
   def __ge__(self, other: DimSize) -> bool:
-    return self.ge(
-      other, lambda: f"'{self}' >= '{other}'")
+    return _geq_decision(self, other, lambda: f"'{self}' >= '{other}'")
 
   def __le__(self, other: DimSize):
-    return _ensure_poly(other, "le", self.scope).ge(
-      self, lambda: f"'{self}' <= '{other}'")
+    return _geq_decision(other, self, lambda: f"'{self}' <= '{other}'")
 
   def __gt__(self, other: DimSize):
-    return not _ensure_poly(other, "le", self.scope).ge(
-      self, lambda: f"'{self}' > '{other}'")
+    return not _geq_decision(other, self, lambda: f"'{self}' > '{other}'")
 
   def __lt__(self, other: DimSize):
-    return not self.ge(
-      other, lambda: f"'{self}' < '{other}'")
+    return not _geq_decision(self, other, lambda: f"'{self}' < '{other}'")
 
   def divmod(self, divisor: _DimExpr) -> tuple[DimSize, int]:
     """
@@ -890,41 +809,6 @@ class _DimExpr():
               _DimExpr.from_operation(_DimAtom.MOD, self, divisor,
                                       scope=self.scope))
 
-  def bounds(self) -> tuple[float, float]:
-    """Returns the lower and upper bounds, or -+inf."""
-    lb = ub = self._coeffs.get(_DimMon(), 0)  # The free coefficient
-    for mon, coeff in self.monomials():
-      if mon.degree == 0: continue  # We already included the free coefficient
-      m_l, m_u = mon.bounds(self.scope)
-      assert m_l <= m_u and coeff != 0
-      item_l, item_u = coeff * m_l, coeff * m_u
-      lb = lb + min(item_l, item_u)  # type: ignore
-      ub = ub + max(item_l, item_u)  # type: ignore
-
-    bounds_from_constraints = self.scope._expr_bounds.get(self, (- np.inf, np.inf))
-    lb = max(lb, bounds_from_constraints[0])  # type: ignore
-    ub = min(ub, bounds_from_constraints[1])  # type: ignore
-    if lb != -np.inf or ub != np.inf:
-      return lb, ub
-    # Watch for special-case: ct*a - ct*mod(b, a) >= 1 when ct >= 0 and a >= 0
-    # TODO(necula): add more principled support for floordiv and mod
-    # For example, this will miss "1 + a - mod(b, a)"
-    for dec in _decompose_expr(self, _DimAtom.MOD,
-                               with_exp=1, with_rest_monomial=1):
-      # E = factor*mod(op1, op2)^1 * 1 + rest_expr
-      if dec.rest_expr == - dec.factor * dec.operands[1]:
-        try:
-          if dec.operands[1] <= 0:
-            continue
-        except InconclusiveDimensionOperation:
-          continue
-        if dec.factor > 0:
-          return (-np.inf, -1)
-        else:
-          return (1, np.inf)
-
-    return lb, ub
-
   def evaluate(self, env: DimVarEnv):
     # Evaluates as a value of dtype=core.dim_value_dtype()
     terms = [_evaluate_multiply(mon.evaluate(env), core.dim_constant(coeff))
@@ -932,25 +816,25 @@ class _DimExpr():
     return functools.reduce(_evaluate_add, terms) if len(terms) > 1 else terms[0]
 
   def max(self, other: DimSize) -> DimSize:
-    lb, ub = _ensure_poly(self - other, "max", self.scope).bounds()
+    lb, ub = _bounds_decision(self - other, _stop_early_for_geq0_leq0)
     if 0 <= lb: return self
     if ub <= 0: return other
     return _DimExpr.from_operation(_DimAtom.MAX, self, other, scope=self.scope)
 
   def rmax(self, other: DimSize) -> DimSize:
-    lb, ub = _ensure_poly(self - other, "max", self.scope).bounds()
+    lb, ub = _bounds_decision(self - other, _stop_early_for_geq0_leq0)
     if 0 <= lb: return self
     if ub <= 0: return other
     return _DimExpr.from_operation(_DimAtom.MAX, other, self, scope=self.scope)
 
   def min(self, other: DimSize) -> DimSize:
-    lb, ub = _ensure_poly(self - other, "min", self.scope).bounds()
+    lb, ub = _bounds_decision(self - other, _stop_early_for_geq0_leq0)
     if 0 <= lb: return other
     if ub <= 0: return self
     return _DimExpr.from_operation(_DimAtom.MIN, self, other, scope=self.scope)
 
   def rmin(self, other: DimSize) -> DimSize:
-    lb, ub = _ensure_poly(self - other, "min", self.scope).bounds()
+    lb, ub = _bounds_decision(self - other, _stop_early_for_geq0_leq0)
     if 0 <= lb: return other
     if ub <= 0: return self
     return _DimExpr.from_operation(_DimAtom.MIN, other, self, scope=self.scope)
@@ -981,6 +865,8 @@ def cmp_sequence(s1, s2, elem_cmp) -> int:
   if len(s1) < l2: return -1
   return 0
 
+def _stop_early_for_geq0_leq0(lb, ub):
+  return 0 <= lb or ub <= 0
 
 class SymbolicScope:
   """Indentifies a scope for symbolic expressions.
@@ -1003,19 +889,20 @@ class SymbolicScope:
     self._location_frame = source_info_util.user_frame(source_info_util.current())
     self._explicit_constraints: list[tuple[_DimExpr, str]] = []
 
-    # Keep an efficient representation of
-    # the explicit constraints for use during reasoning.
-    self._monomial_bounds: dict[_DimMon, tuple[float, float]] = {}
-    self._expr_bounds: dict[_DimExpr, tuple[float, float]] = {}
-
     constraints = self._parse_constraints(constraints_str)
     for c, c_str in zip(constraints, constraints_str):
-      if (const := c.to_constant()) is not None:
+      if (const := _DimExpr.to_constant(c)) is not None:
         if const < 0:
           raise ValueError(f"Unsatisfiable explicit constraint: {c_str}")
         continue
       self._explicit_constraints.append((c, c_str))
-      self._process_constraint(c, c_str)
+
+    # We cache the _DimExpr.bounds calls. The result depends only on the
+    # explicit and implicit constraints, so it is safe to keep it in the
+    # scope.
+    self._bounds_cache: dict[tuple[_DimExpr,
+                                   Callable[[float, float], bool] | None],
+                             tuple[float, float]] = {}
 
   def __str__(self) -> str:
     extras = []
@@ -1051,39 +938,6 @@ class SymbolicScope:
           f"Got {repr(constraints_str)}")
     return tuple(parse_one(cs) for cs in constraints_str)
 
-  def _process_constraint(self, e: _DimExpr, e_str: str):
-    # Look for the special case m*mon + n >= 0.
-    # Then assert mon >= ceil(n / m) or mon <= floor(n / m)
-    n = m = 0
-    mon = None
-    nr_non_trivial_monomials = 0
-    for _mon, count in e.monomials():
-      if _mon.degree == 0:
-        n = count
-        continue
-      nr_non_trivial_monomials += 1
-      mon = _mon
-      m = count
-
-    if nr_non_trivial_monomials > 1:
-      # The general case, we just remember this constraint in _expr_bounds.
-      self._expr_bounds[e] = (0, np.inf)
-      return
-
-    # A single non-trivial monomial
-    assert isinstance(mon, _DimMon)
-    bounds = mon.bounds(self)  # This considers default internal constraints, and
-                           # previous external constraints
-    if m > 0:  # mon >= ceil(-n / m)
-      ge = int(np.ceil(- n / m))
-      new_bounds = (max(ge, bounds[0]), bounds[1])
-    else:  # mon <= floor(-n / m)
-      le = int(np.floor(-n / m))
-      new_bounds = (bounds[0], min(le, bounds[1]))
-    if new_bounds[0] > new_bounds[1]:
-      raise ValueError(f"Unsatisfiable constraints: {e_str}")
-    self._monomial_bounds[mon] = new_bounds
-
   def _check_same_scope(self, other: _DimExpr,
                         when: str = "",
                         self_descr: str = " ",
@@ -1095,6 +949,32 @@ class SymbolicScope:
           f"and found for '{other}' ({other_descr}) scope {other.scope}\n"
           f"See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#user-specified-symbolic-constraints.")
 
+
+# Set by the shape_poly_decision.py module.
+# Calling convention:
+#  _geq_decision(e1, e2, cmp_str)
+#    where e1 and e2 are two expressions to be compared for greater-equal
+#    and `cmp_str()` is a string that describes the comparison for error
+#    messages.
+#    Returns: a boolean or raises InconclusiveDimensionOperation
+# TODO: remove this trampoline when we refactor the sources
+def _geq_decision_unimplemented(d1: DimSize, d2: DimSize,
+                                cmp_str: Callable[[], str]) -> bool:
+  raise NotImplementedError("_geq_decision is uninitialized")
+_geq_decision: Callable[[DimSize, DimSize, Callable[[], str]], bool] = _geq_decision_unimplemented
+#
+# Calling convention:
+#  _bounds_decision(e, stop_early)
+#    returns a tuple with the lower and upper bound of e.
+#    `stop_early(lb, ub)` can be called in an iterative process to decide if the
+#    current bounds are tight enough.
+# TODO: remove this trampoline when we refactor the sources
+def _bounds_decision_unimplemented(
+    d: DimSize,
+    stop_early: Callable[[float, float], bool] | None) -> tuple[float, float]:
+  raise NotImplementedError("_bounds_decision is uninitialized")
+_bounds_decision: Callable[[DimSize, Callable[[float, float], bool] | None],
+                           tuple[float, float]] = _bounds_decision_unimplemented
 
 @dataclasses.dataclass
 class _Decomposition:
@@ -1184,16 +1064,6 @@ def is_poly_dim(p: DimSize) -> bool:
   return is_symbolic_dim(p)
 
 dtypes.python_scalar_dtypes[_DimExpr] = dtypes.python_scalar_dtypes[int]
-
-def definitely_geq_0(d: DimSize) -> bool:
-  """Returns true when we can prove that d >=0, false otherwise.
-  Note that a result of False may mean that we cannot conclusively prove the
-  sign of `d`, it does not mean that `d < 0`.
-  """
-  try:
-    return d >= 0
-  except InconclusiveDimensionOperation:
-    return False
 
 def _einsum_contract_path(*operands, **kwargs):
   """Like opt_einsum.contract_path, with support for DimExpr shapes.
