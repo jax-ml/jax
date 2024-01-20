@@ -1170,7 +1170,8 @@ pjit_p.multiple_results = True
 def _resolve_in_shardings(
     args, pjit_in_shardings: Sequence[PjitSharding],
     out_shardings: Sequence[PjitSharding],
-    pjit_mesh: pxla.Mesh | None) -> Sequence[PjitSharding]:
+    pjit_mesh: pxla.Mesh | None,
+    check_device_assignment: bool = True) -> Sequence[PjitSharding]:
   # If True, means that device or backend is set by the user on pjit and it
   # has the same semantics as device_put i.e. doesn't matter which device the
   # arg is on, reshard it to the device mentioned. So don't do any of the
@@ -1199,12 +1200,13 @@ def _resolve_in_shardings(
 
   # Check if the device_assignment across inputs, outputs and arguments is the
   # same.
-  pxla._get_and_check_device_assignment(
-      it.chain(
-          committed_arg_shardings,
-          [(i, pxla.MismatchType.IN_SHARDING, None) for i in pjit_in_shardings],
-          [(o, pxla.MismatchType.OUT_SHARDING, None) for o in out_shardings]),
-      (None if pjit_mesh is None or pjit_mesh.empty else list(pjit_mesh.devices.flat)))
+  if check_device_assignment:
+    pxla._get_and_check_device_assignment(
+        it.chain(
+            committed_arg_shardings,
+            [(i, pxla.MismatchType.IN_SHARDING, None) for i in pjit_in_shardings],
+            [(o, pxla.MismatchType.OUT_SHARDING, None) for o in out_shardings]),
+        (None if pjit_mesh is None or pjit_mesh.empty else list(pjit_mesh.devices.flat)))
 
   resolved_in_shardings = []
   for arg, pjit_in_s in zip(args, pjit_in_shardings):
