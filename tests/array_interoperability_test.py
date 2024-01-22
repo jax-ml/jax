@@ -19,6 +19,7 @@ from absl.testing import absltest
 import jax
 import jax.dlpack
 import jax.numpy as jnp
+from jax.sharding import PartitionSpec as P
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
@@ -216,6 +217,24 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
         "__cuda_array_interface__ is only defined for NVidia GPU buffers.",
     ):
       _ = x.__cuda_array_interface__
+
+  @jtu.run_on_devices("cuda")
+  @unittest.skipIf(xla_extension_version < 233, "Requires newer jaxlib")
+  def testCudaArrayInterfaceOnShardedArrayFails(self):
+    devices = jax.local_devices()
+    if len(devices) <= 1:
+      raise unittest.SkipTest("Test requires 2 or more devices")
+    mesh = jax.sharding.Mesh(np.array(devices), ("x",))
+    sharding = jax.sharding.NamedSharding(mesh, P("x"))
+    x = jnp.arange(16)
+    x = jax.device_put(x, sharding)
+    self.assertFalse(hasattr(x, "__cuda_array_interface__"))
+    with self.assertRaisesRegex(
+        AttributeError,
+        "__cuda_array_interface__ is only supported for unsharded arrays.",
+    ):
+      _ = x.__cuda_array_interface__
+
 
   @jtu.sample_product(
     shape=all_shapes,

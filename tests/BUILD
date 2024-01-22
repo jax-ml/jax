@@ -61,6 +61,7 @@ jax_test(
     name = "array_interoperability_test",
     srcs = ["array_interoperability_test.py"],
     disable_backends = ["tpu"],
+    tags = ["multiaccelerator"],
     deps = py_deps("tensorflow_core"),
 )
 
