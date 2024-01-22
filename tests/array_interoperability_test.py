@@ -49,6 +49,10 @@ numpy_dtypes = sorted(
     [dt for dt in jax.dlpack.SUPPORTED_DTYPES if dt != jnp.bfloat16],
     key=lambda x: x.__name__)
 
+# NumPy didn't support bool as a dlpack type until 1.25.
+if jtu.numpy_version() < (1, 25, 0):
+  numpy_dtypes = [dt for dt in numpy_dtypes if dt != jnp.bool_]
+
 cuda_array_interface_dtypes = [dt for dt in dlpack_dtypes if dt != jnp.bfloat16]
 
 nonempty_nonscalar_array_shapes = [(4,), (3, 4), (2, 3, 4)]
