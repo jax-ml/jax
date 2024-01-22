@@ -510,6 +510,14 @@ def distributed_debug_log(*pairs):
     logger.warning("\n".join(lines))
 
 
+def stable_unique(it: Iterable[T]) -> Iterable[T]:
+  """Returns unique elements from `it` in the order of occurrence.
+
+  The elements must be hashable.
+  """
+  return dict.fromkeys(it).keys()
+
+
 class OrderedSet(Generic[T]):
   elts_set: set[T]
   elts_list: list[T]

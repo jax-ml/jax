@@ -1985,10 +1985,11 @@ def lower_sharding_computation(
   # should be the same.
   jaxpr_sharding = list(dispatch.jaxpr_shardings(jaxpr))
   backend, device_assignment = _get_and_check_device_assignment(
-      it.chain([(i, MismatchType.ARG_SHARDING, None) for i in in_shardings],
-               [(o, MismatchType.OUT_SHARDING, None) for o in out_shardings],
-               [(js, MismatchType.SHARDING_INSIDE_COMPUTATION, source_info)
-                for js, source_info in jaxpr_sharding]),
+      it.chain(
+          ((i, MismatchType.ARG_SHARDING, None) for i in util.stable_unique(in_shardings)),
+          ((o, MismatchType.OUT_SHARDING, None) for o in util.stable_unique(out_shardings)),
+          ((js, MismatchType.SHARDING_INSIDE_COMPUTATION, source_info)
+           for js, source_info in util.stable_unique(jaxpr_sharding))),
       devices_from_context)
 
   transfer_mem_kind_in_jaxpr = list(jaxpr_transfer_mem_kinds(jaxpr))
