@@ -36,6 +36,7 @@ import jax.util
 
 from jax.interpreters import batching
 from jax.interpreters import xla
+from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 from jax._src import array
 from jax._src import config
 from jax._src import dtypes
@@ -2725,6 +2726,13 @@ class LaxTest(jtu.JaxTestCase):
         return carry, carry
 
     a, b = jax.lax.scan(_step, 0, jnp.arange(4, dtype=jnp.complex64))
+
+  def test_lax_full_sharding(self):
+    devices = jax.devices()
+    mesh = Mesh(devices, axis_names=("i"))
+    sharding = NamedSharding(mesh, P('i', None))
+    x = lax.full((len(devices),), 1.0, sharding=sharding)
+    self.assertEqual(x.sharding, sharding)
 
 
 class LazyConstantTest(jtu.JaxTestCase):
