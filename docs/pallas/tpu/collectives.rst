@@ -1,6 +1,6 @@
 Pallas Collectives
 ===================
-Pallas now has support for manual DMA (between memories of the same chip) and remote DMA (between memories of different chips) support. It also has a more advanced API for nesting pipelines of compute overlapped collectives.
+Pallas has support for manual DMA (between memories of the same chip) and remote DMA (between memories of different chips) support. It also has an API for nesting pipelines of compute overlapped collectives.
 
 Manual DMAs are a necessary imperative escape hatch for maximum performance, but we hope that nested pipelines will minimize where they are used in codebases.
 
@@ -148,7 +148,7 @@ Solution: Custom Pipelines == Nested Pallas Calls!
 Ideally we can use Pallas' templating capabilities to turn any kernel into one that overlaps some sort of communication pattern. Otherwise we'd be rewriting every kernel for every collective we want to overlap it with. This is where the idea for nested grids came from.
 
 .. note::
-   The :code:`emit_pipeline` API is implemented entirely using public Pallas APIs, a testament to the power of Pallas meta-programming.
+   The :code:`emit_pipeline` API is implemented entirely using public Pallas APIs, an illustration of Pallas meta-programming.
 
 Basic Nested Pipeline Example
 ******************************
