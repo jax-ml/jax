@@ -2734,6 +2734,14 @@ class LaxTest(jtu.JaxTestCase):
     x = lax.full((len(devices),), 1.0, sharding=sharding)
     self.assertEqual(x.sharding, sharding)
 
+  def test_lax_full_like_sharding(self):
+    devices = jax.devices()
+    mesh = Mesh(devices, axis_names=("i"))
+    sharding = NamedSharding(mesh, P('i'))
+    x = lax.iota("float32", len(devices))
+    y = lax.full_like(x, 1, sharding=sharding)
+    self.assertEqual(y.sharding, sharding)
+
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):
