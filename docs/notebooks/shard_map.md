@@ -14,7 +14,7 @@ kernelspec:
   name: python3
 ---
 
-# Intro
+# SPMD multi-device parallelism with `shard_map`
 
 `shard_map` is a single-program multiple-data (SPMD) multi-device parallelism API to map a function over shards of data. Mapped function applications, or _instances_, communicate with each other via explicit collective communication operations.
 
