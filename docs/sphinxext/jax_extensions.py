@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from docutils import nodes, utils
+from docutils.parsers.rst import Directive
 
 from sphinx.util.nodes import split_explicit_title
 
@@ -45,7 +46,19 @@ def doi_role(typ, rawtext, text, lineno, inliner, options=None, content=()):
   pnode = nodes.reference(title, title, internal=False, refuri=full_url)
   return [pnode], []
 
+
+class LegacyDirective(Directive):
+  """A noop variant of the ``legacy`` directive from SciPy."""
+  has_content = True
+  node_class = nodes.admonition
+  optional_arguments = 1
+
+  def run(self):
+    return []
+
+
 def setup(app):
+  app.add_directive("legacy", LegacyDirective)
   app.add_role('jax-issue', jax_issue_role)
   app.add_role('doi', doi_role)
   return {
