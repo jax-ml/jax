@@ -516,6 +516,9 @@ jax_test(
 jax_test(
     name = "lax_scipy_special_functions_test",
     srcs = ["lax_scipy_special_functions_test.py"],
+    backend_tags = {
+        "gpu": ["noasan"],  # Times out.
+    },
     shard_count = {
         "cpu": 20,
         "gpu": 20,
