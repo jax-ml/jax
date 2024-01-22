@@ -29,6 +29,7 @@ import numpy as np
 
 import jax
 from jax import tree_util
+from jax.sharding import Sharding
 from jax.tree_util import tree_map
 
 from jax._src import ad_util
@@ -1204,7 +1205,8 @@ def tie_in(x: Any, y: T) -> T:
   """Deprecated. Ignores ``x`` and returns ``y``."""
   return y
 
-def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None) -> Array:
+def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
+         sharding: Sharding | None = None) -> Array:
   """Returns an array of `shape` filled with `fill_value`.
 
   Args:
@@ -1212,6 +1214,7 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None) ->
     fill_value: the value to fill the new array with.
     dtype: the type of the output array, or `None`. If not `None`, `fill_value`
       will be cast to `dtype`.
+    sharding: an optional sharding specification for the resulting array.
   """
   shape = canonicalize_shape(shape)
   if np.shape(fill_value):
@@ -1222,7 +1225,11 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None) ->
   weak_type = dtype is None and dtypes.is_weakly_typed(fill_value)
   dtype = dtypes.canonicalize_dtype(dtype or _dtype(fill_value))
   fill_value = _convert_element_type(fill_value, dtype, weak_type)
-  return broadcast(fill_value, shape)
+  out = broadcast(fill_value, shape)
+  if sharding is not None:
+    return array.make_array_from_callback(shape, sharding, lambda idx: out[idx])
+  return out
+
 
 def zeros_like_shaped_array(aval: ShapedArray) -> Array:
   assert isinstance(aval, ShapedArray)
