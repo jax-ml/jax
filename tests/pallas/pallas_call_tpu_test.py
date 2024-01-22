@@ -22,6 +22,7 @@ from jax import lax
 from jax._src import state
 from jax._src import test_util as jtu
 from jax._src.interpreters import partial_eval as pe
+from jax._src.lib import xla_extension
 from jax.experimental import mesh_utils
 from jax.experimental import mosaic
 from jax.experimental import pallas as pl
@@ -1005,6 +1006,21 @@ class PallasCallTest(jtu.JaxTestCase):
     self.assertEqual(analysis_result['flops'], 1234)
     self.assertEqual(analysis_result['transcendentals'], 21)
     self.assertEqual(analysis_result['bytes accessed'], 12345)
+
+  def test_vmem_limit(self):
+    shape = (128, 128)
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...]
+
+    x = jnp.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    with self.assertRaises(xla_extension.XlaRuntimeError):
+      pl.pallas_call(
+          kernel, out_shape=x, mosaic_params=dict(vmem_limit_bytes=256)
+      )(x)
+    pl.pallas_call(
+        kernel, out_shape=x, mosaic_params=dict(vmem_limit_bytes=int(2**18))
+    )(x)
 
 
 class PallasUXTest(jtu.JaxTestCase):
