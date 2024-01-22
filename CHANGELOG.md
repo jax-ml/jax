@@ -61,10 +61,20 @@ Remember to align the itemized text with the first line of an item within a list
   * A number of previously deprecated functions have been removed, following a
     standard 3+ month deprecation cycle (see {ref}`api-compatibility`).
     This includes:
+    * From {mod}`jax.core`: `TracerArrayConversionError`,
+      `TracerIntegerConversionError`, `UnexpectedTracerError`,
+      `as_hashable_function`, `collections`, `dtypes`, `lu`, `map`,
+      `namedtuple`, `partial`, `pp`, `ref`, `safe_zip`, `safe_map`,
+      `source_info_util`, `total_ordering`, `traceback_util`, `tuple_delete`,
+      `tuple_insert`, and `zip`.
+    * From {mod}`jax.lax`: `dtypes`, `itertools`, `naryop`, `naryop_dtype_rule`,
+      `standard_abstract_eval`, `standard_naryop`, `standard_primitive`,
+      `standard_unop`, `unop`, and `unop_dtype_rule`.
     * The `jax.linear_util` submodule and all its contents.
     * The `jax.prng` submodule and all its contents.
-    * From {mod}`jax.random`: `PRNGKeyArray`, `KeyArray`, `threefry2x32_key`,
-      `rbg_key`, and `unsafe_rbg_key`.
+    * From {mod}`jax.random`: `PRNGKeyArray`, `KeyArray`, `default_prng_impl`,
+      `threefry_2x32`, `threefry2x32_key`, `threefry2x32_p`, `rbg_key`, and
+      `unsafe_rbg_key`.
     * From {mod}`jax.tree_util`: `register_keypaths`, `AttributeKeyPathEntry`, and
       `GetItemKeyPathEntry`.
     * from {mod}`jax.interpreters.xla`: `backend_specific_translations`, `translations`,

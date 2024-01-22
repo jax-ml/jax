@@ -172,86 +172,6 @@ _deprecations = {
         "jax.core.Shape is deprecated. Use Shape = Sequence[int | Any].",
         _src_core.Shape,
     ),
-    "TracerArrayConversionError": (
-        "jax.core.TracerArrayConversionError is deprecated. Use jax.errors.TracerArrayConversionError",
-        _src_core.TracerArrayConversionError,
-    ),
-    "TracerIntegerConversionError": (
-        "jax.core.TracerIntegerConversionError is deprecated. Use jax.errors.TracerIntegerConversionError",
-        _src_core.TracerIntegerConversionError,
-    ),
-    "UnexpectedTracerError": (
-        "jax.core.UnexpectedTracerError is deprecated. Use jax.errors.UnexpectedTracerError",
-        _src_core.UnexpectedTracerError,
-    ),
-    "as_hashable_function": (
-        "jax.core.as_hashable_function is deprecated. Use jax.util.as_hashable_function directly.",
-        _src_core.as_hashable_function,
-    ),
-    "collections": (
-        "jax.core.collections is deprecated. Use the collections module directly.",
-        _src_core.collections,
-    ),
-    "dtypes": (
-        "jax.core.dtypes is deprecated. Use jax.dtypes directly.",
-        _src_core.dtypes,
-    ),
-    "lu": (
-        "jax.core.lu is deprecated. Use lu = jax.extend.linear_util",
-        _src_core.lu,
-    ),
-    "map": (
-        "jax.core.map is deprecated. Use the built-in map function.",
-        _src_core.map,
-    ),
-    "namedtuple": (
-        "jax.core.namedtuple is deprecated. Use collections.namedtuple directly.",
-        _src_core.namedtuple,
-    ),
-    "partial": (
-        "jax.core.partial is deprecated. Use functools.partial directly.",
-        _src_core.partial,
-    ),
-    "pp": (
-        "jax.core.pp is deprecated. jax._src.pretty_printer is a non-public API.",
-        _src_core.pp,
-    ),
-    "ref": (
-        "jax.core.ref is deprecated. Use weakref.ref directly.",
-        _src_core.ref,
-    ),
-    "safe_map": (
-        "jax.core.safe_map is deprecated. Use jax.util.safe_map directly.",
-        _src_core.safe_map,
-    ),
-    "safe_zip": (
-        "jax.core.safe_zip is deprecated. Use jax.util.safe_zip directly.",
-        _src_core.safe_zip,
-    ),
-    "source_info_util": (
-        "jax.core.source_info_util is deprecated. Use jax.extend.source_info_util.",
-        _src_core.source_info_util,
-    ),
-    "total_ordering": (
-        "jax.core.total_ordering is deprecated. Use functools.total_ordering directly.",
-        _src_core.total_ordering,
-    ),
-    "traceback_util": (
-        "jax.core.traceback_util is deprecated. jax._src.traceback_util is a non-public API.",
-        _src_core.traceback_util,
-    ),
-    "tuple_delete": (
-        "jax.core.tuple_delete is deprecated. Use tuple_delete = lambda t, i: (*t[:i], *t[i+1:])",
-        _src_core.tuple_delete,
-    ),
-    "tuple_insert": (
-        "jax.core.tuple_insert is deprecated. Use tuple_insert = lambda t, v, i: (*t[:i], v, *t[i:])",
-        _src_core.tuple_insert,
-    ),
-    "zip": (
-        "jax.core.zip is deprecated. Use the built-in zip function.",
-        _src_core.zip,
-    ),
     # Added Dec 15, 2023
     "canonicalize_shape": (
       "jax.core.canonicalize_shape is deprecated.", _deprecated_canonicalize_shape,
@@ -275,31 +195,11 @@ import typing
 if typing.TYPE_CHECKING:
   DimSize = _src_core.DimSize
   Shape = _src_core.Shape
-  TracerArrayConversionError = _src_core.TracerArrayConversionError
-  TracerIntegerConversionError = _src_core.TracerIntegerConversionError
-  UnexpectedTracerError = _src_core.UnexpectedTracerError
-  as_hashable_function = _src_core.as_hashable_function
   canonicalize_shape = _deprecated_canonicalize_shape
-  collections = _src_core.collections
   dimension_as_value = _deprecated_dimension_as_value
   definitely_equal = _deprecated_definitely_equal
   non_negative_dim = _deprecated_non_negative_dim
-  dtypes = _src_core.dtypes
-  lu = _src_core.lu
-  map = _src_core.map
-  namedtuple = _src_core.namedtuple
-  partial = _src_core.partial
-  pp = _src_core.pp
-  ref = _src_core.ref
-  safe_map = _src_core.safe_map
-  safe_zip = _src_core.safe_zip
-  source_info_util = _src_core.source_info_util
   symbolic_equal_dim = _deprecated_definitely_equal
-  total_ordering = _src_core.total_ordering
-  traceback_util = _src_core.traceback_util
-  tuple_delete = _src_core.tuple_delete
-  tuple_insert = _src_core.tuple_insert
-  zip = _src_core.zip
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)

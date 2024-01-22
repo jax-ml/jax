@@ -89,7 +89,6 @@ from jax._src.lax.lax import (
   dot_general as dot_general,
   dot_general_p as dot_general_p,
   dtype as dtype,
-  dtypes as _deprecated_dtypes,
   eq as eq,
   eq_p as eq_p,
   eq_to_p as eq_to_p,
@@ -118,7 +117,6 @@ from jax._src.lax.lax import (
   iota_p as iota_p,
   is_finite as is_finite,
   is_finite_p as is_finite_p,
-  itertools as _deprecated_itertools,
   le as le,
   le_p as le_p,
   le_to_p as le_to_p,
@@ -137,8 +135,6 @@ from jax._src.lax.lax import (
   min_p as min_p,
   mul as mul,
   mul_p as mul_p,
-  naryop as _deprecated_naryop,
-  naryop_dtype_rule as _deprecated_naryop_dtype_rule,
   ne as ne,
   ne_p as ne_p,
   neg as neg,
@@ -207,10 +203,6 @@ from jax._src.lax.lax import (
   square as square,
   squeeze as squeeze,
   squeeze_p as squeeze_p,
-  standard_abstract_eval as _deprecated_standard_abstract_eval,
-  standard_naryop as _deprecated_standard_naryop,
-  standard_primitive as _deprecated_standard_primitive,
-  standard_unop as _deprecated_standard_unop,
   stop_gradient as stop_gradient,
   sub as sub,
   sub_p as sub_p,
@@ -223,8 +215,6 @@ from jax._src.lax.lax import (
   top_k_p as top_k_p,
   transpose as transpose,
   transpose_p as transpose_p,
-  unop as _deprecated_unop,
-  unop_dtype_rule as _deprecated_unop_dtype_rule,
   xor_p as xor_p,
   zeros_like_array as zeros_like_array,
 )
@@ -385,47 +375,6 @@ from jax._src.dispatch import device_put_p as device_put_p
 
 
 _deprecations = {
-  # Added October 6 2023
-  "dtypes": (
-    "jax.lax.dtypes is deprecated: import jax.dtypes directly.",
-    _deprecated_dtypes,
-  ),
-  "itertools": (
-    "jax.lax.itertools is deprecated: import itertools directly.",
-    _deprecated_itertools,
-  ),
-  "naryop": (
-    "jax.lax.naryop is an internal API and has been deprecated.",
-    _deprecated_naryop,
-  ),
-  "naryop_dtype_rule": (
-    "jax.lax.naryop_dtype_rule is an internal API and has been deprecated.",
-    _deprecated_naryop_dtype_rule,
-  ),
-  "standard_abstract_eval": (
-    "jax.lax.standard_abstract_eval is an internal API and has been deprecated.",
-    _deprecated_standard_abstract_eval,
-  ),
-  "standard_naryop": (
-    "jax.lax.standard_naryop is an internal API and has been deprecated.",
-    _deprecated_standard_naryop,
-  ),
-  "standard_primitive": (
-    "jax.lax.standard_primitive is an internal API and has been deprecated.",
-    _deprecated_standard_primitive,
-  ),
-  "standard_unop": (
-    "jax.lax.standard_unop is an internal API and has been deprecated.",
-    _deprecated_standard_unop,
-  ),
-  "unop": (
-    "jax.lax.unop is an internal API and has been deprecated.",
-    _deprecated_unop,
-  ),
-  "unop_dtype_rule": (
-    "jax.lax.unop_dtype_rule is an internal API and has been deprecated.",
-    _deprecated_unop_dtype_rule,
-  ),
   # Added January 18 2023
   "tie_in": (
     "jax.lax.tie_in is deprecated: it has been a no-op since JAX v0.2.0. "
@@ -435,17 +384,7 @@ _deprecations = {
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
-  dtypes = _deprecated_dtypes,
-  itertools = _deprecated_itertools,
-  naryop = _deprecated_naryop,
-  naryop_dtype_rule = _deprecated_naryop_dtype_rule,
-  standard_abstract_eval = _deprecated_standard_abstract_eval,
-  standard_naryop = _deprecated_standard_naryop,
-  standard_primitive = _deprecated_standard_primitive,
-  standard_unop = _deprecated_standard_unop,
   tie_in = _deprecated_tie_in
-  unop = _deprecated_unop,
-  unop_dtype_rule = _deprecated_unop_dtype_rule,
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
