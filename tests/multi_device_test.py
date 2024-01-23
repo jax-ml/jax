@@ -21,6 +21,7 @@ from absl.testing import absltest
 import jax
 import jax.numpy as jnp
 from jax import lax
+from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 
@@ -268,6 +269,21 @@ class MultiDeviceTest(jtu.JaxTestCase):
     y, x_bar = jax.value_and_grad(lambda x: jax.device_put(x, devices[1]))(x)
     self.assert_committed_to_device(y, devices[1])
     self.assert_committed_to_device(x_bar, devices[0])
+
+  def test_lax_full_sharding(self):
+    devices = jax.devices()
+    mesh = Mesh(devices, axis_names=("i"))
+    sharding = NamedSharding(mesh, P('i', None))
+    x = lax.full((len(devices),), 1.0, sharding=sharding)
+    self.assertEqual(x.sharding, sharding)
+
+  def test_lax_full_like_sharding(self):
+    devices = jax.devices()
+    mesh = Mesh(devices, axis_names=("i"))
+    sharding = NamedSharding(mesh, P('i'))
+    x = lax.iota("float32", len(devices))
+    y = lax.full_like(x, 1, sharding=sharding)
+    self.assertEqual(y.sharding, sharding)
 
 
 if __name__ == '__main__':
