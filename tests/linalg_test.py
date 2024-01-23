@@ -2008,7 +2008,6 @@ class LaxLinalgTest(jtu.JaxTestCase):
             eigvals_all[first:(last + 1)], eigvals_index, atol=atol)
 
   @jtu.sample_product(dtype=[np.float32, np.float64])
-  @jtu.skip_on_devices("rocm")  # will be fixed in ROCm-5.1
   def test_tridiagonal_solve(self, dtype):
     dl = np.array([0.0, 2.0, 3.0], dtype=dtype)
     d = np.ones(3, dtype=dtype)
