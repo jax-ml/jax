@@ -1374,6 +1374,17 @@ class ShardMapTest(jtu.JaxTestCase):
     x = jnp.array([3.0, 1.0, 4.0, 2.0])
     _ = shard_map(lambda x: lax.approx_max_k(x, 2), mesh, P('i'), P('i'))(x)
 
+  def test_disable_jit(self):
+    mesh = Mesh(np.array(jax.devices()[:2]), ('i',))
+
+    @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
+    def f(x):
+      return x
+
+    x = jnp.arange(8.)
+    with jax.disable_jit():
+      f(x)  # don't crash
+
 
 class FunSpec(NamedTuple):
   name: str
