@@ -283,8 +283,25 @@ def _pallas_call_batching_rule(args, dims, *,
                                which_linear: tuple[bool, ...],
                                **compiler_params: Any):
   if grid_mapping.num_index_operands:
-    scalar_batch_dims = dims[:grid_mapping.num_index_operands]
-    if any(bdim is not batching.not_mapped for bdim in scalar_batch_dims):
+    scalar_args, args = split_list(args, [grid_mapping.num_index_operands])
+    scalar_bdims, bdims = split_list(dims, [grid_mapping.num_index_operands])
+    # Ordinarily, adding support for scalar prefetch in vmap would involve
+    # modifying the block specs in a nontrivial way. However, if we are only
+    # vmapping over 1-sized dimensions, we can just get rid of the dimensions
+    # and pretend we were never vmapping over them at all.
+    if all(
+        bdim is batching.not_mapped or arg.shape[bdim] == 1
+        for arg, bdim in zip(scalar_args, scalar_bdims)
+    ):
+      def _squeeze_out_bdim(x: jax.Array, bdim: int | batching.NotMapped):
+        if bdim is batching.not_mapped:
+          return x
+        return jnp.squeeze(x, axis=bdim)
+      scalar_args = safe_map(_squeeze_out_bdim, scalar_args, scalar_bdims)
+      scalar_bdims = [None] * len(scalar_args)
+      args = (*scalar_args, *args)
+      dims = (*scalar_bdims, *bdims)
+    else:
       # TODO(sharadmv,apaszke): enable batching over prefetched scalar args
       raise NotImplementedError
   axis_size, = {x.shape[d] for x, d in zip(args, dims)

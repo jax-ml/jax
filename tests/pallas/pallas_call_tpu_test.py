@@ -214,6 +214,71 @@ class PallasCallScalarPrefetchTest(jtu.JaxTestCase):
 
     np.testing.assert_allclose(out, expected)
 
+  def test_vmap_scalar_prefetch_1sized(self):
+    def body(_, x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    s = jnp.array([4, 3, 2, 5, 3, 5, 2, 7], jnp.int32)
+    x = jnp.arange(8 * 8 * 128, dtype=jnp.int32).reshape((8 * 8, 128))
+
+    def _x_transform(i, s_ref):
+      s = pl.load(s_ref, (i,))
+      return (s, 0)
+
+    s = s[None]
+    x = x[None]
+
+    out = jax.vmap(pl.pallas_call(
+        body,
+        out_shape=jax.ShapeDtypeStruct(x.shape[1:], x.dtype),
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=1,
+            in_specs=[
+                pl.BlockSpec(_x_transform, (x.shape[1] // 8, x.shape[2])),
+            ],
+            out_specs=pl.BlockSpec(lambda i, _: (i, 0),
+                                   (x.shape[1] // 8, x.shape[2])),
+            grid=8,
+        ),
+        interpret=self.interpret,
+    ))(s, x)
+    np.testing.assert_allclose(
+        out, x.reshape((1, 8, 8, -1))[:, s].reshape(x.shape)
+    )
+
+  def test_nontrivial_vmap_scalar_prefetch(self):
+    def body(_, x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    s = jnp.array([4, 3, 2, 5, 3, 5, 2, 7], jnp.int32)
+    x = jnp.arange(8 * 8 * 128, dtype=jnp.int32).reshape((8 * 8, 128))
+
+    def _x_transform(i, s_ref):
+      s = pl.load(s_ref, (i,))
+      return (s, 0)
+
+    s = jnp.tile(s[None], [2, 1])
+    x = jnp.tile(x[None], [2, 1, 1])
+
+    with self.assertRaises(NotImplementedError):
+      jax.vmap(
+          pl.pallas_call(
+              body,
+              out_shape=jax.ShapeDtypeStruct(x.shape[1:], x.dtype),
+              grid_spec=pltpu.PrefetchScalarGridSpec(
+                  num_scalar_prefetch=1,
+                  in_specs=[
+                      pl.BlockSpec(_x_transform, (x.shape[1] // 8, x.shape[2])),
+                  ],
+                  out_specs=pl.BlockSpec(
+                      lambda i, _: (i, 0), (x.shape[1] // 8, x.shape[2])
+                  ),
+                  grid=8,
+              ),
+              interpret=self.interpret,
+          )
+      )(s, x)
+
 
 class PallasCallScalarPrefetchInterpretTest(PallasCallScalarPrefetchTest):
   interpret: bool = True
