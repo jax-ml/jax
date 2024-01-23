@@ -2325,11 +2325,32 @@ def trace_to_subjaxpr_dynamic(
     in_tracers = _input_type_to_tracers(trace.new_arg, in_avals)
     in_tracers_ = [t for t, keep in zip(in_tracers, keep_inputs) if keep]
     ans = fun.call_wrapped(*in_tracers_)
-    out_tracers = map(trace.full_raise, ans)
+    out_tracers = [_full_raise_dbg(trace, debug_info, i, x) for i, x in enumerate(ans)]
     jaxpr, consts = frame.to_jaxpr(out_tracers)
     del fun, main, trace, frame, in_tracers, out_tracers, ans
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   return jaxpr, [v.aval for v in jaxpr.outvars], consts
+
+def _full_raise_dbg(trace: DynamicJaxprTrace, dbg: Optional[DebugInfo], i: int,
+                    x: Any):
+  try:
+    return trace.full_raise(x)
+  except Exception as e:
+    res_info = result_info(dbg)
+    if res_info:
+      if res_info is None:  # can't get any result info
+        path = "some part of the output"
+      elif res_info == [()]:  # single output
+        path = "function output"
+      else:
+        path = f"output pytree key path {keystr(res_info[i])}"
+    val_str = str(x)
+    val_str = f'\n{val_str}\n' if '\n' in val_str else val_str
+    msg = (f"While tracing the function {dbg.func_src_info or '<unknown>'} for "
+           f"{dbg.traced_for}, the value at {path} caused an error of type "
+           f"{type(e)}. The problematic value is of type {type(x)} and value "
+           f"{val_str}. See the above traceback for more info.")
+    raise ValueError(msg) from e
 
 
 @profiler.annotate_function
