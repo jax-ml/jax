@@ -297,6 +297,9 @@ def compile_or_get_cached(
       process_count() > 1
       and config.share_binary_between_hosts.value
       and distributed.global_state.client is not None
+      # Host callbacks are currently baked into the HLO module so we cant share
+      # them.
+      and len(host_callbacks) == 0
   ):
     share_timeout = config.share_binary_between_hosts_timeout_ms.value
     global_client = distributed.global_state.client
