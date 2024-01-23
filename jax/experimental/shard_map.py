@@ -629,7 +629,7 @@ def _names_to_pspec(names: AxisNames) -> PartitionSpec:
   return PartitionSpec(*(unpack(names.get(i)) for i in range(ndmin)))
 
 def _unmatch_spec(mesh: Mesh, src: AxisNames, x: JaxType) -> JaxType:
-  with core.eval_context():
+  with core.eval_context(), jax.disable_jit(False):
     return jax.jit(HashablePartial(_unmatch, mesh, tuple(src.items())))(x)
 
 def _unmatch(mesh, src_tup, x):
@@ -658,7 +658,7 @@ def _check_reps2(mesh, reps_dest, reps):
 def _match_spec(mesh: Mesh, check_rep: bool,
                 pspec: PartitionSpec, x: JaxType) -> JaxType:
   fn = HashablePartial(_match, mesh, check_rep, pspec)
-  with core.eval_context():
+  with core.eval_context(), jax.disable_jit(False):
     return jax.jit(fn, out_shardings=NamedSharding(mesh, pspec))(x)
 
 def _match(mesh, check_rep, pspec, x):
