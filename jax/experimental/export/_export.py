@@ -321,29 +321,6 @@ def default_lowering_platform() -> str:
   # Canonicalize to turn 'gpu' into 'cuda' or 'rocm'
   return xb.canonicalize_platform(jax.default_backend())
 
-def symbolic_shape(
-  shape_spec: str | None,
-  *,
-  like: Sequence[int | None] | None = None) -> Shape:
-  """Constructs a jax.ShapeDtypeStruct with polymorphic shapes.
-
-  Args:
-    shape_spec: a symbolic shape specification. None stands for "...".
-    like: when `shape_spec` contains placeholders ("_", "..."), use this
-      shape to fill in the placeholders.
-      The dimensions of `like` that are used for filling
-      must be known (not `None`). If a dimension in `like` is known and
-      the corresponding dimension in `shape_spec` is a constant then they
-      must be equal.
-
-  See [the README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-polymorphic-conversion)
-  for more details.
-
-  Returns: a jax.ShapeDTypeStruct with shapes that may contain symbolic
-      expressions involving dimension variables.
-  """
-  return _shape_poly.symbolic_shape(shape_spec, like=like)
-
 def shape_and_dtype_jax_array(a) -> tuple[Sequence[int | None], DType]:
   """Returns the shape and dtype of a jax.Array or a j"""
   if isinstance(a, jax.ShapeDtypeStruct):
@@ -365,6 +342,7 @@ def args_specs(
     args = tree_util.tree_map(lambda a: jax.ShapeDtypeStruct(* get_shape_and_dtype(a)),
                               args)
   return _shape_poly.symbolic_args_specs(args, polymorphic_shapes)
+
 
 
 def _keep_main_tokens(serialization_version: int) -> bool:
@@ -433,6 +411,19 @@ def export(fun_jax: Callable,
       prev_enable_shape_assertions = _shape_poly.thread_local_state.enable_shape_assertions
       _shape_poly.thread_local_state.enable_shape_assertions = enable_shape_assertions
       replace_tokens_with_dummy = not _keep_main_tokens(version)
+
+      symbolic_scope: tuple[_shape_poly.SymbolicScope, tree_util.KeyPath] | None = None
+      for k_path, aval in tree_util.tree_flatten_with_path((args_specs, kwargs_specs))[0]:
+        for d in aval.shape:
+          if _shape_poly.is_symbolic_dim(d):
+            if symbolic_scope is None:
+              symbolic_scope = (d.scope, k_path)
+              continue
+            symbolic_scope[0]._check_same_scope(
+                d, when=f"when exporting {fun_name}",
+                self_descr=f"current (from {_shape_poly.args_kwargs_path_to_str(symbolic_scope[1])}) ",
+                other_descr=_shape_poly.args_kwargs_path_to_str(k_path))
+
       lowered = wrapped_fun_jax.lower(
           *args_specs, **kwargs_specs,
           _experimental_lowering_parameters=mlir.LoweringParameters(
@@ -1295,7 +1286,7 @@ export.Exported = Exported
 export.call_exported = wrap_with_deprecation_warning(call_exported)
 export.DisabledSafetyCheck = DisabledSafetyCheck
 export.default_lowering_platform = wrap_with_deprecation_warning(default_lowering_platform)
-export.symbolic_shape = wrap_with_deprecation_warning(symbolic_shape)
+export.symbolic_shape = wrap_with_deprecation_warning(_shape_poly.symbolic_shape)
 export.args_specs = wrap_with_deprecation_warning(args_specs)
 export.minimum_supported_serialization_version = minimum_supported_serialization_version
 export.maximum_supported_serialization_version = maximum_supported_serialization_version

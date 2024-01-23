@@ -82,6 +82,7 @@ class PolyHarness(Harness):
                *,
                arg_descriptors: Sequence[test_harnesses.ArgDescriptor] = (),
                polymorphic_shapes: Sequence[str | None] = (),
+               polymorphic_constraints: Sequence[str] = (),
                input_signature: Sequence[tf.TensorSpec] | None = None,
                expected_output_signature: tf.TensorSpec | None = None,
                enable_xla: bool = True,
@@ -100,6 +101,7 @@ class PolyHarness(Harness):
         be missing, in which case `skip_jax_run` should be `True` and
         `input_signature` must be present.
       polymorphic_shapes: For `jax2tf.convert`.
+      polymorphic_constraints: For `jax2tf.convert`.
       input_signature: For `tf.function.get_concrete_function`. If missing,
         generated from `polymorphic_shapes`.
       expected_output_signature: the expected inferred output shape.
@@ -119,6 +121,7 @@ class PolyHarness(Harness):
     super().__init__(group_name, name, fun, arg_descriptors,
                      dtype=np.float32)
     self.polymorphic_shapes = polymorphic_shapes
+    self.polymorphic_constraints = polymorphic_constraints
     self.input_signature = input_signature
     self.expected_output_signature = expected_output_signature
     self.skip_jax_run = skip_jax_run
@@ -137,6 +140,7 @@ class PolyHarness(Harness):
                         self.fun,
                         arg_descriptors=self.arg_descriptors,
                         polymorphic_shapes=self.polymorphic_shapes,
+                        polymorphic_constraints=self.polymorphic_constraints,
                         input_signature=self.input_signature,
                         expected_output_signature=self.expected_output_signature,
                         expect_error=self.expect_error,
@@ -185,6 +189,7 @@ class PolyHarness(Harness):
         stack.enter_context(tst.assertRaisesRegex(expect_error_type, expect_error_regex))
 
       f_tf = jax2tf.convert(f_jax, polymorphic_shapes=polymorphic_shapes,
+                            polymorphic_constraints=self.polymorphic_constraints,
                             enable_xla=self.enable_xla)
       # Run in tf.Eager mode first, because it is friendlier to debuggers
       res_tf = f_tf(*args) if not self.skip_jax_run else None
@@ -245,6 +250,7 @@ def check_shape_poly(tst, f_jax: Callable, *,
                      arg_descriptors: Sequence[test_harnesses.ArgDescriptor] = (),
                      skip_jax_run: bool = False,
                      polymorphic_shapes: Sequence[str | None] = (),
+                     polymorphic_constraints: Sequence[str] = (),
                      input_signature: Sequence[tf.TensorSpec] | None = None,
                      expected_output_signature: tf.TensorSpec | None = None,
                      expect_error=(None, None)) -> jax.Array | None:
@@ -253,6 +259,7 @@ def check_shape_poly(tst, f_jax: Callable, *,
                   arg_descriptors=arg_descriptors,
                   skip_jax_run=skip_jax_run,
                   polymorphic_shapes=polymorphic_shapes,
+                  polymorphic_constraints=polymorphic_constraints,
                   input_signature=input_signature,
                   expected_output_signature=expected_output_signature,
                   expect_error=expect_error)
@@ -414,6 +421,16 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                        input_signature=[tf.TensorSpec([1, None])],
                        polymorphic_shapes=[None])
 
+  def test_with_constraints(self):
+    if not config.jax2tf_default_native_serialization.value:
+      self.skipTest("not supported")
+    def f_jax(x):  # x: i32[a], with a >= 8
+      return lax.dynamic_slice_in_dim(x, 0, 8, 0)
+    check_shape_poly(self, f_jax,
+                     arg_descriptors=[RandArg((16,), _i32)],
+                     polymorphic_shapes=["a"],
+                     polymorphic_constraints=["a >= 8"])
+
   def test_kwargs(self):
     """Test shape polymorphism for a function with kwargs."""
 
@@ -430,16 +447,17 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
 
     def check_avals(*, arg_shapes: Sequence[Sequence[int | None]],
                     polymorphic_shapes: Sequence[str | None],
-                    expected_avals: Sequence[core.ShapedArray] | None = None,
+                    expected_shapes: Sequence[str] | None = None,
                     expected_shapeenv: dict[str, int] | None = None,
                     eager_mode: bool = False):
       # Use eager mode only for when all arg_shapes are known, in order to
       # check expected_shapeenv.
       arg_dtypes = (_f32,) * len(arg_shapes)
+      symbolic_scope = shape_poly.SymbolicScope()
       def f_tf(*args_tf):
         avals = tuple(map(
             lambda s, dt, spec: core.ShapedArray(
-                export.symbolic_shape(spec, like=s),
+                export.symbolic_shape(spec, like=s, scope=symbolic_scope),
                 dt),
             arg_shapes, arg_dtypes, polymorphic_shapes))
         dim_vars = shape_poly.all_dim_vars(avals)
@@ -448,7 +466,12 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                     avals,
                     args_kwargs_tree=tree_util.tree_flatten((avals, {}))[1]),
             args_tf, avals, "")
-        if expected_avals is not None:
+        if expected_shapes is not None:
+          expected_avals = tree_util.tree_map(
+              lambda shape_str: core.ShapedArray(
+                  shape_poly.symbolic_shape(shape_str, scope=symbolic_scope),
+                  np.float32),
+              expected_shapes)
           self.assertEqual(expected_avals, avals)
         return dict(zip(dim_vars, dim_values))
       if eager_mode:
@@ -465,46 +488,47 @@ class ShapePolyTest(tf_test_util.JaxToTfTestCase):
                                    for a_s in arg_shapes])
         assert not expected_shapeenv, "Should use eager_mode=True"
 
-    def shaped_array(shape_spec: str, actual_shape: core.Shape):
-      return core.ShapedArray(
-          export.symbolic_shape(shape_spec, like=actual_shape), np.float32)
-
     # Known shapes for the arguments
     check_avals(
         arg_shapes=[(2, 3)],
         polymorphic_shapes=[None],
-        expected_avals=(shaped_array("2, 3", [2, 3]),))
+        expected_shapes=("2, 3",))
 
     check_avals(
         arg_shapes=[(2, 3)],
         polymorphic_shapes=["(2, 3)"],
-        expected_avals=(shaped_array("2, 3", [2, 3]),))
+        expected_shapes=("2, 3",))
 
     check_avals(
         arg_shapes=[(2, 3)],
         polymorphic_shapes=["(_, 3)"],
-        expected_avals=(shaped_array("2, 3", [2, 3]),))
+        expected_shapes=("2, 3",))
 
     check_avals(
         arg_shapes=[(2, 3)],
         polymorphic_shapes=["..."],
-        expected_avals=(shaped_array("2, 3", [2, 3]),))
+        expected_shapes=("2, 3",))
 
     # Partially known shapes for the arguments
     check_avals(
+        arg_shapes=[(None, 3)],
+        polymorphic_shapes=["b, ..."],
+        expected_shapes=("(b, 3)",))
+
+    check_avals(
         arg_shapes=[(None, None)],
         polymorphic_shapes=["h, h"],
-        expected_avals=(shaped_array("(h, h)", (2, 2)),))
+        expected_shapes=("(h, h)",))
 
     check_avals(
         arg_shapes=[(2, None)],
         polymorphic_shapes=["h, h"],
-        expected_avals=(shaped_array("(h, h)", (2, 2)),))
+        expected_shapes=("(h, h)",))
 
     check_avals(
         arg_shapes=[(None, 3, 4)],
         polymorphic_shapes=["(c, b, a)"],
-        expected_avals=(shaped_array("(c, b, a)", (2, 3, 4)),),
+        expected_shapes=("(c, b, a)",),
     )
 
     # Check cases when the specifications are polynomials

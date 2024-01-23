@@ -686,6 +686,142 @@ jax2tf.convert(lambda x: 0 if x.shape[0] + 1 >= x.shape[1] else 1,
                 polymorphic_shapes=["(a, b)"])(np.ones((3, 4)))
 ```
 
+If you do get an `core.InconclusiveDimensionOperation`, you can try
+several strategies:
+
+ * If your code uses the built-in `max` or `min`, or the
+   `np.max` or `np.min` then you can replace those with
+   `core.max_dim` and `core.min_dim`, which have the effect
+   of delaying the inequality comparison to the compilation
+   time, when shapes become known.
+ * Try to rewrite conditionals using `core.max_dim` and
+   `core.min_dim`, e.g., instead of `d if d > 0 else 0`
+   you can write `core.max_dim(d, 0)`.
+ * Try to rewrite the code to be less dependent on the fact
+   that dimensions should be integers, and rely on the fact
+   that symbolic dimensions duck-type as integers for most
+   arithmetic operations. E.g., instead of `int(d) + 5` write
+   `d + 5`.
+ * Specify symbolic constraints, as explained below.
+
+#### User-specified symbolic constraints
+
+By default, JAX assumes that all dimension variables range
+over values greater-or-equal to 1, and it tries to derive
+other simple inequalities from that, e.g.:
+
+  * `a + 2 >= 3`,
+  * `a * 2 >= 1`,
+  * `a + b + c >= 3`,
+  * `a // 4 >= 0`, `a**2 >= 1`, and so on.
+
+You can avoid some inequality comparison failures if you
+change the symbolic shape specifications to add implicit constraints
+for dimension sizes. E.g.,
+
+  * You can use `2*b` for a dimension to constrain it to be even (and `>= 2`).
+  * You can use `b + 15` for a dimension to constrain it to
+    be at least 16. E.g., the following code would fail without
+    the `+ 15` part, because JAX will want to verify that slice sizes
+    are at most as large as the axis size.
+
+```python
+jax2tf.convert(lambda x: x[0:16],
+               polymorphic_shapes="b + 15, ...")
+```
+
+Such implicit symbolic constraints are used for reasoning, and are
+checked at compile time, as explained [above](#shape-assertion-errors).
+
+Starting with JAX version 0.4.24 you can also specify explicit
+symbolic constraints:
+
+```python
+jax2tf.convert(lambda x: x[:x.shape[1], :16],
+               polymorphic_shapes="(a, b)",
+               polymorphic_constraints=("a >= b", "b >= 16"))
+```
+
+The constraints form a conjunction together with the implicit
+constraints. You can specify `>=` and `<=` constraints.
+At the moment, JAX has limited support for reasoning with
+symbolic constraints:
+  * You get most from constraints of the form
+    of a variable being greater-or-equal or
+    less-or-equal to a constant.
+    For example, from the constraints that
+    `a >= 16` and `b >= 8` we can infer
+    that `a + 2*b >= 32`.
+  * You get limited power when the constraint involves
+    more complex expressions, e.g., from `a >= b + 8` we
+    can infer that `a - b >= 8` but not that `a >= 9`.
+    We plan to improve somewhat this area in the future.
+
+The symbolic constraints can also help to work around the
+limitations in the JAX reasoning mechanisms. For example, the following
+code would not be able to prove that the slice size fits
+into the axis size (such examples come up when using
+striding):
+
+```python
+jax2tf.convert(lambda x: x[: 4*(x.shape[0] // 4)],
+               polymorphic_shapes=("b, ..."))
+```
+
+You will likely see an error that the comparison
+`b >= 4*floordiv(b, 4)` is inconclusive, even though
+the inequality always holds when `b >= 1`. One option
+here would be to restrict the code to work only on
+axis sizes that are multiple of `4` (by replacing
+`b` with `4*b` in the shape specification);
+another option is to add a symbolic constraint
+with the exact inconclusive inequality:
+
+```python
+jax2tf.convert(lambda x: x[: 4*(x.shape[0] // 4)],
+               polymorphic_shapes=("b, ..."),
+               polymorphic_constraints=("b >= 4*floordiv(b, 4)",))
+```
+
+Just like the implicit constraints, the explicit
+symbolic constraints are checked at compile time,
+using the same mechanism as explained [above](#shape-assertion-errors).
+
+The symbolic constraints are stored in αn
+`export.SymbolicScope` object, which is created implicitly
+for each call to `jax2tf.convert`. You must be careful
+to not mix symbolic expressions that use different scopes.
+For example,
+the following code will fail because `a1` and `a2`
+use different scopes (created by `export.symbolic_shape`):
+
+````python
+a1, = export.symbolic_shape("a,")
+a2, = export.symbolic_shape("a,", constraints=("a >= 8",))
+
+a1 + a2
+````
+
+The symbolic expressions that originate from a single call
+to `export.symbolic_shape` share a scope and
+can be mixed up in arithmetic operations. The result would
+also share the same scope.
+
+You can re-use scopes:
+
+```python
+a, = export.symbolic_shape("a,", constraints=("a >= 8",))
+b, = export.symbolic_shape("b,", scope=a1.scope)
+
+a + b  # Allowed
+```
+
+JAX tracing uses caches keyed partially by shapes, and
+symbolic shapes that are printed identically will be considered
+distinct if they use different scopes.
+
+#### Caveat for equality comparisons
+
 The equality comparison returns `False` for `b + 1 == b` or `b == 0`
 (in which case it is certain that the dimensions are different for all valuations),
 but also for `b == 1` and for `a == b`. This is unsound, and we

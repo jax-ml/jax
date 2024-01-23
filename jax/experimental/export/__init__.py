@@ -29,6 +29,7 @@ from jax.experimental.export._shape_poly import (
     is_symbolic_dim,
     symbolic_shape,
     symbolic_args_specs,
+    SymbolicScope,
 )
 from jax.experimental.export._serialization import (
     serialize,

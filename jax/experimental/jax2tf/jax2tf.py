@@ -236,6 +236,7 @@ def get_thread_local_state_call_tf_concrete_function_list() -> (
 def convert(fun_jax: Callable,
             *,
             polymorphic_shapes: str | None = None,
+            polymorphic_constraints: Sequence[str] = (),
             with_gradient: bool = True,
             enable_xla: bool = True,
             native_serialization: bool | _DefaultNativeSerialization = DEFAULT_NATIVE_SERIALIZATION,
@@ -290,6 +291,9 @@ def convert(fun_jax: Callable,
       See [the README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#shape-polymorphic-conversion)
       for more details.
 
+    polymorphic_constraints: a sequence of contraints on symbolic dimension expressions, of
+      the form `e1 >= e2` or `e1 <= e2`.
+      See more details at https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#user-specified-symbolic-constraints.
     with_gradient: if set (default), add a tf.custom_gradient to the lowered
       function, by converting the ``jax.vjp(fun)``. This means that reverse-mode
       TensorFlow AD is supported for the output TensorFlow function, and the
@@ -332,6 +336,11 @@ def convert(fun_jax: Callable,
   if native_serialization and not enable_xla:
     raise ValueError(
         "native_serialization is not supported with enable_xla=False")
+
+  if not native_serialization and polymorphic_constraints:
+    raise ValueError(
+        "polymorphic_constraints are supported only with native serialization"
+    )
 
   if native_serialization_platforms:
     if not native_serialization:
@@ -379,7 +388,8 @@ def convert(fun_jax: Callable,
 
     args_jax_specs = tree_util.tree_map(jax_arg_spec_from_tf, args_tf)
     args_specs = export.symbolic_args_specs(
-        args_jax_specs, polymorphic_shapes=polymorphic_shapes)
+        args_jax_specs, polymorphic_shapes=polymorphic_shapes,
+        symbolic_constraints=polymorphic_constraints)
     # The polymorphic_shapes argument refers to positional arguments only.
     # We assume None for the kwargs.
     kwargs_jax_specs = tree_util.tree_map(jax_arg_spec_from_tf, kwargs_tf)
