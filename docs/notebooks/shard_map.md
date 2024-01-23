@@ -562,7 +562,7 @@ def all_gather_ref(_, x_blocks, *, tiled=False):
 In deep learning, we might use `all_gather`s on parameters in fully sharded
 data parallelism (FSDP).
 
-# psum_scatter
+## `psum_scatter`
 
 The `jax.lax.psum_scatter` collective is a bit less intuitive. It's like
 `psum` except each function instance gets only one shard of the result:
@@ -1081,8 +1081,7 @@ params = jax.device_put(params, NamedSharding(mesh, P()))
 
 # adapt the loss function to sum the losses across devices
 def loss_dp(params, batch):
-  @partial(shard_map, mesh=mesh, in_specs=P('batch', None), out_specs=P(),
-           check_rep=False)  # TODO remove check_rep=False
+  @partial(shard_map, mesh=mesh, in_specs=P('batch', None), out_specs=P())
   def loss_spmd(local_batch):
     inputs, targets = local_batch
     predictions = predict(params, inputs)  # use reference 'predict`
