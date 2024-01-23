@@ -34,8 +34,7 @@ from jax._src.tree_util import (
 from jax._src.tree_util import _replace_nones
 from jax._src import linear_util as lu
 from jax._src.linear_util import TracingDebugInfo
-from jax._src.util import (safe_map, WrapKwArgs, Hashable, HashableFunction,
-                           Unhashable)
+from jax._src.util import safe_map, WrapKwArgs, HashableFunction, Unhashable
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
@@ -324,13 +323,13 @@ def argnames_partial_except(f: lu.WrappedFun, static_argnames: tuple[str, ...],
             f"to unexpected cache-misses. Static argument (name {k}) of type "
             f"{type(arg)} for function {f.__name__} is non-hashable.")
       else:
-        fixed_kwargs[k] = Hashable(arg)  # type: ignore
+        fixed_kwargs[k] = arg  # type: ignore
 
   return _argnames_partial(f, WrapKwArgs(fixed_kwargs)), dyn_kwargs
 
 @lu.transformation
 def _argnames_partial(fixed_kwargs: WrapKwArgs, *args, **dyn_kwargs):
-  kwargs = dict({k: v.val for k, v in fixed_kwargs.val.items()}, **dyn_kwargs)
+  kwargs = {**fixed_kwargs.val, **dyn_kwargs}
   ans = yield args, kwargs
   yield ans
 
