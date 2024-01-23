@@ -10,6 +10,7 @@
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/triton.pb.h"
 #include "jaxlib/gpu/vendor.h"
 #include "xla/service/custom_call_status.h"
@@ -32,6 +33,9 @@ class Kernel {
 
   static Kernel FromProto(const jax_triton::TritonKernel& proto);
   jax_triton::TritonKernel ToProto() const;
+
+  // Returns true if we can launch the kernel without crashing.
+  bool CanLaunchOnDevice(gpuDevice_t) const;
 
  private:
   std::string kernel_name_;
@@ -71,6 +75,9 @@ class KernelCall {
       const jax_triton::TritonKernelCall& proto);
   jax_triton::TritonKernelCall ToProto() const;
 
+  // Returns true if we can launch the kernel without crashing.
+  bool CanLaunchOnDevice(gpuDevice_t) const;
+
  private:
   Kernel kernel_;
   uint32_t grid_[3];
@@ -86,7 +93,8 @@ class AutotunedKernelCall {
 
   AutotunedKernelCall(
       std::string name, std::vector<Config> configs,
-      std::vector<std::tuple<size_t, size_t, size_t>> input_output_aliases);
+      std::vector<std::tuple<size_t,
+      size_t, size_t>> input_output_aliases);
 
   static absl::StatusOr<KernelCall> Autotune(AutotunedKernelCall kernel_call,
                                              gpuStream_t stream, void** buffers);

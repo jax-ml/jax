@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cmath>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -41,6 +42,29 @@ struct gpuModuleDeleter {
 
 using OwnedGPUmodule =
     std::unique_ptr<std::remove_pointer_t<gpuModule_t>, gpuModuleDeleter>;
+
+absl::StatusOr<gpuDevice_t> GetStreamDevice(gpuStream_t stream) {
+  gpuDevice_t device;
+  gpuContext_t context;
+#ifdef JAX_GPU_HIP
+  int device_id = gpuGetStreamDeviceId(stream);
+  GPU_RETURN_IF_ERROR(gpuDeviceGet(&device, device_id));
+#else  // JAX_GPU_CUDA
+  GPU_RETURN_IF_ERROR(gpuStreamGetCtx(stream, &context));
+  GPU_RETURN_IF_ERROR(gpuCtxPushCurrent(context));
+  absl::Cleanup ctx_restorer = [] { gpuCtxPopCurrent(nullptr); };
+  GPU_RETURN_IF_ERROR(gpuCtxGetDevice(&device));
+#endif
+  return device;
+}
+
+absl::StatusOr<uint32_t> MaxSharedMemoryPerBlock(gpuDevice_t device) {
+  int shared_optin;
+  GPU_RETURN_IF_ERROR(gpuDeviceGetAttribute(
+      &shared_optin, GPU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN,
+      device));
+  return shared_optin;
+}
 
 absl::StatusOr<ModuleImage*> GetModuleImage(std::string kernel_name,
                                             uint32_t shared_mem_bytes,
@@ -248,19 +272,19 @@ absl::Status Kernel::Launch(gpuStream_t stream, uint32_t grid[3],
                                         compute_capability_));
   }
 
-  gpuContext_t context; 
-  #ifdef JAX_GPU_HIP
-    int device_id = gpuGetStreamDeviceId(stream);
-    gpuDevice_t device;
-    GPU_RETURN_IF_ERROR(gpuDeviceGet(&device, device_id));
-    GPU_RETURN_IF_ERROR(gpuDevicePrimaryCtxRetain(&context, device));
-    JAX_ASSIGN_OR_RETURN(gpuFunction_t kernel,
-                         module_image_->GetFunctionForContext(context));
-    return JAX_AS_STATUS(gpuLaunchKernel(
-        kernel, grid[0], grid[1], grid[2], block_dim_x_,
-        /*blockDimY=*/1, /*blockDimZ=*/1, shared_mem_bytes_, stream, params,
-        /*extra=*/nullptr));
-#else //JAX_GPU_CUDA
+  gpuContext_t context;
+#ifdef JAX_GPU_HIP
+  int device_id = gpuGetStreamDeviceId(stream);
+  gpuDevice_t device;
+  GPU_RETURN_IF_ERROR(gpuDeviceGet(&device, device_id));
+  GPU_RETURN_IF_ERROR(gpuDevicePrimaryCtxRetain(&context, device));
+  JAX_ASSIGN_OR_RETURN(gpuFunction_t kernel,
+                       module_image_->GetFunctionForContext(context));
+  return JAX_AS_STATUS(gpuLaunchKernel(
+      kernel, grid[0], grid[1], grid[2], block_dim_x_,
+      /*blockDimY=*/1, /*blockDimZ=*/1, shared_mem_bytes_, stream, params,
+      /*extra=*/nullptr));
+#else  // JAX_GPU_CUDA
   GPU_RETURN_IF_ERROR(gpuStreamGetCtx(stream, &context));
   JAX_ASSIGN_OR_RETURN(gpuFunction_t kernel,
                        module_image_->GetFunctionForContext(context));
@@ -345,6 +369,10 @@ KernelCall::Parameter::FromProto(
       return absl::InvalidArgumentError("Unknown scalar parameter type.");
   }
   return param;
+}
+
+bool Kernel::CanLaunchOnDevice(gpuDevice_t device) const {
+  return shared_mem_bytes_ <= MaxSharedMemoryPerBlock(device).value_or(0);
 }
 
 jax_triton::TritonKernelCall_Parameter KernelCall::Parameter::ToProto() const {
@@ -434,6 +462,10 @@ jax_triton::TritonKernelCall KernelCall::ToProto() const {
     *proto.add_parameters() = param.ToProto();
   }
   return proto;
+}
+
+bool KernelCall::CanLaunchOnDevice(gpuDevice_t device) const {
+  return kernel_.CanLaunchOnDevice(device);
 }
 
 AutotunedKernelCall::AutotunedKernelCall(
@@ -527,7 +559,14 @@ jax_triton::TritonAutotunedKernelCall AutotunedKernelCall::ToProto() const {
   }
 
   best = std::numeric_limits<float>::infinity();
+  JAX_ASSIGN_OR_RETURN(gpuDevice_t device, GetStreamDevice(stream));
   for (Config& config : kernel_call.configs_) {
+    if (!config.kernel_call.CanLaunchOnDevice(device)) {
+      LOG(WARNING) << "Unable to launch autotune config on device: "
+                   << config.description;
+      continue;
+    }
+
     JAX_ASSIGN_OR_RETURN(
         float t, Benchmark(stream, config.kernel_call, buffers, timed_iters));
     LOG(INFO) << config.description << ", ran " << timed_iters << " iters in "
@@ -538,6 +577,11 @@ jax_triton::TritonAutotunedKernelCall AutotunedKernelCall::ToProto() const {
       best = t;
       std::swap(config, kernel_call.configs_[0]);
     }
+  }
+  if (std::isinf(best)) {
+    LOG(WARNING) << "Finished autotuning function: " << kernel_call.name_
+                 << " no valid configs found.";
+    return absl::FailedPreconditionError("No launchable configs.");
   }
 
   LOG(INFO) << "Finished autotuning function: " << kernel_call.name_
