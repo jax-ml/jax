@@ -23,6 +23,20 @@ Remember to align the itemized text with the first line of an item within a list
   * Several changes to the handling of shape polymorphism (used in
     {mod}`jax.experimental.jax2tf` and {mod}`jax.experimental.export`):
     * cleaner pretty-printing of symbolic expressions ({jax-issue}`#19227`)
+    * added the ability to specify symbolic constraints on the dimension variables.
+      This makes shape polymorphism more expressive, and gives a way to workaround
+      limitations in the reasoning about inequalities.
+      See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#user-specified-symbolic-constraints.
+    * with the addition of symbolic constraints ({jax-issue}`#19235`) we now
+      consider dimension variables from different scopes to be different, even
+      if they have the same name. Symbolic expressions from different scopes
+      cannot interact, e.g., in arithmetic operations.
+      Scopes are introduced by {func}`jax.experimental.jax2tf.convert`,
+      {func}`jax.experimental.export.symbolic_shape`, {func}`jax.experimental.export.symbolic_args_specs`.
+      The scope of a symbolic expression `e` can be read with `e.scope` and passed in
+      to the above functions to direct them to construct sybolic expressions in
+      a given scope.
+      See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#user-specified-symbolic-constraints.
     * simplified and faster equality comparisons, where we consider two symbolic dimensions
       to be equal if the normalized form of their difference reduces to 0
       ({jax-issue}`#19231`; note that this may result in user-visible behavior
