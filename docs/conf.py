@@ -209,7 +209,6 @@ nb_execution_excludepatterns = [
     'notebooks/xmap_tutorial.*',
     'notebooks/Distributed_arrays_and_automatic_parallelization.*',
     'notebooks/autodiff_remat.*',
-    'notebooks/shard_map.*',
     # Requires accelerators
     'pallas/quickstart.*',
 ]

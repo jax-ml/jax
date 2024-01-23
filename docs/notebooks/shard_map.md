@@ -24,6 +24,13 @@ If you're familiar with `pmap`, think of `shard_map` as an evolution. It's more 
 
 By reading this tutorial, you'll learn how to use `shard_map` to get full control over your multi-device code. You'll see in detail how it composes with `jax.jit`'s automatic parallelization and `jax.grad`'s automatic differentiation. We'll also give some basic examples of neural network parallelization strategies.
 
+We'll assume this tutorial is being run in an environment with eight devices"
+
+```{code-cell}
+import os
+os.environ["XLA_FLAGS"] = '--xla_force_host_platform_device_count=8' # Use 8 CPU devices
+```
+
 ## So, let's see a `shard_map`!
 
 Without further ado, here's a toy example:
@@ -1240,7 +1247,8 @@ def predict_fsdp_tp(params_frag, inputs):
   return outputs
 
 @partial(shard_map, mesh=mesh,
-         in_specs=(P(('feats', 'batch')), P('batch', 'feats')))
+         in_specs=(P(('feats', 'batch')), P('batch', 'feats')),
+         out_specs=P())
 def loss_fsdp_tp(local_params, local_batch):
   inputs, targets = local_batch
   predictions = predict_fsdp_tp(local_params, inputs)
