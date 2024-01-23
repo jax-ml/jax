@@ -52,6 +52,6 @@ JAX 301
 .. toctree::
    :maxdepth: 1
 
+   jax-primitives
    jaxpr
-   jax-internals
    advanced-compilation
