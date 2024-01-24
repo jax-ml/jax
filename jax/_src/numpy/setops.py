@@ -34,7 +34,7 @@ from jax._src.numpy.lax_numpy import (
     sort, where, zeros)
 from jax._src.numpy.reductions import any, cumsum
 from jax._src.numpy.ufuncs import isnan
-from jax._src.numpy.util import check_arraylike, _wraps
+from jax._src.numpy.util import check_arraylike, implements
 from jax._src.util import canonicalize_axis
 from jax._src.typing import Array, ArrayLike
 
@@ -61,7 +61,7 @@ def _in1d(ar1: ArrayLike, ar2: ArrayLike, invert: bool) -> Array:
   else:
     return (ar1_flat[:, None] == ar2_flat[None, :]).any(-1)
 
-@_wraps(np.setdiff1d,
+@implements(np.setdiff1d,
   lax_description=_dedent("""
     Because the size of the output of ``setdiff1d`` is data-dependent, the function is not
     typically compatible with JIT. The JAX version adds the optional ``size`` argument which
@@ -98,7 +98,7 @@ def setdiff1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
     return where(arange(size) < mask.sum(), arr1[where(mask, size=size)], fill_value)
 
 
-@_wraps(np.union1d,
+@implements(np.union1d,
   lax_description=_dedent("""
     Because the size of the output of ``union1d`` is data-dependent, the function is not
     typically compatible with JIT. The JAX version adds the optional ``size`` argument which
@@ -125,7 +125,7 @@ def union1d(ar1: ArrayLike, ar2: ArrayLike,
   return cast(Array, out)
 
 
-@_wraps(np.setxor1d, lax_description="""
+@implements(np.setxor1d, lax_description="""
 In the JAX version, the input arrays are explicitly flattened regardless
 of assume_unique value.
 """)
@@ -169,7 +169,7 @@ def _intersect1d_sorted_mask(ar1: ArrayLike, ar2: ArrayLike, return_indices: boo
     return aux, mask
 
 
-@_wraps(np.intersect1d)
+@implements(np.intersect1d)
 def intersect1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
                 return_indices: bool = False) -> Array | tuple[Array, Array, Array]:
   check_arraylike("intersect1d", ar1, ar2)
@@ -206,7 +206,7 @@ def intersect1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
     return int1d
 
 
-@_wraps(np.isin, lax_description="""
+@implements(np.isin, lax_description="""
 In the JAX version, the `assume_unique` argument is not referenced.
 """)
 def isin(element: ArrayLike, test_elements: ArrayLike,
@@ -312,7 +312,7 @@ def _unique(ar: Array, axis: int, return_index: bool = False, return_inverse: bo
     ret += (mask.sum(),)
   return ret[0] if len(ret) == 1 else ret
 
-@_wraps(np.unique, skip_params=['axis'],
+@implements(np.unique, skip_params=['axis'],
   lax_description=_dedent("""
     Because the size of the output of ``unique`` is data-dependent, the function is not
     typically compatible with JIT. The JAX version adds the optional ``size`` argument which
@@ -368,7 +368,7 @@ class _UniqueInverseResult(NamedTuple):
     inverse_indices: Array
 
 
-@_wraps(getattr(np, "unique_all", None))
+@implements(getattr(np, "unique_all", None))
 def unique_all(x: ArrayLike, /) -> _UniqueAllResult:
   check_arraylike("unique_all", x)
   values, indices, inverse_indices, counts = unique(
@@ -376,21 +376,21 @@ def unique_all(x: ArrayLike, /) -> _UniqueAllResult:
   return _UniqueAllResult(values=values, indices=indices, inverse_indices=inverse_indices, counts=counts)
 
 
-@_wraps(getattr(np, "unique_counts", None))
+@implements(getattr(np, "unique_counts", None))
 def unique_counts(x: ArrayLike, /) -> _UniqueCountsResult:
   check_arraylike("unique_counts", x)
   values, counts = unique(x, return_counts=True, equal_nan=False)
   return _UniqueCountsResult(values=values, counts=counts)
 
 
-@_wraps(getattr(np, "unique_inverse", None))
+@implements(getattr(np, "unique_inverse", None))
 def unique_inverse(x: ArrayLike, /) -> _UniqueInverseResult:
   check_arraylike("unique_inverse", x)
   values, inverse_indices = unique(x, return_inverse=True, equal_nan=False)
   return _UniqueInverseResult(values=values, inverse_indices=inverse_indices)
 
 
-@_wraps(getattr(np, "unique_values", None))
+@implements(getattr(np, "unique_values", None))
 def unique_values(x: ArrayLike, /) -> Array:
   check_arraylike("unique_values", x)
   return cast(Array, unique(x, equal_nan=False))

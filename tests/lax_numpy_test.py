@@ -52,7 +52,7 @@ from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import xla_extension_version
-from jax._src.numpy.util import _parse_numpydoc, ParsedDoc, _wraps
+from jax._src.numpy.util import _parse_numpydoc, ParsedDoc, implements
 from jax._src.util import safe_zip, NumpyComplexWarning
 
 config.parse_flags_with_absl()
@@ -5861,7 +5861,7 @@ class NumpyDocTests(jtu.JaxTestCase):
     if jit:
       wrapped = jax.jit(wrapped)
 
-    wrapped = _wraps(orig, skip_params=['out'])(wrapped)
+    wrapped = implements(orig, skip_params=['out'])(wrapped)
     doc = wrapped.__doc__
 
     self.assertStartsWith(doc, "Example Docstring")

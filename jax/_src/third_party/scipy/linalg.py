@@ -7,7 +7,7 @@ import scipy.linalg
 from jax import jit, lax
 import jax.numpy as jnp
 from jax._src.numpy.linalg import norm
-from jax._src.numpy.util import _wraps
+from jax._src.numpy.util import implements
 from jax._src.scipy.linalg import rsf2csf, schur
 from jax._src.typing import ArrayLike, Array
 
@@ -51,7 +51,7 @@ Additionally, unlike the SciPy implementation, when ``disp=True`` no warning
 will be printed if the error in the array output is estimated to be large.
 """
 
-@_wraps(scipy.linalg.funm, lax_description=_FUNM_LAX_DESCRIPTION)
+@implements(scipy.linalg.funm, lax_description=_FUNM_LAX_DESCRIPTION)
 def funm(A: ArrayLike, func: Callable[[Array], Array],
          disp: bool = True) -> Array | tuple[Array, Array]:
   A_arr = jnp.asarray(A)

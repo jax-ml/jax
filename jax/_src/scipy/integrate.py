@@ -23,7 +23,7 @@ from jax._src.numpy import util
 from jax._src.typing import Array, ArrayLike
 import jax.numpy as jnp
 
-@util._wraps(scipy.integrate.trapezoid)
+@util.implements(scipy.integrate.trapezoid)
 @partial(jit, static_argnames=('axis',))
 def trapezoid(y: ArrayLike, x: ArrayLike | None = None, dx: ArrayLike = 1.0,
               axis: int = -1) -> Array:

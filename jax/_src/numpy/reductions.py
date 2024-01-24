@@ -31,7 +31,7 @@ from jax._src import dtypes
 from jax._src.numpy import ufuncs
 from jax._src.numpy.util import (
     _broadcast_to, check_arraylike, _complex_elem_type,
-    promote_dtypes_inexact, promote_dtypes_numeric, _where, _wraps)
+    promote_dtypes_inexact, promote_dtypes_numeric, _where, implements)
 from jax._src.lax import lax as lax_internal
 from jax._src.typing import Array, ArrayLike, DType, DTypeLike
 from jax._src.util import (
@@ -219,7 +219,7 @@ def _reduce_sum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                     initial=initial, where_=where, parallel_reduce=lax.psum,
                     promote_integers=promote_integers)
 
-@_wraps(np.sum, skip_params=['out'], extra_params=_PROMOTE_INTEGERS_DOC)
+@implements(np.sum, skip_params=['out'], extra_params=_PROMOTE_INTEGERS_DOC)
 def sum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
         out: None = None, keepdims: bool = False, initial: ArrayLike | None = None,
         where: ArrayLike | None = None, promote_integers: bool = True) -> Array:
@@ -238,7 +238,7 @@ def _reduce_prod(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None
                     axis=axis, dtype=dtype, out=out, keepdims=keepdims,
                     initial=initial, where_=where, promote_integers=promote_integers)
 
-@_wraps(np.prod, skip_params=['out'], extra_params=_PROMOTE_INTEGERS_DOC)
+@implements(np.prod, skip_params=['out'], extra_params=_PROMOTE_INTEGERS_DOC)
 def prod(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
          out: None = None, keepdims: bool = False,
          initial: ArrayLike | None = None, where: ArrayLike | None = None,
@@ -256,7 +256,7 @@ def _reduce_max(a: ArrayLike, axis: Axis = None, out: None = None,
                     axis=axis, out=out, keepdims=keepdims,
                     initial=initial, where_=where, parallel_reduce=lax.pmax)
 
-@_wraps(np.max, skip_params=['out'])
+@implements(np.max, skip_params=['out'])
 def max(a: ArrayLike, axis: Axis = None, out: None = None,
         keepdims: bool = False, initial: ArrayLike | None = None,
         where: ArrayLike | None = None) -> Array:
@@ -271,7 +271,7 @@ def _reduce_min(a: ArrayLike, axis: Axis = None, out: None = None,
                     axis=axis, out=out, keepdims=keepdims,
                     initial=initial, where_=where, parallel_reduce=lax.pmin)
 
-@_wraps(np.min, skip_params=['out'])
+@implements(np.min, skip_params=['out'])
 def min(a: ArrayLike, axis: Axis = None, out: None = None,
         keepdims: bool = False, initial: ArrayLike | None = None,
         where: ArrayLike | None = None) -> Array:
@@ -284,7 +284,7 @@ def _reduce_all(a: ArrayLike, axis: Axis = None, out: None = None,
   return _reduction(a, "all", np.all, lax.bitwise_and, True, preproc=_cast_to_bool,
                     axis=axis, out=out, keepdims=keepdims, where_=where)
 
-@_wraps(np.all, skip_params=['out'])
+@implements(np.all, skip_params=['out'])
 def all(a: ArrayLike, axis: Axis = None, out: None = None,
         keepdims: bool = False, *, where: ArrayLike | None = None) -> Array:
   return _reduce_all(a, axis=_ensure_optional_axes(axis), out=out,
@@ -296,7 +296,7 @@ def _reduce_any(a: ArrayLike, axis: Axis = None, out: None = None,
   return _reduction(a, "any", np.any, lax.bitwise_or, False, preproc=_cast_to_bool,
                     axis=axis, out=out, keepdims=keepdims, where_=where)
 
-@_wraps(np.any, skip_params=['out'])
+@implements(np.any, skip_params=['out'])
 def any(a: ArrayLike, axis: Axis = None, out: None = None,
         keepdims: bool = False, *, where: ArrayLike | None = None) -> Array:
   return _reduce_any(a, axis=_ensure_optional_axes(axis), out=out,
@@ -316,7 +316,7 @@ def _axis_size(a: ArrayLike, axis: int | Sequence[int]):
     size *= maybe_named_axis(a, lambda i: a_shape[i], lambda name: lax.psum(1, name))
   return size
 
-@_wraps(np.mean, skip_params=['out'])
+@implements(np.mean, skip_params=['out'])
 def mean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
          out: None = None, keepdims: bool = False, *,
          where: ArrayLike | None = None) -> Array:
@@ -365,7 +365,7 @@ def average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None, *
 @overload
 def average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
             returned: bool = False, keepdims: bool = False) -> Array | tuple[Array, Array]: ...
-@_wraps(np.average)
+@implements(np.average)
 def average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
             returned: bool = False, keepdims: bool = False) -> Array | tuple[Array, Array]:
   return _average(a, _ensure_optional_axes(axis), weights, returned, keepdims)
@@ -425,7 +425,7 @@ def _average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
   return avg
 
 
-@_wraps(np.var, skip_params=['out'])
+@implements(np.var, skip_params=['out'])
 def var(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
         out: None = None, ddof: int = 0, keepdims: bool = False, *,
         where: ArrayLike | None = None) -> Array:
@@ -486,7 +486,7 @@ def _var_promote_types(a_dtype: DTypeLike, dtype: DTypeLike | None) -> tuple[DTy
   return _upcast_f16(computation_dtype), np.dtype(dtype)
 
 
-@_wraps(np.std, skip_params=['out'])
+@implements(np.std, skip_params=['out'])
 def std(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
         out: None = None, ddof: int = 0, keepdims: bool = False, *,
         where: ArrayLike | None = None) -> Array:
@@ -506,7 +506,7 @@ def _std(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
   return lax.sqrt(var(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims, where=where))
 
 
-@_wraps(np.ptp, skip_params=['out'])
+@implements(np.ptp, skip_params=['out'])
 def ptp(a: ArrayLike, axis: Axis = None, out: None = None,
         keepdims: bool = False) -> Array:
   return _ptp(a, _ensure_optional_axes(axis), out, keepdims)
@@ -522,7 +522,7 @@ def _ptp(a: ArrayLike, axis: Axis = None, out: None = None,
   return lax.sub(x, y)
 
 
-@_wraps(np.count_nonzero)
+@implements(np.count_nonzero)
 @partial(api.jit, static_argnames=('axis', 'keepdims'))
 def count_nonzero(a: ArrayLike, axis: Axis = None,
                   keepdims: bool = False) -> Array:
@@ -546,7 +546,7 @@ def _nan_reduction(a: ArrayLike, name: str, jnp_reduction: Callable[..., Array],
   else:
     return out
 
-@_wraps(np.nanmin, skip_params=['out'])
+@implements(np.nanmin, skip_params=['out'])
 @partial(api.jit, static_argnames=('axis', 'keepdims'))
 def nanmin(a: ArrayLike, axis: Axis = None, out: None = None,
            keepdims: bool = False, initial: ArrayLike | None = None,
@@ -555,7 +555,7 @@ def nanmin(a: ArrayLike, axis: Axis = None, out: None = None,
                         axis=axis, out=out, keepdims=keepdims,
                         initial=initial, where=where)
 
-@_wraps(np.nanmax, skip_params=['out'])
+@implements(np.nanmax, skip_params=['out'])
 @partial(api.jit, static_argnames=('axis', 'keepdims'))
 def nanmax(a: ArrayLike, axis: Axis = None, out: None = None,
            keepdims: bool = False, initial: ArrayLike | None = None,
@@ -564,7 +564,7 @@ def nanmax(a: ArrayLike, axis: Axis = None, out: None = None,
                         axis=axis, out=out, keepdims=keepdims,
                         initial=initial, where=where)
 
-@_wraps(np.nansum, skip_params=['out'])
+@implements(np.nansum, skip_params=['out'])
 @partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def nansum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out: None = None,
            keepdims: bool = False, initial: ArrayLike | None = None,
@@ -578,7 +578,7 @@ def nansum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out:
 if nansum.__doc__ is not None:
   nansum.__doc__ = nansum.__doc__.replace("\n\n\n", "\n\n")
 
-@_wraps(np.nanprod, skip_params=['out'])
+@implements(np.nanprod, skip_params=['out'])
 @partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def nanprod(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out: None = None,
             keepdims: bool = False, initial: ArrayLike | None = None,
@@ -588,7 +588,7 @@ def nanprod(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out
                         axis=axis, dtype=dtype, out=out, keepdims=keepdims,
                         initial=initial, where=where)
 
-@_wraps(np.nanmean, skip_params=['out'])
+@implements(np.nanmean, skip_params=['out'])
 @partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def nanmean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out: None = None,
             keepdims: bool = False, where: ArrayLike | None = None) -> Array:
@@ -608,7 +608,7 @@ def nanmean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out
   return td
 
 
-@_wraps(np.nanvar, skip_params=['out'])
+@implements(np.nanvar, skip_params=['out'])
 @partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def nanvar(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out: None = None,
            ddof: int = 0, keepdims: bool = False,
@@ -639,7 +639,7 @@ def nanvar(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out:
   return lax.convert_element_type(result, dtype)
 
 
-@_wraps(np.nanstd, skip_params=['out'])
+@implements(np.nanstd, skip_params=['out'])
 @partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def nanstd(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out: None = None,
            ddof: int = 0, keepdims: bool = False,
@@ -664,7 +664,7 @@ match the dtype of the input.
 
 def _make_cumulative_reduction(np_reduction: Any, reduction: Callable[..., Array],
                                fill_nan: bool = False, fill_value: ArrayLike = 0) -> CumulativeReduction:
-  @_wraps(np_reduction, skip_params=['out'],
+  @implements(np_reduction, skip_params=['out'],
           lax_description=CUML_REDUCTION_LAX_DESCRIPTION)
   def cumulative_reduction(a: ArrayLike, axis: Axis = None,
                            dtype: DTypeLike | None = None, out: None = None) -> Array:
@@ -709,7 +709,7 @@ nancumprod = _make_cumulative_reduction(np.nancumprod, lax.cumprod,
                                         fill_nan=True, fill_value=1)
 
 # Quantiles
-@_wraps(np.quantile, skip_params=['out', 'overwrite_input'])
+@implements(np.quantile, skip_params=['out', 'overwrite_input'])
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation',
                                'keepdims', 'method'))
 def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = None,
@@ -725,7 +725,7 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
                   "Use 'method=' instead.", DeprecationWarning)
   return _quantile(lax_internal.asarray(a), lax_internal.asarray(q), axis, interpolation or method, keepdims, False)
 
-@_wraps(np.nanquantile, skip_params=['out', 'overwrite_input'])
+@implements(np.nanquantile, skip_params=['out', 'overwrite_input'])
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation',
                                'keepdims', 'method'))
 def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = None,
@@ -862,7 +862,7 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
     result = result.reshape(keepdim)
   return lax.convert_element_type(result, a.dtype)
 
-@_wraps(np.percentile, skip_params=['out', 'overwrite_input'])
+@implements(np.percentile, skip_params=['out', 'overwrite_input'])
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation',
                                    'keepdims', 'method'))
 def percentile(a: ArrayLike, q: ArrayLike,
@@ -874,7 +874,7 @@ def percentile(a: ArrayLike, q: ArrayLike,
   return quantile(a, q / 100, axis=axis, out=out, overwrite_input=overwrite_input,
                   interpolation=interpolation, method=method, keepdims=keepdims)
 
-@_wraps(np.nanpercentile, skip_params=['out', 'overwrite_input'])
+@implements(np.nanpercentile, skip_params=['out', 'overwrite_input'])
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation',
                                'keepdims', 'method'))
 def nanpercentile(a: ArrayLike, q: ArrayLike,
@@ -887,7 +887,7 @@ def nanpercentile(a: ArrayLike, q: ArrayLike,
                      interpolation=interpolation, method=method,
                      keepdims=keepdims)
 
-@_wraps(np.median, skip_params=['out', 'overwrite_input'])
+@implements(np.median, skip_params=['out', 'overwrite_input'])
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'keepdims'))
 def median(a: ArrayLike, axis: int | tuple[int, ...] | None = None,
            out: None = None, overwrite_input: bool = False,
@@ -896,7 +896,7 @@ def median(a: ArrayLike, axis: int | tuple[int, ...] | None = None,
   return quantile(a, 0.5, axis=axis, out=out, overwrite_input=overwrite_input,
                   keepdims=keepdims, method='midpoint')
 
-@_wraps(np.nanmedian, skip_params=['out', 'overwrite_input'])
+@implements(np.nanmedian, skip_params=['out', 'overwrite_input'])
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'keepdims'))
 def nanmedian(a: ArrayLike, axis: int | tuple[int, ...] | None = None,
               out: None = None, overwrite_input: bool = False,

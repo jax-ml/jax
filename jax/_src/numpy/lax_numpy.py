@@ -111,7 +111,7 @@ get_printoptions = np.get_printoptions
 printoptions = np.printoptions
 set_printoptions = np.set_printoptions
 
-@util._wraps(np.iscomplexobj)
+@util.implements(np.iscomplexobj)
 def iscomplexobj(x: Any) -> bool:
   if x is None:
     return False
@@ -218,7 +218,7 @@ array_repr = np.array_repr
 save = np.save
 savez = np.savez
 
-@util._wraps(np.dtype)
+@util.implements(np.dtype)
 def _jnp_dtype(obj: DTypeLike | None, *, align: bool = False,
                copy: bool = False) -> DType:
   """Similar to np.dtype, but respects JAX dtype defaults."""
@@ -283,7 +283,7 @@ def _convert_and_clip_integer(val: ArrayLike, dtype: DType) -> Array:
   return clip(val, min_val, max_val).astype(dtype)
 
 
-@util._wraps(np.load, update_doc=False)
+@util.implements(np.load, update_doc=False)
 def load(*args: Any, **kwargs: Any) -> Array:
   # The main purpose of this wrapper is to recover bfloat16 data types.
   # Note: this will only work for files created via np.save(), not np.savez().
@@ -300,21 +300,21 @@ def load(*args: Any, **kwargs: Any) -> Array:
 
 ### implementations of numpy functions in terms of lax
 
-@util._wraps(np.fmin, module='numpy')
+@util.implements(np.fmin, module='numpy')
 @jit
 def fmin(x1: ArrayLike, x2: ArrayLike) -> Array:
   return where(ufuncs.less(x1, x2) | ufuncs.isnan(x2), x1, x2)
 
-@util._wraps(np.fmax, module='numpy')
+@util.implements(np.fmax, module='numpy')
 @jit
 def fmax(x1: ArrayLike, x2: ArrayLike) -> Array:
   return where(ufuncs.greater(x1, x2) | ufuncs.isnan(x2), x1, x2)
 
-@util._wraps(np.issubdtype)
+@util.implements(np.issubdtype)
 def issubdtype(arg1: DTypeLike, arg2: DTypeLike) -> bool:
   return dtypes.issubdtype(arg1, arg2)
 
-@util._wraps(np.isscalar)
+@util.implements(np.isscalar)
 def isscalar(element: Any) -> bool:
   if hasattr(element, '__jax_array__'):
     element = element.__jax_array__()
@@ -322,12 +322,12 @@ def isscalar(element: Any) -> bool:
 
 iterable = np.iterable
 
-@util._wraps(np.result_type)
+@util.implements(np.result_type)
 def result_type(*args: Any) -> DType:
   return dtypes.result_type(*args)
 
 
-@util._wraps(np.trunc, module='numpy')
+@util.implements(np.trunc, module='numpy')
 @jit
 def trunc(x: ArrayLike) -> Array:
   util.check_arraylike('trunc', x)
@@ -381,8 +381,8 @@ def _conv(x: Array, y: Array, mode: str, op: str, precision: PrecisionLike,
   return result[0, 0, out_order]
 
 
-@util._wraps(np.convolve, lax_description=_PRECISION_DOC,
-             extra_params=_CONV_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
+@util.implements(np.convolve, lax_description=_PRECISION_DOC,
+                 extra_params=_CONV_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('mode', 'precision', 'preferred_element_type'))
 def convolve(a: ArrayLike, v: ArrayLike, mode: str = 'full', *,
              precision: PrecisionLike = None,
@@ -392,8 +392,8 @@ def convolve(a: ArrayLike, v: ArrayLike, mode: str = 'full', *,
                precision=precision, preferred_element_type=preferred_element_type)
 
 
-@util._wraps(np.correlate, lax_description=_PRECISION_DOC,
-             extra_params=_CONV_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
+@util.implements(np.correlate, lax_description=_PRECISION_DOC,
+                 extra_params=_CONV_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('mode', 'precision', 'preferred_element_type'))
 def correlate(a: ArrayLike, v: ArrayLike, mode: str = 'valid', *,
               precision: PrecisionLike = None,
@@ -403,7 +403,7 @@ def correlate(a: ArrayLike, v: ArrayLike, mode: str = 'valid', *,
                precision=precision, preferred_element_type=preferred_element_type)
 
 
-@util._wraps(np.histogram_bin_edges)
+@util.implements(np.histogram_bin_edges)
 def histogram_bin_edges(a: ArrayLike, bins: ArrayLike = 10,
                         range: None | Array | Sequence[ArrayLike] = None,
                         weights: ArrayLike | None = None) -> Array:
@@ -429,7 +429,7 @@ def histogram_bin_edges(a: ArrayLike, bins: ArrayLike = 10,
   return linspace(range[0], range[1], bins_int + 1, dtype=dtype)
 
 
-@util._wraps(np.histogram)
+@util.implements(np.histogram)
 def histogram(a: ArrayLike, bins: ArrayLike = 10,
               range: Sequence[ArrayLike] | None = None,
               weights: ArrayLike | None = None,
@@ -453,7 +453,7 @@ def histogram(a: ArrayLike, bins: ArrayLike = 10,
     counts = counts / bin_widths / counts.sum()
   return counts, bin_edges
 
-@util._wraps(np.histogram2d)
+@util.implements(np.histogram2d)
 def histogram2d(x: ArrayLike, y: ArrayLike, bins: ArrayLike | list[ArrayLike] = 10,
                 range: Sequence[None | Array | Sequence[ArrayLike]] | None = None,
                 weights: ArrayLike | None = None,
@@ -472,7 +472,7 @@ def histogram2d(x: ArrayLike, y: ArrayLike, bins: ArrayLike | list[ArrayLike] = 
   hist, edges = histogramdd(sample, bins, range, weights, density)
   return hist, edges[0], edges[1]
 
-@util._wraps(np.histogramdd)
+@util.implements(np.histogramdd)
 def histogramdd(sample: ArrayLike, bins: ArrayLike | list[ArrayLike] = 10,
                 range: Sequence[None | Array | Sequence[ArrayLike]] | None = None,
                 weights: ArrayLike | None = None,
@@ -536,7 +536,7 @@ The JAX version of this function may in some cases return a copy rather than a
 view of the input.
 """
 
-@util._wraps(np.transpose, lax_description=_ARRAY_VIEW_DOC)
+@util.implements(np.transpose, lax_description=_ARRAY_VIEW_DOC)
 def transpose(a: ArrayLike, axes: Sequence[int] | None = None) -> Array:
   util.check_arraylike("transpose", a)
   axes_ = list(range(ndim(a))[::-1]) if axes is None else axes
@@ -544,13 +544,13 @@ def transpose(a: ArrayLike, axes: Sequence[int] | None = None) -> Array:
   return lax.transpose(a, axes_)
 
 
-@util._wraps(getattr(np, "permute_dims", None))
+@util.implements(getattr(np, "permute_dims", None))
 def permute_dims(a: ArrayLike, /, axes: tuple[int, ...]) -> Array:
   util.check_arraylike("permute_dims", a)
   return lax.transpose(a, axes)
 
 
-@util._wraps(getattr(np, 'matrix_transpose', None))
+@util.implements(getattr(np, 'matrix_transpose', None))
 def matrix_transpose(x: ArrayLike, /) -> Array:
   """Transposes the last two dimensions of x.
 
@@ -572,7 +572,7 @@ def matrix_transpose(x: ArrayLike, /) -> Array:
   return lax.transpose(x, axes)
 
 
-@util._wraps(np.rot90, lax_description=_ARRAY_VIEW_DOC)
+@util.implements(np.rot90, lax_description=_ARRAY_VIEW_DOC)
 @partial(jit, static_argnames=('k', 'axes'))
 def rot90(m: ArrayLike, k: int = 1, axes: tuple[int, int] = (0, 1)) -> Array:
   util.check_arraylike("rot90", m)
@@ -599,7 +599,7 @@ def rot90(m: ArrayLike, k: int = 1, axes: tuple[int, int] = (0, 1)) -> Array:
       return flip(transpose(m, perm), ax2)
 
 
-@util._wraps(np.flip, lax_description=_ARRAY_VIEW_DOC)
+@util.implements(np.flip, lax_description=_ARRAY_VIEW_DOC)
 def flip(m: ArrayLike, axis: int | Sequence[int] | None = None) -> Array:
   util.check_arraylike("flip", m)
   return _flip(asarray(m), reductions._ensure_optional_axes(axis))
@@ -612,30 +612,30 @@ def _flip(m: Array, axis: int | tuple[int, ...] | None = None) -> Array:
   return lax.rev(m, [_canonicalize_axis(ax, ndim(m)) for ax in axis])
 
 
-@util._wraps(np.fliplr, lax_description=_ARRAY_VIEW_DOC)
+@util.implements(np.fliplr, lax_description=_ARRAY_VIEW_DOC)
 def fliplr(m: ArrayLike) -> Array:
   util.check_arraylike("fliplr", m)
   return _flip(asarray(m), 1)
 
 
-@util._wraps(np.flipud, lax_description=_ARRAY_VIEW_DOC)
+@util.implements(np.flipud, lax_description=_ARRAY_VIEW_DOC)
 def flipud(m: ArrayLike) -> Array:
   util.check_arraylike("flipud", m)
   return _flip(asarray(m), 0)
 
-@util._wraps(np.iscomplex)
+@util.implements(np.iscomplex)
 @jit
 def iscomplex(x: ArrayLike) -> Array:
   i = ufuncs.imag(x)
   return lax.ne(i, _lax_const(i, 0))
 
-@util._wraps(np.isreal)
+@util.implements(np.isreal)
 @jit
 def isreal(x: ArrayLike) -> Array:
   i = ufuncs.imag(x)
   return lax.eq(i, _lax_const(i, 0))
 
-@util._wraps(np.angle)
+@util.implements(np.angle)
 @partial(jit, static_argnames=['deg'])
 def angle(z: ArrayLike, deg: bool = False) -> Array:
   re = ufuncs.real(z)
@@ -650,7 +650,7 @@ def angle(z: ArrayLike, deg: bool = False) -> Array:
   return ufuncs.degrees(result) if deg else result
 
 
-@util._wraps(np.diff)
+@util.implements(np.diff)
 @partial(jit, static_argnames=('n', 'axis'))
 def diff(a: ArrayLike, n: int = 1, axis: int = -1,
          prepend: ArrayLike | None = None,
@@ -710,7 +710,7 @@ issue an error if casting ``to_end`` or ``to_begin`` to the type of ``ary``
 loses precision.
 """
 
-@util._wraps(np.ediff1d, lax_description=_EDIFF1D_DOC)
+@util.implements(np.ediff1d, lax_description=_EDIFF1D_DOC)
 @jit
 def ediff1d(ary: ArrayLike, to_end: ArrayLike | None = None,
             to_begin: ArrayLike | None = None) -> Array:
@@ -726,7 +726,7 @@ def ediff1d(ary: ArrayLike, to_end: ArrayLike | None = None,
   return result
 
 
-@util._wraps(np.gradient, skip_params=['edge_order'])
+@util.implements(np.gradient, skip_params=['edge_order'])
 @partial(jit, static_argnames=('axis', 'edge_order'))
 def gradient(f: ArrayLike, *varargs: ArrayLike,
              axis: int | Sequence[int] | None = None,
@@ -771,12 +771,12 @@ def gradient(f: ArrayLike, *varargs: ArrayLike,
   return a_grad[0] if len(axis_tuple) == 1 else a_grad
 
 
-@util._wraps(np.isrealobj)
+@util.implements(np.isrealobj)
 def isrealobj(x: Any) -> bool:
   return not iscomplexobj(x)
 
 
-@util._wraps(np.reshape, lax_description=_ARRAY_VIEW_DOC)
+@util.implements(np.reshape, lax_description=_ARRAY_VIEW_DOC)
 def reshape(a: ArrayLike, newshape: DimSize | Shape, order: str = "C") -> Array:
   __tracebackhide__ = True
   util.check_arraylike("reshape", a)
@@ -788,7 +788,7 @@ def reshape(a: ArrayLike, newshape: DimSize | Shape, order: str = "C") -> Array:
   return asarray(a).reshape(newshape, order=order)
 
 
-@util._wraps(np.ravel, lax_description=_ARRAY_VIEW_DOC)
+@util.implements(np.ravel, lax_description=_ARRAY_VIEW_DOC)
 @partial(jit, static_argnames=('order',), inline=True)
 def ravel(a: ArrayLike, order: str = "C") -> Array:
   util.check_arraylike("ravel", a)
@@ -797,7 +797,7 @@ def ravel(a: ArrayLike, order: str = "C") -> Array:
   return reshape(a, (size(a),), order)
 
 
-@util._wraps(np.ravel_multi_index)
+@util.implements(np.ravel_multi_index)
 def ravel_multi_index(multi_index: Sequence[ArrayLike], dims: Sequence[int],
                       mode: str = 'raise', order: str = 'C') -> Array:
   assert len(multi_index) == len(dims), f"len(multi_index)={len(multi_index)} != len(dims)={len(dims)}"
@@ -840,7 +840,7 @@ Unlike numpy's implementation of unravel_index, negative indices are accepted
 and out-of-bounds indices are clipped into the valid range.
 """
 
-@util._wraps(np.unravel_index, lax_description=_UNRAVEL_INDEX_DOC)
+@util.implements(np.unravel_index, lax_description=_UNRAVEL_INDEX_DOC)
 def unravel_index(indices: ArrayLike, shape: Shape) -> tuple[Array, ...]:
   util.check_arraylike("unravel_index", indices)
   indices_arr = asarray(indices)
@@ -860,7 +860,7 @@ def unravel_index(indices: ArrayLike, shape: Shape) -> tuple[Array, ...]:
   return tuple(where(oob_pos, s - 1, where(oob_neg, 0, i))
                for s, i in safe_zip(shape, out_indices))
 
-@util._wraps(np.resize)
+@util.implements(np.resize)
 @partial(jit, static_argnames=('new_shape',))
 def resize(a: ArrayLike, new_shape: Shape) -> Array:
   util.check_arraylike("resize", a)
@@ -880,7 +880,7 @@ def resize(a: ArrayLike, new_shape: Shape) -> Array:
 
   return reshape(arr, new_shape)
 
-@util._wraps(np.squeeze, lax_description=_ARRAY_VIEW_DOC)
+@util.implements(np.squeeze, lax_description=_ARRAY_VIEW_DOC)
 def squeeze(a: ArrayLike, axis: int | Sequence[int] | None = None) -> Array:
   util.check_arraylike("squeeze", a)
   return _squeeze(asarray(a), _ensure_index_tuple(axis) if axis is not None else None)
@@ -896,14 +896,14 @@ def _squeeze(a: Array, axis: tuple[int]) -> Array:
   return lax.squeeze(a, axis)
 
 
-@util._wraps(np.expand_dims)
+@util.implements(np.expand_dims)
 def expand_dims(a: ArrayLike, axis: int | Sequence[int]) -> Array:
   util.check_arraylike("expand_dims", a)
   axis = _ensure_index_tuple(axis)
   return lax.expand_dims(a, axis)
 
 
-@util._wraps(np.swapaxes, lax_description=_ARRAY_VIEW_DOC)
+@util.implements(np.swapaxes, lax_description=_ARRAY_VIEW_DOC)
 @partial(jit, static_argnames=('axis1', 'axis2'), inline=True)
 def swapaxes(a: ArrayLike, axis1: int, axis2: int) -> Array:
   util.check_arraylike("swapaxes", a)
@@ -912,7 +912,7 @@ def swapaxes(a: ArrayLike, axis1: int, axis2: int) -> Array:
   return lax.transpose(a, list(perm))
 
 
-@util._wraps(np.moveaxis, lax_description=_ARRAY_VIEW_DOC)
+@util.implements(np.moveaxis, lax_description=_ARRAY_VIEW_DOC)
 def moveaxis(a: ArrayLike, source: int | Sequence[int],
              destination: int | Sequence[int]) -> Array:
   util.check_arraylike("moveaxis", a)
@@ -932,7 +932,7 @@ def _moveaxis(a: Array, source: tuple[int, ...], destination: tuple[int, ...]) -
   return lax.transpose(a, perm)
 
 
-@util._wraps(np.isclose)
+@util.implements(np.isclose)
 @partial(jit, static_argnames=('equal_nan',))
 def isclose(a: ArrayLike, b: ArrayLike, rtol: ArrayLike = 1e-05, atol: ArrayLike = 1e-08,
             equal_nan: bool = False) -> Array:
@@ -1034,7 +1034,7 @@ def _interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
   return f
 
 
-@util._wraps(np.interp,
+@util.implements(np.interp,
   lax_description=_dedent("""
     In addition to constant interpolation supported by NumPy, jnp.interp also
     supports left='extrapolate' and right='extrapolate' to indicate linear
@@ -1074,7 +1074,7 @@ def where(condition: ArrayLike, x: ArrayLike | None = None,
 
 _DEPRECATED_WHERE_ARG = object()
 
-@util._wraps(np.where,  # type: ignore[no-redef]
+@util.implements(np.where,  # type: ignore[no-redef]
   lax_description=_dedent("""
     At present, JAX does not support JIT-compilation of the single-argument form
     of :py:func:`jax.numpy.where` because its output shape is data-dependent. The
@@ -1137,7 +1137,7 @@ def where(
     return util._where(acondition, if_true, if_false)
 
 
-@util._wraps(np.select)
+@util.implements(np.select)
 def select(
     condlist: Sequence[ArrayLike],
     choicelist: Sequence[ArrayLike],
@@ -1156,7 +1156,7 @@ def select(
   return output
 
 
-@util._wraps(np.bincount, lax_description="""\
+@util.implements(np.bincount, lax_description="""\
 Jax adds the optional `length` parameter which specifies the output length, and
 defaults to ``x.max() + 1``. It must be specified for bincount to be compiled
 with non-static operands. Values larger than the specified length will be discarded.
@@ -1196,7 +1196,7 @@ def broadcast_shapes(*shapes: Sequence[int]) -> tuple[int, ...]: ...
 def broadcast_shapes(*shapes: Sequence[int | core.Tracer]
                      ) -> tuple[int | core.Tracer, ...]: ...
 
-@util._wraps(getattr(np, "broadcast_shapes", None))
+@util.implements(getattr(np, "broadcast_shapes", None))
 def broadcast_shapes(*shapes):
   if not shapes:
     return ()
@@ -1204,14 +1204,14 @@ def broadcast_shapes(*shapes):
   return lax.broadcast_shapes(*shapes)
 
 
-@util._wraps(np.broadcast_arrays, lax_description="""\
+@util.implements(np.broadcast_arrays, lax_description="""\
 The JAX version does not necessarily return a view of the input.
 """)
 def broadcast_arrays(*args: ArrayLike) -> list[Array]:
   return util._broadcast_arrays(*args)
 
 
-@util._wraps(np.broadcast_to, lax_description="""\
+@util.implements(np.broadcast_to, lax_description="""\
 The JAX version does not necessarily return a view of the input.
 """)
 def broadcast_to(array: ArrayLike, shape: DimSize | Shape) -> Array:
@@ -1257,13 +1257,13 @@ def _split(op: str, ary: ArrayLike,
   return [lax.slice(ary, _subval(starts, axis, start), _subval(ends, axis, end))
           for start, end in zip(split_indices[:-1], split_indices[1:])]
 
-@util._wraps(np.split, lax_description=_ARRAY_VIEW_DOC)
+@util.implements(np.split, lax_description=_ARRAY_VIEW_DOC)
 def split(ary: ArrayLike, indices_or_sections: int | Sequence[int] | ArrayLike,
           axis: int = 0) -> list[Array]:
   return _split("split", ary, indices_or_sections, axis=axis)
 
 def _split_on_axis(op: str, axis: int) -> Callable[[ArrayLike, int | ArrayLike], list[Array]]:
-  @util._wraps(getattr(np, op), update_doc=False)
+  @util.implements(getattr(np, op), update_doc=False)
   def f(ary: ArrayLike, indices_or_sections: int | Sequence[int] | ArrayLike) -> list[Array]:
     # for 1-D array, hsplit becomes vsplit
     nonlocal axis
@@ -1278,12 +1278,12 @@ vsplit = _split_on_axis("vsplit", axis=0)
 hsplit = _split_on_axis("hsplit", axis=1)
 dsplit = _split_on_axis("dsplit", axis=2)
 
-@util._wraps(np.array_split)
+@util.implements(np.array_split)
 def array_split(ary: ArrayLike, indices_or_sections: int | Sequence[int] | ArrayLike,
                 axis: int = 0) -> list[Array]:
   return _split("array_split", ary, indices_or_sections, axis=axis)
 
-@util._wraps(np.clip, skip_params=['out'])
+@util.implements(np.clip, skip_params=['out'])
 @jit
 def clip(a: ArrayLike, a_min: ArrayLike | None = None,
          a_max: ArrayLike | None = None, out: None = None) -> Array:
@@ -1298,7 +1298,7 @@ def clip(a: ArrayLike, a_min: ArrayLike | None = None,
     a = ufuncs.minimum(a_max, a)
   return asarray(a)
 
-@util._wraps(np.around, skip_params=['out'])
+@util.implements(np.around, skip_params=['out'])
 @partial(jit, static_argnames=('decimals',))
 def round(a: ArrayLike, decimals: int = 0, out: None = None) -> Array:
   util.check_arraylike("round", a)
@@ -1334,7 +1334,7 @@ around = round
 round_ = round
 
 
-@util._wraps(np.fix, skip_params=['out'])
+@util.implements(np.fix, skip_params=['out'])
 @jit
 def fix(x: ArrayLike, out: None = None) -> Array:
   util.check_arraylike("fix", x)
@@ -1344,7 +1344,7 @@ def fix(x: ArrayLike, out: None = None) -> Array:
   return where(lax.ge(x, zero), ufuncs.floor(x), ufuncs.ceil(x))
 
 
-@util._wraps(np.nan_to_num)
+@util.implements(np.nan_to_num)
 @jit
 def nan_to_num(x: ArrayLike, copy: bool = True, nan: ArrayLike = 0.0,
                posinf: ArrayLike | None = None,
@@ -1367,7 +1367,7 @@ def nan_to_num(x: ArrayLike, copy: bool = True, nan: ArrayLike = 0.0,
   return out
 
 
-@util._wraps(np.allclose)
+@util.implements(np.allclose)
 @partial(jit, static_argnames=('equal_nan',))
 def allclose(a: ArrayLike, b: ArrayLike, rtol: ArrayLike = 1e-05,
              atol: ArrayLike = 1e-08, equal_nan: bool = False) -> Array:
@@ -1390,7 +1390,7 @@ fill_value : array_like, optional
     remaining elements will be filled with ``fill_value``, which defaults to zero.
 """
 
-@util._wraps(np.nonzero, lax_description=_NONZERO_DOC, extra_params=_NONZERO_EXTRA_PARAMS)
+@util.implements(np.nonzero, lax_description=_NONZERO_DOC, extra_params=_NONZERO_EXTRA_PARAMS)
 def nonzero(a: ArrayLike, *, size: int | None = None,
             fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None
     ) -> tuple[Array, ...]:
@@ -1422,13 +1422,13 @@ def nonzero(a: ArrayLike, *, size: int | None = None,
     out = tuple(where(fill_mask, fval, entry) for fval, entry in safe_zip(fill_value_tup, out))
   return out
 
-@util._wraps(np.flatnonzero, lax_description=_NONZERO_DOC, extra_params=_NONZERO_EXTRA_PARAMS)
+@util.implements(np.flatnonzero, lax_description=_NONZERO_DOC, extra_params=_NONZERO_EXTRA_PARAMS)
 def flatnonzero(a: ArrayLike, *, size: int | None = None,
                 fill_value: None | ArrayLike | tuple[ArrayLike] = None) -> Array:
   return nonzero(ravel(a), size=size, fill_value=fill_value)[0]
 
 
-@util._wraps(np.unwrap)
+@util.implements(np.unwrap)
 @partial(jit, static_argnames=('axis',))
 def unwrap(p: ArrayLike, discont: ArrayLike | None = None,
            axis: int = -1, period: ArrayLike = 2 * pi) -> Array:
@@ -1764,7 +1764,7 @@ def _pad(array: ArrayLike, pad_width: PadValueLike[int], mode: str,
                    "not implemented modes")
 
 
-@util._wraps(np.pad, lax_description="""\
+@util.implements(np.pad, lax_description="""\
 Unlike numpy, JAX "function" mode's argument (which is another function) should return
 the modified array. This is because Jax arrays are immutable.
 (In numpy, "function" mode's argument should modify a rank 1 array in-place.)
@@ -1810,7 +1810,7 @@ def pad(array: ArrayLike, pad_width: PadValueLike[int | Array | np.ndarray],
 ### Array-creation functions
 
 
-@util._wraps(np.stack, skip_params=['out'])
+@util.implements(np.stack, skip_params=['out'])
 def stack(arrays: np.ndarray | Array | Sequence[ArrayLike],
           axis: int = 0, out: None = None, dtype: DTypeLike | None = None) -> Array:
   if not len(arrays):
@@ -1831,7 +1831,7 @@ def stack(arrays: np.ndarray | Array | Sequence[ArrayLike],
       new_arrays.append(expand_dims(a, axis))
     return concatenate(new_arrays, axis=axis, dtype=dtype)
 
-@util._wraps(np.tile)
+@util.implements(np.tile)
 def tile(A: ArrayLike, reps: DimSize | Sequence[DimSize]) -> Array:
   util.check_arraylike("tile", A)
   try:
@@ -1863,7 +1863,7 @@ def _concatenate_array(arr: ArrayLike, axis: int | None,
   dimensions = [*range(1, axis + 1), 0, *range(axis + 1, arr.ndim)]
   return lax.reshape(arr, shape, dimensions)
 
-@util._wraps(np.concatenate)
+@util.implements(np.concatenate)
 def concatenate(arrays: np.ndarray | Array | Sequence[ArrayLike],
                 axis: int | None = 0, dtype: DTypeLike | None = None) -> Array:
   if isinstance(arrays, (np.ndarray, Array)):
@@ -1890,13 +1890,13 @@ def concatenate(arrays: np.ndarray | Array | Sequence[ArrayLike],
   return arrays_out[0]
 
 
-@util._wraps(getattr(np, "concat", None))
+@util.implements(getattr(np, "concat", None))
 def concat(arrays: Sequence[ArrayLike], /, *, axis: int | None = 0) -> Array:
   util.check_arraylike("concat", *arrays)
   return jax.numpy.concatenate(arrays, axis=axis)
 
 
-@util._wraps(np.vstack)
+@util.implements(np.vstack)
 def vstack(tup: np.ndarray | Array | Sequence[ArrayLike],
            dtype: DTypeLike | None = None) -> Array:
   arrs: Array | list[Array]
@@ -1909,7 +1909,7 @@ def vstack(tup: np.ndarray | Array | Sequence[ArrayLike],
   return concatenate(arrs, axis=0, dtype=dtype)
 
 
-@util._wraps(np.hstack)
+@util.implements(np.hstack)
 def hstack(tup: np.ndarray | Array | Sequence[ArrayLike],
            dtype: DTypeLike | None = None) -> Array:
   arrs: Array | list[Array]
@@ -1924,7 +1924,7 @@ def hstack(tup: np.ndarray | Array | Sequence[ArrayLike],
   return concatenate(arrs, axis=0 if arr0_ndim == 1 else 1, dtype=dtype)
 
 
-@util._wraps(np.dstack)
+@util.implements(np.dstack)
 def dstack(tup: np.ndarray | Array | Sequence[ArrayLike],
            dtype: DTypeLike | None = None) -> Array:
   arrs: Array | list[Array]
@@ -1937,7 +1937,7 @@ def dstack(tup: np.ndarray | Array | Sequence[ArrayLike],
   return concatenate(arrs, axis=2, dtype=dtype)
 
 
-@util._wraps(np.column_stack)
+@util.implements(np.column_stack)
 def column_stack(tup: np.ndarray | Array | Sequence[ArrayLike]) -> Array:
   arrs: Array | list[Array] | np.ndarray
   if isinstance(tup, (np.ndarray, Array)):
@@ -1949,7 +1949,7 @@ def column_stack(tup: np.ndarray | Array | Sequence[ArrayLike]) -> Array:
   return concatenate(arrs, 1)
 
 
-@util._wraps(np.choose, skip_params=['out'])
+@util.implements(np.choose, skip_params=['out'])
 def choose(a: ArrayLike, choices: Sequence[ArrayLike],
            out: None = None, mode: str = 'raise') -> Array:
   if out is not None:
@@ -1996,7 +1996,7 @@ def _block(xs: ArrayLike | list[ArrayLike]) -> tuple[Array, int]:
   else:
     return asarray(xs), 1
 
-@util._wraps(np.block)
+@util.implements(np.block)
 @jit
 def block(arrays: ArrayLike | list[ArrayLike]) -> Array:
   out, _ = _block(arrays)
@@ -2012,7 +2012,7 @@ def atleast_1d(x: ArrayLike, /) -> Array:
 @overload
 def atleast_1d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]:
   ...
-@util._wraps(np.atleast_1d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
+@util.implements(np.atleast_1d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 @jit
 def atleast_1d(*arys: ArrayLike) -> Array | list[Array]:
   # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
@@ -2033,7 +2033,7 @@ def atleast_2d(x: ArrayLike, /) -> Array:
 @overload
 def atleast_2d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]:
   ...
-@util._wraps(np.atleast_2d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
+@util.implements(np.atleast_2d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 @jit
 def atleast_2d(*arys: ArrayLike) -> Array | list[Array]:
   # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
@@ -2059,7 +2059,7 @@ def atleast_3d(x: ArrayLike, /) -> Array:
 @overload
 def atleast_3d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]:
   ...
-@util._wraps(np.atleast_3d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
+@util.implements(np.atleast_3d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 @jit
 def atleast_3d(*arys: ArrayLike) -> Array | list[Array]:
   # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
@@ -2093,7 +2093,7 @@ available in the JAX FAQ at :ref:`faq-data-placement` (full FAQ at
 https://jax.readthedocs.io/en/latest/faq.html).
 """
 
-@util._wraps(np.array, lax_description=_ARRAY_DOC)
+@util.implements(np.array, lax_description=_ARRAY_DOC)
 def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
           order: str | None = "K", ndmin: int = 0) -> Array:
   if order is not None and order != "K":
@@ -2185,7 +2185,7 @@ def _convert_to_array_if_dtype_fails(x: ArrayLike) -> ArrayLike:
     return x
 
 
-@util._wraps(getattr(np, "astype", None), lax_description="""
+@util.implements(getattr(np, "astype", None), lax_description="""
 This is implemented via :func:`jax.lax.convert_element_type`, which may
 have slightly different behavior than :func:`numpy.astype` in some cases.
 In particular, the details of float-to-int and int-to-float casts are
@@ -2199,7 +2199,7 @@ def astype(x: ArrayLike, dtype: DTypeLike | None, /, *, copy: bool = True) -> Ar
   return lax.convert_element_type(x, dtype)
 
 
-@util._wraps(np.asarray, lax_description=_ARRAY_DOC)
+@util.implements(np.asarray, lax_description=_ARRAY_DOC)
 def asarray(a: Any, dtype: DTypeLike | None = None, order: str | None = None,
             *, copy: bool | None = None) -> Array:
   # For copy=False, the array API specifies that we raise a ValueError if the input supports
@@ -2217,13 +2217,13 @@ def asarray(a: Any, dtype: DTypeLike | None = None, order: str | None = None,
   return array(a, dtype=dtype, copy=bool(copy), order=order)  # type: ignore
 
 
-@util._wraps(np.copy, lax_description=_ARRAY_DOC)
+@util.implements(np.copy, lax_description=_ARRAY_DOC)
 def copy(a: ArrayLike, order: str | None = None) -> Array:
   util.check_arraylike("copy", a)
   return array(a, copy=True, order=order)
 
 
-@util._wraps(np.zeros_like)
+@util.implements(np.zeros_like)
 def zeros_like(a: ArrayLike | DuckTypedArray,
                dtype: DTypeLike | None = None,
                shape: Any = None) -> Array:
@@ -2235,7 +2235,7 @@ def zeros_like(a: ArrayLike | DuckTypedArray,
   return lax.full_like(a, 0, dtype, shape)
 
 
-@util._wraps(np.ones_like)
+@util.implements(np.ones_like)
 def ones_like(a: ArrayLike | DuckTypedArray,
               dtype: DTypeLike | None = None,
               shape: Any = None) -> Array:
@@ -2247,7 +2247,7 @@ def ones_like(a: ArrayLike | DuckTypedArray,
   return lax.full_like(a, 1, dtype, shape)
 
 
-@util._wraps(np.empty_like, lax_description="""\
+@util.implements(np.empty_like, lax_description="""\
 Because XLA cannot create uninitialized arrays, the JAX version will
 return an array initialized with zeros.""")
 def empty_like(prototype: ArrayLike | DuckTypedArray,
@@ -2269,7 +2269,7 @@ def _normalize_to_sharding(device: xc.Device | Sharding | None) -> Sharding | No
     return device
 
 
-@util._wraps(np.full)
+@util.implements(np.full)
 def full(shape: Any, fill_value: ArrayLike,
          dtype: DTypeLike | None = None, *,
          device: xc.Device | Sharding | None = None) -> Array:
@@ -2283,7 +2283,7 @@ def full(shape: Any, fill_value: ArrayLike,
     return _maybe_device_put(broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
 
 
-@util._wraps(np.full_like)
+@util.implements(np.full_like)
 def full_like(a: ArrayLike | DuckTypedArray,
               fill_value: ArrayLike, dtype: DTypeLike | None = None,
               shape: Any = None) -> Array:
@@ -2302,7 +2302,7 @@ def full_like(a: ArrayLike | DuckTypedArray,
     return broadcast_to(asarray(fill_value, dtype=dtype), shape)
 
 
-@util._wraps(np.zeros)
+@util.implements(np.zeros)
 def zeros(shape: Any, dtype: DTypeLike | None = None, *,
           device: xc.Device | Sharding | None = None) -> Array:
   if isinstance(shape, types.GeneratorType):
@@ -2312,7 +2312,7 @@ def zeros(shape: Any, dtype: DTypeLike | None = None, *,
   shape = canonicalize_shape(shape)
   return lax.full(shape, 0, _jnp_dtype(dtype), sharding=_normalize_to_sharding(device))
 
-@util._wraps(np.ones)
+@util.implements(np.ones)
 def ones(shape: Any, dtype: DTypeLike | None = None, *,
          device: xc.Device | Sharding | None = None) -> Array:
   if isinstance(shape, types.GeneratorType):
@@ -2322,7 +2322,7 @@ def ones(shape: Any, dtype: DTypeLike | None = None, *,
   dtypes.check_user_dtype_supported(dtype, "ones")
   return lax.full(shape, 1, _jnp_dtype(dtype), sharding=_normalize_to_sharding(device))
 
-@util._wraps(np.empty, lax_description="""\
+@util.implements(np.empty, lax_description="""\
 Because XLA cannot create uninitialized arrays, the JAX version will
 return an array initialized with zeros.""")
 def empty(shape: Any, dtype: DTypeLike | None = None, *,
@@ -2340,7 +2340,7 @@ def _check_forgot_shape_tuple(name, shape, dtype) -> str | None:  # type: ignore
             "with a single tuple argument for the shape?")
 
 
-@util._wraps(np.array_equal)
+@util.implements(np.array_equal)
 def array_equal(a1: ArrayLike, a2: ArrayLike, equal_nan: bool = False) -> Array:
   try:
     a1, a2 = asarray(a1), asarray(a2)
@@ -2359,7 +2359,7 @@ def array_equal(a1: ArrayLike, a2: ArrayLike, equal_nan: bool = False) -> Array:
   return reductions.all(eq)
 
 
-@util._wraps(np.array_equiv)
+@util.implements(np.array_equiv)
 def array_equiv(a1: ArrayLike, a2: ArrayLike) -> Array:
   try:
     a1, a2 = asarray(a1), asarray(a2)
@@ -2380,7 +2380,7 @@ def array_equiv(a1: ArrayLike, a2: ArrayLike) -> Array:
 
 # General np.from* style functions mostly delegate to numpy.
 
-@util._wraps(np.frombuffer)
+@util.implements(np.frombuffer)
 def frombuffer(buffer: bytes | Any, dtype: DTypeLike = float,
                count: int = -1, offset: int = 0) -> Array:
   return asarray(np.frombuffer(buffer=buffer, dtype=dtype, count=count, offset=offset))
@@ -2421,7 +2421,7 @@ def fromiter(*args, **kwargs):
     "because of its potential side-effect of consuming the iterable object; for more information see "
     "https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions")
 
-@util._wraps(getattr(np, "from_dlpack", None), lax_description="""
+@util.implements(getattr(np, "from_dlpack", None), lax_description="""
 .. note::
 
    While JAX arrays are always immutable, dlpack buffers cannot be marked as
@@ -2434,7 +2434,7 @@ def from_dlpack(x: Any) -> Array:
   from jax.dlpack import from_dlpack  # pylint: disable=g-import-not-at-top
   return from_dlpack(x.__dlpack__())
 
-@util._wraps(np.fromfunction)
+@util.implements(np.fromfunction)
 def fromfunction(function: Callable[..., Array], shape: Any,
                  *, dtype: DTypeLike = float, **kwargs) -> Array:
   shape = core.canonicalize_shape(shape, context="shape argument of jnp.fromfunction()")
@@ -2444,12 +2444,12 @@ def fromfunction(function: Callable[..., Array], shape: Any,
   return function(*(arange(s, dtype=dtype) for s in shape), **kwargs)
 
 
-@util._wraps(np.fromstring)
+@util.implements(np.fromstring)
 def fromstring(string: str, dtype: DTypeLike = float, count: int = -1, *, sep: str) -> Array:
   return asarray(np.fromstring(string=string, dtype=dtype, count=count, sep=sep))
 
 
-@util._wraps(np.eye)
+@util.implements(np.eye)
 def eye(N: DimSize, M: DimSize | None = None, k: int = 0,
         dtype: DTypeLike | None = None) -> Array:
   dtypes.check_user_dtype_supported(dtype, "eye")
@@ -2461,13 +2461,13 @@ def eye(N: DimSize, M: DimSize | None = None, k: int = 0,
   return lax_internal._eye(_jnp_dtype(dtype), (N_int, M_int), k)
 
 
-@util._wraps(np.identity)
+@util.implements(np.identity)
 def identity(n: DimSize, dtype: DTypeLike | None = None) -> Array:
   dtypes.check_user_dtype_supported(dtype, "identity")
   return eye(n, dtype=dtype)
 
 
-@util._wraps(np.arange,lax_description= """
+@util.implements(np.arange,lax_description= """
 .. note::
 
    Using ``arange`` with the ``step`` argument can lead to precision errors,
@@ -2561,7 +2561,7 @@ def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
              endpoint: bool = True, retstep: bool = False,
              dtype: DTypeLike | None = None,
              axis: int = 0) -> Array | tuple[Array, Array]: ...
-@util._wraps(np.linspace)
+@util.implements(np.linspace)
 def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
              endpoint: bool = True, retstep: bool = False,
              dtype: DTypeLike | None = None,
@@ -2628,7 +2628,7 @@ def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
     return lax.convert_element_type(out, dtype)
 
 
-@util._wraps(np.logspace)
+@util.implements(np.logspace)
 def logspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
              endpoint: bool = True, base: ArrayLike = 10.0,
              dtype: DTypeLike | None = None, axis: int = 0) -> Array:
@@ -2654,7 +2654,7 @@ def _logspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
   return lax.convert_element_type(ufuncs.power(base, lin), dtype)
 
 
-@util._wraps(np.geomspace)
+@util.implements(np.geomspace)
 def geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool = True,
               dtype: DTypeLike | None = None, axis: int = 0) -> Array:
   num = core.concrete_or_error(operator.index, num, "'num' argument of jnp.geomspace")
@@ -2685,7 +2685,7 @@ def _geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool 
   return lax.convert_element_type(res, dtype)
 
 
-@util._wraps(np.meshgrid, lax_description=_ARRAY_VIEW_DOC)
+@util.implements(np.meshgrid, lax_description=_ARRAY_VIEW_DOC)
 def meshgrid(*xi: ArrayLike, copy: bool = True, sparse: bool = False,
              indexing: str = 'xy') -> list[Array]:
   util.check_arraylike("meshgrid", *xi)
@@ -2708,7 +2708,7 @@ def meshgrid(*xi: ArrayLike, copy: bool = True, sparse: bool = False,
 
 
 @custom_jvp
-@util._wraps(np.i0)
+@util.implements(np.i0)
 @jit
 def i0(x: ArrayLike) -> Array:
   x_arr, = util.promote_args_inexact("i0", x)
@@ -2723,7 +2723,7 @@ def _i0_jvp(primals, tangents):
   return primal_out, where(primals[0] == 0, 0.0, tangent_out)
 
 
-@util._wraps(np.ix_)
+@util.implements(np.ix_)
 def ix_(*args: ArrayLike) -> tuple[Array, ...]:
   util.check_arraylike("ix", *args)
   n = len(args)
@@ -2755,7 +2755,7 @@ def indices(dimensions: Sequence[int], dtype: DTypeLike = int32,
 @overload
 def indices(dimensions: Sequence[int], dtype: DTypeLike = int32,
             sparse: bool = False) -> Array | tuple[Array, ...]: ...
-@util._wraps(np.indices)
+@util.implements(np.indices)
 def indices(dimensions: Sequence[int], dtype: DTypeLike = int32,
             sparse: bool = False) -> Array | tuple[Array, ...]:
   dimensions = tuple(
@@ -2784,7 +2784,7 @@ will be repeated.
 """
 
 
-@util._wraps(np.repeat, lax_description=_TOTAL_REPEAT_LENGTH_DOC)
+@util.implements(np.repeat, lax_description=_TOTAL_REPEAT_LENGTH_DOC)
 def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
            total_repeat_length: int | None = None) -> Array:
   util.check_arraylike("repeat", a)
@@ -2865,7 +2865,7 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
   return take(a, gather_indices, axis=axis)
 
 
-@util._wraps(np.tri)
+@util.implements(np.tri)
 def tri(N: int, M: int | None = None, k: int = 0, dtype: DTypeLike | None = None) -> Array:
   dtypes.check_user_dtype_supported(dtype, "tri")
   M = M if M is not None else N
@@ -2873,7 +2873,7 @@ def tri(N: int, M: int | None = None, k: int = 0, dtype: DTypeLike | None = None
   return lax_internal._tri(dtype, (N, M), k)
 
 
-@util._wraps(np.tril)
+@util.implements(np.tril)
 @partial(jit, static_argnames=('k',))
 def tril(m: ArrayLike, k: int = 0) -> Array:
   util.check_arraylike("tril", m)
@@ -2885,7 +2885,7 @@ def tril(m: ArrayLike, k: int = 0) -> Array:
   return lax.select(lax.broadcast(mask, m_shape[:-2]), m, zeros_like(m))
 
 
-@util._wraps(np.triu, update_doc=False)
+@util.implements(np.triu, update_doc=False)
 @partial(jit, static_argnames=('k',))
 def triu(m: ArrayLike, k: int = 0) -> Array:
   util.check_arraylike("triu", m)
@@ -2897,7 +2897,7 @@ def triu(m: ArrayLike, k: int = 0) -> Array:
   return lax.select(lax.broadcast(mask, m_shape[:-2]), zeros_like(m), m)
 
 
-@util._wraps(np.trace, skip_params=['out'])
+@util.implements(np.trace, skip_params=['out'])
 @partial(jit, static_argnames=('offset', 'axis1', 'axis2', 'dtype'))
 def trace(a: ArrayLike, offset: int = 0, axis1: int = 0, axis2: int = 1,
           dtype: DTypeLike | None = None, out: None = None) -> Array:
@@ -2923,7 +2923,7 @@ def trace(a: ArrayLike, offset: int = 0, axis1: int = 0, axis2: int = 1,
 
 
 def _wrap_indices_function(f):
-  @util._wraps(f, update_doc=False)
+  @util.implements(f, update_doc=False)
   def wrapper(*args, **kwargs):
     args = [core.concrete_or_error(
               None, arg, f"argument {i} of jnp.{f.__name__}()")
@@ -2947,7 +2947,7 @@ def _triu_size(n, m, k):
     return mk * (mk + 1) // 2 + mk * (m - k - mk)
 
 
-@util._wraps(np.triu_indices)
+@util.implements(np.triu_indices)
 def triu_indices(n: int, k: int = 0, m: int | None = None) -> tuple[Array, Array]:
   n = core.concrete_or_error(operator.index, n, "n argument of jnp.triu_indices")
   k = core.concrete_or_error(operator.index, k, "k argument of jnp.triu_indices")
@@ -2956,7 +2956,7 @@ def triu_indices(n: int, k: int = 0, m: int | None = None) -> tuple[Array, Array
   return i, j
 
 
-@util._wraps(np.tril_indices)
+@util.implements(np.tril_indices)
 def tril_indices(n: int, k: int = 0, m: int | None = None) -> tuple[Array, Array]:
   n = core.concrete_or_error(operator.index, n, "n argument of jnp.triu_indices")
   k = core.concrete_or_error(operator.index, k, "k argument of jnp.triu_indices")
@@ -2965,19 +2965,19 @@ def tril_indices(n: int, k: int = 0, m: int | None = None) -> tuple[Array, Array
   return i, j
 
 
-@util._wraps(np.triu_indices_from)
+@util.implements(np.triu_indices_from)
 def triu_indices_from(arr: ArrayLike, k: int = 0) -> tuple[Array, Array]:
   arr_shape = shape(arr)
   return triu_indices(arr_shape[-2], k=k, m=arr_shape[-1])
 
 
-@util._wraps(np.tril_indices_from)
+@util.implements(np.tril_indices_from)
 def tril_indices_from(arr: ArrayLike, k: int = 0) -> tuple[Array, Array]:
   arr_shape = shape(arr)
   return tril_indices(arr_shape[-2], k=k, m=arr_shape[-1])
 
 
-@util._wraps(np.fill_diagonal, lax_description="""
+@util.implements(np.fill_diagonal, lax_description="""
 The semantics of :func:`numpy.fill_diagonal` is to modify arrays in-place, which
 JAX cannot do because JAX arrays are immutable. Thus :func:`jax.numpy.fill_diagonal`
 adds the ``inplace`` parameter, which must be set to ``False`` by the user as a
@@ -3005,7 +3005,7 @@ def fill_diagonal(a: ArrayLike, val: ArrayLike, wrap: bool = False, *, inplace: 
   return a.at[idx].set(val if val.ndim == 0 else _tile_to_size(val.ravel(), n))
 
 
-@util._wraps(np.diag_indices)
+@util.implements(np.diag_indices)
 def diag_indices(n: int, ndim: int = 2) -> tuple[Array, ...]:
   n = core.concrete_or_error(operator.index, n, "'n' argument of jnp.diag_indices()")
   ndim = core.concrete_or_error(operator.index, ndim, "'ndim' argument of jnp.diag_indices()")
@@ -3017,7 +3017,7 @@ def diag_indices(n: int, ndim: int = 2) -> tuple[Array, ...]:
                      .format(ndim))
   return (lax.iota(int_, n),) * ndim
 
-@util._wraps(np.diag_indices_from)
+@util.implements(np.diag_indices_from)
 def diag_indices_from(arr: ArrayLike) -> tuple[Array, ...]:
   util.check_arraylike("diag_indices_from", arr)
   nd = ndim(arr)
@@ -3030,7 +3030,7 @@ def diag_indices_from(arr: ArrayLike) -> tuple[Array, ...]:
 
   return diag_indices(s[0], ndim=nd)
 
-@util._wraps(np.diagonal, lax_description=_ARRAY_VIEW_DOC)
+@util.implements(np.diagonal, lax_description=_ARRAY_VIEW_DOC)
 @partial(jit, static_argnames=('offset', 'axis1', 'axis2'))
 def diagonal(a: ArrayLike, offset: int = 0, axis1: int = 0,
              axis2: int = 1) -> Array:
@@ -3049,7 +3049,7 @@ def diagonal(a: ArrayLike, offset: int = 0, axis1: int = 0,
   return a[..., i, j] if offset >= 0 else a[..., j, i]
 
 
-@util._wraps(np.diag, lax_description=_ARRAY_VIEW_DOC)
+@util.implements(np.diag, lax_description=_ARRAY_VIEW_DOC)
 def diag(v: ArrayLike, k: int = 0) -> Array:
   return _diag(v, operator.index(k))
 
@@ -3073,7 +3073,7 @@ jax always returns a two-dimensional array, whereas numpy may
 return a scalar depending on the type of v.
 """
 
-@util._wraps(np.diagflat, lax_description=_SCALAR_VALUE_DOC)
+@util.implements(np.diagflat, lax_description=_SCALAR_VALUE_DOC)
 def diagflat(v: ArrayLike, k: int = 0) -> Array:
   util.check_arraylike("diagflat", v)
   v_ravel = ravel(v)
@@ -3090,7 +3090,7 @@ def diagflat(v: ArrayLike, k: int = 0) -> Array:
   return res
 
 
-@util._wraps(np.trim_zeros)
+@util.implements(np.trim_zeros)
 def trim_zeros(filt, trim='fb'):
   filt = core.concrete_or_error(asarray, filt,
     "Error arose in the `filt` argument of trim_zeros()")
@@ -3113,7 +3113,7 @@ def trim_zeros_tol(filt, tol, trim='fb'):
   return filt[start:len(filt) - end]
 
 
-@util._wraps(np.append)
+@util.implements(np.append)
 @partial(jit, static_argnames=('axis',))
 def append(
     arr: ArrayLike, values: ArrayLike, axis: int | None = None
@@ -3124,7 +3124,7 @@ def append(
     return concatenate([arr, values], axis=axis)
 
 
-@util._wraps(np.delete,
+@util.implements(np.delete,
   lax_description=_dedent("""
     delete() usually requires the index specification to be static. If the index
     is an integer array that is guaranteed to contain unique entries, you may
@@ -3195,7 +3195,7 @@ def delete(
   return a[tuple(slice(None) for i in range(axis)) + (mask,)]
 
 
-@util._wraps(np.insert)
+@util.implements(np.insert)
 def insert(arr: ArrayLike, obj: ArrayLike | slice, values: ArrayLike,
            axis: int | None = None) -> Array:
   util.check_arraylike("insert", arr, 0 if isinstance(obj, slice) else obj, values)
@@ -3248,7 +3248,7 @@ def insert(arr: ArrayLike, obj: ArrayLike | slice, values: ArrayLike,
   return out
 
 
-@util._wraps(np.apply_along_axis)
+@util.implements(np.apply_along_axis)
 def apply_along_axis(
     func1d: Callable, axis: int, arr: ArrayLike, *args, **kwargs
 ) -> Array:
@@ -3264,7 +3264,7 @@ def apply_along_axis(
   return func(arr)
 
 
-@util._wraps(np.apply_over_axes)
+@util.implements(np.apply_over_axes)
 def apply_over_axes(func: Callable[[ArrayLike, int], Array], a: ArrayLike,
                     axes: Sequence[int]) -> Array:
   # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
@@ -3291,8 +3291,8 @@ preferred_element_type : dtype, optional
     rules of the input array dtypes.
 """
 
-@util._wraps(np.dot, lax_description=_PRECISION_DOC,
-             extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
+@util.implements(np.dot, lax_description=_PRECISION_DOC,
+                 extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def dot(a: ArrayLike, b: ArrayLike, *,
         precision: PrecisionLike = None,
@@ -3324,8 +3324,8 @@ def dot(a: ArrayLike, b: ArrayLike, *,
   return lax_internal._convert_element_type(result, preferred_element_type, output_weak_type)
 
 
-@util._wraps(np.matmul, module='numpy', lax_description=_PRECISION_DOC,
-             extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
+@util.implements(np.matmul, module='numpy', lax_description=_PRECISION_DOC,
+                 extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def matmul(a: ArrayLike, b: ArrayLike, *,
            precision: PrecisionLike = None,
@@ -3397,8 +3397,8 @@ def matmul(a: ArrayLike, b: ArrayLike, *,
   return lax_internal._convert_element_type(result, preferred_element_type, output_weak_type)
 
 
-@util._wraps(np.vdot, lax_description=_PRECISION_DOC,
-             extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
+@util.implements(np.vdot, lax_description=_PRECISION_DOC,
+                 extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def vdot(
     a: ArrayLike, b: ArrayLike, *,
@@ -3412,8 +3412,8 @@ def vdot(
              preferred_element_type=preferred_element_type)
 
 
-@util._wraps(getattr(np, "vecdot", None), lax_description=_PRECISION_DOC,
-             extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
+@util.implements(getattr(np, "vecdot", None), lax_description=_PRECISION_DOC,
+                 extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
            precision: PrecisionLike = None,
            preferred_element_type: DTypeLike | None = None) -> Array:
@@ -3427,8 +3427,8 @@ def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
                    signature="(n),(n)->()")(x1_arr, x2_arr)
 
 
-@util._wraps(np.tensordot, lax_description=_PRECISION_DOC,
-             extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
+@util.implements(np.tensordot, lax_description=_PRECISION_DOC,
+                 extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 def tensordot(a: ArrayLike, b: ArrayLike,
               axes: int | Sequence[int] | Sequence[Sequence[int]] = 2,
               *, precision: PrecisionLike = None,
@@ -3505,7 +3505,7 @@ def einsum(
     _dot_general: Callable[..., Array] = lax.dot_general,
 ) -> Array: ...
 
-@util._wraps(np.einsum, lax_description=_EINSUM_DOC, skip_params=['out'])
+@util.implements(np.einsum, lax_description=_EINSUM_DOC, skip_params=['out'])
 def einsum(
     subscripts, /,
     *operands,
@@ -3557,7 +3557,7 @@ def _default_poly_einsum_handler(*operands, **kwargs):
   contract_operands = [operands[mapping[id(d)]] for d in out_dummies]
   return contract_operands, contractions
 
-@util._wraps(np.einsum_path)
+@util.implements(np.einsum_path)
 def einsum_path(subscripts, *operands, optimize='greedy'):
   # using einsum_call=True here is an internal api for opt_einsum
   return opt_einsum.contract_path(subscripts, *operands, optimize=optimize)
@@ -3716,8 +3716,8 @@ def _einsum(
   return lax_internal._convert_element_type(operands[0], preferred_element_type, output_weak_type)
 
 
-@util._wraps(np.inner, lax_description=_PRECISION_DOC,
-             extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
+@util.implements(np.inner, lax_description=_PRECISION_DOC,
+                 extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def inner(
     a: ArrayLike, b: ArrayLike, *, precision: PrecisionLike = None,
@@ -3733,7 +3733,7 @@ def inner(
                    preferred_element_type=preferred_element_type)
 
 
-@util._wraps(np.outer, skip_params=['out'])
+@util.implements(np.outer, skip_params=['out'])
 @partial(jit, inline=True)
 def outer(a: ArrayLike, b: ArrayLike, out: None = None) -> Array:
   if out is not None:
@@ -3743,7 +3743,7 @@ def outer(a: ArrayLike, b: ArrayLike, out: None = None) -> Array:
   a, b = util.promote_dtypes(a, b)
   return ravel(a)[:, None] * ravel(b)[None, :]
 
-@util._wraps(np.cross)
+@util.implements(np.cross)
 @partial(jit, static_argnames=('axisa', 'axisb', 'axisc', 'axis'))
 def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
           axis: int | None = None):
@@ -3773,7 +3773,7 @@ def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
   return moveaxis(c, 0, axisc)
 
 
-@util._wraps(np.kron)
+@util.implements(np.kron)
 @jit
 def kron(a: ArrayLike, b: ArrayLike) -> Array:
   # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
@@ -3789,7 +3789,7 @@ def kron(a: ArrayLike, b: ArrayLike) -> Array:
   return reshape(lax.mul(a_reshaped, b_reshaped), out_shape)
 
 
-@util._wraps(np.vander)
+@util.implements(np.vander)
 @partial(jit, static_argnames=('N', 'increasing'))
 def vander(
     x: ArrayLike, N: int | None = None, increasing: bool = False
@@ -3822,7 +3822,7 @@ nonzero elements than `size` indicates, the index arrays will be zero-padded.
 """
 
 
-@util._wraps(np.argwhere,
+@util.implements(np.argwhere,
   lax_description=_dedent("""
     Because the size of the output of ``argwhere`` is data-dependent, the function is not
     typically compatible with JIT. The JAX version adds the optional ``size`` argument which
@@ -3847,7 +3847,7 @@ def argwhere(
   return result.reshape(result.shape[0], ndim(a))
 
 
-@util._wraps(np.argmax, skip_params=['out'])
+@util.implements(np.argmax, skip_params=['out'])
 def argmax(a: ArrayLike, axis: int | None = None, out: None = None,
            keepdims: bool | None = None) -> Array:
   util.check_arraylike("argmax", a)
@@ -3869,7 +3869,7 @@ def _argmax(a: Array, axis: int | None = None, keepdims: bool = False) -> Array:
   result = lax.argmax(a, _canonicalize_axis(axis, a.ndim), dtypes.canonicalize_dtype(int_))
   return expand_dims(result, dims) if keepdims else result
 
-@util._wraps(np.argmin, skip_params=['out'])
+@util.implements(np.argmin, skip_params=['out'])
 def argmin(a: ArrayLike, axis: int | None = None, out: None = None,
            keepdims: bool | None = None) -> Array:
   util.check_arraylike("argmin", a)
@@ -3898,7 +3898,7 @@ an error.
 """
 
 
-@util._wraps(np.nanargmax, lax_description=_NANARG_DOC.format("max"), skip_params=['out'])
+@util.implements(np.nanargmax, lax_description=_NANARG_DOC.format("max"), skip_params=['out'])
 def nanargmax(
     a: ArrayLike,
     axis: int | None = None,
@@ -3921,7 +3921,7 @@ def _nanargmax(a, axis: int | None = None, keepdims: bool = False):
   return where(reductions.all(nan_mask, axis=axis, keepdims=keepdims), -1, res)
 
 
-@util._wraps(np.nanargmin, lax_description=_NANARG_DOC.format("min"),  skip_params=['out'])
+@util.implements(np.nanargmin, lax_description=_NANARG_DOC.format("min"),  skip_params=['out'])
 def nanargmin(
     a: ArrayLike,
     axis: int | None = None,
@@ -3944,8 +3944,7 @@ def _nanargmin(a, axis: int | None = None, keepdims : bool = False):
   return where(reductions.all(nan_mask, axis=axis, keepdims=keepdims), -1, res)
 
 
-@util._wraps(np.sort,
-             extra_params="""
+@util.implements(np.sort, extra_params="""
 kind : deprecated; specify sort algorithm using stable=True or stable=False
 order : not supported
 stable : bool, default=True
@@ -3980,14 +3979,14 @@ def sort(
   return lax.rev(result, dimensions=[dimension]) if descending else result
 
 
-@util._wraps(np.sort_complex)
+@util.implements(np.sort_complex)
 @jit
 def sort_complex(a: ArrayLike) -> Array:
   util.check_arraylike("sort_complex", a)
   a = lax.sort(asarray(a), dimension=0)
   return lax.convert_element_type(a, dtypes.to_complex_dtype(a.dtype))
 
-@util._wraps(np.lexsort)
+@util.implements(np.lexsort)
 @partial(jit, static_argnames=('axis',))
 def lexsort(keys: Array | np.ndarray | Sequence[ArrayLike], axis: int = -1) -> Array:
   key_tuple = tuple(keys)
@@ -4006,8 +4005,7 @@ def lexsort(keys: Array | np.ndarray | Sequence[ArrayLike], axis: int = -1) -> A
   return lax.sort((*key_arrays[::-1], iota), dimension=axis, num_keys=len(key_arrays))[-1]
 
 
-@util._wraps(np.argsort,
-             extra_params="""
+@util.implements(np.argsort, extra_params="""
 kind : deprecated; specify sort algorithm using stable=True or stable=False
 order : not supported
 stable : bool, default=True
@@ -4051,7 +4049,7 @@ def argsort(
   return lax.rev(indices, dimensions=[dimension]) if descending else indices
 
 
-@util._wraps(np.partition, lax_description="""
+@util.implements(np.partition, lax_description="""
 The JAX version requires the ``kth`` argument to be a static integer rather than
 a general array. This is implemented via two calls to :func:`jax.lax.top_k`. If
 you're only accessing the top or bottom k values of the output, it may be more
@@ -4077,7 +4075,7 @@ def partition(a: ArrayLike, kth: int, axis: int = -1) -> Array:
   return swapaxes(out, -1, axis)
 
 
-@util._wraps(np.argpartition, lax_description="""
+@util.implements(np.argpartition, lax_description="""
 The JAX version requires the ``kth`` argument to be a static integer rather than
 a general array. This is implemented via two calls to :func:`jax.lax.top_k`. If
 you're only accessing the top or bottom k values of the output, it may be more
@@ -4136,7 +4134,7 @@ def _roll_static(a: Array, shift: Sequence[int], axis: Sequence[int]) -> Array:
                         dimension=ax)
   return a
 
-@util._wraps(np.roll)
+@util.implements(np.roll)
 def roll(a: ArrayLike, shift: ArrayLike | Sequence[int],
          axis: int | Sequence[int] | None = None) -> Array:
   util.check_arraylike("roll", a)
@@ -4153,7 +4151,7 @@ def roll(a: ArrayLike, shift: ArrayLike | Sequence[int],
     return _roll_static(arr, shift, axis)
 
 
-@util._wraps(np.rollaxis, lax_description=_ARRAY_VIEW_DOC)
+@util.implements(np.rollaxis, lax_description=_ARRAY_VIEW_DOC)
 @partial(jit, static_argnames=('axis', 'start'))
 def rollaxis(a: ArrayLike, axis: int, start: int = 0) -> Array:
   util.check_arraylike("rollaxis", a)
@@ -4169,7 +4167,7 @@ def rollaxis(a: ArrayLike, axis: int, start: int = 0) -> Array:
   return moveaxis(a, axis, start)
 
 
-@util._wraps(np.packbits)
+@util.implements(np.packbits)
 @partial(jit, static_argnames=('axis', 'bitorder'))
 def packbits(
     a: ArrayLike, axis: int | None = None, bitorder: str = "big"
@@ -4200,7 +4198,7 @@ def packbits(
   return swapaxes(packed, axis, -1)
 
 
-@util._wraps(np.unpackbits)
+@util.implements(np.unpackbits)
 @partial(jit, static_argnames=('axis', 'count', 'bitorder'))
 def unpackbits(
     a: ArrayLike,
@@ -4231,7 +4229,7 @@ def unpackbits(
   return swapaxes(unpacked, axis, -1)
 
 
-@util._wraps(np.take, skip_params=['out'],
+@util.implements(np.take, skip_params=['out'],
         lax_description="""
 By default, JAX assumes that all indices are in-bounds. Alternative out-of-bound
 index semantics can be specified via the ``mode`` parameter (see below).
@@ -4346,7 +4344,7 @@ indexing in JAX.
 """
 
 
-@util._wraps(np.take_along_axis, update_doc=False,
+@util.implements(np.take_along_axis, update_doc=False,
         lax_description=TAKE_ALONG_AXIS_DOC)
 @partial(jit, static_argnames=('axis', 'mode'))
 def take_along_axis(
@@ -5064,7 +5062,7 @@ def _preprocess_slice(
   return start, step, slice_size
 
 
-@util._wraps(np.blackman)
+@util.implements(np.blackman)
 def blackman(M: int) -> Array:
   M = core.concrete_or_error(int, M, "M argument of jnp.blackman")
   dtype = dtypes.canonicalize_dtype(float_)
@@ -5074,7 +5072,7 @@ def blackman(M: int) -> Array:
   return 0.42 - 0.5 * ufuncs.cos(2 * pi * n / (M - 1)) + 0.08 * ufuncs.cos(4 * pi * n / (M - 1))
 
 
-@util._wraps(np.bartlett)
+@util.implements(np.bartlett)
 def bartlett(M: int) -> Array:
   M = core.concrete_or_error(int, M, "M argument of jnp.bartlett")
   dtype = dtypes.canonicalize_dtype(float_)
@@ -5084,7 +5082,7 @@ def bartlett(M: int) -> Array:
   return 1 - ufuncs.abs(2 * n + 1 - M) / (M - 1)
 
 
-@util._wraps(np.hamming)
+@util.implements(np.hamming)
 def hamming(M: int) -> Array:
   M = core.concrete_or_error(int, M, "M argument of jnp.hamming")
   dtype = dtypes.canonicalize_dtype(float_)
@@ -5094,7 +5092,7 @@ def hamming(M: int) -> Array:
   return 0.54 - 0.46 * ufuncs.cos(2 * pi * n / (M - 1))
 
 
-@util._wraps(np.hanning)
+@util.implements(np.hanning)
 def hanning(M: int) -> Array:
   M = core.concrete_or_error(int, M, "M argument of jnp.hanning")
   dtype = dtypes.canonicalize_dtype(float_)
@@ -5104,7 +5102,7 @@ def hanning(M: int) -> Array:
   return 0.5 * (1 - ufuncs.cos(2 * pi * n / (M - 1)))
 
 
-@util._wraps(np.kaiser)
+@util.implements(np.kaiser)
 def kaiser(M: int, beta: ArrayLike) -> Array:
   M = core.concrete_or_error(int, M, "M argument of jnp.kaiser")
   dtype = dtypes.canonicalize_dtype(float_)
@@ -5125,7 +5123,7 @@ def _gcd_body_fn(xs: tuple[Array, Array]) -> tuple[Array, Array]:
             where(x2 != 0, lax.rem(x1, x2), _lax_const(x2, 0)))
   return (where(x1 < x2, x2, x1), where(x1 < x2, x1, x2))
 
-@util._wraps(np.gcd, module='numpy')
+@util.implements(np.gcd, module='numpy')
 @jit
 def gcd(x1: ArrayLike, x2: ArrayLike) -> Array:
   util.check_arraylike("gcd", x1, x2)
@@ -5137,7 +5135,7 @@ def gcd(x1: ArrayLike, x2: ArrayLike) -> Array:
   return gcd
 
 
-@util._wraps(np.lcm, module='numpy')
+@util.implements(np.lcm, module='numpy')
 @jit
 def lcm(x1: ArrayLike, x2: ArrayLike) -> Array:
   util.check_arraylike("lcm", x1, x2)
@@ -5150,12 +5148,12 @@ def lcm(x1: ArrayLike, x2: ArrayLike) -> Array:
                ufuncs.multiply(x1, ufuncs.floor_divide(x2, d)))
 
 
-@util._wraps(np.extract)
+@util.implements(np.extract)
 def extract(condition: ArrayLike, arr: ArrayLike) -> Array:
   return compress(ravel(condition), ravel(arr))
 
 
-@util._wraps(np.compress, skip_params=['out'])
+@util.implements(np.compress, skip_params=['out'])
 def compress(condition: ArrayLike, a: ArrayLike, axis: int | None = None,
              out: None = None) -> Array:
   util.check_arraylike("compress", condition, a)
@@ -5176,7 +5174,7 @@ def compress(condition: ArrayLike, a: ArrayLike, axis: int | None = None,
   return moveaxis(arr[condition_arr], 0, axis)
 
 
-@util._wraps(np.cov)
+@util.implements(np.cov)
 @partial(jit, static_argnames=('rowvar', 'bias', 'ddof'))
 def cov(m: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True,
         bias: bool = False, ddof: int | None = None,
@@ -5244,7 +5242,7 @@ def cov(m: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True,
   return ufuncs.true_divide(dot(X, X_T.conj()), f).squeeze()
 
 
-@util._wraps(np.corrcoef)
+@util.implements(np.corrcoef)
 @partial(jit, static_argnames=('rowvar',))
 def corrcoef(x: ArrayLike, y: ArrayLike | None = None, rowvar: bool = True) -> Array:
   util.check_arraylike("corrcoef", x)
@@ -5299,7 +5297,7 @@ def _searchsorted_via_compare_all(sorted_arr: Array, query: Array, side: str, dt
   return comparisons.sum(dtype=dtype, axis=0)
 
 
-@util._wraps(np.searchsorted, skip_params=['sorter'],
+@util.implements(np.searchsorted, skip_params=['sorter'],
   extra_params=_dedent("""
     method : str
         One of 'scan' (default), 'scan_unrolled', 'sort' or 'compare_all'. Controls the method used by the
@@ -5335,7 +5333,7 @@ def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
   }[method]
   return impl(asarray(a), asarray(v), side, dtype)  # type: ignore
 
-@util._wraps(np.digitize)
+@util.implements(np.digitize)
 @partial(jit, static_argnames=('right',))
 def digitize(x: ArrayLike, bins: ArrayLike, right: bool = False) -> Array:
   util.check_arraylike("digitize", x, bins)
@@ -5358,7 +5356,7 @@ Unlike `np.piecewise`, :py:func:`jax.numpy.piecewise` requires functions in
 See the :func:`jax.lax.switch` documentation for more information.
 """
 
-@util._wraps(np.piecewise, lax_description=_PIECEWISE_DOC)
+@util.implements(np.piecewise, lax_description=_PIECEWISE_DOC)
 def piecewise(x: ArrayLike, condlist: Array | Sequence[ArrayLike],
               funclist: list[ArrayLike | Callable[..., Array]],
               *args, **kw) -> Array:
@@ -5400,7 +5398,7 @@ def _tile_to_size(arr: Array, size: int) -> Array:
   return arr[:size] if arr.size > size else arr
 
 
-@util._wraps(np.place, lax_description="""
+@util.implements(np.place, lax_description="""
 The semantics of :func:`numpy.place` is to modify arrays in-place, which JAX
 cannot do because JAX arrays are immutable. Thus :func:`jax.numpy.place` adds
 the ``inplace`` parameter, which must be set to ``False`` by the user as a
@@ -5430,7 +5428,7 @@ def place(arr: ArrayLike, mask: ArrayLike, vals: ArrayLike, *,
   return data.ravel().at[indices].set(vals_arr, mode='drop').reshape(data.shape)
 
 
-@util._wraps(np.put, lax_description="""
+@util.implements(np.put, lax_description="""
 The semantics of :func:`numpy.put` is to modify arrays in-place, which JAX
 cannot do because JAX arrays are immutable. Thus :func:`jax.numpy.put` adds
 the ``inplace`` parameter, which must be set to ``False`` by the user as a

@@ -17,15 +17,15 @@ import scipy.stats as osp_stats
 from jax import lax
 import jax.numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
-from jax._src.numpy.util import _wraps, promote_args_inexact
+from jax._src.numpy.util import implements, promote_args_inexact
 from jax._src.typing import Array, ArrayLike
 
-@_wraps(osp_stats.vonmises.logpdf, update_doc=False)
+@implements(osp_stats.vonmises.logpdf, update_doc=False)
 def logpdf(x: ArrayLike, kappa: ArrayLike) -> Array:
   x, kappa = promote_args_inexact('vonmises.logpdf', x, kappa)
   zero = _lax_const(kappa, 0)
   return jnp.where(lax.gt(kappa, zero), kappa * (jnp.cos(x) - 1) - jnp.log(2 * jnp.pi * lax.bessel_i0e(kappa)), jnp.nan)
 
-@_wraps(osp_stats.vonmises.pdf, update_doc=False)
+@implements(osp_stats.vonmises.pdf, update_doc=False)
 def pdf(x: ArrayLike, kappa: ArrayLike) -> Array:
   return lax.exp(logpdf(x, kappa))

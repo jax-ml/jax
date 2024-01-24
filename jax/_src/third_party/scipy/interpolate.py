@@ -4,7 +4,7 @@ import scipy.interpolate as osp_interpolate
 from jax.numpy import (asarray, broadcast_arrays, can_cast,
                        empty, nan, searchsorted, where, zeros)
 from jax._src.tree_util import register_pytree_node
-from jax._src.numpy.util import check_arraylike, promote_dtypes_inexact, _wraps
+from jax._src.numpy.util import check_arraylike, promote_dtypes_inexact, implements
 
 
 def _ndim_coords_from_arrays(points, ndim=None):
@@ -31,7 +31,7 @@ def _ndim_coords_from_arrays(points, ndim=None):
   return points
 
 
-@_wraps(
+@implements(
     osp_interpolate.RegularGridInterpolator,
     lax_description="""
 In the JAX version, `bounds_error` defaults to and must always be `False` since no
@@ -76,7 +76,7 @@ class RegularGridInterpolator:
     self.grid = tuple(asarray(p) for p in points)
     self.values = values
 
-  @_wraps(osp_interpolate.RegularGridInterpolator.__call__, update_doc=False)
+  @implements(osp_interpolate.RegularGridInterpolator.__call__, update_doc=False)
   def __call__(self, xi, method=None):
     method = self.method if method is None else method
     if method not in ("linear", "nearest"):

@@ -23,7 +23,7 @@ import jax.numpy as jnp
 from jax import jit
 from jax._src import dtypes
 from jax._src.api import vmap
-from jax._src.numpy.util import check_arraylike, _wraps, promote_args_inexact
+from jax._src.numpy.util import check_arraylike, implements, promote_args_inexact
 from jax._src.typing import ArrayLike, Array
 from jax._src.util import canonicalize_axis
 
@@ -31,7 +31,7 @@ import scipy
 
 ModeResult = namedtuple('ModeResult', ('mode', 'count'))
 
-@_wraps(scipy.stats.mode, lax_description="""\
+@implements(scipy.stats.mode, lax_description="""\
 Currently the only supported nan_policy is 'propagate'
 """)
 @partial(jit, static_argnames=['axis', 'nan_policy', 'keepdims'])
@@ -90,7 +90,7 @@ def invert_permutation(i: Array) -> Array:
   """Helper function that inverts a permutation array."""
   return jnp.empty_like(i).at[i].set(jnp.arange(i.size, dtype=i.dtype))
 
-@_wraps(scipy.stats.rankdata, lax_description="""\
+@implements(scipy.stats.rankdata, lax_description="""\
 Currently the only supported nan_policy is 'propagate'
 """)
 @partial(jit, static_argnames=["method", "axis", "nan_policy"])
@@ -148,7 +148,7 @@ def rankdata(
     return .5 * (count[dense] + count[dense - 1] + 1).astype(dtypes.canonicalize_dtype(jnp.float_))
   raise ValueError(f"unknown method '{method}'")
 
-@_wraps(scipy.stats.sem, lax_description="""\
+@implements(scipy.stats.sem, lax_description="""\
 Currently the only supported nan_policies are 'propagate' and 'omit'
 """)
 @partial(jit, static_argnames=['axis', 'nan_policy', 'keepdims'])

@@ -16,11 +16,11 @@ import scipy.stats as osp_stats
 
 from jax import lax
 from jax._src.lax.lax import _const as _lax_const
-from jax._src.numpy.util import _wraps, promote_args_inexact
+from jax._src.numpy.util import implements, promote_args_inexact
 from jax._src.typing import Array, ArrayLike
 
 
-@_wraps(osp_stats.laplace.logpdf, update_doc=False)
+@implements(osp_stats.laplace.logpdf, update_doc=False)
 def logpdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   x, loc, scale = promote_args_inexact("laplace.logpdf", x, loc, scale)
   two = _lax_const(x, 2)
@@ -28,12 +28,12 @@ def logpdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   return lax.neg(lax.add(linear_term, lax.log(lax.mul(two, scale))))
 
 
-@_wraps(osp_stats.laplace.pdf, update_doc=False)
+@implements(osp_stats.laplace.pdf, update_doc=False)
 def pdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   return lax.exp(logpdf(x, loc, scale))
 
 
-@_wraps(osp_stats.laplace.cdf, update_doc=False)
+@implements(osp_stats.laplace.cdf, update_doc=False)
 def cdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   x, loc, scale = promote_args_inexact("laplace.cdf", x, loc, scale)
   half = _lax_const(x, 0.5)

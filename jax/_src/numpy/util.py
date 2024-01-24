@@ -112,13 +112,13 @@ def _parse_parameters(body: str) -> dict[str, str]:
 
 
 def _parse_extra_params(extra_params: str) -> dict[str, str]:
-  """Parse the extra parameters passed to _wraps()"""
+  """Parse the extra parameters passed to implements()"""
   parameters = _parameter_break.split(extra_params.strip('\n'))
   return {p.partition(' : ')[0].partition(', ')[0]: p for p in parameters}
 
 
-def _wraps(
-    fun: Callable[..., Any] | None,
+def implements(
+    original_fun: Callable[..., Any] | None,
     update_doc: bool = True,
     lax_description: str = "",
     sections: Sequence[str] = ('Parameters', 'Returns', 'References'),
@@ -126,46 +126,46 @@ def _wraps(
     extra_params: str | None = None,
     module: str | None = None,
 ) -> Callable[[_T], _T]:
-  """Specialized version of functools.wraps for wrapping numpy functions.
+  """Decorator for JAX functions which implement a specified NumPy function.
 
-  This produces a wrapped function with a modified docstring. In particular, if
-  `update_doc` is True, parameters listed in the wrapped function that are not
-  supported by the decorated function will be removed from the docstring. For
-  this reason, it is important that parameter names match those in the original
-  numpy function.
+  This mainly contains logic to copy and modify the docstring of the original
+  function. In particular, if `update_doc` is True, parameters listed in the
+  original function that are not supported by the decorated function will
+  be removed from the docstring. For this reason, it is important that parameter
+  names match those in the original numpy function.
 
   Args:
-    fun: The function being wrapped
+    original_fun: The original function being implemented
     update_doc: whether to transform the numpy docstring to remove references of
       parameters that are supported by the numpy version but not the JAX version.
       If False, include the numpy docstring verbatim.
     lax_description: a string description that will be added to the beginning of
       the docstring.
     sections: a list of sections to include in the docstring. The default is
-      ["Parameters", "returns", "References"]
+      ["Parameters", "Returns", "References"]
     skip_params: a list of strings containing names of parameters accepted by the
       function that should be skipped in the parameter list.
     extra_params: an optional string containing additional parameter descriptions.
       When ``update_doc=True``, these will be added to the list of parameter
       descriptions in the updated doc.
-    module: an optional string specifying the module from which the wrapped function
+    module: an optional string specifying the module from which the original function
       is imported. This is useful for objects such as ufuncs, where the module cannot
-      be determined from the wrapped function itself.
+      be determined from the original function itself.
   """
-  def wrap(op):
-    op.__np_wrapped__ = fun
-    # Allows this pattern: @wraps(getattr(np, 'new_function', None))
-    if fun is None:
+  def decorator(wrapped_fun):
+    wrapped_fun.__np_wrapped__ = original_fun
+    # Allows this pattern: @implements(getattr(np, 'new_function', None))
+    if original_fun is None:
       if lax_description:
-        op.__doc__ = lax_description
-      return op
-    docstr = getattr(fun, "__doc__", None)
-    name = getattr(fun, "__name__", getattr(op, "__name__", str(op)))
+        wrapped_fun.__doc__ = lax_description
+      return wrapped_fun
+    docstr = getattr(original_fun, "__doc__", None)
+    name = getattr(original_fun, "__name__", getattr(wrapped_fun, "__name__", str(wrapped_fun)))
     try:
-      mod = module or fun.__module__
+      mod = module or original_fun.__module__
     except AttributeError:
       if config.enable_checks.value:
-        raise ValueError(f"function {fun} defines no __module__; pass module keyword to _wraps.")
+        raise ValueError(f"function {original_fun} defines no __module__; pass module keyword to implements().")
     else:
       name = f"{mod}.{name}"
     if docstr:
@@ -173,7 +173,7 @@ def _wraps(
         parsed = _parse_numpydoc(docstr)
 
         if update_doc and 'Parameters' in parsed.sections:
-          code = getattr(getattr(op, "__wrapped__", op), "__code__", None)
+          code = getattr(getattr(wrapped_fun, "__wrapped__", wrapped_fun), "__code__", None)
           # Remove unrecognized parameter descriptions.
           parameters = _parse_parameters(parsed.sections['Parameters'])
           if extra_params:
@@ -211,18 +211,18 @@ def _wraps(
       except:
         if config.enable_checks.value:
           raise
-        docstr = fun.__doc__
+        docstr = original_fun.__doc__
 
-    op.__doc__ = docstr
+    wrapped_fun.__doc__ = docstr
     for attr in ['__name__', '__qualname__']:
       try:
-        value = getattr(fun, attr)
+        value = getattr(original_fun, attr)
       except AttributeError:
         pass
       else:
-        setattr(op, attr, value)
-    return op
-  return wrap
+        setattr(wrapped_fun, attr, value)
+    return wrapped_fun
+  return decorator
 
 _dtype = partial(dtypes.dtype, canonicalize=True)
 

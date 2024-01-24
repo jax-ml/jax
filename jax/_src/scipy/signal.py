@@ -34,13 +34,13 @@ from jax._src import dtypes
 from jax._src.lax.lax import PrecisionLike
 from jax._src.numpy import linalg
 from jax._src.numpy.util import (
-    check_arraylike, _wraps, promote_dtypes_inexact, promote_dtypes_complex)
+    check_arraylike, implements, promote_dtypes_inexact, promote_dtypes_complex)
 from jax._src.third_party.scipy import signal_helper
 from jax._src.typing import Array, ArrayLike
 from jax._src.util import canonicalize_axis, tuple_delete, tuple_insert
 
 
-@_wraps(osp_signal.fftconvolve)
+@implements(osp_signal.fftconvolve)
 def fftconvolve(in1: ArrayLike, in2: ArrayLike, mode: str = "full",
                 axes: Sequence[int] | None = None) -> Array:
   check_arraylike('fftconvolve', in1, in2)
@@ -133,7 +133,7 @@ def _convolve_nd(in1: Array, in2: Array, mode: str, *, precision: PrecisionLike)
   return result[0, 0]
 
 
-@_wraps(osp_signal.convolve)
+@implements(osp_signal.convolve)
 def convolve(in1: Array, in2: Array, mode: str = 'full', method: str = 'auto',
              precision: PrecisionLike = None) -> Array:
   if method == 'fft':
@@ -144,7 +144,7 @@ def convolve(in1: Array, in2: Array, mode: str = 'full', method: str = 'auto',
     raise ValueError(f"Got {method=}; expected 'auto', 'fft', or 'direct'.")
 
 
-@_wraps(osp_signal.convolve2d)
+@implements(osp_signal.convolve2d)
 def convolve2d(in1: Array, in2: Array, mode: str = 'full', boundary: str = 'fill',
                fillvalue: float = 0, precision: PrecisionLike = None) -> Array:
   if boundary != 'fill' or fillvalue != 0:
@@ -154,13 +154,13 @@ def convolve2d(in1: Array, in2: Array, mode: str = 'full', boundary: str = 'fill
   return _convolve_nd(in1, in2, mode, precision=precision)
 
 
-@_wraps(osp_signal.correlate)
+@implements(osp_signal.correlate)
 def correlate(in1: Array, in2: Array, mode: str = 'full', method: str = 'auto',
               precision: PrecisionLike = None) -> Array:
   return convolve(in1, jnp.flip(in2.conj()), mode, precision=precision, method=method)
 
 
-@_wraps(osp_signal.correlate2d)
+@implements(osp_signal.correlate2d)
 def correlate2d(in1: Array, in2: Array, mode: str = 'full', boundary: str = 'fill',
                 fillvalue: float = 0, precision: PrecisionLike = None) -> Array:
   if boundary != 'fill' or fillvalue != 0:
@@ -191,7 +191,7 @@ def correlate2d(in1: Array, in2: Array, mode: str = 'full', boundary: str = 'fil
   return result
 
 
-@_wraps(osp_signal.detrend)
+@implements(osp_signal.detrend)
 def detrend(data: ArrayLike, axis: int = -1, type: str = 'linear', bp: int = 0,
             overwrite_data: None = None) -> Array:
   if overwrite_data is not None:
@@ -499,7 +499,7 @@ def _spectral_helper(x: Array, y: ArrayLike | None, fs: ArrayLike = 1.0,
   return freqs, time, result
 
 
-@_wraps(osp_signal.stft)
+@implements(osp_signal.stft)
 def stft(x: Array, fs: ArrayLike = 1.0, window: str = 'hann', nperseg: int = 256,
          noverlap: int | None = None, nfft: int | None = None,
          detrend: bool = False, return_onesided: bool = True, boundary: str | None = 'zeros',
@@ -518,7 +518,7 @@ to follow the latter behavior.  For using the former behavior, call this
 function as `csd(x, None)`."""
 
 
-@_wraps(osp_signal.csd, lax_description=_csd_description)
+@implements(osp_signal.csd, lax_description=_csd_description)
 def csd(x: Array, y: ArrayLike | None, fs: ArrayLike = 1.0, window: str = 'hann',
         nperseg: int | None = None, noverlap: int | None = None,
         nfft: int | None = None, detrend: str = 'constant',
@@ -551,7 +551,7 @@ def csd(x: Array, y: ArrayLike | None, fs: ArrayLike = 1.0, window: str = 'hann'
   return freqs, Pxy
 
 
-@_wraps(osp_signal.welch)
+@implements(osp_signal.welch)
 def welch(x: Array, fs: ArrayLike = 1.0, window: str = 'hann',
           nperseg: int | None = None, noverlap: int | None = None,
           nfft: int | None = None, detrend: str = 'constant',
@@ -613,7 +613,7 @@ def _overlap_and_add(x: Array, step_size: int) -> Array:
   return x.reshape(tuple(batch_shape) + (-1,))
 
 
-@_wraps(osp_signal.istft)
+@implements(osp_signal.istft)
 def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
           nperseg: int | None = None, noverlap: int | None = None,
           nfft: int | None = None, input_onesided: bool = True,

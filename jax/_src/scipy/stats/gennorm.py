@@ -14,20 +14,20 @@
 
 import scipy.stats as osp_stats
 from jax import lax
-from jax._src.numpy.util import _wraps, promote_args_inexact
+from jax._src.numpy.util import implements, promote_args_inexact
 from jax._src.typing import Array, ArrayLike
 
 
-@_wraps(osp_stats.gennorm.logpdf, update_doc=False)
+@implements(osp_stats.gennorm.logpdf, update_doc=False)
 def logpdf(x: ArrayLike, p: ArrayLike) -> Array:
   x, p = promote_args_inexact("gennorm.logpdf", x, p)
   return lax.log(.5 * p) - lax.lgamma(1/p) - lax.abs(x)**p
 
-@_wraps(osp_stats.gennorm.cdf, update_doc=False)
+@implements(osp_stats.gennorm.cdf, update_doc=False)
 def cdf(x: ArrayLike, p: ArrayLike) -> Array:
   x, p = promote_args_inexact("gennorm.cdf", x, p)
   return .5 * (1 + lax.sign(x) * lax.igamma(1/p, lax.abs(x)**p))
 
-@_wraps(osp_stats.gennorm.pdf, update_doc=False)
+@implements(osp_stats.gennorm.pdf, update_doc=False)
 def pdf(x: ArrayLike, p: ArrayLike) -> Array:
   return lax.exp(logpdf(x, p))

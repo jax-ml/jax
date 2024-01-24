@@ -34,7 +34,7 @@ from jax._src.typing import Array, ArrayLike
 from jax._src.numpy.util import (
    check_arraylike, promote_args, promote_args_inexact,
    promote_args_numeric, promote_dtypes_inexact, promote_dtypes_numeric,
-   promote_shapes, _where, _wraps, check_no_float0s)
+   promote_shapes, _where, implements, check_no_float0s)
 
 _lax_const = lax._const
 
@@ -68,9 +68,9 @@ def _one_to_one_unop(
   fn = jit(fn, inline=True)
   if lax_doc:
     doc = dedent('\n\n'.join(lax_fn.__doc__.split('\n\n')[1:])).strip()  # type: ignore[union-attr]
-    return _wraps(numpy_fn, lax_description=doc, module='numpy')(fn)
+    return implements(numpy_fn, lax_description=doc, module='numpy')(fn)
   else:
-    return _wraps(numpy_fn, module='numpy')(fn)
+    return implements(numpy_fn, module='numpy')(fn)
 
 
 def _one_to_one_binop(
@@ -87,9 +87,9 @@ def _one_to_one_binop(
   fn = jit(fn, inline=True)
   if lax_doc:
     doc = dedent('\n\n'.join(lax_fn.__doc__.split('\n\n')[1:])).strip()  # type: ignore[union-attr]
-    return _wraps(numpy_fn, lax_description=doc, module='numpy')(fn)
+    return implements(numpy_fn, lax_description=doc, module='numpy')(fn)
   else:
-    return _wraps(numpy_fn, module='numpy')(fn)
+    return implements(numpy_fn, module='numpy')(fn)
 
 
 def _maybe_bool_binop(
@@ -102,9 +102,9 @@ def _maybe_bool_binop(
   fn = jit(fn, inline=True)
   if lax_doc:
     doc = dedent('\n\n'.join(lax_fn.__doc__.split('\n\n')[1:])).strip()  # type: ignore[union-attr]
-    return _wraps(numpy_fn, lax_description=doc, module='numpy')(fn)
+    return implements(numpy_fn, lax_description=doc, module='numpy')(fn)
   else:
-    return _wraps(numpy_fn, module='numpy')(fn)
+    return implements(numpy_fn, module='numpy')(fn)
 
 
 def _comparison_op(numpy_fn: Callable[..., Any], lax_fn: BinOp) -> BinOp:
@@ -120,7 +120,7 @@ def _comparison_op(numpy_fn: Callable[..., Any], lax_fn: BinOp) -> BinOp:
     return lax_fn(x1, x2)
   fn.__qualname__ = f"jax.numpy.{numpy_fn.__name__}"
   fn = jit(fn, inline=True)
-  return _wraps(numpy_fn, module='numpy')(fn)
+  return implements(numpy_fn, module='numpy')(fn)
 
 @overload
 def _logical_op(np_op: Callable[..., Any], bitwise_op: UnOp) -> UnOp: ...
@@ -130,7 +130,7 @@ def _logical_op(np_op: Callable[..., Any], bitwise_op: BinOp) -> BinOp: ...
 def _logical_op(np_op: Callable[..., Any], bitwise_op: UnOp | BinOp) -> UnOp | BinOp: ...
 
 def _logical_op(np_op: Callable[..., Any], bitwise_op: UnOp | BinOp) -> UnOp | BinOp:
-  @_wraps(np_op, update_doc=False, module='numpy')
+  @implements(np_op, update_doc=False, module='numpy')
   @partial(jit, inline=True)
   def op(*args):
     zero = lambda x: lax.full_like(x, shape=(), fill_value=0)
@@ -214,14 +214,14 @@ atanh = _one_to_one_unop(getattr(np, "atanh", np.arctanh), lax.atanh, True)
 atan2 = _one_to_one_binop(getattr(np, "atan2", np.arctan2), lax.atan2, True)
 
 
-@_wraps(getattr(np, 'bitwise_count', None), module='numpy')
+@implements(getattr(np, 'bitwise_count', None), module='numpy')
 @jit
 def bitwise_count(x: ArrayLike, /) -> Array:
   x, = promote_args_numeric("bitwise_count", x)
   # Following numpy we take the absolute value and return uint8.
   return lax.population_count(abs(x)).astype('uint8')
 
-@_wraps(np.right_shift, module='numpy')
+@implements(np.right_shift, module='numpy')
 @partial(jit, inline=True)
 def right_shift(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   x1, x2 = promote_args_numeric(np.right_shift.__name__, x1, x2)
@@ -229,7 +229,7 @@ def right_shift(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     np.issubdtype(x1.dtype, np.unsignedinteger) else lax.shift_right_arithmetic
   return lax_fn(x1, x2)
 
-@_wraps(getattr(np, "bitwise_right_shift", np.right_shift), module='numpy')
+@implements(getattr(np, "bitwise_right_shift", np.right_shift), module='numpy')
 @partial(jit, inline=True)
 def bitwise_right_shift(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   x1, x2 = promote_args_numeric("bitwise_right_shift", x1, x2)
@@ -237,16 +237,16 @@ def bitwise_right_shift(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     np.issubdtype(x1.dtype, np.unsignedinteger) else lax.shift_right_arithmetic
   return lax_fn(x1, x2)
 
-@_wraps(np.absolute, module='numpy')
+@implements(np.absolute, module='numpy')
 @partial(jit, inline=True)
 def absolute(x: ArrayLike, /) -> Array:
   check_arraylike('absolute', x)
   dt = dtypes.dtype(x)
   return lax.asarray(x) if dt == np.bool_ or dtypes.issubdtype(dt, np.unsignedinteger) else lax.abs(x)
-abs = _wraps(np.abs, module='numpy')(absolute)
+abs = implements(np.abs, module='numpy')(absolute)
 
 
-@_wraps(np.rint, module='numpy')
+@implements(np.rint, module='numpy')
 @jit
 def rint(x: ArrayLike, /) -> Array:
   check_arraylike('rint', x)
@@ -258,7 +258,7 @@ def rint(x: ArrayLike, /) -> Array:
   return lax.round(x, lax.RoundingMethod.TO_NEAREST_EVEN)
 
 
-@_wraps(np.copysign, module='numpy')
+@implements(np.copysign, module='numpy')
 @jit
 def copysign(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   x1, x2 = promote_args_inexact("copysign", x1, x2)
@@ -267,7 +267,7 @@ def copysign(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   return _where(signbit(x2).astype(bool), -lax.abs(x1), lax.abs(x1))
 
 
-@_wraps(np.true_divide, module='numpy')
+@implements(np.true_divide, module='numpy')
 @partial(jit, inline=True)
 def true_divide(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   x1, x2 = promote_args_inexact("true_divide", x1, x2)
@@ -276,7 +276,7 @@ def true_divide(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 divide = true_divide
 
 
-@_wraps(np.floor_divide, module='numpy')
+@implements(np.floor_divide, module='numpy')
 @jit
 def floor_divide(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   x1, x2 = promote_args_numeric("floor_divide", x1, x2)
@@ -301,7 +301,7 @@ def floor_divide(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     return _float_divmod(x1, x2)[0]
 
 
-@_wraps(np.divmod, module='numpy')
+@implements(np.divmod, module='numpy')
 @jit
 def divmod(x1: ArrayLike, x2: ArrayLike, /) -> tuple[Array, Array]:
   x1, x2 = promote_args_numeric("divmod", x1, x2)
@@ -323,7 +323,7 @@ def _float_divmod(x1: ArrayLike, x2: ArrayLike) -> tuple[Array, Array]:
   return lax.round(div), mod
 
 
-@_wraps(np.power, module='numpy')
+@implements(np.power, module='numpy')
 def power(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   check_arraylike("power", x1, x2)
   check_no_float0s("power", x1, x2)
@@ -393,7 +393,7 @@ def _pow_int_int(x1, x2):
 
 
 @custom_jvp
-@_wraps(np.logaddexp, module='numpy')
+@implements(np.logaddexp, module='numpy')
 @jit
 def logaddexp(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   x1, x2 = promote_args_inexact("logaddexp", x1, x2)
@@ -431,7 +431,7 @@ def _logaddexp_jvp(primals, tangents):
 
 
 @custom_jvp
-@_wraps(np.logaddexp2, module='numpy')
+@implements(np.logaddexp2, module='numpy')
 @jit
 def logaddexp2(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   x1, x2 = promote_args_inexact("logaddexp2", x1, x2)
@@ -459,28 +459,28 @@ def _logaddexp2_jvp(primals, tangents):
   return primal_out, tangent_out
 
 
-@_wraps(np.log2, module='numpy')
+@implements(np.log2, module='numpy')
 @partial(jit, inline=True)
 def log2(x: ArrayLike, /) -> Array:
   x, = promote_args_inexact("log2", x)
   return lax.div(lax.log(x), lax.log(_constant_like(x, 2)))
 
 
-@_wraps(np.log10, module='numpy')
+@implements(np.log10, module='numpy')
 @partial(jit, inline=True)
 def log10(x: ArrayLike, /) -> Array:
   x, = promote_args_inexact("log10", x)
   return lax.div(lax.log(x), lax.log(_constant_like(x, 10)))
 
 
-@_wraps(np.exp2, module='numpy')
+@implements(np.exp2, module='numpy')
 @partial(jit, inline=True)
 def exp2(x: ArrayLike, /) -> Array:
   x, = promote_args_inexact("exp2", x)
   return lax.exp2(x)
 
 
-@_wraps(np.signbit, module='numpy')
+@implements(np.signbit, module='numpy')
 @jit
 def signbit(x: ArrayLike, /) -> Array:
   x, = promote_args("signbit", x)
@@ -511,7 +511,7 @@ def _normalize_float(x):
   return lax.bitcast_convert_type(x1, int_type), x2
 
 
-@_wraps(np.ldexp, module='numpy')
+@implements(np.ldexp, module='numpy')
 @jit
 def ldexp(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   check_arraylike("ldexp", x1, x2)
@@ -560,7 +560,7 @@ def ldexp(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   return _where(isinf(x1) | isnan(x1) | (x1 == 0), x1, x)
 
 
-@_wraps(np.frexp, module='numpy')
+@implements(np.frexp, module='numpy')
 @jit
 def frexp(x: ArrayLike, /) -> tuple[Array, Array]:
   check_arraylike("frexp", x)
@@ -584,7 +584,7 @@ def frexp(x: ArrayLike, /) -> tuple[Array, Array]:
   return _where(cond, x, x1), lax.convert_element_type(x2, np.int32)
 
 
-@_wraps(np.remainder, module='numpy')
+@implements(np.remainder, module='numpy')
 @jit
 def remainder(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   x1, x2 = promote_args_numeric("remainder", x1, x2)
@@ -596,10 +596,10 @@ def remainder(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   do_plus = lax.bitwise_and(
       lax.ne(lax.lt(trunc_mod, zero), lax.lt(x2, zero)), trunc_mod_not_zero)
   return lax.select(do_plus, lax.add(trunc_mod, x2), trunc_mod)
-mod = _wraps(np.mod, module='numpy')(remainder)
+mod = implements(np.mod, module='numpy')(remainder)
 
 
-@_wraps(np.fmod, module='numpy')
+@implements(np.fmod, module='numpy')
 @jit
 def fmod(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   check_arraylike("fmod", x1, x2)
@@ -608,7 +608,7 @@ def fmod(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   return lax.rem(*promote_args_numeric("fmod", x1, x2))
 
 
-@_wraps(np.square, module='numpy')
+@implements(np.square, module='numpy')
 @partial(jit, inline=True)
 def square(x: ArrayLike, /) -> Array:
   check_arraylike("square", x)
@@ -616,14 +616,14 @@ def square(x: ArrayLike, /) -> Array:
   return lax.integer_pow(x, 2)
 
 
-@_wraps(np.deg2rad, module='numpy')
+@implements(np.deg2rad, module='numpy')
 @partial(jit, inline=True)
 def deg2rad(x: ArrayLike, /) -> Array:
   x, = promote_args_inexact("deg2rad", x)
   return lax.mul(x, _lax_const(x, np.pi / 180))
 
 
-@_wraps(np.rad2deg, module='numpy')
+@implements(np.rad2deg, module='numpy')
 @partial(jit, inline=True)
 def rad2deg(x: ArrayLike, /) -> Array:
   x, = promote_args_inexact("rad2deg", x)
@@ -634,7 +634,7 @@ degrees = rad2deg
 radians = deg2rad
 
 
-@_wraps(np.conjugate, module='numpy')
+@implements(np.conjugate, module='numpy')
 @partial(jit, inline=True)
 def conjugate(x: ArrayLike, /) -> Array:
   check_arraylike("conjugate", x)
@@ -642,20 +642,20 @@ def conjugate(x: ArrayLike, /) -> Array:
 conj = conjugate
 
 
-@_wraps(np.imag)
+@implements(np.imag)
 @partial(jit, inline=True)
 def imag(val: ArrayLike, /) -> Array:
   check_arraylike("imag", val)
   return lax.imag(val) if np.iscomplexobj(val) else lax.full_like(val, 0)
 
 
-@_wraps(np.real)
+@implements(np.real)
 @partial(jit, inline=True)
 def real(val: ArrayLike, /) -> Array:
   check_arraylike("real", val)
   return lax.real(val) if np.iscomplexobj(val) else lax.asarray(val)
 
-@_wraps(np.modf, module='numpy', skip_params=['out'])
+@implements(np.modf, module='numpy', skip_params=['out'])
 @jit
 def modf(x: ArrayLike, /, out=None) -> tuple[Array, Array]:
   check_arraylike("modf", x)
@@ -666,7 +666,7 @@ def modf(x: ArrayLike, /, out=None) -> tuple[Array, Array]:
   return x - whole, whole
 
 
-@_wraps(np.isfinite, module='numpy')
+@implements(np.isfinite, module='numpy')
 @partial(jit, inline=True)
 def isfinite(x: ArrayLike, /) -> Array:
   check_arraylike("isfinite", x)
@@ -679,7 +679,7 @@ def isfinite(x: ArrayLike, /) -> Array:
     return lax.full_like(x, True, dtype=np.bool_)
 
 
-@_wraps(np.isinf, module='numpy')
+@implements(np.isinf, module='numpy')
 @jit
 def isinf(x: ArrayLike, /) -> Array:
   check_arraylike("isinf", x)
@@ -707,24 +707,24 @@ def _isposneginf(infinity: float, x: ArrayLike, out) -> Array:
     return lax.full_like(x, False, dtype=np.bool_)
 
 
-isposinf: UnOp = _wraps(np.isposinf, skip_params=['out'])(
+isposinf: UnOp = implements(np.isposinf, skip_params=['out'])(
   lambda x, /, out=None: _isposneginf(np.inf, x, out)
 )
 
 
-isneginf: UnOp = _wraps(np.isneginf, skip_params=['out'])(
+isneginf: UnOp = implements(np.isneginf, skip_params=['out'])(
   lambda x, /, out=None: _isposneginf(-np.inf, x, out)
 )
 
 
-@_wraps(np.isnan, module='numpy')
+@implements(np.isnan, module='numpy')
 @partial(jit, inline=True)
 def isnan(x: ArrayLike, /) -> Array:
   check_arraylike("isnan", x)
   return lax.ne(x, x)
 
 
-@_wraps(np.heaviside, module='numpy')
+@implements(np.heaviside, module='numpy')
 @jit
 def heaviside(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   check_arraylike("heaviside", x1, x2)
@@ -734,7 +734,7 @@ def heaviside(x1: ArrayLike, x2: ArrayLike, /) -> Array:
                 _where(lax.gt(x1, zero), _lax_const(x1, 1), x2))
 
 
-@_wraps(np.hypot, module='numpy')
+@implements(np.hypot, module='numpy')
 @jit
 def hypot(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   check_arraylike("hypot", x1, x2)
@@ -745,7 +745,7 @@ def hypot(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   return lax.select(x1 == 0, x1, x1 * lax.sqrt(1 + lax.square(lax.div(x2, lax.select(x1 == 0, lax._ones(x1), x1)))))
 
 
-@_wraps(np.reciprocal, module='numpy')
+@implements(np.reciprocal, module='numpy')
 @partial(jit, inline=True)
 def reciprocal(x: ArrayLike, /) -> Array:
   check_arraylike("reciprocal", x)
@@ -753,7 +753,7 @@ def reciprocal(x: ArrayLike, /) -> Array:
   return lax.integer_pow(x, -1)
 
 
-@_wraps(np.sinc, update_doc=False)
+@implements(np.sinc, update_doc=False)
 @jit
 def sinc(x: ArrayLike, /) -> Array:
   check_arraylike("sinc", x)

@@ -17,7 +17,7 @@ import scipy.stats as osp_stats
 
 from jax import lax
 import jax.numpy as jnp
-from jax._src.numpy.util import _wraps, promote_args_inexact
+from jax._src.numpy.util import implements, promote_args_inexact
 from jax._src.scipy.stats import norm
 from jax._src.scipy.special import logsumexp, log_ndtr, ndtr
 
@@ -69,7 +69,7 @@ def _log_gauss_mass(a, b):
   return out
 
 
-@_wraps(osp_stats.truncnorm.logpdf, update_doc=False)
+@implements(osp_stats.truncnorm.logpdf, update_doc=False)
 def logpdf(x, a, b, loc=0, scale=1):
   x, a, b, loc, scale = promote_args_inexact("truncnorm.logpdf", x, a, b, loc, scale)
   val = lax.sub(norm.logpdf(x, loc, scale), _log_gauss_mass(a, b))
@@ -80,23 +80,23 @@ def logpdf(x, a, b, loc=0, scale=1):
   return val
 
 
-@_wraps(osp_stats.truncnorm.pdf, update_doc=False)
+@implements(osp_stats.truncnorm.pdf, update_doc=False)
 def pdf(x, a, b, loc=0, scale=1):
   return lax.exp(logpdf(x, a, b, loc, scale))
 
 
-@_wraps(osp_stats.truncnorm.logsf, update_doc=False)
+@implements(osp_stats.truncnorm.logsf, update_doc=False)
 def logsf(x, a, b, loc=0, scale=1):
   x, a, b, loc, scale = promote_args_inexact("truncnorm.logsf", x, a, b, loc, scale)
   return logcdf(-x, -b, -a, -loc, scale)
 
 
-@_wraps(osp_stats.truncnorm.sf, update_doc=False)
+@implements(osp_stats.truncnorm.sf, update_doc=False)
 def sf(x, a, b, loc=0, scale=1):
   return lax.exp(logsf(x, a, b, loc, scale))
 
 
-@_wraps(osp_stats.truncnorm.logcdf, update_doc=False)
+@implements(osp_stats.truncnorm.logcdf, update_doc=False)
 def logcdf(x, a, b, loc=0, scale=1):
   x, a, b, loc, scale = promote_args_inexact("truncnorm.logcdf", x, a, b, loc, scale)
   x, a, b = jnp.broadcast_arrays(x, a, b)
@@ -113,6 +113,6 @@ def logcdf(x, a, b, loc=0, scale=1):
   return logcdf
 
 
-@_wraps(osp_stats.truncnorm.cdf, update_doc=False)
+@implements(osp_stats.truncnorm.cdf, update_doc=False)
 def cdf(x, a, b, loc=0, scale=1):
   return lax.exp(logcdf(x, a, b, loc, scale))

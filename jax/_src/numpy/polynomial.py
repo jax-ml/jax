@@ -31,7 +31,7 @@ from jax._src.numpy.ufuncs import maximum, true_divide, sqrt
 from jax._src.numpy.reductions import all
 from jax._src.numpy import linalg
 from jax._src.numpy.util import (
-    check_arraylike, promote_dtypes, promote_dtypes_inexact, _where, _wraps)
+    check_arraylike, promote_dtypes, promote_dtypes_inexact, _where, implements)
 from jax._src.typing import Array, ArrayLike
 
 
@@ -57,7 +57,7 @@ def _roots_with_zeros(p: Array, num_leading_zeros: int) -> Array:
   return _where(arange(roots.size) < roots.size - num_leading_zeros, roots, complex(np.nan, np.nan))
 
 
-@_wraps(np.roots, lax_description="""\
+@implements(np.roots, lax_description="""\
 Unlike the numpy version of this function, the JAX version returns the roots in
 a complex array regardless of the values of the roots. Additionally, the jax
 version of this function adds the ``strip_zeros`` function which must be set to
@@ -106,7 +106,7 @@ _POLYFIT_DOC = """\
 Unlike NumPy's implementation of polyfit, :py:func:`jax.numpy.polyfit` will not warn on rank reduction, which indicates an ill conditioned matrix
 Also, it works best on rcond <= 10e-3 values.
 """
-@_wraps(np.polyfit, lax_description=_POLYFIT_DOC)
+@implements(np.polyfit, lax_description=_POLYFIT_DOC)
 @partial(jit, static_argnames=('deg', 'rcond', 'full', 'cov'))
 def polyfit(x: Array, y: Array, deg: int, rcond: float | None = None,
             full: bool = False, w: Array | None = None, cov: bool = False
@@ -187,7 +187,7 @@ np.poly returns an array with a real dtype in such cases.
 jax returns an array with a complex dtype in such cases.
 """
 
-@_wraps(np.poly, lax_description=_POLY_DOC)
+@implements(np.poly, lax_description=_POLY_DOC)
 @jit
 def poly(seq_of_zeros: Array) -> Array:
   check_arraylike('poly', seq_of_zeros)
@@ -214,7 +214,7 @@ def poly(seq_of_zeros: Array) -> Array:
   return a
 
 
-@_wraps(np.polyval, lax_description="""\
+@implements(np.polyval, lax_description="""\
 The ``unroll`` parameter is JAX specific. It does not effect correctness but can
 have a major impact on performance for evaluating high-order polynomials. The
 parameter controls the number of unrolled steps with ``lax.scan`` inside the
@@ -231,7 +231,7 @@ def polyval(p: Array, x: Array, *, unroll: int = 16) -> Array:
   y, _ = lax.scan(lambda y, p: (y * x + p, None), y, p, unroll=unroll)
   return y
 
-@_wraps(np.polyadd)
+@implements(np.polyadd)
 @jit
 def polyadd(a1: Array, a2: Array) -> Array:
   check_arraylike("polyadd", a1, a2)
@@ -242,7 +242,7 @@ def polyadd(a1: Array, a2: Array) -> Array:
     return a2.at[-a1.shape[0]:].add(a1)
 
 
-@_wraps(np.polyint)
+@implements(np.polyint)
 @partial(jit, static_argnames=('m',))
 def polyint(p: Array, m: int = 1, k: int | None = None) -> Array:
   m = core.concrete_or_error(operator.index, m, "'m' argument of jnp.polyint")
@@ -265,7 +265,7 @@ def polyint(p: Array, m: int = 1, k: int | None = None) -> Array:
     return true_divide(concatenate((p, k_arr)), coeff)
 
 
-@_wraps(np.polyder)
+@implements(np.polyder)
 @partial(jit, static_argnames=('m',))
 def polyder(p: Array, m: int = 1) -> Array:
   check_arraylike("polyder", p)
@@ -288,7 +288,7 @@ considered zero may lead to inconsistent results between NumPy and JAX, and even
 JAX backends. The result may lead to inconsistent output shapes when trim_leading_zeros=True.
 """
 
-@_wraps(np.polymul, lax_description=_LEADING_ZEROS_DOC)
+@implements(np.polymul, lax_description=_LEADING_ZEROS_DOC)
 def polymul(a1: ArrayLike, a2: ArrayLike, *, trim_leading_zeros: bool = False) -> Array:
   check_arraylike("polymul", a1, a2)
   a1_arr, a2_arr = promote_dtypes_inexact(a1, a2)
@@ -300,7 +300,7 @@ def polymul(a1: ArrayLike, a2: ArrayLike, *, trim_leading_zeros: bool = False) -
     a2_arr = asarray([0], dtype=a1_arr.dtype)
   return convolve(a1_arr, a2_arr, mode='full')
 
-@_wraps(np.polydiv, lax_description=_LEADING_ZEROS_DOC)
+@implements(np.polydiv, lax_description=_LEADING_ZEROS_DOC)
 def polydiv(u: ArrayLike, v: ArrayLike, *, trim_leading_zeros: bool = False) -> tuple[Array, Array]:
   check_arraylike("polydiv", u, v)
   u_arr, v_arr = promote_dtypes_inexact(u, v)
@@ -317,7 +317,7 @@ def polydiv(u: ArrayLike, v: ArrayLike, *, trim_leading_zeros: bool = False) -> 
     u_arr = trim_zeros_tol(u_arr, tol=sqrt(finfo(u_arr.dtype).eps), trim='f')
   return q, u_arr
 
-@_wraps(np.polysub)
+@implements(np.polysub)
 @jit
 def polysub(a1: Array, a2: Array) -> Array:
   check_arraylike("polysub", a1, a2)

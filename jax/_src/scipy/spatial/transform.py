@@ -22,10 +22,10 @@ import scipy.spatial.transform
 
 import jax
 import jax.numpy as jnp
-from jax._src.numpy.util import _wraps
+from jax._src.numpy.util import implements
 
 
-@_wraps(scipy.spatial.transform.Rotation)
+@implements(scipy.spatial.transform.Rotation)
 class Rotation(typing.NamedTuple):
   """Rotation in 3 dimensions."""
 
@@ -169,7 +169,7 @@ class Rotation(typing.NamedTuple):
     return self.quat.ndim == 1
 
 
-@_wraps(scipy.spatial.transform.Slerp)
+@implements(scipy.spatial.transform.Slerp)
 class Slerp(typing.NamedTuple):
   """Spherical Linear Interpolation of Rotations."""
 

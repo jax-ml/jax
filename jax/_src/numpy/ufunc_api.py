@@ -27,7 +27,7 @@ from jax._src.lax import lax as lax_internal
 from jax._src.numpy import reductions
 from jax._src.numpy.lax_numpy import _eliminate_deprecated_list_indexing, append, take
 from jax._src.numpy.reductions import _moveaxis
-from jax._src.numpy.util import _wraps, check_arraylike, _broadcast_to, _where
+from jax._src.numpy.util import implements, check_arraylike, _broadcast_to, _where
 from jax._src.numpy.vectorize import vectorize
 from jax._src.util import canonicalize_axis, set_module
 import numpy as np
@@ -131,7 +131,7 @@ class ufunc:
       raise NotImplementedError(f"where argument of {self}")
     return self._call(*args, **kwargs)
 
-  @_wraps(np.ufunc.reduce, module="numpy.ufunc")
+  @implements(np.ufunc.reduce, module="numpy.ufunc")
   @partial(jax.jit, static_argnames=['self', 'axis', 'dtype', 'out', 'keepdims'])
   def reduce(self, a: ArrayLike, axis: int = 0, dtype: DTypeLike | None = None,
              out: None = None, keepdims: bool = False, initial: ArrayLike | None = None,
@@ -219,7 +219,7 @@ class ufunc:
       result = result.reshape(final_shape)
     return result
 
-  @_wraps(np.ufunc.accumulate, module="numpy.ufunc")
+  @implements(np.ufunc.accumulate, module="numpy.ufunc")
   @partial(jax.jit, static_argnames=['self', 'axis', 'dtype'])
   def accumulate(self, a: ArrayLike, axis: int = 0, dtype: DTypeLike | None = None,
                  out: None = None) -> Array:
@@ -257,7 +257,7 @@ class ufunc:
     _, result = jax.lax.scan(scan_fun, (0, arr[0].astype(dtype)), None, length=arr.shape[0])
     return _moveaxis(result, 0, axis)
 
-  @_wraps(np.ufunc.accumulate, module="numpy.ufunc")
+  @implements(np.ufunc.accumulate, module="numpy.ufunc")
   @partial(jax.jit, static_argnums=[0], static_argnames=['inplace'])
   def at(self, a: ArrayLike, indices: Any, b: ArrayLike | None = None, /, *,
          inplace: bool = True) -> Array:
@@ -296,7 +296,7 @@ class ufunc:
     carry, _ = jax.lax.scan(scan_fun, (0, a), None, len(indices[0]))
     return carry[1]
 
-  @_wraps(np.ufunc.reduceat, module="numpy.ufunc")
+  @implements(np.ufunc.reduceat, module="numpy.ufunc")
   @partial(jax.jit, static_argnames=['self', 'axis', 'dtype'])
   def reduceat(self, a: ArrayLike, indices: Any, axis: int = 0,
                dtype: DTypeLike | None = None, out: None = None) -> Array:
@@ -335,7 +335,7 @@ class ufunc:
                     out)
     return jax.lax.fori_loop(0, a.shape[axis], loop_body, out)
 
-  @_wraps(np.ufunc.outer, module="numpy.ufunc")
+  @implements(np.ufunc.outer, module="numpy.ufunc")
   @partial(jax.jit, static_argnums=[0])
   def outer(self, A: ArrayLike, B: ArrayLike, /, **kwargs) -> Array:
     if self.nin != 2:

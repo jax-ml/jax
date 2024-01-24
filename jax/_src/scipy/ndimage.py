@@ -25,7 +25,7 @@ from jax._src import api
 from jax._src import util
 from jax import lax
 import jax.numpy as jnp
-from jax._src.numpy.util import _wraps
+from jax._src.numpy.util import implements
 from jax._src.typing import ArrayLike, Array
 from jax._src.util import safe_zip as zip
 
@@ -127,7 +127,7 @@ def _map_coordinates(input: ArrayLike, coordinates: Sequence[ArrayLike],
   return result.astype(input_arr.dtype)
 
 
-@_wraps(scipy.ndimage.map_coordinates, lax_description=textwrap.dedent("""\
+@implements(scipy.ndimage.map_coordinates, lax_description=textwrap.dedent("""\
     Only nearest neighbor (``order=0``), linear interpolation (``order=1``) and
     modes ``'constant'``, ``'nearest'``, ``'wrap'`` ``'mirror'`` and ``'reflect'`` are currently supported.
     Note that interpolation near boundaries differs from the scipy function,
