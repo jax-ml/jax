@@ -40,7 +40,7 @@ sys.path.insert(0, os.path.abspath('..'))
 # -- Project information -----------------------------------------------------
 
 project = 'JAX'
-copyright = '2023, The JAX Authors. NumPy and SciPy documentation are copyright the respective authors.'
+copyright = '2024, The JAX Authors. NumPy and SciPy documentation are copyright the respective authors.'
 author = 'The JAX authors'
 
 # The short X.Y version
