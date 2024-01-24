@@ -44,6 +44,7 @@ import jax
 from jax import jit
 from jax import errors
 from jax import lax
+from jax.sharding import Sharding, SingleDeviceSharding
 from jax.tree_util import tree_leaves, tree_flatten, tree_map
 
 from jax._src import api_util
@@ -58,6 +59,7 @@ from jax._src.core import ShapedArray, ConcreteArray
 from jax._src.lax.lax import (_array_copy, _sort_lt_comparator,
                               _sort_le_comparator, PrecisionLike)
 from jax._src.lax import lax as lax_internal
+from jax._src.lib import xla_client as xc
 from jax._src.numpy import reductions
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
@@ -2257,16 +2259,28 @@ def empty_like(prototype: ArrayLike | DuckTypedArray,
   return zeros_like(prototype, dtype=dtype, shape=shape)
 
 
+def _maybe_device_put(arr: Array, device: xc.Device | Sharding | None) -> Array:
+  return arr if device is None else jax.device_put(arr, device)
+
+def _normalize_to_sharding(device: xc.Device | Sharding | None) -> Sharding | None:
+  if isinstance(device, xc.Device):
+    return SingleDeviceSharding(device)
+  else:
+    return device
+
+
 @util._wraps(np.full)
 def full(shape: Any, fill_value: ArrayLike,
-         dtype: DTypeLike | None = None) -> Array:
+         dtype: DTypeLike | None = None, *,
+         device: xc.Device | Sharding | None = None) -> Array:
   dtypes.check_user_dtype_supported(dtype, "full")
   util.check_arraylike("full", fill_value)
+
   if ndim(fill_value) == 0:
     shape = canonicalize_shape(shape)
-    return lax.full(shape, fill_value, dtype)
+    return lax.full(shape, fill_value, dtype, sharding=_normalize_to_sharding(device))
   else:
-    return broadcast_to(asarray(fill_value, dtype=dtype), shape)
+    return _maybe_device_put(broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
 
 
 @util._wraps(np.full_like)
@@ -2289,30 +2303,33 @@ def full_like(a: ArrayLike | DuckTypedArray,
 
 
 @util._wraps(np.zeros)
-def zeros(shape: Any, dtype: DTypeLike | None = None) -> Array:
+def zeros(shape: Any, dtype: DTypeLike | None = None, *,
+          device: xc.Device | Sharding | None = None) -> Array:
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
   if (m := _check_forgot_shape_tuple("zeros", shape, dtype)): raise TypeError(m)
   dtypes.check_user_dtype_supported(dtype, "zeros")
   shape = canonicalize_shape(shape)
-  return lax.full(shape, 0, _jnp_dtype(dtype))
+  return lax.full(shape, 0, _jnp_dtype(dtype), sharding=_normalize_to_sharding(device))
 
 @util._wraps(np.ones)
-def ones(shape: Any, dtype: DTypeLike | None = None) -> Array:
+def ones(shape: Any, dtype: DTypeLike | None = None, *,
+         device: xc.Device | Sharding | None = None) -> Array:
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
   if (m := _check_forgot_shape_tuple("ones", shape, dtype)): raise TypeError(m)
   shape = canonicalize_shape(shape)
   dtypes.check_user_dtype_supported(dtype, "ones")
-  return lax.full(shape, 1, _jnp_dtype(dtype))
+  return lax.full(shape, 1, _jnp_dtype(dtype), sharding=_normalize_to_sharding(device))
 
 @util._wraps(np.empty, lax_description="""\
 Because XLA cannot create uninitialized arrays, the JAX version will
 return an array initialized with zeros.""")
-def empty(shape: Any, dtype: DTypeLike | None = None) -> Array:
+def empty(shape: Any, dtype: DTypeLike | None = None, *,
+          device: xc.Device | Sharding | None = None) -> Array:
   if (m := _check_forgot_shape_tuple("empty", shape, dtype)): raise TypeError(m)
   dtypes.check_user_dtype_supported(dtype, "empty")
-  return zeros(shape, dtype)
+  return zeros(shape, dtype, device=device)
 
 def _check_forgot_shape_tuple(name, shape, dtype) -> str | None:  # type: ignore
   if isinstance(dtype, int) and isinstance(shape, int):
