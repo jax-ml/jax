@@ -52,9 +52,6 @@ def pallas_call_tpu_lowering_rule(
         interpret=interpret, debug=debug,
         input_output_aliases=input_output_aliases,
         grid_mapping=grid_mapping, **compiler_params)
-  if input_output_aliases:
-    raise NotImplementedError(
-        "`input_output_aliases` not supported on TPU backend.")
   if debug:
     print(jaxpr)
   mesh = None
@@ -77,6 +74,10 @@ def pallas_call_tpu_lowering_rule(
         dimension_semantics=dimension_semantics, mesh=mesh)
     if debug:
       print(mosaic_module)
+  if extra_args and input_output_aliases:
+    raise NotImplementedError(
+        "Cannot use both input_output_aliases and extra_args."
+    )
   out_avals = [jax_core.ShapedArray(s.shape, s.dtype) for s in out_shapes]
   def _lower_fun(*args):
     return mosaic.as_tpu_kernel(
@@ -88,6 +89,7 @@ def pallas_call_tpu_lowering_rule(
         cost_estimate=mosaic_params.get("cost_estimate", None),
         vmem_limit_bytes=mosaic_params.get("vmem_limit_bytes", None),
         flags=mosaic_params.get("flags", None),
+        input_output_aliases=input_output_aliases,
     )(
         *extra_args,
         *args,

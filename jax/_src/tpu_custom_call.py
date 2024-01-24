@@ -32,6 +32,7 @@ from jax import core
 from jax._src import config
 from jax._src.lib import tpu
 from jax._src.lib import xla_client
+from jax._src.lib.mlir.dialects import hlo
 from jax._src.interpreters import mlir
 from jax.interpreters import xla
 from jaxlib.mlir import ir
@@ -172,6 +173,7 @@ def _tpu_custom_call_lowering(
     kernel_name: str | None,
     kernel_regeneration_metadata: bytes | None,
     out_avals: Any,
+    input_output_aliases: tuple[tuple[int, int], ...],
 ) -> ...:
   i32_type = ir.IntegerType.get_signless(32)
   multiple_results = len(out_avals) > 1
@@ -209,7 +211,18 @@ def _tpu_custom_call_lowering(
       called_computations=ir.ArrayAttr.get([]),
       operand_layouts=_avals_to_layouts(ctx.avals_in),
       result_layouts=_avals_to_layouts(ctx.avals_out),
-      output_operand_aliases=None,
+      output_operand_aliases=ir.ArrayAttr.get([
+          hlo.OutputOperandAlias.get(
+              # if len(result_types) == 1 then the aliasing refers implicitly to
+              # the only output.
+              output_tuple_indices=[output_idx]
+              if len(out_avals) > 1
+              else [],
+              operand_index=input_idx,
+              operand_tuple_indices=[],
+          )
+          for input_idx, output_idx in input_output_aliases
+      ]),
   )
 
   # Add kernel_name and kernel_regeneration_metadata as attributes to the
@@ -244,6 +257,7 @@ def as_tpu_kernel(
     kernel_regeneration_metadata: bytes | None = None,
     vmem_limit_bytes: int | None = None,
     flags: dict[str, bool | int | float] | None = None,
+    input_output_aliases: tuple[tuple[int, int], ...] = (),
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
   # We use jax.jit to make sure we hit the fast compilation cache.
@@ -280,6 +294,7 @@ def as_tpu_kernel(
       cost_estimate=cost_estimate,
       vmem_limit_bytes=vmem_limit_bytes,
       flags=flags,
+      input_output_aliases=input_output_aliases,
   )
 
 
@@ -297,6 +312,7 @@ def _lowered_as_tpu_kernel(
     kernel_regeneration_metadata: bytes | None = None,
     vmem_limit_bytes: int | None = None,
     flags: dict[str, bool | int | float] | None = None,
+    input_output_aliases: tuple[tuple[int, int], ...] = (),
 ):
   """Turns a low-level MLIR Mosaic kernel into a JAX-compatible function."""
   unpack = False
@@ -332,6 +348,7 @@ def _lowered_as_tpu_kernel(
         kernel_name=kernel_name,
         kernel_regeneration_metadata=kernel_regeneration_metadata,
         out_avals=out_avals,
+        input_output_aliases=input_output_aliases,
     )
     return result[0] if unpack else result
   return jax.jit(apply_kernel, static_argnames=["collective_id"])

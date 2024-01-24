@@ -41,7 +41,11 @@ P = jax.sharding.PartitionSpec
 partial = functools.partial
 
 
-class PallasCallScalarPrefetchTest(jtu.JaxTestCase):
+class PallasTPUTest(jtu.JaxTestCase):
+  interpret: bool = False
+
+
+class PallasCallScalarPrefetchTest(PallasTPUTest):
   interpret: bool = False
 
   def setUp(self):
@@ -1047,7 +1051,7 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
     np.testing.assert_allclose(y, expected)
 
 
-class PallasCallTest(jtu.JaxTestCase):
+class PallasCallTest(PallasTPUTest):
 
   def setUp(self):
     super().setUp()
@@ -1088,7 +1092,7 @@ class PallasCallTest(jtu.JaxTestCase):
     )(x)
 
 
-class PallasUXTest(jtu.JaxTestCase):
+class PallasUXTest(PallasTPUTest):
 
   def setUp(self):
     super().setUp()
@@ -1111,7 +1115,73 @@ class PallasUXTest(jtu.JaxTestCase):
       mosaic.as_tpu_kernel = as_tpu_kernel
 
 
-class PallasMegacoreTest(jtu.JaxTestCase):
+class PallasCallInputOutputAliasingTest(PallasTPUTest):
+
+  def setUp(self):
+    super().setUp()
+    if not self.interpret and jtu.device_under_test() != 'tpu':
+      self.skipTest('Only interpret mode supported on non-TPU')
+
+  def test_basic_input_output_aliasing(self):
+    # Input needs to be big so it doesn't fit in VMEM
+    x = jnp.ones((32, 1024, 1024))
+    expected = x + 1
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...] + 1.
+    @partial(jax.jit, donate_argnums=(0,))
+    def f(x):
+      return pl.pallas_call(
+          kernel,
+          out_shape=x,
+          in_specs=[pl.BlockSpec(lambda i: (i, 0, 0), (None, 1024, 1024))],
+          out_specs=pl.BlockSpec(lambda i: (i, 0, 0), (None, 1024, 1024)),
+          grid=(x.shape[0],),
+          input_output_aliases={0: 0},
+          interpret=self.interpret,
+      )(x)
+    o = f(x)
+    np.testing.assert_array_equal(o, expected)
+    compiled = f.lower(x).compile()
+    mem_analysis = compiled.memory_analysis()
+    expected_num_bytes = np.prod(x.shape) * x.dtype.itemsize
+    self.assertEqual(mem_analysis.alias_size_in_bytes, expected_num_bytes)
+    self.assertEqual(mem_analysis.temp_size_in_bytes, 0)
+
+  def test_input_output_aliasing_with_scalar_prefetch(self):
+    x = jnp.ones((32, 1024, 1024))
+    expected = x + 1
+
+    def kernel(_, x_ref, y_ref):
+      y_ref[...] = x_ref[...] + 1.
+    @partial(jax.jit, donate_argnums=(0,))
+    def f(x):
+      return pl.pallas_call(
+          kernel,
+          out_shape=x,
+          grid_spec=pltpu.PrefetchScalarGridSpec(
+              num_scalar_prefetch=1,
+              in_specs=[pl.BlockSpec(lambda i, _: (i, 0, 0), (None, 1024, 1024))],
+              out_specs=pl.BlockSpec(lambda i, _: (i, 0, 0), (None, 1024, 1024)),
+              grid=(x.shape[0],),
+          ),
+          input_output_aliases={1: 0},
+          interpret=self.interpret,
+      )(jnp.array([1,2,3]), x)
+    o = f(x)
+    np.testing.assert_array_equal(o, expected)
+    compiled = f.lower(x).compile()
+    mem_analysis = compiled.memory_analysis()
+    expected_num_bytes = np.prod(x.shape) * x.dtype.itemsize
+    self.assertEqual(mem_analysis.alias_size_in_bytes, expected_num_bytes)
+    self.assertEqual(mem_analysis.temp_size_in_bytes, 0)
+
+
+class PallasCallInterpreterInputOutputAliasingTest(PallasTPUTest):
+  interpret: bool = True
+
+
+class PallasMegacoreTest(PallasTPUTest):
 
   def setUp(self):
     super().setUp()
@@ -1149,7 +1219,7 @@ class PallasMegacoreTest(jtu.JaxTestCase):
     np.testing.assert_allclose(z, jax.vmap(jax.vmap(jnp.dot))(x, y))
 
 
-class PallasCallVmapTest(jtu.JaxTestCase):
+class PallasCallVmapTest(PallasTPUTest):
 
   def setUp(self):
     super().setUp()
@@ -1191,7 +1261,7 @@ class PallasCallVmapTest(jtu.JaxTestCase):
     np.testing.assert_array_equal(out, out_ref, strict=True)
 
 
-class PallasCallControlFlowTest(jtu.JaxTestCase):
+class PallasCallControlFlowTest(PallasTPUTest):
 
   def setUp(self):
     super().setUp()
