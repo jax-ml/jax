@@ -3802,6 +3802,16 @@ class ArrayPjitTest(jtu.JaxTestCase):
       g(np.arange(8))
     self.assertEqual(count[0], 2)
 
+  def test_single_device_named_sharding_preserved(self):
+    mesh = jax.sharding.Mesh([jax.devices()[0]], 'x')
+    s = NamedSharding(mesh, P('x'))
+    np_inp = np.arange(8)
+    inp = jax.device_put(np_inp, s)
+
+    out = jax.jit(lambda x: x)(inp)
+    self.assertEqual(out.sharding, s)
+    self.assertArraysEqual(out, np_inp)
+
 
 class TempSharding(Sharding):
 

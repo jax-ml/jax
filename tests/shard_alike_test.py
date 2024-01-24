@@ -291,6 +291,14 @@ class ShardAlikeTest(jtu.JaxTestCase):
     self.assertArraysEqual(out1, np_inp)
     self.assertArraysEqual(out2, np_inp2.T)
 
+  def test_sharding_preserverd_single_device(self):
+    mesh = jax.sharding.Mesh([jax.devices()[0]], "x")
+    s = NamedSharding(mesh, P("x"))
+
+    x = jax.device_put(np.arange(8), s)
+    _, y = shard_alike(x, jnp.arange(8))
+    self.assertEqual(y.sharding, s)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
