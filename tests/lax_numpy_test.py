@@ -41,6 +41,7 @@ import jax
 import jax.ops
 from jax import lax
 from jax import numpy as jnp
+from jax.sharding import SingleDeviceSharding
 from jax import tree_util
 from jax.test_util import check_grads
 
@@ -2826,6 +2827,28 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, in_dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+      func=[jnp.empty, jnp.zeros, jnp.ones, jnp.full],
+      shape=array_shapes,
+      dtype=default_dtypes,
+  )
+  def testArrayCreationWithDevice(self, func, shape, dtype):
+    device = jax.devices()[-1]
+    kwds = {'fill_value': 1} if func is jnp.full else {}
+    out = func(**kwds, shape=shape, dtype=dtype, device=device)
+    self.assertEqual(out.devices(), {device})
+
+  @jtu.sample_product(
+      func=[jnp.empty, jnp.zeros, jnp.ones, jnp.full],
+      shape=array_shapes,
+      dtype=default_dtypes,
+  )
+  def testArrayCreationWithSharding(self, func, shape, dtype):
+    sharding = SingleDeviceSharding(jax.devices()[-1])
+    kwds = {'fill_value': 1} if func is jnp.full else {}
+    out = func(**kwds, shape=shape, dtype=dtype, device=sharding)
+    self.assertEqual(out.sharding, sharding)
 
   def testDuckTypedLike(self):
     x = jax.ShapeDtypeStruct((1, 2, 3), np.dtype("int32"))
@@ -5650,7 +5673,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'hstack': ['casting'],
       'identity': ['like'],
       'isin': ['kind'],
-      'full': ['device', 'order', 'like'],
+      'full': ['order', 'like'],
       'full_like': ['device', 'subok', 'order'],
       'fromfunction': ['like'],
       'histogram': ['normed'],
@@ -5661,7 +5684,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'nanquantile': ['weights'],
       'nanstd': ['correction', 'mean'],
       'nanvar': ['correction', 'mean'],
-      'ones': ['device', 'order', 'like'],
+      'ones': ['order', 'like'],
       'ones_like': ['device', 'subok', 'order'],
       'partition': ['kind', 'order'],
       'percentile': ['weights'],
