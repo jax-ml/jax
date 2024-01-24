@@ -26,4 +26,6 @@ from jax._src.scipy.signal import (
   istft as istft,
   stft as stft,
   welch as welch,
+  lfilter as lfilter,
+  sosfilt as sosfilt,
 )

@@ -423,5 +423,92 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
                             check_dtypes=False)
     self._CompileAndCheck(jsp_fun, args_maker, rtol=tol, atol=tol)
 
+  @jtu.sample_product(
+      shape=[(20,), (20, 10), (10, 20, 5)],
+      dtype=jtu.dtypes.floating,
+      axis=[0, -1],
+      cutoff=[1e-3, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.99],
+      order=[1, 2, 3, 4],
+      btype=["lowpass", "highpass"],
+      has_zi=[True, False],
+      filter_mode=["iir", "fir"],
+  )
+  def testLfilter(
+      self, shape, dtype, axis, cutoff, order, btype, has_zi, filter_mode
+  ):
+      rng = jtu.rand_default(self.rng())
+      args_maker = lambda: [rng(shape, dtype)]
+
+      if filter_mode == "iir":
+          b, a = osp_signal.butter(order, cutoff, btype=btype)
+      else:
+          b, a = np.random.randn(16 * order), [1.0]
+
+      kwds = dict(axis=axis, b=b, a=a)
+
+      if has_zi:
+          zi_shape = list(shape)
+          zi_shape[axis] = len(b) - 1 if filter_mode == "fir" else order
+          kwds["zi"] = rng(zi_shape, dtype)
+
+      def osp_fun(x):
+          if has_zi:
+              output, zi = osp_signal.lfilter(x=x, **kwds)
+              return output.astype(dtypes.to_inexact_dtype(x.dtype)), zi.astype(
+                  dtypes.to_inexact_dtype(x.dtype)
+              )
+          return osp_signal.lfilter(x=x, **kwds).astype(
+              dtypes.to_inexact_dtype(x.dtype)
+          )
+
+      jsp_fun = lambda x: jsp_signal.lfilter(x=x, **kwds)
+
+      tol = {np.float32: 1e-3, np.float64: 1e-12}
+
+      self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, tol=tol)
+      self._CompileAndCheck(
+          jsp_fun, args_maker, rtol=tol, atol=tol, check_cache_misses=False
+      )
+
+  @jtu.sample_product(
+      shape=[(20,), (20, 10), (10, 20, 5)],
+      dtype=jtu.dtypes.floating,
+      axis=[0, -1],
+      cutoff=[1e-3, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.99],
+      order=[1, 2, 3, 4, 5, 6, 10, 12, 20],
+      btype=["lowpass", "highpass"],
+      has_zi=[True, False],
+  )
+  def testSosfilt(self, shape, dtype, axis, cutoff, order, btype, has_zi):
+      rng = jtu.rand_default(self.rng())
+      args_maker = lambda: [rng(shape, dtype)]
+      sos = osp_signal.butter(order, cutoff, btype=btype, output="sos")
+      kwds = dict(axis=axis, sos=sos)
+      if has_zi:
+          zi_shape = list(shape)
+          zi_shape[axis] = 2
+          zi_shape = [sos.shape[0], *zi_shape]
+          kwds["zi"] = rng(zi_shape, dtype)
+
+      def osp_fun(x):
+          if has_zi:
+              output, zi = osp_signal.sosfilt(x=x, **kwds)
+              return output.astype(dtypes.to_inexact_dtype(x.dtype)), zi.astype(
+                  dtypes.to_inexact_dtype(x.dtype)
+              )
+          return osp_signal.sosfilt(x=x, **kwds).astype(
+              dtypes.to_inexact_dtype(x.dtype)
+          )
+
+      jsp_fun = lambda x: jsp_signal.sosfilt(x=x, **kwds)
+
+      tol = {np.float32: 1e-3, np.float64: 1e-12}
+
+      self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker, tol=tol)
+      self._CompileAndCheck(
+          jsp_fun, args_maker, rtol=tol, atol=tol, check_cache_misses=False
+      )
+
+
 if __name__ == "__main__":
     absltest.main(testLoader=jtu.JaxTestLoader())

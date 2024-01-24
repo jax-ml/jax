@@ -18,7 +18,7 @@ from collections.abc import Sequence
 from functools import partial
 import math
 import operator
-from typing import Callable
+from typing import Callable, Set
 import warnings
 
 import numpy as np
@@ -40,6 +40,12 @@ from jax._src.typing import Array, ArrayLike
 from jax._src.util import canonicalize_axis, tuple_delete, tuple_insert
 
 
+def _axes_to_mapped_axes(axes: Sequence[int] | int, ndim: int) -> Set[int]:
+    axes = _ensure_index_tuple(axes)
+    axes = tuple(canonicalize_axis(ax, ndim) for ax in axes)
+    return set(range(ndim)) - set(axes)
+
+
 @_wraps(osp_signal.fftconvolve)
 def fftconvolve(in1: ArrayLike, in2: ArrayLike, mode: str = "full",
                 axes: Sequence[int] | None = None) -> Array:
@@ -52,9 +58,7 @@ def fftconvolve(in1: ArrayLike, in2: ArrayLike, mode: str = "full",
   _fftconvolve = partial(_fftconvolve_unbatched, mode=mode)
   if axes is None:
     return _fftconvolve(in1, in2)
-  axes = _ensure_index_tuple(axes)
-  axes = tuple(canonicalize_axis(ax, in1.ndim) for ax in axes)
-  mapped_axes = set(range(in1.ndim)) - set(axes)
+  mapped_axes = _axes_to_mapped_axes(axes, in1.ndim)
   if any(in1.shape[i] != in2.shape[i] for i in mapped_axes):
     raise ValueError(f"mapped axes must have same shape; got {in1.shape=} {in2.shape=} {axes=}")
   for ax in sorted(mapped_axes):
@@ -700,3 +704,111 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
 
   time = jnp.arange(x.shape[0], dtype=np.finfo(x.dtype).dtype) / fs
   return time, x
+
+
+@_wraps(osp_signal.sosfilt)
+def sosfilt(
+    sos: ArrayLike, x: ArrayLike, axis: int = -1, zi: Array | None = None
+) -> Array | tuple[Array, Array]:
+    sos = jnp.atleast_2d(sos)
+    x = jnp.atleast_1d(x)
+
+    def f(out: Array, sos_zi: tuple[Array, Array]) -> tuple[Array, Array]:
+        sos, zi = sos_zi
+        b, a = jnp.split(sos, 2)
+        out, zi = lfilter(b, a, out, axis, zi)
+        return out, zi
+
+    scan_f = lambda zi_: lax.scan(f, x, (sos, zi_))
+
+    if zi is None:
+        num_sections = sos.shape[0]
+        zi_shape = (
+            num_sections,
+            *(
+                s if a != canonicalize_axis(axis, x.ndim) else 2
+                for a, s in enumerate(x.shape)
+            ),
+        )
+        return scan_f(jnp.zeros_like(x, shape=zi_shape))[0]
+    return scan_f(zi)
+
+
+@_wraps(osp_signal.lfilter)
+def lfilter(
+    b: ArrayLike, a: ArrayLike, x: ArrayLike, axis: int = -1, zi: Array | None = None
+) -> Array | tuple[Array, Array]:
+    a_: Array = jnp.atleast_1d(jnp.asarray(a))
+    b_: Array = jnp.atleast_1d(jnp.asarray(b))
+    x_: Array = jnp.atleast_1d(jnp.asarray(x))
+
+    if len(a_) == 1:
+        b_ /= a_
+        out_full = jnp.apply_along_axis(lambda y: convolve(b_, y, mode="full"), axis, x_)
+
+        ind = out_full.ndim * [slice(None)]
+
+        if zi is not None:
+            ind[axis] = slice(zi.shape[axis])
+            out_full = out_full.at[tuple(ind)].set(out_full[tuple(ind)] + zi)
+
+        ind[axis] = slice(out_full.shape[axis] - len(b_) + 1)
+        out = out_full[tuple(ind)]
+
+        if zi is None:
+            return out
+        else:
+            ind[axis] = slice(out_full.shape[axis] - len(b_) + 1, None)
+            zf = out_full[tuple(ind)]
+            return out, zf
+
+    else:
+        max_coef_len = max(len(b_), len(a_))
+
+        b_, a_ = (
+            x if len(x) == max_coef_len else jnp.pad(x, (0, max_coef_len - len(x)))
+            for x in (b_, a_)
+        )
+
+        b_, a_ = (x / a_[0] for x in (b_, a_))
+
+        _lfilter = lambda x, zi: _lfilter_unbatched(
+            b_,
+            a_,
+            x,
+            zi=zi if zi is not None else jnp.zeros_like(x, shape=max_coef_len - 1),
+        )
+
+        mapped_axes = _axes_to_mapped_axes(axis, x_.ndim)
+
+        for axis in sorted(mapped_axes):
+            _lfilter = jax.vmap(_lfilter, in_axes=axis, out_axes=axis)
+        out, zi_ = _lfilter(x_, zi)
+
+        if zi is None:
+            return out
+        else:
+            return out, zi_
+
+
+def _lfilter_unbatched(b: Array, a: Array, x: Array, zi: Array) -> tuple[Array, Array]:
+    def f(state: Array, x_: Array) -> tuple[Array, Array]:
+        y = state[0] + b[0] * x_
+
+        def calc_middle_delays(_, a_b_z_: Array) -> tuple[Array, Array]:
+            a_, b_, z_ = a_b_z_
+            z = z_ + x_ * b_ - y * a_
+            return z, z
+
+        middle_states = lax.scan(
+            calc_middle_delays,
+            state[1],
+            jnp.stack([a[1:-1], b[1:-1], state[1:]], axis=1),
+        )[1]
+
+        last_state = x_ * b[-1] - y * a[-1]
+        return jnp.concatenate([middle_states, last_state.reshape(-1)]), y
+
+    zi, out = lax.scan(f, zi, x)
+
+    return out, zi
