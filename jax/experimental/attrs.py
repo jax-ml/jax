@@ -3,6 +3,8 @@ from dataclasses import dataclass
 from typing import Callable
 
 import jax
+import jax.numpy as jnp
+from jax._src.lax.control_flow.loops import scan_p
 from jax.tree_util import (tree_flatten, tree_unflatten, PyTreeDef)
 
 from jax._src.core import (Jaxpr, AbstractValue, ClosedJaxpr, raise_to_shaped)
@@ -20,10 +22,10 @@ AttrStates = list
 
 def set_states(attrs_tracked : AttrsTracked, vals : AttrStates):
   for ((obj, attr), val) in zip(attrs_tracked, vals):
-    setattr(obj, attr, val)
+    jax_setattr(obj, attr, val)
 
 def get_states(attrs_tracked : AttrsTracked):
-  return [getattr(obj, attr) for (obj, attr) in attrs_tracked]
+  return [jax_getattr(obj, attr) for (obj, attr) in attrs_tracked]
 
 # === JAX internals ===
 
@@ -101,6 +103,14 @@ def stage_out(f, avals) -> StagedFunction:
   (jaxpr, out_tree, attrs_tracked) = trace_to_jaxpr_dynamic3(f, avals_flat, in_tree)
   return StagedFunction(jaxpr, attrs_tracked, in_tree, out_tree)
 
+def for_loop(n:int, body:Callable[[], None]) -> None:
+  staged = stage_out(body, [])
+  states = get_states(staged.attrs_tracked)
+  num_states = len(states)
+  outs = scan_p.bind(*states, length=n, num_consts=0, linear=(False,) * num_states,
+                     num_carry=num_states, jaxpr=staged.jaxpr, unroll=1, reverse=False)
+  set_states(staged.attrs_tracked, outs)
+
 def jax_setattr(self, attr, val):
   ensure_tracked(self, attr)
   setattr(self, attr, val)
@@ -116,6 +126,8 @@ class Thing:
   x : float
 
 # === user code ===
+
+jax.config.update('jax_traceback_filtering', 'off')
 
 thing = Thing(1.0)
 
@@ -134,3 +146,15 @@ double_it_staged()
 print(thing)  # Thing(x=8.0)
 double_it_staged()
 print(thing)  # Thing(x=16.0)
+
+thing = Thing(1.0)
+
+def double_it_10() -> None:
+  def for_body():
+    cur_x = jax_getattr(thing, "x")
+    jax_setattr(thing, "x", cur_x * 2.0)
+  for_loop(10, for_body)
+
+double_it_staged_10 = stage_out(double_it_10, ())
+double_it_staged_10()
+print(thing)
