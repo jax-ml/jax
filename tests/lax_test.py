@@ -2726,6 +2726,28 @@ class LaxTest(jtu.JaxTestCase):
 
     a, b = jax.lax.scan(_step, 0, jnp.arange(4, dtype=jnp.complex64))
 
+  @parameterized.parameters([float, np.array, np.float32, jnp.float32])
+  def testAsarray(self, typ):
+    x = typ(1.0)
+    x_arr = lax_internal.asarray(x)
+    self.assertArraysEqual(x, x_arr)
+    self.assertIsInstance(x_arr, jax.Array)
+
+    # jaxpr should not bind any primitives, whether called directly or
+    # as a closure:
+    jaxpr = jax.make_jaxpr(lax_internal.asarray)(x)
+    self.assertLen(jaxpr.eqns, 0)
+
+    asarray_closure = lambda: lax_internal.asarray(x)
+    jaxpr = jax.make_jaxpr(asarray_closure)()
+    self.assertLen(jaxpr.eqns, 0)
+
+    # Regression test for https://github.com/google/jax/issues/19334
+    # lax.asarray as a closure should not trigger transfer guard.
+    with jax.transfer_guard('disallow'):
+      jax.jit(asarray_closure)()
+
+
 
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):
