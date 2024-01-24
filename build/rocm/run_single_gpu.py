@@ -22,6 +22,26 @@ from concurrent.futures import ThreadPoolExecutor
 
 GPU_LOCK = threading.Lock()
 LAST_CODE = 0
+base_dir="./logs"
+
+def extract_filename(path):
+  base_name = os.path.basename(path)
+  file_name, _ = os.path.splitext(base_name)
+  return file_name
+
+def generate_final_report(shell=False, env_vars={}):
+  env = os.environ
+  env = {**env, **env_vars}
+  cmd = ["pytest_html_merger", "-i", '{}'.format(base_dir), "-o", '{}/final_compiled_report.html'.format(base_dir)]
+  result = subprocess.run(cmd,
+                          shell=shell,
+                          capture_output=True,
+                          env=env)
+  if result.returncode != 0:
+    print("FAILED - {}".format(" ".join(cmd)))
+    print(result.stderr.decode())
+    # sys.exit(result.returncode)
+  return result.returncode, result.stderr.decode(), result.stdout.decode()
 
 
 def run_shell_command(cmd, shell=False, env_vars={}):
@@ -69,7 +89,8 @@ def run_test(testmodule, gpu_tokens):
       "HIP_VISIBLE_DEVICES": str(target_gpu),
       "XLA_PYTHON_CLIENT_ALLOCATOR": "default",
   }
-  cmd = ["python3", "-m", "pytest", "--reruns", "3", "-x", testmodule]
+  testfile = extract_filename(testmodule)
+  cmd = ["python3", "-m", "pytest", '--html={}/{}_log.html'.format(base_dir, testfile), "--reruns", "3", "-x", testmodule]
   return_code, stderr, stdout = run_shell_command(cmd, env_vars=env_vars)
   with GPU_LOCK:
     gpu_tokens.append(target_gpu)
@@ -102,6 +123,7 @@ def find_num_gpus():
 def main(args):
   all_testmodules = collect_testmodules()
   run_parallel(all_testmodules, args.parallel)
+  generate_final_report()
   exit(LAST_CODE)
 
 

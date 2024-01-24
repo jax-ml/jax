@@ -13,20 +13,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -eux
-# run test module with multi-gpu requirements. We currently do not have a way to filter tests.
-# this issue is also tracked in https://github.com/google/jax/issues/7323
-cmd=$(lspci|grep 'controller'|grep 'AMD/ATI'|wc -l)
-echo $cmd
+set -eu
 
-if [[ $cmd -gt 8 ]]; then
-	export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7 && python3 -m pytest --reruns 3 -x tests/pmap_test.py 
-elif [[ $cmd -gt 4 ]]; then
-	export HIP_VISIBLE_DEVICES=0,1,2,3 && python3 -m pytest --reruns 3 -x tests/pmap_test.py
-elif [[ $cmd -gt 2 ]]; then
-	export HIP_VISIBLE_DEVICES=0,1 && python3 -m pytest --reruns 3 -x tests/pmap_test.py 
-else
-	export HIP_VISIBLE_DEVICES=0 && python3 -m pytest --reruns 3 -x tests/pmap_test.py
+# Function to run tests with specified GPUs
+run_tests() {
+    local base_dir=./logs
+    local gpu_devices="$1"
+    export HIP_VISIBLE_DEVICES=$gpu_devices
+    python3 -m pytest --html=$base_dir/multi_gpu_pmap_test_log.html --reruns 3 -x tests/pmap_test.py
+    python3 -m pytest --html=$base_dir/multi_gpu_multi_device_test_log.html --reruns 3 -x tests/multi_device_test.py
+    python3 -m pytest_html_merger -i $base_dir/ -o  $base_dir/final_compiled_report.html
+}
+
+# Check for required commands
+if ! command -v lspci &> /dev/null; then
+    echo "lspci command not found, aborting."
+    exit 1
 fi
 
-python3 -m pytest --reruns 3 -x tests/multi_device_test.py
+if ! command -v python3 &> /dev/null; then
+    echo "Python3 is not available, aborting."
+    exit 1
+fi
+
+# GPU detection and test execution
+gpu_count=$(lspci | grep -c 'controller.*AMD/ATI')
+echo "Number of AMD/ATI GPUs detected: $gpu_count"
+
+if [[ $gpu_count -gt 8 ]]; then
+    run_tests "0,1,2,3,4,5,6,7"
+elif [[ $gpu_count -gt 4 ]]; then
+    run_tests "0,1,2,3"
+elif [[ $gpu_count -gt 2 ]]; then
+    run_tests "0,1"
+else
+    run_tests "0"
+fi
