@@ -22,7 +22,7 @@ import scipy.fft as osp_fft
 from jax import lax
 import jax.numpy as jnp
 from jax._src.util import canonicalize_axis
-from jax._src.numpy.util import _wraps, promote_dtypes_complex
+from jax._src.numpy.util import implements, promote_dtypes_complex
 from jax._src.typing import Array
 
 def _W4(N: int, k: Array) -> Array:
@@ -42,7 +42,7 @@ def _dct_ortho_norm(out: Array, axis: int) -> Array:
 # Implementation based on
 # John Makhoul: A Fast Cosine Transform in One and Two Dimensions (1980)
 
-@_wraps(osp_fft.dct)
+@implements(osp_fft.dct)
 def dct(x: Array, type: int = 2, n: int | None = None,
         axis: int = -1, norm: str | None = None) -> Array:
   if type != 2:
@@ -81,7 +81,7 @@ def _dct2(x: Array, axes: Sequence[int], norm: str | None) -> Array:
   return out
 
 
-@_wraps(osp_fft.dctn)
+@implements(osp_fft.dctn)
 def dctn(x: Array, type: int = 2,
          s: Sequence[int] | None=None,
          axes: Sequence[int] | None = None,
@@ -109,7 +109,7 @@ def dctn(x: Array, type: int = 2,
   return x
 
 
-@_wraps(osp_fft.dct)
+@implements(osp_fft.dct)
 def idct(x: Array, type: int = 2, n: int | None = None,
         axis: int = -1, norm: str | None = None) -> Array:
   if type != 2:
@@ -139,7 +139,7 @@ def idct(x: Array, type: int = 2, n: int | None = None,
   out = _dct_deinterleave(x.real, axis)
   return out
 
-@_wraps(osp_fft.idctn)
+@implements(osp_fft.idctn)
 def idctn(x: Array, type: int = 2,
          s: Sequence[int] | None=None,
          axes: Sequence[int] | None = None,

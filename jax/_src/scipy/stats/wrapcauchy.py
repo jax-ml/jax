@@ -17,11 +17,11 @@ import scipy.stats as osp_stats
 from jax import lax
 import jax.numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
-from jax._src.numpy.util import _wraps, promote_args_inexact
+from jax._src.numpy.util import implements, promote_args_inexact
 from jax._src.typing import Array, ArrayLike
 
 
-@_wraps(osp_stats.wrapcauchy.logpdf, update_doc=False)
+@implements(osp_stats.wrapcauchy.logpdf, update_doc=False)
 def logpdf(x: ArrayLike, c: ArrayLike) -> Array:
   x, c = promote_args_inexact('wrapcauchy.logpdf', x, c)
   return jnp.where(
@@ -34,6 +34,6 @@ def logpdf(x: ArrayLike, c: ArrayLike) -> Array:
     jnp.nan,
   )
 
-@_wraps(osp_stats.wrapcauchy.pdf, update_doc=False)
+@implements(osp_stats.wrapcauchy.pdf, update_doc=False)
 def pdf(x: ArrayLike, c: ArrayLike) -> Array:
   return lax.exp(logpdf(x, c))

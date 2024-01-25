@@ -16,12 +16,12 @@
 import scipy.stats as osp_stats
 from jax import lax
 import jax.numpy as jnp
-from jax._src.numpy.util import _wraps, promote_args_inexact, promote_args_numeric
+from jax._src.numpy.util import implements, promote_args_inexact, promote_args_numeric
 from jax._src.scipy.special import gammaln, xlogy
 from jax._src.typing import Array, ArrayLike
 
 
-@_wraps(osp_stats.multinomial.logpmf, update_doc=False)
+@implements(osp_stats.multinomial.logpmf, update_doc=False)
 def logpmf(x: ArrayLike, n: ArrayLike, p: ArrayLike) -> Array:
   """JAX implementation of scipy.stats.multinomial.logpmf."""
   p, = promote_args_inexact("multinomial.logpmf", p)
@@ -34,7 +34,7 @@ def logpmf(x: ArrayLike, n: ArrayLike, p: ArrayLike) -> Array:
   return jnp.where(jnp.equal(jnp.sum(x), n), logprobs, -jnp.inf)
 
 
-@_wraps(osp_stats.multinomial.pmf, update_doc=False)
+@implements(osp_stats.multinomial.pmf, update_doc=False)
 def pmf(x: ArrayLike, n: ArrayLike, p: ArrayLike) -> Array:
   """JAX implementation of scipy.stats.multinomial.pmf."""
   return lax.exp(logpmf(x, n, p))

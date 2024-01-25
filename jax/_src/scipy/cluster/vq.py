@@ -19,7 +19,7 @@ import textwrap
 
 from jax import vmap
 import jax.numpy as jnp
-from jax._src.numpy.util import _wraps, check_arraylike, promote_dtypes_inexact
+from jax._src.numpy.util import implements, check_arraylike, promote_dtypes_inexact
 
 
 _no_chkfinite_doc = textwrap.dedent("""
@@ -28,7 +28,7 @@ because compiled JAX code cannot perform checks of array values at runtime
 """)
 
 
-@_wraps(scipy.cluster.vq.vq, lax_description=_no_chkfinite_doc, skip_params=('check_finite',))
+@implements(scipy.cluster.vq.vq, lax_description=_no_chkfinite_doc, skip_params=('check_finite',))
 def vq(obs, code_book, check_finite=True):
     check_arraylike("scipy.cluster.vq.vq", obs, code_book)
     if obs.ndim != code_book.ndim:

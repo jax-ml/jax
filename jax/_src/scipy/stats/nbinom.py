@@ -18,12 +18,12 @@ import scipy.stats as osp_stats
 from jax import lax
 import jax.numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
-from jax._src.numpy.util import _wraps, promote_args_inexact
+from jax._src.numpy.util import implements, promote_args_inexact
 from jax._src.scipy.special import gammaln, xlogy
 from jax._src.typing import Array, ArrayLike
 
 
-@_wraps(osp_stats.nbinom.logpmf, update_doc=False)
+@implements(osp_stats.nbinom.logpmf, update_doc=False)
 def logpmf(k: ArrayLike, n: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Array:
     """JAX implementation of scipy.stats.nbinom.logpmf."""
     k, n, p, loc = promote_args_inexact("nbinom.logpmf", k, n, p, loc)
@@ -37,7 +37,7 @@ def logpmf(k: ArrayLike, n: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Arra
     return jnp.where(lax.lt(k, loc), -jnp.inf, log_probs)
 
 
-@_wraps(osp_stats.nbinom.pmf, update_doc=False)
+@implements(osp_stats.nbinom.pmf, update_doc=False)
 def pmf(k: ArrayLike, n: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Array:
     """JAX implementation of scipy.stats.nbinom.pmf."""
     return lax.exp(logpmf(k, n, p, loc))

@@ -19,10 +19,10 @@ from jax import lax
 from jax import numpy as jnp
 from jax.numpy import where, inf, logical_or
 from jax._src.typing import Array, ArrayLike
-from jax._src.numpy.util import _wraps, promote_args_inexact
+from jax._src.numpy.util import implements, promote_args_inexact
 
 
-@_wraps(osp_stats.uniform.logpdf, update_doc=False)
+@implements(osp_stats.uniform.logpdf, update_doc=False)
 def logpdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   x, loc, scale = promote_args_inexact("uniform.logpdf", x, loc, scale)
   log_probs = lax.neg(lax.log(scale))
@@ -30,11 +30,11 @@ def logpdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
                           lax.lt(x, loc)),
                -inf, log_probs)
 
-@_wraps(osp_stats.uniform.pdf, update_doc=False)
+@implements(osp_stats.uniform.pdf, update_doc=False)
 def pdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   return lax.exp(logpdf(x, loc, scale))
 
-@_wraps(osp_stats.uniform.cdf, update_doc=False)
+@implements(osp_stats.uniform.cdf, update_doc=False)
 def cdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   x, loc, scale = promote_args_inexact("uniform.cdf", x, loc, scale)
   zero, one = jnp.array(0, x.dtype), jnp.array(1, x.dtype)
@@ -43,7 +43,7 @@ def cdf(x: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
 
   return jnp.select(conds, vals)
 
-@_wraps(osp_stats.uniform.ppf, update_doc=False)
+@implements(osp_stats.uniform.ppf, update_doc=False)
 def ppf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
   q, loc, scale = promote_args_inexact("uniform.ppf", q, loc, scale)
   return where(

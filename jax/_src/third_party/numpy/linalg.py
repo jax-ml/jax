@@ -2,7 +2,7 @@ import numpy as np
 
 import jax.numpy as jnp
 import jax.numpy.linalg as la
-from jax._src.numpy.util import check_arraylike, _wraps
+from jax._src.numpy.util import check_arraylike, implements
 
 
 def _isEmpty2d(arr):
@@ -39,7 +39,7 @@ def _assert2d(*arrays):
                        'Array must be two-dimensional')
 
 
-@_wraps(np.linalg.cond)
+@implements(np.linalg.cond)
 def cond(x, p=None):
   check_arraylike('jnp.linalg.cond', x)
   _assertNoEmpty2d(x)
@@ -62,7 +62,7 @@ def cond(x, p=None):
   return r
 
 
-@_wraps(np.linalg.tensorinv)
+@implements(np.linalg.tensorinv)
 def tensorinv(a, ind=2):
   check_arraylike('jnp.linalg.tensorinv', a)
   a = jnp.asarray(a)
@@ -79,7 +79,7 @@ def tensorinv(a, ind=2):
   return ia.reshape(*invshape)
 
 
-@_wraps(np.linalg.tensorsolve)
+@implements(np.linalg.tensorsolve)
 def tensorsolve(a, b, axes=None):
   check_arraylike('jnp.linalg.tensorsolve', a, b)
   a = jnp.asarray(a)
@@ -108,7 +108,7 @@ def tensorsolve(a, b, axes=None):
   return res
 
 
-@_wraps(np.linalg.multi_dot)
+@implements(np.linalg.multi_dot)
 def multi_dot(arrays, *, precision=None):
   check_arraylike('jnp.linalg.multi_dot', *arrays)
   n = len(arrays)

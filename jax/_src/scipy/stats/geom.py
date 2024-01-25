@@ -17,12 +17,12 @@ import scipy.stats as osp_stats
 from jax import lax
 import jax.numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
-from jax._src.numpy.util import _wraps, promote_args_inexact
+from jax._src.numpy.util import implements, promote_args_inexact
 from jax.scipy.special import xlog1py
 from jax._src.typing import Array, ArrayLike
 
 
-@_wraps(osp_stats.geom.logpmf, update_doc=False)
+@implements(osp_stats.geom.logpmf, update_doc=False)
 def logpmf(k: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Array:
     k, p, loc = promote_args_inexact("geom.logpmf", k, p, loc)
     zero = _lax_const(k, 0)
@@ -32,6 +32,6 @@ def logpmf(k: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Array:
     return jnp.where(lax.le(x, zero), -jnp.inf, log_probs)
 
 
-@_wraps(osp_stats.geom.pmf, update_doc=False)
+@implements(osp_stats.geom.pmf, update_doc=False)
 def pmf(k: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Array:
   return jnp.exp(logpmf(k, p, loc))

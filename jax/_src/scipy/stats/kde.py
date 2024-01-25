@@ -21,12 +21,12 @@ import scipy.stats as osp_stats
 
 import jax.numpy as jnp
 from jax import jit, lax, random, vmap
-from jax._src.numpy.util import check_arraylike, promote_dtypes_inexact, _wraps
+from jax._src.numpy.util import check_arraylike, promote_dtypes_inexact, implements
 from jax._src.tree_util import register_pytree_node_class
 from jax.scipy import linalg, special
 
 
-@_wraps(osp_stats.gaussian_kde, update_doc=False)
+@implements(osp_stats.gaussian_kde, update_doc=False)
 @register_pytree_node_class
 @dataclass(frozen=True, init=False)
 class gaussian_kde:
@@ -113,7 +113,7 @@ class gaussian_kde:
   def n(self):
     return self.dataset.shape[1]
 
-  @_wraps(osp_stats.gaussian_kde.evaluate, update_doc=False)
+  @implements(osp_stats.gaussian_kde.evaluate, update_doc=False)
   def evaluate(self, points):
     check_arraylike("evaluate", points)
     points = self._reshape_points(points)
@@ -121,11 +121,11 @@ class gaussian_kde:
                                    points.T, self.inv_cov)
     return result[:, 0]
 
-  @_wraps(osp_stats.gaussian_kde.__call__, update_doc=False)
+  @implements(osp_stats.gaussian_kde.__call__, update_doc=False)
   def __call__(self, points):
     return self.evaluate(points)
 
-  @_wraps(osp_stats.gaussian_kde.integrate_gaussian, update_doc=False)
+  @implements(osp_stats.gaussian_kde.integrate_gaussian, update_doc=False)
   def integrate_gaussian(self, mean, cov):
     mean = jnp.atleast_1d(jnp.squeeze(mean))
     cov = jnp.atleast_2d(cov)
@@ -141,7 +141,7 @@ class gaussian_kde:
     return _gaussian_kernel_convolve(chol, norm, self.dataset, self.weights,
                                      mean)
 
-  @_wraps(osp_stats.gaussian_kde.integrate_box_1d, update_doc=False)
+  @implements(osp_stats.gaussian_kde.integrate_box_1d, update_doc=False)
   def integrate_box_1d(self, low, high):
     if self.d != 1:
       raise ValueError("integrate_box_1d() only handles 1D pdfs")
@@ -153,7 +153,7 @@ class gaussian_kde:
     high = jnp.squeeze((high - self.dataset) / sigma)
     return jnp.sum(self.weights * (special.ndtr(high) - special.ndtr(low)))
 
-  @_wraps(osp_stats.gaussian_kde.integrate_kde, update_doc=False)
+  @implements(osp_stats.gaussian_kde.integrate_kde, update_doc=False)
   def integrate_kde(self, other):
     if other.d != self.d:
       raise ValueError("KDEs are not the same dimensionality")
@@ -189,11 +189,11 @@ class gaussian_kde:
                                      dtype=self.dataset.dtype).T
     return self.dataset[:, ind] + eps
 
-  @_wraps(osp_stats.gaussian_kde.pdf, update_doc=False)
+  @implements(osp_stats.gaussian_kde.pdf, update_doc=False)
   def pdf(self, x):
     return self.evaluate(x)
 
-  @_wraps(osp_stats.gaussian_kde.logpdf, update_doc=False)
+  @implements(osp_stats.gaussian_kde.logpdf, update_doc=False)
   def logpdf(self, x):
     check_arraylike("logpdf", x)
     x = self._reshape_points(x)

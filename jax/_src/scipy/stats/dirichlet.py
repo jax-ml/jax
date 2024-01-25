@@ -18,7 +18,7 @@ import scipy.stats as osp_stats
 from jax import lax
 import jax.numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
-from jax._src.numpy.util import promote_dtypes_inexact, _wraps
+from jax._src.numpy.util import promote_dtypes_inexact, implements
 from jax.scipy.special import gammaln, xlogy
 from jax._src.typing import Array, ArrayLike
 
@@ -28,7 +28,7 @@ def _is_simplex(x: Array) -> Array:
   return jnp.all(x > 0, axis=0) & (abs(x_sum - 1) < 1E-6)
 
 
-@_wraps(osp_stats.dirichlet.logpdf, update_doc=False)
+@implements(osp_stats.dirichlet.logpdf, update_doc=False)
 def logpdf(x: ArrayLike, alpha: ArrayLike) -> Array:
   return _logpdf(*promote_dtypes_inexact(x, alpha))
 
@@ -52,6 +52,6 @@ def _logpdf(x: Array, alpha: Array) -> Array:
   return jnp.where(_is_simplex(x), log_probs, -jnp.inf)
 
 
-@_wraps(osp_stats.dirichlet.pdf, update_doc=False)
+@implements(osp_stats.dirichlet.pdf, update_doc=False)
 def pdf(x: ArrayLike, alpha: ArrayLike) -> Array:
   return lax.exp(logpdf(x, alpha))

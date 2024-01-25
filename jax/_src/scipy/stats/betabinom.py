@@ -18,12 +18,12 @@ import scipy.stats as osp_stats
 from jax import lax
 import jax.numpy as jnp
 from jax._src.lax.lax import _const as _lax_const
-from jax._src.numpy.util import _wraps, promote_args_inexact
+from jax._src.numpy.util import implements, promote_args_inexact
 from jax._src.scipy.special import betaln
 from jax._src.typing import Array, ArrayLike
 
 
-@_wraps(osp_stats.betabinom.logpmf, update_doc=False)
+@implements(osp_stats.betabinom.logpmf, update_doc=False)
 def logpmf(k: ArrayLike, n: ArrayLike, a: ArrayLike, b: ArrayLike,
            loc: ArrayLike = 0) -> Array:
   """JAX implementation of scipy.stats.betabinom.logpmf."""
@@ -40,7 +40,7 @@ def logpmf(k: ArrayLike, n: ArrayLike, a: ArrayLike, b: ArrayLike,
   return jnp.where(n_a_b_cond, jnp.nan, log_probs)
 
 
-@_wraps(osp_stats.betabinom.pmf, update_doc=False)
+@implements(osp_stats.betabinom.pmf, update_doc=False)
 def pmf(k: ArrayLike, n: ArrayLike, a: ArrayLike, b: ArrayLike,
         loc: ArrayLike = 0) -> Array:
   """JAX implementation of scipy.stats.betabinom.pmf."""
