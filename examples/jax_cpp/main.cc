@@ -58,8 +58,9 @@ int main(int argc, char** argv) {
   std::function<void(xla::HloModuleConfig*)> config_modifier_hook =
       [](xla::HloModuleConfig* config) { config->set_seed(42); };
   std::unique_ptr<xla::HloModule> test_module =
-      LoadModuleFromFile(hlo_filename, xla::hlo_module_loader_details::Config(),
-                         "txt", config_modifier_hook)
+      LoadModuleFromFile(hlo_filename, /*format=*/"txt",
+                         xla::hlo_module_loader_details::Config(),
+                         config_modifier_hook)
           .value();
   const xla::HloModuleProto test_module_proto = test_module->ToProto();
 
