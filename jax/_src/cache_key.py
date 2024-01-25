@@ -191,6 +191,14 @@ def _hash_serialized_compile_options(hash_obj, compile_options_obj):
   debug_options.xla_dump_hlo_as_long_text = False
   debug_options.xla_dump_disable_metadata = False
   debug_options.xla_dump_hlo_pipeline_re = ""
+  # Optional way to specify the cuda install path to be used by the compiler.
+  # This could possibly affect the cuda version compiled with, but this should
+  # already be included in the platform information (and might not be reflected
+  # by the cuda path regardless, since this only hashes on the directory name
+  # and not the contents). It can also cause spurious cache misses if the cuda
+  # path changes across runs despite being the same version, so we clear it
+  # here.
+  debug_options.xla_gpu_cuda_data_dir = ""
   # LINT.ThenChange(:xla_flags)
 
   return hash_obj.update(compile_options_copy.SerializeAsString())
@@ -225,6 +233,7 @@ def _hash_xla_flags(hash_obj, extra_flag_prefixes: list[str]):
       "--xla_dump_hlo_pipeline_re",
       "--xla_tpu_sdc_checker_streamz_metric",
       "--xla_tpu_sdc_checker_enable_sdc_event_callbacks",
+      "--xla_gpu_cuda_data_dir",
   ]
   # LINT.ThenChange(:debug_options)
 
