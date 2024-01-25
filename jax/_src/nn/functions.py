@@ -432,7 +432,8 @@ def log_softmax(x: ArrayLike,
   numpy_util.check_arraylike("log_softmax", x)
   x_arr = jnp.asarray(x)
   x_max = jnp.max(x_arr, axis, where=where, initial=initial, keepdims=True)
-  shifted = x_arr - lax.stop_gradient(x_max)
+  x_safe = x_arr if where is None else jnp.where(where, x_arr, initial)
+  shifted = x_safe - lax.stop_gradient(x_max)
   shifted_logsumexp = jnp.log(
       jnp.sum(jnp.exp(shifted), axis, where=where, keepdims=True))
   result = shifted - shifted_logsumexp
@@ -486,7 +487,8 @@ def _softmax(
     where: ArrayLike | None = None,
     initial: ArrayLike | None = None) -> Array:
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
-  unnormalized = jnp.exp(x - x_max)
+  x_safe = x if where is None else jnp.where(where, x, initial)
+  unnormalized = jnp.exp(x_safe - x_max)
   result = unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
   if where is not None:
     result = jnp.where(where, result, 0)
@@ -504,7 +506,8 @@ def _softmax_deprecated(
     where: ArrayLike | None = None,
     initial: ArrayLike | None = None) -> Array:
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
-  unnormalized = jnp.exp(x - lax.stop_gradient(x_max))
+  x_safe = x if where is None else jnp.where(where, x, initial)
+  unnormalized = jnp.exp(x_safe - lax.stop_gradient(x_max))
   result = unnormalized / jnp.sum(unnormalized, axis, where=where, keepdims=True)
   if where is not None:
     result = jnp.where(where, result, 0)
