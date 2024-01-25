@@ -702,7 +702,7 @@ def _conv_general_dilated_lower(
   num_spatial_dims = len(rhs_spec) - 2
   if len(padding) == 0:
     padding = np.zeros((0, 2), dtype=np.int64)
-  window_reversal = mlir.dense_bool_elements([False] * num_spatial_dims)
+  window_reversal = mlir.dense_bool_array([False] * num_spatial_dims)
   if (not core.is_constant_shape(window_strides) or
       not core.is_constant_shape(lhs_dilation) or
       not core.is_constant_shape(rhs_dilation) or
@@ -719,10 +719,10 @@ def _conv_general_dilated_lower(
           dimension_numbers=dnums,
           feature_group_count=mlir.i64_attr(feature_group_count),
           batch_group_count=mlir.i64_attr(batch_group_count),
-          window_strides=mlir.dense_int_elements(window_strides),
+          window_strides=mlir.dense_int_array_v6(window_strides),
           padding=mlir.dense_int_elements(padding),
-          lhs_dilation=mlir.dense_int_elements(lhs_dilation),
-          rhs_dilation=mlir.dense_int_elements(rhs_dilation),
+          lhs_dilation=mlir.dense_int_array_v6(lhs_dilation),
+          rhs_dilation=mlir.dense_int_array_v6(rhs_dilation),
           window_reversal=window_reversal,
           precision_config=lax.precision_attr(precision))
     ]
@@ -744,9 +744,9 @@ def _conv_general_dilated_lower(
           dimension_numbers=dnums,
           feature_group_count=mlir.i64_attr(feature_group_count),
           batch_group_count=mlir.i64_attr(batch_group_count),
-          window_strides=mlir.dense_int_elements(window_strides),
-          lhs_dilation=mlir.dense_int_elements(lhs_dilation),
-          rhs_dilation=mlir.dense_int_elements(rhs_dilation),
+          window_strides=mlir.dense_int_array_v6(window_strides),
+          lhs_dilation=mlir.dense_int_array_v6(lhs_dilation),
+          rhs_dilation=mlir.dense_int_array_v6(rhs_dilation),
           window_reversal=window_reversal,
           precision_config=lax.precision_attr(precision))
     ]

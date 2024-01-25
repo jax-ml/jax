@@ -520,8 +520,8 @@ def _select_and_scatter_lower(
       operand,
       source,
       init_value,
-      window_dimensions=mlir.dense_int_elements(window_dimensions),
-      window_strides=mlir.dense_int_elements(window_strides),
+      window_dimensions=mlir.dense_int_array_v6(window_dimensions),
+      window_strides=mlir.dense_int_array_v6(window_strides),
       padding=ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64),
                                           shape=(len(padding), 2)))
   select = op.select.blocks.append(scalar_type, scalar_type)

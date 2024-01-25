@@ -28,7 +28,7 @@ from jaxlib import xla_client
 
 from .hlo_helpers import (
     DimensionSize, ShapeTypePair, mk_result_types_and_shapes,
-    custom_call, ensure_hlo_s32, hlo_s32, dense_int_array)
+    custom_call, ensure_hlo_s32, hlo_s32, dense_int_array, dense_int_array_v6)
 
 try:
   from .cuda import _blas as _cublas  # pytype: disable=import-error
@@ -536,13 +536,14 @@ def _sytrd_hlo(platform, gpu_solver, dtype, a, *, lower):
   # simply copy it back to where it needs to be:
   intattr = lambda xs: ir.DenseIntElementsAttr.get(np.asarray(xs, np.int64))
   intarrattr = lambda xs: dense_int_array(np.asarray(xs, np.int64))
+  intarrattr_v6 = lambda xs: dense_int_array_v6(np.asarray(xs, np.int64))
   if not lower and platform == "cu" and m > 1:
     start = (0,) * len(batch_dims) + (0,)
     end = batch_dims + (1,)
     s = hlo.slice(
-        e, intarrattr(start), intarrattr(end),intarrattr([1] * len(start)))
+        e, intarrattr(start), intarrattr(end), intarrattr([1] * len(start)))
     s_type = ir.RankedTensorType.get(batch_dims + (1, 1), diag_type)
-    s = hlo.broadcast_in_dim(s_type, s, intattr(range(len(dims) - 1)))
+    s = hlo.broadcast_in_dim(s_type, s, intarrattr_v6(range(len(dims) - 1)))
     # The diagonals are always real; convert to complex if needed.
     s = hlo.convert(
         ir.RankedTensorType.get(s_type.shape, a_type.element_type), s)

@@ -1700,7 +1700,7 @@ def broadcast_hlo(
   for aval, arg in zip(avals, args):
     if aval.shape != aval_out.shape:
       assert len(aval.shape) <= len(aval_out.shape), (aval, aval_out)
-      dims = mlir.dense_int_elements(
+      dims = mlir.dense_int_array_v6(
           range(len(aval_out.shape) - len(aval.shape), len(aval_out.shape)))
       if any(isinstance(d, ir.Value) for d in aval_out.shape):
         arg = hlo.dynamic_broadcast_in_dim(
@@ -3801,7 +3801,7 @@ def _reduce_lower(ctx, *values, computation, jaxpr, dimensions):
   operands, init_values = util.split_list(values, [len(values) // 2])
   init_value_avals = ctx.avals_in[len(values) // 2:]
   op = hlo.ReduceOp([mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
-                    operands, init_values, mlir.dense_int_elements(dimensions))
+                    operands, init_values, mlir.dense_int_array_v6(dimensions))
   ir_types = [mlir.aval_to_ir_type(aval) for aval in init_value_avals]
   reducer = op.regions[0].blocks.append(*(ir_types + ir_types))
   with ir.InsertionPoint(reducer):
@@ -4000,7 +4000,7 @@ def _unary_reduce_lower(reducer, unit_factory, ctx, x, *, axes):
   dtype = aval_out.dtype
   op = hlo.ReduceOp([mlir.aval_to_ir_type(aval_out)], [x],
                     mlir.ir_constants(unit_factory(aval_out.dtype)),
-                    mlir.dense_int_elements(axes))
+                    mlir.dense_int_array_v6(axes))
   scalar_type = mlir.aval_to_ir_type(core.ShapedArray((), dtype))
   reducer_region = op.regions[0].blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(reducer_region):
