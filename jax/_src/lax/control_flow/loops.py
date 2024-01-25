@@ -269,7 +269,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
         f'Effects not supported in `scan`: {disallowed_effects}')
 
   if isinstance(unroll, bool):
-    unroll = length if unroll else 1
+    unroll = max(length, 1) if unroll else 1
   out = scan_p.bind(*consts, *in_flat,
                     reverse=reverse, length=length, jaxpr=jaxpr,
                     num_consts=len(consts), num_carry=len(init_flat),
@@ -1962,12 +1962,18 @@ def fori_loop(lower, upper, body_fun, init_val,
   if use_scan:
     if unroll is None:
       unroll = False
-    if config.disable_jit.value and upper_ == lower_:
+    length = max(upper_ - lower_, 0)
+    if config.disable_jit.value and length == 0:
       # non-jit implementation of scan does not support length=0
       return init_val
 
-    (_, result), _ = scan(_fori_scan_body_fun(body_fun), (lower_, init_val),
-                          None, length=upper_ - lower_, unroll=unroll)
+    (_, result), _ = scan(
+        _fori_scan_body_fun(body_fun),
+        (lower_, init_val),
+        None,
+        length=length,
+        unroll=unroll,
+    )
     return result
   if unroll is not None:
     raise ValueError("Can only use `unroll` in `fori_loop` if the loop bounds "
