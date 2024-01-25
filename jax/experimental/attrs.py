@@ -1,14 +1,15 @@
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Any
 
 import jax
 import jax.numpy as jnp
 from jax._src.lax.control_flow.loops import scan_p
-from jax.tree_util import (tree_flatten, tree_unflatten, PyTreeDef)
+from jax.tree_util import (tree_flatten, tree_unflatten, PyTreeDef, tree_map)
 
 from jax._src.core import (Jaxpr, AbstractValue, ClosedJaxpr, raise_to_shaped)
-from jax._src.util import (unzip2, safe_map)
+from jax._src.util import (unzip2, safe_map, split_list)
+from jax._src.interpreters.ad import jvp_jaxpr
 from jax._src.interpreters.partial_eval import (
   DynamicJaxprTrace, DynamicJaxprTracer, extend_jaxpr_stack,
   JaxprStackFrame, source_info_util, _input_type_to_tracers, make_jaxpr_effects)
@@ -124,6 +125,8 @@ def jax_getattr(self, attr):
 @dataclass
 class Thing:
   x : float
+  def __hash__(self): return id(self)
+  def __eq__(self, other): return self is other
 
 # === user code ===
 
@@ -158,3 +161,60 @@ def double_it_10() -> None:
 double_it_staged_10 = stage_out(double_it_10, ())
 double_it_staged_10()
 print(thing)
+
+# =========================================
+
+@dataclass
+class MutableCell:
+  value : Any # actually a parameter
+
+TangentVals = Any
+PrimalVals = Any
+TangentAttrDict = Any
+
+# TODO: jvp version that goes from StagedJaxpr -> StagedJaxpr
+
+# for each tangent ref, we could be (1) reading (2) writing (3) both
+def jvp2(fun, tangent_attr_dict, primal_vals, tangent_vals) -> tuple[PrimalVals, TangentVals, TangentAttrDict] :
+  primal_avals = tree_map(get_aval, primal_vals)
+  # args are (*primal_referents, *primal_vals)
+  staged = stage_out(fun, primal_avals)
+  # args of fun_jvp are (*primal_referents, *primal_vals, *tangent_referents, *tangent_vals)
+  fun_jvp, _ = jvp_jaxpr(staged.jaxpr, (True,)*len(staged.jaxpr.in_avals), True)
+  primal_init_states = get_states(staged.attrs_tracked)
+  def get_tangent_val(primal_ref):
+    primal_obj, attr_name = primal_ref
+    maybe_tangent_val = tangent_attr_dict.get(primal_ref)
+    if maybe_tangent_val is None:
+      # make zeros. Need to get the type from the primal ref val
+      assert False
+    else:
+      return maybe_tangent_val
+
+  tangent_init_states = map(get_tangent_val, staged.attrs_tracked)
+
+  # results are fun_jvp are (*primal_referents, *primal_vals, *tangent_referents, *tangent_vals)
+  results = core.eval_jaxpr(fun_jvp.jaxpr, fun_jvp.consts, *primal_init_states,
+                            *primal_vals, *tangent_init_states, *tangent_vals)
+  num_refs = len(staged.attrs_tracked)
+  num_vals = len(primal_vals)
+  primal_final_states, primal_vals_out, tangent_final_states, tangent_vals_out = split_list(
+    results, [num_refs, num_vals, num_refs])
+  set_states(staged.attrs_tracked, primal_final_states)
+  tangent_attr_dict_out = dict(zip(staged.attrs_tracked, tangent_final_states))
+  return (primal_vals_out, tangent_vals_out, tangent_attr_dict_out)
+
+thing_primal = Thing(2.0)
+
+thing_tangent = MutableCell(0.0)
+
+def thing_do_ad() -> None:
+  jax_setattr(thing_primal, "x", jnp.sin(jax_getattr(thing_primal, "x")))
+
+print(thing_do_ad())
+print(thing_primal)
+
+# result: ((),())
+print(thing_primal)
+print(jvp2(thing_do_ad, {(thing_primal,"x") : 2.0}, (), ()))
+print(thing_primal)
