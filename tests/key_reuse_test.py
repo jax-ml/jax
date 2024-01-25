@@ -118,7 +118,7 @@ class KeyReuseUnitTestSimple(jtu.JaxTestCase):
     def f(key):
       assert_unconsumed(key)
       key2 = jax.random.fold_in(key, 2)
-      assert_consumed(key)
+      assert_unconsumed(key)
       assert_unconsumed(key2)
     self.check_key_reuse(f, jax.random.key(0))
 
@@ -355,7 +355,7 @@ class KeyReuseUnitTestWithForwarding(jtu.JaxTestCase):
     def f(key):
       assert_unconsumed(key)
       key2 = jax.random.fold_in(key, 2)
-      assert_consumed(key)
+      assert_unconsumed(key)
       assert_unconsumed(key2)
     self.check_key_reuse(f, jax.random.key(0))
 
@@ -603,14 +603,22 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(KeyReuseError, self.random_split_error):
       self.check_key_reuse(f_bad_2)
 
+  def test_repeated_fold_ins(self):
+    # TODO(jakevdp): should we allow repeated fold-ins?
+    def f():
+      key = jax.random.key(0)
+      keys = [jax.random.fold_in(key, i)
+              for i in range(10)]
+      return [jax.random.uniform(k) for k in keys]
+    self.check_key_reuse(f)
+
   def test_reuse_after_fold_in(self):
     def f():
       key = jax.random.key(0)
       _ = jax.random.fold_in(key, 1)
       return jax.random.uniform(key)
 
-    with self.assertRaisesRegex(KeyReuseError, self.random_bits_error):
-      self.check_key_reuse(f)
+    self.check_key_reuse(f)
 
   def test_reuse_after_broadcast(self):
     def f():
