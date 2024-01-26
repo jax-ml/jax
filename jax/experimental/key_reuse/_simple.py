@@ -207,7 +207,7 @@ def _cond_key_type_signature(eqn, args_consumed):
       sources[source.idx].append(source.mask)
 
   combined_sinks = [Sink(i + 1, reduce(np.logical_or, m)) for i, m in sinks.items()]
-  combined_sources = [Source(i + 1, reduce(np.logical_and, m)) for i, m in sources.items()]
+  combined_sources = [Source(i, reduce(np.logical_and, m)) for i, m in sources.items()]
   return KeyReuseSignature(combined_sinks, combined_sources)
 
 key_reuse_signatures_dynamic[lax.cond_p] = _cond_key_type_signature
