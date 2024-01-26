@@ -160,14 +160,13 @@ def lax_ops():
       op_record("floor", 1, float_dtypes, test_util.rand_small),
       op_record("ceil", 1, float_dtypes, test_util.rand_small),
       op_record("round", 1, float_dtypes, test_util.rand_default),
-      # TODO(b/322390905) re-enable this test
-      # op_record(
-      #     "nextafter",
-      #     2,
-      #     [f for f in float_dtypes if f != dtypes.bfloat16],
-      #     test_util.rand_default,
-      #     tol=0,
-      # ),
+      op_record(
+          "nextafter",
+          2,
+          [f for f in float_dtypes if f != dtypes.bfloat16],
+          test_util.rand_default,
+          tol=0,
+      ),
       op_record("is_finite", 1, float_dtypes, test_util.rand_small),
       op_record("exp", 1, float_dtypes + complex_dtypes, test_util.rand_small),
       op_record("exp2", 1, float_dtypes + complex_dtypes, test_util.rand_small),
