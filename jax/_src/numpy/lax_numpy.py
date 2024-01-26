@@ -2226,25 +2226,27 @@ def copy(a: ArrayLike, order: str | None = None) -> Array:
 @util.implements(np.zeros_like)
 def zeros_like(a: ArrayLike | DuckTypedArray,
                dtype: DTypeLike | None = None,
-               shape: Any = None) -> Array:
+               shape: Any = None, *,
+               device: xc.Device | Sharding | None = None) -> Array:
   if not (hasattr(a, 'dtype') and hasattr(a, 'shape')):  # support duck typing
     util.check_arraylike("zeros_like", a)
   dtypes.check_user_dtype_supported(dtype, "zeros_like")
   if shape is not None:
     shape = canonicalize_shape(shape)
-  return lax.full_like(a, 0, dtype, shape)
+  return lax.full_like(a, 0, dtype, shape, sharding=_normalize_to_sharding(device))
 
 
 @util.implements(np.ones_like)
 def ones_like(a: ArrayLike | DuckTypedArray,
               dtype: DTypeLike | None = None,
-              shape: Any = None) -> Array:
+              shape: Any = None, *,
+              device: xc.Device | Sharding | None = None) -> Array:
   if not (hasattr(a, 'dtype') and hasattr(a, 'shape')):  # support duck typing
     util.check_arraylike("ones_like", a)
   dtypes.check_user_dtype_supported(dtype, "ones_like")
   if shape is not None:
     shape = canonicalize_shape(shape)
-  return lax.full_like(a, 1, dtype, shape)
+  return lax.full_like(a, 1, dtype, shape, sharding=_normalize_to_sharding(device))
 
 
 @util.implements(np.empty_like, lax_description="""\
@@ -2252,11 +2254,12 @@ Because XLA cannot create uninitialized arrays, the JAX version will
 return an array initialized with zeros.""")
 def empty_like(prototype: ArrayLike | DuckTypedArray,
                dtype: DTypeLike | None = None,
-               shape: Any = None) -> Array:
+               shape: Any = None, *,
+               device: xc.Device | Sharding | None = None) -> Array:
   if not (hasattr(prototype, 'dtype') and hasattr(prototype, 'shape')):  # support duck typing
     util.check_arraylike("empty_like", prototype)
   dtypes.check_user_dtype_supported(dtype, "empty_like")
-  return zeros_like(prototype, dtype=dtype, shape=shape)
+  return zeros_like(prototype, dtype=dtype, shape=shape, device=device)
 
 
 def _maybe_device_put(arr: Array, device: xc.Device | Sharding | None) -> Array:
@@ -2286,7 +2289,8 @@ def full(shape: Any, fill_value: ArrayLike,
 @util.implements(np.full_like)
 def full_like(a: ArrayLike | DuckTypedArray,
               fill_value: ArrayLike, dtype: DTypeLike | None = None,
-              shape: Any = None) -> Array:
+              shape: Any = None, *,
+              device: xc.Device | Sharding | None = None) -> Array:
   if hasattr(a, 'dtype') and hasattr(a, 'shape'):  # support duck typing
     util.check_arraylike("full_like", 0, fill_value)
   else:
@@ -2295,11 +2299,11 @@ def full_like(a: ArrayLike | DuckTypedArray,
   if shape is not None:
     shape = canonicalize_shape(shape)
   if ndim(fill_value) == 0:
-    return lax.full_like(a, fill_value, dtype, shape)
+    return lax.full_like(a, fill_value, dtype, shape, sharding=_normalize_to_sharding(device))
   else:
     shape = np.shape(a) if shape is None else shape  # type: ignore[arg-type]
     dtype = result_type(a) if dtype is None else dtype  # type: ignore[arg-type]
-    return broadcast_to(asarray(fill_value, dtype=dtype), shape)
+    return _maybe_device_put(broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
 
 
 @util.implements(np.zeros)
