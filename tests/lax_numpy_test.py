@@ -2850,6 +2850,44 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     out = func(**kwds, shape=shape, dtype=dtype, device=sharding)
     self.assertEqual(out.sharding, sharding)
 
+  @jtu.sample_product(
+      func=[jnp.empty_like, jnp.zeros_like, jnp.ones_like, jnp.full_like],
+      shape=array_shapes,
+      dtype=default_dtypes,
+  )
+  def testFullLikeWithDevice(self, func, shape, dtype):
+    device = jax.devices()[-1]
+    rng = jtu.rand_default(self.rng())
+    x = rng(shape, dtype)
+    kwds = {'fill_value': 1} if func is jnp.full_like else {}
+
+    with self.subTest('device from keyword'):
+      out = func(x, **kwds, device=device)
+      self.assertEqual(out.devices(), {device})
+
+    with self.subTest('device from input array'):
+      out2 = func(out, **kwds)
+      self.assertEqual(out2.devices(), out.devices())
+
+  @jtu.sample_product(
+      func=[jnp.empty_like, jnp.zeros_like, jnp.ones_like, jnp.full_like],
+      shape=array_shapes,
+      dtype=default_dtypes,
+  )
+  def testFullLikeWithSharding(self, func, shape, dtype):
+    sharding = SingleDeviceSharding(jax.devices()[-1])
+    rng = jtu.rand_default(self.rng())
+    x = rng(shape, dtype)
+    kwds = {'fill_value': 1} if func is jnp.full_like else {}
+
+    with self.subTest('device from keyword'):
+      out = func(x, **kwds, device=sharding)
+      self.assertEqual(out.sharding, sharding)
+
+    with self.subTest('device from input array'):
+      out2 = func(out, **kwds)
+      self.assertEqual(out2.devices(), out.devices())
+
   def testDuckTypedLike(self):
     x = jax.ShapeDtypeStruct((1, 2, 3), np.dtype("int32"))
     self.assertArraysEqual(jnp.zeros_like(x), jnp.zeros(x.shape, x.dtype))
@@ -5674,7 +5712,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'identity': ['like'],
       'isin': ['kind'],
       'full': ['order', 'like'],
-      'full_like': ['device', 'subok', 'order'],
+      'full_like': ['subok', 'order'],
       'fromfunction': ['like'],
       'histogram': ['normed'],
       'histogram2d': ['normed'],
@@ -5685,7 +5723,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'nanstd': ['correction', 'mean'],
       'nanvar': ['correction', 'mean'],
       'ones': ['order', 'like'],
-      'ones_like': ['device', 'subok', 'order'],
+      'ones_like': ['subok', 'order'],
       'partition': ['kind', 'order'],
       'percentile': ['weights'],
       'quantile': ['weights'],
@@ -5695,7 +5733,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'tri': ['like'],
       'var': ['correction', 'mean'],
       'vstack': ['casting'],
-      'zeros_like': ['device', 'subok', 'order']
+      'zeros_like': ['subok', 'order']
     }
 
     extra_params = {
