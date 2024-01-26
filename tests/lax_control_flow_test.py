@@ -538,6 +538,31 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "Can only use `unroll`"):
       f(10)
 
+  @parameterized.named_parameters(
+      {
+          "testcase_name": f"_{jit=}_{upper=}_{unroll=}",
+          "jit": jit,
+          "upper": upper,
+          "unroll": unroll,
+      }
+      for jit in (False, True)
+      for upper in (0, -1)
+      for unroll in (False, True)
+  )
+  def test_fori_loop_returns_init_with_nonpositive_length(
+      self, jit, upper, unroll
+  ):
+    """Test that `length <= 0` behaves like Python `range`."""
+    fori_loop_with_static_upper_and_lower = partial(
+        lax.fori_loop, 0, upper, lambda i, c: c + 1, unroll=unroll
+    )
+    if jit:
+      fori_loop_with_static_upper_and_lower = jax.jit(
+          fori_loop_with_static_upper_and_lower
+      )
+    init = jnp.float32(10)
+    self.assertEqual(fori_loop_with_static_upper_and_lower(init), init)
+
   def testForiLoopBatched(self):
     def body_fun(i, loop_carry):
       x, y = loop_carry
@@ -1055,7 +1080,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
     assert "select" not in str(jaxpr)
 
-
     # these cases become select
     x = jnp.array([2, 4])
     ans = jax.vmap(fun, (0, 0, None))(x, y, z)
@@ -1107,7 +1131,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expected = np.array([-5, -5])
     self.assertAllClose(ans, expected, check_dtypes=False)
     assert "select" not in str(jaxpr)
-
 
     # these cases become select
     x = jnp.array([0, 1])
@@ -2411,7 +2434,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def f(x, n): return lax.fori_loop(0, n, lambda _, x: x + 1, x)
     x, n = jnp.arange(3), jnp.arange(4)
     jax.vmap(jax.vmap(f, (None, 0)), (0, None))(x, n)  # doesn't crash
-
 
   @parameterized.named_parameters(
       {"testcase_name": f"_{shape}_{axis=}",
