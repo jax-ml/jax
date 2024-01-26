@@ -958,14 +958,11 @@ def _dot_general_lowering(
 triton_lowering_rules[lax.dot_general_p] = _dot_general_lowering
 
 
-def _reduction_lowering(body, ctx: TritonLoweringRuleContext, args, axes):
-  flat_args = tree_util.tree_leaves(args)
+def _reduction_lowering(body, ctx: TritonLoweringRuleContext, a, axes):
+  flat_args = tree_util.tree_leaves(a)
   (axis,) = axes
-  mapped_avals = [
-      jax_core.mapped_aval(aval.shape[axis], axis, aval)
-      for aval in ctx.avals_in
-  ]
-  in_tree = tree_util.tree_structure((args, args))
+  mapped_avals = [jax_core.ShapedArray((), aval.dtype) for aval in ctx.avals_in]
+  in_tree = tree_util.tree_structure((a, a))
   flat_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
       lu.wrap_init(body), in_tree
   )
