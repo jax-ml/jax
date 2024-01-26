@@ -172,6 +172,16 @@ class NNFunctionsTest(jtu.JaxTestCase):
                                 jnp.array([0, 2, 3]))
       jtu.check_grads(g_fun, (x,), order=2)
 
+  @parameterized.parameters([nn.softmax, nn.log_softmax])
+  def testSoftmaxWhereGrad(self, fn):
+    # regression test for https://github.com/google/jax/issues/19490
+    x = jnp.array([36., 10000.])
+    mask = x < 1000
+
+    f = lambda x, mask: fn(x, where=mask, initial=x.min())[0]
+
+    self.assertAllClose(jax.grad(f)(x, mask), jnp.zeros_like(x))
+
   def testSoftmaxGrad(self):
     x = jnp.array([5.5, 1.3, -4.2, 0.9])
     jtu.check_grads(nn.softmax, (x,), order=2, atol=5e-3)
