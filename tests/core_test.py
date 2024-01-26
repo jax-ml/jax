@@ -624,7 +624,7 @@ class DynamicShapesTest(jtu.JaxTestCase):
     def f(x, y):
       return x, y
 
-    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
+    jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
       f, [n, a, b], keep_inputs=[False, True, True])
 
     self.assertLen(jaxpr.invars, 3)
@@ -648,7 +648,7 @@ class DynamicShapesTest(jtu.JaxTestCase):
         return (x, w)
       return g(x, y, x, y)
 
-    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
+    jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
       f, [n, a, b], keep_inputs=[False, True, True])
 
     self.assertLen(jaxpr.invars, 1 + 2)  # one axis size var, two other inputs
@@ -684,7 +684,7 @@ class DynamicShapesTest(jtu.JaxTestCase):
         return (x, w)
       return g(x.shape[0], x, y, x, y)
 
-    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
+    jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
       f, [n, a, b], keep_inputs=[False, True, True])
 
     # { lambda ; a:i32[] b:f32[a] c:f32[a]. let
@@ -720,7 +720,7 @@ class DynamicShapesTest(jtu.JaxTestCase):
       u = lax_internal._reduce_sum(w, [0])
       return (u,)
 
-    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
+    jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
       f, [n, a, b], keep_inputs=[False, True, True])
 
     self.assertLen(jaxpr.invars, 1 + 2)  # one axis size var, two other inputs
@@ -745,7 +745,7 @@ class DynamicShapesTest(jtu.JaxTestCase):
       def g(x): return x
       return g(a),
 
-    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
+    jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
       f, [n, m, a, b], keep_inputs=[False, False, True, True])
     # { lambda ; a:i32[] b:i32[] c:f32[a] d:f32[b]. let
     #     e:f32[a] = xla_call[

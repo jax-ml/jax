@@ -318,7 +318,7 @@ class PallasCallDMATest(parameterized.TestCase):
       pltpu.run_scoped(body, pltpu.VMEM((8,), jnp.float32))
       return []
 
-    jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(
+    jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
         lu.wrap_init(kernel),
         [
             state.shaped_array_ref((8,), jnp.float32),

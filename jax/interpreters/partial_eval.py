@@ -82,7 +82,7 @@ from jax._src.interpreters.partial_eval import (
   result_info as result_info,
   sig_info as sig_info,
   trace_to_jaxpr as trace_to_jaxpr,
-  trace_to_jaxpr_dynamic as trace_to_jaxpr_dynamic,
+  trace_to_jaxpr_dynamic as _trace_to_jaxpr_dynamic,
   trace_to_jaxpr_dynamic2 as trace_to_jaxpr_dynamic2,
   trace_to_jaxpr_final as trace_to_jaxpr_final,
   trace_to_jaxpr_final2 as trace_to_jaxpr_final2,
@@ -96,5 +96,13 @@ from jax._src.interpreters.partial_eval import (
   tracers_to_jaxpr as tracers_to_jaxpr,
   trivial_ctx as trivial_ctx,
 )
+
+
+# TODO(mattjj): remove temporary shim when trace_to_jaxpr_dynamic sig stabilizes
+def trace_to_jaxpr_dynamic(fun, in_avals, debug_info=None, *, keep_inputs=None):  # noqa
+  jaxpr, out_avals, consts, () = _trace_to_jaxpr_dynamic(
+      fun, in_avals, debug_info, keep_inputs=keep_inputs)
+  return jaxpr, out_avals, consts
+
 
 from jax._src.core import Jaxpr as Jaxpr

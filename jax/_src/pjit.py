@@ -21,7 +21,7 @@ import itertools as it
 import logging
 import operator as op
 import weakref
-from typing import Callable, cast, NamedTuple, Any, Union
+from typing import Callable, cast, NamedTuple, Any, Union, Optional
 import threading
 import warnings
 
@@ -129,10 +129,13 @@ def _device_assignment_mismatch_error(fun_name, fails, args_flat, api_name,
 
 
 def _python_pjit_helper(fun, infer_params_fn, *args, **kwargs):
-  args_flat, _, params, _, out_tree, _, _, _, arg_names = infer_params_fn(
-      *args, **kwargs)
+  args_flat, _, params, _, out_tree, _, _, _, arg_names, attrs_tracked = \
+      infer_params_fn(*args, **kwargs)
   for arg in args_flat:
     dispatch.check_arg(arg)
+  if attrs_tracked:
+    init_states = _get_states(attrs_tracked)
+    args_flat = [*init_states, *args_flat]
   try:
     out_flat = pjit_p.bind(*args_flat, **params)
   except pxla.DeviceAssignmentMismatchError as e:
@@ -142,8 +145,20 @@ def _python_pjit_helper(fun, infer_params_fn, *args, **kwargs):
     msg = _device_assignment_mismatch_error(
         fun_name, fails, args_flat, api_name, arg_names)
     raise ValueError(msg) from None
+  if attrs_tracked:
+    final_states, out_flat = split_list(out_flat, [len(attrs_tracked)])
+    _set_states(attrs_tracked, final_states)
   outs = tree_unflatten(out_tree, out_flat)
-  return outs, out_flat, out_tree, args_flat, params['jaxpr']
+  return outs, out_flat, out_tree, args_flat, params['jaxpr'], attrs_tracked
+
+def _set_states(attrs_tracked, vals):
+  from jax.experimental.attrs import jax_setattr  # type: ignore
+  for ((obj, attr), val) in zip(attrs_tracked, vals):
+    jax_setattr(obj, attr, val)
+
+def _get_states(attrs_tracked):
+  from jax.experimental.attrs import jax_getattr  # type: ignore
+  return [jax_getattr(obj, attr) for (obj, attr) in attrs_tracked]
 
 
 def _python_pjit(fun: Callable, infer_params_fn):
@@ -161,7 +176,8 @@ def _python_pjit(fun: Callable, infer_params_fn):
   return wrapped
 
 
-def _get_fastpath_data(executable, out_tree, args_flat, out_flat):
+def _get_fastpath_data(executable, out_tree, args_flat, out_flat, attrs_tracked,
+                       ) -> Optional[pxla.MeshExecutableFastpathData]:
   out_flat, out_tree = pxla.reflatten_outputs_for_dispatch(out_tree, out_flat)
 
   use_fastpath = (
@@ -172,7 +188,9 @@ def _get_fastpath_data(executable, out_tree, args_flat, out_flat):
       not executable.unsafe_call.ordered_effects and
       not executable.unsafe_call.has_unordered_effects and
       not executable.unsafe_call.has_host_callbacks and
-      all(isinstance(x, xc.ArrayImpl) for x in out_flat)
+      all(isinstance(x, xc.ArrayImpl) for x in out_flat) and
+      # no attr state effects
+      not attrs_tracked
   )
 
   if use_fastpath:
@@ -224,11 +242,12 @@ def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames,
 
   @api_boundary
   def cache_miss(*args, **kwargs):
-    outs, out_flat, out_tree, args_flat, jaxpr = _python_pjit_helper(
+    outs, out_flat, out_tree, args_flat, jaxpr, attrs_tracked = _python_pjit_helper(
         fun, infer_params_fn, *args, **kwargs)
     executable = _read_most_recent_pjit_call_executable(jaxpr)
-    fastpath_data = _get_fastpath_data(executable, out_tree, args_flat, out_flat)
-    return outs, fastpath_data
+    maybe_fastpath_data = _get_fastpath_data(
+        executable, out_tree, args_flat, out_flat, attrs_tracked)
+    return outs, maybe_fastpath_data
 
   if xla_extension_version >= 226:
     cpp_pjit_f = xc._xla.pjit(  # type: ignore
@@ -312,7 +331,7 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
     out_layouts = kwargs.pop('_out_layouts', None)
     (args_flat, flat_global_in_avals, params, in_tree, out_tree,
      donated_invars, in_layouts_flat, out_layouts_flat,
-     arg_names) = infer_params_fn(
+     arg_names, ()) = infer_params_fn(
          *args, **kwargs, _in_layouts=in_layouts, _out_layouts=out_layouts)
     resource_env = params['resource_env']
     mesh = None if resource_env is None else resource_env.physical_mesh
@@ -339,7 +358,7 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
 
   @api_boundary
   def eval_shape(*args, **kwargs):
-    _, _, params, _, out_tree, _, _, _, _ = infer_params_fn(
+    _, _, params, _, out_tree, _, _, _, _, _ = infer_params_fn(
         *args, **kwargs, _in_layouts=None, _out_layouts=None)
     out = [api.ShapeDtypeStruct(x.shape, x.dtype, x.named_shape)
            for x in params['jaxpr'].out_avals]
@@ -464,7 +483,7 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
       hashable_pytree(in_shardings), hashable_pytree(in_layouts), in_avals,
       in_tree, resource_env, dbg, device_or_backend_set, True if kwargs else False)
 
-  jaxpr, consts, canonicalized_out_shardings_flat, out_layouts_flat = _pjit_jaxpr(
+  jaxpr, consts, out_shardings, out_layouts_flat, attrs_tracked = _pjit_jaxpr(
       flat_fun, hashable_pytree(out_shardings), hashable_pytree(out_layouts),
       in_type, dbg, device_or_backend_set, HashableFunction(out_tree, closure=()),
       HashableFunction(res_paths, closure=()), inline)
@@ -477,19 +496,19 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
     implicit_args = []
   args_flat = [*implicit_args, *explicit_args]
 
-  num_extra_args = len(implicit_args) + len(consts)
+  num_extra_args = len(implicit_args) + len(attrs_tracked) + len(consts)
   canonicalized_in_shardings_flat = \
       (UNSPECIFIED,) * num_extra_args + canonicalized_in_shardings_flat
   in_layouts_flat = (None,) * num_extra_args + in_layouts_flat
   donated_invars = (False,) * num_extra_args + donated_invars
   assert (len(canonicalized_in_shardings_flat) == len(in_layouts_flat) ==
-          len(donated_invars) == len(consts) + len(args_flat))
+          len(donated_invars) == len(attrs_tracked) + len(consts) + len(args_flat))
 
   # in_shardings and out_shardings here are all GSPMDSharding.
   params = dict(
       jaxpr=jaxpr,
       in_shardings=canonicalized_in_shardings_flat,
-      out_shardings=canonicalized_out_shardings_flat,
+      out_shardings=out_shardings,
       resource_env=resource_env,
       donated_invars=donated_invars,
       name=getattr(flat_fun, '__name__', '<unknown>'),
@@ -498,7 +517,7 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
   )
   return (consts + args_flat, in_type, params, in_tree, out_tree(),
           donated_invars, in_layouts_flat, out_layouts_flat,
-          dbg.arg_names if dbg else None)
+          dbg.arg_names if dbg else None, attrs_tracked)
 
 def _extract_implicit_args(
   in_type: Sequence[tuple[core.AbstractValue, bool]],
@@ -1047,11 +1066,13 @@ def _create_pjit_jaxpr(fun, in_type, debug_info, out_paths, ignored_inline):
     if config.dynamic_shapes.value:
       jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic2(
           lu.annotate(fun, in_type), debug_info=pe_debug)
+      attrs_tracked = []
     else:
-      jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(
+      jaxpr, global_out_avals, consts, attrs_tracked = pe.trace_to_jaxpr_dynamic(
           fun, in_type, debug_info=pe_debug)
 
-  if not config.dynamic_shapes.value:
+  # TODO(dougalm,mattjj): enable debug info with attrs_tracked
+  if not config.dynamic_shapes.value and not attrs_tracked:
     jaxpr = jaxpr_debug_info(jaxpr, debug_info, out_paths())
 
   if config.enable_key_reuse_checks.value:
@@ -1065,7 +1086,7 @@ def _create_pjit_jaxpr(fun, in_type, debug_info, out_paths, ignored_inline):
   else:
     closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
     final_consts = []
-  return closed_jaxpr, final_consts, global_out_avals
+  return closed_jaxpr, final_consts, global_out_avals, attrs_tracked
 
 
 @lru_cache(maxsize=4096)
@@ -1108,13 +1129,12 @@ def _check_and_canonicalize_out_shardings(
 
 def _pjit_jaxpr(fun, out_shardings_thunk, out_layouts_thunk, in_type, debug_info,
                 device_or_backend_set, out_tree, result_paths, inline):
-  jaxpr, final_consts, out_type = _create_pjit_jaxpr(
+  jaxpr, final_consts, out_type, attrs_tracked = _create_pjit_jaxpr(
       fun, in_type, debug_info, result_paths, IgnoreKey(inline))
   canonicalized_out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
       out_shardings_thunk, out_layouts_thunk, out_tree, tuple(out_type),
       jaxpr.jaxpr.debug_info, device_or_backend_set)
-  # lu.cache needs to be able to create weakrefs to outputs, so we can't return a plain tuple
-  return jaxpr, final_consts, canonicalized_out_shardings_flat, out_layouts_flat
+  return jaxpr, final_consts, canonicalized_out_shardings_flat, out_layouts_flat, attrs_tracked
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1357,7 +1377,7 @@ def _pjit_call_impl(*args, jaxpr,
         donated_invars=donated_invars, name=name, keep_unused=keep_unused,
         inline=inline)
     fastpath_data = _get_fastpath_data(
-        compiled, tree_structure(out_flat), args, out_flat)
+        compiled, tree_structure(out_flat), args, out_flat, [])
     return out_flat, fastpath_data
 
   f = _get_jaxpr_as_fun(
@@ -1856,7 +1876,7 @@ pe.partial_eval_jaxpr_custom_rules[pjit_p] = \
 
 @lu.cache
 def _pjit_transpose_trace(fun, in_avals):
-  transpose_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
+  transpose_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(fun, in_avals)
   transpose_jaxpr = core.ClosedJaxpr(transpose_jaxpr, consts)
   return transpose_jaxpr
 

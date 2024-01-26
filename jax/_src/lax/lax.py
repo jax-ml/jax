@@ -1027,7 +1027,7 @@ def _reduction_jaxpr(computation, aval):
           f"Reduction functions should only return an array.\n"
           f"Full return value: {result}")
     return (result,)
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(comp, (aval, aval))
+  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(comp, (aval, aval))
   if any(isinstance(c, core.Tracer) for c in consts):
     raise NotImplementedError(
         "Reduction computations can't close over Tracers. Please open an issue "
@@ -1040,7 +1040,7 @@ def _variadic_reduction_jaxpr(computation, flat_avals, aval_tree):
   flat_in_avals, in_tree = tree_util.tree_flatten((avals, avals))
   comp = lu.wrap_init(computation)
   flat_comp, out_tree = api_util.flatten_fun_nokwargs(comp, in_tree)
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_comp, tuple(flat_in_avals))
+  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_comp, tuple(flat_in_avals))
   if any(isinstance(c, core.Tracer) for c in consts):
     raise NotImplementedError(
         "Reduction computations can't close over Tracers. Please open an issue "

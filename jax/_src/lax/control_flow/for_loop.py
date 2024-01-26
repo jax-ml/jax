@@ -88,7 +88,7 @@ def _hoist_consts_to_refs(jaxpr: core.Jaxpr) -> core.Jaxpr:
     consts = map(lambda x: ref_get(x, ()), consts)
     all_consts = merge_lists(is_const_ref, consts, const_refs)
     return core.eval_jaxpr(jaxpr, all_consts, i, *args)
-  hoisted_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+  hoisted_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(_hoist), in_avals)
   assert not consts, "All consts should have been converted to refs"
   return hoisted_jaxpr
@@ -98,7 +98,7 @@ def _trace_to_jaxpr_with_refs(f, state_tree: PyTreeDef,
                               ) -> tuple[core.Jaxpr, list[Any], PyTreeDef]:
   f, out_tree_thunk = flatten_fun_nokwargs(
       lu.wrap_init(f), treedef_tuple((tree_structure(0), state_tree)))
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
       f, state_avals)
   return jaxpr, consts, out_tree_thunk()
 
@@ -607,7 +607,7 @@ def _for_partial_eval_custom(saveable, in_unknowns, in_inst, eqn):
     return for_p.bind(*jaxpr_known_args, jaxpr=jaxpr_known, nsteps=nsteps,
                       reverse=reverse, which_linear=jaxpr_known_which_linear,
                       unroll=unroll)
-  call_jaxpr_, _, call_jaxpr_consts = pe.trace_to_jaxpr_dynamic(
+  call_jaxpr_, _, call_jaxpr_consts, () = pe.trace_to_jaxpr_dynamic(
       known, [v.aval for v in known_invars])
   call_jaxpr = core.ClosedJaxpr(call_jaxpr_, call_jaxpr_consts)
   eqn_known = pe.new_jaxpr_eqn(known_invars, [*known_outvars, *resvars],
@@ -629,7 +629,7 @@ def _for_partial_eval_custom(saveable, in_unknowns, in_inst, eqn):
     _, ans = split_list(out_flat, [num_res])
     _, ans = partition_list(out_inst, ans)
     return ans
-  call_jaxpr_, _, call_jaxpr_consts = pe.trace_to_jaxpr_dynamic(
+  call_jaxpr_, _, call_jaxpr_consts, () = pe.trace_to_jaxpr_dynamic(
       staged, [v.aval for v in [*resvars, *eqn.invars]])
   assert len(jaxpr_staged.invars) - 1 == len(call_jaxpr_.invars)
   call_jaxpr = core.ClosedJaxpr(call_jaxpr_, call_jaxpr_consts)
@@ -667,7 +667,7 @@ def _convert_outputs_to_writes(
       AbstractRef(core.ShapedArray((nsteps, *v.aval.shape),  # pytype: disable=attribute-error
                   v.aval.dtype))  # pytype: disable=attribute-error
       for v, loop_invar in zip(jaxpr.outvars, loop_invar_res)]
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
       eval_jaxpr, [*in_avals, *res_ref_avals])
   assert not consts
   return jaxpr, [core.ShapedArray(a.shape, a.dtype) for a in res_ref_avals]  # pytype: disable=attribute-error
@@ -693,7 +693,7 @@ def _convert_inputs_to_reads(
                   aval.dtype))  # pytype: disable=attribute-error
       for aval, loop_invar in zip(res_val_avals, loop_invar_res)]
 
-  jaxpr, _, () = pe.trace_to_jaxpr_dynamic(
+  jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(
       eval_jaxpr, [i_aval, *res_ref_avals, *orig_ref_avals])
   return jaxpr
 
@@ -720,7 +720,7 @@ def transpose_jaxpr(jaxpr: core.Jaxpr, which_linear: list[bool]) -> core.Jaxpr:
     ad.backward_pass(
         tangent_jaxpr, (), False, (), (*primals_args, *ct_args), ())
     return []
-  jaxpr_trans, _, _ = pe.trace_to_jaxpr_dynamic(
+  jaxpr_trans, _, _, () = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(trans), [v.aval for v in jaxpr.invars])
   return jaxpr_trans
 

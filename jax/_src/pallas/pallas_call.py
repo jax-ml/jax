@@ -26,11 +26,11 @@ from jax import api_util
 from jax import tree_util
 from jax import lax
 from jax._src import state
-from jax.interpreters import ad
-from jax.interpreters import batching
-from jax.interpreters import partial_eval as pe
-from jax.interpreters import mlir
-from jax.interpreters import xla
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.interpreters import partial_eval as pe
+from jax._src.interpreters import mlir
+from jax._src.interpreters import xla
 from jax._src import ad_util
 from jax._src import core as jax_core
 from jax._src.state import primitives as sp
@@ -258,7 +258,7 @@ def _batch_block_mapping(grid: tuple[int, ...], aval: jax_core.ShapedArray,
     idx_avals = [i32_aval] * (len(grid) + 1)
   else:
     idx_avals = [i32_aval, *block_mapping.index_map_jaxpr.in_avals]
-  block_mapping_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+  block_mapping_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(_block_map_function), idx_avals)
   shape = aval.shape if block_mapping is None else block_mapping.block_shape
   if dim is batching.not_mapped:
@@ -387,7 +387,7 @@ def _hoist_consts_to_refs(jaxpr: jax_core.Jaxpr) -> jax_core.Jaxpr:
     consts = map(lambda x: sp.ref_get(x, ()), consts)
     all_consts = merge_lists(is_const_ref, consts, const_refs)
     return jax_core.eval_jaxpr(jaxpr, all_consts, *args)
-  hoisted_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+  hoisted_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(_hoist), in_avals)
   assert not consts, "All consts should have been converted to refs"
   return hoisted_jaxpr
@@ -401,8 +401,7 @@ def _trace_to_jaxpr(fun: Callable, grid_spec: GridSpec, flat_in_avals,
   wrapped_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
       lu.wrap_init(fun), jaxpr_in_tree)
   debug = pe.debug_info(fun, jaxpr_in_tree, out_tree_thunk, False, "pallas_call")
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, jaxpr_flat_avals,
-                                               debug)
+  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, jaxpr_flat_avals, debug)
   jaxpr = _hoist_consts_to_refs(jaxpr)
   return grid_mapping, jaxpr, consts, out_tree_thunk()
 

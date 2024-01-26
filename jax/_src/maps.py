@@ -999,7 +999,7 @@ def _dynamic_jaxpr_process_xmap(self, primitive, f, tracers, params):
                      for a, a_in_axes in zip(in_avals, params['in_axes'])]
   with core.extend_axis_env_nd(global_axis_sizes.items()):
     with core.new_sublevel():
-      jaxpr, mapped_out_avals, consts = trace_to_subjaxpr_dynamic(
+      jaxpr, mapped_out_avals, consts, () = trace_to_subjaxpr_dynamic(
           f, self.main, mapped_in_avals)
   out_axes = params['out_axes_thunk']()
   if params['spmd_out_axes_thunk'] is not None:
@@ -1340,7 +1340,7 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
   # NOTE: We don't extend the resource env with the mesh shape, because those
   #       resources are already in scope! It's the outermost xmap that introduces
   #       them!
-  vectorized_jaxpr, out_avals, consts = pe.trace_to_jaxpr_dynamic(f, local_avals)
+  vectorized_jaxpr, out_avals, consts, () = pe.trace_to_jaxpr_dynamic(f, local_avals)
   _check_out_avals_vs_out_axes(out_avals, out_axes, global_axis_sizes)
   const_nodes = [mlir.ir_constants(xla.canonicalize_dtype(x)) for x in consts]
 
@@ -1415,7 +1415,7 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
   add_spmd_axes(mesh_in_axes, spmd_in_axes)
   add_spmd_axes(mesh_out_axes, spmd_out_axes)
   global_in_avals = ctx.avals_in
-  vectorized_jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(f, global_in_avals)
+  vectorized_jaxpr, global_out_avals, consts, () = pe.trace_to_jaxpr_dynamic(f, global_in_avals)
 
   sharded_global_in_nodes = [
     [mlir.wrap_with_sharding_op(
@@ -1477,7 +1477,7 @@ def _xmap_lowering_rule_spmd_manual(ctx, *global_in_nodes,
   #       resources are already in scope! It's the outermost xmap that introduces
   #       them!
   global_in_avals = ctx.avals_in
-  vectorized_jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic(f, global_in_avals)
+  vectorized_jaxpr, global_out_avals, consts, () = pe.trace_to_jaxpr_dynamic(f, global_in_avals)
   const_nodes = [mlir.ir_constants(xla.canonicalize_dtype(x)) for x in consts]
 
   # We in-line here rather than generating a Call HLO as in the xla_call

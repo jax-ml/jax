@@ -241,6 +241,7 @@ py_library_providing_imports_info(
             "_src/internal_test_util/**",
         ],
     ) + [
+        "experimental/attrs.py",
         # until new parallelism APIs are moved out of experimental
         "experimental/maps.py",
         "experimental/pjit.py",

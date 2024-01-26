@@ -372,7 +372,7 @@ def _trace_to_jaxpr(fun, in_tree, in_avals):
   flat_fun, out_tree = flatten_fun(lu.wrap_init(fun), in_tree)
   debug = pe.debug_info(fun, in_tree, out_tree, True, "checkpoint")
   try:
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
+    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals, debug)
   except core.ConcretizationTypeError as e:
     msg, = e.args
     if 'for checkpoint' not in msg:
@@ -620,7 +620,7 @@ def _transpose_jaxpr(jaxpr, in_lin, out_zeros, reduce_axes):
     in_cts_nz, _ = partition_list(in_zeros, in_cts)
     return in_cts_nz
 
-  transposed_jaxpr_, _, consts = pe.trace_to_jaxpr_dynamic(transposed, in_avals)
+  transposed_jaxpr_, _, consts, () = pe.trace_to_jaxpr_dynamic(transposed, in_avals)
   transposed_jaxpr = core.ClosedJaxpr(transposed_jaxpr_, consts)
   return transposed_jaxpr, cell.in_cts_zero  # type: ignore
 
