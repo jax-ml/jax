@@ -139,7 +139,7 @@ class builder:
       return arith_dialect.ConstantOp(t, 0.0)
     raise NotImplementedError
 
-  def get_all_ones_values(self, t: ir.Type) -> ir.Value:
+  def get_all_ones_value(self, t: ir.Type) -> ir.Value:
     if isinstance(t, ir.IntegerType):
       return arith_dialect.ConstantOp(t, 0xFFFFFFFFFFFFFFFF)
     raise NotImplementedError
@@ -782,8 +782,17 @@ bfloat16 = tl.core.bfloat16
 float16 = tl.core.float16
 float32 = tl.core.float32
 float64 = tl.core.float64
+int1 = tl.core.int1
 int32 = tl.core.int32
 int64 = tl.core.int64
+uint32 = tl.core.uint32
+uint64 = tl.core.uint64
+
+
+def _bool_block_like(v: tensor) -> block_type:
+  if not v.type.is_block():
+    return int1
+  return tl.block_type(int1, v.type.shape)
 
 
 def wrap_with_builder(fn):
@@ -1223,26 +1232,270 @@ class math:
 
 
 class semantic:
-  add = wrap_with_builder(tl.semantic.add)
-  and_ = wrap_with_builder(tl.semantic.and_)
-  ashr = wrap_with_builder(tl.semantic.ashr)
   cast = wrap_with_builder(tl.semantic.cast)
-  equal = wrap_with_builder(tl.semantic.equal)
-  floordiv = wrap_with_builder(tl.semantic.floordiv)
-  greater_equal = wrap_with_builder(tl.semantic.greater_equal)
-  greater_than = wrap_with_builder(tl.semantic.greater_than)
-  invert = wrap_with_builder(tl.semantic.invert)
-  less_equal = wrap_with_builder(tl.semantic.less_equal)
-  less_than = wrap_with_builder(tl.semantic.less_than)
-  lshr = wrap_with_builder(tl.semantic.lshr)
-  minus = wrap_with_builder(tl.semantic.minus)
-  mod = wrap_with_builder(tl.semantic.mod)
-  mul = wrap_with_builder(tl.semantic.mul)
-  not_equal = wrap_with_builder(tl.semantic.not_equal)
-  or_ = wrap_with_builder(tl.semantic.or_)
-  shl = wrap_with_builder(tl.semantic.shl)
-  sub = wrap_with_builder(tl.semantic.sub)
-  trans = wrap_with_builder(tl.semantic.trans)
-  truediv = wrap_with_builder(tl.semantic.truediv)
   where = wrap_with_builder(tl.semantic.where)
-  xor_ = wrap_with_builder(tl.semantic.xor_)
+
+  @staticmethod
+  def trans(x: tensor) -> tensor:
+    if len(x.shape) != 2:
+      raise NotImplementedError(f"unsupported shape: {x.shape}")
+    return tl.tensor(
+        tt_dialect.trans(x.handle),
+        tl.block_type(x.dtype, [*reversed(x.shape)]),
+    )
+
+  @staticmethod
+  def minus(x: tensor) -> tensor:
+    if x.dtype.is_ptr():
+      raise NotImplementedError(f"unsupported dtype: {x.dtype}")
+    b = builder.current
+    zero = tensor(b.get_null_value(x.dtype.to_ir(b)), x.dtype)
+    return semantic.sub(broadcast_to(zero, x.shape), x)
+
+  @staticmethod
+  def add(x: tensor, y: tensor) -> tensor:
+    assert x.shape == y.shape
+    if y.dtype.is_ptr() and not x.dtype.is_ptr():
+      x, y = y, x
+    if x.dtype.is_ptr():
+      return tensor(
+          tt_dialect.addptr(x.handle.type, x.handle, y.handle), x.type
+      )
+    elif not y.dtype.is_ptr():
+      if x.dtype.is_floating():
+        return tensor(arith_dialect.addf(x.handle, y.handle), x.type)
+      elif x.dtype.is_int():
+        return tensor(arith_dialect.addi(x.handle, y.handle), x.type)
+    raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
+
+  @staticmethod
+  def sub(x: tensor, y: tensor) -> tensor:
+    assert x.shape == y.shape
+    if x.dtype.is_ptr():
+      return tensor(
+          tt_dialect.addptr(x.handle.type, x.handle, semantic.minus(y).handle),
+          x.type,
+      )
+    elif not y.dtype.is_ptr():
+      if y.dtype.is_floating():
+        return tensor(arith_dialect.subf(x.handle, y.handle), x.type)
+      elif y.dtype.is_int():
+        return tensor(arith_dialect.subi(x.handle, y.handle), x.type)
+    raise NotImplementedError(f"unsupported dtypes: {y.dtype} and {y.dtype}")
+
+  @staticmethod
+  def mul(x: tensor, y: tensor) -> tensor:
+    assert x.shape == y.shape
+    if x.dtype.is_floating():
+      return tensor(arith_dialect.mulf(x.handle, y.handle), x.type)
+    elif x.dtype.is_int():
+      return tensor(arith_dialect.muli(x.handle, y.handle), x.type)
+    raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
+
+  @staticmethod
+  def floordiv(x: tensor, y: tensor) -> tensor:
+    assert x.shape == y.shape
+    if not x.dtype.is_int():
+      raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
+    if x.dtype.is_int_signed():
+      return tensor(arith_dialect.divsi(x.handle, y.handle), x.type)
+    else:
+      return tensor(arith_dialect.divui(x.handle, y.handle), x.type)
+
+  @staticmethod
+  def truediv(x: tensor, y: tensor) -> tensor:
+    assert x.shape == y.shape
+    if x.dtype.is_int():
+      assert y.dtype.is_int()
+      x = semantic.cast(x, float32)
+      y = semantic.cast(y, float32)
+    if x.dtype.is_floating():
+      assert y.dtype.is_floating()
+      return tl.tensor(arith_dialect.divf(x.handle, y.handle), x.type)
+    raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
+
+  @staticmethod
+  def mod(x: tensor, y: tensor) -> tensor:
+    assert x.shape == y.shape
+    if not x.dtype.is_int():
+      raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
+    if x.dtype.is_int_signed():
+      return tensor(arith_dialect.remsi(x.handle, y.handle), x.type)
+    else:
+      return tensor(arith_dialect.remui(x.handle, y.handle), x.type)
+
+  @staticmethod
+  def invert(x: tensor) -> tensor:
+    b = builder.current
+    one = tensor(b.get_all_ones_value(x.dtype.to_ir(b)), x.dtype)
+    return semantic.xor_(x, broadcast_to(one, x.shape))
+
+  @staticmethod
+  def and_(x: tensor, y: tensor) -> tensor:
+    return tl.tensor(arith_dialect.andi(x.handle, y.handle), x.type)
+
+  @staticmethod
+  def or_(x: tensor, y: tensor) -> tensor:
+    return tl.tensor(arith_dialect.ori(x.handle, y.handle), x.type)
+
+  @staticmethod
+  def xor_(x: tensor, y: tensor) -> tensor:
+    return tl.tensor(arith_dialect.xori(x.handle, y.handle), x.type)
+
+  @staticmethod
+  def lshr(x: tensor, y: tensor) -> tensor:
+    return tl.tensor(arith_dialect.shrui(x.handle, y.handle), x.type)
+
+  @staticmethod
+  def ashr(x: tensor, y: tensor) -> tensor:
+    return tl.tensor(arith_dialect.shrsi(x.handle, y.handle), x.type)
+
+  @staticmethod
+  def shl(x: tensor, y: tensor) -> tensor:
+    return tl.tensor(arith_dialect.shli(x.handle, y.handle), x.type)
+
+  @staticmethod
+  def equal(x: tensor, y: tensor) -> tensor:
+    assert x.shape == y.shape
+    if x.dtype.is_floating():
+      return tensor(
+          arith_dialect.cmpf(
+              arith_dialect.CmpFPredicate.OEQ, x.handle, y.handle
+          ),
+          _bool_block_like(x),
+      )
+    elif x.dtype.is_int():
+      return tensor(
+          arith_dialect.cmpi(
+              arith_dialect.CmpIPredicate.eq, x.handle, y.handle
+          ),
+          _bool_block_like(x),
+      )
+    raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
+
+  @staticmethod
+  def not_equal(x: tensor, y: tensor) -> tensor:
+    assert x.shape == y.shape
+    if x.dtype.is_floating():
+      return tensor(
+          arith_dialect.cmpf(
+              arith_dialect.CmpFPredicate.UNE, x.handle, y.handle
+          ),
+          _bool_block_like(x),
+      )
+    elif x.dtype.is_int():
+      return tensor(
+          arith_dialect.cmpi(
+              arith_dialect.CmpIPredicate.ne, x.handle, y.handle
+          ),
+          _bool_block_like(x),
+      )
+    raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
+
+  @staticmethod
+  def greater_than(x: tensor, y: tensor) -> tensor:
+    assert x.shape == y.shape
+    if x.dtype.is_floating():
+      return tensor(
+          arith_dialect.cmpf(
+              arith_dialect.CmpFPredicate.OGT, x.handle, y.handle
+          ),
+          _bool_block_like(x),
+      )
+    elif x.dtype.is_int():
+      if x.dtype.is_int_signed():
+        return tensor(
+            arith_dialect.cmpi(
+                arith_dialect.CmpIPredicate.sgt, x.handle, y.handle
+            ),
+            _bool_block_like(x),
+        )
+      else:
+        return tensor(
+            arith_dialect.cmpi(
+                arith_dialect.CmpIPredicate.ugt, x.handle, y.handle
+            ),
+            _bool_block_like(x),
+        )
+    raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
+
+  @staticmethod
+  def greater_equal(x: tensor, y: tensor) -> tensor:
+    assert x.shape == y.shape
+    if x.dtype.is_floating():
+      return tensor(
+          arith_dialect.cmpf(
+              arith_dialect.CmpFPredicate.OGE, x.handle, y.handle
+          ),
+          _bool_block_like(x),
+      )
+    elif x.dtype.is_int():
+      if x.dtype.is_int_signed():
+        return tensor(
+            arith_dialect.cmpi(
+                arith_dialect.CmpIPredicate.sge, x.handle, y.handle
+            ),
+            _bool_block_like(x),
+        )
+      else:
+        return tensor(
+            arith_dialect.cmpi(
+                arith_dialect.CmpIPredicate.uge, x.handle, y.handle
+            ),
+            _bool_block_like(x),
+        )
+    raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
+
+  @staticmethod
+  def less_than(x: tensor, y: tensor) -> tensor:
+    assert x.shape == y.shape
+    if x.dtype.is_floating():
+      return tensor(
+          arith_dialect.cmpf(
+              arith_dialect.CmpFPredicate.OLT, x.handle, y.handle
+          ),
+          _bool_block_like(x),
+      )
+    elif x.dtype.is_int():
+      if x.dtype.is_int_signed():
+        return tensor(
+            arith_dialect.cmpi(
+                arith_dialect.CmpIPredicate.slt, x.handle, y.handle
+            ),
+            _bool_block_like(x),
+        )
+      else:
+        return tensor(
+            arith_dialect.cmpi(
+                arith_dialect.CmpIPredicate.ult, x.handle, y.handle
+            ),
+            _bool_block_like(x),
+        )
+    raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
+
+  @staticmethod
+  def less_equal(x: tensor, y: tensor) -> tensor:
+    assert x.shape == y.shape
+    if x.dtype.is_floating():
+      return tensor(
+          arith_dialect.cmpf(
+              arith_dialect.CmpFPredicate.OLE, x.handle, y.handle
+          ),
+          _bool_block_like(x),
+      )
+    elif x.dtype.is_int():
+      if x.dtype.is_int_signed():
+        return tensor(
+            arith_dialect.cmpi(
+                arith_dialect.CmpIPredicate.sle, x.handle, y.handle
+            ),
+            _bool_block_like(x),
+        )
+      else:
+        return tensor(
+            arith_dialect.cmpi(
+                arith_dialect.CmpIPredicate.ule, x.handle, y.handle
+            ),
+            _bool_block_like(x),
+        )
+    raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")

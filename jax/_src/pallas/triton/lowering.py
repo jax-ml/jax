@@ -60,9 +60,10 @@ from jax_triton import triton_lib
 from jax_triton.triton_lib import compile_ttir_to_ptx_inplace
 from jax_triton.triton_lib import get_triton_type
 import numpy as np
+from triton._C.libtriton import ir as tl_ir
 from triton.compiler import code_generator as code_gen
 import triton.compiler.backends.cuda as cb
-from triton._C.libtriton import ir as tl_ir
+
 
 # TODO(sharadmv): Enable type checking.
 # mypy: ignore-errors
@@ -159,10 +160,16 @@ def _convert_dtype(dtype: jnp.dtype) -> tc.dtype:
     return tc.float16
   elif dtype == jnp.bfloat16:
     return tc.bfloat16
+  elif dtype == jnp.uint32:
+    return tc.uint32
+  elif dtype == jnp.uint64:
+    return tc.uint64
   elif dtype == jnp.int32:
     return tc.int32
   elif dtype == jnp.int64:
     return tc.int64
+  elif dtype == jnp.bool_:
+    return tc.int1
   raise ValueError(f"Unhandled dtype: {dtype}")
 
 
@@ -460,8 +467,7 @@ def _cumsum_lowering_rule(
 triton_lowering_rules[lax.cumsum_p] = _cumsum_lowering_rule
 
 
-_TRITON_FN_MAPPING = {
-    # Unary ops.
+_JAX_TO_TRITON_UNARY = {
     lax.neg_p: tc.semantic.minus,
     lax.abs_p: tc.abs,
     lax.ceil_p: tc.math.ceil,
@@ -490,7 +496,13 @@ _TRITON_FN_MAPPING = {
     lax.not_p: tc.semantic.invert,
     lax.population_count_p: tc.math.popc,
     lax.clz_p: tc.math.clz,
-    # Binary ops.
+}
+
+for prim, fn in _JAX_TO_TRITON_UNARY.items():
+  triton_lowering_rules[prim] = lambda ctx, *args, fn=fn: fn(*args)
+
+
+_JAX_TO_TRITON_BINARY = {
     lax.add_p: tc.semantic.add,
     lax.sub_p: tc.semantic.sub,
     lax.mul_p: tc.semantic.mul,
@@ -510,20 +522,37 @@ _TRITON_FN_MAPPING = {
     lax.shift_right_logical_p: tc.semantic.lshr,
     lax.nextafter_p: tc.math.nextafter,
     ad_util.add_any_p: tc.semantic.add,
-    # Other ops.
+}
+
+for prim, fn in _JAX_TO_TRITON_BINARY.items():
+
+  def rule(ctx: TritonLoweringRuleContext, x, y, fn=fn, p=prim):
+    x_aval, y_aval = ctx.avals_in
+    # TODO(slebedev): This is only here for constants. Find a better way.
+    x = tc.semantic.cast(x, _convert_dtype(x_aval.dtype))
+    y = tc.semantic.cast(y, _convert_dtype(y_aval.dtype))
+    [out_aval] = ctx.avals_out
+    x = tc.broadcast_to(x, out_aval.shape)
+    y = tc.broadcast_to(y, out_aval.shape)
+    return fn(x, y)
+
+  triton_lowering_rules[prim] = rule
+
+
+_JAX_TO_TRITON_OTHER = {
     sp.broadcast_to_p: tc.broadcast_to,
     primitives.atomic_cas_p: tc.atomic_cas,
     primitives.max_contiguous_p: tc.max_contiguous,
     primitives.multiple_of_p: tc.multiple_of,
 }
 
+for prim, fn in _JAX_TO_TRITON_OTHER.items():
 
-for primitive, fn in _TRITON_FN_MAPPING.items():
-  def rule(ctx, *args, fn=fn, **kwargs):
+  def rule(ctx: TritonLoweringRuleContext, *args, fn=fn, **kwargs):
     kwargs = tree_util.tree_map(tc.constexpr, kwargs)
     return fn(*args, **kwargs)
 
-  triton_lowering_rules[primitive] = rule
+  triton_lowering_rules[prim] = rule
 
 
 def _integer_pow(a, *, y):
@@ -557,8 +586,8 @@ _JAX_FN_MAPPING = {
     lax.logistic_p: lambda a: 1 / (1 + jnp.exp(-a)),
 }
 
-for primitive, fn in _JAX_FN_MAPPING.items():
-  triton_lowering_rules[primitive] = lower_fun(fn, multiple_results=False)
+for prim, fn in _JAX_FN_MAPPING.items():
+  triton_lowering_rules[prim] = lower_fun(fn, multiple_results=False)
 
 
 def _min_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
@@ -576,6 +605,9 @@ triton_lowering_rules[lax.max_p] = _max_lowering_rule
 
 
 def _div_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
+  [out_aval] = ctx.avals_out
+  a = tc.broadcast_to(a, out_aval.shape)
+  b = tc.broadcast_to(b, out_aval.shape)
   if a.dtype.is_floating() or b.dtype.is_floating():
     return tc.semantic.truediv(a, b)
   return tc.semantic.floordiv(a, b)
@@ -1253,7 +1285,7 @@ def _scan_lowering_rule(
   if has_loop_index:
     lb, *args = args
     lower_bound = lb.handle
-    ub = lb + length
+    ub = lb + tc.semantic.cast(tc._to_tensor(length), lb.dtype)
     upper_bound = ub.handle
     bound_type = ub.type
   else:
