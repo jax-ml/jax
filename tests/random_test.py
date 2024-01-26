@@ -670,17 +670,6 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertKeysEqual(key, copy.deepcopy(key))
     self.assertKeysEqual(key, jax.jit(lambda k: k.copy())(key))
 
-  def test_isinstance(self):
-    @jax.jit
-    def f(k):
-      self.assertIsInstance(k, prng_internal.PRNGKeyArray)
-      return k
-
-    k1 = self.make_keys()
-    k2 = f(k1)
-    self.assertIsInstance(k1, prng_internal.PRNGKeyArray)
-    self.assertIsInstance(k2, prng_internal.PRNGKeyArray)
-
   def test_cpp_dispatch_normal(self):
     # Ensure we stay on the C++ dispatch path when calling a jitted
     # function with a key array as an argument.
