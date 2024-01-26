@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import abc
 from collections.abc import Iterable
 from typing import Any, Union
 
@@ -136,7 +135,7 @@ ogrid = _Ogrid()
 _IndexType = Union[ArrayLike, str, slice]
 
 
-class _AxisConcat(abc.ABC):
+class _AxisConcat:
   """Concatenates slices, scalars and array-like objects along a given axis."""
   axis: int
   ndmin: int

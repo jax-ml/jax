@@ -26,7 +26,7 @@ from jax._src import xla_bridge as xb
 Device = xc.Device
 
 
-class TopologyDescription(abc.ABC):
+class TopologyDescription:
   def __init__(self, devices: list[Device]):
     self.devices: list[Device] = devices
 

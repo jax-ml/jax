@@ -27,7 +27,6 @@
 
 from __future__ import annotations
 
-import abc
 from collections.abc import Sequence
 import enum
 from functools import partial
@@ -35,6 +34,7 @@ import sys
 from typing import NamedTuple
 
 from jax._src import config
+from jax._src import util
 
 try:
   import colorama  # pytype: disable=import-error
@@ -66,7 +66,7 @@ def _can_use_color() -> bool:
 
 CAN_USE_COLOR = _can_use_color()
 
-class Doc(abc.ABC):
+class Doc(util.StrictABC):
   __slots__ = ()
 
   def format(self, width: int = 80, use_color: bool | None = None,

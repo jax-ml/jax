@@ -387,7 +387,10 @@ pytype_strict_library(
 pytype_strict_library(
     name = "compilation_cache_interface",
     srcs = ["_src/compilation_cache_interface.py"],
-    deps = [":path"],
+    deps = [
+        ":path",
+        ":util",
+    ],
 )
 
 pytype_strict_library(
@@ -672,7 +675,10 @@ pytype_strict_library(
 pytype_strict_library(
     name = "pretty_printer",
     srcs = ["_src/pretty_printer.py"],
-    deps = [":config"] + py_deps("colorama"),
+    deps = [
+        ":config",
+        ":util",
+    ] + py_deps("colorama"),
 )
 
 pytype_strict_library(
