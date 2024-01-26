@@ -463,7 +463,7 @@ triton_lowering_rules[lax.cumsum_p] = _cumsum_lowering_rule
 _TRITON_FN_MAPPING = {
     # Unary ops.
     lax.neg_p: tc.semantic.minus,
-    lax.abs_p: tc.math.abs,
+    lax.abs_p: tc.abs,
     lax.ceil_p: tc.math.ceil,
     lax.floor_p: tc.math.floor,
     lax.exp_p: tc.math.exp,
