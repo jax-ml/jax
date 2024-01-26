@@ -811,40 +811,58 @@ def _to_tensor(v) -> "tensor":
 class tensor(tl.core.tensor):
 
   def __add__(self, other):
-    return semantic.add(self, _to_tensor(other))
+    other = _to_tensor(other)
+    assert self.shape == other.shape
+    return semantic.add(self, other)
 
   def __radd__(self, other):
     return self + other
 
   def __sub__(self, other):
-    return semantic.sub(self, _to_tensor(other))
+    other = _to_tensor(other)
+    assert self.shape == other.shape
+    return semantic.sub(self, other)
 
   def __rsub__(self, other):
     return semantic.sub(_to_tensor(other), self)
 
   def __mul__(self, other):
-    return semantic.mul(self, _to_tensor(other))
+    other = _to_tensor(other)
+    assert self.shape == other.shape
+    return semantic.mul(self, other)
 
   def __rmul__(self, other):
     return self * other
 
   def __truediv__(self, other):
-    return semantic.truediv(self, _to_tensor(other))
+    other = _to_tensor(other)
+    assert self.shape == other.shape
+    return semantic.truediv(self, other)
 
   def __rtruediv__(self, other):
-    return semantic.truediv(_to_tensor(other), self)
+    other = _to_tensor(other)
+    assert self.shape == other.shape
+    return semantic.truediv(other, self)
 
   def __floordiv__(self, other):
-    return semantic.floordiv(self, _to_tensor(other))
+    other = _to_tensor(other)
+    assert self.shape == other.shape
+    return semantic.floordiv(self, other)
 
   def __rfloordiv__(self, other):
-    return semantic.floordiv(_to_tensor(other), self)
+    other = _to_tensor(other)
+    assert self.shape == other.shape
+    return semantic.floordiv(other, self)
 
   def __mod__(self, other):
-    return semantic.mod(self, _to_tensor(other))
+    other = _to_tensor(other)
+    assert self.shape == other.shape
+    return semantic.mod(self, other)
 
   def __rmod__(self, other):
-    return semantic.mod(_to_tensor(other), self)
+    other = _to_tensor(other)
+    assert self.shape == other.shape
+    return semantic.mod(other, self)
 
   def __neg__(self):
     return semantic.minus(self)
@@ -854,7 +872,9 @@ class tensor(tl.core.tensor):
 
   # TODO(slebedev): Override other comparison methods.
   def __eq__(self, other):
-    return semantic.equal(self, _to_tensor(other))
+    other = _to_tensor(other)
+    assert self.shape == other.shape
+    return semantic.equal(self, other)
 
   def __getitem__(self, slices) -> tensor:
     if isinstance(slices, (slice, constexpr)):

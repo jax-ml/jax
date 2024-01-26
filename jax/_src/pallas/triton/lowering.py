@@ -577,8 +577,8 @@ triton_lowering_rules[lax.max_p] = _max_lowering_rule
 
 def _div_lowering_rule(ctx: TritonLoweringRuleContext, a, b):
   if a.dtype.is_floating() or b.dtype.is_floating():
-    return a / b
-  return a // b
+    return tc.semantic.truediv(a, b)
+  return tc.semantic.floordiv(a, b)
 
 
 triton_lowering_rules[lax.div_p] = _div_lowering_rule
@@ -721,7 +721,8 @@ def _compute_pointers_from_indices(
       if isinstance(index.start, int):
         ptr_dim_offset = tc.arange(index.start, index.start + index.size)
       else:
-        ptr_dim_offset = index.start + tc.arange(0, index.size)
+        ptr_dim_offset = tc.broadcast_to(index.start, [index.size])
+        ptr_dim_offset += tc.arange(0, index.size)
       # We need to add broadcastable dimensions for the advanced int indexing
       # and for previous slices
       num_left_expand_dims = len(int_indexer_shape) + other_shape_idx
@@ -746,7 +747,7 @@ def _compute_pointers_from_indices(
     if not ptr_dim_offset.type.is_block() and indexer_shape:
       ptr_dim_offset = tc.broadcast_to(
           ptr_dim_offset,
-          [tc.constexpr(1)] * len(indexer_shape),
+          [1] * len(indexer_shape),
       )
     else:
       for _ in range(num_left_expand_dims):
@@ -755,20 +756,20 @@ def _compute_pointers_from_indices(
         ndim = len(ptr_dim_offset.shape)
         ptr_dim_offset = tc.expand_dims(ptr_dim_offset, ndim)
     if start_offset is not None:
-      ptr_dim_offset += start_offset
-    stride_size = tc._to_tensor(int(dim_stride))
+      ptr_dim_offset += tc.broadcast_to(start_offset, ptr_dim_offset.shape)
+    stride_size = tc.broadcast_to(dim_stride, ptr_dim_offset.shape)
     bcast_indices.append(ptr_dim_offset * stride_size)
   block_shapes = [
       () if not index.type.is_block() else tuple(index.type.get_block_shapes())
       for index in bcast_indices
   ]
   bcast_indices = [
-      tc.broadcast_to(index, map(tc.constexpr, indexer_shape))
+      tc.broadcast_to(index, indexer_shape)
       if indexer_shape != block_shape
       else index
       for index, block_shape in zip(bcast_indices, block_shapes)
   ]
-  return sum(bcast_indices, root_ptr)
+  return sum(bcast_indices, tc.broadcast_to(root_ptr, indexer_shape))
 
 
 def _pack_indices(non_slice_idx, indexed_dims):
