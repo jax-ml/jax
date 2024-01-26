@@ -19,7 +19,7 @@ from jax import Array
 from jax.experimental.array_api._data_type_functions import result_type as _result_type
 
 
-def broadcast_arrays(*arrays: Array) -> list[Array]:
+def broadcast_arrays(*arrays: Array) -> tuple[Array, ...]:
   """Broadcasts one or more arrays against one another."""
   return jax.numpy.broadcast_arrays(*arrays)
 

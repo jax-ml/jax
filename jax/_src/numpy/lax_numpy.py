@@ -476,7 +476,7 @@ def histogram2d(x: ArrayLike, y: ArrayLike, bins: ArrayLike | list[ArrayLike] = 
 def histogramdd(sample: ArrayLike, bins: ArrayLike | list[ArrayLike] = 10,
                 range: Sequence[None | Array | Sequence[ArrayLike]] | None = None,
                 weights: ArrayLike | None = None,
-                density: bool | None = None) -> tuple[Array, list[Array]]:
+                density: bool | None = None) -> tuple[Array, tuple[Array, ...]]:
   if weights is None:
     util.check_arraylike("histogramdd", sample)
     sample, = util.promote_dtypes_inexact(sample)
@@ -528,7 +528,7 @@ def histogramdd(sample: ArrayLike, bins: ArrayLike | list[ArrayLike] = 10,
     for norm in ix_(*dedges):
       hist /= norm
 
-  return hist, bin_edges_by_dim
+  return hist, tuple(bin_edges_by_dim)
 
 
 _ARRAY_VIEW_DOC = """
@@ -1207,7 +1207,7 @@ def broadcast_shapes(*shapes):
 @util.implements(np.broadcast_arrays, lax_description="""\
 The JAX version does not necessarily return a view of the input.
 """)
-def broadcast_arrays(*args: ArrayLike) -> list[Array]:
+def broadcast_arrays(*args: ArrayLike) -> tuple[Array, ...]:
   return util._broadcast_arrays(*args)
 
 
@@ -1220,7 +1220,7 @@ def broadcast_to(array: ArrayLike, shape: DimSize | Shape) -> Array:
 
 def _split(op: str, ary: ArrayLike,
            indices_or_sections: int | Sequence[int] | ArrayLike,
-           axis: int = 0) -> list[Array]:
+           axis: int = 0) -> tuple[Array, ...]:
   util.check_arraylike(op, ary)
   ary = asarray(ary)
   axis = core.concrete_or_error(operator.index, axis, f"in jax.numpy.{op} argument `axis`")
@@ -1254,17 +1254,17 @@ def _split(op: str, ary: ArrayLike,
       raise ValueError("array split does not result in an equal division")
   starts, ends = [0] * ndim(ary), shape(ary)
   _subval = lambda x, i, v: subvals(x, [(i, v)])
-  return [lax.slice(ary, _subval(starts, axis, start), _subval(ends, axis, end))
-          for start, end in zip(split_indices[:-1], split_indices[1:])]
+  return tuple(lax.slice(ary, _subval(starts, axis, start), _subval(ends, axis, end))
+               for start, end in zip(split_indices[:-1], split_indices[1:]))
 
 @util.implements(np.split, lax_description=_ARRAY_VIEW_DOC)
 def split(ary: ArrayLike, indices_or_sections: int | Sequence[int] | ArrayLike,
-          axis: int = 0) -> list[Array]:
+          axis: int = 0) -> tuple[Array, ...]:
   return _split("split", ary, indices_or_sections, axis=axis)
 
-def _split_on_axis(op: str, axis: int) -> Callable[[ArrayLike, int | ArrayLike], list[Array]]:
+def _split_on_axis(op: str, axis: int) -> Callable[[ArrayLike, int | ArrayLike], tuple[Array, ...]]:
   @util.implements(getattr(np, op), update_doc=False)
-  def f(ary: ArrayLike, indices_or_sections: int | Sequence[int] | ArrayLike) -> list[Array]:
+  def f(ary: ArrayLike, indices_or_sections: int | Sequence[int] | ArrayLike) -> tuple[Array, ...]:
     # for 1-D array, hsplit becomes vsplit
     nonlocal axis
     util.check_arraylike(op, ary)
@@ -1280,7 +1280,7 @@ dsplit = _split_on_axis("dsplit", axis=2)
 
 @util.implements(np.array_split)
 def array_split(ary: ArrayLike, indices_or_sections: int | Sequence[int] | ArrayLike,
-                axis: int = 0) -> list[Array]:
+                axis: int = 0) -> tuple[Array, ...]:
   return _split("array_split", ary, indices_or_sections, axis=axis)
 
 @util.implements(np.clip, skip_params=['out'])
@@ -2004,38 +2004,38 @@ def block(arrays: ArrayLike | list[ArrayLike]) -> Array:
 
 
 @overload
-def atleast_1d() -> list[Array]:
+def atleast_1d() -> tuple[Array, ...]:
   ...
 @overload
 def atleast_1d(x: ArrayLike, /) -> Array:
   ...
 @overload
-def atleast_1d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]:
+def atleast_1d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> tuple[Array, ...]:
   ...
 @util.implements(np.atleast_1d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 @jit
-def atleast_1d(*arys: ArrayLike) -> Array | list[Array]:
+def atleast_1d(*arys: ArrayLike) -> Array | tuple[Array, ...]:
   # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
   util.check_arraylike("atleast_1d", *arys, emit_warning=True)
   if len(arys) == 1:
     arr = asarray(arys[0])
     return arr if ndim(arr) >= 1 else reshape(arr, -1)
   else:
-    return [atleast_1d(arr) for arr in arys]
+    return tuple(atleast_1d(arr) for arr in arys)
 
 
 @overload
-def atleast_2d() -> list[Array]:
+def atleast_2d() -> tuple[Array, ...]:
   ...
 @overload
 def atleast_2d(x: ArrayLike, /) -> Array:
   ...
 @overload
-def atleast_2d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]:
+def atleast_2d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> tuple[Array, ...]:
   ...
 @util.implements(np.atleast_2d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 @jit
-def atleast_2d(*arys: ArrayLike) -> Array | list[Array]:
+def atleast_2d(*arys: ArrayLike) -> Array | tuple[Array, ...]:
   # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
   util.check_arraylike("atleast_2d", *arys, emit_warning=True)
   if len(arys) == 1:
@@ -2047,21 +2047,21 @@ def atleast_2d(*arys: ArrayLike) -> Array | list[Array]:
     else:
       return expand_dims(arr, axis=(0, 1))
   else:
-    return [atleast_2d(arr) for arr in arys]
+    return tuple(atleast_2d(arr) for arr in arys)
 
 
 @overload
-def atleast_3d() -> list[Array]:
+def atleast_3d() -> tuple[Array, ...]:
   ...
 @overload
 def atleast_3d(x: ArrayLike, /) -> Array:
   ...
 @overload
-def atleast_3d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> list[Array]:
+def atleast_3d(x: ArrayLike, y: ArrayLike, /, *arys: ArrayLike) -> tuple[Array, ...]:
   ...
 @util.implements(np.atleast_3d, update_doc=False, lax_description=_ARRAY_VIEW_DOC)
 @jit
-def atleast_3d(*arys: ArrayLike) -> Array | list[Array]:
+def atleast_3d(*arys: ArrayLike) -> Array | tuple[Array, ...]:
   # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
   util.check_arraylike("atleast_3d", *arys, emit_warning=True)
   if len(arys) == 1:
@@ -2074,7 +2074,7 @@ def atleast_3d(*arys: ArrayLike) -> Array | list[Array]:
       arr = expand_dims(arr, axis=2)
     return arr
   else:
-    return [atleast_3d(arr) for arr in arys]
+    return tuple(atleast_3d(arr) for arr in arys)
 
 
 def _supports_buffer_protocol(obj):
@@ -2691,7 +2691,7 @@ def _geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool 
 
 @util.implements(np.meshgrid, lax_description=_ARRAY_VIEW_DOC)
 def meshgrid(*xi: ArrayLike, copy: bool = True, sparse: bool = False,
-             indexing: str = 'xy') -> list[Array]:
+             indexing: str = 'xy') -> tuple[Array, ...]:
   util.check_arraylike("meshgrid", *xi)
   args = [asarray(x) for x in xi]
   if not copy:
@@ -2708,7 +2708,7 @@ def meshgrid(*xi: ArrayLike, copy: bool = True, sparse: bool = False,
   output = [lax.broadcast_in_dim(a, _a_shape(i, a), (i,)) for i, a, in enumerate(args)]
   if indexing == "xy" and len(args) >= 2:
     output[0], output[1] = output[1], output[0]
-  return output
+  return tuple(output)
 
 
 @custom_jvp
