@@ -59,6 +59,25 @@ class AttrsTest(jtu.JaxTestCase):
     double_it()
     self.assertEqual(thing.x, 16.0)
 
+  def test_nesting_basic(self):
+    thing = Thing(1.0)
+
+    @jax.jit
+    @jax.jit
+    def double_it() -> None:
+      cur_x = jax_getattr(thing, "x")
+      jax_setattr(thing, "x", cur_x * 2)
+
+    self.assertEqual(thing.x, 1.0)
+    double_it()
+    self.assertEqual(thing.x, 2.0)
+    double_it()
+    self.assertEqual(thing.x, 4.0)
+    double_it()
+    self.assertEqual(thing.x, 8.0)
+    double_it()
+    self.assertEqual(thing.x, 16.0)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
