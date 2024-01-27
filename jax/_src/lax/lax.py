@@ -2046,8 +2046,6 @@ def _pow_lower(ctx, x, y):
   return _nary_lower_hlo(hlo.power, ctx_, x_, y_)
 mlir.register_lowering(pow_p, _pow_lower)
 
-
-
 def _integer_pow_dtype_rule(x, *, y):
   dtype = unop_dtype_rule(_identity, _int | _float | _complex, 'integer_pow', x)
   if y < 0 and dtypes.issubdtype(dtype, np.integer):
@@ -3928,17 +3926,22 @@ def _argminmax_dtype_rule(operand, *, axes, index_dtype):
                     .format(dtype_to_string(index_dtype)))
   return index_dtype
 
-def _compute_argminmax(value_comparator, get_identity,
-                       operand, *, index_dtype, axes):
-  # value_comparator is either lax.lt (for argmin) or lax.gt
-  # get_identity(operand.dtype) is inf for argmin or -inf for argmax
-  axis, = axes
-  indices = broadcasted_iota(index_dtype, np.shape(operand), axis)
-  def reducer_fn(op_val_index, acc_val_index):
+class _ArgMinMaxReducer:
+
+  def __init__(self, value_comparator):
+    self._value_comparator = value_comparator
+
+  def __repr__(self):
+    # Override the repr so that the metadata attached to the lowered op does not
+    # contain unstable function ids. This plays more nicely with computation
+    # fingerprint calculation in the compilation cache.
+    return f'_ArgMinMaxReducer({self._value_comparator.__name__})'
+
+  def __call__(self, op_val_index, acc_val_index):
     op_val, op_index = op_val_index
     acc_val, acc_index = acc_val_index
     # Pick op_val if Lt (for argmin) or if NaN
-    pick_op_val = bitwise_or(value_comparator(op_val, acc_val),
+    pick_op_val = bitwise_or(self._value_comparator(op_val, acc_val),
                              ne(op_val, op_val))
     # If x and y are not NaN and x = y, then pick the first
     pick_op_index = bitwise_or(pick_op_val,
@@ -3946,9 +3949,16 @@ def _compute_argminmax(value_comparator, get_identity,
                                            lt(op_index, acc_index)))
     return (select(pick_op_val, op_val, acc_val),
             select(pick_op_index, op_index, acc_index))
+
+def _compute_argminmax(value_comparator, get_identity,
+                       operand, *, index_dtype, axes):
+  # value_comparator is either lax.lt (for argmin) or lax.gt
+  # get_identity(operand.dtype) is inf for argmin or -inf for argmax
+  axis, = axes
+  indices = broadcasted_iota(index_dtype, np.shape(operand), axis)
   res = reduce([operand, indices],
                [get_identity(operand.dtype), np.array(0, index_dtype)],
-               reducer_fn,
+               _ArgMinMaxReducer(value_comparator),
                axes)
   return res[1]
 
