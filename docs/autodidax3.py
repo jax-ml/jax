@@ -34,6 +34,8 @@ import numpy as np
 #  * Only one type of tracer. It's just a pointer to a list of eqns.
 #  * No trace lifting
 #  * No eager
+#  * explicit type for linear jaxprs with linearity checker
+
 
 # === core AST types ===
 
@@ -59,6 +61,8 @@ class JaxTupleType(JaxType):
 class Var:
   ty: JaxType
   def __hash__(self): return id(self)
+  def __eq__(self, other): return self is other
+  def free_vars(self): return {self}
 
 @dataclass
 class ArrayLit:
@@ -67,6 +71,7 @@ class ArrayLit:
   def ty(self):
     return JaxArrayType(self.val.shape, self.val.dtype)
   def __str__(self): return str(self.val)
+  def free_vars(self): return set()
 
 TupleCon_ = Any  # TODO: figure out how to spell recursive types
 Atom = Union[Var, ArrayLit, TupleCon_]
@@ -83,11 +88,12 @@ pylit_types = { bool, int, float, np.bool_, np.int32
               , np.int64, np.float32, np.float64, np.ndarray}
 PyLit = Any # any of the types in pylit_types
 PyVal = Any # What the user sees. PyLit | Tracer | tuple of PyVals
-TangentPyVal = Union[Atom, SymbolicZero]  # TODO: tangent tuple
+LinearPyVal = Union[Atom, SymbolicZero]  # TODO: tangent tuple
+LinearAtom_ = Any # TODO: toposort
 
 @dataclass
 class Primitive:
-  def bind(self, *args:PyVal) -> PyVal:
+  def apply(self, *args:PyVal) -> PyVal:
     if cur_trace() is None:
       return self.impl(*args)
     else:
@@ -104,9 +110,13 @@ class Primitive:
     raise NotImplementedError("No type rule for " + type(self).__name__)
 
   # The implementation can assume that at least one of the tangent args is not a symbolic zero.
-  def linearize_rule(self, primals:list[PyVal], tangents:list[TangentPyVal]
-                     ) -> tuple[PyVal, Callable[[], TangentPyVal]]:
+  def linearize_rule(self, primals:list[PyVal], tangents:list[LinearPyVal]
+                     ) -> tuple[PyVal, Callable[[], LinearPyVal]]:
     raise NotImplementedError("No linearization rule for " + type(self).__name__)
+
+  def transpose_rule(self, cotangent: PyVal, *args:list[LinearPyVal]
+                     ) -> list[tuple[LinearAtom_, PyVal]]:
+    raise NotImplementedError("No transposition rule for " + type(self).__name__)
 
 @dataclass
 class JaxprEqn:
@@ -120,11 +130,47 @@ class Jaxpr:
   eqns: list[JaxprEqn]
   result: Atom
 
+  @property
+  def ty(self):
+    return JaxprType([v.ty for v in self.arg_binders], self.result.ty)
+
+
   def __repr__(self): return str(pp_jaxpr(self))
 
 @dataclass
 class JaxprType:
   arg_types:  list[JaxType]
+  result_type : JaxType
+
+# === linear jaxprs ===
+
+@dataclass
+class LinearAtom:
+  value: Union[SymbolicZero, Var]
+  @property
+  def ty(self): return self.value.ty
+MaybeLinearAtom = Union[Atom, LinearAtom]
+
+@dataclass
+class LinearJaxprEqn:
+  is_linear: bool
+  binder: Var
+  primitive: Primitive
+  args: list[MaybeLinearAtom]
+
+@dataclass
+class LinearJaxpr:
+  binder : Var
+  eqns: list[LinearJaxprEqn]
+  result: LinearAtom
+
+  @property
+  def ty(self):
+    return LinearJaxprType(self.binder.ty, self.result.ty)
+
+@dataclass
+class LinearJaxprType:
+  arg_type:  JaxType
   result_type : JaxType
 
 # === tracing ===
@@ -173,7 +219,9 @@ def make_arg_pyval(v: Var, ty: JaxType) -> PyVal:
   else:
     raise Exception("unexpected type: " + str(type(v)))
 
-def eval_atom(env: dict[Var, PyVal], x:Atom) -> PyVal:
+EvalEnv = dict[Var, PyVal]
+
+def eval_atom(env: EvalEnv, x:Atom) -> PyVal:
   if isinstance(x, Var):
     return env.get(x, Tracer(x))
   elif isinstance(x, ArrayLit):
@@ -193,14 +241,14 @@ def pyval_to_atom(x: PyVal) -> Atom:
   else:
     raise Exception("unexpected type: " + str(type(x)))
 
-def get_pyval_type(x: PyVal) -> JaxType:
+def pyval_type(x: PyVal) -> JaxType:
   if isinstance(x, Tracer):
     return x.var.ty
   elif type(x) in pylit_types:
     x_arr = np.asarray(x)
     return JaxArrayType(x_arr.shape, x_arr.dtype)
   elif isinstance(x, tuple):
-    return JaxTupleType(tuple(map(get_pyval_type, x)))
+    return JaxTupleType(tuple(map(pyval_type, x)))
   else:
     raise Exception
 
@@ -245,11 +293,14 @@ def check_atom(env: set[Var], x: Atom) -> None:
 
 # === linearize ===
 
-def linearize_jaxpr(jaxpr:Jaxpr, args:PyVal) -> tuple[PyVal, Jaxpr]:
+def linearize_jaxpr(jaxpr:Jaxpr, args:PyVal) -> tuple[PyVal, LinearJaxpr]:
+  argnum = 0
+  assert argnum < len(args)
+  assert jaxpr.ty.arg_types == [pyval_type(arg) for arg in args]
   primal_env = {b : arg for (b, arg) in zip(jaxpr.arg_binders, args)}
-  tangent_binders = [Var(get_tangent_type(b.ty)) for b in jaxpr.arg_binders]
+  tangent_binder = Var(tangent_type(jaxpr.ty.arg_types[argnum]))
+  tangent_env = {jaxpr.arg_binders[argnum] : Tracer(tangent_binder)}
   tangent_eqns = []
-  tangent_env = {b : Tracer(arg) for (b, arg) in zip(jaxpr.arg_binders, tangent_binders)}
   for eqn in jaxpr.eqns:
     primal_args = [eval_atom(primal_env, arg) for arg in eqn.args]
     tangent_args = [get_tangent_arg(tangent_env, arg) for arg in eqn.args]
@@ -258,36 +309,40 @@ def linearize_jaxpr(jaxpr:Jaxpr, args:PyVal) -> tuple[PyVal, Jaxpr]:
     primal_env[eqn.binder] = primal_result
     tangent_env[eqn.binder] = tangent_result
   final_primal = eval_atom(primal_env, jaxpr.result)
-  final_tangent = instantiate_zeros(get_tangent_arg(tangent_env, jaxpr.result))
-  tangent_jaxpr = Jaxpr(tangent_binders, tangent_eqns, final_tangent)
+  final_tangent = get_tangent_arg(tangent_env, jaxpr.result)
+  tangent_jaxpr = make_linear_jaxpr(tangent_binder, tangent_eqns, final_tangent)
   return (final_primal, tangent_jaxpr)
 
-def get_tangent_type(ty:JaxType) -> JaxType:
+def tangent_type(ty:JaxType) -> JaxType:
   return ty # todo
 
-def instantiate_zeros(x:TangentPyVal) -> Atom:
+def instantiate_zeros(x:LinearPyVal) -> PyVal:
   if isinstance(x, SymbolicZero):
-    raise NotImplementedError
+    if isinstance(x.ty, JaxArrayType):
+      return np.zeros(x.ty.shape, x.ty.dtype)
+    else:
+      raise NotImplementedError
   elif isinstance(x, Tracer):
-    return x.var
+    return x
   elif type(x) in pylit_types:
-    return ArrayLit(np.asarray(x))
+    return x
   elif isinstance(x, tuple):
-    return TupleCon(tuple(map(instantiate_zeros, x)))
+    return tuple(map(instantiate_zeros, x))
   else:
     raise Exception("unexpected type: " + str(type(x)))
 
-def linearize_primitive(prim:Primitive, primals:list[PyVal], tangents:list[TangentPyVal]
-                        ) -> tuple[PyVal, list[JaxprEqn], TangentPyVal]:
+def linearize_primitive(prim:Primitive, primals:list[PyVal], tangents:list[LinearPyVal]
+                        ) -> tuple[PyVal, list[JaxprEqn], LinearPyVal]:
   if all(isinstance(t, SymbolicZero) for t in tangents):
+    print(prim)
     raise NotImplementedError
   else:
     (primal_result, tangent_thunk) = prim.linearize_rule(primals, tangents)
     tangent_result, eqns = collect_eqns(tangent_thunk)
     return primal_result, eqns, tangent_result
 
-def get_tangent_arg(tangent_env: dict[Var, TangentPyVal], primal:Atom) -> TangentPyVal:
-  zero = SymbolicZero(get_tangent_type(primal.ty))
+def get_tangent_arg(tangent_env: dict[Var, LinearPyVal], primal:Atom) -> LinearPyVal:
+  zero = SymbolicZero(tangent_type(primal.ty))
   if isinstance(primal, Var):
     return tangent_env.get(primal, zero)
   elif isinstance(primal, ArrayLit):
@@ -297,10 +352,73 @@ def get_tangent_arg(tangent_env: dict[Var, TangentPyVal], primal:Atom) -> Tangen
   else:
     raise Exception
 
+def make_linear_jaxpr(
+    top_binder:Var, eqns:list[JaxprEqn], result_pyval:LinearPyVal) -> LinearJaxpr:
+  linear_eqns = []
+  linear_vars = {top_binder}
+  for eqn in eqns:
+    maybe_linear_args = [as_maybe_linear_arg(linear_vars, arg) for arg in eqn.args]
+    is_linear = any(isinstance(arg, LinearAtom) for arg in maybe_linear_args)
+    linear_eqns.append(LinearJaxprEqn(is_linear, eqn.binder, eqn.primitive, maybe_linear_args))
+    if is_linear: linear_vars.add(eqn.binder)
+  if isinstance(result_pyval, SymbolicZero):
+    result = LinearAtom(result_pyval)
+  else:
+    result = LinearAtom(pyval_to_atom(result_pyval))
+  return LinearJaxpr(top_binder, linear_eqns, result)
+
+def as_maybe_linear_arg(linear_vars:set[Var], x:Union[Atom]) -> MaybeLinearAtom:
+  if linear_vars.intersection(x.free_vars()):
+    return LinearAtom(x)
+  else:
+    return x
+
 # === transpose ===
 
-def transpose_jaxpr(jaxpr:Jaxpr) -> Jaxpr:
-  assert False
+CotangentMap = dict[Var, PyVal]
+
+def transpose_linear_jaxpr(ljaxpr:LinearJaxpr, top_ct:LinearPyVal) -> LinearPyVal:
+  assert ljaxpr.ty.result_type == pyval_type(top_ct)
+  primal_env = {}
+  top_binder = ljaxpr.binder
+  # forward pass for nonlinear stuff
+  for eqn in ljaxpr.eqns:
+    if not eqn.is_linear:
+      args = [eval_atom(primal_env, arg) for arg in eqn.args]
+      primal_env[eqn.binder] = eqn.primitive.apply(*args)
+  # backward pass for the linear stuff
+  cotangents : CotangentMap = {}
+  if isinstance(ljaxpr.result.value, Var):
+    cotangents[ljaxpr.result.value] = top_ct
+  else:
+    raise NotImplementedError # todo: symbolic zero case
+  for eqn in ljaxpr.eqns[::-1]:
+    if eqn.is_linear:
+      args = [eval_maybe_linear_atom(primal_env, arg) for arg in eqn.args]
+      ct = get_cotangent(cotangents, eqn.binder)
+      if not isinstance(ct, SymbolicZero):
+        updates = eqn.primitive.transpose_rule(ct, *args)
+        for (lin_atom, arg_ct) in updates:
+          if isinstance(lin_atom.value, Var):
+            accum_cotangent(cotangents, lin_atom.value, arg_ct)
+  return get_cotangent(cotangents, top_binder)
+
+def eval_maybe_linear_atom(env: EvalEnv, x:Union[Atom, LinearAtom]) -> Union[PyVal, LinearAtom]:
+  if isinstance(x, LinearAtom):
+    return x
+  else:
+    return eval_atom(env, x)
+
+def get_cotangent(cts:CotangentMap, v:Var):
+  if v in cts:
+    return cts[v]
+  else:
+    return SymbolicZero(tangent_type(v.ty))
+
+def accum_cotangent(cts:dict[Var, PyVal], v:Var, ct:LinearPyVal):
+  ct_new = maybe_add(v.ty, get_cotangent(cts, v), ct)
+  if not isinstance(ct_new, SymbolicZero):
+    cts[v] = ct_new
 
 # === vmap ===
 
@@ -317,22 +435,25 @@ def compile_jaxpr(japxr:Jaxpr) -> CompiledJaxpr:
 
 # === primitives ===
 
-def id_op(x): return IdP().bind(x)
+def id_op(x): return IdP().apply(x)
 class IdP(Primitive):
   def impl(self, x) : return x
   def eval_type(self, x): return x
 
-def add(x, y): return AddP().bind(x, y)
+def add(x, y): return AddP().apply(x, y)
 class AddP(Primitive):
   def impl(self, x, y): return np.add(x, y)
   def eval_type(self, x, y): return binop_eval_type(x, y)
   def linearize_rule(self, primals, tangents):
     (x, y), (x_dot, y_dot) = primals, tangents
     primal_result = x + y
-    result_ty = get_tangent_type(get_pyval_type(primal_result))
+    result_ty = tangent_type(pyval_type(primal_result))
     return primal_result, lambda: maybe_add(result_ty, x_dot, y_dot)
+  def transpose_rule(self, ct, x, y):
+    assert isinstance(x, LinearAtom) and isinstance(y, LinearAtom)
+    return [(x, ct), (y, ct)]
 
-def mul(x, y): return MulP().bind(x, y)
+def mul(x, y): return MulP().apply(x, y)
 class MulP(Primitive):
   def impl(self, x, y): return np.multiply(x, y)
   def eval_type(self, x, y): return binop_eval_type(x, y)
@@ -340,21 +461,31 @@ class MulP(Primitive):
     (x, y), (x_dot, y_dot) = primals, tangents
     primal_result = x * y
     def tangent_thunk():
-      result_ty = get_tangent_type(get_pyval_type(primal_result))
+      result_ty = tangent_type(pyval_type(primal_result))
       tx = maybe_mul(result_ty, y, x_dot)
       ty = maybe_mul(result_ty, x, y_dot)
       return maybe_add(result_ty, tx, ty)
     return x * y, tangent_thunk
+  def transpose_rule(self, ct, x, y):
+    updates = []
+    if isinstance(x, LinearAtom):
+      updates.append((x, ct * y))
+    if isinstance(y, LinearAtom):
+      updates.append((y, x * ct))
+    return updates
 
-def neg(x): return NegP().bind(x)
+def neg(x): return NegP().apply(x)
 class NegP(Primitive):
   def impl(self, x): return np.negative(x)
   def eval_type(self, t): return t
   def linearize_rule(self, primals, tangents):
     (x,), (x_dot,) = primals, tangents
     return neg(x), lambda: neg(x_dot)
+  def transpose_rule(self, ct, x):
+    assert isinstance(x, LinearAtom)
+    return [(x, -ct)]
 
-def sin(x): return SinP().bind(x)
+def sin(x): return SinP().apply(x)
 class SinP(Primitive):
   def impl(self, x): return np.sin(x)
   def eval_type(self, t): return t
@@ -362,7 +493,7 @@ class SinP(Primitive):
     (x,), (x_dot,) = primals, tangents
     return sin(x), lambda: x_dot * cos(x)
 
-def cos(x): return CosP().bind(x)
+def cos(x): return CosP().apply(x)
 class CosP(Primitive):
   def impl(self, x): return np.cos(x)
   def eval_type(self, t): return t
@@ -373,13 +504,13 @@ def binop_eval_type(x: JaxArrayType, y: JaxArrayType) -> list[JaxArrayType]:
   if x != y: raise TypeError
   return JaxArrayType(x.shape, x.dtype)
 
-def maybe_mul(result_ty:JaxType, x:PyVal, t:TangentPyVal) -> TangentPyVal:
+def maybe_mul(result_ty:JaxType, x:PyVal, t:LinearPyVal) -> LinearPyVal:
   if isinstance(t, SymbolicZero):
     return SymbolicZero(result_ty)
   else:
     return x * t
 
-def maybe_add(result_ty:JaxType, t1:TangentPyVal, t2:TangentPyVal) -> TangentPyVal:
+def maybe_add(result_ty:JaxType, t1:LinearPyVal, t2:LinearPyVal) -> LinearPyVal:
   if isinstance(t1, SymbolicZero):
     return t2
   elif isinstance(t2, SymbolicZero):
@@ -453,13 +584,34 @@ def atom_str(names: defaultdict[Var, str], atom:Atom) -> str:
   else:
     return str(atom)
 
+# === utils ===
+
+def map(f, *xs):
+  return list(builtins.map(f, *xs))
+
 # === user-facing wrappers ===
 
 def jit(f): assert False
 
-def grad(f): assert False
+def value_and_grad(f, *args):
+  jaxpr = stage_out(f, map(pyval_type, args))
+  assert jaxpr.ty.result_type == JaxArrayType((), np.float64)
+  (value, linearized) = linearize_jaxpr(jaxpr, args)
+  gradient = instantiate_zeros(transpose_linear_jaxpr(linearized, 1.0))
+  return value, gradient
+
+def value_and_deriv(f, *args):
+  jaxpr = stage_out(f, map(pyval_type, args))
+  assert jaxpr.ty.result_type == JaxArrayType((), np.float64)
+  (value, linearized) = linearize_jaxpr(jaxpr, args)
+  gradient = instantiate_zeros(transpose_linear_jaxpr(linearized, 1.0))
+  return value, gradient
 
 # === tests ===
+
+def nd(f, x):
+  deriv = (f(x + 0.001) - f(x - 0.001)) / 0.002
+  return f(x), deriv
 
 def f(x):
   y = sin(x) * 2.
@@ -468,9 +620,10 @@ def f(x):
 
 print(f(3.0))
 
-jaxpr = stage_out(f, (get_pyval_type(3.),))
-
+jaxpr = stage_out(f, (pyval_type(3.),))
 print(linearize_jaxpr(jaxpr, (3.0,)))
 
-print(jaxpr)
-typecheck_jaxpr(jaxpr)
+print(value_and_grad(f, 3.0))
+print(nd(f, 3.0))
+
+
