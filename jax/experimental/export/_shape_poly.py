@@ -40,7 +40,6 @@ from enum import Enum
 import functools
 import itertools
 import io
-import math
 import operator as op
 import threading
 import tokenize
@@ -73,6 +72,10 @@ DType = Any
 # Tuples of terms and their coefficients, sorted with the largest term first.
 SortedTerms = Sequence[tuple["_DimMon", int]]
 
+# Normalization rules represent the explicit constraint `t*tk == e` as
+# a mapping of `t` to `(e, tk)`.
+NormalizationRules = dict["_DimMon", tuple["_DimExpr", int]]
+
 class InconclusiveDimensionOperation(core.InconclusiveDimensionOperation):
   """Raised when we cannot conclusively compute with symbolic dimensions."""
 
@@ -98,6 +101,21 @@ class _ShapePolyThreadLocalState(threading.local):
     self.enable_shape_assertions = True
 
 thread_local_state = _ShapePolyThreadLocalState()
+
+
+class Comparator(Enum):
+  EQ = 1
+  GEQ = 2
+
+@dataclasses.dataclass(frozen=True)
+class _SymbolicConstraint:
+  cmp: Comparator
+  debug_str: str  # The form in which the user expressed it, for error messages
+  diff: _DimExpr  # For GEQ: diff >= 0, and for EQ: diff == 0
+
+  def __repr__(self):
+    return f"Constraint({self.debug_str}: {self.diff})"
+
 
 class _DimAtom:
   """Represents an atom in a symbolic dimension expression.
@@ -249,6 +267,7 @@ class _DimAtom:
       else:
         assert False, self.operation
 
+
 class _DimMon(dict):
   """Represents a multiplication of atoms.
 
@@ -267,6 +286,8 @@ class _DimMon(dict):
   def __str__(self):
     return "*".join(f"{key}^{exponent}" if exponent != 1 else str(key)
                     for key, exponent in sorted(self.items()))
+
+  __repr__ = __str__
 
   @classmethod
   def from_var(cls, v: str) -> _DimMon:
@@ -412,7 +433,7 @@ class _DimExpr:
 
   @classmethod
   def from_monomial(cls, mon: _DimMon, exp: int, scope: SymbolicScope):
-    return _DimExpr.normalize(((mon, exp),), scope)
+    return _DimExpr.normalize_coeffs({mon: exp}, scope)
 
   @classmethod
   def from_constant(cls, c: int, scope: SymbolicScope):
@@ -465,19 +486,44 @@ class _DimExpr:
     return (n1, n2, mon)
 
   @classmethod
-  def normalize(cls, coeffs: SortedTerms,
-                scope: SymbolicScope) -> DimSize:
-    """The main constructor for _DimExpr.
+  def add_coeff(cls, coeffs: dict[_DimMon, int], t: _DimMon, coeff: int):
+    """coeffs[t] += coeff, with squashing 0 coefficients."""
+    if coeff == 0: return
+    n_coeff = coeffs.get(t, 0) + coeff
+    if n_coeff == 0:
+      del coeffs[t]
+    else:
+      coeffs[t] = n_coeff
+
+  @classmethod
+  def normalize_coeffs(cls,
+                       coeffs: dict[_DimMon, int],
+                       scope: SymbolicScope) -> DimSize:
+    """Constructs a _DimExpr in normal form.
 
     Ensures that the symbolic dimension is normalized, e.g., does not
-    have terms with coefficient 0, and it is represented as a Python int
-    if it is known to be a constant.
+    have terms with coefficient 0, it reflects all the scope
+    normalization_rules, and it is represented as a Python integer if it is
+    known to be a constant.
+
+    Does not attempt to normalize the keys (terms) inside `coeffs`.
     """
-    non_zero_coeffs = tuple(c for c in coeffs if c[1] != 0)
-    if not non_zero_coeffs: return 0
-    if non_zero_coeffs[0][0].degree == 0:
-      return int(non_zero_coeffs[0][1])
-    return _DimExpr(non_zero_coeffs, scope)
+    new_coeffs = coeffs.copy()
+    for t, t_k in coeffs.items():
+      if t_k == 0:
+        del new_coeffs[t]
+        continue
+      after, t_k_after = scope._normalization_rules.get(t, (None, 0))
+      if after is not None and t_k % t_k_after == 0:
+        # We have t*t_k_after -> after.
+        # We subtract `t*t_k` and add `c * (- (t_k // t_k_after))`.
+        _DimExpr.add_coeff(new_coeffs, t, - t_k)
+        for t2, tc2 in after._monomials_sorted:
+          _DimExpr.add_coeff(new_coeffs, t2, tc2 * (t_k // t_k_after))
+    new_terms = _DimExpr._coeff_dict_to_terms(new_coeffs)
+    if not new_terms: return 0
+    if new_terms[0][0].degree == 0: return new_terms[0][1]
+    return _DimExpr(new_terms, scope)
 
   def to_monomial(self) -> _DimMon | None:
     """Extract the single monomial from a symbolic expression.
@@ -611,8 +657,8 @@ class _DimExpr:
     other = _ensure_poly(other, "add", self.scope)
     coeffs = dict(self._monomials_sorted)
     for mon, coeff in other.monomials():
-      coeffs[mon] = coeff + coeffs.get(mon, 0)
-    return _DimExpr.normalize(_DimExpr._coeff_dict_to_terms(coeffs), self.scope)
+      _DimExpr.add_coeff(coeffs, mon, coeff)
+    return _DimExpr.normalize_coeffs(coeffs, self.scope)
 
   def __radd__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
@@ -645,8 +691,8 @@ class _DimExpr:
     for mon1, coeff1 in self.monomials():
       for mon2, coeff2 in other.monomials():
         mon = mon1.mul(mon2)
-        coeffs[mon] = coeff1 * coeff2 + coeffs.get(mon, 0)
-    return _DimExpr.normalize(_DimExpr._coeff_dict_to_terms(coeffs), self.scope)
+        _DimExpr.add_coeff(coeffs, mon, coeff1 * coeff2)
+    return _DimExpr.normalize_coeffs(coeffs, self.scope)
 
   def __rmul__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
@@ -805,25 +851,25 @@ class _DimExpr:
     return functools.reduce(_evaluate_add, terms) if len(terms) > 1 else terms[0]
 
   def max(self, other: DimSize) -> DimSize:
-    lb, ub = _bounds_decision(self - other, _stop_early_for_geq0_leq0)
+    lb, ub = _bounds_decision(self - other, _stop_early_for_geq0_or_leq0)
     if 0 <= lb: return self
     if ub <= 0: return other
     return _DimExpr.from_operation(_DimAtom.MAX, self, other, scope=self.scope)
 
   def rmax(self, other: DimSize) -> DimSize:
-    lb, ub = _bounds_decision(self - other, _stop_early_for_geq0_leq0)
+    lb, ub = _bounds_decision(self - other, _stop_early_for_geq0_or_leq0)
     if 0 <= lb: return self
     if ub <= 0: return other
     return _DimExpr.from_operation(_DimAtom.MAX, other, self, scope=self.scope)
 
   def min(self, other: DimSize) -> DimSize:
-    lb, ub = _bounds_decision(self - other, _stop_early_for_geq0_leq0)
+    lb, ub = _bounds_decision(self - other, _stop_early_for_geq0_or_leq0)
     if 0 <= lb: return other
     if ub <= 0: return self
     return _DimExpr.from_operation(_DimAtom.MIN, self, other, scope=self.scope)
 
   def rmin(self, other: DimSize) -> DimSize:
-    lb, ub = _bounds_decision(self - other, _stop_early_for_geq0_leq0)
+    lb, ub = _bounds_decision(self - other, _stop_early_for_geq0_or_leq0)
     if 0 <= lb: return other
     if ub <= 0: return self
     return _DimExpr.from_operation(_DimAtom.MIN, other, self, scope=self.scope)
@@ -854,7 +900,7 @@ def cmp_sequence(s1, s2, elem_cmp) -> int:
   if len(s1) < l2: return -1
   return 0
 
-def _stop_early_for_geq0_leq0(lb, ub):
+def _stop_early_for_geq0_or_leq0(lb, ub):
   return 0 <= lb or ub <= 0
 
 class SymbolicScope:
@@ -873,59 +919,88 @@ class SymbolicScope:
     constraints_str: A sequence of constraints on symbolic dimension expressions,
       of the form `e1 >= e2` or `e1 <= e2`.
   """
+
   def __init__(self,
                constraints_str: Sequence[str] = ()):
-    self._location_frame = source_info_util.user_frame(source_info_util.current())
-    self._explicit_constraints: list[tuple[_DimExpr, str]] = []
+    if isinstance(constraints_str, str):
+      raise ValueError(
+          "The symbolic constraints should be a sequence of strings. "
+          f"Got {repr(constraints_str)}")
 
-    constraints = self._parse_constraints(constraints_str)
-    for c, c_str in zip(constraints, constraints_str):
-      if (const := _DimExpr.to_constant(c)) is not None:
-        if const < 0:
-          raise ValueError(f"Unsatisfiable explicit constraint: {c_str}")
-        continue
-      self._explicit_constraints.append((c, c_str))
+    self._location_frame = source_info_util.user_frame(source_info_util.current())
+    # Keep the explicit constraints in the order in which they were added
+    self._explicit_constraints: list[_SymbolicConstraint] = []
 
     # We cache the _DimExpr.bounds calls. The result depends only on the
     # explicit and implicit constraints, so it is safe to keep it in the
-    # scope.
+    # scope. Set the cache before we parse constraints.
     self._bounds_cache: dict[tuple[_DimExpr,
                                    Callable[[float, float], bool] | None],
                              tuple[float, float]] = {}
+    # We turn the equality constraints into normalization rules.
+    # For an explicit constraint `t*tk == e`, we keep
+    # `_normalization_rules[t] = (e, tk)`.
+    # During building of expressions, if we encounter the term
+    # `t*tk1` and `tk1 % tk == 0`, we replace it with `e*(tk1 // tk)`.
+    self._normalization_rules: NormalizationRules = {}
+
+    for c_str in constraints_str:
+      self._parse_and_process_explicit_constraint(c_str)
+      self._bounds_cache.clear()
 
   def __str__(self) -> str:
     extras = []
     if self._explicit_constraints:
       extras.append(" with constraints:")
-      for _, c_str in self._explicit_constraints:
-        extras.append(f"  {c_str}")
+      for constr in self._explicit_constraints:
+        extras.append(f"  {constr.debug_str}")
     loc = source_info_util._summarize_frame(self._location_frame) if self._location_frame else "unknown"
     return (
         f"{id(self)} created at {loc}" +
         "\n".join(extras))
   __repr__ = __str__
 
-  def _parse_constraints(self, constraints_str: Sequence[str]) -> Sequence[_DimExpr]:
-    # Parse some contraints into the current scope.
-    def parse_one(cs: str) -> _DimExpr:
-      if not isinstance(cs, str):
-        raise ValueError(
-            f"symbolic_scope must be invoked with a string: got {repr(cs)}")
-      eq_pos = cs.find("=")
-      if eq_pos <= 0 or cs[eq_pos - 1] not in [">", "<"]:
-        raise ValueError("Constraint parsing error: must contain one of '>=' or '<='")
-      e1_str = cs[:eq_pos - 1]
-      e1, = _Parser(e1_str, None, repr(e1_str), self).parse()
-      e2_str = cs[eq_pos + 1:]
-      e2, = _Parser(e2_str, None, repr(e2_str), self).parse()
-      diff = e1 - e2 if cs[eq_pos - 1] == ">" else e2 - e1
-      return _ensure_poly(diff, "symbolic_scope", self)
-
-    if isinstance(constraints_str, str):
+  def _parse_and_process_explicit_constraint(self, c_str: str):
+    if not isinstance(c_str, str):
       raise ValueError(
-          "The symbolic constraints should be a sequence of strings. "
-          f"Got {repr(constraints_str)}")
-    return tuple(parse_one(cs) for cs in constraints_str)
+          f"SymbolicScope constraint must be a string: got {repr(c_str)}")
+    cmp_pos, cmp, is_geq = c_str.find("=="), Comparator.EQ, True
+    if cmp_pos < 0:
+      cmp_pos, cmp, is_geq = c_str.find(">="), Comparator.GEQ, True
+      if cmp_pos < 0:
+        cmp_pos, cmp, is_geq = c_str.find("<="), Comparator.GEQ, False
+      if cmp_pos < 0:
+        raise ValueError("Constraint parsing error: must contain one of '==' or '>=' or '<='")
+    e1_str = c_str[:cmp_pos]
+    e1, = _Parser(e1_str, None, repr(e1_str), self).parse()
+    e2_str = c_str[cmp_pos + 2:]
+    e2, = _Parser(e2_str, None, repr(e2_str), self).parse()
+    if cmp == Comparator.GEQ and not is_geq:
+      e1, e2 = e2, e1
+
+    diff = e1 - e2
+    if (diff_const := _DimExpr.to_constant(diff)) is not None:
+      if ((cmp == Comparator.EQ and diff_const != 0) or
+          (cmp == Comparator.GEQ and diff_const < 0)):
+        raise ValueError(f"Unsatisfiable explicit constraint: {c_str}")
+      return
+
+    constr = _SymbolicConstraint(debug_str=c_str, cmp=cmp, diff=diff)  # type: ignore[arg-type]
+    self._explicit_constraints.append(constr)
+    if cmp == Comparator.EQ:
+      if not isinstance(e1, _DimExpr):
+        raise ValueError("Invalid equality constraint: {e1} == {e2}. "
+                         "The left-hand-side must be of the form `term * coefficient`.")
+      (before, before_k), *rest = e1._monomials_sorted
+      if rest:
+        raise ValueError("Invalid equality constraint: {e1} == {e2}. "
+                         "The left-hand-side must be of the form `term * coefficient`.")
+
+      after = _ensure_poly(e2, "parse_constraint", e1.scope)
+      if before in self._normalization_rules:
+        raise NotImplementedError(
+            f"Found multiple equality constraints with the same left-hand-side: {before}")
+      self._normalization_rules[before] = (after, before_k)
 
   def _check_same_scope(self, other: _DimExpr,
                         when: str = "",
@@ -1474,7 +1549,7 @@ class _Parser:
         power, tok = self.integer(tok)
         a = a ** power
 
-      acc = acc * a if acc is not None else a  # type:ignore [operator]
+      acc = acc * a if acc is not None else a  # type: ignore[operator]
       if tok.exact_type in self.FOLLOW_MON:
         return acc, tok
       tok = self.consume_token(tok, tokenize.STAR)
@@ -1510,6 +1585,10 @@ class _Parser:
     tok = self.consume_token(tok, tokenize.COMMA)
     e2, tok = self.expr(tok)
     tok = self.consume_token(tok, tokenize.RPAR)
+    if op == _DimAtom.MAX:
+      return core.max_dim(e1, e2), tok
+    if op == _DimAtom.MIN:
+      return core.min_dim(e1, e2), tok
     return _DimExpr.from_operation(op, e1, e2,
                                    scope=self.scope), tok  # type: ignore
 
@@ -1586,9 +1665,6 @@ class CachingShapeEvaluator:
 
 @dataclasses.dataclass(frozen=True)
 class ShapeConstraint:
-  class Comparator(Enum):
-    EQ = 1
-    GEQ = 2
 
   comp: Comparator
   left: DimSize
@@ -1601,9 +1677,9 @@ class ShapeConstraint:
     """Evaluates a constraint statically."""
     left, right = eval.evaluate(self.left), eval.evaluate(self.right)
     try:
-      if self.comp == ShapeConstraint.Comparator.EQ:
+      if self.comp == Comparator.EQ:
         ok = (left == right)
-      elif self.comp == ShapeConstraint.Comparator.GEQ:
+      elif self.comp == Comparator.GEQ:
         ok = (left >= right)
       else:
         assert False  # We are in a context where we know we can evaluate
@@ -1625,24 +1701,24 @@ class ShapeConstraint:
     # Try to evaluate the constraint statically.
     if core.is_constant_shape((left, right)):
       left_int, right_int = op.index(left), op.index(right)
-      if self.comp == ShapeConstraint.Comparator.EQ:
+      if self.comp == Comparator.EQ:
         if not (left_int == right_int):
           raise self.make_error(eval)
-      elif self.comp == ShapeConstraint.Comparator.GEQ:
+      elif self.comp == Comparator.GEQ:
         if not (left_int >= right_int):
           raise self.make_error(eval)
       else: assert False
       return None
 
-    if self.comp == ShapeConstraint.Comparator.EQ:
+    if self.comp == Comparator.EQ:
       is_ok = lax.eq(left, right)
-    elif self.comp == ShapeConstraint.Comparator.GEQ:
+    elif self.comp == Comparator.GEQ:
       is_ok = lax.ge(left, right)
     else: assert False
     return is_ok
 
   def __str__(self):
-    return (f"{self.left} {'==' if self.comp == ShapeConstraint.Comparator.EQ else '>='} {self.right}"
+    return (f"{self.left} {'==' if self.comp == Comparator.EQ else '>='} {self.right}"
             f" ({self.error_message_pieces})")
   __repr__ = __str__
 
@@ -1687,7 +1763,7 @@ class ShapeConstraints:
     self.constraints: list[ShapeConstraint] = []
 
   def add_constraint(self,
-                     comp: ShapeConstraint.Comparator,
+                     comp: Comparator,
                      left: DimSize, right: DimSize,
                      error_message_pieces: Sequence[str | DimSize]):
     c = ShapeConstraint(comp, left, right, error_message_pieces)
@@ -1910,7 +1986,7 @@ def _solve_dim_equations(
       else:
         var_value, var_remainder = divmod(dim_value, core.dim_constant(factor_var))  # type: ignore
         shape_constraints.add_constraint(
-            ShapeConstraint.Comparator.EQ, var_remainder, 0,
+            Comparator.EQ, var_remainder, 0,
             error_message_pieces=([
                 "Input shapes do not match the polymorphic shapes specification. "
                 "Division had remainder ", var_remainder,
@@ -1929,7 +2005,7 @@ def _solve_dim_equations(
         "), "])
 
       shape_constraints.add_constraint(
-          ShapeConstraint.Comparator.GEQ, var_value, 1,
+          Comparator.GEQ, var_value, 1,
           error_message_pieces=[
                 "Input shapes do not match the polymorphic shapes specification. "
                 f"Expected value >= 1 for dimension variable '{var}'." +
@@ -1941,7 +2017,7 @@ def _solve_dim_equations(
     else:
       # All variables are resolved for this equation, we emit an assertion
       shape_constraints.add_constraint(
-          ShapeConstraint.Comparator.EQ,
+          Comparator.EQ,
           _DimExpr.from_var(eqn.dim_name, eqn.aval_dim_expr.scope),
           eqn.aval_dim_expr.evaluate(shape_env),
           error_message_pieces=([
@@ -1958,14 +2034,15 @@ def _solve_dim_equations(
   def add_explicit_symbolic_constraints(shape_env: DimVarEnv):
     if not shape_env: return
     assert scope is not None
-    for c, c_str in scope._explicit_constraints:
-      c_value = c.evaluate(shape_env)
+    for constr in scope._explicit_constraints:
+      c_value = constr.diff.evaluate(shape_env)
       shape_constraints.add_constraint(
-          ShapeConstraint.Comparator.GEQ, c_value, 0,
+          constr.cmp, c_value, 0,
           error_message_pieces=[
-                f"Input shapes do not match the symbolic shape constraint {c_str}. "
-                f"Expected '{c}' to be greater or equal to 0, but found ",
-                c_value,
+                f"Input shapes do not match the symbolic shape constraint {constr.debug_str}. "
+                f"Expected '{constr.diff}' to be "
+                f"{'greater or equal' if constr.cmp == Comparator.GEQ else 'equal'} to 0, "
+                "but found ", c_value,
                 ". " + poly_specs_err_msg
               ] + solution_error_message_pieces + [
               solution_err_msg_trailer_errors])

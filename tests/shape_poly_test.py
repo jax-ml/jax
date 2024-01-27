@@ -685,6 +685,75 @@ class DimExprTest(jtu.JaxTestCase):
       self.sampled_assertion(remainder, lambda *args: divmod(*args)[1],
                              dividend, divisor)
 
+
+  def test_unit_combine_term_with_constraints(self):
+    a, b, c, d, e = shape_poly.symbolic_shape("a, b, c, d, e",
+        constraints=[
+           "a >= 4",
+           "b <= 5",
+           "c + 3*d >= 10", "c - 2*d >= -4",  # -> 5c >= 8 -> c >= 2
+        ])
+    scope = a.scope
+    def _m(e: shape_poly._DimExpr) -> shape_poly._DimMon:
+      return e.to_monomial()
+    Comparator = shape_poly.Comparator
+    decision = shape_poly_decision._DecisionByElimination(scope)
+
+    self.assertSetEqual(
+        set(),
+        set(decision.combine_term_with_existing(_m(e), 2, scope=scope)))
+
+    self.assertSetEqual(
+        {(Comparator.GEQ, a - 4, 2, -1)},
+        set(decision.combine_term_with_existing(_m(a), 2, scope=scope)))
+
+    self.assertSetEqual(
+        {(Comparator.GEQ, a - 4, 2, 1)},
+        set(decision.combine_term_with_existing(_m(a), -2, scope=scope)))
+
+    self.assertSetEqual(
+        {(Comparator.GEQ, b - 1, 2, -1),
+         (Comparator.GEQ, -b + 5, 2, 1)},
+        set(decision.combine_term_with_existing(_m(b), 2, scope=scope)))
+
+    self.assertSetEqual(
+        {(Comparator.GEQ, b - 1, 2, 1),
+         (Comparator.GEQ, -b + 5, 2, -1)},
+        set(decision.combine_term_with_existing(_m(b), -2, scope=scope)))
+
+    self.assertSetEqual(
+        {(Comparator.GEQ, c - 2, 2, -1),
+         (Comparator.GEQ, -2*d + c + 4, 2, -1),
+         (Comparator.GEQ, 3*d + c - 10, 2, -1)},
+        set(decision.combine_term_with_existing(_m(c), 2, scope=scope,
+                                                only_smaller_than_t=False)))
+
+    self.assertSetEqual(
+        {(Comparator.GEQ, c - 2, 2, 1),
+         (Comparator.GEQ, -2*d + c + 4, 2, 1),
+         (Comparator.GEQ, 3*d + c - 10, 2, 1)},
+        set(decision.combine_term_with_existing(_m(c), -2, scope=scope,
+                                                only_smaller_than_t=False)))
+
+    self.assertSetEqual(
+        {(Comparator.GEQ, c - 2, 2, -1)},
+        set(decision.combine_term_with_existing(_m(c), 2, scope=scope,
+                                                only_smaller_than_t=True)))
+
+    self.assertSetEqual(
+        {(Comparator.GEQ, d - 1, 2, -1),
+         (Comparator.GEQ, -2*d + c + 4, 2, 2),
+         (Comparator.GEQ, 3*d + c - 10, 2, -3)},
+        set(decision.combine_term_with_existing(_m(d), 2, scope=scope,
+                                                only_smaller_than_t=False)))
+
+    self.assertSetEqual(
+        {(Comparator.GEQ, d - 1, 2, -1),
+         (Comparator.GEQ, -2*d + c + 4, 2, 2),
+         (Comparator.GEQ, 3*d + c - 10, 2, -3)},
+        set(decision.combine_term_with_existing(_m(d), 2, scope=scope,
+                                                only_smaller_than_t=True)))
+
   def test_non_negative_dim(self):
     a, = shape_poly.symbolic_shape("a,")
 
@@ -725,13 +794,13 @@ class DimExprTest(jtu.JaxTestCase):
     self.sampled_assertion(core.max_dim((a - 4) // 2 + 1, 0),
                            core.stride_dim, a, 4, 2)
 
-  def test_constraints_basic(self):
+  def test_constraints_ge_basic(self):
     a, b = shape_poly.symbolic_shape("a, b",
                                      constraints=("a >= 5", "b <= 16"))
     self.assertEqual(_bounds(a), (5, np.inf))
     self.assertEqual(_bounds(b), (1, 16))
 
-  def test_constraints_trivial(self):
+  def test_constraints_ge_trivial(self):
     a, = shape_poly.symbolic_shape("a",
                                    # Trivial, is dropped
                                    constraints=("a <= a + 1",))
@@ -748,7 +817,34 @@ class DimExprTest(jtu.JaxTestCase):
                                        constraints=("a <= 0",))
       a >= b
 
-  def test_constraints_a_minus_4d(self):
+    with self.assertRaisesRegex(ValueError,
+                                "Unsatisfiable.*a <= 0"):
+      a, b = shape_poly.symbolic_shape("a, b",
+                                       # Contradicts the default a >= 1
+                                       constraints=("a <= 0",))
+      a >= b
+
+  def test_constraints_ge_smallest_first(self):
+    # Since we process the smaller constraints first, they take effect for the
+    # processing of the remaining constraints.
+    a, = shape_poly.symbolic_shape("a",
+                                   # max(a, 2) = a
+                                   constraints=("a >= 4", "max(a, 2) >= 6"))
+    self.assertEqual(core.max_dim(a, 2), a)
+    self.assertEqual(_bounds(a), (6, np.inf))
+
+  def test_constraints_ge_smallest_first_caching(self):
+    # When we process the constraint with max(a, 5) we will compute the bounds
+    # of (a, 5) and at that time we will cache that "-1 <= a - 5". We should
+    # not cache that, because later we learn that a >= 5
+    a, = shape_poly.symbolic_shape("a",
+                                   # max(a, 2) = a
+                                   constraints=("a >= 4", "max(a, 5) >= 5",
+                                                "max(a, 2) >= 5"))
+    self.assertEqual(core.max_dim(a, 2), a)
+    self.assertEqual(core.max_dim(a, 5), a)
+
+  def test_constraints_ge_a_minus_4d(self):
     # simulates d = div(a, 4) and m = mod(a, 4)
     assumptions = ["a >= 4*d + m ",
                    "a <= 4*d + m",
@@ -764,16 +860,29 @@ class DimExprTest(jtu.JaxTestCase):
   def test_constraints_errors(self):
     with self.assertRaisesRegex(ValueError,
                                 "The symbolic constraints should be a sequence of strings"):
-      _ = shape_poly.symbolic_shape("a, b",
+      _ = shape_poly.symbolic_shape("a",
                                     constraints="a <= a - 1")
 
     with self.assertRaisesRegex(ValueError,
-                                "Constraint parsing error: must contain one of '>=' or '<='"):
-      _ = shape_poly.symbolic_shape("a, b",
-                                    # Contradicts the default a >= 1
-                                    constraints=("a == 0",))
+                                "Constraint parsing error: must contain one of '==' or '>=' or '<='"):
+      _ = shape_poly.symbolic_shape("a",
+                                    constraints=("a != 0",))
 
-  def test_constraints_monomial(self):
+    with self.assertRaisesRegex(ValueError,
+                                re.escape("Unsatisfiable explicit constraint: a == a + 1")):
+      _ = shape_poly.symbolic_shape("a",
+                                    # Contradicts the default a >= 1
+                                    constraints=("a == a + 1",))
+
+    with self.assertRaisesRegex(ValueError,
+                                re.escape("Unsatisfiable constraint: a >= 1")):
+      a, = shape_poly.symbolic_shape("a",
+                                     # Contradicts the default a >= 1
+                                     constraints=("a == 0",))
+      # We detect unsatisfiablity once we try to decide inequalities
+      _ = a >= -1
+
+  def test_constraints_ge_monomial(self):
     a, b = shape_poly.symbolic_shape(
         "a, b",
         constraints=("max(a, b) >= 8", "min(a, b) <= 2",
@@ -786,7 +895,7 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertGreaterEqual(a % b, 1)
     self.assertGreaterEqual(core.max_dim(a, b) % 4, 2)
 
-  def test_constraints_monomial_derived(self):
+  def test_constraints_ge_monomial_derived(self):
     a, b = shape_poly.symbolic_shape(
         "a, b",
         constraints=("a >= 4", "3 >= b"))
@@ -795,12 +904,12 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertEqual(core.min_dim(a, b), b)
     self.assertGreaterEqual(a // 3, 1)
 
-  def test_constraints_not_monomial(self):
+  def test_constraints_ge_not_monomial(self):
     a, b = shape_poly.symbolic_shape("a, b",
-                                        constraints=("a >= b",))
+                                     constraints=("a >= b",))
     self.assertGreaterEqual(a, b)
 
-  def test_constraints_complex(self):
+  def test_constraints_ge_complex(self):
     a, b, c = shape_poly.symbolic_shape(
         "a, b, c",
         constraints=("a + 2 <= b", "b <= a + 5", "a + b >= c"))
@@ -809,7 +918,7 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertEqual(_bounds(b - a - 7), (-5, -2))
     self.assertEqual(_bounds(c - 2*a - 5), (-np.inf, 0))
 
-  def test_constraints_fractional(self):
+  def test_constraints_ge_fractional(self):
     a, = shape_poly.symbolic_shape("a",
                                    constraints=("2 * a >=  5", "3 * a <= 10",))
     self.assertEqual(_bounds(5*a - 2), (13, 13))
@@ -825,7 +934,7 @@ class DimExprTest(jtu.JaxTestCase):
           dict(constraint="2*a + -3*b >= 10", exp="-1*a + 2*b", bounds=(-np.inf, np.inf)),
       ]
   )
-  def test_constraints_complex_gen(self,
+  def test_constraints_ge_complex_gen(self,
                                    constraint: str, exp: str,
                                    bounds: tuple[float, float]):
     a, b, exp = shape_poly.symbolic_shape(
@@ -833,13 +942,115 @@ class DimExprTest(jtu.JaxTestCase):
         constraints=(constraint,))
     self.assertEqual(bounds, _bounds(exp))
 
-  def test_constraints_override(self):
+  def test_constraints_ge_override(self):
     # Some constaints override other
     a, b = shape_poly.symbolic_shape("a, b",
                                      constraints=("a >= 5", "b <= 16",
                                                   "a >= 10", "b <= 10"))
     self.assertEqual(_bounds(a), (10, np.inf))
     self.assertEqual(_bounds(b), (1, 10))
+
+  def test_constraints_eq_1(self):
+    # Some constaints override other
+    a, b, c = shape_poly.symbolic_shape("a, b, c",
+                                        constraints=("max(a, b) == c",))
+    self.assertEqual(_bounds(core.max_dim(a, b) - c + 3), (3, 3))
+
+  def test_constraints_eq_2(self):
+    a, b = shape_poly.symbolic_shape("a, b",
+                                     constraints=("max(a, b) == 5",
+                                                  "min(a, b) == 3"))
+    self.assertEqual(_bounds(core.max_dim(a, b)), (5, 5))
+    self.assertEqual(_bounds(core.min_dim(a, b)), (3, 3))
+    self.assertEqual(_bounds(a), (3, 5))
+
+  def test_constraints_eq_3(self):
+    a, b = shape_poly.symbolic_shape(
+        "a, b",
+        # The constraint implies `b >= 2` thus `min(b, 2)` gets normalized
+        # to `2`
+        constraints=("min(a, b) == b - min(b, 2)",))
+    self.assertEqual(core.min_dim(b, 2), 2)
+    self.assertEqual(_bounds(b), (2, np.inf))
+    # TODO: the following ought to work, but the way we wrote the equality
+    # constraint, `min(b, 2)` gets rewritten to `2`.
+    #self.assertEqual(core.min_dim(a, b), b - core.min_dim(b, 2))
+
+  def test_constraints_eq_4(self):
+    # Equalities of a variable with an expression
+    a, b, c, d = shape_poly.symbolic_shape(
+        "a, b, c, d",
+        constraints=("floordiv(d, 2) == a + 5",
+                     "floordiv(c, 3) == a + 3",
+                     "b == a + 1"))
+    self.assertEqual(b, a + 1)
+    self.assertEqual(d // 2, a + 5)
+    self.assertEqual(c // 3, b + 2)
+
+  def test_constraints_eq_5(self):
+    # Constraints involving both inequalities and equalities
+    a, b, c, d = shape_poly.symbolic_shape(
+        "a, b, c, d",
+        constraints=(# max(c, a) == c because c >= b + 3 = a + 3
+                     "b == a",
+                     "c >= b + 3",
+                     "floordiv(d, 2) == floordiv(max(c, a), 3) + 2",
+        ))
+    self.assertEqual(core.max_dim(c, a), c)
+    # d // 2 = c // 3 + 2 = b + 5
+    self.assertEqual(_bounds(d // 2 - c // 3), (2, 2))
+
+  def test_constraints_eq_6(self):
+    # Constraints involving both inequalities and equalities
+    a, b, c, d = shape_poly.symbolic_shape(
+        "a, b, c, d",
+        constraints=("b == a",
+                     "c >= b + 3",
+                     "max(d, a) == b + 3",))
+    self.assertEqual(core.max_dim(c, a), c)
+    # d <= max(d, a) == a + 3, thus d - a <= 3
+    self.assertEqual(_bounds(d - b), (-np.inf, 3))
+
+  def test_constraints_eq_threefry(self):
+    # Test equalities that arise out of the threefree lowering
+    # x : i32[a]  # a may be even or odd
+    # x_padded: i32[a + a % 2] = jnp.concat([x, jnp.zeros((a % 2,))])
+    # x_reshaped: i32[2, (a + a % 2) // 2] = x_padded.reshape((-1, 2))
+    # x_1 = x_reshaped.reshape((-1,))
+    a, = shape_poly.symbolic_shape(
+        "a",
+        constraints=("mod(a + mod(a, 2), -2) == 0",
+                     "2*floordiv(mod(a, 2) + a, -2) == a"))
+
+    x_reshaped, r = divmod(a + a % 2, -2)
+    self.assertEqual(r, 0)
+    self.assertEqual(x_reshaped, (a + a % 2) // -2)
+    self.assertEqual(2 * x_reshaped, a)
+
+  def test_constraints_a_minus_4d_eq(self):
+    # simulates d = div(a, 4) and m = mod(a, 4)
+    assumptions = ["4*d == a - m", "m >= 0", "m <= 3"]
+    scope = shape_poly.SymbolicScope(assumptions)
+    a, d = shape_poly.symbolic_shape("a, d", scope=scope)
+    self.assertEqual(_bounds(a - 4*d), (1, 3))  # a - 4d = m >= 1
+    # TODO: The incompleteness is due to the way we combine external constraints
+    self.assertEqual(_bounds(a - 2*d),
+                     _expect(best=(3, np.inf), current=(-np.inf, np.inf)))  # a - 2d = m + 2d >= 3
+    # TODO: The incompleteness is due to the way we combine external constraints
+    self.assertEqual(_bounds(a),
+                     _expect(best=(5, np.inf), current=(1, np.inf)))  # a >= 4d + m >= 5
+
+    # Now with a different order of constraints
+    assumptions1 = ["m1 >= 0", "m1 <= 3", "a1 == 4*d1 + m1"]
+    scope1 = shape_poly.SymbolicScope(assumptions1)
+    a1, d1, m1 = shape_poly.symbolic_shape("a1, d1, m1", scope=scope1)
+    # TODO: The incompleteness is due to the way we combine external constraints
+    self.assertEqual(_bounds(a1 - 4*d1),
+                     _expect(best=(1, 3), current=(1, 3)))  # a - 4d = m >= 1
+    self.assertEqual(_bounds(a1 - 2*d1), (3, np.inf))  # a - 2d = m + 2d >= 3
+    # TODO: The incompleteness is due to the way we combine external constraints
+    self.assertEqual(_bounds(a1),
+                     _expect(best=(5, np.inf), current=(-np.inf, np.inf)))  # a >= 4d + m >= 5
 
   def test_constraints_error_msg(self):
     a, b = shape_poly.symbolic_shape("a, b",
@@ -1320,6 +1531,41 @@ class ShapePolyTest(jtu.JaxTestCase):
                      polymorphic_shapes=["a"],
                      symbolic_constraints=["a >= 8"])
 
+  def test_constraints_slice_in_dim_eq(self):
+    def f(x, y):  # x: i32[a], y: i32[b]
+      v1 = x[:y.shape[0]]  # i32[min(a, b)]
+      v2 = y[2:]  # i32[b - min(b, 2)]
+      return v1 + v2
+    check_shape_poly(self, f,
+                     arg_descriptors=[RandArg((16,), _i32),  # a == 16
+                                      RandArg((18,), _i32)],  # b == 18
+                     polymorphic_shapes=["a", "b"],
+                     # This is the exact failure we are getting.
+                     symbolic_constraints=[
+                         "b >= 2",
+                         "min(a, b) == b - 2"
+                     ])
+
+  def test_constraints_eq_threefry(self):
+    # This pattern arises in the lowering of threefry
+    def f(x):  # x: i32[a]
+      a, = x.shape
+      x_padded = jnp.concatenate([x, jnp.zeros((a % 2,), dtype=x.dtype)])
+      x_reshaped = x_padded.reshape((2, -1))
+      x_reshaped += 2
+      x_padded_1 = x_reshaped.reshape((-1,))
+      x_1 = x_padded_1[:a]
+      # Ensure x and x_1 have the same shape
+      return x + x_1
+
+    check_shape_poly(self, f,
+                     arg_descriptors=[RandArg((16,), _i32)],  # a == 16
+                     polymorphic_shapes=["a"],
+                     # These are the exact failure we are getting.
+                     symbolic_constraints=[
+                         "mod(a + mod(a, 2), -2) == 0",
+                         "-2*floordiv(a + mod(a, 2), -2) == a + mod(a, 2)"])
+
   def test_constraints_for_profile(self):
     # A somewhat more involved tests to stress test the correctness and
     # performance
@@ -1333,9 +1579,8 @@ class ShapePolyTest(jtu.JaxTestCase):
         acc += jnp.sum(slice, axis=0)
       return acc
 
-    exp = export.export(f)(jax.ShapeDtypeStruct(export.symbolic_shape("a, b"),
-                                                np.int32))
-
+    _ = export.export(f)(jax.ShapeDtypeStruct(export.symbolic_shape("a, b"),
+                                              np.int32))
 
 
   def test_constraints_compile_time_check(self):

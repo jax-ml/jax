@@ -2016,7 +2016,9 @@ def divide_shape_sizes(s1: Shape, s2: Shape) -> DimSize:
     return 1
   q, r = divmod(sz1, sz2)
   if isinstance(r, Tracer) or r != 0:
-    raise InconclusiveDimensionOperation(f"Cannot divide evenly the sizes of shapes {tuple(s1)} and {tuple(s2)}")
+    raise InconclusiveDimensionOperation(
+        f"Cannot divide evenly the sizes of shapes {tuple(s1)} and {tuple(s2)}. "
+        f"The remainder {r} should be 0.")
   return q
 
 def cancel_divide_tracers(num, denom):

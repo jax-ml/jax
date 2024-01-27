@@ -743,7 +743,7 @@ jax2tf.convert(lambda x: x[:x.shape[1], :16],
 ```
 
 The constraints form a conjunction together with the implicit
-constraints. You can specify `>=` and `<=` constraints.
+constraints. You can specify `>=`, `<=`, and `==` constraints.
 At the moment, JAX has limited support for reasoning with
 symbolic constraints:
   * You get most from constraints of the form
@@ -756,6 +756,13 @@ symbolic constraints:
     more complex expressions, e.g., from `a >= b + 8` we
     can infer that `a - b >= 8` but not that `a >= 9`.
     We plan to improve somewhat this area in the future.
+  * Equality constraints are treated as normalization rules.
+    E.g., `floordiv(a, b) = c` works by replacing all
+    occurences of the left-hand-side with the right-hand-side.
+    You can only have equality constraints where the left-hand-side
+    is a multiplication of factors, e.g, `a * b`, or `4 * a`, or
+    `floordiv(a, b)`. Thus, the left-hand-side cannot contain
+    addition or subtraction at the top-level.
 
 The symbolic constraints can also help to work around the
 limitations in the JAX reasoning mechanisms. For example, the following
@@ -765,7 +772,7 @@ striding):
 
 ```python
 jax2tf.convert(lambda x: x[: 4*(x.shape[0] // 4)],
-               polymorphic_shapes=("b, ..."))
+               polymorphic_shapes=("b, ...",))
 ```
 
 You will likely see an error that the comparison
@@ -779,8 +786,30 @@ with the exact inconclusive inequality:
 
 ```python
 jax2tf.convert(lambda x: x[: 4*(x.shape[0] // 4)],
-               polymorphic_shapes=("b, ..."),
+               polymorphic_shapes=("b, ...",),
                polymorphic_constraints=("b >= 4*floordiv(b, 4)",))
+```
+
+An example where an equality constraint would be useful
+is in the following code:
+
+```python
+jax2tf.convert(lambda x, y: x + y[:y.shape[0] // 2],
+               polymorphic_shapes=("a", "b"))(x, y)
+```
+
+The above code would raise a `TypeError` because JAX cannot verify that
+`x` and `y[:x.shape[0]]` have the same shape:
+
+```python
+TypeError: add got incompatible shapes for broadcasting: (a,), (floordiv(b, 2),)
+```
+
+You can fix this by adding a constraint:
+```python
+jax2tf.convert(lambda x, y: x + y[:y.shape[0] // 2],
+               polymorphic_shapes=("a", "b"),
+               polymorphic_constraints=("floordiv(b, 2) == a",))(x, y)
 ```
 
 Just like the implicit constraints, the explicit
