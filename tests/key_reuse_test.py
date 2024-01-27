@@ -253,6 +253,15 @@ class KeyReuseUnitTestSimple(jtu.JaxTestCase):
       assert_consumed(key2)
     self.check_key_reuse(f, jax.random.key(0))
 
+  def test_cond_source(self):
+    @jax.jit
+    def f(flag, key):
+      f1 = lambda seed, _: jax.random.key(seed)
+      f2 = lambda _, key: key
+      key_out = jax.lax.cond(flag, f1, f2, 0, key)
+      assert_unconsumed(key_out)
+    self.check_key_reuse(f, True, jax.random.key(0))
+
   def test_cond_both_consumed(self):
     @jax.jit
     def f(flag, key):

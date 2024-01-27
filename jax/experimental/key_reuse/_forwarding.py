@@ -152,6 +152,8 @@ def get_jaxpr_type_signature(
       forwards[eqn.outvars[out_idx]] = eqn.invars[in_idx]
 
     for snk in signature.sinks:
+      if not 0 <= snk.idx < len(eqn.invars):
+        raise KeyReuseError(f"In {eqn.primitive}, sink {snk.idx} out of range [0, {len(eqn.invars)}]")
       if sink(eqn.invars[snk.idx], snk.mask):
         raise KeyReuseError(f"In {eqn.primitive}, key values {eqn.invars[snk.idx]} are already consumed.\n"
                             f"eqn: {eqn}\njaxpr:\n{jaxpr}")
@@ -159,6 +161,8 @@ def get_jaxpr_type_signature(
       if not isinstance(var, core.Literal) and var not in forwards:
         source(var, True)  # consumed unless in a Source.
     for src in signature.sources:
+      if not 0 <= src.idx < len(eqn.outvars):
+        raise KeyReuseError(f"In {eqn.primitive}, source {src.idx} out of range [0, {len(eqn.outvars)}]")
       source(eqn.outvars[src.idx])
 
   return KeyReuseSignatureWithForwards(
@@ -232,7 +236,7 @@ def _cond_key_type_signature(eqn, args_consumed):
       sources[source.idx].append(source.mask)
 
   combined_sinks = [Sink(i + 1, reduce(np.logical_or, m)) for i, m in sinks.items()]
-  combined_sources = [Source(i + 1, reduce(np.logical_and, m)) for i, m in sources.items()]
+  combined_sources = [Source(i, reduce(np.logical_and, m)) for i, m in sources.items()]
   combined_forwards = [Forward(f.in_idx + 1, f.out_idx) for f in
                        set.intersection(*(set(sig.forwards) for sig in signatures))]
   return KeyReuseSignatureWithForwards(combined_sinks, combined_sources, combined_forwards)
