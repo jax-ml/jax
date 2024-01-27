@@ -21,8 +21,6 @@ from typing import Any, Callable, TypeVar
 
 from absl.testing import absltest
 from absl.testing import parameterized
-import hypothesis as hp
-import hypothesis.strategies as hps
 import jax
 from jax import random
 from jax import tree_util
@@ -31,6 +29,17 @@ from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_ke
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask as mask_lib
 import jax.numpy as jnp
 import numpy as np
+
+
+try:
+  import hypothesis as hp
+  import hypothesis.strategies as hps
+  CAN_USE_HYPOTHESIS = True
+except (ModuleNotFoundError, ImportError):
+  CAN_USE_HYPOTHESIS = False
+
+if not CAN_USE_HYPOTHESIS:
+  import sys; sys.exit(0)
 
 
 jax.config.parse_flags_with_absl()
