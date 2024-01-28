@@ -133,9 +133,6 @@ def _python_pjit_helper(fun, infer_params_fn, *args, **kwargs):
       infer_params_fn(*args, **kwargs)
   for arg in args_flat:
     dispatch.check_arg(arg)
-  if attrs_tracked:
-    init_states = _get_states(attrs_tracked)
-    args_flat = [*init_states, *args_flat]
   try:
     out_flat = pjit_p.bind(*args_flat, **params)
   except pxla.DeviceAssignmentMismatchError as e:
@@ -157,6 +154,9 @@ def _set_states(attrs_tracked, vals):
     jax_setattr(obj, attr, val)
 
 def _get_states(attrs_tracked):
+  if not attrs_tracked:
+    return []
+
   from jax.experimental.attrs import jax_getattr  # type: ignore
   return [jax_getattr(obj, attr) for (obj, attr) in attrs_tracked]
 
@@ -515,7 +515,9 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
       keep_unused=keep_unused,
       inline=inline,
   )
-  return (consts + args_flat, in_type, params, in_tree, out_tree(),
+
+  init_states = _get_states(attrs_tracked)
+  return (init_states + consts + args_flat, in_type, params, in_tree, out_tree(),
           donated_invars, in_layouts_flat, out_layouts_flat,
           dbg.arg_names if dbg else None, attrs_tracked)
 
