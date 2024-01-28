@@ -447,7 +447,7 @@ def sparsify_raw(f):
     spvalues_flat, in_tree = tree_flatten(spvalues, is_leaf=_is_spvalue)
     in_avals_flat = spvalues_to_avals(spenv, spvalues_flat)
     wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(f, params), in_tree)
-    jaxpr, out_avals_flat, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals_flat)
+    jaxpr, out_avals_flat, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals_flat)
     result = eval_sparse(jaxpr, consts, spvalues_flat, spenv)
     if len(out_avals_flat) != len(result):
       raise Exception("Internal: eval_sparse does not return expected number of arguments. "
@@ -747,7 +747,7 @@ def _sparsify_jaxpr(spenv, jaxpr, *spvalues):
   args = spvalues_to_arrays(spenv, spvalues)
   args_flat, in_tree = tree_flatten(args)
   avals_flat = [core.raise_to_shaped(core.get_aval(arg)) for arg in args_flat]
-  sp_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped, avals_flat)
+  sp_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped, avals_flat)
   sp_jaxpr = pe.ClosedJaxpr(sp_jaxpr, consts)
   assert out_tree is not None
   return sp_jaxpr, out_tree

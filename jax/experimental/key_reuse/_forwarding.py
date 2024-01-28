@@ -181,7 +181,7 @@ def check_key_reuse(fun: Callable[..., Any], /, *args: Any) -> KeyReuseSignature
   args_flat, in_tree = tree_util.tree_flatten(args)
   in_avals_flat = [core.get_aval(arg) for arg in args_flat]
   wrapped_fun, _ = api_util.flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-  jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals_flat)
+  jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals_flat)
   return get_jaxpr_type_signature(jaxpr)
 
 

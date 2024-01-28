@@ -53,8 +53,8 @@ from jax._src.util import merge_lists
 from jax._src.util import partition_list
 from jax._src.util import split_list
 from jax._src.util import weakref_lru_cache
-from jax.interpreters import mlir
-from jax.interpreters import partial_eval as pe
+from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 import jax.numpy as jnp
 from jax_triton import triton_lib
 from jax_triton.triton_lib import compile_ttir_to_ptx_inplace
@@ -424,7 +424,7 @@ def _associative_scan_lowering(
   flat_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
       lu.wrap_init(body), in_tree
   )
-  combine_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+  combine_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
       flat_fun, in_avals
   )
   out_tree = out_tree_thunk()
@@ -572,7 +572,7 @@ def lower_fun(
 
   def f_lowered(ctx: TritonLoweringRuleContext, *args, **params):
     wrapped_fun = lu.wrap_init(fn, params)
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
+    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
     jaxpr = jax_core.ClosedJaxpr(jaxpr, consts)
     out = _closed_call_lowering_rule(ctx, *args, call_jaxpr=jaxpr)
     return out if multiple_results else out[0]
@@ -998,7 +998,7 @@ def _reduction_lowering(body, ctx: TritonLoweringRuleContext, a, axes):
   flat_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
       lu.wrap_init(body), in_tree
   )
-  combine_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+  combine_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
       flat_fun, [*mapped_avals, *mapped_avals]
   )
   out_tree = out_tree_thunk()

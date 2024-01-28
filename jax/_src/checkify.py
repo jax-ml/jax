@@ -746,7 +746,7 @@ def jaxpr_to_checkify_jaxpr(
   fun = lu.wrap_init(checkify_jaxpr_partial)
   fun, metadata = _flatten_and_get_error_metadata_thunk(fun)
 
-  new_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun, flat_err_and_in_vals)
+  new_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(fun, flat_err_and_in_vals)
   checked_jaxpr = core.ClosedJaxpr(new_jaxpr, consts)
   out_tree, error_effects = metadata()
   return checked_jaxpr, out_tree, error_effects
@@ -832,7 +832,7 @@ def checkify_while_body_jaxpr(
     return out
   new_body_f_ = lu.wrap_init(new_body_f)
   c_consts_avals = cond_jaxpr.in_avals[:c_consts_num]
-  jaxpr, _, () = pe.trace_to_jaxpr_dynamic(new_body_f_, [*c_consts_avals,
+  jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(new_body_f_, [*c_consts_avals,
                                                          *body_jaxpr.in_avals])
   closed_jaxpr = pe.close_jaxpr(jaxpr)
   err_vals, err_tree = jtu.tree_flatten(error)
@@ -1128,7 +1128,7 @@ def checkify(f: Callable[..., Out],
     # stage:
     fun_, out_tree = flatten_fun(lu.wrap_init(closed_f), in_tree)
     debug = pe.debug_info(closed_f, in_tree, out_tree, False, 'checkify')
-    jaxpr_, _, consts = pe.trace_to_jaxpr_dynamic(fun_, (), debug)
+    jaxpr_, _, consts, () = pe.trace_to_jaxpr_dynamic(fun_, (), debug)
     jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr_))
     # checkify:
     error, out_flat = checkify_jaxpr(jaxpr, errors, init_error, *consts)

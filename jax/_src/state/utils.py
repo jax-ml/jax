@@ -15,7 +15,7 @@
 
 from collections.abc import Sequence
 
-from jax.interpreters import partial_eval as pe
+from jax._src.interpreters import partial_eval as pe
 from jax._src import core
 from jax._src import linear_util as lu
 from jax._src.state import AbstractRef
@@ -44,7 +44,7 @@ def hoist_consts_to_refs(jaxpr: core.Jaxpr) -> core.Jaxpr:
     consts = map(lambda x: ref_get(x, ()), consts)
     all_consts = merge_lists(is_const_ref, consts, const_refs)
     return core.eval_jaxpr(jaxpr, all_consts, *args)
-  hoisted_jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(
+  hoisted_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(_hoist), in_avals)
   assert not consts, "All consts should have been converted to refs"
   return hoisted_jaxpr

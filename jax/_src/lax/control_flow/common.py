@@ -58,7 +58,7 @@ def _initial_style_open_jaxpr(fun: Callable, in_tree, in_avals,
   wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   debug = pe.debug_info(fun, in_tree, out_tree, False,
                         primitive_name or "<unknown>")
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals, debug)
+  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals, debug)
   return jaxpr, consts, out_tree()
 
 @weakref_lru_cache
@@ -226,7 +226,7 @@ def _prune_zeros(ts):
   return [t for t in ts if type(t) is not ad_util.Zero]
 
 def _make_closed_jaxpr(traceable: lu.WrappedFun, in_avals: Sequence[core.AbstractValue]):
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(traceable, in_avals)
+  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(traceable, in_avals)
   return core.ClosedJaxpr(jaxpr, consts)
 
 def _show_diff(array1, array2):

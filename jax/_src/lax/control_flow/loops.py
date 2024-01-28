@@ -985,7 +985,7 @@ def _scan_partial_eval_custom(saveable, unks_in, inst_in, eqn):
     intensive_res, consts_known_lp = split_list(out_hoist, [num_intensive_res])
     out_loop = scan_p.bind(*consts_known_lp, *ins_known_lp, **params_known)
     return [*intensive_res, *out_loop]
-  call_jaxpr_, _, call_jaxpr_consts = pe.trace_to_jaxpr_dynamic(
+  call_jaxpr_, _, call_jaxpr_consts, () = pe.trace_to_jaxpr_dynamic(
       known, [v.aval for v in ins_known])
   call_jaxpr = core.ClosedJaxpr(call_jaxpr_, call_jaxpr_consts)
   eqn_known = pe.new_jaxpr_eqn(
@@ -1108,8 +1108,7 @@ def _scan_state_discharge_rule(in_avals, out_avals, *args, jaxpr, num_consts,
   new_in_avals = [*remaining_const_avals, *[a.inner_aval for a in in_ref_avals],
                   *carry_avals,
                   *[core.mapped_aval(length, 0, a) for a in xs_avals]]
-  new_jaxpr, _, () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(wrapped),
-                                               new_in_avals)
+  new_jaxpr, _, (), () = pe.trace_to_jaxpr_dynamic(lu.wrap_init(wrapped), new_in_avals)
   new_linear = (*remaining_consts_linear, *in_refs_linear,
                 *carry_linear, *xs_linear)
   all_out = scan_p.bind(*remaining_consts, *in_refs, *carry, *xs,
@@ -1768,7 +1767,7 @@ def _while_discharge_rule(in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
                                  *carry)
     carry, refs_out = split_list(carry_refs, [num_carry])
     return [*refs_out, *carry]
-  new_body_jaxpr, _, new_body_consts = pe.trace_to_jaxpr_dynamic(
+  new_body_jaxpr, _, new_body_consts, () = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(new_body), [*remaining_body_const_avals, *[a.inner_aval for a
                                                               in ref_avals],
                                *carry_avals])
@@ -1782,7 +1781,7 @@ def _while_discharge_rule(in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
         consts_refs_carry, [cond_nconsts, num_refs])
     del refs  # We don't use them here!
     return core.eval_jaxpr(cond_jaxpr, cond_jaxpr_consts, *consts, *carry)
-  new_cond_jaxpr, _, new_cond_consts = pe.trace_to_jaxpr_dynamic(
+  new_cond_jaxpr, _, new_cond_consts, () = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(new_cond), [*cond_consts_avals,
                                *[a.inner_aval for a in ref_avals],
                                *carry_avals])

@@ -66,7 +66,7 @@ def _resolve_kwargs(fun, args, kwargs):
     return ba.args
 
 def _initial_style_jaxpr(fun, in_avals):
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(fun, in_avals)
+  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(fun, in_avals)
   return jaxpr, consts
 
 def _close_jaxpr(jaxpr):
@@ -977,7 +977,7 @@ def custom_gradient(fun):
     ans_flat, out_tree = tree_flatten((ans,))
     rule, in_tree = flatten_fun_nokwargs(lu.wrap_init(rule), out_tree)
     ans_avals = [core.get_aval(x).at_least_vspace() for x in ans_flat]
-    jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(rule, ans_avals)
+    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(rule, ans_avals)
     return ans, Residuals(jaxpr, in_tree(), out_tree, consts)
 
   def bwd(res, cts):
@@ -1102,7 +1102,7 @@ def _maybe_perturbed(x: Any) -> bool:
 @cache()
 def _closure_convert_for_avals(fun, in_tree, in_avals):
   wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
-  jaxpr, out_pvals, consts = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals)
+  jaxpr, out_pvals, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals)
   out_tree = out_tree()
 
   (closure_consts, hoisted_consts), merge = partition_list(_maybe_perturbed, consts)

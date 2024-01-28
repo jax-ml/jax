@@ -1302,6 +1302,14 @@ jax_test(
 )
 
 jax_test(
+    name = "attrs_test",
+    srcs = ["attrs_test.py"],
+    deps = [
+        "//jax:experimental",
+    ],
+)
+
+jax_test(
     name = "experimental_rnn_test",
     srcs = ["experimental_rnn_test.py"],
     disable_backends = [

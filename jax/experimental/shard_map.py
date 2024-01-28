@@ -426,7 +426,7 @@ def _shard_map_staging(
   in_avals_ = map(partial(_shard_aval, mesh), in_names, in_avals)
   main = trace.main
   with core.new_sublevel(), core.extend_axis_env_nd(mesh.shape.items()):
-      jaxpr, genavals, consts = pe.trace_to_subjaxpr_dynamic(f, main, in_avals_)
+      jaxpr, genavals, consts, () = pe.trace_to_subjaxpr_dynamic(f, main, in_avals_)
   out_avals_ = map(_check_shapedarray, genavals)
   _check_names(out_names_thunk(), out_avals_)
   in_rep = map(partial(_in_names_to_rep, mesh), in_names)
@@ -1378,7 +1378,7 @@ def _promote_scalar_residuals_jaxpr(jaxpr, which):
   res_avals = [core.unmapped_aval(1, None, 0, v.aval) if w else v.aval
                for v, w in zip(jaxpr.constvars, which)]
   in_avals = [*res_avals, *[v.aval for v in jaxpr.invars]]
-  jaxpr, _, _ = pe.trace_to_jaxpr_dynamic(fun, in_avals)
+  jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(fun, in_avals)
   return jaxpr
 
 def _shard_map_transpose(out_cts, *args, jaxpr, mesh, in_names, out_names,
@@ -1495,7 +1495,7 @@ def _add_reshapes(which, jaxpr_known, jaxpr_staged):
     res = [_add_singleton(x) if not x.shape else x for x in res]
     return [*out_known, *res]
   avals_in = [v.aval for v in jaxpr_known.invars]
-  jaxpr_known, _, () = pe.trace_to_jaxpr_dynamic(known, avals_in)
+  jaxpr_known, _, (), () = pe.trace_to_jaxpr_dynamic(known, avals_in)
 
   @lu.wrap_init
   def staged(*args):
@@ -1505,7 +1505,7 @@ def _add_reshapes(which, jaxpr_known, jaxpr_staged):
   res_avals = [core.unmapped_aval(1, None, 0, v.aval) if w else v.aval
                for w, v in zip(which_, jaxpr_staged.invars[:len(which)])]
   avals_in = [*res_avals, *[v.aval for v in jaxpr_staged.invars[len(which):]]]
-  jaxpr_staged, _, () = pe.trace_to_jaxpr_dynamic(staged, avals_in)
+  jaxpr_staged, _, (), () = pe.trace_to_jaxpr_dynamic(staged, avals_in)
 
   return jaxpr_known, jaxpr_staged
 
@@ -1773,7 +1773,7 @@ def _replication_rewrite_match(
   f, out_rep = _efficient_transpose_rewrite_nomatch(f, mesh, in_rep)
   f = _match_rep(f, mesh, out_rep, out_rep_dst)
   with core.extend_axis_env_nd(mesh.shape.items()):
-    jaxpr_, _, consts = pe.trace_to_jaxpr_dynamic(f, jaxpr.in_avals)
+    jaxpr_, _, consts, () = pe.trace_to_jaxpr_dynamic(f, jaxpr.in_avals)
   return core.ClosedJaxpr(jaxpr_, consts)
 
 # TODO(mattjj): caching
@@ -1785,7 +1785,7 @@ def _replication_rewrite_nomatch(
   f = lu.wrap_init(partial(core.eval_jaxpr, jaxpr.jaxpr, jaxpr.consts))
   f, out_rep = _efficient_transpose_rewrite_nomatch(f, mesh, in_rep)
   with core.extend_axis_env_nd(mesh.shape.items()):
-    jaxpr_, _, consts = pe.trace_to_jaxpr_dynamic(f, jaxpr.in_avals)
+    jaxpr_, _, consts, () = pe.trace_to_jaxpr_dynamic(f, jaxpr.in_avals)
   return core.ClosedJaxpr(jaxpr_, consts), out_rep()
 
 @lu.transformation_with_aux

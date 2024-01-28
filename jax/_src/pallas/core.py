@@ -192,7 +192,7 @@ def _convert_block_spec_to_block_mapping(
   block_shape = tuple(
       mapped if s is None else s for s in block_shape)
   flat_fun, _ = api_util.flatten_fun(lu.wrap_init(compute_index), in_tree)
-  jaxpr, _, consts = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
   return BlockMapping(block_shape, jax_core.ClosedJaxpr(jaxpr, consts))
 
 def _tile_ref(ref: state.AbstractRef, block_shape: tuple[int, ...] | None
