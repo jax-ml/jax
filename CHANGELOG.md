@@ -67,9 +67,14 @@ Remember to align the itemized text with the first line of an item within a list
   * {func}`jax.scipy.special.logsumexp` with `return_sign=True` now uses the NumPy 2.0
     convention for the complex sign, `x / abs(x)`. This is consistent with the behavior
     of {func}`scipy.special.logsumexp` in SciPy v1.13.
-
   * JAX now supports the bool DLPack type for both import and export.
     Previously bool values could not be imported and were exported as integers.
+  * A number of {mod}`jax.numpy` APIs now return tuples of arrays rather than lists of
+    arrays, consistent with the behavior in NumPy 2.0. These include
+    {func}`~jax.numpy.atleast_1d`, {func}`~jax.numpy.atleast_2d`, {func}`~jax.numpy.atleast_3d`,
+    {func}`~jax.numpy.broadcast_arrays`, {func}`~jax.numpy.array_split`, {func}`~jax.numpy.split`,
+    {func}`~jax.numpy.dsplit`, {func}`~jax.numpy.hsplit`, {func}`~jax.numpy.vsplit`,
+    {func}`~jax.numpy.meshgrid`, {func}`~jax.numpy.ogrid`, and {func}`~jax.numpy.histogramdd`. 
 
 * Deprecations & Removals
   * A number of previously deprecated functions have been removed, following a

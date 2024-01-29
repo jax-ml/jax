@@ -110,7 +110,10 @@ def _indexer_with_default_outputs(indexer, use_defaults=True):
   class Indexer:
     @partial(jtu.with_jax_dtype_defaults, use_defaults=use_defaults)
     def __getitem__(self, *args):
-      return indexer.__getitem__(*args)
+      result = indexer.__getitem__(*args)
+      if jtu.numpy_version() < (2, 0, 0) and isinstance(result, list):
+        return tuple(result)
+      return result
   return Indexer()
 
 def _valid_dtypes_for_shape(shape, dtypes):
@@ -4803,9 +4806,9 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testOgrid(self):
     # wrap indexer for appropriate dtype defaults.
     np_ogrid = _indexer_with_default_outputs(np.ogrid)
-    def assertListOfArraysEqual(xs, ys):
-      self.assertIsInstance(xs, list)
-      self.assertIsInstance(ys, list)
+    def assertTupleOfArraysEqual(xs, ys):
+      self.assertIsInstance(xs, tuple)
+      self.assertIsInstance(ys, tuple)
       self.assertEqual(len(xs), len(ys))
       for x, y in zip(xs, ys):
         self.assertArraysEqual(x, y)
@@ -4814,10 +4817,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertArraysEqual(np_ogrid[:5], jax.jit(lambda: jnp.ogrid[:5])())
     self.assertArraysEqual(np_ogrid[1:7:2], jnp.ogrid[1:7:2])
     # List of arrays
-    assertListOfArraysEqual(np_ogrid[:5,], jnp.ogrid[:5,])
-    assertListOfArraysEqual(np_ogrid[0:5, 1:3], jnp.ogrid[0:5, 1:3])
-    assertListOfArraysEqual(np_ogrid[1:3:2, 2:9:3], jnp.ogrid[1:3:2, 2:9:3])
-    assertListOfArraysEqual(np_ogrid[:5, :9, :11], jnp.ogrid[:5, :9, :11])
+    assertTupleOfArraysEqual(np_ogrid[:5,], jnp.ogrid[:5,])
+    assertTupleOfArraysEqual(np_ogrid[0:5, 1:3], jnp.ogrid[0:5, 1:3])
+    assertTupleOfArraysEqual(np_ogrid[1:3:2, 2:9:3], jnp.ogrid[1:3:2, 2:9:3])
+    assertTupleOfArraysEqual(np_ogrid[:5, :9, :11], jnp.ogrid[:5, :9, :11])
     # Corner cases
     self.assertArraysEqual(np_ogrid[:], jnp.ogrid[:])
     # Complex number steps
