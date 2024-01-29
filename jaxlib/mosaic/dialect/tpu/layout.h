@@ -287,7 +287,7 @@ class VectorLayout {
   // minimize the number of vregs.
   //
   // Args:
-  // - shape: The shape of the full vector this layout applies to.
+  //   shape: The shape of the full vector this layout applies to.
   llvm::SmallVector<int64_t> tileArrayShape(
       ArrayRef<int64_t> shape, std::array<int64_t, 2> target_shape) const;
 
