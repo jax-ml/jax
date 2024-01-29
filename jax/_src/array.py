@@ -49,7 +49,7 @@ from jax._src.util import safe_zip, unzip3, use_cpp_class, use_cpp_method
 Shape = tuple[int, ...]
 Device = xc.Device
 Index = tuple[slice, ...]
-PRNGKeyArrayImpl = Any  # TODO(jakevdp): fix cycles and import this.
+PRNGKeyArray = Any  # TODO(jakevdp): fix cycles and import this.
 
 def _get_device(a: ArrayImpl) -> Device:
   assert len(a.devices()) == 1
@@ -69,7 +69,7 @@ class Shard:
   """
 
   def __init__(self, device: Device, sharding: Sharding, global_shape: Shape,
-               data: None | ArrayImpl | PRNGKeyArrayImpl = None):
+               data: None | ArrayImpl | PRNGKeyArray = None):
     self._device = device
     self._sharding = sharding
     self._global_shape = global_shape
