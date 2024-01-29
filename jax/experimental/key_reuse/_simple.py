@@ -19,10 +19,10 @@ from functools import reduce
 from typing import Any, Callable
 
 import jax
-from jax import core
 from jax import lax
 from jax import tree_util
 from jax._src import api_util
+from jax._src import core
 from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import prng
@@ -166,9 +166,14 @@ def _slice_signature(eqn, args_consumed):
   limit_indices = eqn.params['limit_indices']
   strides = eqn.params['strides'] or (1,) * len(start_indices)
   idx = tuple(slice(*tup) for tup in util.safe_zip(start_indices, limit_indices, strides))
-  mask = np.zeros(in_aval.shape, dtype=bool)
-  mask[idx] = True
-  return KeyReuseSignature([Sink(0, mask)], [Source(0)])
+  if any(core.is_symbolic_dim(s) for s in in_aval.shape):
+    sink = True
+  else:
+    # TODO(jakevdp): should we avoid constructing the mask array if the input
+    # does not have a key dtype?
+    sink = np.zeros(in_aval.shape, dtype=bool)
+    sink[idx] = True
+  return KeyReuseSignature([Sink(0, sink)], [Source(0)])
 
 key_reuse_signatures_dynamic[lax.slice_p] = _slice_signature
 
