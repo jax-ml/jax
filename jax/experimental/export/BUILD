@@ -34,6 +34,7 @@ py_library(
         "_export.py",
         "_serialization.py",
         "_shape_poly.py",
+        "_shape_poly_decision.py",
         "serialization_generated.py",
     ],
     srcs_version = "PY3",
