@@ -48,7 +48,7 @@ from jax._src import source_info_util
 from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            tuple_delete, as_hashable_function,
                            HashableFunction, HashableWrapper, weakref_lru_cache,
-                           partition_list)
+                           partition_list, StrictABCMeta)
 import jax._src.pretty_printer as pp
 from jax._src.lib import jax_jit
 from jax._src import traceback_util
@@ -689,7 +689,7 @@ def _aval_property(name):
   return property(lambda self: getattr(self.aval, name))
 
 
-class Tracer(typing.Array):
+class Tracer(typing.Array, metaclass=StrictABCMeta):
   __array_priority__ = 1000
   __slots__ = ['_trace', '_line_info']
 

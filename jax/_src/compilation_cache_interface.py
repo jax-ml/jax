@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 
 from jax._src import path as pathlib
+from jax._src import util
 
 
-class CacheInterface(ABC):
+class CacheInterface(util.StrictABC):
   _path: pathlib.Path
 
   @abstractmethod
