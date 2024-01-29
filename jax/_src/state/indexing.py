@@ -53,7 +53,7 @@ class Slice:
     start, stop, step = slc.indices(size)
     if step != 1:
       raise ValueError(f"slice must have a step of 1 (found: {step})")
-    return cls(start, stop - start)
+    return cls(start, max(stop - start, 0))
 
 
 def dslice(start: int |  Array | None, size: int | None = None
