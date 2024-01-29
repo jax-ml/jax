@@ -1876,9 +1876,10 @@ pe.partial_eval_jaxpr_custom_rules[pjit_p] = \
 
 @lu.cache
 def _pjit_transpose_trace(fun, in_avals):
-  transpose_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(fun, in_avals)
+  transpose_jaxpr, _, consts, attrs_tracked = pe.trace_to_jaxpr_dynamic(
+      fun, in_avals)
   transpose_jaxpr = core.ClosedJaxpr(transpose_jaxpr, consts)
-  return transpose_jaxpr
+  return transpose_jaxpr, attrs_tracked
 
 
 def _pjit_transpose(reduce_axes, cts_in, *primals_in,
@@ -1899,12 +1900,19 @@ def _pjit_transpose(reduce_axes, cts_in, *primals_in,
   global_cts_in_avals = tuple(core.raise_to_shaped(core.get_aval(ct))
                               for ct in primals_and_nz_cts_in)
 
-  transpose_jaxpr = _pjit_transpose_trace(body, global_cts_in_avals)
+  transpose_jaxpr, attrs_tracked = _pjit_transpose_trace(
+      body, global_cts_in_avals)
   cts_out_treedef = cts_out_treedef_thunk()
   transpose_out_shardings = prune_type(
       ad.Zero,
       in_shardings,
       tree_unflatten(cts_out_treedef, [object()] * cts_out_treedef.num_leaves))
+
+  if attrs_tracked:
+    init_states =  _get_states(attrs_tracked)
+    primals_and_nz_cts_in = [*init_states, *primals_and_nz_cts_in]
+    transpose_in_shardings = (UNSPECIFIED,) * len(attrs_tracked) + transpose_in_shardings
+    transpose_out_shardings = (UNSPECIFIED,) * len(attrs_tracked) + transpose_out_shardings
 
   nz_cts_out = pjit_p.bind(
       *primals_and_nz_cts_in,
@@ -1916,6 +1924,9 @@ def _pjit_transpose(reduce_axes, cts_in, *primals_in,
       name=name,
       keep_unused=keep_unused,
       inline=inline)
+  if attrs_tracked:
+    final_states, nz_cts_out = split_list(nz_cts_out, [len(init_states)])
+    _set_states(attrs_tracked, final_states)
   return tree_unflatten(cts_out_treedef, nz_cts_out)
 ad.reducing_transposes[pjit_p] = _pjit_transpose
 
