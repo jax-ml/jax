@@ -106,7 +106,7 @@ def _stop_profile(tst: jtu.JaxTestCase):
     p.sort_stats("cumtime").print_stats(.2)
     p.print_callers(.2)
 
-@jtu.with_config(jax_enable_key_reuse_checks=False)
+
 class DimExprTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -1074,7 +1074,6 @@ def check_shape_poly(tst, f_jax: Callable, *,
   return h.run_test(tst)
 
 
-@jtu.with_config(jax_enable_key_reuse_checks=False)
 class ShapePolyTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -1475,6 +1474,7 @@ class ShapePolyTest(jtu.JaxTestCase):
                               polymorphic_shapes=["(b,)"])
     self.assertAllClose(f(x), res_tf)
 
+  @jax.enable_key_reuse_checks(False)
   def test_prng(self):
     # The PRNG implementation uses opaque types, test shape polymorphism
     with config.enable_custom_prng(True):
@@ -2908,7 +2908,6 @@ def _flatten_harnesses(harnesses):
   return res
 
 
-@jtu.with_config(jax_enable_key_reuse_checks=False)
 class ShapePolyHarnessesTest(jtu.JaxTestCase):
   """This test runs for all _POLY_SHAPE_PRIMITIVE_HARNESSES."""
 
@@ -2987,16 +2986,19 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
     if harness.group_name == "eig" and not jtu.test_device_matches(["cpu"]):
       raise unittest.SkipTest("JAX implements eig only on CPU.")
 
-    prev_jax_config_flags = {
-      fname: getattr(jax.config, fname)
-      for fname, fvalue in harness.override_jax_config_flags.items()
-    }
+    config_flags = harness.override_jax_config_flags
+    # Update this here rather than in harness object because vmap_random_gamma is derived
+    # from test_harnesses.all_harnesses, which strips override_jax_config_flags.
+    if "random_gamma" in harness.group_name:
+      config_flags = {**config_flags, "jax_enable_key_reuse_checks": False}
+
+    prev_jax_config_flags = {fname: getattr(jax.config, fname) for fname in config_flags}
     try:
-      for fname, fvalue in harness.override_jax_config_flags.items():
+      for fname, fvalue in config_flags.items():
         jax.config.update(fname, fvalue)
       harness.run_test(self)
     finally:
-      for fname, _ in harness.override_jax_config_flags.items():
+      for fname, _ in config_flags.items():
         jax.config.update(fname, prev_jax_config_flags[fname])
 
 if __name__ == "__main__":
