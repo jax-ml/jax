@@ -1568,9 +1568,13 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
       inp = core.ShapedArray(input_data.shape, input_data.dtype)
       compiled = f.lower(inp).compile()
 
-      different_pspec = (P('y', 'x')
-                          if compiled.input_shardings[0][0].spec == P(('x',), ('y',))
-                          else P('x', 'y'))
+      different_pspec = (
+          P('y', 'x')
+          if compiled.input_shardings[0][0].is_equivalent_to(
+              NamedSharding(global_mesh, P('x', 'y')), len(global_input_shape)
+          )
+          else P('x', 'y')
+      )
       arr, _ = create_array(global_input_shape, global_mesh, different_pspec,
                             input_data)
       with self.assertRaisesRegex(
