@@ -27,8 +27,7 @@ from jax._src import effects
 from jax._src import ad_util
 from jax._src import state
 from jax._src import util
-from jax._src.util import (cache, weakref_lru_cache, safe_map, unzip3,
-                           partition_list)
+from jax._src.util import cache, weakref_lru_cache, safe_map, partition_list
 from jax.api_util import flatten_fun_nokwargs
 from jax._src.interpreters import partial_eval as pe
 from jax.tree_util import tree_map, tree_unflatten
@@ -58,16 +57,24 @@ def _initial_style_open_jaxpr(fun: Callable, in_tree, in_avals,
   wrapped_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   debug = pe.debug_info(fun, in_tree, out_tree, False,
                         primitive_name or "<unknown>")
-  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals, debug)
-  return jaxpr, consts, out_tree()
+  jaxpr, _, consts, attrs_tracked = pe.trace_to_jaxpr_dynamic(
+      wrapped_fun, in_avals, debug)
+  return jaxpr, consts, out_tree(), attrs_tracked
 
 @weakref_lru_cache
 def _initial_style_jaxpr(fun: Callable, in_tree, in_avals,
                          primitive_name: str | None = None):
-  jaxpr, consts, out_tree = _initial_style_open_jaxpr(
+  jaxpr, consts, out_tree, () = _initial_style_open_jaxpr(
       fun, in_tree, in_avals, primitive_name)
-  closed_jaxpr = core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
+  closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
   return closed_jaxpr, consts, out_tree
+
+def _initial_style_jaxpr_attrs(fun: Callable, in_tree, in_avals,
+                               primitive_name: str | None = None):
+  jaxpr, consts, out_tree, attrs_tracked = _initial_style_open_jaxpr(
+      fun, in_tree, in_avals, primitive_name)
+  closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
+  return closed_jaxpr, consts, out_tree, attrs_tracked
 
 @cache()
 def _initial_style_jaxprs_with_common_consts(
@@ -79,9 +86,12 @@ def _initial_style_jaxprs_with_common_consts(
   # for each one, it makes another that accepts *all* constants, but only uses
   # those that it needs (dropping the rest).
 
-  jaxprs, all_consts, all_out_trees = \
-      unzip3(_initial_style_open_jaxpr(fun, in_tree, in_avals, primitive_name)
-             for fun in funs)
+  jaxpr_data = [_initial_style_open_jaxpr(fn, in_tree, in_avals, primitive_name)
+                for fn in funs]
+  if not jaxpr_data:
+    return [], [], []
+
+  jaxprs, all_consts, all_out_trees, all_attrs_tracked = zip(*jaxpr_data)
   all_const_avals = [map(_abstractify, consts) for consts in all_consts]
   # If we get a `Ref` in the consts, we know it must come from an outer
   # `run_state`. We also know if shouldn't be boxed up in another tracer.
@@ -228,6 +238,11 @@ def _prune_zeros(ts):
 def _make_closed_jaxpr(traceable: lu.WrappedFun, in_avals: Sequence[core.AbstractValue]):
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(traceable, in_avals)
   return core.ClosedJaxpr(jaxpr, consts)
+
+def _make_closed_jaxpr_attrs(traceable: lu.WrappedFun, in_avals: Sequence[core.AbstractValue]):
+  jaxpr, _, consts, attrs_tracked = pe.trace_to_jaxpr_dynamic(traceable, in_avals)
+  return core.ClosedJaxpr(jaxpr, consts), attrs_tracked
+
 
 def _show_diff(array1, array2):
   if core.typematch(array1, array2):

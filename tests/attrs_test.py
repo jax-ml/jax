@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 from absl.testing import absltest
 from absl.testing import parameterized
+import numpy as np
 
 import jax
 import jax.numpy as jnp
@@ -40,7 +41,7 @@ class Thing:
 class AttrsTest(jtu.JaxTestCase):
 
   @parameterized.parameters([True, False])
-  def test_basic(self, jit: bool):
+  def test_jit_basic(self, jit: bool):
     thing = Thing(1.0)
 
     def double_it() -> None:
@@ -60,7 +61,7 @@ class AttrsTest(jtu.JaxTestCase):
     double_it()
     self.assertEqual(thing.x, 16.0)
 
-  def test_nesting_basic(self):
+  def test_jit_nesting_basic(self):
     thing = Thing(1.0)
 
     @jax.jit
@@ -77,6 +78,25 @@ class AttrsTest(jtu.JaxTestCase):
     double_it()
     self.assertEqual(thing.x, 8.0)
     double_it()
+    self.assertEqual(thing.x, 16.0)
+
+  def test_jit_consts_and_args(self):
+    thing = Thing(1.0)
+
+    @jax.jit
+    def double_it(y) -> None:
+      cur_x = jax_getattr(thing, "x")
+      jax_setattr(thing, "x", cur_x * 2)
+      return jnp.cos(np.arange(3.) * cur_x * y)
+
+    self.assertEqual(thing.x, 1.0)
+    double_it(2.)
+    self.assertEqual(thing.x, 2.0)
+    double_it(2.)
+    self.assertEqual(thing.x, 4.0)
+    double_it(2.)
+    self.assertEqual(thing.x, 8.0)
+    double_it(2.)
     self.assertEqual(thing.x, 16.0)
 
   def test_jit_transpose_basic(self):
@@ -123,6 +143,69 @@ class AttrsTest(jtu.JaxTestCase):
 
     jax.grad(jax.jit(bar))(3.0)
     self.assertAllClose(thing.x, -0.9899925, atol=1e-5, rtol=1e-5, check_dtypes=False)
+
+  @parameterized.parameters([True, False])
+  def test_scan_basic(self, jit: bool):
+    thing = Thing(1.0)
+
+    def double_it_10():
+      def body(_, __):
+        cur_x = jax_getattr(thing ,"x")
+        jax_setattr(thing, "x", cur_x * 2.0)
+        return None, None
+      _, _ = jax.lax.scan(body, None, None, length=10)
+
+    if jit:
+      double_it_10 = jax.jit(double_it_10)
+
+    double_it_10()
+    self.assertAllClose(thing.x, 1024., check_dtypes=False)
+
+  def test_scan_basic_consts_and_args(self):
+    thing = Thing(1.0)
+
+    def double_it_10(y):
+      def body(i, x):
+        cur_x = jax_getattr(thing ,"x")
+        jax_setattr(thing, "x", cur_x * 2.0)
+        return i + 1, (y, y)
+      _, _ = jax.lax.scan(body, 0, jnp.arange(10))
+
+    jax.jit(double_it_10)(jnp.arange(3.))
+    self.assertAllClose(thing.x, 1024., check_dtypes=False)
+
+  @parameterized.parameters([True, False])
+  def test_scan_transpose_basic(self, jit: bool):
+    thing = Thing(1.0)
+
+    @jax.custom_vjp
+    def foo(x):
+      return x
+
+    def foo_fwd(x):
+      return x, None
+
+    def foo_bwd(x, g):
+      jax_setattr(thing, 'x', 2 * jax_getattr(thing, 'x') * g)
+      return g,
+
+    foo.defvjp(foo_fwd, foo_bwd)
+
+
+    def double_it_10(x):
+      def body(x, __):
+        return foo(x), None
+      x, _ = jax.lax.scan(body, x, None, length=10)
+      return x
+
+    if jit:
+      double_it_10 = jax.jit(double_it_10)
+
+    double_it_10(1.0)
+    self.assertAllClose(thing.x, 1., check_dtypes=False)
+
+    jax.grad(double_it_10)(1.0)
+    self.assertAllClose(thing.x, 1024., check_dtypes=False)
 
 
 if __name__ == '__main__':
