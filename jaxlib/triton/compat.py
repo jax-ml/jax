@@ -28,7 +28,7 @@ from jaxlib.mlir.dialects import arith as arith_dialect
 from jaxlib.mlir.dialects import math as math_dialect
 from jaxlib.mlir.dialects import scf as scf_dialect
 import numpy as np
-import triton.compiler.backends.cuda as cb
+import triton.backends.nvidia.compiler as cb
 import triton.language as tl
 
 from . import dialect as tt_dialect
@@ -1108,9 +1108,6 @@ def set_attr(v: ir.Value, name: str, attr: ir.Attribute) -> None:
     op.attributes[name] = attr
 
 
-_LIBDEVICE_PATH = tl.math.libdevice_path()
-
-
 def libdevice_extern_elementwise(
     table: Mapping[tuple[dtype, ...], tuple[str, dtype]],
     is_pure: bool = True,
@@ -1132,8 +1129,8 @@ def libdevice_extern_elementwise(
         tt_dialect.extern_elementwise(
             return_type.to_ir(builder.current),
             [arg.handle for arg in args],
-            libname="libdevice",
-            libpath=_LIBDEVICE_PATH,
+            libname="",
+            libpath="",
             symbol=symbol,
             pure=is_pure,
         ),
