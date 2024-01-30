@@ -228,13 +228,19 @@ def _scan_key_type_signature(eqn, args_consumed):
 
   # scan body should not consume key in constants
   if any(np.any(s.mask) for s in signature.sinks if s.idx < num_consts):
-    raise KeyReuseError(f"scan body function leads to key reuse when repeatedly executed: {signature=}")
+    raise KeyReuseError(f"scan body function leads to key reuse when repeatedly executed:\n"
+                        f"  {signature=}\n"
+                        f"  {eqn=}\n"
+                        f"  {jaxpr=}")
 
   # scan carry should only consume keys that are sourced on output.
   carry_sinks = {s.idx - num_consts: s.mask for s in signature.sinks if 0 <= s.idx - num_consts < num_carry}
   carry_sources = {s.idx: s.mask for s in signature.sources if 0 <= s.idx < num_carry}
   if carry_sinks.keys() != carry_sources.keys():  # TODO(jakevdp): check that masks match
-    raise KeyReuseError(f"scan body function leads to key reuse when repeatedly executed: {signature=}")
+    raise KeyReuseError(f"scan body function leads to key reuse when repeatedly executed:\n"
+                        f"  {signature=}\n"
+                        f"  {eqn=}\n"
+                        f"  {jaxpr=}")
   return signature
 
 key_reuse_signatures_dynamic[jax.lax.scan_p] = _scan_key_type_signature
@@ -252,10 +258,12 @@ def _while_key_type_signature(eqn, args_consumed):
   # Error if there are sinks among consts.
   if any(np.any(s.mask) for s in cond_signature.sinks if s.idx < cond_nconsts):
     raise KeyReuseError("while_loop cond function leads to key reuse when repeatedly executed: "
-                        f"{cond_signature=}")
+                        f"  {cond_signature=}\n"
+                        f"  {eqn=}")
   if any(np.any(s.mask) for s in body_signature.sinks if s.idx < body_nconsts):
     raise KeyReuseError("while_loop body function leads to key reuse when repeatedly executed: "
-                        f"{body_signature=}")
+                        f"  {body_signature=}\n"
+                        f"  {eqn=}")
 
   # carry should only consume keys that are sourced on output.
   body_carry_sinks = {s.idx - body_nconsts: s.mask for s in body_signature.sinks if s.idx >= body_nconsts}
@@ -264,13 +272,17 @@ def _while_key_type_signature(eqn, args_consumed):
   # TODO(jakevdp): check masks at each index?
   if not (cond_carry_sinks.keys() <= carry_sources.keys()):
     raise KeyReuseError("while_loop cond function leads to key reuse when repeatedly executed: "
-                        f"{cond_signature=}")
+                        f"{  cond_signature=}\n"
+                        f"  {eqn=}")
   if not (body_carry_sinks.keys() <= carry_sources.keys()):
     raise KeyReuseError("while_loop body function leads to key reuse when repeatedly executed: "
-                        f"{body_signature=}")
+                        f"  {body_signature=}\n"
+                        f"  {eqn=}")
   if body_carry_sinks.keys() & cond_carry_sinks.keys():
     raise KeyReuseError("while_loop cond and body functions both use the same key: "
-                        f"{cond_signature=} {body_signature=}")
+                        f"  {cond_signature=}\n"
+                        f"  {body_signature=}\n"
+                        f"  {eqn=}")
   return body_signature
 
 key_reuse_signatures_dynamic[jax.lax.while_p] = _while_key_type_signature
