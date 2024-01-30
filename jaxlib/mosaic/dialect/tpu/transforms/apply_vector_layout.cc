@@ -460,44 +460,17 @@ FailureOr<VectorType> getNativeVregType(
                          elem_ty);
 }
 
-// Get the layout from a VectorLayoutAttr or StringAttr.
-mlir::FailureOr<Layout> getLayoutFromAttr(Attribute attr) {
-  if (attr == nullptr) {
-    return failure();
-  }
-
-  if (auto layout_attr = dyn_cast<VectorLayoutAttr>(attr)) {
-    return layout_attr.getLayout();
-  }
-
-  // TODO(tlongeri): StringAttr support was only added temporarily to avoid
-  // having Python bindings for VectorLayoutAttr. Remove this once we get rid
-  // of the Python implementation
-  if (auto string_attr = dyn_cast<StringAttr>(attr)) {
-    StringRef str = string_attr.getValue();
-    if (!str.consume_front("#tpu.vpad<\"")) {
-      return failure();
-    }
-    if (str.consume_front("none")) {
-      return kNoLayout;
-    }
-    if (auto layout = VectorLayout::parse(&str)) {
-      return layout;
-    }
-    return failure();
-  }
-
-  return failure();
-}
-
 // Returns empty vector on null attribute
 FailureOr<SmallVector<Layout>> getLayoutArrayFromAttr(const Attribute attr) {
   if (const auto array_attr = dyn_cast_if_present<ArrayAttr>(attr)) {
     SmallVector<Layout> out_layouts;
     out_layouts.reserve(array_attr.size());
     for (const Attribute a : array_attr) {
-      FAILUREOR_ASSIGN_OR_RETURN(const Layout layout, getLayoutFromAttr(a));
-      out_layouts.push_back(layout);
+      if (auto layout_attr = dyn_cast_if_present<VectorLayoutAttr>(a)) {
+        out_layouts.push_back(layout_attr.getLayout());
+      } else {
+        return failure();
+      }
     }
     return out_layouts;
   }
@@ -506,13 +479,6 @@ FailureOr<SmallVector<Layout>> getLayoutArrayFromAttr(const Attribute attr) {
 
 // TODO(tlongeri): Unify with infer_vector_layout.cc's getOutLayout.
 FailureOr<SmallVector<Layout>> getOutLayout(Operation &op) {
-  // TODO(tlongeri): non-array attribute path should be removed after tests are
-  // updated
-  FailureOr<Layout> failure_or_layout =
-      getLayoutFromAttr(op.getAttr("out_layout"));
-  if (succeeded(failure_or_layout)) {
-    return SmallVector<Layout>{failure_or_layout.value()};
-  }
   FAILUREOR_ASSIGN_OR_RETURN(const SmallVector<Layout> out_layout,
                              getLayoutArrayFromAttr(op.getAttr("out_layout")));
   if (out_layout.size() != op.getNumResults()) {
