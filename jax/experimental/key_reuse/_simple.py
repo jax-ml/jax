@@ -122,7 +122,9 @@ def get_jaxpr_type_signature(
     for snk in signature.sinks:
       if sink(eqn.invars[snk.idx], snk.mask):
         raise KeyReuseError(f"In {eqn.primitive}, key values {eqn.invars[snk.idx]} are already consumed.\n"
-                            f"eqn: {eqn}\njaxpr:\n{jaxpr}")
+                            f"  signature: {signature}\n"
+                            f"  eqn: {eqn}\n"
+                            f"  jaxpr:\n{jaxpr}")
     for var in eqn.outvars:
       if not isinstance(var, core.Literal):
         source(var, True)  # consumed unless in a Source.
