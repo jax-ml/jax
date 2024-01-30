@@ -360,8 +360,10 @@ def post_infer_params(fun, infer_params_fn, static_argnums, static_argnames,
   def eval_shape(*args, **kwargs):
     _, _, params, _, out_tree, _, _, _, _, _ = infer_params_fn(
         *args, **kwargs, _in_layouts=None, _out_layouts=None)
-    out = [api.ShapeDtypeStruct(x.shape, x.dtype, x.named_shape)
-           for x in params['jaxpr'].out_avals]
+    out_s = [None if is_unspecified(s) else getattr(s, '_original_sharding', s)
+             for s in params['out_shardings']]
+    out = [api.ShapeDtypeStruct(x.shape, x.dtype, x.named_shape, sharding=s)
+           for x, s in zip(params['jaxpr'].out_avals, out_s)]
     return tree_unflatten(out_tree, out)
 
   wrapped.lower = lower

@@ -2515,6 +2515,18 @@ class APITest(jtu.JaxTestCase):
     # one for `f` and another for mul (`x * 2`) which is jitted.
     self.assertEqual(count[0], 2)
 
+  def test_eval_shape_out_shardings(self):
+    s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+
+    @partial(jax.jit, out_shardings=s)
+    def f(x):
+      return x * 2
+
+    inp = np.arange(8)
+    out = f.eval_shape(inp)
+    self.assertEqual(out.sharding, s)
+    self.assertEqual(out.shape, (inp * 2).shape)
+
   def test_eval_shape_duck_typing(self):
     def fun(A, b, x):
       return jnp.dot(A, x) + b
