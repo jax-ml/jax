@@ -27,7 +27,6 @@ from jax._src.lib.mlir.dialects import hlo
 from jax._src.core import ShapedArray
 
 from jax.experimental.custom_partitioning import custom_partitioning
-from jax.experimental.pjit import pjit
 from jax.sharding import Mesh, PartitionSpec, NamedSharding
 
 from jax._src.interpreters import batching
@@ -214,7 +213,8 @@ def check_is_flash_attention(query, key):
     # check if regular fused attention is supported
     is_flash_attention = False
   else:
-    raise NotImplementedError("Unsupported sequence length and head dim.")
+    raise NotImplementedError(
+      f"Unsupported sequence length Q {q_seq_len}, KV {kv_sqe_len} and head dim {head_dim}.")
   return is_flash_attention, is_cross_attention
 
 def check_cudnn_version(is_flash_attention, is_cross_attention):
@@ -533,46 +533,71 @@ def _get_padded_spec(arg_info):
   assert len(spec) <= ndim
   return spec + (None,) * (ndim - len(spec))
 
+def _check_qkv_bias_mask_spec(query_spec, key_spec, value_spec, bias_spec, mask_spec):
+  # check qkv spec
+  if not query_spec == key_spec == value_spec:
+    raise ValueError("Query, key and value should have same sharding.")
+  *batch_spec, q_seq_spec, num_head_spec, head_spec = query_spec
+  if q_seq_spec != None:
+    raise ValueError("Sharding on sequence dim is not allowed.")
+  if head_spec != None:
+    raise ValueError("Sharding on head dim is not allowed.")
+  # check bias and mask spec
+  if bias_spec:
+    *bias_batch_spec, bias_num_head_spec, bias_q_seq_spec, bias_kv_seq_spec = bias_spec
+    if bias_batch_spec != batch_spec or bias_num_head_spec != num_head_spec:
+      raise ValueError("Query and bias should have same sharding on batch and num_head dim.")
+    if bias_q_seq_spec != None or bias_kv_seq_spec != None:
+      raise ValueError("Sharding on bias sequence dim is not allowed.")
+  if mask_spec:
+    *mask_batch_spec, mask_num_head_spec, mask_q_seq_spec, mask_kv_seq_spec = mask_spec
+    if mask_batch_spec != batch_spec or mask_num_head_spec != num_head_spec:
+      raise ValueError("Query and mask should have same sharding on batch and num_head dim.")
+    if mask_q_seq_spec != None or mask_kv_seq_spec != None:
+      raise ValueError("Sharding on mask sequence dim is not allowed.")
+
 # fwd custom partition
-def _infer_fwd_output_sharding(mesh, arg_shapes):
+def _infer_fwd_output_sharding(mesh, arg_shapes, variadic_args):
   # only sharding on batch and num_head dim is allowed
   # (*batch, q_seq, num_head, head)
   query_spec = _get_padded_spec(arg_shapes[0])
   # (*batch, kv_seq, num_head, head)
   key_spec = _get_padded_spec(arg_shapes[1])
   value_spec = _get_padded_spec(arg_shapes[2])
-  if not query_spec == key_spec == value_spec:
-    raise ValueError("Query, key and value should have same sharding.")
-  seq_spec = query_spec[-3]
-  head_spec = query_spec[-1]
-  if seq_spec != None:
-    raise ValueError("Sharding on sequence dim is not allowed.")
-  if head_spec != None:
-    raise ValueError("Sharding on head dim is not allowed.")
+  has_bias, has_mask = variadic_args
+  bias_spec = _get_padded_spec(arg_shapes[3]) if has_bias else None
+  mask_spec = _get_padded_spec(arg_shapes[4]) if has_mask else None
+  _check_qkv_bias_mask_spec(query_spec, key_spec, value_spec, bias_spec, mask_spec)
   # keep out sharding same as query sharding since they have same shape
   out_sharding = NamedSharding(mesh, PartitionSpec(*query_spec))
   # activation sharding
-  activation_sharding = NamedSharding(mesh, PartitionSpec(*query_spec[:-3], query_spec[-2], query_spec[-3], None))
+  *batch_spec, q_seq_spec, num_head_spec, head_spec = query_spec
+  activation_sharding = NamedSharding(mesh, PartitionSpec(*batch_spec, num_head_spec, q_seq_spec, None))
   return (out_sharding, activation_sharding)
 
 _dot_product_attention_fwd_lower = custom_partitioning(_dot_product_attention_fwd_impl, static_argnums=(5,6,7,8,9,10))
 def _dot_product_attention_fwd_infer_sharding_from_operands(scale, seed, dropout_rate, variadic_args, is_flash_attention, is_causal_mask, mesh, arg_shapes, result_shape):
-  return _infer_fwd_output_sharding(mesh, arg_shapes)
+  return _infer_fwd_output_sharding(mesh, arg_shapes, variadic_args)
 
 def _dot_product_attention_fwd_partition(scale, seed, dropout_rate, variadic_args, is_flash_attention, is_causal_mask, mesh, arg_shapes, result_shape):
   # args sharding
   arg_shardings = tuple([arg_i.sharding for arg_i in arg_shapes])
-  out_shardings = _infer_fwd_output_sharding(mesh, arg_shapes)
+  out_shardings = _infer_fwd_output_sharding(mesh, arg_shapes, variadic_args)
   impl = partial(_dot_product_attention_fwd_impl, scale=scale, seed=seed, dropout_rate=dropout_rate,
                 variadic_args=variadic_args, is_flash_attention=is_flash_attention, is_causal_mask=is_causal_mask)
   return mesh, impl, out_shardings, arg_shardings
 
 # bwd custom partition
-def _infer_bwd_output_sharding(mesh, arg_shapes):
+def _infer_bwd_output_sharding(mesh, arg_shapes, variadic_args):
   # (*batch, q_seq, num_head, head)
   query_spec = _get_padded_spec(arg_shapes[0])
   # (*batch, kv_seq, num_head, head)
   key_spec = _get_padded_spec(arg_shapes[1])
+  value_spec = _get_padded_spec(arg_shapes[2])
+  has_bias, has_mask = variadic_args
+  bias_spec = _get_padded_spec(arg_shapes[3]) if has_bias else None
+  mask_spec = _get_padded_spec(arg_shapes[4]) if has_mask else None
+  _check_qkv_bias_mask_spec(query_spec, key_spec, value_spec, bias_spec, mask_spec)
   # keep grad query sharding same as query sharding
   grad_query_sharding = NamedSharding(mesh, PartitionSpec(*query_spec))
   grad_key_sharding = NamedSharding(mesh, PartitionSpec(*key_spec))
@@ -582,10 +607,10 @@ def _infer_bwd_output_sharding(mesh, arg_shapes):
 
 _dot_product_attention_bwd_lower = custom_partitioning(_dot_product_attention_bwd_impl, static_argnums=(8,9,10,11,12,13))
 def _dot_product_attention_bwd_infer_sharding_from_operands(scale, seed, dropout_rate, variadic_args, is_flash_attention, is_causal_mask, mesh, arg_shapes, result_shape):
-  return _infer_bwd_output_sharding(mesh, arg_shapes)
+  return _infer_bwd_output_sharding(mesh, arg_shapes, variadic_args)
 
 def _dot_product_attention_bwd_partition(scale, seed, dropout_rate, variadic_args, is_flash_attention, is_causal_mask, mesh, arg_shapes, result_shape):
-  out_shardings = _infer_bwd_output_sharding(mesh, arg_shapes)
+  out_shardings = _infer_bwd_output_sharding(mesh, arg_shapes, variadic_args)
   # args sharding
   arg_shardings = tuple([arg_i.sharding for arg_i in arg_shapes])
   impl = partial(_dot_product_attention_bwd_impl, scale=scale, seed=seed, dropout_rate=dropout_rate,
@@ -700,7 +725,7 @@ def dot_product_attention(query: Array,
     mask: mask used mask out logits with shape of `[batch, num_heads,
     q_length, kv_length]`.
     scale: scale for the query.
-    dropout_rate: dropout rate
+    dropout_rate: dropout rate.
   Returns:
     Output of shape `[batch, q_length, num_heads, v_depth_per_head]`.
   """

@@ -25,7 +25,7 @@ from jax.sharding import Mesh
 from jax.sharding import PartitionSpec, NamedSharding
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.cudnn.fused_attention_stablehlo import dot_product_attention
+from jax.cudnn import dot_product_attention
 
 config.parse_flags_with_absl()
 Array = jnp.ndarray
@@ -76,6 +76,8 @@ def sdpa_ref(query: Array,
     bias = get_causal_mask(attn_weights)
   if bias is not None:
     attn_weights = attn_weights + bias.astype(attn_weights.dtype)
+  if mask is not None:
+    attn_weights = jax.lax.select(mask, attn_weights, large_negative_number)
   attn_weights = jax.nn.softmax(attn_weights)
   if dropout_rate > 0.:
     keep_prob = 1.0 - dropout_rate
@@ -107,6 +109,7 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       num_heads=[8],
       head_dim=[64, 128],
       use_bias=[True],
+      use_mask=[True],
       is_causal_mask=[False],
       dropout_rate=[0, 0.5],
       scale=[0.5],
@@ -114,7 +117,7 @@ class DotProductAttentionTest(jtu.JaxTestCase):
   )
   @jtu.run_on_devices("cuda")
   def test_sdpa(self, batch_size: int, seq_len: int, num_heads: int,
-                head_dim: int, use_bias: bool, is_causal_mask: bool,
+                head_dim: int, use_bias: bool, use_mask: bool, is_causal_mask: bool,
                 dropout_rate: float, scale: float, dtype: jnp.dtype):
     if seq_len == 256 and is_causal_mask:
       self.skipTest("Fused attention does not support mask generation.")
@@ -123,7 +126,7 @@ class DotProductAttentionTest(jtu.JaxTestCase):
     if len(jax.local_devices()) <= 4:
       self.skipTest("Require at least 4 devices to run sharding tests.")
 
-    k1, k2, k3, k4, k5 = jax.random.split(jax.random.key(0), 5)
+    k1, k2, k3, k4, k5, k6 = jax.random.split(jax.random.key(0), 6)
     query = jax.random.normal(
         k1, (batch_size, seq_len, num_heads, head_dim), dtype=dtype)
     key = jax.random.normal(
@@ -137,7 +140,11 @@ class DotProductAttentionTest(jtu.JaxTestCase):
         k5, (batch_size, num_heads, seq_len, seq_len), dtype=dtype)
     else:
       bias = None
-
+    if use_mask:
+      mask = jax.random.bernoulli(
+        k5, 0.5, (batch_size, num_heads, seq_len, seq_len)).astype(dtype)
+    else:
+      mask = None
     devices = np.array(jax.local_devices()[:4])
     devices = devices.reshape((2, 2))
     with Mesh(devices, ('dp', 'tp')) as mesh:
@@ -145,17 +152,22 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       qkv_sharding = NamedSharding(mesh, qkv_spec)
       if bias is not None:
         bias_spec = PartitionSpec('dp', 'tp', None, None)
+        mask_spec = PartitionSpec('dp', 'tp', None, None)
       else:
         bias_spec = PartitionSpec()
+        mask_spec = PartitionSpec()
       bias_sharding = NamedSharding(mesh, bias_spec)
+      mask_sharding = NamedSharding(mesh, mask_spec)
       replicated = NamedSharding(mesh, PartitionSpec())
       query = jax.device_put(query, qkv_sharding)
       key = jax.device_put(key, qkv_sharding)
       value = jax.device_put(value, qkv_sharding)
       if bias is not None:
         bias = jax.device_put(bias, bias_sharding)
+      if mask is not None:
+        mask = jax.device_put(mask, mask_sharding)
       grad = jax.device_put(grad, qkv_sharding)
-      in_shardings = (qkv_sharding, qkv_sharding, qkv_sharding, qkv_sharding, bias_sharding, replicated)
+      in_shardings = (qkv_sharding, qkv_sharding, qkv_sharding, qkv_sharding, bias_sharding, mask_sharding)
       out_shardings = (replicated, (qkv_sharding, qkv_sharding, qkv_sharding))
       jitted_sdpa_train = jax.jit(
         partial(sdpa_train, scale=scale, is_causal_mask=is_causal_mask, dropout_rate=dropout_rate),
@@ -169,8 +181,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
         out_shardings=out_shardings
       )
 
-      out, (query_grad, key_grad, value_grad) = jitted_sdpa_train(query, key, value, grad, bias, None)
-      out_ref, (query_grad_ref, key_grad_ref, value_grad_ref) = jitted_sdpa_train_ref(query, key, value, grad, bias, None)
+      out, (query_grad, key_grad, value_grad) = jitted_sdpa_train(query, key, value, grad, bias, mask)
+      out_ref, (query_grad_ref, key_grad_ref, value_grad_ref) = jitted_sdpa_train_ref(query, key, value, grad, bias, mask)
       self.assertArraysAllClose(out_ref, out, rtol=1e-5, atol=1e-5)
       if seq_len > 512:
         # query_grad in flash attention is not deterministic
