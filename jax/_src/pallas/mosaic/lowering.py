@@ -27,6 +27,7 @@ from jax import tree_util
 from jax._src import custom_derivatives
 from jax._src import debugging
 from jax._src import linear_util as lu
+from jax._src import ad_util
 from jax._src import mesh as mesh_lib
 from jax._src import pjit
 from jax._src import source_info_util
@@ -1253,6 +1254,8 @@ def _add_lowering_rule(ctx: LoweringRuleContext, x, y):
 
 lowering_rules[lax.add_p] = _add_lowering_rule
 skip_mlir_conversions.add(lax.add_p)
+lowering_rules[ad_util.add_any_p] = _add_lowering_rule
+skip_mlir_conversions.add(ad_util.add_any_p)
 
 
 def _max_lowering_rule(ctx: LoweringRuleContext, x, y):
@@ -1478,6 +1481,7 @@ _cmpi_lowering_types = {
 
 _cmpf_lowering_types = {
     lax.eq_p: 1,
+    lax.gt_p: 2,
     lax.ne_p: 6,
 }
 
