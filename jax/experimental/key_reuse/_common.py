@@ -24,10 +24,22 @@ class Sink(NamedTuple):
   idx: int
   mask: bool | np.ndarray = True
 
+  def __repr__(self):
+    if isinstance(self.mask, bool) and self.mask:
+      return f"Sink({self.idx})"
+    else:
+      return f"Sink({self.idx}, mask={self.mask})"
+
 
 class Source(NamedTuple):
   idx: int
   mask: bool | np.ndarray = True
+
+  def __repr__(self):
+    if isinstance(self.mask, bool) and self.mask:
+      return f"Source({self.idx})"
+    else:
+      return f"Source({self.idx}, mask={self.mask})"
 
 
 class KeyReuseSignature(NamedTuple):
