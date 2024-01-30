@@ -257,7 +257,7 @@ The code below will run in NumPy. However, JAX arrays won't allow themselves to 
 :id: u6grTYIVcZ3f
 :tags: [raises-exception]
 
-in_place_modify(jnp.array(x))  # Raises error when we cast input to jnp.ndarray
+in_place_modify(jnp.array(x))  # Raises error if we cast input to jnp.ndarray
 ```
 
 +++ {"id": "RGqVfYSpc49s"}
