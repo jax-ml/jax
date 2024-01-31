@@ -17,7 +17,6 @@ load(
     "jax_test",
     "py_deps",
 )
-load("@rules_python//python:defs.bzl", "py_test")
 
 licenses(["notice"])
 
@@ -58,10 +57,14 @@ jax_test(
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
-py_test(
+jax_test(
     name = "indexing_test",
     srcs = [
         "indexing_test.py",
+    ],
+    disable_backends = [
+        "gpu",
+        "tpu",
     ],
     deps = [
         "//third_party/py/jax:pallas",

@@ -19,8 +19,8 @@ from __future__ import annotations
 import unittest
 
 from absl.testing import absltest
-from absl.testing import parameterized
 import jax
+from jax._src import test_util as jtu
 from jax._src import util
 from jax._src.state import indexing
 import numpy as np
@@ -36,6 +36,8 @@ hp.settings.register_profile(
     "deterministic", database=None, derandomize=True, deadline=None,
     max_examples=100, print_blob=True)
 hp.settings.load_profile("deterministic")
+
+jax.config.parse_flags_with_absl()
 
 Slice = indexing.Slice
 NDIndexer = indexing.NDIndexer
@@ -84,7 +86,7 @@ def nd_indexer_strategy(draw, shape) -> NDIndexer:
   return NDIndexer.from_indices_shape(indices, shape)
 
 
-class IndexerTest(parameterized.TestCase):
+class IndexerTest(jtu.JaxTestCase):
 
   def test_simple_ndindexer(self):
     indices = (0, 0)
@@ -196,4 +198,4 @@ class IndexerTest(parameterized.TestCase):
 
 
 if __name__ == "__main__":
-  absltest.main()
+  absltest.main(testLoader=jtu.JaxTestLoader())
