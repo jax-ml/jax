@@ -59,17 +59,30 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   @jtu.sample_product(
     shape=[(1, 1), (4, 4), (2, 5, 5), (200, 200), (1000, 0, 0)],
     dtype=float_types + complex_types,
+    upper=[True, False]
   )
-  def testCholesky(self, shape, dtype):
+  def testCholesky(self, shape, dtype, upper):
     rng = jtu.rand_default(self.rng())
     def args_maker():
       factor_shape = shape[:-1] + (2 * shape[-1],)
       a = rng(factor_shape, dtype)
       return [np.matmul(a, jnp.conj(T(a)))]
 
-    self._CheckAgainstNumpy(np.linalg.cholesky, jnp.linalg.cholesky, args_maker,
+    jnp_fun = partial(jnp.linalg.cholesky, upper=upper)
+
+    def np_fun(x, upper=upper):
+      # Upper argument added in NumPy 2.0.0
+      if jtu.numpy_version() >= (2, 0, 0):
+        return np.linalg.cholesky(x, upper=upper)
+      if upper:
+        axes = list(range(x.ndim))
+        axes[-1], axes[-2] = axes[-2], axes[-1]
+        x = np.transpose(x, axes)
+      return np.linalg.cholesky(x)
+
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
                             tol=1e-3)
-    self._CompileAndCheck(jnp.linalg.cholesky, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
     if jnp.finfo(dtype).bits == 64:
       jtu.check_grads(jnp.linalg.cholesky, args_maker(), order=2)
