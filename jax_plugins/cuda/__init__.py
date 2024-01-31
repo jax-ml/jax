@@ -75,25 +75,9 @@ def initialize():
   if path is None:
     return
 
-  # TODO(b/300099402): use the util method when it is ready.
-  options = {}
-  visible_devices = xb.CUDA_VISIBLE_DEVICES.value
-  if visible_devices != 'all':
-    options['visible_devices'] = [int(x) for x in visible_devices.split(',')]
-
-  allocator = os.getenv('XLA_PYTHON_CLIENT_ALLOCATOR', 'default').lower()
-  memory_fraction = os.getenv('XLA_PYTHON_CLIENT_MEM_FRACTION', '')
-  preallocate = os.getenv('XLA_PYTHON_CLIENT_PREALLOCATE', '').lower()
-  if allocator not in ('default', 'platform', 'bfc', 'cuda_async'):
-    raise ValueError(
-        'XLA_PYTHON_CLIENT_ALLOCATOR env var must be "default", "platform", '
-        '"bfc", or "cuda_async", got "%s"' % allocator
-    )
-  options['allocator'] = allocator
-  if memory_fraction:
-    options['memory_fraction'] = float(memory_fraction)
-  if preallocate:
-    options['preallocate'] = preallocate not in ('false', '0')
+  options = xla_client.generate_pjrt_gpu_plugin_options(
+      xb.CUDA_VISIBLE_DEVICES.value
+  )
   c_api = xb.register_plugin(
       'cuda', priority=500, library_path=str(path), options=options
   )
