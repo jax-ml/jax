@@ -21,7 +21,7 @@ def cholesky(x, /, *, upper=False):
   """
   Returns the lower (upper) Cholesky decomposition of a complex Hermitian or real symmetric positive-definite matrix x.
   """
-  return jax.numpy.linalg.cholesky(jax.numpy.matrix_transpose(x) if upper else x)
+  return jax.numpy.linalg.cholesky(x, upper=upper)
 
 def cross(x1, x2, /, *, axis=-1):
   """
