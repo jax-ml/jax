@@ -1,8 +1,8 @@
 Pallas Collectives
 ===================
-Pallas has support for manual DMA (between memories of the same chip) and remote DMA (between memories of different chips) support. It also has an API for nesting pipelines of compute overlapped collectives.
+Pallas has support for both local DMAs (between memories of the same chip) and remote DMAs (between memories of different chips). Pallas also has an API for nesting pipelines of compute overlapped collectives.
 
-Manual DMAs are a necessary imperative escape hatch for maximum performance, but we hope that nested pipelines will minimize where they are used in codebases.
+Manual DMAs, while powerful, are very low level. Pallas offers a flexible nested pipeline abstraction which is usually easier to use than explicit DMAs or at least can reduce their use in a kernel.
 
 Manual DMAs
 ------------
@@ -17,7 +17,7 @@ Manual DMAs
     local_copy.wait()
 
     # Should do a barrier the first time we communicate
-    # with another chip.
+    # with another chip so collectives don't deadlock.
     barrier_sem = pltpu.get_barrier_semaphore()
     pltpu.semaphore_signal(barrier_sem, device_id=neighbor)
     pltpu.semaphore_wait(barrier_sem)
@@ -219,7 +219,7 @@ Nested Pipeline with Output Accumulation
 Fusing Nested Pipelines (Realistic AG Matmul)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-To solve the fact that each child pipeline introduces its own bubbles at their start and end, we must add a layer of complexity via prologue and epilogue callbacks. We danced around with more restrictive but simpler ways of expressing this, but ultimately the behavior here will be very specific to the collective pattern being implemented and you might want to prefetch or wait on pipeline arguments differently based on which ones are participating in the collective.
+To solve the fact that each child pipeline introduces its own bubbles at their start and end, we must add a layer of complexity via prologue and epilogue callbacks. The behavior here will be very specific to the collective pattern being implemented and you might want to prefetch or wait on pipeline arguments differently based on which ones are participating in the collective.
 
 For pipeline fusion to work we also need to allocate things at the parent grid level. :code:`emit_pipeline_with_allocations` makes that simple.
 
