@@ -35,6 +35,7 @@ from jax._src import util
 from jax._src import xla_bridge
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.partition_spec import PartitionSpec
 
 import numpy as np
@@ -681,6 +682,8 @@ class PositionalSharding(XLACompatibleSharding):
 
   def __init__(self, devices: Sequence[xc.Device] | np.ndarray,
                *, memory_kind: str | None = None):
+    if xla_extension_version >= 235:
+      super().__init__()
     if not isinstance(devices, np.ndarray):
       devices = np.array(devices, dtype='object')
     if not devices.size:

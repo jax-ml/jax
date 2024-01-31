@@ -3820,6 +3820,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
 class TempSharding(Sharding):
 
   def __init__(self, devices):
+    if xla_extension_version >= 235:
+      super().__init__()
     self._devices = devices
 
   @property
