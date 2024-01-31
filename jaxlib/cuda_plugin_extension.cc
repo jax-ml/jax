@@ -44,11 +44,11 @@ Status RegisterCustomCallTarget(const PJRT_Api* c_api, nb::str fn_name,
   if (c_api->extension_start == nullptr) {
     return Unimplemented("The plugin does not have extension.");
   }
-  const PJRT_Structure_Base* next =
-      reinterpret_cast<const PJRT_Structure_Base*>(c_api->extension_start);
+  const PJRT_Extension_Base* next =
+      reinterpret_cast<const PJRT_Extension_Base*>(c_api->extension_start);
   while (next != nullptr &&
          next->type !=
-             PJRT_Structure_Type::PJRT_Structure_Type_Gpu_Custom_Call) {
+             PJRT_Extension_Type::PJRT_Extension_Type_Gpu_Custom_Call) {
     next = next->next;
   }
   if (next == nullptr) {
