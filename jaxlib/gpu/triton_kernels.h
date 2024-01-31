@@ -97,7 +97,7 @@ class AutotunedKernelCall {
       size_t, size_t>> input_output_aliases);
 
   static absl::StatusOr<KernelCall> Autotune(AutotunedKernelCall kernel_call,
-                                             void** buffers);
+                                             gpuStream_t stream, void** buffers);
 
   static absl::StatusOr<AutotunedKernelCall> FromProto(
       const jax_triton::TritonAutotunedKernelCall& proto);
