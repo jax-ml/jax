@@ -34,7 +34,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - name: Install dependencies
       run: |
-        python -m pip install .[cpu]
+        python -m pip install .[ci]
         python -m pip install -r array-api-tests/requirements.txt
     - name: Run the test suite
       env:
