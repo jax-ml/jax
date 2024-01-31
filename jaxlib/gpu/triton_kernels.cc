@@ -524,16 +524,16 @@ jax_triton::TritonAutotunedKernelCall AutotunedKernelCall::ToProto() const {
 
   gpustreamCaptureStatus_t capture_status;
   GPU_RETURN_IF_ERROR(gpuStreamIsCapturing(stream, &capture_status));
-  bool is_capturing = capture_status == CU_STREAM_CAPTURE_STATUS_ACTIVE;
+  bool is_capturing = capture_status == GPU_STREAM_CAPTURE_STATUS_ACTIVE;
 
-  gpustreamCaptureMode_t capture_mode = CU_STREAM_CAPTURE_MODE_RELAXED;
+  gpustreamCaptureMode_t capture_mode = GPU_STREAM_CAPTURE_MODE_RELAXED;
   gpuStream_t autotune_stream = stream;
 
   if (is_capturing) {
+    
     GPU_RETURN_IF_ERROR(gpuThreadExchangeStreamCaptureMode(&capture_mode));
     // Need a side stream so as not to interfere with graph capture.
-    GPU_RETURN_IF_ERROR(
-        gpuStreamCreate(&autotune_stream, CU_STREAM_NON_BLOCKING));
+    GPU_RETURN_IF_ERROR(gpuStreamCreate(&autotune_stream, GPU_STREAM_NON_BLOCKING));
   }
 
   // If an input aliases with an output, it will get overwritten during the
