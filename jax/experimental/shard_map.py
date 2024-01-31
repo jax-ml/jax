@@ -923,13 +923,14 @@ def _standard_collective_check(prim, mesh, x_rep, *, axis_name, **params):
 
 def _standard_collective_rewrite(prim, mesh, in_rep, x, axis_name, **params):
   # The standard collective rewrite may insert a pbroadcast on the input.
-  if type(axis_name) is tuple: raise NotImplementedError  # TODO
   if params.get('axis_index_groups') is not None: raise NotImplementedError
+  axis_name = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   x_rep, = in_rep
-  if axis_name in in_rep:
-    x = pbroadcast(x, (axis_name,))
+  axis_name_set = set(axis_name)
+  if pbroadcast_axis_name := axis_name_set & x_rep:
+    x = pbroadcast(x, tuple(pbroadcast_axis_name))
   out_val = prim.bind(x, axis_name=axis_name, **params)
-  return [out_val], [x_rep - {axis_name}]
+  return [out_val], [x_rep - axis_name_set]
 
 
 for o in it.chain(lax.__dict__.values(), slicing.__dict__.values(),
