@@ -32,6 +32,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import errors
 from jax._src import profiler
 from jax._src import tree_util
 from jax._src import xla_bridge
@@ -642,7 +643,9 @@ def make_array_from_callback(
   """Returns a ``jax.Array`` via data fetched from ``data_callback``.
 
   ``data_callback`` is used to fetch the data for each addressable shard of the
-  returned ``jax.Array``.
+  returned ``jax.Array``. This function must return concrete arrays, meaning that
+  ``make_array_from_callback`` has limited compatibility with JAX transformations
+  like :func:`jit` or :func:`vmap`.
 
   Args:
     shape : Shape of the ``jax.Array``.
@@ -687,6 +690,10 @@ def make_array_from_callback(
     devices = list(device_to_index_map.keys())
     per_device_values = [data_callback(device_to_index_map[device])
                          for device in devices]
+
+  if isinstance(per_device_values[0], core.Tracer):
+    raise errors.UnexpectedTracerError(
+        "jax.make_array_from_callback cannot be called within a traced context.")
 
   first_value = xla.canonicalize_dtype(per_device_values[0])
   aval = core.ShapedArray(shape, first_value.dtype, weak_type=False)
@@ -794,6 +801,9 @@ def make_array_from_single_device_arrays(
   """
   # All input arrays should be committed. Checking it is expensive on
   # single-controller systems.
+  if any(isinstance(arr, core.Tracer) for arr in arrays):
+    raise ValueError("jax.make_array_from_single_device_arrays requires a list of concrete arrays as input. "
+                     f"got types {set(map(type, arrays))}")
   aval = core.ShapedArray(shape, arrays[0].dtype, weak_type=False)
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     return aval.dtype._rules.make_sharded_array(aval, sharding, arrays, committed=True)
