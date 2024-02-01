@@ -42,7 +42,7 @@ class JaxVal:
   def __str__(self):           raise SubclassShouldImplementThis
 
 class Primitive:
-  def impl(self, x):                               raise SubclassShouldImplementThis
+  def impl(self, env, *args):                       raise SubclassShouldImplementThis
   def eval_type(self, t):                          raise SubclassShouldImplementThis
   def linearize_rule(self, ty, primals, tangents): raise SubclassShouldImplementThis
   def transpose_rule(self, ct, *args):             raise SubclassShouldImplementThis
@@ -101,8 +101,12 @@ class JaxprEqn:
 
   def __str__(self): return PrettyPrinter.to_str(self)
   def pretty_print(self, p):
-    # TODO: subjaxprs
     p.emit(f'{self.binder} = {self.primitive}{arglist_str(self.args)}')
+    if isinstance(self.primitive, SecondOrderPrimitive):
+      with p.indent():
+        for jaxpr in self.primitive.jaxprs:
+          jaxpr.pretty_print(p)
+
 
 @dataclass
 class Jaxpr:
@@ -127,6 +131,10 @@ class JaxprType:
   arg_types:  list[JaxType]
   result_type : JaxType
   def __str__(self): return f'{arglist_str(self.arg_types)} -> {self.result_type}'
+
+class SecondOrderPrimitive(Primitive):
+  @property
+  def jaxprs(self): raise SubclassShouldImplementThis
 
 # === tracing ===
 
@@ -168,10 +176,13 @@ class TraceCtx:
 trace_ctx = TraceCtx([], 0)
 
 def apply_primitive(prim: Primitive, args_raw:list[LoosePyVal]) -> StrictPyVal:
-  trace = trace_ctx.cur_trace
   args = map(canonicalize_pyval, args_raw)
+  return apply_primitive_strict(prim, args)
+
+def apply_primitive_strict(prim: Primitive, args:list[StrictPyVal]) -> StrictPyVal:
+  trace = trace_ctx.cur_trace
   if trace is None:
-    return prim.impl(*args)
+    return prim.impl({}, *args)
   else:
     result_ty = prim.eval_type(*[arg.ty for arg in args])
     arg_atoms = [arg.to_atom() for arg in args]
@@ -208,7 +219,8 @@ def canonicalize_pyval(x: LoosePyVal) -> StrictPyVal:
 
 Env : TypeAlias = dict[Var, StrictPyVal]
 
-def eval_jaxpr(outer_env: Env, jaxpr: Jaxpr, top_args_loose: LoosePyVal):
+def eval_jaxpr(outer_env: Env, jaxpr: Jaxpr, top_args_loose: list[LoosePyVal]):
+  assert trace_ctx.cur_trace is None
   env = outer_env.copy()  # could avoid this with a list of dicts
   top_args = map(canonicalize_pyval, top_args_loose)
   assert jaxpr.ty.arg_types == [arg.ty for arg in top_args]
@@ -216,7 +228,7 @@ def eval_jaxpr(outer_env: Env, jaxpr: Jaxpr, top_args_loose: LoosePyVal):
     env[v] = val
   for eqn in jaxpr.eqns:
     args = [arg.eval_atom(env) for arg in eqn.args]
-    env[eqn.binder] = apply_primitive(eqn.primitive, args)
+    env[eqn.binder] = eqn.primitive.impl(env, *args)
   return jaxpr.result.eval_atom(env)
 
 # === type checking ===

@@ -29,7 +29,7 @@ class JaxArrayType(JaxType):
   def ndim(self): return len(self.shape)
 
   def __str__(self):
-    return f'{self.dtype.name}[{",".join(str(d) for d in self.shape)}]'
+    return f'{dtype_str(self.dtype)}[{",".join(str(d) for d in self.shape)}]'
 
   @staticmethod
   def var_to_tracer(v):
@@ -48,6 +48,8 @@ class JaxArrayType(JaxType):
     else:
       return x
 
+jax_bool = JaxArrayType((), np.bool_)
+
 class JaxArray(JaxVal):
   __array_priority__ = 1000
 
@@ -60,8 +62,6 @@ class JaxArray(JaxVal):
   def __rmul__(self, other): return mul(other, self)
   def __gt__(self, other): return greater(self, other)
   def __lt__(self, other): return less(self, other)
-  def __bool__(self): raise Exception("Tracer can't be converted to bool")
-  def __nonzero__(self): raise Exception("Traver can't be converted to bool")
 
 @dataclass
 class JaxArrayLit(JaxArray):
@@ -80,15 +80,68 @@ class JaxArrayLit(JaxArray):
   def __str__(self):
     return str(self.val)
 
-class JaxArrayTracer(Tracer, JaxArray): pass
+  def __bool__(self): return bool(self.val)
+  def __nonzero__(self): return bool(self.val)
+
+class JaxArrayTracer(Tracer, JaxArray):
+  def __bool__(self): raise Exception("Tracer can't be converted to bool")
+  def __nonzero__(self): raise Exception("Traver can't be converted to bool")
+
+def dtype_str(dtype):
+  match dtype:
+   case np.bool_: return "bool"
+   case np.float64: return "f64"
+   case _ : raise Exception(f"unrecognized dtype: {dtype}")
 
 register_canonicalizer(float, lambda x: JaxArrayLit(np.asarray(x, dtype=np.float64)))
+register_canonicalizer(bool, lambda x: JaxArrayLit(np.asarray(x, dtype=np.bool_)))
+
+# === higher-order ops ===
+
+def cond(predicate_raw, when_true_callable, when_false_callable):
+  predicate = canonicalize_pyval(predicate_raw)
+  assert predicate.ty == jax_bool
+  when_true  = trace_to_jaxpr(when_true_callable , ())
+  when_false = trace_to_jaxpr(when_false_callable, ())
+  return apply_primitive_strict(CondP(when_true, when_false), (predicate,))
+
+@dataclass
+class CondP(SecondOrderPrimitive):
+  when_true: Jaxpr
+  when_false: Jaxpr
+  @property
+  def jaxprs(self):
+    return [self.when_true, self.when_false]
+
+  def eval_type(self, predicate):
+    assert self.when_true.ty == self.when_false.ty
+    assert predicate == jax_bool
+    return self.when_true.ty.result_type
+
+  def impl(self, env, predicate):
+    if predicate:
+      return eval_jaxpr(env, self.when_true, ())
+    else:
+      print(self.when_false)
+      return eval_jaxpr(env, self.when_false, ())
+
+  # def linearize_rule(self, ty, primals, tangents):
+  #   (x, y), (x_dot, y_dot) = primals, tangents
+  #   primal_result = x + y
+  #   return primal_result, lambda: ty.add_tangents(x_dot, y_dot)
+  # def transpose_rule(self, ct, x, y):
+  #   assert x.is_linear and y.is_linear
+  #   return [(x.val, ct), (y.val, ct)]
+  def __str__(self): return "cond"
+
+
+
 
 # === ops ===
 
 def add(x, y): return apply_primitive(AddP(), (x, y))
 class AddP(Primitive):
-  def impl(self, x, y): return JaxArrayLit(np.add(x.val, y.val))
+  def impl(self, _, x, y): return JaxArrayLit(np.add(x.val, y.val))
   def eval_type(self, x, y): return binop_eval_type(x, y)
   def __str__(self): return "add"
   def linearize_rule(self, ty, primals, tangents):
@@ -101,7 +154,7 @@ class AddP(Primitive):
 
 def sub(x, y): return apply_primitive(SubP(), (x, y))
 class SubP(Primitive):
-  def impl(self, x, y): return JaxArrayLit(np.subtract(x.val, y.val))
+  def impl(self, _, x, y): return JaxArrayLit(np.subtract(x.val, y.val))
   def eval_type(self, x, y): return binop_eval_type(x, y)
   def __str__(self): return "sub"
   def linearize_rule(self, ty, primals, tangents):
@@ -114,7 +167,7 @@ class SubP(Primitive):
 
 def mul(x, y): return apply_primitive(MulP(), (x, y))
 class MulP(Primitive):
-  def impl(self, x, y): return JaxArrayLit(np.multiply(x.val, y.val))
+  def impl(self, _, x, y): return JaxArrayLit(np.multiply(x.val, y.val))
   def eval_type(self, x, y): return binop_eval_type(x, y)
   def __str__(self): return "mul"
   def linearize_rule(self, result_ty, primals, tangents):
@@ -135,7 +188,7 @@ class MulP(Primitive):
 
 def neg(x): return apply_primitive(NegP(), (x,))
 class NegP(Primitive):
-  def impl(self, x): return JaxArrayLit(np.negative(x.val))
+  def impl(self, _, x): return JaxArrayLit(np.negative(x.val))
   def eval_type(self, t): return t
   def __str__(self): return "neg"
   def linearize_rule(self, ty, primals, tangents):
@@ -147,7 +200,7 @@ class NegP(Primitive):
 
 def sin(x): return apply_primitive(SinP(), (x,))
 class SinP(Primitive):
-  def impl(self, x): return JaxArrayLit(np.sin(x.val))
+  def impl(self, _, x): return JaxArrayLit(np.sin(x.val))
   def eval_type(self, t): return t
   def __str__(self): return "sin"
   def linearize_rule(self, _, primals, tangents):
@@ -156,15 +209,27 @@ class SinP(Primitive):
 
 def cos(x): return apply_primitive(CosP(), (x,))
 class CosP(Primitive):
-  def impl(self, x): return JaxArrayLit(np.cos(x.val))
+  def impl(self, _, x): return JaxArrayLit(np.cos(x.val))
   def eval_type(self, t): return t
   def __str__(self): return "cos"
 
-def binop_eval_type(x: JaxArrayType, y: JaxArrayType) -> list[JaxArrayType]:
+def greater(x, y): return apply_primitive(GreaterP(), (x, y))
+class GreaterP(Primitive):
+  def impl(self, _, x, y): return JaxArrayLit(np.greater(x.val, y.val))
+  def eval_type(self, x, y): return cmp_binop_eval_type(x, y)
+  def __str__(self): return "greater"
+
+def binop_eval_type(x: JaxArrayType, y: JaxArrayType) -> JaxArrayType:
   if not isinstance(x, JaxArrayType) or not isinstance(y, JaxArrayType):
     raise TypeError
   if x != y: raise TypeError
   return JaxArrayType(x.shape, x.dtype)
+
+def cmp_binop_eval_type(x: JaxArrayType, y: JaxArrayType) -> JaxArrayType:
+  if not isinstance(x, JaxArrayType) or not isinstance(y, JaxArrayType):
+    raise TypeError
+  if x != y: raise TypeError
+  return JaxArrayType(x.shape, np.bool_)
 
 # === linear operations handling symbolic zeros ===
 
