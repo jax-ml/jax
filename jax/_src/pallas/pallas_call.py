@@ -286,8 +286,15 @@ def _pallas_call_batching_rule(args, dims, *,
                                interpret: bool,
                                which_linear: tuple[bool, ...],
                                **compiler_params: Any):
-  if grid_mapping.num_dynamic_grid_bounds:
-    raise NotImplementedError("interpret with dynamic grid bounds unsupported")
+  dynamic_grid_args, args = split_list(
+      args, [grid_mapping.num_dynamic_grid_bounds]
+  )
+  dynamic_grid_dims, dims = split_list(
+      dims, [grid_mapping.num_dynamic_grid_bounds]
+  )
+  if any(dim is not batching.not_mapped for dim in dynamic_grid_dims):
+    raise NotImplementedError("Batched dynamic grid bounds unsupported")
+  del dynamic_grid_dims
   if grid_mapping.num_index_operands:
     scalar_args, args = split_list(args, [grid_mapping.num_index_operands])
     scalar_bdims, bdims = split_list(dims, [grid_mapping.num_index_operands])
@@ -363,15 +370,20 @@ def _pallas_call_batching_rule(args, dims, *,
       grid=(axis_size, *grid_mapping.grid),
       block_mappings=tuple(batched_block_mappings),
       mapped_dims=(0,) + tuple(a + 1 for a in grid_mapping.mapped_dims))
-  out = pallas_call_p.bind(*args, jaxpr=jaxpr, name=f"batched_{name}",
-                           in_shapes=batched_in_shapes,
-                           out_shapes=batched_out_shapes,
-                           which_linear=which_linear,
-                           grid_mapping=batched_grid_mapping,
-                           input_output_aliases=input_output_aliases,
-                           debug=debug,
-                           interpret=interpret,
-                           **compiler_params)
+  out = pallas_call_p.bind(
+      *dynamic_grid_args,
+      *args,
+      jaxpr=jaxpr,
+      name=f"batched_{name}",
+      in_shapes=batched_in_shapes,
+      out_shapes=batched_out_shapes,
+      which_linear=which_linear,
+      grid_mapping=batched_grid_mapping,
+      input_output_aliases=input_output_aliases,
+      debug=debug,
+      interpret=interpret,
+      **compiler_params,
+  )
   return out, (0,) * len(out)
 batching.primitive_batchers[pallas_call_p] = _pallas_call_batching_rule
 

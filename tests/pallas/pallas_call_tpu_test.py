@@ -1113,6 +1113,30 @@ class PallasCallTest(PallasTPUTest):
         dynamic_kernel(4), np.full(shape, 8.0, np.float32)
     )
 
+  def test_vmap_dynamic_grid(self):
+    shape = (8, 128)
+    result_ty = jax.ShapeDtypeStruct(shape, jnp.float32)
+
+    def kernel(x_ref, y_ref):
+      @pl.when(pl.program_id(0) == 0)
+      def _init():
+        y_ref[...] = x_ref[...]
+      y_ref[...] += 1.
+
+    @jax.jit
+    def dynamic_kernel(x, steps):
+      return pl.pallas_call(
+          kernel,
+          grid=(steps * 2,),
+          out_specs=pl.BlockSpec(lambda i: (0, 0), shape),
+          out_shape=result_ty,
+      )(x)
+    x = jnp.arange(4 * 8 * 128.).reshape((4, *shape))
+    np.testing.assert_array_equal(
+        jax.jit(jax.vmap(dynamic_kernel, in_axes=(0, None)))(x, 4),
+        x + 8,
+    )
+
 
 class PallasUXTest(PallasTPUTest):
 
