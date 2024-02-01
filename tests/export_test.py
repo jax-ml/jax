@@ -1031,8 +1031,8 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform(self):
     x = np.arange(8, dtype=np.float32)
     exp = get_exported(_testing_multi_platform_func,
-                        lowering_platforms=("tpu", "cpu", "cuda"))(x)
-    self.assertEqual(exp.lowering_platforms, ("tpu", "cpu", "cuda"))
+                        lowering_platforms=("tpu", "cpu", "cuda","rocm"))(x)
+    self.assertEqual(exp.lowering_platforms, ("tpu", "cpu", "cuda", "rocm"))
     module_str = str(exp.mlir_module())
     expected_main_re = (
       r"@main\("
@@ -1054,14 +1054,14 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform_nested(self):
     x = np.arange(5, dtype=np.float32)
     exp = get_exported(lambda x: _testing_multi_platform_func(jnp.sin(x)),
-                        lowering_platforms=("cpu", "tpu", "cuda"))(x)
-    self.assertEqual(exp.lowering_platforms, ("cpu", "tpu", "cuda"))
+                        lowering_platforms=("cpu", "tpu", "cuda","rocm"))(x)
+    self.assertEqual(exp.lowering_platforms, ("cpu", "tpu", "cuda","rocm"))
 
     # Now serialize the call to the exported using a different sequence of
     # lowering platforms, but included in the lowering platforms for the
     # nested exported.
     exp2 = get_exported(export.call_exported(exp),
-                         lowering_platforms=("cpu", "cuda"))(x)
+                         lowering_platforms=("cpu", "cuda","rocm"))(x)
 
     # Ensure that we do not have multiple lowerings of the exported function
     exp2_module_str = str(exp2.mlir_module())
@@ -1080,8 +1080,8 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform_nested_inside_single_platform_export(self):
     x = np.arange(5, dtype=np.float32)
     exp = get_exported(_testing_multi_platform_func,
-                        lowering_platforms=("cpu", "tpu", "cuda"))(x)
-    self.assertEqual(exp.lowering_platforms, ("cpu", "tpu", "cuda"))
+                        lowering_platforms=("cpu", "tpu", "cuda","rocm"))(x)
+    self.assertEqual(exp.lowering_platforms, ("cpu", "tpu", "cuda", "rocm"))
 
     # Now serialize the call for the current platform.
     exp2 = get_exported(export.call_exported(exp))(x)
@@ -1120,7 +1120,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
     res_native = f_jax(a)
     exp = get_exported(f_jax,
-                        lowering_platforms=("cpu", "tpu", "cuda"))(a)
+                        lowering_platforms=("cpu", "tpu", "cuda", "rocm"))(a)
 
     # Call with argument placed on different plaforms
     for platform in self.__class__.platforms:
