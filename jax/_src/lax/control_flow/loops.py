@@ -60,7 +60,8 @@ import numpy as np
 
 from jax._src.lax.control_flow.common import (
     _abstractify, _avals_short, _check_tree_and_avals, _initial_style_jaxpr,
-    _make_closed_jaxpr, _prune_zeros, _typecheck_param)
+    _initial_style_jaxpr_attrs, _make_closed_jaxpr_attrs, _prune_zeros,
+    _typecheck_param)
 
 _map = safe_map
 zip = safe_zip
@@ -241,14 +242,15 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     in_flat, in_tree = tree_flatten((init, xs))
 
     carry_avals = tuple(_map(_abstractify, init_flat))
-    jaxpr, consts, out_tree = _initial_style_jaxpr(
+    jaxpr, consts, out_tree, attrs_tracked = _initial_style_jaxpr_attrs(
         f, in_tree, (*carry_avals, *x_avals), "scan")
     out_tree_children = out_tree.children()
     if len(out_tree_children) != 2:
       msg = "scan body output must be a pair, got {}."
       raise TypeError(msg.format(tree_unflatten(out_tree, jaxpr.out_avals)))
     carry_avals_out = jaxpr.out_avals[:out_tree_children[0].num_leaves]
-    return init_flat, carry_avals, carry_avals_out, init_tree, in_flat, jaxpr, consts, out_tree, out_tree_children
+    return (init_flat, carry_avals, carry_avals_out, init_tree, in_flat, jaxpr,
+            consts, out_tree, out_tree_children, attrs_tracked)
 
   # The carry input and output avals must match exactly. However, we want to account for
   # the case when init contains weakly-typed values (e.g. Python scalars), with avals that
@@ -260,7 +262,8 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   if changed:
     init = tree_unflatten(init_tree, new_init_flat)
     init_flat, carry_avals, carry_avals_out, init_tree, *rest = _create_jaxpr(init)
-  in_flat, jaxpr, consts, out_tree, out_tree_children = rest
+  in_flat, jaxpr, consts, out_tree, out_tree_children, attrs_tracked = rest
+  num_carry = len(init_flat)
 
   _check_scan_carry_type(f, init, out_tree_children[0], carry_avals_out)
   disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(jaxpr.effects)
@@ -270,12 +273,29 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
 
   if isinstance(unroll, bool):
     unroll = max(length, 1) if unroll else 1
+  if attrs_tracked:
+    in_state = _get_states(attrs_tracked)
+    in_carry, in_ext = split_list(in_flat, [num_carry])
+    in_flat = [*in_state, *in_carry, *in_ext]
+    num_carry += len(attrs_tracked)
   out = scan_p.bind(*consts, *in_flat,
                     reverse=reverse, length=length, jaxpr=jaxpr,
-                    num_consts=len(consts), num_carry=len(init_flat),
+                    num_consts=len(consts), num_carry=num_carry,
                     linear=(False,) * (len(consts) + len(in_flat)),
                     unroll=unroll)
+  if attrs_tracked:
+    out_state, out = split_list(out, [len(attrs_tracked)])
+    _set_states(attrs_tracked, out_state)
   return tree_unflatten(out_tree, out)
+
+def _set_states(attrs_tracked, vals):
+  from jax.experimental.attrs import jax_setattr  # type: ignore
+  for ((obj, attr), val) in zip(attrs_tracked, vals):
+    jax_setattr(obj, attr, val)
+
+def _get_states(attrs_tracked):
+  from jax.experimental.attrs import jax_getattr  # type: ignore
+  return [jax_getattr(obj, attr) for (obj, attr) in attrs_tracked]
 
 def _check_scan_carry_type(body_fun, in_carry, out_carry_tree, out_avals):
   try:
@@ -748,18 +768,21 @@ def _scan_transpose(reduce_axes, cts, *args, reverse, length, num_consts,
 
   #       jaxpr :: [ires, T d] -> [T c] -> [T a, eres] -> ([T c], [T b])
   # jaxpr_trans :: [ires] -> [CT d, CT c] -> [CT b, eres] -> ([CT d, CT c], [CT a])
-  jaxpr_trans = _transpose_scan_jaxpr(
+  jaxpr_trans, attrs_tracked = _transpose_scan_jaxpr(
       jaxpr, num_ires, num_consts - num_ires, num_eres, reduce_axes,
       ct_ys_is_zeros)
-  linear_trans = ([False] * num_ires +
+  linear_trans = ([False] * num_ires + [False] * len(attrs_tracked) +
                   [True] * (len(ct_consts) + len(ct_carry) + len(ct_ys)) +
                   [False] * num_eres)
-
+  in_state = _get_states(attrs_tracked)
   outs = scan_p.bind(
-      *(ires + ct_consts + ct_carry + ct_ys + eres), reverse=not reverse,
-      length=length, jaxpr=jaxpr_trans, num_consts=num_ires,
-      num_carry=num_consts-num_ires+num_carry, linear=tuple(linear_trans),
-      unroll=unroll)
+      *ires, *in_state, *ct_consts, *ct_carry, *ct_ys, *eres,
+      reverse=not reverse, length=length, jaxpr=jaxpr_trans,
+      num_consts=num_ires,
+      num_carry=num_consts-num_ires+num_carry+len(attrs_tracked),
+      linear=tuple(linear_trans), unroll=unroll)
+  out_state, outs = split_list(outs, [len(attrs_tracked)])
+  _set_states(attrs_tracked, out_state)
   ct_consts, ct_init, ct_xs = split_list(outs, [num_consts - num_ires, num_carry])
   return [None] * num_ires + ct_consts + ct_init + ct_xs + [None] * num_eres
 
@@ -802,7 +825,7 @@ def _transpose_scan_jaxpr(jaxpr, num_res1, num_c, num_res2, reduce_axes,
     a_bar = _map(ad.instantiate_zeros, a_bar)
     c_bar = _map(ad.instantiate_zeros, _map(ad.add_tangents, c_bar, new_c_bar))
     return c_bar + a_bar
-  return _make_closed_jaxpr(
+  return _make_closed_jaxpr_attrs(
       transposed, tuple(res1_avals + c_avals + b_carry_avals +
                         b_ys_avals_stripped + res2_avals))
 
