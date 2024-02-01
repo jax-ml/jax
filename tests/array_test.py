@@ -1157,6 +1157,36 @@ class ShardingTest(jtu.JaxTestCase):
     mesh = jtu.create_global_mesh((2, 2, 2), ('x', 'y', 'z'))
     self.assertEqual(str(mesh), "Mesh('x': 2, 'y': 2, 'z': 2)")
 
+  def test_make_array_from_callback_error(self):
+    mesh_shape = (2, 3)
+    global_shape = tuple(np.square(mesh_shape))
+    mesh = jtu.create_global_mesh(mesh_shape, ('x', 'y'))
+    pspec = P('x', 'y')
+    sharding = jax.sharding.NamedSharding(mesh, pspec)
+    n = math.prod(global_shape)
+    global_x = jnp.arange(n).astype('uint32').reshape(global_shape)
+
+    def f(arr):
+      return array.make_array_from_callback(arr.shape, sharding, lambda i: arr[i])
+
+    out = f(global_x)
+    self.assertEqual(out.shape, global_shape)
+
+    msg = "jax.make_array_from_callback cannot be called within a traced context"
+    with self.assertRaisesRegex(jax.errors.UnexpectedTracerError, msg):
+      jax.jit(f)(global_x)
+
+  def test_make_array_from_single_device_arrays_error(self):
+    x = jnp.arange(10)
+    sharding = x.sharding
+
+    def f(x):
+      return jax.make_array_from_single_device_arrays(x.shape, sharding, [x])
+
+    msg = "jax.make_array_from_single_device_arrays requires a list of concrete arrays"
+    with self.assertRaisesRegex(ValueError, msg):
+      jax.jit(f)(x)
+
 
 class RngShardingTest(jtu.JaxTestCase):
   # tests that the PRNGs are automatically sharded as expected
