@@ -709,6 +709,13 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
       return jax.lax.map(jax.random.bits, keys)
     self.check_key_reuse(f_scan_over_keys, jax.random.key(0))
 
+  def test_scan_consume_one(self):
+    def f_scan_over_keys(*keys):
+      def body_func(keys, x):
+        return tuple(jax.random.split(keys[0])), x
+      return jax.lax.scan(body_func, keys, xs=jnp.arange(10))
+    self.check_key_reuse(f_scan_over_keys, jax.random.key(0), jax.random.key(1))
+
   def test_vmap(self):
     @jax.vmap
     def f_good(seed):
