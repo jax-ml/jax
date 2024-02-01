@@ -77,7 +77,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       if upper:
         axes = list(range(x.ndim))
         axes[-1], axes[-2] = axes[-2], axes[-1]
-        x = np.transpose(x, axes)
+        x = np.transpose(x, axes).conj()
       return np.linalg.cholesky(x)
 
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
