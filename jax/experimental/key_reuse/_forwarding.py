@@ -211,8 +211,11 @@ def _pjit_key_type_signature(eqn, args_consumed):
   jaxpr = eqn.params['jaxpr']
   forwarded_inputs = {i: eqn.invars.index(var) for i, var in enumerate(eqn.invars)
                       if var in eqn.invars[:i]}
-  return get_jaxpr_type_signature(jaxpr.jaxpr, consumed_inputs=args_consumed,
-                                  forwarded_inputs=forwarded_inputs)
+  sig = get_jaxpr_type_signature(jaxpr.jaxpr)
+  if args_consumed and any(np.any(args_consumed[s.idx] & s.mask) for s in sig.sinks):
+    # Double consumption detected: re-trace with context for better errors.
+    get_jaxpr_type_signature(jaxpr.jaxpr, args_consumed, forwarded_inputs)
+  return sig
 
 key_reuse_signatures_dynamic[pjit.pjit_p] = _pjit_key_type_signature
 

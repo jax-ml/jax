@@ -183,7 +183,11 @@ def _pjit_key_type_signature(eqn, args_consumed):
   non_literal_invars = [v for v in eqn.invars if not isinstance(v, core.Literal)]
   if len(set(non_literal_invars)) != len(non_literal_invars):
     raise ValueError(f"pjit with duplicate inputs: {eqn.invars=}")
-  return get_jaxpr_type_signature(jaxpr.jaxpr, consumed_inputs=args_consumed)
+  sig = get_jaxpr_type_signature(jaxpr.jaxpr)
+  if args_consumed and any(np.any(args_consumed[s.idx] & s.mask) for s in sig.sinks):
+    # Double consumption detected: re-trace with context for better errors.
+    get_jaxpr_type_signature(jaxpr.jaxpr, args_consumed)
+  return sig
 
 key_reuse_signatures_dynamic[pjit.pjit_p] = _pjit_key_type_signature
 
