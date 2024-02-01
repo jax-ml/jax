@@ -95,11 +95,13 @@ def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
                       input_output_aliases: tuple[tuple[int, int], ...],
                       grid_mapping: GridMapping,
                       **compiler_params: Any):
+  if grid_mapping.num_dynamic_grid_bounds:
+    raise NotImplementedError("interpret with dynamic grid bounds unsupported")
   if interpret:
     # If we're in interpreter mode, we *scan* over the grid and eval the
     # discharged jaxpr. This should reproduce exactly what compiling to Triton
     # will do.
-    grid = grid_mapping.grid
+    grid = grid_mapping.static_grid
     discharged_jaxpr, consts = state_discharge.discharge_state(jaxpr, ())
     if debug:
       print(discharged_jaxpr)
@@ -195,6 +197,8 @@ pallas_call_p.def_abstract_eval(_pallas_call_abstract_eval)
 def _pallas_call_jvp_rule(primals, tangents, *, jaxpr, name, which_linear,
     input_output_aliases: tuple[tuple[int, int], ...],
     in_shapes, out_shapes, grid_mapping, debug, interpret, **compiler_params: Any):
+  if grid_mapping.num_dynamic_grid_bounds:
+    raise NotImplementedError("interpret with dynamic grid bounds unsupported")
   if grid_mapping.num_index_operands:
     raise NotImplementedError
   if input_output_aliases:
@@ -282,6 +286,8 @@ def _pallas_call_batching_rule(args, dims, *,
                                interpret: bool,
                                which_linear: tuple[bool, ...],
                                **compiler_params: Any):
+  if grid_mapping.num_dynamic_grid_bounds:
+    raise NotImplementedError("interpret with dynamic grid bounds unsupported")
   if grid_mapping.num_index_operands:
     scalar_args, args = split_list(args, [grid_mapping.num_index_operands])
     scalar_bdims, bdims = split_list(dims, [grid_mapping.num_index_operands])
@@ -453,8 +459,11 @@ def pallas_call(
     **compiler_params: Any,
 ):
   name = _extract_function_name(f, name)
+  if grid is not None and grid_spec is not None:
+    raise ValueError("Cannot specify both grid and grid_spec at the same time.")
   if grid_spec is None:
     grid_spec = GridSpec(grid, in_specs, out_specs)
+  grid_spec, dynamic_grid_bounds = grid_spec.unzip_dynamic_grid_bounds()
   if isinstance(out_shape, list):
     out_shape = tuple(out_shape)
   flat_out_shapes, out_tree = tree_util.tree_flatten(out_shape)
@@ -472,7 +481,8 @@ def pallas_call(
         out_tree)
     which_linear = (False,) * len(flat_args)
     out_flat = pallas_call_p.bind(
-        *consts, *flat_args, jaxpr=jaxpr, name=name, which_linear=which_linear,
+        *dynamic_grid_bounds, *consts, *flat_args,
+        jaxpr=jaxpr, name=name, which_linear=which_linear,
         in_shapes=tuple(jax.ShapeDtypeStruct(a.shape, a.dtype)
                         for a in flat_args),
         out_shapes=tuple(flat_out_shapes), debug=debug,

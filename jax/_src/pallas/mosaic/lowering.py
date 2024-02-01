@@ -68,6 +68,9 @@ TPUMemorySpace = tpu_core.TPUMemorySpace
 VMEM = tpu_core.TPUMemorySpace.VMEM
 SMEM = tpu_core.TPUMemorySpace.SMEM
 
+# The value interpreter as a dynamic dimension by MLIR.
+MLIR_DYNAMIC = -9223372036854775808
+
 partial = functools.partial
 map, unsafe_map = safe_map, map  # pylint: disable=redefined-builtin
 zip, unsafe_zip = safe_zip, zip  # pylint: disable=redefined-builtin
@@ -381,6 +384,10 @@ def lower_jaxpr_to_module(
         zip(block_operand_shapes, grid_mapping.block_mappings, avals)
     ):
       func_name = f"transform_{i}"
+      if bm is None:
+        raise NotImplementedError(
+            "BlockSpecs are required on TPU when grid is specified"
+        )
       if bm.index_map_jaxpr.consts:
         raise NotImplementedError("Index map jaxpr with consts not supported.")
       # ANY operands don't support windowing and require empty window_params.
@@ -421,7 +428,8 @@ def lower_jaxpr_to_module(
       m.body.append(mlir_func)
       sym_tab.insert(mlir_func)
     func_op.attributes["window_params"] = ir.ArrayAttr.get(window_params)
-    func_op.attributes["iteration_bounds"] = ir.DenseI64ArrayAttr.get(grid)
+    static_grid = [MLIR_DYNAMIC if b is None else b for b in grid]
+    func_op.attributes["iteration_bounds"] = ir.DenseI64ArrayAttr.get(static_grid)
 
   func_op.attributes["scalar_prefetch"] = ir.IntegerAttr.get(
       ir.IntegerType.get_signless(64), len(mosaic_grid_mapping.scalar_prefetch_types))

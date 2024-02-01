@@ -1568,6 +1568,8 @@ def pallas_call_lowering(
     triton_params: dict[str, Any] | None = None,
     **compiler_params: Any,
 ):
+  if grid_mapping.num_dynamic_grid_bounds:
+    raise NotImplementedError("dynamic grid bounds not supported in the Triton backend")
   if interpret:
     return mlir.lower_fun(pallas_call_p.impl, multiple_results=True)(
         ctx,

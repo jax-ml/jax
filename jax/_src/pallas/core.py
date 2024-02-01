@@ -15,11 +15,12 @@
 """Module for pallas-core functionality."""
 from __future__ import annotations
 
+import copy
 from collections.abc import Sequence
 import contextlib
 import dataclasses
 import functools
-from typing import Any, Callable
+from typing import Any, Callable, Union
 from collections.abc import Iterator
 
 from jax._src import api_util
@@ -36,7 +37,8 @@ import jax.numpy as jnp
 # mypy: ignore-errors
 
 partial = functools.partial
-Grid = tuple[int, ...]
+Grid = tuple[Union[int, None], ...]  # None indicates that the bound is dynamic.
+StaticGrid = tuple[int, ...]  # None indicates that the bound is dynamic.
 split_list = util.split_list
 
 map, unsafe_map = util.safe_map, map
@@ -160,13 +162,23 @@ class BlockMapping:
 
 @dataclasses.dataclass(frozen=True)
 class GridMapping:
-  grid: tuple[int, ...]
+  grid: Grid
   block_mappings: tuple[BlockMapping | None, ...]
   mapped_dims: tuple[int, ...]
   num_index_operands: int
   num_scratch_operands: int
 
   replace = dataclasses.replace
+
+  @property
+  def num_dynamic_grid_bounds(self):
+    return sum(b is None for b in self.grid)
+
+  @property
+  def static_grid(self) -> StaticGrid:
+    if self.num_dynamic_grid_bounds:
+      raise ValueError("Expected a grid with fully static bounds")
+    return self.grid  # typing: ignore
 
 
 def _preprocess_grid(grid: Grid | int | None) -> Grid:
@@ -317,3 +329,12 @@ class GridSpec:
     if not isinstance(jaxpr_out_avals, (tuple, list)):
       jaxpr_out_avals = (jaxpr_out_avals,)
     return (*jaxpr_in_avals, *jaxpr_out_avals), grid_mapping
+
+  def unzip_dynamic_grid_bounds(self) -> tuple[GridSpec, tuple[Any, ...]]:
+    static_grid = tuple(d if isinstance(d, int) else None for d in self.grid)
+    dynamic_bounds = tuple(d for d in self.grid if not isinstance(d, int))
+    # We can't use dataclasses.replace, because our fields are incompatible
+    # with __init__'s signature.
+    static_self = copy.copy(self)
+    static_self.grid = static_grid
+    return static_self, dynamic_bounds

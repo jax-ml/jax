@@ -45,6 +45,10 @@ def pallas_call_tpu_lowering_rule(
     **compiler_params: Any):
   """Lowers a pallas_call to a Mosaic TPU custom call."""
   if interpret:
+    if grid_mapping.num_dynamic_grid_bounds:
+      raise NotImplementedError(
+          "Dynamic grid bounds not supported in interpret mode."
+      )
     return mlir.lower_fun(pallas_call_p.impl, multiple_results=True)(
         ctx, *in_nodes, jaxpr=jaxpr, name=name, out_shapes=out_shapes,
         in_shapes=in_shapes,
@@ -78,8 +82,14 @@ def pallas_call_tpu_lowering_rule(
     raise NotImplementedError(
         "Cannot use both input_output_aliases and extra_args."
     )
+  num_dyn_bounds = grid_mapping.num_dynamic_grid_bounds
+  input_output_aliases = tuple(
+      (a[0] + num_dyn_bounds, a[1]) for a in input_output_aliases
+  )
   out_avals = [jax_core.ShapedArray(s.shape, s.dtype) for s in out_shapes]
   def _lower_fun(*args):
+    # Dynamic grid bounds have to go at the front.
+    dynamic_grid_args, args = args[:num_dyn_bounds], args[num_dyn_bounds:],
     return mosaic.as_tpu_kernel(
         mosaic_module,
         out_avals,
@@ -91,6 +101,7 @@ def pallas_call_tpu_lowering_rule(
         flags=mosaic_params.get("flags", None),
         input_output_aliases=input_output_aliases,
     )(
+        *dynamic_grid_args,
         *extra_args,
         *args,
         collective_id=mosaic_params.get("collective_id", None),
