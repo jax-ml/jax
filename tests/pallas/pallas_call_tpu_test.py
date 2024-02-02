@@ -1113,6 +1113,52 @@ class PallasCallTest(PallasTPUTest):
         dynamic_kernel(4), np.full(shape, 8.0, np.float32)
     )
 
+  def test_vmap_trivial_dynamic_grid(self):
+    shape = (8, 128)
+    result_ty = jax.ShapeDtypeStruct(shape, jnp.float32)
+
+    def kernel(x_ref, y_ref):
+      @pl.when(pl.program_id(0) == 0)
+      def _init():
+        y_ref[...] = x_ref[...]
+      y_ref[...] += 1
+
+    @jax.jit
+    @jax.vmap
+    def dynamic_kernel(steps, x):
+      return pl.pallas_call(
+          kernel,
+          grid=(steps * 2,),
+          out_specs=pl.BlockSpec(lambda i: (0, 0), shape),
+          out_shape=result_ty,
+      )(x)
+    x = jnp.arange(8 * 128.).reshape((1, *shape))
+    np.testing.assert_array_equal(dynamic_kernel(jnp.array([4]), x), x + 8.0)
+
+  def test_vmap_nontrivial_dynamic_grid(self):
+    # Dynamic grid doesn't support vmapping over multiple distinct grid values
+    # at the moment.
+    shape = (8, 128)
+    result_ty = jax.ShapeDtypeStruct(shape, jnp.float32)
+
+    def kernel(y_ref):
+      @pl.when(pl.program_id(0) == 0)
+      def _init():
+        y_ref[...] = jnp.zeros_like(y_ref)
+      y_ref[...] += 1
+
+    @jax.jit
+    @jax.vmap
+    def dynamic_kernel(steps):
+      return pl.pallas_call(
+          kernel,
+          grid=(steps * 2,),
+          out_specs=pl.BlockSpec(lambda i: (0, 0), shape),
+          out_shape=result_ty,
+      )()
+    with self.assertRaises(NotImplementedError):
+      dynamic_kernel(jnp.array([4, 8]))
+
   def test_vmap_dynamic_grid(self):
     shape = (8, 128)
     result_ty = jax.ShapeDtypeStruct(shape, jnp.float32)
