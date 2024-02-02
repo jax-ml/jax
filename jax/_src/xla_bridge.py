@@ -540,12 +540,11 @@ def register_plugin(
                            fail_quietly=False, experimental=experimental)
   if library_path is not None:
     c_api = xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)  # type: ignore
+    xla_client.profiler.register_plugin_profiler(c_api)
   else:
     if xla_extension_version >= 236:
       assert c_api is not None
       xla_client.load_pjrt_plugin_with_c_api(plugin_name, c_api)
-  if xla_extension_version >= 236 or c_api is not None:
-    xla_client.profiler.register_plugin_profiler(c_api)
   return c_api
 
 
