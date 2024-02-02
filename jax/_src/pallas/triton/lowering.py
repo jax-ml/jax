@@ -891,7 +891,7 @@ def _masked_load_lowering_rule(
       eviction_policy=eviction_policy,
   )
   # `tl.load` of a `*int1` returns a tensor with type `int8`, so fix the type.
-  return val.to(ptr.dtype.element_ty)
+  return tc.semantic.cast(val, ptr.dtype.element_ty)
 
 
 triton_lowering_rules[primitives.load_p] = _masked_load_lowering_rule
@@ -1009,12 +1009,15 @@ def _dot_general_lowering(
   if acc_dtype not in (tc.int32, tc.float16):
     acc_dtype = tc.float32
 
-  return tc.dot(
-      a,
-      b,
-      allow_tf32=allow_tf32,
-      out_dtype=acc_dtype,
-  ).to(out_dtype)
+  return tc.semantic.cast(
+      tc.dot(
+          a,
+          b,
+          allow_tf32=allow_tf32,
+          out_dtype=acc_dtype,
+      ),
+      out_dtype,
+  )
 
 
 triton_lowering_rules[lax.dot_general_p] = _dot_general_lowering

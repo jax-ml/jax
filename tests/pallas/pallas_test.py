@@ -193,6 +193,15 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(64).reshape((8, 8))
     np.testing.assert_allclose(add_one(x), x + 1)
 
+  def test_bool_array(self):
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.bool_))
+    def logical_and(x_ref, o_ref):
+      o_ref[()] = jnp.logical_and(x_ref[()], True)
+
+    x = jnp.array(True)
+    self.assertTrue(jnp.all(logical_and(x)))
+
   def test_vector_indexing(self):
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.float32),

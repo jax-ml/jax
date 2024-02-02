@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from functools import partial, wraps
+from functools import partial
 import threading
 from typing import Any
 
@@ -645,20 +645,6 @@ def _bool_block_like(v: tensor) -> block_type:
   return block_type(int1, v.type.shape)
 
 
-def wrap_with_builder(fn):
-  @wraps(fn)
-  def inner(*args, **kwargs):
-    if tl.core.is_builtin(fn):
-      v = fn(*args, **kwargs, _builder=builder.current)
-    else:
-      v = fn(*args, **kwargs, builder=builder.current)
-    if isinstance(v, tl.core.tensor):
-      return _to_tensor(v)
-    return v
-
-  return inner
-
-
 constexpr = tl.core.constexpr
 
 
@@ -738,7 +724,8 @@ class tensor(tl.core.tensor):
         raise IndexError(f"unsupported tensor index: {s}")
     return t
 
-  to = wrap_with_builder(tl.tensor.to)
+  def to(self, *args, **kwargs) -> tensor:
+    raise NotImplementedError
 
 
 def program_id(axis: int) -> tensor:
@@ -1377,7 +1364,10 @@ class math:
 
 
 class semantic:
-  cast = wrap_with_builder(tl.semantic.cast)
+
+  @staticmethod
+  def cast(x: tensor, dst_ty: dtype) -> tensor:
+    return _to_tensor(tl.semantic.cast(x, dst_ty, builder.current))
 
   @staticmethod
   def where(cond: tensor, x: tensor, y: tensor) -> tensor:
