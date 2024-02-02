@@ -1274,11 +1274,6 @@ class math:
       (float64,): ("__nv_rsqrt", float64),
   })
 
-# TODO(slebedev): Fix the implementation above and remove this.
-for name in vars(math):
-  if not name.startswith("__") and hasattr(tl.math, name):
-    setattr(math, name, wrap_with_builder(getattr(tl.math, name)))
-
 
 class semantic:
   cast = wrap_with_builder(tl.semantic.cast)

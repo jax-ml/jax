@@ -508,7 +508,6 @@ _JAX_TO_TRITON_BINARY = {
     lax.add_p: tc.semantic.add,
     lax.sub_p: tc.semantic.sub,
     lax.mul_p: tc.semantic.mul,
-    lax.pow_p: tc.math.pow,
     lax.rem_p: tc.semantic.mod,
     lax.and_p: tc.semantic.and_,
     lax.or_p: tc.semantic.or_,
@@ -539,6 +538,25 @@ for prim, fn in _JAX_TO_TRITON_BINARY.items():
     return fn(x, y)
 
   triton_lowering_rules[prim] = rule
+
+
+def _pow_lowering_rule(ctx: TritonLoweringRuleContext, x: tc.tensor, y: tc.tensor) -> tc.tensor:
+  x_aval, y_aval = ctx.avals_in
+  y_dtype = y_aval.dtype
+  if y_aval.weak_type:
+    if jnp.isdtype(y_dtype, "integral"):
+      y_dtype = jnp.int32
+    else:
+      y_dtype = x_aval.dtype
+  x = tc.semantic.cast(x, _convert_dtype(x_aval.dtype))
+  y = tc.semantic.cast(y, _convert_dtype(y_dtype))
+  [out_aval] = ctx.avals_out
+  x = tc.broadcast_to(x, out_aval.shape)
+  y = tc.broadcast_to(y, out_aval.shape)
+  return tc.math.pow(x, y)
+
+
+triton_lowering_rules[lax.pow_p] = _pow_lowering_rule
 
 
 _JAX_TO_TRITON_OTHER = {

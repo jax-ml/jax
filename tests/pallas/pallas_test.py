@@ -1471,6 +1471,15 @@ class PallasCallInterpreterVmapTest(PallasCallVmapTest):
 
 class PallasOpsTest(PallasTest):
 
+  def test_pow_weak_dtype(self):
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.float32))
+    def square(x_ref, o_ref):
+      o_ref[()] = x_ref[()]**2.0
+
+    x = jnp.array(42.0)
+    np.testing.assert_allclose(square(x), x**2.0)
+
   def test_ne(self):
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((8,), jnp.bool_),
