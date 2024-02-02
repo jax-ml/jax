@@ -33,7 +33,6 @@ from jax._src import monitoring
 from jax._src import profiler
 from jax._src import traceback_util
 from jax._src.interpreters import mlir
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib import xla_client as xc
 
@@ -252,8 +251,8 @@ def compile_or_get_cached(
   # Persistent compilation cache only implemented on TPU and GPU.
   # TODO(skye): add warning when initializing cache on unsupported default platform
   supported_platforms = ["tpu", "gpu"]
-  if xla_extension_version >= 230:
-    supported_platforms.append("cpu")
+  # TODO(b/323256224): Add back support for CPU together with extra fields in a
+  # cache key with underlying hardware features (xla_extension_version >= 230).
   use_compilation_cache = (config.enable_compilation_cache.value and
                            backend.platform in supported_platforms)
 

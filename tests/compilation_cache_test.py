@@ -35,7 +35,6 @@ from jax._src import config
 from jax._src import monitoring
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
-from jax._src.lib import xla_extension_version
 from jax._src.lib import xla_client
 from jax.experimental.maps import xmap
 from jax.experimental.pjit import pjit
@@ -71,9 +70,9 @@ class CompilationCacheTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
+    # TODO(b/323256224): Add back support for CPU together with extra fields in
+    # a cache key with underlying hardware features.
     supported_platforms = ["tpu", "gpu"]
-    if xla_extension_version >= 230:
-      supported_platforms.append("cpu")
 
     if not jtu.test_device_matches(supported_platforms):
       raise SkipTest(
