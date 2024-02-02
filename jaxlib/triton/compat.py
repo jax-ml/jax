@@ -773,66 +773,55 @@ def wrap_with_builder(fn):
 constexpr = tl.core.constexpr
 
 
-def _to_tensor(v) -> "tensor":
-  t = tl.core._to_tensor(v, builder.current)
-  return tensor(t.handle, t.type)
+def _to_tensor(v, dtype: dtype | None = None) -> "tensor":
+  if isinstance(v, tensor):
+    return v
+  elif isinstance(v, (int, float)) and dtype is not None:
+    return tensor(
+        arith_dialect.constant(dtype.to_ir(builder.current), v), dtype
+    )
+  else:
+    t = tl.core._to_tensor(v, builder.current)
+    return tensor(t.handle, t.type)
 
 
 class tensor(tl.core.tensor):
 
   def __add__(self, other):
-    other = _to_tensor(other)
-    assert self.shape == other.shape
-    return semantic.add(self, other)
+    return semantic.add(self, _to_tensor(other, self.dtype))
 
   def __radd__(self, other):
     return self + other
 
   def __sub__(self, other):
-    other = _to_tensor(other)
-    assert self.shape == other.shape
-    return semantic.sub(self, other)
+    return semantic.sub(self, _to_tensor(other, self.dtype))
 
   def __rsub__(self, other):
-    return semantic.sub(_to_tensor(other), self)
+    return semantic.sub(_to_tensor(other, self.dtype), self)
 
   def __mul__(self, other):
-    other = _to_tensor(other)
-    assert self.shape == other.shape
-    return semantic.mul(self, other)
+    return semantic.mul(self, _to_tensor(other, self.dtype))
 
   def __rmul__(self, other):
     return self * other
 
   def __truediv__(self, other):
-    other = _to_tensor(other)
-    assert self.shape == other.shape
-    return semantic.truediv(self, other)
+    return semantic.truediv(self, _to_tensor(other, self.dtype))
 
   def __rtruediv__(self, other):
-    other = _to_tensor(other)
-    assert self.shape == other.shape
-    return semantic.truediv(other, self)
+    return semantic.truediv(_to_tensor(other, self.dtype), self)
 
   def __floordiv__(self, other):
-    other = _to_tensor(other)
-    assert self.shape == other.shape
-    return semantic.floordiv(self, other)
+    return semantic.floordiv(self, _to_tensor(other, self.dtype))
 
   def __rfloordiv__(self, other):
-    other = _to_tensor(other)
-    assert self.shape == other.shape
-    return semantic.floordiv(other, self)
+    return semantic.floordiv(_to_tensor(other, self.dtype), self)
 
   def __mod__(self, other):
-    other = _to_tensor(other)
-    assert self.shape == other.shape
-    return semantic.mod(self, other)
+    return semantic.mod(self, _to_tensor(other, self.dtype))
 
   def __rmod__(self, other):
-    other = _to_tensor(other)
-    assert self.shape == other.shape
-    return semantic.mod(other, self)
+    return semantic.mod(_to_tensor(other, self.dtype), self)
 
   def __neg__(self):
     return semantic.minus(self)
@@ -842,9 +831,7 @@ class tensor(tl.core.tensor):
 
   # TODO(slebedev): Override other comparison methods.
   def __eq__(self, other):
-    other = _to_tensor(other)
-    assert self.shape == other.shape
-    return semantic.equal(self, other)
+    return semantic.equal(self, _to_tensor(other, self.dtype))
 
   def __getitem__(self, slices) -> tensor:
     if isinstance(slices, (slice, constexpr)):
@@ -1328,6 +1315,7 @@ class semantic:
           tt_dialect.addptr(x.handle.type, x.handle, y.handle), x.type
       )
     elif not y.dtype.is_ptr():
+      assert x.dtype == y.dtype
       if x.dtype.is_floating():
         return tensor(arith_dialect.addf(x.handle, y.handle), x.type)
       elif x.dtype.is_int():
@@ -1343,6 +1331,7 @@ class semantic:
           x.type,
       )
     elif not y.dtype.is_ptr():
+      assert x.dtype == y.dtype
       if y.dtype.is_floating():
         return tensor(arith_dialect.subf(x.handle, y.handle), x.type)
       elif y.dtype.is_int():
@@ -1351,7 +1340,7 @@ class semantic:
 
   @staticmethod
   def mul(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape
+    assert x.shape == y.shape and x.dtype == y.dtype
     if x.dtype.is_floating():
       return tensor(arith_dialect.mulf(x.handle, y.handle), x.type)
     elif x.dtype.is_int():
@@ -1360,7 +1349,7 @@ class semantic:
 
   @staticmethod
   def floordiv(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape
+    assert x.shape == y.shape and x.dtype == y.dtype
     if not x.dtype.is_int():
       raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
     if x.dtype.is_int_signed():
@@ -1370,7 +1359,7 @@ class semantic:
 
   @staticmethod
   def truediv(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape
+    assert x.shape == y.shape and x.dtype == y.dtype
     if x.dtype.is_int():
       assert y.dtype.is_int()
       x = semantic.cast(x, float32)
@@ -1382,7 +1371,7 @@ class semantic:
 
   @staticmethod
   def mod(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape
+    assert x.shape == y.shape and x.dtype == y.dtype
     if not x.dtype.is_int():
       raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
     if x.dtype.is_int_signed():
@@ -1398,31 +1387,37 @@ class semantic:
 
   @staticmethod
   def and_(x: tensor, y: tensor) -> tensor:
+    assert x.shape == y.shape and x.dtype == y.dtype
     return tensor(arith_dialect.andi(x.handle, y.handle), x.type)
 
   @staticmethod
   def or_(x: tensor, y: tensor) -> tensor:
+    assert x.shape == y.shape and x.dtype == y.dtype
     return tensor(arith_dialect.ori(x.handle, y.handle), x.type)
 
   @staticmethod
   def xor_(x: tensor, y: tensor) -> tensor:
+    assert x.shape == y.shape and x.dtype == y.dtype
     return tensor(arith_dialect.xori(x.handle, y.handle), x.type)
 
   @staticmethod
   def lshr(x: tensor, y: tensor) -> tensor:
+    assert x.shape == y.shape and x.dtype == y.dtype
     return tensor(arith_dialect.shrui(x.handle, y.handle), x.type)
 
   @staticmethod
   def ashr(x: tensor, y: tensor) -> tensor:
+    assert x.shape == y.shape and x.dtype == y.dtype
     return tensor(arith_dialect.shrsi(x.handle, y.handle), x.type)
 
   @staticmethod
   def shl(x: tensor, y: tensor) -> tensor:
+    assert x.shape == y.shape and x.dtype == y.dtype
     return tensor(arith_dialect.shli(x.handle, y.handle), x.type)
 
   @staticmethod
   def equal(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape
+    assert x.shape == y.shape and x.dtype == y.dtype
     if x.dtype.is_floating():
       return tensor(
           arith_dialect.cmpf(
@@ -1441,7 +1436,7 @@ class semantic:
 
   @staticmethod
   def not_equal(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape
+    assert x.shape == y.shape and x.dtype == y.dtype
     if x.dtype.is_floating():
       return tensor(
           arith_dialect.cmpf(
@@ -1460,7 +1455,7 @@ class semantic:
 
   @staticmethod
   def greater_than(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape
+    assert x.shape == y.shape and x.dtype == y.dtype
     if x.dtype.is_floating():
       return tensor(
           arith_dialect.cmpf(
@@ -1487,7 +1482,7 @@ class semantic:
 
   @staticmethod
   def greater_equal(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape
+    assert x.shape == y.shape and x.dtype == y.dtype
     if x.dtype.is_floating():
       return tensor(
           arith_dialect.cmpf(
@@ -1514,7 +1509,7 @@ class semantic:
 
   @staticmethod
   def less_than(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape
+    assert x.shape == y.shape and x.dtype == y.dtype
     if x.dtype.is_floating():
       return tensor(
           arith_dialect.cmpf(
@@ -1541,7 +1536,7 @@ class semantic:
 
   @staticmethod
   def less_equal(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape
+    assert x.shape == y.shape and x.dtype == y.dtype
     if x.dtype.is_floating():
       return tensor(
           arith_dialect.cmpf(
@@ -1565,8 +1560,3 @@ class semantic:
             _bool_block_like(x),
         )
     raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
-
-# TODO(slebedev): Fix the implementation above and remove this.
-for name in vars(semantic):
-  if not name.startswith("__") and hasattr(tl.semantic, name):
-    setattr(semantic, name, wrap_with_builder(getattr(tl.semantic, name)))

@@ -146,7 +146,9 @@ def _eval_index_map(
       )
   )
   return tuple(
-      i if b is pallas_core.mapped else i * b
+      i
+      if b is pallas_core.mapped
+      else i * tc._to_tensor(b, i.dtype)
       for i, b in zip(block_indices, block_mapping.block_shape)
   )
 
@@ -788,8 +790,14 @@ def _compute_pointers_from_indices(
         ndim = len(ptr_dim_offset.shape)
         ptr_dim_offset = tc.expand_dims(ptr_dim_offset, ndim)
     if start_offset is not None:
-      ptr_dim_offset += tc.broadcast_to(start_offset, ptr_dim_offset.shape)
-    stride_size = tc.broadcast_to(dim_stride, ptr_dim_offset.shape)
+      ptr_dim_offset += tc.broadcast_to(
+          tc.semantic.cast(start_offset, ptr_dim_offset.dtype),
+          ptr_dim_offset.shape,
+      )
+
+    stride_size = tc.broadcast_to(
+        tc._to_tensor(dim_stride, ptr_dim_offset.dtype), ptr_dim_offset.shape
+    )
     bcast_indices.append(ptr_dim_offset * stride_size)
   block_shapes = [
       () if not index.type.is_block() else tuple(index.type.get_block_shapes())
@@ -1238,7 +1246,7 @@ def _lower_jaxpr_to_for_loop(ctx: TritonLoweringRuleContext, jaxpr: jax_core.Jax
       lower_bound, upper_bound, step, [arg.handle for arg in args]
   )
   with ir.InsertionPoint.at_block_begin(for_op.body):
-    loop_index = tc.tensor(for_op.induction_variable, tc.int32)
+    loop_index = tc.tensor(for_op.induction_variable, bound_type)
     for_body_args = [
         tc.tensor(for_op.body.arguments[i + 1], arg.type) for i, arg in enumerate(args)
     ]
@@ -1285,7 +1293,7 @@ def _scan_lowering_rule(
   if has_loop_index:
     lb, *args = args
     lower_bound = lb.handle
-    ub = lb + tc.semantic.cast(tc._to_tensor(length), lb.dtype)
+    ub = lb + tc._to_tensor(length, lb.dtype)
     upper_bound = ub.handle
     bound_type = ub.type
   else:
