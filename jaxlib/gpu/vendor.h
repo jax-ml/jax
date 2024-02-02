@@ -66,6 +66,7 @@ typedef cublasStatus_t gpublasStatus_t;
 typedef cublasHandle_t gpublasHandle_t;
 typedef CUcontext gpuContext_t;
 typedef CUstreamCaptureMode gpustreamCaptureMode_t;
+typedef CUstreamCaptureStatus gpustreamCaptureStatus_t;
 typedef cudaDataType gpuDataType;
 typedef CUdevice gpuDevice_t;
 typedef CUdeviceptr gpuDevicePtr_t;
@@ -276,6 +277,7 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpuThreadExchangeStreamCaptureMode cuThreadExchangeStreamCaptureMode
 #define gpuStreamCreate cuStreamCreate
 #define gpuStreamDestroy cuStreamDestroy
+#define gpuStreamIsCapturing cuStreamIsCapturing
 
 #define GPU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR \
   CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR
