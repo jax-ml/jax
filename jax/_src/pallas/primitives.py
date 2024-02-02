@@ -417,8 +417,8 @@ def _swap_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
 state_discharge.register_discharge_rule(swap_p)(_swap_discharge_rule)
 
 
-def load(x_ref_or_view, idx, *, mask=None, other=None, cache_modifier="",
-         eviction_policy="", volatile=False) -> jax.Array:
+def load(x_ref_or_view, idx, *, mask=None, other=None, cache_modifier=None,
+         eviction_policy=None, volatile=False) -> jax.Array:
   x_ref, indexers = sp.get_ref_and_indexers(x_ref_or_view, idx, "load")
   args_flat, args_tree = tree_util.tree_flatten((x_ref, indexers, mask, other))
   return load_p.bind(
@@ -429,7 +429,7 @@ def load(x_ref_or_view, idx, *, mask=None, other=None, cache_modifier="",
       is_volatile=volatile,
   )
 
-def swap(x_ref_or_view, idx, val, *, mask=None, eviction_policy="",
+def swap(x_ref_or_view, idx, val, *, mask=None, eviction_policy=None,
          _function_name="swap") -> Any:
   x_ref, indexers = sp.get_ref_and_indexers(x_ref_or_view, idx, _function_name)
   args_flat, args_tree = tree_util.tree_flatten((x_ref, indexers, val, mask))
@@ -437,7 +437,7 @@ def swap(x_ref_or_view, idx, val, *, mask=None, eviction_policy="",
       *args_flat, args_tree=args_tree, eviction_policy=eviction_policy
   )
 
-def store(x_ref_or_view, idx, val, *, mask=None, eviction_policy="") -> None:
+def store(x_ref_or_view, idx, val, *, mask=None, eviction_policy=None) -> None:
   _ = swap(x_ref_or_view, idx, val, mask=mask, eviction_policy=eviction_policy,
            _function_name="store")
 

@@ -880,12 +880,14 @@ def _masked_load_lowering_rule(
   ptr = _compute_pointers_from_indices(
       ptr, ctx.block_infos[0], idx, ctx.avals_in[0].shape
   )
+  if other is not None and mask is not None:
+    other = tc.broadcast_to(other, mask.shape)
   val = tc.load(
       ptr,
       mask=mask,
       other=other,
       cache_modifier=cache_modifier,
-      volatile=is_volatile,
+      is_volatile=is_volatile,
       eviction_policy=eviction_policy,
   )
   # `tl.load` of a `*int1` returns a tensor with type `int8`, so fix the type.
@@ -931,7 +933,9 @@ def _masked_swap_lowering_rule(
   ptr = _compute_pointers_from_indices(
       ptr, ctx.block_infos[0], idx, ctx.avals_in[0].shape
   )
-  other = None if mask is None else value
+  other = None
+  if value is not None and mask is not None:
+    other = tc.broadcast_to(value, mask.shape)
   old_value = tc.load(ptr, mask=mask, other=other)
   tc.store(
       ptr,
