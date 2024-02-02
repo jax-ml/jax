@@ -970,7 +970,9 @@ We list here a history of the serialization version numbers:
     See the docstring for `export.Exported` for the precise calling convention.
     In this serialization version we also tag the platform index and the
     dimension variables arguments with `jax.global_constant` attributes.
-    Available in JAX since October 20th, 2023 (JAX 0.4.20).
+    Supported by XlaCallModule since October 27th, 2023,
+    available in JAX since October 20th, 2023 (JAX 0.4.20),
+    and the default since February 1st, 2024 (JAX 0.4.24).
 
 ## Known issues
 
