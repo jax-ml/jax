@@ -72,6 +72,13 @@ build:cuda --@xla//xla/python:enable_gpu=true
 build:cuda --@xla//xla/python:jax_cuda_pip_rpaths=true
 build:cuda --define=xla_python_enable_gpu=true
 
+# Build with nvcc for CUDA and clang for host
+build:nvcc_clang --config=cuda
+# Unfortunately, cuda_configure.bzl demands this for using nvcc + clang
+build:nvcc_clang --action_env=TF_CUDA_CLANG="1"
+build:nvcc_clang --action_env=TF_NVCC_CLANG="1"
+build:nvcc_clang --@local_config_cuda//:cuda_compiler=nvcc
+
 # Later Bazel flag values override earlier values.
 # TODO(jieying): remove enable_gpu and xla_python_enable_gpu from build:cuda
 # after the pluin is released.
