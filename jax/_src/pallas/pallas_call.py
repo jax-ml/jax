@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 from functools import partial
-import itertools as it
+from functools import reduce
 
 from typing import Any, Callable
 from collections.abc import Sequence
@@ -89,24 +89,37 @@ def _uninitialized_value(shape, dtype):
     return jnp.full(shape, jnp.iinfo(dtype).min, dtype)
   raise NotImplementedError(dtype)
 
+def _get_next_indices(grid, indices):
+  next_indices = []
+  carry = True
+  for dim_size, index in reversed(list(zip(grid, indices))):
+    i = jnp.where(carry, index + 1, index)
+    carry = dim_size == i
+    next_indices.append(jnp.where(carry, 0, i))
+  return tuple(reversed(next_indices))
+
 def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
                       interpret, debug: bool,
                       in_shapes,
                       input_output_aliases: tuple[tuple[int, int], ...],
                       grid_mapping: GridMapping,
                       **compiler_params: Any):
-  if grid_mapping.num_dynamic_grid_bounds:
-    raise NotImplementedError("interpret with dynamic grid bounds unsupported")
+  dynamic_grid_args, args = split_list(  # type: ignore
+      args, [grid_mapping.num_dynamic_grid_bounds]
+  )
   if interpret:
     # If we're in interpreter mode, we *scan* over the grid and eval the
     # discharged jaxpr. This should reproduce exactly what compiling to Triton
     # will do.
-    grid = grid_mapping.static_grid
+    dynamic_grid_args_iter = iter(dynamic_grid_args)
+    grid = tuple(
+        a if a is not None else next(dynamic_grid_args_iter)
+        for a in grid_mapping.grid
+    )
+    assert next(dynamic_grid_args_iter, None) is None
     discharged_jaxpr, consts = state_discharge.discharge_state(jaxpr, ())
     if debug:
       print(discharged_jaxpr)
-    loop_indices = jnp.array(list(it.product(*(range(g) for g in grid))),
-                             dtype=jnp.int32)
     oi_map = {v: k for k, v in input_output_aliases}
     out = []
     for i, out_shape in enumerate(out_shapes):
@@ -135,12 +148,18 @@ def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
                       for a in scratch_avals]
     carry = [*args, *out, *scratch_values]
     num_carry = len(args) + len(out)
+    grid_start_indices = (jnp.int32(0),) * len(grid)
+    if grid:
+      num_iterations = reduce(jnp.multiply, grid)
+    else:
+      # Base case is always one iteration when grid is ()
+      num_iterations = 1
     def cond(carry):
-      return carry[0] < loop_indices.shape[0]
+      i, *_ = carry
+      return i < num_iterations
     def body(carry):
-      i, *carry = carry
+      i, loop_idx, *carry = carry
       carry, scratch = split_list(carry, [num_carry])
-      loop_idx = loop_indices[i]
       start_indices = [
           None if bm is None else bm.compute_start_indices(loop_idx, *scalars)
           for bm in grid_mapping.block_mappings]
@@ -177,8 +196,10 @@ def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
       blocks, out_scratch = split_list(blocks, [num_carry])
       carry = map(_maybe_dynamic_update_slice, start_indices, block_shapes,
                   carry, blocks, is_indexing_dim)
-      return (i + 1, *carry, *out_scratch)
-    (_, *carry) = lax.while_loop(cond, body, (jnp.int32(0), *carry))
+      return (i + 1, _get_next_indices(grid, loop_idx), *carry, *out_scratch)
+    (_, _, *carry) = lax.while_loop(
+        cond, body, (jnp.int32(0), grid_start_indices, *carry)
+    )
     _, out, _ = split_list(carry, [len(args), len(out)])
     return out
   return xla.apply_primitive(pallas_call_p, *args, jaxpr=jaxpr, name=name,
