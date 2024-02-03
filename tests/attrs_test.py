@@ -27,6 +27,7 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip, safe_map
 
+from jax.experimental import attrs
 from jax.experimental.attrs import jax_setattr, jax_getattr
 
 config.parse_flags_with_absl()
@@ -206,6 +207,146 @@ class AttrsTest(jtu.JaxTestCase):
 
     jax.grad(double_it_10)(1.0)
     self.assertAllClose(thing.x, 1024., check_dtypes=False)
+
+
+class AttrsJVPTest(jtu.JaxTestCase):
+
+  @parameterized.parameters([True, False])
+  def test_jvp_basic(self, jit):
+    thing = Thing(2.0)
+
+    def f():
+      x = jax_getattr(thing, 'x')
+      x = jnp.sin(x)
+      jax_setattr(thing, 'x', x)
+
+    if jit:
+      f = jax.jit(f)
+
+    _, _, attr_tangents = attrs.jvp(f, (), (), [(thing, 'x', 1.0)])
+    self.assertAllClose(thing.x, jnp.sin(2.0), check_dtypes=False)
+    (thing_, attr_, tangent_), = attr_tangents
+    self.assertIs(thing, thing_)
+    self.assertEqual(attr_, 'x')
+    self.assertAllClose(tangent_, jnp.cos(2.0), check_dtypes=False)
+
+  @parameterized.parameters([True, False])
+  def test_jvp_clobber(self, jit):
+    thing = Thing(2.0)
+
+    def f():
+      x = jax_getattr(thing, 'x')
+      x = jnp.sin(2.0)
+      jax_setattr(thing, 'x', x)
+
+    if jit:
+      f = jax.jit(f)
+
+    _, _, attr_tangents = attrs.jvp(f, (), (), [(thing, 'x', 1.0)])
+    self.assertAllClose(thing.x, jnp.sin(2.0), check_dtypes=False)
+    self.assertEmpty(attr_tangents)
+
+  @parameterized.parameters([True, False])
+  def test_jvp_nowrite(self, jit):
+    thing = Thing(2.0)
+
+    def f():
+      x = jax_getattr(thing, 'x')
+
+    if jit:
+      f = jax.jit(f)
+
+    _, _, attr_tangents = attrs.jvp(f, (), (), [(thing, 'x', 1.0)])
+    self.assertAllClose(thing.x, 2.0, check_dtypes=False)
+    (thing_, attr_, tangent_), = attr_tangents
+    self.assertIs(thing, thing_)
+    self.assertEqual(attr_, 'x')
+    self.assertAllClose(tangent_, 1.0, check_dtypes=False)
+
+  def test_jit_of_jvp(self):
+    thing = Thing(2.0)
+
+    def f():
+      x = jax_getattr(thing, 'x')
+      x = jnp.sin(x)
+      jax_setattr(thing, 'x', x)
+
+    @jax.jit
+    def g():
+      _, _, attr_tangents = attrs.jvp(f, (), (), [(thing, 'x', 1.0)])
+      (thing_, attr_, tangent_), = attr_tangents
+      self.assertIs(thing, thing_)
+      self.assertEqual(attr_, 'x')
+      return jax_getattr(thing, 'x'), tangent_
+
+    x, tangent = g()
+    self.assertAllClose(x, jnp.sin(2.0), check_dtypes=False)
+    self.assertAllClose(tangent, jnp.cos(2.0), check_dtypes=False)
+
+  @parameterized.parameters([True, False])
+  def test_jvp_higher_order(self, jit):
+    thing = Thing(2.0)
+
+    def f(y):
+      x = jax_getattr(thing, 'x')
+      w = jnp.tan(jnp.sin(y) * jnp.cos(x))
+      z = jnp.tan(jnp.cos(y) * jnp.sin(x))
+      jax_setattr(thing, 'x', z)
+      return w
+    if jit:
+      f = jax.jit(f)
+
+    def f_ref(x, y):
+      w = jnp.tan(jnp.sin(y) * jnp.cos(x))
+      z = jnp.tan(jnp.cos(y) * jnp.sin(x))
+      return w, z
+
+    x     = jax.random.normal(jax.random.key(0), (3,))
+    x_dot = jax.random.normal(jax.random.key(1), (3,))
+    y     = jax.random.normal(jax.random.key(2), (3,))
+    y_dot = jax.random.normal(jax.random.key(3), (3,))
+
+    setattr(thing, 'x', x)
+    w, w_dot, [(_, _, z_dot)] = attrs.jvp(f, (y,), (y_dot,), [(thing, 'x', x_dot)])
+    z = getattr(thing, 'x')
+
+    (w_, z_), (w_dot_, z_dot_) = jax.jvp(f_ref, (x, y), (x_dot, y_dot))
+
+    self.assertAllClose(w, w_, check_dtypes=False)
+    self.assertAllClose(z, z_, check_dtypes=False)
+    self.assertAllClose(w_dot, w_dot_, check_dtypes=False)
+    self.assertAllClose(z_dot, z_dot_, check_dtypes=False)
+
+    def g(x_dot, y, y_dot):
+      w, w_dot, [(_, _, z_dot)] = attrs.jvp(f, (y,), (y_dot,), [(thing, 'x', x_dot)])
+      return w, w_dot, z_dot
+
+    def g_ref(x, x_dot, y, y_dot):
+      (w, z), (w_dot, z_dot) = jax.jvp(f_ref, (x, y), (x_dot, y_dot))
+      return w, w_dot, z, z_dot
+
+    x_dot2    = jax.random.normal(jax.random.key(3), (3,))
+    x_ddot    = jax.random.normal(jax.random.key(4), (3,))
+    y_dot2    = jax.random.normal(jax.random.key(5), (3,))
+    y_ddot    = jax.random.normal(jax.random.key(6), (3,))
+
+    setattr(thing, 'x', x)
+    (w, w_dot, z_dot), (w_dot2, w_ddot, z_ddot), [(_, _, z_dot2)] = \
+        attrs.jvp(g, (x_dot, y, y_dot), (x_ddot, y_dot2, y_ddot),
+                  [(thing, 'x', x_dot2)])
+    z = getattr(thing, 'x')
+
+    (w_, w_dot_, z_, z_dot_), (w_dot2_, w_ddot_, z_dot2_, z_ddot_) = \
+        jax.jvp(g_ref, (x, x_dot, y, y_dot), (x_dot2, x_ddot, y_dot2, y_ddot))
+
+    self.assertAllClose(     w,      w_, check_dtypes=False)
+    self.assertAllClose(     z,      z_, check_dtypes=False)
+    self.assertAllClose( w_dot,  w_dot_, check_dtypes=False)
+    self.assertAllClose( z_dot,  z_dot_, check_dtypes=False)
+    self.assertAllClose(w_dot2, w_dot2_, check_dtypes=False)
+    self.assertAllClose(z_dot2, z_dot2_, check_dtypes=False)
+    self.assertAllClose(w_ddot, w_ddot_, check_dtypes=False)
+    self.assertAllClose(z_ddot, z_ddot_, check_dtypes=False)
 
 
 if __name__ == '__main__':
