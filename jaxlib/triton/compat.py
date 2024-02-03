@@ -622,8 +622,13 @@ _FLOAT_TYPES = (
 
 dtype = tl.core.dtype
 
-block_type = tl.core.block_type
-function_type = tl.core.function_type
+
+class block_type(tl.core.block_type):
+  def __init__(self, element_ty: dtype, shape: list[Any]) -> Any:
+    super().__init__(element_ty, shape)
+    self.shape = tuple(self.shape)
+
+
 pointer_type = tl.core.pointer_type
 
 void = tl.core.void
@@ -639,13 +644,10 @@ uint32 = tl.core.uint32
 uint64 = tl.core.uint64
 
 
-def _bool_block_like(v: tensor) -> block_type:
+def _bool_block_like(v: tensor) -> dtype:
   if not v.type.is_block():
     return int1
-  return block_type(int1, v.type.shape)
-
-
-constexpr = tl.core.constexpr
+  return block_type(int1, v.shape)
 
 
 def _to_tensor(v, dtype: dtype | None = None) -> "tensor":
@@ -660,72 +662,16 @@ def _to_tensor(v, dtype: dtype | None = None) -> "tensor":
     return tensor(t.handle, t.type)
 
 
-class tensor(tl.core.tensor):
+class tensor:
 
-  def __add__(self, other):
-    return semantic.add(self, _to_tensor(other, self.dtype))
+  def __init__(self, handle: ir.Value, type: dtype):
+    self.handle = handle
+    self.shape = tuple(type.shape) if type.is_block() else ()
+    self.type = type
+    self.dtype = type.scalar
 
-  def __radd__(self, other):
-    return self + other
-
-  def __sub__(self, other):
-    return semantic.sub(self, _to_tensor(other, self.dtype))
-
-  def __rsub__(self, other):
-    return semantic.sub(_to_tensor(other, self.dtype), self)
-
-  def __mul__(self, other):
-    return semantic.mul(self, _to_tensor(other, self.dtype))
-
-  def __rmul__(self, other):
-    return self * other
-
-  def __truediv__(self, other):
-    return semantic.truediv(self, _to_tensor(other, self.dtype))
-
-  def __rtruediv__(self, other):
-    return semantic.truediv(_to_tensor(other, self.dtype), self)
-
-  def __floordiv__(self, other):
-    return semantic.floordiv(self, _to_tensor(other, self.dtype))
-
-  def __rfloordiv__(self, other):
-    return semantic.floordiv(_to_tensor(other, self.dtype), self)
-
-  def __mod__(self, other):
-    return semantic.mod(self, _to_tensor(other, self.dtype))
-
-  def __rmod__(self, other):
-    return semantic.mod(_to_tensor(other, self.dtype), self)
-
-  def __neg__(self):
-    return semantic.minus(self)
-
-  def __invert__(self):
-    return semantic.invert(self)
-
-  # TODO(slebedev): Override other comparison methods.
-  def __eq__(self, other):
-    return semantic.equal(self, _to_tensor(other, self.dtype))
-
-  def __getitem__(self, slices) -> tensor:
-    if isinstance(slices, (slice, constexpr)):
-      slices = [slices]
-    t = self
-    for axis, s in enumerate(slices):
-      if s is None or isinstance(s, constexpr) and s.value is None:
-        t = expand_dims(t, axis)
-      elif (
-          isinstance(s, slice)
-          and s.start is s.stop is s.step is None
-      ):
-        pass
-      else:
-        raise IndexError(f"unsupported tensor index: {s}")
-    return t
-
-  def to(self, *args, **kwargs) -> tensor:
-    raise NotImplementedError
+  def __str__(self) -> str:
+    return f"{self.dtype}[{', '.join(map(str, self.shape))}]"
 
 
 def program_id(axis: int) -> tensor:
@@ -901,13 +847,11 @@ def arange(start: int, end: int) -> tensor:
   return tensor(tt_dialect.make_range(ir_ty, start, end), ty)
 
 
-def broadcast_to(x: object, shape: Sequence[int | constexpr]) -> tensor:
-  x = _to_tensor(x)
+def broadcast_to(x: tensor, shape: Sequence[int]) -> tensor:
   if not x.type.is_block():
     return splat(x, shape)
   elif x.shape == shape:
     return x
-  shape = [dim.__index__() for dim in shape]
   x_ir_type = ir.RankedTensorType(x.handle.type)
   result_ir_type = ir.RankedTensorType.get(
       shape, x_ir_type.element_type, x_ir_type.encoding
@@ -918,22 +862,19 @@ def broadcast_to(x: object, shape: Sequence[int | constexpr]) -> tensor:
   )
 
 
-def splat(x: object, shape: Sequence[int | constexpr]) -> tensor:
-  x = _to_tensor(x)
+def splat(x: tensor, shape: Sequence[int]) -> tensor:
   if x.type.is_block():
     raise ValueError("cannot splat a block tensor")
   if len(shape) == 0:
     return x
-  shape = [dim.__index__() for dim in shape]
   result_ir_type = ir.RankedTensorType.get(shape, x.handle.type)
   return tensor(
       tt_dialect.splat(result_ir_type, x.handle), block_type(x.dtype, shape)
   )
 
 
-def expand_dims(x: object, axis: int) -> tensor:
-  x = _to_tensor(x)
-  dst_shape = [dim.__index__() for dim in x.shape]
+def expand_dims(x: tensor, axis: int) -> tensor:
+  dst_shape = list(x.shape)
   dst_shape.insert(axis, 1)
   if not x.type.is_block():
     return splat(input, dst_shape)
@@ -967,9 +908,7 @@ def dot(
     max_num_imprecise_acc: int | None = None,
     out_dtype: dtype = float32,
 ) -> tensor:
-  x_dims = [dim.__index__() for dim in x.shape]
-  y_dims = [dim.__index__() for dim in y.shape]
-  if min(*x_dims, *y_dims) < 16:
+  if min(*x.shape, *y.shape) < 16:
     raise ValueError("all dimensions of x and y must be >= 16 ")
   if out_dtype.is_bf16():
     raise ValueError(f"out_dtype={out_dtype} is unsupported")
@@ -993,8 +932,8 @@ def dot(
   if element_type != out_dtype:
     raise TypeError(f"out_dtype={out_dtype} does not match element type {element_type}")
 
-  m, _ = x_dims
-  _, n = y_dims
+  m, _ = x.shape
+  _, n = y.shape
   result_type = block_type(element_type, [m, n])
 
   if acc is None:
@@ -1096,8 +1035,7 @@ def atomic_add(
   return _atomic_rmw(op, ptr, val, mask, semantic, sync_scope)
 
 
-def abs(x: object) -> tensor:
-  x = _to_tensor(x)
+def abs(x: tensor) -> tensor:
   dtype = x.dtype
   if dtype.is_floating():
     return tensor(math_dialect.absf(x.handle), x.type)
@@ -1107,41 +1045,6 @@ def abs(x: object) -> tensor:
     return x
   else:
     raise ValueError(f"unsupported dtype: {dtype}")
-
-
-def exp(x: object) -> tensor:
-  x = _to_tensor(x)
-  if x.dtype != float32 and x.dtype != float64:
-    raise ValueError(f"unsupported dtype: {x.dtype}")
-  return tensor(math_dialect.exp(x.handle), x.type)
-
-
-def log(x: object) -> tensor:
-  x = _to_tensor(x)
-  if x.dtype != float32 and x.dtype != float64:
-    raise ValueError(f"unsupported dtype: {x.dtype}")
-  return tensor(math_dialect.log(x.handle), x.type)
-
-
-def sqrt(x: object) -> tensor:
-  x = _to_tensor(x)
-  if x.dtype != float32 and x.dtype != float64:
-    raise ValueError(f"unsupported dtype: {x.dtype}")
-  return tensor(math_dialect.sqrt(x.handle), x.type)
-
-
-def sin(x: object) -> tensor:
-  x = _to_tensor(x)
-  if x.dtype != float32 and x.dtype != float64:
-    raise ValueError(f"unsupported dtype: {x.dtype}")
-  return tensor(math_dialect.sin(x.handle), x.type)
-
-
-def cos(x: object) -> tensor:
-  x = _to_tensor(x)
-  if x.dtype != float32 and x.dtype != float64:
-    raise ValueError(f"unsupported dtype: {x.dtype}")
-  return tensor(math_dialect.cos(x.handle), x.type)
 
 
 def multiple_of(x: tensor, values: Sequence[int]) -> tensor:
