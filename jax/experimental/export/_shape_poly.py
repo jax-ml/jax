@@ -949,6 +949,9 @@ class SymbolicScope:
           f"and found for '{other}' ({other_descr}) scope {other.scope}\n"
           f"See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#user-specified-symbolic-constraints.")
 
+  def _clear_caches(self):
+    self._bounds_cache.clear()
+
 
 # Set by the shape_poly_decision.py module.
 # Calling convention:
