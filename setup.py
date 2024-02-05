@@ -28,7 +28,7 @@ _latest_jaxlib_version_on_pypi = '0.4.23'
 _available_cuda11_cudnn_versions = ['86']
 _default_cuda11_cudnn_version = '86'
 _default_cuda12_cudnn_version = '89'
-_libtpu_version = '0.1.dev20240123'
+_libtpu_version = '0.1.dev20240205'
 
 def load_version_module(pkg_path):
   spec = importlib.util.spec_from_file_location(
