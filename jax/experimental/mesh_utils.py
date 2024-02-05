@@ -315,9 +315,7 @@ def create_device_mesh(
     physical_mesh = _get_physical_tpu_mesh(devices)
     if contiguous_submeshes:
       physical_mesh = _transpose_trick(physical_mesh, mesh_shape)
-    device_mesh, assignment = _create_device_mesh_for_nd_torus(
-        physical_mesh, mesh_shape)
-    logger.info('_create_device_mesh_for_nd_torus assignment: %s', assignment)
+    device_mesh, _ = _create_device_mesh_for_nd_torus(physical_mesh, mesh_shape)
     return device_mesh
   else:
     device_mesh = np.asarray(devices).reshape(mesh_shape)
