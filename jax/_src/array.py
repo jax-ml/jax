@@ -376,8 +376,11 @@ class ArrayImpl(basearray.Array):
 
     if self.is_fully_addressable or self.is_fully_replicated:
       line_width = np.get_printoptions()["linewidth"]
-      s = np.array2string(self._value, prefix=prefix, suffix=',',
-                          separator=', ', max_line_width=line_width)
+      if self.size == 0:
+        s = f"[], shape={self.shape}"
+      else:
+        s = np.array2string(self._value, prefix=prefix, suffix=',',
+                            separator=', ', max_line_width=line_width)
       last_line_len = len(s) - s.rfind('\n') + 1
       sep = ' '
       if last_line_len + len(dtype_str) + 1 > line_width:
