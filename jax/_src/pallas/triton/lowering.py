@@ -60,7 +60,6 @@ from jax_triton import triton_lib
 from jax_triton.triton_lib import compile_ttir_to_ptx_inplace
 from jax_triton.triton_lib import get_triton_type
 import numpy as np
-from triton._C.libtriton import ir as tl_ir
 import triton.backends.nvidia.compiler as cb
 from triton.compiler import code_generator as code_gen
 
@@ -1568,10 +1567,6 @@ def compile_jaxpr(
           debug=debug,
       )
   )
-  context = tl_ir.context()
-  tl_ir.load_dialects(context)
-  cuda_backend.load_dialects(context)
-
   lowering_result = lower_jaxpr_to_triton_module(
       jaxpr, in_shapes, grid_mapping, name, cuda_options
   )
@@ -1580,7 +1575,6 @@ def compile_jaxpr(
   ptx, name, shared_mem_bytes, compute_capability, _ = (
       compile_ttir_to_ptx_inplace(
           lowering_result.module,
-          context,
           cuda_backend,
           cuda_options,
           device=device,
