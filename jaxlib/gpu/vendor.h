@@ -254,6 +254,10 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPUSPARSE_SPARSETODENSE_ALG_DEFAULT CUSPARSE_SPARSETODENSE_ALG_DEFAULT
 #define GPUSPARSE_STATUS_SUCCESS CUSPARSE_STATUS_SUCCESS
 
+#define GPU_STREAM_CAPTURE_STATUS_ACTIVE CU_STREAM_CAPTURE_STATUS_ACTIVE
+#define GPU_STREAM_CAPTURE_MODE_RELAXED CU_STREAM_CAPTURE_MODE_RELAXED
+#define GPU_STREAM_NON_BLOCKING CU_STREAM_NON_BLOCKING
+
 #define gpuCtxGetDevice cuCtxGetDevice
 #define gpuCtxPopCurrent cuCtxPopCurrent
 #define gpuCtxPushCurrent cuCtxPushCurrent
@@ -332,6 +336,8 @@ typedef hipsolverFillMode_t gpusolverFillMode_t;
 typedef hipblasHandle_t gpublasHandle_t;
 typedef hipblasStatus_t gpublasStatus_t;
 typedef hipCtx_t gpuContext_t;
+typedef hipStreamCaptureMode gpustreamCaptureMode_t;
+typedef hipStreamCaptureStatus gpustreamCaptureStatus_t;
 typedef hipDataType gpuDataType;
 typedef hipDevice_t gpuDevice_t;
 typedef hipDeviceptr_t gpuDevicePtr_t;
@@ -494,6 +500,10 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPUSPARSE_SPARSETODENSE_ALG_DEFAULT HIPSPARSE_SPARSETODENSE_ALG_DEFAULT
 #define GPUSPARSE_STATUS_SUCCESS HIPSPARSE_STATUS_SUCCESS
 
+#define GPU_STREAM_CAPTURE_STATUS_ACTIVE hipStreamCaptureStatusActive 
+#define GPU_STREAM_CAPTURE_MODE_RELAXED hipStreamCaptureModeRelaxed
+#define GPU_STREAM_NON_BLOCKING hipStreamNonBlocking   
+
 #define gpuGetLastError hipGetLastError
 #define gpuGetErrorString hipGetErrorString
 #define gpuMemcpyAsync hipMemcpyAsync
@@ -526,6 +536,10 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpuMemcpyDtoHAsync hipMemcpyDtoHAsync
 #define gpuMemcpyHtoDAsync hipMemcpyHtoDAsync
 #define gpuMemsetD8Async hipMemsetD8Async
+#define gpuThreadExchangeStreamCaptureMode hipThreadExchangeStreamCaptureMode
+#define gpuStreamCreate hipStreamCreateWithFlags
+#define gpuStreamDestroy hipStreamDestroy
+#define gpuStreamIsCapturing  hipStreamIsCapturing
 
 #define GPU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR \
   hipDeviceAttributeComputeCapabilityMajor
