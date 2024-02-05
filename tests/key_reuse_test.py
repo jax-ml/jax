@@ -573,6 +573,7 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
   random_bits_error = "In random_bits, key values .+ are already consumed.*"
   random_split_error = "In random_split, key values .+ are already consumed.*"
   generic_error = ".*key values .+ are already consumed.*"
+  pjit_error = "In pjit, key values a are already consumed."
 
   def check_key_reuse(self, f, *args):
     if self.use_forwarding:
@@ -781,6 +782,18 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
       return jax.lax.while_loop(cond_fun, body_fun, 0)
     with self.assertRaisesRegex(KeyReuseError, "while_loop cond function leads to key reuse"):
       self.check_key_reuse(f, 0)
+
+  def test_pjit_consumed_input(self):
+    @jax.jit
+    def g(key, x):  # doesn't consume key
+      return x
+
+    def f(seed):
+      key = jax.random.key(seed)
+      x = jax.random.bits(key)
+      return g(key, x)
+
+    self.check_key_reuse(f, 0)
 
 
 class KeyReuseIntegrationTestSimple(KeyReuseIntegrationTest):
