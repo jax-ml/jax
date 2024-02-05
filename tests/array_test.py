@@ -231,6 +231,12 @@ class JaxArrayTest(jtu.JaxTestCase):
         input_shape, jax.sharding.NamedSharding(global_mesh, P('x', 'y')))
     self.assertStartsWith(repr(arr), "Array(")
 
+  def test_empty_repr(self):
+    shape = (0, 5)
+    dtype = 'float32'
+    x = jnp.empty(shape, dtype)
+    self.assertEqual(repr(x), f"Array([], shape={shape}, dtype={dtype})")
+
   def test_jnp_array(self):
     arr = jnp.array([1, 2, 3])
     self.assertIsInstance(arr, array.ArrayImpl)
