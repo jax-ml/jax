@@ -22,7 +22,7 @@ from jax import dtypes
 from jax import lax
 from jax._src.lib import xla_client
 from jax._src.util import safe_zip
-from jax._src.numpy.util import check_arraylike, implements
+from jax._src.numpy.util import check_arraylike, implements, promote_dtypes_inexact
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import ufuncs, reductions
 from jax._src.typing import Array, ArrayLike
@@ -32,7 +32,11 @@ Shape = Sequence[int]
 def _fft_norm(s: Array, func_name: str, norm: str) -> Array:
   if norm == "backward":
     return jnp.array(1)
-  elif norm == "ortho":
+
+  # Avoid potential integer overflow
+  s, = promote_dtypes_inexact(s)
+
+  if norm == "ortho":
     return ufuncs.sqrt(reductions.prod(s)) if func_name.startswith('i') else 1/ufuncs.sqrt(reductions.prod(s))
   elif norm == "forward":
     return reductions.prod(s) if func_name.startswith('i') else 1/reductions.prod(s)
