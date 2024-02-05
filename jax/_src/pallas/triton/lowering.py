@@ -35,10 +35,14 @@ from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import state
 from jax._src import util
+from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 from jax._src.lax.control_flow import for_loop
 from jax._src.lib import gpu_triton as triton_kernel_call_lib
 from jax._src.lib import hlo_helpers
 from jax._src.lib.mlir import ir
+from jax._src.lib.mlir.dialects import arith as arith_dialect
+from jax._src.lib.mlir.dialects import scf as scf_dialect
 from jax._src.lib.triton import compat as tc
 from jax._src.lib.triton import dialect as tt_dialect
 from jax._src.pallas import core as pallas_core
@@ -53,8 +57,6 @@ from jax._src.util import merge_lists
 from jax._src.util import partition_list
 from jax._src.util import split_list
 from jax._src.util import weakref_lru_cache
-from jax._src.interpreters import mlir
-from jax._src.interpreters import partial_eval as pe
 import jax.numpy as jnp
 from jax_triton import triton_lib
 from jax_triton.triton_lib import compile_ttir_to_ptx_inplace
@@ -267,7 +269,7 @@ def lower_jaxpr_to_triton_module(
         res_attrs=ir.DictAttr.get(dict(noinline=ir.BoolAttr.get(False))),
     )
     fn.arg_attrs = ir.ArrayAttr.get(
-        [ir.DictAttr.get({"tt.divisibility": builder.get_int32_attr(32)})]
+        [ir.DictAttr.get({"tt.divisibility": mlir.i32_attr(32)})]
         * len(param_types)
     )
     fn.body.blocks.append(*fn_type.inputs)
@@ -435,7 +437,7 @@ def _associative_scan_lowering(
   if consts:
     raise NotImplementedError("Associative scan with constants not supported.")
   element_types = [arg.type.scalar for arg in flat_args]
-  scan_op = ctx.builder.create_scan([t.handle for t in flat_args], axis)
+  scan_op = tt_dialect.ScanOp([t.handle for t in flat_args], axis)
   param_types = element_types * 2
   ir_param_types = [ty.to_ir(ctx.builder) for ty in param_types]
   entry = scan_op.regions[0].blocks.append(*ir_param_types)
@@ -446,7 +448,7 @@ def _associative_scan_lowering(
     results = lower_jaxpr_to_triton_ir(
         ctx.context, combine_jaxpr, None, *combine_args
     )
-    ctx.builder.create_scan_ret(*(r.handle for r in results))
+    tt_dialect.scan_return([r.handle for r in results])
   scan_op.verify()
   def wrap_tensor(x, scalar_ty):
     if ctx.avals_out[0].shape:
@@ -1039,7 +1041,7 @@ def _reduction_lowering(body, ctx: TritonLoweringRuleContext, a, axes):
   if consts:
     raise NotImplementedError("Reductions with constants not supported.")
   element_types = [arg.type.scalar for arg in flat_args]
-  reduce_op = ctx.builder.create_reduce([t.handle for t in flat_args], axis)
+  reduce_op = tt_dialect.ReduceOp([t.handle for t in flat_args], axis)
   param_types = element_types * 2
   ir_param_types = [ty.to_ir(ctx.builder) for ty in param_types]
   entry = reduce_op.regions[0].blocks.append(*ir_param_types)
@@ -1050,7 +1052,7 @@ def _reduction_lowering(body, ctx: TritonLoweringRuleContext, a, axes):
     results = lower_jaxpr_to_triton_ir(
         ctx.context, combine_jaxpr, None, *combine_args
     )
-    ctx.builder.create_reduce_ret(*(r.handle for r in results))
+    tt_dialect.reduce_return([r.handle for r in results])
   reduce_op.verify()
 
   def wrap_tensor(x, scalar_ty):
@@ -1209,9 +1211,9 @@ def _for_lowering_rule(
   del which_linear
   if reverse or unroll != 1:
     raise NotImplementedError
-  lower_bound = ctx.builder.get_int32(0)
-  upper_bound = ctx.builder.get_int32(nsteps)
-  step = ctx.builder.get_int32(1)
+  lower_bound = _i32_constant(0)
+  upper_bound = _i32_constant(nsteps)
+  step = _i32_constant(1)
   init_args = args
   # Partially discharge state from jaxpr for non-pointers
   should_discharge = [not isinstance(a, AbstractRef) for a in ctx.avals_in]
@@ -1228,7 +1230,7 @@ def _for_lowering_rule(
   )
   ptrs, _ = partition_list(should_discharge, init_args)
   non_loop_args, loop_args = partition_list(is_loop_arg, init_args)
-  for_op = ctx.builder.create_for_op(
+  for_op = scf_dialect.ForOp(
       lower_bound, upper_bound, step, [arg.handle for arg in loop_args]
   )
   with ir.InsertionPoint(for_op.body):
@@ -1248,7 +1250,7 @@ def _for_lowering_rule(
     )
     all_out = merge_lists(should_discharge, ptrs, out_discharged)
     _, loop_out = partition_list(is_loop_arg, all_out)
-    ctx.builder.create_yield_op([arg.handle for arg in loop_out])
+    scf_dialect.yield_([arg.handle for arg in loop_out])
   for_out = [tc.tensor(r, a.type) for r, a in zip(for_op.results_, loop_args)]
   return merge_lists(is_loop_arg, non_loop_args, for_out)
 
@@ -1263,11 +1265,11 @@ def _lower_jaxpr_to_for_loop(ctx: TritonLoweringRuleContext, jaxpr: jax_core.Jax
   if step != 1:
     raise NotImplementedError
   if bound_type == tc.int64:
-    step = ctx.builder.get_int64(step)
+    step = _i64_constant(step)
   else:
-    step = ctx.builder.get_int32(step)
+    step = _i32_constant(step)
 
-  for_op = ctx.builder.create_for_op(
+  for_op = scf_dialect.ForOp(
       lower_bound, upper_bound, step, [arg.handle for arg in args]
   )
   with ir.InsertionPoint.at_block_begin(for_op.body):
@@ -1284,7 +1286,7 @@ def _lower_jaxpr_to_for_loop(ctx: TritonLoweringRuleContext, jaxpr: jax_core.Jax
         jaxpr,
         ctx.block_infos,
         *jaxpr_args)
-    ctx.builder.create_yield_op([arg.handle for arg in all_out])
+    scf_dialect.yield_([arg.handle for arg in all_out])
 
   return [tc.tensor(r, a.type) for r, a in zip(for_op.results_, args)]
 
@@ -1322,8 +1324,8 @@ def _scan_lowering_rule(
     upper_bound = ub.handle
     bound_type = ub.type
   else:
-    lower_bound = ctx.builder.get_int32(0)
-    upper_bound = ctx.builder.get_int32(length)
+    lower_bound = _i32_constant(0)
+    upper_bound = _i32_constant(length)
     bound_type = tc.int32
   for_out = _lower_jaxpr_to_for_loop(
       ctx, jaxpr, lower_bound, upper_bound, consts, *args,
@@ -1417,7 +1419,6 @@ def _while_lowering_rule(
   if result is not None:
     return result
   # Fall back to default while lowering
-  num_args = len(args)
   cond_consts, body_consts, carry = util.split_list(
       args, [cond_nconsts, body_nconsts]
   )
@@ -1428,7 +1429,7 @@ def _while_lowering_rule(
   body_const_types = [a.type.to_ir(ctx.builder) for a in body_consts]
   carry_types = [a.type.to_ir(ctx.builder) for a in carry]
   all_types = [*cond_const_types, *body_const_types, *carry_types]
-  while_op = ctx.builder.create_while_op(
+  while_op = scf_dialect.WhileOp(
       all_types,
       [arg.handle for arg in args],
   )
@@ -1449,7 +1450,7 @@ def _while_lowering_rule(
         [*cond_const_block_infos, *carry_block_infos],
         *cond_args,
     )
-    ctx.builder.create_condition_op(cond.handle, before_block.arguments)
+    scf_dialect.condition(cond.handle, before_block.arguments)
 
   after_block = while_op.after.blocks.append(*all_types)
   cond_consts_, body_consts_, carry_ = util.split_list(
@@ -1479,7 +1480,7 @@ def _while_lowering_rule(
     loop_out_handles = [a.handle for a in loop_out]
     all_handles = [*cond_consts_handles, *body_consts_handles, *loop_out_handles]
     if all_handles:
-      ctx.builder.create_yield_op(all_handles)
+      scf_dialect.yield_(all_handles)
 
   all_out =  [
       tc.tensor(r, a.type) for r, a in zip(while_op.results_, args)
@@ -1511,14 +1512,14 @@ def _cond_lowering_rule(
 
   use_branch0 = tc.semantic.equal(index, tc._to_tensor(0, index.dtype))
   # TODO(bjp): Switch to scf.index_switch once exposed in triton.cc
-  if_op = ctx.builder.create_if_op(out_ir_types, use_branch0.handle, with_else=True)
+  if_op = scf_dialect.IfOp(use_branch0.handle, out_ir_types, hasElse=True)
   with ir.InsertionPoint.at_block_begin(if_op.then_block):
     outs0 = lower_jaxpr_to_triton_ir(
         ctx.context,
         branches[0].jaxpr,
         block_infos[1:],
         *args)
-    ctx.builder.create_yield_op([out.handle for out in outs0])
+    scf_dialect.yield_([out.handle for out in outs0])
   with ir.InsertionPoint.at_block_begin(if_op.else_block):
     # TODO(bjp): Instead of linear nest of 'if's, partition into halves.
     if len(branches) > 2:
@@ -1535,12 +1536,20 @@ def _cond_lowering_rule(
           branches[1].jaxpr,
           block_infos[1:],
           *args)
-    ctx.builder.create_yield_op([out.handle for out in outs1])
+    scf_dialect.yield_([out.handle for out in outs1])
 
   return map(tc.tensor, if_op.results_, out_types)
 
 
 triton_lowering_rules[lax.cond_p] = _cond_lowering_rule
+
+
+def _i32_constant(v: int) -> ir.Value:
+  return arith_dialect.constant(ir.IntegerType.get_signless(32), v)
+
+
+def _i64_constant(v: int) -> ir.Value:
+  return arith_dialect.constant(ir.IntegerType.get_signless(64), v)
 
 
 @weakref_lru_cache

@@ -27,7 +27,6 @@ from typing import Any
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith as arith_dialect
 from jaxlib.mlir.dialects import math as math_dialect
-from jaxlib.mlir.dialects import scf as scf_dialect
 import numpy as np
 import triton.backends.nvidia.compiler as cb
 import triton.language as tl
@@ -68,39 +67,6 @@ class builder:
     self.context.__exit__(*exc_info)
     del _tls.builder
 
-  def create_module(self, *args):
-    raise NotImplementedError
-
-  def set_insertion_point_to_start(self, *args):
-    raise NotImplementedError
-
-  def set_insertion_point_to_end(self, *args):
-    raise NotImplementedError
-
-  def set_insertion_point_after(self, *args):
-    raise NotImplementedError
-
-  def get_insertion_block(self, *args):
-    raise NotImplementedError
-
-  def get_insertion_point(self, *args):
-    raise NotImplementedError
-
-  def restore_insertion_point(self, *args):
-    raise NotImplementedError
-
-  def set_loc(self, *args):
-    raise NotImplementedError
-
-  def get_loc(self, *args):
-    raise NotImplementedError
-
-  def get_bool_attr(self, v: bool) -> ir.BoolAttr:
-    return ir.BoolAttr.get(v)
-
-  def get_int32_attr(self, v: int) -> ir.IntegerAttr:
-    return ir.IntegerAttr.get(ir.IntegerType.get_signless(32), v)
-
   def get_int1(self, v: bool) -> arith_dialect.ConstantOp:
     return arith_dialect.ConstantOp(self.get_int1_ty(), v)
 
@@ -132,18 +98,6 @@ class builder:
 
   def get_fp64(self, v: float) -> arith_dialect.ConstantOp:
     return arith_dialect.ConstantOp(ir.F64Type.get(), float(v))
-
-  def get_null_value(self, t: ir.Type) -> ir.Value:
-    if isinstance(t, ir.IntegerType):
-      return arith_dialect.ConstantOp(t, 0)
-    elif isinstance(t, _FLOAT_TYPES):
-      return arith_dialect.ConstantOp(t, 0.0)
-    raise NotImplementedError
-
-  def get_all_ones_value(self, t: ir.Type) -> ir.Value:
-    if isinstance(t, ir.IntegerType):
-      return arith_dialect.ConstantOp(t, 0xFFFFFFFFFFFFFFFF)
-    raise NotImplementedError
 
   def get_void_ty(self) -> ir.Type:
     return ir.NoneType.get()
@@ -199,414 +153,6 @@ class builder:
       self, in_types: Sequence[ir.Type], out_types: Sequence[ir.Type]
   ) -> type[ir.FunctionType]:
     return ir.FunctionType.get(in_types, out_types)
-
-  def get_or_insert_function(self, *args):
-    raise NotImplementedError
-
-  def create_block(self, *args):
-    raise NotImplementedError
-
-  def create_block_with_parent(self, *args):
-    raise NotImplementedError
-
-  def new_block(self):
-    raise NotImplementedError
-
-  def ret(self, vs: Sequence[ir.Value]) -> tt_dialect.ReturnOp:
-    return tt_dialect.ReturnOp(vs)
-
-  def call(
-      self, func: tt_dialect.FuncOp, args: Sequence[ir.Value]
-  ) -> tt_dialect.CallOp:
-    func_type: ir.FunctionType = func.function_type
-    return tt_dialect.CallOp(func_type.results, func.function_type, args)
-
-  def create_cond_branch(self, *args):
-    raise NotImplementedError
-
-  def create_branch(self, *args):
-    raise NotImplementedError
-
-  def create_for_op(
-      self,
-      lb: ir.Value,
-      ub: ir.Value,
-      step: ir.Value,
-      init_args: Sequence[ir.Value],
-  ) -> scf_dialect.ForOp:
-    return scf_dialect.ForOp(lb, ub, step, init_args)
-
-  def create_if_op(
-      self, ret_types: Sequence[ir.Type], condition: ir.Value, with_else: bool
-  ) -> scf_dialect.IfOp:
-    return scf_dialect.IfOp(condition, ret_types, hasElse=with_else)
-
-  def create_yield_op(self, yields: Sequence[ir.Value]) -> scf_dialect.YieldOp:
-    return scf_dialect.YieldOp(yields)
-
-  def create_while_op(
-      self, ret_types: Sequence[ir.Type], init_args: Sequence[ir.Value]
-  ) -> scf_dialect.WhileOp:
-    return scf_dialect.WhileOp(ret_types, init_args)
-
-  def create_condition_op(
-      self, cond: ir.Value, args: Sequence[ir.Value]
-  ) -> scf_dialect.ConditionOp:
-    return scf_dialect.ConditionOp(cond, args)
-
-  def create_fp_to_fp(self, src: ir.Value, dst_type: ir.Type) -> ir.Value:
-    return tt_dialect.fp_to_fp(dst_type, src)
-
-  def create_bitcast(self, src: ir.Value, dst_type: ir.Type) -> ir.Value:
-    return tt_dialect.bitcast(dst_type, src)
-
-  def create_si_to_fp(self, src: ir.Value, dst_type: ir.Type) -> ir.Value:
-    return arith_dialect.sitofp(dst_type, src)
-
-  def create_ui_to_fp(self, src: ir.Value, dst_type: ir.Type) -> ir.Value:
-    return arith_dialect.uitofp(dst_type, src)
-
-  def create_fp_to_si(self, src: ir.Value, dst_type: ir.Type) -> ir.Value:
-    return arith_dialect.fptosi(dst_type, src)
-
-  def create_fp_to_ui(self, src: ir.Value, dst_type: ir.Type) -> ir.Value:
-    return arith_dialect.fptoui(dst_type, src)
-
-  def create_fp_ext(self, src: ir.Value, dst_type: ir.Type) -> ir.Value:
-    return arith_dialect.extf(dst_type, src)
-
-  def create_fp_trunc(self, src: ir.Value, dst_type: ir.Type) -> ir.Value:
-    return arith_dialect.truncf(dst_type, src)
-
-  def create_int_cast(
-      self, src: ir.Value, dst_type: ir.Type, is_signed: bool
-  ) -> ir.Value:
-    src_type = src.type
-    if ir.RankedTensorType.isinstance(
-        src_type
-    ) and ir.RankedTensorType.isinstance(dst_type):
-      src_element_type = ir.RankedTensorType(src_type).element_type
-      dst_element_type = ir.RankedTensorType(dst_type).element_type
-    else:
-      src_element_type = src_type
-      dst_element_type = dst_type
-    src_width = ir.IntegerType(src_element_type).width
-    dst_width = ir.IntegerType(dst_element_type).width
-    if src_width == dst_width:
-      return arith_dialect.bitcast(dst_type, src)
-    elif src_width > dst_width:
-      return arith_dialect.trunci(dst_type, src)
-    elif is_signed:
-      return arith_dialect.extsi(dst_type, src)
-    else:
-      return arith_dialect.extui(dst_type, src)
-
-  def create_to_index(self, input: ir.Value) -> ir.Value:
-    return arith_dialect.index_cast(ir.IndexType.get(), input)
-
-  def create_index_to_si(self, input: ir.Value) -> ir.Value:
-    return arith_dialect.index_cast(self.get_int64_ty(), input)
-
-  def create_fmul(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.mulf(lhs, rhs)
-
-  def create_fdiv(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.divf(lhs, rhs)
-
-  def create_frem(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.remf(lhs, rhs)
-
-  def create_fadd(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.addf(lhs, rhs)
-
-  def create_fsub(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.subf(lhs, rhs)
-
-  def create_mul(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.muli(lhs, rhs)
-
-  def create_sdiv(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.divsi(lhs, rhs)
-
-  def create_udiv(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.divui(lhs, rhs)
-
-  def create_srem(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.remsi(lhs, rhs)
-
-  def create_urem(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.remui(lhs, rhs)
-
-  def create_add(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.addi(lhs, rhs)
-
-  def create_sub(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.subi(lhs, rhs)
-
-  def create_shl(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.shli(lhs, rhs)
-
-  def create_lshr(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.shrui(lhs, rhs)
-
-  def create_ashr(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.shrsi(lhs, rhs)
-
-  def create_minsi(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.minsi(lhs, rhs)
-
-  def create_minui(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.minui(lhs, rhs)
-
-  def create_minimumf(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.minimumf(lhs, rhs)
-
-  def create_minnumf(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.minnumf(lhs, rhs)
-
-  def create_maxsi(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.maxsi(lhs, rhs)
-
-  def create_maxui(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.maxui(lhs, rhs)
-
-  def create_maximumf(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.maximumf(lhs, rhs)
-
-  def create_maxnumf(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.maxnumf(lhs, rhs)
-
-  def create_addptr(self, ptr: ir.Value, offset: ir.Value) -> ir.Value:
-    return tt_dialect.addptr(ptr.type, ptr, offset)
-
-  def create_icmpSLE(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.cmpi(arith_dialect.CmpIPredicate.sle, lhs, rhs)
-
-  def create_icmpSLT(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.cmpi(arith_dialect.CmpIPredicate.slt, lhs, rhs)
-
-  def create_icmpSGE(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.cmpi(arith_dialect.CmpIPredicate.sge, lhs, rhs)
-
-  def create_icmpSGT(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.cmpi(arith_dialect.CmpIPredicate.sgt, lhs, rhs)
-
-  def create_icmpULE(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.cmpi(arith_dialect.CmpIPredicate.ule, lhs, rhs)
-
-  def create_icmpULT(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.cmpi(arith_dialect.CmpIPredicate.ult, lhs, rhs)
-
-  def create_icmpUGE(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.cmpi(arith_dialect.CmpIPredicate.uge, lhs, rhs)
-
-  def create_icmpUGT(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.cmpi(arith_dialect.CmpIPredicate.ugt, lhs, rhs)
-
-  def create_icmpEQ(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.cmpi(arith_dialect.CmpIPredicate.eq, lhs, rhs)
-
-  def create_icmpNE(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.cmpi(arith_dialect.CmpIPredicate.ne, lhs, rhs)
-
-  def create_fcmpOLT(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.cmpf(arith_dialect.CmpFPredicate.OLT, lhs, rhs)
-
-  def create_fcmpOGT(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.cmpf(arith_dialect.CmpFPredicate.OGT, lhs, rhs)
-
-  def create_fcmpOLE(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.cmpf(arith_dialect.CmpFPredicate.OLE, lhs, rhs)
-
-  def create_fcmpOGE(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.cmpf(arith_dialect.CmpFPredicate.OGE, lhs, rhs)
-
-  def create_fcmpOEQ(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.cmpf(arith_dialect.CmpFPredicate.OEQ, lhs, rhs)
-
-  def create_fcmpONE(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.cmpf(arith_dialect.CmpFPredicate.ONE, lhs, rhs)
-
-  def create_fcmpULT(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.cmpf(arith_dialect.CmpFPredicate.ULT, lhs, rhs)
-
-  def create_fcmpUGT(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.cmpf(arith_dialect.CmpFPredicate.UGT, lhs, rhs)
-
-  def create_fcmpULE(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.cmpf(arith_dialect.CmpFPredicate.ULE, lhs, rhs)
-
-  def create_fcmpUGE(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.cmpf(arith_dialect.CmpFPredicate.UGE, lhs, rhs)
-
-  def create_fcmpUEQ(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.cmpf(arith_dialect.CmpFPredicate.UEQ, lhs, rhs)
-
-  def create_fcmpUNE(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.cmpf(arith_dialect.CmpFPredicate.UNE, lhs, rhs)
-
-  def create_and(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.andi(lhs, rhs)
-
-  def create_xor(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.xori(lhs, rhs)
-
-  def create_or(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    return arith_dialect.ori(lhs, rhs)
-
-  def create_cat(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    assert ir.RankedTensorType.isinstance(lhs.type)
-    assert ir.RankedTensorType.isinstance(rhs.type)
-    lhs_type = ir.RankedTensorType(lhs.type)
-    rhs_type = ir.RankedTensorType(rhs.type)
-    assert len(lhs_type.shape) == 1 and len(rhs_type.shape) == 1
-    result_type = ir.RankedTensorType.get(
-        [lhs_type.shape[0] + rhs_type.shape[0]],
-        lhs_type.element_type,
-        lhs_type.encoding,
-    )
-    return tt_dialect.cat(result_type, lhs, rhs)
-
-  def create_interleave(self, lhs: ir.Value, rhs: ir.Value) -> ir.Value:
-    raise NotImplementedError
-
-  def create_trans(self, arg: ir.Value) -> ir.Value:
-    return tt_dialect.trans(arg)
-
-  def create_broadcast(self, arg: ir.Value, shape: Sequence[int]) -> ir.Value:
-    assert ir.RankedTensorType.isinstance(arg.type)
-    arg_type = ir.RankedTensorType(arg.type)
-    result_type = ir.RankedTensorType.get(
-        shape, arg_type.element_type, arg_type.encoding
-    )
-    return tt_dialect.broadcast(result_type, arg)
-
-  def create_splat(self, arg: ir.Value, shape: Sequence[int]) -> ir.Value:
-    result_type = ir.RankedTensorType.get(shape, arg.type)
-    return tt_dialect.splat(result_type, arg)
-
-  def create_extern_elementwise(
-      self,
-      lib_name: str,
-      lib_path: str,
-      symbol: str,
-      args: Sequence[ir.Value],
-      return_type: ir.Type,
-      is_pure: bool,
-  ) -> ir.Value:
-    return tt_dialect.extern_elementwise(
-        return_type, args, lib_name, lib_path, symbol, is_pure
-    )
-
-  def create_get_num_programs(self, axis: int) -> ir.Value:
-    return tt_dialect.get_num_programs(axis)
-
-  def create_dot(
-      self,
-      a: ir.Value,
-      b: ir.Value,
-      c: ir.Value,
-      allow_tf32: bool,
-      max_num_imprecise_acc: int,
-  ) -> ir.Value:
-    return tt_dialect.dot(a, b, c, allow_tf32, max_num_imprecise_acc)
-
-  def create_reduce(
-      self, operands: Sequence[ir.Value], axis: int
-  ) -> tt_dialect.ReduceOp:
-    return_types = _infer_reduce_op_return_types(operands, axis)
-    return tt_dialect.ReduceOp(return_types, operands, axis)
-
-  def create_reduce_ret(self, *args: ir.Value) -> ir.Value:
-    return tt_dialect.reduce_return(args)
-
-  def create_scan(
-      self, operands: Sequence[ir.Value], axis: int
-  ) -> tt_dialect.ScanOp:
-    return tt_dialect.ScanOp([op.type for op in operands], operands, axis)
-
-  def create_scan_ret(self, *args: ir.Value) -> ir.Value:
-    return tt_dialect.scan_return(args)
-
-  def create_ptr_to_int(self, val: ir.Value, t: ir.Type) -> ir.Value:
-    return tt_dialect.ptr_to_int(t, val)
-
-  def create_int_to_ptr(self, val: ir.Value, t: ir.Type) -> ir.Value:
-    return tt_dialect.int_to_ptr(t, val)
-
-  def create_select(
-      self, condition: ir.Value, true_value: ir.Value, false_value: ir.Value
-  ) -> ir.Value:
-    return arith_dialect.select(condition, true_value, false_value)
-
-  def create_inline_asm(self, *args):
-    raise NotImplementedError
-
-  def create_print(self, prefix: str, values: Sequence[ir.Value]) -> None:
-    tt_dialect.print_(prefix, values)
-
-  def create_assert(
-      self,
-      condition: ir.Value,
-      message: str,
-      file_name: str,
-      func_name: str,
-      line_no: int,
-  ) -> None:
-    tt_dialect.assert_(condition, message, file_name, func_name, line_no)
-
-  def create_undef(self, t: ir.Type) -> ir.Value:
-    raise NotImplementedError
-
-  def create_barrier(self):
-    # TODO(slebedev): This needs Triton GPU dialect.
-    raise NotImplementedError
-
-  def create_make_block_ptr(
-      self,
-      base: ir.Value,
-      shape: Sequence[ir.Value],
-      strides: Sequence[ir.Value],
-      offsets: Sequence[ir.Value],
-      tensor_shape: Sequence[int],
-      order: Sequence[int],
-  ) -> ir.Value:
-    # TODO(slebedev): How to compute result=?
-    raise NotImplementedError
-
-  def create_advance(
-      self, ptr: ir.Value, offsets: Sequence[ir.Value]
-  ) -> ir.Value:
-    return tt_dialect.advance(ptr.type, ptr, offsets)
-
-
-# The following reimplements return type inference for some Triton operations.
-# We cannot avoid doing that atm, because MLIR Python bindings do not support
-# neither
-# * transparent return type inference for operations with regions; nor
-# * manual return type inference for dialects with usePropertiesForAttributes.
-
-
-def _infer_reduce_op_return_types(
-    operands: Sequence[ir.Value], axis: int
-) -> Sequence[ir.Type]:
-  return_types = []
-  for op in operands:
-    op_type = ir.RankedTensorType(op.type)
-    shape = list(op_type.shape)
-    del shape[axis]
-    if not shape:
-      return_types.append(op_type.element_type)
-    elif op_encoding := op_type.encoding:
-      encoding = tt_dialect.infer_reduce_op_encoding(op_encoding, axis)
-      if encoding is not None:
-        raise RuntimeError("Failed to infer return type encoding for ReduceOp")
-      return_types.append(
-          ir.RankedTensorType.get(shape, op_type.element_type, encoding)
-      )
-    else:
-      return_types.append(ir.RankedTensorType.get(shape, op_type.element_type))
-  return return_types
 
 
 _FLOAT_TYPES = (
@@ -917,16 +463,10 @@ def dot(
   if x.dtype.is_int():
     if x.dtype != int8:
       raise TypeError(f"unsupported dtype: {x.dtype}")
-    zero = tensor(b.get_int32(0), int32)
     element_type = int32
   elif x.dtype.is_fp32() or x.dtype.is_bf16():
-    zero = tensor(b.get_fp32(0), float32)
     element_type = float32
   else:
-    if out_dtype.is_fp16():
-      zero = tensor(b.get_fp16(0), float16)
-    else:
-      zero = tensor(b.get_fp32(0), float32)
     element_type = out_dtype
 
   if element_type != out_dtype:
@@ -937,7 +477,14 @@ def dot(
   result_type = block_type(element_type, [m, n])
 
   if acc is None:
-    acc = splat(zero, [m, n])
+    zero = 0 if element_type.is_int() else 0.0
+    acc = splat(
+        tensor(
+            arith_dialect.constant(element_type.to_ir(builder.current), zero),
+            element_type,
+        ),
+        [m, n],
+    )
   else:
     assert acc.type == result_type
 
@@ -1284,6 +831,27 @@ def _full(t: ir.Type, v: object) -> ir.Type:
     return result
 
 
+def _int_cast(src: ir.Value, dst_type: ir.Type, is_signed: bool) -> ir.Value:
+  src_type = src.type
+  if ir.RankedTensorType.isinstance(
+      src_type
+  ) and ir.RankedTensorType.isinstance(dst_type):
+    src_element_type = ir.RankedTensorType(src_type).element_type
+    dst_element_type = ir.RankedTensorType(dst_type).element_type
+  else:
+    src_element_type = src_type
+    dst_element_type = dst_type
+  src_width = ir.IntegerType(src_element_type).width
+  dst_width = ir.IntegerType(dst_element_type).width
+  if src_width == dst_width:
+    return arith_dialect.bitcast(dst_type, src)
+  elif src_width > dst_width:
+    return arith_dialect.trunci(dst_type, src)
+  elif is_signed:
+    return arith_dialect.extsi(dst_type, src)
+  else:
+    return arith_dialect.extui(dst_type, src)
+
 
 class semantic:
 
@@ -1352,7 +920,7 @@ class semantic:
             src_element_ty.is_int_signed() and not src_element_ty.is_bool()
         )
         return tensor(
-            builder.current.create_int_cast(x.handle, dst_ty.to_ir(builder.current), sign_extend),
+            _int_cast(x.handle, dst_ty.to_ir(builder.current), sign_extend),
             dst_ty,
         )
 
@@ -1424,9 +992,8 @@ class semantic:
   def minus(x: tensor) -> tensor:
     if x.dtype.is_ptr():
       raise NotImplementedError(f"unsupported dtype: {x.dtype}")
-    b = builder.current
-    zero = tensor(b.get_null_value(x.dtype.to_ir(b)), x.dtype)
-    return semantic.sub(broadcast_to(zero, x.shape), x)
+    zero = tensor(_full(x.type.to_ir(builder.current), 0), x.type)
+    return semantic.sub(zero, x)
 
   @staticmethod
   def add(x: tensor, y: tensor) -> tensor:
@@ -1504,9 +1071,12 @@ class semantic:
 
   @staticmethod
   def invert(x: tensor) -> tensor:
-    b = builder.current
-    one = tensor(b.get_all_ones_value(x.dtype.to_ir(b)), x.dtype)
-    return semantic.xor_(x, broadcast_to(one, x.shape))
+    if not x.dtype.is_int():
+      raise NotImplementedError(f"unsupported dtype: {x.dtype}")
+    one = tensor(
+        _full(x.type.to_ir(builder.current), 0xFFFFFFFFFFFFFFFF), x.type
+    )
+    return semantic.xor_(x, one)
 
   @staticmethod
   def and_(x: tensor, y: tensor) -> tensor:
