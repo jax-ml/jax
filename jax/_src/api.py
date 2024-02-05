@@ -336,6 +336,8 @@ def disable_jit(disable: bool = True):
   `cond` functions passed to higher-level primitives like :func:`~jax.lax.scan` and
   :func:`~jax.lax.while_loop`, JIT used in implementations of :mod:`jax.numpy` functions,
   and any other case where :func:`jit` is used within an API's implementation.
+  Note however that even under `disable_jit`, individual primitive operations
+  will still be compiled by XLA as in normal eager op-by-op execution.
 
   Values that have a data dependence on the arguments to a jitted function are
   traced and abstracted. For example, an abstract value may be a
