@@ -60,10 +60,8 @@ from jax._src.util import weakref_lru_cache
 import jax.numpy as jnp
 from jax_triton import triton_lib
 from jax_triton.triton_lib import compile_ttir_to_ptx_inplace
-from jax_triton.triton_lib import get_triton_type
 import numpy as np
 import triton.backends.nvidia.compiler as cb
-from triton.compiler import code_generator as code_gen
 
 
 # TODO(sharadmv): Enable type checking.
@@ -255,7 +253,7 @@ def lower_jaxpr_to_triton_module(
     module: ir.Module = ir.Module.create()
     stack.enter_context(ir.InsertionPoint.at_block_begin(module.body))
     param_types = [
-        code_gen.str_to_ty(get_triton_type(var.aval)) for var in jaxpr.invars
+        tc.pointer_type(_convert_dtype(var.aval.dtype)) for var in jaxpr.invars
     ]
     assert len(jaxpr.outvars) == 0
     fn_type = ir.FunctionType.get(
@@ -320,7 +318,7 @@ def lower_jaxpr_to_triton_ir(
   def read_env(var: jax_core.Atom):
     if type(var) is jax_core.Literal:
       t = tc._to_tensor(np.array(var.val).tolist())
-      dst_ty = code_gen.str_to_ty(get_triton_type(var.aval)).element_ty
+      dst_ty = _convert_dtype(var.aval.dtype)
       if t.type.scalar != dst_ty:
         # _to_tensor(np.array(var.val).tolist()) can be lossy e.g. np.float64
         # comes out of .tolist() as list[float], which then comes out of
@@ -1501,7 +1499,7 @@ def _cond_lowering_rule(
   block_infos = ctx.block_infos
 
   def to_type(out_aval):
-    elt_type = code_gen.str_to_ty(get_triton_type(out_aval)).element_ty
+    elt_type = _convert_dtype(out_aval.dtype)
     if not out_aval.shape:
       # Scalar types get special handling.
       return elt_type
