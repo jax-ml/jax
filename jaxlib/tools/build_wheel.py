@@ -327,10 +327,13 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, include_gpu_plugin_extensi
           f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsSparseTensor.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/_mlirSparseTensorPasses.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/_tpu_ext.{pyext}",
+          f"__main__/jaxlib/mlir/_mlir_libs/_triton_ext.{pyext}",
+          "__main__/jaxlib/mlir/_mlir_libs/_triton_ext.pyi",
           f"__main__/jaxlib/mlir/_mlir_libs/_stablehlo.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/register_jax_dialects.{pyext}",
       ],
   )
+
 
   triton_dir = jaxlib_dir / "triton"
   copy_runfiles(
@@ -339,8 +342,6 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, include_gpu_plugin_extensi
           "__main__/jaxlib/triton/__init__.py",
           "__main__/jaxlib/triton/compat.py",
           "__main__/jaxlib/triton/dialect.py",
-          f"__main__/jaxlib/triton/_triton_ext.{pyext}",
-          "__main__/jaxlib/triton/_triton_ext.pyi",
       ],
   )
   patch_copy_mlir_import(

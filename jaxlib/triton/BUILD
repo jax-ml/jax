@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("//jaxlib:jax.bzl", "py_deps", "pybind_extension", "pytype_strict_library")
+load("//jaxlib:jax.bzl", "py_deps", "pytype_strict_library")
 load("@rules_python//python:defs.bzl", "py_library")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_filegroup")
 
@@ -47,9 +47,9 @@ pytype_strict_library(
     ],
     visibility = ["//visibility:public"],
     deps = [
-        ":_triton_ext",
         "//jaxlib/mlir:core",
         "//jaxlib/mlir:ir",
+        "//jaxlib/mlir/_mlir_libs:_triton_ext",
     ],
 )
 
@@ -100,22 +100,6 @@ gentbl_filegroup(
     ],
 )
 
-pybind_extension(
-    name = "_triton_ext",
-    srcs = ["_triton_ext.cc"],
-    pytype_deps = [
-        "//jaxlib/mlir:ir",
-    ],
-    pytype_srcs = ["_triton_ext.pyi"],
-    visibility = ["//visibility:private"],
-    deps = [
-        ":triton_dialect_capi",
-        "@llvm-project//mlir:CAPIIR",
-        "@llvm-project//mlir:MLIRBindingsPythonHeadersAndDeps",
-        "@pybind11",
-    ],
-)
-
 cc_library(
     name = "triton_dialect_capi",
     srcs = ["triton_dialect_capi.cc"],
@@ -126,4 +110,26 @@ cc_library(
         "@llvm-project//mlir:IR",
         "@triton//:TritonDialects",
     ],
+)
+
+# Header-only target, used when using the C API from a separate shared library.
+cc_library(
+    name = "triton_dialect_capi_headers",
+    hdrs = ["triton_dialect_capi.h"],
+    deps = [
+        "@llvm-project//mlir:CAPIIRHeaders",
+    ],
+)
+
+# Alwayslink target, used when exporting the C API from a shared library.
+cc_library(
+    name = "triton_dialect_capi_objects",
+    srcs = ["triton_dialect_capi.cc"],
+    hdrs = ["triton_dialect_capi.h"],
+    deps = [
+        "@llvm-project//mlir:CAPIIRObjects",
+        "@llvm-project//mlir:IR",
+        "@triton//:TritonDialects",
+    ],
+    alwayslink = True,
 )

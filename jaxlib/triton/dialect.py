@@ -18,16 +18,15 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
 
 from jaxlib.mlir import ir
-
-from ._triton_enum_gen import *  # pylint: disable=wildcard-import
-from ._triton_ext import (
+from jaxlib.mlir._mlir_libs._triton_ext import (
     PointerType,
     infer_reduce_op_encoding,
     register_dialect,
 )
+
+from ._triton_enum_gen import *  # pylint: disable=wildcard-import
 from ._triton_ops_gen import *  # pylint: disable=wildcard-import
 
 
