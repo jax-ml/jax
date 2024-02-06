@@ -807,6 +807,7 @@ pytype_strict_library(
         ":core",
         ":jax",
         ":mlir",
+        ":sharding_impls",
         "//jax/_src/lib",
     ] + if_building_jaxlib([
         "//jaxlib/mlir:ir",

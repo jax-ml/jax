@@ -52,6 +52,7 @@ from jax._src import custom_derivatives
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
+from jax._src import debugging
 from jax._src.ad_checkpoint import saved_residuals
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
@@ -6310,7 +6311,7 @@ class JaxprTest(jtu.JaxTestCase):
       jax.debug.print("{}", x)
       return x
     jaxpr = jax.make_jaxpr(f)(np.int32(0))
-    self.assertEqual(jaxpr.eqns[0].primitive, jax._src.debugging.debug_callback_p)
+    self.assertEqual(jaxpr.eqns[0].primitive, debugging.debug_callback_p)
     self.assertStartsWith(str(jaxpr.eqns[0]), "debug_callback[", )
 
 

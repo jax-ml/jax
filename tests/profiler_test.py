@@ -28,6 +28,7 @@ import jax.numpy as jnp
 import jax.profiler
 from jax import config
 import jax._src.test_util as jtu
+from jax._src import profiler
 
 try:
   import portpicker
@@ -121,7 +122,7 @@ class ProfilerTest(unittest.TestCase):
           jnp.ones(jax.local_device_count())
       )
     finally:
-      fdo_profile = jax._src.profiler.stop_and_get_fdo_profile()
+      fdo_profile = profiler.stop_and_get_fdo_profile()
     if jtu.test_device_matches(["gpu"]) and jtu.is_device_cuda():
       self.assertIn(b"copy", fdo_profile)
 

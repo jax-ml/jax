@@ -30,6 +30,7 @@ from jax._src.numpy.reductions import _moveaxis
 from jax._src.numpy.util import implements, check_arraylike, _broadcast_to, _where
 from jax._src.numpy.vectorize import vectorize
 from jax._src.util import canonicalize_axis, set_module
+from jax._src import pjit
 import numpy as np
 
 
@@ -53,8 +54,8 @@ def get_if_single_primitive(fun: Callable[..., Any], *args: Any) -> jax.core.Pri
     eqn = jaxpr.eqns[0]
     if (eqn.invars, eqn.outvars) != (jaxpr.jaxpr.invars, jaxpr.jaxpr.outvars):
       return None
-    elif (eqn.primitive == jax._src.pjit.pjit_p and
-          all(jax._src.pjit.is_unspecified(sharding) for sharding in
+    elif (eqn.primitive == pjit.pjit_p and
+          all(pjit.is_unspecified(sharding) for sharding in
               (*eqn.params['in_shardings'], *eqn.params['out_shardings']))):
       jaxpr = jaxpr.eqns[0].params['jaxpr']
     else:

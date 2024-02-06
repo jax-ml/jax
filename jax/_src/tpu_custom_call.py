@@ -34,6 +34,7 @@ from jax._src.lib import tpu
 from jax._src.lib import xla_client
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.interpreters import mlir
+from jax._src import sharding_impls
 from jax.interpreters import xla
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import stablehlo
@@ -184,7 +185,6 @@ def _tpu_custom_call_lowering(
   else:
     result_type = mlir.aval_to_ir_type(out_avals[0])
   axis_context = ctx.module_context.axis_context
-  sharding_impls = jax._src.sharding_impls  # pylint: disable=protected-access
   if isinstance(axis_context, sharding_impls.SPMDAxisContext):
     if axis_context.manual_axes != frozenset(axis_context.mesh.axis_names):
       raise NotImplementedError(
