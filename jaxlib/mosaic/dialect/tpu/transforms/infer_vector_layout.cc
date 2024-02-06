@@ -435,6 +435,7 @@ class VectorLayoutInferer {
       setLayout(op, src_layout, dst_layout);
       return success();
     }
+    op.emitOpError("unsupported truncation layout");
     return failure();
   }
 
@@ -494,6 +495,7 @@ class VectorLayoutInferer {
       setLayout(op, src_layout, dst_layout);
       return success();
     }
+    op.emitOpError("unsupported truncation layout");
     return failure();
   }
 
