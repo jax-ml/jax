@@ -15,6 +15,7 @@
 # ruff: noqa
 
 """Python bindings for the MLIR Triton dialect."""
+from __future__ import annotations
 
 from collections.abc import Sequence
 from typing import Any
