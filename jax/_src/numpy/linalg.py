@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from functools import partial
+import warnings
 
 import numpy as np
 import textwrap
@@ -635,9 +636,15 @@ def qr(a: ArrayLike, mode: str = "reduced") -> Array | QRResult:
 def solve(a: ArrayLike, b: ArrayLike) -> Array:
   check_arraylike("jnp.linalg.solve", a, b)
   a, b = promote_dtypes_inexact(jnp.asarray(a), jnp.asarray(b))
-  # TODO(jakevdp): this condition matches the broadcasting behavior in numpy < 2.0.
-  # For the array API specification, we would check only if b.ndim == 1.
-  if b.ndim == 1 or a.ndim == b.ndim + 1:
+
+  if b.ndim == 1:
+    signature = "(m,m),(m)->(m)"
+  elif a.ndim == b.ndim + 1:
+    # Deprecation warning added 2024-02-06
+    warnings.warn("jnp.linalg.solve: batched 1D solves with b.ndim > 1 are deprecated, "
+                  "and in the future will be treated as a batched 2D solve. "
+                  "Use solve(a, b[..., None])[..., 0] to avoid this warning.",
+                  category=FutureWarning)
     signature = "(m,m),(m)->(m)"
   else:
     signature = "(m,m),(m,n)->(m,n)"
