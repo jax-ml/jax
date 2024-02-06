@@ -1035,6 +1035,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       lhs_shape=[(2, 2), (2, 2, 2), (2, 2, 2, 2), (2, 2, 2, 2, 2)],
       rhs_shape=[(2,), (2, 2), (2, 2, 2), (2, 2, 2, 2)]
   )
+  @jtu.ignore_warning(category=FutureWarning, message="jnp.linalg.solve: batched")
   def testSolveBroadcasting(self, lhs_shape, rhs_shape):
     # Batched solve can involve some ambiguities; this test checks
     # that we match NumPy's convention in all cases.
@@ -1196,6 +1197,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self.assertAllClose(xc, grad_test_jc(xc))
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
+  @jtu.ignore_warning(category=FutureWarning, message="jnp.linalg.solve: batched")
   def testIssue1151(self):
     rng = self.rng()
     A = jnp.array(rng.randn(100, 3, 3), dtype=jnp.float32)

@@ -110,6 +110,9 @@ Remember to align the itemized text with the first line of an item within a list
     such as {func}`~jax.random.bits`, {func}`~jax.random.gamma`, and others, is deprecated
     and will emit a `FutureWarning`.  Use `jax.vmap` for explicit batching.
   * {func}`jax.lax.tie_in` is deprecated: it has been a no-op since JAX v0.2.0.
+  * {func}`jax.numpy.linalg.solve` now shows a deprecation warning for batched 1D
+    solves with `b.ndim > 1`. In the future these will be treated as batched 2D
+    solves.
 
 ## jaxlib 0.4.24
 
