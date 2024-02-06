@@ -238,6 +238,7 @@ jax_test(
 jax_test(
     name = "memories_test",
     srcs = ["memories_test.py"],
+    env = {"XLA_FLAGS": "--xla_tpu_pipeline_memory_host_transfers=true"},
     shard_count = {
         "tpu": 5,
     },
