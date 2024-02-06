@@ -1099,6 +1099,11 @@ class MemoriesComputationTest(jtu.BufferDonationTestCase):
 
 class ActivationOffloadingTest(jtu.JaxTestCase):
 
+  def setUp(self):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Memories do not work on CPU and GPU backends yet.")
+    super().setUp()
+
   def test_remat_jaxpr_offloadable(self):
     mesh = jtu.create_global_mesh((2,), ("x",))
     inp = jax.device_put(np.arange(16.), NamedSharding(mesh, P("x")))
