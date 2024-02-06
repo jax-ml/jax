@@ -1046,6 +1046,20 @@ traceback_in_locations_limit = define_int_state(
     ),
 )
 
+share_autotune_config_between_hosts = define_bool_state(
+    name='jax_share_autotune_config_between_hosts',
+    default=False,
+    help=(
+        'If set to True, the coordinator process will share autotune configs '
+        'other participants. This will increase overall compilation time, but '
+        'will lead to equal compiled modules in each process. '
+        'If both jax_share_binary_between_hosts and '
+        'jax_share_autotune_config_between_hosts are set, compiled HLO will be '
+        "shared when it's possible and autotune config sharing will be used "
+        'as a fallback.'
+    ),
+)
+
 share_binary_between_hosts = define_bool_state(
     name='jax_share_binary_between_hosts',
     default=False,
@@ -1057,7 +1071,7 @@ share_binary_between_hosts = define_bool_state(
 
 share_binary_between_hosts_timeout_ms = define_int_state(
     name='jax_share_binary_between_hosts_timeout_ms',
-    default=10 * 60 * 1000,
+    default=20 * 60 * 1000,
     help='Timeout for the compiled module share.',
 )
 

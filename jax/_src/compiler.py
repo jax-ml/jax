@@ -17,24 +17,25 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import logging
+import os
+import tempfile
 import time
 from typing import Any
-import logging
 import warnings
 
-import numpy as np
-
-from jax._src import lib
-from jax._src import distributed
 from jax._src import compilation_cache
 from jax._src import config as config
-from jax._src.xla_bridge import process_count
+from jax._src import distributed
+from jax._src import lib
 from jax._src import monitoring
 from jax._src import profiler
 from jax._src import traceback_util
 from jax._src.interpreters import mlir
-from jax._src.lib.mlir import ir
 from jax._src.lib import xla_client as xc
+from jax._src.lib.mlir import ir
+from jax._src.xla_bridge import process_count
+import numpy as np
 
 
 _DISABLE_MOST_OPTIMIZATIONS = config.DEFINE_bool(
@@ -300,46 +301,172 @@ def compile_or_get_cached(
       # them.
       and len(host_callbacks) == 0
   ):
-    share_timeout = config.share_binary_between_hosts_timeout_ms.value
-    global_client = distributed.global_state.client
-
-    # TODO: Using module name as a cache key might lead to issues when the
-    # the module with the same name should be recompiled. This cache should be
-    # replaced with proper cache eviction logic based on barriers.
-    if module_name in compile_or_get_cached.cached_modules:
-      return compile_or_get_cached.cached_modules[module_name]
-
-    # The coordinator host should compile the module and write it to the K-V
-    # storage.
-    # TODO: In case when coordinator process is not participating in the
-    # computation we need to choose another host to compile the module.
-    if distributed.global_state.service is None:
-      serialized_executable = global_client.blocking_key_value_get_bytes(
-          module_name, share_timeout)
-      serialized_executable = compilation_cache.decompress_executable(
-          serialized_executable)
-      executable = backend.deserialize_executable(
-          serialized_executable, compile_options)
-    else:
-      executable = backend_compile(backend, computation,
-                                   compile_options, host_callbacks)
-      serialized_executable = backend.serialize_executable(executable)
-      serialized_executable = compilation_cache.compress_executable(
-          serialized_executable)
-      global_client.key_value_set(module_name, serialized_executable)
-
-    compile_or_get_cached.cached_modules[module_name] = executable
-    return executable
+    return _compile_and_share_module(
+        backend,
+        computation,
+        compile_options,
+        host_callbacks,
+        distributed.global_state.client,
+        module_name,
+        cache_key,
+    )
+  elif (
+      process_count() > 1
+      and config.share_autotune_config_between_hosts.value
+      and distributed.global_state.client is not None
+  ):
+    return _compile_and_write_autotune_config(
+        backend,
+        computation,
+        compile_options,
+        host_callbacks,
+        distributed.global_state.client,
+        module_name,
+        cache_key,
+    )
   else:
-    start_time = time.monotonic()
-    executable = backend_compile(backend, computation,
-                                compile_options, host_callbacks)
-    compile_time = time.monotonic() - start_time
-    _cache_write(cache_key, compile_time, module_name, backend, executable,
-                 host_callbacks)
-    return executable
+    return _compile_and_write_cache(
+        backend,
+        computation,
+        compile_options,
+        host_callbacks,
+        module_name,
+        cache_key,
+    )
 
-compile_or_get_cached.cached_modules = {}
+
+# The process with id 0 should compile the module and write an autotune config
+# to the K-V storage.
+def _compile_and_write_autotune_config(
+    backend: xc.Client,
+    computation: ir.Module,
+    compile_options: xc.CompileOptions,
+    host_callbacks: Sequence[Any],
+    global_client: lib.xla_extension.DistributedRuntimeClient,
+    module_name: str,
+    cache_key: str,
+) -> xc.LoadedExecutable:
+  share_timeout = config.share_binary_between_hosts_timeout_ms.value
+  debug_options = compile_options.executable_build_options.debug_options
+  autotune_tmp_file = os.path.join(
+      _compile_and_write_autotune_config.autotune_configs_dir, cache_key
+  )
+
+  if os.path.exists(autotune_tmp_file):
+    debug_options.xla_gpu_load_autotune_results_from = autotune_tmp_file
+    return _compile_and_write_cache(
+        backend,
+        computation,
+        compile_options,
+        host_callbacks,
+        module_name,
+        cache_key,
+    )
+
+  if distributed.global_state.process_id == 0:
+    debug_options.xla_gpu_dump_autotune_results_to = autotune_tmp_file
+    executable = _compile_and_write_cache(
+        backend,
+        computation,
+        compile_options,
+        host_callbacks,
+        module_name,
+        cache_key,
+    )
+    with open(autotune_tmp_file, "rb") as f:
+      autotune_config = f.read()
+
+    autotune_config = compilation_cache.compress_executable(autotune_config)
+    global_client.key_value_set_bytes(cache_key, autotune_config)
+  else:
+    autotune_config = global_client.blocking_key_value_get_bytes(
+        cache_key, share_timeout
+    )
+
+    autotune_config = compilation_cache.decompress_executable(autotune_config)
+    with open(autotune_tmp_file, "wb") as f:
+      f.write(autotune_config)
+
+    debug_options.xla_gpu_load_autotune_results_from = autotune_tmp_file
+    executable = _compile_and_write_cache(
+        backend,
+        computation,
+        compile_options,
+        host_callbacks,
+        module_name,
+        cache_key,
+    )
+  return executable
+
+_compile_and_write_autotune_config.autotune_configs_dir = tempfile.mkdtemp()
+
+# The process with id 0 should compile the module and write it to the K-V
+# storage.
+# TODO: In case when the process with id 0 is not participating in computation
+# we need to choose another process to compile the module.
+def _compile_and_share_module(
+    backend: xc.Client,
+    computation: ir.Module,
+    compile_options: xc.CompileOptions,
+    host_callbacks: Sequence[Any],
+    global_client: lib.xla_extension.DistributedRuntimeClient,
+    module_name: str,
+    cache_key: str,
+) -> xc.LoadedExecutable:
+  share_timeout = config.share_binary_between_hosts_timeout_ms.value
+
+  # TODO: We need a proper eviction protocol here, otherwise all compiled
+  # modules will pile in memory.
+  if cache_key in _compile_and_share_module.modules_cache:
+    return _compile_and_share_module.modules_cache[cache_key]
+
+  if distributed.global_state.process_id == 0:
+    executable = _compile_and_write_cache(
+        backend,
+        computation,
+        compile_options,
+        host_callbacks,
+        module_name,
+        cache_key,
+    )
+    serialized_executable = backend.serialize_executable(executable)
+    serialized_executable = compilation_cache.compress_executable(
+        serialized_executable
+    )
+    global_client.key_value_set_bytes(cache_key, serialized_executable)
+  else:
+    serialized_executable = global_client.blocking_key_value_get_bytes(
+        cache_key, share_timeout
+    )
+    serialized_executable = compilation_cache.decompress_executable(
+        serialized_executable
+    )
+    executable = backend.deserialize_executable(
+        serialized_executable, compile_options
+    )
+
+  _compile_and_share_module.modules_cache[cache_key] = executable
+  return executable
+
+_compile_and_share_module.modules_cache = {}
+
+def _compile_and_write_cache(
+    backend: xc.Client,
+    computation: ir.Module,
+    compile_options: xc.CompileOptions,
+    host_callbacks: Sequence[Any],
+    module_name: str,
+    cache_key: str,
+) -> xc.LoadedExecutable:
+  start_time = time.monotonic()
+  executable = backend_compile(
+      backend, computation, compile_options, host_callbacks
+  )
+  compile_time = time.monotonic() - start_time
+  _cache_write(
+      cache_key, compile_time, module_name, backend, executable, host_callbacks
+  )
+  return executable
 
 def _cache_read(
     module_name: str, cache_key: str, compile_options: xc.CompileOptions,
