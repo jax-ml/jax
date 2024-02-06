@@ -107,6 +107,19 @@ def save_only_these_names(*names_which_can_be_saved):
     return False  # not saveable unless it's in the allow-list
   return policy
 
+def save_and_offload_only_these_names(
+    *, names_which_can_be_saved, names_which_can_be_offloaded,
+    offload_src, offload_dst):
+  names_which_can_be_saved = set(names_which_can_be_saved)
+  names_which_can_be_offloaded = set(names_which_can_be_offloaded)
+  def policy(prim, *_, **params):
+    if prim is name_p and params['name'] in names_which_can_be_saved:
+      return pe.Saveable
+    if prim is name_p and params['name'] in names_which_can_be_offloaded:
+      return pe.Offloadable(src=offload_src, dst=offload_dst)
+    return pe.Recompute  # not saveable unless it's in the allow-list
+  return policy
+
 
 def save_from_both_policies(policy_1, policy_2):
 
@@ -126,7 +139,8 @@ checkpoint_policies = types.SimpleNamespace(
     save_anything_except_these_names=save_anything_except_these_names,
     save_any_names_but_these=save_any_names_but_these,
     save_only_these_names=save_only_these_names,
-    save_from_both_policies=save_from_both_policies)
+    save_from_both_policies=save_from_both_policies,
+    save_and_offload_only_these_names=save_and_offload_only_these_names)
 
 
 ### Main API

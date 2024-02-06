@@ -1395,7 +1395,7 @@ def lower_jaxpr_to_fun(
 
     if ir_arg_memory_kinds is not None:
       flat_args = [
-          a if mk is None else wrap_with_memory_kind(a, mk, a_aval, is_input=True)
+          a if mk is None else wrap_with_memory_kind(a, mk, a_aval)
           for a, mk, a_aval in zip(flat_args, ir_arg_memory_kinds, input_avals)]
 
     _, token_args, unflattened_args = util.split_list(
@@ -1446,27 +1446,15 @@ def lower_jaxpr_to_fun(
   return func_op
 
 
-def get_compute_type(memory_kind: str) -> str:
-  if memory_kind == 'tpu_hbm':
-    return 'dense'
-  elif memory_kind == 'unpinned_host':
-    return 'host'
-  raise ValueError(f'Unknown memory_kind: {memory_kind}')
-
-
 def wrap_with_memory_kind(
-    x: ir.Value, memory_kind: str, aval_out: core.AbstractValue,
-    is_input: bool = False) -> ir.Value:
+    x: ir.Value, memory_kind: str, aval_out: core.AbstractValue) -> ir.Value:
   if aval_out is None:
     result_type = x.type
   else:
     result_type = aval_to_ir_type(aval_out)
   op = custom_call("annotate_device_placement", result_types=[result_type],
-                   operands=[x], api_version=1)
-  mka = get_compute_type(memory_kind)
-  dict_attr = {"_xla_compute_type": ir.StringAttr.get(mka)}
-  if is_input and mka == 'host':
-    dict_attr.update({"_xla_buffer_placement": ir.StringAttr.get("arg")})
+                   operands=[x], has_side_effect=True, api_version=1)
+  dict_attr = {"_xla_buffer_placement": ir.StringAttr.get(memory_kind)}
   op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
   return op.result
 

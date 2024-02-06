@@ -1993,15 +1993,15 @@ def lower_sharding_computation(
            for js, source_info in util.stable_unique(jaxpr_sharding))),
       devices_from_context)
 
-  transfer_mem_kind_in_jaxpr = list(jaxpr_transfer_mem_kinds(jaxpr))
+  # TODO(yashkatariya): Enable this when offload APIs are stable.
+  # transfer_mem_kind_in_jaxpr = list(jaxpr_transfer_mem_kinds(jaxpr))
 
   committed = bool(
       devices_from_context or
       len(device_assignment) > 1 or
       any(not is_unspecified(i) for i in in_shardings) or
       any(not is_unspecified(js) for js, _ in jaxpr_sharding) or
-      any(not is_unspecified(o) for o in out_shardings) or
-      transfer_mem_kind_in_jaxpr)
+      any(not is_unspecified(o) for o in out_shardings))
 
   gs = sharding_impls.GSPMDSharding.get_replicated(device_assignment)
   in_shardings = tuple(gs if is_unspecified(i) else i for i in in_shardings)
@@ -2010,8 +2010,7 @@ def lower_sharding_computation(
 
   all_default_mem_kind = are_all_shardings_default_mem_kind(
       da_object,
-      it.chain(in_shardings, out_shardings, [js for js, _ in jaxpr_sharding],  # type: ignore
-               transfer_mem_kind_in_jaxpr))
+      it.chain(in_shardings, out_shardings, [js for js, _ in jaxpr_sharding]))  # type: ignore
 
   if not da_object.is_fully_addressable:  # type: ignore
     if inline and config.spmd_mode.value != 'allow_all':

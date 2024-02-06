@@ -22,6 +22,7 @@ import jax
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src import config
+from jax.ad_checkpoint import checkpoint_name
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 from jax.ad_checkpoint import Offloadable, remat
@@ -199,20 +200,8 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
 class MemoriesComputationTest(jtu.BufferDonationTestCase):
 
   def setUp(self):
-    if not jtu.test_device_matches(["tpu"]):
-      self.skipTest("Memories do not work on CPU and GPU backends yet.")
-    # TODO(b/311021572)
-    if jtu.is_cloud_tpu():
-      self.skipTest("Experimental feature not yet implemented on Cloud TPU")
+    self.skipTest("Compute via memories does not work yet.")
     super().setUp()
-    self.orig_memories_flag = config.enable_memories.value
-    jax.config.update('jax_enable_memories', True)
-    FLAGS.xla_tpu_enable_host_aware_passes = True
-
-  def tearDown(self):
-    jax.config.update('jax_enable_memories', self.orig_memories_flag)
-    FLAGS.xla_tpu_enable_host_aware_passes = False
-    super().tearDown()
 
   def _check_mem_kind(self, executable_kind, out_sharding, expected_kind):
     out_kind = out_sharding.memory_kind
@@ -1115,7 +1104,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
     inp = jax.device_put(np.arange(16.), NamedSharding(mesh, P("x")))
 
     def policy(prim, *avals, **params):
-      return Offloadable(src="tpu_hbm", dst="unpinned_host")
+      return Offloadable(src="tpu_hbm", dst="pinned_host")
 
     @functools.partial(remat, policy=policy)
     def f(x):
@@ -1126,43 +1115,68 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
 
     fwd_jaxpr, bwd_jaxpr = jtu.fwd_bwd_jaxprs(f, inp)
 
-    self.assertLen(fwd_jaxpr.out_avals, 4) # 1 output, 3 offloaded residuals
+    self.assertLen(fwd_jaxpr.out_avals, 4)  # 1 output, 3 offloaded residuals
     fwd_mem_kind_count = str(fwd_jaxpr).count(
-        "TransferToMemoryKind(memory_kind='unpinned_host')")
+        "TransferToMemoryKind(memory_kind='pinned_host')")
     self.assertEqual(fwd_mem_kind_count, 3)
 
-    self.assertLen(bwd_jaxpr.in_avals, 4) # 3 offloaded residuals, 1 input
+    self.assertLen(bwd_jaxpr.in_avals, 4)  # 3 offloaded residuals, 1 input
     bwd_mem_kind_count = str(bwd_jaxpr).count(
         "TransferToMemoryKind(memory_kind='tpu_hbm')")
     self.assertEqual(bwd_mem_kind_count, 3)
+
+    # Execution test.
+    f = jax.jit(jax.grad(f))
+    f(inp)  # doesn't crash
+
+    compiled_text = f.lower(inp).compile().as_text()
+    if compiled_text is not None:
+      self.assertIn('S(5)', compiled_text)
+      self.assertRegex(compiled_text, r"copy-start.*S\(5\)")
+      self.assertRegex(compiled_text, r"copy-done.*S\(5\)")
 
   def test_remat_scan_jaxpr_offloadable(self):
     mesh = jtu.create_global_mesh((2,), ("x",))
-    inp = jax.device_put(np.arange(16.), NamedSharding(mesh, P("x")))
+    shape = (256, 128)
+    np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    inp = jax.device_put(np_inp, NamedSharding(mesh, P("x")))
 
-    def policy(prim, *avals, **params):
-      return Offloadable(src="tpu_hbm", dst="unpinned_host")
+    policy = jax.checkpoint_policies.save_and_offload_only_these_names(
+        names_which_can_be_saved=["y"], names_which_can_be_offloaded=["z", "w"],
+        offload_src='tpu_hbm', offload_dst='pinned_host')
 
+    @functools.partial(remat, policy=policy)
     def f(x):
-      @functools.partial(remat, policy=policy)
-      def g(y, _):
-        y = jnp.sin(y)
-        y = jnp.sin(y)
-        y = jnp.sin(y)
-        return y, None
-      return jax.lax.scan(g, x, None, length=1)[0]
+      def g(ys, _):
+        y, _ = ys
+        y = checkpoint_name(jnp.sin(y), "y")
+        z = checkpoint_name(jnp.sin(y), "z")
+        w = checkpoint_name(jnp.sin(z), "w")
+        return (w, jnp.sum(w)), None
+      _, scan_out = jax.lax.scan(g, (x, np.array(1, dtype=np.float32)), [np_inp])[0]
+      return scan_out
 
     fwd_jaxpr, bwd_jaxpr = jtu.fwd_bwd_jaxprs(f, inp)
 
-    self.assertLen(fwd_jaxpr.out_avals, 4) # 1 output, 3 offloaded residuals
+    self.assertLen(fwd_jaxpr.out_avals, 5)  # 2 output, 3 offloaded residuals
     fwd_mem_kind_count = str(fwd_jaxpr).count(
-        "TransferToMemoryKind(memory_kind='unpinned_host')")
-    self.assertEqual(fwd_mem_kind_count, 3)
+        "TransferToMemoryKind(memory_kind='pinned_host')")
+    self.assertEqual(fwd_mem_kind_count, 2)
 
-    self.assertLen(bwd_jaxpr.in_avals, 4) # 3 offloaded residuals, 1 input
+    self.assertLen(bwd_jaxpr.in_avals, 5)  # 3 offloaded residuals, 2 input
     bwd_mem_kind_count = str(bwd_jaxpr).count(
         "TransferToMemoryKind(memory_kind='tpu_hbm')")
-    self.assertEqual(bwd_mem_kind_count, 3)
+    self.assertEqual(bwd_mem_kind_count, 2)
+
+    f = jax.jit(jax.grad(f))
+    f(inp)  # doesn't crash
+
+    compiled_text = f.lower(inp).compile().as_text()
+    if compiled_text is not None:
+      self.assertIn('S(5)', compiled_text)
+      self.assertNotRegex(compiled_text, r"copy-start.*S\(5\)")
+      self.assertNotRegex(compiled_text, r"copy-done.*S\(5\)")
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
