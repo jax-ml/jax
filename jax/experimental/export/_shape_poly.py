@@ -70,6 +70,9 @@ TfVal = Any
 DimVarEnv = dict[str, jax.Array]
 DType = Any
 
+# Tuples of terms and their coefficients, sorted with the largest term first.
+SortedTerms = Sequence[tuple["_DimMon", int]]
+
 class InconclusiveDimensionOperation(core.InconclusiveDimensionOperation):
   """Raised when we cannot conclusively compute with symbolic dimensions."""
 
@@ -366,36 +369,70 @@ class _DimMon(dict):
     return prod([pow_opt(a.evaluate(env), deg) for a, deg in self.items()])
 
 
-class _DimExpr():
+class _DimExpr:
   """Symbolic expression in terms of dimension variables.
 
-  A dimension expression is an addition of products (_DimMon)
-  of atoms (_DimAtom).
+  A dimension expression is an addition of terms (_DimMon), which themselves
+  are products of factors (_DimAtom).
+
+  The representation of a _DimExpr is as sequence of pairs `(_DimMon, coeff)`,
+  representing the linear combination of terms with the given coefficients.
+  The sequence is sorted by lexicographic (syntactic) ordering of `_DimMon`,
+  with the largest terms first. The special monomial `_DimMon()` is mapped
+  to the free integer coefficient of the expression.
 
   We overload integer operations, but we do that soundly, raising
   :class:`InconclusiveDimensionOperation` when the result is not
   representable as a _DimExpr.
-
-  The representation of a _DimExpr is as a dictionary mapping _DimMon to
-  integer coefficients. The special monomial `_DimMon()` is mapped to the
-  free integer coefficient of the expression.
   """
   __array_priority__ = 1000   # Same as tracer, for __radd__ and others on ndarray
-  def __init__(self, coeffs: dict[_DimMon, int],
+  def __init__(self, terms: SortedTerms,
                scope: SymbolicScope):
-    # Do not construct _DimExpr directly, unless you are sure that coeffs is
+    # Do not construct _DimExpr directly, unless you are sure that terms is
     # normalized; Use _DimExpr.normalize.
-    # Takes ownership of coeffs.
-    self._coeffs = coeffs or {_DimMon(): 0}
+    self._monomials_sorted = tuple(terms) or ((_DimMon(), 0),)
     self._scope = scope
-    self._monomials_sorted = tuple(sorted(self._coeffs.items(), reverse=True))
     self._hash = hash((self._monomials_sorted, self.scope))
+    # _size speeds up _syntactic_cmp, which is used a lot for hashing.
     self._size = sum((1 + m._size)
                      for m, m_count in self._monomials_sorted)
+
   @property
   def scope(self):
     # We make the expression scope visible, but read-only.
     return self._scope
+
+  @classmethod
+  def _coeff_dict_to_terms(cls, coeffs: dict[_DimMon, int]) -> SortedTerms:
+    return sorted(coeffs.items(), reverse=True)
+
+  @classmethod
+  def from_dict(cls, coeffs: dict[_DimMon, int], scope: SymbolicScope) -> _DimExpr:
+    return _DimExpr(_DimExpr._coeff_dict_to_terms(coeffs), scope)
+
+  @classmethod
+  def from_monomial(cls, mon: _DimMon, exp: int, scope: SymbolicScope):
+    return _DimExpr.normalize(((mon, exp),), scope)
+
+  @classmethod
+  def from_constant(cls, c: int, scope: SymbolicScope):
+    return _DimExpr(((_DimMon(), op.index(c)),), scope)
+
+  @classmethod
+  def from_var(cls, v: str, scope: SymbolicScope) -> _DimExpr:
+    return _DimExpr(((_DimMon.from_var(v), 1),), scope)
+
+  @classmethod
+  def from_operation(cls, operation: str, *operands: DimSize,
+                     scope: SymbolicScope) -> _DimExpr:
+    if operation == _DimAtom.NON_NEGATIVE:  # For parsing
+      return _DimExpr.from_monomial(
+          _DimMon.from_operation(_DimAtom.MAX, *operands, 0,
+                                 scope=scope), 1,
+          scope=scope)
+    return _DimExpr.from_monomial(
+        _DimMon.from_operation(operation, *operands, scope=scope), 1,
+        scope=scope)
 
   def monomials(self) -> Iterable[tuple[_DimMon, int]]:
     """The monomials in sorted reverse lexicographic order.
@@ -428,79 +465,27 @@ class _DimExpr():
     return (n1, n2, mon)
 
   @classmethod
-  def _add_coeffs(cls, coeffs: dict[_DimMon, int], mon: _DimMon, coeff: int):
-    """Computes `coeffs[mon] += coeff` while removing 0 coefficients."""
-    old_c = coeffs.get(mon)
-    if old_c is None:
-      if coeff != 0: coeffs[mon] = coeff
-    else:
-      new_c = old_c + coeff
-      if new_c == 0:
-        del coeffs[mon]
-      else:
-        coeffs[mon] = new_c
-
-  @classmethod
-  def normalize(cls, coeffs: dict[_DimMon, int],
+  def normalize(cls, coeffs: SortedTerms,
                 scope: SymbolicScope) -> DimSize:
     """The main constructor for _DimExpr.
 
-    Ensures that the symbolic dimension is normalized, e.g.,
-    it is represented as a Python int if it is known to be a constant.
+    Ensures that the symbolic dimension is normalized, e.g., does not
+    have terms with coefficient 0, and it is represented as a Python int
+    if it is known to be a constant.
     """
-    # TODO(necula): profile and optimize this
-    has_non_zero_degree = False
-    free_const = 0
-    new_coeffs: dict[_DimMon, int] = {}
-    for mon, coeff in coeffs.items():
-      if coeff == 0: continue
-      if mon.degree == 0:  # A constant, there can be a single one
-        free_const = coeff
-      else:
-        has_non_zero_degree = True
-
-      new_coeffs[mon] = new_coeffs.get(mon, 0) + coeff
-
-    if has_non_zero_degree:
-      return _DimExpr(new_coeffs, scope)
-    else:
-      return int(free_const)
-
-  @classmethod
-  def from_constant(cls, c: int, scope: SymbolicScope):
-    return _DimExpr({_DimMon(): op.index(c)}, scope)
-
-  @classmethod
-  def from_var(cls, v: str, scope: SymbolicScope) -> _DimExpr:
-    return _DimExpr({_DimMon.from_var(v): 1}, scope)
-
-  @classmethod
-  def from_operation(cls, operation: str, *operands: DimSize,
-                     scope: SymbolicScope) -> _DimExpr:
-    if operation == _DimAtom.NON_NEGATIVE:  # For parsing
-      return _DimExpr.from_monomial(
-          _DimMon.from_operation(_DimAtom.MAX, *operands, 0,
-                                 scope=scope), 1,
-          scope=scope)
-    return _DimExpr.from_monomial(
-        _DimMon.from_operation(operation, *operands,
-                               scope=scope), 1,
-        scope=scope)
-
-  @classmethod
-  def from_monomial(cls, mon: _DimMon, exp: int, scope: SymbolicScope):
-    return _DimExpr.normalize({mon: exp}, scope)
+    non_zero_coeffs = tuple(c for c in coeffs if c[1] != 0)
+    if not non_zero_coeffs: return 0
+    if non_zero_coeffs[0][0].degree == 0:
+      return int(non_zero_coeffs[0][1])
+    return _DimExpr(non_zero_coeffs, scope)
 
   def to_monomial(self) -> _DimMon | None:
     """Extract the single monomial from a symbolic expression.
     Returns None if the expression is not a single monomial."""
-    items = self.monomials()
-    if len(items) != 1:  # type: ignore
+    (mon, mon_count), *rest = self.monomials()
+    if rest:  # type: ignore
       return None
-    (mon, mon_count), = items
-    if mon_count != 1:
-      return None
-    return mon
+    return mon if mon_count == 1 else None
 
   def to_atom(self) -> _DimAtom | None:
     """Extract the atom from a symbolic expression.
@@ -535,10 +520,10 @@ class _DimExpr():
     return acc
 
   @classmethod
-  def _merge_sorted_terms(
+  def _linear_combination(
       cls,
-      e1: Sequence[tuple[_DimMon, int]], i1: int, f1: int,
-      e2: Sequence[tuple[_DimMon, int]], i2: int, f2: int) -> Sequence[tuple[_DimMon, int]]:
+      e1: SortedTerms, i1: int, f1: int,
+      e2: SortedTerms, i2: int, f2: int) -> SortedTerms:
     """Computes e1[i1:] * f1 + e2[i2:] * f2.
 
     e1, e2, and the result are sorted with largest term first.
@@ -563,8 +548,8 @@ class _DimExpr():
         if m1_c == 0: continue
         acc.append((m1, m1_c))
 
-    acc.extend((m1, m1_c * f1) for m1, m1_c in itertools.islice(e1, i1, len(e1)))
-    acc.extend((m2, m2_c * f2) for m2, m2_c in itertools.islice(e2, i2, len(e2)))
+    acc.extend((m1, m1_c * f1) for m1, m1_c in itertools.islice(e1, i1, len(e1)) if m1_c != 0)
+    acc.extend((m2, m2_c * f2) for m2, m2_c in itertools.islice(e2, i2, len(e2)) if m2_c != 0)
     return acc
 
   def _syntactic_cmp(self, other: _DimExpr) -> int:
@@ -622,21 +607,23 @@ class _DimExpr():
   def __add__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__add__(other)
-
+    if isinstance(other, int) and other == 0: return self
     other = _ensure_poly(other, "add", self.scope)
-    coeffs = self._coeffs.copy()
+    coeffs = dict(self._monomials_sorted)
     for mon, coeff in other.monomials():
-      _DimExpr._add_coeffs(coeffs, mon, coeff)
-    return _DimExpr.normalize(coeffs, self.scope)
+      coeffs[mon] = coeff + coeffs.get(mon, 0)
+    return _DimExpr.normalize(_DimExpr._coeff_dict_to_terms(coeffs), self.scope)
 
   def __radd__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__radd__(other)
+    if isinstance(other, int) and other == 0: return self
     return _ensure_poly(other, "add", self.scope).__add__(self)
 
   def __sub__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__sub__(other)
+    if isinstance(other, int) and other == 0: return self
     return self + -_ensure_poly(other, "sub", self.scope)
 
   def __rsub__(self, other):
@@ -645,23 +632,26 @@ class _DimExpr():
     return _ensure_poly(other, "sub", self.scope).__sub__(self)
 
   def __neg__(self) -> _DimExpr:
-    return _DimExpr({mon: -coeff for mon, coeff in self.monomials()},
-                    self.scope)
+    return _DimExpr(
+        tuple((t, -coeff) for t, coeff in self._monomials_sorted),
+        self.scope)
 
   def __mul__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__mul__(other)
+    if isinstance(other, int) and other == 1: return self
     other = _ensure_poly(other, "mul", self.scope)
     coeffs: dict[_DimMon, int] = {}
     for mon1, coeff1 in self.monomials():
       for mon2, coeff2 in other.monomials():
         mon = mon1.mul(mon2)
-        _DimExpr._add_coeffs(coeffs, mon, coeff1 * coeff2)
-    return _DimExpr.normalize(coeffs, self.scope)
+        coeffs[mon] = coeff1 * coeff2 + coeffs.get(mon, 0)
+    return _DimExpr.normalize(_DimExpr._coeff_dict_to_terms(coeffs), self.scope)
 
   def __rmul__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__rmul__(other)
+    if isinstance(other, int) and other == 1: return self
     return _ensure_poly(other, "mul", self.scope).__mul__(self)
 
   def __pow__(self, power, modulo=None):
@@ -711,10 +701,9 @@ class _DimExpr():
     return _ensure_poly(dividend, "divmod", self.scope).__divmod__(self)
 
   def __int__(self):
-    if self.is_constant:
-      return op.index(next(iter(self._coeffs.values())))
-    else:
-      raise InconclusiveDimensionOperation(f"Symbolic dimension '{self}' used in a context that requires a constant")
+    if (c := _DimExpr.to_constant(self)) is not None:
+      return c
+    raise InconclusiveDimensionOperation(f"Symbolic dimension '{self}' used in a context that requires a constant")
 
   # We must overload __eq__ and __ne__, or else we get unsound defaults.
   def __eq__(self, other: Any) -> bool:
@@ -1011,18 +1000,18 @@ def _decompose_expr(e: _DimExpr, operation: str, *,
   for m, m_factor in e.monomials():
     atoms = [(a, aexp) for a, aexp in m.items() if a.operation == operation]
     if atoms:
-      e_minus_m_coeffs = e._coeffs.copy()
+      e_minus_m_coeffs = dict(e._monomials_sorted)
       del e_minus_m_coeffs[m]
     for a, aexp in atoms:
       if with_factor is not None and with_factor != m_factor:
         continue
       if with_exp is not None and with_exp != aexp:
         continue
-      rest_monomial = _DimExpr({m.divide(_DimMon.from_atom(a, aexp)): 1}, e.scope)
+      rest_monomial = _DimExpr.from_monomial(m.divide(_DimMon.from_atom(a, aexp)), 1, e.scope)
       if (with_rest_monomial is not None and
           not core.definitely_equal(with_rest_monomial, rest_monomial)):
         continue
-      rest_expr = _DimExpr(e_minus_m_coeffs, e.scope)
+      rest_expr = _DimExpr.from_dict(e_minus_m_coeffs, e.scope)
       if (with_rest_expr is not None and
           not core.definitely_equal(with_rest_expr, rest_expr)):
         continue
@@ -1462,10 +1451,11 @@ class _Parser:
   def expr(self, tok: tokenize.TokenInfo) -> tuple[DimSize, tokenize.TokenInfo]:
     # A sum of monomials
     next_m_negated = False
-    acc = 0
+    acc = None
     while True:
       m, tok = self.mon(tok)
-      acc = acc + (- m if next_m_negated else m)
+      m_sign = - m if next_m_negated else m
+      acc = acc + m_sign if acc is not None else m_sign  # type:ignore [operator]
       if tok.exact_type in self.FOLLOW_EXPR:
         return acc, tok
       next_m_negated = (tok.exact_type == tokenize.MINUS)
@@ -1475,7 +1465,7 @@ class _Parser:
   FOLLOW_MON = FOLLOW_EXPR + [tokenize.PLUS, tokenize.MINUS]
   def mon(self, tok: tokenize.TokenInfo) -> tuple[DimSize, tokenize.TokenInfo]:
     # A monomial is product of atoms. Each atom may be raised to an integer power.
-    acc = 1
+    acc = None
     while True:
       a, tok = self.atom(tok)
       if tok.exact_type == tokenize.CIRCUMFLEX:
@@ -1484,7 +1474,7 @@ class _Parser:
         power, tok = self.integer(tok)
         a = a ** power
 
-      acc = acc * a
+      acc = acc * a if acc is not None else a  # type:ignore [operator]
       if tok.exact_type in self.FOLLOW_MON:
         return acc, tok
       tok = self.consume_token(tok, tokenize.STAR)

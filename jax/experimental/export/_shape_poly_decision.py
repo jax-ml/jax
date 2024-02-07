@@ -166,30 +166,31 @@ class _DecisionByElimination:
       m_lb, m_ub = self._term_bounds.get(e_m, (-np.inf, np.inf))
       if e_c > 0:
         if m_ub < np.inf:
-          e_minus_m = _DimExpr._merge_sorted_terms(e._monomials_sorted, 0, 1,
+          e_minus_m = _DimExpr._linear_combination(e._monomials_sorted, 0, 1,
                                                    [(e_m, e_c)], 0, -1)
-          e_minus_m_ub = _DimExpr._merge_sorted_terms(e_minus_m, 0, 1,
+          e_minus_m_ub = _DimExpr._linear_combination(e_minus_m, 0, 1,
                                                       [(_DimMon(), 1)], 0, e_c * int(m_ub))
-          acc_combination(_DimExpr(dict(e_minus_m_ub), e.scope))
+          acc_combination(_DimExpr(e_minus_m_ub, e.scope))
       else:
         if m_lb > -np.inf:
-          e_minus_m = _DimExpr._merge_sorted_terms(e._monomials_sorted, 0, 1,
+          e_minus_m = _DimExpr._linear_combination(e._monomials_sorted, 0, 1,
                                                    [(e_m, e_c)], 0, -1)
-          e_minus_m_lb = _DimExpr._merge_sorted_terms(e_minus_m, 0, 1,
+          e_minus_m_lb = _DimExpr._linear_combination(e_minus_m, 0, 1,
                                                       [(_DimMon(), 1)], 0, e_c * int(m_lb))
-          acc_combination(_DimExpr(dict(e_minus_m_lb), e.scope))
+          acc_combination(_DimExpr(e_minus_m_lb, e.scope))
 
     for prev_constraints in self._expr_constraints.values():
       for _, prev in prev_constraints:
         # Compose "e" with "prev" if they have one monomial with different
         # signs
+        prev_coeffs = dict(prev._monomials_sorted)
         for e_m, e_c in e.monomials():
           if e_m.degree == 0: continue
-          prev_c = prev._coeffs.get(e_m)
+          prev_c = prev_coeffs.get(e_m)
           if prev_c is not None and prev_c * e_c < 0:
             new_constraint = _DimExpr(
-                dict(_DimExpr._merge_sorted_terms(e._monomials_sorted, 0, abs(prev_c),
-                                                  prev._monomials_sorted, 0, abs(e_c))),
+                _DimExpr._linear_combination(e._monomials_sorted, 0, abs(prev_c),
+                                             prev._monomials_sorted, 0, abs(e_c)),
                 e.scope)
             acc_combination(new_constraint)
             break
@@ -280,7 +281,7 @@ class _DecisionByElimination:
         # The recursive call has a smaller leading monomial, because we are only
         # looking at the tail of e, and in c the largest monomial is m, and the
         # merging will cancel the m.
-        rest = _DimExpr._merge_sorted_terms(e, i, abs_m_k,
+        rest = _DimExpr._linear_combination(e, i, abs_m_k,
                                             c._monomials_sorted, 0, - sgn_m_k * m_c)
         rest_lb, rest_ub = self._bounds_for_sorted_terms(scope, rest, 0, None)
         if m_c / m_k > 0:
@@ -295,9 +296,9 @@ class _DecisionByElimination:
         # m_c*MAX(op1, op2) + rest_e >= max(m_c * op1 + rest_e, m_c * op2 + rest_e)
         #   if m_c > 0. Similar rules for when m_c < 0 and for MIN.
         op1, op2 = m_a.operands
-        rest1 = _DimExpr._merge_sorted_terms(e, i + 1, 1,
+        rest1 = _DimExpr._linear_combination(e, i + 1, 1,
                                              op1._monomials_sorted, 0, m_c)
-        rest2 = _DimExpr._merge_sorted_terms(e, i + 1, 1,
+        rest2 = _DimExpr._linear_combination(e, i + 1, 1,
                                              op2._monomials_sorted, 0, m_c)
         rest1_lb, rest1_ub = self._bounds_for_sorted_terms(scope, rest1, 0, None)
         rest2_lb, rest2_ub = self._bounds_for_sorted_terms(scope, rest2, 0, None)
