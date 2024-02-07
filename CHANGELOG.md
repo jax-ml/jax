@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.24
+## jax 0.4.25
+
+## jaxlib 0.4.25
+
+## jax 0.4.24 (Feb 6, 2024)
 
 * Changes
 
@@ -111,7 +115,7 @@ Remember to align the itemized text with the first line of an item within a list
     and will emit a `FutureWarning`.  Use `jax.vmap` for explicit batching.
   * {func}`jax.lax.tie_in` is deprecated: it has been a no-op since JAX v0.2.0.
 
-## jaxlib 0.4.24
+## jaxlib 0.4.24 (Feb 6, 2024)
 
 * Changes
 
