@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.24
+## jax 0.4.25
+
+## jaxlib 0.4.25
+
+## jax 0.4.24 (Feb 6, 2024)
 
 * Changes
 
@@ -114,7 +118,7 @@ Remember to align the itemized text with the first line of an item within a list
     solves with `b.ndim > 1`. In the future these will be treated as batched 2D
     solves.
 
-## jaxlib 0.4.24
+## jaxlib 0.4.24 (Feb 6, 2024)
 
 * Changes
 
