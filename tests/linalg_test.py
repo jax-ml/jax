@@ -74,11 +74,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       # Upper argument added in NumPy 2.0.0
       if jtu.numpy_version() >= (2, 0, 0):
         return np.linalg.cholesky(x, upper=upper)
+      result = np.linalg.cholesky(x)
       if upper:
         axes = list(range(x.ndim))
         axes[-1], axes[-2] = axes[-2], axes[-1]
-        x = np.transpose(x, axes).conj()
-      return np.linalg.cholesky(x)
+        return np.transpose(result, axes).conj()
+      return result
 
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker,
                             tol=1e-3)
