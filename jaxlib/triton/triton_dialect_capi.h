@@ -17,6 +17,7 @@ limitations under the License.
 #define JAXLIB_TRITON_TRITON_DIALECT_CAPI_H_
 
 #include "mlir/include/mlir-c/IR.h"
+#include "mlir/include/mlir-c/Support.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,12 +25,14 @@ extern "C" {
 
 MLIR_DECLARE_CAPI_DIALECT_REGISTRATION(Triton, triton);
 
-MlirType mlirTritonPointerTypeGet(MlirType pointeeType, int addressSpace);
-bool mlirTritonIsAPointerType(MlirType type);
-MlirType mlirTritonPointerTypeGetPointeeType(MlirType pointerType);
+MLIR_CAPI_EXPORTED MlirType mlirTritonPointerTypeGet(MlirType pointeeType,
+                                                     int addressSpace);
+MLIR_CAPI_EXPORTED bool mlirTritonIsAPointerType(MlirType type);
+MLIR_CAPI_EXPORTED MlirType
+mlirTritonPointerTypeGetPointeeType(MlirType pointerType);
 
-MlirAttribute mlirTritonInferReduceOpEncoding(MlirAttribute operandEncoding,
-                                              int axis);
+MLIR_CAPI_EXPORTED MlirAttribute
+mlirTritonInferReduceOpEncoding(MlirAttribute operandEncoding, int axis);
 
 #ifdef __cplusplus
 }  // extern "C"
