@@ -880,8 +880,10 @@ def _masked_load_lowering_rule(
   ptr = _compute_pointers_from_indices(
       ptr, ctx.block_infos[0], idx, ctx.avals_in[0].shape
   )
-  if other is not None and mask is not None:
-    other = tc.broadcast_to(other, mask.shape)
+  if mask is not None:
+    mask = tc.broadcast_to(mask, ptr.shape)
+  if other is not None:
+    other = tc.broadcast_to(other, ptr.shape)
   val = tc.load(
       ptr,
       mask=mask,
@@ -934,8 +936,11 @@ def _masked_swap_lowering_rule(
       ptr, ctx.block_infos[0], idx, ctx.avals_in[0].shape
   )
   other = None
-  if value is not None and mask is not None:
-    other = tc.broadcast_to(value, mask.shape)
+  if mask is not None:
+    mask = tc.broadcast_to(mask, ptr.shape)
+    if value is not None:
+      other = tc.broadcast_to(value, ptr.shape)
+
   old_value = tc.load(ptr, mask=mask, other=other)
   tc.store(
       ptr,
