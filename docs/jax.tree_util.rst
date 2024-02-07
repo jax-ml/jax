@@ -12,6 +12,7 @@ List of Functions
    :toctree: _autosummary
 
    Partial
+   MAP_TO_NONE
    all_leaves
    build_tree
    register_pytree_node
@@ -28,6 +29,7 @@ List of Functions
    tree_reduce
    tree_structure
    tree_transpose
+   tree_traverse
    tree_unflatten
    treedef_children
    treedef_is_leaf
