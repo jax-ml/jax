@@ -274,6 +274,87 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
                      z.__cuda_array_interface__["data"][0])
     self.assertAllClose(x, cupy.asnumpy(z))
 
+  @unittest.skipIf(xla_extension_version < 237, "Requires newer jaxlib")
+  @jtu.sample_product(
+    shape=all_shapes,
+    dtype=jtu.dtypes.supported(cuda_array_interface_dtypes),
+  )
+  @unittest.skipIf(not cupy, "Test requires CuPy")
+  @jtu.run_on_devices("cuda")
+  def testCuPyToJax(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    x = rng(shape, dtype)
+    y = cupy.asarray(x)
+    z = jnp.array(y, copy=False)  # this conversion uses dlpack protocol
+    self.assertEqual(z.dtype, dtype)
+    self.assertEqual(y.__cuda_array_interface__["data"][0],
+                     z.__cuda_array_interface__["data"][0])
+    self.assertAllClose(np.asarray(z), cupy.asnumpy(y))
+
+  @unittest.skipIf(xla_extension_version < 237, "Requires newer jaxlib")
+  @jtu.sample_product(
+    shape=all_shapes,
+    dtype=jtu.dtypes.supported(cuda_array_interface_dtypes),
+  )
+  @jtu.run_on_devices("cuda")
+  def testCaiToJax(self, shape, dtype):
+    if xb.using_pjrt_c_api():
+      self.skipTest("CUDA Array Interface support is incomplete in the PJRT C API")  # TODO(jakevdp)
+    rng = jtu.rand_default(self.rng())
+    x = rng(shape, dtype)
+
+    # using device with highest device_id for testing the correctness
+    # of detecting the device id from a pointer value
+    device = jax.devices('cuda')[-1]
+    with jax.default_device(device):
+      y = jnp.array(x, dtype=dtype)
+    self.assertEqual(y.dtype, dtype)
+
+    # Using a jax array CAI provider support to construct an object
+    # that implements the CUDA Array Interface, versions 2 and 3.
+    cai = y.__cuda_array_interface__
+    stream = tuple(y.devices())[0].get_stream_for_external_ready_events()
+
+    class CAIWithoutStridesV2:
+      __cuda_array_interface__ = cai.copy()
+      __cuda_array_interface__["version"] = 2
+      # CAI version 2 may not define strides and does not define stream
+      __cuda_array_interface__.pop("strides", None)
+      __cuda_array_interface__.pop("stream", None)
+
+    class CAIWithoutStrides:
+      __cuda_array_interface__ = cai.copy()
+      __cuda_array_interface__["version"] = 3
+      __cuda_array_interface__["strides"] = None
+      __cuda_array_interface__["stream"] = None  # default stream
+
+    class CAIWithStrides:
+      __cuda_array_interface__ = cai.copy()
+      __cuda_array_interface__["version"] = 3
+      strides = (dtype.dtype.itemsize,) if shape else ()
+      for s in reversed(shape[1:]):
+        strides = (strides[0] * s, *strides)
+      __cuda_array_interface__['strides'] = strides
+      __cuda_array_interface__["stream"] = stream
+
+    for CAIObject in [CAIWithoutStridesV2, CAIWithoutStrides,
+                      CAIWithStrides]:
+      z = jnp.array(CAIObject(), copy=False)
+      self.assertEqual(y.__cuda_array_interface__["data"][0],
+                       z.__cuda_array_interface__["data"][0])
+      self.assertAllClose(x, z)
+      if 0 in shape:
+        # the device id detection from a zero pointer value is not
+        # possible
+        pass
+      else:
+        self.assertEqual(y.devices(), z.devices())
+
+      z = jnp.array(CAIObject(), copy=True)
+      if 0 not in shape:
+        self.assertNotEqual(y.__cuda_array_interface__["data"][0],
+                            z.__cuda_array_interface__["data"][0])
+      self.assertAllClose(x, z)
 
 class Bfloat16Test(jtu.JaxTestCase):
 
