@@ -298,8 +298,9 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
   )
   @jtu.run_on_devices("cuda")
   def testCaiToJax(self, shape, dtype):
+    # TODO(b/324133505) enable this test for PJRT C API
     if xb.using_pjrt_c_api():
-      self.skipTest("CUDA Array Interface support is incomplete in the PJRT C API")  # TODO(jakevdp)
+      self.skipTest("CUDA Array Interface support is incomplete in the PJRT C API")
     rng = jtu.rand_default(self.rng())
     x = rng(shape, dtype)
 
