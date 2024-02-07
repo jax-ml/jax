@@ -1500,7 +1500,7 @@ class PallasCallPipelineTest(parameterized.TestCase):
 
   @parameterized.named_parameters(
       ('vmem', pltpu.TPUMemorySpace.VMEM, jnp.bfloat16),
-      ('hbm', pltpu.TPUMemorySpace.VMEM, jnp.bfloat16),
+      ('hbm', pltpu.TPUMemorySpace.ANY, jnp.bfloat16),
       ('hbm_float32', pltpu.TPUMemorySpace.ANY, jnp.float32),
   )
   def test_pipeline_all_gather_matmul(self, memory_space, out_dtype):
