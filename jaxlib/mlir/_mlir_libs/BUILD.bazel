@@ -15,6 +15,7 @@
 load(
     "//jaxlib:jax.bzl",
     "py_extension",
+    "pybind_extension",
     "windows_cc_shared_mlir_library",
 )
 load("//jaxlib:symlink_files.bzl", "symlink_inputs")
@@ -114,6 +115,21 @@ py_library(
         ":_tpu_ext",
         "//jaxlib/mlir:ir",
         "//jaxlib/mosaic/python:layout_defs",
+    ],
+)
+
+pybind_extension(
+    name = "_triton_ext",
+    srcs = ["triton_ext.cc"],
+    copts = COPTS,
+    linkopts = LINKOPTS,
+    pytype_srcs = ["_triton_ext.pyi"],
+    deps = [
+        ":jaxlib_mlir_capi_shared_library",
+        "//jaxlib/triton:triton_dialect_capi_headers",
+        "@llvm-project//mlir:CAPIIRHeaders",
+        "@llvm-project//mlir:MLIRBindingsPythonHeadersAndDeps",
+        "@pybind11",
     ],
 )
 
@@ -234,6 +250,7 @@ cc_library(
     name = "jaxlib_mlir_capi_objects",
     deps = [
         "//jaxlib/mosaic:tpu_dialect_capi_objects",
+        "//jaxlib/triton:triton_dialect_capi_objects",
         "@llvm-project//mlir:CAPIArithObjects",
         "@llvm-project//mlir:CAPIIRObjects",
         "@llvm-project//mlir:CAPIMathObjects",
