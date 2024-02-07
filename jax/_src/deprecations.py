@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import ModuleType
 import warnings
 
 # Module __getattr__ factory that warns if deprecated names are used.
@@ -53,3 +54,29 @@ def deprecation_getattr(module, deprecations):
     raise AttributeError(f"module {module!r} has no attribute {name!r}")
 
   return getattr
+
+
+def accelerate_module_deprecation(module: ModuleType, name: str) -> None:
+  """Accelerate the deprecation of a module-level attribute"""
+  message, _ = module._deprecations[name]
+  module._deprecations[name] = (message, None)
+
+
+_registered_deprecations: dict[tuple[str, str], bool] = {}
+
+
+def register(module: str, key: str) -> None:
+  _registered_deprecations[module, key] = False
+
+
+def unregister(module: str, key: str) -> None:
+  _registered_deprecations.pop((module, key))
+
+
+def accelerate(module: str, key: str) -> None:
+  assert (module, key) in _registered_deprecations
+  _registered_deprecations[module, key] = True
+
+
+def is_accelerated(module: str, key: str) -> bool:
+  return _registered_deprecations[module, key]

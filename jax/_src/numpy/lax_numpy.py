@@ -51,6 +51,7 @@ from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src.custom_derivatives import custom_jvp
+from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import xla_bridge
@@ -2094,6 +2095,8 @@ available in the JAX FAQ at :ref:`faq-data-placement` (full FAQ at
 https://jax.readthedocs.io/en/latest/faq.html).
 """
 
+deprecations.register(__name__, "array-none")
+
 @util.implements(np.array, lax_description=_ARRAY_DOC)
 def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
           order: str | None = "K", ndmin: int = 0) -> Array:
@@ -2146,6 +2149,8 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
   leaves = tree_leaves(object, is_leaf=lambda x: x is None)
   if any(leaf is None for leaf in leaves):
     # Added Nov 16 2023
+    if deprecations.is_accelerated(__name__, "array-none"):
+      raise TypeError("None is not a valid value for jnp.array")
     warnings.warn(
       "None encountered in jnp.array(); this is currently treated as NaN. "
       "In the future this will result in an error.",
