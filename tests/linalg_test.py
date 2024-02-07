@@ -1023,6 +1023,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     ],
     dtype=float_types + complex_types,
   )
+  @jtu.ignore_warning(category=FutureWarning, message="jnp.linalg.solve: batched")
   def testSolve(self, lhs_shape, rhs_shape, dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
