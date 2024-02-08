@@ -3396,10 +3396,14 @@ def _reshape_shape_rule(operand, *, new_sizes, dimensions):
     msg = 'reshape new_sizes must all be positive, got {}.'
     raise TypeError(msg.format(new_sizes))
   # TODO(necula): re-enable this check
+  operand_size = math.prod(np.shape(operand))
+  new_size = math.prod(new_sizes)
   if (not config.dynamic_shapes.value and
-      not math.prod(np.shape(operand)) == math.prod(new_sizes)):
-    msg = 'reshape total size must be unchanged, got new_sizes {} for shape {}.'
-    raise TypeError(msg.format(new_sizes, np.shape(operand)))
+      not operand_size == new_size):
+    msg = (f"reshape total size must be unchanged, got new_sizes {new_sizes} "
+           f"(of total size {new_size}) for shape {np.shape(operand)} "
+           f"(of total size {operand_size}).")
+    raise TypeError(msg)
   if dimensions is not None:
     if set(dimensions) != set(range(np.ndim(operand))):
       msg = ('reshape dimensions must be a permutation of operand dimensions, '
