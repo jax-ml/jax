@@ -285,7 +285,18 @@ absl::Status Kernel::Launch(gpuStream_t stream, uint32_t grid[3],
       /*blockDimY=*/1, /*blockDimZ=*/1, shared_mem_bytes_, stream, params,
       /*extra=*/nullptr));
 #else  // JAX_GPU_CUDA
-  GPU_RETURN_IF_ERROR(gpuStreamGetCtx(stream, &context));
+  // TODO(b/324319767): A bug in CUDA prevents us from calling cuStreamGetCtx
+  // inside graph capture. We use cuCtxGetCurrent as a workaround here because
+  // context is not updated, but we should change it back to cuStreamGetCtx once
+  // the bug is fixed.
+  gpustreamCaptureStatus_t capture_status;
+  GPU_RETURN_IF_ERROR(gpuStreamIsCapturing(stream, &capture_status));
+  if (capture_status == GPU_STREAM_CAPTURE_STATUS_ACTIVE) {
+    GPU_RETURN_IF_ERROR(gpuCtxGetCurrent(&context));
+  } else {
+    GPU_RETURN_IF_ERROR(gpuStreamGetCtx(stream, &context));
+  }
+
   JAX_ASSIGN_OR_RETURN(gpuFunction_t kernel,
                        module_image_->GetFunctionForContext(context));
   const uint32_t cluster_size =

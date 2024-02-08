@@ -259,6 +259,7 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPU_STREAM_NON_BLOCKING CU_STREAM_NON_BLOCKING
 
 #define gpuCtxGetDevice cuCtxGetDevice
+#define gpuCtxGetCurrent cuCtxGetCurrent
 #define gpuCtxPopCurrent cuCtxPopCurrent
 #define gpuCtxPushCurrent cuCtxPushCurrent
 #define gpuDeviceGetAttribute cuDeviceGetAttribute
@@ -514,6 +515,7 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpuSuccess hipSuccess
 
 #define gpuCtxGetDevice hipCtxGetDevice
+#define gpuCtxGetCurrent hipCtxGetCurrent
 #define gpuCtxPopCurrent hipCtxPopCurrent
 #define gpuCtxPushCurrent hipCtxPushCurrent
 #define gpuDeviceGet hipDeviceGet
