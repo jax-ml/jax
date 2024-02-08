@@ -1901,6 +1901,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         fill_value = rng((), dtype)
       else:
         fill_value = rng(shape[:axis] + shape[axis + 1:], dtype)
+    elif fill_value is not None:
+      fill_value = np.array(fill_value).astype(dtype)
 
     @partial(jtu.with_jax_dtype_defaults, use_defaults=(False, True, True, True))
     def np_fun(x, fill_value=fill_value):
