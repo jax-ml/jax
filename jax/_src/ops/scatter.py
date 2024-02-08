@@ -103,6 +103,9 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
   idx = jnp._merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
   indexer = jnp._index_to_gather(jnp.shape(x), idx,
                                  normalize_indices=normalize_indices)
+  # TODO(jakevdp): implement scalar boolean logic.
+  if indexer.scalar_bool_dims:
+    raise TypeError("Scalar boolean indices are not allowed in scatter.")
 
   # Avoid calling scatter if the slice shape is empty, both as a fast path and
   # to handle cases like zeros(0)[array([], int32)].

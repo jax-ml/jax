@@ -1,8 +1,5 @@
 # Known failures for the array api tests.
 
-# JAX doesn't yet support scalar boolean indexing
-array_api_tests/test_array_object.py::test_getitem_masking
-
 # Test suite attempts in-place mutation:
 array_api_tests/test_special_cases.py::test_binary
 array_api_tests/test_special_cases.py::test_iop
