@@ -889,7 +889,7 @@ def _sum(self, *args, **kwargs):
   return sparsify(lambda x: x.sum(*args, **kwargs))(self)
 
 def _reshape(self, *args, **kwargs):
-  """Sum array along axis."""
+  """Returns an array containing the same data with a new shape."""
   return sparsify(lambda x: x.reshape(*args, **kwargs))(self)
 
 def _astype(self, *args, **kwargs):
