@@ -115,20 +115,36 @@ class Mapped:
 mapped = Mapped()
 
 
+@dataclasses.dataclass(frozen=True)
+class Unblocked:
+  padding: tuple[tuple[int, int], ...] | None = None
+unblocked = Unblocked()
+
+
+class Blocked:
+  pass
+blocked = Blocked()
+
+
+IndexingMode = Union[Blocked, Unblocked]
+
+
 @dataclasses.dataclass(init=False, unsafe_hash=True)
 class BlockSpec:
   index_map: Callable[..., Any] | None
   block_shape: tuple[int | None, ...] | None
   memory_space: Any
+  indexing_mode: IndexingMode
 
   def __init__(self, index_map: Callable[..., Any] | None = None,
                block_shape: tuple[int | None, ...] | None = None,
-               memory_space: Any = None):
+               memory_space: Any = None, indexing_mode: IndexingMode = blocked):
     self.index_map = index_map
     if block_shape is not None and not isinstance(block_shape, tuple):
       block_shape = tuple(block_shape)
     self.block_shape = block_shape
     self.memory_space = memory_space
+    self.indexing_mode = indexing_mode
 
   def compute_index(self, *args):
     assert self.index_map is not None
@@ -143,6 +159,7 @@ class BlockSpec:
 class BlockMapping:
   block_shape: tuple[Mapped | int, ...]
   index_map_jaxpr: jax_core.ClosedJaxpr
+  indexing_mode: IndexingMode
 
   def compute_start_indices(self, loop_idx, *args):
     discharged_jaxpr, discharged_consts = state_discharge.discharge_state(
@@ -154,8 +171,13 @@ class BlockMapping:
     # updated values since we only care about the return values.
     block_indices, _ = split_list(block_indices_and_rest,
                                   [len(self.block_shape)])
-    return tuple(i if b is mapped else b * i
-                 for b, i in zip(self.block_shape, block_indices))
+    if isinstance(self.indexing_mode, Blocked):
+      return tuple(i if b is mapped else b * i
+                  for b, i in zip(self.block_shape, block_indices))
+    elif isinstance(self.indexing_mode, Unblocked):
+      return block_indices
+    else:
+      raise RuntimeError(f"Unknown indexing mode: {self.indexing_mode}")
 
   replace = dataclasses.replace
 
@@ -205,7 +227,9 @@ def _convert_block_spec_to_block_mapping(
       mapped if s is None else s for s in block_shape)
   flat_fun, _ = api_util.flatten_fun(lu.wrap_init(compute_index), in_tree)
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
-  return BlockMapping(block_shape, jax_core.ClosedJaxpr(jaxpr, consts))
+  return BlockMapping(
+      block_shape, jax_core.ClosedJaxpr(jaxpr, consts), block_spec.indexing_mode
+  )
 
 def _tile_ref(ref: state.AbstractRef, block_shape: tuple[int, ...] | None
              ) -> state.AbstractRef:

@@ -15,6 +15,7 @@
 """Module for calling pallas functions from JAX."""
 from __future__ import annotations
 
+import itertools
 from functools import partial
 from functools import reduce
 
@@ -146,8 +147,18 @@ def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
       raise NotImplementedError(f"Cannot initialize scratch: {scratch_avals}")
     scratch_values = [_uninitialized_value(a.shape, a.dtype)
                       for a in scratch_avals]
-    carry = [*args, *out, *scratch_values]
-    num_carry = len(args) + len(out)
+
+    carry = []
+    for x, bm in zip(itertools.chain(args, out), grid_mapping.block_mappings):
+      if bm is not None and isinstance(bm.indexing_mode, pallas_core.Unblocked):
+        padding = bm.indexing_mode.padding
+        if padding is not None and any(p != (0, 0) for p in padding):
+          if input_output_aliases:
+            raise NotImplementedError("Padding with aliasing not supported.")
+          x = lax.pad(x, jnp.zeros((), x.dtype), [(*p, 0) for p in padding])
+      carry.append(x)
+    carry.extend(scratch_values)
+    num_inout = len(args) + len(out)
     grid_start_indices = (jnp.int32(0),) * len(grid)
     if grid:
       num_iterations = reduce(jnp.multiply, grid)
@@ -159,7 +170,7 @@ def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
       return i < num_iterations
     def body(carry):
       i, loop_idx, *carry = carry
-      carry, scratch = split_list(carry, [num_carry])
+      carry, scratch = split_list(carry, [num_inout])
       start_indices = [
           None if bm is None else bm.compute_start_indices(loop_idx, *scalars)
           for bm in grid_mapping.block_mappings]
@@ -193,7 +204,7 @@ def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
         blocks = jax.core.eval_jaxpr(discharged_jaxpr, consts, *scalars,
                                      *blocks, *scratch)
       blocks = blocks[grid_mapping.num_index_operands:]
-      blocks, out_scratch = split_list(blocks, [num_carry])
+      blocks, out_scratch = split_list(blocks, [num_inout])
       carry = map(_maybe_dynamic_update_slice, start_indices, block_shapes,
                   carry, blocks, is_indexing_dim)
       return (i + 1, _get_next_indices(grid, loop_idx), *carry, *out_scratch)
@@ -201,7 +212,20 @@ def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
         cond, body, (jnp.int32(0), grid_start_indices, *carry)
     )
     _, out, _ = split_list(carry, [len(args), len(out)])
-    return out
+    assert len(grid_mapping.block_mappings) == len(args) + len(out)
+    out_block_mappings = grid_mapping.block_mappings[len(args):]
+    out_nopad = []
+    for o, bm in zip(out, out_block_mappings):
+      if bm is not None and isinstance(bm.indexing_mode, pallas_core.Unblocked):
+        padding = bm.indexing_mode.padding
+        if padding is not None and any(p != (0, 0) for p in padding):
+          if input_output_aliases:
+            raise NotImplementedError("Padding with aliasing not supported.")
+          pad_low, pad_high = zip(*padding)
+          limit_indices = [s - p for s, p in zip(out.shape, pad_high)]
+          o = lax.slice(o, pad_low, limit_indices)
+      out_nopad.append(o)
+    return out_nopad
   return xla.apply_primitive(pallas_call_p, *args, jaxpr=jaxpr, name=name,
                              in_shapes=in_shapes,
                              out_shapes=out_shapes, which_linear=which_linear,
@@ -292,7 +316,11 @@ def _batch_block_mapping(grid: tuple[int, ...], aval: jax_core.ShapedArray,
     new_block_shape = tuple_insert(shape, dim, pallas_core.mapped)
   jaxpr = jax_core.ClosedJaxpr(block_mapping_jaxpr, consts)
   if block_mapping is None:
-    return BlockMapping(block_shape=new_block_shape, index_map_jaxpr=jaxpr)
+    return BlockMapping(
+        block_shape=new_block_shape,
+        index_map_jaxpr=jaxpr,
+        indexing_mode=pallas_core.blocked,
+    )
   return block_mapping.replace(block_shape=new_block_shape,
                                index_map_jaxpr=jaxpr)
 

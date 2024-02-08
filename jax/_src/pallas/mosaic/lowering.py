@@ -417,14 +417,19 @@ def lower_jaxpr_to_module(
           1 if b is pl_core.mapped else b for b in bm.block_shape
       ]
       window_shape = ir.DenseI64ArrayAttr.get(block_shape)
-      window_params.append(
-          ir.DictAttr.get(
-              dict(
-                  window_bounds=window_shape,
-                  transform_indices=ir.FlatSymbolRefAttr.get(func_name),
-              )
-          )
+      block_params = dict(
+          window_bounds=window_shape,
+          transform_indices=ir.FlatSymbolRefAttr.get(func_name),
       )
+      if isinstance(bm.indexing_mode, pl_core.Unblocked):
+        if bm.indexing_mode.padding is None:
+          pad_low = pad_high = [0] * len(bm.block_shape)
+        else:
+          pad_low, pad_high = map(list, zip(*bm.indexing_mode.padding))
+        block_params["window_kind"] = ir.Attribute.parse(
+            f"#tpu.element_window<{pad_low},{pad_high}>"
+        )
+      window_params.append(ir.DictAttr.get(block_params))
       m.body.append(mlir_func)
       sym_tab.insert(mlir_func)
     func_op.attributes["window_params"] = ir.ArrayAttr.get(window_params)

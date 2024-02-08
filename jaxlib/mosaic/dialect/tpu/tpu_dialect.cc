@@ -191,6 +191,11 @@ bool isGuaranteedDivisible(Value value, int64_t divisor, int64_t fuel) {
   if (auto assume_op = value.getDefiningOp<tpu::AssumeMultipleOp>()) {
     return assume_op.getMultiple() % divisor == 0;
   }
+  if (auto mul_op = value.getDefiningOp<arith::MulIOp>()) {
+    // We check RHS first, because MLIR canonicalizes constants to the right.
+    return isGuaranteedDivisible(mul_op.getRhs(), divisor, fuel / 2) ||
+           isGuaranteedDivisible(mul_op.getLhs(), divisor, (fuel + 1) / 2);
+  }
   if (auto cst_op = value.getDefiningOp<arith::ConstantOp>()) {
     auto int_attr = dyn_cast<IntegerAttr>(cst_op.getValue());
     return int_attr && int_attr.getInt() % divisor == 0;

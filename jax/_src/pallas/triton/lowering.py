@@ -81,6 +81,7 @@ Grid = tuple[int, ...]
 NDIndexer = indexing.NDIndexer
 GridMapping = pallas_core.GridMapping
 BlockMapping = pallas_core.BlockMapping
+Blocked = pallas_core.Blocked
 
 
 # # General lowering logic
@@ -284,6 +285,11 @@ def lower_jaxpr_to_triton_module(
         raise NotImplementedError(
             "Scalar prefetch not supported in Triton lowering."
         )
+      for bm in grid_mapping.block_mappings:
+        if bm is not None and not isinstance(bm.indexing_mode, Blocked):
+          raise NotImplementedError(
+              "Only Blocked indexing mode is supported in Triton lowering."
+          )
       start_indices = map(
           partial(_eval_index_map, ctx, program_ids),
           grid_mapping.block_mappings,

@@ -74,6 +74,17 @@ def TPU_DimensionSemanticsEnum
     let assemblyFormat = "`<` $value `>`";
 }
 
+// All indices/sizes are in element-space.
+// Note that the implementation will require statically provable tile alignment.
+def TPU_ElementWindowAttr : TPU_Attr<"ElementWindow", "element_window"> {
+  // Including low padding, to avoid backwards-incompatible changes once we add it.
+  let parameters = (ins
+    ArrayRefParameter<"int64_t", "">:$pad_low,
+    ArrayRefParameter<"int64_t", "">:$pad_high
+  );
+  let assemblyFormat = "`<` `[` $pad_low `]` `,` `[` $pad_high `]` `>`";
+}
+
 def TPU_ContractPrecision : I32EnumAttr<"ContractPrecision", "Contraction precision", [
   I32EnumAttrCase<"kBF16", 0, "bf16">,
   I32EnumAttrCase<"kFP32", 1, "fp32">

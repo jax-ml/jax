@@ -1195,6 +1195,70 @@ class PallasCallTest(PallasTPUTest):
     )(x)
 
 
+class PallasCallUnblockedIndexingTest(PallasTPUTest):
+
+  def setUp(self):
+    super().setUp()
+    if not self.interpret and jtu.device_under_test() != 'tpu':
+      self.skipTest('Only interpret mode supported on non-TPU')
+
+  def test_unblocked_indexing(self):
+    shape = (16 * 8, 128)
+    result_ty = jax.ShapeDtypeStruct((15 * 8, 128), jnp.float32)
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[pl.ds(0, 8)] + x_ref[pl.ds(8, 8)]
+
+    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    y = pl.pallas_call(
+        kernel,
+        grid=(15,),
+        in_specs=(
+            pl.BlockSpec(
+                lambda i: (i * 8, 0), (2 * 8, 128), indexing_mode=pl.unblocked
+            ),
+        ),
+        out_specs=pl.BlockSpec(lambda i: (i, 0), (8, 128)),
+        out_shape=result_ty,
+        interpret=self.interpret,
+    )(x)
+    ref = []
+    for i in range(15):
+      ref.append(x[i * 8:(i + 1) * 8] + x[(i + 1) * 8:(i + 2) * 8])
+    ref = np.concatenate(ref, axis=0)
+    np.testing.assert_array_equal(y, ref)
+
+  def test_unblocked_indexing_with_padding(self):
+    shape = (8, 128)
+    result_ty = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[pl.ds(0, 8)]
+
+    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    y = pl.pallas_call(
+        kernel,
+        grid=(1,),
+        in_specs=(
+            pl.BlockSpec(
+                lambda i: (0, 0),
+                (2 * 8, 128),
+                indexing_mode=pl.Unblocked(((0, 8), (0, 0))),
+            ),
+        ),
+        out_specs=pl.BlockSpec(lambda i: (0, 0), (8, 128)),
+        out_shape=result_ty,
+        interpret=self.interpret,
+    )(x)
+    np.testing.assert_array_equal(y, x)
+
+
+class PallasCallInterpreterUnblockedIndexingTest(
+    PallasCallUnblockedIndexingTest
+):
+  interpret = True
+
+
 class PallasUXTest(PallasTPUTest):
 
   def setUp(self):
