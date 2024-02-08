@@ -701,6 +701,7 @@ def dot_product_attention(query: Array,
                           value: Array,
                           bias: Optional[Array] = None,
                           mask: Optional[Array] = None,
+                          *,
                           scale: float = 1.0,
                           is_causal_mask: bool = False,
                           seed: int = 42,
@@ -737,15 +738,13 @@ def dot_product_attention(query: Array,
   check_cudnn_version(is_flash_attention, is_cross_attention)
   if mask is not None and is_causal_mask:
     raise ValueError("can not apply a mask and generate a causal_mask at the same time.")
+  if not is_flash_attention and is_causal_mask:
+    raise ValueError("can only generate a causal_mask with flash attention.")
   variadic_args = (bias is not None, mask is not None)
   if bias is None:
     bias = jnp.zeros(0, dtype=query.dtype)
   if mask is None:
     mask = jnp.zeros(0, dtype=query.dtype)
-  # TODO: remove this once scale behavior is fixed
-  if scale != 1.0:
-    query = query * scale
-    scale = 1.0
   output = _dot_product_attention(
     query, key, value, bias, mask, 
     scale, seed, dropout_rate, variadic_args, 

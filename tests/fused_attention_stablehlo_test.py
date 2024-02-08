@@ -69,9 +69,9 @@ def sdpa_ref(query: Array,
     mask = (row_idx < col_idx).astype(input_t.dtype) * large_negative_number
     return mask[jnp.newaxis, jnp.newaxis, :, :]
 
-  if scale != 1.0:
-    query = query * scale
   attn_weights = jnp.einsum('bqhd,bkhd->bhqk', query, key)
+  if scale != 1.0:
+    attn_weights = attn_weights * scale
   if is_causal_mask:
     bias = get_causal_mask(attn_weights)
   if bias is not None:
@@ -108,8 +108,8 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       seq_len=[256, 1024],
       num_heads=[8],
       head_dim=[64, 128],
-      use_bias=[True],
-      use_mask=[True],
+      use_bias=[False, True],
+      use_mask=[False, True],
       is_causal_mask=[False],
       dropout_rate=[0, 0.5],
       scale=[0.5],
