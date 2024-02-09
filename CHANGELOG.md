@@ -127,6 +127,8 @@ Remember to align the itemized text with the first line of an item within a list
 
 * Changes
 
+  * JAX now supports CUDA 12.3 and CUDA 11.8. Support for CUDA 12.2 has been
+    dropped.
   * `cost_analysis` now works with cross-compiled `Compiled` objects (i.e. when
     using `.lower().compile()` with a topology object, e.g., to compile for
     Cloud TPU from a non-TPU computer).

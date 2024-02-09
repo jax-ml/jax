@@ -114,7 +114,7 @@ able to use the
 that NVIDIA provides for this purpose.
 
 JAX currently ships two CUDA wheel variants:
-* CUDA 12.2, cuDNN 8.9, NCCL 2.16
+* CUDA 12.3, cuDNN 8.9, NCCL 2.16
 * CUDA 11.8, cuDNN 8.6, NCCL 2.16
 
 You may use a JAX wheel provided the major version of your CUDA, cuDNN, and NCCL
