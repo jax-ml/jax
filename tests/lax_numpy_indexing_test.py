@@ -876,15 +876,6 @@ class IndexingTest(jtu.JaxTestCase):
     i = np.array([True, True, False])
     self.assertRaises(IndexError, lambda: jax.jit(lambda x, i: x[i])(x, i))
 
-  def testScalarBooleanIndexingNotImplemented(self):
-    msg = "JAX arrays do not support boolean scalar indices"
-    with self.assertRaisesRegex(TypeError, msg):
-      jnp.arange(4)[True]
-    with self.assertRaisesRegex(TypeError, msg):
-      jnp.arange(4)[False]
-    with self.assertRaisesRegex(TypeError, msg):
-      jnp.arange(4)[..., True]
-
   def testIssue187(self):
     x = jnp.ones((5, 5))
     x[[0, 2, 4], [0, 2, 4]]  # doesn't crash
@@ -1033,6 +1024,29 @@ class IndexingTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @jtu.sample_product(
+      shape=[(2, 3, 4, 5)],
+      idx=[
+        np.index_exp[True],
+        np.index_exp[False],
+        np.index_exp[..., True],
+        np.index_exp[..., False],
+        np.index_exp[0, :2, True],
+        np.index_exp[0, :2, False],
+        np.index_exp[:2, 0, True],
+        np.index_exp[:2, 0, False],
+        np.index_exp[:2, np.array([0, 2]), True],
+        np.index_exp[np.array([1, 0]), :, True],
+        np.index_exp[True, :, True, :, np.array(True)],
+      ]
+  )
+  def testScalarBooleanIndexing(self, shape, idx):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, np.int32)]
+    np_fun = lambda x: np.asarray(x)[idx]
+    jnp_fun = lambda x: jnp.asarray(x)[idx]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+
   def testFloatIndexingError(self):
     BAD_INDEX_TYPE_ERROR = "Indexer must have integer or boolean type, got indexer with type"
     with self.assertRaisesRegex(TypeError, BAD_INDEX_TYPE_ERROR):
@@ -1158,8 +1172,7 @@ class IndexingTest(jtu.JaxTestCase):
   def testWrongNumberOfIndices(self):
     with self.assertRaisesRegex(
         IndexError,
-        "Too many indices for array: array has ndim of 1, "
-        "but was indexed with 2 non-None/Ellipsis indices"):
+        "Too many indices for array: 2 non-None/Ellipsis indices for dim 1."):
       jnp.zeros(3)[:, 5]
 
 

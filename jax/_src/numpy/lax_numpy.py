@@ -4613,6 +4613,9 @@ def _gather(arr, treedef, static_idx, dynamic_idx, indices_are_sorted,
     if isinstance(fill_value, np.ndarray):
       fill_value = fill_value.item()
 
+  if indexer.scalar_bool_dims:
+    y = lax.expand_dims(y, indexer.scalar_bool_dims)
+
   # Avoid calling gather if the slice shape is empty, both as a fast path and to
   # handle cases like zeros(0)[array([], int32)].
   if core.is_empty_shape(indexer.slice_shape):
@@ -4656,6 +4659,10 @@ class _Indexer(NamedTuple):
   # Keep track of any axes created by `newaxis`. These must be inserted for
   # gathers and eliminated for scatters.
   newaxis_dims: Sequence[int]
+
+  # Keep track of dimensions with scalar bool indices. These must be inserted
+  # for gathers before performing other index operations.
+  scalar_bool_dims: Sequence[int]
 
 
 def _split_index_for_jit(idx, shape):
@@ -4704,6 +4711,16 @@ def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
                      normalize_indices: bool = True) -> _Indexer:
   # Remove ellipses and add trailing slice(None)s.
   idx = _canonicalize_tuple_index(len(x_shape), idx)
+
+  # Check for scalar boolean indexing: this requires inserting extra dimensions
+  # before performing the rest of the logic.
+  scalar_bool_dims: Sequence[int] = [n for n, i in enumerate(idx) if isinstance(i, bool)]
+  if scalar_bool_dims:
+    idx = tuple(np.arange(int(i)) if isinstance(i, bool) else i for i in idx)
+    x_shape = list(x_shape)
+    for i in sorted(scalar_bool_dims):
+      x_shape.insert(i, 1)
+    x_shape = tuple(x_shape)
 
   # Check for advanced indexing:
   # https://docs.scipy.org/doc/numpy/reference/arrays.indexing.html#advanced-indexing
@@ -4805,8 +4822,8 @@ def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
         # XLA gives error when indexing into an axis of size 0
         raise IndexError(f"index is out of bounds for axis {x_axis} with size 0")
       i = _normalize_index(i, x_shape[x_axis]) if normalize_indices else i
-      i = lax.convert_element_type(i, index_dtype)
-      gather_indices.append((i, len(gather_indices_shape)))
+      i_converted = lax.convert_element_type(i, index_dtype)
+      gather_indices.append((i_converted, len(gather_indices_shape)))
       collapsed_slice_dims.append(x_axis)
       gather_slice_shape.append(1)
       start_index_map.append(x_axis)
@@ -4893,7 +4910,8 @@ def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
     dnums=dnums,
     gather_indices=gather_indices_array,
     unique_indices=advanced_indexes is None,
-    indices_are_sorted=advanced_indexes is None)
+    indices_are_sorted=advanced_indexes is None,
+    scalar_bool_dims=scalar_bool_dims)
 
 def _should_unpack_list_index(x):
   """Helper for _eliminate_deprecated_list_indexing."""
@@ -4959,7 +4977,7 @@ def _expand_bool_indices(idx, shape):
         # TODO(mattjj): improve this error by tracking _why_ the indices are not concrete
         raise errors.NonConcreteBooleanIndexError(abstract_i)
       elif _ndim(i) == 0:
-        raise TypeError("JAX arrays do not support boolean scalar indices")
+        out.append(bool(i))
       else:
         i_shape = _shape(i)
         start = len(out) + ellipsis_offset - newaxis_offset
@@ -5010,10 +5028,10 @@ def _is_scalar(x):
 
 def _canonicalize_tuple_index(arr_ndim, idx, array_name='array'):
   """Helper to remove Ellipsis and add in the implicit trailing slice(None)."""
-  len_without_none = sum(e is not None and e is not Ellipsis for e in idx)
-  if len_without_none > arr_ndim:
+  num_dimensions_consumed = sum(not (e is None or e is Ellipsis or isinstance(e, bool)) for e in idx)
+  if num_dimensions_consumed > arr_ndim:
     raise IndexError(
-        f"Too many indices for {array_name}: {len_without_none} "
+        f"Too many indices for {array_name}: {num_dimensions_consumed} "
         f"non-None/Ellipsis indices for dim {arr_ndim}.")
   ellipses = (i for i, elt in enumerate(idx) if elt is Ellipsis)
   ellipsis_index = next(ellipses, None)
@@ -5021,10 +5039,10 @@ def _canonicalize_tuple_index(arr_ndim, idx, array_name='array'):
     if next(ellipses, None) is not None:
       raise IndexError(
           f"Multiple ellipses (...) not supported: {list(map(type, idx))}.")
-    colons = (slice(None),) * (arr_ndim - len_without_none)
+    colons = (slice(None),) * (arr_ndim - num_dimensions_consumed)
     idx = idx[:ellipsis_index] + colons + idx[ellipsis_index + 1:]
-  elif len_without_none < arr_ndim:
-    colons = (slice(None),) * (arr_ndim - len_without_none)
+  elif num_dimensions_consumed < arr_ndim:
+    colons = (slice(None),) * (arr_ndim - num_dimensions_consumed)
     idx = tuple(idx) + colons
   return idx
 

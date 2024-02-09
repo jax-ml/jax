@@ -308,13 +308,6 @@ class ArrayImpl(basearray.Array):
     from jax._src.numpy import lax_numpy
     self._check_if_deleted()
 
-    if isinstance(idx, tuple):
-      num_idx = sum(e is not None and e is not Ellipsis for e in idx)
-      if num_idx > self.ndim:
-        raise IndexError(
-            f"Too many indices for array: array has ndim of {self.ndim}, but "
-            f"was indexed with {num_idx} non-None/Ellipsis indices.")
-
     if isinstance(self.sharding, PmapSharding):
       if config.pmap_no_rank_reduction.value:
         cidx = idx if isinstance(idx, tuple) else (idx,)
