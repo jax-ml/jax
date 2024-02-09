@@ -78,6 +78,17 @@ def dot_with_no_batch_dims_saveable(prim, *_, **params) -> bool:
       return True
   return False
 
+def offload_dot_with_no_batch_dims(offload_src, offload_dst):
+  def policy(prim, *_, **params):
+    # This is a useful heuristic for transformers.
+    if prim is lax_internal.dot_general_p:
+      (_, _), (lhs_b, rhs_b) = params['dimension_numbers']
+      if not lhs_b and not rhs_b:
+        return pe.Offloadable(src=offload_src, dst=offload_dst)
+    return pe.Recompute
+  return policy
+
+
 name_p = core.Primitive('name')
 
 def save_anything_except_these_names(*names_not_to_save):
@@ -136,6 +147,7 @@ checkpoint_policies = types.SimpleNamespace(
     checkpoint_dots=dots_saveable,
     dots_with_no_batch_dims_saveable=dot_with_no_batch_dims_saveable,
     checkpoint_dots_with_no_batch_dims=dot_with_no_batch_dims_saveable,
+    offload_dot_with_no_batch_dims=offload_dot_with_no_batch_dims,
     save_anything_except_these_names=save_anything_except_these_names,
     save_any_names_but_these=save_any_names_but_these,
     save_only_these_names=save_only_these_names,

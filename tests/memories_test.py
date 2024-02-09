@@ -18,11 +18,13 @@ from absl.testing import absltest
 from absl.testing import parameterized
 from absl import flags
 import unittest
+
 import jax
+from jax import lax
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src import config
-from jax.ad_checkpoint import checkpoint_name
+from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 from jax.ad_checkpoint import Offloadable, remat
@@ -1181,6 +1183,31 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
       self.assertIn('S(5)', compiled_text)
       self.assertNotRegex(compiled_text, r"copy-start.*S\(5\)")
       self.assertNotRegex(compiled_text, r"copy-done.*S\(5\)")
+
+  def test_remat_checkpoint_dots_with_no_batch_dims(self):
+    policy = jax.checkpoint_policies.offload_dot_with_no_batch_dims(
+        "device", "pinned_host")
+
+    @functools.partial(new_checkpoint, policy=policy)
+    def f(x):
+      x = jnp.einsum('ij,jk->ik', x, x, precision=lax.Precision.HIGHEST)
+      x = jnp.sin(x)
+      x = jnp.einsum('ij,jk->ik', x, x, precision=lax.Precision.HIGHEST)
+      x = jnp.sin(x)
+      x = jnp.einsum('ij,jk->ik', x, x, precision=lax.Precision.HIGHEST)
+      x = jnp.sin(x)
+      x = jnp.sum(x)
+      return x
+
+    inp = jnp.ones((2, 2))
+    f = jax.jit(jax.grad(f))
+    f(inp)  # doesn't crash
+
+    compiled_text = f.lower(inp).compile().as_text()
+    if compiled_text is not None:
+      self.assertIn('S(5)', compiled_text)
+      self.assertRegex(compiled_text, r"copy-start.*S\(5\)")
+      self.assertRegex(compiled_text, r"copy-done.*S\(5\)")
 
 
 if __name__ == "__main__":
