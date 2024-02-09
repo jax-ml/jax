@@ -385,16 +385,27 @@ def _program_id_lowering_rule(ctx: TritonLoweringRuleContext, *, axis):
 
 
 triton_lowering_rules[primitives.program_id_p] = _program_id_lowering_rule
-# ## Atomic op primitives
-_ATOMIC_OP_MAPPING = {
-    primitives.AtomicOpType.XCHG: tc.atomic_xchg,
-    primitives.AtomicOpType.ADD: tc.atomic_add,
-    primitives.AtomicOpType.MAX: tc.atomic_max,
-    primitives.AtomicOpType.MIN: tc.atomic_min,
-    primitives.AtomicOpType.AND: tc.atomic_and,
-    primitives.AtomicOpType.OR: tc.atomic_or,
-    primitives.AtomicOpType.XOR: tc.atomic_xor,
-}
+
+
+def _atomic_rmw(
+    op: tt_dialect.RMWOp,
+    ptr: ir.Value,
+    val: ir.Value,
+    mask: ir.Value | None = None,
+    semantic: tt_dialect.MemSemantic = tt_dialect.MemSemantic.ACQUIRE_RELEASE,
+    sync_scope: tt_dialect.MemSyncScope = tt_dialect.MemSyncScope.GPU,
+) -> ir.Value:
+  if ir.RankedTensorType.isinstance(ptr.type):
+    ptr_type = ir.RankedTensorType(ptr.type)
+    element_type = tt_dialect.PointerType(ptr_type.element_type)
+    result_type = ir.RankedTensorType.get(
+        ptr_type.shape, element_type.pointee_type, ptr_type.encoding
+    )
+  else:
+    result_type = tt_dialect.PointerType(ptr.type).pointee_type
+  return tt_dialect.atomic_rmw(
+      result_type, op, ptr, val, mask=mask, sem=semantic, scope=sync_scope
+  )
 
 
 def _atomic_lowering_rule(
@@ -410,13 +421,60 @@ def _atomic_lowering_rule(
   ptr = _compute_pointers_from_indices(
       ptr, ctx.block_infos[0], idx, ctx.avals_in[0].shape
   )
-  op = _ATOMIC_OP_MAPPING.get(atomic_type)
-  if op is None:
-    raise NotImplementedError(atomic_type)
-  return op(ptr, value, mask=mask)
+  if atomic_type == primitives.AtomicOpType.XCHG:
+    op = tt_dialect.RMWOp.XCHG
+  elif atomic_type == primitives.AtomicOpType.ADD:
+    if value.dtype.is_floating():
+      op = tt_dialect.RMWOp.FADD
+    else:
+      op = tt_dialect.RMWOp.ADD
+  elif atomic_type == primitives.AtomicOpType.MIN:
+    op = tt_dialect.RMWOp.MIN
+  elif atomic_type == primitives.AtomicOpType.MAX:
+    op = tt_dialect.RMWOp.MAX
+  elif atomic_type == primitives.AtomicOpType.AND:
+    op = tt_dialect.RMWOp.AND
+  elif atomic_type == primitives.AtomicOpType.OR:
+    op = tt_dialect.RMWOp.OR
+  elif atomic_type == primitives.AtomicOpType.XOR:
+    op = tt_dialect.RMWOp.XOR
+  else:
+    raise NotImplementedError(f"unsupported atomic operation: {atomic_type}")
+  return tc.tensor(
+      _atomic_rmw(
+          op,
+          ptr.handle,
+          value.handle,
+          mask=mask.handle if mask is not None else None,
+      ),
+      value.type,
+  )
 
 
 triton_lowering_rules[primitives.atomic_rmw_p] = _atomic_lowering_rule
+
+
+def _atomic_cas_lowering_rule(ctx: TritonLoweringRuleContext, ptr, cmp, val):
+  if ir.RankedTensorType.isinstance(ptr.handle.type):
+    ptr_type = ir.RankedTensorType(ptr.handle.type)
+    element_type = tt_dialect.PointerType(ptr_type.element_type)
+    result_type = ir.RankedTensorType.get(
+        ptr_type.shape, element_type.pointee_type, ptr_type.encoding
+    )
+  else:
+    result_type = tt_dialect.PointerType(ptr.handle.type).pointee_type
+  result_handle = tt_dialect.atomic_cas(
+      result_type,
+      ptr.handle,
+      cmp.handle,
+      val.handle,
+      sem=tt_dialect.MemSemantic.ACQUIRE_RELEASE,
+      scope=tt_dialect.MemSyncScope.GPU,
+  )
+  return tc.tensor(result_handle, val.type)
+
+
+triton_lowering_rules[primitives.atomic_cas_p] = _atomic_cas_lowering_rule
 
 
 def _associative_scan_lowering(
@@ -568,7 +626,6 @@ triton_lowering_rules[lax.pow_p] = _pow_lowering_rule
 
 _JAX_TO_TRITON_OTHER = {
     sp.broadcast_to_p: tc.broadcast_to,
-    primitives.atomic_cas_p: tc.atomic_cas,
     primitives.max_contiguous_p: tc.max_contiguous,
     primitives.multiple_of_p: tc.multiple_of,
 }
@@ -973,7 +1030,10 @@ def _addupdate_lowering_rule(
   ptr = _compute_pointers_from_indices(
       ptr, ctx.block_infos[0], indexer, ctx.avals_in[0].shape,
   )
-  tc.atomic_add(ptr, value)
+  op = tt_dialect.RMWOp.ADD
+  if value.dtype.is_floating():
+    op = tt_dialect.RMWOp.FADD
+  _atomic_rmw(op, ptr.handle, value.handle)
   return []
 
 

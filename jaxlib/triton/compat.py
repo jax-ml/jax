@@ -20,7 +20,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from functools import partial
 import threading
 from typing import Any
 
@@ -503,82 +502,6 @@ def dot(
       ),
       result_type,
   )
-
-
-def atomic_cas(
-    ptr: tensor,
-    cmp: tensor,
-    val: tensor,
-    semantic: tt_dialect.MemSemantic = tt_dialect.MemSemantic.ACQUIRE_RELEASE,
-    sync_scope: tt_dialect.MemSyncScope = tt_dialect.MemSyncScope.GPU,
-):
-  if ir.RankedTensorType.isinstance(ptr.handle.type):
-    ptr_type = ir.RankedTensorType(ptr.handle.type)
-    element_type = tt_dialect.PointerType(ptr_type.element_type)
-    result_type = ir.RankedTensorType.get(
-        ptr_type.shape, element_type.pointee_type, ptr_type.encoding
-    )
-  else:
-    result_type = tt_dialect.PointerType(ptr.handle.type).pointee_type
-  result_handle = tt_dialect.atomic_cas(
-      result_type,
-      ptr.handle,
-      cmp.handle,
-      val.handle,
-      sem=semantic,
-      scope=sync_scope,
-  )
-  return tensor(result_handle, val.type)
-
-
-def _atomic_rmw(
-    op: tt_dialect.RMWOp,
-    ptr: tensor,
-    val: tensor,
-    mask: tensor | None = None,
-    semantic: tt_dialect.MemSemantic = tt_dialect.MemSemantic.ACQUIRE_RELEASE,
-    sync_scope: tt_dialect.MemSyncScope = tt_dialect.MemSyncScope.GPU,
-) -> tensor:
-  if ir.RankedTensorType.isinstance(ptr.handle.type):
-    ptr_type = ir.RankedTensorType(ptr.handle.type)
-    element_type = tt_dialect.PointerType(ptr_type.element_type)
-    result_type = ir.RankedTensorType.get(
-        ptr_type.shape, element_type.pointee_type, ptr_type.encoding
-    )
-  else:
-    result_type = tt_dialect.PointerType(ptr.handle.type).pointee_type
-  result_handle = tt_dialect.atomic_rmw(
-      result_type,
-      op,
-      ptr.handle,
-      val.handle,
-      mask=mask.handle if mask is not None else None,
-      sem=semantic,
-      scope=sync_scope,
-  )
-  return tensor(result_handle, val.type)
-
-
-atomic_xchg = partial(_atomic_rmw, tt_dialect.RMWOp.XCHG)
-atomic_max = partial(_atomic_rmw, tt_dialect.RMWOp.MAX)
-atomic_min = partial(_atomic_rmw, tt_dialect.RMWOp.MIN)
-atomic_and = partial(_atomic_rmw, tt_dialect.RMWOp.AND)
-atomic_or = partial(_atomic_rmw, tt_dialect.RMWOp.OR)
-atomic_xor = partial(_atomic_rmw, tt_dialect.RMWOp.XOR)
-
-
-def atomic_add(
-    ptr: tensor,
-    val: tensor,
-    mask: tensor | None = None,
-    semantic: tt_dialect.MemSemantic = tt_dialect.MemSemantic.ACQUIRE_RELEASE,
-    sync_scope: tt_dialect.MemSyncScope = tt_dialect.MemSyncScope.GPU,
-):
-  if val.dtype.is_floating():
-    op = tt_dialect.RMWOp.FADD
-  else:
-    op = tt_dialect.RMWOp.ADD
-  return _atomic_rmw(op, ptr, val, mask, semantic, sync_scope)
 
 
 def abs(x: tensor) -> tensor:
