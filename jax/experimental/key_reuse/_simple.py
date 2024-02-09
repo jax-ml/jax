@@ -28,6 +28,7 @@ from jax._src import pjit
 from jax._src import prng
 from jax._src import random
 from jax._src import util
+from jax._src.ad_checkpoint import remat_p
 from jax._src.debugging import debug_callback_p
 from jax._src.interpreters import partial_eval as pe
 
@@ -293,3 +294,21 @@ def _while_key_type_signature(eqn, args_consumed):
   return body_signature
 
 key_reuse_signatures_dynamic[jax.lax.while_p] = _while_key_type_signature
+
+
+def _remat_key_type_signature(eqn, args_consumed):
+  # The assumption here is that the non-differentiated pass contains all relevant
+  # key usage, and the differentiated pass
+  #  1) will only consume keys that are already consumed in the non-differentiated pass
+  #  2) will never create keys
+  # Therefore, the differentiated pass is a no-op.
+  if eqn.params['differentiated']:
+    return KeyReuseSignature([], [])
+  jaxpr = eqn.params['jaxpr']
+  sig = get_jaxpr_type_signature(jaxpr)
+  if args_consumed and any(np.any(args_consumed[s.idx] & s.mask) for s in sig.sinks):
+    # Double consumption detected: re-trace with context for better errors.
+    get_jaxpr_type_signature(jaxpr, args_consumed)
+  return sig
+
+key_reuse_signatures_dynamic[remat_p] = _remat_key_type_signature

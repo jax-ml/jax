@@ -802,6 +802,28 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
 
     self.check_key_reuse(f, 0)
 
+  @jax.numpy_dtype_promotion('standard')
+  def test_remat(self):
+    @jax.checkpoint
+    def f_bad(x, key):
+      return x * jax.random.bits(key) + jax.random.bits(key)
+
+    @jax.checkpoint
+    def f_good(x, key):
+      return x * jax.random.bits(key)
+
+    x = jnp.float32(1.0)
+    key = jax.random.key(0)
+
+    with self.assertRaisesRegex(KeyReuseError, self.random_bits_error):
+      self.check_key_reuse(f_bad, x, key)
+
+    with self.assertRaisesRegex(KeyReuseError, self.random_bits_error):
+      self.check_key_reuse(jax.grad(f_bad), x, key)
+
+    self.check_key_reuse(f_good, x, key)
+    self.check_key_reuse(jax.grad(f_good), x, key)
+
 
 class KeyReuseIntegrationTestSimple(KeyReuseIntegrationTest):
   use_forwarding = False
