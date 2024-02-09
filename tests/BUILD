@@ -696,9 +696,6 @@ jax_test(
     name = "pmap_test",
     srcs = ["pmap_test.py"],
     backend_tags = {
-        "gpu": [
-            "noasan",  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
-        ],
         "tpu": [
             "noasan",  # Times out under asan.
         ],
