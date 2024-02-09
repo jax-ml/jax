@@ -8,14 +8,19 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.25
 
-## jaxlib 0.4.25
-
-## jax 0.4.24 (Feb 6, 2024)
-
 * New Features
   * Added [CUDA Array
     Interface](https://numba.readthedocs.io/en/stable/cuda/cuda_array_interface.html)
-    import support.
+    import support (requires jaxlib 0.4.24).
+
+* Deprecations & Removals
+  * {func}`jax.numpy.linalg.solve` now shows a deprecation warning for batched 1D
+    solves with `b.ndim > 1`. In the future these will be treated as batched 2D
+    solves.
+
+## jaxlib 0.4.25
+
+## jax 0.4.24 (Feb 6, 2024)
 
 * Changes
 
@@ -119,9 +124,6 @@ Remember to align the itemized text with the first line of an item within a list
     such as {func}`~jax.random.bits`, {func}`~jax.random.gamma`, and others, is deprecated
     and will emit a `FutureWarning`.  Use `jax.vmap` for explicit batching.
   * {func}`jax.lax.tie_in` is deprecated: it has been a no-op since JAX v0.2.0.
-  * {func}`jax.numpy.linalg.solve` now shows a deprecation warning for batched 1D
-    solves with `b.ndim > 1`. In the future these will be treated as batched 2D
-    solves.
 
 ## jaxlib 0.4.24 (Feb 6, 2024)
 
@@ -132,6 +134,9 @@ Remember to align the itemized text with the first line of an item within a list
   * `cost_analysis` now works with cross-compiled `Compiled` objects (i.e. when
     using `.lower().compile()` with a topology object, e.g., to compile for
     Cloud TPU from a non-TPU computer).
+  * Added [CUDA Array
+    Interface](https://numba.readthedocs.io/en/stable/cuda/cuda_array_interface.html)
+    import support (requires jax 0.4.25).
 
 ## jax 0.4.23 (Dec 13, 2023)
 
