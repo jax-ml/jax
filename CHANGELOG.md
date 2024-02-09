@@ -8,6 +8,9 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.25
 
+* New Features
+  * Added {func}`jax.tree_util.tree_traverse`
+
 ## jaxlib 0.4.25
 
 ## jax 0.4.24 (Feb 6, 2024)

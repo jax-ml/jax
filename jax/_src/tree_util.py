@@ -939,3 +939,73 @@ def _prefix_error(
      f"{prefix_tree_keys} and {full_tree_keys}")
   for k, t1, t2 in zip(prefix_tree_keys, prefix_tree_children, full_tree_children):
     yield from _prefix_error((*key_path, k), t1, t2)
+
+
+def tree_traverse(fn, structure, *, top_down=True):
+  """Traverses the given nested structure, applying the given function.
+
+  The traversal is depth-first. If ``top_down`` is True (default), parents
+  are returned before their children (giving the option to avoid traversing
+  into a sub-tree).
+
+  >>> visited = []
+  >>> tree_traverse(visited.append, [(1, 2), [3], {"a": 4}], top_down=True)
+  [(1, 2), [3], {'a': 4}]
+  >>> visited
+  [[(1, 2), [3], {'a': 4}], (1, 2), 1, 2, [3], 3, {'a': 4}, 4]
+
+  >>> visited = []
+  >>> tree_traverse(visited.append, [(1, 2), [3], {"a": 4}], top_down=False)
+  [(1, 2), [3], {'a': 4}]
+  >>> visited
+  [1, 2, (1, 2), 3, [3], 4, {'a': 4}, [(1, 2), [3], {'a': 4}]]
+
+  Args:
+    fn: The function to be applied to each sub-nest of the structure.
+
+      When traversing top-down:
+        If ``fn(subtree) is None`` the traversal continues into the sub-tree.
+        If ``fn(subtree) is not None`` the traversal does not continue into
+        the sub-tree. The sub-tree will be replaced by ``fn(subtree)`` in the
+        returned structure (to replace the sub-tree with None, use the special
+        value :data:`MAP_TO_NONE`).
+
+      When traversing bottom-up:
+        If ``fn(subtree) is None`` the traversed sub-tree is returned unaltered.
+        If ``fn(subtree) is not None`` the sub-tree will be replaced by
+        ``fn(subtree)`` in the returned structure (to replace the sub-tree
+        with None, use the special value :data:`MAP_TO_NONE`).
+
+    structure: The structure to traverse.
+    top_down: If True, parent structures will be visited before their children.
+
+  Returns:
+    The structured output from the traversal.
+  """
+  def traverse_children():
+    children, treedef = tree_flatten(structure, is_leaf=lambda x: x is not structure)
+    if treedef_is_strict_leaf(treedef):
+      return structure
+    else:
+      return tree_unflatten(treedef, [tree_traverse(fn, c, top_down=top_down) for c in children])
+
+  if top_down:
+    ret = fn(structure)
+    if ret is None:
+      return traverse_children()
+  else:
+    traversed_structure = traverse_children()
+    ret = fn(traversed_structure)
+    if ret is None:
+      return traversed_structure
+  return None if ret is MAP_TO_NONE else ret
+
+
+class _MapToNone:
+  """
+  :data:`MAP_TO_NONE` is a special object used as a sentinel within
+  :func:`jax.tree_util.tree_traverse`.
+  """
+  def __repr__(self): return "jax.tree_util.MAP_TO_NONE"
+  __str__ = __repr__
+MAP_TO_NONE = _MapToNone()

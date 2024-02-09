@@ -39,6 +39,7 @@ for examples.
 # See PEP 484 & https://github.com/google/jax/issues/7570
 
 from jax._src.tree_util import (
+  MAP_TO_NONE as MAP_TO_NONE,
   Partial as Partial,
   PyTreeDef as PyTreeDef,
   all_leaves as all_leaves,
@@ -52,6 +53,7 @@ from jax._src.tree_util import (
   tree_reduce as tree_reduce,
   tree_structure as tree_structure,
   tree_transpose as tree_transpose,
+  tree_traverse as tree_traverse,
   tree_unflatten as tree_unflatten,
   treedef_children as treedef_children,
   treedef_is_leaf as treedef_is_leaf,

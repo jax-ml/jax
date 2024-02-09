@@ -743,6 +743,41 @@ class TreeTest(jtu.JaxTestCase):
     leaves, _ = tree_util.tree_flatten_with_path(ATuple2(1, 'hi'))
     self.assertLen(leaves, 1)
 
+  def testTraverseListsToTuples(self):
+    structure = [(1, 2), [3], {"a": [4]}]
+    self.assertEqual(
+        ((1, 2), (3,), {"a": (4,)}),
+        tree_util.tree_traverse(
+            lambda x: tuple(x) if isinstance(x, list) else x,
+            structure,
+            top_down=False))
+
+  def testTraverseEarlyTermination(self):
+    structure = [(1, [2]), [3, (4, 5, 6)]]
+    visited = []
+    def visit(x):
+      visited.append(x)
+      return "X" if isinstance(x, tuple) and len(x) > 2 else None
+
+    output = tree_util.tree_traverse(visit, structure)
+    self.assertEqual([(1, [2]), [3, "X"]], output)
+    self.assertEqual(
+        [[(1, [2]), [3, (4, 5, 6)]],
+         (1, [2]), 1, [2], 2, [3, (4, 5, 6)], 3, (4, 5, 6)],
+        visited)
+
+  def testTraverseMapToNone(self):
+    structure = [(1, 2), ['c'], {"a": [4, 'd']}]
+    def string_to_none(x):
+      if isinstance(x, str):
+        return tree_util.MAP_TO_NONE
+      return None
+    output = tree_util.tree_traverse(string_to_none, structure, top_down=True)
+    self.assertEqual(output, [(1, 2), [None], {'a': [4, None]}])
+    output = tree_util.tree_traverse(string_to_none, structure, top_down=False)
+    self.assertEqual(output, [(1, 2), [None], {'a': [4, None]}])
+
+
 
 class StaticTest(parameterized.TestCase):
 
