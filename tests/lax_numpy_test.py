@@ -1889,7 +1889,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       for axis in [None] + list(range(len(shape)))],
     dtype=number_dtypes,
     size=[1, 5, 10],
-    fill_value=[None, -1.0, "slice"],
+    fill_value=[None, 0, "slice"],
   )
   def testUniqueSize(self, shape, dtype, axis, size, fill_value):
     rng = jtu.rand_some_equal(self.rng())
