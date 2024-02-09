@@ -34,6 +34,7 @@ jax2tf.convert docstring, and the
 from __future__ import annotations
 
 import collections
+import enum
 from collections.abc import Iterable, Sequence
 import dataclasses
 from enum import Enum
@@ -278,7 +279,7 @@ class _DimMon(dict):
   def __init__(self, *args, **kwargs):
     super().__init__(*args, **kwargs)
     self._hash = hash(frozenset(self.items()))
-    self._size = sum((1 + a._size) for a, a_exp in self.items())
+    self._size = sum((1 + a_exp * a._size) for a, a_exp in self.items())
 
   def __hash__(self):
     return self._hash
@@ -415,7 +416,7 @@ class _DimExpr:
     self._scope = scope
     self._hash = hash((self._monomials_sorted, self.scope))
     # _size speeds up _syntactic_cmp, which is used a lot for hashing.
-    self._size = sum((1 + m._size)
+    self._size = sum((1 + abs(m_count) * m._size)
                      for m, m_count in self._monomials_sorted)
 
   @property
@@ -851,25 +852,25 @@ class _DimExpr:
     return functools.reduce(_evaluate_add, terms) if len(terms) > 1 else terms[0]
 
   def max(self, other: DimSize) -> DimSize:
-    lb, ub = _bounds_decision(self - other, _stop_early_for_geq0_or_leq0)
+    lb, ub = _bounds_decision(self - other, BoundsPrecision.FOR_GEQ0_OR_LEQ0)
     if 0 <= lb: return self
     if ub <= 0: return other
     return _DimExpr.from_operation(_DimAtom.MAX, self, other, scope=self.scope)
 
   def rmax(self, other: DimSize) -> DimSize:
-    lb, ub = _bounds_decision(self - other, _stop_early_for_geq0_or_leq0)
+    lb, ub = _bounds_decision(self - other, BoundsPrecision.FOR_GEQ0_OR_LEQ0)
     if 0 <= lb: return self
     if ub <= 0: return other
     return _DimExpr.from_operation(_DimAtom.MAX, other, self, scope=self.scope)
 
   def min(self, other: DimSize) -> DimSize:
-    lb, ub = _bounds_decision(self - other, _stop_early_for_geq0_or_leq0)
+    lb, ub = _bounds_decision(self - other, BoundsPrecision.FOR_GEQ0_OR_LEQ0)
     if 0 <= lb: return other
     if ub <= 0: return self
     return _DimExpr.from_operation(_DimAtom.MIN, self, other, scope=self.scope)
 
   def rmin(self, other: DimSize) -> DimSize:
-    lb, ub = _bounds_decision(self - other, _stop_early_for_geq0_or_leq0)
+    lb, ub = _bounds_decision(self - other, BoundsPrecision.FOR_GEQ0_OR_LEQ0)
     if 0 <= lb: return other
     if ub <= 0: return self
     return _DimExpr.from_operation(_DimAtom.MIN, other, self, scope=self.scope)
@@ -900,8 +901,6 @@ def cmp_sequence(s1, s2, elem_cmp) -> int:
   if len(s1) < l2: return -1
   return 0
 
-def _stop_early_for_geq0_or_leq0(lb, ub):
-  return 0 <= lb or ub <= 0
 
 class SymbolicScope:
   """Indentifies a scope for symbolic expressions.
@@ -933,10 +932,10 @@ class SymbolicScope:
 
     # We cache the _DimExpr.bounds calls. The result depends only on the
     # explicit and implicit constraints, so it is safe to keep it in the
-    # scope. Set the cache before we parse constraints.
-    self._bounds_cache: dict[tuple[_DimExpr,
-                                   Callable[[float, float], bool] | None],
-                             tuple[float, float]] = {}
+    # scope. Set the cache before we parse constraints. We also keep the
+    # bounds precision with which we computed the cached result.
+    self._bounds_cache: dict[_DimExpr,
+                             tuple[float, float, BoundsPrecision]] = {}
     # We turn the equality constraints into normalization rules.
     # For an explicit constraint `t*tk == e`, we keep
     # `_normalization_rules[t] = (e, tk)`.
@@ -1017,6 +1016,36 @@ class SymbolicScope:
     self._bounds_cache.clear()
 
 
+class BoundsPrecision(enum.Enum):
+  """Specifies desired precision for the bounds calculation.
+
+  Since the bounds calculations are expensive, we allow the caller to specify
+  a sufficient condition for a result. As the bounds calculations progresses
+  the lower bounds is progressively increased and the upper bounds is
+  progressively decreased. Depending on the precision, we may stop the
+  computation early, if the results are sufficient for the use case.
+
+  The enumeraion values are chosen such that, if "(lb, ub)" are sufficient
+  for a precision value then they are also sufficient for any smaller
+  precision.
+  """
+
+  # For static evaluation of "max(e1, e2)", can stop if "lb >= 0 OR ub <= 0"
+  FOR_GEQ0_OR_LEQ0 = 0
+
+  # For deciding inequalities, such as "e1 >= e2", can stop if "lb >= 0 OR ub < 0"
+  FOR_GEQ0_OR_LT0 = 1
+
+  # Do not stop early, refine bounds as much as possible.
+  BEST = 2
+
+  def _bounds_are_sufficient(self, lb: float, ub: float) -> bool:
+    if self == BoundsPrecision.FOR_GEQ0_OR_LEQ0:
+      return lb >= 0 or ub <= 0
+    if self == BoundsPrecision.FOR_GEQ0_OR_LT0:
+      return lb >= 0 or ub < 0
+    return False
+
 # Set by the shape_poly_decision.py module.
 # Calling convention:
 #  _geq_decision(e1, e2, cmp_str)
@@ -1028,7 +1057,7 @@ class SymbolicScope:
 def _geq_decision_unimplemented(d1: DimSize, d2: DimSize,
                                 cmp_str: Callable[[], str]) -> bool:
   raise NotImplementedError("_geq_decision is uninitialized")
-_geq_decision: Callable[[DimSize, DimSize, Callable[[], str]], bool] = _geq_decision_unimplemented
+
 #
 # Calling convention:
 #  _bounds_decision(e, stop_early)
@@ -1038,10 +1067,45 @@ _geq_decision: Callable[[DimSize, DimSize, Callable[[], str]], bool] = _geq_deci
 # TODO: remove this trampoline when we refactor the sources
 def _bounds_decision_unimplemented(
     d: DimSize,
-    stop_early: Callable[[float, float], bool] | None) -> tuple[float, float]:
+    prec: BoundsPrecision) -> tuple[float, float]:
+  del d, prec
   raise NotImplementedError("_bounds_decision is uninitialized")
-_bounds_decision: Callable[[DimSize, Callable[[float, float], bool] | None],
+
+_bounds_decision: Callable[[DimSize, BoundsPrecision],
                            tuple[float, float]] = _bounds_decision_unimplemented
+
+def _geq_decision(e1: DimSize, e2: DimSize, cmp_str: Callable[[], str]) -> bool:
+  """Implements `e1 >= e2`.
+
+  Args:
+    e1, e2: the expressions to compare for greater-equal
+    cmp_str: a callable such that `cmp_str()` describes the comparison
+      for error messages, e.g., "a <= b". Without this all comparisions would
+      be reported as ">=".
+
+  Raises InconclusiveDimensionOperation if the result is not conclusive.
+  """
+  if isinstance(e1, _DimExpr):
+    scope = e1.scope
+    if isinstance(e2, _DimExpr):
+      scope._check_same_scope(e2, f"when comparing {cmp_str()}")
+  elif isinstance(e2, _DimExpr):
+    scope = e2.scope
+  else:
+    return int(e1) >= int(e2)
+  lb, ub = _bounds_decision(e1 - e2, BoundsPrecision.FOR_GEQ0_OR_LT0)
+  if lb >= 0:
+    return True
+  if ub < 0:
+    return False
+
+  if scope._explicit_constraints:
+    describe_scope = f"\nUsing symbolic scope {scope}"
+  else:
+    describe_scope = ""
+  raise InconclusiveDimensionOperation(
+      f"Symbolic dimension comparison {cmp_str()} is inconclusive.{describe_scope}")
+
 
 @dataclasses.dataclass
 class _Decomposition:

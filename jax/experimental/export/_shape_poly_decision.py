@@ -32,55 +32,18 @@ from jax.experimental.export._shape_poly import (
   DimSize,
   InconclusiveDimensionOperation,
   Comparator,
+  BoundsPrecision,
 )
 
 def sgn(x): return 1 if x >= 0 else -1
 
-def geq_decision(e1: DimSize, e2: DimSize,
-                 cmp_str: Callable[[], str]) -> bool:
-  """Implements `e1 >= e2`.
-
-  Args:
-    e1, e2: the expressions to compare for greater-equal
-    cmp_str: a callable such that `cmp_str()` describes the comparison
-      for error messages, e.g., "a <= b". Without this all comparisions would
-      be reported as ">=".
-
-  Raises InconclusiveDimensionOperation if the result is not conclusive.
-  """
-  if isinstance(e1, _DimExpr):
-    scope = e1.scope
-    if isinstance(e2, _DimExpr):
-      scope._check_same_scope(e2, f"when comparing {cmp_str()}")
-  elif isinstance(e2, _DimExpr):
-    scope = e2.scope
-  else:
-    return int(e1) >= int(e2)
-  decision = _DecisionByElimination(scope)
-  lb, ub = decision.bounds(e1 - e2, _stop_early_for_geq0_or_lt0)
-  if lb >= 0:
-    return True
-  if ub < 0:
-    return False
-
-  if scope._explicit_constraints:
-    describe_scope = f"\nUsing symbolic scope {scope}"
-  else:
-    describe_scope = ""
-  raise InconclusiveDimensionOperation(
-      f"Symbolic dimension comparison {cmp_str()} is inconclusive.{describe_scope}")
-
-_shape_poly._geq_decision = geq_decision
-
-def _stop_early_for_geq0_or_lt0(lb, ub):
-  return lb >= 0 or ub < 0
 
 def bounds_decision(e: DimSize,
-                    stop_early: Callable[[float, float], bool] | None) -> tuple[float, float]:
+                    prec: BoundsPrecision) -> tuple[float, float]:
   if not isinstance(e, _DimExpr):
     return (int(e), int(e))
   decision = _DecisionByElimination(e.scope)
-  return decision.bounds(e, stop_early)
+  return decision.bounds(e, prec)
 
 _shape_poly._bounds_decision = bounds_decision
 
@@ -133,6 +96,8 @@ class _DecisionByElimination:
         for m, _ in constr.diff.monomials():
           if m.degree == 0: continue
           self.add_implicit_constraints(m)
+      # Clear the cache, since we have added constraints.
+      self.scope._bounds_cache.clear()
 
   def combine_and_add_constraint(self,
                                  cmp: Comparator,
@@ -267,7 +232,7 @@ class _DecisionByElimination:
     return combinations
 
   def bounds(self, e: DimSize,
-             stop_early: Callable[[float, float], bool] | None
+             prec: BoundsPrecision
              ) -> tuple[float, float]:
     """Returns the lower and upper bounds, or -+inf.
 
@@ -276,27 +241,31 @@ class _DecisionByElimination:
     if (const := _DimExpr.to_constant(e)) is not None:
       return (const, const)
     assert isinstance(e, _DimExpr)
-    # TODO: turn off the caching for now. Sometimes it leads to incompleteness.
-    # It is also too weak because if the stop_early is None, then the result
-    # should apply for any other stop_early. Similarly, if stop_early is
-    # _stop_early_for_geq0_or_leq0 and the result spans 0, then this should
-    # apply even if we don't have a stop_early.
-    #cache_key = (e, stop_early)
-    #if (res := self.scope._bounds_cache.get(cache_key)) is not None: return res
-    lb, ub = self._bounds_for_sorted_terms(e.scope, e._monomials_sorted, 0, stop_early)
-    res = (int(lb) if lb > -np.inf else lb,
-           int(ub) if ub < np.inf else ub)
-    #self.scope._bounds_cache[cache_key] = res
-    return res
+    # Caching bounds is tricky. Since the underlying _bounds_for_sorted_monomials
+    # is incomplete, and it may produce better results in the context of
+    # specific queries (due to the implicit constraints), if we cache the
+    # bounds computation we may stick to sub-optimal results. Also, we should
+    # not use the precision as part of the cache key, because a certain result
+    # may work for multiple precisions.
+    if (res := self.scope._bounds_cache.get(e)) is not None:
+      lb, ub, prev_prec = res
+      if prec._bounds_are_sufficient(lb, ub): return (lb, ub)
+      if prev_prec.value >= prec.value: return (lb, ub)
+    lb, ub = self._bounds_for_sorted_terms(e.scope, e._monomials_sorted, 0, prec)
+    lb, ub = (int(lb) if lb > -np.inf else lb,
+              int(ub) if ub < np.inf else ub)
+    self.scope._bounds_cache[e] = (lb, ub, prec)
+    return (lb, ub)
 
   def _bounds_for_sorted_terms(self,
                                scope: SymbolicScope,
                                e: Sequence[tuple[_DimMon, int]],
                                i: int,
-                               stop_early: Callable[[float, float], bool] | None) -> tuple[float, float]:
+                               prec: BoundsPrecision) -> tuple[float, float]:
     """The lower and upper bounds of e[i:].
 
     See comments about soundness and `cmp_with` in the `_shape_poly.bounds_decision`` method.
+    Returns (lower-bound, upper-bound)
     """
     if i >= len(e): return (0, 0)
 
@@ -317,7 +286,8 @@ class _DecisionByElimination:
       # rest = e[i:]*t_s + c*c_s` AND `rest_ub >= rest >= rest_lb`
       rest = _DimExpr._linear_combination(e, i, t_s,
                                           c._monomials_sorted, 0, c_s)
-      rest_lb, rest_ub = self._bounds_for_sorted_terms(scope, rest, 0, None)
+      rest_lb, rest_ub = self._bounds_for_sorted_terms(scope, rest, 0,
+                                                       BoundsPrecision.BEST)
       if rest_ub < np.inf:
         if t_s > 0:
           ub = min(ub, int(np.floor(rest_ub / t_s)))
@@ -330,7 +300,7 @@ class _DecisionByElimination:
         else:
           ub = min(ub, int(np.floor(rest_lb / t_s)))
 
-      if stop_early is not None and stop_early(lb, ub): return (lb, ub)
+      if prec._bounds_are_sufficient(lb, ub): return (lb, ub)
 
     # Now look for special rules for atoms
     if (m_a := t.to_atom()) is not None:
@@ -342,8 +312,10 @@ class _DecisionByElimination:
                                              op1._monomials_sorted, 0, t_k)
         rest2 = _DimExpr._linear_combination(e, i + 1, 1,
                                              op2._monomials_sorted, 0, t_k)
-        rest1_lb, rest1_ub = self._bounds_for_sorted_terms(scope, rest1, 0, None)
-        rest2_lb, rest2_ub = self._bounds_for_sorted_terms(scope, rest2, 0, None)
+        rest1_lb, rest1_ub = self._bounds_for_sorted_terms(scope, rest1, 0,
+                                                           BoundsPrecision.BEST)
+        rest2_lb, rest2_ub = self._bounds_for_sorted_terms(scope, rest2, 0,
+                                                           BoundsPrecision.BEST)
         like_max = (t_k > 0 if m_a.operation == _DimAtom.MAX else t_k < 0)
         if like_max:
           lb = max(lb, max(rest1_lb, rest2_lb))
@@ -351,7 +323,7 @@ class _DecisionByElimination:
         else:
           lb = max(lb, min(rest1_lb, rest2_lb))
           ub = min(ub, min(rest1_ub, rest2_ub))
-        if stop_early is not None and stop_early(lb, ub): return (lb, ub)
+        if prec._bounds_are_sufficient(lb, ub, ): return (lb, ub)
 
     return lb, ub
 
@@ -367,7 +339,8 @@ class _DecisionByElimination:
       bounds = []
       for a, exp in m.items():
         a_l, a_u = self.bounds(_DimExpr.from_monomial(_DimMon.from_atom(a, 1),
-                                                      1, self.scope), None)
+                                                      1, self.scope),
+                               BoundsPrecision.BEST)
         assert a_l <= a_u
         bounds.append((a_l ** exp, a_u ** exp))
 
@@ -387,7 +360,7 @@ class _DecisionByElimination:
 
     if a.operation == _DimAtom.MOD:
       op1, op2 = a.operands
-      op2_b_l, op2_b_u = self.bounds(op2, _stop_early_for_geq0_or_lt0)
+      op2_b_l, op2_b_u = self.bounds(op2, BoundsPrecision.FOR_GEQ0_OR_LT0)
       if op2_b_l > 0:  # positive divisor
         self.combine_and_add_constraint(Comparator.GEQ, m_e, 0)  # m >= 0
         self.combine_and_add_constraint(Comparator.GEQ, op2 - 1, m_e)  # m <= op2 - 1
@@ -400,8 +373,8 @@ class _DecisionByElimination:
 
     if a.operation == _DimAtom.FLOORDIV:
       op1, op2 = a.operands
-      (op1_l, op1_u) = self.bounds(op1, None)
-      (op2_l, op2_u) = self.bounds(op2, None)
+      (op1_l, op1_u) = self.bounds(op1, BoundsPrecision.BEST)
+      (op2_l, op2_u) = self.bounds(op2, BoundsPrecision.BEST)
 
       def math_floor_with_inf(a: float, b: float):  # math.floor, but aware of inf
         # When either a or b are infinite, the results represent the limit
@@ -428,7 +401,7 @@ class _DecisionByElimination:
       self.combine_and_add_constraint(Comparator.GEQ, m_e, m_l)
       self.combine_and_add_constraint(Comparator.GEQ, m_u, m_e)
       if op2_l >= 0:
-        if self.bounds(op1, _stop_early_for_geq0_or_lt0)[0] >= 0:
+        if op1_l >= 0:
           self.combine_and_add_constraint(Comparator.GEQ, m_e, 0)
         mod_e = _DimExpr.from_operation(_DimAtom.MOD, op1, op2,
                                         scope=self.scope)
@@ -438,8 +411,8 @@ class _DecisionByElimination:
 
     if a.operation == _DimAtom.MAX:
       op1, op2 = a.operands
-      op1_b_l, op1_b_u = self.bounds(op1, None)
-      op2_b_l, op2_b_u = self.bounds(op2, None)
+      op1_b_l, op1_b_u = self.bounds(op1, BoundsPrecision.BEST)
+      op2_b_l, op2_b_u = self.bounds(op2, BoundsPrecision.BEST)
       self.combine_and_add_constraint(Comparator.GEQ, m_e, max(op1_b_l, op2_b_l))
       self.combine_and_add_constraint(Comparator.GEQ, max(op1_b_u, op2_b_u), m_e)
       self.combine_and_add_constraint(Comparator.GEQ, m_e, op1)
@@ -447,8 +420,8 @@ class _DecisionByElimination:
 
     if a.operation == _DimAtom.MIN:
       op1, op2 = a.operands
-      op1_b_l, op1_b_u = self.bounds(op1, None)
-      op2_b_l, op2_b_u = self.bounds(op2, None)
+      op1_b_l, op1_b_u = self.bounds(op1, BoundsPrecision.BEST)
+      op2_b_l, op2_b_u = self.bounds(op2, BoundsPrecision.BEST)
       self.combine_and_add_constraint(Comparator.GEQ, m_e, min(op1_b_l, op2_b_l))
       self.combine_and_add_constraint(Comparator.GEQ, min(op1_b_u, op2_b_u), m_e)
       self.combine_and_add_constraint(Comparator.GEQ, op1, m_e)
