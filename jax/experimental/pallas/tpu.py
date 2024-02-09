@@ -23,6 +23,7 @@ from jax._src.pallas.mosaic import VMEM
 from jax._src.pallas.mosaic import DeviceIdType
 from jax._src.pallas.mosaic import async_copy
 from jax._src.pallas.mosaic import async_remote_copy
+from jax._src.pallas.mosaic import bitcast
 from jax._src.pallas.mosaic import dma_semaphore
 from jax._src.pallas.mosaic import device_id
 from jax._src.pallas.mosaic import emit_pipeline_with_allocations

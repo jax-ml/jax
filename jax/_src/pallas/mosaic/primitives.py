@@ -23,6 +23,7 @@ from typing import Any, Callable
 import jax
 from jax._src import api_util
 from jax._src import core as jax_core
+from jax._src import dtypes
 from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import pretty_printer as pp
@@ -35,6 +36,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pl_core
 from jax._src.pallas.mosaic import core as tpu_core
+from jax._src.typing import DTypeLike
 import jax.numpy as jnp
 
 map, unsafe_map = util.safe_map, map
@@ -57,6 +59,47 @@ def _repeat_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, repeats, axis):
     return jnp.repeat(x, repeats, axis)
   return mlir.lower_fun(_repeat, multiple_results=False)(ctx, x)
 mlir.register_lowering(repeat_p, _repeat_lowering_rule)
+
+bitcast_p = jax_core.Primitive("bitcast")
+
+
+def bitcast(x, ty: DTypeLike):
+  ty = dtypes.canonicalize_dtype(ty)
+  if len(x.shape) < 2:
+    raise ValueError("Not implemented: bitcast 1D")
+  if x.shape[-2] * x.dtype.itemsize % ty.itemsize:
+    raise ValueError(
+        "Not implemented: the 2nd minor dim can not be perfectly packed or"
+        " unpacked"
+    )
+  return bitcast_p.bind(x, ty=ty)
+
+
+@bitcast_p.def_abstract_eval
+def _bitcast_abstract_eval(x, *, ty):
+  shape = list(x.shape)
+  shape[-2] = shape[-2] * x.dtype.itemsize // ty.itemsize
+  return jax_core.ShapedArray(shape, ty)
+
+
+def _bitcast_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, ty):
+  def _bitcast(x):
+    if x.dtype.itemsize < ty.itemsize:
+      *leading, m, n = x.shape
+      packing = ty.itemsize // x.dtype.itemsize
+      x = x.reshape(*leading, m // packing, packing, n)
+      x = jnp.swapaxes(x, -1, -2)
+      return jax.lax.bitcast_convert_type(x, ty)
+    if x.dtype.itemsize > ty.itemsize:
+      y = jax.lax.bitcast_convert_type(x, ty)
+      *leading, m, n, packing = y.shape
+      return jnp.swapaxes(y, -1, -2).reshape(*leading, m * packing, n)
+    return jax.lax.bitcast_convert_type(x, ty)
+
+  return mlir.lower_fun(_bitcast, multiple_results=False)(ctx, x)
+
+
+mlir.register_lowering(bitcast_p, _bitcast_lowering_rule)
 
 trace_start_p = jax_core.Primitive('trace_start')
 trace_start_p.multiple_results = True

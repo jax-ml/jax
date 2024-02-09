@@ -1871,6 +1871,14 @@ def _shift_right_logical_lowering_rules(ctx: LoweringRuleContext, x, d):
 lowering_rules[lax.shift_right_logical_p] = _shift_right_logical_lowering_rules
 
 
+def _bitcast_lowering_rule(ctx: LoweringRuleContext, x, *, ty):
+  del ty
+  (out_aval,) = ctx.avals_out
+  return tpu.BitcastOp(aval_to_ir_type(out_aval), x).result
+
+
+lowering_rules[tpu_primitives.bitcast_p] = _bitcast_lowering_rule
+
 def _trace_start_lowering_rule(
     ctx: LoweringRuleContext, *, message: str, level: int
 ):
