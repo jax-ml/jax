@@ -2020,10 +2020,9 @@ def atleast_1d(*arys: ArrayLike) -> Array | list[Array]:
   # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
   util.check_arraylike("atleast_1d", *arys, emit_warning=True)
   if len(arys) == 1:
-    arr = asarray(arys[0])
-    return arr if ndim(arr) >= 1 else reshape(arr, -1)
+    return array(arys[0], copy=False, ndmin=1)
   else:
-    return [atleast_1d(arr) for arr in arys]
+    return [array(arr, copy=False, ndmin=1) for arr in arys]
 
 
 @overload
@@ -2041,15 +2040,9 @@ def atleast_2d(*arys: ArrayLike) -> Array | list[Array]:
   # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
   util.check_arraylike("atleast_2d", *arys, emit_warning=True)
   if len(arys) == 1:
-    arr = asarray(arys[0])
-    if ndim(arr) >= 2:
-      return arr
-    elif ndim(arr) == 1:
-      return expand_dims(arr, axis=0)
-    else:
-      return expand_dims(arr, axis=(0, 1))
+    return array(arys[0], copy=False, ndmin=2)
   else:
-    return [atleast_2d(arr) for arr in arys]
+    return [array(arr, copy=False, ndmin=2) for arr in arys]
 
 
 @overload
@@ -2068,12 +2061,12 @@ def atleast_3d(*arys: ArrayLike) -> Array | list[Array]:
   util.check_arraylike("atleast_3d", *arys, emit_warning=True)
   if len(arys) == 1:
     arr = asarray(arys[0])
-    if ndim(arr) == 0:
-      arr = expand_dims(arr, axis=(0, 1, 2))
-    elif ndim(arr) == 1:
-      arr = expand_dims(arr, axis=(0, 2))
-    elif ndim(arr) == 2:
-      arr = expand_dims(arr, axis=2)
+    if arr.ndim == 0:
+      arr = lax.expand_dims(arr, dimensions=(0, 1, 2))
+    elif arr.ndim == 1:
+      arr = lax.expand_dims(arr, dimensions=(0, 2))
+    elif arr.ndim == 2:
+      arr = lax.expand_dims(arr, dimensions=(2,))
     return arr
   else:
     return [atleast_3d(arr) for arr in arys]
