@@ -1041,9 +1041,7 @@ triton_lowering_rules[sp.addupdate_p] = _addupdate_lowering_rule
 
 
 def _transpose_lowering(ctx: TritonLoweringRuleContext, a, *, permutation):
-  if permutation != (1, 0):
-    raise NotImplementedError(permutation)
-  return tc.semantic.trans(a)
+  return tc.semantic.permute(a, permutation)
 
 
 triton_lowering_rules[lax.transpose_p] = _transpose_lowering
@@ -1066,9 +1064,9 @@ def _dot_general_lowering(
   assert batch_dims == ((), ())
 
   if a_contract_dim == 0:
-    a = tc.semantic.trans(a)
+    a = tc.semantic.permute(a, (1, 0))
   if b_contract_dim == 1:
-    b = tc.semantic.trans(b)
+    b = tc.semantic.permute(b, (1, 0))
 
   if precision is None:
     allow_tf32 = True

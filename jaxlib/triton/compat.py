@@ -902,12 +902,14 @@ class semantic:
     return tensor(arith_dialect.select(cond.handle, x.handle, y.handle), x.type)
 
   @staticmethod
-  def trans(x: tensor) -> tensor:
-    if len(x.shape) != 2:
-      raise NotImplementedError(f"unsupported shape: {x.shape}")
+  def permute(x: tensor, dims: Sequence[int]) -> tensor:
+    if len(dims) != len(x.shape):
+      raise ValueError("dims must have the same shape as x")
+    if set(dims) != set(range(len(x.shape))):
+      raise ValueError(f"dims must be a permutation of 0, ..., {len(x.shape)}-1")
     return tensor(
-        tt_dialect.trans(x.handle),
-        block_type(x.dtype, [*reversed(x.shape)]),
+        tt_dialect.trans(x.handle, dims),
+        block_type(x.dtype, [x.shape[i] for i in dims]),
     )
 
   @staticmethod
