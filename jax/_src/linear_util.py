@@ -337,10 +337,10 @@ def cache(call: Callable, *, explain: Callable | None = None):
     if config.check_tracer_leaks.value:
       key = (_copy_main_traces(fun.transforms), fun.params, fun.in_type, args,
              config.enable_x64.value, config.default_device.value,
-             config.config._trace_context())
+             config.trace_context())
     else:
       key = (fun.transforms, fun.params, fun.in_type, args, config.enable_x64.value,
-             config.default_device.value, config.config._trace_context())
+             config.default_device.value, config.trace_context())
     result = cache.get(key, None)
     if result is not None:
       ans, stores = result

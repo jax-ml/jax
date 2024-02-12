@@ -284,7 +284,7 @@ def cache(max_size=4096):
       if config.check_tracer_leaks.value:
         return f(*args, **kwargs)
       else:
-        return cached(config.config._trace_context(), *args, **kwargs)
+        return cached(config.trace_context(), *args, **kwargs)
 
     wrapper.cache_clear = cached.cache_clear
     wrapper.cache_info = cached.cache_info
@@ -302,7 +302,7 @@ def weakref_lru_cache(call: Callable, maxsize=2048):
   behave similar to `functools.lru_cache`.
   """
   global _weakref_lru_caches
-  cached_call = xc.weakref_lru_cache(config.config._trace_context, call, maxsize)
+  cached_call = xc.weakref_lru_cache(config.trace_context, call, maxsize)
   _weakref_lru_caches.add(cached_call)
   return cached_call
 

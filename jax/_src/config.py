@@ -216,35 +216,34 @@ class Config:
       self.complete_absl_config(absl.flags)
       already_configured_with_absl = True
 
-  def _trace_context(self):
-    """Returns a tuple of configuration values that affect tracing.
 
-    These values are included in the cache key for linear_util.cache.
+def trace_context():
+  """Returns a tuple of configuration values that affect tracing.
 
-    Values included in this set should also most likely be included in
-    the C++ JIT state, which is handled separately.
-    """
-    tls = jax_jit.thread_local_state()
-    axis_env_state = ()
-    mesh_context_manager = ()
-    context = tls.extra_jit_context
-    if context and context.axis_env_state is not None:
-      axis_env_state = context.axis_env_state
-    if context and context.mesh_context_manager:
-      mesh_context_manager = context.mesh_context_manager
-    return (axis_env_state, mesh_context_manager, self.x64_enabled,
-            self.jax_numpy_rank_promotion, self.jax_default_matmul_precision,
-            self.jax_dynamic_shapes, self.jax_numpy_dtype_promotion,
-            self.jax_default_device,
-            self.jax_random_seed_offset,
-            self.jax_threefry_partitionable,
-            self.jax_softmax_custom_jvp,
-            self.jax_enable_memories,
-            self.jax_disable_jit,
-            self.jax_xla_profile_version,
-            # Technically this affects jaxpr->stablehlo lowering, not tracing.
-            self.jax_hlo_source_file_canonicalization_regex)
+  These values are included in the cache key for linear_util.cache.
 
+  Values included in this set should also most likely be included in
+  the C++ JIT state, which is handled separately.
+  """
+  tls = jax_jit.thread_local_state()
+  axis_env_state = ()
+  mesh_context_manager = ()
+  context: Any = tls.extra_jit_context
+  if context and context.axis_env_state is not None:
+    axis_env_state = context.axis_env_state
+  if context and context.mesh_context_manager:
+    mesh_context_manager = context.mesh_context_manager
+  return (axis_env_state, mesh_context_manager, enable_x64.value,
+          numpy_rank_promotion.value, default_matmul_precision.value,
+          dynamic_shapes.value, numpy_dtype_promotion.value,
+          default_device.value, random_seed_offset.value,
+          threefry_partitionable.value,
+          softmax_custom_jvp.value,
+          enable_memories.value,
+          disable_jit.value,
+          jax_xla_profile_version.value,
+          # Technically this affects jaxpr->stablehlo lowering, not tracing.
+          hlo_source_file_canonicalization_regex.value)
 
 config = Config()
 
