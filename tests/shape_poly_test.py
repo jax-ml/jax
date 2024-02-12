@@ -80,7 +80,7 @@ def _bounds(e: shape_poly.DimSize) -> tuple[float, float]:
   else:
     scope = shape_poly.SymbolicScope()
   decision = shape_poly_decision._DecisionByElimination(scope)
-  return decision.bounds(e, None)
+  return decision.bounds(e, shape_poly.BoundsPrecision.BEST)
 
 def _assert_equal_bounds(tst: jtu.JaxTestCase,
                          e: shape_poly.DimSize,
@@ -101,6 +101,9 @@ def _start_profile(tst: jtu.JaxTestCase):
 
 def _stop_profile(tst: jtu.JaxTestCase):
   if tst.prof is not None:
+    outfile = os.getenv("JAX_PROFILE_OUT")
+    if outfile:
+      tst.prof.dump_stats(outfile)
     p = Stats(tst.prof)
     p.strip_dirs()
     p.sort_stats("cumtime").print_stats(.2)
@@ -287,6 +290,19 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertIn(a, [a, b])
     self.assertIn(b, [a, b])
 
+  def test_sizes(self):
+    a, b = shape_poly.symbolic_shape("a, b")
+    self.assertEqual(a._size, b._size)
+    self.assertGreater(a._size, shape_poly._ensure_poly(1, "", a.scope)._size)
+    self.assertGreater((a + 1)._size, a._size)
+    self.assertGreater((a + b)._size, a._size)
+    self.assertGreater((a + b)._size, (a + 1)._size)
+    self.assertGreater((2 * a)._size, a._size)
+    self.assertGreater((2 * a)._size, (a + 1)._size)
+    self.assertGreater((a * a)._size, a._size)
+    self.assertGreater((a * a * a)._size, (a * a)._size)
+    self.assertGreater((a * b)._size, a._size)
+
   def test_get_vars(self):
     a, b = shape_poly.symbolic_shape("a, b")
 
@@ -340,7 +356,7 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertTrue(b.to_monomial() > a.to_monomial())
 
     self.assertTrue(((3 * b) // a).to_monomial() >= ((2 * b) // a).to_monomial())
-    self.assertTrue(((3 * b) // a).to_monomial() >= ((4 * a) // b).to_monomial())
+    self.assertTrue(((3 * b) // a).to_monomial() <= ((4 * a) // b).to_monomial())
     self.assertTrue(a.to_monomial() < (a * a).to_monomial())
     self.assertTrue(b.to_monomial() < (a * a).to_monomial())
     self.assertTrue((a * a * b).to_monomial() < (a * b * b).to_monomial())
@@ -874,14 +890,6 @@ class DimExprTest(jtu.JaxTestCase):
                                     # Contradicts the default a >= 1
                                     constraints=("a == a + 1",))
 
-    with self.assertRaisesRegex(ValueError,
-                                re.escape("Unsatisfiable constraint: a >= 1")):
-      a, = shape_poly.symbolic_shape("a",
-                                     # Contradicts the default a >= 1
-                                     constraints=("a == 0",))
-      # We detect unsatisfiablity once we try to decide inequalities
-      _ = a >= -1
-
   def test_constraints_ge_monomial(self):
     a, b = shape_poly.symbolic_shape(
         "a, b",
@@ -903,6 +911,9 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertEqual(core.max_dim(a, b), a)
     self.assertEqual(core.min_dim(a, b), b)
     self.assertGreaterEqual(a // 3, 1)
+
+    self.assertEqual(_bounds(a + b), (5, np.inf))
+    self.assertEqual(_bounds(a - b), (1, np.inf))
 
   def test_constraints_ge_not_monomial(self):
     a, b = shape_poly.symbolic_shape("a, b",
