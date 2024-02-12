@@ -71,7 +71,7 @@ def f(x_ref, o_ref):
   # Or via Numpy advanced int indexing
   o_ref[jnp.arange(3), :] = x
 
-Note that in order to use NumPy advanced int indexing, you need to broadcast the indices against each other into the desired multidimensional shape:
+# Note that in order to use NumPy advanced int indexing, you need to broadcast the indices against each other into the desired multidimensional shape:
 def f(x_ref):
   # Assume x_ref is (8, 4) and we want to read out a (2, 3) slice
   x = x_ref[jnp.arange(2)[..., None], jnp.arange(3)[None, ...]]
@@ -154,7 +154,7 @@ def pallas_call(
 
 When we provide a kernel to `pallas_call` we provide additional information. The first is `out_shape` which tells the kernel what the outputs look like (`pallas_call` will pass a `Ref` corresponding to these into the kernel to be written to). The rest of the information (`in_specs`, `out_specs`, and `grid`) are information about how the kernel will be scheduled on the accelerator.
 
-The (rough) semantics are for `pallas_call` are as follows:
+The (rough) semantics for `pallas_call` are as follows:
 
 ```python
 def pallas_call(kernel, in_specs, out_specs, out_shapes, grid):
