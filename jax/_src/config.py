@@ -22,7 +22,7 @@ import logging
 import os
 import sys
 import threading
-from typing import Any, Callable, Generic, NamedTuple, NoReturn, TypeVar
+from typing import Any, Callable, Generic, NamedTuple, NoReturn, TypeVar, cast
 import warnings
 
 from jax._src import lib
@@ -91,11 +91,14 @@ class Config:
   _HAS_DYNAMIC_ATTRIBUTES = True
 
   def __init__(self):
-    self.values = {}
+    # There are two kinds of value holders: FlagHolders, which hold global
+    # flags, and StateContextManagers, which hold state that can be changed
+    # locally within a thread. A value holder needs a `.value` property and a
+    # `._set()` method.
+    self.value_holders = {}
     self.meta = {}
     self.use_absl = False
     self._contextmanager_flags = set()
-    self._update_hooks = {}
 
   def __getattr__(self, name):
     fn = None
@@ -112,13 +115,9 @@ class Config:
     return fn
 
   def update(self, name, val):
-    if name not in self.values:
+    if name not in self.value_holders:
       raise AttributeError(f"Unrecognized config option: {name}")
-    self.values[name] = val
-
-    hook = self._update_hooks.get(name, None)
-    if hook:
-      hook(val)
+    self.value_holders[name]._set(val)
 
   def read(self, name):
     if name in self._contextmanager_flags:
@@ -129,19 +128,15 @@ class Config:
 
   def _read(self, name):
     try:
-      return self.values[name]
+      return self.value_holders[name].value
     except KeyError:
       raise AttributeError(f"Unrecognized config option: {name}")
 
-  def add_option(self, name, default, opt_type, meta_args, meta_kwargs,
-                 update_hook: Callable[[Any], None] | None = None):
-    if name in self.values:
+  def add_option(self, name, holder, opt_type, meta_args, meta_kwargs):
+    if name in self.value_holders:
       raise Exception(f"Config option {name} already defined")
-    self.values[name] = default
+    self.value_holders[name] = holder
     self.meta[name] = (opt_type, meta_args, meta_kwargs)
-    if update_hook:
-      self._update_hooks[name] = update_hook
-      update_hook(default)
 
   def config_with_absl(self):
     """Registers absl flags for the JAX configs.
@@ -174,15 +169,15 @@ class Config:
                   str:  absl_flags.DEFINE_string,
                   'enum': absl_flags.DEFINE_enum }
 
-    for name, val in self.values.items():
-      flag_type, meta_args, meta_kwargs = self.meta[name]
-      absl_defs[flag_type](name, val, *meta_args, **meta_kwargs)
+    for name, (flag_type, meta_args, meta_kwargs) in self.meta.items():
+      holder = self.value_holders[name]
+      absl_defs[flag_type](name, holder.value, *meta_args, **meta_kwargs)
     app.call_after_init(lambda: self.complete_absl_config(absl_flags))
 
   def complete_absl_config(self, absl_flags):
     # NOTE: avoid calling from outside this module. Instead, use
     # `config_with_absl()`, and (in rare cases) `parse_flags_with_absl()`.
-    for name, _ in self.values.items():
+    for name, holder in self.value_holders.items():
       try:
         flag = absl_flags.FLAGS[name]
       except KeyError:
@@ -193,7 +188,7 @@ class Config:
         # should have called config_with_absl() later.
         continue
       if flag.present:
-        self.update(name, flag.value)
+        holder._set(flag.value)
 
   def parse_flags_with_absl(self):
     """Parses command-line args that start with --jax.
@@ -267,18 +262,32 @@ unset = _Unset()
 
 _thread_local_state = threading.local()
 
-
 class _StateContextManager(Generic[_T]):
-  def __init__(self, name, help, update_thread_local_hook,
-               validate_new_val_hook: Callable[[Any], None] | None = None,
-               extra_description: str = "", default_value: Any = no_default):
+  __slots__ = (
+      '_name', '_value', '_update_thread_local_hook', '_update_global_hook',
+      '_validator', '_default_context_manager_value', '__doc__', '__name__',
+  )
+
+  def __init__(
+      self,
+      name: str,
+      default: _T,
+      help,
+      update_global_hook: Callable[[_T], None] | None = None,
+      update_thread_local_hook: Callable[[_T | None], None] | None = None,
+      validator: Callable[[Any], None] | None = None,
+      extra_description: str = '',
+      default_context_manager_value: Any = no_default,
+  ):
     self._name = name
     self.__name__ = name[4:] if name.startswith('jax_') else name
     self.__doc__ = (f"Context manager for `{name}` config option"
                     f"{extra_description}.\n\n{help}")
+    self._update_global_hook = update_global_hook
     self._update_thread_local_hook = update_thread_local_hook
-    self._validate_new_val_hook = validate_new_val_hook
-    self._default_value = default_value
+    self._validator = validator
+    self._default_context_manager_value = default_context_manager_value
+    self._set(default)
 
   def __bool__(self) -> NoReturn:
     raise TypeError(
@@ -286,24 +295,29 @@ class _StateContextManager(Generic[_T]):
         "(did you mean to use '{0}.value' instead?)".format(
             type(self).__name__))
 
+  def _set(self, value: _T) -> None:
+    self._value = value
+    if self._update_global_hook:
+      self._update_global_hook(value)
+
   @property
   def value(self) -> _T:
     val = _thread_local_state.__dict__.get(self._name, unset)
-    return val if val is not unset else config._read(self._name)
+    return cast(_T, val) if val is not unset else self._value
 
   @contextlib.contextmanager
   def __call__(self, new_val: Any = no_default):
     if new_val is no_default:
-      if self._default_value is not no_default:
-        new_val = self._default_value  # default_value provided to constructor
+      if self._default_context_manager_value is not no_default:
+        new_val = self._default_context_manager_value  # default_context_manager_value provided to constructor
       else:
         # no default_value provided to constructor and no value provided as an
         # argument, so we raise an error
         raise TypeError(f"Context manager for {self.__name__} config option "
                         "requires an argument representing the new value for "
                         "the config option.")
-    if self._validate_new_val_hook:
-      self._validate_new_val_hook(new_val)
+    if self._validator:
+      self._validator(new_val)
     prev_val = getattr(_thread_local_state, self._name, unset)
     setattr(_thread_local_state, self._name, new_val)
     if self._update_thread_local_hook:
@@ -318,15 +332,15 @@ class _StateContextManager(Generic[_T]):
       else:
         setattr(_thread_local_state, self._name, prev_val)
         if self._update_thread_local_hook:
-          self._update_thread_local_hook(prev_val)
+          self._update_thread_local_hook(cast(_T, prev_val))
 
   def _add_hooks(self, update_global_hook, update_thread_local_hook):
     """Private method that adds hooks to an existing context-manager.
 
     Used to avoid cyclic import dependencies."""
     self._update_thread_local_hook = update_thread_local_hook
-    config._update_hooks[self._name] = update_global_hook
-    update_global_hook(config._read(self._name))
+    self._update_global_hook = update_global_hook
+    update_global_hook(self._value)
 
 
 def define_bool_state(
@@ -395,13 +409,13 @@ def define_bool_state(
   if upgrade:
     help += ' ' + UPGRADE_BOOL_HELP
     extra_description += UPGRADE_BOOL_EXTRA_DESC
-  DEFINE_bool(name, bool_env(name.upper(), default), help,
-              update_hook=update_global_hook)
   config._contextmanager_flags.add(name)
 
   s = _StateContextManager[bool](
-      name, help, update_thread_local_hook,
-      extra_description=extra_description, default_value=True)
+      name, default, help, update_global_hook=update_global_hook,
+      update_thread_local_hook=update_thread_local_hook,
+      extra_description=extra_description, default_context_manager_value=True)
+  config.add_option(name, s, bool, meta_args=[], meta_kwargs={"help": help})
   setattr(Config, name, property(lambda _: s.value))
   return s
 
@@ -438,17 +452,26 @@ def define_enum_state(
   default = os.getenv(name.upper(), default)
   if default not in enum_values:
     raise ValueError(f"Invalid value \"{default}\" for JAX flag {name}")
-  DEFINE_enum(name, default,
-              enum_values=enum_values, help=help,
-              update_hook=update_global_hook)
   config._contextmanager_flags.add(name)
 
-  def validate(new_val):
+  def validator(new_val):
     if type(new_val) is not str or new_val not in enum_values:
       raise ValueError(f"new enum value must be in {enum_values}, "
                        f"got {new_val} of type {type(new_val)}.")
 
-  s = _StateContextManager[str](name, help, update_thread_local_hook, validate)
+  s = _StateContextManager[str](
+      name,
+      default,
+      help,
+      update_global_hook=update_global_hook,
+      update_thread_local_hook=update_thread_local_hook,
+      validator=validator,
+  )
+  config.add_option(
+      name, s, 'enum',
+      meta_args=[],
+      meta_kwargs={"enum_values": enum_values, "help": help}
+  )
   setattr(Config, name, property(lambda _: s.value))
   return s
 
@@ -459,7 +482,7 @@ def define_optional_enum_state(
     default: str | None,
     help: str,
     *,
-    update_global_hook: Callable[[str], None] | None = None,
+    update_global_hook: Callable[[str | None], None] | None = None,
     update_thread_local_hook: Callable[[str | None], None] | None = None,
 ) -> _StateContextManager[str | None]:
   """Set up thread-local state and return a contextmanager for managing it.
@@ -485,9 +508,6 @@ def define_optional_enum_state(
   default = os.getenv(name.upper(), default)
   if default is not None and default not in enum_values:
     raise ValueError(f"Invalid value \"{default}\" for JAX flag {name}")
-  DEFINE_enum(name, default,
-              enum_values=enum_values, help=help,
-              update_hook=update_global_hook)
   config._contextmanager_flags.add(name)
 
   def validate(new_val):
@@ -497,7 +517,13 @@ def define_optional_enum_state(
                        f"got {new_val} of type {type(new_val)}.")
 
   s = _StateContextManager['str | None'](
-      name, help, update_thread_local_hook, validate
+      name, default, help, update_global_hook, update_thread_local_hook,
+      validate
+  )
+  config.add_option(
+      name, s, 'enum',
+      meta_args=[],
+      meta_kwargs={"enum_values": enum_values, "help": help}
   )
   setattr(Config, name, property(lambda _: s.value))
   return s
@@ -508,8 +534,8 @@ def define_int_state(
     default: int,
     help: str,
     *,
-    update_global_hook: Callable[[str], None] | None = None,
-    update_thread_local_hook: Callable[[str | None], None] | None = None,
+    update_global_hook: Callable[[int], None] | None = None,
+    update_thread_local_hook: Callable[[int | None], None] | None = None,
 ) -> _StateContextManager[int]:
   """Set up thread-local state and return a contextmanager for managing it.
 
@@ -535,7 +561,6 @@ def define_int_state(
       default = int(default_env)
     except ValueError:
       raise ValueError(f"Invalid value \"{default_env}\" for JAX flag {name}")
-  DEFINE_integer(name, default, help=help, update_hook=update_global_hook)
   config._contextmanager_flags.add(name)
 
   def validate(new_val):
@@ -543,7 +568,9 @@ def define_int_state(
       raise ValueError(f'new int config value must be None or of type int, '
                        f'got {new_val} of type {type(new_val)}')
 
-  s = _StateContextManager[int](name, help, update_thread_local_hook, validate)
+  s = _StateContextManager[int](name, default, help, update_global_hook,
+                                update_thread_local_hook, validate)
+  config.add_option(name, s, int, meta_args=[], meta_kwargs={"help": help})
   setattr(Config, name, property(lambda _: s.value))
   return s
 
@@ -553,8 +580,8 @@ def define_float_state(
     default: float,
     help: str,
     *,
-    update_global_hook: Callable[[str], None] | None = None,
-    update_thread_local_hook: Callable[[str | None], None] | None = None,
+    update_global_hook: Callable[[float], None] | None = None,
+    update_thread_local_hook: Callable[[float | None], None] | None = None,
 ) -> _StateContextManager[float]:
   """Set up thread-local state and return a contextmanager for managing it.
 
@@ -580,7 +607,6 @@ def define_float_state(
       default = float(default_env)
     except ValueError:
       raise ValueError(f"Invalid value \"{default_env}\" for JAX flag {name}")
-  DEFINE_float(name, default, help=help, update_hook=update_global_hook)
   config._contextmanager_flags.add(name)
 
   def validate(new_val):
@@ -589,8 +615,9 @@ def define_float_state(
         f'new float config value must be None or of type float, '
         f'got {new_val} of type {type(new_val)}')
 
-  s = _StateContextManager[float](name, help, update_thread_local_hook,
-                                  validate)
+  s = _StateContextManager[float](name, default, help, update_global_hook,
+                                  update_thread_local_hook, validate)
+  config.add_option(name, s, float, meta_args=[], meta_kwargs={"help": help})
   setattr(Config, name, property(lambda _: s.value))
   return s
 
@@ -626,7 +653,7 @@ def define_string_state(
   if not isinstance(default, str):
     raise TypeError(f"Default value must be of type str, got {default}")
 
-  def validate(new_val):
+  def validator(new_val):
     if not isinstance(new_val, str):
       raise ValueError('new string config value must be of type str,'
                        f' got {new_val} of type {type(new_val)}.')
@@ -635,7 +662,7 @@ def define_string_state(
       name, default, help,
       update_global_hook=update_global_hook,
       update_thread_local_hook=update_thread_local_hook,
-      validate_new_val_hook=validate)
+      validator=validator)
 
 
 def define_optional_string_state(
@@ -669,7 +696,7 @@ def define_optional_string_state(
   if default is not None and not isinstance(default, str):
     raise TypeError(f"Default value must be of type str or None, got {default}")
 
-  def validate(new_val):
+  def validator(new_val):
     if new_val is not None and not isinstance(new_val, str):
       raise ValueError('new string config value must be None or of type str,'
                        f' got {new_val} of type {type(new_val)}.')
@@ -678,7 +705,7 @@ def define_optional_string_state(
       name, default, help,
       update_global_hook=update_global_hook,
       update_thread_local_hook=update_thread_local_hook,
-      validate_new_val_hook=validate)
+      validator=validator)
 
 def define_string_or_object_state(
     name: str,
@@ -687,7 +714,7 @@ def define_string_or_object_state(
     *,
     update_global_hook: Callable[[Any], None] | None = None,
     update_thread_local_hook: Callable[[Any], None] | None = None,
-    validate_new_val_hook: Callable[[Any], None] | None = None,
+    validator: Callable[[Any], None] | None = None,
 ) -> _StateContextManager[Any]:
   """Set up thread-local state and return a contextmanager for managing it.
 
@@ -707,7 +734,7 @@ def define_string_or_object_state(
     update_thread_local_hook: an optional callback that is called with the
       updated value of the thread-local state when it is altered or set
       initially.
-    validate_new_val_hook: an optional callback that is called with the new
+    validator: an optional callback that is called with the new
       value on any update, and should raise an error if the new value is
       invalid.
 
@@ -716,18 +743,28 @@ def define_string_or_object_state(
   """
   name = name.lower()
   default = os.getenv(name.upper(), default)
-  DEFINE_string(name, default, help=help, update_hook=update_global_hook)
   config._contextmanager_flags.add(name)
 
   s = _StateContextManager[Any](
-      name, help, update_thread_local_hook, validate_new_val_hook)
+      name, default, help, update_global_hook, update_thread_local_hook,
+      validator)
   setattr(Config, name, property(lambda _: s.value))
+  config.add_option(name, s, str, meta_args=[], meta_kwargs={"help": help})
   return s
 
 
 class FlagHolder(Generic[_T]):
-  def __init__(self, name: str):
+  __slots__ = ("_name", "value", "_update_hook")
+
+  _name: str
+  value: _T
+  _update_hook: Callable[[Any], None] | None
+
+  def __init__(self, name: str, default: _T,
+               update_hook: Callable[[Any], None] | None = None):
     self._name = name
+    self._update_hook = update_hook
+    self._set(default)
 
   def __bool__(self) -> NoReturn:
     raise TypeError(
@@ -735,46 +772,50 @@ class FlagHolder(Generic[_T]):
         "(did you mean to use '{0}.value' instead?)".format(
             type(self).__name__))
 
-  @property
-  def value(self) -> _T:
-    return config.read(self._name)
+  def _set(self, value: _T) -> None:
+    self.value = value
+    if self._update_hook is not None:
+      self._update_hook(value)
 
 
 def check_exists(name):
-  if name not in config.values:
+  if name not in config.value_holders:
     raise AttributeError(f"Unrecognized config option: {name}")
 
 
 def DEFINE_bool(name, default, *args, **kwargs) -> FlagHolder[bool]:
   update_hook = kwargs.pop("update_hook", None)
-  config.add_option(name, default, bool, args, kwargs, update_hook=update_hook)
-  return FlagHolder(name)
+  holder = FlagHolder(name, default, update_hook)
+  config.add_option(name, holder, bool, args, kwargs)
+  return holder
 
 
 def DEFINE_integer(name, default, *args, **kwargs) -> FlagHolder[int]:
   update_hook = kwargs.pop("update_hook", None)
-  config.add_option(name, default, int, args, kwargs, update_hook=update_hook)
-  return FlagHolder(name)
+  holder = FlagHolder(name, default, update_hook)
+  config.add_option(name, holder, int, args, kwargs)
+  return holder
 
 
 def DEFINE_float(name, default, *args, **kwargs) -> FlagHolder[float]:
   update_hook = kwargs.pop("update_hook", None)
-  config.add_option(name, default, float, args, kwargs,
-                    update_hook=update_hook)
-  return FlagHolder(name)
+  holder = FlagHolder(name, default, update_hook)
+  config.add_option(name, holder, float, args, kwargs)
+  return holder
 
 
 def DEFINE_string(name, default, *args, **kwargs) -> FlagHolder[str]:
   update_hook = kwargs.pop("update_hook", None)
-  config.add_option(name, default, str, args, kwargs, update_hook=update_hook)
-  return FlagHolder(name)
+  holder = FlagHolder(name, default, update_hook)
+  config.add_option(name, holder, str, args, kwargs)
+  return holder
 
 
 def DEFINE_enum(name, default, *args, **kwargs) -> FlagHolder[str]:
   update_hook = kwargs.pop("update_hook", None)
-  config.add_option(name, default, 'enum', args, kwargs,
-                    update_hook=update_hook)
-  return FlagHolder(name)
+  holder = FlagHolder(name, default, update_hook)
+  config.add_option(name, holder, 'enum', args, kwargs)
+  return holder
 
 
 already_configured_with_absl = False
@@ -1231,8 +1272,7 @@ enable_x64 = define_bool_state(
 # TODO(phawkins): remove after fixing users of FLAGS.x64_enabled.
 config._contextmanager_flags.remove('jax_enable_x64')
 
-Config.x64_enabled = Config.jax_enable_x64  # type: ignore
-
+setattr(Config, "x64_enabled", property(lambda _: enable_x64.value))
 
 def _update_default_device_global(val):
   lib.jax_jit.global_state().default_device = val
@@ -1269,7 +1309,7 @@ default_device = define_string_or_object_state(
         ':ref:`faq-data-placement` for more information on device placement.'),
     update_global_hook=_update_default_device_global,
     update_thread_local_hook=_update_default_device_thread_local,
-    validate_new_val_hook=_validate_default_device)
+    validator=_validate_default_device)
 
 def _update_disable_jit_global(val):
   lib.jax_jit.global_state().disable_jit = val
