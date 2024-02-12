@@ -48,11 +48,27 @@ class JaxArrayType(JaxType):
     else:
       return x
 
+  def to_repval(self, val):
+    return [val]
+
+  def from_repval(self, repvals):
+    val, = repvals
+    return val
+
+  @property
+  def rep_types(self):
+    return [self]
+
 jax_bool = JaxArrayType((), np.bool_)
+jax_int  = JaxArrayType((), np.int64)
 
 class JaxArray(JaxVal):
   __array_priority__ = 1000
 
+  @property
+  def shape(self): return self.ty.shape
+
+  def __getitem__(self, ix): return array_getitem(self, ix)
   def __neg__(self): return neg(self)
   def __add__(self, other): return add(self, other)
   def __radd__(self, other): return add(other, self)
@@ -91,10 +107,58 @@ def dtype_str(dtype):
   match dtype:
    case np.bool_: return "bool"
    case np.float64: return "f64"
+   case np.int64: return "i64"
    case _ : raise Exception(f"unrecognized dtype: {dtype}")
 
 register_canonicalizer(float, lambda x: JaxArrayLit(np.asarray(x, dtype=np.float64)))
 register_canonicalizer(bool, lambda x: JaxArrayLit(np.asarray(x, dtype=np.bool_)))
+register_canonicalizer(int, lambda x: JaxArrayLit(np.asarray(x, dtype=np.int64)))
+register_canonicalizer(np.ndarray, lambda x: JaxArrayLit(x))
+
+# === list type ===
+
+@dataclass
+class JaxListType(JaxType):
+  size : int
+  elt_ty : JaxType
+
+  # def to_repval(self, x):
+
+class JaxList(JaxVal):
+  def __getitem__(self, ix): return list_getitem(self, ix)
+
+@dataclass
+class JaxListLit(JaxList):
+  list_ty : JaxListType
+  list_repval  : JaxVal
+
+  @property
+  def ty(self): return self.list_ty
+
+  def __str__(self):
+    return f'[{", ".join(str(elt) for elt in self)}]'
+
+class JaxListTracer(Tracer, JaxList): pass
+
+def make_jax_list(elt_ty:JaxType, elts: list[JaxVal]) -> JaxListLit:
+  n = len(elts)
+  list_ty = JaxListType(n, elt_ty)
+  repval_list = [elt_ty.to_repval(elt) for elt in elts]
+  repval_size = len(elt_ty.rep_types)
+  repval = [JaxArrayLit(np.stack(map(lambda x: x[i], repval_list)))
+            for i in range(repval_size)]
+  return JaxListLit(list_ty, repval)
+
+def list_getitem(xs, i): return apply_primitive(ListGetitemP(), (xs, i))
+class ListGetitemP(Primitive):
+
+  def eval_type(self, xs_ty, i_ty):
+    assert i_ty == jax_int
+    return xs_ty.elt_ty
+
+  def impl(self, _, xs, i):
+    elt_ty = xs.ty.elt_ty
+    return elt_ty.from_repval([arr[i] for arr in xs.list_repval])
 
 # === higher-order ops ===
 
@@ -125,17 +189,29 @@ class CondP(SecondOrderPrimitive):
       print(self.when_false)
       return eval_jaxpr(env, self.when_false, ())
 
-  # def linearize_rule(self, ty, primals, tangents):
-  #   (x, y), (x_dot, y_dot) = primals, tangents
-  #   primal_result = x + y
-  #   return primal_result, lambda: ty.add_tangents(x_dot, y_dot)
-  # def transpose_rule(self, ct, x, y):
-  #   assert x.is_linear and y.is_linear
-  #   return [(x.val, ct), (y.val, ct)]
   def __str__(self): return "cond"
 
+def fori(n:int, body_callable:Callable):
+  assert isinstance(n, int)
+  body = trace_to_jaxpr(body_callable, (jax_int,))
+  return apply_primitive_strict(ForP(n, body), ())
 
+@dataclass
+class ForP(SecondOrderPrimitive):
+  n : int
+  body: Jaxpr
+  @property
+  def jaxprs(self):
+    return [self.body]
 
+  def eval_type(self):
+    return JaxListType(self.n, self.body.ty.result_type)
+
+  def impl(self, env):
+    elts = [eval_jaxpr(env, self.body, (canonicalize_pyval(i),)) for i in range(self.n)]
+    return make_jax_list(self.body.ty.result_type, elts)
+
+  def __str__(self): return "for"
 
 # === ops ===
 
@@ -212,6 +288,18 @@ class CosP(Primitive):
   def impl(self, _, x): return JaxArrayLit(np.cos(x.val))
   def eval_type(self, t): return t
   def __str__(self): return "cos"
+
+def array_getitem(x, ixs): return apply_primitive(ArrayGetItemP(), (x, ixs))
+class ArrayGetItemP(Primitive):
+  def impl(self, _, x, ix): return JaxArrayLit(x.val.__getitem__(ix.val))
+  def eval_type(self, x_ty, ixs_ty):
+    if isinstance(ixs_ty, JaxArrayType) and ixs_ty.shape == ():
+      assert len(x_ty.shape) > 0
+      return JaxArrayType(x_ty.shape[1:], x_ty.dtype)
+    else:
+      return False
+  def __str__(self): assert Fales
+  def linearize_rule(self, _, primals, tangents): assert False
 
 def greater(x, y): return apply_primitive(GreaterP(), (x, y))
 class GreaterP(Primitive):

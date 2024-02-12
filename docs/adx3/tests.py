@@ -40,3 +40,10 @@ f2_jaxpr = trace_to_jaxpr(f2, (jax_type_of(1.),))
 print(f2_jaxpr)
 print(eval_jaxpr({}, f2_jaxpr, (1.,)))
 print(eval_jaxpr({}, f2_jaxpr, (3.,)))
+
+def uses_for(x):
+  def body(i):
+    return x[i] * (i + 1)
+  return fori(x.shape[0], body)
+
+print(uses_for(canonicalize_pyval(np.arange(5))))

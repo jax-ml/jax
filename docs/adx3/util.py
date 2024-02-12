@@ -16,10 +16,6 @@
 import builtins
 from contextlib import contextmanager
 
-# === misc ===
-
-class SubclassShouldImplementThis(Exception): pass
-
 # === fix python3 regressions ===
 
 def map(f, *xs):

@@ -23,31 +23,36 @@ from util import *
 
 # Subclass these for new types and operations. See Note [defining_new_types_and_ops]
 class JaxType:
-  def __eq__(self, other): raise SubclassShouldImplementThis
-  def __str__(self):       raise SubclassShouldImplementThis
+  def __eq__(self, other): raise NotImplementedError(type(self))
+  def __str__(self):       raise NotImplementedError(type(self))
   @staticmethod
-  def var_to_tracer():     raise SubclassShouldImplementThis
-  def tangent_type(self):  raise SubclassShouldImplementThis
+  def var_to_tracer():     raise NotImplementedError(type(self))
+  def tangent_type(self):  raise NotImplementedError(type(self))
   # add_tangents and instantiate_zeros only need to be defined for vector spaces
-  def add_tangents(self, x, y):   raise SubclassShouldImplementThis
-  def instantiate_zeros(self, x): raise SubclassShouldImplementThis
+  def add_tangents(self, x, y):   raise NotImplementedError(type(self))
+  def instantiate_zeros(self, x): raise NotImplementedError(type(self))
+  # to_repval, from_repval, rep_type describe how to convert to/from a flat list of arrays
+  def to_repval(self, x):   raise NotImplementedError(type(self))
+  def from_repval(self, x): raise NotImplementedError(type(self))
+  @property
+  def rep_types(self):      raise NotImplementedError(type(self))
+
 class JaxVal:
   @property
-  def ty(self) -> JaxType:     raise SubclassShouldImplementThis
-  def to_atom(self):           raise SubclassShouldImplementThis
-  def eval_atom(self, _):      raise SubclassShouldImplementThis
-  def eval_tangent(self, _):   raise SubclassShouldImplementThis
-  def push_cotangent(self, _): raise SubclassShouldImplementThis
-  def free_vars(self):         raise SubclassShouldImplementThis
-  def __str__(self):           raise SubclassShouldImplementThis
+  def ty(self) -> JaxType:     raise NotImplementedError(type(self))
+  def to_atom(self):           raise NotImplementedError(type(self))
+  def eval_atom(self, _):      raise NotImplementedError(type(self))
+  def eval_tangent(self, _):   raise NotImplementedError(type(self))
+  def push_cotangent(self, _): raise NotImplementedError(type(self))
+  def free_vars(self):         raise NotImplementedError(type(self))
+  def __str__(self):           raise NotImplementedError(type(self))
 
 class Primitive:
-  def impl(self, env, *args):                       raise SubclassShouldImplementThis
-  def eval_type(self, t):                          raise SubclassShouldImplementThis
-  def linearize_rule(self, ty, primals, tangents): raise SubclassShouldImplementThis
-  def transpose_rule(self, ct, *args):             raise SubclassShouldImplementThis
-  def __str__(self):                               raise SubclassShouldImplementThis
-
+  def impl(self, env, *args):                      raise NotImplementedError(type(self))
+  def eval_type(self, *args):                      raise NotImplementedError(type(self))
+  def linearize_rule(self, ty, primals, tangents): raise NotImplementedError(type(self))
+  def transpose_rule(self, ct, *args):             raise NotImplementedError(type(self))
+  def __str__(self):                               raise NotImplementedError(type(self))
 @dataclass
 class Var:
   ty: JaxType
@@ -134,7 +139,7 @@ class JaxprType:
 
 class SecondOrderPrimitive(Primitive):
   @property
-  def jaxprs(self): raise SubclassShouldImplementThis
+  def jaxprs(self): raise NotImplementedError(type(self))
 
 # === tracing ===
 
@@ -181,10 +186,10 @@ def apply_primitive(prim: Primitive, args_raw:list[LoosePyVal]) -> StrictPyVal:
 
 def apply_primitive_strict(prim: Primitive, args:list[StrictPyVal]) -> StrictPyVal:
   trace = trace_ctx.cur_trace
+  result_ty = prim.eval_type(*[arg.ty for arg in args])
   if trace is None:
     return prim.impl({}, *args)
   else:
-    result_ty = prim.eval_type(*[arg.ty for arg in args])
     arg_atoms = [arg.to_atom() for arg in args]
     v = trace_ctx.new_var(result_ty)
     trace.append(JaxprEqn(v, prim, arg_atoms))
