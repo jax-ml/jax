@@ -24,6 +24,7 @@ Subpackages
    jax.ops
    jax.profiler
    jax.stages
+   jax.tree
    jax.tree_util
    jax.typing
    jax.extend

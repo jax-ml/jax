@@ -79,6 +79,19 @@ def tree_flatten(tree: Any,
   Returns:
     A pair where the first element is a list of leaf values and the second
     element is a treedef representing the structure of the flattened tree.
+
+  Example:
+     >>> import jax
+     >>> vals, treedef = jax.tree.flatten([1, (2, 3), [4, 5]])
+     >>> vals
+     [1, 2, 3, 4, 5]
+     >>> treedef
+     PyTreeDef([*, (*, *), [*, *]])
+
+  See Also:
+    - :func:`jax.tree.leaves`
+    - :func:`jax.tree.structure`
+    - :func:`jax.tree.unflatten`
   """
   return default_registry.flatten(tree, is_leaf)
 
@@ -96,6 +109,18 @@ def tree_unflatten(treedef: PyTreeDef, leaves: Iterable[Leaf]) -> Any:
   Returns:
     The reconstructed pytree, containing the ``leaves`` placed in the structure
     described by ``treedef``.
+
+  Example:
+     >>> import jax
+     >>> vals, treedef = jax.tree.flatten([1, (2, 3), [4, 5]])
+     >>> newvals = [100, 200, 300, 400, 500]
+     >>> jax.tree.unflatten(treedef, newvals)
+     [100, (200, 300), [400, 500]]
+
+  See Also:
+    - :func:`jax.tree.flatten`
+    - :func:`jax.tree.leaves`
+    - :func:`jax.tree.structure`
   """
   return treedef.unflatten(leaves)
 
@@ -103,14 +128,53 @@ def tree_unflatten(treedef: PyTreeDef, leaves: Iterable[Leaf]) -> Any:
 def tree_leaves(tree: Any,
                 is_leaf: Callable[[Any], bool] | None = None
                 ) -> list[Leaf]:
-  """Gets the leaves of a pytree."""
+  """Gets the leaves of a pytree.
+
+  Args:
+    tree: the pytree for which to get the leaves
+    is_leaf : an optionally specified function that will be called at each
+      flattening step. It should return a boolean, which indicates whether the
+      flattening should traverse the current object, or if it should be stopped
+      immediately, with the whole subtree being treated as a leaf.
+  Returns:
+    leaves: a list of tree leaves.
+
+  Example:
+     >>> import jax
+     >>> jax.tree.leaves([1, (2, 3), [4, 5]])
+     [1, 2, 3, 4, 5]
+
+  See Also:
+    - :func:`jax.tree.flatten`
+    - :func:`jax.tree.structure`
+    - :func:`jax.tree.unflatten`
+  """
   return default_registry.flatten(tree, is_leaf)[0]
 
 
 def tree_structure(tree: Any,
                    is_leaf: None | (Callable[[Any],
                                               bool]) = None) -> PyTreeDef:
-  """Gets the treedef for a pytree."""
+  """Gets the treedef for a pytree.
+
+  Args:
+    tree: the pytree for which to get the leaves
+    is_leaf : an optionally specified function that will be called at each
+      flattening step. It should return a boolean, which indicates whether the
+      flattening should traverse the current object, or if it should be stopped
+      immediately, with the whole subtree being treated as a leaf.
+  Returns:
+    pytreedef: a PyTreeDef representing the structure of the tree.
+  Example:
+     >>> import jax
+     >>> jax.tree.structure([1, (2, 3), [4, 5]])
+     PyTreeDef([*, (*, *), [*, *]])
+
+  See Also:
+    - :func:`jax.tree.flatten`
+    - :func:`jax.tree.leaves`
+    - :func:`jax.tree.unflatten`
+  """
   return default_registry.flatten(tree, is_leaf)[1]
 
 
@@ -238,6 +302,10 @@ def tree_map(f: Callable[..., Any],
 
     >>> jax.tree_util.tree_map(lambda x, y: [x] + y, [5, 6], [[7, 9], [1, 2]])
     [[5, 7, 9], [6, 1, 2]]
+
+  See Also:
+    - :func:`jax.tree.leaves`
+    - :func:`jax.tree.reduce`
   """
   leaves, treedef = tree_flatten(tree, is_leaf)
   all_leaves = [leaves] + [treedef.flatten_up_to(r) for r in rest]
@@ -250,9 +318,23 @@ def build_tree(treedef: PyTreeDef, xs: Any) -> Any:
 
 def tree_transpose(outer_treedef: PyTreeDef, inner_treedef: PyTreeDef,
                    pytree_to_transpose: Any) -> Any:
-  """Transform a tree having tree structure (outer, inner) into one having structure
+  """Transform a tree having tree structure (outer, inner) into one having structure (inner, outer).
 
-  (inner, outer).
+  Args:
+    outer_treedef: PyTreeDef representing the outer tree.
+    inner_treedef: PyTreeDef representing the inner tree.
+    pytree_to_transpose: the pytree to be transposed.
+
+  Returns:
+    transposed_pytree: the transposed pytree.
+
+  Examples:
+    >>> import jax
+    >>> tree = [(1, 2, 3), (4, 5, 6)]
+    >>> inner_structure = jax.tree.structure(('*', '*', '*'))
+    >>> outer_structure = jax.tree.structure(['*', '*'])
+    >>> jax.tree.transpose(outer_structure, inner_structure, tree)
+    ([1, 4], [2, 5], [3, 6])
   """
   flat, treedef = tree_flatten(pytree_to_transpose)
   inner_size = inner_treedef.num_leaves
@@ -323,12 +405,52 @@ def tree_reduce(function: Callable[[T, Any], T],
                 tree: Any,
                 initializer: Any = no_initializer,
                 is_leaf: Callable[[Any], bool] | None = None) -> T:
+  """Call reduce() over the leaves of a tree.
+
+  Args:
+    function: the reduction function
+    tree: the pytree to reduce over
+    initializer: the optional initial value
+    is_leaf : an optionally specified function that will be called at each
+      flattening step. It should return a boolean, which indicates whether the
+      flattening should traverse the current object, or if it should be stopped
+      immediately, with the whole subtree being treated as a leaf.
+
+  Returns:
+    result: the reduced value.
+
+  Examples:
+    >>> import jax
+    >>> import operator
+    >>> jax.tree.reduce(operator.add, [1, (2, 3), [4, 5, 6]])
+    21
+
+  See Also:
+    - :func:`jax.tree.leaves`
+    - :func:`jax.tree.map`
+  """
   if initializer is no_initializer:
     return functools.reduce(function, tree_leaves(tree, is_leaf=is_leaf))
   else:
     return functools.reduce(function, tree_leaves(tree, is_leaf=is_leaf), initializer)
 
 def tree_all(tree: Any) -> bool:
+  """Call all() over the leaves of a tree.
+
+  Args:
+    tree: the pytree to evaluate
+
+  Returns:
+    result: boolean True or False
+
+  Examples:
+
+    >>> import jax
+    >>> jax.tree.all([True, {'a': True, 'b': (True, True)}])
+    True
+    >>> jax.tree.all([False, (True, False)])
+    False
+  """
   return all(tree_leaves(tree))
 
 

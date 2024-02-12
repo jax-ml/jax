@@ -47,6 +47,7 @@ del _core
 # See PEP 484 & https://github.com/google/jax/issues/7570
 
 from jax._src.basearray import Array as Array
+from jax import tree as tree
 from jax import typing as typing
 
 from jax._src.config import (
@@ -188,23 +189,23 @@ _deprecations = {
     _deprecated_treedef_is_leaf
   ),
   "tree_flatten": (
-    "jax.tree_flatten is deprecated: use jax.tree_util.tree_flatten.",
+    "jax.tree_flatten is deprecated: use jax.tree.flatten.",
     _deprecated_tree_flatten
   ),
   "tree_leaves": (
-    "jax.tree_leaves is deprecated: use jax.tree_util.tree_leaves.",
+    "jax.tree_leaves is deprecated: use jax.tree.leaves.",
     _deprecated_tree_leaves
   ),
   "tree_structure": (
-    "jax.tree_structure is deprecated: use jax.tree_util.tree_structure.",
+    "jax.tree_structure is deprecated: use jax.tree.structure.",
     _deprecated_tree_structure
   ),
   "tree_transpose": (
-    "jax.tree_transpose is deprecated: use jax.tree_util.tree_transpose.",
+    "jax.tree_transpose is deprecated: use jax.tree.transpose.",
     _deprecated_tree_transpose
   ),
   "tree_unflatten": (
-    "jax.tree_unflatten is deprecated: use jax.tree_util.tree_unflatten.",
+    "jax.tree_unflatten is deprecated: use jax.tree.unflatten.",
     _deprecated_tree_unflatten
   ),
 }
