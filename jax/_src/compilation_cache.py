@@ -121,7 +121,7 @@ def _initialize_cache() -> None:
 
     global _cache
     assert _cache is None, "The cache has already been initialized!"
-    path: str = config.compilation_cache_dir.value
+    path: str | None = config.compilation_cache_dir.value
     # If the path is not set, the cache will not be enabled.
     if not path:
       return
