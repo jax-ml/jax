@@ -1545,6 +1545,15 @@ _strip_weak_type = lambda *args, **_: False
 
 
 def unop_dtype_rule(result_dtype, accepted_dtypes, name, aval, **kwargs):
+  if aval.dtype == dtypes.float0:
+    raise TypeError(
+        f"Called {name} with a float0 array. "
+        "float0s do not support any operations by design, because they "
+        "are not compatible with non-trivial vector spaces. No implicit dtype "
+        "conversion is done. You can use np.zeros_like(arr, dtype=np.float) "
+        "to cast a float0 array to a regular zeros array. \n"
+        "If you didn't expect to get a float0 you might have accidentally "
+        "taken a gradient with respect to an integer argument.")
   if not any(dtypes.issubdtype(aval.dtype, t) for t in accepted_dtypes):
     msg = '{} does not accept dtype {}. Accepted dtypes are subtypes of {}.'
     typename = dtype_to_string(aval.dtype)
@@ -1555,9 +1564,7 @@ def unop_dtype_rule(result_dtype, accepted_dtypes, name, aval, **kwargs):
 
 def unop(result_dtype, accepted_dtypes, name):
   dtype_rule = partial(unop_dtype_rule, result_dtype, accepted_dtypes, name)
-  weak_type_rule = partial(_naryop_weak_type_rule, name)
-  prim = standard_primitive(_attrgetter('shape'), dtype_rule, name,
-                            weak_type_rule=weak_type_rule)
+  prim = standard_primitive(_attrgetter('shape'), dtype_rule, name)
   batching.defvectorized(prim)
   pe.def_trivial_padding(prim)
   return prim
@@ -1619,18 +1626,6 @@ def broadcasting_shape_rule(name, *avals):
 
   return tuple(result_shape)
 
-def _naryop_weak_type_rule(name, *avals, **kwargs):
-  if any(aval.dtype == dtypes.float0 for aval in avals):
-    pos = next(i for i, aval in enumerate(avals) if aval.dtype == dtypes.float0)
-    raise TypeError(
-        f"Called {name} with a float0 at position {pos}. "
-        "float0s do not support any operations by design, because they "
-        "are not compatible with non-trivial vector spaces. No implicit dtype "
-        "conversion is done. You can use np.zeros_like(arr, dtype=np.float) "
-        "to cast a float0 array to a regular zeros array. \n"
-        "If you didn't expect to get a float0 you might have accidentally "
-        "taken a gradient with respect to an integer argument.")
-  return all(aval.weak_type for aval in avals)
 
 def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
            require_same_dtypes=False):
@@ -1638,9 +1633,7 @@ def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
                        allow_extended_dtype=allow_extended_dtype,
                        require_same=require_same_dtypes)
   shape_rule = partial(broadcasting_shape_rule, name)
-  weak_type_rule = partial(_naryop_weak_type_rule, name)
-  prim = standard_primitive(shape_rule, dtype_rule, name,
-                            weak_type_rule=weak_type_rule)
+  prim = standard_primitive(shape_rule, dtype_rule, name)
   batching.defbroadcasting(prim)
   pe.def_trivial_padding(prim)
   return prim
