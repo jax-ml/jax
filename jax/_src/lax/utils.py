@@ -51,8 +51,9 @@ def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
   assert all(isinstance(aval, core.UnshapedArray) for aval in avals), avals
   assert not prim.multiple_results
   weak_type = weak_type_rule(*avals, **kwargs)
-  least_specialized = max(map(type, avals),
-                          key=operator.attrgetter('array_abstraction_level'))
+  least_specialized = type(
+      max(avals, key=operator.attrgetter('array_abstraction_level'))
+  )
   if least_specialized is core.ConcreteArray:
     out = prim.impl(*[x.val for x in avals], **kwargs)
     return core.ConcreteArray(out.dtype, out, weak_type=weak_type)
