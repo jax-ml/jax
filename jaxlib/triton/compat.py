@@ -19,9 +19,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
+import functools
 import threading
-from typing import Any
+from typing import Any, Literal
 
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith as arith_dialect
@@ -31,6 +32,9 @@ import triton.backends.nvidia.compiler as cb
 import triton.language as tl
 
 from . import dialect as tt_dialect
+
+
+PointerType = tt_dialect.PointerType
 
 
 _tls = threading.local()
@@ -109,7 +113,7 @@ class builder:
     return ir.F64Type.get()
 
   def get_ptr_ty(self, t: ir.Type, addr_space: int) -> ir.Type:
-    return tt_dialect.PointerType.get(t, addr_space)
+    return PointerType.get(t, addr_space)
 
   def get_block_ty(
       self, t: ir.Type, shape: Sequence[int]
@@ -122,16 +126,46 @@ class builder:
     return ir.FunctionType.get(in_types, out_types)
 
 
-_FLOAT_TYPES = (
-    ir.Float8E4M3FNUZType,
-    ir.Float8E4M3FNType,
-    ir.Float8E4M3B11FNUZType,
-    ir.Float8E5M2Type,
-    ir.BF16Type,
-    ir.F16Type,
-    ir.F32Type,
-    ir.F64Type,
-)
+# TODO(slebedev): Consider moving upstream.
+_FLOAT_WIDTH = {
+    ir.Float8E4M3FNUZType: 8,
+    ir.Float8E4M3FNType: 8,
+    ir.Float8E4M3B11FNUZType: 8,
+    ir.Float8E5M2Type: 8,
+    ir.BF16Type: 16,
+    ir.F16Type: 16,
+    ir.F32Type: 32,
+    ir.F64Type: 64,
+}
+_FLOAT_TYPES = tuple(_FLOAT_WIDTH)
+
+
+class FloatTypeMeta(type):
+
+  def __instancecheck__(cls, instance: object) -> bool:
+    return isinstance(instance, _FLOAT_TYPES)
+
+  def __subclasscheck__(cls, subclass: type[object]) -> bool:
+    return issubclass(subclass, _FLOAT_TYPES)
+
+
+class FloatType(metaclass=FloatTypeMeta):
+  """Fake base class for MLIR floating point types."""
+
+  def __init__(self, type: ir.Type):
+    assert isinstance(type, _FLOAT_TYPES)
+    self.type = type
+
+  @property
+  def is_standard(self) -> bool:
+    return isinstance(
+        self.type, (ir.BF16Type, ir.F16Type, ir.F32Type, ir.F64Type)
+    )
+
+  @property
+  def width(self) -> int:
+    return _FLOAT_WIDTH[type(self.type)]
+
 
 dtype = tl.core.dtype
 
@@ -218,6 +252,12 @@ class tensor:
     return f"{self.dtype}[{', '.join(map(str, self.shape))}]"
 
 
+def _program_id(axis: int) -> ir.Value:
+  if axis not in range(3):
+    raise ValueError(f"axis must be in [0, 3), but got: {axis}")
+  return tt_dialect.get_program_id(axis)
+
+
 def program_id(axis: int) -> tensor:
   if axis not in range(3):
     raise ValueError(f"axis must be in [0, 3), but got: {axis}")
@@ -231,14 +271,14 @@ _STR_TO_CACHE_MODIFIER = {str(c): c for c in tt_dialect.CacheModifier}
 def _infer_load_return_type(ptr: ir.Value) -> ir.Type:
   if ir.RankedTensorType.isinstance(ptr.type):
     ptr_type = ir.RankedTensorType(ptr.type)
-    element_type = tt_dialect.PointerType(ptr_type.element_type)
+    element_type = PointerType(ptr_type.element_type)
     return ir.RankedTensorType.get(
         ptr_type.shape,
         element_type.pointee_type,
         ptr_type.encoding,
     )
   else:
-    ptr_type = tt_dialect.PointerType(ptr.type)
+    ptr_type = PointerType(ptr.type)
     return ptr_type.pointee_type
 
 
@@ -377,71 +417,138 @@ def store(
   )
 
 
-def arange(start: int, end: int) -> tensor:
+def _make_range(start: int, end: int) -> ir.Value:
   if end <= start:
     raise ValueError(
         f"end must be greater than start, but got: {end} <= {start}"
     )
   if max(start, end) >= 2**32:
     raise ValueError("start and end must fit in int32")
-  ty = block_type(int32, [end - start])
-  ir_ty = ir.RankedTensorType.get(
-      [end - start], ir.IntegerType.get_signless(32)
+  return tt_dialect.make_range(
+      ir.RankedTensorType.get([end - start], ir.IntegerType.get_signless(32)),
+      start,
+      end,
   )
-  return tensor(tt_dialect.make_range(ir_ty, start, end), ty)
+
+
+def arange(start: int, end: int) -> tensor:
+  handle = _make_range(start, end)
+  return tensor(handle, block_type(int32, [end - start]))
+
+
+def _broadcast_to(x: ir.Value, shape: Sequence[int]) -> ir.Value:
+  if not ir.RankedTensorType.isinstance(x.type):
+    return _splat(x, shape)
+  ty = ir.RankedTensorType(x.type)
+  if tuple(ty.shape) == shape:
+    return x
+  return tt_dialect.broadcast(
+      ir.RankedTensorType.get(shape, ty.element_type, ty.encoding), x
+  )
 
 
 def broadcast_to(x: tensor, shape: Sequence[int]) -> tensor:
-  if not x.type.is_block():
-    return splat(x, shape)
-  elif x.shape == shape:
+  if not shape:
     return x
-  x_ir_type = ir.RankedTensorType(x.handle.type)
-  result_ir_type = ir.RankedTensorType.get(
-      shape, x_ir_type.element_type, x_ir_type.encoding
-  )
-  return tensor(
-      tt_dialect.broadcast(result_ir_type, x.handle),
-      block_type(x.dtype, shape),
-  )
+  return tensor(_broadcast_to(x.handle, shape), block_type(x.dtype, shape))
 
 
-def splat(x: tensor, shape: Sequence[int]) -> tensor:
-  if x.type.is_block():
-    raise ValueError("cannot splat a block tensor")
-  if len(shape) == 0:
+def _splat(x: ir.Value, shape: Sequence[int]) -> ir.Value:
+  if ir.RankedTensorType.isinstance(x.type):
+    raise TypeError("cannot splat a ranked tensor")
+  if not shape:
     return x
-  result_ir_type = ir.RankedTensorType.get(shape, x.handle.type)
-  return tensor(
-      tt_dialect.splat(result_ir_type, x.handle), block_type(x.dtype, shape)
-  )
+  return tt_dialect.splat(ir.RankedTensorType.get(shape, x.type), x)
+
+
+def _expand_dims(x: ir.Value, axis: int) -> ir.Value:
+  if not ir.RankedTensorType.isinstance(x.type):
+    shape = list(ir.RankedTensorType(x.type).shape)
+    shape.insert(axis, 1)
+    return _splat(x, shape)
+  return tt_dialect.expand_dims(x, axis)
 
 
 def expand_dims(x: tensor, axis: int) -> tensor:
   dst_shape = list(x.shape)
   dst_shape.insert(axis, 1)
-  if not x.type.is_block():
-    return splat(input, dst_shape)
-  return tensor(
-      tt_dialect.expand_dims(x.handle, axis),
-      block_type(x.dtype, dst_shape),
+  return tensor(_expand_dims(x.handle, axis), block_type(x.dtype, dst_shape))
+
+
+def _reshape(x: ir.Value, shape: Sequence[int]) -> ir.Value:
+  ty = ir.RankedTensorType(x.type)
+  return tt_dialect.reshape(
+      ir.RankedTensorType.get(shape, ty.element_type, ty.encoding),
+      x,
+      allow_reorder=False,
   )
 
 
-def reshape(x: tensor, dst_shape: Sequence[int]) -> tensor:
-  x_ir_type = ir.RankedTensorType(x.handle.type)
-  result_ir_type = ir.RankedTensorType.get(
-      dst_shape, x_ir_type.element_type, x_ir_type.encoding
-  )
-  return tensor(
-      tt_dialect.reshape(result_ir_type, x.handle, allow_reorder=False),
-      block_type(x.dtype, dst_shape),
-  )
-
-
-def _check_dot_operands(x_dtype: dtype, y_dtype: dtype, options: Any):
+def _check_dot_operands(
+    x_type: ir.RankedTensorType, y_type: ir.RankedTensorType, options: Any
+):
   # TODO(slebedev): Ensure that the dtypes are supported by CUDA.
   return
+
+
+def _dot(
+    x: ir.Value,
+    y: ir.Value,
+    acc: ir.Value | None = None,
+    *,
+    allow_tf32: bool = True,
+    max_num_imprecise_acc: int | None = None,
+    out_type: ir.Type | None = None,
+) -> ir.Value:
+  if out_type is None:
+    out_type = ir.F32Type.get()
+  elif isinstance(out_type, ir.BF16Type):
+    raise NotImplementedError(f"unsupported output type: {out_type}")
+
+  x_type = ir.RankedTensorType(x.type)
+  y_type = ir.RankedTensorType(y.type)
+  if min(*x_type.shape, *y_type.shape) < 16:
+    raise ValueError("all dimensions of x and y must be >= 16 ")
+  if x_type.element_type != y_type.element_type:
+    raise ValueError(
+        "x and y must have the same element type, but got:"
+        f" {x_type.element_type} and {y_type.element_type}"
+    )
+
+  _check_dot_operands(x_type, y_type, object())
+
+  element_type = x_type.element_type
+  if isinstance(element_type, ir.IntegerType):
+    if element_type.width != 8:
+      raise TypeError(f"unsupported element type: {element_type}")
+    element_type = ir.IntegerType.get_signless(32)
+  elif isinstance(element_type, (ir.F32Type, ir.BF16Type)):
+    element_type = ir.F32Type.get()
+  else:
+    element_type = out_type
+
+  if element_type != out_type:
+    raise TypeError(
+        f"output type {out_type} does not match element type {element_type}"
+    )
+
+  m, _ = x_type.shape
+  _, n = y_type.shape
+
+  if acc is None:
+    acc = _full(ir.RankedTensorType.get([m, n], element_type), 0)
+
+  if max_num_imprecise_acc is None:
+    if (
+        FloatType(x_type.element_type).width == 8
+        and FloatType(y_type.element_type).width == 8
+    ):
+      # TODO(slebedev): Fill in from options.
+      raise NotImplementedError
+    else:
+      max_num_imprecise_acc = 0
+
+  return tt_dialect.dot(x, y, acc, allow_tf32, max_num_imprecise_acc)
 
 
 def dot(
@@ -452,12 +559,6 @@ def dot(
     max_num_imprecise_acc: int | None = None,
     out_dtype: dtype = float32,
 ) -> tensor:
-  if min(*x.shape, *y.shape) < 16:
-    raise ValueError("all dimensions of x and y must be >= 16 ")
-  if out_dtype.is_bf16():
-    raise ValueError(f"out_dtype={out_dtype} is unsupported")
-  b: builder = builder.current
-  _check_dot_operands(x.dtype, y.dtype, b.options)
   if x.dtype.is_int():
     if x.dtype != int8:
       raise TypeError(f"unsupported dtype: {x.dtype}")
@@ -467,38 +568,18 @@ def dot(
   else:
     element_type = out_dtype
 
-  if element_type != out_dtype:
-    raise TypeError(f"out_dtype={out_dtype} does not match element type {element_type}")
-
   m, _ = x.shape
   _, n = y.shape
   result_type = block_type(element_type, [m, n])
 
-  if acc is None:
-    zero = 0 if element_type.is_int() else 0.0
-    acc = splat(
-        tensor(
-            arith_dialect.constant(element_type.to_ir(builder.current), zero),
-            element_type,
-        ),
-        [m, n],
-    )
-  else:
-    assert acc.type == result_type
-
-  if max_num_imprecise_acc is None:
-    if x.dtype.is_fp8() and y.dtype.is_fp8():
-      max_num_imprecise_acc = b.options.max_num_imprecise_acc_default
-    else:
-      max_num_imprecise_acc = 0
-
   return tensor(
-      tt_dialect.dot(
+      _dot(
           x.handle,
           y.handle,
           acc.handle if acc is not None else None,
-          allow_tf32,
-          max_num_imprecise_acc,
+          allow_tf32=allow_tf32,
+          max_num_imprecise_acc=max_num_imprecise_acc,
+          out_type=out_dtype.to_ir(builder.current),
       ),
       result_type,
   )
@@ -555,194 +636,18 @@ def set_attr(v: ir.Value, name: str, attr: ir.Attribute) -> None:
     op.attributes[name] = attr
 
 
-def libdevice_extern_elementwise(
-    table: Mapping[tuple[dtype, ...], tuple[str, dtype]],
-    is_pure: bool = True,
-):
-
-  def inner(arg: tensor, *rest: tensor) -> tensor:
-    args = (arg, *rest)
-    assert all(other.shape == arg.shape for other in rest)
-    key = tuple(arg.dtype for arg in args)
-    try:
-      symbol, dtype = table[key]
-    except KeyError:
-      raise NotImplementedError(f"unsupported dtypes: {key}") from None
-
-    return_type = dtype
-    if arg.type.is_block():
-      return_type = block_type(dtype, arg.shape)
-    return tensor(
-        tt_dialect.extern_elementwise(
-            return_type.to_ir(builder.current),
-            [arg.handle for arg in args],
-            libname="",
-            libpath="",
-            symbol=symbol,
-            pure=is_pure,
-        ),
-        return_type,
-    )
-
-  return inner
-
-
-class math:
-  @staticmethod
-  def max(x: tensor, y: tensor) -> tensor:
-    # TODO(slebedev): Consider allowing customizing nan behavior.
-    assert x.shape == y.shape
-    if x.dtype.is_floating():
-      # TODO(slebedev): Triton promotes bfloat16 to float32 and back here.
-      return tensor(arith_dialect.maxnumf(x.handle, y.handle), x.type)
-    if not x.dtype.is_int():
-      raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
-    elif x.dtype.is_int_signed():
-      return tensor(arith_dialect.maxsi(x.handle, y.handle), x.type)
-    else:
-      return tensor(arith_dialect.maxui(x.handle, y.handle), x.type)
-
-  @staticmethod
-  def min(x: tensor, y: tensor) -> tensor:
-    # TODO(slebedev): Consider allowing customizing nan behavior.
-    assert x.shape == y.shape
-    if x.dtype.is_floating():
-      # TODO(slebedev): Triton promotes bfloat16 to float32 and back here.
-      return tensor(arith_dialect.minnumf(x.handle, y.handle), x.type)
-    if not x.dtype.is_int():
-      raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
-    elif x.dtype.is_int_signed():
-      return tensor(arith_dialect.minsi(x.handle, y.handle), x.type)
-    else:
-      return tensor(arith_dialect.minui(x.handle, y.handle), x.type)
-
-  sin = libdevice_extern_elementwise({
-      (float32,): ("__nv_sinf", float32),
-      (float64,): ("__nv_sin", float64),
-  })
-  cos = libdevice_extern_elementwise({
-      (float32,): ("__nv_cosf", float32),
-      (float64,): ("__nv_cos", float64),
-  })
-  tan = libdevice_extern_elementwise({
-      (float32,): ("__nv_tanf", float32),
-      (float64,): ("__nv_tan", float64),
-  })
-  asin = libdevice_extern_elementwise({
-      (float32,): ("__nv_asinf", float32),
-      (float64,): ("__nv_asin", float64),
-  })
-  acos = libdevice_extern_elementwise({
-      (float32,): ("__nv_acosf", float32),
-      (float64,): ("__nv_acos", float64),
-  })
-  atan = libdevice_extern_elementwise({
-      (float32,): ("__nv_atanf", float32),
-      (float64,): ("__nv_atan", float64),
-  })
-  atan2 = libdevice_extern_elementwise({
-      (float32,): ("__nv_atan2f", float32),
-      (float64,): ("__nv_atan2", float64),
-  })
-  sinh = libdevice_extern_elementwise({
-      (float32,): ("__nv_sinhf", float32),
-      (float64,): ("__nv_sinh", float64),
-  })
-  cosh = libdevice_extern_elementwise({
-      (float32,): ("__nv_coshf", float32),
-      (float64,): ("__nv_cosh", float64),
-  })
-  tanh = libdevice_extern_elementwise({
-      (float32,): ("__nv_tanhf", float32),
-      (float64,): ("__nv_tanh", float64),
-  })
-  asinh = libdevice_extern_elementwise({
-      (float32,): ("__nv_asinhf", float32),
-      (float64,): ("__nv_asinh", float64),
-  })
-  acosh = libdevice_extern_elementwise({
-      (float32,): ("__nv_acosf", float32),
-      (float64,): ("__nv_acosh", float64),
-  })
-  atanh = libdevice_extern_elementwise({
-      (float32,): ("__nv_atanhf", float32),
-      (float64,): ("__nv_atanh", float64),
-  })
-
-  cbrt = libdevice_extern_elementwise({
-      (float32,): ("__nv_cbrtf", float32),
-      (float64,): ("__nv_cbrt", float64),
-  })
-  clz = libdevice_extern_elementwise({
-      (int32,): ("__nv_clz", int32),
-      (int64,): ("__nv_clzll", int64),
-  })
-  exp = libdevice_extern_elementwise({
-      (float32,): ("__nv_expf", float32),
-      (float64,): ("__nv_exp", float64),
-  })
-  exp2 = libdevice_extern_elementwise({
-      (float32,): ("__nv_exp2f", float32),
-      (float64,): ("__nv_exp2", float64),
-  })
-  expm1 = libdevice_extern_elementwise({
-      (float32,): ("__nv_expm1f", float32),
-      (float64,): ("__nv_expm1", float64),
-  })
-  log = libdevice_extern_elementwise({
-      (float32,): ("__nv_logf", float32),
-      (float64,): ("__nv_log", float64),
-  })
-  log1p = libdevice_extern_elementwise({
-      (float32,): ("__nv_log1pf", float32),
-      (float64,): ("__nv_log1p", float64),
-  })
-  floor = libdevice_extern_elementwise({
-      (float32,): ("__nv_floorf", float32),
-      (float64,): ("__nv_floor", float64),
-  })
-  ceil = libdevice_extern_elementwise({
-      (float32,): ("__nv_ceilf", float32),
-      (float64,): ("__nv_ceil", float64),
-  })
-  abs = libdevice_extern_elementwise({
-      (int32,): ("__nv_abs", int32),
-      (int64,): ("__nv_llabs", int64),
-      (float32,): ("__nv_fabsf", float32),
-      (float64,): ("__nv_fabs", float64),
-  })
-  nextafter = libdevice_extern_elementwise({
-      (float32, float32): ("__nv_nextafterf", float32),
-      (float64, float64): ("__nv_nextafter", float64),
-  })
-  popc = libdevice_extern_elementwise({
-      (int32,): ("__nv_popc", int32),
-      (int64,): ("__nv_popcll", int64),
-  })
-  pow = libdevice_extern_elementwise({
-      (float32, int32): ("__nv_powif", float32),
-      (float64, int32): ("__nv_powi", float64),
-      (float32, float32): ("__nv_powf", float32),
-      (float64, float64): ("__nv_pow", float64),
-  })
-  sqrt = libdevice_extern_elementwise({
-      (float32,): ("__nv_sqrtf", float32),
-      (float64,): ("__nv_sqrt", float64),
-  })
-  rsqrt = libdevice_extern_elementwise({
-      (float32,): ("__nv_rsqrtf", float32),
-      (float64,): ("__nv_rsqrt", float64),
-  })
+def _element_type(t: ir.Type) -> ir.Type:
+  if ir.RankedTensorType.isinstance(t):
+    return ir.RankedTensorType(t).element_type
+  else:
+    return t
 
 
 def _full(t: ir.Type, v: object) -> ir.Type:
-  element_type = t
-  if ir.RankedTensorType.isinstance(t):
-    element_type = ir.RankedTensorType(t).element_type
-
+  element_type = _element_type(t)
   if isinstance(element_type, ir.IntegerType):
     result = arith_dialect.constant(element_type, int(v))
-  elif isinstance(element_type, _FLOAT_TYPES):
+  elif isinstance(element_type, FloatType):
     result = arith_dialect.constant(element_type, float(v))
   else:
     raise NotImplementedError
@@ -753,21 +658,85 @@ def _full(t: ir.Type, v: object) -> ir.Type:
     return result
 
 
-def _int_cast(src: ir.Value, dst_type: ir.Type, is_signed: bool) -> ir.Value:
-  src_type = src.type
-  if ir.RankedTensorType.isinstance(
-      src_type
-  ) and ir.RankedTensorType.isinstance(dst_type):
-    src_element_type = ir.RankedTensorType(src_type).element_type
-    dst_element_type = ir.RankedTensorType(dst_type).element_type
+_UI_PREDICATES = {
+    "==": arith_dialect.CmpIPredicate.eq,
+    "!=": arith_dialect.CmpIPredicate.ne,
+    "<": arith_dialect.CmpIPredicate.ult,
+    "<=": arith_dialect.CmpIPredicate.ule,
+    ">": arith_dialect.CmpIPredicate.ugt,
+    ">=": arith_dialect.CmpIPredicate.uge,
+}
+_SI_PREDICATES = {
+    "==": arith_dialect.CmpIPredicate.eq,
+    "!=": arith_dialect.CmpIPredicate.ne,
+    "<": arith_dialect.CmpIPredicate.slt,
+    "<=": arith_dialect.CmpIPredicate.sle,
+    ">": arith_dialect.CmpIPredicate.sgt,
+    ">=": arith_dialect.CmpIPredicate.sge,
+}
+_F_PREDICATES = {
+    "==": arith_dialect.CmpFPredicate.OEQ,
+    "!=": arith_dialect.CmpFPredicate.UNE,
+    "<": arith_dialect.CmpFPredicate.OLT,
+    "<=": arith_dialect.CmpFPredicate.OLE,
+    ">": arith_dialect.CmpFPredicate.OGT,
+    ">=": arith_dialect.CmpFPredicate.OGE,
+}
+
+
+def _cmp(
+    x: ir.Value, y: ir.Value, p: Literal["==", "!=", "<", "<=", ">", ">="]
+) -> ir.Value:
+  assert x.type == y.type
+  x_element_type = _element_type(x.type)
+  if isinstance(x_element_type, ir.IntegerType):
+    if x_element_type.is_signed:
+      op = _SI_PREDICATES[p]
+    else:
+      op = _UI_PREDICATES[p]
+    return arith_dialect.cmpi(op, x, y)
+  elif isinstance(x_element_type, FloatType):
+    return arith_dialect.cmpf(_F_PREDICATES[p], x, y)
   else:
-    src_element_type = src_type
-    dst_element_type = dst_type
-  src_width = ir.IntegerType(src_element_type).width
-  dst_width = ir.IntegerType(dst_element_type).width
-  if src_width == dst_width:
+    raise NotImplementedError(f"unsupported types: {x.type} and {y.type}")
+
+
+_equal = functools.partial(_cmp, p="==")
+_not_equal = functools.partial(_cmp, p="!=")
+_less_than = functools.partial(_cmp, p="<")
+_less_equal = functools.partial(_cmp, p="<=")
+_greater_than = functools.partial(_cmp, p=">")
+_greater_equal = functools.partial(_cmp, p=">=")
+
+
+def _float_float_cast(src: ir.Value, dst_type: ir.Type) -> ir.Value:
+  src_element_type = FloatType(_element_type(src.type))
+  dst_element_type = FloatType(_element_type(dst_type))
+  if src_element_type.width == 8 or dst_element_type.width == 8:
+    return tt_dialect.fp_to_fp(
+        dst_type,
+        src,
+        rounding=tt_dialect.RoundingMode.RTNE,
+    )
+  if src_element_type.width > dst_element_type.width:
+    return arith_dialect.truncf(dst_type, src)
+  elif src_element_type.width < dst_element_type.width:
+    return arith_dialect.extf(dst_type, src)
+  else:
+    raise NotImplementedError
+
+
+def _int_int_cast(src: ir.Value, dst_type: ir.Type) -> ir.Value:
+  src_element_type = ir.IntegerType(_element_type(src.type))
+  dst_element_type = ir.IntegerType(_element_type(dst_type))
+  assert src_element_type != dst_element_type
+  if dst_element_type.width == 1:
+    return _not_equal(src, _full(src.type, 0))
+
+  is_signed = src_element_type.is_signed and src_element_type.width != 1
+  if src_element_type.width == dst_element_type.width:
     return arith_dialect.bitcast(dst_type, src)
-  elif src_width > dst_width:
+  elif src_element_type.width > dst_element_type.width:
     return arith_dialect.trunci(dst_type, src)
   elif is_signed:
     return arith_dialect.extsi(dst_type, src)
@@ -775,131 +744,104 @@ def _int_cast(src: ir.Value, dst_type: ir.Type, is_signed: bool) -> ir.Value:
     return arith_dialect.extui(dst_type, src)
 
 
+def _float_int_cast(src: ir.Value, dst_type: ir.Type) -> ir.Value:
+  src_element_type = FloatType(_element_type(src.type))
+  if not src_element_type.is_standard:
+    raise NotImplementedError(f"cannot cast {src} tp {dst_type}")
+  dst_element_type = ir.IntegerType(_element_type(dst_type))
+  if dst_element_type.width == 1:
+    return _not_equal(src, _full(src.type, 0))
+  elif dst_element_type.is_signed:
+    return arith_dialect.fptosi(dst_type, src)
+  else:
+    return arith_dialect.fptoui(dst_type, src)
+
+
+def _int_float_cast(src: ir.Value, dst_type: ir.Type) -> ir.Value:
+  src_element_type = ir.IntegerType(_element_type(src.type))
+  dst_element_type = FloatType(_element_type(dst_type))
+  if not dst_element_type.is_standard:
+    raise NotImplementedError(f"cannot cast {src} tp {dst_type}")
+  if src_element_type.width == 1 or not src_element_type.is_signed:
+    return arith_dialect.uitofp(dst_type, src)
+  else:
+    return arith_dialect.sitofp(dst_type, src)
+
+
+def _cast(src: ir.Value, dst_type: ir.Type) -> ir.Value:
+  if ir.RankedTensorType.isinstance(
+      src.type
+  ) and not ir.RankedTensorType.isinstance(dst_type):
+    src_type = ir.RankedTensorType(src.type)
+    dst_type = ir.RankedTensorType.get(
+        src_type.shape,
+        dst_type,
+        src_type.encoding,
+    )
+  if src.type == dst_type:
+    return src
+
+  src_element_type = _element_type(src.type)
+  dst_element_type = _element_type(dst_type)
+  if isinstance(src_element_type, ir.Float8E4M3FNUZType) or isinstance(
+      dst_element_type, ir.Float8E4M3FNUZType
+  ):
+    # TODO(slebedev): Check the CUDA version and raise conditionally.
+    raise NotImplementedError("cannot cast from or to float8_e4m3fnuz")
+
+  if isinstance(src_element_type, (ir.F16Type, ir.BF16Type)) and not isinstance(
+      dst_element_type, ir.F32Type
+  ):
+    return _cast(_cast(src, ir.F32Type.get()), dst_type)
+
+  if isinstance(src_element_type, FloatType) and isinstance(
+      dst_element_type, FloatType
+  ):
+    return _float_float_cast(src, dst_type)
+
+  if isinstance(src_element_type, ir.IntegerType) and isinstance(
+      dst_element_type, ir.IntegerType
+  ):
+    return _int_int_cast(src, dst_type)
+
+  if isinstance(src_element_type, FloatType) and isinstance(
+      dst_element_type, ir.IntegerType
+  ):
+    return _float_int_cast(src, dst_type)
+  if isinstance(src_element_type, ir.IntegerType) and isinstance(
+      dst_element_type, FloatType
+  ):
+    return _int_float_cast(src, dst_type)
+
+  if PointerType.isinstance(src_element_type) and isinstance(
+      dst_element_type, ir.IntegerType
+  ):
+    if dst_element_type.int_bitwidth == 64:
+      return tt_dialect.ptr_to_int(dst_type, src)
+    else:
+      x = _cast(src, ir.IntegerType.get_signless(64))
+      zero = _full(x.type, 0)
+      return _cast(_not_equal(x, zero), dst_type)
+  if isinstance(src_element_type, ir.IntegerType) and PointerType.isinstance(
+      dst_element_type
+  ):
+    return tt_dialect.int_to_ptr(dst_type, src)
+  if PointerType.isinstance(src_element_type) and PointerType.isinstance(
+      dst_element_type
+  ):
+    return tt_dialect.bitcast(dst_type, src)
+
+  raise NotImplementedError(f"cannot cast {src} to {dst_type}")
+
+
 class semantic:
 
   @staticmethod
   def cast(x: tensor, dst_ty: dtype) -> tensor:
-    src_ty = x.type
-    if src_ty.is_block():
-      dst_ty = block_type(dst_ty.scalar, x.shape)
-    if src_ty == dst_ty:
-      return x
-
-    src_element_ty = src_ty.scalar
-    dst_element_ty = dst_ty.scalar
-
-    if src_element_ty.is_fp8e4nv() or dst_element_ty.is_fp8e4nv():
-      # TODO(slebedev): Check the CUDA version and raise conditionally.
-      raise NotImplementedError("cannot cast from or to float8_e4m3fnuz")
-
-    if (
-        src_element_ty.is_floating()
-        and dst_element_ty.is_floating()
-        and (src_element_ty.is_fp8() or dst_element_ty.is_fp8())
-    ):
-      return tensor(
-          tt_dialect.fp_to_fp(
-              dst_ty.to_ir(builder.current),
-              x.handle,
-              rounding=tt_dialect.RoundingMode.RTNE,
-          ),
-          dst_ty,
-      )
-
-    if (
-        src_element_ty.is_fp16() or src_element_ty.is_bf16()
-    ) and not dst_element_ty.is_fp32():
-      return semantic.cast(
-          semantic.cast(x, float32), dst_element_ty.to_ir(builder.current)
-      )
-
-    if src_element_ty.is_floating() and dst_element_ty.is_floating():
-      src_width = src_element_ty.primitive_bitwidth
-      dst_width = dst_element_ty.primitive_bitwidth
-      if src_width > dst_width:
-        return tensor(
-            arith_dialect.truncf(dst_ty.to_ir(builder.current), x.handle),
-            dst_ty,
-        )
-      elif src_width < dst_width:
-        return tensor(
-            arith_dialect.extf(dst_ty.to_ir(builder.current), x.handle), dst_ty
-        )
-
-    if (
-        src_element_ty.is_int()
-        and dst_element_ty.is_int()
-        and (
-            src_element_ty.int_bitwidth != dst_element_ty.int_bitwidth
-            or src_element_ty.int_signedness != dst_element_ty.int_signedness
-        )
-    ):
-      if dst_element_ty.is_bool():
-        zero = tensor(_full(src_ty.to_ir(builder.current), 0), src_ty)
-        return semantic.not_equal(x, zero)
-      else:
-        sign_extend = (
-            src_element_ty.is_int_signed() and not src_element_ty.is_bool()
-        )
-        return tensor(
-            _int_cast(x.handle, dst_ty.to_ir(builder.current), sign_extend),
-            dst_ty,
-        )
-
-    if src_element_ty.is_standard_floating() and dst_element_ty.is_int():
-      if dst_element_ty.is_bool():
-        zero = tensor(_full(src_ty.to_ir(builder.current), 0), src_ty)
-        return semantic.not_equal(x, zero)
-      elif dst_element_ty.is_int_signed():
-        return tensor(
-            arith_dialect.fptosi(dst_ty.to_ir(builder.current), x.handle),
-            dst_ty,
-        )
-      else:
-        return tensor(
-            arith_dialect.fptoui(dst_ty.to_ir(builder.current), x.handle),
-            dst_ty,
-        )
-
-    if src_element_ty.is_int() and dst_element_ty.is_standard_floating():
-      if src_element_ty.is_bool() or not src_element_ty.is_int_signed():
-        return tensor(
-            arith_dialect.uitofp(dst_ty.to_ir(builder.current), x.handle),
-            dst_ty,
-        )
-      else:
-        return tensor(
-            arith_dialect.sitofp(dst_ty.to_ir(builder.current), x.handle),
-            dst_ty,
-        )
-
-    if src_element_ty.is_ptr() and dst_element_ty.is_int():
-      if dst_element_ty.int_bitwidth == 64:
-        return tensor(
-            tt_dialect.ptr_to_int(dst_ty.to_ir(builder.current), x.handle),
-            dst_ty,
-        )
-      else:
-        x = semantic.cast(x, int64)
-        zero = tensor(_full(x.type.to_ir(builder.current), 0), x.type)
-        return semantic.not_equal(x, zero)
-
-    if src_element_ty.is_int() and dst_element_ty.is_ptr():
-      return tensor(
-          tt_dialect.int_to_ptr(dst_ty.to_ir(builder.current), x.handle), dst_ty
-      )
-
-    if src_element_ty.is_ptr() and dst_element_ty.is_ptr():
-      return tensor(
-          tt_dialect.bitcast(dst_ty.to_ir(builder.current), x.handle), dst_ty
-      )
-
-    raise NotImplementedError(f"cannot cast {x} to {dst_ty}")
-
-  @staticmethod
-  def where(cond: tensor, x: tensor, y: tensor) -> tensor:
-    assert cond.shape == x.shape == y.shape
-    return tensor(arith_dialect.select(cond.handle, x.handle, y.handle), x.type)
+    return tensor(
+        _cast(x.handle, dst_ty.to_ir(builder.current)),
+        block_type(dst_ty, x.shape) if x.type.is_block() else dst_ty,
+    )
 
   @staticmethod
   def permute(x: tensor, dims: Sequence[int]) -> tensor:
@@ -913,85 +855,116 @@ class semantic:
     )
 
   @staticmethod
+  def _minus(x: ir.Value) -> ir.Value:
+    if PointerType.isinstance(_element_type(x.type)):
+      raise NotImplementedError(f"unsupported dtype: {x.type}")
+    return semantic._sub(_full(x.type, 0), x)
+
+  @staticmethod
   def minus(x: tensor) -> tensor:
-    if x.dtype.is_ptr():
-      raise NotImplementedError(f"unsupported dtype: {x.dtype}")
-    zero = tensor(_full(x.type.to_ir(builder.current), 0), x.type)
-    return semantic.sub(zero, x)
+    return tensor(semantic._minus(x.handle), x.type)
+
+  @staticmethod
+  def _add(x: ir.Value, y: ir.Value) -> ir.Value:
+    x_element_type = _element_type(x.type)
+    y_element_type = _element_type(y.type)
+    if PointerType.isinstance(y_element_type):
+      assert not PointerType.isinstance(x_element_type)
+      x, y = y, x
+      x_element_type, y_element_type = y_element_type, x_element_type
+
+    if PointerType.isinstance(x_element_type):
+      return tt_dialect.addptr(x.type, x, y)
+
+    assert x.type == y.type, (str(x.type), str(y.type))
+    if isinstance(x_element_type, ir.IntegerType):
+      return arith_dialect.addi(x, y)
+    elif isinstance(x_element_type, FloatType):
+      return arith_dialect.addf(x, y)
+    else:
+      raise NotImplementedError(f"unsupported dtypes: {x.type} and {y.type}")
 
   @staticmethod
   def add(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape
-    if y.dtype.is_ptr() and not x.dtype.is_ptr():
-      x, y = y, x
-    if x.dtype.is_ptr():
-      return tensor(
-          tt_dialect.addptr(x.handle.type, x.handle, y.handle), x.type
-      )
-    elif not y.dtype.is_ptr():
-      assert x.dtype == y.dtype
-      if x.dtype.is_floating():
-        return tensor(arith_dialect.addf(x.handle, y.handle), x.type)
-      elif x.dtype.is_int():
-        return tensor(arith_dialect.addi(x.handle, y.handle), x.type)
-    raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
+    return tensor(semantic._add(x.handle, y.handle), x.type)
+
+  @staticmethod
+  def _sub(x: ir.Value, y: ir.Value) -> ir.Value:
+    x_element_type = _element_type(x.type)
+    y_element_type = _element_type(y.type)
+    if PointerType.isinstance(x_element_type):
+      return tt_dialect.addptr(x.type, x, semantic._minus(y))
+    elif not PointerType.isinstance(y_element_type):
+      assert x.type == y.type
+      if isinstance(x_element_type, ir.IntegerType):
+        return arith_dialect.subi(x, y)
+      elif isinstance(x_element_type, FloatType):
+        return arith_dialect.subf(x, y)
+    raise NotImplementedError(f"unsupported dtype: {y.type}")
 
   @staticmethod
   def sub(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape
-    if x.dtype.is_ptr():
-      return tensor(
-          tt_dialect.addptr(x.handle.type, x.handle, semantic.minus(y).handle),
-          x.type,
-      )
-    elif not y.dtype.is_ptr():
-      assert x.dtype == y.dtype
-      if y.dtype.is_floating():
-        return tensor(arith_dialect.subf(x.handle, y.handle), x.type)
-      elif y.dtype.is_int():
-        return tensor(arith_dialect.subi(x.handle, y.handle), x.type)
-    raise NotImplementedError(f"unsupported dtypes: {y.dtype} and {y.dtype}")
+    return tensor(semantic._sub(x.handle, y.handle), x.type)
+
+  @staticmethod
+  def _mul(x: ir.Value, y: ir.Value) -> ir.Value:
+    assert x.type == y.type
+    x_element_type = _element_type(x.type)
+    if isinstance(x_element_type, ir.IntegerType):
+      return arith_dialect.muli(x, y)
+    elif isinstance(x_element_type, FloatType):
+      return arith_dialect.mulf(x, y)
+    raise NotImplementedError(f"unsupported types: {x.type} and {y.type}")
 
   @staticmethod
   def mul(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape and x.dtype == y.dtype
-    if x.dtype.is_floating():
-      return tensor(arith_dialect.mulf(x.handle, y.handle), x.type)
-    elif x.dtype.is_int():
-      return tensor(arith_dialect.muli(x.handle, y.handle), x.type)
-    raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
+    return tensor(semantic._mul(x.handle, y.handle), x.type)
+
+  @staticmethod
+  def _floordiv(x: ir.Value, y: ir.Value) -> ir.Value:
+    assert x.type == y.type
+    x_element_type = _element_type(x.type)
+    if not isinstance(x_element_type, ir.IntegerType):
+      raise NotImplementedError(f"unsupported types: {x.type} and {y.type}")
+    if x_element_type.is_signed:
+      return arith_dialect.divsi(x, y)
+    else:
+      return arith_dialect.divui(x, y)
 
   @staticmethod
   def floordiv(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape and x.dtype == y.dtype
-    if not x.dtype.is_int():
-      raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
-    if x.dtype.is_int_signed():
-      return tensor(arith_dialect.divsi(x.handle, y.handle), x.type)
-    else:
-      return tensor(arith_dialect.divui(x.handle, y.handle), x.type)
+    return tensor(semantic._floordiv(x.handle, y.handle), x.type)
+
+  @staticmethod
+  def _truediv(x: ir.Value, y: ir.Value) -> ir.Value:
+    assert x.type == y.type
+    x_element_type = _element_type(x.type)
+    if isinstance(x_element_type, ir.IntegerType):
+      x_element_type = ir.F32Type.get()
+      x = _int_float_cast(x, x_element_type)
+      y = _int_float_cast(y, x_element_type)
+    if isinstance(x_element_type, FloatType):
+      return arith_dialect.divf(x, y)
+    raise NotImplementedError(f"unsupported types: {x.type} and {y.type}")
 
   @staticmethod
   def truediv(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape and x.dtype == y.dtype
-    if x.dtype.is_int():
-      assert y.dtype.is_int()
-      x = semantic.cast(x, float32)
-      y = semantic.cast(y, float32)
-    if x.dtype.is_floating():
-      assert y.dtype.is_floating()
-      return tensor(arith_dialect.divf(x.handle, y.handle), x.type)
-    raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
+    return tensor(semantic._truediv(x.handle, y.handle), x.type)
+
+  @staticmethod
+  def _mod(x: ir.Value, y: ir.Value) -> ir.Value:
+    assert x.type == y.type
+    x_element_type = _element_type(x.type)
+    if not isinstance(x_element_type, ir.IntegerType):
+      raise NotImplementedError(f"unsupported types: {x.type} and {y.type}")
+    if x_element_type.is_signed:
+      return arith_dialect.remsi(x, y)
+    else:
+      return arith_dialect.remui(x, y)
 
   @staticmethod
   def mod(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape and x.dtype == y.dtype
-    if not x.dtype.is_int():
-      raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
-    if x.dtype.is_int_signed():
-      return tensor(arith_dialect.remsi(x.handle, y.handle), x.type)
-    else:
-      return tensor(arith_dialect.remui(x.handle, y.handle), x.type)
+    return tensor(semantic._mod(x.handle, y.handle), x.type)
 
   @staticmethod
   def invert(x: tensor) -> tensor:
@@ -1034,146 +1007,24 @@ class semantic:
 
   @staticmethod
   def equal(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape and x.dtype == y.dtype
-    if x.dtype.is_floating():
-      return tensor(
-          arith_dialect.cmpf(
-              arith_dialect.CmpFPredicate.OEQ, x.handle, y.handle
-          ),
-          _bool_block_like(x),
-      )
-    elif x.dtype.is_int():
-      return tensor(
-          arith_dialect.cmpi(
-              arith_dialect.CmpIPredicate.eq, x.handle, y.handle
-          ),
-          _bool_block_like(x),
-      )
-    raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
+    return tensor(_equal(x.handle, y.handle), _bool_block_like(x))
 
   @staticmethod
   def not_equal(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape and x.dtype == y.dtype
-    if x.dtype.is_floating():
-      return tensor(
-          arith_dialect.cmpf(
-              arith_dialect.CmpFPredicate.UNE, x.handle, y.handle
-          ),
-          _bool_block_like(x),
-      )
-    elif x.dtype.is_int():
-      return tensor(
-          arith_dialect.cmpi(
-              arith_dialect.CmpIPredicate.ne, x.handle, y.handle
-          ),
-          _bool_block_like(x),
-      )
-    raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
+    return tensor(_not_equal(x.handle, y.handle), _bool_block_like(x))
 
   @staticmethod
   def greater_than(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape and x.dtype == y.dtype
-    if x.dtype.is_floating():
-      return tensor(
-          arith_dialect.cmpf(
-              arith_dialect.CmpFPredicate.OGT, x.handle, y.handle
-          ),
-          _bool_block_like(x),
-      )
-    elif x.dtype.is_int():
-      if x.dtype.is_int_signed():
-        return tensor(
-            arith_dialect.cmpi(
-                arith_dialect.CmpIPredicate.sgt, x.handle, y.handle
-            ),
-            _bool_block_like(x),
-        )
-      else:
-        return tensor(
-            arith_dialect.cmpi(
-                arith_dialect.CmpIPredicate.ugt, x.handle, y.handle
-            ),
-            _bool_block_like(x),
-        )
-    raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
+    return tensor(_greater_than(x.handle, y.handle), _bool_block_like(x))
 
   @staticmethod
   def greater_equal(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape and x.dtype == y.dtype
-    if x.dtype.is_floating():
-      return tensor(
-          arith_dialect.cmpf(
-              arith_dialect.CmpFPredicate.OGE, x.handle, y.handle
-          ),
-          _bool_block_like(x),
-      )
-    elif x.dtype.is_int():
-      if x.dtype.is_int_signed():
-        return tensor(
-            arith_dialect.cmpi(
-                arith_dialect.CmpIPredicate.sge, x.handle, y.handle
-            ),
-            _bool_block_like(x),
-        )
-      else:
-        return tensor(
-            arith_dialect.cmpi(
-                arith_dialect.CmpIPredicate.uge, x.handle, y.handle
-            ),
-            _bool_block_like(x),
-        )
-    raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
+    return tensor(_greater_equal(x.handle, y.handle), _bool_block_like(x))
 
   @staticmethod
   def less_than(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape and x.dtype == y.dtype
-    if x.dtype.is_floating():
-      return tensor(
-          arith_dialect.cmpf(
-              arith_dialect.CmpFPredicate.OLT, x.handle, y.handle
-          ),
-          _bool_block_like(x),
-      )
-    elif x.dtype.is_int():
-      if x.dtype.is_int_signed():
-        return tensor(
-            arith_dialect.cmpi(
-                arith_dialect.CmpIPredicate.slt, x.handle, y.handle
-            ),
-            _bool_block_like(x),
-        )
-      else:
-        return tensor(
-            arith_dialect.cmpi(
-                arith_dialect.CmpIPredicate.ult, x.handle, y.handle
-            ),
-            _bool_block_like(x),
-        )
-    raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
+    return tensor(_less_than(x.handle, y.handle), _bool_block_like(x))
 
   @staticmethod
   def less_equal(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape and x.dtype == y.dtype
-    if x.dtype.is_floating():
-      return tensor(
-          arith_dialect.cmpf(
-              arith_dialect.CmpFPredicate.OLE, x.handle, y.handle
-          ),
-          _bool_block_like(x),
-      )
-    elif x.dtype.is_int():
-      if x.dtype.is_int_signed():
-        return tensor(
-            arith_dialect.cmpi(
-                arith_dialect.CmpIPredicate.sle, x.handle, y.handle
-            ),
-            _bool_block_like(x),
-        )
-      else:
-        return tensor(
-            arith_dialect.cmpi(
-                arith_dialect.CmpIPredicate.ule, x.handle, y.handle
-            ),
-            _bool_block_like(x),
-        )
-    raise NotImplementedError(f"unsupported dtypes: {x.dtype} and {y.dtype}")
+    return tensor(_less_equal(x.handle, y.handle), _bool_block_like(x))
