@@ -132,9 +132,21 @@ absl::StatusOr<KernelCall*> GetKernelCall(absl::string_view opaque,
       *new absl::flat_hash_map<std::string, std::unique_ptr<KernelCall>>
           ABSL_GUARDED_BY(mutex);
 
+  {
+    // Fast path uses reader lock (as hash map look-up is relatively slow).
+    absl::ReaderMutexLock lock(&mutex);
+    auto it = kernel_calls.find(opaque);
+    if (ABSL_PREDICT_TRUE(it != kernel_calls.end())) return it->second.get();
+  }
+
+  if (opaque.empty()) {
+    return absl::InvalidArgumentError("Opaque data is empty.");
+  }
+
   absl::MutexLock lock(&mutex);
-  auto it = kernel_calls.find(opaque);
-  if (ABSL_PREDICT_TRUE(it != kernel_calls.end())) return it->second.get();
+  std::unique_ptr<KernelCall>& kernel_call = kernel_calls[opaque];
+  // We released the reader lock, so it may have been written by another thread.
+  if (kernel_call != nullptr) return kernel_call.get();
 
   // The opaque data is a zlib compressed protobuf.
   JAX_ASSIGN_OR_RETURN(std::string serialized, ZlibUncompress(opaque));
@@ -144,7 +156,6 @@ absl::StatusOr<KernelCall*> GetKernelCall(absl::string_view opaque,
     return absl::InvalidArgumentError("Failed to parse serialized data.");
   }
 
-  std::unique_ptr<KernelCall> kernel_call;
   if (proto.has_kernel_call()) {
     JAX_ASSIGN_OR_RETURN(KernelCall kernel_call_,
                          KernelCall::FromProto(proto.kernel_call()));
@@ -163,10 +174,7 @@ absl::StatusOr<KernelCall*> GetKernelCall(absl::string_view opaque,
     return absl::InvalidArgumentError("Unknown kernel call type.");
   }
 
-  auto [it2, success] =
-      kernel_calls.insert({std::string(opaque), std::move(kernel_call)});
-  CHECK(success);
-  return it2->second.get();
+  return kernel_call.get();
 }
 
 }  // namespace
