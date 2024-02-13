@@ -336,7 +336,6 @@ jax_test(
         "cpu": 10,
         "gpu": 20,
         "tpu": 10,
-        "iree": 10,
     },
     tags = ["noasan"],  # Linking TF causes a linker OOM.
     deps = py_deps("pil") + py_deps("tensorflow_core"),
@@ -396,7 +395,6 @@ jax_test(
         "cpu": 30,
         "gpu": 40,
         "tpu": 30,
-        "iree": 10,
     },
 )
 
@@ -407,7 +405,6 @@ jax_test(
         "cpu": 10,
         "gpu": 10,
         "tpu": 10,
-        "iree": 10,
     },
 )
 
@@ -418,7 +415,6 @@ jax_test(
         "cpu": 10,
         "gpu": 10,
         "tpu": 10,
-        "iree": 10,
     },
 )
 
@@ -463,7 +459,6 @@ jax_test(
         "cpu": 10,
         "gpu": 10,
         "tpu": 10,
-        "iree": 10,
     },
 )
 
@@ -474,7 +469,6 @@ jax_test(
         "cpu": 10,
         "gpu": 10,
         "tpu": 10,
-        "iree": 10,
     },
 )
 
@@ -495,7 +489,6 @@ jax_test(
         "cpu": 20,
         "gpu": 20,
         "tpu": 20,
-        "iree": 10,
     },
     deps = py_deps("numpy") + py_deps("scipy") + py_deps("absl/testing"),
 )
@@ -510,7 +503,6 @@ jax_test(
         "cpu": 10,
         "gpu": 10,
         "tpu": 10,
-        "iree": 10,
     },
 )
 
@@ -524,7 +516,6 @@ jax_test(
         "cpu": 20,
         "gpu": 20,
         "tpu": 20,
-        "iree": 10,
     },
     deps = py_deps("numpy") + py_deps("scipy") + py_deps("absl/testing"),
 )
@@ -536,7 +527,6 @@ jax_test(
         "cpu": 40,
         "gpu": 40,
         "tpu": 40,
-        "iree": 40,
     },
     deps = [
         "//jax:internal_test_util",
@@ -553,7 +543,6 @@ jax_test(
         "cpu": 40,
         "gpu": 40,
         "tpu": 40,
-        "iree": 40,
     },
     deps = [
         "//jax:internal_test_util",
@@ -568,7 +557,6 @@ jax_test(
         "cpu": 40,
         "gpu": 40,
         "tpu": 20,
-        "iree": 40,
     },
 )
 
@@ -579,7 +567,6 @@ jax_test(
         "cpu": 40,
         "gpu": 40,
         "tpu": 40,
-        "iree": 40,
     },
     deps = ["//jax:internal_test_util"] + py_deps("numpy") + py_deps("absl/testing"),
 )
@@ -591,7 +578,6 @@ jax_test(
         "cpu": 40,
         "gpu": 40,
         "tpu": 40,
-        "iree": 40,
     },
     deps = ["//jax:internal_test_util"] + py_deps("numpy") + py_deps("absl/testing"),
 )
@@ -634,7 +620,6 @@ jax_test(
         "cpu": 40,
         "gpu": 40,
         "tpu": 40,
-        "iree": 20,
     },
 )
 
@@ -785,7 +770,6 @@ jax_test(
         "cpu": 30,
         "gpu": 30,
         "tpu": 40,
-        "iree": 30,
     },
     tags = ["noasan"],  # Times out
 )
@@ -808,7 +792,6 @@ jax_test(
         "cpu": 40,
         "gpu": 30,
         "tpu": 40,
-        "iree": 30,
     },
     tags = ["noasan"],  # Times out
 )
@@ -836,7 +819,6 @@ jax_test(
         "cpu": 40,
         "gpu": 40,
         "tpu": 40,
-        "iree": 20,
     },
 )
 
@@ -906,7 +888,6 @@ jax_test(
         "cpu": 40,
         "gpu": 30,
         "tpu": 40,
-        "iree": 10,
     },
     tags = [
         "noasan",
@@ -935,7 +916,6 @@ jax_test(
         "cpu": 50,
         "gpu": 50,
         "tpu": 50,
-        "iree": 10,
     },
     tags = [
         "noasan",
@@ -969,7 +949,6 @@ jax_test(
         "cpu": 50,
         "gpu": 50,
         "tpu": 50,
-        "iree": 10,
     },
     tags = [
         "noasan",
@@ -1026,7 +1005,6 @@ jax_test(
     shard_count = {
         "cpu": 5,
         "gpu": 5,
-        "iree": 5,
     },
     deps = ["//jax:stax"],
 )
