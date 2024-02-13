@@ -1570,7 +1570,7 @@ def naryop_dtype_rule(result_dtype, accepted_dtypes, name, *avals,
   del kwargs
   assert len(avals) == len(accepted_dtypes), (avals, accepted_dtypes)
   for i, aval in enumerate(avals):
-    if allow_extended_dtype and dtypes.issubdtype(aval.dtype, dtypes.extended):
+    if allow_extended_dtype and isinstance(aval.dtype, dtypes.ExtendedDType):
       continue
     types = accepted_dtypes[i]
     if not any(dtypes.issubdtype(aval.dtype, t) for t in types):

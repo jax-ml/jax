@@ -1565,7 +1565,7 @@ def physical_aval(aval: AbstractValue) -> AbstractValue: ...
 
 def physical_aval(aval):
   aval_dtype = getattr(aval, 'dtype', None)
-  if aval_dtype and dtypes.issubdtype(aval_dtype, dtypes.extended):
+  if aval_dtype and isinstance(aval_dtype, dtypes.ExtendedDType):
     ctor = type(aval)
     aval_shape = getattr(aval, 'shape', None)
     assert aval_shape is not None, (ctor, aval)
@@ -1576,14 +1576,14 @@ def physical_aval(aval):
     return aval
 
 def _short_dtype_name(dtype) -> str:
-  if dtypes.issubdtype(dtype, dtypes.extended):
+  if isinstance(dtype, dtypes.ExtendedDType):
     return str(dtype)
   else:
     return (dtype.name.replace('float', 'f').replace('uint'   , 'u')
                       .replace('int'  , 'i').replace('complex', 'c'))
 
 def _dtype_object(dtype):
-  return dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
+  return dtype if isinstance(dtype, dtypes.ExtendedDType) else np.dtype(dtype)
 
 class UnshapedArray(AbstractValue):
   __slots__ = ['dtype', 'weak_type']
@@ -1792,7 +1792,7 @@ class ConcreteArray(ShapedArray):
   _complex = concretization_function_error(complex, True)
 
 def primal_dtype_to_tangent_dtype(primal_dtype):
-  if dtypes.issubdtype(primal_dtype, dtypes.extended):
+  if isinstance(primal_dtype, dtypes.ExtendedDType):
     return primal_dtype._rules.tangent_dtype(primal_dtype)  # type: ignore
   elif not dtypes.issubdtype(primal_dtype, np.inexact):
     return dtypes.float0
