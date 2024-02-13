@@ -25,6 +25,7 @@ Experimental Modules
     jax.experimental.multihost_utils
     jax.experimental.compilation_cache
     jax.experimental.key_reuse
+    jax.experimental.mesh_utils
 
 Experimental APIs
 -----------------
