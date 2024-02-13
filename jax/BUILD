@@ -1035,3 +1035,16 @@ pytype_library(
     visibility = ["//visibility:public"],
     deps = [":jax"],
 )
+
+pytype_library(
+    name = "fused_attention_stablehlo",
+    srcs = [
+        "_src/cudnn/__init__.py",
+        "_src/cudnn/fused_attention_stablehlo.py",
+    ],
+    visibility = [":internal"],
+    deps = [
+        ":experimental",
+        ":jax",
+    ],
+)
