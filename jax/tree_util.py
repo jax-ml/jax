@@ -43,6 +43,7 @@ from jax._src.tree_util import (
   PyTreeDef as PyTreeDef,
   all_leaves as all_leaves,
   build_tree as build_tree,
+  default_registry as default_registry,
   register_pytree_node as register_pytree_node,
   register_pytree_node_class as register_pytree_node_class,
   tree_all as tree_all,
