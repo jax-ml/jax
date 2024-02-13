@@ -95,7 +95,7 @@ class Config:
     # flags, and StateContextManagers, which hold state that can be changed
     # locally within a thread. A value holder needs a `.value` property and a
     # `._set()` method.
-    self.value_holders = {}
+    self._value_holders = {}
     self.meta = {}
     self.use_absl = False
     self._contextmanager_flags = set()
@@ -115,9 +115,9 @@ class Config:
     return fn
 
   def update(self, name, val):
-    if name not in self.value_holders:
+    if name not in self._value_holders:
       raise AttributeError(f"Unrecognized config option: {name}")
-    self.value_holders[name]._set(val)
+    self._value_holders[name]._set(val)
 
   def read(self, name):
     if name in self._contextmanager_flags:
@@ -128,14 +128,18 @@ class Config:
 
   def _read(self, name):
     try:
-      return self.value_holders[name].value
+      return self._value_holders[name].value
     except KeyError:
       raise AttributeError(f"Unrecognized config option: {name}")
 
+  @property
+  def values(self):
+    return {name: holder.value for name, holder in self._value_holders.items()}
+
   def add_option(self, name, holder, opt_type, meta_args, meta_kwargs):
-    if name in self.value_holders:
+    if name in self._value_holders:
       raise Exception(f"Config option {name} already defined")
-    self.value_holders[name] = holder
+    self._value_holders[name] = holder
     self.meta[name] = (opt_type, meta_args, meta_kwargs)
 
   def config_with_absl(self):
@@ -170,14 +174,14 @@ class Config:
                   'enum': absl_flags.DEFINE_enum }
 
     for name, (flag_type, meta_args, meta_kwargs) in self.meta.items():
-      holder = self.value_holders[name]
+      holder = self._value_holders[name]
       absl_defs[flag_type](name, holder.value, *meta_args, **meta_kwargs)
     app.call_after_init(lambda: self.complete_absl_config(absl_flags))
 
   def complete_absl_config(self, absl_flags):
     # NOTE: avoid calling from outside this module. Instead, use
     # `config_with_absl()`, and (in rare cases) `parse_flags_with_absl()`.
-    for name, holder in self.value_holders.items():
+    for name, holder in self._value_holders.items():
       try:
         flag = absl_flags.FLAGS[name]
       except KeyError:
@@ -778,7 +782,7 @@ class FlagHolder(Generic[_T]):
 
 
 def check_exists(name):
-  if name not in config.value_holders:
+  if name not in config._value_holders:
     raise AttributeError(f"Unrecognized config option: {name}")
 
 
