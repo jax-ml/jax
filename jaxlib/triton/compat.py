@@ -26,10 +26,7 @@ from typing import Any, Literal
 
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith as arith_dialect
-from jaxlib.mlir.dialects import math as math_dialect
-import numpy as np
 import triton.backends.nvidia.compiler as cb
-import triton.language as tl
 
 from . import dialect as tt_dialect
 
@@ -69,61 +66,6 @@ class builder:
     self.loc.__exit__(*exc_info)
     self.context.__exit__(*exc_info)
     del _tls.builder
-
-  def get_void_ty(self) -> ir.Type:
-    return ir.NoneType.get()
-
-  def get_int1_ty(self) -> ir.Type:
-    return ir.IntegerType.get_signless(1)
-
-  def get_int8_ty(self) -> ir.Type:
-    return ir.IntegerType.get_signless(8)
-
-  def get_int16_ty(self) -> ir.Type:
-    return ir.IntegerType.get_signless(16)
-
-  def get_int32_ty(self) -> ir.Type:
-    return ir.IntegerType.get_signless(32)
-
-  def get_int64_ty(self) -> ir.Type:
-    return ir.IntegerType.get_signless(64)
-
-  def get_fp8e4nv_ty(self) -> ir.Type:
-    return ir.Float8E4M3FNUZType.get()
-
-  def get_fp8e4b15_ty(self) -> ir.Type:
-    return ir.Float8E4M3B11FNUZType.get()
-
-  def get_fp8e4b15x4_ty(self) -> ir.Type:
-    return ir.Float8E4M3FNType.get()
-
-  def get_fp8e5_ty(self) -> ir.Type:
-    return ir.Float8E5M2Type.get()
-
-  def get_half_ty(self) -> ir.Type:
-    return ir.F16Type.get()
-
-  def get_bf16_ty(self) -> ir.Type:
-    return ir.BF16Type.get()
-
-  def get_float_ty(self) -> ir.Type:
-    return ir.F32Type.get()
-
-  def get_double_ty(self) -> ir.Type:
-    return ir.F64Type.get()
-
-  def get_ptr_ty(self, t: ir.Type, addr_space: int) -> ir.Type:
-    return PointerType.get(t, addr_space)
-
-  def get_block_ty(
-      self, t: ir.Type, shape: Sequence[int]
-  ) -> ir.RankedTensorType:
-    return ir.RankedTensorType.get(shape, t)
-
-  def get_function_ty(
-      self, in_types: Sequence[ir.Type], out_types: Sequence[ir.Type]
-  ) -> type[ir.FunctionType]:
-    return ir.FunctionType.get(in_types, out_types)
 
 
 # TODO(slebedev): Consider moving upstream.
@@ -167,101 +109,10 @@ class FloatType(metaclass=FloatTypeMeta):
     return _FLOAT_WIDTH[type(self.type)]
 
 
-dtype = tl.core.dtype
-
-
-class block_type(tl.core.block_type):
-  def __init__(self, element_ty: dtype, shape: list[Any]) -> Any:
-    super().__init__(element_ty, shape)
-    self.shape = tuple(self.shape)
-
-
-pointer_type = tl.core.pointer_type
-
-void = tl.core.void
-bfloat16 = tl.core.bfloat16
-float16 = tl.core.float16
-float32 = tl.core.float32
-float64 = tl.core.float64
-int1 = tl.core.int1
-int8 = tl.core.int8
-int32 = tl.core.int32
-int64 = tl.core.int64
-uint32 = tl.core.uint32
-uint64 = tl.core.uint64
-
-
-def _bool_block_like(v: tensor) -> dtype:
-  if not v.type.is_block():
-    return int1
-  return block_type(int1, v.shape)
-
-
-def _to_tensor(x: object, dtype: dtype | None = None) -> "tensor":
-  if dtype is not None and isinstance(x, (bool, int, float)):
-    return tensor(
-        arith_dialect.constant(dtype.to_ir(builder.current), x), dtype
-    )
-
-  # We follow Triton conversion logic here, but it might better to use
-  # mlir.ir_constant instead.
-  #
-  # Note that Triton uses singless integers for both int* and uint* types.
-  if isinstance(x, bool):
-    return tensor(
-        arith_dialect.constant(ir.IntegerType.get_signless(1), x), int1
-    )
-  elif isinstance(x, int):
-    if -(2**31) <= x < 2**31:
-      return tensor(
-          arith_dialect.constant(ir.IntegerType.get_signless(32), x), int32
-      )
-    elif 2**31 <= x < 2**32:
-      return tensor(
-          arith_dialect.constant(ir.IntegerType.get_signless(32), x), uint32
-      )
-    elif -(2**63) <= x < 2**63:
-      return tensor(
-          arith_dialect.constant(ir.IntegerType.get_signless(64), x), int64
-      )
-    elif 2**63 <= x < 2**64:
-      return tensor(
-          arith_dialect.constant(ir.IntegerType.get_signless(64), x), uint64
-      )
-    else:
-      raise ValueError(f"integer overflow representing {x}")
-  elif isinstance(x, float):
-    fi = np.finfo(np.float32)
-    if np.isinf(x) or np.isnan(x) or x == 0 or -fi.min <= x <= fi.max:
-      return tensor(arith_dialect.constant(ir.F32Type.get(), x), float32)
-    else:
-      return tensor(arith_dialect.constant(ir.F64Type.get(), x), float64)
-  else:
-    raise ValueError(f"cannot convert {x} to tensor")
-
-
-class tensor:
-
-  def __init__(self, handle: ir.Value, type: dtype):
-    self.handle = handle
-    self.shape = tuple(type.shape) if type.is_block() else ()
-    self.type = type
-    self.dtype = type.scalar
-
-  def __str__(self) -> str:
-    return f"{self.dtype}[{', '.join(map(str, self.shape))}]"
-
-
 def _program_id(axis: int) -> ir.Value:
   if axis not in range(3):
     raise ValueError(f"axis must be in [0, 3), but got: {axis}")
   return tt_dialect.get_program_id(axis)
-
-
-def program_id(axis: int) -> tensor:
-  if axis not in range(3):
-    raise ValueError(f"axis must be in [0, 3), but got: {axis}")
-  return tensor(tt_dialect.get_program_id(axis), int32)
 
 
 _STR_TO_EVICTION_POLICY = {str(e): e for e in tt_dialect.EvictionPolicy}
@@ -347,30 +198,6 @@ def _load(
   )
 
 
-def load(
-    ptr: tensor,
-    mask: tensor | None = None,
-    other: tensor | None = None,
-    *,
-    cache_modifier: str | None = None,
-    eviction_policy: str | None = None,
-    is_volatile: bool = False,
-) -> tensor:
-  element_type = ptr.dtype.element_ty
-  result_handle = _load(
-      ptr.handle,
-      mask.handle if mask is not None else None,
-      other.handle if other is not None else None,
-      cache_modifier=cache_modifier,
-      eviction_policy=eviction_policy,
-      is_volatile=is_volatile,
-  )
-  if ptr.type.is_block():
-    return tensor(result_handle, block_type(element_type, ptr.type.shape))
-  else:
-    return tensor(result_handle, element_type)
-
-
 def _store(
     ptr: ir.Value,
     value: ir.Value,
@@ -418,93 +245,6 @@ def _store(
   value = _cast(value, pointee_type)
   return tt_dialect.store(
       ptr, value, mask=mask, cache=cache_modifier, evict=eviction_policy
-  )
-
-
-def store(
-    ptr: tensor,
-    value: tensor,
-    mask: tensor | None = None,
-    *,
-    cache_modifier: str | None = None,
-    eviction_policy: str | None = None,
-) -> tensor:
-  return tensor(
-      _store(
-          ptr.handle,
-          value.handle,
-          mask.handle if mask is not None else None,
-          cache_modifier=cache_modifier,
-          eviction_policy=eviction_policy,
-      ),
-      void,
-  )
-
-
-def _make_range(start: int, end: int) -> ir.Value:
-  if end <= start:
-    raise ValueError(
-        f"end must be greater than start, but got: {end} <= {start}"
-    )
-  if max(start, end) >= 2**32:
-    raise ValueError("start and end must fit in int32")
-  return tt_dialect.make_range(
-      ir.RankedTensorType.get([end - start], ir.IntegerType.get_signless(32)),
-      start,
-      end,
-  )
-
-
-def arange(start: int, end: int) -> tensor:
-  handle = _make_range(start, end)
-  return tensor(handle, block_type(int32, [end - start]))
-
-
-def _broadcast_to(x: ir.Value, shape: Sequence[int]) -> ir.Value:
-  if not ir.RankedTensorType.isinstance(x.type):
-    return _splat(x, shape)
-  ty = ir.RankedTensorType(x.type)
-  if tuple(ty.shape) == shape:
-    return x
-  return tt_dialect.broadcast(
-      ir.RankedTensorType.get(shape, ty.element_type, ty.encoding), x
-  )
-
-
-def broadcast_to(x: tensor, shape: Sequence[int]) -> tensor:
-  if not shape:
-    return x
-  return tensor(_broadcast_to(x.handle, shape), block_type(x.dtype, shape))
-
-
-def _splat(x: ir.Value, shape: Sequence[int]) -> ir.Value:
-  if ir.RankedTensorType.isinstance(x.type):
-    raise TypeError("cannot splat a ranked tensor")
-  if not shape:
-    return x
-  return tt_dialect.splat(ir.RankedTensorType.get(shape, x.type), x)
-
-
-def _expand_dims(x: ir.Value, axis: int) -> ir.Value:
-  if not ir.RankedTensorType.isinstance(x.type):
-    shape = list(ir.RankedTensorType(x.type).shape)
-    shape.insert(axis, 1)
-    return _splat(x, shape)
-  return tt_dialect.expand_dims(x, axis)
-
-
-def expand_dims(x: tensor, axis: int) -> tensor:
-  dst_shape = list(x.shape)
-  dst_shape.insert(axis, 1)
-  return tensor(_expand_dims(x.handle, axis), block_type(x.dtype, dst_shape))
-
-
-def _reshape(x: ir.Value, shape: Sequence[int]) -> ir.Value:
-  ty = ir.RankedTensorType(x.type)
-  return tt_dialect.reshape(
-      ir.RankedTensorType.get(shape, ty.element_type, ty.encoding),
-      x,
-      allow_reorder=False,
   )
 
 
@@ -575,77 +315,7 @@ def _dot(
   return tt_dialect.dot(x, y, acc, allow_tf32, max_num_imprecise_acc)
 
 
-def dot(
-    x: tensor,
-    y: tensor,
-    acc: tensor | None = None,
-    allow_tf32: bool = True,
-    max_num_imprecise_acc: int | None = None,
-    out_dtype: dtype = float32,
-) -> tensor:
-  if x.dtype.is_int():
-    if x.dtype != int8:
-      raise TypeError(f"unsupported dtype: {x.dtype}")
-    element_type = int32
-  elif x.dtype.is_fp32() or x.dtype.is_bf16():
-    element_type = float32
-  else:
-    element_type = out_dtype
-
-  m, _ = x.shape
-  _, n = y.shape
-  result_type = block_type(element_type, [m, n])
-
-  return tensor(
-      _dot(
-          x.handle,
-          y.handle,
-          acc.handle if acc is not None else None,
-          allow_tf32=allow_tf32,
-          max_num_imprecise_acc=max_num_imprecise_acc,
-          out_type=out_dtype.to_ir(builder.current),
-      ),
-      result_type,
-  )
-
-
-def abs(x: tensor) -> tensor:
-  dtype = x.dtype
-  if dtype.is_floating():
-    return tensor(math_dialect.absf(x.handle), x.type)
-  elif dtype.is_int_signed():
-    return tensor(math_dialect.absi(x.handle), x.type)
-  elif dtype.is_int_unsigned():
-    return x
-  else:
-    raise ValueError(f"unsupported dtype: {dtype}")
-
-
-def multiple_of(x: tensor, values: Sequence[int]) -> tensor:
-  assert max(1, len(x.shape)) == len(values)
-  set_attr(
-      x.handle,
-      "tt.divisibility",
-      ir.DenseIntElementsAttr.get(
-          np.fromiter(map(int, values), dtype=np.uint32)
-      ),
-  )
-  return x
-
-
-def max_contiguous(x: tensor, values: Sequence[int]) -> tensor:
-  assert len(x.shape) == len(values)
-  set_attr(
-      x.handle,
-      "tt.contiguity",
-      ir.DenseIntElementsAttr.get(
-          np.fromiter(map(int, values), dtype=np.uint32)
-      ),
-  )
-  return x
-
-
-def set_attr(v: ir.Value, name: str, attr: ir.Attribute) -> None:
+def _set_attr(v: ir.Value, name: str, attr: ir.Attribute) -> None:
   if not ir.BlockArgument.isinstance(v):
     v.owner.attributes[name] = attr
     return
@@ -667,6 +337,20 @@ def _element_type(t: ir.Type) -> ir.Type:
     return t
 
 
+def _make_range(start: int, end: int) -> ir.Value:
+  if end <= start:
+    raise ValueError(
+        f"end must be greater than start, but got: {end} <= {start}"
+    )
+  if max(start, end) >= 2**32:
+    raise ValueError("start and end must fit in int32")
+  return tt_dialect.make_range(
+      ir.RankedTensorType.get([end - start], ir.IntegerType.get_signless(32)),
+      start,
+      end,
+  )
+
+
 def _full(t: ir.Type, v: object) -> ir.Type:
   element_type = _element_type(t)
   if isinstance(element_type, ir.IntegerType):
@@ -680,6 +364,33 @@ def _full(t: ir.Type, v: object) -> ir.Type:
     return tt_dialect.splat(t, result)
   else:
     return result
+
+
+def _splat(x: ir.value, shape: Sequence[int]) -> ir.Value:
+  if ir.RankedTensorType.isinstance(x.type):
+    raise TypeError("cannot splat a tensor")
+  if not shape:
+    return x
+  return tt_dialect.splat(ir.RankedTensorType.get(shape, x.type), x)
+
+
+def _expand_dims(x: ir.Value, axis: int) -> ir.Value:
+  if not ir.RankedTensorType.isinstance(x.type):
+    shape = list(ir.RankedTensorType(x.type).shape)
+    shape.insert(axis, 1)
+    return _splat(x, shape)
+  return tt_dialect.expand_dims(x, axis)
+
+
+def _reshape(x: ir.Value, shape: Sequence[int]) -> ir.Value:
+  if not shape:
+    raise ValueError("cannot reshape to an empty shape")
+  ty = ir.RankedTensorType(x.type)
+  return tt_dialect.reshape(
+      ir.RankedTensorType.get(shape, ty.element_type, ty.encoding),
+      x,
+      allow_reorder=False,
+  )
 
 
 _UI_PREDICATES = {
@@ -711,7 +422,7 @@ _F_PREDICATES = {
 def _cmp(
     x: ir.Value, y: ir.Value, p: Literal["==", "!=", "<", "<=", ">", ">="]
 ) -> ir.Value:
-  assert x.type == y.type
+  assert x.type == y.type, (str(x.type), str(y.type))
   x_element_type = _element_type(x.type)
   if isinstance(x_element_type, ir.IntegerType):
     if x_element_type.is_signed:
@@ -723,14 +434,6 @@ def _cmp(
     return arith_dialect.cmpf(_F_PREDICATES[p], x, y)
   else:
     raise NotImplementedError(f"unsupported types: {x.type} and {y.type}")
-
-
-_equal = functools.partial(_cmp, p="==")
-_not_equal = functools.partial(_cmp, p="!=")
-_less_than = functools.partial(_cmp, p="<")
-_less_equal = functools.partial(_cmp, p="<=")
-_greater_than = functools.partial(_cmp, p=">")
-_greater_equal = functools.partial(_cmp, p=">=")
 
 
 def _float_float_cast(src: ir.Value, dst_type: ir.Type) -> ir.Value:
@@ -755,7 +458,7 @@ def _int_int_cast(src: ir.Value, dst_type: ir.Type) -> ir.Value:
   dst_element_type = ir.IntegerType(_element_type(dst_type))
   assert src_element_type != dst_element_type
   if dst_element_type.width == 1:
-    return _not_equal(src, _full(src.type, 0))
+    return semantic._not_equal(src, _full(src.type, 0))
 
   is_signed = src_element_type.is_signed and src_element_type.width != 1
   if src_element_type.width == dst_element_type.width:
@@ -774,7 +477,7 @@ def _float_int_cast(src: ir.Value, dst_type: ir.Type) -> ir.Value:
     raise NotImplementedError(f"cannot cast {src} tp {dst_type}")
   dst_element_type = ir.IntegerType(_element_type(dst_type))
   if dst_element_type.width == 1:
-    return _not_equal(src, _full(src.type, 0))
+    return semantic._not_equal(src, _full(src.type, 0))
   elif dst_element_type.is_signed:
     return arith_dialect.fptosi(dst_type, src)
   else:
@@ -793,9 +496,7 @@ def _int_float_cast(src: ir.Value, dst_type: ir.Type) -> ir.Value:
 
 
 def _cast(src: ir.Value, dst_type: ir.Type) -> ir.Value:
-  if ir.RankedTensorType.isinstance(
-      src.type
-  ) and not ir.RankedTensorType.isinstance(dst_type):
+  if ir.RankedTensorType.isinstance(src.type) and not ir.RankedTensorType.isinstance(dst_type):
     src_type = ir.RankedTensorType(src.type)
     dst_type = ir.RankedTensorType.get(
         src_type.shape,
@@ -840,12 +541,12 @@ def _cast(src: ir.Value, dst_type: ir.Type) -> ir.Value:
   if PointerType.isinstance(src_element_type) and isinstance(
       dst_element_type, ir.IntegerType
   ):
-    if dst_element_type.int_bitwidth == 64:
+    if dst_element_type.width == 64:
       return tt_dialect.ptr_to_int(dst_type, src)
     else:
       x = _cast(src, ir.IntegerType.get_signless(64))
       zero = _full(x.type, 0)
-      return _cast(_not_equal(x, zero), dst_type)
+      return _cast(semantic._not_equal(x, zero), dst_type)
   if isinstance(src_element_type, ir.IntegerType) and PointerType.isinstance(
       dst_element_type
   ):
@@ -861,35 +562,13 @@ def _cast(src: ir.Value, dst_type: ir.Type) -> ir.Value:
 class semantic:
 
   @staticmethod
-  def cast(x: tensor, dst_ty: dtype) -> tensor:
-    return tensor(
-        _cast(x.handle, dst_ty.to_ir(builder.current)),
-        block_type(dst_ty, x.shape) if x.type.is_block() else dst_ty,
-    )
-
-  @staticmethod
-  def permute(x: tensor, dims: Sequence[int]) -> tensor:
-    if len(dims) != len(x.shape):
-      raise ValueError("dims must have the same shape as x")
-    if set(dims) != set(range(len(x.shape))):
-      raise ValueError(f"dims must be a permutation of 0, ..., {len(x.shape)}-1")
-    return tensor(
-        tt_dialect.trans(x.handle, dims),
-        block_type(x.dtype, [x.shape[i] for i in dims]),
-    )
-
-  @staticmethod
   def _minus(x: ir.Value) -> ir.Value:
     if PointerType.isinstance(_element_type(x.type)):
-      raise NotImplementedError(f"unsupported dtype: {x.type}")
+      raise NotImplementedError(f"unsupported type: {x.type}")
     return semantic._sub(_full(x.type, 0), x)
 
   @staticmethod
-  def minus(x: tensor) -> tensor:
-    return tensor(semantic._minus(x.handle), x.type)
-
-  @staticmethod
-  def _add(x: ir.Value, y: ir.Value) -> ir.Value:
+  def _add(x: ir.Value, y: ir.Value):
     x_element_type = _element_type(x.type)
     y_element_type = _element_type(y.type)
     if PointerType.isinstance(y_element_type):
@@ -909,17 +588,13 @@ class semantic:
       raise NotImplementedError(f"unsupported dtypes: {x.type} and {y.type}")
 
   @staticmethod
-  def add(x: tensor, y: tensor) -> tensor:
-    return tensor(semantic._add(x.handle, y.handle), x.type)
-
-  @staticmethod
   def _sub(x: ir.Value, y: ir.Value) -> ir.Value:
     x_element_type = _element_type(x.type)
     y_element_type = _element_type(y.type)
     if PointerType.isinstance(x_element_type):
       return tt_dialect.addptr(x.type, x, semantic._minus(y))
     elif not PointerType.isinstance(y_element_type):
-      assert x.type == y.type
+      assert x.type == y.type, (str(x.type), str(y.type))
       if isinstance(x_element_type, ir.IntegerType):
         return arith_dialect.subi(x, y)
       elif isinstance(x_element_type, FloatType):
@@ -927,12 +602,8 @@ class semantic:
     raise NotImplementedError(f"unsupported dtype: {y.type}")
 
   @staticmethod
-  def sub(x: tensor, y: tensor) -> tensor:
-    return tensor(semantic._sub(x.handle, y.handle), x.type)
-
-  @staticmethod
   def _mul(x: ir.Value, y: ir.Value) -> ir.Value:
-    assert x.type == y.type
+    assert x.type == y.type, (str(x.type), str(y.type))
     x_element_type = _element_type(x.type)
     if isinstance(x_element_type, ir.IntegerType):
       return arith_dialect.muli(x, y)
@@ -940,13 +611,10 @@ class semantic:
       return arith_dialect.mulf(x, y)
     raise NotImplementedError(f"unsupported types: {x.type} and {y.type}")
 
-  @staticmethod
-  def mul(x: tensor, y: tensor) -> tensor:
-    return tensor(semantic._mul(x.handle, y.handle), x.type)
 
   @staticmethod
   def _floordiv(x: ir.Value, y: ir.Value) -> ir.Value:
-    assert x.type == y.type
+    assert x.type == y.type, (str(x.type), str(y.type))
     x_element_type = _element_type(x.type)
     if not isinstance(x_element_type, ir.IntegerType):
       raise NotImplementedError(f"unsupported types: {x.type} and {y.type}")
@@ -955,13 +623,10 @@ class semantic:
     else:
       return arith_dialect.divui(x, y)
 
-  @staticmethod
-  def floordiv(x: tensor, y: tensor) -> tensor:
-    return tensor(semantic._floordiv(x.handle, y.handle), x.type)
 
   @staticmethod
   def _truediv(x: ir.Value, y: ir.Value) -> ir.Value:
-    assert x.type == y.type
+    assert x.type == y.type, (str(x.type), str(y.type))
     x_element_type = _element_type(x.type)
     if isinstance(x_element_type, ir.IntegerType):
       x_element_type = ir.F32Type.get()
@@ -971,13 +636,10 @@ class semantic:
       return arith_dialect.divf(x, y)
     raise NotImplementedError(f"unsupported types: {x.type} and {y.type}")
 
-  @staticmethod
-  def truediv(x: tensor, y: tensor) -> tensor:
-    return tensor(semantic._truediv(x.handle, y.handle), x.type)
 
   @staticmethod
   def _mod(x: ir.Value, y: ir.Value) -> ir.Value:
-    assert x.type == y.type
+    assert x.type == y.type, (str(x.type), str(y.type))
     x_element_type = _element_type(x.type)
     if not isinstance(x_element_type, ir.IntegerType):
       raise NotImplementedError(f"unsupported types: {x.type} and {y.type}")
@@ -986,69 +648,10 @@ class semantic:
     else:
       return arith_dialect.remui(x, y)
 
-  @staticmethod
-  def mod(x: tensor, y: tensor) -> tensor:
-    return tensor(semantic._mod(x.handle, y.handle), x.type)
 
-  @staticmethod
-  def invert(x: tensor) -> tensor:
-    if not x.dtype.is_int():
-      raise NotImplementedError(f"unsupported dtype: {x.dtype}")
-    one = tensor(
-        _full(x.type.to_ir(builder.current), 0xFFFFFFFFFFFFFFFF), x.type
-    )
-    return semantic.xor_(x, one)
-
-  @staticmethod
-  def and_(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape and x.dtype == y.dtype
-    return tensor(arith_dialect.andi(x.handle, y.handle), x.type)
-
-  @staticmethod
-  def or_(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape and x.dtype == y.dtype
-    return tensor(arith_dialect.ori(x.handle, y.handle), x.type)
-
-  @staticmethod
-  def xor_(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape and x.dtype == y.dtype
-    return tensor(arith_dialect.xori(x.handle, y.handle), x.type)
-
-  @staticmethod
-  def lshr(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape and x.dtype == y.dtype
-    return tensor(arith_dialect.shrui(x.handle, y.handle), x.type)
-
-  @staticmethod
-  def ashr(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape and x.dtype == y.dtype
-    return tensor(arith_dialect.shrsi(x.handle, y.handle), x.type)
-
-  @staticmethod
-  def shl(x: tensor, y: tensor) -> tensor:
-    assert x.shape == y.shape and x.dtype == y.dtype
-    return tensor(arith_dialect.shli(x.handle, y.handle), x.type)
-
-  @staticmethod
-  def equal(x: tensor, y: tensor) -> tensor:
-    return tensor(_equal(x.handle, y.handle), _bool_block_like(x))
-
-  @staticmethod
-  def not_equal(x: tensor, y: tensor) -> tensor:
-    return tensor(_not_equal(x.handle, y.handle), _bool_block_like(x))
-
-  @staticmethod
-  def greater_than(x: tensor, y: tensor) -> tensor:
-    return tensor(_greater_than(x.handle, y.handle), _bool_block_like(x))
-
-  @staticmethod
-  def greater_equal(x: tensor, y: tensor) -> tensor:
-    return tensor(_greater_equal(x.handle, y.handle), _bool_block_like(x))
-
-  @staticmethod
-  def less_than(x: tensor, y: tensor) -> tensor:
-    return tensor(_less_than(x.handle, y.handle), _bool_block_like(x))
-
-  @staticmethod
-  def less_equal(x: tensor, y: tensor) -> tensor:
-    return tensor(_less_equal(x.handle, y.handle), _bool_block_like(x))
+  _equal = functools.partial(_cmp, p="==")
+  _not_equal = functools.partial(_cmp, p="!=")
+  _less_than = functools.partial(_cmp, p="<")
+  _less_equal = functools.partial(_cmp, p="<=")
+  _greater_than = functools.partial(_cmp, p=">")
+  _greater_equal = functools.partial(_cmp, p=">=")
