@@ -776,7 +776,8 @@ def _indexer_to_start_size(
       else _index_to_start_size(next(indices_iter), cast_to_index)
       for s in ref_block_shape
   )
-  assert next(indices_iter, None) is None
+  next_index = next(indices_iter, None)
+  assert next_index is None, (indexer.indices, ref_block_shape)
   new_ref_block_shape = tuple(s for s, squeeze in zip(sizes, squeeze_dims)
                               if not squeeze)
   return tuple(starts), tuple(sizes), tuple(squeeze_dims), new_ref_block_shape
@@ -1660,9 +1661,12 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
     raise NotImplementedError(
         f"Only unroll={num_steps=} and unroll=1 supported. Got {unroll=}.")
   lbd = ir_constant(0, mlir_type=mlir.dtype_to_ir_type(jnp.dtype("int32")))
-  ubd = ir_constant(
-      num_steps, mlir_type=_dtype_to_ir_type(jnp.dtype("int32"))
-  )
+  if isinstance(num_steps, int):
+    ubd = ir_constant(
+        num_steps, mlir_type=_dtype_to_ir_type(jnp.dtype("int32"))
+    )
+  else:
+    ubd = num_steps
   step = ir_constant(1, mlir_type=_dtype_to_ir_type(jnp.dtype("int32")))
   for_op = scf.ForOp(lbd, ubd, step, args)
   with ir.InsertionPoint(for_op.body):
@@ -1739,6 +1743,37 @@ def _scan_lowering_rule(
 lowering_rules[lax.scan_p] = _scan_lowering_rule
 skip_mlir_conversions.add(lax.scan_p)
 
+
+def _while_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args,
+    cond_nconsts,
+    cond_jaxpr,
+    body_nconsts,
+    body_jaxpr,
+):
+  jaxpr = pallas_utils.pattern_match_while_to_fori_loop(
+      cond_jaxpr, cond_nconsts, body_jaxpr, body_nconsts
+  )
+  _, body_consts, carry = split_list(args, [cond_nconsts, body_nconsts])
+  (lb, ub), args = carry[:2], carry[2:]
+  for_out = _lower_jaxpr_to_for_loop(
+      ctx.replace(
+          block_shapes=ctx.block_shapes[: body_nconsts + 1]
+          + ctx.block_shapes[body_nconsts + 2 :],
+      ),
+      jaxpr,
+      lb,
+      ub,
+      body_consts,
+      *args,
+      has_loop_index=True,
+      unroll=1,
+  )
+  return [ub, ub, *for_out]
+
+
+lowering_rules[lax.while_p] = _while_lowering_rule
 
 def _cond_lowering_rule(ctx: LoweringRuleContext, *args, branches, linear):
   index, *args = args
