@@ -41,6 +41,7 @@ from enum import Enum
 import functools
 import itertools
 import io
+import copy
 import operator as op
 import threading
 import tokenize
@@ -268,6 +269,11 @@ class _DimAtom:
       else:
         assert False, self.operation
 
+  def __deepcopy__(self, memo):
+    return _DimAtom(*copy.deepcopy(self.operands, memo),
+        var=copy.deepcopy(self.var, memo),
+        operation=copy.deepcopy(self.operation, memo))
+
 
 class _DimMon(dict):
   """Represents a multiplication of atoms.
@@ -390,6 +396,8 @@ class _DimMon(dict):
       return v if p == 1 else prod([v] * p)
     return prod([pow_opt(a.evaluate(env), deg) for a, deg in self.items()])
 
+  def __deepcopy__(self, memo):
+    return _DimMon(copy.deepcopy(dict(self), memo))
 
 class _DimExpr:
   """Symbolic expression in terms of dimension variables.
@@ -886,6 +894,11 @@ class _DimExpr:
   def __jax_array__(self):
     # Used for implicit coercions of polynomials as JAX arrays
     return _dim_as_value(self)
+
+  def __deepcopy__(self, memo):
+    return _DimExpr(
+        copy.deepcopy(self._monomials_sorted, memo),
+        copy.deepcopy(self._scope, memo))
 
 def cmp_comparable(i1, i2) -> int:
   if i1 < i2: return -1
