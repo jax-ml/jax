@@ -535,10 +535,15 @@ class Trace(Generic[TracerType]):
     self.sublevel = sublevel
 
   def full_raise(self, val) -> TracerType:
-    if hasattr(val, "dimension_as_value"):  # Used for shape_poly._DimPolynomial
-      val = val.dimension_as_value()
     if not isinstance(val, Tracer):
-      return self.pure(val)
+      # This check is only applied to non-Tracers, because the hasattr() is
+      # expensive (Tracer.__getattr__) in the common case that val is a Tracer.
+      if hasattr(val, "dimension_as_value"):  # Used for shape_poly._DimExpr
+        val = val.dimension_as_value()
+        if not isinstance(val, Tracer):
+          return self.pure(val)
+      else:
+        return self.pure(val)
     val._assert_live()
     level = self.level
     sublevel = self.sublevel
