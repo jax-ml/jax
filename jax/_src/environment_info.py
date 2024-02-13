@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import platform
 import subprocess
 import sys
 import textwrap
@@ -49,7 +50,9 @@ def print_environment_info(return_string: bool = False) -> str | None:
   numpy:  {np.__version__}
   python: {python_version}
   jax.devices ({xla_bridge.device_count()} total, {xla_bridge.local_device_count()} local): {devices_short}
-  process_count: {xla_bridge.process_count()}"""
+  process_count: {xla_bridge.process_count()}
+  platform: {platform.uname()}
+"""
   )
   nvidia_smi = try_nvidia_smi()
   if nvidia_smi:
