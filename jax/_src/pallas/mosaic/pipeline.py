@@ -143,13 +143,6 @@ def _get_next_indices(grid: core.StaticGrid, indices: GridIndices) -> GridIndice
   return tuple(reversed(next_indices))
 
 
-def _replace_nones_in_block_spec(block_spec: core.BlockSpec) -> core.BlockSpec:
-  """Replaces Nones in a block spec shape with 1s."""
-  block_shape = cast(tuple[int, ...], block_spec.block_shape)
-  block_shape = tuple([1 if dim is None else dim for dim in block_shape])
-  return dataclasses.replace(block_spec, block_shape=block_shape)
-
-
 def _run_block_spec(
     block_spec: core.BlockSpec, indices: GridIndices
 ) -> tuple[Union[slice, indexing.Slice], ...]:
@@ -466,10 +459,6 @@ def emit_pipeline_with_allocations(
       in_specs, out_specs, in_out_specs
   )
   del in_specs, out_specs, should_accumulate_out, in_out_specs
-  pipeline_specs_with_nones = pipeline_specs
-  pipeline_specs = jax.tree_util.tree_map(
-      _replace_nones_in_block_spec, pipeline_specs_with_nones
-  )
 
   def make_pipeline_refs(
       *ref_args: PipelineRefs,
@@ -572,7 +561,7 @@ def emit_pipeline_with_allocations(
 
   def pipeline(
       *ref_args: PipelineRefs,
-      scratchs: Union[PipelineRefs, None] = None,
+      scratchs: PipelineRefs = None,
       allocations: Union[
           None,
           tuple[PipelineArg[PipelineBuffers], PipelineArg[PipelineAllocations]],
@@ -615,7 +604,7 @@ def emit_pipeline_with_allocations(
 
       zero_indices = (jnp.array(0, dtype=jnp.int32),) * len(grid)
       last_indices = tuple(
-          [jnp.asarray(dim_size - 1, dtype=jnp.int32) for dim_size in grid]
+          [jnp.array(dim_size - 1, dtype=jnp.int32) for dim_size in grid]
       )
       indices = zero_indices
       pipeline_buffers: PipelineArg[PipelineBuffers] = tree_util.tree_map(
@@ -816,7 +805,6 @@ def emit_pipeline_with_allocations(
         with tpu_primitives.trace("ep_kernel"):
 
           def grab_body_ref(
-              spec_with_nones,
               spec,
               allocation,
               buffers,
@@ -824,23 +812,14 @@ def emit_pipeline_with_allocations(
               in_out_existing_allocation=None,
           ):
             if existing_allocation is None:
-              buffer_slice = tuple([
-                  0 if dim is None else slice(None)
-                  for dim in spec_with_nones.block_shape
-              ])
-              return allocation.vmem_ref.at[buffers.current, *buffer_slice]
+              return allocation.vmem_ref.at[buffers.current]
             dma_slice = _run_block_spec(spec, indices)
-            dma_slice = tuple([
-                0 if dim is None else _slice
-                for dim, _slice in zip(spec_with_nones.block_shape, dma_slice)
-            ])
             if in_out_existing_allocation is None:
               return existing_allocation.at[dma_slice]
             return in_out_existing_allocation.at[dma_slice]
 
           in_args = tree_util.tree_map(
               grab_body_ref,
-              pipeline_specs_with_nones.input,
               pipeline_specs.input,
               pipeline_allocations.input,
               pipeline_buffers.input,
@@ -848,7 +827,6 @@ def emit_pipeline_with_allocations(
           )
           out_args = tree_util.tree_map(
               grab_body_ref,
-              pipeline_specs_with_nones.out,
               pipeline_specs.out,
               pipeline_allocations.out,
               pipeline_buffers.out,

@@ -220,33 +220,6 @@ class PallasCallScalarPrefetchTest(PallasTPUTest):
 
     np.testing.assert_allclose(out, expected)
 
-  def test_scalar_interpreter_dynamic_loop(self):
-    loop_end = jnp.array([5], jnp.int32)
-
-    def body(loop_end_ref, out_ref):
-      out_ref[...] = jnp.zeros_like(out_ref)
-
-      def loop_body(i, carry):
-        del i, carry
-        out_ref[...] += 1
-
-      lax.fori_loop(0, loop_end_ref[0], loop_body, None)
-
-    out = pl.pallas_call(
-        body,
-        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-        grid_spec=pltpu.PrefetchScalarGridSpec(
-            num_scalar_prefetch=1,
-            out_specs=pl.BlockSpec(lambda *_: (0, 0), (8, 128)),
-            grid=1,
-        ),
-        interpret=self.interpret,
-        debug=False,
-    )(loop_end)
-
-    expected_out = jnp.ones((8, 128), jnp.float32) * 5
-    np.testing.assert_allclose(out, expected_out)
-
   def test_vmap_scalar_prefetch_1sized(self):
     def body(_, x_ref, o_ref):
       o_ref[...] = x_ref[...]
