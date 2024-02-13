@@ -13,6 +13,8 @@ Remember to align the itemized text with the first line of an item within a list
     Interface](https://numba.readthedocs.io/en/stable/cuda/cuda_array_interface.html)
     import support (requires jaxlib 0.4.24).
   * JAX arrays now support NumPy-style scalar boolean indexing, e.g. `x[True]` or `x[False]`.
+  * Added {mod}`jax.tree` module, with a more convenient interface for referencing functions
+    in {mod}`jax.tree_util`.
 
 * Deprecations & Removals
   * {func}`jax.numpy.linalg.solve` now shows a deprecation warning for batched 1D

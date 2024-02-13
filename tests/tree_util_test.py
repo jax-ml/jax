@@ -1024,5 +1024,22 @@ class TreePrefixErrorsTest(jtu.JaxTestCase):
       raise e('in_axes')
 
 
+class TreeAliasTest(jtu.JaxTestCase):
+  @parameterized.parameters(
+      ('all', 'tree_all'),
+      ('flatten', 'tree_flatten'),
+      ('leaves', 'tree_leaves'),
+      ('map', 'tree_map'),
+      ('reduce', 'tree_reduce'),
+      ('structure', 'tree_structure'),
+      ('transpose', 'tree_transpose'),
+      ('unflatten', 'tree_unflatten'),
+  )
+  def test_tree_aliases(self, tree_name, tree_util_name):
+    wrapper = getattr(jax.tree, tree_name)
+    original = getattr(jax.tree_util, tree_util_name)
+    self.assertIs(wrapper.__wrapped__, original)
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
