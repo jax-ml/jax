@@ -34,13 +34,18 @@ MlirType mlirTritonPointerTypeGet(MlirType pointeeType, int addressSpace) {
       mlir::triton::PointerType::get(unwrap(pointeeType), addressSpace));
 }
 
-bool mlirTritonIsAPointerType(MlirType type) {
+bool mlirTritonIsAPointer(MlirType type) {
   return llvm::isa<mlir::triton::PointerType>(unwrap(type));
 }
 
 MlirType mlirTritonPointerTypeGetPointeeType(MlirType pointerType) {
   return wrap(llvm::cast<mlir::triton::PointerType>(unwrap(pointerType))
                   .getPointeeType());
+}
+
+int mlirTritonPointerTypeGetAddressSpace(MlirType pointerType) {
+  return llvm::cast<mlir::triton::PointerType>(unwrap(pointerType))
+      .getAddressSpace();
 }
 
 MlirAttribute mlirTritonInferReduceOpEncoding(MlirAttribute operandEncoding,

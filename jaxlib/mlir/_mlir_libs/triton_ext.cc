@@ -43,7 +43,7 @@ PYBIND11_MODULE(_triton_ext, m) {
   //
 
   mlir::python::adaptors::mlir_type_subclass(m, "PointerType",
-                                             mlirTritonIsAPointerType)
+                                             mlirTritonIsAPointer)
       .def_classmethod(
           "get",
           [](py::object cls, MlirType pointee_type, int64_t address_space) {
@@ -53,6 +53,9 @@ PYBIND11_MODULE(_triton_ext, m) {
           "Creates a PointerType type.")
       .def_property_readonly("pointee_type", [](MlirType self) {
         return mlirTritonPointerTypeGetPointeeType(self);
+      })
+      .def_property_readonly("address_space", [](MlirType self) {
+        return mlirTritonPointerTypeGetAddressSpace(self);
       });
 
   //

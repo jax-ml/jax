@@ -26,6 +26,9 @@ class PointerType(ir.Type):
   @property
   def pointee_type(self) -> ir.Type: ...
 
+  @property
+  def address_space(self) -> int: ...
+
 def infer_reduce_op_encoding(
     op_attribute: ir.Attribute,
     axis: int,
