@@ -196,14 +196,19 @@ def TPU_LoadOp : TPU_Op<"load"> {
 
 def TPU_RotateOp : TPU_Op<"rotate", [Pure, SameOperandsAndResultType]> {
   let arguments = (ins
-    AnyType:$value,
+    AnyVector:$value,
     SI32Attr:$amount,
-    I32Attr:$dimension
+    SI32Attr:$dimension,
+    // When the stride is specified, the rotation amount for each index on the
+    // stride dimension will be (amount + stride * index).
+    OptionalAttr<SI32Attr>:$stride,
+    OptionalAttr<SI32Attr>:$stride_dimension
   );
-  let results = (outs AnyType:$result);
+  let results = (outs AnyVector:$result);
   let assemblyFormat = [{
-    $value `by` $amount `dim` $dimension attr-dict `:` type($value)
+    $value `by` $amount `dim` $dimension (`stride` $stride `stride_dim` $stride_dimension^)? attr-dict `:` type($value)
   }];
+  let hasVerifier = 1;
 }
 
 def TPU_IotaOp : TPU_Op<"iota", [Pure]> {

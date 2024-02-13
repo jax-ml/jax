@@ -187,6 +187,35 @@ LogicalResult ReinterpretCastOp::verify() {
       source_type.getMemorySpace() == target_type.getMemorySpace());
 }
 
+LogicalResult RotateOp::verify() {
+  auto vty = getResult().getType();
+  if (vty.getRank() <= getDimension() || getDimension() < 0) {
+    emitOpError("Invalid dimension: ") << getDimension();
+    return failure();
+  }
+  if (getAmount() < 0) {
+    emitOpError("Rotate amount must be >= 0");
+    return failure();
+  }
+  if (getStride().has_value() && getStride().value() < 0) {
+    emitOpError("Rotate stride must be >= 0 if it is specified");
+    return failure();
+  }
+  if (getStrideDimension().has_value() &&
+      (vty.getRank() <= getStrideDimension().value() ||
+       getStrideDimension().value() < 0)) {
+    emitOpError("Invalid stride dimension: ") << getStrideDimension().value();
+    return failure();
+  }
+  if (getStride().has_value() != getStrideDimension().has_value()) {
+    emitOpError(
+        "Expected  either none or both stride and stride dimension are "
+        "present");
+    return failure();
+  }
+  return success();
+}
+
 // a + matmul(l, r, 0) == matmul(l, r, a)
 template <typename AddOp>
 class CanonicalizeAddOfMatmul : public OpRewritePattern<AddOp> {

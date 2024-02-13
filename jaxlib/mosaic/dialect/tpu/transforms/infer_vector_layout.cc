@@ -232,6 +232,10 @@ class VectorLayoutInferer {
         if (infer(op).failed()) {
           return failure();
         }
+        } else if (auto op = dyn_cast<tpu::RotateOp>(any_op)) {
+          if (infer(op).failed()) {
+            return failure();
+          }
       } else if (auto op = dyn_cast<tpu::ConcatenateOp>(any_op)) {
         if (infer(op).failed()) {
           return failure();
@@ -659,6 +663,20 @@ class VectorLayoutInferer {
     auto yield_op = op.getBody()->getTerminator();
     setInLayout(yield_op, out_layouts);
     setLayout(op, in_layouts, out_layouts);
+    return success();
+  }
+
+  LogicalResult infer(tpu::RotateOp op) {
+    auto bitwidth = op.getType().getElementTypeBitWidth();
+    if (bitwidth != 32) {
+      NYI("Rotate with non-32-bit data");
+    }
+    if (op.getType().getRank() < 2) {
+      NYI("Unsupported 1D shape");
+    }
+    auto layout = VectorLayout(bitwidth, {0, 0}, nativeTiling(bitwidth),
+                               ImplicitDim::kNone);
+    setLayout(op, layout, layout);
     return success();
   }
 
