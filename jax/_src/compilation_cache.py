@@ -63,8 +63,9 @@ def set_once_cache_used(f) -> None:
         f()
 
 
-def get_file_cache(path: str) -> CacheInterface:
-  return GFileCache(path)
+def get_file_cache(path: str) -> tuple[CacheInterface, str] | None:
+  """Returns the file cache and the path to the cache."""
+  return GFileCache(path), path
 
 
 def set_cache_dir(path) -> None:
@@ -104,7 +105,6 @@ def _initialize_cache() -> None:
   global _cache_initialized
   with _cache_initialized_mutex:
     if _cache_initialized:
-      logger.debug("_initialize_cache: cache has already been initialized!")
       return
     _cache_initialized = True
 
@@ -126,8 +126,12 @@ def _initialize_cache() -> None:
     if not path:
       return
 
-    _cache = get_file_cache(path)
-    logger.debug("Initialized persistent compilation cache at %s", path)
+    cache_and_path = get_file_cache(path)
+    if cache_and_path is None:
+      logger.debug("_initialize_cache: cache initialization failed!")
+    else:
+      _cache, path = cache_and_path
+      logger.debug("Initialized persistent compilation cache at %s", path)
 
 
 def _get_cache() -> CacheInterface | None:
