@@ -116,6 +116,7 @@ def jvp_subtrace_aux(main, primals, tangents):
                  else x for x in aux]
   yield (out_primals, out_tangents), aux_primals
 
+
 def linearize(traceable, *primals, **kwargs):
   has_aux = kwargs.pop('has_aux', False)
   if not has_aux:
