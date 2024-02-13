@@ -41,7 +41,6 @@ from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import effects
-from jax._src import shard_alike
 from jax._src import linear_util as lu
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
@@ -63,7 +62,6 @@ from jax._src.lax.utils import (
   standard_primitive)
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
@@ -1213,7 +1211,9 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
     fill_value: the value to fill the new array with.
     dtype: the type of the output array, or `None`. If not `None`, `fill_value`
       will be cast to `dtype`.
-    sharding: an optional sharding specification for the resulting array.
+    sharding: an optional sharding specification for the resulting array,
+    note, sharding will currently be ignored in jitted mode, this might change
+    in the future.
   """
   shape = canonicalize_shape(shape)
   if np.shape(fill_value):
@@ -1224,10 +1224,19 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
   weak_type = dtype is None and dtypes.is_weakly_typed(fill_value)
   dtype = dtypes.canonicalize_dtype(dtype or _dtype(fill_value))
   fill_value = _convert_element_type(fill_value, dtype, weak_type)
-  out = broadcast(fill_value, shape)
-  if sharding is not None:
-    return array.make_array_from_callback(shape, sharding, lambda idx: out[idx])
-  return out
+  # In tracing mode we can't set sharing explictly and PmapShardng is not
+  # supported.
+  # NB: Consider using with_sharding_constraint in jitted computation
+  # if needed?
+  if (sharding is not None and not isinstance(sharding, PmapSharding) and
+      isinstance(fill_value, array.ArrayImpl)):
+
+    broadcast_shape = sharding.shard_shape(shape)
+    shard = broadcast(fill_value, broadcast_shape)
+    return array.make_array_from_callback(shape, sharding, lambda _: shard)
+
+  return broadcast(fill_value, shape)
+
 
 
 def zeros_like_shaped_array(aval: ShapedArray) -> Array:
@@ -1370,7 +1379,10 @@ def full_like(x: ArrayLike | DuckTypedArray,
     shape: optional, a shape parameter for the output ndarray.
     sharding: an optional sharding specification for the resulting array.
       If not specified, the output will have the same sharding as the input,
-      so long as ``shape`` is also not specified.
+      with a few exceptions/limitations in particular:
+      1. Sharding is not available during tracing, thus this will rely on jit.
+      2. If x is weakly typed or uncomitted, will use default sharding.
+      3. Shape is not None and is different from x.shape, default will be used.
 
   Returns:
     An ndarray with the same shape as `x` with its entries set equal to
@@ -1381,19 +1393,20 @@ def full_like(x: ArrayLike | DuckTypedArray,
   dtype = dtype or _dtype(x)
   if dtypes.issubdtype(dtype, dtypes.extended):
     return dtype._rules.full(fill_shape, fill_value, dtype)  # type: ignore[union-attr]
+
+  use_x_sharding = (
+      sharding is None and
+      isinstance(x, array.ArrayImpl) and
+      not weak_type and x._committed and
+      # NB: consider reusng x.sharding for mismatched shapes
+      # if x is replicated or single device.
+      fill_shape == x.shape)
+  if use_x_sharding:
+    assert isinstance(x, array.ArrayImpl)   # makes pytype happy.
+    # TODO(yashkatariya): Use shard_alike in tracing_mode once it is supported.
+    sharding = x.sharding
   val = full(fill_shape, _convert_element_type(fill_value, dtype, weak_type),
              sharding=sharding)
-  # TODO(yashkatariya): Use shard_like in tracing mode too i.e. remove the
-  # ArrayImpl check.
-  if shape is None and sharding is None and isinstance(x, array.ArrayImpl):
-    if xla_extension_version < 227:
-      sharding = x.sharding  # type: ignore[union-attr]
-      if (not dispatch.is_single_device_sharding(sharding) and
-          not isinstance(sharding, PmapSharding)):
-        return array.make_array_from_callback(
-            type_cast(array.Shape, fill_shape), sharding, lambda idx: val[idx])
-    else:
-      return shard_alike.shard_alike(x, val)[1]
   return val
 
 

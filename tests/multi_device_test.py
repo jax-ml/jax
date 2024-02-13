@@ -15,6 +15,7 @@
 
 import os
 from unittest import SkipTest
+import tracemalloc as tm
 
 from absl.testing import absltest
 
@@ -285,6 +286,65 @@ class MultiDeviceTest(jtu.JaxTestCase):
     y = lax.full_like(x, 1, sharding=sharding)
     self.assertEqual(y.sharding, sharding)
 
+  def test_lax_full_like_same_device(self):
+    devices = self.get_devices()
+    x = jax.device_put(jnp.ones((100, 100)), devices[1])
+    y = lax.full_like(x, 1)
+    self.assertEqual(y.sharding, x.sharding)
+    self.assertEqual(y.sharding.device_set, {jax.devices()[1]})
+
+
+  def test_lax_full_like_custom_shape_sharded(self):
+    devices = [self.get_devices()]
+    mesh = Mesh(devices, axis_names=('i', 'j'))
+    sharding = NamedSharding(mesh, P('i', 'j'))
+    x = jnp.array(jnp.arange(8).reshape((1, 8)), dtype=jnp.int32)
+    x = jax.device_put(x, sharding)
+    y = lax.full_like(x, fill_value=1.0, shape=())
+    self.assertEqual(y.shape, ())
+
+  def test_lax_full_like_single_device(self):
+    devices = self.get_devices()
+    x = jax.device_put(jnp.ones((100, 100)), devices[1])
+    y = lax.full_like(x, fill_value=1.0, shape=())
+    self.assertEqual(y.shape, ())
+    # Currently if shape is provided the sharding will revert
+    # to default. This might change in the future and this test might
+    # need to be updated.
+    self.assertEqual(
+        y.sharding,
+        jax.sharding.SingleDeviceSharding(jax.devices()[0]))
+
+
+  def test_lax_full_like_efficient(self):
+    devices = self.get_devices()
+    if len(devices) < 4:
+      self.skipTest("test requires 4 devices")
+    mem_stats = devices[0].memory_stats()
+    if mem_stats is None:
+      self.skipTest('Only can run test on device with mem_stats')
+    mesh = Mesh(devices, axis_names=("i"))
+    sharding = NamedSharding(mesh, P('i'))
+    available_memory = mem_stats['bytes_reservable_limit']
+    array_size = available_memory // (6 * len(devices)) * len(devices)
+    # Set up tracemalloc to track memory usage.
+    tm.start()
+    x = lax.full([array_size], sharding=sharding, fill_value=1.0,
+                  dtype=jnp.float32)
+    y = lax.full_like(x, fill_value=1.0, dtype=jnp.float32)
+
+    # Wait until computation finished to ensure we are measuring the correct
+    # thing.
+    y.block_until_ready()
+    unused_current, peak = tm.get_traced_memory()
+    # Verify that we don't create large CPU arrays.
+    self.assertLess(peak, array_size // len(devices))
+
+    # Important: make sure that all jax computation in this part has finished
+    # before we can stop trace_malloc.
+    jax.effects_barrier()
+    tm.stop()
+    self.assertEqual(y.sharding, x.sharding)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
