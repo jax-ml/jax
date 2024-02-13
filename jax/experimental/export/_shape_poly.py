@@ -517,10 +517,21 @@ class _DimExpr:
       after, t_k_after = scope._normalization_rules.get(t, (None, 0))
       if after is not None and t_k % t_k_after == 0:
         # We have t*t_k_after -> after.
-        # We subtract `t*t_k` and add `c * (- (t_k // t_k_after))`.
+        # We subtract `t*t_k` and add `after * (- (t_k // t_k_after))`.
         _DimExpr.add_coeff(new_coeffs, t, - t_k)
         for t2, tc2 in after._monomials_sorted:
           _DimExpr.add_coeff(new_coeffs, t2, tc2 * (t_k // t_k_after))
+      elif t.degree > 1:  # A product of factors; look up individually
+        for f, fexp in t.items():
+          f_after, f_k_after = scope._normalization_rules.get(_DimMon({f: fexp}), (None, 0))
+          if f_after is not None and t_k % f_k_after == 0:
+            # We subtract `t*t_k`.
+            _DimExpr.add_coeff(new_coeffs, t, - t_k)
+            t_without_f = t.divide(_DimMon({f: fexp}))
+            # And add `(t // f**fexp) * f_after * (- (t_k // f_k_after))`
+            for t2, tc2 in f_after._monomials_sorted:
+              _DimExpr.add_coeff(new_coeffs, t2.mul(t_without_f), tc2 * (t_k // f_k_after))
+            break
     new_terms = _DimExpr._coeff_dict_to_terms(new_coeffs)
     if not new_terms: return 0
     if new_terms[0][0].degree == 0: return new_terms[0][1]
