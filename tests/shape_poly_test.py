@@ -1022,6 +1022,23 @@ class DimExprTest(jtu.JaxTestCase):
     # d <= max(d, a) == a + 3, thus d - a <= 3
     self.assertEqual(_bounds(d - b), (-np.inf, 3))
 
+  def test_constraints_eq_7(self):
+    # This came up in b/324989597
+    b, t = shape_poly.symbolic_shape(
+        "b, t",
+        constraints=(
+            "128 * b * floordiv(t + mod(-1*t, 128), 128) == b * t + b * mod(-1*t, 128)",))
+    t_ceil = t + (-t) % 128  # A multiple of 128, but hard to tell
+    self.assertEqual(128 * b * (t_ceil // 128), b * t_ceil)
+
+    b1, t1 = shape_poly.symbolic_shape(
+        "b1, t1",
+        constraints=(
+            "128 * floordiv(t1 + mod(-1*t1, 128), 128) == t1 + mod(-1*t1, 128)",))
+    t1_ceil = t1 + (-t1) % 128  # A multiple of 128, but hard to tell
+    self.assertEqual(128 * (t1_ceil // 128), t1_ceil)
+    self.assertEqual(128 * b1 * (t1_ceil // 128), b1 * t1_ceil)
+
   def test_constraints_eq_threefry(self):
     # Test equalities that arise out of the threefree lowering
     # x : i32[a]  # a may be even or odd
