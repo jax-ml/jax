@@ -37,6 +37,7 @@ from jax._src.pallas.mosaic.primitives import get_barrier_semaphore
 from jax._src.pallas.mosaic.primitives import make_async_copy
 from jax._src.pallas.mosaic.primitives import make_async_remote_copy
 from jax._src.pallas.mosaic.primitives import repeat
+from jax._src.pallas.mosaic.primitives import roll
 from jax._src.pallas.mosaic.primitives import run_scoped
 from jax._src.pallas.mosaic.primitives import semaphore_signal
 from jax._src.pallas.mosaic.primitives import semaphore_wait

@@ -105,6 +105,58 @@ trace_start_p = jax_core.Primitive('trace_start')
 trace_start_p.multiple_results = True
 
 
+roll_p = jax_core.Primitive("roll")
+
+
+def roll(
+    x,
+    shift: int,
+    axis: int,
+    *,
+    stride: int | None = None,
+    stride_axis: int | None = None,
+):
+  if shift < 0:
+    raise ValueError("shift must be non-negative.")
+  if axis < 0 or axis >= len(x.shape):
+    raise ValueError("axis is out of range.")
+  if (stride is None) != (stride_axis is None):
+    raise ValueError("stride and stride_axis must be both specified or not.")
+  if stride is not None and stride_axis is not None:
+    if stride < 0:
+      raise ValueError("stride must be non-negative.")
+    if stride_axis < 0 or stride_axis >= len(x.shape):
+      raise ValueError("stride_axis is out of range")
+    if axis == stride_axis:
+      raise ValueError("expected axis and stride_axis are different.")
+  return roll_p.bind(
+      x, shift=shift, axis=axis, stride=stride, stride_axis=stride_axis
+  )
+
+
+@roll_p.def_abstract_eval
+def _roll_abstract_eval(x, **_):
+  return jax_core.raise_to_shaped(x)
+
+
+def _roll_lowering_rule(
+    ctx: mlir.LoweringRuleContext, x, *, shift, axis, stride, stride_axis
+):
+  def _roll(x):
+    if stride is None:
+      return jnp.roll(x, shift, axis)
+    outputs = [
+        jnp.roll(xs, shift + i * stride, axis)
+        for i, xs in enumerate(jnp.split(x, x.shape[stride_axis], stride_axis))
+    ]
+    return jnp.concatenate(outputs, stride_axis)
+
+  return mlir.lower_fun(_roll, multiple_results=False)(ctx, x)
+
+
+mlir.register_lowering(roll_p, _roll_lowering_rule)
+
+
 @trace_start_p.def_impl
 def _trace_start_impl(*, message: str, level: int):
   del message, level
