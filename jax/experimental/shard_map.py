@@ -279,8 +279,8 @@ def _spec_divisibility_error(
   msg = (f"shard_map applied to the function '{fun_name}' was given argument "
          f"arrays with axis sizes that are not evenly divisible by the "
          f"corresponding mesh axis sizes:\n\n"
-         f"The mesh given has shape {mesh.device_ids.shape} with corresponding "
-         f"axis names {mesh.axis_names}.\n\n"
+         f"The mesh given has shape {tuple(mesh.shape.values())} with "
+         f"corresponding axis names {mesh.axis_names}.\n\n"
          + '\n\n'.join(msgs) + '\n\n' +
          f"Array arguments' axis sizes must be evenly divisible by the mesh "
          f"axis or axes indicated by the corresponding elements of the "
@@ -316,8 +316,8 @@ def _inout_rep_error(f: Callable, mesh: Mesh, tree: PyTreeDef, specs: Specs,
   msg = (f"shard_map applied to the function '{fun_name}' was given "
          f"out_specs which require replication which can't be statically "
          f"inferred given the mesh:\n\n"
-         f"The mesh given has shape {mesh.device_ids.shape} with corresponding "
-         f"axis names {mesh.axis_names}.\n\n"
+         f"The mesh given has shape {tuple(mesh.shape.values())} with "
+         f"corresponding axis names {mesh.axis_names}.\n\n"
          + '\n\n'.join(msgs) + '\n\n' +
          "Check if these output values are meant to be replicated over those "
          "mesh axes. If not, consider revising the corresponding out_specs "
