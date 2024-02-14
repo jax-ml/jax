@@ -22,9 +22,8 @@ import jax.numpy as jnp
 from jax._src import prng
 from jax._src import test_util as jtu
 from jax.experimental.key_reuse._common import (
-  assert_consumed, assert_unconsumed, consume, consume_p, unconsumed_copy_p)
-from jax.experimental.key_reuse import (
-  _forwarding, _simple, KeyReuseError, unconsumed_copy)
+  assert_consumed, assert_unconsumed, consume, consume_p)
+from jax.experimental.key_reuse import _forwarding, _simple, KeyReuseError
 
 from jax import config
 config.parse_flags_with_absl()
@@ -36,7 +35,7 @@ key1D = jax.eval_shape(lambda key: key[None], key)
 
 primitives_with_static_signatures = {
   consume_p: (consume, key),
-  unconsumed_copy_p: (unconsumed_copy, key),
+  prng.reuse_key_p: (prng.reuse_key, key),
   prng.random_bits_p: (jax.random.bits, key),
   prng.random_fold_in_p: (jax.random.fold_in, key, 2),
   prng.random_seed_p: (jax.random.key, 0),
@@ -91,12 +90,12 @@ class KeyReuseUnitTestSimple(jtu.JaxTestCase):
       assert_consumed(key2)
     self.check_key_reuse(f, jax.random.key(0))
 
-  def test_unconsumed_copy(self):
+  def test_reuse_key(self):
     def f(key):
       assert_unconsumed(key)
       consume(key)
       assert_consumed(key)
-      key2 = unconsumed_copy(key)
+      key2 = prng.reuse_key(key)
       assert_unconsumed(key2)
     self.check_key_reuse(f, jax.random.key(0))
 
@@ -337,12 +336,12 @@ class KeyReuseUnitTestWithForwarding(jtu.JaxTestCase):
       assert_consumed(key2)
     self.check_key_reuse(f, jax.random.key(0))
 
-  def test_unconsumed_copy(self):
+  def test_reuse_key(self):
     def f(key):
       assert_unconsumed(key)
       consume(key)
       assert_consumed(key)
-      key2 = unconsumed_copy(key)
+      key2 = prng.reuse_key(key)
       assert_unconsumed(key2)
     self.check_key_reuse(f, jax.random.key(0))
 

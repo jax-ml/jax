@@ -62,17 +62,6 @@ def consume(key):
   """Consume the key and return a consumed copy."""
   return consume_p.bind(key)
 
-unconsumed_copy_p = core.Primitive("unconsumed_copy")
-unconsumed_copy_p.def_impl(lambda x: x)
-unconsumed_copy_p.def_abstract_eval(lambda x: x)
-batching.defvectorized(unconsumed_copy_p)
-mlir.register_lowering(
-    unconsumed_copy_p,
-    mlir.lower_fun(lambda x: x, multiple_results=False))
-
-def unconsumed_copy(key):
-  """Return a copy of key marked as unconsumed."""
-  return unconsumed_copy_p.bind(key)
 
 assert_consumed_value_p = core.Primitive("assert_consumed_value")
 assert_consumed_value_p.def_impl(lambda x, *, value: x)
