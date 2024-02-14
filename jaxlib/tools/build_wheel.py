@@ -339,7 +339,6 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, include_gpu_plugin_extensi
       dst_dir=triton_dir,
       src_files=[
           "__main__/jaxlib/triton/__init__.py",
-          "__main__/jaxlib/triton/compat.py",
           "__main__/jaxlib/triton/dialect.py",
       ],
   )

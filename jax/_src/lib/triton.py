@@ -16,10 +16,8 @@
 
 from typing import Any
 
-compat: Any = None
 dialect: Any = None
 try:
-  from jaxlib.triton import compat  # pytype: disable=import-error
   from jaxlib.triton import dialect  # pytype: disable=import-error
 except ImportError:
   # TODO(slebedev): Switch to a jaxlib version guard, once Triton bindings

@@ -70,7 +70,6 @@ py_library_providing_imports_info(
         "//jaxlib/mlir:vector_dialect",
         "//jaxlib/mosaic",
         "//jaxlib/triton",
-        "//jaxlib/triton:compat",
     ],
 )
 
