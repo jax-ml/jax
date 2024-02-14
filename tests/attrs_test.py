@@ -39,6 +39,8 @@ zip, unsafe_zip = safe_zip, zip
 class Thing:
   x: float
 
+attrs.register(Thing)
+
 class AttrsTest(jtu.JaxTestCase):
 
   @parameterized.parameters([True, False])
@@ -207,6 +209,22 @@ class AttrsTest(jtu.JaxTestCase):
 
     jax.grad(double_it_10)(1.0)
     self.assertAllClose(thing.x, 1024., check_dtypes=False)
+
+  def test_arg_to_jit(self):
+    thing = Thing(1.0)
+    count = 0
+
+    @jax.jit
+    def f(obj, x):
+      nonlocal count
+      count += 1
+      jax_setattr(obj, 'x', x)
+
+    f(thing, 2.0)  # don't crash!
+    self.assertAllClose(thing.x, 2.0, check_dtypes=False)
+    f(thing, 3.0)
+    self.assertAllClose(thing.x, 3.0, check_dtypes=False)
+    self.assertEqual(count, 1)
 
 
 class AttrsJVPTest(jtu.JaxTestCase):

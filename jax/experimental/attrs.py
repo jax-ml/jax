@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 from jax._src import core
+from jax._src import api_util
 from jax._src import linear_util as lu
 from jax._src.api_util import flatten_fun_nokwargs
 from jax._src.interpreters import ad
@@ -25,6 +26,8 @@ from jax._src.tree_util import tree_flatten, tree_unflatten
 from jax._src.util import unzip2
 
 JaxVal = Any
+
+register = api_util.register_class_with_attrs
 
 class GetAttrPrimitive(core.Primitive):
   def bind_with_trace(self, trace, args, params):
