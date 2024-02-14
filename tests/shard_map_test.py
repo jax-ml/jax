@@ -137,6 +137,28 @@ class ShardMapTest(jtu.JaxTestCase):
     for i, a_shard in enumerate(np.split(a, 2, axis=0)):
       self.assertAllClose(d.addressable_data(i), a_shard)
 
+  def test_all_gather_with_axis_index_groups(self):
+    mesh, a, _ = create_inputs(P('x', ('y', 'z')), P(None, None))
+
+    @jax.jit
+    @partial(
+        shard_map,
+        mesh=mesh,
+        in_specs=(P('x', ('y', 'z')),),
+        out_specs=P('x', ('y', 'z')),
+    )
+    def fwd(a):
+      return lax.all_gather(
+          a, ('y', 'z'), axis_index_groups=((0, 1), (2, 3)), axis=-1, tiled=True
+      )
+
+    c = fwd(a)
+    self.assertEqual(c.addressable_data(0).shape, (4, 4))
+    for i, row_block in enumerate(np.split(a, 2, axis=0)):
+      for j, block in enumerate(np.split(row_block, 2, axis=-1)):
+        self.assertAllClose(c.addressable_data(4 * i + 2 * j), block)
+        self.assertAllClose(c.addressable_data(4 * i + 2 * j + 1), block)
+
   def test_matmul_partial(self):
     raise unittest.SkipTest("invalid replication asserted by out_spec?")
 
@@ -174,6 +196,39 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertAllClose(expected, c)
     self.assertEqual(d.addressable_data(0).shape, (1, 8))
     self.assertAllClose(expected[:4] + expected[4:], d)
+
+  def test_reduce_scatter_with_axis_index_groups(self):
+    axis_index_groups = ((0, 2, 4, 6), (1, 3, 5, 7))
+    mesh, a, _ = create_inputs(P(None, ('x', 'y', 'z')), P(None, None))
+    assert a.addressable_data(0).shape == (8, 1)
+
+    @jax.jit
+    @partial(
+        shard_map,
+        mesh=mesh,
+        in_specs=(P(None, ('x', 'y', 'z')),),
+        out_specs=P(None, ('x', 'y', 'z')),
+    )
+    def fwd(a):
+      return lax.psum_scatter(
+          a,
+          ('x', 'y', 'z'),
+          scatter_dimension=0,
+          axis_index_groups=axis_index_groups,
+          tiled=True,
+      )
+
+    c = fwd(a)
+
+    self.assertEqual(c.addressable_data(0).shape, (2, 1))
+
+    sum_of_even_columns = np.sum(a[..., axis_index_groups[0]], -1)
+    for i, sums in enumerate(np.split(sum_of_even_columns, 4, 0)):
+      self.assertAllClose(np.squeeze(c.addressable_data(2 * i), -1), sums)
+
+    sum_of_odd_columns = np.sum(a[..., axis_index_groups[1]], -1)
+    for i, sums in enumerate(np.split(sum_of_odd_columns, 4, 0)):
+      self.assertAllClose(np.squeeze(c.addressable_data(2 * i + 1), -1), sums)
 
   def test_collective_permute(self):
     devices = np.array(jax.devices()[:8]) # Take up to 8 devices
@@ -265,6 +320,44 @@ class ShardMapTest(jtu.JaxTestCase):
 
     c = fwd(a)
     assert (c == jnp.reshape(a.T, (1, 64))).all()
+
+  def test_all_to_all_with_axis_index_groups(self):
+    mesh_axes = dict(x=4)
+    devices = np.array(jax.devices()[: np.prod(tuple(mesh_axes.values()))])
+    mesh = Mesh(
+        devices.reshape(tuple(mesh_axes.values())),
+        axis_names=tuple(mesh_axes.keys()),
+    )
+    a = jax.device_put(
+        jnp.arange(4 * 4).reshape((4, 4)),
+        jax.sharding.NamedSharding(mesh, P('x', None)),
+    )
+    self.assertEqual(a.addressable_data(0).shape, (1, 4))
+
+    @jax.jit
+    @partial(
+        shard_map,
+        mesh=mesh,
+        in_specs=(P('x', None),),
+        out_specs=P(None, 'x'),
+    )
+    def fwd(a):
+      return lax.all_to_all(
+          a,
+          'x',
+          split_axis=1,
+          concat_axis=0,
+          axis_index_groups=((0, 1), (2, 3)),
+          tiled=True,
+      )
+
+    c = fwd(a)
+
+    # Each shard corresponds to a quadrant rather than a row.
+    self.assertEqual(c.addressable_data(0).shape, (2, 2))
+    for i, row_block in enumerate(np.split(a, 2, axis=0)):
+      for j, block in enumerate(np.split(row_block, 2, axis=-1)):
+        self.assertAllClose(block, c.addressable_data(2 * i + j))
 
   def test_eager_repr(self):
     mesh = Mesh(np.array(jax.devices()[:4]).reshape(2, 2), ('x', 'y'))

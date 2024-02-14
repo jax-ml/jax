@@ -923,7 +923,6 @@ def _standard_collective_check(prim, mesh, x_rep, *, axis_name, **params):
 
 def _standard_collective_rewrite(prim, mesh, in_rep, x, axis_name, **params):
   # The standard collective rewrite may insert a pbroadcast on the input.
-  if params.get('axis_index_groups') is not None: raise NotImplementedError
   axis_name = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
   x_rep, = in_rep
   axis_name_set = set(axis_name)
