@@ -18,7 +18,7 @@ from collections.abc import Iterable, Sequence
 import inspect
 import operator
 from functools import partial
-from typing import Any, Callable
+from typing import Any, Callable, Type
 import warnings
 
 import numpy as np
@@ -675,3 +675,27 @@ def debug_info_final(f: lu.WrappedFun, dbg: TracingDebugInfo | None,
   assert dbg.result_paths is None
   res_paths_ = HashableFunction(res_paths, closure=())
   return lu.add_debug_info(f, dbg._replace(result_paths=res_paths_))
+
+
+def hoist_obj_attrs(f, flat_args):
+  idxs, objs, flat_args_ = [], [], []
+  for i, x in enumerate(flat_args):
+    if type(x) in _class_with_attrs:
+      objs.append(_HashableByObjectId(x))
+    else:
+      idxs.append(i)
+      flat_args_.append(x)
+  return _argnums_partial(f, tuple(idxs), tuple(objs)), flat_args_
+
+class _HashableByObjectId:
+  __slots__ = ['val']
+  def __init__(self, val):
+    self.val = val
+  def __hash__(self):
+    return id(self.val)
+  def __eq__(self, other):
+    return self.val is other.val
+
+def register_class_with_attrs(t: Type) -> None:
+  _class_with_attrs.add(t)
+_class_with_attrs: set[Type] = set()

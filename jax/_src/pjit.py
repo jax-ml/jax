@@ -44,7 +44,8 @@ from jax._src import xla_bridge as xb
 from jax._src.api_util import (
     argnums_partial_except, flatten_axes, flatten_fun, flatten_fun_nokwargs,
     donation_vector, shaped_abstractify, check_callable, resolve_argnums,
-    argnames_partial_except, debug_info, result_paths, jaxpr_debug_info)
+    argnames_partial_except, debug_info, result_paths, jaxpr_debug_info,
+    hoist_obj_attrs)
 from jax._src.errors import JAXTypeError
 from jax._src.interpreters import partial_eval as pe
 from jax._src.partition_spec import PartitionSpec
@@ -426,13 +427,13 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
   dbg = debug_info(jit_name, fun, args, kwargs, static_argnums, static_argnames)
   f = lu.wrap_init(fun)
   f, res_paths = result_paths(f)
-  f, dyn_args = argnums_partial_except(f, static_argnums, args,
-                                       allow_invalid=True)
+  f, dyn_args = argnums_partial_except(f, static_argnums, args, allow_invalid=True)
   del args
 
   f, dyn_kwargs = argnames_partial_except(f, static_argnames, kwargs)
   explicit_args, in_tree = tree_flatten((dyn_args, dyn_kwargs))
   flat_fun, out_tree = flatten_fun(f, in_tree)
+  flat_fun, explicit_args = hoist_obj_attrs(flat_fun, explicit_args)
 
   if (donate_argnums or donate_argnames) and not config.debug_nans.value:
     donated_invars = donation_vector(
@@ -918,7 +919,9 @@ def _process_in_axis_resources(in_shardings_thunk, in_layouts_thunk, in_avals,
     in_layouts_flat = flatten_axis_resources(
         "pjit in_layouts", in_tree, in_layouts, tupled_args=True)
 
-  if not config.dynamic_shapes.value:
+  # TODO(dougalm,mattjj): enable debug info with attrs_tracked
+  attrs_tracked = debug_info and len(debug_info.arg_names) != len(in_avals)
+  if not config.dynamic_shapes.value and not attrs_tracked:
     pjit_check_aval_sharding(in_shardings_flat, in_avals,
                              None if debug_info is None else debug_info.arg_names,
                              "pjit arguments", allow_uneven_sharding=False)
@@ -936,7 +939,8 @@ def explain_tracing_cache_miss(
 
   def unpack(key):
     transforms, (), _, (in_type, debug_info, _, inline), *_, ctx = key
-    (_, (in_tree,)), (_, ()) = transforms
+    # TODO(dougalm,mattjj): enable cache miss explanation with attrs
+    _, (_, (in_tree,)), (_, ()) = transforms
     return in_tree, in_type, debug_info, inline.val, ctx
   in_tree, in_type, debug_info, inline, ctx = unpack(key)
   if inline: return
