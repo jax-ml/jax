@@ -180,26 +180,37 @@ class DimExprTest(jtu.JaxTestCase):
   a, b = shape_poly.symbolic_shape("a, b")
 
   @jtu.parameterized_filterable(
-    kwargs=[
-      dict(testcase_name=f"_{dim_spec}",
-           dim_spec=dim_spec, dim_poly=dim_poly)
-      for dim_spec, dim_poly in [
-          ("2*a*b", 2 * a * b),
-          ("-2 * a^2 * b + b^2", -2 * a * a * b + b * b),
-          ("-2 * a^2 * b + -1 *b^2*a", -2 * a * a * b - a * b * b),
-          ("3 * a * b * a + -2", 3 * a * b * a - 2),
-          ("a + 1 ,", a + 1),
-          ("a - 1", a - 1),
-          ("a + -1", a - 1),
-          ("3 * a * mod(a + 2, b + 2)", 3 * a * ((a + 2) % (b + 2))),
-          ("3 * floordiv(a + 2, b + 2) * 2", 3 * ((a + 2) // (b + 2)) * 2),
-          # Keep for backwards compatibility. We ought to be able to parse
-          # non_negative
-          ("non_negative(a - 2)", "build_inside"),
-          ("max(a, b)", "build_inside"),
-          ("min(a, b)", "build_inside"),
+      kwargs=[
+          dict(testcase_name=f"_{dim_spec}",
+               dim_spec=dim_spec, dim_poly=dim_poly, expected_str=expected_str)
+          for dim_spec, dim_poly, expected_str in [
+              ("2*b*a", 2 * a * b, "2*a*b"),
+              ("-2 * b * a^2 + b^2", -2 * a * a * b + b * b,
+               "- 2*a^2*b + b^2"),
+              ("-2 * a^2 * b + -1 *b^2*a", -2 * a * a * b - a * b * b,
+               "- a*b^2 - 2*a^2*b"),
+              ("3 * a * b * a - 2", 3 * a * b * a - 2,
+               "3*a^2*b - 2"),
+              ("a - b", a - b, "- b + a"),
+              ("b - a", b - a, "b - a"),
+              ("-1 * a", -a, "- a"),
+              ("-2*a", -2 * a, "- 2*a"),
+              ("a + -1", a - 1, "a - 1"),
+              ("a + 1 ,", a + 1, "a + 1"),
+              ("a - 1", a - 1, "a - 1"),
+              ("+ a - b", a - b, "- b + a"),
+              ("+ 2", 2, "2"),
+              ("3 * a * mod(a + 2, b + 2)", 3 * a * ((a + 2) % (b + 2)),
+               "3*a*mod(a + 2, b + 2)"),
+              ("3 * floordiv(a + 2, b + 2) * 2", 3 * ((a + 2) // (b + 2)) * 2,
+               "6*floordiv(a + 2, b + 2)"),
+              # Keep for backwards compatibility. We ought to be able to parse
+              # non_negative
+              ("non_negative(a - 2)", "build_inside", "max(a - 2, 0)"),
+              ("max(a, b)", "build_inside", "max(a, b)"),
+              ("min(a, b)", "build_inside", "min(a, b)"),
   ]])
-  def test_parse_dim(self, dim_spec, dim_poly):
+  def test_parse_dim(self, dim_spec, dim_poly, expected_str):
     if dim_spec == "non_negative(a - 2)":
       dim_poly = core.non_negative_dim(DimExprTest.a - 2)
     elif dim_spec == "max(a, b)":
@@ -208,9 +219,10 @@ class DimExprTest(jtu.JaxTestCase):
       dim_poly = core.min_dim(DimExprTest.a, DimExprTest.b)
 
     self.assertEqual((dim_poly,), shape_poly.symbolic_shape(dim_spec,
-                                                            scope=dim_poly.scope))
-    self.assertEqual((dim_poly,), shape_poly.symbolic_shape(str(dim_poly),
-                                                            scope=dim_poly.scope))
+                                                            scope=DimExprTest.a.scope))
+    self.assertEqual(expected_str, str(dim_poly))
+    self.assertEqual((dim_poly,), shape_poly.symbolic_shape(expected_str,
+                                                            scope=DimExprTest.a.scope))
 
   @jtu.parameterized_filterable(
       kwargs=[
@@ -223,9 +235,9 @@ class DimExprTest(jtu.JaxTestCase):
               "mod(a, 4) + floordiv(a, 4) + a",
               "2*a^2 - 3*a - 1",
               "a^2 + 3*a - 1",
-              "-1*a + 3",
-              "-1*mod(a, 4) + 3",
-              "-2*a + 3",
+              "- a + 3",
+              "- mod(a, 4) + 3",
+              "- 2*a + 3",
               "a*floordiv(b, 8)*mod(b, 4)",
           ]
       ]
@@ -1637,7 +1649,7 @@ class ShapePolyTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        re.escape("Expected '-1*a + 4' to be greater or equal to 0, but found -1")):
+        re.escape("Expected '- a + 4' to be greater or equal to 0, but found -1")):
       export.call_exported(exp)(np.arange(5, dtype=np.int32))
 
   def test_caching_with_scopes(self):
