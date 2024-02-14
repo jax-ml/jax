@@ -78,6 +78,7 @@ SortedTerms = Sequence[tuple["_DimMon", int]]
 # a mapping of `t` to `(e, tk)`.
 NormalizationRules = dict["_DimMon", tuple["_DimExpr", int]]
 
+
 class InconclusiveDimensionOperation(core.InconclusiveDimensionOperation):
   """Raised when we cannot conclusively compute with symbolic dimensions."""
 
@@ -655,15 +656,18 @@ class _DimExpr:
 
   def __str__(self):
     def _one_monomial(mon, c):
+      abs_c = abs(c)
+      sgn_c = "+" if c > 0 else "-"
       if mon.degree == 0:
-        return str(c)
-      if c == 1:
-        return str(mon)
-      return f"{c}*{mon}"
+        return f"{sgn_c} {abs_c}" if abs_c != 0 else "0"
+      if abs_c == 1:
+        return f"{sgn_c} {mon}"
+      return f"{sgn_c} {abs_c}*{mon}"
     # We print first the "larger" monomials, so that the constant is last.
-    res = " + ".join(_one_monomial(mon, c)
-                     for mon, c in self._monomials_sorted)
-    res = res.replace(" + -", " - ").replace(" - 1*", " - ")
+    res = " ".join(_one_monomial(mon, c)
+                   for mon, c in self._monomials_sorted)
+    if res[0:2] == "+ ":
+      res = res[2:]
     return res
 
   def __repr__(self):
@@ -1613,7 +1617,11 @@ class _Parser:
 
   def expr(self, tok: tokenize.TokenInfo) -> tuple[DimSize, tokenize.TokenInfo]:
     # A sum of monomials
-    next_m_negated = False
+    next_m_negated = (tok.exact_type == tokenize.MINUS)
+    if next_m_negated:
+      tok = self.next_tok()
+    elif tok.exact_type == tokenize.PLUS:
+      tok = self.next_tok()
     acc = None
     while True:
       m, tok = self.mon(tok)
