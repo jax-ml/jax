@@ -341,6 +341,28 @@ class PallasCallDynamicGridTest(PallasTPUTest):
         dynamic_kernel(jnp.int32(4)), np.full(shape, 8.0, np.float32)
     )
 
+  # TODO(apaszke): Add tests for scalar_prefetch too
+  def test_dynamic_grid_scalar_input(self):
+    shape = (8, 128)
+    result_ty = jax.ShapeDtypeStruct(shape, jnp.float32)
+
+    def kernel(scalar_input_ref, output_ref):
+      output_ref[...] = jnp.full_like(output_ref, scalar_input_ref[0, 0])
+
+    @jax.jit
+    def dynamic_kernel(steps):
+      return self.pallas_call(
+          kernel,
+          out_shape=result_ty,
+          in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+          out_specs=pl.BlockSpec(lambda i: (0, 0), shape),
+          grid=(steps * 2,),
+      )(jnp.array([[42]], dtype=jnp.int32))
+
+    np.testing.assert_array_equal(
+        dynamic_kernel(jnp.int32(4)), np.full(shape, 42.0, np.float32)
+    )
+
   def test_vmap_trivial_dynamic_grid(self):
     shape = (8, 128)
     result_ty = jax.ShapeDtypeStruct(shape, jnp.float32)
