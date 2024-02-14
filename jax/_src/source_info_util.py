@@ -216,6 +216,13 @@ class _SourceInfoContext(threading.local):
 
 _source_info_context = _SourceInfoContext()
 
+
+def current_traceback() -> Traceback:
+  # Similar to current(), but avoids allocating a SourceInfo if you just need
+  # the traceback.
+  tb = _source_info_context.context.traceback
+  return xla_client.Traceback.get_traceback() if tb is None else tb
+
 def current() -> SourceInfo:
   source_info = _source_info_context.context
   if not source_info.traceback:

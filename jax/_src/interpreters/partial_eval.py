@@ -224,7 +224,10 @@ class JaxprTrace(Trace['JaxprTracer']):
     avals = [t.aval for t in tracers]
     out_aval, effects = primitive.abstract_eval(*avals, **params)
     name_stack = self._current_truncated_name_stack()
-    source = source_info_util.current().replace(name_stack=name_stack)
+    source = source_info_util.SourceInfo(
+        traceback=source_info_util.current_traceback(),
+        name_stack=name_stack,
+    )
     if primitive.multiple_results:
       out_tracers = [JaxprTracer(self, PartialVal.unknown(aval), None)
                      for aval in out_aval]
