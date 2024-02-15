@@ -41,6 +41,7 @@ from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, tree_structure, tree_transpose,
     tree_leaves, Partial, PyTreeDef, all_leaves, keystr, broadcast_prefix,
     prefix_errors, generate_key_paths)
+from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -60,7 +61,8 @@ from jax._src.api_util import (
     argnums_partial_except, flatten_axes, donation_vector,
     rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
     shaped_abstractify, _ensure_str_tuple, apply_flat_fun_nokwargs,
-    check_callable, debug_info, result_paths, flat_out_axes, debug_info_final)
+    check_callable, debug_info, result_paths, flat_out_axes, debug_info_final,
+    fun_sourceinfo)
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
@@ -304,12 +306,16 @@ def jit(
         fun, in_shardings, out_shardings, donate_argnums, donate_argnames,
         static_argnums, static_argnames, device, backend, abstracted_axes)
 
+  fun_sourceinfo = api_util.fun_sourceinfo(fun)
+  fun_signature = api_util.fun_signature(fun)
+
   def infer_params(*args, **kwargs):
     # TODO(yashkatariya): Remove this when it's added on jit.
     in_layouts = kwargs.pop('_in_layouts', None)
     out_layouts = kwargs.pop('_out_layouts', None)
     pjit_info_args = pjit.PjitInfo(
-        fun=fun, in_shardings=in_shardings,
+        fun=fun, fun_sourceinfo=fun_sourceinfo, fun_signature=fun_signature,
+        in_shardings=in_shardings,
         out_shardings=out_shardings, static_argnums=static_argnums,
         static_argnames=static_argnames, donate_argnums=donate_argnums,
         donate_argnames=donate_argnames, device=device, backend=backend,
@@ -1651,7 +1657,11 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
   if in_devices is not None and len(in_devices) == 0:
     raise ValueError("'devices' argument to pmap must be non-empty, or None.")
 
-  dbg = debug_info('pmap', fun, args, kwargs, static_broadcasted_tuple, ())
+  src = fun_sourceinfo(fun)
+  signature = api_util.fun_signature(fun)
+
+  dbg = debug_info('pmap', src, signature, args, kwargs,
+                   static_broadcasted_tuple, ())
 
   f = lu.wrap_init(fun)
   if static_broadcasted_tuple:

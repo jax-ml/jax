@@ -612,15 +612,23 @@ def api_hook(fun, tag: str):
   return fun
 
 
-def debug_info(traced_for: str, fun: Callable, args: tuple[Any],
-               kwargs: dict[str, Any], static_argnums: tuple[int, ...],
-               static_argnames: tuple[str, ...]) -> TracingDebugInfo | None:
+def debug_info(
+  traced_for: str, src: str | None, fun_signature: inspect.Signature | None,
+  args: tuple[Any], kwargs: dict[str, Any], static_argnums: tuple[int, ...],
+  static_argnames: tuple[str, ...]
+) -> TracingDebugInfo | None:
   """Try to build trace-time debug info for fun when applied to args/kwargs."""
-  src = fun_sourceinfo(fun)
-  arg_names = _arg_names(fun, args, kwargs, static_argnums, static_argnames)
+  arg_names = _arg_names(fun_signature, args, kwargs, static_argnums,
+                         static_argnames)
   if src is None or arg_names is None:
     return None
   return TracingDebugInfo(traced_for, src, arg_names, None)
+
+def fun_signature(fun: Callable) -> inspect.Signature | None:
+  try:
+    return inspect.signature(fun)
+  except (ValueError, TypeError):
+    return None
 
 # TODO(mattjj): make this function internal to this module
 def fun_sourceinfo(fun: Callable) -> str | None:
@@ -634,15 +642,16 @@ def fun_sourceinfo(fun: Callable) -> str | None:
   except AttributeError:
     return None
 
-def _arg_names(fn, args, kwargs, static_argnums, static_argnames,
+def _arg_names(fn_signature, args, kwargs, static_argnums, static_argnames,
                ) -> tuple[str, ...] | None:
+  if fn_signature is None: return None
   static = object()
   static_argnums_ = _ensure_inbounds(True, len(args), static_argnums)
   static_argnames_ = set(static_argnames)
   args_ = [static if i in static_argnums_ else x for i, x in enumerate(args)]
   kwargs = {k:static if k in static_argnames_ else x for k, x in kwargs.items()}
   try:
-    ba = inspect.signature(fn).bind(*args_, **kwargs)
+    ba = fn_signature.bind(*args_, **kwargs)
   except (ValueError, TypeError):
     return None
   return tuple(f'{name}{keystr(path)}' for name, x in ba.arguments.items()

@@ -17,6 +17,7 @@ from __future__ import annotations
 from collections.abc import Sequence, Iterable
 import dataclasses
 from functools import partial, lru_cache
+import inspect
 import itertools as it
 import logging
 import operator as op
@@ -28,6 +29,7 @@ import warnings
 import numpy as np
 
 from jax._src import api
+from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
@@ -384,6 +386,8 @@ def _pjit_explicit_sharding(in_shardings, out_shardings, device,
 
 class PjitInfo(NamedTuple):
   fun: Callable
+  fun_sourceinfo: str | None
+  fun_signature: inspect.Signature
   in_shardings: Any
   out_shardings: Any
   static_argnums: tuple[int, ...]
@@ -401,7 +405,8 @@ class PjitInfo(NamedTuple):
 
 
 def common_infer_params(pjit_info_args, *args, **kwargs):
-  (fun, user_in_shardings, user_out_shardings, static_argnums, static_argnames,
+  (fun, fun_sourceinfo, fun_signature, user_in_shardings, user_out_shardings,
+   static_argnums, static_argnames,
    donate_argnums, donate_argnames, device, backend, keep_unused, inline,
    resource_env, abstracted_axes, in_layouts, out_layouts) = pjit_info_args
 
@@ -424,7 +429,8 @@ def common_infer_params(pjit_info_args, *args, **kwargs):
 
   jit_name = 'jit' if resource_env is None else 'pjit'
 
-  dbg = debug_info(jit_name, fun, args, kwargs, static_argnums, static_argnames)
+  dbg = debug_info(jit_name, fun_sourceinfo, fun_signature, args, kwargs,
+                   static_argnums, static_argnames)
   f = lu.wrap_init(fun)
   f, res_paths = result_paths(f)
   f, dyn_args = argnums_partial_except(f, static_argnums, args, allow_invalid=True)
@@ -767,6 +773,9 @@ def pjit(
        fun, in_shardings, out_shardings, donate_argnums, donate_argnames,
        static_argnums, static_argnames, device, backend, abstracted_axes)
 
+  fun_sourceinfo = api_util.fun_sourceinfo(fun)
+  fun_signature = api_util.fun_signature(fun)
+
   def infer_params(*args, **kwargs):
     # Putting this outside of wrapped would make resources lexically scoped
     resource_env = mesh_lib.thread_resources.env
@@ -775,7 +784,10 @@ def pjit(
     in_layouts = kwargs.pop('_in_layouts', None)
     out_layouts = kwargs.pop('_out_layouts', None)
     pjit_info_args = PjitInfo(
-          fun=fun, in_shardings=in_shardings,
+          fun=fun,
+          fun_sourceinfo=fun_sourceinfo,
+          fun_signature=fun_signature,
+          in_shardings=in_shardings,
           out_shardings=out_shardings, static_argnums=static_argnums,
           static_argnames=static_argnames, donate_argnums=donate_argnums,
           donate_argnames=donate_argnames, device=device, backend=backend,
