@@ -491,7 +491,7 @@ def traverse_jaxpr_params(f, params):
           if type(p) in (Jaxpr, ClosedJaxpr)}
 
 
-def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True):
+def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[Any]:
   def read(v: Atom) -> Any:
     return v.val if isinstance(v, Literal) else env[v]
 
