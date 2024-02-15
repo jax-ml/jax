@@ -3011,7 +3011,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jax.jvp(lambda idx: jnp.split(jnp.zeros((12, 2)), idx),
             (2.,), (1.,))
     # A tuple including a concrete tracer -> no error
-    jax.jvp(lambda idx: jnp.split(jnp.zeros((12, 2)), (1, idx)),
+    jax.jvp(lambda idx: jnp.split(jnp.zeros((12, 2)), (1, idx.astype(np.int32))),
             (2.,), (1.,))
 
   @jtu.sample_product(
