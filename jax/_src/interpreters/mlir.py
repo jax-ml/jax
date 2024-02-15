@@ -269,11 +269,11 @@ def ir_constant(val: Any) -> ir.Value:
   return values[0]
 
 
-def _numpy_array_constant(x: np.ndarray) -> Sequence[ir.Value]:
+def _numpy_array_constant(x: np.ndarray | np.generic) -> Sequence[ir.Value]:
   element_type = dtype_to_ir_type(x.dtype)
   shape = x.shape
   if x.dtype == np.bool_:
-    x = np.packbits(x, bitorder='little')
+    x = np.packbits(x, bitorder='little')  # type: ignore
   x = np.ascontiguousarray(x)
   attr = ir.DenseElementsAttr.get(x, type=element_type, shape=shape)
   return (hlo.constant(attr),)
@@ -285,7 +285,7 @@ def _masked_array_constant_handler(*args, **kwargs):
 
 register_constant_handler(np.ma.MaskedArray, _masked_array_constant_handler)
 
-def _ndarray_constant_handler(val: np.ndarray) -> Sequence[ir.Value]:
+def _ndarray_constant_handler(val: np.ndarray | np.generic) -> Sequence[ir.Value]:
   """Constant handler for ndarray literals, handling zero-size strides.
 
   In most cases this function calls _numpy_array_constant(val) except it has
@@ -302,7 +302,7 @@ def _ndarray_constant_handler(val: np.ndarray) -> Sequence[ir.Value]:
     An XLA ComputationDataHandle / XlaOp representing the constant ndarray
     staged into the XLA Computation.
   """
-  if dtypes.result_type(val) == dtypes.float0:
+  if val.dtype == dtypes.float0:
     return _numpy_array_constant(np.zeros(val.shape, dtype=np.bool_))
   elif np.any(np.equal(0, val.strides)) and val.size > 0:
     zero_stride_axes, = np.where(np.equal(0, val.strides))
