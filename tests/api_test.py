@@ -2617,6 +2617,12 @@ class APITest(jtu.JaxTestCase):
     _, out_tangent = api.jvp(jax.jit(lambda x: x+1), primals, tangents)
     self.assertEqual(out_tangent, np.zeros(shape=(), dtype=float0))
 
+  def test_jvp_of_convert_element_type(self):
+    fun = lambda x: x.astype(np.int32) + 1
+    primal, tangent = jax.jvp(fun, (2.,), (1.,))
+    self.assertAllClose(primal, np.int32(3))
+    self.assertEqual(tangent, np.zeros((), dtype=float0))
+
   def test_vjp_of_int_index(self):
     primal, fn_vjp = api.vjp(lambda x, i: x[i], np.ones(2)*2, 1)
     tangent_x, tangent_i = fn_vjp(1.)
