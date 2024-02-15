@@ -379,34 +379,20 @@ _bool_types: list[JAXType] = [np.dtype(bool)]
 _signed_types: list[JAXType]
 _unsigned_types: list[JAXType]
 _int_types: list[JAXType]
-if int4 is not None:
-  _unsigned_types = [
-      np.dtype(uint4),
-      np.dtype('uint8'),
-      np.dtype('uint16'),
-      np.dtype('uint32'),
-      np.dtype('uint64'),
-  ]
-  _signed_types = [
-      np.dtype(int4),
-      np.dtype('int8'),
-      np.dtype('int16'),
-      np.dtype('int32'),
-      np.dtype('int64'),
-  ]
-else:
-  _unsigned_types = [
-      np.dtype('uint8'),
-      np.dtype('uint16'),
-      np.dtype('uint32'),
-      np.dtype('uint64'),
-  ]
-  _signed_types = [
-      np.dtype('int8'),
-      np.dtype('int16'),
-      np.dtype('int32'),
-      np.dtype('int64'),
-  ]
+_unsigned_types = [
+    np.dtype(uint4),
+    np.dtype('uint8'),
+    np.dtype('uint16'),
+    np.dtype('uint32'),
+    np.dtype('uint64'),
+]
+_signed_types = [
+    np.dtype(int4),
+    np.dtype('int8'),
+    np.dtype('int16'),
+    np.dtype('int32'),
+    np.dtype('int64'),
+]
 
 _int_types = _unsigned_types + _signed_types
 
@@ -493,10 +479,7 @@ def _type_promotion_lattice(jax_numpy_dtype_promotion: str) -> dict[JAXType, lis
   This DAG maps each type to its immediately higher type on the lattice.
   """
   b1, = _bool_types
-  if int4 is not None:
-    _uint4, u1, u2, u4, u8, _int4, i1, i2, i4, i8 = _int_types  # pytype: disable=bad-unpacking
-  else:
-    u1, u2, u4, u8, i1, i2, i4, i8 = _int_types  # pytype: disable=bad-unpacking
+  _uint4, u1, u2, u4, u8, _int4, i1, i2, i4, i8 = _int_types
   *f1_types, bf, f2, f4, f8 = _float_types
   c4, c8 = _complex_types
   i_, f_, c_ = _weak_types
@@ -740,10 +723,7 @@ def check_user_dtype_supported(dtype, fun_name=None):
   if isinstance(dtype, type) and dtype in {bool, int, float, builtins.complex}:
     return
   np_dtype = np.dtype(dtype)
-  if int4 is not None:
-    is_custom_dtype = np_dtype.type in [*_custom_float_scalar_types, int4, uint4]
-  else:
-    is_custom_dtype = np_dtype.type in _custom_float_scalar_types
+  is_custom_dtype = np_dtype.type in [*_custom_float_scalar_types, int4, uint4]
   if np_dtype.kind not in "biufc" and not is_custom_dtype:
     msg = f"JAX only supports number and bool dtypes, got dtype {dtype}"
     msg += f" in {fun_name}" if fun_name else ""

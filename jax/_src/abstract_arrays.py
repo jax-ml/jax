@@ -34,16 +34,11 @@ canonicalize_shape = core.canonicalize_shape
 raise_to_shaped = core.raise_to_shaped
 
 numpy_scalar_types: set[type] = {  # pylint: disable=g-bare-generic
-    np.int8, np.int16, np.int32, np.int64,
-    np.uint8, np.uint16, np.uint32, np.uint64,
+    dtypes.int4, np.int8, np.int16, np.int32, np.int64,
+    dtypes.uint4, np.uint8, np.uint16, np.uint32, np.uint64,
     np.complex64, np.complex128,
     np.bool_, np.longlong, np.intc,
 } | {np.dtype(dt).type for dt in dtypes._float_types}
-
-if dtypes.int4 is not None:
-  numpy_scalar_types.add(dtypes.int4)
-if dtypes.uint4 is not None:
-  numpy_scalar_types.add(dtypes.uint4)
 
 array_types: set[type] = {np.ndarray} | numpy_scalar_types  # pylint: disable=g-bare-generic
 

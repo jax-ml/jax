@@ -146,10 +146,12 @@ def delegate_lowering(ctx, lowering_fun, *args, **ctx_override_kwargs):
 _dtype_to_ir_type : dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(dtypes.float0): partial(ir.IntegerType.get_signless, 1),
   np.dtype(np.bool_): partial(ir.IntegerType.get_signless, 1),
+  np.dtype(dtypes.int4): partial(ir.IntegerType.get_signless, 4),
   np.dtype(np.int8): partial(ir.IntegerType.get_signless, 8),
   np.dtype(np.int16): partial(ir.IntegerType.get_signless, 16),
   np.dtype(np.int32): partial(ir.IntegerType.get_signless, 32),
   np.dtype(np.int64): partial(ir.IntegerType.get_signless, 64),
+  np.dtype(dtypes.uint4): partial(ir.IntegerType.get_unsigned, 4),
   np.dtype(np.uint8): partial(ir.IntegerType.get_unsigned, 8),
   np.dtype(np.uint16): partial(ir.IntegerType.get_unsigned, 16),
   np.dtype(np.uint32): partial(ir.IntegerType.get_unsigned, 32),
@@ -166,13 +168,6 @@ _dtype_to_ir_type : dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(np.complex64): lambda: ir.ComplexType.get(ir.F32Type.get()),
   np.dtype(np.complex128): lambda: ir.ComplexType.get(ir.F64Type.get()),
 }
-
-if dtypes.int4 is not None:
-  _dtype_to_ir_type.update({
-    np.dtype(dtypes.int4): partial(ir.IntegerType.get_signless, 4),
-    np.dtype(dtypes.uint4): partial(ir.IntegerType.get_unsigned, 4),
-  })
-
 
 def dtype_to_ir_type(dtype: core.bint | np.dtype | np.generic) -> ir.Type:
   if isinstance(dtype, core.bint):
