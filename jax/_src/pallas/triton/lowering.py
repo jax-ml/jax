@@ -1001,7 +1001,8 @@ triton_lowering_rules[primitives.max_contiguous_p] = _max_contiguous_rule
 
 
 def _broadcast_to_rule(ctx: LoweringRuleContext, x, shape: Sequence[int]):
-  return _bcast_to(x, shape)
+  (x_aval,) = ctx.avals_in
+  return _bcast_to(_ensure_ir_value(x, x_aval), shape)
 
 
 triton_lowering_rules[sp.broadcast_to_p] = _broadcast_to_rule
