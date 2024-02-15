@@ -606,6 +606,19 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "pallas_gpu_ops",
+    srcs = glob(["experimental/pallas/ops/gpu/**/*.py"]),
+    visibility = [
+        ":pallas_gpu_users",
+    ],
+    deps = [
+        ":jax",
+        ":pallas",
+        ":pallas_gpu",
+    ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
     name = "pallas_tpu_ops",
     srcs = glob(["experimental/pallas/ops/tpu/**/*.py"]),
     visibility = [

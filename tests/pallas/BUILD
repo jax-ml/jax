@@ -58,6 +58,39 @@ jax_test(
 )
 
 jax_test(
+    name = "gpu_attention_test",
+    srcs = [
+        "gpu_attention_test.py",
+    ],
+    backend_tags = {
+        "gpu": ["noasan"],  # https://github.com/openai/triton/issues/2918
+    },
+    config_tags_overrides = {
+        "gpu_x32": {
+            "ondemand": False,  # Include in presubmit.
+        },
+    },
+    disable_backends = [
+        "cpu",
+        "tpu",
+    ],
+    disable_configs = [
+        "gpu",
+        "gpu_a100",
+        "gpu_p100",
+    ],
+    enable_configs = [
+        "gpu_x32",
+        "gpu_a100_x32",
+    ],
+    shard_count = 1,
+    deps = [
+        "//third_party/py/jax:pallas_gpu",
+        "//third_party/py/jax:pallas_gpu_ops",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_test(
     name = "indexing_test",
     srcs = [
         "indexing_test.py",
