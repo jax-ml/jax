@@ -96,12 +96,14 @@ def main(_):
 
   # CHECK-LABEL: TEST: cos complex64[]
   # CHECK: hlo.cosine
-  # CHECK-SAME: tensor<complex<f32>>
+  # TODO: when the accuracy of lax.cos is fixed upstream, undo relevant parts of jax PR 19823
+  # CHECK-SAME: tensor<f32>
   print_ir(np.complex64(0))(lax.cos)
 
   # CHECK-LABEL: TEST: cos complex128[]
   # CHECK: hlo.cosine
-  # CHECK-SAME: tensor<complex<f64>>
+  # TODO: when the accuracy of lax.cos is fixed upstream, undo relevant parts of jax PR 19823
+  # CHECK-SAME: tensor<f64>
   print_ir(np.complex128(0))(lax.cos)
 
 

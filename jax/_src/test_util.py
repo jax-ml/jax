@@ -1413,3 +1413,63 @@ def numpy_vecdot(x, y, axis):
   y = np.moveaxis(y, axis, -1)
   x, y = np.broadcast_arrays(x, y)
   return np.matmul(np.conj(x[..., None, :]), y[..., None])[..., 0, 0]
+
+
+def complex_plane_sample(dtype, size_re=10, size_im=None):
+  """Return a 2-D array of complex numbers that covers the complex plane
+     with a grid of samples.
+
+     The size of the grid is (3 + 2 * size_im) x (3 + 2 * size_re)
+     that includes infinity points, extreme finite points, and the
+     specified number of points from real and imaginary axis.
+
+     For example:
+
+     >>> print(complex_plane_sample(np.complex64, 0, 3))
+     [[-inf          -infj   0.          -infj  inf          -infj]
+      [-inf-3.4028235e+38j   0.-3.4028235e+38j  inf-3.4028235e+38j]
+      [-inf-2.0000052e+00j   0.-2.0000052e+00j  inf-2.0000052e+00j]
+      [-inf-1.1754944e-38j   0.-1.1754944e-38j  inf-1.1754944e-38j]
+      [-inf+0.0000000e+00j   0.+0.0000000e+00j  inf+0.0000000e+00j]
+      [-inf+1.1754944e-38j   0.+1.1754944e-38j  inf+1.1754944e-38j]
+      [-inf+2.0000052e+00j   0.+2.0000052e+00j  inf+2.0000052e+00j]
+      [-inf+3.4028235e+38j   0.+3.4028235e+38j  inf+3.4028235e+38j]
+      [-inf          +infj   0.          +infj  inf          +infj]]
+
+  """
+  if size_im is None:
+    size_im = size_re
+  finfo = np.finfo(dtype)
+
+  def make_axis_points(size):
+    logmin = np.log10(abs(finfo.min))
+    logtiny = np.log10(finfo.tiny)
+    logmax = np.log10(finfo.max)
+    axis_points = np.zeros(3 + 2 * size, dtype=finfo.dtype)
+
+    with warnings.catch_warnings():
+      # Silence RuntimeWarning: overflow encountered in cast
+      warnings.simplefilter("ignore")
+      axis_points[1:size + 1] = -np.logspace(logmin, logtiny, size, dtype=finfo.dtype)
+      axis_points[-size - 1:-1] = np.logspace(logtiny, logmax, size, dtype=finfo.dtype)
+
+    if size > 1:
+      axis_points[1] = finfo.min
+      axis_points[-2] = finfo.max
+    if size > 0:
+      axis_points[size] = -finfo.tiny
+      axis_points[-size - 1] = finfo.tiny
+    axis_points[0] = -np.inf
+    axis_points[-1] = np.inf
+    return axis_points
+
+  real_axis_points = make_axis_points(size_re)
+  imag_axis_points = make_axis_points(size_im)
+
+  real_part = real_axis_points.reshape((-1, 3 + 2 * size_re)).repeat(3 + 2 * size_im, 0).astype(dtype)
+
+  imag_part = imag_axis_points.repeat(2).view(dtype)
+  imag_part.real[:] = 0
+  imag_part = imag_part.reshape((3 + 2 * size_im, -1)).repeat(3 + 2 * size_re, 1)
+
+  return real_part + imag_part

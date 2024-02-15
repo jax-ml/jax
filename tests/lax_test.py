@@ -46,6 +46,7 @@ from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.util import NumpyComplexWarning
 
 config.parse_flags_with_absl()
@@ -3334,6 +3335,118 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     self.assertArraysEqual(f(x), jax.jit(f)(x))
 
   # TODO(frostig,mattjj): more polymorphic primitives tests
+
+
+class FunctionAccuracyTest(jtu.JaxTestCase):
+
+  @parameterized.named_parameters(
+    dict(testcase_name=f"_{name}_{dtype.__name__}_{kind}", name=name, dtype=dtype, kind=kind)
+    for name, dtype, kind in itertools.product(
+        [ 'arccos', 'arccosh', 'arcsin', 'arcsinh',
+          'arctan', 'arctanh', 'conjugate', 'cos',
+          'cosh', 'exp', 'exp2', 'expm1', 'log',
+          'log10', 'log1p', 'sin', 'sinh', 'sqrt',
+          'square', 'tan', 'tanh', 'sinc', 'positive',
+          'negative', 'absolute', 'sign'],
+        jtu.dtypes.supported([np.complex64, np.complex128]),
+        ['success', 'failure'],
+    ))
+  @jtu.skip_on_devices("tpu")
+  def testOnComplexPlane(self, name, dtype, kind):
+    all_regions = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'zero']
+    is_cpu = jtu.test_device_matches(["cpu"])
+    is_cuda = jtu.test_device_matches(["cuda"])
+
+    # TODO(pearu): eliminate all items in the following lists:
+    # TODO(pearu): when all items are eliminated, eliminate the kind == 'failure' tests
+    regions_with_inaccuracies = dict(
+      absolute = ['q1', 'q2', 'q3', 'q4'] if dtype == np.complex128 and is_cuda else [],
+      exp = ['pos', 'pinfj', 'pinf', 'ninfj', 'ninf'],
+      exp2 = ['pos', 'pinfj', 'pinf', 'ninfj', 'ninf', *(['q1', 'q4'] if is_cpu else [])],
+      log = ['q1', 'q2', 'q3', 'q4'],
+      log1p = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'ninfj', 'pinfj'],
+      log10 = ['q1', 'q2', 'q3', 'q4', 'zero', 'ninf', 'ninfj', 'pinf', 'pinfj'],
+      sinh = ['pos', 'neg', 'ninf', 'pinf'],
+      cosh = ['pos', 'neg', 'ninf', 'pinf'],
+      tan = ['q1', 'q2', 'q3', 'q4', 'negj', 'posj', 'ninf', 'ninfj', 'pinf', 'pinfj'],
+      square = ((['q1', 'q2', 'q3', 'q4', 'ninfj', 'pinfj'] if is_cuda else [])
+                + ['ninf', 'pinf']
+                + (['q1', 'q2', 'q3', 'q4'] if is_cpu and dtype == np.complex128 else [])),
+      sinc = ['q1', 'q2', 'q3', 'q4'],
+      sign = ['q1', 'q2', 'q3', 'q4', 'negj', 'posj', 'ninf', 'ninfj', 'pinf', 'pinfj'],
+      arcsin = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'pinf', 'ninfj', 'pinfj'],
+      arccos = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'pinf', 'ninfj', 'pinfj'],
+      arctan = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'pinf', 'ninfj', 'pinfj'],
+      arcsinh = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'pinf', 'ninfj', 'pinfj'],
+      arccosh = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'pinf', 'ninfj', 'pinfj'],
+      arctanh = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'pinf', 'ninfj', 'pinfj'],
+    )
+
+    jnp_op = getattr(jnp, name)
+
+    if name == 'square':
+      # numpy square is incorrect on inputs with large absolute value
+      tiny = np.finfo(dtype).tiny
+
+      def square(x):
+        re = (x.real - x.imag) * (x.real + x.imag)
+        im = x.real * x.imag * 2
+        if is_cuda:
+          # apply FTZ
+          if np.isfinite(re) and abs(re) < tiny:
+            re *= 0
+          if np.isfinite(im) and abs(im) < tiny:
+            im *= 0
+        return np.array(complex(re, im), dtype=dtype)
+
+      np_op = np.vectorize(square)
+    else:
+      np_op = getattr(np, name)
+
+    with jtu.ignore_warning(category=RuntimeWarning, message="(overflow|invalid value|divide by zero) encountered in.*"):
+      args = (jtu.complex_plane_sample(dtype=dtype, size_re=11),)
+      result = np.asarray(jnp_op(*args))
+      expected = np_op(*args)
+
+    s0, s1 = (result.shape[0] - 3) // 2, (result.shape[1] - 3) // 2
+    s_dict = dict(
+      q1=(slice(s0 + 2, -1), slice(s1 + 2, -1)),
+      q2=(slice(s0 + 2, -1), slice(1, s1 + 1)),
+      q3=(slice(1, s0 + 1), slice(1, s1 + 1)),
+      q4=(slice(1, s0 + 1), slice(s1 + 2, -1)),
+      neg=(s0 + 1, slice(1, s1 + 1)),
+      pos=(s0 + 1, slice(s1 + 2, -1)),
+      negj=(slice(1, s0 + 1), s1 + 1),
+      posj=(slice(s0 + 2, -1), s1 + 1),
+      ninf=(slice(None), 0),
+      pinf=(slice(None), -1),
+      ninfj=(0, slice(None)),
+      pinfj=(-1, slice(None)),
+      zero=(slice(s0 + 1, s0 + 2), slice(s1 + 1, s1 + 2)),
+    )
+
+    for region in all_regions:
+      s = s_dict[region]
+      inds = np.where(result[s] != expected[s])
+      if inds[0].size > 0:
+        mismatches = []
+        for ind in zip(*inds):
+          x, r, e = args[0][s][ind], str(result[s][ind]), str(expected[s][ind])
+          if r == e:
+            # skip equal nan-s
+            continue
+          mismatches.append(f'jax.numpy.{name}{x} -> {r}, expected {e}')
+        mismatches = "\n".join(mismatches)
+      else:
+        mismatches = ''
+      if kind == 'success' and region not in regions_with_inaccuracies.get(name, []):
+        with jtu.ignore_warning(category=RuntimeWarning, message="overflow encountered in.*"):
+          self.assertAllClose(result[s], expected[s], err_msg=f"{name} in {region}, {is_cpu=} {is_cuda=}, {xla_extension_version=}\n{mismatches}")
+      if kind == 'failure' and region in regions_with_inaccuracies.get(name, []):
+        with self.assertRaises(AssertionError, msg=f"{name} in {region}, {is_cpu=} {is_cuda=}, {xla_extension_version=}"):
+          with jtu.ignore_warning(category=RuntimeWarning, message="overflow encountered in.*"):
+            self.assertAllClose(result[s], expected[s])  # on success, update regions_with_inaccuracies
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
