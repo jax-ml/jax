@@ -14,12 +14,11 @@
 
 # ruff: noqa
 
-from typing import Any
-
-dialect: Any = None
 try:
   from jaxlib.triton import dialect  # pytype: disable=import-error
-except ImportError:
-  # TODO(slebedev): Switch to a jaxlib version guard, once Triton bindings
-  # are bundled with jaxlib.
-  pass
+except ImportError as e:
+  raise ModuleNotFoundError(
+      "Cannot import the Triton bindings. You may need a newer version of"
+      " jaxlib. Try installing a nightly wheel following instructions in"
+      " https://jax.readthedocs.io/en/latest/installation.html#nightly-installation"
+  ) from e

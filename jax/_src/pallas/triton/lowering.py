@@ -65,13 +65,6 @@ import triton.backends.nvidia.compiler as cb
 # TODO(sharadmv): Enable type checking.
 # mypy: ignore-errors
 
-if tt_dialect is None:
-  raise RuntimeError(
-      "Cannot import the Triton bindings. You may need a newer version of"
-      " jaxlib. Try installing a nightly wheel following instructions in"
-      " https://jax.readthedocs.io/en/latest/installation.html#nightly-installation"
-  )
-
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 partial = functools.partial
