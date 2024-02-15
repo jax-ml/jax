@@ -519,10 +519,27 @@ class TreeTest(jtu.JaxTestCase):
     outer_treedef = tree_util.tree_structure(tree)
     if not outer_treedef.num_leaves:
       self.skipTest("Skipping empty tree")
-    inner_treedef = tree_util.tree_structure([1, 1, 1])
-    nested = tree_util.tree_map(lambda x: [x, x, x], tree)
+    def make_inner(x):
+      return [x, x, x]
+    inner_treedef = tree_util.tree_structure(make_inner(1))
+    nested = tree_util.tree_map(make_inner, tree)
     actual = tree_util.tree_transpose(outer_treedef, inner_treedef, nested)
-    self.assertEqual(actual, [tree, tree, tree])
+    self.assertEqual(actual, make_inner(tree))
+
+  @parameterized.parameters(*TREES)
+  def testTransposeInferInnerTreedef(self, tree):
+    if isinstance(tree, FlatCache):
+      # The tree_map construction below fails for FlatCache, because
+      # the cached metadata becomes out of sync.
+      self.skipTest("Test does not work properly for FlatCache.")
+    outer_treedef = tree_util.tree_structure(tree)
+    if not outer_treedef.num_leaves:
+      self.skipTest("Skipping empty tree")
+    def make_inner(x):
+      return [x, {'a': x}, (x,)]
+    nested = tree_util.tree_map(make_inner, tree)
+    actual = tree_util.tree_transpose(outer_treedef, None, nested)
+    self.assertEqual(actual, make_inner(tree))
 
   def testTransposeMismatchOuter(self):
     tree = {"a": [1, 2], "b": [3, 4]}

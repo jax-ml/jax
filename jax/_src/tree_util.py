@@ -316,13 +316,15 @@ def build_tree(treedef: PyTreeDef, xs: Any) -> Any:
   return treedef.from_iterable_tree(xs)
 
 
-def tree_transpose(outer_treedef: PyTreeDef, inner_treedef: PyTreeDef,
+def tree_transpose(outer_treedef: PyTreeDef, inner_treedef: PyTreeDef | None,
                    pytree_to_transpose: Any) -> Any:
   """Transform a tree having tree structure (outer, inner) into one having structure (inner, outer).
 
   Args:
     outer_treedef: PyTreeDef representing the outer tree.
     inner_treedef: PyTreeDef representing the inner tree.
+      If None, then it will be inferred from outer_treedef and the structure of
+      pytree_to_transpose.
     pytree_to_transpose: the pytree to be transposed.
 
   Returns:
@@ -335,8 +337,15 @@ def tree_transpose(outer_treedef: PyTreeDef, inner_treedef: PyTreeDef,
     >>> outer_structure = jax.tree.structure(['*', '*'])
     >>> jax.tree.transpose(outer_structure, inner_structure, tree)
     ([1, 4], [2, 5], [3, 6])
+
+    Inferring the inner structure:
+
+    >>> jax.tree.transpose(outer_structure, None, tree)
+    ([1, 4], [2, 5], [3, 6])
   """
   flat, treedef = tree_flatten(pytree_to_transpose)
+  if inner_treedef is None:
+    inner_treedef = tree_structure(outer_treedef.flatten_up_to(pytree_to_transpose)[0])
   inner_size = inner_treedef.num_leaves
   outer_size = outer_treedef.num_leaves
   if treedef.num_leaves != (inner_size * outer_size):
