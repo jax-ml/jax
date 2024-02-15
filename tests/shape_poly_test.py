@@ -75,10 +75,6 @@ def _expect(*, current, best):
   return current
 
 def _bounds(e: shape_poly.DimSize) -> tuple[float, float]:
-  if isinstance(e, shape_poly._DimExpr):
-    scope = e.scope
-  else:
-    scope = shape_poly.SymbolicScope()
   return shape_poly._bounds_decision(e, shape_poly.BoundsPrecision.BEST)
 
 def _assert_equal_bounds(tst: jtu.JaxTestCase,
@@ -682,6 +678,8 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertIsInstance(a + (2 - a), int)
     self.assertEqual(a * 2 // a, 2)
     self.assertIsInstance(a * 2 // a, int)
+    self.assertEqual((4*a)*0, 0)
+    self.assertEqual(0*(4*a), 0)
 
   @jtu.parameterized_filterable(
     kwargs=[
@@ -697,6 +695,7 @@ class DimExprTest(jtu.JaxTestCase):
           (3 * a - 2, 3, a - 1, 1),
           (3 * a * a * b + 2 * b * b * a, a * b, 3 * a + 2 * b, 0),
           (a * a - b * b, a + b, a - b, 0),
+          (256 * a * b, 32, 8 * a * b, 0),
           (a, b, "floordiv(a, b)", "mod(a, b)"),
           (3 * a, 2, "floordiv(3*a, 2)", "mod(3*a, 2)"),
           (2 * a * b + b * b, a + b, "floordiv(2*a*b + b^2, b + a)", "mod(2*a*b + b^2, b + a)"),

@@ -238,14 +238,14 @@ class _DecisionByElimination:
                                        debug_str: str | None) -> set[tuple[Comparator, _DimExpr]]:
     combinations: set[tuple[Comparator, _DimExpr]] = set()
     for t, t_k in e._monomials_sorted:
-      if t.degree == 0: continue
+      if t.is_constant: continue
       for (c_eq, c, c_s, t_s) in self.combine_term_with_existing(t, t_k,
                                                                  only_smaller_than_t=False,
                                                                  scope=e.scope):
         # c =[c_eq] 0 AND c_s > 0 AND t*t_k*t_s + c*c_s does not contain t
         if t_s > 0 or eq == Comparator.EQ:
           new_eq = Comparator.EQ if (eq == c_eq == Comparator.EQ) else Comparator.GEQ
-          new_e = e * t_s + c * c_s
+          new_e = _DimExpr._linear_combination(e, t_s, c, c_s, e.scope)
           if (const := _DimExpr.to_constant(new_e)) is not None:
             if ((new_eq == Comparator.GEQ and const < 0) or
                 (new_eq == Comparator.EQ and const != 0)):
@@ -301,7 +301,7 @@ class _DecisionByElimination:
     if i >= len(e): return (0, 0)
 
     t, t_k = e[i]
-    if len(t) == 0:  # A constant
+    if t.is_constant:
       assert i == len(e) - 1  # Must be last
       return (t_k, t_k)
 
@@ -314,8 +314,8 @@ class _DecisionByElimination:
       # `c =[eq] 0` AND `t*t_k*t_s + c*c_s` contains only terms smaller than t
       # AND c_s > 0.
       # rest = e[i:]*t_s + c*c_s` AND `rest_ub >= rest >= rest_lb`
-      rest = _DimExpr._linear_combination(e, i, t_s,
-                                          c._monomials_sorted, 0, c_s)
+      rest = _DimExpr._linear_combination_sorted_pairs(e, i, t_s,
+                                                       c._monomials_sorted, 0, c_s)
       rest_lb, rest_ub = self._bounds_for_sorted_terms(scope, rest, 0,
                                                        BoundsPrecision.BEST)
       if rest_ub < np.inf:
@@ -338,10 +338,10 @@ class _DecisionByElimination:
         # m_c*MAX(op1, op2) + rest_e >= max(m_c * op1 + rest_e, m_c * op2 + rest_e)
         #   if m_c > 0. Similar rules for when m_c < 0 and for MIN.
         op1, op2 = m_a.operands
-        rest1 = _DimExpr._linear_combination(e, i + 1, 1,
-                                             op1._monomials_sorted, 0, t_k)
-        rest2 = _DimExpr._linear_combination(e, i + 1, 1,
-                                             op2._monomials_sorted, 0, t_k)
+        rest1 = _DimExpr._linear_combination_sorted_pairs(e, i + 1, 1,
+                                                          op1._monomials_sorted, 0, t_k)
+        rest2 = _DimExpr._linear_combination_sorted_pairs(e, i + 1, 1,
+                                                          op2._monomials_sorted, 0, t_k)
         rest1_lb, rest1_ub = self._bounds_for_sorted_terms(scope, rest1, 0,
                                                            BoundsPrecision.BEST)
         rest2_lb, rest2_ub = self._bounds_for_sorted_terms(scope, rest2, 0,
@@ -360,7 +360,7 @@ class _DecisionByElimination:
   def add_implicit_constraints_expr(self, e: _DimExpr):
     """Adds the implicit constraints for the expression `e`"""
     for m, _ in e.monomials():
-      if m.degree == 0: continue
+      if m.is_constant: continue
       self.add_implicit_constraints_term(m)
 
   def add_implicit_constraints_term(self, m: _DimMon):
@@ -372,7 +372,7 @@ class _DecisionByElimination:
       # This is a multiplication of atoms. Try to compute bounds based on
       # the bounds of the atoms.
       bounds = []
-      for a1, a1_exp in m.items():
+      for a1, a1_exp in m._factors:
         a1_t = _DimMon.from_atom(a1, 1)
         a1_e = _DimExpr.from_monomial(a1_t, 1, self.scope)
         self.add_implicit_constraints_term(a1_t)
@@ -443,7 +443,8 @@ class _DecisionByElimination:
           self.combine_and_add_constraint(Comparator.GEQ, m_e, 0)
         mod_e = _DimExpr.from_operation(_DimAtom.MOD, op1, op2,
                                         scope=self.scope)
-        self.add_implicit_constraints_expr(mod_e)
+        if isinstance(mod_e, _DimExpr):
+          self.add_implicit_constraints_expr(mod_e)
         combined = op2 * m_e + mod_e
         self.combine_and_add_constraint(Comparator.EQ, op1, combined)
       return

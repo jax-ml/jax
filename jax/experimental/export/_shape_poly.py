@@ -33,7 +33,6 @@ jax2tf.convert docstring, and the
 
 from __future__ import annotations
 
-import collections
 import enum
 from collections.abc import Iterable, Sequence
 import dataclasses
@@ -45,7 +44,7 @@ import copy
 import operator as op
 import threading
 import tokenize
-from typing import Any, Callable, Union
+from typing import Any, Callable, Union, overload
 import warnings
 
 import numpy as np
@@ -73,6 +72,7 @@ DType = Any
 
 # Tuples of terms and their coefficients, sorted with the largest term first.
 SortedTerms = Sequence[tuple["_DimMon", int]]
+SortedFactors = Sequence[tuple["_DimAtom", int]]
 
 # Normalization rules represent the explicit constraint `t*tk == e` as
 # a mapping of `t` to `(e, tk)`.
@@ -148,6 +148,8 @@ class _DimAtom:
   NON_NEGATIVE = "non_negative"  # The max of the operand and 0. Replaced with
                                  # max but kept here for backwards compatibility.
 
+  __slots__ = ["var", "operation", "operands", "_hash", "_size"]
+
   def __init__(self, *operands: _DimExpr,
                var: str | None = None,
                operation: str | None = None):
@@ -159,21 +161,15 @@ class _DimAtom:
     self.var = var
     self.operation = operation
     self.operands = operands
-    # Precompute the hash (used extensively because these are kept in
-    # dictionaries) and the size (used for sorting, which is important for
-    # some of the reasoning). It is important for the size of _DimAtom,
-    # _DimMon, or _DimExpr, to be strictly larger than the size of any
-    # constituent sub-item.
-    self._hash = hash((self.var, self.operation, *self.operands))
-    self._size = 1 if var is not None else 1 + sum(o._size for o in operands)
+    self._hash = None
+    self._size: int = 1 if var is not None else 1 + sum(o._size for o in operands)
 
-  @classmethod
-  def from_var(cls, v: str) -> _DimAtom:
+  @staticmethod
+  def from_var(v: str) -> _DimAtom:
     return _DimAtom(var=v)
 
-  @classmethod
-  @functools.cache  # use caching to ensure we can compare _DimAtom by id
-  def from_operation(cls, operation: str, *operands: DimSize,
+  @staticmethod
+  def from_operation(operation: str, *operands: DimSize,
                      scope: SymbolicScope) -> _DimAtom:
     return _DimAtom(*(_ensure_poly(o, operation, scope) for o in operands),
                     operation=operation)
@@ -199,6 +195,8 @@ class _DimAtom:
   __repr__ = __str__
 
   def __hash__(self):
+    if self._hash is None:
+      self._hash = hash((self.var, self.operation, *self.operands))
     return self._hash
 
   def _syntactic_cmp(self, other: _DimAtom) -> int:
@@ -276,40 +274,42 @@ class _DimAtom:
         operation=copy.deepcopy(self.operation, memo))
 
 
-class _DimMon(dict):
+class _DimMon:
   """Represents a multiplication of atoms.
 
-  The representation is a dictionary mapping _DimAtom to exponent.
-  The exponents are integers >= 1.
+  The representation is a sequence of _DimAtom factors along with their
+  integer exponents (>= 1). The empty sequence represents the constant 1.
   """
-
-  def __init__(self, *args, **kwargs):
-    super().__init__(*args, **kwargs)
-    self._hash = hash(frozenset(self.items()))
-    self._size = sum((1 + a_exp * a._size) for a, a_exp in self.items())
+  __slots__ = ["_factors", "_hash", "_size"]
+  def __init__(self, sorted_factors: SortedFactors):
+    self._factors = sorted_factors
+    self._hash = None
+    self._size = sum((1 + a_exp * a._size) for a, a_exp in self._factors)
 
   def __hash__(self):
+    if self._hash is None:
+      self._hash = hash(tuple(self._factors))
     return self._hash
 
   def __str__(self):
     return "*".join(f"{key}^{exponent}" if exponent != 1 else str(key)
-                    for key, exponent in sorted(self.items()))
+                    for key, exponent in sorted(self._factors))
 
   __repr__ = __str__
 
-  @classmethod
-  def from_var(cls, v: str) -> _DimMon:
-    return _DimMon({_DimAtom.from_var(v): 1})
+  @staticmethod
+  def from_var(v: str) -> _DimMon:
+    return _DimMon(((_DimAtom.from_var(v), 1),))
 
-  @classmethod
-  def from_atom(clscls, a: _DimAtom, aexp: int):
-    return _DimMon({a: aexp})
+  @staticmethod
+  def from_atom(a: _DimAtom, aexp: int):
+    return _DimMon(((a, aexp),))
 
-  @classmethod
-  def from_operation(cls, operation: str, *operands: DimSize,
+  @staticmethod
+  def from_operation(operation: str, *operands: DimSize,
                      scope: SymbolicScope) -> _DimMon:
-    return _DimMon({_DimAtom.from_operation(operation, *operands,
-                                            scope=scope): 1})
+    return _DimMon(((_DimAtom.from_operation(operation, *operands,
+                                             scope=scope), 1),))
 
   def to_var(self) -> str | None:
     """Extract the variable name from a monomial.
@@ -320,24 +320,21 @@ class _DimMon(dict):
   def to_atom(self) -> _DimAtom | None:
     """Extract the single atom from a monomial.
      Return None if the monomial is not a single atom."""
-    items = self.items()
-    if len(items) != 1:
-      return None
-    (a, aexp), = items
-    if aexp != 1:
-      return None
+    if len(self._factors) > 1: return None
+    (a, aexp), = self._factors
+    if aexp != 1: return None
     return a
 
   def get_vars(self) -> set[str]:
     # All the vars that appear in the monomial
     acc = set()
-    for a in self.keys():
-      acc.update(a.get_vars())
+    for (f, _) in self._factors:
+      acc.update(f.get_vars())
     return acc
 
   @property
-  def degree(self):
-    return sum(self.values())
+  def is_constant(self):
+    return not self._factors
 
   def _syntactic_cmp(self, other: _DimMon) -> int:
     """Returns -1 if self < other, 0 if self == other, 1 if self > other.
@@ -345,14 +342,13 @@ class _DimMon(dict):
     The result is not related to the semantic value.
     """
     if c := cmp_comparable(self._size, other._size): return c
-    if c := cmp_comparable(self.degree, other.degree): return c
     def cmp_atom(s_a: tuple[_DimAtom, int], o_a: tuple[_DimAtom, int]) -> int:
       if c := s_a[0]._syntactic_cmp(o_a[0]): return c
-      # Consider the monomials with exponents to be expanded as multiplications.
-      # Then a higher exponent for a "small" atom should lead to a "smaller" monomial.
-      return - cmp_comparable(s_a[1], o_a[1])
+      # Consider the terms with exponents to be expanded as multiplications.
+      # Then a higher exponent for a "large" atom should lead to a "larger" term.
+      return cmp_comparable(s_a[1], o_a[1])
 
-    return cmp_sequence(sorted(self.items()), sorted(other.items()), cmp_atom)
+    return cmp_sequence(self._factors, other._factors, cmp_atom)
 
   def __lt__(self, other: _DimMon):
     """Lexicographic comparison"""
@@ -370,11 +366,19 @@ class _DimMon(dict):
     """Lexicographic comparison"""
     return self._syntactic_cmp(other) >= 0
 
+  def __eq__(self, other) -> bool:
+    if not isinstance(other, _DimMon): return False
+    return self._syntactic_cmp(other) == 0
+
+  def __ne__(self, other) -> bool:
+    return not (self == other)
+
   def mul(self, other: _DimMon) -> _DimMon:
     """
     Returns the product with another monomial. Example: (n^2*m) * n == n^3 * m.
     """
-    return _DimMon(collections.Counter(self) + collections.Counter(other))
+    return _DimMon(_DimExpr._linear_combination_sorted_pairs(self._factors, 0, 1,  # type: ignore[arg-type]
+                                                             other._factors, 0, 1))  # type: ignore[arg-type]
 
   def divide(self, divisor: _DimMon) -> _DimMon:
     """
@@ -382,23 +386,25 @@ class _DimMon(dict):
     if the result is not a monomial.
     For example, (n^3 * m) // n == n^2*m, but n // m fails.
     """
-    d = collections.Counter(self)
-    for key, exponent in divisor.items():
-      diff = self.get(key, 0) - exponent
-      if diff < 0:
+    new_factors = _DimExpr._linear_combination_sorted_pairs(self._factors, 0, 1,  # type: ignore[arg-type]
+                                                            divisor._factors, 0, -1)  # type: ignore[arg-type]
+    for _, f_exp in new_factors:
+      if f_exp <= 0:
         raise InconclusiveDimensionOperation(f"Cannot divide {self} by {divisor}.")
-      elif diff == 0: del d[key]
-      elif diff > 0: d[key] = diff
-    return _DimMon(d)
+    return _DimMon(new_factors)  # type: ignore
 
   def evaluate(self, env: DimVarEnv):
     prod = lambda xs: functools.reduce(_evaluate_multiply, xs) if xs else core.dim_constant(1)
     def pow_opt(v, p: int):
       return v if p == 1 else prod([v] * p)
-    return prod([pow_opt(a.evaluate(env), deg) for a, deg in self.items()])
+    return prod([pow_opt(a.evaluate(env), deg) for a, deg in self._factors])
 
   def __deepcopy__(self, memo):
-    return _DimMon(copy.deepcopy(dict(self), memo))
+    return _DimMon(copy.deepcopy(self._factors, memo))
+
+# The constant 1, as a term.
+_DimMon_one = _DimMon(())
+
 
 class _DimExpr:
   """Symbolic expression in terms of dimension variables.
@@ -417,13 +423,14 @@ class _DimExpr:
   representable as a _DimExpr.
   """
   __array_priority__ = 1000   # Same as tracer, for __radd__ and others on ndarray
+  __slots__ = ("_monomials_sorted", "_scope", "_hash", "_size")
   def __init__(self, terms: SortedTerms,
                scope: SymbolicScope):
     # Do not construct _DimExpr directly, unless you are sure that terms is
     # normalized; Use _DimExpr.normalize.
-    self._monomials_sorted = tuple(terms) or ((_DimMon(), 0),)
+    self._monomials_sorted = tuple(terms) or ((_DimMon_one, 0),)
     self._scope = scope
-    self._hash = hash((self._monomials_sorted, self.scope))
+    self._hash = None
     # _size speeds up _syntactic_cmp, which is used a lot for hashing.
     self._size = sum((1 + abs(m_count) * m._size)
                      for m, m_count in self._monomials_sorted)
@@ -433,30 +440,22 @@ class _DimExpr:
     # We make the expression scope visible, but read-only.
     return self._scope
 
-  @classmethod
-  def _coeff_dict_to_terms(cls, coeffs: dict[_DimMon, int]) -> SortedTerms:
-    return sorted(coeffs.items(), reverse=True)
+  @staticmethod
+  def _coeff_to_sorted_terms(coeffs: dict[_DimMon, int]) -> SortedTerms:
+    return sorted((p for p in coeffs.items() if p[1] != 0), reverse=True)
 
-  @classmethod
-  def from_dict(cls, coeffs: dict[_DimMon, int], scope: SymbolicScope) -> _DimExpr:
-    return _DimExpr(_DimExpr._coeff_dict_to_terms(coeffs), scope)
+  @staticmethod
+  def from_monomial(mon: _DimMon, count: int, scope: SymbolicScope) -> DimSize:
+    return _DimExpr._normalize_sorted_terms(((mon, count),), scope)
 
-  @classmethod
-  def from_monomial(cls, mon: _DimMon, exp: int, scope: SymbolicScope):
-    return _DimExpr.normalize_coeffs({mon: exp}, scope)
-
-  @classmethod
-  def from_constant(cls, c: int, scope: SymbolicScope):
-    return _DimExpr(((_DimMon(), op.index(c)),), scope)
-
-  @classmethod
-  def from_var(cls, v: str, scope: SymbolicScope) -> _DimExpr:
+  @staticmethod
+  def from_var(v: str, scope: SymbolicScope) -> _DimExpr:
     return _DimExpr(((_DimMon.from_var(v), 1),), scope)
 
-  @classmethod
-  def from_operation(cls, operation: str, *operands: DimSize,
-                     scope: SymbolicScope) -> _DimExpr:
-    if operation == _DimAtom.NON_NEGATIVE:  # For parsing
+  @staticmethod
+  def from_operation(operation: str, *operands: DimSize,
+                     scope: SymbolicScope) -> DimSize:
+    if operation == _DimAtom.NON_NEGATIVE:  # For parsing, for backwards compatibility
       return _DimExpr.from_monomial(
           _DimMon.from_operation(_DimAtom.MAX, *operands, 0,
                                  scope=scope), 1,
@@ -484,7 +483,7 @@ class _DimExpr:
     n2 = 0
     mon = None
     for m, c in self.monomials():
-      if m.degree == 0:
+      if m.is_constant:
         n1 = c
         continue
       if mon is None:
@@ -495,56 +494,69 @@ class _DimExpr:
     assert mon is not None
     return (n1, n2, mon)
 
-  @classmethod
-  def add_coeff(cls, coeffs: dict[_DimMon, int], t: _DimMon, coeff: int):
+  @staticmethod
+  def add_coeff(coeffs: dict[_DimMon, int], t: _DimMon, coeff: int):
     """coeffs[t] += coeff, with squashing 0 coefficients."""
     if coeff == 0: return
-    n_coeff = coeffs.get(t, 0) + coeff
-    if n_coeff == 0:
-      del coeffs[t]
-    else:
-      coeffs[t] = n_coeff
+    coeffs[t] = coeffs.get(t, 0) + coeff
 
-  @classmethod
-  def normalize_coeffs(cls,
-                       coeffs: dict[_DimMon, int],
-                       scope: SymbolicScope) -> DimSize:
-    """Constructs a _DimExpr in normal form.
+  @staticmethod
+  def _normalize_term(t: _DimMon, t_k: int,
+                      scope: SymbolicScope) -> Sequence[tuple[_DimMon, int]]:
+    # If (t, t_k) is among the scope normalization rules, then return
+    # a list of updates to apply to the expression containing (t, t_k).
+    # Returns empty sequence if no normalizations are necessary.
+    updates = []
+    after, t_k_after = scope._normalization_rules.get(t, (None, 0))
+    if after is not None and t_k % t_k_after == 0:
+      # We have t*t_k_after -> after.
+      # We subtract `t*t_k` and add `after * (t_k // t_k_after)`.
+      updates.append((t, - t_k))
+      updates.extend((t2, tc2 * (t_k // t_k_after))
+                     for t2, tc2 in after._monomials_sorted)
+      return updates
+
+    if len(t._factors) <= 1:
+      return updates
+
+    # A product of factors; look up individually
+    for f, fexp in t._factors:
+      f_after, f_k_after = scope._normalization_rules.get(_DimMon(((f, fexp),)), (None, 0))
+      if f_after is not None and t_k % f_k_after == 0:
+        # We subtract `t*t_k`.
+        updates.append((t, - t_k))
+        # And add `(t // f**fexp) * f_after * (t_k // f_k_after)`
+        t_without_f = t.divide(_DimMon(((f, fexp),)))
+        updates.extend((t2.mul(t_without_f), tc2 * (t_k // f_k_after))
+                       for t2, tc2 in f_after._monomials_sorted)
+        return updates
+    return updates
+
+  @staticmethod
+  def _normalize_sorted_terms(terms: SortedTerms,
+                              scope: SymbolicScope) -> DimSize:
+    """Constructs a _DimExpr in normal form from sorted terms.
 
     Ensures that the symbolic dimension is normalized, e.g., does not
     have terms with coefficient 0, it reflects all the scope
     normalization_rules, and it is represented as a Python integer if it is
     known to be a constant.
 
-    Does not attempt to normalize the keys (terms) inside `coeffs`.
+    Does not attempt to normalize the keys (terms) inside `terms`.
     """
-    new_coeffs = coeffs.copy()
-    for t, t_k in coeffs.items():
-      if t_k == 0:
-        del new_coeffs[t]
-        continue
-      after, t_k_after = scope._normalization_rules.get(t, (None, 0))
-      if after is not None and t_k % t_k_after == 0:
-        # We have t*t_k_after -> after.
-        # We subtract `t*t_k` and add `after * (- (t_k // t_k_after))`.
-        _DimExpr.add_coeff(new_coeffs, t, - t_k)
-        for t2, tc2 in after._monomials_sorted:
-          _DimExpr.add_coeff(new_coeffs, t2, tc2 * (t_k // t_k_after))
-      elif t.degree > 1:  # A product of factors; look up individually
-        for f, fexp in t.items():
-          f_after, f_k_after = scope._normalization_rules.get(_DimMon({f: fexp}), (None, 0))
-          if f_after is not None and t_k % f_k_after == 0:
-            # We subtract `t*t_k`.
-            _DimExpr.add_coeff(new_coeffs, t, - t_k)
-            t_without_f = t.divide(_DimMon({f: fexp}))
-            # And add `(t // f**fexp) * f_after * (- (t_k // f_k_after))`
-            for t2, tc2 in f_after._monomials_sorted:
-              _DimExpr.add_coeff(new_coeffs, t2.mul(t_without_f), tc2 * (t_k // f_k_after))
-            break
-    new_terms = _DimExpr._coeff_dict_to_terms(new_coeffs)
-    if not new_terms: return 0
-    if new_terms[0][0].degree == 0: return new_terms[0][1]
-    return _DimExpr(new_terms, scope)
+    for t, t_k in terms:
+      assert t_k != 0
+      if updates := _DimExpr._normalize_term(t, t_k, scope):
+        coeffs = dict(terms)
+        for t1, t1_k in updates:
+          _DimExpr.add_coeff(coeffs, t1, t1_k)
+        terms = _DimExpr._coeff_to_sorted_terms(coeffs)
+        # TODO: check the case when we need to apply multiple normalizations
+        break
+
+    if not terms: return 0
+    if terms[0][0].is_constant: return terms[0][1]
+    return _DimExpr(terms, scope)
 
   def to_monomial(self) -> _DimMon | None:
     """Extract the single monomial from a symbolic expression.
@@ -566,14 +578,14 @@ class _DimExpr:
     mon = self.to_atom()
     return mon.to_var() if mon is not None else None
 
-  @classmethod
-  def to_constant(cls, e: DimSize) -> int | None:
+  @staticmethod
+  def to_constant(e: DimSize) -> int | None:
     """Extract the constant from a symbolic expression.
     Returns None if the expression is not a single constant."""
     if not isinstance(e, _DimExpr):
       return int(e)
     m, m_c = e.leading_term
-    return m_c if m.degree == 0 else None
+    return m_c if m.is_constant else None
 
   @property
   def is_constant(self):
@@ -586,21 +598,36 @@ class _DimExpr:
       acc.update(mon.get_vars())
     return acc
 
-  @classmethod
-  def _linear_combination(
-      cls,
+  @overload
+  @staticmethod
+  def _linear_combination_sorted_pairs(
       e1: SortedTerms, i1: int, f1: int,
       e2: SortedTerms, i2: int, f2: int) -> SortedTerms:
+    ...
+
+  @overload
+  @staticmethod
+  def _linear_combination_sorted_pairs(
+      e1: SortedFactors, i1: int, f1: int,
+      e2: SortedFactors, i2: int, f2: int) -> SortedFactors:
+    ...
+
+  @staticmethod
+  def _linear_combination_sorted_pairs(
+      pairs1, i1, f1,
+      pairs2, i2, f2):
     """Computes e1[i1:] * f1 + e2[i2:] * f2.
 
     e1, e2, and the result are sorted with largest term first.
     This is an optimization for a common operation. The unoptimized code would
-    compute each subexpression in term.
+    compute each subexpression in turn. This works for both SortedTerms and SortedFactors.
     """
+    len1 = len(pairs1)
+    len2 = len(pairs2)
     acc = []
-    while i1 < len(e1) and i2 < len(e2):
-      m1, m1_c = e1[i1]
-      m2, m2_c = e2[i2]
+    while i1 < len1 and i2 < len2:
+      m1, m1_c = pairs1[i1]
+      m2, m2_c = pairs2[i2]
       cmp = m1._syntactic_cmp(m2)  # Pick the largest monomial
       if cmp < 0:
         acc.append((m2, m2_c * f2))
@@ -615,8 +642,10 @@ class _DimExpr:
         if m1_c == 0: continue
         acc.append((m1, m1_c))
 
-    acc.extend((m1, m1_c * f1) for m1, m1_c in itertools.islice(e1, i1, len(e1)) if m1_c != 0)
-    acc.extend((m2, m2_c * f2) for m2, m2_c in itertools.islice(e2, i2, len(e2)) if m2_c != 0)
+    if i1 < len1:
+      acc.extend((m1, m1_c * f1) for m1, m1_c in itertools.islice(pairs1, i1, len1) if m1_c != 0)
+    if i2 < len2:
+      acc.extend((m2, m2_c * f2) for m2, m2_c in itertools.islice(pairs2, i2, len2) if m2_c != 0)
     return acc
 
   def _syntactic_cmp(self, other: _DimExpr) -> int:
@@ -652,13 +681,15 @@ class _DimExpr:
     return diff == 0
 
   def __hash__(self):
+    if self._hash is None:
+      self._hash = hash((self._monomials_sorted, self.scope))
     return self._hash
 
   def __str__(self):
     def _one_monomial(mon, c):
       abs_c = abs(c)
       sgn_c = "+" if c > 0 else "-"
-      if mon.degree == 0:
+      if mon.is_constant:
         return f"{sgn_c} {abs_c}" if abs_c != 0 else "0"
       if abs_c == 1:
         return f"{sgn_c} {mon}"
@@ -673,55 +704,80 @@ class _DimExpr:
   def __repr__(self):
     return str(self)
 
+  # A special case for linear combinations because they are common
+  @staticmethod
+  def _linear_combination(e1: DimSize, k1: int,
+                          e2: DimSize, k2: int,
+                          scope: SymbolicScope) -> DimSize:
+    """Computes and normalizes `e1 * k1 + e2 * k2`"""
+    if isinstance(e1, _DimExpr):
+      e1_terms = e1._monomials_sorted
+      if isinstance(e2, _DimExpr):
+        e1.scope._check_same_scope(e2, when="for linear combination")
+    else:
+      if not isinstance(e2, _DimExpr):
+        return e1 * k1 + e2 * k2  # Constants
+      e1_terms = ((_DimMon_one, op.index(e1)),)
+    if isinstance(e2, _DimExpr):
+      e2_terms = e2._monomials_sorted
+    elif e2 == 0:
+      e2_terms = ()
+    else:
+      e2_terms = ((_DimMon_one, op.index(e2)),)
+    new_terms = _DimExpr._linear_combination_sorted_pairs(e1_terms, 0, k1,
+                                                          e2_terms, 0, k2)
+    return _DimExpr._normalize_sorted_terms(new_terms, scope)
+
   # We overload +, -, *, because they are fully defined for _DimExpr.
   def __add__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__add__(other)
     if isinstance(other, int) and other == 0: return self
-    other = _ensure_poly(other, "add", self.scope)
-    coeffs = dict(self._monomials_sorted)
-    for mon, coeff in other.monomials():
-      _DimExpr.add_coeff(coeffs, mon, coeff)
-    return _DimExpr.normalize_coeffs(coeffs, self.scope)
+    return _DimExpr._linear_combination(self, 1, other, 1, self.scope)
 
   def __radd__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__radd__(other)
     if isinstance(other, int) and other == 0: return self
-    return _ensure_poly(other, "add", self.scope).__add__(self)
+    return _DimExpr._linear_combination(self, 1, other, 1, self.scope)
 
   def __sub__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__sub__(other)
     if isinstance(other, int) and other == 0: return self
-    return self + -_ensure_poly(other, "sub", self.scope)
+    return _DimExpr._linear_combination(self, 1, other, -1, self.scope)
 
   def __rsub__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__rsub__(other)
-    return _ensure_poly(other, "sub", self.scope).__sub__(self)
+    return _DimExpr._linear_combination(self, -1, other, 1, self.scope)
 
-  def __neg__(self) -> _DimExpr:
-    return _DimExpr(
-        tuple((t, -coeff) for t, coeff in self._monomials_sorted),
-        self.scope)
+  def __neg__(self) -> DimSize:
+    return _DimExpr._linear_combination(self, -1, 0, 0, self.scope)
 
   def __mul__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__mul__(other)
-    if isinstance(other, int) and other == 1: return self
+    if isinstance(other, int):
+      if other == 1: return self
+      if other == 0: return 0
+      return _DimExpr._linear_combination(self, other, 0, 0, self.scope)
     other = _ensure_poly(other, "mul", self.scope)
     coeffs: dict[_DimMon, int] = {}
     for mon1, coeff1 in self.monomials():
       for mon2, coeff2 in other.monomials():
         mon = mon1.mul(mon2)
         _DimExpr.add_coeff(coeffs, mon, coeff1 * coeff2)
-    return _DimExpr.normalize_coeffs(coeffs, self.scope)
+    return _DimExpr._normalize_sorted_terms(_DimExpr._coeff_to_sorted_terms(coeffs),
+                                            self.scope)
 
   def __rmul__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
       return self.__jax_array__().__rmul__(other)
-    if isinstance(other, int) and other == 1: return self
+    if isinstance(other, int):
+      if other == 1: return self
+      if other == 0: return 0
+      return _DimExpr._linear_combination(self, other, 0, 0, self.scope)
     return _ensure_poly(other, "mul", self.scope).__mul__(self)
 
   def __pow__(self, power, modulo=None):
@@ -735,7 +791,7 @@ class _DimExpr:
   def __floordiv__(self, divisor):
     if isinstance(divisor, core.Tracer) or not _convertible_to_poly(divisor):
       return self.__jax_array__().__floordiv__(divisor)
-    return self.divmod(_ensure_poly(divisor, "floordiv", self.scope))[0]
+    return self.divmod(divisor)[0]
 
   def __rfloordiv__(self, other):
     if isinstance(other, core.Tracer) or not _convertible_to_poly(other):
@@ -753,7 +809,7 @@ class _DimExpr:
   def __mod__(self, divisor):
     if isinstance(divisor, core.Tracer) or not _convertible_to_poly(divisor):
       return self.__jax_array__().__mod__(divisor)
-    return self.divmod(_ensure_poly(divisor, "mod", self.scope))[1]
+    return self.divmod(divisor)[1]
 
   def __rmod__(self, dividend):
     if isinstance(dividend, core.Tracer) or not _convertible_to_poly(dividend):
@@ -763,7 +819,7 @@ class _DimExpr:
   def __divmod__(self, divisor):
     if isinstance(divisor, core.Tracer) or not _convertible_to_poly(divisor):
       return self.__jax_array__().__divmod__(divisor)
-    return self.divmod(_ensure_poly(divisor, "divmod", self.scope))
+    return self.divmod(divisor)
 
   def __rdivmod__(self, dividend):
     if isinstance(dividend, core.Tracer) or not _convertible_to_poly(dividend):
@@ -816,7 +872,7 @@ class _DimExpr:
   def __lt__(self, other: DimSize):
     return not _geq_decision(self, other, lambda: f"'{self}' < '{other}'")
 
-  def divmod(self, divisor: _DimExpr) -> tuple[DimSize, int]:
+  def divmod(self, divisor: DimSize) -> tuple[DimSize, int]:
     """
     Floor division with remainder (divmod) generalized to polynomials.
     If the `divisor` is not a constant, the remainder must be 0.
@@ -825,19 +881,18 @@ class _DimExpr:
 
     :return: Quotient resulting from polynomial division and integer remainder.
     """
-    assert isinstance(divisor, _DimExpr)
     try:
-      dmon, dcount = divisor.leading_term
       dividend, quotient = self, 0
       # invariant: self = dividend + divisor * quotient
       # quotient and dividend are changed in the loop; the leading term of
       # dividend decreases at each iteration.
       while is_symbolic_dim(dividend) and not dividend.is_constant:
         mon, count = dividend.leading_term
-        try:
+        if isinstance(divisor, _DimExpr):
+          dmon, dcount = divisor.leading_term
           qmon = mon.divide(dmon)
-        except InconclusiveDimensionOperation:
-          raise InconclusiveDimensionOperation("")
+        else:
+          qmon, dcount = mon, int(divisor)
         qcount, rcount = divmod(count, dcount)
         if rcount != 0:
           raise InconclusiveDimensionOperation("")
@@ -847,14 +902,14 @@ class _DimExpr:
         dividend -= q * divisor  # type: ignore[assignment]
 
       dividend = int(dividend)  # type: ignore[assignment]
-      if divisor.is_constant:
-        q, r = divmod(dividend, int(divisor))  # type: ignore
-        quotient += q
-        remainder = r
-      else:
+      if isinstance(divisor, _DimExpr):
         if dividend != 0:
           raise InconclusiveDimensionOperation("")
         remainder = 0
+      else:
+        q, r = divmod(dividend, int(divisor))  # type: ignore
+        quotient += q
+        remainder = r
 
       if config.enable_checks.value:
         v1 = divisor * quotient
@@ -1140,61 +1195,6 @@ def _geq_decision(e1: DimSize, e2: DimSize, cmp_str: Callable[[], str]) -> bool:
   raise InconclusiveDimensionOperation(
       f"Symbolic dimension comparison {cmp_str()} is inconclusive.{describe_scope}")
 
-
-@dataclasses.dataclass
-class _Decomposition:
-  """Decomposition of an expression around an operation atom.
-
-  E.g., for decomposing around "mod":
-
-    E = factor * mod(*operands)^exp * rest_monomial + rest_expr
-  """
-  factor: int
-  operands: Sequence[_DimExpr]
-  exp: int
-  rest_monomial: _DimExpr
-  rest_expr: _DimExpr
-
-
-def _decompose_expr(e: _DimExpr, operation: str, *,
-                    with_factor: int | None = None,
-                    with_exp: int | None = None,
-                    with_rest_monomial: _DimExpr | int | None = None,
-                    with_rest_expr: _DimExpr | int | None = None,
-                    ) -> Iterable[_Decomposition]:
-  """Computes the decompositions of `e` into `_Decomposition`.
-
-  Args:
-    e: the expression to decompose
-    operation: the operation atom around which to decompose
-    with_factor, with_exp, with_rest_monomial, with_rest_expr: if present,
-      keep only the decompositions that match.
-  """
-  for m, m_factor in e.monomials():
-    atoms = [(a, aexp) for a, aexp in m.items() if a.operation == operation]
-    if atoms:
-      e_minus_m_coeffs = dict(e._monomials_sorted)
-      del e_minus_m_coeffs[m]
-    for a, aexp in atoms:
-      if with_factor is not None and with_factor != m_factor:
-        continue
-      if with_exp is not None and with_exp != aexp:
-        continue
-      rest_monomial = _DimExpr.from_monomial(m.divide(_DimMon.from_atom(a, aexp)), 1, e.scope)
-      if (with_rest_monomial is not None and
-          not core.definitely_equal(with_rest_monomial, rest_monomial)):
-        continue
-      rest_expr = _DimExpr.from_dict(e_minus_m_coeffs, e.scope)
-      if (with_rest_expr is not None and
-          not core.definitely_equal(with_rest_expr, rest_expr)):
-        continue
-      yield _Decomposition(
-          factor=m_factor,
-          operands=a.operands,
-          exp=aexp,
-          rest_monomial=rest_monomial,
-          rest_expr=rest_expr)
-
 core.pytype_aval_mappings[_DimExpr] = _DimExpr.get_aval
 xla.pytype_aval_mappings[_DimExpr] = _DimExpr.get_aval
 dtypes._weak_types.append(_DimExpr)
@@ -1213,8 +1213,8 @@ def _ensure_poly(p: DimSize,
     scope._check_same_scope(p, when=f"for operation {operation_name}")
     return p
   if _convertible_to_int(p):
-    return _DimExpr.from_constant(p, scope)
-  raise TypeError(f"Symnbolic dimension {operation_name} not supported for {p}.")
+    return _DimExpr(((_DimMon_one, op.index(p)),), scope)
+  raise TypeError(f"Symbolic dimension {operation_name} not supported for {p}.")
 
 def _convertible_to_poly(p: DimSize) -> bool:
   return isinstance(p, _DimExpr) or _convertible_to_int(p)
