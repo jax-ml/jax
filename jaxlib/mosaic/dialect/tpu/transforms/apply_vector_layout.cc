@@ -1585,30 +1585,32 @@ LogicalResult tpu_rotate_rule(RewriteContext &ctx, Operation &op,
       shift /= ctx.target_shape[tiling_dim];
       CHECK((tiling_dim == 0 && stride == 0) ||
             (tiling_dim == 1 && stride >= 0));
-      for (int64_t i = 0; i < chunks.size(); ++i) {
-        chunks[i].Each([&](absl::Span<const int64_t> idxs, Value *v) {
-          auto stride_attr =
-              stride > 0 ? builder.getSI32IntegerAttr(stride) : nullptr;
-          auto stride_dimension_attr =
-              stride > 0 ? builder.getSI32IntegerAttr(0) : nullptr;
-          *v = builder.create<tpu::RotateOp>(res_vreg_ty, *v, shift_in_vreg,
-                                             tiling_dim, stride_attr,
-                                             stride_dimension_attr);
+      if (shift_in_vreg != 0 || stride != 0) {
+        for (int64_t i = 0; i < chunks.size(); ++i) {
+          chunks[i].Each([&](absl::Span<const int64_t> idxs, Value *v) {
+            auto stride_attr =
+                stride > 0 ? builder.getSI32IntegerAttr(stride) : nullptr;
+            auto stride_dimension_attr =
+                stride > 0 ? builder.getSI32IntegerAttr(0) : nullptr;
+            *v = builder.create<tpu::RotateOp>(res_vreg_ty, *v, shift_in_vreg,
+                                               tiling_dim, stride_attr,
+                                               stride_dimension_attr);
+          });
+        }
+        // After rotation on each vreg, we need to select the wrapped data
+        // from the previous vreg and overwrite them to the current vreg.
+        auto mask = getVmaskByPaddingEnd(
+            tiling_dim, ctx.target_shape[tiling_dim] - shift_in_vreg, stride);
+        xla::Array<Value> last_chunk_copy(chunks[chunks.size() - 1]);
+        for (int64_t i = chunks.size() - 1; i > 0; --i) {
+          chunks[i].Each([&](absl::Span<const int64_t> idxs, Value *v) {
+            *v = builder.create<arith::SelectOp>(mask, chunks[i - 1](idxs), *v);
+          });
+        }
+        chunks[0].Each([&](absl::Span<const int64_t> idxs, Value *v) {
+          *v = builder.create<arith::SelectOp>(mask, last_chunk_copy(idxs), *v);
         });
       }
-      // After rotation on each vreg, we need to select the wrapped data
-      // from the previous vreg and overwrite them to the current vreg.
-      auto mask = getVmaskByPaddingEnd(
-          tiling_dim, ctx.target_shape[tiling_dim] - shift_in_vreg, stride);
-      xla::Array<Value> last_chunk_copy(chunks[chunks.size() - 1]);
-      for (int64_t i = chunks.size() - 1; i > 0; --i) {
-        chunks[i].Each([&](absl::Span<const int64_t> idxs, Value *v) {
-          *v = builder.create<arith::SelectOp>(mask, chunks[i - 1](idxs), *v);
-        });
-      }
-      chunks[0].Each([&](absl::Span<const int64_t> idxs, Value *v) {
-        *v = builder.create<arith::SelectOp>(mask, last_chunk_copy(idxs), *v);
-      });
     } else {
       CHECK_EQ(stride, 0);
     }
