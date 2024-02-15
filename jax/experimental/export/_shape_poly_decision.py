@@ -17,11 +17,9 @@
 
 from __future__ import annotations
 
-import collections
 from collections.abc import Sequence
 import itertools
 import math
-from typing import Callable
 
 import numpy as np
 
@@ -42,8 +40,8 @@ def bounds_decision(e: DimSize,
                     prec: BoundsPrecision) -> tuple[float, float]:
   if not isinstance(e, _DimExpr):
     return (int(e), int(e))
-  decision = _DecisionByElimination(e.scope)
-  return decision.bounds(e, prec)
+  decision = _DecisionByElimination.build(e.scope)
+  return decision.bounds(e, prec, add_implicit_constraints=True)
 
 _shape_poly._bounds_decision = bounds_decision
 
@@ -65,6 +63,7 @@ class _DecisionByElimination:
     then `abs(m_c)*e <= e0`, hence, `UB(e) <= floor(UB(e0) / abs(m_c))`,
 
   See the implementation in self.combine_term_with_existing.
+  Do not use the constructor directly, use the `build` static method.
   """
   def __init__(self, scope: SymbolicScope):
     self.scope = scope
@@ -76,28 +75,52 @@ class _DecisionByElimination:
     # just simple terms. The set is represented as a mapping from a
     # term "t" to tuples (cmp, k, c) where "c >= 0" (if cmp is GEQ else "c == 0")
     # represents a constraint that has "t" as the leading term with coefficient "k".
-    self._expr_constraints: dict[_DimMon, set[tuple[Comparator, int, _DimExpr]]] = collections.defaultdict(set)
+    self._expr_constraints: dict[_DimMon, set[tuple[Comparator, int, _DimExpr]]] = {}
 
+  def initialize(self) -> _DecisionByElimination:
     # Process the explicit constraints in the order in which the user specifies
     # them. This is because the heuristics depend on the order in which the
     # constraints are processed, and this way we give the user a way to control
     # the result (albeit, for now, without a good feedback loop to understand
     # how the order matters for inequalities).
-    for constr in scope._explicit_constraints:
+    for constr in self.scope._explicit_constraints:
+      self.add_implicit_constraints_expr(constr.diff)
+      # The equality constraints are not needed for inequality decisions,
+      # because the LHS should always be rewritten in terms of the RHS.
+      # In fact, adding them may break the assumption that if we eliminate
+      # the leading term we end up with only smaller terms, because the LHS
+      # may appear in the rest and may be rewritten to something larger.
+      # However, we want to add the implicit constraints within.
       if constr.cmp == Comparator.GEQ:
-        self.combine_and_add_constraint(constr.cmp, constr.diff, 0, constr.debug_str)
-      else:
-        # The equality constraints are not needed for inequality decisions,
-        # because the LHS should always be rewritten in terms of the RHS.
-        # In fact, adding them may break the assumption that if we eliminate
-        # the leading term we end up with only smaller terms, because the LHS
-        # may appear in the rest and may be rewritten to something larger.
-        # However, we want to add the implicit constraints within.
-        for m, _ in constr.diff.monomials():
-          if m.degree == 0: continue
-          self.add_implicit_constraints(m)
+        self.combine_and_add_constraint(constr.cmp, constr.diff, 0,
+                                        constr.debug_str)
+
+
       # Clear the cache, since we have added constraints.
       self.scope._bounds_cache.clear()
+    return self
+
+  @staticmethod
+  def build(scope: SymbolicScope) -> _DecisionByElimination:
+    """Builds an initialized DecisionByElimination for a scope.
+
+    Caches the initial state of the decision procedure in the scope.
+    """
+    if not scope._initialized or not scope._explicit_constraints:
+      # We do not cache until the scope is fully initialized.
+      return _DecisionByElimination(scope).initialize()
+
+    if not scope._decision_initial_state:
+      scope._decision_initial_state = _DecisionByElimination(scope).initialize()
+    d = scope._decision_initial_state
+    # Return a copy, because the decision procedure state is mutable
+    c = _DecisionByElimination(scope)
+    c._processed_for_internal_constraints = d._processed_for_internal_constraints.copy()
+    c._term_bounds = d._term_bounds.copy()
+    c._expr_constraints = {
+        lead_t: lead_t_constraints.copy()
+        for lead_t, lead_t_constraints in d._expr_constraints.items()}
+    return c
 
   def combine_and_add_constraint(self,
                                  cmp: Comparator,
@@ -114,11 +137,9 @@ class _DecisionByElimination:
       assert e2 == np.floor(e2)
       e2 = int(e2)
     e = e1 - e2
-    if debug_str is None:
-      debug_str = f"{e1} >= {e2}"
     if (const := _DimExpr.to_constant(e)) is not None:
       if const < 0:
-        raise ValueError(f"Unsatisfiable constraint: {debug_str}")
+        raise ValueError(f"Unsatisfiable constraint: {debug_str or str(e1) + ' >= ' + str(e2)}")
       return
     assert isinstance(e, _DimExpr)
     # TODO: we only really need to add the implicit constraints now, else
@@ -127,17 +148,14 @@ class _DecisionByElimination:
     self.add_to_state(cmp, e, debug_str)
     geq_combinations = self.combine_constraint_with_existing(cmp, e, debug_str)
     for cmp, a in geq_combinations:
-      self.add_to_state(cmp, a, f"{a} >= 0")
+      self.add_to_state(cmp, a, None)
 
   def add_to_state(self,
                    cmp: Comparator,
                    e: _DimExpr,
-                   debug_str: str):
+                   debug_str: str | None):
     """Updates the internal state to reflect "e >= 0". """
     assert _DimExpr.to_constant(e) is None
-    for m, m_c in e.monomials():
-      if m.degree == 0: continue
-      self.add_implicit_constraints(m)
 
     if (mon_factors := e.to_single_term()) is not None:
       n, mon_c, mon = mon_factors  # n + mon * mon_c [== | >=] 0
@@ -161,7 +179,11 @@ class _DecisionByElimination:
       return
 
     lead_t, lead_t_k = e.leading_term
-    self._expr_constraints[lead_t].add((cmp, lead_t_k, e))
+    lead_t_constraints = self._expr_constraints.get(lead_t)
+    if lead_t_constraints is None:
+      lead_t_constraints = set()
+      self._expr_constraints[lead_t] = lead_t_constraints
+    lead_t_constraints.add((cmp, lead_t_k, e))
 
   def combine_term_with_existing(self, t: _DimMon, t_k: int, *,
                                  scope: _shape_poly.SymbolicScope,
@@ -197,7 +219,8 @@ class _DecisionByElimination:
         acc.append((Comparator.GEQ, _DimExpr(((t, -1),), scope) + int(t_ub),
                     abs(t_k), sgn(t_k)))
 
-    for prev_constraint in ([self._expr_constraints[t]] if only_smaller_than_t
+    prev_constraint: set[tuple[Comparator, int, _DimExpr]]
+    for prev_constraint in ([self._expr_constraints.get(t, set())] if only_smaller_than_t
                             else self._expr_constraints.values()):
       for c_eq, _, c in prev_constraint:
         # TODO: optimize this dict()
@@ -212,7 +235,7 @@ class _DecisionByElimination:
   def combine_constraint_with_existing(self,
                                        eq: Comparator,
                                        e: _DimExpr,
-                                       debug_str: str) -> set[tuple[Comparator, _DimExpr]]:
+                                       debug_str: str | None) -> set[tuple[Comparator, _DimExpr]]:
     combinations: set[tuple[Comparator, _DimExpr]] = set()
     for t, t_k in e._monomials_sorted:
       if t.degree == 0: continue
@@ -226,17 +249,22 @@ class _DecisionByElimination:
           if (const := _DimExpr.to_constant(new_e)) is not None:
             if ((new_eq == Comparator.GEQ and const < 0) or
                 (new_eq == Comparator.EQ and const != 0)):
-              raise ValueError(f"Unsatisfiable constraints: {debug_str}")
+              raise ValueError(f"Unsatisfiable constraints: {debug_str or str(e) + ' >= 0'}")
           else:
             combinations.add((new_eq, new_e))  # type: ignore
     return combinations
 
   def bounds(self, e: DimSize,
-             prec: BoundsPrecision
+             prec: BoundsPrecision,
+             add_implicit_constraints: bool = False
              ) -> tuple[float, float]:
     """Returns the lower and upper bounds, or -+inf.
 
-    See more details in `_shape_poly.bounds_decision`.
+    Args:
+      e: the expression for which to compute the bounds.
+      prec: the desired precision. See comments in `BoundsPrecision`.
+      add_implicit_constraints: if True, then before computing the bounds
+        add the implicit constraints for the terms inside `e`.
     """
     if (const := _DimExpr.to_constant(e)) is not None:
       return (const, const)
@@ -251,6 +279,9 @@ class _DecisionByElimination:
       lb, ub, prev_prec = res
       if prec._bounds_are_sufficient(lb, ub): return (lb, ub)
       if prev_prec.value >= prec.value: return (lb, ub)
+
+    if add_implicit_constraints:
+      self.add_implicit_constraints_expr(e)
     lb, ub = self._bounds_for_sorted_terms(e.scope, e._monomials_sorted, 0, prec)
     lb, ub = (int(lb) if lb > -np.inf else lb,
               int(ub) if ub < np.inf else ub)
@@ -274,7 +305,6 @@ class _DecisionByElimination:
       assert i == len(e) - 1  # Must be last
       return (t_k, t_k)
 
-    self.add_implicit_constraints(t)
     lb = -np.inf
     ub = np.inf
 
@@ -327,8 +357,13 @@ class _DecisionByElimination:
 
     return lb, ub
 
-  def add_implicit_constraints(self: _DecisionByElimination, m: _DimMon):
-    """Adds the internal constraints for the monomial `m`."""
+  def add_implicit_constraints_expr(self, e: _DimExpr):
+    """Adds the implicit constraints for the expression `e`"""
+    for m, _ in e.monomials():
+      if m.degree == 0: continue
+      self.add_implicit_constraints_term(m)
+
+  def add_implicit_constraints_term(self, m: _DimMon):
     if m in self._processed_for_internal_constraints: return
     self._processed_for_internal_constraints.add(m)
     m_e = _DimExpr.from_monomial(m, 1, self.scope)  # m as a _DimExpr
@@ -337,12 +372,13 @@ class _DecisionByElimination:
       # This is a multiplication of atoms. Try to compute bounds based on
       # the bounds of the atoms.
       bounds = []
-      for a, exp in m.items():
-        a_l, a_u = self.bounds(_DimExpr.from_monomial(_DimMon.from_atom(a, 1),
-                                                      1, self.scope),
-                               BoundsPrecision.BEST)
-        assert a_l <= a_u
-        bounds.append((a_l ** exp, a_u ** exp))
+      for a1, a1_exp in m.items():
+        a1_t = _DimMon.from_atom(a1, 1)
+        a1_e = _DimExpr.from_monomial(a1_t, 1, self.scope)
+        self.add_implicit_constraints_term(a1_t)
+        a1_l, a1_u = self.bounds(a1_e, BoundsPrecision.BEST)
+        assert a1_l <= a1_u
+        bounds.append((a1_l ** a1_exp, a1_u ** a1_exp))
 
       candidate_bounds = [math.prod(atom_bounds)
                           for atom_bounds in itertools.product(*bounds)]
@@ -354,9 +390,11 @@ class _DecisionByElimination:
 
     # It is an atom, is it a variable?
     if (v := a.to_var()) is not None:
-      self.combine_and_add_constraint(Comparator.GEQ, m_e, 1,
-                                      debug_str=f"{v} >= 1")  # v >= 1
+      self.combine_and_add_constraint(Comparator.GEQ, m_e, 1)  # v >= 1
       return
+
+    for oper in a.operands:
+      self.add_implicit_constraints_expr(oper)
 
     if a.operation == _DimAtom.MOD:
       op1, op2 = a.operands
@@ -405,6 +443,7 @@ class _DecisionByElimination:
           self.combine_and_add_constraint(Comparator.GEQ, m_e, 0)
         mod_e = _DimExpr.from_operation(_DimAtom.MOD, op1, op2,
                                         scope=self.scope)
+        self.add_implicit_constraints_expr(mod_e)
         combined = op2 * m_e + mod_e
         self.combine_and_add_constraint(Comparator.EQ, op1, combined)
       return
@@ -417,6 +456,7 @@ class _DecisionByElimination:
       self.combine_and_add_constraint(Comparator.GEQ, max(op1_b_u, op2_b_u), m_e)
       self.combine_and_add_constraint(Comparator.GEQ, m_e, op1)
       self.combine_and_add_constraint(Comparator.GEQ, m_e, op2)
+      return
 
     if a.operation == _DimAtom.MIN:
       op1, op2 = a.operands
@@ -426,3 +466,4 @@ class _DecisionByElimination:
       self.combine_and_add_constraint(Comparator.GEQ, min(op1_b_u, op2_b_u), m_e)
       self.combine_and_add_constraint(Comparator.GEQ, op1, m_e)
       self.combine_and_add_constraint(Comparator.GEQ, op2, m_e)
+      return

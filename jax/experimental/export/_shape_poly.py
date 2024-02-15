@@ -666,7 +666,7 @@ class _DimExpr:
     # We print first the "larger" monomials, so that the constant is last.
     res = " ".join(_one_monomial(mon, c)
                    for mon, c in self._monomials_sorted)
-    if res[0:2] == "+ ":
+    if res.startswith("+ "):
       res = res[2:]
     return res
 
@@ -953,7 +953,7 @@ class SymbolicScope:
       raise ValueError(
           "The symbolic constraints should be a sequence of strings. "
           f"Got {repr(constraints_str)}")
-
+    self._initialized = False
     self._location_frame = source_info_util.user_frame(source_info_util.current())
     # Keep the explicit constraints in the order in which they were added
     self._explicit_constraints: list[_SymbolicConstraint] = []
@@ -964,6 +964,11 @@ class SymbolicScope:
     # bounds precision with which we computed the cached result.
     self._bounds_cache: dict[_DimExpr,
                              tuple[float, float, BoundsPrecision]] = {}
+
+    # We store here a decision procedure state initialized with all the
+    # _explicit_constraints.
+    self._decision_initial_state: Any | None = None
+
     # We turn the equality constraints into normalization rules.
     # For an explicit constraint `t*tk == e`, we keep
     # `_normalization_rules[t] = (e, tk)`.
@@ -974,6 +979,7 @@ class SymbolicScope:
     for c_str in constraints_str:
       self._parse_and_process_explicit_constraint(c_str)
       self._bounds_cache.clear()
+    self._initialized = True
 
   def __str__(self) -> str:
     extras = []

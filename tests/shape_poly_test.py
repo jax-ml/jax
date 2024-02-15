@@ -79,8 +79,7 @@ def _bounds(e: shape_poly.DimSize) -> tuple[float, float]:
     scope = e.scope
   else:
     scope = shape_poly.SymbolicScope()
-  decision = shape_poly_decision._DecisionByElimination(scope)
-  return decision.bounds(e, shape_poly.BoundsPrecision.BEST)
+  return shape_poly._bounds_decision(e, shape_poly.BoundsPrecision.BEST)
 
 def _assert_equal_bounds(tst: jtu.JaxTestCase,
                          e: shape_poly.DimSize,
@@ -725,7 +724,7 @@ class DimExprTest(jtu.JaxTestCase):
     def _m(e: shape_poly._DimExpr) -> shape_poly._DimMon:
       return e.to_monomial()
     Comparator = shape_poly.Comparator
-    decision = shape_poly_decision._DecisionByElimination(scope)
+    decision = shape_poly_decision._DecisionByElimination(scope).initialize()
 
     self.assertSetEqual(
         set(),
@@ -1085,8 +1084,7 @@ class DimExprTest(jtu.JaxTestCase):
     scope1 = shape_poly.SymbolicScope(assumptions1)
     a1, d1, m1 = shape_poly.symbolic_shape("a1, d1, m1", scope=scope1)
     # TODO: The incompleteness is due to the way we combine external constraints
-    self.assertEqual(_bounds(a1 - 4*d1),
-                     _expect(best=(1, 3), current=(1, 3)))  # a - 4d = m >= 1
+    self.assertEqual(_bounds(a1 - 4*d1), (1, 3))  # a - 4d = m >= 1
     self.assertEqual(_bounds(a1 - 2*d1), (3, np.inf))  # a - 2d = m + 2d >= 3
     # TODO: The incompleteness is due to the way we combine external constraints
     self.assertEqual(_bounds(a1),
@@ -1611,7 +1609,7 @@ class ShapePolyTest(jtu.JaxTestCase):
     # performance
     def f(x):  # x: i32[a, b]
       acc = 0
-      for start in range(0, 10):
+      for start in range(0, 50):
         slice = x[start::2]  # exercises floordiv and min
         acc += jnp.sum(slice, axis=0)
 
