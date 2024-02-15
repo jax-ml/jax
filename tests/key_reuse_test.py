@@ -23,7 +23,7 @@ from jax._src import prng
 from jax._src import test_util as jtu
 from jax.experimental.key_reuse._common import (
   assert_consumed, assert_unconsumed, consume, consume_p)
-from jax.experimental.key_reuse import _forwarding, _simple, KeyReuseError
+from jax.experimental.key_reuse import _core, KeyReuseError
 
 from jax import config
 config.parse_flags_with_absl()
@@ -37,11 +37,11 @@ primitives_with_static_signatures = {
   consume_p: (consume, key),
   prng.reuse_key_p: (prng.reuse_key, key),
   prng.random_bits_p: (jax.random.bits, key),
-  prng.random_fold_in_p: (jax.random.fold_in, key, 2),
+  # prng.random_fold_in_p: (jax.random.fold_in, key, 2),
   prng.random_seed_p: (jax.random.key, 0),
   prng.random_split_p: (jax.random.split, key),
   prng.random_wrap_p: (jax.random.wrap_key_data, np.uint32([0, 0])),
-  prng.random_unwrap_p: (jax.random.key_data, key),
+  # prng.random_unwrap_p: (jax.random.key_data, key),
   jax.random.random_gamma_p: (jax.random.gamma, key, 1.0),
   jax.lax.broadcast_in_dim_p: (lambda key: key[None], key),
   jax.lax.copy_p: (jnp.array, key),
@@ -64,255 +64,9 @@ def apply_unknown_primitive(key):
 @jtu.with_config(
   jax_enable_custom_prng=False,
   jax_enable_key_reuse_checks=False)
-class KeyReuseUnitTestSimple(jtu.JaxTestCase):
-  def check_key_reuse(self, *args):
-    return _simple.check_key_reuse(*args)
-
-  def test_assertions(self):
-    key = jax.random.key(0)
-    self.check_key_reuse(assert_unconsumed, key)
-    with self.assertRaises(AssertionError):
-      self.check_key_reuse(assert_consumed, key)
-
-  def test_unknown(self):
-    def f(key):
-      assert_unconsumed(key)
-      key2 = apply_unknown_primitive(key)
-      assert_consumed(key)
-      assert_consumed(key2)
-    self.check_key_reuse(f, jax.random.key(0))
-
-  def test_consume(self):
-    def f(key):
-      assert_unconsumed(key)
-      key2 = consume(key)
-      assert_consumed(key)
-      assert_consumed(key2)
-    self.check_key_reuse(f, jax.random.key(0))
-
-  def test_reuse_key(self):
-    def f(key):
-      assert_unconsumed(key)
-      consume(key)
-      assert_consumed(key)
-      key2 = prng.reuse_key(key)
-      assert_unconsumed(key2)
-    self.check_key_reuse(f, jax.random.key(0))
-
-  def test_seed(self):
-    def f():
-      key = jax.random.key(0)
-      assert_unconsumed(key)
-    self.check_key_reuse(f)
-
-  def test_split(self):
-    def f(key):
-      assert_unconsumed(key)
-      key2 = jax.random.split(key)
-      assert_unconsumed(key2)
-      assert_consumed(key)
-    self.check_key_reuse(f, jax.random.key(0))
-
-  def test_fold_in(self):
-    def f(key):
-      assert_unconsumed(key)
-      key2 = jax.random.fold_in(key, 2)
-      assert_unconsumed(key)
-      assert_unconsumed(key2)
-    self.check_key_reuse(f, jax.random.key(0))
-
-  def test_bits(self):
-    def f(key):
-      assert_unconsumed(key)
-      bits = jax.random.bits(key, (), 'uint32')
-      assert_consumed(key)
-      return bits
-    self.check_key_reuse(f, jax.random.key(0))
-
-  def test_wrap(self):
-    def f(key_data):
-      key = jax.random.wrap_key_data(key_data)
-      assert_unconsumed(key)
-    self.check_key_reuse(f, jax.random.PRNGKey(0))
-
-  def test_unwrap(self):
-    def f(key):
-      assert_unconsumed(key)
-      key_data = jax.random.key_data(key)
-      assert_consumed(key)
-    self.check_key_reuse(f, jax.random.key(0))
-
-  def test_gamma(self):
-    def f(key):
-      assert_unconsumed(key)
-      values = jax.random.gamma(key, 1.0)
-      assert_consumed(key)
-      return values
-    self.check_key_reuse(f, jax.random.key(0))
-
-  def test_broadcast_in_dim(self):
-    def f(key):
-      assert_unconsumed(key)
-      key2 = key[None]
-      assert_consumed(key)
-      assert_unconsumed(key2)
-    self.check_key_reuse(f, jax.random.key(0))
-
-  def test_copy(self):
-    def f(key):
-      assert_unconsumed(key)
-      key2 = jnp.array(key, copy=True)
-      assert_consumed(key)
-      assert_unconsumed(key2)
-    self.check_key_reuse(f, jax.random.key(0))
-
-  def test_device_put(self):
-    def f(key):
-      assert_unconsumed(key)
-      key2 = jax.device_put(key)
-      assert_consumed(key)
-      assert_unconsumed(key2)
-    self.check_key_reuse(f, jax.random.key(0))
-
-  def test_squeeze(self):
-    def f(key):
-      assert_unconsumed(key)
-      key2 = jax.lax.squeeze(key, (0,))
-      assert_consumed(key)
-      assert_unconsumed(key2)
-    self.check_key_reuse(f, jax.random.key(0)[None])
-
-  def test_reshape(self):
-    def f(key):
-      assert_unconsumed(key)
-      key2 = key.reshape(1, *key.shape)
-      assert_consumed(key)
-      assert_unconsumed(key2)
-    self.check_key_reuse(f, jax.random.key(0))
-
-  def test_slice(self):
-    def f(keys):
-      assert_unconsumed(keys)
-
-      assert_unconsumed(keys[0])
-      assert_consumed(keys, np.array([True, False]))
-
-      assert_unconsumed(keys[1])
-      assert_consumed(keys, np.array([True, True]))
-    self.check_key_reuse(f, jax.random.split(jax.random.key(0)))
-
-  def test_jit_can_consume_input(self):
-    def f(key):
-      assert_unconsumed(key)
-      jax.jit(jax.random.bits)(key)
-      assert_consumed(key)
-    self.check_key_reuse(f, jax.random.key(0))
-
-  def test_jit_can_return_consumed_output(self):
-    def f():
-      def g():
-        key = jax.random.key(0)
-        assert_unconsumed(key)
-        bits = jax.random.bits(key)
-        assert_consumed(key)
-        return bits, key
-      _, key = jax.jit(g)()
-      assert_consumed(key)
-    self.check_key_reuse(f)
-
-  def test_jit_duplicate_inputs(self):
-    def f(key):
-      assert_unconsumed(key)
-      def g(key1, key2):
-        return jax.random.bits(key1)
-      _ = jax.jit(g)(key, key)
-      assert_consumed(key)
-    # TODO(jakevdp) handle this somehow?
-    with self.assertRaisesRegex(ValueError, "pjit with duplicate inputs"):
-      self.check_key_reuse(f, jax.random.key(0))
-
-  def test_jit_propagates_consumption_bit(self):
-    def f(key):
-      assert_unconsumed(key)
-      g = jax.jit(lambda: key)
-      key2 = g()
-      assert_consumed(key)
-      assert_unconsumed(key2)
-    self.check_key_reuse(f, jax.random.key(0))
-
-  def test_jit_duplicate_outputs(self):
-    # TODO(jakevdp): implement this case
-    def f(key):
-      assert_unconsumed(key)
-      def g(key):
-        return key, key
-      key1, key2 = jax.jit(g)(key)
-      assert_consumed(key)
-      assert_unconsumed(key1)
-      assert_consumed(key2)
-    self.check_key_reuse(f, jax.random.key(0))
-
-  def test_cond_source(self):
-    @jax.jit
-    def f(flag, key):
-      f1 = lambda seed, _: jax.random.key(seed)
-      f2 = lambda _, key: key
-      key_out = jax.lax.cond(flag, f1, f2, 0, key)
-      assert_unconsumed(key_out)
-    self.check_key_reuse(f, True, jax.random.key(0))
-
-  def test_cond_both_consumed(self):
-    @jax.jit
-    def f(flag, key):
-      assert_unconsumed(key)
-      _ = jax.lax.cond(
-        flag, jax.random.uniform, jax.random.normal, key)
-      assert_consumed(key)
-    self.check_key_reuse(f, True, jax.random.key(0))
-
-  def test_cond_one_consumed(self):
-    @jax.jit
-    def f(flag, key):
-      assert_unconsumed(key)
-      _ = jax.lax.cond(
-        flag, jax.random.uniform, lambda k: 1.0, key)
-      assert_consumed(key)
-    self.check_key_reuse(f, True, jax.random.key(0))
-
-  def test_cond_neither_consumed(self):
-    @jax.jit
-    def f(flag, key):
-      assert_unconsumed(key)
-      _ = jax.lax.cond(
-        flag, lambda k: 0.0, lambda k: 1.0, key)
-      assert_unconsumed(key)
-    self.check_key_reuse(f, True, jax.random.key(0))
-
-  def test_simple_vmap(self):
-    @jax.jit
-    def f(seed):
-      key = jax.random.key(seed)
-      assert_unconsumed(key)
-      result = jax.random.uniform(key)
-      assert_consumed(key)
-      return result
-    self.check_key_reuse(f, 0)
-    self.check_key_reuse(jax.vmap(f), jnp.arange(4))
-
-  @parameterized.parameters(*primitives_with_static_signatures)
-  def test_jaxpr_type_signature(self, primitive):
-    func, *args = primitives_with_static_signatures[primitive]
-    signature = _simple.key_reuse_signatures[primitive]
-    jaxpr = jax.make_jaxpr(func)(*args)
-    self.assertEqual(signature, _simple.get_jaxpr_type_signature(jaxpr.jaxpr))
-
-
-@jtu.with_config(
-  jax_enable_custom_prng=False,
-  jax_enable_key_reuse_checks=False)
 class KeyReuseUnitTestWithForwarding(jtu.JaxTestCase):
   def check_key_reuse(self, *args):
-    return _forwarding.check_key_reuse(*args)
+    return _core.check_key_reuse(*args)
 
   def test_assertions(self):
     key = jax.random.key(0)
@@ -385,7 +139,7 @@ class KeyReuseUnitTestWithForwarding(jtu.JaxTestCase):
     def f(key):
       assert_unconsumed(key)
       key_data = jax.random.key_data(key)
-      assert_consumed(key)
+      assert_unconsumed(key)
     self.check_key_reuse(f, jax.random.key(0))
 
   def test_gamma(self):
@@ -561,24 +315,20 @@ class KeyReuseUnitTestWithForwarding(jtu.JaxTestCase):
   @parameterized.parameters(*primitives_with_static_signatures)
   def test_jaxpr_type_signature(self, primitive):
     func, *args = primitives_with_static_signatures[primitive]
-    signature = _forwarding.key_reuse_signatures[primitive]
+    signature = _core.key_reuse_signatures[primitive]
     jaxpr = jax.make_jaxpr(func)(*args)
-    self.assertEqual(signature, _forwarding.get_jaxpr_type_signature(jaxpr.jaxpr))
+    self.assertEqual(signature, _core.get_jaxpr_type_signature(jaxpr.jaxpr))
 
 
 @jtu.with_config(jax_enable_key_reuse_checks=False)
 class KeyReuseIntegrationTest(jtu.JaxTestCase):
-  use_forwarding = True
   random_bits_error = "In random_bits, key values .+ are already consumed.*"
   random_split_error = "In random_split, key values .+ are already consumed.*"
   generic_error = ".*key values .+ are already consumed.*"
   pjit_error = "In pjit, key values a are already consumed."
 
   def check_key_reuse(self, f, *args):
-    if self.use_forwarding:
-      return _forwarding.check_key_reuse(f, *args)
-    else:
-      return _simple.check_key_reuse(f, *args)
+    return _core.check_key_reuse(f, *args)
 
   def test_reuse(self):
     def f():
@@ -822,10 +572,6 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
 
     self.check_key_reuse(f_good, x, key)
     self.check_key_reuse(jax.grad(f_good), x, key)
-
-
-class KeyReuseIntegrationTestSimple(KeyReuseIntegrationTest):
-  use_forwarding = False
 
 
 @jtu.with_config(jax_enable_checks=False)

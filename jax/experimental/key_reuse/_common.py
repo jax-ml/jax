@@ -41,10 +41,15 @@ class Source(NamedTuple):
     else:
       return f"Source({self.idx}, mask={self.mask})"
 
+class Forward(NamedTuple):
+  in_idx: int
+  out_idx: int
+
 
 class KeyReuseSignature(NamedTuple):
   sinks: list[Sink]
   sources: list[Source]
+  forwards: list[Forward] = []
 
 
 class KeyReuseError(RuntimeError):
