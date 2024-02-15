@@ -501,8 +501,8 @@ def _cache_write(cache_key: str,
   """
   # Only write cache entries from the first process. Otherwise we create
   # problems with contention for writes on some filesystems, e.g., GCS.
-  if backend.process_index() != 0:
-    logger.debug("Not writing persistent cache entry since process_index != 0")
+  if distributed.global_state.process_id != 0:
+    logger.debug("Not writing persistent cache entry since process_id != 0")
     return
 
   if host_callbacks:

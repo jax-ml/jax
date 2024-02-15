@@ -32,6 +32,7 @@ from jax import pmap
 from jax._src import compilation_cache as cc
 from jax._src import compiler
 from jax._src import config
+from jax._src import distributed
 from jax._src import monitoring
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
@@ -426,6 +427,24 @@ class CompilationCacheTest(jtu.JaxTestCase):
         _counts["/jax/compilation_cache/cache_hits"]
         - previous_counts["/jax/compilation_cache/cache_hits"],
         1)
+
+  @parameterized.parameters(0, 1)
+  def test_cache_write_with_process_restriction(self, process_id):
+    with (
+      tempfile.TemporaryDirectory() as tmpdir,
+      config.persistent_cache_min_compile_time_secs(0),
+      config.persistent_cache_min_entry_size_bytes(0),
+      mock.patch.object(distributed.global_state, "process_id", process_id),
+    ):
+      cc.set_cache_dir(tmpdir)
+
+      jit(lambda x: x + 1)(1)
+
+      files_in_directory = len(os.listdir(tmpdir))
+      if process_id == 0:
+        self.assertEqual(files_in_directory, 1)
+      elif process_id == 1:
+        self.assertEqual(files_in_directory, 0)
 
 
 @jtu.with_config(
