@@ -147,7 +147,12 @@ xla::Array<Value> concatenate(const ArrayRef<xla::Array<Value>> arrays,
   SmallVector<int64_t> dims(toArrayRef(arrays[0].dimensions()));
   CHECK(0 <= axis && axis < dims.size());
   for (size_t i = 1; i < arrays.size(); ++i) {
-    CHECK(arrays[i].dimensions() == arrays[0].dimensions());
+    CHECK_EQ(arrays[i].num_dimensions(), arrays[0].num_dimensions());
+    for (size_t j = 0; j < arrays[i].num_dimensions(); ++j) {
+      if (j != axis) {
+        CHECK_EQ(arrays[i].dim(j), arrays[0].dim(j));
+      }
+    }
     dims[axis] += arrays[i].dim(axis);
   }
   xla::Array<Value> res(dims);
