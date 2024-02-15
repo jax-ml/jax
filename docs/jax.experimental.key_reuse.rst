@@ -9,5 +9,5 @@ API
 .. autosummary::
   :toctree: _autosummary
 
-  unconsumed_copy
+  reuse_key
   KeyReuseError

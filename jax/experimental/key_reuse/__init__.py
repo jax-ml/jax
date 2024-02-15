@@ -38,8 +38,10 @@ Key reuse checking can be enabled on `jit`-compiled functions using the
 This flag can also be set globally if you wish to enagle key reuse checks in
 every JIT-compiled function.
 """
+from jax._src.prng import (
+    reuse_key as reuse_key,
+)
 
 from jax.experimental.key_reuse._common import (
-    unconsumed_copy as unconsumed_copy,
     KeyReuseError as KeyReuseError,
 )

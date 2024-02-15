@@ -33,7 +33,7 @@ from jax._src.debugging import debug_callback_p
 from jax._src.interpreters import partial_eval as pe
 
 from jax.experimental.key_reuse._common import (
-  consume_p, unconsumed_copy_p, assert_consumed_value_p, KeyReuseError,
+  consume_p, assert_consumed_value_p, KeyReuseError,
   Sink, Source, KeyReuseSignature
 )
 import numpy as np
@@ -42,7 +42,7 @@ import numpy as np
 key_reuse_signatures: dict[core.Primitive, KeyReuseSignature] = {}
 
 key_reuse_signatures[consume_p] = KeyReuseSignature([Sink(0)], [])
-key_reuse_signatures[unconsumed_copy_p] = KeyReuseSignature([], [Source(0)])
+key_reuse_signatures[prng.reuse_key_p] = KeyReuseSignature([], [Source(0)])
 key_reuse_signatures[prng.random_bits_p] = KeyReuseSignature([Sink(0)], [])
 # TODO(jakevdp): should fold_in sink its input key?
 # key_reuse_signatures[prng.random_fold_in_p] = KeyReuseSignature([Sink(0)], [Source(0)])

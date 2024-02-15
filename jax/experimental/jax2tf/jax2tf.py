@@ -69,7 +69,6 @@ from jax._src.lax import slicing as lax_slicing
 from jax._src.lax import windowed_reductions as lax_windowed_reductions
 from jax._src.lib import xla_client
 from jax._src.numpy.ufuncs import logaddexp
-from jax.experimental.key_reuse._common import unconsumed_copy_p
 
 import tensorflow as tf  # type: ignore[import]
 
@@ -1529,7 +1528,7 @@ tf_not_yet_impl = [
     "consume",
 ]
 
-tf_impl[unconsumed_copy_p] = lambda x: x
+tf_impl[prng.reuse_key_p] = lambda x: x
 
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
 
