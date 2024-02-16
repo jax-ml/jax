@@ -1800,25 +1800,35 @@ for dtype in jtu.dtypes.all_floating + jtu.dtypes.complex:
   for shape in [(2, 2), (2, 7), (29, 29), (2, 3, 53), (2, 3, 29, 7)]:
     for full_matrices in [False, True]:
       for compute_uv in [False, True]:
+        subset_by_index = None
         define(
             lax.linalg.svd_p,
             f"shape={jtu.format_shape_dtype_string(shape, dtype)}_fullmatrices={full_matrices}_computeuv={compute_uv}",
             lambda *args: lax.linalg.svd_p.bind(
-                args[0], full_matrices=args[1], compute_uv=args[2]), [
-                    RandArg(shape, dtype),
-                    StaticArg(full_matrices),
-                    StaticArg(compute_uv)
-                ],
+                args[0],
+                full_matrices=args[1],
+                compute_uv=args[2],
+                subset_by_index=args[3],
+            ),
+            [
+                RandArg(shape, dtype),
+                StaticArg(full_matrices),
+                StaticArg(compute_uv),
+                StaticArg(subset_by_index),
+            ],
             jax_unimplemented=[
                 Limitation(
                     "unimplemented",
                     devices=("cpu", "gpu"),
-                    dtypes=[np.float16, dtypes.bfloat16]),
+                    dtypes=[np.float16, dtypes.bfloat16],
+                ),
             ],
             shape=shape,
             dtype=dtype,
             full_matrices=full_matrices,
-            compute_uv=compute_uv)
+            compute_uv=compute_uv,
+            subset_by_index=subset_by_index,
+        )
 
 for dtype in jtu.dtypes.all_inexact:
   for shape in [(0, 0), (5, 5), (2, 6, 6)]:
@@ -2664,7 +2674,6 @@ for dtype in (np.float32, np.float64):
         jax.jit(lambda x: jax_random.gamma(jax.random.key(42), x)),
         [RandArg(shape, dtype)],
         dtype=dtype)
-
 
 
 def wrap_and_split():

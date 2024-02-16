@@ -3249,7 +3249,18 @@ def _qr(operand, full_matrices):
 tf_impl[lax.linalg.qr_p] = _qr
 
 
-def _svd(operand, full_matrices, compute_uv):
+def _svd(
+    operand: TfVal,
+    full_matrices: bool,
+    compute_uv: bool,
+    subset_by_index: tuple[int, int] | None = None,
+):
+  if not (
+      subset_by_index is None
+      or subset_by_index == (0, min(operand.shape[-1], operand.shape[-2]))
+  ):
+    raise NotImplementedError("subset_by_index is not implemented")
+
   result = tf.linalg.svd(operand, full_matrices, compute_uv)
   if not compute_uv:
     return result,

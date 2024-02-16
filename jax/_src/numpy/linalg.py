@@ -72,30 +72,85 @@ def cholesky(a: ArrayLike, *, upper: bool = False) -> Array:
   L = lax_linalg.cholesky(a)
   return L.mT.conj() if upper else L
 
+
 @overload
-def svd(a: ArrayLike, full_matrices: bool = True, *, compute_uv: Literal[True],
-        hermitian: bool = False) -> SVDResult: ...
+def svd(
+    a: ArrayLike,
+    full_matrices: bool = True,
+    *,
+    compute_uv: Literal[True],
+    hermitian: bool = False,
+    subset_by_index: tuple[int, int] | None = None,
+) -> SVDResult:
+  ...
+
+
 @overload
-def svd(a: ArrayLike, full_matrices: bool, compute_uv: Literal[True],
-        hermitian: bool = False) -> SVDResult: ...
+def svd(
+    a: ArrayLike,
+    full_matrices: bool,
+    compute_uv: Literal[True],
+    hermitian: bool = False,
+    subset_by_index: tuple[int, int] | None = None,
+) -> SVDResult:
+  ...
+
+
 @overload
-def svd(a: ArrayLike, full_matrices: bool = True, *, compute_uv: Literal[False],
-        hermitian: bool = False) -> Array: ...
+def svd(
+    a: ArrayLike,
+    full_matrices: bool = True,
+    *,
+    compute_uv: Literal[False],
+    hermitian: bool = False,
+    subset_by_index: tuple[int, int] | None = None,
+) -> Array:
+  ...
+
+
 @overload
-def svd(a: ArrayLike, full_matrices: bool, compute_uv: Literal[False],
-        hermitian: bool = False) -> Array: ...
+def svd(
+    a: ArrayLike,
+    full_matrices: bool,
+    compute_uv: Literal[False],
+    hermitian: bool = False,
+    subset_by_index: tuple[int, int] | None = None,
+) -> Array:
+  ...
+
+
 @overload
-def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: bool = True,
-        hermitian: bool = False) -> Array | SVDResult: ...
+def svd(
+    a: ArrayLike,
+    full_matrices: bool = True,
+    compute_uv: bool = True,
+    hermitian: bool = False,
+    subset_by_index: tuple[int, int] | None = None,
+) -> Array | SVDResult:
+  ...
+
 
 @implements(np.linalg.svd)
-@partial(jit, static_argnames=('full_matrices', 'compute_uv', 'hermitian'))
-def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: bool = True,
-        hermitian: bool = False) -> Array | SVDResult:
+@partial(
+    jit,
+    static_argnames=(
+        "full_matrices",
+        "compute_uv",
+        "hermitian",
+        "subset_by_index",
+    ),
+)
+def svd(
+    a: ArrayLike,
+    full_matrices: bool = True,
+    compute_uv: bool = True,
+    hermitian: bool = False,
+    subset_by_index: tuple[int, int] | None = None,
+) -> Array | SVDResult:
   check_arraylike("jnp.linalg.svd", a)
   a, = promote_dtypes_inexact(jnp.asarray(a))
   if hermitian:
-    w, v = lax_linalg.eigh(a)
+    w, v = lax_linalg.eigh(a, subset_by_index=subset_by_index)
     s = lax.abs(v)
     if compute_uv:
       sign = lax.sign(v)
@@ -111,10 +166,20 @@ def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: bool = True,
       return lax.rev(lax.sort(s, dimension=-1), dimensions=[s.ndim-1])
 
   if compute_uv:
-    u, s, vh = lax_linalg.svd(a, full_matrices=full_matrices, compute_uv=True)
+    u, s, vh = lax_linalg.svd(
+        a,
+        full_matrices=full_matrices,
+        compute_uv=True,
+        subset_by_index=subset_by_index,
+    )
     return SVDResult(u, s, vh)
   else:
-    return lax_linalg.svd(a, full_matrices=full_matrices, compute_uv=False)
+    return lax_linalg.svd(
+        a,
+        full_matrices=full_matrices,
+        compute_uv=False,
+        subset_by_index=subset_by_index,
+    )
 
 
 @implements(np.linalg.matrix_power)
