@@ -4495,37 +4495,35 @@ class APITest(jtu.JaxTestCase):
     array_int = jnp.arange(10, dtype=int)
     scalar_float = jnp.float32(0)
     scalar_int = jnp.int32(0)
+    empty_int = jnp.arange(0, dtype='int32')
     array1_float = jnp.arange(1, dtype='float32')
 
     assertIntError = partial(self.assertRaisesRegex, TypeError,
                              "Only integer scalar arrays can be converted to a scalar index.")
     for func in [operator.index, hex, oct]:
       assertIntError(func, array_int)
+      assertIntError(func, empty_int)
       assertIntError(func, scalar_float)
       assertIntError(jax.jit(func), array_int)
+      assertIntError(jax.jit(func), empty_int)
       assertIntError(jax.jit(func), scalar_float)
       self.assertRaises(TracerIntegerConversionError, jax.jit(func), scalar_int)
       _ = func(scalar_int)  # no error
 
     assertScalarError = partial(self.assertRaisesRegex, TypeError,
-                                "Only length-1 arrays can be converted to Python scalars.")
+                                "Only scalar arrays can be converted to Python scalars.")
     for func in [int, float, complex]:
       assertScalarError(func, array_int)
       assertScalarError(jax.jit(func), array_int)
       self.assertRaises(ConcretizationTypeError, jax.jit(func), scalar_int)
       _ = func(scalar_int)  # no error
-      # TODO(jakevdp): remove this ignore warning when possible
-      with jtu.ignore_warning(category=DeprecationWarning):
-        self.assertRaises(ConcretizationTypeError, jax.jit(func), array1_float)
-        _ = func(array1_float)  # no error
+      assertScalarError(func, array1_float)
 
-    # TODO(jakevdp): add these tests once these deprecated operations error.
-    # empty_int = jnp.arange(0, dtype='int32')
-    # assertEmptyBoolError = partial(
-    #     self.assertRaisesRegex, ValueError,
-    #     "The truth value of an empty array is ambiguous.")
-    # assertEmptyBoolError(bool, empty_int)
-    # assertEmptyBoolError(jax.jit(bool), empty_int)
+    assertEmptyBoolError = partial(
+        self.assertRaisesRegex, ValueError,
+        "The truth value of an empty array is ambiguous.")
+    assertEmptyBoolError(bool, empty_int)
+    assertEmptyBoolError(jax.jit(bool), empty_int)
 
     assertBoolError = partial(
         self.assertRaisesRegex, ValueError,
