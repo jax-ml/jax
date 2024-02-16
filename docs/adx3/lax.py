@@ -114,6 +114,76 @@ register_canonicalizer(float, lambda x: JaxArrayLit(np.asarray(x, dtype=np.float
 register_canonicalizer(bool, lambda x: JaxArrayLit(np.asarray(x, dtype=np.bool_)))
 register_canonicalizer(int, lambda x: JaxArrayLit(np.asarray(x, dtype=np.int64)))
 register_canonicalizer(np.ndarray, lambda x: JaxArrayLit(x))
+register_canonicalizer(tuple, lambda xs: JaxTupleCon([canonicalize_pyval(x) for x in xs]))
+
+# === tuple type ===
+
+@dataclass
+class JaxTupleType(JaxType):
+  elt_tys : list[JaxType]
+
+  def __str__(self):
+    return f'({",".join(str(elt_ty) for elt_ty in self.elt_tys)})'
+
+  @staticmethod
+  def var_to_tracer(v):
+    return JaxTupleTracer(v)
+
+  def tangent_type(self):
+    # TODO: handle ints and bools. Do we make a unit dtype or just use JaxTuple?
+    return JaxTupleType([elt_ty.tangent_type() for elt_ty in self.elt_tys])
+
+  def add_tangents(self, x:LinearPyVal, y:LinearPyVal) -> LinearPyVal:
+    assert False # todo
+
+  def instantiate_zeros(self, x:LinearPyVal) -> StrictPyVal:
+    assert False # todo
+
+  def to_repval(self, val):
+    assert False # todo
+
+  def from_repval(self, repvals):
+    assert False # todo
+
+class JaxTuple(JaxVal):
+  def __getitem__(self, ix):
+    return proj(self, ix)
+  def __str__(self):
+    return f'({", ".join(str(elt) for elt in self)})'
+
+class JaxTupleTracer(Tracer, JaxTuple): pass
+
+@dataclass
+class JaxTupleCon(JaxTuple):
+  def __init__(self, elts:list[JaxVal]):
+    assert all([isinstance(elt, (JaxVal, Var)) for elt in elts])
+    self.elts = elts
+  @property
+  def ty(self): return JaxTupleType([elt.ty for elt in self.elts])
+  def to_atom(self): return JaxTupleCon([elt.to_atom() for elt in self.elts])
+  def free_vars(self): return set.union(*[elt.free_vars() for elt in self.elts])
+  def eval_atom(self, env:Env): return JaxTupleCon([elt.eval_atom(env) for elt in self.elts])
+  def eval_tangent(self, env): return JaxTupleCon([elt.eval_tangent(env) for elt in self.elts])
+
+def proj(xs, i): return apply_primitive(ProjP(i), (xs,))
+
+class ProjP(Primitive):
+  i : int
+  def __init__(self, i):
+    assert isinstance(i, int)  # must be concrete
+    self.i = i
+
+  def eval_type(self, xs_ty):
+    assert isinstance(xs_ty, JaxTupleType)
+    return xs_ty.elt_tys[self.i]
+
+  def impl(self, _, xs):
+    return xs.elts[self.i]
+
+  def __str__(self): return f'proj_{self.i}'
+
+  def linearize_rule(self, _, primals, tangents):
+    assert False
 
 # === list type ===
 

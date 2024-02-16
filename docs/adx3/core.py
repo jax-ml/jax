@@ -26,7 +26,7 @@ class JaxType:
   def __eq__(self, other): raise NotImplementedError(type(self))
   def __str__(self):       raise NotImplementedError(type(self))
   @staticmethod
-  def var_to_tracer():     raise NotImplementedError(type(self))
+  def var_to_tracer(self):     raise NotImplementedError(type(self))
   def tangent_type(self):  raise NotImplementedError(type(self))
   # add_tangents and instantiate_zeros only need to be defined for vector spaces
   def add_tangents(self, x, y):   raise NotImplementedError(type(self))

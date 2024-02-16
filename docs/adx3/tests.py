@@ -47,3 +47,17 @@ def uses_for(x):
   return fori(x.shape[0], body)
 
 print(uses_for(canonicalize_pyval(np.arange(5))))
+
+
+def f3(xy):
+  x, y = xy
+  def when_true():
+    return (x + x, 1.0)
+  def when_false():
+    return (x * x, 2.0)
+  return cond(x > y, when_true, when_false)
+
+f3_jaxpr = trace_to_jaxpr(f3, (jax_type_of((1.,2.)),))
+print(f3_jaxpr)
+print(eval_jaxpr({}, f3_jaxpr, ((1.,2.),)))
+print(eval_jaxpr({}, f3_jaxpr, ((2.,1.),)))
