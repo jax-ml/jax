@@ -335,7 +335,7 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
       key = jax.random.key(0)
       return jax.random.uniform(key) + jax.random.uniform(key)
 
-    with self.assertRaisesRegex(KeyReuseError, self.random_bits_error):
+    with self.assertRaisesRegex(KeyReuseError, self.pjit_error):
       self.check_key_reuse(f)
 
   def test_reuse_after_split(self):
@@ -350,7 +350,7 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
       _ = jax.random.split(key)
       return jax.random.uniform(key)
 
-    with self.assertRaisesRegex(KeyReuseError, self.random_bits_error):
+    with self.assertRaisesRegex(KeyReuseError, self.pjit_error):
       self.check_key_reuse(f_bad)
 
     def f_bad_2():
@@ -418,7 +418,7 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
       r1 = jax.lax.cond(condition, jax.random.uniform, jax.random.normal, key)
       return r1 + jax.random.uniform(key)
 
-    with self.assertRaisesRegex(KeyReuseError, self.random_bits_error):
+    with self.assertRaisesRegex(KeyReuseError, self.pjit_error):
       self.check_key_reuse(f_bad, key, True)
 
     # Check where only one branch consumes the key
@@ -426,7 +426,7 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
       r1 = jax.lax.cond(condition, jax.random.uniform, lambda key: 1.0, key)
       return r1 + jax.random.uniform(key)
 
-    with self.assertRaisesRegex(KeyReuseError, self.random_bits_error):
+    with self.assertRaisesRegex(KeyReuseError, self.pjit_error):
       self.check_key_reuse(f_bad_2, key, True)
 
   def test_simple_scan(self):
