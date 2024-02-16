@@ -133,7 +133,8 @@ class PallasTest(parameterized.TestCase):
       try:
         import triton  # noqa: F401
       except ImportError:
-        self.skipTest("Triton is not installed. Skipping PallasTest.")
+        if not _TRITON_COMPILE_VIA_XLA.value:
+          self.skipTest("Triton is not installed. Skipping PallasTest.")
     super().setUp()
     if compile_jaxpr:
       compile_jaxpr.cache_clear()

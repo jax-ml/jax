@@ -58,10 +58,7 @@ from jax._src.util import partition_list
 from jax._src.util import split_list
 from jax._src.util import weakref_lru_cache
 import jax.numpy as jnp
-from jax_triton import triton_lib
-from jax_triton.triton_lib import compile_ttir_to_ptx_inplace
 import numpy as np
-import triton.backends.nvidia.compiler as cb
 
 
 # TODO(sharadmv): Enable type checking.
@@ -257,8 +254,9 @@ def lower_jaxpr_to_triton_module(
     in_shapes,
     grid_mapping: GridMapping,
     name: str,
-    cuda_options: cb.CUDAOptions,
+    cuda_options: Any,
 ) -> LoweringResult:
+  # TODO(slebedev): Use cuda_options= during lowering.
   jaxpr, _ = pe.dce_jaxpr(jaxpr, [True] * len(jaxpr.outvars), instantiate=True)
   with _new_ir_context(), ir.Location.unknown():
     module = ir.Module.create()
@@ -2424,6 +2422,9 @@ def compile_jaxpr(
     num_stages: int,
     debug: bool,
 ) -> CompilationResult:
+  from jax_triton.triton_lib import compile_ttir_to_ptx_inplace
+  import triton.backends.nvidia.compiler as cb
+
   # TODO(sharadmv): handle multiple devices, right now we assume device 0
   # which is fine when we have multiple of the same GPU but this won't work in
   # general.
@@ -2454,6 +2455,18 @@ def compile_jaxpr(
   return CompilationResult(
       name, ttir, ptx, shared_mem_bytes, compute_capability, lowering_result
   )
+
+
+def normalize_grid(grid: Grid) -> tuple[int, int, int]:
+  if isinstance(grid, int):
+    grid = (grid,)
+  elif len(grid) > 3:
+    raise ValueError("`grid` should have three or fewer dimensions.")
+  return tuple(grid) + (1,) * (3 - len(grid))
+
+
+def avals_to_layouts(avals):
+  return [list(reversed(range(aval.ndim))) for aval in avals]
 
 
 def _pallas_call_ptx_lowering(
@@ -2498,9 +2511,7 @@ def _pallas_call_ptx_lowering(
       1,  # TODO(giorgioa): Add support for clustering on H100s on Pallas.
   )
 
-  grid = triton_lib.normalize_grid(
-      compilation_result.lowering_result.grid, metaparams={}
-  )
+  grid = normalize_grid(compilation_result.lowering_result.grid)
 
   kernel_params = []
   for _ in range(len(in_shapes) + len(out_shapes)):
@@ -2527,8 +2538,8 @@ def _pallas_call_ptx_lowering(
       result_types=out_types,
       operands=in_nodes,
       backend_config=zlib.compress(kernel_call_proto),
-      operand_layouts=triton_lib.avals_to_layouts(ctx.avals_in),
-      result_layouts=triton_lib.avals_to_layouts(ctx.avals_out),
+      operand_layouts=avals_to_layouts(ctx.avals_in),
+      result_layouts=avals_to_layouts(ctx.avals_out),
       operand_output_aliases=dict(input_output_aliases),
   ).results
 
@@ -2554,11 +2565,12 @@ def _pallas_call_ttir_lowering(
   # which is fine when we have multiple of the same GPU but this won't work in
   # general.
   device = 0
-  arch = triton_kernel_call_lib.get_compute_capability(device)
-  target = ("cuda", arch)
-  cuda_backend = cb.CUDABackend(target)
-  cuda_options = cuda_backend.parse_options(
-      dict(num_warps=num_warps, num_stages=num_stages, debug=debug)
+  compute_capability = triton_kernel_call_lib.get_compute_capability(device)
+  cuda_options = dict(
+      compute_capability=compute_capability,
+      num_warps=num_warps,
+      num_stages=num_stages,
+      debug=debug,
   )
 
   lowering_result = lower_jaxpr_to_triton_module(
@@ -2567,9 +2579,7 @@ def _pallas_call_ttir_lowering(
   if debug:
     lowering_result.module.dump()
 
-  grid_x, grid_y, grid_z = triton_lib.normalize_grid(
-      lowering_result.grid, metaparams={}
-  )
+  grid_x, grid_y, grid_z = normalize_grid(lowering_result.grid)
   out_types = [
       ir.RankedTensorType.get(shape.shape, mlir.dtype_to_ir_type(shape.dtype))
       for shape in out_shapes
@@ -2592,8 +2602,8 @@ def _pallas_call_ttir_lowering(
       operands=in_nodes,
       backend_config=backend_config,
       api_version=4,
-      operand_layouts=triton_lib.avals_to_layouts(ctx.avals_in),
-      result_layouts=triton_lib.avals_to_layouts(ctx.avals_out),
+      operand_layouts=avals_to_layouts(ctx.avals_in),
+      result_layouts=avals_to_layouts(ctx.avals_out),
       operand_output_aliases=dict(input_output_aliases),
   ).results
 
