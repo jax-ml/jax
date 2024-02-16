@@ -630,8 +630,9 @@ def _transpose_jaxpr(jaxpr, in_lin, out_zeros, reduce_axes):
                 pe.PartialVal.known(next(ins_iter))
                 for aval, lin in zip(jaxpr.in_avals, in_lin)]
     assert next(ins_iter, None) is None
-    lin_jaxpr, _, consts = pe.trace_to_jaxpr_nounits(
-        lu.wrap_init(core.jaxpr_as_fun(jaxpr)), in_pvals, False)
+    with source_info_util.extend_name_stack('rematted_computation'):
+      lin_jaxpr, _, consts = pe.trace_to_jaxpr_nounits(
+          lu.wrap_init(core.jaxpr_as_fun(jaxpr)), in_pvals, False)
 
     # Transpose the linear jaxpr (which only has linear inputs).
     out_cts_iter = iter(out_cts_flat)
@@ -697,7 +698,7 @@ def remat_lowering(*args, jaxpr: core.Jaxpr, prevent_cse: bool,
   else:
     translation_rule = lambda *args, jaxpr: core.eval_jaxpr(jaxpr, (), *args)
 
-  return api.named_call(translation_rule, name="remat")(*args, jaxpr=jaxpr)
+  return api.named_call(translation_rule, name="checkpoint")(*args, jaxpr=jaxpr)
 
 def _remat_translation_using_opt_barrier(*args, jaxpr: core.Jaxpr):
   args = _optimization_barrier(args)

@@ -23,6 +23,7 @@ from jax._src import linear_util as lu
 from jax import config
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client
+from jax._src import ad_checkpoint
 
 config.parse_flags_with_absl()
 
@@ -266,6 +267,18 @@ class NameStackTransformationTest(jtu.JaxTestCase):
     self.assertIn('jvp(pjit(f))/pjit(g)/sin', hlo_text)
     self.assertIn('jvp(pjit(f))/pjit(g)/cos', hlo_text)
     self.assertIn('transpose(jvp(pjit(f)))/pjit(g)/mul', hlo_text)
+
+  def test_remat_appears_in_hlo(self):
+    @ad_checkpoint.remat
+    def f(x):
+      return jnp.sin(x)
+
+    hlo_text = _get_hlo(f)(2.)
+    hlo_text_grad = _get_hlo(jax.grad(f))(2.)
+    self.assertNotIn('rematted_computation', hlo_text)
+    self.assertNotIn('remat', hlo_text)
+    self.assertIn('checkpoint', hlo_text)
+    self.assertIn('rematted_computation', hlo_text_grad)
 
 
 class NameStackControlFlowTest(jtu.JaxTestCase):
