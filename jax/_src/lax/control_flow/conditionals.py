@@ -638,7 +638,7 @@ def _join_cond_outputs(jaxprs, all_res_avals, res_aval_indices_per_jaxpr,
 # that it does not read.
 def _join_cond_pe_staged_jaxpr_inputs(jaxprs, all_res_avals,
                                       res_aval_indices_per_jaxpr):
-  newvar = core.gensym([j.jaxpr for j in jaxprs], suffix='_')
+  newvar = core.gensym(suffix='_')
   all_res_vars = map(newvar, all_res_avals)
 
   def augment_jaxpr(jaxpr, res_indices):
@@ -809,7 +809,7 @@ def _cond_typecheck(bind_time, *in_atoms, branches, linear):
 def cond_bind(*args, branches, linear):
   if config.enable_checks.value:
     avals = map(core.get_aval, args)
-    in_atoms = [core.Var(0, '', a) for a in avals]  # dummies
+    in_atoms = [core.Var('', a) for a in avals]  # dummies
     _cond_typecheck(True, *in_atoms, branches=branches, linear=linear)
     for jaxpr in branches:
       core.check_jaxpr(jaxpr.jaxpr)

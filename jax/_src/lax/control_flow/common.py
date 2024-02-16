@@ -173,7 +173,7 @@ def _initial_style_jaxprs_with_common_consts(
     all_nonref_const_avals.append(nonref_const_avals)
     canonical_ref_indices.append(ref_indices)
 
-  newvar = core.gensym(jaxprs, suffix='_')
+  newvar = core.gensym(suffix='_')
   unused_ref_const_vars = map(newvar, canonical_ref_avals)
   unused_const_vars = [map(newvar, const_avals)
                        for const_avals in all_nonref_const_avals]

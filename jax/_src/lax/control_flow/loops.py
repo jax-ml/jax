@@ -1046,7 +1046,7 @@ def _scan_state_discharge_rule(in_avals, out_avals, *args, jaxpr, num_consts,
 def scan_bind(*args, **params):
   if config.enable_checks.value:
     avals = _map(core.get_aval, args)
-    in_atoms = [core.Var(0, '', a) for a in avals]  # dummies
+    in_atoms = [core.Var('', a) for a in avals]  # dummies
     _scan_typecheck(True, *in_atoms, **params)
     core.check_jaxpr(params['jaxpr'].jaxpr)
   return core.AxisPrimitive.bind(scan_p, *args, **params)
@@ -1330,7 +1330,7 @@ def _while_loop_jvp(primals, tangents, cond_nconsts, cond_jaxpr, body_nconsts,
       [body_nconsts, num_carry], [len(bconst_dot), len(init_dot)],
       [num_carry], [len(init_dot)])
 
-  newvar = core.gensym([cond_jaxpr.jaxpr])
+  newvar = core.gensym()
   invars_aug = (
       cond_jaxpr.jaxpr.invars + [newvar(core.get_aval(x)) for x in init_dot])
   cond_jaxpr_augmented = core.Jaxpr(cond_jaxpr.jaxpr.constvars,

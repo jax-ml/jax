@@ -1741,7 +1741,7 @@ class JumbleTest(jtu.JaxTestCase):
                                        ).at[:x.shape[0]].set(x) for x in xs])
 
       # binder = i
-      binder = core.Var(0, '', core.ShapedArray((), np.dtype('int32')))
+      binder = core.Var('', core.ShapedArray((), np.dtype('int32')))
       # elt_ty = f32[[3, 1, 4].i, 128]
       elt_ty = core.DShapedArray((batching.IndexedAxisSize(binder, lengths), 128),
                                  xs_padded.dtype)

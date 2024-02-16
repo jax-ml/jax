@@ -25,6 +25,7 @@ from jax._src import api_util
 from jax._src import core
 from jax._src import linear_util as lu
 from jax._src import pjit
+from jax._src import pretty_printer as pp
 from jax._src import prng
 from jax._src import random
 from jax._src import util
@@ -152,10 +153,15 @@ def get_jaxpr_type_signature(jaxpr: core.Jaxpr) -> KeyReuseSignature:
       if not 0 <= snk.idx < len(eqn.invars):
         raise KeyReuseError(f"In {eqn.primitive}, sink {snk.idx} out of range [0, {len(eqn.invars)}]")
       if sink(eqn.invars[snk.idx], snk.mask):
-        raise KeyReuseError(f"In {eqn.primitive}, key values {eqn.invars[snk.idx]} are already consumed.\n"
+        context = core.JaxprPpContext()
+        settings = core.JaxprPpSettings()
+        jaxpr_str = core.pp_jaxpr(jaxpr, context, settings).format()
+        eqn_str = core.pp_eqn(eqn, context, settings).format()
+        key_vals_str = core.pp_var(eqn.invars[snk.idx], context).format()
+        raise KeyReuseError(f"In {eqn.primitive}, key values {key_vals_str} are already consumed.\n"
                             f"  signature: {signature}\n"
-                            f"  eqn: {eqn}\n"
-                            f"  jaxpr:\n{jaxpr}")
+                            f"  eqn: {eqn_str}\n"
+                            f"  jaxpr:\n{jaxpr_str}")
     for var in eqn.outvars:
       if not isinstance(var, core.Literal) and var not in forwards:
         source(var, True)  # consumed unless in a Source.

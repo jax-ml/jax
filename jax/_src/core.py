@@ -332,6 +332,8 @@ def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None)
     assert all(isinstance(v,  Var)           for v in outvars)
   return JaxprEqn(invars, outvars, primitive, params, effects, source_info)
 
+_var_counter = it.count()
+
 @total_ordering
 class Var:
   __slots__ = ["count", "suffix", "aval"]
@@ -340,48 +342,23 @@ class Var:
   suffix: str
   aval: AbstractValue
 
-  def __init__(self, count: int, suffix: str, aval: AbstractValue):
-    self.count = count
+  def __init__(self, suffix: str, aval: AbstractValue):
+    self.count = next(_var_counter)
     self.suffix = suffix
     self.aval = raise_to_shaped(aval)
 
+  # TODO(phawkins, mattjj): remove ordering of variables. JAX itself does not
+  # care about variable ordering, but the downstream package kfac_jax does.
   def __lt__(self, other):
-    if not isinstance(other, Var):
-      return NotImplemented
-    else:
-      return (self.count, self.suffix) < (other.count, other.suffix)
+    return self.count < other.count
 
   def __repr__(self):
-    return _encode_digits_alphabetic(self.count) + self.suffix
+    return f'Var(id={id(self)}){self.suffix}:{self.aval.str_short()}'
 
-def _encode_digits_alphabetic(n: int) -> str:
-  if n == -1:
-    return '*'
-  s = ''
-  while len(s) == 0 or n:
-    n, i = n // 26, n % 26
-    s = chr(97 + i % 26) + s
-  return s
 
-def _jaxpr_vars(jaxpr) -> Iterable[Var]:
-  return it.chain(
-      jaxpr.invars, jaxpr.constvars,
-      (v for eqn in jaxpr.eqns for v in eqn.outvars))
-
-def gensym(jaxprs: Iterable[Jaxpr] | None = None,
-           suffix: str = '') -> Callable[[AbstractValue], Var]:
-  """Produce distinct variables, printed with the optional suffix.
-
-  If `jaxprs` is provided, the variables produced will be distinct from those in
-  any of the given jaxprs.
-  """
-  if jaxprs is None:
-    start = 0
-  else:
-    all_vars = it.chain.from_iterable(_jaxpr_vars(j) for j in jaxprs)
-    start = 1 + max((v.count for v in all_vars), default=-1)
-  counter = it.count(start=start)
-  return lambda aval: Var(next(counter), suffix, aval)
+def gensym(suffix: str = '') -> Callable[[AbstractValue], Var]:
+  """Produce distinct variables, printed with the optional suffix."""
+  return partial(Var, suffix)
 
 # In a jaxpr, `dropvar` can appear in place of a bound variable to indicate that
 # the assignment is dropped, i.e. that an expression's output value will never
@@ -389,7 +366,7 @@ def gensym(jaxprs: Iterable[Jaxpr] | None = None,
 # treat it as a special case of one. Its `aval` is similarly inexact.
 class DropVar(Var):
   def __init__(self, aval: AbstractValue):
-    super().__init__(-1, '', aval)
+    super().__init__('', aval)
   def __repr__(self): return '_'
 
 class Literal:
@@ -2687,7 +2664,7 @@ def subst_axis_names_var(v: Var, subst: AxisSubst, var_map: dict[Var, Var]) -> V
   named_shape = {name: axis_frame(name).size for name in names}
   if len(named_shape) != len(names):
     raise DuplicateAxisNameError(v)
-  new_v = Var(v.count, v.suffix, v.aval.update(named_shape=named_shape))
+  new_v = Var(v.suffix, v.aval.update(named_shape=named_shape))
   var_map[v] = new_v
   return new_v
 
@@ -3090,6 +3067,15 @@ class JaxprPpSettings(NamedTuple):
   custom_pp_eqn_rules: bool = True
   print_effects: bool = False
 
+def _encode_digits_alphabetic(n: int) -> str:
+  if n == -1:
+    return '*'
+  s = ''
+  while len(s) == 0 or n:
+    n, i = n // 26, n % 26
+    s = chr(97 + i % 26) + s
+  return s
+
 # A JaxprPpContext allows us to globally uniquify variable names within nested
 # Jaxprs.
 class JaxprPpContext:
@@ -3108,7 +3094,7 @@ class JaxprPpContext:
     self.var_names = defaultdict(fresh_names.__next__)
 
 
-def pp_var(v: Var, context: JaxprPpContext) -> str:
+def pp_var(v: Var | Literal, context: JaxprPpContext) -> str:
   if isinstance(v, (Literal, DropVar)): return str(v)
   return f"{context.var_names[v]}{v.suffix}"
 
