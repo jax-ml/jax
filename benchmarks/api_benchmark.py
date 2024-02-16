@@ -687,6 +687,16 @@ def device_put(state):
 
 
 @google_benchmark.register
+@google_benchmark.option.unit(google_benchmark.kMillisecond)
+def device_put_big(state):
+  x = np.arange(4000 * 10**6 // np.dtype('float32').itemsize, dtype=np.float32)
+  jax.device_put(x).block_until_ready()
+
+  while state:
+    _ = jax.device_put(x).block_until_ready()
+
+
+@google_benchmark.register
 def device_put_sharded(state):
   arr_inp = [np.array(i) for i in range(jax.device_count())]
   dev = jax.devices()
