@@ -551,7 +551,7 @@ FailureOr<SmallVector<Layout>> getInLayouts(Operation &op) {
   for (const auto [l, operand] :
        llvm::zip_equal(in_layouts, op.getOperands())) {
     if (!layoutIsValidForValue(l, operand)) {
-      return op.emitOpError("Invalid output layout");
+      return op.emitOpError("Invalid input layout");
     }
   }
   return in_layouts;
