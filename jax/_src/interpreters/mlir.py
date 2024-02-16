@@ -696,7 +696,7 @@ class LoweringRuleContext:
     assert self.tokens_out is None, 'Should only set `tokens_out` once.'
     self.tokens_out = tokens_out
 
-  def replace(self, **kw): return dataclasses.replace(self, **kw)
+  def replace(self, **kw): return dataclasses.replace(self, **kw)  # pytype: disable=wrong-arg-types  # dataclasses-replace-types
 
 
 if not MYPY:
