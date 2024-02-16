@@ -73,6 +73,14 @@ jax_test(
     },
 )
 
+py_test(
+    name = "config_test",
+    srcs = ["config_test.py"],
+    deps = [
+        "//jax",
+    ],
+)
+
 jax_test(
     name = "core_test",
     srcs = ["core_test.py"],

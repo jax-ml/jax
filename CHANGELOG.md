@@ -20,10 +20,6 @@ Remember to align the itemized text with the first line of an item within a list
   * {func}`jax.numpy.linalg.solve` now shows a deprecation warning for batched 1D
     solves with `b.ndim > 1`. In the future these will be treated as batched 2D
     solves.
-  * The previously deprecated {data}`jax.config` *submodule* has been removed
-    following a standard 3 months deprecation cycle (see {ref}`api-compatibility`).
-    Note that the {data}`jax.config` *object*, exposed in the public API, is
-    unaffected by this change.
 
 ## jaxlib 0.4.25
 
