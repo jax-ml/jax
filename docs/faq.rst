@@ -626,7 +626,7 @@ for its components are donated::
    def add_ones(xs: List[Array]):
      return [x + 1 for x in xs]
 
-   xs = [jax.device_put(np.ones((2, 3)), jax.device_put(np.ones((3, 4))]
+   xs = [jax.device_put(np.ones((2, 3))), jax.device_put(np.ones((3, 4)))]
    # Execute `add_ones` with donation of all the buffers for `xs`.
    # The outputs have the same shape and type as the elements of `xs`,
    # so they will share those buffers.
