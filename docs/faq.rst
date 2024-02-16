@@ -267,7 +267,7 @@ your object**. Mutations of objects used as hash keys lead to several subtle pro
 which is why for example mutable Python containers (e.g. :class:`dict`, :class:`list`)
 don't define ``__hash__``, while their immutable counterparts (e.g. :class:`tuple`) do.
 
-If your class relies on in-place mutations (such as setting ```self.attr = ...`` within its
+If your class relies on in-place mutations (such as setting ``self.attr = ...`` within its
 methods), then your object is not really "static" and marking it as such may lead to problems.
 Fortunately, there's another option for this case.
 
@@ -626,7 +626,7 @@ for its components are donated::
    def add_ones(xs: List[Array]):
      return [x + 1 for x in xs]
 
-   xs = [jax.device_put(np.ones((2, 3)), jax.device_put(np.ones((3, 4))]
+   xs = [jax.device_put(np.ones((2, 3))), jax.device_put(np.ones((3, 4)))]
    # Execute `add_ones` with donation of all the buffers for `xs`.
    # The outputs have the same shape and type as the elements of `xs`,
    # so they will share those buffers.
