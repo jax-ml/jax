@@ -7,6 +7,8 @@ Manual DMAs, while powerful, are very low level. Pallas offers a flexible nested
 Manual DMAs
 ------------
 
+Manual DMAs allow you to both copy data between memories of the same chip and across chips, assuming the cores are already synchronized via a barrier.
+
 .. code-block:: python
 
   from jax.experimental import pallas as pl
@@ -44,9 +46,19 @@ Manual DMAs
   semaphore = pltpu.SemaphoreType.DMA
 
   # Inside a kernel:
-  pltpu.run_scoped(
-    move_data, src_data, dst_data, *((semaphore,) * 3)
-  )
+  def kernel():
+    pltpu.run_scoped(
+      move_data, src_data, dst_data, *((semaphore,) * 3)
+    )
+
+  pl.pallas_call(
+      kernel,
+      grid_spec=pltpu.PrefetchScalarGridSpec(
+          num_scalar_prefetch=0,
+          # Could also use other memory spaces and input/outputs.
+          scratch_shapes=[src_data, dst_data, semaphore],
+      ),
+  )()
 
   # Or alternatively to use data that is live across iterations:
   pl.pallas_call(
@@ -335,7 +347,10 @@ Here is a full realistic example:
     @pltpu.trace('send_next_dma')
     def _send_next_dma():
       pltpu.make_async_remote_copy(**bwd_kwargs).start()
-      pltpu.make_async_remote_copy(**fwd_kwargs).start()
+
+      @pl.when(jnp.logical_not(is_start))
+      def _send_next_fwd_dma():
+        pltpu.make_async_remote_copy(**fwd_kwargs).start()
 
     def get_rhs_slice(step, is_start_of_step=is_start_of_step):
       bwd_rhs_offset = lax.rem(my_id + step, num_devices)
@@ -357,6 +372,7 @@ Here is a full realistic example:
         @pltpu.trace('fwd_prologue')
         def _fwd_prologue():
           prologue_fwd_copy.wait()
+          pltpu.make_async_remote_copy(**fwd_kwargs).start()
 
         @pl.when(jnp.logical_and(is_not_last_step, is_end_of_step))
         @pltpu.trace('wait_on_prev_dma')
