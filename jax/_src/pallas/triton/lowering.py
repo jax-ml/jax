@@ -18,6 +18,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 import dataclasses
 import functools
+import io
 import operator
 from typing import Any, Callable
 import zlib
@@ -28,6 +29,7 @@ from jax import tree_util
 from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import api_util
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import custom_derivatives
 from jax._src import linear_util as lu
@@ -2454,49 +2456,20 @@ def compile_jaxpr(
   )
 
 
-def pallas_call_lowering(
+def _pallas_call_ptx_lowering(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,
     jaxpr: jax_core.Jaxpr,
     name: str,
     in_shapes: tuple[jax.ShapeDtypeStruct, ...],
     out_shapes: tuple[jax.ShapeDtypeStruct, ...],
-    which_linear: tuple[bool, ...],
-    interpret: bool,
     debug: bool,
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: GridMapping,
-    triton_params: dict[str, Any] | None = None,
-    **compiler_params: Any,
+    triton_params: dict[str, Any],
+    num_warps: int,
+    num_stages: int,
 ):
-  if grid_mapping.num_dynamic_grid_bounds:
-    raise NotImplementedError("dynamic grid bounds not supported in the Triton backend")
-  if interpret:
-    return mlir.lower_fun(pallas_call_p.impl, multiple_results=True)(
-        ctx,
-        *in_nodes,
-        jaxpr=jaxpr,
-        name=name,
-        out_shapes=out_shapes,
-        in_shapes=in_shapes,
-        which_linear=which_linear,
-        interpret=interpret,
-        debug=debug,
-        input_output_aliases=input_output_aliases,
-        grid_mapping=grid_mapping,
-        **compiler_params
-    )
-  num_warps = compiler_params.get("num_warps", 4)
-  if len(ctx.module_context.platforms) > 1:
-    raise NotImplementedError("multi-platform lowering for Pallas kernels")
-  if ctx.module_context.platforms[0] == 'rocm':
-    num_stages = compiler_params.get("num_stages", 1)
-  else:
-    num_stages = compiler_params.get("num_stages", 3)
-
-  if debug:
-    print(jaxpr)
-    print(grid_mapping)
   compilation_result = compile_jaxpr(
       jaxpr,
       (*in_shapes, *out_shapes),
@@ -2547,8 +2520,6 @@ def pallas_call_lowering(
       for shape in out_shapes
   ]
 
-  if triton_params is None:
-    triton_params = {}
   serialized_metadata = triton_params.get("serialized_metadata", b"")
   kernel_call_proto = kernel_call.to_proto(name, serialized_metadata)
   return hlo_helpers.custom_call(
@@ -2560,6 +2531,149 @@ def pallas_call_lowering(
       result_layouts=triton_lib.avals_to_layouts(ctx.avals_out),
       operand_output_aliases=dict(input_output_aliases),
   ).results
+
+
+def _pallas_call_ttir_lowering(
+    ctx: mlir.LoweringRuleContext,
+    *in_nodes,
+    jaxpr: jax_core.Jaxpr,
+    name: str,
+    in_shapes: tuple[jax.ShapeDtypeStruct, ...],
+    out_shapes: tuple[jax.ShapeDtypeStruct, ...],
+    debug: bool,
+    input_output_aliases: tuple[tuple[int, int], ...],
+    grid_mapping: GridMapping,
+    triton_params: dict[str, Any] | None = None,
+    num_warps: int,
+    num_stages: int,
+):
+  if triton_params:
+    raise NotImplementedError("triton_params are not supported")
+
+  # TODO(sharadmv): handle multiple devices, right now we assume device 0
+  # which is fine when we have multiple of the same GPU but this won't work in
+  # general.
+  device = 0
+  arch = triton_kernel_call_lib.get_compute_capability(device)
+  target = ("cuda", arch)
+  cuda_backend = cb.CUDABackend(target)
+  cuda_options = cuda_backend.parse_options(
+      dict(num_warps=num_warps, num_stages=num_stages, debug=debug)
+  )
+
+  lowering_result = lower_jaxpr_to_triton_module(
+      jaxpr, (*in_shapes, *out_shapes), grid_mapping, name, cuda_options
+  )
+  if debug:
+    lowering_result.module.dump()
+
+  grid_x, grid_y, grid_z = triton_lib.normalize_grid(
+      lowering_result.grid, metaparams={}
+  )
+  out_types = [
+      ir.RankedTensorType.get(shape.shape, mlir.dtype_to_ir_type(shape.dtype))
+      for shape in out_shapes
+  ]
+  buf = io.BytesIO()
+  lowering_result.module.operation.write_bytecode(buf)
+  backend_config = dict(
+      name=ir.StringAttr.get(name),
+      ir=ir.StringAttr.get(buf.getvalue()),
+      num_stages=mlir.i32_attr(num_stages),
+      num_warps=mlir.i32_attr(num_warps),
+      grid_x=mlir.i32_attr(grid_x),
+      grid_y=mlir.i32_attr(grid_y),
+      grid_z=mlir.i32_attr(grid_z),
+      debug=ir.BoolAttr.get(debug),
+  )
+  return mlir.custom_call(
+      call_target_name="__gpu$xla.gpu.triton",
+      result_types=out_types,
+      operands=in_nodes,
+      backend_config=backend_config,
+      api_version=4,
+      operand_layouts=triton_lib.avals_to_layouts(ctx.avals_in),
+      result_layouts=triton_lib.avals_to_layouts(ctx.avals_out),
+      operand_output_aliases=dict(input_output_aliases),
+  ).results
+
+
+_TRITON_COMPILE_VIA_XLA = config.DEFINE_bool(
+    "triton_compile_via_xla",
+    default=config.bool_env("JAX_TRITON_COMPILE_VIA_XLA", False),
+    help="If True, Pallas delegates Triton kernel compilation to XLA.",
+)
+
+
+def pallas_call_lowering(
+    ctx: mlir.LoweringRuleContext,
+    *in_nodes,
+    jaxpr: jax_core.Jaxpr,
+    name: str,
+    in_shapes: tuple[jax.ShapeDtypeStruct, ...],
+    out_shapes: tuple[jax.ShapeDtypeStruct, ...],
+    which_linear: tuple[bool, ...],
+    interpret: bool,
+    debug: bool,
+    input_output_aliases: tuple[tuple[int, int], ...],
+    grid_mapping: GridMapping,
+    triton_params: dict[str, Any] | None = None,
+    **compiler_params: Any,
+):
+  if grid_mapping.num_dynamic_grid_bounds:
+    raise NotImplementedError(
+        "dynamic grid bounds not supported in the Triton backend"
+    )
+  if interpret:
+    return mlir.lower_fun(pallas_call_p.impl, multiple_results=True)(
+        ctx,
+        *in_nodes,
+        jaxpr=jaxpr,
+        name=name,
+        out_shapes=out_shapes,
+        in_shapes=in_shapes,
+        which_linear=which_linear,
+        interpret=interpret,
+        debug=debug,
+        input_output_aliases=input_output_aliases,
+        grid_mapping=grid_mapping,
+        **compiler_params,
+    )
+  num_warps = compiler_params.pop("num_warps", 4)
+  if len(ctx.module_context.platforms) > 1:
+    raise NotImplementedError("multi-platform lowering for Pallas kernels")
+  if ctx.module_context.platforms[0] == "rocm":
+    num_stages = compiler_params.pop("num_stages", 1)
+  else:
+    num_stages = compiler_params.pop("num_stages", 3)
+
+  if triton_params is None:
+    triton_params = {}
+
+  if debug:
+    print(jaxpr)
+    print(grid_mapping)
+
+  if _TRITON_COMPILE_VIA_XLA.value:
+    lowering_fn = _pallas_call_ttir_lowering
+  else:
+    lowering_fn = _pallas_call_ptx_lowering
+
+  return lowering_fn(
+        ctx,
+        *in_nodes,
+        jaxpr=jaxpr,
+        name=name,
+        in_shapes=in_shapes,
+        out_shapes=out_shapes,
+        debug=debug,
+        input_output_aliases=input_output_aliases,
+        grid_mapping=grid_mapping,
+        triton_params=triton_params,
+        num_warps=num_warps,
+        num_stages=num_stages,
+        **compiler_params,
+    )
 
 
 mlir.register_lowering(pallas_call_p, pallas_call_lowering, platform="gpu")
