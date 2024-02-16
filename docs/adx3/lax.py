@@ -175,7 +175,7 @@ class CondP(SecondOrderPrimitive):
   when_false: Jaxpr
   @property
   def jaxprs(self):
-    return [self.when_true, self.when_false]
+    return {"when_true": self.when_true, "when_false": self.when_false}
 
   def eval_type(self, predicate):
     assert self.when_true.ty == self.when_false.ty
@@ -200,9 +200,10 @@ def fori(n:int, body_callable:Callable):
 class ForP(SecondOrderPrimitive):
   n : int
   body: Jaxpr
+
   @property
   def jaxprs(self):
-    return [self.body]
+     return {"body": self.body}
 
   def eval_type(self):
     return JaxListType(self.n, self.body.ty.result_type)

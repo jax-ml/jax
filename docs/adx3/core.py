@@ -109,8 +109,10 @@ class JaxprEqn:
     p.emit(f'{self.binder} = {self.primitive}{arglist_str(self.args)}')
     if isinstance(self.primitive, SecondOrderPrimitive):
       with p.indent():
-        for jaxpr in self.primitive.jaxprs:
-          jaxpr.pretty_print(p)
+        for label, jaxpr in self.primitive.jaxprs.items():
+          p.emit(f"{label} = ")
+          with p.indent():
+            jaxpr.pretty_print(p)
 
 
 @dataclass
