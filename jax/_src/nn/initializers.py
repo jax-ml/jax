@@ -371,7 +371,7 @@ def variance_scaling(
 def glorot_uniform(in_axis: int | Sequence[int] = -2,
                    out_axis: int | Sequence[int] = -1,
                    batch_axis: Sequence[int] = (),
-                   dtype: DTypeLikeInexact = jnp.float_) -> Initializer:
+                   dtype: DTypeLikeInexact = None) -> Initializer:
   """Builds a Glorot uniform initializer (aka Xavier uniform initializer).
 
   A `Glorot uniform initializer`_ is a specialization of
@@ -409,7 +409,7 @@ xavier_uniform = glorot_uniform
 def glorot_normal(in_axis: int | Sequence[int] = -2,
                   out_axis: int | Sequence[int] = -1,
                   batch_axis: Sequence[int] = (),
-                  dtype: DTypeLikeInexact = jnp.float_) -> Initializer:
+                  dtype: DTypeLikeInexact = None) -> Initializer:
   """Builds a Glorot normal initializer (aka Xavier normal initializer).
 
   A `Glorot normal initializer`_ is a specialization of
@@ -447,7 +447,7 @@ xavier_normal = glorot_normal
 def lecun_uniform(in_axis: int | Sequence[int] = -2,
                   out_axis: int | Sequence[int] = -1,
                   batch_axis: Sequence[int] = (),
-                  dtype: DTypeLikeInexact = jnp.float_) -> Initializer:
+                  dtype: DTypeLikeInexact = None) -> Initializer:
   """Builds a Lecun uniform initializer.
 
   A `Lecun uniform initializer`_ is a specialization of
@@ -483,7 +483,7 @@ def lecun_uniform(in_axis: int | Sequence[int] = -2,
 def lecun_normal(in_axis: int | Sequence[int] = -2,
                  out_axis: int | Sequence[int] = -1,
                  batch_axis: Sequence[int] = (),
-                 dtype: DTypeLikeInexact = jnp.float_) -> Initializer:
+                 dtype: DTypeLikeInexact = None) -> Initializer:
   """Builds a Lecun normal initializer.
 
   A `Lecun normal initializer`_ is a specialization of
@@ -519,7 +519,7 @@ def lecun_normal(in_axis: int | Sequence[int] = -2,
 def he_uniform(in_axis: int | Sequence[int] = -2,
                out_axis: int | Sequence[int] = -1,
                batch_axis: Sequence[int] = (),
-               dtype: DTypeLikeInexact = jnp.float_) -> Initializer:
+               dtype: DTypeLikeInexact = None) -> Initializer:
   """Builds a He uniform initializer (aka Kaiming uniform initializer).
 
   A `He uniform initializer`_ is a specialization of
@@ -557,7 +557,7 @@ kaiming_uniform = he_uniform
 def he_normal(in_axis: int | Sequence[int] = -2,
               out_axis: int | Sequence[int] = -1,
               batch_axis: Sequence[int] = (),
-              dtype: DTypeLikeInexact = jnp.float_) -> Initializer:
+              dtype: DTypeLikeInexact = None) -> Initializer:
   """Builds a He normal initializer (aka Kaiming normal initializer).
 
   A `He normal initializer`_ is a specialization of
