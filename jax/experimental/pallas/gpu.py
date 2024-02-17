@@ -17,5 +17,5 @@ try:
   from jax._src.pallas import triton
   get_compute_capability = triton.get_compute_capability
   del triton
-except ImportError as e:
+except:
   pass
