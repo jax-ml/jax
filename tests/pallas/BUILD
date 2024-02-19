@@ -14,6 +14,7 @@
 
 load(
     "//jaxlib:jax.bzl",
+    "jax_generate_backend_suites",
     "jax_test",
     "py_deps",
 )
@@ -24,6 +25,8 @@ package(
     default_applicable_licenses = [],
     default_visibility = ["//visibility:private"],
 )
+
+jax_generate_backend_suites()
 
 jax_test(
     name = "pallas_test",
