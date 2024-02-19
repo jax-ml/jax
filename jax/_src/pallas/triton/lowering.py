@@ -2561,11 +2561,10 @@ def _pallas_call_ttir_lowering(
   if triton_params:
     raise NotImplementedError("triton_params are not supported")
 
-  # TODO(sharadmv): handle multiple devices, right now we assume device 0
-  # which is fine when we have multiple of the same GPU but this won't work in
-  # general.
-  device = 0
-  compute_capability = triton_kernel_call_lib.get_compute_capability(device)
+  compute_capability = min(
+      triton_kernel_call_lib.get_compute_capability(d.id)
+      for d in jax.devices("gpu")
+  )
   cuda_options = dict(
       compute_capability=compute_capability,
       num_warps=num_warps,
