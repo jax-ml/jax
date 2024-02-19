@@ -769,6 +769,8 @@ class PallasCallTest(PallasTest):
     (2, 1, 1),
   ])
   def test_atomic_cas(self, init_value, cmp, new_value):
+    if not self.check_gpu_capability_at_least(70):
+      raise unittest.SkipTest("requires a GPU with compute capability >= sm70")
 
     @functools.partial(
         self.pallas_call, out_shape=(
@@ -789,6 +791,10 @@ class PallasCallTest(PallasTest):
   def test_atomic_counter(self, num_threads):
     if self.INTERPRET:
       self.skipTest("While loop not supported in interpreter mode.")
+
+    if not self.check_gpu_capability_at_least(70):
+      raise unittest.SkipTest("requires a GPU compute capability >= sm70")
+
     @functools.partial(
         self.pallas_call, out_shape=(
           jax.ShapeDtypeStruct((), jnp.int32),
