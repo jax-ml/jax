@@ -457,7 +457,7 @@ class DimExprTest(jtu.JaxTestCase):
     # the "2*ceil(b / 2)".
     self.assertGreaterEqual(-2 * ((- b) // 2), b)
 
-  def poly_bounds_div(self):
+  def test_bounds_floordiv(self):
     a, b = shape_poly.symbolic_shape("a, b")
     self.assertEqual(_bounds((a + 4) // 2), (2, np.inf))
     self.assertEqual(_bounds((a + 4) // -2), (-np.inf, -3))
@@ -471,9 +471,11 @@ class DimExprTest(jtu.JaxTestCase):
 
     self.assertEqual(_bounds(a - a // 2), (1, np.inf))
     self.assertEqual(_bounds(a - 2 * (a // 2)), (0, 1))
-    self.assertEqual(_bounds(a - 2 * (a // 2)), (0, 0))
+    with self.assertRaisesRegex(core.InconclusiveDimensionOperation,
+                                "Possible division by 0"):
+      _bounds(a // (a - 3))
 
-  def test_bounds_div_generated(self):
+  def test_bounds_floordiv_against_concrete_evaluation(self):
     a, b = shape_poly.symbolic_shape("a, b")
     # Generate test cases for floordiv and mod: (a + N) // +-2, (N - a) // +-2
     # and then evaluate them for a = 1, 5, 10000
@@ -2986,11 +2988,10 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 lambda x: lax.slice_in_dim(x, 0, x.shape[0], stride=2, axis=0),
                 arg_descriptors=[RandArg((13, 4), _f32)],
                 polymorphic_shapes=["b, ..."]),
-    # TODO: Not yet, the slice_in_dim does int(stride)
-    # PolyHarness("slice_in_dim", "stride=sym",
-    #             lambda x: lax.slice_in_dim(x, 0, x.shape[0], stride=x.shape[0] // 4, axis=0),
-    #             arg_descriptors=[RandArg((13, 4), _f32)],
-    #             polymorphic_shapes=["b, ..."]),
+    PolyHarness("slice_in_dim", "stride_sym",
+                lambda x: lax.slice_in_dim(x, 0, x.shape[0], stride=1 + x.shape[0] // 4, axis=0),
+                arg_descriptors=[RandArg((13, 4), _f32)],
+                polymorphic_shapes=["b, ..."]),
     PolyHarness("jnp_split", "idx_tuple_ct",
                 # The indices are a tuple with constants
                 lambda a: jnp.split(a, (2,)),
