@@ -2630,10 +2630,6 @@ def pallas_call_lowering(
     triton_params: dict[str, Any] | None = None,
     **compiler_params: Any,
 ):
-  if grid_mapping.num_dynamic_grid_bounds:
-    raise NotImplementedError(
-        "dynamic grid bounds not supported in the Triton backend"
-    )
   if interpret:
     return mlir.lower_fun(pallas_call_p.impl, multiple_results=True)(
         ctx,
@@ -2649,6 +2645,12 @@ def pallas_call_lowering(
         grid_mapping=grid_mapping,
         **compiler_params,
     )
+
+  if grid_mapping.num_dynamic_grid_bounds:
+    raise NotImplementedError(
+        "dynamic grid bounds not supported in the Triton backend"
+    )
+
   num_warps = compiler_params.pop("num_warps", 4)
   if len(ctx.module_context.platforms) > 1:
     raise NotImplementedError("multi-platform lowering for Pallas kernels")
