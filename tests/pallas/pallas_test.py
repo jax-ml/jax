@@ -43,6 +43,7 @@ try:
   from jax.experimental.pallas import gpu as plgpu
 except ModuleNotFoundError:
   compile_jaxpr = None
+  _TRITON_COMPILE_VIA_XLA = None
 import numpy as np
 
 
@@ -133,8 +134,11 @@ class PallasTest(parameterized.TestCase):
       try:
         import triton  # noqa: F401
       except ImportError:
-        if not _TRITON_COMPILE_VIA_XLA.value:
-          self.skipTest("Triton is not installed. Skipping PallasTest.")
+        if (
+            _TRITON_COMPILE_VIA_XLA is not None
+            and not _TRITON_COMPILE_VIA_XLA.value
+        ):
+          self.skipTest("Triton is not installed.")
     super().setUp()
     if compile_jaxpr:
       compile_jaxpr.cache_clear()
@@ -326,8 +330,10 @@ class PallasCallTest(PallasTest):
     if not self.check_gpu_capability_at_least(70):
       raise unittest.SkipTest(
           "Matmul only works on GPUs with capability >= sm70")
-    if not self.INTERPRET and (plgpu.get_compute_capability(0) <= 75
-        and (bm > 128 or bn > 128 or bk > 32)):
+    if not self.INTERPRET and (
+        plgpu.get_compute_capability(0) <= 75
+        and (bm >= 128 or bn > 128 or bk > 32)
+    ):
       raise unittest.SkipTest("Block sizes too big for sm70.")
     k1, k2 = random.split(random.key(0))
     x = random.normal(k1, (m, k), dtype=dtype)
@@ -353,8 +359,10 @@ class PallasCallTest(PallasTest):
     if not self.check_gpu_capability_at_least(70):
       raise unittest.SkipTest(
           "Matmul only works on GPUs with capability >= sm70")
-    if not self.INTERPRET and (plgpu.get_compute_capability(0) <= 75
-        and (bm > 128 or bn > 128 or bk > 32)):
+    if not self.INTERPRET and (
+        plgpu.get_compute_capability(0) <= 75
+        and (bm >= 128 or bn > 128 or bk > 32)
+    ):
       raise unittest.SkipTest("Block sizes too big for sm70.")
 
     k1, k2 = random.split(random.key(0))

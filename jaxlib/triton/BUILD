@@ -52,8 +52,8 @@ genrule(
       out=$${src//_raw/}
       echo '# pytype: skip-file' > $${out} && \
           cat $${src} |
-          sed -e 's/^from \\.\\./from mlir\\./g' |
-          sed -e 's/^from \\./from mlir\\.dialects\\./g' >> $${out}
+          sed -e 's/^from \\.\\./from jaxlib.mlir\\./g' |
+          sed -e 's/^from \\./from jaxlib.mlir\\.dialects\\./g' >> $${out}
     done
     """,
 )

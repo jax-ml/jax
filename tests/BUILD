@@ -1452,6 +1452,6 @@ filegroup(
         exclude = [],
     ) + ["BUILD"],
     visibility = [
-        "//third_party/py/jax:__subpackages__",
+        "//:__subpackages__",
     ],
 )

@@ -174,6 +174,7 @@ def jax_test(
         backend_tags = {},  # buildifier: disable=unused-variable
         disable_configs = None,  # buildifier: disable=unused-variable
         enable_configs = None,  # buildifier: disable=unused-variable
+        config_tags_overrides = None,  # buildifier: disable=unused-variable
         tags = [],
         main = None,
         pjrt_c_api_bypass = False):  # buildifier: disable=unused-variable
