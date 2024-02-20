@@ -676,14 +676,14 @@ def _wrap_main_func(
       module_context = mlir.ModuleContext(
           backend_or_name="cpu", platforms=["cpu"],
           axis_context=sharding_impls.ShardingContext(0),
-          name_stack=source_info_util.new_name_stack(),
           keepalives=[], channel_iterator=itertools.count(1),
           host_callbacks=[], module=wrapped_module, context=context,
           lowering_parameters=mlir.LoweringParameters(
             global_constant_computation=True
           ))
       ctx = mlir.LoweringRuleContext(
-        module_context=module_context, primitive=None,
+        module_context=module_context,
+        name_stack=source_info_util.new_name_stack(), primitive=None,
         avals_in=args_avals_flat, avals_out=None,
         tokens_in=mlir.TokenSet(), tokens_out=None)
       # We compute dim_values from the array arguments.

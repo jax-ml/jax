@@ -1360,12 +1360,12 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
   #       them!
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
-  sub_ctx = ctx.module_context.replace(
-      name_stack=ctx.module_context.name_stack.extend(wrap_name(name, 'xmap')))
+  name_stack = ctx.name_stack.extend(wrap_name(name, 'xmap'))
   if any(effects.ordered_effects.contains(eff) for eff
          in vectorized_jaxpr.effects):
     raise NotImplementedError('Cannot lower `xmap` with ordered effects.')
-  tiled_outs, _ = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr, mlir.TokenSet(),
+  tiled_outs, _ = mlir.jaxpr_subcomp(ctx.module_context, vectorized_jaxpr,
+                                     name_stack, mlir.TokenSet(),
                                      const_nodes, *tiled_ins,
                                      dim_var_values=ctx.dim_var_values)
 
@@ -1429,14 +1429,13 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
 
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
-  sub_ctx = ctx.module_context.replace(
-      name_stack=ctx.module_context.name_stack.extend(wrap_name(name, 'xmap')))
+  name_stack = ctx.name_stack.extend(wrap_name(name, 'xmap'))
   if any(effects.ordered_effects.contains(eff) for eff
          in vectorized_jaxpr.effects):
     raise NotImplementedError('Cannot lower `xmap` with ordered effects.')
-  global_out_nodes, _ = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr,
-      mlir.TokenSet(), const_nodes, *sharded_global_in_nodes,
-      dim_var_values=ctx.dim_var_values)
+  global_out_nodes, _ = mlir.jaxpr_subcomp(
+      ctx.module_context, vectorized_jaxpr, name_stack, mlir.TokenSet(),
+      const_nodes, *sharded_global_in_nodes, dim_var_values=ctx.dim_var_values)
 
   sharded_global_out_nodes = [
     mlir.wrap_with_sharding_op(
@@ -1484,13 +1483,14 @@ def _xmap_lowering_rule_spmd_manual(ctx, *global_in_nodes,
   # translation rule just because the extra tuple stuff is a pain.
   assert isinstance(ctx.module_context.axis_context,
                     sharding_impls.SPMDAxisContext)
+  name_stack = ctx.name_stack.extend(wrap_name(name, 'xmap'))
   sub_ctx = ctx.module_context.replace(
-      name_stack=ctx.module_context.name_stack.extend(wrap_name(name, 'xmap')),
       axis_context=ctx.module_context.axis_context.extend_manual(manual_mesh_axes))
   if any(effects.ordered_effects.contains(eff) for eff
          in vectorized_jaxpr.effects):
     raise NotImplementedError('Cannot lower `xmap` with ordered effects.')
-  global_out_nodes, _ = mlir.jaxpr_subcomp(sub_ctx, vectorized_jaxpr,
+  global_out_nodes, _ = mlir.jaxpr_subcomp(
+      sub_ctx, vectorized_jaxpr, name_stack,
       mlir.TokenSet(), const_nodes, *([n] for n in global_in_nodes),
       dim_var_values=ctx.dim_var_values)
 

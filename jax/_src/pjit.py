@@ -1602,9 +1602,9 @@ def _pjit_cached_lower_jaxpr_to_fun(ctx, name, jaxpr, effects, in_shardings,
     # inputs or outputs because they are lost during MLIR->HLO conversion.
     # using_sharding_annotation=False means we add an identity operation instead.
     func = mlir.lower_jaxpr_to_fun(
-        mod_ctx, name, jaxpr, effects, arg_shardings=arg_shardings,
-        result_shardings=result_shardings, use_sharding_annotations=False,
-        api_name=api_name)
+        mod_ctx, name, jaxpr, effects, ctx.name_stack,
+        arg_shardings=arg_shardings, result_shardings=result_shardings,
+        use_sharding_annotations=False, api_name=api_name)
     mod_ctx.cached_primitive_lowerings[key] = func
   return func
 

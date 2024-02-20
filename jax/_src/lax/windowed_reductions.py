@@ -320,7 +320,7 @@ def _generic_reduce_window_lower(ctx, *args, jaxpr, consts,
   def reducer_body(reducer: ir.Block) -> Sequence[ir.Value]:
     if jaxpr.effects:
       raise NotImplementedError('Cannot lower effectful `reduce_window`.')
-    out_nodes, _ = mlir.jaxpr_subcomp(ctx.module_context, jaxpr,
+    out_nodes, _ = mlir.jaxpr_subcomp(ctx.module_context, jaxpr, ctx.name_stack,
         mlir.TokenSet(), consts, *([a] for a in reducer.arguments),
         dim_var_values=ctx.dim_var_values)
     return util.flatten(out_nodes)
@@ -529,6 +529,7 @@ def _select_and_scatter_lower(
     if select_jaxpr.effects:
       raise NotImplementedError('Cannot lower effectful `select`.')
     out_nodes, _ = mlir.jaxpr_subcomp(ctx.module_context, select_jaxpr,
+                                      ctx.name_stack,
                                       mlir.TokenSet(), select_consts,
                                       *([a] for a in select.arguments),
                                       dim_var_values=ctx.dim_var_values)
@@ -538,6 +539,7 @@ def _select_and_scatter_lower(
     if scatter_jaxpr.effects:
       raise NotImplementedError('Cannot lower effectful `scatter`.')
     out_nodes, _ = mlir.jaxpr_subcomp(ctx.module_context, scatter_jaxpr,
+                                      ctx.name_stack,
                                       mlir.TokenSet(), scatter_consts,
                                       *([a] for a in scatter.arguments),
                                       dim_var_values=ctx.dim_var_values)

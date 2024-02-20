@@ -340,24 +340,23 @@ register_constant_handler(core.Token, _token_constant_handler)
 # Source locations
 
 def get_canonical_source_file(file_name: str, caches: TracebackCaches) -> str:
-  if file_name in caches.canonical_name_cache:
-    return caches.canonical_name_cache[file_name]
+  canonical_file_name = caches.canonical_name_cache.get(file_name, None)
+  if canonical_file_name is not None:
+    return canonical_file_name
 
-  source_file = file_name
   pattern = config.hlo_source_file_canonicalization_regex.value
   if pattern:
-    source_file = re.sub(pattern, '', source_file)
-
-  caches.canonical_name_cache[file_name] = source_file
-  return source_file
+    file_name = re.sub(pattern, '', file_name)
+  caches.canonical_name_cache[file_name] = file_name
+  return file_name
 
 def _is_user_file(ctx: ModuleContext, file_name: str) -> bool:
-  if file_name in ctx.traceback_caches.is_user_file_cache:
-    return ctx.traceback_caches.is_user_file_cache[file_name]
-
-  result = source_info_util.is_user_filename(file_name)
-  ctx.traceback_caches.is_user_file_cache[file_name] = result
-  return result
+  is_user = ctx.traceback_caches.is_user_file_cache.get(file_name, None)
+  if is_user is not None:
+    return is_user
+  out = source_info_util.is_user_filename(file_name)
+  ctx.traceback_caches.is_user_file_cache[file_name] = out
+  return out
 
 def _traceback_to_location(ctx: ModuleContext, tb: xc.Traceback) -> ir.Location:
   """Converts a full traceback to a callsite() MLIR location."""
@@ -386,12 +385,12 @@ def _traceback_to_location(ctx: ModuleContext, tb: xc.Traceback) -> ir.Location:
     if len(frame_locs) >= frames_limit:
       break
 
-  if len(frame_locs) == 0:
+  n = len(frame_locs)
+  if n == 0:
     return ir.Location.unknown()
+  elif n == 1:
+    return frame_locs[0]
   else:
-    if len(frame_locs) == 1:
-      return frame_locs[0]
-
     return ir.Location.callsite(frame_locs[0], frame_locs[1:])
 
 def _source_info_to_location(
@@ -589,7 +588,6 @@ class ModuleContext:
   backend_or_name: str | xb.XlaBackend | None
   platforms: Sequence[str]
   axis_context: AxisContext
-  name_stack: source_info_util.NameStack
   keepalives: list[Any]
   channel_iterator: Iterator[int]
   host_callbacks: list[Any]
@@ -614,7 +612,6 @@ class ModuleContext:
       backend_or_name: str | xb.XlaBackend | None,
       platforms: Sequence[str],
       axis_context: AxisContext,
-      name_stack: source_info_util.NameStack,
       keepalives: list[Any],
       channel_iterator: Iterator[int],
       host_callbacks: list[Any],
@@ -635,7 +632,6 @@ class ModuleContext:
     self.backend_or_name = backend_or_name
     self.platforms = platforms
     self.axis_context = axis_context
-    self.name_stack = name_stack
     self.cached_primitive_lowerings = ({} if cached_primitive_lowerings is None
                                        else cached_primitive_lowerings)
     self.traceback_caches = (TracebackCaches() if traceback_caches is None
@@ -683,6 +679,7 @@ class ModuleContext:
 class LoweringRuleContext:
   """Per-rule context information for MLIR lowering."""
   module_context: ModuleContext
+  name_stack: source_info_util.NameStack
   primitive: core.Primitive | None
   avals_in: Sequence[core.AbstractValue]
   avals_out: Any  # Usually Sequence[core.AbstractValue], but sometimes None.
@@ -947,7 +944,6 @@ def lower_jaxpr_to_module(
 
   ctx = ModuleContext(backend_or_name=backend_or_name,
                       platforms=platforms, axis_context=axis_context,
-                      name_stack=name_stack,
                       keepalives=keepalives,
                       channel_iterator=channel_iter,
                       host_callbacks=host_callbacks,
@@ -964,7 +960,9 @@ def lower_jaxpr_to_module(
     attrs["mhlo.num_partitions"] = i32_attr(num_partitions)
     replace_tokens_with_dummy = lowering_parameters.replace_tokens_with_dummy
     lower_jaxpr_to_fun(
-        ctx, "main", jaxpr, ordered_effects, public=True,
+        ctx, "main", jaxpr, ordered_effects,
+        name_stack=name_stack,
+        public=True,
         create_tokens=replace_tokens_with_dummy,
         replace_tokens_with_dummy=replace_tokens_with_dummy,
         num_output_tokens=0,
@@ -1105,6 +1103,7 @@ def lower_jaxpr_to_fun(
     name: str,
     jaxpr: core.ClosedJaxpr,
     effects: Sequence[core.Effect],
+    name_stack: source_info_util.NameStack,
     *,
     create_tokens: bool = False,
     public: bool = False,
@@ -1376,7 +1375,7 @@ def lower_jaxpr_to_fun(
     dim_var_values, _, _ = util.split_list(flat_args, [num_dim_vars, num_tokens])
     # A lowering context just for function body entry/exit code.
     entry_lowering_ctx = LoweringRuleContext(
-        module_context=ctx, primitive=None,
+        module_context=ctx, name_stack=name_stack, primitive=None,
         avals_in=[], avals_out=None,
         tokens_in=TokenSet.create([]), tokens_out=None,
         axis_size_env=None, dim_var_values=dim_var_values)
@@ -1403,10 +1402,10 @@ def lower_jaxpr_to_fun(
         args.append([hlo.create_token()])
       else:
         args.append(arg)
-    callee_name_stack = ctx.name_stack.extend(util.wrap_name(name, api_name))
+    callee_name_stack = name_stack.extend(util.wrap_name(name, api_name))
     consts = [ir_constants(xla.canonicalize_dtype(x)) for x in jaxpr.consts]
     out_vals, tokens_out = jaxpr_subcomp(
-        ctx.replace(name_stack=callee_name_stack), jaxpr.jaxpr, tokens_in,
+        ctx, jaxpr.jaxpr, callee_name_stack, tokens_in,
         consts, *args, dim_var_values=dim_var_values)
     outs = []
     if create_tokens:
@@ -1496,6 +1495,7 @@ def _emit_lowering_rule_as_fun(lowering_rule,
   return func_op
 
 def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
+                  name_stack: source_info_util.NameStack,
                   tokens: TokenSet,
                   consts: Sequence[Sequence[ir.Value]],
                   *args: Sequence[ir.Value],
@@ -1536,6 +1536,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
 
   env: dict[core.Var, tuple[ir.Value, ...]] = {}
 
+  assert isinstance(name_stack, source_info_util.NameStack), type(name_stack)
   assert len(args) == len(jaxpr.invars), (jaxpr, args)
   assert len(consts) == len(jaxpr.constvars), (jaxpr, consts)
   assert all(isinstance(v, ir.Value) for vs in consts for v in vs), consts
@@ -1545,9 +1546,8 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
   last_used = core.last_used(jaxpr)
   for eqn in jaxpr.eqns:
     in_nodes = map(read, eqn.invars)
-    assert isinstance(ctx.name_stack, source_info_util.NameStack), type(ctx.name_stack)
     source_info = eqn.source_info.replace(
-        name_stack=ctx.name_stack + eqn.source_info.name_stack)
+        name_stack=name_stack + eqn.source_info.name_stack)
     loc = _source_info_to_location(ctx, eqn.primitive, eqn.params, source_info)
     with source_info_util.user_context(eqn.source_info.traceback), loc:
       override_rule = get_override_lowering_rule(eqn.primitive)
@@ -1569,12 +1569,12 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
         elif eqn.primitive in xla._translations:
           default_rule = xla_fallback_lowering(eqn.primitive)
 
-      eqn_ctx = ctx.replace(name_stack=source_info.name_stack)
       effects = list(effects_lib.ordered_effects.filter_in(eqn.effects))
       tokens_in = tokens.subset(effects)
       avals_in = map(aval, eqn.invars)
       rule_ctx = LoweringRuleContext(
-          module_context=eqn_ctx, primitive=eqn.primitive,
+          module_context=ctx, primitive=eqn.primitive,
+          name_stack=source_info.name_stack,
           avals_in=avals_in,
           avals_out=map(aval, eqn.outvars), tokens_in=tokens_in,
           tokens_out=None, dim_var_values=dim_var_values)
@@ -1781,15 +1781,16 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
       # TODO(frostig,mattjj): check ctx.avals_out against jaxpr avals out?
 
     out, tokens = jaxpr_subcomp(
-        ctx.module_context, jaxpr, ctx.tokens_in, _ir_consts(consts),
-        *map(wrap_singleton_ir_values, args), dim_var_values=ctx.dim_var_values)
+        ctx.module_context, jaxpr, ctx.name_stack, ctx.tokens_in,
+        _ir_consts(consts), *map(wrap_singleton_ir_values, args),
+        dim_var_values=ctx.dim_var_values)
     ctx.set_tokens_out(tokens)
     return out
 
   return f_lowered
 
 
-def _lower_jaxpr_to_fun_cached(ctx, fn_name, call_jaxpr, effects,
+def _lower_jaxpr_to_fun_cached(ctx, fn_name, call_jaxpr, effects, name_stack,
                                arg_names=None, result_names=None):
   if not call_jaxpr.consts and arg_names is result_names is None:
     # Cacheable.
@@ -1798,12 +1799,12 @@ def _lower_jaxpr_to_fun_cached(ctx, fn_name, call_jaxpr, effects,
       func_op = ctx.cached_primitive_lowerings[key]
     except KeyError:
       func_op = lower_jaxpr_to_fun(
-          ctx, fn_name, call_jaxpr, effects, arg_names=arg_names,
+          ctx, fn_name, call_jaxpr, effects, name_stack, arg_names=arg_names,
           result_names=result_names)
       ctx.cached_primitive_lowerings[key] = func_op
   else:
     func_op = lower_jaxpr_to_fun(
-        ctx, fn_name, call_jaxpr, effects, arg_names=arg_names,
+        ctx, fn_name, call_jaxpr, effects, name_stack, arg_names=arg_names,
         result_names=result_names)
   return func_op
 
@@ -1825,12 +1826,12 @@ def check_backend_matches(inner_backend: str | None,
         f"inner-jit backend specification {inner_backend}.")
 
 
-def _call_lowering(fn_name, stack_name, call_jaxpr, backend,
-                   ctx: ModuleContext, avals_in,
-                   avals_out, tokens_in, *args,
-                   dim_var_values: Sequence[ir.Value],
-                   arg_names=None, result_names=None):
-  del stack_name, avals_in
+def call_lowering(fn_name, name_stack, call_jaxpr, backend,
+                  ctx: ModuleContext, avals_in,
+                  avals_out, tokens_in, *args,
+                  dim_var_values: Sequence[ir.Value],
+                  arg_names=None, result_names=None):
+  del avals_in
   if isinstance(call_jaxpr, core.Jaxpr):
     call_jaxpr = pe.close_jaxpr(call_jaxpr)
   check_backend_matches(backend, ctx.platforms)
@@ -1839,7 +1840,7 @@ def _call_lowering(fn_name, stack_name, call_jaxpr, backend,
   output_types = [token_type()] * len(effects) + output_types
   flat_output_types = util.flatten(output_types)
   symbol_name = _lower_jaxpr_to_fun_cached(
-      ctx, fn_name, call_jaxpr, effects, arg_names=arg_names,
+      ctx, fn_name, call_jaxpr, effects, name_stack, arg_names=arg_names,
       result_names=result_names).name.value
   tokens = [tokens_in.get(eff) for eff in effects]
   args = (*dim_var_values, *tokens, *args)
@@ -1853,8 +1854,8 @@ def _call_lowering(fn_name, stack_name, call_jaxpr, backend,
 
 def core_call_lowering(ctx: LoweringRuleContext,
                        *args, name, backend=None, call_jaxpr):
-  out_nodes, tokens = _call_lowering(
-      name, name, call_jaxpr, backend, ctx.module_context,
+  out_nodes, tokens = call_lowering(
+      name, ctx.name_stack, call_jaxpr, backend, ctx.module_context,
       ctx.avals_in, ctx.avals_out, ctx.tokens_in, *args,
       dim_var_values=ctx.dim_var_values)
   ctx.set_tokens_out(tokens)

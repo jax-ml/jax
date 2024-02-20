@@ -27,7 +27,7 @@ from jax._src.interpreters.mlir import (
   Token as Token,
   TokenSet as TokenSet,
   Value as Value,
-  _call_lowering as _call_lowering,
+  call_lowering as _call_lowering,
   _lowerings as _lowerings,
   _platform_specific_lowerings as _platform_specific_lowerings,
   aval_to_ir_type as aval_to_ir_type,

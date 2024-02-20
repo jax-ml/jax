@@ -1433,12 +1433,12 @@ def _pmap_lowering(ctx, *in_nodes, axis_name,
 
   with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
     sub_ctx = ctx.module_context.replace(
-        axis_context=sharding_impls.ReplicaAxisContext(new_env),
-        name_stack=ctx.module_context.name_stack.extend(
-            util.wrap_name(name, 'pmap')))
-    sharded_outs, _ = mlir.jaxpr_subcomp(sub_ctx, call_jaxpr, mlir.TokenSet(), (),
-                                         *in_nodes_sharded,
-                                         dim_var_values=ctx.dim_var_values)
+        axis_context=sharding_impls.ReplicaAxisContext(new_env))
+    sharded_outs, _ = mlir.jaxpr_subcomp(
+        sub_ctx, call_jaxpr,
+        ctx.name_stack.extend(util.wrap_name(name, 'pmap')),
+        mlir.TokenSet(), (), *in_nodes_sharded,
+        dim_var_values=ctx.dim_var_values)
   out_avals = [v.aval for v in call_jaxpr.outvars]
   outs = [_hlo_unshard(ctx, aval, new_env, out_axis, shard)
           for aval, out_axis, shard in zip(out_avals, out_axes, sharded_outs)]

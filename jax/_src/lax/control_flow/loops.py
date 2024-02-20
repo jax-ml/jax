@@ -1662,7 +1662,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
 
   # Loop condition
   cond_block = while_op.regions[0].blocks.append(*flat_loop_carry_types)
-  name_stack = ctx.module_context.name_stack.extend('while')
+  name_stack = ctx.name_stack.extend('while')
   with ir.InsertionPoint(cond_block):
     flat_cond_args = [
         cond_block.arguments[i] for i in range(len(flat_loop_carry_types))
@@ -1671,13 +1671,14 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     # Remove tokens from cond args
     cond_args = cond_args[num_tokens:]
     x, _, z = util.split_list(cond_args, [cond_nconsts, body_nconsts])
-    cond_ctx = ctx.module_context.replace(name_stack=name_stack.extend('cond'))
     cond_consts = [
         mlir.ir_constants(xla.canonicalize_dtype(x)) for x in cond_jaxpr.consts
     ]
+    cond_name_stack = name_stack.extend('cond')
     ((pred,),), _ = mlir.jaxpr_subcomp(
-        cond_ctx,
+        ctx.module_context,
         cond_jaxpr.jaxpr,
+        cond_name_stack,
         mlir.TokenSet(),
         cond_consts,
         *(x + z),
@@ -1686,6 +1687,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     if batched:
       pred_ctx = mlir.LoweringRuleContext(
           module_context=ctx.module_context,
+          name_stack=cond_name_stack,
           primitive=None,
           avals_in=[pred_aval],
           avals_out=[pred_aval.update(shape=())],
@@ -1710,20 +1712,21 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     token_args, body_args = util.split_list(body_args, [num_tokens])
     tokens_in = mlir.TokenSet(zip(body_effects, token_args))
     x, y, z = util.split_list(body_args, [cond_nconsts, body_nconsts])
-    body_ctx = ctx.module_context.replace(name_stack=name_stack.extend('body'))
+    body_name_stack = name_stack.extend('body')
     body_consts = [mlir.ir_constants(xla.canonicalize_dtype(x))
                    for x in body_jaxpr.consts]
-    new_z, tokens_out = mlir.jaxpr_subcomp(body_ctx, body_jaxpr.jaxpr,
+    new_z, tokens_out = mlir.jaxpr_subcomp(
+        ctx.module_context, body_jaxpr.jaxpr, body_name_stack,
         tokens_in, body_consts, *(y + z), dim_var_values=ctx.dim_var_values)
     out_tokens = [tokens_out.get(eff) for eff in body_effects]
     if batched:
-      body_pred_ctx = ctx.module_context.replace(
-          name_stack=name_stack.extend('body_pred'))
+      body_pred_name_stack = name_stack.extend('body_pred')
       cond_consts = [mlir.ir_constants(xla.canonicalize_dtype(x))
                      for x in cond_jaxpr.consts]
       ((body_pred,),), _ = mlir.jaxpr_subcomp(
-          body_pred_ctx, cond_jaxpr.jaxpr, mlir.TokenSet(),
-          cond_consts, *(x + z), dim_var_values=ctx.dim_var_values)
+          ctx.module_context, cond_jaxpr.jaxpr, body_pred_name_stack,
+          mlir.TokenSet(), cond_consts, *(x + z),
+          dim_var_values=ctx.dim_var_values)
       new_z = _map(
           partial(_pred_bcast_select_hlo, ctx, pred_aval, body_pred), new_z, z,
           body_jaxpr.out_avals)

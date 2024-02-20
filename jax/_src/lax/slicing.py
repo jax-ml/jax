@@ -2493,13 +2493,12 @@ def _scatter_lower(ctx, operand, indices, updates, *,
   scalar_type = mlir.aval_to_ir_type(core.ShapedArray((), aval_out.dtype))
   update = op.update_computation.blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(update):
-    update_ctx = ctx.module_context.replace(
-        name_stack=source_info_util.new_name_stack())
+    name_stack = source_info_util.new_name_stack()
     if update_jaxpr.effects:
       raise NotImplementedError('Cannot lower effectful `scatter`.')
     out_nodes, _ = mlir.jaxpr_subcomp(
-        update_ctx, update_jaxpr, mlir.TokenSet(), update_consts,
-        (update.arguments[0],), (update.arguments[1],),
+        ctx.module_context, update_jaxpr, name_stack, mlir.TokenSet(),
+        update_consts, (update.arguments[0],), (update.arguments[1],),
         dim_var_values=ctx.dim_var_values)
     hlo.return_(util.flatten(out_nodes))
   return op.results
