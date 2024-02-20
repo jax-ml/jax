@@ -33,6 +33,8 @@ cc_library(
     name = "lapack_kernels",
     srcs = ["lapack_kernels.cc"],
     hdrs = ["lapack_kernels.h"],
+    copts = ["-fexceptions"],
+    features = ["-use_header_modules"],
     deps = [
         "@xla//xla/service:custom_call_status",
         "@com_google_absl//absl/base:dynamic_annotations",
