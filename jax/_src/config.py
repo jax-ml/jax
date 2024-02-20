@@ -408,6 +408,7 @@ def define_bool_state(
   """
   if not isinstance(default, bool):
     raise TypeError(f"Default value must be of type bool, got {default}")
+  default = bool_env(name.upper(), default)
   name = name.lower()
   if upgrade:
     help += ' ' + UPGRADE_BOOL_HELP
