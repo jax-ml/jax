@@ -825,14 +825,20 @@ class _ThreadLocalExtraJitContext(NamedTuple):
   dynamic_trace_state: Any | None = None
   axis_env_state: Hashable = ()
   mesh_context_manager: Hashable = ()
+
+  # Values set by _StateContextManager context managers.
+  # CAUTION: these must be initialized to `None`! The state context manager
+  # restores these to None on exit. If the object default is not `None`, the
+  # context manager is not a no-op, which leads to problems with stale state
+  # (e.g. spurious cache misses in tests).
   numpy_rank_promotion: str | None = None
   numpy_dtype_promotion: str | None = None
   default_matmul_precision: Any | None = None
-  dynamic_shapes: bool = False
-  random_seed_offset: int = 0
-  threefry_partitionable: bool = False
-  softmax_custom_jvp: bool = False
-  xla_profile_version: int = 0
+  dynamic_shapes: bool | None = None
+  random_seed_offset: int | None = None
+  threefry_partitionable: bool | None = None
+  softmax_custom_jvp: bool | None = None
+  xla_profile_version: int | None = None
 
 
 class _ThreadLocalStateCache(threading.local):

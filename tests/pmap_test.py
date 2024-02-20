@@ -2195,6 +2195,8 @@ class CppPmapTest(PythonPmapTest):
       outputs = [f.result() for f in futures]
 
     np.testing.assert_array_equal(pmaped_f(inputs), outputs[0])
+    if pmaped_f._cache_size != 1:
+      print(pmaped_f._debug_cache_keys())
     self.assertEqual(pmaped_f._cache_size, 1)
 
   def test_cache_uses_jax_key(self):
