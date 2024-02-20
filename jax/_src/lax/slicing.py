@@ -772,7 +772,7 @@ def slice_in_dim(operand: Array | np.ndarray, start_index: int | None,
   axis = int(axis)
   start_indices[axis] = start_index_int
   limit_indices[axis] = limit_index_int
-  strides[axis] = int(stride)
+  strides[axis] = core._canonicalize_dimension(stride)
 
   return slice(operand, start_indices, limit_indices, strides)
 

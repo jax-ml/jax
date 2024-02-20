@@ -414,12 +414,13 @@ class _DecisionByElimination:
       (op1_l, op1_u) = self.bounds(op1, BoundsPrecision.BEST)
       (op2_l, op2_u) = self.bounds(op2, BoundsPrecision.BEST)
 
-      def math_floor_with_inf(a: float, b: float):  # math.floor, but aware of inf
-        # When either a or b are infinite, the results represent the limit
+      def math_floor_with_inf(a: float, b: float):
+        # math.floor(a / b), but aware of inf.
+        # When either a or b are infinite, the result represents the limit
         # of "a // b".
-        assert b != 0
+        assert b != 0  # we caught division by 0 earlier
         if not np.isinf(b):  # divisor b is finite
-          if not np.isinf(a):
+          if not np.isinf(a):  # both dividend a and divisor b are finite
             return math.floor(a / b)
           # a is infinite, b is finite
           return -np.inf if (a >= 0) != (b >= 0) else np.inf
@@ -430,6 +431,9 @@ class _DecisionByElimination:
 
       # Same reasoning as for multiplication: the bounds are among the cross-product
       # of the bounds.
+      if op2_l <= 0 <= op2_u:
+        raise InconclusiveDimensionOperation(
+            f"Possible division by 0 in division by {op2}")
       candidate_bounds = [math_floor_with_inf(op1_l, op2_l),
                           math_floor_with_inf(op1_l, op2_u),
                           math_floor_with_inf(op1_u, op2_l),
