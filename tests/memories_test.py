@@ -1146,7 +1146,8 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
     mesh = jtu.create_global_mesh((2,), ("x",))
     shape = (256, 128)
     np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
-    inp = jax.device_put(np_inp, NamedSharding(mesh, P("x")))
+    s = NamedSharding(mesh, P("x"))
+    inp = jax.device_put(np_inp, s)
 
     policy = jax.checkpoint_policies.save_and_offload_only_these_names(
         names_which_can_be_saved=["y"], names_which_can_be_offloaded=["z", "w"],
@@ -1158,6 +1159,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
         y, _ = ys
         y = checkpoint_name(jnp.sin(y), "y")
         z = checkpoint_name(jnp.sin(y), "z")
+        z = jax.lax.with_sharding_constraint(z, s)
         w = checkpoint_name(jnp.sin(z), "w")
         return (w, jnp.sum(w)), None
       _, scan_out = jax.lax.scan(g, (x, np.array(1, dtype=np.float32)), [np_inp])[0]
