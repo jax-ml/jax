@@ -925,7 +925,7 @@ def lower_jaxpr_to_module(
     # Find the dimension variables
     all_dim_poly = [d for aval in jaxpr.in_avals if hasattr(aval, "shape")
                     for d in aval.shape if not core.is_constant_dim(d)]
-    dim_vars = tuple(sorted(functools.reduce(lambda acc, new: acc.union(new.get_vars()),
+    dim_vars = tuple(sorted(functools.reduce(lambda acc, new: acc.union(new._get_vars()),
                                              all_dim_poly, set())))
   else:
     dim_vars = ()

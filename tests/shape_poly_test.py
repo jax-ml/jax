@@ -141,7 +141,7 @@ class DimExprTest(jtu.JaxTestCase):
     dim_vars: set[str] = set()
     for a in (e, computed_sym, *operands_sym):
       if core.is_symbolic_dim(a):
-        dim_vars = dim_vars.union(a.get_vars())
+        dim_vars = dim_vars.union(a._get_vars())
     if not dim_vars:
       return
     dim_vars_tuple = tuple(dim_vars)
@@ -149,7 +149,7 @@ class DimExprTest(jtu.JaxTestCase):
     for dim_values in itertools.product(*([(1, 2, 5, 10)] * len(dim_vars_tuple))):
       env = dict(zip(dim_vars_tuple, dim_values))
       def eval(d: shape_poly.DimSize):
-        return d.evaluate(env) if core.is_symbolic_dim(d) else d  # type: ignore
+        return d._evaluate(env) if core.is_symbolic_dim(d) else d  # type: ignore
 
       compute_concrete = fun(*map(eval, operands_sym))
       expected_concrete = eval(e)
@@ -313,15 +313,15 @@ class DimExprTest(jtu.JaxTestCase):
   def test_get_vars(self):
     a, b = shape_poly.symbolic_shape("a, b")
 
-    self.assertEqual({"a"}, a.get_vars())
-    self.assertEqual({"a", "b"}, (a * b * a).get_vars())
+    self.assertEqual({"a"}, a._get_vars())
+    self.assertEqual({"a", "b"}, (a * b * a)._get_vars())
 
   def test_evaluate(self):
     a, b = shape_poly.symbolic_shape("a, b")
 
-    self.assertEqual(1, (a * a - b).evaluate(dict(a=2, b=3)))
-    self.assertEqual(1, ((a * a) // b).evaluate(dict(a=2, b=3)))
-    self.assertEqual(4, ((a * a) % b).evaluate(dict(a=5, b=7)))
+    self.assertEqual(1, (a * a - b)._evaluate(dict(a=2, b=3)))
+    self.assertEqual(1, ((a * a) // b)._evaluate(dict(a=2, b=3)))
+    self.assertEqual(4, ((a * a) % b)._evaluate(dict(a=5, b=7)))
 
   def test_dim_vars_definitely_equal(self):
     a, b = shape_poly.symbolic_shape("a, b")
@@ -340,54 +340,54 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertTrue(core.definitely_equal(1, jnp.add(0, 1)))  # An Array
     self.assertFalse(core.definitely_equal(1, "a"))
 
-  def test_atoms_ordering(self):
+  def test_factors_ordering(self):
     a, b = shape_poly.symbolic_shape("a, b")
 
-    self.assertTrue(a.to_atom() < b.to_atom())
-    self.assertFalse(a.to_atom() >= b.to_atom())
-    self.assertTrue(a.to_atom() <= b.to_atom())
-    self.assertTrue(a.to_atom() != b.to_atom())
+    self.assertTrue(a._to_factor() < b._to_factor())
+    self.assertFalse(a._to_factor() >= b._to_factor())
+    self.assertTrue(a._to_factor() <= b._to_factor())
+    self.assertTrue(a._to_factor() != b._to_factor())
 
-    self.assertTrue(a.to_atom() < (a % 4).to_atom())
-    self.assertFalse(a.to_atom() > (a % 4).to_atom())
+    self.assertTrue(a._to_factor() < (a % 4)._to_factor())
+    self.assertFalse(a._to_factor() > (a % 4)._to_factor())
     # FLOORDIV comes before MON because we compare operations alphabetically
-    self.assertTrue((a // 4).to_atom() < (a % 4).to_atom())
+    self.assertTrue((a // 4)._to_factor() < (a % 4)._to_factor())
 
-    self.assertEqual(hash((a // 4).to_atom()), hash((a // 4).to_atom()))
+    self.assertEqual(hash((a // 4)._to_factor()), hash((a // 4)._to_factor()))
 
-  def test_monomial_ordering(self):
+  def test_term_ordering(self):
     a, b = shape_poly.symbolic_shape("a, b")
-    self.assertTrue(a.to_monomial() < b.to_monomial())
-    self.assertTrue(a.to_monomial() <= b.to_monomial())
-    self.assertTrue(b.to_monomial() >= a.to_monomial())
-    self.assertTrue(b.to_monomial() > a.to_monomial())
+    self.assertTrue(a._to_term() < b._to_term())
+    self.assertTrue(a._to_term() <= b._to_term())
+    self.assertTrue(b._to_term() >= a._to_term())
+    self.assertTrue(b._to_term() > a._to_term())
 
-    self.assertTrue(((3 * b) // a).to_monomial() >= ((2 * b) // a).to_monomial())
-    self.assertTrue(((3 * b) // a).to_monomial() <= ((4 * a) // b).to_monomial())
-    self.assertTrue(a.to_monomial() < (a * a).to_monomial())
-    self.assertTrue(b.to_monomial() < (a * a).to_monomial())
-    self.assertTrue((a * a * b).to_monomial() < (a * b * b).to_monomial())
+    self.assertTrue(((3 * b) // a)._to_term() >= ((2 * b) // a)._to_term())
+    self.assertTrue(((3 * b) // a)._to_term() <= ((4 * a) // b)._to_term())
+    self.assertTrue(a._to_term() < (a * a)._to_term())
+    self.assertTrue(b._to_term() < (a * a)._to_term())
+    self.assertTrue((a * a * b)._to_term() < (a * b * b)._to_term())
     e1 = 2 + a * a * b + a * b * b + a * b + a * a + a + b
 
-    sorted_e1 = [shape_poly._DimExpr.from_monomial(m, m_count, a.scope)
-                 for m, m_count in e1.monomials()]
+    sorted_e1 = [shape_poly._DimExpr._from_term(m, m_count, a.scope)
+                 for m, m_count in e1._sorted_terms]
     self.assertSequenceEqual(sorted_e1,
                              [a * b * b, a * a * b, a * b, a * a, b, a, 2])
 
     e2 = a * (a // 4) + (a // 4) + b * (a // 4) + b * (a % 4) + a * a + b + 15
-    sorted_e2 = [shape_poly._DimExpr.from_monomial(m, m_count, a.scope)
-                 for m, m_count in e2.monomials()]
+    sorted_e2 = [shape_poly._DimExpr._from_term(m, m_count, a.scope)
+                 for m, m_count in e2._sorted_terms]
     self.assertSequenceEqual(sorted_e2,
                              [b * (a % 4), b * (a // 4), a * (a // 4), a // 4,
                               a * a, b, 15])
 
-    # This failed with a previous implementation of atom equality
-    self.assertNotEqual(shape_poly._DimMon.from_operation(shape_poly._DimAtom.NON_NEGATIVE,
-                                                          a - b - 1,
-                                                          scope=a.scope),
-                        shape_poly._DimMon.from_operation(shape_poly._DimAtom.NON_NEGATIVE,
-                                                          a - 2 * b - 1,
-                                                          scope=a.scope))
+    # This failed with a previous implementation of factor equality
+    self.assertNotEqual(shape_poly._DimTerm.from_operation(shape_poly._DimFactor.NON_NEGATIVE,
+                                                           a - b - 1,
+                                                           scope=a.scope),
+                        shape_poly._DimTerm.from_operation(shape_poly._DimFactor.NON_NEGATIVE,
+                                                           a - 2 * b - 1,
+                                                           scope=a.scope))
   def test_bounds_arithmetic(self):
     a, b, c = shape_poly.symbolic_shape("a, b, c")
     bounded_le4 = 5 - a
@@ -479,20 +479,20 @@ class DimExprTest(jtu.JaxTestCase):
     a, b = shape_poly.symbolic_shape("a, b")
     # Generate test cases for floordiv and mod: (a + N) // +-2, (N - a) // +-2
     # and then evaluate them for a = 1, 5, 10000
-    div_mod_atoms = [
+    div_mod_factors = [
         operation(op1 + n, div)
         for op1 in (a, a + 10, a + 11, -a, -a + 10, -a + 11)
         for n in (-3, -1, 0, 1, 3)
         for div in (-2, 2, a + 4, -4 - a)  # Either negative, or positive
         for operation in (op.floordiv, op.mod)
         ]
-    for atom in div_mod_atoms:
-      lb, ub = _bounds(atom)
+    for fact in div_mod_factors:
+      lb, ub = _bounds(fact)
       self.assertLessEqual(lb, ub)
       for a_val in (1, 5, 10000):
-        atom_val = atom.evaluate(dict(a=a_val))
-        self.assertGreaterEqual(atom_val, lb)
-        self.assertLessEqual(atom_val, ub)
+        fact_val = fact._evaluate(dict(a=a_val))
+        self.assertGreaterEqual(fact_val, lb)
+        self.assertLessEqual(fact_val, ub)
 
   def test_bounds_non_negative(self):
     a, b = shape_poly.symbolic_shape("a, b")
@@ -597,15 +597,15 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertEqual(poly3, np.array(3, np.int64)[()])
     self.assertNotEqual(poly3 + 1, 3)
     self.assertNotEqual(poly3, poly3 + 1)
-    self.assertTrue((2 * a * b * a + 3).eq(1 + b * a * a + a * a * b + 2))
-    self.assertFalse((2 * a * b * a + 3).eq(a * b * a + 3))
+    self.assertTrue((2 * a * b * a + 3)._eq(1 + b * a * a + a * a * b + 2))
+    self.assertFalse((2 * a * b * a + 3)._eq(a * b * a + 3))
 
-    self.assertFalse((a * b * a + 3).eq(a * b * a + 4))
-    self.assertFalse((2 * a * b * a).eq(a * b * a))
-    self.assertFalse((2 * a * b * a + 1).eq(a * b * a))
-    self.assertFalse((3 * a * b * a - 1).eq(a * b * a))
+    self.assertFalse((a * b * a + 3)._eq(a * b * a + 4))
+    self.assertFalse((2 * a * b * a)._eq(a * b * a))
+    self.assertFalse((2 * a * b * a + 1)._eq(a * b * a))
+    self.assertFalse((3 * a * b * a - 1)._eq(a * b * a))
 
-    self.assertFalse((3 * a * b * a - 2).eq(a * b * a))
+    self.assertFalse((3 * a * b * a - 2)._eq(a * b * a))
 
     self.sampled_assertion(a % b,
                            lambda x: x, a % b)
@@ -722,8 +722,8 @@ class DimExprTest(jtu.JaxTestCase):
            "c + 3*d >= 10", "c - 2*d >= -4",  # -> 5c >= 8 -> c >= 2
         ])
     scope = a.scope
-    def _m(e: shape_poly._DimExpr) -> shape_poly._DimMon:
-      return e.to_monomial()
+    def _m(e: shape_poly._DimExpr) -> shape_poly._DimTerm:
+      return e._to_term()
     Comparator = shape_poly.Comparator
     decision = shape_poly_decision._DecisionByElimination(scope).initialize()
 
@@ -902,7 +902,7 @@ class DimExprTest(jtu.JaxTestCase):
                                     # Contradicts the default a >= 1
                                     constraints=("a == a + 1",))
 
-  def test_constraints_ge_monomial(self):
+  def test_constraints_ge_term(self):
     a, b = shape_poly.symbolic_shape(
         "a, b",
         constraints=("max(a, b) >= 8", "min(a, b) <= 2",
@@ -915,7 +915,7 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertGreaterEqual(a % b, 1)
     self.assertGreaterEqual(core.max_dim(a, b) % 4, 2)
 
-  def test_constraints_ge_monomial_derived(self):
+  def test_constraints_ge_term_derived(self):
     a, b = shape_poly.symbolic_shape(
         "a, b",
         constraints=("a >= 4", "3 >= b"))
@@ -927,7 +927,7 @@ class DimExprTest(jtu.JaxTestCase):
     self.assertEqual(_bounds(a + b), (5, np.inf))
     self.assertEqual(_bounds(a - b), (1, np.inf))
 
-  def test_constraints_ge_not_monomial(self):
+  def test_constraints_ge_not_term(self):
     a, b = shape_poly.symbolic_shape("a, b",
                                      constraints=("a >= b",))
     self.assertGreaterEqual(a, b)
@@ -1118,7 +1118,7 @@ class DimExprTest(jtu.JaxTestCase):
     )
     self.assertEqual(_bounds(a1 - a5), (0, np.inf))
 
-  def test_constraints_rounding_monomials(self):
+  def test_constraints_rounding_terms(self):
     a1, a2 = shape_poly.symbolic_shape(
         "a1, a2",
         constraints=(
@@ -1128,7 +1128,7 @@ class DimExprTest(jtu.JaxTestCase):
     )
     self.assertEqual(_bounds(a1), (2, 2))
 
-  def test_constraints_rounding_not_monomials(self):
+  def test_constraints_rounding_not_terms(self):
     a1, a2 = shape_poly.symbolic_shape(
         "a1, a2",
         constraints=(
@@ -1145,7 +1145,7 @@ class DimExprTest(jtu.JaxTestCase):
       _ = shape_poly.symbolic_shape(
           "a1", constraints=("a1 >= a1 + 1",))
 
-  def test_constraints_unsat_monomials(self):
+  def test_constraints_unsat_terms(self):
     with self.assertRaisesRegex(ValueError,
                                 "Unsatisfiable constraint"):
       a1, a2, *_ = shape_poly.symbolic_shape(
@@ -1157,7 +1157,7 @@ class DimExprTest(jtu.JaxTestCase):
               "a1 <= a4 + 2", "a4 <= 2"))
       a1 >= a2
 
-  def test_constraints_unsat_not_monomials(self):
+  def test_constraints_unsat_not_terms(self):
     with self.assertRaisesRegex(ValueError,
                                 "Unsatisfiable constraint"):
       a1, a2, a3, a4 = shape_poly.symbolic_shape(
@@ -1716,7 +1716,7 @@ class ShapePolyTest(jtu.JaxTestCase):
         polymorphic_shapes=["b1", "b2"])
 
     # A polymorphic arg is not used, and the dimension var does appear
-    # elsewhere but not as a trivial monomial.
+    # elsewhere but not as a trivial term.
     check_shape_poly(self,
         lambda x_unused, y: y * 2.0,
         arg_descriptors=[RandArg((3,), _f32), RandArg((9,), _f32)],

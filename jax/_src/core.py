@@ -2177,7 +2177,7 @@ def evaluate_shape(shape: Shape, dim_vars: Sequence[str],
       return operator.index(d)
     except:
       # Is a _DimExpr
-      return d.evaluate(env)  # type: ignore
+      return d._evaluate(env)  # type: ignore
   return tuple(eval_one_dim(d) for d in shape)
 
 def dim_value_dtype():
