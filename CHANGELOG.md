@@ -33,6 +33,7 @@ Remember to align the itemized text with the first line of an item within a list
   * Importing the `jax.config` submodule via `import jax.config` is deprecated.
     To configure JAX use `import jax` and then reference the config object
     via `jax.config`.
+  * The minimum jaxlib version is now 0.4.20.
 
 ## jaxlib 0.4.25
 

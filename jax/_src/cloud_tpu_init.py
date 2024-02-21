@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import os
-import warnings
 from jax._src import hardware_utils
 
 running_in_cloud_tpu_vm: bool = False
@@ -69,14 +68,3 @@ def cloud_tpu_init() -> None:
   os.environ['TPU_ML_PLATFORM'] = 'JAX'
   if hardware_utils.tpu_enhanced_barrier_supported():
     os.environ["LIBTPU_INIT_ARGS"] = os.environ.get("LIBTPU_INIT_ARGS","") + " --xla_tpu_use_enhanced_launch_barrier=true"
-
-  # TODO(skyewm): remove this warning at some point, say around Sept 2023.
-  use_pjrt_c_api = os.environ.get('JAX_USE_PJRT_C_API_ON_TPU', None)
-  if use_pjrt_c_api:
-    warnings.warn(
-        "JAX_USE_PJRT_C_API_ON_TPU no longer has an effect (the new TPU "
-        "runtime is always enabled now). Unset the environment variable "
-        "to disable this warning.")
-
-  # Remove when minimum jaxlib version is >= 0.4.15
-  os.environ['JAX_USE_PJRT_C_API_ON_TPU'] = "true"

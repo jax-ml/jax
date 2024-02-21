@@ -1381,7 +1381,7 @@ dynamic_shapes = define_bool_state(
 # TODO(parkers): Remove if there are no complaints.
 remat_opt_barrier = define_bool_state(
     name='jax_remat_opt_barrier',
-    default=(lib.version >= (0, 3, 6)),
+    default=True,
     help=('Enables using optimization-barrier op for lowering remat.'))
 
 # TODO(sharadmv,mattjj): set default to True, then remove

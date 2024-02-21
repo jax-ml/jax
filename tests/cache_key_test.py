@@ -29,7 +29,6 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
 
 
 config.parse_flags_with_absl()
@@ -69,9 +68,6 @@ class CacheKeyTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("cpu")
   def test_hash_accelerator_devices(self):
-    if xla_extension_version < 209 and xla_bridge.using_pjrt_c_api():
-      raise unittest.SkipTest("PjRt C API not yet supported.")
-
     devices = np.array([[jax.local_devices()[0]]])
 
     dev_hash1 = self.get_hashed_value(cache_key._hash_devices, devices)

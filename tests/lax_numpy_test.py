@@ -51,7 +51,6 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
-from jax._src.lib import xla_extension_version
 from jax._src.numpy.util import _parse_numpydoc, ParsedDoc, implements
 from jax._src.util import safe_zip, NumpyComplexWarning
 
@@ -3787,7 +3786,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
-  @unittest.skipIf(xla_extension_version < 210, 'jaxlib version too old')
   def testAstypeInt4(self):
     # Test converting from int4 to int8
     x = np.array([1, -2, -3, 4, -8, 7], dtype=jnp.int4)
