@@ -72,9 +72,10 @@ without going through StableHLO.
          TensorFlow ops but does not yet work with StableHLO,
          e.g., TFLite and TensorFlow.js.
        * using the more mature support for dynamic shapes in TensorFlow.
-         StableHLO does have support for dynamic shapes, and in the near future
-         we expect it will support shape polymorphism to the same extent as
-         graph serialization.
+         [StableHLO does have support for dynamic
+         shapes](https://github.com/openxla/stablehlo/blob/main/rfcs/20230704-dynamism-101.md),
+         and in the near future we expect it will support shape polymorphism
+         to the same extent as graph serialization.
 
     Even in the graph serialization mode the resulting TensorFlow graph
     is pretty much 1:1 with the StableHLO module
@@ -373,7 +374,7 @@ for the `jax2tf.convert` function:
 ```python
 f_tf = tf.function(jax2tf.convert(f_jax,
                                   polymorphic_shapes=["(b, 28, 28)"]),
-                                  autograph=False)
+                   autograph=False)
 f_tf.get_concrete_function(tf.TensorSpec([None, 28, 28], tf.float32))
 ```
 
@@ -746,6 +747,7 @@ The constraints form a conjunction together with the implicit
 constraints. You can specify `>=`, `<=`, and `==` constraints.
 At the moment, JAX has limited support for reasoning with
 symbolic constraints:
+
   * You get most from constraints of the form
     of a variable being greater-or-equal or
     less-or-equal to a constant.
