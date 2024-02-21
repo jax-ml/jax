@@ -734,12 +734,17 @@ def _flatten_bwd(in_tree, in_avals, out_trees, *args):
   zero = object()  # non-pytree sentinel to replace Nones in py_cts_in
   dummy = tree_unflatten(in_tree, [object()] * in_tree.num_leaves)
   cts_in_flat = []
-  append = lambda x, d: cts_in_flat.extend([x] * len(tree_flatten(d)[0])) or x
+  def append(x, d):
+    num_leaves = len(tree_flatten(d)[0])
+    if x is None and d is not None:
+      cts_in_flat.extend([zero] * num_leaves)
+    elif x is not None:
+      cts_in_flat.extend([x] * num_leaves)
+    return x
   try:
     if not isinstance(py_cts_in, tuple):
       raise ValueError
-    tree_map(append,
-             tuple(zero if ct is None else ct for ct in py_cts_in), dummy)
+    tree_map(append, py_cts_in, dummy, is_leaf=lambda x: x is None)
   except ValueError:
     _, in_tree2 = tree_flatten(py_cts_in)
     msg = ("Custom VJP rule must produce an output with the same container "
