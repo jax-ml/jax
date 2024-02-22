@@ -546,7 +546,7 @@ class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBas
 
   def serialize_with_paths(self, arrays: Sequence[jax.Array],
                            paths: Sequence[str], *, on_commit_callback):
-    tspecs = jax.tree_map(get_tensorstore_spec, paths)
+    tspecs = jax.tree.map(get_tensorstore_spec, paths)
     self.serialize(arrays, tspecs, on_commit_callback=on_commit_callback)
 
   def deserialize(self, shardings: Sequence[sharding.Sharding],
@@ -564,6 +564,6 @@ class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBas
       global_shapes: Sequence[array.Shape] | None = None,
       dtypes: Sequence[typing.DTypeLike] | None = None,
       concurrent_gb: int = 32):
-    tspecs = jax.tree_map(get_tensorstore_spec, paths)
+    tspecs = jax.tree.map(get_tensorstore_spec, paths)
     return self.deserialize(shardings, tspecs, global_shapes, dtypes,
                             concurrent_gb)

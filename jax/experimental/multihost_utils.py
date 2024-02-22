@@ -40,7 +40,7 @@ import numpy as np
 
 
 def _psum(x: Any) -> Any:
-  return jax.tree_map(partial(jnp.sum, axis=0), x)
+  return jax.tree.map(partial(jnp.sum, axis=0), x)
 
 
 def broadcast_one_to_all(in_tree: Any, is_source: bool | None = None) -> Any:
@@ -76,10 +76,10 @@ def broadcast_one_to_all(in_tree: Any, is_source: bool | None = None) -> Any:
   def post_jit(x):
     return np.asarray(x.addressable_data(0))
 
-  in_tree = jax.tree_map(pre_jit, in_tree)
+  in_tree = jax.tree.map(pre_jit, in_tree)
   out_tree = jax.jit(_psum, out_shardings=jax.sharding.NamedSharding(
       global_mesh, P()))(in_tree)
-  return jax.tree_map(post_jit, out_tree)
+  return jax.tree.map(post_jit, out_tree)
 
 
 def sync_global_devices(name: str):
@@ -148,7 +148,7 @@ def process_allgather(in_tree: Any, tiled: bool = False) -> Any:
 
   def _pjit(inp):
     return _handle_array_process_allgather(inp, tiled)
-  return jax.tree_map(_pjit, in_tree)
+  return jax.tree.map(_pjit, in_tree)
 
 
 def assert_equal(in_tree, fail_message: str = ''):

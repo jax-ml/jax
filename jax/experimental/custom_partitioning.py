@@ -266,20 +266,20 @@ class custom_partitioning:
 
     def propagate_user_sharding(mesh, user_shape):
       '''Update the sharding of the op from a user's shape.sharding.'''
-      user_sharding = jax.tree_map(lambda x: x.sharding, user_shape)
+      user_sharding = jax.tree.map(lambda x: x.sharding, user_shape)
 
     def partition(mesh, arg_shapes, result_shape):
       def lower_fn(*args):
         ... builds computation on per-device shapes ...
-      result_shardings = jax.tree_map(lambda x: x.sharding, result_shape)
-      arg_shardings = jax.tree_map(lambda x: x.sharding, arg_shapes)
+      result_shardings = jax.tree.map(lambda x: x.sharding, result_shape)
+      arg_shardings = jax.tree.map(lambda x: x.sharding, arg_shapes)
       # result_sharding and arg_shardings may optionally be modified and the
       # partitioner will insert collectives to reshape.
       return mesh, lower_fn, result_sharding, arg_shardings
 
     def infer_sharding_from_operands(mesh, arg_shapes, shape):
       '''Compute the result sharding from the sharding of the operands.'''
-      arg_shardings = jax.tree_map(lambda x: x.sharding, arg_shapes)
+      arg_shardings = jax.tree.map(lambda x: x.sharding, arg_shapes)
 
 
     f.def_partition(partition, propagate_user_sharding, infer_sharding_from_operands)
@@ -337,14 +337,14 @@ class custom_partitioning:
           return NamedSharding(sharding.mesh, P(*names))
 
       def partition(mesh, arg_shapes, result_shape):
-          result_shardings = jax.tree_map(lambda x: x.sharding, result_shape)
-          arg_shardings = jax.tree_map(lambda x: x.sharding, arg_shapes)
+          result_shardings = jax.tree.map(lambda x: x.sharding, result_shape)
+          arg_shardings = jax.tree.map(lambda x: x.sharding, arg_shapes)
           return mesh, fft, \
               supported_sharding(arg_shardings[0], arg_shapes[0]), \
               (supported_sharding(arg_shardings[0], arg_shapes[0]),)
 
       def infer_sharding_from_operands(mesh, arg_shapes, result_shape):
-          arg_shardings = jax.tree_map(lambda x: x.sharding, arg_shapes)
+          arg_shardings = jax.tree.map(lambda x: x.sharding, arg_shapes)
           return supported_sharding(arg_shardings[0], arg_shapes[0])
 
       @custom_partitioning

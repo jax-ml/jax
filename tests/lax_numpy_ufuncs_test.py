@@ -74,7 +74,7 @@ nonscalar_shapes = [(3,), (4,), (4, 3)]
 def cast_outputs(fun):
   def wrapped(*args, **kwargs):
     dtype = np.asarray(args[0]).dtype
-    return jax.tree_map(lambda x: np.asarray(x, dtype=dtype), fun(*args, **kwargs))
+    return jax.tree.map(lambda x: np.asarray(x, dtype=dtype), fun(*args, **kwargs))
   return wrapped
 
 

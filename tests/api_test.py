@@ -523,7 +523,7 @@ class JitTest(jtu.BufferDonationTestCase):
 
   def test_donate_args_info_aot(self):
     def fn(x, y):
-      return jax.tree_map(lambda i: i * 2, x), y * 2
+      return jax.tree.map(lambda i: i * 2, x), y * 2
 
     x = jax.device_put({"A": np.array(1.0), "B": np.array(2.0)},
                        jax.devices()[0])

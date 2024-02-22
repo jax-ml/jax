@@ -1606,16 +1606,16 @@ def shmap_reference(
     f: Callable, mesh: Mesh, in_specs: Specs, out_specs: Specs
   ) -> Callable:
   def f_shmapped(*args):
-    outs = jax.tree_map(lambda y: jnp.zeros(y.shape, y.dtype), out_types)
+    outs = jax.tree.map(lambda y: jnp.zeros(y.shape, y.dtype), out_types)
     getters = [make_indexer(mesh, s, x) for s, x in zip(in_specs, args)]
-    putters = jax.tree_map(partial(make_indexer, mesh), out_specs, outs)
+    putters = jax.tree.map(partial(make_indexer, mesh), out_specs, outs)
     for idx in it.product(*map(range, mesh.shape.values())):
       args_shards = [x[indexer(idx)] for x, indexer in zip(args, getters)]
       assert all(x.shape == r.shape for x, r in zip(args_shards, body_in_types))
       out_shards = f(*args_shards)
-      assert jax.tree_util.tree_all(jax.tree_map(lambda y, r: y.shape == r.shape,
+      assert jax.tree_util.tree_all(jax.tree.map(lambda y, r: y.shape == r.shape,
                                                  out_shards, body_out_types))
-      outs = jax.tree_map(lambda y, out, indexer: out.at[indexer(idx)].set(y),
+      outs = jax.tree.map(lambda y, out, indexer: out.at[indexer(idx)].set(y),
                           out_shards, outs, putters)
     return outs
   return f_shmapped
@@ -1662,7 +1662,7 @@ def sample_shmap() -> Chooser:
           for ty in in_types]
   out_reps = spec.out_rep(*map(partial(unmentioned, mesh), in_specs))
   out_specs = yield from make_out_specs(mesh, body_out_types, out_reps)
-  out_types = jax.tree_map(partial(dilate, mesh), out_specs, body_out_types)
+  out_types = jax.tree.map(partial(dilate, mesh), out_specs, body_out_types)
   ref = partial(shmap_reference, body_in_types, body_out_types, out_types)
   in_str = '(' + ','.join(jax.core.ShapedArray(t.shape, t.dtype).str_short()
                           for t in in_types) + ')'
