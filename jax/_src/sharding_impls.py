@@ -126,7 +126,7 @@ class XLACompatibleSharding(sharding.Sharding):
     try:
       return (are_op_shardings_equal(self._to_xla_hlo_sharding(ndim),
                                       other._to_xla_hlo_sharding(ndim))
-              and self._device_assignment == other._device_assignment and
+              and self._internal_device_list == other._internal_device_list and  # type: ignore
               self.memory_kind == other.memory_kind)
     # NotImplementedError is raised by PmapSharding because it can't lower
     # to OpSharding. So if `other` is a PmapSharding, default to a strict
