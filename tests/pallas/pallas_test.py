@@ -1505,7 +1505,7 @@ class PallasOpsTest(PallasTest):
       o_ref[()] = x_ref[()]**2.0
 
     x = jnp.array(42.0)
-    np.testing.assert_allclose(square(x), x**2.0)
+    np.testing.assert_allclose(square(x), x*x)
 
   def test_ne(self):
     @functools.partial(
