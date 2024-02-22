@@ -2405,6 +2405,71 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
             .getOperation());
     broadcast_op.erase();
     return success();
+  } else if (layout_out.bitwidth() == 32 &&
+             broadcast_op.getSourceType().getIntOrFloatBitWidth() == 1) {
+    // Broadcasting the i1 scalar involves first converting i1 to i32, followed
+    // by broadcasting i32 to the target shape. Finally, the comparison with 0s
+    // yields the vmask.
+    auto src_i32 = builder.create<arith::ExtUIOp>(
+        broadcast_op.getLoc(), builder.getI32Type(), broadcast_op.getSource());
+    FAILUREOR_ASSIGN_OR_RETURN(
+        const VectorType native_vreg_ty,
+        getNativeVregType(src_i32.getType(), ctx.target_shape));
+    auto tile_i32 =
+        builder.create<vector::BroadcastOp>(native_vreg_ty, src_i32);
+    auto zeros = builder.create<arith::ConstantOp>(
+        broadcast_op.getLoc(), tile_i32.getType(),
+        DenseElementsAttr::get(tile_i32.getType(),
+                               builder.getI32IntegerAttr(0)));
+    auto tile =
+        builder.create<arith::CmpIOp>(arith::CmpIPredicate::ne, tile_i32, zeros)
+            .getResult();
+    const xla::Array<Value> dst_tiles(dst_tiles_shape, tile);
+    broadcast_op.replaceAllUsesWith(
+        assemble(builder, dst_ty, layout_out, dst_tiles, ctx.target_shape)
+            .getOperation());
+    broadcast_op.erase();
+    return success();
+  } else if (layout_out.bitwidth() < 32) {
+    CHECK_EQ(layout_out.bitwidth(),
+             broadcast_op.getSourceType().getIntOrFloatBitWidth());
+    // Broadcasting the scalar with narrower type involves first packing (32 /
+    // bitwidth) copies to i32, followed by broadcasting i32 to the target
+    // shape. Finally, bitcast i32 vector back to the original narrower type
+    // vector.
+    auto loc = broadcast_op.getLoc();
+    auto src_ty = broadcast_op.getSourceType();
+    auto bitwidth = src_ty.getIntOrFloatBitWidth();
+    auto unpacked_src = broadcast_op.getSource();
+    if (!src_ty.isSignlessInteger(bitwidth)) {
+      unpacked_src = builder.create<arith::BitcastOp>(
+          loc, builder.getIntegerType(bitwidth), unpacked_src);
+    }
+    auto src_i32 =
+        builder.create<arith::ExtUIOp>(loc, builder.getI32Type(), unpacked_src)
+            .getResult();
+    for (int i = 1; i < (32 / bitwidth); ++i) {
+      auto shift_width = builder.create<arith::ConstantOp>(
+          loc, builder.getIntegerAttr(builder.getI32Type(), i * bitwidth));
+      src_i32 = builder.create<arith::OrIOp>(
+          loc, src_i32,
+          builder.create<arith::ShLIOp>(loc, src_i32, shift_width));
+    }
+    FAILUREOR_ASSIGN_OR_RETURN(
+        const VectorType i32_vreg_ty,
+        getNativeVregType(src_i32.getType(), ctx.target_shape));
+    auto tile_i32 = builder.create<vector::BroadcastOp>(i32_vreg_ty, src_i32);
+
+    FAILUREOR_ASSIGN_OR_RETURN(const VectorType native_vreg_ty,
+                               getNativeVregType(src_ty, ctx.target_shape));
+    auto tile = builder.create<tpu::BitcastVregOp>(native_vreg_ty, tile_i32);
+
+    const xla::Array<Value> dst_tiles(dst_tiles_shape, tile);
+    broadcast_op.replaceAllUsesWith(
+        assemble(builder, dst_ty, layout_out, dst_tiles, ctx.target_shape)
+            .getOperation());
+    broadcast_op.erase();
+    return success();
   } else {
     FAILUREOR_ASSIGN_OR_RETURN(
         const VectorType native_vreg_ty,

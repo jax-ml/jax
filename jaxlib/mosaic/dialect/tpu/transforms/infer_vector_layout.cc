@@ -850,18 +850,23 @@ class VectorLayoutInferer {
     auto res_ty = op.getResultVectorType();
     TPU_CHECK_OP(res_ty.getRank() > 0, "rank 0 vectors unsupported");
     if (some_src_ty.isSignlessIntOrIndexOrFloat()) {
-      TPU_CHECK_OP(some_src_ty.getIntOrFloatBitWidth() == kNativeBitwidth,
-                   "Only 32-bit broadcasts supported");
+      auto bitwidth = some_src_ty.getIntOrFloatBitWidth();
+      // TODO(b/320725357): We need a better design for mask layout. For now, we
+      // always set layout bitwidth of Vmask to 32bit.
+      if (bitwidth == 1) {
+        bitwidth = kNativeBitwidth;
+      }
       if (res_ty.getRank() == 1) {
         // We use a full vreg tile, because only then its layout can be changed
         // for free.
-        setLayout(op, kNoLayout,
-                  VectorLayout(kNativeBitwidth, {std::nullopt, std::nullopt},
-                               default_tiling_, ImplicitDim::kSecondMinor));
+        setLayout(
+            op, kNoLayout,
+            VectorLayout(bitwidth, {std::nullopt, std::nullopt},
+                         nativeTiling(bitwidth), ImplicitDim::kSecondMinor));
       } else {  // rank >= 2  // NOLINT(readability-else-after-return)
         setLayout(op, kNoLayout,
-                  VectorLayout(kNativeBitwidth, {std::nullopt, std::nullopt},
-                               default_tiling_, ImplicitDim::kNone));
+                  VectorLayout(bitwidth, {std::nullopt, std::nullopt},
+                               nativeTiling(bitwidth), ImplicitDim::kNone));
       }
       return success();
     }
