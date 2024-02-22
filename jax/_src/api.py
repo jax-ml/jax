@@ -2084,9 +2084,8 @@ def linearize(fun: Callable, *primals, has_aux: bool = False
     jaxtree_fun, out_tree = flatten_fun_nokwargs2(f, in_tree)
   else:
     jaxtree_fun, out_tree = flatten_fun_nokwargs(f, in_tree)
-  out_primals, out_pvals, jaxpr, consts, *maybe_aux = ad.linearize(jaxtree_fun,
-                                                                   *primals_flat,
-                                                                   has_aux=has_aux)
+  out_primals, out_pvals, jaxpr, consts, *maybe_aux = ad.linearize(
+      jaxtree_fun, *primals_flat, has_aux=has_aux)
   if has_aux:
     out_tree, aux_tree = out_tree()
   else:

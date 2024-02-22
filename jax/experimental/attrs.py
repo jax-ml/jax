@@ -22,8 +22,12 @@ from jax._src import linear_util as lu
 from jax._src.api_util import flatten_fun_nokwargs
 from jax._src.interpreters import ad
 from jax._src.interpreters import partial_eval as pe
-from jax._src.tree_util import tree_flatten, tree_unflatten
-from jax._src.util import unzip2
+from jax._src.tree_util import (tree_flatten, tree_unflatten, tree_structure,
+                                treedef_tuple)
+from jax._src.util import unzip2, safe_map, safe_zip, split_list
+
+map, unsafe_map = safe_map, map
+zip, unsafe_zip = safe_zip, zip
 
 JaxVal = Any
 
@@ -84,8 +88,8 @@ pe.DynamicJaxprTrace.process_setattr = _setattr_staging
 def jvp(f, primals, tangents, attr_tangents):
   attrs, attr_tangents = unzip2(((o, a), t) for o, a, t in attr_tangents)
   attr_primals = tuple(jax_getattr(o, a) for o, a in attrs)
-  primals_flat, in_tree = tree_flatten((attr_primals, primals))
-  tangents_flat, in_tree_ = tree_flatten((attr_tangents, tangents))
+  primals_flat, in_tree = tree_flatten((attr_primals, *primals))
+  tangents_flat, in_tree_ = tree_flatten((attr_tangents, *tangents))
   if in_tree != in_tree_: raise Exception
   f_, out_tree = flatten_fun_nokwargs(_set_attrs(lu.wrap_init(f), attrs), in_tree)
   out_primals_flat, out_tangents_flat, tangent_attrs_out = _jvp(f_).call_wrapped(
@@ -95,7 +99,7 @@ def jvp(f, primals, tangents, attr_tangents):
   return out_primals, out_tangents, tangent_attrs_out
 
 @lu.transformation
-def _set_attrs(attrs, attr_vals, args):
+def _set_attrs(attrs, attr_vals, *args):
   for (o, a), x in zip(attrs, attr_vals):
     jax_setattr(o, a, x)
   yield (yield args, {})
@@ -134,3 +138,81 @@ def _setattr_jvp(trace, tracer, *, obj, attr):
     trace.main.attrs_tracked.append((obj, attr))
   setattr(obj, attr, tracer)
 ad.JVPTrace.process_setattr = _setattr_jvp
+
+
+def linearize(f, *primals, attrs: list[tuple[Any, str]] = []):
+  attr_primals = [jax_getattr(o, a) for o, a in attrs]
+  attr_avals = [core.raise_to_shaped(core.get_aval(p)) for p in attr_primals]
+  primals_flat, in_tree = tree_flatten(primals)
+  tree = treedef_tuple((tree_structure(attr_primals), *in_tree.children()))
+  f_, out_tree = flatten_fun_nokwargs(_set_attrs(lu.wrap_init(f), attrs), tree)
+  primal_out, out_pvals, jaxpr, consts, attrs_out = _linearize(
+      f_, *attr_primals, *primals_flat)
+  f_lin = _lin_wrap(jaxpr, consts, out_pvals, attr_avals, (in_tree, out_tree()),
+                    attrs, attrs_out)
+  return tree_unflatten(out_tree(), primal_out), f_lin
+
+def _linearize(traceable: lu.WrappedFun, *primals):
+  jvpfun, attrs = _split_attrs(_jvp(traceable))
+  in_pvals = (tuple(pe.PartialVal.known(p) for p in primals)
+              + tuple(pe.PartialVal.unknown(core.get_aval(p).at_least_vspace())
+                      for p in primals))
+  _, in_tree = tree_flatten((primals, primals))
+  jvpfun_flat, out_tree = flatten_fun_nokwargs(jvpfun, in_tree)
+  jaxpr, out_pvals, consts = pe.trace_to_jaxpr_nounits(jvpfun_flat, in_pvals)
+  out_primals_pvals, out_tangents_pvals, out_tangent_attr_pvals = \
+      tree_unflatten(out_tree(), out_pvals)
+  out_primals_consts = [pval.get_known() for pval in out_primals_pvals]
+  return (out_primals_consts, [*out_tangents_pvals, *out_tangent_attr_pvals],
+          jaxpr, consts, attrs())
+
+@lu.transformation_with_aux
+def _split_attrs(*args, **kwargs):
+  primals, tangents, tangent_attrs = yield args, kwargs
+  attrs, tangent_attr_vals = unzip2(((o, a), t) for o, a, t in tangent_attrs)
+  yield (primals, tangents, tangent_attr_vals), attrs
+
+def _lin_wrap(jaxpr, consts, out_pvals, attr_avals, io_tree, in_attrs, out_attrs):
+  in_tree, out_tree = io_tree
+  def f_lin(*tangents, attr_tangents):
+    if set(attr_tangents) - set(in_attrs): raise Exception
+    tangents_, in_tree_ = tree_flatten(tangents)
+    assert in_tree == in_tree_
+    attr_tangents_ = [attr_tangents.get(a, ad.Zero(aval))
+                      for a, aval in zip(in_attrs, attr_avals)]
+    out = core.eval_jaxpr(jaxpr, consts, *attr_tangents_, *tangents_)
+    out_ = iter(out)
+    out = [p.get_known() if p.is_known() else next(out_) for p in out_pvals]
+    assert next(out_, None) is None
+    tangents_out, attr_tangents_out = split_list(out, [len(out)-len(out_attrs)])
+    out_ct = tree_unflatten(out_tree, tangents_out)
+    return out_ct, dict(zip(out_attrs, attr_tangents_out))
+  return f_lin
+
+
+def vjp(f, *primals, attrs: list[tuple[Any, str]] = []):
+  attr_primals = [jax_getattr(o, a) for o, a in attrs]
+  primals_flat, in_tree = tree_flatten(primals)
+  tree = treedef_tuple((tree_structure(attr_primals), *in_tree.children()))
+  f_, out_tree = flatten_fun_nokwargs(_set_attrs(lu.wrap_init(f), attrs), tree)
+  primal_out, out_pvals, jaxpr, consts, attrs_out = _linearize(
+      f_, *attr_primals, *primals_flat)
+  attr_avals = [core.raise_to_shaped(core.get_aval(jax_getattr(o, a))).at_least_vspace()
+                for o, a in attrs_out]
+  f_vjp = _vjp_wrap(jaxpr, consts, out_pvals, attr_avals, (in_tree, out_tree()),
+                    attrs, attrs_out)
+  return tree_unflatten(out_tree(), primal_out), f_vjp
+
+def _vjp_wrap(jaxpr, consts, out_pvals, attr_avals, io_tree, in_attrs, out_attrs):
+  in_tree, out_tree = io_tree
+  dummies = [ad.UndefinedPrimal(v.aval) for v in jaxpr.invars]
+  def f_vjp(out_ct, *, attr_cotangents: dict[tuple[Any, str], JaxVal] = {}):
+    out_cts, out_tree_ = tree_flatten(out_ct)
+    assert out_tree == out_tree_
+    attr_cts = [attr_cotangents.get(a, ad.Zero(aval))
+                for a, aval in zip(out_attrs, attr_avals)]
+    out = ad.backward_pass(jaxpr, (), (), consts, dummies, (*out_cts, *attr_cts))
+    in_attr_bars, arg_cts = split_list(out, [len(in_attrs)])
+    args_ct = tree_unflatten(in_tree, map(ad.instantiate_zeros, arg_cts))
+    return args_ct, dict(zip(in_attrs, in_attr_bars))
+  return f_vjp
