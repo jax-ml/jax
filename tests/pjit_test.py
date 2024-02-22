@@ -376,7 +376,7 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     @partial(pjit, out_shardings=s, donate_argnames='inp2')
     def f(inp1, inp2, inp3):
-      return jax.tree_map(lambda x, y, z: x + y + z, inp1, inp2, inp3)
+      return jax.tree.map(lambda x, y, z: x + y + z, inp1, inp2, inp3)
 
     x = np.ones((2, 5)) * 4
     x_tree = jax.device_put({"a": {"b": x}, "c": x}, s)
@@ -389,10 +389,10 @@ class PJitTest(jtu.BufferDonationTestCase):
 
     expected = x + y + z
     out = f(x_tree, inp2=y_tree, inp3=z_tree)
-    jax.tree_map(lambda o: self.assertAllClose(o, expected), out)
-    jax.tree_map(self.assertNotDeleted, x_tree)
-    jax.tree_map(self.assertDeleted, y_tree)
-    jax.tree_map(self.assertNotDeleted, z_tree)
+    jax.tree.map(lambda o: self.assertAllClose(o, expected), out)
+    jax.tree.map(self.assertNotDeleted, x_tree)
+    jax.tree.map(self.assertDeleted, y_tree)
+    jax.tree.map(self.assertNotDeleted, z_tree)
 
   @unittest.skipIf(xla_extension_version < 220, 'jaxlib version too old')
   @jtu.run_on_devices('tpu', 'cpu', 'gpu')
@@ -422,9 +422,9 @@ class PJitTest(jtu.BufferDonationTestCase):
     z_tree = jax.device_put({'a': {'b': z}, 'c': z}, s)
 
     out = f(x_tree, y_tree, z_tree)
-    jax.tree_map(self.assertNotDeleted, x_tree)
-    jax.tree_map(self.assertDeleted, y_tree)
-    jax.tree_map(self.assertDeleted, z_tree)
+    jax.tree.map(self.assertNotDeleted, x_tree)
+    jax.tree.map(self.assertDeleted, y_tree)
+    jax.tree.map(self.assertDeleted, z_tree)
 
   @unittest.skipIf(xla_extension_version < 220, 'jaxlib version too old')
   @jtu.run_on_devices('tpu')
@@ -1334,7 +1334,7 @@ class CustomPartitionerTest(jtu.JaxTestCase):
     self.skip_if_custom_partitioning_not_supported()
 
     def partition(precision, mesh, arg_shapes, result_shape):
-      arg_shardings = jax.tree_map(lambda s: s.sharding, arg_shapes)
+      arg_shardings = jax.tree.map(lambda s: s.sharding, arg_shapes)
       result_sharding = result_shape[0].sharding
       self.assertEqual(arg_shardings[0], result_sharding)
       self.assertEqual(P('x', None), result_sharding.spec)
@@ -1351,7 +1351,7 @@ class CustomPartitionerTest(jtu.JaxTestCase):
       return mesh, lower_fn, (result_sharding, result_sharding), arg_shardings
 
     def infer_sharding_from_operands(precision, mesh, arg_shapes, result_shape):
-      arg_shardings = jax.tree_map(lambda s: s.sharding, arg_shapes)
+      arg_shardings = jax.tree.map(lambda s: s.sharding, arg_shapes)
       x_shard, y_shard = arg_shardings
       x_shape, y_shape = arg_shapes
       x_names = tuple(x_shard.spec) + tuple(

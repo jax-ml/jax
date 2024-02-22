@@ -583,7 +583,7 @@ def pjit_simple_benchmark(state, num_devices, num_args, cpp_jit, use_aot=False):
   out_axis_resources = jax.sharding.NamedSharding(mesh, spec)
 
   f = pjit_lib.pjit(
-      lambda x: jax.tree_map(lambda x: x + 1, x),
+      lambda x: jax.tree.map(lambda x: x + 1, x),
       in_shardings=in_axis_resources,
       out_shardings=out_axis_resources,
   )
