@@ -13,13 +13,14 @@
 # limitations under the License.
 
 import warnings
+from jax._src import deprecations
 
 # Added February 16, 2024.
-warnings.warn(
-    "Importing the jax.config submodule via `import jax.config` is deprecated."
-    " To configure JAX use `import jax` and then reference the config object"
-    " via `jax.config`.",
-    DeprecationWarning,
-    stacklevel=2,
-)
-del warnings
+_msg = ("Importing the jax.config submodule via `import jax.config` is deprecated."
+        " To configure JAX use `import jax` and then reference the config object"
+        " via `jax.config`.")
+if deprecations.is_accelerated("jax.config", "config-module"):
+  raise ImportError(_msg)
+else:
+  warnings.warn(_msg, DeprecationWarning, stacklevel=2)
+del deprecations, warnings, _msg
