@@ -14,6 +14,7 @@
 
 load(
     "//jaxlib:jax.bzl",
+    "if_windows",
     "py_extension",
     "pybind_extension",
     "windows_cc_shared_mlir_library",
@@ -250,7 +251,6 @@ cc_library(
     name = "jaxlib_mlir_capi_objects",
     deps = [
         "//jaxlib/mosaic:tpu_dialect_capi_objects",
-        "//jaxlib/triton:triton_dialect_capi_objects",
         "@llvm-project//mlir:CAPIArithObjects",
         "@llvm-project//mlir:CAPIIRObjects",
         "@llvm-project//mlir:CAPIMathObjects",
@@ -263,7 +263,12 @@ cc_library(
         "@stablehlo//:chlo_capi_objects",
         "@stablehlo//:stablehlo_capi_objects",
         "@xla//xla/mlir_hlo:CAPIObjects",
-    ],
+    ] + if_windows(
+        [],
+        [
+            "//jaxlib/triton:triton_dialect_capi_objects",
+        ],
+    ),
 )
 
 cc_binary(

@@ -327,11 +327,17 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, include_gpu_plugin_extensi
           f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsSparseTensor.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/_mlirSparseTensorPasses.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/_tpu_ext.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_triton_ext.{pyext}",
-          "__main__/jaxlib/mlir/_mlir_libs/_triton_ext.pyi",
           f"__main__/jaxlib/mlir/_mlir_libs/_stablehlo.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/register_jax_dialects.{pyext}",
-      ],
+      ]
+      + (
+          []
+          if build_utils.is_windows()
+          else [
+              f"__main__/jaxlib/mlir/_mlir_libs/_triton_ext.{pyext}",
+              "__main__/jaxlib/mlir/_mlir_libs/_triton_ext.pyi",
+          ]
+      ),
   )
 
   triton_dir = jaxlib_dir / "triton"

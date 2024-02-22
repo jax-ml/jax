@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("//jaxlib:jax.bzl", "pytype_strict_library")
+load("//jaxlib:jax.bzl", "if_windows", "pytype_strict_library")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_filegroup")
 
 licenses(["notice"])
@@ -33,8 +33,10 @@ pytype_strict_library(
     deps = [
         "//jaxlib/mlir:core",
         "//jaxlib/mlir:ir",
-        "//jaxlib/mlir/_mlir_libs:_triton_ext",
-    ],
+    ] + if_windows(
+        [],
+        ["//jaxlib/mlir/_mlir_libs:_triton_ext"],
+    ),
 )
 
 genrule(
