@@ -9212,6 +9212,38 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     g(1.)  # doesn't crash
 
+  def test_nones_representing_zeros_in_subtrees_returned_by_bwd(self):
+    # https://github.com/google/jax/issues/8356
+    @jax.custom_vjp
+    def f(x):
+      return x[0]
+
+    def f_fwd(x):
+      return f(x), None
+
+    def f_bwd(_, z_bar):
+      return (z_bar, (None, None)),
+
+    f.defvjp(f_fwd, f_bwd)
+
+    jax.grad(f)((1.0, (2.0, 3.0)))  # don't crash
+
+  def test_pytree_nones_returned_by_bwd(self):
+    @jax.custom_vjp
+    def f(x):
+      return x[0]
+
+    def f_fwd(x):
+      return f(x), None
+
+    def f_bwd(_, z_bar):
+      return (z_bar, (None, None)),
+
+    f.defvjp(f_fwd, f_bwd)
+
+    jax.grad(f)((1.0, (2.0, None)))  # don't crash
+
+
 
 def transpose_unary(f, x_example):
   def transposed(y):
