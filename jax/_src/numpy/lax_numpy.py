@@ -388,7 +388,7 @@ def _conv(x: Array, y: Array, mode: str, op: str, precision: PrecisionLike,
 @partial(jit, static_argnames=('mode', 'precision', 'preferred_element_type'))
 def convolve(a: ArrayLike, v: ArrayLike, mode: str = 'full', *,
              precision: PrecisionLike = None,
-             preferred_element_type: dtype | None = None) -> Array:
+             preferred_element_type: DTypeLike | None = None) -> Array:
   util.check_arraylike("convolve", a, v)
   return _conv(asarray(a), asarray(v), mode=mode, op='convolve',
                precision=precision, preferred_element_type=preferred_element_type)
@@ -399,7 +399,7 @@ def convolve(a: ArrayLike, v: ArrayLike, mode: str = 'full', *,
 @partial(jit, static_argnames=('mode', 'precision', 'preferred_element_type'))
 def correlate(a: ArrayLike, v: ArrayLike, mode: str = 'valid', *,
               precision: PrecisionLike = None,
-              preferred_element_type: dtype | None = None) -> Array:
+              preferred_element_type: DTypeLike | None = None) -> Array:
   util.check_arraylike("correlate", a, v)
   return _conv(asarray(a), asarray(v), mode=mode, op='correlate',
                precision=precision, preferred_element_type=preferred_element_type)
