@@ -2609,8 +2609,8 @@ def _pallas_call_ttir_lowering(
 
 
 _TRITON_COMPILE_VIA_XLA = config.DEFINE_bool(
-    "triton_compile_via_xla",
-    default=config.bool_env("JAX_TRITON_COMPILE_VIA_XLA", False),
+    "jax_triton_compile_via_xla",
+    default=config.bool_env("JAX_TRITON_COMPILE_VIA_XLA", True),
     help="If True, Pallas delegates Triton kernel compilation to XLA.",
 )
 

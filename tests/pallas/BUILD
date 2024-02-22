@@ -53,6 +53,9 @@ jax_test(
         "gpu_x32",
         "gpu_a100_x32",
     ],
+    env = {
+        "JAX_TRITON_COMPILE_VIA_XLA": "0",
+    },
     shard_count = 4,
     deps = [
         "//jax:pallas_gpu",
@@ -118,9 +121,6 @@ jax_test(
         "gpu_x32",
         "gpu_a100_x32",
     ],
-    env = {
-        "JAX_TRITON_COMPILE_VIA_XLA": "1",
-    },
     shard_count = 4,
     deps = [
         "//jax:pallas_gpu",
