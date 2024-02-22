@@ -730,12 +730,13 @@ jax_test(
 jax_test(
     name = "pytorch_interoperability_test",
     srcs = ["pytorch_interoperability_test.py"],
-    backend_tags = {
-        # PyTorch leaks dlpack metadata https://github.com/pytorch/pytorch/issues/117058
-        "gpu": ["noasan"],
-    },
     disable_backends = ["tpu"],
-    tags = ["not_build:arm"],
+    tags = [
+        # PyTorch leaks dlpack metadata https://github.com/pytorch/pytorch/issues/117058, and
+        # compilation times out on CPU.
+        "noasan",
+        "not_build:arm",
+    ],
     deps = py_deps("torch"),
 )
 
