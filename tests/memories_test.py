@@ -1186,6 +1186,39 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
       self.assertNotRegex(compiled_text, r"copy-start.*S\(5\)")
       self.assertNotRegex(compiled_text, r"copy-done.*S\(5\)")
 
+  def test_remat_scan_layout_change_offloadable(self):
+    mesh = jtu.create_global_mesh((2,), ("x",))
+    shape = (256, 128)
+    np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
+    s = NamedSharding(mesh, P("x"))
+    inp = jax.device_put(np_inp, s)
+
+    policy = jax.checkpoint_policies.save_and_offload_only_these_names(
+        names_which_can_be_saved=["y"], names_which_can_be_offloaded=["z", "w"],
+        offload_src='device', offload_dst='pinned_host')
+
+    @functools.partial(remat, policy=policy)
+    def f(x):
+      def g(ys, _):
+        y, _ = ys
+        y = checkpoint_name(jnp.sin(y), "y")
+        z = checkpoint_name(jnp.sin(y), "z")
+        z = jax.lax.with_sharding_constraint(z, s)
+        z = z.T
+        w = checkpoint_name(jnp.sin(z), "w")
+        return (w.T, jnp.sum(w)), None
+      _, scan_out = jax.lax.scan(g, (x, np.array(1, dtype=np.float32)), [np_inp])[0]
+      return scan_out
+
+    f = jax.jit(jax.grad(f))
+    f(inp)  # doesn't crash
+
+    compiled_text = f.lower(inp).compile().as_text()
+    if compiled_text is not None:
+      self.assertIn('S(5)', compiled_text)
+      self.assertNotRegex(compiled_text, r"copy-start.*S\(5\)")
+      self.assertNotRegex(compiled_text, r"copy-done.*S\(5\)")
+
   def test_remat_checkpoint_dots_with_no_batch_dims(self):
     policy = jax.checkpoint_policies.offload_dot_with_no_batch_dims(
         "device", "pinned_host")
