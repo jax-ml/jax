@@ -22,6 +22,12 @@ Remember to align the itemized text with the first line of an item within a list
   * Pallas now uses XLA instead of the Triton Python APIs to compile Triton
     kernels. You can revert to the old behavior by setting the
     `JAX_TRITON_COMPILE_VIA_XLA` environment variable to `"0"`.
+  * Several deprecated APIs in {mod}`jax.interpreters.xla` that were removed in v0.4.24
+    have been re-added in v0.4.25, including `backend_specific_translations`,
+    `translations`, `register_translation`, `xla_destructure`, `TranslationRule`,
+    `TranslationContext`, and `XLAOp`. These are still considered deprecated, and
+    will be removed again in the future when better replacements are available.
+    Refer to {jax-issue}`#19816` for discussion.
 
 * Deprecations & Removals
   * {func}`jax.numpy.linalg.solve` now shows a deprecation warning for batched 1D
