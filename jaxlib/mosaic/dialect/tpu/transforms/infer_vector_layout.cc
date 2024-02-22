@@ -984,17 +984,18 @@ class VectorLayoutInferer {
 
     SmallVector<Layout, 4> in_layout(op->getNumOperands(), kNoLayout);
     CHECK_EQ(op->getNumOperands(), op.getIndices().size() + 1);
-    SmallVector<int64_t, 2> tile_indices;
+    SmallVector<int64_t, 2> tile_offsets;  // indices % tiling
     for (int i = 0; i < tiling.size(); ++i) {
       int dim = rank - tiling.size() + i;
       Value tiled_index = op.getIndices()[dim];
       if (auto cst_op = tiled_index.getDefiningOp<arith::ConstantOp>()) {
-        tile_indices.push_back(cast<IntegerAttr>(cst_op.getValue()).getInt());
+        tile_offsets.push_back(cast<IntegerAttr>(cst_op.getValue()).getInt() %
+                               tiling[i]);
       } else {
         if (failed(verifyDivisibleIndex(tiled_index, tiling[0], dim, op))) {
           return failure();
         }
-        tile_indices.push_back(0);
+        tile_offsets.push_back(0);
       }
     }
 
@@ -1007,16 +1008,14 @@ class VectorLayoutInferer {
       auto tile = tiling.front();
       TPU_CHECK_OP(tile % target_shape_[1] == 0,
                    "Unsupported tiling for 1D load");
-      CHECK_EQ(tile_indices.size(), 1);
-      int64_t idx = tile_indices.front();
-      int64_t offset = idx % kVmemAlignment32;
+      CHECK_EQ(tile_offsets.size(), 1);
       // TODO(apaszke): We could generate replicated loads for short values.
       setLayout(op, in_layout,
-                VectorLayout(bitwidth, {0, offset}, {1, tile},
+                VectorLayout(bitwidth, {0, tile_offsets[0]}, {1, tile},
                              ImplicitDim::kSecondMinor));
     } else {  // rank >= 2
       TPU_CHECK_OP(tiling.size() == 2, "Expected 2D tiling in 2D+ loads");
-      CHECK_EQ(tile_indices.size(), 2);
+      CHECK_EQ(tile_offsets.size(), 2);
       std::array<std::optional<int64_t>, 2> offsets;
       const auto tile_src_shape = src_ty.getShape().take_back(2);
       const auto tile_res_shape = res_ty.getShape().take_back(2);
@@ -1032,9 +1031,9 @@ class VectorLayoutInferer {
           (tile_src_shape[1] <= target_shape_[1] || num_sublanes == 1)) {
         offsets[0] = 0;
       } else {
-        offsets[0] = tile_indices[0] % tiling[0];
+        offsets[0] = tile_offsets[0];
       }
-      offsets[1] = tile_indices[1] % target_shape_[1];
+      offsets[1] = tile_offsets[1];
       std::array<int64_t, 2> layout_tiling{tiling[0], tiling[1]};
       if (num_sublanes == 1 && bitwidth == 32 &&
           tiling[1] == target_shape_[1] &&
@@ -1326,17 +1325,18 @@ class VectorLayoutInferer {
     }
     auto tiling = *maybe_tiling;
 
-    SmallVector<int64_t, 2> tile_indices;
+    SmallVector<int64_t, 2> tile_offsets;  // indices % tiling
     for (int i = 0; i < tiling.size(); ++i) {
       int dim = rank - tiling.size() + i;
       Value tiled_index = op.getIndices()[dim];
       if (auto cst_op = tiled_index.getDefiningOp<arith::ConstantOp>()) {
-        tile_indices.push_back(cast<IntegerAttr>(cst_op.getValue()).getInt());
+        tile_offsets.push_back(cast<IntegerAttr>(cst_op.getValue()).getInt() %
+                               tiling[i]);
       } else {
         if (failed(verifyDivisibleIndex(tiled_index, tiling[0], dim, op))) {
           return failure();
         }
-        tile_indices.push_back(0);
+        tile_offsets.push_back(0);
       }
     }
 
@@ -1350,14 +1350,12 @@ class VectorLayoutInferer {
       auto tile = tiling.front();
       TPU_CHECK_OP(tile % target_shape_[1] == 0,
                    "Unsupported 1D tiling for 1D store");
-      CHECK_EQ(tile_indices.size(), 1);
-      int64_t idx = tile_indices.front();
-      int64_t offset = idx % kVmemAlignment32;
-      store_layout = VectorLayout(bitwidth, {0, offset}, {1, tile},
+      CHECK_EQ(tile_offsets.size(), 1);
+      store_layout = VectorLayout(bitwidth, {0, tile_offsets[0]}, {1, tile},
                                   ImplicitDim::kSecondMinor);
     } else {  // rank >= 2  // NOLINT(readability-else-after-return)
       TPU_CHECK_OP(tiling.size() == 2, "Expected 2D tiling in 2D+ store");
-      CHECK_EQ(tile_indices.size(), 2);
+      CHECK_EQ(tile_offsets.size(), 2);
       std::array<std::optional<int64_t>, 2> offsets;
       const auto tile_ref_shape = ref_ty.getShape().take_back(2);
       const auto tile_store_shape = store_ty.getShape().take_back(2);
@@ -1373,9 +1371,9 @@ class VectorLayoutInferer {
           (tile_ref_shape[1] <= target_shape_[1] || num_sublanes == 1)) {
         offsets[0] = 0;
       } else {
-        offsets[0] = tile_indices[0] % tiling[0];
+        offsets[0] = tile_offsets[0];
       }
-      offsets[1] = tile_indices[1] % target_shape_[1];
+      offsets[1] = tile_offsets[1];
       if (num_sublanes == 1 && bitwidth == 32 &&
           tiling[1] == target_shape_[1] &&
           tile_store_shape[1] > target_shape_[1]) {
