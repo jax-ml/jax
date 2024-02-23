@@ -349,6 +349,8 @@ def supported_dtypes():
   elif device_under_test() == "iree":
     types = {np.bool_, np.int8, np.int16, np.int32, np.uint8, np.uint16,
              np.uint32, np.float32}
+  elif device_under_test() == "METAL":
+    types = {np.int32, np.uint32, np.float32}
   else:
     types = {np.bool_, np.int8, np.int16, np.int32, np.int64,
              np.uint8, np.uint16, np.uint32, np.uint64,
@@ -423,6 +425,8 @@ def _get_device_tags():
     device_tags = {device_under_test(), "rocm"}
   elif is_device_cuda():
     device_tags = {device_under_test(), "cuda"}
+  elif device_under_test() == "METAL":
+    device_tags = {device_under_test(), "gpu"}
   else:
     device_tags = {device_under_test()}
   return device_tags
