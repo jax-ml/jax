@@ -305,6 +305,7 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpuMemcpyHostToDevice cudaMemcpyHostToDevice
 #define gpuMemcpyDeviceToHost cudaMemcpyDeviceToHost
 #define gpuStreamSynchronize cudaStreamSynchronize
+#define gpuStreamWaitEvent cudaStreamWaitEvent
 #define gpuSuccess cudaSuccess
 
 namespace jax::JAX_GPU_NAMESPACE {
@@ -501,9 +502,9 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPUSPARSE_SPARSETODENSE_ALG_DEFAULT HIPSPARSE_SPARSETODENSE_ALG_DEFAULT
 #define GPUSPARSE_STATUS_SUCCESS HIPSPARSE_STATUS_SUCCESS
 
-#define GPU_STREAM_CAPTURE_STATUS_ACTIVE hipStreamCaptureStatusActive 
+#define GPU_STREAM_CAPTURE_STATUS_ACTIVE hipStreamCaptureStatusActive
 #define GPU_STREAM_CAPTURE_MODE_RELAXED hipStreamCaptureModeRelaxed
-#define GPU_STREAM_NON_BLOCKING hipStreamNonBlocking   
+#define GPU_STREAM_NON_BLOCKING hipStreamNonBlocking
 
 #define gpuGetLastError hipGetLastError
 #define gpuGetErrorString hipGetErrorString
