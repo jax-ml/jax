@@ -26,7 +26,6 @@ import inspect
 import itertools as it
 import math
 import operator
-from operator import attrgetter
 import threading
 import types
 from typing import (Any, Callable, ClassVar, Generic, NamedTuple, TypeVar,
@@ -1327,9 +1326,13 @@ def full_lower(val):
   else:
     return val
 
+
+def _get_trace_level(t: Tracer) -> int: return t._trace.level
+
+
 def find_top_trace(xs) -> Trace:
   top_tracer = max((x for x in xs if isinstance(x, Tracer)),
-                    default=None, key=attrgetter('_trace.level'))
+                    default=None, key=_get_trace_level)
   if top_tracer is not None:
     top_tracer._assert_live()
     top_main = top_tracer._trace.main
@@ -2322,7 +2325,7 @@ def process_env_traces_call(primitive: CallPrimitive, level: int,
     tracers = [x for x in outs if isinstance(x, Tracer) and x._trace.level > level]
     if not tracers:
       break
-    ans = max(tracers, key=operator.attrgetter('_trace.level'))
+    ans = max(tracers, key=_get_trace_level)
     trace = ans._trace.main.with_cur_sublevel()
     outs = map(trace.full_raise, outs)
     outs, cur_todo = trace.post_process_call(primitive, outs, params)
@@ -2451,7 +2454,7 @@ def process_env_traces_map(primitive: MapPrimitive, level: int,
                and (level is None or x._trace.level > level)]
     if not tracers:
       break
-    ans = max(tracers, key=operator.attrgetter('_trace.level'))
+    ans = max(tracers, key=_get_trace_level)
     trace = ans._trace.main.with_cur_sublevel()
     outs = map(trace.full_raise, outs)
     outs, (cur_todo, cur_xform) = primitive.post_process(trace, outs, params)
