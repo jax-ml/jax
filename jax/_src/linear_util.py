@@ -64,7 +64,6 @@ data must be immutable, because it will be stored in function memoization tables
 from __future__ import annotations
 
 from functools import partial
-import operator
 from typing import Any, Callable, NamedTuple
 import weakref
 
@@ -117,7 +116,9 @@ class EqualStore:
   def __init__(self):
     self._store = Store()
 
-  val = property(operator.attrgetter('_store.val'))
+  @property
+  def val(self):
+    return self._store.val
 
   def store(self, val):
     try:

@@ -17,7 +17,6 @@
 # multiple modules can go here.
 
 from functools import partial
-import operator
 
 from jax._src import core
 from jax._src import dispatch
@@ -46,14 +45,14 @@ def standard_primitive(shape_rule, dtype_rule, name,
               weak_type_rule, named_shape_rule))
   return prim
 
+def _get_array_abstraction_level(a): return a.array_abstraction_level
+
 def standard_abstract_eval(prim, shape_rule, dtype_rule, weak_type_rule,
                            named_shape_rule, *avals, **kwargs):
   assert all(isinstance(aval, core.UnshapedArray) for aval in avals), avals
   assert not prim.multiple_results
   weak_type = weak_type_rule(*avals, **kwargs)
-  least_specialized = type(
-      max(avals, key=operator.attrgetter('array_abstraction_level'))
-  )
+  least_specialized = type(max(avals, key=_get_array_abstraction_level))
   if least_specialized is core.ConcreteArray:
     out = prim.impl(*[x.val for x in avals], **kwargs)
     return core.ConcreteArray(out.dtype, out, weak_type=weak_type)
@@ -76,8 +75,7 @@ def standard_multi_result_abstract_eval(
     named_shape_rule, *avals, **kwargs):
   assert prim.multiple_results
   assert all(isinstance(aval, core.UnshapedArray) for aval in avals), avals
-  least_specialized = max(map(type, avals),
-                          key=operator.attrgetter('array_abstraction_level'))
+  least_specialized = max(map(type, avals), key=_get_array_abstraction_level)
   weak_types = weak_type_rule(*avals, **kwargs)
   if least_specialized is core.ConcreteArray:
     out_vals = prim.impl(*[x.val for x in avals], **kwargs)
