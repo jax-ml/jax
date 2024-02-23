@@ -3816,6 +3816,27 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, s)
     self.assertArraysEqual(out, np_inp)
 
+  def test_mpmd_device_put_fast_path(self):
+    if jax.device_count() < 4:
+      self.skipTest('Needs >= 4 devices')
+
+    dev_count = jax.device_count()
+    mesh1 = jax.sharding.Mesh(jax.devices()[:dev_count//2], 'x')
+    mesh2 = jax.sharding.Mesh(jax.devices()[dev_count//2:], 'x')
+    inp = np.arange(8)
+    arr1 = jax.device_put(inp, NamedSharding(mesh1, P('x')))
+
+    # This is to prevent changes to shard_arg_handler of Array which checks for
+    # indices to take the fast path for resharding. Changes made to the handler
+    # to check for shardings instead of indices will cause this test to fail and
+    # that is expected.
+    with jtu.count_device_put_fast_path_hit() as count:
+      out = jax.device_put(arr1, NamedSharding(mesh2, P('x')))
+    self.assertEqual(count[0], 1)
+    self.assertTupleEqual(out.sharding._device_assignment,
+                          mesh2._flat_devices_tuple)
+    self.assertArraysEqual(out, inp)
+
 
 class TempSharding(Sharding):
 

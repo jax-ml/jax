@@ -49,6 +49,7 @@ from jax._src import linear_util as lu
 from jax._src import dtypes as _dtypes
 from jax._src import monitoring
 from jax._src import stages
+from jax._src.lib import xla_client as xc
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 from jax._src.interpreters import pxla
 from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
@@ -222,6 +223,22 @@ def count_primitive_compiles():
     yield count
   finally:
     count[0] = dispatch.xla_primitive_callable.cache_info().misses
+
+
+@contextmanager
+def count_device_put_fast_path_hit():
+  original_fn = xc.copy_array_to_devices_with_sharding
+  count = [0]
+
+  def copy_array_to_devices_with_sharding_and_count(*args, **kwargs):
+    count[0] += 1
+    return original_fn(*args, **kwargs)
+
+  xc.copy_array_to_devices_with_sharding = copy_array_to_devices_with_sharding_and_count
+  try:
+    yield count
+  finally:
+    xc.copy_array_to_devices_with_sharding = original_fn
 
 
 @contextmanager
