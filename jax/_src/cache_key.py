@@ -145,6 +145,7 @@ def _hash_devices(hash_obj, devices: np.ndarray) -> None:
 
 
 def _hash_accelerator_config(hash_obj, accelerators: np.ndarray, backend):
+  _hash_platform(hash_obj, backend)  # includes build information
   accelerator_devices = []
   for accelerator in accelerators.flat:
     accelerator_devices.append(accelerator)
@@ -157,9 +158,8 @@ def _hash_accelerator_config(hash_obj, accelerators: np.ndarray, backend):
     # PjRtTopologyDescription as yet.
     logger.info("get (_hash_accelerator_config): unable to hash "
                 "accelerator config, falling back to hashing "
-                "devices + platform: %s (type %s)", ex, type(ex))
+                "devices: %s (type %s)", ex, type(ex))
     _hash_devices(hash_obj, accelerators)
-    _hash_platform(hash_obj, backend)
 
 
 def _hash_serialized_compile_options(hash_obj, compile_options_obj):
