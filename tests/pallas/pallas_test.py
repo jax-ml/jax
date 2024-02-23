@@ -38,13 +38,15 @@ from jax.experimental.pallas.ops import attention
 from jax.experimental.pallas.ops import layer_norm
 from jax.experimental.pallas.ops import rms_norm
 from jax.experimental.pallas.ops import softmax
-try:
-  from jax._src.pallas.triton.lowering import compile_jaxpr, _TRITON_COMPILE_VIA_XLA
-  from jax.experimental.pallas import gpu as plgpu
-except ModuleNotFoundError:
-  compile_jaxpr = None
-  _TRITON_COMPILE_VIA_XLA = None
 import numpy as np
+
+lowering = None
+_PALLAS_IMPORT_ERROR = None
+try:
+  from jax._src.pallas.triton import lowering
+  from jax.experimental.pallas import gpu as plgpu
+except ModuleNotFoundError as e:
+  _PALLAS_IMPORT_ERROR = e
 
 
 # TODO(sharadmv): Update signatures of pallas_call to correct inputs/outputs.
@@ -126,22 +128,23 @@ class PallasTest(parameterized.TestCase):
   INTERPRET = False
 
   def setUp(self):
+    super().setUp()
+
     if jax.config.x64_enabled:
       self.skipTest("Only works in 32-bit")
-    if not self.INTERPRET:
-      if not jtu.test_device_matches(["gpu"]):
-        self.skipTest("Only works on GPU")
+    if self.INTERPRET:
+      return
+    if not jtu.test_device_matches(["gpu"]):
+      self.skipTest("Only works on GPU")
+    if not lowering:
+      self.skipTest(f"Pallas failed to import with {_PALLAS_IMPORT_ERROR}")
+    if not lowering._TRITON_COMPILE_VIA_XLA.value:
       try:
         import triton  # noqa: F401
       except ImportError:
-        if (
-            _TRITON_COMPILE_VIA_XLA is not None
-            and not _TRITON_COMPILE_VIA_XLA.value
-        ):
-          self.skipTest("Triton is not installed.")
-    super().setUp()
-    if compile_jaxpr:
-      compile_jaxpr.cache_clear()
+        self.skipTest("Triton is not installed")
+
+    lowering.compile_jaxpr.cache_clear()
     _trace_to_jaxpr.cache_clear()
 
   def pallas_call(self, *args, **kwargs):
@@ -746,11 +749,9 @@ class PallasCallTest(PallasTest):
     self.assertEqual(trace_count, 1)
 
   def test_pallas_compilation_cache(self):
-    if not compile_jaxpr:
-      self.skipTest("No Triton GPU.")
     if self.INTERPRET:
       raise unittest.SkipTest("No Triton compilation in interpreter mode.")
-    if _TRITON_COMPILE_VIA_XLA.value:
+    if lowering._TRITON_COMPILE_VIA_XLA.value:
       raise unittest.SkipTest("Triton is compiled via XLA.")
 
     @functools.partial(
@@ -765,7 +766,7 @@ class PallasCallTest(PallasTest):
 
     x = jnp.array(0., dtype=jnp.float32)
     self.assertEqual(f(x), 2.)
-    num_misses = compile_jaxpr.cache_info().misses
+    num_misses = lowering.compile_jaxpr.cache_info().misses
     self.assertEqual(num_misses, 1)
 
   @parameterized.parameters(*[
