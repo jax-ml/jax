@@ -385,19 +385,21 @@ class VectorLayout {
 
   static std::optional<VectorLayout> parse(llvm::StringRef *data);
 
+  // Check conditions that depend on the target shape. Invariants that are
+  // independent of it are checked in the constructor.
+  bool isValid(const std::array<int64_t, 2> target_shape) const {
+    // Tiling should neatly divide the target shape, so that every vector
+    // register ends up having the same structure.
+    // Also, every tile should occupy a fixed number of sublanes.
+    auto [num_sublanes, rem] =
+        std::div(tiling_[0] * tiling_[1], packing() * target_shape[1]);
+    return rem == 0 && target_shape[0] % num_sublanes == 0;
+  }
+
  private:
   std::tuple<std::optional<int64_t>, std::optional<int64_t>, int64_t, int64_t,
              int8_t, ImplicitDim>
   as_tuple() const;
-
-  // Check conditions that depend on the target shape. Invariants that are
-  // independent of it are checked in the constructor.
-  void verify(const std::array<int64_t, 2> target_shape) const {
-    // Tiling should neatly divide the target shape, so that every vector
-    // register ends up having the same structure.
-    // Also, every tile should occupy a fixed number of sublanes.
-    CHECK_EQ((tiling_[0] * tiling_[1]) % (packing() * target_shape[1]), 0);
-  }
 
   friend llvm::hash_code hash_value(const VectorLayout &layout);
 
