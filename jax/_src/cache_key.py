@@ -254,7 +254,7 @@ def _hash_xla_flags(hash_obj, extra_flag_prefixes: list[str]):
 
   # N.B. all XLA flags that take an argument must use '=' and not a space
   # (e.g. --xla_force_host_platform_device_count=8) (I think).
-  for flag in xla_flags:
+  for flag in sorted(xla_flags):
     if flag.split("=")[0] in xla_flags_to_exclude_from_cache_key:
       logger.debug("Not including XLA flag in cache key: %s", flag)
       continue
