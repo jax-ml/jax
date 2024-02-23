@@ -210,7 +210,7 @@ def put_executable_and_time(
         min_entry_size,
     )
   else:
-    logger.debug(
+    logger.info(
         "Writing %s to persistent compilation cache with key %s.",
         module_name,
         cache_key
@@ -243,7 +243,7 @@ def reset_cache() -> None:
   global _cache
   global _cache_initialized
   global _cache_used
-  logger.debug("Resetting cache at %s.",
+  logger.info("Resetting cache at %s.",
                _cache._path if _cache is not None else "<empty>")
   _cache = None
   with _cache_initialized_mutex:
