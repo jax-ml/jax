@@ -3532,6 +3532,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         self.assertTrue(jnp.all(jnp.equal(result_np, result_jax)))
         self.assertTrue(jnp.all(jnp.equal(result_np, result_jit)))
 
+    self.assertEqual(np.isclose(6, 10, rtol=0.5), jnp.isclose(6, 10, rtol=0.5))
+    key = jax.random.key(0)
+    self.assertTrue(jnp.isclose(key, key))
+
   @jtu.sample_product(
     x=[1, [1], [1, 1 + 1E-4], [1, np.nan]],
     y=[1, [1], [1, 1 + 1E-4], [1, np.nan]],
