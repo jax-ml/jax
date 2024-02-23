@@ -180,7 +180,7 @@ pip install -U --pre jaxlib -f https://storage.googleapis.com/jax-releases/jaxli
 * Jaxlib TPU:
 ```bash
 pip install -U --pre jaxlib -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_releases.html
-pip install -U libtpu-nightly -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+pip install -U --pre libtpu-nightly -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 ```
 
 * Jaxlib GPU (Cuda 12):
