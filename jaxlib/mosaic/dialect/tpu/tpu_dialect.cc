@@ -29,6 +29,7 @@ limitations under the License.
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/DialectImplementation.h"  // IWYU pragma: keep.
+#include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "absl/hash/hash.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
@@ -103,7 +104,7 @@ Attribute TiledLayoutAttr::parse(AsmParser &parser, Type type) {
   if (failed(parser.parseLess())) {
     return {};
   }
-  llvm::SmallVector<xla::Tile, 2> tiles;
+  SmallVector<xla::Tile, 2> tiles;
   int64_t size;
   while (succeeded(parser.parseOptionalLParen())) {
     xla::Tile &tile = tiles.emplace_back();
@@ -121,7 +122,7 @@ Attribute TiledLayoutAttr::parse(AsmParser &parser, Type type) {
       tile.add_dimensions(size);
     }
   }
-  llvm::SmallVector<int64_t, 2> tile_strides;
+  SmallVector<int64_t, 2> tile_strides;
   int64_t stride;
   if (failed(parser.parseComma())) {
     return {};

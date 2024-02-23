@@ -13,8 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <cstdint>
+
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/Support/Casting.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -32,7 +33,7 @@ namespace tpu {
 LogicalResult UnrollVectorsOp::canonicalize(UnrollVectorsOp op,
                                             PatternRewriter &rewriter) {
   RollVectorsOp roll_op =
-      llvm::dyn_cast_or_null<RollVectorsOp>(op.getOperand().getDefiningOp());
+      dyn_cast_or_null<RollVectorsOp>(op.getOperand().getDefiningOp());
   if (!roll_op) {
      return failure();
   }
@@ -150,8 +151,8 @@ LogicalResult MemRefSqueezeOp::canonicalize(MemRefSqueezeOp op,
   int target_index = target_shape.size() - 1;
   auto old_layout = dyn_cast<tpu::TiledLayoutAttr>(layout_ty.getLayout());
   auto target_strides = old_layout.getTileStrides();
-  llvm::SmallVector<int64_t> tile_strides(target_strides.begin(),
-                                          target_strides.end());
+  SmallVector<int64_t> tile_strides(target_strides.begin(),
+                                    target_strides.end());
   // We want to remove all strides that correspond to squeezed dimensions and
   // update the corresponding output layout.
   while (source_index >= 0 || target_index >= 0) {

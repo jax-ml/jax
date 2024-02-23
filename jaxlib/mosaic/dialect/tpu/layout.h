@@ -26,8 +26,6 @@ limitations under the License.
 
 #include "absl/log/check.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/bit.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/raw_ostream.h"
@@ -270,10 +268,10 @@ class VectorLayout {
     return {tiling_[0], tilesPerVreg(target_shape) * tiling_[1]};
   }
 
-  llvm::SmallVector<int64_t> implicitShape(ArrayRef<int64_t> shape) const;
+  SmallVector<int64_t> implicitShape(ArrayRef<int64_t> shape) const;
 
  private:
-  llvm::SmallVector<int64_t> tileArrayImplicitShape(
+  SmallVector<int64_t> tileArrayImplicitShape(
       ArrayRef<int64_t> shape, std::array<int64_t, 2> target_shape) const;
 
  public:
@@ -288,7 +286,7 @@ class VectorLayout {
   //
   // Args:
   //   shape: The shape of the full vector this layout applies to.
-  llvm::SmallVector<int64_t> tileArrayShape(
+  SmallVector<int64_t> tileArrayShape(
       ArrayRef<int64_t> shape, std::array<int64_t, 2> target_shape) const;
 
   // Returns the bounds of the given tile that hold useful data.
@@ -383,7 +381,7 @@ class VectorLayout {
                                           const VectorLayout &r,
                                           ArrayRef<int64_t> shape);
 
-  static std::optional<VectorLayout> parse(llvm::StringRef *data);
+  static std::optional<VectorLayout> parse(StringRef *data);
 
   // Check conditions that depend on the target shape. Invariants that are
   // independent of it are checked in the constructor.

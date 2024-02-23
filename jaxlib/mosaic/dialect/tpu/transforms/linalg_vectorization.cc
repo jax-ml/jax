@@ -73,7 +73,7 @@ struct LinalgVectorizationPass
 
     // We do not want to apply the vector patterns above to the ops that are
     // unrelated to the original linalg op.
-    llvm::SmallVector<Operation *> linalgOps;
+    SmallVector<Operation *> linalgOps;
     func.walk([&](linalg::LinalgOp op) { linalgOps.push_back(op); });
     if (failed(applyOpPatternsAndFold(linalgOps, std::move(patterns)))) {
       return signalPassFailure();

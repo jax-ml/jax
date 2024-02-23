@@ -12,9 +12,7 @@
 #include <utility>
 #include <vector>
 
-#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/iterator_range.h"
@@ -3020,7 +3018,7 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
                // replicated result
     ) {
       // First, insert the new singleton lane dimension.
-      llvm::SmallVector<int64_t> s(src_shape);
+      SmallVector<int64_t> s(src_shape);
       s.push_back(1);
       xla::Array<Value> dst_vregs_local(
           layout_out.tileArrayShape(s, ctx.target_shape));

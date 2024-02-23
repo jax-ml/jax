@@ -6,7 +6,6 @@
 #include <cstdint>
 #include <type_traits>
 
-#include "llvm/ADT/ArrayRef.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinTypes.h"
@@ -63,12 +62,12 @@ FailureOr<int8_t> getTypeBitwidth(Type ty) {
 }
 
 template <typename T>
-llvm::ArrayRef<std::remove_const_t<T>> toArrayRef(absl::Span<T> span) {
-  return llvm::ArrayRef<std::remove_const_t<T>>(span.data(), span.size());
+ArrayRef<std::remove_const_t<T>> toArrayRef(absl::Span<T> span) {
+  return ArrayRef<std::remove_const_t<T>>(span.data(), span.size());
 }
 template <typename T, std::size_t N>
-llvm::ArrayRef<std::remove_const_t<T>> toArrayRef(std::array<T, N> array) {
-  return llvm::ArrayRef<std::remove_const_t<T>>(array.data(), array.size());
+ArrayRef<std::remove_const_t<T>> toArrayRef(std::array<T, N> array) {
+  return ArrayRef<std::remove_const_t<T>>(array.data(), array.size());
 }
 
 inline arith::ConstantOp IdxConst(int64_t idx, OpBuilder &builder,

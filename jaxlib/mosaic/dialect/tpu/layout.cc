@@ -28,8 +28,6 @@ limitations under the License.
 
 #include "llvm/ADT/Hashing.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/MathExtras.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
@@ -79,7 +77,7 @@ FailureOr<TypedValue<VectorType>> RectangularVregBounds::getVectorMask(
 
 DenseBoolArrayAttr RectangularVregBounds::getSublaneMask(
     MLIRContext* mlir_ctx, const std::array<int64_t, 2> target_shape) const {
-  llvm::SmallVector<bool, 8> sublane_mask(target_shape[0], false);
+  SmallVector<bool, 8> sublane_mask(target_shape[0], false);
   for (int64_t i = starts_[0]; i < ends_[0]; ++i) {
     sublane_mask[i] = true;
   }
@@ -178,7 +176,7 @@ class SingleRowVRegBounds : public VRegDataBounds {
     const int64_t end_sublane = llvm::divideCeil(
         llvm::divideCeil(stop_offset_, layout_.packing()), target_shape[1]);
 
-    llvm::SmallVector<bool> sublane_mask(target_shape[0], false);
+    SmallVector<bool> sublane_mask(target_shape[0], false);
     for (int64_t i = start_sublane; i < end_sublane; ++i) {
       sublane_mask[i] = true;
     }
@@ -382,7 +380,7 @@ class TiledRectangularVregBounds : public VRegDataBounds {
   DenseBoolArrayAttr getSublaneMask(
       MLIRContext* mlir_ctx,
       const std::array<int64_t, 2> target_shape) const override {
-    llvm::SmallVector<bool> mask(target_shape[0], false);
+    SmallVector<bool> mask(target_shape[0], false);
     const int64_t start = start_offsets_[0] / layout_.packing();
     const int64_t end = llvm::divideCeil(end_offsets_[0], layout_.packing());
     const int64_t sublanes_per_tile = layout_.sublanesPerTile(target_shape);
@@ -403,8 +401,7 @@ class TiledRectangularVregBounds : public VRegDataBounds {
   std::array<int64_t, 2> end_offsets_;
 };
 
-mlir::ParseResult parseOffset(llvm::StringRef* data,
-                              std::optional<int64_t>* result) {
+mlir::ParseResult parseOffset(StringRef* data, std::optional<int64_t>* result) {
   int64_t int_result;
   if (data->consume_front("*")) {
     *result = std::nullopt;
@@ -441,21 +438,21 @@ bool VectorLayout::hasNativeTiling(
   return tiling_ == nativeTiling(bitwidth_, target_shape);
 }
 
-llvm::SmallVector<int64_t> VectorLayout::implicitShape(
+SmallVector<int64_t> VectorLayout::implicitShape(
     ArrayRef<int64_t> shape) const {
   CHECK(!shape.empty());
   switch (implicit_dim_) {
     case ImplicitDim::kNone:
-      return llvm::SmallVector<int64_t>(shape);
+      return SmallVector<int64_t>(shape);
     case ImplicitDim::kMinor: {
-      llvm::SmallVector<int64_t> implicit_shape;
+      SmallVector<int64_t> implicit_shape;
       implicit_shape.reserve(shape.size() + 1);
       implicit_shape.append(shape.begin(), shape.end());
       implicit_shape.push_back(1);
       return implicit_shape;
     }
     case ImplicitDim::kSecondMinor: {
-      llvm::SmallVector<int64_t> implicit_shape;
+      SmallVector<int64_t> implicit_shape;
       implicit_shape.reserve(shape.size() + 1);
       implicit_shape.append(shape.begin(), std::prev(shape.end()));
       implicit_shape.push_back(1);
@@ -465,11 +462,11 @@ llvm::SmallVector<int64_t> VectorLayout::implicitShape(
   }
 }
 
-llvm::SmallVector<int64_t> VectorLayout::tileArrayImplicitShape(
+SmallVector<int64_t> VectorLayout::tileArrayImplicitShape(
     const ArrayRef<int64_t> shape,
     const std::array<int64_t, 2> target_shape) const {
   const std::array<int64_t, 2> vreg_slice = vregSlice(target_shape);
-  llvm::SmallVector<int64_t> tiles_shape = implicitShape(shape);
+  SmallVector<int64_t> tiles_shape = implicitShape(shape);
   tiles_shape[tiles_shape.size() - 2] = llvm::divideCeil(
       offsets_[0].value_or(0) + tiles_shape[tiles_shape.size() - 2],
       vreg_slice[0]);
@@ -479,10 +476,10 @@ llvm::SmallVector<int64_t> VectorLayout::tileArrayImplicitShape(
   return tiles_shape;
 }
 
-llvm::SmallVector<int64_t> VectorLayout::tileArrayShape(
+SmallVector<int64_t> VectorLayout::tileArrayShape(
     const ArrayRef<int64_t> shape,
     const std::array<int64_t, 2> target_shape) const {
-  llvm::SmallVector<int64_t> tiles_shape =
+  SmallVector<int64_t> tiles_shape =
       tileArrayImplicitShape(shape, target_shape);
   // Remove the implicit dimension --- it's always of size 1.
   switch (implicit_dim_) {
@@ -521,11 +518,11 @@ std::unique_ptr<VRegDataBounds> VectorLayout::tileDataBounds(
       break;
   }
 
-  const llvm::SmallVector<int64_t> tiles_implicit_shape =
+  const SmallVector<int64_t> tiles_implicit_shape =
       tileArrayImplicitShape(full_shape, target_shape);
   const int64_t ns = tiles_implicit_shape[tiles_implicit_shape.size() - 2];
   const int64_t nl = tiles_implicit_shape[tiles_implicit_shape.size() - 1];
-  const llvm::SmallVector<int64_t> implicit_shape = implicitShape(full_shape);
+  const SmallVector<int64_t> implicit_shape = implicitShape(full_shape);
   const int64_t is = implicit_shape[implicit_shape.size() - 2];
   const int64_t il = implicit_shape[implicit_shape.size() - 1];
 
@@ -718,8 +715,8 @@ std::optional<VectorLayout> VectorLayout::join(const VectorLayout& l,
   return VectorLayout(l.bitwidth_, offsets, l.tiling_, l.implicit_dim_);
 }
 
-std::optional<VectorLayout> VectorLayout::parse(llvm::StringRef* data) {
-  llvm::StringRef local(*data);
+std::optional<VectorLayout> VectorLayout::parse(StringRef* data) {
+  StringRef local(*data);
   int8_t bitwidth;
   LayoutOffsets offsets;
   std::array<int64_t, 2> tiling;
@@ -797,7 +794,7 @@ std::optional<Layout> parseLayout(mlir::AsmParser& parser) {
   if (layout_str == "none") {
     return kNoLayout;
   }
-  llvm::StringRef ref(layout_str);
+  StringRef ref(layout_str);
   if (auto layout = VectorLayout::parse(&ref); ref.empty()) {
     return *layout;
   }

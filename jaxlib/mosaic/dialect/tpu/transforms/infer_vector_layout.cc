@@ -25,9 +25,7 @@ limitations under the License.
 #include <utility>
 #include <variant>
 
-#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
-#include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -144,8 +142,7 @@ class VectorLayoutInferer {
         has_vector_io |= r.getType().isa<VectorType>();
       }
       if (!has_vector_io && any_op.getRegions().empty()) {
-        llvm::SmallVector<Layout, 4> in_layout(any_op.getNumOperands(),
-                                               kNoLayout);
+        SmallVector<Layout, 4> in_layout(any_op.getNumOperands(), kNoLayout);
         if (any_op.getNumResults() == 0) {
           setInLayout(&any_op, in_layout);
         } else if (any_op.getNumResults() == 1) {
@@ -412,7 +409,7 @@ class VectorLayoutInferer {
     auto then_yield = op.thenBlock()->getTerminator();
     TPU_CHECK_OP(then_yield->getOperandTypes() == op->getResultTypes(),
                  "scf if results and then branch yield operands do not match");
-    llvm::SmallVector<Layout, 4> result_layout;
+    SmallVector<Layout, 4> result_layout;
     result_layout.reserve(then_yield->getNumOperands());
     for (const auto &operand : then_yield->getOperands()) {
       if (operand.getType().isSignlessIntOrIndexOrFloat()) {
@@ -482,7 +479,7 @@ class VectorLayoutInferer {
         op->getNumOperands() == 3 + op.getNumResults(),
         "expected num_operands is equal to 3 + num_results in scf.for");
 
-    llvm::SmallVector<Layout, 4> in_layouts;
+    SmallVector<Layout, 4> in_layouts;
     in_layouts.reserve(op->getNumOperands());
     in_layouts.push_back(kNoLayout);  // Lower bound.
     in_layouts.push_back(kNoLayout);  // Upper bound.
