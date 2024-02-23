@@ -20,7 +20,7 @@ import jax
 import jax.numpy as jnp
 
 import datasets
-from models import Model, Sequential, DenseModel, NormalizeLogits, CategoricalLoss, Relu
+from models import Model, Sequential, DenseModel, NormalizeLogits, WithCategoricalLoss, Relu
 from initializers import Initializer, IIDNormalInitializer
 from optimizers import Optimizer, SGDOptimizer
 from util import JaxType, JaxVal, PRNGKey
@@ -49,7 +49,7 @@ def train_state_type(model: Model, initializer: Initializer, optimizer: Optimize
 def train_step(
     model: Model, opt:Optimizer, key: PRNGKey, batch, ts:TrainingState
     ) -> TrainingState:
-  grads, new_model_state = model.grad(ts.model_state, ts.model_params, batch)
+  grads, _, new_model_state = model.grad(ts.model_state, ts.model_params, batch)
   new_params, new_opt_state = opt.opt_step(key, ts.opt_state, ts.model_params, grads)
   return TrainingState(
     train_iter = ts.train_iter + 1,
@@ -137,7 +137,7 @@ def build_mlp(cfg: MLPConfig) -> Model:
 def run_training_loop(cfg:TrainingConfig):
   k1, k2 = jax.random.split(cfg.init_key)
   model = build_mlp(cfg.model_cfg)
-  model_with_loss = CategoricalLoss(model, 555)
+  model_with_loss = WithCategoricalLoss(model)
   initializer = IIDNormalInitializer(model.param_type, scale=cfg.param_scale)
   optimizer = SGDOptimizer(param_type=model.param_type, scale=cfg.param_scale)
   train_batches, eval_data = mnist_data(cfg.batch_size)
@@ -175,7 +175,7 @@ if __name__ == "__main__":
     batch_size    = 128,
     learning_rate = 0.01,
     param_scale   = 0.1,
-    max_iters         = 1000,
+    max_iters         = 10,
     eval_period       = 20,
     checkpoint_period = 20,
     checkpoint_dir     = None,
