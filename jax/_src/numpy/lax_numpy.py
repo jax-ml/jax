@@ -888,7 +888,7 @@ def squeeze(a: ArrayLike, axis: int | Sequence[int] | None = None) -> Array:
   return _squeeze(asarray(a), _ensure_index_tuple(axis) if axis is not None else None)
 
 @partial(jit, static_argnames=('axis',), inline=True)
-def _squeeze(a: Array, axis: tuple[int]) -> Array:
+def _squeeze(a: Array, axis: tuple[int, ...]) -> Array:
   if axis is None:
     a_shape = shape(a)
     if not core.is_constant_shape(a_shape):
@@ -1427,7 +1427,7 @@ def nonzero(a: ArrayLike, *, size: int | None = None,
 
 @util.implements(np.flatnonzero, lax_description=_NONZERO_DOC, extra_params=_NONZERO_EXTRA_PARAMS)
 def flatnonzero(a: ArrayLike, *, size: int | None = None,
-                fill_value: None | ArrayLike | tuple[ArrayLike] = None) -> Array:
+                fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None) -> Array:
   return nonzero(ravel(a), size=size, fill_value=fill_value)[0]
 
 

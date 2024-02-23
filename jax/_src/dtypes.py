@@ -421,7 +421,7 @@ _dtype_kinds: dict[str, set] = {
 }
 
 
-def isdtype(dtype: DTypeLike, kind: str | DType | tuple[str | DType]) -> bool:
+def isdtype(dtype: DTypeLike, kind: str | DType | tuple[str | DType, ...]) -> bool:
   """Returns a boolean indicating whether a provided dtype is of a specified kind.
 
   Args:
@@ -444,7 +444,7 @@ def isdtype(dtype: DTypeLike, kind: str | DType | tuple[str | DType]) -> bool:
     True or False
   """
   the_dtype = np.dtype(dtype)
-  kind_tuple: tuple[DType | str] = kind if isinstance(kind, tuple) else (kind,)
+  kind_tuple: tuple[DType | str, ...] = kind if isinstance(kind, tuple) else (kind,)
   options: set[DType] = set()
   for kind in kind_tuple:
     if isinstance(kind, str):

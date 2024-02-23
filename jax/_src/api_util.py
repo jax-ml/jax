@@ -614,7 +614,7 @@ def api_hook(fun, tag: str):
 
 def debug_info(
   traced_for: str, src: str | None, fun_signature: inspect.Signature | None,
-  args: tuple[Any], kwargs: dict[str, Any], static_argnums: tuple[int, ...],
+  args: tuple[Any, ...], kwargs: dict[str, Any], static_argnums: tuple[int, ...],
   static_argnames: tuple[str, ...]
 ) -> TracingDebugInfo | None:
   """Try to build trace-time debug info for fun when applied to args/kwargs."""

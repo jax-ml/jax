@@ -1238,7 +1238,7 @@ class ShardingContext:
   This context also uses the GSPMD partitioner.
   """
   num_devices: int
-  device_assignment: tuple[xc.Device] | None = None
+  device_assignment: tuple[xc.Device, ...] | None = None
 
   def __post_init__(self):
     if self.device_assignment is not None:

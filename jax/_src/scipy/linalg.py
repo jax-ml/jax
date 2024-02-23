@@ -19,7 +19,7 @@ from functools import partial
 import numpy as np
 import scipy.linalg
 import textwrap
-from typing import cast, overload, Any, Literal
+from typing import overload, Any, Literal
 
 import jax
 import jax.numpy as jnp
@@ -601,8 +601,8 @@ def expm_frechet(A: ArrayLike, E: ArrayLike, *, method: str | None = None,
 @jit
 def block_diag(*arrs: ArrayLike) -> Array:
   if len(arrs) == 0:
-    arrs = cast(tuple[ArrayLike], (jnp.zeros((1, 0)),))
-  arrs = cast(tuple[ArrayLike], promote_dtypes(*arrs))
+    arrs =  (jnp.zeros((1, 0)),)
+  arrs = tuple(promote_dtypes(*arrs))
   bad_shapes = [i for i, a in enumerate(arrs) if jnp.ndim(a) > 2]
   if bad_shapes:
     raise ValueError("Arguments to jax.scipy.linalg.block_diag must have at "
