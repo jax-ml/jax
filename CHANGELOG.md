@@ -15,8 +15,6 @@ Remember to align the itemized text with the first line of an item within a list
   * JAX arrays now support NumPy-style scalar boolean indexing, e.g. `x[True]` or `x[False]`.
   * Added {mod}`jax.tree` module, with a more convenient interface for referencing functions
     in {mod}`jax.tree_util`.
-  * {func}`jax.tree_map` is deprecated; use `jax.tree.map` instead, or for backward
-    compatibility with older JAX versions, use {func}`jax.tree_util.tree_map`.
   * {func}`jax.tree.transpose` (i.e. {func}`jax.tree_util.tree_transpose`) now accepts
     `inner_treedef=None`, in which case the inner treedef will be automatically inferred.
 

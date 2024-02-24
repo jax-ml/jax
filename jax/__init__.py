@@ -136,7 +136,7 @@ from jax._src.array import (
 )
 
 from jax._src.tree_util import (
-  tree_map as _deprecated_tree_map,
+  tree_map as tree_map,
   treedef_is_leaf as _deprecated_treedef_is_leaf,
   tree_flatten as _deprecated_tree_flatten,
   tree_leaves as _deprecated_tree_leaves,
@@ -212,12 +212,6 @@ _deprecations = {
     "or jax.tree_util.tree_unflatten (any JAX version).",
     _deprecated_tree_unflatten
   ),
-  # Added Feb 22, 2024
-  "tree_map": (
-    "jax.tree_map is deprecated: use jax.tree.map (jax v0.4.25 or newer) "
-    "or jax.tree_util.tree_map (any JAX version).",
-    _deprecated_tree_map
-  ),
 }
 
 import typing as _typing
@@ -225,7 +219,6 @@ if _typing.TYPE_CHECKING:
   from jax._src.tree_util import treedef_is_leaf as treedef_is_leaf
   from jax._src.tree_util import tree_flatten as tree_flatten
   from jax._src.tree_util import tree_leaves as tree_leaves
-  from jax._src.tree_util import tree_map as tree_map
   from jax._src.tree_util import tree_structure as tree_structure
   from jax._src.tree_util import tree_transpose as tree_transpose
   from jax._src.tree_util import tree_unflatten as tree_unflatten
