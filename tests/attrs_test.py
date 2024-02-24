@@ -38,8 +38,10 @@ zip, unsafe_zip = safe_zip, zip
 @dataclass
 class Thing:
   x: float
+  __hash__ = object.__hash__
+  __eq__ = object.__eq__
 
-attrs.register(Thing)
+attrs.register(Thing)  # enables passing as arg into jitted function
 
 class AttrsTest(jtu.JaxTestCase):
 
@@ -366,6 +368,170 @@ class AttrsJVPTest(jtu.JaxTestCase):
     self.assertAllClose(w_ddot, w_ddot_, check_dtypes=False)
     self.assertAllClose(z_ddot, z_ddot_, check_dtypes=False)
 
+class AttrsLinTest(jtu.JaxTestCase):
+
+  @parameterized.parameters([True, False])
+  def test_attr_output(self, jit):
+    thing = Thing(1.0)
+
+    def f(x, _):
+      y = jnp.sin(x)
+      jax_setattr(thing, 'x', y)
+
+    if jit:
+      f = jax.jit(f)
+
+    out, f_lin = attrs.linearize(f, 3.0, 4.0)
+    self.assertIsNone(out)
+    self.assertAllClose(thing.x, jnp.sin(3.0), check_dtypes=False)
+
+    out_dot, attr_tangents = f_lin(1.0, 2.0, attr_tangents={})
+    self.assertIsNone(out_dot)
+    self.assertAllClose(thing.x, jnp.sin(3.0))  # didn't change
+    self.assertLen(attr_tangents, 1)
+    self.assertAllClose(attr_tangents[(thing, 'x')], jnp.cos(3.0),
+                        check_dtypes=False)
+
+  @parameterized.parameters([True, False])
+  def test_attr_input(self, jit):
+    thing = Thing(1.0)
+
+    def f():
+      x = jax_getattr(thing, 'x')
+      return jnp.sin(x)
+
+    if jit:
+      f = jax.jit(f)
+
+    out, f_lin = attrs.linearize(f, attrs=[(thing, 'x')])
+    self.assertAllClose(out, jnp.sin(1.0), check_dtypes=False)
+
+    out_dot, attr_tangents = f_lin(attr_tangents={(thing, 'x'): 2.0})
+    self.assertAllClose(out_dot, 2. * jnp.cos(1.0), check_dtypes=False)
+    self.assertLen(attr_tangents, 1)
+    self.assertAllClose(attr_tangents[(thing, 'x')], 2.0, check_dtypes=False)
+
+  @parameterized.parameters([True, False])
+  def test_attr_inout(self, jit):
+    thing1 = Thing(1.0)
+    thing2 = Thing(2.0)
+
+    def f(x, y):
+      z = jax_getattr(thing1, 'x')
+      w = jax_getattr(thing2, 'x')
+      out = jnp.sin(x * y * z * w)
+      jax_setattr(thing1, 'x', out)
+      jax_setattr(thing2, 'x', 2 * out)
+      return 3 * out, 4 * out
+
+    if jit:
+      f = jax.jit(f)
+
+    def f_ref(x, y, z, w):
+      out = jnp.sin(x * y * z * w)
+      return (3 * out, 4 * out), (out, 2 * out)
+
+    out, f_lin = attrs.linearize(f, 3., 4., attrs=[(thing1, 'x'), (thing2, 'x')])
+    expected = (3 * jnp.sin(1. * 2. * 3. * 4.),
+                4 * jnp.sin(1. * 2. * 3. * 4.))
+    self.assertAllClose(out, expected, check_dtypes=False)
+    self.assertAllClose(thing1.x, jnp.sin(1. * 2. * 3. * 4.))
+    self.assertAllClose(thing2.x, 2 * jnp.sin(1. * 2. * 3. * 4.))
+
+    (out_ref, state_out_ref), f_lin_ref = jax.linearize(f_ref, 3., 4., 1., 2.)
+    self.assertAllClose(out, out_ref, check_dtypes=False)
+    self.assertAllClose((thing1.x, thing2.x), state_out_ref, check_dtypes=False)
+
+    out_dot, attr_tangents = f_lin(1., 2.,
+                                   attr_tangents={(thing1, 'x'): 5.,
+                                                  (thing2, 'x'): 6.})
+    self.assertAllClose(thing1.x, jnp.sin(1. * 2. * 3. * 4.))
+    self.assertAllClose(thing2.x, 2 * jnp.sin(1. * 2. * 3. * 4.))
+    (out_dot_ref, state_dot_ref) = f_lin_ref(1., 2., 5., 6.)
+    self.assertAllClose(out_dot, out_dot_ref, check_dtypes=False)
+    self.assertLen(attr_tangents, 2)
+    self.assertAllClose(attr_tangents[(thing1, 'x')], state_dot_ref[0],
+                        check_dtypes=False)
+    self.assertAllClose(attr_tangents[(thing2, 'x')], state_dot_ref[1],
+                        check_dtypes=False)
+
+class AttrsVJPTest(jtu.JaxTestCase):
+
+  @parameterized.parameters([True, False])
+  def test_attr_input(self, jit):
+    thing = Thing(1.0)
+
+    def f():
+      x = jax_getattr(thing, 'x')
+      return jnp.sin(x)
+
+    if jit:
+      f = jax.jit(f)
+
+    out, f_vjp = attrs.vjp(f, attrs=[(thing, 'x')])
+    self.assertAllClose(out, jnp.sin(1.0), check_dtypes=False)
+
+    arg_cts, attr_cotangents = f_vjp(1.0)
+    self.assertEqual(arg_cts, ())
+    self.assertLen(attr_cotangents, 1)
+    self.assertAllClose(attr_cotangents[(thing, 'x')], jnp.cos(1.0),
+                        check_dtypes=False)
+
+  @parameterized.parameters([True, False])
+  def test_attr_output(self, jit):
+    thing = Thing(1.0)
+
+    def f(x, _):
+      y = jnp.sin(x)
+      jax_setattr(thing, 'x', y)
+
+    if jit:
+      f = jax.jit(f)
+
+    out, f_vjp = attrs.vjp(f, 3.0, 4.0)
+    self.assertIsNone(out)
+    self.assertAllClose(thing.x, jnp.sin(3.0), check_dtypes=False)
+
+    arg_cts, attr_cotangents = f_vjp(None, attr_cotangents={(thing, 'x'): 2.0})
+    self.assertAllClose(arg_cts, (2 * jnp.cos(3.0), 0.), check_dtypes=False)
+    self.assertLen(attr_cotangents, 0)
+
+  @parameterized.parameters([True, False])
+  def test_attr_inout(self, jit):
+    thing1 = Thing(1.0)
+    thing2 = Thing(2.0)
+
+    def f(x, y):
+      z = jax_getattr(thing1, 'x')
+      w = jax_getattr(thing2, 'x')
+      out = jnp.sin(x * y * z * w)
+      jax_setattr(thing1, 'x', out)
+      jax_setattr(thing2, 'x', 2 * out)
+      return 3 * out, 4 * out
+
+    if jit:
+      f = jax.jit(f)
+
+    def f_ref(x, y, z, w):
+      out = jnp.sin(x * y * z * w)
+      return (3 * out, 4 * out), (out, 2 * out)
+
+    out, f_vjp = attrs.vjp(f, 3., 4., attrs=[(thing1, 'x'), (thing2, 'x')])
+    (out_ref, state_out_ref), f_vjp_ref = jax.vjp(f_ref, 3., 4., 1., 2.)
+    self.assertAllClose(out, out_ref, check_dtypes=False)
+    self.assertAllClose((thing1.x, thing2.x), state_out_ref, check_dtypes=False)
+
+    in_bar, attr_cotangents = f_vjp((1., 2.),
+                                    attr_cotangents={(thing1, 'x'): 5.,
+                                                     (thing2, 'x'): 6.})
+    in_bar_ref_ = f_vjp_ref(((1., 2.), (5., 6.)))
+    in_bar_ref, attr_cotangents_ref = in_bar_ref_[:2], in_bar_ref_[2:]
+    self.assertAllClose(in_bar, in_bar_ref, check_dtypes=False)
+    self.assertLen(attr_cotangents, 2)
+    self.assertAllClose(attr_cotangents[(thing1, 'x')], attr_cotangents_ref[0],
+                        check_dtypes=False)
+    self.assertAllClose(attr_cotangents[(thing2, 'x')], attr_cotangents_ref[1],
+                        check_dtypes=False)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
