@@ -43,13 +43,14 @@ import warnings
 #     Mesh as Mesh,
 #   )
 # del typing
-def deprecation_getattr(module, deprecations):
+def deprecation_getattr(module, deprecations, from_init: bool = False):
   def getattr(name):
     if name in deprecations:
       message, fn = deprecations[name]
       if fn is None:
         raise AttributeError(message)
-      warnings.warn(message, DeprecationWarning, stacklevel=2)
+      stacklevel = 3 if from_init else 2
+      warnings.warn(message, DeprecationWarning, stacklevel=stacklevel)
       return fn
     raise AttributeError(f"module {module!r} has no attribute {name!r}")
 

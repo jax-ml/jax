@@ -232,7 +232,7 @@ if _typing.TYPE_CHECKING:
 
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
+  __getattr__ = _deprecation_getattr(__name__, _deprecations, from_init=True)
   del _deprecation_getattr
 del _typing
 
