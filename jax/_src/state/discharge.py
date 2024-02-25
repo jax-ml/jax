@@ -704,8 +704,7 @@ def _transpose_jaxpr(jaxpr: core.Jaxpr, which_linear: Sequence[bool]
     primals_args = [*nonref_res, *ref_res]
     _, tangent_args = partition_list(which_linear, args)
     _, ct_args = partition_list(used_cts, tangent_args)
-    ad.backward_pass(
-        tangent_jaxpr, (), False, (), (*primals_args, *ct_args), ())
+    ad.backward_pass(tangent_jaxpr, False, (), (*primals_args, *ct_args), ())
     return []
   jaxpr_trans, _, consts, () = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(trans), [v.aval for v in jaxpr.invars])

@@ -58,7 +58,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import pxla
-from jax.interpreters import ad
+from jax._src.interpreters import ad
 from jax.tree_util import (tree_map, tree_flatten, tree_unflatten,
                            tree_structure, tree_leaves, keystr)
 from jax._src.tree_util import (broadcast_prefix, prefix_errors, PyTreeDef,
@@ -1400,7 +1400,7 @@ def _shard_map_transpose(out_cts, *args, jaxpr, mesh, in_names, out_names,
         pe.close_jaxpr(jaxpr), map(ad.is_undefined_primal, args), False)
     res_reshaped = core.jaxpr_as_fun(jaxpr_known)(*res)
     out = ad.backward_pass(
-        jaxpr_unknown.jaxpr, (), False, (), (*res_reshaped, *undefs), out_cts
+        jaxpr_unknown.jaxpr, False, (), (*res_reshaped, *undefs), out_cts
     )
     out = [ad.Zero(_unshard_aval(mesh, ns, x.aval)) if type(x) is ad.Zero
            else x if rewrite else jax.lax.psum(x, tuple(_unmentioned(mesh, ns)))

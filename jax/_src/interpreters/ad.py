@@ -138,7 +138,7 @@ def linearize(traceable, *primals, **kwargs):
   else:
     return out_primals_consts, out_tangents_pvals, jaxpr, consts, aux()
 
-def vjp(traceable, primals, has_aux=False, reduce_axes=()):
+def vjp(traceable, primals, has_aux=False):
   if not has_aux:
     out_primals, pvals, jaxpr, consts = linearize(traceable, *primals)
   else:
@@ -147,7 +147,7 @@ def vjp(traceable, primals, has_aux=False, reduce_axes=()):
   def unbound_vjp(pvals, jaxpr, consts, *cts):
     cts = tuple(ct for ct, pval in zip(cts, pvals) if not pval.is_known())
     dummy_args = [UndefinedPrimal(v.aval) for v in jaxpr.invars]
-    arg_cts = backward_pass(jaxpr, reduce_axes, True, consts, dummy_args, cts)
+    arg_cts = backward_pass(jaxpr, True, consts, dummy_args, cts)
     return map(instantiate_zeros, arg_cts)
 
   # Ensure that vjp_ is a PyTree so that we can pass it from the forward to the backward
@@ -182,7 +182,7 @@ def recast_to_float0(primal, tangent):
 
 # NOTE: The FIXMEs below are caused by primal/tangent mixups (type
 # errors if you will)
-def backward_pass(jaxpr: core.Jaxpr, reduce_axes, transform_stack,
+def backward_pass(jaxpr: core.Jaxpr, transform_stack,
                   consts, primals_in, cotangents_in):
   if all(type(ct) is Zero for ct in cotangents_in) and not jaxpr.effects:
     return map(lambda v: Zero(v.aval), jaxpr.invars)
@@ -196,11 +196,6 @@ def backward_pass(jaxpr: core.Jaxpr, reduce_axes, transform_stack,
       # FIXME: This triggers a lot of failures!
       # assert v.aval == ct.aval, (prim, v.aval, ct.aval)
       return
-    axes_to_reduce = tuple(axis_name for axis_name in reduce_axes
-                           if axis_name in core.get_aval(ct).named_shape
-                           and axis_name not in v.aval.named_shape)
-    if axes_to_reduce:
-      ct = jax.lax.psum(ct, axis_name=axes_to_reduce)
     ct_env[v] = add_tangents(ct_env[v], ct) if v in ct_env else ct
     # TODO(mattjj): add back these checks for dynamic shapes
     # if config.enable_checks.value:
@@ -249,10 +244,10 @@ def backward_pass(jaxpr: core.Jaxpr, reduce_axes, transform_stack,
           params = dict(eqn.params)
           call_jaxpr = params.pop('call_jaxpr')
           cts_out = get_primitive_transpose(eqn.primitive)(
-              params, call_jaxpr, invals, cts_in, cts_in_avals, reduce_axes)
+              params, call_jaxpr, invals, cts_in, cts_in_avals)
         elif eqn.primitive in reducing_transposes:
           cts_out = reducing_transposes[eqn.primitive](
-              reduce_axes, cts_in, *invals, **eqn.params)
+              cts_in, *invals, **eqn.params)
         else:
           cts_out = get_primitive_transpose(eqn.primitive)(
               cts_in, *invals, **eqn.params)
@@ -263,9 +258,9 @@ def backward_pass(jaxpr: core.Jaxpr, reduce_axes, transform_stack,
   cotangents_out = map(read_cotangent, jaxpr.invars)
   return cotangents_out
 
-def closed_backward_pass(jaxpr: core.ClosedJaxpr, reduce_axes, transform_stack,
+def closed_backward_pass(jaxpr: core.ClosedJaxpr, transform_stack,
                          primals_in, cotangents_in):
-  return backward_pass(jaxpr.jaxpr, reduce_axes, transform_stack, jaxpr.consts,
+  return backward_pass(jaxpr.jaxpr, transform_stack, jaxpr.consts,
                        primals_in, cotangents_in)
 
 
@@ -601,14 +596,13 @@ def traceable(in_tree, *primals_and_tangents):
   yield out_flat, out_tree
 
 
-def call_transpose(primitive, params, call_jaxpr, args, ct, _, reduce_axes):
+def call_transpose(primitive, params, call_jaxpr, args, ct, _):
   if isinstance(call_jaxpr, core.ClosedJaxpr):
     call_jaxpr, consts = call_jaxpr.jaxpr, call_jaxpr.consts
   else:
     consts = ()
   all_args, in_tree_def = tree_flatten((consts, args, ct))
-  fun = lu.hashable_partial(lu.wrap_init(backward_pass), call_jaxpr,
-                            reduce_axes, False)
+  fun = lu.hashable_partial(lu.wrap_init(backward_pass), call_jaxpr, False)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
   update_params = call_transpose_param_updaters.get(primitive)
   if update_params:
@@ -628,11 +622,11 @@ def call_transpose(primitive, params, call_jaxpr, args, ct, _, reduce_axes):
 primitive_transposes[core.call_p] = partial(call_transpose, call_p)
 
 
-def _closed_call_transpose(params, jaxpr, args, ct, cts_in_avals, reduce_axes):
+def _closed_call_transpose(params, jaxpr, args, ct, cts_in_avals):
   jaxpr_, consts = jaxpr.jaxpr, jaxpr.consts
   jaxpr_ = pe.convert_constvars_jaxpr(jaxpr_)
   return call_transpose(core.closed_call_p, params, jaxpr_, (*consts, *args),
-                        ct, cts_in_avals, reduce_axes)
+                        ct, cts_in_avals)
 primitive_transposes[core.closed_call_p] = _closed_call_transpose
 
 
@@ -641,9 +635,9 @@ def nonzero_outputs(*args, **kwargs):
   results = yield args, kwargs
   yield results, [type(r) is not Zero for r in results]
 
-def map_transpose(primitive, params, call_jaxpr, args, ct, _, reduce_axes):
+def map_transpose(primitive, params, call_jaxpr, args, ct, _):
   all_args, in_tree_def = tree_flatten(((), args, ct))  # empty consts
-  fun = lu.hashable_partial(lu.wrap_init(backward_pass), call_jaxpr, reduce_axes, False)
+  fun = lu.hashable_partial(lu.wrap_init(backward_pass), call_jaxpr, False)
   fun, nz_arg_cts = nonzero_outputs(fun)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
   # Preserve axis for primal arguments, skip tangents (represented as undefined primals).

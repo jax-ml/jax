@@ -446,9 +446,9 @@ mlir.register_lowering(custom_jvp_call_p, _custom_jvp_call_mlir_translation)
 # If a (multi)linear function is defined with a custom jvp, then
 # custom_jvp_call_ can appear in jaxprs to be transposed. Since it's already
 # been linearized, we can drop the jvp rule.
-def _custom_jvp_call_transpose(params, jaxpr, args, ct, _, reduce_axes):
+def _custom_jvp_call_transpose(params, jaxpr, args, ct, _):
   del params
-  return ad.backward_pass(jaxpr.jaxpr, reduce_axes, None, jaxpr.consts, args, ct)
+  return ad.backward_pass(jaxpr.jaxpr, None, jaxpr.consts, args, ct)
 ad.primitive_transposes[custom_jvp_call_p] = _custom_jvp_call_transpose
 
 

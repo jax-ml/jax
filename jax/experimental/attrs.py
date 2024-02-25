@@ -211,7 +211,7 @@ def _vjp_wrap(jaxpr, consts, out_pvals, attr_avals, io_tree, in_attrs, out_attrs
     assert out_tree == out_tree_
     attr_cts = [attr_cotangents.get(a, ad.Zero(aval))
                 for a, aval in zip(out_attrs, attr_avals)]
-    out = ad.backward_pass(jaxpr, (), (), consts, dummies, (*out_cts, *attr_cts))
+    out = ad.backward_pass(jaxpr, (), consts, dummies, (*out_cts, *attr_cts))
     in_attr_bars, arg_cts = split_list(out, [len(in_attrs)])
     args_ct = tree_unflatten(in_tree, map(ad.instantiate_zeros, arg_cts))
     return args_ct, dict(zip(in_attrs, in_attr_bars))
