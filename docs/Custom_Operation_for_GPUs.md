@@ -677,9 +677,7 @@ See the code comments for more explanation:
         # first dim of x that will be kept as is.
         # This is because the implementaion can only be sharded on the batch dimensions.
 
-        # get_padded_spec() make sure the lenght of the PartitionSpec
-        # is the same as the tensor rank. See it's docstring for details.
-        x_spec = get_padded_spec(arg_infos[0])
+        x_spec = arg_infos[0].sharding.spec
         # None mean that we replicate on that dimension.
         output_sharding = NamedSharding(mesh, PartitionSpec(x_spec[0], None, None))
         invvar_sharding = NamedSharding(mesh, PartitionSpec(x_spec[0]))
@@ -692,7 +690,7 @@ See the code comments for more explanation:
         x_info, weight_info = arg_infos
         assert len(x_info.shape) == 3
         assert len(weight_info.shape) == 2
-        x_spec = get_padded_spec(arg_infos[0])
+        x_spec = arg_infos[0].sharding.spec
         # We only support sharding on the batch dimensions.
         # Force sharding on all others dimensions with None.
         arg_shardings = (NamedSharding(mesh, PartitionSpec(x_spec[0], None, None)),
@@ -891,7 +889,7 @@ return (
         assert len(x_info.shape) == 3
         assert len(weight_info.shape) == 2
         # partition() will force all dims to be replicated except the batch dimension.
-        x_spec = get_padded_spec(x_info)
+        x_spec = x_info.sharding.spec
         output_sharding = NamedSharding(mesh, PartitionSpec(x_spec[0], None, None))
         invvar_sharding = NamedSharding(mesh, PartitionSpec(None, None))
         return (output_sharding, invvar_sharding, output_sharding, )
@@ -906,11 +904,11 @@ return (
         assert len(invvar_info.shape) == 1
         assert len(x_info.shape) == 3
         assert len(weight_info.shape) == 2
-        x_spec = get_padded_spec(x_info)
+
         # We only support sharding on the batch dimensions.
         # Force sharding on all others dimensions with None.
         # Also force gx, x and invvar to have the same batch sharding/replication.
-        x_spec = get_padded_spec(x_info)
+        x_spec = x_info.sharding.spec
         arg_shardings = (NamedSharding(mesh, PartitionSpec(x_spec[0], None, None)),
                          NamedSharding(mesh, PartitionSpec(x_spec[0],)),
                          NamedSharding(mesh, PartitionSpec(x_spec[0], None, None)),
