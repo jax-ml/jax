@@ -553,6 +553,7 @@ pytype_strict_library(
         ":util",
         ":xla",
         ":xla_bridge",
+        ":state_types",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
 )

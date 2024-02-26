@@ -68,7 +68,7 @@ from jax._src.sharding_impls import (
     AUTO, UNSPECIFIED, UnspecifiedValue,
     ParsedPartitionSpec, SpecSync, get_single_pspec, is_auto, is_unspecified,
     is_unspecified_or_auto, prepare_axis_resources, parse_flatten_op_sharding)
-from jax._src.state import discharge as state_discharge
+from jax._src.state import discharge as state_discharge, RefEffect
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
     tree_map, tree_flatten, tree_unflatten, treedef_is_leaf, tree_structure,
@@ -180,9 +180,11 @@ def _python_pjit(fun: Callable, infer_params_fn):
   return wrapped
 
 
-def _get_fastpath_data(executable, out_tree, args_flat, out_flat, attrs_tracked,
-                       ) -> Optional[pxla.MeshExecutableFastpathData]:
+def _get_fastpath_data(
+    executable, out_tree, args_flat, out_flat, attrs_tracked, effects
+) -> Optional[pxla.MeshExecutableFastpathData]:
   out_reflattened, out_tree = pxla.reflatten_outputs_for_dispatch(out_tree, out_flat)
+
   use_fastpath = (
       executable is not None and
       isinstance(executable, pxla.MeshExecutable) and
@@ -194,12 +196,13 @@ def _get_fastpath_data(executable, out_tree, args_flat, out_flat, attrs_tracked,
       all(isinstance(x, xc.ArrayImpl) for x in out_reflattened) and
       # no attr state effects
       not attrs_tracked and
+      # no ref state effects
+      not any(isinstance(e, RefEffect) for e in effects) and
       # no prng reuse checking
       not (config.enable_key_reuse_checks.value and any(
         hasattr(arg, 'dtype') and dtypes.issubdtype(arg.dtype, dtypes.prng_key)
-        for arg in (*args_flat, *out_flat)
-      ))
-  )
+        for arg in (*args_flat, *out_flat)))
+      )
 
   if use_fastpath:
     out_avals = [o.aval for o in out_reflattened]
@@ -254,7 +257,7 @@ def _cpp_pjit(fun: Callable, infer_params_fn, static_argnums, static_argnames,
         fun, infer_params_fn, *args, **kwargs)
     executable = _read_most_recent_pjit_call_executable(jaxpr)
     maybe_fastpath_data = _get_fastpath_data(
-        executable, out_tree, args_flat, out_flat, attrs_tracked)
+        executable, out_tree, args_flat, out_flat, attrs_tracked, jaxpr.effects)
     return outs, maybe_fastpath_data
 
   if xla_extension_version >= 226:
@@ -1400,7 +1403,7 @@ def _pjit_call_impl(*args, jaxpr,
         donated_invars=donated_invars, name=name, keep_unused=keep_unused,
         inline=inline)
     fastpath_data = _get_fastpath_data(
-        compiled, tree_structure(out_flat), args, out_flat, [])
+        compiled, tree_structure(out_flat), args, out_flat, [], set())
     return out_flat, fastpath_data
 
   f = _get_jaxpr_as_fun(

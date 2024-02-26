@@ -203,6 +203,7 @@ class Jaxpr:
     outvars = self.outvars if outvars is None else outvars
     eqns = self.eqns if eqns is None else eqns
     effects = self.effects if effects is None else effects
+    debug_info = self.debug_info if debug_info is None else debug_info
     return Jaxpr(constvars=constvars, invars=invars, outvars=outvars, eqns=eqns,
                  effects=effects, debug_info=debug_info)
 

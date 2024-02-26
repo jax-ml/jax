@@ -109,9 +109,8 @@ def _eval_jaxpr_discharge_state(
   # regular values in this interpreter.
   map(env.write, jaxpr.invars, args)
 
-  refs_to_discharge = {id(v.aval) for v, d
-                          in zip(jaxpr.invars, should_discharge) if d
-                          and isinstance(v.aval, AbstractRef)}
+  refs_to_discharge = {id(v.aval) for v, d in zip(jaxpr.invars, should_discharge)
+                       if d and isinstance(v.aval, AbstractRef)}
 
   for eqn in jaxpr.eqns:
     if _has_refs(eqn) and any(id(v.aval) in refs_to_discharge

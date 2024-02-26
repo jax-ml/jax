@@ -49,7 +49,7 @@ from jax._src.state.primitives import (get_p, swap_p, addupdate_p,
                                        ref_addupdate, ref_get, ref_set,
                                        ref_swap)
 from jax._src.state.types import (shaped_array_ref, ReadEffect, WriteEffect,
-                                  AccumEffect, AbstractRef)
+                                  AccumEffect, RefEffect, AbstractRef)
 
 config.parse_flags_with_absl()
 
@@ -1506,6 +1506,57 @@ class RunStateTest(jtu.JaxTestCase):
     self.assertAllClose(x_ct, np.cos(1.))
 
     jtu.check_grads(f, (0.5,), order=3)
+
+
+class MutableArray:
+  _aval: core.ShapedArray
+  _buf: jax.Array
+  def __init__(self, aval, buf):
+    self._aval = aval
+    self._buf = buf
+  aval = property(lambda self: self._aval)
+  shape = property(lambda self: self._aval.shape)
+  dtype = property(lambda self: self._aval.dtype)
+
+def mutable_array(init_val):
+  return mutable_array_p.bind(init_val)
+mutable_array_p = core.Primitive('mutable_array')
+
+@mutable_array_p.def_impl
+def _mutable_array_impl(init_val):
+  aval = core.raise_to_shaped(core.get_aval(init_val))
+  return MutableArray(AbstractRef(aval), init_val)
+
+def _error_on_staging(trace, x):
+  raise Exception
+pe.custom_staging_rules[mutable_array_p] = _error_on_staging
+
+from jax._src.interpreters import xla
+from jax._src.interpreters import pxla
+xla.canonicalize_dtype_handlers[MutableArray] = lambda x: x
+xla.pytype_aval_mappings[MutableArray] = lambda x: x._aval
+pxla.shard_arg_handlers[MutableArray] = lambda x, s: pxla.shard_arg(x._buf, s)
+core.pytype_aval_mappings[MutableArray] = lambda x: x._aval
+
+class MutableArrayTest(jtu.JaxTestCase):
+
+  def test_basic(self):
+    read = jax.jit(lambda x_ref: x_ref[...])
+
+    @jax.jit
+    def f(x_mut):
+      x_mut[...] += 1.
+      x_mut[0] += 1
+      x_mut[1] += 5
+
+    x_mut = mutable_array(jnp.zeros(3))
+    f(x_mut)
+
+    self.assertAllClose(read(x_mut), jnp.array([2., 6., 1.]), check_dtypes=False)
+
+    jaxpr = jax.make_jaxpr(f)(x_mut)
+    self.assertTrue(any(isinstance(e, RefEffect) for e in jaxpr.effects))
+
 
 if CAN_USE_HYPOTHESIS:
 
