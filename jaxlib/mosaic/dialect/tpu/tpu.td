@@ -514,6 +514,12 @@ def TPU_MaskCastOp : TPU_Op<"mask_cast", [Pure]> {
   let hasVerifier = 1;
 }
 
+def TPU_GetIterationBoundOp : TPU_Op<"iteration_bound"> {
+  let arguments = (ins I32Attr:$dim);
+  let results = (outs I32:$result);
+  let assemblyFormat = [{ $dim attr-dict `:` type($result) }];
+}
+
 def DebugAssertInsertionPass : Pass<"debug-assert-insertion", "::mlir::func::FuncOp"> {
   let dependentDialects = [
     "::mlir::func::FuncDialect",

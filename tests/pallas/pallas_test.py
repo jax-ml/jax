@@ -231,6 +231,19 @@ class PallasCallTest(PallasTest):
       idx = jnp.arange(i, i + 2)
       np.testing.assert_allclose(index(x, idx), x[idx])
 
+  def test_num_programs(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((4,), jnp.int32),
+        grid=4,
+    )
+    def kernel(o_ref):
+      o_ref[pl.program_id(0)] = pl.num_programs(0)
+
+    np.testing.assert_array_equal(
+        kernel(), np.asarray([4, 4, 4, 4], dtype=np.int32)
+    )
+
   def test_where_broadcasting(self):
     @functools.partial(
         self.pallas_call,

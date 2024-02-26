@@ -33,6 +33,7 @@ from jax._src.pallas.primitives import dot
 from jax._src.pallas.primitives import load
 from jax._src.pallas.primitives import max_contiguous
 from jax._src.pallas.primitives import multiple_of
+from jax._src.pallas.primitives import num_programs
 from jax._src.pallas.primitives import program_id
 from jax._src.pallas.primitives import store
 from jax._src.pallas.primitives import swap

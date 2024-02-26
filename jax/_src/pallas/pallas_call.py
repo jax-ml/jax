@@ -170,10 +170,16 @@ def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
       return i < num_iterations
     def body(carry):
       i, loop_idx, *carry = carry
+      local_grid_env = tuple(
+          (idx, b)
+          for dim, (idx, b) in enumerate(zip(loop_idx, grid))
+          if dim not in grid_mapping.mapped_dims
+      )
       carry, scratch = split_list(carry, [num_inout])
-      start_indices = [
-          None if bm is None else bm.compute_start_indices(loop_idx, *scalars)
-          for bm in grid_mapping.block_mappings]
+      with pallas_core.grid_env(local_grid_env):
+        start_indices = [
+            None if bm is None else bm.compute_start_indices(loop_idx, *scalars)
+            for bm in grid_mapping.block_mappings]
       block_shapes_without_mapped_dims = [
           None if block_mapping is None else block_mapping.block_shape
           for block_mapping in grid_mapping.block_mappings
@@ -188,11 +194,7 @@ def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
       ]
       blocks = map(_maybe_dynamic_slice, start_indices, block_shapes, carry,
                    is_indexing_dim)
-      is_mapped_grid_dim = [
-          i in grid_mapping.mapped_dims for i in range(len(grid_mapping.grid))]
-      local_grid_env, _ = partition_list(is_mapped_grid_dim,
-                                         zip(loop_idx, grid_mapping.grid))
-      with pallas_core.grid_env(tuple(local_grid_env)):
+      with pallas_core.grid_env(local_grid_env):
         assert len(discharged_jaxpr.invars) == len(scalars) + len(blocks) + len(
             scratch_values
         ), (

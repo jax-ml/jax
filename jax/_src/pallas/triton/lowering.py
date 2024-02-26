@@ -388,6 +388,14 @@ def _program_id_lowering_rule(ctx: LoweringRuleContext, *, axis):
 triton_lowering_rules[primitives.program_id_p] = _program_id_lowering_rule
 
 
+def _num_programs_lowering_rule(ctx: LoweringRuleContext, *, axis):
+  if axis not in range(3):
+    raise ValueError(f"axis must be in [0, 3), but got: {axis}")
+  return tt_dialect.get_num_programs(axis)
+
+triton_lowering_rules[primitives.num_programs_p] = _num_programs_lowering_rule
+
+
 def _atomic_rmw(
     op: tt_dialect.RMWOp,
     ptr: ir.Value,

@@ -1859,6 +1859,11 @@ def _program_id_lowering_rule(ctx: LoweringRuleContext, *, axis: int):
   return ctx.lowering_context.grid_indices[axis]
 lowering_rules[primitives.program_id_p] = _program_id_lowering_rule
 
+def _num_programs_lowering_rule(ctx: LoweringRuleContext, *, axis: int):
+  del ctx
+  return tpu.iteration_bound(axis)
+lowering_rules[primitives.num_programs_p] = _num_programs_lowering_rule
+
 
 def _repeat_lowering_rule(ctx: LoweringRuleContext, x, *, repeats, axis):
   (out_aval,) = ctx.avals_out

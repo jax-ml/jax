@@ -32,7 +32,6 @@ from jax._src.state import indexing
 from jax._src.state import primitives as sp
 from jax._src.interpreters import ad
 from jax.interpreters import mlir
-from jax.interpreters import xla
 import jax.numpy as jnp
 
 from jax._src.pallas import core as pallas_core
@@ -64,12 +63,31 @@ def _program_id_impl(*, axis: int):
   return grid_env[axis].axis_index
 program_id_p.def_impl(_program_id_impl)
 
-mlir.register_lowering(program_id_p, functools.partial(xla.apply_primitive,
-                                                       program_id_p))
-
 def _program_id_abstract_eval(**_):
   return jax_core.ShapedArray((), jnp.int32)
 program_id_p.def_abstract_eval(_program_id_abstract_eval)
+
+
+num_programs_p = jax_core.Primitive("num_programs")
+
+def num_programs(axis):
+  return num_programs_p.bind(axis=axis)
+
+@num_programs_p.def_custom_bind
+def _num_programs_bind(*, axis: int):
+  grid_env = pallas_core.current_grid_env()
+  if grid_env:
+    return jnp.asarray(grid_env[axis].axis_size, dtype=jnp.int32)
+  return jax_core.Primitive.bind(num_programs_p, axis=axis)
+
+@num_programs_p.def_impl
+def _num_programs_impl(*, axis: int):
+  grid_env = pallas_core.current_grid_env()
+  return jnp.asarray(grid_env[axis].axis_size, dtype=jnp.int32)
+
+@num_programs_p.def_abstract_eval
+def _num_programs_abstract_eval(**_):
+  return jax_core.ShapedArray((), jnp.int32)
 
 class AtomicOpType(enum.Enum):
   XCHG = "xchg"

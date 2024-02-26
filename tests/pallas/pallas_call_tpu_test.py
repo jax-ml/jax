@@ -435,6 +435,44 @@ class PallasCallDynamicGridTest(PallasTPUTest):
         x + 8,
     )
 
+  def test_num_programs(self):
+    def kernel(y_ref):
+      y_ref[0, 0] = pl.num_programs(0)
+
+    @jax.jit
+    def dynamic_kernel(steps):
+      return self.pallas_call(
+          kernel,
+          grid=(steps * 2,),
+          out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+          out_shape=jax.ShapeDtypeStruct((1, 1), jnp.int32),
+      )()
+
+    self.assertEqual(dynamic_kernel(4), 8)
+
+  def test_num_programs_block_spec(self):
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...]
+
+    @jax.jit
+    def dynamic_kernel(steps, x):
+      return self.pallas_call(
+          kernel,
+          grid=(steps * 2,),
+          in_specs=[
+              pl.BlockSpec(
+                  # Should always evaluate to (1, 0)
+                  lambda i: (1 + 8 - pl.num_programs(0), 0),
+                  (8, 128),
+              )
+          ],
+          out_specs=pl.BlockSpec(lambda i: (0, 0), (8, 128)),
+          out_shape=jax.ShapeDtypeStruct((8, 128), jnp.int32),
+      )(x)
+
+    x = np.arange(4 * 8 * 128., dtype=np.int32).reshape((4 * 8, 128))
+    np.testing.assert_array_equal(dynamic_kernel(4, x), x[8:16])
+
 
 class PallasCallInterpretDynamicGridTest(PallasCallDynamicGridTest):
   interpret: bool = True
