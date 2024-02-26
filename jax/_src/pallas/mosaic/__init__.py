@@ -21,8 +21,6 @@ from jax._src.pallas.mosaic.core import SemaphoreType
 from jax._src.pallas.mosaic.core import TPUMemorySpace
 from jax._src.pallas.mosaic.core import semaphore
 from jax._src.pallas.mosaic.core import dma_semaphore
-from jax._src.pallas.mosaic.kernel_regeneration_util import encode_kernel_regeneration_metadata
-from jax._src.pallas.mosaic.kernel_regeneration_util import extract_kernel_regeneration_metadata
 from jax._src.pallas.mosaic.lowering import LoweringException
 from jax._src.pallas.mosaic.pipeline import emit_pipeline_with_allocations
 from jax._src.pallas.mosaic.pipeline import emit_pipeline

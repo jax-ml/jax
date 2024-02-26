@@ -19,6 +19,8 @@ from jax._src.pallas.core import BlockSpec
 from jax._src.pallas.core import no_block_spec
 from jax._src.pallas.core import Unblocked
 from jax._src.pallas.core import unblocked
+from jax._src.pallas.metadata import encode_kernel_regeneration_metadata
+from jax._src.pallas.metadata import extract_kernel_regeneration_metadata
 from jax._src.pallas.pallas_call import pallas_call
 from jax._src.pallas.pallas_call import pallas_call_p
 from jax._src.pallas.primitives import atomic_add

@@ -232,7 +232,7 @@ def _tpu_custom_call_lowering(
     call.attributes["kernel_name"] = ir.StringAttr.get(kernel_name)
   if kernel_regeneration_metadata is not None:
     call.attributes["kernel_regeneration_metadata"] = ir.StringAttr.get(
-        base64.b64encode(kernel_regeneration_metadata)
+        kernel_regeneration_metadata
     )
   if multiple_results:
     results = [stablehlo.get_tuple_element(call, mlir.i32_attr(i))

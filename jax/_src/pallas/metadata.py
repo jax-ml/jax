@@ -1,4 +1,4 @@
-# Copyright 2023 The JAX Authors.
+# Copyright 2024 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Helpers to encode and decode Mosaic kernel regeneration metadata."""
+"""Helpers to encode and decode Pallas kernel regeneration metadata."""
 
 import base64
 import json
 from typing import Any
+
 from jaxlib.mlir import ir
 
 
@@ -32,27 +33,23 @@ def encode_kernel_regeneration_metadata(
       config.
 
   Returns:
-    A dict that can be directly passed to pallas_call as a 'mosaic_params'
+    A dict that can be directly passed to `pallas_call` via the `*_params`
     argument.
 
   Raises:
-    TypeError: when the input metadata is not serializable in json format.
+    TypeError: when the input metadata is not serializable in JSON format.
   """
-  serialized_metadata = bytes(json.dumps(metadata), encoding="utf-8")
+  serialized_metadata = base64.b64encode(json.dumps(metadata).encode())
   return dict(kernel_regeneration_metadata=serialized_metadata)
 
 
 def extract_kernel_regeneration_metadata(op: ir.Operation) -> dict[str, Any]:
-  """Extract kernel regeneration metadata from the given Operation.
+  """Returns the kernel regeneration metadata stored in the given operation.
 
   This function hides the serialization details from the end user.
 
   Args:
-    op: the tpu custom_call mlir Operation that contains the kernel metadata.
-
-  Returns:
-    The decoded metadata in the form of a dict. This corresponds to the dict
-    in input to the 'encode' function.
+    op: the operation that contains the kernel metadata.
   """
   kernel_regeneration_metadata = ir.StringAttr(
       op.attributes["kernel_regeneration_metadata"]

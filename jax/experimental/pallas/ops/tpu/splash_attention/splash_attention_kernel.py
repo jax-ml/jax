@@ -1067,7 +1067,7 @@ def _splash_attention_forward(
       residual_checkpoint_name=residual_checkpoint_name,
   )
 
-  mosaic_params = pltpu.encode_kernel_regeneration_metadata(metadata_dict)
+  mosaic_params = pl.encode_kernel_regeneration_metadata(metadata_dict)
 
   mosaic_params.update(
       dimension_semantics=("parallel", "arbitrary", "arbitrary"),
@@ -1541,7 +1541,7 @@ def _splash_attention_bwd_dq(
       attn_logits_soft_cap=attn_logits_soft_cap,
   )
 
-  mosaic_params = pltpu.encode_kernel_regeneration_metadata(metadata_dict)
+  mosaic_params = pl.encode_kernel_regeneration_metadata(metadata_dict)
   mosaic_params.update(
       dimension_semantics=("arbitrary", "arbitrary", "arbitrary"),
       flags={"XLA_TPU_FORCE_LP_LLO_SCHEDULER": True},
@@ -2089,7 +2089,7 @@ def _splash_attention_bwd_dkv(
       attn_logits_soft_cap=attn_logits_soft_cap,
   )
 
-  mosaic_params = pltpu.encode_kernel_regeneration_metadata(metadata_dict)
+  mosaic_params = pl.encode_kernel_regeneration_metadata(metadata_dict)
   # We set all dimensions to arbitrary because:
   # 1) for kv_seq_len, the splash attention prefetch schedule assumes no
   #    megacore
