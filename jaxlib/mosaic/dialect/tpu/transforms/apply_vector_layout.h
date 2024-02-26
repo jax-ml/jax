@@ -29,7 +29,8 @@ RollVectorsOp assemble(OpBuilder &builder, VectorType vty,
                        const xla::Array<Value> &vals,
                        std::array<int64_t, 2> target_shape);
 FailureOr<xla::Array<Value>> disassemble(OpBuilder &builder,
-                                         const VectorLayout &layout, Value val,
+                                         const VectorLayout &layout,
+                                         TypedValue<VectorType> val,
                                          std::array<int64_t, 2> target_shape);
 
 // Rewrites the operation according to its layout annotations.
@@ -55,9 +56,11 @@ LogicalResult applyLayoutOp(RewriteContext &ctx, Operation &op);
 //
 // Returns:
 //   A new MLIR vector value, laid out as requested by dst.
-FailureOr<Value> relayout(OpBuilder &builder, Value v, VectorLayout src,
-                          const VectorLayout &dst,
-                          std::array<int64_t, 2> target_shape);
+FailureOr<TypedValue<VectorType>> relayout(OpBuilder &builder,
+                                           TypedValue<VectorType> v,
+                                           VectorLayout src,
+                                           const VectorLayout &dst,
+                                           std::array<int64_t, 2> target_shape);
 
 }  // namespace mlir::tpu
 

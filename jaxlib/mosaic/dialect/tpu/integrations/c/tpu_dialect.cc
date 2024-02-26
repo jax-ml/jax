@@ -349,8 +349,10 @@ MlirTpuValueArray mlirTpuDisassemble(MlirTpuInsertionPoint insertion_point,
                                      MlirTpuVectorLayout layout, MlirValue val,
                                      MlirTpuI64TargetTuple target_shape) {
   mlir::OpBuilder builder = mlirTpuInsertionPointToOpBuilder(insertion_point);
+  // This cast will fail and assert if the caller passed a non-vector
+  auto vector_val = mlir::cast<mlir::TypedValue<mlir::VectorType>>(unwrap(val));
   mlir::FailureOr<xla::Array<mlir::Value>> failure_or_vals =
-      mlir::tpu::disassemble(builder, *unwrap(layout), unwrap(val),
+      mlir::tpu::disassemble(builder, *unwrap(layout), vector_val,
                              unwrap(target_shape));
   if (failed(failure_or_vals)) {
     return {{nullptr, 0}, nullptr};
@@ -371,8 +373,11 @@ MlirValue mlirTpuRelayout(MlirTpuInsertionPoint insertion_point, MlirValue val,
                           MlirTpuVectorLayout src, MlirTpuVectorLayout dst,
                           MlirTpuI64TargetTuple target_shape) {
   mlir::OpBuilder builder = mlirTpuInsertionPointToOpBuilder(insertion_point);
-  mlir::FailureOr<mlir::Value> failure_or_new_val = mlir::tpu::relayout(
-      builder, unwrap(val), *unwrap(src), *unwrap(dst), unwrap(target_shape));
+  // This cast will fail and assert if the caller passed a non-vector
+  auto vector_val = mlir::cast<mlir::TypedValue<mlir::VectorType>>(unwrap(val));
+  mlir::FailureOr<mlir::TypedValue<mlir::VectorType>> failure_or_new_val =
+      mlir::tpu::relayout(builder, vector_val, *unwrap(src), *unwrap(dst),
+                          unwrap(target_shape));
   if (failed(failure_or_new_val)) {
     return {nullptr};
   }

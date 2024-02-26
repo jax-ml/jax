@@ -325,16 +325,16 @@ def TPU_BitcastVregOp : TPU_Op<"bitcast_vreg", [Pure]> {
 }
 
 def TPU_RollVectorsOp : TPU_Op<"roll_vectors", [Pure]> {
-  let arguments = (ins Variadic<AnyType>:$input);
-  let results = (outs AnyType:$output);
+  let arguments = (ins Variadic<AnyVector>:$input);
+  let results = (outs AnyVector:$output);
   let assemblyFormat = [{
     $input attr-dict `:` type($input) `->` type($output)
   }];
 }
 
 def TPU_UnrollVectorsOp : TPU_Op<"unroll_vectors", [Pure]> {
-  let arguments = (ins AnyType:$input);
-  let results = (outs Variadic<AnyType>:$output);
+  let arguments = (ins AnyVector:$input);
+  let results = (outs Variadic<AnyVector>:$output);
   let hasCanonicalizeMethod = 1;
   let assemblyFormat = [{
     $input attr-dict `:` type($input) `->` type($output)
