@@ -584,12 +584,12 @@ pe.partial_eval_jaxpr_custom_rules[remat_p] = \
     partial(pe.call_partial_eval_custom_rule, 'jaxpr',
             remat_partial_eval_custom_params_updater)
 
-def remat_transpose(reduce_axes, out_cts, *in_primals, jaxpr, **params):
+def remat_transpose(out_cts, *in_primals, jaxpr, **params):
   assert not jaxpr.constvars
   in_linear = [ad.is_undefined_primal(x) for x in in_primals]
   out_zeros = [type(ct) is ad_util.Zero for ct in out_cts]
   transposed_jaxpr_, in_zeros = transpose_jaxpr(
-      pe.close_jaxpr(jaxpr), in_linear, out_zeros, reduce_axes)
+      pe.close_jaxpr(jaxpr), in_linear, out_zeros)
   transposed_jaxpr, consts = transposed_jaxpr_.jaxpr, transposed_jaxpr_.consts
   transposed_jaxpr = pe.convert_constvars_jaxpr(transposed_jaxpr)
   args, _ = tree_flatten((in_primals, out_cts))
@@ -605,17 +605,15 @@ ad.reducing_transposes[remat_p] = remat_transpose
 # TODO(mattjj): move this to ad.py
 def transpose_jaxpr(jaxpr: core.ClosedJaxpr, in_linear: bool | Sequence[bool],
                     out_zeros: bool | Sequence[bool],
-                    reduce_axes: Sequence[core.AxisName],
                     ) -> tuple[core.ClosedJaxpr, list[bool]]:
   if type(in_linear) is bool:
     in_linear = (in_linear,) * len(jaxpr.in_avals)
   if type(out_zeros) is bool:
     out_zeros = (out_zeros,) * len(jaxpr.out_avals)
-  return _transpose_jaxpr(jaxpr, tuple(in_linear), tuple(out_zeros),
-                          tuple(reduce_axes))
+  return _transpose_jaxpr(jaxpr, tuple(in_linear), tuple(out_zeros))
 
 @weakref_lru_cache
-def _transpose_jaxpr(jaxpr, in_lin, out_zeros, reduce_axes):
+def _transpose_jaxpr(jaxpr, in_lin, out_zeros):
   in_avals = ([a for a,  lin in zip(jaxpr.in_avals,  in_lin   ) if not lin] +
               [a for a, zero in zip(jaxpr.out_avals, out_zeros) if not zero])
   cell = lambda: None
@@ -640,8 +638,7 @@ def _transpose_jaxpr(jaxpr, in_lin, out_zeros, reduce_axes):
                for aval, zero in zip(jaxpr.out_avals, out_zeros)]
     assert next(out_cts_iter, None) is None
     dummy_args = [ad.UndefinedPrimal(v.aval) for v in lin_jaxpr.invars]
-    in_cts = ad.backward_pass(lin_jaxpr, reduce_axes, False, consts, dummy_args,
-                              out_cts)
+    in_cts = ad.backward_pass(lin_jaxpr, False, consts, dummy_args, out_cts)
 
     # Identify symbolic zeros in the resulting cotangents, and return nonzeros.
     in_zeros = cell.in_cts_zero = [type(ct) is ad_util.Zero for ct in in_cts]

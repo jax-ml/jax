@@ -6247,6 +6247,7 @@ class JaxprTest(jtu.JaxTestCase):
 
   @parameterized.parameters(True, False)
   def test_vjp_reduce_axes_jaxpr(self, gy_batched):
+    raise unittest.SkipTest("reduce_axes autodiff is removed")
     def f(w, x):
       return jnp.sin(jnp.dot(x, w))
 

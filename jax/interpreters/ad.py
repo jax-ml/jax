@@ -27,7 +27,7 @@ from jax._src.interpreters.ad import (
   add_jaxvals as add_jaxvals,
   add_jaxvals_p as add_jaxvals_p,
   add_tangents as add_tangents,
-  backward_pass as backward_pass,
+  backward_pass as backward_pass_internal,
   bilinear_transpose as bilinear_transpose,
   call_param_updaters as call_param_updaters,
   call_transpose as call_transpose,
@@ -98,3 +98,11 @@ else:
 del typing
 del _deprecated_config
 del _deprecated_source_info_util
+
+def backward_pass(jaxpr, reduce_axes, transform_stack,
+                  consts, primals_in, cotangents_in):
+  if reduce_axes:
+    raise NotImplementedError("reduce_axes on ad.backward_pass is deprecated")
+  del reduce_axes
+  return backward_pass_internal(
+      jaxpr, transform_stack, consts, primals_in, cotangents_in)

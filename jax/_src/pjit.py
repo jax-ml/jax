@@ -1906,14 +1906,14 @@ def _pjit_transpose_trace(fun, in_avals):
   return transpose_jaxpr, attrs_tracked
 
 
-def _pjit_transpose(reduce_axes, cts_in, *primals_in,
+def _pjit_transpose(cts_in, *primals_in,
                     jaxpr, in_shardings, out_shardings,
                     resource_env, donated_invars, name, keep_unused, inline):
   def prune_type(ty, xs, maybe_zeros):
     return tuple(x for x, mz in zip(xs, maybe_zeros) if type(mz) is not ty)
 
   body = lu.wrap_init(ad.closed_backward_pass)
-  body = lu.hashable_partial(body, jaxpr, reduce_axes, False)
+  body = lu.hashable_partial(body, jaxpr, False)
   primals_and_nz_cts_in, in_treedef = tree_flatten((primals_in, cts_in))
   body, cts_out_treedef_thunk = flatten_fun_nokwargs(body, in_treedef)
 

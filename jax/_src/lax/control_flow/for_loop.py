@@ -717,8 +717,7 @@ def transpose_jaxpr(jaxpr: core.Jaxpr, which_linear: list[bool]) -> core.Jaxpr:
     if used_i:
       primals_args = [*primals_args, i]
     ct_args = [x for x, u in zip(args, used_ct) if u]
-    ad.backward_pass(
-        tangent_jaxpr, (), False, (), (*primals_args, *ct_args), ())
+    ad.backward_pass(tangent_jaxpr, False, (), (*primals_args, *ct_args), ())
     return []
   jaxpr_trans, _, _, () = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(trans), [v.aval for v in jaxpr.invars])

@@ -618,6 +618,7 @@ class XMapTest(XMapTestCase):
     self.assertAllClose(f(x * 2), ref(x * 2))
 
   def testAutodiffBroadcast(self):
+    raise SkipTest("reduce_axes on vjp is deprecated")
     f = xmap(lambda x, y: jnp.cos(lax.dot(x, jnp.sin(y),
                                           precision=lax.Precision.HIGHEST)),
              in_axes=(['i', ...], {}), out_axes=['i', ...])
@@ -1713,6 +1714,7 @@ class XMapErrorTest(jtu.JaxTestCase):
            in_axes=['i', None], out_axes=['i', None])(jnp.ones((5, 4)))
 
   def testReturnExtraMappedAxes(self):
+    raise SkipTest("reduce_axes on vjp is deprecated")
     fm = xmap(lambda x, y: x + y,
               in_axes=(['a', ...], ['b', ...]), out_axes=['a', ...])
     x = np.arange(12).reshape((4, 3))
@@ -1871,6 +1873,7 @@ class XMapErrorTest(jtu.JaxTestCase):
 class NamedAutodiffTests(jtu.JaxTestCase):
 
   def testVjpReduceAxes(self):
+    raise SkipTest("reduce_axes on vjp is deprecated")
     def f(w, x):
       return jnp.sin(jnp.dot(x, w))
 
@@ -1909,6 +1912,7 @@ class NamedAutodiffTests(jtu.JaxTestCase):
     self.assertAllClose(out, expected, check_dtypes=True, rtol=0.005)
 
   def testVjpReduceAxesCollective(self):
+    raise SkipTest("reduce_axes on vjp is deprecated")
 
     # lax.psum has the wrong transpose, so test with a corrected version for now
     @functools.partial(jax.custom_vjp, nondiff_argnums=(1,))

@@ -18,6 +18,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 from typing import Any, Callable, TypeVar
+import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -39,7 +40,7 @@ except (ModuleNotFoundError, ImportError):
   CAN_USE_HYPOTHESIS = False
 
 if not CAN_USE_HYPOTHESIS:
-  import sys; sys.exit(0)
+  raise unittest.SkipTest("tests require hypothesis")
 
 
 jax.config.parse_flags_with_absl()

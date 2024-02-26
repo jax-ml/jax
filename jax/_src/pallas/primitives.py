@@ -30,7 +30,7 @@ from jax._src.util import (safe_map, safe_zip)
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as sp
-from jax.interpreters import ad
+from jax._src.interpreters import ad
 from jax.interpreters import mlir
 from jax.interpreters import xla
 import jax.numpy as jnp

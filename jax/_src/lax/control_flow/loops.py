@@ -739,7 +739,7 @@ def _maybe_put(x):
   else:
     return x
 
-def _scan_transpose(reduce_axes, cts, *args, reverse, length, num_consts,
+def _scan_transpose(cts, *args, reverse, length, num_consts,
                     num_carry, jaxpr, linear, unroll):
   # we've only implemented transposing scans with specific lin/nonlin patterns
   consts_lin, init_lin, xs_lin = split_list(linear, [num_consts, num_carry])
@@ -769,8 +769,7 @@ def _scan_transpose(reduce_axes, cts, *args, reverse, length, num_consts,
   #       jaxpr :: [ires, T d] -> [T c] -> [T a, eres] -> ([T c], [T b])
   # jaxpr_trans :: [ires] -> [CT d, CT c] -> [CT b, eres] -> ([CT d, CT c], [CT a])
   jaxpr_trans, attrs_tracked = _transpose_scan_jaxpr(
-      jaxpr, num_ires, num_consts - num_ires, num_eres, reduce_axes,
-      ct_ys_is_zeros)
+      jaxpr, num_ires, num_consts - num_ires, num_eres, ct_ys_is_zeros)
   linear_trans = ([False] * num_ires + [False] * len(attrs_tracked) +
                   [True] * (len(ct_consts) + len(ct_carry) + len(ct_ys)) +
                   [False] * num_eres)
@@ -790,7 +789,7 @@ def _scan_transpose(reduce_axes, cts, *args, reverse, length, num_consts,
 # transpose_scan_jaxpr :: ([res1, c, a, res2] -> b)
 #                         -> ([res1, CT c, CT b, res2] -> [CT c, CT a])
 @weakref_lru_cache
-def _transpose_scan_jaxpr(jaxpr, num_res1, num_c, num_res2, reduce_axes,
+def _transpose_scan_jaxpr(jaxpr, num_res1, num_c, num_res2,
                           ct_ys_is_zeros):
   num_a = len(jaxpr.in_avals) - num_res1 - num_c - num_res2
   # TODO: allow input cotangent avals to be batched relative to jaxpr.in_avals
@@ -820,7 +819,7 @@ def _transpose_scan_jaxpr(jaxpr, num_res1, num_c, num_res2, reduce_axes,
     primals = (res1 + [ad.UndefinedPrimal(aval) for aval in c_avals] +
                [ad.UndefinedPrimal(aval) for aval in a_avals] + res2)
     cbar_abar = ad.backward_pass(
-        jaxpr.jaxpr, reduce_axes, False, jaxpr.consts, primals, b_bar + ys_bar)
+        jaxpr.jaxpr, False, jaxpr.consts, primals, b_bar + ys_bar)
     _, new_c_bar, a_bar, _ = split_list(cbar_abar, [num_res1, num_c, num_a])
     a_bar = _map(ad.instantiate_zeros, a_bar)
     c_bar = _map(ad.instantiate_zeros, _map(ad.add_tangents, c_bar, new_c_bar))

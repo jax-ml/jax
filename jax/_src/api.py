@@ -60,9 +60,8 @@ from jax._src.api_util import (
     flatten_fun, flatten_fun_nokwargs, flatten_fun_nokwargs2, argnums_partial,
     argnums_partial_except, flatten_axes, donation_vector,
     rebase_donate_argnums, _ensure_index, _ensure_index_tuple,
-    shaped_abstractify, _ensure_str_tuple, apply_flat_fun_nokwargs,
-    check_callable, debug_info, result_paths, flat_out_axes, debug_info_final,
-    fun_sourceinfo)
+    shaped_abstractify, apply_flat_fun_nokwargs, check_callable, debug_info,
+    result_paths, flat_out_axes, debug_info_final, fun_sourceinfo)
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
@@ -629,13 +628,6 @@ def grad(fun: Callable, argnums: int | Sequence[int] = 0,
     allow_int: Optional, bool. Whether to allow differentiating with
       respect to integer valued inputs. The gradient of an integer input will
       have a trivial vector-space dtype (float0). Default False.
-    reduce_axes: Optional, tuple of axis names. If an axis is listed here, and
-      ``fun`` implicitly broadcasts a value over that axis, the backward pass
-      will perform a ``psum`` of the corresponding gradient. Otherwise, the
-      gradient will be per-example over named axes. For example, if ``'batch'``
-      is a named batch axis, ``grad(f, reduce_axes=('batch',))`` will create a
-      function that computes the total gradient while ``grad(f)`` will create
-      one that computes the per-example gradient.
 
   Returns:
     A function with the same arguments as ``fun``, that evaluates the gradient
@@ -653,10 +645,12 @@ def grad(fun: Callable, argnums: int | Sequence[int] = 0,
   >>> print(grad_tanh(0.2))
   0.961043
   """
+  if reduce_axes:
+    raise NotImplementedError("reduce_axes argument to grad is deprecated")
+  del reduce_axes
   value_and_grad_f = value_and_grad(fun, argnums, has_aux=has_aux,
                                     holomorphic=holomorphic,
-                                    allow_int=allow_int,
-                                    reduce_axes=reduce_axes)
+                                    allow_int=allow_int)
 
   docstr = ("Gradient of {fun} with respect to positional argument(s) "
             "{argnums}. Takes the same arguments as {fun} but returns the "
@@ -698,14 +692,6 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
     allow_int: Optional, bool. Whether to allow differentiating with
       respect to integer valued inputs. The gradient of an integer input will
       have a trivial vector-space dtype (float0). Default False.
-    reduce_axes: Optional, tuple of axis names. If an axis is listed here, and
-      ``fun`` implicitly broadcasts a value over that axis, the backward pass
-      will perform a ``psum`` of the corresponding gradient. Otherwise, the
-      gradient will be per-example over named axes. For example, if ``'batch'``
-      is a named batch axis, ``value_and_grad(f, reduce_axes=('batch',))`` will
-      create a function that computes the total gradient while
-      ``value_and_grad(f)`` will create one that computes the per-example
-      gradient.
 
   Returns:
     A function with the same arguments as ``fun`` that evaluates both ``fun``
@@ -716,6 +702,9 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
     shapes and types as the corresponding arguments. If ``has_aux`` is True
     then a tuple of ((value, auxiliary_data), gradient) is returned.
   """
+  if reduce_axes:
+    raise NotImplementedError("reduce_axes argument to grad is deprecated")
+  del reduce_axes
 
   docstr = ("Value and gradient of {fun} with respect to positional "
             "argument(s) {argnums}. Takes the same arguments as {fun} but "
@@ -725,7 +714,6 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
 
   check_callable(fun)
   argnums = core.concrete_or_error(_ensure_index, argnums)
-  reduce_axes = _ensure_str_tuple(reduce_axes)  # type: ignore
 
   @wraps(fun, docstr=docstr, argnums=argnums)
   @api_boundary
@@ -742,10 +730,10 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
     for leaf in tree_leaves(dyn_args):
       _check_input_dtype_grad(holomorphic, allow_int, leaf)
     if not has_aux:
-      ans, vjp_py = _vjp(f_partial, *dyn_args, reduce_axes=reduce_axes)
+      ans, vjp_py = _vjp(f_partial, *dyn_args)
     else:
       ans, vjp_py, aux = _vjp(
-          f_partial, *dyn_args, has_aux=True, reduce_axes=reduce_axes)
+          f_partial, *dyn_args, has_aux=True)
     _check_scalar(ans)
     tree_map(partial(_check_output_dtype_grad, holomorphic), ans)
     g = vjp_py(lax_internal._one(ans))
@@ -2193,13 +2181,6 @@ def vjp(  # type: ignore
     has_aux: Optional, bool. Indicates whether ``fun`` returns a pair where the
      first element is considered the output of the mathematical function to be
      differentiated and the second element is auxiliary data. Default False.
-    reduce_axes: Optional, tuple of axis names. If an axis is listed here, and
-      ``fun`` implicitly broadcasts a value over that axis, the backward pass
-      will perform a ``psum`` of the corresponding gradient. Otherwise, the
-      VJP will be per-example over named axes. For example, if ``'batch'``
-      is a named batch axis, ``vjp(f, *args, reduce_axes=('batch',))`` will
-      create a VJP function that sums over the batch while ``vjp(f, *args)``
-      will create a per-example VJP.
 
   Returns:
     If ``has_aux`` is ``False``, returns a ``(primals_out, vjpfun)`` pair, where
@@ -2224,24 +2205,25 @@ def vjp(  # type: ignore
   >>> print(ybar)
   -0.2524413
   """
+  if reduce_axes:
+    raise NotImplementedError("reduce_axes argument to vjp is deprecated")
+  del reduce_axes
   check_callable(fun)
-  reduce_axes = _ensure_str_tuple(reduce_axes)  # type: ignore
   return _vjp(
-      lu.wrap_init(fun), *primals, has_aux=has_aux, reduce_axes=reduce_axes)
+      lu.wrap_init(fun), *primals, has_aux=has_aux)
 
-def _vjp(fun: lu.WrappedFun, *primals, has_aux=False, reduce_axes=()):
+def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
   """Variant of vjp() that takes an lu.WrappedFun."""
   primals_flat, in_tree = tree_flatten(primals)
   for arg in primals_flat: dispatch.check_arg(arg)
   if not has_aux:
     flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
-    out_primal, out_vjp = ad.vjp(
-        flat_fun, primals_flat, reduce_axes=reduce_axes)
+    out_primal, out_vjp = ad.vjp(flat_fun, primals_flat)
     out_tree = out_tree()
   else:
     flat_fun, out_aux_trees = flatten_fun_nokwargs2(fun, in_tree)
     out_primal, out_vjp, aux = ad.vjp(
-        flat_fun, primals_flat, has_aux=True, reduce_axes=reduce_axes)
+        flat_fun, primals_flat, has_aux=True)
     out_tree, aux_tree = out_aux_trees()
   out_primal_py = tree_unflatten(out_tree, out_primal)
   ct_dtypes = [core.primal_dtype_to_tangent_dtype(_dtype(x)) for x in out_primal]
@@ -2278,14 +2260,6 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
       is not required: only the ``shape`` and ``dtype`` attributes are accessed.
       See below for an example. (Note that the duck-typed objects cannot be
       namedtuples because those are treated as standard Python containers.)
-    reduce_axes: Optional, tuple of axis names. If an axis is listed here, and
-      ``fun`` implicitly broadcasts a value over that axis, the backward pass
-      will perform a ``psum`` of the corresponding cotangent. Otherwise, the
-      transposed function will be per-example over named axes. For example, if
-      ``'batch'`` is a named batch axis, ``linear_transpose(f, *args,
-      reduce_axes=('batch',))`` will create a transpose function that sums over
-      the batch while ``linear_transpose(f, args)`` will create a per-example
-      transpose.
 
   Returns:
     A callable that calculates the transpose of ``fun``. Valid input into this
@@ -2302,7 +2276,9 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
   >>> f_transpose(1.0)
   (Array(0.5, dtype=float32), Array(-0.5, dtype=float32))
   """
-  reduce_axes = _ensure_str_tuple(reduce_axes)
+  if reduce_axes:
+    raise NotImplementedError("reduce_axes argument to transpose is deprecated")
+  del reduce_axes
   primals_flat, in_tree = tree_flatten(primals)
   flat_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   in_avals = map(shaped_abstractify, primals_flat)
@@ -2331,7 +2307,7 @@ def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
       raise TypeError("cotangent type does not match function output, "
                       f"expected {out_avals} but got {out_cts}")
     dummies = [ad.UndefinedPrimal(a) for a in in_avals]
-    in_cts = ad.backward_pass(jaxpr, reduce_axes, True, const, dummies, out_cts)
+    in_cts = ad.backward_pass(jaxpr, True, const, dummies, out_cts)
     in_cts = map(ad.instantiate_zeros, in_cts)
     return tree_unflatten(in_tree, in_cts)
 

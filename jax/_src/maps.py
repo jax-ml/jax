@@ -662,7 +662,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
         fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
       jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(fun, mapped_in_avals)
   out_axes = out_axes_thunk()
-  _check_out_avals_vs_out_axes(out_avals, out_axes, global_axis_sizes)
+  # _check_out_avals_vs_out_axes(out_avals, out_axes, global_axis_sizes)
   # NOTE: We don't use avals and all params, so only pass in the relevant parts (too lazy...)
   _resource_typing_xmap([], dict(axis_resources=axis_resources,
                                  out_axes=out_axes,
@@ -875,11 +875,9 @@ core.axis_substitution_rules[xmap_p] = _xmap_axis_subst
 ad.JVPTrace.process_xmap = ad.JVPTrace.process_call  # type: ignore
 ad.call_param_updaters[xmap_p] = pxla.xla_call_jvp_update_params
 
-def _xmap_transpose(params, call_jaxpr, args, cts_in, cts_in_avals, reduce_axes):
+def _xmap_transpose(params, call_jaxpr, args, cts_in, cts_in_avals):
   all_args, in_tree_def = tree_flatten(((), args, cts_in))  # empty consts
-  fun = lu.hashable_partial(
-      lu.wrap_init(ad.backward_pass),
-      call_jaxpr, reduce_axes + tuple(params['global_axis_sizes'].keys()), False)
+  fun = lu.hashable_partial(lu.wrap_init(ad.backward_pass), call_jaxpr, False)
   fun, nz_arg_cts = ad.nonzero_outputs(fun)
   fun, out_tree = flatten_fun_nokwargs(fun, in_tree_def)
   # Preserve axis for primal arguments, skip tangents (represented as undefined primals).
@@ -1014,7 +1012,7 @@ def _dynamic_jaxpr_process_xmap(self, primitive, f, tracers, params):
   }
   out_avals = [_insert_aval_axes(a, a_out_axes, local_axis_sizes)
                for a, a_out_axes in zip(mapped_out_avals, out_axes)]
-  _check_out_avals_vs_out_axes(out_avals, out_axes, params['global_axis_sizes'])
+  # _check_out_avals_vs_out_axes(out_avals, out_axes, params['global_axis_sizes'])
   source_info = source_info_util.current()
   out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
   invars = map(self.getvar, tracers)
@@ -1341,7 +1339,7 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
   #       resources are already in scope! It's the outermost xmap that introduces
   #       them!
   vectorized_jaxpr, out_avals, consts, () = pe.trace_to_jaxpr_dynamic(f, local_avals)
-  _check_out_avals_vs_out_axes(out_avals, out_axes, global_axis_sizes)
+  # _check_out_avals_vs_out_axes(out_avals, out_axes, global_axis_sizes)
   const_nodes = [mlir.ir_constants(xla.canonicalize_dtype(x)) for x in consts]
 
   local_mesh_shape = mesh.local_mesh.shape

@@ -695,7 +695,7 @@ def _cond_dce_rule(used_outputs: list[bool], eqn: core.JaxprEqn,
   return [True, *used_inputs], new_eqn
 
 
-def _transpose_cond_jaxpr(jaxpr, num_res, reduce_axes):
+def _transpose_cond_jaxpr(jaxpr, num_res):
   res_avals, primal_avals = split_list(jaxpr.in_avals, [num_res])
   primal_avals = map(raise_to_shaped, primal_avals)
 
@@ -704,13 +704,13 @@ def _transpose_cond_jaxpr(jaxpr, num_res, reduce_axes):
     res, cts_out = split_list(args, [num_res])
     primals = res + [ad.UndefinedPrimal(aval) for aval in primal_avals]
     cts_in = ad.backward_pass(
-        jaxpr.jaxpr, reduce_axes, False, jaxpr.consts, primals, cts_out)
+        jaxpr.jaxpr, False, jaxpr.consts, primals, cts_out)
     _, cts_in = split_list(cts_in, [num_res])
     return map(ad.instantiate_zeros, cts_in)
 
   return _make_closed_jaxpr(transposed, res_avals + jaxpr.out_avals)
 
-def _cond_transpose(reduce_axes, cts, *args, branches, linear):
+def _cond_transpose(cts, *args, branches, linear):
   del linear  # could use for error checking, but see #14026
   index, *ops = args
   linear = [type(x) is ad.UndefinedPrimal for x in ops]
@@ -721,7 +721,7 @@ def _cond_transpose(reduce_axes, cts, *args, branches, linear):
     raise NotImplementedError("State effect not supported in cond transpose.")
 
   branches_trans = tuple(
-      _transpose_cond_jaxpr(jaxpr, num_res, reduce_axes) for jaxpr in branches)
+      _transpose_cond_jaxpr(jaxpr, num_res) for jaxpr in branches)
   lin_in_avals = [raise_to_shaped(a, weak_type=False)
                   for a, l in zip(in_avals, linear) if l]
   assert all(core.typematch(out_aval, lin_in_aval)
