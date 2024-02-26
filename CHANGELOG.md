@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.25
+## jax 0.4.26
+
+## jaxlib 0.4.26
+
+## jax 0.4.25 (Feb 26, 2024)
 
 * New Features
   * Added [CUDA Array
@@ -46,7 +50,7 @@ Remember to align the itemized text with the first line of an item within a list
     via `jax.config`.
   * The minimum jaxlib version is now 0.4.20.
 
-## jaxlib 0.4.25
+## jaxlib 0.4.25 (Feb 26, 2024)
 
 ## jax 0.4.24 (Feb 6, 2024)
 
