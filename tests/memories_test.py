@@ -677,10 +677,6 @@ class MemoriesComputationTest(jtu.BufferDonationTestCase):
     self.assertEqual(cache_info2.misses, cache_info1.misses)
 
   def test_device_put_host_to_hbm(self):
-    # TODO(jieying): remove after 12/26/2023.
-    if not jtu.pjrt_c_api_version_at_least(0, 32):
-      raise unittest.SkipTest("CopyToMemorySpace is not supported on PJRT C API version < 0.32.")
-
     mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
     s_host = NamedSharding(mesh, P("y"), memory_kind="unpinned_host")
     np_inp = jnp.arange(16).reshape(8, 2)
@@ -698,10 +694,6 @@ class MemoriesComputationTest(jtu.BufferDonationTestCase):
         out_on_hbm, np_inp, s_hbm, "device")
 
   def test_device_put_hbm_to_host(self):
-    # TODO(jieying): remove after 12/26/2023.
-    if not jtu.pjrt_c_api_version_at_least(0, 32):
-      raise unittest.SkipTest("CopyToMemorySpace is not supported on PJRT C API version < 0.32.")
-
     mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
     s_host = NamedSharding(mesh, P("y"), memory_kind="unpinned_host")
     inp = jnp.arange(16).reshape(8, 2)
@@ -718,9 +710,6 @@ class MemoriesComputationTest(jtu.BufferDonationTestCase):
   def test_device_put_different_device_and_memory_host_to_hbm(self):
     if jax.device_count() < 3:
       raise unittest.SkipTest("Test requires >=3 devices")
-    # TODO(jieying): remove after 12/26/2023.
-    if not jtu.pjrt_c_api_version_at_least(0, 32):
-      raise unittest.SkipTest("CopyToMemorySpace is not supported on PJRT C API version < 0.32.")
 
     out_host0 = jax.device_put(
         jnp.arange(8),
@@ -738,9 +727,6 @@ class MemoriesComputationTest(jtu.BufferDonationTestCase):
   def test_device_put_different_device_and_memory_hbm_to_host(self):
     if jax.device_count() < 3:
       raise unittest.SkipTest("Test requires >=3 devices")
-    # TODO(jieying): remove after 12/26/2023.
-    if not jtu.pjrt_c_api_version_at_least(0, 32):
-      raise unittest.SkipTest("CopyToMemorySpace is not supported on PJRT C API version < 0.32.")
 
     out_hbm0 = jnp.arange(8)
 
@@ -758,9 +744,6 @@ class MemoriesComputationTest(jtu.BufferDonationTestCase):
   def test_device_put_on_different_device_with_the_same_memory_kind(self):
     if len(jax.devices()) < 2:
       raise unittest.SkipTest("Test requires >=2 devices.")
-    # TODO(jieying): remove after 12/26/2023.
-    if not jtu.pjrt_c_api_version_at_least(0, 32):
-      raise unittest.SkipTest("CopyToMemorySpace is not supported on PJRT C API version < 0.32.")
 
     np_inp = np.arange(16).reshape(8, 2)
 
@@ -779,10 +762,6 @@ class MemoriesComputationTest(jtu.BufferDonationTestCase):
         out_host_dev_1, np_inp, s_host_dev_1, "unpinned_host")
 
   def test_device_put_resharding(self):
-    # TODO(jieying): remove after 12/26/2023.
-    if not jtu.pjrt_c_api_version_at_least(0, 32):
-      raise unittest.SkipTest("CopyToMemorySpace is not supported on PJRT C API version < 0.32.")
-
     mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
     s_host = NamedSharding(mesh, P("x", "y"), memory_kind="unpinned_host")
     s_hbm = s_host.with_memory_kind("device")
@@ -807,10 +786,6 @@ class MemoriesComputationTest(jtu.BufferDonationTestCase):
         out_sharded_hbm, np_inp, s_hbm, "device")
 
   def test_jit_host_inputs_via_device_put_outside(self):
-    # TODO(jieying): remove after 12/26/2023.
-    if not jtu.pjrt_c_api_version_at_least(0, 32):
-      raise unittest.SkipTest("CopyToMemorySpace is not supported on PJRT C API version < 0.32.")
-
     mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
     s_host = NamedSharding(mesh, P("x", "y"), memory_kind="unpinned_host")
     s_hbm = s_host.with_memory_kind("device")

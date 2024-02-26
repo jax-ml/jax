@@ -18,7 +18,6 @@ import logging
 import math
 import os
 import tempfile
-import unittest
 
 from absl.testing import absltest
 import jax
@@ -37,11 +36,6 @@ config.parse_flags_with_absl()
 class PgleTest(jtu.JaxTestCase):
 
   def testPassingFDOProfile(self):
-    # TODO(jieying): remove after 01/10/2023.
-    if not jtu.pjrt_c_api_version_at_least(0, 34):
-      raise unittest.SkipTest(
-          'Profiler is not supported on PJRT C API version < 0.34.'
-      )
     mesh = jtu.create_global_mesh((2,), ('x',))
     @partial(
         jax.jit,
