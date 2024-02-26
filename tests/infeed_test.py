@@ -72,7 +72,7 @@ class InfeedTest(jtu.JaxTestCase):
 
     device = jax.local_devices()[0]
     # We must transfer the flattened data, as a tuple!!!
-    flat_to_infeed, _ = jax.tree_util.tree_flatten(to_infeed)
+    flat_to_infeed, _ = jax.tree.flatten(to_infeed)
     device.transfer_to_infeed(tuple(flat_to_infeed))
     self.assertAllClose(f(x), to_infeed)
 

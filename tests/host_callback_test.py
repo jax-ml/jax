@@ -34,7 +34,6 @@ from jax import config
 from jax import dtypes
 from jax import lax
 from jax import numpy as jnp
-from jax import tree_util
 from jax.experimental import host_callback as hcb
 from jax.experimental import pjit
 from jax.sharding import PartitionSpec as P
@@ -887,7 +886,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
     # making the Jaxpr does not print anything
     hcb.barrier_wait()
 
-    treedef = tree_util.tree_structure(arg)
+    treedef = jax.tree.structure(arg)
     assertMultiLineStrippedEqual(
         self, f"""
       {{ lambda ; a:f32[]. let
@@ -1027,7 +1026,7 @@ class HostCallbackTapTest(jtu.JaxTestCase):
           return res
         ct_dtype = core.primal_dtype_to_tangent_dtype(res_dtype)
         return np.ones(np.shape(res), dtype=ct_dtype)
-      cts = tree_util.tree_map(make_ct, res_f_of_args)
+      cts = jax.tree.map(make_ct, res_f_of_args)
       def f_vjp(args, cts):
         res, pullback = jax.vjp(f, *args)
         return pullback(cts)

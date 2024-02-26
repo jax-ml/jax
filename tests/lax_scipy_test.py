@@ -29,7 +29,6 @@ import jax.dtypes
 from jax import numpy as jnp
 from jax import lax
 from jax import scipy as jsp
-from jax.tree_util import tree_map
 from jax._src.scipy import special as lsp_special_internal
 from jax._src import test_util as jtu
 from jax.scipy import special as lsp_special
@@ -125,7 +124,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
         res = osp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims,
                                     return_sign=return_sign, b=scale_array)
         if dtype == np.int32:
-          res = tree_map(lambda x: x.astype('float32'), res)
+          res = jax.tree.map(lambda x: x.astype('float32'), res)
         return res
 
       def lax_fun(array_to_reduce, scale_array):
@@ -138,7 +137,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
         res = osp_special.logsumexp(array_to_reduce, axis, keepdims=keepdims,
                                     return_sign=return_sign)
         if dtype == np.int32:
-          res = tree_map(lambda x: x.astype('float32'), res)
+          res = jax.tree.map(lambda x: x.astype('float32'), res)
         return res
 
       def lax_fun(array_to_reduce):

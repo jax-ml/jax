@@ -21,7 +21,6 @@ import jax
 from jax._src import test_util as jtu
 import jax.numpy as jnp
 from jax.experimental.ode import odeint
-from jax.tree_util import tree_map
 
 import scipy.integrate as osp_integrate
 
@@ -63,7 +62,7 @@ class ODETest(jtu.JaxTestCase):
   def test_pytree_state(self):
     """Test calling odeint with y(t) values that are pytrees."""
     def dynamics(y, _t):
-      return tree_map(jnp.negative, y)
+      return jax.tree.map(jnp.negative, y)
 
     y0 = (np.array(-0.1), np.array([[[0.1]]]))
     ts = np.linspace(0., 1., 11)

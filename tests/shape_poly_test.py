@@ -46,7 +46,6 @@ from jax import random
 from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
-from jax._src import tree_util
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lib import xla_client
@@ -1270,7 +1269,7 @@ class PolyHarness(Harness):
 
     f_jax = self.dyn_fun
     args = self.dyn_args_maker(tst.rng())
-    args = tree_util.tree_map(jnp.array, args)
+    args = jax.tree.map(jnp.array, args)
     args_specs = export.symbolic_args_specs(args, self.polymorphic_shapes,
                                    symbolic_constraints=self.symbolic_constraints)
 

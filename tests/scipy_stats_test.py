@@ -23,7 +23,7 @@ import scipy.stats as osp_stats
 import scipy.version
 
 import jax
-from jax._src import dtypes, test_util as jtu, tree_util
+from jax._src import dtypes, test_util as jtu
 from jax.scipy import stats as lsp_stats
 from jax.scipy.special import expit
 
@@ -1517,9 +1517,9 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     dataset = rng((3, 15), dtype)
     x = rng((3, 12), dtype)
     kde = lsp_stats.gaussian_kde(dataset)
-    leaves, treedef = tree_util.tree_flatten(kde)
-    kde2 = tree_util.tree_unflatten(treedef, leaves)
-    tree_util.tree_map(lambda a, b: self.assertAllClose(a, b), kde, kde2)
+    leaves, treedef = jax.tree.flatten(kde)
+    kde2 = jax.tree.unflatten(treedef, leaves)
+    jax.tree.map(lambda a, b: self.assertAllClose(a, b), kde, kde2)
     self.assertAllClose(evaluate_kde(kde, x), kde.evaluate(x))
 
   @jtu.sample_product(

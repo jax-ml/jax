@@ -24,7 +24,6 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import random
-from jax import tree_util
 from jax._src import test_util as jtu
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_kernel as splash
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask as mask_lib
@@ -479,7 +478,7 @@ class SplashAttentionTest(AttentionTest):
                                   custom_type="vanilla",
                                   attn_logits_soft_cap=attn_logits_soft_cap)
     o_ref, attn_vjp_ref = jax.vjp(attn_ref, q, k, v, segment_ids)
-    q32, k32, v32 = tree_util.tree_map(lambda x: x.astype(jnp.float32),
+    q32, k32, v32 = jax.tree.map(lambda x: x.astype(jnp.float32),
                                        (q, k, v))
     o_custom = attn_custom(q32, k32, v32, segment_ids)
     _, attn_vjp = jax.vjp(attn_custom, q32, k32, v32, segment_ids)
@@ -582,7 +581,7 @@ class SplashAttentionTest(AttentionTest):
           attn_logits_soft_cap=attn_logits_soft_cap,
       )
     o, attn_vjp = jax.vjp(attn, q, k, v, segment_ids)
-    q32, k32, v32 = tree_util.tree_map(
+    q32, k32, v32 = jax.tree.map(
         lambda x: x.astype(jnp.float32), (q, k, v)
     )
     o_ref, (logsumexp,) = attn_ref(

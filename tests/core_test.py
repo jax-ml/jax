@@ -28,7 +28,6 @@ from jax import numpy as jnp
 from jax import jvp, linearize, vjp, jit, make_jaxpr
 from jax.api_util import flatten_fun_nokwargs
 from jax import config
-from jax.tree_util import tree_flatten, tree_unflatten, tree_map, tree_reduce
 
 from jax._src import core
 from jax._src import linear_util as lu
@@ -49,17 +48,17 @@ def call(f, *args):
 
 @util.curry
 def core_call(f, *args):
-  args, in_tree = tree_flatten(args)
+  args, in_tree = jax.tree.flatten(args)
   f, out_tree = flatten_fun_nokwargs(lu.wrap_init(f), in_tree)
   out = core.call_p.bind(f, *args)
-  return tree_unflatten(out_tree(), out)
+  return jax.tree.unflatten(out_tree(), out)
 
 @util.curry
 def core_closed_call(f, *args):
-  args, in_tree = tree_flatten(args)
+  args, in_tree = jax.tree.flatten(args)
   f, out_tree = flatten_fun_nokwargs(lu.wrap_init(f), in_tree)
   out = core.closed_call_p.bind(f, *args)
-  return tree_unflatten(out_tree(), out)
+  return jax.tree.unflatten(out_tree(), out)
 
 def simple_fun(x, y):
   return jnp.sin(x * y)
@@ -175,24 +174,24 @@ class CoreTest(jtu.JaxTestCase):
     zs = ({'a': 11}, [22, 33])
 
     f = lambda x, y: x + y
-    assert tree_map(f, xs, ys) == zs
+    assert jax.tree.map(f, xs, ys) == zs
     try:
-      tree_map(f, xs, ys_bad)
+      jax.tree.map(f, xs, ys_bad)
       assert False
     except (TypeError, ValueError):
       pass
 
   def test_tree_flatten(self):
-    flat, _ = tree_flatten(({'a': 1}, [2, 3], 4))
+    flat, _ = jax.tree.flatten(({'a': 1}, [2, 3], 4))
     assert flat == [1, 2, 3, 4]
 
   def test_tree_unflatten(self):
     tree = [(1, 2), {"roy": (3, [4, 5, ()])}]
-    flat, treedef = tree_flatten(tree)
+    flat, treedef = jax.tree.flatten(tree)
     assert flat == [1, 2, 3, 4, 5]
-    tree2 = tree_unflatten(treedef, flat)
-    nodes_equal = tree_map(operator.eq, tree, tree2)
-    assert tree_reduce(operator.and_, nodes_equal)
+    tree2 = jax.tree.unflatten(treedef, flat)
+    nodes_equal = jax.tree.map(operator.eq, tree, tree2)
+    assert jax.tree.reduce(operator.and_, nodes_equal)
 
   @jtu.sample_product(
       dtype=[*jtu.dtypes.all, object, [('i', 'i4'), ('f', 'f4')]]

@@ -36,7 +36,6 @@ from jax.experimental.sparse import _lowerings
 from jax._src import xla_bridge
 from jax._src.lib import gpu_sparse
 from jax import jit
-from jax import tree_util
 from jax import vmap
 from jax._src import test_util as jtu
 from jax.interpreters import mlir
@@ -735,9 +734,9 @@ class SparseObjectTest(sptu.SparseTestCase):
     sparse_format = cls.__name__.lower()
     M = sparse.empty((2, 4), sparse_format=sparse_format)
     self.assertIsInstance(M, cls)
-    buffers, tree = tree_util.tree_flatten(M)
+    buffers, tree = jax.tree.flatten(M)
     self.assertTrue(all(isinstance(buffer, jax.Array) for buffer in buffers))
-    M_out = tree_util.tree_unflatten(tree, buffers)
+    M_out = jax.tree.unflatten(tree, buffers)
     self.assertEqual(M.dtype, M_out.dtype)
     self.assertEqual(M.shape, M_out.shape)
     self.assertEqual(M.nse, M_out.nse)
@@ -877,7 +876,7 @@ class SparseObjectTest(sptu.SparseTestCase):
   def test_todense_ad(self, Obj, shape=(3,), dtype=np.float32):
     M_dense = jnp.array([1., 2., 3.])
     M = M_dense if Obj is jnp.array else Obj.fromdense(M_dense)
-    bufs, tree = tree_util.tree_flatten(M)
+    bufs, tree = jax.tree.flatten(M)
     jac = jnp.eye(M.shape[0], dtype=M.dtype)
     jac1 = jax.jacfwd(lambda *bufs: sparse.todense_p.bind(*bufs, tree=tree))(*bufs)
     jac2 = jax.jacrev(lambda *bufs: sparse.todense_p.bind(*bufs, tree=tree))(*bufs)

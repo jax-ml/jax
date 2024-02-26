@@ -22,7 +22,6 @@ import numpy as np
 import jax
 from jax import lax
 from jax._src import test_util as jtu
-from jax import tree_util
 import jax.numpy as jnp  # scan tests use numpy
 import jax.scipy as jsp
 
@@ -227,7 +226,7 @@ class CustomRootTest(jtu.JaxTestCase):
     expected_fwd_val = expected_fwd(a, b)
     self.assertAllClose(fwd_val, expected_fwd_val, rtol={np.float32: 5E-6, np.float64: 5E-12})
 
-    jtu.check_close(fwd_aux, tree_util.tree_map(jnp.zeros_like, fwd_aux))
+    jtu.check_close(fwd_aux, jax.tree.map(jnp.zeros_like, fwd_aux))
 
   def test_custom_root_errors(self):
     with self.assertRaisesRegex(TypeError, re.escape("f() output pytree")):

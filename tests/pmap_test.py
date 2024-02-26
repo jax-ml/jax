@@ -36,7 +36,6 @@ from jax import (pmap, jit, vmap, jvp, grad, make_jaxpr,
                  linearize, device_put)
 from jax import lax
 from jax import random
-from jax import tree_util
 from jax.ad_checkpoint import checkpoint as new_checkpoint
 import jax.numpy as jnp
 from jax._src import api as src_api
@@ -205,7 +204,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     # It's a pair of: (positional args, as a tuple of their structures, kwargs).
     for obj in [lowered, compiled]:
       self.assertFalse(obj._no_kwargs)
-      self.assertEqual(obj.in_tree, jax.tree_util.tree_flatten(((0,), {}))[1])
+      self.assertEqual(obj.in_tree, jax.tree.flatten(((0,), {}))[1])
       self.assertEqual(obj.in_avals, ((core.ShapedArray(x.shape, x.dtype),), {}))
 
   def testLowerCompileInTreeMismatch(self):
@@ -524,7 +523,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       n = lax.psum(1, axis_name)
       return lax.ppermute(x, axis_name, [(i, (i + 1) % n) for i in range(n)])
 
-    tree_f = lambda f: partial(tree_util.tree_map, f)
+    tree_f = lambda f: partial(jax.tree.map, f)
     jax_f = lambda p: self.pmap(lambda x: p(x, 'i'), 'i')
     np_f = lambda p: tree_f(lambda x: np.broadcast_to(p(x, 0), x.shape))
     np_transpose = tree_f(np.transpose)
@@ -535,7 +534,7 @@ class PythonPmapTest(jtu.JaxTestCase):
          'b': np.arange(2 * n * n, 3 * n * n).reshape([n, n]),
          'c': np.arange(4 * n * n, 5 * n * n).reshape([n, n])}
 
-    assert_allclose = partial(tree_util.tree_map,
+    assert_allclose = partial(jax.tree.map,
                               partial(self.assertAllClose, check_dtypes=False))
     assert_allclose(jax_f(lax.pmax)(x), np_f(np.max)(x))
     assert_allclose(jax_f(lax.pmin)(x), np_f(np.min)(x))
@@ -550,10 +549,10 @@ class PythonPmapTest(jtu.JaxTestCase):
          'b': np.arange(2 * n * n, 3 * n * n, dtype=np.int32).reshape([n, n]),
          'c': np.arange(4 * n * n, 5 * n * n, dtype=np.float32).reshape([n, n]),
          'd': np.arange(6 * n * n, 7 * n * n, dtype=np.int32).reshape([n, n])}
-    tree_f = lambda f: partial(tree_util.tree_map, f)
+    tree_f = lambda f: partial(jax.tree.map, f)
     jax_f = lambda p: self.pmap(lambda x: p(x, 'i'), 'i')
     np_f = lambda p: tree_f(lambda x: np.broadcast_to(p(x, 0), x.shape))
-    assert_allclose = partial(tree_util.tree_map,
+    assert_allclose = partial(jax.tree.map,
                               partial(self.assertAllClose, check_dtypes=False))
     assert_allclose(jax_f(lax.pmax)(x), np_f(np.max)(x))
     assert_allclose(jax_f(lax.pmin)(x), np_f(np.min)(x))
@@ -1488,7 +1487,7 @@ class PythonPmapTest(jtu.JaxTestCase):
 
     @vmap
     def s(keys):
-      keys = tree_util.tree_map(
+      keys = jax.tree.map(
           lambda x: jnp.broadcast_to(x, (N_DEVICES,) + x.shape),
           keys)
       return g(keys)
@@ -2677,7 +2676,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
       return {'a': x}
     device_count = jax.device_count()
     x = jnp.arange(device_count)
-    tree_util.tree_map(self.assertAllClose, f(x), {'a': x})
+    jax.tree.map(self.assertAllClose, f(x), {'a': x})
 
   @jtu.sample_product(
     in_axes=all_bdims((3, 4), (3, 1), (1, 4), pmap=True),

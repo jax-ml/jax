@@ -25,7 +25,6 @@ import jax
 from jax import lax
 from jax.ad_checkpoint import checkpoint
 from jax._src import test_util as jtu
-from jax import tree_util
 import jax.numpy as jnp  # scan tests use numpy
 import jax.scipy as jsp
 
@@ -160,7 +159,7 @@ class CustomLinearSolveTest(jtu.JaxTestCase):
     # vmap test
     c = rng.randn(3, 2)
     expected = jnp.linalg.solve(a, c)
-    expected_aux = tree_util.tree_map(partial(np.repeat, repeats=2), array_aux)
+    expected_aux = jax.tree.map(partial(np.repeat, repeats=2), array_aux)
     actual_vmap, vmap_aux = jax.vmap(linear_solve_aux, (None, 1), -1)(a, c)
 
     self.assertAllClose(expected, actual_vmap)
@@ -473,7 +472,7 @@ class CustomLinearSolveTest(jtu.JaxTestCase):
       return mv(b), aux
 
     def solve_aux(x):
-      matvec = lambda y: tree_util.tree_map(partial(jnp.dot, A), y)
+      matvec = lambda y: jax.tree.map(partial(jnp.dot, A), y)
       return lax.custom_linear_solve(matvec, (x, x), solve, solve, symmetric=True, has_aux=True)
 
     rng = self.rng()
