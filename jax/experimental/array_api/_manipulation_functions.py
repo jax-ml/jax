@@ -58,7 +58,7 @@ def reshape(x: Array, /, shape: tuple[int, ...], *, copy: bool | None = None) ->
   return jax.numpy.reshape(x, shape)
 
 
-def roll(x: Array, /, shift: int | tuple[int], *, axis: int | tuple[int, ...] | None = None) -> Array:
+def roll(x: Array, /, shift: int | tuple[int, ...], *, axis: int | tuple[int, ...] | None = None) -> Array:
   """Rolls array elements along a specified axis."""
   return jax.numpy.roll(x, shift=shift, axis=axis)
 

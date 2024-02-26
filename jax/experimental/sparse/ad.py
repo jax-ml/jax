@@ -31,7 +31,7 @@ from jax.experimental.sparse._base import JAXSparse
 is_sparse = lambda x: isinstance(x, JAXSparse)
 
 
-def flatten_fun_for_sparse_ad(fun, argnums: int | tuple[int], args: tuple[Any]):
+def flatten_fun_for_sparse_ad(fun, argnums: int | tuple[int, ...], args: tuple[Any, ...]):
   argnums_tup = _ensure_index_tuple(argnums)
   assert all(0 <= argnum < len(args) for argnum in argnums_tup)
 

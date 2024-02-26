@@ -682,7 +682,7 @@ def _dot_product_attention(query: Array,
                             scale: float,
                             seed: int,
                             dropout_rate: float,
-                            variadic_args: tuple[bool],
+                            variadic_args: tuple[bool, ...],
                             is_flash_attention: bool,
                             is_causal_mask: bool):
   output = _dot_product_attention_fwd(

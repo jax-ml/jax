@@ -740,7 +740,7 @@ def _maybe_cast_to_index(cast_to_index, x):
     return _make_index(x)
   return _ensure_mlir_value(x, aval=jax_core.ShapedArray((), jnp.int32))
 
-def _index_to_start_size(idx: tuple[indexing.Slice | int | ir.Value],
+def _index_to_start_size(idx: tuple[indexing.Slice | int | ir.Value, ...],
                          cast_to_index: bool) -> tuple[ir.Value, int, bool]:
   assert not isinstance(idx, slice)
   if isinstance(idx, indexing.Slice):

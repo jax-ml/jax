@@ -1761,7 +1761,7 @@ ad.primitive_jvps[pjit_p] = _pjit_jvp
 
 @weakref_lru_cache
 def _known_jaxpr_fwd(known_jaxpr: core.ClosedJaxpr,
-                     in_fwd: tuple[int | None]) -> core.ClosedJaxpr:
+                     in_fwd: tuple[int | None, ...]) -> core.ClosedJaxpr:
   updated_jaxpr = known_jaxpr.jaxpr.replace(
       outvars=[x for x, i in zip(known_jaxpr.jaxpr.outvars, in_fwd)
                if i is None])
@@ -1957,7 +1957,7 @@ ad.reducing_transposes[pjit_p] = _pjit_transpose
 
 @weakref_lru_cache
 def _dce_jaxpr_pjit(
-    jaxpr: core.ClosedJaxpr, used_outputs: tuple[bool]
+    jaxpr: core.ClosedJaxpr, used_outputs: tuple[bool, ...]
 ) -> tuple[core.ClosedJaxpr, list[bool]]:
   new_jaxpr, used_inputs = pe.dce_jaxpr(jaxpr.jaxpr, used_outputs)
   return core.ClosedJaxpr(new_jaxpr, jaxpr.consts), used_inputs
