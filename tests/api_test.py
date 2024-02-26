@@ -1042,7 +1042,7 @@ class JitTest(jtu.BufferDonationTestCase):
       self.assertEqual(
           obj.in_avals,
           ((core.ShapedArray([], expected_dtype, weak_type=True),), {}))
-      self.assertEqual(obj.in_tree, jax.tree_util.tree_flatten(((0,), {}))[1])
+      self.assertEqual(obj.in_tree, jax.tree.flatten(((0,), {}))[1])
 
   def test_jit_lower_duck_typing(self):
     f_jit = jit(lambda x: 2 * x)
@@ -2490,7 +2490,7 @@ class APITest(jtu.JaxTestCase):
     x = (jnp.ones(2), jnp.ones(2))
     y = 3.
     out_shape = api.eval_shape(fun, x, y)
-    out_shape = tree_util.tree_map(np.shape, out_shape)
+    out_shape = jax.tree.map(np.shape, out_shape)
 
     self.assertEqual(out_shape, {'hi': (2,)})
 
@@ -3004,7 +3004,7 @@ class APITest(jtu.JaxTestCase):
         ValueError,
         "vmap in_axes specification must be a tree prefix of the corresponding "
         r"value, got specification \(\[0\],\) for value tree "
-        + re.escape(f"{tree_util.tree_structure((value_tree,))}."),
+        + re.escape(f"{jax.tree.structure((value_tree,))}."),
         lambda: api.vmap(lambda x: x, in_axes=([0],))(value_tree)
     )
 
@@ -7013,8 +7013,8 @@ class CustomJVPTest(jtu.JaxTestCase):
             "must produce primal and tangent outputs "
             "with equal container (pytree) structures, but got "
             "{} and {} respectively.".format(
-                tree_util.tree_structure((1,)),
-                tree_util.tree_structure([1, 2]))
+                jax.tree.structure((1,)),
+                jax.tree.structure([1, 2]))
         ),
         lambda: api.jvp(f, (2.,), (1.,)))
 
@@ -7729,9 +7729,9 @@ class CustomJVPTest(jtu.JaxTestCase):
 
     def _vmap(fun):
       def _fun(*args):
-        args = tree_util.tree_map(_pack, args)
+        args = jax.tree.map(_pack, args)
         out = jax.vmap(fun)(*args)
-        out = tree_util.tree_map(_unpack, out)
+        out = jax.tree.map(_unpack, out)
         return out
       return _fun
 
@@ -8242,8 +8242,8 @@ class CustomVJPTest(jtu.JaxTestCase):
             "and in particular must produce a tuple of length equal to the "
             "number of arguments to the primal function, but got VJP output "
             "structure {} for primal input structure {}.".format(
-                tree_util.tree_structure((1, 1)),
-                tree_util.tree_structure((1,)))
+                jax.tree.structure((1, 1)),
+                jax.tree.structure((1,)))
         ),
         lambda: api.grad(f)(2.))
 
@@ -9017,9 +9017,9 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     def _vmap(fun):
       def _fun(*args):
-        args = tree_util.tree_map(_pack, args)
+        args = jax.tree.map(_pack, args)
         out = jax.vmap(fun)(*args)
-        out = tree_util.tree_map(_unpack, out)
+        out = jax.tree.map(_unpack, out)
         return out
       return _fun
 
@@ -9281,7 +9281,7 @@ def custom_transpose(example_out):
     return _custom_transpose(out_type, example_out)
   return partial(
       _custom_transpose,
-      tree_util.tree_map(
+      jax.tree.map(
           lambda x: core.get_aval(x).at_least_vspace(), example_out))
 
 
@@ -10139,13 +10139,13 @@ class CustomVmapTest(jtu.JaxTestCase):
             f_jvp, in_axes=(None, 0), out_axes=(None, 0))(x, txs))
 
   def test_tree(self):
-    tree_sin = partial(tree_util.tree_map, jnp.sin)
-    tree_cos = partial(tree_util.tree_map, jnp.cos)
+    tree_sin = partial(jax.tree.map, jnp.sin)
+    tree_cos = partial(jax.tree.map, jnp.cos)
 
     x, xs = jnp.array(1.), jnp.arange(3)
     x  = (x,  [x  + 1, x  + 2], [x  + 3], x  + 4)
     xs = (xs, [xs + 1, xs + 2], [xs + 3], xs + 4)
-    in_batched_ref = tree_util.tree_map(lambda _: True, x)
+    in_batched_ref = jax.tree.map(lambda _: True, x)
 
     @jax.custom_batching.custom_vmap
     def f(xs): return tree_sin(xs)
@@ -10153,7 +10153,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     @f.def_vmap
     def rule(axis_size, in_batched, xs):
       self.assertEqual(in_batched, [in_batched_ref])
-      sz, = {z.shape[0] for z in tree_util.tree_leaves(xs)}
+      sz, = {z.shape[0] for z in jax.tree.leaves(xs)}
       self.assertEqual(axis_size, sz)
       return tree_cos(xs), in_batched[0]
 
@@ -10163,13 +10163,13 @@ class CustomVmapTest(jtu.JaxTestCase):
     self.assertAllClose(ys, tree_cos(xs))
 
   def test_tree_with_nones(self):
-    tree_sin = partial(tree_util.tree_map, jnp.sin)
-    tree_cos = partial(tree_util.tree_map, jnp.cos)
+    tree_sin = partial(jax.tree.map, jnp.sin)
+    tree_cos = partial(jax.tree.map, jnp.cos)
 
     x, xs = jnp.array(1.), jnp.arange(3)
     x  = (x,  [x  + 1, None], [x  + 3], None)
     xs = (xs, [xs + 1, None], [xs + 3], None)
-    in_batched_ref = tree_util.tree_map(lambda _: True, x)
+    in_batched_ref = jax.tree.map(lambda _: True, x)
 
     @jax.custom_batching.custom_vmap
     def f(xs): return tree_sin(xs)
@@ -10177,7 +10177,7 @@ class CustomVmapTest(jtu.JaxTestCase):
     @f.def_vmap
     def rule(axis_size, in_batched, xs):
       self.assertEqual(in_batched, [in_batched_ref])
-      sz, = {z.shape[0] for z in tree_util.tree_leaves(xs)}
+      sz, = {z.shape[0] for z in jax.tree.leaves(xs)}
       self.assertEqual(axis_size, sz)
       return tree_cos(xs), in_batched[0]
 

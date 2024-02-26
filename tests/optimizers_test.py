@@ -19,10 +19,10 @@ import functools
 from absl.testing import absltest
 import numpy as np
 
+import jax
 import jax.numpy as jnp
 import jax._src.test_util as jtu
 from jax import jit, grad, jacfwd, jacrev
-from jax import tree_util
 from jax import lax
 from jax.example_libraries import optimizers
 
@@ -41,8 +41,8 @@ class OptimizerTests(jtu.JaxTestCase):
     opt_state = init_fun(x0)
     self.assertAllClose(x0, get_params(opt_state))
     opt_state2 = update_fun(0, grad(loss)(x0), opt_state)  # doesn't crash
-    self.assertEqual(tree_util.tree_structure(opt_state),
-                     tree_util.tree_structure(opt_state2))
+    self.assertEqual(jax.tree.structure(opt_state),
+                     jax.tree.structure(opt_state2))
 
   @jtu.skip_on_devices('gpu')
   def _CheckRun(self, optimizer, loss, x0, num_steps, *args, **kwargs):

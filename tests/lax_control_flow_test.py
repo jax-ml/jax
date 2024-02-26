@@ -289,8 +289,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
 
   def testWhileTypeErrors(self):
     """Test typing error messages for while."""
-    tuple_treedef = tree_util.tree_structure((1., 1.))
-    leaf_treedef = tree_util.tree_structure(0.)
+    tuple_treedef = jax.tree.structure((1., 1.))
+    leaf_treedef = jax.tree.structure(0.)
     with self.assertRaisesRegex(TypeError,
         re.escape(f"cond_fun must return a boolean scalar, but got pytree {tuple_treedef}.")):
       lax.while_loop(lambda c: (1., 1.), lambda c: c, 0.)
@@ -970,7 +970,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       lax.cond((1., 1.), lambda top: 2., lambda fop: 3., 1.)
     with self.assertRaisesRegex(TypeError,
         re.escape("true_fun and false_fun output must have same type structure, "
-                  f"got {tree_util.tree_structure(2.)} and {tree_util.tree_structure((3., 3.))}.")):
+                  f"got {jax.tree.structure(2.)} and {jax.tree.structure((3., 3.))}.")):
       lax.cond(True, lambda top: 2., lambda fop: (3., 3.), 1.)
     with self.assertRaisesRegex(
         TypeError,
@@ -998,7 +998,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       lax.switch(0, [], 1.)
     with self.assertRaisesRegex(TypeError,
         re.escape("branch 0 and 1 outputs must have same type structure, "
-                  f"got {tree_util.tree_structure(2.)} and {tree_util.tree_structure((3., 3.))}.")):
+                  f"got {jax.tree.structure(2.)} and {jax.tree.structure((3., 3.))}.")):
       lax.switch(1, [lambda _: 2., lambda _: (3., 3.)], 1.)
     with self.assertRaisesRegex(
         TypeError,

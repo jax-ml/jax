@@ -42,7 +42,6 @@ import jax.ops
 from jax import lax
 from jax import numpy as jnp
 from jax.sharding import SingleDeviceSharding
-from jax import tree_util
 from jax.test_util import check_grads
 
 from jax._src import array
@@ -971,7 +970,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   )
   def testPad(self, shape, dtype, mode, pad_width, constant_values):
     if np.issubdtype(dtype, np.unsignedinteger):
-      constant_values = tree_util.tree_map(abs, constant_values)
+      constant_values = jax.tree.map(abs, constant_values)
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     if constant_values is None:

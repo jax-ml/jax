@@ -31,7 +31,6 @@ import jax
 from jax import lax
 from jax import numpy as jnp
 from jax import random
-from jax import tree_util
 from jax._src import config
 from jax._src import core
 from jax._src import deprecations
@@ -1114,7 +1113,7 @@ class KeyArrayTest(jtu.JaxTestCase):
     def f(_, state):
       return state
     def _f_fwd(_, state):
-      return tree_util.tree_map(lambda x: x.value, state), None
+      return jax.tree.map(lambda x: x.value, state), None
     def _f_bwd(_, state_bar):
       self.assertTrue(state_bar[1].dtype == dtypes.float0)
       self.assertIsInstance(state_bar[1], jax.custom_derivatives.SymbolicZero)
@@ -1173,12 +1172,12 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     like = lambda keys: jnp.ones(keys.shape)
     out_key = func(*args)
     self.assertIsInstance(out_key, prng_internal.PRNGKeyArray)
-    out_like_key = func(*tree_util.tree_map(like, args))
+    out_like_key = func(*jax.tree.map(like, args))
     self.assertIsInstance(out_like_key, jax.Array)
     self.assertEqual(out_key.shape, out_like_key.shape)
 
   def check_against_reference(self, key_func, arr_func, *key_args):
-    out_arr = arr_func(*tree_util.tree_map(lambda x: random.key_data(x),
+    out_arr = arr_func(*jax.tree.map(lambda x: random.key_data(x),
                                            key_args))
     self.assertIsInstance(out_arr, jax.Array)
 

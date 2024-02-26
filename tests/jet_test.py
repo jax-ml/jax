@@ -58,8 +58,8 @@ class JetTest(jtu.JaxTestCase):
   def check_jet(self, fun, primals, series, atol=1e-5, rtol=1e-5,
                 check_dtypes=True):
     # Convert to jax arrays to ensure dtype canonicalization.
-    primals = jax.tree_util.tree_map(jnp.asarray, primals)
-    series = jax.tree_util.tree_map(jnp.asarray, series)
+    primals = jax.tree.map(jnp.asarray, primals)
+    series = jax.tree.map(jnp.asarray, series)
 
     y, terms = jet(fun, primals, series)
     expected_y, expected_terms = jvp_taylor(fun, primals, series)
@@ -73,8 +73,8 @@ class JetTest(jtu.JaxTestCase):
   def check_jet_finite(self, fun, primals, series, atol=1e-5, rtol=1e-5,
                        check_dtypes=True):
     # Convert to jax arrays to ensure dtype canonicalization.
-    primals = jax.tree_util.tree_map(jnp.asarray, primals)
-    series = jax.tree_util.tree_map(jnp.asarray, series)
+    primals = jax.tree.map(jnp.asarray, primals)
+    series = jax.tree.map(jnp.asarray, series)
 
     y, terms = jet(fun, primals, series)
     expected_y, expected_terms = jvp_taylor(fun, primals, series)

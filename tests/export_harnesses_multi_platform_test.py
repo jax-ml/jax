@@ -155,7 +155,7 @@ class PrimitiveTest(jtu.JaxTestCase):
       if device.platform in skip_run_on_platforms:
         logging.info("Skipping running on %s", device)
         continue
-      device_args = jax.tree_util.tree_map(
+      device_args = jax.tree.map(
           lambda x: jax.device_put(x, device), args
       )
       logging.info("Running harness natively on %s", device)
