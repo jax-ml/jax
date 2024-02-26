@@ -339,6 +339,11 @@ def sign(x, /):
   return jax.numpy.sign(x)
 
 
+def signbit(x, /):
+  """Determines whether the sign bit is set for each element x_i of the input array x."""
+  return jax.numpy.signbit(x)
+
+
 def sin(x, /):
   """Calculates an implementation-dependent approximation to the sine for each element x_i of the input array x."""
   x, = _promote_dtypes("sin", x)

@@ -135,6 +135,7 @@ MAIN_NAMESPACE = {
   'roll',
   'round',
   'sign',
+  'signbit',
   'sin',
   'sinh',
   'sort',

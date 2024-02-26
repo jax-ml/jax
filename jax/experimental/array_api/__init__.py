@@ -147,6 +147,7 @@ from jax.experimental.array_api._elementwise_functions import (
     remainder as remainder,
     round as round,
     sign as sign,
+    signbit as signbit,
     sin as sin,
     sinh as sinh,
     sqrt as sqrt,
