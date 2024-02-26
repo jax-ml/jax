@@ -1837,13 +1837,51 @@ def logistic_impl(x):
 mlir.register_lowering(logistic_p,
                        mlir.lower_fun(logistic_impl, multiple_results=False))
 
+def _sin_complex(x):
+  # use expm1 instead of exp to avoid cancellation when abs(x) is small
+  # relies on the quality of real-valued expm1, sin, cos
+  # sin(x) = complex(sin(real(x)) * cosh(imag(x)), cos(real(x)) * sinh(imag(x)))
+  # 2 * sinh(x) = exp(x) - 1 - (exp(-x) - 1) = expm1(x) - expm1(-x)
+  # 2 * cosh(x) = exp(x) - 1 + (exp(-x) - 1) + 2 = expm1(x) + expm1(-x) + 2
+  a, b = real(x), imag(x)
+  a_is_zero = eq(a, _const(a, 0))
+  sn, cs = sin(a), cos(a)
+  e1m, e2m = expm1(b), expm1(-b)
+  snh, csh = (e1m - e2m) / 2, (e1m + e2m + 2) / 2
+  re, im = sn * csh, cs * snh
+  # avoid nan value when real(x) is zero and abs(x) is so large that abs(expm1(x)) is inf
+  return select(a_is_zero, complex(_const(a, 0), im), complex(re, im))
+
+def _sin_lowering(ctx, x):
+  if dtypes.issubdtype(ctx.avals_in[0].dtype, np.complexfloating):
+    sine = mlir.lower_fun(_sin_complex, multiple_results=False)
+    return sine(ctx, x)
+  return _nary_lower_hlo(hlo.sine, ctx, x)
+
 sin_p = standard_unop(_float | _complex, 'sin')
 ad.defjvp(sin_p, lambda g, x: mul(g, cos(x)))
-mlir.register_lowering(sin_p, partial(_nary_lower_hlo, hlo.sine))
+mlir.register_lowering(sin_p, _sin_lowering)
+
+def _cos_complex(x):
+  # cos(x) = complex(cos(real(x)) * cosh(imag(x)), -sin(real(x)) * sinh(imag(x)))
+  # see also _sin_complex
+  a, b = real(x), imag(x)
+  a_is_zero = eq(a, _const(a, 0))
+  sn, cs = sin(a), cos(a)
+  e1m, e2m = expm1(b), expm1(-b)
+  snh, csh = (e1m - e2m) / 2, (e1m + e2m + 2) / 2
+  re, im = cs * csh, -sn * snh
+  return select(a_is_zero, complex(re, _const(a, 0)), complex(re, im))
+
+def _cos_lowering(ctx, x):
+  if dtypes.issubdtype(ctx.avals_in[0].dtype, np.complexfloating):
+    cosine = mlir.lower_fun(_cos_complex, multiple_results=False)
+    return cosine(ctx, x)
+  return _nary_lower_hlo(hlo.cosine, ctx, x)
 
 cos_p = standard_unop(_float | _complex, 'cos')
 ad.defjvp(cos_p, lambda g, x: neg(mul(g, sin(x))))
-mlir.register_lowering(cos_p, partial(_nary_lower_hlo, hlo.cosine))
+mlir.register_lowering(cos_p, _cos_lowering)
 
 @_upcast_fp16_for_computation
 def _tan_impl(x):
