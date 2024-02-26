@@ -200,8 +200,8 @@ pybind_extension(
         # TODO(jieying): move to jaxlib after py_client_gpu is separated from py_client
         "@xla//xla/python:py_client_gpu",
         "@xla//xla/python:status_casters",
-        "@tsl//tsl/cuda:cublas",
-        "@tsl//tsl/cuda:cudart",
+        "@xla//xla/tsl/cuda:cublas",
+        "@xla//xla/tsl/cuda:cudart",
     ],
 )
 
