@@ -39,9 +39,12 @@ def sdpa_train(query: Array,
             scale: float = 0.5,
             is_causal_mask: bool = False,
             dropout_rate: float = 0.1) -> Array:
+  if mask is not None:
+    # convert bool mask to dtype mask
+    mask = mask.astype(query.dtype)
   out, sdpa_vjp = jax.vjp(
     partial(dot_product_attention, scale=scale, is_causal_mask=is_causal_mask, dropout_rate=dropout_rate),
-    query, key, value, bias, None)
+    query, key, value, bias, mask)
   query_grad, key_grad, value_grad, _, _ = sdpa_vjp(grad)
   return out, (query_grad, key_grad, value_grad)
 
@@ -54,7 +57,7 @@ def sdpa_ref(query: Array,
       is_causal_mask: bool = False,
       dropout_rate: float = 0.1) -> Array:
 
-  def get_causal_mask(input_t):
+  def get_large_negative_number(input_t):
     dtype = input_t.dtype
     if jnp.issubdtype(dtype, jnp.inexact):
       dtype_max = jnp.finfo(dtype).max
@@ -63,6 +66,10 @@ def sdpa_ref(query: Array,
     else:
       raise ValueError('Unsupported dtype for inputs.')
     large_negative_number = jnp.asarray(-0.7 * dtype_max, dtype=dtype)
+    return large_negative_number
+
+  def get_causal_mask(input_t):
+    large_negative_number = get_large_negative_number(input_t)
     t = input_t.shape[2]
     col_idx = jax.lax.broadcasted_iota(np.int32, (t, t), 1)
     row_idx = jax.lax.broadcasted_iota(np.int32, (t, t), 0)
@@ -77,9 +84,8 @@ def sdpa_ref(query: Array,
   if bias is not None:
     attn_weights = attn_weights + bias.astype(attn_weights.dtype)
   if mask is not None:
-    large_negative_number = jnp.asarray(
-        -0.7 * jnp.finfo(attn_weights.dtype).max, dtype=attn_weights.dtype)
-    attn_weights = jax.lax.select(mask, attn_weights, large_negative_number)
+    large_negative_number = get_large_negative_number(attn_weights)
+    attn_weights = jax.lax.select(mask, attn_weights, jax.lax.broadcast(large_negative_number, attn_weights.shape))
   attn_weights = jax.nn.softmax(attn_weights)
   if dropout_rate > 0.:
     keep_prob = 1.0 - dropout_rate
@@ -100,7 +106,7 @@ def sdpa_train_ref(query: Array,
             dropout_rate: float = 0.1) -> Array:
   out_ref, sdpa_vjp_ref = jax.vjp(
     partial(sdpa_ref, scale=scale, is_causal_mask=is_causal_mask, dropout_rate=dropout_rate),
-    query, key, value, bias, None)
+    query, key, value, bias, mask)
   query_grad_ref, key_grad_ref, value_grad_ref, _, _ = sdpa_vjp_ref(grad)
   return out_ref, (query_grad_ref, key_grad_ref, value_grad_ref)
 
@@ -144,7 +150,7 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       bias = None
     if use_mask:
       mask = jax.random.bernoulli(
-        k5, 0.5, (batch_size, num_heads, seq_len, seq_len)).astype(dtype)
+        k5, 0.5, (batch_size, num_heads, seq_len, seq_len))
     else:
       mask = None
     devices = np.array(jax.local_devices()[:4])
@@ -154,9 +160,11 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       qkv_sharding = NamedSharding(mesh, qkv_spec)
       if bias is not None:
         bias_spec = PartitionSpec('dp', 'tp', None, None)
-        mask_spec = PartitionSpec('dp', 'tp', None, None)
       else:
         bias_spec = PartitionSpec()
+      if mask is not None:
+        mask_spec = PartitionSpec('dp', 'tp', None, None)
+      else:
         mask_spec = PartitionSpec()
       bias_sharding = NamedSharding(mesh, bias_spec)
       mask_sharding = NamedSharding(mesh, mask_spec)
