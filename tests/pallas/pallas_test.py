@@ -39,7 +39,10 @@ from jax.experimental.pallas.ops import layer_norm
 from jax.experimental.pallas.ops import rms_norm
 from jax.experimental.pallas.ops import softmax
 try:
-  from jax._src.pallas.triton.lowering import compile_jaxpr, _TRITON_COMPILE_VIA_XLA
+  from jax._src.pallas.triton.pallas_call_registration import (
+      compile_jaxpr,
+      _TRITON_COMPILE_VIA_XLA,
+  )
   from jax.experimental.pallas import gpu as plgpu
 except ModuleNotFoundError:
   compile_jaxpr = None

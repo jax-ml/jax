@@ -35,14 +35,30 @@ py_library_providing_imports_info(
     lib_rule = pytype_strict_library,
     deps = [
         ":lowering",
+        ":pallas_call_registration",
         "//jax/_src/lib",
     ],
 )
 
+# TODO(slebedev): Enable pytype for this target.
 py_library(
     name = "lowering",
     srcs = ["lowering.py"],
     deps = [
         "//jax",
+    ],
+)
+
+pytype_strict_library(
+    name = "pallas_call_registration",
+    srcs = ["pallas_call_registration.py"],
+    deps = [
+        ":lowering",
+        "//jax",
+        "//jax:config",
+        "//jax:mlir",
+        "//jax:util",
+        "//jax/_src/lib",
+        "//jax/_src/pallas",
     ] + py_deps("jax_triton"),
 )
