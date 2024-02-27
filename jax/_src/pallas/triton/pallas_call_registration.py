@@ -46,7 +46,6 @@ class CompilationResult:
   lowering_result: lowering.LoweringResult
 
 
-
 @util.weakref_lru_cache
 def compile_jaxpr(
     jaxpr: jax_core.Jaxpr,
@@ -193,9 +192,6 @@ def _pallas_call_ttir_lowering(
     num_warps: int,
     num_stages: int,
 ):
-  if triton_params:
-    raise NotImplementedError("triton_params are not supported")
-
   # TODO(sharadmv): handle multiple devices, right now we assume device 0
   # which is fine when we have multiple of the same GPU but this won't work in
   # general.
@@ -231,6 +227,11 @@ def _pallas_call_ttir_lowering(
       grid_z=mlir.i32_attr(grid_z),
       debug=ir.BoolAttr.get(debug),
   )
+  if "serialized_metadata" in (triton_params or {}):
+    # This field is unstable and may be removed in the future.
+    backend_config["serialized_metadata"] = ir.StringAttr.get(
+        triton_params["serialized_metadata"]
+    )
   return mlir.custom_call(
       call_target_name="__gpu$xla.gpu.triton",
       result_types=out_types,
