@@ -1329,7 +1329,9 @@ class JitTest(jtu.BufferDonationTestCase):
     def f(d) -> float:
       return d[E.A]
 
-    with self.assertRaisesRegex(TypeError, "'<' not supported.*"):
+    with self.assertRaisesRegex(
+        (TypeError, ValueError),
+        "('<' not supported|Comparator raised exception).*"):
       f({E.A: 1.0, E.B: 2.0})
 
   def test_jit_static_argnums_requires_type_equality(self):

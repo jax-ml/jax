@@ -582,7 +582,9 @@ class TreeTest(jtu.JaxTestCase):
 
   def testDictKeysSortable(self):
     d = {"a": 1, 2: "b"}
-    with self.assertRaisesRegex(TypeError, "'<' not supported"):
+    with self.assertRaisesRegex(
+        (TypeError, ValueError),
+        "('<' not supported|Comparator raised exception).*"):
       _, _ = tree_util.tree_flatten(d)
 
   def testFlattenDictKeyOrder(self):
