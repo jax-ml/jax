@@ -51,6 +51,15 @@ def get_flag_prefixes() -> list[str]:
   return _extra_flag_prefixes
 
 
+def custom_hook() -> str:
+  """Custom hook for any addition to the cache key.
+
+  The custom hook will be called everytime get() is called and can be
+  defined to return a string that will be hashed into the cache key.
+  """
+  return ""
+
+
 def get(module: ir.Module,
         devices: np.ndarray,
         compile_options: xla_client.CompileOptions,
@@ -86,6 +95,7 @@ def get(module: ir.Module,
          lambda hash_obj: _hash_accelerator_config(hash_obj, devices, backend)),
       ("compression",
        lambda hash_obj: _hash_string(hash_obj, compression_algorithm)),
+      ("custom_hook", lambda hash_obj: _hash_string(hash_obj, custom_hook())),
   ]
 
   hash_obj = hashlib.sha256()

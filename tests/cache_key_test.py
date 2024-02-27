@@ -127,6 +127,21 @@ class CacheKeyTest(jtu.JaxTestCase):
         cache_key.get(computation, devices, compile_options_filled, backend),
     )
 
+  def test_custom_hook(self):
+    computation = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
+    devices = np.array([[jax.local_devices()[0]]])
+    compile_options = compiler.get_compile_options(
+        num_replicas=1, num_partitions=1
+    )
+    backend = xla_bridge.get_backend()
+    original_custom_hook = cache_key.custom_hook
+    cache_key.custom_hook = lambda: "hook1"
+    key1 = cache_key.get(computation, devices, compile_options, backend)
+    cache_key.custom_hook = lambda: "hook2"
+    key2 = cache_key.get(computation, devices, compile_options, backend)
+    cache_key.custom_hook = original_custom_hook
+    self.assertNotEqual(key1, key2)
+
   def test_different_computations(self):
     computation1 = jax.jit(lambda x, y: x + y).lower(1, 1).compiler_ir()
     computation2 = jax.jit(lambda x, y: x * y).lower(2, 2).compiler_ir()
