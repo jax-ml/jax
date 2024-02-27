@@ -1837,9 +1837,9 @@ def _dot_general_lowering(
   assert batch_dims == ((), ())
 
   if a_contract_dim == 0:
-    a = tt_dialect.permute(a, (1, 0))
+    a = tt_dialect.trans(a, (1, 0))
   if b_contract_dim == 1:
-    b = tt_dialect.permute(b, (1, 0))
+    b = tt_dialect.trans(b, (1, 0))
 
   if precision is None:
     allow_tf32 = True

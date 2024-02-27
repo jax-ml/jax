@@ -388,15 +388,20 @@ class PallasCallTest(PallasTest):
                                       interpret=self.INTERPRET), jnp.matmul(x, y)
     np.testing.assert_allclose(out, expected, atol=0.05, rtol=0.05)
 
-  @parameterized.named_parameters(*(
-      dict(testcase_name=f"{size}_{dtype}", size=size, dtype=dtype)
-      for size in [16, 32, 64]
-      for dtype in ["float32", "float16"]
-  ))
-  def test_dot(self, size, dtype):
+  @parameterized.product(
+      size=[16, 32, 64],
+      dtype=["float32", "float16"],
+      trans_a=[False, True],
+      trans_b=[False, True],
+  )
+  def test_dot(self, size, dtype, trans_a, trans_b):
     if not self.check_gpu_capability_at_least(70):
       raise unittest.SkipTest(
           "Matmul only works on GPUs with capability >= sm70")
+    if trans_a or trans_b:
+      # TODO(slebedev): Remove this once the problematic Triton pass is fixed.
+      raise unittest.SkipTest(
+          "Triton crashes if any of the operands are transposed")
 
     @functools.partial(
         self.pallas_call,
@@ -405,7 +410,7 @@ class PallasCallTest(PallasTest):
     def dot(x_ref, y_ref, o_ref):
       x = x_ref[:, :]
       y = y_ref[:, :]
-      o_ref[:, :] = pl.dot(x, y).astype(o_ref.dtype)
+      o_ref[:, :] = pl.dot(x, y, trans_a, trans_b).astype(o_ref.dtype)
 
     k1, k2 = random.split(random.key(0))
     x = random.normal(k1, (size, size), dtype=dtype)
