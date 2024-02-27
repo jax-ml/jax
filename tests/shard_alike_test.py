@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import datetime
 import os
 
 import jax
@@ -66,6 +67,8 @@ class ShardAlikeTest(jtu.JaxTestCase):
     super().setUp()
     if xla_extension_version < 227:
       self.skipTest('Requires xla_extension_version >= 227')
+    if not jtu.if_cloud_tpu_at_least(datetime.date(2024, 2, 23)):
+      self.skipTest("Requires Cloud TPU older than 2024/02/23.")
 
   def test_basic(self):
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))

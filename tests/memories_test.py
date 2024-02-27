@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import datetime
 import functools
 import math
 from absl.testing import absltest
@@ -1079,6 +1080,8 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
   def setUp(self):
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Memories do not work on CPU and GPU backends yet.")
+    if not jtu.if_cloud_tpu_at_least(datetime.date(2024, 2, 23)):
+      self.skipTest("Memories do not work on Cloud TPU older than 2024/02/23.")
     super().setUp()
 
   def test_remat_jaxpr_offloadable(self):

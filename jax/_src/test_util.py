@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from collections.abc import Generator, Iterable, Sequence
 from contextlib import contextmanager, ExitStack
+import datetime
 import inspect
 import io
 import functools
@@ -365,6 +366,24 @@ def is_device_cuda():
 
 def is_cloud_tpu():
   return running_in_cloud_tpu_vm
+
+# Returns True if it is not cloud TPU. If it is cloud TPU, returns True if it is
+# built at least `date``.
+# TODO(b/327203806): after libtpu adds a XLA version and the oldest support
+# libtpu contains the XLA version, remove using built time to skip tests.
+def if_cloud_tpu_at_least(date: datetime.date):
+  if not is_cloud_tpu():
+    return True
+  # The format of Cloud TPU platform_version is like:
+  # PJRT C API
+  # TFRT TPU v2
+  # Built on Oct 30 2023 03:04:42 (1698660263) cl/577737722
+  platform_version = xla_bridge.get_backend().platform_version.split('\n')[-1]
+  results = re.findall(r'\(.*?\)', platform_version)
+  if len(results) != 1:
+    return True
+  build_date = date.fromtimestamp(int(results[0][1:-1]))
+  return build_date >= date
 
 def pjrt_c_api_version_at_least(major_version: int, minor_version: int):
   pjrt_c_api_versions = xla_bridge.backend_pjrt_c_api_version()
