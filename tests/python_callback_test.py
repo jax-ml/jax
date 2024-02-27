@@ -566,6 +566,16 @@ class PureCallbackTest(jtu.JaxTestCase):
     self.assertArraysAllClose(out, np.sin(np.arange(4.)) + np.arange(10., 14.),
                               rtol=1E-7, check_dtypes=False)
 
+    @jax.jit
+    @functools.partial(jax.vmap, in_axes=1, out_axes=1)
+    def h(x, y):
+      out_shape = jax.ShapeDtypeStruct(x.shape, np.result_type(x.dtype, y.dtype))
+      return jax.pure_callback(lambda x, y: np.sin(x) + y, out_shape, x, y)
+    out = h(jnp.arange(4.)[None], jnp.arange(10., 14.)[None])
+    self.assertArraysAllClose(out, np.sin(np.arange(4.)) + np.arange(10.,
+      14.)[None],
+                              rtol=1E-7, check_dtypes=False)
+
   def test_vmap_vectorized_callback(self):
 
     def cb(x):
@@ -597,6 +607,15 @@ class PureCallbackTest(jtu.JaxTestCase):
                                vectorized=True)
     out = h(jnp.arange(4.), 4.)
     np.testing.assert_allclose(out, np.sin(np.arange(4.)) + 4.)
+
+    @jax.jit
+    @functools.partial(jax.vmap, in_axes=(1, None), out_axes=1)
+    def h(x, y):
+      return jax.pure_callback(lambda x, y: np.sin(x) + y, x, x, y,
+                               vectorized=True)
+    out = h(jnp.arange(4.)[None], 4.)
+    np.testing.assert_allclose(out, np.sin(np.arange(4.)[None]) + 4.)
+
 
   def test_vmap_vectorized_callback_errors_if_returns_wrong_shape(self):
 

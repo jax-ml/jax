@@ -97,7 +97,7 @@ def pure_callback_batching_rule(
     vectorized: bool,
     result_avals: Sequence[core.ShapedArray],
 ):
-  axis_size = next(a.shape[0] for a, d in zip(args, dims)
+  axis_size = next(a.shape[d] for a, d in zip(args, dims)
                    if d is not batching.not_mapped)
   new_args = [arg if dim is batching.not_mapped else
               batching.moveaxis(arg, dim, 0) for arg, dim in zip(args, dims)]
