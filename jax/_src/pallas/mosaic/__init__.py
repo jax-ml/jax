@@ -28,6 +28,7 @@ from jax._src.pallas.mosaic.pipeline import emit_pipeline_with_allocations
 from jax._src.pallas.mosaic.pipeline import emit_pipeline
 from jax._src.pallas.mosaic.pipeline import PipelineCallbackArgs
 from jax._src.pallas.mosaic.pipeline import PipelinePrefetchArgs
+from jax._src.pallas.mosaic.pipeline import ManualPrefetchArgs
 from jax._src.pallas.mosaic.primitives import DeviceIdType
 from jax._src.pallas.mosaic.primitives import async_copy
 from jax._src.pallas.mosaic.primitives import async_remote_copy

@@ -30,6 +30,7 @@ from jax._src.pallas.mosaic import emit_pipeline_with_allocations
 from jax._src.pallas.mosaic import emit_pipeline
 from jax._src.pallas.mosaic import PipelineCallbackArgs
 from jax._src.pallas.mosaic import PipelinePrefetchArgs
+from jax._src.pallas.mosaic import ManualPrefetchArgs
 from jax._src.pallas.mosaic import encode_kernel_regeneration_metadata
 from jax._src.pallas.mosaic import extract_kernel_regeneration_metadata
 from jax._src.pallas.mosaic import get_barrier_semaphore

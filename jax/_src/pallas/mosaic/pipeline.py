@@ -408,7 +408,39 @@ class StartPipelinePrefetch(Protocol):
       force_copy: Union[
           bool, tuple[Union[CondVal, Any], Union[CondVal, Any]]
       ] = False,
-  ) -> PipelineArg[PipelineBuffers]:
+      force_skip: Union[
+          bool, tuple[Union[CondVal, Any], Union[CondVal, Any]]
+      ] = False,
+  ) -> tuple[PipelineBuffers, PipelineBuffers]:
+    ...
+
+
+@dataclasses.dataclass(frozen=True)
+class ManualPrefetchArgs:
+  """Args for pipeline prefetch."""
+
+  pipeline_specs: PipelineBlockSpecs
+  pipeline_refs: PipelineRefs
+  pipeline_allocations: PipelineAllocations
+  pipeline_buffers: PipelineBuffers
+
+
+class StartManualPrefetch(Protocol):
+  """Starts manual prefetch.
+
+  Use force_copy if a spec's indices don't change from last to first grid
+  indices and you still want to force a copy. This must be used in conjunction
+  with the prologue's return value to force a wait.
+  """
+
+  def __call__(
+      self,
+      prefetch_args: ManualPrefetchArgs,
+      *,
+      indices: GridIndices,
+      force_copy: Union[bool, Union[CondVal, Any]] = False,
+      force_skip: Union[bool, Union[CondVal, Any]] = False,
+  ) -> PipelineBuffers:
     ...
 
 
@@ -422,6 +454,8 @@ class PipelineCallbackArgs:
   pipeline_buffers: PipelineArg[PipelineBuffers]
   make_pipeline_refs: MakePipelineRefs
   start_pipeline_prefetch: StartPipelinePrefetch
+  start_manual_prefetch: StartManualPrefetch
+  run_manual_compute: Callable[[Callable[[], None]], None]
 
 
 PipelinePrologue = Callable[
@@ -437,6 +471,8 @@ PipelinePrologue = Callable[
 PipelineEpilogue = Callable[
     [PipelineCallbackArgs], tuple[PipelineBuffers, PipelineBuffers]
 ]
+PipelineOutPrologue = Callable[[PipelineCallbackArgs], Union[CondVal, Any]]
+PipelineOutEpilogue = Callable[[PipelineCallbackArgs], Union[CondVal, Any]]
 
 
 class Pipeline(Protocol):
@@ -449,8 +485,8 @@ class Pipeline(Protocol):
       init_allocations: CondVal = False,
       prologue: Union[PipelinePrologue, None] = None,
       epilogue: Union[PipelineEpilogue, None] = None,
-      out_prologue: Union[PipelinePrologue, None] = None,
-      out_epilogue: Union[PipelineEpilogue, None] = None,
+      out_prologue: Union[PipelineOutPrologue, None] = None,
+      out_epilogue: Union[PipelineOutEpilogue, None] = None,
   ) -> None:
     ...
 
@@ -523,39 +559,80 @@ def emit_pipeline_with_allocations(
       force_copy: Union[
           bool, tuple[Union[CondVal, Any], Union[CondVal, Any]]
       ] = False,
+      force_skip: Union[
+          bool, tuple[Union[CondVal, Any], Union[CondVal, Any]]
+      ] = False,
   ) -> tuple[PipelineBuffers, PipelineBuffers]:
     if isinstance(force_copy, bool):
-      next_in_and_in_out_buffers = tree_util.tree_map(
-          partial(_start_block_copy_in, indices=indices, force_copy=force_copy),
-          pipeline_specs.input_and_in_out,
-          prefetch_args.pipeline_refs.input_and_in_out,
-          prefetch_args.pipeline_allocations.input_and_in_out,
-          prefetch_args.pipeline_buffers.input_and_in_out,
-      )
-    else:
-      force_input_copy, force_in_out_copy = force_copy
-      force_input_copy = _broadcast_pytree_to(
-          "force_input_copy",
-          force_input_copy,
-          pipeline_specs.input,
-      )
-      force_in_out_copy = _broadcast_pytree_to(
-          "force_in_out_copy",
-          force_in_out_copy,
-          pipeline_specs.out,
-      )
-      next_in_and_in_out_buffers = _tree_map_with_kwargs(
-          partial(_start_block_copy_in, indices=indices),
-          pipeline_specs.input_and_in_out,
-          prefetch_args.pipeline_refs.input_and_in_out,
-          prefetch_args.pipeline_allocations.input_and_in_out,
-          prefetch_args.pipeline_buffers.input_and_in_out,
-          force_copy=force_input_copy + force_in_out_copy,
-      )
+      force_copy = (force_copy, force_copy)
+    if isinstance(force_skip, bool):
+      force_skip = (force_skip, force_skip)
+    force_input_copy, force_in_out_copy = force_copy
+    force_input_copy = _broadcast_pytree_to(
+        "force_input_copy",
+        force_input_copy,
+        pipeline_specs.input,
+    )
+    force_in_out_copy = _broadcast_pytree_to(
+        "force_in_out_copy",
+        force_in_out_copy,
+        pipeline_specs.in_out,
+    )
+    force_input_skip, force_in_out_skip = force_skip
+    force_input_skip = _broadcast_pytree_to(
+        "force_input_skip",
+        force_input_skip,
+        pipeline_specs.input,
+    )
+    force_in_out_skip = _broadcast_pytree_to(
+        "force_in_out_skip",
+        force_in_out_skip,
+        pipeline_specs.in_out,
+    )
+    next_in_and_in_out_buffers = _tree_map_with_kwargs(
+        partial(_start_block_copy_in, indices=indices),
+        pipeline_specs.input_and_in_out,
+        prefetch_args.pipeline_refs.input_and_in_out,
+        prefetch_args.pipeline_allocations.input_and_in_out,
+        prefetch_args.pipeline_buffers.input_and_in_out,
+        force_copy=force_input_copy + force_in_out_copy,
+        force_skip=force_input_skip + force_in_out_skip,
+    )
     next_in_buffers, next_in_out_buffers = split_list(
         next_in_and_in_out_buffers, [len(pipeline_specs.input)]
     )
     return next_in_buffers, next_in_out_buffers
+
+  def start_manual_prefetch(
+      prefetch_args: ManualPrefetchArgs,
+      *,
+      indices: GridIndices,
+      force_copy: Union[bool, Union[CondVal, Any]] = False,
+      force_skip: Union[bool, Union[CondVal, Any]] = False,
+  ) -> PipelineBuffers:
+    force_copy = _broadcast_pytree_to(
+        "force_input_copy",
+        force_copy,
+        prefetch_args.pipeline_specs,
+    )
+    force_skip = _broadcast_pytree_to(
+        "force_skip",
+        force_skip,
+        prefetch_args.pipeline_specs,
+    )
+    next_buffers = _tree_map_with_kwargs(
+        partial(_start_block_copy_in, indices=indices),
+        prefetch_args.pipeline_specs,
+        prefetch_args.pipeline_refs,
+        prefetch_args.pipeline_allocations,
+        prefetch_args.pipeline_buffers,
+        force_copy=force_copy,
+        force_skip=force_skip,
+    )
+    return next_buffers
+
+  def run_manual_compute(fn: Callable[[], None]) -> None:
+    fn()
 
   def make_pipeline_allocations(
       *ref_args: PipelineRefs,
@@ -623,8 +700,8 @@ def emit_pipeline_with_allocations(
       init_allocations: CondVal = False,
       prologue: Union[PipelinePrologue, None] = None,
       epilogue: Union[PipelineEpilogue, None] = None,
-      out_prologue: Union[PipelinePrologue, None] = None,
-      out_epilogue: Union[PipelineEpilogue, None] = None,
+      out_prologue: Union[PipelineOutPrologue, None] = None,
+      out_epilogue: Union[PipelineOutEpilogue, None] = None,
   ) -> None:
     use_in_out = jnp.logical_not(init_allocations)
     if scratchs is None:
@@ -683,16 +760,20 @@ def emit_pipeline_with_allocations(
                 make_pipeline_refs=make_pipeline_refs,
                 start_pipeline_prefetch=partial(
                     cast(Any, start_pipeline_prefetch),
-                    indices=(zero_indices, last_indices, indices),
-                    force_copy=True,
+                    indices=(last_indices, zero_indices, indices),
                 ),
+                start_manual_prefetch=partial(
+                    cast(Any, start_manual_prefetch),
+                    indices=(last_indices, zero_indices, indices),
+                ),
+                run_manual_compute=run_manual_compute,
             )
         )
       else:
-        skip_input_prologue = None
-        skip_in_out_prologue = None
-        force_input_prologue_wait = None
-        force_in_out_prologue_wait = None
+        skip_input_prologue = False
+        skip_in_out_prologue = False
+        force_input_prologue_wait = False
+        force_in_out_prologue_wait = False
       skip_input_prologue = _broadcast_pytree_to(
           "skip_input_prologue",
           skip_input_prologue,
@@ -851,6 +932,11 @@ def emit_pipeline_with_allocations(
                         cast(Any, start_pipeline_prefetch),
                         indices=(prev_indices, indices, zero_indices),
                     ),
+                    start_manual_prefetch=partial(
+                        cast(Any, start_manual_prefetch),
+                        indices=(prev_indices, indices, zero_indices),
+                    ),
+                    run_manual_compute=run_manual_compute,
                 )
             )
 
@@ -961,8 +1047,12 @@ def emit_pipeline_with_allocations(
                       start_pipeline_prefetch=partial(
                           cast(Any, start_pipeline_prefetch),
                           indices=copy_indices,
-                          force_copy=True,
                       ),
+                      start_manual_prefetch=partial(
+                          cast(Any, start_manual_prefetch),
+                          indices=copy_indices,
+                      ),
+                      run_manual_compute=run_manual_compute,
                   )
               )
               skip_out_prologue_wait = _broadcast_pytree_to(
@@ -1009,7 +1099,13 @@ def emit_pipeline_with_allocations(
                     pipeline_allocations=pipeline_allocations,
                     pipeline_buffers=pipeline_buffers,
                     make_pipeline_refs=make_pipeline_refs,
-                    start_pipeline_prefetch=cast(Any, lambda *args, **kwargs: None),
+                    start_pipeline_prefetch=cast(
+                        Any, lambda *args, **kwargs: None
+                    ),
+                    start_manual_prefetch=cast(
+                        Any, lambda *args, **kwargs: None
+                    ),
+                    run_manual_compute=cast(Any, lambda *args, **kwargs: None),
                 )
             )
           else:
@@ -1084,9 +1180,13 @@ def emit_pipeline_with_allocations(
                     make_pipeline_refs=make_pipeline_refs,
                     start_pipeline_prefetch=partial(
                         cast(Any, start_pipeline_prefetch),
-                        indices=(zero_indices, zero_indices, zero_indices),
-                        force_copy=True,
+                        indices=(prev_indices, indices, zero_indices),
                     ),
+                    start_manual_prefetch=partial(
+                        cast(Any, start_manual_prefetch),
+                        indices=(prev_indices, indices, zero_indices),
+                    ),
+                    run_manual_compute=run_manual_compute,
                 )
             )
           else:
