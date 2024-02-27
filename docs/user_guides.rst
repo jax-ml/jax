@@ -34,4 +34,8 @@ or deployed codebases.
    errors
    transfer_guard
 
+.. toctree::
+   :maxdepth: 1
+   :caption: Custom Operations
+
    pallas/index
