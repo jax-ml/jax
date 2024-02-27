@@ -916,7 +916,6 @@ class JaxExportTest(jtu.JaxTestCase):
                           res_r.addressable_shards[i].data)
 
   @jtu.parameterized_filterable(
-    one_containing="in_shardings_None_out_shardings_P_with_mesh_False",
     kwargs=[
       dict(in_shardings=in_shardings, out_shardings=out_shardings,
            with_mesh=with_mesh)
@@ -971,15 +970,17 @@ class JaxExportTest(jtu.JaxTestCase):
     else:
       primal_out_sharding = "{replicated}"
 
-    main = re.compile(
-      r"func.func public @main\(%arg0: tensor<10x20xf32>.*"
-      "mhlo.sharding = \"" + re.escape(primal_in_sharding) + "\""
-      r".*%arg1: tensor<20x10xf32>.*"
-      "mhlo.sharding = \"" + re.escape(primal_out_sharding) + "\""
-      # result
-      r".*->.*\(tensor<10x20xf32>.*"
-      "mhlo.sharding = \"" + re.escape(primal_in_sharding) + "\"")
-    self.assertRegex(vjp_module_str, main)
+    # TODO(b/326476605): Change the condition below if required.
+    if in_shardings == "P":
+      main = re.compile(
+        r"func.func public @main\(%arg0: tensor<10x20xf32>.*"
+        "mhlo.sharding = \"" + re.escape(primal_in_sharding) + "\""
+        r".*%arg1: tensor<20x10xf32>.*"
+        "mhlo.sharding = \"" + re.escape(primal_out_sharding) + "\""
+        # result
+        r".*->.*\(tensor<10x20xf32>.*"
+        "mhlo.sharding = \"" + re.escape(primal_in_sharding) + "\"")
+      self.assertRegex(vjp_module_str, main)
 
     # Custom calls for the primal input shape all match primal_in_sharding
     primal_in_calls = re.findall(

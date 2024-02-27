@@ -559,8 +559,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     # Annotations from with_sharding_constraint
     self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
     self.assertIn('sharding={devices=[2,1]<=[2]}', hlo.as_hlo_text())
-    # Annotation from pjit
-    self.assertIn("sharding={replicated}", hlo.as_hlo_text())
 
   def testShardingConstraintPyTreeWithUnconstrainedDimsWithJit(self):
 
@@ -1718,19 +1716,16 @@ class ArrayPjitTest(jtu.JaxTestCase):
     input_shape = (8, 2)
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     input_data = np.arange(
-        math.prod(input_shape), dtype=np.float32).reshape(input_shape)
-    with global_mesh:
-      f = pjit(lambda x: x,
-                out_shardings=NamedSharding(
-                    global_mesh, P('x', 'y')))
-      # Since no in_axis_resources is provided, pjit will assume that
-      # the numpy input is fully replicated over the mesh.
-      out = f(input_data)
-      self.assertIsInstance(out, array.ArrayImpl)
-      for s in out.addressable_shards:
-        self.assertEqual(s.data.shape, (2, 1))
-        self.assertArraysEqual(s.data, input_data[s.index])
-      self.assertArraysEqual(out._value, input_data)
+        math.prod(input_shape)).reshape(input_shape)
+
+    f = pjit(lambda x: x,
+              out_shardings=NamedSharding(global_mesh, P('x', 'y')))
+    out = f(input_data)
+    self.assertIsInstance(out, array.ArrayImpl)
+    self.assertArraysEqual(out, input_data)
+    for s in out.addressable_shards:
+      self.assertEqual(s.data.shape, (2, 1))
+      self.assertArraysEqual(s.data, input_data[s.index])
 
   def test_numpy_array_input(self):
     input_shape = (8, 2)

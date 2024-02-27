@@ -247,14 +247,19 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
             # The argument
             (r"f32\[10,20\].*custom_call_target.*Sharding.*sharding.*devices=\[1,2\]",
              count_in_P),
-            (r"f32\[10,20\].*custom_call_target.*Sharding.*sharding.*replicated",
-             count_in_replicated),
             # The result
             (r"f32\[20,10\].*custom_call_target.*Sharding.*sharding.*devices=\[2,1\]",
              count_out_P),
+        ])
+    # TODO(b/326476605): Change the condition below if required.
+    if in_shardings not in [None, "missing"] and out_shardings is not None:
+      self.check_sharding(
+        jax2tf.convert(f_jax), [x],
+        checks=[
+            (r"f32\[10,20\].*custom_call_target.*Sharding.*sharding.*replicated",
+             count_in_replicated),
             (r"f32\[20,10\].*custom_call_target.*Sharding.*sharding.*replicated",
              count_out_replicated),
-            # No other shardings
             (r"custom_call_target.*Sharding",
              count_in_P + count_in_replicated + count_out_P + count_out_replicated),
         ])
@@ -437,10 +442,16 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
         checks=[
             # The input primal argument, and the output grad
             (r"f32\[10,20\].*custom_call_target.*Sharding.*sharding.*devices=\[1,2\]", count_in_P),
+            # The primal result, and the input cotangent
+            (r"f32\[20,10\].*custom_call_target.*Sharding.*sharding.*devices=\[2,1\]", count_out_P),
+        ])
+    # TODO(b/326476605): Change the condition below if required.
+    if out_shardings not in [None, "missing"] and in_shardings not in [None, "missing"]:
+      self.check_sharding(f_grad_tf, [x, x.T],
+        checks=[
             (r"f32\[10,20\].*custom_call_target.*Sharding.*sharding.*replicated", count_in_replicated),
             # The primal result, and the input cotangent
             (r"f32\[20,10\].*custom_call_target.*Sharding.*sharding.*devices=\[2,1\]", count_out_P),
-            (r"f32\[20,10\].*custom_call_target.*Sharding.*sharding.*replicated", count_out_replicated),
         ])
 
   @jtu.parameterized_filterable(
