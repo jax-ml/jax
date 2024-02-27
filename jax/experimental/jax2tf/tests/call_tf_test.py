@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Tests for call_tf."""
+
+import contextlib
 from functools import partial
 import os
 from typing import Callable
@@ -22,14 +24,16 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import config
+from jax import dlpack
 from jax import dtypes
 from jax import lax
 from jax import numpy as jnp
 from jax._src import test_util as jtu
+from jax._src import xla_bridge
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax.experimental import jax2tf
 from jax.experimental import export
+from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
 import numpy as np
 
@@ -813,6 +817,49 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
         with tf.device(tf_device):
           res = f_tf(x)
         self.assertAllClose(res, f_jax(x))
+
+  @parameterized.named_parameters(
+      {"testcase_name": f"_type={type_.__name__}", "type_": type_}
+      for type_ in dlpack.SUPPORTED_DTYPES
+  )
+  def test_avoid_copy_between_gpu_and_cpu(self, type_):
+    try:
+      gpu_devices = jax.devices("gpu")
+    except RuntimeError:
+      gpu_devices = []
+    if not gpu_devices:
+      raise unittest.SkipTest("Test requires a GPU device.")
+
+    def tf_fun(x):
+      if type_ == jnp.bool_:
+        return tf.math.logical_or(x, True)
+      else:
+        return x + 1
+
+    jax_array_on_gpu = jnp.zeros([1], type_, device=gpu_devices[0])
+
+    # Since the input array is already on a GPU device, we expect that no memory
+    # copy occurs between GPU and CPU. Thus, we expect no errors raised by the
+    # transfer guard.
+    # There are two exceptions:
+    # First, when dtype is "int32". This is because almost all TensorFlow
+    # kernels for GPU devices keep int32 tensors in host memory.
+    # (https://github.com/tensorflow/tensorflow/blob/4eb3e36d1b0cd511e1677e740bd093f42365cf9f/tensorflow/python/eager/pywrap_tensor.cc#L352-L354)
+    # Hence, for "int32", we do expect a "host-to-device" copy.
+    # Second, when using PJRT C API runtime. This is because it currently skips dlpack
+    # to workaround "PJRT C API does not support GetDefaultLayout" runtime error.
+    # https://github.com/openxla/xla/blob/762bde36adf22792e91c38fe87cabe5af05bfadc/xla/pjrt/pjrt_c_api_client.h#L285-L289
+    @contextlib.contextmanager
+    def _transfer_guard(guard_level):
+      with contextlib.ExitStack() as stack:
+        stack.enter_context(jax.transfer_guard_device_to_device(guard_level))
+        stack.enter_context(jax.transfer_guard_device_to_host(guard_level))
+        if not (type_ == jnp.int32 or xla_bridge.using_pjrt_c_api()):
+          stack.enter_context(jax.transfer_guard_host_to_device(guard_level))
+        yield
+
+    with _transfer_guard("disallow_explicit"):
+      jax2tf.call_tf(tf_fun)(jax_array_on_gpu)
 
 
 class RoundTripToJaxTest(tf_test_util.JaxToTfTestCase):

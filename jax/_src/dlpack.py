@@ -26,6 +26,13 @@ from jax._src.lib import xla_extension_version
 from jax._src.typing import Array
 
 
+# A set of dtypes that dlpack supports.
+# Note: Make sure to use a "type", not a dtype instance, when looking up this set
+# because their hashes are different.
+# For example,
+# hash(jnp.float32) != hash(jnp.dtype(jnp.float32))
+# hash(jnp.float32) == hash(jnp.dtype(jnp.float32).type)
+# TODO(phawkins): Migrate to using dtypes instead of the scalar type objects.
 SUPPORTED_DTYPES = frozenset({
     jnp.int8, jnp.int16, jnp.int32, jnp.int64, jnp.uint8, jnp.uint16,
     jnp.uint32, jnp.uint64, jnp.float16, jnp.bfloat16, jnp.float32,
@@ -74,7 +81,6 @@ def to_dlpack(x: Array, take_ownership: bool = False,
   return xla_client._xla.buffer_to_dlpack_managed_tensor(
       x.addressable_data(0), stream=stream
   )  # type: ignore
-
 
 
 def from_dlpack(external_array):

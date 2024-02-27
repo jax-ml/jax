@@ -40,6 +40,7 @@ from jax._src import ad_util
 from jax._src import core
 from jax._src import effects
 from jax._src import util
+from jax._src import xla_bridge
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
@@ -332,7 +333,7 @@ def _call_tf_impl(*args_jax_flat, callable_flat_tf, **_):
   def _arg_jax_to_tf(arg_jax):
     if (isinstance(arg_jax, jax.Array) and
         list(arg_jax.devices())[0].platform in _DLPACK_PLATFORMS and
-        arg_jax.dtype in dlpack.SUPPORTED_DTYPES):
+        arg_jax.dtype.type in dlpack.SUPPORTED_DTYPES):
       arg_dlpack = jax.dlpack.to_dlpack(arg_jax, take_ownership=False)
       return tf.experimental.dlpack.from_dlpack(arg_dlpack)
     # The following avoids copies to the host on CPU, always for Array
@@ -349,11 +350,14 @@ def _call_tf_impl(*args_jax_flat, callable_flat_tf, **_):
     res_tf_flat = callable_flat_tf(*args_tf_flat)
 
   def _res_tf_to_jax(res_tf: TfVal):
-    res_tf, _ = jax2tf_internal._tfval_to_tensor_jax_dtype(res_tf)
-    if isinstance(res_tf, tf.Tensor) and res_tf.dtype in dlpack.SUPPORTED_DTYPES:
+    res_tf, jax_dtype = jax2tf_internal._tfval_to_tensor_jax_dtype(res_tf)
+    if isinstance(res_tf, tf.Tensor) and jax_dtype.type in dlpack.SUPPORTED_DTYPES:
       res_tf_platform = tf.DeviceSpec.from_string(res_tf.backing_device).device_type
       res_jax_platform = res_tf_platform.lower()
-      if res_jax_platform in _DLPACK_PLATFORMS:
+      # Skip using dlpack in PJRT C API runtime, because it currently fails
+      # with "PJRT C API does not support GetDefaultLayout".
+      # https://github.com/openxla/xla/blob/762bde36adf22792e91c38fe87cabe5af05bfadc/xla/pjrt/pjrt_c_api_client.h#L285-L289
+      if res_jax_platform in _DLPACK_PLATFORMS and not xla_bridge.using_pjrt_c_api():
         res_dlpack = tf.experimental.dlpack.to_dlpack(res_tf)
         return jax.dlpack.from_dlpack(res_dlpack)
 
