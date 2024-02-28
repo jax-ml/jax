@@ -8,6 +8,11 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.26
 
+* Deprecations
+  * {func}`jax.tree_map` is deprecated; use {func}`jax.tree.map` instead
+    (v0.4.25 or newer), or {func}`jax.tree_util.tree_map` for compatibility
+    with older JAX versions.
+
 ## jaxlib 0.4.26
 
 ## jax 0.4.25 (Feb 26, 2024)
