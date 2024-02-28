@@ -3832,6 +3832,55 @@ class ArrayPjitTest(jtu.JaxTestCase):
                           mesh2._flat_devices_tuple)
     self.assertArraysEqual(out, inp)
 
+  def test_prng_sharding_propagation(self):
+    input_shape = (8, 2)
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    spec = P('x', 'y')
+
+    seeds, _ = create_array(input_shape, mesh, spec, dtype=np.uint32)
+
+    @jax.jit
+    def make_keys(seeds):
+      make_key = partial(prng.random_seed, impl=prng.threefry_prng_impl)
+      key = make_key(seeds)
+      return key.T
+
+    out = make_keys(seeds)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('y', 'x')))
+
+    base_array = jax.random.key_data(out)
+    self.assertEqual(base_array.shape, (2, 8, 2))
+    self.assertEqual(base_array.sharding, NamedSharding(mesh, P('y', 'x', None)))
+
+    lowered_text = make_keys.lower(seeds).as_text()
+    self.assertIn('unspecified_dims=[0,1]', lowered_text)
+
+  def test_prng_sharding_propagation_with_nested_jit(self):
+    input_shape = (8, 2)
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    spec = P('x', 'y')
+
+    seeds, _ = create_array(input_shape, mesh, spec, dtype=np.uint32)
+
+    @jax.jit
+    def make_keys(seeds):
+      @partial(jax.jit, out_shardings=NamedSharding(mesh, P('y')))
+      def f():
+        make_key = partial(prng.random_seed, impl=prng.threefry_prng_impl)
+        return make_key(seeds)
+      x = f()
+      return x.T
+
+    out = make_keys(seeds)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, 'y')))
+
+    base_array = jax.random.key_data(out)
+    self.assertEqual(base_array.shape, (2, 8, 2))
+    self.assertEqual(base_array.sharding, NamedSharding(mesh, P(None, 'y', None)))
+
+    lowered_text = make_keys.lower(seeds).as_text()
+    self.assertIn('unspecified_dims=[0,1]', lowered_text)
+
 
 class TempSharding(Sharding):
 

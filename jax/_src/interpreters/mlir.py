@@ -1187,11 +1187,11 @@ def lower_jaxpr_to_fun(
     # MLIR function.
     output_token_types = []
     token_types = [token_type() for _ in effects]
-  token_avals = [core.AbstractToken] * num_tokens
+  token_avals = [core.abstract_token] * num_tokens
   # Order of arguments: dim vars, tokens, array inputs
   input_avals = dim_var_avals + token_avals + jaxpr.in_avals
   input_types = [*dim_var_types, *token_types, *input_types]
-  output_avals = [core.AbstractToken] * (len(output_token_types) + num_tokens) + jaxpr.out_avals
+  output_avals = [core.abstract_token] * (len(output_token_types) + num_tokens) + jaxpr.out_avals
   output_types = [*output_token_types, *token_types, *output_types]
 
   if input_output_aliases is not None:
@@ -1392,6 +1392,14 @@ def lower_jaxpr_to_fun(
           a if s is None else wrap_with_sharding_op(entry_lowering_ctx, a, a_aval, s)
           for a, s, a_aval in zip(flat_args, ir_arg_shardings, input_avals)]
 
+    if ir_arg_shardings is not None and name == "main":
+      flat_args = [
+          a.dtype._rules.replicate_trailing_dims(entry_lowering_ctx, o, a)  # type: ignore
+          if (a is not core.abstract_token and
+              dtypes.issubdtype(a.dtype, dtypes.extended) and s is None) else o  # type: ignore
+          for o, s, a in zip(flat_args, ir_arg_shardings, input_avals)
+      ]
+
     if ir_arg_memory_kinds is not None:
       flat_args = [
           a if mk is None else wrap_with_memory_kind(a, mk, a_aval)
@@ -1429,7 +1437,9 @@ def lower_jaxpr_to_fun(
         outs.append(ir_constants(np.zeros((), np.bool_)))
       else:
         outs.append(out)
+
     flat_outputs = util.flatten(outs)
+
     if not use_sharding_annotations and ir_result_shardings is not None:
       flat_outputs = [
           o if s is None else wrap_with_sharding_op(entry_lowering_ctx, o, o_aval, s)
@@ -1439,6 +1449,14 @@ def lower_jaxpr_to_fun(
       flat_outputs = [
           o if mk is None else wrap_with_memory_kind(o, mk, o_aval)
           for o, mk, o_aval in zip(flat_outputs, ir_result_memory_kinds, output_avals)]
+
+    if ir_result_shardings is not None and name == "main":
+      flat_outputs = [
+          a.dtype._rules.replicate_trailing_dims(entry_lowering_ctx, o, a)  # type: ignore
+          if (a is not core.abstract_token and
+              dtypes.issubdtype(a.dtype, dtypes.extended) and s is None) else o  # type: ignore
+          for o, s, a in zip(flat_outputs, ir_result_shardings, output_avals)
+      ]
 
     func_dialect.return_(flat_outputs)
 

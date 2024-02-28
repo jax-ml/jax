@@ -2996,6 +2996,14 @@ class FooTyRules:
       return FooArray(aval.shape, buf)
     return handler
 
+  @staticmethod
+  def replicate_trailing_dims(ctx, val, aval):
+    return val
+
+  @staticmethod
+  def check_replicated_trailing_dims(sharding: jax.sharding.GSPMDSharding, aval):
+    pass
+
 
 class FooTy(dtypes.ExtendedDType):
   type = dtypes.extended

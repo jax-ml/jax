@@ -36,6 +36,7 @@ from jax._src import pretty_printer as pp
 from jax._src import sharding_specs
 from jax._src import tree_util as tree_util_internal
 from jax._src import typing
+from jax._src import op_shardings
 from jax._src.api import jit, vmap
 from jax._src.dtypes import float0
 from jax._src.interpreters import ad
@@ -477,6 +478,29 @@ class KeyTyRules:
     return random_wrap(physical_result, impl=aval.dtype._impl)
 
   @staticmethod
+  def check_replicated_trailing_dims(sharding: GSPMDSharding, aval):
+    partitions, _ = op_shardings.get_num_ways_dim_sharded(sharding._hlo_sharding)
+    num_trailing_dims = core.physical_aval(aval).ndim - aval.ndim
+    if not all(i == 1 for i in partitions[-num_trailing_dims:]):
+      raise AssertionError(
+          "The trailing dims of extended dtypes should be replicated. Got"
+          f" sharding: {sharding}, partitions: {partitions}, "
+          f"num_trailing_dims: {num_trailing_dims}")
+
+  @staticmethod
+  def replicate_trailing_dims(ctx, val: ir.Value, aval) -> ir.Value:
+    # Set the sharding of extended dtypes to be UNCONSTRAINED
+    # (i.e. XLA will choose) on aval.shape.
+    # For the trailing dims i.e. the dimension of key_shape on the base_array,
+    # the sharding is set to be REPLICATED always.
+    # For example: if the key.shape is (8, 2) and key_data(key).shape is (8, 2, 2),
+    # then the sharding will be P(P.UNCONSTRAINED, P.UNCONSTRAINED, None).
+    # The below custom call achieves the sharding like above example.
+    return mlir.wrap_with_sharding_op(
+        ctx, val, aval, xc.HloSharding.replicate().to_proto(),
+        unspecified_dims=set(range(aval.ndim)))
+
+  @staticmethod
   def tangent_dtype(_):
     return dtypes.float0
 
@@ -520,7 +544,6 @@ class KeyTy(dtypes.ExtendedDType):
 
   def __hash__(self) -> int:
     return hash((self.__class__, self._impl))
-
 
 
 core.pytype_aval_mappings[PRNGKeyArray] = lambda x: x.aval

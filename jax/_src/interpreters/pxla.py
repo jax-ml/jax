@@ -2331,7 +2331,7 @@ def get_out_shardings_from_executable(
     num_out_avals: int,
     num_ordered_effects: int,
     all_default_mem_kind: bool,
-) -> Sequence[sharding_impls.XLACompatibleSharding] | None:
+) -> Sequence[sharding_impls.GSPMDSharding] | None:
   from jax._src import pjit
 
   if config.enable_memories.value:
@@ -2384,14 +2384,14 @@ def get_out_shardings_from_executable(
 def _get_in_shardings_from_xla(
     xla_executable, device_assignment: Sequence[xc.Device], num_in_avals: int,
     num_ordered_effects: int
-  ) -> Sequence[sharding_impls.XLACompatibleSharding] | None:
+  ) -> Sequence[GSPMDSharding] | None:
   """Returns input shardings from XLA."""
   from jax._src import pjit
 
   # When the device assignment only has 1 device, SPMD partitioner will not run.
   # Hence the op shardings will not be set on the `hlo_module`.
   if len(device_assignment) == 1:
-    return [sharding_impls.SingleDeviceSharding(device_assignment[0])] * num_in_avals
+    return [GSPMDSharding.get_replicated(device_assignment)] * num_in_avals
 
   in_op_shardings, _ = pjit.get_op_sharding_from_executable(xla_executable)
   if not in_op_shardings:
@@ -2403,7 +2403,7 @@ def _get_in_shardings_from_xla(
   assert len(in_op_shardings) == num_in_avals, (
       len(in_op_shardings), num_in_avals)
 
-  return [sharding_impls.GSPMDSharding(device_assignment, os)
+  return [GSPMDSharding(device_assignment, os)
           for os in in_op_shardings]
 
 
@@ -2650,6 +2650,9 @@ def _maybe_get_and_check_in_shardings(
   for xla_s, orig, aval in safe_zip(in_shardings_xla, in_shardings,
                                     global_in_avals):
     if is_unspecified(orig):
+      if (aval is not core.abstract_token and
+          dtypes.issubdtype(aval.dtype, dtypes.extended)):
+        aval.dtype._rules.check_replicated_trailing_dims(xla_s, aval)
       new_in_shardings.append(xla_s)
     else:
       xla_hlo_s = xla_s._to_xla_hlo_sharding(aval.ndim)  # type: ignore
@@ -2680,6 +2683,9 @@ def _get_out_shardings_from_executable(
   for xla_s, orig, aval in safe_zip(out_shardings_xla, out_shardings,
                                     global_out_avals):
     if is_unspecified(orig):
+      if (aval is not core.abstract_token and
+          dtypes.issubdtype(aval.dtype, dtypes.extended)):
+        aval.dtype._rules.check_replicated_trailing_dims(xla_s, aval)
       new_out_shardings.append(xla_s)
       are_out_shardings_from_xla.append(True)
     else:
