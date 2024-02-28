@@ -124,10 +124,10 @@ def save_and_offload_only_these_names(
   names_which_can_be_saved = set(names_which_can_be_saved)
   names_which_can_be_offloaded = set(names_which_can_be_offloaded)
   def policy(prim, *_, **params):
-    if prim is name_p and params['name'] in names_which_can_be_saved:
-      return pe.Saveable
     if prim is name_p and params['name'] in names_which_can_be_offloaded:
       return pe.Offloadable(src=offload_src, dst=offload_dst)
+    if prim is name_p and params['name'] in names_which_can_be_saved:
+      return pe.Saveable
     return pe.Recompute  # not saveable unless it's in the allow-list
   return policy
 
