@@ -4429,6 +4429,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(np_fun, jnp.where, args_maker)
       self._CompileAndCheck(jnp.where, args_maker)
 
+  def testWhereExtraCode(self):
+    def f(x):
+      return jnp.where(x > 0, x, -x)
+
+    jaxpr = jax.make_jaxpr(jax.grad(f))(3.)
+    # Test no comparison literal True/False in jaxpr, and hence no comparison to
+    # literals
+    self.assertNotIn('False', str(jaxpr))
+    self.assertNotIn('True', str(jaxpr))
+
   def testWhereScalarPromotion(self):
     x = jnp.where(jnp.array([True, False]), 3,
                   jnp.ones((2,), dtype=jnp.float32))

@@ -3618,11 +3618,15 @@ def _select_transpose_rule(t, which, *cases):
                      for c in cases]
   else:
     zeros = full_like(t, 0)
-    return [None] + [
-        select(eq(which, _const(which, i)), t, zeros)
-        if ad.is_undefined_primal(case) else None
-        for i, case in enumerate(cases)
-    ]
+    if dtypes.dtype(which) == np.dtype(np.bool_):
+      ct0 = select(which, zeros, t) if ad.is_undefined_primal(cases[0]) else None
+      ct1 = select(which, t, zeros) if ad.is_undefined_primal(cases[1]) else None
+      return (None, ct0, ct1)
+    else:
+      return [None] + [
+          select(eq(which, _const(which, i)), t, zeros)
+          if ad.is_undefined_primal(case) else None for i, case in enumerate(cases)
+      ]
 
 def _select_batch_rule(batched_args, batch_dims, **unused_kwargs):
   which, *cases = batched_args
