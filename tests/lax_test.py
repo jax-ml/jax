@@ -2978,6 +2978,10 @@ class FooTyRules:
     return xc.HloSharding.from_proto(new_op_sharding)
 
   @staticmethod
+  def logical_op_sharding(aval, phys_sharding):
+    return phys_sharding
+
+  @staticmethod
   def result_handler(sticky_device, aval):
     def handler(_, buf):
       buf.aval = core.ShapedArray(buf.shape, buf.dtype)
@@ -2985,8 +2989,7 @@ class FooTyRules:
     return handler
 
   @staticmethod
-  def global_sharded_result_handler(aval, out_sharding, committed,
-                                    is_out_sharding_from_xla):
+  def global_sharded_result_handler(aval, out_sharding, committed):
     def handler(arr):
       from jax._src.array import ArrayImpl
       if isinstance(arr, ArrayImpl):

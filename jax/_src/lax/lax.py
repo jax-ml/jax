@@ -5082,8 +5082,7 @@ class BIntRules:
     return handler
 
   @staticmethod
-  def global_sharded_result_handler(aval, out_sharding, committed,
-                                    is_out_sharding_from_xla):
+  def global_sharded_result_handler(aval, out_sharding, committed):
     phys_aval = core.physical_aval(aval)
     phys_handler_maker = pxla.global_result_handlers[core.ShapedArray]
 
@@ -5091,8 +5090,7 @@ class BIntRules:
       raise NotImplementedError  # TODO(mattjj)
     else:
       phys_sharding = out_sharding
-    phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed,
-                                      is_out_sharding_from_xla)
+    phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed)
 
     def handler(bufs):
       return core.DArray(aval, phys_handler(bufs))
@@ -5101,6 +5099,10 @@ class BIntRules:
   @staticmethod
   def physical_hlo_sharding(aval, hlo_sharding: xc.HloSharding) -> xc.HloSharding:
     return hlo_sharding
+
+  @staticmethod
+  def logical_op_sharding(aval, phys_sharding):
+    return phys_sharding
 
   @staticmethod
   def convert_from(bint_dtype, other_dtype) -> bool:

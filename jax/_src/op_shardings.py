@@ -25,7 +25,7 @@ from jax._src.lib import xla_client as xc
 
 
 def get_num_ways_dim_sharded(
-    hlo_sharding: xc.HloSharding) -> tuple[Sequence[int], int]:
+    hlo_sharding: xc.HloSharding) -> tuple[list[int], int]:
   if hlo_sharding.is_replicated():  # type: ignore
     return [], 1
   partitions = hlo_sharding.tile_assignment_dimensions()
@@ -42,7 +42,7 @@ def get_num_ways_dim_sharded(
   if replicate_on_last_tile_dim:
     num_replicas = partitions[-1]
     partitions = partitions[:-1]
-  return partitions, num_replicas
+  return list(partitions), num_replicas
 
 
 def is_op_sharding_replicated(op: xc.OpSharding | xc.HloSharding) -> bool:

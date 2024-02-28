@@ -1701,8 +1701,8 @@ def _pjit_batcher_for_sharding(
     else:
       new_gs = GSPMDSharding(s._device_assignment, new_op)  # type: ignore
     if hasattr(s, '_original_sharding'):
-      vmapped_s, _ = pxla._get_out_sharding_from_orig_sharding(
-          [new_gs], [None], s._original_sharding, None, [False])[0]  # type: ignore
+      vmapped_s = pxla._get_out_sharding_from_orig_sharding(
+          [new_gs], [None], s._original_sharding, None)[0]  # type: ignore
       new_gs = to_gspmd_sharding(vmapped_s, ndim)
     return new_gs
   else:

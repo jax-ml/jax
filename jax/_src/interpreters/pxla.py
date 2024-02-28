@@ -224,8 +224,7 @@ local_result_handlers: dict[type[core.AbstractValue], PxlaResultHandler] = {}
 
 
 def global_aval_to_result_handler(
-    aval: core.AbstractValue, out_sharding, committed: bool,
-    is_out_sharding_from_xla: bool
+    aval: core.AbstractValue, out_sharding, committed: bool
 ) -> Callable[[Sequence[xc.ArrayImpl]], Any]:
   """Returns a function for handling the raw buffers of a single output aval.
 
@@ -235,8 +234,6 @@ def global_aval_to_result_handler(
       Used for creating GSDAs.
     global_mesh: The global device mesh that generated this output. Used
       for creating GSDAs.
-    is_out_sharding_from_xla: True, if the out_sharding comes from XLA i.e.
-      the sharding is extracted from the HLO.
 
   Returns:
     A function for handling the Buffers that will eventually be produced
@@ -244,8 +241,7 @@ def global_aval_to_result_handler(
     to the user, e.g. an Array.
   """
   try:
-    return global_result_handlers[type(aval)](
-        aval, out_sharding, committed, is_out_sharding_from_xla)
+    return global_result_handlers[type(aval)](aval, out_sharding, committed)
   except KeyError as err:
     raise TypeError(
         f"No pxla_result_handler for type: {type(aval)}") from err
@@ -1139,12 +1135,10 @@ def local_avals_to_results_handler(
 def global_avals_to_results_handler(
     global_out_avals: Sequence[ShapedArray],
     shardings: Sequence[sharding_impls.XLACompatibleSharding],
-    committed: bool,
-    are_out_shardings_from_xla: Sequence[bool]) -> ResultsHandler:
+    committed: bool) -> ResultsHandler:
   handlers = [
-      global_aval_to_result_handler(global_aval, s, committed, x)
-      for global_aval, s, x in safe_zip(global_out_avals, shardings,
-                                        are_out_shardings_from_xla)
+      global_aval_to_result_handler(global_aval, s, committed)
+      for global_aval, s in safe_zip(global_out_avals, shardings)
   ]
   return ResultsHandler(handlers, shardings, global_out_avals)
 
@@ -2010,12 +2004,6 @@ def lower_sharding_computation(
   if xla_extension_version < 240 or hasattr(backend, "compile_replicated"):
     in_shardings = tuple(gs if is_unspecified(i) else i for i in in_shardings)
 
-  # TODO(yashkatariya): Allow prng sharding inference by XLA. Enable this after
-  # output sharding of XLA is partially constrained on the trailing dimensions.
-  in_shardings = tuple(
-      gs if a is not core.abstract_token and dtypes.issubdtype(a.dtype, dtypes.extended)
-      else i for i, a in safe_zip(in_shardings, global_in_avals))
-
   da_object = _create_da_object(tuple(device_assignment))
 
   all_default_mem_kind = are_all_shardings_default_mem_kind(
@@ -2466,11 +2454,10 @@ _register_out_sharding_handler(
 
 
 def _get_out_sharding_from_orig_sharding(
-    out_shardings, out_avals, orig_in_s, orig_aval, are_out_sharding_from_xla):
+    out_shardings, out_avals, orig_in_s, orig_aval):
   out = []
   orig_handler = _orig_out_sharding_handlers[type(orig_in_s)]
-  for o, out_aval, from_xla in safe_zip(out_shardings, out_avals,
-                                        are_out_sharding_from_xla):
+  for o, out_aval in safe_zip(out_shardings, out_avals):
     if isinstance(o, sharding_impls.GSPMDSharding):
       try:
         # Only return the same input sharding object if the OpShardings and
@@ -2482,21 +2469,19 @@ def _get_out_sharding_from_orig_sharding(
             and sharding_impls.are_op_shardings_equal(
                 o._hlo_sharding, orig_in_s._to_xla_hlo_sharding(orig_aval.ndim))
             and o.memory_kind == orig_in_s.memory_kind):
-          out.append((orig_in_s, False))
+          out.append(orig_in_s)
         else:
-          out.append((orig_handler(o, orig_in_s), False))
+          out.append(orig_handler(o, orig_in_s))
       except:
-        out.append((o, from_xla))
+        out.append(o)
     else:
-      out.append((o, from_xla))
+      out.append(o)
   return out
 
 def maybe_get_orig_out_sharding(
-    in_shardings, out_shardings, are_out_shardings_from_xla, in_avals,
-    out_avals):
+    in_shardings, out_shardings, in_avals, out_avals):
   if all(hasattr(o, '_original_sharding') for o in out_shardings):
-    return ([o._original_sharding for o in out_shardings],
-            (False,) * len(out_shardings))
+    return [o._original_sharding for o in out_shardings]
 
   orig_in_s = None
   orig_aval = None
@@ -2507,10 +2492,10 @@ def maybe_get_orig_out_sharding(
       orig_aval = aval
       break
   if orig_in_s is not None:
-    return zip(*_get_out_sharding_from_orig_sharding(
-        out_shardings, out_avals, orig_in_s, orig_aval, are_out_shardings_from_xla))
+    return _get_out_sharding_from_orig_sharding(
+        out_shardings, out_avals, orig_in_s, orig_aval)
 
-  return out_shardings, are_out_shardings_from_xla
+  return out_shardings
 
 
 def _get_layouts_from_executable(
@@ -2653,6 +2638,7 @@ def _maybe_get_and_check_in_shardings(
       if (aval is not core.abstract_token and
           dtypes.issubdtype(aval.dtype, dtypes.extended)):
         aval.dtype._rules.check_replicated_trailing_dims(xla_s, aval)
+        xla_s = aval.dtype._rules.logical_op_sharding(aval, xla_s)
       new_in_shardings.append(xla_s)
     else:
       xla_hlo_s = xla_s._to_xla_hlo_sharding(aval.ndim)  # type: ignore
@@ -2677,17 +2663,17 @@ def _get_out_shardings_from_executable(
       xla_executable, device_assignment, len(global_out_avals),
       num_ordered_effects, all_default_mem_kind)  # type: ignore
   if out_shardings_xla is None:
-    return out_shardings, (False,) * len(global_out_avals)
+    return out_shardings
 
-  new_out_shardings, are_out_shardings_from_xla = [], []  # type: ignore
+  new_out_shardings = []
   for xla_s, orig, aval in safe_zip(out_shardings_xla, out_shardings,
                                     global_out_avals):
     if is_unspecified(orig):
       if (aval is not core.abstract_token and
           dtypes.issubdtype(aval.dtype, dtypes.extended)):
         aval.dtype._rules.check_replicated_trailing_dims(xla_s, aval)
+        xla_s = aval.dtype._rules.logical_op_sharding(aval, xla_s)
       new_out_shardings.append(xla_s)
-      are_out_shardings_from_xla.append(True)
     else:
       xla_hlo_s = xla_s._to_xla_hlo_sharding(aval.ndim)  # type: ignore
       orig_hlo_s = orig._to_xla_hlo_sharding(aval.ndim)  # type: ignore
@@ -2700,17 +2686,14 @@ def _get_out_shardings_from_executable(
             f"Unexpected XLA sharding override: (XLA) {xla_s} != {orig} "
             "(User sharding)")
       new_out_shardings.append(orig)
-      are_out_shardings_from_xla.append(False)
-  return new_out_shardings, are_out_shardings_from_xla
+  return new_out_shardings
 
 
-def finalize_out_shardings(out_shardings, are_out_shardings_from_xla,
-                           device_assignment):
+def finalize_out_shardings(out_shardings, device_assignment):
   if len(device_assignment) == 1:
-    return ([SingleDeviceSharding(device_assignment[0], memory_kind=o.memory_kind)
-             if isinstance(o, GSPMDSharding) else o for o in out_shardings],
-            are_out_shardings_from_xla)
-  return out_shardings, are_out_shardings_from_xla
+    return [SingleDeviceSharding(device_assignment[0], memory_kind=o.memory_kind)
+            if isinstance(o, GSPMDSharding) else o for o in out_shardings]
+  return out_shardings
 
 
 @dataclasses.dataclass
@@ -2723,7 +2706,6 @@ class UnloadedMeshExecutable:
   output_avals: Sequence[ShapedArray]
   output_shardings: Sequence[sharding_impls.XLACompatibleSharding]
   committed: bool
-  are_out_shardings_from_xla: Sequence[bool]
   name: str
   unordered_effects: list[core.Effect]
   ordered_effects: list[core.Effect]
@@ -2744,8 +2726,7 @@ class UnloadedMeshExecutable:
       handle_args = InputsHandler(
           self.input_shardings, self.xla_executable.local_devices(), input_indices)
     handle_outs = global_avals_to_results_handler(
-        self.output_avals, self.output_shardings, self.committed,
-        self.are_out_shardings_from_xla)  # type: ignore  # arg-type
+        self.output_avals, self.output_shardings, self.committed)  # type: ignore  # arg-type
 
     unsafe_call = ExecuteReplicated(  # type: ignore  # assignment
         self.xla_executable, self.name, self.backend, handle_args,
@@ -2833,11 +2814,8 @@ class UnloadedMeshExecutable:
           xla_executable, mesh)
       in_shardings = [x if is_auto(i) else getattr(i, '_original_sharding', i)  # type: ignore
                       for x, i in safe_zip(in_shardings_xla, in_shardings)]
-      out_shardings_tuple = [
-          (x, True) if is_auto(o) else (o, False)
-          for x, o in safe_zip(out_shardings_xla, out_shardings)
-      ]
-      out_shardings, are_out_shardings_from_xla = unzip2(out_shardings_tuple)
+      out_shardings = [x if is_auto(o) else o
+                       for x, o in safe_zip(out_shardings_xla, out_shardings)]
     else:
       if pmap_nreps == 1:
         assert mesh is None
@@ -2845,13 +2823,12 @@ class UnloadedMeshExecutable:
           in_shardings = _maybe_get_and_check_in_shardings(
               xla_executable, in_shardings, tuple(da), global_in_avals,
               len(ordered_effects))
-        out_shardings, are_out_shardings_from_xla = _get_out_shardings_from_executable(
+        out_shardings = _get_out_shardings_from_executable(
             xla_executable, out_shardings, tuple(da), global_out_avals,
             len(ordered_effects), all_default_mem_kind)
       else:
         in_shardings, out_shardings, committed, da = _get_metadata_jit_pmap(
             xla_executable.local_devices(), len(in_shardings), len(out_shardings))
-        are_out_shardings_from_xla = (False,) * len(global_out_avals)
 
     if xla_extension_version >= 217:
       in_layouts, out_layouts = _get_layouts_from_executable(
@@ -2860,12 +2837,10 @@ class UnloadedMeshExecutable:
       assert all(i is None for i in in_layouts)
       assert all(o is None for o in out_layouts)
 
-    out_shardings, are_out_shardings_from_xla = maybe_get_orig_out_sharding(
-        in_shardings, out_shardings, are_out_shardings_from_xla,
-        global_in_avals, global_out_avals)
+    out_shardings = maybe_get_orig_out_sharding(
+        in_shardings, out_shardings, global_in_avals, global_out_avals)
 
-    out_shardings, are_out_shardings_from_xla = finalize_out_shardings(
-        out_shardings, are_out_shardings_from_xla, da)
+    out_shardings = finalize_out_shardings(out_shardings, da)
 
     return UnloadedMeshExecutable(
         xla_executable=xla_executable,
@@ -2876,7 +2851,6 @@ class UnloadedMeshExecutable:
         output_avals=global_out_avals,
         output_shardings=out_shardings,  # type: ignore # arg-type
         committed=committed,
-        are_out_shardings_from_xla=are_out_shardings_from_xla,
         name=name,
         unordered_effects=unordered_effects,
         ordered_effects=ordered_effects,
