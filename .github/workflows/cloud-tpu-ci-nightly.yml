@@ -28,7 +28,7 @@ jobs:
         tpu-type: ["v3-8", "v4-8", "v5e-4"]
     name: "TPU test (jaxlib=${{ matrix.jaxlib-version }}, ${{ matrix.tpu-type }})"
     env:
-      LIBTPU_OLDEST_VERSION_DATE: 20231030
+      LIBTPU_OLDEST_VERSION_DATE: 20240228
       ENABLE_PJRT_COMPATIBILITY: ${{ matrix.jaxlib-version == 'nightly+oldest_supported_libtpu' }}
     runs-on: ["self-hosted", "tpu", "${{ matrix.tpu-type }}"]
     timeout-minutes: 120

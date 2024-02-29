@@ -14,7 +14,6 @@
 
 """Test TPU-specific extensions to pallas_call."""
 
-import datetime
 import functools
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -49,8 +48,6 @@ class PallasTPUTest(jtu.JaxTestCase):
     super().setUp()
     if not self.interpret and jtu.device_under_test() != 'tpu':
       self.skipTest('Only interpret mode supported on non-TPU')
-    if not jtu.if_cloud_tpu_at_least(datetime.date(2024, 2, 10)):
-      self.skipTest('Does not work on Cloud TPU older than 2024/02/10.')
 
   def pallas_call(self, *args, **kwargs):
     return pl.pallas_call(*args, **kwargs, interpret=self.interpret)
@@ -346,8 +343,6 @@ class PallasCallDynamicGridTest(PallasTPUTest):
 
   # TODO(apaszke): Add tests for scalar_prefetch too
   def test_dynamic_grid_scalar_input(self):
-    if not jtu.if_cloud_tpu_at_least(datetime.date(2024, 2, 14)):
-      self.skipTest('Does not work on Cloud TPU older than 2024/02/14.')
     shape = (8, 128)
     result_ty = jax.ShapeDtypeStruct(shape, jnp.float32)
 
@@ -441,9 +436,6 @@ class PallasCallDynamicGridTest(PallasTPUTest):
     )
 
   def test_num_programs(self):
-    if not jtu.if_cloud_tpu_at_least(datetime.date(2024, 2, 27)):
-      self.skipTest('Does not work on Cloud TPU older than 2024/02/27.')
-
     def kernel(y_ref):
       y_ref[0, 0] = pl.num_programs(0)
 
@@ -459,9 +451,6 @@ class PallasCallDynamicGridTest(PallasTPUTest):
     self.assertEqual(dynamic_kernel(4), 8)
 
   def test_num_programs_block_spec(self):
-    if not jtu.if_cloud_tpu_at_least(datetime.date(2024, 2, 27)):
-      self.skipTest('Does not work on Cloud TPU older than 2024/02/27.')
-
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...]
 
