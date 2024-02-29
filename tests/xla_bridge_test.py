@@ -194,7 +194,7 @@ class XlaBridgeTest(jtu.JaxTestCase):
     self.assertIn("name2", xb._backend_factories)
     self.assertEqual(registration.priority, 400)
     self.assertTrue(registration.experimental)
-    mock_make.assert_called_once_with("name1", None, None)
+    mock_make.assert_called_once_with("name1", {}, None)
 
   def test_register_plugin_with_config(self):
     test_json_file_path = os.path.join(

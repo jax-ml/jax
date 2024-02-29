@@ -485,6 +485,20 @@ def discover_pjrt_plugins() -> None:
                          "calling %s.initialize()", plugin_module_name)
 
 
+def _options_from_jax_configs(plugin_name):
+  if plugin_name != "cuda":
+    return {}
+
+  options = {}
+  visible_devices = CUDA_VISIBLE_DEVICES.value
+  if visible_devices != 'all':
+    options['visible_devices'] = [int(x) for x in visible_devices.split(',')]
+  options['enable_mock_nccl'] = _USE_MOCK_GPU_CLIENT.value
+  if options['enable_mock_nccl']:
+    options['num_nodes'] = _MOCK_NUM_GPUS.value
+  return options
+
+
 # TODO(b/261345120): decide on a public name and expose a public method which is
 # an alias of this method.
 def register_plugin(
@@ -509,15 +523,19 @@ def register_plugin(
   def factory():
     if not xla_client.pjrt_plugin_initialized(plugin_name):
       xla_client.initialize_pjrt_plugin(plugin_name)
-
+    updated_options = {}
+    if options is not None:
+      updated_options.update(options)
+    updated_options.update(_options_from_jax_configs(plugin_name))
     if distributed.global_state.client is None:
-      return xla_client.make_c_api_client(plugin_name, options, None)
+      return xla_client.make_c_api_client(plugin_name, updated_options, None)
+
     distribute_options = {
         'node_id': distributed.global_state.process_id,
         'num_nodes': distributed.global_state.num_processes,
     }
     if options is not None:
-      distribute_options.update(options)
+      distribute_options.update(updated_options)
     return xla_client.make_c_api_client(
         plugin_name, distribute_options, distributed.global_state.client
     )

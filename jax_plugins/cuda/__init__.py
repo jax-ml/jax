@@ -75,9 +75,7 @@ def initialize():
   if path is None:
     return
 
-  options = xla_client.generate_pjrt_gpu_plugin_options(
-      xb.CUDA_VISIBLE_DEVICES.value
-  )
+  options = xla_client.generate_pjrt_gpu_plugin_options()
   c_api = xb.register_plugin(
       'cuda', priority=500, library_path=str(path), options=options
   )

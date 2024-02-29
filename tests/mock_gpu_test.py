@@ -27,7 +27,6 @@ import numpy as np
 config.parse_flags_with_absl()
 
 
-@jtu.run_on_devices('gpu')
 class MockGPUTest(jtu.JaxTestCase):
 
   def setUp(self):
