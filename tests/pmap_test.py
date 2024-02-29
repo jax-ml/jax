@@ -1737,10 +1737,10 @@ class PythonPmapTest(jtu.JaxTestCase):
       res = res.reshape(res.shape[0] * res.shape[1], *res.shape[2:])
       return res
 
-    key = random.PRNGKey(1)
-    x = random.normal(key, (80, 50))
+    key = lambda: random.PRNGKey(1)
+    x = random.normal(key(), (80, 50))
     batched_mvm = vmap(lambda b: distributed_matrix_vector(x, b), in_axes=0)
-    y = random.normal(key, (10, 50, 1))
+    y = random.normal(key(), (10, 50, 1))
     result = batched_mvm(y)
     expected = jnp.einsum('ij,njk->nik', x, y)
     self.assertAllClose(result, expected, check_dtypes=False, atol=1e-3,

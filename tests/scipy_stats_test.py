@@ -1475,17 +1475,18 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
     ndim = shape[0] if len(shape) > 1 else 1
 
-    args = args_maker()
     func = partial(resample, shape=())
-    self._CompileAndCheck(
-      func, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
-    result = func(*args)
+    with jax.enable_key_reuse_checks(False):
+      self._CompileAndCheck(
+        func, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
+    result = func(*args_maker())
     assert result.shape == (ndim,)
 
     func = partial(resample, shape=(4,))
-    self._CompileAndCheck(
-      func, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
-    result = func(*args)
+    with jax.enable_key_reuse_checks(False):
+      self._CompileAndCheck(
+        func, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
+    result = func(*args_maker())
     assert result.shape == (ndim, 4)
 
   @jtu.sample_product(

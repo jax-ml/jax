@@ -153,12 +153,14 @@ class PRNGKeyArray(jax.Array):
 
   _impl: PRNGImpl
   _base_array: typing.Array
+  _consumed: bool | np.ndarray  # Used in jax.experimental.key_reuse.
 
   def __init__(self, impl, key_data: Any):
     assert not isinstance(key_data, core.Tracer)
     _check_prng_key_data(impl, key_data)
     self._impl = impl
     self._base_array = key_data
+    self._consumed = False  # TODO(jakevdp): default to True here?
 
   def block_until_ready(self):
     _ = self._base_array.block_until_ready()
@@ -269,7 +271,9 @@ class PRNGKeyArray(jax.Array):
       pp.nest(2, pp.brk() + pp_keys + pp.brk() + pp_impl)))
 
   def copy(self):
-    return self.__class__(self._impl, self._base_array.copy())
+    out = self.__class__(self._impl, self._base_array.copy())
+    out._consumed = self._consumed  # TODO(jakevdp): is this correct?
+    return out
 
   __hash__ = None  # type: ignore[assignment]
   __array_priority__ = 100

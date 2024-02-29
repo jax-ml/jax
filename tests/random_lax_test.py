@@ -126,12 +126,12 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @jtu.sample_product(dtype=float_dtypes)
   def testRngUniform(self, dtype):
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
     rand = lambda key: random.uniform(key, (10000,), dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key)
-    compiled_samples = crand(key)
+    uncompiled_samples = rand(key())
+    compiled_samples = crand(key())
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckCollisions(samples, jnp.finfo(dtype).nmant)
@@ -142,12 +142,12 @@ class LaxRandomTest(jtu.JaxTestCase):
     lo = 5
     hi = 10
 
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
     rand = lambda key: random.randint(key, (10000,), lo, hi, dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key)
-    compiled_samples = crand(key)
+    uncompiled_samples = rand(key())
+    compiled_samples = crand(key())
 
     for samples in [uncompiled_samples, compiled_samples]:
       self.assertTrue(np.all(lo <= samples))
@@ -155,12 +155,12 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @jtu.sample_product(dtype=float_dtypes)
   def testNormal(self, dtype):
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
     rand = lambda key: random.normal(key, (10000,), dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key)
-    compiled_samples = crand(key)
+    uncompiled_samples = rand(key())
+    compiled_samples = crand(key())
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.norm().cdf)
@@ -174,12 +174,12 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @jtu.sample_product(dtype=complex_dtypes)
   def testNormalComplex(self, dtype):
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
     rand = lambda key: random.normal(key, (10000,), dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key)
-    compiled_samples = crand(key)
+    uncompiled_samples = rand(key())
+    compiled_samples = crand(key())
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(jnp.real(samples), scipy.stats.norm(scale=1/np.sqrt(2)).cdf)
@@ -188,12 +188,12 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @jtu.sample_product(dtype=float_dtypes)
   def testTruncatedNormal(self, dtype):
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
     rand = lambda key: random.truncated_normal(key, -0.3, 0.3, (10000,), dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key)
-    compiled_samples = crand(key)
+    uncompiled_samples = rand(key())
+    compiled_samples = crand(key())
 
     min_val = np.min(uncompiled_samples)
     max_val = np.max(uncompiled_samples)
@@ -204,15 +204,15 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @jtu.sample_product(dtype=jtu.dtypes.floating + jtu.dtypes.integer)
   def testShuffle(self, dtype):
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
     x = np.arange(100).astype(dtype)
     rand = lambda key: random.shuffle(key, x)
     crand = jax.jit(rand)
 
     with self.assertWarns((DeprecationWarning, FutureWarning)):
-      perm1 = rand(key)
+      perm1 = rand(key())
     with self.assertWarns((DeprecationWarning, FutureWarning)):
-      perm2 = crand(key)
+      perm2 = crand(key())
 
     self.assertAllClose(perm1, perm2)
     self.assertFalse(np.all(perm1 == x))  # seems unlikely!
@@ -238,7 +238,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     np_choice = np.random.default_rng(0).choice
     p_dtype = dtypes.to_inexact_dtype(dtype)
 
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
     is_range = type(input_range_or_shape) is int
     x = (input_range_or_shape if is_range else
          self.rng().permutation(np.arange(math.prod(
@@ -250,7 +250,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     else:
       p = None
     rand = lambda key, x: random.choice(key, x, shape, replace, p, axis)
-    sample = rand(key, x)
+    sample = rand(key(), x)
     if not is_range:
       self.assertEqual(dtype, sample.dtype)
     expected_shape = np.shape(np_choice(x, shape or None, replace, p, axis))
@@ -263,9 +263,9 @@ class LaxRandomTest(jtu.JaxTestCase):
         ind = np.lexsort(np.swapaxes(x, axis, -1).reshape((-1, x.shape[axis])))
         return jnp.take(x, ind, axis)
       self.assertArraysEqual(lsort(sample), lsort(np.unique(sample, axis=axis)))
-    self.assertArraysEqual(sample, rand(key, np.array(x)))
+    self.assertArraysEqual(sample, rand(key(), np.array(x)))
     self.assertArraysEqual(sample, jax.jit(rand, static_argnames=
-      'x' if is_range else None)(key, x))
+      'x' if is_range else None)(key(), x))
 
   @jtu.sample_product(
     [dict(range_or_shape=range_or_shape, axis=axis)
@@ -278,7 +278,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     independent=[True, False],
   )
   def testPermutation(self, dtype, range_or_shape, axis, independent):
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
     is_range = type(range_or_shape) is int
     x = (range_or_shape if is_range else
          self.rng().permutation(np.arange(
@@ -286,7 +286,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     shape = ((range_or_shape,) if is_range else range_or_shape)
     x_ = np.copy(x)
     rand = lambda key, x: random.permutation(key, x, axis, independent=independent)
-    perm = rand(key, x)
+    perm = rand(key(), x)
     if shape[axis] >= 10:
       self.assertFalse(np.all(perm == x))  # seems unlikely!
     arr = np.arange(x) if is_range else x
@@ -302,9 +302,9 @@ class LaxRandomTest(jtu.JaxTestCase):
       with self.assertRaises(AssertionError):
         self.assertArraysEqual(lsort(arr), lsort(perm), check_dtypes=not is_range)
     self.assertArraysEqual(x_, x)
-    self.assertArraysEqual(perm, rand(key, np.array(x)))
+    self.assertArraysEqual(perm, rand(key(), np.array(x)))
     self.assertArraysEqual(perm, jax.jit(rand, static_argnames=
-      'x' if is_range else None)(key, x))
+      'x' if is_range else None)(key(), x))
 
   def testPermutationErrors(self):
     key = self.make_key(0)
@@ -320,13 +320,13 @@ class LaxRandomTest(jtu.JaxTestCase):
     dtype=jtu.dtypes.floating,
   )
   def testBernoulli(self, p, dtype):
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
     p = np.array(p, dtype=dtype)
     rand = lambda key, p: random.bernoulli(key, p, (10000,))
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key, p)
-    compiled_samples = crand(key, p)
+    uncompiled_samples = rand(key(), p)
+    compiled_samples = crand(key(), p)
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckChiSquared(samples, scipy.stats.bernoulli(p).pmf)
@@ -344,7 +344,7 @@ class LaxRandomTest(jtu.JaxTestCase):
     dtype=jtu.dtypes.floating,
   )
   def testCategorical(self, p, axis, dtype, sample_shape):
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
     p = np.array(p, dtype=dtype)
     logits = np.log(p) - 42 # test unnormalized
     out_shape = tuple(np.delete(logits.shape, axis))
@@ -352,8 +352,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     rand = partial(random.categorical, shape=shape, axis=axis)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key, logits)
-    compiled_samples = crand(key, logits)
+    uncompiled_samples = rand(key(), logits)
+    compiled_samples = crand(key(), logits)
 
     if axis < 0:
       axis += len(logits.shape)
@@ -384,12 +384,12 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testBeta(self, a, b, dtype):
     if not config.enable_x64.value:
       raise SkipTest("skip test except on X64")
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
     rand = lambda key, a, b: random.beta(key, a, b, (10000,), dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key, a, b)
-    compiled_samples = crand(key, a, b)
+    uncompiled_samples = rand(key(), a, b)
+    compiled_samples = crand(key(), a, b)
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.beta(a, b).cdf)
@@ -412,12 +412,12 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @jtu.sample_product(dtype=float_dtypes)
   def testCauchy(self, dtype):
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
     rand = lambda key: random.cauchy(key, (10000,), dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key)
-    compiled_samples = crand(key)
+    uncompiled_samples = rand(key())
+    compiled_samples = crand(key())
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.cauchy().cdf)
@@ -428,13 +428,13 @@ class LaxRandomTest(jtu.JaxTestCase):
   )
   @jtu.skip_on_devices("tpu")  # TODO(mattjj): slow compilation times
   def testDirichlet(self, alpha, dtype):
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
     num_samples = 10000
     rand = lambda key, alpha: random.dirichlet(key, alpha, (num_samples,), dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key, alpha)
-    compiled_samples = crand(key, alpha)
+    uncompiled_samples = rand(key(), alpha)
+    compiled_samples = crand(key(), alpha)
 
     for samples in [uncompiled_samples, compiled_samples]:
       self.assertAllClose(samples.sum(-1), np.ones(num_samples, dtype=dtype))
@@ -462,12 +462,12 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @jtu.sample_product(dtype=float_dtypes)
   def testExponential(self, dtype):
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
     rand = lambda key: random.exponential(key, (10000,), dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key)
-    compiled_samples = crand(key)
+    uncompiled_samples = rand(key())
+    compiled_samples = crand(key())
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.expon().cdf)
@@ -479,15 +479,15 @@ class LaxRandomTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")  # low accuracy leads to failures.
   def testGammaVsLogGamma(self, a, dtype):
     # Test that gamma() and loggamma() produce equivalent samples.
-    key = self.make_key(0)
     rand_gamma = lambda key, a: random.gamma(key, a, (100,), dtype)
     rand_loggamma = lambda key, a: random.loggamma(key, a, (100,), dtype)
     crand_loggamma = jax.jit(rand_loggamma)
     tol = {np.float32: 1E-6, np.float64: 1E-12}
 
-    self.assertAllClose(rand_gamma(key, a), jnp.exp(rand_loggamma(key, a)),
+    key = lambda: self.make_key(0)
+    self.assertAllClose(rand_gamma(key(), a), jnp.exp(rand_loggamma(key(), a)),
                         atol=tol, rtol=tol)
-    self.assertAllClose(rand_gamma(key, a), jnp.exp(crand_loggamma(key, a)),
+    self.assertAllClose(rand_gamma(key(), a), jnp.exp(crand_loggamma(key(), a)),
                         atol=tol, rtol=tol)
 
   @jtu.sample_product(
@@ -495,12 +495,12 @@ class LaxRandomTest(jtu.JaxTestCase):
     dtype=jtu.dtypes.floating,
   )
   def testGamma(self, a, dtype):
-    key = self.make_key(1)
+    key = lambda: self.make_key(1)
     rand = lambda key, a: random.gamma(key, a, (10000,), dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key, a)
-    compiled_samples = crand(key, a)
+    uncompiled_samples = rand(key(), a)
+    compiled_samples = crand(key(), a)
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.gamma(a).cdf)
@@ -515,13 +515,13 @@ class LaxRandomTest(jtu.JaxTestCase):
     alpha=[1e-4, 1e-3, 1e-2, 1e-1, 1e0, 1e1, 1e2, 1e3, 1e4],
   )
   def testGammaGrad(self, log_space, alpha):
-    rng = self.make_key(0)
+    rng = lambda: self.make_key(0)
     alphas = np.full((100,), alpha)
-    z = random.gamma(rng, alphas)
+    z = random.gamma(rng(), alphas)
     if log_space:
-      actual_grad = jax.grad(lambda x: lax.exp(random.loggamma(rng, x)).sum())(alphas)
+      actual_grad = jax.grad(lambda x: lax.exp(random.loggamma(rng(), x)).sum())(alphas)
     else:
-      actual_grad = jax.grad(lambda x: random.gamma(rng, x).sum())(alphas)
+      actual_grad = jax.grad(lambda x: random.gamma(rng(), x).sum())(alphas)
 
     eps = 0.01 * alpha / (1.0 + np.sqrt(alpha))
     cdf_dot = (scipy.stats.gamma.cdf(z, alpha + eps)
@@ -548,12 +548,12 @@ class LaxRandomTest(jtu.JaxTestCase):
     dtype=jtu.dtypes.supported([np.int16, np.int32, np.int64]),
   )
   def testPoisson(self, lam, dtype):
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
     rand = lambda key, lam: random.poisson(key, lam, (10000,), dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key, lam)
-    compiled_samples = crand(key, lam)
+    uncompiled_samples = rand(key(), lam)
+    compiled_samples = crand(key(), lam)
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckChiSquared(samples, scipy.stats.poisson(lam).pmf)
@@ -594,36 +594,36 @@ class LaxRandomTest(jtu.JaxTestCase):
 
   @jtu.sample_product(dtype=jtu.dtypes.floating)
   def testGumbel(self, dtype):
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
     rand = lambda key: random.gumbel(key, (10000,), dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key)
-    compiled_samples = crand(key)
+    uncompiled_samples = rand(key())
+    compiled_samples = crand(key())
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.gumbel_r().cdf)
 
   @jtu.sample_product(dtype=float_dtypes)
   def testLaplace(self, dtype):
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
     rand = lambda key: random.laplace(key, (10000,), dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key)
-    compiled_samples = crand(key)
+    uncompiled_samples = rand(key())
+    compiled_samples = crand(key())
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.laplace().cdf)
 
   @jtu.sample_product(dtype=float_dtypes)
   def testLogistic(self, dtype):
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
     rand = lambda key: random.logistic(key, (10000,), dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key)
-    compiled_samples = crand(key)
+    uncompiled_samples = rand(key())
+    compiled_samples = crand(key())
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.logistic().cdf)
@@ -651,12 +651,12 @@ class LaxRandomTest(jtu.JaxTestCase):
     dtype=jtu.dtypes.floating,
   )
   def testGeneralizedNormal(self, p, shape, dtype):
-    key = self.make_key(2)
+    key = lambda: self.make_key(2)
     rand = lambda key, p: random.generalized_normal(key, p, shape, dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key, p)
-    compiled_samples = crand(key, p)
+    uncompiled_samples = rand(key(), p)
+    compiled_samples = crand(key(), p)
     for samples in [uncompiled_samples, compiled_samples]:
       self.assertEqual(samples.shape, shape)
       self.assertEqual(samples.dtype, dtype)
@@ -669,12 +669,12 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testGeneralizedNormalKS(self, p, shape, dtype):
     self.skipTest(  # test is also sometimes slow, with (300, ...)-shape draws
         "sensitive to random key - https://github.com/google/jax/issues/18941")
-    key = self.make_key(2)
+    key = lambda: self.make_key(2)
     rand = lambda key, p: random.generalized_normal(key, p, (300, *shape), dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key, p)
-    compiled_samples = crand(key, p)
+    uncompiled_samples = rand(key(), p)
+    compiled_samples = crand(key(), p)
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples.ravel(), scipy.stats.gennorm(p).cdf)
 
@@ -686,11 +686,11 @@ class LaxRandomTest(jtu.JaxTestCase):
   )
   @jtu.skip_on_devices("tpu")  # TPU precision causes issues.
   def testBall(self, d, p, shape, dtype):
-    key = self.make_key(123)
+    key = lambda: self.make_key(123)
     rand = lambda key, p: random.ball(key, d, p, shape, dtype)
     crand = jax.jit(rand)
-    uncompiled_samples = rand(key, p)
-    compiled_samples = crand(key, p)
+    uncompiled_samples = rand(key(), p)
+    compiled_samples = crand(key(), p)
     for samples in [uncompiled_samples, compiled_samples]:
       self.assertEqual(samples.shape, (*shape, d))
       self.assertEqual(samples.dtype, dtype)
@@ -706,11 +706,11 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testBallKS(self, d, p, shape, dtype):
     self.skipTest(
         "sensitive to random key - https://github.com/google/jax/issues/18932")
-    key = self.make_key(123)
+    key = lambda: self.make_key(123)
     rand = lambda key, p: random.ball(key, d, p, (100, *shape), dtype)
     crand = jax.jit(rand)
-    uncompiled_samples = rand(key, p)
-    compiled_samples = crand(key, p)
+    uncompiled_samples = rand(key(), p)
+    compiled_samples = crand(key(), p)
     for samples in [uncompiled_samples, compiled_samples]:
       norms = (jnp.abs(samples) ** p).sum(-1) ** (d / p)
       self._CheckKolmogorovSmirnovCDF(norms.ravel(), scipy.stats.uniform().cdf)
@@ -720,12 +720,12 @@ class LaxRandomTest(jtu.JaxTestCase):
     dtype=jtu.dtypes.floating,
   )
   def testPareto(self, b, dtype):
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
     rand = lambda key, b: random.pareto(key, b, (10000,), dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key, b)
-    compiled_samples = crand(key, b)
+    uncompiled_samples = rand(key(), b)
+    compiled_samples = crand(key(), b)
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.pareto(b).cdf)
@@ -742,12 +742,12 @@ class LaxRandomTest(jtu.JaxTestCase):
   )
   @jtu.skip_on_devices("cpu", "tpu")  # TODO(phawkins): slow compilation times
   def testT(self, df, dtype):
-    key = self.make_key(1)
+    key = lambda: self.make_key(1)
     rand = lambda key, df: random.t(key, df, (10000,), dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key, df)
-    compiled_samples = crand(key, df)
+    uncompiled_samples = rand(key(), df)
+    compiled_samples = crand(key(), df)
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.t(df).cdf)
@@ -763,14 +763,14 @@ class LaxRandomTest(jtu.JaxTestCase):
     cov_factor = r.randn(dim, dim)
     cov = np.dot(cov_factor, cov_factor.T) + dim * np.eye(dim)
 
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
     rand = partial(random.multivariate_normal, mean=mean, cov=cov,
                    shape=(10000,), method=method)
     crand = jax.jit(rand)
 
     with jax.numpy_rank_promotion('allow'):
-      uncompiled_samples = np.asarray(rand(key), np.float64)
-      compiled_samples = np.asarray(crand(key), np.float64)
+      uncompiled_samples = np.asarray(rand(key()), np.float64)
+      compiled_samples = np.asarray(crand(key()), np.float64)
 
     inv_scale = scipy.linalg.lapack.dtrtri(np.linalg.cholesky(cov), lower=True)[0]
     for samples in [uncompiled_samples, compiled_samples]:
@@ -895,17 +895,17 @@ class LaxRandomTest(jtu.JaxTestCase):
   def testRandomBroadcast(self):
     """Issue 4033"""
     # test for broadcast issue in https://github.com/google/jax/issues/4033
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
     shape = (10, 2)
     with jax.numpy_rank_promotion('allow'):
-      x1 = random.uniform(key, shape, minval=jnp.zeros(2), maxval=jnp.ones(2))
-      x2 = random.randint(key, shape, jnp.array([0, 1]), jnp.array([1, 2]))
+      x1 = random.uniform(key(), shape, minval=jnp.zeros(2), maxval=jnp.ones(2))
+      x2 = random.randint(key(), shape, jnp.array([0, 1]), jnp.array([1, 2]))
     assert x1.shape == shape
     assert x2.shape == shape
 
   def testMaxwellSample(self):
     num_samples = 10**5
-    rng = self.make_key(0)
+    rng = lambda: self.make_key(0)
 
     rand = lambda x: random.maxwell(x, (num_samples, ))
     crand = jax.jit(rand)
@@ -913,8 +913,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     loc = jtu.to_default_dtype(scipy.stats.maxwell.mean())
     std = jtu.to_default_dtype(scipy.stats.maxwell.std())
 
-    uncompiled_samples = rand(rng)
-    compiled_samples = crand(rng)
+    uncompiled_samples = rand(rng())
+    compiled_samples = crand(rng())
 
     for samples in [uncompiled_samples, compiled_samples]:
       # Check first and second moments.
@@ -928,7 +928,7 @@ class LaxRandomTest(jtu.JaxTestCase):
       ('test2', 2.0, 3.0))
   def testWeibullSample(self, concentration, scale):
     num_samples = 10**5
-    rng = self.make_key(0)
+    rng = lambda: self.make_key(0)
 
     rand = lambda x: random.weibull_min(x, scale, concentration, (num_samples,))
     crand = jax.jit(rand)
@@ -936,8 +936,8 @@ class LaxRandomTest(jtu.JaxTestCase):
     loc = jtu.to_default_dtype(scipy.stats.weibull_min.mean(c=concentration, scale=scale))
     std = jtu.to_default_dtype(scipy.stats.weibull_min.std(c=concentration, scale=scale))
 
-    uncompiled_samples = rand(rng)
-    compiled_samples = crand(rng)
+    uncompiled_samples = rand(rng())
+    compiled_samples = crand(rng())
 
     for samples in [uncompiled_samples, compiled_samples]:
       # Check first and second moments.
@@ -952,17 +952,17 @@ class LaxRandomTest(jtu.JaxTestCase):
       ('test2', 2.0, 3.0))
   def testDoublesidedMaxwellSample(self, loc, scale):
     num_samples = 10**4
-    rng = self.make_key(0)
+    rng = lambda: self.make_key(0)
 
     rand = lambda key: random.double_sided_maxwell(
-        rng, loc, scale, (num_samples,))
+        rng(), loc, scale, (num_samples,))
     crand = jax.jit(rand)
 
     mean = loc
     std = np.sqrt(3.) * scale
 
-    uncompiled_samples = rand(rng)
-    compiled_samples = crand(rng)
+    uncompiled_samples = rand(rng())
+    compiled_samples = crand(rng())
 
     # Compute the double sided maxwell CDF through the one sided maxwell cdf.
     # This is done as follows:
@@ -989,14 +989,14 @@ class LaxRandomTest(jtu.JaxTestCase):
           samples, lambda x: double_sided_maxwell_cdf(x, loc, scale))
 
   def testRadamacher(self):
-    rng = self.make_key(0)
+    rng = lambda: self.make_key(0)
     num_samples = 10**5
 
     rand = lambda x: random.rademacher(x, (num_samples,))
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(rng)
-    compiled_samples = crand(rng)
+    uncompiled_samples = rand(rng())
+    compiled_samples = crand(rng())
 
     for samples in [uncompiled_samples, compiled_samples]:
       unique_values, counts = np.unique(samples, return_counts=True)
@@ -1052,24 +1052,25 @@ class LaxRandomTest(jtu.JaxTestCase):
   def test_randint_bounds(self, dtype):
     min = np.iinfo(dtype).min
     max = np.iinfo(dtype).max
-    key = self.make_key(1701)
+    key = lambda: self.make_key(1701)
     shape = (10,)
     if np.iinfo(dtype).bits < np.iinfo(dtypes.canonicalize_dtype(int)).bits:
-      expected = random.randint(key, shape, min, max + 1, dtype)
-      self.assertArraysEqual(expected, random.randint(key, shape, min - 12345, max + 12345, dtype))
+      expected = random.randint(key(), shape, min, max + 1, dtype)
+      self.assertArraysEqual(expected, random.randint(key(), shape, min - 12345, max + 12345, dtype))
     else:
-      self.assertRaises(OverflowError, random.randint, key, shape, min - 12345, max + 12345, dtype)
+      self.assertRaises(OverflowError, random.randint, key(), shape, min - 12345, max + 12345, dtype)
 
   def test_randint_out_of_range(self):
     key = self.make_key(0)
-
     r = random.randint(key, (10,), 255, 256, np.uint8)
     self.assertAllClose(r, jnp.full_like(r, 255))
 
+    key = self.make_key(0)
     r = random.randint(key, (1000,), -128, 128, np.int8)
     self.assertGreater((r == -128).sum(), 0)
     self.assertGreater((r == 127).sum(), 0)
 
+    key = self.make_key(0)
     r = random.randint(key, (1000,), -1000, 1000, np.uint8)
     self.assertGreater((r == 0).sum(), 0)
     self.assertGreater((r == 255).sum(), 0)
@@ -1103,14 +1104,14 @@ class LaxRandomTest(jtu.JaxTestCase):
       df = [0.2, 1., 10., 100.],
       dtype=jtu.dtypes.floating)
   def testChisquare(self, df, dtype):
-    key = self.make_key(1)
+    key = lambda: self.make_key(1)
 
     def rand(key, df):
       return random.chisquare(key, df, shape=(10000,), dtype=dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key, df)
-    compiled_samples = crand(key, df)
+    uncompiled_samples = rand(key(), df)
+    compiled_samples = crand(key(), df)
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.chi2(df).cdf)
@@ -1120,12 +1121,12 @@ class LaxRandomTest(jtu.JaxTestCase):
       dfden = [1. ,2., 10., 100.],
       dtype=jtu.dtypes.floating)
   def testF(self, dfnum, dfden, dtype):
-    key = self.make_key(9)
+    key = lambda: self.make_key(9)
     rand = lambda key: random.f(key, dfnum, dfden, shape = (10000, ), dtype = dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key)
-    compiled_samples = crand(key)
+    uncompiled_samples = rand(key())
+    compiled_samples = crand(key())
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.f(dfnum, dfden).cdf)
@@ -1134,12 +1135,12 @@ class LaxRandomTest(jtu.JaxTestCase):
       scale= [0.2, 1., 2., 10. ,100.],
       dtype=jtu.dtypes.floating)
   def testRayleigh(self, scale, dtype):
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
     rand = lambda key: random.rayleigh(key, scale, shape = (10000, ), dtype = dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key)
-    compiled_samples = crand(key)
+    uncompiled_samples = rand(key())
+    compiled_samples = crand(key())
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.rayleigh(scale=scale).cdf)
@@ -1148,12 +1149,12 @@ class LaxRandomTest(jtu.JaxTestCase):
       mean= [0.2, 1., 2., 10. ,100.],
       dtype=jtu.dtypes.floating)
   def testWald(self, mean, dtype):
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
     rand = lambda key: random.wald(key, mean, shape=(10000, ), dtype=dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key)
-    compiled_samples = crand(key)
+    uncompiled_samples = rand(key())
+    compiled_samples = crand(key())
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.invgauss(mu=mean).cdf)
@@ -1162,12 +1163,12 @@ class LaxRandomTest(jtu.JaxTestCase):
       p=[0.2, 0.3, 0.4, 0.5 ,0.6],
       dtype=jtu.dtypes.supported([np.int16, np.int32, np.int64]))
   def testGeometric(self, p, dtype):
-    key = self.make_key(1)
+    key = lambda: self.make_key(1)
     rand = lambda key: random.geometric(key, p, shape=(10000, ), dtype=dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key)
-    compiled_samples = crand(key)
+    uncompiled_samples = rand(key())
+    compiled_samples = crand(key())
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckChiSquared(samples, scipy.stats.geom(p).pmf)
@@ -1181,13 +1182,13 @@ class LaxRandomTest(jtu.JaxTestCase):
       right= [10., 20., 30., 40.],
       dtype= jtu.dtypes.floating)
   def testTriangular(self, left, mode, right, dtype):
-    key = self.make_key(1)
+    key = lambda: self.make_key(1)
     rand = lambda key: random.triangular(key, left, mode, right, shape=(10000,),
                                          dtype=dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key)
-    compiled_samples = crand(key)
+    uncompiled_samples = rand(key())
+    compiled_samples = crand(key())
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.triang(
@@ -1197,12 +1198,12 @@ class LaxRandomTest(jtu.JaxTestCase):
     sigma = [0.2, 0.5, 1., 2.],
     dtype=jtu.dtypes.floating)
   def testLogNormal(self, sigma, dtype):
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
     rand = lambda key: random.lognormal(key, sigma, shape=(10000,), dtype=dtype)
     crand = jax.jit(rand)
 
-    uncompiled_samples = rand(key)
-    compiled_samples = crand(key)
+    uncompiled_samples = rand(key())
+    compiled_samples = crand(key())
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.lognorm(s=sigma).cdf)
@@ -1212,11 +1213,11 @@ class LaxRandomTest(jtu.JaxTestCase):
       p= [0.1, 0.3, 0.5, 0.7, 0.9],
       dtype= jtu.dtypes.floating)
   def testBinomialSample(self, n, p, dtype):
-    key = self.make_key(12)
+    key = lambda: self.make_key(12)
     rand = lambda key: random.binomial(key, n, p, shape=(12000,), dtype=dtype)
     crand = jax.jit(rand)
-    uncompiled_samples = rand(key)
-    compiled_samples = crand(key)
+    uncompiled_samples = rand(key())
+    compiled_samples = crand(key())
 
     pmf = lambda x: scipy.stats.binom(n, p).pmf(x)
 
@@ -1227,52 +1228,52 @@ class LaxRandomTest(jtu.JaxTestCase):
                           check_dtypes=False)
 
   def testBinomialCornerCases(self):
-    key = self.make_key(0)
+    key = lambda: self.make_key(0)
 
     # corner case n
     n = jnp.array([-1, 0, jnp.nan, jnp.inf])
-    samples1 = random.binomial(key, n, 0.5, shape=(4,))
+    samples1 = random.binomial(key(), n, 0.5, shape=(4,))
 
     # corner case p
     p = jnp.array([jnp.nan, 0, -0.1, 1.1])
-    samples2 = random.binomial(key, 5, p, shape=(4,))
+    samples2 = random.binomial(key(), 5, p, shape=(4,))
 
     # corner case n and p
     # expect nan or illegal will lead to nan
     n_cc = jnp.array([jnp.inf, -1, jnp.inf])
     p_cc = jnp.array([jnp.nan, jnp.nan, -0.1])
-    samples3 = random.binomial(key, n_cc, p_cc, shape=(3,))
+    samples3 = random.binomial(key(), n_cc, p_cc, shape=(3,))
 
     self.assertArraysAllClose(samples1, jnp.array([jnp.nan, 0., jnp.nan, jnp.inf]), check_dtypes=False)
     self.assertArraysAllClose(samples2, jnp.array([jnp.nan, 0., jnp.nan, jnp.nan]), check_dtypes=False)
     self.assertArraysAllClose(samples3, jnp.array([jnp.nan, jnp.nan, jnp.nan]), check_dtypes=False)
 
   def test_batched_key_warnings(self):
-    keys = jax.random.split(self.make_key(0))
+    keys = lambda: jax.random.split(self.make_key(0))
     msg = "{} accepts a single key, but was given a key array of shape.*"
 
     # Check a handful of functions that are expected to warn.
     with self.assertWarnsRegex(FutureWarning, msg.format('bits')):
-      jax.random.bits(keys, shape=(2,))
+      jax.random.bits(keys(), shape=(2,))
     with self.assertWarnsRegex(FutureWarning, msg.format('chisquare')):
-      jax.random.chisquare(keys, 1.0, shape=(2,))
+      jax.random.chisquare(keys(), 1.0, shape=(2,))
     with self.assertWarnsRegex(FutureWarning, msg.format('dirichlet')):
-      jax.random.dirichlet(keys, jnp.arange(2.0), shape=(2,))
+      jax.random.dirichlet(keys(), jnp.arange(2.0), shape=(2,))
     with self.assertWarnsRegex(FutureWarning, msg.format('gamma')):
-      jax.random.gamma(keys, 1.0, shape=(2,))
+      jax.random.gamma(keys(), 1.0, shape=(2,))
     with self.assertWarnsRegex(FutureWarning, msg.format('loggamma')):
-      jax.random.loggamma(keys, 1.0, shape=(2,))
+      jax.random.loggamma(keys(), 1.0, shape=(2,))
 
     # Other functions should error; test a few cases.
     with self.assertRaisesRegex(ValueError, msg.format('fold_in')):
-      jax.random.fold_in(keys, 0)
+      jax.random.fold_in(keys(), 0)
     with self.assertRaisesRegex(ValueError, msg.format('split')):
-      jax.random.split(keys)
+      jax.random.split(keys())
 
     # Some shouldn't error or warn
     with self.assertNoWarnings():
-      jax.random.key_data(keys)
-      jax.random.key_impl(keys)
+      jax.random.key_data(keys())
+      jax.random.key_impl(keys())
 
 
 threefry_seed = prng_internal.threefry_seed
@@ -1323,28 +1324,28 @@ class LaxRandomWithCustomPRNGTest(LaxRandomTest):
 
   def test_vmap_fold_in_shape(self):
     # broadcast with scalar
-    keys = random.split(self.make_key(73), 2)
+    keys = lambda: random.split(self.make_key(73), 2)
     msgs = jnp.arange(3)
-    out = vmap(lambda i: random.fold_in(keys[0], i))(msgs)
+    out = vmap(lambda i: random.fold_in(keys()[0], i))(msgs)
     self.assertEqual(out.shape, (3,))
-    out = vmap(lambda k: random.fold_in(k, msgs[0]))(keys)
+    out = vmap(lambda k: random.fold_in(k, msgs[0]))(keys())
     self.assertEqual(out.shape, (2,))
-    out = vmap(random.fold_in, in_axes=(None, 0))(keys[0], msgs)
+    out = vmap(random.fold_in, in_axes=(None, 0))(keys()[0], msgs)
     self.assertEqual(out.shape, (3,))
-    out = vmap(random.fold_in, in_axes=(0, None))(keys, msgs[0])
+    out = vmap(random.fold_in, in_axes=(0, None))(keys(), msgs[0])
     self.assertEqual(out.shape, (2,))
 
     # vmap all
     msgs = jnp.arange(2)
-    out = vmap(random.fold_in)(keys, msgs)
+    out = vmap(random.fold_in)(keys(), msgs)
     self.assertEqual(out.shape, (2,))
 
     # nested vmap
-    keys = random.split(self.make_key(73), 2 * 3).reshape((2, 3))
+    keys = lambda: random.split(self.make_key(73), 2 * 3).reshape((2, 3))
     msgs = jnp.arange(2 * 3).reshape((2, 3))
-    out = vmap(vmap(random.fold_in), in_axes=(0, 1))(keys, msgs.T)
+    out = vmap(vmap(random.fold_in), in_axes=(0, 1))(keys(), msgs.T)
     self.assertEqual(out.shape, (2, 3))
-    out = vmap(vmap(random.fold_in), in_axes=(1, 0))(keys, msgs.T)
+    out = vmap(vmap(random.fold_in), in_axes=(1, 0))(keys(), msgs.T)
     self.assertEqual(out.shape, (3, 2))
 
   def test_vmap_split_mapped_key(self):
@@ -1381,6 +1382,7 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
     keys = random.split(key, 10)
     self.assertEqual(keys.shape, (10, *key.shape))
 
+  @jax.enable_key_reuse_checks(False)
   def test_vmap_fold_in_shape(self):
     # broadcast with scalar
     keys = random.split(self.make_key(73), 2)
@@ -1396,6 +1398,7 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
     out = vmap(random.fold_in, in_axes=(0, None))(keys, msgs[0])
     self.assertEqual(out.shape, keys.shape)
 
+  @jax.enable_key_reuse_checks(False)
   def test_vmap_split_not_mapped_key(self):
     key = self.make_key(73)
     single_split_key = random.split(key)

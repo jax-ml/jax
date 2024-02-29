@@ -932,8 +932,11 @@ enable_checks = define_bool_state(
 enable_key_reuse_checks = define_bool_state(
     name='jax_enable_key_reuse_checks',
     default=False,
-    help="Turn on experimental key reuse checking."
-)
+    help=('Turn on experimental key reuse checking. With this configuration enabled,'
+          ' typed PRNG keys (i.e. keys created with jax.random.key()) will have their'
+          ' usage tracked, and incorrect reuse of a previously-used key will lead to'
+          ' an error. Currently enabling this leads to a small Python overhead on'
+          ' every call to a JIT-compiled function with keys as inputs or outputs.'))
 
 check_tracer_leaks = define_bool_state(
     name='jax_check_tracer_leaks',

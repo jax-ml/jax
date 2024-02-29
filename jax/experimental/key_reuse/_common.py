@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import NamedTuple
 from jax import core
 from jax.interpreters import batching, mlir
+from jax._src import prng
 import numpy as np
 
 
@@ -50,6 +51,33 @@ class KeyReuseSignature(NamedTuple):
   sinks: list[Sink]
   sources: list[Source]
   forwards: list[Forward] = []
+
+  def check_signature(self, *args, jaxpr=None):
+    for sink in self.sinks:
+      if not isinstance(args[sink.idx], prng.PRNGKeyArray):
+        continue
+      if np.any(args[sink.idx]._consumed & sink.mask):
+        msg = f"Previously-consumed key at index {sink.idx} passed to function"
+        if jaxpr:
+          msg += f"\n{jaxpr=}"
+        raise KeyReuseError(msg)
+
+  def update_consumption(self, args_in, args_out):
+    for sink in self.sinks:
+      arg = args_in[sink.idx]
+      if isinstance(arg, prng.PRNGKeyArray):
+        arg._consumed = arg._consumed | sink.mask
+    for arg in args_out:
+      if isinstance(arg, prng.PRNGKeyArray):
+        arg._consumed = True
+    for source in self.sources:
+      if isinstance(args_out[source.idx], prng.PRNGKeyArray):
+        args_out[source.idx]._consumed = ~np.asarray(source.mask)
+    for forward in self.forwards:
+      arg_in = args_in[forward.in_idx]
+      arg_out = args_out[forward.out_idx]
+      if isinstance(arg_in, prng.PRNGKeyArray) and isinstance(arg_out, prng.PRNGKeyArray):
+        arg_out._consumed = arg_in._consumed
 
 
 class KeyReuseError(RuntimeError):

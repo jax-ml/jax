@@ -112,6 +112,7 @@ class X64ContextTests(jtu.JaxTestCase):
       self.assertEqual(x32.result(), jnp.int32)
 
   @jax.legacy_prng_key('allow')
+  @jax.enable_key_reuse_checks(False)
   @jtu.ignore_warning(category=UserWarning,
                       message="Explicitly requested dtype float64  is not available")
   def test_jit_cache(self):

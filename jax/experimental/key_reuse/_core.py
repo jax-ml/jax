@@ -15,13 +15,14 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from functools import reduce
+from functools import partial, reduce, wraps
 from typing import Any, Callable
 
 import jax
 from jax import lax
 from jax import tree_util
 from jax._src import api_util
+from jax._src import config
 from jax._src import core
 from jax._src import linear_util as lu
 from jax._src import pjit
@@ -32,11 +33,13 @@ from jax._src import util
 from jax._src.ad_checkpoint import remat_p
 from jax._src.debugging import debug_callback_p
 from jax._src.interpreters import partial_eval as pe
+from jax._src.util import weakref_lru_cache
 
 from jax.experimental.key_reuse._common import (
   consume_p, assert_consumed_value_p, KeyReuseError,
   Sink, Source, Forward, KeyReuseSignature
 )
+from jax.experimental.shard_map import shard_map_p
 import numpy as np
 
 
@@ -77,7 +80,9 @@ key_reuse_signatures[prng.random_wrap_p] = KeyReuseSignature([], [Source(0)], []
 key_reuse_signatures[prng.random_unwrap_p] = KeyReuseSignature([], [], [])
 key_reuse_signatures[debug_callback_p] = KeyReuseSignature([], [])
 key_reuse_signatures[lax.dynamic_slice_p] = KeyReuseSignature([], [], [Forward(0, 0)])
-key_reuse_signatures[lax.dynamic_update_slice_p] = KeyReuseSignature([], [], [])
+key_reuse_signatures[lax.dynamic_update_slice_p] = KeyReuseSignature([Sink(1)], [], [Forward(0, 0)])
+key_reuse_signatures[lax.gather_p] = KeyReuseSignature([], [], [Forward(0, 0)])
+key_reuse_signatures[lax.scatter_p] = KeyReuseSignature([Sink(2)], [], [Forward(0, 0)])
 
 # Rules which require more dynamic logic.
 key_reuse_signatures_dynamic: dict[core.Primitive, Callable[..., KeyReuseSignature]] = {}
@@ -91,6 +96,7 @@ def unknown_signature(eqn):
     sources=[],
   )
 
+@weakref_lru_cache
 def get_jaxpr_type_signature(jaxpr: core.Jaxpr) -> KeyReuseSignature:
   """Parse the jaxpr to determine key reuse signature"""
   consumed: dict[core.Atom, bool | np.ndarray] = {}
@@ -219,6 +225,11 @@ def _pjit_key_type_signature(eqn):
 
 key_reuse_signatures_dynamic[pjit.pjit_p] = _pjit_key_type_signature
 
+def _shard_map_type_signature(eqn):
+  return get_jaxpr_type_signature(eqn.params['jaxpr'])
+
+key_reuse_signatures_dynamic[shard_map_p] = _shard_map_type_signature
+
 def _cond_key_type_signature(eqn):
   signatures = [get_jaxpr_type_signature(branch.jaxpr) for branch in eqn.params['branches']]
   sinks = defaultdict(list)
@@ -318,3 +329,33 @@ def _remat_key_type_signature(eqn):
   return get_jaxpr_type_signature(eqn.params['jaxpr'])
 
 key_reuse_signatures_dynamic[remat_p] = _remat_key_type_signature
+
+
+# TODO(jakevdp): when we integrate key reuse checks more tightly with JAX,
+# we should move this logic directly into each primitive impl.
+def key_reuse_impl_rule(prim, original_rule):
+  @wraps(original_rule)
+  def key_reuse_impl(*args, **kwargs):
+    if config.enable_key_reuse_checks.value:
+      if prim == pjit.pjit_p:
+        jaxpr = kwargs['jaxpr'].jaxpr
+        signature = get_jaxpr_type_signature(jaxpr)
+      elif prim in key_reuse_signatures:
+        jaxpr = prim
+        signature = key_reuse_signatures[prim]
+      elif prim in key_reuse_signatures_dynamic:
+        jaxpr = jax.make_jaxpr(partial(prim.bind, **kwargs))(*args).jaxpr
+        signature = get_jaxpr_type_signature(jaxpr)
+      else:
+        raise RuntimeError(f"Internal: no key reuse rule for primitive {prim}")
+      signature.check_signature(*args, jaxpr=jaxpr)
+      result =  original_rule(*args, **kwargs)
+      signature.update_consumption(args, result if prim.multiple_results else [result])
+      return result
+    else:
+      return original_rule(*args, **kwargs)
+  return key_reuse_impl
+
+
+for prim in (*key_reuse_signatures, *key_reuse_signatures_dynamic):
+  prim.impl = key_reuse_impl_rule(prim, prim.impl)  # type: ignore[method-assign]
