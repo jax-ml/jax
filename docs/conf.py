@@ -122,6 +122,7 @@ exclude_patterns = [
     # These are kept in sync using the jupytext pre-commit hook.
     'notebooks/*.md',
     'pallas/quickstart.md',
+    'pallas/tpu/pipelining.md',
     'jep/9407-type-promotion.md',
     'jax-101/*.md',
     'autodidax.md',
@@ -211,6 +212,7 @@ nb_execution_excludepatterns = [
     'notebooks/autodiff_remat.*',
     # Requires accelerators
     'pallas/quickstart.*',
+    'pallas/tpu/pipelining.*',
 ]
 
 # -- Options for HTMLHelp output ---------------------------------------------
