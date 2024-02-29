@@ -1118,8 +1118,8 @@ class DevicePutTest(jtu.JaxTestCase):
 class ActivationOffloadingTest(jtu.JaxTestCase):
 
   def setUp(self):
-    if not jtu.test_device_matches(["tpu"]):
-      self.skipTest("Memories do not work on CPU and GPU backends yet.")
+    if not jtu.test_device_matches(["tpu", "gpu"]):
+      self.skipTest("Memories do not work on CPU backend.")
     super().setUp()
     self.orig_memories_flag = config.enable_memories.value
     jax.config.update('jax_enable_memories', True)
@@ -1167,11 +1167,13 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
       self.assertRegex(compiled_text, r"copy-done.*S\(5\)")
 
     compiled_stats = compiled_f.memory_analysis()
-    if compiled_stats is not None:
+    if compiled_stats is not None and jtu.test_device_matches(["tpu"]):
       if xla_extension_version >= 240 and jtu.pjrt_c_api_version_at_least(0, 43):
         self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
   def test_remat_scan_jaxpr_offloadable(self):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Remat scan does not work on GPU backend.")
     mesh = jtu.create_global_mesh((2,), ("x",))
     shape = (256, 128)
     np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
@@ -1229,6 +1231,8 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
         self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
   def test_remat_scan_layout_change_offloadable(self):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Remat scan does not work on GPU backend.")
     mesh = jtu.create_global_mesh((2,), ("x",))
     shape = (256, 128)
     np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
@@ -1296,7 +1300,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
       self.assertRegex(compiled_text, r"copy-done.*S\(5\)")
 
     compiled_stats = compiled_f.memory_analysis()
-    if compiled_stats is not None:
+    if compiled_stats is not None and jtu.test_device_matches(["tpu"]):
       if xla_extension_version >= 240 and jtu.pjrt_c_api_version_at_least(0, 43):
         self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 

@@ -3748,8 +3748,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
         ' manager.*SingleDeviceSharding'):
       jax.jit(jax.vmap(f, spmd_axis_name='x'))(arr)
 
-  @jtu.skip_on_devices("tpu")
-  def test_device_put_memory_kind_not_tpu(self):
+  @jtu.skip_on_devices("tpu", "gpu")
+  def test_device_put_memory_kind_not_tpu_gpu(self):
     @jax.jit
     def f(x):
       y = x * 2
