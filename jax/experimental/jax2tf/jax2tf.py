@@ -3019,7 +3019,11 @@ def _cond(index: TfVal, *operands: TfVal, branches: Sequence[core.ClosedJaxpr],
   # Note: extend_name_stack is a contextmanager, which is callable as a decorator.
   branches_tf = list(map(source_info_util.extend_name_stack("cond"),  # type: ignore[arg-type]
       branches_tf))
-  return tf.switch_case(index, branches_tf)
+  if len(branches) == 2:
+    # `index` comes with tf.int32 type of casted boolean parameter.
+    return tf.cond(tf.cast(index, tf.bool), branches_tf[1], branches_tf[0])
+  else:
+    return tf.switch_case(index, branches_tf)
 
 
 tf_impl[lax.cond_p] = _cond

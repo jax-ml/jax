@@ -1710,6 +1710,26 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
         res,
         x + _testing_multi_platform_to_add[tf_device_jax_platform])
 
+  def test_cond_primitive(self):
+    def f_cond(x):
+      return lax.cond(x < 1.0, jnp.cos, jnp.sin, x)
+
+    self.ConvertAndCompare(f_cond, np.pi / 4, enable_xla=False)
+    self.ConvertAndCompare(f_cond, np.pi / 2, enable_xla=False)
+
+    f_cond_tf = jax2tf.convert(f_cond, enable_xla=False)
+    self.assertNotIn("switch_case", self.TfToHlo(f_cond_tf, np.pi))
+
+    def f_switch(x):
+      return lax.switch(jnp.int32(x), [jnp.cos, jnp.sin, lambda _: 42.0], x)
+
+    self.ConvertAndCompare(f_switch, np.pi / 4, enable_xla=False)
+    self.ConvertAndCompare(f_switch, np.pi / 2, enable_xla=False)
+    self.ConvertAndCompare(f_switch, 2 * np.pi, enable_xla=False)
+
+    f_switch_tf = jax2tf.convert(f_switch, enable_xla=False)
+    self.assertIn("switch_case", self.TfToHlo(f_switch_tf, np.pi))
+
 
 @jtu.with_config(jax_enable_custom_prng=True)
 class Jax2tfWithCustomPRNGTest(tf_test_util.JaxToTfTestCase):
