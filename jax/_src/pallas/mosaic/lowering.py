@@ -157,7 +157,7 @@ def ir_constant(x, mlir_type=None):
       x = np.array(x, np.float32)
   if not mlir_type:
     mlir_type = _dtype_to_ir_type(x.dtype)
-  if isinstance(x, int) or x.dtype == np.int32 or x.dtype == np.uint32:
+  if isinstance(x, int) or x.dtype in (np.int32, np.uint32, np.int8):
     return arith.ConstantOp(mlir_type, ir.IntegerAttr.get(mlir_type, int(x))
                             ).result
   elif isinstance(x, float) or x.dtype == np.float32:
