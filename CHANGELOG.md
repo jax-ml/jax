@@ -11,6 +11,8 @@ Remember to align the itemized text with the first line of an item within a list
 * Deprecations
   * {func}`jax.tree_map` is deprecated; use `jax.tree.map` instead, or for backward
     compatibility with older JAX versions, use {func}`jax.tree_util.tree_map`.
+  * Passing arguments to {func}`jax.numpy.array_equal` and {func}`jax.numpy.array_equiv`
+    that cannot be converted to a JAX array now results in an exception.
 
 ## jaxlib 0.4.26
 
