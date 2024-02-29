@@ -575,7 +575,7 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
 
 
 @jtu.with_config(jax_enable_checks=False)
-class KeyReuseGlobalFlags(KeyReuseIntegrationTest):
+class KeyReuseGlobalFlags(jtu.JaxTestCase):
   def test_key_reuse_flag(self):
 
     @jax.jit
