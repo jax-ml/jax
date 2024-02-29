@@ -2637,7 +2637,6 @@ def _maybe_get_and_check_in_shardings(
     if is_unspecified(orig):
       if (aval is not core.abstract_token and
           dtypes.issubdtype(aval.dtype, dtypes.extended)):
-        aval.dtype._rules.check_replicated_trailing_dims(xla_s, aval)
         xla_s = aval.dtype._rules.logical_op_sharding(aval, xla_s)
       new_in_shardings.append(xla_s)
     else:
@@ -2655,7 +2654,7 @@ def _maybe_get_and_check_in_shardings(
   return new_in_shardings
 
 
-def _get_out_shardings_from_executable(
+def _maybe_get_and_check_out_shardings(
     xla_executable, out_shardings, device_assignment, global_out_avals,
     num_ordered_effects, all_default_mem_kind
   ):
@@ -2671,7 +2670,6 @@ def _get_out_shardings_from_executable(
     if is_unspecified(orig):
       if (aval is not core.abstract_token and
           dtypes.issubdtype(aval.dtype, dtypes.extended)):
-        aval.dtype._rules.check_replicated_trailing_dims(xla_s, aval)
         xla_s = aval.dtype._rules.logical_op_sharding(aval, xla_s)
       new_out_shardings.append(xla_s)
     else:
@@ -2823,7 +2821,7 @@ class UnloadedMeshExecutable:
           in_shardings = _maybe_get_and_check_in_shardings(
               xla_executable, in_shardings, tuple(da), global_in_avals,
               len(ordered_effects))
-        out_shardings = _get_out_shardings_from_executable(
+        out_shardings = _maybe_get_and_check_out_shardings(
             xla_executable, out_shardings, tuple(da), global_out_avals,
             len(ordered_effects), all_default_mem_kind)
       else:
