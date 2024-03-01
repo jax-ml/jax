@@ -574,6 +574,33 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
     self.check_key_reuse(jax.grad(f_good), x, key)
 
 
+class KeyReuseEager(jtu.JaxTestCase):
+  jit_msg = "Previously-consumed key at index 0 passed to function"
+  bits_msg = "In random_bits, key values a are already consumed."
+
+  def test_simple_reuse_nojit(self):
+    key = jax.random.key(0)
+    _ = jax.random.bits(key)
+    with jax.disable_jit():
+      with self.assertRaisesRegex(KeyReuseError, self.jit_msg):
+        _ = jax.random.bits(key)
+
+  def test_simple_key_reuse_jit(self):
+    key = jax.random.key(0)
+    _ = jax.random.bits(key)
+    with self.assertRaisesRegex(KeyReuseError, self.jit_msg):
+      _ = jax.random.bits(key)
+
+  def test_key_reuse_within_jit(self):
+    @jax.jit
+    def f():
+      key = jax.random.key(0)
+      return jax.random.bits(key) + jax.random.bits(key)
+    with self.assertRaisesRegex(KeyReuseError, self.bits_msg):
+      f()
+
+
+
 @jtu.with_config(jax_enable_checks=False)
 class KeyReuseGlobalFlags(jtu.JaxTestCase):
   def test_key_reuse_flag(self):

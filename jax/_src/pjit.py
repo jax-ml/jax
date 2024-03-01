@@ -33,6 +33,7 @@ from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
+from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
 from jax._src import op_shardings
@@ -181,8 +182,7 @@ def _python_pjit(fun: Callable, infer_params_fn):
 
 def _get_fastpath_data(executable, out_tree, args_flat, out_flat, attrs_tracked,
                        ) -> Optional[pxla.MeshExecutableFastpathData]:
-  out_flat, out_tree = pxla.reflatten_outputs_for_dispatch(out_tree, out_flat)
-
+  out_reflattened, out_tree = pxla.reflatten_outputs_for_dispatch(out_tree, out_flat)
   use_fastpath = (
       executable is not None and
       isinstance(executable, pxla.MeshExecutable) and
@@ -191,14 +191,19 @@ def _get_fastpath_data(executable, out_tree, args_flat, out_flat, attrs_tracked,
       not executable.unsafe_call.ordered_effects and
       not executable.unsafe_call.has_unordered_effects and
       not executable.unsafe_call.has_host_callbacks and
-      all(isinstance(x, xc.ArrayImpl) for x in out_flat) and
+      all(isinstance(x, xc.ArrayImpl) for x in out_reflattened) and
       # no attr state effects
-      not attrs_tracked
+      not attrs_tracked and
+      # no prng reuse checking
+      not (config.enable_key_reuse_checks.value and any(
+        hasattr(arg, 'dtype') and dtypes.issubdtype(arg.dtype, dtypes.prng_key)
+        for arg in (*args_flat, *out_flat)
+      ))
   )
 
   if use_fastpath:
-    out_avals = [o.aval for o in out_flat]
-    out_committed = [o._committed for o in out_flat]
+    out_avals = [o.aval for o in out_reflattened]
+    out_committed = [o._committed for o in out_reflattened]
     kept_var_bitvec = [i in executable._kept_var_idx
                        for i in range(len(args_flat))]
     fastpath_data = pxla.MeshExecutableFastpathData(
