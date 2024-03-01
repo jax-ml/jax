@@ -3618,7 +3618,8 @@ def _select_transpose_rule(t, which, *cases):
                      for c in cases]
   else:
     zeros = full_like(t, 0)
-    if dtypes.dtype(which) == np.dtype(np.bool_):
+    if (dtypes.dtype(which) == np.dtype(np.bool_) and
+        config.new_select_transpose.value):
       ct0 = select(which, zeros, t) if ad.is_undefined_primal(cases[0]) else None
       ct1 = select(which, t, zeros) if ad.is_undefined_primal(cases[1]) else None
       return (None, ct0, ct1)
