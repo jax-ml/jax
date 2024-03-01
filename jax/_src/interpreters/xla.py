@@ -22,7 +22,6 @@ import dataclasses
 import functools
 from functools import partial
 import itertools as it
-import operator
 from typing import Any, Callable, Protocol, Union
 
 import numpy as np
@@ -166,6 +165,7 @@ canonicalize_dtype_handlers.update(
     (t, partial(_canonicalize_python_scalar_dtype, t)) for t in _scalar_types)
 canonicalize_dtype_handlers[core.Token] = identity
 canonicalize_dtype_handlers[core.DArray] = identity
+canonicalize_dtype_handlers[core.MutableArray] = identity
 
 def abstractify(x) -> Any:
   typ = type(x)
@@ -196,7 +196,8 @@ def _make_shaped_array_for_numpy_array(x: np.ndarray) -> ShapedArray:
 
 
 pytype_aval_mappings: dict[Any, Callable[[Any], core.AbstractValue]] = {}
-pytype_aval_mappings[core.DArray] = operator.attrgetter('_aval')
+pytype_aval_mappings[core.DArray] = lambda x: x._aval
+pytype_aval_mappings[core.MutableArray] = lambda x: x._aval
 pytype_aval_mappings[core.Token] = lambda _: core.abstract_token
 pytype_aval_mappings.update((t, _make_shaped_array_for_numpy_scalar)
                             for t in numpy_scalar_types)

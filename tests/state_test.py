@@ -55,18 +55,6 @@ config.parse_flags_with_absl()
 
 class StatePrimitivesTest(jtu.JaxTestCase):
 
-  def test_cant_eval_get_primitive(self):
-    with self.assertRaises(ValueError):
-      get_p.bind(jnp.ones(5), tree=None)
-
-  def test_cant_eval_swap_primitive(self):
-    with self.assertRaises(ValueError):
-      swap_p.bind(jnp.ones(5), jnp.zeros(5), tree=None)
-
-  def test_cant_eval_addupdate_primitive(self):
-    with self.assertRaises(ValueError):
-      addupdate_p.bind(jnp.ones(5), jnp.zeros(5), tree=None)
-
   def test_get_abstract_aval_must_take_in_refs(self):
     ref_aval = core.ShapedArray((), jnp.float32)
     def f(x_ref):
@@ -1508,54 +1496,53 @@ class RunStateTest(jtu.JaxTestCase):
     jtu.check_grads(f, (0.5,), order=3)
 
 
-class MutableArray:
-  _aval: core.ShapedArray
-  _buf: jax.Array
-  def __init__(self, aval, buf):
-    self._aval = aval
-    self._buf = buf
-  aval = property(lambda self: self._aval)
-  shape = property(lambda self: self._aval.shape)
-  dtype = property(lambda self: self._aval.dtype)
-
-def mutable_array(init_val):
-  return mutable_array_p.bind(init_val)
-mutable_array_p = core.Primitive('mutable_array')
-
-@mutable_array_p.def_impl
-def _mutable_array_impl(init_val):
-  aval = core.raise_to_shaped(core.get_aval(init_val))
-  return MutableArray(AbstractRef(aval), init_val)
-
-def _error_on_staging(trace, x):
-  raise Exception
-pe.custom_staging_rules[mutable_array_p] = _error_on_staging
-
-from jax._src.interpreters import xla
-from jax._src.interpreters import pxla
-xla.canonicalize_dtype_handlers[MutableArray] = lambda x: x
-xla.pytype_aval_mappings[MutableArray] = lambda x: x._aval
-pxla.shard_arg_handlers[MutableArray] = lambda x, s: pxla.shard_arg(x._buf, s)
-core.pytype_aval_mappings[MutableArray] = lambda x: x._aval
-
 class MutableArrayTest(jtu.JaxTestCase):
 
-  def test_basic(self):
-    read = jax.jit(lambda x_ref: x_ref[...])
-
-    @jax.jit
+  @parameterized.parameters([True, False])
+  def test_basic(self, jit):
     def f(x_mut):
       x_mut[...] += 1.
       x_mut[0] += 1
       x_mut[1] += 5
 
-    x_mut = mutable_array(jnp.zeros(3))
+    if jit:
+      f = jax.jit(f)
+
+    x_mut = core.mutable_array(jnp.zeros(3))
     f(x_mut)
 
-    self.assertAllClose(read(x_mut), jnp.array([2., 6., 1.]), check_dtypes=False)
+    self.assertAllClose(x_mut[...], jnp.array([2., 6., 1.]),
+                        check_dtypes=False)
 
     jaxpr = jax.make_jaxpr(f)(x_mut)
     self.assertTrue(any(isinstance(e, RefEffect) for e in jaxpr.effects))
+
+  def test_staging_error(self):
+    x = jnp.zeros(3)
+    with self.assertRaises(Exception):
+      jax.jit(core.mutable_array)(x)
+
+  @parameterized.parameters([True, False])
+  def test_multiple_inputs_and_outputs(self, jit):
+    def f(x_mut, y, z_mut, w):
+      x_mut[...] += 1
+      z_mut[...] += 1
+      return x_mut[...] + y + z_mut[...] + w, y + w
+
+    if jit:
+      f = jax.jit(f)
+
+    x_mut = core.mutable_array(jnp.zeros((1, 3)))
+    y = jnp.ones((2, 3))
+    z_mut = core.mutable_array(jnp.zeros((2, 3)))
+    w = jnp.ones((2, 1))
+
+    out1, out2 = f(x_mut, y, z_mut, w)
+
+    self.assertAllClose(x_mut[...], jnp.ones((1, 3)), check_dtypes=False)
+    self.assertAllClose(z_mut[...], jnp.ones((2, 3)), check_dtypes=False)
+    self.assertAllClose(out1, 4 * jnp.ones((2, 3)), check_dtypes=False)
+    self.assertAllClose(out2, y + w, check_dtypes=False)
 
 
 if CAN_USE_HYPOTHESIS:
