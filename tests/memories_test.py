@@ -1124,6 +1124,12 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
     s = NamedSharding(mesh, P("x"))
     inp = jax.device_put(np_inp, s)
 
+    with self.assertRaisesRegex(
+        ValueError, "The names should be exclusive and should not intersect"):
+      jax.checkpoint_policies.save_and_offload_only_these_names(
+          names_which_can_be_saved=["y"], names_which_can_be_offloaded=["y", "w"],
+          offload_src="device", offload_dst="pinned_host")
+
     policy = jax.checkpoint_policies.save_and_offload_only_these_names(
         names_which_can_be_saved=["y"], names_which_can_be_offloaded=["z", "w"],
         offload_src='device', offload_dst='pinned_host')
