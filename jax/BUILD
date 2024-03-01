@@ -550,6 +550,7 @@ pytype_strict_library(
         ":pickle_util",
         ":sharding_impls",
         ":source_info_util",
+        ":state_types",
         ":util",
         ":xla",
         ":xla_bridge",

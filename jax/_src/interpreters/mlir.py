@@ -56,6 +56,7 @@ from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir import register_jax_dialects
 from jax._src.sharding_impls import XLACompatibleSharding
+from jax._src.state.types import AbstractRef
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -824,6 +825,8 @@ def _to_logical_op_sharding(
   if sharding is None:
     return None
   assert isinstance(sharding, sharding_impls.XLACompatibleSharding)
+  if isinstance(aval, AbstractRef):
+    return _to_logical_op_sharding(aval.inner_aval, sharding)
   assert isinstance(aval, (core.ShapedArray, core.DShapedArray))
   return sharding._to_xla_hlo_sharding(aval.ndim)
 
@@ -863,6 +866,7 @@ def lower_jaxpr_to_module(
     num_replicas: int = 1,
     num_partitions: int = 1,
     all_default_mem_kind: bool = True,
+    input_output_aliases: None | tuple[int | None, ...] = None,
     lowering_parameters: LoweringParameters,
 ) -> LoweringResult:
   """Lowers a top-level jaxpr to an MLIR module.
@@ -872,7 +876,6 @@ def lower_jaxpr_to_module(
   """
   platforms = tuple(map(xb.canonicalize_platform, platforms))
 
-  input_output_aliases = None
   in_avals = (jaxpr.in_avals if arg_shardings is None else
               map(sharded_aval, jaxpr.in_avals, arg_shardings))
   out_avals = (jaxpr.out_avals if result_shardings is None else
@@ -900,8 +903,8 @@ def lower_jaxpr_to_module(
       xla_donated_args = donated_args
     if xla_donated_args is None:
       input_output_aliases, donated_args = _set_up_aliases(
-        in_avals, out_avals, donated_args, arg_memory_kinds,
-        result_memory_kinds)
+          input_output_aliases, in_avals, out_avals, donated_args,
+          arg_memory_kinds, result_memory_kinds)
   unlowerable_effects = lowerable_effects.filter_not_in(jaxpr.effects)
   if unlowerable_effects:
     raise ValueError(f'Cannot lower jaxpr with effects: {jaxpr.effects}')
@@ -1006,9 +1009,12 @@ def lower_jaxpr_to_module(
   return LoweringResult(ctx.module, ctx.keepalives, ctx.host_callbacks,
                         ctx.shape_poly_state)
 
-def _set_up_aliases(avals_in, avals_out, donated_args, arg_memory_kinds,
-                    result_memory_kinds):
-  input_output_aliases = [None] * len(avals_in)
+def _set_up_aliases(input_output_aliases, avals_in, avals_out, donated_args,
+                    arg_memory_kinds, result_memory_kinds):
+  if input_output_aliases is None:
+    input_output_aliases = [None] * len(avals_in)
+  else:
+    input_output_aliases = list(input_output_aliases)
   # To match-up in-avals to out-avals we only care about the number of
   # bytes, so we strip off unrelated aval metadata (eg. the named shape)
   strip_metadata = lambda a: a.strip_named_shape().strip_weak_type()
@@ -1028,9 +1034,9 @@ def _set_up_aliases(avals_in, avals_out, donated_args, arg_memory_kinds,
     result_memory_kinds = [None] * len(avals_out)
 
   donations = collections.defaultdict(collections.deque)
-  for i, (aval, am, donated) in enumerate(
-      zip(avals_in, arg_memory_kinds, donated_args)):
-    if donated:
+  for i, (aval, am, donated, aliased) in enumerate(
+      zip(avals_in, arg_memory_kinds, donated_args, input_output_aliases)):
+    if donated and aliased is None:
       donations[(aval, am)].append(i)
 
   out_donated_args = list(donated_args)
