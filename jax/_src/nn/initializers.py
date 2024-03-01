@@ -130,7 +130,7 @@ def uniform(scale: RealNumeric = 1e-2,
            shape: core.Shape,
            dtype: DTypeLikeInexact = dtype) -> Array:
     dtype = dtypes.canonicalize_dtype(dtype)
-    return random.uniform(key, shape, dtype) * scale
+    return random.uniform(key, shape, dtype) * jnp.array(scale, dtype)
   return init
 
 @export
@@ -156,7 +156,7 @@ def normal(stddev: RealNumeric = 1e-2,
            shape: core.Shape,
            dtype: DTypeLikeInexact = dtype) -> Array:
     dtype = dtypes.canonicalize_dtype(dtype)
-    return random.normal(key, shape, dtype) * stddev
+    return random.normal(key, shape, dtype) * jnp.array(stddev, dtype)
   return init
 
 @export
@@ -193,7 +193,8 @@ def truncated_normal(stddev: RealNumeric = 1e-2,
            shape: core.Shape,
            dtype: DTypeLikeInexact = dtype) -> Array:
     dtype = dtypes.canonicalize_dtype(dtype)
-    return random.truncated_normal(key, lower, upper, shape, dtype) * stddev
+    return random.truncated_normal(
+        key, lower, upper, shape, dtype) * jnp.array(stddev, dtype)
   return init
 
 @export
@@ -613,7 +614,7 @@ def orthogonal(scale: RealNumeric = 1.0,
     if n_rows < n_cols: Q = Q.T
     Q = jnp.reshape(Q, tuple(np.delete(shape, column_axis)) + (shape[column_axis],))
     Q = jnp.moveaxis(Q, -1, column_axis)
-    return scale * Q
+    return jnp.array(scale, dtype) * Q
   return init
 
 @export

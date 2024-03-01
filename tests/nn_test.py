@@ -403,6 +403,17 @@ class NNInitializersTest(jtu.JaxTestCase):
     ):
       initializer(rng, shape)
 
+  def testAccidentalUpcasting(self):
+    rng = random.PRNGKey(0)
+    shape = (4, 4)
+    scalar_param = jnp.array(1.0, dtype=jnp.float32)
+    for init_fn in (nn.initializers.uniform(scalar_param, jnp.bfloat16),
+                    nn.initializers.normal(scalar_param, jnp.bfloat16),
+                    nn.initializers.truncated_normal(scalar_param, jnp.bfloat16),
+                   ):
+      sub_rng, rng = random.split(rng)
+      val = init_fn(sub_rng, shape)
+      self.assertEqual(val.dtype, jnp.bfloat16)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
