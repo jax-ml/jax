@@ -49,9 +49,11 @@ genrule(
         "_triton_ops_gen.py",
         "_triton_enum_gen.py",
     ],
+    # Use $(RULEDIR) to avoid an implicit dependency on whether inputs are in bin or genfiles.
     cmd = """
     for src in $(SRCS); do
-      out=$${src//_raw/}
+      base=$$(basename $$src)
+      out=$(RULEDIR)/$${base//_raw/}
       echo '# pytype: skip-file' > $${out} && \
           cat $${src} |
           sed -e 's/^from \\.\\./from jaxlib.mlir\\./g' |
