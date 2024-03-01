@@ -22,6 +22,7 @@ import numpy as np
 
 from jax._src import ad_util
 from jax._src import core
+from jax._src import dispatch
 from jax._src import pretty_printer as pp
 from jax._src import tree_util
 from jax._src.interpreters import ad
@@ -53,11 +54,7 @@ zip, unsafe_zip = safe_zip, zip
 # `Ref((3,), np.dtype('float32'))` leads to a jaxpr eqn printed like
 #   a:f32[3] <- x[]
 get_p = core.Primitive("get")
-
-def _get_impl(ref: AbstractRef, *args: Any, tree):
-  del ref, args, tree
-  raise ValueError("Cannot run stateful primitive.")
-get_p.def_impl(_get_impl)
+get_p.def_impl(partial(dispatch.apply_primitive, get_p))
 
 Indexer = tuple[Union[int, slice, Array], ...]
 # or Ellipsis, but that can't be annotated until Python 3.10? (types.EllipsisType)
@@ -113,11 +110,7 @@ def ref_get(ref_or_view: Any, idx: Indexer | None = None) -> Array:
 # are `ShapedArray((), np.dtype('int32'))` leads to a jaxpr eqn printed like
 #   x:Ref{f32[3]}[i, j] <- a
 swap_p = core.Primitive("swap")
-
-def _swap_impl(ref: AbstractRef, value: Array, *idx: Any, tree):
-  del ref, value, idx, tree
-  raise ValueError("Cannot run stateful primitive.")
-swap_p.def_impl(_swap_impl)
+swap_p.def_impl(partial(dispatch.apply_primitive, swap_p))
 
 def ref_swap(ref_or_view: AbstractRef | RefView, idx: Indexer | None, value: Array,
              _function_name: str = "ref_swap") -> Array:
@@ -143,11 +136,7 @@ def ref_set(ref_or_view: AbstractRef | RefView, idx: Indexer | None, value: Arra
 # ```
 addupdate_p = core.Primitive('addupdate')
 addupdate_p.multiple_results = True
-
-def _addupdate_impl(ref: AbstractRef, value: Array, *args: Any, tree):
-  del ref, value, args, tree
-  raise ValueError("Can't evaluate `addupdate` outside a stateful context.")
-addupdate_p.def_impl(_addupdate_impl)
+addupdate_p.def_impl(partial(dispatch.apply_primitive, addupdate_p))
 
 def ref_addupdate(ref_or_view: AbstractRef, idx: Indexer | None, x: Array) -> None:
   """Mutates a ref with an additive update i.e. `ref[idx] += x`."""

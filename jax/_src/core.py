@@ -1912,6 +1912,30 @@ class bint(dtypes.ExtendedDType):
 AxisSize = Union[int, DArray, Tracer, Var, DBIdx, InDBIdx, OutDBIdx]
 
 
+class MutableArray:
+  _aval: ShapedArray
+  _buf: Array
+  def __init__(self, aval, buf):
+    self._aval = aval
+    self._buf = buf
+  aval = property(lambda self: self._aval)
+  shape = property(lambda self: self._aval.shape)
+  dtype = property(lambda self: self._aval.dtype)
+  def __getitem__(self, idx): return get_aval(self)._getitem(self, idx)
+  def __setitem__(self, idx, x): return get_aval(self)._setitem(self, idx, x)
+pytype_aval_mappings[MutableArray] = lambda x: x._aval
+
+def mutable_array(init_val):
+  return mutable_array_p.bind(init_val)
+mutable_array_p = Primitive('mutable_array')
+
+@mutable_array_p.def_impl
+def _mutable_array_impl(init_val):
+  from jax._src.state.types import AbstractRef  # type: ignore[import]
+  aval = raise_to_shaped(get_aval(init_val))
+  return MutableArray(AbstractRef(aval), init_val)
+
+
 class AbstractToken(AbstractValue):
   def join(self, other):
     if isinstance(other, AbstractToken):

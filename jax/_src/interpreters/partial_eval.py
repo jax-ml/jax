@@ -2730,6 +2730,13 @@ def call_padding_rule(prim, in_avals, out_avals, *args, call_jaxpr, **params):
   return prim.bind(*subfuns, *args, **bind_params)
 
 
+def _error_staging_mutable_array_p(trace, x):
+  raise Exception(
+      "mutable_array constructor can't be staged out, and in particular can't "
+      "be used under a jax.jit or jax.lax.scan")
+custom_staging_rules[core.mutable_array_p] = _error_staging_mutable_array_p
+
+
 # TODO(mattjj): the following are deprecated; update callers to _nounits version
 # See https://github.com/google/jax/pull/9498
 @lu.transformation

@@ -160,6 +160,10 @@ def _shard_darray(x, sharding):
   return shard_arg(x._data, sharding)
 shard_arg_handlers[core.DArray] = _shard_darray
 
+def _shard_mutable_array(x, sharding):
+  return shard_arg(x._buf, sharding)
+shard_arg_handlers[core.MutableArray] = _shard_mutable_array
+
 def batched_device_put(aval: core.ShapedArray,
                        sharding: jax.sharding.Sharding, xs: Sequence[Any],
                        devices: Sequence[jax.Device], committed: bool = True):
@@ -1778,17 +1782,16 @@ def _dce_jaxpr(closed_jaxpr, global_in_avals, api_name, fun_name,
 @weakref_lru_cache
 def _discharge_refs(
     jaxpr: core.ClosedJaxpr
-) -> tuple[core.ClosedJaxpr, None | Sequence[int | None], None | Sequence[int | None]]:
+) -> tuple[core.ClosedJaxpr, Sequence[int | None], Sequence[int | None]]:
   from jax._src.state.discharge import discharge_state
-  out_mut = [None] * len(jaxpr.out_avals) + [
-      i for i, a in enumerate(jaxpr.in_avals) if isinstance(a, AbstractRef)]
-  count = it.count()
-  inout_aliases = tuple(next(count) if isinstance(a, AbstractRef) else None
-                        for a in jaxpr.in_avals)
-  jaxpr = core.ClosedJaxpr(*discharge_state(jaxpr.jaxpr, jaxpr.consts))
-  assert len(inout_aliases) == len(jaxpr.in_avals)
-  assert       len(out_mut) == len(jaxpr.out_avals)
-  return jaxpr, inout_aliases, out_mut
+  new_jaxpr = core.ClosedJaxpr(*discharge_state(jaxpr.jaxpr, jaxpr.consts))
+  count = it.count(len(jaxpr.out_avals))  # new outputs are appended to the end
+  inout_map = {i: next(count) for i, a in enumerate(jaxpr.in_avals)
+               if isinstance(a, AbstractRef)}
+  outin_map = {j: i for i, j in inout_map.items()}
+  inout_aliases = tuple(map(inout_map.get, range(len(new_jaxpr.in_avals))))
+  out_mut = tuple(map(outin_map.get, range(len(new_jaxpr.out_avals))))
+  return new_jaxpr, inout_aliases, out_mut
 
 
 @dataclasses.dataclass(frozen=True)
