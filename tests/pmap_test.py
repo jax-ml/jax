@@ -213,7 +213,9 @@ class PythonPmapTest(jtu.JaxTestCase):
     x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     f_exe = f.lower(x).compile()
     self.assertRaisesRegex(
-        TypeError, "function compiled for .*, called with .*",
+        TypeError,
+        'Function compiled with input pytree does not match the input pytree it'
+        ' was called with',
         lambda: f_exe([x]))
 
   def testLowerCompileTrivial(self):
@@ -229,7 +231,9 @@ class PythonPmapTest(jtu.JaxTestCase):
     x = np.arange(jax.device_count(), dtype=np.float32)
     f_exe = f.lower(x).compile()
     self.assertRaisesRegex(
-        TypeError, "function compiled for .*, called with .*",
+        TypeError,
+        'Function compiled with input pytree does not match the input pytree it'
+        ' was called with',
         lambda: f_exe([x]))
 
   def testLowerCompileArgTypeMismatch(self):

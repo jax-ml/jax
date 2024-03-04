@@ -1058,7 +1058,9 @@ class JitTest(jtu.BufferDonationTestCase):
     f_low = f_jit.lower(1.)
     f_exe = f_low.compile()
     self.assertRaisesRegex(
-        TypeError, "function compiled for .*, called with .*",
+        TypeError,
+        'Function compiled with input pytree does not match the input pytree it'
+        ' was called with',
         lambda: f_exe([1.]))
 
   def test_jit_lower_compile_trivial(self):
@@ -1076,8 +1078,11 @@ class JitTest(jtu.BufferDonationTestCase):
     def f(x): return x
     f_exe = jit(f).lower(1.).compile()
     self.assertRaisesRegex(
-        TypeError, "function compiled for .*, called with .*",
-        lambda: f_exe([4.]))
+        TypeError,
+        "Function compiled with input pytree does not match the input pytree it"
+        " was called with",
+        lambda: f_exe([4.0]),
+    )
 
   def test_jit_lower_compile_arg_type_mismatch(self):
     def f(x):
@@ -9245,7 +9250,6 @@ class CustomVJPTest(jtu.JaxTestCase):
     f.defvjp(f_fwd, f_bwd)
 
     jax.grad(f)((1.0, (2.0, None)))  # don't crash
-
 
 
 def transpose_unary(f, x_example):

@@ -708,7 +708,9 @@ class XMapTest(XMapTestCase):
     x = jnp.arange(4, dtype=jnp.float32).reshape((2, 2))
     f_exe = f.lower(x).compile()
     self.assertRaisesRegex(
-        TypeError, "function compiled for .*, called with .*",
+        TypeError,
+        'Function compiled with input pytree does not match the input pytree it'
+        ' was called with',
         lambda: f_exe([x]))
 
   def testLowerCompileArgTypeMismatch(self):

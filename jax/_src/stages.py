@@ -42,6 +42,7 @@ from jax._src import config
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import tree_util
+from jax._src.tree_util import tree_unflatten, keystr
 from jax._src import util
 from jax._src.layout import SpecifiedLayout
 from jax._src.interpreters import mlir
@@ -536,10 +537,22 @@ class Compiled(Stage):
           f"keyword arguments, but called with keyword arguments: {kws}")
     args_flat, in_tree = tree_util.tree_flatten((args, kwargs))
     if in_tree != params.in_tree:
-      # TODO(frostig): provide more info about the source function
-      # and transformation
-      raise TypeError(
-          f"function compiled for {params.in_tree}, called with {in_tree}")
+      leaf = PytreeLeaf()
+      this_dummy = tree_unflatten(in_tree, [leaf] * in_tree.num_leaves)
+      other_dummy = tree_unflatten(
+          params.in_tree, [leaf] * params.in_tree.num_leaves)  # type: ignore
+      errs = list(tree_util.equality_errors(this_dummy, other_dummy))
+      msg = []
+      msg.append(
+          "Function compiled with input pytree does not match the input pytree"
+          f" it was called with. There are {len(errs)} mismatches, including:")
+      for path, thing1, thing2, explanation in errs:
+        fst, *rest = path  # type: ignore
+        base = ['args', 'kwargs'][fst.idx]
+        msg.append(
+            f"    * at {base}{keystr(rest)}, seen {thing2} but now given"  # type: ignore
+            f" {thing1}, so {explanation}")
+      raise TypeError('\n'.join(msg))
     try:
       out_flat = params.executable.call(*args_flat)
     except TypeError as e:
@@ -573,6 +586,10 @@ class Compiled(Stage):
           return outs
         self._call = cpp_call_fallback
     return self._call(*args, **kwargs)
+
+
+class PytreeLeaf:
+  def __repr__(self): return "pytree leaf"
 
 
 class Lowered(Stage):

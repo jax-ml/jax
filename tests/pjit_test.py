@@ -1025,8 +1025,11 @@ class PJitTest(jtu.BufferDonationTestCase):
     exe = f.lower(x, x + 1).compile()
 
     self.assertRaisesRegex(
-        TypeError, "function compiled for .*, called with .*",
-        lambda: exe([x], [x + 1]))
+        TypeError,
+        'Function compiled with input pytree does not match the input pytree it'
+        ' was called with',
+        lambda: exe([x], [x + 1]),
+    )
 
   @jtu.with_mesh([('x', 2), ('y', 2)])
   def testLowerCompileArgTypeMismatch(self):
@@ -2318,6 +2321,19 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out3.sharding.devices_indices_map(shape)
     cache_info3 = sharding_impls.common_devices_indices_map.cache_info()
     self.assertEqual(cache_info3.hits, cache_info2.hits + 1)
+
+  def test_yash(self):
+    @jax.jit
+    def f(tree):
+      return tree
+
+    tree1 = {'a': {'c': 5, 'd': 6}}
+    tree2 = {'a': 1, 'c': {'b': 5, 'e': 7}}
+    with self.assertRaisesRegex(
+        TypeError,
+        'Function compiled with input pytree does not match the input pytree it'
+        ' was called with'):
+      f.lower(tree1).compile()(tree2)
 
   @jax.enable_custom_prng()
   def test_device_put_sharding_prng(self):
