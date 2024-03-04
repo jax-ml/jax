@@ -83,6 +83,9 @@ key_reuse_signatures[lax.dynamic_slice_p] = KeyReuseSignature([], [], [Forward(0
 key_reuse_signatures[lax.dynamic_update_slice_p] = KeyReuseSignature([Sink(1)], [], [Forward(0, 0)])
 key_reuse_signatures[lax.gather_p] = KeyReuseSignature([], [], [Forward(0, 0)])
 key_reuse_signatures[lax.scatter_p] = KeyReuseSignature([Sink(2)], [], [Forward(0, 0)])
+# Equality checks don't consume
+key_reuse_signatures[lax.eq_p] = KeyReuseSignature([], [], [])
+key_reuse_signatures[lax.ne_p] = KeyReuseSignature([], [], [])
 
 # Rules which require more dynamic logic.
 key_reuse_signatures_dynamic: dict[core.Primitive, Callable[..., KeyReuseSignature]] = {}
