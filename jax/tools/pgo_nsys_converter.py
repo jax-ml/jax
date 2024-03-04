@@ -7,9 +7,11 @@ import os
 import shutil
 import subprocess
 
+print("Script to convert NVIDIA Nsys Profiles to the .pbtxt format. This format is readable by XLA's Profile Guided Latency Estimator. Usage: pgo_nsys_converter.py --profile_path <path the nsys profile> --pgle_output_path <path to output .pbtxt>")
+
 nsys_path = shutil.which("nsys")
 
-parser = argparse.ArgumentParser(description='Tool to sweep for optimal collective combiner threshold')
+parser = argparse.ArgumentParser(description='Tool to convert NVIDIA Nsys Profiles to the .pbtxt format')
 parser.add_argument("--profile_path", type=str, help="path to nsys profile")
 parser.add_argument("--post_process", help="post process pbtxt to get minimum cost value for each instruction", action="store_true")
 parser.add_argument("--pgle_output_path", type=str, help="output directory", default="/opt/paxml/workspace/lhs_pbtxt/temp.pbtxt")
