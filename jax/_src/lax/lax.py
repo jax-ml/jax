@@ -22,7 +22,7 @@ from functools import partial
 import itertools
 import math
 import operator
-from typing import Any, Callable, TypeVar, Union, cast as type_cast, overload
+from typing import Any, Callable, TypeVar, Union, cast as type_cast, overload, TYPE_CHECKING
 import warnings
 
 import numpy as np
@@ -622,61 +622,82 @@ def concatenate(operands: Array | Sequence[ArrayLike], dimension: int) -> Array:
   return concatenate_p.bind(*operands, dimension=dimension)
 
 
-class _enum_descriptor:
-  def __init__(self, val):
-    self.val = val
-  def __get__(self, _, owner):
-    return owner(self.val)
+_precision_strings: dict[Any, Precision] = {}
+
+# TODO(b/328046715): pytype appears unable to handle overriding __new__ in an
+# enum class. Doing this crashes Pytype. For now, just write an explicit type
+# for type checkers.
+if TYPE_CHECKING:
+  class Precision:
+    DEFAULT: Precision
+    HIGH: Precision
+    HIGHEST: Precision
+
+    def __new__(cls, value: Precision | int | str | None) -> Precision:
+      raise NotImplementedError
+
+    @property
+    def name(self) -> str:
+      raise NotImplementedError
+
+    @property
+    def value(self) -> int:
+      raise NotImplementedError
+
+else:
+  class Precision(enum.Enum):
+    """Precision enum for lax functions
+
+    The `precision` argument to JAX functions generally controls the tradeoff
+    between speed and accuracy for array computations on accelerator backends,
+    (i.e. TPU and GPU). Members are:
+
+    DEFAULT:
+      Fastest mode, but least accurate. Performs computations in bfloat16.
+      Aliases: ``'default'``, ``'fastest'``, ``'bfloat16'``.
+    HIGH:
+      Slower but more accurate. Performs float32 computations in 3 bfloat16
+      passes, or using tensorfloat32 where available. Aliases: ``'high'``,
+      ``'bfloat16_3x'``, ``'tensorfloat32'``.
+    HIGHEST:
+      Slowest but most accurate. Performs computations in float32 or float64
+      as applicable. Aliases: ``'highest'``, ``'float32'``.
+    """
+    DEFAULT = 0
+    HIGH = 1
+    HIGHEST = 2
+
+    def __repr__(self) -> str:
+      return f"{self.__class__.__name__}.{self.name}"
+
+    def __str__(self) -> str:
+      return self.name
+
+  # You can't define __new__ on an enum class directly, but you can monkey-patch
+  # it after the fact. Another way to do this might be using a metaclass.
+  def _precision_new(cls, value: Precision | int | str | None) -> Precision:
+    return super(Precision, cls).__new__(cls, _precision_strings.get(value, value))
+
+  Precision.__new__ = _precision_new
 
 
-class Precision(xla_client.PrecisionConfig.Precision):  # type: ignore
-  """Precision enum for lax functions
 
-  The `precision` argument to JAX functions generally controls the tradeoff
-  between speed and accuracy for array computations on accelerator backends,
-  (i.e. TPU and GPU). Members are:
-
-  DEFAULT:
-    Fastest mode, but least accurate. Performs computations in bfloat16.
-    Aliases: ``'default'``, ``'fastest'``, ``'bfloat16'``.
-  HIGH:
-    Slower but more accurate. Performs float32 computations in 3 bfloat16
-    passes, or using tensorfloat32 where available. Aliases: ``'high'``,
-    ``'bfloat16_3x'``, ``'tensorfloat32'``.
-  HIGHEST:
-    Slowest but most accurate. Performs computations in float32 or float64
-    as applicable. Aliases: ``'highest'``, ``'float32'``.
-  """
-  # Wrap enum values with this class.
-  DEFAULT = _enum_descriptor('default')
-  HIGH = _enum_descriptor('high')
-  HIGHEST = _enum_descriptor('highest')
-
-  _strings = {
-      'highest':       xla_client.PrecisionConfig.Precision.HIGHEST,
-      'float32':       xla_client.PrecisionConfig.Precision.HIGHEST,
-      'high':          xla_client.PrecisionConfig.Precision.HIGH,
-      'bfloat16_3x':   xla_client.PrecisionConfig.Precision.HIGH,
-      'tensorfloat32': xla_client.PrecisionConfig.Precision.HIGH,
-      'default':       xla_client.PrecisionConfig.Precision.DEFAULT,
-      'bfloat16':      xla_client.PrecisionConfig.Precision.DEFAULT,
-      'fastest':       xla_client.PrecisionConfig.Precision.DEFAULT,
-      None:            xla_client.PrecisionConfig.Precision.DEFAULT,
-  }
-  def __init__(self, arg0):
-    arg0 = self._strings.get(arg0, arg0)
-    super().__init__(arg0)
-
-  def __str__(self) -> str:
-    return self.name
+_precision_strings['highest'] = Precision.HIGHEST
+_precision_strings['float32'] = Precision.HIGHEST
+_precision_strings['high'] = Precision.HIGH
+_precision_strings['bfloat16_3x'] = Precision.HIGH
+_precision_strings['tensorfloat32'] = Precision.HIGH
+_precision_strings['default'] = Precision.DEFAULT
+_precision_strings['bfloat16'] = Precision.DEFAULT
+_precision_strings['fastest'] = Precision.DEFAULT
+_precision_strings[None] = Precision.DEFAULT
 
 
-PrecisionType = Precision
 PrecisionLike = Union[
     str,
-    PrecisionType,
+    Precision,
     tuple[str, str],
-    tuple[PrecisionType, PrecisionType],
+    tuple[Precision, Precision],
     None,
 ]
 
@@ -2576,17 +2597,6 @@ def _validate_preferred_element_type(input_dtype, preferred_element_type):
                     "original type.")
 
 
-def _precision_config(precision):
-  if precision is not None:
-    config = xla_client.PrecisionConfig()
-    if isinstance(precision, tuple):
-      config.operand_precision.extend(precision)
-    else:
-      config.operand_precision.extend((precision, precision))
-    return config
-  return None
-
-
 def _dot_general_shape_rule(lhs, rhs, *, dimension_numbers, precision,
                             preferred_element_type: DTypeLike | None):
   (lhs_contracting, rhs_contracting), (lhs_batch, rhs_batch) = dimension_numbers
@@ -2854,7 +2864,7 @@ batching.primitive_batchers[dot_general_p] = _dot_general_batch_rule
 pe.padding_rules[dot_general_p] = _dot_general_padding_rule
 core.pp_eqn_rules[dot_general_p] = _dot_general_pp_rule
 
-def precision_attr(precision: PrecisionType) -> ir.ArrayAttr:
+def precision_attr(precision: Precision) -> ir.ArrayAttr:
   if precision is None:
     full_precision = (Precision.DEFAULT, Precision.DEFAULT)
   elif not isinstance(precision, tuple):
@@ -4993,7 +5003,7 @@ def remaining(original, *removed_lists):
   return [i for i in original if i not in removed]
 
 
-def canonicalize_precision(precision: PrecisionLike) -> tuple[PrecisionType, PrecisionType] | None:
+def canonicalize_precision(precision: PrecisionLike) -> tuple[Precision, Precision] | None:
   """Turns an API precision specification, into a pair of enumeration values.
 
   The API can take the precision as a string, or int, and either as a single
@@ -5004,31 +5014,31 @@ def canonicalize_precision(precision: PrecisionLike) -> tuple[PrecisionType, Pre
       return None
     try:
       return type_cast(
-          tuple[PrecisionType, PrecisionType],
+          tuple[Precision, Precision],
           (Precision(config.default_matmul_precision.value),
            Precision(config.default_matmul_precision.value)))
     except TypeError:
       raise ValueError(
           "jax_default_matmul_precision flag must be set to None or a value in "
-          f"{list(Precision._strings)}, but got {config.default_matmul_precision.value}"
+          f"{list(_precision_strings)}, but got {config.default_matmul_precision.value}"
       ) from None
-  elif isinstance(precision, str) and precision in Precision._strings:
-    return type_cast(tuple[PrecisionType, PrecisionType],
+  elif isinstance(precision, str) and precision in _precision_strings:
+    return type_cast(tuple[Precision, Precision],
                      (Precision(precision), Precision(precision)))
-  elif isinstance(precision, xla_client.PrecisionConfig.Precision):
-    return type_cast(tuple[PrecisionType, PrecisionType], (precision, precision))
+  elif isinstance(precision, Precision):
+    return type_cast(tuple[Precision, Precision], (precision, precision))
   elif (isinstance(precision, (list, tuple)) and len(precision) == 2 and
-        all(isinstance(p, xla_client.PrecisionConfig.Precision) for p in precision)):
-    return type_cast(tuple[PrecisionType, PrecisionType], precision)
+        all(isinstance(p, Precision) for p in precision)):
+    return type_cast(tuple[Precision, Precision], precision)
   elif (isinstance(precision, (list, tuple)) and len(precision) == 2 and
         all(isinstance(s, str) for s in precision)):
     s1, s2 = precision
-    p1 = type_cast(tuple[PrecisionType, PrecisionType], canonicalize_precision(s1))[0]
-    p2 = type_cast(tuple[PrecisionType, PrecisionType], canonicalize_precision(s2))[0]
+    p1 = type_cast(tuple[Precision, Precision], canonicalize_precision(s1))[0]
+    p2 = type_cast(tuple[Precision, Precision], canonicalize_precision(s2))[0]
     return (p1, p2)
   else:
     raise ValueError(
-        f"Precision argument must be None, a string in {list(Precision._strings)}, "
+        f"Precision argument must be None, a string in {list(_precision_strings)}, "
         "a lax.Precision value or a tuple of two lax.Precision values or "
         f"strings; got {precision}.")
 

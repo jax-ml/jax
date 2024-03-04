@@ -2065,8 +2065,8 @@ def _precision_config_proto(precision: None | (tuple[PrecisionType,
     return None
 
   proto = xla_data_pb2.PrecisionConfig()
-  proto.operand_precision.append(int(precision[0]))
-  proto.operand_precision.append(int(precision[1]))
+  proto.operand_precision.append(precision[0].value)
+  proto.operand_precision.append(precision[1].value)
   return proto
 
 

@@ -33,7 +33,7 @@ def conv_general_dilated_patches(
     lhs_dilation: Sequence[int] | None = None,
     rhs_dilation: Sequence[int] | None = None,
     dimension_numbers: convolution.ConvGeneralDilatedDimensionNumbers | None = None,
-    precision: lax.PrecisionType | None = None,
+    precision: lax.Precision | None = None,
     preferred_element_type: DType | None = None,
 ) -> jax.Array:
   """Extract patches subject to the receptive field of `conv_general_dilated`.
@@ -204,7 +204,7 @@ def conv_general_dilated_local(
 
   c_precision = lax.canonicalize_precision(precision)
   lhs_precision = type_cast(
-      Union[lax.PrecisionType, None],
+      Union[lax.Precision, None],
       (c_precision[0]
        if (isinstance(c_precision, tuple) and len(c_precision) == 2)
        else c_precision))
