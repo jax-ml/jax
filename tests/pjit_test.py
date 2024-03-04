@@ -2322,7 +2322,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     cache_info3 = sharding_impls.common_devices_indices_map.cache_info()
     self.assertEqual(cache_info3.hits, cache_info2.hits + 1)
 
-  def test_yash(self):
+  def test_aot_compile_in_tree_mismatch(self):
     @jax.jit
     def f(tree):
       return tree
