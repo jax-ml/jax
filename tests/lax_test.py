@@ -3366,7 +3366,8 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
   def testOnComplexPlane(self, name, dtype, kind):
     all_regions = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'zero']
     is_cpu = jtu.test_device_matches(["cpu"])
-    is_arm_cpu = platform.machine().startswith('aarch')
+    machine = platform.machine()
+    is_arm_cpu = machine.startswith('aarch') or machine.startswith('arm')
     is_cuda = jtu.test_device_matches(["cuda"])
 
     # TODO(pearu): eliminate all items in the following lists:
