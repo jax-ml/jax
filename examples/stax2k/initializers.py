@@ -14,7 +14,8 @@
 # limitations under the License.
 
 import jax
-from util import Any, JaxType, JaxVal, tree_map_with_index
+from typing import Any
+from jaxtypes import JaxType, JaxVal, prng_map
 
 Key = Any
 State = Any
@@ -36,7 +37,6 @@ class IIDNormalInitializer(Initializer):
     self.scale = scale
 
   def new_params(self, k:Key) -> JaxVal:
-    def new_leaf(i, ty):
-      ki = jax.random.fold_in(k, i)
-      return jax.random.normal(ki, shape=ty.shape, dtype=ty.dtype)
-    return tree_map_with_index(self.param_type, new_leaf)
+    def new_leaf(k, ty):
+      return jax.random.normal(k, shape=ty.shape, dtype=ty.dtype)
+    return prng_map(new_leaf, k, self.param_type)

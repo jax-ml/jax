@@ -20,10 +20,10 @@ import jax
 import jax.numpy as jnp
 
 import datasets
-from models import Model, Sequential, DenseModel, NormalizeLogits, WithCategoricalLoss, Relu
+from models import Module, Sequential, DenseLayer, NormalizeLogits, WithCategoricalLoss, Relu
 from initializers import Initializer, IIDNormalInitializer
 from optimizers import Optimizer, SGDOptimizer
-from util import JaxType, JaxVal, PRNGKey
+from jaxtypes import JaxType, JaxVal, PRNGKey
 
 # === generic training step (could be a library) ===
 
@@ -35,7 +35,7 @@ class TrainingState:
   model_state  : JaxVal
   model_params : JaxVal
 
-def initial_train_state(model: Model, initializer: Initializer, optimizer: Optimizer, key: PRNGKey):
+def initial_train_state(model: Module, initializer: Initializer, optimizer: Optimizer, key: PRNGKey):
   k1, k2, k3 = jax.random.split(key, num=3)
   return TrainingState(
     train_iter = 0,
@@ -43,11 +43,11 @@ def initial_train_state(model: Model, initializer: Initializer, optimizer: Optim
     model_state = model.initial_state(k2),
     model_params = initializer.new_params(k3))
 
-def train_state_type(model: Model, initializer: Initializer, optimizer: Optimizer, key: PRNGKey) -> JaxType:
+def train_state_type(model: Module, initializer: Initializer, optimizer: Optimizer, key: PRNGKey) -> JaxType:
   assert False
 
 def train_step(
-    model: Model, opt:Optimizer, key: PRNGKey, batch, ts:TrainingState
+    model: Module, opt:Optimizer, key: PRNGKey, batch, ts:TrainingState
     ) -> TrainingState:
   grads, _, new_model_state = model.grad(ts.model_state, ts.model_params, batch)
   new_params, new_opt_state = opt.opt_step(key, ts.opt_state, ts.model_params, grads)
@@ -93,6 +93,7 @@ def mnist_data(batch_size):
 
 @dataclass
 class MLPConfig:
+ batch_size   : int
  input_size   : int
  output_size  : int
  hidden_sizes : list[int]
@@ -100,7 +101,6 @@ class MLPConfig:
 @dataclass
 class TrainingConfig:
   model_cfg            : MLPConfig
-  batch_size           : int
   param_scale          : float
   learning_rate        : float
   max_iters            : int
@@ -112,26 +112,27 @@ class TrainingConfig:
 
 # === training loop implementation ===
 
-def eval_accuracy(model:Model, ts: TrainingState, features, labels):
+def eval_accuracy(model:Module, ts: TrainingState, features, labels):
   logits, _ = model.forward(ts.model_state, ts.model_params, features)
   pred_classes = jnp.argmax(logits, axis=1)
   label_classes = jnp.argmax(labels, axis=1)
   return jnp.mean(pred_classes == label_classes)
 
-def run_evals(model: Model, eval_data, ts: TrainingState):
+def run_evals(model: Module, eval_data, ts: TrainingState):
   train_images, train_labels, test_images, test_labels = eval_data
   print(f"Iteration: {ts.train_iter}")
   print(f"Train accuracy: {eval_accuracy(model, ts, train_images, train_labels)}")
   print(f"Test  accuracy: {eval_accuracy(model, ts, test_images, test_labels)}")
 
-def build_mlp(cfg: MLPConfig) -> Model:
+def build_mlp(cfg: MLPConfig) -> Module:
+  bs = cfg.batch_size
   input_sizes = [cfg.input_size] + cfg.hidden_sizes
   output_sizes = cfg.hidden_sizes + [cfg.output_size]
   nonlinearities = [Relu] * len(cfg.hidden_sizes) + [NormalizeLogits]
   layers = []
   for (n_in, n_out, nonlinearity) in zip(input_sizes, output_sizes, nonlinearities):
-    layers.append(DenseModel(n_in, n_out))
-    layers.append(nonlinearity(n_out))
+    layers.append(DenseLayer(bs, n_in, n_out))
+    layers.append(nonlinearity(bs, n_out))
   return Sequential(layers)
 
 def run_training_loop(cfg:TrainingConfig):
@@ -139,8 +140,11 @@ def run_training_loop(cfg:TrainingConfig):
   model = build_mlp(cfg.model_cfg)
   model_with_loss = WithCategoricalLoss(model)
   initializer = IIDNormalInitializer(model.param_type, scale=cfg.param_scale)
-  optimizer = SGDOptimizer(param_type=model.param_type, scale=cfg.param_scale)
-  train_batches, eval_data = mnist_data(cfg.batch_size)
+  optimizer = SGDOptimizer(param_type=model.param_type, lr=cfg.learning_rate)
+  model_with_loss.check_types()
+  # initializer.check_types()
+  # optimizer.check_types()
+  train_batches, eval_data = mnist_data(cfg.model_cfg.batch_size)
   assert model.param_type == optimizer.param_type
   assert model.param_type == initializer.param_type
 
@@ -165,6 +169,7 @@ def run_training_loop(cfg:TrainingConfig):
 if __name__ == "__main__":
 
   model_config = MLPConfig(
+    batch_size   = 128,
     input_size   = 784,
     output_size  = 10,
     hidden_sizes = [1024, 1024])
@@ -172,10 +177,9 @@ if __name__ == "__main__":
   training_config = TrainingConfig(
     model_cfg     = model_config,
     init_key      = jax.random.key(0),
-    batch_size    = 128,
     learning_rate = 0.01,
     param_scale   = 0.1,
-    max_iters         = 10,
+    max_iters         = 1000,
     eval_period       = 20,
     checkpoint_period = 20,
     checkpoint_dir     = None,

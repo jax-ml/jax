@@ -16,7 +16,8 @@
 from typing import Any
 
 import jax
-from util import tree_map, JaxType, PRNGKey, jax_type
+from jax.tree_util import tree_map
+from jaxtypes import JaxType, PRNGKey
 
 Key = Any
 State = Any
@@ -42,11 +43,10 @@ class Optimizer:
     assert False
 
 class SGDOptimizer(Optimizer):
-  def __init__(self, param_type: JaxType, scale:float=0.1, lr:float=0.001):
+  def __init__(self, param_type: JaxType, lr:float=0.001):
     assert is_pytree_of_floats(param_type)
     self.param_type = param_type
     self.opt_state_type = ()
-    self.scale = scale
     self.lr    = lr
 
   def initial_state(self, _):

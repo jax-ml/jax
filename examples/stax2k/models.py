@@ -14,15 +14,14 @@
 # limitations under the License.
 
 from functools import partial
+import numpy as np
 import jax
 from jax.nn import relu
-from jax.tree_util import tree_map
 from jax.scipy.special import logsumexp
 from typing import Any, Callable, Generic, TypeVar
 import jax.numpy as jnp
 from dataclasses import dataclass
-
-from util import JaxType, ArrayType, float_type, JaxVal, PRNGKey
+from jaxtypes import *
 
 State = Any
 Cotangents = Any
@@ -39,17 +38,23 @@ O = TypeVar("O")  # outputs
 T = TypeVar("T")  # targets, or general-purpose
 
 @dataclass
-class Model(Generic[S,P,I,O]):
+class Module(Generic[S,P,I,O]):
   state_type  : JaxType
   param_type  : JaxType
-  input_type  : JaxType  # no batch dimension
-  output_type : JaxType  # no batch dimension
+  input_type  : JaxType  # includes batch dimension
+  output_type : JaxType  # includes batch dimension
 
   def initial_state(self, prng:PRNGKey) -> State:
     raise NotImplementedError(type(self)) # subclass should implement
 
   def forward(self, state: State, params: Params, inputs: Values) -> tuple[Values, State]:
     raise NotImplementedError(type(self)) # subclass should implement
+
+  # Default implementation only saves inputs and params. Subclasseses may override it.
+  # residuals_type, forward_with_residuals, and backward must all be overrided together.
+  @property
+  def residuals_type(self):
+    return (self.param_type, self.input_type)
 
   # Default implementation only saves inputs and params. Subclasseses may override it.
   def forward_with_residuals(self, state: State, params: Params, inputs: Values
@@ -75,34 +80,53 @@ class Model(Generic[S,P,I,O]):
     return params_cts, inputs_cts, new_state
 
   def grad(self, state: State, params: Params, inputs: Values) -> (Params, Values, State):
-    assert self.output_type == float_type
+    assert self.output_type == f32[()]
     output, new_state, residuals = self.forward_with_residuals(state, params, inputs)
     grads, _, newer_state = self.backward(new_state, residuals, 1.0)
     return grads, output, newer_state
 
-class DenseModel(Model):
-  def __init__(self, n_in, n_out, init_scale=1.0):
-    self.n_in  = n_in
-    self.n_out = n_out
-    self.init_scale = init_scale
-    param_type = dict(
-      w = ArrayType((n_out, n_in), float),
-      b = ArrayType((n_out,), float))
-    input_type = ArrayType((n_in,), float)
-    output_type = ArrayType((n_out,), float)
+  def check_types(self):
+    assert is_type(self.state_type)
+    assert is_type(self.param_type)
+    assert is_type(self.input_type)
+    assert is_type(self.output_type)
+    check_function_type(self.initial_state, (prng[()],), self.state_type)
+    check_function_type(self.forward,
+      (self.state_type, self.param_type, self.input_type),
+      (self.output_type, self.state_type))
+    check_function_type(self.forward_with_residuals,
+      (self.state_type, self.param_type, self.input_type),
+      (self.output_type, self.state_type, self.residuals_type))
+    check_function_type(self.backward,
+      (self.state_type, self.residuals_type, tangent_type(self.output_type)),
+      (tangent_type(self.param_type), tangent_type(self.input_type), self.state_type))
+
+@pytree_dataclass
+class DenseParams:
+  w : Params
+  b : Params
+
+def DenseParamsType(i:int, o:int):
+  return DenseParams(f32[i, o], f32[o])
+
+class DenseLayer(Module):
+  def __init__(self, b, i, o):
+    param_type = DenseParamsType(i, o)
+    input_type = f32[b, i]
+    output_type = f32[b, o]
     super().__init__((), param_type, input_type, output_type)
 
   def initial_state(self, prng): return ()
 
   def forward(self, state, params, inputs):
-    w, b = params['w'], params['b']
-    outputs = jnp.dot(inputs, w.T) + b
+    w, b = params.w, params.b
+    outputs = jnp.dot(inputs, w) + b[None,:]
     return outputs, state
 
 # === second-order combinators (models parameterized by models) ===
 
-class CombinatorModel(Model):
-  children : list[Model]
+class CombinatorModule(Module):
+  children : list[Module]
   def __init__(self, component_models, state_type, param_type, input_type, output_type):
     self.children = component_models
     super().__init__(state_type, param_type, input_type, output_type)
@@ -123,18 +147,17 @@ class CombinatorModel(Model):
   def backward(self, state, residuals, output_cts: Values):
     raise NotImplementedError(type(self)) # subclass should implement
 
-class Sequential(CombinatorModel):
+class Sequential(CombinatorModule):
   def __init__(self, models, input_type=None):
     if models:
       output_type = models[-1].output_type
-      assert input_type is None or models[0].input_type == input_type
+      input_type  = models[0].input_type
     else:
       assert input_type is not None
       output_type = input_type
 
     for m1, m2 in zip(models[:-1], models[1:]):
       assert m1.output_type == m2.input_type
-
     state_type = [m.state_type for m in models]
     param_type = [m.param_type for m in models]
     super().__init__(models, state_type, param_type, input_type, output_type)
@@ -142,6 +165,10 @@ class Sequential(CombinatorModel):
   def initial_state(self, prng):
     prngs = jax.random.split(prng, len(self.children))
     return [m.initial_state(p) for p, m in zip(prngs, self.children)]
+
+  @property
+  def residuals_type(self):
+    return [m.residuals_type for m in self.children]
 
   def forward_general(self, state, params, inputs, save_residuals):
     x = inputs
@@ -164,9 +191,9 @@ class Sequential(CombinatorModel):
 
 # === pure functions ===
 
-# Models that implement pure functions without any state, prng or trainable
+# Modules that implement pure functions without any state, prng or trainable
 # parameters. E.g. normalization layers, max-pooling layers, etc.
-class FunctionModel(Model):
+class FunctionModule(Module):
   def __init__(self, input_type, output_type):
     super().__init__((), (), input_type, output_type)
 
@@ -179,22 +206,22 @@ class FunctionModel(Model):
   def forward(self, _, params: Params, inputs: Values) -> tuple[Values, State]:
     return self.apply_function(inputs), ()
 
-class NormalizeLogits(FunctionModel):
-  def __init__(self, num_classes):
+class NormalizeLogits(FunctionModule):
+  def __init__(self, batch_size, num_classes):
     super().__init__(
-      input_type  = ArrayType((num_classes,), float),
-      output_type = ArrayType((num_classes,), float))
+      input_type  = f32[batch_size, num_classes],
+      output_type = f32[batch_size, num_classes])
 
   def apply_function(self, logits):
     return logits - logsumexp(logits, axis=1, keepdims=True)
 
 # === nonlinearities ===
 
-class Relu(FunctionModel):
-  def __init__(self, num_features):
+class Relu(FunctionModule):
+  def __init__(self, b, i):
     super().__init__(
-      input_type  = ArrayType((num_features,), float),
-      output_type = ArrayType((num_features,), float))
+      input_type  = f32[b, i],
+      output_type = f32[b, i])
 
   def apply_function(self, activations):
     return relu(activations)
@@ -203,17 +230,25 @@ class Relu(FunctionModel):
 
 # Wraps e.g. an `image -> logits` model to make an
 # `(image, label) -> scalar_loss` model.
-class ModelWithLoss(CombinatorModel):
-  def __init__(self, model:Model, label_type:JaxType):
+class ModuleWithLoss(CombinatorModule):
+  def __init__(self, model:Module, labels_type:JaxType):
     state_type = model.state_type
     param_type = model.param_type
-    input_type = (model.input_type, label_type)
-    output_type = float_type
+    input_type = (model.input_type, labels_type)
+    output_type = f32[()]
     self.model = model
+    self.labels_type = labels_type
     super().__init__([model], state_type, param_type, input_type, output_type)
+
+  def initial_state(self, key):
+    return self.model.initial_state(key)
 
   def compute_loss(self, preds, labels) -> float:
     raise NotImplementedError(type(self)) # subclass should implement
+
+  @property
+  def residuals_type(self):
+    return (self.model.residuals_type, self.model.output_type, self.labels_type)
 
   def forward_general(self, state, params, inputs_labels, save_residuals):
     inputs, labels = inputs_labels
@@ -228,13 +263,12 @@ class ModelWithLoss(CombinatorModel):
     params_ct, model_inputs_ct, new_state  = self.model.backward(state, model_residuals, preds_ct)
     return params_ct, (model_inputs_ct, labels_ct), new_state
 
-class WithCategoricalLoss(ModelWithLoss):
-  def __init__(self, model:Model[S,P,I,O]):
+class WithCategoricalLoss(ModuleWithLoss):
+  def __init__(self, model:Module[S,P,I,O]):
     assert isinstance(model.output_type, ArrayType)
-    assert len(model.output_type.shape) == 1
-    num_categories = model.output_type.shape[0]
-    label_type = ArrayType((num_categories,), float)
-    super().__init__(model, label_type)
+    batch_size, num_categories = model.output_type.shape
+    labels_type = f32[batch_size, num_categories]
+    super().__init__(model, labels_type)
 
   def compute_loss(self, preds: O, targets: T) -> float:
-    return -jnp.mean(jnp.sum(preds * targets, axis=1))
+    return - jnp.mean(jnp.sum(preds * targets, axis=1))
