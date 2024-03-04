@@ -937,7 +937,8 @@ def _typecheck_xmap(
   mapped_out_avals = [v.aval for v in call_jaxpr.outvars]
   out_avals = [_insert_aval_axes(a, a_out_axes, local_axis_sizes)
                for a, a_out_axes in zip(mapped_out_avals, out_axes)]
-  return out_avals, call_jaxpr.effects
+  effs = core.filter_named_axis_effects(call_jaxpr.effects, global_axis_sizes)
+  return out_avals, effs
 core.custom_typechecks[xmap_p] = _typecheck_xmap
 
 
@@ -1033,8 +1034,9 @@ def _dynamic_jaxpr_process_xmap(self, primitive, f, tracers, params):
                     call_jaxpr=call_jaxpr)
   del new_params['out_axes_thunk']
   del new_params['spmd_out_axes_thunk']
+  effs = core.filter_named_axis_effects(call_jaxpr.effects, global_axis_sizes)
   eqn = new_jaxpr_eqn([*constvars, *invars], outvars, primitive,
-                      new_params, call_jaxpr.effects, source_info)
+                      new_params, effs, source_info)
   self.frame.add_eqn(eqn)
   return out_tracers
 pe.DynamicJaxprTrace.process_xmap = _dynamic_jaxpr_process_xmap  # type: ignore

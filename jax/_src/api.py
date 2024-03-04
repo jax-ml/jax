@@ -569,6 +569,10 @@ def xla_computation(fun: Callable,
         stack.enter_context(core.extend_axis_env(axis_name, size, None))
       jaxpr, out_avals, consts, () = pe.trace_to_jaxpr_dynamic(jaxtree_fun, avals)
       jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
+      if axis_env:
+        jaxpr = core.remove_named_axis_effects(
+            jaxpr, {axis_name for axis_name, _ in axis_env}
+        )
       axis_env_ = make_axis_env(dispatch.jaxpr_replicas(jaxpr))
       ordered_effects = list(
           effects.ordered_effects.filter_in(jaxpr.effects))

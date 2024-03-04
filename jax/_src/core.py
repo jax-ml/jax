@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import collections  # noqa: F401
 from collections import Counter, defaultdict, deque, namedtuple
-from collections.abc import (Generator, Hashable, Iterable, Iterator, Sequence,
-                             MutableSet, MutableMapping)
+from collections.abc import (Collection, Generator, Hashable, Iterable,
+                             Iterator, Set, Sequence, MutableSet,
+                             MutableMapping)
 from contextlib import contextmanager
 from dataclasses import dataclass
 import functools
@@ -2637,6 +2638,34 @@ def axis_frame(axis_name: AxisName, main_trace: MainTrace | None = None
       f'by pmap) are available to collective operations: {named_axes}')
 
 
+@dataclass(frozen=True)
+class NamedAxisEffect(effects.Effect):
+  """A side-effect introducing a new named axis into the current scope."""
+
+  name: AxisName
+
+
+effects.control_flow_allowed_effects.add_type(NamedAxisEffect)
+effects.custom_derivatives_allowed_effects.add_type(NamedAxisEffect)
+effects.lowerable_effects.add_type(NamedAxisEffect)
+effects.remat_allowed_effects.add_type(NamedAxisEffect)
+
+
+def filter_named_axis_effects(
+    effects: Effects, names: Collection[AxisName]
+) -> Effects:
+  return {e for e in effects
+          if not isinstance(e, NamedAxisEffect) or e.name not in names}
+
+
+def remove_named_axis_effects(
+    jaxpr: Jaxpr, names: Collection[AxisName]
+) -> Jaxpr:
+  if not names or not jaxpr.effects:
+    return jaxpr
+  return jaxpr.replace(effects=filter_named_axis_effects(jaxpr.effects, names))
+
+
 ParamDict = dict[str, Any]
 AxisSubst = Callable[[AxisName], tuple[AxisName, ...]]
 
@@ -2676,6 +2705,15 @@ class DuplicateAxisNameError(Exception):
     self.var = var
     self.eqn = None
 
+def subst_axis_names_effects(effects: Set[Effect], subst: AxisSubst) -> Set[Effect]:
+  new_effects = set[Effect]()
+  for e in effects:
+    if isinstance(e, NamedAxisEffect):
+      new_effects.update(map(NamedAxisEffect, subst(e.name)))
+    else:
+      new_effects.add(e)
+  return new_effects
+
 def subst_axis_names_var(v: Var, subst: AxisSubst, var_map: dict[Var, Var]) -> Var:
   # Var identity is load-bearing, so we can't have duplicates!
   if isinstance(v, DropVar): return v
@@ -2699,7 +2737,8 @@ def subst_axis_names_eqn(eqn: JaxprEqn, subst: AxisSubst, var_map: dict[Var, Var
     e.eqn = eqn
     raise
   params = subst_axis_names(eqn.primitive, eqn.params, subst)
-  return eqn.replace(invars=invars, outvars=outvars, params=params)
+  effects = subst_axis_names_effects(eqn.effects, subst)
+  return eqn.replace(invars=invars, outvars=outvars, params=params, effects=effects)
 
 def do_subst_axis_names_jaxpr(jaxpr: Jaxpr | ClosedJaxpr, subst: AxisSubst):
   consts = None
@@ -2711,16 +2750,14 @@ def do_subst_axis_names_jaxpr(jaxpr: Jaxpr | ClosedJaxpr, subst: AxisSubst):
   constvars = [subst_axis_names_var(v, subst, var_map) for v in jaxpr.constvars]  # type: ignore[union-attr]
   eqns = [subst_axis_names_eqn(eqn, subst, var_map) for eqn in jaxpr.eqns]  # type: ignore[union-attr]
   outvars: list[Atom] = [v if isinstance(v, Literal) else var_map[v] for v in jaxpr.outvars]  # type: ignore[union-attr]
-  new_jaxpr = Jaxpr(constvars, invars, outvars, eqns, jaxpr.effects)
+  effects = subst_axis_names_effects(jaxpr.effects, subst)
+  new_jaxpr = Jaxpr(constvars, invars, outvars, eqns, effects)
   if consts is not None:
     return ClosedJaxpr(new_jaxpr, consts)
   return new_jaxpr
 
-@weakref_lru_cache
 def used_axis_names_jaxpr(jaxpr: Jaxpr | ClosedJaxpr):
-  subst = NameGatheringSubst()
-  do_subst_axis_names_jaxpr(jaxpr, subst)
-  return frozenset(subst.axis_names)
+  return {e.name for e in jaxpr.effects if isinstance(e, NamedAxisEffect)}
 
 def subst_axis_names_jaxpr(jaxpr: Jaxpr | ClosedJaxpr, subst: AxisSubst):
   if isinstance(subst, NameGatheringSubst):  # This is a common case, so we optimize it!
@@ -2924,6 +2961,9 @@ def _check_jaxpr(
             raise JaxprTypeError(
                 "Invalid `JaxprInputEffect`: must be present in jaxpr. "
                 f"{jaxpr_effect} is not in {jaxpr.effects}.")
+        elif isinstance(eff, NamedAxisEffect):
+          # It is valid for a primitive to discharge the named axis effect.
+          continue
         elif eff not in jaxpr.effects:
           raise JaxprTypeError("Equation effect not present in jaxpr effects. "
                                f"Equation effect: {eff}. "
@@ -3077,7 +3117,7 @@ def _check_map(ctx_factory, prim, in_avals, params):
   out_avals = [unmapped_aval(axis_size, axis_name, out_axis, aval)
                if out_axis is not None else aval
                for aval, out_axis in zip(mapped_out_avals, out_axes)]
-  return out_avals, call_jaxpr.effects
+  return out_avals, filter_named_axis_effects(call_jaxpr.effects, {axis_name})
 
 
 # ------------------- Jaxpr printed representation -------------------

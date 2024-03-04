@@ -23,15 +23,12 @@ import itertools
 import math
 import string
 
-import numpy as np
-
 from jax import tree_util
-
 from jax._src import core
 from jax._src import dtypes
 from jax._src import sharding_impls
 from jax._src import util
-from jax._src.core import ShapedArray, AxisName, raise_to_shaped
+from jax._src.core import AxisName, ShapedArray, raise_to_shaped
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -41,8 +38,9 @@ from jax._src.lax import slicing
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy import lax_numpy
-from jax._src.util import (
-    unzip2, canonicalize_axis, safe_map, safe_zip, moveaxis)
+from jax._src.util import (canonicalize_axis, moveaxis, safe_map, safe_zip,
+                           unzip2)
+import numpy as np
 
 unsafe_map, map = map, safe_map  # type: ignore
 
@@ -709,21 +707,23 @@ def _allreduce_impl(pos_reducer, *args, axes, axis_index_groups):
   assert all(isinstance(axis, int) for axis in axes)
   return [pos_reducer(arg, axes) for arg in args]
 
-def _allreduce_abstract_eval(*args, axes, axis_index_groups):
+def _allreduce_effectful_abstract_eval(*args, axes, axis_index_groups):
   # TODO(frostig,mattjj,jekbradbury): maybe check aval names here
   pos_axes = tuple(axis for axis in axes if isinstance(axis, int))
   named_shapes = [arg.named_shape for arg in args]
+  named_axes = {axis for axis in axes if not isinstance(axis, int)}
   if axis_index_groups is None:
-    named_axes = {axis for axis in axes if not isinstance(axis, int)}
     named_shapes = [{name: size for name, size in arg.named_shape.items()
                      if name not in named_axes} for arg in args]
   else:
     if len(pos_axes) != 0:
       raise ValueError(f"axis_index_groups can only be used with reductions over "
                        f"named axes, but got: {axes}")
-  return [ShapedArray(lax._reduce_op_shape_rule(raise_to_shaped(arg), axes=pos_axes),
-                      arg.dtype, named_shape=named_shape)
-          for arg, named_shape in zip(args, named_shapes)]
+  out_avals = [
+      ShapedArray(lax._reduce_op_shape_rule(raise_to_shaped(arg), axes=pos_axes),
+                  arg.dtype, named_shape=named_shape)
+      for arg, named_shape in zip(args, named_shapes)]
+  return out_avals, {core.NamedAxisEffect(axis) for axis in named_axes}
 
 def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
   if axis_index_groups is not None and ("tpu" in ctx.module_context.platforms):
@@ -804,7 +804,7 @@ def _psum_transpose_rule(cts, *args, axes, axis_index_groups):
 psum_p = core.AxisPrimitive('psum')
 psum_p.multiple_results = True
 psum_p.def_impl(partial(_allreduce_impl, lax._reduce_sum))
-psum_p.def_abstract_eval(_allreduce_abstract_eval)
+psum_p.def_effectful_abstract_eval(_allreduce_effectful_abstract_eval)
 mlir.register_lowering(
     psum_p, partial(_allreduce_lowering, lax.add_p, lax._reduce_sum))
 ad.deflinear2(psum_p, _psum_transpose_rule)
@@ -840,7 +840,7 @@ def psum_bind(*args, axes, axis_index_groups):
 pmax_p = core.AxisPrimitive('pmax')
 pmax_p.multiple_results = True
 pmax_p.def_impl(partial(_allreduce_impl, lax._reduce_max))
-pmax_p.def_abstract_eval(_allreduce_abstract_eval)
+pmax_p.def_effectful_abstract_eval(_allreduce_effectful_abstract_eval)
 mlir.register_lowering(
     pmax_p, partial(_allreduce_lowering, lax.max_p, lax._reduce_max))
 batching.primitive_batchers[pmax_p] = partial(_reduction_batcher, pmax_p)
@@ -852,7 +852,7 @@ core.axis_substitution_rules[pmax_p] = partial(_subst_all_names_in_param, 'axes'
 pmin_p = core.AxisPrimitive('pmin')
 pmin_p.multiple_results = True
 pmin_p.def_impl(partial(_allreduce_impl, lax._reduce_min))
-pmin_p.def_abstract_eval(_allreduce_abstract_eval)
+pmin_p.def_effectful_abstract_eval(_allreduce_effectful_abstract_eval)
 mlir.register_lowering(
     pmin_p, partial(_allreduce_lowering, lax.min_p, lax._reduce_min))
 batching.primitive_batchers[pmin_p] = partial(_reduction_batcher, pmin_p)
@@ -1060,17 +1060,25 @@ def _all_to_all_batched_collective(axis_size, frame_name, _, vals_in, dims_in,
   new_d -= 1  # We've removed 0th dimension, so new_d needs to be adjusted
   return x, new_d
 
-def _all_to_all_abstract_eval(x, axis_name, split_axis, concat_axis, axis_index_groups):
+
+def _all_to_all_effectful_abstract_eval(
+    x, axis_name, split_axis, concat_axis, axis_index_groups
+):
+  if not isinstance(axis_name, (list, tuple)):
+    axis_name = (axis_name,)
   input_aval = raise_to_shaped(x)
   shape = list(input_aval.shape)
   axis_size = psum(1, axis_name) if axis_index_groups is None else len(axis_index_groups[0])
   assert shape[split_axis] % axis_size == 0, (shape[split_axis], axis_size)
   shape[split_axis] //= axis_size
   shape[concat_axis] *= axis_size
-  return input_aval.update(shape=tuple(shape), weak_type=False)
+  out_aval = input_aval.update(shape=tuple(shape), weak_type=False)
+  effects = {*map(core.NamedAxisEffect, axis_name)}
+  return out_aval, effects
+
 
 all_to_all_p = core.AxisPrimitive('all_to_all')
-all_to_all_p.def_abstract_eval(_all_to_all_abstract_eval)
+all_to_all_p.def_effectful_abstract_eval(_all_to_all_effectful_abstract_eval)
 mlir.register_lowering(all_to_all_p, _all_to_all_lowering)
 ad.deflinear2(all_to_all_p, _all_to_all_transpose_rule)
 batching.primitive_batchers[all_to_all_p] = _all_to_all_batcher
@@ -1204,7 +1212,10 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
       replica_groups=_replica_groups_hlo(replica_groups),
       **other_args).results
 
-def _all_gather_abstract_eval(x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
+
+def _all_gather_effectful_abstract_eval(
+    x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled
+):
   if not isinstance(axis_name, (list, tuple)):
     axis_name = (axis_name,)
   x_aval = raise_to_shaped(x)
@@ -1215,7 +1226,10 @@ def _all_gather_abstract_eval(x, *, all_gather_dimension, axis_name, axis_index_
     new_shape.insert(all_gather_dimension, axis_size)
   new_named_shape = {name: size for name, size in x_aval.named_shape.items()
                      if name not in axis_name}
-  return x_aval.update(shape=new_shape, named_shape=new_named_shape)
+  out_aval = x_aval.update(shape=new_shape, named_shape=new_named_shape)
+  effects = {*map(core.NamedAxisEffect, axis_name)}
+  return out_aval, effects
+
 
 def _all_gather_transpose_rule(cts, x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
   return (psum_scatter(cts, axis_name=axis_name,
@@ -1264,7 +1278,7 @@ def _all_gather_batched_collective(frame_size, frame_name, _, vals_in, dims_in,
   return y, batching.not_mapped
 
 all_gather_p = core.AxisPrimitive('all_gather')
-all_gather_p.def_abstract_eval(_all_gather_abstract_eval)
+all_gather_p.def_effectful_abstract_eval(_all_gather_effectful_abstract_eval)
 all_gather_p.def_impl(_all_gather_impl)
 mlir.register_lowering(all_gather_p, _all_gather_lowering)
 for p in ("cuda", "rocm", "tpu"):
@@ -1327,9 +1341,9 @@ def _reduce_scatter_lowering(
     return [hlo.reshape(mlir.aval_to_ir_type(aval_out), op.result)]
 
 
-
-def _reduce_scatter_abstract_eval(x, *, axis_name, scatter_dimension,
-                                  axis_index_groups, axis_size, tiled):
+def _reduce_scatter_effectful_abstract_eval(
+    x, *, axis_name, scatter_dimension, axis_index_groups, axis_size, tiled
+):
   if not isinstance(axis_name, (list, tuple)):
     axis_name = (axis_name,)
   x_aval = core.raise_to_shaped(x)
@@ -1353,7 +1367,9 @@ def _reduce_scatter_abstract_eval(x, *, axis_name, scatter_dimension,
       for name, size in x_aval.named_shape.items()
       if name not in axis_name
   }
-  return x_aval.update(shape=new_shape, named_shape=new_named_shape)
+  out_aval = x_aval.update(shape=new_shape, named_shape=new_named_shape)
+  effects = {*map(core.NamedAxisEffect, axis_name)}
+  return out_aval, effects
 
 
 def _reduce_scatter_transpose_rule(cts, x, *, axis_name, scatter_dimension,
@@ -1401,7 +1417,9 @@ def _reduce_scatter_collective(frame_size, frame_name, _, vals_in, dims_in,
 
 
 reduce_scatter_p = core.AxisPrimitive("reduce_scatter")
-reduce_scatter_p.def_abstract_eval(_reduce_scatter_abstract_eval)
+reduce_scatter_p.def_effectful_abstract_eval(
+    _reduce_scatter_effectful_abstract_eval
+)
 ad.deflinear2(reduce_scatter_p, _reduce_scatter_transpose_rule)
 batching.primitive_batchers[reduce_scatter_p] = _reduce_scatter_batcher
 batching.axis_primitive_batchers[reduce_scatter_p] = _reduce_scatter_collective
@@ -1537,13 +1555,15 @@ def _axis_index_lowering(ctx, *, axis_name):
   ]
 
 
-def _axis_index_abstract_eval(*, axis_name):
+def _axis_index_effectful_abstract_eval(*, axis_name):
   frame = core.axis_frame(axis_name)
-  return ShapedArray((), np.int32, named_shape={axis_name: frame.size})
+  out_aval = ShapedArray((), np.int32, named_shape={axis_name: frame.size})
+  return out_aval, {core.NamedAxisEffect(axis_name)}
+
 
 axis_index_p = core.Primitive('axis_index')
 mlir.register_lowering(axis_index_p, _axis_index_lowering)
-axis_index_p.def_abstract_eval(_axis_index_abstract_eval)
+axis_index_p.def_effectful_abstract_eval(_axis_index_effectful_abstract_eval)
 core.axis_substitution_rules[axis_index_p] = partial(_subst_all_names_in_param, 'axis_name')
 
 # Axis index doesn't get any arguments, so that the default bind would have no
@@ -1585,8 +1605,11 @@ def _pdot_impl(x, y, *, axis_name, pos_contract, pos_batch, precision):
   if axis_name: raise NameError(f"unbound axis name: {axis_name[0]}")
   return lax.dot_general(x, y, (pos_contract, pos_batch), precision=precision)
 
-@pdot_p.def_abstract_eval
-def _pdot_abstract_eval(x, y, *, axis_name, pos_contract, pos_batch, precision):
+
+@pdot_p.def_effectful_abstract_eval
+def _pdot_effectful_abstract_eval(
+    x, y, *, axis_name, pos_contract, pos_batch, precision
+):
   # TODO(frostig,mattjj,jekbradbury): check inputs have given axis names?
   if not len(set(axis_name)) == len(axis_name): raise ValueError
   pos_aval = lax.dot_general_p.abstract_eval(
@@ -1596,7 +1619,10 @@ def _pdot_abstract_eval(x, y, *, axis_name, pos_contract, pos_batch, precision):
   named_shape = {name: size
                  for name, size in common_named_shape.items()
                  if name not in axis_name}
-  return pos_aval.update(named_shape=named_shape)
+  out_aval = pos_aval.update(named_shape=named_shape)
+  effects = {*map(core.NamedAxisEffect, axis_name)}
+  return out_aval, effects
+
 
 def _pdot_vmap_collective_rule(axis_size, frame_name, _, vals_in, dims_in, *, axis_name,
                                pos_contract, pos_batch, precision):

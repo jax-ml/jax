@@ -426,7 +426,9 @@ def _shard_map_staging(
   in_avals_ = map(partial(_shard_aval, mesh), in_names, in_avals)
   main = trace.main
   with core.new_sublevel(), core.extend_axis_env_nd(mesh.shape.items()):
-      jaxpr, genavals, consts, () = pe.trace_to_subjaxpr_dynamic(f, main, in_avals_)
+    jaxpr, genavals, consts, () = pe.trace_to_subjaxpr_dynamic(
+        f, main, in_avals_
+    )
   out_avals_ = map(_check_shapedarray, genavals)
   _check_names(out_names_thunk(), out_avals_)
   in_rep = map(partial(_in_names_to_rep, mesh), in_names)
@@ -445,8 +447,9 @@ def _shard_map_staging(
   params = dict(mesh=mesh, in_names=in_names_staged,
                 out_names=tuple(out_names_thunk()), jaxpr=jaxpr,
                 check_rep=check_rep, rewrite=rewrite, auto=auto)
+  effs = core.filter_named_axis_effects(jaxpr.effects, mesh.axis_names)
   eqn = pe.new_jaxpr_eqn([*constvars, *invars], outvars, prim, params,
-                         jaxpr.effects, source_info)
+                         effs, source_info)
   trace.frame.add_eqn(eqn)
   return out_tracers
 pe.DynamicJaxprTrace.process_shard_map = _shard_map_staging
@@ -495,7 +498,8 @@ def _shard_map_typecheck(_, *in_atoms, jaxpr, mesh, in_names, out_names,
                                   "sufficiently replicated")
   out_avals_sharded = [x.aval for x in jaxpr.outvars]
   out_avals = map(partial(_unshard_aval, mesh), out_names, out_avals_sharded)
-  return out_avals, jaxpr.effects
+  effs = core.filter_named_axis_effects(jaxpr.effects, mesh.axis_names)
+  return out_avals, effs
 core.custom_typechecks[shard_map_p] = _shard_map_typecheck
 
 def _in_names_to_rep(mesh: Mesh, names: AxisNames) -> set[AxisName]:
@@ -1305,9 +1309,10 @@ def _shard_map_partial_eval(trace, shard_map_p, f, tracers, mesh, in_names,
   out_avals = map(partial(_unshard_aval, mesh), unk_out_names, out_avals_sharded)
   out_tracers = [pe.JaxprTracer(trace, pe.PartialVal.unknown(a), None)
                  for a in out_avals]
+  effs = core.filter_named_axis_effects(jaxpr.effects, mesh.axis_names)
   eqn = pe.new_eqn_recipe((*const_tracers, *env_tracers, *unk_arg_tracers),  # type: ignore[arg-type]
                           out_tracers, shard_map_p, unk_params,
-                          jaxpr.effects, source_info_util.current())
+                          effs, source_info_util.current())
   for t in out_tracers: t.recipe = eqn
   return pe.merge_lists(out_knowns, out_tracers, out_consts)
 pe.JaxprTrace.process_shard_map = _shard_map_partial_eval
@@ -1345,8 +1350,9 @@ def _shard_map_partial_eval_post_process(
                    for a in out_avals]
     name_stack = trace._current_truncated_name_stack()
     source = source_info_util.current().replace(name_stack=name_stack)
+    effs = core.filter_named_axis_effects(jaxpr.effects, mesh.axis_names)
     eqn = pe.new_eqn_recipe((*const_tracers, *env_tracers), out_tracers,
-                            shard_map_p, staged_params, jaxpr.effects, source)
+                            shard_map_p, staged_params, effs, source)
     for t in out_tracers: t.recipe = eqn
     return merge_lists(out_knowns, out_tracers, out_consts)
 
@@ -1456,6 +1462,8 @@ def _partial_eval_jaxpr_custom_rule(
   with core.extend_axis_env_nd(eqn.params['mesh'].shape.items()):
     jaxpr_known = pe.prune_jaxpr_outputs(jaxpr_known, [True] * num_out_primals + which)
     jaxpr_known, jaxpr_staged = _add_reshapes(which, jaxpr_known, jaxpr_staged)
+  jaxpr_known = core.remove_named_axis_effects(jaxpr_known, mesh.axis_names)
+  jaxpr_staged = core.remove_named_axis_effects(jaxpr_staged, mesh.axis_names)
   ins_known, _ = partition_list(unks_in, eqn.invars)
   out_binders_known, _ = partition_list(unks_out, eqn.outvars)
   _, ins_staged = partition_list(inst_in, eqn.invars)
@@ -1535,7 +1543,8 @@ def _pe_custom_params(unks_in, inst_in, kept_outs_known, kept_outs_staged,
 # TODO(mattjj): de-duplicate with pe.dce_jaxpr_call_rule, and/or _pmap_dce_rule?
 def _shard_map_dce(used_outputs: list[bool], eqn: core.JaxprEqn
                    ) -> tuple[list[bool], core.JaxprEqn | None]:
-  with core.extend_axis_env_nd(eqn.params['mesh'].shape.items()):
+  mesh = eqn.params["mesh"]
+  with core.extend_axis_env_nd(mesh.shape.items()):
     jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'], used_outputs)
   if not any(used_inputs) and not any(used_outputs) and not jaxpr.effects:
     return used_inputs, None
@@ -1544,10 +1553,11 @@ def _shard_map_dce(used_outputs: list[bool], eqn: core.JaxprEqn
     _, out_names = partition_list(used_outputs, eqn.params['out_names'])
     new_params = dict(eqn.params, jaxpr=jaxpr, in_names=tuple(in_names),
                       out_names=tuple(out_names))
+    effs = core.filter_named_axis_effects(jaxpr.effects, mesh.axis_names)
     new_eqn = pe.new_jaxpr_eqn(
         [v for v, used in zip(eqn.invars, used_inputs) if used],
         [x for x, used in zip(eqn.outvars, used_outputs) if used],
-        eqn.primitive, new_params, jaxpr.effects, eqn.source_info)
+        eqn.primitive, new_params, effs, eqn.source_info)
     return used_inputs, new_eqn
 pe.dce_rules[shard_map_p] = _shard_map_dce
 

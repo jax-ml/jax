@@ -766,6 +766,7 @@ def lower_parallel_callable(
   axis_env = sharding_impls.AxisEnv(
       replicas.num_global_replicas, (axis_name,), (global_axis_size,))
   name_stack = source_info_util.new_name_stack(wrap_name(name, 'pmap'))
+  jaxpr = core.remove_named_axis_effects(jaxpr, {axis_name})
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   replicated_args = [axis is None for axis in in_axes]
   tuple_args = dispatch.should_tuple_args(len(shards.global_sharded_avals),
@@ -1258,8 +1259,8 @@ def _pmap_partial_eval_custom_res_maker(params_known, aval):
 
 def _pmap_dce_rule(used_outputs, eqn):
   # just like pe.dce_jaxpr_call_rule, except handles in_axes / out_axes
-  with maybe_extend_axis_env(eqn.params['axis_name'],
-                             eqn.params['global_axis_size'], None):
+  axis_name = eqn.params["axis_name"]
+  with maybe_extend_axis_env(axis_name, eqn.params["global_axis_size"], None):
     new_jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['call_jaxpr'], used_outputs)
   _, donated_invars = partition_list(used_inputs, eqn.params['donated_invars'])
   _, in_axes = partition_list(used_inputs, eqn.params['in_axes'])
@@ -1270,10 +1271,11 @@ def _pmap_dce_rule(used_outputs, eqn):
   if not any(used_inputs) and not any(used_outputs) and not new_jaxpr.effects:
     return used_inputs, None
   else:
+    effs = core.filter_named_axis_effects(new_jaxpr.effects, {axis_name})
     new_eqn = pe.new_jaxpr_eqn(
         [v for v, used in zip(eqn.invars, used_inputs) if used],
         [v for v, used in zip(eqn.outvars, used_outputs) if used],
-        eqn.primitive, new_params, new_jaxpr.effects, eqn.source_info)
+        eqn.primitive, new_params, effs, eqn.source_info)
     return used_inputs, new_eqn
 
 
@@ -2238,6 +2240,7 @@ def lower_mesh_computation(
     axis_ctx = sharding_impls.ReplicaAxisContext(axis_env)
     num_replicas = mesh.devices.size
     num_partitions = 1
+  jaxpr = core.remove_named_axis_effects(jaxpr, mesh.axis_names)
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   module_name = f"{api_name}_{fun_name}"
   with core.extend_axis_env_nd(mesh.shape.items()):

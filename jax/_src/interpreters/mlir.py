@@ -2570,8 +2570,9 @@ def build_mlir_module_helper(
     platforms: Sequence[str],
     backend_or_name: str, axis_context: AxisContext) -> ir.Module:
   """Helper to generate pmap-style XLA computations for custom partitioners."""
-  if closed_jaxpr.effects:
-    raise NotImplementedError
+  unlowerable_effects = lowerable_effects.filter_not_in(closed_jaxpr.effects)
+  if unlowerable_effects:
+    raise ValueError(f'Cannot lower jaxpr with effects: {closed_jaxpr.effects}')
   lowering_result = lower_jaxpr_to_module(name, closed_jaxpr,
       backend_or_name=backend_or_name, ordered_effects=[],
       name_stack=source_info_util.NameStack(),

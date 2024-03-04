@@ -380,10 +380,10 @@ class JaxprTrace(Trace['JaxprTracer']):
                  for ax, a in zip(staged_out_axes, out_avals_mapped)]
     out_tracers = [JaxprTracer(self, PartialVal.unknown(a), None)
                    for a in out_avals]
+    effs = core.filter_named_axis_effects(jaxpr.effects, {params['axis_name']})
+    src_info = source_info_util.current()
     eqn = new_eqn_recipe((*const_tracers, *env_tracers, *unknown_arg_tracers),  # type: ignore[arg-type]
-                         out_tracers, primitive, staged_params,
-                         jaxpr.effects,
-                         source_info_util.current())
+                         out_tracers, primitive, staged_params, effs, src_info)
     for t in out_tracers: t.recipe = eqn
 
     return merge_lists(out_knowns, out_tracers, out_consts)
@@ -2099,8 +2099,9 @@ class DynamicJaxprTrace(core.Trace):
       update_params = call_param_updaters.get(map_primitive)
       if update_params:
         new_params = update_params(new_params, [True] * len(tracers), len(consts))
+      effs = core.filter_named_axis_effects(jaxpr.effects, {axis_name})
       eqn = new_jaxpr_eqn([*constvars, *invars], outvars, map_primitive,
-                          new_params, jaxpr.effects, source_info)
+                          new_params, effs, source_info)
       self.frame.add_eqn(eqn)
     return out_tracers
 
