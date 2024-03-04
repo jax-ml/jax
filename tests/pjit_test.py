@@ -3881,6 +3881,29 @@ class ArrayPjitTest(jtu.JaxTestCase):
     lowered_text = make_keys.lower(seeds).as_text()
     self.assertIn('unspecified_dims=[0,1]', lowered_text)
 
+  def test_jit_partially_specified_shardings(self):
+    if jtu.is_device_tpu(version=5, variant="e"):
+      self.skipTest('Remove this once b/328054509 is fixed')
+
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    s2 = NamedSharding(mesh, P('x'))
+    arr = jax.device_put(np_inp, s)
+    arr2 = jax.device_put(np_inp, s2)
+
+    @partial(jax.jit, in_shardings=(s, None, s2, UNSPECIFIED, UNSPECIFIED),
+             out_shardings=(s2, None, None, s, None))
+    def f(x, y, z, a, b):
+      return x * 2, y @ y.T, z ** 2, a * 3, b.T
+
+    out1, out2, out3, out4, out5 = f(arr, np_inp, arr2, np_inp, arr)
+    self.assertArraysEqual(out1, np_inp * 2)
+    self.assertArraysEqual(out2, np_inp @ np_inp.T)
+    self.assertArraysEqual(out3, np_inp ** 2)
+    self.assertArraysEqual(out4, np_inp * 3)
+    self.assertArraysEqual(out5, np_inp.T)
+
 
 class TempSharding(Sharding):
 
@@ -4313,24 +4336,6 @@ class UtilTest(jtu.JaxTestCase):
     self.assertEqual(
         sharding_impls.array_mapping_to_axis_resources(inp), expected_out
     )
-
-  @parameterized.named_parameters(
-      ("all_unspecified", (UNSPECIFIED, UNSPECIFIED), AssertionError),
-      ("only_unspecified", UNSPECIFIED),
-      ("all_specified", (P('x'), P('y'))),
-      ("only_specified", P('x')),
-      ("mix_1", (P('x'), UNSPECIFIED), ValueError),
-      ("mix_2", (P('x'), UNSPECIFIED, P('y')), ValueError),
-      ("mix_3", (UNSPECIFIED, P('x'), P('y')), ValueError),
-      ("mix_4", (UNSPECIFIED, P('x'), UNSPECIFIED), ValueError),
-  )
-  def test_all_or_non_unspecified(self, axis_resources, error=None):
-    entries, _ = jax.tree.flatten(axis_resources, is_leaf=lambda x: x is None)
-    if error is not None:
-      with self.assertRaises(error):
-        sharding_impls.check_all_or_none_unspecified(entries, 'test axis resources')
-    else:
-      sharding_impls.check_all_or_none_unspecified(entries, 'test axis resources')
 
   def test_op_sharding_equality_and_hash_equality(self):
     op1 = xc.OpSharding()
