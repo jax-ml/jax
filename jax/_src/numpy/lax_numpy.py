@@ -2171,7 +2171,7 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     # containing large integers; see discussion in
     # https://github.com/google/jax/pull/6047. More correct would be to call
     # coerce_to_array on each leaf, but this may have performance implications.
-    out = np.array(object, dtype=dtype, ndmin=ndmin, copy=False)  # type: ignore[arg-type]
+    out = np.asarray(object, dtype=dtype)
   elif isinstance(object, Array):
     assert object.aval is not None
     out = _array_copy(object) if copy else object
@@ -2181,7 +2181,9 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     else:
       out = np.array([], dtype=dtype)  # type: ignore[arg-type]
   elif _supports_buffer_protocol(object):
-    out = np.array(memoryview(object), copy=copy)
+    object = memoryview(object)
+    # TODO(jakevdp): update this once we support NumPy 2.0 semantics for the copy arg.
+    out = np.array(object) if copy else np.asarray(object)
   else:
     raise TypeError(f"Unexpected input type for array: {type(object)}")
 
