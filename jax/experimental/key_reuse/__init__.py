@@ -43,6 +43,6 @@ from jax._src.prng import (
     reuse_key as reuse_key,
 )
 
-from jax.experimental.key_reuse._common import (
+from jax.experimental.key_reuse._core import (
     KeyReuseError as KeyReuseError,
 )
