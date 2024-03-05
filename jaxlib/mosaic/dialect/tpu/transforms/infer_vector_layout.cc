@@ -1491,14 +1491,21 @@ class VectorLayoutInferer {
     std::array<Layout, 3> in_layout;
     CHECK_EQ(op->getNumOperands(), 3);
     std::optional<int64_t> lhs_major_multiple;
+    std::optional<int64_t> rhs_major_multiple;
     // We don't restrict the first lhs axis when the data is not packed.
     if (cast<VectorType>(op->getOperand(0).getType())
             .getElementTypeBitWidth() == kNativeBitwidth) {
       lhs_major_multiple = 1;
     }
+    // We don't restrict the first rhs axis when the data is not packed.
+    if (cast<VectorType>(op->getOperand(1).getType())
+            .getElementTypeBitWidth() == kNativeBitwidth) {
+      rhs_major_multiple = 1;
+    }
     in_layout[0] =
         get_unpadded_layout(op->getOperand(0), lhs_major_multiple, 1);
-    in_layout[1] = get_unpadded_layout(op->getOperand(1), 128, 1);
+    in_layout[1] =
+        get_unpadded_layout(op->getOperand(1), rhs_major_multiple, 1);
     in_layout[2] = get_unpadded_layout(op->getOperand(2), 1, 1);
     for (Layout &l : in_layout) {
       if (!l.has_value()) {

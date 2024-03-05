@@ -1214,139 +1214,212 @@ LogicalResult matmul_rule_impl(RewriteContext &ctx, Operation &op,
   TPU_ASSERT_EQ_OP(lhs_shape.size(), 2);
   TPU_ASSERT_EQ_OP(rhs_shape.size(), 2);
   // The code below puts no constraints on the second dimension of both lhs and
-  // rhs. However, leading axis of lhs needs to be a multiple of native tiling
-  // for packed types, while leading axis of rhs needs to be a multiple of 128
-  // (no matter the type and transpose mode).
+  // rhs. However, leading axis of lhs and rhs needs to be a multiple of native
+  // tiling for packed types.
   if (layout_lhs.packing() != 1 && lhs_shape[0] % layout_lhs.tiling()[0] != 0) {
-    return op.emitOpError("Not implemented: Unsupported LHS shape");
+    return op.emitOpError(
+        "Not implemented: Unsupported LHS shape with padded tiling and "
+        "narrower data type");
   }
-  if (rhs_shape[0] % 128 != 0) {
-    return op.emitOpError("Not implemented: Unsupported RHS shape");
+  if (layout_rhs.packing() != 1 && rhs_shape[0] % layout_rhs.tiling()[0] != 0) {
+    return op.emitOpError(
+        "Not implemented: Unsupported RHS shape with padded tiling and "
+        "narrower data type");
   }
+
   const int64_t padded_lhs_rows =
       llvm::alignTo(lhs_shape[0], layout_lhs.tiling()[0]);
-  const auto lhs_col_ty =
-      VectorType::get({padded_lhs_rows, 128}, lhs.getType().getElementType());
+  const int64_t padded_lhs_cols =
+      llvm::alignTo(lhs_shape[1], layout_lhs.tiling()[1]);
+  const int64_t padded_rhs_rows =
+      llvm::alignTo(rhs_shape[0], layout_rhs.tiling()[0]);
+  const int64_t padded_rhs_cols =
+      llvm::alignTo(rhs_shape[1], layout_rhs.tiling()[1]);
+
   if (llvm::alignTo(lhs_shape[0], layout_acc.tiling()[0]) != padded_lhs_rows) {
     return op.emitOpError(
         "Not implemented: Matmul acc requires less padding than lhs");
   }
-  const auto acc_col_ty =
-      VectorType::get({padded_lhs_rows, 128}, acc.getType().getElementType());
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> lhs_vregs,
       disassemble(builder, layout_lhs, lhs, ctx.target_shape));
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> acc_vregs,
       disassemble(builder, layout_acc, acc, ctx.target_shape));
+  FAILUREOR_ASSIGN_OR_RETURN(
+      xla::Array<Value> rhs_vregs,
+      disassemble(builder, layout_rhs, rhs, ctx.target_shape));
   TPU_ASSERT_EQ_OP(padded_lhs_rows, lhs_vregs.dim(0) * layout_lhs.tiling()[0]);
   TPU_ASSERT_EQ_OP(padded_lhs_rows, acc_vregs.dim(0) * layout_acc.tiling()[0]);
-  SmallVector<tpu::RollVectorsOp> lhs_cols(lhs_vregs.dim(1));
+  TPU_ASSERT_EQ_OP(padded_rhs_rows, rhs_vregs.dim(0) * layout_rhs.tiling()[0]);
 
-  TypedValue<VectorType> contraction_lane_mask;
-  auto maskLastLaneContractionVreg = [&](TypedValue<VectorType> zeros,
-                                         TypedValue<VectorType> vreg) {
-    CHECK(contraction_lane_mask != nullptr);
-    TypedValue<VectorType> mask = contraction_lane_mask;
-    if (vreg.getType().getShape() != mask.getType().getShape()) {
-      mask = builder.create<tpu::MaskCastOp>(
-          VectorType::get(vreg.getType().getShape(), builder.getI1Type()),
-          mask);
-    }
-    return builder.create<arith::SelectOp>(mask, vreg, zeros);
-  };
-  if (const int64_t contraction_rem = lhs_shape[1] % 128) {
-    FAILUREOR_ASSIGN_OR_RETURN(
-        const VectorType i32_vreg,
-        getNativeVregType(builder.getI32Type(), ctx.target_shape));
-    contraction_lane_mask = cast<TypedValue<VectorType>>(
+  FAILUREOR_ASSIGN_OR_RETURN(
+      const VectorType i32_vreg,
+      getNativeVregType(builder.getI32Type(), ctx.target_shape));
+  auto getVmaskByPaddingEnd = [&](int64_t dim, int64_t padding,
+                                  VectorType vreg_ty) {
+    CHECK(dim == 0 || dim == 1);
+    CHECK(padding >= 0 && padding <= ctx.target_shape[dim]);
+    auto mask = cast<TypedValue<VectorType>>(
         builder
             .create<arith::CmpIOp>(
                 arith::CmpIPredicate::slt,
-                builder.create<tpu::IotaOp>(
-                    i32_vreg,
-                    /*dimension=*/builder.getI32IntegerAttr(1)),
-                builder.create<arith::ConstantOp>(
-                    DenseElementsAttr::get(
-                        i32_vreg, builder.getI32IntegerAttr(contraction_rem))))
+                builder.create<tpu::IotaOp>(i32_vreg,
+                                            builder.getI32IntegerAttr(dim)),
+                builder.create<arith::ConstantOp>(DenseElementsAttr::get(
+                    i32_vreg, builder.getI32IntegerAttr(ctx.target_shape[dim] -
+                                                        padding))))
             .getResult());
-    const VectorType lhs_vreg_type =
-        cast<VectorType>(lhs_vregs.begin()->getType());
+    if (vreg_ty.getShape() != mask.getType().getShape()) {
+      mask = builder.create<tpu::MaskCastOp>(
+          VectorType::get(vreg_ty.getShape(), builder.getI1Type()), mask);
+    }
+    return mask;
+  };
+
+  // We can also extend this helper function with padding_top and padding_left
+  // based on the offsets in vregs.
+  auto maskVregs = [&](xla::Array<Value> &vregs, Value zeros,
+                       int64_t padding_bottom, int64_t padding_right) {
+    auto vreg_ty = cast<VectorType>(vregs.begin()->getType());
+    // Mask out the bottom.
+    if (padding_bottom > 0) {
+      auto mask_bottom = getVmaskByPaddingEnd(0, padding_bottom, vreg_ty);
+      for (int64_t i = 0; i < vregs.dim(1); ++i) {
+        Value &vreg = vregs({vregs.dim(0) - 1, i});
+        vreg = builder.create<arith::SelectOp>(mask_bottom, vreg, zeros);
+      }
+    }
+    // Mask out the right.
+    if (padding_right > 0) {
+      auto mask_right = getVmaskByPaddingEnd(1, padding_right, vreg_ty);
+      for (int64_t i = 0; i < vregs.dim(0); ++i) {
+        Value &vreg = vregs({i, vregs.dim(1) - 1});
+        vreg = builder.create<arith::SelectOp>(mask_right, vreg, zeros);
+      }
+    }
+  };
+
+  // Create a vreg filled with zeros.
+  auto getZerosVergLike =
+      [&](const Value &vreg) -> FailureOr<TypedValue<VectorType>> {
+    const VectorType vreg_type = cast<VectorType>(vreg.getType());
     FAILUREOR_ASSIGN_OR_RETURN(
         const Attribute zero_attr,
-        getZeroIntOrFloatAttr(lhs_vreg_type.getElementType()));
-    auto lhs_zeros = cast<TypedValue<VectorType>>(
+        getZeroIntOrFloatAttr(vreg_type.getElementType()));
+    return cast<TypedValue<VectorType>>(
         builder
             .create<arith::ConstantOp>(
-                op.getLoc(), DenseElementsAttr::get(lhs_vreg_type, zero_attr))
+                op.getLoc(), DenseElementsAttr::get(vreg_type, zero_attr))
             .getResult());
-    for (int64_t i = 0; i < lhs_vregs.dim(0); ++i) {
-      Value &vreg = lhs_vregs({i, lhs_vregs.dim(1) - 1});
-      vreg = maskLastLaneContractionVreg(lhs_zeros,
-                                         cast<TypedValue<VectorType>>(vreg));
-    }
+  };
+
+  FAILUREOR_ASSIGN_OR_RETURN(auto lhs_zeros_vreg,
+                             getZerosVergLike(*lhs_vregs.begin()));
+  FAILUREOR_ASSIGN_OR_RETURN(auto rhs_zeros_vreg,
+                             getZerosVergLike(*rhs_vregs.begin()));
+  FAILUREOR_ASSIGN_OR_RETURN(auto acc_zeros_vreg,
+                             getZerosVergLike(*acc_vregs.begin()));
+
+  // Only mask out the paddings on contracting dim of LHS and RHS.
+  maskVregs(lhs_vregs, lhs_zeros_vreg, 0, padded_lhs_cols - lhs_shape[1]);
+  if (transpose_rhs) {
+    maskVregs(rhs_vregs, rhs_zeros_vreg, 0, padded_rhs_cols - rhs_shape[1]);
+  } else {
+    maskVregs(rhs_vregs, rhs_zeros_vreg, padded_rhs_rows - rhs_shape[0], 0);
   }
+
+  // TODO(b/328094640): use latch 3 for short dimensions.
+  // TODO(b/328093587): Skip zeros vreg matmul
+  // At this point, all paddings on vregs are masked out. For now, we
+  // append zero vregs to make LHS's second dim, both RHS's dims and ACC's
+  // second dim to be a multiple of mxu_size.
+  if (ctx.mxu_shape[0] != ctx.mxu_shape[1]) {
+    return op.emitOpError(
+        "Not implemented: MXU contracting size and noncontracting size are "
+        "different");
+  }
+  int64_t mxu_size = ctx.mxu_shape[0];
+  CHECK_EQ(mxu_size % ctx.target_shape[0], 0);
+  CHECK_EQ(mxu_size % ctx.target_shape[1], 0);
+  auto mxu_row_vregs = mxu_size / (ctx.target_shape[0] * layout_rhs.packing());
+  auto mxu_col_vregs = mxu_size / ctx.target_shape[1];
+  int64_t target_lhs_col_vregs = llvm::alignTo(lhs_vregs.dim(1), mxu_col_vregs);
+  int64_t target_rhs_row_vregs = llvm::alignTo(rhs_vregs.dim(0), mxu_row_vregs);
+  int64_t target_rhs_col_vregs = llvm::alignTo(rhs_vregs.dim(1), mxu_col_vregs);
+  int64_t target_acc_col_vregs = llvm::alignTo(acc_vregs.dim(1), mxu_col_vregs);
+
+  xla::Array<Value> target_lhs_vregs({lhs_vregs.dim(0), target_lhs_col_vregs},
+                                     lhs_zeros_vreg);
+  xla::Array<Value> target_rhs_vregs(
+      {target_rhs_row_vregs, target_rhs_col_vregs}, rhs_zeros_vreg);
+  xla::Array<Value> target_acc_vregs({acc_vregs.dim(0), target_acc_col_vregs},
+                                     acc_zeros_vreg);
+  target_lhs_vregs.UpdateSlice(lhs_vregs, {0, 0});
+  target_rhs_vregs.UpdateSlice(rhs_vregs, {0, 0});
+  target_acc_vregs.UpdateSlice(acc_vregs, {0, 0});
+
+  // Now we can regroup vregs from target vregs.
+  const auto lhs_col_ty = VectorType::get({padded_lhs_rows, mxu_size},
+                                          lhs.getType().getElementType());
+  const auto acc_col_ty = VectorType::get({padded_lhs_rows, mxu_size},
+                                          acc.getType().getElementType());
   const ArrayAttr lhs_layout_attr =
       builder.getArrayAttr({builder.getAttr<VectorLayoutAttr>(layout_lhs)});
   const ArrayAttr rhs_layout_attr =
       builder.getArrayAttr({builder.getAttr<VectorLayoutAttr>(layout_rhs)});
   const ArrayAttr acc_layout_attr =
       builder.getArrayAttr({builder.getAttr<VectorLayoutAttr>(layout_acc)});
-  for (int64_t i = 0; i < lhs_vregs.dim(1); ++i) {
-    const xla::Array<Value> col_vregs =
-        lhs_vregs.Slice({0, i}, {lhs_vregs.dim(0), i + 1});
+
+  int64_t nk = llvm::divideCeil(lhs_shape[1], mxu_size);
+  CHECK_EQ(nk, target_lhs_vregs.dim(1) / mxu_col_vregs);
+  SmallVector<tpu::RollVectorsOp> lhs_cols(nk);
+  for (int64_t i = 0; i < nk; ++i) {
+    const xla::Array<Value> col_vregs = target_lhs_vregs.Slice(
+        {0, i * mxu_col_vregs},
+        {target_lhs_vregs.dim(0), (i + 1) * mxu_col_vregs});
     lhs_cols[i] = builder.create<tpu::RollVectorsOp>(
         op.getLoc(), lhs_col_ty, XlaArrayToFlatArrayRef(col_vregs));
     lhs_cols[i]->setAttr("out_layout", lhs_layout_attr);
   }
-  // Here, "tile" is used as in the context of the MXU, a 128x128 operand to a
-  // matmul computation (NOT as in the context of tiled layouts).
+  // Here, "tile" is used as in the context of the MXU shape (NOT as in the
+  // context of tiled layouts).
   const auto rhs_tile_ty =
-      VectorType::get({128, 128}, rhs.getType().getElementType());
-  FAILUREOR_ASSIGN_OR_RETURN(
-      xla::Array<Value> rhs_vregs,
-      disassemble(builder, layout_rhs, rhs, ctx.target_shape));
-  const int64_t rhs_vregs_per_tile = 16 / layout_rhs.packing();
-  int64_t nj, nk;
+      VectorType::get({mxu_size, mxu_size}, rhs.getType().getElementType());
+  const int64_t rhs_vregs_per_tile = mxu_row_vregs * mxu_col_vregs;
+
+  int64_t nj;
   if (transpose_rhs) {
-    nj = llvm::divideCeil(rhs_shape[0], 128);
-    nk = llvm::divideCeil(rhs_shape[1], 128);
-    rhs_vregs.Reshape({nj, rhs_vregs_per_tile, nk});
-    rhs_vregs.TransposeDimensions({2, 0, 1});
+    nj = llvm::divideCeil(rhs_shape[0], mxu_size);
+    CHECK_EQ(nk, llvm::divideCeil(rhs_shape[1], mxu_size));
+    CHECK_EQ(nk, target_rhs_vregs.dim(1) / mxu_col_vregs);
+    target_rhs_vregs.Reshape(
+        {nj, rhs_vregs_per_tile / mxu_col_vregs, nk, mxu_col_vregs});
+    target_rhs_vregs.TransposeDimensions({2, 0, 1, 3});
+    target_rhs_vregs.Reshape({nk, nj, rhs_vregs_per_tile});
   } else {
-    nj = llvm::divideCeil(rhs_shape[1], 128);
-    nk = llvm::divideCeil(rhs_shape[0], 128);
-    rhs_vregs.Reshape({nk, rhs_vregs_per_tile, nj});
-    rhs_vregs.TransposeDimensions({0, 2, 1});
+    nj = llvm::divideCeil(rhs_shape[1], mxu_size);
+    CHECK_EQ(nk, llvm::divideCeil(rhs_shape[0], mxu_size));
+    CHECK_EQ(nk, target_rhs_vregs.dim(0) / mxu_row_vregs);
+    target_rhs_vregs.Reshape(
+        {nk, rhs_vregs_per_tile / mxu_col_vregs, nj, mxu_col_vregs});
+    target_rhs_vregs.TransposeDimensions({0, 2, 1, 3});
+    target_rhs_vregs.Reshape({nk, nj, rhs_vregs_per_tile});
   }
+
   const tpu::ContractPrecisionAttr precision_attr =  // May be null
       op.getAttrOfType<tpu::ContractPrecisionAttr>("precision");
-  const auto rhs_vreg_type = cast<VectorType>(rhs_vregs.begin()->getType());
-  FAILUREOR_ASSIGN_OR_RETURN(
-      const Attribute zero_attr,
-      getZeroIntOrFloatAttr(rhs_vreg_type.getElementType()));
-  auto rhs_zeros = cast<TypedValue<VectorType>>(
-      builder
-          .create<arith::ConstantOp>(
-              op.getLoc(), DenseElementsAttr::get(rhs_vreg_type, zero_attr))
-          .getResult());
   for (int64_t j = 0; j < nj; ++j) {
     for (int64_t k = 0; k < nk; ++k) {
       // TODO(tlongeri): there should be a way to slice without copying
       xla::Array<Value> rhs_tile =
-          rhs_vregs.Slice({k, j, 0}, {k + 1, j + 1, rhs_vregs_per_tile});
-      if (contraction_lane_mask != nullptr && k == nk - 1) {
-        rhs_tile.Each(
-            [&](const absl::Span<const int64_t> idx, Value *const vreg) {
-              *vreg = maskLastLaneContractionVreg(
-                  rhs_zeros, cast<TypedValue<VectorType>>(*vreg));
-            });
-      }
+          target_rhs_vregs.Slice({k, j, 0}, {k + 1, j + 1, rhs_vregs_per_tile});
       auto rhs_rolled_tile = builder.create<tpu::RollVectorsOp>(
           op.getLoc(), rhs_tile_ty, XlaArrayToFlatArrayRef(rhs_tile));
       rhs_rolled_tile->setAttr("out_layout", rhs_layout_attr);
-      const xla::Array<Value> acc_col_vregs =
-          acc_vregs.Slice({0, j}, {acc_vregs.dim(0), j + 1});
+      const xla::Array<Value> acc_col_vregs = target_acc_vregs.Slice(
+          {0, j * mxu_col_vregs},
+          {target_acc_vregs.dim(0), (j + 1) * mxu_col_vregs});
       auto acc_col = builder.create<tpu::RollVectorsOp>(
           op.getLoc(), acc_col_ty, XlaArrayToFlatArrayRef(acc_col_vregs));
       acc_col->setAttr("out_layout", acc_layout_attr);
@@ -1358,12 +1431,16 @@ LogicalResult matmul_rule_impl(RewriteContext &ctx, Operation &op,
           TypeRange(ValueRange(XlaArrayToFlatArrayRef(acc_col_vregs))),
           new_acc_col);
       new_acc_vregs->setAttr("in_layout", acc_layout_attr);
-      updateSliceFromRange(acc_vregs, new_acc_vregs->getResults(), {0, j},
-                           {acc_vregs.dim(0), j + 1});
+      updateSliceFromRange(target_acc_vregs, new_acc_vregs->getResults(),
+                           {0, j * mxu_col_vregs},
+                           {target_acc_vregs.dim(0), (j + 1) * mxu_col_vregs});
     }
   }
   op.replaceAllUsesWith(
-      assemble(builder, res.getType(), layout_out, acc_vregs, ctx.target_shape)
+      assemble(
+          builder, res.getType(), layout_out,
+          target_acc_vregs.Slice({0, 0}, {acc_vregs.dim(0), acc_vregs.dim(1)}),
+          ctx.target_shape)
           .getOperation());
   op.erase();
   return success();
@@ -4292,10 +4369,13 @@ LogicalResult applyLayoutFunc(RewriteContext &ctx, func::FuncOp f) {
 struct ApplyVectorLayoutPass
     : public impl::ApplyVectorLayoutPassBase<ApplyVectorLayoutPass> {
   ApplyVectorLayoutPass(int hardware_generation_, int lane_count_,
-                        int sublane_count_) {
+                        int sublane_count_, int mxu_contracting_size_,
+                        int mxu_noncontracting_size_) {
     hardware_generation = hardware_generation_;
     sublane_count = sublane_count_;
     lane_count = lane_count_;
+    mxu_contracting_size = mxu_contracting_size_;
+    mxu_noncontracting_size = mxu_noncontracting_size_;
   }
   void runOnOperation() override {
     // Fail if hardware_generation has not been set from the default value.
@@ -4304,7 +4384,10 @@ struct ApplyVectorLayoutPass
       return;
     }
     func::FuncOp func = getOperation();
-    RewriteContext ctx{func, hardware_generation, {sublane_count, lane_count}};
+    RewriteContext ctx{func,
+                       hardware_generation,
+                       {sublane_count, lane_count},
+                       {mxu_contracting_size, mxu_noncontracting_size}};
     if (failed(applyLayoutFunc(ctx, func))) {
       signalPassFailure();
       return;
@@ -4313,9 +4396,11 @@ struct ApplyVectorLayoutPass
 };
 
 std::unique_ptr<OperationPass<func::FuncOp>> createApplyVectorLayoutPass(
-    int hardware_generation, int lane_count, int sublane_count) {
-  return std::make_unique<ApplyVectorLayoutPass>(hardware_generation,
-                                                 lane_count, sublane_count);
+    int hardware_generation, int lane_count, int sublane_count,
+    int mxu_contracting_size, int mxu_noncontracting_size) {
+  return std::make_unique<ApplyVectorLayoutPass>(
+      hardware_generation, lane_count, sublane_count, mxu_contracting_size,
+      mxu_noncontracting_size);
 }
 
 }  // namespace mlir::tpu
