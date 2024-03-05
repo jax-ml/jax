@@ -181,7 +181,8 @@ class Array(abc.ABC):
   # Even though we don't always support the NumPy array protocol, e.g., for
   # tracer types, for type checking purposes we must declare support so we
   # implement the NumPy ArrayLike protocol.
-  def __array__(self) -> np.ndarray: ...
+  def __array__(self, dtype: Optional[np.dtype] = ...,
+                copy: Optional[bool] = ...) -> np.ndarray: ...
   def __dlpack__(self) -> Any: ...
 
   # JAX extensions
