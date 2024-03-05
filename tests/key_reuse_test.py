@@ -14,6 +14,7 @@
 
 from absl.testing import absltest, parameterized
 from functools import partial
+import operator
 
 import numpy as np
 import jax
@@ -215,6 +216,17 @@ class KeyReuseUnitTestWithForwarding(jtu.JaxTestCase):
       assert_unconsumed(keys[1])
       assert_consumed(keys, np.array([True, True]))
     self.check_key_reuse(f, jax.random.split(jax.random.key(0)))
+
+  @parameterized.parameters(operator.eq, operator.ne)
+  def test_equality_checks(self, op):
+    def f(key1, key2):
+      assert_unconsumed(key1)
+      assert_unconsumed(key2)
+      result = op(key1, key2)
+      assert_unconsumed(key1)
+      assert_unconsumed(key2)
+      return result
+    self.check_key_reuse(f, jax.random.key(0), jax.random.key(1))
 
   def test_jit_can_consume_input(self):
     def f(key):
