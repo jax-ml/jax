@@ -72,6 +72,7 @@ def _ensure_tracked(trace: pe.DynamicJaxprTrace, obj: Any, attr: str):
     frame.attrs_tracked.append((obj, attr))
     frame.attrs_inits.append(init_val)
     frame.attrs_vars.append(var)
+    frame.tracers.append(tracer)
 pe.DynamicJaxprTrace._ensure_tracked = _ensure_tracked
 
 def _getattr_staging(trace, *, obj, attr):
