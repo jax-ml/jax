@@ -45,6 +45,7 @@ attrs.register(Thing)  # enables passing as arg into jitted function
 
 class AttrsTest(jtu.JaxTestCase):
 
+
   @parameterized.parameters([True, False])
   def test_jit_basic(self, jit: bool):
     thing = Thing(1.0)
@@ -227,6 +228,28 @@ class AttrsTest(jtu.JaxTestCase):
     f(thing, 3.0)
     self.assertAllClose(thing.x, 3.0, check_dtypes=False)
     self.assertEqual(count, 1)
+
+  def test_tracer_lifetime_bug(self):
+    # regression test for https://github.com/google/jax/issues/20082
+    class StatefulRNG:
+      key: jax.Array
+
+      def __init__(self, key: jax.Array):
+        self.key = key
+
+      def split(self) -> jax.Array:
+        key = jax_getattr(self, "key")
+        new_key, returned_key = jax.random.split(key)
+        jax_setattr(self, "key", new_key)
+        return returned_key
+
+    rng = StatefulRNG(jax.random.key(0))
+
+    def jitted():
+      rng.split()
+      rng.split()
+
+    jax.jit(jitted)()  # don't crash
 
 
 class AttrsJVPTest(jtu.JaxTestCase):
@@ -532,6 +555,7 @@ class AttrsVJPTest(jtu.JaxTestCase):
                         check_dtypes=False)
     self.assertAllClose(attr_cotangents[(thing2, 'x')], attr_cotangents_ref[1],
                         check_dtypes=False)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
