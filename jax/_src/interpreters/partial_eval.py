@@ -1217,6 +1217,9 @@ def _partial_eval_jaxpr_custom_cached(
       residuals.add(x)
     return x
 
+  def has_effects(effects) -> bool:
+    return bool({e for e in effects if not isinstance(e, core.NamedAxisEffect)})
+
   newvar = core.gensym(suffix='_offload')
   known_eqns, staged_eqns = [], []
   map(write, in_unknowns, in_inst, jaxpr.invars)
@@ -1242,7 +1245,7 @@ def _partial_eval_jaxpr_custom_cached(
       # If it's an effectful primitive, we always to run and avoid staging it.
       policy = ensure_enum(saveable(
           eqn.primitive, *[x.aval for x in eqn.invars], **eqn.params))
-      if eqn.effects or isinstance(policy, SaveableType):
+      if has_effects(eqn.effects) or isinstance(policy, SaveableType):
         map(partial(write, False, False), eqn.outvars)
       elif isinstance(policy, Offloadable):
         from jax._src.dispatch import device_put_p, TransferToMemoryKind  # type: ignore
@@ -1548,8 +1551,9 @@ def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
     if type(x) is Var:
       env[x] = read(x) or b
 
-  def has_effects(e: JaxprEqn) -> bool:
-    return bool(e.effects) or core.primitive_uses_outfeed(e.primitive, e.params)
+  def has_effects(eqn: JaxprEqn) -> bool:
+    effs = {e for e in eqn.effects if not isinstance(e, core.NamedAxisEffect)}
+    return bool(effs) or core.primitive_uses_outfeed(eqn.primitive, eqn.params)
 
   new_eqns = []
   map(write, jaxpr.outvars, used_outputs)

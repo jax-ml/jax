@@ -38,6 +38,7 @@ from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
+from jax._src.ad_checkpoint import saved_residuals
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src import linear_util as lu
@@ -638,20 +639,26 @@ class ShardMapTest(jtu.JaxTestCase):
     @jax.remat
     @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
     def f(x):
-      return jnp.sin(x)
+      return jnp.sin(jnp.sin(x))
 
     x = jnp.arange(4.)
     g = jax.grad(lambda x: f(x).sum())(x)  # doesn't crash
-    self.assertAllClose(g, jnp.cos(x), check_dtypes=False)
+    self.assertAllClose(g, jnp.cos(jnp.sin(x)) * jnp.cos(x), check_dtypes=False,
+                        atol=1e-3, rtol=1e-3)
+    saved_res = saved_residuals(f, x)
+    self.assertLen(saved_res, 1)
 
     # also check residuals are handled correctly
     @partial(jax.remat, policy=jax.checkpoint_policies.everything_saveable)
     @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
     def f2(x):
-      return jnp.sin(x)
+      return jnp.sin(jnp.sin(x))
 
     g2 = jax.grad(lambda x: f2(x).sum())(x)  # doesn't crash
-    self.assertAllClose(g2, jnp.cos(x), check_dtypes=False)
+    self.assertAllClose(g2, jnp.cos(jnp.sin(x)) * jnp.cos(x),
+                        check_dtypes=False, atol=1e-3, rtol=1e-3)
+    saved_res = saved_residuals(f2, x)
+    self.assertLen(saved_res, 2)
 
   def test_shmap_of_remat_basic(self):
     mesh = Mesh(np.array(jax.devices()[:4]), ('x',))
@@ -677,6 +684,18 @@ class ShardMapTest(jtu.JaxTestCase):
     x = jnp.arange(8.)
     _ = jax.grad(lambda x: f(x).sum())(x)  # doesn't crash
     jtu.check_grads(f, (x,), modes=['rev'], order=2, atol=1e-2, rtol=1e-2)
+
+  def test_collectives_not_saved(self):
+    # regression test for bug in cl/612416803
+    mesh = Mesh(np.array(jax.devices()[:4]), ('x',))
+
+    @jax.remat
+    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    def f(x):
+      return jax.lax.all_gather(x, 'x') * jax.lax.all_gather(x, 'x')
+
+    saved_res = saved_residuals(f, jnp.ones(4))
+    self.assertLen(saved_res, 1)
 
   def test_check_rep_false_doesnt_hit_rep_rules(self):
     mesh = Mesh(np.array(jax.devices()[:4]), ('x',))
