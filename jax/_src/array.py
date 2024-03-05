@@ -399,10 +399,8 @@ class ArrayImpl(basearray.Array):
     """
     return self.sharding.is_fully_addressable
 
-  def __array__(self, dtype=None, context=None, copy=None):
-    # copy argument is supported by np.asarray starting in numpy 2.0
-    kwds = {} if copy is None else {'copy': copy}
-    return np.asarray(self._value, dtype=dtype, **kwds)
+  def __array__(self, dtype=None, context=None):
+    return np.asarray(self._value, dtype=dtype)
 
   def __dlpack__(self, *, stream: int | Any | None = None):
     if len(self._arrays) != 1:
