@@ -396,7 +396,8 @@ def all_to_all(x, axis_name, split_axis, concat_axis, *, axis_index_groups=None,
         split_axis += 1   # we have a new axis before split_axis now
     result = all_to_all_p.bind(x, split_axis=split_axis, concat_axis=concat_axis,
                                axis_name=axis_name,
-                               axis_index_groups=axis_index_groups)
+                               axis_index_groups=axis_index_groups,
+                               tiled=tiled)
     if not tiled and split_axis != concat_axis:
       result = lax.squeeze(result, (split_axis,))
     return result
@@ -954,8 +955,10 @@ def _index_in_group(axis_name, axis_index_groups):
       slicing.dynamic_slice_in_dim(device_id_to_idx, cur_device_id, 1), [0])
 
 
-def _all_to_all_lowering(ctx, x, *,
-                         split_axis, concat_axis, axis_name, axis_index_groups):
+def _all_to_all_lowering(
+    ctx, x, *, split_axis, concat_axis, axis_name, axis_index_groups, tiled
+):
+  del tiled  # expand_dims and squeeze is done in `all_to_all` if `True`
   # Workaround for AllToAll not being implemented on CPU.
   replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
                                    axis_index_groups)
@@ -985,15 +988,19 @@ def _all_to_all_lowering(ctx, x, *,
       replica_groups=_replica_groups_hlo(replica_groups),
       **other_args).results
 
-def _all_to_all_transpose_rule(cts, x, axis_name, split_axis, concat_axis, axis_index_groups):
+def _all_to_all_transpose_rule(
+    cts, x, axis_name, split_axis, concat_axis, axis_index_groups, tiled
+):
   return (all_to_all(
       cts,
       axis_name=axis_name,
       split_axis=concat_axis,
       concat_axis=split_axis,
-      axis_index_groups=axis_index_groups),)
+      axis_index_groups=axis_index_groups,
+      tiled=tiled),)
 
-def _all_to_all_batcher(vals_in, dims_in, *, axis_name, split_axis, concat_axis, axis_index_groups):
+def _all_to_all_batcher(vals_in, dims_in, *, axis_name, split_axis, concat_axis, axis_index_groups,
+                        tiled):
   x, = vals_in
   d, = dims_in
   result = all_to_all_p.bind(
@@ -1001,12 +1008,14 @@ def _all_to_all_batcher(vals_in, dims_in, *, axis_name, split_axis, concat_axis,
       axis_name=axis_name,
       split_axis=split_axis + (d <= split_axis),
       concat_axis=concat_axis + (d <= concat_axis),
-      axis_index_groups=axis_index_groups)
+      axis_index_groups=axis_index_groups,
+      tiled=tiled,
+  )
   return result, d
 
 def _all_to_all_batched_collective(axis_size, frame_name, _, vals_in, dims_in,
                                    axis_name, split_axis, concat_axis,
-                                   axis_index_groups):
+                                   axis_index_groups, tiled):
   if axis_index_groups is not None:
     raise NotImplementedError("Please open a feature request!")
   x, = vals_in
@@ -1041,7 +1050,8 @@ def _all_to_all_batched_collective(axis_size, frame_name, _, vals_in, dims_in,
   if major_axes:
     x = all_to_all_p.bind(x, axis_name=major_axes,
                           split_axis=split_axis, concat_axis=0,
-                          axis_index_groups=axis_index_groups)
+                          axis_index_groups=axis_index_groups,
+                          tiled=tiled)
   # Split out the local part into axis new_d (NOTE: d is already in axis 1)
   x = _splitaxis(split_axis, axis_size, x)
   new_d = split_axis
@@ -1050,7 +1060,8 @@ def _all_to_all_batched_collective(axis_size, frame_name, _, vals_in, dims_in,
   if minor_axes:
     x = all_to_all_p.bind(x, axis_name=minor_axes,
                           split_axis=split_axis, concat_axis=2,
-                          axis_index_groups=axis_index_groups)
+                          axis_index_groups=axis_index_groups,
+                          tiled=tiled)
 
   # Fold the chunk axes into a single one
   x = _foldaxis(0, _foldaxis(0, x))
@@ -1062,8 +1073,9 @@ def _all_to_all_batched_collective(axis_size, frame_name, _, vals_in, dims_in,
 
 
 def _all_to_all_effectful_abstract_eval(
-    x, axis_name, split_axis, concat_axis, axis_index_groups
+    x, axis_name, split_axis, concat_axis, axis_index_groups, tiled
 ):
+  del tiled  # expand_dims and squeeze is done in `all_to_all` if `True`
   if not isinstance(axis_name, (list, tuple)):
     axis_name = (axis_name,)
   input_aval = raise_to_shaped(x)

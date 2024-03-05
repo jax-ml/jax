@@ -359,6 +359,40 @@ class ShardMapTest(jtu.JaxTestCase):
       for j, block in enumerate(np.split(row_block, 2, axis=-1)):
         self.assertAllClose(block, c.addressable_data(2 * i + j))
 
+  def test_all_to_all_grad(self):
+    mesh_axes = dict(x=4)
+    devices = np.array(jax.devices()[: np.prod(tuple(mesh_axes.values()))])
+    mesh = Mesh(
+        devices.reshape(tuple(mesh_axes.values())),
+        axis_names=tuple(mesh_axes.keys()),
+    )
+    a = jax.device_put(
+        jnp.arange(8 * 8, dtype=jnp.float32).reshape((8, 8)),
+        jax.sharding.NamedSharding(mesh, P('x', None)),
+    )
+    self.assertEqual(a.addressable_data(0).shape, (2, 8))
+
+    @jax.jit
+    @partial(
+        shard_map, mesh=mesh, in_specs=(P('x', None),), out_specs=P(None, 'x')
+    )
+    def fwd(x):
+      return lax.all_to_all(x, 'x', split_axis=1, concat_axis=0, tiled=True)
+
+    c = fwd(a)
+    self.assertEqual(c.addressable_data(0).shape, (8, 2))
+    self.assertAllClose(a, c)
+
+    @jax.jit
+    @partial(jax.grad, has_aux=True)
+    def loss_and_grad(x):
+      loss = fwd(x).sum() * 2
+      return loss, loss
+
+    grad, loss = loss_and_grad(a)
+    self.assertEqual(loss, 2 * sum(range(64)))
+    self.assertAllClose(grad, 2 * np.ones_like(a))
+
   def test_eager_repr(self):
     mesh = Mesh(np.array(jax.devices()[:4]).reshape(2, 2), ('x', 'y'))
     s = None
