@@ -109,7 +109,7 @@ def dctn(x: Array, type: int = 2,
   return x
 
 
-@implements(osp_fft.dct)
+@implements(osp_fft.idct)
 def idct(x: Array, type: int = 2, n: int | None = None,
         axis: int = -1, norm: str | None = None) -> Array:
   if type != 2:

@@ -51,7 +51,6 @@ jax.scipy.linalg
    qr
    rsf2csf
    schur
-   sqrtm
    solve
    solve_triangular
    sqrtm
