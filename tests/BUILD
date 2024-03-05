@@ -416,9 +416,6 @@ jax_test(
     backend_tags = {
         "cpu": ["notsan"],  # Test times out.
     },
-    disable_configs = [
-        "gpu_h100",  # TODO(b/328050517): ptxas compilation failures
-    ],
     shard_count = {
         "cpu": 40,
         "gpu": 40,
@@ -947,9 +944,6 @@ jax_test(
         "cpu_x32": ["--jax_num_generated_cases=40"],
         "gpu": ["--jax_num_generated_cases=40"],
     },
-    disable_configs = [
-        "gpu_h100",  # TODO(b/328050517): ptxas compilation failures
-    ],
     shard_count = {
         "cpu": 50,
         "gpu": 50,
@@ -979,9 +973,6 @@ jax_test(
             "noasan",  # Times out under asan.
         ],
     },
-    disable_configs = [
-        "gpu_h100",  # TODO(b/328050517): ptxas compilation failures
-    ],
     shard_count = {
         "cpu": 5,
         "gpu": 20,
@@ -1238,9 +1229,6 @@ jax_test(
     backend_variant_args = {
         "tpu_pjrt_c_api": ["--jax_num_generated_cases=1"],
     },
-    disable_configs = [
-        "gpu_h100",  # TODO(b/328050517): ptxas compilation failures
-    ],
     enable_configs = [
         "gpu",
         "cpu",
