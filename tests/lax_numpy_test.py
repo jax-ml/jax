@@ -3465,7 +3465,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     assert type(jnp.array(np.array([]))) is array.ArrayImpl
 
     class NDArrayLike:
-      def __array__(self, dtype=None):
+      def __array__(self, dtype=None, copy=None):
         return np.array([], dtype=dtype)
     assert type(jnp.array(NDArrayLike())) is array.ArrayImpl
 
@@ -3478,7 +3478,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testArrayMethod(self):
     class arraylike:
       dtype = np.dtype('float32')
-      def __array__(self, dtype=None):
+      def __array__(self, dtype=None, copy=None):
         return np.array(3., dtype=dtype)
     a = arraylike()
     ans = jnp.array(a)
