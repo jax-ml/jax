@@ -677,7 +677,8 @@ def remat_dce(used_outputs: list[bool], eqn: core.JaxprEqn
               ) -> tuple[list[bool], core.JaxprEqn | None]:
   new_jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'], used_outputs)
   new_params = dict(eqn.params, jaxpr=new_jaxpr)
-  if not any(used_inputs) and not any(used_outputs) and not new_jaxpr.effects:
+  if (not any(used_inputs) and not any(used_outputs) and
+      _has_effects(new_jaxpr.effects)):
     return used_inputs, None
   else:
     new_eqn = pe.new_jaxpr_eqn(
@@ -686,6 +687,9 @@ def remat_dce(used_outputs: list[bool], eqn: core.JaxprEqn
         eqn.primitive, new_params, new_jaxpr.effects, eqn.source_info)
     return used_inputs, new_eqn
 pe.dce_rules[remat_p] = remat_dce
+
+def _has_effects(effects) -> bool:
+  return bool({e for e in effects if not isinstance(e, core.NamedAxisEffect)})
 
 
 def remat_lowering(*args, jaxpr: core.Jaxpr, prevent_cse: bool,
