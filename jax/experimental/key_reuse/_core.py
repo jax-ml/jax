@@ -29,6 +29,7 @@ from jax._src import linear_util as lu
 from jax._src import pjit
 from jax._src import prng
 from jax._src import random
+from jax._src import source_info_util
 from jax._src import util
 from jax._src.ad_checkpoint import remat_p
 from jax._src.debugging import debug_callback_p
@@ -232,40 +233,35 @@ def get_jaxpr_type_signature(jaxpr: core.Jaxpr) -> KeyReuseSignature:
     return consumed.get(var, False)
 
   for eqn in jaxpr.eqns:
-    if eqn.primitive in key_reuse_signatures:
-      signature = key_reuse_signatures[eqn.primitive]
-    elif eqn.primitive in key_reuse_signatures_dynamic:
-      signature = key_reuse_signatures_dynamic[eqn.primitive](eqn)
-    else:
-      signature = unknown_signature(eqn)
+    traceback = eqn.source_info.traceback
+    name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
+    with source_info_util.user_context(traceback, name_stack=name_stack):
+      if eqn.primitive in key_reuse_signatures:
+        signature = key_reuse_signatures[eqn.primitive]
+      elif eqn.primitive in key_reuse_signatures_dynamic:
+        signature = key_reuse_signatures_dynamic[eqn.primitive](eqn)
+      else:
+        signature = unknown_signature(eqn)
 
-    if eqn.primitive == assert_consumed_value_p:
-      # This is a special case that goes beyond normal key reuse logic.
-      _check_consumed_value(eqn, is_consumed(eqn.invars[0]))
+      if eqn.primitive == assert_consumed_value_p:
+        # This is a special case that goes beyond normal key reuse logic.
+        _check_consumed_value(eqn, is_consumed(eqn.invars[0]))
 
-    for in_idx, out_idx in signature.forwards:
-      forwards[eqn.outvars[out_idx]] = eqn.invars[in_idx]
+      for in_idx, out_idx in signature.forwards:
+        forwards[eqn.outvars[out_idx]] = eqn.invars[in_idx]
 
-    for snk in signature.sinks:
-      if not 0 <= snk.idx < len(eqn.invars):
-        raise KeyReuseError(f"In {eqn.primitive}, sink {snk.idx} out of range [0, {len(eqn.invars)}]")
-      if sink(eqn.invars[snk.idx], snk.mask):
-        context = core.JaxprPpContext()
-        settings = core.JaxprPpSettings()
-        jaxpr_str = core.pp_jaxpr(jaxpr, context, settings).format()
-        eqn_str = core.pp_eqn(eqn, context, settings).format()
-        key_vals_str = core.pp_var(eqn.invars[snk.idx], context).format()
-        raise KeyReuseError(f"In {eqn.primitive}, key values {key_vals_str} are already consumed.\n"
-                            f"  signature: {signature}\n"
-                            f"  eqn: {eqn_str}\n"
-                            f"  jaxpr:\n{jaxpr_str}")
-    for var in eqn.outvars:
-      if not isinstance(var, core.Literal) and var not in forwards:
-        source(var, True)  # consumed unless in a Source.
-    for src in signature.sources:
-      if not 0 <= src.idx < len(eqn.outvars):
-        raise KeyReuseError(f"In {eqn.primitive}, source {src.idx} out of range [0, {len(eqn.outvars)}]")
-      source(eqn.outvars[src.idx])
+      for snk in signature.sinks:
+        if not 0 <= snk.idx < len(eqn.invars):
+          raise KeyReuseError(f"In {eqn.primitive}, sink {snk.idx} out of range [0, {len(eqn.invars)}]")
+        if sink(eqn.invars[snk.idx], snk.mask):
+          raise KeyReuseError(f"In {eqn.primitive}, argument {snk.idx} is already consumed.")
+      for var in eqn.outvars:
+        if not isinstance(var, core.Literal) and var not in forwards:
+          source(var, True)  # consumed unless in a Source.
+      for src in signature.sources:
+        if not 0 <= src.idx < len(eqn.outvars):
+          raise KeyReuseError(f"In {eqn.primitive}, source {src.idx} out of range [0, {len(eqn.outvars)}]")
+        source(eqn.outvars[src.idx])
 
   return KeyReuseSignature(
     sinks=[Sink(i, consumed[v]) for i, v in enumerate(jaxpr.invars)

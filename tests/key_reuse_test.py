@@ -334,10 +334,10 @@ class KeyReuseUnitTestWithForwarding(jtu.JaxTestCase):
 
 @jtu.with_config(jax_enable_key_reuse_checks=False)
 class KeyReuseIntegrationTest(jtu.JaxTestCase):
-  random_bits_error = "In random_bits, key values .+ are already consumed.*"
-  random_split_error = "In random_split, key values .+ are already consumed.*"
-  generic_error = ".*key values .+ are already consumed.*"
-  pjit_error = "In pjit, key values a are already consumed."
+  random_bits_error = "In random_bits, argument [0-9]+ is already consumed.*"
+  random_split_error = "In random_split, argument [0-9]+ is already consumed.*"
+  generic_error = ".*argument [0-9]+ is already consumed.*"
+  pjit_error = "In pjit, argument 0 is already consumed."
 
   def check_key_reuse(self, f, *args):
     return _core.check_key_reuse(f, *args)
@@ -589,7 +589,7 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
 class KeyReuseEager(jtu.JaxTestCase):
   jit_msg = "Previously-consumed key passed to jit-compiled function at index 0"
   eager_bits_msg = "Previously-consumed key passed to random_bits at index 0"
-  traced_bits_msg = "In random_bits, key values a are already consumed."
+  traced_bits_msg = "In random_bits, argument 0 is already consumed."
 
   def test_simple_reuse_nojit(self):
     key = jax.random.key(0)
