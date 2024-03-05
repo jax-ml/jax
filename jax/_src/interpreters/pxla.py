@@ -2048,10 +2048,8 @@ def lower_sharding_computation(
       any(not is_unspecified(o) for o in out_shardings))
 
   gs = GSPMDSharding.get_replicated(device_assignment)
-  # TODO(yashkatariya): Enable this when the SPMD chooses correct shardings for
-  # shapes indivisible by shard_shape.
-  # if xla_extension_version < 239 or hasattr(backend, "compile_replicated"):
-  in_shardings = tuple(gs if is_unspecified(i) else i for i in in_shardings)
+  if xla_extension_version < 241 or hasattr(backend, "compile_replicated"):
+    in_shardings = tuple(gs if is_unspecified(i) else i for i in in_shardings)
 
   da_object = _create_da_object(tuple(device_assignment))
 
@@ -2650,7 +2648,7 @@ def _cached_compilation(computation, name, mesh, spmd_lowering,
         get_logical_mesh_ids(list(mesh.shape.values()))
         .reshape(-1))
   compile_options.parameter_is_tupled_arguments = tuple_args
-  if xla_extension_version >= 239:
+  if xla_extension_version >= 241:
     opts.allow_spmd_sharding_propagation_to_parameters = list(allow_prop_to_inputs)
   opts.allow_spmd_sharding_propagation_to_output = list(allow_prop_to_outputs)
 
@@ -2876,7 +2874,7 @@ class UnloadedMeshExecutable:
     else:
       if pmap_nreps == 1:
         assert mesh is None
-        if xla_extension_version >= 239:
+        if xla_extension_version >= 241:
           in_shardings = _maybe_get_and_check_in_shardings(
               xla_executable, in_shardings, tuple(da), global_in_avals,
               len(ordered_effects))
