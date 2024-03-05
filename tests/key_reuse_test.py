@@ -22,7 +22,7 @@ from jax import core
 import jax.numpy as jnp
 from jax._src import prng
 from jax._src import test_util as jtu
-from jax.experimental.key_reuse._common import (
+from jax.experimental.key_reuse._core import (
   assert_consumed, assert_unconsumed, consume, consume_p)
 from jax.experimental.key_reuse import _core, KeyReuseError
 
@@ -587,28 +587,29 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
 
 
 class KeyReuseEager(jtu.JaxTestCase):
-  jit_msg = "Previously-consumed key at index 0 passed to function"
-  bits_msg = "In random_bits, key values a are already consumed."
+  jit_msg = "Previously-consumed key passed to jit-compiled function at index 0"
+  eager_bits_msg = "Previously-consumed key passed to random_bits at index 0"
+  traced_bits_msg = "In random_bits, key values a are already consumed."
 
   def test_simple_reuse_nojit(self):
     key = jax.random.key(0)
     _ = jax.random.bits(key)
     with jax.disable_jit():
-      with self.assertRaisesRegex(KeyReuseError, self.jit_msg):
+      with self.assertRaisesRegex(KeyReuseError, self.eager_bits_msg):
         _ = jax.random.bits(key)
 
   def test_simple_key_reuse_jit(self):
     key = jax.random.key(0)
     _ = jax.random.bits(key)
     with self.assertRaisesRegex(KeyReuseError, self.jit_msg):
-      _ = jax.random.bits(key)
+      _ = jax.jit(jax.random.bits)(key)
 
   def test_key_reuse_within_jit(self):
     @jax.jit
     def f():
       key = jax.random.key(0)
       return jax.random.bits(key) + jax.random.bits(key)
-    with self.assertRaisesRegex(KeyReuseError, self.bits_msg):
+    with self.assertRaisesRegex(KeyReuseError, self.traced_bits_msg):
       f()
 
 
