@@ -202,6 +202,7 @@ pybind_extension(
         "@xla//xla/python:py_client_gpu",
         "@xla//xla/tsl/cuda:cublas",
         "@xla//xla/tsl/cuda:cudart",
+        "@tsl//tsl/python/lib/core:numpy",
     ],
 )
 

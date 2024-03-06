@@ -27,6 +27,7 @@ limitations under the License.
 #include "xla/python/py_client_gpu.h"
 #include "xla/status.h"
 #include "xla/util.h"
+#include "tsl/python/lib/core/numpy.h"
 
 namespace nb = nanobind;
 
@@ -78,6 +79,7 @@ nb::dict Registrations() {
 }  // namespace
 
 NB_MODULE(cuda_plugin_extension, m) {
+  tsl::ImportNumpy();
   m.def(
       "register_custom_call_target",
       [](nb::capsule c_api, nb::str fn_name, nb::capsule fn,
