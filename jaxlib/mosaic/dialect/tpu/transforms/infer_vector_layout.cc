@@ -1021,18 +1021,18 @@ class VectorLayoutInferer {
         return success();
       }
       // Sublane (un)tiling.
-      if (res_rank >= 2 && layout.offsets() == LayoutOffsets{0, 0} &&
-          layout.tiling()[1] == target_shape_[1] &&
+      if (res_rank >= 2 && layout.tiling()[1] == target_shape_[1] &&
           src_ty.getDimSize(src_ty.getRank() - 1) ==
               res_shape[res_shape.size() - 1] &&
           src_ty.getDimSize(src_ty.getRank() - 2) % layout.tiling()[0] == 0 &&
           res_shape[res_shape.size() - 2] % layout.tiling()[0] == 0) {
+        layout = VectorLayout(layout.bitwidth(), {0, 0}, layout.tiling(),
+                              layout.implicit_dim());
         setLayout(op, layout, layout);
         return success();
       }
       // Lane (un)tiling.
-      if (layout.offsets() == LayoutOffsets{0, 0} &&
-          layout.tiling()[1] == target_shape_[1] &&
+      if (layout.tiling()[1] == target_shape_[1] &&
           src_ty.getDimSize(src_ty.getRank() - 1) !=
               res_shape[res_shape.size() - 1] &&
           src_ty.getDimSize(src_ty.getRank() - 1) % layout.tiling()[1] == 0 &&
@@ -1055,10 +1055,10 @@ class VectorLayoutInferer {
           // Inferring in_layout to have tiling (1, 128) triggers any
           // necessary relayout before shapecast.
           setLayout(op,
-                    VectorLayout(layout.bitwidth(), layout.offsets(),
+                    VectorLayout(layout.bitwidth(), {0, 0},
                                  {1, target_shape_[1]}, ImplicitDim::kNone),
-                    VectorLayout(layout.bitwidth(), layout.offsets(),
-                                 default_tiling_, ImplicitDim::kNone));
+                    VectorLayout(layout.bitwidth(), {0, 0}, default_tiling_,
+                                 ImplicitDim::kNone));
           return success();
         }
 
@@ -1073,9 +1073,9 @@ class VectorLayoutInferer {
             (*(res_shape.end() - 2) == 1 ||
              *(res_shape.end() - 2) % target_shape_[0] == 0)) {
           setLayout(op,
-                    VectorLayout(layout.bitwidth(), layout.offsets(),
-                                 default_tiling_, ImplicitDim::kNone),
-                    VectorLayout(layout.bitwidth(), layout.offsets(),
+                    VectorLayout(layout.bitwidth(), {0, 0}, default_tiling_,
+                                 ImplicitDim::kNone),
+                    VectorLayout(layout.bitwidth(), {0, 0},
                                  {1, target_shape_[1]}, ImplicitDim::kNone));
           return success();
         }
