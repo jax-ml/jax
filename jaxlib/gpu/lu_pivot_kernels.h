@@ -17,6 +17,7 @@ limitations under the License.
 #define JAXLIB_GPU_LU_PIVOT_KERNELS_H_
 
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 #include "jaxlib/gpu/vendor.h"
