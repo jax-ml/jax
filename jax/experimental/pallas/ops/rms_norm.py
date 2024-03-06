@@ -81,9 +81,15 @@ def rms_norm_forward(
           jax.ShapeDtypeStruct(shape=(n,), dtype=x.dtype),
           jax.ShapeDtypeStruct(shape=(), dtype=x.dtype)
   ]
-  method = pl.pallas_call(kernel, num_warps=num_warps,
-                          grid=(), out_shape=out_shape, debug=False,
-                          interpret=interpret, name='rms_forward')
+  method = pl.pallas_call(
+      kernel,
+      compiler_params=dict(triton=dict(num_warps=num_warps)),
+      grid=(),
+      out_shape=out_shape,
+      debug=False,
+      interpret=interpret,
+      name="rms_forward",
+  )
 
   method = jax.vmap(jax.vmap(method, in_axes=(0, None, None)), in_axes=(0, None, None))
   out, rstd = method(x, weight, bias)
@@ -189,9 +195,15 @@ def rms_norm_backward(
   kernel = functools.partial(rms_norm_backward_kernel_dx, eps=eps,
                              block_size=block_size)
   out_shape_dx = jax.ShapeDtypeStruct(shape=(n,), dtype=x.dtype)
-  method = pl.pallas_call(kernel, num_warps=num_warps,
-                          grid=(), out_shape=out_shape_dx, debug=False,
-                          interpret=interpret, name='ln_backward_dx')
+  method = pl.pallas_call(
+      kernel,
+      compiler_params=dict(triton=dict(num_warps=num_warps)),
+      grid=(),
+      out_shape=out_shape_dx,
+      debug=False,
+      interpret=interpret,
+      name="ln_backward_dx",
+  )
 
   method = jax.vmap(method, in_axes=(0, None, None, 0, 0))
   dx = method(reshaped_x, weight, bias, reshaped_do, reshaped_rstd)
@@ -215,9 +227,15 @@ def rms_norm_backward(
           jax.ShapeDtypeStruct(shape=bias.shape, dtype=bias.dtype)
   ]
   grid_ = (pl.cdiv(reshaped_x.shape[1], block_n),)
-  method = pl.pallas_call(kernel, num_warps=num_warps,
-                          grid=grid_, out_shape=out_shape_dwbias, debug=False,
-                          interpret=interpret, name='ln_backward_dw_db')
+  method = pl.pallas_call(
+      kernel,
+      compiler_params=dict(triton=dict(num_warps=num_warps)),
+      grid=grid_,
+      out_shape=out_shape_dwbias,
+      debug=False,
+      interpret=interpret,
+      name="ln_backward_dw_db",
+  )
   dw, dbias = method(reshaped_x, weight, bias, reshaped_do, reshaped_rstd)
   return dx, dw, dbias
 
@@ -245,9 +263,16 @@ def rms_norm(
   kernel = functools.partial(rms_norm_forward_kernel, eps=eps,
                              block_size=block_size)
   out_shape = jax.ShapeDtypeStruct(shape=(n,), dtype=x.dtype)
-  method = pl.pallas_call(kernel, num_warps=num_warps, num_stages=num_stages,
-                          grid=(), out_shape=out_shape, debug=False,
-                          interpret=interpret)
+  method = pl.pallas_call(
+      kernel,
+      compiler_params=dict(
+          triton=dict(num_warps=num_warps, num_stages=num_stages)
+      ),
+      grid=(),
+      out_shape=out_shape,
+      debug=False,
+      interpret=interpret,
+  )
   method = jax.vmap(jax.vmap(method, in_axes=(0, None, None)), in_axes=(0, None, None))
   return method(x, weight, bias)
 rms_norm.defvjp(rms_norm_forward, rms_norm_backward)

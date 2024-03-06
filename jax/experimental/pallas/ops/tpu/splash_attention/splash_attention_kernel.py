@@ -1106,7 +1106,7 @@ def _splash_attention_forward(
             out_specs=out_specs,
             grid=grid,
         ),
-        mosaic_params=mosaic_params,
+        compiler_params=dict(mosaic=mosaic_params),
         out_shape=out_shapes,
         name=kernel_name,
     )(
@@ -1558,7 +1558,7 @@ def _splash_attention_bwd_dq(
             grid=grid,
         ),
         out_shape=out_shapes,
-        mosaic_params=mosaic_params,
+        compiler_params=dict(mosaic=mosaic_params),
         name=kernel_name,
     )(
         mask_info.data_next,
@@ -2111,7 +2111,7 @@ def _splash_attention_bwd_dkv(
             grid=grid,
         ),
         out_shape=out_shapes,
-        mosaic_params=mosaic_params,
+        compiler_params=dict(mosaic=mosaic_params),
         name=kernel_name,
     )(
         mask_info.data_next,

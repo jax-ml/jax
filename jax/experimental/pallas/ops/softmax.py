@@ -77,8 +77,14 @@ def softmax(
   out_shape = jax.ShapeDtypeStruct(shape=(row_len,), dtype=x.dtype)
 
   kernel = functools.partial(_vmappable_softmax_kernel, block_row=block_row)
-  f = pl.pallas_call(kernel, num_warps=num_warps, num_stages=1, grid=(),
-                     out_shape=out_shape, debug=debug, interpret=interpret)
+  f = pl.pallas_call(
+      kernel,
+      compiler_params=dict(triton=dict(num_warps=num_warps, num_stages=1)),
+      grid=(),
+      out_shape=out_shape,
+      debug=debug,
+      interpret=interpret,
+  )
 
   for _ in range(len(x.shape) - 1):
     f = jax.vmap(f)

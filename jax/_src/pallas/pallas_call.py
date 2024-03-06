@@ -104,7 +104,7 @@ def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
                       in_shapes,
                       input_output_aliases: tuple[tuple[int, int], ...],
                       grid_mapping: GridMapping,
-                      **compiler_params: Any):
+                      compiler_params: Any):
   dynamic_grid_args, args = split_list(  # type: ignore
       args, [grid_mapping.num_dynamic_grid_bounds]
   )
@@ -234,7 +234,7 @@ def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
                              grid_mapping=grid_mapping, interpret=interpret,
                              debug=debug,
                              input_output_aliases=input_output_aliases,
-                             **compiler_params)
+                             compiler_params=compiler_params)
 pallas_call_p.def_impl(_pallas_call_impl)
 
 def _pallas_call_abstract_eval(*avals, out_shapes, **_):
@@ -243,7 +243,7 @@ pallas_call_p.def_abstract_eval(_pallas_call_abstract_eval)
 
 def _pallas_call_jvp_rule(primals, tangents, *, jaxpr, name, which_linear,
     input_output_aliases: tuple[tuple[int, int], ...],
-    in_shapes, out_shapes, grid_mapping, debug, interpret, **compiler_params: Any):
+    in_shapes, out_shapes, grid_mapping, debug, interpret, compiler_params: Any):
   if grid_mapping.num_dynamic_grid_bounds:
     raise NotImplementedError("interpret with dynamic grid bounds unsupported")
   if grid_mapping.num_index_operands:
@@ -285,7 +285,7 @@ def _pallas_call_jvp_rule(primals, tangents, *, jaxpr, name, which_linear,
       interpret=interpret,
       debug=debug,
       input_output_aliases=(),
-      **compiler_params,
+      compiler_params=compiler_params,
   )
   out_primals, out_tangents = split_list(out_flat, [len(out_flat) // 2])
   return out_primals, out_tangents
@@ -336,7 +336,7 @@ def _pallas_call_batching_rule(args, dims, *,
                                debug: bool,
                                interpret: bool,
                                which_linear: tuple[bool, ...],
-                               **compiler_params: Any):
+                               compiler_params: Any):
 
   def _maybe_squeeze_out_bdim(
       x: jax.Array, bdim: int | batching.NotMapped
@@ -449,7 +449,7 @@ def _pallas_call_batching_rule(args, dims, *,
       input_output_aliases=input_output_aliases,
       debug=debug,
       interpret=interpret,
-      **compiler_params,
+      compiler_params=compiler_params,
   )
   return out, (0,) * len(out)
 batching.primitive_batchers[pallas_call_p] = _pallas_call_batching_rule
@@ -535,9 +535,15 @@ def pallas_call(
     input_output_aliases: dict[int, int] = {},
     interpret: bool = False,
     name: str | None = None,
-    **compiler_params: Any,
+    compiler_params: dict[str, Any] | None = None,
+    **compiler_params_: Any,
 ):
   name = _extract_function_name(f, name)
+  if compiler_params is None:
+    compiler_params = {}
+  assert not (compiler_params and compiler_params_)
+  if compiler_params_:
+    compiler_params = compiler_params_
   if grid is not None and grid_spec is not None:
     raise ValueError("Cannot specify both grid and grid_spec at the same time.")
   if grid_spec is None:
@@ -568,7 +574,7 @@ def pallas_call(
         interpret=interpret,
         grid_mapping=grid_mapping,
         input_output_aliases=tuple(input_output_aliases.items()),
-        **compiler_params)
+        compiler_params=compiler_params)
     out = tree_util.tree_unflatten(out_tree, out_flat)
     return out
   return wrapped

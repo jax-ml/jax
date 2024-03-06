@@ -1252,7 +1252,7 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
           in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM)],
           out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
           out_shape=x,
-          mosaic_params=dict(collective_id=0)
+          compiler_params=dict(mosaic=dict(collective_id=0)),
       )(x)
 
     device_mesh = mesh_utils.create_device_mesh(
@@ -1281,9 +1281,11 @@ class PallasCallTest(PallasTPUTest):
     f = pl.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-        mosaic_params=dict(
-            cost_estimate=pltpu.CostEstimate(
-                flops=1234, transcendentals=21, bytes_accessed=12345
+        compiler_params=dict(
+            mosaic=dict(
+                cost_estimate=pltpu.CostEstimate(
+                    flops=1234, transcendentals=21, bytes_accessed=12345
+                )
             )
         ),
     )
@@ -1301,10 +1303,14 @@ class PallasCallTest(PallasTPUTest):
     x = jnp.arange(np.prod(shape), dtype=np.float32).reshape(shape)
     with self.assertRaises(xla_extension.XlaRuntimeError):
       pl.pallas_call(
-          kernel, out_shape=x, mosaic_params=dict(vmem_limit_bytes=256)
+          kernel,
+          out_shape=x,
+          compiler_params=dict(mosaic=dict(vmem_limit_bytes=256)),
       )(x)
     pl.pallas_call(
-        kernel, out_shape=x, mosaic_params=dict(vmem_limit_bytes=int(2**18))
+        kernel,
+        out_shape=x,
+        compiler_params=dict(mosaic=dict(vmem_limit_bytes=int(2**18))),
     )(x)
 
 
@@ -1946,8 +1952,8 @@ class PallasCallPipelineTest(parameterized.TestCase):
                 )
             ],
         ),
-        mosaic_params=dict(
-            collective_id=0, vmem_limit_bytes=int(134217728 * 0.9)
+        compiler_params=dict(
+            mosaic=dict(collective_id=0, vmem_limit_bytes=int(134217728 * 0.9))
         ),
     )
 

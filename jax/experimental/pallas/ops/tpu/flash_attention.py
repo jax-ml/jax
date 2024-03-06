@@ -745,8 +745,15 @@ def _flash_attention_impl(
       ),
       out_shape=out_shape,
       debug=debug,
-      mosaic_params=dict(
-          dimension_semantics=("parallel", "parallel", "parallel", "arbitrary")
+      compiler_params=dict(
+          mosaic=dict(
+              dimension_semantics=(
+                  "parallel",
+                  "parallel",
+                  "parallel",
+                  "arbitrary",
+              )
+          )
       ),
   )(q, k, v, ab, q_segment_ids, kv_segment_ids)
   if save_residuals:
@@ -1098,12 +1105,14 @@ def _flash_attention_bwd_dkv(
         ),
         out_shape=out_shapes,
         debug=debug,
-        mosaic_params=dict(
-            dimension_semantics=(
-                "parallel",
-                "parallel",
-                "parallel",
-                "arbitrary",
+        compiler_params=dict(
+            mosaic=dict(
+                dimension_semantics=(
+                    "parallel",
+                    "parallel",
+                    "parallel",
+                    "arbitrary",
+                )
             )
         ),
     )(q, k, v, ab, q_segment_ids, kv_segment_ids, l, m, do, di)
@@ -1441,12 +1450,14 @@ def _flash_attention_bwd_dq(
         ),
         out_shape=out_shapes,
         debug=debug,
-        mosaic_params=dict(
-            dimension_semantics=(
-                "parallel",
-                "parallel",
-                "parallel",
-                "arbitrary",
+        compiler_params=dict(
+            mosaic=dict(
+                dimension_semantics=(
+                    "parallel",
+                    "parallel",
+                    "parallel",
+                    "arbitrary",
+                )
             )
         ),
     )(q, k, v, ab, q_segment_ids, kv_segment_ids, l, m, do, di)

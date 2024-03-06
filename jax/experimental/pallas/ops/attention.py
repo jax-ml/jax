@@ -220,8 +220,9 @@ def mha(
       out_specs=pl.BlockSpec(
           lambda _, j, k: (j, 0, k, 0), (None, seq_len, None, head_dim)
       ),
-      num_warps=num_warps_,
-      num_stages=num_stages,
+      compiler_params=dict(
+          triton=dict(num_warps=num_warps_, num_stages=num_stages)
+      ),
       out_shape=out_shape,
       debug=debug,
       interpret=interpret,
@@ -294,8 +295,9 @@ def _mha_forward(
           pl.BlockSpec(lambda _, j, k: (j, k, 0), (None, None, seq_len)),
           pl.BlockSpec(lambda _, j, k: (j, k, 0), (None, None, seq_len)),
       ],
-      num_warps=num_warps_,
-      num_stages=num_stages,
+      compiler_params=dict(
+          triton=dict(num_warps=num_warps_, num_stages=num_stages)
+      ),
       out_shape=out_shape,
       debug=debug,
       interpret=interpret,
@@ -342,8 +344,9 @@ def _preprocess_backward(out, do, l, block_q: int,
         pl.BlockSpec(lambda _, j, k: (j, 0, k, 0), (None, seq_len, None, head_dim)),
         pl.BlockSpec(lambda _, j, k: (j, k, 0), (None, None, seq_len)),
       ],
-      num_warps=4,
-      num_stages=3,
+      compiler_params=dict(
+          triton=dict(num_warps=4, num_stages=3)
+      ),
       out_shape=out_shape,
       debug=debug,
       interpret=interpret,
@@ -536,8 +539,7 @@ def _mha_backward(sm_scale: float, causal: bool, block_q: int, block_k: int,
         name="mha_backward",
         debug=debug,
         interpret=interpret,
-        num_warps=num_warps,
-        num_stages=1,
+        compiler_params=dict(triton=dict(num_warps=num_warps, num_stages=1)),
         input_output_aliases=input_output_aliases,
     )(q, k, v, segment_ids, out, do_scaled, l, m, delta, dq)
   else:

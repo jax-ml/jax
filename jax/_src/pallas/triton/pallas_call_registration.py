@@ -261,8 +261,7 @@ def pallas_call_lowering(
     debug: bool,
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: pallas_core.GridMapping,
-    triton_params: dict[str, Any] | None = None,
-    **compiler_params: Any,
+    compiler_params: dict[str, Any],
 ):
   if interpret:
     return mlir.lower_fun(pallas_call_p.impl, multiple_results=True)(
@@ -277,24 +276,22 @@ def pallas_call_lowering(
         debug=debug,
         input_output_aliases=input_output_aliases,
         grid_mapping=grid_mapping,
-        **compiler_params,
+        compiler_params=compiler_params,
     )
 
   if grid_mapping.num_dynamic_grid_bounds:
     raise NotImplementedError(
         "dynamic grid bounds not supported in the Triton backend"
     )
-
-  num_warps = compiler_params.pop("num_warps", 4)
+  triton_params = compiler_params.get("triton_params", {})
+  triton_compiler_params = compiler_params.get("triton", {})
+  num_warps = triton_compiler_params.pop("num_warps", 4)
   if len(ctx.module_context.platforms) > 1:
     raise NotImplementedError("multi-platform lowering for Pallas kernels")
   if ctx.module_context.platforms[0] == "rocm":
-    num_stages = compiler_params.pop("num_stages", 1)
+    num_stages = triton_compiler_params.pop("num_stages", 1)
   else:
-    num_stages = compiler_params.pop("num_stages", 3)
-
-  if triton_params is None:
-    triton_params = {}
+    num_stages = triton_compiler_params.pop("num_stages", 3)
 
   if debug:
     print(jaxpr)
@@ -318,7 +315,6 @@ def pallas_call_lowering(
         triton_params=triton_params,
         num_warps=num_warps,
         num_stages=num_stages,
-        **compiler_params,
     )
 
 

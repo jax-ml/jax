@@ -373,7 +373,8 @@ def add_matrices_pipelined_megacore(x: jax.Array, y: jax.Array) -> jax.Array:
       in_specs=[block_spec, block_spec],
       out_specs=block_spec,
       grid=(2,),
-      mosaic_params=dict(dimension_semantics=("parallel",)))(x, y)
+      compiler_params=dict(mosaic=dict(dimension_semantics=("parallel",))))(
+        x, y)
 
 x, y = jnp.ones((512, 512)), jnp.ones((512, 512))
 add_matrices_pipelined_megacore(x, y)

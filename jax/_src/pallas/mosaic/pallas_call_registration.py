@@ -41,8 +41,7 @@ def pallas_call_tpu_lowering_rule(
     out_shapes: tuple[jax.ShapeDtypeStruct, ...],
     debug: bool,
     interpret: bool,
-    mosaic_params: dict[str, Any] | None = None,
-    **compiler_params: Any):
+    compiler_params: dict[str, Any]):
   """Lowers a pallas_call to a Mosaic TPU custom call."""
   if interpret:
     return mlir.lower_fun(pallas_call_p.impl, multiple_results=True)(
@@ -51,9 +50,17 @@ def pallas_call_tpu_lowering_rule(
         which_linear=which_linear,
         interpret=interpret, debug=debug,
         input_output_aliases=input_output_aliases,
-        grid_mapping=grid_mapping, **compiler_params)
+        grid_mapping=grid_mapping,
+        compiler_params=compiler_params)
   if debug:
     print(jaxpr)
+  if 'mosaic_params' in compiler_params:
+    assert 'mosaic' not in compiler_params
+    mosaic_params = compiler_params['mosaic_params']
+  elif 'mosaic' in compiler_params:
+    mosaic_params = compiler_params['mosaic']
+  else:
+    mosaic_params = {}
   mesh = None
   axis_context = ctx.module_context.axis_context
   if axis_context is not None:
