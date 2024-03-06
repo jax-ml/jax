@@ -650,19 +650,13 @@ def check_integer_conversion(arr: Array):
     raise TypeError("Only integer scalar arrays can be converted to a scalar index.")
 
 
-def check_bool_conversion(arr: Array, warn_on_empty=False):
+def check_bool_conversion(arr: Array):
   if arr.size == 0:
-    if warn_on_empty:
-      warnings.warn(
-        "The truth value of an empty array is ambiguous. Returning False. In the future this "
-        "will result in an error. Use `array.size > 0` to check that an array is not empty.",
-        DeprecationWarning, stacklevel=3)
-    else:
-      raise ValueError("The truth value of an empty array is ambiguous. Use "
-                       "`array.size > 0` to check that an array is not empty.")
+    raise ValueError("The truth value of an empty array is ambiguous. Use"
+                     " `array.size > 0` to check that an array is not empty.")
   if arr.size > 1:
-    raise ValueError("The truth value of an array with more than one element is "
-                      "ambiguous. Use a.any() or a.all()")
+    raise ValueError("The truth value of an array with more than one element"
+                     " is ambiguous. Use a.any() or a.all()")
 
 
 def _aval_property(name):
