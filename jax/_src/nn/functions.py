@@ -149,7 +149,7 @@ def sigmoid(x: ArrayLike) -> Array:
 
 @jax.jit
 def silu(x: ArrayLike) -> Array:
-  r"""SiLU (a.k.a. swish) activation function.
+  r"""SiLU (aka swish) activation function.
 
   Computes the element-wise function:
 
