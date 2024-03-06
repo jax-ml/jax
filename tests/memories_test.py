@@ -677,115 +677,6 @@ class MemoriesComputationTest(jtu.BufferDonationTestCase):
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
     self.assertEqual(cache_info2.misses, cache_info1.misses)
 
-  def test_device_put_host_to_hbm(self):
-    mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
-    s_host = NamedSharding(mesh, P("y"), memory_kind="unpinned_host")
-    np_inp = jnp.arange(16).reshape(8, 2)
-
-    @functools.partial(jax.jit, out_shardings=s_host)
-    def f(x):
-      return x
-
-    out_on_host = f(np_inp)
-    self.assertEqual(out_on_host.sharding, s_host)
-
-    s_hbm = s_host.with_memory_kind("device")
-    out_on_hbm = jax.device_put(out_on_host, s_hbm)
-    self._check_device_put_addressable_shards(
-        out_on_hbm, np_inp, s_hbm, "device")
-
-  def test_device_put_hbm_to_host(self):
-    mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
-    s_host = NamedSharding(mesh, P("y"), memory_kind="unpinned_host")
-    inp = jnp.arange(16).reshape(8, 2)
-
-    out_on_host = jax.device_put(inp, s_host)
-    self._check_device_put_addressable_shards(
-        out_on_host, inp, s_host, "unpinned_host")
-
-    sharded_inp = jax.device_put(inp, s_host.with_memory_kind("device"))
-    sharded_out_on_host = jax.device_put(sharded_inp, s_host)
-    self._check_device_put_addressable_shards(
-        sharded_out_on_host, sharded_inp, s_host, "unpinned_host")
-
-  def test_device_put_different_device_and_memory_host_to_hbm(self):
-    if jax.device_count() < 3:
-      raise unittest.SkipTest("Test requires >=3 devices")
-
-    out_host0 = jax.device_put(
-        jnp.arange(8),
-        SingleDeviceSharding(jax.devices()[0], memory_kind="unpinned_host"))
-
-    dev2 = jax.devices()[2]
-    out_hbm1 = jax.device_put(
-        out_host0, SingleDeviceSharding(dev2, memory_kind="device"))
-    self.assertEqual(out_hbm1.sharding.memory_kind, "device")
-    self.assertEqual(out_hbm1.sharding._device, dev2)
-    self.assertEqual(out_hbm1.addressable_shards[0].data.sharding._device, dev2)
-    self.assertEqual(
-        out_hbm1.addressable_shards[0].data.sharding.memory_kind, "device")
-
-  def test_device_put_different_device_and_memory_hbm_to_host(self):
-    if jax.device_count() < 3:
-      raise unittest.SkipTest("Test requires >=3 devices")
-
-    out_hbm0 = jnp.arange(8)
-
-    dev2 = jax.devices()[2]
-    out_host1 = jax.device_put(
-        out_hbm0, SingleDeviceSharding(dev2, memory_kind="unpinned_host"))
-    self.assertEqual(out_host1.sharding.memory_kind, "unpinned_host")
-    self.assertEqual(out_host1.sharding._device, dev2)
-    self.assertEqual(out_host1.addressable_shards[0].data.sharding._device,
-                     dev2)
-    self.assertEqual(
-        out_host1.addressable_shards[0].data.sharding.memory_kind,
-        "unpinned_host")
-
-  def test_device_put_on_different_device_with_the_same_memory_kind(self):
-    if len(jax.devices()) < 2:
-      raise unittest.SkipTest("Test requires >=2 devices.")
-
-    np_inp = np.arange(16).reshape(8, 2)
-
-    s_hbm_dev_0 = SingleDeviceSharding(jax.devices()[0], memory_kind="device")
-    s_hbm_dev_1 = SingleDeviceSharding(jax.devices()[1], memory_kind="device")
-    inp_hbm_dev0 = jax.device_put(np_inp, s_hbm_dev_0)
-    out_hbm_dev_1 = jax.device_put(inp_hbm_dev0, s_hbm_dev_1)
-    self._check_device_put_addressable_shards(
-        out_hbm_dev_1, np_inp, s_hbm_dev_1, "device")
-
-    inp_host_dev0 = jax.device_put(
-        np_inp, s_hbm_dev_0.with_memory_kind("unpinned_host"))
-    s_host_dev_1 = s_hbm_dev_1.with_memory_kind("unpinned_host")
-    out_host_dev_1 = jax.device_put(inp_host_dev0, s_host_dev_1)
-    self._check_device_put_addressable_shards(
-        out_host_dev_1, np_inp, s_host_dev_1, "unpinned_host")
-
-  def test_device_put_resharding(self):
-    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
-    s_host = NamedSharding(mesh, P("x", "y"), memory_kind="unpinned_host")
-    s_hbm = s_host.with_memory_kind("device")
-    np_inp = np.arange(16).reshape(8, 2)
-
-    # Reshard single device array on HBM to multi device on host
-    sds_inp_hbm = jax.device_put(
-        jnp.arange(16).reshape(8, 2),
-        SingleDeviceSharding(jax.devices()[0], memory_kind="device"))
-    # device_put on host
-    out_sharded_host = jax.device_put(sds_inp_hbm, s_host)
-    self._check_device_put_addressable_shards(
-        out_sharded_host, np_inp, s_host, "unpinned_host")
-
-    # Reshard single device array on host to multi device on hbm
-    sds_inp_host = jax.device_put(
-        jnp.arange(16).reshape(8, 2),
-        SingleDeviceSharding(jax.devices()[0], memory_kind="unpinned_host"))
-    # device_put on hbm
-    out_sharded_hbm = jax.device_put(sds_inp_host, s_hbm)
-    self._check_device_put_addressable_shards(
-        out_sharded_hbm, np_inp, s_hbm, "device")
-
   def test_jit_host_inputs_via_device_put_outside(self):
     mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
     s_host = NamedSharding(mesh, P("x", "y"), memory_kind="unpinned_host")
@@ -806,57 +697,6 @@ class MemoriesComputationTest(jtu.BufferDonationTestCase):
         out_host, np_inp * 2, s_host, "unpinned_host")
     self._check_device_put_addressable_shards(
         out_hbm, np_inp * 2, s_hbm, "device")
-
-  def test_device_put_numpy_array(self):
-    mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
-    np_inp = np.arange(16).reshape(8, 2)
-    s_hbm = NamedSharding(mesh, P(("x", "y")), memory_kind="device")
-    s_host = s_hbm.with_memory_kind("unpinned_host")
-
-    out_hbm = jax.device_put(np_inp, s_hbm)
-    self._check_device_put_addressable_shards(out_hbm, np_inp, s_hbm, "device")
-
-    out_host = jax.device_put(np_inp, s_host)
-    self._check_device_put_addressable_shards(
-        out_host, np_inp, s_host, "unpinned_host")
-
-  def test_device_put_numpy_scalar(self):
-    np_inp = np.float32(8)
-    s_hbm = SingleDeviceSharding(jax.devices()[0], memory_kind="device")
-    s_host = s_hbm.with_memory_kind("unpinned_host")
-
-    out_hbm = jax.device_put(np_inp, s_hbm)
-    self._check_device_put_addressable_shards(out_hbm, np_inp, s_hbm, "device")
-
-    out_host = jax.device_put(np_inp, s_host)
-    self._check_device_put_addressable_shards(
-        out_host, np_inp, s_host, "unpinned_host")
-
-  def test_device_put_python_scalar(self):
-    py_scalar = float(8)
-    s_hbm = SingleDeviceSharding(jax.devices()[0], memory_kind="device")
-    s_host = s_hbm.with_memory_kind("unpinned_host")
-
-    out_hbm = jax.device_put(py_scalar, s_hbm)
-    self._check_device_put_addressable_shards(
-        out_hbm, py_scalar, s_hbm, "device", index=False)
-
-    out_host = jax.device_put(py_scalar, s_host)
-    self._check_device_put_addressable_shards(
-        out_host, py_scalar, s_host, "unpinned_host", index=False)
-
-  def test_device_put_python_int(self):
-    py_inp = 8
-    s_hbm = SingleDeviceSharding(jax.devices()[0], memory_kind="device")
-    s_host = s_hbm.with_memory_kind("unpinned_host")
-
-    out_hbm = jax.device_put(py_inp, s_hbm)
-    self._check_device_put_addressable_shards(
-        out_hbm, py_inp, s_hbm, "device", index=False)
-
-    out_host = jax.device_put(py_inp, s_host)
-    self._check_device_put_addressable_shards(
-        out_host, py_inp, s_host, "unpinned_host", index=False)
 
   def test_trivial_computation(self):
     if xb.using_pjrt_c_api():
@@ -1073,6 +913,189 @@ class MemoriesComputationTest(jtu.BufferDonationTestCase):
     x = jax.device_put(jnp.ones(4) * 4, s)
     all_true = jnp.ones(4)
     self.assertArraysEqual(g(x), all_true)
+
+
+class DevicePutTest(jtu.JaxTestCase):
+
+  def setUp(self):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Memories do not work on CPU and GPU backends yet.")
+    super().setUp()
+    self.orig_memories_flag = config.enable_memories.value
+    jax.config.update('jax_enable_memories', True)
+
+  def tearDown(self):
+    jax.config.update('jax_enable_memories', self.orig_memories_flag)
+    super().tearDown()
+
+  def _check_device_put_addressable_shards(
+      self, out, inp, expected_sharding, expected_mem_kind, index=True):
+    self.assertArraysEqual(out, inp)
+    self.assertEqual(out.sharding, expected_sharding)
+    self.assertEqual(out.sharding.memory_kind, expected_mem_kind)
+    for s in out.addressable_shards:
+      if index:
+        self.assertArraysEqual(s.data, inp[s.index])
+      else:
+        self.assertArraysEqual(s.data, inp)
+      self.assertEqual(s.data.sharding.memory_kind, expected_mem_kind)
+
+  def test_device_put_host_to_hbm(self):
+    mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
+    s_host = NamedSharding(mesh, P("y"), memory_kind="unpinned_host")
+    np_inp = np.arange(16).reshape(8, 2)
+
+    out_on_host = jax.device_put(np_inp, s_host)
+    self.assertEqual(out_on_host.sharding, s_host)
+
+    s_hbm = s_host.with_memory_kind("device")
+    out_on_hbm = jax.device_put(out_on_host, s_hbm)
+    self._check_device_put_addressable_shards(
+        out_on_hbm, np_inp, s_hbm, "device")
+
+  def test_device_put_hbm_to_host(self):
+    mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
+    s_host = NamedSharding(mesh, P("y"), memory_kind="unpinned_host")
+    inp = jnp.arange(16).reshape(8, 2)
+
+    out_on_host = jax.device_put(inp, s_host)
+    self._check_device_put_addressable_shards(
+        out_on_host, inp, s_host, "unpinned_host")
+
+    sharded_inp = jax.device_put(inp, s_host.with_memory_kind("device"))
+    sharded_out_on_host = jax.device_put(sharded_inp, s_host)
+    self._check_device_put_addressable_shards(
+        sharded_out_on_host, sharded_inp, s_host, "unpinned_host")
+
+  def test_device_put_different_device_and_memory_host_to_hbm(self):
+    if jax.device_count() < 3:
+      raise unittest.SkipTest("Test requires >=3 devices")
+
+    out_host0 = jax.device_put(
+        jnp.arange(8),
+        SingleDeviceSharding(jax.devices()[0], memory_kind="unpinned_host"))
+
+    dev2 = jax.devices()[2]
+    out_hbm1 = jax.device_put(
+        out_host0, SingleDeviceSharding(dev2, memory_kind="device"))
+    self.assertEqual(out_hbm1.sharding.memory_kind, "device")
+    self.assertEqual(out_hbm1.sharding._device, dev2)
+    self.assertEqual(out_hbm1.addressable_shards[0].data.sharding._device, dev2)
+    self.assertEqual(
+        out_hbm1.addressable_shards[0].data.sharding.memory_kind, "device")
+
+  def test_device_put_different_device_and_memory_hbm_to_host(self):
+    if jax.device_count() < 3:
+      raise unittest.SkipTest("Test requires >=3 devices")
+
+    out_hbm0 = jnp.arange(8)
+
+    dev2 = jax.devices()[2]
+    out_host1 = jax.device_put(
+        out_hbm0, SingleDeviceSharding(dev2, memory_kind="unpinned_host"))
+    self.assertEqual(out_host1.sharding.memory_kind, "unpinned_host")
+    self.assertEqual(out_host1.sharding._device, dev2)
+    self.assertEqual(out_host1.addressable_shards[0].data.sharding._device,
+                     dev2)
+    self.assertEqual(
+        out_host1.addressable_shards[0].data.sharding.memory_kind,
+        "unpinned_host")
+
+  def test_device_put_on_different_device_with_the_same_memory_kind(self):
+    if len(jax.devices()) < 2:
+      raise unittest.SkipTest("Test requires >=2 devices.")
+
+    np_inp = np.arange(16).reshape(8, 2)
+
+    s_hbm_dev_0 = SingleDeviceSharding(jax.devices()[0], memory_kind="device")
+    s_hbm_dev_1 = SingleDeviceSharding(jax.devices()[1], memory_kind="device")
+    inp_hbm_dev0 = jax.device_put(np_inp, s_hbm_dev_0)
+    out_hbm_dev_1 = jax.device_put(inp_hbm_dev0, s_hbm_dev_1)
+    self._check_device_put_addressable_shards(
+        out_hbm_dev_1, np_inp, s_hbm_dev_1, "device")
+
+    inp_host_dev0 = jax.device_put(
+        np_inp, s_hbm_dev_0.with_memory_kind("unpinned_host"))
+    s_host_dev_1 = s_hbm_dev_1.with_memory_kind("unpinned_host")
+    out_host_dev_1 = jax.device_put(inp_host_dev0, s_host_dev_1)
+    self._check_device_put_addressable_shards(
+        out_host_dev_1, np_inp, s_host_dev_1, "unpinned_host")
+
+  # TODO(yashkatariya): Enable this once we can compute on host.
+  # def test_device_put_resharding(self):
+  #   mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
+  #   s_host = NamedSharding(mesh, P("x", "y"), memory_kind="unpinned_host")
+  #   s_hbm = s_host.with_memory_kind("device")
+  #   np_inp = np.arange(16).reshape(8, 2)
+
+  #   # Reshard single device array on HBM to multi device on host
+  #   sds_inp_hbm = jax.device_put(
+  #       jnp.arange(16).reshape(8, 2),
+  #       SingleDeviceSharding(jax.devices()[0], memory_kind="device"))
+  #   # device_put on host
+  #   out_sharded_host = jax.device_put(sds_inp_hbm, s_host)
+  #   self._check_device_put_addressable_shards(
+  #       out_sharded_host, np_inp, s_host, "unpinned_host")
+
+  #   # Reshard single device array on host to multi device on hbm
+  #   sds_inp_host = jax.device_put(
+  #       jnp.arange(16).reshape(8, 2),
+  #       SingleDeviceSharding(jax.devices()[0], memory_kind="unpinned_host"))
+  #   # device_put on hbm
+  #   out_sharded_hbm = jax.device_put(sds_inp_host, s_hbm)
+  #   self._check_device_put_addressable_shards(
+  #       out_sharded_hbm, np_inp, s_hbm, "device")
+
+  def test_device_put_numpy_array(self):
+    mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
+    np_inp = np.arange(16).reshape(8, 2)
+    s_hbm = NamedSharding(mesh, P(("x", "y")), memory_kind="device")
+    s_host = s_hbm.with_memory_kind("unpinned_host")
+
+    out_hbm = jax.device_put(np_inp, s_hbm)
+    self._check_device_put_addressable_shards(out_hbm, np_inp, s_hbm, "device")
+
+    out_host = jax.device_put(np_inp, s_host)
+    self._check_device_put_addressable_shards(
+        out_host, np_inp, s_host, "unpinned_host")
+
+  def test_device_put_numpy_scalar(self):
+    np_inp = np.float32(8)
+    s_hbm = SingleDeviceSharding(jax.devices()[0], memory_kind="device")
+    s_host = s_hbm.with_memory_kind("unpinned_host")
+
+    out_hbm = jax.device_put(np_inp, s_hbm)
+    self._check_device_put_addressable_shards(out_hbm, np_inp, s_hbm, "device")
+
+    out_host = jax.device_put(np_inp, s_host)
+    self._check_device_put_addressable_shards(
+        out_host, np_inp, s_host, "unpinned_host")
+
+  def test_device_put_python_scalar(self):
+    py_scalar = float(8)
+    s_hbm = SingleDeviceSharding(jax.devices()[0], memory_kind="device")
+    s_host = s_hbm.with_memory_kind("unpinned_host")
+
+    out_hbm = jax.device_put(py_scalar, s_hbm)
+    self._check_device_put_addressable_shards(
+        out_hbm, py_scalar, s_hbm, "device", index=False)
+
+    out_host = jax.device_put(py_scalar, s_host)
+    self._check_device_put_addressable_shards(
+        out_host, py_scalar, s_host, "unpinned_host", index=False)
+
+  def test_device_put_python_int(self):
+    py_inp = 8
+    s_hbm = SingleDeviceSharding(jax.devices()[0], memory_kind="device")
+    s_host = s_hbm.with_memory_kind("unpinned_host")
+
+    out_hbm = jax.device_put(py_inp, s_hbm)
+    self._check_device_put_addressable_shards(
+        out_hbm, py_inp, s_hbm, "device", index=False)
+
+    out_host = jax.device_put(py_inp, s_host)
+    self._check_device_put_addressable_shards(
+        out_host, py_inp, s_host, "unpinned_host", index=False)
 
 
 class ActivationOffloadingTest(jtu.JaxTestCase):
