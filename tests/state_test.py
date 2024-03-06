@@ -1544,6 +1544,51 @@ class MutableArrayTest(jtu.JaxTestCase):
     self.assertAllClose(out1, 4 * jnp.ones((2, 3)), check_dtypes=False)
     self.assertAllClose(out2, y + w, check_dtypes=False)
 
+  @parameterized.parameters([True, False])
+  def test_closed_over_basic(self, jit):
+    x_mut = core.mutable_array(jnp.zeros(3))
+    def f():
+      x_mut[...] += 1.
+      x_mut[0] += 1
+      x_mut[1] += 5
+
+    if jit:
+      f = jax.jit(f)
+
+    f()
+
+    self.assertAllClose(x_mut[...], jnp.array([2., 6., 1.]),
+                        check_dtypes=False)
+
+    jaxpr = jax.make_jaxpr(f)()
+    self.assertTrue(any(isinstance(e, RefEffect) for e in jaxpr.effects))
+
+  @parameterized.parameters([True, False])
+  def test_closed_over_nested(self, jit):
+    x_mut = core.mutable_array(jnp.zeros(3))
+
+    @jax.jit
+    def f(y_mut, z):
+      x_mut[...] += 1.
+      x_mut[0] += 1
+      x_mut[1] += 5
+
+      y_mut[2] += 7
+      return z + 9
+
+    if jit:
+      f = jax.jit(f)
+
+    y_mut = core.mutable_array(np.zeros(3))
+
+    w = f(y_mut, 1)
+
+    self.assertAllClose(x_mut[...], jnp.array([2., 6., 1.]),
+                        check_dtypes=False)
+    self.assertAllClose(y_mut[...], jnp.array([0., 0., 7.]),
+                        check_dtypes=False)
+    self.assertAllClose(w, 10, check_dtypes=False)
+
 
 if CAN_USE_HYPOTHESIS:
 

@@ -67,14 +67,12 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding_impls import (
-    ArrayMapping, ArrayMappingOrAutoOrUnspecified,
-    AUTO, UnspecifiedValue, get_array_mapping as _get_array_mapping, is_auto,
+    ArrayMapping, ArrayMappingOrAutoOrUnspecified, AUTO, UNSPECIFIED,
+    UnspecifiedValue, get_array_mapping as _get_array_mapping, is_auto,
     is_unspecified, is_unspecified_or_auto, array_mapping_to_axis_resources,
-    SingleDeviceSharding, GSPMDSharding
-)
-from jax._src.util import (safe_map, safe_zip, partition_list,
-                           wrap_name, tuple_update, tuple_delete,
-                           distributed_debug_log,
+    SingleDeviceSharding, GSPMDSharding)
+from jax._src.util import (safe_map, safe_zip, partition_list, wrap_name,
+                           tuple_update, tuple_delete, distributed_debug_log,
                            unzip2, HashableFunction, weakref_lru_cache)
 from jax._src.state.types import AbstractRef, RefEffect
 
@@ -1153,14 +1151,14 @@ class ExecuteReplicated:
   __slots__ = ['xla_executable', 'name', 'backend', 'in_handler', 'out_handler',
                'has_unordered_effects', 'ordered_effects', 'keepalive',
                'has_host_callbacks', '_local_devices', 'kept_var_idx',
-               'out_mut', '__weakref__']
+               'mut', '__weakref__']
 
   def __init__(self, xla_executable, name, backend, in_handler: InputsHandler,
                out_handler: ResultsHandler,
                unordered_effects: list[core.Effect],
                ordered_effects: list[core.Effect], keepalive: Any,
                has_host_callbacks: bool, kept_var_idx: set[int],
-               out_mut: Sequence[int | None] | None):
+               mut: MutationData | None):
     self.xla_executable = xla_executable
     self.name = name
     self.backend = backend
@@ -1172,7 +1170,7 @@ class ExecuteReplicated:
     self.keepalive = keepalive
     self.has_host_callbacks = has_host_callbacks
     self.kept_var_idx = kept_var_idx
-    self.out_mut = out_mut
+    self.mut = mut
 
   def _add_tokens_to_inputs(self, input_bufs):
     if self.ordered_effects:
@@ -1195,6 +1193,8 @@ class ExecuteReplicated:
   @profiler.annotate_function
   def __call__(self, *args):
     args = [x for i, x in enumerate(args) if i in self.kept_var_idx]
+    if self.mut:
+      args = [*args, *self.mut.in_mut]
     input_bufs = self.in_handler(args)
     if (self.ordered_effects or self.has_unordered_effects
         or self.has_host_callbacks):
@@ -1215,11 +1215,11 @@ class ExecuteReplicated:
       out = self.out_handler(out_arrays)
     else:
       out = results.consume_with_handlers(self.out_handler.handlers)
-    if self.out_mut is None:
+    if self.mut is None:
       return out
     else:
       out_ = []
-      for i, o in zip(self.out_mut, out):
+      for i, o in zip(self.mut.out_mut, out):
         if i is not None:
           args[i]._buf = o
         else:
@@ -1781,19 +1781,38 @@ def _dce_jaxpr(closed_jaxpr, global_in_avals, api_name, fun_name,
   return (closed_jaxpr, global_in_avals, tuple(global_out_avals), donated_invars,
           kept_var_idx, name_stack)
 
+class MutationData(NamedTuple):
+  in_mut: list[core.MutableArray]
+  out_mut: list[int | None]
+
 @weakref_lru_cache
 def _discharge_refs(
     jaxpr: core.ClosedJaxpr
-) -> tuple[core.ClosedJaxpr, Sequence[int | None], Sequence[int | None]]:
+) -> tuple[core.ClosedJaxpr, Sequence[int | None], MutationData]:
   from jax._src.state.discharge import discharge_state
+  jaxpr, in_mut = _move_mutable_consts(jaxpr)
   new_jaxpr = core.ClosedJaxpr(*discharge_state(jaxpr.jaxpr, jaxpr.consts))
   count = it.count(len(jaxpr.out_avals))  # new outputs are appended to the end
   inout_map = {i: next(count) for i, a in enumerate(jaxpr.in_avals)
                if isinstance(a, AbstractRef)}
   outin_map = {j: i for i, j in inout_map.items()}
   inout_aliases = tuple(map(inout_map.get, range(len(new_jaxpr.in_avals))))
-  out_mut = tuple(map(outin_map.get, range(len(new_jaxpr.out_avals))))
-  return new_jaxpr, inout_aliases, out_mut
+  out_mut = list(map(outin_map.get, range(len(new_jaxpr.out_avals))))
+  return new_jaxpr, inout_aliases, MutationData(in_mut, out_mut)
+
+@weakref_lru_cache
+def _move_mutable_consts(
+    closed_jaxpr: core.ClosedJaxpr,
+) -> tuple[core.ClosedJaxpr, list[core.MutableArray]]:
+  jaxpr = closed_jaxpr.jaxpr
+  hoist = [isinstance(c, core.MutableArray) for c in closed_jaxpr.consts]
+  consts, in_mut = partition_list(hoist, closed_jaxpr.consts)
+  constvars, mutvars = partition_list(hoist, jaxpr.constvars)
+  invars = (*jaxpr.invars, *mutvars)
+  effects = pe.make_jaxpr_effects(constvars, invars, jaxpr.outvars, jaxpr.eqns)
+  jaxpr = core.Jaxpr(constvars, invars, jaxpr.outvars, jaxpr.eqns,
+                     effects, None)
+  return core.ClosedJaxpr(jaxpr, consts), in_mut
 
 
 @dataclasses.dataclass(frozen=True)
@@ -2012,16 +2031,20 @@ def lower_sharding_computation(
   in_layouts = tuple(l for i, l in enumerate(in_layouts) if i in kept_var_idx)
 
   if any(isinstance(e, RefEffect) for e in closed_jaxpr.effects):
-    closed_jaxpr, inout_aliases, out_mut = _discharge_refs(closed_jaxpr)
-    if out_mut:
-      out_layouts_ = iter(zip(out_shardings, out_layouts))
-      out_shardings, out_layouts = unzip2(
-          next(out_layouts_) if i is None else (in_shardings[i], in_layouts[i])
-          for i in out_mut)
-      assert next(out_layouts_, None) is None
-      global_out_avals = closed_jaxpr.out_avals
+    closed_jaxpr, inout_aliases, mut = _discharge_refs(closed_jaxpr)
+    in_shardings = (*in_shardings,) + (UNSPECIFIED,) * len(mut.in_mut)
+    in_layouts = (*in_layouts,) + (None,) * len(mut.in_mut)
+    donated_invars = (*donated_invars,) + (False,) * len(mut.in_mut)
+    out_layouts_ = iter(zip(out_shardings, out_layouts))
+    out_shardings, out_layouts = unzip2(
+        next(out_layouts_) if i is None else (in_shardings[i], in_layouts[i])
+        for i in mut.out_mut)
+    assert next(out_layouts_, None) is None
+    # TODO(yashkatariya): remove global_in_avals / global_out_avals
+    global_in_avals = closed_jaxpr.in_avals
+    global_out_avals = closed_jaxpr.out_avals
   else:
-    inout_aliases = out_mut = None
+    inout_aliases = mut = None
 
   jaxpr = closed_jaxpr.jaxpr
   assert len(out_shardings) == len(out_layouts) == len(global_out_avals), (
@@ -2106,7 +2129,7 @@ def lower_sharding_computation(
       host_callbacks=host_callbacks,
       keepalive=keepalive,
       kept_var_idx=kept_var_idx,
-      out_mut=out_mut,
+      mut=mut,
       backend=backend,
       device_assignment=da_object,
       committed=committed,
@@ -2775,7 +2798,7 @@ class UnloadedMeshExecutable:
   keepalive: Sequence[Any]
   host_callbacks: Sequence[Any]
   kept_var_idx: set[int]
-  out_mut: Sequence[None | int] | None
+  mut: MutationData | None
   auto_spmd_lowering: bool
   in_layouts: Sequence[SpecifiedLayout | None]
   out_layouts: Sequence[SpecifiedLayout | None]
@@ -2795,7 +2818,7 @@ class UnloadedMeshExecutable:
     unsafe_call = ExecuteReplicated(  # type: ignore  # assignment
         self.xla_executable, self.name, self.backend, handle_args,
         handle_outs, self.unordered_effects, self.ordered_effects, self.keepalive,
-        bool(self.host_callbacks), self.kept_var_idx, self.out_mut)
+        bool(self.host_callbacks), self.kept_var_idx, self.mut)
     return unsafe_call
 
   def load(self) -> MeshExecutable:
@@ -2829,7 +2852,7 @@ class UnloadedMeshExecutable:
                in_layouts: MaybeLayout,
                out_layouts: MaybeLayout,
                pmap_nreps: int = 1,
-               out_mut: Sequence[None | int] | None = None,
+               mut: MutationData | None = None,
                shape_poly_state: mlir.ShapePolyLoweringState | None = None,
                all_default_mem_kind: bool = True,
                all_args_info: AllArgsInfo | None = None,
@@ -2922,7 +2945,7 @@ class UnloadedMeshExecutable:
         keepalive=keepalive,
         host_callbacks=host_callbacks,
         kept_var_idx=kept_var_idx,
-        out_mut=out_mut,
+        mut=mut,
         auto_spmd_lowering=auto_spmd_lowering,
         in_layouts=in_layouts,  # type: ignore
         out_layouts=out_layouts,  # type: ignore
