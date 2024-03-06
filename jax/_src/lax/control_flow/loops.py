@@ -2046,16 +2046,18 @@ def map(f, xs):
   return ys
 
 def _rng_bit_generator_batching_rule(batched_args, batch_dims, *, shape, dtype, algorithm):
-  """Calls RBG in a loop and stacks the results."""
-  key, = batched_args
+  keys, = batched_args
   bd, = batch_dims
   if bd is batching.not_mapped:
-    return lax.rng_bit_generator_p.bind(key, shape=shape, dtype=dtype,
+    return lax.rng_bit_generator_p.bind(keys, shape=shape, dtype=dtype,
                                         algorithm=algorithm), (None, None)
-  key = batching.moveaxis(key, bd, 0)
-  map_body = lambda k: lax.rng_bit_generator_p.bind(k, shape=shape, dtype=dtype, algorithm=algorithm)
-  stacked_keys, stacked_bits = map(map_body, key)
-  return (stacked_keys, stacked_bits), (0, 0)
+  keys = batching.moveaxis(keys, bd, 0)
+  batch_size = keys.shape[0]
+  key = keys[0]
+  new_key, bits = lax.rng_bit_generator_p.bind(key, shape=(batch_size, *shape),
+                                               dtype=dtype, algorithm=algorithm)
+  new_keys = jax.lax.dynamic_update_index_in_dim(keys, new_key, 0, axis=0)
+  return (new_keys, bits), (0, 0)
 
 batching.primitive_batchers[lax.rng_bit_generator_p] = _rng_bit_generator_batching_rule  # type: ignore
 

@@ -784,6 +784,9 @@ jax_test(
             "notsan",  # Times out
         ],
     },
+    backend_variant_args = {
+        "gpu": ["--jax_num_generated_cases=40"],
+    },
     shard_count = {
         "cpu": 40,
         "gpu": 30,

@@ -2652,6 +2652,24 @@ class LaxTest(jtu.JaxTestCase):
     new_key, _ = lax.rng_bit_generator(key, (0,))
     self.assertAllClose(key, new_key)
 
+  def test_rng_bit_generator_vmap(self):
+    def f(key):
+      return lax.rng_bit_generator(key, shape=(5, 7))
+
+    keys = np.arange(3 * 4).reshape((3, 4)).astype(np.uint32)
+    out_keys, bits = jax.vmap(f)(keys)
+    self.assertEqual(out_keys.shape, (3, 4))
+    self.assertEqual(bits.shape, (3, 5, 7))
+
+  def test_rng_bit_generator_vmap_vmap(self):
+    def f(key):
+      return lax.rng_bit_generator(key, shape=(5, 7))
+
+    keys = np.arange(2 * 3 * 4).reshape((2, 3, 4)).astype(np.uint32)
+    out_keys, bits = jax.vmap(jax.vmap(f))(keys)
+    self.assertEqual(out_keys.shape, (2, 3, 4))
+    self.assertEqual(bits.shape, (2, 3, 5, 7))
+
   @jtu.sample_product(
       dtype=lax_test_util.all_dtypes + lax_test_util.python_scalar_types,
       weak_type=[True, False],
