@@ -48,14 +48,14 @@ jax_test(
     disable_configs = [
         "gpu",
         "gpu_a100",
+        "gpu_h100",
     ],
     enable_configs = [
         "gpu_x32",
         "gpu_a100_x32",
+        "gpu_p100_x32",
+        "gpu_h100_x32",
     ],
-    env = {
-        "JAX_TRITON_COMPILE_VIA_XLA": "0",
-    },
     shard_count = 4,
     deps = [
         "//jax:pallas_gpu",
@@ -81,12 +81,15 @@ jax_test(
     ],
     disable_configs = [
         "gpu",
-        "gpu_a100",
         "gpu_p100",
+        "gpu_a100",
+        "gpu_h100",
     ],
     enable_configs = [
         "gpu_x32",
         "gpu_a100_x32",
+        "gpu_p100_x32",
+        "gpu_h100_x32",
     ],
     shard_count = 1,
     deps = [
@@ -114,12 +117,15 @@ jax_test(
     ],
     disable_configs = [
         "gpu",
-        "gpu_a100",
         "gpu_p100",
+        "gpu_a100",
+        "gpu_h100",
     ],
     enable_configs = [
         "gpu_x32",
         "gpu_a100_x32",
+        "gpu_p100_x32",
+        "gpu_h100_x32",
     ],
     shard_count = 4,
     deps = [
