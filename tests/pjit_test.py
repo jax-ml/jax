@@ -3897,6 +3897,30 @@ class ArrayPjitTest(jtu.JaxTestCase):
     lowered_text = make_keys.lower(seeds).as_text()
     self.assertIn('unspecified_dims=[0,1]', lowered_text)
 
+  def test_partial_sharded_prng_key_inp(self):
+    input_shape = (8, 2, 2)
+    mesh = jtu.create_global_mesh((2, 2, 2), ('x', 'y', 'z'))
+    spec = P('x', 'y', None)
+
+    seeds, _ = create_array(input_shape, mesh, spec, dtype=np.uint32)
+
+    @jax.jit
+    def make_keys(seeds):
+      make_key = partial(prng.random_seed, impl=prng.threefry_prng_impl)
+      key = make_key(seeds)
+      return key.T
+
+    make_keys(seeds)
+    out = make_keys(seeds)  # cpp dispatch
+    self.assertEqual(out.sharding, NamedSharding(mesh, P(None, 'y', 'x')))
+
+    base_array = jax.random.key_data(out)
+    self.assertEqual(base_array.shape, (2, 2, 8, 2))
+    self.assertEqual(base_array.sharding, NamedSharding(mesh, P(None, 'y', 'x')))
+
+    lowered_text = make_keys.lower(seeds).as_text()
+    self.assertIn('unspecified_dims=[0,1,2]', lowered_text)
+
   def test_jit_partially_specified_shardings(self):
 
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))

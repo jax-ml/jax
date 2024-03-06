@@ -186,20 +186,20 @@ def _get_fastpath_data(
   out_reflattened, out_tree = pxla.reflatten_outputs_for_dispatch(out_tree, out_flat)
 
   use_fastpath = (
-      executable is not None and
-      isinstance(executable, pxla.MeshExecutable) and
-      isinstance(executable.unsafe_call, pxla.ExecuteReplicated) and
+      executable is not None
+      and isinstance(executable, pxla.MeshExecutable)
+      and isinstance(executable.unsafe_call, pxla.ExecuteReplicated)
       # No effects in computation
-      not executable.unsafe_call.ordered_effects and
-      not executable.unsafe_call.has_unordered_effects and
-      not executable.unsafe_call.has_host_callbacks and
-      all(isinstance(x, xc.ArrayImpl) for x in out_reflattened) and
+      and not executable.unsafe_call.ordered_effects
+      and not executable.unsafe_call.has_unordered_effects
+      and not executable.unsafe_call.has_host_callbacks
+      and all(isinstance(x, xc.ArrayImpl) for x in out_reflattened)
       # no attr state effects
-      not attrs_tracked and
+      and not attrs_tracked
       # no ref state effects
-      not any(isinstance(e, RefEffect) for e in effects) and
+      and not any(isinstance(e, RefEffect) for e in effects)
       # no prng reuse checking
-      not (config.enable_key_reuse_checks.value and any(
+      and not (config.enable_key_reuse_checks.value and any(
         hasattr(arg, 'dtype') and dtypes.issubdtype(arg.dtype, dtypes.prng_key)
         for arg in (*args_flat, *out_flat)))
       )
@@ -209,8 +209,14 @@ def _get_fastpath_data(
     out_committed = [o._committed for o in out_reflattened]
     kept_var_bitvec = [i in executable._kept_var_idx
                        for i in range(len(args_flat))]
+    in_shardings = [
+        a.dtype._rules.physical_sharding(a, s)
+        if a is not core.abstract_token and dtypes.issubdtype(a.dtype, dtypes.extended)
+        else s
+        for s, a in zip(executable._in_shardings, executable.in_avals)
+    ]
     fastpath_data = pxla.MeshExecutableFastpathData(
-        executable.xla_executable, out_tree, executable._in_shardings,
+        executable.xla_executable, out_tree, in_shardings,
         executable._out_shardings, out_avals, out_committed, kept_var_bitvec,
         executable.unsafe_call.in_handler.local_devices,
         executable.unsafe_call.in_handler.input_indices)
@@ -2082,7 +2088,6 @@ def _pjit_pp_rule(eqn, context, settings):
   return core._pp_eqn(eqn, context, settings, params=["name"] + sorted(params))
 
 core.pp_eqn_rules[pjit_p] = _pjit_pp_rule
-
 
 
 def _pjit_state_discharge_rule(

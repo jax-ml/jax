@@ -586,6 +586,7 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
     self.check_key_reuse(jax.grad(f_good), x, key)
 
 
+@jtu.with_config(jax_enable_key_reuse_checks=True)
 class KeyReuseEager(jtu.JaxTestCase):
   jit_msg = "Previously-consumed key passed to jit-compiled function at index 0"
   eager_bits_msg = "Previously-consumed key passed to random_bits at index 0"

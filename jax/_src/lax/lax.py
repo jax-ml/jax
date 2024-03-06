@@ -5116,8 +5116,12 @@ class BIntRules:
     return hlo_sharding
 
   @staticmethod
-  def logical_op_sharding(aval, phys_sharding):
+  def logical_sharding(aval, phys_sharding):
     return phys_sharding
+
+  @staticmethod
+  def physical_sharding(aval, sharding):
+    return sharding
 
   @staticmethod
   def convert_from(bint_dtype, other_dtype) -> bool:

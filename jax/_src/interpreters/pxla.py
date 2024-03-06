@@ -2471,6 +2471,15 @@ def _register_out_sharding_handler(
   _orig_out_sharding_handlers[sharding_cls] = handler
 
 
+def _gspmd_to_named_sharding_via_mesh(
+    out_s: sharding_impls.GSPMDSharding,
+    mesh: Mesh) -> sharding_impls.NamedSharding:
+  parsed_pspec = sharding_impls.parse_flatten_op_sharding(
+      out_s._hlo_sharding, mesh)[0]
+  return create_mesh_pspec_sharding(
+      mesh, parsed_pspec.get_partition_spec(), parsed_pspec,
+      out_s.memory_kind)
+
 def _gspmd_to_named_sharding(
     out_s: sharding_impls.GSPMDSharding,
     orig_in_s: sharding_impls.NamedSharding) -> sharding_impls.NamedSharding:
@@ -2688,7 +2697,7 @@ def _maybe_get_and_check_in_shardings(
     if is_unspecified(orig):
       if (aval is not core.abstract_token and
           dtypes.issubdtype(aval.dtype, dtypes.extended)):
-        xla_s = aval.dtype._rules.logical_op_sharding(aval, xla_s)
+        xla_s = aval.dtype._rules.logical_sharding(aval, xla_s)
       new_in_shardings.append(xla_s)
     else:
       # TODO(yashkatariya): Remove the if branch for abstract_token once
@@ -2726,7 +2735,7 @@ def _maybe_get_and_check_out_shardings(
     if is_unspecified(orig):
       if (aval is not core.abstract_token and
           dtypes.issubdtype(aval.dtype, dtypes.extended)):
-        xla_s = aval.dtype._rules.logical_op_sharding(aval, xla_s)
+        xla_s = aval.dtype._rules.logical_sharding(aval, xla_s)
       new_out_shardings.append(xla_s)
     else:
       xla_hlo_s = xla_s._to_xla_hlo_sharding(aval.ndim)  # type: ignore
@@ -3031,8 +3040,14 @@ class MeshExecutable(stages.XlaExecutable):
         out_committed = [o._committed for o in out_flat]
         kept_var_bitvec = [i in self._kept_var_idx
                            for i in range(len(args_flat))]
+        in_shardings = [
+            a.dtype._rules.physical_sharding(a, s)
+            if a is not core.abstract_token and dtypes.issubdtype(a.dtype, dtypes.extended)
+            else s
+            for s, a in zip(self._in_shardings, self.in_avals)
+        ]
         fastpath_data = MeshExecutableFastpathData(
-            self.xla_executable, out_tree_dispatch, self._in_shardings,
+            self.xla_executable, out_tree_dispatch, in_shardings,
             self._out_shardings, out_avals, out_committed, kept_var_bitvec,
             self.unsafe_call.in_handler.local_devices,
             self.unsafe_call.in_handler.input_indices)

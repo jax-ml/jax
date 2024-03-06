@@ -2979,8 +2979,12 @@ class FooTyRules:
     return xc.HloSharding.from_proto(new_op_sharding)
 
   @staticmethod
-  def logical_op_sharding(aval, phys_sharding):
+  def logical_sharding(aval, phys_sharding):
     return phys_sharding
+
+  @staticmethod
+  def physical_sharding(aval, sharding):
+    return sharding
 
   @staticmethod
   def result_handler(sticky_device, aval):

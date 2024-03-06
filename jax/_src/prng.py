@@ -234,7 +234,7 @@ class PRNGKeyArray(jax.Array):
   @property
   def sharding(self):
     phys_sharding = self._base_array.sharding
-    return KeyTyRules.logical_op_sharding(self.aval, phys_sharding)
+    return KeyTyRules.logical_sharding(self.aval, phys_sharding)
 
   def _is_scalar(self):
     base_ndim = len(self._impl.key_shape)
@@ -345,6 +345,22 @@ def make_key_array_phys_sharding(aval, sharding):
         sharding._device_assignment,
         KeyTyRules.physical_hlo_sharding(aval, hlos))
 
+
+def get_logical_gspmd_sharding(aval, phys_sharding):
+  key_shape = aval.dtype._impl.key_shape
+  phys_hlo_sharding = phys_sharding._to_xla_hlo_sharding(
+      aval.ndim + len(key_shape))
+  partitions, num_replicas = op_shardings.get_num_ways_dim_sharded(
+      phys_hlo_sharding)
+  suffix = [] if num_replicas == 1 else [num_replicas]
+  # Create logical sharding by cutting off the replicated trailing dims.
+  logical_op_sharding = phys_hlo_sharding.to_proto().clone()
+  tad = partitions[:-len(key_shape)] + suffix
+  logical_op_sharding.tile_assignment_dimensions = tad
+  return GSPMDSharding(phys_sharding._device_assignment,
+                       xc.HloSharding.from_proto(logical_op_sharding))
+
+
 class KeyTyRules:
 
   @staticmethod
@@ -378,7 +394,12 @@ class KeyTyRules:
     return xc.HloSharding.from_proto(new_op_sharding)
 
   @staticmethod
-  def logical_op_sharding(aval, phys_sharding) -> XLACompatibleSharding:
+  def physical_sharding(
+      aval, sharding: XLACompatibleSharding) -> XLACompatibleSharding:
+    return make_key_array_phys_sharding(aval, sharding)
+
+  @staticmethod
+  def logical_sharding(aval, phys_sharding) -> XLACompatibleSharding:
     # The trailing dims should always be replicated.
     aval.dtype._rules.check_replicated_trailing_dims(phys_sharding, aval)
 
@@ -392,23 +413,11 @@ class KeyTyRules:
       return PmapSharding(devices=phys_sharding.devices,
                           sharding_spec=logical_sharding_spec)
     elif isinstance(phys_sharding, NamedSharding):
-      key_shape = aval.dtype._impl.key_shape
-      return pxla.create_mesh_pspec_sharding(
-          phys_sharding.mesh,
-          PartitionSpec(*phys_sharding.spec[:-len(key_shape)]))
+      logical_gs = get_logical_gspmd_sharding(aval, phys_sharding)
+      return pxla._gspmd_to_named_sharding_via_mesh(
+          logical_gs, phys_sharding.mesh)
     else:
-      key_shape = aval.dtype._impl.key_shape
-      phys_hlo_sharding = phys_sharding._to_xla_hlo_sharding(
-          aval.ndim + len(key_shape))
-      partitions, num_replicas = op_shardings.get_num_ways_dim_sharded(
-          phys_hlo_sharding)
-      suffix = [] if num_replicas == 1 else [num_replicas]
-      # Create logical sharding by cutting off the replicated trailing dims.
-      logical_op_sharding = phys_hlo_sharding.to_proto().clone()
-      tad = partitions[:-len(key_shape)] + suffix
-      logical_op_sharding.tile_assignment_dimensions = tad
-      return GSPMDSharding(phys_sharding._device_assignment,
-                           xc.HloSharding.from_proto(logical_op_sharding))
+      return get_logical_gspmd_sharding(aval, phys_sharding)
 
   @staticmethod
   def result_handler(sticky_device, aval):

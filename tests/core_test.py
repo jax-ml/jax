@@ -27,7 +27,7 @@ from jax import lax
 from jax import numpy as jnp
 from jax import jvp, linearize, vjp, jit, make_jaxpr
 from jax.api_util import flatten_fun_nokwargs
-from jax import config
+from jax._src import config
 
 from jax._src import core
 from jax._src import linear_util as lu
@@ -750,16 +750,17 @@ class DynamicShapesTest(jtu.JaxTestCase):
       core.check_jaxpr(jaxpr)
 
   def test_check_jaxpr_key_reuse(self):
-    try:
-      from jax.experimental.key_reuse import KeyReuseError
-    except ImportError:
-      self.skipTest("Test requires jax.experimental.key_reuse")
-    def f(seed):
-      key = jax.random.key(seed)
-      return jax.random.uniform(key) + jax.random.normal(key)
-    with jax.enable_checks(True):
-      with self.assertRaises(KeyReuseError):
-        jax.jit(f)(0)
+    with config.enable_key_reuse_checks(True):
+      try:
+        from jax.experimental.key_reuse import KeyReuseError
+      except ImportError:
+        self.skipTest("Test requires jax.experimental.key_reuse")
+      def f(seed):
+        key = jax.random.key(seed)
+        return jax.random.uniform(key) + jax.random.normal(key)
+      with jax.enable_checks(True):
+        with self.assertRaises(KeyReuseError):
+          jax.jit(f)(0)
 
 
 if __name__ == '__main__':
