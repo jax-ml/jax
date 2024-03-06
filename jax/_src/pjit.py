@@ -1437,7 +1437,8 @@ class SameDeviceAssignmentTuple:
 
   def __hash__(self):
     shardings_hash = tuple(
-        s._hlo_sharding_hash if isinstance(s, GSPMDSharding) else s  # type: ignore
+        (s._hlo_sharding_hash, s.memory_kind)  # type: ignore
+        if isinstance(s, GSPMDSharding) else s
         for s in self.shardings)
     if self.device_assignment is None:
       return hash(shardings_hash)

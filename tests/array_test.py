@@ -32,7 +32,8 @@ from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.util import safe_zip
 from jax._src.sharding_impls import (_op_sharding_to_pos_sharding,
-                                     pmap_sharding_devices_indices_map)
+                                     pmap_sharding_devices_indices_map,
+                                     NamedSharding, GSPMDSharding)
 from jax.experimental.pjit import pjit
 from jax.experimental import multihost_utils
 from jax.sharding import PartitionSpec as P
@@ -1190,6 +1191,16 @@ class ShardingTest(jtu.JaxTestCase):
     msg = "jax.make_array_from_single_device_arrays requires a list of concrete arrays"
     with self.assertRaisesRegex(ValueError, msg):
       jax.jit(f)(x)
+
+  def test_gspmd_sharding_hash_eq(self):
+    mesh = jtu.create_global_mesh((1, 1, 1), ('x', 'y', 'z'))
+    ns = NamedSharding(mesh, P('x', 'y', 'z'))
+
+    x1 = GSPMDSharding(mesh._flat_devices_tuple, ns._to_xla_hlo_sharding(3))
+    x2 = GSPMDSharding.get_replicated(mesh._flat_devices_tuple)
+
+    self.assertEqual(x1, x2)
+    self.assertEqual(hash(x1), hash(x2))
 
 
 class RngShardingTest(jtu.JaxTestCase):

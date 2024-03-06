@@ -1802,7 +1802,8 @@ class SemanticallyEqualShardings:
 
   def __hash__(self):
     return hash(tuple(
-        s._hlo_sharding_hash if isinstance(s, sharding_impls.GSPMDSharding) else s  # type: ignore
+        (s._hlo_sharding_hash, s.memory_kind)  # type: ignore
+        if isinstance(s, sharding_impls.GSPMDSharding) else s
         for s in self.shardings))
 
   def __eq__(self, other):
