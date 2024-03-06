@@ -17,6 +17,7 @@ limitations under the License.
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 
 #include "jaxlib/gpu/vendor.h"
 

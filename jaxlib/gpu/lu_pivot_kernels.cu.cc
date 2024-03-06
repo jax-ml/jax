@@ -16,6 +16,7 @@ limitations under the License.
 #include "jaxlib/gpu/lu_pivot_kernels.h"
 
 #include <array>
+#include <cstdint>
 #include <iostream>
 
 #include "jaxlib/gpu/vendor.h"
