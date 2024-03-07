@@ -73,11 +73,9 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
     super().setUp()
     self.orig_memories_flag = config.enable_memories.value
     jax.config.update('jax_enable_memories', True)
-    FLAGS.xla_tpu_enable_host_aware_passes = True
 
   def tearDown(self):
     jax.config.update('jax_enable_memories', self.orig_memories_flag)
-    FLAGS.xla_tpu_enable_host_aware_passes = False
     super().tearDown()
 
   @parameterized.named_parameters(
@@ -1104,6 +1102,12 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Memories do not work on CPU and GPU backends yet.")
     super().setUp()
+    self.orig_memories_flag = config.enable_memories.value
+    jax.config.update('jax_enable_memories', True)
+
+  def tearDown(self):
+    jax.config.update('jax_enable_memories', self.orig_memories_flag)
+    super().tearDown()
 
   def test_remat_jaxpr_offloadable(self):
     mesh = jtu.create_global_mesh((2,), ("x",))
