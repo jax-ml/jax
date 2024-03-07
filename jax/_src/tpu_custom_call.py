@@ -41,14 +41,6 @@ from jaxlib.mlir.dialects import stablehlo
 import numpy as np
 
 FLAGS = flags.FLAGS
-_MOSAIC_ON_DEVICE_CHECKS = config.define_string_state(
-    name="mosaic_on_device_checks",
-    default="",
-    help=(
-        "If True, additional on-device asserts are inserted into the program,"
-        " to verify operation invariants (accesses in-bounds, etc.)"
-    ),
-)
 
 _MOSAIC_ALLOW_HLO = config.define_bool_state(
     name="jax_mosaic_allow_hlo",
