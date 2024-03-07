@@ -1421,7 +1421,7 @@ def _compute_pointers_from_indices(
       else:
         ptr_dim_offset = _add(
             _bcast_to(index.start, [index.size]),
-            _make_range(0, index.size),
+            _cast(_make_range(0, index.size), index.start.type),
         )
       # We need to add broadcastable dimensions for the advanced int indexing
       # and for previous slices
