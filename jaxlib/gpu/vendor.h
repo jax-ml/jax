@@ -496,6 +496,7 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpuMemcpyHostToDevice hipMemcpyHostToDevice
 #define gpuMemcpyDeviceToHost hipMemcpyDeviceToHost
 #define gpuStreamSynchronize hipStreamSynchronize
+#define gpuStreamWaitEvent hipStreamWaitEvent
 #define gpuSuccess hipSuccess
 
 #define gpuCtxGetDevice hipCtxGetDevice
