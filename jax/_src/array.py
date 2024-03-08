@@ -187,7 +187,12 @@ class ArrayImpl(basearray.Array):
 
   def _check_and_rearrange(self):
     for db in self._arrays:
-      if db.dtype != self.dtype:
+
+      def _allowed_mismatch(aval_dtype, target_dtype) -> bool:
+        # It's possible to read (u)int4 from int8 container.
+        return aval_dtype == 'int8' and target_dtype in ['int4', 'uint4']
+
+      if db.dtype != self.dtype and not _allowed_mismatch(db.dtype, self.dtype):
         raise ValueError(
             "Input buffers to `Array` must have matching dtypes. "
             f"Got {db.dtype}, expected {self.dtype} for buffer: {db}")
