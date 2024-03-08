@@ -595,6 +595,15 @@ class KeyReuseEagerTest(jtu.JaxTestCase):
   eager_bits_msg = "Previously-consumed key passed to random_bits at index 0"
   traced_bits_msg = "In random_bits, argument 0 is already consumed."
 
+  def test_clone_eager(self):
+    key = jax.random.key(0)
+    key2 = jax.random.clone(key)
+    self.assertIsNot(key, key2)
+
+    _ = jax.random.uniform(key)
+    self.assertTrue(key._consumed)
+    self.assertFalse(key2._consumed)
+
   def test_simple_reuse_nojit(self):
     key = jax.random.key(0)
     _ = jax.random.bits(key)

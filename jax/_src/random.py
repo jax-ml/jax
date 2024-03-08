@@ -30,6 +30,7 @@ from jax.numpy.linalg import cholesky, svd, eigh
 
 from jax._src import config
 from jax._src import core
+from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import prng
 from jax._src import xla_bridge
@@ -2615,7 +2616,7 @@ def binomial(
 
 # Functions related to key reuse checking
 random_clone_p = core.Primitive("random_clone")
-random_clone_p.def_impl(lambda x: x)
+dispatch.simple_impl(random_clone_p)
 random_clone_p.def_abstract_eval(lambda x: x)
 batching.defvectorized(random_clone_p)
 mlir.register_lowering(random_clone_p, lambda _, k: [k])
