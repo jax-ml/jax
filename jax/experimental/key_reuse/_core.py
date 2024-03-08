@@ -149,7 +149,7 @@ key_reuse_signatures: dict[core.Primitive, KeyReuseSignature] = {}
 
 key_reuse_signatures[consume_p] = KeyReuseSignature([Sink(0)], [], [Forward(0, 0)])
 key_reuse_signatures[assert_consumed_value_p] = KeyReuseSignature([], [], [Forward(0, 0)])
-key_reuse_signatures[prng.reuse_key_p] = KeyReuseSignature([], [Source(0)])
+key_reuse_signatures[random.random_clone_p] = KeyReuseSignature([], [Source(0)])
 key_reuse_signatures[prng.random_bits_p] = KeyReuseSignature([Sink(0)], [])
 # TODO(jakevdp): should fold_in sink its input key?
 # key_reuse_signatures[prng.random_fold_in_p] = KeyReuseSignature([Sink(0)], [Source(0)])

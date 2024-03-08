@@ -588,6 +588,14 @@ class KeyArrayTest(jtu.JaxTestCase):
     key = random.key(42)
     self.assertIsInstance(key, prng_internal.PRNGKeyArray)
 
+  def test_random_clone(self):
+    # Here we test value semantics and compatibility with jit/vmap
+    # key reuse semantics are tested in key_reuse_test.py
+    keys = jax.random.split(jax.random.key(0), 5)
+    self.assertKeysEqual(keys, jax.random.clone(keys))
+    self.assertKeysEqual(keys, jax.jit(jax.random.clone)(keys))
+    self.assertKeysEqual(keys, jax.vmap(jax.random.clone)(keys))
+
   def test_issubdtype(self):
     key = random.key(42)
 

@@ -1377,26 +1377,3 @@ unsafe_rbg_prng_impl = PRNGImpl(
     tag='urbg')
 
 register_prng(unsafe_rbg_prng_impl)
-
-
-# Primitives related to key reuse
-reuse_key_p = core.Primitive("reuse_key")
-reuse_key_p.def_impl(lambda x: x)
-reuse_key_p.def_abstract_eval(lambda x: x)
-batching.defvectorized(reuse_key_p)
-mlir.register_lowering(reuse_key_p, lambda _, k: [k])
-
-def reuse_key(key):
-  """Explicitly mark a key as unconsumed.
-
-  Outside the context of key reuse checking (see :mod:`jax.experimental.key_reuse`)
-  this function operates as an identity.
-
-  Example:
-
-    >>> import jax
-    >>> key = jax.random.key(0)
-    >>> data = jax.random.uniform(key)
-    >>> same_data = jax.random.uniform(reuse_key(key))
-  """
-  return reuse_key_p.bind(key)

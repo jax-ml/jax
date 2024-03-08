@@ -145,6 +145,7 @@ from jax._src.random import (
   cauchy as cauchy,
   chisquare as chisquare,
   choice as choice,
+  clone as clone,
   dirichlet as dirichlet,
   double_sided_maxwell as double_sided_maxwell,
   exponential as exponential,

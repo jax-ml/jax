@@ -394,9 +394,7 @@ def _scan_impl_loop(*args, reverse, length, num_consts, num_carry, linear,
     i_ = length - i - 1 if reverse else i
     # TODO(jakevdp)[key-reuse]: this key reuse logic is not quite right,
     # because the scan body may consume any keys within it.
-    # Import here to avoid circular imports
-    from jax.experimental import key_reuse
-    xs_unconsumed =  _map(key_reuse.reuse_key, xs)
+    xs_unconsumed =  _map(jax.random.clone, xs)
     x = _map(partial(_dynamic_index_array, i_), x_avals, xs_unconsumed)
     out_flat = f_impl(*consts, *carry, *x)
     carry_out, y_updates = split_list(out_flat, [num_carry])

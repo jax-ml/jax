@@ -2611,3 +2611,28 @@ def binomial(
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   return _binomial(key, n, p, shape, dtype)
+
+
+# Functions related to key reuse checking
+random_clone_p = core.Primitive("random_clone")
+random_clone_p.def_impl(lambda x: x)
+random_clone_p.def_abstract_eval(lambda x: x)
+batching.defvectorized(random_clone_p)
+mlir.register_lowering(random_clone_p, lambda _, k: [k])
+
+def clone(key):
+  """Clone a key for reuse
+
+  Outside the context of key reuse checking (see :mod:`jax.experimental.key_reuse`)
+  this function operates as an identity.
+
+  Example:
+
+    >>> import jax
+    >>> key = jax.random.key(0)
+    >>> data = jax.random.uniform(key)
+    >>> cloned_key = jax.random.clone(key)
+    >>> same_data = jax.random.uniform(cloned_key)
+    >>> assert data == same_data
+  """
+  return random_clone_p.bind(key)
