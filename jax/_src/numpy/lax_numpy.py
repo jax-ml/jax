@@ -2438,7 +2438,7 @@ def fromiter(*args, **kwargs):
 """)
 def from_dlpack(x: Any) -> Array:
   from jax.dlpack import from_dlpack  # pylint: disable=g-import-not-at-top
-  return from_dlpack(x.__dlpack__())
+  return from_dlpack(x)
 
 @util.implements(np.fromfunction)
 def fromfunction(function: Callable[..., Array], shape: Any,
