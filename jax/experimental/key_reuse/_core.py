@@ -21,6 +21,7 @@ from typing import Any, Callable, NamedTuple
 import jax
 from jax import lax
 from jax import tree_util
+from jax.errors import KeyReuseError
 from jax.interpreters import batching, mlir
 from jax._src import api_util
 from jax._src import config
@@ -98,9 +99,6 @@ class KeyReuseSignature(NamedTuple):
       if isinstance(arg_in, prng.PRNGKeyArray) and isinstance(arg_out, prng.PRNGKeyArray):
         arg_out._consumed = arg_in._consumed
 
-
-class KeyReuseError(RuntimeError):
-  pass
 
 consume_p = core.Primitive("consume")
 consume_p.def_impl(lambda x: x)
