@@ -116,8 +116,9 @@ Here is a short summary:
    identical across JAX/XLA versions    ✅        ✅
    =================================   ========  =========  ===  ==========  =====  ============
 
-(*): with jax_threefry_partitionable=1 set
-(**): with XLA_FLAGS=--xla_tpu_spmd_rng_bit_generator_unsafe=1 set
+(*): with ``jax_threefry_partitionable=1`` set
+
+(**): with ``XLA_FLAGS=--xla_tpu_spmd_rng_bit_generator_unsafe=1`` set
 
 The difference between "rbg" and "unsafe_rbg" is that while "rbg" uses a less
 robust/studied hash function for random value generation (but not for
