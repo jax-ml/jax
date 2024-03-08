@@ -23,9 +23,10 @@ import jax.numpy as jnp
 from jax._src import prng
 from jax._src import random
 from jax._src import test_util as jtu
+from jax.errors import KeyReuseError
 from jax.experimental.key_reuse._core import (
   assert_consumed, assert_unconsumed, consume, consume_p)
-from jax.experimental.key_reuse import _core, KeyReuseError
+from jax.experimental.key_reuse import _core
 
 from jax import config
 config.parse_flags_with_absl()
