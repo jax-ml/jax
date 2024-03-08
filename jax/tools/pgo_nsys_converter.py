@@ -16,7 +16,6 @@ import csv
 import re
 import sys
 import argparse
-import psutil
 import os
 import shutil
 import subprocess
