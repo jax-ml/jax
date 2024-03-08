@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from functools import partial, reduce, wraps
-from typing import Any, Callable, NamedTuple
+from typing import Any, Callable, Iterator, NamedTuple
 
 import jax
 from jax import lax
@@ -41,36 +41,91 @@ from jax.experimental.shard_map import shard_map_p
 import numpy as np
 
 
-class Sink(NamedTuple):
+# Create Source() and Sink() objects which validate inputs, have
+# correct equality semantics, and are hashable & immutable.
+class _SourceSinkBase:
   idx: int
-  mask: bool | np.ndarray = True
+  mask: bool | np.ndarray
+
+  def __init__(self, idx: int, mask: bool | np.bool_ | np.ndarray = True):
+    assert isinstance(idx, int)
+    if isinstance(mask, np.ndarray):
+      assert mask.dtype == np.dtype('bool')
+      if np.all(mask):
+        mask = True
+      elif not np.any(mask):
+        mask = False
+      elif mask.flags.writeable:
+          mask = np.array(mask, copy=True)
+          mask.flags.writeable = False
+    elif isinstance(mask, np.bool_):
+      mask = bool(mask)
+    else:
+      assert isinstance(mask, bool)
+    super().__setattr__("idx", idx)
+    super().__setattr__("mask", mask)
+
+  def __setattr__(self, *args, **kwargs):
+    raise ValueError(f"{self.__class__.__name__} is immutable")
+
+  def __eq__(self, other):
+    return (self.__class__ == other.__class__
+            and self.idx == other.idx
+            and np.shape(self.mask) == np.shape(other.mask)
+            and np.all(self.mask == other.mask))
+
+  def __hash__(self):
+    if isinstance(self.mask, bool):
+      return hash((self.__class__, self.idx, self.mask))
+    else:
+      mask = np.asarray(self.mask)
+      return hash((self.__class__, self.idx, mask.shape,
+                   tuple(mask.flatten().tolist())))
 
   def __repr__(self):
-    if isinstance(self.mask, bool) and self.mask:
-      return f"Sink({self.idx})"
-    else:
-      return f"Sink({self.idx}, mask={self.mask})"
+    if self.mask is True:
+      return f"{self.__class__.__name__}({self.idx})"
+    return f"{self.__class__.__name__}({self.idx}, {self.mask})"
 
 
-class Source(NamedTuple):
-  idx: int
-  mask: bool | np.ndarray = True
+class Sink(_SourceSinkBase):
+  pass
 
-  def __repr__(self):
-    if isinstance(self.mask, bool) and self.mask:
-      return f"Source({self.idx})"
-    else:
-      return f"Source({self.idx}, mask={self.mask})"
+
+class Source(_SourceSinkBase):
+  pass
+
 
 class Forward(NamedTuple):
   in_idx: int
   out_idx: int
 
 
-class KeyReuseSignature(NamedTuple):
-  sinks: list[Sink]
-  sources: list[Source]
-  forwards: list[Forward] = []
+# KeyReuseSignature is essentially a frozen set of Source/Sink/Forward
+# objects, with a few convenience methods related to key reuse checking.
+class KeyReuseSignature:
+  _args: frozenset[Source | Sink | Forward]
+
+  def __init__(self, *args):
+    self._args = frozenset(args)
+
+  def __eq__(self, other):
+    return isinstance(other, KeyReuseSignature) and self._args == other._args
+
+  def __hash__(self):
+    return hash(self._args)
+
+  @property
+  def sinks(self) -> Iterator[Sink]:
+    yield from (s for s in self._args if isinstance(s, Sink))
+
+  @property
+  def sources(self) -> Iterator[Source]:
+    yield from (s for s in self._args if isinstance(s, Source))
+
+  @property
+  def forwards(self) -> Iterator[Forward]:
+    yield from (s for s in self._args if isinstance(s, Forward))
 
   def check_signature(self, *args, funcname="function", context=None):
     for sink in self.sinks:
@@ -145,34 +200,33 @@ def _check_consumed_value(eqn, consumed):
 # The behavior of most primitives can be described via simple signatures.
 key_reuse_signatures: dict[core.Primitive, KeyReuseSignature] = {}
 
-key_reuse_signatures[consume_p] = KeyReuseSignature([Sink(0)], [], [Forward(0, 0)])
-key_reuse_signatures[assert_consumed_value_p] = KeyReuseSignature([], [], [Forward(0, 0)])
-key_reuse_signatures[random.random_clone_p] = KeyReuseSignature([], [Source(0)])
-key_reuse_signatures[prng.random_bits_p] = KeyReuseSignature([Sink(0)], [])
+key_reuse_signatures[consume_p] = KeyReuseSignature(Sink(0), Forward(0, 0))
+key_reuse_signatures[assert_consumed_value_p] = KeyReuseSignature(Forward(0, 0))
+key_reuse_signatures[random.random_clone_p] = KeyReuseSignature(Source(0))
+key_reuse_signatures[prng.random_bits_p] = KeyReuseSignature(Sink(0))
 # TODO(jakevdp): should fold_in sink its input key?
-# key_reuse_signatures[prng.random_fold_in_p] = KeyReuseSignature([Sink(0)], [Source(0)])
-key_reuse_signatures[prng.random_fold_in_p] = KeyReuseSignature([], [Source(0)])
-key_reuse_signatures[prng.random_seed_p] = KeyReuseSignature([], [Source(0)])
-key_reuse_signatures[prng.random_split_p] = KeyReuseSignature([Sink(0)], [Source(0)])
-key_reuse_signatures[random.random_gamma_p] = KeyReuseSignature([Sink(0)], [])
+key_reuse_signatures[prng.random_fold_in_p] = KeyReuseSignature(Source(0))
+key_reuse_signatures[prng.random_seed_p] = KeyReuseSignature(Source(0))
+key_reuse_signatures[prng.random_split_p] = KeyReuseSignature(Sink(0), Source(0))
+key_reuse_signatures[random.random_gamma_p] = KeyReuseSignature(Sink(0))
 # TODO(jakevdp): broadcast should probably consume the input to avoid implicit duplication
-key_reuse_signatures[lax.broadcast_in_dim_p] = KeyReuseSignature([], [], [Forward(0, 0)])
-key_reuse_signatures[lax.copy_p] = KeyReuseSignature([], [], [Forward(0, 0)])
-key_reuse_signatures[lax.convert_element_type_p] = KeyReuseSignature([], [], [Forward(0, 0)])
-key_reuse_signatures[lax.device_put_p] = KeyReuseSignature([], [], [Forward(0, 0)])
-key_reuse_signatures[lax.reshape_p] = KeyReuseSignature([], [], [Forward(0, 0)])
-key_reuse_signatures[lax.squeeze_p] = KeyReuseSignature([], [], [Forward(0, 0)])
-key_reuse_signatures[prng.random_wrap_p] = KeyReuseSignature([], [Source(0)], [])
+key_reuse_signatures[lax.broadcast_in_dim_p] = KeyReuseSignature(Forward(0, 0))
+key_reuse_signatures[lax.copy_p] = KeyReuseSignature(Forward(0, 0))
+key_reuse_signatures[lax.convert_element_type_p] = KeyReuseSignature(Forward(0, 0))
+key_reuse_signatures[lax.device_put_p] = KeyReuseSignature(Forward(0, 0))
+key_reuse_signatures[lax.reshape_p] = KeyReuseSignature(Forward(0, 0))
+key_reuse_signatures[lax.squeeze_p] = KeyReuseSignature(Forward(0, 0))
+key_reuse_signatures[prng.random_wrap_p] = KeyReuseSignature(Source(0))
 # TODO(jakevdp): should unwrap sink its input key?
-key_reuse_signatures[prng.random_unwrap_p] = KeyReuseSignature([], [], [])
-key_reuse_signatures[debug_callback_p] = KeyReuseSignature([], [])
-key_reuse_signatures[lax.dynamic_slice_p] = KeyReuseSignature([], [], [Forward(0, 0)])
-key_reuse_signatures[lax.dynamic_update_slice_p] = KeyReuseSignature([Sink(1)], [], [Forward(0, 0)])
-key_reuse_signatures[lax.gather_p] = KeyReuseSignature([], [], [Forward(0, 0)])
-key_reuse_signatures[lax.scatter_p] = KeyReuseSignature([Sink(2)], [], [Forward(0, 0)])
+key_reuse_signatures[prng.random_unwrap_p] = KeyReuseSignature()
+key_reuse_signatures[debug_callback_p] = KeyReuseSignature()
+key_reuse_signatures[lax.dynamic_slice_p] = KeyReuseSignature(Forward(0, 0))
+key_reuse_signatures[lax.dynamic_update_slice_p] = KeyReuseSignature(Sink(1), Forward(0, 0))
+key_reuse_signatures[lax.gather_p] = KeyReuseSignature(Forward(0, 0))
+key_reuse_signatures[lax.scatter_p] = KeyReuseSignature(Sink(2), Forward(0, 0))
 # Equality checks don't consume
-key_reuse_signatures[lax.eq_p] = KeyReuseSignature([], [], [])
-key_reuse_signatures[lax.ne_p] = KeyReuseSignature([], [], [])
+key_reuse_signatures[lax.eq_p] = KeyReuseSignature()
+key_reuse_signatures[lax.ne_p] = KeyReuseSignature()
 
 # Rules which require more dynamic logic.
 key_reuse_signatures_dynamic: dict[core.Primitive, Callable[..., KeyReuseSignature]] = {}
@@ -182,8 +236,7 @@ def unknown_signature(eqn):
   def is_key(var: core.Atom):
     return hasattr(var.aval, "dtype") and jax.dtypes.issubdtype(var.aval.dtype, jax.dtypes.prng_key)
   return KeyReuseSignature(
-    sinks=[Sink(idx, True) for idx, var in enumerate(eqn.invars) if is_key(var)],
-    sources=[],
+    *(Sink(idx) for idx, var in enumerate(eqn.invars) if is_key(var))
   )
 
 @weakref_lru_cache
@@ -215,7 +268,6 @@ def get_jaxpr_type_signature(jaxpr: core.Jaxpr) -> KeyReuseSignature:
     if np.any(np.logical_and(consumed.get(var, False), mask)):
       return True
     consumed[var] = np.logical_or(consumed.get(var, False), mask)
-
 
   def source(var: core.Atom, mask=False):
     if not is_key(var):
@@ -262,13 +314,13 @@ def get_jaxpr_type_signature(jaxpr: core.Jaxpr) -> KeyReuseSignature:
         source(eqn.outvars[src.idx])
 
   return KeyReuseSignature(
-    sinks=[Sink(i, consumed[v]) for i, v in enumerate(jaxpr.invars)
-           if is_key(v) and np.any(consumed.get(v, False))],
-    sources=[Source(i) for i, v in enumerate(jaxpr.outvars)
-             if is_key(v) and resolve_forwards(v) not in jaxpr.invars and not consumed.get(v, False)],
-    forwards=[Forward(jaxpr.invars.index(resolve_forwards(outvar)), idx_out)  # type: ignore[arg-type]
-              for idx_out, outvar in enumerate(jaxpr.outvars)
-              if is_key(outvar) and resolve_forwards(outvar) in jaxpr.invars]
+    *(Sink(i, consumed[v]) for i, v in enumerate(jaxpr.invars)
+      if is_key(v) and np.any(consumed.get(v, False))),
+    *(Source(i) for i, v in enumerate(jaxpr.outvars)
+      if is_key(v) and resolve_forwards(v) not in jaxpr.invars and not consumed.get(v, False)),
+    *(Forward(jaxpr.invars.index(resolve_forwards(outvar)), idx_out)  # type: ignore[arg-type]
+      for idx_out, outvar in enumerate(jaxpr.outvars)
+      if is_key(outvar) and resolve_forwards(outvar) in jaxpr.invars)
   )
 
 
@@ -292,16 +344,16 @@ def check_key_reuse(fun: Callable[..., Any], /, *args: Any) -> None:
 def _slice_signature(eqn):
   in_aval = eqn.invars[0].aval
   if not jax.dtypes.issubdtype(in_aval.dtype, jax.dtypes.prng_key):
-    return KeyReuseSignature([], [], [Forward(0, 0)])
+    return KeyReuseSignature(Forward(0, 0))
   if any(core.is_symbolic_dim(s) for s in in_aval.shape):
-    return KeyReuseSignature([], [], [Forward(0, 0)])
+    return KeyReuseSignature(Forward(0, 0))
   start_indices = eqn.params['start_indices']
   limit_indices = eqn.params['limit_indices']
   strides = eqn.params['strides'] or (1,) * len(start_indices)
   idx = tuple(slice(*tup) for tup in util.safe_zip(start_indices, limit_indices, strides))
   sink = np.zeros(in_aval.shape, dtype=bool)
   sink[idx] = True
-  return KeyReuseSignature([Sink(0, sink)], [Source(0)])
+  return KeyReuseSignature(Sink(0, sink), Source(0))
 
 key_reuse_signatures_dynamic[lax.slice_p] = _slice_signature
 
@@ -329,7 +381,7 @@ def _cond_key_type_signature(eqn):
   combined_sources = [Source(i, reduce(np.logical_and, m)) for i, m in sources.items()]
   combined_forwards = [Forward(f.in_idx + 1, f.out_idx) for f in
                        set.intersection(*(set(sig.forwards) for sig in signatures))]
-  return KeyReuseSignature(combined_sinks, combined_sources, combined_forwards)
+  return KeyReuseSignature(*combined_sinks, *combined_sources, *combined_forwards)
 
 key_reuse_signatures_dynamic[lax.cond_p] = _cond_key_type_signature
 
@@ -410,7 +462,7 @@ def _remat_key_type_signature(eqn):
   #  2) will never create keys
   # Therefore, the differentiated pass is a no-op.
   if eqn.params['differentiated']:
-    return KeyReuseSignature([], [])
+    return KeyReuseSignature()
   return get_jaxpr_type_signature(eqn.params['jaxpr'])
 
 key_reuse_signatures_dynamic[remat_p] = _remat_key_type_signature

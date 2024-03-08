@@ -25,7 +25,8 @@ from jax._src import random
 from jax._src import test_util as jtu
 from jax.errors import KeyReuseError
 from jax.experimental.key_reuse._core import (
-  assert_consumed, assert_unconsumed, consume, consume_p)
+  assert_consumed, assert_unconsumed, consume, consume_p,
+  Source, Sink, Forward, KeyReuseSignature)
 from jax.experimental.key_reuse import _core
 
 from jax import config
@@ -589,7 +590,7 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
 
 
 @jtu.with_config(jax_enable_key_reuse_checks=True)
-class KeyReuseEager(jtu.JaxTestCase):
+class KeyReuseEagerTest(jtu.JaxTestCase):
   jit_msg = "Previously-consumed key passed to jit-compiled function at index 0"
   eager_bits_msg = "Previously-consumed key passed to random_bits at index 0"
   traced_bits_msg = "In random_bits, argument 0 is already consumed."
@@ -616,9 +617,76 @@ class KeyReuseEager(jtu.JaxTestCase):
       f()
 
 
+class KeyReuseImplementationTest(jtu.JaxTestCase):
+
+  def assertEquivalent(self, a, b):
+    self.assertEqual(a, b)
+    self.assertEqual(hash(a), hash(b))
+
+  def assertNotEquivalent(self, a, b):
+    self.assertNotEqual(a, b)
+    self.assertNotEqual(hash(a), hash(b))
+
+  def test_source_sink_immutability(self):
+    mask = np.array([True, False])
+    orig_mask_writeable = mask.flags.writeable
+
+    sink = Sink(0, mask)
+    source = Source(0, mask)
+
+    self.assertFalse(sink.mask.flags.writeable)
+    self.assertFalse(source.mask.flags.writeable)
+    self.assertEqual(mask.flags.writeable, orig_mask_writeable)
+
+    with self.assertRaises(ValueError):
+      sink.idx = 1
+    with self.assertRaises(ValueError):
+      sink.mask = True
+    with self.assertRaises(ValueError):
+      source.idx = 1
+    with self.assertRaises(ValueError):
+      source.mask = True
+
+  def test_source_sink_forward_equivalence_semantics(self):
+
+    true_mask = np.array([True, True])
+    false_mask = np.array([False, False])
+    mixed_mask = np.array([True, False])
+
+    self.assertEquivalent(Source(0), Source(0, True))
+    self.assertEquivalent(Source(0, True), Source(0, true_mask))
+    self.assertEquivalent(Source(0, False), Source(0, false_mask))
+    self.assertEquivalent(Source(0, mixed_mask), Source(0, mixed_mask))
+    self.assertNotEquivalent(Source(0), Source(1))
+    self.assertNotEquivalent(Source(0), Source(0, False))
+    self.assertNotEquivalent(Source(0), Source(0, mixed_mask))
+
+    self.assertEquivalent(Sink(0), Sink(0, True))
+    self.assertEquivalent(Sink(0, True), Sink(0, true_mask))
+    self.assertEquivalent(Sink(0, False), Sink(0, false_mask))
+    self.assertEquivalent(Sink(0, mixed_mask), Sink(0, mixed_mask))
+    self.assertNotEquivalent(Sink(0), Sink(1))
+    self.assertNotEquivalent(Sink(0), Sink(0, False))
+    self.assertNotEquivalent(Sink(0), Sink(0, mixed_mask))
+
+    self.assertNotEquivalent(Source(0), Sink(0))
+
+    self.assertEquivalent(Forward(0, 1), Forward(0, 1))
+    self.assertNotEquivalent(Forward(0, 1), Forward(1, 0))
+
+  def test_signature_equality_semantics(self):
+    self.assertEquivalent(
+      KeyReuseSignature(Sink(0), Source(1), Forward(1, 0)),
+      KeyReuseSignature(Forward(1, 0), Source(1), Sink(0)))
+    self.assertEquivalent(
+      KeyReuseSignature(), KeyReuseSignature())
+    self.assertNotEquivalent(
+      KeyReuseSignature(Source(0)), KeyReuseSignature(Sink(0)))
+
+
 
 @jtu.with_config(jax_enable_checks=False)
-class KeyReuseGlobalFlags(jtu.JaxTestCase):
+class KeyReuseGlobalFlagsTest(jtu.JaxTestCase):
   def test_key_reuse_flag(self):
 
     @jax.jit
