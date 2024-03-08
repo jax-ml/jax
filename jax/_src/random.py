@@ -1233,7 +1233,7 @@ def _gamma_impl(key, a, *, log_space, use_vmap=False):
   keys = keys.flatten()
   alphas = a.flatten()
 
-  if use_vmap:
+  if use_vmap and _key_impl(key) is prng.threefry_prng_impl:
     samples = vmap(partial(_gamma_one, log_space=log_space))(keys, alphas)
   else:
     samples = lax.map(
