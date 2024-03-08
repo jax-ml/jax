@@ -16,7 +16,6 @@ import csv
 import re
 import sys
 import argparse
-import psutil
 import os
 import shutil
 import subprocess
@@ -36,6 +35,7 @@ pgle_filename = os.path.basename(args.pgle_output_path).partition('.')[0]
 pgle_folder = os.path.join(os.path.split(args.pgle_output_path)[0], '')
 profile_folder = os.path.join(os.path.split(args.profile_path)[0], '')
 
+assert isinstance(nsys_path, str)
 stats_command = [nsys_path, "stats", "--force-overwrite", "true", "--force-export", "true", "--report", "nvtxkernsum", f"{args.profile_path}", "-o", f"{args.pgle_output_path}"]
 
 print(f"""
@@ -46,7 +46,6 @@ proc = subprocess.Popen(stats_command, stdout=sys.stdout, stderr=sys.stderr)
 proc.wait()
 
 thunk_re = re.compile("hlo_op=(.*)#")
-cost_dictionary = dict()
 with open(f"{args.pgle_output_path}", 'w', newline='') as protofile:
     with open(f"{pgle_folder}{pgle_filename}.pbtxt_nvtxkernsum.csv", newline='') as csvfile:
       reader = csv.DictReader(csvfile)
