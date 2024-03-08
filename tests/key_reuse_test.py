@@ -21,6 +21,7 @@ import jax
 from jax import core
 import jax.numpy as jnp
 from jax._src import prng
+from jax._src import random
 from jax._src import test_util as jtu
 from jax.experimental.key_reuse._core import (
   assert_consumed, assert_unconsumed, consume, consume_p)
@@ -36,7 +37,7 @@ key1D = jax.eval_shape(lambda key: key[None], key)
 
 primitives_with_static_signatures = {
   consume_p: (consume, key),
-  prng.reuse_key_p: (prng.reuse_key, key),
+  random.random_clone_p: (random.clone, key),
   prng.random_bits_p: (jax.random.bits, key),
   # prng.random_fold_in_p: (jax.random.fold_in, key, 2),
   prng.random_seed_p: (jax.random.key, 0),
@@ -91,12 +92,12 @@ class KeyReuseUnitTestWithForwarding(jtu.JaxTestCase):
       assert_consumed(key2)
     self.check_key_reuse(f, jax.random.key(0))
 
-  def test_reuse_key(self):
+  def test_random_clone(self):
     def f(key):
       assert_unconsumed(key)
       consume(key)
       assert_consumed(key)
-      key2 = prng.reuse_key(key)
+      key2 = jax.random.clone(key)
       assert_unconsumed(key2)
     self.check_key_reuse(f, jax.random.key(0))
 

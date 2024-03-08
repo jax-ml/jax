@@ -39,10 +39,6 @@ context manager::
   ...  print(jax.random.normal(key))
   -0.20584226
 """
-from jax._src.prng import (
-    reuse_key as reuse_key,
-)
-
 from jax.experimental.key_reuse._core import (
     KeyReuseError as KeyReuseError,
 )
