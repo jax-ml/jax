@@ -3395,15 +3395,13 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
       log1p = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'ninfj', 'pinfj'],
       log10 = ['q1', 'q2', 'q3', 'q4', 'zero', 'ninf', 'ninfj', 'pinf', 'pinfj'],
       sinh = (['pos', 'neg', 'ninf', 'pinf']
-              + (['q1', 'q2', 'q3', 'q4'] if is_arm_cpu and dtype != np.complex128 else [])),
+              + (['q1', 'q2', 'q3', 'q4'] if dtype != np.complex128 else (['q1', 'q4'] if is_cpu else []))),
       cosh = (['pos', 'neg', 'ninf', 'pinf']
-              + (['q1', 'q2', 'q3', 'q4'] if is_arm_cpu and dtype != np.complex128 else [])),
+              + (['q1', 'q2', 'q3', 'q4'] if dtype != np.complex128 else (['q1', 'q4'] if is_cpu else []))),
       tan = ['q1', 'q2', 'q3', 'q4', 'negj', 'posj', 'ninf', 'ninfj', 'pinf', 'pinfj'],
       square = (['pinf']
-                + (['ninfj', 'pinfj'] if is_arm_cpu else [])
-                + (['ninf'] if not is_arm_cpu else [])
-                + (['q1', 'q2', 'q3', 'q4', 'ninfj', 'pinfj'] if is_cuda else [])
-                + (['q1', 'q2', 'q3', 'q4'] if is_cpu and dtype == np.complex128 else [])),
+                + (['ninfj', 'pinfj'] if is_arm_cpu or is_cuda else [])
+                + (['ninf', 'q1', 'q2', 'q3', 'q4'] if is_cpu or is_cuda else [])),
       sinc = ['q1', 'q2', 'q3', 'q4'],
       arcsin = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'pinf', 'ninfj', 'pinfj'],
       arccos = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'pinf', 'ninfj', 'pinfj'],
@@ -3413,17 +3411,25 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
       arctanh = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'pinf', 'ninfj', 'pinfj'],
       sin = ['q1', 'q2', 'q3', 'q4', 'ninfj', 'pinfj'] if is_arm_cpu and dtype != np.complex128 else [],
       cos = ['q1', 'q2', 'q3', 'q4', 'ninfj', 'pinfj'] if is_arm_cpu and dtype != np.complex128 else [],
-      expm1 = ['q1', 'q4', 'pinf'] if is_arm_cpu and dtype != np.complex128 else [],
+      expm1 = ((['q1', 'q4', 'pinf'] if is_arm_cpu
+                else ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'pinf']) if dtype != np.complex128
+               else (['pos', 'pinf'] if is_cpu else [])),
+      sqrt = (['q2', 'q3', 'neg'] if is_cpu or is_cuda else [])
     )
 
     if jtu.numpy_version() < (2, 0, 0):
       regions_with_inaccuracies['sign'] = ['q1', 'q2', 'q3', 'q4', 'negj', 'posj', 'ninf', 'ninfj', 'pinf', 'pinfj']
+    if xla_extension_version >= 244:
+      # TODO: check the validity of clearing expm1 inaccuracies list for ARM CPU.
+      regions_with_inaccuracies['expm1'].clear()
 
     jnp_op = getattr(jnp, name)
 
+    finfo = np.finfo(dtype)
+    tiny = finfo.tiny
+
     if name == 'square':
       # numpy square is incorrect on inputs with large absolute value
-      tiny = np.finfo(dtype).tiny
 
       def square(x):
         re = (x.real - x.imag) * (x.real + x.imag)
@@ -3437,6 +3443,21 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
         return np.array(complex(re, im), dtype=dtype)
 
       np_op = np.vectorize(square)
+
+    elif name == 'expm1':
+      # numpy.expm1 is incorrect on inputs with large real part and
+      # zero imag part. At other parts of the complex plane,
+      # numpy.expm1 is sufficiently accurate (see
+      # https://github.com/pearu/complex_function_validation/)
+
+      def expm1(x):
+        if x.imag == 0:
+          return np.array(complex(np.expm1(x.real), 0), dtype=dtype)
+        else:
+          return np.expm1(x, dtype=dtype)
+
+      np_op = np.vectorize(expm1)
+
     else:
       np_op = getattr(np, name)
 
@@ -3462,6 +3483,45 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
       zero=(slice(s0 + 1, s0 + 2), slice(s1 + 1, s1 + 2)),
     )
 
+    # In this test, the results and expected values may range from
+    # tiny to maximal value of the used floating-point
+    # dtype. assertAllClose fixed tolerances are not suitable for
+    # testing the closeness of values that are extremely small, for
+    # instance, when using default atol=1e-6 in comparing values of
+    # the order, say 1e-23, would never fail. Therefore, we normalize
+    # results and expected values by a weight that transforms all
+    # possible values to values close to the unit value where the
+    # default tolerances are sensible. The normalization of values x
+    # and y that are to be tested for closeness, is defined as
+    # follows:
+    #
+    #   x = xm * 2 ** xe   where -1 < xm < 1, xe is integer
+    #   y = ym * 2 ** ye   where -1 < ym < 1, ye is integer
+    #   define e = (xe + ye) // 2
+    #   normalized x = x * 2 ** (-e) = xm * 2 ** (xe - e) =
+    #                = xm * 2 ** (xe/2 - ye/2)
+    #   normalized y = ym * 2 ** (ye/2 - xe/2)
+    #
+    # that is, when x and y have the same magnitude (xe == ye), the
+    # closeness test of x and y is equivalent to testing the closeness
+    # of the x and y mantissa parts.
+
+    def make_complex(real, imag):
+      # constructs an array with complex dtype from two arrays
+      # representing the real and imaginary parts
+      c = imag.repeat(2).view(dtype).reshape(imag.shape)
+      c.real[:] = real
+      return c
+
+    def normalize(values, weight_exp):
+      m, e = np.frexp(values)
+      return np.ldexp(m, e - weight_exp)
+
+    weight_re_exp = (np.frexp(result.real)[1] + np.frexp(expected.real)[1]) // 2
+    weight_im_exp = (np.frexp(result.imag)[1] + np.frexp(expected.imag)[1]) // 2
+    nresult = make_complex(normalize(result.real, weight_re_exp), normalize(result.imag, weight_im_exp))
+    nexpected = make_complex(normalize(expected.real, weight_re_exp), normalize(expected.imag, weight_im_exp))
+
     for region in all_regions:
       if is_arm_cpu:
         if (
@@ -3474,25 +3534,35 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
         ):
           continue
       s = s_dict[region]
-      inds = np.where(result[s] != expected[s])
+      result1 = result[s]
+      expected1 = expected[s]
+      nresult1 = nresult[s]
+      nexpected1 = nexpected[s]
+
+      inds = np.where(nresult1 != nexpected1)
       if inds[0].size > 0:
         mismatches = []
         for ind in zip(*inds):
-          x, r, e = args[0][s][ind], str(result[s][ind]), str(expected[s][ind])
+          x, r, e = args[0][s][ind], str(result1[ind]), str(expected1[ind])
+          nr, ne = str(nresult1[ind]), str(nexpected1[ind])
           if r == e:
             # skip equal nan-s
             continue
-          mismatches.append(f'jax.numpy.{name}{x} -> {r}, expected {e}')
-        mismatches = "\n".join(mismatches)
+          max_abs_diff = abs(result1[ind] - expected1[ind]).max() if np.isfinite(result1[ind]) and np.isfinite(expected1[ind]) else np.inf
+          mismatches.append((max_abs_diff, f'jax.numpy.{name}({x}) -> {r} [{nr}], expected {e} [{ne}]'))
+        mismatches = "\n".join([item[1] for item in sorted(mismatches)])
       else:
         mismatches = ''
+
       if kind == 'success' and region not in regions_with_inaccuracies.get(name, []):
         with jtu.ignore_warning(category=RuntimeWarning, message="overflow encountered in.*"):
-          self.assertAllClose(result[s], expected[s], err_msg=f"{name} in {region}, {is_cpu=} {is_cuda=}, {xla_extension_version=}\n{mismatches}")
+          self.assertAllClose(
+            nresult1, nexpected1,
+            err_msg=f"{name} in {region}, {is_cpu=} {is_cuda=}, {xla_extension_version=}\n{mismatches}")
       if kind == 'failure' and region in regions_with_inaccuracies.get(name, []):
         with self.assertRaises(AssertionError, msg=f"{name} in {region}, {is_cpu=} {is_cuda=}, {xla_extension_version=}"):
           with jtu.ignore_warning(category=RuntimeWarning, message="overflow encountered in.*"):
-            self.assertAllClose(result[s], expected[s])  # on success, update regions_with_inaccuracies
+            self.assertAllClose(nresult1, nexpected1)  # on success, update regions_with_inaccuracies
 
 
 if __name__ == '__main__':
