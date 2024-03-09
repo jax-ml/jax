@@ -304,7 +304,7 @@ per_core_batch_size=4
 seq_len=512
 emb_dim=512
 x = jax.random.normal(
-    jax.random.PRNGKey(0),
+    jax.random.key(0),
     shape=(jax.local_device_count() * per_core_batch_size, seq_len, emb_dim),
     dtype=jnp.bfloat16,
 )
@@ -1049,7 +1049,7 @@ per_core_batch_size=4
 seq_len=512
 emb_dim=512
 x = jax.random.normal(
-    jax.random.PRNGKey(0),
+    jax.random.key(0),
     shape=(jax.local_device_count() * per_core_batch_size, seq_len, emb_dim),
     dtype=jnp.bfloat16,
 )

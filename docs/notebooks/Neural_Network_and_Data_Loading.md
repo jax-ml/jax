@@ -71,7 +71,7 @@ step_size = 0.01
 num_epochs = 8
 batch_size = 128
 n_targets = 10
-params = init_network_params(layer_sizes, random.PRNGKey(0))
+params = init_network_params(layer_sizes, random.key(0))
 ```
 
 +++ {"id": "BtoNk_yxWtIw"}
@@ -109,7 +109,7 @@ Let's check that our prediction function only works on single images.
 :outputId: 9d3b29e8-fab3-4ecb-9f63-bc8c092f9006
 
 # This works on single examples
-random_flattened_image = random.normal(random.PRNGKey(1), (28 * 28,))
+random_flattened_image = random.normal(random.key(1), (28 * 28,))
 preds = predict(params, random_flattened_image)
 print(preds.shape)
 ```
@@ -119,7 +119,7 @@ print(preds.shape)
 :outputId: d5d20211-b6da-44e9-f71e-946f2a9d0fc4
 
 # Doesn't work with a batch
-random_flattened_images = random.normal(random.PRNGKey(1), (10, 28 * 28))
+random_flattened_images = random.normal(random.key(1), (10, 28 * 28))
 try:
   preds = predict(params, random_flattened_images)
 except TypeError:

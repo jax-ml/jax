@@ -150,14 +150,14 @@ To avoid this issue, JAX does not use a global state. Instead, random functions 
 
 from jax import random
 
-key = random.PRNGKey(42)
+key = random.key(42)
 
 print(key)
 ```
 
 +++ {"id": "XhFpKnW9F2nF"}
 
-A key is just an array of shape `(2,)`.
+A single key is an array of scalar shape `()` and key element type.
 
 'Random key' is essentially just another word for 'random seed'. However, instead of setting it once as in NumPy, any call of a random function in JAX requires a key to be specified. Random functions consume the key, but do not modify it. Feeding the same key to a random function will always result in the same sample being generated:
 
@@ -201,7 +201,7 @@ key = new_key  # If we wanted to do this again, we would use new_key as the key.
 
 `split()` is a deterministic function that converts one `key` into several independent (in the pseudorandomness sense) keys. We keep one of the outputs as the `new_key`, and can safely use the unique extra key (called `subkey`) as input into a random function, and then discard it forever.
 
-If you wanted to get another sample from the normal distribution, you would split `key` again, and so on. The crucial point is that you never use the same PRNGKey twice. Since `split()` takes a key as its argument, we must throw away that old key when we split it.
+If you wanted to get another sample from the normal distribution, you would split `key` again, and so on. The crucial point is that you never use the same PRNG key twice. Since `split()` takes a key as its argument, we must throw away that old key when we split it.
 
 It doesn't matter which part of the output of `split(key)` we call `key`, and which we call `subkey`. They are all pseudorandom numbers with equal status. The reason we use the key/subkey convention is to keep track of how they're consumed down the road. Subkeys are destined for immediate consumption by random functions, while the key is retained to generate more randomness later.
 
@@ -240,12 +240,12 @@ In the example below, sampling 3 values out of a normal distribution individuall
 :id: 4nB_TA54D-HT
 :outputId: 2f259f63-3c45-46c8-f597-4e53dc63cb56
 
-key = random.PRNGKey(42)
+key = random.key(42)
 subkeys = random.split(key, 3)
 sequence = np.stack([random.normal(subkey) for subkey in subkeys])
 print("individually:", sequence)
 
-key = random.PRNGKey(42)
+key = random.key(42)
 print("all at once: ", random.normal(key, shape=(3,)))
 ```
 

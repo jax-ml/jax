@@ -1277,7 +1277,7 @@ def ensure_compile_time_eval():
     @jax.jit
     def jax_fn(x):
       with jax.ensure_compile_time_eval():
-        y = random.randint(random.PRNGKey(0), (1000,1000), 0, 100)
+        y = random.randint(random.key(0), (1000,1000), 0, 100)
       y2 = y @ y
       x2 = jnp.sum(y2) * x
       return x2
@@ -1285,7 +1285,7 @@ def ensure_compile_time_eval():
   A similar behavior can often be achieved simply by 'hoisting' the constant
   expression out of the corresponding staging API::
 
-    y = random.randint(random.PRNGKey(0), (1000,1000), 0, 100)
+    y = random.randint(random.key(0), (1000,1000), 0, 100)
 
     @jax.jit
     def jax_fn(x):

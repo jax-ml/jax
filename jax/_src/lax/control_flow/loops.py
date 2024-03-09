@@ -2101,7 +2101,7 @@ def associative_scan(fn: Callable, elems, reverse: bool = False, axis: int = 0):
 
   Example 2: partial products of an array of matrices
 
-  >>> mats = jax.random.uniform(jax.random.PRNGKey(0), (4, 2, 2))
+  >>> mats = jax.random.uniform(jax.random.key(0), (4, 2, 2))
   >>> partial_prods = lax.associative_scan(jnp.matmul, mats)
   >>> partial_prods.shape
   (4, 2, 2)

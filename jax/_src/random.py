@@ -245,7 +245,7 @@ def fold_in(key: KeyArrayLike, data: IntegerArray) -> KeyArray:
   """Folds in data to a PRNG key to form a new PRNG key.
 
   Args:
-    key: a PRNG key (from ``PRNGKey``, ``split``, ``fold_in``).
+    key: a PRNG key (from ``key``, ``split``, ``fold_in``).
     data: a 32bit integer representing data to be folded in to the key.
 
   Returns:
@@ -275,7 +275,7 @@ def split(key: KeyArrayLike, num: int | tuple[int, ...] = 2) -> KeyArray:
   """Splits a PRNG key into `num` new keys by adding a leading axis.
 
   Args:
-    key: a PRNG key (from ``PRNGKey``, ``split``, ``fold_in``).
+    key: a PRNG key (from ``key``, ``split``, ``fold_in``).
     num: optional, a positive integer (or tuple of integers) indicating
       the number (or shape) of keys to produce. Defaults to 2.
 

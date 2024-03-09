@@ -43,7 +43,7 @@ from jax import random
 import jax.numpy as jnp
 import numpy as np
 
-key = random.PRNGKey(1701)
+key = random.key(1701)
 
 x = jnp.linspace(0, 10, 500)
 y = jnp.sin(x) + 0.2 * random.normal(key, shape=(500,))
@@ -84,7 +84,7 @@ ax[0].imshow(image, cmap='binary_r')
 ax[0].set_title('original')
 
 # Create a noisy version by adding random Gaussian noise
-key = random.PRNGKey(1701)
+key = random.key(1701)
 noisy_image = image + 50 * random.normal(key, image.shape)
 ax[1].imshow(noisy_image, cmap='binary_r')
 ax[1].set_title('noisy')

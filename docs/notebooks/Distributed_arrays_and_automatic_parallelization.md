@@ -81,7 +81,7 @@ sharding = PositionalSharding(mesh_utils.create_device_mesh((8,)))
 :outputId: 3b518df8-5c29-4848-acc3-e41df939f30b
 
 # Create an array of random values:
-x = jax.random.normal(jax.random.PRNGKey(0), (8192, 8192))
+x = jax.random.normal(jax.random.key(0), (8192, 8192))
 # and use jax.device_put to distribute it across devices:
 y = jax.device_put(x, sharding.reshape(4, 2))
 jax.debug.visualize_array_sharding(y)
@@ -144,7 +144,7 @@ For example, here's a value with a single-device `Sharding`:
 :id: VmoX4SUp3vGJ
 
 import jax
-x = jax.random.normal(jax.random.PRNGKey(0), (8192, 8192))
+x = jax.random.normal(jax.random.key(0), (8192, 8192))
 ```
 
 ```{code-cell}
@@ -609,7 +609,7 @@ sharding = PositionalSharding(mesh_utils.create_device_mesh((8,)))
 ```{code-cell}
 :id: Q1wuDp-L3vGT
 
-x = jax.random.normal(jax.random.PRNGKey(0), (8192, 8192))
+x = jax.random.normal(jax.random.key(0), (8192, 8192))
 x = jax.device_put(x, sharding.reshape(4, 2))
 ```
 
@@ -720,7 +720,7 @@ def init_model(key, layer_sizes, batch_size):
 layer_sizes = [784, 8192, 8192, 8192, 10]
 batch_size = 8192
 
-params, batch = init_model(jax.random.PRNGKey(0), layer_sizes, batch_size)
+params, batch = init_model(jax.random.key(0), layer_sizes, batch_size)
 ```
 
 +++ {"id": "sJv_h0AS2drh"}
@@ -902,7 +902,7 @@ def f(key, x):
   numbers = jax.random.uniform(key, x.shape)
   return x + numbers
 
-key = jax.random.PRNGKey(42)
+key = jax.random.key(42)
 x_sharding = jax.sharding.PositionalSharding(jax.devices())
 x = jax.device_put(jnp.arange(24), x_sharding)
 ```

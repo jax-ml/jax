@@ -48,7 +48,7 @@ JAX provides a NumPy-like API for numerical computing which can be used as is, b
 ```{code-cell} ipython3
 :id: HmlMcICOcSXR
 
-x = random.normal(random.PRNGKey(0), (5000, 5000))
+x = random.normal(random.key(0), (5000, 5000))
 def f(w, b, x):
   return jnp.tanh(jnp.dot(x, w) + b)
 fast_f = jit(f)
