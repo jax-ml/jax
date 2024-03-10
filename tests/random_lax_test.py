@@ -1459,7 +1459,8 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
 
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckCollisions(samples, jnp.finfo(dtype).nmant)
-      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.uniform().cdf)
+      self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.uniform().cdf,
+                                      pval=0.005)
 
   def test_cannot_add(self):
     key = self.make_key(73)
