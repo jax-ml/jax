@@ -141,6 +141,9 @@ class CustomCallBackendConfig:
         if i + 1 != len(self.flags):
           config.write(b",")
       config.write(b"]")
+    # Prevent the compiler from sharding the custom call beyond what Mosaic does
+    # based on user annotations
+    config.write(b', "implicit_sharding": {"type": "MANUAL"}')
     config.write(b"}")
     return config.getvalue()
 
