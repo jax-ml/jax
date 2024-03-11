@@ -243,6 +243,53 @@ class CheckpointTest(jtu.JaxTestCase):
     for l in m2.addressable_shards:
       self.assertArraysEqual(l.data, global_input_data1.astype('float32'))
 
+  def test_checkpointing_with_int4(self):
+    global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    global_input_shape = (8, 2)
+    num = math.prod(global_input_shape)
+
+    global_input_data = np.arange(num, dtype=jax.numpy.int8).reshape(global_input_shape)
+    def cb(index):
+      return global_input_data[index]
+    arr = array.make_array_from_callback(
+        global_input_shape, NamedSharding(global_mesh, P('x', 'y')), cb)
+    ckpt_dir = pathlib.Path(self.create_tempdir('first').full_path)
+
+    ckpt_paths = [str(ckpt_dir)]
+    tspecs = jax.tree_util.tree_map(serialization.get_tensorstore_spec, ckpt_paths)
+
+    manager = serialization.GlobalAsyncCheckpointManager()
+    manager.serialize(
+        [arr], tspecs,
+        on_commit_callback=partial(self._on_commit_callback, ckpt_dir, ckpt_dir))
+    manager.wait_until_finished()
+
+    ds = NamedSharding(jtu.create_global_mesh((4, 2), ('x', 'y')), P('x', 'y'))
+
+    target_dtype = jax.numpy.dtype('int4')
+    m1, = serialization.run_deserialization([ds], tspecs, [(12, 2)],
+                                            [target_dtype])
+
+    # values bigger than 7 are converted properly.
+    expected_data = {
+        0: jax.numpy.array([[0], [2], [4]], dtype=target_dtype),
+        1: jax.numpy.array([[1], [3], [5]], dtype=target_dtype),
+        2: jax.numpy.array([[6], [8], [10]], dtype=target_dtype),
+        3: jax.numpy.array([[7], [9], [11]], dtype=target_dtype),
+        4: jax.numpy.array([[12], [14], [0]], dtype=target_dtype),
+        5: jax.numpy.array([[13], [15], [0]], dtype=target_dtype),
+        6: jax.numpy.array([[0], [0], [0]], dtype=target_dtype),
+        7: jax.numpy.array([[0], [0], [0]], dtype=target_dtype),
+    }
+
+    for l in m1.addressable_shards:
+      self.assertArraysEqual(np.asarray(l.data), expected_data[l.device.id])
+
+    new_ds = GSPMDSharding.get_replicated(list(global_mesh.devices.flat))
+    m2, = serialization.run_deserialization([new_ds], tspecs, [(8, 2)], [target_dtype])
+    for l in m2.addressable_shards:
+      self.assertArraysEqual(l.data, global_input_data.astype(target_dtype))
+
   def test_checkpointing_scalar_jax_array(self):
     global_mesh = jtu.create_global_mesh((2,), ('x'))
     global_input_shape = ()
