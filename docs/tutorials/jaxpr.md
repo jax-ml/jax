@@ -195,7 +195,7 @@ def func7(arg):
 print(make_jaxpr(func7)(5.))
 ```
 
-In this case, the boolean predicate is converted to an integer index (0 or 1), and `branches` are jaxprs that correspond to the false and true branch functionals, in that order. Again, each functional takes one input variable, corresponding to `xfalse` and `xtrue` respectively.
+In this case, the boolean predicate is converted to an integer index (0 or 1), and `branches` are jaxprs that correspond to the false and true branch functionals, in that order. Again, each function takes one input variable, corresponding to `xfalse` and `xtrue` respectively.
 
 The following example shows a more complicated situation when the input to the branch functionals is a tuple, and the `false` branch functional contains a constant `jnp.ones(1)` that is hoisted as a `constvar`.
 
@@ -218,7 +218,7 @@ lax.while_loop(cond_fun: (C -> bool), body_fun: (C -> C), init: C) -> C
 lax.fori_loop(start: int, end: int, body: (int -> C -> C), init: C) -> C
 ```
 
-In the above signature, `C` stands for the type of a the loop “carry” value. For example, here is an example `fori_loop`:
+In the above signature, `C` stands for the type of the loop “carry” value. For example, here is an example `fori_loop`:
 
 ```{code-cell}
 import numpy as np
