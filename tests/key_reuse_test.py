@@ -692,6 +692,15 @@ class KeyReuseImplementationTest(jtu.JaxTestCase):
     self.assertNotEquivalent(
       KeyReuseSignature(Source(0)), KeyReuseSignature(Sink(0)))
 
+  def test_reprs(self):
+    self.assertEqual(repr(Sink(0)), "Sink(0)")
+    self.assertEqual(repr(Source(0)), "Source(0)")
+    self.assertEqual(repr(Forward(0, 1)), "Forward(0, 1)")
+    self.assertEqual(repr(KeyReuseSignature(Sink(1), Source(0))),
+                     "KeyReuseSignature(Sink(1), Source(0))")
+    self.assertEqual(repr(KeyReuseSignature(Sink(1), Sink(0))),
+                     "KeyReuseSignature(Sink(0), Sink(1))")
+
 
 
 @jtu.with_config(jax_enable_checks=False)
