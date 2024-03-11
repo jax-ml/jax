@@ -84,7 +84,7 @@ class BlockInfo:
 
 
 @dataclasses.dataclass
-class LoweringRuleContext:
+class RuleContext:
   context: ModuleContext
   avals_in: Sequence[jax_core.ShapedArray]
   avals_out: Sequence[jax_core.ShapedArray]
@@ -342,7 +342,7 @@ def lower_jaxpr_to_triton_ir(
     loc = mlir._source_info_to_location(
         ctx, eqn.primitive, eqn.params, eqn.source_info
     )
-    rule_ctx = LoweringRuleContext(ctx, avals_in, avals_out, eqn_block_infos)
+    rule_ctx = RuleContext(ctx, avals_in, avals_out, eqn_block_infos)
     try:
       with source_info_util.user_context(eqn.source_info.traceback), loc:
         outvals = rule(rule_ctx, *invals, **eqn.params)
@@ -371,17 +371,18 @@ def _program_id(axis: int) -> ir.Value:
   return tt_dialect.get_program_id(axis)
 
 
-def _program_id_lowering_rule(ctx: LoweringRuleContext, *, axis):
+def _program_id_lowering_rule(ctx: RuleContext, *, axis):
   return ctx.context.program_ids[axis]
 
 
 triton_lowering_rules[primitives.program_id_p] = _program_id_lowering_rule
 
 
-def _num_programs_lowering_rule(ctx: LoweringRuleContext, *, axis):
+def _num_programs_lowering_rule(ctx: RuleContext, *, axis):
   if axis not in range(3):
     raise ValueError(f"axis must be in [0, 3), but got: {axis}")
   return tt_dialect.get_num_programs(axis)
+
 
 triton_lowering_rules[primitives.num_programs_p] = _num_programs_lowering_rule
 
@@ -408,7 +409,7 @@ def _atomic_rmw(
 
 
 def _atomic_lowering_rule(
-    ctx: LoweringRuleContext,
+    ctx: RuleContext,
     *args_flat,
     args_tree,
     atomic_type: primitives.AtomicOpType,
@@ -449,7 +450,7 @@ def _atomic_lowering_rule(
 triton_lowering_rules[primitives.atomic_rmw_p] = _atomic_lowering_rule
 
 
-def _atomic_cas_lowering_rule(ctx: LoweringRuleContext, ptr, cmp, val):
+def _atomic_cas_lowering_rule(ctx: RuleContext, ptr, cmp, val):
   _, cmp_aval, val_aval = ctx.avals_in
   if ir.RankedTensorType.isinstance(ptr.type):
     ptr_type = ir.RankedTensorType(ptr.type)
@@ -472,7 +473,7 @@ def _atomic_cas_lowering_rule(ctx: LoweringRuleContext, ptr, cmp, val):
 triton_lowering_rules[primitives.atomic_cas_p] = _atomic_cas_lowering_rule
 
 
-def _associative_scan_lowering(body, ctx: LoweringRuleContext, args, axes):
+def _associative_scan_lowering(body, ctx: RuleContext, args, axes):
   flat_args = tree_util.tree_leaves(args)
   (axis,) = axes
   dtype = ctx.avals_in[0].dtype
@@ -504,9 +505,7 @@ def _associative_scan_lowering(body, ctx: LoweringRuleContext, args, axes):
   return list(scan_op.result)
 
 
-def _cumsum_lowering_rule(
-    ctx: LoweringRuleContext, x, *, axis: int, reverse: bool
-):
+def _cumsum_lowering_rule(ctx: RuleContext, x, *, axis: int, reverse: bool):
   if reverse:
     raise NotImplementedError("Reverse cumsum is not supported.")
   return _associative_scan_lowering(jnp.add, ctx, x, (axis,))[0]
@@ -515,7 +514,7 @@ def _cumsum_lowering_rule(
 triton_lowering_rules[lax.cumsum_p] = _cumsum_lowering_rule
 
 
-def _not_lowering_rule(ctx: LoweringRuleContext, x):
+def _not_lowering_rule(ctx: RuleContext, x):
   [x_aval] = ctx.avals_in
   if not np.issubdtype(x_aval.dtype, jnp.integer):
     raise NotImplementedError(f"unsupported type: {x_aval.dtype}")
@@ -545,7 +544,7 @@ def _extern_elementwise(
     name: str, table: Sequence[_Extern]
 ) -> Callable[..., ir.Value]:
 
-  def inner(ctx: LoweringRuleContext, *args: ir.Value) -> ir.Value:
+  def inner(ctx: RuleContext, *args: ir.Value) -> ir.Value:
     extern = next((e for e in table if e.matches(ctx.avals_in)), None)
     if extern is None:
       arg_aval_dtypes = tuple(aval.dtype.name for aval in ctx.avals_in)
@@ -944,7 +943,7 @@ _JAX_TO_TRITON_BINARY = {
 
 for prim, fn in _JAX_TO_TRITON_BINARY.items():
 
-  def rule(ctx: LoweringRuleContext, x, y, fn=fn):
+  def rule(ctx: RuleContext, x, y, fn=fn):
     x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
     return fn(x, y)
 
@@ -966,7 +965,7 @@ def _set_attr(v: ir.Value, name: str, attr: ir.Attribute) -> None:
     op.attributes[name] = attr
 
 
-def _multiple_of_rule(ctx: LoweringRuleContext, x, values: Sequence[int]):
+def _multiple_of_rule(ctx: RuleContext, x, values: Sequence[int]):
   [x_aval] = ctx.avals_in
   assert max(1, len(x_aval.shape)) == len(values)
   _set_attr(
@@ -980,7 +979,7 @@ def _multiple_of_rule(ctx: LoweringRuleContext, x, values: Sequence[int]):
 triton_lowering_rules[primitives.multiple_of_p] = _multiple_of_rule
 
 
-def _max_contiguous_rule(ctx: LoweringRuleContext, x, values: Sequence[int]):
+def _max_contiguous_rule(ctx: RuleContext, x, values: Sequence[int]):
   [x_aval] = ctx.avals_in
   assert len(x_aval.shape) == len(values)
   _set_attr(
@@ -994,7 +993,7 @@ def _max_contiguous_rule(ctx: LoweringRuleContext, x, values: Sequence[int]):
 triton_lowering_rules[primitives.max_contiguous_p] = _max_contiguous_rule
 
 
-def _broadcast_to_rule(ctx: LoweringRuleContext, x, shape: Sequence[int]):
+def _broadcast_to_rule(ctx: RuleContext, x, shape: Sequence[int]):
   (x_aval,) = ctx.avals_in
   return _bcast_to(_ensure_ir_value(x, x_aval), shape)
 
@@ -1017,7 +1016,7 @@ def lower_fun(
 ) -> Callable[..., Any]:
   fn = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
 
-  def f_lowered(ctx: LoweringRuleContext, *args, **params):
+  def f_lowered(ctx: RuleContext, *args, **params):
     wrapped_fun = lu.wrap_init(fn, params)
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
     jaxpr = jax_core.ClosedJaxpr(jaxpr, consts)
@@ -1037,7 +1036,7 @@ for prim, fn in _JAX_FN_MAPPING.items():
   triton_lowering_rules[prim] = lower_fun(fn, multiple_results=False)
 
 
-def _min_lowering_rule(ctx: LoweringRuleContext, x, y):
+def _min_lowering_rule(ctx: RuleContext, x, y):
   # TODO(slebedev): Consider allowing customizing nan behavior.
   x_aval, y_aval = ctx.avals_in
   x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
@@ -1057,7 +1056,7 @@ def _min_lowering_rule(ctx: LoweringRuleContext, x, y):
 triton_lowering_rules[lax.min_p] = _min_lowering_rule
 
 
-def _max_lowering_rule(ctx: LoweringRuleContext, x, y):
+def _max_lowering_rule(ctx: RuleContext, x, y):
   # TODO(slebedev): Consider allowing customizing nan behavior.
   x_aval, y_aval = ctx.avals_in
   x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
@@ -1077,7 +1076,7 @@ def _max_lowering_rule(ctx: LoweringRuleContext, x, y):
 triton_lowering_rules[lax.max_p] = _max_lowering_rule
 
 
-def _div_lowering_rule(ctx: LoweringRuleContext, x, y):
+def _div_lowering_rule(ctx: RuleContext, x, y):
   x_aval, y_aval = ctx.avals_in
   x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
   if np.issubdtype(x_aval.dtype, np.floating) or np.issubdtype(
@@ -1090,7 +1089,7 @@ def _div_lowering_rule(ctx: LoweringRuleContext, x, y):
 triton_lowering_rules[lax.div_p] = _div_lowering_rule
 
 
-def _iota_lowering_rule(ctx: LoweringRuleContext, *, dtype, shape, dimension):
+def _iota_lowering_rule(ctx: RuleContext, *, dtype, shape, dimension):
   if dimension != 0:
     raise NotImplementedError
   return _cast(_make_range(0, *shape), _dtype_to_ir_type(dtype))
@@ -1277,7 +1276,7 @@ def _cast(src: ir.Value, dst_type: ir.Type) -> ir.Value:
 
 
 def _convert_element_type_lowering_rule(
-    ctx: LoweringRuleContext, x, *, new_dtype, weak_type
+    ctx: RuleContext, x, *, new_dtype, weak_type
 ):
   [x_aval] = ctx.avals_in
   x = _ensure_ir_value(x, x_aval)
@@ -1291,7 +1290,7 @@ triton_lowering_rules[lax.convert_element_type_p] = (
 )
 
 
-def select_n_lowering_rule(ctx: LoweringRuleContext, pred, x, y):
+def select_n_lowering_rule(ctx: RuleContext, pred, x, y):
   pred_aval, a_aval, b_aval = ctx.avals_in
   [out_aval] = ctx.avals_out
   pred, x = _bcast(pred, x, pred_aval, a_aval, out_aval)
@@ -1303,7 +1302,7 @@ triton_lowering_rules[lax.select_n_p] = select_n_lowering_rule
 
 
 def _broadcast_in_dim_lowering_rule(
-    ctx: LoweringRuleContext, x, *, broadcast_dimensions, shape
+    ctx: RuleContext, x, *, broadcast_dimensions, shape
 ):
   x = _ensure_ir_value(x, *ctx.avals_in)
   if not ir.RankedTensorType.isinstance(x.type):
@@ -1319,7 +1318,7 @@ triton_lowering_rules[jax.lax.broadcast_in_dim_p] = (
 )
 
 
-def _squeeze_lowering_rule(ctx: LoweringRuleContext, a, *, dimensions):
+def _squeeze_lowering_rule(ctx: RuleContext, a, *, dimensions):
   del dimensions
   return _reshape_lowering_rule(ctx, a, new_sizes=None, dimensions=None)
 
@@ -1338,9 +1337,7 @@ def _reshape(x: ir.Value, shape: Sequence[int]) -> ir.Value:
   )
 
 
-def _reshape_lowering_rule(
-    ctx: LoweringRuleContext, a, *, new_sizes, dimensions
-):
+def _reshape_lowering_rule(ctx: RuleContext, a, *, new_sizes, dimensions):
   del new_sizes  # Unused.
   if dimensions is not None:
     return ValueError("`dimensions` is not supported.")
@@ -1491,7 +1488,7 @@ def _pack_indices(non_slice_idx, indexed_dims):
   )
 
 
-def _get_lowering_rule(ctx: LoweringRuleContext, ptr, *idx, tree):
+def _get_lowering_rule(ctx: RuleContext, ptr, *idx, tree):
   indexers = tree_util.tree_unflatten(tree, idx)
   if not tt_dialect.PointerType.isinstance(ptr.type):
     assert len(indexers) == 0
@@ -1599,7 +1596,7 @@ def _load(
 
 
 def _masked_load_lowering_rule(
-    ctx: LoweringRuleContext,
+    ctx: RuleContext,
     *args_flat,
     args_tree,
     eviction_policy,
@@ -1636,7 +1633,7 @@ def _masked_load_lowering_rule(
 triton_lowering_rules[primitives.load_p] = _masked_load_lowering_rule
 
 
-def _swap_lowering_rule(ctx: LoweringRuleContext, ptr, value, *idx, tree):
+def _swap_lowering_rule(ctx: RuleContext, ptr, value, *idx, tree):
   indexers = tree_util.tree_unflatten(tree, idx)
   if not tt_dialect.PointerType.isinstance(ptr.type):
     assert len(indexers) == 0
@@ -1706,7 +1703,7 @@ def _store(
 
 
 def _masked_swap_lowering_rule(
-    ctx: LoweringRuleContext, *args_flat, args_tree, eviction_policy
+    ctx: RuleContext, *args_flat, args_tree, eviction_policy
 ):
   ptr, indexers, value, mask = args_tree.unflatten(args_flat)
   *_, value_aval, mask_aval = args_tree.unflatten(ctx.avals_in)
@@ -1732,7 +1729,7 @@ def _masked_swap_lowering_rule(
 triton_lowering_rules[primitives.swap_p] = _masked_swap_lowering_rule
 
 
-def _addupdate_lowering_rule(ctx: LoweringRuleContext, ptr, value, *idx, tree):
+def _addupdate_lowering_rule(ctx: RuleContext, ptr, value, *idx, tree):
   indexers = tree_util.tree_unflatten(tree, idx)
   if not tt_dialect.PointerType.isinstance(ptr.type):
     assert len(indexers) == 0
@@ -1756,7 +1753,7 @@ def _addupdate_lowering_rule(ctx: LoweringRuleContext, ptr, value, *idx, tree):
 triton_lowering_rules[sp.addupdate_p] = _addupdate_lowering_rule
 
 
-def _transpose_lowering(ctx: LoweringRuleContext, x, *, permutation):
+def _transpose_lowering(ctx: RuleContext, x, *, permutation):
   return tt_dialect.trans(x, permutation)
 
 
@@ -1831,7 +1828,7 @@ _TF32_PRECISIONS = (lax.Precision.HIGH, lax.Precision.DEFAULT)
 
 
 def _dot_general_lowering(
-    ctx: LoweringRuleContext,
+    ctx: RuleContext,
     a,
     b,
     *,
@@ -1873,7 +1870,7 @@ def _dot_general_lowering(
 triton_lowering_rules[lax.dot_general_p] = _dot_general_lowering
 
 
-def _reduction_lowering(body, ctx: LoweringRuleContext, a, axes):
+def _reduction_lowering(body, ctx: RuleContext, a, axes):
   flat_args = tree_util.tree_leaves(a)
   (axis,) = axes
   mapped_avals = [jax_core.ShapedArray((), aval.dtype) for aval in ctx.avals_in]
@@ -1901,7 +1898,7 @@ def _reduction_lowering(body, ctx: LoweringRuleContext, a, axes):
   return list(reduce_op.result)
 
 
-def _reduce_lowering(body, ctx: LoweringRuleContext, a, *, axes):
+def _reduce_lowering(body, ctx: RuleContext, a, *, axes):
   assert isinstance(axes, tuple)
   if not axes:
     return a
@@ -1932,9 +1929,7 @@ triton_lowering_rules[lax.reduce_sum_p] = functools.partial(
 )
 
 
-def _argreduce_lowering(
-    body, ctx: LoweringRuleContext, a, *, axes, index_dtype
-):
+def _argreduce_lowering(body, ctx: RuleContext, a, *, axes, index_dtype):
   if index_dtype != jnp.int32:
     raise ValueError("`index_type` must be i32.")
   if len(axes) != 1:
@@ -1985,7 +1980,7 @@ triton_lowering_rules[lax.argmin_p] = functools.partial(
 )
 
 
-def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
+def _pjit_lowering_rule(ctx: RuleContext, *args, jaxpr, **_):
   if jaxpr.consts:
     raise NotImplementedError
   return lower_jaxpr_to_triton_ir(
@@ -1996,9 +1991,7 @@ def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
 triton_lowering_rules[pjit.pjit_p] = _pjit_lowering_rule
 
 
-def _closed_call_lowering_rule(
-    ctx: LoweringRuleContext, *args, call_jaxpr, **_
-):
+def _closed_call_lowering_rule(ctx: RuleContext, *args, call_jaxpr, **_):
   jaxpr, consts = call_jaxpr.jaxpr, call_jaxpr.consts
   if consts:
     raise NotImplementedError
@@ -2011,7 +2004,7 @@ triton_lowering_rules[custom_derivatives.custom_jvp_call_p] = (
 )
 
 
-def _remat_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
+def _remat_lowering_rule(ctx: RuleContext, *args, jaxpr, **_):
   return lower_jaxpr_to_triton_ir(ctx.context, jaxpr, ctx.block_infos, *args)
 
 
@@ -2030,7 +2023,7 @@ def _is_read_only(ref_effects) -> bool:
 
 
 def _for_lowering_rule(
-    ctx: LoweringRuleContext,
+    ctx: RuleContext,
     *args,
     jaxpr,
     which_linear,
@@ -2086,7 +2079,7 @@ triton_lowering_rules[for_loop.for_p] = _for_lowering_rule
 
 
 def _lower_jaxpr_to_for_loop(
-    ctx: LoweringRuleContext,
+    ctx: RuleContext,
     jaxpr: jax_core.Jaxpr,
     lower_bound,
     upper_bound,
@@ -2122,7 +2115,7 @@ def _lower_jaxpr_to_for_loop(
 
 
 def _scan_lowering_rule(
-    ctx: LoweringRuleContext,
+    ctx: RuleContext,
     *args,
     jaxpr,
     linear,
@@ -2172,7 +2165,7 @@ triton_lowering_rules[lax.scan_p] = _scan_lowering_rule
 
 
 def _maybe_pattern_match_fori_loop(
-    ctx: LoweringRuleContext,
+    ctx: RuleContext,
     *args,
     cond_nconsts,
     cond_jaxpr,
@@ -2252,7 +2245,7 @@ def _maybe_pattern_match_fori_loop(
 
 
 def _while_lowering_rule(
-    ctx: LoweringRuleContext,
+    ctx: RuleContext,
     *args,
     cond_nconsts,
     cond_jaxpr,
@@ -2324,7 +2317,7 @@ triton_lowering_rules[lax.while_p] = _while_lowering_rule
 
 
 def _cond_lowering_rule(
-    ctx: LoweringRuleContext,
+    ctx: RuleContext,
     index,
     *args,  # *consts, *ops
     branches,  # tuple(jaxprs)
