@@ -450,6 +450,27 @@ class PallasCallDynamicGridTest(PallasTPUTest):
 
     self.assertEqual(dynamic_kernel(4), 8)
 
+  @parameterized.parameters(range(1, 4))
+  def test_vmap_num_programs(self, num_vmaps):
+    result_ty = jax.ShapeDtypeStruct((8, 128), jnp.int32)
+
+    def kernel(y_ref):
+      y_ref[...] = jnp.full_like(y_ref, pl.num_programs(0))
+
+    kernel_call = self.pallas_call(
+        kernel,
+        grid=(8,),
+        out_specs=pl.BlockSpec(lambda i: (0, 0), result_ty.shape),
+        out_shape=result_ty,
+    )
+
+    out_shape = (*(2 for _ in range(num_vmaps)), *result_ty.shape)
+    f = kernel_call
+    for _ in range(num_vmaps):
+      f = lambda impl=f: jax.vmap(impl, axis_size=2)()
+    out = jax.jit(f)()
+    np.testing.assert_array_equal(out, np.full(out_shape, 8.0))
+
   def test_num_programs_block_spec(self):
     def kernel(x_ref, y_ref):
       y_ref[...] = x_ref[...]
