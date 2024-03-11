@@ -79,6 +79,7 @@ class CustomCallBackendConfig:
   needs_layout_passes: bool
   vmem_limit_bytes: int | None
   flags: dict[str, bool | int | float] | None
+  allow_input_fusion: list[bool] | None
 
   # We omit the body while printing, because primitive params get embedded
   # in HLO metadata, and the body blows up its size.
@@ -107,7 +108,15 @@ class CustomCallBackendConfig:
     if self.needs_layout_passes:
       config.write(b', "needs_layout_passes": ')
       config.write(str(self.needs_layout_passes).lower().encode("ascii"))
-    config.write(b"}")
+    if self.allow_input_fusion is not None:
+      config.write(b', "allow_input_fusion": [')
+      for i, value in enumerate(self.allow_input_fusion):
+        config.write(b"true" if value else b"false")
+        # config.write(str(value).lower().encode("ascii"))
+        if i + 1 != len(self.allow_input_fusion):
+          config.write(b",")
+      config.write(b"]")
+    config.write(b"}")  # End of custom_call_config.
     if self.device_type is not None:
       config.write(b', "device_type": ')
       config.write(
@@ -252,6 +261,7 @@ def as_tpu_kernel(
     kernel_regeneration_metadata: bytes | None = None,
     vmem_limit_bytes: int | None = None,
     flags: dict[str, bool | int | float] | None = None,
+    allow_input_fusion: list[bool] | None = None,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
@@ -289,6 +299,7 @@ def as_tpu_kernel(
       cost_estimate=cost_estimate,
       vmem_limit_bytes=vmem_limit_bytes,
       flags=flags,
+      allow_input_fusion=allow_input_fusion,
       input_output_aliases=input_output_aliases,
   )
 
@@ -307,6 +318,7 @@ def _lowered_as_tpu_kernel(
     kernel_regeneration_metadata: bytes | None = None,
     vmem_limit_bytes: int | None = None,
     flags: dict[str, bool | int | float] | None = None,
+    allow_input_fusion: list[bool] | None = None,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
 ):
   """Turns a low-level MLIR Mosaic kernel into a JAX-compatible function."""
@@ -336,6 +348,7 @@ def _lowered_as_tpu_kernel(
         needs_layout_passes,
         vmem_limit_bytes,
         flags,
+        allow_input_fusion,
     )
     result = tpu_custom_call_p.bind(
         *args,
