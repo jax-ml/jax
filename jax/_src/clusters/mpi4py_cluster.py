@@ -24,7 +24,12 @@ from importlib.util import find_spec
 class Mpi4pyCluster(clusters.ClusterEnv):
   
   @classmethod
-  def is_env_present(cls) -> bool:
+  def is_env_present(cls, opt_in=False) -> bool:
+    # Why include and opt_in?  Enables this class to conform to
+    # every other ClusterEnv subclass while always being rejected
+    # as viable, except in the express case where we request to check
+    # it explicitly.
+
     # in many HPC clusters, the variables `https_proxy` and `http_proxy`
     # are set to enable access to normally unreachable network locations.
     # For example, `pip install ...` fails on compute nodes without them.
@@ -36,7 +41,7 @@ class Mpi4pyCluster(clusters.ClusterEnv):
     # And I also don't know what the right way to raise a complaint here is
     
     # Relies on mpi4py:
-    return find_spec("mpi4py") is not None
+    return find_spec("mpi4py") is not None and opt_in == True
 
   @classmethod
   def get_coordinator_address(cls) -> str:
