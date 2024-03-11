@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import inspect
 
 from jaxlib.mlir._mlir_libs._triton_ext import (
     PointerType,
@@ -55,12 +56,18 @@ class ScanOp(ScanOp):  # type: ignore
       self,
       operands: Sequence[ir.Value],
       axis: int,
+      reverse: ir.Attribute,
       *,
       loc: ir.Location | None = None,
       ip: ir.InsertionPoint | None = None,
   ):
     return_types = [op.type for op in operands]
-    super().__init__(return_types, operands, axis, loc=loc, ip=ip)
+    # OSS might have an old version of Triton, whose ScanOp doesn't have a
+    # reverse parameter.
+    if "reverse" in inspect.signature(super().__init__).parameters:
+      super().__init__(return_types, operands, axis, reverse, loc=loc, ip=ip)
+    else:
+      super().__init__(return_types, operands, axis, loc=loc, ip=ip)  # pylint: disable=no-value-for-parameter
 
 
 # TODO(slebedev): Consider overriding instead.
