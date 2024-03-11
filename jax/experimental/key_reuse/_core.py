@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from functools import partial, reduce, wraps
+from functools import partial, reduce, total_ordering, wraps
 from typing import Any, Callable, Iterator, NamedTuple
 
 import jax
@@ -43,6 +43,7 @@ import numpy as np
 
 # Create Source() and Sink() objects which validate inputs, have
 # correct equality semantics, and are hashable & immutable.
+@total_ordering
 class _SourceSinkBase:
   idx: int
   mask: bool | np.ndarray
@@ -74,6 +75,15 @@ class _SourceSinkBase:
             and np.shape(self.mask) == np.shape(other.mask)
             and np.all(self.mask == other.mask))
 
+  def __lt__(self, other):
+    if isinstance(other, Forward):
+      return True
+    elif isinstance(other, _SourceSinkBase):
+      return ((self.__class__.__name__, self.idx)
+              < (other.__class__.__name__, other.idx))
+    else:
+      return NotImplemented
+
   def __hash__(self):
     if isinstance(self.mask, bool):
       return hash((self.__class__, self.idx, self.mask))
@@ -100,6 +110,9 @@ class Forward(NamedTuple):
   in_idx: int
   out_idx: int
 
+  def __repr__(self):
+    return f"Forward({self.in_idx}, {self.out_idx})"
+
 
 # KeyReuseSignature is essentially a frozen set of Source/Sink/Forward
 # objects, with a few convenience methods related to key reuse checking.
@@ -108,6 +121,9 @@ class KeyReuseSignature:
 
   def __init__(self, *args):
     self._args = frozenset(args)
+
+  def __repr__(self):
+    return f"KeyReuseSignature{tuple(sorted(self._args))}"
 
   def __eq__(self, other):
     return isinstance(other, KeyReuseSignature) and self._args == other._args
