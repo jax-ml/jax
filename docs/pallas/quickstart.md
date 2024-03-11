@@ -143,7 +143,7 @@ On TPUs, programs are executed in a combination of parallel and sequential (depe
 +++
 
 With `grid` and `program_id` in mind, Pallas provides an abstraction that takes care of some common indexing patterns seen in a lot of kernels.
-To build intution, let's try to implement a matrix multiplication.
+To build intuition, let's try to implement a matrix multiplication.
 
 A simple strategy for implementing a matrix multiplication in Pallas is to implement it recursively. We know our underlying hardware has support for small matrix multiplications (using GPU and TPU tensorcores), so we just express a big matrix multiplication in terms of smaller ones.
 

@@ -266,7 +266,7 @@ Elementwise operations
 ^^^^^^^^^^^^^^^^^^^^^^
 
 Many elementwise operations are supported. It is worth noting that the hardware
-generally only supports elementwise compute using 32-bit types. When loading
+generally only supports elementwise computation using 32-bit types. When loading
 operands that use lower-precision types, they should generally be upcast to a
 32-bit type before applying elementwise ops.
 
@@ -344,5 +344,5 @@ However, loop primitives get fully unrolled during the compilation at the
 moment, so try to keep the loop trip count reasonably small.
 
 Overusing control flow can lead to significant regressions in low-level code
-generation, and it is recommended to try to squeeze as many computationaly
+generation, and it is recommended to try to squeeze as many computationally
 expensive operations into a single basic block as possible.
