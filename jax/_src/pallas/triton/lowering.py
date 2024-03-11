@@ -215,8 +215,8 @@ def _process_grid_to_3d_grid(grid_mapping: GridMapping):
   for i, s in enumerate(collapse_dims):
     out_idx = launch_grid_to_pallas_grid[i]
     s = _i32_constant(s)
-    out_indices[out_idx] = _mod(grid0, s)
-    grid0 = _floordiv(grid0, s)
+    out_indices[out_idx] = _mod(grid0, s, signed=False)
+    grid0 = _floordiv(grid0, s, signed=False)
 
   for i in range(len(prog_id_dims)):
     out_idx = launch_grid_to_pallas_grid[num_collapse + i]
@@ -558,7 +558,11 @@ def _extern_elementwise(
     for aval, arg, arg_type in zip(ctx.avals_in, args, extern.arg_types):
       bcast_arg = _bcast_to(_ensure_ir_value(arg, aval), out_aval.shape)
       if aval.weak_type and aval.dtype.name != arg_type:
-        bcast_arg = _cast(bcast_arg, _dtype_to_ir_type(jnp.dtype(arg_type)))
+        bcast_arg = _cast(
+            bcast_arg,
+            _dtype_to_ir_type(jnp.dtype(arg_type)),
+            signed=jnp.issubdtype(aval.dtype, jnp.signedinteger),
+        )
       bcast_args.append(bcast_arg)
 
     result_type = _dtype_to_ir_type(jnp.dtype(extern.result_type))
@@ -831,35 +835,33 @@ def _mul(x: ir.Value, y: ir.Value) -> ir.Value:
   raise NotImplementedError(f"unsupported types: {x.type} and {y.type}")
 
 
-def _floordiv(x: ir.Value, y: ir.Value) -> ir.Value:
+def _floordiv(x: ir.Value, y: ir.Value, *, signed: bool) -> ir.Value:
   assert x.type == y.type, (str(x.type), str(y.type))
-  x_element_type = _element_type(x.type)
-  if not isinstance(x_element_type, ir.IntegerType):
+  if not isinstance(_element_type(x.type), ir.IntegerType):
     raise NotImplementedError(f"unsupported types: {x.type} and {y.type}")
-  if x_element_type.is_signed:
+  if signed:
     return arith_dialect.divsi(x, y)
   else:
     return arith_dialect.divui(x, y)
 
 
-def _truediv(x: ir.Value, y: ir.Value) -> ir.Value:
+def _truediv(x: ir.Value, y: ir.Value, *, signed: bool) -> ir.Value:
   assert x.type == y.type, (str(x.type), str(y.type))
   x_element_type = _element_type(x.type)
   if isinstance(x_element_type, ir.IntegerType):
     x_element_type = ir.F32Type.get()
-    x = _int_float_cast(x, x_element_type)
-    y = _int_float_cast(y, x_element_type)
+    x = _int_float_cast(x, x_element_type, signed=signed)
+    y = _int_float_cast(y, x_element_type, signed=signed)
   if isinstance(x_element_type, ir.FloatType):
     return arith_dialect.divf(x, y)
   raise NotImplementedError(f"unsupported types: {x.type} and {y.type}")
 
 
-def _mod(x: ir.Value, y: ir.Value) -> ir.Value:
+def _mod(x: ir.Value, y: ir.Value, *, signed: bool) -> ir.Value:
   assert x.type == y.type, (str(x.type), str(y.type))
-  x_element_type = _element_type(x.type)
-  if not isinstance(x_element_type, ir.IntegerType):
+  if not isinstance(_element_type(x.type), ir.IntegerType):
     raise NotImplementedError(f"unsupported types: {x.type} and {y.type}")
-  if x_element_type.is_signed:
+  if signed:
     return arith_dialect.remsi(x, y)
   else:
     return arith_dialect.remui(x, y)
@@ -871,13 +873,13 @@ def _cmp(
     si_pred: arith_dialect.CmpIPredicate,
     ui_pred: arith_dialect.CmpIPredicate,
     f_pred: arith_dialect.CmpFPredicate,
+    *,
+    signed: bool,
 ) -> ir.Value:
   assert x.type == y.type, (str(x.type), str(y.type))
   x_element_type = _element_type(x.type)
   if isinstance(x_element_type, ir.IntegerType):
-    return arith_dialect.cmpi(
-        si_pred if x_element_type.is_signed else ui_pred, x, y
-    )
+    return arith_dialect.cmpi(si_pred if signed else ui_pred, x, y)
   elif isinstance(x_element_type, ir.FloatType):
     return arith_dialect.cmpf(f_pred, x, y)
   else:
@@ -926,29 +928,42 @@ _JAX_TO_TRITON_BINARY = {
     lax.add_p: _add,
     lax.sub_p: _sub,
     lax.mul_p: _mul,
-    lax.rem_p: _mod,
     lax.and_p: arith_dialect.andi,
     lax.or_p: arith_dialect.ori,
     lax.xor_p: arith_dialect.xori,
     lax.shift_left_p: arith_dialect.shli,
     lax.shift_right_arithmetic_p: arith_dialect.shrsi,
     lax.shift_right_logical_p: arith_dialect.shrui,
+    ad_util.add_any_p: _add,
+}
+
+for prim, fn in _JAX_TO_TRITON_BINARY.items():
+
+  def signless_rule(ctx: LoweringRuleContext, x, y, fn=fn):
+    x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
+    return fn(x, y)
+
+  triton_lowering_rules[prim] = signless_rule
+
+
+_JAX_TO_TRITON_SIGNED_BINARY = {
+    lax.rem_p: _mod,
     lax.eq_p: _equal,
     lax.ne_p: _not_equal,
     lax.gt_p: _greater_than,
     lax.ge_p: _greater_equal,
     lax.lt_p: _less_than,
     lax.le_p: _less_equal,
-    ad_util.add_any_p: _add,
 }
 
-for prim, fn in _JAX_TO_TRITON_BINARY.items():
+for prim, fn in _JAX_TO_TRITON_SIGNED_BINARY.items():
 
-  def rule(ctx: LoweringRuleContext, x, y, fn=fn):
+  def signed_rule(ctx: LoweringRuleContext, x, y, fn=fn):
+    x_aval, _ = ctx.avals_in
     x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
-    return fn(x, y)
+    return fn(x, y, signed=jnp.issubdtype(x_aval.dtype, jnp.signedinteger))
 
-  triton_lowering_rules[prim] = rule
+  triton_lowering_rules[prim] = signed_rule
 
 
 def _set_attr(v: ir.Value, name: str, attr: ir.Attribute) -> None:
@@ -1080,11 +1095,14 @@ triton_lowering_rules[lax.max_p] = _max_lowering_rule
 def _div_lowering_rule(ctx: LoweringRuleContext, x, y):
   x_aval, y_aval = ctx.avals_in
   x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
+  signed = jnp.issubdtype(x_aval.dtype, jnp.signedinteger) or jnp.issubdtype(
+      y_aval.dtype, jnp.signedinteger
+  )
   if np.issubdtype(x_aval.dtype, np.floating) or np.issubdtype(
       y_aval.dtype, np.floating
   ):
-    return _truediv(x, y)
-  return _floordiv(x, y)
+    return _truediv(x, y, signed=signed)
+  return _floordiv(x, y, signed=signed)
 
 
 triton_lowering_rules[lax.div_p] = _div_lowering_rule
@@ -1093,7 +1111,7 @@ triton_lowering_rules[lax.div_p] = _div_lowering_rule
 def _iota_lowering_rule(ctx: LoweringRuleContext, *, dtype, shape, dimension):
   if dimension != 0:
     raise NotImplementedError
-  return _cast(_make_range(0, *shape), _dtype_to_ir_type(dtype))
+  return _cast(_make_range(0, *shape), _dtype_to_ir_type(dtype), signed=False)
 
 
 triton_lowering_rules[lax.iota_p] = _iota_lowering_rule
@@ -1168,49 +1186,54 @@ def _float_float_cast(src: ir.Value, dst_type: ir.Type) -> ir.Value:
     raise NotImplementedError
 
 
-def _int_int_cast(src: ir.Value, dst_type: ir.Type) -> ir.Value:
+def _int_int_cast(src: ir.Value, dst_type: ir.Type, signed: bool) -> ir.Value:
   src_element_type = ir.IntegerType(_element_type(src.type))
   dst_element_type = ir.IntegerType(_element_type(dst_type))
   assert src_element_type != dst_element_type
   if dst_element_type.width == 1:
-    return _not_equal(src, _full(src.type, 0))
+    return _not_equal(src, _full(src.type, 0), signed=signed)
 
-  is_signed = src_element_type.is_signed and src_element_type.width != 1
   if src_element_type.width == dst_element_type.width:
     return arith_dialect.bitcast(dst_type, src)
   elif src_element_type.width > dst_element_type.width:
     return arith_dialect.trunci(dst_type, src)
-  elif is_signed:
+  elif signed and src_element_type.width != 1:
     return arith_dialect.extsi(dst_type, src)
   else:
     return arith_dialect.extui(dst_type, src)
 
 
-def _float_int_cast(src: ir.Value, dst_type: ir.Type) -> ir.Value:
+def _float_int_cast(
+    src: ir.Value, dst_type: ir.Type, *, signed: bool
+) -> ir.Value:
   src_element_type = _element_type(src.type)
   if not isinstance(src_element_type, (ir.BF16Type, ir.F16Type, ir.F32Type, ir.F64Type)):
     raise NotImplementedError(f"cannot cast {src} tp {dst_type}")
   dst_element_type = ir.IntegerType(_element_type(dst_type))
   if dst_element_type.width == 1:
-    return _not_equal(src, _full(src.type, 0))
-  elif dst_element_type.is_signed:
+    return _not_equal(src, _full(src.type, 0), signed=signed)
+  elif signed:
     return arith_dialect.fptosi(dst_type, src)
   else:
     return arith_dialect.fptoui(dst_type, src)
 
 
-def _int_float_cast(src: ir.Value, dst_type: ir.Type) -> ir.Value:
+def _int_float_cast(
+    src: ir.Value, dst_type: ir.Type, *, signed: bool
+) -> ir.Value:
   src_element_type = ir.IntegerType(_element_type(src.type))
   dst_element_type = _element_type(dst_type)
-  if not isinstance(dst_element_type, (ir.BF16Type, ir.F16Type, ir.F32Type, ir.F64Type)):
+  if not isinstance(
+      dst_element_type, (ir.BF16Type, ir.F16Type, ir.F32Type, ir.F64Type)
+  ):
     raise NotImplementedError(f"cannot cast {src} tp {dst_type}")
-  if src_element_type.width == 1 or not src_element_type.is_signed:
+  if src_element_type.width == 1 or not signed:
     return arith_dialect.uitofp(dst_type, src)
   else:
     return arith_dialect.sitofp(dst_type, src)
 
 
-def _cast(src: ir.Value, dst_type: ir.Type) -> ir.Value:
+def _cast(src: ir.Value, dst_type: ir.Type, *, signed: bool) -> ir.Value:
   if ir.RankedTensorType.isinstance(
       src.type
   ) and not ir.RankedTensorType.isinstance(dst_type):
@@ -1234,7 +1257,9 @@ def _cast(src: ir.Value, dst_type: ir.Type) -> ir.Value:
   if isinstance(src_element_type, (ir.F16Type, ir.BF16Type)) and not isinstance(
       dst_element_type, ir.F32Type
   ):
-    return _cast(_cast(src, ir.F32Type.get()), dst_type)
+    return _cast(
+        _cast(src, ir.F32Type.get(), signed=False), dst_type, signed=False
+    )
 
   if isinstance(src_element_type, ir.FloatType) and isinstance(
       dst_element_type, ir.FloatType
@@ -1244,16 +1269,16 @@ def _cast(src: ir.Value, dst_type: ir.Type) -> ir.Value:
   if isinstance(src_element_type, ir.IntegerType) and isinstance(
       dst_element_type, ir.IntegerType
   ):
-    return _int_int_cast(src, dst_type)
+    return _int_int_cast(src, dst_type, signed=signed)
 
   if isinstance(src_element_type, ir.FloatType) and isinstance(
       dst_element_type, ir.IntegerType
   ):
-    return _float_int_cast(src, dst_type)
+    return _float_int_cast(src, dst_type, signed=signed)
   if isinstance(src_element_type, ir.IntegerType) and isinstance(
       dst_element_type, ir.FloatType
   ):
-    return _int_float_cast(src, dst_type)
+    return _int_float_cast(src, dst_type, signed=signed)
 
   if tt_dialect.PointerType.isinstance(src_element_type) and isinstance(
       dst_element_type, ir.IntegerType
@@ -1261,9 +1286,9 @@ def _cast(src: ir.Value, dst_type: ir.Type) -> ir.Value:
     if dst_element_type.width == 64:
       return tt_dialect.ptr_to_int(dst_type, src)
     else:
-      x = _cast(src, ir.IntegerType.get_signless(64))
+      x = _cast(src, ir.IntegerType.get_signless(64), signed=signed)
       zero = _full(x.type, 0)
-      return _cast(_not_equal(x, zero), dst_type)
+      return _cast(_not_equal(x, zero, signed=signed), dst_type, signed=signed)
   if isinstance(
       src_element_type, ir.IntegerType
   ) and tt_dialect.PointerType.isinstance(dst_element_type):
@@ -1283,7 +1308,8 @@ def _convert_element_type_lowering_rule(
   x = _ensure_ir_value(x, x_aval)
   if new_dtype == x_aval.dtype:
     return x
-  return _cast(x, _dtype_to_ir_type(new_dtype))
+  signed = jnp.issubdtype(x_aval.dtype, jnp.signedinteger)
+  return _cast(x, _dtype_to_ir_type(new_dtype), signed=signed)
 
 
 triton_lowering_rules[lax.convert_element_type_p] = (
@@ -1428,7 +1454,7 @@ def _compute_pointers_from_indices(
       else:
         ptr_dim_offset = _add(
             _bcast_to(index.start, [index.size]),
-            _cast(_make_range(0, index.size), index.start.type),
+            _cast(_make_range(0, index.size), index.start.type, signed=False),
         )
       # We need to add broadcastable dimensions for the advanced int indexing
       # and for previous slices
@@ -1466,7 +1492,7 @@ def _compute_pointers_from_indices(
     ptr_dim_offset = _bcast_to(ptr_dim_offset, indexer_shape)
     index_type = ir.IntegerType(_element_type(ptr_dim_offset.type))
     if start_offset is not None:
-      start_offset = _cast(start_offset, index_type)
+      start_offset = _cast(start_offset, index_type, signed=False)
       ptr_dim_offset = _add(
           ptr_dim_offset, _bcast_to(start_offset, indexer_shape)
       )
@@ -1578,11 +1604,13 @@ def _load(
   if is_int1:
     pointee_type = ir.IntegerType.get_signless(8)
     ptr = _cast(
-        ptr, tt_dialect.PointerType.get(pointee_type, ptr_type.address_space)
+        ptr,
+        tt_dialect.PointerType.get(pointee_type, ptr_type.address_space),
+        signed=False,
     )
 
   if other is not None:
-    other = _cast(other, pointee_type)
+    other = _cast(other, pointee_type, signed=False)
 
   result = tt_dialect.load(
       _infer_load_return_type(ptr),
@@ -1594,7 +1622,9 @@ def _load(
       is_volatile=is_volatile,
   )
   return (
-      result if not is_int1 else _cast(result, ir.IntegerType.get_signless(1))
+      result
+      if not is_int1
+      else _cast(result, ir.IntegerType.get_signless(1), signed=False)
   )
 
 
@@ -1696,10 +1726,12 @@ def _store(
   if isinstance(pointee_type, ir.IntegerType) and pointee_type.width == 1:
     pointee_type = ir.IntegerType.get_signless(8)
     ptr = _cast(
-        ptr, tt_dialect.PointerType.get(pointee_type, ptr_type.address_space)
+        ptr,
+        tt_dialect.PointerType.get(pointee_type, ptr_type.address_space),
+        signed=False,
     )
 
-  value = _cast(value, pointee_type)
+  value = _cast(value, pointee_type, signed=False)
   return tt_dialect.store(
       ptr, value, mask=mask, cache=cache_modifier, evict=eviction_policy
   )
@@ -1867,6 +1899,7 @@ def _dot_general_lowering(
           out_type=_dtype_to_ir_type(acc_dtype),
       ),
       _dtype_to_ir_type(out_dtype),
+      signed=jnp.issubdtype(out_aval.dtype, jnp.signedinteger),
   )
 
 
@@ -2340,7 +2373,7 @@ def _cond_lowering_rule(
 
   out_types = [to_type(out) for out in ctx.avals_out]
 
-  use_branch0 = _equal(index, _ir_constant(0, index.type))
+  use_branch0 = _equal(index, _ir_constant(0, index.type), signed=False)
   # TODO(bjp): Switch to scf.index_switch once exposed in triton.cc
   if_op = scf_dialect.IfOp(use_branch0, out_types, hasElse=True)
   with ir.InsertionPoint.at_block_begin(if_op.then_block):

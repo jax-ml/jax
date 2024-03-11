@@ -1303,7 +1303,7 @@ class PallasCallAutodifferentiationTest(PallasTest):
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((), jnp.float32),
         name=self.id().split(".")[-1],
-        debug=True,
+        debug=False,
         grid=1)
     def pallas_impl(x_ref, o_ref):
       x = x_ref[()]
@@ -1551,8 +1551,38 @@ class PallasOpsTest(PallasTest):
     x = x.at[3].set(jnp.nan)
     np.testing.assert_allclose(isnan(x), jnp.isnan(x))
 
+  @parameterized.named_parameters(*(
+      (fn.__name__, fn, out_dtype)
+      for fn, out_dtype in [
+          (jnp.add, jnp.int32),
+          (jnp.subtract, jnp.int32),
+          (jnp.multiply, jnp.int32),
+          (jnp.true_divide, jnp.float32),
+          (jnp.remainder, jnp.int32),
+          (jnp.less, jnp.bool_),
+          (jnp.less_equal, jnp.bool_),
+          (jnp.greater, jnp.bool_),
+          (jnp.greater_equal, jnp.bool_),
+          (jnp.equal, jnp.bool_),
+          (jnp.not_equal, jnp.bool_),
+      ]
+  ))
+  def test_signed_int_ops(self, f, out_dtype):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8,), out_dtype),
+        grid=1)
+    def f_i32(x_ref, y_ref, o_ref):
+      o_ref[...] = f(x_ref[...], y_ref[...])
+
+    x = jnp.int32([1, 3, -4, -6, 2, 5, 4, -7])
+    y = jnp.int32([3, 1, -4, -5, 2, -2, 0, 4])
+    np.testing.assert_allclose(f(x, y), f_i32(x, y))
+
+
 class PallasOpsInterpretTest(PallasOpsTest):
   INTERPRET = True
+
 
 class PallasPrimitivesTest(PallasTest):
 
