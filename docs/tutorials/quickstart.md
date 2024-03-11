@@ -89,7 +89,7 @@ For more on JIT compilation in JAX, check out {ref}`jit-compilation`.
 
 ## Taking derivatives with {func}`~jax.grad`
 
-In addition to evaluating numerical functions, we can also to transform them.
+In addition to evaluating numerical functions, we can also transform them.
 One transformation is [automatic differentiation (autodiff)](https://en.wikipedia.org/wiki/Automatic_differentiation).
 In JAX, you can compute gradients with the {func}`~jax.grad` function.
 

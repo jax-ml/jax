@@ -406,7 +406,7 @@ If you attempt now to use reverse differentiation, you'll notice that JAX starts
 When computing the reverse differentiation, JAX first performs an abstract evaluation of the forward differentiation code `multiply_add_value_and_jvp` to obtain a  trace of primitives that compute the output tangent.
 
 - Observe that JAX performs this abstract evaluation with concrete values for the differentiation point, and abstract values for the tangents.
-- Notice that JAX uses the special abstract tangent value `Zero` for the tangent corresponding to the 3rd argument of `ma`. This reflects the fact that you do not differentiate w.r.t. the secibd argument to `square_add_prim`, which flows to the third argument to `multiply_add_prim`.
+- Notice that JAX uses the special abstract tangent value `Zero` for the tangent corresponding to the third argument of `ma`. This reflects the fact that you do not differentiate w.r.t. the second argument to `square_add_prim`, which flows to the third argument to `multiply_add_prim`.
 - Notice also that during the abstract evaluation of the tangent you pass the value `0.0` as the tangent for the third argument. This is because of the use of the `make_zero` function in the definition of `multiply_add_value_and_jvp`.
 
 ```{code-cell}

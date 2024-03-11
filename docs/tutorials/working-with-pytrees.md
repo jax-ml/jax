@@ -15,7 +15,7 @@ kernelspec:
 (working-with-pytrees)=
 # Working with pytrees
 
-JAX has built-in support for objects that look like dictionaries (dicts) of arrays, or lists of lists of dicts, or other nested structures — they are called JAX pytrees (also known as nests, or just trees). Often, in JAX, you want to operate over these nested pytrees. This tutorial will explain how to use them, provide useful code example, and point out common "gotchas" and patterns.
+JAX has built-in support for objects that look like dictionaries (dicts) of arrays, or lists of lists of dicts, or other nested structures — they are called JAX pytrees (also known as nests, or just trees). Often, in JAX, you want to operate over these nested pytrees. This tutorial will explain how to use them, provide useful code examples, and point out common "gotchas" and patterns.
 
 
 (pytrees-what-is-a-pytree)=
@@ -82,7 +82,7 @@ list_of_lists = [
 jax.tree_map(lambda x: x*2, list_of_lists)
 ```
 
-{func}`jax.tree_map` also allows to map a [N-ary](https://en.wikipedia.org/wiki/N-ary) function over multiple arguments. For example:
+{func}`jax.tree_map` also allows mapping a [N-ary](https://en.wikipedia.org/wiki/N-ary) function over multiple arguments. For example:
 
 ```{code-cell}
 another_list_of_lists = list_of_lists
