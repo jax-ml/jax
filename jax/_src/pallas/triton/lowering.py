@@ -492,7 +492,7 @@ def _associative_scan_lowering(body, ctx: LoweringRuleContext, args, axes):
   if consts:
     raise NotImplementedError("Associative scan with constants not supported.")
   element_types = [_element_type(arg.type) for arg in flat_args]
-  scan_op = tt_dialect.ScanOp(flat_args, axis, reverse=False)
+  scan_op = tt_dialect.ScanOp(flat_args, axis)
   param_types = element_types * 2
   entry = scan_op.regions[0].blocks.append(*param_types)
   with ir.InsertionPoint.at_block_begin(entry):
