@@ -286,6 +286,13 @@ def xmap(fun: Callable,
   """Assign a positional signature to a program that uses named array axes.
 
   .. warning::
+    xmap is deprecated and will be removed in a future release. Use
+    :py:func:`~jax.shard_map` or :py:func:`~jax.vmap` with the
+    ``spmd_axis_name`` argument for expressing SPMD device-parallel
+    computations. Please file an issue on https://github.com/google/jax/issues
+    if neither are suitable for your use case.
+
+  .. warning::
     This is an experimental feature and the details can change at
     any time. Use at your own risk!
 
