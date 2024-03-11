@@ -35,7 +35,7 @@ config.parse_flags_with_absl()
 
 
 def _CheckShapeAgreement(test_case, init_fun, apply_fun, input_shape):
-  jax_rng = random.PRNGKey(0)
+  jax_rng = random.key(0)
   result_shape, params = init_fun(jax_rng, input_shape)
   result = apply_fun(params, test_case.rng.normal(size=input_shape).astype("float32"))
   test_case.assertEqual(result.shape, result_shape)

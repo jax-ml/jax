@@ -751,15 +751,11 @@ class DynamicShapesTest(jtu.JaxTestCase):
 
   def test_check_jaxpr_key_reuse(self):
     with config.enable_key_reuse_checks(True):
-      try:
-        from jax.experimental.key_reuse import KeyReuseError
-      except ImportError:
-        self.skipTest("Test requires jax.experimental.key_reuse")
       def f(seed):
         key = jax.random.key(seed)
         return jax.random.uniform(key) + jax.random.normal(key)
       with jax.enable_checks(True):
-        with self.assertRaises(KeyReuseError):
+        with self.assertRaises(jax.errors.KeyReuseError):
           jax.jit(f)(0)
 
 

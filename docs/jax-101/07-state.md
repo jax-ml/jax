@@ -166,7 +166,7 @@ Notice that the need for a class becomes less clear once we have rewritten it th
 
 In our case, the `CounterV2` class is nothing more than a namespace bringing all the functions that use `CounterState` into one location. Exercise for the reader: do you think it makes sense to keep it as a class?
 
-Incidentally, you've already seen an example of this strategy in the JAX pseudo-randomness API, `jax.random`, shown in the [Random Numbers section](https://colab.research.google.com/github/google/jax/blob/main/docs/jax-101/05-random-numbers.ipynb). Unlike Numpy, which manages random state using stateful classes, JAX requires the programmer to work directly with the random generator state -- the PRNGKey.
+Incidentally, you've already seen an example of this strategy in the JAX pseudo-randomness API, `jax.random`, shown in the [Random Numbers section](https://colab.research.google.com/github/google/jax/blob/main/docs/jax-101/05-random-numbers.ipynb). Unlike Numpy, which manages random state using stateful classes, JAX requires the programmer to work directly with the random generator state -- the PRNG key.
 
 +++ {"id": "I2SqRx14_z98"}
 
@@ -233,7 +233,7 @@ Notice that we manually pipe the params in and out of the update function.
 
 import matplotlib.pyplot as plt
 
-rng = jax.random.PRNGKey(42)
+rng = jax.random.key(42)
 
 # Generate true data from y = w*x + b + noise
 true_w, true_b = 2, -1

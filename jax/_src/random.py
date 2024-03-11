@@ -30,6 +30,7 @@ from jax.numpy.linalg import cholesky, svd, eigh
 
 from jax._src import config
 from jax._src import core
+from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import prng
 from jax._src import xla_bridge
@@ -244,7 +245,7 @@ def fold_in(key: KeyArrayLike, data: IntegerArray) -> KeyArray:
   """Folds in data to a PRNG key to form a new PRNG key.
 
   Args:
-    key: a PRNG key (from ``PRNGKey``, ``split``, ``fold_in``).
+    key: a PRNG key (from ``key``, ``split``, ``fold_in``).
     data: a 32bit integer representing data to be folded in to the key.
 
   Returns:
@@ -274,7 +275,7 @@ def split(key: KeyArrayLike, num: int | tuple[int, ...] = 2) -> KeyArray:
   """Splits a PRNG key into `num` new keys by adding a leading axis.
 
   Args:
-    key: a PRNG key (from ``PRNGKey``, ``split``, ``fold_in``).
+    key: a PRNG key (from ``key``, ``split``, ``fold_in``).
     num: optional, a positive integer (or tuple of integers) indicating
       the number (or shape) of keys to produce. Defaults to 2.
 
@@ -1233,7 +1234,7 @@ def _gamma_impl(key, a, *, log_space, use_vmap=False):
   keys = keys.flatten()
   alphas = a.flatten()
 
-  if use_vmap:
+  if use_vmap and _key_impl(key) is prng.threefry_prng_impl:
     samples = vmap(partial(_gamma_one, log_space=log_space))(keys, alphas)
   else:
     samples = lax.map(
@@ -2611,3 +2612,28 @@ def binomial(
   if shape is not None:
     shape = core.canonicalize_shape(shape)
   return _binomial(key, n, p, shape, dtype)
+
+
+# Functions related to key reuse checking
+random_clone_p = core.Primitive("random_clone")
+dispatch.simple_impl(random_clone_p)
+random_clone_p.def_abstract_eval(lambda x: x)
+batching.defvectorized(random_clone_p)
+mlir.register_lowering(random_clone_p, lambda _, k: [k])
+
+def clone(key):
+  """Clone a key for reuse
+
+  Outside the context of key reuse checking (see :mod:`jax.experimental.key_reuse`)
+  this function operates as an identity.
+
+  Example:
+
+    >>> import jax
+    >>> key = jax.random.key(0)
+    >>> data = jax.random.uniform(key)
+    >>> cloned_key = jax.random.clone(key)
+    >>> same_data = jax.random.uniform(cloned_key)
+    >>> assert data == same_data
+  """
+  return random_clone_p.bind(key)

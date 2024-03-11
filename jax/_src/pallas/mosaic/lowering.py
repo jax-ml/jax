@@ -86,7 +86,9 @@ class MeshContext:
 @dataclasses.dataclass
 class LoweringContext:
   ir_context: ir.Context
-  grid_indices: Sequence[ir.Value] | None
+  grid_rank: int  # Includes both user and vmap axes.
+  mapped_dims: tuple[int, ...]  # Indices of vmapped grid dimensions.
+  user_grid_indices: Sequence[ir.Value] | None
   block_shapes: list[tuple[int | pl_core.Mapped, ...]]
   name_stack: source_info_util.NameStack
   mesh_context: MeshContext | None
@@ -475,6 +477,8 @@ def lower_jaxpr_to_transform_func(
       mesh_context = None
     lowering_context = LoweringContext(
         ctx,
+        len(mosaic_grid_mapping.grid),
+        mosaic_grid_mapping.mapped_dims,
         None,
         arg_block_shapes,
         source_info_util.NameStack(),
@@ -531,6 +535,8 @@ def lower_jaxpr_to_func(
       mesh_context = None
     lowering_context = LoweringContext(
         ctx,
+        len(mosaic_grid_mapping.grid),
+        mosaic_grid_mapping.mapped_dims,
         jaxpr_indices,
         arg_block_shapes,
         source_info_util.NameStack(),
@@ -1846,22 +1852,32 @@ lowering_rules[debugging.debug_callback_p] = _debug_callback_lowering_rule
 
 
 def _program_id_lowering_rule(ctx: LoweringRuleContext, *, axis: int):
-  if ctx.lowering_context.grid_indices is None:
+  if ctx.lowering_context.user_grid_indices is None:
     raise ValueError(
         f"program id: {axis} was passed, but user did not provide a grid."
     )
-  length = len(ctx.lowering_context.grid_indices)
+  length = len(ctx.lowering_context.user_grid_indices)
   if not (0 <= axis < length):
     raise ValueError(
         f"user passed in program id with axis: {axis}, but grid only has"
         f" length: {length}"
     )
-  return ctx.lowering_context.grid_indices[axis]
+  return ctx.lowering_context.user_grid_indices[axis]
 lowering_rules[primitives.program_id_p] = _program_id_lowering_rule
 
 def _num_programs_lowering_rule(ctx: LoweringRuleContext, *, axis: int):
-  del ctx
-  return tpu.iteration_bound(axis)
+  mapped_axes = set(ctx.lowering_context.mapped_dims)
+  seen_user_axes = 0
+  for i in range(ctx.lowering_context.grid_rank):
+    seen_user_axes += int(i not in mapped_axes)
+    if seen_user_axes == axis + 1:
+      break
+  else:
+    raise ValueError(
+        f"user passed in program id with axis: {axis}, but grid only has"
+        f" length: {len(ctx.lowering_context.grid_rank)}"
+    )
+  return tpu.iteration_bound(i)
 lowering_rules[primitives.num_programs_p] = _num_programs_lowering_rule
 
 

@@ -2049,8 +2049,8 @@ def lower_sharding_computation(
       any(not is_unspecified(o) for o in out_shardings))
 
   gs = GSPMDSharding.get_replicated(device_assignment)
-  if xla_extension_version < 241 or hasattr(backend, "compile_replicated"):
-    in_shardings = tuple(gs if is_unspecified(i) else i for i in in_shardings)
+  # if xla_extension_version < 241 or hasattr(backend, "compile_replicated"):
+  in_shardings = tuple(gs if is_unspecified(i) else i for i in in_shardings)
 
   da_object = _create_da_object(tuple(device_assignment))
 
@@ -2483,11 +2483,7 @@ def _gspmd_to_named_sharding_via_mesh(
 def _gspmd_to_named_sharding(
     out_s: sharding_impls.GSPMDSharding,
     orig_in_s: sharding_impls.NamedSharding) -> sharding_impls.NamedSharding:
-  parsed_pspec = sharding_impls.parse_flatten_op_sharding(
-      out_s._hlo_sharding, orig_in_s.mesh)[0]
-  return create_mesh_pspec_sharding(
-      orig_in_s.mesh, parsed_pspec.get_partition_spec(), parsed_pspec,
-      out_s.memory_kind)
+  return _gspmd_to_named_sharding_via_mesh(out_s, orig_in_s.mesh)
 
 _register_out_sharding_handler(
     sharding_impls.NamedSharding, _gspmd_to_named_sharding)

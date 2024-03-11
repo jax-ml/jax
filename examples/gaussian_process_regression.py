@@ -30,7 +30,7 @@ import matplotlib.pyplot as plt
 def main(unused_argv):
 
   numpts = 7
-  key = random.PRNGKey(0)
+  key = random.key(0)
   eye = jnp.eye(numpts)
 
   def cov_map(cov_func, xs, xs2=None):

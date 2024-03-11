@@ -1528,7 +1528,7 @@ tf_not_yet_impl = [
     "consume",
 ]
 
-tf_impl[prng.reuse_key_p] = lambda x: x
+tf_impl[random_internal.random_clone_p] = lambda x: x
 
 tf_impl[ad_util.stop_gradient_p] = tf.stop_gradient
 

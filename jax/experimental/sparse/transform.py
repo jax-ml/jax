@@ -27,9 +27,9 @@ For example:
 >>> from jax import random
 >>> from jax.experimental.sparse import BCOO, sparsify
 
->>> mat = random.uniform(random.PRNGKey(1701), (5, 5))
+>>> mat = random.uniform(random.key(1701), (5, 5))
 >>> mat = mat.at[mat < 0.5].set(0)
->>> vec = random.uniform(random.PRNGKey(42), (5,))
+>>> vec = random.uniform(random.key(42), (5,))
 
 >>> def f(mat, vec):
 ...   return -(jnp.sin(mat) @ vec)

@@ -394,9 +394,7 @@ def _scan_impl_loop(*args, reverse, length, num_consts, num_carry, linear,
     i_ = length - i - 1 if reverse else i
     # TODO(jakevdp)[key-reuse]: this key reuse logic is not quite right,
     # because the scan body may consume any keys within it.
-    # Import here to avoid circular imports
-    from jax.experimental import key_reuse
-    xs_unconsumed =  _map(key_reuse.reuse_key, xs)
+    xs_unconsumed =  _map(jax.random.clone, xs)
     x = _map(partial(_dynamic_index_array, i_), x_avals, xs_unconsumed)
     out_flat = f_impl(*consts, *carry, *x)
     carry_out, y_updates = split_list(out_flat, [num_carry])
@@ -2046,16 +2044,18 @@ def map(f, xs):
   return ys
 
 def _rng_bit_generator_batching_rule(batched_args, batch_dims, *, shape, dtype, algorithm):
-  """Calls RBG in a loop and stacks the results."""
-  key, = batched_args
+  keys, = batched_args
   bd, = batch_dims
   if bd is batching.not_mapped:
-    return lax.rng_bit_generator_p.bind(key, shape=shape, dtype=dtype,
+    return lax.rng_bit_generator_p.bind(keys, shape=shape, dtype=dtype,
                                         algorithm=algorithm), (None, None)
-  key = batching.moveaxis(key, bd, 0)
-  map_body = lambda k: lax.rng_bit_generator_p.bind(k, shape=shape, dtype=dtype, algorithm=algorithm)
-  stacked_keys, stacked_bits = map(map_body, key)
-  return (stacked_keys, stacked_bits), (0, 0)
+  keys = batching.moveaxis(keys, bd, 0)
+  batch_size = keys.shape[0]
+  key = keys[0]
+  new_key, bits = lax.rng_bit_generator_p.bind(key, shape=(batch_size, *shape),
+                                               dtype=dtype, algorithm=algorithm)
+  new_keys = jax.lax.dynamic_update_index_in_dim(keys, new_key, 0, axis=0)
+  return (new_keys, bits), (0, 0)
 
 batching.primitive_batchers[lax.rng_bit_generator_p] = _rng_bit_generator_batching_rule  # type: ignore
 
@@ -2101,7 +2101,7 @@ def associative_scan(fn: Callable, elems, reverse: bool = False, axis: int = 0):
 
   Example 2: partial products of an array of matrices
 
-  >>> mats = jax.random.uniform(jax.random.PRNGKey(0), (4, 2, 2))
+  >>> mats = jax.random.uniform(jax.random.key(0), (4, 2, 2))
   >>> partial_prods = lax.associative_scan(jnp.matmul, mats)
   >>> partial_prods.shape
   (4, 2, 2)

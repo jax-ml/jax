@@ -655,3 +655,29 @@ class UnexpectedTracerError(JAXTypeError):
 
   def __init__(self, msg: str):
     super().__init__(msg)
+
+
+@export
+class KeyReuseError(JAXTypeError):
+  """
+  This error occurs when a PRNG key is reused in an unsafe manner.
+  Key reuse is checked only when `jax_enable_key_reuse_checks` is
+  set to `True`.
+
+  Here is a simple example of code that would lead to such an error::
+
+    >>> with jax.enable_key_reuse_checks(True):  # doctest: +SKIP
+    ...   key = jax.random.key(0)
+    ...   value = jax.random.uniform(key)
+    ...   new_value = jax.random.uniform(key)
+    ...
+    ---------------------------------------------------------------------------
+    KeyReuseError                             Traceback (most recent call last)
+    ...
+    KeyReuseError: Previously-consumed key passed to jit-compiled function at index 0
+
+  This sort of key reuse is problematic because the JAX PRNG is stateless, and keys
+  must be manually split; For more information on this see `Sharp Bits: Random Numbers
+  <https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#random-numbers>`_.
+  """
+  pass

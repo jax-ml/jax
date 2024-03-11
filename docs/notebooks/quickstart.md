@@ -59,7 +59,7 @@ We'll be generating random data in the following examples. One big difference be
 :id: u0nseKZNqOoH
 :outputId: 03e20e21-376c-41bb-a6bb-57431823691b
 
-key = random.PRNGKey(0)
+key = random.key(0)
 x = random.normal(key, (10,))
 print(x)
 ```

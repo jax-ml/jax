@@ -463,14 +463,14 @@ The Mersenne Twister PRNG is also known to have a [number](https://cs.stackexcha
 
 JAX instead implements an _explicit_ PRNG where entropy production and consumption are handled by explicitly passing and iterating PRNG state.  JAX uses a modern [Threefry counter-based PRNG](https://github.com/google/jax/blob/main/docs/jep/263-prng.md) that's __splittable__.  That is, its design allows us to __fork__ the PRNG state into new PRNGs for use with parallel stochastic generation.
 
-The random state is described by two unsigned-int32s that we call a __key__:
+The random state is described by a special array element that we call a __key__:
 
 ```{code-cell} ipython3
 :id: yPHE7KTWgAWs
 :outputId: ae8af0ee-f19e-474e-81b6-45e894eb2fc3
 
 from jax import random
-key = random.PRNGKey(0)
+key = random.key(0)
 key
 ```
 
@@ -1071,7 +1071,7 @@ At the moment, JAX by default enforces single-precision numbers to mitigate the 
 :id: CNNGtzM3NDkO
 :outputId: b422bb23-a784-44dc-f8c9-57f3b6c861b8
 
-x = random.uniform(random.PRNGKey(0), (1000,), dtype=jnp.float64)
+x = random.uniform(random.key(0), (1000,), dtype=jnp.float64)
 x.dtype
 ```
 
@@ -1117,7 +1117,7 @@ We can then confirm that `x64` mode is enabled:
 
 import jax.numpy as jnp
 from jax import random
-x = random.uniform(random.PRNGKey(0), (1000,), dtype=jnp.float64)
+x = random.uniform(random.key(0), (1000,), dtype=jnp.float64)
 x.dtype # --> dtype('float64')
 ```
 

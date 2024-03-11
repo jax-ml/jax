@@ -588,6 +588,14 @@ class KeyArrayTest(jtu.JaxTestCase):
     key = random.key(42)
     self.assertIsInstance(key, prng_internal.PRNGKeyArray)
 
+  def test_random_clone(self):
+    # Here we test value semantics and compatibility with jit/vmap
+    # key reuse semantics are tested in key_reuse_test.py
+    keys = jax.random.split(jax.random.key(0), 5)
+    self.assertKeysEqual(keys, jax.random.clone(keys))
+    self.assertKeysEqual(keys, jax.jit(jax.random.clone)(keys))
+    self.assertKeysEqual(keys, jax.vmap(jax.random.clone)(keys))
+
   def test_issubdtype(self):
     key = random.key(42)
 
@@ -1015,8 +1023,10 @@ class KeyArrayTest(jtu.JaxTestCase):
       with jtu.ignore_warning(category=DeprecationWarning, message="arr.device"):
         self.assertEqual(key.device(), key._base_array.device())
     self.assertEqual(key.devices(), key._base_array.devices())
-    self.assertEqual(key.on_device_size_in_bytes, key._base_array.on_device_size_in_bytes)
-    self.assertEqual(key.unsafe_buffer_pointer, key._base_array.unsafe_buffer_pointer)
+    self.assertEqual(key.on_device_size_in_bytes(),
+                     key._base_array.on_device_size_in_bytes())
+    self.assertEqual(key.unsafe_buffer_pointer(),
+                     key._base_array.unsafe_buffer_pointer())
     self.assertArraysEqual(key.addressable_data(0)._base_array,
                            key._base_array.addressable_data(0))
     self.assertLen(key.addressable_shards, len(key._base_array.addressable_shards))

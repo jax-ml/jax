@@ -205,7 +205,9 @@ def _pallas_call_ttir_lowering(
   lowering_result = lowering.lower_jaxpr_to_triton_module(
       jaxpr, (*in_shapes, *out_shapes), grid_mapping, name, cuda_options
   )
+  module_op = lowering_result.module.operation
   if debug:
+    print(module_op.get_asm(enable_debug_info=True, pretty_debug_info=True))
     lowering_result.module.dump()
 
   grid_x, grid_y, grid_z = normalize_grid(lowering_result.grid)
@@ -214,7 +216,7 @@ def _pallas_call_ttir_lowering(
       for shape in out_shapes
   ]
   buf = io.BytesIO()
-  lowering_result.module.operation.write_bytecode(buf)
+  module_op.write_bytecode(buf)
   backend_config = dict(
       name=ir.StringAttr.get(name),
       ir=ir.StringAttr.get(buf.getvalue()),

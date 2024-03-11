@@ -226,7 +226,7 @@ def matmul(x: jax.Array, y: jax.Array):
       lambda i, j: (i, j), (x.shape[0] // 2, y.shape[1] // 2)
     )
   )(x, y)
-k1, k2 = jax.random.split(jax.random.PRNGKey(0))
+k1, k2 = jax.random.split(jax.random.key(0))
 x = jax.random.normal(k1, (1024, 1024))
 y = jax.random.normal(k2, (1024, 1024))
 z = matmul(x, y)
@@ -253,7 +253,7 @@ def matmul(x: jax.Array, y: jax.Array, *, activation):
       lambda i, j: (i, j), (x.shape[0] // 2, y.shape[1] // 2)
     ),
   )(x, y)
-k1, k2 = jax.random.split(jax.random.PRNGKey(0))
+k1, k2 = jax.random.split(jax.random.key(0))
 x = jax.random.normal(k1, (1024, 1024))
 y = jax.random.normal(k2, (1024, 1024))
 z = matmul(x, y, activation=jax.nn.relu)
@@ -263,7 +263,7 @@ np.testing.assert_allclose(z, jax.nn.relu(x @ y))
 To conclude, let's highlight a cool feature of Pallas: it composes with `jax.vmap`! To turn this matrix multiplication into a batched version, we just need to `vmap` it.
 
 ```{code-cell} ipython3
-k1, k2 = jax.random.split(jax.random.PRNGKey(0))
+k1, k2 = jax.random.split(jax.random.key(0))
 x = jax.random.normal(k1, (4, 1024, 1024))
 y = jax.random.normal(k2, (4, 1024, 1024))
 z = jax.vmap(partial(matmul, activation=jax.nn.relu))(x, y)

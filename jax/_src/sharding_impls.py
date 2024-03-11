@@ -284,24 +284,15 @@ class NamedSharding(XLACompatibleSharding):
     self.mesh = mesh
     self.spec = spec
     self._memory_kind = memory_kind
-    self._parsed_pspec = _parsed_pspec
     self._manual_axes = _manual_axes
-    self._preprocess()
+    self._parsed_pspec = preprocess(self.mesh, self.spec, _parsed_pspec)
 
-  def _preprocess(self):
-    # This split exists because you can pass `_parsed_pspec` that has been
-    # modified from the original. For example: Adding extra dimension to
-    # axis_resources for vmap handlers. In such cases you need to preserve the
-    # `sync` attribute of parsed pspecs.
-    # PartitionSpec is inferred from the parsed pspec in this case.
-    # TODO(yaskatariya): Remove this and replace this with a normalized
-    # representation of Parsed Pspec
-    if self._parsed_pspec is None:
-      self._parsed_pspec, _, _ = prepare_axis_resources(
-          PartitionSpec() if self.spec is None else self.spec,
-          "NamedSharding spec", allow_unconstrained_dims=True)
-
-    _check_mesh_resource_axis(self.mesh, self._parsed_pspec)
+  # TODO(phawkins): remove this method when jaxlib 0.4.26 or newer is the
+  # minimum. This method is called by the C++ sharding implementation in earlier
+  # versions.
+  if xla_extension_version < 243:
+    def _preprocess(self):
+      self._parsed_pspec = preprocess(self.mesh, self.spec, self._parsed_pspec)
 
   def __repr__(self):
     mesh_repr = ", ".join(f"'{k}': {v}" for k, v in self.mesh.shape.items())
@@ -1113,6 +1104,23 @@ class CanonicalizedParsedPartitionSpec(ParsedPartitionSpec):
     return (f"CanonicalizedParsedPartitionSpec(partitions={self.partitions}, "
             f"unsafe_user_spec={self.unsafe_user_spec}, "
             f"sync={self.sync})")
+
+
+def preprocess(mesh, spec, parsed_pspec):
+  # This split exists because you can pass `_parsed_pspec` that has been
+  # modified from the original. For example: Adding extra dimension to
+  # axis_resources for vmap handlers. In such cases you need to preserve the
+  # `sync` attribute of parsed pspecs.
+  # PartitionSpec is inferred from the parsed pspec in this case.
+  # TODO(yaskatariya): Remove this and replace this with a normalized
+  # representation of Parsed Pspec
+  if parsed_pspec is None:
+    parsed_pspec, _, _ = prepare_axis_resources(
+        PartitionSpec() if spec is None else spec,
+        "NamedSharding spec", allow_unconstrained_dims=True)
+
+  _check_mesh_resource_axis(mesh, parsed_pspec)
+  return parsed_pspec
 
 
 def prepare_axis_resources(axis_resources,

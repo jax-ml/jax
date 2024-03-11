@@ -291,7 +291,7 @@ noise = 0.5 * np.random.normal(size=(128, 1))
 ys = xs * true_w + true_b + noise
 
 # Initialise parameters and replicate across devices.
-params = init(jax.random.PRNGKey(123))
+params = init(jax.random.key(123))
 n_devices = jax.local_device_count()
 replicated_params = jax.tree_map(lambda x: jnp.array([x] * n_devices), params)
 ```

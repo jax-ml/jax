@@ -29,7 +29,6 @@ from jax._src import core
 from jax._src import config
 from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe
-from jax._src import prng
 from jax._src import test_util as jtu
 from jax._src.util import tuple_insert
 import jax.numpy as jnp
@@ -1735,8 +1734,8 @@ if CAN_USE_HYPOTHESIS:
       y, impl_vjp = jax.vjp(impl, x)
       y_ref, ref_vjp = jax.vjp(ref, x)
       self.assertAllClose(y, y_ref)
-      t = random.normal(prng.reuse_key(k2), x.shape)
-      y2 = random.normal(prng.reuse_key(k1), y.shape)
+      t = random.normal(jax.random.clone(k2), x.shape)
+      y2 = random.normal(jax.random.clone(k1), y.shape)
       self.assertAllClose(impl_vjp(t), ref_vjp(t))
 
       # Second order
@@ -1752,7 +1751,7 @@ if CAN_USE_HYPOTHESIS:
       (x,), impl_vjp2 = jax.vjp(impl_vjp, t2)
       (x_ref,), ref_vjp2 = jax.vjp(ref_vjp, t2)
       self.assertAllClose(x, x_ref)
-      y2 = random.normal(prng.reuse_key(k1), y.shape)
+      y2 = random.normal(jax.random.clone(k1), y.shape)
       self.assertAllClose(impl_vjp2((y2,)), ref_vjp2((y2,)))
 
 if __name__ == '__main__':
