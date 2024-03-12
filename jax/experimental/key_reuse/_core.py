@@ -373,6 +373,16 @@ def _slice_signature(eqn):
 
 key_reuse_signatures_dynamic[lax.slice_p] = _slice_signature
 
+def _concatenate_signature(eqn):
+  num_vals = len(eqn.invars)
+  # TODO(jakevdp): should this signature be more granular?
+  if num_vals == 1:
+    return KeyReuseSignature(Forward(0, 0))
+  else:
+    return KeyReuseSignature(*(Sink(i) for i in range(num_vals)), Source(0))
+
+key_reuse_signatures_dynamic[lax.concatenate_p] = _concatenate_signature
+
 def _pjit_key_type_signature(eqn):
   return get_jaxpr_type_signature(eqn.params['jaxpr'].jaxpr)
 
