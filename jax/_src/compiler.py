@@ -357,6 +357,11 @@ def _compile_and_write_autotune_config(
   )
 
   if os.path.exists(autotune_tmp_file):
+    logger.debug(
+        "Compiling module: %s. Use existing autotune config file: %s",
+        module_name,
+        autotune_tmp_file,
+    )
     debug_options.xla_gpu_load_autotune_results_from = autotune_tmp_file
     return _compile_and_write_cache(
         backend,
@@ -369,6 +374,7 @@ def _compile_and_write_autotune_config(
 
   if distributed.global_state.process_id == 0:
     debug_options.xla_gpu_dump_autotune_results_to = autotune_tmp_file
+    logger.debug("Compiling and dumping autotune for module: %s", module_name)
     executable = _compile_and_write_cache(
         backend,
         computation,
@@ -377,20 +383,47 @@ def _compile_and_write_autotune_config(
         module_name,
         cache_key,
     )
+
+    logger.debug(
+        "Writing autotune config for module %s to %s",
+        module_name,
+        autotune_tmp_file,
+    )
     with open(autotune_tmp_file, "rb") as f:
       autotune_config = f.read()
 
     autotune_config = compilation_cache.compress_executable(autotune_config)
     global_client.key_value_set_bytes(cache_key, autotune_config)
+    logger.debug(
+        "Autotune config for module %s with size %d shared by cache_key %s",
+        module_name,
+        len(autotune_config),
+        cache_key,
+    )
   else:
+    logger.debug(
+        "Compiling module %s, waiting for config to be shared by cache_key %s",
+        module_name,
+        cache_key,
+    )
     autotune_config = global_client.blocking_key_value_get_bytes(
         cache_key, share_timeout
     )
 
+    logger.debug(
+        "Received autotune config for module %s of size %d",
+        module_name,
+        len(autotune_config),
+    )
     autotune_config = compilation_cache.decompress_executable(autotune_config)
     with open(autotune_tmp_file, "wb") as f:
       f.write(autotune_config)
 
+    logger.debug(
+        "Compiling module %s, using autotune config from %s",
+        module_name,
+        autotune_tmp_file,
+    )
     debug_options.xla_gpu_load_autotune_results_from = autotune_tmp_file
     executable = _compile_and_write_cache(
         backend,
