@@ -232,11 +232,19 @@ class VectorLayoutInferer {
         if (infer(op).failed()) {
           return failure();
         }
-      } else if (auto op = dyn_cast<tpu::MatmulOp>(any_op)) {
+      } else if (auto op = dyn_cast<tpu::StoreOp>(any_op)) {
         if (infer(op).failed()) {
           return failure();
         }
-      } else if (auto op = dyn_cast<tpu::StoreOp>(any_op)) {
+      } else if (auto op = dyn_cast<tpu::StridedLoadOp>(any_op)) {
+        if (infer(op).failed()) {
+          return failure();
+        }
+      } else if (auto op = dyn_cast<tpu::StridedStoreOp>(any_op)) {
+        if (infer(op).failed()) {
+          return failure();
+        }
+      } else if (auto op = dyn_cast<tpu::MatmulOp>(any_op)) {
         if (infer(op).failed()) {
           return failure();
         }
@@ -578,6 +586,37 @@ class VectorLayoutInferer {
     auto out_layout = VectorLayout(bitwidth, {0, 0}, nativeTiling(bitwidth),
                                    ImplicitDim::kNone);
     setLayout(op, in_layout, out_layout);
+    return success();
+  }
+
+  LogicalResult infer(tpu::StridedLoadOp op) {
+    auto vty = op.getResult().getType();
+    int8_t bitwidth = vty.getElementTypeBitWidth();
+    if (bitwidth != 32) {
+      NYI("Strided load with non 32-bit data");
+    }
+    if (vty.getRank() < 2) {
+      NYI("Strided load with 1D vector");
+    }
+    SmallVector<Layout, 4> in_layout(op->getNumOperands(), kNoLayout);
+    setLayout(op, in_layout,
+              VectorLayout(bitwidth, {0, 0}, nativeTiling(bitwidth),
+                           ImplicitDim::kNone));
+    return success();
+  }
+
+  LogicalResult infer(tpu::StridedStoreOp op) {
+    auto vty = op.getValueToStore().getType();
+    int8_t bitwidth = vty.getElementTypeBitWidth();
+    if (bitwidth != 32) {
+      NYI("Strided store with non 32-bit data");
+    }
+    if (vty.getRank() < 2) {
+      NYI("Strided store with 1D vector");
+    }
+    auto store_layout = VectorLayout(bitwidth, {0, 0}, nativeTiling(bitwidth),
+                                     ImplicitDim::kNone);
+    setInLayout(op, {store_layout, kNoLayout});
     return success();
   }
 

@@ -194,6 +194,33 @@ def TPU_LoadOp : TPU_Op<"load"> {
   }];
 }
 
+def TPU_StridedLoadOp : TPU_Op<"strided_load"> {
+  let arguments = (ins
+    AnyMemRef:$base,
+    DenseI32ArrayAttr:$indices,
+    DenseI32ArrayAttr:$strides
+  );
+  let results = (outs AnyVector:$result);
+  let assemblyFormat = [{
+    $base attr-dict `:` type($base) `,` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+def TPU_StridedStoreOp : TPU_Op<"strided_store"> {
+  let arguments = (ins
+    AnyVector:$valueToStore,
+    AnyMemRef:$base,
+    DenseI32ArrayAttr:$indices,
+    DenseI32ArrayAttr:$strides
+  );
+  let results = (outs);
+  let assemblyFormat = [{
+    $base `,` $valueToStore attr-dict `:` type($base) `,` type($valueToStore)
+  }];
+  let hasVerifier = 1;
+}
+
 def TPU_RotateOp : TPU_Op<"rotate", [Pure, SameOperandsAndResultType]> {
   let arguments = (ins
     AnyVector:$value,

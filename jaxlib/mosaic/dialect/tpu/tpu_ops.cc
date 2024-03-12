@@ -24,6 +24,7 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
+#include "mlir/include/mlir/IR/BuiltinTypes.h"
 #include "mlir/include/mlir/IR/IRMapping.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 
@@ -178,6 +179,56 @@ LogicalResult MemRefSqueezeOp::canonicalize(MemRefSqueezeOp op,
                                                   layout_ref);
   rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), squeeze);
   return success();
+}
+
+template <typename Op>
+LogicalResult verifyStridedOp(Op op, MemRefType memref_ty,
+                              VectorType vector_ty) {
+  auto indices = op.getIndices();
+  auto strides = op.getStrides();
+  if (memref_ty.getRank() != indices.size()) {
+    op.emitError("Base memref's rank and indices size do not match: ")
+        << memref_ty.getRank() << " vs " << indices.size();
+    return failure();
+  }
+  if (memref_ty.getRank() != strides.size()) {
+    op.emitError("Base memref's rank and strides size do not match: ")
+        << memref_ty.getRank() << " vs " << strides.size();
+    return failure();
+  }
+  if (memref_ty.getRank() != vector_ty.getRank()) {
+    op.emitError("Base memref's rank and result's rank do not match: ")
+        << memref_ty.getRank() << " vs " << vector_ty.getRank();
+    return failure();
+  }
+  for (int64_t i = 0; i < memref_ty.getRank(); ++i) {
+    if (indices[i] < 0 && indices[i] >= memref_ty.getDimSize(i)) {
+      op.emitError("Indices[")
+          << i << "]=" << indices[i] << " is out of range [0, "
+          << memref_ty.getDimSize(i) << ")";
+      return failure();
+    }
+    if (strides[i] < 1) {
+      op.emitError("Strides[") << i << "]=" << strides[i] << " must be >= 1";
+      return failure();
+    }
+    if ((indices[i] + (vector_ty.getDimSize(i) - 1) * strides[i]) >
+        memref_ty.getDimSize(i)) {
+      op.emitError() << "Strided slice is out of range at dim " << i;
+      return failure();
+    }
+  }
+  return success();
+}
+
+LogicalResult StridedLoadOp::verify() {
+  return verifyStridedOp<StridedLoadOp>(*this, getMemRefType(getBase()),
+                                        getType());
+}
+
+LogicalResult StridedStoreOp::verify() {
+  return verifyStridedOp<StridedStoreOp>(*this, getMemRefType(getBase()),
+                                         getValueToStore().getType());
 }
 
 LogicalResult ReinterpretCastOp::verify() {
