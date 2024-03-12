@@ -2158,7 +2158,9 @@ class DynamicJaxprTrace(core.Trace):
     def fwd_jaxpr_from_zeros(*zeros):
       for store in fwd.stores: store and store.reset()
       fwd_ = _interleave_fun(fwd, zeros)
-      return trace_to_subjaxpr_dynamic(fwd_, main_(), in_avals)[::2]
+      jaxpr, _, consts, atr = trace_to_subjaxpr_dynamic(fwd_, main_(), in_avals)
+      if atr: raise NotImplementedError
+      return jaxpr, consts
 
     out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]
     invars = map(self.getvar, tracers)
