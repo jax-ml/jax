@@ -837,7 +837,10 @@ def _mul(x: ir.Value, y: ir.Value) -> ir.Value:
 
 def _floordiv(x: ir.Value, y: ir.Value, *, signed: bool) -> ir.Value:
   assert x.type == y.type, (str(x.type), str(y.type))
-  if not isinstance(_element_type(x.type), ir.IntegerType):
+  x_element_type = _element_type(x.type)
+  if isinstance(x_element_type, ir.FloatType):
+    return arith_dialect.divf(x, y)
+  if not isinstance(x_element_type, ir.IntegerType):
     raise NotImplementedError(f"unsupported types: {x.type} and {y.type}")
   if signed:
     return arith_dialect.divsi(x, y)
@@ -859,7 +862,10 @@ def _truediv(x: ir.Value, y: ir.Value, *, signed: bool) -> ir.Value:
 
 def _mod(x: ir.Value, y: ir.Value, *, signed: bool) -> ir.Value:
   assert x.type == y.type, (str(x.type), str(y.type))
-  if not isinstance(_element_type(x.type), ir.IntegerType):
+  x_element_type = _element_type(x.type)
+  if isinstance(x_element_type, ir.FloatType):
+    return arith_dialect.remf(x, y)
+  if not isinstance(x_element_type, ir.IntegerType):
     raise NotImplementedError(f"unsupported types: {x.type} and {y.type}")
   if signed:
     return arith_dialect.remsi(x, y)
@@ -1106,6 +1112,19 @@ def _div_lowering_rule(ctx: LoweringRuleContext, x, y):
 
 
 triton_lowering_rules[lax.div_p] = _div_lowering_rule
+
+
+def _sign_lowering_rule(ctx: LoweringRuleContext, x):
+  [x_aval] = ctx.avals_in
+  signed = np.issubdtype(x_aval.dtype, jnp.signedinteger)
+  zero = _full(x.type, 0)
+  return _sub(
+      _cast(_greater_than(x, zero, signed=signed), x.type, signed=signed),
+      _cast(_less_than(x, zero, signed=signed), x.type, signed=signed),
+  )
+
+
+triton_lowering_rules[lax.sign_p] = _sign_lowering_rule
 
 
 def _iota_lowering_rule(ctx: LoweringRuleContext, *, dtype, shape, dimension):
