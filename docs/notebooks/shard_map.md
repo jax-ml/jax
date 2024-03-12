@@ -24,7 +24,7 @@ If you're familiar with `pmap`, think of `shard_map` as an evolution. It's more 
 
 By reading this tutorial, you'll learn how to use `shard_map` to get full control over your multi-device code. You'll see in detail how it composes with `jax.jit`'s automatic parallelization and `jax.grad`'s automatic differentiation. We'll also give some basic examples of neural network parallelization strategies.
 
-We'll assume this tutorial is being run in an environment with eight devices"
+We'll assume this tutorial is being run in an environment with eight devices:
 
 ```{code-cell}
 import os
@@ -166,7 +166,7 @@ def check_shmap(f, y):
 check_shmap(lambda x: x.T @ x, jnp.arange(32).reshape(8, 4))
 ```
 
-Recall that jnp.split slices its input into equally-sized blocks with the same
+Recall that `jnp.split` slices its input into equally-sized blocks with the same
 rank, so that if in the above example `y` had shape `f32[8,5]` then each
 `y_blk` would have shape `f32[2,5]`, and if each `f(y_blk)` had shape
 `f32[3,7]` then the final concatenated result `shard_map(f, ...)(y)` would have
@@ -845,7 +845,7 @@ print(jnp.allclose(out, lhs @ rhs, atol=1e-3, rtol=1e-3))
 ```
 
 That's great, but we're not getting any compute/communication overlap
-here: before we can start the matmul, we need the all_gather to complete.
+here: before we can start the matmul, we need the `all_gather` to complete.
 Here's a profile using the same code, but on larger example shapes (`(8192,
 8192)` for `lhs` and `(8192, 1024)` for `rhs`):
 
