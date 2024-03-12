@@ -147,12 +147,16 @@ def _masked_array_error(x, sharding):
 shard_arg_handlers[np.ma.MaskedArray] = _masked_array_error
 
 def _shard_array(x, sharding):
-  indices = tuple(sharding.addressable_devices_indices_map(x.shape).values())
   devices = get_addressable_devices_for_shard_arg(sharding)
   if x.dtype == dtypes.float0:
     x = np.zeros(x.shape, dtype=np.dtype(bool))
   aval = api_util.shaped_abstractify(x)
-  return batched_device_put(aval, sharding, [x[i] for i in indices], devices)
+  if sharding.is_fully_replicated:
+    shards = [x] * len(devices)
+  else:
+    indices = tuple(sharding.addressable_devices_indices_map(x.shape).values())
+    shards = [x[i] for i in indices]
+  return batched_device_put(aval, sharding, shards, devices)
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
 
