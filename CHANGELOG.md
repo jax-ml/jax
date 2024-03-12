@@ -89,7 +89,7 @@ Remember to align the itemized text with the first line of an item within a list
       Scopes are introduced by {func}`jax.experimental.jax2tf.convert`,
       {func}`jax.experimental.export.symbolic_shape`, {func}`jax.experimental.export.symbolic_args_specs`.
       The scope of a symbolic expression `e` can be read with `e.scope` and passed in
-      to the above functions to direct them to construct sybolic expressions in
+      to the above functions to direct them to construct symbolic expressions in
       a given scope.
       See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#user-specified-symbolic-constraints.
     * simplified and faster equality comparisons, where we consider two symbolic dimensions
@@ -220,7 +220,7 @@ Remember to align the itemized text with the first line of an item within a list
     that cannot be converted to a JAX array is deprecated and now raises a
     {obj}`DeprecationWaning`. Currently the functions return False, in the future this
     will raise an exception.
-  * The `device()` method of JAX arrays deprecated. Depending on the context, it may
+  * The `device()` method of JAX arrays is deprecated. Depending on the context, it may
     be replaced with one of the following:
     - {meth}`jax.Array.devices` returns the set of all devices used by the array.
     - {attr}`jax.Array.sharding` gives the sharding configuration used by the array.
@@ -311,7 +311,7 @@ Remember to align the itemized text with the first line of an item within a list
 ## jax 0.4.17 (Oct 3, 2023)
 
 * New features
-  * Added new {func}`jax.numpy.bitwise_count` function, matching the API of the simlar
+  * Added new {func}`jax.numpy.bitwise_count` function, matching the API of the similar
     function recently added to NumPy.
 * Deprecations
   * Removed the deprecated module `jax.abstract_arrays` and all its contents.
@@ -738,8 +738,8 @@ Changes:
     custom pytree node. This includes:
     * `tree_flatten_with_path` that flattens a tree and return not only each leaf but
       also their key paths.
-    * `tree_map_with_paths` that can map a function that takes the key path as argument.
-    * `register_pytree_with_keys`` to register how the key path and leaves should looks
+    * `tree_map_with_path` that can map a function that takes the key path as an argument.
+    * `register_pytree_with_keys` to register how the key path and leaves should looks
       like in a custom pytree node.
     * `keystr` that pretty-prints a key path.
 
@@ -802,7 +802,7 @@ Changes:
 * Breaking Changes
   * the `initial` argument to reduction functions like :func:`jax.numpy.sum`
     is now required to be a scalar, consistent with the corresponding NumPy API.
-    The previous behavior of broadcating the output against non-scalar `initial`
+    The previous behavior of broadcasting the output against non-scalar `initial`
     values was an unintentional implementation detail ({jax-issue}`#14446`).
 
 ## jaxlib 0.4.4 (Feb 16, 2023)
@@ -1014,7 +1014,7 @@ Changes:
     changes to how `isinstance` works for {class}`jax.numpy.ndarray` for jax-internal
     objects, as {class}`jax.numpy.ndarray` is now a simple alias of {class}`jax.Array`.
 * Breaking changes
-  * `jax._src` is no longer imported into the from the public `jax` namespace.
+  * `jax._src` is no longer imported into the public `jax` namespace.
     This may break users that were using JAX internals.
   * `jax.soft_pmap` has been deleted. Please use `pjit` or `xmap` instead.
     `jax.soft_pmap` is undocumented. If it were documented, a deprecation period
@@ -1233,7 +1233,7 @@ Changes:
     `format_shape_dtype_string`, `rand_uniform`, `skip_on_devices`, `with_config`, `xla_bridge`, and
     `_default_tolerance` ({jax-issue}`#10389`). These, along with previously-deprecated `JaxTestCase`,
     `JaxTestLoader`, and `BufferDonationTestCase`, will be removed in a future JAX release.
-    Most of these utilites can be replaced by calls to standard python & numpy testing utilities found
+    Most of these utilities can be replaced by calls to standard python & numpy testing utilities found
     in e.g.  {mod}`unittest`, {mod}`absl.testing`, {mod}`numpy.testing`, etc. JAX-specific functionality
     such as device checking can be replaced through the use of public APIs such as {func}`jax.devices`.
     Many of the deprecated utilities will still exist in {mod}`jax._src.test_util`, but these are not
@@ -1437,7 +1437,7 @@ Changes:
 
 * Bug fixes:
   * Out-of-bounds indices to `jax.ops.segment_sum` will now be handled with
-    `FILL_OR_DROP` semantics, as documented. This primarily afects the
+    `FILL_OR_DROP` semantics, as documented. This primarily affects the
     reverse-mode derivative, where gradients corresponding to out-of-bounds
     indices will now be returned as 0. (#8634).
   * jax2tf will force the converted code to use XLA for the code fragments
@@ -1879,7 +1879,7 @@ Changes:
 
 ## jaxlib 0.1.61 (February 12 2021)
 
-## jaxlib 0.1.60 (Febuary 3 2021)
+## jaxlib 0.1.60 (February 3 2021)
 
 * Bug fixes:
   * Fixed a memory leak when converting CPU DeviceArrays to NumPy arrays. The
@@ -1933,7 +1933,7 @@ Changes:
     * `host_callback.outfeed_receiver` has been removed (it is not necessary,
       and was deprecated a few months ago).
 * New features:
-  * New flag for debugging `inf`, analagous to that for `NaN` ({jax-issue}`#5224`).
+  * New flag for debugging `inf`, analogous to that for `NaN` ({jax-issue}`#5224`).
 
 ## jax 0.2.7 (Dec 4 2020)
 
@@ -2172,7 +2172,7 @@ Changes:
   * Adds preliminary support for on-device heap profiling.
   * Implements `np.nextafter` for `bfloat16` types.
   * Complex128 support for FFTs on CPU and GPU.
-* Bugfixes:
+* Bug fixes:
   * Improved float64 `tanh` accuracy on GPU.
   * float64 scatters on GPU are much faster.
   * Complex matrix multiplication on CPU should be much faster.
