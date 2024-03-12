@@ -523,5 +523,10 @@ def key_reuse_impl_rule(prim, original_rule):
   return key_reuse_impl
 
 
-for prim in (*key_reuse_signatures, *key_reuse_signatures_dynamic):
-  prim.impl = key_reuse_impl_rule(prim, prim.impl)  # type: ignore[method-assign]
+_registered = False
+def _register_impls():
+  global _registered
+  if not _registered:
+    for prim in (*key_reuse_signatures, *key_reuse_signatures_dynamic):
+      prim.impl = key_reuse_impl_rule(prim, prim.impl)  # type: ignore[method-assign]
+  _registered = True

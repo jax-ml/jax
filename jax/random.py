@@ -224,6 +224,13 @@ from jax._src.random import (
   wrap_key_data as wrap_key_data,
 )
 
+
+# TODO(jakevdp): remove this when key reuse rules are defined locally
+from jax.experimental.key_reuse._core import _register_impls
+_register_impls()
+del _register_impls
+
+
 _deprecations = {
     # Added November 6, 2023; but has been raising a FutureWarning since JAX 0.1.66
     "shuffle": (
