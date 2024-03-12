@@ -715,8 +715,8 @@ triton_lowering_rules.update({
     lax.atan2_p: _extern_elementwise(
         "atan2",
         [
-            _Extern(["float32"], "__nv_atan2f", "float32"),
-            _Extern(["float64"], "__nv_atan2", "float64"),
+            _Extern(["float32", "float32"], "__nv_atan2f", "float32"),
+            _Extern(["float64", "float64"], "__nv_atan2", "float64"),
         ],
     ),
     lax.sinh_p: _extern_elementwise(
@@ -750,7 +750,7 @@ triton_lowering_rules.update({
     lax.acosh_p: _extern_elementwise(
         "acosh",
         [
-            _Extern(["float32"], "__nv_acosf", "float32"),
+            _Extern(["float32"], "__nv_acoshf", "float32"),
             _Extern(["float64"], "__nv_acosh", "float64"),
         ],
     ),
@@ -765,21 +765,21 @@ triton_lowering_rules.update({
         "population_count",
         [
             _Extern(["int32"], "__nv_popc", "int32"),
-            _Extern(["int64"], "__nv_popcll", "int64"),
+            _Extern(["int64"], "__nv_popcll", "int32"),
         ],
     ),
     lax.clz_p: _extern_elementwise(
         "clz",
         [
             _Extern(["int32"], "__nv_clz", "int32"),
-            _Extern(["int64"], "__nv_clzll", "int64"),
+            _Extern(["int64"], "__nv_clzll", "int32"),
         ],
     ),
     lax.nextafter_p: _extern_elementwise(
         "nextafter",
         [
-            _Extern(["float32", "float32"], "_nv_nextafterf", "float32"),
-            _Extern(["float64", "float64"], "_nv_nextafter", "float64"),
+            _Extern(["float32", "float32"], "__nv_nextafterf", "float32"),
+            _Extern(["float64", "float64"], "__nv_nextafter", "float64"),
         ],
     ),
 })
