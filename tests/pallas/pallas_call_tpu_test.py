@@ -341,6 +341,30 @@ class PallasCallDynamicGridTest(PallasTPUTest):
         dynamic_kernel(jnp.int32(4)), np.full(shape, 8.0, np.float32)
     )
 
+  def test_dynamic_grid_overflow(self):
+    # If we pad statically the dynamic grid dims to max int32, then the product
+    # of this grid size will overflow int64 and can cause failing checks in XLA.
+    shape = (8, 128)
+    result_ty = jax.ShapeDtypeStruct(shape, jnp.float32)
+
+    def kernel(y_ref):
+      @pl.when(sum(pl.program_id(i) for i in range(3)) == 0)
+      def _init():
+        y_ref[...] = jnp.zeros_like(y_ref)
+      y_ref[...] += 1
+
+    @jax.jit
+    def dynamic_kernel(steps):
+      return self.pallas_call(
+          kernel,
+          grid=(steps * 2, steps + 1, 3),
+          out_specs=pl.BlockSpec(lambda *_: (0, 0), shape),
+          out_shape=result_ty,
+      )()
+    np.testing.assert_array_equal(
+        dynamic_kernel(jnp.int32(4)), np.full(shape, 120.0, np.float32)
+    )
+
   # TODO(apaszke): Add tests for scalar_prefetch too
   def test_dynamic_grid_scalar_input(self):
     shape = (8, 128)
