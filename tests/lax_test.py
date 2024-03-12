@@ -3396,16 +3396,13 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     # TODO(pearu): when all items are eliminated, eliminate the kind == 'failure' tests
     regions_with_inaccuracies = dict(
       absolute = ['q1', 'q2', 'q3', 'q4'] if dtype == np.complex128 and is_cuda else [],
-      exp = (['pos', 'pinfj', 'pinf', 'ninfj', 'ninf']
-             + (['q1', 'q4'] if is_arm_cpu and dtype != np.complex128 else [])),
+      exp = ['pos', 'pinfj', 'pinf', 'ninfj', 'ninf'],
       exp2 = ['pos', 'pinfj', 'pinf', 'ninfj', 'ninf', *(['q1', 'q4'] if is_cpu else [])],
       log = ['q1', 'q2', 'q3', 'q4'],
       log1p = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'ninfj', 'pinfj'],
       log10 = ['q1', 'q2', 'q3', 'q4', 'zero', 'ninf', 'ninfj', 'pinf', 'pinfj'],
-      sinh = (['pos', 'neg', 'ninf', 'pinf']
-              + (['q1', 'q2', 'q3', 'q4'] if is_arm_cpu and dtype != np.complex128 else [])),
-      cosh = (['pos', 'neg', 'ninf', 'pinf']
-              + (['q1', 'q2', 'q3', 'q4'] if is_arm_cpu and dtype != np.complex128 else [])),
+      sinh = ['pos', 'neg', 'ninf', 'pinf'],
+      cosh = ['pos', 'neg', 'ninf', 'pinf'],
       tan = ['q1', 'q2', 'q3', 'q4', 'negj', 'posj', 'ninf', 'ninfj', 'pinf', 'pinfj'],
       square = (['pinf']
                 + (['ninfj', 'pinfj'] if is_arm_cpu else [])
@@ -3420,9 +3417,6 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
       arcsinh = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'pinf', 'ninfj', 'pinfj'],
       arccosh = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'pinf', 'ninfj', 'pinfj'],
       arctanh = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'pinf', 'ninfj', 'pinfj'],
-      sin = ['q1', 'q2', 'q3', 'q4', 'ninfj', 'pinfj'] if is_arm_cpu and dtype != np.complex128 else [],
-      cos = ['q1', 'q2', 'q3', 'q4', 'ninfj', 'pinfj'] if is_arm_cpu and dtype != np.complex128 else [],
-      expm1 = ['q1', 'q4', 'pinf'] if is_arm_cpu and dtype != np.complex128 else [],
     )
 
     jnp_op = getattr(jnp, name)
