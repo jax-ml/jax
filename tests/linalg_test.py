@@ -1043,9 +1043,15 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # that we match NumPy's convention in all cases.
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, 'float32'), rng(rhs_shape, 'float32')]
-    # As of numpy 1.26.3, np.linalg.solve fails when this condition is not met.
-    if len(lhs_shape) == 2 or len(rhs_shape) > 1:
-      self._CheckAgainstNumpy(np.linalg.solve, jnp.linalg.solve, args_maker, tol=1E-3)
+
+    if jtu.numpy_version() >= (2, 0, 0):
+      # TODO(jakevdp) remove this condition after solve broadcast deprecation is finalized.
+      if len(lhs_shape) == 1 or (len(rhs_shape) != len(lhs_shape) + 1):
+        self._CheckAgainstNumpy(np.linalg.solve, jnp.linalg.solve, args_maker, tol=1E-3)
+    else:  # numpy 1.X
+      # As of numpy 1.26.3, np.linalg.solve fails when this condition is not met.
+      if len(lhs_shape) == 2 or len(rhs_shape) > 1:
+        self._CheckAgainstNumpy(np.linalg.solve, jnp.linalg.solve, args_maker, tol=1E-3)
     self._CompileAndCheck(jnp.linalg.solve, args_maker)
 
   @jtu.sample_product(
