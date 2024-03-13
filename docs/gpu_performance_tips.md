@@ -1,4 +1,4 @@
-# GPU peformance tips
+# GPU performance tips
 
 This document focuses on performance tips for neural network workloads
 

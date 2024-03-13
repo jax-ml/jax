@@ -6,7 +6,7 @@ JAX Frequently Asked Questions (FAQ)
 
 .. _JAX - The Sharp Bits: https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html
 
-We are collecting here answers to frequently asked questions.
+We are collecting answers to frequently asked questions here.
 Contributions welcome!
 
 ``jit`` changes the behavior of my function

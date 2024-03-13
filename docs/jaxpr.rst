@@ -306,7 +306,7 @@ and :py:func:`jax.lax.fori_loop`
     lax.fori_loop(start: int, end: int, body: (int -> C -> C), init: C) -> C
 
 
-In the above signature, “C” stands for the type of a the loop “carry” value.
+In the above signature, “C” stands for the type of the loop “carry” value.
 For example, here is an example fori loop
 
 >>> import numpy as np

@@ -150,7 +150,7 @@ def callback(fun: Callable, *args: PyTree[Array], **kwargs: PyTree[Array]) -> No
   return None
 ```
 
-As with `jax.debug.print`, these callbacks should only be used for debugging output, like printing or plotting. Printing and plotting are pretty harmless, but if you use it for anything else its behavior might surprise you under transformations. For example, it's not safe to use `jax.debug.callback` for timing operations, since callbacks might reordered and asynchronous (see below).
+As with `jax.debug.print`, these callbacks should only be used for debugging output, like printing or plotting. Printing and plotting are pretty harmless, but if you use it for anything else its behavior might surprise you under transformations. For example, it's not safe to use `jax.debug.callback` for timing operations, since callbacks might be reordered and asynchronous (see below).
 
 ### Sharp bits
 Like most JAX APIs, `jax.debug.print` can cut you if you're not careful.
