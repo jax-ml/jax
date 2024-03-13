@@ -746,7 +746,11 @@ jax_test(
     name = "pytorch_interoperability_test",
     srcs = ["pytorch_interoperability_test.py"],
     disable_backends = ["tpu"],
+    # The following cases are disabled because they time out in Google's CI, mostly because the
+    # CUDA kernels in Torch take a very long time to compile.
     disable_configs = [
+        "gpu_p100",  # Pytorch P100 build times out in Google's CI.
+        "gpu_a100",  # Pytorch A100 build times out in Google's CI.
         "gpu_h100",  # Pytorch H100 build times out in Google's CI.
     ],
     tags = [
