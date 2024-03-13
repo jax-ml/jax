@@ -517,10 +517,7 @@ triton_lowering_rules[lax.cumsum_p] = _cumsum_lowering_rule
 
 def _not_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
-  if not np.issubdtype(x_aval.dtype, jnp.integer):
-    raise NotImplementedError(f"unsupported type: {x_aval.dtype}")
-  one = _full(x.type, 0xFFFFFFFFFFFFFFFF)
-  return arith_dialect.xori(x, one)
+  return arith_dialect.xori(x, _full(x.type, ~x_aval.dtype.type(0)))
 
 
 triton_lowering_rules[lax.not_p] = _not_lowering_rule

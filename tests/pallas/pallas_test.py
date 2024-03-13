@@ -1532,7 +1532,7 @@ class PallasOpsTest(PallasTest):
           # fmt: on
           ["float32", "float64"]
       ),
-      ([lax.population_count, lax.clz], ["int32", "int64"]),
+      ([lax.population_count, lax.clz, jnp.invert], ["int32", "int64"]),
   ]
 
   @parameterized.named_parameters(
