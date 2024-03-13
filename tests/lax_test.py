@@ -1074,7 +1074,8 @@ class LaxTest(jtu.JaxTestCase):
       np.float16: 1e-2,
       np.float64: max(jtu.default_tolerance()[np.dtype(np.float64)], 1e-14),
       np.complex128: max(jtu.default_tolerance()[np.dtype(np.complex128)],
-                          1e-14)
+                          1e-14),
+      jnp.bfloat16: 1e-1
     }
     lax_op = partial(lax.dot, precision=lax.Precision.HIGHEST)
     self._CheckAgainstNumpy(lax_reference.dot, lax_op, args_maker, tol=tol)
