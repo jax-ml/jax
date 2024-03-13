@@ -543,6 +543,21 @@ jax_test(
 )
 
 jax_test(
+    name = "lax_metal_test",
+    srcs = ["lax_metal_test.py"],
+    tags = ["notap"],
+    disable_backends = [
+        "cpu",
+        "gpu",
+        "tpu",
+    ],
+    deps = [
+        "//jax:internal_test_util",
+        "//jax:lax_reference",
+    ] + py_deps("numpy"),
+)
+
+jax_test(
     name = "lax_autodiff_test",
     srcs = ["lax_autodiff_test.py"],
     shard_count = {
