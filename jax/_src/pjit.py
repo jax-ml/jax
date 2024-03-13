@@ -1409,7 +1409,7 @@ def _pjit_call_impl(*args, jaxpr,
         donated_invars=donated_invars, name=name, keep_unused=keep_unused,
         inline=inline)
     fastpath_data = _get_fastpath_data(
-        compiled, tree_structure(out_flat), args, out_flat, [], set())
+        compiled, tree_structure(out_flat), args, out_flat, [], jaxpr.effects)
     return out_flat, fastpath_data
 
   f = _get_jaxpr_as_fun(
@@ -1561,6 +1561,14 @@ def pjit_staging_rule(trace, *args, **params):
       params['jaxpr'].effects, source_info)
     trace.frame.add_eqn(eqn)
     return out_tracers
+  elif any(isinstance(c, core.MutableArray) for c in params['jaxpr'].consts):
+    jaxpr, consts = pxla._move_mutable_consts(params['jaxpr'])
+    consts = map(trace.instantiate_const, consts)
+    in_shardings = (*params['in_shardings'],) + (UNSPECIFIED,) * len(consts)
+    donated_invars = (*params['donated_invars'],) + (False,) * len(consts)
+    new_params = dict(params, jaxpr=jaxpr, in_shardings=in_shardings,
+                      donated_invars=donated_invars)
+    return trace.default_process_primitive(pjit_p, (*args, *consts), new_params)
   else:
     return trace.default_process_primitive(pjit_p, args, params)
 pe.custom_staging_rules[pjit_p] = pjit_staging_rule

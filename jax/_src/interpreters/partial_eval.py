@@ -1005,11 +1005,9 @@ def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
 
 @weakref_lru_cache
 def convert_invars_to_constvars(jaxpr: Jaxpr, n: int) -> Jaxpr:
-  """Move n invars to constvars. Like an inverse of convert_constvars_Jaxpr."""
+  """Move n invars to constvars. Like an inverse of convert_constvars_jaxpr."""
   if n == 0:
     return jaxpr.replace()  # 'return jaxpr' would create cache reference cycle
-  if any(isinstance(eff, effects.JaxprInputEffect) for eff in jaxpr.effects):
-    raise NotImplementedError
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   constvars, invars = split_list(jaxpr.invars, [n])
   dbg = jaxpr.debug_info and jaxpr.debug_info._replace(

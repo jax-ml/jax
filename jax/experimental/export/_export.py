@@ -436,8 +436,8 @@ def export(fun_jax: Callable,
       mlir_module = lowering.stablehlo()
 
       args_avals_flat, _ = tree_util.tree_flatten(lowered.in_avals)
-      if "out_mut" in lowering.compile_args:
-        if lowering.compile_args["out_mut"]: raise NotImplementedError
+      if "mut" in lowering.compile_args:
+        if lowering.compile_args["mut"]: raise NotImplementedError
       if "kept_var_idx" in lowering.compile_args:
         module_kept_var_idx = tuple(sorted(lowering.compile_args["kept_var_idx"]))
       else:
@@ -747,7 +747,7 @@ def _check_lowering(lowering) -> None:
   allowed_compile_args = [
       "backend", "mesh", "global_in_avals",
       "global_out_avals", "in_shardings", "out_shardings", "kept_var_idx",
-      "out_mut", "spmd_lowering", "auto_spmd_lowering",
+      "mut", "spmd_lowering", "auto_spmd_lowering",
       "tuple_args", "ordered_effects", "unordered_effects",
       "keepalive", "host_callbacks", "pmap_nreps", "committed",
       "device_assignment", "jaxpr_debug_info", "shape_poly_state",

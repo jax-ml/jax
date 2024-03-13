@@ -1918,6 +1918,7 @@ class MutableArray:
   dtype = property(lambda self: self._aval.dtype)
   def __getitem__(self, idx): return get_aval(self)._getitem(self, idx)
   def __setitem__(self, idx, x): return get_aval(self)._setitem(self, idx, x)
+  def __repr__(self) -> str: return 'Mutable' + repr(self[...])
 pytype_aval_mappings[MutableArray] = lambda x: x._aval
 
 def mutable_array(init_val):
