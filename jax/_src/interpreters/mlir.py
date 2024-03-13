@@ -1284,6 +1284,7 @@ def lower_jaxpr_to_fun(
   if (
       replicated_args is not None
       or ir_arg_shardings is not None
+      or ir_arg_memory_kinds is not None
       or ir_arg_layouts is not None
       or input_output_aliases is not None
       or ir_donated_args is not None
@@ -1305,6 +1306,11 @@ def lower_jaxpr_to_fun(
       for attrs, sharding in zip(arg_attrs, ir_arg_shardings):
         if sharding is not None:
           attrs["mhlo.sharding"] = get_sharding_attr(sharding)
+
+    if ir_arg_memory_kinds is not None:
+      for attrs, memory_kind in zip(arg_attrs, ir_arg_memory_kinds):
+        if memory_kind is not None:
+          attrs["mhlo.memory_kind"] = ir.StringAttr.get(memory_kind)
 
     if ir_arg_layouts is not None:
       for attrs, layout in zip(arg_attrs, ir_arg_layouts):
@@ -1365,6 +1371,11 @@ def lower_jaxpr_to_fun(
       if sharding is not None:
         attrs['mhlo.sharding'] = get_sharding_attr(sharding)
 
+  if ir_result_memory_kinds is not None:
+    for attrs, mem_kind in zip(result_attrs, ir_result_memory_kinds):
+      if mem_kind is not None:
+        attrs['mhlo.memory_kind'] = ir.StringAttr.get(mem_kind)
+
   if ir_result_layouts is not None:
     for attrs, layout in zip(result_attrs, ir_result_layouts):
       if layout is not None:
@@ -1406,11 +1417,6 @@ def lower_jaxpr_to_fun(
           for o, s, a in zip(flat_args, ir_arg_shardings, input_avals)
       ]
 
-    if ir_arg_memory_kinds is not None:
-      flat_args = [
-          a if mk is None else wrap_with_memory_kind(a, mk, a_aval)
-          for a, mk, a_aval in zip(flat_args, ir_arg_memory_kinds, input_avals)]
-
     _, token_args, unflattened_args = util.split_list(
         util.unflatten(flat_args, map(len, input_types)),
         [num_dim_vars, num_tokens])
@@ -1450,11 +1456,6 @@ def lower_jaxpr_to_fun(
       flat_outputs = [
           o if s is None else wrap_with_sharding_op(entry_lowering_ctx, o, o_aval, s)
           for o, s, o_aval in zip(flat_outputs, ir_result_shardings, output_avals)]
-
-    if ir_result_memory_kinds is not None:
-      flat_outputs = [
-          o if mk is None else wrap_with_memory_kind(o, mk, o_aval)
-          for o, mk, o_aval in zip(flat_outputs, ir_result_memory_kinds, output_avals)]
 
     if ir_result_shardings is not None and name == "main":
       flat_outputs = [

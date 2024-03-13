@@ -2733,8 +2733,7 @@ def _maybe_get_and_check_in_shardings(
         # MANUAL HloSharding comes from other partitioning frameworks.
         if (not dtypes.issubdtype(aval.dtype, dtypes.extended) and
             not xla_hlo_s.is_manual() and
-            (not op_shardings.are_op_shardings_equal(xla_hlo_s, orig_hlo_s) or
-            xla_s.memory_kind != orig.memory_kind)):  # type: ignore
+            (not op_shardings.are_op_shardings_equal(xla_hlo_s, orig_hlo_s))):
           raise AssertionError(
               f"Unexpected XLA sharding override: (XLA) {xla_s} != {orig} "
               "(User sharding)")

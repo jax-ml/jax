@@ -197,6 +197,25 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
     dev = jax.devices()[0]
     self.assertEqual(dev.default_memory().kind, "device")
 
+  def test_parameter_streaming(self):
+    _, s_host, _, inp_host = _create_inputs(
+        (8, 2), P("x", "y"), mem_kind="unpinned_host")
+    s_dev = s_host.with_memory_kind('device')
+    inp_dev = jax.device_put(inp_host, s_dev)
+
+    @functools.partial(jax.jit, out_shardings=s_dev)
+    def f(a, b):
+      x = b * 2
+      y = jax.device_put(a, s_dev)
+      z = x * y
+      return z * 4, z
+
+    compiled = f.lower(inp_host, inp_dev).compile()  # doesn't crash
+    compiled_text = compiled.as_text()
+    self.assertRegex(compiled_text, r"entry_computation_layout=.*S\(5\)}")
+
+    # TODO(yashkatariya): Add execution tests when it works.
+
 
 class MemoriesComputationTest(jtu.BufferDonationTestCase):
 
