@@ -46,7 +46,7 @@ class PgleTest(jtu.JaxTestCase):
       z = x @ y
       return z @ y
 
-    shape = (8, 8)
+    shape = (16, 16)
     x = jnp.arange(math.prod(shape)).reshape(shape).astype(np.float32)
     y = x + 1
     f_lowered = f.lower(x, y)
