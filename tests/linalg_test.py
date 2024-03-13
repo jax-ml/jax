@@ -1046,7 +1046,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     if jtu.numpy_version() >= (2, 0, 0):
       # TODO(jakevdp) remove this condition after solve broadcast deprecation is finalized.
-      if len(lhs_shape) == 1 or (len(rhs_shape) != len(lhs_shape) + 1):
+      if len(rhs_shape) == 1 or (len(lhs_shape) != len(rhs_shape) + 1):
         self._CheckAgainstNumpy(np.linalg.solve, jnp.linalg.solve, args_maker, tol=1E-3)
     else:  # numpy 1.X
       # As of numpy 1.26.3, np.linalg.solve fails when this condition is not met.
