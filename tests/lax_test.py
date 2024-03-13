@@ -3383,6 +3383,8 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     machine = platform.machine()
     is_arm_cpu = machine.startswith('aarch') or machine.startswith('arm')
     is_cuda = jtu.test_device_matches(["cuda"])
+    size_re = size_im = 11
+    atol = None
 
     # TODO(pearu): eliminate all items in the following lists:
     # TODO(pearu): when all items are eliminated, eliminate the kind == 'failure' tests
@@ -3423,6 +3425,31 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
       # TODO: check the validity of clearing expm1 inaccuracies list for ARM CPU.
       regions_with_inaccuracies['expm1'].clear()
 
+    if xla_extension_version >= 245:
+      regions_with_inaccuracies['log1p'].clear()
+
+      if name == 'log1p' and is_cuda:
+        atol = 1e-5
+
+      if is_cpu and dtype == np.complex64 and 0:
+        for r in ['q1', 'q2', 'q3', 'q4']:
+          regions_with_inaccuracies['square'].remove(r)
+
+      if dtype == np.complex64:
+        for r in ['posj', 'negj']:
+          regions_with_inaccuracies['arctanh'].remove(r)
+
+      if dtype == np.complex128:
+        for r in ['pos', 'neg', 'posj', 'negj', 'q1', 'q2', 'q3', 'q4']:
+          regions_with_inaccuracies['arctanh'].remove(r)
+
+      if name == 'log1p':
+        # disturb the grid size to avoid substraction errors on points where
+        #   2 * z.real = -z.imag**2
+        #   abs(z.imag) is very small
+        # holds (see Log1p TODO item in xla/service/elemental_ir_emitter.cc)
+        size_im += 1
+
     jnp_op = getattr(jnp, name)
 
     finfo = np.finfo(dtype)
@@ -3458,11 +3485,18 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
 
       np_op = np.vectorize(expm1)
 
+    elif name == 'log1p':
+      # numpy.log1p is inaccurate for inputs with small absolute value
+      # and overflows in the case of large absolute values (see
+      # https://github.com/pearu/complex_function_validation/).
+      # scipy.special.log1p is accurate on the whole complex plane.
+      from scipy.special import log1p as np_op
+
     else:
       np_op = getattr(np, name)
 
     with jtu.ignore_warning(category=RuntimeWarning, message="(overflow|invalid value|divide by zero) encountered in.*"):
-      args = (jtu.complex_plane_sample(dtype=dtype, size_re=11),)
+      args = (jtu.complex_plane_sample(dtype=dtype, size_re=size_re, size_im=size_im),)
       result = np.asarray(jnp_op(*args))
       expected = np_op(*args)
 
@@ -3548,7 +3582,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
           if r == e:
             # skip equal nan-s
             continue
-          max_abs_diff = abs(result1[ind] - expected1[ind]).max() if np.isfinite(result1[ind]) and np.isfinite(expected1[ind]) else np.inf
+          max_abs_diff = abs(nresult1[ind] - nexpected1[ind]).max() if np.isfinite(result1[ind]) and np.isfinite(expected1[ind]) else np.inf
           mismatches.append((max_abs_diff, f'jax.numpy.{name}({x}) -> {r} [{nr}], expected {e} [{ne}]'))
         mismatches = "\n".join([item[1] for item in sorted(mismatches)])
       else:
@@ -3557,7 +3591,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
       if kind == 'success' and region not in regions_with_inaccuracies.get(name, []):
         with jtu.ignore_warning(category=RuntimeWarning, message="overflow encountered in.*"):
           self.assertAllClose(
-            nresult1, nexpected1,
+            nresult1, nexpected1, atol=atol,
             err_msg=f"{name} in {region}, {is_cpu=} {is_cuda=}, {xla_extension_version=}\n{mismatches}")
       if kind == 'failure' and region in regions_with_inaccuracies.get(name, []):
         with self.assertRaises(AssertionError, msg=f"{name} in {region}, {is_cpu=} {is_cuda=}, {xla_extension_version=}"):
