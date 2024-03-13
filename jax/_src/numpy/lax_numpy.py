@@ -32,8 +32,8 @@ from functools import partial
 import math
 import operator
 import types
-from typing import (overload, Any, Callable, Literal, NamedTuple, Protocol,
-                    TypeVar, Union)
+from typing import (cast, overload, Any, Callable, Literal, NamedTuple,
+                    Protocol, TypeVar, Union)
 from textwrap import dedent as _dedent
 import warnings
 
@@ -851,10 +851,12 @@ def unravel_index(indices: ArrayLike, shape: Shape) -> tuple[Array, ...]:
   try:
     shape = list(shape)
   except TypeError:
-    shape = [shape]
+    # TODO: Consider warning here since shape is supposed to be a sequence, so
+    # this should not happen.
+    shape = cast(list[Any], [shape])
   if any(ndim(s) != 0 for s in shape):
     raise ValueError("unravel_index: shape should be a scalar or 1D sequence.")
-  out_indices = [0] * len(shape)
+  out_indices: list[ArrayLike] = [0] * len(shape)
   for i, s in reversed(list(enumerate(shape))):
     indices_arr, out_indices[i] = ufuncs.divmod(indices_arr, s)
   oob_pos = indices_arr > 0
@@ -1137,7 +1139,12 @@ def where(
   else:
     util.check_arraylike("where", acondition, if_true, if_false)
     if size is not None or fill_value is not None:
-      raise ValueError("size and fill_value arguments cannot be used in three-term where function.")
+      raise ValueError("size and fill_value arguments cannot be used in "
+                       "three-term where function.")
+    if if_true is None or if_false is None:
+      raise ValueError("Either both or neither of the x and y arguments "
+                       "should be provided to jax.numpy.where, got "
+                       f"{if_true} and {if_false}.")
     return util._where(acondition, if_true, if_false)
 
 
