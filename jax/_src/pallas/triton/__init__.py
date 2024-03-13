@@ -22,7 +22,8 @@ try:
   get_compute_capability = triton_kernel_call_lib.get_compute_capability
 except AttributeError:
 
-  def get_compute_capability() -> int:
+  def get_compute_capability(device) -> int:
+    del device  # Unused.
     raise RuntimeError(
         "get_compute_capability is not available. Try installing jaxlib with"
         " GPU support following instructions in"
