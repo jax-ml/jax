@@ -1528,14 +1528,6 @@ def _compute_pointers_from_indices(
   )
 
 
-def _pack_indices(non_slice_idx, indexed_dims):
-  non_slice_idx_iter = iter(non_slice_idx)
-  return tuple(
-      next(non_slice_idx_iter) if indexed else slice(None)
-      for indexed in indexed_dims
-  )
-
-
 def _get_lowering_rule(ctx: LoweringRuleContext, ptr, *idx, tree):
   indexers = tree_util.tree_unflatten(tree, idx)
   if not tt_dialect.PointerType.isinstance(ptr.type):
