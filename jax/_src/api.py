@@ -589,10 +589,14 @@ def xla_computation(fun: Callable,
           arg_shardings=None,
           result_shardings=None,
           lowering_parameters=mlir.LoweringParameters())
+
+      if xla_extension_version >= 244:
+        m = mlir.module_to_bytecode(lowering_result.module)
+      else:
+        m = mlir.module_to_string(lowering_result.module)
+
       built = xc._xla.mlir.mlir_module_to_xla_computation(
-          mlir.module_to_string(lowering_result.module),
-          use_tuple_args=tuple_args,
-          return_tuple=True)
+          m, use_tuple_args=tuple_args, return_tuple=True)
     out_shapes_flat = [
         ShapeDtypeStruct(a.shape, a.dtype, a.named_shape) for a in out_avals]
     out_shape = tree_unflatten(out_tree(), out_shapes_flat)
