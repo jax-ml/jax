@@ -4477,12 +4477,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertNotIn('False', str(jaxpr))
     self.assertNotIn('True', str(jaxpr))
 
-    # But if we set the option off, we get the old behavior.
-    with config.new_select_transpose(False):
-      jaxpr = jax.make_jaxpr(jax.grad(f))(3.)
-    self.assertIn('False', str(jaxpr))
-    self.assertIn('True', str(jaxpr))
-
   def testWhereScalarPromotion(self):
     x = jnp.where(jnp.array([True, False]), 3,
                   jnp.ones((2,), dtype=jnp.float32))

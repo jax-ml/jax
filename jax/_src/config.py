@@ -211,7 +211,6 @@ def trace_context():
           default_device.value, random_seed_offset.value,
           threefry_partitionable.value,
           softmax_custom_jvp.value,
-          new_select_transpose.value,
           enable_memories.value,
           disable_jit.value,
           jax_xla_profile_version.value,
@@ -805,7 +804,6 @@ class _GlobalExtraJitContext(NamedTuple):
   random_seed_offset: int = 0
   threefry_partitionable: bool = False
   softmax_custom_jvp: bool = False
-  new_select_transpose: bool = False
   xla_profile_version: int = 0
 
 
@@ -840,7 +838,6 @@ class _ThreadLocalExtraJitContext(NamedTuple):
   random_seed_offset: int | None = None
   threefry_partitionable: bool | None = None
   softmax_custom_jvp: bool | None = None
-  new_select_transpose: bool | None = None
   xla_profile_version: int | None = None
 
 
@@ -1083,7 +1080,7 @@ threefry_partitionable = define_bool_state(
     update_thread_local_hook=lambda val: update_thread_local_jit_state(
         threefry_partitionable=val))
 
-# TODO(mattjj): set default True then remove this flag (or die trying)
+
 softmax_custom_jvp = define_bool_state(
     name='jax_softmax_custom_jvp',
     default=False,
@@ -1095,18 +1092,6 @@ softmax_custom_jvp = define_bool_state(
         softmax_custom_jvp=val),
     update_thread_local_hook=lambda val: update_thread_local_jit_state(
         softmax_custom_jvp=val))
-
-
-# TODO(mattjj): remove this flag
-new_select_transpose = define_bool_state(
-    name='new_select_transpose',
-    default=True,
-    upgrade=True,
-    help=('Change select_n_p transpose rule to specialize on bools'),
-    update_global_hook=lambda val: _update_global_jit_state(
-        new_select_transpose=val),
-    update_thread_local_hook=lambda val: update_thread_local_jit_state(
-        new_select_transpose=val))
 
 
 enable_custom_vjp_by_custom_transpose = define_bool_state(
