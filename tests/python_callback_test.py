@@ -494,6 +494,29 @@ class PythonCallbackTest(jtu.JaxTestCase):
         out,
         np.arange(2 * jax.local_device_count()).reshape([-1, 2]) + 1.)
 
+  @with_pure_and_io_callbacks
+  def test_exception_in_callback(self, *, callback):
+    def fail(x):
+      raise RuntimeError("Ooops")
+
+    @jax.jit
+    def f(x):
+      return callback(fail, core.ShapedArray(x.shape, x.dtype), x)
+
+    with self.assertLogs(level="ERROR") as l:
+      try:
+        f(0.0).block_until_ready()
+      except RuntimeError:
+        pass
+
+      api_name = (
+          "pure_callback" if callback is jax.pure_callback else "io_callback"
+      )
+      output = "\n".join(l.output)
+      self.assertIn(f"jax.{api_name} failed", output)
+      self.assertIn("Traceback (most recent call last)", output)
+
+
 class PureCallbackTest(jtu.JaxTestCase):
 
   def setUp(self):

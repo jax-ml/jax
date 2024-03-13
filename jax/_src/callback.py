@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+import logging
 import functools
 from typing import Any, Callable
 
@@ -34,6 +35,9 @@ from jax._src.lib import xla_client as xc
 from jax._src.lax.control_flow.loops import map as lax_map
 from jax._src.sharding_impls import SingleDeviceSharding
 
+logger = logging.getLogger(__name__)
+
+
 # `pure_callback_p` is the main primitive for staging out Python pure callbacks.
 pure_callback_p = core.Primitive("pure_callback")
 pure_callback_p.multiple_results = True
@@ -50,7 +54,11 @@ def pure_callback_impl(
     vectorized: bool,
 ):
   del sharding, vectorized, result_avals
-  return callback(*args)
+  try:
+    return callback(*args)
+  except BaseException:
+    logger.exception("jax.pure_callback failed")
+    raise
 
 
 pure_callback_p.def_impl(functools.partial(dispatch.apply_primitive,
@@ -375,7 +383,11 @@ def io_callback_impl(
     ordered: bool,
 ):
   del result_avals, sharding, ordered
-  return callback(*args)
+  try:
+    return callback(*args)
+  except BaseException:
+    logger.exception("jax.io_callback failed")
+    raise
 
 
 io_callback_p.def_impl(functools.partial(dispatch.apply_primitive,
