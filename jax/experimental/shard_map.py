@@ -40,6 +40,7 @@ from jax._src import linear_util as lu
 from jax._src import ops
 from jax._src import pjit
 from jax._src import prng
+from jax._src import random
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import traceback_util
@@ -941,7 +942,8 @@ for o in it.chain(lax.__dict__.values(), slicing.__dict__.values(),
                   special.__dict__.values(), convolution.__dict__.values(),
                   fft.__dict__.values(), linalg.__dict__.values(),
                   ops.__dict__.values(), ad_util.__dict__.values(),
-                  prng.__dict__.values(), ann.__dict__.values()):
+                  prng.__dict__.values(), ann.__dict__.values(),
+                  random.__dict__.values()):
   if isinstance(o, core.Primitive):
     register_standard_check(o)
     register_standard_rewrite(o)
