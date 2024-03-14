@@ -213,6 +213,7 @@ def trace_context():
           softmax_custom_jvp.value,
           enable_memories.value,
           disable_jit.value,
+          enable_key_reuse_checks.value,
           jax_xla_profile_version.value,
           # Technically this affects jaxpr->stablehlo lowering, not tracing.
           hlo_source_file_canonicalization_regex.value)
