@@ -33,16 +33,19 @@ class Slice:
   """Represents a slice with a dynamic start index and a fixed size."""
   start: Any
   size: int
+  stride: int = 1
 
   def __post_init__(self):
     if self.size < 0:
       raise ValueError("`size` must not be negative.")
+    if self.stride < 1:
+      raise ValueError("`stride` must be >= 1.")
 
   def tree_flatten(self):
     # If `start` is statically known, we treat it as static information
     if isinstance(self.start, int):
-      return (), (self.start, self.size)
-    return (self.start,), (self.size,)
+      return (), (self.start, self.size, self.stride)
+    return (self.start,), (self.size, self.stride)
 
   @classmethod
   def tree_unflatten(cls, aux_data, children) -> Slice:
@@ -51,21 +54,30 @@ class Slice:
   @classmethod
   def from_slice(cls, slc: slice, size: int) -> Slice:
     start, stop, step = slc.indices(size)
-    if step != 1:
-      raise ValueError(f"slice must have a step of 1 (found: {step})")
-    return cls(start, max(stop - start, 0))
+    if step < 1:
+      raise ValueError(f"slice must have a step >= 1 (found: {step})")
+    return cls(start, max((stop - start + step - 1) // step, 0), step)
 
 
-def dslice(start: int |  Array | None, size: int | None = None
-           ) -> slice | Slice:
+def dslice(
+    start: int | Array | None,
+    size: int | None = None,
+    stride: int | None = None,
+) -> slice | Slice:
   """Constructs a `Slice` from a start and a size."""
   if start is None:
     return slice(None)
+  if stride is None:
+    stride = 1
+  if not isinstance(stride, int):
+    raise ValueError("Non-static stride in `dslice`")
   if size is None:
     if not isinstance(start, int):
       raise ValueError("Non-static `dslice`")
-    return Slice(0, start)
-  return Slice(start, size)
+    return Slice(0, start, stride)
+  return Slice(start, size, stride)
+
+
 ds = dslice  # Handy alias
 
 
@@ -113,9 +125,10 @@ class NDIndexer:
         if value := _maybe_concretize(start):
           if value >= s:
             raise ValueError(f"Out of bound slice: start={value}, dim={s}.")
-          if value + idx.size > s:
+          if value + (idx.size - 1) * idx.stride >= s:
             raise ValueError(
-                f"Out of bound slice: start={value}, size={idx.size}, dim={s}."
+                f"Out of bound slice: start={value}, size={idx.size},"
+                f" stride={idx.stride}, dim={s}."
             )
         continue
       # The shape of indexer integers should be broadcastable up to the
