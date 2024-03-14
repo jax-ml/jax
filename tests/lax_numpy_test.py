@@ -2597,7 +2597,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     xshape=[(20,), (5, 4)],
-    binshape=[(1,), (5,)],
+    binshape=[(0,), (1,), (5,)],
     right=[True, False],
     reverse=[True, False],
     dtype=default_dtypes,
