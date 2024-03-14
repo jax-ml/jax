@@ -16,7 +16,7 @@ from functools import partial
 from absl.testing import absltest
 from typing import Optional
 import os
-os.environ['XLA_FLAGS'] = '--xla_gpu_enable_cudnn_fmha=true --xla_gpu_fused_attention_use_cudnn_rng=true --xla_dump_hlo_as_text --xla_dump_to=./hlo'
+os.environ['XLA_FLAGS'] = '--xla_gpu_enable_cudnn_fmha=true --xla_gpu_fused_attention_use_cudnn_rng=true'
 
 import numpy as np
 import jax
