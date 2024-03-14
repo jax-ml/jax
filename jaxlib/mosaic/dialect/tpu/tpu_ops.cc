@@ -202,19 +202,8 @@ LogicalResult verifyStridedOp(Op op, MemRefType memref_ty,
     return failure();
   }
   for (int64_t i = 0; i < memref_ty.getRank(); ++i) {
-    if (indices[i] < 0 && indices[i] >= memref_ty.getDimSize(i)) {
-      op.emitError("Indices[")
-          << i << "]=" << indices[i] << " is out of range [0, "
-          << memref_ty.getDimSize(i) << ")";
-      return failure();
-    }
     if (strides[i] < 1) {
       op.emitError("Strides[") << i << "]=" << strides[i] << " must be >= 1";
-      return failure();
-    }
-    if ((indices[i] + (vector_ty.getDimSize(i) - 1) * strides[i]) >
-        memref_ty.getDimSize(i)) {
-      op.emitError() << "Strided slice is out of range at dim " << i;
       return failure();
     }
   }

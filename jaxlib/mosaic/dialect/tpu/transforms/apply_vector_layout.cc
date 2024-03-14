@@ -1159,9 +1159,9 @@ LogicalResult tpu_load_rule(RewriteContext &ctx, Operation &op,
 }
 
 LogicalResult strided_op_rule_impl(RewriteContext &ctx, Operation &op,
-                                   Value base_ref, const VectorType &vty,
+                                   Value base_ref, ValueRange indices,
+                                   const VectorType &vty,
                                    const VectorLayout &layout,
-                                   const ArrayRef<int32_t> &indices,
                                    const ArrayRef<int32_t> &strides) {
   if (!isa<tpu::StridedLoadOp, tpu::StridedStoreOp>(op)) {
     return op.emitOpError("Not implemented: Unsupported strided op")
@@ -1198,7 +1198,10 @@ LogicalResult strided_op_rule_impl(RewriteContext &ctx, Operation &op,
   if (strides[rank - 1] != 1) {
     return op.emitOpError("Not Implemented: Stride on last dim is not 1");
   }
-  if (indices[rank - 1] != 0) {
+  auto last_idx = getIntConst(indices[rank - 1], /*silent=*/true);
+  if (failed(last_idx)) {
+    return op.emitOpError("Not Implemented: Dynamic index on last dim");
+  } else if (last_idx.value() != 0) {
     return op.emitOpError("Not Implemented: Index on last dim is not 0");
   }
   ImplicitLocOpBuilder builder(op.getLoc(), &op);
@@ -1224,8 +1227,8 @@ LogicalResult strided_op_rule_impl(RewriteContext &ctx, Operation &op,
       int64_t stride = (i < rank - 2)
                            ? strides[i]
                            : (strides[i] * ctx.target_shape[i - rank + 2]);
-      idxs[i] =
-          IdxConst(indices[i] + tile_idxs[i] * stride, builder, op.getLoc());
+      idxs[i] = builder.create<arith::AddIOp>(
+          indices[i], IdxConst(tile_idxs[i] * stride, builder, op.getLoc()));
     }
     SmallVector<bool> sublane_mask(ctx.target_shape[0], true);
     int64_t sublane_rem = vty.getDimSize(rank - 2) % ctx.target_shape[0];
@@ -1264,12 +1267,9 @@ LogicalResult tpu_strided_load_rule(RewriteContext &ctx, Operation &op,
   TPU_ASSERT_OP(layouts_out.front().has_value());
   const VectorLayout &layout_out = *layouts_out.front();
   auto load_op = cast<tpu::StridedLoadOp>(op);
-  const auto base_ref = load_op.getBase();
-  const auto indices = load_op.getIndices();
-  const auto strides = load_op.getStrides();
   const auto vty = cast<VectorType>(load_op.getResult().getType());
-  return strided_op_rule_impl(ctx, op, base_ref, vty, layout_out, indices,
-                              strides);
+  return strided_op_rule_impl(ctx, op, load_op.getBase(), load_op.getIndices(),
+                              vty, layout_out, load_op.getStrides());
 }
 
 // TODO(jevinjiang): maybe unify with vector store?
@@ -1283,12 +1283,10 @@ LogicalResult tpu_strided_store_rule(RewriteContext &ctx, Operation &op,
 
   const VectorLayout &to_store_layout = *layouts_in.front();
   auto store_op = cast<tpu::StridedStoreOp>(op);
-  const auto base_ref = store_op.getBase();
-  const auto indices = store_op.getIndices();
-  const auto strides = store_op.getStrides();
   const auto vty = store_op.getValueToStore().getType();
-  return strided_op_rule_impl(ctx, op, base_ref, vty, to_store_layout, indices,
-                              strides);
+  return strided_op_rule_impl(ctx, op, store_op.getBase(),
+                              store_op.getIndices(), vty, to_store_layout,
+                              store_op.getStrides());
 }
 
 LogicalResult matmul_rule_impl(RewriteContext &ctx, Operation &op,

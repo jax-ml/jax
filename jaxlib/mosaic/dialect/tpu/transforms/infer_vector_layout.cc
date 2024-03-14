@@ -616,7 +616,9 @@ class VectorLayoutInferer {
     }
     auto store_layout = VectorLayout(bitwidth, {0, 0}, nativeTiling(bitwidth),
                                      ImplicitDim::kNone);
-    setInLayout(op, {store_layout, kNoLayout});
+    SmallVector<Layout, 5> in_layout{op->getNumOperands(), kNoLayout};
+    in_layout[0] = store_layout;
+    setInLayout(op, in_layout);
     return success();
   }
 
