@@ -26,6 +26,7 @@ pytype_strict_library(
     name = "extend",
     srcs = ["__init__.py"],
     deps = [
+        ":backend",
         ":core",
         ":linear_util",
         ":random",
@@ -43,6 +44,12 @@ pytype_strict_library(
     name = "linear_util",
     srcs = ["linear_util.py"],
     deps = ["//jax:core"],
+)
+
+pytype_strict_library(
+    name = "backend",
+    srcs = ["backend.py"],
+    deps = ["//jax"],
 )
 
 pytype_strict_library(

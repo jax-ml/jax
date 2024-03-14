@@ -1024,6 +1024,7 @@ pytype_strict_library(
     visibility = [":jax_extend_users"],
     deps = [
         "//jax/extend",
+        "//jax/extend:backend",
         "//jax/extend:core",
         "//jax/extend:linear_util",
         "//jax/extend:random",
