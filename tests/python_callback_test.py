@@ -30,6 +30,7 @@ from jax._src import maps
 from jax._src import test_util as jtu
 from jax._src import util
 from jax._src.lib import xla_client
+from jax._src.lib import xla_extension_version
 from jax.experimental import io_callback
 from jax.experimental import pjit
 from jax.experimental.maps import xmap
@@ -639,7 +640,6 @@ class PureCallbackTest(jtu.JaxTestCase):
     out = h(jnp.arange(4.)[None], 4.)
     np.testing.assert_allclose(out, np.sin(np.arange(4.)[None]) + 4.)
 
-
   def test_vmap_vectorized_callback_errors_if_returns_wrong_shape(self):
 
     def cb(x):
@@ -715,6 +715,18 @@ class PureCallbackTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError, "Pure callbacks do not support JVP."):
       f(2.)
+
+  @unittest.skipIf(xla_extension_version < 245, "jaxlib version too old")
+  def test_error_propagation(self):
+    def throws_error_fn(x):
+      raise RuntimeError("Errors should propagate.")
+
+    @jax.jit
+    def f(x):
+      return jax.pure_callback(throws_error_fn, x, x)
+
+    with self.assertRaisesRegex(Exception, "Errors should propagate."):
+      print(np.array(f(2.0)), flush=True)
 
   def test_can_take_grad_of_pure_callback_with_custom_jvp(self):
 
@@ -832,7 +844,6 @@ class PureCallbackTest(jtu.JaxTestCase):
     # immediately. This test verifies that the execution itself keeps the
     # callback alive.
     np.testing.assert_allclose(out, np.full((num_devices, 4), 11, np.float32))
-
 
   def test_callback_inside_xmap(self):
 
