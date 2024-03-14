@@ -27,7 +27,6 @@ coordinator_port = '8476'
 
 def get_metadata(key):
   import requests  # pytype: disable=import-error
-  import time  # pytype: disable=import-error
   # Based on https://github.com/tensorflow/tensorflow/pull/40317
   gce_metadata_endpoint = 'http://' + os.environ.get(
       'GCE_METADATA_IP', 'metadata.google.internal')
@@ -68,7 +67,7 @@ def get_tpu_env_value(key):
 def is_gce_env():
   worker_number_string = get_metadata('agent-worker-number')
   try:
-    worker_number = int(worker_number_string)
+    int(worker_number_string)
     return True
   except:
     return False
@@ -82,7 +81,9 @@ def is_gke_env():
 def get_gce_worker_endpoints() -> str:
   return get_metadata('worker-network-endpoints').split(',')
 
+
 class SingleSliceGceTpuCluster(clusters.ClusterEnv):
+
   @classmethod
   def is_env_present(cls) -> bool:
     return running_in_cloud_tpu_vm and is_gce_env() and not is_multislice_gce_env()
@@ -103,7 +104,9 @@ class SingleSliceGceTpuCluster(clusters.ClusterEnv):
   def get_local_process_id(cls) -> int | None:
     return None
 
+
 class MultisliceGceTpuCluster(clusters.ClusterEnv):
+
   @classmethod
   def is_env_present(cls) -> bool:
     return running_in_cloud_tpu_vm and is_multislice_gce_env()
@@ -159,7 +162,9 @@ class MultisliceGceTpuCluster(clusters.ClusterEnv):
   def _get_process_id_in_slice() -> int:
     return int(get_metadata('agent-worker-number'))
 
+
 class GkeTpuCluster(MultisliceGceTpuCluster):
+
   # This class handles both single and multislice GKE as the environment
   # variables are set the same in both cases.
   @classmethod

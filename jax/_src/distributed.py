@@ -41,17 +41,22 @@ class State:
                  num_processes: int | None = None,
                  process_id: int | None = None,
                  local_device_ids: int | Sequence[int] | None = None,
-                 initialization_timeout: int = 300):
+                 initialization_timeout: int = 300,
+                 local_coordinator: bool = False):
     coordinator_address = (coordinator_address or
                            os.environ.get('JAX_COORDINATOR_ADDRESS', None))
+
     if isinstance(local_device_ids, int):
       local_device_ids = [local_device_ids]
 
-    (coordinator_address, num_processes, process_id, local_device_ids) = (
-        clusters.ClusterEnv.auto_detect_unset_distributed_params(
-            coordinator_address, num_processes, process_id, local_device_ids
-        )
-    )
+    if local_coordinator:
+      coordinator_address = '127.0.0.1:8080'
+      num_processes = 1
+      process_id = 0
+    else:
+      (coordinator_address, num_processes, process_id,
+       local_device_ids) = clusters.ClusterEnv.auto_detect_distributed_params(
+           coordinator_address, num_processes, process_id, local_device_ids)
 
     if coordinator_address is None:
       raise ValueError('coordinator_address should be defined.')
@@ -114,7 +119,8 @@ def initialize(coordinator_address: str | None = None,
                num_processes: int | None = None,
                process_id: int | None = None,
                local_device_ids: int | Sequence[int] | None = None,
-               initialization_timeout: int = 300):
+               initialization_timeout: int = 300,
+               local_coordinator: bool = False):
   """Initializes the JAX distributed system.
 
   Calling :func:`~jax.distributed.initialize` prepares JAX for execution on
@@ -174,7 +180,8 @@ def initialize(coordinator_address: str | None = None,
     raise RuntimeError("jax.distributed.initialize() must be called before "
                         "any JAX computations are executed.")
   global_state.initialize(coordinator_address, num_processes, process_id,
-                          local_device_ids, initialization_timeout)
+                          local_device_ids, initialization_timeout,
+                          local_coordinator)
   atexit.register(shutdown)
 
 

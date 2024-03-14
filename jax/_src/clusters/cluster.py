@@ -37,18 +37,13 @@ class ClusterEnv:
     cls._cluster_types.append(cls)
 
   @classmethod
-  # pytype: disable=bad-return-type
-  def auto_detect_unset_distributed_params(cls,
-                                           coordinator_address: str | None,
-                                           num_processes: int | None,
-                                           process_id: int | None,
-                                           local_device_ids: Sequence[int] | None
-                                          ) -> tuple[str | None, int | None, int | None,
-                                                     Sequence[int] | None]:
-    if all(p is not None for p in (coordinator_address, num_processes,
-      process_id, local_device_ids)):
-      return (coordinator_address, num_processes, process_id,
-              local_device_ids)
+  def auto_detect_distributed_params(
+      cls, coordinator_address: str | None, num_processes: int | None,
+      process_id: int | None, local_device_ids: Sequence[int] | None
+    ) -> tuple[str | None, int | None, int | None, Sequence[int] | None]:
+    all_args = (coordinator_address, num_processes, process_id, local_device_ids)
+    if all(p is not None for p in all_args):
+      return coordinator_address, num_processes, process_id, local_device_ids
     env = next((env for env in cls._cluster_types if env.is_env_present()), None)
     if env:
       logger.debug('Initializing distributed JAX environment via %s', env.__name__)
@@ -67,10 +62,11 @@ class ClusterEnv:
           env.get_local_process_id() is not None):
         local_device_ids = [env.get_local_process_id()] # type: ignore[list-item]
     else:
-      logger.debug('Could not find a known environment for initializing distributed JAX. '
-        'Known environments: %s', ', '.join(e.__name__ for e in cls._cluster_types))
-    return (coordinator_address, num_processes, process_id, local_device_ids)
-  # pytype: enable=bad-return-type
+      logger.debug(
+          "Could not find a known environment for initializing distributed JAX."
+          " Known environments: %s",
+          ", ".join(e.__name__ for e in cls._cluster_types))
+    return coordinator_address, num_processes, process_id, local_device_ids
 
   @classmethod
   def is_env_present(cls) -> bool:
