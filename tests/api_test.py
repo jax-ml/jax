@@ -4588,6 +4588,23 @@ class APITest(jtu.JaxTestCase):
         return inner(0., x)[0]
     jax.grad(f)(1.)  # don't crash
 
+  @parameterized.parameters(it.product(range(4), repeat=3))
+  @jtu.run_on_devices("cpu")
+  def test_jit_forwarding_correctness(self, seed, num_input_fwd, num_output_fwd):
+    num_args = 3
+    rng = np.random.RandomState(seed)
+
+    @jax.jit
+    def f(inputs):
+      inputs = [inputs[i] for i in rng.permutation(num_args)]
+      outputs = inputs[:num_input_fwd] + [
+          jnp.exp(inputs[i]) if i < num_output_fwd else jnp.sin(inputs[i])
+          for i in range(num_args - num_input_fwd)]
+      return [outputs[i] for i in rng.permutation(num_args)]
+
+    jtu.check_grads(f, (list(jnp.arange(float(num_args))),), order=1,
+                    modes=['rev'], atol=1e-3, rtol=1e-3)
+
 
 class RematTest(jtu.JaxTestCase):
 
@@ -9311,7 +9328,6 @@ class CustomVJPTest(jtu.JaxTestCase):
         ValueError,
         r'output\[1\] the bwd rule produced an output of shape/dtype float..\[3\]'):
       jax.grad(lambda x, y: foo(x, y * y).sum(), 1)(jnp.ones(3), jnp.ones(4))
-
 
 def transpose_unary(f, x_example):
   def transposed(y):
