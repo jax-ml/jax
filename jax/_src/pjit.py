@@ -1824,12 +1824,27 @@ def _pjit_partial_eval(trace, *in_tracers,
   idx_map = {id(v): i for i, v in enumerate(out_vars)}
   out_fwd = [None] * num_out_primals + [idx_map.get(id(v)) for v in res_vars]
 
+  # Rarely, residuals can be primal outputs that are themselves forwarded inputs.
+  # In this case, set in_fwd for them.
+  for i in range(len(out_fwd)):
+    j = out_fwd[i]
+    if j is not None and in_fwd[j] is not None:
+      in_fwd[i] = in_fwd[j]
+      out_fwd[i] = None
+
   # Prune jaxpr outputs and out_shardings by removing forwards.
   keep = [f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd)]
   known_jaxpr = pe.prune_closed_jaxpr_outputs(known_jaxpr, keep)
   known_out_shardings = keep_where(out_shardings, known_outs) + res_shardings
   known_out_shardings = keep_where(known_out_shardings, keep)
-  del keep, num_out_primals
+
+  # Adjust the indices in out_fwd to account for the removed outputs.
+  kept = {}
+  for i in range(len(keep)):
+    if keep[i]:
+      kept[i] = len(kept)
+  out_fwd = [None if i is None else kept[i] for i in out_fwd]
+  del keep, kept, num_out_primals
 
   known_params = dict(
       jaxpr=known_jaxpr, in_shardings=keep_where(in_shardings, known_ins),

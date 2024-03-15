@@ -661,6 +661,15 @@ class PJitTest(jtu.BufferDonationTestCase):
     )
     jtu.check_grads(g, (jnp.arange(16.).reshape((4, 4)) / 100,), order=2)
 
+  def testAutodiffPrimals(self):
+    # Test for issue #20267.
+    def f(x):
+        @jax.jit
+        def inner(a, x):
+            return a, jnp.exp(x)
+        return inner(0., x)[0]
+    jax.grad(f)(1.)
+
   @jtu.with_mesh([('x', 2), ('y', 1)])
   def testAutodiffCache(self):
     f = pjit(
