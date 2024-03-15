@@ -22,6 +22,7 @@ Activation functions
     relu6
     sigmoid
     softplus
+    sparse_plus
     soft_sign
     silu
     swish

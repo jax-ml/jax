@@ -41,6 +41,7 @@ from jax._src.nn.functions import (
   soft_sign as soft_sign,
   softmax as softmax,
   softplus as softplus,
+  sparse_plus as sparse_plus,
   silu as silu,
   swish as swish,
   squareplus as squareplus,

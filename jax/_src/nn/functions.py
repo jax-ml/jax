@@ -111,6 +111,31 @@ def softplus(x: ArrayLike) -> Array:
   return jnp.logaddexp(x, 0)
 
 @jax.jit
+def sparse_plus(x: ArrayLike) -> Array:
+  r"""Sparse plus function.
+
+  Computes the function:
+
+  .. math::
+
+    \mathrm{sparse\_plus}(x) = \begin{cases}
+      0, & x \leq -1\\
+      \frac{1}{4}(x+1)^2, & -1 < x < 1 \\
+      x, & 1 \leq x
+    \end{cases}
+
+  This is the twin function of the softplus activation ensuring a zero output
+  for inputs less than -1 and a linear output for inputs greater than 1,
+  while remaining smooth, convex, monotonic by an adequate definition between
+  -1 and 1.
+
+  Args:
+    x: input (float)
+  """
+  x = jnp.asarray(x)
+  return jnp.where(x <= -1.0, 0.0, jnp.where(x >= 1.0, x, (x + 1.0)**2/4))
+
+@jax.jit
 def soft_sign(x: ArrayLike) -> Array:
   r"""Soft-sign activation function.
 
