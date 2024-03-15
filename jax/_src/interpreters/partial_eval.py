@@ -847,7 +847,7 @@ def trace_to_subjaxpr_nounits_fwd2(
   out_pvals = [t.pval for t in out_tracers]
 
   # Which consts (aka residuals) are just forwarded inputs? Check obj id.
-  in_consts  = [pval.get_known()    for pval in  in_pvals if     pval.is_known()]
+  in_consts  = [pval.get_known()    for pval in  in_pvals if    pval.is_known()]
   id_map = {id(c): i for i, c in enumerate(in_consts)}
   input_fwds: list[int | None] = [id_map.get(id(c)) for c in consts]
 

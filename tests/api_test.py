@@ -4593,14 +4593,16 @@ class APITest(jtu.JaxTestCase):
   def test_jit_forwarding_correctness(self, seed, num_input_fwd, num_output_fwd):
     num_args = 3
     rng = np.random.RandomState(seed)
+    in_perm = rng.permutation(num_args)
+    out_perm = rng.permutation(num_args)
 
     @jax.jit
     def f(inputs):
-      inputs = [inputs[i] for i in rng.permutation(num_args)]
+      inputs = [inputs[i] for i in in_perm]
       outputs = inputs[:num_input_fwd] + [
           jnp.exp(inputs[i]) if i < num_output_fwd else jnp.sin(inputs[i])
           for i in range(num_args - num_input_fwd)]
-      return [outputs[i] for i in rng.permutation(num_args)]
+      return [outputs[i] for i in out_perm]
 
     jtu.check_grads(f, (list(jnp.arange(float(num_args))),), order=1,
                     modes=['rev'], atol=1e-3, rtol=1e-3)
