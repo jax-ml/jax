@@ -445,7 +445,7 @@ def device_put_transpose_rule(ct, _, device, src):
 ad.deflinear2(device_put_p, device_put_transpose_rule)
 batching.defvectorized(device_put_p)
 
-def _tpu_device_put_lowering(ctx, x, *, device, src):
+def _tpu_gpu_device_put_lowering(ctx, x, *, device, src):
   if (isinstance(device, (XLACompatibleSharding, TransferToMemoryKind)) and
       device.memory_kind is not None):
     aval, = ctx.avals_in
@@ -456,7 +456,10 @@ def _tpu_device_put_lowering(ctx, x, *, device, src):
           ctx, x, out_aval, device._to_xla_hlo_sharding(aval.ndim).to_proto())
     return [x]
   return [x]
-mlir.register_lowering(device_put_p, _tpu_device_put_lowering, platform='tpu')
+mlir.register_lowering(
+  device_put_p, _tpu_gpu_device_put_lowering, platform='tpu')
+mlir.register_lowering(
+  device_put_p, _tpu_gpu_device_put_lowering, platform='gpu')
 
 
 def _common_device_put_lowering(ctx, x, *, device, src):
