@@ -40,12 +40,14 @@ from jax.experimental.pallas.ops import layer_norm
 from jax.experimental.pallas.ops import rms_norm
 from jax.experimental.pallas.ops import softmax
 try:
+  from jax._src.pallas.triton.lowering import LoweringError
   from jax._src.pallas.triton.pallas_call_registration import (
       compile_jaxpr,
       _TRITON_COMPILE_VIA_XLA,
   )
   from jax.experimental.pallas import gpu as plgpu
 except ModuleNotFoundError:
+  LoweringError = Exception
   compile_jaxpr = None
   _TRITON_COMPILE_VIA_XLA = None
 import numpy as np
@@ -1634,18 +1636,40 @@ class PallasOpsTest(PallasTest):
     x = x.at[3].set(jnp.nan)
     np.testing.assert_allclose(isnan(x), jnp.isnan(x))
 
-  def test_true_divide(self):
+  @parameterized.parameters(
+      ("int32", "float32"),
+      ("float32", "float32"),
+  )
+  def test_true_divide(self, dtype, out_dtype):
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((8,), jnp.float32),
+        out_shape=jax.ShapeDtypeStruct((8,), out_dtype),
         grid=1,
     )
     def kernel(x_ref, y_ref, o_ref):
       o_ref[...] = jnp.true_divide(x_ref[...], y_ref[...])
 
-    x = jnp.array([1, 3, -4, -6, 2, 5, 4, -7], dtype=jnp.int32)
-    y = jnp.array([3, 1, -4, -5, 2, -2, 2, 4], dtype=jnp.int32)
+    x = jnp.array([1, 3, -4, -6, 2, 5, 4, -7]).astype(dtype)
+    y = jnp.array([3, 1, -4, -5, 2, -2, 2, 4]).astype(dtype)
     np.testing.assert_allclose(jnp.true_divide(x, y), kernel(x, y))
+
+  @parameterized.parameters("float16", "bfloat16")
+  def test_true_divide_unsupported(self, dtype):
+    if self.INTERPRET:
+      self.skipTest("No lowering in interpreter mode")
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((2,), dtype),
+        grid=1,
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = jnp.true_divide(x_ref[...], y_ref[...])
+
+    x = jnp.array([2.4, 4.2]).astype(dtype)
+    y = jnp.array([4.2, 2.4]).astype(dtype)
+    with self.assertRaises(LoweringError):
+      kernel(x, y)
 
   BINARY_OPS = [
       ([jnp.floor_divide], ["int32", "uint32"]),
