@@ -303,6 +303,10 @@ def _load_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
     raise NotImplementedError("Only one indexer supported in discharge rule.")
   idx = indexers[0]
   if all((isinstance(s, Slice) or not s.shape) for s in idx.indices):
+    # TODO(b/329733289): support strided load/store in interpret mode.
+    for s in idx.indices:
+      if isinstance(s, Slice) and s.stride > 1:
+        raise NotImplementedError("Unimplemented stride support.")
     indices = idx.indices
     scalar_dims = [not isinstance(s, Slice) and not s.shape for s in indices]
     slice_starts = [s.start if isinstance(s, Slice) else s for s in indices]
@@ -404,6 +408,10 @@ def _swap_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
     raise NotImplementedError("Only one indexer supported in discharge rule.")
   idx = indexers[0]
   if all((isinstance(s, Slice) or not s.shape) for s in idx.indices):
+    # TODO(b/329733289): support strided load/store in interpret mode.
+    for s in idx.indices:
+      if isinstance(s, Slice) and s.stride > 1:
+        raise NotImplementedError("Unimplemented stride support.")
     indices = idx.indices
     scalar_dims = [
         i

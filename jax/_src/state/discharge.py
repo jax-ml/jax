@@ -194,6 +194,10 @@ def _maybe_convert_to_dynamic_slice(
   if not all(isinstance(i, indexing.Slice) or not np.shape(i)
              for i in indexer.indices):
     return None
+  # TODO(b/329733289): support strided load/store in interpret mode.
+  for i in indexer.indices:
+    if isinstance(i, indexing.Slice) and i.stride > 1:
+      raise NotImplementedError("Unimplemented stride support.")
   _convert_i32 = lambda x: lax.convert_element_type(x, np.dtype("int32"))
   starts = tuple(
       _convert_i32(i.start) if isinstance(i, indexing.Slice)
