@@ -368,8 +368,6 @@ class CoreTest(jtu.JaxTestCase):
     dropvar, b = jaxpr.eqns[0].outvars
     self.assertEqual(dropvar.aval, aval)
 
-  # TODO(mattjj): un-skip
-  @unittest.skip('temporarily skipping until we can add more tests')
   def test_input_residual_forwarding(self):
     # https://github.com/google/jax/pull/11151
     x = jnp.arange(3 * 4.).reshape(3, 4)
