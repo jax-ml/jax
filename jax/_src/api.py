@@ -2958,7 +2958,29 @@ def block_until_ready(x):
       return x.block_until_ready()
     except AttributeError:
       return x
-  return tree_map(try_to_block, x)
+
+  if xla_extension_version < 246:
+    return tree_map(try_to_block, x)
+
+  arrays = []
+  for leaf in tree_leaves(x):
+    if isinstance(leaf, array.ArrayImpl):
+      arrays.append(leaf)
+    else:
+      try_to_block(leaf)
+
+  if not arrays:
+    # `arrays` will be empty if tree_leaves(x) is empty or all leaves are not
+    # jax.Array.
+    pass
+  elif len(arrays) == 1:
+    # Fast path for single array.
+    try_to_block(arrays[0])
+  else:
+    # Optimized for multiple arrays.
+    xc.batched_block_until_ready(arrays)
+
+  return x
 
 
 def clear_backends():

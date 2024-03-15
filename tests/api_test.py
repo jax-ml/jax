@@ -2374,6 +2374,20 @@ class APITest(jtu.JaxTestCase):
     self.assertAllClose(pytree[0], jnp.array(1.), check_dtypes=False)
     self.assertAllClose(pytree[1], np.ones(3), check_dtypes=False)
 
+  def test_block_until_ready_numpy_arrays(self):
+    pytree = (np.ones(1), np.ones(2))
+    pytree = jax.block_until_ready(pytree)
+    self.assertAllClose(pytree[0], np.ones(1), check_dtypes=False)
+    self.assertAllClose(pytree[1], np.ones(2), check_dtypes=False)
+
+  def test_block_until_ready_mixed(self):
+    pytree = (device_put(1.), device_put(2.), np.ones(3), 4)
+    pytree = jax.block_until_ready(pytree)
+    self.assertAllClose(pytree[0], jnp.array(1.), check_dtypes=False)
+    self.assertAllClose(pytree[1], jnp.array(2.), check_dtypes=False)
+    self.assertAllClose(pytree[2], np.ones(3), check_dtypes=False)
+    self.assertEqual(pytree[3], 4)
+
   def test_devicearray_weakref_friendly(self):
     x = device_put(1.)
     y = weakref.ref(x)
