@@ -45,7 +45,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
-from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
 from jax._src.util import NumpyComplexWarning
 
@@ -2988,14 +2987,6 @@ class FooTyRules:
   @staticmethod
   def physical_element_aval(dtype) -> core.ShapedArray:
     return core.ShapedArray((2,), jnp.dtype('uint32'))
-
-  @staticmethod
-  def physical_hlo_sharding(aval, hlo_sharding: xc.HloSharding):
-    op_sharding_proto = hlo_sharding.to_proto()
-    new_op_sharding = op_sharding_proto.clone()
-    tad = list(new_op_sharding.tile_assignment_dimensions)
-    new_op_sharding.tile_assignment_dimensions = [*tad, 1]
-    return xc.HloSharding.from_proto(new_op_sharding)
 
   @staticmethod
   def logical_sharding(aval, phys_sharding):

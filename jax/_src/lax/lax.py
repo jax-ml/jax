@@ -5111,10 +5111,6 @@ class BIntRules:
     return handler
 
   @staticmethod
-  def physical_hlo_sharding(aval, hlo_sharding: xc.HloSharding) -> xc.HloSharding:
-    return hlo_sharding
-
-  @staticmethod
   def logical_sharding(aval, phys_sharding):
     return phys_sharding
 

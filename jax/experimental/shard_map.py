@@ -567,13 +567,13 @@ def _xla_shard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
                aval_in, aval_out, x):
   manual_proto = pxla.manual_proto(aval_in, frozenset(mesh.axis_names) - auto, mesh)
   axes = {name: i for i, ns in names.items() for name in ns}
-  shard_proto = NamedSharding(
-      mesh, sharding_impls.array_mapping_to_axis_resources(axes)  # type: ignore
-  )._to_xla_hlo_sharding(aval_in.ndim)
+  ns = NamedSharding(mesh, sharding_impls.array_mapping_to_axis_resources(axes))  # type: ignore
   if dtypes.issubdtype(aval_in.dtype, dtypes.extended):
-    shard_proto = aval_in.dtype._rules.physical_hlo_sharding(aval_in, shard_proto)
+    ns = aval_in.dtype._rules.physical_sharding(aval_in, ns)
+    aval_in = core.physical_aval(aval_in)
+  shard_proto = ns._to_xla_hlo_sharding(aval_in.ndim).to_proto()
   unspecified = set(range(aval_in.ndim)) if auto else set()
-  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, shard_proto.to_proto(),  # type: ignore
+  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, shard_proto,  # type: ignore
                                   unspecified_dims=unspecified)
   return [mlir.wrap_with_full_to_shard_op(ctx, sx, aval_out, manual_proto, set())]
 
@@ -583,13 +583,13 @@ def _xla_unshard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
   manual_proto = pxla.manual_proto(aval_in, frozenset(mesh.axis_names) - auto, mesh)
   sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, manual_proto, unspecified_dims=set())
   axes = {name: i for i, ns in names.items() for name in ns}
-  shard_proto = NamedSharding(
-      mesh, sharding_impls.array_mapping_to_axis_resources(axes)  # type: ignore
-  )._to_xla_hlo_sharding(aval_out.ndim)
+  ns = NamedSharding(mesh, sharding_impls.array_mapping_to_axis_resources(axes))  # type: ignore
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    shard_proto = aval_out.dtype._rules.physical_hlo_sharding(aval_out, shard_proto)
+    ns = aval_out.dtype._rules.physical_sharding(aval_out, ns)
+    aval_out = core.physical_aval(aval_out)
+  shard_proto = ns._to_xla_hlo_sharding(aval_out.ndim).to_proto()
   unspecified = set(range(aval_out.ndim)) if auto else set()
-  return mlir.wrap_with_shard_to_full_op(ctx, sx, aval_out, shard_proto.to_proto(),
+  return mlir.wrap_with_shard_to_full_op(ctx, sx, aval_out, shard_proto,
                                          unspecified)  # type: ignore
 
 def _pspec_mhlo_attrs(names: AxisNames, aval: core.AbstractValue) -> str:

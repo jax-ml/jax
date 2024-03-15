@@ -819,16 +819,19 @@ class LoweringResult(NamedTuple):
 _platforms_with_donation = ["cpu", "cuda", "rocm", "tpu"]
 
 
-def _to_logical_op_sharding(
+def _to_physical_op_sharding(
     aval: core.AbstractValue, sharding: XLACompatibleSharding | None,
-) -> xc.HloSharding | None:
+) -> xc.OpSharding | None:
   if sharding is None:
     return None
   assert isinstance(sharding, sharding_impls.XLACompatibleSharding)
   if isinstance(aval, AbstractRef):
-    return _to_logical_op_sharding(aval.inner_aval, sharding)
+    return _to_physical_op_sharding(aval.inner_aval, sharding)
   assert isinstance(aval, (core.ShapedArray, core.DShapedArray))
-  return sharding._to_xla_hlo_sharding(aval.ndim)
+  if dtypes.issubdtype(aval.dtype, dtypes.extended):
+    sharding = aval.dtype._rules.physical_sharding(aval, sharding)
+    aval = core.physical_aval(aval)
+  return sharding._to_xla_hlo_sharding(aval.ndim).to_proto()  # type: ignore
 
 
 def _to_xla_layout(layout: XLACompatibleLayout | None | LayoutRequest) -> str | None:
@@ -941,13 +944,6 @@ def lower_jaxpr_to_module(
   else:
     dim_vars = ()
 
-  arg_op_shardings = (
-      map(_to_logical_op_sharding, jaxpr.in_avals, arg_shardings)
-      if arg_shardings is not None else arg_shardings)
-  result_op_shardings = (
-      map(_to_logical_op_sharding, jaxpr.out_avals, result_shardings)
-      if result_shardings is not None else result_shardings)
-
   arg_layouts = (map(_to_xla_layout, in_layouts) if in_layouts is not None
                   else in_layouts)
   result_layouts = (map(_to_xla_layout, out_layouts) if out_layouts is not None
@@ -978,8 +974,8 @@ def lower_jaxpr_to_module(
         replace_tokens_with_dummy=replace_tokens_with_dummy,
         num_output_tokens=0,
         replicated_args=replicated_args,
-        arg_shardings=arg_op_shardings,
-        result_shardings=result_op_shardings,
+        arg_shardings=arg_shardings,
+        result_shardings=result_shardings,
         input_output_aliases=input_output_aliases,
         xla_donated_args=xla_donated_args,
         arg_names=arg_names,
@@ -1123,8 +1119,8 @@ def lower_jaxpr_to_fun(
     public: bool = False,
     replace_tokens_with_dummy: bool = False,
     replicated_args: Sequence[bool] | None = None,
-    arg_shardings: Sequence[xc.HloSharding | None] | None = None,
-    result_shardings: Sequence[xc.HloSharding | None] | None = None,
+    arg_shardings: Sequence[XLACompatibleSharding | None] | None = None,
+    result_shardings: Sequence[XLACompatibleSharding | None] | None = None,
     use_sharding_annotations: bool = True,
     input_output_aliases: Sequence[int | None] | None = None,
     xla_donated_args: Sequence[bool] | None = None,
@@ -1481,15 +1477,6 @@ def wrap_with_memory_kind(
   dict_attr = {"_xla_buffer_placement": ir.StringAttr.get(memory_kind)}
   op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
   return op.result
-
-
-def _to_physical_op_sharding(
-    aval: core.AbstractValue | None, sharding: xc.HloSharding | None
-) -> xc.OpSharding | None:
-  if (isinstance(aval, core.ShapedArray) and dtypes.issubdtype(aval.dtype, dtypes.extended)
-      and sharding is not None):
-    return aval.dtype._rules.physical_hlo_sharding(aval, sharding).to_proto()
-  return None if sharding is None else sharding.to_proto()  # type: ignore
 
 
 def _emit_lowering_rule_as_fun(lowering_rule,
