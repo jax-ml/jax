@@ -361,14 +361,13 @@ def get_logical_gspmd_sharding(aval, phys_sharding):
 
 
 def physical_hlo_sharding(aval, hlo_sharding: xc.HloSharding) -> xc.HloSharding:
-    key_shape = aval.dtype._impl.key_shape
-    new_op_sharding = hlo_sharding.to_proto().clone()  # type: ignore
-    partitions, num_replicas = op_shardings.get_num_ways_dim_sharded(
-        hlo_sharding)
-    suffix = [] if num_replicas == 1 else [num_replicas]
-    tad = partitions + [1] * len(key_shape) + suffix
-    new_op_sharding.tile_assignment_dimensions = tad
-    return xc.HloSharding.from_proto(new_op_sharding)
+  key_shape = aval.dtype._impl.key_shape
+  new_op_sharding = hlo_sharding.to_proto().clone()  # type: ignore
+  partitions, num_replicas = op_shardings.get_num_ways_dim_sharded(hlo_sharding)
+  suffix = [] if num_replicas == 1 else [num_replicas]
+  tad = partitions + [1] * len(key_shape) + suffix
+  new_op_sharding.tile_assignment_dimensions = tad
+  return xc.HloSharding.from_proto(new_op_sharding)
 
 
 class KeyTyRules:
