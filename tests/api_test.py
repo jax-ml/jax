@@ -4565,6 +4565,15 @@ class APITest(jtu.JaxTestCase):
     gc.collect()
     assert a() is None
 
+  def test_forwarding_bug(self):
+    # Test for issue #20267.
+    def f(x):
+        @jax.jit
+        def inner(a, x):
+            return a, jnp.exp(x)
+        return inner(0., x)[0]
+    jax.grad(f)(1.)  # don't crash
+
 
 class RematTest(jtu.JaxTestCase):
 
