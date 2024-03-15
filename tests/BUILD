@@ -1437,7 +1437,10 @@ jax_test(
         "tpu",
         "cpu",
     ],
-    shard_count = 4,
+    shard_count = {
+        "gpu": 4,
+    },
+    tags = ["multiaccelerator"],
     deps = [
         "//jax:fused_attention_stablehlo",
     ],
