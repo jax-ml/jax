@@ -337,7 +337,7 @@ referred to as being *sticky* to the device).
 By default, JAX arrays are placed uncommitted on the default device
 (``jax.devices()[0]``), which is the first GPU or TPU by default. If no GPU or
 TPU is present, ``jax.devices()[0]`` is the CPU. The default device can
-temporarily overridden with the :func:`jax.default_device` context manager, or
+be temporarily overridden with the :func:`jax.default_device` context manager, or
 set for the whole process by setting the environment variable ``JAX_PLATFORMS``
 or the absl flag ``--jax_platforms`` to "cpu", "gpu", or "tpu"
 (``JAX_PLATFORMS`` can also be a list of platforms, which determines which
