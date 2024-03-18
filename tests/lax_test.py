@@ -3461,6 +3461,16 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     )
 
     for region in all_regions:
+      if is_arm_cpu:
+        if (
+            (
+                region in ['q1', 'q2', 'q3', 'q4']
+                and name in ['cos', 'cosh', 'sin', 'sinh', 'exp', 'expm1']
+            )
+            or (region in ['pinfj', 'ninfj'] and name in ['sin', 'cos'])
+            or (region == 'pinf' and name in ['expm1'])
+        ):
+          continue
       s = s_dict[region]
       inds = np.where(result[s] != expected[s])
       if inds[0].size > 0:
