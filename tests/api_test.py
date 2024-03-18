@@ -5568,6 +5568,16 @@ class RematTest(jtu.JaxTestCase):
     res_avals = saved_residuals(f, jnp.ones((2, 2)))
     self.assertLen(res_avals, 1)
 
+  def test_name_saveable_input(self):
+    @partial(jax.remat, policy=lambda p, *_, **__: 'mul' in str(p))
+    def f(x):
+      x = checkpoint_name(x * x, 'foo')
+      x = x * x
+      return x
+
+    res = saved_residuals(f, 3.)
+    self.assertStartsWith(res[1][1], "named 'foo'")
+
   def test_name_denylist(self):
     def f(x):
       y = checkpoint_name(jnp.multiply(2., 2.), 'y')
