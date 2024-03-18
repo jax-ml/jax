@@ -11,6 +11,12 @@ Remember to align the itemized text with the first line of an item within a list
 * Deprecations & Removals
   * {func}`jax.tree_map` is deprecated; use `jax.tree.map` instead, or for backward
     compatibility with older JAX versions, use {func}`jax.tree_util.tree_map`.
+  * {func}`jax.clear_backends` is deprecated as it does not necessarily do what
+    its name suggests and can lead to unexpected consequences, e.g., it will not
+    destroy existing backends and release corresponding owned resources. Use
+    {func}`jax.clear_caches` if you only want to clean up compilation caches.
+    For backward compatibility or you really need to switch/reinitialize the
+    default backend, use {func}`jax.extend.backend.clear_backends`.
   * The `jax.experimental.maps` module and `jax.experimental.maps.xmap` are
     deprecated. Use `jax.experimental.shard_map` or `jax.vmap` with the
     `spmd_axis_name` argument for expressing SPMD device-parallel computations.
