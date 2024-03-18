@@ -8,7 +8,7 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.26
 
-* Deprecations
+* Deprecations & Removals
   * {func}`jax.tree_map` is deprecated; use `jax.tree.map` instead, or for backward
     compatibility with older JAX versions, use {func}`jax.tree_util.tree_map`.
   * The `jax.experimental.maps` module and `jax.experimental.maps.xmap` are
@@ -16,6 +16,8 @@ Remember to align the itemized text with the first line of an item within a list
     `spmd_axis_name` argument for expressing SPMD device-parallel computations.
   * Passing arguments to {func}`jax.numpy.array_equal` and {func}`jax.numpy.array_equiv`
     that cannot be converted to a JAX array now results in an exception.
+  * The deprecated flag `jax_parallel_functions_output_gda` has been removed.
+    This flag was long deprecated and did nothing; its use was a no-op.
 
 ## jaxlib 0.4.26
 

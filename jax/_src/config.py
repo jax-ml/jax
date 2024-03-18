@@ -987,11 +987,6 @@ log_checkpoint_residuals = define_bool_state(
           'partially evaluated (e.g. for autodiff), printing what residuals '
           'are saved.'))
 
-parallel_functions_output_gda = define_bool_state(
-    name='jax_parallel_functions_output_gda',
-    default=False,
-    help='If True, pjit will output GDAs.')
-
 pmap_shmap_merge = define_bool_state(
     name='jax_pmap_shmap_merge',
     default=False,
