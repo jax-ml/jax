@@ -465,11 +465,14 @@ def _saved_residuals(jaxpr, arg_info) -> list[tuple[core.AbstractValue, str]]:
         src = 'from the argument at flattened index {i}'
       results.append((v.aval, src))
 
+  named_vars = {v: e for e in jaxpr.eqns if e.primitive is name_p
+                for v in e.invars}
+
   for eqn in jaxpr.eqns:
     src = source_info_util.summarize(eqn.source_info)
     for v in eqn.outvars:
       if v in res_vars:
-        if eqn.primitive is name_p:
+        if eqn.primitive is name_p or v in named_vars and (eqn := named_vars[v]):
           results.append((v.aval, f"named '{eqn.params['name']}' from {src}"))
         elif str(eqn.primitive) == 'xla_call':
           results.append((v.aval,
