@@ -201,7 +201,7 @@ class DotProductAttentionTest(jtu.JaxTestCase):
         self.assertArraysAllClose(query_grad_ref, query_grad, rtol=1e-5, atol=1e-5)
       self.assertArraysAllClose(key_grad_ref, key_grad, rtol=1e-5, atol=1e-5)
       self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-5, atol=1e-5)
-  
+
   @jtu.run_on_devices("cuda")
   def test_sdpa_inference(self):
     k1, k2, k3 = jax.random.split(jax.random.key(0), 3)
