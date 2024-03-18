@@ -1109,12 +1109,41 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertEqual((tuple(sorted(groups[0])),),
                      ((0, 1, 2, 3, 4, 5, 6, 7,),))  # order doesn't matter
 
+  @jtu.skip_on_devices("cpu", "tpu")
+  def testCollectiveBroadcast(self):
+    device_count = jax.device_count()
+    f = lambda x: lax.pbroadcast(x, source=0, axis_name='i')
+    f = self.pmap(f, 'i')
+    x = jnp.arange(4 * device_count).reshape((device_count, 4))
+    ans = f(x)
+    expected = np.take(x, [0] * device_count, axis=0)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.skip_on_devices("cpu", "tpu")
+  def testCollectiveBroadcastVmap(self):
+    device_count = jax.device_count()
+    f = lambda x: lax.pbroadcast(x, source=0, axis_name='i')
+    x = np.arange(device_count * 16, dtype=np.float32)
+    x = x.reshape((device_count, 4, 4))
+    ans = self.pmap(vmap(f), 'i')(x)
+    expected = jnp.broadcast_to(x[0:1], x.shape)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.skip_on_devices("cpu", "tpu")
+  def testCollectiveBroadcastGrad(self):
+    device_count = jax.device_count()
+    f = lambda x: lax.pbroadcast(x, source=0, axis_name='i')
+    x = np.arange(device_count, dtype=np.float32)
+    ans = self.pmap(grad(f), 'i')(x)
+    expected = np.zeros_like(x)
+    expected[0] = device_count
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testCollectivePermute(self):
     device_count = jax.device_count()
     rotation = [(i, (i + 1) % device_count) for i in range(device_count)]
     f = lambda x: lax.ppermute(x, perm=rotation, axis_name='i')
     f = self.pmap(f, 'i')
-
     x = jnp.arange(4 * device_count).reshape((device_count, 4))
     ans = f(x)
     expected = np.roll(x, shift=1, axis=0)
