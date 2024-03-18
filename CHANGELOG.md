@@ -18,6 +18,9 @@ Remember to align the itemized text with the first line of an item within a list
     that cannot be converted to a JAX array now results in an exception.
   * The deprecated flag `jax_parallel_functions_output_gda` has been removed.
     This flag was long deprecated and did nothing; its use was a no-op.
+  * The previously-deprecated imports `jax.interpreters.ad.config` and
+    `jax.interpreters.ad.source_info_util` have now been removed. Use `jax.config`
+    and `jax.extend.source_info_util` instead.
 
 ## jaxlib 0.4.26
 
