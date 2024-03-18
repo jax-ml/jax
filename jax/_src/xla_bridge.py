@@ -840,7 +840,8 @@ def _get_backend_uncached(
         raise RuntimeError(f"Backend '{platform}' failed to initialize: "
                            f"{_backend_errors[platform]}. "
                            f'Available backends are {list(bs)}')
-      raise RuntimeError(f"Unknown backend {platform}")
+      raise RuntimeError(
+          f"Unknown backend {platform}. Available backends are {list(bs)}")
     return backend
   else:
     assert _default_backend is not None
