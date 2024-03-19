@@ -5373,7 +5373,7 @@ def digitize(x: ArrayLike, bins: ArrayLike, right: bool = False) -> Array:
   if bins_arr.ndim != 1:
     raise ValueError(f"digitize: bins must be a 1-dimensional array; got {bins=}")
   if bins_arr.shape[0] == 0:
-    return zeros(x, dtype=dtypes.canonicalize_dtype(int_))
+    return zeros_like(x, dtype=int32)
   side = 'right' if not right else 'left'
   return where(
     bins_arr[-1] >= bins_arr[0],
