@@ -1038,28 +1038,6 @@ def toeplitz(c: ArrayLike, r: ArrayLike | None = None) -> Array:
 
 @implements(scipy.linalg.hilbert)
 @partial(jit, static_argnames=("n",))
-def hilbert(n: int):
-  """
-  Creates a Hilbert matrix of order n.
-    
-  Returns the n by n array with entries h[i,j] = 1 / (i + j + 1).
-    
-    Parameters:
-            n: int
-               Size of the array.
-
-    Returns:
-            h(n, n): ndarray
-                     The Hilbert matrix.
-    
-  Examples:
-  >>> from jax.scipy.linalg import hilbert
-  >>> hilbert(4)
-  Array([[1.        , 0.5       , 0.33333334, 0.25      ],
-     [0.5       , 0.33333334, 0.25      , 0.2       ],
-     [0.33333334, 0.25      , 0.2       , 0.16666667],
-     [0.25      , 0.2       , 0.16666667, 0.14285715]], dtype=float32)
-  """
-  a = jnp.arange(n)
-  return 1 / (jnp.expand_dims(a, axis=0) + jnp.expand_dims(a, axis=1) + 1)
-  
+def hilbert(n: int) -> Array:
+  a = lax.broadcasted_iota(jnp.float64, (n, 1), 0)
+  return 1/(a + a.T + 1)
