@@ -179,6 +179,7 @@ del _ccache
 # TODO(jakevdp): remove this when jax/config.py is removed.
 from jax._src.deprecations import register as _register_deprecation
 _register_deprecation("jax.config", "config-module")
+_register_deprecation("jax.experimental", "maps-module")
 del _register_deprecation
 
 _deprecations = {
