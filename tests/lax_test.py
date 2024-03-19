@@ -3405,7 +3405,6 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
                 + (['q1', 'q2', 'q3', 'q4', 'ninfj', 'pinfj'] if is_cuda else [])
                 + (['q1', 'q2', 'q3', 'q4'] if is_cpu and dtype == np.complex128 else [])),
       sinc = ['q1', 'q2', 'q3', 'q4'],
-      sign = ['q1', 'q2', 'q3', 'q4', 'negj', 'posj', 'ninf', 'ninfj', 'pinf', 'pinfj'],
       arcsin = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'pinf', 'ninfj', 'pinfj'],
       arccos = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'pinf', 'ninfj', 'pinfj'],
       arctan = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'pinf', 'ninfj', 'pinfj'],
@@ -3416,6 +3415,9 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
       cos = ['q1', 'q2', 'q3', 'q4', 'ninfj', 'pinfj'] if is_arm_cpu and dtype != np.complex128 else [],
       expm1 = ['q1', 'q4', 'pinf'] if is_arm_cpu and dtype != np.complex128 else [],
     )
+
+    if jtu.numpy_version() < (2, 0, 0):
+      regions_with_inaccuracies['sign'] = ['q1', 'q2', 'q3', 'q4', 'negj', 'posj', 'ninf', 'ninfj', 'pinf', 'pinfj']
 
     jnp_op = getattr(jnp, name)
 
