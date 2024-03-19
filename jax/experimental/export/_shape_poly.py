@@ -87,7 +87,7 @@ This error arises for comparison operations with shapes that
 are non-constant, and the result of the operation cannot be represented as
 a boolean value for all values of the symbolic dimensions involved.
 
-Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison_of_symbolic_dimensions_is_partially_supported
+Please see https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#comparison-of-symbolic-dimensions-is-partially-supported
 for more details.
 """
 
