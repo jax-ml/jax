@@ -19,7 +19,6 @@ from absl.testing import absltest
 import jax
 import jax.numpy as jnp
 from jax import lax
-from jax.experimental import maps
 from jax.experimental import pjit
 from jax._src import ad_checkpoint
 from jax._src import dispatch
@@ -32,6 +31,7 @@ from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.maps import xmap
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -275,7 +275,7 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
       effect_p.bind(effect=foo_effect)
       effect_p.bind(effect=bar_effect)
       return x
-    f = maps.xmap(f, in_axes=['a'], out_axes=['a'])
+    f = xmap(f, in_axes=['a'], out_axes=['a'])
     jaxpr = jax.make_jaxpr(f)(jnp.arange(jax.local_device_count()))
     self.assertSetEqual(jaxpr.effects, {foo_effect, bar_effect})
 

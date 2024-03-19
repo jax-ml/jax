@@ -27,13 +27,13 @@ from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import maps
+from jax._src.maps import xmap
 from jax._src import test_util as jtu
 from jax._src import util
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension_version
 from jax.experimental import io_callback
 from jax.experimental import pjit
-from jax.experimental.maps import xmap
 from jax.experimental.shard_map import shard_map
 import jax.numpy as jnp
 from jax.sharding import Mesh

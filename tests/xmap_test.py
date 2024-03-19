@@ -37,13 +37,13 @@ from jax import vmap
 from jax import lax
 from jax.ad_checkpoint import checkpoint
 from jax.errors import JAXTypeError
-from jax.experimental.maps import xmap, serial_loop, SerialLoop
 from jax.experimental.pjit import pjit
 from jax.interpreters import batching
 from jax.sharding import PartitionSpec as P
 from jax._src import array
 from jax._src import core
 from jax._src import maps
+from jax._src.maps import xmap, serial_loop, SerialLoop
 from jax._src import xla_bridge
 from jax._src.core import NamedShape
 from jax._src.lax import parallel as lax_parallel
