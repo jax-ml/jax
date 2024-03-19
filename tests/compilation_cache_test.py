@@ -33,11 +33,11 @@ from jax._src import compilation_cache as cc
 from jax._src import compiler
 from jax._src import config
 from jax._src import distributed
+from jax._src.maps import xmap
 from jax._src import monitoring
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
-from jax.experimental.maps import xmap
 from jax.experimental.pjit import pjit
 from jax.sharding import PartitionSpec as P
 import numpy as np

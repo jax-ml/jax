@@ -41,7 +41,6 @@ from jax import lax
 from jax.lax import with_sharding_constraint
 from jax._src import prng
 from jax.sharding import PartitionSpec as P
-from jax.experimental.maps import xmap
 from jax.experimental import multihost_utils
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax._src import array
@@ -52,6 +51,7 @@ from jax._src.sharding_impls import (
     AUTO, UNSPECIFIED, NamedSharding, GSPMDSharding, PositionalSharding,
     SingleDeviceSharding, parse_flatten_op_sharding)
 import jax._src.pjit as pjit_lib
+from jax._src.maps import xmap
 from jax._src.pjit import pjit, pjit_p
 from jax._src import mesh as mesh_lib
 from jax._src.interpreters import pxla
