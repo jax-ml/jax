@@ -132,6 +132,7 @@ def sparse_plus(x: ArrayLike) -> Array:
   Args:
     x: input (float)
   """
+  numpy_util.check_arraylike("sparse_plus", x)
   x = jnp.asarray(x)
   return jnp.where(x <= -1.0, 0.0, jnp.where(x >= 1.0, x, (x + 1.0)**2/4))
 
