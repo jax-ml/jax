@@ -216,16 +216,6 @@ from a running program.
    You can also use the `memory_viewer`, `op_profile`, and `graph_viewer`
    tools.<br /><br />
 
-### Concurrent kernel tracing on GPU
-
-By default, traces are captured on GPU in a mode that prevents CUDA kernels from
-running concurrently. This allows for more accurate kernel timings, but removes
-any concurrency between streams (for example, between compute and
-communication). To enable concurrent kernel tracing, set the environment
-variable `TF_GPU_CUPTI_FORCE_CONCURRENT_KERNEL=1` when launching the JAX
-program.
-
-
 ### Adding custom trace events
 
 By default, the events in the trace viewer are mostly low-level internal JAX
