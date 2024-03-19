@@ -2085,6 +2085,12 @@ class LaxLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @jtu.sample_product(
+    n=[0, 1, 5, 10, 20],
+    )
+  def testHilbert(self, n):
+    args_maker = lambda: [n]
+    self._CheckAgainstNumpy(osp.linalg.hilbert, jsp.linalg.hilbert, args_maker)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
