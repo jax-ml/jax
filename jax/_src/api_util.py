@@ -151,7 +151,7 @@ _POSITIONAL_ARGUMENTS = (
   inspect.Parameter.POSITIONAL_OR_KEYWORD
 )
 
-def validate_argnums(sig: inspect.Signature, argnums: tuple[int, ...], argnums_name: str) -> None:
+def _validate_argnums(sig: inspect.Signature, argnums: tuple[int, ...], argnums_name: str) -> None:
   """
   Validate that the argnums are sensible for a given function.
 
@@ -181,11 +181,14 @@ _INVALID_KEYWORD_ARGUMENTS = (
   inspect.Parameter.VAR_POSITIONAL
 )
 
+
 _KEYWORD_ARGUMENTS = (
   inspect.Parameter.POSITIONAL_OR_KEYWORD,
   inspect.Parameter.KEYWORD_ONLY,
 )
-def validate_argnames(sig: inspect.Signature, argnames: tuple[str, ...], argnames_name: str) -> None:
+def _validate_argnames(
+    sig: inspect.Signature, argnames: tuple[str, ...], argnames_name: str
+) -> None:
   """
   Validate that the argnames are sensible for a given function.
 
@@ -205,7 +208,6 @@ def validate_argnames(sig: inspect.Signature, argnames: tuple[str, ...], argname
 
     elif param.kind in _INVALID_KEYWORD_ARGUMENTS:
       invalid_kwargs.add(param_name)
-
 
   # Check whether any kwargs are invalid due to position only
   invalid_argnames = invalid_kwargs & set(argnames)
@@ -232,7 +234,6 @@ def validate_argnames(sig: inspect.Signature, argnames: tuple[str, ...], argname
                   f"in {argnames_name}. Function does not take these args."
                   "This warning will be replaced by an error after 2022-08-20 "
                   "at the earliest.", SyntaxWarning)
-
 
 
 def argnums_partial(f, dyn_argnums, args, require_static_args_hashable=True):
@@ -506,8 +507,21 @@ def infer_argnums_and_argnames(
 
 
 def resolve_argnums(
-    fun, donate_argnums, donate_argnames, static_argnums, static_argnames
+    fun: Callable,
+    donate_argnums: int | Sequence[int] | None,
+    donate_argnames: str | Iterable[str] | None,
+    static_argnums: int | Sequence[int] | None,
+    static_argnames: str | Iterable[str] | None,
 ) -> tuple[tuple[int, ...], tuple[str, ...], tuple[int, ...], tuple[str, ...]]:
+  """Validates and completes the argnum/argname specification for a jit.
+
+  * fills in any missing pieces (e.g., names given numbers, or vice versa),
+  * validates the argument names/numbers against the function signature,
+  * validates that donated and static arguments don't intersect.
+  * rebases the donated arguments so they index into the dynamic arguments,
+    (after static arguments have been removed), in the order that parameters
+    are passed into the compiled function.
+  """
   try:
     sig = inspect.signature(fun)
   except ValueError as e:
@@ -535,18 +549,18 @@ def resolve_argnums(
         sig, donate_argnums, donate_argnames)
 
     # Validation
-    validate_argnums(sig, static_argnums, "static_argnums")
-    validate_argnames(sig, static_argnames, "static_argnames")
-    validate_argnums(sig, donate_argnums, "donate_argnums")
-    validate_argnames(sig, donate_argnames, "donate_argnames")
+    _validate_argnums(sig, static_argnums, "static_argnums")
+    _validate_argnames(sig, static_argnames, "static_argnames")
+    _validate_argnums(sig, donate_argnums, "donate_argnums")
+    _validate_argnames(sig, donate_argnames, "donate_argnames")
 
   # Compensate for static argnums absorbing args
-  assert_no_intersection(static_argnames, donate_argnames)
+  _assert_no_intersection(static_argnames, donate_argnames)
   donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
   return donate_argnums, donate_argnames, static_argnums, static_argnames
 
 
-def assert_no_intersection(static_argnames, donate_argnames):
+def _assert_no_intersection(static_argnames, donate_argnames):
   out = set(static_argnames).intersection(set(donate_argnames))
   if out:
     raise ValueError(
