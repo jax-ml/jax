@@ -43,6 +43,7 @@ jax.scipy.linalg
    expm_frechet
    funm
    hessenberg
+   hilbert
    inv
    lu
    lu_factor
