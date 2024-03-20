@@ -1103,7 +1103,7 @@ def _div_lowering_rule(ctx: LoweringRuleContext, x, y):
   signed = jnp.issubdtype(x_aval.dtype, jnp.signedinteger) or jnp.issubdtype(
       y_aval.dtype, jnp.signedinteger
   )
-  if np.issubdtype(x_aval.dtype, np.floating) or np.issubdtype(
+  if jnp.issubdtype(x_aval.dtype, np.floating) or jnp.issubdtype(
       y_aval.dtype, np.floating
   ):
     return _truediv(x, y, signed=signed)
@@ -1115,7 +1115,7 @@ triton_lowering_rules[lax.div_p] = _div_lowering_rule
 
 def _sign_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
-  signed = np.issubdtype(x_aval.dtype, jnp.signedinteger)
+  signed = jnp.issubdtype(x_aval.dtype, jnp.signedinteger)
   zero = _full(x.type, 0)
   return _sub(
       _cast(_greater_than(x, zero, signed=signed), x.type, signed=signed),
@@ -2445,7 +2445,7 @@ def _i64_constant(v: int) -> ir.Value:
 
 
 def _dtype_to_ir_type(dtype: jnp.dtype) -> ir.Type:
-  if np.issubdtype(dtype, np.integer):
+  if jnp.issubdtype(dtype, np.integer):
     # All integer types in Triton are signless.
     return ir.IntegerType.get_signless(dtype.itemsize * 8)
   return mlir.dtype_to_ir_type(dtype)
