@@ -280,12 +280,12 @@ def _load_jvp(primals, tangents, args_tree, **params):
     other_tangent = ad_util.instantiate(other_tangent)
   return (
       load_p.bind(
-          *tree_util.flatten(ref_primal, indexers, mask, other_primal),
+          *tree_util.tree_leaves((ref_primal, indexers, mask, other_primal)),
           args_tree=args_tree,
           **params,
       ),
       load_p.bind(
-          *tree_util.flatten(ref_tangent, indexers, mask, other_tangent),
+          *tree_util.tree_leaves((ref_tangent, indexers, mask, other_tangent)),
           args_tree=args_tree,
           **params,
       ),
@@ -386,12 +386,12 @@ def _swap_jvp(primals, tangents, *, args_tree, **params):
   val_tangent = ad_util.instantiate(val_tangent)
   return (
       swap_p.bind(
-          *tree_util.flatten(ref_primal, indexers, val_primal, mask),
+          *tree_util.tree_leaves((ref_primal, indexers, val_primal, mask)),
           args_tree=args_tree,
           **params,
       ),
       swap_p.bind(
-          *tree_util.flatten(ref_tangent, indexers, val_tangent, mask),
+          *tree_util.tree_leaves((ref_tangent, indexers, val_tangent, mask)),
           args_tree=args_tree,
           **params,
       ),
