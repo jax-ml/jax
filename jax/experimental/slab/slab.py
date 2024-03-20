@@ -68,49 +68,43 @@ def slab_alloc(slab, shape, dtype):
   slab_val = SlabView(slab.cursor, shape, dtype)
   return new_slab, slab_val
 
-def slab_read(slab, view, word_offset, tile_sshape):
-  assert view.ndim() == 1, 'for now'
-  assert view.ndim() == len(tile_sshape)
-  sz = np.prod(tile_sshape) * view.dtype.itemsize
-  assert sz % word_sz == 0, sz
+def slab_read(slab, view, word_offset, tile_sshape_e):
+  assert view.ndim() == len(tile_sshape_e)
+  num_words, rem = divmod(
+      np.prod(tile_sshape_e) * view.dtype.itemsize, word_sz)
+  assert not rem
   mem = jax.lax.dynamic_slice_in_dim(
-    slab.data, view.addr + word_offset, sz // word_sz, axis=0)
+      slab.data, view.addr + word_offset, num_words, axis=0)
   cast = jax.lax.bitcast_convert_type(
-    mem.reshape((-1, view.dtype.itemsize)), view.dtype)
-  return cast.reshape(tile_sshape)
+      mem.reshape(-1, view.dtype.itemsize), view.dtype)
+  return cast.reshape(tile_sshape_e)
 
 # TODO: just take vjp of slab_read
 def slab_write(slab, view, word_offset, arr):
-  assert view.ndim() == 1, 'for now'
   assert view.ndim() == arr.ndim
-  assert view.dtype == arr.dtype
-  sz = np.prod(arr.shape) * view.dtype.itemsize
-  assert sz % word_sz == 0, sz
-  cast = jax.lax.bitcast_convert_type(arr, slab.data.dtype)
-  mem = cast.reshape((-1, word_sz))
+  assert view.dtype == arr.dtype, (view.dtype, arr.dtype)
+  cast = arr.ravel()
+  # TODO: bct has a different output shape if itemsizes are equal in/out.
+  # Handle the special case here and in slab_read's bct use.
+  mem = jax.lax.bitcast_convert_type(cast, jnp.uint8).reshape(-1, word_sz)
   data = jax.lax.dynamic_update_slice_in_dim(
-    slab.data, mem, view.addr + word_offset, axis=0)
+      slab.data, mem, view.addr + word_offset, axis=0)
   return Slab(data, slab.cursor)
 
-def elemwise_loop_bounds(operands):
-  x, *_ = operands
-  assert x.ndim() == 1, 'for now'
-  x_sz = x.size()
-  return 0, x_sz
-
-def elemwise_loop_cond(tile_sshape, kernel,
+def elemwise_loop_cond(tile_sshape_e, kernel,
                        slab, cursor, end, operands, results):
   return cursor < end
 
-def elemwise_loop_body(tile_sshape, kernel,
+def elemwise_loop_body(tile_sshape_e, kernel,
                        slab, cursor, end, operands, results):
-  tile_sz, = tile_sshape
-  x, *_ = operands
-  in_tiles = [slab_read(slab, x, cursor, tile_sshape) for x in operands]
+  dtype, = {o.dtype for o in (*operands, *results)}
+  in_tiles = [slab_read(slab, x, cursor, tile_sshape_e) for x in operands]
   out_tiles = kernel(*in_tiles)
   for y, r in zip(out_tiles, results):
     slab = slab_write(slab, r, cursor, y)
-  cursor = cursor + tile_sz
+  inc, rem = divmod(np.prod(tile_sshape_e) * dtype.itemsize, word_sz)
+  assert not rem
+  cursor = cursor + inc
   return slab, cursor, end, operands, results
 
 def while_loop(cond, body, *args):
@@ -118,35 +112,44 @@ def while_loop(cond, body, *args):
   def b(x): return body(*x)
   return jax.lax.while_loop(c, b, args)
 
-@partial(jax.jit, static_argnums=(0, 1))
-def tile(tile_sshape, kernel,
-         slab: Slab, operands: tuple[SlabView], results: tuple[SlabView]):
-  start, end = elemwise_loop_bounds(operands)
-  slab, *_ = while_loop(partial(elemwise_loop_cond, tile_sshape, kernel),
-                        partial(elemwise_loop_body, tile_sshape, kernel),
-                        slab, start, end, operands, results)
+def elementwise_tile_sshape_e(rank, dtype):
+  assert rank > 0, rank
+  if rank >= 2:
+    return (1,) * (rank - 2) + (2, word_sz // dtype.itemsize)
+  elif rank == 1:
+    return (word_sz // dtype.itemsize * 2,)
+
+@partial(jax.jit, static_argnums=0)
+def elementwise_tile(kernel, slab: Slab,
+                     operands: tuple[SlabView], results: tuple[SlabView]):
+  rank,  = {v.ndim() for v in [*operands, *results]}
+  dtype, = {v.dtype for v in [*operands, *results]}
+  end_w = (operands[0].size() * dtype.itemsize) // word_sz
+  tile_sshape_e = elementwise_tile_sshape_e(rank, dtype)
+  slab, *_ = while_loop(partial(elemwise_loop_cond, tile_sshape_e, kernel),
+                        partial(elemwise_loop_body, tile_sshape_e, kernel),
+                        slab, 0, end_w, operands, results)
   return slab
 
-def make_elementwise_op(tile_sshape, name, op):
+def make_elementwise_op(name, op):
   def kernel(*args): return [op(*args)]
 
   def f(slab: Slab, *operands: tuple[SlabView]):
     x, *_ = operands
     slab, result = slab_alloc(slab, x.shape, x.dtype)
-    slab = tile(tile_sshape, kernel, slab, operands, [result])
+    slab = elementwise_tile(kernel, slab, operands, [result])
     return slab, result
 
   f.__name__ = name
   return f
 
-tile_sz = word_sz * 2
-add = make_elementwise_op((tile_sz,), 'add', jax.lax.add)
-mul = make_elementwise_op((tile_sz,), 'mul', jax.lax.mul)
+add = make_elementwise_op('add', jax.lax.add)
+mul = make_elementwise_op('mul', jax.lax.mul)
 
 def parse_arr(i, s):
   shape = eval(s)
   z = 3 * i + jnp.arange(np.prod(shape), dtype=jnp.float32).reshape(shape)
-  return z.ravel()
+  return z
 
 def main(args):
   xs = map(parse_arr, range(len(args)), args)
