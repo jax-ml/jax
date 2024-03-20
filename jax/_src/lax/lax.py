@@ -1233,8 +1233,8 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
     dtype: the type of the output array, or `None`. If not `None`, `fill_value`
       will be cast to `dtype`.
     sharding: an optional sharding specification for the resulting array,
-    note, sharding will currently be ignored in jitted mode, this might change
-    in the future.
+      note, sharding will currently be ignored in jitted mode, this might change
+      in the future.
   """
   shape = canonicalize_shape(shape)
   if np.shape(fill_value):
