@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 import dataclasses
 import functools
+import math
 import operator
 from typing import Any, Callable
 
@@ -57,6 +58,7 @@ import numpy as np
 
 # TODO(sharadmv): Enable type checking.
 # mypy: ignore-errors
+# pytype: skip-file
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -204,7 +206,7 @@ def _process_grid_to_3d_grid(grid_mapping: GridMapping):
 
     return prog_id_dims, prog_ids
   else:
-    new_grid = [np.prod(collapse_dims), *prog_id_dims]
+    new_grid = [math.prod(collapse_dims), *prog_id_dims]
 
   assert new_grid[0] < 2**31 - 1, \
           "Cannot fix pallas kernel launch grid within CUDA limits"
