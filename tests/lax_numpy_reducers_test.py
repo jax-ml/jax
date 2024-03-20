@@ -662,6 +662,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     [dict(a_shape=a_shape, axis=axis)
       for a_shape, axis in (
         ((7,), None),
+        ((6, 7,), None),
         ((47, 7), 0),
         ((47, 7), ()),
         ((4, 101), 1),
@@ -716,6 +717,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     [dict(a_shape=a_shape, axis=axis)
       for a_shape, axis in (
         ((7,), None),
+        ((6, 7,), None),
         ((47, 7), 0),
         ((4, 101), 1),
       )
