@@ -260,10 +260,7 @@ async def async_serialize(
       else:
         await write_future.commit
 
-  if isinstance(arr_inp, array.ArrayImpl):
-    local_shards = arr_inp.addressable_shards
-  else:
-    local_shards = arr_inp.addressable_shards
+  local_shards = arr_inp.addressable_shards
   future_write_state = jax.tree_util.tree_map(_write_array, local_shards)
   return await asyncio.gather(*future_write_state)
 
