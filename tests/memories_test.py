@@ -1273,6 +1273,8 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
         self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
   def test_remat_checkpoint_dots_with_no_batch_dims(self):
+    if not jtu.test_device_matches(["tpu"]) and xla_extension_version < 247:
+      self.skipTest("Test requires a newer jaxlib")
     policy = jax.checkpoint_policies.offload_dot_with_no_batch_dims(
         "device", "pinned_host")
 

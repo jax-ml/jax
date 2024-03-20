@@ -36,7 +36,6 @@ from jax import random
 from jax import numpy as jnp
 from jax import tree_util
 from jax import sharding
-from jax.experimental import maps
 from jax.experimental import export
 from jax.experimental.export import _export
 from jax.experimental.export import _shape_poly
@@ -54,6 +53,8 @@ from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import op_shardings
 from jax._src import sharding_impls
+from jax._src import maps
+from jax._src import mesh
 from jax._src import pjit
 from jax._src import prng
 from jax._src import random as random_internal
@@ -3503,7 +3504,7 @@ def _pjit(*args: TfVal,
           jaxpr: core.ClosedJaxpr,
           in_shardings: Sequence[sharding.XLACompatibleSharding],
           out_shardings: Sequence[sharding.XLACompatibleSharding],
-          resource_env: maps.ResourceEnv,
+          resource_env: mesh.ResourceEnv,
           donated_invars,
           name: str,
           keep_unused: bool,
@@ -3535,7 +3536,7 @@ tf_impl_with_avals[pjit.pjit_p] = _pjit
 
 def _pjit_sharding_constraint(arg: TfVal, *,
                               sharding: sharding.XLACompatibleSharding,
-                              resource_env: maps.ResourceEnv,
+                              resource_env: mesh.ResourceEnv,
                               _in_avals: Sequence[core.ShapedArray],
                               _out_aval: core.ShapedArray,
                               **kwargs) -> TfVal:

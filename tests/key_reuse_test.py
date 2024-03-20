@@ -344,7 +344,13 @@ class KeyReuseUnitTestWithForwarding(jtu.JaxTestCase):
     func, *args = primitives_with_static_signatures[primitive]
     signature = _core.key_reuse_signatures[primitive]
     jaxpr = jax.make_jaxpr(func)(*args)
-    self.assertEqual(signature, _core.get_jaxpr_type_signature(jaxpr.jaxpr))
+    self.assertEqual(signature, _core.jaxpr_type_signature(jaxpr.jaxpr))
+
+  @parameterized.parameters(*primitives_with_static_signatures)
+  def test_function_type_signature(self, primitive):
+    func, *args = primitives_with_static_signatures[primitive]
+    signature = _core.key_reuse_signatures[primitive]
+    self.assertEqual(signature, _core.function_type_signature(func, *args))
 
 
 @jtu.with_config(jax_enable_key_reuse_checks=False)

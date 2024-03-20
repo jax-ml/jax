@@ -35,12 +35,12 @@ from jax import random
 from jax._src import test_util as jtu
 from jax import tree_util
 from jax._src.util import unzip2
-from jax.experimental import maps
 from jax.ad_checkpoint import checkpoint as new_checkpoint, checkpoint_policies
 import jax.numpy as jnp  # scan tests use numpy
 import jax.scipy as jsp
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax.control_flow import for_loop
+from jax._src.maps import xmap
 
 from jax import config
 config.parse_flags_with_absl()
@@ -2712,7 +2712,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         i, x = carry
         return i + 1, x + lax.psum(y, 'b')
       return lax.while_loop(cond, body, (0, z))[1]
-    maps.xmap(f, axis_sizes=dict(a=2, b=10), out_axes=(['a']), in_axes={})(1.)
+    xmap(f, axis_sizes=dict(a=2, b=10), out_axes=(['a']), in_axes={})(1.)
 
   def test_while_loop_fixed_point_with_batched_pred_and_consts(self):
     def f(i, x):

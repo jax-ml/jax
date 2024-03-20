@@ -90,7 +90,7 @@ class BaseTpuCluster(clusters.ClusterEnv):
     return False
 
   @classmethod
-  def get_coordinator_address(cls) -> str:
+  def get_coordinator_address(cls, timeout_secs: int | None) -> str:
     if has_megascale_address():
       # For both GCE via QueuedResources and GKE via JobSet, the
       # Megascale coordinator address is set as the host with process id = 0,
@@ -103,24 +103,27 @@ class BaseTpuCluster(clusters.ClusterEnv):
       coordinator_address = cls._get_worker_list_in_slice()[0]
     coordinator_address = coordinator_address.split(':')[0]
     logger.debug("TPU Cluster using coordinator address: %s", coordinator_address)
-    cls.wait_for_coordinator(coordinator_address)
+    cls.wait_for_coordinator(coordinator_address, timeout_secs)
     return f'{coordinator_address}:{coordinator_port}'
 
   @classmethod
-  def wait_for_coordinator(cls, coordinator_address):
+  def wait_for_coordinator(cls, coordinator_address, timeout_secs):
     # The coordinator may not be up before the other hosts try to
     # communicate with it. We check for its existence with retries.
     coordinator_found = False
-    lookup_attempt = 1
-    max_coordinator_lookups = 50
-    while not coordinator_found and lookup_attempt <= max_coordinator_lookups:
+    max_time = time.time() + timeout_secs
+    coordinator_retry_secs = 5
+    while not coordinator_found and time.time() < max_time:
       try:
         ip_address = socket.gethostbyname(coordinator_address)
         coordinator_found = True
+        logger.debug("Found coordinator with address %s", coordinator_address)
       except socket.gaierror:
-        print(f"Failed to recognize coordinator address {coordinator_address} on attempt {lookup_attempt}, retrying...")
-        lookup_attempt += 1
-        time.sleep(5)
+        logger.debug(
+            "Failed to recognize coordinator address %s"
+            " retrying...", coordinator_address
+        )
+        time.sleep(coordinator_retry_secs)
     if not coordinator_found:
       raise RuntimeError(f"Failed to recognize coordinator address {coordinator_address}")
 

@@ -256,7 +256,7 @@ def unknown_signature(eqn):
   )
 
 @weakref_lru_cache
-def get_jaxpr_type_signature(jaxpr: core.Jaxpr) -> KeyReuseSignature:
+def jaxpr_type_signature(jaxpr: core.Jaxpr) -> KeyReuseSignature:
   """Parse the jaxpr to determine key reuse signature"""
   consumed: dict[core.Atom, bool | np.ndarray] = {}
   forwards: dict[core.Atom, core.Atom] = {}  # map forwarded outputs to inputs.
@@ -340,18 +340,22 @@ def get_jaxpr_type_signature(jaxpr: core.Jaxpr) -> KeyReuseSignature:
   )
 
 
-def check_key_reuse_jaxpr(jaxpr: core.Jaxpr) -> None:
-  """Check the jaxpr for key reuse."""
-  get_jaxpr_type_signature(jaxpr)
-
-
-def check_key_reuse(fun: Callable[..., Any], /, *args: Any) -> None:
-  """Function to statically check key reuse."""
+def function_type_signature(fun: Callable[..., Any], *args: Any) -> KeyReuseSignature:
   args_flat, in_tree = tree_util.tree_flatten(args)
   in_avals_flat = [core.get_aval(arg) for arg in args_flat]
   wrapped_fun, _ = api_util.flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
   jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, in_avals_flat)
-  check_key_reuse_jaxpr(jaxpr)
+  return jaxpr_type_signature(jaxpr)
+
+
+def check_key_reuse_jaxpr(jaxpr: core.Jaxpr) -> None:
+  """Check the jaxpr for key reuse."""
+  jaxpr_type_signature(jaxpr)
+
+
+def check_key_reuse(fun: Callable[..., Any], /, *args: Any) -> None:
+  """Function to statically check key reuse."""
+  function_type_signature(fun, *args)
 
 
 #----------------------------------------------------------------------------------
@@ -384,17 +388,17 @@ def _concatenate_signature(eqn):
 key_reuse_signatures_dynamic[lax.concatenate_p] = _concatenate_signature
 
 def _pjit_key_type_signature(eqn):
-  return get_jaxpr_type_signature(eqn.params['jaxpr'].jaxpr)
+  return jaxpr_type_signature(eqn.params['jaxpr'].jaxpr)
 
 key_reuse_signatures_dynamic[pjit.pjit_p] = _pjit_key_type_signature
 
 def _shard_map_type_signature(eqn):
-  return get_jaxpr_type_signature(eqn.params['jaxpr'])
+  return jaxpr_type_signature(eqn.params['jaxpr'])
 
 key_reuse_signatures_dynamic[shard_map_p] = _shard_map_type_signature
 
 def _cond_key_type_signature(eqn):
-  signatures = [get_jaxpr_type_signature(branch.jaxpr) for branch in eqn.params['branches']]
+  signatures = [jaxpr_type_signature(branch.jaxpr) for branch in eqn.params['branches']]
   sinks = defaultdict(list)
   sources = defaultdict(list)
   for sig in signatures:
@@ -415,7 +419,7 @@ def _scan_key_type_signature(eqn):
   jaxpr = eqn.params['jaxpr'].jaxpr
   num_consts = eqn.params['num_consts']
   num_carry = eqn.params['num_carry']
-  signature = get_jaxpr_type_signature(jaxpr)
+  signature = jaxpr_type_signature(jaxpr)
 
   # scan body should not consume key in constants
   if any(np.any(s.mask) for s in signature.sinks if s.idx < num_consts):
@@ -446,8 +450,8 @@ def _while_key_type_signature(eqn):
   body_jaxpr = eqn.params['body_jaxpr'].jaxpr
   body_nconsts = eqn.params['body_nconsts']
 
-  cond_signature = get_jaxpr_type_signature(cond_jaxpr)
-  body_signature = get_jaxpr_type_signature(body_jaxpr)
+  cond_signature = jaxpr_type_signature(cond_jaxpr)
+  body_signature = jaxpr_type_signature(body_jaxpr)
 
   # Error if there are sinks among consts.
   if any(np.any(s.mask) for s in cond_signature.sinks if s.idx < cond_nconsts):
@@ -489,7 +493,7 @@ def _remat_key_type_signature(eqn):
   # Therefore, the differentiated pass is a no-op.
   if eqn.params['differentiated']:
     return KeyReuseSignature()
-  return get_jaxpr_type_signature(eqn.params['jaxpr'])
+  return jaxpr_type_signature(eqn.params['jaxpr'])
 
 key_reuse_signatures_dynamic[remat_p] = _remat_key_type_signature
 
@@ -503,7 +507,7 @@ def key_reuse_impl_rule(prim, original_rule):
       if prim == pjit.pjit_p:
         funcname = "jit-compiled function"
         jaxpr = kwargs['jaxpr'].jaxpr
-        signature = get_jaxpr_type_signature(jaxpr)
+        signature = jaxpr_type_signature(jaxpr)
       elif prim in key_reuse_signatures:
         funcname = str(prim)
         jaxpr = None
@@ -511,7 +515,7 @@ def key_reuse_impl_rule(prim, original_rule):
       elif prim in key_reuse_signatures_dynamic:
         funcname = str(prim)
         jaxpr = jax.make_jaxpr(partial(prim.bind, **kwargs))(*args).jaxpr
-        signature = get_jaxpr_type_signature(jaxpr)
+        signature = jaxpr_type_signature(jaxpr)
       else:
         raise RuntimeError(f"Internal: no key reuse rule for primitive {prim}")
       signature.check_signature(*args, funcname=funcname)

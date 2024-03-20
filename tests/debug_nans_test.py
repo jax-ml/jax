@@ -23,7 +23,8 @@ from unittest import SkipTest
 from jax._src import api
 from jax._src import test_util as jtu
 from jax import numpy as jnp
-from jax.experimental import pjit, maps
+from jax.experimental import pjit
+from jax._src.maps import xmap
 
 from jax import config
 config.parse_flags_with_absl()
@@ -125,7 +126,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
   @jtu.ignore_warning(message=".*is an experimental.*")
   def testXmap(self):
 
-    f = maps.xmap(
+    f = xmap(
         lambda x: 0. / x,
         in_axes=["i"],
         out_axes=["i"],
