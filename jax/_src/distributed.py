@@ -49,7 +49,11 @@ class State:
 
     (coordinator_address, num_processes, process_id, local_device_ids) = (
         clusters.ClusterEnv.auto_detect_unset_distributed_params(
-            coordinator_address, num_processes, process_id, local_device_ids
+            coordinator_address,
+            num_processes,
+            process_id,
+            local_device_ids,
+            initialization_timeout,
         )
     )
 

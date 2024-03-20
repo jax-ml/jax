@@ -30,7 +30,7 @@ class SlurmCluster(clusters.ClusterEnv):
     return _JOBID_PARAM in os.environ
 
   @classmethod
-  def get_coordinator_address(cls) -> str:
+  def get_coordinator_address(cls, timeout_secs: int | None) -> str:
     # Pick port in ephemeral range [(65535 - 2^12 + 1), 65535]
     port = int(os.environ[_JOBID_PARAM]) % 2**12 + (65535 - 2**12 + 1)
 
