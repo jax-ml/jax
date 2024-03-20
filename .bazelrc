@@ -320,6 +320,31 @@ build:rbe_cross_compile_base --strategy_regexp='Executing genrule @llvm-project.
 build:rbe_cross_compile_linux_arm64 --config=cross_compile_linux_arm64
 build:rbe_cross_compile_linux_arm64 --config=rbe_cross_compile_base
 # END LINUX AARCH64 CROSS-COMPILE CONFIGS
+
+# START MACOS CROSS-COMPILE CONFIGS
+build:cross_compile_macos_x86 --config=cross_compile_base
+build:cross_compile_macos_x86 --config=nonccl
+# Target Catalina (10.15) as the minimum supported OS
+build:cross_compile_macos_x86 --action_env  MACOSX_DEPLOYMENT_TARGET=10.15
+
+# Set the target CPU to Darwin x86
+build:cross_compile_macos_x86 --platforms=@xla//tools/toolchains/cross_compile/config:darwin_x86_64
+build:cross_compile_macos_x86 --cpu=darwin
+build:cross_compile_macos_x86 --crosstool_top=@xla//tools/toolchains/cross_compile/cc:cross_compile_toolchain_suite
+# When RBE cross-compiling for macOS, we need to explicitly register the
+# toolchain. Otherwise, oddly, RBE complains that a "docker container must be
+# specified".
+build:cross_compile_macos_x86 --extra_toolchains=@xla//tools/toolchains/cross_compile/config:macos-x86-cross-compile-cc-toolchain
+# Map --platforms=darwin_x86_64 to --cpu=darwin and vice-versa to make selects()
+# and transistions that use these flags work. The flag --platform_mappings needs
+# to be set to a file that exists relative to the package path roots.
+build:cross_compile_macos_x86 --platform_mappings=platform_mappings
+
+# RBE cross-compile configs for Darwin x86
+build:rbe_cross_compile_macos_x86 --config=cross_compile_macos_x86
+build:rbe_cross_compile_macos_x86 --config=rbe_cross_compile_base
+# END MACOS CROSS-COMPILE CONFIGS
+
 # END CROSS-COMPILE CONFIGS
 
 #############################################################################
