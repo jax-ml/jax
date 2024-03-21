@@ -333,7 +333,8 @@ def make_gpu_client(
       else distributed.global_state.num_processes
   )
   if platform_name == "cuda":
-    _check_cuda_versions()
+    if not os.getenv("JAX_SKIP_CUDA_CONSTRAINTS_CHECK"):
+      _check_cuda_versions()
     # TODO(micky774): remove this check when minimum jaxlib is v0.4.26
     if jaxlib.version.__version_info__ >= (0, 4, 26):
       devices_to_check = (allowed_devices if allowed_devices else
