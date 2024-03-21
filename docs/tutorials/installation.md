@@ -1,5 +1,5 @@
 (installation)=
-# How to install JAX
+# Installing JAX
 
 This guide provides instructions for:
 
@@ -9,11 +9,14 @@ This guide provides instructions for:
 
 **TL;DR** For most users, a typical JAX installation may look something like this:
 
-| Hardware                           | Installation                               |
-|------------------------------------|--------------------------------------------|
-| CPU-only, Linux/macOS/Windows      | `pip install -U "jax[cpu]"`                |
-| NVIDIA, CUDA 12, x86_64            | `pip install -U "jax[cuda12_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html`|
-
+* **CPU-only (Linux/macOS/Windows)**
+  ```
+  pip install -U "jax[cpu]"
+  ```
+* **GPU (NVIDIA, CUDA 12, x86_64)**
+  ```
+  pip install -U "jax[cuda12_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+  ```
 
 (install-supported-platforms)=
 ## Supported platforms

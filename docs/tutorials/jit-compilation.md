@@ -12,6 +12,13 @@ kernelspec:
   name: python3
 ---
 
+```{code-cell}
+:tags: [remove-cell]
+
+# This ensures that code cell tracebacks appearing below will be concise.
+%xmode minimal
+```
+
 (jit-compilation)=
 # Just-in-time compilation
 

@@ -17,9 +17,7 @@ JAX 101
 .. toctree::
    :maxdepth: 1
 
-   installation
    quickstart
-   jax-as-accelerated-numpy
    thinking-in-jax
    jit-compilation
    automatic-vectorization
@@ -55,3 +53,12 @@ JAX 301
    jax-primitives
    jaxpr
    advanced-compilation
+
+
+Reference
+---------
+
+.. toctree::
+   :maxdepth: 1
+
+   installation

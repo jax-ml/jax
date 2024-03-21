@@ -26,7 +26,7 @@ To better understand the difference between the approaches taken by JAX and NumP
 ## Random numbers in NumPy
 
 Pseudo random number generation is natively supported in NumPy by the {mod}`numpy.random` module.
-In NumPy, pseudo random number generation is based on a global `state`, which can be set to a deterministic initial condition using {func}`np.random.seed`.
+In NumPy, pseudo random number generation is based on a global `state`, which can be set to a deterministic initial condition using {func}`numpy.random.seed`.
 
 ```{code-cell}
 import numpy as np
@@ -192,4 +192,17 @@ key = random.key(42)
 print("all at once: ", random.normal(key, shape=(3,)))
 ```
 
-Note that contrary to our recommendation above, we use `key` directly as an input to {func}`random.normal` in the second example. This is because we won't reuse it anywhere else, so we don't violate the single-use principle.
+The lack of sequential equivalence gives us freedom to write code more efficiently; for example,
+instead of generating `sequence` above via a sequential loop, we can use {func}`jax.vmap` to
+compute the same result in a vectorized manner:
+
+```{code-cell}
+import jax
+print("vectorized:", jax.vmap(random.normal)(subkeys))
+```
+
+## Next Steps
+
+For more information on JAX random numbers, refer to the documentation of the {mod}`jax.random`
+module. If you're interested in the details of the design of JAX's random number generator,
+see {ref}`prng-design-jep`.

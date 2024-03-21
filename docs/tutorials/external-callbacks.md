@@ -12,6 +12,13 @@ kernelspec:
   name: python3
 ---
 
+```{code-cell}
+:tags: [remove-cell]
+
+# This ensures that code cell tracebacks appearing below will be concise.
+%xmode minimal
+```
+
 (external-callbacks)=
 # External callbacks
 
@@ -116,10 +123,6 @@ jax.lax.scan(body_fun, None, jnp.arange(5.0))[1]
 ```
 
 However, because there is no way for JAX to introspect the content of the callback, `pure_callback` has undefined autodiff semantics:
-
-```{code-cell}
-%xmode minimal
-```
 
 ```{code-cell}
 :tags: [raises-exception]
