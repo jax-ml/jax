@@ -85,6 +85,7 @@ filterwarnings = [
     # end array_api_tests-related warnings
     "ignore:jax.extend.mlir.dialects.mhlo is deprecated.*:DeprecationWarning",
     "ignore:jax.experimental.maps and .* are deprecated.*:DeprecationWarning",
+    "ignore:The host_callback APIs are deprecated .*:DeprecationWarning",
 ]
 doctest_optionflags = [
     "NUMBER",
