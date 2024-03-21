@@ -300,34 +300,10 @@ def jit(
     >>> g(jnp.arange(4), 3)
     Array([   0,    1,  256, 6561], dtype=int32)
   """
-  (in_shardings, out_shardings, donate_argnums, donate_argnames, static_argnums,
-   static_argnames) = pjit.pre_infer_params(
+  return pjit.make_jit(
         fun, in_shardings, out_shardings, donate_argnums, donate_argnames,
-        static_argnums, static_argnames, device, backend, abstracted_axes)
-
-  fun_sourceinfo = api_util.fun_sourceinfo(fun)
-  fun_signature = api_util.fun_signature(fun)
-
-  def infer_params(*args, **kwargs):
-    # TODO(yashkatariya): Remove this when it's added on jit.
-    in_layouts = kwargs.pop('_in_layouts', None)
-    out_layouts = kwargs.pop('_out_layouts', None)
-    pjit_info_args = pjit.PjitInfo(
-        fun=fun, fun_sourceinfo=fun_sourceinfo, fun_signature=fun_signature,
-        in_shardings=in_shardings,
-        out_shardings=out_shardings, static_argnums=static_argnums,
-        static_argnames=static_argnames, donate_argnums=donate_argnums,
-        donate_argnames=donate_argnames, device=device, backend=backend,
-        keep_unused=keep_unused, inline=inline, resource_env=None,
-        abstracted_axes=abstracted_axes, in_layouts=in_layouts,
-        out_layouts=out_layouts)
-    return pjit.common_infer_params(pjit_info_args, *args, **kwargs)
-
-  has_explicit_sharding = pjit._pjit_explicit_sharding(
-      in_shardings, out_shardings, device, backend)
-  return pjit.post_infer_params(fun, infer_params, static_argnums,
-                                static_argnames, donate_argnums,
-                                abstracted_axes, has_explicit_sharding)
+        static_argnums, static_argnames, device, backend, abstracted_axes,
+        keep_unused, inline, use_resource_env=False)
 
 
 @contextmanager
