@@ -18,6 +18,7 @@ JAX 101
    :maxdepth: 1
 
    quickstart
+   key-concepts
    thinking-in-jax
    jit-compilation
    automatic-vectorization
