@@ -66,7 +66,8 @@ LogicalResult MemRefSliceOp::verify() {
       (target_memory_space == nullptr ||
        target_memory_space == source_type.getMemorySpace()) &&
       ((isa<AffineMapAttr>(target_layout) && target_layout.isIdentity()) ||
-       target_type.getLayout() == source_type.getLayout()));
+       target_type.getLayout() == source_type.getLayout()) &&
+      getDynamicSizes().size() == target_type.getNumDynamicDims());
 }
 
 LogicalResult MemRefSliceOp::canonicalize(MemRefSliceOp op,
@@ -82,8 +83,9 @@ LogicalResult MemRefSliceOp::canonicalize(MemRefSliceOp op,
   auto new_result_type = MemRefType::get(
       op.getResult().getType().getShape(), layout_ty.getElementType(),
       layout_ty.getLayout(), layout_ty.getMemorySpace());
-  auto slice = rewriter.create<MemRefSliceOp>(op.getLoc(), new_result_type,
-                                              layout_ref, op.getBaseIdx());
+  auto slice =
+      rewriter.create<MemRefSliceOp>(op.getLoc(), new_result_type, layout_ref,
+                                     op.getBaseIdx(), op.getDynamicSizes());
   rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), slice);
   return success();
 }

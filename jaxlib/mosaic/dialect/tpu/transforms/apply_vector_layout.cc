@@ -367,7 +367,7 @@ FailureOr<std::pair<Value, SmallVector<int64_t>>> sliceRef(
   Value sliced_ref = builder.create<tpu::MemRefSliceOp>(
       MemRefType::get(pad_slice_shape, ref_ty.getElementType(),
                       ref_ty.getLayout(), ref_ty.getMemorySpace()),
-      base_ref, slice_base_indices);
+      base_ref, slice_base_indices, /*dynamic_sizes=*/ValueRange());
 
   return std::make_pair(sliced_ref, indices_within_slice);
 }

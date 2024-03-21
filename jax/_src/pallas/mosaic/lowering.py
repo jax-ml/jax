@@ -833,7 +833,7 @@ def _slice_memref(ref: ir.Value, ref_aval: state.AbstractRef,
       memory_space=ref.type.memory_space)
   inner_aval = ref_aval.inner_aval
   out_aval = ref_aval.update(inner_aval=inner_aval.update(shape=target_shape))
-  out = tpu.MemRefSliceOp(target_ref_ty, ref, starts).result
+  out = tpu.MemRefSliceOp(target_ref_ty, ref, starts, []).result
   if any(squeeze_dims):
     # We need to squeeze out some dimensions
     squeezed_ref_ty = ir.MemRefType.get(

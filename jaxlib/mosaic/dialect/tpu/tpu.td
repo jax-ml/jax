@@ -397,14 +397,16 @@ def TPU_AssumeMultipleOp : TPU_Op<"assume_multiple", [Pure, SameOperandsAndResul
   let results = (outs AnyTypeOf<[Index, AnyInteger]>:$result);
 }
 
-def TPU_MemRefSliceOp : TPU_Op<"memref_slice", [Pure]> {
+def TPU_MemRefSliceOp : TPU_Op<"memref_slice", [Pure, AttrSizedOperandSegments]> {
   let arguments = (ins
     AnyMemRef:$mem_ref,
-    Variadic<I32>:$base_idx
+    Variadic<I32>:$base_idx,
+    Variadic<I32>:$dynamic_sizes
   );
   let results = (outs AnyMemRef:$result);
   let assemblyFormat = [{
-    $mem_ref `[` $base_idx `]` attr-dict `:` type($mem_ref) `->` type($result)
+    $mem_ref `[` $base_idx `]` (`<` $dynamic_sizes^ `>`)?
+    attr-dict `:` type($mem_ref) `->` type($result)
   }];
   let hasVerifier = 1;
   let hasCanonicalizeMethod = 1;
