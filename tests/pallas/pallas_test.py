@@ -31,6 +31,7 @@ from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import state
 from jax._src.lax.control_flow.for_loop import for_loop
+from jax._src.lib import version as jaxlib_version
 from jax._src.pallas.pallas_call import _trace_to_jaxpr
 from jax.interpreters import partial_eval as pe
 import jax.numpy as jnp
@@ -1550,6 +1551,9 @@ class PallasOpsTest(PallasTest):
       for fn, dtype in itertools.product(*args)
   )
   def test_elementwise(self, fn, dtype):
+    if fn is lax.exp2 and jaxlib_version < (0, 4, 26):
+      self.skipTest("Requires jaxlib 0.4.26 or later")
+
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), dtype), grid=1
     )
