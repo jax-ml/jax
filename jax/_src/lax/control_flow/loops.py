@@ -1229,6 +1229,7 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
 
   .. _Haskell-like type signature: https://wiki.haskell.org/Type_signature
   """
+  print("!!! args: cond_fun: ", cond_fun, ", body_fun: ", body_fun, ", init_val: ", init_val)
   if not (callable(body_fun) and callable(cond_fun)):
     raise TypeError("lax.while_loop: body_fun and cond_fun arguments should be callable.")
   if config.disable_jit.value:
