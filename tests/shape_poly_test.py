@@ -1757,7 +1757,7 @@ class ShapePolyTest(jtu.JaxTestCase):
                               polymorphic_shapes=["(b,)"])
     self.assertAllClose(f(x), res_tf)
 
-  @jax.enable_key_reuse_checks(False)
+  @jax.debug_key_reuse(False)
   def test_prng(self):
     # The PRNG implementation uses opaque types, test shape polymorphism
     with config.enable_custom_prng(True):
@@ -3294,7 +3294,7 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
     # Update this here rather than in harness object because vmap_random_gamma is derived
     # from test_harnesses.all_harnesses, which strips override_jax_config_flags.
     if "random_gamma" in harness.group_name:
-      config_flags = {**config_flags, "jax_enable_key_reuse_checks": False}
+      config_flags = {**config_flags, "jax_debug_key_reuse": False}
 
     prev_jax_config_flags = {fname: getattr(jax.config, fname) for fname in config_flags}
     try:

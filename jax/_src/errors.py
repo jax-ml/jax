@@ -661,12 +661,12 @@ class UnexpectedTracerError(JAXTypeError):
 class KeyReuseError(JAXTypeError):
   """
   This error occurs when a PRNG key is reused in an unsafe manner.
-  Key reuse is checked only when `jax_enable_key_reuse_checks` is
+  Key reuse is checked only when `jax_debug_key_reuse` is
   set to `True`.
 
   Here is a simple example of code that would lead to such an error::
 
-    >>> with jax.enable_key_reuse_checks(True):  # doctest: +SKIP
+    >>> with jax.debug_key_reuse(True):  # doctest: +SKIP
     ...   key = jax.random.key(0)
     ...   value = jax.random.uniform(key)
     ...   new_value = jax.random.uniform(key)

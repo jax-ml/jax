@@ -213,7 +213,7 @@ def trace_context():
           softmax_custom_jvp.value,
           enable_memories.value,
           disable_jit.value,
-          enable_key_reuse_checks.value,
+          debug_key_reuse.value,
           jax_xla_profile_version.value,
           # Technically this affects jaxpr->stablehlo lowering, not tracing.
           hlo_source_file_canonicalization_regex.value)
@@ -930,8 +930,8 @@ enable_checks = define_bool_state(
     default=False,
     help='Turn on invariant checking for JAX internals. Makes things slower.')
 
-enable_key_reuse_checks = define_bool_state(
-    name='jax_enable_key_reuse_checks',
+debug_key_reuse = define_bool_state(
+    name='jax_debug_key_reuse',
     default=False,
     help=('Turn on experimental key reuse checking. With this configuration enabled,'
           ' typed PRNG keys (i.e. keys created with jax.random.key()) will have their'

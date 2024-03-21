@@ -67,7 +67,7 @@ def apply_unknown_primitive(key):
 
 @jtu.with_config(
   jax_enable_custom_prng=False,
-  jax_enable_key_reuse_checks=False)
+  jax_debug_key_reuse=False)
 class KeyReuseUnitTestWithForwarding(jtu.JaxTestCase):
   def check_key_reuse(self, *args):
     return _core.check_key_reuse(*args)
@@ -353,7 +353,7 @@ class KeyReuseUnitTestWithForwarding(jtu.JaxTestCase):
     self.assertEqual(signature, _core.function_type_signature(func, *args))
 
 
-@jtu.with_config(jax_enable_key_reuse_checks=False)
+@jtu.with_config(jax_debug_key_reuse=False)
 class KeyReuseIntegrationTest(jtu.JaxTestCase):
   random_bits_error = "In random_bits, argument [0-9]+ is already consumed.*"
   random_split_error = "In random_split, argument [0-9]+ is already consumed.*"
@@ -607,7 +607,7 @@ class KeyReuseIntegrationTest(jtu.JaxTestCase):
     self.check_key_reuse(jax.grad(f_good), x, key)
 
 
-@jtu.with_config(jax_enable_key_reuse_checks=True)
+@jtu.with_config(jax_debug_key_reuse=True)
 class KeyReuseEagerTest(jtu.JaxTestCase):
   jit_msg = "Previously-consumed key passed to jit-compiled function at index 0"
   eager_bits_msg = "Previously-consumed key passed to random_bits at index 0"
@@ -735,14 +735,14 @@ class KeyReuseGlobalFlagsTest(jtu.JaxTestCase):
 
     key = jax.random.key(0)
 
-    with jax.enable_key_reuse_checks(False):
+    with jax.debug_key_reuse(False):
       f_good(key)
       f_bad(key)  # No failure
 
     f_bad.clear_cache()
     f_good.clear_cache()
 
-    with jax.enable_key_reuse_checks(True):
+    with jax.debug_key_reuse(True):
       f_good(key)
       with self.assertRaisesRegex(KeyReuseError, "In random_bits.*"):
         f_bad(key)

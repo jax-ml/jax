@@ -1083,7 +1083,7 @@ class LaxRandomTest(jtu.JaxTestCase):
 
     # TODO(jakevdp): key reuse checks for this OOM because of slice masking.
     # Can we fix this?
-    with jax.enable_key_reuse_checks(False):
+    with jax.debug_key_reuse(False):
       # just lower, don't run, takes too long
       jax.jit(f).lower()
 
@@ -1348,7 +1348,7 @@ class LaxRandomWithCustomPRNGTest(LaxRandomTest):
     out = vmap(vmap(random.fold_in), in_axes=(1, 0))(keys(), msgs.T)
     self.assertEqual(out.shape, (3, 2))
 
-  @jax.enable_key_reuse_checks(False)
+  @jax.debug_key_reuse(False)
   def test_vmap_split_mapped_key(self):
     key = self.make_key(73)
     mapped_keys = random.split(key, num=3)
@@ -1383,7 +1383,7 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
     keys = random.split(key, 10)
     self.assertEqual(keys.shape, (10, *key.shape))
 
-  @jax.enable_key_reuse_checks(False)
+  @jax.debug_key_reuse(False)
   def test_vmap_fold_in_shape(self):
     # broadcast with scalar
     keys = random.split(self.make_key(73), 2)
@@ -1399,7 +1399,7 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
     out = vmap(random.fold_in, in_axes=(0, None))(keys, msgs[0])
     self.assertEqual(out.shape, keys.shape)
 
-  @jax.enable_key_reuse_checks(False)
+  @jax.debug_key_reuse(False)
   def test_vmap_split_not_mapped_key(self):
     key = self.make_key(73)
     single_split_key = random.split(key)
@@ -1409,14 +1409,14 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
       self.assertArraysEqual(random.key_data(vk),
                              random.key_data(single_split_key))
 
-  @jax.enable_key_reuse_checks(False)
+  @jax.debug_key_reuse(False)
   def test_vmap_split_mapped_key_shape(self):
     key = self.make_key(73)
     mapped_keys = random.split(key, num=3)
     vmapped_keys = vmap(random.split)(mapped_keys)
     self.assertEqual(vmapped_keys.shape, (3, 2, *key.shape))
 
-  @jax.enable_key_reuse_checks(False)
+  @jax.debug_key_reuse(False)
   def test_vmap_split_mapped_key_values(self):
     key = self.make_key(73)
     mapped_keys = random.split(key, num=3)
@@ -1426,7 +1426,7 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
       self.assertArraysEqual(random.key_data(rk),
                              random.key_data(vk))
 
-  @jax.enable_key_reuse_checks(False)
+  @jax.debug_key_reuse(False)
   def test_vmap_random_bits_shape(self):
     rand_fun = lambda key, shape=(): random.randint(key, shape, 0, 100)
     key = self.make_key(73)
@@ -1435,7 +1435,7 @@ class LaxRandomWithRBGPRNGTest(LaxRandomTest):
     self.assertEqual(rand_nums.shape, (3,))
 
   @jtu.skip_on_devices("tpu")
-  @jax.enable_key_reuse_checks(False)
+  @jax.debug_key_reuse(False)
   def test_vmap_random_bits_value(self):
     rand_fun = lambda key, shape=(): random.randint(key, shape, 0, 100)
     key = self.make_key(73)
@@ -1491,7 +1491,7 @@ class LaxRandomWithUnsafeRBGPRNGTest(LaxRandomWithRBGPRNGTest):
     return random.PRNGKey(seed, impl="unsafe_rbg")
 
   @jtu.skip_on_devices("tpu")
-  @jax.enable_key_reuse_checks(False)
+  @jax.debug_key_reuse(False)
   def test_vmap_split_mapped_key_values(self):
     key = self.make_key(73)
     mapped_keys = random.split(key, num=3)

@@ -962,7 +962,7 @@ class BatchingTest(jtu.JaxTestCase):
       u, _ = lax.while_loop(lambda uk: uk[0] > 0.5, body_fn, (1., key))
       return u
 
-    with jax.enable_key_reuse_checks(False):
+    with jax.debug_key_reuse(False):
       print(vmap(f)(random.split(random.PRNGKey(0), 2)))  # no crash
 
   def testEmptyTuples(self):
