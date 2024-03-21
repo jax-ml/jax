@@ -363,11 +363,11 @@ def _parse_jit_arguments(fun: Callable, in_shardings: Any, out_shardings: Any,
 
   user_specified_in_shardings = (in_shardings is not None and
                                  not is_unspecified(in_shardings))
-  is_none = lambda x: x is None
-  in_shardings_leaves, in_shardings_treedef = tree_flatten(
-      in_shardings, is_leaf=is_none)
-  out_shardings_leaves, out_shardings_treedef = tree_flatten(
-      out_shardings, is_leaf=is_none)
+  none_leaf_registry = tree_util.none_leaf_registry
+  in_shardings_leaves, in_shardings_treedef = none_leaf_registry.flatten(
+      in_shardings)
+  out_shardings_leaves, out_shardings_treedef = none_leaf_registry.flatten(
+      out_shardings)
 
   fun_sourceinfo = api_util.fun_sourceinfo(fun)
   fun_signature = api_util.fun_signature(fun)
