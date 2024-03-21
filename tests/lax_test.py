@@ -3365,87 +3365,133 @@ class CustomElementTypesTest(jtu.JaxTestCase):
 class FunctionAccuracyTest(jtu.JaxTestCase):
 
   @parameterized.named_parameters(
-    dict(testcase_name=f"_{name}_{dtype.__name__}_{kind}", name=name, dtype=dtype, kind=kind)
-    for name, dtype, kind in itertools.product(
-        [ 'arccos', 'arccosh', 'arcsin', 'arcsinh',
-          'arctan', 'arctanh', 'conjugate', 'cos',
-          'cosh', 'exp', 'exp2', 'expm1', 'log',
-          'log10', 'log1p', 'sin', 'sinh', 'sqrt',
-          'square', 'tan', 'tanh', 'sinc', 'positive',
-          'negative', 'absolute', 'sign'],
+    dict(testcase_name=f"_{dtype.__name__}", dtype=dtype)
+    for dtype in jtu.dtypes.supported([np.float32, np.float64, np.complex64, np.complex128]))
+  def testMPMathUtils(self, dtype):
+    try:
+      import mpmath
+    except ImportError as msg:
+      self.skipTest(f'could not import mpmath: {msg}')
+
+    prec = {np.float32: 24, np.float64: 53, np.complex64: 24, np.complex128: 53}[dtype]
+    is_complex = dtype().dtype.kind == 'c'
+
+    def func(x):
+      assert isinstance(x, mpmath.ctx_mp.mpnumeric)
+      assert x.context.prec == prec
+      assert isinstance(x, x.context.mpc if is_complex else x.context.mpf)
+      return x
+
+    ufunc = jtu.vectorize_with_mpmath(func, mpmath=mpmath)
+
+    with jtu.ignore_warning(category=RuntimeWarning, message="(overflow|invalid value|divide by zero) encountered in.*"):
+      if is_complex:
+        arr = jtu.complex_plane_sample(dtype=dtype, size_re=11)
+      else:
+        cdtype = getattr(np, ufunc.map_float_to_complex[dtype.__name__])
+        arr = jtu.complex_plane_sample(dtype=cdtype, size_re=11, size_im=0)[1:2].real
+
+    arr2 = ufunc.mptonp(ufunc.nptomp(arr))
+    with jtu.ignore_warning(category=RuntimeWarning, message="(overflow|invalid value|divide by zero) encountered in.*"):
+      self.assertAllClose(arr, arr2, atol=0, rtol=0)
+
+    arr3 = ufunc(arr)
+    with jtu.ignore_warning(category=RuntimeWarning, message="(overflow|invalid value|divide by zero) encountered in.*"):
+      self.assertAllClose(arr, arr3, atol=0, rtol=0)
+
+    if is_complex:
+      # tests scale in normalize
+      v = dtype(1.1071487177940644+1.1102230246251565e-16j)
+      r = dtype(1.1071487177940644+0j)
+      mnp = jtu.numpy_with_mpmath(mpmath, extra_prec=1)
+      nr, nv = mnp.normalize(r, r, v)
+      self.assertAllClose(nr, nv)
+
+  _functions_on_complex_plane = [
+    'arccos', 'arccosh', 'arcsin', 'arcsinh',
+    'arctan', 'arctanh', 'conjugate', 'cos',
+    'cosh', 'exp', 'exp2', 'expm1', 'log',
+    'log10', 'log1p', 'sin', 'sinh', 'sqrt',
+    'square', 'tan', 'tanh', 'sinc', 'positive',
+    'negative', 'absolute', 'sign'
+  ]
+
+  @parameterized.named_parameters(
+    dict(testcase_name=f"_{name}_{dtype.__name__}", name=name, dtype=dtype)
+    for name, dtype in itertools.product(
+        _functions_on_complex_plane,
         jtu.dtypes.supported([np.complex64, np.complex128]),
-        ['success', 'failure'],
     ))
   @jtu.skip_on_devices("tpu")
-  def testOnComplexPlane(self, name, dtype, kind):
-    all_regions = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'zero']
+  def testSuccessOnComplexPlane(self, name, dtype):
+    self._testOnComplexPlaneWorker(name, dtype, 'success')
+
+  @parameterized.named_parameters(
+    dict(testcase_name=f"_{name}_{dtype.__name__}", name=name, dtype=dtype)
+    for name, dtype in itertools.product(
+        _functions_on_complex_plane,
+        jtu.dtypes.supported([np.complex64, np.complex128]),
+    ))
+  @jtu.skip_on_devices("tpu")
+  def testFailureOnComplexPlane(self, name, dtype):
+    self._testOnComplexPlaneWorker(name, dtype, 'failure')
+
+  def _testOnComplexPlaneWorker(self, name, dtype, kind):
+    try:
+      import mpmath
+    except ImportError as msg:
+      self.skipTest(f'could not import mpmath: {msg}')
+
     is_cpu = jtu.test_device_matches(["cpu"])
     machine = platform.machine()
+    # TODO: remove is_arm_cpu as previously arm cpu related failures
+    # were due to numpy issues. Confirm?
     is_arm_cpu = machine.startswith('aarch') or machine.startswith('arm')
     is_cuda = jtu.test_device_matches(["cuda"])
 
-    # TODO(pearu): eliminate all items in the following lists:
-    # TODO(pearu): when all items are eliminated, eliminate the kind == 'failure' tests
-    regions_with_inaccuracies = dict(
-      absolute = ['q1', 'q2', 'q3', 'q4'] if dtype == np.complex128 and is_cuda else [],
-      exp = (['pos', 'pinfj', 'pinf', 'ninfj', 'ninf']
-             + (['q1', 'q4'] if is_arm_cpu and dtype != np.complex128 else [])),
-      exp2 = ['pos', 'pinfj', 'pinf', 'ninfj', 'ninf', *(['q1', 'q4'] if is_cpu else [])],
-      log = ['q1', 'q2', 'q3', 'q4'],
-      log1p = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'ninfj', 'pinfj'],
-      log10 = ['q1', 'q2', 'q3', 'q4', 'zero', 'ninf', 'ninfj', 'pinf', 'pinfj'],
-      sinh = (['pos', 'neg', 'ninf', 'pinf']
-              + (['q1', 'q2', 'q3', 'q4'] if is_arm_cpu and dtype != np.complex128 else [])),
-      cosh = (['pos', 'neg', 'ninf', 'pinf']
-              + (['q1', 'q2', 'q3', 'q4'] if is_arm_cpu and dtype != np.complex128 else [])),
-      tan = ['q1', 'q2', 'q3', 'q4', 'negj', 'posj', 'ninf', 'ninfj', 'pinf', 'pinfj'],
-      square = (['pinf']
-                + (['ninfj', 'pinfj'] if is_arm_cpu else [])
-                + (['ninf'] if not is_arm_cpu else [])
-                + (['q1', 'q2', 'q3', 'q4', 'ninfj', 'pinfj'] if is_cuda else [])
-                + (['q1', 'q2', 'q3', 'q4'] if is_cpu and dtype == np.complex128 else [])),
-      sinc = ['q1', 'q2', 'q3', 'q4'],
-      arcsin = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'pinf', 'ninfj', 'pinfj'],
-      arccos = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'pinf', 'ninfj', 'pinfj'],
-      arctan = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'pinf', 'ninfj', 'pinfj'],
-      arcsinh = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'pinf', 'ninfj', 'pinfj'],
-      arccosh = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'pinf', 'ninfj', 'pinfj'],
-      arctanh = ['q1', 'q2', 'q3', 'q4', 'pos', 'neg', 'posj', 'negj', 'ninf', 'pinf', 'ninfj', 'pinfj'],
-      sin = ['q1', 'q2', 'q3', 'q4', 'ninfj', 'pinfj'] if is_arm_cpu and dtype != np.complex128 else [],
-      cos = ['q1', 'q2', 'q3', 'q4', 'ninfj', 'pinfj'] if is_arm_cpu and dtype != np.complex128 else [],
-      expm1 = ['q1', 'q4', 'pinf'] if is_arm_cpu and dtype != np.complex128 else [],
-    )
+    size_re = 11
+    size_im = 11
+    atol = None
 
-    if jtu.numpy_version() < (2, 0, 0):
-      regions_with_inaccuracies['sign'] = ['q1', 'q2', 'q3', 'q4', 'negj', 'posj', 'ninf', 'ninfj', 'pinf', 'pinfj']
+    mnp = jtu.numpy_with_mpmath(mpmath, extra_prec=1)
+    mnp2 = jtu.numpy_with_mpmath(mpmath, extra_prec_multiplier=1)
 
+    ref_op = getattr(mnp, name)
+    ref2_op = getattr(mnp2, name)
     jnp_op = getattr(jnp, name)
 
-    if name == 'square':
-      # numpy square is incorrect on inputs with large absolute value
-      tiny = np.finfo(dtype).tiny
-
-      def square(x):
-        re = (x.real - x.imag) * (x.real + x.imag)
-        im = x.real * x.imag * 2
-        if is_cuda:
-          # apply FTZ
-          if np.isfinite(re) and abs(re) < tiny:
-            re *= 0
-          if np.isfinite(im) and abs(im) < tiny:
-            im *= 0
-        return np.array(complex(re, im), dtype=dtype)
-
-      np_op = np.vectorize(square)
-    else:
-      np_op = getattr(np, name)
-
     with jtu.ignore_warning(category=RuntimeWarning, message="(overflow|invalid value|divide by zero) encountered in.*"):
-      args = (jtu.complex_plane_sample(dtype=dtype, size_re=11),)
+      args = (jtu.complex_plane_sample(dtype=dtype, size_re=size_re, size_im=size_im),)
       result = np.asarray(jnp_op(*args))
-      expected = np_op(*args)
+      expected = ref_op(*args)
+      expected2 = ref2_op(*args)
 
-    s0, s1 = (result.shape[0] - 3) // 2, (result.shape[1] - 3) // 2
+    normalized_expected, normalized_result = mnp2.normalize(expected2, expected, result)
+
+    # When comparing the results with expected, we'll divide the
+    # complex plane grid into smaller regions and perform the
+    # closeness tests on each region separately. The reason for this
+    # is that the inaccuracy or incorrectness issues with a particular
+    # function exists typically in specific regions while in other
+    # regions the function is accurate. So, such a division of the
+    # complex plane helps to identify the problematic regions as well
+    # as to fix the inaccuracy or incorrectness issues.
+    #
+    # Regions in complex plane:
+    #
+    #       (                pinfj                 )
+    #              (  q2   ) (posj) (  q1   )
+    #       (ninf) (  neg  ) (zero) (  pos  ) (pinf)
+    #              (  q3   ) (negj) (  q4   )
+    #       (                 ninfj                )
+    #
+    # In addition, the 1/3 middle parts of regions q1, q2, q3, q4,
+    # neg, pos are tested separately as these don't contain extremely
+    # small or extremelly large values and functions on these regions
+    # ought not to possess any incorrectness issues.
+
+    s0, s1 = size_re, size_im
+    s03, s13 = s0 // 3, s1 // 3
     s_dict = dict(
       q1=(slice(s0 + 2, -1), slice(s1 + 2, -1)),
       q2=(slice(s0 + 2, -1), slice(1, s1 + 1)),
@@ -3462,38 +3508,167 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
       zero=(slice(s0 + 1, s0 + 2), slice(s1 + 1, s1 + 2)),
     )
 
-    for region in all_regions:
-      if is_arm_cpu:
-        if (
-            (
-                region in ['q1', 'q2', 'q3', 'q4']
-                and name in ['cos', 'cosh', 'sin', 'sinh', 'exp', 'expm1']
-            )
-            or (region in ['pinfj', 'ninfj'] and name in ['sin', 'cos'])
-            or (region == 'pinf' and name in ['expm1'])
-        ):
-          continue
-      s = s_dict[region]
-      inds = np.where(result[s] != expected[s])
-      if inds[0].size > 0:
-        mismatches = []
-        for ind in zip(*inds):
-          x, r, e = args[0][s][ind], str(result[s][ind]), str(expected[s][ind])
-          if r == e:
-            # skip equal nan-s
-            continue
-          mismatches.append(f'jax.numpy.{name}{x} -> {r}, expected {e}')
-        mismatches = "\n".join(mismatches)
-      else:
-        mismatches = ''
-      if kind == 'success' and region not in regions_with_inaccuracies.get(name, []):
-        with jtu.ignore_warning(category=RuntimeWarning, message="overflow encountered in.*"):
-          self.assertAllClose(result[s], expected[s], err_msg=f"{name} in {region}, {is_cpu=} {is_cuda=}, {xla_extension_version=}\n{mismatches}")
-      if kind == 'failure' and region in regions_with_inaccuracies.get(name, []):
-        with self.assertRaises(AssertionError, msg=f"{name} in {region}, {is_cpu=} {is_cuda=}, {xla_extension_version=}"):
-          with jtu.ignore_warning(category=RuntimeWarning, message="overflow encountered in.*"):
-            self.assertAllClose(result[s], expected[s])  # on success, update regions_with_inaccuracies
+    if s03 and s13:
+      s_dict.update(
+        mq1 = (slice(s0 + 3 + s03, s0 + 3 + 2 * s03), slice(s1 + 3 + s13, s1 + 3 + 2 * s13)),
+        mq2 = (slice(s0 + 3 + s03, s0 + 3 + 2 * s03), slice(2 + s13, 2 + 2 * s13)),
+        mq3 = (slice(2 + s03, 2 + 2 * s03), slice(2 + s13, 2 + 2 * s13)),
+        mq4 = (slice(2 + s03, 2 + 2 * s03), slice(s1 + 3 + s13, s1 + 3 + 2 * s13)),
+        mneg=(s0 + 1, slice(2 + s13, 2 + 2 * s13)),
+        mpos=(s0 + 1, slice(s1 + 3 + s13, s1 + 3 + 2 * s13)),
+        mnegj=(slice(2 + s03, 2 + 2 * s03), s1 + 1),
+        mposj=(slice(s0 + 3 + s03, s0 + 3 + 2 * s03), s1 + 1),
+      )
 
+    # Start with an assumption that all regions are problematic for a
+    # particular function:
+    regions_with_inaccuracies = list(s_dict)
+
+    # Next, we'll remove non-problematic regions from the
+    # regions_with_inaccuracies list by explicitly keeping problematic
+    # regions:
+    def regions_with_inaccuracies_keep(*to_keep):
+      for item in regions_with_inaccuracies[:]:
+        if item not in to_keep:
+          regions_with_inaccuracies.remove(item)
+
+    if name == 'absolute':
+      if is_cuda and dtype == np.complex128:
+        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4')
+      else:
+        regions_with_inaccuracies.clear()
+
+    elif name == 'sign':
+      regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4')
+
+    elif name == 'square':
+      if is_cuda:
+        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'ninf', 'pinf', 'ninfj', 'pinfj')
+      if is_cpu:
+        regions_with_inaccuracies_keep('ninf', 'pinf')
+
+    elif name == 'log':
+      regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'ninf', 'pinf', 'ninfj', 'pinfj')
+
+    elif name == 'log10':
+      regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'ninf', 'pinf', 'ninfj', 'pinfj', 'zero')
+
+    elif name == 'log1p':
+      regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj')
+
+    elif name == 'exp':
+      regions_with_inaccuracies_keep('pos', 'pinf', 'mpos')
+
+    elif name == 'exp2':
+      if dtype == np.complex64:
+        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'mq1', 'mq2', 'mq3', 'mq4', 'mpos', 'mnegj', 'mposj')
+      if dtype == np.complex128:
+        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'mpos')
+
+    elif name == 'expm1':
+      regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'pinf', 'mq1', 'mq2', 'mq3', 'mq4', 'mneg', 'mpos')
+
+    elif name == 'sinc':
+      regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'mq1', 'mq2', 'mq3', 'mq4', 'mneg', 'mpos', 'mnegj', 'mposj')
+
+    elif name == 'tan':
+      regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'negj', 'posj', 'ninfj', 'pinfj', 'mq1', 'mq2', 'mq3', 'mq4', 'mnegj', 'mposj')
+
+    elif name == 'sinh':
+      if is_cuda:
+        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'ninf', 'pinf', 'mq1', 'mq2', 'mq3', 'mq4', 'mneg', 'mpos')
+      if is_cpu:
+        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'mq1', 'mq2', 'mq3', 'mq4', 'mneg', 'mpos')
+
+    elif name == 'cosh':
+      regions_with_inaccuracies_keep('neg', 'pos', 'ninf', 'pinf', 'mneg', 'mpos')
+
+    elif name == 'tanh':
+      regions_with_inaccuracies_keep('ninf', 'pinf', 'ninfj', 'pinfj')
+
+    elif name == 'arccos':
+      if dtype == np.complex64:
+        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mq2', 'mq3', 'mneg', 'mpos', 'mnegj')
+      if dtype == np.complex128:
+        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mq2', 'mq3', 'mq4', 'mneg', 'mpos', 'mnegj')
+
+    elif name == 'arccosh':
+      if dtype == np.complex64:
+        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mq2', 'mq3', 'mneg', 'mpos', 'mnegj')
+      if dtype == np.complex128:
+        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mq2', 'mq3', 'mq4', 'mneg', 'mnegj')
+
+    elif name == 'arcsin':
+      if dtype == np.complex64:
+        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mq1', 'mq2', 'mq3', 'mq4', 'mneg', 'mpos', 'mnegj', 'mposj')
+      if dtype == np.complex128:
+        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mq1', 'mq2', 'mq3', 'mq4', 'mneg', 'mpos', 'mnegj', 'mposj')
+
+    elif name == 'arcsinh':
+      if dtype == np.complex64:
+        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mq1', 'mq2', 'mq3', 'mq4', 'mneg', 'mpos', 'mnegj')
+      if dtype == np.complex128:
+        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mq2', 'mq3', 'mneg', 'mnegj')
+
+    elif name == 'arctan':
+      if dtype == np.complex64:
+        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mq1', 'mq2', 'mq3', 'mq4', 'mnegj', 'mposj')
+      if dtype == np.complex128:
+        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj')
+
+    elif name == 'arctanh':
+      regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mpos')
+
+    elif name in {'positive', 'negative', 'conjugate', 'sin', 'cos', 'sqrt'}:
+      regions_with_inaccuracies.clear()
+    else:
+      assert 0  # unreachable
+
+    # Finally, perform the closeness tests per region:
+    unexpected_success_regions = []
+    for region_name, region_slice in s_dict.items():
+      region = args[0][region_slice]
+      inexact_indices = np.where(normalized_result[region_slice] != normalized_expected[region_slice])
+
+      if inexact_indices[0].size == 0:
+        inexact_samples = ''
+      else:
+        inexact_samples = []
+        for ind in zip(*inexact_indices):
+          x = region[ind]
+          y1, y2 = result[region_slice][ind],  expected[region_slice][ind]
+          ny1, ny2 = normalized_result[region_slice][ind],  normalized_expected[region_slice][ind]
+          if str(y1) == str(y2):  # skip equal nan-s
+            continue
+          max_abs_diff = abs(ny1 - ny2).max() if np.isfinite(y1) and np.isfinite(y1) else np.inf
+          inexact_samples.append((max_abs_diff, f'jax.numpy.{name}({x}) -> {y1} [{ny1}], expected {y2} [{ny2}]'))
+        inexact_samples = "\n".join([msg for _, msg in sorted(inexact_samples)])
+
+      if kind == 'success' and region_name not in regions_with_inaccuracies:
+        with jtu.ignore_warning(category=RuntimeWarning, message="overflow encountered in.*"):
+          self.assertAllClose(
+            normalized_result[region_slice], normalized_expected[region_slice], atol=atol,
+            err_msg=f"{name} in {region_name}, {is_cpu=} {is_cuda=}, {xla_extension_version=}\n{inexact_samples}")
+
+      if kind == 'failure' and region_name in regions_with_inaccuracies:
+        try:
+          with self.assertRaises(AssertionError, msg=f"{name} in {region_name}, {is_cpu=} {is_cuda=}, {xla_extension_version=}"):
+            with jtu.ignore_warning(category=RuntimeWarning, message="overflow encountered in.*"):
+              self.assertAllClose(normalized_result[region_slice], normalized_expected[region_slice])
+        except AssertionError as msg:
+          if str(msg).startswith('AssertionError not raised'):
+            unexpected_success_regions.append(region_name)
+          else:
+            raise  # something else is wrong..
+
+    if kind == 'success' and regions_with_inaccuracies:
+      reason = "xfail: problematic regions: " + ", ".join(regions_with_inaccuracies)
+      raise unittest.SkipTest(reason)
+
+    if kind == 'failure':
+      self.assertEqual(unexpected_success_regions, [])  # regions_with_inaccuracies requires an update!
+      if not regions_with_inaccuracies:
+        raise unittest.SkipTest("no problematic regions")
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
