@@ -499,7 +499,7 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertDeleted(z)
 
   def test_resolve_argnums_signature_fail(self):
-    api_util.resolve_argnums(int, None, None, None, None)  # doesn't crash
+    api_util.resolve_argnums(int, None, None, None, None, None)  # doesn't crash
 
   @jtu.device_supports_buffer_donation()
   def test_donate_argnames_with_args(self):

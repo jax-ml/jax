@@ -369,11 +369,12 @@ def _parse_jit_arguments(fun: Callable, in_shardings: Any, out_shardings: Any,
   in_shardings, _, _ = prepare_axis_resources(in_shardings, 'in_shardings')
   out_shardings, _, _ = prepare_axis_resources(out_shardings, 'out_shardings')
 
-  donate_argnums, donate_argnames, static_argnums, static_argnames = resolve_argnums(
-      fun, donate_argnums, donate_argnames, static_argnums, static_argnames)
-
   fun_sourceinfo = api_util.fun_sourceinfo(fun)
   fun_signature = api_util.fun_signature(fun)
+
+  donate_argnums, donate_argnames, static_argnums, static_argnames = resolve_argnums(
+      fun, fun_signature, donate_argnums, donate_argnames, static_argnums,
+      static_argnames)
 
   has_explicit_sharding = _pjit_explicit_sharding(
       in_shardings, out_shardings, device, backend)
