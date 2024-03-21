@@ -245,7 +245,7 @@ def _get_discharge(x, idx, tree):
     return x
   # If everything in the indexer is a slice or ()-shaped, we can also
   # use `lax.dynamic_slice` with 1-sized slices for ()-shaped indices.
-  # We need to squeeze out the the 1-sized slices at the end.
+  # We need to squeeze out the 1-sized slices at the end.
   if maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
     starts, sizes, squeeze_dims = maybe_slice
     y = lax_slicing.dynamic_slice(x, starts, sizes)
@@ -279,7 +279,7 @@ def _swap_discharge(x, val, idx, tree):
     return x, val
   # If everything in the indexer is a slice or ()-shaped, we can also
   # use `lax.dynamic_slice` with 1-sized slices for ()-shaped indices.
-  # We need to squeeze out the the 1-sized slices at the end.
+  # We need to squeeze out the 1-sized slices at the end.
   if maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
     starts, sizes, squeeze_dims = maybe_slice
     x_old = lax_slicing.dynamic_slice(x, starts, sizes)
@@ -308,7 +308,7 @@ def _addupdate_discharge(x, val, idx, tree):
     return x + val
   # If everything in the indexer is a slice or ()-shaped, we can also
   # use `lax.dynamic_slice` with 1-sized slices for ()-shaped indices.
-  # We need to squeeze out the the 1-sized slices at the end.
+  # We need to squeeze out the 1-sized slices at the end.
   if maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
     starts, sizes, squeeze_dims = maybe_slice
     x_old = lax_slicing.dynamic_slice(x, starts, sizes)
