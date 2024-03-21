@@ -1171,9 +1171,12 @@ triton_lowering_rules[lax.sign_p] = _sign_lowering_rule
 
 
 def _iota_lowering_rule(ctx: LoweringRuleContext, *, dtype, shape, dimension):
-  if dimension != 0:
-    raise NotImplementedError
-  return _cast(_make_range(0, *shape), _dtype_to_ir_type(dtype), signed=False)
+  iota = _make_range(0, shape[dimension])
+  iota = _cast(iota, _dtype_to_ir_type(dtype), signed=False)
+  for i in range(len(shape)):
+    if i != dimension:
+      iota = _expand_dims(iota, i)
+  return _bcast_to(iota, shape)
 
 
 triton_lowering_rules[lax.iota_p] = _iota_lowering_rule

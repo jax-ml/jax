@@ -1710,6 +1710,22 @@ class PallasOpsTest(PallasTest):
     y = jnp.array([3, 1, -4, -5, 2, -2, 2, 4]).astype(dtype)
     np.testing.assert_allclose(f(x, y), kernel(x, y))
 
+  @parameterized.parameters(
+      ((8, 4), jnp.int32, 0),
+      ((8, 16), jnp.float32, 1),
+      ((8, 16, 2), jnp.int8, 1),
+  )
+  def test_broadcasted_iota(self, shape, dtype, dimension):
+    f = lambda: jax.lax.broadcasted_iota(dtype, shape, dimension)
+
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct(shape, dtype), grid=1
+    )
+    def kernel(o_ref):
+      o_ref[...] = f()
+
+    np.testing.assert_allclose(f(), kernel())
+
 
 class PallasOpsInterpretTest(PallasOpsTest):
   INTERPRET = True
