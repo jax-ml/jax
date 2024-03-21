@@ -20,7 +20,8 @@ def cond_fn(loop_carry):
 def body_fn(loop_carry):
     init, limit_value = loop_carry
     #   one_value = torch.ones(1, dtype=torch.int32, device=device)
-    return (lax.add(init, lax._const(init, 1)), limit_value)
+    # return (lax.add(init, lax._const(init, 1)), limit_value)
+    return (lax.add(init, 1), limit_value)
 
     # TODO(@manfei): init and limit_value has to be torch.tensor.
     # init = torch.tensor([0], dtype=torch.int32, device=device)
