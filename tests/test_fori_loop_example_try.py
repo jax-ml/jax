@@ -14,7 +14,7 @@ from jax import lax
     # device = xm.xla_device()
 
 def cond_fn(init, limit_value):
-    return lax.lt(limit_value[0], init[0]) # limit_value[0] >= init[0]
+    return lax.lt(limit_value, init) # limit_value[0] >= init[0]
 
 def body_fn(init, limit_value):
     #   one_value = torch.ones(1, dtype=torch.int32, device=device)
