@@ -20,6 +20,8 @@ Remember to align the itemized text with the first line of an item within a list
   * The `jax.experimental.maps` module and `jax.experimental.maps.xmap` are
     deprecated. Use `jax.experimental.shard_map` or `jax.vmap` with the
     `spmd_axis_name` argument for expressing SPMD device-parallel computations.
+  * The `jax.experimental.host_callback` module is deprecated.
+    Use instead the [new JAX external callbacks](https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html).
   * Passing arguments to {func}`jax.numpy.array_equal` and {func}`jax.numpy.array_equiv`
     that cannot be converted to a JAX array now results in an exception.
   * The deprecated flag `jax_parallel_functions_output_gda` has been removed.
