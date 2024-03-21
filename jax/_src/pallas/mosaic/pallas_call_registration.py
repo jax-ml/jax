@@ -102,6 +102,7 @@ def pallas_call_tpu_lowering_rule(
         cost_estimate=mosaic_params.get("cost_estimate", None),
         vmem_limit_bytes=mosaic_params.get("vmem_limit_bytes", None),
         flags=mosaic_params.get("flags", None),
+        allow_input_fusion=mosaic_params.get("allow_input_fusion", None),
         input_output_aliases=input_output_aliases,
     )(
         *dynamic_grid_args,

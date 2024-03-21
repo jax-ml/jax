@@ -15,6 +15,7 @@
 """Test TPU-specific extensions to pallas_call."""
 
 import functools
+import re
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -1357,6 +1358,32 @@ class PallasCallTest(PallasTPUTest):
         out_shape=x,
         compiler_params=dict(mosaic=dict(vmem_limit_bytes=int(2**18))),
     )(x)
+
+  def test_allow_input_fusion(self):
+    shape = (3, 128, 128)
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...]
+
+    def f(x, y):
+      z = jax.numpy.add(x, y)
+      return pl.pallas_call(
+          kernel,
+          grid=(3,),
+          in_specs=[pl.BlockSpec(lambda i: (i, 0, 0), (1, 128, 128))],
+          out_specs=pl.BlockSpec(lambda i: (i, 0, 0), (1, 128, 128)),
+          out_shape=x,
+          compiler_params=dict(mosaic=dict(allow_input_fusion=[True])),
+      )(z)
+
+    x = jnp.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    y = jnp.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+
+    out = f(x, y)
+    expected = x + y
+    np.testing.assert_array_equal(out, expected)
+    compiled = jax.jit(f).lower(x, y).compile().as_text()
+    assert re.search(r'fusion.*kind=kCustom.*fused_computation', compiled)
 
 
 class PallasCallUnblockedIndexingTest(PallasTPUTest):
