@@ -720,11 +720,7 @@ pytype_strict_library(
 pytype_strict_library(
     name = "layout",
     srcs = ["_src/layout.py"],
-    deps = [
-        ":util",
-        ":xla_bridge",
-        "//jax/_src/lib",
-    ],
+    deps = ["//jax/_src/lib"],
 )
 
 pytype_strict_library(
