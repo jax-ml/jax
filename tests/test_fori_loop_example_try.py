@@ -13,10 +13,12 @@ from jax import lax
 #   return val
     # device = xm.xla_device()
 
-def cond_fn(init, limit_value):
+def cond_fn(loop_carry):
+    init, limit_value = loop_carry
     return lax.lt(limit_value, init) # limit_value[0] >= init[0]
 
-def body_fn(init, limit_value):
+def body_fn(loop_carry):
+    init, limit_value = loop_carry
     #   one_value = torch.ones(1, dtype=torch.int32, device=device)
     return (lax.add(init, lax._const(init, 1)), limit_value)
 
