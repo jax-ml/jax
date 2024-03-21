@@ -92,6 +92,7 @@ class CustomCallBackendConfig:
   vmem_limit_bytes: int | None
   flags: dict[str, bool | int | float] | None
   allow_input_fusion: list[bool] | None
+  serialization_format: int | None
 
   # We omit the body while printing, because primitive params get embedded
   # in HLO metadata, and the body blows up its size.
@@ -117,6 +118,9 @@ class CustomCallBackendConfig:
     if self.needs_hlo_passes:
       config.write(b', "needs_hlo_passes": ')
       config.write(str(self.needs_hlo_passes).lower().encode("ascii"))
+    if self.serialization_format is not None:
+      config.write(b', "serialization_format": ')
+      config.write(str(self.serialization_format).lower().encode("ascii"))
     if self.needs_layout_passes:
       config.write(b', "needs_layout_passes": ')
       config.write(str(self.needs_layout_passes).lower().encode("ascii"))
@@ -283,17 +287,12 @@ def _lower_tpu_kernel(
     raise ValueError("The compiled module fails MLIR verification") from e
 
   with module.context as ctx, module.operation.location as _:
-
     ctx.append_dialect_registry(mlir.upstream_dialects)
     ctx.load_all_available_dialects()
     tpu.register_dialect(ctx)
     mhlo.register_mhlo_dialect(ctx)
     mhlo.register_mhlo_passes()
 
-    # We'll mutate the module, so clone it
-    module = ir.Module.parse(
-        module.operation.get_asm(binary=True, enable_debug_info=True)
-    )
     dump_mlir(module, "original")
 
     if _MOSAIC_ALLOW_HLO.value:
@@ -391,13 +390,24 @@ def as_tpu_kernel(
       module.operation
   )
   needs_layout_passes = not device_type
-  if needs_layout_passes and _MOSAIC_USE_PYTHON_PIPELINE.value:
-    module = _lower_tpu_kernel(module, hardware_generation)
-    needs_layout_passes = False
-
-  bytecode_buffer = io.BytesIO()
-  module.operation.write_bytecode(bytecode_buffer, desired_version=0)
-  asm = bytecode_buffer.getvalue()
+  # We'll mutate the module, so clone it
+  with module.context as ctx, module.operation.location as _:
+    module = ir.Module.parse(
+        module.operation.get_asm(binary=True, enable_debug_info=True)
+    )
+    if needs_layout_passes and _MOSAIC_USE_PYTHON_PIPELINE.value:
+      module = _lower_tpu_kernel(module, hardware_generation)
+      needs_layout_passes = False
+    prev_allow_unregistered_dialects = ctx.allow_unregistered_dialects
+    ctx.allow_unregistered_dialects = True
+    try:
+      pipeline = PassManager.parse("builtin.module(mosaic-serde{serialize=true})")
+      pipeline.run(module.operation)
+    finally:
+      ctx.allow_unregistered_dialects = prev_allow_unregistered_dialects
+    bytecode_buffer = io.BytesIO()
+    module.operation.write_bytecode(bytecode_buffer, desired_version=0)
+    asm = bytecode_buffer.getvalue()
 
   # TODO(amagni): Kernel name and regeneration metadata could alternatively be
   # added as a custom attribute to the MLIR call op rather than including them
@@ -436,6 +446,7 @@ def _lowered_as_tpu_kernel(
     flags: dict[str, bool | int | float] | None = None,
     allow_input_fusion: list[bool] | None = None,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
+    serialization_format: int | None = 1,
 ):
   """Turns a low-level MLIR Mosaic kernel into a JAX-compatible function."""
   unpack = False
@@ -465,6 +476,7 @@ def _lowered_as_tpu_kernel(
         vmem_limit_bytes,
         flags,
         allow_input_fusion,
+        serialization_format=serialization_format,
     )
     result = tpu_custom_call_p.bind(
         *args,
