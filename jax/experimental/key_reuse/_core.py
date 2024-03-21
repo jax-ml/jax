@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import contextlib
 from functools import partial, reduce, total_ordering, wraps
 from typing import Any, Callable, Iterator, NamedTuple
 
@@ -31,6 +32,7 @@ from jax._src import pjit
 from jax._src import prng
 from jax._src import random
 from jax._src import source_info_util
+from jax._src import traceback_util
 from jax._src import util
 from jax._src.ad_checkpoint import remat_p
 from jax._src.debugging import debug_callback_p
@@ -39,6 +41,27 @@ from jax._src.util import weakref_lru_cache
 
 from jax.experimental.shard_map import shard_map_p
 import numpy as np
+
+
+traceback_util.register_exclusion(__file__)
+
+_source_context_message = (
+    'PRNG key first used at the above location was subsequently reused'
+    ' at the following location:')
+
+def key_reuse_error_with_source_traceback(
+    message: str, traceback: source_info_util.Traceback | None) -> KeyReuseError:
+  err = KeyReuseError(message)
+  if traceback is not None:
+    filtered_tb = traceback_util.filter_traceback(traceback.as_python_traceback())
+    if filtered_tb:
+      context_err = KeyReuseError(_source_context_message).with_traceback(filtered_tb)
+      context_err.__context__ = err.__context__
+      context_err.__cause__ = err.__cause__
+      context_err.__suppress_context__ = err.__suppress_context__
+      err.__context__ = None
+      err.__cause__ = context_err
+  return err
 
 
 # Create Source() and Sink() objects which validate inputs, have
@@ -145,19 +168,23 @@ class KeyReuseSignature:
 
   def check_signature(self, *args, funcname="function", context=None):
     for sink in self.sinks:
-      if not isinstance(args[sink.idx], prng.PRNGKeyArray):
+      key = args[sink.idx]
+      if not isinstance(key, prng.PRNGKeyArray):
         continue
-      if np.any(args[sink.idx]._consumed & sink.mask):
+      if np.any(key._consumed & sink.mask):
         msg = f"Previously-consumed key passed to {funcname} at index {sink.idx}"
         if context:
           msg += " {context}"
-        raise KeyReuseError(msg)
+        raise key_reuse_error_with_source_traceback(
+            msg, key._source_info and key._source_info.traceback)
 
   def update_consumption(self, args_in, args_out):
     for sink in self.sinks:
       arg = args_in[sink.idx]
       if isinstance(arg, prng.PRNGKeyArray):
         arg._consumed = arg._consumed | sink.mask
+        if np.any(sink.mask):
+          arg._source_info = source_info_util.current()
     for arg in args_out:
       if isinstance(arg, prng.PRNGKeyArray):
         arg._consumed = True

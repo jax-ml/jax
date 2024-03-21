@@ -34,6 +34,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import pretty_printer as pp
 from jax._src import sharding_specs
+from jax._src import source_info_util
 from jax._src import tree_util as tree_util_internal
 from jax._src import typing
 from jax._src import op_shardings
@@ -154,6 +155,7 @@ class PRNGKeyArray(jax.Array):
   _impl: PRNGImpl
   _base_array: typing.Array
   _consumed: bool | np.ndarray  # Used in jax.experimental.key_reuse.
+  _source_info: None | source_info_util.SourceInfo = None
 
   def __init__(self, impl, key_data: Any):
     assert not isinstance(key_data, core.Tracer)
