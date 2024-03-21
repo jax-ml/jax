@@ -1741,12 +1741,12 @@ class HostCallbackTapTest(jtu.JaxTestCase):
         comp, token, 123,
         [xops.Constant(comp, np.zeros((2, 3), dtype=np.float32))], 0)
     with self.assertRaisesRegex(
-        RuntimeError, ".*does not match previous shape element_type.*"):
+        RuntimeError, ".*does not match previous shape .*\n?element_type.*"):
       hcb._callback_handler_data.receiver.add_outfeed(
           comp, token, 123,
           [xops.Constant(comp, np.zeros((2, 3), dtype=np.int32))], 0)
     with self.assertRaisesRegex(
-        RuntimeError, ".*does not match previous shape element_type.*"):
+        RuntimeError, ".*does not match previous shape .*\n?element_type.*"):
       hcb._callback_handler_data.receiver.add_outfeed(
           comp, token, 123,
           [xops.Constant(comp, np.zeros((2,), dtype=np.float32))], 0)
