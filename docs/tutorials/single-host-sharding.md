@@ -1,3 +1,4 @@
+(single-host-sharding)=
 # Sharded data on a single host
 
 ```{note}

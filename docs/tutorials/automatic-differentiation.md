@@ -63,7 +63,7 @@ dfdx = jax.grad(f)
 The higher-order derivatives of $f$ are:
 
 $$
-\begin{array}{l}s
+\begin{array}{l}
 f'(x) = 3x^2 + 4x -3\\
 f''(x) = 6x + 4\\
 f'''(x) = 6\\
@@ -105,27 +105,27 @@ print(d4fdx(1.))
 The next example shows how to compute gradients with {func}`jax.grad` in a linear logistic regression model. First, the setup:
 
 ```{code-cell}
-key = jax.random.PRNGKey(0)
+key = jax.random.key(0)
 
 def sigmoid(x):
-    return 0.5 * (jnp.tanh(x / 2) + 1)
+  return 0.5 * (jnp.tanh(x / 2) + 1)
 
 # Outputs probability of a label being true.
 def predict(W, b, inputs):
-    return sigmoid(jnp.dot(inputs, W) + b)
+  return sigmoid(jnp.dot(inputs, W) + b)
 
 # Build a toy dataset.
 inputs = jnp.array([[0.52, 1.12,  0.77],
-                   [0.88, -1.08, 0.15],
-                   [0.52, 0.06, -1.30],
-                   [0.74, -2.49, 1.39]])
+                    [0.88, -1.08, 0.15],
+                    [0.52, 0.06, -1.30],
+                    [0.74, -2.49, 1.39]])
 targets = jnp.array([True, True, False, True])
 
 # Training loss is the negative log-likelihood of the training examples.
 def loss(W, b):
-    preds = predict(W, b, inputs)
-    label_probs = preds * targets + (1 - preds) * (1 - targets)
-    return -jnp.sum(jnp.log(label_probs))
+  preds = predict(W, b, inputs)
+  label_probs = preds * targets + (1 - preds) * (1 - targets)
+  return -jnp.sum(jnp.log(label_probs))
 
 # Initialize random model coefficients
 key, W_key, b_key = jax.random.split(key, 3)
@@ -138,20 +138,20 @@ Use the {func}`jax.grad` function with its `argnums` argument to differentiate a
 ```{code-cell}
 # Differentiate `loss` with respect to the first positional argument:
 W_grad = grad(loss, argnums=0)(W, b)
-print('W_grad', W_grad)
+print(f'{W_grad=}')
 
 # Since argnums=0 is the default, this does the same thing:
 W_grad = grad(loss)(W, b)
-print('W_grad', W_grad)
+print(f'{W_grad=}')
 
 # But you can choose different values too, and drop the keyword:
 b_grad = grad(loss, 1)(W, b)
-print('b_grad', b_grad)
+print(f'{b_grad=}')
 
 # Including tuple values
 W_grad, b_grad = grad(loss, (0, 1))(W, b)
-print('W_grad', W_grad)
-print('b_grad', b_grad)
+print(f'{W_grad=}')
+print(f'{b_grad=}')
 ```
 
 The {func}`jax.grad` API has a direct correspondence to the excellent notation in Spivak's classic *Calculus on Manifolds* (1965), also used in Sussman and Wisdom's [*Structure and Interpretation of Classical Mechanics*](https://mitpress.mit.edu/9780262028967/structure-and-interpretation-of-classical-mechanics) (2015) and their [*Functional Differential Geometry*](https://mitpress.mit.edu/9780262019347/functional-differential-geometry) (2013). Both books are open-access. See in particular the "Prologue" section of *Functional Differential Geometry* for a defense of this notation.
@@ -162,7 +162,8 @@ Essentially, when using the `argnums` argument, if `f` is a Python function for 
 (automatic-differentiation-nested-lists-tuples-and-dicts)=
 ## 3. Differentiating with respect to nested lists, tuples, and dicts
 
-Differentiating with respect to standard Python containers just works, so use tuples, lists, and dicts (and arbitrary nesting) however you like.
+Due to JAX's PyTree abstraction (see {ref}`thinking-in-jax-pytrees`), differentiating with
+respect to standard Python containers just works, so use tuples, lists, and dicts (and arbitrary nesting) however you like.
 
 Continuing the previous example:
 
@@ -181,7 +182,7 @@ You can {ref}`pytrees-custom-pytree-nodes` to work with not just {func}`jax.grad
 (automatic-differentiation-evaluating-using-jax-value_and_grad)=
 ## 4. Evaluating a function and its gradient using `jax.value_and_grad`
 
-Another convenient function is {func}`jax.value_and_grad` for efficiently computing both a function's value as well as its gradient's value.
+Another convenient function is {func}`jax.value_and_grad` for efficiently computing both a function's value as well as its gradient's value in one pass.
 
 Continuing the previous examples:
 

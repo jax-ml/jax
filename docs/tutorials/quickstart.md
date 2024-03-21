@@ -29,7 +29,11 @@ JAX can be installed for CPU on Linux, Windows, and macOS directly from the [Pyt
 ```
 pip install "jax[cpu]"
 ```
-For more detailed installation information, including installation with GPU support, check out {ref}`installation`.
+or, for NVIDIA GPU:
+```
+pip install -U "jax[cuda12_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+```
+For more detailed platform-specific installation information, check out {ref}`installation`.
 
 ## JAX as NumPy
 
@@ -121,6 +125,13 @@ In the above example we jitted `sum_logistic` and then took its derivative. We c
 print(grad(jit(grad(jit(grad(sum_logistic)))))(1.0))
 ```
 
+The {func}`jax.jacobian` transformation can be used to compute gradients of vector-valued functions:
+
+```{code-cell}
+from jax import jacobian
+print(jacobian(jnp.exp)(x_small))
+```
+
 For more advanced autodiff, you can use {func}`jax.vjp` for reverse-mode vector-Jacobian products and {func}`jax.jvp` for forward-mode Jacobian-vector products.
 The two can be composed arbitrarily with one another, and with other JAX transformations.
 Here's one way to compose them to make a function that efficiently computes full Hessian matrices:
@@ -140,7 +151,7 @@ For more on automatic differentiation in JAX, check out {ref}`automatic-differen
 
 Another useful transformation is {func}`~jax.vmap`, the vectorizing map.
 It has the familiar semantics of mapping a function along array axes, but instead of keeping the loop on the outside, it pushes the loop down into a function’s primitive operations for better performance.
-When composed with {func}`~jax.jit`, it can be just as fast as adding the batch dimensions manually.
+When composed with {func}`~jax.jit`, it can be just as performant as manually rewriting your function operate over an extra batch dimension.
 
 We're going to work with a simple example, and promote matrix-vector products into matrix-matrix products using {func}`~jax.vmap`.
 Although this is easy to do by hand in this specific case, the same technique can apply to more complicated functions.

@@ -12,6 +12,13 @@ kernelspec:
   name: python3
 ---
 
+```{code-cell}
+:tags: [remove-cell]
+
+# This ensures that code cell tracebacks appearing below will be concise.
+%xmode minimal
+```
+
 (thinking-in-jax)=
 # How to think in JAX
 
@@ -73,10 +80,6 @@ print(x)
 The equivalent in JAX results in an error, as JAX arrays are immutable:
 
 ```{code-cell}
-%xmode minimal
-```
-
-```python
 :tags: [raises-exception]
 
 # JAX: immutable arrays
@@ -86,7 +89,7 @@ x[0] = 10
 
 For updating individual elements, JAX provides an [indexed update syntax](https://jax.readthedocs.io/en/latest/jax.ops.html#indexed-update-operators) that returns an updated copy:
 
-```python
+```{code-cell}
 y = x.at[0].set(10)
 print(x)
 print(y)
@@ -98,53 +101,91 @@ print(y)
 **Key concepts:**
 
 - `jax.Array` is the default array implementation in JAX.
-- The JAX array is a unified distributed datatype for representing arrays, even with physical storage spanning multiple devices
-- Automatic parallelization: You can operate over sharded `jax.Array`s without copying data onto a device using the {func}`jax.jit` transformation. You can also replicate a `jax.Array` to every device on a mesh.
+- JAX arrays may be stored on a single device, or sharded across many devices.
 
-Consider this simple example:
+When you create an array in JAX, the type is `jax.Array`:
 
 ```{code-cell}
 import jax
-from jax import Array
 import jax.numpy as jnp
 
-x = jnp.arange(5)
-isinstance(x, jax.Array)  # Returns True both inside and outside traced functions.
-
-def f(x: Array) -> Array:  # Type annotations are valid for traced and non-traced types.
-  return x
+x = jnp.arange(10)
+isinstance(x, jax.Array)
 ```
 
-The `jax.Array` type also helps make parallelism a core feature of JAX.
+`jax.Array` is also the appropriate type annotation for functions with array inputs or outputs:
+
+```{code-cell}
+def f(x: jax.Array) -> jax.Array:
+  return jnp.sin(x) ** 2 + jnp.cos(x) ** 2
+```
+
+JAX Array objects have a `devices` method that lets you inspect where the contents of the array are stored. In the simplest cases, this will be a single CPU device:
+
+```{code-cell}
+x.devices()
+```
+
+In general, an array may be *sharded* across multiple devices, in a manner that can be inspected via the `sharding` attribute:
+
+```{code-cell}
+x.sharding
+```
+
+In this case the sharding is on a single device, but in general a JAX array can be
+sharded across multiple devices, or even multiple hosts.
+To read more about sharded arrays and parallel computation, refer to {ref}`single-host-sharding`
 
 (thinking-in-jax-pytrees)=
-# Pytrees
+## Pytrees
 
 **Key concepts:**
 
-- JAX supports a special data structure called a pytree when you need to operate on dictionaries of lists, for example.
-- Use cases: machine learning model parameters, dataset entries, lists of lists of dictionaries.  
+- JAX supports tuples, dicts, lists, and more general containers of arrays through the
+  *pytree* abstraction.
 
-JAX has built-in support for objects that look like dictionaries (dicts) of arrays, or lists of lists of dicts, or other nested structures — they are called JAX pytrees (also known as nests, or just trees). In the context of machine learning, a pytree can contain model parameters, dataset entries, and reinforcement learning agent observations.
+Often it is convenient for applications to work with collections of arrays: for example,
+a neural network might organize its parameters in a dictionary of arrays with meaningful
+keys. Rather than handle such structures on a case-by-case basis, JAX relies on a *pytree*
+abstraction to treat such collections in a uniform matter.
+In JAX any pytree is safe to pass to transformed functions, which makes them much more flexible
+than if they only accepted single arrays as arguments.
 
-Below is an example of a simple pytree. In JAX, you can use {func}`jax.tree_util.tree_leaves`, to extract the flattened leaves from the trees, as demonstrated here:
+Here are some examples of objects that can be treated as pytrees:
 
 ```{code-cell}
-example_trees = [
-    [1, 'a', object()],
-    (1, (2, 3), ()),
-    [1, {'k1': 2, 'k2': (3, 4)}, 5],
-    {'a': 2, 'b': (2, 3)},
-    jnp.array([1, 2, 3]),
-]
+# (nested) list of parameters
+params = [1, 2, (jnp.arange(3), jnp.ones(2))]
 
-# Let's see how many leaves they have:
-for pytree in example_trees:
-  leaves = jax.tree_util.tree_leaves(pytree)
-  print(f"{repr(pytree):<45} has {len(leaves)} leaves: {leaves}")
+print(jax.tree.structure(params))
+print(jax.tree.leaves(params))
 ```
 
-{func}`jax.tree_map` is the most commonly used pytree function in JAX. It works analogously to Python's native map, but on entire pytrees.
+```{code-cell}
+# Dictionary of parameters
+params = {'n': 5, 'W': jnp.ones((2, 2)), 'b': jnp.zeros(2)}
+
+print(jax.tree.structure(params))
+print(jax.tree.leaves(params))
+```
+
+```{code-cell}
+# Named tuple of parameters
+from typing import NamedTuple
+
+class Params(NamedTuple):
+  a: int
+  b: float
+
+params = Params(1, 5.0)
+print(jax.tree.structure(params))
+print(jax.tree.leaves(params))
+```
+
+JAX has a number of general-purpose utilities for working with PyTrees; for example
+the functions {func}`jax.tree.map` can be used to map a function to every leaf in a
+tree, and {func}`jax.tree.reduce` can be used to apply a reduction across the leaves
+in a tree.
 
 You can learn more in the {ref}`working-with-pytrees` tutorial.
 
@@ -312,7 +353,7 @@ f(x2, y2)
 
 The extracted sequence of operations is encoded in a JAX expression, or *jaxpr* for short. You can view the jaxpr using the {func}`jax.make_jaxpr` transformation:
 
-```python
+```{code-cell}
 from jax import make_jaxpr
 
 def f(x, y):
