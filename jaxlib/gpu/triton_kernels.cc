@@ -31,6 +31,7 @@
 #include "jaxlib/gpu/vendor.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/stream_executor/gpu/asm_compiler.h"
+#include "tsl/platform/env.h"
 
 #define GPU_RETURN_IF_ERROR(expr) JAX_RETURN_IF_ERROR(JAX_AS_STATUS(expr))
 
