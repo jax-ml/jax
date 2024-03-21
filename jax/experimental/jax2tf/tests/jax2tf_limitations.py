@@ -547,6 +547,12 @@ class Jax2TfLimitation(test_harnesses.Limitation):
         # may be more precise.
         custom_numeric(dtypes=[np.float16], devices=["cpu"], tol=1e-2,
                        modes=("eager", "graph", "compiled")),
+        # Flakiness on different_dtypes_lhs_int16_4_3_rhs_float16_3_6_dimensionnumbers_1_0_enable_xla_True
+        # Strangely, we only see the flakiness in primitives_graph_serialization_test_gpu_pjrt_c_api
+        custom_numeric(dtypes=[np.int16], devices=["gpu"], tol=1e-2,
+                       modes=("eager", "graph", "compiled"),
+                       enabled=(harness.params["enable_xla"] and
+                                harness.dtype != harness.params["rhs_dtype"])),
     ]
 
   @classmethod
