@@ -19,10 +19,3 @@ xla_workspace0()
 
 load("//third_party/flatbuffers:workspace.bzl", flatbuffers = "repo")
 flatbuffers()
-
-load("//third_party/robin_map:workspace.bzl", robin_map = "repo")
-robin_map()
-
-load("//third_party/nanobind:workspace.bzl", nanobind = "repo")
-nanobind()
-
