@@ -77,7 +77,7 @@ zip, unsafe_zip = safe_zip, zip  # pylint: disable=redefined-builtin
 
 @dataclasses.dataclass
 class MeshContext:
-  logical_to_mesh: ir.Value
+  mesh_shape: tuple[int, ...]
   axis_names: tuple[str, ...]
   mesh_strides: tuple[int, ...]
 
@@ -298,20 +298,7 @@ class MosaicGridMapping:
     mesh_strides = pallas_utils.strides_from_shape(tuple(
         mesh.shape[a] for a in axis_names
     ))
-    logical_to_mesh = np.empty((mesh.size, len(axis_names)), dtype=np.int32)
-    for i, idx in enumerate(np.ndindex(*mesh.device_ids.shape)):
-      logical_to_mesh[i] = np.array(idx)
-    self.mesh_info = MeshInfo(logical_to_mesh, axis_names, mesh_strides)
-    l_to_m_aval = pl_core.AbstractMemoryRef(
-        jax_core.raise_to_shaped(jax_core.get_aval(logical_to_mesh)),
-        TPUMemorySpace.SMEM,
-    )
-    # We are now passing in the logical -> mesh index mapping
-    # TODO(sharadmv,apaszke): avoid stalling pipeline by marking the index
-    # mapping as scalar prefetch and instead just mark it as an SMEM operand.
-    self.scalar_prefetch_types = (
-        _get_arg_type(l_to_m_aval, None)[0],
-        *self.scalar_prefetch_types)
+    self.mesh_info = MeshInfo(mesh.device_ids.shape, axis_names, mesh_strides)
 
   def maybe_compress_grid(self):
     # If we have many leading parallel dimensions, we should "compress" them
@@ -324,9 +311,7 @@ class MosaicGridMapping:
     return bool(jax_core.used_axis_names_jaxpr(self.jaxpr))
 
   def get_extra_args(self) -> tuple[Any, ...]:
-    if self.mesh_info is None:
-      return ()
-    return (self.mesh_info.logical_to_mesh,)
+    return ()
 
   def get_dimension_semantics(self) -> ir.ArrayAttr:
 
@@ -344,7 +329,7 @@ class MosaicGridMapping:
 
 @dataclasses.dataclass
 class MeshInfo:
-  logical_to_mesh: np.ndarray
+  mesh_shape: tuple[int, ...]
   axis_names: list[str]
   mesh_strides: tuple[int, ...]
 
@@ -469,9 +454,9 @@ def lower_jaxpr_to_transform_func(
 
     mesh_info = mosaic_grid_mapping.mesh_info
     if mesh_info is not None:
-      (l_to_m,), scalar_prefetch = split_list(scalar_prefetch, [1])
-      mesh_context = MeshContext(l_to_m, mesh_info.axis_names,
-                                 mesh_info.mesh_strides)
+      mesh_context = MeshContext(
+          mesh_info.mesh_shape, mesh_info.axis_names, mesh_info.mesh_strides
+      )
     else:
       mesh_context = None
     lowering_context = LoweringContext(
@@ -527,9 +512,9 @@ def lower_jaxpr_to_func(
                           if i not in mosaic_grid_mapping.mapped_dims)
     mesh_info = mosaic_grid_mapping.mesh_info
     if mesh_info is not None:
-      (l_to_m,), scalar_prefetch = split_list(scalar_prefetch, [1])
-      mesh_context = MeshContext(l_to_m, mesh_info.axis_names,
-                                 mesh_info.mesh_strides)
+      mesh_context = MeshContext(
+          mesh_info.mesh_shape, mesh_info.axis_names, mesh_info.mesh_strides
+      )
     else:
       mesh_context = None
     lowering_context = LoweringContext(
@@ -2145,11 +2130,15 @@ def _device_id_lowering_rule(ctx: LoweringRuleContext):
 lowering_rules[tpu_primitives.device_id_p] = _device_id_lowering_rule
 
 def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: str):
-  device_id = _make_index(tpu.DeviceIdOp().result)
-  l_to_m = ctx.lowering_context.mesh_context.logical_to_mesh
+  device_id = tpu.DeviceIdOp().result
+  mesh_shape = ctx.lowering_context.mesh_context.mesh_shape
   axis_names = ctx.lowering_context.mesh_context.axis_names
-  col = _make_index(axis_names.index(axis_name))
-  return memref.LoadOp(l_to_m, [device_id, col]).result
+  axis_index = axis_names.index(axis_name)
+  axis_size = ir_constant(mesh_shape[axis_index])
+  minor_divisor = ir_constant(
+      np.prod(mesh_shape[axis_index + 1 :], dtype=np.int32)
+  )
+  return arith.remsi(arith.divsi(device_id, minor_divisor), axis_size)
 lowering_rules[lax.axis_index_p] = _axis_index_rule
 
 def _get_barrier_semaphore_rule(ctx: LoweringRuleContext):
