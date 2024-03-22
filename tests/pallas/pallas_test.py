@@ -1551,7 +1551,7 @@ class PallasOpsTest(PallasTest):
       for fn, dtype in itertools.product(*args)
   )
   def test_elementwise(self, fn, dtype):
-    if fn is lax.exp2 and jaxlib_version < (0, 4, 26):
+    if fn is jnp.exp2 and jaxlib_version < (0, 4, 26):
       self.skipTest("Requires jaxlib 0.4.26 or later")
 
     @functools.partial(
