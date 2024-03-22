@@ -2927,6 +2927,16 @@ class ArrayPjitTest(jtu.JaxTestCase):
         'out_shardings should not be specified.'):
       pjit(lambda x: x, out_shardings=s, device=jax.devices()[0])
 
+  def test_check_arg_error(self):
+    sds = jax.ShapeDtypeStruct((4, 2), np.int32)
+    inp = np.arange(8).reshape(4, 2)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"Argument 'x\['b'\]\['c'\]' of shape int32\[4,2\] of "
+        "type.*ShapeDtypeStruct.*is not a valid JAX type."):
+      jax.jit(lambda x: x)({'a': inp, 'b': {'c': sds}})
+
   def test_pjit_device_backend_both_error(self):
     with self.assertRaisesRegex(
         ValueError, "can't specify both a device and a backend for jit"):

@@ -110,8 +110,6 @@ def tuple_sharding_proto(elems):
   return proto
 
 
-
-
 ### handlers
 
 # JAX abstract values -> XLA shapes
@@ -132,6 +130,10 @@ _xla_shape_handlers[core.AbstractToken] = lambda _: (xc.Shape.token_shape(),)
 
 # IR constants
 
+class InvalidInputException(Exception):
+  pass
+
+
 # TODO(mattjj): try to remove this canonicalize_dtype stuff
 def canonicalize_dtype(x):
   typ = type(x)
@@ -142,8 +144,8 @@ def canonicalize_dtype(x):
     if handler: return handler(x)
   if hasattr(x, '__jax_array__'):
     return canonicalize_dtype(x.__jax_array__())
-  raise TypeError(f"Argument '{x}' of type {type(x)} is not a valid "
-                  "JAX type.")
+  raise InvalidInputException(
+      f"Argument '{x}' of type {type(x)} is not a valid JAX type.")
 
 def _canonicalize_masked_array_dtype(x):
   raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "

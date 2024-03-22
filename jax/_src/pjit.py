@@ -167,9 +167,11 @@ def _python_pjit_helper(jit_info, *args, **kwargs):
       _infer_params(jit_info, args, kwargs)
   for arg in args_flat:
     dispatch.check_arg(arg)
+
   if attrs_tracked:
     init_states = _get_states(attrs_tracked)
     args_flat = [*init_states, *args_flat]
+
   try:
     out_flat = pjit_p.bind(*args_flat, **params)
   except pxla.DeviceAssignmentMismatchError as e:
@@ -180,11 +182,28 @@ def _python_pjit_helper(jit_info, *args, **kwargs):
     msg = _device_assignment_mismatch_error(
         fun_name, fails, args_flat, api_name, arg_names)
     raise ValueError(msg) from None
+  except xla.InvalidInputException as e:
+    arg_names = [''] * len(args_flat) if arg_names is None else arg_names
+    # Run canonicalization again to figure out which arg failed.
+    if params['jaxpr'].consts:
+      raise TypeError(e.args[0]) from e
+    else:
+      for arg, name, aval in zip(args_flat, arg_names, params['jaxpr'].in_avals):
+        try:
+          xla.canonicalize_dtype(arg)
+        except xla.InvalidInputException as _:
+          # Reraise as TypeError with the new message.
+          raise TypeError(
+              f"Argument '{name}' of shape {aval.str_short()} of type"
+              f' {type(arg)} is not a valid JAX type.') from e
+      raise AssertionError("Unreachable") from e
+
   if attrs_tracked:
     final_states, out_flat = split_list(out_flat, [len(attrs_tracked)])
     _set_states(attrs_tracked, final_states)
   outs = tree_unflatten(out_tree, out_flat)
   return outs, out_flat, out_tree, args_flat, params['jaxpr'], attrs_tracked
+
 
 def _set_states(attrs_tracked, vals):
   from jax.experimental.attrs import jax_setattr  # type: ignore
