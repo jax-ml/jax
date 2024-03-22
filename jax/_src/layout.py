@@ -14,6 +14,8 @@
 
 from __future__ import annotations
 
+import re
+
 from jax._src.lib import xla_client as xc
 
 
@@ -22,10 +24,16 @@ class Layout:
   pass
 
 
-class SpecifiedLayout(Layout):
-  layout: xc.PjRtLayout
+class XLACompatibleLayout(Layout):
 
-  def __init__(self, layout: xc.PjRtLayout):
+  def _to_xla_layout(self) -> str:
+    raise NotImplementedError("Subclasses should implement this method.")
+
+
+class SpecifiedLayout(XLACompatibleLayout):
+  layout: xc.Layout
+
+  def __init__(self, layout: xc.Layout):
     self._layout = layout
     self._layout_str = str(self._layout)
 
@@ -43,10 +51,19 @@ class SpecifiedLayout(Layout):
   def _to_xla_layout(self) -> str:
     return self._layout_str
 
+  @property
+  def _minor_to_major(self):
+    m = re.search("{([0-9,]*):", str(self))
+    assert m is not None
+    m2m_str = m.group(1)
+    if m2m_str == "":
+      return ()
+    return tuple(int(x) for x in m2m_str.split(","))
 
-class AutoLayout:
+
+class LayoutRequest:
 
   def __repr__(self):
-    return "AUTO"
+    return "Request a layout from the compiler"
 
-AUTO = AutoLayout()
+AUTO = LayoutRequest()

@@ -198,10 +198,8 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
     self.assertEqual(dev.default_memory().kind, "device")
 
   def test_parameter_streaming(self):
-    self.skipTest("Enable after pinned_host support exists")
-
-    _, s_host, np_inp, inp_host = _create_inputs(
-        (8, 2), P("x", "y"), mem_kind="pinned_host")
+    _, s_host, _, inp_host = _create_inputs(
+        (8, 2), P("x", "y"), mem_kind="unpinned_host")
     s_dev = s_host.with_memory_kind('device')
     inp_dev = jax.device_put(inp_host, s_dev)
 

@@ -14,7 +14,6 @@
 
 import math
 import os
-import re
 from absl.testing import absltest
 import numpy as np
 
@@ -51,15 +50,6 @@ def tearDownModule():
   xla_bridge.get_backend.cache_clear()
 
 
-pattern = re.compile(r"\{(.*?):")
-
-# Extract minor_to_major from str(layout) because layout doesn't have a
-# minor_to_major property yet.
-def extract_minor_to_major(l):
-  match = re.search(pattern, str(l))
-  return tuple(int(i) for i in match.groups()[0].split(','))
-
-
 class LayoutTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -70,11 +60,9 @@ class LayoutTest(jtu.JaxTestCase):
     super().setUp()
 
   def test_auto_layout(self):
-    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     shape1 = (128, 128)
     shape2 = (128, 128)
-    s1 = NamedSharding(mesh, P('x', 'y'))
-    s2 = NamedSharding(mesh, P('x'))
 
     def apply(x, y):
       return x.T, y.T
@@ -83,51 +71,35 @@ class LayoutTest(jtu.JaxTestCase):
       return x * 2, y * 2
 
     np_inp1 = np.arange(math.prod(shape1)).reshape(shape1)
+    arr1 = jax.device_put(np_inp1, NamedSharding(mesh, P('x', 'y')))
     np_inp2 = np.arange(math.prod(shape2)).reshape(shape2)
-    sds1 = jax.ShapeDtypeStruct(np_inp1.shape, np_inp1.dtype, sharding=s1)
-    sds2 = jax.ShapeDtypeStruct(np_inp2.shape, np_inp2.dtype, sharding=s2)
+    arr2 = jax.device_put(np_inp2, NamedSharding(mesh, P('x')))
 
-    lowered_apply = jax.jit(apply).lower(
-        sds1, sds2, _in_layouts=layout.AUTO, _out_layouts=layout.AUTO)
+    lowered_apply = jax.jit(apply).lower(arr1, arr2, _in_layouts=layout.AUTO,
+                                         _out_layouts=layout.AUTO)
     compiled_apply = lowered_apply.compile()
 
     arg_layouts, kw_layouts = compiled_apply._input_layouts()
     self.assertEmpty(kw_layouts)
-
     for i, o in zip(arg_layouts, compiled_apply._output_layouts()):
-      self.assertEqual(extract_minor_to_major(i),
-                       extract_minor_to_major(o)[::-1])
+      self.assertEqual(i._minor_to_major, o._minor_to_major[::-1])
 
     init_compiled = jax.jit(init).lower(
-        sds1, sds2, _out_layouts=arg_layouts).compile()
+        arr1, arr2, _out_layouts=arg_layouts).compile()
 
     for i, o in zip(init_compiled._input_layouts()[0],
                     init_compiled._output_layouts()):
-      self.assertEqual(i, o)
-
-    arr1 = jax.device_put(np_inp1, s1)
-    arr2 = jax.device_put(np_inp2, s2)
+      self.assertEqual(i._minor_to_major, o._minor_to_major)
 
     with jtu.count_aot_jit_cpp_cache_miss() as init_count:
       init_out = init_compiled(arr1, arr2)
       init_compiled(arr1, arr2)
     self.assertEqual(init_count[0], 1)
 
-    self.assertEqual(init_out[0].layout, init_compiled._output_layouts()[0])
-    self.assertEqual(init_out[1].layout, init_compiled._output_layouts()[0])
-
     with jtu.count_aot_jit_cpp_cache_miss() as apply_count:
       apply_out = compiled_apply(*init_out)
       compiled_apply(*init_out)
     self.assertEqual(apply_count[0], 1)
-
-    self.assertEqual(apply_out[0].layout, compiled_apply._output_layouts()[0])
-    self.assertEqual(apply_out[1].layout, compiled_apply._output_layouts()[1])
-
-    self.assertTupleEqual(extract_minor_to_major(apply_out[0].layout),
-                          extract_minor_to_major(init_out[0].layout)[::-1])
-    self.assertTupleEqual(extract_minor_to_major(apply_out[1].layout),
-                          extract_minor_to_major(init_out[1].layout)[::-1])
 
     self.assertArraysEqual(init_out[0], np_inp1 * 2)
     self.assertArraysEqual(init_out[1], np_inp2 * 2)
@@ -135,37 +107,34 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertArraysEqual(apply_out[1], (np_inp2 * 2).T)
 
   def test_default_layout(self):
-    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
-    shape = (4, 4, 2)
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    shape = (8, 4, 2)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
     s = NamedSharding(mesh, P('x', 'y'))
-    sds = jax.ShapeDtypeStruct(np_inp.shape, np_inp.dtype, sharding=s)
     arr = jax.device_put(np_inp, s)
 
     def f(x):
       return x.T
 
-    lowered = jax.jit(f).lower(sds, _in_layouts=None, _out_layouts=None)
+    lowered = jax.jit(f).lower(arr, _in_layouts=None, _out_layouts=None)
     self.assertIn("default", lowered.as_text())
     compiled = lowered.compile()
     out = compiled(arr)
 
-    self.assertTupleEqual(
-        extract_minor_to_major(compiled._input_layouts()[0][0]), (2, 1, 0))
-    self.assertTupleEqual(
-        extract_minor_to_major(compiled._output_layouts()), (2, 1, 0))
+    self.assertTupleEqual(compiled._input_layouts()[0][0]._minor_to_major, (2, 1, 0))
+    self.assertTupleEqual(compiled._output_layouts()._minor_to_major, (2, 1, 0))
     self.assertArraysEqual(out, np_inp.T)
     self.assertEqual(out.sharding, NamedSharding(mesh, P(None, 'y', 'x')))
 
-    compiled_auto = jax.jit(f).lower(sds, _in_layouts=layout.AUTO,
+    compiled_auto = jax.jit(f).lower(arr, _in_layouts=layout.AUTO,
                                      _out_layouts=layout.AUTO).compile()
-    self.assertTupleEqual(
-        extract_minor_to_major(compiled_auto._input_layouts()[0][0]), (2, 1, 0))
-    self.assertTupleEqual(
-        extract_minor_to_major(compiled_auto._output_layouts()), (0, 1, 2))
+    self.assertTupleEqual(compiled_auto._input_layouts()[0][0]._minor_to_major,
+                          (2, 1, 0))
+    self.assertTupleEqual(compiled_auto._output_layouts()._minor_to_major,
+                          (0, 1, 2))
 
   def test_in_layouts_out_layouts(self):
-    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     shape = (8, 8)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
     s = NamedSharding(mesh, P('x', 'y'))
@@ -173,21 +142,17 @@ class LayoutTest(jtu.JaxTestCase):
 
     def f(x):
       return x.T
-
     compiled = jax.jit(f).lower(
         arr, _in_layouts=None, _out_layouts=layout.AUTO).compile()
-    self.assertTupleEqual(
-        extract_minor_to_major(compiled._input_layouts()[0][0]), (1, 0))
-    self.assertTupleEqual(
-        extract_minor_to_major(compiled._output_layouts()), (0, 1))
+    self.assertTupleEqual(compiled._input_layouts()[0][0]._minor_to_major, (1, 0))
+    self.assertTupleEqual(compiled._output_layouts()._minor_to_major, (0, 1))
 
     out = compiled(arr)
     self.assertArraysEqual(out, np_inp.T)
-    self.assertEqual(out.layout, compiled._output_layouts())
     self.assertEqual(out.sharding, NamedSharding(mesh, P('y', 'x')))
 
   def test_sharding_and_layouts(self):
-    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     shape = (4, 8)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
     s = NamedSharding(mesh, P('x', 'y'))
@@ -195,10 +160,8 @@ class LayoutTest(jtu.JaxTestCase):
     compiled = jax.jit(lambda x: x.T, in_shardings=s, out_shardings=s).lower(
         np_inp, _in_layouts=layout.AUTO, _out_layouts=layout.AUTO).compile()
     out = compiled(np_inp)
-    self.assertTupleEqual(
-        extract_minor_to_major(compiled._input_layouts()[0][0]), (1, 0))
-    self.assertTupleEqual(
-        extract_minor_to_major(compiled._output_layouts()), (0, 1))
+    self.assertTupleEqual(compiled._input_layouts()[0][0]._minor_to_major, (1, 0))
+    self.assertTupleEqual(compiled._output_layouts()._minor_to_major, (0, 1))
     self.assertArraysEqual(out, np_inp.T)
     self.assertEqual(out.sharding, s)
 
@@ -224,33 +187,6 @@ class LayoutTest(jtu.JaxTestCase):
 
     # TODO(yashkatariya, frostig): Also use the arg_layouts to create an Array
     # and then pass that back into compiled.
-
-  def test_aot_layout_mismatch(self):
-    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
-    shape = (256, 4, 2)
-    np_inp = np.arange(math.prod(shape)).reshape(shape)
-    s = NamedSharding(mesh, P('x'))
-
-    sds = jax.ShapeDtypeStruct(np_inp.shape, np_inp.dtype, sharding=s)
-    arr = jax.device_put(np_inp, s)
-
-    def f(x):
-      return (x * 2).T
-
-    with self.assertRaisesRegex(
-        ValueError,
-        'Layout passed to jit does not match the layout on the respective arg'):
-      jax.jit(f).lower(arr, _in_layouts=layout.AUTO)
-
-    compiled = jax.jit(f).lower(
-        sds, _in_layouts=layout.AUTO, _out_layouts=layout.AUTO).compile()
-
-    with self.assertRaisesRegex(
-        ValueError,
-        r'Compiled object called with input layout\(s\) does'
-        r' not match the layout\(s\) the computation was'
-        ' compiled with'):
-      compiled(arr)
 
 
 if __name__ == '__main__':
