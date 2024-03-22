@@ -26,6 +26,7 @@ from jax.experimental import mesh_utils
 from jax.sharding import Mesh  # pylint: disable=g-importing-member
 import numpy as np
 
+# pyformat: disable
 
 @dataclasses.dataclass(frozen=True)
 class MockTpuDevice:
@@ -241,22 +242,79 @@ class MeshUtilsTest(test_util.JaxTestCase):
     self.assertArraysEqual(assignment, expected_assignment_matrix)
 
   @parameterized.named_parameters(
-      ('4x4x4a', mock_4x4x4_devices, [2, 1, 32]),
-      ('4x4x4b', mock_4x4x4_devices, [8, 8, 1]),
-      ('4x4x8a', mock_4x4x8_devices, [2, 2, 8, 4]),
-      ('4x4x8b', mock_4x4x8_devices, [2, 4, 1, 16]),
-      ('4x8x8', mock_4x8x8_devices, [1, 128, 2]),
-      ('8x8', mock_8x8_devices, [2, 1, 32, 1]),
+      (
+          '4x4x4a',
+          mock_4x4x4_devices,
+          [2, 1, 32],
+          [
+              [1, 1, 4],
+              [1, 1, 4],
+              [2, 1, 2],
+          ],
+      ),
+      (
+          '4x4x4b',
+          mock_4x4x4_devices,
+          [8, 8, 1],
+          [
+              [1, 4, 1],
+              [2, 2, 1],
+              [4, 1, 1],
+          ],
+      ),
+      (
+          '4x4x8a',
+          mock_4x4x8_devices,
+          [2, 2, 8, 4],
+          [
+              [1, 1, 1, 4],
+              [2, 2, 1, 1],
+              [1, 1, 8, 1],
+          ],
+      ),
+      (
+          '4x4x8b',
+          mock_4x4x8_devices,
+          [2, 4, 1, 16],
+          [
+              [1, 1, 1, 4],
+              [1, 1, 1, 4],
+              [2, 4, 1, 1],
+          ],
+      ),
+      (
+          '4x8x8',
+          mock_4x8x8_devices,
+          [1, 128, 2],
+          [
+              [1, 2, 2],
+              [1, 8, 1],
+              [1, 8, 1],
+          ],
+      ),
+      (
+          '8x8',
+          mock_8x8_devices,
+          [2, 1, 32, 1],
+          [
+              [1, 1, 8, 1],
+              [2, 1, 4, 1],
+              [1, 1, 1, 1],
+          ],
+      ),
   )
   def test_create_device_mesh_for_nd_torus_split_axes_can_handle_axes_split(
-      self, devices, mesh_shape
+      self, devices, mesh_shape, assignment_matrix
   ):
     jax_devices = devices(True)
     physical_mesh = mesh_utils._get_physical_tpu_mesh(jax_devices)
-    logical_mesh, _ = mesh_utils._create_device_mesh_for_nd_torus(
+    logical_mesh, assignment = mesh_utils._create_device_mesh_for_nd_torus(
         physical_mesh, mesh_shape, allow_split_physical_axes=True
     )
     self.assertEqual(logical_mesh.shape, tuple(mesh_shape))
+    self.assertArraysEqual(
+        assignment, np.array(assignment_matrix, dtype=np.int64)
+    )
 
   @parameterized.named_parameters(
       ('2X4x4x4a', (1, 16, 4), (2, 1, 1)),
