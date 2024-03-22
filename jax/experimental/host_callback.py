@@ -1927,6 +1927,9 @@ if typing.TYPE_CHECKING:
   stop_outfeed_receiver = _deprecated_stop_outfeed_receiver
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+  from jax._src.deprecations import register
+  for deprecated in _deprecations.keys():
+    register(__name__, deprecated)
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del typing
