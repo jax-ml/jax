@@ -593,10 +593,9 @@ def _shaped_abstractify_slow(x):
 
 # TODO(mattjj,yashkatariya): replace xla.abstractify with this, same behavior
 def shaped_abstractify(x):
-  try:
-    return _shaped_abstractify_handlers[type(x)](x)
-  except KeyError:
-    return _shaped_abstractify_slow(x)
+  handler = _shaped_abstractify_handlers.get(type(x), None)
+  return handler(x) if handler is not None else _shaped_abstractify_slow(x)
+
 _shaped_abstractify_handlers: dict[Any, Callable[[Any], core.ShapedArray]] = {}
 
 
@@ -618,6 +617,13 @@ def _np_scalar_abstractify(x: np.generic) -> ShapedArray:
       dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True))
 _shaped_abstractify_handlers.update((t, _np_scalar_abstractify)
                                     for t in numpy_scalar_types)
+
+def _python_scalar_abstractify(x: int | float | complex | bool) -> ShapedArray:
+  typ = type(x)
+  dtype = dtypes._scalar_type_to_dtype(typ, x)
+  return ShapedArray((), dtype, weak_type=typ in dtypes._weak_types)
+_shaped_abstractify_handlers.update((t, _python_scalar_abstractify)
+                                    for t in dtypes.python_scalar_dtypes)
 
 # This decorator exists to make it easier to monkey-patch APIs in JAX.
 # By default it does nothing, but it can be monkey-patched to do other things.

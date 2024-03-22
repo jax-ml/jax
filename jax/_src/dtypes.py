@@ -623,10 +623,12 @@ def promote_types(a: DTypeLike, b: DTypeLike) -> DType:
   return np.dtype(_least_upper_bound(config.numpy_dtype_promotion.value, a_tp, b_tp))
 
 def is_weakly_typed(x: Any) -> bool:
+  if type(x) in _weak_types:
+    return True
   try:
     return x.aval.weak_type
   except AttributeError:
-    return type(x) in _weak_types
+    return False
 
 def is_python_scalar(x: Any) -> bool:
   try:
