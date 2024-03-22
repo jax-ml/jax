@@ -1251,7 +1251,6 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
   # if needed?
   if (sharding is not None and not isinstance(sharding, PmapSharding) and
       isinstance(fill_value, array.ArrayImpl)):
-
     broadcast_shape = sharding.shard_shape(shape)
     shard = broadcast(fill_value, broadcast_shape)
     return array.make_array_from_callback(shape, sharding, lambda _: shard)
@@ -1415,17 +1414,15 @@ def full_like(x: ArrayLike | DuckTypedArray,
   if dtypes.issubdtype(dtype, dtypes.extended):
     return dtype._rules.full(fill_shape, fill_value, dtype)  # type: ignore[union-attr]
 
+  # If `x` has a sharding but no `_committed` attribute
+  # (in case of ShapeDtypeStruct), default it to True.
   use_x_sharding = (
       sharding is None and
-      isinstance(x, array.ArrayImpl) and
-      not weak_type and x._committed and
-      # NB: consider reusng x.sharding for mismatched shapes
-      # if x is replicated or single device.
-      fill_shape == x.shape)
+      hasattr(x, 'sharding') and getattr(x, '_committed', True) and
+      not weak_type and fill_shape == x.shape)  # type: ignore
   if use_x_sharding:
-    assert isinstance(x, array.ArrayImpl)   # makes pytype happy.
     # TODO(yashkatariya): Use shard_alike in tracing_mode once it is supported.
-    sharding = x.sharding
+    sharding = x.sharding  # type: ignore
   val = full(fill_shape, _convert_element_type(fill_value, dtype, weak_type),
              sharding=sharding)
   return val

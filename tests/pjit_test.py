@@ -1824,6 +1824,18 @@ class ArrayPjitTest(jtu.JaxTestCase):
     for s in out4.addressable_shards:
       self.assertArraysEqual(s.data, input_data)
 
+  def test_sds_full_like(self):
+    # https://github.com/google/jax/issues/20390
+    mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    x = jax.ShapeDtypeStruct((4, 4), jnp.float32, sharding=s)
+    y = jnp.zeros_like(x)
+    z = jnp.zeros_like(x, device=y.sharding)
+
+    self.assertEqual(x.sharding, s)
+    self.assertEqual(y.sharding, s)
+    self.assertEqual(z.sharding, s)
+
   def test_in_axis_resources_mismatch_error(self):
     global_input_shape = (8, 2)
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
