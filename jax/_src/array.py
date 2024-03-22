@@ -34,10 +34,12 @@ from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import errors
+from jax._src import layout
 from jax._src import profiler
 from jax._src import tree_util
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension as xe
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
@@ -528,6 +530,18 @@ class ArrayImpl(basearray.Array):
     return out
 
   @property
+  def layout(self):
+    # TODO(yashkatariya): Remove the try;except when pathways supports layouts.
+    try:
+      return layout.SpecifiedLayout(self._pjrt_layout)
+    except xe.XlaRuntimeError as e:
+      msg, *_ = e.args
+      if type(msg) is str and msg.startswith("UNIMPLEMENTED"):
+        return None
+      else:
+        raise
+
+  @property
   def global_shards(self) -> Sequence[Shard]:
     """Returns list of all `Shard`s of the Array across all devices.
 
@@ -637,7 +651,7 @@ if not TYPE_CHECKING:
   ArrayImpl = use_cpp_class(xc.ArrayImpl)(ArrayImpl)
 
 
-# explicitly set to be unhashable. Same as what device_array.py does.
+# explicitly set to be unhashable.
 setattr(ArrayImpl, "__hash__", None)
 setattr(ArrayImpl, "__array_priority__", 100)
 

@@ -435,6 +435,7 @@ def _make_jit_wrapper(jit_info: PjitInfo):
     try:
       in_shardings = _resolve_in_shardings(
           args_flat, params['in_shardings'], params['out_shardings'], mesh)
+      in_layouts_flat = _resolve_in_layouts(args_flat, in_layouts_flat)
       lowering = _pjit_lower(
           params['jaxpr'], in_shardings, params['out_shardings'],
           params['resource_env'], params['donated_invars'], params['name'],
@@ -1130,7 +1131,6 @@ def explain_tracing_cache_miss(
   p("explanation unavailable! please open an issue at https://github.com/google/jax")
   return done()
 
-
 @partial(lu.cache, explain=explain_tracing_cache_miss)
 def _create_pjit_jaxpr(fun, in_type, debug_info, out_paths, ignored_inline):
   del ignored_inline  # just for explain_cache_miss
@@ -1264,6 +1264,28 @@ pjit_p = core.AxisPrimitive("pjit")
 pjit_p.multiple_results = True
 
 
+def _resolve_in_layouts(args, jit_in_layouts):
+  resolved_in_layouts = []
+  for arg, jit_in_l in safe_zip(args, jit_in_layouts):
+    arg_layout, committed = (
+        (arg.layout, getattr(arg, '_committed', True))
+        if getattr(arg, 'layout', None) is not None else (None, False))
+    if jit_in_l is None:
+      if committed:
+        resolved_in_layouts.append(arg_layout)
+      else:
+        resolved_in_layouts.append(None)
+    else:
+      if committed and arg_layout != jit_in_l:
+        raise ValueError('Layout passed to jit does not match the layout '
+                          'on the respective arg. '
+                          f'Got pjit layout: {jit_in_l},\n'
+                          f'arg sharding: {arg_layout} for '
+                          f'arg shape: {shaped_abstractify(arg).str_short()}')
+      resolved_in_layouts.append(jit_in_l)
+  return tuple(resolved_in_layouts)
+
+
 def _resolve_in_shardings(
     args, pjit_in_shardings: Sequence[PjitSharding],
     out_shardings: Sequence[PjitSharding],
@@ -1387,8 +1409,9 @@ def _pjit_call_impl_python(
   _most_recent_pjit_call_executable.weak_key_dict[jaxpr] = compiled
   # This check is expensive so only do it if enable_checks is on.
   if compiled._auto_spmd_lowering and config.enable_checks.value:
-    pxla.check_gda_or_array_xla_sharding_match(args, compiled._in_shardings,
-                                               jaxpr.jaxpr.debug_info)
+    pxla.check_array_xla_sharding_layout_match(
+        args, compiled._in_shardings, compiled._in_layouts,
+        jaxpr.jaxpr.debug_info)
   if config.distributed_debug.value:
     # Defensively only perform fingerprint logic if debug logging is enabled
     # NOTE(skyewm): I didn't benchmark this

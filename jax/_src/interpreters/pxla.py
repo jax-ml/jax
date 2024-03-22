@@ -60,7 +60,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
-from jax._src.layout import XLACompatibleLayout, SpecifiedLayout, LayoutRequest
+from jax._src.layout import SpecifiedLayout, AutoLayout
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
@@ -1985,13 +1985,14 @@ def are_all_shardings_default_mem_kind(da_object, shardings):
       return False
   return True
 
-MaybeLayout = Sequence[Union[XLACompatibleLayout, LayoutRequest, None]]
+MaybeLayout = Sequence[Union[SpecifiedLayout, AutoLayout, None]]
 
 
 class AllArgsInfo(NamedTuple):
   """Avals, shardings, layouts and debug_info for all arguments prior to DCE."""
   in_avals: Sequence[core.ShapedArray]
   in_shardings: Any
+  in_layouts: Any
   debug_info: core.JaxprDebugInfo | None
 
 
@@ -2023,7 +2024,7 @@ def lower_sharding_computation(
   auto_spmd_lowering = check_if_any_auto(
       it.chain.from_iterable([in_shardings, out_shardings]))  # type: ignore
 
-  all_args_info = AllArgsInfo(global_in_avals, in_shardings,
+  all_args_info = AllArgsInfo(global_in_avals, in_shardings, in_layouts,
                               closed_jaxpr.jaxpr.debug_info)
 
   (closed_jaxpr, global_in_avals, global_out_avals, donated_invars,
@@ -2227,8 +2228,6 @@ def lower_mesh_computation(
       out_jaxpr_avals = fun_or_jaxpr.out_avals
       consts = fun_or_jaxpr.consts
 
-  all_args_info = AllArgsInfo(global_in_avals, in_shardings, jaxpr.debug_info)
-
   assert len(out_shardings) == len(out_jaxpr_avals)
   if spmd_lowering:
     global_out_avals = out_jaxpr_avals
@@ -2319,7 +2318,7 @@ def lower_mesh_computation(
       in_layouts=(None,) * len(global_in_avals),
       out_layouts=(None,) * len(global_out_avals),
       shape_poly_state=lowering_result.shape_poly_state,
-      all_args_info=all_args_info)
+      all_args_info=None)
 
 class MeshComputation(stages.XlaLowering):
   _hlo: ir.Module | None
@@ -2599,7 +2598,7 @@ def _get_layouts_from_executable(
     if isinstance(i, SpecifiedLayout):
       if i != x:
         raise AssertionError(
-            f"Unexpected XLA layout override: (XLA) {x} != {i} (User sharding)")
+            f"Unexpected XLA layout override: (XLA) {x} != {i} (User layout)")
       new_in_layouts.append(i)
     else:
       new_in_layouts.append(x)
@@ -2610,7 +2609,7 @@ def _get_layouts_from_executable(
     if isinstance(o, SpecifiedLayout):
       if o != x:
         raise AssertionError(
-            f"Unexpected XLA layout override: (XLA) {x} != {o} (User sharding)")
+            f"Unexpected XLA layout override: (XLA) {x} != {o} (User layout)")
       new_out_layouts.append(o)
     else:
       new_out_layouts.append(x)
@@ -3016,6 +3015,7 @@ class MeshExecutable(stages.XlaExecutable):
       kept_args = [a for i, a in enumerate(args) if i in self._kept_var_idx]
       ref_avals = self.in_avals
       in_shardings = self._in_shardings
+      in_layouts = self._in_layouts
       debug_info = None
     else:
       kept_args = args
@@ -3023,12 +3023,16 @@ class MeshExecutable(stages.XlaExecutable):
       iter_in_shardings = iter(self._in_shardings)
       in_shardings = [next(iter_in_shardings) if i in self._kept_var_idx else s
                       for i, s in enumerate(self._all_args_info.in_shardings)]
+      iter_in_layouts = iter(self._in_layouts)
+      in_layouts = [next(iter_in_layouts) if i in self._kept_var_idx else s
+                    for i, s in enumerate(self._all_args_info.in_layouts)]
       debug_info = self._all_args_info.debug_info
 
     arg_avals = map(xla.abstractify, kept_args)
     check_arg_avals_for_call(ref_avals, arg_avals, debug_info)
     # Check the GDA sharding and the input sharding.
-    check_gda_or_array_xla_sharding_match(kept_args, in_shardings, debug_info)
+    check_array_xla_sharding_layout_match(kept_args, in_shardings,
+                                          in_layouts, debug_info)
     return self.unsafe_call(*args)  # pylint: disable=not-callable
 
   def input_shardings(self) -> Sequence[sharding_impls.XLACompatibleSharding]:
@@ -3184,15 +3188,17 @@ def check_device_backend_on_shardings(shardings) -> bool:
   return False
 
 
-def check_gda_or_array_xla_sharding_match(
+def check_array_xla_sharding_layout_match(
     args, in_xla_shardings: Sequence[sharding_impls.XLACompatibleSharding],
+    in_xla_layouts: Sequence[SpecifiedLayout],
     jaxpr_debug_info: core.JaxprDebugInfo | None) -> None:
   from jax._src.array import ArrayImpl
   arg_names = ([''] * len(args) if jaxpr_debug_info is None else
                jaxpr_debug_info.arg_names)
   errors = []
   num_errors = 5
-  for arg, xs, name in safe_zip(args, in_xla_shardings, arg_names):
+  for arg, xs, xl, name in safe_zip(args, in_xla_shardings, in_xla_layouts,
+                                    arg_names):
     if not isinstance(arg, ArrayImpl):
       continue
     if is_unspecified_or_auto(xs):
@@ -3205,27 +3211,47 @@ def check_gda_or_array_xla_sharding_match(
     # Raise memory kind mismatch error even if the arg is uncommitted.
     if arg.sharding.memory_kind != xs.memory_kind:
       errors.append(
-          "Got input sharding(s) that compiled object was called with: "
+          ("Got input sharding(s) that compiled object was called with: "
           f"{arg.sharding} and sharding(s) the computation was compiled "
-          f"with: {xs} for arg {name} with shape: {arg.aval.str_short()}")
+          f"with: {xs} for arg {name} with shape: {arg.aval.str_short()}",
+          'sharding'))
 
     if (not db_xs and arg._committed and
         not op_shardings.are_op_shardings_equal(
             arg.sharding._to_xla_hlo_sharding(arg.ndim),
             xs._to_xla_hlo_sharding(arg.ndim))):
       errors.append(
-          "Got input sharding(s) that compiled object was called with: "
+          ("Got input sharding(s) that compiled object was called with: "
           f"{arg.sharding} and sharding(s) the computation was compiled "
-          f"with: {xs} for arg {name} with shape: {arg.aval.str_short()}")
+          f"with: {xs} for arg {name} with shape: {arg.aval.str_short()}",
+          'sharding'))
+
+    # TODO(yashkatariya): Remove `arg.layout is not None` check after pathways
+    # supports layout on Array.
+    if (xla_extension_version >= 249 and not db_xs and arg._committed and
+        arg.layout is not None and arg.layout != xl):
+      errors.append(
+          ("Got input layout(s) that compiled object was called with: "
+          f"{arg.layout} and layout(s) the computation was compiled "
+          f"with: {xl} for arg {name} with shape: {arg.aval.str_short()}",
+          'layout'))
 
   if errors:
-    str_errors = '\n'.join(errors[:num_errors])
+    first_errors, error_kinds = unzip2(errors[:num_errors])
+    str_errors = '\n'.join(first_errors)
+    if all(k == 'sharding' for k in error_kinds):
+      kind_str = r'sharding(s)'
+    elif all(k == 'layout' for k in error_kinds):
+      kind_str = 'layout(s)'
+    else:
+      kind_str = 'sharding(s) and layout(s)'
     num_mismatch_str = (
         f'the {len(errors)} mismatches' if len(errors) < num_errors else
         f"{num_errors} mismatches out of {len(errors)}")
     raise ValueError(
-          "Compiled object called with input sharding(s) does not match the "
-          "sharding(s) the computation was compiled with. "
+          f"Compiled object called with input {kind_str} does "
+          f"not match the {kind_str} the computation was "
+          "compiled with. "
           f"Here are {num_mismatch_str}:\n{str_errors}")
 
 
