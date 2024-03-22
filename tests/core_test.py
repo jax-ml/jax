@@ -750,7 +750,7 @@ class DynamicShapesTest(jtu.JaxTestCase):
       core.check_jaxpr(jaxpr)
 
   def test_check_jaxpr_key_reuse(self):
-    with config.enable_key_reuse_checks(True):
+    with config.debug_key_reuse(True):
       def f(seed):
         key = jax.random.key(seed)
         return jax.random.uniform(key) + jax.random.normal(key)

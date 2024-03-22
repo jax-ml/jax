@@ -2861,7 +2861,7 @@ def check_jaxpr(jaxpr: Jaxpr):
     raise JaxprTypeError(msg) from None
 
   # Run key reuse checker after validating jaxpr:
-  if config.enable_key_reuse_checks.value:
+  if config.debug_key_reuse.value:
     # Import here to avoid circular imports
     from jax.experimental.key_reuse._core import check_key_reuse_jaxpr  # pytype: disable=import-error
     check_key_reuse_jaxpr(jaxpr)

@@ -677,7 +677,7 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertKeysEqual(key, jax.jit(lambda k: k.copy())(key))
 
   # TODO(jakevdp) remove this decorator when reuse checks move to C++
-  @jax.enable_key_reuse_checks(False)
+  @jax.debug_key_reuse(False)
   def test_cpp_dispatch_normal(self):
     # Ensure we stay on the C++ dispatch path when calling a jitted
     # function with a key array as an argument.
@@ -694,7 +694,7 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertEqual(count[0], 1)
 
   # TODO(jakevdp) remove this decorator when reuse checks move to C++
-  @jax.enable_key_reuse_checks(False)
+  @jax.debug_key_reuse(False)
   def test_cpp_dispatch_split(self):
     # Ensure we stay on the C++ dispatch path when calling a jitted
     # function with a key arrays as inputs and as outputs.
@@ -1277,7 +1277,7 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
 
     self.check_shape(key_func, keys(), key())
     self.check_shape(arr_func, keys(), key())
-    with jax.enable_key_reuse_checks(False):
+    with jax.debug_key_reuse(False):
       self.check_against_reference(key_func, arr_func, keys(), key())
 
   def test_ravel(self):
@@ -1322,7 +1322,7 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     key_func = arr_func = lambda x: x[idx]
 
     self.check_shape(key_func, keys())
-    with jax.enable_key_reuse_checks(False):
+    with jax.debug_key_reuse(False):
       self.check_against_reference(key_func, arr_func, keys())
 
   @parameterized.parameters([
@@ -1336,10 +1336,10 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     key_func = arr_func = lambda key: key.at[idx].get()
 
     self.check_shape(key_func, keys())
-    with jax.enable_key_reuse_checks(False):
+    with jax.debug_key_reuse(False):
       self.check_against_reference(key_func, arr_func, keys())
 
-  @jax.enable_key_reuse_checks(False)
+  @jax.debug_key_reuse(False)
   def test_equality(self):
     key = random.key(123)
     key2 = random.key(456)

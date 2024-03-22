@@ -530,7 +530,7 @@ key_reuse_signatures_dynamic[remat_p] = _remat_key_type_signature
 def key_reuse_impl_rule(prim, original_rule):
   @wraps(original_rule)
   def key_reuse_impl(*args, **kwargs):
-    if config.enable_key_reuse_checks.value:
+    if config.debug_key_reuse.value:
       if prim == pjit.pjit_p:
         funcname = "jit-compiled function"
         jaxpr = kwargs['jaxpr'].jaxpr

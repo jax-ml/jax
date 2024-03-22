@@ -20,16 +20,16 @@ This module contains **experimental** functionality for detecting reuse of rando
 keys within JAX programs. It is under active development and the APIs here are
 likely to change. The usage below requires JAX version 0.4.26 or newer.
 
-Key reuse checking can be enabled using the ``jax_enable_key_reuse_checks`` configuration.
+Key reuse checking can be enabled using the ``jax_debug_key_reuse`` configuration.
 This can be set globally using::
 
-  >>> jax.config.update('jax_enable_key_reuse_checks', True)  # doctest: +SKIP
+  >>> jax.config.update('jax_debug_key_reuse', True)  # doctest: +SKIP
 
-Or it can be enabled locally with the :func:`jax.enable_key_reuse_checks` context manager.
+Or it can be enabled locally with the :func:`jax.debug_key_reuse` context manager.
 When enabled, using the same key twice will result in a :class:`~jax.errors.KeyReuseError`::
 
   >>> import jax
-  >>> with jax.enable_key_reuse_checks(True):
+  >>> with jax.debug_key_reuse(True):
   ...   key = jax.random.key(0)
   ...   val1 = jax.random.normal(key)
   ...   val2 = jax.random.normal(key)  # doctest: +IGNORE_EXCEPTION_DETAIL

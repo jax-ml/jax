@@ -236,7 +236,7 @@ def _get_fastpath_data(
       # no ref state effects
       and not any(isinstance(e, RefEffect) for e in effects)
       # no prng reuse checking
-      and not (config.enable_key_reuse_checks.value and any(
+      and not (config.debug_key_reuse.value and any(
         hasattr(arg, 'dtype') and dtypes.issubdtype(arg.dtype, dtypes.prng_key)
         for arg in (*args_flat, *out_flat)))
       )
@@ -1150,7 +1150,7 @@ def _create_pjit_jaxpr(fun, in_type, debug_info, out_paths, ignored_inline):
   if not config.dynamic_shapes.value and not attrs_tracked:
     jaxpr = jaxpr_debug_info(jaxpr, debug_info, out_paths())
 
-  if config.enable_key_reuse_checks.value:
+  if config.debug_key_reuse.value:
     # Import here to avoid circular imports
     from jax.experimental.key_reuse._core import check_key_reuse_jaxpr
     check_key_reuse_jaxpr(jaxpr)

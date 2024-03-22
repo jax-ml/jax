@@ -1476,14 +1476,14 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     ndim = shape[0] if len(shape) > 1 else 1
 
     func = partial(resample, shape=())
-    with jax.enable_key_reuse_checks(False):
+    with jax.debug_key_reuse(False):
       self._CompileAndCheck(
         func, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
     result = func(*args_maker())
     assert result.shape == (ndim,)
 
     func = partial(resample, shape=(4,))
-    with jax.enable_key_reuse_checks(False):
+    with jax.debug_key_reuse(False):
       self._CompileAndCheck(
         func, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
     result = func(*args_maker())
