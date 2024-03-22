@@ -95,7 +95,11 @@ class RefView:
   indexers: tuple[indexing.NDIndexer, ...]
 
   @property
-  def shape(self) -> tuple[int, ...]:
+  def is_dynamic_size(self):
+    return self.indexers[-1].is_dynamic_size
+
+  @property
+  def shape(self) -> tuple[int | Array, ...]:
     assert (
         len(self.indexers) > 0
     ), "Should not be able to create a trivial RefView"

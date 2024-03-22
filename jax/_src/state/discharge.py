@@ -188,7 +188,10 @@ def _convert_to_array_indexer(indexer: indexing.NDIndexer
 
 def _maybe_convert_to_dynamic_slice(
     indexer: indexing.NDIndexer,
-) -> tuple[tuple[Array | int, ...], tuple[int, ...], tuple[int, ...]] | None:
+) -> (
+    tuple[tuple[Array | int, ...], tuple[Array | int, ...], tuple[int, ...]]
+    | None
+):
   # An NDIndexer only corresponds to a `dynamic_slice` or `dynamic_update_slice`
   # if each of the indexers is a `Slice` or a ()-shaped value.
   if not all(isinstance(i, indexing.Slice) or not np.shape(i)

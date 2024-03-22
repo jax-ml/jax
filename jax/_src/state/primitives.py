@@ -148,11 +148,12 @@ def ref_addupdate(ref_or_view: AbstractRef, idx: Indexer | None, x: Array) -> No
 
 
 def _shape_after_indexing(
-    shape: tuple[int, ...], indexers: tuple[indexing.NDIndexer, ...]
-) -> tuple[int, ...]:
+    shape: tuple[int | Array, ...], indexers: tuple[indexing.NDIndexer, ...]
+) -> tuple[int | Array, ...]:
   for indexer in indexers:
     # Run some simple checks that all the indexers have consistent shapes
-    assert indexer.shape == shape, (indexer.shape, shape)
+    if not indexer.is_dynamic_size:
+      assert indexer.shape == shape, (indexer.shape, shape)
     shape = indexer.get_indexer_shape()
   return shape
 
@@ -239,12 +240,26 @@ def _pp_slice(context: core.JaxprPpContext, dim, slc: indexing.Slice
   start, size = slc.start, slc.size
   if isinstance(start, core.Var):
     start_str = core.pp_var(start, context)
-    end_str = f'{start_str}+{size}'
+    size_str = (
+        core.pp_var(size, context)
+        if isinstance(size, core.Var)
+        else str(size)
+    )
+    return f'{start_str}:{start_str}+{size_str}'
   else:
-    start_str = '' if start == 0 else str(start)
-    end = start + size
-    end_str = '' if end == dim else str(end)
-  return f'{start_str}:{end_str}'
+    start_str = str(start)
+    if start == 0:
+      start_str = ''
+    if isinstance(size, core.Var):
+      size_str = core.pp_var(size, context)
+      if start_str:
+        return f'{start_str}:{start_str}+{size_str}'
+      else:
+        return f':{size_str}'
+    else:
+      end = start + size
+      end_str = '' if end == dim else str(end)
+      return f'{start_str}:{end_str}'
 
 def pp_indexer(context: core.JaxprPpContext,indexer: indexing.NDIndexer
                 ) -> pp.Doc:

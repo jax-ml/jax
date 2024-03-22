@@ -2061,5 +2061,69 @@ class PallasCallPipelineTest(parameterized.TestCase):
     )
 
 
+class PallasCallDynamicDMATest(PallasTPUTest):
+
+  def setUp(self):
+    super().setUp()
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('DMAs not supported on TPU generations <= 3')
+
+  def test_simple_tile_aligned_dynamic_size_dma(self):
+
+    def kernel(size_smem_ref, x_hbm_ref, _, o_hbm_ref, sem):
+      size = size_smem_ref[0]
+      pltpu.async_copy(
+          x_hbm_ref.at[pl.ds(0, size)],
+          o_hbm_ref.at[pl.ds(0, size)], sem).wait()
+
+    x = jnp.tile(jnp.arange(8, dtype=jnp.int32)[:, None, None], [1, 8, 128])
+    o = jnp.zeros((8, 8, 128), dtype=jnp.int32)
+    size = jnp.array([4], dtype=jnp.int32)
+
+    out = pl.pallas_call(
+        kernel,
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+          num_scalar_prefetch=0,
+          in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM),
+                    pl.BlockSpec(memory_space=pltpu.ANY),
+                    pl.BlockSpec(memory_space=pltpu.ANY)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+          scratch_shapes=[pltpu.SemaphoreType.DMA]
+        ),
+        out_shape=o,
+        input_output_aliases={2: 0},
+    )(size, x, o)
+    expected = o.at[:4].set(x.at[:4].get())
+    np.testing.assert_array_equal(out, expected)
+
+  def test_simple_dynamic_size_dma(self):
+    self.skipTest("doesn't work yet.")
+    def kernel(size_smem_ref, x_hbm_ref, _, o_hbm_ref, sem):
+      size = size_smem_ref[0]
+      pltpu.async_copy(
+          x_hbm_ref.at[pl.ds(0, size)],
+          o_hbm_ref.at[pl.ds(0, size)], sem).wait()
+
+    x = jnp.arange(8, dtype=jnp.int32)
+    o = jnp.zeros(8, dtype=jnp.int32)
+    size = jnp.array([4], dtype=jnp.int32)
+
+    out = pl.pallas_call(
+        kernel,
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+          num_scalar_prefetch=0,
+          in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM),
+                    pl.BlockSpec(memory_space=pltpu.ANY),
+                    pl.BlockSpec(memory_space=pltpu.ANY)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+          scratch_shapes=[pltpu.SemaphoreType.DMA]
+        ),
+        out_shape=o,
+        input_output_aliases={2: 0},
+    )(size, x, o)
+    expected = o.at[:4].set(x.at[:4].get())
+    np.testing.assert_array_equal(out, expected)
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
