@@ -713,9 +713,13 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
     # This attribute is part of the jax.Array API, but only defined on concrete arrays.
     # Raising a ConcretizationTypeError would make sense, but for backward compatibility
     # we raise an AttributeError so that hasattr() and getattr() work as expected.
+    try:
+      orig_msg = self._origin_msg()
+    except:
+      orig_msg = ''
     raise AttributeError(self,
       f"The 'sharding' attribute is not available on {self._error_repr()}."
-      f"{self._origin_msg()}")
+      f"{orig_msg}")
 
   @property
   def addressable_shards(self):
