@@ -681,7 +681,6 @@ else:
   Precision.__new__ = _precision_new
 
 
-
 _precision_strings['highest'] = Precision.HIGHEST
 _precision_strings['float32'] = Precision.HIGHEST
 _precision_strings['high'] = Precision.HIGH
@@ -1258,7 +1257,6 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
   return broadcast(fill_value, shape)
 
 
-
 def zeros_like_shaped_array(aval: ShapedArray) -> Array:
   assert isinstance(aval, ShapedArray)
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
@@ -1417,9 +1415,16 @@ def full_like(x: ArrayLike | DuckTypedArray,
   # If `x` has a sharding but no `_committed` attribute
   # (in case of ShapeDtypeStruct), default it to True.
   use_x_sharding = (
-      sharding is None and
-      hasattr(x, 'sharding') and getattr(x, '_committed', True) and
-      not weak_type and fill_shape == x.shape)  # type: ignore
+      sharding is None
+      # Tracer have special logic in handling sharding and even
+      # though hasattr(x, 'sharding') returns False, it is very slow.
+      # This bypasses the check.
+      and not isinstance(x, core.Tracer)
+      and hasattr(x, 'sharding')
+      and getattr(x, '_committed', True)
+      and not weak_type
+      and fill_shape == np.shape(x)  # type: ignore[arg-type]
+  )  # type: ignore
   if use_x_sharding:
     # TODO(yashkatariya): Use shard_alike in tracing_mode once it is supported.
     sharding = x.sharding  # type: ignore
