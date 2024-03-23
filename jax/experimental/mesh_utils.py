@@ -677,7 +677,7 @@ def create_hybrid_device_mesh(
     process_is_granule: if True, this function will treat processes as the units
       of the slower/outer network. Otherwise it will look for slice_index
       attributes on devices and use slices as the units. Enabling this is meant
-      as a fallback for platforms (e.g., GPU) that don't set slice_index.
+      as a fallback for platforms that don't set slice_index.
     should_sort_granules_by_key: Whether device granules should be sorted by the
       granule key, either slice or process index, depending on
       process_is_granule.
