@@ -26,7 +26,6 @@ from jax.sharding import PartitionSpec, NamedSharding
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.cudnn.fused_attention_stablehlo import dot_product_attention, check_is_flash_attention
-import unittest
 
 config.parse_flags_with_absl()
 Array = jnp.ndarray
@@ -112,6 +111,10 @@ def sdpa_train_ref(query: Array,
   return out_ref, (query_grad_ref, key_grad_ref, value_grad_ref)
 
 class DotProductAttentionTest(jtu.JaxTestCase):
+  def setUp(self):
+    if jax.device_count() < 4:
+      self.skipTest("Requires more than 4 devices.")
+
   @jtu.sample_product(
       batch_size=[4],
       seq_len=[256, 1024],
@@ -203,7 +206,6 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       self.assertArraysAllClose(key_grad_ref, key_grad, rtol=1e-5, atol=1e-5)
       self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-5, atol=1e-5)
 
-  @unittest.skipIf(len(jax.local_devices()) < 4, '4 gpus required')
   @jtu.run_on_devices("cuda")
   def test_sdpa_inference(self):
     k1, k2, k3 = jax.random.split(jax.random.key(0), 3)
