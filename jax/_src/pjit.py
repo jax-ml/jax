@@ -1011,7 +1011,7 @@ def explain_tracing_cache_miss(
   def unpack(key):
     transforms, (), _, (in_type, debug_info, _, inline), *_, ctx = key
     # TODO(dougalm,mattjj): enable cache miss explanation with attrs
-    _, (_, (in_tree,)), (_, ()) = transforms
+    _, (_, (in_tree,)), *_ = transforms
     return in_tree, in_type, debug_info, inline.val, ctx
   in_tree, in_type, debug_info, inline, ctx = unpack(key)
   if inline: return

@@ -1412,7 +1412,6 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(core.ConcretizationTypeError, "Abstract tracer value"):
       jax.jit(f)(x)
 
-
   @parameterized.named_parameters(
       ('grad', jax.grad),
       ('jacfwd', jax.jacfwd),
@@ -1991,7 +1990,6 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(fwd(fwd(f, 1), 0)(x, u).shape, (2, 5))
     self.assertEqual(fwd(rev(f, 0), 1)(x, u).shape, (5, 2))
     self.assertEqual(fwd(fwd(f, 0), 1)(x, u).shape, (5, 2))
-
 
   def test_large_device_constant(self):
     ans = jit(lambda x: 2 * x)(jnp.ones(int(2e6)))  # doesn't crash
@@ -2993,7 +2991,6 @@ class APITest(jtu.JaxTestCase):
     dictionary = {'a': 5., 'b': jnp.ones(2)}
     x = jnp.zeros(3)
     y = jnp.arange(3.)
-
 
     def f(dct, x, y):
       return dct['a'] + dct['b'] + x + y
@@ -4297,7 +4294,6 @@ class APITest(jtu.JaxTestCase):
     def b(x):
       return a(x)
 
-
     @jax.jit
     def g(x):
       return x, x
@@ -4319,7 +4315,6 @@ class APITest(jtu.JaxTestCase):
     @jax.jit
     def b(x):
       return a()
-
 
     @jax.jit
     def g(x):
@@ -4498,6 +4493,21 @@ class APITest(jtu.JaxTestCase):
     _, msg = cm.output
     self.assertIn('another function defined on the same line', msg)
 
+  def test_cache_miss_explanations_unpacks_transforms(self):
+    # Tests that the explain_tracing_cache_miss() function does not throw an
+    # error when unpacking `transforms` with a length greater than 3.
+    @jax.jit
+    def f(key):
+      return jax.random.truncated_normal(key, 1, 1, dtype=jax.numpy.float32)
+
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        f(jax.random.key(seed=123))
+
+    self.assertLen(cm.output, 5)
+    for msg in cm.output:
+      self.assertIn("TRACING CACHE MISS", msg)
+
   @parameterized.named_parameters([
       {"testcase_name": f"{dtype}", "dtype": dtype}
       for dtype in jtu.dtypes.custom_floats])
@@ -4582,10 +4592,12 @@ class APITest(jtu.JaxTestCase):
   def test_forwarding_bug(self):
     # Test for issue #20267.
     def f(x):
-        @jax.jit
-        def inner(a, x):
-            return a, jnp.exp(x)
-        return inner(0., x)[0]
+
+      @jax.jit
+      def inner(a, x):
+        return a, jnp.exp(x)
+
+      return inner(0.0, x)[0]
     jax.grad(f)(1.)  # don't crash
 
   @parameterized.parameters(it.product(range(4), repeat=3))
