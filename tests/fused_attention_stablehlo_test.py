@@ -25,7 +25,7 @@ from jax.sharding import Mesh
 from jax.sharding import PartitionSpec, NamedSharding
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.cudnn.fused_attention_stablehlo import dot_product_attention
+from jax._src.cudnn.fused_attention_stablehlo import dot_product_attention, check_is_flash_attention
 
 config.parse_flags_with_absl()
 Array = jnp.ndarray
@@ -43,7 +43,7 @@ def sdpa_train(query: Array,
     # convert bool mask to dtype mask
     mask = mask.astype(query.dtype)
   out, sdpa_vjp = jax.vjp(
-    partial(dot_product_attention, scale=scale, is_causal_mask=is_causal_mask, dropout_rate=dropout_rate),
+    partial(dot_product_attention, scale=scale, is_causal_mask=is_causal_mask, dropout_rate=dropout_rate, is_training=True),
     query, key, value, bias, mask)
   query_grad, key_grad, value_grad, _, _ = sdpa_vjp(grad)
   return out, (query_grad, key_grad, value_grad)
@@ -111,6 +111,10 @@ def sdpa_train_ref(query: Array,
   return out_ref, (query_grad_ref, key_grad_ref, value_grad_ref)
 
 class DotProductAttentionTest(jtu.JaxTestCase):
+  def setUp(self):
+    if jax.device_count() < 4:
+      self.skipTest("Requires more than 4 devices.")
+
   @jtu.sample_product(
       batch_size=[4],
       seq_len=[256, 1024],
@@ -201,6 +205,58 @@ class DotProductAttentionTest(jtu.JaxTestCase):
         self.assertArraysAllClose(query_grad_ref, query_grad, rtol=1e-5, atol=1e-5)
       self.assertArraysAllClose(key_grad_ref, key_grad, rtol=1e-5, atol=1e-5)
       self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-5, atol=1e-5)
+
+  @jtu.run_on_devices("cuda")
+  def test_sdpa_inference(self):
+    k1, k2, k3 = jax.random.split(jax.random.key(0), 3)
+    query = jax.random.normal(
+        k1, (4, 1024, 4, 64), dtype=jnp.bfloat16)
+    key = jax.random.normal(
+        k2, (4, 1024, 4, 64), dtype=jnp.bfloat16)
+    value = jax.random.normal(
+        k3, (4, 1024, 4, 64), dtype=jnp.bfloat16)
+
+    devices = np.array(jax.local_devices()[:4])
+    devices = devices.reshape((2, 2))
+    with Mesh(devices, ('dp', 'tp')) as mesh:
+      qkv_spec = PartitionSpec('dp', None, 'tp', None)
+      qkv_sharding = NamedSharding(mesh, qkv_spec)
+      replicated = NamedSharding(mesh, PartitionSpec())
+      in_shardings = (qkv_sharding, qkv_sharding, qkv_sharding, replicated, replicated)
+      out_shardings = replicated
+      query = jax.device_put(query, qkv_sharding)
+      key = jax.device_put(key, qkv_sharding)
+      value = jax.device_put(value, qkv_sharding)
+      jitted_sdpa_inference = jax.jit(
+        partial(dot_product_attention, scale=1.0, is_causal_mask=False, dropout_rate=0),
+        in_shardings=in_shardings,
+        out_shardings=out_shardings
+      )
+
+      jitted_sdpa_inference_ref = jax.jit(
+        partial(sdpa_ref, scale=1.0, is_causal_mask=False, dropout_rate=0),
+        in_shardings=in_shardings,
+        out_shardings=out_shardings
+      )
+
+      out = jitted_sdpa_inference(query, key, value, None, None)
+      out_ref = jitted_sdpa_inference_ref(query, key, value, None, None)
+      self.assertArraysAllClose(out_ref, out, rtol=1e-5, atol=1e-5)
+
+  def test_sdpa_utils(self):
+    test_cases = {
+      (256, 512, 64, 8905, False, False): False,
+      (1, 257, 64, 8905, False, True): True,
+      (1, 1024, 64, 8905, False, False): True,
+      (1024, 1024, 64, 8905, False, False): True,
+      (1024, 1024, 128, 8905, False, False): True,
+    }
+
+    for k, v in test_cases.items():
+      sql_q, sql_v, head_dim, cudnn_version, has_bias, is_training = k
+      query = jnp.empty((4, sql_q, 4, head_dim))
+      key = jnp.empty((4, sql_v, 4, head_dim))
+      self.assertEqual(check_is_flash_attention(query, key, cudnn_version, has_bias, is_training), v)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
