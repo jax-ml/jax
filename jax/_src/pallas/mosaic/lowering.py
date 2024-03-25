@@ -1271,24 +1271,30 @@ lowering_rules[lax.transpose_p] = _transpose_lowering_rule
 
 
 def _bcast(x, y, x_aval, y_aval, out_aval):
+  x_dtype = x_aval.dtype
+  y_dtype = y_aval.dtype
+  if y_aval.weak_type:
+    y_dtype = x_aval.dtype
+  elif x_aval.weak_type:
+    x_dtype = y_aval.dtype
   if isinstance(x, (np.ndarray, np.number, int, float)):
-    if hasattr(y, "type") and y.type == ir.IndexType.get():
+    if getattr(y, "type", None) == ir.IndexType.get():
       mlir_type = y.type
     else:
-      mlir_type = _dtype_to_ir_type(x_aval.dtype)
+      mlir_type = _dtype_to_ir_type(x_dtype)
     x = ir_constant(x, mlir_type)
   if isinstance(y, (np.ndarray, np.number, int, float)):
-    if hasattr(x, "type") and x.type == ir.IndexType.get():
+    if getattr(x, "type", None) == ir.IndexType.get():
       mlir_type = x.type
     else:
-      mlir_type = _dtype_to_ir_type(y_aval.dtype)
+      mlir_type = _dtype_to_ir_type(y_dtype)
     y = ir_constant(y, mlir_type)
   out_shape = list(out_aval.shape)
   if x_aval.shape != out_aval.shape:
-    x_ty = ir.VectorType.get(out_shape, _dtype_to_ir_type(x_aval.dtype))
+    x_ty = ir.VectorType.get(out_shape, _dtype_to_ir_type(x_dtype))
     x = vector.BroadcastOp(x_ty, x)
   if y_aval.shape != out_aval.shape:
-    y_ty = ir.VectorType.get(out_shape, _dtype_to_ir_type(y_aval.dtype))
+    y_ty = ir.VectorType.get(out_shape, _dtype_to_ir_type(y_dtype))
     y = vector.BroadcastOp(y_ty, y)
   return x, y
 
@@ -1560,18 +1566,22 @@ lowering_rules[lax.gt_p] = functools.partial(_cmp_lowering_rule, lax.gt_p)
 lowering_rules[lax.ge_p] = functools.partial(_cmp_lowering_rule, lax.ge_p)
 
 
-def _and_lowering_rule(ctx: LoweringRuleContext, lhs, rhs):
-  return arith.AndIOp(lhs, rhs).result
+def _and_lowering_rule(ctx: LoweringRuleContext, x, y):
+  x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
+  return arith.AndIOp(x, y).result
 
 
 lowering_rules[lax.and_p] = _and_lowering_rule
+skip_mlir_conversions.add(lax.and_p)
 
 
-def _or_lowering_rule(ctx: LoweringRuleContext, lhs, rhs):
-  return arith.OrIOp(lhs, rhs).result
+def _or_lowering_rule(ctx: LoweringRuleContext, x, y):
+  x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
+  return arith.OrIOp(x, y).result
 
 
 lowering_rules[lax.or_p] = _or_lowering_rule
+skip_mlir_conversions.add(lax.or_p)
 
 
 def _not_lowering_rule(ctx: LoweringRuleContext, x):
@@ -1953,24 +1963,30 @@ lowering_rules[lax.slice_p] = _slice_lowering_rule
 
 
 def _xor_lowering_rule(ctx: LoweringRuleContext, x, y):
+  x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
   return arith.XOrIOp(x, y).result
 
 
 lowering_rules[lax.xor_p] = _xor_lowering_rule
+skip_mlir_conversions.add(lax.xor_p)
 
 
 def _shift_left_lowering_rule(ctx: LoweringRuleContext, x, d):
+  x, d = _bcast(x, d, *ctx.avals_in, *ctx.avals_out)
   return arith.ShLIOp(x, d).result
 
 
 lowering_rules[lax.shift_left_p] = _shift_left_lowering_rule
+skip_mlir_conversions.add(lax.shift_left_p)
 
 
 def _shift_right_logical_lowering_rules(ctx: LoweringRuleContext, x, d):
+  x, d = _bcast(x, d, *ctx.avals_in, *ctx.avals_out)
   return arith.ShRUIOp(x, d).result
 
 
 lowering_rules[lax.shift_right_logical_p] = _shift_right_logical_lowering_rules
+skip_mlir_conversions.add(lax.shift_right_logical_p)
 
 
 def _bitcast_lowering_rule(ctx: LoweringRuleContext, x, *, ty):

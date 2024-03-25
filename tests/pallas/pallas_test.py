@@ -1586,15 +1586,6 @@ class PallasOpsTest(PallasTest):
       y = jnp.array([1, 2, 3, 4]).astype(y_dtype)
       np.testing.assert_allclose(kernel(x, y), lax.pow(x, y))
 
-  def test_pow_weak_dtype(self):
-    @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.float32))
-    def square(x_ref, o_ref):
-      o_ref[()] = x_ref[()]**2.0
-
-    x = jnp.array(42.0)
-    np.testing.assert_allclose(square(x), x*x)
-
   @parameterized.parameters("float32", "float64")
   def test_nextafter(self, dtype):
     @functools.partial(

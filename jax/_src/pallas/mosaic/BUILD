@@ -99,7 +99,7 @@ py_library(
     name = "kernel_regeneration_util",
     srcs = ["kernel_regeneration_util.py"],
     deps = [
-        "//third_party/py/mlir:ir",
+        "//jax:mlir",
     ],
 )
 
