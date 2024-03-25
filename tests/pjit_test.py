@@ -2848,6 +2848,20 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(compiled._executable._kept_var_idx, {5})
     self.assertLen(compiled._executable.in_avals, 1)
 
+  def test_pjit_relayout_multi_slice(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+
+    @jax.jit
+    def mul(x):
+      return x @ x.T
+
+    x = jnp.arange(8).reshape(4, 2)
+    y = jax.device_put(x, jax.sharding.NamedSharding(mesh, P('x', 'y')))
+    compiled = mul.lower(jax.ShapeDtypeStruct(
+        y.shape, y.dtype, sharding=y.sharding)).compile()
+    out = compiled(y)
+    self.assertArraysEqual(out, x @ x.T)
+
   def test_pjit_with_device_arg(self):
     def mul(x):
       return x @ x.T

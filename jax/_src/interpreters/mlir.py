@@ -46,7 +46,7 @@ from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
-from jax._src.layout import XLACompatibleLayout, LayoutRequest
+from jax._src.layout import AutoLayout, SpecifiedLayout
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
 from jax._src.lib import xla_extension_version
@@ -834,10 +834,10 @@ def _to_physical_op_sharding(
   return sharding._to_xla_hlo_sharding(aval.ndim).to_proto()  # type: ignore
 
 
-def _to_xla_layout(layout: XLACompatibleLayout | None | LayoutRequest) -> str | None:
+def _to_xla_layout(layout: SpecifiedLayout | None | AutoLayout) -> str | None:
   if layout is None:
     return "default"
-  if isinstance(layout, LayoutRequest):
+  if isinstance(layout, AutoLayout):
     return "auto"
   return layout._to_xla_layout()
 
@@ -862,8 +862,8 @@ def lower_jaxpr_to_module(
     replicated_args: Sequence[bool] | None = None,
     arg_shardings: Sequence[XLACompatibleSharding | None] | None = None,
     result_shardings: Sequence[XLACompatibleSharding | None] | None = None,
-    in_layouts: Sequence[XLACompatibleLayout | None | LayoutRequest] | None = None,
-    out_layouts: Sequence[XLACompatibleLayout | None | LayoutRequest] | None = None,
+    in_layouts: Sequence[SpecifiedLayout | None | AutoLayout] | None = None,
+    out_layouts: Sequence[SpecifiedLayout | None | AutoLayout] | None = None,
     arg_names: Sequence[str | None] | None = None,
     result_names: Sequence[str | None] | None = None,
     num_replicas: int = 1,
