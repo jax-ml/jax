@@ -1637,6 +1637,37 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
         "Received incompatible devices for jitted computation"):
       f.lower(inp, inp).compile()
 
+  @parameterized.named_parameters(
+    ('2d_array', (4, 2), ('x', 'y')),
+    ('1d_array', (8,), ('x')),
+  )
+  def test_jit_auto_sharding_partial_tuple_input_shardings(
+      self, mesh_shape, mesh_axis_names):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest('Parameters are tupled only on TPU if >2000 parameters')
+
+    mesh = jtu.create_global_mesh(mesh_shape, mesh_axis_names)
+    global_input_shape = (8, 4)
+    input_data = np.arange(
+        math.prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
+    input_sharding = NamedSharding(mesh, P(mesh_axis_names))
+    input_sharding_annotations = [AUTO(mesh)] * 2001
+    for i in range(1000):
+      input_sharding_annotations[2*i] = input_sharding
+
+    jit_tuple_identity_fn = jax.jit(
+        lambda *x: x,
+        in_shardings=input_sharding_annotations,
+        out_shardings=AUTO(mesh))
+
+    inp = core.ShapedArray(input_data.shape, input_data.dtype)
+    compiled = jit_tuple_identity_fn.lower(*([inp] * 2001)).compile()
+
+
+    # Check sharding preservation for even numbered inputs.
+    for i in range(1000):
+      self.assertEqual(compiled.input_shardings[0][2*i], input_sharding)
+
   @unittest.skip('The error is not raised yet. Enable this back once we raise '
                  'the error in pjit again.')
   def test_pjit_array_error(self):
