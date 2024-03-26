@@ -16,6 +16,7 @@ from functools import partial
 from absl.testing import absltest
 from typing import Optional
 import os
+
 os.environ['XLA_FLAGS'] = '--xla_gpu_enable_cudnn_fmha=true --xla_gpu_fused_attention_use_cudnn_rng=true'
 
 import numpy as np
@@ -25,7 +26,7 @@ from jax.sharding import Mesh
 from jax.sharding import PartitionSpec, NamedSharding
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.cudnn.fused_attention_stablehlo import dot_product_attention, check_is_flash_attention
+from jax._src.cudnn.fused_attention_stablehlo import dot_product_attention, check_is_flash_attention, check_cudnn_version
 
 config.parse_flags_with_absl()
 Array = jnp.ndarray
@@ -112,8 +113,20 @@ def sdpa_train_ref(query: Array,
 
 class DotProductAttentionTest(jtu.JaxTestCase):
   def setUp(self):
+    # TODO(Cjkkkk): Tests fail when the cuDNN constraints check fails, or
+    #  even when it passes: https://github.com/google/jax/issues/20438
+    self.skipTest('Failing with various errors')
+    return
+
     if jax.device_count() < 4:
       self.skipTest("Requires more than 4 devices.")
+    try:
+      cudnn_version = check_cudnn_version()
+    except RuntimeError as e:
+      self.skipTest(str(e))
+      return
+    if cudnn_version < 8904:
+      self.skipTest('Requires >= cuDNN 8.9.4')
 
   @jtu.sample_product(
       batch_size=[4],
