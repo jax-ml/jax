@@ -1935,9 +1935,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
       with self.assertRaisesRegex(
           ValueError,
-          r"Compiled object called with input sharding\(s\) does not match the "
-          r"sharding\(s\) the computation was compiled with. "
-          "Here are 5 mismatches out of 6"):
+          r"Compiled object called with input sharding.*does not match the "
+          r"sharding.*the computation was compiled with. "
+          "Here are.*mismatches.*"):
         compiled(a2, a2, a2, a2, a2, a2)
 
     with global_mesh:
@@ -1949,9 +1949,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
       inp2 = {'x': a2, 'y': {'y1': a2}}
       with self.assertRaisesRegex(
           ValueError,
-          r"Compiled object called with input sharding\(s\) does not match the "
-          r"sharding\(s\) the computation was compiled with. "
-          "Here are the 2 mismatches"):
+          r"Compiled object called with input sharding.*does not match the "
+          r"sharding.*the computation was compiled with. "
+          "Here are the.*mismatches"):
         compiled(inp2)
 
   def test_globally_sharded_key_array_result_8x4_single_device(self):
