@@ -2461,15 +2461,22 @@ def emit_python_callback(
       raise RuntimeError(
           "Mismatched number of outputs from callback. "
           "Expected: {}, Actual: {}".format(len(result_avals), len(out_vals)))
+    # Handle Python literals, and custom arrays, e.g., tf.Tensor.
+    out_vals = tuple(np.asarray(a) for a in out_vals)
     for i, (out_val, out_aval) in enumerate(zip(out_vals, result_avals)):
       if out_val.shape != out_aval.shape:
         raise RuntimeError(
-            f"Incorrect output shape for return value {i}: "
-            "Expected: {}, Actual: {}".format(out_aval.shape, out_val.shape))
+            f"Incorrect output shape for return value #{i}: "
+            f"Expected: {out_aval.shape}, Actual: {out_val.shape}")
+      if out_val.dtype != dtypes.canonicalize_dtype(out_val.dtype):
+        raise RuntimeError(
+            "Cannot return 64-bit values when `jax_enable_x64` is disabled. "
+            f"Actual: {out_val.dtype}")
       if out_val.dtype != out_aval.dtype:
         raise RuntimeError(
-            f"Incorrect output dtype for return value {i}: "
-            "Expected: {}, Actual: {}".format(out_aval.dtype, out_val.dtype))
+            f"Incorrect output dtype for return value #{i}: "
+            f"Expected: {out_aval.dtype}, Actual: {out_val.dtype}")
+
     if platform == "tpu":
       # On TPU we cannot receive empty arrays. So, we return from the wrapped
       # callback only the non-empty results, and we will create empty constants
