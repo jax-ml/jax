@@ -3554,7 +3554,10 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
       regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'ninf', 'pinf', 'ninfj', 'pinfj', 'zero')
 
     elif name == 'log1p':
-      regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj')
+      if xla_extension_version < 251:
+        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj')
+      else:
+        regions_with_inaccuracies_keep('ninf', 'pinf', 'ninfj', 'pinfj')
 
     elif name == 'exp':
       regions_with_inaccuracies_keep('pos', 'pinf', 'mpos')
@@ -3565,7 +3568,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
       if dtype == np.complex128:
         regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'mpos')
 
-    elif name == 'expm1':
+    elif name == 'expm1' and xla_extension_version < 250:
       regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'pinf', 'mq1', 'mq2', 'mq3', 'mq4', 'mneg', 'mpos')
 
     elif name == 'sinc':
@@ -3617,9 +3620,12 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
         regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj')
 
     elif name == 'arctanh':
-      regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mpos')
+      if xla_extension_version < 251:
+        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mpos')
+      else:
+        regions_with_inaccuracies_keep('pos', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mpos')
 
-    elif name in {'positive', 'negative', 'conjugate', 'sin', 'cos', 'sqrt'}:
+    elif name in {'positive', 'negative', 'conjugate', 'sin', 'cos', 'sqrt', 'expm1'}:
       regions_with_inaccuracies.clear()
     else:
       assert 0  # unreachable
@@ -3666,9 +3672,16 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
       raise unittest.SkipTest(reason)
 
     if kind == 'failure':
-      self.assertEqual(unexpected_success_regions, [])  # regions_with_inaccuracies requires an update!
       if not regions_with_inaccuracies:
         raise unittest.SkipTest("no problematic regions")
+      elif unexpected_success_regions:
+        # This skip ought to be effective only when fixing functions
+        # on problematic regions in XLA that should follow up a JAX PR
+        # that enables testing the functions on these regions for
+        # success.
+        raise unittest.SkipTest(
+          f"detected success in regions {', '.join(unexpected_success_regions)}, please update regions_with_inaccuracies!"
+        )
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
