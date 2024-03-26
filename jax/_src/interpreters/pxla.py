@@ -1818,15 +1818,27 @@ def _move_mutable_consts(
   return core.ClosedJaxpr(jaxpr, consts), in_mut
 
 
-@dataclasses.dataclass(frozen=True)
 class SemanticallyEqualShardings:
-  shardings: tuple[sharding_impls.GSPMDSharding | UnspecifiedValue, ...]
+
+  def __init__(self, shardings: tuple[GSPMDSharding | UnspecifiedValue, ...],
+               avals: tuple[core.AbstractValue]):
+    if xla_extension_version < 241:
+      gspmd_shardings = [
+          s if is_unspecified_or_auto(s) or a is core.abstract_token
+          else to_gspmd_sharding(s, a.ndim)  # type: ignore
+          for s, a in zip(shardings, avals)]
+    else:
+      gspmd_shardings = [
+          s if is_unspecified_or_auto(s) else to_gspmd_sharding(s, a.ndim)  # type: ignore
+          for s, a in zip(shardings, avals)]
+    self._gspmd_shardings = gspmd_shardings
+    self.shardings = shardings
+    self.avals = avals
 
   def __hash__(self):
     return hash(tuple(
         (s._hlo_sharding_hash, s.memory_kind)  # type: ignore
-        if isinstance(s, sharding_impls.GSPMDSharding) else s
-        for s in self.shardings))
+        if isinstance(s, GSPMDSharding) else s for s in self._gspmd_shardings))
 
   def __eq__(self, other):
     if not isinstance(other, SemanticallyEqualShardings):
@@ -1834,10 +1846,9 @@ class SemanticallyEqualShardings:
     return all(
         (op_shardings.are_op_shardings_equal(s._hlo_sharding, o._hlo_sharding)
          and s.memory_kind == o.memory_kind)
-        if (isinstance(s, sharding_impls.GSPMDSharding) and
-            isinstance(o, sharding_impls.GSPMDSharding))
+        if (isinstance(s, GSPMDSharding) and isinstance(o, GSPMDSharding))
         else s == o
-        for s, o in zip(self.shardings, other.shardings)
+        for s, o in zip(self._gspmd_shardings, other._gspmd_shardings)
     )
 
 
@@ -1873,8 +1884,8 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
                             inout_aliases: None | tuple[None | int, ...],
                             lowering_parameters: mlir.LoweringParameters):
   jaxpr = closed_jaxpr.jaxpr
-  in_shardings = semantic_in_shardings.shardings
-  out_shardings = semantic_out_shardings.shardings
+  in_shardings = semantic_in_shardings._gspmd_shardings
+  out_shardings = semantic_out_shardings._gspmd_shardings
   global_in_avals = closed_jaxpr.in_avals
   global_out_avals = closed_jaxpr.out_avals
 
@@ -1996,6 +2007,20 @@ class AllArgsInfo(NamedTuple):
   debug_info: core.JaxprDebugInfo | None
 
 
+@lru_cache(maxsize=2048)
+def to_gspmd_sharding(s: sharding_impls.XLACompatibleSharding,
+                      ndim: int) -> GSPMDSharding:
+  if isinstance(s, GSPMDSharding):
+    return s
+  if xla_extension_version >= 234:
+    return GSPMDSharding(s._device_assignment, s._to_xla_hlo_sharding(ndim),
+                         memory_kind=s.memory_kind,
+                         _device_list=getattr(s, '_internal_device_list', None))
+  else:
+    return GSPMDSharding(s._device_assignment, s._to_xla_hlo_sharding(ndim),
+                         memory_kind=s.memory_kind)
+
+
 @profiler.annotate_function
 def lower_sharding_computation(
     closed_jaxpr: core.ClosedJaxpr,
@@ -2075,8 +2100,8 @@ def lower_sharding_computation(
       any(not is_unspecified(js) for js, _ in jaxpr_sharding) or
       any(not is_unspecified(o) for o in out_shardings))
 
-  gs = GSPMDSharding.get_replicated(device_assignment)
   if xla_extension_version < 241 or hasattr(backend, "compile_replicated"):
+    gs = GSPMDSharding.get_replicated(device_assignment)
     in_shardings = tuple(gs if is_unspecified(i) else i for i in in_shardings)
 
   da_object = _create_da_object(tuple(device_assignment))
@@ -2100,8 +2125,10 @@ def lower_sharding_computation(
           "`with jax.spmd_mode('allow_all'):` context manager.")
 
   # 2. Build up the HLO
-  semantic_in_shardings = SemanticallyEqualShardings(in_shardings)  # type: ignore
-  semantic_out_shardings = SemanticallyEqualShardings(out_shardings)  # type: ignore
+  semantic_in_shardings = SemanticallyEqualShardings(
+      in_shardings, global_in_avals)  # type: ignore
+  semantic_out_shardings = SemanticallyEqualShardings(
+      out_shardings, global_out_avals)  # type: ignore
   prim_requires_devices = dispatch.jaxpr_has_prim_requiring_devices(jaxpr)
 
   (module, keepalive, host_callbacks, unordered_effects, ordered_effects,
@@ -2540,34 +2567,33 @@ def _get_out_sharding_from_orig_sharding(
   orig_handler = _orig_out_sharding_handlers[type(orig_in_s)]
   for o, out_aval in safe_zip(out_shardings, out_avals):
     if isinstance(o, sharding_impls.GSPMDSharding):
-      try:
-        # Only return the same input sharding object if the OpShardings and
-        # in_aval.ndim and out_aval.ndim match. This is because if OpSharding is
-        # replicated then, it doesn't encode the ndim in it. The devices
-        # will be the same at this point because those checks happen before.
-        if (orig_aval is not None and out_aval is not None and
-            out_aval.ndim == orig_aval.ndim
-            and sharding_impls.are_op_shardings_equal(
-                o._hlo_sharding, orig_in_s._to_xla_hlo_sharding(orig_aval.ndim))
-            and o.memory_kind == orig_in_s.memory_kind):
-          out.append(orig_in_s)
-        else:
+      # Only return the same input sharding object if the OpShardings and
+      # in_aval.ndim and out_aval.ndim match. This is because if OpSharding is
+      # replicated then, it doesn't encode the ndim in it. The devices
+      # will be the same at this point because those checks happen before.
+      if (orig_aval is not None and out_aval is not None and
+          out_aval.ndim == orig_aval.ndim
+          and sharding_impls.are_op_shardings_equal(
+              o._hlo_sharding, orig_in_s._to_xla_hlo_sharding(orig_aval.ndim))
+          and o.memory_kind == orig_in_s.memory_kind):
+        out.append(orig_in_s)
+      else:
+        try:
           out.append(orig_handler(o, orig_in_s))
-      except:
-        out.append(o)
+        except:
+          out.append(o)
     else:
       out.append(o)
   return out
 
 def maybe_get_orig_out_sharding(
     in_shardings, out_shardings, in_avals, out_avals):
-  if all(hasattr(o, '_original_sharding') for o in out_shardings):
-    return [o._original_sharding for o in out_shardings]
+  if all(not isinstance(o, sharding_impls.GSPMDSharding) for o in out_shardings):
+    return out_shardings
 
   orig_in_s = None
   orig_aval = None
-  for i, aval in safe_zip(in_shardings, in_avals):
-    oi = getattr(i, '_original_sharding', None)
+  for oi, aval in safe_zip(in_shardings, in_avals):
     if type(oi) in _orig_out_sharding_handlers:
       orig_in_s = oi
       orig_aval = aval
@@ -2885,8 +2911,10 @@ class UnloadedMeshExecutable:
         compiler_options_keys, compiler_options_values)
 
     if hasattr(backend, "compile_replicated"):
-      semantics_in_shardings = SemanticallyEqualShardings(in_shardings)  # type: ignore
-      semantics_out_shardings = SemanticallyEqualShardings(out_shardings)  # type: ignore
+      semantics_in_shardings = SemanticallyEqualShardings(
+          in_shardings, global_in_avals)  # type: ignore
+      semantics_out_shardings = SemanticallyEqualShardings(
+          out_shardings, global_out_avals)  # type: ignore
       return _compile_replicated_mesh_executable_from_hlo(
           hlo, name, tuple(global_in_avals), tuple(global_out_avals),
           semantics_in_shardings, semantics_out_shardings, auto_spmd_lowering,
@@ -2898,7 +2926,7 @@ class UnloadedMeshExecutable:
       assert mesh is not None
       in_shardings_xla, out_shardings_xla = _get_mesh_pspec_shardings_from_executable(
           xla_executable, mesh)
-      in_shardings = [x if is_auto(i) else getattr(i, '_original_sharding', i)  # type: ignore
+      in_shardings = [x if is_auto(i) else i
                       for x, i in safe_zip(in_shardings_xla, in_shardings)]
       out_shardings = [x if is_auto(o) else o
                        for x, o in safe_zip(out_shardings_xla, out_shardings)]
@@ -3183,8 +3211,7 @@ def check_device_backend_on_shardings(shardings) -> bool:
   for i in shardings:
     if is_unspecified(i) or is_auto(i):
       continue
-    if hasattr(i, '_original_sharding') and getattr(
-        i._original_sharding, '_device_backend', False):
+    if getattr(i, '_device_backend', False):
       return True
   return False
 
@@ -3206,8 +3233,6 @@ def check_array_xla_sharding_layout_match(
       continue
 
     db_xs = check_device_backend_on_shardings([xs])
-    if not db_xs:
-      xs = getattr(xs, '_original_sharding', xs)
 
     # Raise memory kind mismatch error even if the arg is uncommitted.
     if arg.sharding.memory_kind != xs.memory_kind:
