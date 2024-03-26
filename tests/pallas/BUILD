@@ -161,6 +161,7 @@ jax_test(
         "gpu_p100_x32",
         "gpu_h100_x32",
     ],
+    tags = ["nomsan"],
     deps = [
         "//jax:pallas_gpu",
         "//jax:pallas_tpu",
