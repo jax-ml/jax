@@ -208,7 +208,6 @@ def _pallas_call_ttir_lowering(
   module_op = lowering_result.module.operation
   if debug:
     print(module_op.get_asm(enable_debug_info=True, pretty_debug_info=True))
-    lowering_result.module.dump()
 
   grid_x, grid_y, grid_z = normalize_grid(lowering_result.grid)
   out_types = [

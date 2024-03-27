@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import collections
+import contextlib
 import functools
 import logging
 import textwrap
@@ -27,11 +28,11 @@ from jax._src import config
 from jax._src import core
 from jax._src import dispatch
 from jax._src import maps
-from jax._src.maps import xmap
 from jax._src import test_util as jtu
 from jax._src import util
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension_version
+from jax._src.maps import xmap
 from jax.experimental import io_callback
 from jax.experimental import pjit
 from jax.experimental.shard_map import shard_map
@@ -72,6 +73,7 @@ with_pure_and_io_callbacks = parameterized.named_parameters(
   for flavor in ("io_unordered", "io_ordered", "pure")
 )
 
+
 class PythonCallbackTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -92,6 +94,73 @@ class PythonCallbackTest(jtu.JaxTestCase):
 
     out = f(0.)
     self.assertEqual(out, 1.)
+
+  @parameterized.named_parameters(
+      dict(
+          testcase_name=f"{flavor}_expect_dtype_{expect_dtype}",
+          callback=dict(
+              io_unordered=io_calback_unordered,
+              io_ordered=io_callback_ordered,
+              pure=jax.pure_callback,
+          )[flavor],
+          expect_dtype=expect_dtype,
+      )
+      for flavor in ("io_unordered", "io_ordered", "pure")
+      for expect_dtype in (np.int32, np.int64, np.float32, np.float64)
+  )
+  def test_callback_returning_python_literal(self, *, callback, expect_dtype):
+    returned_literal = 42 if expect_dtype in (np.int32, np.int64) else 42.0
+
+    @jax.jit
+    def f(x):
+      return callback(
+          lambda x: returned_literal, core.ShapedArray((), expect_dtype), x
+      )
+
+    if not config.enable_x64.value:
+      ctx = self.assertRaisesRegex(Exception, "Cannot return 64-bit values")
+    elif expect_dtype in (np.int32, np.float32):
+      ctx = self.assertRaisesRegex(Exception, "Incorrect output dtype")
+    else:
+      ctx = contextlib.nullcontext()
+
+    with ctx:
+      out = f(0.0)
+      jax.effects_barrier()
+      self.assertEqual(out, returned_literal)
+
+  @with_pure_and_io_callbacks
+  def test_callback_returning_custom_array(self, *, callback):
+    # Some users write the callback in TF, returning a tf.Tensor. We don't
+    # want to add TF as a dependency, but simulate that use case with a
+    # custom array class.
+    class CustomArray:
+
+      def __init__(self, a: np.ndarray):
+        self.a = a
+
+      @property
+      def shape(self):
+        return self.a.shape
+
+      @property
+      def dtype(self):
+        return self.a.dtype
+
+      def __array__(self):
+        return self.a
+
+    @jax.jit
+    def f(x):
+      return callback(
+          lambda x: CustomArray(np.array(42.0, dtype=np.float32)),
+          core.ShapedArray((), np.float32),
+          x,
+      )
+
+    out = f(0.0)
+    jax.effects_barrier()
+    self.assertEqual(out, 42.0)
 
   @parameterized.named_parameters(
     dict(testcase_name=f"{flavor}_{dtype}",
@@ -727,6 +796,20 @@ class PureCallbackTest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(Exception, "Errors should propagate."):
       print(np.array(f(2.0)), flush=True)
+
+  @unittest.skipIf(xla_extension_version < 250, "jaxlib version too old")
+  def test_reentrant_error_propagation(self):
+    reentrant_fn = jax.jit(jnp.sin).lower(2.0).compile()
+
+    @jax.jit
+    def f(x):
+      return jax.pure_callback(reentrant_fn, x, x)
+
+    try:
+      np.array(f(2.0))
+    except:
+      # Only should not deadlock.
+      pass
 
   def test_can_take_grad_of_pure_callback_with_custom_jvp(self):
 

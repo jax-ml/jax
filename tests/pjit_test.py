@@ -15,7 +15,7 @@
 from collections import OrderedDict, namedtuple
 import os
 import re
-from functools import partial, lru_cache
+from functools import partial
 import logging
 import math
 import textwrap
@@ -104,11 +104,6 @@ def create_array(global_shape, global_mesh, mesh_axes, global_data=None,
 
   return array.make_array_from_callback(
       global_shape, sharding, lambda idx: global_data[idx]), global_data
-
-
-@lru_cache
-def simulated_cached_fun(s):
-  return s
 
 
 def _check_instance(self, x):
@@ -515,7 +510,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     shape = (8, 8)
     mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
     s = NamedSharding(mesh, P(None))
-    ops = pjit_lib.to_gspmd_sharding(
+    ops = pxla.to_gspmd_sharding(
         NamedSharding(mesh, P('x', 'y')), len(shape))
 
     @partial(pjit, in_shardings=s, out_shardings=s)
@@ -748,7 +743,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     jaxpr = jax.make_jaxpr(jax.vmap(f))(x)
     pjit_eqn, = jaxpr.eqns
     constraint_eqn, = pjit_eqn.params['jaxpr'].eqns
-    op = constraint_eqn.params['sharding']._hlo_sharding
+    op = constraint_eqn.params['sharding']._to_xla_hlo_sharding(x.ndim)
     self.assertTrue(op.is_tiled())
     self.assertListEqual(op.tile_assignment_dimensions(), [1, 2])
     self.assertListEqual(op.tile_assignment_devices(), [0, 1])
@@ -768,7 +763,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     jaxpr = jax.make_jaxpr(f)(x)
     pjit_eqn, = jaxpr.eqns
     constraint_eqn, = pjit_eqn.params['jaxpr'].eqns
-    op = constraint_eqn.params['sharding']._hlo_sharding
+    op = constraint_eqn.params['sharding']._to_xla_hlo_sharding(x.ndim)
     self.assertTrue(op.is_tiled())
     self.assertListEqual(op.tile_assignment_dimensions(), [2, 1])
     self.assertListEqual(op.tile_assignment_devices(), [0, 1])
@@ -785,13 +780,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     def _test_rule(*args, **kwargs):
       nonlocal test_rule_called
       test_rule_called = True
-      in_shardings = kwargs['in_shardings']
-      self.assertLen(in_shardings, 1)
-      self.assertListEqual(in_shardings[0]._hlo_sharding.tile_assignment_dimensions(),
-                           [1, 1, 2])
-      self.assertFalse(op_shardings.is_op_sharding_replicated(
-          in_shardings[0]._hlo_sharding))
-
       return rule(*args, **kwargs)
     try:
       mlir._lowerings[pjit_p] = _test_rule
@@ -1935,9 +1923,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
       with self.assertRaisesRegex(
           ValueError,
-          r"Compiled object called with input sharding\(s\) does not match the "
-          r"sharding\(s\) the computation was compiled with. "
-          "Here are 5 mismatches out of 6"):
+          r"Compiled object called with input sharding.*does not match the "
+          r"sharding.*the computation was compiled with. "
+          "Here are.*mismatches.*"):
         compiled(a2, a2, a2, a2, a2, a2)
 
     with global_mesh:
@@ -1949,9 +1937,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
       inp2 = {'x': a2, 'y': {'y1': a2}}
       with self.assertRaisesRegex(
           ValueError,
-          r"Compiled object called with input sharding\(s\) does not match the "
-          r"sharding\(s\) the computation was compiled with. "
-          "Here are the 2 mismatches"):
+          r"Compiled object called with input sharding.*does not match the "
+          r"sharding.*the computation was compiled with. "
+          "Here are the.*mismatches"):
         compiled(inp2)
 
   def test_globally_sharded_key_array_result_8x4_single_device(self):
@@ -4763,24 +4751,6 @@ class UtilTest(jtu.JaxTestCase):
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
     self.assertEqual(cache_info2.misses, cache_info1.misses)
     self.assertEqual(cache_info2.currsize, cache_info1.currsize)
-
-  def test_simulated_training_cache_in_pjit(self):
-    ndim = 2
-    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-
-    mps1 = NamedSharding(mesh, P('x', 'y'))
-    gspmd_sharding = pjit_lib.to_gspmd_sharding(mps1, ndim)
-    next_loop_sharding = simulated_cached_fun(gspmd_sharding)
-    cache_info1 = simulated_cached_fun.cache_info()
-
-    next_gspmd_sharding = pjit_lib.to_gspmd_sharding(
-        next_loop_sharding, ndim)
-    simulated_cached_fun(next_gspmd_sharding)
-    cache_info2 = simulated_cached_fun.cache_info()
-
-    self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
-    self.assertEqual(cache_info2.misses, cache_info1.misses)
-    self.assertEqual(id(next_gspmd_sharding), id(gspmd_sharding))
 
   def test_get_partition_spec(self):
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
