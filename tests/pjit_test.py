@@ -1638,15 +1638,18 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
     global_input_shape = (8, 4)
     input_data = np.arange(
         math.prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
-    input_sharding = NamedSharding(mesh, P(mesh_axis_names))
+    input_sharding = NamedSharding(mesh, P(mesh_axis_names)) # sharded
     input_sharding_annotations = [AUTO(mesh)] * 2001
+    output_sharding = NamedSharding(mesh, P()) # replicated
+    output_sharding_annotations = [AUTO(mesh)] * 2001
     for i in range(1000):
       input_sharding_annotations[2*i] = input_sharding
+      output_sharding_annotations[2*i] = output_sharding
 
     jit_tuple_identity_fn = jax.jit(
         lambda *x: x,
         in_shardings=input_sharding_annotations,
-        out_shardings=AUTO(mesh))
+        out_shardings=tuple(output_sharding_annotations))
 
     inp = core.ShapedArray(input_data.shape, input_data.dtype)
     compiled = jit_tuple_identity_fn.lower(*([inp] * 2001)).compile()
@@ -1655,6 +1658,7 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
     # Check sharding preservation for even numbered inputs.
     for i in range(1000):
       self.assertEqual(compiled.input_shardings[0][2*i], input_sharding)
+      self.assertEqual(compiled.output_shardings[2*i], output_sharding)
 
   @unittest.skip('The error is not raised yet. Enable this back once we raise '
                  'the error in pjit again.')

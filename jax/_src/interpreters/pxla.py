@@ -2895,7 +2895,8 @@ class UnloadedMeshExecutable:
 
     allow_prop_to_inputs = tuple(is_unspecified(i) or is_auto(i)
                                  for i in in_shardings)
-    allow_prop_to_outputs = tuple(is_unspecified(o) for o in out_shardings)
+    allow_prop_to_outputs = tuple(is_unspecified(o) or is_auto(o)
+                                  for o in out_shardings)
 
     mesh = None
     if auto_spmd_lowering:
