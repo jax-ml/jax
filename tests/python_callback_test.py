@@ -1035,6 +1035,18 @@ class PureCallbackTest(jtu.JaxTestCase):
         out, inp + y
     )
 
+  def test_does_not_deadlock(self):
+    if jtu.device_under_test() == "tpu":
+      self.skipTest("The test raises an exception on TPU")
+
+    def f(x):
+      y = jnp.asarray(x) + 1
+      return np.asarray(2 * jnp.log(y))
+
+    x = jnp.array([1.0, 2.0, 3.0, 4.0])
+    out = jax.pure_callback(f, jax.ShapeDtypeStruct(x.shape, x.dtype), x)
+    np.testing.assert_allclose(out, 2 * jnp.log(x + 1))
+
 
 class IOCallbackTest(jtu.JaxTestCase):
 
