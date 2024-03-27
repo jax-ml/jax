@@ -25,14 +25,17 @@ of a JAX Python function so it can be executed efficiently in XLA.
 
 ## How JAX transforms work
 
-In the previous section, we discussed that JAX allows us to transform Python functions. This is done by first converting the Python function into a simple intermediate language called jaxpr. The transformations then work on the jaxpr representation. 
+In the previous section, we discussed that JAX allows us to transform Python functions. This is done by first converting the Python function into a simple intermediate language called jaxpr. The transformations then work on the jaxpr representation.
 
 We can show a representation of the jaxpr of a function by using `jax.make_jaxpr`:
 
 ```{code-cell} ipython3
-:id: P9Xj77Wx3Z2P
-:outputId: 5a0597eb-86c9-4762-ce10-2811debbc732
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: P9Xj77Wx3Z2P
+outputId: 9334d172-29b5-4fb6-f051-a29ccd246519
+---
 import jax
 import jax.numpy as jnp
 
@@ -60,9 +63,12 @@ When tracing, JAX wraps each argument by a *tracer* object. These tracers then r
 Note: the Python `print()` function is not pure: the text output is a side-effect of the function. Therefore, any `print()` calls will only happen during tracing, and will not appear in the jaxpr:
 
 ```{code-cell} ipython3
-:id: JxV2p7e2RawC
-:outputId: 9dfe8a56-e553-4640-a04e-5405aea7832d
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: JxV2p7e2RawC
+outputId: 971a4ae2-c375-4744-db56-fe186645929b
+---
 def log2_with_print(x):
   print("printed x:", x)
   ln_x = jnp.log(x)
@@ -83,9 +89,12 @@ The fact that the Python code runs at least once is strictly an implementation d
 A key thing to understand is that jaxpr captures the function as executed on the parameters given to it. For example, if we have a conditional, jaxpr will only know about the branch we take:
 
 ```{code-cell} ipython3
-:id: hn0CuphEZKZm
-:outputId: 99dae727-d2be-4577-831c-e1e14af5890a
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: hn0CuphEZKZm
+outputId: 1739e264-d3bb-4643-a361-d0cbbbe43249
+---
 def log2_if_rank_2(x):
   if x.ndim == 2:
     ln_x = jnp.log(x)
@@ -107,9 +116,12 @@ Let's look at an example of computing a *Scaled Exponential Linear Unit*
 operation commonly used in deep learning:
 
 ```{code-cell} ipython3
-:id: JAXFYtlRvD6p
-:outputId: e94d7dc2-a9a1-4ac2-fd3f-152e3f6d141b
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: JAXFYtlRvD6p
+outputId: e9336c68-b7f3-41a7-f41d-ed86c341fdef
+---
 import jax
 import jax.numpy as jnp
 
@@ -127,9 +139,12 @@ The code above is sending one operation at a time to the accelerator. This limit
 Naturally, what we want to do is give the XLA compiler as much code as possible, so it can fully optimize it. For this purpose, JAX provides the `jax.jit` transformation, which will JIT compile a JAX-compatible function. The example below shows how to use JIT to speed up the previous function.
 
 ```{code-cell} ipython3
-:id: nJVEwPcH6bQX
-:outputId: 289eb2f7-a5ce-4cec-f652-5c4e5b0b86cf
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: nJVEwPcH6bQX
+outputId: 8b9404f6-2904-42aa-b572-8717282407ea
+---
 selu_jit = jax.jit(selu)
 
 # Warm up
@@ -157,10 +172,14 @@ Here's what just happened:
 After going through the example above, you might be wondering whether we should simply apply `jax.jit` to every function. To understand why this is not the case, and when we should/shouldn't apply `jit`, let's first check some cases where JIT doesn't work.
 
 ```{code-cell} ipython3
-:id: GO1Mwd_3_W6g
-:outputId: a6fcf6d1-7bd6-4bb7-99c3-2a5a827183e2
-:tags: [raises-exception]
-
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 564
+id: GO1Mwd_3_W6g
+outputId: f6c95902-7df9-4800-bff0-582e49a69b12
+tags: [raises-exception]
+---
 # Condition on value of x.
 
 def f(x):
@@ -170,14 +189,18 @@ def f(x):
     return 2 * x
 
 f_jit = jax.jit(f)
-f_jit(10)  # Should raise an error. 
+f_jit(10)  # Should raise an error.
 ```
 
 ```{code-cell} ipython3
-:id: LHlipkIMFUhi
-:outputId: 54935882-a180-45c0-ad03-9dfb5e3baa97
-:tags: [raises-exception]
-
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 443
+id: LHlipkIMFUhi
+outputId: aa214b28-9dda-415e-d5c2-0f2dae671c23
+tags: [raises-exception]
+---
 # While loop conditioned on x and n.
 
 def g(x, n):
@@ -187,12 +210,12 @@ def g(x, n):
   return x + i
 
 g_jit = jax.jit(g)
-g_jit(10, 20)  # Should raise an error. 
+g_jit(10, 20)  # Should raise an error.
 ```
 
 +++ {"id": "isz2U_XX_wH2"}
 
-The problem is that we tried to condition on the *value* of an input to the function being jitted. The reason we can't do this is related to the fact mentioned above that jaxpr depends on the actual values used to trace it. 
+The problem is that we tried to condition on the *value* of an input to the function being jitted. The reason we can't do this is related to the fact mentioned above that jaxpr depends on the actual values used to trace it.
 
 The more specific information about the values we use in the trace, the more we can use standard Python control flow to express ourselves. However, being too specific means we can't reuse the same traced function for other values. JAX solves this by tracing at different levels of abstraction for different purposes.
 
@@ -203,9 +226,12 @@ In `jax.grad`, the constraints are more relaxed, so you can do more. If you comp
 One way to deal with this problem is to rewrite the code to avoid conditionals on value. Another is to use special [control flow operators](https://jax.readthedocs.io/en/latest/jax.lax.html#control-flow-operators) like `jax.lax.cond`. However, sometimes that is impossible. In that case, you can consider jitting only part of the function. For example, if the most computationally expensive part of the function is inside the loop, we can JIT just that inner part (though make sure to check the next section on caching to avoid shooting yourself in the foot):
 
 ```{code-cell} ipython3
-:id: OeR8hF-NHAML
-:outputId: d47fd6b2-8bbd-4939-a794-0b80183d3179
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: OeR8hF-NHAML
+outputId: 9682f3f3-ee19-48e1-f1e5-72bc449d8bbf
+---
 # While loop conditioned on x and n with a jitted body.
 
 @jax.jit
@@ -226,27 +252,38 @@ g_inner_jitted(10, 20)
 If we really need to JIT a function that has a condition on the value of an input, we can tell JAX to help itself to a less abstract tracer for a particular input by specifying `static_argnums` or `static_argnames`. The cost of this is that the resulting jaxpr is less flexible, so JAX will have to re-compile the function for every new value of the specified static input. It is only a good strategy if the function is guaranteed to get limited different values.
 
 ```{code-cell} ipython3
-:id: 2yQmQTDNAenY
-:outputId: c48f07b8-c3f9-4d2a-9dfd-663838a52511
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: 2yQmQTDNAenY
+outputId: 69e3677e-b2b2-45b4-db53-f8bcdae53c94
+---
 f_jit_correct = jax.jit(f, static_argnums=0)
 print(f_jit_correct(10))
 ```
 
 ```{code-cell} ipython3
-:id: R4SXUEu-M-u1
-:outputId: 9e712e14-4e81-4744-dcf2-a10f470d9121
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: R4SXUEu-M-u1
+outputId: 2fa6a012-b71d-4a6a-b387-0701d111e8d6
+---
 g_jit_correct = jax.jit(g, static_argnames=['n'])
 print(g_jit_correct(10, 20))
 ```
 
++++ {"id": "Fl_0M44c_dmk"}
+
 To specify such arguments when using `jit` as a decorator, a common pattern is to use python's `functools.partial`:
 
 ```{code-cell} ipython3
-:id: 2X5rR4jkIO
-:outputId: 81-4744-dc2e4-4e10f470f2-a19e71d9121
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: 2X5rR4jkIO
+outputId: 2c6c3325-30bb-40e4-c270-c830caeed5e7
+---
 from functools import partial
 
 @partial(jax.jit, static_argnames=['n'])
@@ -266,9 +303,12 @@ print(g_jit_decorated(10, 20))
 In many of the examples above, jitting is not worth it:
 
 ```{code-cell} ipython3
-:id: uMOqsNnqYApD
-:outputId: 2d6c5122-43ad-4257-e56b-e77c889131c2
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: uMOqsNnqYApD
+outputId: 91a5eb0a-6579-4f97-da83-0d9eccff856c
+---
 print("g jitted:")
 %timeit g_jit_correct(10, 20).block_until_ready()
 
@@ -295,9 +335,12 @@ If I specify `static_argnums`, then the cached code will be used only for the sa
 Avoid calling `jax.jit` inside loops. For most cases, JAX will be able to use the compiled, cached function in subsequent calls to `jax.jit`. However, because the cache relies on the hash of the function, it becomes problematic when equivalent functions are redefined. This will cause unnecessary compilation each time in the loop:
 
 ```{code-cell} ipython3
-:id: 6MDSXCfmSZVZ
-:outputId: a035d0b7-6a4d-4a9e-c6b4-7521970829fc
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: 6MDSXCfmSZVZ
+outputId: 191c8119-3c56-41d6-b594-ad833f77b847
+---
 from functools import partial
 
 def unjitted_loop_body(prev_i):
