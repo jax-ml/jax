@@ -1426,7 +1426,10 @@ def lower_jaxpr_to_fun(
         args.append([hlo.create_token()])
       else:
         args.append(arg)
-    callee_name_stack = name_stack.extend(util.wrap_name(name, api_name))
+    if name is not None:
+      callee_name_stack = name_stack.extend(util.wrap_name(name, api_name))
+    else:
+      callee_name_stack = name_stack
     consts = [ir_constants(xla.canonicalize_dtype(x)) for x in jaxpr.consts]
     out_vals, tokens_out = jaxpr_subcomp(
         ctx, jaxpr.jaxpr, callee_name_stack, tokens_in,
@@ -1883,7 +1886,7 @@ def core_call_lowering(ctx: LoweringRuleContext,
 
 register_lowering(core.call_p, partial(core_call_lowering, name="core_call"))
 register_lowering(core.closed_call_p,
-                  partial(core_call_lowering, name="core_closed_call"))
+                  partial(core_call_lowering, name=None))
 
 def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue, *,
                      broadcast_dimensions) -> ir.Value:
