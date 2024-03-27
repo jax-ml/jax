@@ -29,6 +29,13 @@ Remember to align the itemized text with the first line of an item within a list
   * The previously-deprecated imports `jax.interpreters.ad.config` and
     `jax.interpreters.ad.source_info_util` have now been removed. Use `jax.config`
     and `jax.extend.source_info_util` instead.
+  * JAX export does not support anymore older serialization version. Version 9
+    has been supported since October 27th, 2023 and has become the default
+    since February 1, 2024.
+    See [a description of the versions](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions).
+    This change could break clients that set a specific
+    JAX serialization version lower than 9.
+
 
 ## jaxlib 0.4.26
 

@@ -66,7 +66,7 @@ Sharding = Union[xla_client.HloSharding, None]
 
 # See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions
 # for a description of the different versions.
-minimum_supported_serialization_version = 6
+minimum_supported_serialization_version = 9
 maximum_supported_serialization_version = 9
 
 _VERSION_START_SUPPORT_SHAPE_ASSERTIONS = 7
