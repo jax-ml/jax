@@ -14,13 +14,13 @@
 
 # NVIDIA CUDA kernels
 
+load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "cuda_library",
     "if_cuda_is_configured",
     "pybind_extension",
 )
-load("@rules_python//python:defs.bzl", "py_library")
 
 licenses(["notice"])
 

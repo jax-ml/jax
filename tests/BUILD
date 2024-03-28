@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@rules_python//python:defs.bzl", "py_test")
 load(
     "//jaxlib:jax.bzl",
     "jax_generate_backend_suites",
@@ -20,7 +21,6 @@ load(
     "py_deps",
     "pytype_test",
 )
-load("@rules_python//python:defs.bzl", "py_test")
 
 licenses(["notice"])
 

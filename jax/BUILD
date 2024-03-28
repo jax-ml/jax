@@ -15,6 +15,7 @@
 # JAX is Autograd and XLA
 
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "if_building_jaxlib",
@@ -33,7 +34,6 @@ load(
     "pytype_library",
     "pytype_strict_library",
 )
-load("@rules_python//python:defs.bzl", "py_library")
 
 package(
     default_applicable_licenses = [],
