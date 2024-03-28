@@ -242,3 +242,16 @@ jax_test(
         "//jax:pallas_tpu_ops",
     ],
 )
+
+jax_test(
+    name = "paged_attention_kernel_test",
+    srcs = ["paged_attention_kernel_test.py"],
+    disable_backends = [
+        "cpu",
+        "gpu",
+    ],
+    shard_count = 2,
+    deps = [
+        "//jax:pallas_tpu_ops",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
