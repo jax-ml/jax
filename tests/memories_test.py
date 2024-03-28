@@ -196,27 +196,6 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
     dev = jax.devices()[0]
     self.assertEqual(dev.default_memory().kind, "device")
 
-  def test_parameter_streaming(self):
-    self.skipTest("Enable after pinned_host support exists")
-
-    _, s_host, np_inp, inp_host = _create_inputs(
-        (8, 2), P("x", "y"), mem_kind="pinned_host")
-    s_dev = s_host.with_memory_kind('device')
-    inp_dev = jax.device_put(inp_host, s_dev)
-
-    @functools.partial(jax.jit, out_shardings=s_dev)
-    def f(a, b):
-      x = b * 2
-      y = jax.device_put(a, s_dev)
-      z = x * y
-      return z * 4, z
-
-    compiled = f.lower(inp_host, inp_dev).compile()  # doesn't crash
-    compiled_text = compiled.as_text()
-    self.assertRegex(compiled_text, r"entry_computation_layout=.*S\(5\)}")
-
-    # TODO(yashkatariya): Add execution tests when it works.
-
 
 class MemoriesComputationTest(jtu.BufferDonationTestCase):
 
@@ -1114,6 +1093,29 @@ class DevicePutTest(jtu.JaxTestCase):
     out_host = jax.device_put(py_inp, s_host)
     self._check_device_put_addressable_shards(
         out_host, py_inp, s_host, "unpinned_host", index=False)
+
+  def test_parameter_streaming(self):
+    _, s_host, np_inp, inp_host = _create_inputs(
+        (8, 2), P("x", "y"), mem_kind="pinned_host")
+    s_dev = s_host.with_memory_kind('device')
+    inp_dev = jax.device_put(np_inp, s_dev)
+
+    @functools.partial(jax.jit, out_shardings=s_host)
+    def f(a, b):
+      x = b * 2
+      y = jax.device_put(a, s_dev)
+      z = x * y
+      return z * 4, z
+
+    compiled = f.lower(inp_host, inp_dev).compile()  # doesn't crash
+    compiled_text = compiled.as_text()
+    self.assertRegex(compiled_text, r"entry_computation_layout=.*S\(5\)}")
+
+    out1, out2 = f(inp_host, inp_dev)
+    self._check_device_put_addressable_shards(
+        out1, np_inp * np_inp * 8, s_host, 'pinned_host')
+    self._check_device_put_addressable_shards(
+        out2, np_inp * np_inp * 2, s_host, 'pinned_host')
 
 
 class ActivationOffloadingTest(jtu.JaxTestCase):

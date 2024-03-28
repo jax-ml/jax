@@ -1453,6 +1453,14 @@ def lower_jaxpr_to_fun(
           o if s is None else wrap_with_sharding_op(entry_lowering_ctx, o, o_aval, s)
           for o, s, o_aval in zip(flat_outputs, ir_result_shardings, output_avals)]
 
+    # Insert a custom call if output is on host because XLA needs that to do the
+    # transfer.
+    if ir_result_memory_kinds is not None:
+      # TODO: We should have a default memory kind which we can check against.
+      flat_outputs = [
+          o if mk is None or mk == 'device' else wrap_with_memory_kind(o, mk, o_aval)
+          for o, mk, o_aval in zip(flat_outputs, ir_result_memory_kinds, output_avals)]
+
     if ir_result_shardings is not None and name == "main":
       flat_outputs = [
           a.dtype._rules.replicate_trailing_dims(entry_lowering_ctx, o, a)  # type: ignore
