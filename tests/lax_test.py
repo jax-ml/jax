@@ -2767,7 +2767,6 @@ class LaxTest(jtu.JaxTestCase):
       jax.jit(asarray_closure)()
 
 
-
 class LazyConstantTest(jtu.JaxTestCase):
   def _Check(self, make_const, expected):
     # check casting to ndarray works
@@ -3246,6 +3245,54 @@ class CustomElementTypesTest(jtu.JaxTestCase):
     self.assertLen(e.outvars, 1)
     b, = e.outvars
     self.assertEqual(b.aval, core.ShapedArray((3, 4), FooTy()))
+
+  def test_scan_jaxpr_split_transpose(self):
+    def stage(x, w):
+      x = x @ w
+      x = jnp.tanh(x)
+      return (x, ())
+    def loss(ws, x, split_transpose=False):
+      return jnp.sum(jax.lax.scan(stage, x, ws,
+                                  _split_transpose=split_transpose)[0])
+
+    def fn(*args, split_transpose=False):
+      v, fn_transpose = jax.vjp(
+          partial(loss, split_transpose=split_transpose), *args)
+      grads = fn_transpose(1.0)
+      return *grads, v
+
+    # x : [batch, d_model]
+    x = jax.random.uniform(jax.random.PRNGKey(0), [256, 100])
+    # wss : [layers, d_model, d_model]
+    wss = jax.random.uniform(jax.random.PRNGKey(1), [7, 100, 100])
+
+    jaxpr = jax.make_jaxpr(partial(fn))(wss, x)
+    jaxpr_split_transpose = jax.make_jaxpr(partial(fn, split_transpose=True))(
+        wss, x
+    )
+
+    # Check that the shapes were preserved.
+    self.assertEqual(jaxpr.in_avals, jaxpr_split_transpose.in_avals)
+    self.assertEqual(jaxpr.out_avals, jaxpr_split_transpose.out_avals)
+
+    # The first two outvars (corresponding to gradients of params and inputs)
+    # must come from two different loops.
+    ct_ws = jaxpr_split_transpose.jaxpr.outvars[0]
+    ct_x = jaxpr_split_transpose.jaxpr.outvars[1]
+
+    # The last two equations are the two loops we care about
+    backprop_scan = jaxpr_split_transpose.jaxpr.eqns[-2]
+    self.assertEqual(backprop_scan.primitive, jax.lax.scan_p)
+
+    param_gradient_map = jaxpr_split_transpose.jaxpr.eqns[-1]
+    self.assertEqual(param_gradient_map.primitive, jax.lax.scan_p)
+    self.assertEqual(param_gradient_map.params['num_consts'], 0)
+    self.assertEqual(param_gradient_map.params['num_carry'], 0)
+
+    # Assert that parameter gradients come from the map.
+    self.assertEqual(ct_ws, param_gradient_map.outvars[0])
+    # And that activation gradients come from the scan.
+    self.assertEqual(ct_x, backprop_scan.outvars[0])
 
   def test_scan_lowering(self):
     ks = jax.jit(lambda: make((3, 4)))()

@@ -96,6 +96,7 @@ def scan_with_remat_for(f, *args, **kwargs):
 SCAN_IMPLS_WITH_FOR = [
     (lax.scan, 'unroll1'),
     (partial(lax.scan, unroll=2), 'unroll2'),
+    (partial(lax.scan, _split_transpose=True), 'split_transpose'),
     (scan_with_new_checkpoint , 'new_checkpoint'),
     (scan_with_new_checkpoint2, 'new_checkpoint2'),
     (scan_with_for, 'for_loop'),

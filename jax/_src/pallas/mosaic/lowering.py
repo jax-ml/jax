@@ -1755,7 +1755,9 @@ def _scan_lowering_rule(
     unroll: bool,
     num_consts: int,
     num_carry: int,
+    _split_transpose: bool,
 ):
+  del _split_transpose
   # Can only handle fori_loop-like scans
   num_extensive = len(args) - num_consts - num_carry
   if num_extensive: raise NotImplementedError

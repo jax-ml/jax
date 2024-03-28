@@ -785,7 +785,7 @@ def cond_error_check(error: Error, enabled_errors, index, *ops, branches, linear
 error_checks[lax.cond_p] = cond_error_check
 
 def scan_error_check(error, enabled_errors, *in_flat, reverse, length, jaxpr,
-                     num_consts, num_carry, linear, unroll):
+                     num_consts, num_carry, linear, unroll, _split_transpose):
 
   consts, carry, xs = split_list(in_flat, [num_consts, num_carry])
   xs_mapped = [core.mapped_aval(length, 0, get_shaped_aval(val)) for val in xs]
@@ -812,7 +812,7 @@ def scan_error_check(error, enabled_errors, *in_flat, reverse, length, jaxpr,
   err_and_out = lax.scan_p.bind(
       *new_in_flat, reverse=reverse, length=length, jaxpr=checked_jaxpr,
       num_consts=len(consts), num_carry=len(carry)+len(err_vals),
-      linear=new_linear, unroll=unroll)
+      linear=new_linear, unroll=unroll, _split_transpose=_split_transpose)
   err, out = tree_unflatten(out_tree, err_and_out)
   return err, out
 
