@@ -111,11 +111,11 @@ that NVIDIA provides for this purpose.
 
 JAX currently ships one CUDA wheel variant:
 
-| Built with | Compatible with |
-|------------|-----------------|
-| CUDA 12.3  | CUDA 12.1+      |
-| cuDNN 8.9  | cuDNN 8.9+      |
-| NCCL 2.19  | NCCL 2.18+      |
+| Built with | Compatible with   |
+|------------|-------------------|
+| CUDA 12.3  | CUDA >=12.1       |
+| CUDNN 8.9  | CUDNN >=8.9, <9.0 |
+| NCCL 2.19  | NCCL >=2.18       |
 
 JAX checks the versions of your libraries, and will report an error if they are
 not sufficiently new.

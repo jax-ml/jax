@@ -72,7 +72,8 @@ setup(
         "nvidia-cuda-cupti-cu12>=12.1.105",
         "nvidia-cuda-nvcc-cu12>=12.1.105",
         "nvidia-cuda-runtime-cu12>=12.1.105",
-        "nvidia-cudnn-cu12>=8.9.2.26",
+        # https://docs.nvidia.com/deeplearning/cudnn/developer/misc.html#cudnn-api-compatibility
+        "nvidia-cudnn-cu12>=8.9.2.26,<9.0",
         "nvidia-cufft-cu12>=11.0.2.54",
         "nvidia-cusolver-cu12>=11.4.5.107",
         "nvidia-cusparse-cu12>=12.1.0.106",
@@ -86,6 +87,7 @@ setup(
         "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
     ],
     package_data={
         'jaxlib': [
