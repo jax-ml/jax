@@ -37,7 +37,7 @@ jax_test(
         "gpu": ["noasan"],  # https://github.com/openai/triton/issues/2918
     },
     config_tags_overrides = {
-        "gpu_x32": {
+        "gpu_a100_x32": {
             "ondemand": False,  # Include in presubmit.
         },
     },
@@ -47,13 +47,13 @@ jax_test(
     ],
     disable_configs = [
         "gpu",
+        "gpu_x32",
         "gpu_a100",
         "gpu_h100",
+        "gpu_p100_x32",
     ],
     enable_configs = [
-        "gpu_x32",
         "gpu_a100_x32",
-        "gpu_p100_x32",
         "gpu_h100_x32",
     ],
     shard_count = 4,
@@ -71,7 +71,7 @@ jax_test(
         "gpu": ["noasan"],  # https://github.com/openai/triton/issues/2918
     },
     config_tags_overrides = {
-        "gpu_x32": {
+        "gpu_a100_x32": {
             "ondemand": False,  # Include in presubmit.
         },
     },
@@ -81,12 +81,12 @@ jax_test(
     ],
     disable_configs = [
         "gpu",
+        "gpu_x32",
         "gpu_p100",
         "gpu_a100",
         "gpu_h100",
     ],
     enable_configs = [
-        "gpu_x32",
         "gpu_a100_x32",
         "gpu_p100_x32",
         "gpu_h100_x32",
@@ -107,7 +107,7 @@ jax_test(
         "gpu": ["noasan"],  # https://github.com/openai/triton/issues/2918
     },
     config_tags_overrides = {
-        "gpu_x32": {
+        "gpu_a100_x32": {
             "ondemand": False,  # Include in presubmit.
         },
     },
@@ -117,14 +117,14 @@ jax_test(
     ],
     disable_configs = [
         "gpu",
+        "gpu_x32",
         "gpu_p100",
+        "gpu_p100_x32",
         "gpu_a100",
         "gpu_h100",
     ],
     enable_configs = [
-        "gpu_x32",
         "gpu_a100_x32",
-        "gpu_p100_x32",
         "gpu_h100_x32",
     ],
     shard_count = 4,
@@ -142,7 +142,7 @@ jax_test(
         "gpu": ["noasan"],  # https://github.com/openai/triton/issues/2918
     },
     config_tags_overrides = {
-        "gpu_x32": {
+        "gpu_a100_x32": {
             "ondemand": False,  # Include in presubmit.
         },
     },
@@ -151,14 +151,14 @@ jax_test(
     ],
     disable_configs = [
         "gpu",
+        "gpu_x32",
         "gpu_a100",
         "gpu_p100",
+        "gpu_p100_x32",
         "gpu_h100",
     ],
     enable_configs = [
-        "gpu_x32",
         "gpu_a100_x32",
-        "gpu_p100_x32",
         "gpu_h100_x32",
     ],
     deps = [
