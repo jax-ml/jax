@@ -51,6 +51,7 @@ except ModuleNotFoundError:
   LoweringError = Exception
   compile_jaxpr = None
   _TRITON_COMPILE_VIA_XLA = None
+  plgpu = None
 import numpy as np
 
 
@@ -138,6 +139,10 @@ class PallasTest(parameterized.TestCase):
     if not self.INTERPRET:
       if not jtu.test_device_matches(["gpu"]):
         self.skipTest("Only works on GPU")
+      if (jtu.test_device_matches(["cuda"]) and
+          not self.check_gpu_capability_at_least(80)):
+        self.skipTest("Only works on GPUs with capability >= sm80")
+
       try:
         import triton  # noqa: F401
       except ImportError:
@@ -156,6 +161,8 @@ class PallasTest(parameterized.TestCase):
 
   def check_gpu_capability_at_least(self, capability,
                                     device: int = 0):
+    if plgpu is None:
+      return False
     if self.INTERPRET:
       return True
     return plgpu.get_compute_capability(device) >= capability
@@ -347,9 +354,6 @@ class PallasCallTest(PallasTest):
       if block_size_m <= m and block_size_n <= n and block_size_k <= k
     ])
   def test_matmul(self, m, n, k, dtype, bm, bn, bk, gm):
-    if not self.check_gpu_capability_at_least(70):
-      raise unittest.SkipTest(
-          "Matmul only works on GPUs with capability >= sm70")
     if not self.INTERPRET and (
         plgpu.get_compute_capability(0) <= 75
         and (bm >= 128 or bn > 128 or bk > 32)
@@ -376,9 +380,6 @@ class PallasCallTest(PallasTest):
       if block_size_m <= m and block_size_n <= n and block_size_k <= k
     ])
   def test_matmul_block_spec(self, m, n, k, dtype, bm, bn, bk):
-    if not self.check_gpu_capability_at_least(70):
-      raise unittest.SkipTest(
-          "Matmul only works on GPUs with capability >= sm70")
     if not self.INTERPRET and (
         plgpu.get_compute_capability(0) <= 75
         and (bm >= 128 or bn > 128 or bk > 32)
@@ -399,9 +400,6 @@ class PallasCallTest(PallasTest):
       trans_b=[False, True],
   )
   def test_dot(self, size, dtype, trans_a, trans_b):
-    if not self.check_gpu_capability_at_least(70):
-      raise unittest.SkipTest(
-          "Matmul only works on GPUs with capability >= sm70")
     if trans_a or trans_b:
       # TODO(slebedev): Remove this once the problematic Triton pass is fixed.
       raise unittest.SkipTest(
@@ -579,9 +577,6 @@ class PallasCallTest(PallasTest):
       ("min_f32", pl.atomic_min, np.array([1, 2, 3, 4], np.float32), np.min),
   ])
   def test_scalar_atomic(self, op, value, numpy_op):
-    if not self.check_gpu_capability_at_least(70):
-      raise unittest.SkipTest(
-          "Atomic ops onl works on GPUs with capability >= sm70")
 
     @functools.partial(
         self.pallas_call,
@@ -612,10 +607,6 @@ class PallasCallTest(PallasTest):
 
   @parameterized.parameters(*[(0,), (1,)])
   def test_array_atomic_add(self, axis):
-    if not self.check_gpu_capability_at_least(70):
-      raise unittest.SkipTest(
-          "Atomic ops onl works on GPUs with capability >= sm70")
-
     m, n = 32, 8
     if axis == 0:
       grid = m
@@ -802,9 +793,6 @@ class PallasCallTest(PallasTest):
     (2, 1, 1),
   ])
   def test_atomic_cas(self, init_value, cmp, new_value):
-    if not self.check_gpu_capability_at_least(70):
-      raise unittest.SkipTest("requires a GPU with compute capability >= sm70")
-
     @functools.partial(
         self.pallas_call, out_shape=(
           jax.ShapeDtypeStruct((), jnp.int32),
@@ -824,9 +812,6 @@ class PallasCallTest(PallasTest):
   def test_atomic_counter(self, num_threads):
     if self.INTERPRET:
       self.skipTest("While loop not supported in interpreter mode.")
-
-    if not self.check_gpu_capability_at_least(70):
-      raise unittest.SkipTest("requires a GPU compute capability >= sm70")
 
     @functools.partial(
         self.pallas_call, out_shape=(
@@ -1830,10 +1815,6 @@ class FusedAttentionTest(PallasTest):
       use_segment_ids,
       kwargs,
   ):
-    if not self.check_gpu_capability_at_least(80):
-      raise unittest.SkipTest(
-          "Fused attention only works on GPUs with capability >= sm80")
-
     k1, k2, k3 = random.split(random.key(0), 3)
     q = random.normal(
         k1, (batch_size, seq_len, num_heads, head_dim), dtype=jnp.float16
@@ -1907,9 +1888,6 @@ class FusedAttentionTest(PallasTest):
   def test_fused_attention_bwd(
       self, batch_size, seq_len, num_heads, head_dim, causal, use_segment_ids
   ):
-    if not self.check_gpu_capability_at_least(80):
-      raise unittest.SkipTest(
-          "Fused attention only works on GPUs with capability >= sm80")
     k1, k2, k3 = random.split(random.key(0), 3)
     q = random.normal(
         k1, (batch_size, seq_len, num_heads, head_dim), dtype=jnp.float16
@@ -1951,9 +1929,6 @@ class FusedLayerNormTest(PallasTest):
     (2, 384, 192),
   ])
   def test_fused_layernorm_fwd(self, batch_size, seq_len, embed_dim):
-    if not self.check_gpu_capability_at_least(70):
-      raise unittest.SkipTest(
-          "Fused layernorm only works on GPUs with capability >= sm70")
     k1, k2, k3 = random.split(random.key(0), 3)
     x = random.normal(k1, (batch_size, seq_len, embed_dim), dtype=jnp.float32)
     w = jax.random.normal(k2, (embed_dim,), dtype=jnp.float32)
@@ -1968,9 +1943,6 @@ class FusedLayerNormTest(PallasTest):
     (2, 384, 192),
   ])
   def test_fused_layernorm_bwd(self, batch_size, seq_len, embed_dim):
-    if not self.check_gpu_capability_at_least(70):
-      raise unittest.SkipTest(
-          "Fused layernorm only works on GPUs with capability >= sm70")
     k1, k2, k3 = random.split(random.key(0), 3)
     x = random.normal(k1, (batch_size, seq_len, embed_dim), dtype=jnp.float32)
     w = jax.random.normal(k2, (embed_dim,), dtype=jnp.float32)
@@ -2000,9 +1972,6 @@ class RmsNormTest(PallasTest):
     (2, 384, 192),
   ])
   def test_rms_fwd(self, batch_size, seq_len, embed_dim):
-    if not self.check_gpu_capability_at_least(70):
-      raise unittest.SkipTest(
-          "Rms norm only works on GPUs with capability >= sm70")
     k1, k2, k3 = random.split(random.key(0), 3)
     x = random.normal(k1, (batch_size, seq_len, embed_dim), dtype=jnp.float32)
     w = jax.random.normal(k2, (embed_dim,), dtype=jnp.float32)
@@ -2017,9 +1986,6 @@ class RmsNormTest(PallasTest):
     (2, 384, 192),
   ])
   def test_rms_norm_bwd(self, batch_size, seq_len, embed_dim):
-    if not self.check_gpu_capability_at_least(70):
-      raise unittest.SkipTest(
-          "Rms norm only works on GPUs with capability >= sm70")
     k1, k2, k3 = random.split(random.key(0), 3)
     x = random.normal(k1, (batch_size, seq_len, embed_dim), dtype=jnp.float32)
     w = jax.random.normal(k2, (embed_dim,), dtype=jnp.float32)

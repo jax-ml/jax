@@ -22,6 +22,10 @@ import jax
 from jax import lax
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
+try:
+  from jax.experimental.pallas import gpu as plgpu
+except (ModuleNotFoundError, ImportError):
+  plgpu = None
 import jax.numpy as jnp
 import numpy as np
 
@@ -38,6 +42,17 @@ class OpsTest(jtu.JaxTestCase):
       self.skipTest("Only works in 32-bit")
     if jtu.device_under_test() == "cpu" and not self.INTERPRET:
       self.skipTest("Only interpreter mode supported on CPU")
+    if (jtu.test_device_matches(["cuda"]) and
+        not self.check_gpu_capability_at_least(80)):
+      self.skipTest("Only works on GPUs with capability >= sm80")
+
+  def check_gpu_capability_at_least(self, capability,
+                                    device: int = 0):
+    if plgpu is None:
+      return False
+    if self.INTERPRET:
+      return True
+    return plgpu.get_compute_capability(device) >= capability
 
   @classmethod
   def pallas_call(cls, *args, **kwargs):
