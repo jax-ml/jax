@@ -3262,9 +3262,9 @@ class CustomElementTypesTest(jtu.JaxTestCase):
       return *grads, v
 
     # x : [batch, d_model]
-    x = jax.random.uniform(jax.random.PRNGKey(0), [256, 100])
+    x = jax.random.uniform(jax.random.key(0), [256, 100])
     # wss : [layers, d_model, d_model]
-    wss = jax.random.uniform(jax.random.PRNGKey(1), [7, 100, 100])
+    wss = jax.random.uniform(jax.random.key(1), [7, 100, 100])
 
     jaxpr = jax.make_jaxpr(partial(fn))(wss, x)
     jaxpr_split_transpose = jax.make_jaxpr(partial(fn, split_transpose=True))(
