@@ -78,7 +78,7 @@ class InfeedTest(jtu.JaxTestCase):
 
   @jax.numpy_rank_promotion("allow")  # Test explicitly exercises implicit rank promotion.
   def testInfeedThenOutfeed(self):
-    hcb.stop_outfeed_receiver()
+    hcb._deprecated_stop_outfeed_receiver()
 
     @jax.jit
     def f(x):
@@ -100,7 +100,7 @@ class InfeedTest(jtu.JaxTestCase):
     self.assertAllClose(out, y + np.float32(1))
 
   def testInfeedThenOutfeedInALoop(self):
-    hcb.stop_outfeed_receiver()
+    hcb._deprecated_stop_outfeed_receiver()
 
     def doubler(_, token):
       y, token = lax.infeed(
