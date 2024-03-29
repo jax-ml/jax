@@ -255,3 +255,23 @@ jax_test(
         "//jax:pallas_tpu_ops",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
+
+jax_test(
+    name = "gmm_test",
+    srcs = [
+        "gmm_test.py",
+    ],
+    disable_backends = [
+        "cpu",
+        "gpu",
+    ],
+    shard_count = 50,
+    tags = [
+        "noasan",  # Times out.
+        "nomsan",  # Times out.
+        "notsan",  # Times out.
+    ],
+    deps = [
+        "//jax:pallas_tpu_ops",
+    ] + py_deps("absl/testing") + py_deps("absl/flags") + py_deps("numpy") + py_deps("hypothesis"),
+)
