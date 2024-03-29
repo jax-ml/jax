@@ -193,7 +193,7 @@ def _swap_abstract_eval(ref_aval: AbstractRef,
     if ref_aval.dtype != val_aval.dtype:
       raise ValueError("Invalid dtype for `swap`. "
                        f"Ref dtype: {ref_aval.dtype}. "
-                       f"Value shape: {val_aval.dtype}. ")
+                       f"Value dtype: {val_aval.dtype}. ")
     out_aval = core.ShapedArray(expected_out_shape, ref_aval.dtype)
   else:
     if indexers:
