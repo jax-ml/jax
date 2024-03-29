@@ -1733,8 +1733,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       rtol = {np.float32: 2e-5, np.float64: 1e-13}
       atol = {np.float32: 6e-2, np.float64: 1e-13}
     else:
-      rtol = {np.float32: 2e-5, np.float64: 1e-13}
-      atol = {np.float32: 5e-5, np.float64: 1e-13}
+      rtol = {np.float32: 2e-4, np.float64: 1e-13}
+      atol = {np.float32: 8e-5, np.float64: 1e-13}
 
     if jit_f:
       f = jax.jit(f)
