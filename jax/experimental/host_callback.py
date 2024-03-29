@@ -1818,13 +1818,13 @@ def _initialize_outfeed_receiver(
       dispatch._on_exit = True  # type: ignore[protected-access]
       if not _callback_handler_data.on_exit:
         _callback_handler_data.on_exit = True
-        barrier_wait("at_exit")
+        _deprecated_barrier_wait("at_exit")
 
     atexit.register(exit_handler)  # We wait as long as we have callbacks
     _callback_handler_data.initialized = True
 
 
-def barrier_wait(logging_name: str | None = None):
+def _deprecated_barrier_wait(logging_name: str | None = None):
   """Blocks the calling thread until all current outfeed is processed.
 
   Waits until all callbacks from computations already running on all devices
@@ -1914,6 +1914,7 @@ _deprecations = {
     "id_tap": (_deprecation_msg, _deprecated_id_tap),
     "id_print": (_deprecation_msg, _deprecated_id_print),
     "call": (_deprecation_msg, _deprecated_call),
+    "barrier_wait": (_deprecation_msg, _deprecated_barrier_wait),
     "stop_outfeed_receiver": (_deprecation_msg, _deprecated_stop_outfeed_receiver),
 }
 
@@ -1922,6 +1923,7 @@ if typing.TYPE_CHECKING:
   id_tap = _deprecated_id_tap
   id_print = _deprecated_id_print
   call = _deprecated_call
+  barrier_wait = _deprecated_barrier_wait
   stop_outfeed_receiver = _deprecated_stop_outfeed_receiver
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
