@@ -51,6 +51,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lax import parallel
 from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
 from jax._src.util import safe_map, safe_zip
 
 config.parse_flags_with_absl()
@@ -1109,7 +1110,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertEqual((tuple(sorted(groups[0])),),
                      ((0, 1, 2, 3, 4, 5, 6, 7,),))  # order doesn't matter
 
-  @jtu.skip_on_devices("cpu", "tpu")
+  @jtu.run_on_devices("gpu")
+  @unittest.skipIf(xla_extension_version < 250, "Requires jaxlib 0.4.26")
   def testCollectiveBroadcast(self):
     device_count = jax.device_count()
     f = lambda x: lax.pbroadcast(x, source=0, axis_name='i')
@@ -1119,7 +1121,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     expected = np.take(x, [0] * device_count, axis=0)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @jtu.skip_on_devices("cpu", "tpu")
+  @jtu.run_on_devices("gpu")
+  @unittest.skipIf(xla_extension_version < 250, "Requires jaxlib 0.4.26")
   def testCollectiveBroadcastVmap(self):
     device_count = jax.device_count()
     f = lambda x: lax.pbroadcast(x, source=0, axis_name='i')
@@ -1129,7 +1132,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     expected = jnp.broadcast_to(x[0:1], x.shape)
     self.assertAllClose(ans, expected, check_dtypes=False)
 
-  @jtu.skip_on_devices("cpu", "tpu")
+  @jtu.run_on_devices("gpu")
+  @unittest.skipIf(xla_extension_version < 250, "Requires jaxlib 0.4.26")
   def testCollectiveBroadcastGrad(self):
     device_count = jax.device_count()
     f = lambda x: lax.pbroadcast(x, source=0, axis_name='i')
