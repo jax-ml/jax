@@ -997,7 +997,11 @@ pytype_library(
 
 pytype_library(
     name = "experimental_host_callback",
-    srcs = ["experimental/host_callback.py"],
+    srcs = [
+        "experimental/__init__.py",  # To support JAX_HOST_CALLBACK_LEGACY=False
+        "experimental/host_callback.py",
+        "experimental/x64_context.py",  # To support JAX_HOST_CALLBACK_LEGACY=False
+    ],
     visibility = ["//visibility:public"],
     deps = [
         ":jax",

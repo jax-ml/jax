@@ -247,7 +247,7 @@ class PythonCallbackTest(jtu.JaxTestCase):
       jax.effects_barrier()
 
   @with_pure_and_io_callbacks
-  def test_callback_with_wrong_dtype_outputs(self, *, callback=io_callback_ordered):
+  def test_callback_with_wrong_dtype_outputs(self, *, callback):
 
     def _cb():
       return np.array([1], np.float64)
