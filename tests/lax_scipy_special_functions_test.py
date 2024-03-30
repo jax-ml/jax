@@ -218,6 +218,12 @@ class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_special.gamma, lsp_special.gamma, args_maker, rtol=rtol)
     self._CompileAndCheck(lsp_special.gamma, args_maker, rtol=rtol)
 
+  def testScipySpecialFunNdtri(self):
+    dtype = jax.numpy.zeros(0).dtype
+    args_maker = lambda: [np.arange(-10, 10).astype(dtype)]
+    rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
+    self._CheckAgainstNumpy(osp_special.ndtri, lsp_special.ndtri, args_maker, rtol=rtol)
+    self._CompileAndCheck(lsp_special.ndtri, args_maker, rtol=rtol)
 
 
 if __name__ == "__main__":
