@@ -391,6 +391,7 @@ namespace; they are listed below.
     tensordot
     tile
     trace
+    trapezoid
     transpose
     tri
     tril
