@@ -2206,6 +2206,8 @@ class PythonPmapTest(jtu.JaxTestCase):
     # Regression test for https://github.com/google/jax/issues/20428
     # pmap isn't particularly important here, but it guarantees that the CPU
     # client runs the computation on a threadpool rather than inline.
+    if jax.device_count() < 2:
+      raise SkipTest("test requires at least two devices")
     x = jnp.eye(200)
     y = jax.pmap(jax.scipy.linalg.expm)(jnp.array([x, x]))
     y.block_until_ready()  # doesn't crash
