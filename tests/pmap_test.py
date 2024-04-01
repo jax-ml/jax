@@ -35,6 +35,7 @@ import jax
 from jax import (pmap, jit, vmap, jvp, grad, make_jaxpr,
                  linearize, device_put)
 from jax import lax
+import jax.scipy.linalg
 from jax import random
 from jax.ad_checkpoint import checkpoint as new_checkpoint
 import jax.numpy as jnp
@@ -2198,6 +2199,16 @@ class PythonPmapTest(jtu.JaxTestCase):
     # vmap-of-vmap with matched axis sizes
     jax.vmap(jax.vmap(lambda x: 2 * x, axis_name='i'),
              axis_name='i')(jax.numpy.ones((1, 1)))  # don't crash
+
+  @unittest.skipIf(xla_extension_version < 252, "Requires jaxlib 0.4.26")
+  @jtu.run_on_devices("cpu")
+  def test_pmap_stack_size(self):
+    # Regression test for https://github.com/google/jax/issues/20428
+    # pmap isn't particularly important here, but it guarantees that the CPU
+    # client runs the computation on a threadpool rather than inline.
+    x = jnp.eye(200)
+    y = jax.pmap(jax.scipy.linalg.expm)(jnp.array([x, x]))
+    y.block_until_ready()  # doesn't crash
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
