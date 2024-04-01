@@ -830,6 +830,11 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
       f"The addressable_data() method was called on {self._error_repr()}."
       f"{self._origin_msg()}")
 
+  def fully_replicated_shard(self, index):
+    raise ConcretizationTypeError(self,
+      f"The fully_replicated_shard() method was called on {self._error_repr()}."
+      f"{self._origin_msg()}")
+
   @property
   def block_until_ready(self):
     # Raise AttribureError for backward compatibility with hasattr() and getattr() checks.
