@@ -110,5 +110,3 @@ def pallas_call_tpu_lowering_rule(
     )
   return mlir.lower_fun(_lower_fun, multiple_results=True)(
       ctx, *in_nodes)
-mlir.register_lowering(pallas_call_p, pallas_call_tpu_lowering_rule,
-                       platform="tpu")

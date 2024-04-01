@@ -15,7 +15,6 @@
 """Module for Mosaic lowering of Pallas call."""
 
 from jax._src.pallas.mosaic import core
-from jax._src.pallas.mosaic import pallas_call_registration
 from jax._src.pallas.mosaic.core import PrefetchScalarGridSpec
 from jax._src.pallas.mosaic.core import SemaphoreType
 from jax._src.pallas.mosaic.core import TPUMemorySpace
@@ -48,5 +47,3 @@ ANY = TPUMemorySpace.ANY
 CMEM = TPUMemorySpace.CMEM
 SMEM = TPUMemorySpace.SMEM
 VMEM = TPUMemorySpace.VMEM
-
-del pallas_call_registration

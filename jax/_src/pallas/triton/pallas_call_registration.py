@@ -317,6 +317,3 @@ def pallas_call_lowering(
         num_warps=num_warps,
         num_stages=num_stages,
     )
-
-
-mlir.register_lowering(pallas_call_p, pallas_call_lowering, platform="gpu")

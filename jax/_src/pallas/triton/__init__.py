@@ -14,7 +14,6 @@
 
 """Contains Triton-specific pallas modules."""
 
-from jax._src.pallas.triton import pallas_call_registration
 from jax._src.lib import gpu_triton as triton_kernel_call_lib
 
 
@@ -31,4 +30,4 @@ except AttributeError:
     )
 
 
-del pallas_call_registration, triton_kernel_call_lib
+del triton_kernel_call_lib
