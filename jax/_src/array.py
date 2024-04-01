@@ -533,7 +533,7 @@ class ArrayImpl(basearray.Array):
   def layout(self):
     # TODO(yashkatariya): Remove the try;except when pathways supports layouts.
     try:
-      return layout.SpecifiedLayout(self._pjrt_layout)
+      return layout.DeviceLocalLayout(self._pjrt_layout)
     except xe.XlaRuntimeError as e:
       msg, *_ = e.args
       if type(msg) is str and msg.startswith("UNIMPLEMENTED"):

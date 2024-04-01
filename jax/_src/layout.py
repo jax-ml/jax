@@ -17,12 +17,7 @@ from __future__ import annotations
 from jax._src.lib import xla_client as xc
 
 
-# TODO(yashkatariya): Revist the 3 class hierarchy after ifrt::Layout lands.
-class Layout:
-  pass
-
-
-class SpecifiedLayout(Layout):
+class DeviceLocalLayout:
   layout: xc.PjRtLayout
 
   def __init__(self, layout: xc.PjRtLayout):
@@ -30,13 +25,13 @@ class SpecifiedLayout(Layout):
     self._layout_str = str(self._layout)
 
   def __repr__(self):
-    return f'SpecifiedLayout({self._layout_str})'
+    return f'DeviceLocalLayout({self._layout_str})'
 
   def __hash__(self):
     return hash(self._layout)
 
   def __eq__(self, other):
-    if not isinstance(other, SpecifiedLayout):
+    if not isinstance(other, DeviceLocalLayout):
       return False
     return self._layout == other._layout
 
