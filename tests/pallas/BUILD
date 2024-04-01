@@ -251,6 +251,9 @@ jax_test(
         "gpu",
     ],
     shard_count = 2,
+    tags = [
+        "noasan",  # Times out.
+    ],
     deps = [
         "//jax:pallas_tpu_ops",
     ] + py_deps("absl/testing") + py_deps("numpy"),
