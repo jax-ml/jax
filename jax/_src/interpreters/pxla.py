@@ -60,7 +60,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
-from jax._src.layout import SpecifiedLayout, AutoLayout
+from jax._src.layout import DeviceLocalLayout, AutoLayout
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
@@ -1996,7 +1996,7 @@ def are_all_shardings_default_mem_kind(da_object, shardings):
       return False
   return True
 
-MaybeLayout = Sequence[Union[SpecifiedLayout, AutoLayout, None]]
+MaybeLayout = Sequence[Union[DeviceLocalLayout, AutoLayout, None]]
 
 
 class AllArgsInfo(NamedTuple):
@@ -2607,7 +2607,7 @@ def maybe_get_orig_out_sharding(
 
 def _get_layouts_from_executable(
     xla_executable, in_layouts, out_layouts, num_ordered_effects
-) -> tuple[Sequence[SpecifiedLayout | None], Sequence[SpecifiedLayout | None]]:
+) -> tuple[Sequence[DeviceLocalLayout | None], Sequence[DeviceLocalLayout | None]]:
   try:
     in_layouts_xla = xla_executable.get_parameter_layouts()
     out_layouts_xla = xla_executable.get_output_layouts()
@@ -2620,8 +2620,8 @@ def _get_layouts_from_executable(
 
   new_in_layouts = []
   for x, i in safe_zip(in_layouts_xla, in_layouts):
-    x = SpecifiedLayout(x)
-    if isinstance(i, SpecifiedLayout):
+    x = DeviceLocalLayout(x)
+    if isinstance(i, DeviceLocalLayout):
       if i != x:
         raise AssertionError(
             f"Unexpected XLA layout override: (XLA) {x} != {i} (User layout)")
@@ -2631,8 +2631,8 @@ def _get_layouts_from_executable(
 
   new_out_layouts = []
   for x, o in safe_zip(out_layouts_xla, out_layouts):
-    x = SpecifiedLayout(x)
-    if isinstance(o, SpecifiedLayout):
+    x = DeviceLocalLayout(x)
+    if isinstance(o, DeviceLocalLayout):
       if o != x:
         raise AssertionError(
             f"Unexpected XLA layout override: (XLA) {x} != {o} (User layout)")
@@ -2640,8 +2640,8 @@ def _get_layouts_from_executable(
     else:
       new_out_layouts.append(x)
 
-  assert all(isinstance(i, SpecifiedLayout) for i in new_in_layouts)
-  assert all(isinstance(o, SpecifiedLayout) for o in new_out_layouts)
+  assert all(isinstance(i, DeviceLocalLayout) for i in new_in_layouts)
+  assert all(isinstance(o, DeviceLocalLayout) for o in new_out_layouts)
   return new_in_layouts, new_out_layouts  # type: ignore
 
 
@@ -2823,8 +2823,8 @@ class UnloadedMeshExecutable:
   kept_var_idx: set[int]
   mut: MutationData | None
   auto_spmd_lowering: bool
-  in_layouts: Sequence[SpecifiedLayout | None]
-  out_layouts: Sequence[SpecifiedLayout | None]
+  in_layouts: Sequence[DeviceLocalLayout | None]
+  out_layouts: Sequence[DeviceLocalLayout | None]
   all_args_info: AllArgsInfo | None
 
   def build_unsafe_call(self):
@@ -3219,7 +3219,7 @@ def check_device_backend_on_shardings(shardings) -> bool:
 
 def check_array_xla_sharding_layout_match(
     args, in_xla_shardings: Sequence[sharding_impls.XLACompatibleSharding],
-    in_xla_layouts: Sequence[SpecifiedLayout],
+    in_xla_layouts: Sequence[DeviceLocalLayout],
     jaxpr_debug_info: core.JaxprDebugInfo | None) -> None:
   from jax._src.array import ArrayImpl
   arg_names = ([''] * len(args) if jaxpr_debug_info is None else
