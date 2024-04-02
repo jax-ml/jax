@@ -112,7 +112,8 @@ def _device_assignment_mismatch_error(fun_name, fails, args_flat, api_name,
   if arg_names is None:
     arg_names = [''] * len(args_flat)
   for a, n in zip(args_flat, arg_names):
-    da = a.sharding._device_assignment if hasattr(a, 'sharding') else None
+    da = (a.sharding._device_assignment
+          if getattr(a, 'sharding', None) is not None else None)
     arg_list.append((n, da, shaped_abstractify(a)))
 
   mismatched_args_msg = _find_arg_mismatch(arg_list, fails, fun_name)
