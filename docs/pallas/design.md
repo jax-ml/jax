@@ -236,10 +236,11 @@ add = pl.pallas_call(
     add_kernel,
     out_shape=jax.ShapeDtypeStruct((8,), jnp.int32),
     in_specs=[
-      pl.BlockSpec(lambda i:, i, (2,)),
-      pl.BlockSpec(lambda i:, i, (2,))
+      pl.BlockSpec(lambda i: i, (2,)),
+      pl.BlockSpec(lambda i: i, (2,))
     ],
-    out_specs=pl.BlockSpec(lambda i: i, (2,))
+    out_specs=pl.BlockSpec(lambda i: i, (2,)),
+    grid=(4,))
 add(x, y)
 ```
 
