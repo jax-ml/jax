@@ -281,7 +281,9 @@ divide = true_divide
 def floor_divide(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   x1, x2 = promote_args_numeric("floor_divide", x1, x2)
   dtype = dtypes.dtype(x1)
-  if dtypes.issubdtype(dtype, np.integer):
+  if dtypes.issubdtype(dtype, np.unsignedinteger):
+    return lax.div(x1, x2)
+  elif dtypes.issubdtype(dtype, np.integer):
     quotient = lax.div(x1, x2)
     select = logical_and(lax.sign(x1) != lax.sign(x2), lax.rem(x1, x2) != 0)
     # TODO(mattjj): investigate why subtracting a scalar was causing promotion
