@@ -5068,6 +5068,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testGeomspace(self, start_shape, stop_shape, num,
                     endpoint, dtype, axis):
+    # TODO(jakevdp): remove once https://github.com/numpy/numpy/issues/26195 is fixed.
+    if jtu.numpy_version() >= (2, 0, 0) and dtypes.issubdtype(dtype, jnp.complexfloating):
+      self.skipTest("NumPy 2.0.0rc1 geomspace is broken for complex dtypes.")
+
     rng = jtu.rand_default(self.rng())
     # relax default tolerances slightly
     tol = {dtypes.bfloat16: 2e-2, np.float16: 4e-3, np.float32: 2e-3,
