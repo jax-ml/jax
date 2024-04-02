@@ -586,6 +586,20 @@ class PythonCallbackTest(jtu.JaxTestCase):
       self.assertIn(f"jax.{api_name} failed", output)
       self.assertIn("Traceback (most recent call last)", output)
 
+  @with_pure_and_io_callbacks
+  def test_compilation_caching(self, *, callback):
+    def f_outside(x):
+      return 2 * x
+
+    def fun(x):
+      return callback(f_outside, x, x)
+
+    x = np.arange(6, dtype=np.int32).reshape((2, 3))
+    with jtu.count_primitive_compiles() as count:
+      for _ in range(3):
+        self.assertAllClose(2 * x, fun(x))
+    self.assertEqual(count[0], 1)
+
 
 class PureCallbackTest(jtu.JaxTestCase):
 
