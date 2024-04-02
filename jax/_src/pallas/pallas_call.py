@@ -523,17 +523,23 @@ def _pallas_call_lowering(
   if platform == "cpu":
     raise ValueError("Only interpret mode is supported on CPU backend.")
   elif platform == "cuda" or platform == "rocm":
-    from jax._src.pallas.triton import pallas_call_registration  # type: ignore
-
-    return pallas_call_registration.pallas_call_lowering(
-        ctx, *in_nodes, interpret=interpret, **params
-    )
+    try:
+      from jax._src.pallas.triton import pallas_call_registration  # type: ignore
+    except ImportError:
+      pass
+    else:
+      return pallas_call_registration.pallas_call_lowering(
+          ctx, *in_nodes, interpret=interpret, **params
+      )
   elif platform == "tpu":
-    from jax._src.pallas.mosaic import pallas_call_registration  # type: ignore
-
-    return pallas_call_registration.pallas_call_tpu_lowering_rule(
-        ctx, *in_nodes, interpret=interpret, **params
-    )
+    try:
+      from jax._src.pallas.mosaic import pallas_call_registration  # type: ignore
+    except ImportError:
+      pass
+    else:
+      return pallas_call_registration.pallas_call_tpu_lowering_rule(
+          ctx, *in_nodes, interpret=interpret, **params
+      )
 
   raise _unsupported_lowering_error(platform)
 

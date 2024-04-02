@@ -56,10 +56,13 @@ jax_test(
         "gpu_a100_x32",
         "gpu_h100_x32",
     ],
+    env = {
+        "JAX_TRITON_COMPILE_VIA_XLA": "0",
+    },
     shard_count = 4,
     deps = [
         "//jax:pallas_gpu",
-    ] + py_deps("absl/testing") + py_deps("numpy"),
+    ] + py_deps("absl/testing") + py_deps("jax_triton") + py_deps("numpy"),
 )
 
 jax_test(
@@ -162,8 +165,7 @@ jax_test(
         "gpu_h100_x32",
     ],
     deps = [
-        "//jax:pallas_gpu",
-        "//jax:pallas_tpu",
+        "//jax:pallas",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 

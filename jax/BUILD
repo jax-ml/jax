@@ -104,6 +104,7 @@ package_group(
     name = "pallas_gpu_users",
     packages = [
         "//...",
+        "//learning/brain/research/jax",
     ] + pallas_gpu_internal_users,
 )
 
@@ -111,6 +112,7 @@ package_group(
     name = "pallas_tpu_users",
     packages = [
         "//...",
+        "//learning/brain/research/jax",
     ] + pallas_tpu_internal_users,
 )
 

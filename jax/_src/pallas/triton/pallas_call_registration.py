@@ -56,8 +56,8 @@ def compile_jaxpr(
     num_stages: int,
     debug: bool,
 ) -> CompilationResult:
-  from jax_triton.triton_lib import compile_ttir_to_ptx_inplace
-  import triton.backends.nvidia.compiler as cb
+  from jax_triton.triton_lib import compile_ttir_to_ptx_inplace  # type: ignore
+  import triton.backends.nvidia.compiler as cb  # type: ignore
 
   # TODO(sharadmv): handle multiple devices, right now we assume device 0
   # which is fine when we have multiple of the same GPU but this won't work in
