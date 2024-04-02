@@ -1817,6 +1817,13 @@ def _move_mutable_consts(
                      effects, None)
   return core.ClosedJaxpr(jaxpr, consts), in_mut
 
+@weakref_lru_cache
+def _discharge_internal_refs(jaxpr: core.ClosedJaxpr) -> core.ClosedJaxpr:
+  from jax._src.state.discharge import discharge_state
+  jaxpr_, consts = discharge_state(jaxpr.jaxpr, jaxpr.consts)
+  jaxpr_._debug_info = jaxpr.jaxpr.debug_info
+  return core.ClosedJaxpr(jaxpr_, consts)
+
 
 class SemanticallyEqualShardings:
 
@@ -2074,6 +2081,8 @@ def lower_sharding_computation(
     global_out_avals = closed_jaxpr.out_avals
   else:
     inout_aliases = mut = None
+    if any(isinstance(e, core.InternalMutableArray) for e in closed_jaxpr.effects):
+      closed_jaxpr = _discharge_internal_refs(closed_jaxpr)
 
   jaxpr = closed_jaxpr.jaxpr
   assert len(out_shardings) == len(out_layouts) == len(global_out_avals), (

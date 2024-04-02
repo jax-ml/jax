@@ -1929,6 +1929,14 @@ def mutable_array(init_val):
   return mutable_array_p.bind(init_val)
 mutable_array_p = Primitive('mutable_array')
 
+class InternalMutableArray(effects.Effect):
+  pass
+
+@mutable_array_p.def_effectful_abstract_eval
+def mutable_array_abstract_eval(init_aval):
+  from jax._src.state.types import AbstractRef  # type: ignore[import]
+  return AbstractRef(init_aval), {InternalMutableArray}
+
 @mutable_array_p.def_impl
 def _mutable_array_impl(init_val):
   from jax._src.state.types import AbstractRef  # type: ignore[import]
@@ -2922,6 +2930,8 @@ def _check_jaxpr(
     write(v, v.aval)
 
   # Check each eqn.
+  sentinel = object()
+  in_idx = {v: i for i, v in enumerate(it.chain(jaxpr.constvars, jaxpr.invars))}
   for eqn_idx, eqn in enumerate(jaxpr.eqns):
     prim = eqn.primitive
     try:
@@ -2943,6 +2953,9 @@ def _check_jaxpr(
 
       # Check the computed effect type matches the eqn's annotation, and is
       # included in the jaxpr's annotation.
+      if prim is mutable_array_p:
+        outvar, = eqn.outvars
+        in_idx[outvar] = None  # type: ignore
       if eqn.effects != eqn_effects:
         raise JaxprTypeError("Inferred effects do not match equation effects. "
                              f"Equation effects: {eqn.effects}. "
@@ -2950,11 +2963,9 @@ def _check_jaxpr(
       for eff in eqn.effects:
         if isinstance(eff, effects.JaxprInputEffect):
           eqn_invar = eqn.invars[eff.input_index]
-          all_vars = [*jaxpr.constvars, *jaxpr.invars]
-          if eqn_invar not in all_vars:
+          if (jaxpr_index := in_idx.get(eqn_invar, sentinel)) is sentinel:
             raise JaxprTypeError(
                 "Invalid `JaxprInputEffect`: must correspond to a jaxpr invar")
-          jaxpr_index = all_vars.index(eqn_invar)
           jaxpr_effect = eff.replace(input_index=jaxpr_index)
           if jaxpr_effect not in jaxpr.effects:
             raise JaxprTypeError(
