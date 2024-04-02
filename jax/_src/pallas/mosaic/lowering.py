@@ -378,13 +378,20 @@ def lower_jaxpr_to_module(
         raise NotImplementedError("Index map jaxpr with consts not supported.")
       # ANY operands don't support windowing and require empty window_params.
       if aval.memory_space == tpu_core.TPUMemorySpace.ANY:
-        requires_windowing = bm.block_shape != full_ty.shape
-        for atom in bm.index_map_jaxpr.jaxpr.outvars:
-          if requires_windowing:
-            break
-          requires_windowing = not (
-              isinstance(atom, jax_core.Literal) and atom.val == 0
-          )
+        # We may not require windowing if our block_shape matches the original
+        # shape or the dimensions are mapped.
+        requires_windowing = any(
+            b != s
+            for b, s in zip(bm.block_shape, full_ty.shape)
+            if not (b is pl_core.mapped and s == 1)
+        )
+        if np.prod(grid) != 1:
+          for atom in bm.index_map_jaxpr.jaxpr.outvars:
+            if requires_windowing:
+              break
+            requires_windowing = not (
+                isinstance(atom, jax_core.Literal) and atom.val == 0
+            )
         if requires_windowing:
           raise NotImplementedError(
               "Operands in placed in the TPUMemorySpace.ANY memory space don't"
@@ -823,8 +830,10 @@ def _slice_memref(ref: ir.Value, ref_aval: state.AbstractRef,
   out = tpu.MemRefSliceOp(target_ref_ty, ref, starts, dynamic_sizes).result
   if any(squeeze_dims):
     # We need to squeeze out some dimensions
+    static_sizes = tuple(s if not isinstance(s, ir.Value)
+                         else ir_dynamic_size for s in target_shape)
     squeezed_ref_ty = ir.MemRefType.get(
-        tuple(target_shape), _dtype_to_ir_type(ref_aval.dtype),
+        static_sizes, _dtype_to_ir_type(ref_aval.dtype),
         memory_space=ref.type.memory_space)
     out = tpu.MemRefSqueezeOp(squeezed_ref_ty, out).result
   return out, ref_block_shape
