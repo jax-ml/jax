@@ -117,10 +117,10 @@ class PythonCallbackTest(jtu.JaxTestCase):
           lambda x: returned_literal, core.ShapedArray((), expect_dtype), x
       )
 
-    if not config.enable_x64.value:
-      ctx = self.assertRaisesRegex(Exception, "Cannot return 64-bit values")
-    elif expect_dtype in (np.int32, np.float32):
-      ctx = self.assertRaisesRegex(Exception, "Incorrect output dtype")
+    if not config.enable_x64.value and expect_dtype in (np.int64, np.float64):
+      ctx = self.assertRaisesRegex(Exception, "result_shape_dtypes cannot specify 64-bit types")
+    elif config.enable_x64.value and expect_dtype in (np.int32, np.float32):
+      ctx = self.assertRaisesRegex(Exception, "Incorrect output dtype for return value")
     else:
       ctx = contextlib.nullcontext()
 
@@ -247,7 +247,7 @@ class PythonCallbackTest(jtu.JaxTestCase):
       jax.effects_barrier()
 
   @with_pure_and_io_callbacks
-  def test_callback_with_wrong_dtype_outputs(self, *, callback):
+  def test_callback_with_wrong_dtype_outputs(self, *, callback=io_callback_ordered):
 
     def _cb():
       return np.array([1], np.float64)
@@ -257,9 +257,14 @@ class PythonCallbackTest(jtu.JaxTestCase):
       # Calling a function expected a f32 return value but getting f64
       return callback(_cb, core.ShapedArray((1,), np.float32))
 
-    with self.assertRaises(RuntimeError):
-      f()
+    if config.enable_x64.value:
+      ctx = self.assertRaisesRegex(Exception, "Incorrect output dtype for return value")
+    else:
+      ctx = contextlib.nullcontext()
+    with ctx:
+      res = f()
       jax.effects_barrier()
+      self.assertAllClose(res, np.array([1], np.float32))
 
   @with_pure_and_io_callbacks
   def test_callback_with_wrongly_specified_64_bit_dtype(self, *, callback):
