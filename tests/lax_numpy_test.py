@@ -5181,6 +5181,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
+  def testBroadcastToInvalidShape(self):
+    # Regression test for https://github.com/google/jax/issues/20533
+    x = jnp.zeros((3, 4, 5))
+    with self.assertRaisesRegex(
+        ValueError, "Cannot broadcast to shape with fewer dimensions"):
+      jnp.broadcast_to(x, (4, 5))
+
   @jtu.sample_product(
     [dict(shapes=shapes, broadcasted_shape=broadcasted_shape)
       for shapes, broadcasted_shape in [
