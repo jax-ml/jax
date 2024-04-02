@@ -1527,6 +1527,18 @@ def _log1p_lowering_rule(ctx: LoweringRuleContext, x):
 lowering_rules[lax.log1p_p] = _log1p_lowering_rule
 
 
+def _round_lowering_rule(ctx: LoweringRuleContext, x, *, rounding_method):
+  if rounding_method == 0:
+    return math.RoundOp(x).result
+  elif rounding_method == 1:
+    return math.RoundEvenOp(x).result
+  else:
+    raise NotImplementedError(f"Unsupported rounding method: {rounding_method}")
+
+
+lowering_rules[lax.round_p] = _round_lowering_rule
+
+
 _cmpi_lowering_types = {
     lax.eq_p: 0,
     lax.ne_p: 1,
