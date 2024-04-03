@@ -37,7 +37,7 @@ jobs:
         run: |
           python -m pip install -r build/test-requirements.txt
           python -m pip uninstall -y matplotlib
-          python -m pip install --pre --upgrade numpy==2.0.0rc1 scipy==1.13.0rc1
+          python -m pip install --pre --upgrade numpy==2.0.0rc1 scipy==1.13.0
           "C:\\msys64\\;C:\\msys64\\usr\\bin\\;" >> $env:GITHUB_PATH
           python.exe build\build.py --bazel_options=--color=yes --verbose
 
