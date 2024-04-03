@@ -62,6 +62,9 @@ The API {func}`jax.distributed.initialize` takes several arguments, namely:
     with a port available on that process. Process 0 will start a JAX service
     exposed via that IP address and port, to which the other processes in the
     cluster will connect.
+  * `coordinator_bind_address`: the IP address and port to which the JAX service
+    on process 0 in your cluster will bind. By default, it will bind to all
+    available interfaces using the same port as `coordinator_address`.
   * `num_processes`: the number of processes in the cluster
   * `process_id`: the ID number of this process, in the range `[0 ..
     num_processes)`.
