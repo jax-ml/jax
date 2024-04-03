@@ -12,6 +12,10 @@ Remember to align the itemized text with the first line of an item within a list
   * Added {func}`jax.numpy.trapezoid`, following the addition of this function in
     NumPy 2.0.
 
+* Changes
+  * Complex-valued {func}`jax.numpy.geomspace` now chooses the logarithmic spiral
+    branch consistent with that of NumPy 2.0.
+
 * Deprecations & Removals
   * {func}`jax.tree_map` is deprecated; use `jax.tree.map` instead, or for backward
     compatibility with older JAX versions, use {func}`jax.tree_util.tree_map`.
