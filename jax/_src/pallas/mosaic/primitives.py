@@ -36,7 +36,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pl_core
 from jax._src.pallas.mosaic import core as tpu_core
-from jax._src.typing import DTypeLike
+from jax._src.typing import DTypeLike, ArrayLike
 import jax.numpy as jnp
 
 map, unsafe_map = util.safe_map, map
@@ -63,7 +63,7 @@ mlir.register_lowering(repeat_p, _repeat_lowering_rule)
 bitcast_p = jax_core.Primitive("bitcast")
 
 
-def bitcast(x, ty: DTypeLike):
+def bitcast(x: ArrayLike, ty: DTypeLike) -> jax.Array:
   ty = dtypes.canonicalize_dtype(ty)
   if len(x.shape) < 2:
     raise ValueError("Not implemented: bitcast 1D")
@@ -109,13 +109,13 @@ roll_p = jax_core.Primitive("roll")
 
 
 def roll(
-    x,
+    x: ArrayLike,
     shift: int,
     axis: int,
     *,
     stride: int | None = None,
     stride_axis: int | None = None,
-):
+) -> jax.Array:
   if shift < 0:
     raise ValueError("shift must be non-negative.")
   if axis < 0 or axis >= len(x.shape):
