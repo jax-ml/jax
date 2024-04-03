@@ -200,6 +200,29 @@ def silu(x: ArrayLike) -> Array:
 swish = silu
 
 @jax.jit
+def mish(x: ArrayLike) -> Array:
+  r"""Mish activation function.
+
+  Computes the element-wise function:
+
+  .. math::
+    \mathrm{mish}(x) = x \cdot \mathrm{tanh}(\mathrm{softplus}(x))
+
+  For more information, see
+  `Mish: A Self Regularized Non-Monotonic Activation Function
+  <https://arxiv.org/abs/1908.08681>`_.
+
+  Args:
+    x : input array
+
+  Returns:
+    An array.
+  """
+  numpy_util.check_arraylike("mish", x)
+  x_arr = jnp.asarray(x)
+  return x_arr * jnp.tanh(softplus(x_arr))
+
+@jax.jit
 def log_sigmoid(x: ArrayLike) -> Array:
   r"""Log-sigmoid activation function.
 
@@ -314,7 +337,7 @@ def celu(x: ArrayLike, alpha: ArrayLike = 1.0) -> Array:
 
   For more information, see
   `Continuously Differentiable Exponential Linear Units
-  <https://arxiv.org/pdf/1704.07483.pdf>`_.
+  <https://arxiv.org/abs/1704.07483>`_.
 
   Args:
     x : input array
@@ -342,7 +365,7 @@ def selu(x: ArrayLike) -> Array:
 
   For more information, see
   `Self-Normalizing Neural Networks
-  <https://papers.nips.cc/paper/6698-self-normalizing-neural-networks.pdf>`_.
+  <https://arxiv.org/abs/1706.02515>`_.
 
   Args:
     x : input array

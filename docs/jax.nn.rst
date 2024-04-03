@@ -38,6 +38,7 @@ Activation functions
     gelu
     glu
     squareplus
+    mish
 
 Other functions
 ---------------
