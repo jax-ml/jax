@@ -67,6 +67,7 @@ from jax._src.sharding_impls import (
     SingleDeviceSharding, PmapSharding, AUTO, UNSPECIFIED, UnspecifiedValue,
     ParsedPartitionSpec, SpecSync, get_single_pspec, is_auto, is_unspecified,
     is_unspecified_or_auto, prepare_axis_resources, parse_flatten_op_sharding)
+from jax._src.layout import Layout, LayoutOptions
 from jax._src.state import discharge as state_discharge, RefEffect
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
@@ -437,6 +438,7 @@ def _make_jit_wrapper(jit_info: PjitInfo):
           args_flat, params['in_shardings'], params['out_shardings'], mesh)
       in_layouts_flat = _resolve_in_layouts(
           args_flat, in_layouts_flat, in_shardings)
+      out_layouts_flat = _resolve_out_layouts(out_layouts_flat)
       lowering = _pjit_lower(
           params['jaxpr'], in_shardings, params['out_shardings'],
           params['resource_env'], params['donated_invars'], params['name'],
@@ -1268,8 +1270,10 @@ def _resolve_in_layouts(args, jit_in_layouts, jit_in_shardings):
   resolved_in_layouts = []
   for arg, jit_in_l in safe_zip(args, jit_in_layouts):
     arg_layout, committed = (
-        (arg.layout, getattr(arg, '_committed', True))
+        (arg.layout.device_local_layout, getattr(arg, '_committed', True))
         if getattr(arg, 'layout', None) is not None else (None, False))
+    jit_in_l = (jit_in_l.device_local_layout
+                if isinstance(jit_in_l, Layout) else jit_in_l)
     if jit_in_l is None:
       if committed:
         resolved_in_layouts.append(arg_layout)
@@ -1284,6 +1288,14 @@ def _resolve_in_layouts(args, jit_in_layouts, jit_in_shardings):
                           f'arg shape: {shaped_abstractify(arg).str_short()}')
       resolved_in_layouts.append(jit_in_l)
   return tuple(resolved_in_layouts)
+
+
+def _resolve_out_layouts(out_layouts: Sequence[Layout]
+                         ) -> Sequence[LayoutOptions]:
+  # TODO(yashkatariya): Remove the if condition when all layouts come via the
+  # `layout.Layout` API.
+  return tuple(o.device_local_layout if isinstance(o, Layout) else o
+               for o in out_layouts)
 
 
 def _resolve_in_shardings(

@@ -51,6 +51,7 @@ from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     PmapSharding, SingleDeviceSharding, NamedSharding, XLACompatibleSharding,
     GSPMDSharding, TransferToMemoryKind)
+from jax._src.layout import Layout, DeviceLocalLayout
 
 
 JAXPR_TRACE_EVENT = "/jax/core/compile/jaxpr_trace_duration"
@@ -380,24 +381,8 @@ def _mcjax_reshard(x, target_sharding):
     pxla._get_and_check_device_assignment.fn = _orig_get_and_check_device_assignment
 
 
-def _device_put_impl(
-    x,
-    device: Device | Sharding | None = None,
-    src: Device | Sharding | None = None):
+def _device_put_sharding_impl(x, aval, device):
   from jax._src import array
-
-  if (isinstance(device, TransferToMemoryKind) or
-      isinstance(src, TransferToMemoryKind)):
-    raise ValueError(
-        "TransferToMemoryKind argument to jax.device_put can only be used"
-        " inside jax.jit. If you are using device_put outside jax.jit, then"
-        " please provide a concrete Sharding with memory_kind.")
-
-  try:
-    aval = xla.abstractify(x)
-  except TypeError as err:
-    raise TypeError(
-        f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
 
   if isinstance(device, Sharding):
     s = device
@@ -434,6 +419,43 @@ def _device_put_impl(
   sh = SingleDeviceSharding(pxla._get_default_device()
                             if device is None else device)
   return _put_x(x, sh, aval, device is not None)
+
+def _device_put_impl(
+    x,
+    device: Device | Sharding | Layout | None = None,
+    src: Device | Sharding | Layout | None = None):
+  if (isinstance(device, TransferToMemoryKind) or
+      isinstance(src, TransferToMemoryKind)):
+    raise ValueError(
+        "TransferToMemoryKind argument to jax.device_put can only be used"
+        " inside jax.jit. If you are using device_put outside jax.jit, then"
+        " please provide a concrete Sharding with memory_kind.")
+
+  try:
+    aval = xla.abstractify(x)
+  except TypeError as err:
+    raise TypeError(
+        f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
+
+  if isinstance(device, Layout):
+    l = device
+    dll = l.device_local_layout
+    x_dll = x.layout.device_local_layout if hasattr(x, 'layout') else None
+    if (not isinstance(l.sharding, Sharding) or
+        not isinstance(dll, (DeviceLocalLayout, type(None)))):
+      raise ValueError(
+          "sharding and device_local_layout in `Layout` instance should be"
+          f" concrete. Got layout: {l}")
+    if getattr(x, 'layout', None) == l and getattr(x, '_committed', False):
+      return x
+    if x_dll is None and dll is None:
+      return _device_put_sharding_impl(x, aval, l.sharding)
+    # TODO(yashkatariya): Pass layout to out_shardings directly and remove
+    # out_layouts from lower.
+    return api.jit(_identity_fn, out_shardings=l.sharding).lower(
+        x, _out_layouts=dll).compile()(x)
+
+  return _device_put_sharding_impl(x, aval, device)
 
 
 device_put_p = core.Primitive('device_put')

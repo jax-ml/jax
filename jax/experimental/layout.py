@@ -15,4 +15,5 @@
 from jax._src.layout import (
     DeviceLocalLayout as DeviceLocalLayout,
     AUTO as AUTO,
+    Layout as Layout
 )

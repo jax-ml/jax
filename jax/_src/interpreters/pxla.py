@@ -60,7 +60,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
-from jax._src.layout import DeviceLocalLayout, AutoLayout
+from jax._src.layout import DeviceLocalLayout, AutoLayout, Layout
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
@@ -2624,7 +2624,8 @@ def _get_layouts_from_executable(
     if isinstance(i, DeviceLocalLayout):
       if i != x:
         raise AssertionError(
-            f"Unexpected XLA layout override: (XLA) {x} != {i} (User layout)")
+            f"Unexpected XLA layout override: (XLA) {x} != {i} (User input"
+            " layout)")
       new_in_layouts.append(i)
     else:
       new_in_layouts.append(x)
@@ -2635,7 +2636,8 @@ def _get_layouts_from_executable(
     if isinstance(o, DeviceLocalLayout):
       if o != x:
         raise AssertionError(
-            f"Unexpected XLA layout override: (XLA) {x} != {o} (User layout)")
+            f"Unexpected XLA layout override: (XLA) {x} != {o} (User output"
+            " layout)")
       new_out_layouts.append(o)
     else:
       new_out_layouts.append(x)
@@ -3072,10 +3074,12 @@ class MeshExecutable(stages.XlaExecutable):
     return self._out_shardings
 
   def input_layouts(self):
-    return self._in_layouts
+    return [Layout(l, s)
+            for l, s in safe_zip(self._in_layouts, self._in_shardings)]
 
   def output_layouts(self):
-    return self._out_layouts
+    return [Layout(l, s)
+            for l, s in safe_zip(self._out_layouts, self._out_shardings)]
 
   def create_cpp_call(self, no_kwargs, in_tree, out_tree):
     if not (isinstance(self.unsafe_call, ExecuteReplicated) and
@@ -3254,7 +3258,8 @@ def check_array_xla_sharding_layout_match(
           'sharding'))
 
     if (xla_extension_version >= 249 and not db_xs and arg._committed and
-        arg.layout is not None and xl is not None and arg.layout != xl):
+        arg.layout.device_local_layout is not None and xl is not None and
+        arg.layout.device_local_layout != xl):
       errors.append(
           ("Got input layout(s) that compiled object was called with: "
           f"{arg.layout} and layout(s) the computation was compiled "

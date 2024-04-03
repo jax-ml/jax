@@ -722,7 +722,11 @@ pytype_strict_library(
 pytype_strict_library(
     name = "layout",
     srcs = ["_src/layout.py"],
-    deps = ["//jax/_src/lib"],
+    deps = [
+        ":sharding",
+        ":sharding_impls",
+        "//jax/_src/lib",
+    ],
 )
 
 pytype_strict_library(
