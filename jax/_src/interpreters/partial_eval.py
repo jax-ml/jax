@@ -1727,7 +1727,7 @@ api_util._shaped_abstractify_handlers[DynamicJaxprTracer] = op.attrgetter("aval"
 
 def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
   jaxpr_effects = set()
-  all_vars = [*constvars, *invars]
+  all_vars = {v: i for i, v in enumerate(it.chain(constvars, invars))}
   for eqn in eqns:
     for eff in eqn.effects:
       if isinstance(eff, effects.JaxprInputEffect):
@@ -1738,14 +1738,14 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
               "\n Jaxpr: "
               f"{core.Jaxpr(constvars, invars, outvars, eqns, set())}")
         invar = eqn.invars[eff.input_index]
-        if invar not in all_vars:
+        if (input_index := all_vars.get(invar)) is None:
           raise ValueError(
                 f"`JaxprInputEffect` {eff} does not have "
                 f"corresponding input: {invar}."
                 f"\n Equation: {eqn}\n"
                 "\n Jaxpr: "
                 f"{core.Jaxpr(constvars, invars, outvars, eqns, set())}")
-        eff = eff.replace(input_index=all_vars.index(invar))
+        eff = eff.replace(input_index=input_index)
       jaxpr_effects.add(eff)
   return jaxpr_effects
 
