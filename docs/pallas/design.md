@@ -88,6 +88,7 @@ Because JAX was designed with HLO in mind, the set of JAX primitives closely mir
 Because Pallas was initially designed with Triton in mind, we offer a set of new primitives targeting the Triton programming model. As we’ll show later, we can lower these primitives to Mosaic as well.
 
 #### `pallas.load` and `pallas.store`
+
 `pallas.load` and `pallas.store` are primitives that allow loading from memory and storing into memory. Unlike `__getitem__` and `__setitem__` they are more flexible at the cost of being more verbose. Specifically, you can use the `pallas.dynamic_slice` (`pallas.ds` for short) construct (which should maybe be upstreamed into JAX to be used with Ref `__getitem__` and `__setitem__`).
 
 ```python
@@ -114,6 +115,7 @@ def f(x_ref, o_ref):
 Masking is important when doing out-of-bounds loads/stores. The operational semantics of masking can be compiler-determined (if we understand the documentation properly, Triton avoids the read from/write to memory if it’s masked).
 
 #### `pallas.program_id` and `pallas.num_programs`
+
 As we’ll soon see, we’ll be executing the same Pallas kernels many times (either in parallel or in a pipeline depending on the backend). These new primitives tell us “where” we are in the execution of the kernel.
 
 `pallas.program_id` takes in an axis argument, which tells us which index in an axis of a multidimensional grid this kernel is currently executing in (analogous to `threadId` from CUDA programming or `lax.axis_index` in `jax.pmap`). Note that we are currently borrowing the “program” terminology from Triton and in the future we might want to change it to something more familiar to JAX users.
@@ -251,7 +253,7 @@ In this example, we compute tiles of the output by doing an unrolled accumulatio
 ```python
 def matmul_kernel(x_ref, y_ref, o_ref, *, activation, block_k):
   acc = jnp.zeros((x_ref.shape[0], x_ref.shape[1]), jnp.float32)
-  for k in range(x_ref.shape[1] // block_k)
+  for k in range(x_ref.shape[1] // block_k):
     x = x_ref[:, k*block_k:(k+1)*block_k]
     y = y_ref[k*block_k:(k+1)*block_k, :]
     acc += x @ y
@@ -267,10 +269,12 @@ def matmul(x, y, *, block_shape, activation):
       partial(matmul_kernel, block_k=block_k, activation=activation),
       out_shape=jax.ShapeDtypeStruct((x.shape[0], y.shape[1],), jnp.float32),
       in_specs=[
-        pl.BlockSpec(lambda i, j:, (i, 0), (block_m, x.shape[1])),
-        pl.BlockSpec(lambda i, j:, (0, j), (y.shape[0], block_n))
+        pl.BlockSpec(lambda i, j: (i, 0), (block_m, x.shape[1])),
+        pl.BlockSpec(lambda i, j: (0, j), (y.shape[0], block_n))
       ],
-      out_specs=pl.BlockSpec(lambda i, j: (i, j), (block_m, block_n))
+      out_specs=pl.BlockSpec(lambda i, j: (i, j), (block_m, block_n)),
+      grid=(4, 4),
+  )
   return fused_matmul(x, y)
 
 z = matmul(x, y, block_shape=block_shape, activation=jax.nn.gelu)
