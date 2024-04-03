@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.26
+## jax 0.4.27
+
+## jaxlib 0.4.27
+
+## jax 0.4.26 (April 3, 2024)
 
 * New Functionality
   * Added {func}`jax.numpy.trapezoid`, following the addition of this function in
@@ -45,7 +49,7 @@ Remember to align the itemized text with the first line of an item within a list
     JAX serialization version lower than 9.
 
 
-## jaxlib 0.4.26
+## jaxlib 0.4.26 (April 3, 2024)
 
 * Changes
   * JAX now supports CUDA 12.1 or newer only. Support for CUDA 11.8 has been
