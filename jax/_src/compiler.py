@@ -33,6 +33,7 @@ from jax._src import profiler
 from jax._src import traceback_util
 from jax._src.interpreters import mlir
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.xla_bridge import process_count
 import numpy as np
@@ -253,8 +254,8 @@ def compile_or_get_cached(
   # that supports serialization of executables.
   # TODO(skye): add warning when initializing cache on unsupported default platform
   supported_platforms = ["tpu", "gpu"]
-  # TODO(b/323256224): Add back support for CPU together with extra fields in a
-  # cache key with underlying hardware features (xla_extension_version >= 230).
+  if xla_extension_version >= 253:
+    supported_platforms.append("cpu")
   use_compilation_cache = (
       config.enable_compilation_cache.value
       and getattr(backend, "supports_executable_serialization", True)
