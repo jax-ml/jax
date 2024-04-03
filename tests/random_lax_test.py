@@ -742,6 +742,9 @@ class LaxRandomTest(jtu.JaxTestCase):
   )
   @jtu.skip_on_devices("cpu", "tpu")  # TODO(phawkins): slow compilation times
   def testT(self, df, dtype):
+    scipy_version = jtu.parse_version(scipy.__version__)
+    if scipy_version >= (1, 13):
+      self.skipTest("ks test returns NaN on SciPy 1.13")
     key = lambda: self.make_key(1)
     rand = lambda key, df: random.t(key, df, (10000,), dtype)
     crand = jax.jit(rand)
