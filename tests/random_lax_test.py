@@ -65,6 +65,14 @@ class LaxRandomTest(jtu.JaxTestCase):
     # whether RBG keys may be involved, but that's no longer exact.
     if config.enable_custom_prng.value and samples.dtype == jnp.bfloat16:
       return
+    # kstest fails for infinities starting in scipy 1.12
+    # (https://github.com/scipy/scipy/issues/20386)
+    # TODO(jakevdp): remove this logic if/when fixed upstream.
+    scipy_version = jtu.parse_version(scipy.__version__)
+    if scipy_version >= (1, 12) and np.issubdtype(samples.dtype, np.floating):
+      samples = np.array(samples, copy=True)
+      samples[np.isposinf(samples)] = 0.01 * np.finfo(samples.dtype).max
+      samples[np.isneginf(samples)] = 0.01 * np.finfo(samples.dtype).min
     self.assertGreater(scipy.stats.kstest(samples, cdf).pvalue, fail_prob)
 
   def _CheckChiSquared(self, samples, pmf, *, pval=None):
@@ -742,9 +750,6 @@ class LaxRandomTest(jtu.JaxTestCase):
   )
   @jtu.skip_on_devices("cpu", "tpu")  # TODO(phawkins): slow compilation times
   def testT(self, df, dtype):
-    scipy_version = jtu.parse_version(scipy.__version__)
-    if scipy_version >= (1, 13):
-      self.skipTest("ks test returns NaN on SciPy 1.13")
     key = lambda: self.make_key(1)
     rand = lambda key, df: random.t(key, df, (10000,), dtype)
     crand = jax.jit(rand)
