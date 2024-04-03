@@ -3443,8 +3443,11 @@ def vdot(
              preferred_element_type=preferred_element_type)
 
 
-@util.implements(getattr(np, "vecdot", None), lax_description=_PRECISION_DOC,
-                 extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
+@util.implements(
+    getattr(np, "vecdot", None), lax_description=_PRECISION_DOC,
+    extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION,
+    # TODO(phawkins): numpy.vecdot doesn't have a __module__ attribute.
+    module="numpy")
 def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
            precision: PrecisionLike = None,
            preferred_element_type: DTypeLike | None = None) -> Array:
