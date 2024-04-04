@@ -21,8 +21,16 @@ from jax._src.sharding_impls import AUTO as AutoSharding, is_auto
 from jax._src.lib import xla_client as xc
 
 
+class AutoLayout:
+
+  def __repr__(self):
+    return "AUTO"
+
+
 class DeviceLocalLayout:
   layout: xc.PjRtLayout
+
+  AUTO = AutoLayout()
 
   def __init__(self, layout: xc.PjRtLayout):
     self._layout = layout
@@ -41,14 +49,6 @@ class DeviceLocalLayout:
 
   def _to_xla_layout(self) -> str:
     return self._layout_str
-
-
-class AutoLayout:
-
-  def __repr__(self):
-    return "AUTO"
-
-AUTO = AutoLayout()
 
 
 LayoutOptions = Union[DeviceLocalLayout, None, AutoLayout]
