@@ -44,6 +44,7 @@ from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
+from jax._src import state
 from jax._src import util
 from jax._src.abstract_arrays import array_types
 from jax._src.core import (Primitive, UnshapedArray, ShapedArray, ConcreteArray,
@@ -1256,7 +1257,6 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
 
   return broadcast(fill_value, shape)
 
-
 def zeros_like_shaped_array(aval: ShapedArray) -> Array:
   assert isinstance(aval, ShapedArray)
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
@@ -1268,6 +1268,12 @@ def zeros_like_shaped_array(aval: ShapedArray) -> Array:
   return broadcast(scalar_zero, aval.shape)
 
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
+
+def zeros_like_abstract_ref(aval: state.AbstractRef) -> core.MutableArray:
+  val = ad_util.zeros_like_aval(aval.inner_aval)
+  return core.mutable_array(val)
+
+ad_util.aval_zeros_likers[state.AbstractRef] = zeros_like_abstract_ref  # type: ignore
 
 def iota(dtype: DTypeLike, size: int) -> Array:
   """Wraps XLA's `Iota
