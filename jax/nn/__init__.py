@@ -45,6 +45,7 @@ from jax._src.nn.functions import (
   silu as silu,
   swish as swish,
   squareplus as squareplus,
+  mish as mish,
 )
 
 # Deprecations
