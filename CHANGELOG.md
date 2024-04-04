@@ -30,6 +30,8 @@ Remember to align the itemized text with the first line of an item within a list
     changed](https://github.com/google/jax/issues/19085) so that
     mapping over keys results in random generation only from the first
     key in the batch.
+  * Docs now use `jax.random.key` for construction of PRNG key arrays
+    rather than `jax.random.PRNGKey`.
 
 * Deprecations & Removals
   * {func}`jax.tree_map` is deprecated; use `jax.tree.map` instead, or for backward
