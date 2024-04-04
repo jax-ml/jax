@@ -24,7 +24,7 @@ from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
 try:
   from jax.experimental.pallas import gpu as plgpu
-except (ModuleNotFoundError, ImportError):
+except ImportError:
   plgpu = None
 import jax.numpy as jnp
 import numpy as np

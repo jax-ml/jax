@@ -8,6 +8,12 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.27
 
+* Deprecations & Removals
+  * Pallas now exclusively uses XLA for compiling kernels on GPU. The old
+    lowering pass via Triton Python APIs has been removed and the
+    `JAX_TRITON_COMPILE_VIA_XLA` environment variable no longer has any effect.
+
+
 ## jaxlib 0.4.27
 
 ## jax 0.4.26 (April 3, 2024)
