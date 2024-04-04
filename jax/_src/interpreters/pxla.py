@@ -2918,12 +2918,8 @@ class UnloadedMeshExecutable:
         in_shardings, out_shardings, committed, da = _get_metadata_jit_pmap(
             xla_executable.local_devices(), len(in_shardings), len(out_shardings))
 
-    if xla_extension_version >= 217:
-      in_layouts, out_layouts = _get_layouts_from_executable(
-          xla_executable, in_layouts, out_layouts, len(ordered_effects))
-    else:
-      assert all(i is None for i in in_layouts)
-      assert all(o is None for o in out_layouts)
+    in_layouts, out_layouts = _get_layouts_from_executable(
+        xla_executable, in_layouts, out_layouts, len(ordered_effects))
 
     out_shardings = maybe_recover_user_shardings(
         in_shardings, out_shardings, global_in_avals, global_out_avals)

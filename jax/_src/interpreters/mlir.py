@@ -49,7 +49,6 @@ from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import dialects
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
@@ -911,7 +910,7 @@ def lower_jaxpr_to_module(
         "In multi-platform lowering either all or no lowering platforms "
         f"should support donation. Lowering for {platforms} of which "
         f"only {platforms_with_donation} support donation")
-    if num_partitions > 1 and xla_extension_version >= 220 and (
+    if num_partitions > 1 and (
         result_shardings is None or all(s is None for s in result_shardings)):
       xla_donated_args = donated_args
     if xla_donated_args is None:
