@@ -378,8 +378,8 @@ def _parse_jit_arguments(fun: Callable, in_shardings: Any, out_shardings: Any,
     # rather than raising an error. https://github.com/google/jax/issues/2367
     in_shardings = tuple(in_shardings)
 
-  in_shardings, _, _ = prepare_axis_resources(in_shardings, 'in_shardings')
-  out_shardings, _, _ = prepare_axis_resources(out_shardings, 'out_shardings')
+  in_shardings = prepare_axis_resources(in_shardings, 'in_shardings')
+  out_shardings = prepare_axis_resources(out_shardings, 'out_shardings')
 
   user_specified_in_shardings = (in_shardings is not None and
                                  not is_unspecified(in_shardings))
@@ -2163,7 +2163,7 @@ def with_sharding_constraint(x, shardings):
   .. _Distributed arrays and automatic parallelization: https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html
   """
   x_flat, tree = tree_flatten(x)
-  user_shardings, _, _ = prepare_axis_resources(
+  user_shardings = prepare_axis_resources(
       shardings, "shardings", allow_unconstrained_dims=True)
   del shardings
 
