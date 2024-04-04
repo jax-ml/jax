@@ -53,10 +53,10 @@ int_dtypes = jtu.dtypes.integer
 
 JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record(
-        "beta", 2, float_dtypes, jtu.rand_positive, False
+        "beta", 2, float_dtypes, jtu.rand_default, False
     ),
     op_record(
-        "betaln", 2, float_dtypes, jtu.rand_positive, False
+        "betaln", 2, float_dtypes, jtu.rand_default, False
     ),
     op_record(
         "betainc", 3, float_dtypes, jtu.rand_positive, False
