@@ -425,8 +425,8 @@ def _make_jit_wrapper(jit_info: PjitInfo):
     lowering_parameters = kwargs.pop(
         '_experimental_lowering_parameters', mlir.LoweringParameters())
     # TODO(yashkatariya): Remove this when it's added on jit.
-    in_layouts = kwargs.pop('_in_layouts', None)
-    out_layouts = kwargs.pop('_out_layouts', None)
+    in_layouts = kwargs.pop('_in_layouts', Layout())
+    out_layouts = kwargs.pop('_out_layouts', Layout())
     (args_flat, flat_global_in_avals, params, in_tree, out_tree,
      donated_invars, in_layouts_flat, out_layouts_flat,
      arg_names, ()) = _infer_params(
@@ -1272,8 +1272,7 @@ def _resolve_in_layouts(args, jit_in_layouts, jit_in_shardings):
     arg_layout, committed = (
         (arg.layout.device_local_layout, getattr(arg, '_committed', True))
         if getattr(arg, 'layout', None) is not None else (None, False))
-    jit_in_l = (jit_in_l.device_local_layout
-                if isinstance(jit_in_l, Layout) else jit_in_l)
+    jit_in_l = None if jit_in_l is None else jit_in_l.device_local_layout
     if jit_in_l is None:
       if committed:
         resolved_in_layouts.append(arg_layout)
@@ -1293,9 +1292,8 @@ def _resolve_in_layouts(args, jit_in_layouts, jit_in_shardings):
 def _resolve_out_layouts(out_layouts: Sequence[Layout]
                          ) -> Sequence[LayoutOptions]:
   # TODO(yashkatariya): Remove the if condition when all layouts come via the
-  # `layout.Layout` API.
-  return tuple(o.device_local_layout if isinstance(o, Layout) else o
-               for o in out_layouts)
+  # `layout.Layout` API or handle this properly when layout is on jit.
+  return tuple(None if o is None else o.device_local_layout for o in out_layouts)
 
 
 def _resolve_in_shardings(

@@ -518,7 +518,7 @@ class Compiled(Stage):
     if self.in_tree.num_leaves > len(layouts_flat):
       iter_layouts_flat = iter(layouts_flat)
       layouts_flat = [next(iter_layouts_flat) if i in self._executable._kept_var_idx
-                      else None for i in range(self.in_tree.num_leaves)]
+                      else Layout() for i in range(self.in_tree.num_leaves)]
     return tree_util.tree_unflatten(self.in_tree, layouts_flat)  # pytype: disable=attribute-error
 
   def _output_layouts(self):

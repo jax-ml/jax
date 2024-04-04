@@ -441,11 +441,13 @@ def _device_put_impl(
     l = device
     dll = l.device_local_layout
     x_dll = x.layout.device_local_layout if hasattr(x, 'layout') else None
+    if dll is None and l.sharding is None:
+      return _device_put_sharding_impl(x, aval, l.sharding)
     if (not isinstance(l.sharding, Sharding) or
         not isinstance(dll, (DeviceLocalLayout, type(None)))):
       raise ValueError(
           "sharding and device_local_layout in `Layout` instance should be"
-          f" concrete. Got layout: {l}")
+          f" concrete. Got layout: {l} for input {aval.str_short()}")
     if getattr(x, 'layout', None) == l and getattr(x, '_committed', False):
       return x
     if x_dll is None and dll is None:
@@ -453,7 +455,7 @@ def _device_put_impl(
     # TODO(yashkatariya): Pass layout to out_shardings directly and remove
     # out_layouts from lower.
     return api.jit(_identity_fn, out_shardings=l.sharding).lower(
-        x, _out_layouts=dll).compile()(x)
+        x, _out_layouts=l).compile()(x)
 
   return _device_put_sharding_impl(x, aval, device)
 
