@@ -1279,11 +1279,14 @@ def _resolve_in_layouts(args, jit_in_layouts, jit_in_shardings):
       else:
         resolved_in_layouts.append(None)
     else:
-      if committed and arg_layout != jit_in_l:
+      # arg_layout can be None because some backends don't implement the
+      # required layout methods. Hence `arr.layout` can return
+      # `Layout(None, sharding)`
+      if committed and arg_layout is not None and arg_layout != jit_in_l:
         raise ValueError('Layout passed to jit does not match the layout '
                           'on the respective arg. '
                           f'Got pjit layout: {jit_in_l},\n'
-                          f'arg sharding: {arg_layout} for '
+                          f'arg layout: {arg_layout} for '
                           f'arg shape: {shaped_abstractify(arg).str_short()}')
       resolved_in_layouts.append(jit_in_l)
   return tuple(resolved_in_layouts)
