@@ -96,9 +96,6 @@ def register_discharge_rule(prim: core.Primitive):
     _discharge_rules[prim] = f
   return register
 
-def _has_refs(eqn: core.JaxprEqn):
-  return any(isinstance(v.aval, AbstractRef) for v in eqn.invars)
-
 def _eval_jaxpr_discharge_state(
     jaxpr: core.Jaxpr, should_discharge: Sequence[bool], consts: Sequence[Any],
     *args: Any):
@@ -113,8 +110,12 @@ def _eval_jaxpr_discharge_state(
                        if d and isinstance(v.aval, AbstractRef)}
 
   for eqn in jaxpr.eqns:
-    if _has_refs(eqn) and any(id(v.aval) in refs_to_discharge
-                              for v in eqn.invars):
+    if eqn.primitive is core.mutable_array_p:
+      [invar], [outvar] = eqn.invars, eqn.outvars
+      init_val = env.read(invar)
+      env.write(outvar, init_val)
+      refs_to_discharge.add(id(outvar.aval))
+    elif any(id(v.aval) in refs_to_discharge for v in eqn.invars):
       if eqn.primitive not in _discharge_rules:
         raise NotImplementedError("No state discharge rule implemented for "
             f"primitive: {eqn.primitive}")

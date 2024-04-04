@@ -1726,9 +1726,13 @@ class DynamicJaxprTracer(core.Tracer):
 api_util._shaped_abstractify_handlers[DynamicJaxprTracer] = op.attrgetter("aval")
 
 def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
+  sentinel = object()
   jaxpr_effects = set()
   all_vars = {v: i for i, v in enumerate(it.chain(constvars, invars))}
   for eqn in eqns:
+    if eqn.primitive is core.mutable_array_p:
+      outvar, = eqn.outvars
+      all_vars[outvar] = None  # type: ignore
     for eff in eqn.effects:
       if isinstance(eff, effects.JaxprInputEffect):
         if eff.input_index >= len(eqn.invars):
@@ -1738,7 +1742,7 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
               "\n Jaxpr: "
               f"{core.Jaxpr(constvars, invars, outvars, eqns, set())}")
         invar = eqn.invars[eff.input_index]
-        if (input_index := all_vars.get(invar)) is None:
+        if (input_index := all_vars.get(invar, sentinel)) is sentinel:
           raise ValueError(
                 f"`JaxprInputEffect` {eff} does not have "
                 f"corresponding input: {invar}."
@@ -2733,13 +2737,6 @@ def call_padding_rule(prim, in_avals, out_avals, *args, call_jaxpr, **params):
   new_params = dict(params, call_jaxpr=padded_jaxpr)
   subfuns, bind_params = prim.get_bind_params(new_params)
   return prim.bind(*subfuns, *args, **bind_params)
-
-
-def _error_staging_mutable_array_p(trace, x):
-  raise Exception(
-      "mutable_array constructor can't be staged out, and in particular can't "
-      "be used under a jax.jit or jax.lax.scan")
-custom_staging_rules[core.mutable_array_p] = _error_staging_mutable_array_p
 
 
 # TODO(mattjj): the following are deprecated; update callers to _nounits version
