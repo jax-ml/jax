@@ -554,7 +554,7 @@ jax_triton::TritonAutotunedKernelCall AutotunedKernelCall::ToProto() const {
   // GPU_RETURN_IF_ERROR(gpuCtxPushCurrent(context));
   // absl::Cleanup ctx_restorer = [] { gpuCtxPopCurrent(nullptr); };
 
-  // Autotuning is not supported if the the stream is in graph capture mode.
+  // Autotuning is not supported if the stream is in graph capture mode.
   gpustreamCaptureStatus_t capture_status;
   GPU_RETURN_IF_ERROR(gpuStreamIsCapturing(stream, &capture_status));
   if (capture_status == GPU_STREAM_CAPTURE_STATUS_ACTIVE) {
