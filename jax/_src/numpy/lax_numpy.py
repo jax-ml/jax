@@ -66,7 +66,10 @@ from jax._src.numpy import reductions
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
 from jax._src.numpy.vectorize import vectorize
-from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DType, DTypeLike, Shape
+from jax._src.typing import (
+  Array, ArrayLike, DimSize, DuckTypedArray,
+  DType, DTypeLike, Shape, DeprecatedArg
+)
 from jax._src.util import (unzip2, subvals, safe_zip,
                            ceil_of_ratio, partition_list,
                            canonicalize_axis as _canonicalize_axis,
@@ -1293,20 +1296,63 @@ def array_split(ary: ArrayLike, indices_or_sections: int | Sequence[int] | Array
                 axis: int = 0) -> list[Array]:
   return _split("array_split", ary, indices_or_sections, axis=axis)
 
-@util.implements(np.clip, skip_params=['out'])
+
+_DEPRECATED_CLIP_ARG = DeprecatedArg()
+@util.implements(
+  np.clip,
+  skip_params=['a', 'a_min'],
+  extra_params=_dedent("""
+    x : array_like
+        Array containing elements to clip.
+    min : array_like, optional
+        Minimum value. If ``None``, clipping is not performed on the
+        corresponding edge. The value of ``min`` is broadcast against x.
+    max : array_like, optional
+        Maximum value. If ``None``, clipping is not performed on the
+        corresponding edge. The value of ``max`` is broadcast against x.
+""")
+)
 @jit
-def clip(a: ArrayLike, a_min: ArrayLike | None = None,
-         a_max: ArrayLike | None = None, out: None = None) -> Array:
-  util.check_arraylike("clip", a)
-  if out is not None:
-    raise NotImplementedError("The 'out' argument to jnp.clip is not supported.")
-  if a_min is None and a_max is None:
-    raise ValueError("At most one of a_min and a_max may be None")
-  if a_min is not None:
-    a = ufuncs.maximum(a_min, a)
-  if a_max is not None:
-    a = ufuncs.minimum(a_max, a)
-  return asarray(a)
+def clip(
+  x: ArrayLike | None = None, # Default to preserve backwards compatability
+  /,
+  min: ArrayLike | None = None,
+  max: ArrayLike | None = None,
+  *,
+  a: ArrayLike | DeprecatedArg = _DEPRECATED_CLIP_ARG,
+  a_min: ArrayLike | None | DeprecatedArg = _DEPRECATED_CLIP_ARG,
+  a_max: ArrayLike | None | DeprecatedArg = _DEPRECATED_CLIP_ARG
+) -> Array:
+  # TODO(micky774): deprecated 2024-4-2, remove after deprecation expires.
+  x = a if not isinstance(a, DeprecatedArg) else x
+  if x is None:
+    raise ValueError("No input was provided to the clip function.")
+  min = a_min if not isinstance(a_min, DeprecatedArg) else min
+  max = a_max if not isinstance(a_max, DeprecatedArg) else max
+  if any(not isinstance(t, DeprecatedArg) for t in (a, a_min, a_max)):
+    warnings.warn(
+      "Passing arguments 'a', 'a_min', or 'a_max' to jax.numpy.clip is "
+      "deprecated. Please use 'x', 'min', and 'max' respectively instead.",
+      DeprecationWarning,
+      stacklevel=2,
+    )
+
+  util.check_arraylike("clip", x)
+  if any(jax.numpy.iscomplexobj(t) for t in (x, min, max)):
+    # TODO(micky774): Deprecated 2024-4-2, remove after deprecation expires.
+    warnings.warn(
+      "Clip received a complex value either through the input or the min/max "
+      "keywords. Complex values have no ordering and cannot be clipped. "
+      "Attempting to clip using complex numbers is deprecated and will soon "
+      "raise a ValueError. Please convert to a real value or array by taking "
+      "the real or imaginary components via jax.numpy.real/imag respectively.",
+      DeprecationWarning, stacklevel=2,
+    )
+  if min is not None:
+    x = ufuncs.maximum(min, x)
+  if max is not None:
+    x = ufuncs.minimum(max, x)
+  return asarray(x)
 
 @util.implements(np.around, skip_params=['out'])
 @partial(jit, static_argnames=('decimals',))

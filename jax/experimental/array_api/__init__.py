@@ -112,6 +112,7 @@ from jax.experimental.array_api._elementwise_functions import (
     bitwise_right_shift as bitwise_right_shift,
     bitwise_xor as bitwise_xor,
     ceil as ceil,
+    clip as clip,
     conj as conj,
     cos as cos,
     cosh as cosh,

@@ -12,6 +12,9 @@ Remember to align the itemized text with the first line of an item within a list
   * Pallas now exclusively uses XLA for compiling kernels on GPU. The old
     lowering pass via Triton Python APIs has been removed and the
     `JAX_TRITON_COMPILE_VIA_XLA` environment variable no longer has any effect.
+  * {func}`jax.numpy.clip` has a new argument signature: `a`, `a_min`, and
+    `a_max` are deprecated in favor of `x` (positonal only), `min`, and
+    `max` ({jax-issue}`20550`).
 
 
 ## jaxlib 0.4.27
