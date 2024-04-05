@@ -50,6 +50,8 @@ Remember to align the itemized text with the first line of an item within a list
     `spmd_axis_name` argument for expressing SPMD device-parallel computations.
   * The `jax.experimental.host_callback` module is deprecated.
     Use instead the [new JAX external callbacks](https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html).
+    Added `JAX_HOST_CALLBACK_LEGACY` flag to assist in the transition to the
+    new callbacks. See {jax-issue}`#20385` for a discussion.
   * Passing arguments to {func}`jax.numpy.array_equal` and {func}`jax.numpy.array_equiv`
     that cannot be converted to a JAX array now results in an exception.
   * The deprecated flag `jax_parallel_functions_output_gda` has been removed.
@@ -1451,7 +1453,7 @@ Changes:
     special autodiff handling for hcb.id_tap and id_print.
     From now on, only the primals are tapped. The old behavior can be
     obtained (for a limited time) by setting the ``JAX_HOST_CALLBACK_AD_TRANSFORMS``
-    environment variable, or the ```--flax_host_callback_ad_transforms``` flag.
+    environment variable, or the ```--jax_host_callback_ad_transforms``` flag.
     Additionally, added documentation for how to implement the old behavior
     using JAX custom AD APIs ({jax-issue}`#8678`).
   * Sorting now matches the behavior of NumPy for ``0.0`` and ``NaN`` regardless of the
