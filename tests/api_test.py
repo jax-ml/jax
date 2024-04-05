@@ -9372,6 +9372,27 @@ class CustomVJPTest(jtu.JaxTestCase):
         r'output\[1\] the bwd rule produced an output of shape/dtype float..\[3\]'):
       jax.grad(lambda x, y: foo(x, y * y).sum(), 1)(jnp.ones(3), jnp.ones(4))
 
+  def test_bwd_rule_shape_mismatch_disable(self):
+    # TODO(mattjj): remove this test when the config option is removed
+    @jax.custom_vjp
+    def foo(x, y):
+      return x
+
+    def foo_fwd(x, y):
+      return x, None
+
+    def foo_bwd(_, g):
+      return jnp.zeros(3), jnp.zeros(3)
+
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    try:
+      jax.config.update('jax_custom_vjp_disable_shape_check', True)
+      jax.grad(lambda x, y: foo(x, y).sum(), 1)(jnp.ones(3), jnp.ones(4))
+    finally:
+      jax.config.update('jax_custom_vjp_disable_shape_check', False)
+
+
 def transpose_unary(f, x_example):
   def transposed(y):
     x, = api.linear_transpose(f, x_example)(y)
