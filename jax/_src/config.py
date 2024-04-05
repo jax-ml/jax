@@ -1390,6 +1390,13 @@ eager_pmap = define_bool_state(
     upgrade=True,
     help='Enable eager-mode pmap when jax_disable_jit is activated.')
 
+# TODO(mattjj): remove once we land mutable array plumbing, or face great shame
+custom_vjp_disable_shape_check = define_bool_state(
+    name='jax_custom_vjp_disable_shape_check',
+    default=False,
+    upgrade=True,
+    help='Disable the check from #19009 to enable some custom_vjp hacks.')
+
 xla_runtime_errors = define_bool_state(
     name='jax_experimental_unsafe_xla_runtime_errors',
     default=False,
