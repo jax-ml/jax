@@ -76,8 +76,6 @@ class DLPackTest(jtu.JaxTestCase):
     gpu=[False, True],
   )
   def testJaxRoundTrip(self, shape, dtype, gpu):
-    if xb.using_pjrt_c_api():
-      self.skipTest("DLPack support is incomplete in the PJRT C API")  # TODO(skyewm)
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
     if gpu and jtu.test_device_matches(["cpu"]):
@@ -119,8 +117,6 @@ class DLPackTest(jtu.JaxTestCase):
   )
   @unittest.skipIf(not tf, "Test requires TensorFlow")
   def testTensorFlowToJax(self, shape, dtype):
-    if xb.using_pjrt_c_api():
-      self.skipTest("DLPack support is incomplete in the PJRT C API")
     if (not config.enable_x64.value and
         dtype in [jnp.int64, jnp.uint64, jnp.float64]):
       raise self.skipTest("x64 types are disabled by jax_enable_x64")
@@ -163,8 +159,6 @@ class DLPackTest(jtu.JaxTestCase):
 
   @unittest.skipIf(not tf, "Test requires TensorFlow")
   def testTensorFlowToJaxInt64(self):
-    if xb.using_pjrt_c_api():
-      self.skipTest("DLPack support is incomplete in the PJRT C API")
     # See https://github.com/google/jax/issues/11895
     x = jax.dlpack.from_dlpack(
         tf.experimental.dlpack.to_dlpack(tf.ones((2, 3), tf.int64)))
