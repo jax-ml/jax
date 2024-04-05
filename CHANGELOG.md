@@ -25,6 +25,13 @@ Remember to align the itemized text with the first line of an item within a list
 * Changes
   * Complex-valued {func}`jax.numpy.geomspace` now chooses the logarithmic spiral
     branch consistent with that of NumPy 2.0.
+  * The behavior of `lax.rng_bit_generator`, and in turn the `'rbg'`
+    and `'unsafe_rbg'` PRNG implementations, under `jax.vmap` [has
+    changed](https://github.com/google/jax/issues/19085) so that
+    mapping over keys results in random generation only from the first
+    key in the batch.
+  * Docs now use `jax.random.key` for construction of PRNG key arrays
+    rather than `jax.random.PRNGKey`.
 
 * Deprecations & Removals
   * {func}`jax.tree_map` is deprecated; use `jax.tree.map` instead, or for backward
