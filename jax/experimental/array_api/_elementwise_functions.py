@@ -125,6 +125,22 @@ def ceil(x, /):
   return jax.numpy.ceil(x)
 
 
+def clip(x, /, min=None, max=None):
+  """Returns the complex conjugate for each element x_i of the input array x."""
+  x, = _promote_dtypes("clip", x)
+
+  # TODO(micky774): Remove when jnp.clip deprecation is completed
+  # (began 2024-4-2) and default behavior is Array API 2023 compliant
+  if any(jax.numpy.iscomplexobj(t) for t in (x, min, max)):
+    raise ValueError(
+      "Clip received a complex value either through the input or the min/max "
+      "keywords. Complex values have no ordering and cannot be clipped. "
+      "Please convert to a real value or array by taking the real or "
+      "imaginary components via jax.numpy.real/imag respectively."
+    )
+  return jax.numpy.clip(x, min=min, max=max)
+
+
 def conj(x, /):
   """Returns the complex conjugate for each element x_i of the input array x."""
   x, = _promote_dtypes("conj", x)

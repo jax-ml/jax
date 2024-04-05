@@ -77,3 +77,9 @@ class DuckTypedArray(Protocol):
 # JAX array (i.e. not including future non-standard array types like KeyArray and BInt).
 # It's different than np.typing.ArrayLike in that it doesn't accept arbitrary sequences,
 # nor does it accept string data.
+
+# We use a class for deprecated args to avoid using Any/object types which can
+# introduce complications and mistakes in static analysis
+class DeprecatedArg:
+  def __repr__(self):
+    return "Deprecated"
