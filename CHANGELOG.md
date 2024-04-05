@@ -57,7 +57,7 @@ Remember to align the itemized text with the first line of an item within a list
   * The previously-deprecated imports `jax.interpreters.ad.config` and
     `jax.interpreters.ad.source_info_util` have now been removed. Use `jax.config`
     and `jax.extend.source_info_util` instead.
-  * JAX export does not support anymore older serialization version. Version 9
+  * JAX export does not support older serialization versions anymore. Version 9
     has been supported since October 27th, 2023 and has become the default
     since February 1, 2024.
     See [a description of the versions](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions).
@@ -141,8 +141,8 @@ Remember to align the itemized text with the first line of an item within a list
       cannot interact, e.g., in arithmetic operations.
       Scopes are introduced by {func}`jax.experimental.jax2tf.convert`,
       {func}`jax.experimental.export.symbolic_shape`, {func}`jax.experimental.export.symbolic_args_specs`.
-      The scope of a symbolic expression `e` can be read with `e.scope` and passed in
-      to the above functions to direct them to construct symbolic expressions in
+      The scope of a symbolic expression `e` can be read with `e.scope` and passed 
+      into the above functions to direct them to construct symbolic expressions in
       a given scope.
       See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#user-specified-symbolic-constraints.
     * simplified and faster equality comparisons, where we consider two symbolic dimensions
@@ -323,7 +323,7 @@ Remember to align the itemized text with the first line of an item within a list
 * Bug fixes
   * Only process 0 in a multicontroller distributed JAX program will write
     persistent compilation cache entries. This fixes write contention if the
-    cache is placed on a network filesystem such as GCS.
+    cache is placed on a network file system such as GCS.
   * The version check for cusolver and cufft no longer considers the patch
     versions when determining if the installed version of these libraries is at
     least as new as the versions against which JAX was built.
