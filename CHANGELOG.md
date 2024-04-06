@@ -8,6 +8,12 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.27
 
+* Changes
+  * {func}`jax.pure_callback` and {func}`jax.experimental.io_callback`
+    now use {class}`jax.Array` instead of {class}`np.ndarray`. You can recover
+    the old behavior by transforming the arguments via
+    `jax.tree.map(np.asarray, args)` before passing them to the callback.
+
 * Deprecations & Removals
   * Pallas now exclusively uses XLA for compiling kernels on GPU. The old
     lowering pass via Triton Python APIs has been removed and the
@@ -65,7 +71,6 @@ Remember to align the itemized text with the first line of an item within a list
     See [a description of the versions](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions).
     This change could break clients that set a specific
     JAX serialization version lower than 9.
-
 
 ## jaxlib 0.4.26 (April 3, 2024)
 
