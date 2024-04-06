@@ -34,7 +34,6 @@ from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import errors
-from jax._src import layout
 from jax._src import profiler
 from jax._src import tree_util
 from jax._src import xla_bridge
@@ -47,6 +46,7 @@ from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     SingleDeviceSharding, XLACompatibleSharding, PmapSharding,
     device_replica_id_map, hashed_index)
+from jax._src.layout import DeviceLocalLayout, Layout
 from jax._src.typing import ArrayLike
 from jax._src.util import safe_zip, unzip3, use_cpp_class, use_cpp_method
 
@@ -529,15 +529,17 @@ class ArrayImpl(basearray.Array):
       out.append(Shard(_get_device(a), self.sharding, self.shape, a))
     return out
 
-  @property
+  @functools.cached_property
   def layout(self):
+    # TODO(yashkatariya): Remove the deleted check from here.
+    if self.is_deleted():
+      return Layout(None, self.sharding)
     try:
-      return layout.Layout(layout.DeviceLocalLayout(self._pjrt_layout),
-                           self.sharding)
+      return Layout(DeviceLocalLayout(self._pjrt_layout), self.sharding)
     except xe.XlaRuntimeError as e:
       msg, *_ = e.args
       if type(msg) is str and msg.startswith("UNIMPLEMENTED"):
-        return layout.Layout(None, self.sharding)
+        return Layout(None, self.sharding)
       else:
         raise
 

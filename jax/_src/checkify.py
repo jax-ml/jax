@@ -895,9 +895,9 @@ def while_loop_error_check(error, enabled_errors, *in_flat, cond_nconsts,
 error_checks[lax.while_p] = while_loop_error_check
 
 def pjit_error_check(error, enabled_errors, *vals_in, jaxpr,
-                     in_shardings, out_shardings, resource_env,
-                     donated_invars, name,
-                     inline, keep_unused):
+                     in_shardings, out_shardings,
+                     in_layouts, out_layouts,
+                     resource_env, donated_invars, name, inline, keep_unused):
   # jaxpr to checked_jaxpr
   err_vals, err_tree = jtu.tree_flatten(error)
   new_vals_in = [*err_vals, *vals_in]
@@ -908,10 +908,12 @@ def pjit_error_check(error, enabled_errors, *vals_in, jaxpr,
   # Update pjit params to account for extra error values.
   num_error_vals = len(err_vals)
   num_out_error_vals = out_tree.num_leaves - len(out_shardings)
-  sharding = sharding_impls.UNSPECIFIED
 
+  sharding = sharding_impls.UNSPECIFIED
   new_in_shardings = (*[sharding] * num_error_vals, *in_shardings)
   new_out_shardings = (*[sharding] * num_out_error_vals, *out_shardings)
+  new_in_layouts = (*[None] * num_error_vals, *in_layouts)
+  new_out_layouts = (*[None] * num_out_error_vals, *out_layouts)
   new_donated_invars = (*[False] * num_error_vals, *donated_invars)
 
   err_and_out = pjit.pjit_p.bind(
@@ -919,6 +921,8 @@ def pjit_error_check(error, enabled_errors, *vals_in, jaxpr,
       jaxpr=checked_jaxpr,
       in_shardings=new_in_shardings,
       out_shardings=new_out_shardings,
+      in_layouts=new_in_layouts,
+      out_layouts=new_out_layouts,
       resource_env=resource_env,
       donated_invars=new_donated_invars,
       name=name,

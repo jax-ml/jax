@@ -1500,7 +1500,7 @@ class PallasCallInputOutputAliasingTest(PallasTPUTest):
       )(x)
     o = f(x)
     np.testing.assert_array_equal(o, expected)
-    compiled = f.lower(x).compile()
+    compiled = f.lower(jax.ShapeDtypeStruct(x.shape, x.dtype)).compile()
     mem_analysis = compiled.memory_analysis()
     expected_num_bytes = np.prod(x.shape) * x.dtype.itemsize
     self.assertEqual(mem_analysis.alias_size_in_bytes, expected_num_bytes)
@@ -1528,7 +1528,7 @@ class PallasCallInputOutputAliasingTest(PallasTPUTest):
       )(jnp.array([1,2,3]), x)
     o = f(x)
     np.testing.assert_array_equal(o, expected)
-    compiled = f.lower(x).compile()
+    compiled = f.lower(jax.ShapeDtypeStruct(x.shape, x.dtype)).compile()
     mem_analysis = compiled.memory_analysis()
     expected_num_bytes = np.prod(x.shape) * x.dtype.itemsize
     self.assertEqual(mem_analysis.alias_size_in_bytes, expected_num_bytes)

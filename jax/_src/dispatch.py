@@ -452,10 +452,7 @@ def _device_put_impl(
       return x
     if x_dll is None and dll is None:
       return _device_put_sharding_impl(x, aval, l.sharding)
-    # TODO(yashkatariya): Pass layout to out_shardings directly and remove
-    # out_layouts from lower.
-    return api.jit(_identity_fn, out_shardings=l.sharding).lower(
-        x, _out_layouts=l).compile()(x)
+    return api.jit(_identity_fn, out_shardings=l)(x)
 
   return _device_put_sharding_impl(x, aval, device)
 

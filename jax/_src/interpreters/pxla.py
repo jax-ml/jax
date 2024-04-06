@@ -2035,15 +2035,15 @@ def lower_sharding_computation(
     fun_name: str,
     in_shardings: Sequence[MaybeSharding],
     out_shardings: Sequence[MaybeSharding],
+    in_layouts: MaybeLayout,
+    out_layouts: MaybeLayout,
     donated_invars: Sequence[bool],
     global_in_avals: Sequence[core.ShapedArray],
     *,
     keep_unused: bool,
     inline: bool,
     devices_from_context: Sequence[xc.Device] | None = None,
-    lowering_parameters: mlir.LoweringParameters,
-    in_layouts: MaybeLayout,
-    out_layouts: MaybeLayout,
+    lowering_parameters: mlir.LoweringParameters
 ) -> MeshComputation:
   """Lowers a computation to XLA. It can take arbitrary shardings as input.
 
@@ -3266,8 +3266,9 @@ def check_array_xla_sharding_layout_match(
         arg.layout.device_local_layout != xl):
       errors.append(
           ("Got input layout(s) that compiled object was called with: "
-          f"{arg.layout} and layout(s) the computation was compiled "
-          f"with: {xl} for arg {name} with shape: {arg.aval.str_short()}",
+          f"{arg.layout.device_local_layout} and layout(s) the computation was "
+          f"compiled with: {xl} for arg {name} with "
+          f"shape: {arg.aval.str_short()}",
           'layout'))
 
   if errors:

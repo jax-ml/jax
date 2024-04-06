@@ -1643,6 +1643,8 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: list[core.JaxprEqn],
                     eqn.params["out_shardings"]
                     + (sharding_impls.UNSPECIFIED, sharding_impls.UNSPECIFIED)
                 ),
+                in_layouts=(eqn.params["in_layouts"] + (None, None)),
+                out_layouts=(eqn.params["out_layouts"] + (None, None)),
             ),
         )
     )
