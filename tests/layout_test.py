@@ -15,6 +15,7 @@
 import math
 import os
 import re
+from functools import partial
 from absl.testing import absltest
 import numpy as np
 
@@ -308,6 +309,18 @@ class LayoutTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError, 'Sharding has to be concrete when layout.*'):
       Layout(compiled.output_layouts()[0], None)
+
+  def test_layout_auto_sharding_unspecified(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+
+    @partial(jax.jit, out_shardings=s)
+    def f(x):
+      return x * 2
+
+    out = f(jnp.arange(16).reshape(8, 2))
+    self.assertArraysEqual(out, np.arange(16).reshape(8, 2))
+    self.assertEqual(out.sharding, s)
 
 
 if __name__ == '__main__':

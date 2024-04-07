@@ -2083,6 +2083,13 @@ def lower_sharding_computation(
     gs = GSPMDSharding.get_replicated(device_assignment)
     in_shardings = tuple(gs if is_unspecified(i) else i for i in in_shardings)
 
+  # If sharding is not specified, GSPMD compiler will decide it. In that case,
+  # layouts should also be decided by the compiler.
+  in_layouts = tuple(DeviceLocalLayout.AUTO if is_unspecified(s) else l
+                     for s, l in safe_zip(in_shardings, in_layouts))
+  out_layouts = tuple(DeviceLocalLayout.AUTO if is_unspecified(s) else l
+                      for s, l in safe_zip(out_shardings, out_layouts))
+
   da_object = _create_da_object(tuple(device_assignment))
 
   all_default_mem_kind = are_all_shardings_default_mem_kind(
