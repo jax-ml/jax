@@ -453,47 +453,22 @@ def _parse_jit_arguments(fun: Callable, in_shardings: Any, out_shardings: Any,
         use_resource_env=use_resource_env)
 
 
-# TODO(yashkatariya): Delete this function once internal users migrate off of
-# the deprecated AOT API.
-def _handle_layouts_in_aot(jit_info: PjitInfo, kwargs):
-  if '_in_layouts' in kwargs or '_out_layouts' in kwargs:
-    warnings.warn(
-        'Passing `_in_layouts` and `_out_layouts` to `.lower` is deprecated and'
-        ' will be removed soon. Please pass your `Layout` instances to'
-        ' `in_shardings` and `out_shardings` arguments of `jax.jit`',
-        DeprecationWarning)
-    in_layouts = kwargs.pop('_in_layouts', None)
-    out_layouts = kwargs.pop('_out_layouts', None)
-    in_layouts, _ = _split_layout_and_sharding(in_layouts)
-    out_layouts, _ = _split_layout_and_sharding(out_layouts)
-    in_layouts_leaves, in_layouts_treedef = none_lr.flatten(in_layouts)
-    out_layouts_leaves, out_layouts_treedef = none_lr.flatten(out_layouts)
-    return jit_info._replace(in_layouts_treedef=in_layouts_treedef,
-                            in_layouts_leaves=tuple(in_layouts_leaves),
-                            out_layouts_treedef=out_layouts_treedef,
-                            out_layouts_leaves=tuple(out_layouts_leaves))
-  return jit_info
-
-
 def _make_jit_wrapper(jit_info: PjitInfo):
 
   @api_boundary
   def lower(*args, **kwargs):
     lowering_parameters = kwargs.pop(
         '_experimental_lowering_parameters', mlir.LoweringParameters())
-    # TODO(yashkatariya): Remove this handling once internal users migrate off
-    # of the deprecated API
-    new_jit_info = _handle_layouts_in_aot(jit_info, kwargs)
 
     (args_flat, flat_global_in_avals, params, in_tree, out_tree,
-     donated_invars, arg_names, ()) = _infer_params(new_jit_info, args, kwargs)
+     donated_invars, arg_names, ()) = _infer_params(jit_info, args, kwargs)
     try:
       lowering = _resolve_and_lower(
           args_flat, **params, lowering_parameters=lowering_parameters)
     except pxla.DeviceAssignmentMismatchError as e:
       fails, = e.args
       api_name = 'jit' if params['resource_env'] is None else 'pjit'
-      fun = new_jit_info.fun
+      fun = jit_info.fun
       fun_name = getattr(fun, '__qualname__',
                          getattr(fun, '__name__', str(fun)))
       msg = _device_assignment_mismatch_error(
