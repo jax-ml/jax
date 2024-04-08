@@ -540,7 +540,7 @@ def _ndtri(p: ArrayLike) -> Array:
   # later on. The result from the computation when p == 0 is not used so any
   # number that doesn't result in NaNs is fine.
   sanitized_mcp = jnp.where(
-      maybe_complement_p <= dtype(0.),
+      maybe_complement_p == dtype(0.),
       jnp.full(shape, dtype(0.5)),
       maybe_complement_p)
 
@@ -571,9 +571,9 @@ def _ndtri(p: ArrayLike) -> Array:
 
   x = jnp.where(p > dtype(1. - np.exp(-2.)), x, -x)
   infinity = jnp.full(shape, dtype(np.inf))
-  x_nan_replaced = jnp.where(
-      p <= dtype(0.0), -infinity, jnp.where(p >= dtype(1.0), infinity, x))
-  return x_nan_replaced
+  x_fix_boundaries = jnp.where(
+      p == dtype(0.0), -infinity, jnp.where(p == dtype(1.0), infinity, x))
+  return x_fix_boundaries
 
 
 @partial(custom_derivatives.custom_jvp, nondiff_argnums=(1,))
