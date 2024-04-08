@@ -529,7 +529,7 @@ class ArrayImpl(basearray.Array):
       out.append(Shard(_get_device(a), self.sharding, self.shape, a))
     return out
 
-  @functools.cached_property
+  @property
   def layout(self):
     # TODO(yashkatariya): Remove the deleted check from here.
     if self.is_deleted():
