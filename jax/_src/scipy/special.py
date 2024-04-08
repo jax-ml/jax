@@ -44,14 +44,16 @@ def gammaln(x: ArrayLike) -> Array:
   return lax.lgamma(x)
 
 
+def _gamma_sign(x: Array) -> Array:
+  floor_x = lax.floor(x)
+  return jnp.where((x > 0) | (x == floor_x) | (floor_x % 2 == 0), 1.0, -1.0)
+
+
 @implements(osp_special.gamma, module='scipy.special', lax_description="""\
 The JAX version only accepts real-valued inputs.""")
 def gamma(x: ArrayLike) -> Array:
   x, = promote_args_inexact("gamma", x)
-  # Compute the sign for negative x, matching the semantics of scipy.special.gamma
-  floor_x = lax.floor(x)
-  sign = jnp.where((x > 0) | (x == floor_x), 1.0, (-1.0) ** floor_x)
-  return sign * lax.exp(lax.lgamma(x))
+  return _gamma_sign(x) * lax.exp(lax.lgamma(x))
 
 betaln = implements(
     osp_special.betaln,
@@ -71,7 +73,8 @@ def factorial(n: ArrayLike, exact: bool = False) -> Array:
 @implements(osp_special.beta, module='scipy.special')
 def beta(x: ArrayLike, y: ArrayLike) -> Array:
   x, y = promote_args_inexact("beta", x, y)
-  return lax.exp(betaln(x, y))
+  sign = _gamma_sign(x) * _gamma_sign(y) * _gamma_sign(x + y)
+  return sign * lax.exp(betaln(x, y))
 
 
 @implements(osp_special.betainc, module='scipy.special')
