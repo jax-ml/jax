@@ -303,9 +303,12 @@ def _igamma_series(ax, x, a, enabled, dtype, mode):
 
 def igamma_impl(a, x, *, dtype):
   is_nan = bitwise_or(_isnan(a), _isnan(x))
+  a_is_zero = eq(a, _const(a, 0))
   x_is_zero = eq(x, _const(x, 0))
   x_is_infinity = eq(x, _const(x, float('inf')))
-  domain_error = bitwise_or(lt(x, _const(x, 0)), le(a, _const(a, 0)))
+  domain_error = bitwise_or(
+    bitwise_or(lt(x, _const(x, 0)), lt(a, _const(a, 0))),
+    bitwise_and(x_is_zero, a_is_zero))
   use_igammac = bitwise_and(gt(x, _const(x, 1)), gt(x, a))
   ax = a * log(x) - x - lgamma(a)
   underflow = lt(ax, -log(dtypes.finfo(dtype).max))
@@ -322,6 +325,7 @@ def igamma_impl(a, x, *, dtype):
                    dtype, IgammaMode.VALUE)
   )
   output = select(x_is_zero, full_like(a, 0), output)
+  output = select(a_is_zero, full_like(a, 1), output)
   output = select(x_is_infinity, full_like(a, 1), output)
   output = select(bitwise_or(domain_error, is_nan),
                   full_like(a, float('nan')), output)
@@ -433,7 +437,9 @@ def _igammac_continued_fraction(ax, x, a, enabled, dtype, mode):
     raise ValueError(f"Invalid mode: {mode}")
 
 def igammac_impl(a, x, *, dtype):
-  out_of_range = bitwise_or(le(x, _const(x, 0)), le(a, _const(a, 0)))
+  out_of_range = bitwise_or(
+    bitwise_or(lt(x, _const(x, 0)), lt(a, _const(a, 0))),
+    bitwise_and(eq(x, _const(x, 0)), eq(a, _const(a, 0))))
   use_igamma = bitwise_or(lt(x, _const(x, 1)), lt(x, a))
   ax = a * log(x) - x - lgamma(a)
   underflow = lt(ax, -log(dtypes.finfo(dtype).max))
@@ -448,7 +454,8 @@ def igammac_impl(a, x, *, dtype):
   result = select(use_igamma, _const(a, 1) - igamma_call, igammac_cf_call)
   x_is_infinity = eq(x, _const(x, float('inf')))
   result = select(x_is_infinity, full_like(result, 0), result)
-  return select(out_of_range, full_like(a, 1), result)
+  result = select(eq(a, _const(a, 0)), full_like(a, 0), result)
+  return select(out_of_range, full_like(a, float('nan')), result)
 
 def igamma_grad_a_impl(a, x, *, dtype):
   is_nan = bitwise_or(_isnan(a), _isnan(x))
