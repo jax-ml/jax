@@ -1300,6 +1300,6 @@ def check_error(error: Error) -> None:
   >>> error, _ = checkify.checkify(with_inner_jit)(-1)
   """
   if not isinstance(error, Error):
-    raise ValueError('check_error takes an Error as argument, '
+    raise TypeError('check_error takes an Error as argument, '
                      f'got type {type(error)} instead.')
   _check_error(error, debug=False)

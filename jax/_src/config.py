@@ -628,7 +628,7 @@ def define_string_state(
 
   def validator(new_val):
     if not isinstance(new_val, str):
-      raise ValueError('new string config value must be of type str,'
+      raise TypeError('new string config value must be of type str,'
                        f' got {new_val} of type {type(new_val)}.')
 
   return define_string_or_object_state(

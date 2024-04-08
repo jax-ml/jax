@@ -385,7 +385,7 @@ def bcoo_extract(sparr: BCOO, arr: ArrayLike, *, assume_unique: bool | None = No
     extracted : a BCOO array with the same sparsity pattern as self.
   """
   if not isinstance(sparr, BCOO):
-    raise ValueError(f"First argument to bcoo_extract should be a BCOO array. Got {type(sparr)=}")
+    raise TypeError(f"First argument to bcoo_extract should be a BCOO array. Got {type(sparr)=}")
   a = jnp.asarray(arr)
   if a.shape != sparr.shape:
     raise ValueError(f"shape mismatch: {sparr.shape=} {a.shape=}")
@@ -1951,7 +1951,7 @@ def bcoo_slice(mat: BCOO, *, start_indices: Sequence[int], limit_indices: Sequen
     out: BCOO array containing the slice.
   """
   if not isinstance(mat, BCOO):
-    raise ValueError(f"bcoo_slice: input should be BCOO array, got type(mat)={type(mat)}")
+    raise TypeError(f"bcoo_slice: input should be BCOO array, got type(mat)={type(mat)}")
   start_indices = [operator.index(i) for i in start_indices]
   limit_indices = [operator.index(i) for i in limit_indices]
   if strides is not None:
@@ -2030,7 +2030,7 @@ def bcoo_dynamic_slice(mat: BCOO, start_indices: Sequence[Any], slice_sizes: Seq
   jax.eval_shape(partial(lax.dynamic_slice, slice_sizes=slice_sizes),
     jax.ShapeDtypeStruct(mat.shape, mat.dtype), start_indices)
   if not isinstance(mat, BCOO):
-    raise ValueError(f"bcoo_slice: input should be BCOO array, got type(mat)={type(mat)}")
+    raise TypeError(f"bcoo_slice: input should be BCOO array, got type(mat)={type(mat)}")
   start_indices = tuple(jnp.asarray(i) for i in start_indices)
   assert all(jnp.issubdtype(i.dtype, np.integer) for i in start_indices)
   assert all(i.shape == () for i in start_indices)
@@ -2379,7 +2379,7 @@ def _convert_to_1d_for_conv(mat, index_dtype):
     # zero-out data at OOB indices, otherwise strange things happen.
     data = jnp.where(lax.squeeze(indices, (1,)) < mat.shape[-1], data, 0)
   else:
-    raise ValueError(f"bcoo_conv_general_dilated: input of type {type(mat)} not recognized.")
+    raise TypeError(f"bcoo_conv_general_dilated: input of type {type(mat)} not recognized.")
   return BCOO((data, indices), shape=mat.shape[2:])
 
 def _bcoo_conv_1d(lhs: BCOO, rhs: BCOO, padding: Sequence[int]) -> BCOO:

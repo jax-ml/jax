@@ -2559,7 +2559,7 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
   # TODO(jakevdp): provide a default for devices that considers both local
   # devices and pods
   if not isinstance(shards, Sequence):
-    raise ValueError("device_put_sharded `shards` input must be a sequence; "
+    raise TypeError("device_put_sharded `shards` input must be a sequence; "
                      f"got {type(shards)}")
   if len(shards) != len(devices):
     raise ValueError(f"len(shards) = {len(shards)} must equal "
@@ -2911,7 +2911,7 @@ def named_scope(
     ...   return jax.nn.relu(logits)
   """
   if not isinstance(name, str):
-    raise ValueError("named_scope name argument must be a string.")
+    raise TypeError("named_scope name argument must be a string.")
   with source_info_util.extend_name_stack(name):
     yield
 
