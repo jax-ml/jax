@@ -454,7 +454,7 @@ logsumexp = _logsumexp
 def log_softmax(x: ArrayLike,
                 axis: int | tuple[int, ...] | None = -1,
                 where: ArrayLike | None = None,
-                initial: ArrayLike | None = None) -> Array:
+                initial: ArrayLike | None = -jnp.inf) -> Array:
   r"""Log-Softmax function.
 
   Computes the logarithm of the :code:`softmax` function, which rescales
@@ -496,7 +496,7 @@ def log_softmax(x: ArrayLike,
 def softmax(x: ArrayLike,
             axis: int | tuple[int, ...] | None = -1,
             where: ArrayLike | None = None,
-            initial: ArrayLike | None = None) -> Array:
+            initial: ArrayLike | None = -jnp.inf) -> Array:
   r"""Softmax function.
 
   Computes the function which rescales elements to the range :math:`[0, 1]`
@@ -534,7 +534,7 @@ def _softmax(
     x: ArrayLike,
     axis: int | tuple[int, ...] | None = -1,
     where: ArrayLike | None = None,
-    initial: ArrayLike | None = None) -> Array:
+    initial: ArrayLike | None = -jnp.inf) -> Array:
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
   x_safe = x if where is None else jnp.where(where, x, initial)
   unnormalized = jnp.exp(x_safe - x_max)
@@ -553,7 +553,7 @@ def _softmax_deprecated(
     x: ArrayLike,
     axis: int | tuple[int, ...] | None = -1,
     where: ArrayLike | None = None,
-    initial: ArrayLike | None = None) -> Array:
+    initial: ArrayLike | None = -jnp.inf) -> Array:
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
   x_safe = x if where is None else jnp.where(where, x, initial)
   unnormalized = jnp.exp(x_safe - lax.stop_gradient(x_max))
