@@ -83,7 +83,7 @@ jobs:
           && steps.status.outcome == 'failure'
           && github.event_name == 'schedule'
           && github.repository == 'google/jax'
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: output-${{ matrix.python-version }}-log.jsonl
           path: output-${{ matrix.python-version }}-log.jsonl
