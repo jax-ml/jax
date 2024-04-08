@@ -898,18 +898,20 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     x = rng(shape, dtype=jnp.complex64)
     msg = "Complex values have no ordering and cannot be clipped"
-    with self.assertWarns(DeprecationWarning, msg=msg):
-      jnp.clip(x)
+    # jit is disabled so we don't miss warnings due to caching.
+    with jax.disable_jit():
+      with self.assertWarns(DeprecationWarning, msg=msg):
+        jnp.clip(x)
 
-    with self.assertWarns(DeprecationWarning, msg=msg):
-      jnp.clip(x, max=x)
+      with self.assertWarns(DeprecationWarning, msg=msg):
+        jnp.clip(x, max=x)
 
-    x = rng(shape, dtype=jnp.int32)
-    with self.assertWarns(DeprecationWarning, msg=msg):
-      jnp.clip(x, min=-1+5j)
+      x = rng(shape, dtype=jnp.int32)
+      with self.assertWarns(DeprecationWarning, msg=msg):
+        jnp.clip(x, min=-1+5j)
 
-    with self.assertWarns(DeprecationWarning, msg=msg):
-      jnp.clip(x, max=jnp.array([-1+5j]))
+      with self.assertWarns(DeprecationWarning, msg=msg):
+        jnp.clip(x, max=jnp.array([-1+5j]))
 
 
   @jtu.sample_product(
