@@ -63,7 +63,7 @@ mlir.register_lowering(repeat_p, _repeat_lowering_rule)
 bitcast_p = jax_core.Primitive("bitcast")
 
 
-def bitcast(x: ArrayLike, ty: DTypeLike) -> jax.Array:
+def bitcast(x: jax.Array, ty: DTypeLike) -> jax.Array:
   ty = dtypes.canonicalize_dtype(ty)
   if len(x.shape) < 2:
     raise ValueError("Not implemented: bitcast 1D")
