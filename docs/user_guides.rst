@@ -15,7 +15,7 @@ or deployed codebases.
    device_memory_profiling
    debugging/index
    gpu_performance_tips
-
+   persistent_compilation_cache
 
 .. toctree::
    :maxdepth: 1
