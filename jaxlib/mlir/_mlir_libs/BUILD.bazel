@@ -34,11 +34,11 @@ COPTS = [
 ]
 
 LINKOPTS = select({
-    "@tsl//tsl:macos": [
+    "@xla//xla/tsl:macos": [
         "-Wl,-rpath,@loader_path/",
         "-Wl,-rename_section,__TEXT,text_env,__TEXT,__text",
     ],
-    "@tsl//tsl:windows": [],
+    "@xla//xla/tsl:windows": [],
     "//conditions:default": [
         "-Wl,-rpath,$$ORIGIN/",
     ],
@@ -239,12 +239,12 @@ py_extension(
 cc_library(
     name = "jaxlib_mlir_capi_shared_library",
     srcs = select({
-        "@tsl//tsl:windows": [":jaxlib_mlir_capi.dll"],
-        "@tsl//tsl:macos": [":libjaxlib_mlir_capi.dylib"],
+        "@xla//xla/tsl:windows": [":jaxlib_mlir_capi.dll"],
+        "@xla//xla/tsl:macos": [":libjaxlib_mlir_capi.dylib"],
         "//conditions:default": [":libjaxlib_mlir_capi.so"],
     }),
     deps = select({
-        "@tsl//tsl:windows": [":jaxlib_mlir_capi_dll"],
+        "@xla//xla/tsl:windows": [":jaxlib_mlir_capi_dll"],
         "//conditions:default": [],
     }),
 )
