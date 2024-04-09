@@ -399,7 +399,7 @@ cc_library(
         ":triton_utils",
         "//jaxlib/gpu:triton_cc_proto",
         "@xla//xla/service:custom_call_status",
-        "@xla//xla/stream_executor/gpu:asm_compiler",
+        "@xla//xla/stream_executor/cuda:cuda_asm_compiler",
         "@xla//xla/tsl/cuda:cudart",
         "@tsl//tsl/platform:env",
         "@com_google_absl//absl/base:core_headers",
