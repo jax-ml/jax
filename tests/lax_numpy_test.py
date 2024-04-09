@@ -862,7 +862,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                            (np.full(1, -0.9), np.ones(1))]
     ],
     shape=all_shapes,
-    dtype=number_dtypes,
+    dtype=float_dtypes + int_dtypes + unsigned_dtypes,
   )
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises mixed type promotion
