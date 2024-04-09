@@ -22,10 +22,11 @@ import numpy as np
 
 def _promote_dtypes(name, *args):
   assert isinstance(name, str)
-  if not all(isinstance(arg, jax.Array) for arg in args):
+  if not all(isinstance(arg, (bool, int, float, complex, jax.Array))
+             for arg in args):
     raise ValueError(f"{name}: inputs must be arrays; got types {[type(arg) for arg in args]}")
   dtype = _result_type(*args)
-  return [arg.astype(dtype) for arg in args]
+  return [jax.numpy.asarray(arg).astype(dtype) for arg in args]
 
 
 def abs(x, /):

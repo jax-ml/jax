@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
+import builtins
 import functools
 from typing import NamedTuple
 import jax
@@ -183,6 +183,8 @@ def isdtype(dtype, kind):
 def result_type(*arrays_and_dtypes):
   dtypes = []
   for val in arrays_and_dtypes:
+    if isinstance(val, (builtins.bool, int, float, complex)):
+      val = jax.numpy.array(val)
     if isinstance(val, jax.Array):
       val = val.dtype
     if _is_valid_dtype(val):
