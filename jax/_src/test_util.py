@@ -1456,24 +1456,24 @@ def numpy_vecdot(x, y, axis):
 
 def complex_plane_sample(dtype, size_re=10, size_im=None):
   """Return a 2-D array of complex numbers that covers the complex plane
-     with a grid of samples.
+  with a grid of samples.
 
-     The size of the grid is (3 + 2 * size_im) x (3 + 2 * size_re)
-     that includes infinity points, extreme finite points, and the
-     specified number of points from real and imaginary axis.
+  The size of the grid is (3 + 2 * size_im) x (3 + 2 * size_re)
+  that includes infinity points, extreme finite points, and the
+  specified number of points from real and imaginary axis.
 
-     For example:
+  For example:
 
-     >>> print(complex_plane_sample(np.complex64, 0, 3))
-     [[-inf          -infj   0.          -infj  inf          -infj]
-      [-inf-3.4028235e+38j   0.-3.4028235e+38j  inf-3.4028235e+38j]
-      [-inf-2.0000000e+00j   0.-2.0000000e+00j  inf-2.0000000e+00j]
-      [-inf-1.1754944e-38j   0.-1.1754944e-38j  inf-1.1754944e-38j]
-      [-inf+0.0000000e+00j   0.+0.0000000e+00j  inf+0.0000000e+00j]
-      [-inf+1.1754944e-38j   0.+1.1754944e-38j  inf+1.1754944e-38j]
-      [-inf+2.0000000e+00j   0.+2.0000000e+00j  inf+2.0000000e+00j]
-      [-inf+3.4028235e+38j   0.+3.4028235e+38j  inf+3.4028235e+38j]
-      [-inf          +infj   0.          +infj  inf          +infj]]
+  >>> print(complex_plane_sample(np.complex64, 0, 3))
+  [[-inf          -infj   0.          -infj  inf          -infj]
+   [-inf-3.4028235e+38j   0.-3.4028235e+38j  inf-3.4028235e+38j]
+   [-inf-2.0000000e+00j   0.-2.0000000e+00j  inf-2.0000000e+00j]
+   [-inf-1.1754944e-38j   0.-1.1754944e-38j  inf-1.1754944e-38j]
+   [-inf+0.0000000e+00j   0.+0.0000000e+00j  inf+0.0000000e+00j]
+   [-inf+1.1754944e-38j   0.+1.1754944e-38j  inf+1.1754944e-38j]
+   [-inf+2.0000000e+00j   0.+2.0000000e+00j  inf+2.0000000e+00j]
+   [-inf+3.4028235e+38j   0.+3.4028235e+38j  inf+3.4028235e+38j]
+   [-inf          +infj   0.          +infj  inf          +infj]]
 
   """
   if size_im is None:

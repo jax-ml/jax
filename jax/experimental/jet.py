@@ -13,43 +13,43 @@
 # limitations under the License.
 
 r"""Jet is an experimental module for higher-order automatic differentiation
-  that does not rely on repeated first-order automatic differentiation.
+that does not rely on repeated first-order automatic differentiation.
 
-  How? Through the propagation of truncated Taylor polynomials.
-  Consider a function :math:`f = g \circ h`, some point :math:`x`
-  and some offset :math:`v`.
-  First-order automatic differentiation (such as :func:`jax.jvp`)
-  computes the pair :math:`(f(x), \partial f(x)[v])` from the pair
-  :math:`(h(x), \partial h(x)[v])`.
+How? Through the propagation of truncated Taylor polynomials.
+Consider a function :math:`f = g \circ h`, some point :math:`x`
+and some offset :math:`v`.
+First-order automatic differentiation (such as :func:`jax.jvp`)
+computes the pair :math:`(f(x), \partial f(x)[v])` from the pair
+:math:`(h(x), \partial h(x)[v])`.
 
-  :func:`jet` implements the higher-order analogue:
-  Given the tuple
+:func:`jet` implements the higher-order analogue:
+Given the tuple
 
-  .. math::
-    (h_0, ... h_K) :=
-    (h(x), \partial h(x)[v], \partial^2 h(x)[v, v], ..., \partial^K h(x)[v,...,v]),
+.. math::
+(h_0, ... h_K) :=
+(h(x), \partial h(x)[v], \partial^2 h(x)[v, v], ..., \partial^K h(x)[v,...,v]),
 
-  which represents a :math:`K`-th order Taylor approximation
-  of :math:`h` at :math:`x`, :func:`jet` returns a :math:`K`-th order
-  Taylor approximation of :math:`f` at :math:`x`,
+which represents a :math:`K`-th order Taylor approximation
+of :math:`h` at :math:`x`, :func:`jet` returns a :math:`K`-th order
+Taylor approximation of :math:`f` at :math:`x`,
 
-  .. math::
-    (f_0, ..., f_K) :=
-    (f(x), \partial f(x)[v], \partial^2 f(x)[v, v], ..., \partial^K f(x)[v,...,v]).
+.. math::
+(f_0, ..., f_K) :=
+(f(x), \partial f(x)[v], \partial^2 f(x)[v, v], ..., \partial^K f(x)[v,...,v]).
 
-  More specifically, :func:`jet` computes
+More specifically, :func:`jet` computes
 
-  .. math::
-    f_0, (f_1, . . . , f_K) = \texttt{jet} (f, h_0, (h_1, . . . , h_K))
+.. math::
+f_0, (f_1, . . . , f_K) = \texttt{jet} (f, h_0, (h_1, . . . , h_K))
 
-  and can thus be used for high-order
-  automatic differentiation of :math:`f`.
-  Details are explained in
-  `these notes <https://github.com/google/jax/files/6717197/jet.pdf>`__.
+and can thus be used for high-order
+automatic differentiation of :math:`f`.
+Details are explained in
+`these notes <https://github.com/google/jax/files/6717197/jet.pdf>`__.
 
-  Note:
-    Help improve :func:`jet` by contributing
-    `outstanding primitive rules <https://github.com/google/jax/issues/2431>`__.
+Note:
+Help improve :func:`jet` by contributing
+`outstanding primitive rules <https://github.com/google/jax/issues/2431>`__.
 """
 
 from typing import Any, Callable

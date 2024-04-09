@@ -39,8 +39,8 @@ _einsum = partial(jnp.einsum, precision=lax.Precision.HIGHEST)
 # aliases for working with pytrees
 def _vdot_real_part(x, y):
   """Vector dot-product guaranteed to have a real valued result despite
-     possibly complex input. Thus neglects the real-imaginary cross-terms.
-     The result is a real float.
+  possibly complex input. Thus neglects the real-imaginary cross-terms.
+  The result is a real float.
   """
   # all our uses of vdot() in CG are for computing an operator of the form
   #  z^H M z

@@ -315,13 +315,13 @@ class _DimTerm:
 
   def to_var(self) -> str | None:
     """Extract the variable name from a term.
-     Return None if the term is not a single variable."""
+    Return None if the term is not a single variable."""
     a = self.to_factor()
     return a.to_var() if a is not None else None
 
   def to_factor(self) -> _DimFactor | None:
     """Extract the single factor from a term.
-     Return None if the term is not a single factor."""
+    Return None if the term is not a single factor."""
     if len(self._factors) > 1: return None
     (f, f_exp), = self._factors
     if f_exp != 1: return None

@@ -1230,23 +1230,23 @@ class PolyHarness(Harness):
                override_jax_config_flags: dict[str, Any] = {}):
     """Args:
 
-      group_name, name: The name for the harness. See `Harness.__init__`.
-      fun: the function to be converted. See `Harness.__init__`.
-      arg_descriptors: The argument descriptors. See `Harness.__init__`.
-      polymorphic_shapes: For `export.args_specs`.
-      symbolic_constraints: For `export.args_specs`.
-      expect_error: an optional pair of an Exception type and a regular
-        expression to match the expected exception string.
-        We expect this error during tracing and exporting with shape
-        polymorphism.
-      check_result: specifies if we want to check that the result of invoking
-        the shape polymorphic export produces the same result as the
-        native JAX function.
-      tol: the tolerance to use for checking results.
-      limitations: a sequence of Limitation(s), used for obtaining the default
-        tolerance (if `tol` is not specified).
-      override_jax_config_flags: jax.config flags to override for the duration
-        of the test.
+    group_name, name: The name for the harness. See `Harness.__init__`.
+    fun: the function to be converted. See `Harness.__init__`.
+    arg_descriptors: The argument descriptors. See `Harness.__init__`.
+    polymorphic_shapes: For `export.args_specs`.
+    symbolic_constraints: For `export.args_specs`.
+    expect_error: an optional pair of an Exception type and a regular
+      expression to match the expected exception string.
+      We expect this error during tracing and exporting with shape
+      polymorphism.
+    check_result: specifies if we want to check that the result of invoking
+      the shape polymorphic export produces the same result as the
+      native JAX function.
+    tol: the tolerance to use for checking results.
+    limitations: a sequence of Limitation(s), used for obtaining the default
+      tolerance (if `tol` is not specified).
+    override_jax_config_flags: jax.config flags to override for the duration
+      of the test.
     """
     super().__init__(group_name, name, fun, arg_descriptors,
                      dtype=np.float32)

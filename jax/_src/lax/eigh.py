@@ -103,7 +103,7 @@ def _update_slice(operand, update, start_indices, update_dims):
   update: the padded array to write
   start_indices: the offset at which to write `update`.
   update_dims: the true dimensions of the padded update `update`. Only values
-    inside the rectangle given by `update_dims` will be overwritten."""
+  inside the rectangle given by `update_dims` will be overwritten."""
   operand_shape = operand.shape
   operand = lax.pad(operand,
                     jnp.array(0, operand.dtype),

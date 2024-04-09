@@ -13,9 +13,9 @@
 # limitations under the License.
 """Tests for the jax2tf conversion of pjit.
 
- To verify that the tests do run indeed on multiple devices you can run
+To verify that the tests do run indeed on multiple devices you can run
 
-  perftools/gputools/profiler/jfprof.sh jax/experimental/jax2tf/tests:sharding_test_tpu -- -c opt --test_filter=ShardingTest.test_shmap_all_to_all --test_arg=--vmodule=jax2tf=3 --
+perftools/gputools/profiler/jfprof.sh jax/experimental/jax2tf/tests:sharding_test_tpu -- -c opt --test_filter=ShardingTest.test_shmap_all_to_all --test_arg=--vmodule=jax2tf=3 --
 
 """
 from collections.abc import Sequence
