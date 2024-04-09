@@ -58,6 +58,7 @@ MAIN_NAMESPACE = {
   'broadcast_to',
   'can_cast',
   'ceil',
+  'clip',
   'complex128',
   'complex64',
   'concat',
@@ -231,6 +232,28 @@ class ArrayAPISmokeTest(absltest.TestCase):
     x = array_api.arange(20)
     self.assertIsInstance(x, jax.Array)
     self.assertIs(x.__array_namespace__(), array_api)
+
+
+class ArrayAPIErrors(absltest.TestCase):
+  """Test that our array API implementations raise errors where required"""
+
+  # TODO(micky774): Remove when jnp.clip deprecation is completed
+  # (began 2024-4-2) and default behavior is Array API 2023 compliant
+  def test_clip_complex(self):
+    x = array_api.arange(5, dtype=array_api.complex64)
+    complex_msg = "Complex values have no ordering and cannot be clipped"
+    with self.assertRaisesRegex(ValueError, complex_msg):
+      array_api.clip(x)
+
+    with self.assertRaisesRegex(ValueError, complex_msg):
+      array_api.clip(x, max=x)
+
+    x = array_api.arange(5, dtype=array_api.int32)
+    with self.assertRaisesRegex(ValueError, complex_msg):
+      array_api.clip(x, min=-1+5j)
+
+    with self.assertRaisesRegex(ValueError, complex_msg):
+      array_api.clip(x, max=-1+5j)
 
 
 if __name__ == '__main__':

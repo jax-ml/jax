@@ -6,7 +6,28 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.26
+## jax 0.4.27
+
+* Changes
+  * {func}`jax.pure_callback` and {func}`jax.experimental.io_callback`
+    now use {class}`jax.Array` instead of {class}`np.ndarray`. You can recover
+    the old behavior by transforming the arguments via
+    `jax.tree.map(np.asarray, args)` before passing them to the callback.
+
+* Deprecations & Removals
+  * Pallas now exclusively uses XLA for compiling kernels on GPU. The old
+    lowering pass via Triton Python APIs has been removed and the
+    `JAX_TRITON_COMPILE_VIA_XLA` environment variable no longer has any effect.
+  * {func}`jax.numpy.clip` has a new argument signature: `a`, `a_min`, and
+    `a_max` are deprecated in favor of `x` (positonal only), `min`, and
+    `max` ({jax-issue}`20550`).
+  * The `device()` method of JAX arrays has been removed, after being deprecated
+    since JAX v0.4.21. Use `arr.devices()` instead.
+
+
+## jaxlib 0.4.27
+
+## jax 0.4.26 (April 3, 2024)
 
 * New Functionality
   * Added {func}`jax.numpy.trapezoid`, following the addition of this function in
@@ -15,6 +36,13 @@ Remember to align the itemized text with the first line of an item within a list
 * Changes
   * Complex-valued {func}`jax.numpy.geomspace` now chooses the logarithmic spiral
     branch consistent with that of NumPy 2.0.
+  * The behavior of `lax.rng_bit_generator`, and in turn the `'rbg'`
+    and `'unsafe_rbg'` PRNG implementations, under `jax.vmap` [has
+    changed](https://github.com/google/jax/issues/19085) so that
+    mapping over keys results in random generation only from the first
+    key in the batch.
+  * Docs now use `jax.random.key` for construction of PRNG key arrays
+    rather than `jax.random.PRNGKey`.
 
 * Deprecations & Removals
   * {func}`jax.tree_map` is deprecated; use `jax.tree.map` instead, or for backward
@@ -30,6 +58,8 @@ Remember to align the itemized text with the first line of an item within a list
     `spmd_axis_name` argument for expressing SPMD device-parallel computations.
   * The `jax.experimental.host_callback` module is deprecated.
     Use instead the [new JAX external callbacks](https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html).
+    Added `JAX_HOST_CALLBACK_LEGACY` flag to assist in the transition to the
+    new callbacks. See {jax-issue}`#20385` for a discussion.
   * Passing arguments to {func}`jax.numpy.array_equal` and {func}`jax.numpy.array_equiv`
     that cannot be converted to a JAX array now results in an exception.
   * The deprecated flag `jax_parallel_functions_output_gda` has been removed.
@@ -44,8 +74,7 @@ Remember to align the itemized text with the first line of an item within a list
     This change could break clients that set a specific
     JAX serialization version lower than 9.
 
-
-## jaxlib 0.4.26
+## jaxlib 0.4.26 (April 3, 2024)
 
 * Changes
   * JAX now supports CUDA 12.1 or newer only. Support for CUDA 11.8 has been
@@ -1431,7 +1460,7 @@ Changes:
     special autodiff handling for hcb.id_tap and id_print.
     From now on, only the primals are tapped. The old behavior can be
     obtained (for a limited time) by setting the ``JAX_HOST_CALLBACK_AD_TRANSFORMS``
-    environment variable, or the ```--flax_host_callback_ad_transforms``` flag.
+    environment variable, or the ```--jax_host_callback_ad_transforms``` flag.
     Additionally, added documentation for how to implement the old behavior
     using JAX custom AD APIs ({jax-issue}`#8678`).
   * Sorting now matches the behavior of NumPy for ``0.0`` and ``NaN`` regardless of the

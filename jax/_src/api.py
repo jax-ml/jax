@@ -70,6 +70,7 @@ from jax._src.lib import pmap_lib
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (PmapSharding, TransferToMemoryKind,
                                      XLACompatibleSharding)
+from jax._src.layout import Layout
 from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
 from jax._src.util import unzip2, safe_map, safe_zip, wrap_name, wraps
@@ -2461,8 +2462,8 @@ def _check_sharding(x, s):
 
 def device_put(
     x,
-    device: None | xc.Device | Sharding | Any | TransferToMemoryKind = None,
-    *, src: None | xc.Device | Sharding | Any | TransferToMemoryKind = None):
+    device: None | xc.Device | Sharding | Layout | Any | TransferToMemoryKind = None,
+    *, src: None | xc.Device | Sharding | Layout | Any | TransferToMemoryKind = None):
   """Transfers ``x`` to ``device``.
 
   Args:
@@ -2558,7 +2559,7 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
   # TODO(jakevdp): provide a default for devices that considers both local
   # devices and pods
   if not isinstance(shards, Sequence):
-    raise ValueError("device_put_sharded `shards` input must be a sequence; "
+    raise TypeError("device_put_sharded `shards` input must be a sequence; "
                      f"got {type(shards)}")
   if len(shards) != len(devices):
     raise ValueError(f"len(shards) = {len(shards)} must equal "
@@ -2910,7 +2911,7 @@ def named_scope(
     ...   return jax.nn.relu(logits)
   """
   if not isinstance(name, str):
-    raise ValueError("named_scope name argument must be a string.")
+    raise TypeError("named_scope name argument must be a string.")
   with source_info_util.extend_name_stack(name):
     yield
 

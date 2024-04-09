@@ -53,7 +53,6 @@ from jax._src.errors import JAXTypeError
 from jax._src.interpreters import partial_eval as pe
 from jax._src.partition_spec import PartitionSpec
 from jax._src.interpreters import xla
-
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -67,12 +66,13 @@ from jax._src.sharding_impls import (
     SingleDeviceSharding, PmapSharding, AUTO, UNSPECIFIED, UnspecifiedValue,
     ParsedPartitionSpec, SpecSync, get_single_pspec, is_auto, is_unspecified,
     is_unspecified_or_auto, prepare_axis_resources, parse_flatten_op_sharding)
+from jax._src.layout import Layout, DeviceLocalLayout, AutoLayout
 from jax._src.state import discharge as state_discharge, RefEffect
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
     tree_flatten, tree_unflatten, treedef_is_leaf, tree_structure,
     treedef_children, broadcast_prefix, all_leaves, prefix_errors, keystr,
-    PyTreeDef)
+    PyTreeDef, none_leaf_registry as none_lr)
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps,
     distributed_debug_log, split_list, weakref_lru_cache,
@@ -149,6 +149,10 @@ class PjitInfo(NamedTuple):
   in_shardings_leaves: tuple[Any, ...]
   out_shardings_treedef: PyTreeDef
   out_shardings_leaves: tuple[Any, ...]
+  in_layouts_treedef: PyTreeDef
+  in_layouts_leaves: tuple[Any, ...]
+  out_layouts_treedef: PyTreeDef
+  out_layouts_leaves: tuple[Any, ...]
   static_argnums: tuple[int, ...]
   static_argnames: tuple[str, ...]
   donate_argnums: tuple[int, ...]
@@ -163,8 +167,9 @@ class PjitInfo(NamedTuple):
 
 
 def _python_pjit_helper(jit_info, *args, **kwargs):
-  args_flat, _, params, _, out_tree, _, _, _, arg_names, attrs_tracked = \
-      _infer_params(jit_info, args, kwargs)
+  (args_flat, _, params, _, out_tree, _, arg_names,
+   attrs_tracked) = _infer_params(jit_info, args, kwargs)
+
   for arg in args_flat:
     dispatch.check_arg(arg)
 
@@ -201,6 +206,7 @@ def _python_pjit_helper(jit_info, *args, **kwargs):
   if attrs_tracked:
     final_states, out_flat = split_list(out_flat, [len(attrs_tracked)])
     _set_states(attrs_tracked, final_states)
+
   outs = tree_unflatten(out_tree, out_flat)
   return outs, out_flat, out_tree, args_flat, params['jaxpr'], attrs_tracked
 
@@ -334,6 +340,30 @@ def _pjit_explicit_sharding(in_shardings, out_shardings, device,
           any(not is_unspecified(i) for i in out_shardings_flat))
 
 
+def _split_layout_and_sharding(entries):
+  entries_flat, treedef = tree_flatten(entries, is_leaf=lambda x: x is None)
+  layouts, shardings = [], []
+
+  for e in entries_flat:
+    if e is None or is_unspecified_or_auto(e):
+      layouts.append(None)
+      shardings.append(e)
+    elif isinstance(e, Layout):
+      layouts.append(e.device_local_layout)
+      shardings.append(e.sharding)
+    elif isinstance(e, (DeviceLocalLayout, AutoLayout)):
+      raise ValueError(
+          '`jax.jit` does not accept device-local layouts directly. Create '
+          'a `Layout` instance wrapping this device-local layout and pass '
+          f'that to `jit` instead. Got {e}')
+    else:
+      layouts.append(None)
+      shardings.append(e)
+
+  assert len(layouts) == len(shardings)
+  return tree_unflatten(treedef, layouts), tree_unflatten(treedef, shardings)
+
+
 def _parse_jit_arguments(fun: Callable, in_shardings: Any, out_shardings: Any,
                          donate_argnums: int | Sequence[int] | None,
                          donate_argnames: str | Iterable[str] | None,
@@ -377,16 +407,19 @@ def _parse_jit_arguments(fun: Callable, in_shardings: Any, out_shardings: Any,
     # rather than raising an error. https://github.com/google/jax/issues/2367
     in_shardings = tuple(in_shardings)
 
-  in_shardings, _, _ = prepare_axis_resources(in_shardings, 'in_shardings')
-  out_shardings, _, _ = prepare_axis_resources(out_shardings, 'out_shardings')
+  in_layouts, in_shardings = _split_layout_and_sharding(in_shardings)
+  out_layouts, out_shardings = _split_layout_and_sharding(out_shardings)
+
+  in_shardings = prepare_axis_resources(in_shardings, 'in_shardings')
+  out_shardings = prepare_axis_resources(out_shardings, 'out_shardings')
 
   user_specified_in_shardings = (in_shardings is not None and
                                  not is_unspecified(in_shardings))
-  none_leaf_registry = tree_util.none_leaf_registry
-  in_shardings_leaves, in_shardings_treedef = none_leaf_registry.flatten(
-      in_shardings)
-  out_shardings_leaves, out_shardings_treedef = none_leaf_registry.flatten(
-      out_shardings)
+
+  in_shardings_leaves, in_shardings_treedef = none_lr.flatten(in_shardings)
+  out_shardings_leaves, out_shardings_treedef = none_lr.flatten(out_shardings)
+  in_layouts_leaves, in_layouts_treedef = none_lr.flatten(in_layouts)
+  out_layouts_leaves, out_layouts_treedef = none_lr.flatten(out_layouts)
 
   fun_sourceinfo = api_util.fun_sourceinfo(fun)
   fun_signature = api_util.fun_signature(fun)
@@ -407,6 +440,10 @@ def _parse_jit_arguments(fun: Callable, in_shardings: Any, out_shardings: Any,
         in_shardings_leaves=tuple(in_shardings_leaves),
         out_shardings_treedef=out_shardings_treedef,
         out_shardings_leaves=tuple(out_shardings_leaves),
+        in_layouts_treedef=in_layouts_treedef,
+        in_layouts_leaves=tuple(in_layouts_leaves),
+        out_layouts_treedef=out_layouts_treedef,
+        out_layouts_leaves=tuple(out_layouts_leaves),
         static_argnums=static_argnums,
         static_argnames=static_argnames, donate_argnums=donate_argnums,
         donate_argnames=donate_argnames, device=device, backend=backend,
@@ -417,31 +454,17 @@ def _parse_jit_arguments(fun: Callable, in_shardings: Any, out_shardings: Any,
 
 
 def _make_jit_wrapper(jit_info: PjitInfo):
-  wrapped = _cpp_pjit(jit_info)
 
   @api_boundary
   def lower(*args, **kwargs):
     lowering_parameters = kwargs.pop(
         '_experimental_lowering_parameters', mlir.LoweringParameters())
-    # TODO(yashkatariya): Remove this when it's added on jit.
-    in_layouts = kwargs.pop('_in_layouts', None)
-    out_layouts = kwargs.pop('_out_layouts', None)
+
     (args_flat, flat_global_in_avals, params, in_tree, out_tree,
-     donated_invars, in_layouts_flat, out_layouts_flat,
-     arg_names, ()) = _infer_params(
-         jit_info, args, kwargs, in_layouts=in_layouts, out_layouts=out_layouts)
-    resource_env = params['resource_env']
-    mesh = None if resource_env is None else resource_env.physical_mesh
+     donated_invars, arg_names, ()) = _infer_params(jit_info, args, kwargs)
     try:
-      in_shardings = _resolve_in_shardings(
-          args_flat, params['in_shardings'], params['out_shardings'], mesh)
-      in_layouts_flat = _resolve_in_layouts(
-          args_flat, in_layouts_flat, in_shardings)
-      lowering = _pjit_lower(
-          params['jaxpr'], in_shardings, params['out_shardings'],
-          params['resource_env'], params['donated_invars'], params['name'],
-          params['keep_unused'], params['inline'], in_layouts=in_layouts_flat,
-          out_layouts=out_layouts_flat, lowering_parameters=lowering_parameters)
+      lowering = _resolve_and_lower(
+          args_flat, **params, lowering_parameters=lowering_parameters)
     except pxla.DeviceAssignmentMismatchError as e:
       fails, = e.args
       api_name = 'jit' if params['resource_env'] is None else 'pjit'
@@ -459,18 +482,17 @@ def _make_jit_wrapper(jit_info: PjitInfo):
 
   @api_boundary
   def eval_shape(*args, **kwargs):
-    _, _, params, _, out_tree, _, _, _, _, _ = _infer_params(
-        jit_info, args, kwargs, in_layouts=None, out_layouts=None
-    )
-    out_s = [None if is_unspecified(s) else getattr(s, '_original_sharding', s)
-             for s in params['out_shardings']]
+    _, _, params, _, out_tree, _, _, _ = _infer_params(jit_info, args, kwargs)
+    out_s = [None if is_unspecified(s) else s for s in params['out_shardings']]
     out = [api.ShapeDtypeStruct(x.shape, x.dtype, x.named_shape, sharding=s)
            for x, s in zip(params['jaxpr'].out_avals, out_s)]
     return tree_unflatten(out_tree, out)
 
+  wrapped = _cpp_pjit(jit_info)
   wrapped.lower = lower
   wrapped.eval_shape = eval_shape
   return wrapped
+
 
 def make_jit(fun: Callable, in_shardings: Any, out_shardings: Any,
              donate_argnums: int | Sequence[int] | None,
@@ -488,10 +510,11 @@ def make_jit(fun: Callable, in_shardings: Any, out_shardings: Any,
   return _make_jit_wrapper(jit_info)
 
 
-def _infer_params(jit_info, args, kwargs, *, in_layouts=None, out_layouts=None):
+def _infer_params(jit_info, args, kwargs):
   (fun, fun_sourceinfo, fun_signature, user_specified_in_shardings,
    in_shardings_treedef, in_shardings_leaves, out_shardings_treedef,
-   out_shardings_leaves, static_argnums, static_argnames,
+   out_shardings_leaves, in_layouts_treedef, in_layouts_leaves,
+   out_layouts_treedef, out_layouts_leaves, static_argnums, static_argnames,
    donate_argnums, donate_argnames, device, backend, keep_unused, inline,
    abstracted_axes, _, use_resource_env) = jit_info
 
@@ -574,17 +597,18 @@ def _infer_params(jit_info, args, kwargs, *, in_layouts=None, out_layouts=None):
         ) from e
     in_type = in_avals = tuple(avals)
 
-  canonicalized_in_shardings_flat, in_layouts_flat = _process_in_axis_resources(
-      in_shardings_treedef, in_shardings_leaves, hashable_pytree(in_layouts),
+  in_shardings_flat, in_layouts_flat = _process_in_axis_resources(
+      in_shardings_treedef, in_shardings_leaves,
+      in_layouts_treedef, in_layouts_leaves,
       in_avals, in_tree, dbg, device_or_backend_set, have_kwargs)
 
-  jaxpr, consts, out_shardings, out_layouts_flat, attrs_tracked = _pjit_jaxpr(
+  jaxpr, consts, out_shardings_flat, out_layouts_flat, attrs_tracked = _pjit_jaxpr(
       flat_fun, out_shardings_treedef, out_shardings_leaves,
-      hashable_pytree(out_layouts), in_type, dbg, device_or_backend_set,
-      HashableFunction(out_tree, closure=()),
+      out_layouts_treedef, out_layouts_leaves, in_type, dbg,
+      device_or_backend_set, HashableFunction(out_tree, closure=()),
       HashableFunction(res_paths, closure=()), inline)
 
-  assert len(explicit_args) == len(canonicalized_in_shardings_flat) == len(in_layouts_flat)
+  assert len(explicit_args) == len(in_shardings_flat) == len(in_layouts_flat)
 
   if config.dynamic_shapes.value:
     implicit_args = _extract_implicit_args(in_type, explicit_args)
@@ -593,18 +617,19 @@ def _infer_params(jit_info, args, kwargs, *, in_layouts=None, out_layouts=None):
   args_flat = [*implicit_args, *explicit_args]
 
   num_extra_args = len(implicit_args) + len(attrs_tracked) + len(consts)
-  canonicalized_in_shardings_flat = \
-      (UNSPECIFIED,) * num_extra_args + canonicalized_in_shardings_flat
+  in_shardings_flat = (UNSPECIFIED,) * num_extra_args + in_shardings_flat
   in_layouts_flat = (None,) * num_extra_args + in_layouts_flat
   donated_invars = (False,) * num_extra_args + donated_invars
-  assert (len(canonicalized_in_shardings_flat) == len(in_layouts_flat) ==
+  assert (len(in_shardings_flat) == len(in_layouts_flat) ==
           len(donated_invars) == len(attrs_tracked) + len(consts) + len(args_flat))
 
   # in_shardings and out_shardings here are all GSPMDSharding.
   params = dict(
       jaxpr=jaxpr,
-      in_shardings=canonicalized_in_shardings_flat,
-      out_shardings=out_shardings,
+      in_shardings=in_shardings_flat,
+      out_shardings=out_shardings_flat,
+      in_layouts=in_layouts_flat,
+      out_layouts=out_layouts_flat,
       resource_env=resource_env,
       donated_invars=donated_invars,
       name=getattr(flat_fun, '__name__', '<unknown>'),
@@ -612,8 +637,7 @@ def _infer_params(jit_info, args, kwargs, *, in_layouts=None, out_layouts=None):
       inline=inline,
   )
   return (consts + args_flat, in_type, params, in_tree, out_tree(),
-          donated_invars, in_layouts_flat, out_layouts_flat,
-          dbg.arg_names if dbg else None, attrs_tracked)
+          donated_invars, dbg.arg_names if dbg else None, attrs_tracked)
 
 def _extract_implicit_args(
   in_type: Sequence[tuple[core.AbstractValue, bool]],
@@ -971,8 +995,8 @@ class PytreeLeaf:
 
 @lru_cache(maxsize=4096)
 def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
-                               in_layouts_thunk, in_avals,
-                               in_tree, debug_info,
+                               in_layouts_treedef, in_layouts_leaves,
+                               in_avals, in_tree, debug_info,
                                device_or_backend_set, kws):
   if not kws:
     in_tree, _ = treedef_children(in_tree)
@@ -986,7 +1010,7 @@ def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
     in_shardings_flat = flatten_axis_resources(
         "pjit in_shardings", in_tree, orig_in_shardings, tupled_args=True)
 
-  in_layouts = in_layouts_thunk()
+  in_layouts = tree_unflatten(in_layouts_treedef, in_layouts_leaves)
   if in_layouts is None:
     in_layouts_flat = (in_layouts,) * len(in_avals)
   else:
@@ -999,7 +1023,7 @@ def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
     pjit_check_aval_sharding(in_shardings_flat, in_avals,
                              None if debug_info is None else debug_info.arg_names,
                              "pjit arguments", allow_uneven_sharding=False)
-  return in_shardings_flat, tuple(in_layouts_flat)
+  return in_shardings_flat, in_layouts_flat
 
 callsites: set[str] = set()
 
@@ -1166,13 +1190,9 @@ def _create_pjit_jaxpr(fun, in_type, debug_info, out_paths, ignored_inline):
 
 @lru_cache(maxsize=4096)
 def _check_and_canonicalize_out_shardings(
-    out_shardings_treedef, out_shardings_leaves, out_layouts_thunk, out_tree,
-    out_type, debug_info, device_or_backend_set):
+    out_shardings_treedef, out_shardings_leaves, out_layouts_treedef,
+    out_layouts_leaves, out_tree, out_type, debug_info, device_or_backend_set):
   orig_out_shardings = tree_unflatten(out_shardings_treedef, out_shardings_leaves)
-  # TODO(yashkatariya): Remove the if branch and fix flatten_axis_resources
-  # instead. This condition exists because flatten_axis_resources passes in an
-  # `object()` while unflattening which breaks assertion is user defined
-  # pytrees (which shouldn't exist but they do).
   if (is_unspecified(orig_out_shardings) or
       isinstance(orig_out_shardings, XLACompatibleSharding)):
     out_shardings_flat = (orig_out_shardings,) * len(out_type)
@@ -1181,7 +1201,7 @@ def _check_and_canonicalize_out_shardings(
         "pjit out_shardings", out_tree(), orig_out_shardings,
         tupled_args=False)
 
-  out_layouts = out_layouts_thunk()
+  out_layouts = tree_unflatten(out_layouts_treedef, out_layouts_leaves)
   if out_layouts is None:
     out_layouts_flat = (out_layouts,) * len(out_type)
   else:
@@ -1193,18 +1213,20 @@ def _check_and_canonicalize_out_shardings(
         out_shardings_flat, out_type,
         None if debug_info is None else debug_info.result_paths,
         "pjit outputs", allow_uneven_sharding=False)
-  return out_shardings_flat, tuple(out_layouts_flat)
+  return out_shardings_flat, out_layouts_flat
 
 
 def _pjit_jaxpr(fun, out_shardings_treedef, out_shardings_leaves,
-                out_layouts_thunk, in_type, debug_info, device_or_backend_set,
-                out_tree, result_paths, inline):
+                out_layouts_treedef, out_layouts_leaves, in_type, debug_info,
+                device_or_backend_set, out_tree, result_paths, inline):
   jaxpr, final_consts, out_type, attrs_tracked = _create_pjit_jaxpr(
       fun, in_type, debug_info, result_paths, IgnoreKey(inline))
   canonicalized_out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
-      out_shardings_treedef, out_shardings_leaves, out_layouts_thunk, out_tree, tuple(out_type),
+      out_shardings_treedef, out_shardings_leaves, out_layouts_treedef,
+      out_layouts_leaves, out_tree, tuple(out_type),
       jaxpr.jaxpr.debug_info, device_or_backend_set)
-  return jaxpr, final_consts, canonicalized_out_shardings_flat, out_layouts_flat, attrs_tracked
+  return (jaxpr, final_consts, canonicalized_out_shardings_flat,
+          out_layouts_flat, attrs_tracked)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1257,30 +1279,69 @@ pjit_p = core.AxisPrimitive("pjit")
 pjit_p.multiple_results = True
 
 
-def _resolve_in_layouts(args, jit_in_layouts, jit_in_shardings):
+@lru_cache(maxsize=2048)
+def _maybe_get_default_layout(arg_layout, jit_in_layout, sharding, aval):
+  if is_unspecified_or_auto(sharding):
+    return None
+  # TODO(yashkatariya): Figure out how layouts work with extended dtypes.
+  if dtypes.issubdtype(aval.dtype, dtypes.extended):
+    return None
+  if not core.is_constant_shape(aval.shape):
+    return None
+  shard_shape = sharding.shard_shape(aval.shape)
+  d = sharding._device_assignment[0]
+  # If a backend doesn't implement `get_default_layout` return `None` to avoid
+  # cache misses. This can happen when you have `jit(f, in_shardings=s)`. On
+  # first call you pass it a sharded array with layout and on second call you
+  # pass a numpy array. The layouts should be the same to get cache hits.
+  try:
+    al = DeviceLocalLayout(
+        d.client.get_default_layout(aval.dtype, shard_shape, d))
+  except:
+    return None
+  # argument does not have `.layout` property. ShapedArray, ShapedDtypeStruct,
+  # numpy array, etc are some examples.
+  if arg_layout is None:
+    return al if jit_in_layout is None else arg_layout  # arg_layout is None
+  # If arg has a `.layout` property, then return device_local_layout as is.
+  return arg_layout.device_local_layout
+
+
+def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
   # If device or backend is set, return the default layout. This is because you
   # can pass arrays on cpu (with untiled layouts) to jit with backend='tpu'
   # which causes error checks to fail. Returning the default layout allows
   # this to exist. It's the same for handling shardings.
-  if pxla.check_device_backend_on_shardings(jit_in_shardings):
+  if pxla.check_device_backend_on_shardings(resolved_in_shardings):
     return (None,) * len(jit_in_layouts)
 
   resolved_in_layouts = []
-  for arg, jit_in_l in safe_zip(args, jit_in_layouts):
+  for arg, jit_in_l, rs, aval in safe_zip(
+      args, jit_in_layouts, resolved_in_shardings, in_avals):
     arg_layout, committed = (
-        (arg.layout, getattr(arg, '_committed', True))
-        if getattr(arg, 'layout', None) is not None else (None, False))
+        _maybe_get_default_layout(getattr(arg, 'layout', None), jit_in_l, rs, aval),
+        getattr(arg, '_committed', True))
+    # Sharding can be unspecified when array is committed if it's a PmapSharding.
+    is_pmap_sharding = (is_unspecified(rs) or
+                        isinstance(getattr(arg, 'sharding', None), PmapSharding))
     if jit_in_l is None:
       if committed:
-        resolved_in_layouts.append(arg_layout)
+        if is_pmap_sharding:
+          resolved_in_layouts.append(None)
+        else:
+          resolved_in_layouts.append(arg_layout)
       else:
         resolved_in_layouts.append(None)
     else:
-      if committed and arg_layout != jit_in_l:
+      # arg_layout can be None because some backends don't implement the
+      # required layout methods. Hence `arr.layout` can return
+      # `Layout(None, sharding)`
+      if (committed and not is_pmap_sharding and
+          arg_layout is not None and arg_layout != jit_in_l):
         raise ValueError('Layout passed to jit does not match the layout '
                           'on the respective arg. '
                           f'Got pjit layout: {jit_in_l},\n'
-                          f'arg sharding: {arg_layout} for '
+                          f'arg layout: {arg_layout} for '
                           f'arg shape: {shaped_abstractify(arg).str_short()}')
       resolved_in_layouts.append(jit_in_l)
   return tuple(resolved_in_layouts)
@@ -1322,8 +1383,10 @@ def _resolve_in_shardings(
     pxla._get_and_check_device_assignment(
         it.chain(
             util.stable_unique(committed_arg_shardings),
-            ((i, pxla.MismatchType.IN_SHARDING, None) for i in util.stable_unique(pjit_in_shardings)),
-            ((o, pxla.MismatchType.OUT_SHARDING, None) for o in util.stable_unique(out_shardings))),
+            ((i, pxla.MismatchType.IN_SHARDING, None)
+             for i in util.stable_unique(pjit_in_shardings)),
+            ((o, pxla.MismatchType.OUT_SHARDING, None)
+             for o in util.stable_unique(out_shardings))),
         (None if pjit_mesh is None or pjit_mesh.empty else list(pjit_mesh.devices.flat)))
 
   resolved_in_shardings = []
@@ -1391,19 +1454,33 @@ def _resolve_in_shardings(
   return tuple(resolved_in_shardings)
 
 
-def _pjit_call_impl_python(
-    *args, jaxpr, in_shardings, out_shardings, resource_env, donated_invars,
-    name, keep_unused, inline):
-  global _most_recent_pjit_call_executable
-
+def _resolve_and_lower(
+    args, jaxpr, in_shardings, out_shardings, in_layouts,
+    out_layouts, resource_env, donated_invars, name, keep_unused, inline,
+    lowering_parameters):
   in_shardings = _resolve_in_shardings(
       args, in_shardings, out_shardings,
       resource_env.physical_mesh if resource_env is not None else None)
-
-  compiled = _pjit_lower(
-      jaxpr, in_shardings, out_shardings, resource_env,
+  in_layouts = _resolve_in_layouts(args, in_layouts, in_shardings,
+                                   jaxpr.in_avals)
+  lowered = _pjit_lower(
+      jaxpr, in_shardings, out_shardings, in_layouts, out_layouts, resource_env,
       donated_invars, name, keep_unused, inline,
-      lowering_parameters=mlir.LoweringParameters()).compile()
+      lowering_parameters=lowering_parameters)
+  return lowered
+
+
+def _pjit_call_impl_python(
+    *args, jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
+    resource_env, donated_invars, name, keep_unused, inline):
+  global _most_recent_pjit_call_executable
+
+  compiled = _resolve_and_lower(
+      args, jaxpr=jaxpr, in_shardings=in_shardings, out_shardings=out_shardings,
+      in_layouts=in_layouts, out_layouts=out_layouts, resource_env=resource_env,
+      donated_invars=donated_invars, name=name, keep_unused=keep_unused,
+      inline=inline, lowering_parameters=mlir.LoweringParameters()).compile()
+
   _most_recent_pjit_call_executable.weak_key_dict[jaxpr] = compiled
   # This check is expensive so only do it if enable_checks is on.
   if compiled._auto_spmd_lowering and config.enable_checks.value:
@@ -1421,6 +1498,8 @@ def _pjit_call_impl_python(
     distributed_debug_log(("Running pjit'd function", name),
                           ("in_shardings", in_shardings),
                           ("out_shardings", out_shardings),
+                          ("in_layouts", in_layouts),
+                          ("out_layouts", out_layouts),
                           ("abstract args", map(xla.abstractify, args)),
                           ("fingerprint", fingerprint))
   try:
@@ -1452,8 +1531,9 @@ def _pjit_call_impl_python(
 
 
 @weakref_lru_cache
-def _get_jaxpr_as_fun(jaxpr, in_shardings, out_shardings, resource_env,
-                      donated_invars, name, keep_unused, inline):
+def _get_jaxpr_as_fun(jaxpr, in_shardings, out_shardings, in_layouts,
+                      out_layouts, resource_env, donated_invars, name,
+                      keep_unused, inline):
   # The input jaxpr to `_get_jaxpr_as_fun` is under a weakref_lru_cache so
   # returning `core.jaxpr_as_fun(jaxpr)` directly creates a strong reference to
   # the jaxpr defeating the purpose of weakref_lru_cache. So return a function
@@ -1465,12 +1545,14 @@ def _get_jaxpr_as_fun(jaxpr, in_shardings, out_shardings, resource_env,
 
 
 def _pjit_call_impl(*args, jaxpr,
-                    in_shardings, out_shardings, resource_env,
+                    in_shardings, out_shardings, in_layouts, out_layouts,
+                    resource_env,
                     donated_invars, name, keep_unused, inline):
   def call_impl_cache_miss(*args_, **kwargs_):
     out_flat, compiled = _pjit_call_impl_python(
         *args, jaxpr=jaxpr, in_shardings=in_shardings,
-        out_shardings=out_shardings, resource_env=resource_env,
+        out_shardings=out_shardings, in_layouts=in_layouts,
+        out_layouts=out_layouts, resource_env=resource_env,
         donated_invars=donated_invars, name=name, keep_unused=keep_unused,
         inline=inline)
     fastpath_data = _get_fastpath_data(
@@ -1479,7 +1561,7 @@ def _pjit_call_impl(*args, jaxpr,
     return out_flat, fastpath_data
 
   f = _get_jaxpr_as_fun(
-      jaxpr, in_shardings, out_shardings,
+      jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
       resource_env, donated_invars, name, keep_unused, inline)
   donated_argnums = [i for i, d in enumerate(donated_invars) if d]
   has_explicit_sharding = _pjit_explicit_sharding(
@@ -1507,22 +1589,15 @@ def _pjit_lower_cached(
     jaxpr: core.ClosedJaxpr,
     in_shardings,
     out_shardings,
+    in_layouts: pxla.MaybeLayout,
+    out_layouts: pxla.MaybeLayout,
     resource_env,
     donated_invars,
     name: str,
     keep_unused: bool,
     inline: bool,
     *,
-    lowering_parameters: mlir.LoweringParameters,
-    in_layouts: pxla.MaybeLayout | None = None,
-    out_layouts: pxla.MaybeLayout | None = None):
-  # TODO(yashkatariya): Remove this when layouts are supported on jit and
-  # passed to params.
-  if in_layouts is None:
-    in_layouts = (None,) * len(in_shardings)
-  if out_layouts is None:
-    out_layouts = (None,) * len(out_shardings)
-
+    lowering_parameters: mlir.LoweringParameters):
   if resource_env is not None:
     pxla.resource_typecheck(jaxpr, resource_env, {}, lambda: "pjit")
 
@@ -1545,18 +1620,19 @@ def _pjit_lower_cached(
   else:
     return pxla.lower_sharding_computation(
         jaxpr, api_name, name, in_shardings, out_shardings,
-        tuple(donated_invars), tuple(jaxpr.in_avals),
+        in_layouts, out_layouts, tuple(donated_invars), tuple(jaxpr.in_avals),
         keep_unused=keep_unused, inline=inline,
         devices_from_context=(
             None if mesh is None or mesh.empty else list(mesh.devices.flat)),
-        lowering_parameters=lowering_parameters, in_layouts=in_layouts,
-        out_layouts=out_layouts)
+        lowering_parameters=lowering_parameters)
 
 
 def pjit_staging_rule(trace, *args, **params):
   if (params["inline"] and
       all(is_unspecified(i) for i in params["in_shardings"]) and
-      all(is_unspecified(o) for o in params["out_shardings"])):
+      all(is_unspecified(o) for o in params["out_shardings"]) and
+      all(i is None for i in params["in_layouts"]) and
+      all(o is None for o in params["out_layouts"])):
     jaxpr = params['jaxpr']
     if config.dynamic_shapes.value:
       # Inline jaxpr doesn't handle dynamic shapes when inlining. If dynamic
@@ -1585,13 +1661,15 @@ def pjit_staging_rule(trace, *args, **params):
     jaxpr, consts = pxla._move_mutable_consts(params['jaxpr'])
     consts = map(trace.instantiate_const, consts)
     in_shardings = (*params['in_shardings'],) + (UNSPECIFIED,) * len(consts)
+    in_layouts = (*params['in_layouts'],) + (None,) * len(consts)
     donated_invars = (*params['donated_invars'],) + (False,) * len(consts)
     new_params = dict(params, jaxpr=jaxpr, in_shardings=in_shardings,
-                      donated_invars=donated_invars)
+                      in_layouts=in_layouts, donated_invars=donated_invars)
     return trace.default_process_primitive(pjit_p, (*args, *consts), new_params)
   else:
     return trace.default_process_primitive(pjit_p, args, params)
 pe.custom_staging_rules[pjit_p] = pjit_staging_rule
+
 
 # TODO(mattjj): remove/trivialize this when jaxprs have type annotation on them,
 # since it's actually not possible in general to infer the type from the term
@@ -1617,13 +1695,14 @@ def _pjit_typecheck(ctx_factory, *in_atoms, jaxpr, **params):
 core.custom_typechecks[pjit_p] = _pjit_typecheck
 
 
-def _pjit_abstract_eval(*args, jaxpr, out_shardings, resource_env, **_):
+def _pjit_abstract_eval(*args, jaxpr, **_):
   return jaxpr.out_avals, jaxpr.effects
 pjit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
 
 
 def _pjit_cached_lower_jaxpr_to_fun(ctx, name, jaxpr, effects, in_shardings,
-                                    out_shardings, api_name):
+                                    out_shardings, in_layouts, out_layouts,
+                                    api_name):
   mod_ctx = ctx.module_context
   axis_ctx = ctx.module_context.axis_context
   num_devices = None
@@ -1634,7 +1713,7 @@ def _pjit_cached_lower_jaxpr_to_fun(ctx, name, jaxpr, effects, in_shardings,
   key = (pjit_p, name, jaxpr, effects, num_devices,
          pxla.SemanticallyEqualShardings(in_shardings, jaxpr.in_avals),
          pxla.SemanticallyEqualShardings(out_shardings, jaxpr.out_avals),
-         api_name)
+         in_layouts, out_layouts, api_name)
 
   func = mod_ctx.cached_primitive_lowerings.get(key, None)
   if func is None:
@@ -1646,14 +1725,15 @@ def _pjit_cached_lower_jaxpr_to_fun(ctx, name, jaxpr, effects, in_shardings,
     func = mlir.lower_jaxpr_to_fun(
         mod_ctx, name, jaxpr, effects, ctx.name_stack,
         arg_shardings=arg_shardings, result_shardings=result_shardings,
-        use_sharding_annotations=False, api_name=api_name)
+        use_sharding_annotations=False, api_name=api_name,
+        arg_layouts=in_layouts, result_layouts=out_layouts)
     mod_ctx.cached_primitive_lowerings[key] = func
   return func
 
 
 def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
-                   out_shardings, resource_env, donated_invars,
-                   keep_unused, inline):
+                   out_shardings, in_layouts, out_layouts, resource_env,
+                   donated_invars, keep_unused, inline):
   effects = list(ctx.tokens_in.effects())
   output_types = map(mlir.aval_to_ir_types, ctx.avals_out)
   output_types = [mlir.token_type()] * len(effects) + output_types
@@ -1661,7 +1741,8 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
 
   func = _pjit_cached_lower_jaxpr_to_fun(
       ctx, name, jaxpr, tuple(effects), in_shardings,
-      out_shardings, api_name=('jit' if resource_env is None else 'pjit'))
+      out_shardings, in_layouts, out_layouts,
+      api_name=('jit' if resource_env is None else 'pjit'))
 
   tokens_in = [ctx.tokens_in.get(eff) for eff in effects]
   args = (*ctx.dim_var_values, *tokens_in, *args)
@@ -1680,7 +1761,7 @@ mlir.register_lowering(pjit_p, _pjit_lowering)
 def _pjit_batcher(insert_axis, spmd_axis_name,
                   axis_size, axis_name, main_type,
                   vals_in, dims_in,
-                  jaxpr, in_shardings, out_shardings,
+                  jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
                   resource_env, donated_invars, name, keep_unused, inline):
   segment_lens, dims_in = batching.indirectify_ragged_axes(dims_in)
   new_jaxpr, axes_out = batching.batch_jaxpr2(
@@ -1705,16 +1786,24 @@ def _pjit_batcher(insert_axis, spmd_axis_name,
       _pjit_batcher_for_sharding(o, axis_out, new_parts, mesh, aval.ndim)
       if axis_out is not None else o
       for axis_out, o, aval in zip(axes_out, out_shardings, new_jaxpr.out_avals))
+  # TODO(yashkatariya): Figure out layouts should change under vmap.
+  if not (all(l is None for l in in_layouts) and
+          all(l is None for l in out_layouts)):
+    raise NotImplementedError
+
   vals_out = pjit_p.bind(
     *vals_in,
     jaxpr=new_jaxpr,
     in_shardings=in_shardings,
     out_shardings=out_shardings,
+    in_layouts=in_layouts,
+    out_layouts=out_layouts,
     resource_env=resource_env,
     donated_invars=donated_invars,
     name=name,
     keep_unused=keep_unused,
     inline=inline)
+
   resolved_axes_out = batching.resolve_ragged_axes_against_inputs_outputs(
       vals_in, vals_out, axes_out)
   return vals_out, resolved_axes_out
@@ -1760,7 +1849,7 @@ def _pjit_batcher_for_sharding(
 
 
 def _pjit_jvp(primals_in, tangents_in,
-              jaxpr, in_shardings, out_shardings,
+              jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
               resource_env, donated_invars, name, keep_unused, inline):
   is_nz_tangents_in = [type(t) is not ad.Zero for t in tangents_in]
   jaxpr_jvp, is_nz_tangents_out = ad.jvp_jaxpr(
@@ -1775,6 +1864,8 @@ def _pjit_jvp(primals_in, tangents_in,
       jaxpr=jaxpr_jvp,
       in_shardings=(*in_shardings, *_filter_zeros_in(in_shardings)),
       out_shardings=(*out_shardings, *_filter_zeros_out(out_shardings)),
+      in_layouts=(*in_layouts, *_filter_zeros_in(in_layouts)),
+      out_layouts=(*out_layouts, *_filter_zeros_out(out_layouts)),
       resource_env=resource_env,
       donated_invars=(*donated_invars, *_filter_zeros_in(donated_invars)),
       name=name,
@@ -1800,7 +1891,8 @@ def _known_jaxpr_fwd(known_jaxpr: core.ClosedJaxpr,
 
 def _pjit_partial_eval(trace, *in_tracers,
                        jaxpr, in_shardings, out_shardings,
-                       resource_env, donated_invars, name, keep_unused, inline):
+                       in_layouts, out_layouts, resource_env, donated_invars,
+                       name, keep_unused, inline):
   in_pvals = [t.pval for t in in_tracers]
 
   known_ins = tuple(pv.is_known() for pv in in_pvals)
@@ -1811,25 +1903,31 @@ def _pjit_partial_eval(trace, *in_tracers,
   known_outs = tuple(not uk for uk in unknown_outs)
   num_residuals = len(res_avals)
   res_shardings = (UNSPECIFIED,) * num_residuals
+  res_layouts = (None,) * num_residuals
 
   def keep_where(l, should_keep):
     return tuple(x for x, keep in zip(l, should_keep) if keep)
 
   known_out_shardings = keep_where(out_shardings, known_outs) + res_shardings
+  known_out_layouts = keep_where(out_layouts, known_outs) + res_layouts
 
   # Input-to-output forwarding: compute which outputs are just forwarded inputs.
   num_out_primals = len(known_jaxpr.out_avals) - num_residuals
   in_fwd: list[int | None] = pe._jaxpr_forwarding(known_jaxpr.jaxpr)
   # Only forward primal outputs when corresponding out_sharding is UNSPECIFIED.
   in_fwd_primal, in_fwd_res = split_list(in_fwd, [num_out_primals])
-  in_fwd = [fwd if is_unspecified(os) else None for os, fwd in
-            zip(keep_where(out_shardings, known_outs), in_fwd_primal)
-            ] + in_fwd_res
+  in_fwd = [
+      fwd if is_unspecified(os) and ol is None else None
+      for os, ol, fwd in zip(
+          keep_where(out_shardings, known_outs),
+          keep_where(out_layouts, known_outs), in_fwd_primal)
+  ] + in_fwd_res
   del in_fwd_primal, in_fwd_res
   # Prune jaxpr outputs and out_shardings by removing the input-forwards.
   keep = [f is None for f in in_fwd]
   known_jaxpr = pe.prune_closed_jaxpr_outputs(known_jaxpr, keep)
   known_out_shardings = keep_where(known_out_shardings, keep)
+  known_out_layouts = keep_where(known_out_layouts, keep)
   # Update num_out_primals to reflect pruning.
   kept_primals, kept_res = split_list(keep, [num_out_primals])
   num_out_primals = sum(kept_primals)
@@ -1843,14 +1941,18 @@ def _pjit_partial_eval(trace, *in_tracers,
   keep = [f is None for f in out_fwd]
   known_jaxpr = pe.prune_closed_jaxpr_outputs(known_jaxpr, keep)
   known_out_shardings = keep_where(known_out_shardings, keep)
+  known_out_layouts = keep_where(known_out_layouts, keep)
   del keep
 
   known_params = dict(
       jaxpr=known_jaxpr, in_shardings=keep_where(in_shardings, known_ins),
-      out_shardings=known_out_shardings, resource_env=resource_env,
+      out_shardings=known_out_shardings,
+      in_layouts=keep_where(in_layouts, known_ins),
+      out_layouts=known_out_layouts, resource_env=resource_env,
       donated_invars=keep_where(donated_invars, known_ins),
       name=name, keep_unused=keep_unused, inline=inline)
   assert len(known_params['out_shardings']) == len(known_params['jaxpr'].out_avals)
+  assert len(known_params['out_layouts']) == len(known_params['jaxpr'].out_avals)
 
   # Bind known things to pjit_p.
   known_inputs = [pv.get_known() for pv in in_pvals if pv.is_known()]
@@ -1875,6 +1977,8 @@ def _pjit_partial_eval(trace, *in_tracers,
       jaxpr=unknown_jaxpr,
       in_shardings=(keep_where(in_shardings, unknown_ins) + res_shardings),
       out_shardings=keep_where(out_shardings, unknown_outs),
+      in_layouts=(keep_where(in_layouts, unknown_ins) + res_layouts),
+      out_layouts=keep_where(out_layouts, unknown_outs),
       resource_env=resource_env,
       donated_invars=(keep_where(donated_invars, unknown_ins) +
                       (False,) * num_residuals),
@@ -1908,28 +2012,41 @@ def _pjit_partial_eval_custom_params_updater(
   donated_invars_known, _ = pe.partition_list(unks_in, params_known['donated_invars'])
   in_shardings_known, _ = pe.partition_list(unks_in, params_known['in_shardings'])
   _, out_shardings_known = pe.partition_list(kept_outs_known, params_known['out_shardings'])
+  in_layouts_known, _ = pe.partition_list(unks_in, params_known['in_layouts'])
+  _, out_layouts_known = pe.partition_list(kept_outs_known, params_known['out_layouts'])
+
   new_params_known = dict(params_known,
                           in_shardings=tuple(in_shardings_known),
                           out_shardings=(*out_shardings_known,
                                          *[UNSPECIFIED] * num_res_out),
+                          in_layouts=tuple(in_layouts_known),
+                          out_layouts=(*out_layouts_known, *[None] * num_res_out),
                           donated_invars=tuple(donated_invars_known))
   assert len(new_params_known['in_shardings']) == len(params_known['jaxpr'].in_avals)
   assert len(new_params_known['out_shardings']) == len(params_known['jaxpr'].out_avals)
+  assert len(new_params_known['in_layouts']) == len(params_known['jaxpr'].in_avals)
+  assert len(new_params_known['out_layouts']) == len(params_known['jaxpr'].out_avals)
 
   # added num_res new inputs to jaxpr_staged, and pruning according to inst_in
   _, donated_invars_staged = pe.partition_list(inst_in, params_staged['donated_invars'])
   donated_invars_staged = [False] * num_res_in + donated_invars_staged
   _, in_shardings_staged = pe.partition_list(inst_in, params_staged['in_shardings'])
   in_shardings_staged = [*[UNSPECIFIED] * num_res_in, *in_shardings_staged]
-
   _, out_shardings_staged = pe.partition_list(kept_outs_staged, params_staged['out_shardings'])
+  _, in_layouts_staged = pe.partition_list(inst_in, params_staged['in_layouts'])
+  in_layouts_staged = [*[None] * num_res_in, *in_layouts_staged]
+  _, out_layouts_staged = pe.partition_list(kept_outs_staged, params_staged['out_layouts'])
 
   new_params_staged = dict(params_staged,
                            in_shardings=tuple(in_shardings_staged),
                            out_shardings=tuple(out_shardings_staged),
+                           in_layouts=tuple(in_layouts_staged),
+                           out_layouts=tuple(out_layouts_staged),
                            donated_invars=tuple(donated_invars_staged))
   assert len(new_params_staged['in_shardings']) == len(params_staged['jaxpr'].in_avals)
   assert len(new_params_staged['out_shardings']) == len(params_staged['jaxpr'].out_avals)
+  assert len(new_params_staged['in_layouts']) == len(params_staged['jaxpr'].in_avals)
+  assert len(new_params_staged['out_layouts']) == len(params_staged['jaxpr'].out_avals)
   return new_params_known, new_params_staged
 
 pe.partial_eval_jaxpr_custom_rules[pjit_p] = \
@@ -1946,7 +2063,7 @@ def _pjit_transpose_trace(fun, in_avals):
 
 
 def _pjit_transpose(cts_in, *primals_in,
-                    jaxpr, in_shardings, out_shardings,
+                    jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
                     resource_env, donated_invars, name, keep_unused, inline):
   def prune_type(ty, xs, maybe_zeros):
     return tuple(x for x, mz in zip(xs, maybe_zeros) if type(mz) is not ty)
@@ -1960,6 +2077,10 @@ def _pjit_transpose(cts_in, *primals_in,
     *prune_type(ad.UndefinedPrimal, in_shardings, primals_in),
     *prune_type(ad.Zero, out_shardings, cts_in)
   )
+  transpose_in_layouts = (
+    *prune_type(ad.UndefinedPrimal, in_layouts, primals_in),
+    *prune_type(ad.Zero, out_layouts, cts_in)
+  )
   global_cts_in_avals = tuple(core.raise_to_shaped(core.get_aval(ct))
                               for ct in primals_and_nz_cts_in)
 
@@ -1970,26 +2091,36 @@ def _pjit_transpose(cts_in, *primals_in,
       ad.Zero,
       in_shardings,
       tree_unflatten(cts_out_treedef, [object()] * cts_out_treedef.num_leaves))
+  transpose_out_layouts = prune_type(
+      ad.Zero,
+      in_layouts,
+      tree_unflatten(cts_out_treedef, [object()] * cts_out_treedef.num_leaves))
 
   if attrs_tracked:
     init_states =  _get_states(attrs_tracked)
     primals_and_nz_cts_in = [*init_states, *primals_and_nz_cts_in]
     transpose_in_shardings = (UNSPECIFIED,) * len(attrs_tracked) + transpose_in_shardings
     transpose_out_shardings = (UNSPECIFIED,) * len(attrs_tracked) + transpose_out_shardings
+    transpose_in_layouts = (None,) * len(attrs_tracked) + transpose_in_layouts
+    transpose_out_layouts = (None,) * len(attrs_tracked) + transpose_out_layouts
 
   nz_cts_out = pjit_p.bind(
       *primals_and_nz_cts_in,
       jaxpr=transpose_jaxpr,
       in_shardings=transpose_in_shardings,
       out_shardings=transpose_out_shardings,
+      in_layouts=transpose_in_layouts,
+      out_layouts=transpose_out_layouts,
       resource_env=resource_env,
       donated_invars=(False,) * len(primals_and_nz_cts_in),
       name=name,
       keep_unused=keep_unused,
       inline=inline)
+
   if attrs_tracked:
     final_states, nz_cts_out = split_list(nz_cts_out, [len(init_states)])
     _set_states(attrs_tracked, final_states)
+
   return tree_unflatten(cts_out_treedef, nz_cts_out)
 ad.reducing_transposes[pjit_p] = _pjit_transpose
 
@@ -2016,6 +2147,8 @@ def dce_jaxpr_pjit_rule(used_outputs: list[bool], eqn: core.JaxprEqn
       jaxpr=dced_jaxpr,
       in_shardings=keep_where(eqn_params["in_shardings"], used_inputs),
       out_shardings=keep_where(eqn_params["out_shardings"], used_outputs),
+      in_layouts=keep_where(eqn_params["in_layouts"], used_inputs),
+      out_layouts=keep_where(eqn_params["out_layouts"], used_outputs),
       donated_invars=keep_where(eqn_params["donated_invars"], used_inputs),
   )
   if not any(used_inputs) and not any(used_outputs) and not dced_jaxpr.effects:
@@ -2099,6 +2232,10 @@ def _pjit_pp_rule(eqn, context, settings):
     del params['in_shardings']
   if all(is_unspecified(s) for s in params['out_shardings']):
     del params['out_shardings']
+  if all(l is None for l in params['in_layouts']):
+    del params['in_layouts']
+  if all(l is None for l in params['out_layouts']):
+    del params['out_layouts']
   if not params['keep_unused']:
     del params['keep_unused']
   if (params['resource_env'] is None or
@@ -2113,18 +2250,28 @@ core.pp_eqn_rules[pjit_p] = _pjit_pp_rule
 
 
 def _pjit_state_discharge_rule(
-    in_avals, out_avals, *args, jaxpr, in_shardings, out_shardings, **params):
+    in_avals, out_avals, *args, jaxpr, in_shardings, out_shardings,
+    in_layouts, out_layouts, **params):
   if not (all(map(is_unspecified, in_shardings)) and
-          all(map(is_unspecified, out_shardings))): raise NotImplementedError
+          all(map(is_unspecified, out_shardings))):
+    raise NotImplementedError
+
+  if not (all(l is None for l in in_layouts) and
+          all(l is None for l in out_layouts)):
+    raise NotImplementedError
+
   jaxpr, consts = jaxpr.jaxpr, jaxpr.consts
   num_outs = len(jaxpr.outvars)
   discharged_jaxpr, discharged_consts = state_discharge.discharge_state(jaxpr, consts)
   discharged_closed_jaxpr = core.ClosedJaxpr(discharged_jaxpr, discharged_consts)
   new_in_shardings = (UnspecifiedValue(),) * len(discharged_jaxpr.invars)
   new_out_shardings = (UnspecifiedValue(),) * len(discharged_jaxpr.outvars)
+  new_in_layouts = (None,) * len(discharged_jaxpr.invars)
+  new_out_layouts = (None,) * len(discharged_jaxpr.outvars)
   out_and_ref_vals = pjit_p.bind(
       *args, jaxpr=discharged_closed_jaxpr, in_shardings=new_in_shardings,
-      out_shardings=new_out_shardings, **params)
+      out_shardings=new_out_shardings, in_layouts=new_in_layouts,
+      out_layouts=new_out_layouts, **params)
   out_vals, ref_vals = split_list(out_and_ref_vals, [num_outs])
   ref_vals_iter = iter(ref_vals)
   new_invals = tuple(next(ref_vals_iter) if isinstance(aval, state_discharge.AbstractRef)
@@ -2153,7 +2300,7 @@ def with_sharding_constraint(x, shardings):
   .. _Distributed arrays and automatic parallelization: https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html
   """
   x_flat, tree = tree_flatten(x)
-  user_shardings, _, _ = prepare_axis_resources(
+  user_shardings = prepare_axis_resources(
       shardings, "shardings", allow_unconstrained_dims=True)
   del shardings
 

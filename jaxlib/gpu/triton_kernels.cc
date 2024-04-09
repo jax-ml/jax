@@ -30,8 +30,11 @@
 #include "jaxlib/gpu/triton_utils.h"
 #include "jaxlib/gpu/vendor.h"
 #include "xla/service/custom_call_status.h"
-#include "xla/stream_executor/gpu/asm_compiler.h"
 #include "tsl/platform/env.h"
+
+#ifdef JAX_GPU_CUDA
+#include "xla/stream_executor/cuda/cuda_asm_compiler.h"
+#endif
 
 #define GPU_RETURN_IF_ERROR(expr) JAX_RETURN_IF_ERROR(JAX_AS_STATUS(expr))
 
@@ -554,7 +557,7 @@ jax_triton::TritonAutotunedKernelCall AutotunedKernelCall::ToProto() const {
   // GPU_RETURN_IF_ERROR(gpuCtxPushCurrent(context));
   // absl::Cleanup ctx_restorer = [] { gpuCtxPopCurrent(nullptr); };
 
-  // Autotuning is not supported if the the stream is in graph capture mode.
+  // Autotuning is not supported if the stream is in graph capture mode.
   gpustreamCaptureStatus_t capture_status;
   GPU_RETURN_IF_ERROR(gpuStreamIsCapturing(stream, &capture_status));
   if (capture_status == GPU_STREAM_CAPTURE_STATUS_ACTIVE) {

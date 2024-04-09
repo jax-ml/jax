@@ -487,9 +487,7 @@ def paged_attention(
               pltpu.SemaphoreType.DMA,
           ),
       ),
-      mosaic_params=dict(
-          dimension_semantics=dimension_sematics,
-      ),
+      compiler_params=dict(mosaic=dict(dimension_semantics=dimension_sematics)),
       out_shape=[
           jax.ShapeDtypeStruct(q.shape, q_dtype_for_kernel_launch),
           jax.ShapeDtypeStruct((*q.shape[:-1], 1), jnp.float32),

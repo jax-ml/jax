@@ -17,6 +17,7 @@
   The host_callback APIs are deprecated as of March 20, 2024.
   The functionality is subsumed by the
   `new JAX external callbacks <https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html>`_
+  See https://github.com/google/jax/issues/20385.
 
 This module introduces the host callback functions :func:`call`,
 :func:`id_tap`, and :func:`id_print`, that send their arguments from the device
@@ -501,6 +502,7 @@ Still to do:
 from __future__ import annotations
 
 import atexit
+import enum
 from collections.abc import Sequence
 import functools
 import itertools
@@ -510,6 +512,7 @@ import threading
 import traceback
 from typing import Any, Callable, cast
 
+import jax
 from jax._src import api
 from jax._src import core
 from jax._src import config
@@ -517,6 +520,7 @@ from jax import custom_derivatives
 from jax._src import dtypes
 from jax import lax
 from jax.experimental import pjit
+from jax.experimental import io_callback
 from jax._src.interpreters import ad, batching, pxla
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
@@ -560,6 +564,15 @@ _HOST_CALLBACK_OUTFEED = config.DEFINE_bool(
         'Has no effect on TPU, since only the outfeed mechanism is implemented.'
     )
 )
+_HOST_CALLBACK_LEGACY = config.DEFINE_bool(
+    'jax_host_callback_legacy',
+    config.bool_env('JAX_HOST_CALLBACK_LEGACY', True),
+    help=(
+        'Use old implementation of host_callback, documented in the module docstring.'
+        'If False, use the jax.experimental.io_callback implementation. '
+        'See https://github.com/google/jax/issues/20385.'
+    )
+)
 
 logger = logging.getLogger(__name__)
 
@@ -591,6 +604,15 @@ XlaDevice = xla_client.Device
 XlaLocalClient = xla_client.Client
 DType = Any
 
+class CallbackFlavor(enum.Enum):
+  """Specifies which flavor of callback to use under JAX_HOST_CALLBACK_LEGACY=False.
+
+  See https://github.com/google/jax/issues/20385.
+  """
+  IO_CALLBACK = 1  # uses jax.experimental.io_callback
+  PURE = 2  # uses jax.pure_callback
+  DEBUG = 3  # uses jax.debug.callback, valid only when there are no results
+
 
 def _deprecated_id_tap(tap_func,
            arg,
@@ -598,6 +620,7 @@ def _deprecated_id_tap(tap_func,
            result=None,
            tap_with_device=False,
            device_index=0,
+           callback_flavor=CallbackFlavor.IO_CALLBACK,
            **kwargs):
   """Host-callback tap primitive, like identity function with a call to ``tap_func``.
 
@@ -605,6 +628,7 @@ def _deprecated_id_tap(tap_func,
     The host_callback APIs are deprecated as of March 20, 2024.
     The functionality is subsumed by the
     `new JAX external callbacks <https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html>`_
+    See https://github.com/google/jax/issues/20385.
 
   ``id_tap`` behaves semantically like the identity function but has the
   side-effect that a user-defined Python function is called with the runtime
@@ -628,6 +652,9 @@ def _deprecated_id_tap(tap_func,
     device_index: specifies from which device the tap function is invoked in a
       SPMD program. Works only when using the outfeed implementation mechanism,
       i.e., does not work on CPU unless --jax_host_callback_outfeed=True.
+    callback_flavor: if running with `JAX_HOST_CALLBACK_LEGACY=False` specifies
+       the flavor of callback to use.
+       See https://github.com/google/jax/issues/20385.
 
   Returns:
     ``arg``, or ``result`` if given.
@@ -660,7 +687,8 @@ def _deprecated_id_tap(tap_func,
       call_with_device=tap_with_device,
       result_shape=None,
       identity=True,
-      device_index=device_index)
+      device_index=device_index,
+      callback_flavor=callback_flavor)
 
   if result is not None:
     return result
@@ -675,6 +703,7 @@ def _deprecated_id_print(arg,
              device_index=0,
              output_stream=None,
              threshold=None,
+             callback_flavor=CallbackFlavor.IO_CALLBACK,
              **kwargs):
   """Like :func:`id_tap` with a printing tap function.
 
@@ -682,6 +711,7 @@ def _deprecated_id_print(arg,
     The host_callback APIs are deprecated as of March 20, 2024.
     The functionality is subsumed by the
     `new JAX external callbacks <https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html>`_
+    See https://github.com/google/jax/issues/20385.
 
    On each invocation of the printing tap, the ``kwargs`` if present
    will be printed first (sorted by keys). Then arg will be printed,
@@ -697,6 +727,9 @@ def _deprecated_id_print(arg,
      built-in ``print``. The string will be passed as
      ``output_stream.write(s)``.
    * ``threshold`` is passed to ``numpy.array2string``.
+   * ``callback_flavor``: if running with `JAX_HOST_CALLBACK_LEGACY=False` specifies
+       the flavor of callback to use.
+       See https://github.com/google/jax/issues/20385.
 
   For more details see the :mod:`jax.experimental.host_callback` module documentation.
   """
@@ -708,19 +741,22 @@ def _deprecated_id_print(arg,
       arg,
       result=result,
       tap_with_device=tap_with_device,
-      device_index=device_index)
+      device_index=device_index,
+      callback_flavor=callback_flavor)
 
 
 def _deprecated_call(callback_func: Callable, arg, *,
          result_shape=None,
          call_with_device=False,
-         device_index=0):
+         device_index=0,
+         callback_flavor=CallbackFlavor.IO_CALLBACK):
   """Make a call to the host, and expect a result.
 
   .. warning::
     The host_callback APIs are deprecated as of March 20, 2024.
     The functionality is subsumed by the
     `new JAX external callbacks <https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html>`_
+    See https://github.com/google/jax/issues/20385.
 
   Args:
     callback_func: The Python function to invoke on the host as
@@ -748,14 +784,26 @@ def _deprecated_call(callback_func: Callable, arg, *,
     device_index: specifies from which device the tap function is invoked in a
       SPMD program. Works only when using the outfeed implementation mechanism,
       i.e., does not work on CPU unless --jax_host_callback_outfeed=True.
+    callback_flavor: if running with `JAX_HOST_CALLBACK_LEGACY=False` specifies
+       the flavor of callback to use.
+       See https://github.com/google/jax/issues/20385.
+
   Returns:
     the result of the ``callback_func`` invocation.
 
   For more details see the :mod:`jax.experimental.host_callback` module documentation.
   """
+  if (not _HOST_CALLBACK_LEGACY.value and
+      callback_flavor is CallbackFlavor.DEBUG and
+      result_shape is not None):
+    raise NotImplementedError(
+        "When using JAX_HOST_CALLBACK_LEGACY=False you can use the `DEBUG` "
+        "flavor of callback only when the `result_shape` is None. "
+        "See https://github.com/google/jax/issues/20385."
+    )
   return _call(callback_func, arg, result_shape=result_shape,
                call_with_device=call_with_device, identity=False,
-               device_index=device_index)
+               device_index=device_index, callback_flavor=callback_flavor)
 
 
 # We need the wrapper function to have hash and equality defined since it is
@@ -766,6 +814,11 @@ class _CallbackWrapper:
     self.callback_func = callback_func
     self.identity = identity
     self.call_with_device = call_with_device
+    if not _HOST_CALLBACK_LEGACY.value and call_with_device:
+      raise NotImplementedError(
+          "When using JAX_HOST_CALLBACK_LEGACY=False, the host_callback APIs"
+          " do not support `tap_with_device` and `call_with_device`. "
+          "See https://github.com/google/jax/issues/20385.")
 
   def __hash__(self):
     return hash((self.callback_func, self.identity, self.call_with_device))
@@ -775,7 +828,16 @@ class _CallbackWrapper:
             self.identity == other.identity and
             self.call_with_device == other.call_with_device)
 
-  def __call__(self, arg, device, transforms):
+  def __call__(self, *args, **kwargs):
+    if _HOST_CALLBACK_LEGACY.value:
+      return self._call_legacy(*args, **kwargs)
+    else:
+      if self.identity:
+        # For id_tap, we pass empty transforms, for backwards compatibility
+        return self.callback_func(args[0], ())
+      return self.callback_func(*args, **kwargs)
+
+  def _call_legacy(self, arg, device, transforms):
     if self.identity:
       # For id_tap, we pass the transforms, for backwards compatibility
       if self.call_with_device:
@@ -797,14 +859,16 @@ def _call(callback_func: Callable,
           result_shape=None,
           call_with_device=False,
           device_index=0,
-          identity=False):
-  # Lazy initialization
-  _initialize_outfeed_receiver(
-      max_callback_queue_size_bytes=_HOST_CALLBACK_MAX_QUEUE_BYTE_SIZE.value)
+          identity=False,
+          callback_flavor=CallbackFlavor.IO_CALLBACK):
+  if _HOST_CALLBACK_LEGACY.value:
+    # Lazy initialization
+    _initialize_outfeed_receiver(
+        max_callback_queue_size_bytes=_HOST_CALLBACK_MAX_QUEUE_BYTE_SIZE.value)
   api.check_callable(callback_func)
   flat_args, arg_treedef = tree_util.tree_flatten(arg)
-  for arg in flat_args:
-    dispatch.check_arg(arg)
+  for arg_ in flat_args:
+    dispatch.check_arg(arg_)
   # See definition of outside_call_p for what parameters it takes
   params: dict[str, Any] = {}
   # TODO: wrap function
@@ -829,8 +893,27 @@ def _call(callback_func: Callable,
 
     params["result_treedef"] = result_treedef
     params["flat_results_aval"] = tuple(flat_results_aval)
-  flat_results = outside_call_p.bind(*flat_args, **params)
-  return result_treedef.unflatten(flat_results) if not identity else arg_treedef.unflatten(flat_results)
+
+  if _HOST_CALLBACK_LEGACY.value:
+    flat_results = outside_call_p.bind(*flat_args, **params)
+    return result_treedef.unflatten(flat_results) if not identity else arg_treedef.unflatten(flat_results)
+  else:
+    callback_device = jax.local_devices()[device_index]
+    sharding = jax.sharding.SingleDeviceSharding(callback_device)
+    callback_func = _CallbackWrapper(callback_func, identity,
+                                     call_with_device)
+    if callback_flavor is CallbackFlavor.DEBUG:
+      assert identity
+      jax.debug.callback(callback_func, arg)
+      return arg
+    elif callback_flavor is CallbackFlavor.PURE:
+      call_res = jax.pure_callback(callback_func, result_shape, arg,
+                                   sharding=sharding)
+    else:
+      call_res = io_callback(callback_func, result_shape, arg,
+                             sharding=sharding,
+                             ordered=True)
+    return call_res if not identity else arg
 
 
 # We need the lock for when we use the CustomCall implementation of callbacks.
@@ -855,7 +938,6 @@ def _print_tap_func(
     threshold: the value of numpy.array2string threshold parameter.
     **kwargs: all other keyword args are printed before printing `arg`.
   """
-
   def emit_str(s: str):
     if output_stream is not None:
       output_stream.write(s + "\n")
@@ -1561,6 +1643,8 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: list[core.JaxprEqn],
                     eqn.params["out_shardings"]
                     + (sharding_impls.UNSPECIFIED, sharding_impls.UNSPECIFIED)
                 ),
+                in_layouts=(eqn.params["in_layouts"] + (None, None)),
+                out_layouts=(eqn.params["out_layouts"] + (None, None)),
             ),
         )
     )
@@ -1844,6 +1928,10 @@ def _deprecated_barrier_wait(logging_name: str | None = None):
 
   For more details see the :mod:`jax.experimental.host_callback` module documentation.
   """
+  if not _HOST_CALLBACK_LEGACY.value:
+    jax.effects_barrier()
+    return
+
   logging_name = logging_name or ""
   logger.debug("barrier_wait[%s]: start", logging_name)
 
@@ -1907,7 +1995,7 @@ def _deprecated_stop_outfeed_receiver():
 _deprecation_msg = (
     "The host_callback APIs are deprecated as of March 20, 2024. The functionality "
     "is subsumed by the new JAX external callbacks. "
-    "See https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html.")
+    "See https://github.com/google/jax/issues/20385.")
 
 _deprecations = {
     # Added March 20, 2024

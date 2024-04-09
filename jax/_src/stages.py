@@ -44,7 +44,7 @@ from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src.tree_util import tree_unflatten, keystr
 from jax._src import util
-from jax._src.layout import DeviceLocalLayout
+from jax._src.layout import Layout
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.lib import xla_client as xc
@@ -88,12 +88,10 @@ class Executable(Protocol):
     """
     raise NotImplementedError
 
-  # Layouts are exposed via jax.experimental.layouts
-  # TODO(frostig,yashkatariya): expose here when no longer experimental.
-  def _input_layouts(self):
+  def input_layouts(self):
     raise NotImplementedError
 
-  def _output_layouts(self):
+  def output_layouts(self):
     raise NotImplementedError
 
   def as_text(self) -> str:
@@ -228,11 +226,11 @@ class XlaExecutable(Executable):
     raise NotImplementedError(
         "compiled executable carries no output sharding information")
 
-  def _input_layouts(self):
+  def input_layouts(self):
     raise NotImplementedError(
         "compiled executable carries no input layout information")
 
-  def _output_layouts(self):
+  def output_layouts(self):
     raise NotImplementedError(
         "compiled executable carries no input layout information")
 
@@ -511,19 +509,19 @@ class Compiled(Stage):
     shardings_flat = self._executable.output_shardings()
     return tree_util.tree_unflatten(self.out_tree, shardings_flat)  # pytype: disable=attribute-error
 
-  def _input_layouts(self):
+  def input_layouts(self):
     layouts_flat = self._executable.input_layouts()
-    assert all(isinstance(l, DeviceLocalLayout) for l in layouts_flat)
+    assert all(isinstance(l, Layout) for l in layouts_flat)
     # Some input layouts got DCE'd
     if self.in_tree.num_leaves > len(layouts_flat):
       iter_layouts_flat = iter(layouts_flat)
       layouts_flat = [next(iter_layouts_flat) if i in self._executable._kept_var_idx
-                      else None for i in range(self.in_tree.num_leaves)]
+                      else Layout() for i in range(self.in_tree.num_leaves)]
     return tree_util.tree_unflatten(self.in_tree, layouts_flat)  # pytype: disable=attribute-error
 
-  def _output_layouts(self):
+  def output_layouts(self):
     layouts_flat = self._executable.output_layouts()
-    assert all(isinstance(l, DeviceLocalLayout) for l in layouts_flat)
+    assert all(isinstance(l, Layout) for l in layouts_flat)
     return tree_util.tree_unflatten(self.out_tree, layouts_flat)  # pytype: disable=attribute-error
 
   @staticmethod

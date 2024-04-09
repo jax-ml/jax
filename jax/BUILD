@@ -201,6 +201,7 @@ py_library_providing_imports_info(
         "_src/debugging.py",
         "_src/dispatch.py",
         "_src/dlpack.py",
+        "_src/earray.py",
         "_src/flatten_util.py",
         "_src/interpreters/__init__.py",
         "_src/interpreters/ad.py",
@@ -722,7 +723,11 @@ pytype_strict_library(
 pytype_strict_library(
     name = "layout",
     srcs = ["_src/layout.py"],
-    deps = ["//jax/_src/lib"],
+    deps = [
+        ":sharding",
+        ":sharding_impls",
+        "//jax/_src/lib",
+    ],
 )
 
 pytype_strict_library(
@@ -993,7 +998,11 @@ pytype_library(
 
 pytype_library(
     name = "experimental_host_callback",
-    srcs = ["experimental/host_callback.py"],
+    srcs = [
+        "experimental/__init__.py",  # To support JAX_HOST_CALLBACK_LEGACY=False
+        "experimental/host_callback.py",
+        "experimental/x64_context.py",  # To support JAX_HOST_CALLBACK_LEGACY=False
+    ],
     visibility = ["//visibility:public"],
     deps = [
         ":jax",

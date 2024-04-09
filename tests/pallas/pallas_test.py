@@ -16,6 +16,7 @@ import contextlib
 import functools
 import itertools
 import os
+import sys
 import unittest
 
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
@@ -33,25 +34,21 @@ from jax._src import state
 from jax._src.lax.control_flow.for_loop import for_loop
 from jax._src.lib import version as jaxlib_version
 from jax._src.pallas.pallas_call import _trace_to_jaxpr
+if jaxlib_version >= (0, 4, 24) and sys.platform != "win32":
+  from jax._src.pallas.triton.lowering import LoweringError
+else:
+  LoweringError = Exception
 from jax.interpreters import partial_eval as pe
 import jax.numpy as jnp
 from jax.experimental import pallas as pl
+try:
+  from jax.experimental.pallas import gpu as plgpu
+except ImportError:
+  plgpu = None
 from jax.experimental.pallas.ops import attention
 from jax.experimental.pallas.ops import layer_norm
 from jax.experimental.pallas.ops import rms_norm
 from jax.experimental.pallas.ops import softmax
-try:
-  from jax._src.pallas.triton.lowering import LoweringError
-  from jax._src.pallas.triton.pallas_call_registration import (
-      compile_jaxpr,
-      _TRITON_COMPILE_VIA_XLA,
-  )
-  from jax.experimental.pallas import gpu as plgpu
-except ModuleNotFoundError:
-  LoweringError = Exception
-  compile_jaxpr = None
-  _TRITON_COMPILE_VIA_XLA = None
-  plgpu = None
 import numpy as np
 
 
@@ -143,17 +140,7 @@ class PallasTest(parameterized.TestCase):
           not self.check_gpu_capability_at_least(80)):
         self.skipTest("Only works on GPUs with capability >= sm80")
 
-      try:
-        import triton  # noqa: F401
-      except ImportError:
-        if (
-            _TRITON_COMPILE_VIA_XLA is not None
-            and not _TRITON_COMPILE_VIA_XLA.value
-        ):
-          self.skipTest("Triton is not installed.")
     super().setUp()
-    if compile_jaxpr:
-      compile_jaxpr.cache_clear()
     _trace_to_jaxpr.cache_clear()
 
   def pallas_call(self, *args, **kwargs):
@@ -760,29 +747,6 @@ class PallasCallTest(PallasTest):
     x = jnp.array(0., dtype=jnp.float32)
     self.assertEqual(f(x), 2.)
     self.assertEqual(trace_count, 1)
-
-  def test_pallas_compilation_cache(self):
-    if not compile_jaxpr:
-      self.skipTest("No Triton GPU.")
-    if self.INTERPRET:
-      raise unittest.SkipTest("No Triton compilation in interpreter mode.")
-    if _TRITON_COMPILE_VIA_XLA.value:
-      raise unittest.SkipTest("Triton is compiled via XLA.")
-
-    @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.float32),
-        grid=1)
-    def add_one(x_ref, o_ref):
-      o_ref[()] = x_ref[()] + 1.
-
-    @jax.jit
-    def f(x):
-      return add_one(add_one(x))
-
-    x = jnp.array(0., dtype=jnp.float32)
-    self.assertEqual(f(x), 2.)
-    num_misses = compile_jaxpr.cache_info().misses
-    self.assertEqual(num_misses, 1)
 
   @parameterized.parameters(*[
     (0, 0, 1),

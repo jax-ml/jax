@@ -739,6 +739,8 @@ def _pjit_jet_rule(primals_in, series_in, **params):
           params['out_shardings']
           + (sharding_impls.UNSPECIFIED,) * num_series_out
       ),
+      'in_layouts': params['in_layouts'] + (None,) * num_series_in,
+      'out_layouts': params['out_layouts'] + (None,) * num_series_out,
       'donated_invars': params['donated_invars'] + (False,) * num_series_in,
   }
   result = pjit.pjit_p.bind(*primals_and_series, **new_params)

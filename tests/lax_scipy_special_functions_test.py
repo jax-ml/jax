@@ -53,10 +53,10 @@ int_dtypes = jtu.dtypes.integer
 
 JAX_SPECIAL_FUNCTION_RECORDS = [
     op_record(
-        "beta", 2, float_dtypes, jtu.rand_positive, False
+        "beta", 2, float_dtypes, jtu.rand_default, False
     ),
     op_record(
-        "betaln", 2, float_dtypes, jtu.rand_positive, False
+        "betaln", 2, float_dtypes, jtu.rand_default, False
     ),
     op_record(
         "betainc", 3, float_dtypes, jtu.rand_positive, False
@@ -114,7 +114,7 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
     ),
     op_record(
         "ndtri", 1, float_dtypes,
-        functools.partial(jtu.rand_uniform, low=0.05, high=0.95), True,
+        functools.partial(jtu.rand_uniform, low=0.0, high=1.0), True,
     ),
     op_record(
         "ndtr", 1, float_dtypes, jtu.rand_default, True
@@ -218,6 +218,13 @@ class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_special.gamma, lsp_special.gamma, args_maker, rtol=rtol)
     self._CompileAndCheck(lsp_special.gamma, args_maker, rtol=rtol)
 
+  def testNdtriExtremeValues(self):
+    # Testing at the extreme values (bounds (0. and 1.) and outside the bounds).
+    dtype = jax.numpy.zeros(0).dtype  # default float dtype.
+    args_maker = lambda: [np.arange(-10, 10).astype(dtype)]
+    rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
+    self._CheckAgainstNumpy(osp_special.ndtri, lsp_special.ndtri, args_maker, rtol=rtol)
+    self._CompileAndCheck(lsp_special.ndtri, args_maker, rtol=rtol)
 
 
 if __name__ == "__main__":

@@ -51,6 +51,7 @@ from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     PmapSharding, SingleDeviceSharding, NamedSharding, XLACompatibleSharding,
     GSPMDSharding, TransferToMemoryKind)
+from jax._src.layout import Layout, DeviceLocalLayout
 
 
 JAXPR_TRACE_EVENT = "/jax/core/compile/jaxpr_trace_duration"
@@ -107,7 +108,7 @@ def simple_impl(prim):
 RuntimeToken = Any
 
 class RuntimeTokenSet(threading.local):
-  """See docstring for effect.py module for the calling convention for tokens."""
+  """See docstring for effects.py module for the calling convention for tokens."""
 
   # For each ordered effect, the token returned by the last dispatched
   # computation, sharded over the devices in that computation.
@@ -124,6 +125,16 @@ class RuntimeTokenSet(threading.local):
   def get_token_input(self, eff: core.Effect,
                       devices: list[Device]) -> jax.Array:
     tok = self.current_tokens.get(eff, np.zeros(0, np.bool_))
+
+    if isinstance(tok, jax.Array):
+      # The order of devices may change, so we need to reshard if necessary.
+      # TODO(yueshengys): This might still be buggy in a multi-process SPMD
+      # scenario. Revise the logic later. A distributed shutdown barrier inside
+      # the XLA program may be needed.
+      return jax.device_put(tok, jax.sharding.PositionalSharding(devices))
+
+    # We only use replicated sharding for the first time when the token for the
+    # order effect hasn't been created.
     s = jax.sharding.GSPMDSharding.get_replicated(devices)
     sharded_tok = pxla.shard_args([s], [tok])[0]
     self.current_tokens[eff] = sharded_tok
@@ -380,24 +391,8 @@ def _mcjax_reshard(x, target_sharding):
     pxla._get_and_check_device_assignment.fn = _orig_get_and_check_device_assignment
 
 
-def _device_put_impl(
-    x,
-    device: Device | Sharding | None = None,
-    src: Device | Sharding | None = None):
+def _device_put_sharding_impl(x, aval, device):
   from jax._src import array
-
-  if (isinstance(device, TransferToMemoryKind) or
-      isinstance(src, TransferToMemoryKind)):
-    raise ValueError(
-        "TransferToMemoryKind argument to jax.device_put can only be used"
-        " inside jax.jit. If you are using device_put outside jax.jit, then"
-        " please provide a concrete Sharding with memory_kind.")
-
-  try:
-    aval = xla.abstractify(x)
-  except TypeError as err:
-    raise TypeError(
-        f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
 
   if isinstance(device, Sharding):
     s = device
@@ -434,6 +429,42 @@ def _device_put_impl(
   sh = SingleDeviceSharding(pxla._get_default_device()
                             if device is None else device)
   return _put_x(x, sh, aval, device is not None)
+
+def _device_put_impl(
+    x,
+    device: Device | Sharding | Layout | None = None,
+    src: Device | Sharding | Layout | None = None):
+  if (isinstance(device, TransferToMemoryKind) or
+      isinstance(src, TransferToMemoryKind)):
+    raise ValueError(
+        "TransferToMemoryKind argument to jax.device_put can only be used"
+        " inside jax.jit. If you are using device_put outside jax.jit, then"
+        " please provide a concrete Sharding with memory_kind.")
+
+  try:
+    aval = xla.abstractify(x)
+  except TypeError as err:
+    raise TypeError(
+        f"Argument '{x}' of type {type(x)} is not a valid JAX type") from err
+
+  if isinstance(device, Layout):
+    l = device
+    dll = l.device_local_layout
+    x_dll = x.layout.device_local_layout if hasattr(x, 'layout') else None
+    if dll is None and l.sharding is None:
+      return _device_put_sharding_impl(x, aval, l.sharding)
+    if (not isinstance(l.sharding, Sharding) or
+        not isinstance(dll, (DeviceLocalLayout, type(None)))):
+      raise ValueError(
+          "sharding and device_local_layout in `Layout` instance should be"
+          f" concrete. Got layout: {l} for input {aval.str_short()}")
+    if getattr(x, 'layout', None) == l and getattr(x, '_committed', False):
+      return x
+    if x_dll is None and dll is None:
+      return _device_put_sharding_impl(x, aval, l.sharding)
+    return api.jit(_identity_fn, out_shardings=l)(x)
+
+  return _device_put_sharding_impl(x, aval, device)
 
 
 device_put_p = core.Primitive('device_put')

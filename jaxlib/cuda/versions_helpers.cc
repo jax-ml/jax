@@ -86,6 +86,7 @@ size_t CudnnGetVersion() {
 }
 int CudaComputeCapability(int device) {
   int major, minor;
+  JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpuInit(0)));
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpuDeviceGetAttribute(
       &major, GPU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR, device)));
   JAX_THROW_IF_ERROR(JAX_AS_STATUS(gpuDeviceGetAttribute(

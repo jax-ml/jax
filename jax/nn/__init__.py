@@ -42,9 +42,11 @@ from jax._src.nn.functions import (
   softmax as softmax,
   softplus as softplus,
   sparse_plus as sparse_plus,
+  sparse_sigmoid as sparse_sigmoid,
   silu as silu,
   swish as swish,
   squareplus as squareplus,
+  mish as mish,
 )
 
 # Deprecations

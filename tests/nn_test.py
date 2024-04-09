@@ -71,6 +71,17 @@ class NNFunctionsTest(jtu.JaxTestCase):
     check_grads(nn.sparse_plus, (0.,), order=1,
                 rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
 
+  def testSparseplusAndSparseSigmoid(self):
+    self.assertAllClose(
+        jax.grad(nn.sparse_plus)(0.), nn.sparse_sigmoid(0.),
+        check_dtypes=False)
+    self.assertAllClose(
+        jax.grad(nn.sparse_plus)(2.), nn.sparse_sigmoid(2.),
+        check_dtypes=False)
+    self.assertAllClose(
+        jax.grad(nn.sparse_plus)(-2.), nn.sparse_sigmoid(-2.),
+        check_dtypes=False)
+
   def testSquareplusGrad(self):
     check_grads(nn.squareplus, (1e-8,), order=4,
                 rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
@@ -90,6 +101,26 @@ class NNFunctionsTest(jtu.JaxTestCase):
   @parameterized.parameters([float] + jtu.dtypes.floating)
   def testSquareplusZero(self, dtype):
     self.assertEqual(dtype(1), nn.squareplus(dtype(0), dtype(4)))
+
+  def testMishGrad(self):
+    check_grads(nn.mish, (1e-8,), order=4,
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
+
+  def testMishGradZero(self):
+    check_grads(nn.mish, (0.,), order=1,
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
+
+  def testMishGradNegInf(self):
+    check_grads(nn.mish, (-float('inf'),), order=1,
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
+
+  def testMishGradNan(self):
+    check_grads(nn.mish, (float('nan'),), order=1,
+                rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
+
+  @parameterized.parameters([float] + jtu.dtypes.floating)
+  def testMishZero(self, dtype):
+    self.assertEqual(dtype(0), nn.mish(dtype(0)))
 
   def testReluGrad(self):
     rtol = 1e-2 if jtu.test_device_matches(["tpu"]) else None
@@ -113,8 +144,17 @@ class NNFunctionsTest(jtu.JaxTestCase):
     val = nn.sparse_plus(89.)
     self.assertAllClose(val, 89., check_dtypes=False)
 
+  def testSparsesigmoidValue(self):
+    self.assertAllClose(nn.sparse_sigmoid(-2.), 0., check_dtypes=False)
+    self.assertAllClose(nn.sparse_sigmoid(2.), 1., check_dtypes=False)
+    self.assertAllClose(nn.sparse_sigmoid(0.), .5, check_dtypes=False)
+
   def testSquareplusValue(self):
     val = nn.squareplus(1e3)
+    self.assertAllClose(val, 1e3, check_dtypes=False, atol=1e-3)
+
+  def testMishValue(self):
+    val = nn.mish(1e3)
     self.assertAllClose(val, 1e3, check_dtypes=False, atol=1e-3)
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
@@ -149,7 +189,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
       (jnp.float32, jnp.bfloat16, jnp.float16),
       (partial(nn.gelu, approximate=False),
        partial(nn.gelu, approximate=True),
-       nn.relu, nn.softplus, nn.sparse_plus, nn.sigmoid, nn.squareplus)))
+       nn.relu, nn.softplus, nn.sparse_plus, nn.sigmoid, nn.squareplus, nn.mish)))
   def testDtypeMatchesInput(self, dtype, fn):
     x = jnp.zeros((), dtype=dtype)
     out = fn(x)

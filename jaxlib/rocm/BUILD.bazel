@@ -100,7 +100,7 @@ pybind_extension(
         "@local_config_rocm//rocm:hipblas",
         "@local_config_rocm//rocm:rocm_headers",
         "@nanobind",
-        "@tsl//tsl/python/lib/core:numpy",
+        "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )
 
@@ -141,7 +141,7 @@ pybind_extension(
         "@local_config_rocm//rocm:hipsolver",
         "@local_config_rocm//rocm:rocm_headers",
         "@nanobind",
-        "@tsl//tsl/python/lib/core:numpy",
+        "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )
 
@@ -189,7 +189,7 @@ pybind_extension(
         "@local_config_rocm//rocm:hipsparse",
         "@local_config_rocm//rocm:rocm_headers",
         "@nanobind",
-        "@tsl//tsl/python/lib/core:numpy",
+        "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )
 
@@ -306,7 +306,7 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
-        "@tsl//tsl/platform:env",
+        "@xla//xla/tsl/util:env_var",
     ],
 )
 

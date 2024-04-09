@@ -89,8 +89,7 @@ class PythonCallbackTest(jtu.JaxTestCase):
   def test_callback_with_scalar_values(self, *, callback):
     @jax.jit
     def f(x):
-      return callback(lambda x: x + np.float32(1.),
-                      core.ShapedArray(x.shape, x.dtype), x)
+      return callback(lambda x: x + 1.0, core.ShapedArray(x.shape, x.dtype), x)
 
     out = f(0.)
     self.assertEqual(out, 1.)
@@ -247,7 +246,7 @@ class PythonCallbackTest(jtu.JaxTestCase):
       jax.effects_barrier()
 
   @with_pure_and_io_callbacks
-  def test_callback_with_wrong_dtype_outputs(self, *, callback=io_callback_ordered):
+  def test_callback_with_wrong_dtype_outputs(self, *, callback):
 
     def _cb():
       return np.array([1], np.float64)
@@ -617,10 +616,10 @@ class PureCallbackTest(jtu.JaxTestCase):
     super().tearDown()
     dispatch.runtime_tokens.clear()
 
-  def test_pure_callback_passes_ndarrays_without_jit(self):
+  def test_pure_callback_passes_jax_arrays_without_jit(self):
 
     def cb(x):
-      self.assertIs(type(x), np.ndarray)
+      self.assertIsInstance(x, jax.Array)
       return x
 
     def f(x):

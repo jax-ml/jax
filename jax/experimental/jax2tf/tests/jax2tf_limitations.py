@@ -1283,7 +1283,7 @@ class Jax2TfLimitation(test_harnesses.Limitation):
         # values like 1.0000001 on float32, which are clipped to 1.0. It is
         # possible that anything other than `cos_angular_diff` can be outside
         # the interval [0, 1] due to roundoff.
-        cos_angular_diff = jnp.clip(cos_angular_diff, a_min=0.0, a_max=1.0)
+        cos_angular_diff = jnp.clip(cos_angular_diff, min=0.0, max=1.0)
 
         angular_diff = jnp.arccos(cos_angular_diff)
 

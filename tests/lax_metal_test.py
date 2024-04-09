@@ -877,7 +877,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       a_max = None if a_max is None else abs(a_max)
     rng = jtu.rand_default(self.rng())
     np_fun = lambda x: np.clip(x, a_min=a_min, a_max=a_max)
-    jnp_fun = lambda x: jnp.clip(x, a_min=a_min, a_max=a_max)
+    jnp_fun = lambda x: jnp.clip(x, min=a_min, max=a_max)
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)

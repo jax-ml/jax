@@ -1588,6 +1588,21 @@ class MutableArrayTest(jtu.JaxTestCase):
                         check_dtypes=False)
     self.assertAllClose(w, 10, check_dtypes=False)
 
+  @parameterized.parameters([True, False])
+  def test_internal_mutarray_basic(self, jit):
+    def f():
+      x_mut = core.mutable_array(jnp.zeros(3))
+      x_mut[0] += 1
+      x_mut[0] += 1
+      x_mut[2] += 1
+      return x_mut[...]
+
+    if jit:
+      f = jax.jit(f)
+
+    out = f()
+    self.assertAllClose(out, jnp.array([2., 0., 1.]), check_dtypes=False)
+
 
 if CAN_USE_HYPOTHESIS:
 

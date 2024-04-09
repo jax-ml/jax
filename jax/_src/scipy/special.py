@@ -44,14 +44,16 @@ def gammaln(x: ArrayLike) -> Array:
   return lax.lgamma(x)
 
 
+def _gamma_sign(x: Array) -> Array:
+  floor_x = lax.floor(x)
+  return jnp.where((x > 0) | (x == floor_x) | (floor_x % 2 == 0), 1.0, -1.0)
+
+
 @implements(osp_special.gamma, module='scipy.special', lax_description="""\
 The JAX version only accepts real-valued inputs.""")
 def gamma(x: ArrayLike) -> Array:
   x, = promote_args_inexact("gamma", x)
-  # Compute the sign for negative x, matching the semantics of scipy.special.gamma
-  floor_x = lax.floor(x)
-  sign = jnp.where((x > 0) | (x == floor_x), 1.0, (-1.0) ** floor_x)
-  return sign * lax.exp(lax.lgamma(x))
+  return _gamma_sign(x) * lax.exp(lax.lgamma(x))
 
 betaln = implements(
     osp_special.betaln,
@@ -71,7 +73,8 @@ def factorial(n: ArrayLike, exact: bool = False) -> Array:
 @implements(osp_special.beta, module='scipy.special')
 def beta(x: ArrayLike, y: ArrayLike) -> Array:
   x, y = promote_args_inexact("beta", x, y)
-  return lax.exp(betaln(x, y))
+  sign = _gamma_sign(x) * _gamma_sign(y) * _gamma_sign(x + y)
+  return sign * lax.exp(betaln(x, y))
 
 
 @implements(osp_special.betainc, module='scipy.special')
@@ -301,7 +304,7 @@ def _zeta_series_expansion(x: ArrayLike, q: ArrayLike | None = None) -> Array:
   m = jnp.expand_dims(np.arange(2 * M, dtype=M.dtype), tuple(range(s.ndim)))
   s_over_a = (s_ + m) / (a_ + N)
   T1 = jnp.cumprod(s_over_a, -1)[..., ::2]
-  T1 = jnp.clip(T1, a_max=jnp.finfo(dtype).max)
+  T1 = jnp.clip(T1, max=jnp.finfo(dtype).max)
   coefs = np.expand_dims(np.array(_BERNOULLI_COEFS[:T1.shape[-1]], dtype=dtype),
                          tuple(range(a.ndim)))
   T1 = T1 / coefs
@@ -540,7 +543,7 @@ def _ndtri(p: ArrayLike) -> Array:
   # later on. The result from the computation when p == 0 is not used so any
   # number that doesn't result in NaNs is fine.
   sanitized_mcp = jnp.where(
-      maybe_complement_p <= dtype(0.),
+      maybe_complement_p == dtype(0.),
       jnp.full(shape, dtype(0.5)),
       maybe_complement_p)
 
@@ -571,9 +574,9 @@ def _ndtri(p: ArrayLike) -> Array:
 
   x = jnp.where(p > dtype(1. - np.exp(-2.)), x, -x)
   infinity = jnp.full(shape, dtype(np.inf))
-  x_nan_replaced = jnp.where(
-      p <= dtype(0.0), -infinity, jnp.where(p >= dtype(1.0), infinity, x))
-  return x_nan_replaced
+  x_fix_boundaries = jnp.where(
+      p == dtype(0.0), -infinity, jnp.where(p == dtype(1.0), infinity, x))
+  return x_fix_boundaries
 
 
 @partial(custom_derivatives.custom_jvp, nondiff_argnums=(1,))

@@ -1725,22 +1725,12 @@ class numpy_with_mpmath:
 
   def sqrt(self, x):
     ctx = x.context
-    # workaround mpmath bugs:
     if isinstance(x, ctx.mpc):
-      if ctx.isinf(x.real) and ctx.isinf(x.imag):
-        if x.real > 0: return x
-        ninf = x.real
-        inf = -ninf
-        if x.imag > 0: return ctx.make_mpc((inf._mpf_, inf._mpf_))
-        return ctx.make_mpc((inf._mpf_, inf._mpf_))
-      elif ctx.isfinite(x.real) and ctx.isinf(x.imag):
-        if x.imag > 0:
-          inf = x.imag
-          return ctx.make_mpc((inf._mpf_, inf._mpf_))
-        else:
-          ninf = x.imag
-          inf = -ninf
-          return ctx.make_mpc((inf._mpf_, ninf._mpf_))
+      # Workaround mpmath 1.3 bug in sqrt(+-inf+-infj) evaluation (see mpmath/mpmath#776).
+      # TODO(pearu): remove this function when mpmath 1.4 or newer
+      # will be the required test dependency.
+      if ctx.isinf(x.imag):
+        return ctx.make_mpc((ctx.inf._mpf_, x.imag._mpf_))
     return ctx.sqrt(x)
 
   def expm1(self, x):

@@ -174,6 +174,38 @@ def sigmoid(x: ArrayLike) -> Array:
   return lax.logistic(x)
 
 @jax.jit
+def sparse_sigmoid(x: ArrayLike) -> Array:
+  r"""Sparse sigmoid activation function.
+
+  Computes the function:
+
+  .. math::
+
+    \mathrm{sparse\_sigmoid}(x) = \begin{cases}
+      0, & x \leq -1\\
+      \frac{1}{2}(x+1), & -1 < x < 1 \\
+      1, & 1 \leq x
+    \end{cases}
+
+  This is the twin function of the ``sigmoid`` activation ensuring a zero output
+  for inputs less than -1, a 1 ouput for inputs greater than 1, and a linear
+  output for inputs between -1 and 1. It is the derivative of ``sparse_plus``.
+
+  For more information, see `Learning with Fenchel-Young Losses (section 6.2)
+  <https://arxiv.org/abs/1901.02324>`_.
+
+  Args:
+    x : input array
+
+  Returns:
+    An array.
+
+  See also:
+    :func:`sigmoid`
+  """
+  return 0.5 * jnp.clip(x + 1.0, 0.0, 2.0)
+
+@jax.jit
 def silu(x: ArrayLike) -> Array:
   r"""SiLU (aka swish) activation function.
 
@@ -198,6 +230,29 @@ def silu(x: ArrayLike) -> Array:
   return x_arr * sigmoid(x_arr)
 
 swish = silu
+
+@jax.jit
+def mish(x: ArrayLike) -> Array:
+  r"""Mish activation function.
+
+  Computes the element-wise function:
+
+  .. math::
+    \mathrm{mish}(x) = x \cdot \mathrm{tanh}(\mathrm{softplus}(x))
+
+  For more information, see
+  `Mish: A Self Regularized Non-Monotonic Activation Function
+  <https://arxiv.org/abs/1908.08681>`_.
+
+  Args:
+    x : input array
+
+  Returns:
+    An array.
+  """
+  numpy_util.check_arraylike("mish", x)
+  x_arr = jnp.asarray(x)
+  return x_arr * jnp.tanh(softplus(x_arr))
 
 @jax.jit
 def log_sigmoid(x: ArrayLike) -> Array:
@@ -314,7 +369,7 @@ def celu(x: ArrayLike, alpha: ArrayLike = 1.0) -> Array:
 
   For more information, see
   `Continuously Differentiable Exponential Linear Units
-  <https://arxiv.org/pdf/1704.07483.pdf>`_.
+  <https://arxiv.org/abs/1704.07483>`_.
 
   Args:
     x : input array
@@ -342,7 +397,7 @@ def selu(x: ArrayLike) -> Array:
 
   For more information, see
   `Self-Normalizing Neural Networks
-  <https://papers.nips.cc/paper/6698-self-normalizing-neural-networks.pdf>`_.
+  <https://arxiv.org/abs/1706.02515>`_.
 
   Args:
     x : input array
@@ -431,7 +486,7 @@ logsumexp = _logsumexp
 def log_softmax(x: ArrayLike,
                 axis: int | tuple[int, ...] | None = -1,
                 where: ArrayLike | None = None,
-                initial: ArrayLike | None = None) -> Array:
+                initial: ArrayLike | None = -jnp.inf) -> Array:
   r"""Log-Softmax function.
 
   Computes the logarithm of the :code:`softmax` function, which rescales
@@ -473,7 +528,7 @@ def log_softmax(x: ArrayLike,
 def softmax(x: ArrayLike,
             axis: int | tuple[int, ...] | None = -1,
             where: ArrayLike | None = None,
-            initial: ArrayLike | None = None) -> Array:
+            initial: ArrayLike | None = -jnp.inf) -> Array:
   r"""Softmax function.
 
   Computes the function which rescales elements to the range :math:`[0, 1]`
@@ -511,7 +566,7 @@ def _softmax(
     x: ArrayLike,
     axis: int | tuple[int, ...] | None = -1,
     where: ArrayLike | None = None,
-    initial: ArrayLike | None = None) -> Array:
+    initial: ArrayLike | None = -jnp.inf) -> Array:
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
   x_safe = x if where is None else jnp.where(where, x, initial)
   unnormalized = jnp.exp(x_safe - x_max)
@@ -530,7 +585,7 @@ def _softmax_deprecated(
     x: ArrayLike,
     axis: int | tuple[int, ...] | None = -1,
     where: ArrayLike | None = None,
-    initial: ArrayLike | None = None) -> Array:
+    initial: ArrayLike | None = -jnp.inf) -> Array:
   x_max = jnp.max(x, axis, where=where, initial=initial, keepdims=True)
   x_safe = x if where is None else jnp.where(where, x, initial)
   unnormalized = jnp.exp(x_safe - lax.stop_gradient(x_max))

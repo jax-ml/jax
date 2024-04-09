@@ -22,10 +22,11 @@ import numpy as np
 
 def _promote_dtypes(name, *args):
   assert isinstance(name, str)
-  if not all(isinstance(arg, jax.Array) for arg in args):
+  if not all(isinstance(arg, (bool, int, float, complex, jax.Array))
+             for arg in args):
     raise ValueError(f"{name}: inputs must be arrays; got types {[type(arg) for arg in args]}")
   dtype = _result_type(*args)
-  return [arg.astype(dtype) for arg in args]
+  return [jax.numpy.asarray(arg).astype(dtype) for arg in args]
 
 
 def abs(x, /):
@@ -123,6 +124,22 @@ def ceil(x, /):
   if _isdtype(x.dtype, "integral"):
     return x
   return jax.numpy.ceil(x)
+
+
+def clip(x, /, min=None, max=None):
+  """Returns the complex conjugate for each element x_i of the input array x."""
+  x, = _promote_dtypes("clip", x)
+
+  # TODO(micky774): Remove when jnp.clip deprecation is completed
+  # (began 2024-4-2) and default behavior is Array API 2023 compliant
+  if any(jax.numpy.iscomplexobj(t) for t in (x, min, max)):
+    raise ValueError(
+      "Clip received a complex value either through the input or the min/max "
+      "keywords. Complex values have no ordering and cannot be clipped. "
+      "Please convert to a real value or array by taking the real or "
+      "imaginary components via jax.numpy.real/imag respectively."
+    )
+  return jax.numpy.clip(x, min=min, max=max)
 
 
 def conj(x, /):

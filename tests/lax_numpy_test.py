@@ -862,7 +862,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                            (np.full(1, -0.9), np.ones(1))]
     ],
     shape=all_shapes,
-    dtype=number_dtypes,
+    dtype=float_dtypes + int_dtypes + unsigned_dtypes,
   )
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises mixed type promotion
@@ -872,14 +872,47 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       a_max = None if a_max is None else abs(a_max)
     rng = jtu.rand_default(self.rng())
     np_fun = lambda x: np.clip(x, a_min=a_min, a_max=a_max)
-    jnp_fun = lambda x: jnp.clip(x, a_min=a_min, a_max=a_max)
+    jnp_fun = lambda x: jnp.clip(x, min=a_min, max=a_max)
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-  def testClipError(self):
-    with self.assertRaisesRegex(ValueError, "At most one of a_min and a_max.*"):
-      jnp.clip(jnp.zeros((3,)))
+
+  @jtu.sample_product(
+    shape=all_shapes,
+    dtype=default_dtypes + unsigned_dtypes,
+  )
+  def testClipNone(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    x = rng(shape, dtype)
+    self.assertArraysEqual(jnp.clip(x), x)
+
+
+  # TODO(micky774): Check for ValueError instead of DeprecationWarning when
+  # jnp.clip deprecation is completed (began 2024-4-2) and default behavior is
+  # Array API 2023 compliant
+  @jtu.sample_product(shape=all_shapes)
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises mixed type promotion
+  def testClipComplexInputDeprecation(self, shape):
+    rng = jtu.rand_default(self.rng())
+    x = rng(shape, dtype=jnp.complex64)
+    msg = "Complex values have no ordering and cannot be clipped"
+    # jit is disabled so we don't miss warnings due to caching.
+    with jax.disable_jit():
+      with self.assertWarns(DeprecationWarning, msg=msg):
+        jnp.clip(x)
+
+      with self.assertWarns(DeprecationWarning, msg=msg):
+        jnp.clip(x, max=x)
+
+      x = rng(shape, dtype=jnp.int32)
+      with self.assertWarns(DeprecationWarning, msg=msg):
+        jnp.clip(x, min=-1+5j)
+
+      with self.assertWarns(DeprecationWarning, msg=msg):
+        jnp.clip(x, max=jnp.array([-1+5j]))
+
 
   @jtu.sample_product(
     [dict(shape=shape, dtype=dtype)
@@ -5772,7 +5805,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'argpartition': ['kind', 'order'],
       'asarray': ['like'],
       'broadcast_to': ['subok'],
-      'clip': ['kwargs'],
+      'clip': ['kwargs', 'out'],
       'copy': ['subok'],
       'corrcoef': ['ddof', 'bias', 'dtype'],
       'cov': ['dtype'],
@@ -5809,6 +5842,9 @@ class NumpySignaturesTest(jtu.JaxTestCase):
     }
 
     extra_params = {
+      # TODO(micky774): Remove when np.clip has adopted the Array API 2023
+      # standard
+      'clip': ['x', 'max', 'min'],
       'einsum': ['subscripts', 'precision'],
       'einsum_path': ['subscripts'],
       'take_along_axis': ['mode'],

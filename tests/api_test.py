@@ -1227,6 +1227,14 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertIn("kwargs['z']", hlo_str)
     self.assertIn("kwargs['w']", hlo_str)
 
+    hlo_str = mlir.module_to_string(
+      lowered.compiler_ir('stablehlo'),
+      enable_debug_info=False,
+    )
+    for s in ("\"x\"", "y['hi']", "args[0]", "args[1]", "kwargs['z']", "kwargs['w']"):
+      self.assertNotIn(s, hlo_str)
+
+
   @parameterized.parameters([0, 2, [(0, 2)]])
   def test_jit_lower_arg_info_static_argnums(self, static_argnums):
     def f(x, y, *args, **kwargs):
@@ -1241,6 +1249,10 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertIn("args[1]", hlo_str)
     self.assertIn("kwargs['z']", hlo_str)
     self.assertIn("kwargs['w']", hlo_str)
+
+    hlo_str = mlir.module_to_string(ir, enable_debug_info=False)
+    for s in ("\"x\"", "y['hi']", "args[0]", "args[1]", "kwargs['z']", "kwargs['w']"):
+      self.assertNotIn(s, hlo_str)
 
   @parameterized.parameters(['a', 'b', [('a', 'b')]])
   def test_jit_lower_arg_info_static_argnames(self, static_argnames):
@@ -1258,6 +1270,13 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertIn("kwargs['w']", hlo_str)
     self.assertNotIn("kwargs['a']", hlo_str)
     self.assertNotIn("kwargs['b']", hlo_str)
+
+    hlo_str = mlir.module_to_string(ir, enable_debug_info=False)
+    for s in (
+      "\"x\"", "y['hi']", "args[0]", "args[1]", "kwargs['z']",
+      "kwargs['w']", "kwargs['a']", "kwargs['b']"
+    ):
+      self.assertNotIn(s, hlo_str)
 
   def test_jit_lower_result_info(self):
     def f(x, y, z):
@@ -9352,6 +9371,27 @@ class CustomVJPTest(jtu.JaxTestCase):
         ValueError,
         r'output\[1\] the bwd rule produced an output of shape/dtype float..\[3\]'):
       jax.grad(lambda x, y: foo(x, y * y).sum(), 1)(jnp.ones(3), jnp.ones(4))
+
+  def test_bwd_rule_shape_mismatch_disable(self):
+    # TODO(mattjj): remove this test when the config option is removed
+    @jax.custom_vjp
+    def foo(x, y):
+      return x
+
+    def foo_fwd(x, y):
+      return x, None
+
+    def foo_bwd(_, g):
+      return jnp.zeros(3), jnp.zeros(3)
+
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    try:
+      jax.config.update('jax_custom_vjp_disable_shape_check', True)
+      jax.grad(lambda x, y: foo(x, y).sum(), 1)(jnp.ones(3), jnp.ones(4))
+    finally:
+      jax.config.update('jax_custom_vjp_disable_shape_check', False)
+
 
 def transpose_unary(f, x_example):
   def transposed(y):

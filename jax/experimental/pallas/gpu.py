@@ -13,10 +13,6 @@
 # limitations under the License.
 
 """Contains Triton specific Pallas functions."""
-try:
-  from jax._src.pallas import triton
-  get_compute_capability = triton.get_compute_capability
-  del triton
-except ImportError as e:
-  raise ImportError("Cannot import Pallas Triton backend. "
-                    "Make sure you've installed jax-triton.") from e
+from jax._src.pallas import triton
+get_compute_capability = triton.get_compute_capability
+del triton

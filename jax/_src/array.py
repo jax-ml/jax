@@ -30,11 +30,9 @@ from jax._src import api_util
 from jax._src import basearray
 from jax._src import config
 from jax._src import core
-from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import errors
-from jax._src import layout
 from jax._src import profiler
 from jax._src import tree_util
 from jax._src import xla_bridge
@@ -47,10 +45,10 @@ from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     SingleDeviceSharding, XLACompatibleSharding, PmapSharding,
     device_replica_id_map, hashed_index)
+from jax._src.layout import DeviceLocalLayout, Layout
 from jax._src.typing import ArrayLike
 from jax._src.util import safe_zip, unzip3, use_cpp_class, use_cpp_method
 
-deprecations.register(__name__, "device-method")
 
 Shape = tuple[int, ...]
 Device = xc.Device
@@ -471,21 +469,6 @@ class ArrayImpl(basearray.Array):
     per_shard_size = arr.on_device_size_in_bytes()  # type: ignore
     return per_shard_size * len(self.sharding.device_set)
 
-  # TODO(yashkatariya): Remove this method when everyone is using devices().
-  def device(self) -> Device:
-    if deprecations.is_accelerated(__name__, "device-method"):
-      raise NotImplementedError("arr.device() is deprecated. Use arr.devices() instead.")
-    else:
-      warnings.warn("arr.device() is deprecated. Use arr.devices() instead.",
-                    DeprecationWarning, stacklevel=2)
-    self._check_if_deleted()
-    device_set = self.sharding.device_set
-    if len(device_set) == 1:
-      single_device, = device_set
-      return single_device
-    raise ValueError('Length of devices is greater than 1. '
-                     'Please use `.devices()`.')
-
   def devices(self) -> set[Device]:
     self._check_if_deleted()
     return self.sharding.device_set
@@ -531,13 +514,15 @@ class ArrayImpl(basearray.Array):
 
   @property
   def layout(self):
-    # TODO(yashkatariya): Remove the try;except when pathways supports layouts.
+    # TODO(yashkatariya): Remove the deleted check from here.
+    if self.is_deleted():
+      return Layout(None, self.sharding)
     try:
-      return layout.DeviceLocalLayout(self._pjrt_layout)
+      return Layout(DeviceLocalLayout(self._pjrt_layout), self.sharding)
     except xe.XlaRuntimeError as e:
       msg, *_ = e.args
       if type(msg) is str and msg.startswith("UNIMPLEMENTED"):
-        return None
+        return Layout(None, self.sharding)
       else:
         raise
 

@@ -56,9 +56,6 @@ jax_test(
         "gpu_a100_x32",
         "gpu_h100_x32",
     ],
-    env = {
-        "JAX_TRITON_COMPILE_VIA_XLA": "0",
-    },
     shard_count = 4,
     deps = [
         "//jax:pallas_gpu",
@@ -98,41 +95,6 @@ jax_test(
     deps = [
         "//jax:pallas_gpu",
         "//jax:pallas_gpu_ops",
-    ] + py_deps("absl/testing") + py_deps("numpy"),
-)
-
-jax_test(
-    name = "pallas_via_xla_test",
-    srcs = [
-        "pallas_test.py",
-    ],
-    backend_tags = {
-        "gpu": ["noasan"],  # https://github.com/openai/triton/issues/2918
-    },
-    config_tags_overrides = {
-        "gpu_a100_x32": {
-            "ondemand": False,  # Include in presubmit.
-        },
-    },
-    disable_backends = [
-        "cpu",
-        "tpu",
-    ],
-    disable_configs = [
-        "gpu",
-        "gpu_x32",
-        "gpu_p100",
-        "gpu_p100_x32",
-        "gpu_a100",
-        "gpu_h100",
-    ],
-    enable_configs = [
-        "gpu_a100_x32",
-        "gpu_h100_x32",
-    ],
-    shard_count = 4,
-    deps = [
-        "//jax:pallas_gpu",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 

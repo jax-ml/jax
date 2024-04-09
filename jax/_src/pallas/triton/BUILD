@@ -67,7 +67,5 @@ pytype_strict_library(
         "//jax:util",
         "//jax/_src/lib",
         "//jax/_src/pallas",
-        # Users are expected to add a jax_triton dependency to use the legacy
-        # lowering path.
     ],
 )
