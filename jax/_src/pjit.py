@@ -510,35 +510,6 @@ def make_jit(fun: Callable, in_shardings: Any, out_shardings: Any,
   return _make_jit_wrapper(jit_info)
 
 
-def _check_in_shardings_kwargs_compatibility(
-    kws: bool, has_args: bool, sig, in_shardings_treedef,
-    user_specified_in_shardings: bool):
-  if not user_specified_in_shardings:
-    return
-  node_data = in_shardings_treedef.node_data()
-  if node_data is None:
-    return
-  type_, keys = node_data
-  if not kws and type_ is not dict:
-    return
-  # TODO(yashkatariya): Try to allow these cases as and when need arises.
-  if has_args and kws and type_ is dict:
-    raise ValueError(
-        'If in_shardings is a dict, the function should be called with kwargs'
-        ' only.')
-  if kws and type_ is not dict:
-    raise ValueError(
-        'If you are using kwargs, in_shardings needs to be passed as a dict'
-        f' corresponding to the kwargs. Got in_shardings type: {type_}')
-  if not kws and type_ is dict:
-    raise ValueError(
-        'in_shardings can only be an instance of dict if you have kwargs.'
-        ' Please pass in_shardings positionally if you are using args.')
-  assert type_ is dict
-  api_util._validate_argnames(sig, tuple(keys), 'in_shardings',
-                              err_on_invalid=True)
-
-
 def _infer_params(jit_info, args, kwargs):
   (fun, fun_sourceinfo, fun_signature, user_specified_in_shardings,
    in_shardings_treedef, in_shardings_leaves, out_shardings_treedef,
@@ -548,9 +519,9 @@ def _infer_params(jit_info, args, kwargs):
    abstracted_axes, _, use_resource_env) = jit_info
 
   have_kwargs = bool(kwargs)
-  _check_in_shardings_kwargs_compatibility(
-      have_kwargs, bool(args), fun_signature, in_shardings_treedef,
-      user_specified_in_shardings)
+  if have_kwargs and user_specified_in_shardings:
+    raise ValueError(
+        "pjit does not support kwargs when in_shardings is specified.")
 
   if use_resource_env:
     # We need to fetch the mesh from inside the wrapped function, because
@@ -566,6 +537,7 @@ def _infer_params(jit_info, args, kwargs):
     resource_env = None
     pjit_mesh = None
     jit_name = 'jit'
+
 
   axes_specs = _flat_axes_specs(abstracted_axes, *args, **kwargs)
 
@@ -1026,22 +998,14 @@ def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
                                in_layouts_treedef, in_layouts_leaves,
                                in_avals, in_tree, debug_info,
                                device_or_backend_set, kws):
-  in_tree_args, in_tree_kwargs = treedef_children(in_tree)
   if not kws:
-    in_tree = in_tree_args
+    in_tree, _ = treedef_children(in_tree)
 
   orig_in_shardings = tree_unflatten(in_shardings_treedef, in_shardings_leaves)
   # Only do this if original in_shardings are unspecified. If it is AUTO, go
   # via flatten_axis_resources.
   if is_unspecified(orig_in_shardings):
     in_shardings_flat = (orig_in_shardings,) * len(in_avals)
-  elif isinstance(orig_in_shardings, dict):
-    if in_shardings_treedef != in_tree_kwargs:
-      # TODO(yashkatariya): Improve the error message drastically.
-      raise ValueError(
-          'Pytree of in_shardings and kwargs should be equal. Got in_shardings'
-          f' pytree: {in_shardings_treedef}, kwargs pytree: {in_tree_kwargs}')
-    in_shardings_flat = in_shardings_leaves
   else:
     in_shardings_flat = flatten_axis_resources(
         "pjit in_shardings", in_tree, orig_in_shardings, tupled_args=True)
@@ -1049,13 +1013,6 @@ def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
   in_layouts = tree_unflatten(in_layouts_treedef, in_layouts_leaves)
   if in_layouts is None:
     in_layouts_flat = (in_layouts,) * len(in_avals)
-  elif isinstance(in_layouts, dict):
-    if in_layouts_treedef != in_tree_kwargs:
-      # TODO(yashkatariya): Improve the error message drastically.
-      raise ValueError(
-          'Pytree of in_layouts and kwargs should be equal. Got in_layouts'
-          f' pytree: {in_layouts_treedef}, kwargs pytree: {in_tree_kwargs}')
-    in_layouts_flat = in_layouts_leaves
   else:
     in_layouts_flat = flatten_axis_resources(
         "pjit in_layouts", in_tree, in_layouts, tupled_args=True)

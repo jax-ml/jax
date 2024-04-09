@@ -187,8 +187,7 @@ _KEYWORD_ARGUMENTS = (
   inspect.Parameter.KEYWORD_ONLY,
 )
 def _validate_argnames(
-    sig: inspect.Signature, argnames: tuple[str, ...], argnames_name: str,
-    err_on_invalid: bool = False
+    sig: inspect.Signature, argnames: tuple[str, ...], argnames_name: str
 ) -> None:
   """
   Validate that the argnames are sensible for a given function.
@@ -213,15 +212,13 @@ def _validate_argnames(
   # Check whether any kwargs are invalid due to position only
   invalid_argnames = invalid_kwargs & set(argnames)
   if invalid_argnames:
-    if err_on_invalid:
-      raise ValueError(f"Jitted function has invalid argnames {invalid_argnames} "
-                      f"in {argnames_name}. These are positional-only")
-    else:
-      # TODO: 2022-08-20 or later: replace with error
-      warnings.warn(f"Jitted function has invalid argnames {invalid_argnames} "
-                    f"in {argnames_name}. These are positional-only. "
-                    "This warning will be replaced by an error after 2022-08-20 "
-                    "at the earliest.", SyntaxWarning)
+    # raise ValueError(f"Jitted function has invalid argnames {invalid_argnames} "
+    #                  f"in {argnames_name}. These are positional-only")
+    # TODO: 2022-08-20 or later: replace with error
+    warnings.warn(f"Jitted function has invalid argnames {invalid_argnames} "
+                  f"in {argnames_name}. These are positional-only. "
+                  "This warning will be replaced by an error after 2022-08-20 "
+                  "at the earliest.", SyntaxWarning)
 
   # Takes any kwargs
   if var_kwargs:
@@ -230,16 +227,13 @@ def _validate_argnames(
   # Check that all argnames exist on function
   invalid_argnames = set(argnames) - valid_kwargs
   if invalid_argnames:
-    if err_on_invalid:
-      raise ValueError(f"Jitted function has invalid argnames {invalid_argnames} "
-                      f"in {argnames_name}. Function does not take these args. "
-                      f"Valid kwargs are {valid_kwargs}")
-    else:
-      # TODO: 2022-08-20 or later: replace with error
-      warnings.warn(f"Jitted function has invalid argnames {invalid_argnames} "
-                    f"in {argnames_name}. Function does not take these args."
-                    "This warning will be replaced by an error after 2022-08-20 "
-                    "at the earliest.", SyntaxWarning)
+    # TODO: 2022-08-20 or later: replace with error
+    # raise ValueError(f"Jitted function has invalid argnames {invalid_argnames} "
+    #                  f"in {argnames_name}. Function does not take these args.")
+    warnings.warn(f"Jitted function has invalid argnames {invalid_argnames} "
+                  f"in {argnames_name}. Function does not take these args."
+                  "This warning will be replaced by an error after 2022-08-20 "
+                  "at the earliest.", SyntaxWarning)
 
 
 def argnums_partial(f, dyn_argnums, args, require_static_args_hashable=True):
