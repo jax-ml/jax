@@ -36,7 +36,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pl_core
 from jax._src.pallas.mosaic import core as tpu_core
-from jax._src.typing import DTypeLike, ArrayLike
+from jax._src.typing import DTypeLike
 import jax.numpy as jnp
 
 map, unsafe_map = util.safe_map, map
@@ -109,7 +109,7 @@ roll_p = jax_core.Primitive("roll")
 
 
 def roll(
-    x: ArrayLike,
+    x: jax.Array,
     shift: int,
     axis: int,
     *,
