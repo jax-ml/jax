@@ -147,8 +147,10 @@ grid axes over cores. This is an opt-in procedure. To allow that,
 ..
   pallas_call(
       ...,
-      mosaic_params=dict(
-        dimension_semantics=["parallel", "parallel", "arbitrary"]
+      compiler_params=dict(
+          mosaic=dict(
+              dimension_semantics=["parallel", "parallel", "arbitrary"]
+          )
       ),
     )
 

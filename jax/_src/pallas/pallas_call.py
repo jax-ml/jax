@@ -561,14 +561,10 @@ def pallas_call(
     interpret: bool = False,
     name: str | None = None,
     compiler_params: dict[str, Any] | None = None,
-    **compiler_params_: Any,
 ):
   name = _extract_function_name(f, name)
   if compiler_params is None:
     compiler_params = {}
-  assert not (compiler_params and compiler_params_)
-  if compiler_params_:
-    compiler_params = compiler_params_
   if grid is not None and grid_spec is not None:
     raise ValueError("Cannot specify both grid and grid_spec at the same time.")
   if grid_spec is None:
