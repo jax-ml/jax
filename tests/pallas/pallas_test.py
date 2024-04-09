@@ -16,6 +16,7 @@ import contextlib
 import functools
 import itertools
 import os
+import sys
 import unittest
 
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
@@ -33,7 +34,7 @@ from jax._src import state
 from jax._src.lax.control_flow.for_loop import for_loop
 from jax._src.lib import version as jaxlib_version
 from jax._src.pallas.pallas_call import _trace_to_jaxpr
-if jaxlib_version >= (0, 4, 24):
+if jaxlib_version >= (0, 4, 24) and sys.platform != "win32":
   from jax._src.pallas.triton.lowering import LoweringError
 else:
   LoweringError = Exception
