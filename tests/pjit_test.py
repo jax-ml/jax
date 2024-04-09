@@ -2822,13 +2822,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(cache_info3.hits, cache_info2.hits)
     self.assertEqual(cache_info3.misses, cache_info2.misses + 1)
 
-  def test_pjit_kwargs_axis_resources_error(self):
-    with self.assertRaisesRegex(
-        ValueError,
-        "pjit does not support kwargs when in_shardings is specified."):
-      pjit(lambda x: x,
-           in_shardings=SingleDeviceSharding(jax.devices()[0]))(x=jnp.arange(8.))
-
   def test_pjit_keep_unused_true(self):
     @partial(pjit, keep_unused=True)
     def f(x, y, z, a, b, c):  # pylint: disable=unused-argument
@@ -4014,6 +4007,120 @@ class ArrayPjitTest(jtu.JaxTestCase):
     arr = jax.device_put(inp, s)
     inps = [arr, *[inp] * 2001]
     f(inps)  # doesn't crash
+
+  def test_in_shardings_kwargs(self):
+    mesh = jtu.create_global_mesh((2,), 'x')
+    s = NamedSharding(mesh, P('x'))
+    s1 = NamedSharding(mesh, P())
+    np_inp = np.arange(8)
+    arr = jax.device_put(np_inp, s1)
+
+    kw_in_s = dict(y=s1, x=s)
+    @partial(jax.jit, in_shardings=kw_in_s, out_shardings=(s, s1))
+    def f(x, y):
+      return x * 2, y * 2
+
+    out1, out2 = f(x=np_inp, y=arr)
+    self.assertArraysEqual(out1, np_inp * 2)
+    self.assertArraysEqual(out2, np_inp * 2)
+    self.assertEqual(out1.sharding, s)
+    self.assertEqual(out2.sharding, s1)
+
+    c_in_s = f.lower(x=np_inp, y=np_inp).compile().input_shardings
+    _, kw_shardings = c_in_s
+    self.assertDictEqual(kw_shardings, kw_in_s)
+
+  def test_kwargs_leaf_in_shardings(self):
+    s = SingleDeviceSharding(jax.devices()[0])
+    np_inp = np.arange(16).reshape(8, 2)
+
+    @partial(jax.jit, in_shardings=s)
+    def f(x, y):
+      return x @ y.T
+
+    out = f(x=np_inp, y=np_inp)
+    self.assertArraysEqual(out, np_inp @ np_inp.T)
+
+  def test_arg_in_shardings_kwarg_error(self):
+    s = SingleDeviceSharding(jax.devices()[0])
+    np_inp = np.arange(16).reshape(8, 2)
+
+    @partial(jax.jit, in_shardings=dict(x=s, y=s))
+    def f(x, y):
+      return x * 2, y * 2
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'in_shardings can only be an instance of dict if you have kwargs.'
+        ' Please pass in_shardings positionally if you are using args.'):
+      f(np_inp, np_inp)
+
+  def test_kwarg_in_shardings_positional_error(self):
+    s = SingleDeviceSharding(jax.devices()[0])
+    np_inp = np.arange(16).reshape(8, 2)
+
+    @partial(jax.jit, in_shardings=(s, s))
+    def f(x, y):
+      return x * 2, y * 2
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'If you are using kwargs, in_shardings needs to be passed as a dict'
+        ' corresponding to the kwargs'):
+      f(x=np_inp, y=np_inp)
+
+  def test_invalid_in_shardings_kwarg(self):
+    s = SingleDeviceSharding(jax.devices()[0])
+    np_inp = np.arange(16).reshape(8, 2)
+
+    @partial(jax.jit, in_shardings=dict(z=s))
+    def f(x):
+      return x * 2
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "Jitted function has invalid argnames {'z'} in in_shardings. Function"
+        " does not take these args. Valid kwargs are {'x'}"):
+      f(x=np_inp)
+
+  def test_mix_args_kwargs_in_shardings(self):
+    s = SingleDeviceSharding(jax.devices()[0])
+    np_inp = np.arange(16).reshape(8, 2)
+
+    @partial(jax.jit, in_shardings=dict(x=s, y=s, z=s))
+    def f(x, y, z):
+      return x * 2, y * 2, z * 2
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'If in_shardings is a dict, the function should be called with kwargs'
+        ' only.'):
+      f(np_inp, y=np_inp, z=np_inp)
+
+  def test_kwargs_in_shardings_partial(self):
+    s = SingleDeviceSharding(jax.devices()[0])
+    np_inp = np.arange(16).reshape(8, 2)
+
+    @partial(jax.jit, in_shardings=dict(x=s))
+    def f(x, y, z):
+      return x * 2, y * 2, z * 2
+
+    with self.assertRaisesRegex(
+        ValueError, "Pytree of in_shardings and kwargs should be equal"):
+      f(x=np_inp, y=np_inp, z=np_inp)
+
+  def test_args_kwargs_in_shardings_mixture(self):
+    s = SingleDeviceSharding(jax.devices()[0])
+    np_inp = np.arange(16).reshape(8, 2)
+
+    @partial(jax.jit, in_shardings=(s, dict(y=s, z=s)))
+    def f(x, y, z):
+      return x * 2, y * 2, z * 2
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'If you are using kwargs, in_shardings needs to be passed as a dict'):
+      f(np_inp, y=np_inp, z=np_inp)
 
 
 class TempSharding(Sharding):
