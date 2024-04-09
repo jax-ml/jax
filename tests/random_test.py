@@ -33,7 +33,6 @@ from jax import numpy as jnp
 from jax import random
 from jax._src import config
 from jax._src import core
-from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax import vmap
@@ -1019,9 +1018,6 @@ class KeyArrayTest(jtu.JaxTestCase):
 
     self.assertEqual(key.is_fully_addressable, key._base_array.is_fully_addressable)
     self.assertEqual(key.is_fully_replicated, key._base_array.is_fully_replicated)
-    if not deprecations.is_accelerated('jax._src.array', 'device-method'):
-      with jtu.ignore_warning(category=DeprecationWarning, message="arr.device"):
-        self.assertEqual(key.device(), key._base_array.device())
     self.assertEqual(key.devices(), key._base_array.devices())
     self.assertEqual(key.on_device_size_in_bytes(),
                      key._base_array.on_device_size_in_bytes())

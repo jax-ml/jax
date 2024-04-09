@@ -21,6 +21,8 @@ Remember to align the itemized text with the first line of an item within a list
   * {func}`jax.numpy.clip` has a new argument signature: `a`, `a_min`, and
     `a_max` are deprecated in favor of `x` (positonal only), `min`, and
     `max` ({jax-issue}`20550`).
+  * The `device()` method of JAX arrays has been removed, after being deprecated
+    since JAX v0.4.21. Use `arr.devices()` instead.
 
 
 ## jaxlib 0.4.27
