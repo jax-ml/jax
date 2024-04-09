@@ -1822,9 +1822,12 @@ def _while_lowering_rule(
     body_nconsts,
     body_jaxpr,
 ):
-  jaxpr = pallas_utils.pattern_match_while_to_fori_loop(
+  jaxpr, err = pallas_utils.pattern_match_while_to_fori_loop(
       cond_jaxpr, cond_nconsts, body_jaxpr, body_nconsts
   )
+  if jaxpr is None:
+    raise NotImplementedError(err)
+
   _, body_consts, carry = split_list(args, [cond_nconsts, body_nconsts])
   (lb, ub), args = carry[:2], carry[2:]
   for_out = _lower_jaxpr_to_for_loop(
