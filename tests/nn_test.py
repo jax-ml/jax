@@ -71,6 +71,17 @@ class NNFunctionsTest(jtu.JaxTestCase):
     check_grads(nn.sparse_plus, (0.,), order=1,
                 rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
 
+  def testSparseplusAndSparseSigmoid(self):
+    self.assertAllClose(
+        jax.grad(nn.sparse_plus)(0.), nn.sparse_sigmoid(0.),
+        check_dtypes=False)
+    self.assertAllClose(
+        jax.grad(nn.sparse_plus)(2.), nn.sparse_sigmoid(2.),
+        check_dtypes=False)
+    self.assertAllClose(
+        jax.grad(nn.sparse_plus)(-2.), nn.sparse_sigmoid(-2.),
+        check_dtypes=False)
+
   def testSquareplusGrad(self):
     check_grads(nn.squareplus, (1e-8,), order=4,
                 rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
@@ -132,6 +143,11 @@ class NNFunctionsTest(jtu.JaxTestCase):
   def testSparseplusValue(self):
     val = nn.sparse_plus(89.)
     self.assertAllClose(val, 89., check_dtypes=False)
+
+  def testSparsesigmoidValue(self):
+    self.assertAllClose(nn.sparse_sigmoid(-2.), 0., check_dtypes=False)
+    self.assertAllClose(nn.sparse_sigmoid(2.), 1., check_dtypes=False)
+    self.assertAllClose(nn.sparse_sigmoid(0.), .5, check_dtypes=False)
 
   def testSquareplusValue(self):
     val = nn.squareplus(1e3)
