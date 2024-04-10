@@ -206,11 +206,23 @@ class NNFunctionsTest(jtu.JaxTestCase):
       jax.make_jaxpr(lambda: nn.hard_tanh(jnp.ones((10 ** 12,))))  # don't oom
 
   @parameterized.parameters([nn.softmax, nn.log_softmax])
+  def testSoftmaxEmptyArray(self, fn):
+    x = jnp.array([], dtype=float)
+    self.assertArraysEqual(fn(x), x)
+
+  @parameterized.parameters([nn.softmax, nn.log_softmax])
+  def testSoftmaxEmptyMask(self, fn):
+    x = jnp.array([5.5, 1.3, -4.2, 0.9])
+    m = jnp.zeros_like(x, dtype=bool)
+    expected = jnp.full_like(x, 0.0 if fn is nn.softmax else -jnp.inf)
+    self.assertArraysEqual(fn(x, where=m), expected)
+
+  @parameterized.parameters([nn.softmax, nn.log_softmax])
   def testSoftmaxWhereMask(self, fn):
     x = jnp.array([5.5, 1.3, -4.2, 0.9])
     m = jnp.array([True, False, True, True])
 
-    out = fn(x, where=m, initial=-jnp.inf)
+    out = fn(x, where=m)
     self.assertAllClose(out[m], fn(x[m]))
 
     probs = out if fn is nn.softmax else jnp.exp(out)
@@ -230,7 +242,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     x = jnp.array([36., 10000.])
     mask = x < 1000
 
-    f = lambda x, mask: fn(x, where=mask, initial=x.min())[0]
+    f = lambda x, mask: fn(x, where=mask)[0]
 
     self.assertAllClose(jax.grad(f)(x, mask), jnp.zeros_like(x))
 
