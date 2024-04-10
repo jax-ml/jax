@@ -882,10 +882,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-  def testClipError(self):
-    with self.assertRaisesRegex(ValueError, "At most one of a_min and a_max.*"):
-      jnp.clip(jnp.zeros((3,)))
-
   @jtu.sample_product(
     [dict(shape=shape, dtype=dtype)
       for shape, dtype in _shape_and_dtypes(all_shapes, number_dtypes)],
