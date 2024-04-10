@@ -730,6 +730,31 @@ class PallasCallDMATest(parameterized.TestCase):
         debug=True,
     )())
 
+  def test_can_read_semaphore(self):
+    m, n = 2, 3
+
+    def kernel(y_ref):
+      def body(sems):
+        for r in range(m):
+          for c in range(n):
+            v = r * n + c
+            pltpu.semaphore_signal(sems.at[r, c],v)
+            y_ref[r, c] = pltpu.semaphore_read(sems.at[r, c])
+            pltpu.semaphore_wait(sems.at[r, c], v)
+
+      pltpu.run_scoped(body, pltpu.SemaphoreType.REGULAR((m, n)))
+
+    y = jax.block_until_ready(
+        pl.pallas_call(
+            kernel,
+            out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+            out_shape=jax.ShapeDtypeStruct((m, n), jnp.int32),
+        )()
+    )
+    np.testing.assert_array_equal(
+        y, jnp.arange(m * n).astype(jnp.int32).reshape((m, n))
+    )
+
   def test_hbm_hbm_dma(self):
     def kernel(x_hbm_ref, y_hbm_ref):
       def body(sem):
