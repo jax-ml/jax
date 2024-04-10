@@ -1989,10 +1989,8 @@ MaybeLayout = Sequence[Union[DeviceLocalLayout, AutoLayout, None]]
 
 
 class AllArgsInfo(NamedTuple):
-  """Avals, shardings, layouts and debug_info for all arguments prior to DCE."""
+  """Avals and debug_info for all arguments prior to DCE."""
   in_avals: Sequence[core.ShapedArray]
-  in_shardings: Any
-  in_layouts: Any
   debug_info: core.JaxprDebugInfo | None
 
 
@@ -2038,8 +2036,7 @@ def lower_sharding_computation(
   auto_spmd_lowering = check_if_any_auto(
       it.chain.from_iterable([in_shardings, out_shardings]))  # type: ignore
 
-  all_args_info = AllArgsInfo(global_in_avals, in_shardings, in_layouts,
-                              closed_jaxpr.jaxpr.debug_info)
+  all_args_info = AllArgsInfo(global_in_avals, closed_jaxpr.jaxpr.debug_info)
 
   (closed_jaxpr, global_in_avals, global_out_avals, donated_invars,
    kept_var_idx, name_stack) = _dce_jaxpr(
@@ -3013,28 +3010,22 @@ class MeshExecutable(stages.XlaExecutable):
     return self.xla_executable
 
   def call(self, *args):
+    args_after_dce = [a for i, a in enumerate(args) if i in self._kept_var_idx]
     if self._all_args_info is None:
-      kept_args = [a for i, a in enumerate(args) if i in self._kept_var_idx]
+      kept_args = args_after_dce
       ref_avals = self.in_avals
-      in_shardings = self._in_shardings
-      in_layouts = self._in_layouts
       debug_info = None
     else:
       kept_args = args
       ref_avals = self._all_args_info.in_avals
-      iter_in_shardings = iter(self._in_shardings)
-      in_shardings = [next(iter_in_shardings) if i in self._kept_var_idx else s
-                      for i, s in enumerate(self._all_args_info.in_shardings)]
-      iter_in_layouts = iter(self._in_layouts)
-      in_layouts = [next(iter_in_layouts) if i in self._kept_var_idx else s
-                    for i, s in enumerate(self._all_args_info.in_layouts)]
       debug_info = self._all_args_info.debug_info
 
-    arg_avals = map(xla.abstractify, kept_args)
-    check_arg_avals_for_call(ref_avals, arg_avals, debug_info)
+    all_arg_avals = map(xla.abstractify, kept_args)
+    check_arg_avals_for_call(ref_avals, all_arg_avals, debug_info)
     # Check the GDA sharding and the input sharding.
-    check_array_xla_sharding_layout_match(kept_args, in_shardings,
-                                          in_layouts, debug_info)
+    check_array_xla_sharding_layout_match(
+        args_after_dce, self._in_shardings, self._in_layouts, debug_info,
+        self._kept_var_idx)
     return self.unsafe_call(*args)  # pylint: disable=not-callable
 
   def input_shardings(self) -> Sequence[sharding_impls.XLACompatibleSharding]:
@@ -3163,16 +3154,22 @@ def check_device_backend_on_shardings(shardings) -> bool:
 
 
 def check_array_xla_sharding_layout_match(
-    args, in_xla_shardings: Sequence[sharding_impls.XLACompatibleSharding],
+    args_after_dce,
+    in_xla_shardings: Sequence[sharding_impls.XLACompatibleSharding],
     in_xla_layouts: Sequence[DeviceLocalLayout],
-    jaxpr_debug_info: core.JaxprDebugInfo | None) -> None:
+    jaxpr_debug_info: core.JaxprDebugInfo | None,
+    kept_var_idx: set[int]) -> None:
   from jax._src.array import ArrayImpl
-  arg_names = ([''] * len(args) if jaxpr_debug_info is None else
-               jaxpr_debug_info.arg_names)
+  # jaxpr_debug_info.arg_names are before DCE, so need to DCE them.
+  arg_names = (
+      [""] * len(args_after_dce) if jaxpr_debug_info is None
+      else [a for i, a in enumerate(jaxpr_debug_info.arg_names)  # type: ignore
+            if i in kept_var_idx]
+  )
   errors = []
   num_errors = 5
-  for arg, xs, xl, name in safe_zip(args, in_xla_shardings, in_xla_layouts,
-                                    arg_names):
+  for arg, xs, xl, name in safe_zip(
+      args_after_dce, in_xla_shardings, in_xla_layouts, arg_names):
     if not isinstance(arg, ArrayImpl):
       continue
     if is_unspecified_or_auto(xs):
@@ -3200,7 +3197,6 @@ def check_array_xla_sharding_layout_match(
 
     if (xla_extension_version >= 249 and not db_xs and arg._committed and
         arg.layout.device_local_layout is not None and xl is not None and
-        not isinstance(xl, AutoLayout) and
         arg.layout.device_local_layout != xl):
       errors.append(
           ("Got input layout(s) that compiled object was called with: "
