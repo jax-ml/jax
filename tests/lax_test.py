@@ -3616,11 +3616,9 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     elif name == 'log10':
       regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'ninf.imag', 'pinf.imag', 'ninfj.imag', 'pinfj.imag', 'zero.imag')
 
-    elif name == 'log1p':
-      regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real', 'neg.real', 'pos.real',
-                                     'negj.real', 'posj.real', 'ninf.real', 'ninfj.real', 'pinfj.real')
-      # TODO(pearu): after landing openxla/xla#10503, switch to
-      #   regions_with_inaccuracies_keep('ninf', 'pinf', 'ninfj', 'pinfj')
+    elif name == 'log1p' and xla_extension_version < 254:
+        regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real', 'neg.real', 'pos.real',
+                                       'negj.real', 'posj.real', 'ninf.real', 'ninfj.real', 'pinfj.real')
 
     elif name == 'exp':
       regions_with_inaccuracies_keep('pos.imag', 'pinf.imag', 'mpos.imag')
@@ -3640,9 +3638,10 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
                                      'ninf.imag', 'pinf.imag', 'ninfj.real', 'pinfj.real')
 
     elif name == 'tan':
+      # TODO(pearu): eliminate this if-block when openxla/xla#10525 lands
       regions_with_inaccuracies_keep('q1.imag', 'q2.imag', 'q3.imag', 'q4.imag', 'negj.imag', 'posj.imag',
                                      'ninfj.imag', 'pinfj.imag', 'mq1.imag', 'mq2.imag', 'mq3.imag', 'mq4.imag', 'mnegj.imag', 'mposj.imag',
-                                     'ninf.imag', 'pinf.imag')
+                                     'ninf.imag', 'pinf.imag', 'ninf.real', 'pinf.real', 'ninfj.real', 'pinfj.real')
 
     elif name == 'sinh':
       if is_cuda:
@@ -3695,14 +3694,15 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
         regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj')
 
     elif name == 'arctanh':
-      regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mpos.imag')
-      # TODO(pearu): after landing openxla/xla#10503, switch to
-      # regions_with_inaccuracies_keep('pos', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mpos')
+      if xla_extension_version < 254:
+        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mpos.imag')
+      else:
+        regions_with_inaccuracies_keep('pos.imag', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mpos.imag')
 
     elif name in {'cos', 'sin'}:
       regions_with_inaccuracies_keep('ninf.imag', 'pinf.imag')
 
-    elif name in {'positive', 'negative', 'conjugate', 'sin', 'cos', 'sqrt', 'expm1'}:
+    elif name in {'positive', 'negative', 'conjugate', 'sin', 'cos', 'sqrt', 'expm1', 'log1p'}:
       regions_with_inaccuracies.clear()
     else:
       assert 0  # unreachable
