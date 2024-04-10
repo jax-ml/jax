@@ -37,8 +37,9 @@ import jax.numpy as jnp
 # mypy: ignore-errors
 
 partial = functools.partial
-Grid = tuple[Union[int, None], ...]  # None indicates that the bound is dynamic.
-StaticGrid = tuple[int, ...]  # None indicates that the bound is dynamic.
+Grid = tuple[Union[int, jax_core.Array, None], ...]  # None indicates that the bound is dynamic.
+DynamicGrid = tuple[Union[int, jax_core.Array], ...]
+StaticGrid = tuple[int, ...]
 split_list = util.split_list
 
 map, unsafe_map = util.safe_map, map
