@@ -18,10 +18,7 @@ load(
     "pytype_strict_library",
 )
 
-package(
-    default_applicable_licenses = [],
-    default_visibility = ["//jax:jax_extend_users"],
-)
+package(default_applicable_licenses = ["//third_party/py/jax:license"])
 
 pytype_strict_library(
     name = "ir",
