@@ -2263,11 +2263,16 @@ In particular, the details of float-to-int and int-to-float casts are
 implementation dependent.
 """)
 def astype(x: ArrayLike, dtype: DTypeLike | None, /, *, copy: bool = True) -> Array:
+  util.check_arraylike("astype", x)
+  x_arr = asarray(x)
   del copy  # unused in JAX
   if dtype is None:
     dtype = dtypes.canonicalize_dtype(float_)
   dtypes.check_user_dtype_supported(dtype, "astype")
-  return lax.convert_element_type(x, dtype)
+  # convert_element_type(complex, bool) has the wrong semantics.
+  if np.dtype(dtype) == bool and issubdtype(x_arr.dtype, complexfloating):
+    return (x_arr != _lax_const(x_arr, 0))
+  return lax.convert_element_type(x_arr, dtype)
 
 
 @util.implements(np.asarray, lax_description=_ARRAY_DOC)

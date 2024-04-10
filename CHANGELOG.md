@@ -13,6 +13,8 @@ Remember to align the itemized text with the first line of an item within a list
     now use {class}`jax.Array` instead of {class}`np.ndarray`. You can recover
     the old behavior by transforming the arguments via
     `jax.tree.map(np.asarray, args)` before passing them to the callback.
+  * `complex_arr.astype(bool)` now follows the same semantics as NumPy, returning
+    False where `complex_arr` is equal to `0 + 0j`, and True otherwise.
 
 * Deprecations & Removals
   * Pallas now exclusively uses XLA for compiling kernels on GPU. The old

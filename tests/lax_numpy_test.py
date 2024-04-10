@@ -3822,6 +3822,24 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
+  @jtu.sample_product(
+    from_dtype=['int32', 'float32', 'complex64'],
+    use_method=[True, False],
+  )
+  def testAstypeBool(self, from_dtype, use_method, to_dtype='bool'):
+    rng = jtu.rand_some_zero(self.rng())
+    args_maker = lambda: [rng((3, 4), from_dtype)]
+    if (not use_method) and hasattr(np, "astype"):  # Added in numpy 2.0
+      np_op = lambda x: np.astype(x, to_dtype)
+    else:
+      np_op = lambda x: np.asarray(x).astype(to_dtype)
+    if use_method:
+      jnp_op = lambda x: jnp.asarray(x).astype(to_dtype)
+    else:
+      jnp_op = lambda x: jnp.astype(x, to_dtype)
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
+    self._CompileAndCheck(jnp_op, args_maker)
+
   def testAstypeInt4(self):
     # Test converting from int4 to int8
     x = np.array([1, -2, -3, 4, -8, 7], dtype=jnp.int4)
