@@ -151,7 +151,7 @@ def _is_required_cuda_version_satisfied(cuda_version):
 class BCOOTest(sptu.SparseTestCase):
 
   def gpu_matmul_warning_context(self, msg):
-    if sptu.GPU_LOWERING_ENABLED and config.jax_bcoo_cusparse_lowering:
+    if config.jax_bcoo_cusparse_lowering:
       return self.assertWarnsRegex(sparse.CuSparseEfficiencyWarning, msg)
     return contextlib.nullcontext()
 
@@ -479,9 +479,6 @@ class BCOOTest(sptu.SparseTestCase):
       dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
   @jax.default_matmul_precision("float32")
-  @unittest.skipIf(
-      not sptu.GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse"
-  )
   @jtu.run_on_devices("gpu")
   def test_bcoo_dot_general_cusparse(
       self, lhs_shape, rhs_shape, dtype, lhs_contracting, rhs_contracting
@@ -528,9 +525,6 @@ class BCOOTest(sptu.SparseTestCase):
       dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
   @jax.default_matmul_precision("float32")
-  @unittest.skipIf(
-      not sptu.GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse"
-  )
   @jtu.run_on_devices("gpu")
   def test_bcoo_batched_matmat_cusparse(
       self,
@@ -581,9 +575,6 @@ class BCOOTest(sptu.SparseTestCase):
       ],
       dtype=jtu.dtypes.floating + jtu.dtypes.complex,
   )
-  @unittest.skipIf(
-      not sptu.GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse"
-  )
   @jtu.run_on_devices("gpu")
   def test_bcoo_batched_matmat_default_lowering(
       self,
@@ -615,9 +606,6 @@ class BCOOTest(sptu.SparseTestCase):
     matmat_default_lowering_fallback = sp_matmat(lhs_bcoo, rhs)
     self.assertArraysEqual(matmat_expected, matmat_default_lowering_fallback)
 
-  @unittest.skipIf(
-      not sptu.GPU_LOWERING_ENABLED, "test requires cusparse/hipsparse"
-  )
   @jtu.run_on_devices("gpu")
   def test_bcoo_dot_general_oob_and_unsorted_indices_cusparse(self):
     """Tests bcoo dot general with out-of-bound and unsorted indices."""
