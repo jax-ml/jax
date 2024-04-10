@@ -452,6 +452,12 @@ def TPU_DeviceIdOp : TPU_Op<"device_id", [Pure]> {
   let assemblyFormat = [{ attr-dict `:` type($result) }];
 }
 
+def TPU_SemaphoreReadOp : TPU_Op<"sem_read"> {
+  let arguments = (ins MemRefOf<[TPU_SemaphoreType]>:$semaphore);
+  let results = (outs I32:$result);
+  let assemblyFormat = [{ $semaphore attr-dict `:` type($semaphore) `->` type($result)}];
+}
+
 def TPU_SemaphoreWaitOp : TPU_Op<"sem_wait"> {
   let arguments = (ins
     MemRefOf<[TPU_SemaphoreType]>:$semaphore,
