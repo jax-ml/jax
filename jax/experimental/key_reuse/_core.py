@@ -572,19 +572,3 @@ def call_impl_with_key_reuse_checks(prim: core.Primitive, raw_impl: Callable[...
   result = raw_impl(*args, **kwargs)
   signature.update_consumption([*args, *consts], result if prim.multiple_results else [result])
   return result
-
-
-# TODO(jakevdp): when we integrate key reuse checks more tightly with JAX,
-# we should move this logic directly into each primitive impl.
-def key_reuse_impl_rule(prim, raw_impl):
-  @wraps(raw_impl)
-  def key_reuse_impl(*args, **kwargs):
-    if config.debug_key_reuse.value:
-      return call_impl_with_key_reuse_checks(prim, raw_impl, *args, **kwargs)
-    else:
-      return raw_impl(*args, **kwargs)
-  return key_reuse_impl
-
-
-for prim in key_reuse_signatures:
-  prim.impl = key_reuse_impl_rule(prim, prim.impl)  # type: ignore[method-assign]
