@@ -233,6 +233,25 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertArraysEqual(out1, out5)
     self.assertArraysEqual(out2, out6)
 
+  def test_no_error_dced_args(self):
+    mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
+    shape = (8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+    arr1 = jax.device_put(np_inp, s)
+    arr2 = jax.device_put(np_inp, s)
+    arrs = [arr1, arr2]
+
+    def f(x, y):
+      return x * 2
+
+    jf = jax.jit(f, in_shardings=Layout(DLL.AUTO, s),
+                 out_shardings=Layout(DLL.AUTO, s))
+    compiled = jf.lower(np_inp, np_inp).compile()
+    arg_layouts, _ = compiled.input_layouts()
+    arrs = [jax.device_put(i, l) for i, l in zip(arrs, arg_layouts)]
+    compiled(*arrs)
+
   def test_aot_layout_mismatch(self):
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     shape = (256, 4, 2)

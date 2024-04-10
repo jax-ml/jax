@@ -3200,6 +3200,7 @@ def check_array_xla_sharding_layout_match(
 
     if (xla_extension_version >= 249 and not db_xs and arg._committed and
         arg.layout.device_local_layout is not None and xl is not None and
+        not isinstance(xl, AutoLayout) and
         arg.layout.device_local_layout != xl):
       errors.append(
           ("Got input layout(s) that compiled object was called with: "
