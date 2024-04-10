@@ -327,7 +327,7 @@ def paged_attention(
     pages_per_compute_block: how many pages to be processed in one flash
       attention block in the pallas kernel.
     megacore_mode: if set, enable megacore to parallelize the computation. Must
-      be one of ['kv_head', 'batch', None]. Ceveat: set this only if megacore is
+      be one of ['kv_head', 'batch', None]. Caveat: set this only if megacore is
       enabled, otherwise the kernel may hang. If you are not sure, leave it to
       None.
       * None: disable megacore parallelism.
