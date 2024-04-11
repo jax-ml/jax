@@ -22,7 +22,7 @@ from functools import partial
 import itertools
 import math
 import operator
-from typing import Any, Callable, TypeVar, Union, cast as type_cast, overload, TYPE_CHECKING
+from typing import Any, Callable, ClassVar, TypeVar, Union, cast as type_cast, overload, TYPE_CHECKING
 import warnings
 
 import numpy as np
@@ -624,14 +624,14 @@ def concatenate(operands: Array | Sequence[ArrayLike], dimension: int) -> Array:
 
 _precision_strings: dict[Any, Precision] = {}
 
-# TODO(b/328046715): pytype appears unable to handle overriding __new__ in an
-# enum class. Doing this crashes Pytype. For now, just write an explicit type
-# for type checkers.
+# TODO(b/333851820): pytype does not properly handle _missing_ in enums.
+# We work around that by defining `Precision` as a normal class.
 if TYPE_CHECKING:
+
   class Precision:
-    DEFAULT: Precision
-    HIGH: Precision
-    HIGHEST: Precision
+    DEFAULT: ClassVar[Precision]
+    HIGH: ClassVar[Precision]
+    HIGHEST: ClassVar[Precision]
 
     def __new__(cls, value: Precision | int | str | None) -> Precision:
       raise NotImplementedError
@@ -645,6 +645,7 @@ if TYPE_CHECKING:
       raise NotImplementedError
 
 else:
+
   class Precision(enum.Enum):
     """Precision enum for lax functions
 
@@ -663,22 +664,20 @@ else:
       Slowest but most accurate. Performs computations in float32 or float64
       as applicable. Aliases: ``'highest'``, ``'float32'``.
     """
+
     DEFAULT = 0
     HIGH = 1
     HIGHEST = 2
 
+    @classmethod
+    def _missing_(cls, value: object) -> Precision | None:
+      return _precision_strings.get(value)
+
     def __repr__(self) -> str:
-      return f"{self.__class__.__name__}.{self.name}"
+      return f'{self.__class__.__name__}.{self.name}'
 
     def __str__(self) -> str:
       return self.name
-
-  # You can't define __new__ on an enum class directly, but you can monkey-patch
-  # it after the fact. Another way to do this might be using a metaclass.
-  def _precision_new(cls, value: Precision | int | str | None) -> Precision:
-    return super(Precision, cls).__new__(cls, _precision_strings.get(value, value))
-
-  Precision.__new__ = _precision_new
 
 
 _precision_strings['highest'] = Precision.HIGHEST
