@@ -413,7 +413,7 @@ speed of code using JAX:
    use 32-bit dtypes in NumPy or enable 64-bit dtypes in JAX (see
    `Double (64 bit) precision`_) for a fair comparison.
 4. **Transferring data between CPUs and accelerators takes time.** If you only
-   want to measure the how long it takes to evaluate a function, you may want to
+   want to measure how long it takes to evaluate a function, you may want to
    transfer data to the device on which you want to run it first (see
    :ref:`faq-data-placement`).
 
