@@ -83,7 +83,7 @@ def _grouped_query_attention_reference(q, k, v, lengths):
 
 
 def _megacore_enabled():
-  return jax.devices()[0].device_kind == "TPU V4" and jtu.is_device_tpu(
+  return jax.devices()[0].device_kind == "TPU v4" or jtu.is_device_tpu(
       version=5, variant="p"
   )
 
@@ -114,15 +114,12 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest("Only supports TPU generation 4 or above")
     if megacore_mode and not _megacore_enabled():
-      self.skipTest("Megacore is only available on TPU v4 and TPU v5p")
+      self.skipTest("Megacore is only available on TPU v4 or TPU v5p")
     if num_kv_heads % 2 != 0 and megacore_mode == "kv_head":
       self.skipTest("Skip kv_head megacore mode when num_kv_heads is odd")
-    batch_size = 4
     max_kv_len = 2048
     block_size = 512
-    seq_lens = np.asarray(
-        [max_kv_len // batch_size * (i + 1) for i in range(batch_size)]
-    )
+    seq_lens = np.asarray([0, 3, 256, 513, 1023, 2048])
     q, k_pages, v_pages, page_indices = _generate_qkv(
         seq_lens,
         page_size,
@@ -151,7 +148,10 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
     else:
       atol, rtol = 1e-1, 1e-1
     np.testing.assert_allclose(
-        o.astype(jnp.float32), o_ref.astype(jnp.float32), atol=atol, rtol=rtol
+        o[np.where(seq_lens > 0)].astype(jnp.float32),
+        o_ref[np.where(seq_lens > 0)].astype(jnp.float32),
+        atol=atol,
+        rtol=rtol,
     )
 
 
