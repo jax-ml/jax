@@ -407,7 +407,7 @@ print(np.random.random())
 
 +++ {"id": "ORMVVGZJgSVi"}
 
-Underneath the hood, numpy uses the [Mersenne Twister](https://en.wikipedia.org/wiki/Mersenne_Twister) PRNG to power its pseudorandom functions.  The PRNG has a period of $2^{19937}-1$ and at any point can be described by __624 32bit unsigned ints__ and a __position__ indicating how much of this  "entropy" has been used up.
+Underneath the hood, numpy uses the [Mersenne Twister](https://en.wikipedia.org/wiki/Mersenne_Twister) PRNG to power its pseudorandom functions.  The PRNG has a period of $2^{19937}-1$ and at any point can be described by __624 32-bit unsigned ints__ and a __position__ indicating how much of this  "entropy" has been used up.
 
 ```{code-cell} ipython3
 :id: 7Pyp2ajzfPO2
@@ -1081,7 +1081,7 @@ To use double-precision numbers, you need to set the `jax_enable_x64` configurat
 
 There are a few ways to do this:
 
-1. You can enable 64bit mode by setting the environment variable `JAX_ENABLE_X64=True`.
+1. You can enable 64-bit mode by setting the environment variable `JAX_ENABLE_X64=True`.
 
 2. You can manually set the `jax_enable_x64` configuration flag at startup:
 
