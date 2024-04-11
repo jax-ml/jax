@@ -26,6 +26,12 @@ Remember to align the itemized text with the first line of an item within a list
   * The `device()` method of JAX arrays has been removed, after being deprecated
     since JAX v0.4.21. Use `arr.devices()` instead.
 
+* Bug fixes
+  * {func}`jax.numpy.astype` will now always return a copy when `copy=True`.
+    Previously, no copy would be made when the output array would have the same
+    dtype as the input array. This may result in some increased memory usage.
+    To prevent copying when possible, set `copy=None`. To error when a copy is
+    required, set `copy=False`.
 
 ## jaxlib 0.4.27
 

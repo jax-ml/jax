@@ -2262,17 +2262,43 @@ have slightly different behavior than :func:`numpy.astype` in some cases.
 In particular, the details of float-to-int and int-to-float casts are
 implementation dependent.
 """)
-def astype(x: ArrayLike, dtype: DTypeLike | None, /, *, copy: bool = True) -> Array:
+def astype(x: ArrayLike, dtype: DTypeLike | None,
+           /, *, copy: bool = True,
+           device: xc.Device | Sharding | None = None) -> Array:
   util.check_arraylike("astype", x)
   x_arr = asarray(x)
-  del copy  # unused in JAX
   if dtype is None:
     dtype = dtypes.canonicalize_dtype(float_)
   dtypes.check_user_dtype_supported(dtype, "astype")
+  if (
+    issubdtype(x_arr.dtype, complexfloating)
+    and dtypes.isdtype(dtype, ("integral", "real floating"))
+  ):
+    warnings.warn(
+      "Casting from complex to real dtypes will soon raise a ValueError. "
+      "Please first use jnp.real or jnp.imag to take the real/imaginary "
+      "component of your input.",
+      DeprecationWarning, stacklevel=2
+    )
+
+  out = x_arr
   # convert_element_type(complex, bool) has the wrong semantics.
   if np.dtype(dtype) == bool and issubdtype(x_arr.dtype, complexfloating):
-    return (x_arr != _lax_const(x_arr, 0))
-  return lax.convert_element_type(x_arr, dtype)
+    out = (x_arr != _lax_const(x_arr, 0))
+  out = _place_array(out, device=device, copy=copy)
+
+  # We offer a more specific warning than the usual ComplexWarning so we prefer
+  # to issue our warning.
+  with warnings.catch_warnings():
+    warnings.simplefilter("ignore", ComplexWarning)
+    return lax.convert_element_type(out, dtype)
+
+def _place_array(x, device=None, copy=None):
+  # TODO(micky774): Implement in future PRs as we formalize device placement
+  # semantics
+  if copy:
+    return _array_copy(x)
+  return x
 
 
 @util.implements(np.asarray, lax_description=_ARRAY_DOC)

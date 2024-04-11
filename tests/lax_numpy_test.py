@@ -3840,6 +3840,26 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
+  @jtu.sample_product(
+    change_dtype=[True, False],
+    copy=[True, False],
+  )
+  def testAstypeCopy(self, change_dtype, copy):
+    dtype = 'float32' if change_dtype else 'int32'
+    expect_copy = change_dtype or copy
+    x = jnp.arange(5, dtype='int32')
+    y = x.astype(dtype, copy=copy)
+
+    assert y.dtype == dtype
+    y.delete()
+    assert x.is_deleted() != expect_copy
+
+  def testAstypeComplexDowncast(self):
+    x = jnp.array(2.0+1.5j, dtype='complex64')
+    msg = "Casting from complex to non-complex dtypes will soon raise "
+    with self.assertWarns(DeprecationWarning, msg=msg):
+      x.astype('float32')
+
   def testAstypeInt4(self):
     # Test converting from int4 to int8
     x = np.array([1, -2, -3, 4, -8, 7], dtype=jnp.int4)
