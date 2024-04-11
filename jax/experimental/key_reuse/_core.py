@@ -356,14 +356,15 @@ def jaxpr_type_signature(jaxpr: core.Jaxpr) -> KeyReuseSignature:
           raise KeyReuseError(f"In {eqn.primitive}, source {src.idx} out of range [0, {len(eqn.outvars)}]")
         source(eqn.outvars[src.idx])
 
+  all_inputs = [*jaxpr.invars, *jaxpr.constvars]
   return KeyReuseSignature(
-    *(Sink(i, consumed[v]) for i, v in enumerate(jaxpr.invars)
+    *(Sink(i, consumed[v]) for i, v in enumerate(all_inputs)
       if is_key(v) and np.any(consumed.get(v, False))),
     *(Source(i) for i, v in enumerate(jaxpr.outvars)
-      if is_key(v) and resolve_forwards(v) not in jaxpr.invars and not consumed.get(v, False)),
-    *(Forward(jaxpr.invars.index(resolve_forwards(outvar)), idx_out)  # type: ignore[arg-type]
+      if is_key(v) and resolve_forwards(v) not in all_inputs and not consumed.get(v, False)),
+    *(Forward(all_inputs.index(resolve_forwards(outvar)), idx_out)  # type: ignore[arg-type]
       for idx_out, outvar in enumerate(jaxpr.outvars)
-      if is_key(outvar) and resolve_forwards(outvar) in jaxpr.invars)
+      if is_key(outvar) and resolve_forwards(outvar) in all_inputs)
   )
 
 
@@ -531,23 +532,24 @@ def key_reuse_impl_rule(prim, original_rule):
   @wraps(original_rule)
   def key_reuse_impl(*args, **kwargs):
     if config.debug_key_reuse.value:
+      funcname = str(prim)
+      jaxpr = None
+      consts = []
       if prim == pjit.pjit_p:
         funcname = "jit-compiled function"
         jaxpr = kwargs['jaxpr'].jaxpr
+        consts = kwargs['jaxpr'].consts
         signature = jaxpr_type_signature(jaxpr)
       elif prim in key_reuse_signatures:
-        funcname = str(prim)
-        jaxpr = None
         signature = key_reuse_signatures[prim]
       elif prim in key_reuse_signatures_dynamic:
-        funcname = str(prim)
         jaxpr = jax.make_jaxpr(partial(prim.bind, **kwargs))(*args).jaxpr
         signature = jaxpr_type_signature(jaxpr)
       else:
         raise RuntimeError(f"Internal: no key reuse rule for primitive {prim}")
-      signature.check_signature(*args, funcname=funcname)
+      signature.check_signature(*args, *consts, funcname=funcname)
       result =  original_rule(*args, **kwargs)
-      signature.update_consumption(args, result if prim.multiple_results else [result])
+      signature.update_consumption([*args, *consts], result if prim.multiple_results else [result])
       return result
     else:
       return original_rule(*args, **kwargs)
