@@ -29,6 +29,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, Protocol, Union
 import numpy as np
+import enum
 
 from jax._src.basearray import (
     Array as Array,
@@ -83,3 +84,9 @@ class DuckTypedArray(Protocol):
 class DeprecatedArg:
   def __repr__(self):
     return "Deprecated"
+
+# Mirror of dlpack.h enum
+class DLDeviceType(enum.IntEnum):
+  kDLCPU = 1
+  kDLCUDA = 2
+  kDLROCM = 10
