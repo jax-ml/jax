@@ -25,8 +25,7 @@ import jax
 from jax._src import test_util as jtu
 from jax import numpy as jnp
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 npr.seed(0)
 

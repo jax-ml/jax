@@ -42,8 +42,7 @@ from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax.control_flow import for_loop
 from jax._src.maps import xmap
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 # Some tests are useful for testing both lax.cond and lax.switch. This function

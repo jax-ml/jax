@@ -26,8 +26,7 @@ from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 prev_xla_flags = None
 

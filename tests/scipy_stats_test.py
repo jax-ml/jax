@@ -27,8 +27,7 @@ from jax._src import dtypes, test_util as jtu
 from jax.scipy import stats as lsp_stats
 from jax.scipy.special import expit
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 scipy_version = jtu.parse_version(scipy.version.version)
 

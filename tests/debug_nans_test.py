@@ -26,19 +26,18 @@ from jax import numpy as jnp
 from jax.experimental import pjit
 from jax._src.maps import xmap
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 class DebugNaNsTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    self.cfg = config._read("jax_debug_nans")
-    config.update("jax_debug_nans", True)
+    self.cfg = jax.config._read("jax_debug_nans")
+    jax.config.update("jax_debug_nans", True)
 
   def tearDown(self):
-    config.update("jax_debug_nans", self.cfg)
+    jax.config.update("jax_debug_nans", self.cfg)
     super().tearDown()
 
   def testSinc(self):
@@ -67,7 +66,7 @@ class DebugNaNsTest(jtu.JaxTestCase):
       ans.block_until_ready()
 
   def testJitComputationNaNContextManager(self):
-    config.update("jax_debug_nans", False)
+    jax.config.update("jax_debug_nans", False)
     A = jnp.array(0.)
     f = jax.jit(lambda x: 0. / x)
     ans = f(A)
@@ -210,11 +209,11 @@ class DebugInfsTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    self.cfg = config._read("jax_debug_infs")
-    config.update("jax_debug_infs", True)
+    self.cfg = jax.config._read("jax_debug_infs")
+    jax.config.update("jax_debug_infs", True)
 
   def tearDown(self):
-    config.update("jax_debug_infs", self.cfg)
+    jax.config.update("jax_debug_infs", self.cfg)
     super().tearDown()
 
   def testSingleResultPrimitiveNoInf(self):

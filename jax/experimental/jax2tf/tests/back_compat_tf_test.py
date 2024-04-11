@@ -27,7 +27,7 @@ import tarfile
 from typing import Callable, Optional
 
 from absl.testing import absltest
-from jax import config
+import jax
 from jax._src import test_util as jtu
 from jax._src.internal_test_util import export_back_compat_test_util as bctu
 from jax._src.lib import xla_extension
@@ -37,7 +37,7 @@ import jax.numpy as jnp
 import tensorflow as tf
 
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 def serialize_directory(directory_path):

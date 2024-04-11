@@ -22,7 +22,6 @@ import unittest
 
 from absl.testing import absltest
 import jax
-from jax import config
 from jax import jit
 from jax import lax
 from jax import vmap
@@ -40,7 +39,7 @@ import jax.random
 from jax.util import split_list
 import numpy as np
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 COMPATIBLE_SHAPE_PAIRS = [
     [(), ()],
@@ -151,7 +150,7 @@ def _is_required_cuda_version_satisfied(cuda_version):
 class BCOOTest(sptu.SparseTestCase):
 
   def gpu_matmul_warning_context(self, msg):
-    if config.jax_bcoo_cusparse_lowering:
+    if jax.config.jax_bcoo_cusparse_lowering:
       return self.assertWarnsRegex(sparse.CuSparseEfficiencyWarning, msg)
     return contextlib.nullcontext()
 

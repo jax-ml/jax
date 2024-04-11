@@ -938,9 +938,9 @@ If you want to trace where NaNs are occurring in your functions or gradients, yo
 
 * setting the `JAX_DEBUG_NANS=True` environment variable;
 
-* adding `from jax import config` and `config.update("jax_debug_nans", True)` near the top of your main file;
+* adding `jax.config.update("jax_debug_nans", True)` near the top of your main file;
 
-* adding `from jax import config` and `config.parse_flags_with_absl()` to your main file, then set the option using a command-line flag like `--jax_debug_nans=True`;
+* adding `jax.config.parse_flags_with_absl()` to your main file, then set the option using a command-line flag like `--jax_debug_nans=True`;
 
 This will cause computations to error-out immediately on production of a NaN. Switching this option on adds a nan check to every floating point type value produced by XLA. That means values are pulled back to the host and checked as ndarrays for every primitive operation not under an `@jit`. For code under an `@jit`, the output of every `@jit` function is checked and if a nan is present it will re-run the function in de-optimized op-by-op mode, effectively removing one level of `@jit` at a time.
 
@@ -1087,24 +1087,24 @@ There are a few ways to do this:
 
    ```python
    # again, this only works on startup!
-   from jax import config
-   config.update("jax_enable_x64", True)
+   import jax
+   jax.config.update("jax_enable_x64", True)
    ```
 
 3. You can parse command-line flags with `absl.app.run(main)`
 
    ```python
-   from jax import config
-   config.config_with_absl()
+   import jax
+   jax.config.config_with_absl()
    ```
 
 4. If you want JAX to run absl parsing for you, i.e. you don't want to do `absl.app.run(main)`, you can instead use
 
    ```python
-   from jax import config
+   import jax
    if __name__ == '__main__':
-     # calls config.config_with_absl() *and* runs absl parsing
-     config.parse_flags_with_absl()
+     # calls jax.config.config_with_absl() *and* runs absl parsing
+     jax.config.parse_flags_with_absl()
    ```
 
 Note that #2-#4 work for _any_ of JAX's configuration options.

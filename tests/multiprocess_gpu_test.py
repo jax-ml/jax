@@ -26,7 +26,6 @@ from absl.testing import parameterized
 import numpy as np
 
 import jax
-from jax import config
 from jax._src import core
 from jax._src import distributed
 from jax._src import maps
@@ -40,7 +39,7 @@ try:
 except ImportError:
   portpicker = None
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 @unittest.skipIf(not portpicker, "Test requires portpicker")
 class DistributedTest(jtu.JaxTestCase):

@@ -23,7 +23,6 @@ from absl.testing import parameterized
 import jax
 import jax.numpy as jnp
 from jax import lax
-from jax import config
 from jax.interpreters import batching
 
 import jax._src.lib
@@ -31,7 +30,7 @@ import jax._src.util
 from jax._src import core
 from jax._src import test_util as jtu
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 @jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow")

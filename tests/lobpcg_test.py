@@ -30,7 +30,6 @@ import scipy.linalg as sla
 import scipy.sparse as sps
 
 import jax
-from jax import config
 from jax._src import test_util as jtu
 from jax.experimental.sparse import linalg, bcoo
 import jax.numpy as jnp
@@ -433,5 +432,5 @@ class F64LobpcgTest(LobpcgTest):
 
 
 if __name__ == '__main__':
-  config.parse_flags_with_absl()
+  jax.config.parse_flags_with_absl()
   absltest.main(testLoader=jtu.JaxTestLoader())
