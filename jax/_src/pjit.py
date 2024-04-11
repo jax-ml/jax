@@ -223,7 +223,7 @@ def _get_states(attrs_tracked):
 
 def _get_fastpath_data(
     executable, out_tree, args_flat, out_flat, attrs_tracked, effects,
-    abstracted_axes
+    consts, abstracted_axes,
 ) -> Optional[pxla.MeshExecutableFastpathData]:
   out_reflattened, out_tree = pxla.reflatten_outputs_for_dispatch(out_tree, out_flat)
 
@@ -244,7 +244,7 @@ def _get_fastpath_data(
       # no prng reuse checking
       and not (config.debug_key_reuse.value and any(
         hasattr(arg, 'dtype') and dtypes.issubdtype(arg.dtype, dtypes.prng_key)
-        for arg in (*args_flat, *out_flat)))
+        for arg in (*args_flat, *out_flat, *consts)))
       )
 
   if use_fastpath:
@@ -306,7 +306,7 @@ def _cpp_pjit(jit_info: PjitInfo):
     executable = _read_most_recent_pjit_call_executable(jaxpr)
     maybe_fastpath_data = _get_fastpath_data(
         executable, out_tree, args_flat, out_flat, attrs_tracked, jaxpr.effects,
-        jit_info.abstracted_axes)
+        jaxpr.consts, jit_info.abstracted_axes)
     return outs, maybe_fastpath_data
 
   fun = jit_info.fun
@@ -1557,7 +1557,7 @@ def _pjit_call_impl(*args, jaxpr,
         inline=inline)
     fastpath_data = _get_fastpath_data(
         compiled, tree_structure(out_flat), args, out_flat, [], jaxpr.effects,
-        None)
+        jaxpr.consts, None)
     return out_flat, fastpath_data
 
   f = _get_jaxpr_as_fun(
