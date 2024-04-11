@@ -24,16 +24,14 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax._src import test_util as jtu
-from jax import config
 from jax._src import array
 from jax.sharding import NamedSharding, GSPMDSharding
 from jax.sharding import PartitionSpec as P
 from jax.experimental.array_serialization import serialization
 import numpy as np
 import tensorstore as ts
-import unittest
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 prev_xla_flags = None
 

@@ -22,6 +22,7 @@ from absl.testing import parameterized
 
 import numpy as np
 
+import jax
 from jax import lax
 from jax import random
 import jax.numpy as jnp
@@ -30,8 +31,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from examples import kernel_lsq
 sys.path.pop()
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 def _CheckShapeAgreement(test_case, init_fun, apply_fun, input_shape):

@@ -22,7 +22,6 @@ import textwrap
 import unittest
 
 import jax
-from jax import config
 import jax._src.test_util as jtu
 from jax._src import xla_bridge
 
@@ -33,7 +32,7 @@ from jax._src import xla_bridge
 # parsing to work correctly with bazel (otherwise we could avoid importing
 # absltest/absl logging altogether).
 from absl.testing import absltest
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 @contextlib.contextmanager
@@ -96,27 +95,27 @@ class LoggingTest(jtu.JaxTestCase):
     self.assertEmpty(log_output.getvalue())
 
     # Turn on all debug logging.
-    config.update("jax_debug_log_modules", "jax")
+    jax.config.update("jax_debug_log_modules", "jax")
     with capture_jax_logs() as log_output:
       jax.jit(lambda x: x + 1)(1)
     self.assertIn("Finished tracing + transforming", log_output.getvalue())
     self.assertIn("Compiling <lambda>", log_output.getvalue())
 
     # Turn off all debug logging.
-    config.update("jax_debug_log_modules", None)
+    jax.config.update("jax_debug_log_modules", None)
     with capture_jax_logs() as log_output:
       jax.jit(lambda x: x + 1)(1)
     self.assertEmpty(log_output.getvalue())
 
     # Turn on one module.
-    config.update("jax_debug_log_modules", "jax._src.dispatch")
+    jax.config.update("jax_debug_log_modules", "jax._src.dispatch")
     with capture_jax_logs() as log_output:
       jax.jit(lambda x: x + 1)(1)
     self.assertIn("Finished tracing + transforming", log_output.getvalue())
     self.assertNotIn("Compiling <lambda>", log_output.getvalue())
 
     # Turn everything off again.
-    config.update("jax_debug_log_modules", None)
+    jax.config.update("jax_debug_log_modules", None)
     with capture_jax_logs() as log_output:
       jax.jit(lambda x: x + 1)(1)
     self.assertEmpty(log_output.getvalue())

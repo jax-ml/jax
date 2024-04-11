@@ -23,8 +23,7 @@ from jax._src import config as jax_config
 from jax._src.lib.mlir import ir
 from jax import numpy as jnp
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 def module_to_string(module: ir.Module) -> str:

@@ -30,7 +30,6 @@ from absl.testing import absltest
 
 import jax
 from jax import ad_checkpoint
-from jax import config
 from jax import dtypes
 from jax import lax
 from jax import numpy as jnp
@@ -46,7 +45,7 @@ xops = xla_client.ops
 
 import numpy as np
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 class _TestingOutputStream:

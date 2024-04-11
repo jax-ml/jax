@@ -15,12 +15,11 @@
 
 from absl.testing import absltest
 import jax
-from jax import config
 from jax._src import api
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 class ClearBackendsTest(jtu.JaxTestCase):
