@@ -8,6 +8,9 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.27
 
+* New Features
+  * {func}`jax.numpy.astype` supports new `device` keyword argument.
+
 * Changes
   * {func}`jax.pure_callback` and {func}`jax.experimental.io_callback`
     now use {class}`jax.Array` instead of {class}`np.ndarray`. You can recover

@@ -3843,16 +3843,26 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jtu.sample_product(
     change_dtype=[True, False],
     copy=[True, False],
+    change_device=[True, False],
   )
-  def testAstypeCopy(self, change_dtype, copy):
+  def testAstypeCopy(self, change_dtype, copy, change_device):
+    if change_device and not jtu.test_device_matches(["gpu"]):
+      raise unittest.SkipTest(
+        "Testing device transfer requires at least two available devices."
+      )
+
     dtype = 'float32' if change_dtype else 'int32'
-    expect_copy = change_dtype or copy
+    device = jax.devices("cpu")[0] if change_device else None
+    expect_copy = change_dtype or copy or change_device
     x = jnp.arange(5, dtype='int32')
-    y = x.astype(dtype, copy=copy)
+    y = x.astype(dtype, copy=copy, device=device)
 
     assert y.dtype == dtype
-    y.delete()
-    assert x.is_deleted() != expect_copy
+    if change_device:
+      assert y.devices() == {device}
+    else:
+      y.delete()
+      assert x.is_deleted() != expect_copy
 
   def testAstypeComplexDowncast(self):
     x = jnp.array(2.0+1.5j, dtype='complex64')

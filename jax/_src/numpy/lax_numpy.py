@@ -41,7 +41,7 @@ import numpy as np
 import opt_einsum
 
 import jax
-from jax import jit
+from jax import jit, device_put
 from jax import errors
 from jax import lax
 from jax.sharding import Sharding, SingleDeviceSharding
@@ -2293,12 +2293,34 @@ def astype(x: ArrayLike, dtype: DTypeLike | None,
     warnings.simplefilter("ignore", ComplexWarning)
     return lax.convert_element_type(out, dtype)
 
-def _place_array(x, device=None, copy=None):
-  # TODO(micky774): Implement in future PRs as we formalize device placement
-  # semantics
+def _get_device_set(x: ArrayLike | xc.Device | Sharding | None):
+  if x is None:
+    return None
+  elif isinstance(x, Sharding):
+    return x.device_set
+  elif isinstance(x, xc.Device):
+    return {x}
+  elif hasattr(x, "devices") and not isinstance(x, core.Tracer):
+    return x.devices()
+
+def _place_array(x: jax.Array, device: xc.Device | Sharding | None = None, copy=None):
+  # TODO(micky774): Fine tune mechanics in future PRs as we formalize device
+  # placement semantics
+  devices = _get_device_set(device)
+  src_devices = _get_device_set(x)
+  if devices is not None and src_devices != devices:
+    if copy is not None and not copy:
+      raise ValueError(
+        f"Specified {device=} which requires a copy since the source devices "
+        f"are {src_devices}, however copy=False. Set copy=True or "
+        "copy=None to perform the requested operation."
+      )
+    out = device_put(x, device)
+  else:
+    out = x
   if copy:
-    return _array_copy(x)
-  return x
+    return _array_copy(out)
+  return out
 
 
 @util.implements(np.asarray, lax_description=_ARRAY_DOC)
