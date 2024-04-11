@@ -1548,6 +1548,8 @@ def _round_lowering_rule(ctx: LoweringRuleContext, x, *, rounding_method):
 lowering_rules[lax.round_p] = _round_lowering_rule
 
 
+# See https://mlir.llvm.org/docs/Dialects/ArithOps/#arithcmpi-arithcmpiop for
+# the mapping from comparison type to integer predicates for int comparisons.
 _cmpi_lowering_types = {
     lax.eq_p: 0,
     lax.ne_p: 1,
@@ -1557,10 +1559,15 @@ _cmpi_lowering_types = {
     lax.ge_p: 5,
 }
 
+# See https://mlir.llvm.org/docs/Dialects/ArithOps/#arithcmpf-arithcmpfop for
+# the mapping from comparison type to integer predicate for float comparisons.
 _cmpf_lowering_types = {
     lax.eq_p: 1,
-    lax.gt_p: 2,
     lax.ne_p: 6,
+    lax.lt_p: 4,
+    lax.le_p: 5,
+    lax.gt_p: 2,
+    lax.ge_p: 3,
 }
 
 
