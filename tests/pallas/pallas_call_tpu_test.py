@@ -2254,5 +2254,137 @@ class PallasCallDynamicDMATest(PallasTPUTest):
     np.testing.assert_array_equal(out, expected)
 
 
+class PallasCallComparisonTest(PallasTPUTest):
+
+  def setUp(self):
+    super().setUp()
+    if jtu.device_under_test() != 'tpu':
+      self.skipTest('Test only works on TPU')
+
+  @parameterized.named_parameters(
+      ('integer_1_1', (1, 1)),
+      ('integer_1_16', (1, 16)),
+      ('integer_16_1', (16, 1)),
+      ('integer_-1_1', (-1, 1)),
+      ('integer_1_-1', (1, -1)),
+      ('float_1_1', (1.0, 1.0)),
+      ('float_1_16', (1.0, 16.0)),
+      ('float_16_1', (16.0, 1.0)),
+      ('float_-1_1', (-1.0, 1.0)),
+      ('float_1_-1', (1.0, -1.0)),
+      ('float_1_inf', (1.0, float('inf'))),
+      ('float_inf_1', (float('inf'), 1.0)),
+      ('float_inf_inf', (float('inf'), float('inf'))),
+      ('float_1_nan', (1.0, float('nan'))),
+      ('float_nan_1', (float('nan'), 1.0)),
+      ('float_nan_nan', (float('nan'), float('nan'))),
+      ('float_inf_nan', (float('inf'), float('nan'))),
+      ('float_nan_inf', (float('inf'), float('inf'))),
+  )
+  def test_scalar_compare(self, params):
+    """Test some scalar compares.
+
+    We don't really expect that the results would be wrong, but rather we want
+    to exercise the lowering rules.
+    """
+
+    def kernel(x_ref, y_ref, o_ref):
+      x = x_ref[0, 0]
+      y = y_ref[0, 0]
+      o_ref[0, 0] = jax.lax.select(x == y, 1, 0)
+      o_ref[0, 1] = jax.lax.select(x != y, 1, 0)
+      o_ref[0, 2] = jax.lax.select(x < y, 1, 0)
+      o_ref[0, 3] = jax.lax.select(x <= y, 1, 0)
+      o_ref[0, 4] = jax.lax.select(x > y, 1, 0)
+      o_ref[0, 5] = jax.lax.select(x >= y, 1, 0)
+
+    x, y = params
+    r = jnp.array(
+        [
+            [x == y, x != y, x < y, x <= y, x > y, x >= y],
+        ],
+        jnp.int32,
+    )
+    x = jnp.array([[x]])
+    y = jnp.array([[y]])
+
+    result = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct([1, 128], jnp.int32),
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.SMEM),
+            pl.BlockSpec(memory_space=pltpu.SMEM),
+        ],
+        out_specs=pl.BlockSpec(
+            lambda i: (0, 0), (1, 128), memory_space=pltpu.SMEM
+        ),
+        grid=(1,),
+    )(x, y)
+    np.testing.assert_array_equal(r, result[..., 0:6])
+
+  @parameterized.named_parameters(
+      ('integer_1_1', (1, 1)),
+      ('integer_1_16', (1, 16)),
+      ('integer_16_1', (16, 1)),
+      ('integer_-1_1', (-1, 1)),
+      ('integer_1_-1', (1, -1)),
+      ('float_1_1', (1.0, 1.0)),
+      ('float_1_16', (1.0, 16.0)),
+      ('float_16_1', (16.0, 1.0)),
+      ('float_-1_1', (-1.0, 1.0)),
+      ('float_1_-1', (1.0, -1.0)),
+      ('float_1_inf', (1.0, float('inf'))),
+      ('float_inf_1', (float('inf'), 1.0)),
+      ('float_inf_inf', (float('inf'), float('inf'))),
+      ('float_1_nan', (1.0, float('nan'))),
+      ('float_nan_1', (float('nan'), 1.0)),
+      ('float_nan_nan', (float('nan'), float('nan'))),
+      ('float_inf_nan', (float('inf'), float('nan'))),
+      ('float_nan_inf', (float('inf'), float('inf'))),
+  )
+  def test_vector_compare(self, params):
+    """Test some vector compares.
+
+    We don't really expect that the results would be wrong, but rather we want
+    to exercise the lowering rules.
+    """
+
+    def kernel(x_ref, y_ref, o_ref):
+      x = x_ref[:]
+      y = y_ref[:]
+      one = jnp.ones([8, 128], dtype=jnp.int32)
+      zero = jnp.zeros([8, 128], dtype=jnp.int32)
+      o_ref[0] = jax.lax.select(x == y, one, zero)
+      o_ref[1] = jax.lax.select(x != y, one, zero)
+      o_ref[2] = jax.lax.select(x < y, one, zero)
+      o_ref[3] = jax.lax.select(x <= y, one, zero)
+      o_ref[4] = jax.lax.select(x > y, one, zero)
+      o_ref[5] = jax.lax.select(x >= y, one, zero)
+
+    # Widen out our params to (8, 128) vectors.
+    x, y = params
+    x = jnp.full([8, 128], x)
+    y = jnp.full([8, 128], y)
+
+    r = [x == y, x != y, x < y, x <= y, x > y, x >= y]
+
+    result = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct([6, 8, 128], jnp.int32),
+        in_specs=[
+            pl.BlockSpec(lambda *_: (0, 0), (8, 128)),
+            pl.BlockSpec(lambda *_: (0, 0), (8, 128)),
+        ],
+        out_specs=pl.BlockSpec(lambda *_: (0, 0, 0), (6, 8, 128)),
+        grid=(1,),
+    )(x, y)
+    np.testing.assert_array_equal(r[0], result[0])
+    np.testing.assert_array_equal(r[1], result[1])
+    np.testing.assert_array_equal(r[2], result[2])
+    np.testing.assert_array_equal(r[3], result[3])
+    np.testing.assert_array_equal(r[4], result[4])
+    np.testing.assert_array_equal(r[5], result[5])
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
