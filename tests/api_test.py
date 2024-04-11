@@ -1706,7 +1706,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_device_put_sharding(self):
     mesh = jax.sharding.Mesh(jax.devices(), ('x',))
-    s = jax.sharding.NamedSharding(mesh, P('x'))
+    s = jax.NamedSharding(mesh, P('x'))
     x = jnp.arange(len(jax.devices()))
 
     y = jax.device_put(x, s)
@@ -1732,9 +1732,9 @@ class APITest(jtu.JaxTestCase):
 
     mesh = jax.sharding.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)),
                              ("x", "y"))
-    s1 = jax.sharding.NamedSharding(mesh, P("x"))
-    s2 = jax.sharding.NamedSharding(mesh, P("y"))
-    s3 = jax.sharding.NamedSharding(mesh, P("x", "y"))
+    s1 = jax.NamedSharding(mesh, P("x"))
+    s2 = jax.NamedSharding(mesh, P("y"))
+    s3 = jax.NamedSharding(mesh, P("x", "y"))
 
     x = jnp.arange(2)
     y = jnp.arange(2) + 10
