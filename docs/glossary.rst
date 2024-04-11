@@ -53,7 +53,7 @@ JAX Glossary of Terms
 
     pytree
       A pytree is an abstraction that lets JAX handle tuples, lists, dicts, and other more
-      general containers of array values in a uniform way. Refer to {ref}`working-with-pytrees`
+      general containers of array values in a uniform way. Refer to :ref:`working-with-pytrees`
       for a more detailed discussion.
 
     reverse-mode autodiff
