@@ -27,8 +27,7 @@ from jax import lax
 import jax.numpy as jnp
 import jax._src.test_util as jtu
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 class EinsumTest(jtu.JaxTestCase):

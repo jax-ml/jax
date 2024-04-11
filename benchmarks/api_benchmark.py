@@ -33,9 +33,7 @@ from jax.experimental import multihost_utils
 import jax.numpy as jnp
 import numpy as np
 
-from jax import config
-
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 partial = functools.partial

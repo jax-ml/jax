@@ -21,14 +21,13 @@ import unittest
 
 from absl.testing import absltest
 import jax
-from jax import config
 from jax.experimental import pjit
 from jax._src import debugger
 from jax._src import test_util as jtu
 import jax.numpy as jnp
 import numpy as np
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 def make_fake_stdin_stdout(commands: Sequence[str]) -> tuple[IO[str], io.StringIO]:
   fake_stdin = io.StringIO()

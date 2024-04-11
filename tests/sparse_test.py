@@ -22,7 +22,6 @@ from absl.testing import parameterized
 
 import jax
 import jax.random
-from jax import config
 from jax import dtypes
 from jax.experimental import sparse
 from jax.experimental.sparse import coo as sparse_coo
@@ -43,7 +42,7 @@ from jax.util import split_list
 import numpy as np
 import scipy.sparse
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 all_dtypes = jtu.dtypes.integer + jtu.dtypes.floating + jtu.dtypes.complex
 

@@ -37,8 +37,7 @@ from jax import vmap
 from jax.interpreters import batching
 from jax.tree_util import register_pytree_node
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 # These are 'manual' tests for batching (vmap). The more exhaustive, more

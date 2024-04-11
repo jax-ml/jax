@@ -26,8 +26,7 @@ import jax
 from jax._src import test_util as jtu
 from jax.scipy import special as lsp_special
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 all_shapes = [(), (4,), (3, 4), (3, 1), (1, 4), (2, 1, 4)]

@@ -34,8 +34,7 @@ from jax._src import test_util as jtu
 from jax.scipy import special as lsp_special
 from jax.scipy import cluster as lsp_cluster
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 scipy_version = jtu.parse_version(scipy.version.version)
 

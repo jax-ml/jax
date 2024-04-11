@@ -29,8 +29,7 @@ from jax.experimental.key_reuse._core import (
   Source, Sink, Forward, KeyReuseSignature)
 from jax.experimental.key_reuse import _core
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 key = jax.eval_shape(jax.random.key, 0)

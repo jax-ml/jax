@@ -24,8 +24,7 @@ from jax._src import test_util as jtu
 from jax._src.lax.control_flow import for_loop
 import jax.numpy as jnp
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 def remat_of_for_loop(nsteps, body, state, **kwargs):
   return jax.remat(lambda state: for_loop.for_loop(nsteps, body, state,

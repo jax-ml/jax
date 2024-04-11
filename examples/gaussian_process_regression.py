@@ -17,10 +17,11 @@
 
 from absl import app
 from functools import partial
+
+import jax
 from jax import grad
 from jax import jit
 from jax import vmap
-from jax import config
 import jax.numpy as jnp
 import jax.random as random
 import jax.scipy as scipy
@@ -125,5 +126,5 @@ def main(unused_argv):
                     mu.flatten() - std * 2, mu.flatten() + std * 2)
 
 if __name__ == "__main__":
-  config.config_with_absl()
+  jax.config.config_with_absl()
   app.run(main)
