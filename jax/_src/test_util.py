@@ -1725,22 +1725,12 @@ class numpy_with_mpmath:
 
   def sqrt(self, x):
     ctx = x.context
-    # workaround mpmath bugs:
     if isinstance(x, ctx.mpc):
-      if ctx.isinf(x.real) and ctx.isinf(x.imag):
-        if x.real > 0: return x
-        ninf = x.real
-        inf = -ninf
-        if x.imag > 0: return ctx.make_mpc((inf._mpf_, inf._mpf_))
-        return ctx.make_mpc((inf._mpf_, inf._mpf_))
-      elif ctx.isfinite(x.real) and ctx.isinf(x.imag):
-        if x.imag > 0:
-          inf = x.imag
-          return ctx.make_mpc((inf._mpf_, inf._mpf_))
-        else:
-          ninf = x.imag
-          inf = -ninf
-          return ctx.make_mpc((inf._mpf_, ninf._mpf_))
+      # Workaround mpmath 1.3 bug in sqrt(+-inf+-infj) evaluation (see mpmath/mpmath#776).
+      # TODO(pearu): remove this function when mpmath 1.4 or newer
+      # will be the required test dependency.
+      if ctx.isinf(x.imag):
+        return ctx.make_mpc((ctx.inf._mpf_, x.imag._mpf_))
     return ctx.sqrt(x)
 
   def expm1(self, x):
@@ -1763,6 +1753,34 @@ class numpy_with_mpmath:
         if x.real < 0 and x.imag > 0:
           return ctx.make_mpc(((-x.real)._mpf_, (3 * pi / 4)._mpf_))
     return ctx.log1p(x)
+
+  def tan(self, x):
+    ctx = x.context
+    if isinstance(x, ctx.mpc):
+      # Workaround mpmath 1.3 bug in tan(+-inf+-infj) evaluation (see mpmath/mpmath#781).
+      # TODO(pearu): remove this function when mpmath 1.4 or newer
+      # will be the required test dependency.
+      if ctx.isinf(x.imag) and (ctx.isinf(x.real) or ctx.isfinite(x.real)):
+        if x.imag > 0:
+          return ctx.make_mpc((ctx.zero._mpf_, ctx.one._mpf_))
+        return ctx.make_mpc((ctx.zero._mpf_, (-ctx.one)._mpf_))
+      if ctx.isinf(x.real) and ctx.isfinite(x.imag):
+        return ctx.make_mpc((ctx.nan._mpf_, ctx.nan._mpf_))
+    return ctx.tan(x)
+
+  def tanh(self, x):
+    ctx = x.context
+    if isinstance(x, ctx.mpc):
+      # Workaround mpmath 1.3 bug in tanh(+-inf+-infj) evaluation (see mpmath/mpmath#781).
+      # TODO(pearu): remove this function when mpmath 1.4 or newer
+      # will be the required test dependency.
+      if ctx.isinf(x.imag) and (ctx.isinf(x.real) or ctx.isfinite(x.real)):
+        if x.imag > 0:
+          return ctx.make_mpc((ctx.zero._mpf_, ctx.one._mpf_))
+        return ctx.make_mpc((ctx.zero._mpf_, (-ctx.one)._mpf_))
+      if ctx.isinf(x.real) and ctx.isfinite(x.imag):
+        return ctx.make_mpc((ctx.nan._mpf_, ctx.nan._mpf_))
+    return ctx.tanh(x)
 
   def log2(self, x):
     return x.context.ln(x) / x.context.ln2

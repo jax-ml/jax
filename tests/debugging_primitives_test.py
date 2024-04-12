@@ -19,7 +19,6 @@ import unittest
 from absl.testing import absltest
 import jax
 from jax import lax
-from jax import config
 from jax.experimental import pjit
 from jax.interpreters import pxla
 from jax._src import ad_checkpoint
@@ -35,7 +34,7 @@ try:
 except ModuleNotFoundError:
   rich = None
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 debug_print = debugging.debug_print
 

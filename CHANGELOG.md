@@ -8,10 +8,25 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.27
 
+* Changes
+  * {func}`jax.pure_callback` and {func}`jax.experimental.io_callback`
+    now use {class}`jax.Array` instead of {class}`np.ndarray`. You can recover
+    the old behavior by transforming the arguments via
+    `jax.tree.map(np.asarray, args)` before passing them to the callback.
+  * `complex_arr.astype(bool)` now follows the same semantics as NumPy, returning
+    False where `complex_arr` is equal to `0 + 0j`, and True otherwise.
+
 * Deprecations & Removals
   * Pallas now exclusively uses XLA for compiling kernels on GPU. The old
     lowering pass via Triton Python APIs has been removed and the
     `JAX_TRITON_COMPILE_VIA_XLA` environment variable no longer has any effect.
+  * {func}`jax.numpy.clip` has a new argument signature: `a`, `a_min`, and
+    `a_max` are deprecated in favor of `x` (positonal only), `min`, and
+    `max` ({jax-issue}`20550`).
+  * The `device()` method of JAX arrays has been removed, after being deprecated
+    since JAX v0.4.21. Use `arr.devices()` instead.
+  * The `initial` argument to {func}`jax.nn.softmax` and {func}`jax.nn.log_softmax`
+    is deprecated; empty inputs to softmax are now supported without setting this.
 
 
 ## jaxlib 0.4.27
@@ -25,6 +40,13 @@ Remember to align the itemized text with the first line of an item within a list
 * Changes
   * Complex-valued {func}`jax.numpy.geomspace` now chooses the logarithmic spiral
     branch consistent with that of NumPy 2.0.
+  * The behavior of `lax.rng_bit_generator`, and in turn the `'rbg'`
+    and `'unsafe_rbg'` PRNG implementations, under `jax.vmap` [has
+    changed](https://github.com/google/jax/issues/19085) so that
+    mapping over keys results in random generation only from the first
+    key in the batch.
+  * Docs now use `jax.random.key` for construction of PRNG key arrays
+    rather than `jax.random.PRNGKey`.
 
 * Deprecations & Removals
   * {func}`jax.tree_map` is deprecated; use `jax.tree.map` instead, or for backward
@@ -40,6 +62,8 @@ Remember to align the itemized text with the first line of an item within a list
     `spmd_axis_name` argument for expressing SPMD device-parallel computations.
   * The `jax.experimental.host_callback` module is deprecated.
     Use instead the [new JAX external callbacks](https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html).
+    Added `JAX_HOST_CALLBACK_LEGACY` flag to assist in the transition to the
+    new callbacks. See {jax-issue}`#20385` for a discussion.
   * Passing arguments to {func}`jax.numpy.array_equal` and {func}`jax.numpy.array_equiv`
     that cannot be converted to a JAX array now results in an exception.
   * The deprecated flag `jax_parallel_functions_output_gda` has been removed.
@@ -47,13 +71,12 @@ Remember to align the itemized text with the first line of an item within a list
   * The previously-deprecated imports `jax.interpreters.ad.config` and
     `jax.interpreters.ad.source_info_util` have now been removed. Use `jax.config`
     and `jax.extend.source_info_util` instead.
-  * JAX export does not support anymore older serialization version. Version 9
+  * JAX export does not support older serialization versions anymore. Version 9
     has been supported since October 27th, 2023 and has become the default
     since February 1, 2024.
     See [a description of the versions](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions).
     This change could break clients that set a specific
     JAX serialization version lower than 9.
-
 
 ## jaxlib 0.4.26 (April 3, 2024)
 
@@ -131,8 +154,8 @@ Remember to align the itemized text with the first line of an item within a list
       cannot interact, e.g., in arithmetic operations.
       Scopes are introduced by {func}`jax.experimental.jax2tf.convert`,
       {func}`jax.experimental.export.symbolic_shape`, {func}`jax.experimental.export.symbolic_args_specs`.
-      The scope of a symbolic expression `e` can be read with `e.scope` and passed in
-      to the above functions to direct them to construct symbolic expressions in
+      The scope of a symbolic expression `e` can be read with `e.scope` and passed 
+      into the above functions to direct them to construct symbolic expressions in
       a given scope.
       See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#user-specified-symbolic-constraints.
     * simplified and faster equality comparisons, where we consider two symbolic dimensions
@@ -313,7 +336,7 @@ Remember to align the itemized text with the first line of an item within a list
 * Bug fixes
   * Only process 0 in a multicontroller distributed JAX program will write
     persistent compilation cache entries. This fixes write contention if the
-    cache is placed on a network filesystem such as GCS.
+    cache is placed on a network file system such as GCS.
   * The version check for cusolver and cufft no longer considers the patch
     versions when determining if the installed version of these libraries is at
     least as new as the versions against which JAX was built.
@@ -1441,7 +1464,7 @@ Changes:
     special autodiff handling for hcb.id_tap and id_print.
     From now on, only the primals are tapped. The old behavior can be
     obtained (for a limited time) by setting the ``JAX_HOST_CALLBACK_AD_TRANSFORMS``
-    environment variable, or the ```--flax_host_callback_ad_transforms``` flag.
+    environment variable, or the ```--jax_host_callback_ad_transforms``` flag.
     Additionally, added documentation for how to implement the old behavior
     using JAX custom AD APIs ({jax-issue}`#8678`).
   * Sorting now matches the behavior of NumPy for ``0.0`` and ``NaN`` regardless of the

@@ -69,7 +69,7 @@ _no_operand_sentinel = object()
 @api_boundary
 def switch(index, branches: Sequence[Callable], *operands,
            operand=_no_operand_sentinel):
-  """Apply exactly one of ``branches`` given by ``index``.
+  """Apply exactly one of the ``branches`` given by ``index``.
 
   If ``index`` is out of bounds, it is clamped to within bounds.
 

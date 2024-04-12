@@ -54,6 +54,7 @@ py_test(
     deps = [
         "//jax",
         "//jax:experimental_array_api",
+        "//jax:test_util",
     ] + py_deps("absl/testing"),
 )
 

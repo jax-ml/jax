@@ -30,8 +30,11 @@
 #include "jaxlib/gpu/triton_utils.h"
 #include "jaxlib/gpu/vendor.h"
 #include "xla/service/custom_call_status.h"
-#include "xla/stream_executor/gpu/asm_compiler.h"
 #include "tsl/platform/env.h"
+
+#ifdef JAX_GPU_CUDA
+#include "xla/stream_executor/cuda/cuda_asm_compiler.h"
+#endif
 
 #define GPU_RETURN_IF_ERROR(expr) JAX_RETURN_IF_ERROR(JAX_AS_STATUS(expr))
 

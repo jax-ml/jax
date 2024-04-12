@@ -29,8 +29,7 @@ from jax.experimental.key_reuse._core import (
   Source, Sink, Forward, KeyReuseSignature)
 from jax.experimental.key_reuse import _core
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 key = jax.eval_shape(jax.random.key, 0)
@@ -624,16 +623,25 @@ class KeyReuseEagerTest(jtu.JaxTestCase):
 
   def test_simple_reuse_nojit(self):
     key = jax.random.key(0)
-    _ = jax.random.bits(key)
     with jax.disable_jit():
+      _ = jax.random.bits(key)
       with self.assertRaisesRegex(KeyReuseError, self.eager_bits_msg):
         _ = jax.random.bits(key)
 
   def test_simple_key_reuse_jit(self):
     key = jax.random.key(0)
-    _ = jax.random.bits(key)
+    _ = jax.jit(jax.random.bits)(key)
     with self.assertRaisesRegex(KeyReuseError, self.jit_msg):
       _ = jax.jit(jax.random.bits)(key)
+
+  def test_closed_over_key_reuse_jit(self):
+    key = jax.random.key(0)
+    @jax.jit
+    def f():
+      return jax.random.uniform(key)
+    _ = f()
+    with self.assertRaisesRegex(KeyReuseError, self.jit_msg):
+      _ = f()
 
   def test_key_reuse_within_jit(self):
     @jax.jit

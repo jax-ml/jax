@@ -1548,6 +1548,8 @@ def _round_lowering_rule(ctx: LoweringRuleContext, x, *, rounding_method):
 lowering_rules[lax.round_p] = _round_lowering_rule
 
 
+# See https://mlir.llvm.org/docs/Dialects/ArithOps/#arithcmpi-arithcmpiop for
+# the mapping from comparison type to integer predicates for int comparisons.
 _cmpi_lowering_types = {
     lax.eq_p: 0,
     lax.ne_p: 1,
@@ -1557,10 +1559,15 @@ _cmpi_lowering_types = {
     lax.ge_p: 5,
 }
 
+# See https://mlir.llvm.org/docs/Dialects/ArithOps/#arithcmpf-arithcmpfop for
+# the mapping from comparison type to integer predicate for float comparisons.
 _cmpf_lowering_types = {
     lax.eq_p: 1,
-    lax.gt_p: 2,
     lax.ne_p: 6,
+    lax.lt_p: 4,
+    lax.le_p: 5,
+    lax.gt_p: 2,
+    lax.ge_p: 3,
 }
 
 
@@ -1822,9 +1829,12 @@ def _while_lowering_rule(
     body_nconsts,
     body_jaxpr,
 ):
-  jaxpr = pallas_utils.pattern_match_while_to_fori_loop(
+  jaxpr, err = pallas_utils.pattern_match_while_to_fori_loop(
       cond_jaxpr, cond_nconsts, body_jaxpr, body_nconsts
   )
+  if jaxpr is None:
+    raise NotImplementedError(err)
+
   _, body_consts, carry = split_list(args, [cond_nconsts, body_nconsts])
   (lb, ub), args = carry[:2], carry[2:]
   for_out = _lower_jaxpr_to_for_loop(
@@ -2091,6 +2101,20 @@ def _device_id_to_logical(
   elif device_id_type is tpu_primitives.DeviceIdType.LOGICAL:
     return device_id
   raise NotImplementedError(f"Unsupported device id type: {device_id_type}")
+
+
+def _semaphore_read_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args,
+    args_tree,
+):
+  sem_aval, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
+  sem, indexers = tree_util.tree_unflatten(args_tree, args)
+  sem, _ = _index_ref(sem, sem_aval, sem_aval.shape, indexers)
+  return tpu.SemaphoreReadOp(sem).result
+
+
+lowering_rules[tpu_primitives.semaphore_read_p] = _semaphore_read_lowering_rule
 
 def _semaphore_signal_lowering_rule(
     ctx: LoweringRuleContext,

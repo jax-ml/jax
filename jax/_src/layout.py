@@ -72,16 +72,18 @@ class Layout:
       )
     if not isinstance(
         device_local_layout, (DeviceLocalLayout, type(None), AutoLayout)):
-      raise ValueError(
+      raise TypeError(
           'Invalid value received for the device_local_layout argument.'
-          ' Expected values are `None`, `DeviceLocalLayout.AUTO` or an instance'
-          f' of `DeviceLocalLayout`. Got {device_local_layout}')
+          ' Expected values are `None`, `DeviceLocalLayout.AUTO` or an'
+          f' instance of `DeviceLocalLayout`. Got {device_local_layout} of'
+          f' type {type(device_local_layout)}'
+      )
     if not isinstance(
         sharding, (Sharding, type(None), AutoSharding)):
-      raise ValueError(
+      raise TypeError(
           'Invalid value received for the sharding argument. Expected values'
           ' are `None`, `pjit.AUTO` or an instance of `jax.Sharding`. Got'
-          f' {sharding}')
+          f' {sharding} of type {type(sharding)}')
 
     self.device_local_layout = device_local_layout
     self.sharding = sharding

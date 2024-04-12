@@ -54,6 +54,7 @@ from jax._src.lib import jax_jit
 from jax._src import traceback_util
 from jax._src.typing import Array, DimSize, Shape
 from jax._src import typing
+
 traceback_util.register_exclusion(__file__)
 
 zip, unsafe_zip = safe_zip, zip
@@ -832,14 +833,14 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
 
   @property
   def block_until_ready(self):
-    # Raise AttribureError for backward compatibility with hasattr() and getattr() checks.
+    # Raise AttributeError for backward compatibility with hasattr() and getattr() checks.
     raise AttributeError(self,
       f"The 'block_until_ready' method is not available on {self._error_repr()}."
       f"{self._origin_msg()}")
 
   @property
   def copy_to_host_async(self):
-    # Raise AttribureError for backward compatibility with hasattr() and getattr() checks.
+    # Raise AttributeError for backward compatibility with hasattr() and getattr() checks.
     raise AttributeError(self,
       f"The 'copy_to_host_async' method is not available on {self._error_repr()}."
       f"{self._origin_msg()}")
@@ -847,11 +848,6 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
   def delete(self):
     raise ConcretizationTypeError(self,
       f"The delete() method was called on {self._error_repr()}."
-      f"{self._origin_msg()}")
-
-  def device(self):
-    raise ConcretizationTypeError(self,
-      f"The device() method was called on {self._error_repr()}."
       f"{self._origin_msg()}")
 
   def devices(self):
@@ -910,10 +906,20 @@ class EvalTrace(Trace):
   lift = sublift = pure
 
   def process_primitive(self, primitive, tracers, params):
-    return primitive.impl(*tracers, **params)
+    if config.debug_key_reuse.value:
+      # Import here to avoid circular imports
+      from jax.experimental.key_reuse._core import call_impl_with_key_reuse_checks  # pytype: disable=import-error
+      return call_impl_with_key_reuse_checks(primitive, primitive.impl, *tracers, **params)
+    else:
+      return primitive.impl(*tracers, **params)
 
   def process_call(self, primitive, f, tracers, params):
-    return primitive.impl(f, *tracers, **params)
+    if config.debug_key_reuse.value:
+      # Import here to avoid circular imports
+      from jax.experimental.key_reuse._core import call_impl_with_key_reuse_checks  # pytype: disable=import-error
+      return call_impl_with_key_reuse_checks(primitive, primitive.impl, f, *tracers, **params)
+    else:
+      return primitive.impl(f, *tracers, **params)
   process_map = process_call
 
   def process_custom_transpose(self, primitive, call, tracers, **_):

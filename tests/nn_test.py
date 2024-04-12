@@ -71,6 +71,17 @@ class NNFunctionsTest(jtu.JaxTestCase):
     check_grads(nn.sparse_plus, (0.,), order=1,
                 rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
 
+  def testSparseplusAndSparseSigmoid(self):
+    self.assertAllClose(
+        jax.grad(nn.sparse_plus)(0.), nn.sparse_sigmoid(0.),
+        check_dtypes=False)
+    self.assertAllClose(
+        jax.grad(nn.sparse_plus)(2.), nn.sparse_sigmoid(2.),
+        check_dtypes=False)
+    self.assertAllClose(
+        jax.grad(nn.sparse_plus)(-2.), nn.sparse_sigmoid(-2.),
+        check_dtypes=False)
+
   def testSquareplusGrad(self):
     check_grads(nn.squareplus, (1e-8,), order=4,
                 rtol=1e-2 if jtu.test_device_matches(["tpu"]) else None)
@@ -133,6 +144,11 @@ class NNFunctionsTest(jtu.JaxTestCase):
     val = nn.sparse_plus(89.)
     self.assertAllClose(val, 89., check_dtypes=False)
 
+  def testSparsesigmoidValue(self):
+    self.assertAllClose(nn.sparse_sigmoid(-2.), 0., check_dtypes=False)
+    self.assertAllClose(nn.sparse_sigmoid(2.), 1., check_dtypes=False)
+    self.assertAllClose(nn.sparse_sigmoid(0.), .5, check_dtypes=False)
+
   def testSquareplusValue(self):
     val = nn.squareplus(1e3)
     self.assertAllClose(val, 1e3, check_dtypes=False, atol=1e-3)
@@ -190,11 +206,23 @@ class NNFunctionsTest(jtu.JaxTestCase):
       jax.make_jaxpr(lambda: nn.hard_tanh(jnp.ones((10 ** 12,))))  # don't oom
 
   @parameterized.parameters([nn.softmax, nn.log_softmax])
+  def testSoftmaxEmptyArray(self, fn):
+    x = jnp.array([], dtype=float)
+    self.assertArraysEqual(fn(x), x)
+
+  @parameterized.parameters([nn.softmax, nn.log_softmax])
+  def testSoftmaxEmptyMask(self, fn):
+    x = jnp.array([5.5, 1.3, -4.2, 0.9])
+    m = jnp.zeros_like(x, dtype=bool)
+    expected = jnp.full_like(x, 0.0 if fn is nn.softmax else -jnp.inf)
+    self.assertArraysEqual(fn(x, where=m), expected)
+
+  @parameterized.parameters([nn.softmax, nn.log_softmax])
   def testSoftmaxWhereMask(self, fn):
     x = jnp.array([5.5, 1.3, -4.2, 0.9])
     m = jnp.array([True, False, True, True])
 
-    out = fn(x, where=m, initial=-jnp.inf)
+    out = fn(x, where=m)
     self.assertAllClose(out[m], fn(x[m]))
 
     probs = out if fn is nn.softmax else jnp.exp(out)
@@ -214,7 +242,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     x = jnp.array([36., 10000.])
     mask = x < 1000
 
-    f = lambda x, mask: fn(x, where=mask, initial=x.min())[0]
+    f = lambda x, mask: fn(x, where=mask)[0]
 
     self.assertAllClose(jax.grad(f)(x, mask), jnp.zeros_like(x))
 

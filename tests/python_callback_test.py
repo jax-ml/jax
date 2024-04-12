@@ -89,8 +89,7 @@ class PythonCallbackTest(jtu.JaxTestCase):
   def test_callback_with_scalar_values(self, *, callback):
     @jax.jit
     def f(x):
-      return callback(lambda x: x + np.float32(1.),
-                      core.ShapedArray(x.shape, x.dtype), x)
+      return callback(lambda x: x + 1.0, core.ShapedArray(x.shape, x.dtype), x)
 
     out = f(0.)
     self.assertEqual(out, 1.)
@@ -247,7 +246,7 @@ class PythonCallbackTest(jtu.JaxTestCase):
       jax.effects_barrier()
 
   @with_pure_and_io_callbacks
-  def test_callback_with_wrong_dtype_outputs(self, *, callback=io_callback_ordered):
+  def test_callback_with_wrong_dtype_outputs(self, *, callback):
 
     def _cb():
       return np.array([1], np.float64)
@@ -617,10 +616,10 @@ class PureCallbackTest(jtu.JaxTestCase):
     super().tearDown()
     dispatch.runtime_tokens.clear()
 
-  def test_pure_callback_passes_ndarrays_without_jit(self):
+  def test_pure_callback_passes_jax_arrays_without_jit(self):
 
     def cb(x):
-      self.assertIs(type(x), np.ndarray)
+      self.assertIsInstance(x, jax.Array)
       return x
 
     def f(x):
@@ -1336,6 +1335,22 @@ class IOCallbackTest(jtu.JaxTestCase):
     for shard in _collected.values():
       self.assertLen(shard, 2)
       np.testing.assert_array_equal(shard[0] + 1, shard[1])
+
+  def test_batching_with_side_effects(self):
+    # https://github.com/google/jax/issues/20628#issuecomment-2050800195
+    x_lst = []
+    def append_x(x):
+      nonlocal x_lst
+      x_lst.append(x)
+
+    @jax.jit
+    def f(x):
+      io_callback(append_x, None, x, ordered=False)
+      io_callback(append_x, None, 2 * x, ordered=False)
+
+    jax.vmap(f)(jnp.arange(3.))
+    jax.effects_barrier()
+    self.assertAllClose(x_lst, [0., 1., 2., 0., 2., 4.], check_dtypes=False)
 
 
 if __name__ == "__main__":

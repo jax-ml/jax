@@ -73,25 +73,48 @@ class DLPackTest(jtu.JaxTestCase):
   @jtu.sample_product(
     shape=all_shapes,
     dtype=dlpack_dtypes,
-    gpu=[False, True],
+    copy=[False, True, None]
   )
-  def testJaxRoundTrip(self, shape, dtype, gpu):
+  @jtu.run_on_devices("gpu")
+  def testJaxRoundTrip(self, shape, dtype, copy):
     if xb.using_pjrt_c_api():
       self.skipTest("DLPack support is incomplete in the PJRT C API")  # TODO(skyewm)
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
-    if gpu and jtu.test_device_matches(["cpu"]):
-      raise unittest.SkipTest("Skipping GPU test case on CPU")
-    device = jax.devices("gpu" if gpu else "cpu")[0]
-    x = jax.device_put(np, device)
-    dlpack = jax.dlpack.to_dlpack(x)
-    y = jax.dlpack.from_dlpack(dlpack)
-    self.assertEqual(y.devices(), {device})
-    self.assertAllClose(np.astype(x.dtype), y)
 
+    def _check_copy(x: jax.Array, y: jax.Array, expect_copy):
+      copied = x.unsafe_buffer_pointer() != y.unsafe_buffer_pointer()
+      assert copied == expect_copy, f"Expected {'a' if expect_copy else 'no'} copy"
+
+    # Check if the source device is preserved
+    x = jax.device_put(np, jax.devices("cpu")[0])
+    device = jax.devices("gpu")[0]
+    y = jax.device_put(x, device)
+    dl_device = y.__dlpack_device__()
+    dlpack = jax.dlpack.to_dlpack(y, copy=copy)
+    z = jax.dlpack.from_dlpack(dlpack)
+
+    self.assertEqual(z.devices(), {device})
+    self.assertAllClose(np.astype(x.dtype), z)
     self.assertRaisesRegex(RuntimeError,
-                           "DLPack tensor may be consumed at most once",
-                           lambda: jax.dlpack.from_dlpack(dlpack))
+                          "DLPack tensor may be consumed at most once",
+                          lambda: jax.dlpack.from_dlpack(dlpack))
+
+    if shape in nonempty_array_shapes:
+      _check_copy(y, z, bool(copy))
+
+    # Check if the destination device can be specified
+    make_dlpack = lambda: x.__dlpack__(dl_device=dl_device, copy=copy)
+    if copy == False:
+      self.assertRaisesRegex(ValueError, "copy=False", make_dlpack)
+      return
+
+    z = jax.dlpack.from_dlpack(make_dlpack())
+    self.assertEqual(z.devices(), {device})
+    self.assertAllClose(x, z)
+
+    if shape in nonempty_array_shapes:
+      _check_copy(x, z, True)
 
   @jtu.sample_product(
     shape=all_shapes,
@@ -119,8 +142,6 @@ class DLPackTest(jtu.JaxTestCase):
   )
   @unittest.skipIf(not tf, "Test requires TensorFlow")
   def testTensorFlowToJax(self, shape, dtype):
-    if xb.using_pjrt_c_api():
-      self.skipTest("DLPack support is incomplete in the PJRT C API")
     if (not config.enable_x64.value and
         dtype in [jnp.int64, jnp.uint64, jnp.float64]):
       raise self.skipTest("x64 types are disabled by jax_enable_x64")
@@ -163,8 +184,6 @@ class DLPackTest(jtu.JaxTestCase):
 
   @unittest.skipIf(not tf, "Test requires TensorFlow")
   def testTensorFlowToJaxInt64(self):
-    if xb.using_pjrt_c_api():
-      self.skipTest("DLPack support is incomplete in the PJRT C API")
     # See https://github.com/google/jax/issues/11895
     x = jax.dlpack.from_dlpack(
         tf.experimental.dlpack.to_dlpack(tf.ones((2, 3), tf.int64)))
@@ -174,12 +193,21 @@ class DLPackTest(jtu.JaxTestCase):
   @jtu.sample_product(
     shape=all_shapes,
     dtype=numpy_dtypes,
+    copy=[False, True],
   )
-  def testNumpyToJax(self, shape, dtype):
+  def testNumpyToJax(self, shape, dtype, copy):
     rng = jtu.rand_default(self.rng())
     x_np = rng(shape, dtype)
-    x_jax = jnp.from_dlpack(x_np)
-    self.assertAllClose(x_np, x_jax)
+    device = jax.devices()[0]
+    _from_dlpack = lambda: jnp.from_dlpack(x_np, device=device, copy=copy)
+    if jax.default_backend() == 'gpu' and not copy:
+      self.assertRaisesRegex(
+        ValueError,
+        r"Specified .* which requires a copy",
+        _from_dlpack
+      )
+    else:
+      self.assertAllClose(x_np, _from_dlpack())
 
   @jtu.sample_product(
     shape=all_shapes,

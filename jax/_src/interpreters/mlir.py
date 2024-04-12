@@ -75,6 +75,13 @@ _JAX_DUMP_IR_TO = config.DEFINE_string(
          "Supports the special value 'sponge' to pick the path from the "
          "environment variable TEST_UNDECLARED_OUTPUTS_DIR.")
 
+_JAX_INCLUDE_DEBUG_INFO_IN_DUMPS = config.DEFINE_string(
+  'jax_include_debug_info_in_dumps',
+  os.getenv('JAX_INCLUDE_DEBUG_INFO_IN_DUMPS', "True"),
+  help="Determine whether or not to keep debug symbols and location information "
+       "when dumping IR code. By default, debug information will be preserved in "
+       "the IR dump. To avoid exposing source code and potentially sensitive "
+       "information, set to false")
 lowerable_effects: effects_lib.EffectTypeSet = effects_lib.lowerable_effects
 
 
@@ -474,9 +481,12 @@ def dump_module_message(module: ir.Module, stage_name: str) -> str:
 def _make_string_safe_for_filename(s: str) -> str:
   return re.sub(r'[^\w.)( -]', '', s)
 
-def module_to_string(module: ir.Module) -> str:
+def module_to_string(module: ir.Module, enable_debug_info=None) -> str:
   output = io.StringIO()
-  module.operation.print(file=output, enable_debug_info=True)
+  if enable_debug_info is None:
+    enable_debug_flag = str.lower(_JAX_INCLUDE_DEBUG_INFO_IN_DUMPS.value)
+    enable_debug_info = enable_debug_flag not in ('false', '0')
+  module.operation.print(file=output, enable_debug_info=enable_debug_info)
   return output.getvalue()
 
 def module_to_bytecode(module: ir.Module) -> bytes:
@@ -944,11 +954,6 @@ def lower_jaxpr_to_module(
   else:
     dim_vars = ()
 
-  arg_layouts = (map(_to_xla_layout, in_layouts) if in_layouts is not None
-                  else in_layouts)
-  result_layouts = (map(_to_xla_layout, out_layouts) if out_layouts is not None
-                    else out_layouts)
-
   ctx = ModuleContext(backend_or_name=backend_or_name,
                       platforms=platforms, axis_context=axis_context,
                       keepalives=keepalives,
@@ -982,8 +987,8 @@ def lower_jaxpr_to_module(
         result_names=result_names,
         arg_memory_kinds=arg_memory_kinds,
         result_memory_kinds=result_memory_kinds,
-        arg_layouts=arg_layouts,
-        result_layouts=result_layouts)
+        arg_layouts=in_layouts,
+        result_layouts=out_layouts)
 
   try:
     if not ctx.module.operation.verify():
@@ -1130,8 +1135,8 @@ def lower_jaxpr_to_fun(
     result_names: Sequence[str | None] | None = None,
     arg_memory_kinds: Sequence[str | None] | None = None,
     result_memory_kinds: Sequence[str | None] | None = None,
-    arg_layouts: Sequence[str | None] | None = None,
-    result_layouts: Sequence[str | None] | None = None,
+    arg_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
+    result_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
 ) -> func_dialect.FuncOp:
   """Lowers jaxpr and its callees to an IR function.
 
@@ -1252,7 +1257,8 @@ def lower_jaxpr_to_fun(
   ir_arg_layouts = None
   if arg_layouts is not None:
     ir_arg_layouts = util.flatten(
-        [[l] * len(types) for l, types in zip(arg_layouts, input_types)])
+        [[_to_xla_layout(l)] * len(types)
+         for l, types in zip(arg_layouts, input_types)])
 
   ir_donated_args = None
   if xla_donated_args is not None:
@@ -1275,7 +1281,8 @@ def lower_jaxpr_to_fun(
   ir_result_layouts = None
   if result_layouts is not None:
     ir_result_layouts = util.flatten(
-        [[l] * len(types) for l, types in zip(result_layouts, output_types)])
+        [[_to_xla_layout(l)] * len(types)
+         for l, types in zip(result_layouts, output_types)])
 
   if (
       replicated_args is not None

@@ -112,6 +112,7 @@ from jax.experimental.array_api._elementwise_functions import (
     bitwise_right_shift as bitwise_right_shift,
     bitwise_xor as bitwise_xor,
     ceil as ceil,
+    clip as clip,
     conj as conj,
     cos as cos,
     cosh as cosh,
@@ -204,6 +205,7 @@ from jax.experimental.array_api._statistical_functions import (
 )
 
 from jax.experimental.array_api._utility_functions import (
+    __array_namespace_info__ as __array_namespace_info__,
     all as all,
     any as any,
 )

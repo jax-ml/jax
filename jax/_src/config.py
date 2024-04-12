@@ -628,7 +628,7 @@ def define_string_state(
 
   def validator(new_val):
     if not isinstance(new_val, str):
-      raise ValueError('new string config value must be of type str,'
+      raise TypeError('new string config value must be of type str,'
                        f' got {new_val} of type {type(new_val)}.')
 
   return define_string_or_object_state(
@@ -1389,6 +1389,13 @@ eager_pmap = define_bool_state(
     default=True,
     upgrade=True,
     help='Enable eager-mode pmap when jax_disable_jit is activated.')
+
+# TODO(mattjj): remove once we land mutable array plumbing, or face great shame
+custom_vjp_disable_shape_check = define_bool_state(
+    name='jax_custom_vjp_disable_shape_check',
+    default=False,
+    upgrade=True,
+    help='Disable the check from #19009 to enable some custom_vjp hacks.')
 
 xla_runtime_errors = define_bool_state(
     name='jax_experimental_unsafe_xla_runtime_errors',

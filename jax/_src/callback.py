@@ -14,13 +14,11 @@
 """Module for JAX callbacks."""
 from __future__ import annotations
 
-import dataclasses
 from collections.abc import Sequence
-import logging
+import dataclasses
 import functools
+import logging
 from typing import Any, Callable
-
-import numpy as np
 
 import jax
 from jax._src import core
@@ -33,9 +31,10 @@ from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
-from jax._src.lib import xla_client as xc
 from jax._src.lax.control_flow.loops import map as lax_map
+from jax._src.lib import xla_client as xc
 from jax._src.sharding_impls import SingleDeviceSharding
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -73,11 +72,14 @@ def pure_callback_impl(
     vectorized: bool,
 ):
   del sharding, vectorized, result_avals
-  try:
-    return callback(*args)
-  except BaseException:
-    logger.exception("jax.pure_callback failed")
-    raise
+  cpu_device, *_ = jax.local_devices(backend="cpu")
+  args = tree_util.tree_map(lambda arg: jax.device_put(arg, cpu_device), args)
+  with jax.default_device(cpu_device):
+    try:
+      return tree_util.tree_map(np.asarray, callback(*args))
+    except BaseException:
+      logger.exception("jax.pure_callback failed")
+      raise
 
 
 pure_callback_p.def_impl(functools.partial(dispatch.apply_primitive,
@@ -398,11 +400,14 @@ def io_callback_impl(
     ordered: bool,
 ):
   del result_avals, sharding, ordered
-  try:
-    return callback(*args)
-  except BaseException:
-    logger.exception("jax.io_callback failed")
-    raise
+  cpu_device, *_ = jax.local_devices(backend="cpu")
+  args = tree_util.tree_map(lambda arg: jax.device_put(arg, cpu_device), args)
+  with jax.default_device(cpu_device):
+    try:
+      return tree_util.tree_map(np.asarray, callback(*args))
+    except BaseException:
+      logger.exception("jax.io_callback failed")
+      raise
 
 
 io_callback_p.def_impl(functools.partial(dispatch.apply_primitive,
@@ -439,16 +444,16 @@ def io_callback_batching_rule(
 ):
   if ordered:
     raise ValueError("Cannot `vmap` ordered IO callback.")
-  return pure_callback_batching_rule(
-      args,
-      dims,
-      callback=callback,
-      sharding=sharding,
-      vectorized=False,
-      result_avals=result_avals,
-  )
-
-
+  is_batched = [d is not batching.not_mapped for d in dims]
+  new_args = [arg if dim is batching.not_mapped else
+              batching.moveaxis(arg, dim, 0) for arg, dim in zip(args, dims)]
+  unbatched_args, batched_args = util.partition_list(is_batched, new_args)
+  def _batch_fun(batched_args):
+    merged = util.merge_lists(is_batched, unbatched_args, batched_args)
+    return io_callback_p.bind(*merged, callback=callback, sharding=sharding,
+                              result_avals=result_avals, ordered=False)
+  out_vals = lax_map(_batch_fun, batched_args)
+  return out_vals, (0,) * len(out_vals)
 batching.primitive_batchers[io_callback_p] = io_callback_batching_rule
 
 

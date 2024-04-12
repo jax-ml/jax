@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.16.0
+    jupytext_version: 1.16.1
 kernelspec:
   display_name: Python 3
   name: python3
@@ -125,7 +125,7 @@ jax.pmap(convolve)(xs, jax.pmap(convolve)(xs, ws))
 
 +++ {"id": "iuHqht-OYqca"}
 
-The outputs of the inner `jax.pmap(convolve)` never left their devices when being fed into the outer `jax.pmap(convolve)`.
+The outputs of the inner `jax.pmap(convolve)` have never left their devices when being fed into the outer `jax.pmap(convolve)`.
 
 +++ {"id": "vEFAJXN2q3dV"}
 

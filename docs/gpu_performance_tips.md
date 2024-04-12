@@ -69,7 +69,7 @@ training on Nvidia GPUs](https://github.com/NVIDIA/JAX-Toolbox/blob/main/rosetta
   The default value is False.
 * **--xla_gpu_enable_pipelined_collectives** When using pipeline parallelism,
   this flag enables overlapping the (i+1)-th layer weight `AllGather` with the
-  i-th layer computation. It also enables enable overlapping (i+1)-th layer
+  i-th layer computation. It also enables overlapping (i+1)-th layer
   weight `Reduce`/`ReduceScatter` with i-th layer's computation. The default
   value is False. **There are some bugs when this flag is turned on.**
 * **--xla_gpu_collective_permute_decomposer_threshold** This flag is useful when

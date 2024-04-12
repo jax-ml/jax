@@ -32,8 +32,8 @@ def encode_kernel_regeneration_metadata(
       config.
 
   Returns:
-    A dict that can be directly passed to pallas_call as a 'mosaic_params'
-    argument.
+    A dict that can be passed to pallas_call via
+    compiler_params=dict(mosaic=...)).
 
   Raises:
     TypeError: when the input metadata is not serializable in json format.

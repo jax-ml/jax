@@ -418,9 +418,9 @@ def make_attention_reference(
     if is_grouped:
 
       def reshape_activations(activations):
-        if activations.ndim == 4:
-          kv_heads, q_heads_per_kv_head, q_seq_len, head_dim = activations.shape
-          return activations.reshape(
+        if activations.ndim == 4:  # pytype: disable=attribute-error
+          kv_heads, q_heads_per_kv_head, q_seq_len, head_dim = activations.shape  # pytype: disable=attribute-error
+          return activations.reshape(  # pytype: disable=attribute-error
               kv_heads * q_heads_per_kv_head, q_seq_len, head_dim
           )
         return activations
@@ -755,7 +755,7 @@ def flash_attention_kernel(
 
     qk = apply_mask_and_soft_cap()
 
-    m_curr = qk.max(axis=-1)[:, None]
+    m_curr = qk.max(axis=-1)[:, None]  # pytype: disable=attribute-error
     assert m_curr.shape == (bq, 1)
     m_next = jnp.maximum(m_prev, m_curr)
     assert m_next.shape == (bq, NUM_LANES)

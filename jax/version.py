@@ -47,21 +47,15 @@ def _version_from_git_tree(base_version: str) -> str | None:
   try:
     root_directory = os.path.dirname(os.path.realpath(__file__))
 
-    # Get date string from date of most recent git commit.
-    p = subprocess.Popen(["git", "show", "-s", "--format=%at", "HEAD"],
+    # Get date string from date of most recent git commit, and the abbreviated
+    # hash of that commit.
+    p = subprocess.Popen(["git", "show", "-s", "--format=%at-%h", "HEAD"],
                          cwd=root_directory,
                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     stdout, _ = p.communicate()
-    timestamp = int(stdout.decode().strip())
-    datestring = datetime.date.fromtimestamp(timestamp).strftime("%Y%m%d")
+    timestamp, commit_hash = stdout.decode().strip().split('-', 1)
+    datestring = datetime.date.fromtimestamp(int(timestamp)).strftime("%Y%m%d")
     assert datestring.isnumeric()
-
-    # Get commit hash from most recent git commit.
-    p = subprocess.Popen(["git", "describe", "--long", "--always"],
-                         cwd=root_directory,
-                         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    stdout, _ = p.communicate()
-    commit_hash = stdout.decode().strip().rsplit('-g', 1)[-1]
     assert commit_hash.isalnum()
   except:
     return None

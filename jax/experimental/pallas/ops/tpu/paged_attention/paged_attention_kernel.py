@@ -281,7 +281,14 @@ def paged_flash_attention_kernel_inline_seq_dim(
     return ()
 
   bk = pages_per_compute_block * k_pages_hbm_ref.shape[-2]
-  lax.fori_loop(0, lax.div(lengths_ref[b] + bk - 1, bk), body, ())
+
+  if megacore_mode == "batch":
+    num_cores = pl.num_programs(0)
+    length = lengths_ref[b * num_cores + core_index]
+  else:
+    length = lengths_ref[b]
+
+  lax.fori_loop(0, lax.div(length + bk - 1, bk), body, ())
 
 
 @functools.partial(
@@ -304,7 +311,7 @@ def paged_attention(
     pages_per_compute_block: int,
     megacore_mode: Optional[str] = None,
     inline_seq_dim: bool = True,
-) -> tuple[jax.Array, tuple[jax.Array, jax.Array]]:
+) -> jax.Array:
   """Paged grouped query attention.
 
   Args:
@@ -487,9 +494,7 @@ def paged_attention(
               pltpu.SemaphoreType.DMA,
           ),
       ),
-      mosaic_params=dict(
-          dimension_semantics=dimension_sematics,
-      ),
+      compiler_params=dict(mosaic=dict(dimension_semantics=dimension_sematics)),
       out_shape=[
           jax.ShapeDtypeStruct(q.shape, q_dtype_for_kernel_launch),
           jax.ShapeDtypeStruct((*q.shape[:-1], 1), jnp.float32),

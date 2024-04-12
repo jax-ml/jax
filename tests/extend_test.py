@@ -24,8 +24,7 @@ from jax._src import linear_util
 from jax._src import prng
 from jax._src import test_util as jtu
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 class ExtendTest(jtu.JaxTestCase):

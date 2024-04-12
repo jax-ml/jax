@@ -20,12 +20,11 @@ from jax._src import core
 from jax import lax
 from jax._src.pjit import pjit
 from jax._src import linear_util as lu
-from jax import config
 from jax._src import test_util as jtu
 from jax._src.lib import xla_client
 from jax._src import ad_checkpoint
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 def _get_hlo(f):
   def wrapped(*args, **kwargs):

@@ -217,6 +217,8 @@ jax_test(
     shard_count = 2,
     tags = [
         "noasan",  # Times out.
+        "nomsan",  # Times out.
+        "notsan",  # Times out.
     ],
     deps = [
         "//jax:pallas_tpu_ops",

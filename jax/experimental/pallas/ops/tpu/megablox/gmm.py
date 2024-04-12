@@ -537,9 +537,11 @@ def gmm(
           scratch_shapes=[pltpu.VMEM((tm, tn), jnp.float32)],
       ),
       input_output_aliases=input_output_aliases,
-      mosaic_params=dict(
-          dimension_semantics=("parallel", "arbitrary", "arbitrary"),
-          cost_estimate=cost_estimate,
+      compiler_params=dict(
+          mosaic=dict(
+              dimension_semantics=("parallel", "arbitrary", "arbitrary"),
+              cost_estimate=cost_estimate,
+          )
       ),
       interpret=interpret,
   )
@@ -777,9 +779,11 @@ def tgmm(
           scratch_shapes=[pltpu.VMEM((tk, tn), jnp.float32)],
       ),
       input_output_aliases=input_output_aliases,
-      mosaic_params=dict(
-          dimension_semantics=("parallel", "arbitrary", "arbitrary"),
-          cost_estimate=cost_estimate,
+      compiler_params=dict(
+          mosaic=dict(
+              dimension_semantics=("parallel", "arbitrary", "arbitrary"),
+              cost_estimate=cost_estimate,
+          )
       ),
       interpret=interpret,
   )

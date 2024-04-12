@@ -31,7 +31,6 @@ def TPU_Dialect : Dialect {
   let cppNamespace = "::mlir::tpu";
   let useDefaultAttributePrinterParser = 1;
   let useDefaultTypePrinterParser = 1;
-  let usePropertiesForAttributes = 0;
 }
 
 class TPU_Attr<string name, string mnemonic_, list<Trait> traits = []>
@@ -451,6 +450,12 @@ def TPU_DeviceIdOp : TPU_Op<"device_id", [Pure]> {
   let arguments = (ins);
   let results = (outs I32:$result);
   let assemblyFormat = [{ attr-dict `:` type($result) }];
+}
+
+def TPU_SemaphoreReadOp : TPU_Op<"sem_read"> {
+  let arguments = (ins MemRefOf<[TPU_SemaphoreType]>:$semaphore);
+  let results = (outs I32:$result);
+  let assemblyFormat = [{ $semaphore attr-dict `:` type($semaphore) `->` type($result)}];
 }
 
 def TPU_SemaphoreWaitOp : TPU_Op<"sem_wait"> {

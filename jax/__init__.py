@@ -125,6 +125,7 @@ from jax._src.api import value_and_grad as value_and_grad
 from jax._src.api import vjp as vjp
 from jax._src.api import vmap as vmap
 from jax._src.api import xla_computation as xla_computation
+from jax._src.sharding_impls import NamedSharding as NamedSharding
 
 # Force import, allowing jax.interpreters.* to be used after import jax.
 from jax.interpreters import ad, batching, mlir, partial_eval, pxla, xla

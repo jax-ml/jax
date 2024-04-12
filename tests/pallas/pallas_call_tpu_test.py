@@ -730,6 +730,31 @@ class PallasCallDMATest(parameterized.TestCase):
         debug=True,
     )())
 
+  def test_can_read_semaphore(self):
+    m, n = 2, 3
+
+    def kernel(y_ref):
+      def body(sems):
+        for r in range(m):
+          for c in range(n):
+            v = r * n + c
+            pltpu.semaphore_signal(sems.at[r, c],v)
+            y_ref[r, c] = pltpu.semaphore_read(sems.at[r, c])
+            pltpu.semaphore_wait(sems.at[r, c], v)
+
+      pltpu.run_scoped(body, pltpu.SemaphoreType.REGULAR((m, n)))
+
+    y = jax.block_until_ready(
+        pl.pallas_call(
+            kernel,
+            out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+            out_shape=jax.ShapeDtypeStruct((m, n), jnp.int32),
+        )()
+    )
+    np.testing.assert_array_equal(
+        y, jnp.arange(m * n).astype(jnp.int32).reshape((m, n))
+    )
+
   def test_hbm_hbm_dma(self):
     def kernel(x_hbm_ref, y_hbm_ref):
       def body(sem):
@@ -1500,7 +1525,7 @@ class PallasCallInputOutputAliasingTest(PallasTPUTest):
       )(x)
     o = f(x)
     np.testing.assert_array_equal(o, expected)
-    compiled = f.lower(x).compile()
+    compiled = f.lower(jax.ShapeDtypeStruct(x.shape, x.dtype)).compile()
     mem_analysis = compiled.memory_analysis()
     expected_num_bytes = np.prod(x.shape) * x.dtype.itemsize
     self.assertEqual(mem_analysis.alias_size_in_bytes, expected_num_bytes)
@@ -1528,7 +1553,7 @@ class PallasCallInputOutputAliasingTest(PallasTPUTest):
       )(jnp.array([1,2,3]), x)
     o = f(x)
     np.testing.assert_array_equal(o, expected)
-    compiled = f.lower(x).compile()
+    compiled = f.lower(jax.ShapeDtypeStruct(x.shape, x.dtype)).compile()
     mem_analysis = compiled.memory_analysis()
     expected_num_bytes = np.prod(x.shape) * x.dtype.itemsize
     self.assertEqual(mem_analysis.alias_size_in_bytes, expected_num_bytes)
@@ -1652,6 +1677,58 @@ class PallasCallControlFlowTest(PallasTPUTest):
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.int32),
     )()
     return
+
+
+class PallasCallWhileLoopTest(PallasTPUTest):
+
+  def setUp(self):
+    super().setUp()
+    if jtu.device_under_test() != 'tpu':
+      self.skipTest('Test only works on TPU')
+
+  def test_range_while_loop(self):
+    """Tests lowering of a while_loop which can reduce to a fori_loop."""
+
+    def kernel(x_ref, r_ref):
+      @pl.when(pl.program_id(0) == 0)
+      def _():
+        pl.store(r_ref, (0, 0), 0)
+
+      def cond(carry):
+        i, j = carry
+        return i < j
+
+      def body(carry):
+        i, j = carry
+        sl = sl = jax.lax.div(i, 128)
+        l = jax.lax.rem(i, 128)
+        v = x_ref[0, sl, l]
+        s = pl.load(r_ref, (0, 0))
+        pl.store(r_ref, (0, 0), s + v)
+        return i + 1, j
+
+      i = 0
+      j = 1024
+      i, j = jax.lax.while_loop(cond, body, (i, j))
+
+    x = jnp.arange(4096)
+    x = jnp.reshape(x, [4, 8, 128])
+
+    r = pl.pallas_call(
+        kernel,
+        grid=(1,),
+        out_specs=pl.BlockSpec(block_shape=(1, 1), memory_space=pltpu.SMEM),
+        out_shape=jax.ShapeDtypeStruct([1, 1], jnp.int32),
+        in_specs=[
+            pl.BlockSpec(
+                lambda i: (i, 0, 0),
+                block_shape=(1, 8, 128),
+                memory_space=pltpu.SMEM,
+            )
+        ],
+    )(x)
+    expected = jnp.sum(jnp.arange(1024))
+    np.testing.assert_array_equal(r, expected)
 
 
 class PallasCallPipelineTest(parameterized.TestCase):
@@ -2175,6 +2252,138 @@ class PallasCallDynamicDMATest(PallasTPUTest):
     )(size, x, o)
     expected = o.at[:4].set(x.at[:4].get())
     np.testing.assert_array_equal(out, expected)
+
+
+class PallasCallComparisonTest(PallasTPUTest):
+
+  def setUp(self):
+    super().setUp()
+    if jtu.device_under_test() != 'tpu':
+      self.skipTest('Test only works on TPU')
+
+  @parameterized.named_parameters(
+      ('integer_1_1', (1, 1)),
+      ('integer_1_16', (1, 16)),
+      ('integer_16_1', (16, 1)),
+      ('integer_-1_1', (-1, 1)),
+      ('integer_1_-1', (1, -1)),
+      ('float_1_1', (1.0, 1.0)),
+      ('float_1_16', (1.0, 16.0)),
+      ('float_16_1', (16.0, 1.0)),
+      ('float_-1_1', (-1.0, 1.0)),
+      ('float_1_-1', (1.0, -1.0)),
+      ('float_1_inf', (1.0, float('inf'))),
+      ('float_inf_1', (float('inf'), 1.0)),
+      ('float_inf_inf', (float('inf'), float('inf'))),
+      ('float_1_nan', (1.0, float('nan'))),
+      ('float_nan_1', (float('nan'), 1.0)),
+      ('float_nan_nan', (float('nan'), float('nan'))),
+      ('float_inf_nan', (float('inf'), float('nan'))),
+      ('float_nan_inf', (float('inf'), float('inf'))),
+  )
+  def test_scalar_compare(self, params):
+    """Test some scalar compares.
+
+    We don't really expect that the results would be wrong, but rather we want
+    to exercise the lowering rules.
+    """
+
+    def kernel(x_ref, y_ref, o_ref):
+      x = x_ref[0, 0]
+      y = y_ref[0, 0]
+      o_ref[0, 0] = jax.lax.select(x == y, 1, 0)
+      o_ref[0, 1] = jax.lax.select(x != y, 1, 0)
+      o_ref[0, 2] = jax.lax.select(x < y, 1, 0)
+      o_ref[0, 3] = jax.lax.select(x <= y, 1, 0)
+      o_ref[0, 4] = jax.lax.select(x > y, 1, 0)
+      o_ref[0, 5] = jax.lax.select(x >= y, 1, 0)
+
+    x, y = params
+    r = jnp.array(
+        [
+            [x == y, x != y, x < y, x <= y, x > y, x >= y],
+        ],
+        jnp.int32,
+    )
+    x = jnp.array([[x]])
+    y = jnp.array([[y]])
+
+    result = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct([1, 128], jnp.int32),
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.SMEM),
+            pl.BlockSpec(memory_space=pltpu.SMEM),
+        ],
+        out_specs=pl.BlockSpec(
+            lambda i: (0, 0), (1, 128), memory_space=pltpu.SMEM
+        ),
+        grid=(1,),
+    )(x, y)
+    np.testing.assert_array_equal(r, result[..., 0:6])
+
+  @parameterized.named_parameters(
+      ('integer_1_1', (1, 1)),
+      ('integer_1_16', (1, 16)),
+      ('integer_16_1', (16, 1)),
+      ('integer_-1_1', (-1, 1)),
+      ('integer_1_-1', (1, -1)),
+      ('float_1_1', (1.0, 1.0)),
+      ('float_1_16', (1.0, 16.0)),
+      ('float_16_1', (16.0, 1.0)),
+      ('float_-1_1', (-1.0, 1.0)),
+      ('float_1_-1', (1.0, -1.0)),
+      ('float_1_inf', (1.0, float('inf'))),
+      ('float_inf_1', (float('inf'), 1.0)),
+      ('float_inf_inf', (float('inf'), float('inf'))),
+      ('float_1_nan', (1.0, float('nan'))),
+      ('float_nan_1', (float('nan'), 1.0)),
+      ('float_nan_nan', (float('nan'), float('nan'))),
+      ('float_inf_nan', (float('inf'), float('nan'))),
+      ('float_nan_inf', (float('inf'), float('inf'))),
+  )
+  def test_vector_compare(self, params):
+    """Test some vector compares.
+
+    We don't really expect that the results would be wrong, but rather we want
+    to exercise the lowering rules.
+    """
+
+    def kernel(x_ref, y_ref, o_ref):
+      x = x_ref[:]
+      y = y_ref[:]
+      one = jnp.ones([8, 128], dtype=jnp.int32)
+      zero = jnp.zeros([8, 128], dtype=jnp.int32)
+      o_ref[0] = jax.lax.select(x == y, one, zero)
+      o_ref[1] = jax.lax.select(x != y, one, zero)
+      o_ref[2] = jax.lax.select(x < y, one, zero)
+      o_ref[3] = jax.lax.select(x <= y, one, zero)
+      o_ref[4] = jax.lax.select(x > y, one, zero)
+      o_ref[5] = jax.lax.select(x >= y, one, zero)
+
+    # Widen out our params to (8, 128) vectors.
+    x, y = params
+    x = jnp.full([8, 128], x)
+    y = jnp.full([8, 128], y)
+
+    r = [x == y, x != y, x < y, x <= y, x > y, x >= y]
+
+    result = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct([6, 8, 128], jnp.int32),
+        in_specs=[
+            pl.BlockSpec(lambda *_: (0, 0), (8, 128)),
+            pl.BlockSpec(lambda *_: (0, 0), (8, 128)),
+        ],
+        out_specs=pl.BlockSpec(lambda *_: (0, 0, 0), (6, 8, 128)),
+        grid=(1,),
+    )(x, y)
+    np.testing.assert_array_equal(r[0], result[0])
+    np.testing.assert_array_equal(r[1], result[1])
+    np.testing.assert_array_equal(r[2], result[2])
+    np.testing.assert_array_equal(r[3], result[3])
+    np.testing.assert_array_equal(r[4], result[4])
+    np.testing.assert_array_equal(r[5], result[5])
 
 
 if __name__ == '__main__':

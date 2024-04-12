@@ -73,8 +73,8 @@ def ag_kernel(x_ref, o_ref, send_sem, recv_sem, *, axis_name: str,
 
   with pltpu.trace("main_barrier"):
     sem = pltpu.get_barrier_semaphore()
-    pltpu.semaphore_signal(sem, 2, device_id=left_neighbor)
-    pltpu.semaphore_signal(sem, 2, device_id=right_neighbor)
+    pltpu.semaphore_signal(sem, 1, device_id=left_neighbor)
+    pltpu.semaphore_signal(sem, 1, device_id=right_neighbor)
     pltpu.semaphore_wait(sem, 2)
 
   shard_size = x_ref.shape[0]
@@ -136,7 +136,7 @@ def all_gather(x, *, mesh: jax.sharding.Mesh, axis_name: str | Sequence[str],
     out = pl.pallas_call(
         functools.partial(ag_kernel, axis_name=axis_name, mesh=mesh),
         out_shape=out_shape,
-        mosaic_params=dict(collective_id=0),
+        compiler_params=dict(mosaic=dict(collective_id=0)),
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             scratch_shapes=(
