@@ -1858,6 +1858,7 @@ def _pjit_jvp(primals_in, tangents_in,
     primals_in = [*primals_in, *mut_primals]
     tangents_in = [*tangents_in, *mut_tangents]
     in_shardings = (*in_shardings,) + (UNSPECIFIED,) * len(mut_primals)
+    in_layouts = (*in_layouts,) + (None,) * len(mut_primals)
     donated_invars = (*donated_invars,) + (False,) * len(mut_primals)
 
   tangents_in = [ad_util.zeros_like_aval(a) if isinstance(a, AbstractRef) else x
