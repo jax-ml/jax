@@ -381,6 +381,7 @@ cc_library(
         ":cuda_lu_pivot_kernels",
         ":cuda_prng_kernels",
         ":cuda_vendor",
+        ":cudnn_rnn_kernels",
         ":cusolver_kernels",
         ":cusparse_kernels",
         ":triton_kernels",
