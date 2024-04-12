@@ -56,9 +56,9 @@ Index = tuple[slice, ...]
 PRNGKeyArray = Any  # TODO(jakevdp): fix cycles and import this.
 
 def _get_device(a: ArrayImpl) -> Device:
-  devices = a.devices()
+  devices = a.sharding._internal_device_list  # type: ignore
   assert len(devices) == 1
-  return next(iter(devices))
+  return devices[0]
 
 
 class Shard:
