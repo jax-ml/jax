@@ -2095,20 +2095,6 @@ def _device_id_to_logical(
     return device_id
   raise NotImplementedError(f"Unsupported device id type: {device_id_type}")
 
-
-def _semaphore_read_lowering_rule(
-    ctx: LoweringRuleContext,
-    *args,
-    args_tree,
-):
-  sem_aval, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
-  sem, indexers = tree_util.tree_unflatten(args_tree, args)
-  sem, _ = _index_ref(sem, sem_aval, sem_aval.shape, indexers)
-  return tpu.SemaphoreReadOp(sem).result
-
-
-lowering_rules[tpu_primitives.semaphore_read_p] = _semaphore_read_lowering_rule
-
 def _semaphore_signal_lowering_rule(
     ctx: LoweringRuleContext,
     *args,

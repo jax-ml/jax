@@ -222,42 +222,6 @@ class DeviceIdType(enum.Enum):
   LOGICAL = "logical"
 
 
-def check_sem_avals(sem_aval, sem_indexers_avals, name):
-  if not isinstance(sem_aval, state.AbstractRef):
-    raise ValueError(f"Cannot {name} on a non-semaphore Ref: {sem_aval}")
-  sem_shape = sem_aval.shape
-  if sem_indexers_avals:
-    sem_shape = sem_indexers_avals[-1].get_indexer_shape()
-  if sem_shape:
-    raise ValueError(f"Cannot {name} on a non-()-shaped semaphore: {sem_shape}")
-  sem_dtype = sem_aval.dtype
-  if not (
-      jnp.issubdtype(sem_dtype, tpu_core.semaphore)
-      or jnp.issubdtype(sem_dtype, tpu_core.barrier_semaphore)
-  ):
-    raise ValueError(f"Must {name} a REGULAR or BARRIER semaphore: {sem_dtype}")
-
-
-semaphore_read_p = jax_core.Primitive("semaphore_read")
-semaphore_read_p.multiple_results = False
-
-
-def semaphore_read(sem_or_view):
-  ref, indexers = _get_ref_and_indexers(sem_or_view)
-  args = [ref, indexers]
-  flat_args, args_tree = tree_util.tree_flatten(args)
-  return semaphore_read_p.bind(*flat_args, args_tree=args_tree)
-
-@semaphore_read_p.def_abstract_eval
-def _semaphore_read_abstract_eval(
-    *avals,
-    args_tree,
-):
-  sem_aval, sem_indexers_avals = tree_util.tree_unflatten(args_tree, avals)
-  check_sem_avals(sem_aval, sem_indexers_avals, "read")
-  return jax_core.ShapedArray((), jnp.dtype("int32"))
-
-
 semaphore_signal_p = jax_core.Primitive('semaphore_signal')
 semaphore_signal_p.multiple_results = True
 
@@ -290,7 +254,17 @@ def _semaphore_signal_abstract_eval(
   sem_aval, sem_indexers_avals, value_aval, device_id_avals = (
       tree_util.tree_unflatten(args_tree, avals)
   )
-  check_sem_avals(sem_aval, sem_indexers_avals, "signal")
+  if not isinstance(sem_aval, state.AbstractRef):
+    raise ValueError(f"Cannot signal on a non-Ref: {sem_aval}")
+  sem_shape = sem_aval.shape
+  if sem_indexers_avals:
+    sem_shape = sem_indexers_avals[-1].get_indexer_shape()
+  if sem_shape:
+    raise ValueError(f"Cannot signal on a non-()-shaped semaphore: {sem_shape}")
+  sem_dtype = sem_aval.dtype
+  if not (jnp.issubdtype(sem_dtype, tpu_core.semaphore) or jnp.issubdtype(
+      sem_dtype, tpu_core.barrier_semaphore)):
+    raise ValueError(f"Must signal a REGULAR or BARRIER semaphore: {sem_dtype}")
   if value_aval.dtype != jnp.dtype("int32"):
     raise ValueError("Must signal an int32 value.")
   if device_id_avals is not None:
@@ -345,7 +319,17 @@ def semaphore_wait(sem_or_view, dec: int | jax.Array = 1):
 @semaphore_wait_p.def_abstract_eval
 def _semaphore_wait_abstract_eval(*avals, args_tree):
   sem_aval, sem_indexers_avals, value_aval = tree_util.tree_unflatten(args_tree, avals)
-  check_sem_avals(sem_aval, sem_indexers_avals, "wait")
+  if not isinstance(sem_aval, state.AbstractRef):
+    raise ValueError(f"Cannot wait on a non-semaphore Ref: {sem_aval}")
+  sem_shape = sem_aval.shape
+  if sem_indexers_avals:
+    sem_shape = sem_indexers_avals[-1].get_indexer_shape()
+  if sem_shape:
+    raise ValueError(f"Cannot wait on a non-()-shaped semaphore: {sem_shape}")
+  sem_dtype = sem_aval.dtype
+  if not (jnp.issubdtype(sem_dtype, tpu_core.semaphore) or jnp.issubdtype(
+      sem_dtype, tpu_core.barrier_semaphore)):
+    raise ValueError(f"Must wait a REGULAR or BARRIER semaphore: {sem_dtype}")
   if value_aval.dtype != jnp.dtype("int32"):
     raise ValueError("Must wait an int32 value.")
   return []

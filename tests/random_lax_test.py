@@ -210,6 +210,22 @@ class LaxRandomTest(jtu.JaxTestCase):
     for samples in [uncompiled_samples, compiled_samples]:
       self._CheckKolmogorovSmirnovCDF(samples, scipy.stats.truncnorm(-0.3, 0.3).cdf)
 
+  @jtu.sample_product(dtype=jtu.dtypes.floating + jtu.dtypes.integer)
+  def testShuffle(self, dtype):
+    key = lambda: self.make_key(0)
+    x = np.arange(100).astype(dtype)
+    rand = lambda key: random.shuffle(key, x)
+    crand = jax.jit(rand)
+
+    with self.assertWarns((DeprecationWarning, FutureWarning)):
+      perm1 = rand(key())
+    with self.assertWarns((DeprecationWarning, FutureWarning)):
+      perm2 = crand(key())
+
+    self.assertAllClose(perm1, perm2)
+    self.assertFalse(np.all(perm1 == x))  # seems unlikely!
+    self.assertAllClose(np.sort(perm1), x, check_dtypes=False)
+
   @jtu.sample_product(
     [dict(shape=shape, replace=replace, axis=axis,
           input_range_or_shape=input_range_or_shape)
