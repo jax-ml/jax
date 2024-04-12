@@ -79,7 +79,7 @@ def psum(x, axis_name, *, axis_index_groups=None):
     >>> print(y)
     [0.         0.16666667 0.33333334 0.5       ]
 
-    Suppose we want to perform ``psum`` among two groups, one with ``device0`` and ``device1``, the other with `device2` and `device3`,
+    Suppose we want to perform ``psum`` among two groups, one with ``device0`` and ``device1``, the other with ``device2`` and ``device3``,
 
     >>> y = jax.pmap(lambda x: jax.lax.psum(x, 'i', axis_index_groups=[[0, 1], [2, 3]]), axis_name='i')(x)
     >>> print(y)
