@@ -25,6 +25,8 @@ Remember to align the itemized text with the first line of an item within a list
     `max` ({jax-issue}`20550`).
   * The `device()` method of JAX arrays has been removed, after being deprecated
     since JAX v0.4.21. Use `arr.devices()` instead.
+  * The `initial` argument to {func}`jax.nn.softmax` and {func}`jax.nn.log_softmax`
+    is deprecated; empty inputs to softmax are now supported without setting this.
 
 
 ## jaxlib 0.4.27
