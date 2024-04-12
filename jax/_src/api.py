@@ -2350,11 +2350,11 @@ def make_jaxpr(fun: Callable,
       specifies the axis name/size environment that would be set up by
       applications of :py:func:`jax.pmap`.
     return_shape: Optional boolean, defaults to ``False``. If ``True``, the
-      wrapped function returns a pair where the first element is the XLA
-      computation and the second element is a pytree with the same structure as
-      the output of ``fun`` and where the leaves are objects with ``shape``,
-      ``dtype``, and ``named_shape`` attributes representing the corresponding
-      types of the output leaves.
+      wrapped function returns a pair where the first element is the
+      ``ClosedJaxpr`` representation of ``fun`` and the second element is a
+      pytree with the same structure as the output of ``fun`` and where the
+      leaves are objects with ``shape``, ``dtype``, and ``named_shape``
+      attributes representing the corresponding types of the output leaves.
 
   Returns:
     A wrapped version of ``fun`` that when applied to example arguments returns
