@@ -73,8 +73,8 @@ def ag_kernel(x_ref, o_ref, send_sem, recv_sem, *, axis_name: str,
 
   with pltpu.trace("main_barrier"):
     sem = pltpu.get_barrier_semaphore()
-    pltpu.semaphore_signal(sem, 2, device_id=left_neighbor)
-    pltpu.semaphore_signal(sem, 2, device_id=right_neighbor)
+    pltpu.semaphore_signal(sem, 1, device_id=left_neighbor)
+    pltpu.semaphore_signal(sem, 1, device_id=right_neighbor)
     pltpu.semaphore_wait(sem, 2)
 
   shard_size = x_ref.shape[0]
