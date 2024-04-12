@@ -1179,8 +1179,8 @@ class IOCallbackTest(jtu.JaxTestCase):
         io_callback(check, None, i)
         return i + 1
       return lax.while_loop(cond, body, i)
-    with self.assertRaisesRegex(NotImplementedError,
-        "IO effect not supported in vmap-of-while."):
+    with self.assertRaisesRegex(
+        Exception, "not supported in while_loop with batched predicate"):
       jax.vmap(f)(jnp.array([0, 4]))
 
   def test_cannot_use_io_callback_in_checkpoint(self):
@@ -1351,6 +1351,25 @@ class IOCallbackTest(jtu.JaxTestCase):
     jax.vmap(f)(jnp.arange(3.))
     jax.effects_barrier()
     self.assertAllClose(x_lst, [0., 1., 2., 0., 2., 4.], check_dtypes=False)
+
+  def test_batching_with_side_effects_while_loop(self):
+    # https://github.com/google/jax/issues/20628#issuecomment-2050921219
+    x_lst = []
+    def append_x(x):
+      nonlocal x_lst
+      x_lst.append(x)
+
+    @jax.jit
+    def f(x):
+      def body(i):
+        io_callback(append_x, None, x, ordered=False)
+        io_callback(append_x, None, 2 * x, ordered=False)
+        return i + 1
+      jax.lax.while_loop(lambda i: i < 2, body, 0)
+
+    jax.vmap(f)(jnp.arange(3.))
+    jax.effects_barrier()
+    self.assertAllClose(x_lst, [0., 1., 2., 0., 2., 4.] * 2, check_dtypes=False)
 
 
 if __name__ == "__main__":
