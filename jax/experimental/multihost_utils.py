@@ -424,16 +424,18 @@ def global_array_to_host_local_array(
 
   You can use this function to convert the globally shaped `jax.Array` output
   from pjit to host local values again so that the transition to jax.Array can
-  be a mechanical change. Example usage
+  be a mechanical change.
 
-  >> from jax.experimental import multihost_utils # doctest: +SKIP
-  >>
-  >> global_inputs = multihost_utils.host_local_array_to_global_array(host_local_inputs, global_mesh, in_pspecs) # doctest: +SKIP
-  >>
-  >> with mesh: # doctest: +SKIP
-  >>   global_out = pjitted_fun(global_inputs) # doctest: +SKIP
-  >>
-  >> host_local_output = multihost_utils.global_array_to_host_local_array(global_out, mesh, out_pspecs) # doctest: +SKIP
+  Example usage:
+
+  >>> from jax.experimental import multihost_utils # doctest: +SKIP
+  >>>
+  >>> global_inputs = multihost_utils.host_local_array_to_global_array(host_local_inputs, global_mesh, in_pspecs) # doctest: +SKIP
+  >>>
+  >>> with mesh: # doctest: +SKIP
+  >>>   global_out = pjitted_fun(global_inputs) # doctest: +SKIP
+  >>>
+  >>> host_local_output = multihost_utils.global_array_to_host_local_array(global_out, mesh, out_pspecs) # doctest: +SKIP
 
   Args:
     global_inputs: A Pytree of global jax.Array's.
