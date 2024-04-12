@@ -19,7 +19,6 @@ import inspect
 import operator
 from functools import partial
 from typing import Any, Callable, Type
-import warnings
 
 import numpy as np
 
@@ -168,13 +167,8 @@ def _validate_argnums(sig: inspect.Signature, argnums: tuple[int, ...], argnums_
       return
 
   if argnums and (-min(argnums) > n_pos_args or max(argnums) >= n_pos_args):
-    # raise ValueError(f"Jitted function has {argnums_name}={argnums}, "
-    #                  f"but only accepts {n_pos_args} positional arguments.")
-    # TODO: 2022-08-20 or later: replace with error
-    warnings.warn(f"Jitted function has {argnums_name}={argnums}, "
-                  f"but only accepts {n_pos_args} positional arguments. "
-                  "This warning will be replaced by an error after 2022-08-20 "
-                  "at the earliest.", SyntaxWarning)
+    raise ValueError(f"Jitted function has {argnums_name}={argnums}, "
+                     f"but only accepts {n_pos_args} positional arguments.")
 
 _INVALID_KEYWORD_ARGUMENTS = (
   inspect.Parameter.POSITIONAL_ONLY,
@@ -210,30 +204,18 @@ def _validate_argnames(
       invalid_kwargs.add(param_name)
 
   # Check whether any kwargs are invalid due to position only
-  invalid_argnames = invalid_kwargs & set(argnames)
-  if invalid_argnames:
-    # raise ValueError(f"Jitted function has invalid argnames {invalid_argnames} "
-    #                  f"in {argnames_name}. These are positional-only")
-    # TODO: 2022-08-20 or later: replace with error
-    warnings.warn(f"Jitted function has invalid argnames {invalid_argnames} "
-                  f"in {argnames_name}. These are positional-only. "
-                  "This warning will be replaced by an error after 2022-08-20 "
-                  "at the earliest.", SyntaxWarning)
+  if invalid_argnames := (invalid_kwargs & set(argnames)):
+    raise ValueError(f"Jitted function has invalid argnames {invalid_argnames} "
+                     f"in {argnames_name}. These are positional-only")
 
   # Takes any kwargs
   if var_kwargs:
     return
 
   # Check that all argnames exist on function
-  invalid_argnames = set(argnames) - valid_kwargs
-  if invalid_argnames:
-    # TODO: 2022-08-20 or later: replace with error
-    # raise ValueError(f"Jitted function has invalid argnames {invalid_argnames} "
-    #                  f"in {argnames_name}. Function does not take these args.")
-    warnings.warn(f"Jitted function has invalid argnames {invalid_argnames} "
-                  f"in {argnames_name}. Function does not take these args."
-                  "This warning will be replaced by an error after 2022-08-20 "
-                  "at the earliest.", SyntaxWarning)
+  if invalid_argnames := (set(argnames) - valid_kwargs):
+    raise ValueError(f"Jitted function has invalid argnames {invalid_argnames} "
+                     f"in {argnames_name}. Function does not take these args.")
 
 
 def argnums_partial(f, dyn_argnums, args, require_static_args_hashable=True):

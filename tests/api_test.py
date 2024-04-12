@@ -312,20 +312,16 @@ class JitTest(jtu.BufferDonationTestCase):
     jit(f, **{argnum_type: (0, 1, -3)})
 
     # Out of bounds without *args
-    # with self.assertRaises(ValueError):
-    with self.assertWarns(SyntaxWarning):
+    with self.assertRaises(ValueError):
       jit(f, **{argnum_type: (0, 1, 3)})
 
-    # with self.assertRaises(ValueError):
-    with self.assertWarns(SyntaxWarning):
+    with self.assertRaises(ValueError):
       jit(f, **{argnum_type: (0, 1, -4)})
 
-    # with self.assertRaises(ValueError):
-    with self.assertWarns(SyntaxWarning):
+    with self.assertRaises(ValueError):
       jit(g, **{argnum_type: (0, 1, 3)})
 
-    # with self.assertRaises(ValueError):
-    with self.assertWarns(SyntaxWarning):
+    with self.assertRaises(ValueError):
       jit(g, **{argnum_type: (0, 1, -3)})
 
     # Out of bounds with *args
@@ -351,8 +347,7 @@ class JitTest(jtu.BufferDonationTestCase):
     jit(f, **{argnum_type: ("b", "c")})
 
     # Undefined arg without **kwargs
-    # with self.assertRaises(ValueError):
-    with self.assertWarns(SyntaxWarning):
+    with self.assertRaises(ValueError):
       jit(f, **{argnum_type: ("b", "c", "not_defined")})
 
     # Undefined arg with **kwargs
@@ -362,13 +357,11 @@ class JitTest(jtu.BufferDonationTestCase):
     jit(h, **{argnum_type: ("b", "c", "not_defined")})
 
     # Positional only
-    # with self.assertRaises(ValueError):
-    with self.assertWarns(SyntaxWarning):
+    with self.assertRaises(ValueError):
       jit(h, **{argnum_type: ("a", "c")})
 
     # Var positional
-    # with self.assertRaises(ValueError):
-    with self.assertWarns(SyntaxWarning):
+    with self.assertRaises(ValueError):
       jit(h, **{argnum_type: ("args", "c")})
 
   def test_jit_with_many_args_works(self):

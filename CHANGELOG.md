@@ -27,6 +27,8 @@ Remember to align the itemized text with the first line of an item within a list
     since JAX v0.4.21. Use `arr.devices()` instead.
   * The `initial` argument to {func}`jax.nn.softmax` and {func}`jax.nn.log_softmax`
     is deprecated; empty inputs to softmax are now supported without setting this.
+  * In {func}`jax.jit`, passing invalid `static_argnums` or `static_argnames`
+    now leads to an error rather than a warning.
 
 
 ## jaxlib 0.4.27
