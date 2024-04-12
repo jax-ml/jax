@@ -29,6 +29,7 @@ import warnings
 import numpy as np
 
 from jax._src import api
+from jax._src import ad_util
 from jax._src import api_util
 from jax._src import config
 from jax._src import core
@@ -67,7 +68,7 @@ from jax._src.sharding_impls import (
     ParsedPartitionSpec, SpecSync, get_single_pspec, is_auto, is_unspecified,
     is_unspecified_or_auto, prepare_axis_resources, parse_flatten_op_sharding)
 from jax._src.layout import Layout, DeviceLocalLayout, AutoLayout
-from jax._src.state import discharge as state_discharge, RefEffect
+from jax._src.state import discharge as state_discharge, RefEffect, AbstractRef
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
     tree_flatten, tree_unflatten, treedef_is_leaf, tree_structure,
@@ -1851,6 +1852,18 @@ def _pjit_batcher_for_sharding(
 def _pjit_jvp(primals_in, tangents_in,
               jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
               resource_env, donated_invars, name, keep_unused, inline):
+  if any(isinstance(c, core.MutableArray) for c in jaxpr.consts):
+    jaxpr, mut_primals = pxla._move_mutable_consts(jaxpr)
+    mut_tangents = map(ad_util.zeros_like_jaxval, mut_primals)
+    primals_in = [*primals_in, *mut_primals]
+    tangents_in = [*tangents_in, *mut_tangents]
+    in_shardings = (*in_shardings,) + (UNSPECIFIED,) * len(mut_primals)
+    in_layouts = (*in_layouts,) + (None,) * len(mut_primals)
+    donated_invars = (*donated_invars,) + (False,) * len(mut_primals)
+
+  tangents_in = [ad_util.zeros_like_aval(a) if isinstance(a, AbstractRef) else x
+                 for x, a in zip(tangents_in, jaxpr.in_avals)]
+
   is_nz_tangents_in = [type(t) is not ad.Zero for t in tangents_in]
   jaxpr_jvp, is_nz_tangents_out = ad.jvp_jaxpr(
       jaxpr, is_nz_tangents_in, instantiate=False)
@@ -2274,7 +2287,7 @@ def _pjit_state_discharge_rule(
       out_layouts=new_out_layouts, **params)
   out_vals, ref_vals = split_list(out_and_ref_vals, [num_outs])
   ref_vals_iter = iter(ref_vals)
-  new_invals = tuple(next(ref_vals_iter) if isinstance(aval, state_discharge.AbstractRef)
+  new_invals = tuple(next(ref_vals_iter) if isinstance(aval, AbstractRef)
                      else None for aval in in_avals)
   sentinel = object()
   assert next(ref_vals_iter, sentinel) is sentinel
