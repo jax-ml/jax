@@ -1428,10 +1428,8 @@ def _while_loop_batching_rule(spmd_axis_name, axis_size, axis_name, main_type,
                               args, dims, cond_nconsts, cond_jaxpr,
                               body_nconsts, body_jaxpr):
   from jax._src.callback import _IOEffect, _OrderedIOEffect
-  if any(eff in branch.effects for eff in [_IOEffect, _OrderedIOEffect]
-      for branch in [body_jaxpr, cond_jaxpr]):
-    raise NotImplementedError(
-        "IO effect not supported in vmap-of-while.")
+  if any(_OrderedIOEffect in fn.effects for fn in [body_jaxpr, cond_jaxpr]):
+    raise Exception("Ordered IO effects not supported in vmap.")
 
   orig_batched = [d is not batching.not_mapped for d in dims]
   cconst_bat, bconst_bat, init_bat = split_list(orig_batched, [cond_nconsts, body_nconsts])
@@ -1462,6 +1460,9 @@ def _while_loop_batching_rule(spmd_axis_name, axis_size, axis_name, main_type,
   if pred_bat:
     # If the predicate is batched, we have to batch *all* of the carry
     # regardless of if the body needs it.
+    if any(_IOEffect in fn.effects for fn in [body_jaxpr, cond_jaxpr]):
+      raise Exception("Unordered IO effects not supported in while_loop "
+                      "with batched predicate")
     carry_bat = [True] * len(carry_bat)
     carry_dims = [0] * len(carry_bat)
     body_jaxpr_batched, _ = batching.batch_jaxpr_axes(
