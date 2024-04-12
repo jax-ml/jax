@@ -14,6 +14,7 @@
 
 load(
     "//jaxlib:jax.bzl",
+    "py_library_providing_imports_info",
     "pytype_strict_library",
 )
 
@@ -34,10 +35,15 @@ pytype_strict_library(
     ],
 )
 
-pytype_strict_library(
+py_library_providing_imports_info(
     name = "core",
-    srcs = ["core.py"],
-    deps = ["//jax:abstract_arrays"],
+    srcs = glob(["core/**/*.py"]),
+    deps = [
+        "//jax",
+        "//jax:abstract_arrays",
+        "//jax:ad_util",
+        "//jax:core",
+    ],
 )
 
 pytype_strict_library(
