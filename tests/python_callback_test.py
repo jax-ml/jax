@@ -1336,6 +1336,22 @@ class IOCallbackTest(jtu.JaxTestCase):
       self.assertLen(shard, 2)
       np.testing.assert_array_equal(shard[0] + 1, shard[1])
 
+  def test_batching_with_side_effects(self):
+    # https://github.com/google/jax/issues/20628#issuecomment-2050800195
+    x_lst = []
+    def append_x(x):
+      nonlocal x_lst
+      x_lst.append(x)
+
+    @jax.jit
+    def f(x):
+      io_callback(append_x, None, x, ordered=False)
+      io_callback(append_x, None, 2 * x, ordered=False)
+
+    jax.vmap(f)(jnp.arange(3.))
+    jax.effects_barrier()
+    self.assertAllClose(x_lst, [0., 1., 2., 0., 2., 4.], check_dtypes=False)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
