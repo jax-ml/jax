@@ -219,7 +219,8 @@ def _hash_serialized_compile_options(hash_obj, compile_options_obj,
     replica_count = compile_options_copy.device_assignment.replica_count()
     computation_count = compile_options_copy.device_assignment.computation_count()
     compile_options_copy.device_assignment = xla_client.DeviceAssignment.create(
-        np.ndarray([replica_count, computation_count])
+        np.arange(replica_count * computation_count).reshape(
+          [replica_count, computation_count])
     )
   return hash_obj.update(compile_options_copy.SerializeAsString())
 
