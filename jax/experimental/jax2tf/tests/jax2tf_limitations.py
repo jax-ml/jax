@@ -389,35 +389,34 @@ class Jax2TfLimitation(test_harnesses.Limitation):
   @classmethod
   def cumlogsumexp(cls, harness):
     return [
-        # JAX uses a different lowering for CPU and GPU.
         custom_numeric(
-            dtypes=(np.float16, jnp.bfloat16),
-            devices=("cpu", "gpu"),
+            dtypes=(np.float16, jnp.bfloat16, np.float32),
+            devices=("cpu", "gpu", "tpu"),
             modes=("eager", "graph", "compiled"),
-            tol=5e-1)
+            tol=5e-1,
+        )
     ]
-
 
   @classmethod
   def cumprod(cls, harness):
     return [
-        # JAX uses a different lowering for CPU and GPU.
         custom_numeric(
             dtypes=(np.float16, jnp.bfloat16),
-            devices=("cpu", "gpu"),
+            devices=("cpu", "gpu", "tpu"),
             modes=("eager", "graph", "compiled"),
-            tol=5e-1)
+            tol=5e-1,
+        )
     ]
 
   @classmethod
   def cumsum(cls, harness):
     return [
-        # JAX uses a different lowering for CPU and GPU.
         custom_numeric(
             dtypes=(np.float16, jnp.bfloat16),
-            devices=("cpu", "gpu"),
+            devices=("cpu", "gpu", "tpu"),
             modes=("eager", "graph", "compiled"),
-            tol=5e-1)
+            tol=5e-1,
+        )
     ]
 
   @classmethod

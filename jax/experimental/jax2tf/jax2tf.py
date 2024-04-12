@@ -2621,16 +2621,21 @@ tf_impl_with_avals[lax.reduce_p] = _reduce
 def _cumred(lax_reduce_fn: Callable,
             lax_reduce_window_fn: Callable,
             extra_name_stack: str):
-  if config.jax2tf_associative_scan_reductions.value:
-    return _convert_jax_impl(partial(lax_control_flow.associative_scan,
-                                     lax_reduce_fn),
-                             multiple_results=False,
-                             extra_name_stack=extra_name_stack)
-  else:
-    return _convert_jax_impl(partial(lax_control_flow.cumred_reduce_window_impl,
-                                     lax_reduce_window_fn),
-                             multiple_results=False,
-                             extra_name_stack=extra_name_stack)
+  associative_scan = partial(lax_control_flow.associative_scan, lax_reduce_fn)
+  reduce_window = partial(
+      lax_control_flow.cumred_reduce_window_impl, lax_reduce_window_fn
+  )
+
+  def _call_impl(*args, **kwargs):
+    # Vary which implementation to use when cumulation is called. This cannot be
+    # done during import time because the caller may later use a python context
+    # to switch the implementation to use.
+    associative = config.jax2tf_associative_scan_reductions.value
+    return (associative_scan if associative else reduce_window)(*args, **kwargs)
+
+  return _convert_jax_impl(
+      _call_impl, multiple_results=False, extra_name_stack=extra_name_stack
+  )
 
 
 tf_impl_with_avals[lax.cummax_p] = _cumred(
