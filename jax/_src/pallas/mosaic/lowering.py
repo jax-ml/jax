@@ -987,6 +987,12 @@ lowering_rules[primitives.multiple_of_p] = _multiple_of_lowering_rule
 
 def _reduce_max_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
   (x_aval,) = ctx.avals_in
+  if not ctx.avals_out[0].shape:
+    raise NotImplementedError(
+        "Cannot lower reductions to scalar. Reduce to one element vector"
+        " instead, using keepdims=True."
+    )
+
   out_type = aval_to_ir_type(ctx.avals_out[0])
   if jnp.issubdtype(x_aval.dtype, jnp.floating):
     # TODO(apaszke): Remove in 03/2024.
@@ -1019,6 +1025,12 @@ lowering_rules[lax.reduce_max_p] = _reduce_max_lowering_rule
 
 def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
   (x_aval,) = ctx.avals_in
+  if not ctx.avals_out[0].shape:
+    raise NotImplementedError(
+        "Cannot lower reductions to scalar. Reduce to one element vector"
+        " instead, using keepdims=True."
+    )
+
   out_type = aval_to_ir_type(ctx.avals_out[0])
   if jnp.issubdtype(x_aval.dtype, jnp.floating):
     kind = ir.Attribute.parse("#vector.kind<add>")

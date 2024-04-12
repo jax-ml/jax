@@ -2190,6 +2190,61 @@ class PallasCallPipelineTest(parameterized.TestCase):
     )
 
 
+class PallasCallReductionTest(PallasTPUTest):
+
+  def setUp(self):
+    super().setUp()
+    if jtu.device_under_test() != 'tpu':
+      self.skipTest('Test only works on TPU')
+
+  def test_integer_sum(self):
+    def kernel(x_ref, o_ref):
+      x = x_ref[:]
+      # We'd prefer to say:
+      # o_ref[0, 0] = jnp.sum(x)
+      # But this currently hits issues in both Pallas and Mosaic lowering.
+      r = jnp.sum(x, keepdims=True, axis=1)
+      r = jnp.sum(r, keepdims=True, axis=0)
+      o_ref[0, 0] = r[0, 0]
+
+    x = jnp.full([8, 128], 2.0)
+    result = pl.pallas_call(
+        kernel,
+        in_specs=[
+            pl.BlockSpec(lambda *_: (0, 0), (8, 128)),
+        ],
+        out_specs=pl.BlockSpec(block_shape=(1, 1), memory_space=pltpu.SMEM),
+        out_shape=jax.ShapeDtypeStruct([1, 1], jnp.float32),
+        grid=(1,),
+    )(x)
+
+    np.testing.assert_array_equal(result[0, 0], 2048.0)
+
+  def test_integer_max(self):
+    def kernel(x_ref, o_ref):
+      x = x_ref[:]
+      # We'd prefer to say:
+      # o_ref[0, 0] = jnp.max(x)
+      # But this currently hits issues in both Pallas and Mosaic lowering.
+      x = jnp.max(x, keepdims=True, axis=1)
+      x = jnp.max(x, keepdims=True, axis=0)
+      o_ref[0, 0] = x[0, 0]
+
+    x = jnp.arange(1024.0)
+    x = jnp.reshape(x, [8, 128])
+    result = pl.pallas_call(
+        kernel,
+        in_specs=[
+            pl.BlockSpec(lambda *_: (0, 0), (8, 128)),
+        ],
+        out_specs=pl.BlockSpec(block_shape=(1, 1), memory_space=pltpu.SMEM),
+        out_shape=jax.ShapeDtypeStruct([1, 1], jnp.float32),
+        grid=(1,),
+    )(x)
+
+    np.testing.assert_array_equal(result[0, 0], 1023.0)
+
+
 class PallasCallDynamicDMATest(PallasTPUTest):
 
   def setUp(self):
