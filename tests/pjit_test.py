@@ -3999,6 +3999,19 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertArraysEqual(out4, np_inp * 3)
     self.assertArraysEqual(out5, np_inp.T)
 
+  def test_input_shardings_aot(self):
+    mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P('x')))
+
+    @jax.jit
+    def f(x, y):
+      return x * 2, y.T
+
+    arg_shardings, _ = f.lower(arr, np_inp).compile().input_shardings
+    for s in arg_shardings:
+      self.assertIsInstance(s, NamedSharding)
+
   def test_parameter_tupled_jit(self):
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest('Parameters are tupled only on TPU if >2000 parameters')
