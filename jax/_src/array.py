@@ -886,15 +886,11 @@ def _hashable_index(idx):
   return tree_util.tree_map(
       lambda x: (x.start, x.stop) if type(x) == slice else x, idx)
 
-# The fast path is handled directly in shard_args().
+
 def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
   candidates = defaultdict(list)
-  if isinstance(x, ArrayImpl):
-    bufs = [buf.data for buf in x.addressable_shards]
-    arr_indices = tuple(x.sharding.devices_indices_map(x.shape).values())
-  else:
-    bufs = x.device_buffers
-    arr_indices = x.indices
+  bufs = [buf.data for buf in x.addressable_shards]
+  arr_indices = tuple(x.sharding.devices_indices_map(x.shape).values())
   for buf, idx in safe_zip(bufs, arr_indices):
     candidates[_hashable_index(idx)].append(buf)
 
