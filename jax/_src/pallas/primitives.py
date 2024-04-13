@@ -48,7 +48,7 @@ zip, unsafe_zip = safe_zip, zip
 
 program_id_p = jax_core.Primitive("program_id")
 
-def program_id(axis):
+def program_id(axis: int) -> jax.Array:
   return program_id_p.bind(axis=axis)
 
 def program_id_bind(*, axis: int):
@@ -70,7 +70,7 @@ program_id_p.def_abstract_eval(_program_id_abstract_eval)
 
 num_programs_p = jax_core.Primitive("num_programs")
 
-def num_programs(axis):
+def num_programs(axis: int) -> jax.Array:
   return num_programs_p.bind(axis=axis)
 
 @num_programs_p.def_custom_bind
@@ -223,7 +223,7 @@ multiple_of_p = jax_core.Primitive("multiple_of")
 multiple_of_p.def_impl(lambda x, **_: x)
 mlir.register_lowering(multiple_of_p, lambda _, x, **__: [x])
 
-def multiple_of(x, values):
+def multiple_of(x: jax.Array, values: list[int] | int) -> jax.Array:
   if not isinstance(values, list):
     values = [values]
   return multiple_of_p.bind(x, values=values)

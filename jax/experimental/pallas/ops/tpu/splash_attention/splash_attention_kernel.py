@@ -582,7 +582,7 @@ def _apply_mask_and_soft_cap(
     *,
     attn_logits_soft_cap: float,
     k_slice: pl.Slice,
-    k_offset: int,
+    k_offset: int | jax.Array,
     bq: int,
     k_in_lanes=True,
     mask_function=None,
