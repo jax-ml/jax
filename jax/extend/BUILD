@@ -38,6 +38,7 @@ pytype_strict_library(
 py_library_providing_imports_info(
     name = "core",
     srcs = glob(["core/**/*.py"]),
+    lib_rule = pytype_strict_library,
     deps = [
         "//jax",
         "//jax:abstract_arrays",
