@@ -4028,6 +4028,33 @@ class ArrayPjitTest(jtu.JaxTestCase):
     inps = [arr, *[inp] * 2001]
     f(inps)  # doesn't crash
 
+  def test_spmd_preserves_input_sharding_vmap_grad(self):
+    # https://github.com/google/jax/issues/20710
+    n_devices = jax.device_count()
+    sharding = PositionalSharding(jax.devices())
+
+    def model(params, x):
+      return x @ params
+
+    feature_dim = 3
+    batch_size_total = 8
+
+    # Get example data
+    x = jnp.ones((batch_size_total, feature_dim))
+    params = jnp.ones(feature_dim)
+
+    # Shard data, replicate params
+    x = jax.device_put(x, sharding.reshape(n_devices, 1))
+    params = jax.device_put(params, sharding.replicate(axis=0))
+
+    model(params, x)  # doesn't crash
+
+    jax.vmap(model, in_axes=(None, 0))(params, x)  # doesn't crash
+
+    jax.grad(lambda p: model(p, x).sum())(params)  # doesn't crash
+
+    jax.vmap(jax.grad(model), in_axes=(None, 0))(params, x)  # doesn't crash
+
 
 class TempSharding(Sharding):
 
