@@ -695,13 +695,8 @@ def make_array_from_callback(
     >>> arr.addressable_data(0).shape
     (4, 2)
   """
-  has_device_assignment = False
   if sharding.is_fully_replicated:
-    if isinstance(sharding, XLACompatibleSharding):
-      devices = list(sharding._addressable_device_assignment)
-      has_device_assignment = True
-    else:
-      devices = list(sharding.addressable_devices)
+    devices = list(sharding._internal_device_list.addressable_device_list)  # type: ignore
     per_device_values = [data_callback((slice(None),) * len(shape))] * len(devices)
   else:
     device_to_index_map = sharding.addressable_devices_indices_map(shape)
@@ -716,13 +711,11 @@ def make_array_from_callback(
   first_value = xla.canonicalize_dtype(per_device_values[0])
   aval = core.ShapedArray(shape, first_value.dtype, weak_type=False)
 
-  # TODO(yashkatariya): Look into taking this path for non-fully replicated
-  # shardings too.
-  if (sharding.is_fully_replicated and has_device_assignment and
-      not dtypes.issubdtype(aval.dtype, dtypes.extended)):
+  # first value can be numpy array, python scalar, etc.
+  if (sharding.is_fully_replicated and not isinstance(first_value, ArrayImpl)
+      and not dtypes.issubdtype(aval.dtype, dtypes.extended)):
     # Do this check outside because `batched_device_put` won't do these checks
-    # like ArrayImpl. This is a fast path for fully replicated arrays with
-    # xla compatible sharding.
+    # like ArrayImpl.
     if shape != first_value.shape:
       raise ValueError(
             f"Expected shard shape {shape} doesn't match the single device "
@@ -730,6 +723,11 @@ def make_array_from_callback(
             f"{aval.str_short()} with sharding {sharding}")
     return pxla.batched_device_put(
         aval, sharding, per_device_values, devices, committed=True)
+
+  if (sharding.is_fully_replicated and isinstance(first_value, ArrayImpl) and
+      first_value.is_fully_replicated and
+      first_value.sharding._device_assignment == devices):
+    return first_value
 
   arrays = api.device_put(per_device_values, devices)
   if dtypes.issubdtype(aval.dtype, dtypes.extended):

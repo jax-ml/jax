@@ -4062,6 +4062,7 @@ class TempSharding(Sharding):
     if xla_extension_version >= 235:
       super().__init__()
     self._devices = devices
+    self._internal_device_list = xc.DeviceList(tuple(self._devices))
 
   @property
   def device_set(self):
@@ -4072,6 +4073,10 @@ class TempSharding(Sharding):
 
   def shard_shape(self, global_shape):
     return global_shape
+
+  @property
+  def memory_kind(self):
+    return None
 
   @property
   def is_fully_replicated(self):
