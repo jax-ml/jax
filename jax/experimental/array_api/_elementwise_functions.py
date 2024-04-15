@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import jax
+from jax._src.dtypes import issubdtype
 from jax.experimental.array_api._data_type_functions import (
     result_type as _result_type,
     isdtype as _isdtype,
@@ -212,6 +213,20 @@ def greater_equal(x1, x2, /):
   """Computes the truth value of x1_i >= x2_i for each element x1_i of the input array x1 with the respective element x2_i of the input array x2."""
   x1, x2 = _promote_dtypes("greater_equal", x1, x2)
   return jax.numpy.greater_equal(x1, x2)
+
+
+def hypot(x1, x2, /):
+  """Computes the square root of the sum of squares for each element x1_i of the input array x1 with the respective element x2_i of the input array x2."""
+  x1, x2 = _promote_dtypes("hypot", x1, x2)
+
+  # TODO(micky774): Remove when jnp.hypot deprecation is completed
+  # (began 2024-4-14) and default behavior is Array API 2023 compliant
+  if issubdtype(x1.dtype, jax.numpy.complexfloating):
+    raise ValueError(
+      "hypot does not support complex-valued inputs. Please convert to real "
+      "values first, such as by using jnp.real or jnp.imag to take the real "
+      "or imaginary components respectively.")
+  return jax.numpy.hypot(x1, x2)
 
 
 def imag(x, /):

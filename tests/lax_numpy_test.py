@@ -914,6 +914,26 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         jnp.clip(x, max=jnp.array([-1+5j]))
 
 
+  # TODO(micky774): Check for ValueError instead of DeprecationWarning when
+  # jnp.hypot deprecation is completed (began 2024-4-2) and default behavior is
+  # Array API 2023 compliant
+  @jtu.sample_product(shape=all_shapes)
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises mixed type promotion
+  def testHypotComplexInputDeprecation(self, shape):
+    rng = jtu.rand_default(self.rng())
+    x = rng(shape, dtype=jnp.complex64)
+    msg = "Passing complex-valued inputs to hypot"
+    # jit is disabled so we don't miss warnings due to caching.
+    with jax.disable_jit():
+      with self.assertWarns(DeprecationWarning, msg=msg):
+        jnp.hypot(x, x)
+
+      with self.assertWarns(DeprecationWarning, msg=msg):
+        y = jnp.ones_like(x)
+        jnp.hypot(x, y)
+
+
   @jtu.sample_product(
     [dict(shape=shape, dtype=dtype)
       for shape, dtype in _shape_and_dtypes(all_shapes, number_dtypes)],
