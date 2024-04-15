@@ -1887,6 +1887,18 @@ def stack(arrays: np.ndarray | Array | Sequence[ArrayLike],
       new_arrays.append(expand_dims(a, axis))
     return concatenate(new_arrays, axis=axis, dtype=dtype)
 
+@util.implements(getattr(np, 'unstack', None))
+@partial(jit, static_argnames="axis")
+def unstack(x: ArrayLike, /, *, axis: int = 0) -> tuple[Array, ...]:
+  util.check_arraylike("unstack", x)
+  x = asarray(x)
+  if x.ndim == 0:
+    raise ValueError(
+      "Unstack requires arrays with rank > 0, however a scalar array was "
+      "passed."
+    )
+  return tuple(moveaxis(x, axis, 0))
+
 @util.implements(np.tile)
 def tile(A: ArrayLike, reps: DimSize | Sequence[DimSize]) -> Array:
   util.check_arraylike("tile", A)

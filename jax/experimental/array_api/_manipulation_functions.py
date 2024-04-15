@@ -82,3 +82,7 @@ def stack(arrays: tuple[Array, ...] | list[Array], /, *, axis: int = 0) -> Array
   """Joins a sequence of arrays along a new axis."""
   dtype = _result_type(*arrays)
   return jax.numpy.stack(arrays, axis=axis, dtype=dtype)
+
+def unstack(x: Array, /, *, axis: int = 0) -> tuple[Array, ...]:
+  """Splits an array in a sequence of arrays along the given axis."""
+  return jax.numpy.unstack(x, axis=axis)

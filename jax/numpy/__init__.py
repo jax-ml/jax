@@ -253,6 +253,7 @@ from jax._src.numpy.lax_numpy import (
     unpackbits as unpackbits,
     unravel_index as unravel_index,
     unsignedinteger as unsignedinteger,
+    unstack as unstack,
     unwrap as unwrap,
     vander as vander,
     vdot as vdot,

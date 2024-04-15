@@ -171,6 +171,7 @@ MAIN_NAMESPACE = {
   'unique_counts',
   'unique_inverse',
   'unique_values',
+  'unstack',
   'var',
   'vecdot',
   'where',
