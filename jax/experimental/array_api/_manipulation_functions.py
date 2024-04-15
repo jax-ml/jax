@@ -47,9 +47,19 @@ def flip(x: Array, /, *, axis: int | tuple[int, ...] | None = None) -> Array:
   return jax.numpy.flip(x, axis=axis)
 
 
+def moveaxis(x: Array, source: int | tuple[int, ...], destination: int | tuple[int, ...], /) -> Array:
+  """Moves array axes (dimensions) to new positions, while leaving other axes in their original positions."""
+  return jax.numpy.moveaxis(x, source, destination)
+
+
 def permute_dims(x: Array, /, axes: tuple[int, ...]) -> Array:
   """Permutes the axes (dimensions) of an array x."""
   return jax.numpy.permute_dims(x, axes=axes)
+
+
+def repeat(x: Array, repeats: int | Array, /, *, axis: int | None = None) -> Array:
+  """Repeats each element of an array a specified number of times on a per-element basis."""
+  return jax.numpy.repeat(x, repeats=repeats, axis=axis)
 
 
 def reshape(x: Array, /, shape: tuple[int, ...], *, copy: bool | None = None) -> Array:
