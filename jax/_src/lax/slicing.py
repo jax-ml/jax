@@ -370,7 +370,7 @@ class ScatterDimensionNumbers(NamedTuple):
       are the mirror image of `collapsed_slice_dims` in the case of `gather`.
     scatter_dims_to_operand_dims: for each dimension in `scatter_indices`, gives
       the corresponding dimension in `operand`. Must be a sequence of integers
-      with size equal to indices.shape[-1].
+      with size equal to `scatter_indices.shape[-1]`.
 
   Unlike XLA's `ScatterDimensionNumbers` structure, `index_vector_dim` is
   implicit; there is always an index vector dimension and it must always be the
