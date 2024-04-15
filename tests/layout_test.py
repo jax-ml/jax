@@ -325,6 +325,25 @@ class LayoutTest(jtu.JaxTestCase):
         ValueError, 'Sharding has to be concrete when layout.*'):
       Layout(compiled.output_layouts()[0], None)
 
+  def test_layout_on_sds(self):
+    mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, s)
+
+    out_layout = jax.jit(jnp.sin, out_shardings=Layout(DLL.AUTO)).lower(
+        arr).compile().output_layouts()
+
+    sds = jax.ShapeDtypeStruct(arr.shape, arr.dtype, sharding=out_layout)
+    arg_layout, _ = jax.jit(lambda x: x * 2).lower(sds).compile().input_layouts()
+    self.assertEqual(arg_layout[0], out_layout)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        'DeviceLocalLayout.AUTO` cannot be used in place of a device-local'
+        ' layout in a `ShapeDtypeStruct`'):
+      jax.ShapeDtypeStruct(arr.shape, arr.dtype, sharding=Layout(DLL.AUTO))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

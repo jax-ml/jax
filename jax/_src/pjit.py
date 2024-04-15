@@ -485,6 +485,7 @@ def _make_jit_wrapper(jit_info: PjitInfo):
   def eval_shape(*args, **kwargs):
     _, _, params, _, out_tree, _, _, _ = _infer_params(jit_info, args, kwargs)
     out_s = [None if is_unspecified(s) else s for s in params['out_shardings']]
+    # TODO(yashkatariya): Add `Layout` to SDS.
     out = [api.ShapeDtypeStruct(x.shape, x.dtype, x.named_shape, sharding=s)
            for x, s in zip(params['jaxpr'].out_avals, out_s)]
     return tree_unflatten(out_tree, out)

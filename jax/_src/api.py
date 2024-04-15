@@ -70,7 +70,7 @@ from jax._src.lib import pmap_lib
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (PmapSharding, TransferToMemoryKind,
                                      XLACompatibleSharding)
-from jax._src.layout import Layout
+from jax._src.layout import Layout, AutoLayout
 from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
 from jax._src.util import unzip2, safe_map, safe_zip, wrap_name, wraps
@@ -2710,21 +2710,33 @@ class ShapeDtypeStruct:
     named_shape: (optional) a dictionary representing a named shape
     sharding: (optional) a :class:`jax.Sharding` object
   """
-  __slots__ = ["shape", "dtype", "named_shape", "sharding"]
+  __slots__ = ["shape", "dtype", "named_shape", "sharding", "_dll"]
+
   def __init__(self, shape, dtype, named_shape=None, sharding=None):
     self.shape = tuple(shape)
     if dtype is None:
       raise ValueError("ShapeDtypeStruct: dtype must be specified.")
     self.dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
-    if sharding is not None and not isinstance(sharding, Sharding):
+    if sharding is not None and not isinstance(sharding, (Sharding, Layout)):
       raise ValueError(
-          "sharding should be an instance of `jax.sharding.Sharding`. "
-          f"Got {sharding} of type {type(sharding)}.")
-    self.sharding = sharding
+          "sharding should be an instance of `jax.sharding.Sharding` or"
+          f" `jax.experimental.layout.Layout`. Got {sharding} of type"
+          f" {type(sharding)}.")
+    if (isinstance(sharding, Layout) and
+        isinstance(sharding.device_local_layout, AutoLayout)):
+      raise TypeError(
+          "`DeviceLocalLayout.AUTO` cannot be used in place of a device-local"
+          f" layout in a `ShapeDtypeStruct`. Got {sharding}")
+    self.sharding = sharding.sharding if isinstance(sharding, Layout) else sharding
+    self._dll = sharding.device_local_layout if isinstance(sharding, Layout) else None
     self.named_shape = {} if named_shape is None else dict(named_shape)
 
   size = property(lambda self: math.prod(self.shape))
   ndim = property(lambda self: len(self.shape))
+
+  @property
+  def layout(self):
+    return Layout(self._dll, self.sharding)
 
   def __len__(self):
     try:
@@ -2735,8 +2747,9 @@ class ShapeDtypeStruct:
   def __repr__(self):
     ns = f", named_shape={self.named_shape}" if self.named_shape else ""
     sh = f", sharding={self.sharding}" if self.sharding is not None else ""
+    l = f", layout={self.layout}" if self._dll is not None else ""
     return (f"{type(self).__name__}(shape={self.shape}, "
-            f"dtype={self.dtype.name}{ns}{sh})")
+            f"dtype={self.dtype.name}{ns}{sh}{l})")
 
   __str__ = __repr__
 
@@ -2744,18 +2757,20 @@ class ShapeDtypeStruct:
     if not isinstance(other, ShapeDtypeStruct):
       return False
     else:
-      return ((other.shape, other.dtype, other.named_shape, other.sharding) ==
-              (self.shape, self.dtype, self.named_shape, self.sharding))
+      return ((other.shape, other.dtype, other.named_shape, other.sharding, other.layout) ==
+              (self.shape, self.dtype, self.named_shape, self.sharding, self.layout))
 
   def __hash__(self):
     # TODO(frostig): avoid the conversion from dict by addressing
     # https://github.com/google/jax/issues/8182
     named = frozenset(self.named_shape.items())
-    return hash((self.shape, self.dtype, named, self.sharding))
+    return hash((self.shape, self.dtype, named, self.sharding, self.layout))
+
 
 core.pytype_aval_mappings[ShapeDtypeStruct] = (
     lambda x: ShapedArray(x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
                           weak_type=False, named_shape=x.named_shape))
+
 
 @api_boundary
 def eval_shape(fun: Callable, *args, **kwargs):
