@@ -70,6 +70,19 @@ config_setting(
     },
 )
 
+# If this flag is true, jaxlib will be built with Mosaic GPU. VERY EXPERIMENTAL.
+bool_flag(
+    name = "build_mosaic_gpu",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "enable_mosaic_gpu",
+    flag_values = {
+        ":build_mosaic_gpu": "True",
+    },
+)
+
 exports_files([
     "LICENSE",
     "version.py",
