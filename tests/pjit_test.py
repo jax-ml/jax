@@ -389,7 +389,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     jax.tree.map(self.assertDeleted, y_tree)
     jax.tree.map(self.assertNotDeleted, z_tree)
 
-  @unittest.skipIf(xla_extension_version < 220, 'jaxlib version too old')
   @jtu.run_on_devices('tpu', 'cpu', 'gpu')
   def testBufferDonationWithOutputShardingInference(self):
     mesh = jtu.create_global_mesh((2,), 'x')
@@ -443,7 +442,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     jax.effects_barrier()
     self.assertDeleted(x)
 
-  @unittest.skipIf(xla_extension_version < 220, 'jaxlib version too old')
   @jtu.run_on_devices('tpu', 'cpu', 'gpu')
   def testBufferDonationNotDonated(self):
     mesh = jtu.create_global_mesh((2,), 'x')

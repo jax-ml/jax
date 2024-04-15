@@ -60,7 +60,6 @@ from jax.sharding import PartitionSpec as P
 
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.lib import version as jaxlib_version
 
 config.parse_flags_with_absl()
 
@@ -142,23 +141,16 @@ class CompatTest(bctu.CompatTestBase):
     def func(x):
       return lax.fft(x, fft_type="fft", fft_lengths=(4,))
 
-    # An old lowering, with ducc_fft. We keep it for 6 months.
-    data = self.load_testdata(cpu_ducc_fft.data_2023_03_17)
-    if jaxlib_version <= (0, 4, 20):
-      expect_current_custom_calls = ["dynamic_ducc_fft"]
-    else:
-      # We have changed the lowering for fft since we saved this data.
-      # FFT no longer lowers to a custom call.
-      expect_current_custom_calls = []
+    # TODO(b/311175955): Remove this test and the corresponding custom calls.
 
-    self.run_one_test(func, data,
-                      expect_current_custom_calls=expect_current_custom_calls)
+    # An old lowering, with ducc_fft.
+    data = self.load_testdata(cpu_ducc_fft.data_2023_03_17)
+    self.run_one_test(func, data, expect_current_custom_calls=[])
 
     # A newer lowering, with dynamic_ducc_fft.
     data = self.load_testdata(cpu_ducc_fft.data_2023_06_14)
     # FFT no longer lowers to a custom call.
-    self.run_one_test(func, data,
-                      expect_current_custom_calls=expect_current_custom_calls)
+    self.run_one_test(func, data, expect_current_custom_calls=[])
 
   def cholesky_input(self, shape, dtype):
     a = jtu.rand_default(self.rng())(shape, dtype)

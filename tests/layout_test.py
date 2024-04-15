@@ -26,7 +26,6 @@ from jax._src.layout import Layout, DeviceLocalLayout as DLL
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip
 from jax._src import xla_bridge
-from jax._src.lib import xla_extension_version
 
 config.parse_flags_with_absl()
 
@@ -66,8 +65,6 @@ class LayoutTest(jtu.JaxTestCase):
   def setUp(self):
     if not jtu.test_device_matches(['tpu']):
       self.skipTest("Layouts do not work on CPU and GPU backends yet.")
-    if xla_extension_version < 215:
-      self.skipTest('All tests require xla_extension_version >= 215')
     super().setUp()
 
   def test_auto_layout(self):

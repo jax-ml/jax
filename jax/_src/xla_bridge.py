@@ -129,10 +129,6 @@ def _get_tpu_library_path() -> str | None:
 
   libtpu_module = maybe_import_libtpu()
   if libtpu_module is not None:
-    if xla_extension_version < 212:
-      # xla_extension_version < 212 uses tpu_tracer which requires calling
-      # configure_library_path.
-      libtpu_module.configure_library_path()
     return libtpu_module.get_library_path()
 
   return None
@@ -226,28 +222,17 @@ def register_backend_factory(name: str, factory: BackendFactory, *,
 
 
 def make_cpu_client() -> xla_client.Client:
-  if xla_extension_version >= 223:
-    collectives: xla_client._xla.CpuCollectives | None = None
-    if _CPU_ENABLE_GLOO_COLLECTIVES.value:
-      collectives = xla_client._xla.make_gloo_tcp_collectives(  # type: ignore
-        distributed_client=distributed.global_state.client,
-      )
-    return xla_client.make_cpu_client(  # type: ignore
+  collectives: xla_client._xla.CpuCollectives | None = None
+  if _CPU_ENABLE_GLOO_COLLECTIVES.value:
+    collectives = xla_client._xla.make_gloo_tcp_collectives(  # type: ignore
       distributed_client=distributed.global_state.client,
-      node_id=distributed.global_state.process_id,
-      num_nodes=distributed.global_state.num_processes,
-      collectives=collectives,
     )
-  elif xla_extension_version >= 216:
-    # TODO(phawkins): remove type: ignore after updating jaxlib version used for
-    # mypy checks.
-    return xla_client.make_cpu_client(  # type: ignore
-      distributed_client=distributed.global_state.client,
-      node_id=distributed.global_state.process_id,
-      num_nodes=distributed.global_state.num_processes,
-    )
-  else:
-    return xla_client.make_cpu_client()
+  return xla_client.make_cpu_client(  # type: ignore
+    distributed_client=distributed.global_state.client,
+    node_id=distributed.global_state.process_id,
+    num_nodes=distributed.global_state.num_processes,
+    collectives=collectives,
+  )
 
 
 register_backend_factory(

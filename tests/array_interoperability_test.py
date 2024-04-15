@@ -221,7 +221,6 @@ class DLPackTest(jtu.JaxTestCase):
     x_np = np.from_dlpack(x_jax)
     self.assertAllClose(x_np, x_jax)
 
-  @unittest.skipIf(xla_extension_version < 221, "Requires newer jaxlib")
   def testNondefaultLayout(self):
     # Generate numpy array with nonstandard layout
     a = np.arange(4).reshape(2, 2)

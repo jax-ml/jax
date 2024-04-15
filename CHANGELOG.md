@@ -29,7 +29,7 @@ Remember to align the itemized text with the first line of an item within a list
     is deprecated; empty inputs to softmax are now supported without setting this.
   * In {func}`jax.jit`, passing invalid `static_argnums` or `static_argnames`
     now leads to an error rather than a warning.
-
+  * The minimum jaxlib version is now 0.4.23.
 
 ## jaxlib 0.4.27
 
@@ -156,7 +156,7 @@ Remember to align the itemized text with the first line of an item within a list
       cannot interact, e.g., in arithmetic operations.
       Scopes are introduced by {func}`jax.experimental.jax2tf.convert`,
       {func}`jax.experimental.export.symbolic_shape`, {func}`jax.experimental.export.symbolic_args_specs`.
-      The scope of a symbolic expression `e` can be read with `e.scope` and passed 
+      The scope of a symbolic expression `e` can be read with `e.scope` and passed
       into the above functions to direct them to construct symbolic expressions in
       a given scope.
       See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#user-specified-symbolic-constraints.

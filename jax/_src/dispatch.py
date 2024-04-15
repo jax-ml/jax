@@ -44,7 +44,6 @@ from jax._src.interpreters import xla
 from jax._src.interpreters import pxla
 from jax._src import lib
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.monitoring import record_event_duration_secs
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding
@@ -82,15 +81,11 @@ def apply_primitive(prim, *args, **params):
   fun = xla_primitive_callable(prim, **params)
   # TODO(yashkatariya): Investigate adding is_primitive to jit and never
   # triggering the disable jit path instead of messing around with it here.
-  if xla_extension_version >= 218:
-    prev = lib.jax_jit.swap_thread_local_state_disable_jit(False)
-    try:
-      outs = fun(*args)
-    finally:
-      lib.jax_jit.swap_thread_local_state_disable_jit(prev)
-  else:
-    with config.disable_jit(False):
-      outs = fun(*args)
+  prev = lib.jax_jit.swap_thread_local_state_disable_jit(False)
+  try:
+    outs = fun(*args)
+  finally:
+    lib.jax_jit.swap_thread_local_state_disable_jit(prev)
   return outs
 
 @util.cache()
