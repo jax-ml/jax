@@ -299,7 +299,7 @@ expensive (🔴).
 
 Many JAX functions are implemented in terms of other JAX primitives, so this
 list might not be comprehensive. For example, ``jax.nn.relu`` is implemented
-in terms of comparisons and ``jnp.where`` and will work in Pallas kernels too.
+in terms of comparisons and ``jnp.where`` will work in Pallas kernels too.
 
 Array constructors
 ^^^^^^^^^^^^^^^^^^
