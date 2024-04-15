@@ -132,15 +132,15 @@ cc_library(
     deps = [
         ":cuda_gpu_kernel_helpers",
         ":cuda_vendor",
-        "//jaxlib:handle_pool",
-        "//jaxlib:kernel_helpers",
-        "@xla//xla/service:custom_call_status",
-        "@xla//xla/tsl/cuda:cudart",
-        "@xla//xla/tsl/cuda:cudnn",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@local_config_cuda//cuda:cuda_headers",
+        "//jaxlib:handle_pool",
+        "//jaxlib:kernel_helpers",
+        "@xla//xla/service:custom_call_status",
+        # "@xla//xla/tsl/cuda:cudart",
+        # "@xla//xla/tsl/cuda:cudnn",
     ],
 )
 
