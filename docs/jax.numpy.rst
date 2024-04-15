@@ -417,6 +417,7 @@ namespace; they are listed below.
     unique_values
     unpackbits
     unravel_index
+    unstack
     unsignedinteger
     unwrap
     vander
