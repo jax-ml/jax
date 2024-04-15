@@ -30,6 +30,9 @@ Remember to align the itemized text with the first line of an item within a list
   * In {func}`jax.jit`, passing invalid `static_argnums` or `static_argnames`
     now leads to an error rather than a warning.
   * The minimum jaxlib version is now 0.4.23.
+  * The {func}`jax.numpy.hypot` function now issues a deprecation warning when
+    passing complex-valued inputs to it. This will raise an error when the
+    deprecation is completed.
 
 ## jaxlib 0.4.27
 

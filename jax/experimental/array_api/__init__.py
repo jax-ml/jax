@@ -124,6 +124,7 @@ from jax.experimental.array_api._elementwise_functions import (
     floor_divide as floor_divide,
     greater as greater,
     greater_equal as greater_equal,
+    hypot as hypot,
     imag as imag,
     isfinite as isfinite,
     isinf as isinf,

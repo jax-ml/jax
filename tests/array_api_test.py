@@ -88,6 +88,7 @@ MAIN_NAMESPACE = {
   'full_like',
   'greater',
   'greater_equal',
+  'hypot',
   'iinfo',
   'imag',
   'inf',
