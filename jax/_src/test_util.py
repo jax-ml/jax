@@ -66,18 +66,18 @@ import numpy.random as npr
 # jax.test_util. Functionality appearing here is for internal use only, and
 # may be changed or removed at any time and without any deprecation cycle.
 
-_TEST_DUT = config.DEFINE_string(
+_TEST_DUT = config.string_flag(
     'jax_test_dut', '',
     help=
     'Describes the device under test in case special consideration is required.'
 )
 
-NUM_GENERATED_CASES = config.DEFINE_integer(
+NUM_GENERATED_CASES = config.int_flag(
   'jax_num_generated_cases',
   int(os.getenv('JAX_NUM_GENERATED_CASES', '10')),
   help='Number of generated cases to test')
 
-_MAX_CASES_SAMPLING_RETRIES = config.DEFINE_integer(
+_MAX_CASES_SAMPLING_RETRIES = config.int_flag(
   'max_cases_sampling_retries',
   int(os.getenv('JAX_MAX_CASES_SAMPLING_RETRIES', '100')),
   'Number of times a failed test sample should be retried. '
@@ -85,23 +85,23 @@ _MAX_CASES_SAMPLING_RETRIES = config.DEFINE_integer(
   'sampling process is terminated.'
 )
 
-_SKIP_SLOW_TESTS = config.DEFINE_bool(
+_SKIP_SLOW_TESTS = config.bool_flag(
     'jax_skip_slow_tests',
     config.bool_env('JAX_SKIP_SLOW_TESTS', False),
     help='Skip tests marked as slow (> 5 sec).'
 )
 
-_TEST_TARGETS = config.DEFINE_string(
+_TEST_TARGETS = config.string_flag(
   'test_targets', os.getenv('JAX_TEST_TARGETS', ''),
   'Regular expression specifying which tests to run, called via re.search on '
   'the test name. If empty or unspecified, run all tests.'
 )
-_EXCLUDE_TEST_TARGETS = config.DEFINE_string(
+_EXCLUDE_TEST_TARGETS = config.string_flag(
   'exclude_test_targets', os.getenv('JAX_EXCLUDE_TEST_TARGETS', ''),
   'Regular expression specifying which tests NOT to run, called via re.search '
   'on the test name. If empty or unspecified, run all tests.'
 )
-TEST_WITH_PERSISTENT_COMPILATION_CACHE = config.DEFINE_bool(
+TEST_WITH_PERSISTENT_COMPILATION_CACHE = config.bool_flag(
     'jax_test_with_persistent_compilation_cache',
     config.bool_env('JAX_TEST_WITH_PERSISTENT_COMPILATION_CACHE', False),
     help='If enabled, the persistent compilation cache will be enabled for all '

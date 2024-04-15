@@ -67,14 +67,14 @@ Value = Any  # = ir.Value
 # mypy implicitly sets this variable to true when type checking.
 MYPY = False
 
-_JAX_DUMP_IR_TO = config.DEFINE_string(
+_JAX_DUMP_IR_TO = config.string_flag(
     'jax_dump_ir_to', os.getenv('JAX_DUMP_IR_TO', ''),
     help="Path to which the IR that is emitted by JAX should be dumped as "
          "text files. If omitted, JAX will not dump IR. "
          "Supports the special value 'sponge' to pick the path from the "
          "environment variable TEST_UNDECLARED_OUTPUTS_DIR.")
 
-_JAX_INCLUDE_DEBUG_INFO_IN_DUMPS = config.DEFINE_string(
+_JAX_INCLUDE_DEBUG_INFO_IN_DUMPS = config.string_flag(
   'jax_include_debug_info_in_dumps',
   os.getenv('JAX_INCLUDE_DEBUG_INFO_IN_DUMPS', "True"),
   help="Determine whether or not to keep debug symbols and location information "

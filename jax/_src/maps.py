@@ -1850,7 +1850,7 @@ def _ensure_spmd_and(f):
   return update
 
 
-SPMD_LOWERING = config.define_bool_state(
+SPMD_LOWERING = config.bool_state(
     name="experimental_xmap_spmd_lowering",
     default=False,
     help=("When set, multi-device xmap computations will be compiled through "
@@ -1858,7 +1858,7 @@ SPMD_LOWERING = config.define_bool_state(
           "Not supported on CPU!"),
     update_global_hook=_clear_compilation_cache,
     update_thread_local_hook=_thread_local_flag_unsupported)
-SPMD_LOWERING_MANUAL = config.define_bool_state(
+SPMD_LOWERING_MANUAL = config.bool_state(
     name="experimental_xmap_spmd_lowering_manual",
     default=False,
     help=("When set, multi-device xmap computations will be compiled using "
@@ -1867,7 +1867,7 @@ SPMD_LOWERING_MANUAL = config.define_bool_state(
           "Requires experimental_xmap_spmd_lowering!"),
     update_global_hook=_ensure_spmd_and(_clear_compilation_cache),
     update_thread_local_hook=_thread_local_flag_unsupported)
-_ENSURE_FIXED_SHARDING = config.define_bool_state(
+_ENSURE_FIXED_SHARDING = config.bool_state(
     name="experimental_xmap_ensure_fixed_sharding",
     default=False,
     help=("When set and `experimental_xmap_spmd_lowering` is enabled, the lowering will "

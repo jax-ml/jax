@@ -925,7 +925,7 @@ def _extract_function_name(f: Callable, name: str | None) -> str:
   return name
 
 
-_PALLAS_USE_MOSAIC_GPU = config.DEFINE_bool(
+_PALLAS_USE_MOSAIC_GPU = config.bool_flag(
     "jax_pallas_use_mosaic_gpu",
     default=config.bool_env("JAX_PALLAS_USE_MOSAIC_GPU", False),
     help=(
