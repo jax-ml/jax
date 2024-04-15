@@ -37,6 +37,7 @@ from jax._src import profiler
 from jax._src import tree_util
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.lib import xla_extension as xe
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
@@ -45,7 +46,7 @@ from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     SingleDeviceSharding, XLACompatibleSharding, PmapSharding,
     device_replica_id_map, hashed_index)
-from jax._src.layout import DeviceLocalLayout, Layout
+from jax._src.layout import DeviceLocalLayout, Layout, AutoLayout
 from jax._src.typing import ArrayLike, DLDeviceType
 from jax._src.util import safe_zip, unzip3, use_cpp_class, use_cpp_method
 
@@ -644,7 +645,7 @@ setattr(ArrayImpl, "__hash__", None)
 setattr(ArrayImpl, "__array_priority__", 100)
 
 def make_array_from_callback(
-    shape: Shape, sharding: Sharding,
+    shape: Shape, sharding: Sharding | Layout,
     data_callback: Callable[[Index | None], ArrayLike]) -> ArrayImpl:
   """Returns a ``jax.Array`` via data fetched from ``data_callback``.
 
@@ -683,6 +684,17 @@ def make_array_from_callback(
     >>> arr.addressable_data(0).shape
     (4, 2)
   """
+  dll = sharding.device_local_layout if isinstance(sharding, Layout) else None
+  if isinstance(dll, AutoLayout):
+    raise TypeError(
+        "`DeviceLocalLayout.AUTO` cannot be used in place of a device-local"
+        f" layout when calling `jax.make_array_from_callback`. Got {sharding}")
+  sharding = sharding.sharding if isinstance(sharding, Layout) else sharding  # type: ignore
+  if not isinstance(sharding, Sharding):
+    raise TypeError(
+        f"sharding should be an instance of `jax.sharding`. Got {sharding} of"
+        f" type {type(sharding)}")
+
   if sharding.is_fully_replicated:
     devices = list(sharding._internal_device_list.addressable_device_list)  # type: ignore
     per_device_values = [data_callback((slice(None),) * len(shape))] * len(devices)
@@ -701,7 +713,7 @@ def make_array_from_callback(
 
   # first value can be numpy array, python scalar, etc.
   if (sharding.is_fully_replicated and not isinstance(first_value, ArrayImpl)
-      and not dtypes.issubdtype(aval.dtype, dtypes.extended)):
+      and not dtypes.issubdtype(aval.dtype, dtypes.extended) and dll is None):
     # Do this check outside because `batched_device_put` won't do these checks
     # like ArrayImpl.
     if shape != first_value.shape:
@@ -712,11 +724,25 @@ def make_array_from_callback(
     return pxla.batched_device_put(
         aval, sharding, per_device_values, devices, committed=True)
 
-  if (sharding.is_fully_replicated and isinstance(first_value, ArrayImpl) and
-      first_value.is_fully_replicated and
-      first_value.sharding._device_assignment == devices):
+  # After minimum jaxlib version >= 0.4.26, merge this condition into the
+  # following if block.
+  if xla_extension_version >= 256 and isinstance(first_value, ArrayImpl):
+    maybe_default_layout = pxla._maybe_get_default_layout(
+        Layout(dll, sharding), None, sharding, aval)
+    layout_eq = first_value.layout.device_local_layout == maybe_default_layout
+  else:
+    layout_eq = True
+
+  if (isinstance(first_value, ArrayImpl)
+      and first_value._committed
+      and sharding.is_fully_replicated
+      and first_value.is_fully_replicated
+      and first_value.sharding._device_assignment == tuple(devices)
+      and layout_eq):
     return first_value
 
+  if dll is not None:
+    devices = [Layout(dll, SingleDeviceSharding(d)) for d in devices]
   arrays = api.device_put(per_device_values, devices)
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     return aval.dtype._rules.make_sharded_array(aval, sharding, arrays,
@@ -806,11 +832,13 @@ def make_array_from_single_device_arrays(
   # All input arrays should be committed. Checking it is expensive on
   # single-controller systems.
   if any(isinstance(arr, core.Tracer) for arr in arrays):
-    raise ValueError("jax.make_array_from_single_device_arrays requires a list of concrete arrays as input. "
-                     f"got types {set(map(type, arrays))}")
+    raise ValueError(
+        "jax.make_array_from_single_device_arrays requires a list of concrete"
+        f" arrays as input. got types {set(map(type, arrays))}")
   aval = core.ShapedArray(shape, arrays[0].dtype, weak_type=False)
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
-    return aval.dtype._rules.make_sharded_array(aval, sharding, arrays, committed=True)
+    return aval.dtype._rules.make_sharded_array(aval, sharding, arrays,
+                                                committed=True)
   # TODO(phawkins): ideally the cast() could be checked.
   return ArrayImpl(aval, sharding, cast(Sequence[ArrayImpl], arrays),
                    committed=True)

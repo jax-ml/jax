@@ -1281,34 +1281,6 @@ pjit_p = core.AxisPrimitive("pjit")
 pjit_p.multiple_results = True
 
 
-@lru_cache(maxsize=2048)
-def _maybe_get_default_layout(arg_layout, jit_in_layout, sharding, aval):
-  if is_unspecified_or_auto(sharding):
-    return None
-  # TODO(yashkatariya): Figure out how layouts work with extended dtypes.
-  if dtypes.issubdtype(aval.dtype, dtypes.extended):
-    return None
-  if not core.is_constant_shape(aval.shape):
-    return None
-  shard_shape = sharding.shard_shape(aval.shape)
-  d = sharding._device_assignment[0]
-  # If a backend doesn't implement `get_default_layout` return `None` to avoid
-  # cache misses. This can happen when you have `jit(f, in_shardings=s)`. On
-  # first call you pass it a sharded array with layout and on second call you
-  # pass a numpy array. The layouts should be the same to get cache hits.
-  try:
-    al = DeviceLocalLayout(
-        d.client.get_default_layout(aval.dtype, shard_shape, d))
-  except:
-    return None
-  # argument does not have `.layout` property. ShapedArray, ShapedDtypeStruct,
-  # numpy array, etc are some examples.
-  if arg_layout is None:
-    return al if jit_in_layout is None else arg_layout  # arg_layout is None
-  # If arg has a `.layout` property, then return device_local_layout as is.
-  return arg_layout.device_local_layout
-
-
 def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
   # If device or backend is set, return the default layout. This is because you
   # can pass arrays on cpu (with untiled layouts) to jit with backend='tpu'
@@ -1321,7 +1293,7 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
   for arg, jit_in_l, rs, aval in safe_zip(
       args, jit_in_layouts, resolved_in_shardings, in_avals):
     arg_layout, committed = (
-        _maybe_get_default_layout(getattr(arg, 'layout', None), jit_in_l, rs, aval),
+        pxla._maybe_get_default_layout(getattr(arg, 'layout', None), jit_in_l, rs, aval),
         getattr(arg, '_committed', True))
     # Sharding can be unspecified when array is committed if it's a PmapSharding.
     is_pmap_sharding = (is_unspecified(rs) or
