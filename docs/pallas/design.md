@@ -252,7 +252,7 @@ In this example, we compute tiles of the output by doing an unrolled accumulatio
 
 ```python
 def matmul_kernel(x_ref, y_ref, o_ref, *, activation, block_k):
-  acc = jnp.zeros((x_ref.shape[0], x_ref.shape[1]), jnp.float32)
+  acc = jnp.zeros((x_ref.shape[0], y_ref.shape[1]), jnp.float32)
   for k in range(x_ref.shape[1] // block_k):
     x = x_ref[:, k*block_k:(k+1)*block_k]
     y = y_ref[k*block_k:(k+1)*block_k, :]
@@ -260,7 +260,7 @@ def matmul_kernel(x_ref, y_ref, o_ref, *, activation, block_k):
   o_ref[:, :] = activation(acc).astype(o_ref.dtype)
 
 x, y = jnp.ones((512, 256)), jnp.ones((256, 1024))
-block_shape = 256, 256, 128
+block_shape = 128, 256, 128
 
 @partial(jax.jit, static_argnames=["block_shape", "activation"])
 def matmul(x, y, *, block_shape, activation):
