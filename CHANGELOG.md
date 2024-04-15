@@ -15,6 +15,10 @@ Remember to align the itemized text with the first line of an item within a list
     `jax.tree.map(np.asarray, args)` before passing them to the callback.
   * `complex_arr.astype(bool)` now follows the same semantics as NumPy, returning
     False where `complex_arr` is equal to `0 + 0j`, and True otherwise.
+  * Async dispatch expensive computations on the CPU backend. This only applies
+    to non-parallel computations, as we already do async dispatch for parallel
+    computations. You can recover the old behavior by setting
+    `jax.config.update('jax_cpu_enable_async_dispatch', False)`.
 
 * Deprecations & Removals
   * Pallas now exclusively uses XLA for compiling kernels on GPU. The old
