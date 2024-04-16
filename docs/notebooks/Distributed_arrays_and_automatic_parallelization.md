@@ -192,6 +192,8 @@ sharding
 
 +++ {"id": "uRLpOcmNj_Vt"}
 
+The device numbers here are not in numerical order, because the mesh reflects the underlying toroidal topology of the device.
+
 By writing `PositionalSharding(ndarray_of_devices)`, we fix the device order and the initial shape. Then we can reshape it:
 
 ```{code-cell}
