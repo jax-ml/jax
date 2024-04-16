@@ -145,6 +145,12 @@ def initialize(coordinator_address: str | None = None,
   If you are using TPU, Slurm, or Open MPI, all arguments are optional: if omitted, they
   will be chosen automatically.
 
+  The ``spec_detect_method`` may be used to intentionally, automatically select the values for
+  arguments.  You may pass any of the automatic ``spec_detect_methods`` to this argument though 
+  it is not necessary in the TPU, Slurm, or Open MPI cases.  For other MPI installations,
+  if you have a functional ``mpi4py`` installed, you may pass ``spec_detect_method="mpi4py"`` 
+  to bootstrap the required arguments.
+
   Otherwise, you must provide the ``coordinator_address``,
   ``num_processes``, and ``process_id`` arguments to :func:`~jax.distributed.initialize`.
 
@@ -170,9 +176,8 @@ def initialize(coordinator_address: str | None = None,
       If ``None``, defaults to all local devices being visible to the process except when processes
       are launched via Slurm and Open MPI on GPUs. In that case, it will default to a single device per process.
     spec_detect_method: An optional string to attempt to autodetect the configuration of the distributed
-      run.  Available options are "mpipy" only at the moment, though more options may be available in the future.  
-      Note that "mpi4py" method requires you to have a working `mpi4py` install in your environment, 
-      and launch the applicatoin with an MPI-compatible job launcher such as `mpiexec`.  
+      run.  Note that "mpi4py" method requires you to have a working ``mpi4py`` install in your environment, 
+      and launch the applicatoin with an MPI-compatible job launcher such as ``mpiexec`` or ``mpirun``.  
       Legacy auto-detect options (OMPI, Slurm) remain enabled.
     initialization_timeout: Time period (in seconds) for which connection will
       be retried. If the initialization takes more than the timeout specified,
