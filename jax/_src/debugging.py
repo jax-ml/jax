@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 from collections.abc import Sequence
 import functools
 import string
@@ -43,20 +44,6 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import NamedSharding, parse_flatten_op_sharding
-
-# pytype: disable=import-error
-try:
-  import rich
-  import rich.align
-  import rich.box
-  import rich.console
-  import rich.padding
-  import rich.style
-  import rich.table
-  RICH_ENABLED = True
-except:
-  RICH_ENABLED = False
-# pytype: enable=import-error
 
 class DebugEffect(effects.Effect):
   __str__ = lambda self: "Debug"
@@ -440,8 +427,19 @@ def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
                        min_width: int = 9, max_width: int = 80,
                        color_map: ColorMap | None = None):
   """Visualizes a ``Sharding`` using ``rich``."""
-  if not RICH_ENABLED:
+  if not importlib.util.find_spec("rich"):
     raise ValueError("`visualize_sharding` requires `rich` to be installed.")
+
+  # These imports are local so that they don't affect JAX import times.
+  # pytype: disable=import-error
+  import rich.align
+  import rich.console
+  import rich.box
+  import rich.padding
+  import rich.style
+  import rich.table
+  # pytype: enable=import-error
+
   if len(shape) > 2 or len(shape) < 1:
     raise ValueError(
         "`visualize_sharding` only works for shapes with 1 and 2 dimensions.")
