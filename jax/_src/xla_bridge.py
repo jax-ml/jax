@@ -106,9 +106,11 @@ _CPU_ENABLE_GLOO_COLLECTIVES = config.DEFINE_bool(
     help="If True, enable cross-process collectives on CPU using Gloo.",
 )
 
+# TODO(yueshengys): turn default back to True after resolving memory increase
+# issue.
 _CPU_ENABLE_ASYNC_DISPATCH = config.DEFINE_bool(
     name="jax_cpu_enable_async_dispatch",
-    default=True,
+    default=False,
     help="Only applies to non-parallel computations. If False, run computations"
     "inline without async dispatch.",
 )
