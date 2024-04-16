@@ -73,7 +73,7 @@ from jax.experimental import mesh_utils
 
 P = jax.sharding.PartitionSpec
 devices = mesh_utils.create_device_mesh((2, 4))
-mesh = jax.sharding.Mesh(devices, P('x', 'y'))
+mesh = jax.sharding.Mesh(devices, ('x', 'y'))
 sharding = jax.sharding.NamedSharding(mesh, P('x', 'y'))
 print(sharding)
 ```
@@ -145,7 +145,7 @@ def f_contract_2(x):
   out = x.sum(axis=0)
   # mesh = jax.create_mesh((8,), 'x')
   devices = mesh_utils.create_device_mesh(8)
-  mesh = jax.sharding.Mesh(devices, P('x'))
+  mesh = jax.sharding.Mesh(devices, 'x')
   sharding = jax.sharding.NamedSharding(mesh, P('x'))
   return jax.lax.with_sharding_constraint(out, sharding)
 
