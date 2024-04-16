@@ -464,7 +464,7 @@ def dump_module_to_file(module: ir.Module, stage_name: str) -> str | None:
 
   name = f"jax_ir{id}_{_make_string_safe_for_filename(module_name)}_{stage_name}.mlir"
 
-  out_dir = path.Path(out_dir_name)
+  out_dir = path.get_path(out_dir_name)
   out_dir.mkdir(parents=True, exist_ok=True)
   full_path = out_dir / name
   full_path.write_text(module_to_string(module))
