@@ -83,6 +83,9 @@ def get_gce_worker_endpoints() -> str:
   return get_metadata('worker-network-endpoints').split(',')
 
 class SingleSliceGceTpuCluster(clusters.ClusterEnv):
+
+  name: str = "singleslicegcetpu"
+
   @classmethod
   def is_env_present(cls) -> bool:
     return running_in_cloud_tpu_vm and is_gce_env() and not is_multislice_gce_env()
@@ -104,6 +107,9 @@ class SingleSliceGceTpuCluster(clusters.ClusterEnv):
     return None
 
 class MultisliceGceTpuCluster(clusters.ClusterEnv):
+
+  name: str = "multislicegcetpu"
+
   @classmethod
   def is_env_present(cls) -> bool:
     return running_in_cloud_tpu_vm and is_multislice_gce_env()
@@ -160,6 +166,10 @@ class MultisliceGceTpuCluster(clusters.ClusterEnv):
     return int(get_metadata('agent-worker-number'))
 
 class GkeTpuCluster(MultisliceGceTpuCluster):
+
+
+  name: str = "gketpu"
+
   # This class handles both single and multislice GKE as the environment
   # variables are set the same in both cases.
   @classmethod

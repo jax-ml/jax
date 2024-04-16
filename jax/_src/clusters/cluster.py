@@ -31,6 +31,7 @@ class ClusterEnv:
   """
 
   _cluster_types: list[type[ClusterEnv]] = []
+  opt_in_only_method: bool = False # Override this in derived classes if necessary
 
   def __init_subclass__(cls, **kwargs):
     super().__init_subclass__(**kwargs)
@@ -54,12 +55,16 @@ class ClusterEnv:
     
     # First, we check the spec detection method because it will ignore submitted values
     # If if succeeds.
-    if spec_detection_method == "mpi4py":
-      # We directly select the Mpi4pyCluster environment with an override here to opt in:
-      from jax._src.clusters.mpi4py_cluster import Mpi4pyCluster
-      env = Mpi4pyCluster if Mpi4pyCluster.is_env_present(opt_in=True) else None
+    if spec_detection_method is not None:
+      env = next( (env for env in cls._cluster_types if env.name == spec_detection_method), None )
+      if env is None:
+        logger.error(f"Automatic Distributed initialization can not proceed:"
+                     f" {spec_detection_method} is not supported.")
+      if not env.is_env_present():
+        logger.error(f"Automatic Distributed initialization can not proceed:"
+                     f" {spec_detection_method} is supported but not functional in this environment.")
     else:
-      env = next((env for env in cls._cluster_types if env.is_env_present()), None)
+      env = next((env for env in cls._cluster_types if env.opt_in_only_method == False and env.is_env_present()), None)
 
     # Above: I have wrapped the env selection in a conditional to go through
     # opt-in methods first (currently only mpi4py) but to check all possible options 

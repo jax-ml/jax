@@ -23,8 +23,12 @@ from importlib.util import find_spec
 
 class Mpi4pyCluster(clusters.ClusterEnv):
   
+
+  name: str = "mpi4py"
+  opt_in_only_method: bool = True
+
   @classmethod
-  def is_env_present(cls, opt_in=False) -> bool:
+  def is_env_present(cls) -> bool:
     # Why include and opt_in?  Enables this class to conform to
     # every other ClusterEnv subclass while always being rejected
     # as viable, except in the express case where we request to check
@@ -41,7 +45,7 @@ class Mpi4pyCluster(clusters.ClusterEnv):
     # And I also don't know what the right way to raise a complaint here is
     
     # Relies on mpi4py:
-    return find_spec("mpi4py") is not None and opt_in == True
+    return find_spec("mpi4py") is not None
 
   @classmethod
   def get_coordinator_address(cls) -> str:

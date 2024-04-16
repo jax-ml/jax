@@ -48,8 +48,6 @@ class State:
     if isinstance(local_device_ids, int):
       local_device_ids = [local_device_ids]
 
-    if spec_detection_method is not None and spec_detection_method not in ["mpi4py"]:
-      raise ValueError("spec_detection method should only be None, or \"mpi4py\".")
 
     (coordinator_address, num_processes, process_id, local_device_ids) = (
         clusters.ClusterEnv.auto_detect_unset_distributed_params(
@@ -75,7 +73,7 @@ class State:
     self.process_id = process_id
 
     # Emit a warning about PROXY variables if they are in the user's env:
-    proxy_vars = [ key for key in os.environ.keys() if 'proxy' in key.lower()]
+    proxy_vars = [ key for key in os.environ.keys() if '_proxy' in key.lower()]
 
     if len(proxy_vars) > 0:
       vars = " ".join(proxy_vars) + ". "
@@ -152,7 +150,7 @@ def initialize(coordinator_address: str | None = None,
 
   Please note: on some systems, particularly HPC clusters that only access external networks
   through proxy variables such as HTTP_PROXY, HTTPS_PROXY, etc., the call to
-  :func`~jax.distributed.initialize` may timeout.  You may need to unset these variables
+  :func:`~jax.distributed.initialize` may timeout.  You may need to unset these variables
   prior to application launch.
 
   Args:
