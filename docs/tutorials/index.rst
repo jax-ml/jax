@@ -26,7 +26,7 @@ JAX 101
    debugging
    random-numbers
    working-with-pytrees
-   single-host-sharding
+   sharded-computation
    stateful-computations
    simple-neural-network
 

@@ -134,7 +134,7 @@ x.sharding
 
 In this case the sharding is on a single device, but in general a JAX array can be
 sharded across multiple devices, or even multiple hosts.
-To read more about sharded arrays and parallel computation, refer to {ref}`single-host-sharding`
+To read more about sharded arrays and parallel computation, refer to {ref}`sharded-computation`
 
 (thinking-in-jax-pytrees)=
 ## Pytrees

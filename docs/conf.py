@@ -126,6 +126,7 @@ exclude_patterns = [
     'jep/9407-type-promotion.md',
     'jax-101/*.md',
     'autodidax.md',
+    'tutorials/sharded-computation.md',
 ]
 
 # The name of the Pygments (syntax highlighting) style to use.
@@ -213,6 +214,7 @@ nb_execution_excludepatterns = [
     # Requires accelerators
     'pallas/quickstart.*',
     'pallas/tpu/pipelining.*',
+    'tutorials/sharded-computation.*'
 ]
 
 # -- Options for HTMLHelp output ---------------------------------------------
