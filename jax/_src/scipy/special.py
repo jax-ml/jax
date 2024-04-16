@@ -451,7 +451,7 @@ def ndtri(p: ArrayLike) -> Array:
   to `p`.
 
   A piece-wise rational approximation is done for the function.
-  This is a based on the implementation in netlib.
+  This is based on the implementation in netlib.
 
   Args:
     p: an array of type `float32`, `float64`.
@@ -829,7 +829,7 @@ def bessel_jn(z: ArrayLike, *, v: int, n_iter: int=50) -> Array:
 def _gen_recurrence_mask(
     l_max: int, is_normalized: bool, dtype: Any
 ) -> tuple[Array, Array]:
-  """Generates mask for recurrence relation on the remaining entries.
+  """Generates a mask for recurrence relation on the remaining entries.
 
   The remaining entries are with respect to the diagonal and offdiagonal
   entries.
@@ -984,7 +984,7 @@ def _gen_associated_legendre(l_max: int,
   `Y_l^m(θ, φ) = N_l^m * P_l^m(cos(θ)) * exp(i m φ)`, where `N_l^m` is the
   normalization factor and θ and φ are the colatitude and longitude,
   respectively. `N_l^m` is chosen in the way that the spherical harmonics form
-  a set of orthonormal basis function of L^2(S^2). For the computational
+  a set of orthonormal basis functions of L^2(S^2). For the computational
   efficiency of spherical harmonics transform, the normalization factor is
   used in the computation of the ALFs. In addition, normalizing `P_l^m`
   avoids overflow/underflow and achieves better numerical stability. Three
@@ -1008,7 +1008,7 @@ def _gen_associated_legendre(l_max: int,
       operation, `W` is a diagonal matrix containing the quadrature weights,
       and `I` is the identity matrix. The Gauss-Chebyshev points are equally
       spaced, which only provide approximate discrete orthogonality. The
-      Driscoll & Healy qudarture points are equally spaced and provide the
+      Driscoll & Healy quadrature points are equally spaced and provide the
       exact discrete orthogonality. The number of sampling points is required to
       be twice as the number of frequency points (modes) in the Driscoll & Healy
       approach, which enables FFT and achieves a fast spherical harmonics
@@ -1219,7 +1219,7 @@ def sph_harm(m: Array,
 
   Args:
     m: The order of the harmonic; must have `|m| <= n`. Return values for
-      `|m| > n` ara undefined.
+      `|m| > n` are undefined.
     n: The degree of the harmonic; must have `n >= 0`. The standard notation for
       degree in descriptions of spherical harmonics is `l (lower case L)`. We
       use `n` here to be consistent with `scipy.special.sph_harm`. Return
@@ -1229,7 +1229,7 @@ def sph_harm(m: Array,
     n_max: The maximum degree `max(n)`. If the supplied `n_max` is not the true
       maximum value of `n`, the results are clipped to `n_max`. For example,
       `sph_harm(m=jnp.array([2]), n=jnp.array([10]), theta, phi, n_max=6)`
-      acutually returns
+      actually returns
       `sph_harm(m=jnp.array([2]), n=jnp.array([6]), theta, phi, n_max=6)`
   Returns:
     A 1D array containing the spherical harmonics at (m, n, theta, phi).
@@ -1709,7 +1709,7 @@ def spence(x: Array) -> Array:
     -\int_0^z \frac{\log(1 - t)}{t}dt
     \end{equation}
 
-  this is our spence(1 - z).
+  This is our spence(1 - z).
   """
   x = jnp.asarray(x)
   dtype = lax.dtype(x)
