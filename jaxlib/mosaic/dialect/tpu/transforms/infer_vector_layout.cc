@@ -220,6 +220,14 @@ class VectorLayoutInferer {
         if (infer(op).failed()) {
           return failure();
         }
+      } else if (auto op = dyn_cast<scf::WhileOp>(any_op)) {
+        if (infer(op).failed()) {
+          return failure();
+        }
+      } else if (auto op = dyn_cast<scf::ConditionOp>(any_op)) {
+        if (infer(op).failed()) {
+          return failure();
+        }
       } else if (auto op = dyn_cast<tpu::RotateOp>(any_op)) {
         if (infer(op).failed()) {
           return failure();
@@ -533,6 +541,118 @@ class VectorLayoutInferer {
     auto yield_op = op.getBody()->getTerminator();
     setInLayout(yield_op, out_layouts);
     setLayout(op, in_layouts, out_layouts);
+    return success();
+  }
+
+  LogicalResult infer(scf::WhileOp op) {
+    static LogicalResult (*match_condition)(Operation *) = [](Operation *op) {
+      TPU_CHECK_OP(isa<scf::ConditionOp>(op), "expected condition terminator");
+      return success();
+    };
+    static LogicalResult (*match_yield)(Operation *) = [](Operation *op) {
+      TPU_CHECK_OP(isa<scf::YieldOp>(op), "expected yield terminator");
+      return success();
+    };
+    TPU_CHECK_OP(op.getNumRegions() == 2, "expected two blocks for scf.while");
+
+    const auto layout_for_type = [&op, this](const ::mlir::Value &arg,
+                                             SmallVector<Layout> *layouts) {
+      if (arg.getType().isSignlessIntOrIndexOrFloat()) {
+        layouts->push_back(kNoLayout);
+      } else if (isa<VectorType>(arg.getType())) {
+        auto layout = getLayout(arg);
+        layouts->push_back(layout);
+      } else {
+        op.emitOpError() << "unsupported arg type " << arg.getType()
+                         << " in scf.while";
+        return failure();
+      }
+      return success();
+    };
+
+    SmallVector<Layout> in_layouts;
+    in_layouts.reserve(op->getNumOperands());
+    for (const auto &arg : op.getInits()) {
+      const auto status = layout_for_type(arg, &in_layouts);
+      if (status.failed()) return status;
+    }
+
+    // Formally, the types and layouts of the results should follow the layout
+    // of the condition op in the Before region, rather than mimicking the input
+    // layouts. In practice these are constrained to be the same for our current
+    // pipelines, but doesn't represent the full expressiveness of scf.while.
+    // TODO(hmckenzie): Base output layout on ConditionOp, not inputs.
+    SmallVector<Layout> out_layouts = in_layouts;
+
+    // Use tpu.assume_layout to annotate every block argument with the layout of
+    // the corresponding operand in WhileOp and replace all uses of the block
+    // argument with the result of tpu.assume_layout.
+    ImplicitLocOpBuilder builder =
+        ImplicitLocOpBuilder::atBlockBegin(op.getLoc(), op.getBeforeBody());
+    for (auto [iter_arg, layout] :
+         llvm::zip_equal(op.getBeforeBody()->getArguments(), in_layouts)) {
+      if (!dyn_cast<VectorType>(iter_arg.getType())) {
+        continue;
+      }
+      auto assume_layout_op =
+          builder.create<AssumeLayoutOp>(iter_arg.getType(), iter_arg);
+      setLayout(assume_layout_op, layout, layout);
+      iter_arg.replaceUsesWithIf(assume_layout_op, [&](OpOperand &operand) {
+        return operand.getOwner() != assume_layout_op;
+      });
+    }
+    if (inferBlock(*op.getBeforeBody(), match_condition).failed()) {
+      return failure();
+    }
+
+    builder =
+        ImplicitLocOpBuilder::atBlockBegin(op.getLoc(), op.getAfterBody());
+    for (auto [iter_arg, layout] :
+         llvm::zip_equal(op.getAfterBody()->getArguments(), out_layouts)) {
+      if (!dyn_cast<VectorType>(iter_arg.getType())) {
+        continue;
+      }
+      auto assume_layout_op =
+          builder.create<AssumeLayoutOp>(iter_arg.getType(), iter_arg);
+      setLayout(assume_layout_op, layout, layout);
+      iter_arg.replaceUsesWithIf(assume_layout_op, [&](OpOperand &operand) {
+        return operand.getOwner() != assume_layout_op;
+      });
+    }
+
+    if (inferBlock(*op.getAfterBody(), match_yield).failed()) {
+      return failure();
+    }
+
+    auto *condition_op = op.getBeforeBody()->getTerminator();
+    SmallVector<Layout> cond_layout;
+    cond_layout.reserve(out_layouts.size() + 1);
+    cond_layout.push_back(kNoLayout);
+    cond_layout.append(out_layouts);
+    setInLayout(condition_op, cond_layout);
+
+    auto *yield_op = op.getAfterBody()->getTerminator();
+    setInLayout(yield_op, in_layouts);
+
+    setLayout(op, in_layouts, out_layouts);
+    return success();
+  }
+  LogicalResult infer(scf::ConditionOp op) {
+    SmallVector<Layout> in_layouts;
+    in_layouts.reserve(op->getNumOperands());
+    for (const auto &arg : op.getOperands()) {
+      if (arg.getType().isSignlessIntOrIndexOrFloat()) {
+        in_layouts.push_back(kNoLayout);
+      } else if (isa<VectorType>(arg.getType())) {
+        auto layout = getLayout(arg);
+        in_layouts.push_back(layout);
+      } else {
+        op.emitOpError() << "unsupported arg type " << arg.getType()
+                         << " in scf::condition";
+        return failure();
+      }
+    }
+    setLayout(op, in_layouts, ArrayRef<Layout>(in_layouts).drop_front(1));
     return success();
   }
 
