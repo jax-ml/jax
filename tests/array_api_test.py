@@ -68,6 +68,7 @@ MAIN_NAMESPACE = {
   'copysign',
   'cos',
   'cosh',
+  'cumulative_sum',
   'divide',
   'e',
   'empty',

@@ -18,6 +18,10 @@ from jax.experimental.array_api._data_type_functions import (
 )
 
 
+def cumulative_sum(x, /, *, axis=None, dtype=None, include_initial=False):
+  """Calculates the cumulative sum of elements in the input array x."""
+  return jax.numpy.cumulative_sum(x, axis=axis, dtype=dtype, include_initial=include_initial)
+
 def max(x, /, *, axis=None, keepdims=False):
   """Calculates the maximum value of the input array x."""
   return jax.numpy.max(x, axis=axis, keepdims=keepdims)

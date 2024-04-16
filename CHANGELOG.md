@@ -9,8 +9,9 @@ Remember to align the itemized text with the first line of an item within a list
 ## jax 0.4.27
 
 * New Functionality
-  * Added {func}`jax.numpy.unstack`, following the addition of this function in
-    the array API 2023 standard, soon to be adopted by NumPy.
+  * Added {func}`jax.numpy.unstack` and {func}`jax.numpy.cumulative_sum`,
+    following their addition in the array API 2023 standard, soon to be
+    adopted by NumPy.
 
 * Changes
   * {func}`jax.pure_callback` and {func}`jax.experimental.io_callback`
