@@ -31,6 +31,7 @@ import logging
 import os
 import pkgutil
 import platform as py_platform
+import traceback
 import sys
 import threading
 from typing import Any, Callable, Union
@@ -46,6 +47,7 @@ from jax._src.lib import cuda_versions
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
 from jax._src.lib import xla_extension_version
+from jax._src.lib import jaxlib
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +106,13 @@ _CPU_ENABLE_GLOO_COLLECTIVES = config.DEFINE_bool(
     help="If True, enable cross-process collectives on CPU using Gloo.",
 )
 
+_CPU_ENABLE_ASYNC_DISPATCH = config.DEFINE_bool(
+    name="jax_cpu_enable_async_dispatch",
+    default=True,
+    help="Only applies to non-parallel computations. If False, run computations"
+    "inline without async dispatch.",
+)
+
 
 # Warn the user if they call fork(), because it's not going to go well for them.
 def _at_fork():
@@ -112,10 +121,7 @@ def _at_fork():
     "and JAX is multithreaded, so this will likely lead to a deadlock.",
     RuntimeWarning, stacklevel=2)
 
-# os.register_at_fork only exists on Unix.
-if hasattr(os, "register_at_fork"):
-  os.register_at_fork(before=_at_fork)
-
+_at_fork_handler_installed = False
 
 # Backends
 
@@ -127,17 +133,7 @@ def _get_tpu_library_path() -> str | None:
 
   libtpu_module = maybe_import_libtpu()
   if libtpu_module is not None:
-    if hasattr(libtpu_module, "get_library_path"):
-      if xla_extension_version < 212:
-        # xla_extension_version < 212 uses tpu_tracer which requires calling
-        # configure_library_path.
-        libtpu_module.configure_library_path()
-      return libtpu_module.get_library_path()
-    else:
-      # TODO(b/305803029): Remove this branch around 01/2024 after the oldest
-      # supported TPU has get_library_path.
-      libtpu_module.configure_library_path()
-      return os.getenv("TPU_LIBRARY_PATH", None)
+    return libtpu_module.get_library_path()
 
   return None
 
@@ -190,6 +186,9 @@ class BackendRegistration:
   # a buggy plugin.
   experimental: bool = False
 
+  # The C API (`PJRT_Api*`) if this backend is a plugin.
+  c_api: Any | None = None
+
 _backend_factories: dict[str, BackendRegistration] = {}
 _default_backend: xla_client.Client | None = None
 _backends : dict[str, xla_client.Client] = {}
@@ -198,6 +197,8 @@ _backend_lock = threading.Lock()
 _plugins_registered: bool = False
 _plugin_lock = threading.Lock()
 _topology_factories: dict[str, TopologyFactory] = {}
+_plugin_callbacks: list[Any] = []
+_plugin_callback_lock = threading.Lock()
 
 # The set of known non-experimental plugins.
 #
@@ -213,39 +214,37 @@ def register_backend_factory(name: str, factory: BackendFactory, *,
                              priority: int = 0,
                              fail_quietly: bool = True,
                              experimental: bool = False,
-                             make_topology: TopologyFactory | None = None) -> None:
+                             make_topology: TopologyFactory | None = None,
+                             c_api: Any | None = None) -> None:
   with _backend_lock:
     if name in _backends:
       raise RuntimeError(f"Backend {name} already initialized")
   _backend_factories[name] = BackendRegistration(
-    factory, priority, fail_quietly, experimental)
+    factory, priority, fail_quietly, experimental, c_api)
   if make_topology is not None:
     _topology_factories[name] = make_topology
 
 
 def make_cpu_client() -> xla_client.Client:
-  if xla_extension_version >= 223:
-    collectives: xla_client._xla.CpuCollectives | None = None
-    if _CPU_ENABLE_GLOO_COLLECTIVES.value:
-      collectives = xla_client._xla.make_gloo_tcp_collectives(  # type: ignore
-        distributed_client=distributed.global_state.client,
-      )
+  collectives: xla_client._xla.CpuCollectives | None = None
+  if _CPU_ENABLE_GLOO_COLLECTIVES.value:
+    collectives = xla_client._xla.make_gloo_tcp_collectives(  # type: ignore
+      distributed_client=distributed.global_state.client,
+    )
+  if xla_extension_version >= 257:
     return xla_client.make_cpu_client(  # type: ignore
+      asynchronous=_CPU_ENABLE_ASYNC_DISPATCH.value,
       distributed_client=distributed.global_state.client,
       node_id=distributed.global_state.process_id,
       num_nodes=distributed.global_state.num_processes,
       collectives=collectives,
     )
-  elif xla_extension_version >= 216:
-    # TODO(phawkins): remove type: ignore after updating jaxlib version used for
-    # mypy checks.
-    return xla_client.make_cpu_client(  # type: ignore
-      distributed_client=distributed.global_state.client,
-      node_id=distributed.global_state.process_id,
-      num_nodes=distributed.global_state.num_processes,
-    )
-  else:
-    return xla_client.make_cpu_client()
+  return xla_client.make_cpu_client(  # type: ignore
+    distributed_client=distributed.global_state.client,
+    node_id=distributed.global_state.process_id,
+    num_nodes=distributed.global_state.num_processes,
+    collectives=collectives,
+  )
 
 
 register_backend_factory(
@@ -266,33 +265,101 @@ def _check_cuda_compute_capability(devices_to_check):
         RuntimeWarning
       )
 
-def _check_cuda_versions():
-  assert cuda_versions is not None
 
-  def _version_check(name, get_version, get_build_version,
-                     scale_for_comparison=1):
+def _check_cuda_versions(raise_on_first_error: bool = False,
+                         debug: bool = False):
+  assert cuda_versions is not None
+  results: list[dict[str, Any]] = []
+
+  def _make_msg(name: str,
+                runtime_version: int,
+                build_version: int,
+                min_supported: int,
+                debug_msg: bool = False):
+    if debug_msg:
+      return (f"Package: {name}\n"
+              f"Version JAX was built against: {build_version}\n"
+              f"Minimum supported: {min_supported}\n"
+              f"Installed version: {runtime_version}")
+    if min_supported:
+      req_str = (f"The local installation version must be no lower than "
+                 f"{min_supported}.")
+    else:
+      req_str = ("The local installation must be the same version as "
+                 "the version against which JAX was built.")
+    msg = (f"Outdated {name} installation found.\n"
+           f"Version JAX was built against: {build_version}\n"
+           f"Minimum supported: {min_supported}\n"
+           f"Installed version: {runtime_version}\n"
+           f"{req_str}")
+    return msg
+
+  def _version_check(name: str,
+                     get_version,
+                     get_build_version,
+                     scale_for_comparison: int = 1,
+                     min_supported_version: int = 0):
+    """Checks the runtime CUDA component version against the JAX one.
+
+    Args:
+      name: Of the CUDA component.
+      get_version: A function to get the local runtime version of the component.
+      get_build_version: A function to get the build version of the component.
+      scale_for_comparison: For rounding down a version to ignore patch/minor.
+      min_supported_version: An absolute minimum version required. Must be
+        passed without rounding down.
+
+    Raises:
+      RuntimeError: If the component is not found, or is of unsupported version,
+        and if raising the error is not deferred till later.
+    """
+
     build_version = get_build_version()
     try:
       version = get_version()
     except Exception as e:
-      raise RuntimeError(f"Unable to load {name}. Is it installed?") from e
-    if build_version // scale_for_comparison > version // scale_for_comparison:
-      raise RuntimeError(
-          f"Found {name} version {version}, but JAX was built against version "
-          f"{build_version}, which is newer. The copy of {name} that is "
-          "installed must be at least as new as the version against which JAX "
-          "was built."
-      )
+      err_msg = f"Unable to load {name}. Is it installed?"
+      if raise_on_first_error:
+        raise RuntimeError(err_msg) from e
+      err_msg += f"\n{traceback.format_exc()}"
+      results.append({"name": name, "installed": False, "msg": err_msg})
+      return
+
+    if not min_supported_version:
+      min_supported_version = build_version // scale_for_comparison
+    passed = min_supported_version <= version
+
+    if not passed or debug:
+      msg = _make_msg(name=name,
+                      runtime_version=version,
+                      build_version=build_version,
+                      min_supported=min_supported_version,
+                      debug_msg=passed)
+      if not passed and raise_on_first_error:
+        raise RuntimeError(msg)
+      else:
+        record = {"name": name,
+                  "installed": True,
+                  "msg": msg,
+                  "passed": passed,
+                  "build_version": build_version,
+                  "version": version,
+                  "minimum_supported": min_supported_version}
+        results.append(record)
 
   _version_check("CUDA", cuda_versions.cuda_runtime_get_version,
-                 cuda_versions.cuda_runtime_build_version)
+                 cuda_versions.cuda_runtime_build_version,
+                 scale_for_comparison=10,
+                 min_supported_version=12010)
   _version_check(
       "cuDNN",
       cuda_versions.cudnn_get_version,
       cuda_versions.cudnn_build_version,
       # NVIDIA promise both backwards and forwards compatibility for cuDNN patch
-      # versions: https://docs.nvidia.com/deeplearning/cudnn/developer-guide/index.html#api-compat
+      # versions:
+      # https://docs.nvidia.com/deeplearning/cudnn/developer-guide/index.html#api-compat
       scale_for_comparison=100,
+      min_supported_version=8900
   )
   _version_check("cuFFT", cuda_versions.cufft_get_version,
                  cuda_versions.cufft_build_version,
@@ -301,20 +368,42 @@ def _check_cuda_versions():
   _version_check("cuSOLVER", cuda_versions.cusolver_get_version,
                  cuda_versions.cusolver_build_version,
                  # Ignore patch versions.
-                 scale_for_comparison=100)
+                 scale_for_comparison=100,
+                 min_supported_version=11400)
   _version_check("cuPTI", cuda_versions.cupti_get_version,
-                 cuda_versions.cupti_build_version)
+                 cuda_versions.cupti_build_version,
+                 min_supported_version=18)
   # TODO(jakevdp) remove these checks when minimum jaxlib is v0.4.21
   if hasattr(cuda_versions, "cublas_get_version"):
     _version_check("cuBLAS", cuda_versions.cublas_get_version,
                    cuda_versions.cublas_build_version,
                    # Ignore patch versions.
-                   scale_for_comparison=100)
+                   scale_for_comparison=100,
+                   min_supported_version=120100)
   if hasattr(cuda_versions, "cusparse_get_version"):
     _version_check("cuSPARSE", cuda_versions.cusparse_get_version,
                    cuda_versions.cusparse_build_version,
                    # Ignore patch versions.
-                   scale_for_comparison=100)
+                   scale_for_comparison=100,
+                   min_supported_version=12100)
+
+  errors = []
+  debug_results = []
+  for result in results:
+    message: str = result['msg']
+    if not result['installed'] or not result['passed']:
+      errors.append(message)
+    else:
+      debug_results.append(message)
+
+  join_str = f'\n{"-" * 50}\n'
+  if debug_results:
+    print(f'CUDA components status (debug):\n'
+          f'{join_str.join(debug_results)}')
+  if errors:
+    raise RuntimeError(f'Unable to use CUDA because of the '
+                       f'following issues with CUDA components:\n'
+                       f'{join_str.join(errors)}')
 
 
 def make_gpu_client(
@@ -332,9 +421,17 @@ def make_gpu_client(
       else distributed.global_state.num_processes
   )
   if platform_name == "cuda":
-    _check_cuda_versions()
-    devices_to_check = allowed_devices if allowed_devices else range(cuda_versions.cuda_device_count())
-    _check_cuda_compute_capability(devices_to_check)
+    if not os.getenv("JAX_SKIP_CUDA_CONSTRAINTS_CHECK"):
+      _check_cuda_versions()
+    else:
+      print('Skipped CUDA versions constraints check due to the '
+            'JAX_SKIP_CUDA_CONSTRAINTS_CHECK env var being set.')
+
+    # TODO(micky774): remove this check when minimum jaxlib is v0.4.26
+    if jaxlib.version.__version_info__ >= (0, 4, 26):
+      devices_to_check = (allowed_devices if allowed_devices else
+                          range(cuda_versions.cuda_device_count()))
+      _check_cuda_compute_capability(devices_to_check)
 
   return xla_client.make_gpu_client(
       distributed_client=distributed.global_state.client,
@@ -587,7 +684,7 @@ def register_plugin(
   experimental = plugin_name not in _nonexperimental_plugins
   register_backend_factory(plugin_name, factory, priority=priority,
                            fail_quietly=False, experimental=experimental,
-                           make_topology=make_topology)
+                           make_topology=make_topology, c_api=c_api)
   return c_api
 
 
@@ -634,6 +731,11 @@ def _discover_and_register_pjrt_plugins():
       # PJRT_NAMES_AND_LIBRARY_PATHS, in the format of 'name1:path1,name2:path2'
       # ('name1;path1,name2;path2' for windows).
       register_pjrt_plugin_factories_from_env()
+      with _plugin_callback_lock:
+        for factory in _backend_factories.values():
+          if factory.c_api is not None:
+            for callback in _plugin_callbacks:
+              callback(c_api=factory.c_api)
       _plugins_registered = True
 
 
@@ -694,16 +796,44 @@ def backends_are_initialized() -> bool:
     return len(_backends) != 0
 
 
+def register_plugin_callbacks(callback):
+  """Registers a callback to be called with c_api after plugins discovery.
+
+  The callback will be called on all discovered PJRT C API plugins. If
+  `register_plugin_callbacks` is called before the plugins are discovered, the
+  callback will be called right after the plugins are discovered. Otherwise, the
+  callback will be called immediately when `register_plugin_callbacks` is
+  called.
+
+  Args:
+    callback: the callback to be called with c_api.
+  """
+  with _plugin_callback_lock:
+    if _plugins_registered:
+      for factory in _backend_factories.values():
+        if factory.c_api is not None:
+          callback(c_api=factory.c_api)
+    else:
+      _plugin_callbacks.append(callback)
+
+
 def backends() -> dict[str, xla_client.Client]:
   global _backends
   global _backend_errors
   global _default_backend
+  global _at_fork_handler_installed
 
   _discover_and_register_pjrt_plugins()
 
   with _backend_lock:
     if _backends:
       return _backends
+
+    # os.register_at_fork only exists on Unix.
+    if not _at_fork_handler_installed and hasattr(os, "register_at_fork"):
+      os.register_at_fork(before=_at_fork)
+      _at_fork_handler_installed = True
+
     if jax_platforms := config.jax_platforms.value:
       platforms = []
       # Allow platform aliases in the list of platforms.
@@ -769,8 +899,17 @@ def _suggest_missing_backends():
       any(os.path.exists(d) for d in nvidia_gpu_devices)):
     if hasattr(xla_extension, "GpuAllocatorConfig") and "cuda" in _backend_errors:
       err = _backend_errors["cuda"]
-      logger.warning(f"CUDA backend failed to initialize: {err} (Set "
-                     "TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)")
+      warning_msg = f"CUDA backend failed to initialize: {err}."
+      if "no supported devices found for platform CUDA." in err:
+        warning_msg += (
+          "This may be due to JAX pre-allocating too much device "
+          "memory, leaving too little for CUDA library initialization. See "
+          "https://jax.readthedocs.io/en/latest/gpu_memory_allocation.html "
+          "for more details and potential workarounds."
+        )
+      warning_msg += "(Set TF_CPP_MIN_LOG_LEVEL=0 and rerun for more info.)"
+
+      logger.warning(warning_msg)
     else:
       logger.warning("An NVIDIA GPU may be present on this machine, but a "
                      "CUDA-enabled jaxlib is not installed. Falling back to "
@@ -840,7 +979,8 @@ def _get_backend_uncached(
         raise RuntimeError(f"Backend '{platform}' failed to initialize: "
                            f"{_backend_errors[platform]}. "
                            f'Available backends are {list(bs)}')
-      raise RuntimeError(f"Unknown backend {platform}")
+      raise RuntimeError(
+          f"Unknown backend {platform}. Available backends are {list(bs)}")
     return backend
   else:
     assert _default_backend is not None
@@ -936,6 +1076,18 @@ def backend_pjrt_c_api_version(platform=None) -> tuple[int, int] | None:
   ):
     return (backend.pjrt_c_api_major_version, backend.pjrt_c_api_minor_version)
   return None
+
+
+def backend_xla_version(platform=None) -> int | None:
+  """Returns the XLA version of the backend.
+
+  Returns None if the backend does not use PJRT C API or does not have
+  xla_version in the plugin attributes. This methon can be used to skip features
+  that are not available before certain xla_version if the backend is a
+  plugin and uses xla_version.
+  """
+  backend = get_backend(platform)
+  return getattr(backend, "xla_version", None)
 
 
 @lru_cache

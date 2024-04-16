@@ -48,7 +48,7 @@ zip, unsafe_zip = safe_zip, zip
 
 program_id_p = jax_core.Primitive("program_id")
 
-def program_id(axis):
+def program_id(axis: int) -> jax.Array:
   return program_id_p.bind(axis=axis)
 
 def program_id_bind(*, axis: int):
@@ -70,7 +70,7 @@ program_id_p.def_abstract_eval(_program_id_abstract_eval)
 
 num_programs_p = jax_core.Primitive("num_programs")
 
-def num_programs(axis):
+def num_programs(axis: int) -> jax.Array:
   return num_programs_p.bind(axis=axis)
 
 @num_programs_p.def_custom_bind
@@ -223,7 +223,7 @@ multiple_of_p = jax_core.Primitive("multiple_of")
 multiple_of_p.def_impl(lambda x, **_: x)
 mlir.register_lowering(multiple_of_p, lambda _, x, **__: [x])
 
-def multiple_of(x, values):
+def multiple_of(x: jax.Array, values: list[int] | int) -> jax.Array:
   if not isinstance(values, list):
     values = [values]
   return multiple_of_p.bind(x, values=values)
@@ -280,12 +280,12 @@ def _load_jvp(primals, tangents, args_tree, **params):
     other_tangent = ad_util.instantiate(other_tangent)
   return (
       load_p.bind(
-          *tree_util.flatten(ref_primal, indexers, mask, other_primal),
+          *tree_util.tree_leaves((ref_primal, indexers, mask, other_primal)),
           args_tree=args_tree,
           **params,
       ),
       load_p.bind(
-          *tree_util.flatten(ref_tangent, indexers, mask, other_tangent),
+          *tree_util.tree_leaves((ref_tangent, indexers, mask, other_tangent)),
           args_tree=args_tree,
           **params,
       ),
@@ -303,6 +303,10 @@ def _load_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
     raise NotImplementedError("Only one indexer supported in discharge rule.")
   idx = indexers[0]
   if all((isinstance(s, Slice) or not s.shape) for s in idx.indices):
+    # TODO(b/329733289): support strided load/store in interpret mode.
+    for s in idx.indices:
+      if isinstance(s, Slice) and s.stride > 1:
+        raise NotImplementedError("Unimplemented stride support.")
     indices = idx.indices
     scalar_dims = [not isinstance(s, Slice) and not s.shape for s in indices]
     slice_starts = [s.start if isinstance(s, Slice) else s for s in indices]
@@ -382,12 +386,12 @@ def _swap_jvp(primals, tangents, *, args_tree, **params):
   val_tangent = ad_util.instantiate(val_tangent)
   return (
       swap_p.bind(
-          *tree_util.flatten(ref_primal, indexers, val_primal, mask),
+          *tree_util.tree_leaves((ref_primal, indexers, val_primal, mask)),
           args_tree=args_tree,
           **params,
       ),
       swap_p.bind(
-          *tree_util.flatten(ref_tangent, indexers, val_tangent, mask),
+          *tree_util.tree_leaves((ref_tangent, indexers, val_tangent, mask)),
           args_tree=args_tree,
           **params,
       ),
@@ -404,6 +408,10 @@ def _swap_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
     raise NotImplementedError("Only one indexer supported in discharge rule.")
   idx = indexers[0]
   if all((isinstance(s, Slice) or not s.shape) for s in idx.indices):
+    # TODO(b/329733289): support strided load/store in interpret mode.
+    for s in idx.indices:
+      if isinstance(s, Slice) and s.stride > 1:
+        raise NotImplementedError("Unimplemented stride support.")
     indices = idx.indices
     scalar_dims = [
         i

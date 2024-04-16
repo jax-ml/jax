@@ -22,6 +22,7 @@ from functools import partial
 import operator
 from textwrap import dedent
 from typing import Any, Callable, overload
+import warnings
 
 import numpy as np
 
@@ -281,22 +282,15 @@ divide = true_divide
 def floor_divide(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   x1, x2 = promote_args_numeric("floor_divide", x1, x2)
   dtype = dtypes.dtype(x1)
-  if dtypes.issubdtype(dtype, np.integer):
+  if dtypes.issubdtype(dtype, np.unsignedinteger):
+    return lax.div(x1, x2)
+  elif dtypes.issubdtype(dtype, np.integer):
     quotient = lax.div(x1, x2)
     select = logical_and(lax.sign(x1) != lax.sign(x2), lax.rem(x1, x2) != 0)
     # TODO(mattjj): investigate why subtracting a scalar was causing promotion
     return _where(select, quotient - 1, quotient)
   elif dtypes.issubdtype(dtype, np.complexfloating):
-    x1r = lax.real(x1)
-    x1i = lax.imag(x1)
-    x2r = lax.real(x2)
-    x2i = lax.imag(x2)
-    which = lax.ge(lax.abs(x2r), lax.abs(x2i))
-    rat1 = _where(which, lax.full_like(x2i, 1), lax.div(x2r, x2i))
-    rat2 = _where(which, lax.div(x2i, x2r), _lax_const(x2i, 1))
-    out = lax.floor(lax.div(lax.add(lax.mul(x1r, rat1), lax.mul(x1i, rat2)),
-                            lax.add(lax.mul(x2r, rat1), lax.mul(x2i, rat2))))
-    return lax.convert_element_type(out, dtype)
+    raise TypeError("floor_divide does not support complex-valued inputs")
   else:
     return _float_divmod(x1, x2)[0]
 
@@ -737,12 +731,22 @@ def heaviside(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 @implements(np.hypot, module='numpy')
 @jit
 def hypot(x1: ArrayLike, x2: ArrayLike, /) -> Array:
-  check_arraylike("hypot", x1, x2)
-  x1, x2 = promote_dtypes_inexact(x1, x2)
-  x1 = lax.abs(x1)
-  x2 = lax.abs(x2)
+  x1, x2 = promote_args_inexact("hypot", x1, x2)
+
+  # TODO(micky774): Promote to ValueError when deprecation is complete
+  # (began 2024-4-14).
+  if dtypes.issubdtype(x1.dtype, np.complexfloating):
+    warnings.warn(
+      "Passing complex-valued inputs to hypot is deprecated and will raise a "
+      "ValueError in the future. Please convert to real values first, such as "
+      "by using jnp.real or jnp.imag to take the real or imaginary components "
+      "respectively.",
+      DeprecationWarning, stacklevel=2)
+  x1, x2 = lax.abs(x1), lax.abs(x2)
+  idx_inf = lax.bitwise_or(isposinf(x1), isposinf(x2))
   x1, x2 = maximum(x1, x2), minimum(x1, x2)
-  return lax.select(x1 == 0, x1, x1 * lax.sqrt(1 + lax.square(lax.div(x2, lax.select(x1 == 0, lax._ones(x1), x1)))))
+  x = _where(x1 == 0, x1, x1 * lax.sqrt(1 + lax.square(lax.div(x2, _where(x1 == 0, lax._ones(x1), x1)))))
+  return _where(idx_inf, _lax_const(x, np.inf), x)
 
 
 @implements(np.reciprocal, module='numpy')

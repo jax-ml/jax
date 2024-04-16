@@ -206,7 +206,7 @@ python build/build.py --configure_only
 You may pass additional options to `build.py` to configure the build; see the
 `jaxlib` build documentation for details.
 
-By default the Bazel build runs the JAX tests using `jaxlib` built form source.
+By default the Bazel build runs the JAX tests using `jaxlib` built from source.
 To run JAX tests, run:
 
 ```

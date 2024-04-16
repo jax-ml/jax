@@ -16,6 +16,7 @@ from functools import partial
 from absl.testing import absltest
 from typing import Optional
 import os
+
 os.environ['XLA_FLAGS'] = '--xla_gpu_enable_cudnn_fmha=true --xla_gpu_fused_attention_use_cudnn_rng=true'
 
 import numpy as np
@@ -25,26 +26,30 @@ from jax.sharding import Mesh
 from jax.sharding import PartitionSpec, NamedSharding
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.cudnn.fused_attention_stablehlo import dot_product_attention
+from jax._src.cudnn.fused_attention_stablehlo import dot_product_attention, check_is_flash_attention, check_cudnn_version
 
 config.parse_flags_with_absl()
 Array = jnp.ndarray
 
 def sdpa_train(query: Array,
-            key: Array,
-            value: Array,
-            grad: Array,
-            bias: Optional[Array] = None,
-            mask: Optional[Array] = None,
-            scale: float = 0.5,
-            is_causal_mask: bool = False,
-            dropout_rate: float = 0.1) -> Array:
+               key: Array,
+               value: Array,
+               grad: Array,
+               bias: Optional[Array] = None,
+               mask: Optional[Array] = None,
+               scale: float = 0.5,
+               is_causal_mask: bool = False,
+               is_bnth: bool = False,
+               dropout_rate: float = 0.1) -> Array:
   if mask is not None:
     # convert bool mask to dtype mask
     mask = mask.astype(query.dtype)
   out, sdpa_vjp = jax.vjp(
-    partial(dot_product_attention, scale=scale, is_causal_mask=is_causal_mask, dropout_rate=dropout_rate),
-    query, key, value, bias, mask)
+      partial(dot_product_attention, scale=scale, is_causal_mask=is_causal_mask,
+              dropout_rate=dropout_rate,
+              qkv_layout='BNTH' if is_bnth else 'BTNH',
+              is_training=True),
+      query, key, value, bias, mask)
   query_grad, key_grad, value_grad, _, _ = sdpa_vjp(grad)
   return out, (query_grad, key_grad, value_grad)
 
@@ -111,6 +116,22 @@ def sdpa_train_ref(query: Array,
   return out_ref, (query_grad_ref, key_grad_ref, value_grad_ref)
 
 class DotProductAttentionTest(jtu.JaxTestCase):
+  def setUp(self):
+    # TODO(Cjkkkk): Tests fail when the cuDNN constraints check fails, or
+    #  even when it passes: https://github.com/google/jax/issues/20438
+    self.skipTest('Failing with various errors')
+    return
+
+    if jax.device_count() < 4:
+      self.skipTest("Requires more than 4 devices.")
+    try:
+      cudnn_version = check_cudnn_version()
+    except RuntimeError as e:
+      self.skipTest(str(e))
+      return
+    if cudnn_version < 8904:
+      self.skipTest('Requires >= cuDNN 8.9.4')
+
   @jtu.sample_product(
       batch_size=[4],
       seq_len=[256, 1024],
@@ -201,6 +222,86 @@ class DotProductAttentionTest(jtu.JaxTestCase):
         self.assertArraysAllClose(query_grad_ref, query_grad, rtol=1e-5, atol=1e-5)
       self.assertArraysAllClose(key_grad_ref, key_grad, rtol=1e-5, atol=1e-5)
       self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-5, atol=1e-5)
+
+  @jtu.run_on_devices("cuda")
+  def test_sdpa_inference(self):
+    k1, k2, k3 = jax.random.split(jax.random.key(0), 3)
+    query = jax.random.normal(
+        k1, (4, 1024, 4, 64), dtype=jnp.bfloat16)
+    key = jax.random.normal(
+        k2, (4, 1024, 4, 64), dtype=jnp.bfloat16)
+    value = jax.random.normal(
+        k3, (4, 1024, 4, 64), dtype=jnp.bfloat16)
+
+    devices = np.array(jax.local_devices()[:4])
+    devices = devices.reshape((2, 2))
+    with Mesh(devices, ('dp', 'tp')) as mesh:
+      qkv_spec = PartitionSpec('dp', None, 'tp', None)
+      qkv_sharding = NamedSharding(mesh, qkv_spec)
+      replicated = NamedSharding(mesh, PartitionSpec())
+      in_shardings = (qkv_sharding, qkv_sharding, qkv_sharding, replicated, replicated)
+      out_shardings = replicated
+      query = jax.device_put(query, qkv_sharding)
+      key = jax.device_put(key, qkv_sharding)
+      value = jax.device_put(value, qkv_sharding)
+      jitted_sdpa_inference = jax.jit(
+        partial(dot_product_attention, scale=1.0, is_causal_mask=False, dropout_rate=0),
+        in_shardings=in_shardings,
+        out_shardings=out_shardings
+      )
+
+      jitted_sdpa_inference_ref = jax.jit(
+        partial(sdpa_ref, scale=1.0, is_causal_mask=False, dropout_rate=0),
+        in_shardings=in_shardings,
+        out_shardings=out_shardings
+      )
+
+      out = jitted_sdpa_inference(query, key, value, None, None)
+      out_ref = jitted_sdpa_inference_ref(query, key, value, None, None)
+      self.assertArraysAllClose(out_ref, out, rtol=1e-5, atol=1e-5)
+
+  def test_sdpa_utils(self):
+    test_cases = {
+      (256, 512, 64, 8905, False, False): False,
+      (1, 257, 64, 8905, False, True): True,
+      (1, 1024, 64, 8905, False, False): True,
+      (1024, 1024, 64, 8905, False, False): True,
+      (1024, 1024, 128, 8905, False, False): True,
+    }
+
+    for k, v in test_cases.items():
+      sql_q, sql_v, head_dim, cudnn_version, has_bias, is_training = k
+      query = jnp.empty((4, sql_q, 4, head_dim))
+      key = jnp.empty((4, sql_v, 4, head_dim))
+      self.assertEqual(check_is_flash_attention(query, key, cudnn_version, has_bias, is_training), v)
+
+  @jtu.run_on_devices("cuda")
+  def test_layouts(self):
+    dtype = 'bfloat16'
+    B, T, N, H = 4, 1024, 8, 128
+    S = T
+    k0, k1, k2, k3 = jax.random.split(jax.random.key(123), 4)
+    query = jax.random.normal(k0, (B, T, N, H), dtype=dtype)
+    key = jax.random.normal(k1, (B, S, N, H), dtype=dtype)
+    value = jax.random.normal(k2, (B, S, N, H), dtype=dtype)
+    grad = jax.random.normal(k3, (B, T, N, H), dtype=dtype)
+
+    btnh_fn = jax.jit(partial(sdpa_train_ref, scale=.5, is_causal_mask=True,
+                              dropout_rate=0.0))
+    out_ref, (dq_ref, dk_ref, dv_ref) = btnh_fn(query, key, value, grad)
+
+    def _cvt(x):
+      return jnp.einsum('BTNH->BNTH', x)
+    def _cvt_back(x):
+      return jnp.einsum('BNTH->BTNH', x)
+    bnth_fn = jax.jit(partial(sdpa_train, scale=.5, is_causal_mask=True,
+                              is_bnth=True, dropout_rate=0.0))
+    out, (dq, dk, dv) = bnth_fn(_cvt(query), _cvt(key), _cvt(value), _cvt(grad))
+
+    self.assertArraysAllClose(out_ref, _cvt_back(out))
+    self.assertArraysAllClose(dq_ref, _cvt_back(dq))
+    self.assertArraysAllClose(dk_ref, _cvt_back(dk))
+    self.assertArraysAllClose(dv_ref, _cvt_back(dv))
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

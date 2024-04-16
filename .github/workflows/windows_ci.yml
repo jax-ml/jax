@@ -34,7 +34,7 @@ jobs:
           repository: openxla/xla
           path: xla
 
-      - uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c # ratchet:actions/setup-python@v5
+      - uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d # ratchet:actions/setup-python@v5
         with:
           python-version: ${{ matrix.pyver }}
           cache: 'pip'
@@ -46,6 +46,8 @@ jobs:
         run: |
           cd jax
           python -m pip install -r build/test-requirements.txt
+          python -m pip uninstall -y matplotlib
+          python -m pip install --pre --upgrade numpy==2.0.0rc1 scipy==1.13.0
           "C:\\msys64\\;C:\\msys64\\usr\\bin\\;" >> $env:GITHUB_PATH
           python.exe build\build.py ('--bazel_options=--override_repository=xla=${{ github.workspace }}\xla' -replace '\\','\\') --bazel_options=--color=yes
 

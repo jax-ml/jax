@@ -21,7 +21,6 @@ import tempfile
 
 from absl.testing import absltest
 import jax
-from jax import config
 from jax._src import test_util as jtu
 from jax.sharding import NamedSharding
 from jax.experimental import profiler as exp_profiler
@@ -29,7 +28,7 @@ import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 import numpy as np
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
@@ -46,7 +45,7 @@ class PgleTest(jtu.JaxTestCase):
       z = x @ y
       return z @ y
 
-    shape = (8, 8)
+    shape = (16, 16)
     x = jnp.arange(math.prod(shape)).reshape(shape).astype(np.float32)
     y = x + 1
     f_lowered = f.lower(x, y)

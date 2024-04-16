@@ -37,7 +37,7 @@ jax_test(
         "gpu": ["noasan"],  # https://github.com/openai/triton/issues/2918
     },
     config_tags_overrides = {
-        "gpu_x32": {
+        "gpu_a100_x32": {
             "ondemand": False,  # Include in presubmit.
         },
     },
@@ -47,19 +47,19 @@ jax_test(
     ],
     disable_configs = [
         "gpu",
+        "gpu_x32",
         "gpu_a100",
         "gpu_h100",
+        "gpu_p100_x32",
     ],
     enable_configs = [
-        "gpu_x32",
         "gpu_a100_x32",
-        "gpu_p100_x32",
         "gpu_h100_x32",
     ],
     shard_count = 4,
     deps = [
         "//jax:pallas_gpu",
-    ] + py_deps("absl/testing") + py_deps("numpy"),
+    ] + py_deps("absl/testing") + py_deps("jax_triton") + py_deps("numpy"),
 )
 
 jax_test(
@@ -71,7 +71,7 @@ jax_test(
         "gpu": ["noasan"],  # https://github.com/openai/triton/issues/2918
     },
     config_tags_overrides = {
-        "gpu_x32": {
+        "gpu_a100_x32": {
             "ondemand": False,  # Include in presubmit.
         },
     },
@@ -81,12 +81,12 @@ jax_test(
     ],
     disable_configs = [
         "gpu",
+        "gpu_x32",
         "gpu_p100",
         "gpu_a100",
         "gpu_h100",
     ],
     enable_configs = [
-        "gpu_x32",
         "gpu_a100_x32",
         "gpu_p100_x32",
         "gpu_h100_x32",
@@ -99,37 +99,35 @@ jax_test(
 )
 
 jax_test(
-    name = "pallas_via_xla_test",
+    name = "ops_test",
     srcs = [
-        "pallas_test.py",
+        "ops_test.py",
     ],
     backend_tags = {
         "gpu": ["noasan"],  # https://github.com/openai/triton/issues/2918
     },
     config_tags_overrides = {
-        "gpu_x32": {
+        "gpu_a100_x32": {
             "ondemand": False,  # Include in presubmit.
         },
     },
     disable_backends = [
         "cpu",
-        "tpu",
     ],
     disable_configs = [
         "gpu",
-        "gpu_p100",
+        "gpu_x32",
         "gpu_a100",
+        "gpu_p100",
+        "gpu_p100_x32",
         "gpu_h100",
     ],
     enable_configs = [
-        "gpu_x32",
         "gpu_a100_x32",
-        "gpu_p100_x32",
         "gpu_h100_x32",
     ],
-    shard_count = 4,
     deps = [
-        "//jax:pallas_gpu",
+        "//jax:pallas",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
@@ -207,4 +205,42 @@ jax_test(
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
     ],
+)
+
+jax_test(
+    name = "paged_attention_kernel_test",
+    srcs = ["paged_attention_kernel_test.py"],
+    disable_backends = [
+        "cpu",
+        "gpu",
+    ],
+    shard_count = 2,
+    tags = [
+        "noasan",  # Times out.
+        "nomsan",  # Times out.
+        "notsan",  # Times out.
+    ],
+    deps = [
+        "//jax:pallas_tpu_ops",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_test(
+    name = "gmm_test",
+    srcs = [
+        "gmm_test.py",
+    ],
+    disable_backends = [
+        "cpu",
+        "gpu",
+    ],
+    shard_count = 50,
+    tags = [
+        "noasan",  # Times out.
+        "nomsan",  # Times out.
+        "notsan",  # Times out.
+    ],
+    deps = [
+        "//jax:pallas_tpu_ops",
+    ] + py_deps("absl/testing") + py_deps("absl/flags") + py_deps("numpy") + py_deps("hypothesis"),
 )

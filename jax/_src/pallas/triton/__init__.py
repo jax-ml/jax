@@ -14,7 +14,6 @@
 
 """Contains Triton-specific pallas modules."""
 
-from jax._src.pallas.triton import pallas_call_registration
 from jax._src.lib import gpu_triton as triton_kernel_call_lib
 
 
@@ -22,7 +21,8 @@ try:
   get_compute_capability = triton_kernel_call_lib.get_compute_capability
 except AttributeError:
 
-  def get_compute_capability() -> int:
+  def get_compute_capability(device) -> int:
+    del device  # Unused.
     raise RuntimeError(
         "get_compute_capability is not available. Try installing jaxlib with"
         " GPU support following instructions in"
@@ -30,4 +30,4 @@ except AttributeError:
     )
 
 
-del pallas_call_registration, triton_kernel_call_lib
+del triton_kernel_call_lib

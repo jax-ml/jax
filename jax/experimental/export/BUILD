@@ -14,11 +14,11 @@
 
 # JAX-export provides APIs for exporting StableHLO for serialization purposes.
 
+load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "py_deps",
 )
-load("@rules_python//python:defs.bzl", "py_library")
 
 licenses(["notice"])
 

@@ -58,7 +58,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.custom_batching
@@ -312,20 +311,16 @@ class JitTest(jtu.BufferDonationTestCase):
     jit(f, **{argnum_type: (0, 1, -3)})
 
     # Out of bounds without *args
-    # with self.assertRaises(ValueError):
-    with self.assertWarns(SyntaxWarning):
+    with self.assertRaises(ValueError):
       jit(f, **{argnum_type: (0, 1, 3)})
 
-    # with self.assertRaises(ValueError):
-    with self.assertWarns(SyntaxWarning):
+    with self.assertRaises(ValueError):
       jit(f, **{argnum_type: (0, 1, -4)})
 
-    # with self.assertRaises(ValueError):
-    with self.assertWarns(SyntaxWarning):
+    with self.assertRaises(ValueError):
       jit(g, **{argnum_type: (0, 1, 3)})
 
-    # with self.assertRaises(ValueError):
-    with self.assertWarns(SyntaxWarning):
+    with self.assertRaises(ValueError):
       jit(g, **{argnum_type: (0, 1, -3)})
 
     # Out of bounds with *args
@@ -351,8 +346,7 @@ class JitTest(jtu.BufferDonationTestCase):
     jit(f, **{argnum_type: ("b", "c")})
 
     # Undefined arg without **kwargs
-    # with self.assertRaises(ValueError):
-    with self.assertWarns(SyntaxWarning):
+    with self.assertRaises(ValueError):
       jit(f, **{argnum_type: ("b", "c", "not_defined")})
 
     # Undefined arg with **kwargs
@@ -362,13 +356,11 @@ class JitTest(jtu.BufferDonationTestCase):
     jit(h, **{argnum_type: ("b", "c", "not_defined")})
 
     # Positional only
-    # with self.assertRaises(ValueError):
-    with self.assertWarns(SyntaxWarning):
+    with self.assertRaises(ValueError):
       jit(h, **{argnum_type: ("a", "c")})
 
     # Var positional
-    # with self.assertRaises(ValueError):
-    with self.assertWarns(SyntaxWarning):
+    with self.assertRaises(ValueError):
       jit(h, **{argnum_type: ("args", "c")})
 
   def test_jit_with_many_args_works(self):
@@ -499,7 +491,7 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertDeleted(z)
 
   def test_resolve_argnums_signature_fail(self):
-    api_util.resolve_argnums(int, None, None, None, None)  # doesn't crash
+    api_util.resolve_argnums(int, None, None, None, None, None)  # doesn't crash
 
   @jtu.device_supports_buffer_donation()
   def test_donate_argnames_with_args(self):
@@ -1227,6 +1219,14 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertIn("kwargs['z']", hlo_str)
     self.assertIn("kwargs['w']", hlo_str)
 
+    hlo_str = mlir.module_to_string(
+      lowered.compiler_ir('stablehlo'),
+      enable_debug_info=False,
+    )
+    for s in ("\"x\"", "y['hi']", "args[0]", "args[1]", "kwargs['z']", "kwargs['w']"):
+      self.assertNotIn(s, hlo_str)
+
+
   @parameterized.parameters([0, 2, [(0, 2)]])
   def test_jit_lower_arg_info_static_argnums(self, static_argnums):
     def f(x, y, *args, **kwargs):
@@ -1241,6 +1241,10 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertIn("args[1]", hlo_str)
     self.assertIn("kwargs['z']", hlo_str)
     self.assertIn("kwargs['w']", hlo_str)
+
+    hlo_str = mlir.module_to_string(ir, enable_debug_info=False)
+    for s in ("\"x\"", "y['hi']", "args[0]", "args[1]", "kwargs['z']", "kwargs['w']"):
+      self.assertNotIn(s, hlo_str)
 
   @parameterized.parameters(['a', 'b', [('a', 'b')]])
   def test_jit_lower_arg_info_static_argnames(self, static_argnames):
@@ -1258,6 +1262,13 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertIn("kwargs['w']", hlo_str)
     self.assertNotIn("kwargs['a']", hlo_str)
     self.assertNotIn("kwargs['b']", hlo_str)
+
+    hlo_str = mlir.module_to_string(ir, enable_debug_info=False)
+    for s in (
+      "\"x\"", "y['hi']", "args[0]", "args[1]", "kwargs['z']",
+      "kwargs['w']", "kwargs['a']", "kwargs['b']"
+    ):
+      self.assertNotIn(s, hlo_str)
 
   def test_jit_lower_result_info(self):
     def f(x, y, z):
@@ -1411,7 +1422,6 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(f(x), x)
     with self.assertRaisesRegex(core.ConcretizationTypeError, "Abstract tracer value"):
       jax.jit(f)(x)
-
 
   @parameterized.named_parameters(
       ('grad', jax.grad),
@@ -1688,7 +1698,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_device_put_sharding(self):
     mesh = jax.sharding.Mesh(jax.devices(), ('x',))
-    s = jax.sharding.NamedSharding(mesh, P('x'))
+    s = jax.NamedSharding(mesh, P('x'))
     x = jnp.arange(len(jax.devices()))
 
     y = jax.device_put(x, s)
@@ -1714,9 +1724,9 @@ class APITest(jtu.JaxTestCase):
 
     mesh = jax.sharding.Mesh(np.array(jax.devices()[:2]).reshape((2, 1)),
                              ("x", "y"))
-    s1 = jax.sharding.NamedSharding(mesh, P("x"))
-    s2 = jax.sharding.NamedSharding(mesh, P("y"))
-    s3 = jax.sharding.NamedSharding(mesh, P("x", "y"))
+    s1 = jax.NamedSharding(mesh, P("x"))
+    s2 = jax.NamedSharding(mesh, P("y"))
+    s3 = jax.NamedSharding(mesh, P("x", "y"))
 
     x = jnp.arange(2)
     y = jnp.arange(2) + 10
@@ -1991,7 +2001,6 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(fwd(fwd(f, 1), 0)(x, u).shape, (2, 5))
     self.assertEqual(fwd(rev(f, 0), 1)(x, u).shape, (5, 2))
     self.assertEqual(fwd(fwd(f, 0), 1)(x, u).shape, (5, 2))
-
 
   def test_large_device_constant(self):
     ans = jit(lambda x: 2 * x)(jnp.ones(int(2e6)))  # doesn't crash
@@ -2373,6 +2382,20 @@ class APITest(jtu.JaxTestCase):
     pytree = jax.block_until_ready(pytree)
     self.assertAllClose(pytree[0], jnp.array(1.), check_dtypes=False)
     self.assertAllClose(pytree[1], np.ones(3), check_dtypes=False)
+
+  def test_block_until_ready_numpy_arrays(self):
+    pytree = (np.ones(1), np.ones(2))
+    pytree = jax.block_until_ready(pytree)
+    self.assertAllClose(pytree[0], np.ones(1), check_dtypes=False)
+    self.assertAllClose(pytree[1], np.ones(2), check_dtypes=False)
+
+  def test_block_until_ready_mixed(self):
+    pytree = (device_put(1.), device_put(2.), np.ones(3), 4)
+    pytree = jax.block_until_ready(pytree)
+    self.assertAllClose(pytree[0], jnp.array(1.), check_dtypes=False)
+    self.assertAllClose(pytree[1], jnp.array(2.), check_dtypes=False)
+    self.assertAllClose(pytree[2], np.ones(3), check_dtypes=False)
+    self.assertEqual(pytree[3], 4)
 
   def test_devicearray_weakref_friendly(self):
     x = device_put(1.)
@@ -2979,7 +3002,6 @@ class APITest(jtu.JaxTestCase):
     dictionary = {'a': 5., 'b': jnp.ones(2)}
     x = jnp.zeros(3)
     y = jnp.arange(3.)
-
 
     def f(dct, x, y):
       return dct['a'] + dct['b'] + x + y
@@ -4283,7 +4305,6 @@ class APITest(jtu.JaxTestCase):
     def b(x):
       return a(x)
 
-
     @jax.jit
     def g(x):
       return x, x
@@ -4305,7 +4326,6 @@ class APITest(jtu.JaxTestCase):
     @jax.jit
     def b(x):
       return a()
-
 
     @jax.jit
     def g(x):
@@ -4484,6 +4504,21 @@ class APITest(jtu.JaxTestCase):
     _, msg = cm.output
     self.assertIn('another function defined on the same line', msg)
 
+  def test_cache_miss_explanations_unpacks_transforms(self):
+    # Tests that the explain_tracing_cache_miss() function does not throw an
+    # error when unpacking `transforms` with a length greater than 3.
+    @jax.jit
+    def f(key):
+      return jax.random.truncated_normal(key, 1, 1, dtype=jax.numpy.float32)
+
+    with config.explain_cache_misses(True):
+      with self.assertLogs(level="WARNING") as cm:
+        f(jax.random.key(seed=123))
+
+    self.assertLen(cm.output, 5)
+    for msg in cm.output:
+      self.assertIn("TRACING CACHE MISS", msg)
+
   @parameterized.named_parameters([
       {"testcase_name": f"{dtype}", "dtype": dtype}
       for dtype in jtu.dtypes.custom_floats])
@@ -4554,7 +4589,6 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "ndim of its first argument"):
       jax.sharding.Mesh(jax.devices(), ("x", "y"))
 
-  @unittest.skipIf(xla_extension_version < 222, 'jaxlib version too old')
   def test_jit_boundmethod_reference_cycle(self):
     class A:
       def __init__(self):
@@ -4564,6 +4598,36 @@ class APITest(jtu.JaxTestCase):
     a = weakref.ref(A())
     gc.collect()
     assert a() is None
+
+  def test_forwarding_bug(self):
+    # Test for issue #20267.
+    def f(x):
+
+      @jax.jit
+      def inner(a, x):
+        return a, jnp.exp(x)
+
+      return inner(0.0, x)[0]
+    jax.grad(f)(1.)  # don't crash
+
+  @parameterized.parameters(it.product(range(4), repeat=3))
+  @jtu.run_on_devices("cpu")
+  def test_jit_forwarding_correctness(self, seed, num_input_fwd, num_output_fwd):
+    num_args = 3
+    rng = np.random.RandomState(seed)
+    in_perm = rng.permutation(num_args)
+    out_perm = rng.permutation(num_args)
+
+    @jax.jit
+    def f(inputs):
+      inputs = [inputs[i] for i in in_perm]
+      outputs = inputs[:num_input_fwd] + [
+          jnp.exp(inputs[i]) if i < num_output_fwd else jnp.sin(inputs[i])
+          for i in range(num_args - num_input_fwd)]
+      return [outputs[i] for i in out_perm]
+
+    jtu.check_grads(f, (list(jnp.arange(float(num_args))),), order=1,
+                    modes=['rev'], atol=1e-3, rtol=1e-3)
 
 
 class RematTest(jtu.JaxTestCase):
@@ -5525,6 +5589,16 @@ class RematTest(jtu.JaxTestCase):
       return jnp.zeros_like(x) * jnp.sin(x)
     res_avals = saved_residuals(f, jnp.ones((2, 2)))
     self.assertLen(res_avals, 1)
+
+  def test_name_saveable_input(self):
+    @partial(jax.remat, policy=lambda p, *_, **__: 'mul' in str(p))
+    def f(x):
+      x = checkpoint_name(x * x, 'foo')
+      x = x * x
+      return x
+
+    res = saved_residuals(f, 3.)
+    self.assertStartsWith(res[1][1], "named 'foo'")
 
   def test_name_denylist(self):
     def f(x):
@@ -8244,10 +8318,10 @@ class CustomVJPTest(jtu.JaxTestCase):
     self.assertRaisesRegex(
         TypeError,
         re.escape(
-            "Custom VJP rule must produce an output with the same container "
+            "Custom VJP bwd rule must produce an output with the same container "
             "(pytree) structure as the args tuple of the primal function, "
             "and in particular must produce a tuple of length equal to the "
-            "number of arguments to the primal function, but got VJP output "
+            "number of arguments to the primal function, but got bwd output "
             "structure {} for primal input structure {}.".format(
                 jax.tree.structure((1, 1)),
                 jax.tree.structure((1,)))
@@ -8266,7 +8340,7 @@ class CustomVJPTest(jtu.JaxTestCase):
       return 2. * g  # Should be a tuple
 
     f.defvjp(foo_fwd, foo_bwd)
-    with self.assertRaisesRegex(TypeError, "Custom VJP rule .* must produce a tuple"):
+    with self.assertRaisesRegex(TypeError, "Custom VJP bwd rule .* must produce a tuple"):
       api.grad(f)(3.)
 
   def test_fwd_rule_primal_out_type_doesnt_match_primal_error_message(self):
@@ -8996,6 +9070,26 @@ class CustomVJPTest(jtu.JaxTestCase):
     gx, = vjp(x)
     self.assertArraysAllClose(gx, zero)
 
+  def test_symbolic_zero_custom_vjp_bwd_shape_error(self):
+    @jax.custom_vjp
+    def f(x, y, z):
+      return x, y, z
+
+    def fwd(x, y, z):
+      return f(x.value, y.value, z.value), None
+
+    def bwd(_, gs):
+      x_bar, y_bar, z_bar = gs
+      return y_bar, x_bar, z_bar  # swapped!
+
+    f.defvjp(fwd, bwd, symbolic_zeros=True)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r'Consider just returning a None here'):
+      jax.grad(lambda x, y, z: f(x, y, z)[2].sum())(
+        jnp.ones(1), jnp.ones(2), jnp.ones(3))
+
   @parameterized.named_parameters(
       ('jit_vmap', True, True),
       ('jit', True, False),
@@ -9250,6 +9344,44 @@ class CustomVJPTest(jtu.JaxTestCase):
     f.defvjp(f_fwd, f_bwd)
 
     jax.grad(f)((1.0, (2.0, None)))  # don't crash
+
+  def test_bwd_rule_shape_mismatch(self):
+    @jax.custom_vjp
+    def foo(x, y):
+      return x
+
+    def foo_fwd(x, y):
+      return x, None
+
+    def foo_bwd(_, g):
+      return jnp.zeros(3), jnp.zeros(3)
+
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        r'output\[1\] the bwd rule produced an output of shape/dtype float..\[3\]'):
+      jax.grad(lambda x, y: foo(x, y * y).sum(), 1)(jnp.ones(3), jnp.ones(4))
+
+  def test_bwd_rule_shape_mismatch_disable(self):
+    # TODO(mattjj): remove this test when the config option is removed
+    @jax.custom_vjp
+    def foo(x, y):
+      return x
+
+    def foo_fwd(x, y):
+      return x, None
+
+    def foo_bwd(_, g):
+      return jnp.zeros(3), jnp.zeros(3)
+
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    try:
+      jax.config.update('jax_custom_vjp_disable_shape_check', True)
+      jax.grad(lambda x, y: foo(x, y).sum(), 1)(jnp.ones(3), jnp.ones(4))
+    finally:
+      jax.config.update('jax_custom_vjp_disable_shape_check', False)
 
 
 def transpose_unary(f, x_example):

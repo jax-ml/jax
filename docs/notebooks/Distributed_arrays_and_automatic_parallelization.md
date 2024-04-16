@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.16.0
+    jupytext_version: 1.16.1
 kernelspec:
   display_name: Python 3
   name: python3
@@ -20,10 +20,6 @@ kernelspec:
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/Distributed_arrays_and_automatic_parallelization.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/google/jax/blob/main/docs/notebooks/Distributed_arrays_and_automatic_parallelization.ipynb)
 
 This tutorial discusses parallelism via `jax.Array`, the unified array object model available in JAX v0.4.1 and newer.
-
-Refer to the [`jax.Array migration`](https://jax.readthedocs.io/en/latest/jax_array_migration.html#jax-array-migration) guide to learn how to migrate the existing JAX pre-v0.4.1 codebases to `jax.Array`.
-
-**Note:** The features required by `jax.Array` are not supported by the Colab TPU runtime at this time, but are available on Google Cloud TPU and Kaggle TPU VMs.
 
 ```{code-cell}
 :id: FNxScTfq3vGF

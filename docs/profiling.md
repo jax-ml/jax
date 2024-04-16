@@ -50,7 +50,7 @@ active for a portion of your script, you can shut it down by calling
 `jax.profiler.stop_server()`.
 
 Once the script is running and after the profiler server has started, we can
-manually capture an trace by running:
+manually capture and trace by running:
 ```bash
 $ python -m jax.collect_profile <port> <duration_in_ms>
 ```
@@ -215,16 +215,6 @@ from a running program.
 
    You can also use the `memory_viewer`, `op_profile`, and `graph_viewer`
    tools.<br /><br />
-
-### Concurrent kernel tracing on GPU
-
-By default, traces captured on GPU in a mode that prevents CUDA kernels from
-running concurrently. This allows for more accurate kernel timings, but removes
-any concurrency between streams (for example, between compute and
-communication). To enable concurrent kernel tracing, set the environment
-variable `TF_GPU_CUPTI_FORCE_CONCURRENT_KERNEL=1` when launching the JAX
-program.
-
 
 ### Adding custom trace events
 

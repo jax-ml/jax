@@ -306,7 +306,7 @@ and :py:func:`jax.lax.fori_loop`
     lax.fori_loop(start: int, end: int, body: (int -> C -> C), init: C) -> C
 
 
-In the above signature, “C” stands for the type of a the loop “carry” value.
+In the above signature, “C” stands for the type of the loop “carry” value.
 For example, here is an example fori loop
 
 >>> import numpy as np
@@ -371,6 +371,7 @@ For the example consider the function ``func11`` below
 { lambda ; a:f32[16] b:f32[]. let
     c:f32[16] = broadcast_in_dim[broadcast_dimensions=() shape=(16,)] 1.0
     d:f32[] e:f32[16] = scan[
+      _split_transpose=False
       jaxpr={ lambda ; f:f32[] g:f32[] h:f32[] i:f32[]. let
           j:f32[] = mul h i
           k:f32[] = convert_element_type[new_dtype=float32 weak_type=False] g

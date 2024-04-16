@@ -44,7 +44,11 @@ class ClusterEnv:
                                            num_processes: int | None,
                                            process_id: int | None,
                                            local_device_ids: Sequence[int] | None,
+<<<<<<< HEAD
                                            spec_detection_method: str | None,
+=======
+                                           initialization_timeout: int | None,
+>>>>>>> 06cd05d1d6722e77744556983e99396d0c208774
                                           ) -> tuple[str | None, int | None, int | None,
                                                      Sequence[int] | None]:
 
@@ -73,7 +77,7 @@ class ClusterEnv:
     if env:
       logger.debug('Initializing distributed JAX environment via %s', env.__name__)
       if coordinator_address is None:
-        coordinator_address = env.get_coordinator_address()
+        coordinator_address = env.get_coordinator_address(timeout_secs=initialization_timeout)
       if num_processes is None:
         num_processes = env.get_process_count()
       if process_id is None:
@@ -99,7 +103,7 @@ class ClusterEnv:
     raise NotImplementedError("ClusterEnv subclasses must implement is_env_present")
 
   @classmethod
-  def get_coordinator_address(cls) -> str:
+  def get_coordinator_address(cls, timeout_secs: int | None) -> str:
     """Returns address and port used by JAX to bootstrap.
 
     Process id 0 will open a tcp socket at "hostname:port" where

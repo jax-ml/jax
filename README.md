@@ -17,9 +17,8 @@
 
 ## What is JAX?
 
-JAX is [Autograd](https://github.com/hips/autograd) and [XLA](https://www.tensorflow.org/xla),
-brought together for high-performance numerical computing, including
-large-scale machine learning research.
+JAX is a Python library for accelerator-oriented array computation and program transformation,
+designed for high-performance numerical computing and large-scale machine learning.
 
 With its updated version of [Autograd](https://github.com/hips/autograd),
 JAX can automatically differentiate native

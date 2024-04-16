@@ -286,6 +286,13 @@ def xmap(fun: Callable,
   """Assign a positional signature to a program that uses named array axes.
 
   .. warning::
+    xmap is deprecated and will be removed in a future release. Use
+    :py:func:`~jax.shard_map` or :py:func:`~jax.vmap` with the
+    ``spmd_axis_name`` argument for expressing SPMD device-parallel
+    computations. Please file an issue on https://github.com/google/jax/issues
+    if neither are suitable for your use case.
+
+  .. warning::
     This is an experimental feature and the details can change at
     any time. Use at your own risk!
 
@@ -707,9 +714,9 @@ def make_xmap_callable(fun: lu.WrappedFun,
     return pxla.lower_sharding_computation(
         core.ClosedJaxpr(jaxpr, consts), 'jit', name,
         (UNSPECIFIED,) * len(in_avals), (UNSPECIFIED,) * len(out_avals),
+        (None,) * len(in_avals), (None,) * len(out_avals),
         donated_invars, in_avals, keep_unused=True, inline=False,
-        devices_from_context=None, lowering_parameters=lowering_parameters,
-        in_layouts=(None,) * len(in_avals), out_layouts=(None,) * len(out_avals))
+        devices_from_context=None, lowering_parameters=lowering_parameters)
 
 
 class EvaluationPlan(NamedTuple):

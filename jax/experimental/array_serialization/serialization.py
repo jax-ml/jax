@@ -33,6 +33,7 @@ from jax._src import array
 from jax._src import distributed
 from jax._src import sharding
 from jax._src import sharding_impls
+from jax._src.layout import Layout, DeviceLocalLayout as DLL
 from jax._src import typing
 from jax._src import util
 from jax._src.lib import xla_extension as xe
@@ -260,10 +261,7 @@ async def async_serialize(
       else:
         await write_future.commit
 
-  if isinstance(arr_inp, array.ArrayImpl):
-    local_shards = arr_inp.addressable_shards
-  else:
-    local_shards = arr_inp.addressable_shards
+  local_shards = arr_inp.addressable_shards
   future_write_state = jax.tree_util.tree_map(_write_array, local_shards)
   return await asyncio.gather(*future_write_state)
 
@@ -309,7 +307,7 @@ def estimate_read_memory_footprint(t: ts.TensorStore,
 
 
 async def async_deserialize(
-    in_sharding: sharding_impls.XLACompatibleSharding,
+    in_sharding: sharding_impls.XLACompatibleSharding | Layout,
     tensorstore_spec: ts.Spec | dict[str, Any],
     global_shape: Sequence[int] | None = None,
     dtype=None,
@@ -317,6 +315,14 @@ async def async_deserialize(
     context=TS_CONTEXT,
     assume_metadata: bool = False,
 ):
+  in_sharding = (in_sharding.sharding if isinstance(in_sharding, Layout) else  # type: ignore
+                 in_sharding)
+  if not isinstance(in_sharding, sharding_impls.XLACompatibleSharding):
+    raise ValueError(
+        'sharding passed to deserialization should be specified, concrete and'
+        f' an instance of `jax.XLACompatibleSharding`. Got {in_sharding}')
+  dll = (in_sharding.device_local_layout if isinstance(in_sharding, Layout)
+         else None)
   t = await ts.open(
       tensorstore_spec,
       open=True,
@@ -343,7 +349,8 @@ async def async_deserialize(
       # Cast while reloading on process to avoid 2 copies on device if the
       # casting is done on device.
       out = out.astype(dtype)
-    result = jax.device_put(out, device)
+    result = jax.device_put(
+        out, Layout(dll, jax.sharding.SingleDeviceSharding(device)))
     if byte_limiter is not None:
       # NB: `out` actually might not be ready for garbage collection by the
       # time we call release_bytes . Thus peak memory usage still might grow
@@ -361,7 +368,7 @@ async def async_deserialize(
   return await create_async_array_from_callback(tuple(shape), in_sharding, cb)
 
 
-def run_deserialization(shardings: Sequence[sharding.Sharding],
+def run_deserialization(shardings: Sequence[sharding.Sharding | Layout],
                         tensorstore_specs: Sequence[dict[str, Any]],
                         global_shapes: Sequence[array.Shape] | None = None,
                         dtypes: Sequence[typing.DTypeLike] | None = None,
@@ -599,7 +606,7 @@ class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBas
     tspecs = jax.tree.map(get_tensorstore_spec, paths)
     self.serialize(arrays, tspecs, on_commit_callback=on_commit_callback)
 
-  def deserialize(self, shardings: Sequence[sharding.Sharding],
+  def deserialize(self, shardings: Sequence[sharding.Sharding | Layout],
                   tensorstore_specs: Sequence[dict[str, Any]],
                   global_shapes: Sequence[array.Shape] | None = None,
                   dtypes: Sequence[typing.DTypeLike] | None = None,

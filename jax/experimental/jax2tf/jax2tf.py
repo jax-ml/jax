@@ -36,7 +36,6 @@ from jax import random
 from jax import numpy as jnp
 from jax import tree_util
 from jax import sharding
-from jax.experimental import maps
 from jax.experimental import export
 from jax.experimental.export import _export
 from jax.experimental.export import _shape_poly
@@ -54,6 +53,8 @@ from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import op_shardings
 from jax._src import sharding_impls
+from jax._src import maps
+from jax._src import mesh
 from jax._src import pjit
 from jax._src import prng
 from jax._src import random as random_internal
@@ -2620,16 +2621,21 @@ tf_impl_with_avals[lax.reduce_p] = _reduce
 def _cumred(lax_reduce_fn: Callable,
             lax_reduce_window_fn: Callable,
             extra_name_stack: str):
-  if config.jax2tf_associative_scan_reductions.value:
-    return _convert_jax_impl(partial(lax_control_flow.associative_scan,
-                                     lax_reduce_fn),
-                             multiple_results=False,
-                             extra_name_stack=extra_name_stack)
-  else:
-    return _convert_jax_impl(partial(lax_control_flow.cumred_reduce_window_impl,
-                                     lax_reduce_window_fn),
-                             multiple_results=False,
-                             extra_name_stack=extra_name_stack)
+  associative_scan = partial(lax_control_flow.associative_scan, lax_reduce_fn)
+  reduce_window = partial(
+      lax_control_flow.cumred_reduce_window_impl, lax_reduce_window_fn
+  )
+
+  def _call_impl(*args, **kwargs):
+    # Vary which implementation to use when cumulation is called. This cannot be
+    # done during import time because the caller may later use a python context
+    # to switch the implementation to use.
+    associative = config.jax2tf_associative_scan_reductions.value
+    return (associative_scan if associative else reduce_window)(*args, **kwargs)
+
+  return _convert_jax_impl(
+      _call_impl, multiple_results=False, extra_name_stack=extra_name_stack
+  )
 
 
 tf_impl_with_avals[lax.cummax_p] = _cumred(
@@ -3503,7 +3509,8 @@ def _pjit(*args: TfVal,
           jaxpr: core.ClosedJaxpr,
           in_shardings: Sequence[sharding.XLACompatibleSharding],
           out_shardings: Sequence[sharding.XLACompatibleSharding],
-          resource_env: maps.ResourceEnv,
+          in_layouts, out_layouts,
+          resource_env: mesh.ResourceEnv,
           donated_invars,
           name: str,
           keep_unused: bool,
@@ -3535,7 +3542,7 @@ tf_impl_with_avals[pjit.pjit_p] = _pjit
 
 def _pjit_sharding_constraint(arg: TfVal, *,
                               sharding: sharding.XLACompatibleSharding,
-                              resource_env: maps.ResourceEnv,
+                              resource_env: mesh.ResourceEnv,
                               _in_avals: Sequence[core.ShapedArray],
                               _out_aval: core.ShapedArray,
                               **kwargs) -> TfVal:

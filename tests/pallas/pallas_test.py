@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import functools
 import itertools
 import os
+import sys
 import unittest
 
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
@@ -30,23 +32,23 @@ from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import state
 from jax._src.lax.control_flow.for_loop import for_loop
+from jax._src.lib import version as jaxlib_version
 from jax._src.pallas.pallas_call import _trace_to_jaxpr
+if jaxlib_version >= (0, 4, 24) and sys.platform != "win32":
+  from jax._src.pallas.triton.lowering import LoweringError
+else:
+  LoweringError = Exception
 from jax.interpreters import partial_eval as pe
 import jax.numpy as jnp
 from jax.experimental import pallas as pl
+try:
+  from jax.experimental.pallas import gpu as plgpu
+except ImportError:
+  plgpu = None
 from jax.experimental.pallas.ops import attention
 from jax.experimental.pallas.ops import layer_norm
 from jax.experimental.pallas.ops import rms_norm
 from jax.experimental.pallas.ops import softmax
-try:
-  from jax._src.pallas.triton.pallas_call_registration import (
-      compile_jaxpr,
-      _TRITON_COMPILE_VIA_XLA,
-  )
-  from jax.experimental.pallas import gpu as plgpu
-except ModuleNotFoundError:
-  compile_jaxpr = None
-  _TRITON_COMPILE_VIA_XLA = None
 import numpy as np
 
 
@@ -134,17 +136,11 @@ class PallasTest(parameterized.TestCase):
     if not self.INTERPRET:
       if not jtu.test_device_matches(["gpu"]):
         self.skipTest("Only works on GPU")
-      try:
-        import triton  # noqa: F401
-      except ImportError:
-        if (
-            _TRITON_COMPILE_VIA_XLA is not None
-            and not _TRITON_COMPILE_VIA_XLA.value
-        ):
-          self.skipTest("Triton is not installed.")
+      if (jtu.test_device_matches(["cuda"]) and
+          not self.check_gpu_capability_at_least(80)):
+        self.skipTest("Only works on GPUs with capability >= sm80")
+
     super().setUp()
-    if compile_jaxpr:
-      compile_jaxpr.cache_clear()
     _trace_to_jaxpr.cache_clear()
 
   def pallas_call(self, *args, **kwargs):
@@ -152,6 +148,8 @@ class PallasTest(parameterized.TestCase):
 
   def check_gpu_capability_at_least(self, capability,
                                     device: int = 0):
+    if plgpu is None:
+      return False
     if self.INTERPRET:
       return True
     return plgpu.get_compute_capability(device) >= capability
@@ -343,9 +341,6 @@ class PallasCallTest(PallasTest):
       if block_size_m <= m and block_size_n <= n and block_size_k <= k
     ])
   def test_matmul(self, m, n, k, dtype, bm, bn, bk, gm):
-    if not self.check_gpu_capability_at_least(70):
-      raise unittest.SkipTest(
-          "Matmul only works on GPUs with capability >= sm70")
     if not self.INTERPRET and (
         plgpu.get_compute_capability(0) <= 75
         and (bm >= 128 or bn > 128 or bk > 32)
@@ -372,9 +367,6 @@ class PallasCallTest(PallasTest):
       if block_size_m <= m and block_size_n <= n and block_size_k <= k
     ])
   def test_matmul_block_spec(self, m, n, k, dtype, bm, bn, bk):
-    if not self.check_gpu_capability_at_least(70):
-      raise unittest.SkipTest(
-          "Matmul only works on GPUs with capability >= sm70")
     if not self.INTERPRET and (
         plgpu.get_compute_capability(0) <= 75
         and (bm >= 128 or bn > 128 or bk > 32)
@@ -395,9 +387,6 @@ class PallasCallTest(PallasTest):
       trans_b=[False, True],
   )
   def test_dot(self, size, dtype, trans_a, trans_b):
-    if not self.check_gpu_capability_at_least(70):
-      raise unittest.SkipTest(
-          "Matmul only works on GPUs with capability >= sm70")
     if trans_a or trans_b:
       # TODO(slebedev): Remove this once the problematic Triton pass is fixed.
       raise unittest.SkipTest(
@@ -575,9 +564,6 @@ class PallasCallTest(PallasTest):
       ("min_f32", pl.atomic_min, np.array([1, 2, 3, 4], np.float32), np.min),
   ])
   def test_scalar_atomic(self, op, value, numpy_op):
-    if not self.check_gpu_capability_at_least(70):
-      raise unittest.SkipTest(
-          "Atomic ops onl works on GPUs with capability >= sm70")
 
     @functools.partial(
         self.pallas_call,
@@ -608,10 +594,6 @@ class PallasCallTest(PallasTest):
 
   @parameterized.parameters(*[(0,), (1,)])
   def test_array_atomic_add(self, axis):
-    if not self.check_gpu_capability_at_least(70):
-      raise unittest.SkipTest(
-          "Atomic ops onl works on GPUs with capability >= sm70")
-
     m, n = 32, 8
     if axis == 0:
       grid = m
@@ -766,29 +748,6 @@ class PallasCallTest(PallasTest):
     self.assertEqual(f(x), 2.)
     self.assertEqual(trace_count, 1)
 
-  def test_pallas_compilation_cache(self):
-    if not compile_jaxpr:
-      self.skipTest("No Triton GPU.")
-    if self.INTERPRET:
-      raise unittest.SkipTest("No Triton compilation in interpreter mode.")
-    if _TRITON_COMPILE_VIA_XLA.value:
-      raise unittest.SkipTest("Triton is compiled via XLA.")
-
-    @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.float32),
-        grid=1)
-    def add_one(x_ref, o_ref):
-      o_ref[()] = x_ref[()] + 1.
-
-    @jax.jit
-    def f(x):
-      return add_one(add_one(x))
-
-    x = jnp.array(0., dtype=jnp.float32)
-    self.assertEqual(f(x), 2.)
-    num_misses = compile_jaxpr.cache_info().misses
-    self.assertEqual(num_misses, 1)
-
   @parameterized.parameters(*[
     (0, 0, 1),
     (0, 1, 1),
@@ -798,9 +757,6 @@ class PallasCallTest(PallasTest):
     (2, 1, 1),
   ])
   def test_atomic_cas(self, init_value, cmp, new_value):
-    if not self.check_gpu_capability_at_least(70):
-      raise unittest.SkipTest("requires a GPU with compute capability >= sm70")
-
     @functools.partial(
         self.pallas_call, out_shape=(
           jax.ShapeDtypeStruct((), jnp.int32),
@@ -820,9 +776,6 @@ class PallasCallTest(PallasTest):
   def test_atomic_counter(self, num_threads):
     if self.INTERPRET:
       self.skipTest("While loop not supported in interpreter mode.")
-
-    if not self.check_gpu_capability_at_least(70):
-      raise unittest.SkipTest("requires a GPU compute capability >= sm70")
 
     @functools.partial(
         self.pallas_call, out_shape=(
@@ -1303,7 +1256,7 @@ class PallasCallAutodifferentiationTest(PallasTest):
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((), jnp.float32),
         name=self.id().split(".")[-1],
-        debug=True,
+        debug=False,
         grid=1)
     def pallas_impl(x_ref, o_ref):
       x = x_ref[()]
@@ -1517,28 +1470,111 @@ class PallasCallVmapTest(PallasTest):
 class PallasCallInterpreterVmapTest(PallasCallVmapTest):
   INTERPRET = True
 
+
 class PallasOpsTest(PallasTest):
 
-  def test_pow_weak_dtype(self):
+  ELEMENTWISE_OPS = [
+      (
+          [jnp.abs, jnp.negative],
+          ["int16", "int32", "int64", "float16", "float32", "float64"],
+      ),
+      ([jnp.ceil, jnp.floor], ["float32", "float64"]),
+      (
+          [jnp.exp, jnp.exp2, jnp.sin, jnp.cos, jnp.log, jnp.sqrt],
+          ["float16", "float32", "float64"],
+      ),
+      (
+          # fmt: off
+          [jnp.expm1, jnp.log1p, jnp.cbrt, lax.rsqrt, jnp.tan, jnp.asin,
+           jnp.acos, jnp.atan, jnp.sinh, jnp.cosh, jnp.asinh, jnp.acosh,
+           jnp.atanh],
+          # fmt: on
+          ["float32", "float64"],
+      ),
+      ([lax.population_count, lax.clz, jnp.invert], ["int32", "int64"]),
+  ]
+
+  @parameterized.named_parameters(
+      (f"{fn.__name__}_{dtype}", fn, dtype)
+      for args in ELEMENTWISE_OPS
+      for fn, dtype in itertools.product(*args)
+  )
+  def test_elementwise(self, fn, dtype):
+    if fn is jnp.exp2 and jaxlib_version < (0, 4, 26):
+      self.skipTest("Requires jaxlib 0.4.26 or later")
+
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.float32))
-    def square(x_ref, o_ref):
-      o_ref[()] = x_ref[()]**2.0
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), dtype), grid=1
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[:] = fn(x_ref[...])
 
-    x = jnp.array(42.0)
-    np.testing.assert_allclose(square(x), x*x)
+    with contextlib.ExitStack() as stack:
+      if jnp.dtype(dtype).itemsize == 8:
+        stack.enter_context(config.enable_x64(True))
+      x = jnp.array([0.42, 2.4]).astype(dtype)
+      np.testing.assert_allclose(kernel(x), fn(x), rtol=1e-6)
 
-  def test_ne(self):
+  @parameterized.parameters(
+      ("float32", "int32"),
+      ("float64", "int32"),
+      ("float32", "float32"),
+      ("float64", "float64"),
+  )
+  def test_pow(self, x_dtype, y_dtype):
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((4,), x_dtype), grid=1
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[:] = lax.pow(x_ref[...], y_ref[...])
+
+    with contextlib.ExitStack() as stack:
+      if jnp.dtype(x_dtype).itemsize == 8:
+        stack.enter_context(config.enable_x64(True))
+      x = jnp.array([1, 2, 3, 4]).astype(x_dtype)
+      y = jnp.array([1, 2, 3, 4]).astype(y_dtype)
+      np.testing.assert_allclose(kernel(x, y), lax.pow(x, y))
+
+  @parameterized.parameters("float32", "float64")
+  def test_nextafter(self, dtype):
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((4,), dtype), grid=1
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[:] = jnp.nextafter(x_ref[...], y_ref[...])
+
+    with contextlib.ExitStack() as stack:
+      if jnp.dtype(dtype).itemsize == 8:
+        stack.enter_context(config.enable_x64(True))
+      x = jnp.array([1, 2, 3, 4]).astype(dtype)
+      y = jnp.array([1, 2, 3, 4]).astype(dtype)
+      np.testing.assert_allclose(kernel(x, y), jnp.nextafter(x, y))
+
+  COMPARISON_OPS = [
+      jnp.equal,
+      jnp.not_equal,
+      jnp.less,
+      jnp.less_equal,
+      jnp.greater,
+      jnp.greater_equal,
+  ]
+
+  @parameterized.named_parameters(
+      (f"{fn.__name__}_{dtype}", fn, dtype)
+      for fn, dtype in itertools.product(
+          COMPARISON_OPS, ["int32", "uint32", "float16", "float32"]
+      )
+  )
+  def test_comparison(self, fn, dtype):
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((8,), jnp.bool_),
         grid=1)
-    def ne(x_ref, y_ref, o_ref):
-      o_ref[:] = x_ref[...] != y_ref[...]
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[:] = fn(x_ref[...], y_ref[...])
 
-    x = jnp.ones(8, dtype=jnp.int32)
-    y = jnp.arange(8, dtype=jnp.int32)
-    not_equal = ne(x, y)
-    np.testing.assert_allclose(not_equal, x != y)
+    x = jnp.array([1, 3, -4, -6, 2, 5, 4, -7]).astype(dtype)
+    y = jnp.array([3, 1, -4, -5, 2, -2, 2, 4]).astype(dtype)
+    np.testing.assert_allclose(kernel(x, y), fn(x, y))
 
   def test_isnan(self):
     @functools.partial(
@@ -1551,8 +1587,93 @@ class PallasOpsTest(PallasTest):
     x = x.at[3].set(jnp.nan)
     np.testing.assert_allclose(isnan(x), jnp.isnan(x))
 
+  @parameterized.parameters(
+      ("int32", "float32"),
+      ("float32", "float32"),
+  )
+  def test_true_divide(self, dtype, out_dtype):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((8,), out_dtype),
+        grid=1,
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = jnp.true_divide(x_ref[...], y_ref[...])
+
+    x = jnp.array([1, 3, -4, -6, 2, 5, 4, -7]).astype(dtype)
+    y = jnp.array([3, 1, -4, -5, 2, -2, 2, 4]).astype(dtype)
+    np.testing.assert_allclose(jnp.true_divide(x, y), kernel(x, y))
+
+  @parameterized.parameters("float16", "bfloat16")
+  def test_true_divide_unsupported(self, dtype):
+    if self.INTERPRET:
+      self.skipTest("No lowering in interpreter mode")
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((2,), dtype),
+        grid=1,
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = jnp.true_divide(x_ref[...], y_ref[...])
+
+    x = jnp.array([2.4, 4.2]).astype(dtype)
+    y = jnp.array([4.2, 2.4]).astype(dtype)
+    with self.assertRaises(LoweringError):
+      kernel(x, y)
+
+  BINARY_OPS = [
+      ([jnp.floor_divide], ["int32", "uint32"]),
+      (
+          [jnp.add, jnp.subtract, jnp.multiply],
+          ["int16", "int32", "uint32", "float16", "float32"],
+      ),
+      ([jnp.remainder], ["int32", "uint32", "float32"]),
+      (
+          # fmt: off
+          [jnp.bitwise_and, jnp.bitwise_or, jnp.bitwise_xor,
+           jnp.bitwise_left_shift, jnp.bitwise_right_shift],
+          # fmt: on
+          ["int32", "uint32"],
+      ),
+  ]
+
+  @parameterized.named_parameters(
+      (f"{fn.__name__}_{dtype}", fn, dtype)
+      for args in BINARY_OPS
+      for fn, dtype in itertools.product(*args)
+  )
+  def test_binary(self, f, dtype):
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((8,), dtype), grid=1
+    )
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = f(x_ref[...], y_ref[...])
+
+    x = jnp.array([1, 3, -4, -6, 2, 5, 4, -7]).astype(dtype)
+    y = jnp.array([3, 1, -4, -5, 2, -2, 2, 4]).astype(dtype)
+    np.testing.assert_allclose(f(x, y), kernel(x, y))
+
+  @parameterized.parameters(
+      ((8, 4), jnp.int32, 0),
+      ((8, 16), jnp.float32, 1),
+      ((8, 16, 2), jnp.int8, 1),
+  )
+  def test_broadcasted_iota(self, shape, dtype, dimension):
+    f = lambda: jax.lax.broadcasted_iota(dtype, shape, dimension)
+
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct(shape, dtype), grid=1
+    )
+    def kernel(o_ref):
+      o_ref[...] = f()
+
+    np.testing.assert_allclose(f(), kernel())
+
+
 class PallasOpsInterpretTest(PallasOpsTest):
   INTERPRET = True
+
 
 class PallasPrimitivesTest(PallasTest):
 
@@ -1658,10 +1779,6 @@ class FusedAttentionTest(PallasTest):
       use_segment_ids,
       kwargs,
   ):
-    if not self.check_gpu_capability_at_least(80):
-      raise unittest.SkipTest(
-          "Fused attention only works on GPUs with capability >= sm80")
-
     k1, k2, k3 = random.split(random.key(0), 3)
     q = random.normal(
         k1, (batch_size, seq_len, num_heads, head_dim), dtype=jnp.float16
@@ -1735,9 +1852,6 @@ class FusedAttentionTest(PallasTest):
   def test_fused_attention_bwd(
       self, batch_size, seq_len, num_heads, head_dim, causal, use_segment_ids
   ):
-    if not self.check_gpu_capability_at_least(80):
-      raise unittest.SkipTest(
-          "Fused attention only works on GPUs with capability >= sm80")
     k1, k2, k3 = random.split(random.key(0), 3)
     q = random.normal(
         k1, (batch_size, seq_len, num_heads, head_dim), dtype=jnp.float16
@@ -1779,9 +1893,6 @@ class FusedLayerNormTest(PallasTest):
     (2, 384, 192),
   ])
   def test_fused_layernorm_fwd(self, batch_size, seq_len, embed_dim):
-    if not self.check_gpu_capability_at_least(70):
-      raise unittest.SkipTest(
-          "Fused layernorm only works on GPUs with capability >= sm70")
     k1, k2, k3 = random.split(random.key(0), 3)
     x = random.normal(k1, (batch_size, seq_len, embed_dim), dtype=jnp.float32)
     w = jax.random.normal(k2, (embed_dim,), dtype=jnp.float32)
@@ -1796,9 +1907,6 @@ class FusedLayerNormTest(PallasTest):
     (2, 384, 192),
   ])
   def test_fused_layernorm_bwd(self, batch_size, seq_len, embed_dim):
-    if not self.check_gpu_capability_at_least(70):
-      raise unittest.SkipTest(
-          "Fused layernorm only works on GPUs with capability >= sm70")
     k1, k2, k3 = random.split(random.key(0), 3)
     x = random.normal(k1, (batch_size, seq_len, embed_dim), dtype=jnp.float32)
     w = jax.random.normal(k2, (embed_dim,), dtype=jnp.float32)
@@ -1828,9 +1936,6 @@ class RmsNormTest(PallasTest):
     (2, 384, 192),
   ])
   def test_rms_fwd(self, batch_size, seq_len, embed_dim):
-    if not self.check_gpu_capability_at_least(70):
-      raise unittest.SkipTest(
-          "Rms norm only works on GPUs with capability >= sm70")
     k1, k2, k3 = random.split(random.key(0), 3)
     x = random.normal(k1, (batch_size, seq_len, embed_dim), dtype=jnp.float32)
     w = jax.random.normal(k2, (embed_dim,), dtype=jnp.float32)
@@ -1845,9 +1950,6 @@ class RmsNormTest(PallasTest):
     (2, 384, 192),
   ])
   def test_rms_norm_bwd(self, batch_size, seq_len, embed_dim):
-    if not self.check_gpu_capability_at_least(70):
-      raise unittest.SkipTest(
-          "Rms norm only works on GPUs with capability >= sm70")
     k1, k2, k3 = random.split(random.key(0), 3)
     x = random.normal(k1, (batch_size, seq_len, embed_dim), dtype=jnp.float32)
     w = jax.random.normal(k2, (embed_dim,), dtype=jnp.float32)

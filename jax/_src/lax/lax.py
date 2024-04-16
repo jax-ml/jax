@@ -22,7 +22,7 @@ from functools import partial
 import itertools
 import math
 import operator
-from typing import Any, Callable, TypeVar, Union, cast as type_cast, overload, TYPE_CHECKING
+from typing import Any, Callable, ClassVar, TypeVar, Union, cast as type_cast, overload, TYPE_CHECKING
 import warnings
 
 import numpy as np
@@ -44,6 +44,7 @@ from jax._src import effects
 from jax._src import linear_util as lu
 from jax._src import pretty_printer as pp
 from jax._src import source_info_util
+from jax._src import state
 from jax._src import util
 from jax._src.abstract_arrays import array_types
 from jax._src.core import (Primitive, UnshapedArray, ShapedArray, ConcreteArray,
@@ -624,14 +625,14 @@ def concatenate(operands: Array | Sequence[ArrayLike], dimension: int) -> Array:
 
 _precision_strings: dict[Any, Precision] = {}
 
-# TODO(b/328046715): pytype appears unable to handle overriding __new__ in an
-# enum class. Doing this crashes Pytype. For now, just write an explicit type
-# for type checkers.
+# TODO(b/333851820): pytype does not properly handle _missing_ in enums.
+# We work around that by defining `Precision` as a normal class.
 if TYPE_CHECKING:
+
   class Precision:
-    DEFAULT: Precision
-    HIGH: Precision
-    HIGHEST: Precision
+    DEFAULT: ClassVar[Precision]
+    HIGH: ClassVar[Precision]
+    HIGHEST: ClassVar[Precision]
 
     def __new__(cls, value: Precision | int | str | None) -> Precision:
       raise NotImplementedError
@@ -645,6 +646,7 @@ if TYPE_CHECKING:
       raise NotImplementedError
 
 else:
+
   class Precision(enum.Enum):
     """Precision enum for lax functions
 
@@ -663,23 +665,20 @@ else:
       Slowest but most accurate. Performs computations in float32 or float64
       as applicable. Aliases: ``'highest'``, ``'float32'``.
     """
+
     DEFAULT = 0
     HIGH = 1
     HIGHEST = 2
 
+    @classmethod
+    def _missing_(cls, value: object) -> Precision | None:
+      return _precision_strings.get(value)
+
     def __repr__(self) -> str:
-      return f"{self.__class__.__name__}.{self.name}"
+      return f'{self.__class__.__name__}.{self.name}'
 
     def __str__(self) -> str:
       return self.name
-
-  # You can't define __new__ on an enum class directly, but you can monkey-patch
-  # it after the fact. Another way to do this might be using a metaclass.
-  def _precision_new(cls, value: Precision | int | str | None) -> Precision:
-    return super(Precision, cls).__new__(cls, _precision_strings.get(value, value))
-
-  Precision.__new__ = _precision_new
-
 
 
 _precision_strings['highest'] = Precision.HIGHEST
@@ -1233,8 +1232,8 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
     dtype: the type of the output array, or `None`. If not `None`, `fill_value`
       will be cast to `dtype`.
     sharding: an optional sharding specification for the resulting array,
-    note, sharding will currently be ignored in jitted mode, this might change
-    in the future.
+      note, sharding will currently be ignored in jitted mode, this might change
+      in the future.
   """
   shape = canonicalize_shape(shape)
   if np.shape(fill_value):
@@ -1251,14 +1250,11 @@ def full(shape: Shape, fill_value: ArrayLike, dtype: DTypeLike | None = None, *,
   # if needed?
   if (sharding is not None and not isinstance(sharding, PmapSharding) and
       isinstance(fill_value, array.ArrayImpl)):
-
     broadcast_shape = sharding.shard_shape(shape)
     shard = broadcast(fill_value, broadcast_shape)
     return array.make_array_from_callback(shape, sharding, lambda _: shard)
 
   return broadcast(fill_value, shape)
-
-
 
 def zeros_like_shaped_array(aval: ShapedArray) -> Array:
   assert isinstance(aval, ShapedArray)
@@ -1271,6 +1267,12 @@ def zeros_like_shaped_array(aval: ShapedArray) -> Array:
   return broadcast(scalar_zero, aval.shape)
 
 ad_util.aval_zeros_likers[ShapedArray] = zeros_like_shaped_array
+
+def zeros_like_abstract_ref(aval: state.AbstractRef) -> core.MutableArray:
+  val = ad_util.zeros_like_aval(aval.inner_aval)
+  return core.mutable_array(val)
+
+ad_util.aval_zeros_likers[state.AbstractRef] = zeros_like_abstract_ref  # type: ignore
 
 def iota(dtype: DTypeLike, size: int) -> Array:
   """Wraps XLA's `Iota
@@ -1415,17 +1417,22 @@ def full_like(x: ArrayLike | DuckTypedArray,
   if dtypes.issubdtype(dtype, dtypes.extended):
     return dtype._rules.full(fill_shape, fill_value, dtype)  # type: ignore[union-attr]
 
+  # If `x` has a sharding but no `_committed` attribute
+  # (in case of ShapeDtypeStruct), default it to True.
   use_x_sharding = (
-      sharding is None and
-      isinstance(x, array.ArrayImpl) and
-      not weak_type and x._committed and
-      # NB: consider reusng x.sharding for mismatched shapes
-      # if x is replicated or single device.
-      fill_shape == x.shape)
+      sharding is None
+      # Tracer have special logic in handling sharding and even
+      # though hasattr(x, 'sharding') returns False, it is very slow.
+      # This bypasses the check.
+      and not isinstance(x, core.Tracer)
+      and hasattr(x, 'sharding')
+      and getattr(x, '_committed', True)
+      and not weak_type
+      and fill_shape == np.shape(x)  # type: ignore[arg-type]
+  )  # type: ignore
   if use_x_sharding:
-    assert isinstance(x, array.ArrayImpl)   # makes pytype happy.
     # TODO(yashkatariya): Use shard_alike in tracing_mode once it is supported.
-    sharding = x.sharding
+    sharding = x.sharding  # type: ignore
   val = full(fill_shape, _convert_element_type(fill_value, dtype, weak_type),
              sharding=sharding)
   return val
@@ -3628,8 +3635,7 @@ def _select_transpose_rule(t, which, *cases):
                      for c in cases]
   else:
     zeros = full_like(t, 0)
-    if (dtypes.dtype(which) == np.dtype(np.bool_) and
-        config.new_select_transpose.value):
+    if dtypes.dtype(which) == np.dtype(np.bool_):
       ct0 = select(which, zeros, t) if ad.is_undefined_primal(cases[0]) else None
       ct1 = select(which, t, zeros) if ad.is_undefined_primal(cases[1]) else None
       return (None, ct0, ct1)
@@ -5110,10 +5116,6 @@ class BIntRules:
     def handler(bufs):
       return core.DArray(aval, phys_handler(bufs))
     return handler
-
-  @staticmethod
-  def physical_hlo_sharding(aval, hlo_sharding: xc.HloSharding) -> xc.HloSharding:
-    return hlo_sharding
 
   @staticmethod
   def logical_sharding(aval, phys_sharding):

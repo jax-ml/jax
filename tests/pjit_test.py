@@ -15,7 +15,7 @@
 from collections import OrderedDict, namedtuple
 import os
 import re
-from functools import partial, lru_cache
+from functools import partial
 import logging
 import math
 import textwrap
@@ -41,7 +41,6 @@ from jax import lax
 from jax.lax import with_sharding_constraint
 from jax._src import prng
 from jax.sharding import PartitionSpec as P
-from jax.experimental.maps import xmap
 from jax.experimental import multihost_utils
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax._src import array
@@ -52,6 +51,7 @@ from jax._src.sharding_impls import (
     AUTO, UNSPECIFIED, NamedSharding, GSPMDSharding, PositionalSharding,
     SingleDeviceSharding, parse_flatten_op_sharding)
 import jax._src.pjit as pjit_lib
+from jax._src.maps import xmap
 from jax._src.pjit import pjit, pjit_p
 from jax._src import mesh as mesh_lib
 from jax._src.interpreters import pxla
@@ -104,11 +104,6 @@ def create_array(global_shape, global_mesh, mesh_axes, global_data=None,
 
   return array.make_array_from_callback(
       global_shape, sharding, lambda idx: global_data[idx]), global_data
-
-
-@lru_cache
-def simulated_cached_fun(s):
-  return s
 
 
 def _check_instance(self, x):
@@ -394,7 +389,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     jax.tree.map(self.assertDeleted, y_tree)
     jax.tree.map(self.assertNotDeleted, z_tree)
 
-  @unittest.skipIf(xla_extension_version < 220, 'jaxlib version too old')
   @jtu.run_on_devices('tpu', 'cpu', 'gpu')
   def testBufferDonationWithOutputShardingInference(self):
     mesh = jtu.create_global_mesh((2,), 'x')
@@ -433,7 +427,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     s = NamedSharding(mesh, P('x'))
 
     def _callback(x):
-      self.assertIs(type(x), np.ndarray)
+      self.assertIsInstance(x, jax.Array)
 
     @partial(pjit, donate_argnames=('x'))
     def f(x):
@@ -448,7 +442,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     jax.effects_barrier()
     self.assertDeleted(x)
 
-  @unittest.skipIf(xla_extension_version < 220, 'jaxlib version too old')
   @jtu.run_on_devices('tpu', 'cpu', 'gpu')
   def testBufferDonationNotDonated(self):
     mesh = jtu.create_global_mesh((2,), 'x')
@@ -515,7 +508,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     shape = (8, 8)
     mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
     s = NamedSharding(mesh, P(None))
-    ops = pjit_lib.to_gspmd_sharding(
+    ops = pxla.to_gspmd_sharding(
         NamedSharding(mesh, P('x', 'y')), len(shape))
 
     @partial(pjit, in_shardings=s, out_shardings=s)
@@ -748,7 +741,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     jaxpr = jax.make_jaxpr(jax.vmap(f))(x)
     pjit_eqn, = jaxpr.eqns
     constraint_eqn, = pjit_eqn.params['jaxpr'].eqns
-    op = constraint_eqn.params['sharding']._hlo_sharding
+    op = constraint_eqn.params['sharding']._to_xla_hlo_sharding(x.ndim)
     self.assertTrue(op.is_tiled())
     self.assertListEqual(op.tile_assignment_dimensions(), [1, 2])
     self.assertListEqual(op.tile_assignment_devices(), [0, 1])
@@ -768,7 +761,7 @@ class PJitTest(jtu.BufferDonationTestCase):
     jaxpr = jax.make_jaxpr(f)(x)
     pjit_eqn, = jaxpr.eqns
     constraint_eqn, = pjit_eqn.params['jaxpr'].eqns
-    op = constraint_eqn.params['sharding']._hlo_sharding
+    op = constraint_eqn.params['sharding']._to_xla_hlo_sharding(x.ndim)
     self.assertTrue(op.is_tiled())
     self.assertListEqual(op.tile_assignment_dimensions(), [2, 1])
     self.assertListEqual(op.tile_assignment_devices(), [0, 1])
@@ -785,13 +778,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     def _test_rule(*args, **kwargs):
       nonlocal test_rule_called
       test_rule_called = True
-      in_shardings = kwargs['in_shardings']
-      self.assertLen(in_shardings, 1)
-      self.assertListEqual(in_shardings[0]._hlo_sharding.tile_assignment_dimensions(),
-                           [1, 1, 2])
-      self.assertFalse(op_shardings.is_op_sharding_replicated(
-          in_shardings[0]._hlo_sharding))
-
       return rule(*args, **kwargs)
     try:
       mlir._lowerings[pjit_p] = _test_rule
@@ -1326,8 +1312,6 @@ class CustomPartitionerTest(jtu.JaxTestCase):
   def skip_if_custom_partitioning_not_supported(self):
     if jtu.is_cloud_tpu():
       raise unittest.SkipTest("Custom partitioning is not supported on libtpu.")
-    if xla_bridge.using_pjrt_c_api():
-      raise unittest.SkipTest('custom partitioning not implemented in PJRT C API')
 
   @jtu.skip_on_devices('cpu')  # Collectives don't seem to work on CPU.
   @jtu.with_mesh([('x', 4), ('y', 2)])
@@ -1637,6 +1621,41 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
         "Received incompatible devices for jitted computation"):
       f.lower(inp, inp).compile()
 
+  @parameterized.named_parameters(
+    ('2d_array', (4, 2), ('x', 'y')),
+    ('1d_array', (8,), ('x')),
+  )
+  def test_jit_auto_sharding_partial_tuple_input_shardings(
+      self, mesh_shape, mesh_axis_names):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest('Parameters are tupled only on TPU if >2000 parameters')
+
+    mesh = jtu.create_global_mesh(mesh_shape, mesh_axis_names)
+    global_input_shape = (8, 4)
+    input_data = np.arange(
+        math.prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
+    input_sharding = NamedSharding(mesh, P(mesh_axis_names)) # sharded
+    input_sharding_annotations = [AUTO(mesh)] * 2001
+    output_sharding = NamedSharding(mesh, P()) # replicated
+    output_sharding_annotations = [AUTO(mesh)] * 2001
+    for i in range(1000):
+      input_sharding_annotations[2*i] = input_sharding
+      output_sharding_annotations[2*i] = output_sharding
+
+    jit_tuple_identity_fn = jax.jit(
+        lambda *x: x,
+        in_shardings=input_sharding_annotations,
+        out_shardings=tuple(output_sharding_annotations))
+
+    inp = core.ShapedArray(input_data.shape, input_data.dtype)
+    compiled = jit_tuple_identity_fn.lower(*([inp] * 2001)).compile()
+
+
+    # Check sharding preservation for even numbered inputs.
+    for i in range(1000):
+      self.assertEqual(compiled.input_shardings[0][2*i], input_sharding)
+      self.assertEqual(compiled.output_shardings[2*i], output_sharding)
+
   @unittest.skip('The error is not raised yet. Enable this back once we raise '
                  'the error in pjit again.')
   def test_pjit_array_error(self):
@@ -1824,6 +1843,18 @@ class ArrayPjitTest(jtu.JaxTestCase):
     for s in out4.addressable_shards:
       self.assertArraysEqual(s.data, input_data)
 
+  def test_sds_full_like(self):
+    # https://github.com/google/jax/issues/20390
+    mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    x = jax.ShapeDtypeStruct((4, 4), jnp.float32, sharding=s)
+    y = jnp.zeros_like(x)
+    z = jnp.zeros_like(x, device=y.sharding)
+
+    self.assertEqual(x.sharding, s)
+    self.assertEqual(y.sharding, s)
+    self.assertEqual(z.sharding, s)
+
   def test_in_axis_resources_mismatch_error(self):
     global_input_shape = (8, 2)
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
@@ -1892,9 +1923,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
       with self.assertRaisesRegex(
           ValueError,
-          r"Compiled object called with input sharding\(s\) does not match the "
-          r"sharding\(s\) the computation was compiled with. "
-          "Here are 5 mismatches out of 6"):
+          r"Compiled object called with input sharding.*does not match the "
+          r"sharding.*the computation was compiled with. "
+          "Here are.*mismatches.*"):
         compiled(a2, a2, a2, a2, a2, a2)
 
     with global_mesh:
@@ -1906,9 +1937,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
       inp2 = {'x': a2, 'y': {'y1': a2}}
       with self.assertRaisesRegex(
           ValueError,
-          r"Compiled object called with input sharding\(s\) does not match the "
-          r"sharding\(s\) the computation was compiled with. "
-          "Here are the 2 mismatches"):
+          r"Compiled object called with input sharding.*does not match the "
+          r"sharding.*the computation was compiled with. "
+          "Here are the.*mismatches"):
         compiled(inp2)
 
   def test_globally_sharded_key_array_result_8x4_single_device(self):
@@ -2836,6 +2867,20 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(compiled._executable._kept_var_idx, {5})
     self.assertLen(compiled._executable.in_avals, 1)
 
+  def test_pjit_relayout_multi_slice(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+
+    @jax.jit
+    def mul(x):
+      return x @ x.T
+
+    x = jnp.arange(8).reshape(4, 2)
+    y = jax.device_put(x, jax.sharding.NamedSharding(mesh, P('x', 'y')))
+    compiled = mul.lower(jax.ShapeDtypeStruct(
+        y.shape, y.dtype, sharding=y.sharding)).compile()
+    out = compiled(y)
+    self.assertArraysEqual(out, x @ x.T)
+
   def test_pjit_with_device_arg(self):
     def mul(x):
       return x @ x.T
@@ -2926,6 +2971,16 @@ class ArrayPjitTest(jtu.JaxTestCase):
         'If backend or device is specified on jit, then '
         'out_shardings should not be specified.'):
       pjit(lambda x: x, out_shardings=s, device=jax.devices()[0])
+
+  def test_check_arg_error(self):
+    sds = jax.ShapeDtypeStruct((4, 2), np.int32)
+    inp = np.arange(8).reshape(4, 2)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        r"Argument 'x\['b'\]\['c'\]' of shape int32\[4,2\] of "
+        "type.*ShapeDtypeStruct.*is not a valid JAX type."):
+      jax.jit(lambda x: x)({'a': inp, 'b': {'c': sds}})
 
   def test_pjit_device_backend_both_error(self):
     with self.assertRaisesRegex(
@@ -3748,8 +3803,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
         ' manager.*SingleDeviceSharding'):
       jax.jit(jax.vmap(f, spmd_axis_name='x'))(arr)
 
-  @jtu.skip_on_devices("tpu")
-  def test_device_put_memory_kind_not_tpu(self):
+  @jtu.skip_on_devices("tpu", "gpu")
+  def test_device_put_memory_kind_not_tpu_gpu(self):
     @jax.jit
     def f(x):
       y = x * 2
@@ -3942,6 +3997,62 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertArraysEqual(out4, np_inp * 3)
     self.assertArraysEqual(out5, np_inp.T)
 
+  def test_input_shardings_aot(self):
+    mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P('x')))
+
+    @jax.jit
+    def f(x, y):
+      return x * 2, y.T
+
+    arg_shardings, _ = f.lower(arr, np_inp).compile().input_shardings
+    for s in arg_shardings:
+      self.assertIsInstance(s, NamedSharding)
+
+  def test_parameter_tupled_jit(self):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest('Parameters are tupled only on TPU if >2000 parameters')
+
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x'))
+
+    @jax.jit
+    def f(*args):
+      return args * 2
+
+    inp = np.arange(8)
+    arr = jax.device_put(inp, s)
+    inps = [arr, *[inp] * 2001]
+    f(inps)  # doesn't crash
+
+  def test_spmd_preserves_input_sharding_vmap_grad(self):
+    # https://github.com/google/jax/issues/20710
+    n_devices = jax.device_count()
+    sharding = PositionalSharding(jax.devices())
+
+    def model(params, x):
+      return x @ params
+
+    feature_dim = 3
+    batch_size_total = 8
+
+    # Get example data
+    x = jnp.ones((batch_size_total, feature_dim))
+    params = jnp.ones(feature_dim)
+
+    # Shard data, replicate params
+    x = jax.device_put(x, sharding.reshape(n_devices, 1))
+    params = jax.device_put(params, sharding.replicate(axis=0))
+
+    model(params, x)  # doesn't crash
+
+    jax.vmap(model, in_axes=(None, 0))(params, x)  # doesn't crash
+
+    jax.grad(lambda p: model(p, x).sum())(params)  # doesn't crash
+
+    jax.vmap(jax.grad(model), in_axes=(None, 0))(params, x)  # doesn't crash
+
 
 class TempSharding(Sharding):
 
@@ -3949,6 +4060,7 @@ class TempSharding(Sharding):
     if xla_extension_version >= 235:
       super().__init__()
     self._devices = devices
+    self._internal_device_list = xc.DeviceList(tuple(self._devices))
 
   @property
   def device_set(self):
@@ -3959,6 +4071,10 @@ class TempSharding(Sharding):
 
   def shard_shape(self, global_shape):
     return global_shape
+
+  @property
+  def memory_kind(self):
+    return None
 
   @property
   def is_fully_replicated(self):
@@ -4293,32 +4409,6 @@ class PJitErrorTest(jtu.JaxTestCase):
         TypeError,
         'Argument types differ from the types for which this computation was'
         ' compiled'):
-      g(x, y2)
-
-  def test_aot_error_on_dced_shardings_mismatch(self):
-    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-    shape = (8, 2)
-    np_inp = np.arange(math.prod(shape)).reshape(shape)
-
-    x = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
-    y1 = jax.device_put(np_inp, NamedSharding(mesh, P('x')))
-    y2 = jax.device_put(np_inp, NamedSharding(mesh, P('y')))
-
-    @jax.jit
-    def f(x, y):
-      return x + 1
-
-    f_out1 = f(x, y1)
-    f(x, y2)
-
-    g = f.lower(x, y1).compile()
-    g_out1 = g(x, y1)
-    self.assertArraysEqual(f_out1, g_out1)
-
-    with self.assertRaisesRegex(
-        ValueError,
-        r"Compiled object called with input sharding.*does not match the "
-        r"sharding.*the computation was compiled with"):
       g(x, y2)
 
   def test_dce_no_array(self):
@@ -4680,24 +4770,6 @@ class UtilTest(jtu.JaxTestCase):
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
     self.assertEqual(cache_info2.misses, cache_info1.misses)
     self.assertEqual(cache_info2.currsize, cache_info1.currsize)
-
-  def test_simulated_training_cache_in_pjit(self):
-    ndim = 2
-    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
-
-    mps1 = NamedSharding(mesh, P('x', 'y'))
-    gspmd_sharding = pjit_lib.to_gspmd_sharding(mps1, ndim)
-    next_loop_sharding = simulated_cached_fun(gspmd_sharding)
-    cache_info1 = simulated_cached_fun.cache_info()
-
-    next_gspmd_sharding = pjit_lib.to_gspmd_sharding(
-        next_loop_sharding, ndim)
-    simulated_cached_fun(next_gspmd_sharding)
-    cache_info2 = simulated_cached_fun.cache_info()
-
-    self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
-    self.assertEqual(cache_info2.misses, cache_info1.misses)
-    self.assertEqual(id(next_gspmd_sharding), id(gspmd_sharding))
 
   def test_get_partition_spec(self):
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))

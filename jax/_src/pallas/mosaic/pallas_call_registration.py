@@ -17,17 +17,18 @@
 from __future__ import annotations
 
 from typing import Any
+import warnings
 
 import jax
 from jax import core as jax_core
-from jax.experimental import mosaic
-from jax.experimental.mosaic.dialects import tpu
 from jax._src import sharding_impls
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.pallas import core
 from jax._src.pallas.mosaic import lowering
 from jax._src.pallas.pallas_call import pallas_call_p
+from jax.experimental import mosaic
+from jax.experimental.mosaic.dialects import tpu
 
 
 def pallas_call_tpu_lowering_rule(
@@ -54,11 +55,17 @@ def pallas_call_tpu_lowering_rule(
         compiler_params=compiler_params)
   if debug:
     print(jaxpr)
-  if 'mosaic_params' in compiler_params:
-    assert 'mosaic' not in compiler_params
-    mosaic_params = compiler_params['mosaic_params']
-  elif 'mosaic' in compiler_params:
-    mosaic_params = compiler_params['mosaic']
+  if "mosaic_params" in compiler_params:
+    # TODO(slebedev): Remove this branch after July 12th 2024.
+    warnings.warn(
+        "Passing Mosaic parameters via compiler_params=dict(mosaic_params=...)"
+        " is deprecated. Use compiler_params=dict(mosaic=...) instead.",
+        DeprecationWarning,
+    )
+    assert "mosaic" not in compiler_params
+    mosaic_params = compiler_params["mosaic_params"]
+  elif "mosaic" in compiler_params:
+    mosaic_params = compiler_params["mosaic"]
   else:
     mosaic_params = {}
   mesh = None
@@ -70,8 +77,6 @@ def pallas_call_tpu_lowering_rule(
     mlir_ctx.append_dialect_registry(mlir.upstream_dialects)
     mlir_ctx.load_all_available_dialects()
     tpu.register_dialect(mlir_ctx)
-    if mosaic_params is None:
-      mosaic_params = {}
     dimension_semantics = mosaic_params.get("dimension_semantics", None)
     kernel_regeneration_metadata = mosaic_params.get(
         "kernel_regeneration_metadata"
@@ -81,13 +86,11 @@ def pallas_call_tpu_lowering_rule(
         dimension_semantics=dimension_semantics, mesh=mesh)
     if debug:
       print(mosaic_module)
-  if extra_args and input_output_aliases:
-    raise NotImplementedError(
-        "Cannot use both input_output_aliases and extra_args."
-    )
+  num_extra_args = len(extra_args)
   num_dyn_bounds = grid_mapping.num_dynamic_grid_bounds
   input_output_aliases = tuple(
-      (a[0] + num_dyn_bounds, a[1]) for a in input_output_aliases
+      (a[0] + num_dyn_bounds + num_extra_args, a[1])
+      for a in input_output_aliases
   )
   out_avals = [jax_core.ShapedArray(s.shape, s.dtype) for s in out_shapes]
   def _lower_fun(*args):
@@ -102,6 +105,7 @@ def pallas_call_tpu_lowering_rule(
         cost_estimate=mosaic_params.get("cost_estimate", None),
         vmem_limit_bytes=mosaic_params.get("vmem_limit_bytes", None),
         flags=mosaic_params.get("flags", None),
+        allow_input_fusion=mosaic_params.get("allow_input_fusion", None),
         input_output_aliases=input_output_aliases,
     )(
         *dynamic_grid_args,
@@ -111,5 +115,3 @@ def pallas_call_tpu_lowering_rule(
     )
   return mlir.lower_fun(_lower_fun, multiple_results=True)(
       ctx, *in_nodes)
-mlir.register_lowering(pallas_call_p, pallas_call_tpu_lowering_rule,
-                       platform="tpu")

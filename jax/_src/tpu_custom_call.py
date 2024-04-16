@@ -30,17 +30,29 @@ from absl import flags
 import jax
 from jax import core
 from jax._src import config
+from jax._src import sharding_impls
+from jax._src.interpreters import mlir
 from jax._src.lib import tpu
 from jax._src.lib import xla_client
 from jax._src.lib.mlir.dialects import hlo
-from jax._src.interpreters import mlir
-from jax._src import sharding_impls
 from jax.interpreters import xla
 from jaxlib.mlir import ir
+from jaxlib.mlir.dialects import mhlo
 from jaxlib.mlir.dialects import stablehlo
+from jaxlib.mlir.passmanager import PassManager
 import numpy as np
 
 FLAGS = flags.FLAGS
+
+_MOSAIC_USE_PYTHON_PIPELINE = config.define_bool_state(
+    name="mosaic_use_python_pipeline",
+    default=False,
+    help=(
+        "Run the initial Mosaic MLIR passes from Python, when as_tpu_kernel"
+        " is called (for Pallas, this happens at JAX lowering time), instead of"
+        " later within XLA."
+    ),
+)
 
 _MOSAIC_ALLOW_HLO = config.define_bool_state(
     name="jax_mosaic_allow_hlo",
@@ -79,6 +91,8 @@ class CustomCallBackendConfig:
   needs_layout_passes: bool
   vmem_limit_bytes: int | None
   flags: dict[str, bool | int | float] | None
+  allow_input_fusion: list[bool] | None
+  serialization_format: int | None
 
   # We omit the body while printing, because primitive params get embedded
   # in HLO metadata, and the body blows up its size.
@@ -104,10 +118,21 @@ class CustomCallBackendConfig:
     if self.needs_hlo_passes:
       config.write(b', "needs_hlo_passes": ')
       config.write(str(self.needs_hlo_passes).lower().encode("ascii"))
+    if self.serialization_format is not None:
+      config.write(b', "serialization_format": ')
+      config.write(str(self.serialization_format).lower().encode("ascii"))
     if self.needs_layout_passes:
       config.write(b', "needs_layout_passes": ')
       config.write(str(self.needs_layout_passes).lower().encode("ascii"))
-    config.write(b"}")
+    if self.allow_input_fusion is not None:
+      config.write(b', "allow_input_fusion": [')
+      for i, value in enumerate(self.allow_input_fusion):
+        config.write(b"true" if value else b"false")
+        # config.write(str(value).lower().encode("ascii"))
+        if i + 1 != len(self.allow_input_fusion):
+          config.write(b",")
+      config.write(b"]")
+    config.write(b"}")  # End of custom_call_config.
     if self.device_type is not None:
       config.write(b', "device_type": ')
       config.write(
@@ -241,6 +266,100 @@ mlir.register_lowering(tpu_custom_call_p, _tpu_custom_call_lowering,
                        platform="tpu")
 
 
+def _lower_tpu_kernel(
+    module: ir.Module,
+    hardware_generation: int,
+) -> ir.Module:
+  """Runs MLIR passes lowering the given module to an MLIR module.
+
+  Uses Python versions of infer-memref-layout and apply-vector-layout.
+
+  Args:
+    module: The MLIR module to lower.
+    hardware_generation: The TPU hardware generation to target.
+
+  Returns:
+    An MLIR module implementing the kernel.
+  """
+  try:
+    module.operation.verify()
+  except ir.MLIRError as e:
+    raise ValueError("The compiled module fails MLIR verification") from e
+
+  with module.context as ctx, module.operation.location as _:
+    ctx.append_dialect_registry(mlir.upstream_dialects)
+    ctx.load_all_available_dialects()
+    tpu.register_dialect(ctx)
+    mhlo.register_mhlo_dialect(ctx)
+    mhlo.register_mhlo_passes()
+
+    dump_mlir(module, "original")
+
+    if _MOSAIC_ALLOW_HLO.value:
+      # Run hlo dialect conversion: hlo -> linalg -> vector.
+      pipeline = [
+          "hlo-legalize-to-arithmetic",
+          "func.func(hlo-legalize-to-linalg)",
+          "func.func(linalg-vectorization)",
+      ]
+      pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
+      pipeline.run(module.operation)
+      dump_mlir(module, "post-hlo-conversion")
+
+    pipeline = [
+        f"func.func(tpu-infer-memref-layout{{hardware-generation={hardware_generation}}})"
+    ]
+    pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
+    pipeline.run(module.operation)
+    dump_mlir(module, "post-infer-memref-layout")
+
+    pipeline = [
+        "canonicalize",
+        "cse",
+    ]
+    pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
+    pipeline.run(module.operation)
+    dump_mlir(module, "post-simplify")
+
+    if checks := FLAGS["xla_mosaic_on_device_checks"].value:
+      checks = set(checks.split(","))
+      if checks == {"bounds"}:  # We only support one kind of checks now.
+        pipeline = PassManager.parse(
+            "builtin.module(func.func(debug-assert-insertion))"
+        )
+        pipeline.run(module.operation)
+        dump_mlir(module, "post-assert-insertion")
+      elif checks:
+        checks.discard("bounds")
+        raise ValueError(
+            f"Unrecognized on-device check categories: {', '.join(checks)}"
+        )
+
+    pipeline = [
+        "func.func(tpu-infer-vector-layout{sublane-count=8 lane-count=128})",
+    ]
+    pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
+    pipeline.run(module.operation)
+    dump_mlir(module, "post-infer-vector-layout")
+
+    mxu_size = 128 if hardware_generation < 6 else 256
+    pipeline = [
+        "func.func(tpu-apply-vector-layout{sublane-count=8 lane-count=128"
+        f" hardware-generation={hardware_generation}"
+        f" mxu-contracting-size={mxu_size} mxu-noncontracting-size={mxu_size}"
+        "})"
+    ]
+    pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
+    pipeline.run(module.operation)
+    dump_mlir(module, "post-apply-vector-layout")
+
+    pipeline = PassManager.parse("builtin.module(canonicalize)")
+    pipeline.run(module.operation)
+    dump_mlir(module, "pre-lower-to-llo")
+
+    return module
+
+
 def as_tpu_kernel(
     module: ir.Module,
     out_type: Any,
@@ -252,6 +371,7 @@ def as_tpu_kernel(
     kernel_regeneration_metadata: bytes | None = None,
     vmem_limit_bytes: int | None = None,
     flags: dict[str, bool | int | float] | None = None,
+    allow_input_fusion: list[bool] | None = None,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
@@ -269,9 +389,25 @@ def as_tpu_kernel(
   has_communication, has_custom_barrier = tpu.private_has_communication(
       module.operation
   )
-  bytecode_buffer = io.BytesIO()
-  module.operation.write_bytecode(bytecode_buffer, desired_version=0)
-  asm = bytecode_buffer.getvalue()
+  needs_layout_passes = not device_type
+  # We'll mutate the module, so clone it
+  with module.context as ctx, module.operation.location as _:
+    module = ir.Module.parse(
+        module.operation.get_asm(binary=True, enable_debug_info=True)
+    )
+    if needs_layout_passes and _MOSAIC_USE_PYTHON_PIPELINE.value:
+      module = _lower_tpu_kernel(module, hardware_generation)
+      needs_layout_passes = False
+    prev_allow_unregistered_dialects = ctx.allow_unregistered_dialects
+    ctx.allow_unregistered_dialects = True
+    try:
+      pipeline = PassManager.parse("builtin.module(mosaic-serde{serialize=true})")
+      pipeline.run(module.operation)
+    finally:
+      ctx.allow_unregistered_dialects = prev_allow_unregistered_dialects
+    bytecode_buffer = io.BytesIO()
+    module.operation.write_bytecode(bytecode_buffer, desired_version=0)
+    asm = bytecode_buffer.getvalue()
 
   # TODO(amagni): Kernel name and regeneration metadata could alternatively be
   # added as a custom attribute to the MLIR call op rather than including them
@@ -280,7 +416,7 @@ def as_tpu_kernel(
       asm,
       out_type,
       needs_hlo_passes=_MOSAIC_ALLOW_HLO.value,
-      needs_layout_passes=not device_type,
+      needs_layout_passes=needs_layout_passes,
       device_type=device_type,
       has_communication=has_communication,
       has_custom_barrier=has_custom_barrier,
@@ -289,6 +425,7 @@ def as_tpu_kernel(
       cost_estimate=cost_estimate,
       vmem_limit_bytes=vmem_limit_bytes,
       flags=flags,
+      allow_input_fusion=allow_input_fusion,
       input_output_aliases=input_output_aliases,
   )
 
@@ -307,7 +444,9 @@ def _lowered_as_tpu_kernel(
     kernel_regeneration_metadata: bytes | None = None,
     vmem_limit_bytes: int | None = None,
     flags: dict[str, bool | int | float] | None = None,
+    allow_input_fusion: list[bool] | None = None,
     input_output_aliases: tuple[tuple[int, int], ...] = (),
+    serialization_format: int | None = 1,
 ):
   """Turns a low-level MLIR Mosaic kernel into a JAX-compatible function."""
   unpack = False
@@ -336,6 +475,8 @@ def _lowered_as_tpu_kernel(
         needs_layout_passes,
         vmem_limit_bytes,
         flags,
+        allow_input_fusion,
+        serialization_format=serialization_format,
     )
     result = tpu_custom_call_p.bind(
         *args,

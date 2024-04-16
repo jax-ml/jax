@@ -18,13 +18,13 @@ import jax
 import jax.extend as jex
 import jax.numpy as jnp
 
+from jax._src import api
 from jax._src import abstract_arrays
 from jax._src import linear_util
 from jax._src import prng
 from jax._src import test_util as jtu
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 class ExtendTest(jtu.JaxTestCase):
@@ -39,6 +39,7 @@ class ExtendTest(jtu.JaxTestCase):
     self.assertIs(jex.random.unsafe_rbg_prng_impl, prng.unsafe_rbg_prng_impl)
 
     # Assume these are tested elsewhere, only check equivalence
+    self.assertIs(jex.backend.clear_backends, api.clear_backends)
     self.assertIs(jex.core.array_types, abstract_arrays.array_types)
     self.assertIs(jex.linear_util.StoreException, linear_util.StoreException)
     self.assertIs(jex.linear_util.WrappedFun, linear_util.WrappedFun)

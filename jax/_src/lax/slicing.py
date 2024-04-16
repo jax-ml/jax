@@ -232,7 +232,7 @@ class GatherDimensionNumbers(NamedTuple):
       in the output of the gather. Must be a tuple of integers in ascending
       order.
     start_index_map: for each dimension in `start_indices`, gives the
-      corresponding dimension in `operand` that is to be sliced. Must be a
+      corresponding dimension in the `operand` that is to be sliced. Must be a
       tuple of integers with size equal to `start_indices.shape[-1]`.
 
   Unlike XLA's `GatherDimensionNumbers` structure, `index_vector_dim` is
@@ -261,8 +261,8 @@ class GatherScatterMode(enum.Enum):
     will be discarded.
   PROMISE_IN_BOUNDS:
     The user promises that indices are in bounds. No additional checking will be
-    performed. In practice, with the current XLA  implementation this means
-    that, out-of-bounds gathers will be clamped but out-of-bounds scatters will
+    performed. In practice, with the current XLA implementation this means
+    that out-of-bounds gathers will be clamped but out-of-bounds scatters will
     be discarded. Gradients will not be correct if indices are out-of-bounds.
   """
   CLIP = enum.auto()
@@ -370,7 +370,7 @@ class ScatterDimensionNumbers(NamedTuple):
       are the mirror image of `collapsed_slice_dims` in the case of `gather`.
     scatter_dims_to_operand_dims: for each dimension in `scatter_indices`, gives
       the corresponding dimension in `operand`. Must be a sequence of integers
-      with size equal to indices.shape[-1].
+      with size equal to `scatter_indices.shape[-1]`.
 
   Unlike XLA's `ScatterDimensionNumbers` structure, `index_vector_dim` is
   implicit; there is always an index vector dimension and it must always be the

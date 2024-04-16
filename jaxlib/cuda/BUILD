@@ -14,13 +14,13 @@
 
 # NVIDIA CUDA kernels
 
+load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "cuda_library",
     "if_cuda_is_configured",
     "pybind_extension",
 )
-load("@rules_python//python:defs.bzl", "py_library")
 
 licenses(["notice"])
 
@@ -118,7 +118,7 @@ pybind_extension(
         ":cuda_vendor",
         "//jaxlib:kernel_nanobind_helpers",
         "@xla//xla/tsl/cuda:cublas",
-        "@tsl//tsl/python/lib/core:numpy",
+        "@xla//xla/tsl/python/lib/core:numpy",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings:str_format",
         "@nanobind",
@@ -205,7 +205,7 @@ pybind_extension(
         "//jaxlib:kernel_nanobind_helpers",
         "@xla//xla/tsl/cuda:cudart",
         "@xla//xla/tsl/cuda:cusolver",
-        "@tsl//tsl/python/lib/core:numpy",
+        "@xla//xla/tsl/python/lib/core:numpy",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings:str_format",
         "@local_config_cuda//cuda:cuda_headers",
@@ -255,7 +255,7 @@ pybind_extension(
         "//jaxlib:kernel_nanobind_helpers",
         "@xla//xla/tsl/cuda:cudart",
         "@xla//xla/tsl/cuda:cusparse",
-        "@tsl//tsl/python/lib/core:numpy",
+        "@xla//xla/tsl/python/lib/core:numpy",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
         "@com_google_absl//absl/base:core_headers",
@@ -381,6 +381,7 @@ cc_library(
         ":cuda_lu_pivot_kernels",
         ":cuda_prng_kernels",
         ":cuda_vendor",
+        ":cudnn_rnn_kernels",
         ":cusolver_kernels",
         ":cusparse_kernels",
         ":triton_kernels",
@@ -399,7 +400,7 @@ cc_library(
         ":triton_utils",
         "//jaxlib/gpu:triton_cc_proto",
         "@xla//xla/service:custom_call_status",
-        "@xla//xla/stream_executor/gpu:asm_compiler",
+        "@xla//xla/stream_executor/cuda:cuda_asm_compiler",
         "@xla//xla/tsl/cuda:cudart",
         "@tsl//tsl/platform:env",
         "@com_google_absl//absl/base:core_headers",

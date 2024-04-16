@@ -451,8 +451,8 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertIn("jax.uses_shape_polymorphism = true", module_str)
     wrapped_main_expected_re = (
       r"@_wrapped_jax_export_main\("
-      r"%arg0: tensor<i..> {jax.global_constant = \"h\"}.*"
-      r"%arg1: tensor<i..> {jax.global_constant = \"w\"}.*"
+      r"%arg0: tensor<i..> {jax.global_constant = \"h\".*"
+      r"%arg1: tensor<i..> {jax.global_constant = \"w\".*"
       r"%arg2: tensor<\?x\?xf32>"
     )
     self.assertRegex(module_str, wrapped_main_expected_re)
@@ -1031,8 +1031,8 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform(self):
     x = np.arange(8, dtype=np.float32)
     exp = get_exported(_testing_multi_platform_func,
-                        lowering_platforms=("tpu", "cpu", "cuda"))(x)
-    self.assertEqual(exp.lowering_platforms, ("tpu", "cpu", "cuda"))
+                        lowering_platforms=("tpu", "cpu", "cuda","rocm"))(x)
+    self.assertEqual(exp.lowering_platforms, ("tpu", "cpu", "cuda", "rocm"))
     module_str = str(exp.mlir_module())
     expected_main_re = (
       r"@main\("
@@ -1054,14 +1054,14 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform_nested(self):
     x = np.arange(5, dtype=np.float32)
     exp = get_exported(lambda x: _testing_multi_platform_func(jnp.sin(x)),
-                        lowering_platforms=("cpu", "tpu", "cuda"))(x)
-    self.assertEqual(exp.lowering_platforms, ("cpu", "tpu", "cuda"))
+                        lowering_platforms=("cpu", "tpu", "cuda","rocm"))(x)
+    self.assertEqual(exp.lowering_platforms, ("cpu", "tpu", "cuda","rocm"))
 
     # Now serialize the call to the exported using a different sequence of
     # lowering platforms, but included in the lowering platforms for the
     # nested exported.
     exp2 = get_exported(export.call_exported(exp),
-                         lowering_platforms=("cpu", "cuda"))(x)
+                         lowering_platforms=("cpu", "cuda","rocm"))(x)
 
     # Ensure that we do not have multiple lowerings of the exported function
     exp2_module_str = str(exp2.mlir_module())
@@ -1080,8 +1080,8 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform_nested_inside_single_platform_export(self):
     x = np.arange(5, dtype=np.float32)
     exp = get_exported(_testing_multi_platform_func,
-                        lowering_platforms=("cpu", "tpu", "cuda"))(x)
-    self.assertEqual(exp.lowering_platforms, ("cpu", "tpu", "cuda"))
+                        lowering_platforms=("cpu", "tpu", "cuda","rocm"))(x)
+    self.assertEqual(exp.lowering_platforms, ("cpu", "tpu", "cuda", "rocm"))
 
     # Now serialize the call for the current platform.
     exp2 = get_exported(export.call_exported(exp))(x)
@@ -1120,7 +1120,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
     res_native = f_jax(a)
     exp = get_exported(f_jax,
-                        lowering_platforms=("cpu", "tpu", "cuda"))(a)
+                        lowering_platforms=("cpu", "tpu", "cuda", "rocm"))(a)
 
     # Call with argument placed on different plaforms
     for platform in self.__class__.platforms:
@@ -1238,12 +1238,12 @@ class JaxExportTest(jtu.JaxTestCase):
     mlir_module_str = str(exp.mlir_module())
     wrapped_main_expected_re = (
       r"@_wrapped_jax_export_main\("
-      r"%arg0: tensor<i..> {jax.global_constant = \"b1\"}.*, "
-      r"%arg1: tensor<i..> {jax.global_constant = \"b2\"}.*, "
-      r"%arg2: !stablehlo.token {jax.token = true}.*, "
+      r"%arg0: tensor<i..> {jax.global_constant = \"b1\".* "
+      r"%arg1: tensor<i..> {jax.global_constant = \"b2\".* "
+      r"%arg2: !stablehlo.token {jax.token = true.* "
       r"%arg3: tensor<\?x\?xf32>.*\) -> \("
       # Results
-      r"!stablehlo.token {jax.token = true}, tensor<\?x\?xf32>.*\)")
+      r"!stablehlo.token {jax.token = true.*, tensor<\?x\?xf32>.*\)")
     if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
       wrapped_main_expected_re = wrapped_main_expected_re.replace("!stablehlo.token", "tensor<0xi1>")
     self.assertRegex(mlir_module_str, wrapped_main_expected_re)
@@ -1254,10 +1254,10 @@ class JaxExportTest(jtu.JaxTestCase):
     else:
       main_expected_re = (
         r"@main\("
-        r"%arg0: !stablehlo.token {jax.token = true}.*, "
+        r"%arg0: !stablehlo.token {jax.token = true.*, "
         r"%arg1: tensor<\?x\?xf32>.*\) -> \("
         # Results
-        r"!stablehlo.token {jax.token = true}, tensor<\?x\?xf32>.*\)")
+        r"!stablehlo.token {jax.token = true.*, tensor<\?x\?xf32>.*\)")
       self.assertRegex(mlir_module_str, main_expected_re)
 
     res = export.call_exported(exp)(x)
@@ -1284,13 +1284,13 @@ class JaxExportTest(jtu.JaxTestCase):
     mlir_module_str = str(exp.mlir_module())
     wrapped_main_expected_re = (
       r"@_wrapped_jax_export_main\("
-      r"%arg0: tensor<i..> {jax.global_constant = \"_platform_index\"}.*, "
-      r"%arg1: tensor<i..> {jax.global_constant = \"b1\"}.*, "
-      r"%arg2: tensor<i..> {jax.global_constant = \"b2\"}.*, "
-      r"%arg3: !stablehlo.token {jax.token = true}.*, "
+      r"%arg0: tensor<i..> {jax.global_constant = \"_platform_index\".*, "
+      r"%arg1: tensor<i..> {jax.global_constant = \"b1\".*, "
+      r"%arg2: tensor<i..> {jax.global_constant = \"b2\".*, "
+      r"%arg3: !stablehlo.token {jax.token = true.*, "
       r"%arg4: tensor<\?x\?xf32>.*\) -> \("
       # Results
-      r"!stablehlo.token {jax.token = true}, tensor<\?x\?xf32>.*\)")
+      r"!stablehlo.token {jax.token = true.*, tensor<\?x\?xf32>.*\)")
     if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
       wrapped_main_expected_re = wrapped_main_expected_re.replace("!stablehlo.token", "tensor<0xi1>")
     self.assertRegex(mlir_module_str, wrapped_main_expected_re)
@@ -1301,11 +1301,11 @@ class JaxExportTest(jtu.JaxTestCase):
     else:
       main_expected_re = (
         r"@main\("
-        r"%arg0: tensor<i..> {jax.global_constant = \"_platform_index\"}.*, "
-        r"%arg1: !stablehlo.token {jax.token = true}.*, "
+        r"%arg0: tensor<i..> {jax.global_constant = \"_platform_index\".*, "
+        r"%arg1: !stablehlo.token {jax.token = true.*, "
         r"%arg2: tensor<\?x\?xf32>.*\) -> \("
         # Results
-        r"!stablehlo.token {jax.token = true}, tensor<\?x\?xf32>.*\)")
+        r"!stablehlo.token {jax.token = true.*, tensor<\?x\?xf32>.*\)")
       self.assertRegex(mlir_module_str, main_expected_re)
     res = export.call_exported(exp)(x)
     self.assertAllClose(10. + _testing_multi_platform_fun_expected(x),

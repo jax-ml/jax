@@ -90,7 +90,10 @@ def get(module: ir.Module,
        lambda hash_obj: _hash_xla_flags(hash_obj, get_flag_prefixes())),
       ("compile_options",
        lambda hash_obj: _hash_serialized_compile_options(
-           hash_obj, compile_options)),
+           hash_obj, compile_options,
+           # In case of GPU multi-process tasks we need to strip device
+           # assignment to use cache key as invariant between processes.
+           strip_device_assignment=(backend.platform == "gpu"))),
       ("accelerator_config",
          lambda hash_obj: _hash_accelerator_config(hash_obj, devices, backend)),
       ("compression",
@@ -172,7 +175,8 @@ def _hash_accelerator_config(hash_obj, accelerators: np.ndarray, backend):
     _hash_platform(hash_obj, backend)
 
 
-def _hash_serialized_compile_options(hash_obj, compile_options_obj):
+def _hash_serialized_compile_options(hash_obj, compile_options_obj,
+                                     strip_device_assignment=False):
   # Do not mess with the original CompileOptions object since it is passed to
   # the compiler. Create a deep copy for the purpose of cache key generation.
   compile_options_copy = copy.deepcopy(compile_options_obj)
@@ -211,6 +215,13 @@ def _hash_serialized_compile_options(hash_obj, compile_options_obj):
   debug_options.xla_gpu_cuda_data_dir = ""
   # LINT.ThenChange(:xla_flags)
 
+  if strip_device_assignment and compile_options_copy.device_assignment:
+    replica_count = compile_options_copy.device_assignment.replica_count()
+    computation_count = compile_options_copy.device_assignment.computation_count()
+    compile_options_copy.device_assignment = xla_client.DeviceAssignment.create(
+        np.arange(replica_count * computation_count).reshape(
+          [replica_count, computation_count])
+    )
   return hash_obj.update(compile_options_copy.SerializeAsString())
 
 

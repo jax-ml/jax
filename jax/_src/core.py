@@ -54,6 +54,7 @@ from jax._src.lib import jax_jit
 from jax._src import traceback_util
 from jax._src.typing import Array, DimSize, Shape
 from jax._src import typing
+
 traceback_util.register_exclusion(__file__)
 
 zip, unsafe_zip = safe_zip, zip
@@ -713,9 +714,13 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
     # This attribute is part of the jax.Array API, but only defined on concrete arrays.
     # Raising a ConcretizationTypeError would make sense, but for backward compatibility
     # we raise an AttributeError so that hasattr() and getattr() work as expected.
+    try:
+      orig_msg = self._origin_msg()
+    except:
+      orig_msg = ''
     raise AttributeError(self,
       f"The 'sharding' attribute is not available on {self._error_repr()}."
-      f"{self._origin_msg()}")
+      f"{orig_msg}")
 
   @property
   def addressable_shards(self):
@@ -828,14 +833,14 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
 
   @property
   def block_until_ready(self):
-    # Raise AttribureError for backward compatibility with hasattr() and getattr() checks.
+    # Raise AttributeError for backward compatibility with hasattr() and getattr() checks.
     raise AttributeError(self,
       f"The 'block_until_ready' method is not available on {self._error_repr()}."
       f"{self._origin_msg()}")
 
   @property
   def copy_to_host_async(self):
-    # Raise AttribureError for backward compatibility with hasattr() and getattr() checks.
+    # Raise AttributeError for backward compatibility with hasattr() and getattr() checks.
     raise AttributeError(self,
       f"The 'copy_to_host_async' method is not available on {self._error_repr()}."
       f"{self._origin_msg()}")
@@ -843,11 +848,6 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
   def delete(self):
     raise ConcretizationTypeError(self,
       f"The delete() method was called on {self._error_repr()}."
-      f"{self._origin_msg()}")
-
-  def device(self):
-    raise ConcretizationTypeError(self,
-      f"The device() method was called on {self._error_repr()}."
       f"{self._origin_msg()}")
 
   def devices(self):
@@ -906,10 +906,20 @@ class EvalTrace(Trace):
   lift = sublift = pure
 
   def process_primitive(self, primitive, tracers, params):
-    return primitive.impl(*tracers, **params)
+    if config.debug_key_reuse.value:
+      # Import here to avoid circular imports
+      from jax.experimental.key_reuse._core import call_impl_with_key_reuse_checks  # pytype: disable=import-error
+      return call_impl_with_key_reuse_checks(primitive, primitive.impl, *tracers, **params)
+    else:
+      return primitive.impl(*tracers, **params)
 
   def process_call(self, primitive, f, tracers, params):
-    return primitive.impl(f, *tracers, **params)
+    if config.debug_key_reuse.value:
+      # Import here to avoid circular imports
+      from jax.experimental.key_reuse._core import call_impl_with_key_reuse_checks  # pytype: disable=import-error
+      return call_impl_with_key_reuse_checks(primitive, primitive.impl, f, *tracers, **params)
+    else:
+      return primitive.impl(f, *tracers, **params)
   process_map = process_call
 
   def process_custom_transpose(self, primitive, call, tracers, **_):
@@ -1918,11 +1928,20 @@ class MutableArray:
   dtype = property(lambda self: self._aval.dtype)
   def __getitem__(self, idx): return get_aval(self)._getitem(self, idx)
   def __setitem__(self, idx, x): return get_aval(self)._setitem(self, idx, x)
+  def __repr__(self) -> str: return 'Mutable' + repr(self[...])
 pytype_aval_mappings[MutableArray] = lambda x: x._aval
 
 def mutable_array(init_val):
   return mutable_array_p.bind(init_val)
 mutable_array_p = Primitive('mutable_array')
+
+class InternalMutableArray(effects.Effect):
+  pass
+
+@mutable_array_p.def_effectful_abstract_eval
+def mutable_array_abstract_eval(init_aval):
+  from jax._src.state.types import AbstractRef  # type: ignore[import]
+  return AbstractRef(init_aval), {InternalMutableArray}
 
 @mutable_array_p.def_impl
 def _mutable_array_impl(init_val):
@@ -2860,7 +2879,7 @@ def check_jaxpr(jaxpr: Jaxpr):
     raise JaxprTypeError(msg) from None
 
   # Run key reuse checker after validating jaxpr:
-  if config.enable_key_reuse_checks.value:
+  if config.debug_key_reuse.value:
     # Import here to avoid circular imports
     from jax.experimental.key_reuse._core import check_key_reuse_jaxpr  # pytype: disable=import-error
     check_key_reuse_jaxpr(jaxpr)
@@ -2917,6 +2936,8 @@ def _check_jaxpr(
     write(v, v.aval)
 
   # Check each eqn.
+  sentinel = object()
+  in_idx = {v: i for i, v in enumerate(it.chain(jaxpr.constvars, jaxpr.invars))}
   for eqn_idx, eqn in enumerate(jaxpr.eqns):
     prim = eqn.primitive
     try:
@@ -2938,6 +2959,9 @@ def _check_jaxpr(
 
       # Check the computed effect type matches the eqn's annotation, and is
       # included in the jaxpr's annotation.
+      if prim is mutable_array_p:
+        outvar, = eqn.outvars
+        in_idx[outvar] = None  # type: ignore
       if eqn.effects != eqn_effects:
         raise JaxprTypeError("Inferred effects do not match equation effects. "
                              f"Equation effects: {eqn.effects}. "
@@ -2945,11 +2969,9 @@ def _check_jaxpr(
       for eff in eqn.effects:
         if isinstance(eff, effects.JaxprInputEffect):
           eqn_invar = eqn.invars[eff.input_index]
-          all_vars = [*jaxpr.constvars, *jaxpr.invars]
-          if eqn_invar not in all_vars:
+          if (jaxpr_index := in_idx.get(eqn_invar, sentinel)) is sentinel:
             raise JaxprTypeError(
                 "Invalid `JaxprInputEffect`: must correspond to a jaxpr invar")
-          jaxpr_index = all_vars.index(eqn_invar)
           jaxpr_effect = eff.replace(input_index=jaxpr_index)
           if jaxpr_effect not in jaxpr.effects:
             raise JaxprTypeError(

@@ -21,14 +21,13 @@ import unittest
 
 from absl.testing import absltest
 import jax
-from jax import config
 from jax.experimental import pjit
 from jax._src import debugger
 from jax._src import test_util as jtu
 import jax.numpy as jnp
 import numpy as np
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 def make_fake_stdin_stdout(commands: Sequence[str]) -> tuple[IO[str], io.StringIO]:
   fake_stdin = io.StringIO()
@@ -237,14 +236,9 @@ class CliDebuggerTest(jtu.JaxTestCase):
   def test_debugger_works_with_vmap(self):
     stdin, stdout = make_fake_stdin_stdout(["p y", "c", "p y", "c"])
 
-    # On TPU, the breakpoints can be reordered inside of vmap but can be fixed
-    # by ordering sends.
-    # TODO(sharadmv): change back to ordered = False when sends are ordered
-    ordered = jax.default_backend() == "tpu"
-
     def f(x):
       y = x + 1.
-      debugger.breakpoint(stdin=stdin, stdout=stdout, ordered=ordered,
+      debugger.breakpoint(stdin=stdin, stdout=stdout, ordered=True,
           backend="cli")
       return 2. * y
 

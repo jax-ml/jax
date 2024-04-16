@@ -37,8 +37,7 @@ from jax import vmap
 from jax.interpreters import batching
 from jax.tree_util import register_pytree_node
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 # These are 'manual' tests for batching (vmap). The more exhaustive, more
@@ -962,7 +961,7 @@ class BatchingTest(jtu.JaxTestCase):
       u, _ = lax.while_loop(lambda uk: uk[0] > 0.5, body_fn, (1., key))
       return u
 
-    with jax.enable_key_reuse_checks(False):
+    with jax.debug_key_reuse(False):
       print(vmap(f)(random.split(random.PRNGKey(0), 2)))  # no crash
 
   def testEmptyTuples(self):

@@ -31,41 +31,67 @@ import numpy as np
 @dataclasses.dataclass
 class Slice:
   """Represents a slice with a dynamic start index and a fixed size."""
-  start: Any
-  size: int
+  start: int | Array
+  size: int | Array
+  stride: int = 1
 
   def __post_init__(self):
-    if self.size < 0:
-      raise ValueError("`size` must not be negative.")
+    if self.stride < 1:
+      raise ValueError("`stride` must be >= 1.")
+
+  @property
+  def is_dynamic_start(self):
+    return not isinstance(self.start, int)
+
+  @property
+  def is_dynamic_size(self):
+    return not isinstance(self.size, int)
 
   def tree_flatten(self):
     # If `start` is statically known, we treat it as static information
-    if isinstance(self.start, int):
-      return (), (self.start, self.size)
-    return (self.start,), (self.size,)
+    xs = ()
+    data = ()
+    xs += (self.start,) if self.is_dynamic_start else (None,)
+    data += (None,) if self.is_dynamic_start else (self.start,)
+    xs += (self.size,) if self.is_dynamic_size else (None,)
+    data += (None,) if self.is_dynamic_size else (self.size,)
+    data += (self.stride,)
+    return xs, data
 
   @classmethod
   def tree_unflatten(cls, aux_data, children) -> Slice:
-    return cls(*children, *aux_data)
+    start, size = [
+        a if a is not None else b for a, b in zip(children, aux_data[:2])
+    ]
+    return cls(start, size, aux_data[2])
 
   @classmethod
   def from_slice(cls, slc: slice, size: int) -> Slice:
     start, stop, step = slc.indices(size)
-    if step != 1:
-      raise ValueError(f"slice must have a step of 1 (found: {step})")
-    return cls(start, max(stop - start, 0))
+    if step < 1:
+      raise ValueError(f"slice must have a step >= 1 (found: {step})")
+    return cls(start, max((stop - start + step - 1) // step, 0), step)
 
 
-def dslice(start: int |  Array | None, size: int | None = None
-           ) -> slice | Slice:
+def dslice(
+    start: int | Array | None,
+    size: int | Array | None = None,
+    stride: int | None = None,
+) -> slice | Slice:
   """Constructs a `Slice` from a start and a size."""
   if start is None:
     return slice(None)
+  if stride is None:
+    stride = 1
+  if not isinstance(stride, int):
+    raise ValueError("Non-static stride in `dslice`")
   if size is None:
     if not isinstance(start, int):
       raise ValueError("Non-static `dslice`")
-    return Slice(0, start)
-  return Slice(start, size)
+    return Slice(0, start, stride)
+  return Slice(start, size, stride)
+
+
 ds = dslice  # Handy alias
 
 
@@ -113,9 +139,10 @@ class NDIndexer:
         if value := _maybe_concretize(start):
           if value >= s:
             raise ValueError(f"Out of bound slice: start={value}, dim={s}.")
-          if value + idx.size > s:
+          if value + (idx.size - 1) * idx.stride >= s:
             raise ValueError(
-                f"Out of bound slice: start={value}, size={idx.size}, dim={s}."
+                f"Out of bound slice: start={value}, size={idx.size},"
+                f" stride={idx.stride}, dim={s}."
             )
         continue
       # The shape of indexer integers should be broadcastable up to the
@@ -140,6 +167,10 @@ class NDIndexer:
             f"Could not broadcast integer indexer: {idx=} vs."
             f" {self.int_indexer_shape=}"
         ) from e
+
+  @property
+  def is_dynamic_size(self):
+    return any(isinstance(i, Slice) and i.is_dynamic_size for i in self.indices)
 
   def tree_flatten(self):
     flat_idx, idx_tree = tree_util.tree_flatten(self.indices)
@@ -189,7 +220,7 @@ class NDIndexer:
     indices = merge_lists(is_int_indexing, other_indexers, int_indexers)
     return NDIndexer(tuple(indices), shape, bcast_shape, validate=True)
 
-  def get_indexer_shape(self) -> tuple[int, ...]:
+  def get_indexer_shape(self) -> tuple[int | Array, ...]:
     _, slice_indexers, _ = unpack_ndindexer(self)
     slice_shape = [s.size for s in slice_indexers]
     # In NDIndexers, the int_indexer_shape is *always* at the front of the

@@ -33,6 +33,15 @@ def nonzero(x, /):
   return jax.numpy.nonzero(x)
 
 
+def searchsorted(x1, x2, /, *, side='left', sorter=None):
+  """
+  Finds the indices into x1 such that, if the corresponding elements in x2
+  were inserted before the indices, the order of x1, when sorted in ascending
+  order, would be preserved.
+  """
+  return jax.numpy.searchsorted(x1, x2, side=side, sorter=sorter)
+
+
 def where(condition, x1, x2, /):
   """Returns elements chosen from x1 or x2 depending on condition."""
   dtype = _result_type(x1, x2)

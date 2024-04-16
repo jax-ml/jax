@@ -85,6 +85,7 @@ filterwarnings = [
     # end array_api_tests-related warnings
     "ignore:jax.extend.mlir.dialects.mhlo is deprecated.*:DeprecationWarning",
     "ignore:jax.experimental.maps and .* are deprecated.*:DeprecationWarning",
+    "ignore:The host_callback APIs are deprecated .*:DeprecationWarning",
 ]
 doctest_optionflags = [
     "NUMBER",
@@ -123,6 +124,11 @@ exclude = [
     "build",
     "__pycache__",
 ]
+line-length = 88
+indent-width = 2
+target-version = "py39"
+
+[tool.ruff.lint]
 ignore = [
     # Unnecessary collection call
     "C408",
@@ -135,8 +141,6 @@ ignore = [
     # Raise with from clause inside except block
     "B904",
 ]
-line-length = 88
-indent-width = 2
 select = [
     "B9",
     "C",
@@ -148,12 +152,11 @@ select = [
     "E227",
     "E228",
 ]
-target-version = "py39"
 
-[tool.ruff.mccabe]
+[tool.ruff.lint.mccabe]
 max-complexity = 18
 
-[tool.ruff.per-file-ignores]
+[tool.ruff.lint.per-file-ignores]
 # F811: Redefinition of unused name.
 "docs/autodidax.py" = ["F811"]
 # Note: we don't use jax/*.py because this matches contents of jax/_src

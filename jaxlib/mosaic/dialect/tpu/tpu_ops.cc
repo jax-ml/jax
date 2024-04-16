@@ -24,6 +24,7 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
+#include "mlir/include/mlir/IR/BuiltinTypes.h"
 #include "mlir/include/mlir/IR/IRMapping.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 
@@ -65,7 +66,8 @@ LogicalResult MemRefSliceOp::verify() {
       (target_memory_space == nullptr ||
        target_memory_space == source_type.getMemorySpace()) &&
       ((isa<AffineMapAttr>(target_layout) && target_layout.isIdentity()) ||
-       target_type.getLayout() == source_type.getLayout()));
+       target_type.getLayout() == source_type.getLayout()) &&
+      getDynamicSizes().size() == target_type.getNumDynamicDims());
 }
 
 LogicalResult MemRefSliceOp::canonicalize(MemRefSliceOp op,
@@ -81,8 +83,9 @@ LogicalResult MemRefSliceOp::canonicalize(MemRefSliceOp op,
   auto new_result_type = MemRefType::get(
       op.getResult().getType().getShape(), layout_ty.getElementType(),
       layout_ty.getLayout(), layout_ty.getMemorySpace());
-  auto slice = rewriter.create<MemRefSliceOp>(op.getLoc(), new_result_type,
-                                              layout_ref, op.getBaseIdx());
+  auto slice =
+      rewriter.create<MemRefSliceOp>(op.getLoc(), new_result_type, layout_ref,
+                                     op.getBaseIdx(), op.getDynamicSizes());
   rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), slice);
   return success();
 }
@@ -178,6 +181,45 @@ LogicalResult MemRefSqueezeOp::canonicalize(MemRefSqueezeOp op,
                                                   layout_ref);
   rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), squeeze);
   return success();
+}
+
+template <typename Op>
+LogicalResult verifyStridedOp(Op op, MemRefType memref_ty,
+                              VectorType vector_ty) {
+  auto indices = op.getIndices();
+  auto strides = op.getStrides();
+  if (memref_ty.getRank() != indices.size()) {
+    op.emitError("Base memref's rank and indices size do not match: ")
+        << memref_ty.getRank() << " vs " << indices.size();
+    return failure();
+  }
+  if (memref_ty.getRank() != strides.size()) {
+    op.emitError("Base memref's rank and strides size do not match: ")
+        << memref_ty.getRank() << " vs " << strides.size();
+    return failure();
+  }
+  if (memref_ty.getRank() != vector_ty.getRank()) {
+    op.emitError("Base memref's rank and result's rank do not match: ")
+        << memref_ty.getRank() << " vs " << vector_ty.getRank();
+    return failure();
+  }
+  for (int64_t i = 0; i < memref_ty.getRank(); ++i) {
+    if (strides[i] < 1) {
+      op.emitError("Strides[") << i << "]=" << strides[i] << " must be >= 1";
+      return failure();
+    }
+  }
+  return success();
+}
+
+LogicalResult StridedLoadOp::verify() {
+  return verifyStridedOp<StridedLoadOp>(*this, getMemRefType(getBase()),
+                                        getType());
+}
+
+LogicalResult StridedStoreOp::verify() {
+  return verifyStridedOp<StridedStoreOp>(*this, getMemRefType(getBase()),
+                                         getValueToStore().getType());
 }
 
 LogicalResult ReinterpretCastOp::verify() {

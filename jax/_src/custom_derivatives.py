@@ -42,8 +42,10 @@ from jax._src.interpreters.batching import not_mapped
 from jax._src.lax import lax
 from jax._src.tree_util import (tree_flatten, tree_unflatten, tree_map,
                                 treedef_is_leaf, treedef_tuple,
-                                register_pytree_node_class, tree_leaves)
-from jax._src.util import cache, safe_zip, safe_map, split_list, Unhashable
+                                register_pytree_node_class, tree_leaves,
+                                tree_flatten_with_path, keystr)
+from jax._src.util import (cache, safe_zip, safe_map, split_list, Unhashable,
+                           unzip2)
 
 
 traceback_util.register_exclusion(__file__)
@@ -733,6 +735,7 @@ def _flatten_bwd(in_tree, in_avals, out_trees, *args):
   # object, to be replaced with Nones in the final returned result.
   zero = object()  # non-pytree sentinel to replace Nones in py_cts_in
   dummy = tree_unflatten(in_tree, [object()] * in_tree.num_leaves)
+  keypaths, _ = unzip2(tree_flatten_with_path(dummy)[0])
   cts_in_flat = []
   def append(x, d):
     num_leaves = len(tree_flatten(d)[0])
@@ -747,18 +750,50 @@ def _flatten_bwd(in_tree, in_avals, out_trees, *args):
     tree_map(append, py_cts_in, dummy, is_leaf=lambda x: x is None)
   except ValueError:
     _, in_tree2 = tree_flatten(py_cts_in)
-    msg = ("Custom VJP rule must produce an output with the same container "
+    msg = ("Custom VJP bwd rule must produce an output with the same container "
            "(pytree) structure as the args tuple of the primal function, "
            "and in particular must produce a tuple of length equal to the "
-           "number of arguments to the primal function, but got VJP output "
+           "number of arguments to the primal function, but got bwd output "
            "structure {} for primal input structure {}.")
     raise TypeError(msg.format(in_tree2, in_tree)) from None
-  # Ignore any None cotangents, and any corresponding to inputs for which the
-  # type doesn't equal the tangent type (i.e. float0s)
-  # TODO(mattjj): change this to check if tangent type represents 0dim vspace
-  yield [Zero(a.at_least_vspace()) if ct is zero or a != a.at_least_vspace()
-         else ct for a, ct in zip(in_avals, cts_in_flat)]
+  results = []
+  for kp, a, ct in zip(keypaths, in_avals, cts_in_flat):
+    if ct is zero or a != a.at_least_vspace():
+      results.append(Zero(a.at_least_vspace()))
+    elif type(ct) is SymbolicZero:
+      if not core.typecompat(a.at_least_vspace(), a_ := ct.aval):
+        msg = ("Custom VJP bwd rule produced a SymbolicZero with a shape/dtype "
+               "that does not match the corresponding input tangent shape/dtype: "
+               f"the SymbolicZero had shape/dtype {a_.str_short()} while the "
+               f"corresponding input had shape/dtype {a.str_short()}. "
+               "Consider just returning a None here instead of a SymbolicZero "
+               "object.")
+        raise ValueError(msg)
+      results.append(Zero(ct.aval))
+    else:
+      if (not core.typecompat(a.at_least_vspace(), a_ := core.get_aval(ct))
+          and not (_temporary_dtype_exception(a, a_) or
+                   _temporary_shape_exception(a, a_))):
+        msg = ("Custom VJP bwd rule must produce an output with the same "
+               "shape/dtypes as the args tuple of the primal function, but at "
+               f"output{keystr(kp)} the bwd rule produced an output of "
+               f"shape/dtype {raise_to_shaped(a_).str_short()} corresponding "
+               f"to an input of shape/dtype {a.str_short()}.")
+        raise ValueError(msg)
+      results.append(ct)
+  yield results
 
+# TODO(mattjj): remove both these exceptions to cotangent compatibility check
+def _temporary_dtype_exception(a, a_) -> bool:
+  if isinstance(a, core.ShapedArray) and isinstance(a_, core.ShapedArray):
+    return (a.shape == a_.shape and
+            (dtypes.issubdtype(a_.dtype, dtypes.extended) or
+             dtypes.issubdtype(a.dtype, dtypes.np.inexact)))
+  return False
+
+# TODO(mattjj): remove both these exceptions to cotangent compatibility check
+def _temporary_shape_exception(a, a_) -> bool:
+  return config.custom_vjp_disable_shape_check.value
 
 class CustomVJPCallPrimitive(core.CallPrimitive):
   initial_style: core.Primitive

@@ -32,8 +32,8 @@ from functools import partial
 import math
 import operator
 import types
-from typing import (overload, Any, Callable, Literal, NamedTuple, Protocol,
-                    TypeVar, Union)
+from typing import (cast, overload, Any, Callable, Literal, NamedTuple,
+                    Protocol, TypeVar, Union)
 from textwrap import dedent as _dedent
 import warnings
 
@@ -66,7 +66,10 @@ from jax._src.numpy import reductions
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
 from jax._src.numpy.vectorize import vectorize
-from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DType, DTypeLike, Shape
+from jax._src.typing import (
+  Array, ArrayLike, DimSize, DuckTypedArray,
+  DType, DTypeLike, Shape, DeprecatedArg
+)
 from jax._src.util import (unzip2, subvals, safe_zip,
                            ceil_of_ratio, partition_list,
                            canonicalize_axis as _canonicalize_axis,
@@ -851,10 +854,12 @@ def unravel_index(indices: ArrayLike, shape: Shape) -> tuple[Array, ...]:
   try:
     shape = list(shape)
   except TypeError:
-    shape = [shape]
+    # TODO: Consider warning here since shape is supposed to be a sequence, so
+    # this should not happen.
+    shape = cast(list[Any], [shape])
   if any(ndim(s) != 0 for s in shape):
     raise ValueError("unravel_index: shape should be a scalar or 1D sequence.")
-  out_indices = [0] * len(shape)
+  out_indices: list[ArrayLike] = [0] * len(shape)
   for i, s in reversed(list(enumerate(shape))):
     indices_arr, out_indices[i] = ufuncs.divmod(indices_arr, s)
   oob_pos = indices_arr > 0
@@ -1137,7 +1142,12 @@ def where(
   else:
     util.check_arraylike("where", acondition, if_true, if_false)
     if size is not None or fill_value is not None:
-      raise ValueError("size and fill_value arguments cannot be used in three-term where function.")
+      raise ValueError("size and fill_value arguments cannot be used in "
+                       "three-term where function.")
+    if if_true is None or if_false is None:
+      raise ValueError("Either both or neither of the x and y arguments "
+                       "should be provided to jax.numpy.where, got "
+                       f"{if_true} and {if_false}.")
     return util._where(acondition, if_true, if_false)
 
 
@@ -1286,20 +1296,63 @@ def array_split(ary: ArrayLike, indices_or_sections: int | Sequence[int] | Array
                 axis: int = 0) -> list[Array]:
   return _split("array_split", ary, indices_or_sections, axis=axis)
 
-@util.implements(np.clip, skip_params=['out'])
+
+_DEPRECATED_CLIP_ARG = DeprecatedArg()
+@util.implements(
+  np.clip,
+  skip_params=['a', 'a_min'],
+  extra_params=_dedent("""
+    x : array_like
+        Array containing elements to clip.
+    min : array_like, optional
+        Minimum value. If ``None``, clipping is not performed on the
+        corresponding edge. The value of ``min`` is broadcast against x.
+    max : array_like, optional
+        Maximum value. If ``None``, clipping is not performed on the
+        corresponding edge. The value of ``max`` is broadcast against x.
+""")
+)
 @jit
-def clip(a: ArrayLike, a_min: ArrayLike | None = None,
-         a_max: ArrayLike | None = None, out: None = None) -> Array:
-  util.check_arraylike("clip", a)
-  if out is not None:
-    raise NotImplementedError("The 'out' argument to jnp.clip is not supported.")
-  if a_min is None and a_max is None:
-    raise ValueError("At most one of a_min and a_max may be None")
-  if a_min is not None:
-    a = ufuncs.maximum(a_min, a)
-  if a_max is not None:
-    a = ufuncs.minimum(a_max, a)
-  return asarray(a)
+def clip(
+  x: ArrayLike | None = None, # Default to preserve backwards compatability
+  /,
+  min: ArrayLike | None = None,
+  max: ArrayLike | None = None,
+  *,
+  a: ArrayLike | DeprecatedArg = _DEPRECATED_CLIP_ARG,
+  a_min: ArrayLike | None | DeprecatedArg = _DEPRECATED_CLIP_ARG,
+  a_max: ArrayLike | None | DeprecatedArg = _DEPRECATED_CLIP_ARG
+) -> Array:
+  # TODO(micky774): deprecated 2024-4-2, remove after deprecation expires.
+  x = a if not isinstance(a, DeprecatedArg) else x
+  if x is None:
+    raise ValueError("No input was provided to the clip function.")
+  min = a_min if not isinstance(a_min, DeprecatedArg) else min
+  max = a_max if not isinstance(a_max, DeprecatedArg) else max
+  if any(not isinstance(t, DeprecatedArg) for t in (a, a_min, a_max)):
+    warnings.warn(
+      "Passing arguments 'a', 'a_min', or 'a_max' to jax.numpy.clip is "
+      "deprecated. Please use 'x', 'min', and 'max' respectively instead.",
+      DeprecationWarning,
+      stacklevel=2,
+    )
+
+  util.check_arraylike("clip", x)
+  if any(jax.numpy.iscomplexobj(t) for t in (x, min, max)):
+    # TODO(micky774): Deprecated 2024-4-2, remove after deprecation expires.
+    warnings.warn(
+      "Clip received a complex value either through the input or the min/max "
+      "keywords. Complex values have no ordering and cannot be clipped. "
+      "Attempting to clip using complex numbers is deprecated and will soon "
+      "raise a ValueError. Please convert to a real value or array by taking "
+      "the real or imaginary components via jax.numpy.real/imag respectively.",
+      DeprecationWarning, stacklevel=2,
+    )
+  if min is not None:
+    x = ufuncs.maximum(min, x)
+  if max is not None:
+    x = ufuncs.minimum(max, x)
+  return asarray(x)
 
 @util.implements(np.around, skip_params=['out'])
 @partial(jit, static_argnames=('decimals',))
@@ -1834,6 +1887,18 @@ def stack(arrays: np.ndarray | Array | Sequence[ArrayLike],
       new_arrays.append(expand_dims(a, axis))
     return concatenate(new_arrays, axis=axis, dtype=dtype)
 
+@util.implements(getattr(np, 'unstack', None))
+@partial(jit, static_argnames="axis")
+def unstack(x: ArrayLike, /, *, axis: int = 0) -> tuple[Array, ...]:
+  util.check_arraylike("unstack", x)
+  x = asarray(x)
+  if x.ndim == 0:
+    raise ValueError(
+      "Unstack requires arrays with rank > 0, however a scalar array was "
+      "passed."
+    )
+  return tuple(moveaxis(x, axis, 0))
+
 @util.implements(np.tile)
 def tile(A: ArrayLike, reps: DimSize | Sequence[DimSize]) -> Array:
   util.check_arraylike("tile", A)
@@ -2210,11 +2275,16 @@ In particular, the details of float-to-int and int-to-float casts are
 implementation dependent.
 """)
 def astype(x: ArrayLike, dtype: DTypeLike | None, /, *, copy: bool = True) -> Array:
+  util.check_arraylike("astype", x)
+  x_arr = asarray(x)
   del copy  # unused in JAX
   if dtype is None:
     dtype = dtypes.canonicalize_dtype(float_)
   dtypes.check_user_dtype_supported(dtype, "astype")
-  return lax.convert_element_type(x, dtype)
+  # convert_element_type(complex, bool) has the wrong semantics.
+  if np.dtype(dtype) == bool and issubdtype(x_arr.dtype, complexfloating):
+    return (x_arr != _lax_const(x_arr, 0))
+  return lax.convert_element_type(x_arr, dtype)
 
 
 @util.implements(np.asarray, lax_description=_ARRAY_DOC)
@@ -2280,9 +2350,6 @@ def empty_like(prototype: ArrayLike | DuckTypedArray,
   return zeros_like(prototype, dtype=dtype, shape=shape, device=device)
 
 
-def _maybe_device_put(arr: Array, device: xc.Device | Sharding | None) -> Array:
-  return arr if device is None else jax.device_put(arr, device)
-
 def _normalize_to_sharding(device: xc.Device | Sharding | None) -> Sharding | None:
   if isinstance(device, xc.Device):
     return SingleDeviceSharding(device)
@@ -2301,7 +2368,8 @@ def full(shape: Any, fill_value: ArrayLike,
     shape = canonicalize_shape(shape)
     return lax.full(shape, fill_value, dtype, sharding=_normalize_to_sharding(device))
   else:
-    return _maybe_device_put(broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
+    return jax.device_put(
+        broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
 
 
 @util.implements(np.full_like)
@@ -2321,7 +2389,8 @@ def full_like(a: ArrayLike | DuckTypedArray,
   else:
     shape = np.shape(a) if shape is None else shape  # type: ignore[arg-type]
     dtype = result_type(a) if dtype is None else dtype  # type: ignore[arg-type]
-    return _maybe_device_put(broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
+    return jax.device_put(
+        broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
 
 
 @util.implements(np.zeros)
@@ -2436,9 +2505,10 @@ def fromiter(*args, **kwargs):
    is later modified in-place, it may lead to undefined behavior when using
    the associated JAX array.
 """)
-def from_dlpack(x: Any) -> Array:
+def from_dlpack(x: Any, /, *, device: xc.Device | Sharding | None = None,
+                copy: bool | None = None) -> Array:
   from jax.dlpack import from_dlpack  # pylint: disable=g-import-not-at-top
-  return from_dlpack(x)
+  return from_dlpack(x, device=device, copy=copy)
 
 @util.implements(np.fromfunction)
 def fromfunction(function: Callable[..., Array], shape: Any,
@@ -2679,13 +2749,11 @@ def _geomspace(start: ArrayLike, stop: ArrayLike, num: int = 50, endpoint: bool 
   util.check_arraylike("geomspace", start, stop)
   start = asarray(start, dtype=computation_dtype)
   stop = asarray(stop, dtype=computation_dtype)
-  # follow the numpy geomspace convention for negative and complex endpoints
-  signflip = 1 - (1 - ufuncs.sign(ufuncs.real(start))) * (1 - ufuncs.sign(ufuncs.real(stop))) // 2
-  signflip = signflip.astype(computation_dtype)
-  res = signflip * logspace(ufuncs.log10(signflip * start),
-                            ufuncs.log10(signflip * stop), num,
-                            endpoint=endpoint, base=10.0,
-                            dtype=computation_dtype, axis=0)
+
+  sign = ufuncs.sign(start)
+  res = sign * logspace(ufuncs.log10(start / sign), ufuncs.log10(stop / sign),
+                        num, endpoint=endpoint, base=10.0,
+                        dtype=computation_dtype, axis=0)
   if axis != 0:
     res = moveaxis(res, 0, axis)
   return lax.convert_element_type(res, dtype)
@@ -2869,6 +2937,27 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
   # Cumsum again to get scatter indices for repeat, e.g. [0,1,1,3,3,3,3,3]
   gather_indices = reductions.cumsum(block_split_indicators) - 1
   return take(a, gather_indices, axis=axis)
+
+
+@util.implements(getattr(np, "trapezoid", getattr(np, "trapz", None)))
+@partial(jit, static_argnames=('axis',))
+def trapezoid(y: ArrayLike, x: ArrayLike | None = None, dx: ArrayLike = 1.0,
+              axis: int = -1) -> Array:
+  # TODO(phawkins): remove this annotation after fixing jnp types.
+  dx_array: Array
+  if x is None:
+    util.check_arraylike('trapezoid', y)
+    y_arr, = util.promote_dtypes_inexact(y)
+    dx_array = asarray(dx)
+  else:
+    util.check_arraylike('trapezoid', y, x)
+    y_arr, x_arr = util.promote_dtypes_inexact(y, x)
+    if x_arr.ndim == 1:
+      dx_array = diff(x_arr)
+    else:
+      dx_array = moveaxis(diff(x_arr, axis=axis), axis, -1)
+  y_arr = moveaxis(y_arr, axis, -1)
+  return 0.5 * (dx_array * (y_arr[..., 1:] + y_arr[..., :-1])).sum(-1)
 
 
 @util.implements(np.tri)
@@ -3418,8 +3507,11 @@ def vdot(
              preferred_element_type=preferred_element_type)
 
 
-@util.implements(getattr(np, "vecdot", None), lax_description=_PRECISION_DOC,
-                 extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
+@util.implements(
+    getattr(np, "vecdot", None), lax_description=_PRECISION_DOC,
+    extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION,
+    # TODO(phawkins): numpy.vecdot doesn't have a __module__ attribute.
+    module="numpy")
 def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
            precision: PrecisionLike = None,
            preferred_element_type: DTypeLike | None = None) -> Array:
@@ -4861,8 +4953,8 @@ def _index_to_gather(x_shape: Sequence[int], idx: Sequence[Any],
                "with type {} at position {}, indexer value {}")
         raise TypeError(msg.format(abstract_i.dtype.name, idx_pos, i))
 
-      msg = "Indexing mode not yet supported. Open a feature request!\n{}"
-      raise IndexError(msg.format(idx))
+      raise IndexError("Indexing mode not yet supported. Got unsupported indexer "
+                      f"at position {idx_pos}: {i!r}")
 
   if len(gather_indices) == 0:
     gather_indices_array: ArrayLike = np.zeros((0,), dtype=index_dtype)
@@ -5366,7 +5458,7 @@ def digitize(x: ArrayLike, bins: ArrayLike, right: bool = False) -> Array:
   if bins_arr.ndim != 1:
     raise ValueError(f"digitize: bins must be a 1-dimensional array; got {bins=}")
   if bins_arr.shape[0] == 0:
-    return zeros(x, dtype=dtypes.canonicalize_dtype(int_))
+    return zeros_like(x, dtype=int32)
   side = 'right' if not right else 'left'
   return where(
     bins_arr[-1] >= bins_arr[0],

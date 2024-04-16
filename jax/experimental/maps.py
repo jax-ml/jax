@@ -41,9 +41,7 @@ _msg = (
     " jax.experimental.shard_map nor jax.vmap are suitable for your use case."
 )
 
-deprecations.register("jax.experimental.maps", "maps-module")
-
-if deprecations.is_accelerated("jax.experimental.maps", "maps-module"):
+if deprecations.is_accelerated("jax.experimental", "maps-module"):
   raise ImportError(_msg)
 else:
   warnings.warn(_msg, DeprecationWarning, stacklevel=2)

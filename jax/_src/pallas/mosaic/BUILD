@@ -14,12 +14,12 @@
 
 # Package for Mosaic-specific Pallas extensions
 
+load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "py_deps",
     "py_library_providing_imports_info",
 )
-load("@rules_python//python:defs.bzl", "py_library")
 
 package(
     default_applicable_licenses = [],
@@ -99,7 +99,7 @@ py_library(
     name = "kernel_regeneration_util",
     srcs = ["kernel_regeneration_util.py"],
     deps = [
-        "//third_party/py/mlir:ir",
+        "//jax:mlir",
     ],
 )
 

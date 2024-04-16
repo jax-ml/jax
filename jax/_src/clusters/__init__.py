@@ -24,5 +24,4 @@ from .ompi_cluster import OmpiCluster
 from .slurm_cluster import SlurmCluster
 from .mpi4py_cluster import Mpi4pyCluster
 from .cloud_tpu_cluster import GkeTpuCluster
-from .cloud_tpu_cluster import MultisliceGceTpuCluster
-from .cloud_tpu_cluster import SingleSliceGceTpuCluster
+from .cloud_tpu_cluster import GceTpuCluster

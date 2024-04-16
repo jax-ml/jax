@@ -112,7 +112,9 @@ from jax.experimental.array_api._elementwise_functions import (
     bitwise_right_shift as bitwise_right_shift,
     bitwise_xor as bitwise_xor,
     ceil as ceil,
+    clip as clip,
     conj as conj,
+    copysign as copysign,
     cos as cos,
     cosh as cosh,
     divide as divide,
@@ -123,6 +125,7 @@ from jax.experimental.array_api._elementwise_functions import (
     floor_divide as floor_divide,
     greater as greater,
     greater_equal as greater_equal,
+    hypot as hypot,
     imag as imag,
     isfinite as isfinite,
     isinf as isinf,
@@ -138,6 +141,8 @@ from jax.experimental.array_api._elementwise_functions import (
     logical_not as logical_not,
     logical_or as logical_or,
     logical_xor as logical_xor,
+    maximum as maximum,
+    minimum as minimum,
     multiply as multiply,
     negative as negative,
     not_equal as not_equal,
@@ -147,6 +152,7 @@ from jax.experimental.array_api._elementwise_functions import (
     remainder as remainder,
     round as round,
     sign as sign,
+    signbit as signbit,
     sin as sin,
     sinh as sinh,
     sqrt as sqrt,
@@ -167,17 +173,21 @@ from jax.experimental.array_api._manipulation_functions import (
     concat as concat,
     expand_dims as expand_dims,
     flip as flip,
+    moveaxis as moveaxis,
     permute_dims as permute_dims,
+    repeat as repeat,
     reshape as reshape,
     roll as roll,
     squeeze as squeeze,
     stack as stack,
+    unstack as unstack,
 )
 
 from jax.experimental.array_api._searching_functions import (
     argmax as argmax,
     argmin as argmin,
     nonzero as nonzero,
+    searchsorted as searchsorted,
     where as where,
 )
 
@@ -204,6 +214,7 @@ from jax.experimental.array_api._statistical_functions import (
 )
 
 from jax.experimental.array_api._utility_functions import (
+    __array_namespace_info__ as __array_namespace_info__,
     all as all,
     any as any,
 )

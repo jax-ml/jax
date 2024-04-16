@@ -1543,6 +1543,110 @@ class MutableArrayTest(jtu.JaxTestCase):
     self.assertAllClose(out1, 4 * jnp.ones((2, 3)), check_dtypes=False)
     self.assertAllClose(out2, y + w, check_dtypes=False)
 
+  @parameterized.parameters([True, False])
+  def test_closed_over_basic(self, jit):
+    x_mut = core.mutable_array(jnp.zeros(3))
+    def f():
+      x_mut[...] += 1.
+      x_mut[0] += 1
+      x_mut[1] += 5
+
+    if jit:
+      f = jax.jit(f)
+
+    f()
+
+    self.assertAllClose(x_mut[...], jnp.array([2., 6., 1.]),
+                        check_dtypes=False)
+
+    jaxpr = jax.make_jaxpr(f)()
+    self.assertTrue(any(isinstance(e, RefEffect) for e in jaxpr.effects))
+
+  @parameterized.parameters([True, False])
+  def test_closed_over_nested(self, jit):
+    x_mut = core.mutable_array(jnp.zeros(3))
+
+    @jax.jit
+    def f(y_mut, z):
+      x_mut[...] += 1.
+      x_mut[0] += 1
+      x_mut[1] += 5
+
+      y_mut[2] += 7
+      return z + 9
+
+    if jit:
+      f = jax.jit(f)
+
+    y_mut = core.mutable_array(np.zeros(3))
+
+    w = f(y_mut, 1)
+
+    self.assertAllClose(x_mut[...], jnp.array([2., 6., 1.]),
+                        check_dtypes=False)
+    self.assertAllClose(y_mut[...], jnp.array([0., 0., 7.]),
+                        check_dtypes=False)
+    self.assertAllClose(w, 10, check_dtypes=False)
+
+  @parameterized.parameters([True, False])
+  def test_internal_mutarray_basic(self, jit):
+    def f():
+      x_mut = core.mutable_array(jnp.zeros(3))
+      x_mut[0] += 1
+      x_mut[0] += 1
+      x_mut[2] += 1
+      return x_mut[...]
+
+    if jit:
+      f = jax.jit(f)
+
+    out = f()
+    self.assertAllClose(out, jnp.array([2., 0., 1.]), check_dtypes=False)
+
+  @parameterized.parameters([True, False])
+  def test_refs_in_vjps(self, jit):
+    def gradient_history_calculator_fwd(x, ref):
+      return x, ref
+
+    def gradient_history_calculator_bwd(amax_history, grad_output):
+      amax_update = jnp.max(jnp.abs(grad_output))
+      shifted = jnp.roll(amax_history[:], 1)
+      shifted = shifted.at[0].set(amax_update)
+      amax_history[:] = shifted
+      amax_from_history = jnp.max(amax_history[:])
+      grad_output = grad_output / amax_from_history
+      return grad_output, None
+
+    @jax.custom_vjp
+    def gradient_history_calculator(x, ref):
+      return x
+
+    gradient_history_calculator.defvjp(
+      gradient_history_calculator_fwd,
+      gradient_history_calculator_bwd)
+
+    class DotOp:
+      def __init__(self):
+        self.amax_history = core.mutable_array(jnp.zeros(5,))
+
+      def forward(self, x, y):
+        out = jnp.dot(x, y)
+        out = gradient_history_calculator(out, self.amax_history)
+        return out
+
+    dot_op = DotOp()
+    x_top = jnp.ones((5,))
+    y_top = jnp.ones((5,))
+
+    def loss(x, y):
+      return dot_op.forward(x, y).sum()
+
+    if jit:
+      loss = jax.jit(loss)
+
+    for i in range(3):
+      jax.grad(loss, (0,1))(x_top, y_top)
+      self.assertAllClose(dot_op.amax_history[:], jnp.zeros((5,)).at[:i+1].set(1.0), check_dtypes=False)
 
 if CAN_USE_HYPOTHESIS:
 

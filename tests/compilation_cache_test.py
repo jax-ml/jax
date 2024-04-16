@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections import Counter
 from functools import partial
 import math
 import os
 import platform
 import tempfile
-from collections import Counter
 import unittest
 from unittest import mock
 from unittest import SkipTest
@@ -37,7 +37,8 @@ from jax._src import monitoring
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
-from jax.experimental.maps import xmap
+from jax._src.lib import xla_extension_version
+from jax._src.maps import xmap
 from jax.experimental.pjit import pjit
 from jax.sharding import PartitionSpec as P
 import numpy as np
@@ -71,9 +72,9 @@ class CompilationCacheTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    # TODO(b/323256224): Add back support for CPU together with extra fields in
-    # a cache key with underlying hardware features.
     supported_platforms = ["tpu", "gpu"]
+    if xla_extension_version >= 253:
+      supported_platforms.append("cpu")
 
     if not jtu.test_device_matches(supported_platforms):
       raise SkipTest(

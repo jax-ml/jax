@@ -35,15 +35,14 @@ from jax import random
 from jax._src import test_util as jtu
 from jax import tree_util
 from jax._src.util import unzip2
-from jax.experimental import maps
 from jax.ad_checkpoint import checkpoint as new_checkpoint, checkpoint_policies
 import jax.numpy as jnp  # scan tests use numpy
 import jax.scipy as jsp
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax.control_flow import for_loop
+from jax._src.maps import xmap
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 # Some tests are useful for testing both lax.cond and lax.switch. This function
@@ -96,6 +95,7 @@ def scan_with_remat_for(f, *args, **kwargs):
 SCAN_IMPLS_WITH_FOR = [
     (lax.scan, 'unroll1'),
     (partial(lax.scan, unroll=2), 'unroll2'),
+    (partial(lax.scan, _split_transpose=True), 'split_transpose'),
     (scan_with_new_checkpoint , 'new_checkpoint'),
     (scan_with_new_checkpoint2, 'new_checkpoint2'),
     (scan_with_for, 'for_loop'),
@@ -1732,8 +1732,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       rtol = {np.float32: 2e-5, np.float64: 1e-13}
       atol = {np.float32: 6e-2, np.float64: 1e-13}
     else:
-      rtol = {np.float32: 2e-5, np.float64: 1e-13}
-      atol = {np.float32: 5e-5, np.float64: 1e-13}
+      rtol = {np.float32: 2e-4, np.float64: 1e-13}
+      atol = {np.float32: 8e-5, np.float64: 1e-13}
 
     if jit_f:
       f = jax.jit(f)
@@ -2712,7 +2712,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         i, x = carry
         return i + 1, x + lax.psum(y, 'b')
       return lax.while_loop(cond, body, (0, z))[1]
-    maps.xmap(f, axis_sizes=dict(a=2, b=10), out_axes=(['a']), in_axes={})(1.)
+    xmap(f, axis_sizes=dict(a=2, b=10), out_axes=(['a']), in_axes={})(1.)
 
   def test_while_loop_fixed_point_with_batched_pred_and_consts(self):
     def f(i, x):

@@ -42,7 +42,8 @@ class State:
                  process_id: int | None = None,
                  local_device_ids: int | Sequence[int] | None = None,
                  spec_detection_method: str | None = None,
-                 initialization_timeout: int = 300):
+                 initialization_timeout: int = 300,
+                 coordinator_bind_address: str | None = None):
     coordinator_address = (coordinator_address or
                            os.environ.get('JAX_COORDINATOR_ADDRESS', None))
     if isinstance(local_device_ids, int):
@@ -51,7 +52,12 @@ class State:
 
     (coordinator_address, num_processes, process_id, local_device_ids) = (
         clusters.ClusterEnv.auto_detect_unset_distributed_params(
-            coordinator_address, num_processes, process_id, local_device_ids, spec_detection_method
+            coordinator_address,
+            num_processes,
+            process_id,
+            local_device_ids,
+            initialization_timeout,
+            spec_detection_method,
         )
     )
 
@@ -63,6 +69,15 @@ class State:
       raise ValueError('The process id of the current process must be defined.')
 
     self.coordinator_address = coordinator_address
+
+    # The default value of [::]:port tells the coordinator to bind to all
+    # available addresses on the same port as coordinator_address.
+    default_coordinator_bind_address = '[::]:' + coordinator_address.rsplit(':', 1)[1]
+    coordinator_bind_address = (coordinator_bind_address or
+                                os.environ.get('JAX_COORDINATOR_BIND_ADDRESS',
+                                               default_coordinator_bind_address))
+    if coordinator_bind_address is None:
+      raise ValueError('coordinator_bind_address should be defined.')
 
     if local_device_ids:
       visible_devices = ','.join(str(x) for x in local_device_ids) # type: ignore[union-attr]
@@ -89,7 +104,7 @@ class State:
         raise RuntimeError('distributed.initialize should only be called once.')
       logger.info('Starting JAX distributed service on %s', coordinator_address)
       self.service = xla_extension.get_distributed_runtime_service(
-          coordinator_address, num_processes)
+          coordinator_bind_address, num_processes)
 
     self.num_processes = num_processes
 
@@ -129,7 +144,8 @@ def initialize(coordinator_address: str | None = None,
                process_id: int | None = None,
                local_device_ids: int | Sequence[int] | None = None,
                spec_detect_method: str | None = None,
-               initialization_timeout: int = 300):
+               initialization_timeout: int = 300,
+               coordinator_bind_address: str | None = None):
   """Initializes the JAX distributed system.
 
   Calling :func:`~jax.distributed.initialize` prepares JAX for execution on
@@ -182,6 +198,11 @@ def initialize(coordinator_address: str | None = None,
     initialization_timeout: Time period (in seconds) for which connection will
       be retried. If the initialization takes more than the timeout specified,
       the initialization will error. Defaults to 300 secs i.e. 5 mins.
+    coordinator_bind_address: the address and port to which the coordinator service
+      on process `0` should bind. If this is not specified, the default is to bind to
+      all available addresses on the same port as ``coordinator_address``. On systems
+      that have multiple network interfaces per node it may be insufficient to only
+      have the coordinator service listen on one address/interface.
 
   Raises:
     RuntimeError: If :func:`~jax.distributed.initialize` is called more than once.
@@ -204,7 +225,11 @@ def initialize(coordinator_address: str | None = None,
     raise RuntimeError("jax.distributed.initialize() must be called before "
                         "any JAX computations are executed.")
   global_state.initialize(coordinator_address, num_processes, process_id,
+<<<<<<< HEAD
                           local_device_ids, spec_detect_method, initialization_timeout)
+=======
+                          local_device_ids, initialization_timeout, coordinator_bind_address)
+>>>>>>> 06cd05d1d6722e77744556983e99396d0c208774
   atexit.register(shutdown)
 
 

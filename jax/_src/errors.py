@@ -581,7 +581,7 @@ class UnexpectedTracerError(JAXTypeError):
     code by including information about each stage. Respectively:
 
       1. The name of the transformed function (``side_effecting``) and which
-         transform kicked of the trace  :func:`~jax.jit`).
+         transform kicked off the trace  :func:`~jax.jit`).
       2. A reconstructed stack trace of where the leaked Tracer was created,
          which includes where the transformed function was called.
          (``When the Tracer was created, the final 5 stack frames were...``).
@@ -589,7 +589,7 @@ class UnexpectedTracerError(JAXTypeError):
          the leaked Tracer.
       4. The leak location is not included in the error message because it is
          difficult to pin down! JAX can only tell you what the leaked value
-         looks like (what shape is has and where it was created) and what
+         looks like (what shape it has and where it was created) and what
          boundary it was leaked over (the name of the transformation and the
          name of the transformed function).
       5. The current error's stack trace points to where the value is used.
@@ -661,12 +661,12 @@ class UnexpectedTracerError(JAXTypeError):
 class KeyReuseError(JAXTypeError):
   """
   This error occurs when a PRNG key is reused in an unsafe manner.
-  Key reuse is checked only when `jax_enable_key_reuse_checks` is
+  Key reuse is checked only when `jax_debug_key_reuse` is
   set to `True`.
 
   Here is a simple example of code that would lead to such an error::
 
-    >>> with jax.enable_key_reuse_checks(True):  # doctest: +SKIP
+    >>> with jax.debug_key_reuse(True):  # doctest: +SKIP
     ...   key = jax.random.key(0)
     ...   value = jax.random.uniform(key)
     ...   new_value = jax.random.uniform(key)

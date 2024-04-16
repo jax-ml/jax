@@ -19,7 +19,7 @@ from collections.abc import Sequence
 import dataclasses
 import enum
 import functools
-from typing import Any
+from typing import Any, Union
 
 from jax._src import core as jax_core
 from jax._src import dtypes
@@ -143,6 +143,9 @@ def _make_aval(obj: object) -> jax_core.AbstractValue:
                    "Only VMEM and SemaphoreType are supported.")
 
 
+BlockSpecTree = Union[BlockSpec, NoBlockSpec, Sequence["BlockSpecTree"]]
+
+
 @dataclasses.dataclass(init=False, unsafe_hash=True)
 class PrefetchScalarGridSpec(pallas_core.GridSpec):
   grid: Grid
@@ -157,12 +160,8 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
       self,
       num_scalar_prefetch: int,
       grid: Grid | None = None,
-      in_specs: BlockSpec
-      | Sequence[BlockSpec | NoBlockSpec]
-      | NoBlockSpec = no_block_spec,
-      out_specs: BlockSpec
-      | Sequence[BlockSpec | NoBlockSpec]
-      | NoBlockSpec = no_block_spec,
+      in_specs: BlockSpecTree = no_block_spec,
+      out_specs: BlockSpecTree = no_block_spec,
       scratch_shapes: Any | Sequence[Any] = ()
   ):
     super().__init__(grid, in_specs, out_specs)

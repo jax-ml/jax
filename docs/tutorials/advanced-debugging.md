@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.16.0
+    jupytext_version: 1.16.1
 kernelspec:
   display_name: Python 3
   language: python
@@ -14,3 +14,9 @@ kernelspec:
 
 (advanced-debugging)=
 # Advanced debugging
+```{note}
+This is a placeholder for a section in the new {ref}`jax-tutorials`.
+
+For the time being, you may find some related content in the old documentation:
+- {doc}`../debugging/index`
+```

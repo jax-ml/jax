@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+load("@rules_python//python:defs.bzl", "py_test")
 load(
     "//jaxlib:jax.bzl",
     "jax_generate_backend_suites",
@@ -20,7 +21,6 @@ load(
     "py_deps",
     "pytype_test",
 )
-load("@rules_python//python:defs.bzl", "py_test")
 
 licenses(["notice"])
 
@@ -54,6 +54,7 @@ py_test(
     deps = [
         "//jax",
         "//jax:experimental_array_api",
+        "//jax:test_util",
     ] + py_deps("absl/testing"),
 )
 
@@ -543,6 +544,21 @@ jax_test(
 )
 
 jax_test(
+    name = "lax_metal_test",
+    srcs = ["lax_metal_test.py"],
+    disable_backends = [
+        "cpu",
+        "gpu",
+        "tpu",
+    ],
+    tags = ["notap"],
+    deps = [
+        "//jax:internal_test_util",
+        "//jax:lax_reference",
+    ] + py_deps("numpy"),
+)
+
+jax_test(
     name = "lax_autodiff_test",
     srcs = ["lax_autodiff_test.py"],
     shard_count = {
@@ -731,7 +747,11 @@ jax_test(
     name = "pytorch_interoperability_test",
     srcs = ["pytorch_interoperability_test.py"],
     disable_backends = ["tpu"],
+    # The following cases are disabled because they time out in Google's CI, mostly because the
+    # CUDA kernels in Torch take a very long time to compile.
     disable_configs = [
+        "gpu_p100",  # Pytorch P100 build times out in Google's CI.
+        "gpu_a100",  # Pytorch A100 build times out in Google's CI.
         "gpu_h100",  # Pytorch H100 build times out in Google's CI.
     ],
     tags = [
@@ -1418,7 +1438,10 @@ jax_test(
         "tpu",
         "cpu",
     ],
-    shard_count = 4,
+    shard_count = {
+        "gpu": 4,
+    },
+    tags = ["multiaccelerator"],
     deps = [
         "//jax:fused_attention_stablehlo",
     ],

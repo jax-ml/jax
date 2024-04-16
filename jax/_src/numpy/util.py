@@ -418,6 +418,8 @@ def _broadcast_to(arr: ArrayLike, shape: DimSize | Shape) -> Array:
   arr_shape = np.shape(arr)
   if core.definitely_equal_shape(arr_shape, shape):
     return arr
+  elif len(shape) < len(arr_shape):
+    raise ValueError(f"Cannot broadcast to shape with fewer dimensions: {arr_shape=} {shape=}")
   else:
     nlead = len(shape) - len(arr_shape)
     shape_tail = shape[nlead:]

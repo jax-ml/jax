@@ -847,7 +847,7 @@ def trace_to_subjaxpr_nounits_fwd2(
   out_pvals = [t.pval for t in out_tracers]
 
   # Which consts (aka residuals) are just forwarded inputs? Check obj id.
-  in_consts  = [pval.get_known()    for pval in  in_pvals if     pval.is_known()]
+  in_consts  = [pval.get_known()    for pval in  in_pvals if    pval.is_known()]
   id_map = {id(c): i for i, c in enumerate(in_consts)}
   input_fwds: list[int | None] = [id_map.get(id(c)) for c in consts]
 
@@ -1005,11 +1005,9 @@ def convert_constvars_jaxpr(jaxpr: Jaxpr) -> Jaxpr:
 
 @weakref_lru_cache
 def convert_invars_to_constvars(jaxpr: Jaxpr, n: int) -> Jaxpr:
-  """Move n invars to constvars. Like an inverse of convert_constvars_Jaxpr."""
+  """Move n invars to constvars. Like an inverse of convert_constvars_jaxpr."""
   if n == 0:
     return jaxpr.replace()  # 'return jaxpr' would create cache reference cycle
-  if any(isinstance(eff, effects.JaxprInputEffect) for eff in jaxpr.effects):
-    raise NotImplementedError
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   constvars, invars = split_list(jaxpr.invars, [n])
   dbg = jaxpr.debug_info and jaxpr.debug_info._replace(
@@ -1728,9 +1726,13 @@ class DynamicJaxprTracer(core.Tracer):
 api_util._shaped_abstractify_handlers[DynamicJaxprTracer] = op.attrgetter("aval")
 
 def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
+  sentinel = object()
   jaxpr_effects = set()
-  all_vars = [*constvars, *invars]
+  all_vars = {v: i for i, v in enumerate(it.chain(constvars, invars))}
   for eqn in eqns:
+    if eqn.primitive is core.mutable_array_p:
+      outvar, = eqn.outvars
+      all_vars[outvar] = None  # type: ignore
     for eff in eqn.effects:
       if isinstance(eff, effects.JaxprInputEffect):
         if eff.input_index >= len(eqn.invars):
@@ -1740,14 +1742,14 @@ def make_jaxpr_effects(constvars, invars, outvars, eqns) -> effects.Effects:
               "\n Jaxpr: "
               f"{core.Jaxpr(constvars, invars, outvars, eqns, set())}")
         invar = eqn.invars[eff.input_index]
-        if invar not in all_vars:
+        if (input_index := all_vars.get(invar, sentinel)) is sentinel:
           raise ValueError(
                 f"`JaxprInputEffect` {eff} does not have "
                 f"corresponding input: {invar}."
                 f"\n Equation: {eqn}\n"
                 "\n Jaxpr: "
                 f"{core.Jaxpr(constvars, invars, outvars, eqns, set())}")
-        eff = eff.replace(input_index=all_vars.index(invar))
+        eff = eff.replace(input_index=input_index)
       jaxpr_effects.add(eff)
   return jaxpr_effects
 
@@ -2158,7 +2160,9 @@ class DynamicJaxprTrace(core.Trace):
     def fwd_jaxpr_from_zeros(*zeros):
       for store in fwd.stores: store and store.reset()
       fwd_ = _interleave_fun(fwd, zeros)
-      return trace_to_subjaxpr_dynamic(fwd_, main_(), in_avals)[::2]
+      jaxpr, _, consts, atr = trace_to_subjaxpr_dynamic(fwd_, main_(), in_avals)
+      if atr: raise NotImplementedError
+      return jaxpr, consts
 
     out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]
     invars = map(self.getvar, tracers)
@@ -2733,13 +2737,6 @@ def call_padding_rule(prim, in_avals, out_avals, *args, call_jaxpr, **params):
   new_params = dict(params, call_jaxpr=padded_jaxpr)
   subfuns, bind_params = prim.get_bind_params(new_params)
   return prim.bind(*subfuns, *args, **bind_params)
-
-
-def _error_staging_mutable_array_p(trace, x):
-  raise Exception(
-      "mutable_array constructor can't be staged out, and in particular can't "
-      "be used under a jax.jit or jax.lax.scan")
-custom_staging_rules[core.mutable_array_p] = _error_staging_mutable_array_p
 
 
 # TODO(mattjj): the following are deprecated; update callers to _nounits version

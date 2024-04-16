@@ -1035,3 +1035,9 @@ def toeplitz(c: ArrayLike, r: ArrayLike | None = None) -> Array:
       (nrows,), (1,), 'VALID', dimension_numbers=('NTC', 'IOT', 'NTC'),
       precision=lax.Precision.HIGHEST)[0]
   return jnp.flip(patches, axis=0)
+
+@implements(scipy.linalg.hilbert)
+@partial(jit, static_argnames=("n",))
+def hilbert(n: int) -> Array:
+  a = lax.broadcasted_iota(jnp.float64, (n, 1), 0)
+  return 1/(a + a.T + 1)

@@ -24,8 +24,7 @@ import logging
 import os
 import socketserver
 import threading
-
-from typing import Callable
+from typing import Callable, Union
 
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
@@ -211,7 +210,7 @@ def stop_trace():
     _profile_state.reset()
 
 
-def stop_and_get_fdo_profile() -> bytes:
+def stop_and_get_fdo_profile() -> Union[bytes, str]:
   """Stops the currently-running profiler trace and export fdo_profile.
 
   Currently, this is only supported for GPU.

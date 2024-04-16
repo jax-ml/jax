@@ -35,6 +35,7 @@ import jax
 from jax import (pmap, jit, vmap, jvp, grad, make_jaxpr,
                  linearize, device_put)
 from jax import lax
+import jax.scipy.linalg
 from jax import random
 from jax.ad_checkpoint import checkpoint as new_checkpoint
 import jax.numpy as jnp
@@ -51,6 +52,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lax import parallel
 from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
 from jax._src.util import safe_map, safe_zip
 
 config.parse_flags_with_absl()
@@ -1109,12 +1111,44 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertEqual((tuple(sorted(groups[0])),),
                      ((0, 1, 2, 3, 4, 5, 6, 7,),))  # order doesn't matter
 
+  @jtu.run_on_devices("gpu")
+  @unittest.skipIf(xla_extension_version < 250, "Requires jaxlib 0.4.26")
+  def testCollectiveBroadcast(self):
+    device_count = jax.device_count()
+    f = lambda x: lax.pbroadcast(x, source=0, axis_name='i')
+    f = self.pmap(f, 'i')
+    x = jnp.arange(4 * device_count).reshape((device_count, 4))
+    ans = f(x)
+    expected = np.take(x, [0] * device_count, axis=0)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.run_on_devices("gpu")
+  @unittest.skipIf(xla_extension_version < 250, "Requires jaxlib 0.4.26")
+  def testCollectiveBroadcastVmap(self):
+    device_count = jax.device_count()
+    f = lambda x: lax.pbroadcast(x, source=0, axis_name='i')
+    x = np.arange(device_count * 16, dtype=np.float32)
+    x = x.reshape((device_count, 4, 4))
+    ans = self.pmap(vmap(f), 'i')(x)
+    expected = jnp.broadcast_to(x[0:1], x.shape)
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
+  @jtu.run_on_devices("gpu")
+  @unittest.skipIf(xla_extension_version < 250, "Requires jaxlib 0.4.26")
+  def testCollectiveBroadcastGrad(self):
+    device_count = jax.device_count()
+    f = lambda x: lax.pbroadcast(x, source=0, axis_name='i')
+    x = np.arange(device_count, dtype=np.float32)
+    ans = self.pmap(grad(f), 'i')(x)
+    expected = np.zeros_like(x)
+    expected[0] = device_count
+    self.assertAllClose(ans, expected, check_dtypes=False)
+
   def testCollectivePermute(self):
     device_count = jax.device_count()
     rotation = [(i, (i + 1) % device_count) for i in range(device_count)]
     f = lambda x: lax.ppermute(x, perm=rotation, axis_name='i')
     f = self.pmap(f, 'i')
-
     x = jnp.arange(4 * device_count).reshape((device_count, 4))
     ans = f(x)
     expected = np.roll(x, shift=1, axis=0)
@@ -2165,6 +2199,18 @@ class PythonPmapTest(jtu.JaxTestCase):
     # vmap-of-vmap with matched axis sizes
     jax.vmap(jax.vmap(lambda x: 2 * x, axis_name='i'),
              axis_name='i')(jax.numpy.ones((1, 1)))  # don't crash
+
+  @unittest.skipIf(xla_extension_version < 252, "Requires jaxlib 0.4.26")
+  @jtu.run_on_devices("cpu")
+  def test_pmap_stack_size(self):
+    # Regression test for https://github.com/google/jax/issues/20428
+    # pmap isn't particularly important here, but it guarantees that the CPU
+    # client runs the computation on a threadpool rather than inline.
+    if jax.device_count() < 2:
+      raise SkipTest("test requires at least two devices")
+    x = jnp.eye(200)
+    y = jax.pmap(jax.scipy.linalg.expm)(jnp.array([x, x]))
+    y.block_until_ready()  # doesn't crash
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')

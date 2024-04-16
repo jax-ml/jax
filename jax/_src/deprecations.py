@@ -47,7 +47,7 @@ def deprecation_getattr(module, deprecations):
   def getattr(name):
     if name in deprecations:
       message, fn = deprecations[name]
-      if fn is None:
+      if fn is None:  # Is the deprecation accelerated?
         raise AttributeError(message)
       warnings.warn(message, DeprecationWarning, stacklevel=2)
       return fn
@@ -57,11 +57,20 @@ def deprecation_getattr(module, deprecations):
 
 
 def accelerate_module_deprecation(module: ModuleType, name: str) -> None:
-  """Accelerate the deprecation of a module-level attribute"""
+  """Accelerate the deprecation of a module-level attribute.
+
+  Raises an AttributeError instead of a DeprecationWarning upon attribute access.
+  Used in Google-internal code to implement faster deprecation.
+  """
   message, _ = module._deprecations[name]
   module._deprecations[name] = (message, None)
 
-
+# The following mechanism is a separate one, for registering and
+# accelerating deprecations that are not imports (for example, deprecations
+# of a function argument).
+# Maps a pair of strings to a boolean specifying whether the deprecation
+# is accelerated. The intent is that non-accelerated deprecations will warn,
+# and accelerated deprecations will error.
 _registered_deprecations: dict[tuple[str, str], bool] = {}
 
 

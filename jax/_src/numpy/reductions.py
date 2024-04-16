@@ -751,6 +751,8 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
   if dtypes.issubdtype(a.dtype, np.complexfloating):
     raise ValueError("quantile does not support complex input, as the operation is poorly defined.")
   if axis is None:
+    if keepdims:
+      keepdim = [1] * a.ndim
     a = a.ravel()
     axis = 0
   elif isinstance(axis, tuple):

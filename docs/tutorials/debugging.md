@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.16.0
+    jupytext_version: 1.16.1
 kernelspec:
   display_name: Python 3
   language: python
@@ -26,9 +26,9 @@ Let's begin with {func}`jax.debug.print`.
 - Use {func}`jax.debug.print` for traced (dynamic) array values with {func}`jax.jit`, {func}`jax.vmap` and others.
 - Use Python `print` for static values, such as dtypes and array shapes.
 
-With some JAX transformations, such as {func}`jax.grad` and {func}`jax.vmap`, you can use Python’s built-in `print` function to print out numerical values. However, with {func}`jax.jit` for example, you need to use {func}`jax.debug.print`, because those transformations delay numerical evaluation.
-
-Below is a basic example with {func}`jax.jit`:
+Recall from {ref}`jit-compilation` that when transforming a function with {func}`jax.jit`,
+the Python code is executed with abstract tracers in place of your arrays. Because of this,
+the Python `print` statement will only print this tracer value:
 
 ```{code-cell}
 import jax
@@ -36,34 +36,48 @@ import jax.numpy as jnp
 
 @jax.jit
 def f(x):
-    jax.debug.print("This is `jax.debug.print` of x {x}", x=x)
-    y = jnp.sin(x)
-    jax.debug.print("This is `jax.debug.print` of y {y} 🤯", y=y)
-    return y
+  print("print(x) ->", x)
+  y = jnp.sin(x)
+  print("print(y) ->", y)
+  return y
 
-f(2.)
+result = f(2.)
 ```
 
-{func}`jax.debug.print` can reveal the information about how computations are evaluated.
+Python's `print` executes at trace-time, before the runtime values exist.
+If you want to print the actual runtime values, you can use {func}`jax.debug.print`:
 
-Here's an example with {func}`jax.vmap`:
+```{code-cell}
+@jax.jit
+def f(x):
+  jax.debug.print("jax.debug.print(x) -> {x}", x=x)
+  y = jnp.sin(x)
+  jax.debug.print("jax.debug.print(y) -> {y}", y=y)
+  return y
+
+result = f(2.)
+```
+
+Similarly, within {func}`jax.vmap`, using Python's `print` will only print the tracer;
+to print the values being mapped over, use {func}`jax.debug.print`:
 
 ```{code-cell}
 def f(x):
-    jax.debug.print("This is `jax.debug.print` of x: {}", x)
-    y = jnp.sin(x)
-    jax.debug.print("This is `jax.debug.print` of y: {}", y)
-    return y
+  jax.debug.print("jax.debug.print(x) -> {}", x)
+  y = jnp.sin(x)
+  jax.debug.print("jax.debug.print(y) -> {}", y)
+  return y
 
 xs = jnp.arange(3.)
 
-jax.vmap(f)(xs)
+result = jax.vmap(f)(xs)
 ```
 
-Here's an example with {func}`jax.lax.map`:
+Here's the result with {func}`jax.lax.map`, which is a sequential map rather than a
+vectorization:
 
 ```{code-cell}
-jax.lax.map(f, xs)
+result = jax.lax.map(f, xs)
 ```
 
 Notice the order is different, as {func}`jax.vmap` and {func}`jax.lax.map` compute the same results in different ways. When debugging, the evaluation order details are exactly what you may need to inspect.
@@ -72,10 +86,10 @@ Below is an example with {func}`jax.grad`, where {func}`jax.debug.print` only pr
 
 ```{code-cell}
 def f(x):
-    jax.debug.print("This is `jax.debug.print` of x: {}", x)
-    return x ** 2
+  jax.debug.print("jax.debug.print(x) -> {}", x)
+  return x ** 2
 
-jax.grad(f)(1.)
+result = jax.grad(f)(1.)
 ```
 
 Sometimes, when the arguments don't depend on one another, calls to {func}`jax.debug.print` may print them in a different order when staged out with a JAX transformation. If you need the original order, such as `x: ...` first and then `y: ...` second, add the `ordered=True` parameter.
@@ -85,9 +99,11 @@ For example:
 ```{code-cell}
 @jax.jit
 def f(x, y):
-    jax.debug.print("This is `jax.debug.print of x: {}", x, ordered=True)
-    jax.debug.print("This is `jax.debug.print of y: {}", y, ordered=True)
-    return x + y
+  jax.debug.print("jax.debug.print(x) -> {}", x, ordered=True)
+  jax.debug.print("jax.debug.print(y) -> {}", y, ordered=True)
+  return x + y
+
+f(1, 2)
 ```
 
 To learn more about {func}`jax.debug.print` and its Sharp Bits, refer to {ref}`advanced-debugging`.
@@ -101,11 +117,24 @@ To pause your compiled JAX program during certain points during debugging, you c
 
 To print all available commands during a `breakpoint` debugging session, use the `help` command. (Full debugger commands, the Sharp Bits, its strengths and limitations are covered in {ref}`advanced-debugging`.)
 
-Example:
+Here is an example of what a debugger session might look like:
 
 ```{code-cell}
-:tags: [raises-exception]
+:tags: [skip-execution]
 
+@jax.jit
+def f(x):
+  y, z = jnp.sin(x, jnp.cos(x))
+  jax.debug.breakpoint()
+  return y * z
+f(2.) # ==> Pauses during execution
+```
+
+![JAX debugger](../_static/debugger.gif)
+
+For value-dependent breakpointing, you can use runtime conditionals like {func}`jax.lax.cond`:
+
+```{code-cell}
 def breakpoint_if_nonfinite(x):
   is_finite = jnp.isfinite(x).all()
   def true_fn(x):
@@ -119,20 +148,32 @@ def f(x, y):
   z = x / y
   breakpoint_if_nonfinite(z)
   return z
+
+f(2., 1.) # ==> No breakpoint
+```
+
+```{code-cell}
+:tags: [skip-execution]
+
 f(2., 0.) # ==> Pauses during execution
 ```
 
-![JAX debugger](../_static/debugger.gif)
-
 ## JAX `debug.callback` for more control during debugging
 
-As mentioned in the beginning, {func}`jax.debug.print` is a small wrapper around {func}`jax.debug.callback`. The {func}`jax.debug.callback` method allows you to have greater control over string formatting and the debugging output, like printing or plotting. It is compatible with {func}`jax.jit`, {func}`jax.vmap`, {func}`jax.grad` and other transformations (refer to the {ref}`external-callbacks-flavors-of-callback` table in {ref]`external-callbacks` for more information).
+Both {func}`jax.debug.print` and {func}`jax.debug.breakpoint` are implemented using
+the more flexible {func}`jax.debug.callback`, which gives greater control over the
+host-side logic executed via a Python callback.
+It is compatible with {func}`jax.jit`, {func}`jax.vmap`, {func}`jax.grad` and other
+transformations (refer to the {ref}`external-callbacks-flavors-of-callback` table in
+{ref}`external-callbacks` for more information).
 
 For example:
 
 ```{code-cell}
+import logging
+
 def log_value(x):
-  print("log:", x)
+  logging.warning(f'Logged value: {x}')
 
 @jax.jit
 def f(x):
@@ -142,7 +183,7 @@ def f(x):
 f(1.0);
 ```
 
-This callback is compatible with {func}`jax.vmap` and {func}`jax.grad`:
+This callback is compatible with other transformations, including {func}`jax.vmap` and {func}`jax.grad`:
 
 ```{code-cell}
 x = jnp.arange(5.0)
@@ -155,7 +196,7 @@ jax.grad(f)(1.0);
 
 This can make {func}`jax.debug.callback` useful for general-purpose debugging.
 
-You can learn more about different flavors of JAX callbacks in {ref}`external-callbacks-flavors-of-callback` and {ref}`external-callbacks-exploring-debug-callback`.
+You can learn more about {func}`jax.debug.callback` and other kinds of JAX callbacks in {ref}`external-callbacks`.
 
 ## Next steps
 

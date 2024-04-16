@@ -5,12 +5,19 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.16.0
+    jupytext_version: 1.16.1
 kernelspec:
   display_name: Python 3
   language: python
   name: python3
 ---
+
+```{code-cell}
+:tags: [remove-cell]
+
+# This ensures that code cell tracebacks appearing below will be concise.
+%xmode minimal
+```
 
 (jit-compilation)=
 # Just-in-time compilation

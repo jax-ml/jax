@@ -33,7 +33,6 @@ from jax import numpy as jnp
 from jax import random
 from jax._src import config
 from jax._src import core
-from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax import vmap
@@ -677,7 +676,7 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertKeysEqual(key, jax.jit(lambda k: k.copy())(key))
 
   # TODO(jakevdp) remove this decorator when reuse checks move to C++
-  @jax.enable_key_reuse_checks(False)
+  @jax.debug_key_reuse(False)
   def test_cpp_dispatch_normal(self):
     # Ensure we stay on the C++ dispatch path when calling a jitted
     # function with a key array as an argument.
@@ -694,7 +693,7 @@ class KeyArrayTest(jtu.JaxTestCase):
     self.assertEqual(count[0], 1)
 
   # TODO(jakevdp) remove this decorator when reuse checks move to C++
-  @jax.enable_key_reuse_checks(False)
+  @jax.debug_key_reuse(False)
   def test_cpp_dispatch_split(self):
     # Ensure we stay on the C++ dispatch path when calling a jitted
     # function with a key arrays as inputs and as outputs.
@@ -1019,9 +1018,6 @@ class KeyArrayTest(jtu.JaxTestCase):
 
     self.assertEqual(key.is_fully_addressable, key._base_array.is_fully_addressable)
     self.assertEqual(key.is_fully_replicated, key._base_array.is_fully_replicated)
-    if not deprecations.is_accelerated('jax._src.array', 'device-method'):
-      with jtu.ignore_warning(category=DeprecationWarning, message="arr.device"):
-        self.assertEqual(key.device(), key._base_array.device())
     self.assertEqual(key.devices(), key._base_array.devices())
     self.assertEqual(key.on_device_size_in_bytes(),
                      key._base_array.on_device_size_in_bytes())
@@ -1277,7 +1273,7 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
 
     self.check_shape(key_func, keys(), key())
     self.check_shape(arr_func, keys(), key())
-    with jax.enable_key_reuse_checks(False):
+    with jax.debug_key_reuse(False):
       self.check_against_reference(key_func, arr_func, keys(), key())
 
   def test_ravel(self):
@@ -1322,7 +1318,7 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     key_func = arr_func = lambda x: x[idx]
 
     self.check_shape(key_func, keys())
-    with jax.enable_key_reuse_checks(False):
+    with jax.debug_key_reuse(False):
       self.check_against_reference(key_func, arr_func, keys())
 
   @parameterized.parameters([
@@ -1336,10 +1332,10 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     key_func = arr_func = lambda key: key.at[idx].get()
 
     self.check_shape(key_func, keys())
-    with jax.enable_key_reuse_checks(False):
+    with jax.debug_key_reuse(False):
       self.check_against_reference(key_func, arr_func, keys())
 
-  @jax.enable_key_reuse_checks(False)
+  @jax.debug_key_reuse(False)
   def test_equality(self):
     key = random.key(123)
     key2 = random.key(456)

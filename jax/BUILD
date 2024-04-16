@@ -15,6 +15,7 @@
 # JAX is Autograd and XLA
 
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
+load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "if_building_jaxlib",
@@ -33,7 +34,6 @@ load(
     "pytype_library",
     "pytype_strict_library",
 )
-load("@rules_python//python:defs.bzl", "py_library")
 
 package(
     default_applicable_licenses = [],
@@ -104,6 +104,7 @@ package_group(
     name = "pallas_gpu_users",
     packages = [
         "//...",
+        "//learning/brain/research/jax",
     ] + pallas_gpu_internal_users,
 )
 
@@ -111,6 +112,7 @@ package_group(
     name = "pallas_tpu_users",
     packages = [
         "//...",
+        "//learning/brain/research/jax",
     ] + pallas_tpu_internal_users,
 )
 
@@ -199,6 +201,7 @@ py_library_providing_imports_info(
         "_src/debugging.py",
         "_src/dispatch.py",
         "_src/dlpack.py",
+        "_src/earray.py",
         "_src/flatten_util.py",
         "_src/interpreters/__init__.py",
         "_src/interpreters/ad.py",
@@ -721,8 +724,8 @@ pytype_strict_library(
     name = "layout",
     srcs = ["_src/layout.py"],
     deps = [
-        ":util",
-        ":xla_bridge",
+        ":sharding",
+        ":sharding_impls",
         "//jax/_src/lib",
     ],
 )
@@ -826,6 +829,8 @@ pytype_strict_library(
         "//jax/_src/lib",
     ] + if_building_jaxlib([
         "//jaxlib/mlir:ir",
+        "//jaxlib/mlir:mhlo_dialect",
+        "//jaxlib/mlir:pass_manager",
         "//jaxlib/mlir:stablehlo_dialect",
     ]) + py_deps("numpy") + py_deps("absl/flags"),
 )
@@ -993,7 +998,11 @@ pytype_library(
 
 pytype_library(
     name = "experimental_host_callback",
-    srcs = ["experimental/host_callback.py"],
+    srcs = [
+        "experimental/__init__.py",  # To support JAX_HOST_CALLBACK_LEGACY=False
+        "experimental/host_callback.py",
+        "experimental/x64_context.py",  # To support JAX_HOST_CALLBACK_LEGACY=False
+    ],
     visibility = ["//visibility:public"],
     deps = [
         ":jax",
@@ -1024,6 +1033,7 @@ pytype_strict_library(
     visibility = [":jax_extend_users"],
     deps = [
         "//jax/extend",
+        "//jax/extend:backend",
         "//jax/extend:core",
         "//jax/extend:linear_util",
         "//jax/extend:random",

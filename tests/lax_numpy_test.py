@@ -173,6 +173,27 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
               for a in out]
     return f
 
+
+  @jtu.sample_product(
+    [dict(shape=shape, axis=axis)
+      for shape in all_shapes
+      for axis in list(range(-len(shape), len(shape)))],
+    dtype=all_dtypes,
+  )
+  def testUnstack(self, shape, axis, dtype):
+    rng = jtu.rand_default(self.rng())
+    x = rng(shape, dtype)
+    if jnp.asarray(x).ndim == 0:
+      with self.assertRaisesRegex(ValueError, "Unstack requires arrays with"):
+        jnp.unstack(x, axis=axis)
+      return
+    y = jnp.unstack(x, axis=axis)
+    if shape[axis] == 0:
+      self.assertEqual(y, ())
+    else:
+      self.assertArraysEqual(jnp.moveaxis(jnp.array(y), 0, axis), x)
+
+
   @parameterized.parameters(
     [dtype for dtype in [jnp.bool, jnp.uint8, jnp.uint16, jnp.uint32,
                          jnp.uint64, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
@@ -568,7 +589,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       return np.matmul(x, y).astype(dtype)
     args_maker = lambda: [rng(lhs_shape, lhs_dtype), rng(rhs_shape, rhs_dtype)]
     tol = {np.float16: 1e-2, np.float32: 2e-2, np.float64: 1e-12,
-           np.complex128: 1e-12}
+           np.complex128: 1e-12, jnp.bfloat16: 1e-1}
 
     with jtu.strict_promotion_if_dtypes_match([lhs_dtype, rhs_dtype]):
       self._CheckAgainstNumpy(np_fun, jnp.matmul, args_maker, tol=tol)
@@ -603,7 +624,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       return f(x, y, axis=axis).astype(x.dtype)
     jnp_fn = partial(jnp.vecdot, axis=axis)
     tol = {np.float16: 1e-2, np.float32: 1E-3, np.float64: 1e-12,
-           np.complex64: 1E-3, np.complex128: 1e-12}
+           np.complex64: 1E-3, np.complex128: 1e-12, jnp.bfloat16: 1e-1}
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fn, args_maker, tol=tol)
 
@@ -862,7 +883,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                            (np.full(1, -0.9), np.ones(1))]
     ],
     shape=all_shapes,
-    dtype=number_dtypes,
+    dtype=float_dtypes + int_dtypes + unsigned_dtypes,
   )
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises mixed type promotion
@@ -872,14 +893,67 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       a_max = None if a_max is None else abs(a_max)
     rng = jtu.rand_default(self.rng())
     np_fun = lambda x: np.clip(x, a_min=a_min, a_max=a_max)
-    jnp_fun = lambda x: jnp.clip(x, a_min=a_min, a_max=a_max)
+    jnp_fun = lambda x: jnp.clip(x, min=a_min, max=a_max)
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-  def testClipError(self):
-    with self.assertRaisesRegex(ValueError, "At most one of a_min and a_max.*"):
-      jnp.clip(jnp.zeros((3,)))
+
+  @jtu.sample_product(
+    shape=all_shapes,
+    dtype=default_dtypes + unsigned_dtypes,
+  )
+  def testClipNone(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    x = rng(shape, dtype)
+    self.assertArraysEqual(jnp.clip(x), x)
+
+
+  # TODO(micky774): Check for ValueError instead of DeprecationWarning when
+  # jnp.clip deprecation is completed (began 2024-4-2) and default behavior is
+  # Array API 2023 compliant
+  @jtu.sample_product(shape=all_shapes)
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises mixed type promotion
+  def testClipComplexInputDeprecation(self, shape):
+    rng = jtu.rand_default(self.rng())
+    x = rng(shape, dtype=jnp.complex64)
+    msg = "Complex values have no ordering and cannot be clipped"
+    # jit is disabled so we don't miss warnings due to caching.
+    with jax.disable_jit():
+      with self.assertWarns(DeprecationWarning, msg=msg):
+        jnp.clip(x)
+
+      with self.assertWarns(DeprecationWarning, msg=msg):
+        jnp.clip(x, max=x)
+
+      x = rng(shape, dtype=jnp.int32)
+      with self.assertWarns(DeprecationWarning, msg=msg):
+        jnp.clip(x, min=-1+5j)
+
+      with self.assertWarns(DeprecationWarning, msg=msg):
+        jnp.clip(x, max=jnp.array([-1+5j]))
+
+
+  # TODO(micky774): Check for ValueError instead of DeprecationWarning when
+  # jnp.hypot deprecation is completed (began 2024-4-2) and default behavior is
+  # Array API 2023 compliant
+  @jtu.sample_product(shape=all_shapes)
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises mixed type promotion
+  def testHypotComplexInputDeprecation(self, shape):
+    rng = jtu.rand_default(self.rng())
+    x = rng(shape, dtype=jnp.complex64)
+    msg = "Passing complex-valued inputs to hypot"
+    # jit is disabled so we don't miss warnings due to caching.
+    with jax.disable_jit():
+      with self.assertWarns(DeprecationWarning, msg=msg):
+        jnp.hypot(x, x)
+
+      with self.assertWarns(DeprecationWarning, msg=msg):
+        y = jnp.ones_like(x)
+        jnp.hypot(x, y)
+
 
   @jtu.sample_product(
     [dict(shape=shape, dtype=dtype)
@@ -2597,7 +2671,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @jtu.sample_product(
     xshape=[(20,), (5, 4)],
-    binshape=[(1,), (5,)],
+    binshape=[(0,), (1,), (5,)],
     right=[True, False],
     reverse=[True, False],
     dtype=default_dtypes,
@@ -3789,6 +3863,24 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
+  @jtu.sample_product(
+    from_dtype=['int32', 'float32', 'complex64'],
+    use_method=[True, False],
+  )
+  def testAstypeBool(self, from_dtype, use_method, to_dtype='bool'):
+    rng = jtu.rand_some_zero(self.rng())
+    args_maker = lambda: [rng((3, 4), from_dtype)]
+    if (not use_method) and hasattr(np, "astype"):  # Added in numpy 2.0
+      np_op = lambda x: np.astype(x, to_dtype)
+    else:
+      np_op = lambda x: np.asarray(x).astype(to_dtype)
+    if use_method:
+      jnp_op = lambda x: jnp.asarray(x).astype(to_dtype)
+    else:
+      jnp_op = lambda x: jnp.astype(x, to_dtype)
+    self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
+    self._CompileAndCheck(jnp_op, args_maker)
+
   def testAstypeInt4(self):
     # Test converting from int4 to int8
     x = np.array([1, -2, -3, 4, -8, 7], dtype=jnp.int4)
@@ -4396,7 +4488,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    shape=all_shapes, dtype=all_dtypes,
+    shape=all_shapes,
+    dtype=all_dtypes,
   )
   def testWhereOneArgument(self, shape, dtype):
     rng = jtu.rand_some_zero(self.rng())
@@ -4432,17 +4525,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     def f(x):
       return jnp.where(x > 0, x, -x)
 
+    jaxpr = jax.make_jaxpr(jax.grad(f))(3.)
     # Test no comparison literal True/False in jaxpr, and hence no comparison to
     # literals
-    jaxpr = jax.make_jaxpr(jax.grad(f))(3.)
     self.assertNotIn('False', str(jaxpr))
     self.assertNotIn('True', str(jaxpr))
-
-    # But if we set the option off, we get the old behavior.
-    with config.new_select_transpose(False):
-      jaxpr = jax.make_jaxpr(jax.grad(f))(3.)
-    self.assertIn('False', str(jaxpr))
-    self.assertIn('True', str(jaxpr))
 
   def testWhereScalarPromotion(self):
     x = jnp.where(jnp.array([True, False]), 3,
@@ -5102,8 +5189,11 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         start, stop, num, endpoint=endpoint,
         dtype=dtype if dtype != jnp.bfloat16 else np.float32,
         axis=axis).astype(dtype)
-    self._CheckAgainstNumpy(np_op, jnp_op, args_maker,
-                            check_dtypes=False, tol=tol)
+
+    # JAX follows NumPy 2.0 semantics for complex geomspace.
+    if not (jtu.numpy_version() < (2, 0, 0) and dtypes.issubdtype(dtype, jnp.complexfloating)):
+      self._CheckAgainstNumpy(np_op, jnp_op, args_maker,
+                              check_dtypes=False, tol=tol)
     if dtype in (inexact_dtypes + [None,]):
       self._CompileAndCheck(jnp_op, args_maker,
                             check_dtypes=False, atol=tol, rtol=tol)
@@ -5181,6 +5271,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     jnp_op = lambda x: jnp.broadcast_to(x, to_shape)
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
+
+  def testBroadcastToInvalidShape(self):
+    # Regression test for https://github.com/google/jax/issues/20533
+    x = jnp.zeros((3, 4, 5))
+    with self.assertRaisesRegex(
+        ValueError, "Cannot broadcast to shape with fewer dimensions"):
+      jnp.broadcast_to(x, (4, 5))
 
   @jtu.sample_product(
     [dict(shapes=shapes, broadcasted_shape=broadcasted_shape)
@@ -5576,6 +5673,37 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       numpy_result = np.isdtype(dtype, kind)
       self.assertEqual(jax_result, numpy_result)
 
+  @jtu.sample_product(
+    [dict(yshape=yshape, xshape=xshape, dx=dx, axis=axis)
+      for yshape, xshape, dx, axis in [
+        ((10,), None, 1.0, -1),
+        ((3, 10), None, 2.0, -1),
+        ((3, 10), None, 3.0, -0),
+        ((10, 3), (10,), 1.0, -2),
+        ((3, 10), (10,), 1.0, -1),
+        ((3, 10), (3, 10), 1.0, -1),
+        ((2, 3, 10), (3, 10), 1.0, -2),
+      ]
+    ],
+    dtype=float_dtypes + int_dtypes,
+  )
+  @jtu.skip_on_devices("tpu")  # TODO(jakevdp): fix and reenable this test.
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
+  def test_trapezoid(self, yshape, xshape, dtype, dx, axis):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(yshape, dtype), rng(xshape, dtype) if xshape is not None else None]
+    if jtu.numpy_version() >= (2, 0, 0):
+      np_fun = partial(np.trapezoid, dx=dx, axis=axis)
+    else:
+      np_fun = partial(np.trapz, dx=dx, axis=axis)
+    jnp_fun = partial(jnp.trapezoid, dx=dx, axis=axis)
+    tol = jtu.tolerance(dtype, {np.float16: 2e-3, np.float64: 1e-12,
+                                jax.dtypes.bfloat16: 4e-2})
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=tol,
+                            check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker, atol=tol, rtol=tol,
+                          check_dtypes=False)
+
 
 # Most grad tests are at the lax level (see lax_test.py), but we add some here
 # as needed for e.g. particular compound ops of interest.
@@ -5736,7 +5864,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'argpartition': ['kind', 'order'],
       'asarray': ['like'],
       'broadcast_to': ['subok'],
-      'clip': ['kwargs'],
+      'clip': ['kwargs', 'out'],
       'copy': ['subok'],
       'corrcoef': ['ddof', 'bias', 'dtype'],
       'cov': ['dtype'],
@@ -5773,6 +5901,9 @@ class NumpySignaturesTest(jtu.JaxTestCase):
     }
 
     extra_params = {
+      # TODO(micky774): Remove when np.clip has adopted the Array API 2023
+      # standard
+      'clip': ['x', 'max', 'min'],
       'einsum': ['subscripts', 'precision'],
       'einsum_path': ['subscripts'],
       'take_along_axis': ['mode'],

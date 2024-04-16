@@ -16,7 +16,6 @@
 
 from functools import partial
 import itertools
-import unittest
 
 import numpy as np
 import scipy
@@ -30,7 +29,6 @@ from jax import jit, grad, jvp, vmap
 from jax import lax
 from jax import numpy as jnp
 from jax import scipy as jsp
-from jax._src.lib import version as jaxlib_version
 from jax._src import config
 from jax._src.lax import linalg as lax_linalg
 from jax._src import test_util as jtu
@@ -269,7 +267,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
   # TODO(phawkins): enable when there is an eigendecomposition implementation
   # for GPU/TPU.
   @jtu.run_on_devices("cpu")
-  @unittest.skipIf(jaxlib_version < (0, 4, 21), "Test requires jaxlib 0.4.21")
   def testEigHandlesNanInputs(self, shape, dtype, compute_left_eigenvectors,
                               compute_right_eigenvectors):
     """Verifies that `eig` fails gracefully if given non-finite inputs."""
@@ -1016,7 +1013,6 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       ((1, 1), (1, 1)),
       ((4, 4), (4,)),
       ((8, 8), (8, 4)),
-      ((1, 2, 2), (3, 2)),
       ((2, 2), (3, 2, 2)),
       ((2, 1, 3, 3), (1, 4, 3, 4)),
       ((1, 0, 0), (1, 0, 2)),
@@ -1043,9 +1039,15 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     # that we match NumPy's convention in all cases.
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, 'float32'), rng(rhs_shape, 'float32')]
-    # As of numpy 1.26.3, np.linalg.solve fails when this condition is not met.
-    if len(lhs_shape) == 2 or len(rhs_shape) > 1:
-      self._CheckAgainstNumpy(np.linalg.solve, jnp.linalg.solve, args_maker, tol=1E-3)
+
+    if jtu.numpy_version() >= (2, 0, 0):
+      # TODO(jakevdp) remove this condition after solve broadcast deprecation is finalized.
+      if len(rhs_shape) == 1 or (len(lhs_shape) != len(rhs_shape) + 1):
+        self._CheckAgainstNumpy(np.linalg.solve, jnp.linalg.solve, args_maker, tol=1E-3)
+    else:  # numpy 1.X
+      # As of numpy 1.26.3, np.linalg.solve fails when this condition is not met.
+      if len(lhs_shape) == 2 or len(rhs_shape) > 1:
+        self._CheckAgainstNumpy(np.linalg.solve, jnp.linalg.solve, args_maker, tol=1E-3)
     self._CompileAndCheck(jnp.linalg.solve, args_maker)
 
   @jtu.sample_product(
@@ -2078,6 +2080,16 @@ class LaxLinalgTest(jtu.JaxTestCase):
       np_fun = np.linalg.matrix_transpose
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+    n=[0, 1, 5, 10, 20],
+    )
+  def testHilbert(self, n):
+    args_maker = lambda: []
+    osp_fun = partial(osp.linalg.hilbert, n=n)
+    jsp_fun = partial(jsp.linalg.hilbert, n=n)
+    self._CheckAgainstNumpy(osp_fun, jsp_fun, args_maker)
+    self._CompileAndCheck(jsp_fun, args_maker)
 
 
 if __name__ == "__main__":

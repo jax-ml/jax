@@ -228,30 +228,6 @@ build:rbe_linux_cuda_base --config=rbe_linux
 build:rbe_linux_cuda_base --config=cuda
 build:rbe_linux_cuda_base --repo_env=REMOTE_GPU_TESTING=1
 
-build:rbe_linux_cuda11.8_nvcc_base --config=rbe_linux_cuda_base
-build:rbe_linux_cuda11.8_nvcc_base --config=cuda_clang
-build:rbe_linux_cuda11.8_nvcc_base --action_env=TF_NVCC_CLANG="1"
-build:rbe_linux_cuda11.8_nvcc_base --action_env=TF_CUDA_VERSION=11
-build:rbe_linux_cuda11.8_nvcc_base --action_env=TF_CUDNN_VERSION=8
-build:rbe_linux_cuda11.8_nvcc_base --action_env=CUDA_TOOLKIT_PATH="/usr/local/cuda-11.8"
-build:rbe_linux_cuda11.8_nvcc_base --action_env=LD_LIBRARY_PATH="/usr/local/cuda:/usr/local/cuda/lib64:/usr/local/cuda/extras/CUPTI/lib64:/usr/local/tensorrt/lib"
-build:rbe_linux_cuda11.8_nvcc_base --host_crosstool_top="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_cuda//crosstool:toolchain"
-build:rbe_linux_cuda11.8_nvcc_base --crosstool_top="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_cuda//crosstool:toolchain"
-build:rbe_linux_cuda11.8_nvcc_base --extra_toolchains="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_cuda//crosstool:toolchain-linux-x86_64"
-build:rbe_linux_cuda11.8_nvcc_base --extra_execution_platforms="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_platform//:platform"
-build:rbe_linux_cuda11.8_nvcc_base --host_platform="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_platform//:platform"
-build:rbe_linux_cuda11.8_nvcc_base --platforms="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_platform//:platform"
-build:rbe_linux_cuda11.8_nvcc_base --repo_env=TF_CUDA_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_cuda"
-build:rbe_linux_cuda11.8_nvcc_base --repo_env=TF_NCCL_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_nccl"
-build:rbe_linux_cuda11.8_nvcc_py3.9 --config=rbe_linux_cuda11.8_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_python3.9"
-build:rbe_linux_cuda11.8_nvcc_py3.9 --python_path="/usr/local/bin/python3.9"
-build:rbe_linux_cuda11.8_nvcc_py3.10 --config=rbe_linux_cuda11.8_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_python3.10"
-build:rbe_linux_cuda11.8_nvcc_py3.10 --python_path="/usr/local/bin/python3.10"
-build:rbe_linux_cuda11.8_nvcc_py3.11 --config=rbe_linux_cuda11.8_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_python3.11"
-build:rbe_linux_cuda11.8_nvcc_py3.11 --python_path="/usr/local/bin/python3.11"
-build:rbe_linux_cuda11.8_nvcc_py3.12 --config=rbe_linux_cuda11.8_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda11.8-cudnn8.6-tensorrt8.4_config_python3.12"
-build:rbe_linux_cuda11.8_nvcc_py3.12 --python_path="/usr/local/bin/python3.12"
-
 build:rbe_linux_cuda12.3_nvcc_base --config=rbe_linux_cuda_base
 build:rbe_linux_cuda12.3_nvcc_base --config=cuda_clang
 build:rbe_linux_cuda12.3_nvcc_base --action_env=TF_NVCC_CLANG="1"
@@ -320,6 +296,31 @@ build:rbe_cross_compile_base --strategy_regexp='Executing genrule @llvm-project.
 build:rbe_cross_compile_linux_arm64 --config=cross_compile_linux_arm64
 build:rbe_cross_compile_linux_arm64 --config=rbe_cross_compile_base
 # END LINUX AARCH64 CROSS-COMPILE CONFIGS
+
+# START MACOS CROSS-COMPILE CONFIGS
+build:cross_compile_macos_x86 --config=cross_compile_base
+build:cross_compile_macos_x86 --config=nonccl
+# Target Catalina (10.15) as the minimum supported OS
+build:cross_compile_macos_x86 --action_env  MACOSX_DEPLOYMENT_TARGET=10.15
+
+# Set the target CPU to Darwin x86
+build:cross_compile_macos_x86 --platforms=@xla//tools/toolchains/cross_compile/config:darwin_x86_64
+build:cross_compile_macos_x86 --cpu=darwin
+build:cross_compile_macos_x86 --crosstool_top=@xla//tools/toolchains/cross_compile/cc:cross_compile_toolchain_suite
+# When RBE cross-compiling for macOS, we need to explicitly register the
+# toolchain. Otherwise, oddly, RBE complains that a "docker container must be
+# specified".
+build:cross_compile_macos_x86 --extra_toolchains=@xla//tools/toolchains/cross_compile/config:macos-x86-cross-compile-cc-toolchain
+# Map --platforms=darwin_x86_64 to --cpu=darwin and vice-versa to make selects()
+# and transistions that use these flags work. The flag --platform_mappings needs
+# to be set to a file that exists relative to the package path roots.
+build:cross_compile_macos_x86 --platform_mappings=platform_mappings
+
+# RBE cross-compile configs for Darwin x86
+build:rbe_cross_compile_macos_x86 --config=cross_compile_macos_x86
+build:rbe_cross_compile_macos_x86 --config=rbe_cross_compile_base
+# END MACOS CROSS-COMPILE CONFIGS
+
 # END CROSS-COMPILE CONFIGS
 
 #############################################################################

@@ -120,7 +120,9 @@ def _tree_map_with_kwargs(f, *args, **kwargs):
   )
 
 
-def _get_next_indices(grid: core.StaticGrid, indices: GridIndices) -> GridIndices:
+def _get_next_indices(
+    grid: core.DynamicGrid, indices: GridIndices
+) -> GridIndices:
   """Takes a grid and current indices and returns the next indices.
 
   grid: (3, 4, 5)
@@ -135,7 +137,7 @@ def _get_next_indices(grid: core.StaticGrid, indices: GridIndices) -> GridIndice
     Incremented indices.
   """
   next_indices = []
-  carry = True
+  carry: Union[bool, jax.Array] = True
   for dim_size, index in reversed(list(zip(grid, indices))):
     i = jnp.where(carry, index + 1, index)
     carry = dim_size == i
@@ -494,7 +496,7 @@ class Pipeline(Protocol):
 def emit_pipeline_with_allocations(
     body: PipelineBody,
     *,
-    grid: core.StaticGrid,
+    grid: core.DynamicGrid,
     in_specs: PipelineBlockSpecs,
     out_specs: PipelineBlockSpecs,
     should_accumulate_out: Union[Sequence[bool], Any] = False,
@@ -1236,7 +1238,7 @@ def emit_pipeline_with_allocations(
 def emit_pipeline(
     body: PipelineBody,
     *,
-    grid: core.StaticGrid,
+    grid: core.DynamicGrid,
     in_specs: PipelineBlockSpecs,
     out_specs: PipelineBlockSpecs,
     should_accumulate_out: Union[Sequence[bool], Any] = False,

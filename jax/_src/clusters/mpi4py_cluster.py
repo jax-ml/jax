@@ -48,7 +48,7 @@ class Mpi4pyCluster(clusters.ClusterEnv):
     return find_spec("mpi4py") is not None
 
   @classmethod
-  def get_coordinator_address(cls) -> str:
+  def get_coordinator_address(cls, timeout_secs: int | None) -> str:
 
     # Using mpi4py, figure out rank 0 and it's hostname.
     # Then broadcast the hostname and port.

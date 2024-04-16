@@ -27,8 +27,7 @@ from jax._src import dtypes, test_util as jtu
 from jax.scipy import stats as lsp_stats
 from jax.scipy.special import expit
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 scipy_version = jtu.parse_version(scipy.version.version)
 
@@ -1476,14 +1475,14 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     ndim = shape[0] if len(shape) > 1 else 1
 
     func = partial(resample, shape=())
-    with jax.enable_key_reuse_checks(False):
+    with jax.debug_key_reuse(False):
       self._CompileAndCheck(
         func, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
     result = func(*args_maker())
     assert result.shape == (ndim,)
 
     func = partial(resample, shape=(4,))
-    with jax.enable_key_reuse_checks(False):
+    with jax.debug_key_reuse(False):
       self._CompileAndCheck(
         func, args_maker, rtol={np.float32: 3e-07, np.float64: 4e-15})
     result = func(*args_maker())

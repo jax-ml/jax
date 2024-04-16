@@ -41,10 +41,6 @@ MATMUL_TOL = {
     np.complex128: 1e-10,
 }
 
-GPU_LOWERING_ENABLED = gpu_sparse and (
-    gpu_sparse.cuda_is_supported or gpu_sparse.rocm_is_supported
-)
-
 
 def is_sparse(x):
   return isinstance(x, sparse.JAXSparse)

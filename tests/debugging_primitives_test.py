@@ -19,14 +19,13 @@ import unittest
 from absl.testing import absltest
 import jax
 from jax import lax
-from jax import config
-from jax.experimental import maps
 from jax.experimental import pjit
 from jax.interpreters import pxla
 from jax._src import ad_checkpoint
 from jax._src import debugging
 from jax._src import dispatch
 from jax._src import test_util as jtu
+from jax._src.maps import xmap
 import jax.numpy as jnp
 import numpy as np
 
@@ -35,7 +34,7 @@ try:
 except ModuleNotFoundError:
   rich = None
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 debug_print = debugging.debug_print
 
@@ -795,7 +794,7 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
         idx = lax.axis_index('foo')
         debug_print("{idx}: {x}", idx=idx, x=x)
         return jnp.mean(x, axis=['foo'])
-      out = maps.xmap(foo, in_axes=['foo'], out_axes=[...])(x)
+      out = xmap(foo, in_axes=['foo'], out_axes=[...])(x)
       debug_print("Out: {}", out)
       return out
     mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])
@@ -813,8 +812,8 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
   def test_unordered_print_with_xmap(self):
     def f(x):
       debug_print("{}", x, ordered=False)
-    f = maps.xmap(f, in_axes=['a'], out_axes=None, backend='cpu',
-                  axis_resources={'a': 'dev'})
+    f = xmap(f, in_axes=['a'], out_axes=None, backend='cpu',
+             axis_resources={'a': 'dev'})
     with jax.sharding.Mesh(np.array(jax.devices()), ['dev']):
       with jtu.capture_stdout() as output:
         f(np.arange(40))

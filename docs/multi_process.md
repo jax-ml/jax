@@ -28,11 +28,11 @@ Key concepts:
   * Each process has a
     distinct set of *local* devices it can address. The *global* devices are the set
     of all devices across all processes.
-  *  Use standard JAX parallelism APIs like {func}`~jax.pmap` and
-    {func}`~jax.experimental.maps.xmap` . Each process “sees” *local* input and
+  * Use standard JAX parallelism APIs like {func}`~jax.pmap` and
+    {func}`~jax.experimental.maps.xmap`. Each process “sees” *local* input and
     output to parallelized functions, but communication inside the computations
     is *global*.
-  *  Make sure all processes run the same parallel computations in the same
+  * Make sure all processes run the same parallel computations in the same
     order.
 
 ### Launching JAX processes
@@ -62,6 +62,9 @@ The API {func}`jax.distributed.initialize` takes several arguments, namely:
     with a port available on that process. Process 0 will start a JAX service
     exposed via that IP address and port, to which the other processes in the
     cluster will connect.
+  * `coordinator_bind_address`: the IP address and port to which the JAX service
+    on process 0 in your cluster will bind. By default, it will bind to all
+    available interfaces using the same port as `coordinator_address`.
   * `num_processes`: the number of processes in the cluster
   * `process_id`: the ID number of this process, in the range `[0 ..
     num_processes)`.
@@ -106,13 +109,13 @@ only launch computations on the 8 TPU cores attached directly to that host (see
 the
 [Cloud TPU System Architecture](https://cloud.google.com/tpu/docs/system-architecture)
 documentation for more details). You can see a process’s local devices via
-{func}`jax.local_devices()` .
+{func}`jax.local_devices()`.
 
 **The *global* devices are the devices across all processes.** A computation can
 span devices across processes and perform collective operations via the direct
 communication links between devices, as long as each process launches the
 computation on its local devices. You can see all available global devices via
-{func}`jax.devices()` . A process’s local devices are always a subset of the
+{func}`jax.devices()`. A process’s local devices are always a subset of the
 global devices.
 
 ### Running multi-process computations

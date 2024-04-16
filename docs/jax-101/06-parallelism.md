@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.16.0
+    jupytext_version: 1.16.1
 kernelspec:
   display_name: Python 3
   name: python3
@@ -125,7 +125,7 @@ jax.pmap(convolve)(xs, jax.pmap(convolve)(xs, ws))
 
 +++ {"id": "iuHqht-OYqca"}
 
-The outputs of the inner `jax.pmap(convolve)` never left their devices when being fed into the outer `jax.pmap(convolve)`.
+The outputs of the inner `jax.pmap(convolve)` have never left their devices when being fed into the outer `jax.pmap(convolve)`.
 
 +++ {"id": "vEFAJXN2q3dV"}
 
@@ -159,7 +159,7 @@ Keep in mind that when calling the transformed function, the size of the specifi
 ## Communication between devices
 
 The above is enough to perform simple parallel operations, e.g. batching a simple MLP forward pass across several devices. However, sometimes we need to pass information between the devices. For example, perhaps we are interested in normalizing the output of each device so they sum to 1.
-For that, we can use special [collective ops](https://jax.readthedocs.io/en/latest/jax.lax.html#parallel-operators) (such as the `jax.lax.p*` ops `psum`, `pmean`, `pmax`, ...). In order to use the collective ops we must specify the name of the `pmap`-ed axis through `axis_name` argument, and then refer to it when calling the op. Here's how to do that:
+For that, we can use special [collective ops](https://jax.readthedocs.io/en/latest/jax.lax.html#parallel-operators) (such as the `jax.lax.p*` ops `psum`, `pmean`, `pmax`, ...). In order to use the collective ops we must specify the name of the `pmap`-ed axis through the `axis_name` argument, and then refer to it when calling the op. Here's how to do that:
 
 ```{code-cell} ipython3
 :id: 0nCxGwqmtd3w

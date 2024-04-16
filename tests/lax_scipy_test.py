@@ -34,8 +34,7 @@ from jax._src import test_util as jtu
 from jax.scipy import special as lsp_special
 from jax.scipy import cluster as lsp_cluster
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 scipy_version = jtu.parse_version(scipy.version.version)
 
@@ -189,6 +188,19 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
         result = lsp_special.logsumexp(1.0, b=1.0)
         self.assertEqual(result, 1.0)
+
+  @jtu.sample_product(
+    shape=[(0,), (1,), (2,), (3,), (4,), (5,)],
+    dtype=float_dtypes,
+  )
+  def testLogSumExpWhere(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+    x = rng(shape, dtype)
+    rng = jtu.rand_bool(self.rng())
+    mask = rng(shape, bool)
+    y_expected = osp_special.logsumexp(x[mask]) if mask.any() else -jnp.inf
+    y_actual = lsp_special.logsumexp(x, where=mask)
+    self.assertAllClose(y_expected, y_actual, check_dtypes=False)
 
   @jtu.sample_product(
     shape=all_shapes,

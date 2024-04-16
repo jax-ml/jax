@@ -30,7 +30,6 @@ import scipy.linalg as sla
 import scipy.sparse as sps
 
 import jax
-from jax import config
 from jax._src import test_util as jtu
 from jax.experimental.sparse import linalg, bcoo
 import jax.numpy as jnp
@@ -288,7 +287,10 @@ class LobpcgTest(jtu.JaxTestCase):
     # We import matplotlib lazily because (a) it's faster this way, and
     # (b) concurrent imports of matplotlib appear to trigger some sort of
     # collision on the matplotlib cache lock on Windows.
-    from matplotlib import pyplot as plt
+    try:
+      from matplotlib import pyplot as plt
+    except (ModuleNotFoundError, ImportError):
+      return  # If matplotlib isn't available, don't emit plots.
 
     os.makedirs(lobpcg_debug_plot_dir, exist_ok=True)
     clean_matrix_name = _clean_matrix_name(matrix_name)
@@ -430,5 +432,5 @@ class F64LobpcgTest(LobpcgTest):
 
 
 if __name__ == '__main__':
-  config.parse_flags_with_absl()
+  jax.config.parse_flags_with_absl()
   absltest.main(testLoader=jtu.JaxTestLoader())

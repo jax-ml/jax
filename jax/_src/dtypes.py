@@ -342,20 +342,23 @@ def issubdtype(a: DTypeLike | None, b: DTypeLike | None) -> bool:
 
   # First handle extended dtypes. This is important for performance because
   # isinstance(x, extended) is called frequently within JAX internals.
-  if _issubclass(b, extended):
+  a_is_type = isinstance(a, type)
+  b_is_type = isinstance(b, type)
+  if b_is_type and _issubclass(b, extended):
     if isinstance(a, ExtendedDType):
       return _issubclass(a.type, b)
-    if _issubclass(a, np.generic):
+    if a_is_type and _issubclass(a, np.generic):
       return _issubclass(a, b)
     return _issubclass(np.dtype(a).type, b)
   if isinstance(b, ExtendedDType):
     return isinstance(a, ExtendedDType) and a == b
   if isinstance(a, ExtendedDType):
     a = a.type
+    a_is_type = isinstance(a, type)
 
   # For all others, normalize inputs to scalar types.
-  a_sctype = a if _issubclass(a, np.generic) else np.dtype(a).type
-  b_sctype = b if _issubclass(b, np.generic) else np.dtype(b).type
+  a_sctype = a if a_is_type and _issubclass(a, np.generic) else np.dtype(a).type
+  b_sctype = b if b_is_type and _issubclass(b, np.generic) else np.dtype(b).type
 
   # Now do special handling of custom float and int types, as they don't conform
   # to the normal scalar type hierarchy.
@@ -620,10 +623,12 @@ def promote_types(a: DTypeLike, b: DTypeLike) -> DType:
   return np.dtype(_least_upper_bound(config.numpy_dtype_promotion.value, a_tp, b_tp))
 
 def is_weakly_typed(x: Any) -> bool:
+  if type(x) in _weak_types:
+    return True
   try:
     return x.aval.weak_type
   except AttributeError:
-    return type(x) in _weak_types
+    return False
 
 def is_python_scalar(x: Any) -> bool:
   try:
@@ -640,11 +645,12 @@ def dtype(x: Any, *, canonicalize: bool = False) -> DType:
   """Return the dtype object for a value or type, optionally canonicalized based on X64 mode."""
   if x is None:
     raise ValueError(f"Invalid argument to dtype: {x}.")
-  elif isinstance(x, type) and x in python_scalar_dtypes:
+  is_type = isinstance(x, type)
+  if is_type and x in python_scalar_dtypes:
     dt = python_scalar_dtypes[x]
   elif type(x) in python_scalar_dtypes:
     dt = python_scalar_dtypes[type(x)]
-  elif _issubclass(x, np.generic):
+  elif is_type and _issubclass(x, np.generic):
     return np.dtype(x)
   elif issubdtype(getattr(x, 'dtype', None), extended):
     dt = x.dtype

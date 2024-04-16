@@ -23,7 +23,6 @@ from absl import logging
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
-from jax import config
 from jax import dlpack
 from jax import dtypes
 from jax import lax
@@ -42,7 +41,7 @@ try:
 except ImportError:
   tf = None
 
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 def _maybe_jit(with_jit: bool, func: Callable) -> Callable:
@@ -1151,15 +1150,15 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     super().setUp()
 
   def override_serialization_version(self, version_override: int):
-      version = config.jax_serialization_version
+      version = jax.config.jax_serialization_version
       if version != version_override:
-        self.addCleanup(partial(config.update,
+        self.addCleanup(partial(jax.config.update,
                                 "jax_serialization_version",
                                 version_override))
-        config.update("jax_serialization_version", version_override)
+        jax.config.update("jax_serialization_version", version_override)
       logging.info(
         "Using JAX serialization version %s",
-        config.jax_serialization_version)
+        jax.config.jax_serialization_version)
 
   def test_alternate(self):
     # Alternate sin/cos with sin in TF and cos in JAX
@@ -1275,7 +1274,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
 
   @_parameterized_jit
   def test_shape_poly_static_output_shape(self, with_jit=True):
-    if config.jax2tf_default_native_serialization:
+    if jax.config.jax2tf_default_native_serialization:
       raise unittest.SkipTest("TODO(b/268386622): call_tf with shape polymorphism and native serialization.")
     x = np.array([0.7, 0.8], dtype=np.float32)
 
@@ -1289,7 +1288,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
 
   @_parameterized_jit
   def test_shape_poly(self, with_jit=False):
-    if config.jax2tf_default_native_serialization:
+    if jax.config.jax2tf_default_native_serialization:
       raise unittest.SkipTest("TODO(b/268386622): call_tf with shape polymorphism and native serialization.")
     x = np.array([7, 8, 9, 10], dtype=np.float32)
     def fun_jax(x):
@@ -1308,7 +1307,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
 
   @_parameterized_jit
   def test_shape_poly_pytree_result(self, with_jit=True):
-    if config.jax2tf_default_native_serialization:
+    if jax.config.jax2tf_default_native_serialization:
       raise unittest.SkipTest("TODO(b/268386622): call_tf with shape polymorphism and native serialization.")
     x = np.array([7, 8, 9, 10], dtype=np.float32)
     def fun_jax(x):
@@ -1394,7 +1393,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     if kind == "bad_dim" and with_jit:
       # TODO: in jit more the error pops up later, at AddV2
       expect_error = "Dimensions must be equal, but are 4 and 9 for .* AddV2"
-    if kind == "bad_dim" and config.jax2tf_default_native_serialization:
+    if kind == "bad_dim" and jax.config.jax2tf_default_native_serialization:
       # TODO(b/268386622): call_tf with shape polymorphism and native serialization.
       expect_error = "Error compiling TensorFlow function"
     fun_tf_rt = _maybe_tf_jit(with_jit,
@@ -1432,7 +1431,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
                                f4_function=False, f4_saved_model=False):
     if (f2_saved_model and
         f4_saved_model and
-        not config.jax2tf_default_native_serialization):
+        not jax.config.jax2tf_default_native_serialization):
       # TODO: Getting error Found invalid capture Tensor("jax2tf_vjp/jax2tf_arg_0:0", shape=(), dtype=float32) when saving custom gradients
       # when saving f4, but only with non-native serialization.
       raise unittest.SkipTest("TODO: error invalid capture when saving custom gradients")

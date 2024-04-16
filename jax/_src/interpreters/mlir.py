@@ -46,10 +46,9 @@ from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
-from jax._src.layout import XLACompatibleLayout, LayoutRequest
+from jax._src.layout import AutoLayout, DeviceLocalLayout
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import dialects
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
@@ -75,6 +74,13 @@ _JAX_DUMP_IR_TO = config.DEFINE_string(
          "Supports the special value 'sponge' to pick the path from the "
          "environment variable TEST_UNDECLARED_OUTPUTS_DIR.")
 
+_JAX_INCLUDE_DEBUG_INFO_IN_DUMPS = config.DEFINE_string(
+  'jax_include_debug_info_in_dumps',
+  os.getenv('JAX_INCLUDE_DEBUG_INFO_IN_DUMPS', "True"),
+  help="Determine whether or not to keep debug symbols and location information "
+       "when dumping IR code. By default, debug information will be preserved in "
+       "the IR dump. To avoid exposing source code and potentially sensitive "
+       "information, set to false")
 lowerable_effects: effects_lib.EffectTypeSet = effects_lib.lowerable_effects
 
 
@@ -474,9 +480,12 @@ def dump_module_message(module: ir.Module, stage_name: str) -> str:
 def _make_string_safe_for_filename(s: str) -> str:
   return re.sub(r'[^\w.)( -]', '', s)
 
-def module_to_string(module: ir.Module) -> str:
+def module_to_string(module: ir.Module, enable_debug_info=None) -> str:
   output = io.StringIO()
-  module.operation.print(file=output, enable_debug_info=True)
+  if enable_debug_info is None:
+    enable_debug_flag = str.lower(_JAX_INCLUDE_DEBUG_INFO_IN_DUMPS.value)
+    enable_debug_info = enable_debug_flag not in ('false', '0')
+  module.operation.print(file=output, enable_debug_info=enable_debug_info)
   return output.getvalue()
 
 def module_to_bytecode(module: ir.Module) -> bytes:
@@ -819,22 +828,25 @@ class LoweringResult(NamedTuple):
 _platforms_with_donation = ["cpu", "cuda", "rocm", "tpu"]
 
 
-def _to_logical_op_sharding(
+def _to_physical_op_sharding(
     aval: core.AbstractValue, sharding: XLACompatibleSharding | None,
-) -> xc.HloSharding | None:
+) -> xc.OpSharding | None:
   if sharding is None:
     return None
   assert isinstance(sharding, sharding_impls.XLACompatibleSharding)
   if isinstance(aval, AbstractRef):
-    return _to_logical_op_sharding(aval.inner_aval, sharding)
+    return _to_physical_op_sharding(aval.inner_aval, sharding)
   assert isinstance(aval, (core.ShapedArray, core.DShapedArray))
-  return sharding._to_xla_hlo_sharding(aval.ndim)
+  if dtypes.issubdtype(aval.dtype, dtypes.extended):
+    sharding = aval.dtype._rules.physical_sharding(aval, sharding)
+    aval = core.physical_aval(aval)
+  return sharding._to_xla_hlo_sharding(aval.ndim).to_proto()  # type: ignore
 
 
-def _to_xla_layout(layout: XLACompatibleLayout | None | LayoutRequest) -> str | None:
+def _to_xla_layout(layout: DeviceLocalLayout | None | AutoLayout) -> str | None:
   if layout is None:
     return "default"
-  if isinstance(layout, LayoutRequest):
+  if isinstance(layout, AutoLayout):
     return "auto"
   return layout._to_xla_layout()
 
@@ -859,8 +871,8 @@ def lower_jaxpr_to_module(
     replicated_args: Sequence[bool] | None = None,
     arg_shardings: Sequence[XLACompatibleSharding | None] | None = None,
     result_shardings: Sequence[XLACompatibleSharding | None] | None = None,
-    in_layouts: Sequence[XLACompatibleLayout | None | LayoutRequest] | None = None,
-    out_layouts: Sequence[XLACompatibleLayout | None | LayoutRequest] | None = None,
+    in_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
+    out_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
     arg_names: Sequence[str | None] | None = None,
     result_names: Sequence[str | None] | None = None,
     num_replicas: int = 1,
@@ -898,7 +910,7 @@ def lower_jaxpr_to_module(
         "In multi-platform lowering either all or no lowering platforms "
         f"should support donation. Lowering for {platforms} of which "
         f"only {platforms_with_donation} support donation")
-    if num_partitions > 1 and xla_extension_version >= 220 and (
+    if num_partitions > 1 and (
         result_shardings is None or all(s is None for s in result_shardings)):
       xla_donated_args = donated_args
     if xla_donated_args is None:
@@ -941,18 +953,6 @@ def lower_jaxpr_to_module(
   else:
     dim_vars = ()
 
-  arg_op_shardings = (
-      map(_to_logical_op_sharding, jaxpr.in_avals, arg_shardings)
-      if arg_shardings is not None else arg_shardings)
-  result_op_shardings = (
-      map(_to_logical_op_sharding, jaxpr.out_avals, result_shardings)
-      if result_shardings is not None else result_shardings)
-
-  arg_layouts = (map(_to_xla_layout, in_layouts) if in_layouts is not None
-                  else in_layouts)
-  result_layouts = (map(_to_xla_layout, out_layouts) if out_layouts is not None
-                    else out_layouts)
-
   ctx = ModuleContext(backend_or_name=backend_or_name,
                       platforms=platforms, axis_context=axis_context,
                       keepalives=keepalives,
@@ -978,16 +978,16 @@ def lower_jaxpr_to_module(
         replace_tokens_with_dummy=replace_tokens_with_dummy,
         num_output_tokens=0,
         replicated_args=replicated_args,
-        arg_shardings=arg_op_shardings,
-        result_shardings=result_op_shardings,
+        arg_shardings=arg_shardings,
+        result_shardings=result_shardings,
         input_output_aliases=input_output_aliases,
         xla_donated_args=xla_donated_args,
         arg_names=arg_names,
         result_names=result_names,
         arg_memory_kinds=arg_memory_kinds,
         result_memory_kinds=result_memory_kinds,
-        arg_layouts=arg_layouts,
-        result_layouts=result_layouts)
+        arg_layouts=in_layouts,
+        result_layouts=out_layouts)
 
   try:
     if not ctx.module.operation.verify():
@@ -1123,8 +1123,8 @@ def lower_jaxpr_to_fun(
     public: bool = False,
     replace_tokens_with_dummy: bool = False,
     replicated_args: Sequence[bool] | None = None,
-    arg_shardings: Sequence[xc.HloSharding | None] | None = None,
-    result_shardings: Sequence[xc.HloSharding | None] | None = None,
+    arg_shardings: Sequence[XLACompatibleSharding | None] | None = None,
+    result_shardings: Sequence[XLACompatibleSharding | None] | None = None,
     use_sharding_annotations: bool = True,
     input_output_aliases: Sequence[int | None] | None = None,
     xla_donated_args: Sequence[bool] | None = None,
@@ -1134,8 +1134,8 @@ def lower_jaxpr_to_fun(
     result_names: Sequence[str | None] | None = None,
     arg_memory_kinds: Sequence[str | None] | None = None,
     result_memory_kinds: Sequence[str | None] | None = None,
-    arg_layouts: Sequence[str | None] | None = None,
-    result_layouts: Sequence[str | None] | None = None,
+    arg_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
+    result_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
 ) -> func_dialect.FuncOp:
   """Lowers jaxpr and its callees to an IR function.
 
@@ -1256,7 +1256,8 @@ def lower_jaxpr_to_fun(
   ir_arg_layouts = None
   if arg_layouts is not None:
     ir_arg_layouts = util.flatten(
-        [[l] * len(types) for l, types in zip(arg_layouts, input_types)])
+        [[_to_xla_layout(l)] * len(types)
+         for l, types in zip(arg_layouts, input_types)])
 
   ir_donated_args = None
   if xla_donated_args is not None:
@@ -1279,11 +1280,13 @@ def lower_jaxpr_to_fun(
   ir_result_layouts = None
   if result_layouts is not None:
     ir_result_layouts = util.flatten(
-        [[l] * len(types) for l, types in zip(result_layouts, output_types)])
+        [[_to_xla_layout(l)] * len(types)
+         for l, types in zip(result_layouts, output_types)])
 
   if (
       replicated_args is not None
       or ir_arg_shardings is not None
+      or ir_arg_memory_kinds is not None
       or ir_arg_layouts is not None
       or input_output_aliases is not None
       or ir_donated_args is not None
@@ -1305,6 +1308,11 @@ def lower_jaxpr_to_fun(
       for attrs, sharding in zip(arg_attrs, ir_arg_shardings):
         if sharding is not None:
           attrs["mhlo.sharding"] = get_sharding_attr(sharding)
+
+    if ir_arg_memory_kinds is not None:
+      for attrs, memory_kind in zip(arg_attrs, ir_arg_memory_kinds):
+        if memory_kind is not None:
+          attrs["mhlo.memory_kind"] = ir.StringAttr.get(memory_kind)
 
     if ir_arg_layouts is not None:
       for attrs, layout in zip(arg_attrs, ir_arg_layouts):
@@ -1365,6 +1373,11 @@ def lower_jaxpr_to_fun(
       if sharding is not None:
         attrs['mhlo.sharding'] = get_sharding_attr(sharding)
 
+  if ir_result_memory_kinds is not None:
+    for attrs, mem_kind in zip(result_attrs, ir_result_memory_kinds):
+      if mem_kind is not None:
+        attrs['mhlo.memory_kind'] = ir.StringAttr.get(mem_kind)
+
   if ir_result_layouts is not None:
     for attrs, layout in zip(result_attrs, ir_result_layouts):
       if layout is not None:
@@ -1406,11 +1419,6 @@ def lower_jaxpr_to_fun(
           for o, s, a in zip(flat_args, ir_arg_shardings, input_avals)
       ]
 
-    if ir_arg_memory_kinds is not None:
-      flat_args = [
-          a if mk is None else wrap_with_memory_kind(a, mk, a_aval)
-          for a, mk, a_aval in zip(flat_args, ir_arg_memory_kinds, input_avals)]
-
     _, token_args, unflattened_args = util.split_list(
         util.unflatten(flat_args, map(len, input_types)),
         [num_dim_vars, num_tokens])
@@ -1451,6 +1459,8 @@ def lower_jaxpr_to_fun(
           o if s is None else wrap_with_sharding_op(entry_lowering_ctx, o, o_aval, s)
           for o, s, o_aval in zip(flat_outputs, ir_result_shardings, output_avals)]
 
+    # Insert a custom call if output is on host because XLA needs that to do the
+    # transfer.
     if ir_result_memory_kinds is not None:
       flat_outputs = [
           o if mk is None else wrap_with_memory_kind(o, mk, o_aval)
@@ -1480,15 +1490,6 @@ def wrap_with_memory_kind(
   dict_attr = {"_xla_buffer_placement": ir.StringAttr.get(memory_kind)}
   op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
   return op.result
-
-
-def _to_physical_op_sharding(
-    aval: core.AbstractValue | None, sharding: xc.HloSharding | None
-) -> xc.OpSharding | None:
-  if (isinstance(aval, core.ShapedArray) and dtypes.issubdtype(aval.dtype, dtypes.extended)
-      and sharding is not None):
-    return aval.dtype._rules.physical_hlo_sharding(aval, sharding).to_proto()
-  return None if sharding is None else sharding.to_proto()  # type: ignore
 
 
 def _emit_lowering_rule_as_fun(lowering_rule,
@@ -2473,15 +2474,18 @@ def emit_python_callback(
       raise RuntimeError(
           "Mismatched number of outputs from callback. "
           "Expected: {}, Actual: {}".format(len(result_avals), len(out_vals)))
+    # Handle Python literals, and custom arrays, e.g., tf.Tensor.
+    out_vals = tuple(xla.canonicalize_dtype(np.asarray(a)) for a in out_vals)
     for i, (out_val, out_aval) in enumerate(zip(out_vals, result_avals)):
       if out_val.shape != out_aval.shape:
         raise RuntimeError(
-            f"Incorrect output shape for return value {i}: "
-            "Expected: {}, Actual: {}".format(out_aval.shape, out_val.shape))
+            f"Incorrect output shape for return value #{i}: "
+            f"Expected: {out_aval.shape}, Actual: {out_val.shape}")
       if out_val.dtype != out_aval.dtype:
         raise RuntimeError(
-            f"Incorrect output dtype for return value {i}: "
-            "Expected: {}, Actual: {}".format(out_aval.dtype, out_val.dtype))
+            f"Incorrect output dtype for return value #{i}: "
+            f"Expected: {out_aval.dtype}, Actual: {out_val.dtype}")
+
     if platform == "tpu":
       # On TPU we cannot receive empty arrays. So, we return from the wrapped
       # callback only the non-empty results, and we will create empty constants

@@ -34,6 +34,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import pretty_printer as pp
 from jax._src import sharding_specs
+from jax._src import source_info_util
 from jax._src import tree_util as tree_util_internal
 from jax._src import typing
 from jax._src import op_shardings
@@ -154,6 +155,7 @@ class PRNGKeyArray(jax.Array):
   _impl: PRNGImpl
   _base_array: typing.Array
   _consumed: bool | np.ndarray  # Used in jax.experimental.key_reuse.
+  _source_info: None | source_info_util.SourceInfo = None
 
   def __init__(self, impl, key_data: Any):
     assert not isinstance(key_data, core.Tracer)
@@ -342,8 +344,7 @@ def make_key_array_phys_sharding(aval, sharding):
   else:
     hlos = sharding._to_xla_hlo_sharding(aval.ndim)
     return GSPMDSharding(
-        sharding._device_assignment,
-        KeyTyRules.physical_hlo_sharding(aval, hlos))
+        sharding._device_assignment, physical_hlo_sharding(aval, hlos))
 
 
 def get_logical_gspmd_sharding(aval, phys_sharding):
@@ -359,6 +360,16 @@ def get_logical_gspmd_sharding(aval, phys_sharding):
   logical_op_sharding.tile_assignment_dimensions = tad
   return GSPMDSharding(phys_sharding._device_assignment,
                        xc.HloSharding.from_proto(logical_op_sharding))
+
+
+def physical_hlo_sharding(aval, hlo_sharding: xc.HloSharding) -> xc.HloSharding:
+  key_shape = aval.dtype._impl.key_shape
+  new_op_sharding = hlo_sharding.to_proto().clone()  # type: ignore
+  partitions, num_replicas = op_shardings.get_num_ways_dim_sharded(hlo_sharding)
+  suffix = [] if num_replicas == 1 else [num_replicas]
+  tad = partitions + [1] * len(key_shape) + suffix
+  new_op_sharding.tile_assignment_dimensions = tad
+  return xc.HloSharding.from_proto(new_op_sharding)
 
 
 class KeyTyRules:
@@ -381,17 +392,6 @@ class KeyTyRules:
   @staticmethod
   def physical_const(val) -> Array:
     return val._base_array
-
-  @staticmethod
-  def physical_hlo_sharding(aval, hlo_sharding: xc.HloSharding) -> xc.HloSharding:
-    key_shape = aval.dtype._impl.key_shape
-    new_op_sharding = hlo_sharding.to_proto().clone()  # type: ignore
-    partitions, num_replicas = op_shardings.get_num_ways_dim_sharded(
-        hlo_sharding)
-    suffix = [] if num_replicas == 1 else [num_replicas]
-    tad = partitions + [1] * len(key_shape) + suffix
-    new_op_sharding.tile_assignment_dimensions = tad
-    return xc.HloSharding.from_proto(new_op_sharding)
 
   @staticmethod
   def physical_sharding(

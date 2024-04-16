@@ -27,7 +27,7 @@ cc_binary(
         "@xla//xla:status",
         "@xla//xla:statusor",
         "@xla//xla/pjrt:pjrt_client",
-        "@xla//xla/pjrt:tfrt_cpu_pjrt_client",
+        "@xla//xla/pjrt/cpu:cpu_client",
         "@xla//xla/service:hlo_proto_cc",
         "@xla//xla/tools:hlo_module_loader",
         "@tsl//tsl/platform:logging",

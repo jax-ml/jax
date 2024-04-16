@@ -25,8 +25,7 @@ from jax.experimental.shard_alike import shard_alike
 from jax.experimental.shard_map import shard_map
 from jax._src.lib import xla_extension_version
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 prev_xla_flags = None
 

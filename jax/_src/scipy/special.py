@@ -44,14 +44,16 @@ def gammaln(x: ArrayLike) -> Array:
   return lax.lgamma(x)
 
 
+def _gamma_sign(x: Array) -> Array:
+  floor_x = lax.floor(x)
+  return jnp.where((x > 0) | (x == floor_x) | (floor_x % 2 == 0), 1.0, -1.0)
+
+
 @implements(osp_special.gamma, module='scipy.special', lax_description="""\
 The JAX version only accepts real-valued inputs.""")
 def gamma(x: ArrayLike) -> Array:
   x, = promote_args_inexact("gamma", x)
-  # Compute the sign for negative x, matching the semantics of scipy.special.gamma
-  floor_x = lax.floor(x)
-  sign = jnp.where((x > 0) | (x == floor_x), 1.0, (-1.0) ** floor_x)
-  return sign * lax.exp(lax.lgamma(x))
+  return _gamma_sign(x) * lax.exp(lax.lgamma(x))
 
 betaln = implements(
     osp_special.betaln,
@@ -71,7 +73,8 @@ def factorial(n: ArrayLike, exact: bool = False) -> Array:
 @implements(osp_special.beta, module='scipy.special')
 def beta(x: ArrayLike, y: ArrayLike) -> Array:
   x, y = promote_args_inexact("beta", x, y)
-  return lax.exp(betaln(x, y))
+  sign = _gamma_sign(x) * _gamma_sign(y) * _gamma_sign(x + y)
+  return sign * lax.exp(betaln(x, y))
 
 
 @implements(osp_special.betainc, module='scipy.special')
@@ -301,7 +304,7 @@ def _zeta_series_expansion(x: ArrayLike, q: ArrayLike | None = None) -> Array:
   m = jnp.expand_dims(np.arange(2 * M, dtype=M.dtype), tuple(range(s.ndim)))
   s_over_a = (s_ + m) / (a_ + N)
   T1 = jnp.cumprod(s_over_a, -1)[..., ::2]
-  T1 = jnp.clip(T1, a_max=jnp.finfo(dtype).max)
+  T1 = jnp.clip(T1, max=jnp.finfo(dtype).max)
   coefs = np.expand_dims(np.array(_BERNOULLI_COEFS[:T1.shape[-1]], dtype=dtype),
                          tuple(range(a.ndim)))
   T1 = T1 / coefs
@@ -448,7 +451,7 @@ def ndtri(p: ArrayLike) -> Array:
   to `p`.
 
   A piece-wise rational approximation is done for the function.
-  This is a based on the implementation in netlib.
+  This is based on the implementation in netlib.
 
   Args:
     p: an array of type `float32`, `float64`.
@@ -540,7 +543,7 @@ def _ndtri(p: ArrayLike) -> Array:
   # later on. The result from the computation when p == 0 is not used so any
   # number that doesn't result in NaNs is fine.
   sanitized_mcp = jnp.where(
-      maybe_complement_p <= dtype(0.),
+      maybe_complement_p == dtype(0.),
       jnp.full(shape, dtype(0.5)),
       maybe_complement_p)
 
@@ -571,9 +574,9 @@ def _ndtri(p: ArrayLike) -> Array:
 
   x = jnp.where(p > dtype(1. - np.exp(-2.)), x, -x)
   infinity = jnp.full(shape, dtype(np.inf))
-  x_nan_replaced = jnp.where(
-      p <= dtype(0.0), -infinity, jnp.where(p >= dtype(1.0), infinity, x))
-  return x_nan_replaced
+  x_fix_boundaries = jnp.where(
+      p == dtype(0.0), -infinity, jnp.where(p == dtype(1.0), infinity, x))
+  return x_fix_boundaries
 
 
 @partial(custom_derivatives.custom_jvp, nondiff_argnums=(1,))
@@ -826,7 +829,7 @@ def bessel_jn(z: ArrayLike, *, v: int, n_iter: int=50) -> Array:
 def _gen_recurrence_mask(
     l_max: int, is_normalized: bool, dtype: Any
 ) -> tuple[Array, Array]:
-  """Generates mask for recurrence relation on the remaining entries.
+  """Generates a mask for recurrence relation on the remaining entries.
 
   The remaining entries are with respect to the diagonal and offdiagonal
   entries.
@@ -981,7 +984,7 @@ def _gen_associated_legendre(l_max: int,
   `Y_l^m(θ, φ) = N_l^m * P_l^m(cos(θ)) * exp(i m φ)`, where `N_l^m` is the
   normalization factor and θ and φ are the colatitude and longitude,
   respectively. `N_l^m` is chosen in the way that the spherical harmonics form
-  a set of orthonormal basis function of L^2(S^2). For the computational
+  a set of orthonormal basis functions of L^2(S^2). For the computational
   efficiency of spherical harmonics transform, the normalization factor is
   used in the computation of the ALFs. In addition, normalizing `P_l^m`
   avoids overflow/underflow and achieves better numerical stability. Three
@@ -1005,7 +1008,7 @@ def _gen_associated_legendre(l_max: int,
       operation, `W` is a diagonal matrix containing the quadrature weights,
       and `I` is the identity matrix. The Gauss-Chebyshev points are equally
       spaced, which only provide approximate discrete orthogonality. The
-      Driscoll & Healy qudarture points are equally spaced and provide the
+      Driscoll & Healy quadrature points are equally spaced and provide the
       exact discrete orthogonality. The number of sampling points is required to
       be twice as the number of frequency points (modes) in the Driscoll & Healy
       approach, which enables FFT and achieves a fast spherical harmonics
@@ -1216,7 +1219,7 @@ def sph_harm(m: Array,
 
   Args:
     m: The order of the harmonic; must have `|m| <= n`. Return values for
-      `|m| > n` ara undefined.
+      `|m| > n` are undefined.
     n: The degree of the harmonic; must have `n >= 0`. The standard notation for
       degree in descriptions of spherical harmonics is `l (lower case L)`. We
       use `n` here to be consistent with `scipy.special.sph_harm`. Return
@@ -1226,7 +1229,7 @@ def sph_harm(m: Array,
     n_max: The maximum degree `max(n)`. If the supplied `n_max` is not the true
       maximum value of `n`, the results are clipped to `n_max`. For example,
       `sph_harm(m=jnp.array([2]), n=jnp.array([10]), theta, phi, n_max=6)`
-      acutually returns
+      actually returns
       `sph_harm(m=jnp.array([2]), n=jnp.array([6]), theta, phi, n_max=6)`
   Returns:
     A 1D array containing the spherical harmonics at (m, n, theta, phi).
@@ -1706,7 +1709,7 @@ def spence(x: Array) -> Array:
     -\int_0^z \frac{\log(1 - t)}{t}dt
     \end{equation}
 
-  this is our spence(1 - z).
+  This is our spence(1 - z).
   """
   x = jnp.asarray(x)
   dtype = lax.dtype(x)

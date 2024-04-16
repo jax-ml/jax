@@ -29,8 +29,7 @@ from jax.example_libraries import stax
 from jax.experimental.jet import jet, fact, zero_series
 from jax import lax
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 def jvp_taylor(fun, primals, series):
   # Computes the Taylor series the slow way, with nested jvp.

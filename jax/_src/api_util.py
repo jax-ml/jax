@@ -19,7 +19,6 @@ import inspect
 import operator
 from functools import partial
 from typing import Any, Callable, Type
-import warnings
 
 import numpy as np
 
@@ -151,7 +150,7 @@ _POSITIONAL_ARGUMENTS = (
   inspect.Parameter.POSITIONAL_OR_KEYWORD
 )
 
-def validate_argnums(sig: inspect.Signature, argnums: tuple[int, ...], argnums_name: str) -> None:
+def _validate_argnums(sig: inspect.Signature, argnums: tuple[int, ...], argnums_name: str) -> None:
   """
   Validate that the argnums are sensible for a given function.
 
@@ -168,24 +167,22 @@ def validate_argnums(sig: inspect.Signature, argnums: tuple[int, ...], argnums_n
       return
 
   if argnums and (-min(argnums) > n_pos_args or max(argnums) >= n_pos_args):
-    # raise ValueError(f"Jitted function has {argnums_name}={argnums}, "
-    #                  f"but only accepts {n_pos_args} positional arguments.")
-    # TODO: 2022-08-20 or later: replace with error
-    warnings.warn(f"Jitted function has {argnums_name}={argnums}, "
-                  f"but only accepts {n_pos_args} positional arguments. "
-                  "This warning will be replaced by an error after 2022-08-20 "
-                  "at the earliest.", SyntaxWarning)
+    raise ValueError(f"Jitted function has {argnums_name}={argnums}, "
+                     f"but only accepts {n_pos_args} positional arguments.")
 
 _INVALID_KEYWORD_ARGUMENTS = (
   inspect.Parameter.POSITIONAL_ONLY,
   inspect.Parameter.VAR_POSITIONAL
 )
 
+
 _KEYWORD_ARGUMENTS = (
   inspect.Parameter.POSITIONAL_OR_KEYWORD,
   inspect.Parameter.KEYWORD_ONLY,
 )
-def validate_argnames(sig: inspect.Signature, argnames: tuple[str, ...], argnames_name: str) -> None:
+def _validate_argnames(
+    sig: inspect.Signature, argnames: tuple[str, ...], argnames_name: str
+) -> None:
   """
   Validate that the argnames are sensible for a given function.
 
@@ -206,33 +203,19 @@ def validate_argnames(sig: inspect.Signature, argnames: tuple[str, ...], argname
     elif param.kind in _INVALID_KEYWORD_ARGUMENTS:
       invalid_kwargs.add(param_name)
 
-
   # Check whether any kwargs are invalid due to position only
-  invalid_argnames = invalid_kwargs & set(argnames)
-  if invalid_argnames:
-    # raise ValueError(f"Jitted function has invalid argnames {invalid_argnames} "
-    #                  f"in {argnames_name}. These are positional-only")
-    # TODO: 2022-08-20 or later: replace with error
-    warnings.warn(f"Jitted function has invalid argnames {invalid_argnames} "
-                  f"in {argnames_name}. These are positional-only. "
-                  "This warning will be replaced by an error after 2022-08-20 "
-                  "at the earliest.", SyntaxWarning)
+  if invalid_argnames := (invalid_kwargs & set(argnames)):
+    raise ValueError(f"Jitted function has invalid argnames {invalid_argnames} "
+                     f"in {argnames_name}. These are positional-only")
 
   # Takes any kwargs
   if var_kwargs:
     return
 
   # Check that all argnames exist on function
-  invalid_argnames = set(argnames) - valid_kwargs
-  if invalid_argnames:
-    # TODO: 2022-08-20 or later: replace with error
-    # raise ValueError(f"Jitted function has invalid argnames {invalid_argnames} "
-    #                  f"in {argnames_name}. Function does not take these args.")
-    warnings.warn(f"Jitted function has invalid argnames {invalid_argnames} "
-                  f"in {argnames_name}. Function does not take these args."
-                  "This warning will be replaced by an error after 2022-08-20 "
-                  "at the earliest.", SyntaxWarning)
-
+  if invalid_argnames := (set(argnames) - valid_kwargs):
+    raise ValueError(f"Jitted function has invalid argnames {invalid_argnames} "
+                     f"in {argnames_name}. Function does not take these args.")
 
 
 def argnums_partial(f, dyn_argnums, args, require_static_args_hashable=True):
@@ -506,11 +489,23 @@ def infer_argnums_and_argnames(
 
 
 def resolve_argnums(
-    fun, donate_argnums, donate_argnames, static_argnums, static_argnames
+    fun: Callable,
+    signature: inspect.Signature | None,
+    donate_argnums: int | Sequence[int] | None,
+    donate_argnames: str | Iterable[str] | None,
+    static_argnums: int | Sequence[int] | None,
+    static_argnames: str | Iterable[str] | None,
 ) -> tuple[tuple[int, ...], tuple[str, ...], tuple[int, ...], tuple[str, ...]]:
-  try:
-    sig = inspect.signature(fun)
-  except ValueError as e:
+  """Validates and completes the argnum/argname specification for a jit.
+
+  * fills in any missing pieces (e.g., names given numbers, or vice versa),
+  * validates the argument names/numbers against the function signature,
+  * validates that donated and static arguments don't intersect.
+  * rebases the donated arguments so they index into the dynamic arguments,
+    (after static arguments have been removed), in the order that parameters
+    are passed into the compiled function.
+  """
+  if signature is None:
     # Some built-in functions don't support signature.
     # See: https://github.com/python/cpython/issues/73485
     # In this case no validation is done
@@ -522,7 +517,7 @@ def resolve_argnums(
         donate_argnums)
     if donate_argnames is not None:
       raise ValueError(f"Getting the signature of function {fun} failed. "
-                       "Pass donate_argnums instead of donate_argnames.") from e
+                       "Pass donate_argnums instead of donate_argnames.")
     assert donate_argnames is None
     donate_argnames = ()
   else:
@@ -530,23 +525,23 @@ def resolve_argnums(
     # If nums is None and names is not None, then nums are inferred from the
     # names and vice-versa.
     static_argnums, static_argnames = infer_argnums_and_argnames(
-        sig, static_argnums, static_argnames)
+        signature, static_argnums, static_argnames)
     donate_argnums, donate_argnames = infer_argnums_and_argnames(
-        sig, donate_argnums, donate_argnames)
+        signature, donate_argnums, donate_argnames)
 
     # Validation
-    validate_argnums(sig, static_argnums, "static_argnums")
-    validate_argnames(sig, static_argnames, "static_argnames")
-    validate_argnums(sig, donate_argnums, "donate_argnums")
-    validate_argnames(sig, donate_argnames, "donate_argnames")
+    _validate_argnums(signature, static_argnums, "static_argnums")
+    _validate_argnames(signature, static_argnames, "static_argnames")
+    _validate_argnums(signature, donate_argnums, "donate_argnums")
+    _validate_argnames(signature, donate_argnames, "donate_argnames")
 
   # Compensate for static argnums absorbing args
-  assert_no_intersection(static_argnames, donate_argnames)
+  _assert_no_intersection(static_argnames, donate_argnames)
   donate_argnums = rebase_donate_argnums(donate_argnums, static_argnums)
   return donate_argnums, donate_argnames, static_argnums, static_argnames
 
 
-def assert_no_intersection(static_argnames, donate_argnames):
+def _assert_no_intersection(static_argnames, donate_argnames):
   out = set(static_argnames).intersection(set(donate_argnames))
   if out:
     raise ValueError(
@@ -580,10 +575,9 @@ def _shaped_abstractify_slow(x):
 
 # TODO(mattjj,yashkatariya): replace xla.abstractify with this, same behavior
 def shaped_abstractify(x):
-  try:
-    return _shaped_abstractify_handlers[type(x)](x)
-  except KeyError:
-    return _shaped_abstractify_slow(x)
+  handler = _shaped_abstractify_handlers.get(type(x), None)
+  return handler(x) if handler is not None else _shaped_abstractify_slow(x)
+
 _shaped_abstractify_handlers: dict[Any, Callable[[Any], core.ShapedArray]] = {}
 
 
@@ -605,6 +599,13 @@ def _np_scalar_abstractify(x: np.generic) -> ShapedArray:
       dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True))
 _shaped_abstractify_handlers.update((t, _np_scalar_abstractify)
                                     for t in numpy_scalar_types)
+
+def _python_scalar_abstractify(x: int | float | complex | bool) -> ShapedArray:
+  typ = type(x)
+  dtype = dtypes._scalar_type_to_dtype(typ, x)
+  return ShapedArray((), dtype, weak_type=typ in dtypes._weak_types)
+_shaped_abstractify_handlers.update((t, _python_scalar_abstractify)
+                                    for t in dtypes.python_scalar_dtypes)
 
 # This decorator exists to make it easier to monkey-patch APIs in JAX.
 # By default it does nothing, but it can be monkey-patched to do other things.

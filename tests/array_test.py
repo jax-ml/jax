@@ -40,8 +40,7 @@ from jax.sharding import PartitionSpec as P
 from jax._src import array
 from jax._src import prng
 
-from jax import config
-config.parse_flags_with_absl()
+jax.config.parse_flags_with_absl()
 
 
 prev_xla_flags = None
@@ -794,6 +793,24 @@ class JaxArrayTest(jtu.JaxTestCase):
     x = jnp.ones((), dtype=dtype)
     for shard in x.addressable_shards:
       self.assertEqual(shard.data.dtype, dtype)
+
+  def test_make_array_from_callback_global_array(self):
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    sharding = jax.sharding.NamedSharding(mesh, P())
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, sharding)
+
+    out = jax.make_array_from_callback(np_inp.shape, sharding,
+                                       lambda idx: arr[idx])
+    self.assertArraysEqual(out, arr)
+    self.assertEqual(out.sharding, sharding)
+
+    sharding2 = NamedSharding(mesh, P('x', 'y'))
+    arr2 = jax.device_put(np_inp, sharding2)
+    out2 = jax.make_array_from_callback(np_inp.shape, sharding2,
+                                       lambda idx: arr2[idx])
+    self.assertArraysEqual(out2, arr2)
+    self.assertEqual(out2.sharding, sharding2)
 
 
 class ShardingTest(jtu.JaxTestCase):

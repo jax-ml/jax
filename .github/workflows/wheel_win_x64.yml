@@ -25,7 +25,7 @@ jobs:
 
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
 
-      - uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c # ratchet:actions/setup-python@v5
+      - uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d # ratchet:actions/setup-python@v5
         with:
           python-version: ${{ matrix.pyver }}
           cache: 'pip'
@@ -36,6 +36,8 @@ jobs:
           JAXLIB_RELEASE: true
         run: |
           python -m pip install -r build/test-requirements.txt
+          python -m pip uninstall -y matplotlib
+          python -m pip install --pre --upgrade numpy==2.0.0rc1 scipy==1.13.0
           "C:\\msys64\\;C:\\msys64\\usr\\bin\\;" >> $env:GITHUB_PATH
           python.exe build\build.py --bazel_options=--color=yes --verbose
 

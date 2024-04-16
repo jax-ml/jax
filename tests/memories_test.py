@@ -122,8 +122,7 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
       with self.assertRaisesRegex(
           ValueError,
           "Could not find memory addressable by device TPU.*Device TPU.*"
-          " can address the following memory kinds: "
-          "(device, unpinned_host|unpinned_host, device).*",
+          " can address the following memory kinds.*",
       ):
         SingleDeviceSharding(jax.devices()[0], memory_kind="host")
     else:
@@ -938,9 +937,10 @@ class DevicePutTest(jtu.JaxTestCase):
         self.assertArraysEqual(s.data, inp)
       self.assertEqual(s.data.sharding.memory_kind, expected_mem_kind)
 
-  def test_device_put_host_to_hbm(self):
+  @parameterized.parameters("unpinned_host", "pinned_host")
+  def test_device_put_host_to_hbm(self, host_memory_kind: str):
     mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
-    s_host = NamedSharding(mesh, P("y"), memory_kind="unpinned_host")
+    s_host = NamedSharding(mesh, P("y"), memory_kind=host_memory_kind)
     np_inp = np.arange(16).reshape(8, 2)
 
     out_on_host = jax.device_put(np_inp, s_host)
@@ -951,27 +951,31 @@ class DevicePutTest(jtu.JaxTestCase):
     self._check_device_put_addressable_shards(
         out_on_hbm, np_inp, s_hbm, "device")
 
-  def test_device_put_hbm_to_host(self):
+  @parameterized.parameters("unpinned_host", "pinned_host")
+  def test_device_put_hbm_to_host(self, host_memory_kind: str):
     mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
-    s_host = NamedSharding(mesh, P("y"), memory_kind="unpinned_host")
+    s_host = NamedSharding(mesh, P("y"), memory_kind=host_memory_kind)
     inp = jnp.arange(16).reshape(8, 2)
 
     out_on_host = jax.device_put(inp, s_host)
     self._check_device_put_addressable_shards(
-        out_on_host, inp, s_host, "unpinned_host")
+        out_on_host, inp, s_host, host_memory_kind)
 
     sharded_inp = jax.device_put(inp, s_host.with_memory_kind("device"))
     sharded_out_on_host = jax.device_put(sharded_inp, s_host)
     self._check_device_put_addressable_shards(
-        sharded_out_on_host, sharded_inp, s_host, "unpinned_host")
+        sharded_out_on_host, sharded_inp, s_host, host_memory_kind)
 
-  def test_device_put_different_device_and_memory_host_to_hbm(self):
+  @parameterized.parameters("unpinned_host", "pinned_host")
+  def test_device_put_different_device_and_memory_host_to_hbm(
+      self, host_memory_kind: str
+  ):
     if jax.device_count() < 3:
       raise unittest.SkipTest("Test requires >=3 devices")
 
     out_host0 = jax.device_put(
         jnp.arange(8),
-        SingleDeviceSharding(jax.devices()[0], memory_kind="unpinned_host"))
+        SingleDeviceSharding(jax.devices()[0], memory_kind=host_memory_kind))
 
     dev2 = jax.devices()[2]
     out_hbm1 = jax.device_put(
@@ -982,7 +986,10 @@ class DevicePutTest(jtu.JaxTestCase):
     self.assertEqual(
         out_hbm1.addressable_shards[0].data.sharding.memory_kind, "device")
 
-  def test_device_put_different_device_and_memory_hbm_to_host(self):
+  @parameterized.parameters("unpinned_host", "pinned_host")
+  def test_device_put_different_device_and_memory_hbm_to_host(
+      self, host_memory_kind: str
+  ):
     if jax.device_count() < 3:
       raise unittest.SkipTest("Test requires >=3 devices")
 
@@ -990,16 +997,19 @@ class DevicePutTest(jtu.JaxTestCase):
 
     dev2 = jax.devices()[2]
     out_host1 = jax.device_put(
-        out_hbm0, SingleDeviceSharding(dev2, memory_kind="unpinned_host"))
-    self.assertEqual(out_host1.sharding.memory_kind, "unpinned_host")
+        out_hbm0, SingleDeviceSharding(dev2, memory_kind=host_memory_kind))
+    self.assertEqual(out_host1.sharding.memory_kind, host_memory_kind)
     self.assertEqual(out_host1.sharding._device, dev2)
     self.assertEqual(out_host1.addressable_shards[0].data.sharding._device,
                      dev2)
     self.assertEqual(
         out_host1.addressable_shards[0].data.sharding.memory_kind,
-        "unpinned_host")
+        host_memory_kind)
 
-  def test_device_put_on_different_device_with_the_same_memory_kind(self):
+  @parameterized.parameters("unpinned_host", "pinned_host")
+  def test_device_put_on_different_device_with_the_same_memory_kind(
+      self, host_memory_kind: str
+  ):
     if len(jax.devices()) < 2:
       raise unittest.SkipTest("Test requires >=2 devices.")
 
@@ -1013,11 +1023,11 @@ class DevicePutTest(jtu.JaxTestCase):
         out_hbm_dev_1, np_inp, s_hbm_dev_1, "device")
 
     inp_host_dev0 = jax.device_put(
-        np_inp, s_hbm_dev_0.with_memory_kind("unpinned_host"))
-    s_host_dev_1 = s_hbm_dev_1.with_memory_kind("unpinned_host")
+        np_inp, s_hbm_dev_0.with_memory_kind(host_memory_kind))
+    s_host_dev_1 = s_hbm_dev_1.with_memory_kind(host_memory_kind)
     out_host_dev_1 = jax.device_put(inp_host_dev0, s_host_dev_1)
     self._check_device_put_addressable_shards(
-        out_host_dev_1, np_inp, s_host_dev_1, "unpinned_host")
+        out_host_dev_1, np_inp, s_host_dev_1, host_memory_kind)
 
   # TODO(yashkatariya): Enable this once we can compute on host.
   # def test_device_put_resharding(self):
@@ -1044,35 +1054,38 @@ class DevicePutTest(jtu.JaxTestCase):
   #   self._check_device_put_addressable_shards(
   #       out_sharded_hbm, np_inp, s_hbm, "device")
 
-  def test_device_put_numpy_array(self):
+  @parameterized.parameters("unpinned_host", "pinned_host")
+  def test_device_put_numpy_array(self, host_memory_kind: str):
     mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
     np_inp = np.arange(16).reshape(8, 2)
     s_hbm = NamedSharding(mesh, P(("x", "y")), memory_kind="device")
-    s_host = s_hbm.with_memory_kind("unpinned_host")
+    s_host = s_hbm.with_memory_kind(host_memory_kind)
 
     out_hbm = jax.device_put(np_inp, s_hbm)
     self._check_device_put_addressable_shards(out_hbm, np_inp, s_hbm, "device")
 
     out_host = jax.device_put(np_inp, s_host)
     self._check_device_put_addressable_shards(
-        out_host, np_inp, s_host, "unpinned_host")
+        out_host, np_inp, s_host, host_memory_kind)
 
-  def test_device_put_numpy_scalar(self):
+  @parameterized.parameters("unpinned_host", "pinned_host")
+  def test_device_put_numpy_scalar(self, host_memory_kind: str):
     np_inp = np.float32(8)
     s_hbm = SingleDeviceSharding(jax.devices()[0], memory_kind="device")
-    s_host = s_hbm.with_memory_kind("unpinned_host")
+    s_host = s_hbm.with_memory_kind(host_memory_kind)
 
     out_hbm = jax.device_put(np_inp, s_hbm)
     self._check_device_put_addressable_shards(out_hbm, np_inp, s_hbm, "device")
 
     out_host = jax.device_put(np_inp, s_host)
     self._check_device_put_addressable_shards(
-        out_host, np_inp, s_host, "unpinned_host")
+        out_host, np_inp, s_host, host_memory_kind)
 
-  def test_device_put_python_scalar(self):
+  @parameterized.parameters("unpinned_host", "pinned_host")
+  def test_device_put_python_scalar(self, host_memory_kind: str):
     py_scalar = float(8)
     s_hbm = SingleDeviceSharding(jax.devices()[0], memory_kind="device")
-    s_host = s_hbm.with_memory_kind("unpinned_host")
+    s_host = s_hbm.with_memory_kind(host_memory_kind)
 
     out_hbm = jax.device_put(py_scalar, s_hbm)
     self._check_device_put_addressable_shards(
@@ -1080,12 +1093,13 @@ class DevicePutTest(jtu.JaxTestCase):
 
     out_host = jax.device_put(py_scalar, s_host)
     self._check_device_put_addressable_shards(
-        out_host, py_scalar, s_host, "unpinned_host", index=False)
+        out_host, py_scalar, s_host, host_memory_kind, index=False)
 
-  def test_device_put_python_int(self):
+  @parameterized.parameters("unpinned_host", "pinned_host")
+  def test_device_put_python_int(self, host_memory_kind: str):
     py_inp = 8
     s_hbm = SingleDeviceSharding(jax.devices()[0], memory_kind="device")
-    s_host = s_hbm.with_memory_kind("unpinned_host")
+    s_host = s_hbm.with_memory_kind(host_memory_kind)
 
     out_hbm = jax.device_put(py_inp, s_hbm)
     self._check_device_put_addressable_shards(
@@ -1093,14 +1107,57 @@ class DevicePutTest(jtu.JaxTestCase):
 
     out_host = jax.device_put(py_inp, s_host)
     self._check_device_put_addressable_shards(
-        out_host, py_inp, s_host, "unpinned_host", index=False)
+        out_host, py_inp, s_host, host_memory_kind, index=False)
+
+  def test_parameter_streaming(self):
+    _, s_host, np_inp, inp_host = _create_inputs(
+        (8, 2), P("x", "y"), mem_kind="pinned_host")
+    s_dev = s_host.with_memory_kind('device')
+    inp_dev = jax.device_put(np_inp, s_dev)
+
+    @functools.partial(jax.jit, out_shardings=s_host)
+    def f(a, b):
+      x = b * 2
+      y = jax.device_put(a, s_dev)
+      z = x * y
+      return z * 4, z
+
+    compiled = f.lower(inp_host, inp_dev).compile()  # doesn't crash
+    compiled_text = compiled.as_text()
+    self.assertRegex(compiled_text, r"entry_computation_layout=.*S\(5\)}")
+
+    out1, out2 = f(inp_host, inp_dev)
+    self._check_device_put_addressable_shards(
+        out1, np_inp * np_inp * 8, s_host, 'pinned_host')
+    self._check_device_put_addressable_shards(
+        out2, np_inp * np_inp * 2, s_host, 'pinned_host')
+
+  def test_identity_jit_host_to_device_and_vice_versa(self):
+    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
+    np_inp = np.arange(16).reshape(8, 2)
+    s_host = NamedSharding(mesh, P('x', 'y'), memory_kind='pinned_host')
+    s_dev = s_host.with_memory_kind('device')
+    arr_host = jax.device_put(np_inp, s_host)
+    arr_dev = jax.device_put(np_inp, s_dev)
+
+    # pinned_host -> device
+    f = jax.jit(lambda x: x, out_shardings=s_dev)
+    out_dev = f(arr_host)
+    self.assertArraysEqual(out_dev, np_inp)
+    self.assertEqual(out_dev.sharding, s_dev)
+
+    # device -> pinned_host
+    g = jax.jit(lambda x: x, out_shardings=s_host)
+    out_host = g(arr_dev)
+    self.assertArraysEqual(out_host, np_inp)
+    self.assertEqual(out_host.sharding, s_host)
 
 
 class ActivationOffloadingTest(jtu.JaxTestCase):
 
   def setUp(self):
-    if not jtu.test_device_matches(["tpu"]):
-      self.skipTest("Memories do not work on CPU and GPU backends yet.")
+    if not jtu.test_device_matches(["tpu", "gpu"]):
+      self.skipTest("Memories do not work on CPU backend.")
     super().setUp()
     self.orig_memories_flag = config.enable_memories.value
     jax.config.update('jax_enable_memories', True)
@@ -1148,11 +1205,13 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
       self.assertRegex(compiled_text, r"copy-done.*S\(5\)")
 
     compiled_stats = compiled_f.memory_analysis()
-    if compiled_stats is not None:
+    if compiled_stats is not None and jtu.test_device_matches(["tpu"]):
       if xla_extension_version >= 240 and jtu.pjrt_c_api_version_at_least(0, 43):
         self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
   def test_remat_scan_jaxpr_offloadable(self):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Remat scan does not work on GPU backend.")
     mesh = jtu.create_global_mesh((2,), ("x",))
     shape = (256, 128)
     np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
@@ -1210,6 +1269,8 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
         self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
   def test_remat_scan_layout_change_offloadable(self):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Remat scan does not work on GPU backend.")
     mesh = jtu.create_global_mesh((2,), ("x",))
     shape = (256, 128)
     np_inp = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
@@ -1250,6 +1311,8 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
         self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
   def test_remat_checkpoint_dots_with_no_batch_dims(self):
+    if not jtu.test_device_matches(["tpu"]) and xla_extension_version < 247:
+      self.skipTest("Test requires a newer jaxlib")
     policy = jax.checkpoint_policies.offload_dot_with_no_batch_dims(
         "device", "pinned_host")
 
@@ -1277,7 +1340,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
       self.assertRegex(compiled_text, r"copy-done.*S\(5\)")
 
     compiled_stats = compiled_f.memory_analysis()
-    if compiled_stats is not None:
+    if compiled_stats is not None and jtu.test_device_matches(["tpu"]):
       if xla_extension_version >= 240 and jtu.pjrt_c_api_version_at_least(0, 43):
         self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 

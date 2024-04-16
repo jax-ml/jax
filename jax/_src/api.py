@@ -70,6 +70,7 @@ from jax._src.lib import pmap_lib
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (PmapSharding, TransferToMemoryKind,
                                      XLACompatibleSharding)
+from jax._src.layout import Layout, AutoLayout
 from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
 from jax._src.util import unzip2, safe_map, safe_zip, wrap_name, wraps
@@ -300,34 +301,10 @@ def jit(
     >>> g(jnp.arange(4), 3)
     Array([   0,    1,  256, 6561], dtype=int32)
   """
-  (in_shardings, out_shardings, donate_argnums, donate_argnames, static_argnums,
-   static_argnames) = pjit.pre_infer_params(
+  return pjit.make_jit(
         fun, in_shardings, out_shardings, donate_argnums, donate_argnames,
-        static_argnums, static_argnames, device, backend, abstracted_axes)
-
-  fun_sourceinfo = api_util.fun_sourceinfo(fun)
-  fun_signature = api_util.fun_signature(fun)
-
-  def infer_params(*args, **kwargs):
-    # TODO(yashkatariya): Remove this when it's added on jit.
-    in_layouts = kwargs.pop('_in_layouts', None)
-    out_layouts = kwargs.pop('_out_layouts', None)
-    pjit_info_args = pjit.PjitInfo(
-        fun=fun, fun_sourceinfo=fun_sourceinfo, fun_signature=fun_signature,
-        in_shardings=in_shardings,
-        out_shardings=out_shardings, static_argnums=static_argnums,
-        static_argnames=static_argnames, donate_argnums=donate_argnums,
-        donate_argnames=donate_argnames, device=device, backend=backend,
-        keep_unused=keep_unused, inline=inline, resource_env=None,
-        abstracted_axes=abstracted_axes, in_layouts=in_layouts,
-        out_layouts=out_layouts)
-    return pjit.common_infer_params(pjit_info_args, *args, **kwargs)
-
-  has_explicit_sharding = pjit._pjit_explicit_sharding(
-      in_shardings, out_shardings, device, backend)
-  return pjit.post_infer_params(fun, infer_params, static_argnums,
-                                static_argnames, donate_argnums,
-                                abstracted_axes, has_explicit_sharding)
+        static_argnums, static_argnames, device, backend, abstracted_axes,
+        keep_unused, inline, use_resource_env=False)
 
 
 @contextmanager
@@ -589,10 +566,14 @@ def xla_computation(fun: Callable,
           arg_shardings=None,
           result_shardings=None,
           lowering_parameters=mlir.LoweringParameters())
+
+      if xla_extension_version >= 244:
+        m = mlir.module_to_bytecode(lowering_result.module)
+      else:
+        m = mlir.module_to_string(lowering_result.module)
+
       built = xc._xla.mlir.mlir_module_to_xla_computation(
-          mlir.module_to_string(lowering_result.module),
-          use_tuple_args=tuple_args,
-          return_tuple=True)
+          m, use_tuple_args=tuple_args, return_tuple=True)
     out_shapes_flat = [
         ShapeDtypeStruct(a.shape, a.dtype, a.named_shape) for a in out_avals]
     out_shape = tree_unflatten(out_tree(), out_shapes_flat)
@@ -2369,11 +2350,11 @@ def make_jaxpr(fun: Callable,
       specifies the axis name/size environment that would be set up by
       applications of :py:func:`jax.pmap`.
     return_shape: Optional boolean, defaults to ``False``. If ``True``, the
-      wrapped function returns a pair where the first element is the XLA
-      computation and the second element is a pytree with the same structure as
-      the output of ``fun`` and where the leaves are objects with ``shape``,
-      ``dtype``, and ``named_shape`` attributes representing the corresponding
-      types of the output leaves.
+      wrapped function returns a pair where the first element is the
+      ``ClosedJaxpr`` representation of ``fun`` and the second element is a
+      pytree with the same structure as the output of ``fun`` and where the
+      leaves are objects with ``shape``, ``dtype``, and ``named_shape``
+      attributes representing the corresponding types of the output leaves.
 
   Returns:
     A wrapped version of ``fun`` that when applied to example arguments returns
@@ -2481,8 +2462,8 @@ def _check_sharding(x, s):
 
 def device_put(
     x,
-    device: None | xc.Device | Sharding | Any | TransferToMemoryKind = None,
-    *, src: None | xc.Device | Sharding | Any | TransferToMemoryKind = None):
+    device: None | xc.Device | Sharding | Layout | Any | TransferToMemoryKind = None,
+    *, src: None | xc.Device | Sharding | Layout | Any | TransferToMemoryKind = None):
   """Transfers ``x`` to ``device``.
 
   Args:
@@ -2578,7 +2559,7 @@ def device_put_sharded(shards: Sequence[Any], devices: Sequence[xc.Device]):  # 
   # TODO(jakevdp): provide a default for devices that considers both local
   # devices and pods
   if not isinstance(shards, Sequence):
-    raise ValueError("device_put_sharded `shards` input must be a sequence; "
+    raise TypeError("device_put_sharded `shards` input must be a sequence; "
                      f"got {type(shards)}")
   if len(shards) != len(devices):
     raise ValueError(f"len(shards) = {len(shards)} must equal "
@@ -2729,21 +2710,33 @@ class ShapeDtypeStruct:
     named_shape: (optional) a dictionary representing a named shape
     sharding: (optional) a :class:`jax.Sharding` object
   """
-  __slots__ = ["shape", "dtype", "named_shape", "sharding"]
+  __slots__ = ["shape", "dtype", "named_shape", "sharding", "_dll"]
+
   def __init__(self, shape, dtype, named_shape=None, sharding=None):
     self.shape = tuple(shape)
     if dtype is None:
       raise ValueError("ShapeDtypeStruct: dtype must be specified.")
     self.dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
-    if sharding is not None and not isinstance(sharding, Sharding):
+    if sharding is not None and not isinstance(sharding, (Sharding, Layout)):
       raise ValueError(
-          "sharding should be an instance of `jax.sharding.Sharding`. "
-          f"Got {sharding} of type {type(sharding)}.")
-    self.sharding = sharding
+          "sharding should be an instance of `jax.sharding.Sharding` or"
+          f" `jax.experimental.layout.Layout`. Got {sharding} of type"
+          f" {type(sharding)}.")
+    if (isinstance(sharding, Layout) and
+        isinstance(sharding.device_local_layout, AutoLayout)):
+      raise TypeError(
+          "`DeviceLocalLayout.AUTO` cannot be used in place of a device-local"
+          f" layout in a `ShapeDtypeStruct`. Got {sharding}")
+    self.sharding = sharding.sharding if isinstance(sharding, Layout) else sharding
+    self._dll = sharding.device_local_layout if isinstance(sharding, Layout) else None
     self.named_shape = {} if named_shape is None else dict(named_shape)
 
   size = property(lambda self: math.prod(self.shape))
   ndim = property(lambda self: len(self.shape))
+
+  @property
+  def layout(self):
+    return Layout(self._dll, self.sharding)
 
   def __len__(self):
     try:
@@ -2754,8 +2747,9 @@ class ShapeDtypeStruct:
   def __repr__(self):
     ns = f", named_shape={self.named_shape}" if self.named_shape else ""
     sh = f", sharding={self.sharding}" if self.sharding is not None else ""
+    l = f", layout={self.layout}" if self._dll is not None else ""
     return (f"{type(self).__name__}(shape={self.shape}, "
-            f"dtype={self.dtype.name}{ns}{sh})")
+            f"dtype={self.dtype.name}{ns}{sh}{l})")
 
   __str__ = __repr__
 
@@ -2763,18 +2757,20 @@ class ShapeDtypeStruct:
     if not isinstance(other, ShapeDtypeStruct):
       return False
     else:
-      return ((other.shape, other.dtype, other.named_shape, other.sharding) ==
-              (self.shape, self.dtype, self.named_shape, self.sharding))
+      return ((other.shape, other.dtype, other.named_shape, other.sharding, other.layout) ==
+              (self.shape, self.dtype, self.named_shape, self.sharding, self.layout))
 
   def __hash__(self):
     # TODO(frostig): avoid the conversion from dict by addressing
     # https://github.com/google/jax/issues/8182
     named = frozenset(self.named_shape.items())
-    return hash((self.shape, self.dtype, named, self.sharding))
+    return hash((self.shape, self.dtype, named, self.sharding, self.layout))
+
 
 core.pytype_aval_mappings[ShapeDtypeStruct] = (
     lambda x: ShapedArray(x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
                           weak_type=False, named_shape=x.named_shape))
+
 
 @api_boundary
 def eval_shape(fun: Callable, *args, **kwargs):
@@ -2930,7 +2926,7 @@ def named_scope(
     ...   return jax.nn.relu(logits)
   """
   if not isinstance(name, str):
-    raise ValueError("named_scope name argument must be a string.")
+    raise TypeError("named_scope name argument must be a string.")
   with source_info_util.extend_name_stack(name):
     yield
 
@@ -2954,7 +2950,29 @@ def block_until_ready(x):
       return x.block_until_ready()
     except AttributeError:
       return x
-  return tree_map(try_to_block, x)
+
+  if xla_extension_version < 246:
+    return tree_map(try_to_block, x)
+
+  arrays = []
+  for leaf in tree_leaves(x):
+    if isinstance(leaf, array.ArrayImpl):
+      arrays.append(leaf)
+    else:
+      try_to_block(leaf)
+
+  if not arrays:
+    # `arrays` will be empty if tree_leaves(x) is empty or all leaves are not
+    # jax.Array.
+    pass
+  elif len(arrays) == 1:
+    # Fast path for single array.
+    try_to_block(arrays[0])
+  else:
+    # Optimized for multiple arrays.
+    xc.batched_block_until_ready(arrays)
+
+  return x
 
 
 def clear_backends():

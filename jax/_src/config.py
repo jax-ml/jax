@@ -211,9 +211,9 @@ def trace_context():
           default_device.value, random_seed_offset.value,
           threefry_partitionable.value,
           softmax_custom_jvp.value,
-          new_select_transpose.value,
           enable_memories.value,
           disable_jit.value,
+          debug_key_reuse.value,
           jax_xla_profile_version.value,
           # Technically this affects jaxpr->stablehlo lowering, not tracing.
           hlo_source_file_canonicalization_regex.value)
@@ -628,7 +628,7 @@ def define_string_state(
 
   def validator(new_val):
     if not isinstance(new_val, str):
-      raise ValueError('new string config value must be of type str,'
+      raise TypeError('new string config value must be of type str,'
                        f' got {new_val} of type {type(new_val)}.')
 
   return define_string_or_object_state(
@@ -805,7 +805,6 @@ class _GlobalExtraJitContext(NamedTuple):
   random_seed_offset: int = 0
   threefry_partitionable: bool = False
   softmax_custom_jvp: bool = False
-  new_select_transpose: bool = False
   xla_profile_version: int = 0
 
 
@@ -840,7 +839,6 @@ class _ThreadLocalExtraJitContext(NamedTuple):
   random_seed_offset: int | None = None
   threefry_partitionable: bool | None = None
   softmax_custom_jvp: bool | None = None
-  new_select_transpose: bool | None = None
   xla_profile_version: int | None = None
 
 
@@ -932,8 +930,8 @@ enable_checks = define_bool_state(
     default=False,
     help='Turn on invariant checking for JAX internals. Makes things slower.')
 
-enable_key_reuse_checks = define_bool_state(
-    name='jax_enable_key_reuse_checks',
+debug_key_reuse = define_bool_state(
+    name='jax_debug_key_reuse',
     default=False,
     help=('Turn on experimental key reuse checking. With this configuration enabled,'
           ' typed PRNG keys (i.e. keys created with jax.random.key()) will have their'
@@ -989,11 +987,6 @@ log_checkpoint_residuals = define_bool_state(
     help=('Log a message every time jax.checkpoint (aka jax.remat) is '
           'partially evaluated (e.g. for autodiff), printing what residuals '
           'are saved.'))
-
-parallel_functions_output_gda = define_bool_state(
-    name='jax_parallel_functions_output_gda',
-    default=False,
-    help='If True, pjit will output GDAs.')
 
 pmap_shmap_merge = define_bool_state(
     name='jax_pmap_shmap_merge',
@@ -1083,7 +1076,7 @@ threefry_partitionable = define_bool_state(
     update_thread_local_hook=lambda val: update_thread_local_jit_state(
         threefry_partitionable=val))
 
-# TODO(mattjj): set default True then remove this flag (or die trying)
+
 softmax_custom_jvp = define_bool_state(
     name='jax_softmax_custom_jvp',
     default=False,
@@ -1095,18 +1088,6 @@ softmax_custom_jvp = define_bool_state(
         softmax_custom_jvp=val),
     update_thread_local_hook=lambda val: update_thread_local_jit_state(
         softmax_custom_jvp=val))
-
-
-# TODO(mattjj): remove this flag
-new_select_transpose = define_bool_state(
-    name='new_select_transpose',
-    default=True,
-    upgrade=True,
-    help=('Change select_n_p transpose rule to specialize on bools'),
-    update_global_hook=lambda val: _update_global_jit_state(
-        new_select_transpose=val),
-    update_thread_local_hook=lambda val: update_thread_local_jit_state(
-        new_select_transpose=val))
 
 
 enable_custom_vjp_by_custom_transpose = define_bool_state(
@@ -1408,6 +1389,13 @@ eager_pmap = define_bool_state(
     default=True,
     upgrade=True,
     help='Enable eager-mode pmap when jax_disable_jit is activated.')
+
+# TODO(mattjj): remove once we land mutable array plumbing, or face great shame
+custom_vjp_disable_shape_check = define_bool_state(
+    name='jax_custom_vjp_disable_shape_check',
+    default=False,
+    upgrade=True,
+    help='Disable the check from #19009 to enable some custom_vjp hacks.')
 
 xla_runtime_errors = define_bool_state(
     name='jax_experimental_unsafe_xla_runtime_errors',

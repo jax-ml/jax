@@ -1115,7 +1115,7 @@ def preprocess(mesh, spec, parsed_pspec):
   # TODO(yaskatariya): Remove this and replace this with a normalized
   # representation of Parsed Pspec
   if parsed_pspec is None:
-    parsed_pspec, _, _ = prepare_axis_resources(
+    parsed_pspec = prepare_axis_resources(
         PartitionSpec() if spec is None else spec,
         "NamedSharding spec", allow_unconstrained_dims=True)
 
@@ -1148,7 +1148,7 @@ def prepare_axis_resources(axis_resources,
           entry, what, allow_unconstrained_dims=allow_unconstrained_dims))
 
   _check_unique_resources(new_entries, arg_name)
-  return tree_util.tree_unflatten(treedef, new_entries), new_entries, treedef
+  return tree_util.tree_unflatten(treedef, new_entries)
 
 
 def _check_unique_resources(axis_resources, arg_name):

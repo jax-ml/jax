@@ -31,7 +31,6 @@ def TPU_Dialect : Dialect {
   let cppNamespace = "::mlir::tpu";
   let useDefaultAttributePrinterParser = 1;
   let useDefaultTypePrinterParser = 1;
-  let usePropertiesForAttributes = 0;
 }
 
 class TPU_Attr<string name, string mnemonic_, list<Trait> traits = []>
@@ -192,6 +191,33 @@ def TPU_LoadOp : TPU_Op<"load"> {
   let assemblyFormat = [{
     $base `[` $indices `]` `sublanes` $sublane_mask (`sublane_stride` $sublane_stride^)? attr-dict `:` type($base) `,` type($result)
   }];
+}
+
+def TPU_StridedLoadOp : TPU_Op<"strided_load"> {
+  let arguments = (ins
+    AnyMemRef:$base,
+    Variadic<Index>:$indices,
+    DenseI32ArrayAttr:$strides
+  );
+  let results = (outs AnyVector:$result);
+  let assemblyFormat = [{
+    $base `[` $indices `]` attr-dict `:` type($base) `,` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+def TPU_StridedStoreOp : TPU_Op<"strided_store"> {
+  let arguments = (ins
+    AnyVector:$valueToStore,
+    AnyMemRef:$base,
+    Variadic<Index>:$indices,
+    DenseI32ArrayAttr:$strides
+  );
+  let results = (outs);
+  let assemblyFormat = [{
+    $base `[` $indices `]` `,` $valueToStore attr-dict `:` type($base) `,` type($valueToStore)
+  }];
+  let hasVerifier = 1;
 }
 
 def TPU_RotateOp : TPU_Op<"rotate", [Pure, SameOperandsAndResultType]> {
@@ -370,14 +396,16 @@ def TPU_AssumeMultipleOp : TPU_Op<"assume_multiple", [Pure, SameOperandsAndResul
   let results = (outs AnyTypeOf<[Index, AnyInteger]>:$result);
 }
 
-def TPU_MemRefSliceOp : TPU_Op<"memref_slice", [Pure]> {
+def TPU_MemRefSliceOp : TPU_Op<"memref_slice", [Pure, AttrSizedOperandSegments]> {
   let arguments = (ins
     AnyMemRef:$mem_ref,
-    Variadic<I32>:$base_idx
+    Variadic<I32>:$base_idx,
+    Variadic<I32>:$dynamic_sizes
   );
   let results = (outs AnyMemRef:$result);
   let assemblyFormat = [{
-    $mem_ref `[` $base_idx `]` attr-dict `:` type($mem_ref) `->` type($result)
+    $mem_ref `[` $base_idx `]` (`<` $dynamic_sizes^ `>`)?
+    attr-dict `:` type($mem_ref) `->` type($result)
   }];
   let hasVerifier = 1;
   let hasCanonicalizeMethod = 1;
@@ -422,6 +450,12 @@ def TPU_DeviceIdOp : TPU_Op<"device_id", [Pure]> {
   let arguments = (ins);
   let results = (outs I32:$result);
   let assemblyFormat = [{ attr-dict `:` type($result) }];
+}
+
+def TPU_SemaphoreReadOp : TPU_Op<"sem_read"> {
+  let arguments = (ins MemRefOf<[TPU_SemaphoreType]>:$semaphore);
+  let results = (outs I32:$result);
+  let assemblyFormat = [{ $semaphore attr-dict `:` type($semaphore) `->` type($result)}];
 }
 
 def TPU_SemaphoreWaitOp : TPU_Op<"sem_wait"> {

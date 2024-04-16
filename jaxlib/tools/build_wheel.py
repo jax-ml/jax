@@ -100,6 +100,8 @@ def patch_copy_mlir_import(src_file, dst_dir):
 
 _XLA_EXTENSION_STUBS = [
     "__init__.pyi",
+    "ifrt_programs.pyi",
+    "ifrt_proxy.pyi",
     "jax_jit.pyi",
     "ops.pyi",
     "outfeed_receiver.pyi",

@@ -367,7 +367,7 @@ FailureOr<std::pair<Value, SmallVector<int64_t>>> sliceRef(
   Value sliced_ref = builder.create<tpu::MemRefSliceOp>(
       MemRefType::get(pad_slice_shape, ref_ty.getElementType(),
                       ref_ty.getLayout(), ref_ty.getMemorySpace()),
-      base_ref, slice_base_indices);
+      base_ref, slice_base_indices, /*dynamic_sizes=*/ValueRange());
 
   return std::make_pair(sliced_ref, indices_within_slice);
 }
@@ -1156,6 +1156,137 @@ LogicalResult tpu_load_rule(RewriteContext &ctx, Operation &op,
     return operand.getOwner() != roll_vectors_op;
   });
   return success();
+}
+
+LogicalResult strided_op_rule_impl(RewriteContext &ctx, Operation &op,
+                                   Value base_ref, ValueRange indices,
+                                   const VectorType &vty,
+                                   const VectorLayout &layout,
+                                   const ArrayRef<int32_t> &strides) {
+  if (!isa<tpu::StridedLoadOp, tpu::StridedStoreOp>(op)) {
+    return op.emitOpError("Not implemented: Unsupported strided op")
+           << op.getName();
+  }
+  if (layout != VectorLayout(32, {0, 0}, ctx.target_shape,
+                             VectorLayout::ImplicitDim::kNone)) {
+    return op.emitOpError("Not implemented: Unsupported vector layout in ")
+           << op.getName();
+  }
+  const auto base_ty = getMemRefType(base_ref);
+  auto rank = base_ty.getRank();
+  CHECK_EQ(rank, indices.size());
+  CHECK_EQ(rank, strides.size());
+  CHECK_EQ(rank, vty.getShape().size());
+  if (rank < 2) {
+    return op.emitOpError("Not implemented: Stride on 1D vector");
+  }
+  auto mem_layout = dyn_cast<TiledLayoutAttr>(base_ty.getLayout());
+  if (!mem_layout) {
+    return op.emitOpError("Expected a tiled memref");
+  }
+  auto tile_strides = mem_layout.getTileStrides();
+
+  // Currently we hold constraints that the last dim size of memref needs to be
+  // exactly same as the lane size of native vreg and the memref has never
+  // been sliced before on the last dim. In other words, the original base
+  // memref's shape needs to be (..., target_shape[1]).
+  if (base_ty.getShape()[rank - 1] != ctx.target_shape[1] ||
+      tile_strides.take_back(2) != ArrayRef<int64_t>{1, 1}) {
+    return op.emitOpError("Not Implemented: The last dim size is not ")
+           << ctx.target_shape[1] << " in original base memref";
+  }
+  if (strides[rank - 1] != 1) {
+    return op.emitOpError("Not Implemented: Stride on last dim is not 1");
+  }
+  auto last_idx = getIntConst(indices[rank - 1], /*silent=*/true);
+  if (failed(last_idx)) {
+    return op.emitOpError("Not Implemented: Dynamic index on last dim");
+  } else if (last_idx.value() != 0) {
+    return op.emitOpError("Not Implemented: Index on last dim is not 0");
+  }
+  ImplicitLocOpBuilder builder(op.getLoc(), &op);
+
+  FAILUREOR_ASSIGN_OR_RETURN(
+      VectorType vreg_ty,
+      getNativeVregType(vty.getElementType(), ctx.target_shape));
+
+  bool is_load_op = true;
+  xla::Array<Value> tiles(
+      layout.tileArrayShape(vty.getShape(), ctx.target_shape));
+  if (auto store_op = dyn_cast<tpu::StridedStoreOp>(op)) {
+    is_load_op = false;
+    FAILUREOR_ASSIGN_OR_RETURN(
+        tiles, disassemble(builder, layout, store_op.getValueToStore(),
+                           ctx.target_shape));
+  }
+
+  tiles.Each([&](absl::Span<const int64_t> tile_idxs, Value *v) {
+    CHECK_EQ(tile_idxs.size(), rank);
+    SmallVector<Value> idxs(rank);
+    for (int64_t i = 0; i < rank; ++i) {
+      int64_t stride = (i < rank - 2)
+                           ? strides[i]
+                           : (strides[i] * ctx.target_shape[i - rank + 2]);
+      idxs[i] = builder.create<arith::AddIOp>(
+          indices[i], IdxConst(tile_idxs[i] * stride, builder, op.getLoc()));
+    }
+    SmallVector<bool> sublane_mask(ctx.target_shape[0], true);
+    int64_t sublane_rem = vty.getDimSize(rank - 2) % ctx.target_shape[0];
+    if (sublane_rem > 0 && tile_idxs[rank - 2] == tiles.dim(rank - 2) - 1) {
+      for (int64_t i = sublane_rem; i < ctx.target_shape[0]; ++i) {
+        sublane_mask[i] = false;
+      }
+    }
+    const auto sublane_mask_attr =
+        DenseBoolArrayAttr::get(op.getContext(), sublane_mask);
+    if (is_load_op) {
+      *v = builder.create<tpu::LoadOp>(
+          vreg_ty, base_ref, idxs, sublane_mask_attr,
+          builder.getI32IntegerAttr(strides[rank - 2]));
+    } else {
+      builder.create<tpu::StoreOp>(
+          *v, base_ref, idxs, sublane_mask_attr,
+          /*mask=*/nullptr, builder.getI32IntegerAttr(strides[rank - 2]));
+    }
+  });
+  if (is_load_op) {
+    op.replaceAllUsesWith(
+        assemble(builder, vty, layout, std::move(tiles), ctx.target_shape));
+  }
+  op.erase();
+  return success();
+}
+
+// TODO(jevinjiang): maybe unify with vector load?
+LogicalResult tpu_strided_load_rule(RewriteContext &ctx, Operation &op,
+                                    const ArrayRef<Layout> layouts_in,
+                                    const ArrayRef<Layout> layouts_out) {
+  TPU_ASSERT_OP(llvm::none_of(layouts_in,
+                              [&](const Layout &l) { return l.has_value(); }));
+  TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
+  TPU_ASSERT_OP(layouts_out.front().has_value());
+  const VectorLayout &layout_out = *layouts_out.front();
+  auto load_op = cast<tpu::StridedLoadOp>(op);
+  const auto vty = cast<VectorType>(load_op.getResult().getType());
+  return strided_op_rule_impl(ctx, op, load_op.getBase(), load_op.getIndices(),
+                              vty, layout_out, load_op.getStrides());
+}
+
+// TODO(jevinjiang): maybe unify with vector store?
+LogicalResult tpu_strided_store_rule(RewriteContext &ctx, Operation &op,
+                                     const ArrayRef<Layout> layouts_in,
+                                     const ArrayRef<Layout> layouts_out) {
+  TPU_ASSERT_OP(layouts_in.front().has_value());
+  TPU_ASSERT_OP(llvm::none_of(layouts_in.drop_front(),
+                              [&](const Layout &l) { return l.has_value(); }));
+  TPU_ASSERT_EQ_OP(layouts_out.size(), 0);
+
+  const VectorLayout &to_store_layout = *layouts_in.front();
+  auto store_op = cast<tpu::StridedStoreOp>(op);
+  const auto vty = store_op.getValueToStore().getType();
+  return strided_op_rule_impl(ctx, op, store_op.getBase(),
+                              store_op.getIndices(), vty, to_store_layout,
+                              store_op.getStrides());
 }
 
 LogicalResult matmul_rule_impl(RewriteContext &ctx, Operation &op,
@@ -3510,10 +3641,12 @@ const llvm::StringMap<rule_type> &rules() {
       {tpu::IotaOp::getOperationName(), tpu_iota_rule},
       {tpu::GatherOp::getOperationName(), tpu_gather_rule},
       {tpu::LoadOp::getOperationName(), tpu_load_rule},
+      {tpu::StoreOp::getOperationName(), tpu_store_rule},
+      {tpu::StridedLoadOp::getOperationName(), tpu_strided_load_rule},
+      {tpu::StridedStoreOp::getOperationName(), tpu_strided_store_rule},
       {tpu::MatmulOp::getOperationName(), tpu_matmul_rule},
       {tpu::RegionOp::getOperationName(), tpu_region_rule},
       {tpu::RepeatOp::getOperationName(), tpu_repeat_rule},
-      {tpu::StoreOp::getOperationName(), tpu_store_rule},
       {tpu::BitcastOp::getOperationName(), tpu_bitcast_rule},
       {tpu::TraceOp::getOperationName(), tpu_trace_rule},
       {tpu::AssumeLayoutOp::getOperationName(), tpu_assume_layout_rule},
@@ -4216,38 +4349,56 @@ FailureOr<TypedValue<VectorType>> relayout(
         return emitError(v.getLoc(),
                          "Not implemented: Both columns and rows are shifted");
       }
-      if (col_diff < 0) {
-        return emitError(v.getLoc(), "Not implemented: Shifts to the left");
-      }
       if (bitwidth != 32 || tiling != target_shape) {
         return emitError(v.getLoc(),
                          "Not implemented: Only 32-bit column shifts for "
                          "native layouts supported");
       }
-      const int64_t sublane_diff = col_diff;
       TPU_ASSERT_GE_LOC(v.getLoc(), src_tiles.num_dimensions(), 1);
       std::optional<tpu::CreateMaskOp> maybe_create_mask;
-      if (src_tiles.dimensions()[src_tiles.num_dimensions() - 1] > 1) {
+      if (*(src_tiles.dimensions().end() - 1) > 1) {
+        int64_t lane_start, lane_end;
+        if (col_diff > 0) {
+          lane_start = 0;
+          lane_end = col_diff;
+        } else {  // col_diff < 0
+          lane_start = target_shape[1] + col_diff;
+          lane_end = target_shape[1];
+        }
         auto boundIdxConst =
             std::bind(IdxConst, std::placeholders::_1, builder, v.getLoc());
         maybe_create_mask = builder.create<tpu::CreateMaskOp>(
             v.getLoc(), VectorType::get(target_shape, builder.getI1Type()),
-            ValueRange{boundIdxConst(0), boundIdxConst(0)},
+            ValueRange{boundIdxConst(0), boundIdxConst(lane_start)},
             ValueRange{boundIdxConst(target_shape[0]),
-                       boundIdxConst(col_diff)});
+                       boundIdxConst(lane_end)});
       }
-      src_tiles.Each([&](absl::Span<const int64_t> idx, Value tile) {
-        Value rot_tile =
-            builder
-                .create<tpu::RotateOp>(v.getLoc(), tile,
-                                       /*amount=*/sublane_diff,
-                                       /*dimension=*/1, /*stride=*/nullptr,
-                                       /*stride_dimension=*/nullptr)
-                .getResult();
-        if (idx[idx.size() - 1] != 0) {
-          SmallVector<int64_t> prev_idx(idx.begin(), idx.end());
-          --prev_idx[idx.size() - 1];
-          Value prev_rot_tile = dst_tiles(prev_idx);
+      src_tiles.Each([&](absl::Span<const int64_t> idx, Value *tile) {
+        *tile = builder
+                    .create<tpu::RotateOp>(v.getLoc(), *tile,
+                                           /*amount=*/col_diff < 0
+                                               ? target_shape[1] + col_diff
+                                               : col_diff,
+                                           /*dimension=*/1, /*stride=*/nullptr,
+                                           /*stride_dimension=*/nullptr)
+                    .getResult();
+      });
+      src_tiles.Each([&](absl::Span<const int64_t> idx, Value rot_tile) {
+        Value prev_rot_tile;
+        if (col_diff > 0) {
+          if (*(idx.end() - 1) != 0) {
+            SmallVector<int64_t> prev_idx(idx.begin(), idx.end());
+            --*(prev_idx.end() - 1);
+            prev_rot_tile = src_tiles(prev_idx);
+          }
+        } else {  // col_diff < 0
+          if (*(idx.end() - 1) != *(src_tiles.dimensions().end() - 1) - 1) {
+            SmallVector<int64_t> prev_idx(idx.begin(), idx.end());
+            ++*(prev_idx.end() - 1);
+            prev_rot_tile = src_tiles(prev_idx);
+          }
+        }
+        if (prev_rot_tile != nullptr) {
           rot_tile = builder.create<arith::SelectOp>(
               v.getLoc(), maybe_create_mask->getResult(), prev_rot_tile,
               rot_tile);
