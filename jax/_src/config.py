@@ -376,7 +376,8 @@ def define_bool_state(
   an error.
   """
   if not isinstance(default, bool):
-    raise TypeError(f"Default value must be of type bool, got {default}")
+    raise TypeError(f"Default value must be of type bool, got {default} "
+                    f"of type {getattr(type(default), '__name__', type(default))}")
   default = bool_env(name.upper(), default)
   name = name.lower()
   if upgrade:
@@ -420,7 +421,8 @@ def define_enum_state(
     A contextmanager to control the thread-local state value.
   """
   if not isinstance(default, str):
-    raise TypeError(f"Default value must be of type str, got {default}")
+    raise TypeError(f"Default value must be of type str, got {default} "
+                    f"of type {getattr(type(default), '__name__', type(default))}")
   name = name.lower()
   default = os.getenv(name.upper(), default)
   if default not in enum_values:
@@ -476,7 +478,8 @@ def define_optional_enum_state(
     A contextmanager to control the thread-local state value.
   """
   if default is not None and not isinstance(default, str):
-    raise TypeError(f"Default value must be of type str or None, got {default}")
+    raise TypeError(f"Default value must be of type str or None, got {default} "
+                    f"of type {getattr(type(default), '__name__', type(default))}")
   name = name.lower()
   default = os.getenv(name.upper(), default)
   if default is not None and default not in enum_values:
@@ -526,7 +529,8 @@ def define_int_state(
     A contextmanager to control the thread-local state value.
   """
   if not isinstance(default, int):
-    raise TypeError(f"Default value must be of type int, got {default}")
+    raise TypeError(f"Default value must be of type int, got {default} "
+                    f"of type {getattr(type(default), '__name__', type(default))}")
   name = name.lower()
   default_env = os.getenv(name.upper())
   if default_env is not None:
@@ -572,7 +576,8 @@ def define_float_state(
     A contextmanager to control the thread-local state value.
   """
   if not isinstance(default, float):
-    raise TypeError(f"Default value must be of type float, got {default}")
+    raise TypeError(f"Default value must be of type float, got {default} "
+                    f"of type {getattr(type(default), '__name__', type(default))}")
   name = name.lower()
   default_env = os.getenv(name.upper())
   if default_env is not None:
@@ -624,7 +629,8 @@ def define_string_state(
     A contextmanager to control the thread-local state value.
   """
   if not isinstance(default, str):
-    raise TypeError(f"Default value must be of type str, got {default}")
+    raise TypeError(f"Default value must be of type str, got {default} "
+                    f"of type {getattr(type(default), '__name__', type(default))}")
 
   def validator(new_val):
     if not isinstance(new_val, str):
@@ -667,7 +673,8 @@ def define_optional_string_state(
     A contextmanager to control the thread-local state value.
   """
   if default is not None and not isinstance(default, str):
-    raise TypeError(f"Default value must be of type str or None, got {default}")
+    raise TypeError(f"Default value must be of type str or None, got {default} "
+                    f"of type {getattr(type(default), '__name__', type(default))}")
 
   def validator(new_val):
     if new_val is not None and not isinstance(new_val, str):
