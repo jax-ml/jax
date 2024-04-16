@@ -296,6 +296,7 @@ from jax._src.numpy.reductions import (
     count_nonzero as count_nonzero,
     cumsum as cumsum,
     cumprod as cumprod,
+    cumulative_sum as cumulative_sum,
     max as max,
     mean as mean,
     median as median,

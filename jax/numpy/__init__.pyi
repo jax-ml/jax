@@ -241,6 +241,9 @@ def cumprod(a: ArrayLike, axis: _Axis = ..., dtype: DTypeLike = ...,
 cumproduct = cumprod
 def cumsum(a: ArrayLike, axis: _Axis = ..., dtype: DTypeLike = ...,
            out: None = ...) -> Array: ...
+def cumulative_sum(x: ArrayLike, /, *, axis: int | None = ...,
+                   dtype: DTypeLike | None = ...,
+                   include_initial: bool = ...) -> Array: ...
 
 def deg2rad(x: ArrayLike, /) -> Array: ...
 degrees = rad2deg

@@ -204,6 +204,7 @@ from jax.experimental.array_api._sorting_functions import (
 )
 
 from jax.experimental.array_api._statistical_functions import (
+    cumulative_sum as cumulative_sum,
     max as max,
     mean as mean,
     min as min,
