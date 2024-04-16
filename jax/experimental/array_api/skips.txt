@@ -1,11 +1,13 @@
 # Known failures for the array api tests.
 
 # Test suite attempts in-place mutation:
-array_api_tests/test_special_cases.py::test_binary
 array_api_tests/test_special_cases.py::test_iop
 array_api_tests/test_special_cases.py::test_nan_propagation
-array_api_tests/test_special_cases.py::test_unary
 array_api_tests/test_array_object.py::test_setitem
+
+# Raises NonInteractiveExampleWarning
+array_api_tests/test_special_cases.py::test_binary
+array_api_tests/test_special_cases.py::test_unary
 
 # fft test suite is buggy as of 83f0bcdc
 array_api_tests/test_fft.py
