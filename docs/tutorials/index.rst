@@ -19,7 +19,6 @@ JAX 101
 
    quickstart
    key-concepts
-   thinking-in-jax
    jit-compilation
    automatic-vectorization
    automatic-differentiation
