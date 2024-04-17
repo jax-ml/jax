@@ -1718,8 +1718,8 @@ lowering_rules[for_loop.for_p] = _for_lowering_rule
 
 
 def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
-                             jaxpr: jax_core.Jaxpr, start: int,
-                             num_steps: int, consts, *args,
+                             jaxpr: jax_core.Jaxpr, start: int | ir.Value,
+                             num_steps: int | ir.Value, consts, *args,
                              has_loop_index: bool,
                              unroll: int):
   def _run_body(i, args):
@@ -1736,7 +1736,11 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
       args = jaxpr_subcomp(lowering_context, jaxpr, *consts, *args)
     return args
 
-  if num_steps == unroll:
+  if (
+      not isinstance(start, ir.Value)
+      and not isinstance(num_steps, ir.Value)
+      and num_steps == unroll
+  ):
     # No need for an scf.For. We can just unroll completely
     for i in range(start, start + num_steps):
       args = _run_body(
@@ -1747,13 +1751,9 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
   if unroll != 1:
     raise NotImplementedError(
         f"Only unroll={num_steps=} and unroll=1 supported. Got {unroll=}.")
-  lbd = ir_constant(0, mlir_type=mlir.dtype_to_ir_type(jnp.dtype("int32")))
-  if isinstance(num_steps, int):
-    ubd = ir_constant(
-        num_steps, mlir_type=_dtype_to_ir_type(jnp.dtype("int32"))
-    )
-  else:
-    ubd = num_steps
+  i32 = jax_core.ShapedArray((), jnp.int32)
+  lbd = _ensure_mlir_value(start, i32)
+  ubd = arith.addi(lbd, _ensure_mlir_value(num_steps, i32))
   step = ir_constant(1, mlir_type=_dtype_to_ir_type(jnp.dtype("int32")))
   for_op = scf.ForOp(lbd, ubd, step, args)
   with ir.InsertionPoint(for_op.body):
@@ -1792,7 +1792,7 @@ def _scan_lowering_rule(
     linear: tuple[bool, ...],
     length: int,
     reverse: bool,
-    unroll: bool,
+    unroll: bool | int,
     num_consts: int,
     num_carry: int,
     _split_transpose: bool,
@@ -1808,9 +1808,9 @@ def _scan_lowering_rule(
   if jaxpr_consts: raise NotImplementedError
   del jaxpr_consts
 
-  jaxpr, has_loop_index = (
-      pallas_utils.pattern_match_scan_to_fori_loop(jaxpr, num_consts, num_carry)
-      )
+  jaxpr, has_loop_index = pallas_utils.pattern_match_scan_to_fori_loop(
+      jaxpr, num_consts, num_carry
+  )
   consts, args = split_list(args, [num_consts])
   consts_avals, args_avals = split_list(ctx.avals_in, [num_consts])
   if has_loop_index:
@@ -1856,7 +1856,7 @@ def _while_lowering_rule(
       ),
       jaxpr,
       lb,
-      ub,
+      arith.subi(ub, lb),
       body_consts,
       *args,
       has_loop_index=True,

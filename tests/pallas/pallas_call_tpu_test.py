@@ -1699,16 +1699,17 @@ class PallasCallWhileLoopTest(PallasTPUTest):
         return i < j
 
       def body(carry):
-        i, j = carry
+        io, j = carry
+        i = io - 128
         sl = sl = jax.lax.div(i, 128)
         l = jax.lax.rem(i, 128)
         v = x_ref[0, sl, l]
         s = pl.load(r_ref, (0, 0))
         pl.store(r_ref, (0, 0), s + v)
-        return i + 1, j
+        return io + 1, j
 
-      i = 0
-      j = 1024
+      i = 128
+      j = 128 + 1024
       i, j = jax.lax.while_loop(cond, body, (i, j))
 
     x = jnp.arange(4096)
@@ -1729,6 +1730,26 @@ class PallasCallWhileLoopTest(PallasTPUTest):
     )(x)
     expected = jnp.sum(jnp.arange(1024))
     np.testing.assert_array_equal(r, expected)
+
+  def test_fori(self):
+    """Tests lowering of a while_loop which can reduce to a fori_loop."""
+
+    def kernel(lb_ref, ub_ref, o_ref):
+      o_ref[0, 0] = 0
+
+      def body(i, _):
+        o_ref[0, 0] += 1
+
+      jax.lax.fori_loop(lb_ref[0, 0], ub_ref[0, 0], body, None)
+
+    smem = pl.BlockSpec(memory_space=pltpu.SMEM)
+    r = pl.pallas_call(
+        kernel,
+        in_specs=(smem, smem),
+        out_specs=smem,
+        out_shape=jax.ShapeDtypeStruct([1, 1], jnp.int32),
+    )(*(jnp.array([[x]]) for x in (2, 6)))
+    np.testing.assert_array_equal(r, 4)
 
 
 class PallasCallPipelineTest(parameterized.TestCase):
