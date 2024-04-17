@@ -19,4 +19,15 @@ from jax._src.abstract_arrays import (
   array_types as array_types
 )
 
+from jax._src.core import (
+  ClosedJaxpr as ClosedJaxpr,
+  Jaxpr as Jaxpr,
+  JaxprEqn as JaxprEqn,
+  jaxpr_as_fun as jaxpr_as_fun,
+  Literal as Literal,
+  Primitive as Primitive,
+  Token as Token,
+  Var as Var,
+)
+
 from . import primitives as primitives
