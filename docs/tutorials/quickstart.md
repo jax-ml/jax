@@ -58,8 +58,8 @@ print(selu(x))
 You'll find a few differences between JAX arrays and NumPy arrays once you begin digging-in;
 these are explored in  [🔪 JAX - The Sharp Bits 🔪](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html).
 
-## Using {func}`~jax.jit` to speed up functions
-JAX runs transparently on the GPU or TPU (falling back to CPU if you don't have one). However, in the above example, JAX is dispatching kernels to the chip one operation at a time. If we have a sequence of operations, we can use the `@jit` decorator to compile multiple operations together using XLA.
+## Just-in-time compilation with {func}`jax.jit`
+JAX runs transparently on the GPU or TPU (falling back to CPU if you don't have one). However, in the above example, JAX is dispatching kernels to the chip one operation at a time. If we have a sequence of operations, we can use the {func}`jax.jit` function to compile this sequence of operations together using XLA.
 
 We can use IPython's `%timeit` to quickly benchmark our `selu` function, using `block_until_ready()` to
 account for JAX's dynamic dispatch (See {ref}`async-dispatch`):
@@ -75,8 +75,8 @@ x = random.normal(key, (1_000_000,))
 (notice we've used {mod}`jax.random` to generate some random numbers; for details on
 how to generate random numbers in JAX, check out {ref}`pseudorandom-numbers`).
 
-We can speed the execution of this function with `@jit`, which will jit-compile the
-first time `selu` is called and will be cached thereafter.
+We can speed the execution of this function with the {func}`jax.jit` transformation,
+which will jit-compile the first time `selu` is called and will be cached thereafter.
 
 ```{code-cell}
 from jax import jit
@@ -86,16 +86,16 @@ _ = selu_jit(x)  # compiles on first call
 %timeit selu_jit(x).block_until_ready()
 ```
 
-The above timing represent execution on CPU, but the same code can be run on GPU or TPU for
-an even greater speedup.
+The above timing represent execution on CPU, but the same code can be run on GPU or TPU,
+typically for an even greater speedup.
 
 For more on JIT compilation in JAX, check out {ref}`jit-compilation`.
 
-## Taking derivatives with {func}`~jax.grad`
+## Taking derivatives with {func}`jax.grad`
 
-In addition to evaluating numerical functions, we can also transform them.
-One transformation is [automatic differentiation (autodiff)](https://en.wikipedia.org/wiki/Automatic_differentiation).
-In JAX, you can compute gradients with the {func}`~jax.grad` function.
+In addition to transforming functions via JIT compilation, JAX also provides other
+transformations. One such transformation is {func}`jax.grad`, which performs
+[automatic differentiation (autodiff)](https://en.wikipedia.org/wiki/Automatic_differentiation):
 
 ```{code-cell}
 from jax import grad
@@ -125,14 +125,15 @@ In the above example we jitted `sum_logistic` and then took its derivative. We c
 print(grad(jit(grad(jit(grad(sum_logistic)))))(1.0))
 ```
 
-The {func}`jax.jacobian` transformation can be used to compute gradients of vector-valued functions:
+Similarly, the {func}`jax.jacobian` transformation can be used to compute gradients of vector-valued functions:
 
 ```{code-cell}
 from jax import jacobian
 print(jacobian(jnp.exp)(x_small))
 ```
 
-For more advanced autodiff, you can use {func}`jax.vjp` for reverse-mode vector-Jacobian products and {func}`jax.jvp` for forward-mode Jacobian-vector products.
+For more advanced autodiff operations, you can use {func}`jax..jacrev` for reverse-mode vector-Jacobian products,
+and {func}`jax.jacfwd` for forward-mode Jacobian-vector products.
 The two can be composed arbitrarily with one another, and with other JAX transformations.
 Here's one way to compose them to make a function that efficiently computes full Hessian matrices:
 
@@ -147,24 +148,28 @@ This kind of composition produces efficient code in practice; this is more-or-le
 
 For more on automatic differentiation in JAX, check out {ref}`automatic-differentiation`.
 
-## Auto-vectorization with {func}`~jax.vmap`
+## Auto-vectorization with {func}`jax.vmap`
 
 Another useful transformation is {func}`~jax.vmap`, the vectorizing map.
-It has the familiar semantics of mapping a function along array axes, but instead of keeping the loop on the outside, it pushes the loop down into a function’s primitive operations for better performance.
-When composed with {func}`~jax.jit`, it can be just as performant as manually rewriting your function operate over an extra batch dimension.
+It has the familiar semantics of mapping a function along array axes, but instead of explicitly looping
+over function calls, it transforms the function into a natively vectorized version for better performance.
+When composed with {func}`~jax.jit`, it can be just as performant as manually rewriting your function
+operate over an extra batch dimension.
 
 We're going to work with a simple example, and promote matrix-vector products into matrix-matrix products using {func}`~jax.vmap`.
 Although this is easy to do by hand in this specific case, the same technique can apply to more complicated functions.
 
 ```{code-cell}
-mat = random.normal(key, (150, 100))
-batched_x = random.normal(key, (10, 100))
+key1, key2 = random.split(key)
+mat = random.normal(key1, (150, 100))
+batched_x = random.normal(key2, (10, 100))
 
-def apply_matrix(v):
-  return jnp.dot(mat, v)
+def apply_matrix(x):
+  return jnp.dot(mat, x)
 ```
 
-Given a function such as `apply_matrix`, we can loop over a batch dimension in Python, but usually the performance of doing so is poor.
+The `apply_matrix` function maps a vector to a vector, but we may want to apply it row-wise across a matrix.
+We could do this by looping over the batch dimension in Python, but this usually results in poor performance.
 
 ```{code-cell}
 def naively_batched_apply_matrix(v_batched):
@@ -174,32 +179,40 @@ print('Naively batched')
 %timeit naively_batched_apply_matrix(batched_x).block_until_ready()
 ```
 
-We know how to batch this operation manually.
-In this case, `jnp.dot` handles extra batch dimensions transparently.
+A programmer familiar with the the `jnp.dot` function might recognize that `apply_matrix` can
+be rewritten to avoid explicit looping, using the built-in batching semantics of `jnp.dot`:
 
 ```{code-cell}
-@jit
-def batched_apply_matrix(v_batched):
-  return jnp.dot(v_batched, mat.T)
+import numpy as np
 
+@jit
+def batched_apply_matrix(batched_x):
+  return jnp.dot(batched_x, mat.T)
+
+np.testing.assert_allclose(naively_batched_apply_matrix(batched_x),
+                           batched_apply_matrix(batched_x), atol=1E-4, rtol=1E-4)
 print('Manually batched')
 %timeit batched_apply_matrix(batched_x).block_until_ready()
 ```
 
-However, suppose we had a more complicated function without batching support. We can use {func}`~jax.vmap` to add batching support automatically.
+However, as functions become more complicated, this kind of manual batching becomes more difficult and error-prone.
+The {func}`~jax.vmap` transformation is designed to automatically transform a function into a batch-aware version:
 
 ```{code-cell}
 from jax import vmap
 
 @jit
-def vmap_batched_apply_matrix(v_batched):
-  return vmap(apply_matrix)(v_batched)
+def vmap_batched_apply_matrix(batched_x):
+  return vmap(apply_matrix)(batched_x)
 
+np.testing.assert_allclose(naively_batched_apply_matrix(batched_x),
+                           vmap_batched_apply_matrix(batched_x), atol=1E-4, rtol=1E-4)
 print('Auto-vectorized with vmap')
 %timeit vmap_batched_apply_matrix(batched_x).block_until_ready()
 ```
 
-Of course, {func}`~jax.vmap` can be arbitrarily composed with {func}`~jax.jit`, {func}`~jax.grad`, and any other JAX transformation.
+As you would expect, {func}`~jax.vmap` can be arbitrarily composed with {func}`~jax.jit`,
+{func}`~jax.grad`, and any other JAX transformation.
 
 For more on automatic vectorization in JAX, check out {ref}`automatic-vectorization`.
 

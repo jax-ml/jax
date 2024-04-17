@@ -29,10 +29,10 @@ compilation of a JAX Python function so it can be executed efficiently in XLA.
 ## How JAX transformations work
 
 In the previous section, we discussed that JAX allows us to transform Python functions.
-This is done by first converting the Python function into a simple intermediate language called jaxpr.
-The transformations then work on the jaxpr representation. 
+JAX accomplishes this by reducing each function into a sequence of {term}`primitive` operations, each
+representing one fundamental unit of computation.
 
-We can show a representation of the jaxpr of a function by using {func}`jax.make_jaxpr`:
+One way to see the sequence of primitives behind a function is using {func}`jax.make_jaxpr`:
 
 ```{code-cell}
 import jax
@@ -51,9 +51,11 @@ print(jax.make_jaxpr(log2)(3.0))
 
 The {ref}`understanding-jaxprs` section of the documentation provides more information on the meaning of the above output.
 
-Importantly, note how the jaxpr does not capture the side-effect of the function: there is nothing in it corresponding to `global_list.append(x)`. This is a feature, not a bug: JAX is designed to understand side-effect-free (a.k.a. functionally pure) code. If *pure function* and *side-effect* are unfamiliar terms, this is explained in a little more detail in [🔪 JAX - The Sharp Bits 🔪: Pure Functions](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions).
+Importantly, notice that the jaxpr does not capture the side-effect present in the function: there is nothing in it corresponding to `global_list.append(x)`.
+This is a feature, not a bug: JAX transformations are designed to understand side-effect-free (a.k.a. functionally pure) code.
+If *pure function* and *side-effect* are unfamiliar terms, this is explained in a little more detail in [🔪 JAX - The Sharp Bits 🔪: Pure Functions](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#pure-functions).
 
-Of course, impure functions can still be written and even run, but JAX gives no guarantees about their behaviour once converted to jaxpr. However, as a rule of thumb, you can expect (but shouldn't rely on) the side-effects of a JAX-transformed function to run once (during the first call), and never again. This is because of the way that JAX generates jaxpr, using a process called 'tracing'.
+Of course, impure functions can still be written and even run, but JAX gives no guarantees about their behaviour under transformations. However, as a rule of thumb, you can expect (but shouldn't rely on) the side-effects of a JIT-compiled function to run once (during the first call), and never again, due to JAX's traced execution model.
 
 When tracing, JAX wraps each argument by a *tracer* object. These tracers then record all JAX operations performed on them during the function call (which happens in regular Python). Then, JAX uses the tracer records to reconstruct the entire function. The output of that reconstruction is the jaxpr. Since the tracers do not record the Python side-effects, they do not appear in the jaxpr. However, the side-effects still happen during the trace itself.
 
@@ -73,7 +75,8 @@ See how the printed `x` is a `Traced` object? That's the JAX internals at work.
 
 The fact that the Python code runs at least once is strictly an implementation detail, and so shouldn't be relied upon. However, it's useful to understand as you can use it when debugging to print out intermediate values of a computation.
 
-A key thing to understand is that jaxpr captures the function as executed on the parameters given to it. For example, if we have a conditional, jaxpr will only know about the branch we take:
+A key thing to understand is that a jaxpr captures the function as executed on the parameters given to it.
+For example, if we have a Python conditional, the jaxpr will only know about the branch we take:
 
 ```{code-cell}
 def log2_if_rank_2(x):
@@ -143,8 +146,7 @@ def f(x):
   else:
     return 2 * x
 
-f_jit = jax.jit(f)
-f_jit(10)  # Should raise an error. 
+jax.jit(f)(10)  # Raises an error
 ```
 
 ```{code-cell}
@@ -158,19 +160,17 @@ def g(x, n):
     i += 1
   return x + i
 
-g_jit = jax.jit(g)
-g_jit(10, 20)  # Should raise an error. 
+jax.jit(g)(10, 20)  # Raises an error
 ```
 
-The problem is that we tried to condition on the *value* of an input to the function being jitted. The reason we can't do this is related to the fact mentioned above that jaxpr depends on the actual values used to trace it. 
+The problem in both cases is that we tried to condition the trace-time flow of the program using runtime values.
+Traced values within JIT, like `x` and `n` here, can only affect control flow via their static attributes: such as
+`shape` or `dtype`, and not via their values.
+For more detail on the interaction between Python control flow and JAX, see [🔪 JAX - The Sharp Bits 🔪: Control Flow](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#control-flow).
 
-The more specific information about the values we use in the trace, the more we can use standard Python control flow to express ourselves. However, being too specific means we can't reuse the same traced function for other values. JAX solves this by tracing at different levels of abstraction for different purposes.
-
-For {func}`jax.jit`, the default level is {class}`~jax.core.ShapedArray` -- that is, each tracer has a concrete shape (which we're allowed to condition on), but no concrete value. This allows the compiled function to work on all possible inputs with the same shape -- the standard use case in machine learning. However, because the tracers have no concrete value, if we attempt to condition on one, we get the error above.
-
-In {func}`jax.grad`, the constraints are more relaxed, so you can do more. If you compose several transformations, however, you must satisfy the constraints of the most strict one. So, if you `jit(grad(f))`, `f` mustn't condition on value. For more detail on the interaction between Python control flow and JAX, see [🔪 JAX - The Sharp Bits 🔪: Control Flow](https://jax.readthedocs.io/en/latest/notebooks/Common_Gotchas_in_JAX.html#control-flow).
-
-One way to deal with this problem is to rewrite the code to avoid conditionals on value. Another is to use special {ref}`lax-control-flow` like {func}`jax.lax.cond`. However, sometimes that is impossible. In that case, you can consider jitting only part of the function. For example, if the most computationally expensive part of the function is inside the loop, we can JIT just that inner part (though make sure to check the next section on caching to avoid shooting yourself in the foot):
+One way to deal with this problem is to rewrite the code to avoid conditionals on value. Another is to use special {ref}`lax-control-flow` like {func}`jax.lax.cond`. However, sometimes that is not possible or practical.
+In that case, you can consider JIT-compiling only part of the function.
+For example, if the most computationally expensive part of the function is inside the loop, we can JIT-compile just that inner part (though make sure to check the next section on caching to avoid shooting yourself in the foot):
 
 ```{code-cell}
 # While loop conditioned on x and n with a jitted body.
@@ -188,7 +188,11 @@ def g_inner_jitted(x, n):
 g_inner_jitted(10, 20)
 ```
 
-If we really need to JIT a function that has a condition on the value of an input, we can tell JAX to help itself to a less abstract tracer for a particular input by specifying `static_argnums` or `static_argnames`. The cost of this is that the resulting jaxpr is less flexible, so JAX will have to re-compile the function for every new value of the specified static input. It is only a good strategy if the function is guaranteed to get limited different values.
+## Marking arguments as static
+
+If we really need to JIT-compile a function that has a condition on the value of an input, we can tell JAX to help itself to a less abstract tracer for a particular input by specifying `static_argnums` or `static_argnames`.
+The cost of this is that the resulting jaxpr and compiled artifact depends on the particular value passed, and so JAX will have to re-compile the function for every new value of the specified static input.
+It is only a good strategy if the function is guaranteed to see a limited set of static values.
 
 ```{code-cell}
 f_jit_correct = jax.jit(f, static_argnums=0)
@@ -227,9 +231,10 @@ print("g:")
 %timeit g(10, 20)
 ```
 
-This is because {func}`jax.jit` introduces some overhead itself. Therefore, it usually only saves time if the compiled function is complex and you will run it numerous times. Fortunately, this is common in machine learning, where we tend to compile a large, complicated model, then run it for millions of iterations.
+This is because {func}`jax.jit` introduces some overhead itself, and so it usually only saves time if the compiled function is nontrivial, or if you will run it numerous times.
+Fortunately, this is common in machine learning, where we tend to compile a large, complicated model, then run it for millions of iterations.
 
-Generally, you want to jit the largest possible chunk of your computation; ideally, the entire update step. This gives the compiler maximum freedom to optimise.
+Generally, you want to JIT-compile the largest possible chunk of your computation; ideally, the entire update step. This gives the compiler maximum freedom to optimise.
 
 ## JIT and caching
 

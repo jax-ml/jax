@@ -13,11 +13,12 @@ kernelspec:
 ---
 
 (automatic-vectorization)=
-# Automatic Vectorization in JAX
+# Automatic vectorization
 
-In the previous section we discussed JIT compilation via the `jax.jit` function. This notebook discusses another of JAX's transforms: vectorization via `jax.vmap`.
+In the previous section we discussed JIT compilation via the {func}`jax.jit` function.
+This notebook discusses another of JAX's transforms: vectorization via {func}`jax.vmap`.
 
-## Manual Vectorization
+## Manual vectorization
 
 Consider the following simple code that computes the convolution of two one-dimensional vectors:
 
@@ -72,9 +73,9 @@ def manually_vectorized_convolve(xs, ws):
 manually_vectorized_convolve(xs, ws)
 ```
 
-Such re-implementation is messy and error-prone; fortunately JAX provides another way.
+Such re-implementation can be messy and error-prone as the complexity of a function increases; fortunately JAX provides another way.
 
-## Automatic Vectorization
+## Automatic vectorization
 
 In JAX, the {func}`jax.vmap` transformation is designed to generate such a vectorized implementation of a function automatically:
 

@@ -13,7 +13,7 @@ kernelspec:
 ---
 
 (advanced-autodiff)=
-# Advanced automatic differentiation 201
+# Advanced automatic differentiation
 
 In this tutorial, you will learn about complex applications of automatic differentiation (autodiff) in JAX and gain a better understanding of how taking derivatives in JAX can be both easy and powerful.docs.g
 
