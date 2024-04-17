@@ -211,6 +211,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     prims = [eqn.primitive for eqn in jaxpr.eqns]
     self.assertEqual(prims, [lax.convert_element_type_p])  # No copy generated.
 
+  def testDtypeWrapperCasting(self):
+    self.assertEqual(jnp.uint8(-1.0), jnp.uint8(0))
+    self.assertEqual(jnp.uint8(np.float32(-1.0)), jnp.uint8(0))
+    self.assertEqual(jnp.uint8(np.array([-1.0])), jnp.uint8([0]))
+    self.assertEqual(jnp.uint8(jnp.float32(-1.0)), jnp.uint8(0))
+
   def testBoolDtypeAlias(self):
     self.assertIs(jnp.bool, jnp.bool_)
 
