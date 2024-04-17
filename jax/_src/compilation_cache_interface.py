@@ -13,8 +13,8 @@
 # limitations under the License.
 
 from abc import abstractmethod
-import pathlib
 
+from jax._src import path as pathlib
 from jax._src import util
 
 
