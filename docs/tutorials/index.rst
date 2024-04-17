@@ -54,12 +54,3 @@ JAX 301
    jax-primitives
    jaxpr
    advanced-compilation
-
-
-Reference
----------
-
-.. toctree::
-   :maxdepth: 1
-
-   installation
