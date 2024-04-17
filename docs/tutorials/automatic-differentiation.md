@@ -162,7 +162,7 @@ Essentially, when using the `argnums` argument, if `f` is a Python function for 
 (automatic-differentiation-nested-lists-tuples-and-dicts)=
 ## 3. Differentiating with respect to nested lists, tuples, and dicts
 
-Due to JAX's PyTree abstraction (see {ref}`thinking-in-jax-pytrees`), differentiating with
+Due to JAX's PyTree abstraction (see {ref}`pytrees-what-is-a-pytree`), differentiating with
 respect to standard Python containers just works, so use tuples, lists, and dicts (and arbitrary nesting) however you like.
 
 Continuing the previous example:

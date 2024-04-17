@@ -42,7 +42,7 @@ def f(x):
 result = f(2)
 ```
 
-What is printed is not the runtime value, but the trace-time abstract value (if you're not familiar with *tracing* in JAX, a good primer can be found in {ref}`thinking-in-jax`.
+What is printed is not the runtime value, but the trace-time abstract value (if you're not familiar with *tracing* in JAX, a good primer can be found in {ref}`key-concepts-tracing`.
 
 To print the value at runtime, you need a callback, for example {func}`jax.debug.print` (you can learn more about debugging in {ref}`debugging`):
 
