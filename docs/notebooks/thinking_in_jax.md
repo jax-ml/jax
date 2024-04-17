@@ -5,7 +5,7 @@ jupytext:
     extension: .md
     format_name: myst
     format_version: 0.13
-    jupytext_version: 1.16.1
+    jupytext_version: 1.16.0
 kernelspec:
   display_name: Python 3
   name: python3
@@ -485,4 +485,4 @@ f(x)
 
 +++ {"id": "C-QZ5d1DG-dv"}
 
-For this reason, a standard convention in JAX programs is to `import numpy as np` and `import jax.numpy as jnp` so that both interfaces are available for finer control over whether operations are performed in a static matter (with `numpy`, once at compile-time) or a traced manner (with `jax.numpy`, optimized at run-time).
+For this reason, a standard convention in JAX programs is to `import numpy as np` and `import jax.numpy as jnp` so that both interfaces are available for finer control over whether operations are performed in a static manner (with `numpy`, once at compile-time) or a traced manner (with `jax.numpy`, optimized at run-time).

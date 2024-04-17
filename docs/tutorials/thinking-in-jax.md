@@ -455,4 +455,4 @@ def f(x):
 f(x)
 ```
 
-For this reason, a standard convention in JAX programs is to `import numpy as np` and `import jax.numpy as jnp` so that both interfaces are available for finer control over whether operations are performed in a static matter (with `numpy`, once at compile-time) or a traced manner (with {mod}`jax.numpy`, optimized at run-time).
+For this reason, a standard convention in JAX programs is to `import numpy as np` and `import jax.numpy as jnp` so that both interfaces are available for finer control over whether operations are performed in a static manner (with `numpy`, once at compile-time) or a traced manner (with {mod}`jax.numpy`, optimized at run-time).
