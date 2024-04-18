@@ -2996,7 +2996,11 @@ def live_arrays(platform=None):
   return xb.get_backend(platform).live_arrays()
 
 def clear_caches():
-  """Clear all compilation and staging caches."""
+  """Clear all compilation and staging caches.
+
+  This doesn't clear the persistent cache; to disable it (e.g. for benchmarks),
+  set the jax_enable_compilation_cache config option to False.
+  """
   # Clear all lu.cache and util.weakref_lru_cache instances (used for staging
   # and Python-dispatch compiled executable caches).
   lu.clear_all_caches()
