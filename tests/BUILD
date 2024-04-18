@@ -667,6 +667,7 @@ jax_test(
     name = "nn_test",
     srcs = ["nn_test.py"],
     shard_count = {
+        "cpu": 10,
         "tpu": 10,
         "gpu": 10,
     },
