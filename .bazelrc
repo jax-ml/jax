@@ -111,6 +111,10 @@ build:cuda_clang --copt=-Wno-gnu-offsetof-extensions
 # Disable clang extention that rejects unknown arguments.
 build:cuda_clang --copt=-Qunused-arguments
 
+build:mosaic_gpu --@llvm-project//mlir:enable_cuda=true
+build:mosaic_gpu --copt=-DLLVM_HAS_NVPTX_TARGET=1
+build:mosaic_gpu --//jax:build_mosaic_gpu=true
+
 build:rocm --crosstool_top=@local_config_rocm//crosstool:toolchain
 build:rocm --define=using_rocm=true --define=using_rocm_hipcc=true
 build:rocm --@xla//xla/python:enable_gpu=true

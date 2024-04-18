@@ -70,6 +70,19 @@ config_setting(
     },
 )
 
+# If this flag is true, jaxlib will be built with Mosaic GPU. VERY EXPERIMENTAL.
+bool_flag(
+    name = "build_mosaic_gpu",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "enable_mosaic_gpu",
+    flag_values = {
+        ":build_mosaic_gpu": "True",
+    },
+)
+
 exports_files([
     "LICENSE",
     "version.py",
@@ -114,6 +127,14 @@ package_group(
         "//...",
         "//learning/brain/research/jax",
     ] + pallas_tpu_internal_users,
+)
+
+package_group(
+    name = "mosaic_gpu_users",
+    packages = [
+        "//...",
+        "//learning/brain/research/jax",
+    ],
 )
 
 # JAX-private test utilities.
@@ -644,6 +665,37 @@ pytype_strict_library(
     deps = [
         ":pallas",
         "//jax/_src/pallas/triton",
+    ],
+)
+
+# This target only supports sm_90 GPUs.
+py_library(
+    name = "mosaic_gpu",
+    srcs = glob(["experimental/mosaic/gpu/*.py"]),
+    visibility = [
+        ":mosaic_gpu_users",
+    ],
+    deps = [
+        ":config",
+        ":jax",
+        ":mlir",
+        "//jax/_src/lib",
+        "//third_party/py/absl/flags",
+        "//jaxlib/mlir:arithmetic_dialect",
+        "//jaxlib/mlir:builtin_dialect",
+        "//jaxlib/mlir:execution_engine",
+        "//jaxlib/mlir:func_dialect",
+        "//jaxlib/mlir:gpu_dialect",
+        "//jaxlib/mlir:ir",
+        "//jaxlib/mlir:llvm_dialect",
+        "//jaxlib/mlir:math_dialect",
+        "//jaxlib/mlir:memref_dialect",
+        "//jaxlib/mlir:nvgpu_dialect",
+        "//jaxlib/mlir:nvvm_dialect",
+        "//jaxlib/mlir:pass_manager",
+        "//jaxlib/mlir:scf_dialect",
+        "//jaxlib/mlir:vector_dialect",
+        "//third_party/py/numpy",
     ],
 )
 
