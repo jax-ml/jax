@@ -13,22 +13,22 @@ kernelspec:
 ---
 
 (debugging)=
-# Debugging 101
+# Introduction to debugging
 
-This tutorial introduces you to a set of built-in JAX debugging methods — {func}`jax.debug.print`, {func}`jax.debug.breakpoint`, and {func}`jax.debug.callback` — that you can use with various JAX transformations.
+This section introduces you to a set of built-in JAX debugging methods — {func}`jax.debug.print`, {func}`jax.debug.breakpoint`, and {func}`jax.debug.callback` — that you can use with various JAX transformations.
 
 Let's begin with {func}`jax.debug.print`.
 
-## JAX `debug.print` for high-level debugging
+## JAX `debug.print` for high-level
 
 **TL;DR** Here is a rule of thumb:
 
 - Use {func}`jax.debug.print` for traced (dynamic) array values with {func}`jax.jit`, {func}`jax.vmap` and others.
-- Use Python `print` for static values, such as dtypes and array shapes.
+- Use Python {func}`print` for static values, such as dtypes and array shapes.
 
 Recall from {ref}`jit-compilation` that when transforming a function with {func}`jax.jit`,
 the Python code is executed with abstract tracers in place of your arrays. Because of this,
-the Python `print` statement will only print this tracer value:
+the Python {func}`print` function will only print this tracer value:
 
 ```{code-cell}
 import jax
@@ -82,7 +82,7 @@ result = jax.lax.map(f, xs)
 
 Notice the order is different, as {func}`jax.vmap` and {func}`jax.lax.map` compute the same results in different ways. When debugging, the evaluation order details are exactly what you may need to inspect.
 
-Below is an example with {func}`jax.grad`, where {func}`jax.debug.print` only prints the forward pass. In this case, the behavior is similar to Python's `print`, but it's consistent if you apply {func}`jax.jit` during the call.
+Below is an example with {func}`jax.grad`, where {func}`jax.debug.print` only prints the forward pass. In this case, the behavior is similar to Python's {func}`print`, but it's consistent if you apply {func}`jax.jit` during the call.
 
 ```{code-cell}
 def f(x):

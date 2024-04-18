@@ -22,7 +22,8 @@ kernelspec:
 (working-with-pytrees)=
 # Working with pytrees
 
-JAX has built-in support for objects that look like dictionaries (dicts) of arrays, or lists of lists of dicts, or other nested structures — they are called JAX pytrees (also known as nests, or just trees). Often, in JAX, you want to operate over these nested pytrees. This tutorial will explain how to use them, provide useful code examples, and point out common "gotchas" and patterns.
+JAX has built-in support for objects that look like dictionaries (dicts) of arrays, or lists of lists of dicts, or other nested structures — in JAX these are called pytrees.
+This section will explain how to use them, provide useful code examples, and point out common "gotchas" and patterns.
 
 
 (pytrees-what-is-a-pytree)=
@@ -32,7 +33,7 @@ A pytree is a container-like structure built out of container-like Python object
 
 In the context of machine learning (ML), a pytree can contain:
 
-- Model parameters ({ref}`pytrees-example-jax-tree-map-ml`)
+- Model parameters
 - Dataset entries
 - Reinforcement learning agent observations
 
@@ -59,19 +60,17 @@ for pytree in example_trees:
   print(f"{repr(pytree):<45} has {len(leaves)} leaves: {leaves}")
 ```
 
-Any tree-like structure built out of container-like Python objects can be referred to as pytrees in JAX. Classes are considered container-like if they are in the pytree registry, which by default includes lists, tuples, and dicts. Any object whose type is *not* in the pytree container registry will be treated as a leaf node in the tree.
+Any tree-like structure built out of container-like Python objects can be treated as a pytree in JAX.
+Classes are considered container-like if they are in the pytree registry, which by default includes lists, tuples, and dicts. Any object whose type is *not* in the pytree container registry will be treated as a leaf node in the tree.
 
-The pytree registry can be extended to include user-defined container classes by registering a pair of functions that specify:
-
-1) How to convert an instance of the container type to a `(children, metadata)` pair; and
-2) How to convert this pair back to an instance of the container type.
-
-JAX will use these functions to canonicalize any tree of registered container objects into a flat tuple, and then reassemble the tree-like container before returning the processed data to the user.
+The pytree registry can be extended to include user-defined container classes by registering the class
+with functions that specify how to flatten the tree; see {ref}`pytrees-custom-pytree-nodes` below.
 
 (pytrees-common-pytree-functions)=
 ## Common pytree functions
 
-JAX provides a number of utilities to operate over pytrees. These can be found in the {mod}`jax.tree_util` subpackage.
+JAX provides a number of utilities to operate over pytrees. These can be found in the {mod}`jax.tree_util` subpackage;
+for convenience many of these have aliases in the {mod}`jax.tree` module.
 
 ### Common function: `jax.tree.map`
 
@@ -273,7 +272,7 @@ Notice that the `name` field now appears as a leaf, because all tuple elements a
 
 
 (pytree-and-jax-transformations)=
-## Pytree and JAX's transformations
+## Pytrees and JAX transformations
 
 Many JAX functions, like {func}`jax.lax.scan`, operate over pytrees of arrays. In addition, all JAX function transformations can be applied to functions that accept as input and produce as output pytrees of arrays.
 

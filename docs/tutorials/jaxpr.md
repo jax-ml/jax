@@ -13,7 +13,7 @@ kernelspec:
 ---
 
 (jax-internals-jaxpr)=
-# JAX internals 301: The jaxpr language
+# JAX internals: The jaxpr language
 
 Jaxprs are JAX’s internal intermediate representation (IR) of programs. They are explicitly typed, functional, first-order, and in algebraic normal form (ANF).
 

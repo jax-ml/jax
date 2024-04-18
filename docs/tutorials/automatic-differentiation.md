@@ -13,9 +13,9 @@ kernelspec:
 ---
 
 (automatic-differentiation)=
-# Automatic differentiation 101
+# Automatic differentiation
 
-In this tutorial, you will learn about fundamental applications of automatic differentiation (autodiff) in JAX. JAX has a pretty general automatic differentiation (autodiff) system. Computing gradients is a critical part of modern machine learning methods, and this tutorial will walk you through a few introductory autodiff topics, such as:
+In this section, you will learn about fundamental applications of automatic differentiation (autodiff) in JAX. JAX has a pretty general automatic differentiation (autodiff) system. Computing gradients is a critical part of modern machine learning methods, and this tutorial will walk you through a few introductory autodiff topics, such as:
 
 - {ref}`automatic-differentiation-taking-gradients`
 - {ref}`automatic-differentiation-linear logistic regression`
@@ -28,9 +28,9 @@ Make sure to also check out the {ref}`advanced-autodiff` tutorial for more advan
 While understanding how automatic differentiation works "under the hood" isn't crucial for using JAX in most contexts, you are encouraged to check out this quite accessible [video](https://www.youtube.com/watch?v=wG_nF1awSSY) to get a deeper sense of what's going on.
 
 (automatic-differentiation-taking-gradients)=
-## 1.Taking gradients with `jax.grad`
+## 1. Taking gradients with `jax.grad`
 
-In JAX, you can differentiate a function with the {func}`jax.grad` transformation:
+In JAX, you can differentiate a scalar-valued function with the {func}`jax.grad` transformation:
 
 ```{code-cell}
 import jax
@@ -162,7 +162,7 @@ Essentially, when using the `argnums` argument, if `f` is a Python function for 
 (automatic-differentiation-nested-lists-tuples-and-dicts)=
 ## 3. Differentiating with respect to nested lists, tuples, and dicts
 
-Due to JAX's PyTree abstraction (see {ref}`pytrees-what-is-a-pytree`), differentiating with
+Due to JAX's PyTree abstraction (see {ref}`working-with-pytrees`), differentiating with
 respect to standard Python containers just works, so use tuples, lists, and dicts (and arbitrary nesting) however you like.
 
 Continuing the previous example:
@@ -176,7 +176,7 @@ def loss2(params_dict):
 print(grad(loss2)({'W': W, 'b': b}))
 ```
 
-You can {ref}`pytrees-custom-pytree-nodes` to work with not just {func}`jax.grad` but other JAX transformations ({func}`jax.jit`, {func}`jax.vmap`, and so on).
+You can create {ref}`pytrees-custom-pytree-nodes` to work with not just {func}`jax.grad` but other JAX transformations ({func}`jax.jit`, {func}`jax.vmap`, and so on).
 
 
 (automatic-differentiation-evaluating-using-jax-value_and_grad)=

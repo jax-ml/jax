@@ -13,7 +13,7 @@ kernelspec:
 ---
 
 (jax-internals-jax-primitives)=
-# JAX internals 301: JAX primitives
+# JAX Internals: primitives
 
 ## Introduction to JAX primitives
 

@@ -20,10 +20,9 @@ This section briefly introduces some key concepts of the JAX package.
 (key-concepts-jax-arrays)=
 ## JAX arrays ({class}`jax.Array`)
 
-- `jax.Array` is the default array implementation in JAX.
-- `jax.Array` objects are never created directly, but rather using familiar
-  array creation APIs.
-- JAX arrays may be stored on a single device, or sharded across many devices.
+The default array implementation in JAX is {class}`jax.Array`. In many ways it is similar to
+the {class}`numpy.ndarray` type that you may be familar with from the NumPy package, but it
+has some important differences.
 
 ### Array creation
 
