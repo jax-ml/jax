@@ -148,7 +148,7 @@ def _svd_tall_and_square_input(
   # 35, no. 3 (2013): A1325-A1349.
   def correct_rank_deficiency(u_out):
     u_out, r = lax.linalg.qr(u_out, full_matrices=False)
-    u_out = u_out @ jnp.diag(lax.sign(jnp.diag(r)))
+    u_out = u_out @ jnp.diag(jnp.where(jnp.diag(r) >= 0, 1, -1))
     return u_out
 
   eps = float(jnp.finfo(a.dtype).eps)
