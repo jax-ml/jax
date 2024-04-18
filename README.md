@@ -360,8 +360,11 @@ Some standouts:
    startup (or set the environment variable `JAX_ENABLE_X64=True`).
    On TPU, JAX uses 32-bit values by default for everything _except_ internal
    temporary variables in 'matmul-like' operations, such as `jax.numpy.dot` and `lax.conv`.
-   Those ops have a `precision` parameter which can be used to simulate
-   true 32-bit, with a cost of possibly slower runtime.
+   Those ops have a `precision` parameter which can be used to approximate 32-bit operations
+   via three bfloat16 passes, with a cost of possibly slower runtime.
+   Non-matmul operations on TPU lower to implementations that often emphasize speed over
+   accuracy, so in practice computations on TPU will be less precise than similar
+   computations on other backends.
 1. Some of NumPy's dtype promotion semantics involving a mix of Python scalars
    and NumPy types aren't preserved, namely `np.add(1, np.array([2],
    np.float32)).dtype` is `float64` rather than `float32`.
