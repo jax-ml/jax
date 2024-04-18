@@ -323,6 +323,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @jtu.sample_product(shape=all_shapes, dtype=all_dtypes)
   def testNonzero(self, shape, dtype):
+    if numpy_version >= (2, 0, 0) and not shape:
+      shape = (1,)  # NumPy removed support for nonzero on scalars in 2.0.
     rng = jtu.rand_some_zero(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     with jtu.ignore_warning(category=DeprecationWarning,
@@ -338,6 +340,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     size=[1, 5, 10],
   )
   def testNonzeroSize(self, shape, dtype, size, fill_value):
+    if numpy_version >= (2, 0, 0) and not shape:
+      shape = (1,)  # NumPy removed support for nonzero on scalars in 2.0.
     rng = jtu.rand_some_zero(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     def np_fun(x):
@@ -356,6 +360,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @jtu.sample_product(shape=all_shapes, dtype=all_dtypes)
   def testFlatNonzero(self, shape, dtype):
+    if numpy_version >= (2, 0, 0) and not shape:
+      shape = (1,)  # NumPy removed support for nonzero on scalars in 2.0.
     rng = jtu.rand_some_zero(self.rng())
     np_fun = jtu.ignore_warning(
       category=DeprecationWarning,
@@ -375,6 +381,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     size=[1, 5, 10],
   )
   def testFlatNonzeroSize(self, shape, dtype, size, fill_value):
+    if numpy_version >= (2, 0, 0) and not shape:
+      shape = (1,)  # NumPy removed support for nonzero on scalars in 2.0.
     rng = jtu.rand_some_zero(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     @jtu.ignore_warning(category=DeprecationWarning, message="Calling nonzero on 0d arrays.*")
@@ -391,6 +399,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   @jtu.sample_product(shape=all_shapes, dtype=all_dtypes)
   def testArgWhere(self, shape, dtype):
+    if numpy_version >= (2, 0, 0) and not shape:
+      shape = (1,)  # NumPy removed support for nonzero on scalars in 2.0.
     rng = jtu.rand_some_zero(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     with jtu.ignore_warning(category=DeprecationWarning,
@@ -413,6 +423,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     size=[1, 5, 10],
   )
   def testArgWhereSize(self, shape, dtype, size, fill_value):
+    if numpy_version >= (2, 0, 0) and not shape:
+      shape = (1,)  # NumPy removed support for nonzero on scalars in 2.0.
     rng = jtu.rand_some_zero(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
     def np_fun(x):
@@ -4492,6 +4504,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     dtype=all_dtypes,
   )
   def testWhereOneArgument(self, shape, dtype):
+    if numpy_version >= (2, 0, 0) and not shape:
+      shape = (1,)  # NumPy removed support for nonzero on scalars in 2.0.
     rng = jtu.rand_some_zero(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
 
