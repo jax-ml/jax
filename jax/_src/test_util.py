@@ -1289,7 +1289,8 @@ class _LazyDtypes:
 
   @_cached_property
   def all_integer(self):
-    return self.supported([np.int8, np.int16, np.int32, np.int64])
+    return self.supported([
+        _dtypes.int4, np.int8, np.int16, np.int32, np.int64])
 
   @_cached_property
   def unsigned(self):
@@ -1297,7 +1298,8 @@ class _LazyDtypes:
 
   @_cached_property
   def all_unsigned(self):
-    return self.supported([np.uint8, np.uint16, np.uint32, np.uint64])
+    return self.supported([
+        _dtypes.uint4, np.uint8, np.uint16, np.uint32, np.uint64])
 
   @_cached_property
   def complex(self):

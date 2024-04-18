@@ -67,8 +67,8 @@ complex_dtypes = [np.dtype('complex64'), np.dtype('complex128')]
 all_dtypes = (bool_dtypes + signed_dtypes + unsigned_dtypes + float_dtypes +
               complex_dtypes)
 
-scalar_types = [jnp.bool_, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
-                jnp.uint8, jnp.uint16, jnp.uint32, jnp.uint64,
+scalar_types = [jnp.bool_, jnp.int4, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
+                jnp.uint4, jnp.uint8, jnp.uint16, jnp.uint32, jnp.uint64,
                 jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64,
                 jnp.complex64, jnp.complex128]
 
@@ -94,6 +94,7 @@ _EXPECTED_CANONICALIZE_X32[np.complex128] = np.complex64
 _EXPECTED_CANONICALIZE_X32[np.longlong] = np.int32
 
 UINT_DTYPES = {
+  4: jnp.uint4,
   8: np.uint8,
   16: np.uint16,
   32: np.uint32,
@@ -284,13 +285,15 @@ class DtypesTest(jtu.JaxTestCase):
       self.assertTrue(dtypes.issubdtype(np.dtype(t).type, t))
       self.assertTrue(dtypes.issubdtype(t, np.dtype(t).type))
       self.assertTrue(dtypes.issubdtype(t, np.dtype(t)))
-      if t != jnp.bfloat16:
-        for category in [np.generic, jnp.inexact, jnp.integer, jnp.signedinteger,
-                         jnp.unsignedinteger, jnp.floating, jnp.complexfloating]:
-          self.assertEqual(dtypes.issubdtype(t, category),
-                           np.issubdtype(np.dtype(t).type, category))
-          self.assertEqual(dtypes.issubdtype(t, category),
-                           np.issubdtype(np.dtype(t).type, category))
+      if t in [jnp.int4, jnp.uint4, jnp.bfloat16]:
+        # These dtype have no equivalent in NumPy.
+        continue
+      for category in [np.generic, jnp.inexact, jnp.integer, jnp.signedinteger,
+                       jnp.unsignedinteger, jnp.floating, jnp.complexfloating]:
+        self.assertEqual(dtypes.issubdtype(t, category),
+                         np.issubdtype(np.dtype(t).type, category))
+        self.assertEqual(dtypes.issubdtype(t, category),
+                         np.issubdtype(np.dtype(t).type, category))
 
   def testIsSubdtypeExtended(self):
     self.assertTrue(dtypes.issubdtype(dtypes.extended, dtypes.extended))
