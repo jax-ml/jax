@@ -27,7 +27,8 @@ import jax.numpy as jnp
 from jax._src import config, test_util as jtu
 from jax._src.dtypes import _default_types, canonicalize_dtype
 from jax.experimental import array_api
-
+from jax.experimental.array_api._fft_functions import (
+  NEEDS_COMPLEX_IN, NEEDS_REAL_IN)
 config.parse_flags_with_absl()
 
 MAIN_NAMESPACE = {
@@ -326,7 +327,7 @@ class ArrayAPIInspectionUtilsTest(jtu.JaxTestCase):
       target_dict = control[kind]
     assert info_dict == target_dict
 
-class ArrayAPIErrors(absltest.TestCase):
+class ArrayAPIErrors(jtu.JaxTestCase):
   """Test that our array API implementations raise errors where required"""
 
   # TODO(micky774): Remove when jnp.clip deprecation is completed
@@ -346,6 +347,31 @@ class ArrayAPIErrors(absltest.TestCase):
 
     with self.assertRaisesRegex(ValueError, complex_msg):
       array_api.clip(x, max=-1+5j)
+
+  @jtu.sample_product(
+    [dict(dtype=dtype,func_name=func_name)
+    for real in [True, False]
+    for dtype in (jtu.dtypes.complex if real else jtu.dtypes.floating)
+    + jtu.dtypes.integer + jtu.dtypes.boolean
+    for func_name in (NEEDS_REAL_IN if real else NEEDS_COMPLEX_IN)
+    ])
+  def testFftWarnings(self, dtype, func_name):
+    shape = (2, 3, 4)
+    rng = jtu.rand_default(self.rng())
+    x = rng(shape, dtype)
+    func = getattr(array_api.fft, func_name)
+
+    if func_name in NEEDS_COMPLEX_IN:
+      msg = "complex-valued input"
+    else:
+      msg = "real-valued"
+      if x.dtype.kind == 'c':
+        msg += ".*real or imaginary"
+    if x.dtype.kind in {'c', 'r'}:
+      msg += ".*or consider using a more"
+
+    with self.assertRaisesRegex(ValueError, expected_regex=msg):
+      func(x)
 
 
 if __name__ == '__main__':

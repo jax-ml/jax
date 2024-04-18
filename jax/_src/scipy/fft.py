@@ -55,7 +55,7 @@ def dct(x: Array, type: int = 2, n: int | None = None,
                  for a in range(x.ndim)])
 
   N = x.shape[axis]
-  v = _dct_interleave(x, axis)
+  v, = promote_dtypes_complex(_dct_interleave(x, axis))
   V = jnp.fft.fft(v, axis=axis)
   k = lax.expand_dims(jnp.arange(N, dtype=V.real.dtype), [a for a in range(x.ndim) if a != axis])
   out = V * _W4(N, k)
@@ -68,7 +68,7 @@ def dct(x: Array, type: int = 2, n: int | None = None,
 def _dct2(x: Array, axes: Sequence[int], norm: str | None) -> Array:
   axis1, axis2 = map(partial(canonicalize_axis, num_dims=x.ndim), axes)
   N1, N2 = x.shape[axis1], x.shape[axis2]
-  v = _dct_interleave(_dct_interleave(x, axis1), axis2)
+  v, = promote_dtypes_complex(_dct_interleave(_dct_interleave(x, axis1), axis2))
   V = jnp.fft.fftn(v, axes=axes)
   k1 = lax.expand_dims(jnp.arange(N1, dtype=V.dtype),
                        [a for a in range(x.ndim) if a != axis1])

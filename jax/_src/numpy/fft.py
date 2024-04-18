@@ -17,17 +17,64 @@ from __future__ import annotations
 from collections.abc import Sequence
 import operator
 import numpy as np
+import warnings
 
-from jax import dtypes
 from jax import lax
+from jax._src import dtypes
 from jax._src.lib import xla_client
 from jax._src.util import safe_zip
-from jax._src.numpy.util import check_arraylike, implements, promote_dtypes_inexact
+from jax._src.numpy.util import (
+  check_arraylike, implements,
+  promote_dtypes_inexact, promote_dtypes_complex)
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import ufuncs, reductions
 from jax._src.typing import Array, ArrayLike
 
 Shape = Sequence[int]
+
+NEEDS_COMPLEX_IN = {'fft', 'fftn', 'hfft', 'ifft', 'ifftn', 'irfft', 'irfftn'}
+NEEDS_REAL_IN = {
+  # These are already handled in lax.fft
+  # 'rfft', 'rfftn', 'ihfft',
+  'fftshift', 'ifftshift'
+  }
+
+# TODO(micky774): Promote warnings to ValueErrors when deprecation is completed
+# and uncomment the portion of NEEDS_REAL_IN which currently defers type
+# checking to lax.fft. Deprecation began 4-18-24.
+def _check_input_fft(func_name: str, x: Array):
+  kind = x.dtype.kind
+  suggest_alternative_msg = (
+    " or consider using a more appropriate fft function if applicable."
+  )
+  if func_name in NEEDS_COMPLEX_IN and kind != "c":
+    warnings.warn(
+      f"Passing non-complex valued inputs to {func_name} is deprecated and "
+      "will soon raise a ValueError. Please explicitly convert the input to a "
+      f"complex dtype before passing to {func_name} in order to suppress this "
+      "warning," + suggest_alternative_msg,
+      DeprecationWarning, stacklevel=2
+    )
+    return promote_dtypes_complex(x)[0]
+  if func_name in NEEDS_REAL_IN:
+    if kind == "c":
+      warnings.warn(
+        f"Passing complex-valued inputs to {func_name} is deprecated and "
+        "will soon raise a ValueError. To suppress this warning, please convert "
+        "to real values first, such as by using jnp.real or jnp.imag to take "
+        "the real or imaginary components respectively," + suggest_alternative_msg,
+        DeprecationWarning, stacklevel=2
+      )
+    elif kind != "f":
+      warnings.warn(
+        f"Passing integral inputs to {func_name} is deprecated and "
+        "will soon raise a ValueError. Please convert to a real-valued "
+        "floating-point input first.",
+        DeprecationWarning, stacklevel=2
+      )
+      return promote_dtypes_inexact(x)
+  return x
+
 
 def _fft_norm(s: Array, func_name: str, norm: str) -> Array:
   if norm == "backward":
@@ -50,6 +97,7 @@ def _fft_core(func_name: str, fft_type: xla_client.FftType, a: ArrayLike,
   full_name = f"jax.numpy.fft.{func_name}"
   check_arraylike(full_name, a)
   arr = jnp.asarray(a)
+  arr = _check_input_fft(func_name, arr)
 
   if s is not None:
     s = tuple(map(operator.index, s))
@@ -300,6 +348,7 @@ def rfftfreq(n: int, d: ArrayLike = 1.0, *, dtype=None) -> Array:
 def fftshift(x: ArrayLike, axes: None | int | Sequence[int] = None) -> Array:
   check_arraylike("fftshift", x)
   x = jnp.asarray(x)
+  arr = _check_input_fft("fftshift", x)
   shift: int | Sequence[int]
   if axes is None:
     axes = tuple(range(x.ndim))
@@ -316,6 +365,7 @@ def fftshift(x: ArrayLike, axes: None | int | Sequence[int] = None) -> Array:
 def ifftshift(x: ArrayLike, axes: None | int | Sequence[int] = None) -> Array:
   check_arraylike("ifftshift", x)
   x = jnp.asarray(x)
+  arr = _check_input_fft("ifftshift", x)
   shift: int | Sequence[int]
   if axes is None:
     axes = tuple(range(x.ndim))

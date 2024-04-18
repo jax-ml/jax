@@ -27,7 +27,7 @@ from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.numpy.util import promote_dtypes_complex
-from jax._src.numpy.fft import _fft_norm
+from jax._src.numpy.fft import _fft_norm, NEEDS_COMPLEX_IN, NEEDS_REAL_IN
 
 config.parse_flags_with_absl()
 
@@ -37,7 +37,8 @@ FFT_NORMS = [None, "ortho", "forward", "backward"]
 float_dtypes = jtu.dtypes.floating
 inexact_dtypes = jtu.dtypes.inexact
 real_dtypes = float_dtypes + jtu.dtypes.integer + jtu.dtypes.boolean
-all_dtypes = real_dtypes + jtu.dtypes.complex
+complex_dtypes = jtu.dtypes.complex
+all_dtypes = real_dtypes + complex_dtypes
 
 
 def _get_fftn_test_axes(shape):
@@ -89,7 +90,7 @@ def _zero_for_irfft(z, axes):
   else:
     parts = [lax.slice_in_dim(z.real, 0, 1, axis=axis).real,
              lax.slice_in_dim(z.real, 1, size, axis=axis)]
-  return jnp.concatenate(parts, axis=axis)
+  return jnp.concatenate(parts, axis=axis, dtype=z.dtype)
 
 
 class FftTest(jtu.JaxTestCase):
@@ -142,7 +143,7 @@ class FftTest(jtu.JaxTestCase):
     [dict(inverse=inverse, real=real, dtype=dtype)
      for inverse in [False, True]
      for real in [False, True]
-     for dtype in (real_dtypes if real and not inverse else all_dtypes)
+     for dtype in (float_dtypes if real and not inverse else complex_dtypes)
     ],
     [dict(shape=shape, axes=axes, s=s)
      for shape in [(10,), (10, 10), (9,), (2, 3, 4), (2, 3, 4, 5)]
@@ -202,20 +203,21 @@ class FftTest(jtu.JaxTestCase):
       name = 'r' + name
     if inverse:
       name = 'i' + name
+    dtype = np.float64 if (real and not inverse) else np.complex64
     func = _get_fftn_func(jnp.fft, inverse, real)
     self.assertRaisesRegex(
         ValueError,
         "jax.numpy.fft.{} only supports 1D, 2D, and 3D FFTs. "
         "Got axes None with input rank 4.".format(name),
-        lambda: func(rng([2, 3, 4, 5], dtype=np.float64), axes=None))
+        lambda: func(rng([2, 3, 4, 5], dtype=dtype), axes=None))
     self.assertRaisesRegex(
         ValueError,
         f"jax.numpy.fft.{name} does not support repeated axes. Got axes \\[1, 1\\].",
-        lambda: func(rng([2, 3], dtype=np.float64), axes=[1, 1]))
+        lambda: func(rng([2, 3], dtype=dtype), axes=[1, 1]))
     self.assertRaises(
-        ValueError, lambda: func(rng([2, 3], dtype=np.float64), axes=[2]))
+        ValueError, lambda: func(rng([2, 3], dtype=dtype), axes=[2]))
     self.assertRaises(
-        ValueError, lambda: func(rng([2, 3], dtype=np.float64), axes=[-3]))
+        ValueError, lambda: func(rng([2, 3], dtype=dtype), axes=[-3]))
 
   def testFftEmpty(self):
     out = jnp.fft.fft(jnp.zeros((0,), jnp.complex64)).block_until_ready()
@@ -225,9 +227,11 @@ class FftTest(jtu.JaxTestCase):
     [dict(inverse=inverse, real=real, hermitian=hermitian, dtype=dtype)
       for inverse in [False, True]
       for real in [False, True]
-      for hermitian in [False, True]
-      for dtype in (real_dtypes if (real and not inverse) or (hermitian and inverse)
-                                else all_dtypes)
+      for hermitian in [False] + ([] if real else [True])
+      for dtype in (
+        float_dtypes if (real and not inverse) or (hermitian and inverse)
+        else complex_dtypes
+      )
     ],
     shape=[(10,)],
     n=[None, 1, 7, 13, 20],
@@ -289,7 +293,7 @@ class FftTest(jtu.JaxTestCase):
     [dict(inverse=inverse, real=real, dtype=dtype)
      for inverse in [False, True]
      for real in [False, True]
-     for dtype in (real_dtypes if real and not inverse else all_dtypes)
+     for dtype in (float_dtypes if real and not inverse else complex_dtypes)
     ],
     shape=[(16, 8, 4, 8), (16, 8, 4, 8, 4)],
     axes=[(-2, -1), (0, 1), (1, 3), (-1, 2)],
@@ -423,7 +427,7 @@ class FftTest(jtu.JaxTestCase):
      for shape in [[9], [10], [101], [102], [3, 5], [3, 17], [5, 7, 11]]
      for axes in _get_fftn_test_axes(shape)
     ],
-    dtype=all_dtypes,
+    dtype=float_dtypes,
   )
   def testFftshift(self, shape, dtype, axes):
     rng = jtu.rand_default(self.rng())
@@ -437,7 +441,7 @@ class FftTest(jtu.JaxTestCase):
      for shape in [[9], [10], [101], [102], [3, 5], [3, 17], [5, 7, 11]]
      for axes in _get_fftn_test_axes(shape)
     ],
-    dtype=all_dtypes,
+    dtype=float_dtypes,
   )
   def testIfftshift(self, shape, dtype, axes):
     rng = jtu.rand_default(self.rng())
@@ -462,6 +466,31 @@ class FftTest(jtu.JaxTestCase):
     if func_name[0] != "i":
       np_norm = np.reciprocal(np_norm)
     self.assertArraysAllClose(jax_norm, np_norm, rtol=3e-8, check_dtypes=False)
+
+
+  @jtu.sample_product(
+    [dict(dtype=dtype,func_name=func_name)
+    for real in [True, False]
+    for dtype in (complex_dtypes if real else float_dtypes)
+    + jtu.dtypes.integer + jtu.dtypes.boolean
+    for func_name in (NEEDS_REAL_IN if real else NEEDS_COMPLEX_IN)
+    ])
+  def testFftWarnings(self, dtype, func_name):
+    shape = (2, 3, 4)
+    rng = jtu.rand_default(self.rng())
+    x = rng(shape, dtype)
+    func = getattr(jnp.fft, func_name)
+
+    if func_name in NEEDS_COMPLEX_IN:
+      msg = "non-complex"
+    else:
+      msg = "complex-valued" if x.dtype.kind == 'c' else "integral"
+    if x.dtype.kind in {'c', 'r'}:
+      msg += ".*or consider using a more"
+
+    with self.assertWarnsRegex(DeprecationWarning, expected_regex=msg):
+      func(x)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

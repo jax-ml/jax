@@ -177,6 +177,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     boundary=[None, 'even', 'odd', 'zeros'],
     padded=[True, False],
   )
+  @jax.numpy_dtype_promotion('standard')
   def testStftAgainstNumpy(self, *, shape, dtype, fs, window, nperseg,
                            noverlap, nfft, detrend, boundary, padded,
                            timeaxis):
@@ -221,6 +222,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     scaling=['density', 'spectrum'],
     average=['mean'],
   )
+  @jax.numpy_dtype_promotion('standard')
   def testCsdAgainstNumpy(
       self, *, xshape, yshape, dtype, fs, window, nperseg, noverlap, nfft,
       detrend, scaling, timeaxis, average):
@@ -263,6 +265,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     scaling=['density', 'spectrum'],
     average=['mean'],
   )
+  @jax.numpy_dtype_promotion('standard')
   def testCsdWithSameParamAgainstNumpy(
       self, *, shape, dtype, fs, window, nperseg, noverlap, nfft,
       detrend, scaling, timeaxis, average):
@@ -308,6 +311,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     scaling=['density', 'spectrum'],
     average=['mean', 'median'],
   )
+  @jax.numpy_dtype_promotion('standard')
   def testWelchAgainstNumpy(self, *, shape, dtype, fs, window, nperseg,
                             noverlap, nfft, detrend, return_onesided,
                             scaling, timeaxis, average):
@@ -347,6 +351,7 @@ class LaxBackedScipySignalTests(jtu.JaxTestCase):
     use_noverlap=[False, True],
     dtype=jtu.dtypes.floating + jtu.dtypes.integer,
   )
+  @jax.numpy_dtype_promotion('standard')
   def testWelchWithDefaultStepArgsAgainstNumpy(
       self, *, shape, dtype, nperseg, noverlap, use_nperseg, use_noverlap,
       use_window, timeaxis):

@@ -267,7 +267,7 @@ class JetTest(jtu.JaxTestCase):
   @jtu.skip_on_devices("tpu")
   def test_abs(self):        self.unary_check(jnp.abs)
   @jtu.skip_on_devices("tpu")
-  def test_fft(self):        self.unary_check(jnp.fft.fft)
+  def test_fft(self):        self.unary_check(jnp.fft.fft, dtype=jnp.complex64)
   @jtu.skip_on_devices("tpu")
   def test_log1p(self):      self.unary_check(jnp.log1p, lims=[0, 4.])
   @jtu.skip_on_devices("tpu")

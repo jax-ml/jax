@@ -42,6 +42,10 @@ Remember to align the itemized text with the first line of an item within a list
   * The {func}`jax.numpy.hypot` function now issues a deprecation warning when
     passing complex-valued inputs to it. This will raise an error when the
     deprecation is completed.
+  * The {mod}`jax.numpy.fft` module now issues a deprecation warning when
+    passing inputs that would require implicit conversion (e.g. `jnp.float32`
+    with `fft`, `jnp.int32` with `rftt`). Either manually onvert the inputs
+    to preserve old behavior, or use a more appropriate `fft` function.
 
 ## jaxlib 0.4.27
 

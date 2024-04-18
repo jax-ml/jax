@@ -247,12 +247,11 @@ def _fft_helper(x: Array, win: Array, detrend_func: Callable[[Array], Array],
   result = detrend_func(result)
 
   # Apply window by multiplication
-  if jnp.iscomplexobj(win):
-    result, = promote_dtypes_complex(result)
   result = win.reshape((1,) * len(batch_shape) + (1, nperseg)) * result
 
   # Perform the fft on last axis. Zero-pads automatically
   if sides == 'twosided':
+    result, = promote_dtypes_complex(result)
     return jax.numpy.fft.fft(result, n=nfft)
   else:
     return jax.numpy.fft.rfft(result.real, n=nfft)
