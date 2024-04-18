@@ -131,13 +131,6 @@ def get_addressable_devices_for_shard_arg(
 def _get_replicated_slices(num_addressable_devices: int):
   return ((slice(None),),) * num_addressable_devices
 
-def _shard_token(x, sharding):
-  devices = get_addressable_devices_for_shard_arg(sharding)
-  indices = _get_replicated_slices(len(devices))
-  zeros = np.zeros((), dtype=np.dtype(np.bool_))
-  aval = api_util.shaped_abstractify(zeros)
-  return batched_device_put(aval, sharding, [zeros for _ in indices], devices)
-shard_arg_handlers[core.Token] = _shard_token
 
 def _masked_array_error(x, sharding):
   raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "
@@ -1148,8 +1141,9 @@ class ExecuteReplicated:
   def _add_tokens_to_inputs(self, input_bufs):
     if self.ordered_effects:
       tokens = [
-        dispatch.runtime_tokens.get_token_input(eff, self._local_devices)
-        for eff in self.ordered_effects]
+          dispatch.runtime_tokens.get_token_input(eff, self._local_devices)._buf
+          for eff in self.ordered_effects
+      ]
       input_bufs = [*tokens, *input_bufs]
     return input_bufs
 
@@ -1163,7 +1157,7 @@ class ExecuteReplicated:
     for eff, token_buf in zip(self.ordered_effects, token_bufs):
       assert len(token_buf) > 0
       if len(token_buf) == 1:
-        dispatch.runtime_tokens.set_token_result(eff, token_buf[0])
+        dispatch.runtime_tokens.set_token_result(eff, core.Token(token_buf[0]))
       else:
         token_devices = []
         for token in token_buf:
@@ -1173,7 +1167,9 @@ class ExecuteReplicated:
         global_token_array = jax.make_array_from_single_device_arrays(
             (0,), s, token_buf
         )
-        dispatch.runtime_tokens.set_token_result(eff, global_token_array)
+        dispatch.runtime_tokens.set_token_result(
+            eff, core.Token(global_token_array)
+        )
 
   @profiler.annotate_function
   def __call__(self, *args):

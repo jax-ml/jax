@@ -673,8 +673,12 @@ class JitTest(jtu.BufferDonationTestCase):
 
     arr = jnp.ones(10)
     token = jax.lax.create_token()
+    _, out_token = noop(arr, token)
 
-    self.assertEqual(token, noop(arr, token)[1])
+    self.assertIsInstance(token, core.Token)
+    self.assertIsInstance(out_token, core.Token)
+    # Different token objects.
+    self.assertIsNot(token, out_token)
 
   def test_jit_bad_input(self):
     def f(x):
@@ -1225,7 +1229,6 @@ class JitTest(jtu.BufferDonationTestCase):
     )
     for s in ("\"x\"", "y['hi']", "args[0]", "args[1]", "kwargs['z']", "kwargs['w']"):
       self.assertNotIn(s, hlo_str)
-
 
   @parameterized.parameters([0, 2, [(0, 2)]])
   def test_jit_lower_arg_info_static_argnums(self, static_argnums):
@@ -3732,7 +3735,7 @@ class APITest(jtu.JaxTestCase):
     self.assertIsInstance(x, core.Token)
 
   def test_jit_capturing_token(self):
-    tok = core.token
+    tok = jax.lax.create_token()
     _, y = jax.jit(lambda x: (x + 2, tok))(7)
     self.assertIsInstance(y, core.Token)
 

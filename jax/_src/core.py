@@ -1635,6 +1635,70 @@ class UnshapedArray(AbstractValue):
            "UnshapedArray instances to ever be produced.")
     raise TypeError(msg)
 
+def _canonicalize_dimension(dim: DimSize) -> DimSize:
+  # Dimensions are most commonly integral (by far), so we check that first.
+  try:
+    return operator.index(dim)
+  except TypeError as e:
+    type_error = e
+  if isinstance(dim, Tracer) and config.dynamic_shapes.value:
+    if not (dim.ndim == 0 and (dtypes.issubdtype(dim.dtype, np.integer)
+                               or isinstance(dim.dtype, bint))):
+      raise TypeError(f"Dimensions must be integer scalars; got {dim.ndim=} {dim.dtype=}")
+    return dim
+  elif (config.dynamic_shapes.value and isinstance(dim, DArray) and
+        type(dim._aval.dtype) is bint and not dim._aval.shape):
+    return dim
+  elif is_dim(dim):
+    return dim
+  else:
+    raise type_error
+
+def canonicalize_shape(shape: Shape, context: str="") -> tuple[Any, ...]:
+  """Canonicalizes and checks for errors in a user-provided shape value.
+
+  Args:
+    shape: a Python value that represents a shape.
+
+  Returns:
+    A tuple of canonical dimension values.
+  """
+  try:
+    return tuple(unsafe_map(_canonicalize_dimension, shape))
+  except TypeError:
+    pass
+  raise _invalid_shape_error(shape, context)
+
+def canonicalize_dim(d: DimSize, context: str="") -> DimSize:
+  """Canonicalizes and checks for errors in a user-provided shape dimension value.
+
+  Args:
+    f: a Python value that represents a dimension.
+
+  Returns:
+    A canonical dimension value.
+  """
+  return canonicalize_shape((d,), context)[0]
+
+def _invalid_shape_error(shape: Shape, context: str=""):
+  if config.dynamic_shapes.value:
+    msg = ("Shapes must be 1D sequences of integer scalars, "
+           f"got {shape}")
+  else:
+    msg = ("Shapes must be 1D sequences of concrete values of integer type, "
+           f"got {shape}.")
+  if context:
+    msg += f" {context}."
+  if not config.dynamic_shapes.value and any(
+         isinstance(x, Tracer) and isinstance(get_aval(x), ShapedArray)
+         and not isinstance(get_aval(x), ConcreteArray) for x in shape):
+    msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
+            "smaller subfunctions.")
+    for x in shape:
+      if isinstance(x, Tracer) and hasattr(x, "_origin_msg"):
+        msg += x._origin_msg()
+
+  return TypeError(msg)
 
 class ShapedArray(UnshapedArray):
   __slots__ = ['shape', 'named_shape']
@@ -1960,9 +2024,18 @@ class AbstractToken(AbstractValue):
   def at_least_vspace(self): return self
 abstract_token: AbstractToken = AbstractToken()
 
+# Singleton shaped array used by all abstract tokens when shape/dtype is needed.
+token_shaped_array: ShapedArray = ShapedArray((0,), np.dtype(np.bool_))
+
 # Concrete token object
-class Token: pass
-token: Token = Token()
+class Token:
+  # The underlying data wrapped by the token, could be used to threaded in and
+  # out of computations to build up data dependency.
+  _buf: Array
+  def __init__(self, buf):
+    self._buf = buf
+  def block_until_ready(self):
+    self._buf.block_until_ready()
 pytype_aval_mappings[Token] = lambda _: abstract_token
 
 
@@ -2120,71 +2193,6 @@ def dimension_as_value(d: DimSize):
   # For shape_poly._DimPolynomial
   if hasattr(d, "dimension_as_value"): return d.dimension_as_value()
   return operator.index(d)
-
-def _canonicalize_dimension(dim: DimSize) -> DimSize:
-  # Dimensions are most commonly integral (by far), so we check that first.
-  try:
-    return operator.index(dim)
-  except TypeError as e:
-    type_error = e
-  if isinstance(dim, Tracer) and config.dynamic_shapes.value:
-    if not (dim.ndim == 0 and (dtypes.issubdtype(dim.dtype, np.integer)
-                               or isinstance(dim.dtype, bint))):
-      raise TypeError(f"Dimensions must be integer scalars; got {dim.ndim=} {dim.dtype=}")
-    return dim
-  elif (config.dynamic_shapes.value and isinstance(dim, DArray) and
-        type(dim._aval.dtype) is bint and not dim._aval.shape):
-    return dim
-  elif is_dim(dim):
-    return dim
-  else:
-    raise type_error
-
-def canonicalize_shape(shape: Shape, context: str="") -> tuple[Any, ...]:
-  """Canonicalizes and checks for errors in a user-provided shape value.
-
-  Args:
-    shape: a Python value that represents a shape.
-
-  Returns:
-    A tuple of canonical dimension values.
-  """
-  try:
-    return tuple(unsafe_map(_canonicalize_dimension, shape))
-  except TypeError:
-    pass
-  raise _invalid_shape_error(shape, context)
-
-def canonicalize_dim(d: DimSize, context: str="") -> DimSize:
-  """Canonicalizes and checks for errors in a user-provided shape dimension value.
-
-  Args:
-    f: a Python value that represents a dimension.
-
-  Returns:
-    A canonical dimension value.
-  """
-  return canonicalize_shape((d,), context)[0]
-
-def _invalid_shape_error(shape: Shape, context: str=""):
-  if config.dynamic_shapes.value:
-    msg = ("Shapes must be 1D sequences of integer scalars, "
-           f"got {shape}")
-  else:
-    msg = ("Shapes must be 1D sequences of concrete values of integer type, "
-           f"got {shape}.")
-  if context:
-    msg += f" {context}."
-  if not config.dynamic_shapes.value and any(
-         isinstance(x, Tracer) and isinstance(get_aval(x), ShapedArray)
-         and not isinstance(get_aval(x), ConcreteArray) for x in shape):
-    msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
-            "smaller subfunctions.")
-    for x in shape:
-      if isinstance(x, Tracer) and hasattr(x, "_origin_msg"):
-        msg += x._origin_msg()
-
-  return TypeError(msg)
 
 class SomeTracer:
   __slots__ = ()

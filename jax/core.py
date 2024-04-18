@@ -148,7 +148,6 @@ from jax._src.core import (
   subst_axis_names_var as subst_axis_names_var,
   substitute_vars_in_output_ty as substitute_vars_in_output_ty,
   thread_local_state as thread_local_state,
-  token as token,
   trace_state_clean as trace_state_clean,
   traverse_jaxpr_params as traverse_jaxpr_params,
   typecheck as typecheck,

@@ -24,6 +24,10 @@ Remember to align the itemized text with the first line of an item within a list
     to non-parallel computations, as we already do async dispatch for parallel
     computations. You can recover the old behavior by setting
     `jax.config.update('jax_cpu_enable_async_dispatch', False)`.
+  * `core.Token` now is a non-trivial class which wraps a `jax.Array`. It could
+    be created and threaded in and out of computations to build up dependency.
+    The singleton object `core.token` has been removed, users now should create
+    and use fresh `core.Token` objects instead.
 
 * Deprecations & Removals
   * Pallas now exclusively uses XLA for compiling kernels on GPU. The old

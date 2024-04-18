@@ -107,7 +107,7 @@ class RuntimeTokenSet(threading.local):
 
   # For each ordered effect, the token returned by the last dispatched
   # computation, sharded over the devices in that computation.
-  current_tokens: dict[core.Effect, jax.Array]
+  current_tokens: dict[core.Effect, core.Token]
 
   # For each device, the runtime token returned by the last dispatched
   # computation on that device.
@@ -117,11 +117,12 @@ class RuntimeTokenSet(threading.local):
     self.current_tokens = {}
     self.output_runtime_tokens = {}
 
-  def get_token_input(self, eff: core.Effect,
-                      devices: list[Device]) -> jax.Array:
+  def get_token_input(
+      self, eff: core.Effect, devices: list[Device]
+  ) -> core.Token:
     tok = self.current_tokens.get(eff, np.zeros(0, np.bool_))
 
-    if isinstance(tok, jax.Array):
+    if isinstance(tok, core.Token):
       # The order of devices may change, so we need to reshard if necessary.
       # TODO(yueshengys): This might still be buggy in a multi-process SPMD
       # scenario. Revise the logic later. A distributed shutdown barrier inside
@@ -131,11 +132,11 @@ class RuntimeTokenSet(threading.local):
     # We only use replicated sharding for the first time when the token for the
     # order effect hasn't been created.
     s = jax.sharding.GSPMDSharding.get_replicated(devices)
-    sharded_tok = pxla.shard_args([s], [tok])[0]
+    sharded_tok = core.Token(pxla.shard_args([s], [tok])[0])
     self.current_tokens[eff] = sharded_tok
     return sharded_tok
 
-  def set_token_result(self, eff: core.Effect, token: jax.Array):
+  def set_token_result(self, eff: core.Effect, token: core.Token):
     self.current_tokens[eff] = token
 
   def set_output_runtime_token(self, device: Device, token: RuntimeToken):

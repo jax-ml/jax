@@ -2454,6 +2454,8 @@ def _infer_src_sharding(src, x) -> Sharding | None:
 def _check_sharding(x, s):
   if isinstance(s, Sharding):
     aval = shaped_abstractify(x)
+    if isinstance(aval, core.AbstractToken):
+      aval = core.token_shaped_array
     if isinstance(s, XLACompatibleSharding) and not isinstance(s, PmapSharding):
       pjit.pjit_check_aval_sharding(
           (s,), (aval,), None, "device_put args", allow_uneven_sharding=False)
