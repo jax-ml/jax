@@ -61,8 +61,7 @@ For an end-to-end transformer library built on JAX, see MaxText_.
    :caption: Getting Started
 
    installation
-   notebooks/quickstart
-   notebooks/thinking_in_jax
+   quickstart
    notebooks/Common_Gotchas_in_JAX
    faq
 
@@ -70,7 +69,7 @@ For an end-to-end transformer library built on JAX, see MaxText_.
    :hidden:
    :maxdepth: 1
 
-   jax-101/index
+   tutorials
 
 
 .. toctree::

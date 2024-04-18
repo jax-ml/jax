@@ -12,7 +12,7 @@ operations (e.g. {func}`jax.lax.psum` ) in multi-process settings, although
 other communication methods may be useful too depending on your use case (e.g.
 RPC, [mpi4jax](https://github.com/mpi4jax/mpi4jax)). If you’re not already
 familiar with JAX’s collective operations, we recommend starting with the
-{doc}`/jax-101/06-parallelism` notebook. An important requirement of
+{doc}`/sharded-computation` section. An important requirement of
 multi-process environments in JAX is direct communication links between
 accelerators, e.g. the high-speed interconnects for Cloud TPUs or
 [NCCL](https://developer.nvidia.com/nccl) for GPUs. These links allow
@@ -123,10 +123,11 @@ global devices.
 So how do you actually run a computation involving cross-process communication?
 **Use the same parallel evaluation APIs that you would in a single process!**
 
-For example, {func}`~jax.pmap` can be used to run a parallel computation across
+For example, {func}`~jax.experimental.shard_map.shard_map` can be used to
+run a parallel computation across
 multiple processes. (If you’re not already familiar with how to use
-{func}`~jax.pmap` to run across multiple devices within a single process, check
-out the {doc}`/jax-101/06-parallelism` notebook.) Each process should call the
+`shard_map` to run across multiple devices within a single process, check
+out the {doc}`/sharded-computation` tutorial.) Each process should call the
 same pmapped function and pass in arguments to be mapped across its *local*
 devices (i.e., the pmapped axis size is equal to the number of local devices).
 Similarly, the function will return outputs sharded across *local* devices only.

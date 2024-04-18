@@ -130,7 +130,7 @@ def f(x):
 f(2.) # ==> Pauses during execution
 ```
 
-![JAX debugger](../_static/debugger.gif)
+![JAX debugger](_static/debugger.gif)
 
 For value-dependent breakpointing, you can use runtime conditionals like {func}`jax.lax.cond`:
 
