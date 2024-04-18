@@ -4027,6 +4027,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
     f(inps)  # doesn't crash
 
   def test_spmd_preserves_input_sharding_vmap_grad(self):
+    if xla_extension_version < 258:
+      self.skipTest('Requires xla_extension_version >= 258')
+
     # https://github.com/google/jax/issues/20710
     n_devices = jax.device_count()
     sharding = PositionalSharding(jax.devices())
