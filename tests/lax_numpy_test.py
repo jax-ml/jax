@@ -195,11 +195,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
 
   @parameterized.parameters(
-    [dtype for dtype in [jnp.bool, jnp.uint8, jnp.uint16, jnp.uint32,
-                         jnp.uint64, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
-                         jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64,
-                         jnp.complex64, jnp.complex128]
-     if dtype == dtypes.canonicalize_dtype(dtype)])
+      [dtype for dtype in [
+          jnp.bool,
+          jnp.uint4, jnp.uint8, jnp.uint16, jnp.uint32, jnp.uint64,
+          jnp.int4, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
+          jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64,
+          jnp.complex64, jnp.complex128]
+       if dtype == dtypes.canonicalize_dtype(dtype)])
   def testDtypeWrappers(self, dtype):
     arr = dtype(0)
     self.assertIsInstance(arr, jax.Array)
