@@ -1833,20 +1833,15 @@ lowering_rules[lax.scan_p] = _scan_lowering_rule
 skip_mlir_conversions.add(lax.scan_p)
 
 
-def _while_lowering_rule(
+def _lower_while_via_fori(
     ctx: LoweringRuleContext,
     *args,
+    fori_jaxpr,
     cond_nconsts,
     cond_jaxpr,
     body_nconsts,
     body_jaxpr,
 ):
-  jaxpr, err = pallas_utils.pattern_match_while_to_fori_loop(
-      cond_jaxpr, cond_nconsts, body_jaxpr, body_nconsts
-  )
-  if jaxpr is None:
-    raise NotImplementedError(err)
-
   _, body_consts, carry = split_list(args, [cond_nconsts, body_nconsts])
   (lb, ub), args = carry[:2], carry[2:]
   for_out = _lower_jaxpr_to_for_loop(
@@ -1854,7 +1849,7 @@ def _while_lowering_rule(
           block_shapes=ctx.block_shapes[: body_nconsts + 1]
           + ctx.block_shapes[body_nconsts + 2 :],
       ),
-      jaxpr,
+      fori_jaxpr,
       lb,
       arith.subi(ub, lb),
       body_consts,
@@ -1863,6 +1858,84 @@ def _while_lowering_rule(
       unroll=1,
   )
   return [ub, ub, *for_out]
+
+
+def _while_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args,
+    cond_nconsts,
+    cond_jaxpr,
+    body_nconsts,
+    body_jaxpr,
+):
+  # First try to lower via a simpler fori loop, which may optimize better.
+  fori_jaxpr, err = pallas_utils.pattern_match_while_to_fori_loop(
+      cond_jaxpr, cond_nconsts, body_jaxpr, body_nconsts
+  )
+  if fori_jaxpr is not None:
+    return _lower_while_via_fori(
+        ctx,
+        *args,
+        fori_jaxpr=fori_jaxpr,
+        cond_nconsts=cond_nconsts,
+        cond_jaxpr=cond_jaxpr,
+        body_nconsts=body_nconsts,
+        body_jaxpr=body_jaxpr,
+    )
+
+  # If we fail conversion to fori, fallback to an ordinary while loop.
+  cond_consts, body_consts, carry = split_list(
+      args, [cond_nconsts, body_nconsts]
+  )
+  cond_const_block_shapes, body_const_block_shapes, carry_block_shapes = (
+      split_list(ctx.block_shapes, [cond_nconsts, body_nconsts])
+  )
+  cond_const_types = [a.type for a in cond_consts]
+  body_const_types = [a.type for a in body_consts]
+  carry_types = [a.type for a in carry]
+  all_types = [*cond_const_types, *body_const_types, *carry_types]
+  while_op = scf.WhileOp(all_types, args)
+
+  before_block = while_op.before.blocks.append(*all_types)
+  cond_consts_, _, carry_ = split_list(
+      before_block.arguments,
+      [cond_nconsts, body_nconsts],
+  )
+  cond_args = [*cond_consts_, *carry_]
+  with ir.InsertionPoint.at_block_begin(before_block):
+    [cond] = jaxpr_subcomp(
+        ctx.lowering_context.replace(
+            block_shapes=[*cond_const_block_shapes, *carry_block_shapes]
+        ),
+        cond_jaxpr.jaxpr,
+        *cond_args,
+    )
+    scf.condition(cond, before_block.arguments)
+
+  after_block = while_op.after.blocks.append(*all_types)
+  cond_consts_, body_consts_, carry_ = split_list(
+      after_block.arguments,
+      [cond_nconsts, body_nconsts],
+  )
+  all_args = [*cond_consts_, *body_consts_, *carry_]
+  cond_const_args, body_const_args, carry_args = split_list(
+      all_args, [cond_nconsts, body_nconsts]
+  )
+  with ir.InsertionPoint.at_block_begin(after_block):
+    loop_out = jaxpr_subcomp(
+        ctx.lowering_context.replace(
+            block_shapes=[*body_const_block_shapes, *carry_block_shapes],
+        ),
+        body_jaxpr.jaxpr,
+        *body_const_args,
+        *carry_args,
+    )
+    all_handles = [*cond_const_args, *body_const_args, *loop_out]
+    if all_handles:
+      scf.yield_(all_handles)
+
+  all_out = list(while_op.results_)
+  return all_out[cond_nconsts + body_nconsts :]
 
 
 lowering_rules[lax.while_p] = _while_lowering_rule
