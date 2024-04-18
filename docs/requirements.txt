@@ -5,6 +5,7 @@ sphinx-book-theme>=1.0.1  # Older versions fail to pin pydata-sphinx-theme
 sphinx-copybutton>=0.5.0
 sphinx-remove-toctrees
 sphinx-design
+sphinxext-rediraffe
 myst-nb>=1.0.0
 
 # Packages used for CI tests.

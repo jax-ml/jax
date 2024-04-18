@@ -73,7 +73,8 @@ extensions = [
     "sphinx_remove_toctrees",
     'sphinx_copybutton',
     'jax_extensions',
-    'sphinx_design'
+    'sphinx_design',
+    'sphinxext.rediraffe',
 ]
 
 intersphinx_mapping = {
@@ -125,9 +126,8 @@ exclude_patterns = [
     'pallas/quickstart.md',
     'pallas/tpu/pipelining.md',
     'jep/9407-type-promotion.md',
-    'jax-101/*.md',
     'autodidax.md',
-    'tutorials/sharded-computation.md',
+    'sharded-computation.md',
 ]
 
 # The name of the Pygments (syntax highlighting) style to use.
@@ -199,8 +199,6 @@ nb_execution_timeout = 100
 # List of patterns, relative to source directory, that match notebook
 # files that will not be executed.
 nb_execution_excludepatterns = [
-    # Includes GPU timings that shouldn't be executed by doc build
-    'notebooks/quickstart.*',
     # Slow notebook: long time to load tf.ds
     'notebooks/neural_network_with_tfds_data.*',
     # Slow notebook
@@ -208,14 +206,13 @@ nb_execution_excludepatterns = [
     # Has extra requirements: networkx, pandas, pytorch, tensorflow, etc.
     'jep/9407-type-promotion.*',
     # TODO(jakevdp): enable execution on the following if possible:
-    'jax-101/*',
     'notebooks/xmap_tutorial.*',
     'notebooks/Distributed_arrays_and_automatic_parallelization.*',
     'notebooks/autodiff_remat.*',
     # Requires accelerators
     'pallas/quickstart.*',
     'pallas/tpu/pipelining.*',
-    'tutorials/sharded-computation.*'
+    'sharded-computation.*'
 ]
 
 # -- Options for HTMLHelp output ---------------------------------------------
@@ -331,3 +328,18 @@ def linkcode_resolve(domain, info):
   filename = os.path.relpath(filename, start=os.path.dirname(jax.__file__))
   lines = f"#L{linenum}-L{linenum + len(source)}" if linenum else ""
   return f"https://github.com/google/jax/blob/main/jax/{filename}{lines}"
+
+# Generate redirects from deleted files to new sources
+rediraffe_redirects = {
+    'notebooks/quickstart.md': 'quickstart.md',
+    'jax-101/01-jax-basics.md': 'key-concepts.md',
+    'jax-101/02-jitting.md': 'jit-compilation.md',
+    'jax-101/03-vectorization.md': 'automatic-vectorization.md',
+    'jax-101/04-advanced-autodiff.md': 'automatic-differentiation.md',
+    'jax-101/05-random-numbers.md': 'random-numbers.md',
+    'jax-101/05.1-pytrees.md': 'working-with-pytrees.md',
+    'jax-101/06-parallelism.md': 'sharded-computation.md',
+    'jax-101/07-state.md': 'stateful-computations.md',
+    'jax-101/08-pjit.rst': 'sharded-computation.md',
+    'jax-101/index.rst': 'tutorials.rst',
+}
