@@ -414,15 +414,16 @@ def export(fun_jax: Callable,
 
       symbolic_scope: tuple[_shape_poly.SymbolicScope, tree_util.KeyPath] | None = None
       for k_path, aval in tree_util.tree_flatten_with_path((args_specs, kwargs_specs))[0]:
-        for d in aval.shape:
-          if _shape_poly.is_symbolic_dim(d):
-            if symbolic_scope is None:
-              symbolic_scope = (d.scope, k_path)
-              continue
-            symbolic_scope[0]._check_same_scope(
-                d, when=f"when exporting {fun_name}",
-                self_descr=f"current (from {_shape_poly.args_kwargs_path_to_str(symbolic_scope[1])}) ",
-                other_descr=_shape_poly.args_kwargs_path_to_str(k_path))
+        if hasattr(aval, "shape"):
+          for d in aval.shape:
+            if _shape_poly.is_symbolic_dim(d):
+              if symbolic_scope is None:
+                symbolic_scope = (d.scope, k_path)
+                continue
+              symbolic_scope[0]._check_same_scope(
+                  d, when=f"when exporting {fun_name}",
+                  self_descr=f"current (from {_shape_poly.args_kwargs_path_to_str(symbolic_scope[1])}) ",
+                  other_descr=_shape_poly.args_kwargs_path_to_str(k_path))
 
       lowered = wrapped_fun_jax.lower(
           *args_specs, **kwargs_specs,
