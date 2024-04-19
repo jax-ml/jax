@@ -236,9 +236,7 @@ def register_backend_factory(name: str, factory: BackendFactory, *,
 
 
 def make_cpu_client() -> xla_client.Client:
-  collectives: (xla_client._xla.CpuCollectives |
-                xla_client._xla.MpiCollectives |
-                None ) = None
+  collectives: xla_client._xla.CpuCollectives | None = None
 
   collectives_impl = _CPU_COLLECTIVES_IMPLEMENTATION.value
   if _CPU_ENABLE_GLOO_COLLECTIVES.value:
