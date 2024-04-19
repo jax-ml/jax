@@ -281,6 +281,10 @@ class Jax2TfLimitation(test_harnesses.Limitation):
         custom_numeric(dtypes=[np.complex64], devices=("cpu", "gpu", "tpu"),
                        tol=1e-3),
         custom_numeric(dtypes=[np.complex128], devices=("cpu", "gpu"), tol=1e-12),
+        custom_numeric(dtypes=[np.complex128], devices=("cpu",),
+                       modes=("compiled",),
+                       tol=1e-13,
+                       native_serialization=Jax2TfLimitation.FOR_NATIVE | Jax2TfLimitation.FOR_NON_NATIVE),
         cls.helper_get_trig_custom_limitation(np.sinh)
     ]
 
