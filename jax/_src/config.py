@@ -975,7 +975,7 @@ debug_infs = define_bool_state(
 log_compiles = define_bool_state(
     name='jax_log_compiles',
     default=False,
-    help=('Log a message each time every time `jit` or `pmap` compiles an XLA '
+    help=('Log a message each time `jit` or `pmap` compiles an XLA '
           'computation. Logging is performed with `logging`. When this '
           'option is set, the log level is WARNING; otherwise the level is '
           'DEBUG.'))
