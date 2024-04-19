@@ -73,6 +73,9 @@ JAX_SPECIAL_FUNCTION_RECORDS = [
         "gammaincc", 2, float_dtypes, jtu.rand_positive, True
     ),
     op_record(
+        "gammasgn", 1, float_dtypes, jtu.rand_default, True
+    ),
+    op_record(
         "erf", 1, float_dtypes, jtu.rand_small_positive, True
     ),
     op_record(

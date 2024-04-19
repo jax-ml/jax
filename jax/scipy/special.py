@@ -34,6 +34,7 @@ from jax._src.scipy.special import (
   gammainc as gammainc,
   gammaincc as gammaincc,
   gammaln as gammaln,
+  gammasgn as gammasgn,
   gamma as gamma,
   i0 as i0,
   i0e as i0e,
