@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from __future__ import annotations
 
+import atexit
 from collections.abc import Mapping
 import dataclasses
 from functools import lru_cache, partial
@@ -103,7 +104,14 @@ _MOCK_NUM_GPUS = config.DEFINE_integer(
 _CPU_ENABLE_GLOO_COLLECTIVES = config.DEFINE_bool(
     name="jax_cpu_enable_gloo_collectives",
     default=False,
-    help="If True, enable cross-process collectives on CPU using Gloo.",
+    help="Deprecated, please use jax_cpu_collectives_implementation instead.",
+)
+
+_CPU_COLLECTIVES_IMPLEMENTATION = config.DEFINE_string(
+    name='jax_cpu_collectives_implementation',
+    default='none',
+    help='Cross-process collective implementation used on CPU. Either "none", '
+         '"gloo" or "mpi"'
 )
 
 # TODO(yueshengys): turn default back to True after resolving memory increase
@@ -228,11 +236,32 @@ def register_backend_factory(name: str, factory: BackendFactory, *,
 
 
 def make_cpu_client() -> xla_client.Client:
-  collectives: xla_client._xla.CpuCollectives | None = None
+  collectives: (xla_client._xla.CpuCollectives |
+                xla_client._xla.MpiCollectives |
+                None ) = None
+
+  collectives_impl = _CPU_COLLECTIVES_IMPLEMENTATION.value
   if _CPU_ENABLE_GLOO_COLLECTIVES.value:
+      collectives_impl = 'gloo'
+      warnings.warn('Setting `jax_cpu_enable_gloo_collectives` is deprecated. '
+                    'Please use `jax.config.update('
+                    '"jax_cpu_collectives_implementation", "gloo")` instead.',
+                    DeprecationWarning,
+                    )
+  if collectives_impl == 'gloo':
     collectives = xla_client._xla.make_gloo_tcp_collectives(  # type: ignore
       distributed_client=distributed.global_state.client,
     )
+  elif collectives_impl == 'mpi' and xla_extension_version >= 251:
+    collectives = xla_client._xla.make_mpi_collectives()  # type: ignore
+    collectives.Init()
+    atexit.register(collectives.Finalize)
+  elif collectives_impl != 'none':
+    collectives_impls = ['none', 'gloo'
+                        ] + (['mpi'] if xla_extension_version >= 251 else [])
+    raise RuntimeError(f"Unknown collectives implementation "
+                       f"{collectives_impl}. Available implementations are "
+                       f"{collectives_impls}.")
   if xla_extension_version >= 257:
     return xla_client.make_cpu_client(  # type: ignore
       asynchronous=_CPU_ENABLE_ASYNC_DISPATCH.value,

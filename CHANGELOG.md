@@ -12,6 +12,10 @@ Remember to align the itemized text with the first line of an item within a list
   * Added {func}`jax.numpy.unstack` and {func}`jax.numpy.cumulative_sum`,
     following their addition in the array API 2023 standard, soon to be
     adopted by NumPy.
+  * Added a new config option `jax_cpu_collectives_implementation` to select the
+    implementation of cross-process collective operations used by the CPU backend.
+    Choices available are `'none'`(default), `'gloo'` and `'mpi'` (requires jaxlib 0.4.26).
+    If set to `'none'`, cross-process collective operations are disabled.
 
 * Changes
   * {func}`jax.pure_callback` and {func}`jax.experimental.io_callback`
@@ -48,6 +52,8 @@ Remember to align the itemized text with the first line of an item within a list
     deprecation is completed.
   * Scalar arguments to {func}`jax.numpy.nonzero`, {func}`jax.numpy.where`, and
     related functions now raise an error, following a similar change in NumPy.
+  * The config option `jax_cpu_enable_gloo_collectives` is deprecated.
+    Use `jax.config.update('jax_cpu_collectives_implementation', 'gloo')` instead.
 
 ## jaxlib 0.4.27
 
