@@ -46,6 +46,8 @@ Remember to align the itemized text with the first line of an item within a list
   * The {func}`jax.numpy.hypot` function now issues a deprecation warning when
     passing complex-valued inputs to it. This will raise an error when the
     deprecation is completed.
+  * Scalar arguments to {func}`jax.numpy.nonzero`, {func}`jax.numpy.where`, and
+    related functions now raise an error, following a similar change in NumPy.
 
 ## jaxlib 0.4.27
 

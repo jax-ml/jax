@@ -1454,10 +1454,8 @@ def nonzero(a: ArrayLike, *, size: int | None = None,
   arr = asarray(a)
   del a
   if ndim(arr) == 0:
-    # Added 2023 Dec 6
-    warnings.warn("Calling nonzero on 0d arrays is deprecated. Use `atleast_1d(arr).nonzero()",
-                  DeprecationWarning, stacklevel=2)
-  arr = atleast_1d(arr)
+    raise ValueError("Calling nonzero on 0d arrays is not allowed. "
+                     "Use jnp.atleast_1d(scalar).nonzero() instead.")
   mask = arr if arr.dtype == bool else (arr != 0)
   calculated_size = mask.sum() if size is None else size
   calculated_size = core.concrete_dim_or_error(calculated_size,
