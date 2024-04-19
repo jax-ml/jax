@@ -18,6 +18,7 @@ from __future__ import annotations
 import importlib.util
 from collections.abc import Sequence
 import functools
+import logging
 import string
 import sys
 from typing import Any, Callable, Union
@@ -25,6 +26,7 @@ import weakref
 
 import numpy as np
 
+import jax
 import jax.numpy as jnp
 from jax import lax
 
@@ -44,6 +46,8 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import NamedSharding, parse_flatten_op_sharding
+
+logger = logging.getLogger(__name__)
 
 class DebugEffect(effects.Effect):
   __str__ = lambda self: "Debug"
@@ -73,7 +77,14 @@ map, unsafe_map = util.safe_map, map
 def debug_callback_impl(*args, callback: Callable[..., Any],
                         effect: DebugEffect):
   del effect
-  callback(*args)
+  cpu_device, *_ = jax.local_devices(backend="cpu")
+  args = jax.device_put(args, cpu_device)
+  with jax.default_device(cpu_device):
+    try:
+      callback(*args)
+    except BaseException:
+      logger.exception("jax.debug_callback failed")
+      raise
   return ()
 
 @debug_callback_p.def_effectful_abstract_eval

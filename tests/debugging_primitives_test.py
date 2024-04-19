@@ -170,7 +170,7 @@ class DebugPrintTest(jtu.JaxTestCase):
     with jtu.capture_stdout() as output:
       f(np.array(2, np.int32))
       jax.effects_barrier()
-    self.assertEqual(output(), f"x: {str(dict(foo=np.array(2, np.int32)))}\n")
+    self.assertEqual(output(), f"x: {str(dict(foo=jnp.array(2, np.int32)))}\n")
 
   def test_debug_print_should_use_default_layout(self):
     data = np.array(

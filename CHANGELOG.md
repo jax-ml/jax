@@ -14,10 +14,11 @@ Remember to align the itemized text with the first line of an item within a list
     adopted by NumPy.
 
 * Changes
-  * {func}`jax.pure_callback` and {func}`jax.experimental.io_callback`
-    now use {class}`jax.Array` instead of {class}`np.ndarray`. You can recover
-    the old behavior by transforming the arguments via
-    `jax.tree.map(np.asarray, args)` before passing them to the callback.
+  * {func}`jax.pure_callback`, {func}`jax.experimental.io_callback`
+    and {func}`jax.debug.callback` now use {class}`jax.Array` instead
+    of {class}`np.ndarray`. You can recover the old behavior by transforming
+    the arguments via `jax.tree.map(np.asarray, args)` before passing them
+    to the callback.
   * `complex_arr.astype(bool)` now follows the same semantics as NumPy, returning
     False where `complex_arr` is equal to `0 + 0j`, and True otherwise.
   * Async dispatch expensive computations on the CPU backend. This only applies
