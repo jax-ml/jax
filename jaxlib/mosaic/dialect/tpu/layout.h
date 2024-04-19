@@ -270,7 +270,6 @@ class VectorLayout {
 
   SmallVector<int64_t> implicitShape(ArrayRef<int64_t> shape) const;
 
- private:
   SmallVector<int64_t> tileArrayImplicitShape(
       ArrayRef<int64_t> shape, std::array<int64_t, 2> target_shape) const;
 
