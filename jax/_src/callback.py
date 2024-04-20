@@ -73,7 +73,7 @@ def pure_callback_impl(
 ):
   del sharding, vectorized, result_avals
   cpu_device, *_ = jax.local_devices(backend="cpu")
-  args = tree_util.tree_map(lambda arg: jax.device_put(arg, cpu_device), args)
+  args = jax.device_put(args, cpu_device)
   with jax.default_device(cpu_device):
     try:
       return tree_util.tree_map(np.asarray, callback(*args))
@@ -401,7 +401,7 @@ def io_callback_impl(
 ):
   del result_avals, sharding, ordered
   cpu_device, *_ = jax.local_devices(backend="cpu")
-  args = tree_util.tree_map(lambda arg: jax.device_put(arg, cpu_device), args)
+  args = jax.device_put(args, cpu_device)
   with jax.default_device(cpu_device):
     try:
       return tree_util.tree_map(np.asarray, callback(*args))
