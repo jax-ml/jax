@@ -1991,8 +1991,6 @@ class CustomPartitionerTest(jtu.JaxTestCase):
   def skip_if_custom_partitioning_not_supported(self):
     if jtu.is_cloud_tpu():
       raise unittest.SkipTest("Custom partitioning is not supported on libtpu.")
-    if xla_bridge.using_pjrt_c_api():
-      raise unittest.SkipTest('custom partitioning not implemented in PJRT C API')
 
   def test_custom_partitioning(self):
     self.skip_if_custom_partitioning_not_supported()
