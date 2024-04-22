@@ -138,9 +138,9 @@ def initialize(coordinator_address: str | None = None,
 
   The JAX distributed system serves a number of roles:
 
-    * it allows JAX processes to discover each other and share topology information,
-    * it performs health checking, ensuring that all processes shut down if any process dies, and
-    * it is used for distributed checkpointing.
+    * It allows JAX processes to discover each other and share topology information,
+    * It performs health checking, ensuring that all processes shut down if any process dies, and
+    * It is used for distributed checkpointing.
 
   If you are using TPU, Slurm, or Open MPI, all arguments are optional: if omitted, they
   will be chosen automatically.
