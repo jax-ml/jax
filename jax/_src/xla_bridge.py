@@ -252,8 +252,8 @@ def make_cpu_client() -> xla_client.Client:
     )
   elif collectives_impl == 'mpi' and xla_extension_version >= 251:
     collectives = xla_client._xla.make_mpi_collectives()  # type: ignore
-    collectives.Init()
-    atexit.register(collectives.Finalize)
+    collectives.Init()  # type: ignore
+    atexit.register(collectives.Finalize)  # type: ignore
   elif collectives_impl != 'none':
     collectives_impls = ['none', 'gloo'
                         ] + (['mpi'] if xla_extension_version >= 251 else [])
