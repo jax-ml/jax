@@ -136,10 +136,16 @@ class XLACompatibleSharding(sharding.Sharding):
 
 
 @functools.lru_cache
-def _check_mesh_resource_axis(mesh, parsed_pspec):
+def _check_mesh_resource_axis(mesh, parsed_pspec, _manual_axes):
   try:
-    [mesh.shape[r] for p in parsed_pspec if p is not None
-     for r in p]
+    for p in parsed_pspec:
+      if p is not None:
+        for r in p:
+          mesh.shape[r]
+          if r in _manual_axes:
+            raise ValueError(
+                f"Axis: {r} of {parsed_pspec.get_partition_spec()} "
+                f"is also found in manual_axes: {_manual_axes}.") from None
   except KeyError as e:
     raise ValueError(f"Resource axis: {e.args[0]} of {parsed_pspec.user_spec} is "
                      "undefined.") from None
@@ -184,6 +190,10 @@ def named_sharding_to_xla_hlo_sharding(
     axis_names = self.mesh.axis_names
     for manual_axis in self._manual_axes:
       special_axes[axis_names.index(manual_axis)] = xc.OpSharding.Type.MANUAL
+      if xla_extension_version < 259:
+        if manual_axis in array_mapping:   # type: ignore
+          raise ValueError(f"manual axis {repr(manual_axis)} in {repr(self)} "
+                           "cannot be used as a sharded axis")
 
   replicated_mesh_axes = []
   for i, (axis_name, axis_val) in enumerate(mesh_shape.items()):
@@ -1105,7 +1115,7 @@ class CanonicalizedParsedPartitionSpec(ParsedPartitionSpec):
             f"sync={self.sync})")
 
 
-def preprocess(mesh, spec, parsed_pspec):
+def preprocess(mesh, spec, parsed_pspec, _manual_axes=frozenset()):
   # This split exists because you can pass `_parsed_pspec` that has been
   # modified from the original. For example: Adding extra dimension to
   # axis_resources for vmap handlers. In such cases you need to preserve the
@@ -1118,9 +1128,11 @@ def preprocess(mesh, spec, parsed_pspec):
         PartitionSpec() if spec is None else spec,
         "NamedSharding spec", allow_unconstrained_dims=True)
 
-  _check_mesh_resource_axis(mesh, parsed_pspec)
+  _check_mesh_resource_axis(mesh, parsed_pspec, _manual_axes)
   return parsed_pspec
 
+# fallback for c++ .
+preprocess_with_manual = preprocess
 
 def prepare_axis_resources(axis_resources,
                            arg_name,

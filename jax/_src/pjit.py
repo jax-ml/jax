@@ -2339,6 +2339,8 @@ def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding,
   # NamedSharding. So update the NamedSharding to have the manual axes.
   if isinstance(axis_ctx, sharding_impls.SPMDAxisContext):
     mesh = resource_env.physical_mesh
+    if mesh.empty and isinstance(sharding, NamedSharding):
+      mesh = sharding.mesh
     parsed_pspec = parse_flatten_op_sharding(
         sharding._to_xla_hlo_sharding(aval.ndim), mesh)[0]
     sharding = NamedSharding._from_parsed_pspec(

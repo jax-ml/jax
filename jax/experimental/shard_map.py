@@ -93,9 +93,12 @@ def _shard_map(f: Callable, mesh: Mesh, in_specs: Specs,
   if not isinstance(mesh, Mesh):
     raise TypeError("shard_map requires a `jax.sharding.Mesh` instance for its "
                     f"second argument, but got {mesh} of type {type(mesh)}.")
-  _check_specs(SpecErrorType.input, in_specs)
+  if not auto.issubset(mesh.axis_names):
+    raise ValueError(f"shard_map requires auto={auto} to be a subset of "
+                     f"mesh.axis_names={mesh.axis_names}")
+  _check_specs(SpecErrorType.input, in_specs, auto)
   if not callable(out_specs):
-    _check_specs(SpecErrorType.out, out_specs)
+    _check_specs(SpecErrorType.out, out_specs, auto)
 
   @util.wraps(f)
   @traceback_util.api_boundary
@@ -114,7 +117,7 @@ def _shard_map(f: Callable, mesh: Mesh, in_specs: Specs,
     def out_names_thunk():
       if callable(out_specs):
         out_specs_ = out_specs()
-        _check_specs(SpecErrorType.out, out_specs_)
+        _check_specs(SpecErrorType.out, out_specs_, auto)
       else:
         out_specs_ = out_specs
       dummy = tree_unflatten(out_tree(), [object()] * out_tree().num_leaves)
@@ -162,17 +165,40 @@ def _canonicalize_spec(spec: PartitionSpec) -> AxisNames:
 
 SpecErrorType = enum.Enum('SpecErrorType', ['input', 'out'])
 
-def _check_specs(error_type: SpecErrorType, specs: Any) -> None:
+def _check_specs(error_type: SpecErrorType, specs: Any, auto) -> None:
   if error_type == SpecErrorType.input and specs is None:
     raise TypeError(
         "shard_map in_specs argument must be a pytree of "
         "`jax.sharding.PartitionSpec` instances, but it was None.\n"
         "Instead of `in_specs=None`, did you mean `in_specs=P()`, "
         "where `P = jax.sharding.PartitionSpec`?")
-  if all(isinstance(p, PartitionSpec) for p in tree_leaves(specs)): return
+  def check_spec(p):
+    if not isinstance(p, PartitionSpec):
+      return False
+    for names in p:
+      if not isinstance(names, tuple):
+        names = (names,)
+      for name in names:
+        if name in auto:
+          return False
+    return True
+  if all(check_spec(p) for p in tree_leaves(specs)): return
   prefix = 'in' if error_type == SpecErrorType.input else 'out'
   msgs = [f"  {prefix}_specs{keystr(key)} is {x} of type {type(x).__name__}, "
           for key, x in generate_key_paths(specs) if not isinstance(x, P)]
+  if not msgs:
+    for key, p in generate_key_paths(specs):
+      for names in p:
+        if not isinstance(names, tuple):
+          names = (names,)
+        for name in names:
+          if name in auto:
+            msgs.append(f"  {prefix}_specs{keystr(key)} refers to {repr(name)}")
+    raise ValueError(
+        f"shard_map {prefix}_specs argument cannot refer to an axis "
+        f"marked auto ({auto}), but:\n\n"
+        + '\n\n'.join(msgs) + '\n\n'
+        f"Check the {prefix}_specs values passed to shard_map.")
   raise TypeError(
       f"shard_map {prefix}_specs argument must be a pytree of "
       f"`jax.sharding.PartitionSpec` instances, but:\n\n"
@@ -549,7 +575,7 @@ def _shard_map_lowering(ctx, *in_nodes, jaxpr, mesh, in_names, out_names,
   in_nodes_ = map(partial(_xla_shard, ctx, mesh, auto), in_names, ctx.avals_in,
                   in_avals_, in_nodes)
   new_axis_context = sharding_impls.SPMDAxisContext(
-      mesh, frozenset(mesh.axis_names)
+      mesh, frozenset(mesh.axis_names) - auto
   )
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
   with core.extend_axis_env_nd(tuple(mesh.shape.items())):
@@ -575,20 +601,20 @@ def _xla_shard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
   unspecified = set(range(aval_in.ndim)) if auto else set()
   sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, shard_proto,  # type: ignore
                                   unspecified_dims=unspecified)
-  return [mlir.wrap_with_full_to_shard_op(ctx, sx, aval_out, manual_proto, set())]
+  return [mlir.wrap_with_full_to_shard_op(ctx, sx, aval_out, manual_proto, unspecified)]
 
 def _xla_unshard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
                  aval_in, aval_out, xs):
   x, = xs
-  manual_proto = pxla.manual_proto(aval_in, frozenset(mesh.axis_names) - auto, mesh)
-  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, manual_proto, unspecified_dims=set())
   axes = {name: i for i, ns in names.items() for name in ns}
   ns = NamedSharding(mesh, sharding_impls.array_mapping_to_axis_resources(axes))  # type: ignore
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
     ns = aval_out.dtype._rules.physical_sharding(aval_out, ns)
     aval_out = core.physical_aval(aval_out)
-  shard_proto = ns._to_xla_hlo_sharding(aval_out.ndim).to_proto()
   unspecified = set(range(aval_out.ndim)) if auto else set()
+  manual_proto = pxla.manual_proto(aval_in, frozenset(mesh.axis_names) - auto, mesh)
+  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, manual_proto, unspecified_dims=unspecified)
+  shard_proto = ns._to_xla_hlo_sharding(aval_out.ndim).to_proto()
   return mlir.wrap_with_shard_to_full_op(ctx, sx, aval_out, shard_proto,
                                          unspecified)  # type: ignore
 

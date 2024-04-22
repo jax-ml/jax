@@ -1625,6 +1625,97 @@ class ShardMapTest(jtu.JaxTestCase):
     jtu.check_grads(f, (list(jnp.arange(float(num_args))[:,None]),), order=1,
                     modes=['rev'], atol=1e-3, rtol=1e-3)
 
+  def test_partial_auto(self):
+    mesh = jtu.create_global_mesh((2, 2), ('i', 'j'))
+
+    def g(x):
+      x = jax.lax.with_sharding_constraint(
+          x, jax.sharding.NamedSharding(mesh, P(None, 'j')))
+      return x * x
+
+    @jax.jit
+    def f(x):
+      x = shard_map(g, mesh,
+                    in_specs=P('i', None),
+                    out_specs=P('i', None),
+                    check_rep=False,
+                    auto=frozenset({'j'}))(x)
+      return jax.lax.with_sharding_constraint(
+          x, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+
+    v = jnp.arange(32.).reshape(4, 8)
+    v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+    self.assertAllClose(v*v, f(v), check_dtypes=False)
+
+  def test_partial_auto_error_wsc_manual(self):
+    mesh = jtu.create_global_mesh((2, 2), ('i', 'j'))
+
+    def g(x):
+      x = jax.lax.with_sharding_constraint(
+          x, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+      return x * x
+
+    @jax.jit
+    def f(x):
+      x = shard_map(g, mesh,
+                    in_specs=P('i', None),
+                    out_specs=P('i', None),
+                    check_rep=False,
+                    auto=frozenset({'j'}))(x)
+      return jax.lax.with_sharding_constraint(
+          x, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+
+    v = jnp.arange(32.).reshape(4, 8)
+    v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+    with self.assertRaisesRegex(ValueError, "manual"):
+      f(v)
+
+  def test_partial_auto_error_invalid_auto(self):
+    mesh = jtu.create_global_mesh((2, 2), ('i', 'j'))
+
+    def g(x):
+      x = jax.lax.with_sharding_constraint(
+          x, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+      return x * x
+
+    @jax.jit
+    def f(x):
+      x = shard_map(g, mesh,
+                    in_specs=P('i', None),
+                    out_specs=P('i', None),
+                    check_rep=False,
+                    auto=frozenset({'k'}))(x)
+      return jax.lax.with_sharding_constraint(
+          x, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+
+    v = jnp.arange(32.).reshape(4, 8)
+    v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+    with self.assertRaisesRegex(ValueError, "to be a subset of mesh.axis_names"):
+      f(v)
+
+  def test_partial_auto_error_wrong_in_specs(self):
+    mesh = jtu.create_global_mesh((2, 2), ('i', 'j'))
+
+    def g(x):
+      x = jax.lax.with_sharding_constraint(
+          x, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+      return x * x
+
+    @jax.jit
+    def f(x):
+      x = shard_map(g, mesh,
+                    in_specs=P('i', 'j'),
+                    out_specs=P('i', None),
+                    check_rep=False,
+                    auto=frozenset({'j'}))(x)
+      return jax.lax.with_sharding_constraint(
+          x, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+
+    v = jnp.arange(32.).reshape(4, 8)
+    v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+    with self.assertRaisesRegex(ValueError, "in_specs refers to 'j'"):
+      f(v)
+
 
 class FunSpec(NamedTuple):
   name: str
