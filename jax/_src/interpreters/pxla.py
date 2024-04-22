@@ -123,11 +123,6 @@ shard_arg_handlers: dict[Any, Callable[[Any, Any], Any]] = {}
 
 
 @lru_cache(maxsize=1024)
-def get_addressable_devices_for_shard_arg(
-    s: sharding_impls.XLACompatibleSharding) -> tuple[xc.Device, ...]:
-  return s._addressable_device_assignment
-
-@lru_cache(maxsize=1024)
 def _get_replicated_slices(num_addressable_devices: int):
   return ((slice(None),),) * num_addressable_devices
 
@@ -138,7 +133,7 @@ def _masked_array_error(x, sharding):
 shard_arg_handlers[np.ma.MaskedArray] = _masked_array_error
 
 def _shard_array(x, sharding):
-  devices = get_addressable_devices_for_shard_arg(sharding)
+  devices = sharding._addressable_device_assignment
   if x.dtype == dtypes.float0:
     x = np.zeros(x.shape, dtype=np.dtype(bool))
   aval = api_util.shaped_abstractify(x)

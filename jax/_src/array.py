@@ -928,20 +928,26 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
   return pxla.batched_device_put(x.aval, sharding, bufs, devices)
 
 
+@functools.lru_cache(maxsize=4096)
+def _sharding_indices_and_eq(src_sharding, shape, dst_sharding):
+  src_indices = src_sharding.addressable_devices_indices_map(shape).values()
+  dst_indices = dst_sharding.addressable_devices_indices_map(shape).values()
+  return dst_indices, tuple(src_indices) == tuple(dst_indices)
+
+
 def _array_shard_arg(x, sharding):
   x._check_if_deleted()
 
-  x_indices = x.sharding.addressable_devices_indices_map(x.shape).values()
-  indices = sharding.addressable_devices_indices_map(x.shape).values()
+  indices, same_indices = _sharding_indices_and_eq(x.sharding, x.shape, sharding)
   if not x.is_fully_addressable:
-    if tuple(x_indices) == tuple(indices):
+    if same_indices:
       return x
     else:
       raise NotImplementedError(
           "Cannot reshard an input that is not fully addressable")
   else:
-    devices = pxla.get_addressable_devices_for_shard_arg(sharding)
-    if tuple(x_indices) == tuple(indices):
+    devices = sharding._addressable_device_assignment
+    if same_indices:
       return xc.copy_array_to_devices_with_sharding(x, list(devices), sharding)
     # Resharding starts here:
     if dispatch.is_single_device_sharding(x.sharding):
