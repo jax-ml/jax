@@ -31,6 +31,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath('..'))
 
+import jax
 
 # Currently type aliases are expanded. We tried a workaround along the lines of:
 # https://github.com/sphinx-doc/sphinx/issues/6518#issuecomment-589613836
@@ -298,13 +299,21 @@ epub_exclude_files = ['search.html']
 # types, even if the parameters aren't explicitly documented.
 always_document_param_types = True
 
+# For sphinx_autodoc_typehints:
+# Manually format ArrayLike and DTypeLike to work around
+# https://github.com/tox-dev/sphinx-autodoc-typehints/issues/284
+
+_type_alias_formats = {
+    jax.typing.ArrayLike: ":obj:`~jax.typing.ArrayLike`",
+    jax.typing.DTypeLike: ":obj:`~jax.typing.DTypeLike`"
+}
+typehints_formatter = lambda typ, _: _type_alias_formats.get(typ, None)
 
 # Tell sphinx autodoc how to render type aliases.
 autodoc_type_aliases = {
-    'ArrayLike': 'ArrayLike',
-    'DTypeLike': 'DTypeLike',
+    'ArrayLike': 'jax.typing.ArrayLike',
+    'DTypeLike': 'jax.typing.DTypeLike',
 }
-
 
 # Remove auto-generated API docs from sidebars. They take too long to build.
 remove_from_toctrees = ["_autosummary/*"]

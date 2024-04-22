@@ -14,6 +14,7 @@
 import abc
 from typing import Any, Callable, Optional, Sequence, Union
 import numpy as np
+from typing_extensions import TypeAlias
 
 from jax._src.sharding import Sharding
 
@@ -216,7 +217,7 @@ class Array(abc.ABC):
   def device_buffers(self) -> Any: ...
 
 
-ArrayLike = Union[
+ArrayLike: TypeAlias = Union[
   Array,  # JAX array type
   np.ndarray,  # NumPy array type
   np.bool_, np.number,  # NumPy scalar types
