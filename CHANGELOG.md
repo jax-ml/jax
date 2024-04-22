@@ -50,6 +50,12 @@ Remember to align the itemized text with the first line of an item within a list
   * Scalar arguments to {func}`jax.numpy.nonzero`, {func}`jax.numpy.where`, and
     related functions now raise an error, following a similar change in NumPy.
 
+* Bug fixes
+  * {func}`jax.numpy.astype` will now always return a copy when `copy=True`.
+    Previously, no copy would be made when the output array would have the same
+    dtype as the input array. This may result in some increased memory usage.
+    The default value is set to `copy=False` to preserve backwards compatability.
+
 ## jaxlib 0.4.27
 
 ## jax 0.4.26 (April 3, 2024)

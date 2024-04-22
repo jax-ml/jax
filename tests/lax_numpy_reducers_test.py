@@ -776,8 +776,13 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
       for axis in list(
         range(-len(shape), len(shape))
       ) + ([None] if len(shape) == 1 else [])],
-    dtype=all_dtypes + [None],
-    out_dtype=all_dtypes,
+    [dict(dtype=dtype, out_dtype=out_dtype)
+     for dtype in (all_dtypes+[None])
+     for out_dtype in (
+       complex_dtypes if np.issubdtype(dtype, np.complexfloating)
+       else all_dtypes
+      )
+    ],
     include_initial=[False, True],
   )
   @jtu.ignore_warning(category=NumpyComplexWarning)
