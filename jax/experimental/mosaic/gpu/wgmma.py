@@ -82,6 +82,14 @@ def wgmma_encode(x: int):
   return result
 
 
+def llvm_mul(x, y):
+  return llvm.mul(x, y, overflow_flags=llvm.IntegerOverflowFlags.none)
+
+
+def llvm_add(x, y):
+  return llvm.add(x, y, overflow_flags=llvm.IntegerOverflowFlags.none)
+
+
 def get_memref_base(memref_arg, memory_space=None):
   i64 = ir.IntegerType.get_signless(64)
   memref_ty = ir.MemRefType(memref_arg.type)
@@ -99,9 +107,9 @@ def get_memref_base(memref_arg, memory_space=None):
   desc = builtin.UnrealizedConversionCastOp([desc_ty], [memref_arg])
   aligned_ptr = llvm.extractvalue(ptr_ty, desc, [1])
   offset_elems = llvm.extractvalue(i64, desc, [2])
-  offset_bytes = llvm.mul(offset_elems, c(elem_bytewidth, i64))
+  offset_bytes = llvm_mul(offset_elems, c(elem_bytewidth, i64))
   return llvm.inttoptr(
-      ptr_ty, llvm.add(llvm.ptrtoint(i64, aligned_ptr), offset_bytes)
+      ptr_ty, llvm_add(llvm.ptrtoint(i64, aligned_ptr), offset_bytes)
   )
 
 
@@ -246,14 +254,14 @@ def wgmma_m64k128B(
       a_args = [as_i32_reg(v) for v in a_slice.registers.flat]
     else:
       if i > 0:
-        a = llvm.add(
+        a = llvm_add(
             a,
             llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, a_k_stride >> 4)),
         )
       a_args = [a]
     # Advance the B descriptor.
     if i > 0:
-      b_descriptor = llvm.add(
+      b_descriptor = llvm_add(
           b_descriptor,
           llvm.ConstantOp(i64, ir.IntegerAttr.get(i64, b_k_stride >> 4)),
       )
@@ -388,11 +396,11 @@ def wgmma(
       if a_in_regs:
         a_mk = a[mi * 64 : (mi + 1) * 64, ki * kn_tile : (ki + 1) * kn_tile]
       else:
-        a_mk = llvm.add(
+        a_mk = llvm_add(
             a_desc_base,
             c(wgmma_encode(mi * a_m_byte_stride + ki * a_k_byte_stride), i64),
         )
-      b_k = llvm.add(b_desc_base, c(wgmma_encode(ki * b_k_byte_stride), i64))
+      b_k = llvm_add(b_desc_base, c(wgmma_encode(ki * b_k_byte_stride), i64))
       new_acc_regs[mi : mi + 1] = wgmma_m64k128B(
           new_acc_regs[mi : mi + 1], a_mk, b_k, **wgmma_params
       )
