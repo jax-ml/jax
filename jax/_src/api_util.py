@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Sequence
 import inspect
 import operator
-from functools import partial
+from functools import partial, lru_cache
 from typing import Any, Callable, Type
 
 import numpy as np
@@ -34,7 +34,7 @@ from jax._src.tree_util import _replace_nones
 from jax._src import linear_util as lu
 from jax._src.linear_util import TracingDebugInfo
 from jax._src.util import (safe_map, WrapKwArgs, Hashable, HashableFunction,
-                           Unhashable)
+                           Unhashable, safe_zip)
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
 
@@ -316,6 +316,20 @@ def _argnames_partial(fixed_kwargs: WrapKwArgs, *args, **dyn_kwargs):
   kwargs = dict({k: v.val for k, v in fixed_kwargs.val.items()}, **dyn_kwargs)
   ans = yield args, kwargs
   yield ans
+
+
+@lru_cache(maxsize=4096)
+def donation_vector_with_in_tree(donate_argnums, donate_argnames, in_tree
+                                 ) -> tuple[bool, ...]:
+  res: list[bool] = []
+  args_tree, kwargs_tree = treedef_children(in_tree)
+  for i, arg in enumerate(args_tree.children()):
+    donate = bool(i in donate_argnums)
+    res.extend((donate,) * arg.num_leaves)
+  for key, val in safe_zip(kwargs_tree.node_data()[1], kwargs_tree.children()):  # type: ignore
+    donate = key in donate_argnames
+    res.extend((donate,) * val.num_leaves)
+  return tuple(res)
 
 
 def donation_vector(donate_argnums, donate_argnames, args, kwargs) -> tuple[bool, ...]:

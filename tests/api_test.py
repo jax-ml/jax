@@ -550,6 +550,42 @@ class JitTest(jtu.BufferDonationTestCase):
       result = f(x, x)
       result.block_until_ready()
 
+  @parameterized.named_parameters(
+      ('argnames', {'donate_argnames': ('z', 'y')}),
+      ('argnums', {'donate_argnums': (0, 1)})
+  )
+  def test_dict_donation(self, jit_kwargs):
+    @partial(jax.jit, **jit_kwargs)
+    def f(z, y, x):
+      return z, y, x
+
+    z = {'c': 3.}
+    y = {'b': 2.}
+    x = {'a': 1.}
+
+    _, kwargs_info = f.lower(z=z, y=y, x=x).args_info
+    self.assertTrue(kwargs_info['z']['c'].donated)
+    self.assertTrue(kwargs_info['y']['b'].donated)
+    self.assertFalse(kwargs_info['x']['a'].donated)
+
+  @parameterized.named_parameters(
+      ('argnames', {'donate_argnames': ('z', 'y')}),
+      ('argnums', {'donate_argnums': (0, 1)})
+  )
+  def test_dict_donation_args_kwargs(self, jit_kwargs):
+    @partial(jax.jit, **jit_kwargs)
+    def f(z, y, x):
+      return z, y, x
+
+    z = {'c': 3.}
+    y = {'b': 2.}
+    x = {'a': 1.}
+
+    args_info, kwargs_info = f.lower(z, y=y, x=x).args_info
+    self.assertTrue(args_info[0]['c'].donated)
+    self.assertTrue(kwargs_info['y']['b'].donated)
+    self.assertFalse(kwargs_info['x']['a'].donated)
+
   def test_intersecting_static_and_donate_argnames(self):
     with self.assertRaisesRegex(
         ValueError, "static_argnames and donate_argnames cannot intersect"):
