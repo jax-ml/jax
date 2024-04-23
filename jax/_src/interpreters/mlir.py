@@ -910,8 +910,13 @@ def lower_jaxpr_to_module(
         "In multi-platform lowering either all or no lowering platforms "
         f"should support donation. Lowering for {platforms} of which "
         f"only {platforms_with_donation} support donation")
-    if num_partitions > 1 and (
-        result_shardings is None or all(s is None for s in result_shardings)):
+    if (
+        num_partitions > 1
+        and (
+            result_shardings is None or all(s is None for s in result_shardings)
+        )
+        and (arg_shardings is None or all(s is None for s in arg_shardings))
+    ):
       xla_donated_args = donated_args
     if xla_donated_args is None:
       input_output_aliases, donated_args = _set_up_aliases(
