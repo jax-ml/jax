@@ -57,11 +57,11 @@ parser.add_argument(
     help="Create an 'editable' jaxlib build instead of a wheel.",
 )
 parser.add_argument(
-    "--include_gpu_plugin_extension",
-    # args.include_gpu_plugin_extension is True when
-    # --include_gpu_plugin_extension is in the command
+    "--skip_gpu_kernels",
+    # args.skip_gpu_kernels is True when
+    # --skip_gpu_kernels is in the command
     action="store_true",
-    help="Whether to include gpu plugin extension.",
+    help="Whether to skip gpu kernels in jaxlib.",
 )
 args = parser.parse_args()
 
@@ -169,7 +169,7 @@ plat-name={tag}
     )
 
 
-def prepare_wheel(sources_path: pathlib.Path, *, cpu, include_gpu_plugin_extension):
+def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
   """Assembles a source tree for the wheel in `sources_path`."""
   copy_runfiles = functools.partial(build_utils.copy_file, runfiles=r)
 
@@ -222,7 +222,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, include_gpu_plugin_extensi
       ],
   )
 
-  if exists(f"__main__/jaxlib/cuda/_solver.{pyext}") and not include_gpu_plugin_extension:
+  if exists(f"__main__/jaxlib/cuda/_solver.{pyext}") and not skip_gpu_kernels:
     copy_runfiles(
         dst_dir=jaxlib_dir / "cuda" / "nvvm" / "libdevice",
         src_files=["local_config_cuda/cuda/cuda/nvvm/libdevice/libdevice.10.bc"],
@@ -413,7 +413,7 @@ try:
   prepare_wheel(
       pathlib.Path(sources_path),
       cpu=args.cpu,
-      include_gpu_plugin_extension=args.include_gpu_plugin_extension,
+      skip_gpu_kernels=args.skip_gpu_kernels,
   )
   package_name = "jaxlib"
   if args.editable:

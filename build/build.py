@@ -674,7 +674,7 @@ def main():
       f"--jaxlib_git_hash={get_githash()}",
       f"--cpu={wheel_cpu}"])
     if args.build_gpu_plugin:
-      command.append("--include_gpu_plugin_extension")
+      command.append("--skip_gpu_kernels")
     if args.editable:
       command += ["--editable"]
     print(" ".join(command))
