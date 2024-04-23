@@ -385,6 +385,12 @@ class CoreTest(jtu.JaxTestCase):
     self.assertLen(e1.outvars, 1)  # only primal out, no residuals
     self.assertEqual(e1.outvars[0].aval.shape, (3, 3))  # only primal out shape
 
+  def test_tracer_hash_error(self):
+    with self.assertRaises(TypeError):
+      jax.jit(hash)(jnp.arange(4))
+    with self.assertRaises(TypeError):
+      jax.vmap(hash)(jnp.arange(4))
+
 
 @jtu.with_config(jax_pprint_use_color=False)
 class JaxprTypeChecks(jtu.JaxTestCase):
