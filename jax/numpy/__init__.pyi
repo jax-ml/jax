@@ -8,6 +8,7 @@ from jax._src import core as _core
 from jax._src import dtypes as _dtypes
 from jax._src.lax.lax import PrecisionLike
 from jax._src.lax.slicing import GatherScatterMode
+from jax._src.lib import Device
 from jax._src.numpy.index_tricks import _Mgrid, _Ogrid, CClass as _CClass, RClass as _RClass
 from jax._src.typing import (
     Array, ArrayLike, DType, DTypeLike,
@@ -21,8 +22,7 @@ _T = TypeVar('_T')
 
 _Axis = Union[None, int, Sequence[int]]
 
-# TODO(jakevdp): use xla_client.Device here
-_Device = Any
+_Device = Device
 
 ComplexWarning: type
 
@@ -366,7 +366,7 @@ def fmax(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 def fmin(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 def fmod(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 def frexp(x: ArrayLike, /) -> tuple[Array, Array]: ...
-def from_dlpack(x: Any, /, *, device: _Device | None = None,
+def from_dlpack(x: Any, /, *, device: _Device | _Sharding | None = None,
                 copy: builtins.bool | None = None) -> Array: ...
 def frombuffer(buffer: Union[bytes, Any], dtype: DTypeLike = ...,
                count: int = ..., offset: int = ...) -> Array: ...
