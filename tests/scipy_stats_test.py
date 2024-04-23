@@ -23,6 +23,7 @@ import scipy.stats as osp_stats
 import scipy.version
 
 import jax
+import jax.numpy as jnp
 from jax._src import dtypes, test_util as jtu
 from jax.scipy import stats as lsp_stats
 from jax.scipy.special import expit
@@ -252,7 +253,7 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
   @genNamedParametersNArgs(5)
   def testBetaLogPdf(self, shapes, dtypes):
-    rng = jtu.rand_positive(self.rng())
+    rng = jtu.rand_default(self.rng())
     scipy_fun = osp_stats.beta.logpdf
     lax_fun = lsp_stats.beta.logpdf
 
@@ -320,6 +321,23 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
     x = np.array([0., 1.])
     self.assertAllClose(
       osp_stats.beta.pdf(x, a, b), lsp_stats.beta.pdf(x, a, b), atol=1e-5,
+      rtol=2e-5)
+
+  def testBetaLogPdfNegativeConstants(self):
+    a = b = -1.1
+    x = jnp.array([0., 0.5, 1.])
+    self.assertAllClose(
+      osp_stats.beta.pdf(x, a, b), lsp_stats.beta.pdf(x, a, b), atol=1e-5,
+      rtol=2e-5)
+
+  def testBetaLogPdfNegativeScale(self):
+    a = b = 1.
+    x = jnp.array([0., 0.5, 1.])
+    loc = 0
+    scale = -1
+    self.assertAllClose(
+      osp_stats.beta.pdf(x, a, b, loc, scale),
+      lsp_stats.beta.pdf(x, a, b, loc, scale), atol=1e-5,
       rtol=2e-5)
 
   @genNamedParametersNArgs(3)
