@@ -84,6 +84,7 @@ def _one_to_one_binop(
     fn = lambda x1, x2, /: lax_fn(*promote_args_numeric(numpy_fn.__name__, x1, x2))
   else:
     fn = lambda x1, x2, /: lax_fn(*promote_args(numpy_fn.__name__, x1, x2))
+  fn.__name__ = numpy_fn.__name__
   fn.__qualname__ = f"jax.numpy.{numpy_fn.__name__}"
   fn = jit(fn, inline=True)
   if lax_doc:
@@ -99,6 +100,7 @@ def _maybe_bool_binop(
   def fn(x1, x2, /):
     x1, x2 = promote_args(numpy_fn.__name__, x1, x2)
     return lax_fn(x1, x2) if x1.dtype != np.bool_ else bool_lax_fn(x1, x2)
+  fn.__name__ = numpy_fn.__name__
   fn.__qualname__ = f"jax.numpy.{numpy_fn.__name__}"
   fn = jit(fn, inline=True)
   if lax_doc:
@@ -119,6 +121,7 @@ def _comparison_op(numpy_fn: Callable[..., Any], lax_fn: BinOp) -> BinOp:
       return lax.select(lax.eq(rx, ry), lax_fn(lax.imag(x1), lax.imag(x2)),
                         lax_fn(rx, ry))
     return lax_fn(x1, x2)
+  fn.__name__ = numpy_fn.__name__
   fn.__qualname__ = f"jax.numpy.{numpy_fn.__name__}"
   fn = jit(fn, inline=True)
   return implements(numpy_fn, module='numpy')(fn)
