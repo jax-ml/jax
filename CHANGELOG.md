@@ -56,6 +56,12 @@ Remember to align the itemized text with the first line of an item within a list
   * The config option `jax_cpu_enable_gloo_collectives` is deprecated.
     Use `jax.config.update('jax_cpu_collectives_implementation', 'gloo')` instead.
 
+* Bug fixes
+  * {func}`jax.numpy.astype` will now always return a copy when `copy=True`.
+    Previously, no copy would be made when the output array would have the same
+    dtype as the input array. This may result in some increased memory usage.
+    The default value is set to `copy=False` to preserve backwards compatability.
+
 ## jaxlib 0.4.27
 
 ## jax 0.4.26 (April 3, 2024)
