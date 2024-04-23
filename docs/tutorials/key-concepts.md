@@ -26,7 +26,7 @@ has some important differences.
 
 ### Array creation
 
-JAX arrays are never constructed directly, but rather are constructed via JAX API functions.
+We typically don't call the {class}`jax.Array` constructor directly, but rather create arrays via JAX API functions.
 For example, {mod}`jax.numpy` provides familar NumPy-style array construction functionality
 such as {func}`jax.numpy.zeros`, {func}`jax.numpy.linspace`, {func}`jax.numpy.arange`, etc.
 
@@ -93,7 +93,7 @@ key to using JAX effectively, and we'll cover them in detail in later sections.
 (key-concepts-tracing)=
 ## Tracing
 
-The magic behind transformations is the notion of a {term}`Tracers <Tracer>`.
+The magic behind transformations is the notion of a {term}`Tracer`.
 Tracers are abstract stand-ins for array objects, and are passed to JAX functions in order
 to extract the sequence of operations that the function encodes.
 
@@ -119,10 +119,8 @@ of input operations to a transformed sequence of operations.
 (key-concepts-jaxprs)=
 ## Jaxprs
 
-JAX has its own intermediate representation for sequences of operations, and these are
-known as {term}`jaxprs <jaxpr>`. A jaxpr (short for *JAX eXPRession*) represents a list
-of core units of computation called {term}`primitives <primitive>` that represent the
-effect of a computation.
+JAX has its own intermediate representation for sequences of operations, known as a {term}`jaxpr`.
+A jaxpr (short for *JAX exPRession*) is a simple representation of a functional program, comprising a sequence of {term}`primitive` operations.
 
 For example, consider the `selu` function we defined above:
 
