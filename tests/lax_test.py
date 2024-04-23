@@ -66,7 +66,8 @@ preferred_type_combinations = [
   (np.complex64, np.complex64), (np.complex64, np.complex128), (np.complex128, np.complex128),
   (np.int8, np.float16), (np.int8, dtypes.bfloat16), (np.int8, np.float32), (np.int8, np.float64),
   (np.int16, np.float16), (np.int16, dtypes.bfloat16), (np.int16, np.float32), (np.int16, np.float64),
-  (np.int32, np.float32), (np.int32, np.float64), (np.int64, np.float64)]
+  (np.int32, np.float32), (np.int32, np.float64), (np.int64, np.float64),
+  ]
 
 
 class LaxTest(jtu.JaxTestCase):
@@ -1056,6 +1057,39 @@ class LaxTest(jtu.JaxTestCase):
     result_with_upcast_inputs = lax.dot(
       x.astype(preferred_element_type),
       y.astype(preferred_element_type))
+    self.assertArraysAllClose(result_with_preferred_type, result_with_upcast_inputs)
+
+  @jtu.sample_product(
+    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+      for lhs_shape in [(3,), (4, 3)] for rhs_shape in [(3,), (3, 6)]],
+    [dict(lhs_dtype=lhs_d, rhs_dtype=rhs_d, preferred_element_type=p)
+      for lhs_d, rhs_d, p in
+      [
+        (dtypes.float8_e4m3fnuz, dtypes.float8_e4m3fnuz, dtypes.float8_e4m3fnuz),
+        (dtypes.float8_e5m2fnuz, dtypes.float8_e5m2fnuz, dtypes.float8_e5m2fnuz),
+        (dtypes.float8_e5m2fnuz, dtypes.float8_e4m3fnuz, dtypes.float8_e5m2fnuz),
+        (dtypes.float8_e4m3fnuz, dtypes.float8_e5m2fnuz, dtypes.float8_e5m2fnuz)
+      ]
+      ],
+  )
+  def testDotFp8(self, lhs_shape, rhs_shape, lhs_dtype, rhs_dtype, preferred_element_type):
+    if not jtu.is_device_rocm():
+      raise SkipTest("FP8 dot test is only enabled on rocm")
+    rng = jtu.rand_default(self.rng())
+    x = rng(lhs_shape, lhs_dtype)
+    y = rng(rhs_shape, rhs_dtype)
+    
+    # Compute the dot when both inputs are a lower-precision type and preferred_element_type is a higher-precision type.
+    result_with_preferred_type = lax.dot(x, y, preferred_element_type=preferred_element_type)
+    
+    # Compute results where the inputs are first upcast to the higher-precision type and no preferred_element_type is given.
+    result_with_upcast_inputs = lax.dot(
+      x.astype(np.float32),
+      y.astype(np.float32)
+    )
+    result_with_upcast_inputs = result_with_upcast_inputs.astype(preferred_element_type)
+    
+    # Check if the results are extremely similar given the semantics of preferred_element_type.
     self.assertArraysAllClose(result_with_preferred_type, result_with_upcast_inputs)
 
   @jtu.sample_product(
