@@ -29,7 +29,8 @@ def logpmf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:
   zero = _lax_const(k, 0)
   x = lax.sub(k, loc)
   log_probs = xlogy(x, mu) - gammaln(x + 1) - mu
-  return jnp.where(lax.lt(x, zero), -jnp.inf, log_probs)
+  return jnp.where(jnp.logical_or(lax.lt(x, zero),
+                                  lax.ne(jnp.round(k), k)), -jnp.inf, log_probs)
 
 @implements(osp_stats.poisson.pmf, update_doc=False)
 def pmf(k: ArrayLike, mu: ArrayLike, loc: ArrayLike = 0) -> Array:

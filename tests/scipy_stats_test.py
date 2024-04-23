@@ -129,7 +129,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
     def args_maker():
       k, mu, loc = map(rng, shapes, dtypes)
-      k = np.floor(k)
       # clipping to ensure that rate parameter is strictly positive
       mu = np.clip(np.abs(mu), a_min=0.1, a_max=None).astype(mu.dtype)
       loc = np.floor(loc)
@@ -148,7 +147,6 @@ class LaxBackedScipyStatsTests(jtu.JaxTestCase):
 
     def args_maker():
       k, mu, loc = map(rng, shapes, dtypes)
-      k = np.floor(k)
       # clipping to ensure that rate parameter is strictly positive
       mu = np.clip(np.abs(mu), a_min=0.1, a_max=None).astype(mu.dtype)
       loc = np.floor(loc)
