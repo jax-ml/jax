@@ -15,7 +15,7 @@
 # ruff: noqa
 
 try:
-  from jaxlib.mosaic.gpu import _mosaic_gpu_ext  # pytype: disable=import-error
+  from jaxlib.mlir._mlir_libs import _mosaic_gpu_ext  # pytype: disable=import-error
 except ImportError as e:
   raise ModuleNotFoundError(
       "Cannot import the Mosaic GPU bindings. You may need to build jaxlib from"

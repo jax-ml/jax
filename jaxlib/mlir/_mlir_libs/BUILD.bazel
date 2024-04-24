@@ -180,6 +180,23 @@ pybind_extension(
     ],
 )
 
+pybind_extension(
+    name = "_mosaic_gpu_ext",
+    srcs = ["mosaic_gpu_ext.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    visibility = ["//third_party/py/jax:__subpackages__"],
+    deps = [
+        ":jaxlib_mlir_capi_shared_library",
+        "//jaxlib:kernel_nanobind_helpers",
+        "//jaxlib/mosaic/gpu:mlir_capi",
+        "@nanobind",
+        "@xla//xla/service:custom_call_status",
+    ],
+)
+
 symlink_inputs(
     name = "_mlir_libs",
     rule = py_library,
@@ -350,6 +367,7 @@ cc_library(
         ],
     ) + if_building_mosaic_gpu([
         ":jaxlib_mlir_capi_shims",
+        "//jaxlib/mosaic/gpu:mlir_capi_objects",
         "@llvm-project//mlir:CAPIConversionObjects",
         "@llvm-project//mlir:CAPIExecutionEngineObjects",
         "@llvm-project//mlir:CAPIGPUObjects",

@@ -13,7 +13,6 @@
 # limitations under the License.
 
 load("@rules_python//python:defs.bzl", "py_library")
-load("//jaxlib:jax.bzl", "pybind_extension")
 
 package(
     default_applicable_licenses = [],
@@ -24,33 +23,68 @@ py_library(
     name = "mosaic_gpu",
     data = [":libmlir_cuda_runtime.so"],
     deps = [
-        ":_mosaic_gpu_ext",
         "//jaxlib/mlir:execution_engine",
         "//jaxlib/mlir:gpu_dialect",
         "//jaxlib/mlir:llvm_dialect",
         "//jaxlib/mlir:nvgpu_dialect",
         "//jaxlib/mlir:nvvm_dialect",
+        "//jaxlib/mlir/_mlir_libs:_mosaic_gpu_ext",
     ],
 )
 
-pybind_extension(
-    name = "_mosaic_gpu_ext",
-    srcs = ["_mosaic_gpu_ext.cc"],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    linkopts = select({
-        "@xla//xla/python:use_jax_cuda_pip_rpaths": [
-            "-Wl,-rpath,$$ORIGIN/../../../nvidia/cuda_runtime/lib",
-        ],
-        "//conditions:default": [],
-    }),
+cc_library(
+    name = "passes",
+    srcs = ["launch_lowering.cc"],
+    hdrs = ["launch_lowering.h"],
     deps = [
-        "//jaxlib:kernel_nanobind_helpers",
-        "@xla//xla/service:custom_call_status",
-        "@nanobind",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:DataLayoutInterfaces",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:GPUDialect",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:LLVMDialect",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:Support",
     ],
+)
+
+CAPI_SOURCES = [
+    "integrations/c/passes.cc",
+]
+
+CAPI_HEADERS = [
+    "integrations/c/passes.h",
+]
+
+cc_library(
+    name = "mlir_capi",
+    srcs = CAPI_SOURCES,
+    hdrs = CAPI_HEADERS,
+    deps = [
+        ":passes",
+        "@llvm-project//mlir:CAPIIRHeaders",
+    ],
+)
+
+# Header-only target, used when using the C API from a separate shared library.
+cc_library(
+    name = "mlir_capi_headers",
+    hdrs = CAPI_HEADERS,
+    deps = [
+        "@llvm-project//mlir:CAPIIRHeaders",
+    ],
+)
+
+# Alwayslink target, used when exporting the C API from a shared library.
+cc_library(
+    name = "mlir_capi_objects",
+    srcs = CAPI_SOURCES,
+    hdrs = CAPI_HEADERS,
+    deps = [
+        ":passes",
+        "@llvm-project//mlir:CAPIIRObjects",
+    ],
+    alwayslink = True,
 )
 
 cc_binary(

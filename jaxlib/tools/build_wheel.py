@@ -266,7 +266,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
       "__main__/jaxlib/mosaic/python/_tpu_gen.py", dst_dir=mosaic_python_dir
   )
 
-  has_mosaic_gpu = exists(f"__main__/jaxlib/mosaic/gpu/_mosaic_gpu_ext.{pyext}")
+  has_mosaic_gpu = exists(f"__main__/jaxlib/mlir/_mlir_libs/_mosaic_gpu_ext.{pyext}")
   def if_has_mosaic_gpu(extras):
     return extras if has_mosaic_gpu else []
 
@@ -275,7 +275,6 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
         dst_dir=jaxlib_dir / "mosaic" / "gpu",
         src_files=[
             "__main__/jaxlib/mosaic/gpu/libmlir_cuda_runtime.so",
-            f"__main__/jaxlib/mosaic/gpu/_mosaic_gpu_ext.{pyext}",
         ],
     )
 
@@ -381,6 +380,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
               "__main__/jaxlib/mlir/_mlir_libs/_triton_ext.pyi",
           ]
       ) + if_has_mosaic_gpu([
+          f"__main__/jaxlib/mlir/_mlir_libs/_mosaic_gpu_ext.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsLLVM.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/_mlirExecutionEngine.{pyext}",
       ]),

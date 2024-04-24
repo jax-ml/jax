@@ -35,6 +35,7 @@ PYBIND11_MODULE(register_jax_dialects, m) {
     mlirRegisterTransformsPasses();
     // Transforms used by JAX.
     mlirRegisterTransformsStripDebugInfo();
+    // TODO(apaszke): Move those to Mosaic GPU C bindings.
 #ifdef JAXLIB_MOSAIC_GPU
     REGISTER_DIALECT(gpu);
     REGISTER_DIALECT(nvgpu);

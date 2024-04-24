@@ -67,6 +67,7 @@ xla_client.register_custom_call_target(
     mosaic_gpu_lib._mosaic_gpu_ext._custom_call_capsule(),
     platform="CUDA",
 )
+mosaic_gpu_lib._mosaic_gpu_ext.register_passes()
 
 
 mosaic_gpu_dump_ptx = config.define_bool_state(
@@ -102,8 +103,8 @@ def _mosaic_gpu_abstract_eval(*_, module, out_types):
 
 def _mosaic_gpu_lowering_rule(ctx, *args, module, out_types):
   runtime_path = (
-      pathlib.Path(mosaic_gpu_lib._mosaic_gpu_ext.__file__).parent
-      / "libmlir_cuda_runtime.so"
+      pathlib.Path(mosaic_gpu_lib._mosaic_gpu_ext.__file__).parent.parent.parent
+      / "mosaic" / "gpu" / "libmlir_cuda_runtime.so"
   )
   shared_libs = [str(runtime_path)] if runtime_path.exists() else []
   engine = ExecutionEngine(
@@ -111,7 +112,17 @@ def _mosaic_gpu_lowering_rule(ctx, *args, module, out_types):
   )
   ctx.module_context.add_keepalive(engine)
   func_ptr = engine.lookup("main")
-  ptr_bytes = ctypes.cast(func_ptr, ctypes.c_void_p).value.to_bytes(
+
+  # Run the compile-time initialization.
+  kernel_params_ptr = (ctypes.c_void_p * 1)()
+  engine.invoke("main_init", kernel_params_ptr)
+  kernel_params = kernel_params_ptr[0]
+
+  trampoline_args = (ctypes.c_void_p * 2)()
+  trampoline_args[0] = ctypes.cast(func_ptr, ctypes.c_void_p)
+  trampoline_args[1] = ctypes.cast(kernel_params, ctypes.c_void_p)
+  ctx.module_context.add_keepalive(trampoline_args)
+  ptr_bytes = ctypes.cast(trampoline_args, ctypes.c_void_p).value.to_bytes(
       8, byteorder="little"
   )  # pytype: disable=attribute-error
   op = mlir.custom_call(
@@ -506,10 +517,7 @@ def as_gpu_kernel(
 
   dump_low_level(module)
 
-  pass_manager = PassManager.parse(
-      "builtin.module(gpu-lower-to-nvvm-pipeline{cubin-format=fatbin"
-      " cubin-chip=sm_90a cubin-features=+ptx80 opt-level=3})"
-  )
+  pass_manager = _get_mosaic_gpu_pipeline()
   if mosaic_gpu_print_after_all.value:
     pass_manager.enable_ir_printing()
   pass_manager.run(module.operation)
@@ -553,10 +561,7 @@ def dump_low_level(module):
   module = ir.Module.parse(
       module.operation.get_asm(binary=True, enable_debug_info=True)
   )
-  pm = PassManager.parse(
-      "builtin.module(gpu-lower-to-nvvm-pipeline{cubin-format=isa"
-      " cubin-chip=sm_90a cubin-features=+ptx80 opt-level=3})"
-  )
+  pm = _get_mosaic_gpu_pipeline()
   pm.run(module.operation)
 
   for op in module.body:
@@ -593,3 +598,33 @@ def dump_low_level(module):
                 shell=True,
             )
             print(sass.decode())
+
+
+def _get_mosaic_gpu_pipeline() -> PassManager:
+  return PassManager.parse("""builtin.module(
+      convert-nvgpu-to-nvvm,
+      gpu-kernel-outlining{data-layout-str=},
+      convert-vector-to-scf{full-unroll=false lower-tensors=false target-rank=1},
+      convert-scf-to-cf,
+      convert-nvvm-to-llvm,
+      expand-strided-metadata,
+      nvvm-attach-target{O=3 chip=sm_90a fast=false features=+ptx80 ftz=false  module= triple=nvptx64-nvidia-cuda},
+      lower-affine,
+      convert-arith-to-llvm{index-bitwidth=0},
+      convert-index-to-llvm{index-bitwidth=64},
+      canonicalize{  max-iterations=10 max-num-rewrites=-1 region-simplify=true test-convergence=false top-down=true},
+      cse,
+      gpu.module(strip-debuginfo),
+      gpu.module(convert-gpu-to-nvvm{has-redux=false index-bitwidth=64 use-bare-ptr-memref-call-conv=false}),
+      gpu.module(canonicalize{  max-iterations=10 max-num-rewrites=-1 region-simplify=true test-convergence=false top-down=true}),
+      gpu.module(cse),
+      gpu.module(reconcile-unrealized-casts),
+      gpu-to-llvm{gpu-binary-annotation=gpu.binary use-bare-pointers-for-host=false use-bare-pointers-for-kernels=false},
+      gpu-module-to-binary{format=fatbin},
+      convert-math-to-llvm{approximate-log1p=true},
+      canonicalize{  max-iterations=10 max-num-rewrites=-1 region-simplify=true test-convergence=false top-down=true},
+      cse,
+      reconcile-unrealized-casts,
+      gpu-launch-lowering,
+      convert-func-to-llvm{index-bitwidth=0 use-bare-ptr-memref-call-conv=false}
+  )""")
