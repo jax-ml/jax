@@ -75,6 +75,22 @@ py_extension(
 )
 
 py_extension(
+    name = "_mlirDialectsGPU",
+    srcs = [
+        "@llvm-project//mlir:lib/Bindings/Python/DialectGPU.cpp",
+    ],
+    copts = COPTS,
+    linkopts = LINKOPTS,
+    deps = [
+        ":jaxlib_mlir_capi_shared_library",
+        "@llvm-project//mlir:CAPIGPUHeaders",
+        "@llvm-project//mlir:CAPIIRHeaders",
+        "@llvm-project//mlir:MLIRBindingsPythonHeaders",
+        "@pybind11",
+    ],
+)
+
+py_extension(
     name = "_mlirGPUPasses",
     srcs = [
         "@llvm-project//mlir:lib/Bindings/Python/GPUPasses.cpp",
@@ -84,6 +100,22 @@ py_extension(
     deps = [
         ":jaxlib_mlir_capi_shared_library",
         "@llvm-project//mlir:CAPIGPUHeaders",
+        "@pybind11",
+    ],
+)
+
+py_extension(
+    name = "_mlirDialectsNvgpu",
+    srcs = [
+        "@llvm-project//mlir:lib/Bindings/Python/DialectNVGPU.cpp",
+    ],
+    copts = COPTS,
+    linkopts = LINKOPTS,
+    deps = [
+        ":jaxlib_mlir_capi_shared_library",
+        "@llvm-project//mlir:CAPIIRHeaders",
+        "@llvm-project//mlir:CAPINVGPUHeaders",
+        "@llvm-project//mlir:MLIRBindingsPythonHeaders",
         "@pybind11",
     ],
 )
