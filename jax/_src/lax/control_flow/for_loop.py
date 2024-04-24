@@ -177,7 +177,7 @@ Y = TypeVar('Y')
 
 def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
          init: Carry,
-         xs: X,
+         xs: X | None = None,
          length: int | None = None,
          reverse: bool = False,
          unroll: int = 1) -> tuple[Carry, Y]:

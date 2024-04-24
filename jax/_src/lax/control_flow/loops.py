@@ -104,7 +104,7 @@ Y = TypeVar('Y')
 @api_boundary
 def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
          init: Carry,
-         xs: X,
+         xs: X | None = None,
          length: int | None = None,
          reverse: bool = False,
          unroll: int | bool = 1,
