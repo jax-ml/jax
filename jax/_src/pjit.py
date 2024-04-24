@@ -47,9 +47,9 @@ from jax._src import util
 from jax._src import xla_bridge as xb
 from jax._src.api_util import (
     argnums_partial_except, flatten_axes, flatten_fun, flatten_fun_nokwargs,
-    donation_vector_with_in_tree, shaped_abstractify, check_callable,
+    donation_vector, shaped_abstractify, check_callable, resolve_argnums,
     argnames_partial_except, debug_info, result_paths, jaxpr_debug_info,
-    hoist_obj_attrs, resolve_argnums)
+    hoist_obj_attrs)
 from jax._src.errors import JAXTypeError
 from jax._src.interpreters import partial_eval as pe
 from jax._src.partition_spec import PartitionSpec
@@ -556,8 +556,7 @@ def _infer_params(jit_info, args, kwargs):
   flat_fun, explicit_args = hoist_obj_attrs(flat_fun, explicit_args)
 
   if (donate_argnums or donate_argnames) and not config.debug_nans.value:
-    donated_invars = donation_vector_with_in_tree(
-        donate_argnums, donate_argnames, in_tree)
+    donated_invars = donation_vector(donate_argnums, donate_argnames, in_tree)
   else:
     donated_invars = (False,) * len(explicit_args)
   del donate_argnums, donate_argnames

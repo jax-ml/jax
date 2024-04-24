@@ -513,7 +513,7 @@ def xla_computation(fun: Callable,
     f, dyn_args = argnums_partial_except(f, static_argnums, args, allow_invalid=False)
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
     if donate_argnums:
-      donated_invars = donation_vector(donate_argnums, (), dyn_args, kwargs)
+      donated_invars = donation_vector(donate_argnums, (), in_tree)
     else:
       donated_invars = (False,) * len(args_flat)
 
@@ -1635,7 +1635,7 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
   args, in_tree = tree_flatten((dyn_args, kwargs))
 
   if donate_tuple and not config.debug_nans.value:
-    donated_invars = donation_vector(donate_tuple, (), dyn_args, kwargs)
+    donated_invars = donation_vector(donate_tuple, (), in_tree)
   else:
     donated_invars = (False,) * len(args)
   try:
