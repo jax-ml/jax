@@ -1793,6 +1793,43 @@ class numpy_with_mpmath:
   def exp2(self, x):
     return x.context.exp(x * x.context.ln2)
 
+  def arcsin(self, x):
+    ctx = x.context
+    if isinstance(x, ctx.mpc):
+      # Workaround mpmath 1.3 bug in asin(+-inf+-infj) evaluation (see mpmath/mpmath#793).
+      # TODO(pearu): remove this function when mpmath 1.4 or newer
+      # will be the required test dependency.
+      pi = ctx.pi
+      inf = ctx.inf
+      nan = ctx.nan
+      zero = ctx.zero
+      if ctx.isinf(x.real):
+        sign_real = -1 if x.real < 0 else 1
+        real = sign_real * pi / (4 if ctx.isinf(x.imag) else 2)
+        imag = -inf if x.imag < 0 else inf
+        return ctx.make_mpc((real._mpf_, imag._mpf_))
+      elif ctx.isinf(x.imag):
+        return ctx.make_mpc((zero._mpf_, x.imag._mpf_))
+
+      # TODO(pearu): adjust this code according to mpmath/mpmath#786
+      # resolution when mpmath 1.4 or newer will be the required test
+      # dependency.
+      if x.real > 1 and x.imag == 0:
+        return ctx.asin(x).conjugate()
+
+    return ctx.asin(x)
+
+  def arcsinh(self, x):
+    ctx = x.context
+
+    # TODO(pearu): adjust this code according to mpmath/mpmath#786
+    # resolution when mpmath 1.4 or newer will be the required test
+    # dependency.
+    if isinstance(x, ctx.mpc):
+      if x.real == 0 and x.imag < -1:
+        return (-ctx.asinh(x)).conjugate()
+    return ctx.asinh(x)
+
   def normalize(self, exact, reference, value):
     """Normalize reference and value using precision defined by the
     difference of exact and reference.
