@@ -876,6 +876,10 @@ def register_dataclass(
     meta_fields: auxiliary data field names.
     data_fields: data field names.
   """
+  if xla_extension_version < 259:
+    raise NotImplementedError(
+        "Registering dataclasses is only supported in jaxlib>=0.4.26."
+    )
 
   def flatten_with_keys(x):
     meta = tuple(getattr(x, name) for name in meta_fields)
