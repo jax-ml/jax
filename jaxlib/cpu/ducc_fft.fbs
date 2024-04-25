@@ -26,6 +26,17 @@ enum DuccFftType : byte {
   R2C = 2,
 }
 
+table DuccFftDescriptor {
+  dtype:DuccFftDtype;
+  fft_type:DuccFftType;
+  shape:[uint64];
+  strides_in:[uint64];
+  strides_out:[uint64];
+  axes:[uint32];
+  forward:bool;
+  scale:double;
+}
+
 table DynamicDuccFftDescriptor {
   ndims:uint32;
   dtype:DuccFftDtype;
@@ -34,4 +45,4 @@ table DynamicDuccFftDescriptor {
   forward:bool;
 }
 
-root_type DynamicDuccFftDescriptor;
+root_type DuccFftDescriptor;

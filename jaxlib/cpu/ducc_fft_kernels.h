@@ -20,9 +20,10 @@ limitations under the License.
 
 namespace jax {
 
-
-// TODO(b/311175955): this must be kept until May 2024 for backwards
+// TODO(b/287702203): this must be kept until EOY 2023 for backwards
 // of serialized functions using fft.
+void DuccFft(void* out, void** in, XlaCustomCallStatus*);
+
 void DynamicDuccFft(void* out, void** in, XlaCustomCallStatus*);
 
 }  // namespace jax

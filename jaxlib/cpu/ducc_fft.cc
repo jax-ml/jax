@@ -48,8 +48,9 @@ nb::bytes BuildDynamicDuccFftDescriptor(
 
 nb::dict Registrations() {
   nb::dict dict;
-  // TODO(b/311175955): this must be kept until May 2024 for backwards
+  // TODO(b/287702203): this must be kept until EOY 2023 for backwards
   // of serialized functions using fft.
+  dict["ducc_fft"] = EncapsulateFunction(DuccFft);
   dict["dynamic_ducc_fft"] = EncapsulateFunction(DynamicDuccFft);
   return dict;
 }
