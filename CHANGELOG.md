@@ -58,6 +58,8 @@ Remember to align the itemized text with the first line of an item within a list
   * The `jax.Array.device_buffer` and `jax.Array.device_buffers` methods have
     been removed after being deprecated in JAX v0.4.22. Instead use
     {attr}`jax.Array.addressable_shards` and {meth}`jax.Array.addressable_data`.
+  * Passing `A` and `reps` to {func}`jax.numpy.tile` is now deprecated. Instead,
+    pass them as positional arguments only.
 
 * Bug fixes
   * {func}`jax.numpy.astype` will now always return a copy when `copy=True`.

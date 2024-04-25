@@ -82,8 +82,11 @@ class DuckTypedArray(Protocol):
 # We use a class for deprecated args to avoid using Any/object types which can
 # introduce complications and mistakes in static analysis
 class DeprecatedArg:
+  def __init__(self, msg="Deprecated"):
+    self.msg = msg
+    return
   def __repr__(self):
-    return "Deprecated"
+    return self.msg
 
 # Mirror of dlpack.h enum
 class DLDeviceType(enum.IntEnum):

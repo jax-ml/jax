@@ -83,6 +83,12 @@ def stack(arrays: tuple[Array, ...] | list[Array], /, *, axis: int = 0) -> Array
   dtype = _result_type(*arrays)
   return jax.numpy.stack(arrays, axis=axis, dtype=dtype)
 
+
+def tile(x: Array, repetitions: tuple[int], /) -> Array:
+  """Constructs an array by tiling an input array."""
+  return jax.numpy.tile(x, repetitions)
+
+
 def unstack(x: Array, /, *, axis: int = 0) -> tuple[Array, ...]:
   """Splits an array in a sequence of arrays along the given axis."""
   return jax.numpy.unstack(x, axis=axis)

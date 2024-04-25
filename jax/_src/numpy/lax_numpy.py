@@ -1897,20 +1897,68 @@ def unstack(x: ArrayLike, /, *, axis: int = 0) -> tuple[Array, ...]:
     )
   return tuple(moveaxis(x, axis, 0))
 
-@util.implements(np.tile)
-def tile(A: ArrayLike, reps: DimSize | Sequence[DimSize]) -> Array:
-  util.check_arraylike("tile", A)
+@util.implements(np.tile,
+  extra_params=_dedent("""
+    x : array_like
+        Array containing elements to tile.
+    repetitions : array_like
+        The number of repetitions along each axis (dimension).
+""")
+                 )
+def tile(
+  x: ArrayLike | DeprecatedArg = DeprecatedArg(),
+  repetitions: DimSize | Sequence[DimSize] | DeprecatedArg = DeprecatedArg(),
+  /, A: DeprecatedArg = DeprecatedArg(), reps: DeprecatedArg = DeprecatedArg()
+) -> Array:
+
+  # TODO(micky774): deprecated 2024-4-2, remove after deprecation expires.
+  if not isinstance(A, DeprecatedArg):
+    if not isinstance(x, DeprecatedArg):
+      raise ValueError(
+        "Only one of `A` and `x` (the first positional argument) should be "
+        "provided."
+      )
+    warnings.warn(
+      "Passing the `A` argument to jnp.tile by keyword is deprecated. Pass the "
+      "value as the first positional argument instead.",
+      DeprecationWarning, stacklevel=2
+    )
+    x = A
+    del A
+  if not isinstance(reps, DeprecatedArg):
+    if not isinstance(repetitions, DeprecatedArg):
+      raise ValueError(
+        "Only one of `reps` and `repetitions` (the second positional argument) "
+        "should be provided."
+      )
+    warnings.warn(
+      "Passing the `reps` argument to jnp.tile by keyword is deprecated. Pass the "
+      "value as the second positional argument instead.",
+      DeprecationWarning, stacklevel=2
+    )
+    repetitions = reps
+    del reps
+  if isinstance(x, DeprecatedArg):
+    raise ValueError(
+      "jnp.tile is missing a required positional argument: `x`."
+    )
+  if isinstance(reps, DeprecatedArg):
+    raise ValueError(
+      "jnp.tile is missing a required positional argument: `repetitions`."
+    )
+
+  util.check_arraylike("tile", x)
   try:
-    iter(reps)  # type: ignore[arg-type]
+    iter(repetitions)  # type: ignore[arg-type]
   except TypeError:
-    reps_tup: tuple[DimSize, ...] = (reps,)
+    reps_tup: tuple[DimSize, ...] = (repetitions,)
   else:
-    reps_tup = tuple(reps)  # type: ignore[assignment,arg-type]
+    reps_tup = tuple(repetitions)  # type: ignore[assignment,arg-type]
   reps_tup = tuple(operator.index(rep) if core.is_constant_dim(rep) else rep
                    for rep in reps_tup)
-  A_shape = (1,) * (len(reps_tup) - ndim(A)) + shape(A)
+  A_shape = (1,) * (len(reps_tup) - ndim(x)) + shape(x)
   reps_tup = (1,) * (len(A_shape) - len(reps_tup)) + reps_tup
-  result = broadcast_to(reshape(A, [j for i in A_shape for j in [1, i]]),
+  result = broadcast_to(reshape(x, [j for i in A_shape for j in [1, i]]),
                         [k for pair in zip(reps_tup, A_shape) for k in pair])
   return reshape(result, tuple(np.multiply(A_shape, reps_tup)))
 
