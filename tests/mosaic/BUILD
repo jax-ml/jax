@@ -28,24 +28,49 @@ package(
 
 jax_generate_backend_suites()
 
+DISABLED_BACKENDS = [
+    "cpu",
+    "tpu",
+]
+
+DISABLED_CONFIGS = [
+    "gpu",
+    "gpu_a100",
+    "gpu_p100",
+    "gpu_p100_x32",
+    "gpu_x32",
+    "gpu_pjrt_c_api",
+]
+
 jax_test(
     name = "gpu_test",
-    srcs = [
-        "gpu_test.py",
-    ],
-    disable_backends = [
-        "cpu",
-        "tpu",
-    ],
-    disable_configs = [
-        "gpu",
-        "gpu_a100",
-        "gpu_p100",
-        "gpu_p100_x32",
-        "gpu_x32",
-        "gpu_pjrt_c_api",
-    ],
+    srcs = ["gpu_test.py"],
+    disable_backends = DISABLED_BACKENDS,
+    disable_configs = DISABLED_CONFIGS,
     shard_count = 4,
+    deps = [
+        "//jax:mosaic_gpu",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_test(
+    name = "matmul_test",
+    srcs = ["matmul_test.py"],
+    disable_backends = DISABLED_BACKENDS,
+    disable_configs = DISABLED_CONFIGS,
+    shard_count = 8,
+    deps = [
+        "//jax:mosaic_gpu",
+        "//jax/experimental/mosaic/gpu/examples:matmul",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_test(
+    name = "matmul",
+    srcs = ["//third_party/py/jax/experimental/mosaic/gpu/examples:matmul.py"],
+    disable_backends = DISABLED_BACKENDS,
+    disable_configs = DISABLED_CONFIGS,
+    main = "//third_party/py/jax/experimental/mosaic/gpu/examples:matmul.py",
     deps = [
         "//jax:mosaic_gpu",
     ] + py_deps("absl/testing") + py_deps("numpy"),
