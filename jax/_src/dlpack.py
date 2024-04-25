@@ -251,9 +251,9 @@ def from_dlpack(external_array,
       the source of ``external_array`` will require a copy, meaning ``copy`` must be
       set to either ``True`` or ``None``.
 
-    copy: An (optional) boolean, controlling whether or not to a copy is performed.
+    copy: An (optional) boolean, controlling whether or not a copy is performed.
       If ``copy=True`` then a copy is always performed, even if unpacked onto the
-      same device. If ``copy=False`` then the copy is never peformed and will raise
+      same device. If ``copy=False`` then the copy is never performed and will raise
       an error if necessary. When ``copy=None`` then a copy may be performed if
       needed for a device transfer.
 
