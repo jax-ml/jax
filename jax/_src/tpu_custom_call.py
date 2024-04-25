@@ -389,6 +389,7 @@ def as_tpu_kernel(
   has_communication, has_custom_barrier = tpu.private_has_communication(
       module.operation
   )
+  needs_hlo_passes = _MOSAIC_ALLOW_HLO.value
   needs_layout_passes = not device_type
   # We'll mutate the module, so clone it
   with module.context as ctx, module.operation.location as _:
@@ -397,6 +398,7 @@ def as_tpu_kernel(
     )
     if needs_layout_passes and _MOSAIC_USE_PYTHON_PIPELINE.value:
       module = _lower_tpu_kernel(module, hardware_generation)
+      needs_hlo_passes = False
       needs_layout_passes = False
     prev_allow_unregistered_dialects = ctx.allow_unregistered_dialects
     ctx.allow_unregistered_dialects = True
@@ -415,7 +417,7 @@ def as_tpu_kernel(
   return _lowered_as_tpu_kernel(
       asm,
       out_type,
-      needs_hlo_passes=_MOSAIC_ALLOW_HLO.value,
+      needs_hlo_passes=needs_hlo_passes,
       needs_layout_passes=needs_layout_passes,
       device_type=device_type,
       has_communication=has_communication,
