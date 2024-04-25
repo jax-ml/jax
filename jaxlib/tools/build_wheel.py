@@ -380,9 +380,12 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
               "__main__/jaxlib/mlir/_mlir_libs/_triton_ext.pyi",
           ]
       ) + if_has_mosaic_gpu([
-          f"__main__/jaxlib/mlir/_mlir_libs/_mosaic_gpu_ext.{pyext}",
+          f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsGPU.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsLLVM.{pyext}",
+          f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsNvgpu.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/_mlirExecutionEngine.{pyext}",
+          f"__main__/jaxlib/mlir/_mlir_libs/_mlirGPUPasses.{pyext}",
+          f"__main__/jaxlib/mlir/_mlir_libs/_mosaic_gpu_ext.{pyext}",
       ]),
   )
 

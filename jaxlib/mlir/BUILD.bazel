@@ -242,6 +242,7 @@ symlink_inputs(
         ":core",
         ":ir",
         ":mlir",
+        "//jaxlib/mlir/_mlir_libs:_mlirDialectsNvgpu",
     ],
 )
 
@@ -290,6 +291,7 @@ py_library(
         ":core",
         ":ir",
         ":mlir",
+        "//jaxlib/mlir/_mlir_libs:_mlirDialectsGPU",
         "//jaxlib/mlir/_mlir_libs:_mlirGPUPasses",
     ],
 )
