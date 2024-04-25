@@ -55,6 +55,9 @@ Remember to align the itemized text with the first line of an item within a list
     related functions now raise an error, following a similar change in NumPy.
   * The config option `jax_cpu_enable_gloo_collectives` is deprecated.
     Use `jax.config.update('jax_cpu_collectives_implementation', 'gloo')` instead.
+  * The `jax.Array.device_buffer` and `jax.Array.device_buffers` methods have
+    been removed after being deprecated in JAX v0.4.22. Instead use
+    {attr}`jax.Array.addressable_shards` and {meth}`jax.Array.addressable_data`.
 
 * Bug fixes
   * {func}`jax.numpy.astype` will now always return a copy when `copy=True`.

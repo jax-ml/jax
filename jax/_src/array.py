@@ -21,7 +21,6 @@ import operator as op
 import numpy as np
 import functools
 from typing import Any, Callable, cast, TYPE_CHECKING
-import warnings
 from collections.abc import Sequence
 
 from jax._src import abstract_arrays
@@ -479,30 +478,15 @@ class ArrayImpl(basearray.Array):
     self._check_if_deleted()
     return self.sharding.device_set
 
-  # TODO(https://github.com/google/jax/issues/12380): Remove this when DA is
-  # deleted.
   @property
-  def device_buffer(self) -> ArrayImpl:
-    # Added 2023 Dec 6
-    warnings.warn(
-      "arr.device_buffer is deprecated. Use arr.addressable_data(0)",
-      DeprecationWarning, stacklevel=2)
-    self._check_if_deleted()
-    if len(self._arrays) == 1:
-      return self._arrays[0]
-    raise ValueError('Length of buffers is greater than 1. Please use '
-                     '`.device_buffers` instead.')
+  def device_buffer(self):
+    raise AttributeError(
+      "arr.device_buffer has been deprecated. Use arr.addressable_data(0)")
 
-  # TODO(https://github.com/google/jax/issues/12380): Remove this when SDA is
-  # deleted.
   @property
-  def device_buffers(self) -> Sequence[ArrayImpl]:
-    # Added 2023 Dec 6
-    warnings.warn(
-      "arr.device_buffers is deprecated. Use [x.data for x in arr.addressable_shards]",
-      DeprecationWarning, stacklevel=2)
-    self._check_if_deleted()
-    return cast(Sequence[ArrayImpl], self._arrays)
+  def device_buffers(self):
+    raise AttributeError(
+      "arr.device_buffers has been deprecated. Use [x.data for x in arr.addressable_shards]")
 
   def addressable_data(self, index: int) -> ArrayImpl:
     self._check_if_deleted()
