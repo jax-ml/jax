@@ -14,9 +14,14 @@
 # ==============================================================================
 
 import contextlib
+import ctypes
+import functools
 import json
 
 import jax
+from jax._src.interpreters import mlir
+from jax._src.lib import mosaic_gpu as mosaic_gpu_lib
+from jax._src.lib import xla_client
 import jax.numpy as jnp
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
@@ -29,6 +34,58 @@ from .utils import *  # noqa: F403
 
 # ruff: noqa: F405
 # mypy: ignore-errors
+
+xla_client.register_custom_call_target(
+    "mosaic_gpu_record_event",
+    mosaic_gpu_lib._mosaic_gpu_ext._record_event_capsule(),
+    platform="CUDA",
+)
+
+record_event_p = jax.core.Primitive("record_event")
+record_event_p.multiple_results = True
+
+@record_event_p.def_abstract_eval
+def _record_event_abstract_eval(*args, event):
+  del event  # Unused.
+  return args
+
+@functools.partial(mlir.register_lowering, record_event_p, platform="cuda")
+def _record_event_lowering_rule(ctx, *args, event):
+  ptr_bytes = ctypes.cast(event, ctypes.c_void_p).value.to_bytes(
+      8, byteorder="little"
+  )  # pytype: disable=attribute-error
+  op = mlir.custom_call(
+      "mosaic_gpu_record_event",
+      result_types=[mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
+      operands=args,
+      backend_config=ptr_bytes,
+      operand_output_aliases={i: i for i in range(len(args))},
+  )
+  return op.results
+
+def _record_event(args, event):
+  flat_args, treedef = jax.tree.flatten(args)
+  return jax.tree.unflatten(
+      treedef, record_event_p.bind(*flat_args, event=event)
+  )
+
+def measure(f, *args):
+  # TODO(apaszke): Raise if this is called under jit.
+  start_event = mosaic_gpu_lib._mosaic_gpu_ext._gpu_event_create()
+  end_event = mosaic_gpu_lib._mosaic_gpu_ext._gpu_event_create()
+  try:
+    @jax.jit
+    def run(*args):
+      return _record_event(f(*_record_event(args, start_event)), end_event)
+    results = jax.block_until_ready(run(*args))
+    elapsed = mosaic_gpu_lib._mosaic_gpu_ext._gpu_event_elapsed(
+        start_event, end_event
+    )
+  finally:
+    mosaic_gpu_lib._mosaic_gpu_ext._gpu_event_destroy(start_event)
+    mosaic_gpu_lib._mosaic_gpu_ext._gpu_event_destroy(end_event)
+  return results, elapsed
+
 
 class ProfilerSpec:
   ENTER = 0

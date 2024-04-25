@@ -224,7 +224,7 @@ def wgmma_m64k128B(
   ptx = f"{{ .reg .pred p; setp.ne.b32 p, {use_out_reg}, 0; {wgmma_instr} }}\n"
 
   def lc(x):
-    return llvm.mlir_constant(i32, ir.IntegerAttr.get(i32, x))
+    return llvm.ConstantOp(i32, ir.IntegerAttr.get(i32, x)).result
 
   def as_i32_reg(v):
     return llvm.extractelement(

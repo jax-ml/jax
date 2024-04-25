@@ -36,6 +36,7 @@ except ImportError:
 else:
   from jax.experimental.mosaic import gpu as mosaic_gpu
   from jax.experimental.mosaic.gpu import dsl as mgpu
+  from jax.experimental.mosaic.gpu import profiler
   from jax.experimental.mosaic.gpu.utils import *  # noqa: F403
   from jax._src.lib.mlir.dialects import gpu
   from jax._src.lib.mlir.dialects import llvm
@@ -797,6 +798,13 @@ class FragmentedArrayTest(TestCase):
         kernel, (1, 1, 1), (128, 1, 1), (inp,), out, [inp, out],
     )(inp)
     np.testing.assert_array_equal(inp, result)
+
+
+class ProfilerTest(TestCase):
+
+  def test_measure(self):
+    x = jnp.arange(1024 * 1024)
+    profiler.measure(lambda x, y: x + y, x, x)  # This is just a smoke test
 
 
 if __name__ == "__main__":
