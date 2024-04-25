@@ -14,17 +14,29 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+import functools
 from typing import Any
 
-from jax._src.api import device_put
+import jax
 from jax import numpy as jnp
 from jax._src import array
+from jax._src import core
+from jax._src import util
 from jax._src import xla_bridge
+from jax._src.api import device_put
 from jax._src.lax.lax import _array_copy
+from jax._src.lib import gpu_dlpack
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension_version
-from jax._src.typing import Array, DLDeviceType
 from jax._src.sharding import Sharding
+from jax._src.typing import Array
+from jax._src.typing import DLDeviceType
+from jax.interpreters import ad
+from jax.interpreters import batching
+from jax.interpreters import mlir
+from jax.interpreters import xla
+
 
 DLPACK_VERSION = (0, 8)
 MIN_DLPACK_VERSION = (0, 5)
@@ -280,3 +292,137 @@ def from_dlpack(external_array,
 
   # Legacy path
   return _legacy_from_dlpack(external_array, device, copy)
+
+
+def callback(
+    callback: Callable[..., Any],
+    *args: Any,
+    result_shape_dtypes: Any,
+    vectorized: bool = False,
+    **kwargs: Any,
+) -> Any:
+  """Calls a pure Python callback with DLPack tensors.
+
+  This is a variant of `jax.pure_callback` which uses DLPack tensors to
+  keep the data on the device.
+
+  Args:
+    callback: function to execute. The callback is assumed to be a pure
+      function (i.e. one without side-effects): if an impure function is passed,
+      it may behave in unexpected ways, particularly under transformations.
+    result_shape_dtypes: pytree whose leaves have ``shape`` and ``dtype``
+      attributes, whose structure matches the expected output of the callback
+      function at runtime. :class:`jax.ShapeDtypeStruct` is often used to define
+      leaf values.
+    *args: arguments to be passed to the callback function
+    vectorized: boolean specifying whether the callback function can operate in
+      a vectorized manner.
+    **kwargs: keyword arguments to be passed to the callback function.
+
+  Returns:
+    A pytree of :class:`jax.Array` objects whose structure matches that of
+    ``result_shape_dtypes``.
+  """
+
+  def _flat_callback(*flat_args):
+    args, kwargs = jax.tree.unflatten(in_tree, flat_args)
+    return jax.tree.leaves(callback(*args, **kwargs))
+
+  flat_args, in_tree = jax.tree.flatten((args, kwargs))
+  result_avals = jax.tree.map(
+      lambda x: core.ShapedArray(x.shape, x.dtype), result_shape_dtypes
+  )
+  flat_result_avals, out_tree = jax.tree.flatten(result_avals)
+  out_flat = dlpack_callback_p.bind(
+      *flat_args,
+      callback=_flat_callback,
+      result_avals=tuple(flat_result_avals),
+      vectorized=vectorized,
+  )
+  return jax.tree.unflatten(out_tree, out_flat)
+
+
+dlpack_callback_p = core.Primitive("dlpack_callback")
+dlpack_callback_p.multiple_results = True
+dlpack_callback_p.def_impl(
+    functools.partial(xla.apply_primitive, dlpack_callback_p)
+)
+
+
+@dlpack_callback_p.def_abstract_eval
+def dlpack_callback_abstract_eval(*args, result_avals: Any, **kwargs: Any):
+  del args, kwargs
+  return result_avals
+
+
+def dlpack_callback_jvp_rule(*args, **kwargs):
+  del args, kwargs
+  raise ValueError(
+      "DLPack callbacks do not support JVP. "
+      "Please use `jax.custom_jvp` to use callbacks while taking gradients."
+  )
+
+
+ad.primitive_jvps[dlpack_callback_p] = dlpack_callback_jvp_rule
+
+
+def dlpack_callback_transpose_rule(*args, **kwargs):
+  del args, kwargs
+  raise ValueError(
+      "DLPack callbacks do not support transpose. "
+      "Please use `jax.custom_vjp` to use callbacks while taking gradients."
+  )
+
+
+ad.primitive_transposes[dlpack_callback_p] = dlpack_callback_transpose_rule
+
+
+if gpu_dlpack:
+  mlir.register_lowering(
+      dlpack_callback_p, gpu_dlpack.cuda_dlpack_callback, platform="cuda"
+  )
+
+
+def dlpack_callback_batching(
+    args,
+    dims,
+    *,
+    callback,
+    vectorized,
+    result_avals,
+):
+  axis_size = next(
+      a.shape[d] for a, d in zip(args, dims) if d is not batching.not_mapped
+  )
+  new_args = [
+      arg if dim is batching.not_mapped else batching.moveaxis(arg, dim, 0)
+      for arg, dim in zip(args, dims)
+  ]
+  if vectorized:
+    result_avals = tuple(
+        core.unmapped_aval(axis_size, core.no_axis_name, 0, aval)
+        for aval in result_avals
+    )
+    outvals = dlpack_callback_p.bind(
+        *new_args,
+        callback=callback,
+        vectorized=vectorized,
+        result_avals=result_avals,
+    )
+  else:
+    is_batched = [d is not batching.not_mapped for d in dims]
+    unbatched_args, batched_args = util.partition_list(is_batched, new_args)
+
+    def _batch_fun(batched_args):
+      return dlpack_callback_p.bind(
+          *util.merge_lists(is_batched, unbatched_args, batched_args),
+          callback=callback,
+          result_avals=result_avals,
+          vectorized=vectorized,
+      )
+
+    outvals = jax.lax.map(_batch_fun, batched_args)
+  return tuple(outvals), (0,) * len(outvals)
+
+
+batching.primitive_batchers[dlpack_callback_p] = dlpack_callback_batching

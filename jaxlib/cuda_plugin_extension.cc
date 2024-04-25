@@ -36,13 +36,6 @@ namespace xla {
 namespace {
 Status RegisterCustomCallTarget(const PJRT_Api* c_api, nb::str fn_name,
                                 nb::capsule fn, int api_version) {
-  static const char* const kName = "xla._CUSTOM_CALL_TARGET";
-  if (std::string_view(fn.name()) != kName) {
-    return InvalidArgument(
-        "Argument to RegisterCustomCallTargetRegistry was not a "
-        "xla._CUSTOM_CALL_TARGET capsule.");
-  }
-
   if (c_api->extension_start == nullptr) {
     return Unimplemented("The plugin does not have extension.");
   }

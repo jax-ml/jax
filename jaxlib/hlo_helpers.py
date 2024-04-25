@@ -20,6 +20,7 @@ from collections.abc import Sequence
 from functools import partial
 from typing import Callable, Union
 
+import ml_dtypes
 import jaxlib.mlir.ir as ir
 import jaxlib.mlir.dialects.stablehlo as hlo
 import numpy as np
@@ -38,6 +39,7 @@ _dtype_to_ir_type_factory : dict[np.dtype, Callable[[], ir.Type]] = {
   np.dtype(np.float16): ir.F16Type.get,
   np.dtype(np.float32): ir.F32Type.get,
   np.dtype(np.float64): ir.F64Type.get,
+  np.dtype(ml_dtypes.bfloat16): ir.BF16Type.get,
   np.dtype(np.complex64): lambda: ir.ComplexType.get(ir.F32Type.get()),
   np.dtype(np.complex128): lambda: ir.ComplexType.get(ir.F64Type.get()),
 }

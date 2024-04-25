@@ -16,6 +16,8 @@ Remember to align the itemized text with the first line of an item within a list
     implementation of cross-process collective operations used by the CPU backend.
     Choices available are `'none'`(default), `'gloo'` and `'mpi'` (requires jaxlib 0.4.26).
     If set to `'none'`, cross-process collective operations are disabled.
+  * Added {func}`jax.dlpack.callback` -- a variant of {func}`jax.pure_callback`
+    which uses DLPack tensors to keep the data on device.
 
 * Changes
   * {func}`jax.pure_callback`, {func}`jax.experimental.io_callback`

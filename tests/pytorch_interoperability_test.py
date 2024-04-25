@@ -15,14 +15,15 @@
 import unittest
 
 from absl.testing import absltest
-
 import jax
-import jax.dlpack
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
+from jax._src.dlpack import callback as dlpack_callback
 from jax._src.lib import xla_client
+import jax.dlpack
 import jax.numpy as jnp
+
 
 config.parse_flags_with_absl()
 
@@ -162,6 +163,32 @@ class DLPackTest(jtu.JaxTestCase):
     # Verify the resulting value can be passed to a jit computation.
     z = jax.jit(lambda x: x + 1)(y)
     self.assertAllClose(x_np + dtype(1), z)
+
+  @jtu.sample_product(shape=all_shapes, dtype=torch_dtypes)
+  def testCallback(self, shape, dtype):
+    if not config.enable_x64.value and dtype in [
+        jnp.int64,
+        jnp.float64,
+        jnp.complex128,
+    ]:
+      self.skipTest("x64 types are disabled by jax_enable_x64")
+
+    if not jtu.test_device_matches(["cuda"]):
+      self.skipTest("dlpack.callback is only supported on CUDA")
+
+    def f(x):
+      return dlpack_callback(
+          lambda x: torch.to_dlpack(torch.from_dlpack(x) + 1),
+          x,
+          result_shape_dtypes=jax.ShapeDtypeStruct(shape, dtype),
+          vectorized=True,
+      )
+
+    rng = jtu.rand_default(self.rng())
+    x = rng(shape, dtype)
+    self.assertAllClose(f(x), x + dtype(1))
+    y = rng((42,) + shape, dtype)
+    self.assertAllClose(jax.vmap(f)(y), y + dtype(1))
 
 
 if __name__ == "__main__":
