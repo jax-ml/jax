@@ -682,9 +682,6 @@ class VectorLayoutInferer {
     }
     auto res_ty = op.getResult().getType();
     int8_t bitwidth = res_ty.getElementTypeBitWidth();
-    if (bitwidth != 32) {
-      NYI("Support concatenation with non 32-bit data");
-    }
     auto layout = (dimension >= res_rank - 2)
                       ? VectorLayout(bitwidth, {0, 0}, nativeTiling(bitwidth),
                                      ImplicitDim::kNone)

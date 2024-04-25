@@ -2091,15 +2091,12 @@ LogicalResult tpu_concatenate_rule(RewriteContext &ctx, Operation &op,
       return op.emitOpError("Not implemented: Inconsistent layouts");
     }
   }
-  if (!layout.hasNaturalTopology(ctx.target_shape)) {
-    return op.emitOpError("Not implemented");
-  }
   OpBuilder builder(&op);
   auto concatenate_op = cast<tpu::ConcatenateOp>(op);
   const VectorType res_ty = concatenate_op.getResult().getType();
   const uint32_t dimension = concatenate_op.getDimension();
   if (dimension - res_ty.getRank() >= -2) {
-    if (!layout.hasNaturalTopology(ctx.target_shape) ||
+    if (!layout.hasNativeTiling(ctx.target_shape) ||
         layout.offsets() != LayoutOffsets{0, 0}) {
       return op.emitOpError(
           "Not implemented: Only native tiling with offset (0, 0) is supported "
