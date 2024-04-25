@@ -65,7 +65,7 @@ def _maybe_dynamic_slice(start_idx, block_shape, value, is_indexing):
     return value
   assert is_indexing is not None
   start_idx = tuple(jnp.asarray(s, dtype=jnp.int32) for s in start_idx)
-  output = lax.dynamic_slice(value, start_idx, slice_sizes=block_shape)
+  output = _padded_dynamic_slice(value, start_idx, block_shape)
   squeeze_dims = tuple(np.arange(len(is_indexing))[np.array(is_indexing,
                                                             dtype=np.bool_)])
   return lax.squeeze(output, squeeze_dims)
@@ -81,7 +81,7 @@ def _maybe_dynamic_update_slice(start_idx, block_shape, value, update,
                          if not b)
   update = lax.broadcast_in_dim(update, block_shape, broadcast_dims)
   assert update.shape == block_shape
-  return lax.dynamic_update_slice(value, update, start_idx)
+  return _padded_dynamic_update_slice(value, update, start_idx)
 
 def _uninitialized_value(shape, dtype):
   if jnp.issubdtype(dtype, jnp.floating):
@@ -89,6 +89,48 @@ def _uninitialized_value(shape, dtype):
   elif jnp.issubdtype(dtype, jnp.integer):
     return jnp.full(shape, jnp.iinfo(dtype).min, dtype)
   raise NotImplementedError(dtype)
+
+def _padded_dynamic_slice(
+    value: jax.Array, start_idx: jax.Array, slice_sizes: tuple[int, ...]):
+  """Performs a dynamic_slice with padding if required."""
+  if not value.shape:  # Don't pad for scalars.
+    return lax.dynamic_slice(value, start_idx, slice_sizes)
+  requires_pad = jnp.array(
+      [i+b > v for i, b, v in zip(start_idx, slice_sizes, value.shape)])
+  requires_pad = jnp.any(requires_pad)
+  pad_value = _uninitialized_value(shape=(), dtype=value.dtype)
+  def padded_op():
+    pad_width = tuple((0, v+b) for v, b in zip(value.shape, slice_sizes))
+    padded_value = jnp.pad(value, pad_width, constant_values=pad_value)
+    return lax.dynamic_slice(padded_value, start_idx, slice_sizes)
+  result = lax.cond(requires_pad & (len(value.shape) > 0),
+                    padded_op,
+                    lambda: lax.dynamic_slice(value, start_idx, slice_sizes)
+           )
+  return result
+
+def _padded_dynamic_update_slice(
+    value: jax.Array, updates: jax.Array, start_idx: jax.Array):
+  """Performs a dynamic_update_slice with padding if required."""
+  if not value.shape:  # Don't pad for scalars.
+    return lax.dynamic_update_slice(value, updates, start_idx)
+  slice_sizes = updates.shape
+  requires_pad = jnp.array(
+      [i+b > v for i, b, v in zip(start_idx, slice_sizes, value.shape)])
+  requires_pad = jnp.any(requires_pad)
+  pad_value = _uninitialized_value(shape=(), dtype=value.dtype)
+  def padded_op():
+    pad_width = tuple((0, v+b) for v, b in zip(value.shape, slice_sizes))
+    padded_value = jnp.pad(value, pad_width, constant_values=pad_value)
+    padded_value = lax.dynamic_update_slice(padded_value, updates, start_idx)
+    return lax.slice(
+        padded_value, (0,) * len(value.shape), value.shape
+    )
+  result = lax.cond(requires_pad & (len(value.shape) > 0),
+                    padded_op,
+                    lambda: lax.dynamic_update_slice(value, updates, start_idx),
+           )
+  return result
 
 def _get_next_indices(grid, indices):
   next_indices = []
