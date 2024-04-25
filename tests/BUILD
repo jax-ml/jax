@@ -987,6 +987,11 @@ jax_test(
 jax_test(
     name = "sparse_nm_test",
     srcs = ["sparse_nm_test.py"],
+    config_tags_overrides = {
+        "gpu_a100": {
+            "ondemand": False,  # Include in presubmit.
+        },
+    },
     disable_backends = [
         "cpu",
         "gpu",
@@ -998,6 +1003,7 @@ jax_test(
     ],
     deps = [
         "//jax:experimental_sparse",
+        "//jax:pallas_gpu",
     ],
 )
 
