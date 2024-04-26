@@ -395,6 +395,7 @@ jax.scipy.stats.poisson
 
    logpmf
    pmf
+   cdf
 
 jax.scipy.stats.t
 ~~~~~~~~~~~~~~~~~
