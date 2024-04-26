@@ -572,6 +572,29 @@ class LoweringException(Exception):
   pass
 
 
+def _compute_name_stack_updates(
+    old_name_stack: list[str],
+    new_name_stack: list[str]
+) -> tuple[list[str], list[str]]:
+  """Computes the popped/pushed items to the name stack after an update.
+
+  Args:
+    old_name_stack: The name stack prior to the update.
+    new_name_stack: The name stack after the update.
+
+  Returns:
+    popped: A list of names popped from the name stack as part of the update.
+    pushed: A list of names pushed to the name stack as part of the update.
+  """
+  common_prefix_idx = 0
+  for i, (old, new) in enumerate(unsafe_zip(old_name_stack, new_name_stack)):
+    if old == new:
+      common_prefix_idx = i+1
+    else:
+      break
+  return old_name_stack[common_prefix_idx:], new_name_stack[common_prefix_idx:]
+
+
 def jaxpr_subcomp(
     ctx: LoweringContext, jaxpr: jax_core.Jaxpr, *args: ir.Value
 ) -> Sequence[ir.Value]:
@@ -595,6 +618,9 @@ def jaxpr_subcomp(
     block_shape_env[invar] = bs
   map(write_env, jaxpr.invars, args)
 
+  current_name_stack: list[str] = []
+  # TODO(justinfu): Handle transform scopes.
+  current_name_stack.extend([scope.name for scope in ctx.name_stack.stack])
   for eqn in jaxpr.eqns:
     invals = map(read_env, eqn.invars)
     source_info = eqn.source_info.replace(
@@ -615,6 +641,17 @@ def jaxpr_subcomp(
             [v.aval for v in eqn.outvars],
             block_shapes,
         )
+
+        # Insert trace_start and trace_stop ops on named_scope boundaries.
+        name_stack = [scope.name for scope in source_info.name_stack.stack]
+        popped, pushed = _compute_name_stack_updates(
+            current_name_stack, name_stack)
+        current_name_stack = name_stack
+        for _ in popped:
+          _trace_stop_lowering_rule(rule_context)
+        for name in pushed:
+          _trace_start_lowering_rule(rule_context, message=name, level=10)
+
         try:
           ans = lowering_rules[eqn.primitive](
               rule_context, *invals, **eqn.params
