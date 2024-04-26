@@ -95,9 +95,8 @@ class SpmmTest(jtu.JaxTestCase):
     jtu.check_eq(dot_sparse, dot_dense.astype(dtypes.bfloat16))
 
   # ----- Test different input types
-  # TODO(b/336519663): add int8 type once codegen is fixed
   @parameterized.product(
-      lhs_type=[jnp.int16, jnp.float16, jnp.bfloat16],
+      lhs_type=[jnp.int8, jnp.int16, jnp.float16, jnp.bfloat16],
       rhs_type=[jnp.bfloat16],
       output_type=[jnp.bfloat16, jnp.float32],
   )
