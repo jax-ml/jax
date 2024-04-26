@@ -161,6 +161,7 @@ MAIN_NAMESPACE = {
   'tan',
   'tanh',
   'tensordot',
+  'tile',
   'tril',
   'triu',
   'trunc',

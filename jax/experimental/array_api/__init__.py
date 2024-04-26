@@ -180,6 +180,7 @@ from jax.experimental.array_api._manipulation_functions import (
     roll as roll,
     squeeze as squeeze,
     stack as stack,
+    tile as tile,
     unstack as unstack,
 )
 
