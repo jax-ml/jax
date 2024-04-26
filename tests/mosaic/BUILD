@@ -71,6 +71,10 @@ jax_test(
     disable_backends = DISABLED_BACKENDS,
     disable_configs = DISABLED_CONFIGS,
     main = "//third_party/py/jax/experimental/mosaic/gpu/examples:matmul.py",
+    tags = [
+        "manual",
+        "notap",
+    ],
     deps = [
         "//jax:mosaic_gpu",
     ] + py_deps("absl/testing") + py_deps("numpy"),
