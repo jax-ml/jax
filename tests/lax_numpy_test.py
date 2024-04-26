@@ -6018,9 +6018,17 @@ class NumpyDocTests(jtu.JaxTestCase):
 
     # Functions that have their own docstrings & don't wrap numpy.
     known_exceptions = {
-      'fromfile', 'fromiter', 'frompyfunc', 'vectorize',
-      'argwhere', 'where', 'nonzero', 'flatnonzero'}
-
+      'argwhere',
+      'flatnonzero',
+      'fromfile',
+      'fromiter',
+      'frompyfunc',
+      'matrix_transpose',
+      'nonzero',
+      'transpose',
+      'vectorize',
+      'where',
+    }
     for name in dir(jnp):
       if name in known_exceptions or name.startswith('_'):
         continue
