@@ -213,6 +213,32 @@ class JaxExportTest(jtu.JaxTestCase):
     f1 = export.call_exported(exp_f)
     self.assertAllClose(f(x), f1(x))
 
+  def test_jit_static_arg(self):
+
+    with self.subTest("static_argnames"):
+
+      @functools.partial(jax.jit, static_argnames=["c"])
+      def f(x, *, c):
+        return c * jnp.sin(x)
+
+      x = np.arange(4, dtype=np.float32)
+      exp_f = get_exported(f)(x, c=0.1)
+
+      f1 = export.call_exported(exp_f)
+      self.assertAllClose(f(x, c=0.1), f1(x))
+
+    with self.subTest("static_argnums"):
+
+      @functools.partial(jax.jit, static_argnums=[1])
+      def g(x, c):
+        return c * jnp.sin(x)
+
+      x = np.arange(4, dtype=np.float32)
+      exp_g = get_exported(g)(x, 0.1)
+
+      g1 = export.call_exported(exp_g)
+      self.assertAllClose(g(x, 0.1), g1(x))
+
   def test_call_exported_lambda(self):
     # When we export a lambda, the exported.fun_name is not a valid MLIR function name
     f = lambda x: jnp.sin(x)
@@ -494,7 +520,6 @@ class JaxExportTest(jtu.JaxTestCase):
             r"Expected current \(from args\[0\]\) scope .*"
             r"and found for 'w' \(args\[1\]\) scope .*", re.DOTALL)):
       get_exported(f)(x_poly_spec, y_poly_spec)
-
 
   @jtu.parameterized_filterable(
     kwargs=[

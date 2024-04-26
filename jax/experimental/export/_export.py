@@ -414,6 +414,9 @@ def export(fun_jax: Callable,
 
       symbolic_scope: tuple[_shape_poly.SymbolicScope, tree_util.KeyPath] | None = None
       for k_path, aval in tree_util.tree_flatten_with_path((args_specs, kwargs_specs))[0]:
+        # Static args may has no `shape` attribute.
+        if not hasattr(aval, "shape"):
+          continue
         for d in aval.shape:
           if _shape_poly.is_symbolic_dim(d):
             if symbolic_scope is None:
