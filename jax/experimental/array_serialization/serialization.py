@@ -63,9 +63,6 @@ _BARRIER_TIMED_OUT_MSG = (
     "Suggestions for possible fixes:\n"
     "* Check the logs to see if one or more processes failed.\n"
     "* Make sure the training and checkpointing endpoints are close geographically.\n"
-    "* Try setting these environment variables: "
-    "`TENSORSTORE_CURL_LOW_SPEED_TIME_SECONDS=60` "
-    "`TENSORSTORE_CURL_LOW_SPEED_LIMIT_BYTES=256` which will force a http retry\n"
     "* Try increasing the timeout you pass to GlobalAsyncCheckpointManager.")
 
 logger = logging.getLogger(__name__)
