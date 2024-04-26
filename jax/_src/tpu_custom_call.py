@@ -26,7 +26,6 @@ import os
 import time
 from typing import Any, Callable
 
-from absl import flags
 import jax
 from jax import core
 from jax._src import config
@@ -42,7 +41,11 @@ from jaxlib.mlir.dialects import stablehlo
 from jaxlib.mlir.passmanager import PassManager
 import numpy as np
 
-FLAGS = flags.FLAGS
+try:
+  from absl import flags
+  FLAGS = flags.FLAGS
+except ImportError:
+  FLAGS = {}
 
 _MOSAIC_USE_PYTHON_PIPELINE = config.define_bool_state(
     name="mosaic_use_python_pipeline",
@@ -321,7 +324,12 @@ def _lower_tpu_kernel(
     pipeline.run(module.operation)
     dump_mlir(module, "post-simplify")
 
-    if checks := FLAGS["xla_mosaic_on_device_checks"].value:
+    try:
+      on_device_checks = FLAGS["xla_mosaic_on_device_checks"].value
+    except KeyError:
+      on_device_checks = False
+
+    if checks := on_device_checks:
       checks = set(checks.split(","))
       if checks == {"bounds"}:  # We only support one kind of checks now.
         pipeline = PassManager.parse(
