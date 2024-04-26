@@ -87,9 +87,20 @@ cc_library(
     alwayslink = True,
 )
 
+cc_library(
+    name = "runtime",
+    srcs = ["runtime.cc"],
+    deps = [
+        "@local_config_cuda//cuda:cuda_headers",
+    ],
+)
+
 cc_binary(
     name = "libmlir_cuda_runtime.so",
-    srcs = ["@llvm-project//mlir:lib/ExecutionEngine/CudaRuntimeWrappers.cpp"],
+    srcs = [
+        "runtime.cc",
+        "@llvm-project//mlir:lib/ExecutionEngine/CudaRuntimeWrappers.cpp",
+    ],
     copts = ["-fvisibility=default"],
     linkopts = select({
         "@xla//xla/python:use_jax_cuda_pip_rpaths": [

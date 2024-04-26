@@ -219,6 +219,12 @@ pybind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
+    linkopts = select({
+        "@xla//xla/python:use_jax_cuda_pip_rpaths": [
+            "-Wl,-rpath,$$ORIGIN/../../../nvidia/cuda_runtime/lib",
+        ],
+        "//conditions:default": [],
+    }),
     visibility = ["//third_party/py/jax:__subpackages__"],
     deps = [
         ":jaxlib_mlir_capi_shared_library",
@@ -227,6 +233,7 @@ pybind_extension(
         "//jaxlib/mosaic/gpu:mlir_capi",
         "@nanobind",
         "@xla//xla/service:custom_call_status",
+        "@xla//xla/tsl/cuda:cudart",
     ],
 )
 

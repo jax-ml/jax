@@ -37,6 +37,7 @@ cc_library(
     defines = ["JAX_GPU_CUDA=1"],
     visibility = ["//visibility:public"],
     deps = [
+        "@xla//xla/tsl/cuda:cupti",
         "@local_config_cuda//cuda:cuda_headers",
         "@local_config_cuda//cuda:cudnn_header",
     ],
