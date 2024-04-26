@@ -999,7 +999,8 @@ jax_test(
     ],
     enable_configs = [
         "gpu_a100",
-        "gpu_h100",
+        # TODO(b/337303303): re-enable the test
+        # "gpu_h100",
     ],
     deps = [
         "//jax:experimental_sparse",
