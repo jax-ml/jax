@@ -275,9 +275,9 @@ class CompilationCacheTest(jtu.JaxTestCase):
         # Calling assertEqual with the jitted f will generate two PJIT
         # executables: Equal and the lambda function itself.
         self.assertEqual(f(2), 4)
-        if len(w) > 2:
-          print("Warnings:", [str(w_) for w_ in w], flush=True)
-        self.assertLen(w, 2)
+        w_str = '\n'.join(str(warning) for warning in w)
+        self.assertLen(w, 2,
+                       f'Expected 2 warnings, got {len(w)}:\n{w_str}')
         self.assertIn(
             (
                 "Error reading persistent compilation cache entry "
