@@ -272,12 +272,13 @@ class CompilationCacheTest(jtu.JaxTestCase):
         warnings.catch_warnings(record=True) as w,
       ):
         mock_get.side_effect = RuntimeError("test error")
-        # Calling assertEqual with the jitted f will generate two PJIT
+        # Calling assertEqual with the JIT'ed f will generate two PJIT
         # executables: Equal and the lambda function itself.
         self.assertEqual(f(2), 4)
-        if len(w) > 2:
-          print("Warnings:", [str(w_) for w_ in w], flush=True)
-        self.assertLen(w, 2)
+        warnings_str = '\n'.join([str(w_) for w_ in w])
+        self.assertLen(w, 2,
+                       f"Expected two warnings, "
+                       f"got {len(w)} warnings:\n{warnings_str}")
         self.assertIn(
             (
                 "Error reading persistent compilation cache entry "
