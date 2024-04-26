@@ -21,7 +21,7 @@ import dataclasses
 import functools
 import math
 import operator
-from typing import Any, Callable
+from typing import Any, Callable, TypeVar
 
 import jax
 from jax import lax
@@ -56,10 +56,11 @@ from jax._src.util import split_list
 import jax.numpy as jnp
 import numpy as np
 
-
 # TODO(sharadmv): Enable type checking.
 # mypy: ignore-errors
 # pytype: skip-file
+
+_T = TypeVar("_T")
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -165,6 +166,13 @@ def _bcast(
 
 
 triton_lowering_rules = {}
+
+
+def register_lowering(primitive: jax_core.Primitive) -> Callable[[_T], _T]:
+  def wrapper(fn):
+    triton_lowering_rules[primitive] = fn
+    return fn
+  return wrapper
 
 
 def _process_grid_to_3d_grid(grid_mapping: GridMapping):

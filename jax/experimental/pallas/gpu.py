@@ -14,5 +14,6 @@
 
 """Contains Triton specific Pallas functions."""
 from jax._src.pallas import triton
+from jax._src.pallas.triton import approx_tanh
 get_compute_capability = triton.get_compute_capability
 del triton
