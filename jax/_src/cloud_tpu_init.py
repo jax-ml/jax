@@ -68,3 +68,7 @@ def cloud_tpu_init() -> None:
   os.environ['TPU_ML_PLATFORM'] = 'JAX'
   if hardware_utils.tpu_enhanced_barrier_supported():
     os.environ["LIBTPU_INIT_ARGS"] = os.environ.get("LIBTPU_INIT_ARGS","") + " --xla_tpu_use_enhanced_launch_barrier=true"
+
+  # this makes tensorstore serialization work better on TPU
+  os.environ.setdefault('TENSORSTORE_CURL_LOW_SPEED_TIME_SECONDS', '60')
+  os.environ.setdefault('TENSORSTORE_CURL_LOW_SPEED_LIMIT_BYTES', '256')
