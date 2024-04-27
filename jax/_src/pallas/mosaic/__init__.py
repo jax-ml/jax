@@ -14,7 +14,6 @@
 
 """Module for Mosaic lowering of Pallas call."""
 
-from jax._src.api import named_scope as trace
 from jax._src.pallas.mosaic import core
 from jax._src.pallas.mosaic.core import dma_semaphore
 from jax._src.pallas.mosaic.core import PrefetchScalarGridSpec

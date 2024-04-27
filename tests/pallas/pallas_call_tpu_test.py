@@ -2314,7 +2314,7 @@ class PallasCallPipelineTest(parameterized.TestCase):
         del prologue_args
 
         @pl.when(is_start)
-        @pltpu.trace('sync_and_bwd_init')
+        @jax.named_scope('sync_and_bwd_init')
         def _sync_and_bwd_init():
           # barrier at start
           barrier_sem = pltpu.get_barrier_semaphore()
@@ -2327,7 +2327,7 @@ class PallasCallPipelineTest(parameterized.TestCase):
           initial_bwd_copy.wait()
 
         @pl.when(jnp.logical_and(step != steps - 1, phase == 0))
-        @pltpu.trace('send_next_dma')
+        @jax.named_scope('send_next_dma')
         def _send_next_dma():
           bwd_copy.start()
           @pl.when(jnp.logical_not(is_start))
@@ -2344,13 +2344,13 @@ class PallasCallPipelineTest(parameterized.TestCase):
       def epilogue(epilogue_args: pltpu.PipelineCallbackArgs):
 
         @pl.when(is_start)
-        @pltpu.trace('fwd_init')
+        @jax.named_scope('fwd_init')
         def _fwd_init():
           initial_fwd_copy.wait()
           fwd_copy.start()
 
         @pl.when(jnp.logical_and(step != steps - 1, phase == 1))
-        @pltpu.trace('wait_on_prev_dma')
+        @jax.named_scope('wait_on_prev_dma')
         def _wait_on_prev_dma():
           bwd_copy.wait()
           fwd_copy.wait()
@@ -2388,7 +2388,7 @@ class PallasCallPipelineTest(parameterized.TestCase):
             ),
         )
 
-      with pltpu.trace('dots'):
+      with jax.named_scope('dots'):
 
         pipeline(
             lhs_scratch_ref.at[phase, working_slot],

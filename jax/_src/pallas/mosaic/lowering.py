@@ -648,9 +648,9 @@ def jaxpr_subcomp(
             current_name_stack, name_stack)
         current_name_stack = name_stack
         for _ in popped:
-          _trace_stop_lowering_rule(rule_context)
+          tpu.TraceStopOp()
         for name in pushed:
-          _trace_start_lowering_rule(rule_context, message=name, level=10)
+          tpu.TraceStartOp(message=name, level=10)
 
         try:
           ans = lowering_rules[eqn.primitive](
@@ -2151,21 +2151,6 @@ def _bitcast_lowering_rule(ctx: LoweringRuleContext, x, *, ty):
 
 
 lowering_rules[tpu_primitives.bitcast_p] = _bitcast_lowering_rule
-
-def _trace_start_lowering_rule(
-    ctx: LoweringRuleContext, *, message: str, level: int
-):
-  return tpu.TraceStartOp(message=message, level=level).results
-
-
-lowering_rules[tpu_primitives.trace_start_p] = _trace_start_lowering_rule
-
-
-def _trace_stop_lowering_rule(ctx: LoweringRuleContext):
-  return tpu.TraceStopOp().results
-
-
-lowering_rules[tpu_primitives.trace_stop_p] = _trace_stop_lowering_rule
 
 
 def _alloc_value(aval: jax_core.AbstractValue) -> ir.Value:

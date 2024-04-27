@@ -15,7 +15,6 @@
 """Module for Pallas:TPU-specific JAX primitives and functions."""
 from __future__ import annotations
 
-import contextlib
 import dataclasses
 import enum
 from typing import Any, Callable
@@ -101,10 +100,6 @@ def _bitcast_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, ty):
 
 mlir.register_lowering(bitcast_p, _bitcast_lowering_rule)
 
-trace_start_p = jax_core.Primitive('trace_start')
-trace_start_p.multiple_results = True
-
-
 roll_p = jax_core.Primitive("roll")
 
 
@@ -155,39 +150,6 @@ def _roll_lowering_rule(
 
 
 mlir.register_lowering(roll_p, _roll_lowering_rule)
-
-
-@trace_start_p.def_impl
-def _trace_start_impl(*, message: str, level: int):
-  del message, level
-  return []
-
-@trace_start_p.def_abstract_eval
-def _trace_start_abstract_eval(*, message: str, level: int):
-  del message, level
-  return []
-
-mlir.register_lowering(trace_start_p, lambda ctx, **_: [])
-
-
-trace_stop_p = jax_core.Primitive('trace_stop')
-trace_stop_p.multiple_results = True
-
-@trace_stop_p.def_impl
-def _trace_stop_impl():
-  return []
-
-@trace_stop_p.def_abstract_eval
-def _trace_stop_abstract_eval():
-  return []
-
-mlir.register_lowering(trace_stop_p, lambda ctx: [])
-
-@contextlib.contextmanager
-def trace(message: str, level: int = 10):
-  trace_start_p.bind(message=message, level=level)
-  yield
-  trace_stop_p.bind()
 
 
 run_scoped_p = jax_core.Primitive('run_scoped')
