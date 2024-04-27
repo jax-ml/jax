@@ -16,6 +16,7 @@
 
 from jax._src.lib import gpu_triton as triton_kernel_call_lib
 from jax._src.pallas.triton.primitives import approx_tanh
+from jax._src.pallas.triton.primitives import elementwise_inline_asm
 
 
 try:

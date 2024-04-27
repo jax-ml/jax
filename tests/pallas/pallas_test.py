@@ -1693,6 +1693,29 @@ class PallasOpsTest(PallasTest):
         rtol=5e-3,
     )
 
+  def test_elementwise_inline_asm(self):
+    if self.INTERPRET:
+      self.skipTest(
+          "elementwise_inline_asm is not supported in interpreter mode"
+      )
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((256,), jnp.float16),
+        grid=1,
+    )
+    def kernel(x_ref, o_ref):
+      [o_ref[...]] = plgpu.elementwise_inline_asm(
+          "tanh.approx.f16x2 $0, $1;",
+          args=[x_ref[...]],
+          constraints="=r,r",
+          pack=2,
+          result_shape_dtypes=[jax.ShapeDtypeStruct(x_ref.shape, x_ref.dtype)],
+      )
+
+    x = jnp.arange(256).astype(jnp.float16)
+    np.testing.assert_allclose(kernel(x), jnp.tanh(x), atol=5e-3, rtol=5e-3)
+
 
 class PallasOpsInterpretTest(PallasOpsTest):
   INTERPRET = True
