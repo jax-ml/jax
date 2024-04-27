@@ -715,7 +715,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
         core.ClosedJaxpr(jaxpr, consts), 'jit', name,
         (UNSPECIFIED,) * len(in_avals), (UNSPECIFIED,) * len(out_avals),
         (None,) * len(in_avals), (None,) * len(out_avals),
-        donated_invars, in_avals, keep_unused=True, inline=False,
+        donated_invars, keep_unused=True, inline=False,
         devices_from_context=None, lowering_parameters=lowering_parameters)
 
 
