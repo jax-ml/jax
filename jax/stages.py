@@ -30,4 +30,5 @@ from jax._src.stages import (
   Lowered as Lowered,
   Wrapped as Wrapped,
   ArgInfo as ArgInfo,
+  Specialized as Specialized
 )

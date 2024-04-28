@@ -4056,6 +4056,14 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     jax.vmap(jax.grad(model), in_axes=(None, 0))(params, x)  # doesn't crash
 
+  def test_jit_specialize(self):
+    def f(x):
+      return x * 2
+
+    specialized = jax.jit(f).specialize(jnp.arange(8))
+    self.assertLen(specialized.jaxpr.eqns, 1)
+    self.assertEqual(specialized.out_tree.num_leaves, 1)
+
 
 class TempSharding(Sharding):
 
