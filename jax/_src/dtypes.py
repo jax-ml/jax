@@ -340,8 +340,19 @@ def issubdtype(a: DTypeLike | None, b: DTypeLike | None) -> bool:
   #   don't conform to the standard numpy type hierarchy (e.g. the bfloat16 scalar
   #   type is not a subclass of np.floating) so we must also handle these specially.
 
-  # First handle extended dtypes. This is important for performance because
-  # isinstance(x, extended) is called frequently within JAX internals.
+  # We cannot use the cached version directly for all inputs, because some may be
+  # unhashable (e.g. custom objects with a dtype attribute). The following check is
+  # fast and covers the majority of calls to this function within JAX library code.
+  return _issubdtype_cached(
+    a if isinstance(a, (type, np.dtype, ExtendedDType)) else np.dtype(a),  # type: ignore[arg-type]
+    b if isinstance(b, (type, np.dtype, ExtendedDType)) else np.dtype(b),  # type: ignore[arg-type]
+  )
+
+
+@functools.lru_cache(512)  # don't use util.memoize because there is no X64 dependence.
+def _issubdtype_cached(a: type | np.dtype | ExtendedDType,
+                       b: type | np.dtype | ExtendedDType) -> bool:
+  # First handle extended dtypes, which require their own logic.
   a_is_type = isinstance(a, type)
   b_is_type = isinstance(b, type)
   if b_is_type and _issubclass(b, extended):
