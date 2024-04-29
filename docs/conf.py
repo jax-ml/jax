@@ -67,7 +67,6 @@ extensions = [
     'sphinx.ext.napoleon',
     'sphinx.ext.viewcode',
     'matplotlib.sphinxext.plot_directive',
-    'sphinx_autodoc_typehints',
     'myst_nb',
     "sphinx_remove_toctrees",
     'sphinx_copybutton',
@@ -294,17 +293,13 @@ epub_exclude_files = ['search.html']
 
 # -- Extension configuration -------------------------------------------------
 
-# Tell sphinx-autodoc-typehints to generate stub parameter annotations including
-# types, even if the parameters aren't explicitly documented.
-always_document_param_types = True
-
-
 # Tell sphinx autodoc how to render type aliases.
+autodoc_typehints = "description"
+autodoc_typehints_description_target = "all"
 autodoc_type_aliases = {
     'ArrayLike': 'jax.typing.ArrayLike',
     'DTypeLike': 'jax.typing.DTypeLike',
 }
-
 
 # Remove auto-generated API docs from sidebars. They take too long to build.
 remove_from_toctrees = ["_autosummary/*"]
