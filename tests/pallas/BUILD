@@ -59,7 +59,7 @@ jax_test(
     shard_count = 4,
     deps = [
         "//jax:pallas_gpu",
-    ] + py_deps("absl/testing") + py_deps("jax_triton") + py_deps("numpy"),
+    ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
 jax_test(
