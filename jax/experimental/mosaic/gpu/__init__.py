@@ -111,7 +111,7 @@ def _mosaic_gpu_lowering_rule(ctx, *args, module, out_types, gmem_scratch_bytes)
   del out_types  # Unused.
   runtime_path = (
       pathlib.Path(mosaic_gpu_lib._mosaic_gpu_ext.__file__).parent.parent.parent
-      / "mosaic" / "gpu" / "libmlir_cuda_runtime.so"
+      / "mosaic" / "gpu" / "libmosaic_gpu_runtime.so"
   )
   shared_libs = [str(runtime_path)] if runtime_path.exists() else []
   engine = ExecutionEngine(

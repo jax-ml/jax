@@ -21,7 +21,7 @@ package(
 
 py_library(
     name = "mosaic_gpu",
-    data = [":libmlir_cuda_runtime.so"],
+    data = [":libmosaic_gpu_runtime.so"],
     deps = [
         "//jaxlib/mlir:execution_engine",
         "//jaxlib/mlir:gpu_dialect",
@@ -96,11 +96,8 @@ cc_library(
 )
 
 cc_binary(
-    name = "libmlir_cuda_runtime.so",
-    srcs = [
-        "runtime.cc",
-        "@llvm-project//mlir:lib/ExecutionEngine/CudaRuntimeWrappers.cpp",
-    ],
+    name = "libmosaic_gpu_runtime.so",
+    srcs = ["runtime.cc"],
     copts = ["-fvisibility=default"],
     linkopts = select({
         "@xla//xla/python:use_jax_cuda_pip_rpaths": [
@@ -114,7 +111,6 @@ cc_binary(
         "notap",
     ],
     deps = [
-        "@llvm-project//mlir:mlir_c_runner_utils_hdrs",
         "@xla//xla/tsl/cuda:cudart",
         "@local_config_cuda//cuda:cuda_headers",
     ],

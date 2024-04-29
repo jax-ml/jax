@@ -92,4 +92,54 @@ void mosaic_gpu_memcpy_async_h2d(CUdeviceptr dst, void *src, uint64_t bytes,
   }
 }
 
+void* mosaic_gpu_module_load(void *data) {
+  CUmodule module = nullptr;
+  if (auto result = cuModuleLoadData(&module, data); result != CUDA_SUCCESS) {
+    const char *ptr = nullptr;
+    cuGetErrorString(result, &ptr);
+    fprintf(stderr, "cuModuleLoadData failed: %s\n", ptr);
+    abort();
+  }
+  return module;
+}
+
+void *mosaic_gpu_get_function(CUmodule module, const char *name,
+                              int32_t smem_bytes) {
+  CUfunction function = nullptr;
+  CUresult result = cuModuleGetFunction(&function, module, name);
+  if (result != CUDA_SUCCESS) {
+    const char *ptr = nullptr;
+    cuGetErrorString(result, &ptr);
+    fprintf(stderr, "cuModuleGetFunction failed: %s\n", ptr);
+    abort();
+  }
+  if (smem_bytes) {
+    result = cuFuncSetAttribute(
+        function, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, smem_bytes);
+    if (result != CUDA_SUCCESS) {
+      const char *ptr = nullptr;
+      cuGetErrorString(result, &ptr);
+      fprintf(stderr, "cuFuncSetAttribute failed: %s\n", ptr);
+      abort();
+    }
+  }
+  return function;
+}
+
+void mosaic_gpu_launch_kernel(CUfunction function, int64_t grid_x,
+                              int64_t grid_y, int64_t grid_z, int64_t block_x,
+                              int64_t block_y, int64_t block_z,
+                              int32_t smem_bytes, CUstream stream,
+                              void **params) {
+  CUresult result =
+      cuLaunchKernel(function, grid_x, grid_y, grid_z, block_x, block_y,
+                     block_z, smem_bytes, stream, params, nullptr);
+  if (result != CUDA_SUCCESS) {
+    const char *ptr = nullptr;
+    cuGetErrorString(result, &ptr);
+    fprintf(stderr, "cuLaunchKernel failed: %s\n", ptr);
+    abort();
+  }
+}
+
 }
