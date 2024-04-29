@@ -5897,6 +5897,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'partition': ['kind', 'order'],
       'percentile': ['weights'],
       'quantile': ['weights'],
+      'reshape': ['shape', 'copy'],
       'row_stack': ['casting'],
       'stack': ['casting'],
       'std': ['correction', 'mean'],
