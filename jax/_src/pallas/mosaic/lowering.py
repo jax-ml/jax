@@ -2322,3 +2322,23 @@ def _get_barrier_semaphore_rule(ctx: LoweringRuleContext):
   memref_type = aval_to_ir_type(ctx.avals_out[0])
   return tpu.GetBarrierSemaphoreOp(memref_type).result
 lowering_rules[tpu_primitives.get_barrier_semaphore_p] = _get_barrier_semaphore_rule
+
+
+def _prng_set_state_lowering_rule(ctx: LoweringRuleContext, seed):
+  return tpu.PRNGSetStateOp(seed).results
+lowering_rules[tpu_primitives.prng_set_state_p] = _prng_set_state_lowering_rule
+
+def _prng_get_state_lowering_rule(ctx: LoweringRuleContext):
+  out_aval = ctx.avals_out[0]
+  out_type = aval_to_ir_type(out_aval)
+  return tpu.PRNGGetStateOp(out_type).result
+lowering_rules[tpu_primitives.prng_get_state_p] = _prng_get_state_lowering_rule
+
+def _prng_random_bits_lowering_rule(ctx: LoweringRuleContext, *, shape):
+  if len(shape) <= 1:
+    # TODO(justinfu): Support implicit dims for PRNGRandomBitsOp.
+    raise NotImplementedError("random_bits only supports rank>=2 outputs.")
+  out_aval = ctx.avals_out[0]
+  out_type = aval_to_ir_type(out_aval)
+  return tpu.PRNGRandomBitsOp(out_type).result
+lowering_rules[tpu_primitives.prng_random_bits_p] = _prng_random_bits_lowering_rule

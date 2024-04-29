@@ -281,6 +281,18 @@ class VectorLayoutInferer {
         if (infer(op).failed()) {
           return failure();
         }
+      } else if (auto op = dyn_cast<tpu::PRNGSetStateOp>(any_op)) {
+        if (infer(op).failed()) {
+          return failure();
+        }
+      } else if (auto op = dyn_cast<tpu::PRNGGetStateOp>(any_op)) {
+        if (infer(op).failed()) {
+          return failure();
+        }
+      } else if (auto op = dyn_cast<tpu::PRNGRandomBitsOp>(any_op)) {
+        if (infer(op).failed()) {
+          return failure();
+        }
       } else if (auto op = dyn_cast<tpu::RegionOp>(any_op)) {
         if (infer(op).failed()) {
           return failure();
@@ -1697,6 +1709,32 @@ class VectorLayoutInferer {
     setLayout(op, in_layout,
               VectorLayout(kNativeBitwidth, {0, 0}, default_tiling_,
                            ImplicitDim::kNone));
+    return success();
+  }
+
+  LogicalResult infer(tpu::PRNGSetStateOp op) {
+    auto seed_layout = VectorLayout(kNativeBitwidth, {0, 0}, default_tiling_,
+                                     ImplicitDim::kNone);
+    SmallVector<Layout, 4> in_layout{seed_layout};
+    setInLayout(op, in_layout);
+    return success();
+  }
+  LogicalResult infer(tpu::PRNGGetStateOp op) {
+    LayoutOffsets offsets = {0, 0};
+    setOutLayout(op, VectorLayout(
+        kNativeBitwidth, offsets, nativeTiling(kNativeBitwidth),
+                                  ImplicitDim::kNone));
+    return success();
+  }
+  LogicalResult infer(tpu::PRNGRandomBitsOp op) {
+    auto res_ty = dyn_cast<VectorType>(op->getResult(0).getType());
+    TPU_CHECK_OP(res_ty.getElementTypeBitWidth() == kNativeBitwidth,
+                 "only 32-bit random bit generation supported");
+    // TODO(justinfu): Support implicit dims for PRNGRandomBitsOp.
+    LayoutOffsets offsets = {0, 0};
+    setOutLayout(op, VectorLayout(
+        kNativeBitwidth, offsets, nativeTiling(kNativeBitwidth),
+                                  ImplicitDim::kNone));
     return success();
   }
 

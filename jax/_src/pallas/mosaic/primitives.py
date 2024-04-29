@@ -579,3 +579,31 @@ def get_barrier_semaphore():
   semaphore is provided by XLA.
   """
   return get_barrier_semaphore_p.bind()
+
+# RNG Ops
+prng_set_state_p = jax_core.Primitive('prng_set_state')
+prng_set_state_p.multiple_results = True
+
+@prng_set_state_p.def_abstract_eval
+def _(_):
+  return []
+
+prng_set_state = prng_set_state_p.bind
+
+prng_get_state_p = jax_core.Primitive('prng_get_state')
+
+@prng_get_state_p.def_abstract_eval
+def _():
+  return jax_core.ShapedArray((8, 128), jnp.dtype("int32"))
+
+prng_get_state = prng_get_state_p.bind
+
+prng_random_bits_p = jax_core.Primitive(
+    'prng_random_bits')
+
+@prng_random_bits_p.def_abstract_eval
+def _(*, shape):
+  return jax_core.ShapedArray(shape, jnp.dtype("int32"))
+
+def prng_random_bits(shape):
+  return prng_random_bits_p.bind(shape=shape)

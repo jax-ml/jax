@@ -3907,6 +3907,102 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
   transpose_op->erase();
   return success();
 }
+
+LogicalResult prng_set_state_rule(RewriteContext &ctx, Operation &op,
+                                    const ArrayRef<Layout> layouts_in,
+                                    const ArrayRef<Layout> layouts_out) {
+  TPU_ASSERT_EQ_OP(layouts_in.size(), 1);
+  TPU_ASSERT_EQ_OP(layouts_out.size(), 0);
+  TPU_ASSERT_OP(layouts_in.front().has_value());
+
+  OpBuilder builder(&op);
+  const VectorLayout &seed_layout = *layouts_in.front();
+  // We expect the seed is already a native-sized vreg.
+  if (seed_layout.bitwidth() != 32) {
+    return op.emitOpError("Not implemented: Only 32-bit loads supported");
+  }
+  TPU_ASSERT_OP(seed_layout ==
+                VectorLayout(32, {0, 0}, ctx.target_shape,
+                             VectorLayout::ImplicitDim::kNone));
+  tpu::PRNGSetStateOp rng_op = cast<tpu::PRNGSetStateOp>(op);
+
+  // Check that the input shape is exactly one vreg.
+  auto seed_shape = rng_op.getInput().getType().getShape();
+  TPU_ASSERT_OP((seed_shape[0] == ctx.target_shape[0]) &&
+                (seed_shape[1] == ctx.target_shape[1]));
+
+  FAILUREOR_ASSIGN_OR_RETURN(
+      xla::Array<Value> tiles,
+      disassemble(builder, seed_layout, rng_op.getInput(),
+                  ctx.target_shape));
+  TPU_ASSERT_OP((tiles.dimensions() == xla::DimensionVector{1, 1}));
+  rng_op.getInputMutable().assign(tiles({0, 0}));
+  return success();
+}
+
+LogicalResult prng_get_state_rule(RewriteContext &ctx, Operation &op,
+                                  const ArrayRef<Layout> layouts_in,
+                                  const ArrayRef<Layout> layouts_out) {
+  TPU_ASSERT_EQ_OP(layouts_in.size(), 0);
+  TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
+  TPU_ASSERT_OP(layouts_out.front().has_value());
+
+  const VectorLayout &layout_out = *layouts_out.front();
+  // We expect the result is already a native-sized vreg.
+  tpu::PRNGGetStateOp rng_op = cast<tpu::PRNGGetStateOp>(op);
+  if (layout_out != VectorLayout(32, {0, 0}, ctx.target_shape,
+                                   VectorLayout::ImplicitDim::kNone)) {
+    return op.emitOpError("Invalid output layout for ") << rng_op->getName();
+  }
+  // Check that the output shape is exactly one vreg.
+  auto seed_shape = rng_op.getOutput().getType().getShape();
+  TPU_ASSERT_OP((seed_shape[0] == ctx.target_shape[0]) &&
+                (seed_shape[1] == ctx.target_shape[1]));
+
+  OpBuilder builder(op.getContext());
+  builder.setInsertionPointAfter(&op);
+  const RollVectorsOp roll_vectors_op =
+      assemble(builder, rng_op.getResult().getType(), layout_out,
+               {{rng_op.getResult()}}, ctx.target_shape);
+  rng_op->replaceUsesWithIf(roll_vectors_op, [&](OpOperand &operand) {
+    return operand.getOwner() != roll_vectors_op;
+  });
+  return success();
+}
+
+LogicalResult prng_generate_rule(RewriteContext &ctx, Operation &op,
+                                    const ArrayRef<Layout> layouts_in,
+                                    const ArrayRef<Layout> layouts_out) {
+  TPU_ASSERT_EQ_OP(layouts_in.size(), 0);
+  TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
+  TPU_ASSERT_OP(layouts_out.front().has_value());
+
+  const VectorLayout &layout_out = *layouts_out.front();
+  // We expect the result is already a native-sized vreg.
+  tpu::PRNGRandomBitsOp rng_op = cast<tpu::PRNGRandomBitsOp>(op);
+  if (layout_out != VectorLayout(32, {0, 0}, ctx.target_shape,
+                                   VectorLayout::ImplicitDim::kNone)) {
+    return op.emitOpError("Invalid output layout for ") << rng_op->getName();
+  }
+  OpBuilder builder(op.getContext());
+  builder.setInsertionPointAfter(&op);
+
+  VectorType vty = rng_op.getResult().getType();
+  xla::Array<Value> tiles(
+      layout_out.tileArrayShape(vty.getShape(), ctx.target_shape));
+  tiles.Each([&](absl::Span<const int64_t> tile_idxs, Value * v) {
+    *v = builder.create<tpu::PRNGRandomBitsOp>(
+        op.getLoc(), VectorType::get(ctx.target_shape, vty.getElementType()));
+  });
+  const RollVectorsOp roll_vectors_op =
+      assemble(builder, vty, layout_out, tiles, ctx.target_shape);
+  rng_op->replaceUsesWithIf(roll_vectors_op, [&](OpOperand &operand) {
+    return operand.getOwner() != roll_vectors_op;
+  });
+  rng_op->erase();
+  return success();
+}
+
 const llvm::StringMap<rule_type> &rules() {
   static auto rules = new llvm::StringMap<rule_type>{
       {arith::ConstantOp::getOperationName(), arith_constant_rule},
@@ -3934,6 +4030,9 @@ const llvm::StringMap<rule_type> &rules() {
       {tpu::BitcastOp::getOperationName(), tpu_bitcast_rule},
       {tpu::TraceOp::getOperationName(), tpu_trace_rule},
       {tpu::AssumeLayoutOp::getOperationName(), tpu_assume_layout_rule},
+      {tpu::PRNGSetStateOp::getOperationName(), prng_set_state_rule},
+      {tpu::PRNGGetStateOp::getOperationName(), prng_get_state_rule},
+      {tpu::PRNGRandomBitsOp::getOperationName(), prng_generate_rule},
       {vector::BroadcastOp::getOperationName(), vector_broadcast_rule},
       {vector::ContractionOp::getOperationName(), vector_contract_rule},
       {vector::ExtractOp::getOperationName(), vector_extract_rule},

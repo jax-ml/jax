@@ -42,6 +42,9 @@ from jax._src.pallas.mosaic.primitives import run_scoped
 from jax._src.pallas.mosaic.primitives import semaphore_read
 from jax._src.pallas.mosaic.primitives import semaphore_signal
 from jax._src.pallas.mosaic.primitives import semaphore_wait
+from jax._src.pallas.mosaic.primitives import prng_set_state
+from jax._src.pallas.mosaic.primitives import prng_get_state
+from jax._src.pallas.mosaic.primitives import prng_random_bits
 
 ANY = TPUMemorySpace.ANY
 CMEM = TPUMemorySpace.CMEM

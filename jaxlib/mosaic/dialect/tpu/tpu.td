@@ -556,6 +556,21 @@ def TPU_GetIterationBoundOp : TPU_Op<"iteration_bound"> {
   let assemblyFormat = [{ $dim attr-dict `:` type($result) }];
 }
 
+def TPU_PRNGSetStateOp : TPU_Op<"setrngseed"> {
+  let arguments = (ins AnyVector:$input);
+  let results = (outs);
+}
+
+def TPU_PRNGGetStateOp : TPU_Op<"getrngseed"> {
+  let arguments = (ins);
+  let results = (outs AnyVector:$output);
+}
+
+def TPU_PRNGRandomBitsOp : TPU_Op<"vrng"> {
+  let arguments = (ins);
+  let results = (outs AnyVector:$output);
+}
+
 def DebugAssertInsertionPass : Pass<"debug-assert-insertion", "::mlir::func::FuncOp"> {
   let dependentDialects = [
     "::mlir::func::FuncDialect",
