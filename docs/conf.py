@@ -301,8 +301,8 @@ always_document_param_types = True
 
 # Tell sphinx autodoc how to render type aliases.
 autodoc_type_aliases = {
-    'ArrayLike': 'ArrayLike',
-    'DTypeLike': 'DTypeLike',
+    'ArrayLike': 'jax.typing.ArrayLike',
+    'DTypeLike': 'jax.typing.DTypeLike',
 }
 
 
