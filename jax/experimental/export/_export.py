@@ -1179,7 +1179,8 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   # TODO: maybe cache multiple calls
   fn = mlir.merge_mlir_modules(ctx.module_context.module,
                                f"call_exported_{exported.fun_name}",
-                               submodule)
+                               submodule,
+                               dst_symtab=ctx.module_context.symbol_table)
 
   submodule_args = []
   # All the platforms for the current lowering must be among the platforms

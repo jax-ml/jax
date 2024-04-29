@@ -571,7 +571,8 @@ def _call_tf_lowering(
   callee_result_types = symtab["main"].type.results
   fn = mlir.merge_mlir_modules(ctx.module_context.module,
                                f"call_tf_{function_flat_tf.name}",
-                               submodule)
+                               submodule,
+                               dst_symtab=ctx.module_context.symbol_table)
   call = func_dialect.CallOp(callee_result_types,
                              ir.FlatSymbolRefAttr.get(fn),
                              tuple(args_op) + captured_ops)

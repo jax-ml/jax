@@ -248,6 +248,24 @@ class JaxExportTest(jtu.JaxTestCase):
     f1 = export.call_exported(exp_f)
     self.assertAllClose(f(x), f1(x))
 
+  def test_call_name_conflict(self):
+    @jax.jit
+    def inner(x):
+      # The lowering will contain a _where private function
+      return jnp.where(x > 0, jnp.ones_like(x), jnp.zeros_like(x))
+
+    x = jnp.arange(-20, 20, dtype=np.int32)
+    exp_inner = export.export(inner)(x)
+    self.assertIn("@_where(", str(exp_inner.mlir_module()))
+
+    @jax.jit
+    def outer(x):
+      # There should be no conflict on _where
+      x = export.call(exp_inner)(x)
+      return inner(x)
+
+    export.export(outer)(x)
+
   def test_call_twice_exported(self):
     def f(x): return jnp.sin(x)
     x = np.arange(4, dtype=np.float32)
