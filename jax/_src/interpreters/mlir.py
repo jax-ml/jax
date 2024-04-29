@@ -2224,7 +2224,8 @@ def xla_computation_to_mlir_module(xla_computation: xc.XlaComputation
 
 def merge_mlir_modules(dst_module: ir.Module,
                        sym_name: str,
-                       src_module: ir.Module) -> str:
+                       src_module: ir.Module,
+                       dst_symtab: ir.SymbolTable | None = None) -> str:
   """
   Args:
     dst_module: the module into which the contents of src_module should be
@@ -2235,6 +2236,7 @@ def merge_mlir_modules(dst_module: ir.Module,
     src_module: the module whose contents are to be alpha-renamed, set to
       private visibility, and merged into dst_module. src_module must contain
       exactly one symbol named "main".
+    dst_symtab: the symbol table of `dst_module`
 
       Functions in src_module will be renamed such that they do not collide with
       functions in dst_module.
@@ -2248,7 +2250,7 @@ def merge_mlir_modules(dst_module: ir.Module,
   assert dst_module.context == src_module.context
 
   src_symtab = ir.SymbolTable(src_module.operation)
-  dst_symtab = ir.SymbolTable(dst_module.operation)
+  dst_symtab = dst_symtab or ir.SymbolTable(dst_module.operation)
   used_names = set()
 
   # Rename all symbols in src_module that clash with names in dst_module, or
@@ -2286,6 +2288,7 @@ def merge_mlir_modules(dst_module: ir.Module,
 
   for op in src_module.body.operations:
     dst_module.body.append(op)
+    dst_symtab.insert(op)
 
   return renamings["main"]
 
@@ -2313,7 +2316,8 @@ def xla_fallback_lowering(prim: core.Primitive):
         ctx.avals_out, **params)
     xla_module = xla_computation_to_mlir_module(xla_computation)
     callee_name = merge_mlir_modules(
-        module_ctx.module, f"xla_fallback_{prim.name}", xla_module)
+        module_ctx.module, f"xla_fallback_{prim.name}", xla_module,
+        dst_symtab=module_ctx.symbol_table)
     output_types = map(aval_to_ir_types, ctx.avals_out)
     flat_output_types = util.flatten(output_types)
     output_type = (ir.TupleType.get_tuple(flat_output_types)
