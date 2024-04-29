@@ -1999,13 +1999,15 @@ def mutable_array(init_val):
   return mutable_array_p.bind(init_val)
 mutable_array_p = Primitive('mutable_array')
 
-class InternalMutableArray(effects.Effect):
+class InternalMutableArrayEffect(effects.Effect):
   pass
+internal_mutable_array_effect = InternalMutableArrayEffect()
+effects.control_flow_allowed_effects.add_type(InternalMutableArrayEffect)
 
 @mutable_array_p.def_effectful_abstract_eval
 def mutable_array_abstract_eval(init_aval):
   from jax._src.state.types import AbstractRef  # type: ignore[import]
-  return AbstractRef(init_aval), {InternalMutableArray}
+  return AbstractRef(init_aval), {internal_mutable_array_effect}
 
 @mutable_array_p.def_impl
 def _mutable_array_impl(init_val):

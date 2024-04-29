@@ -1290,6 +1290,11 @@ jax_test(
 )
 
 jax_test(
+    name = "mutable_array_test",
+    srcs = ["mutable_array_test.py"],
+)
+
+jax_test(
     name = "for_loop_test",
     srcs = ["for_loop_test.py"],
     shard_count = {
