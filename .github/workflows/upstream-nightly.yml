@@ -108,7 +108,7 @@ jobs:
       - uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d # ratchet:actions/setup-python@v5
         with:
           python-version: "3.x"
-      - uses: actions/download-artifact@9c19ed7fe5d278cd354c7dfd5d3b88589c7e2395 # ratchet:actions/download-artifact@v4
+      - uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # ratchet:actions/download-artifact@v4
         with:
           path: /tmp/workspace/logs
       - name: install requirements
