@@ -22,13 +22,25 @@ package(
 )
 
 exports_files(
-    srcs = ["matmul.py"],
+    srcs = [
+        "flash_attention.py",
+        "matmul.py",
+    ],
     visibility = ["//third_party/py/jax:internal"],
 )
 
 py_library(
     name = "matmul",
     srcs = ["matmul.py"],
+    deps = [
+        "//third_party/py/jax",
+        "//third_party/py/jax:mosaic_gpu",
+    ],
+)
+
+py_library(
+    name = "flash_attention",
+    srcs = ["flash_attention.py"],
     deps = [
         "//third_party/py/jax",
         "//third_party/py/jax:mosaic_gpu",
