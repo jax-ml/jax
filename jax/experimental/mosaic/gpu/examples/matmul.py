@@ -403,7 +403,7 @@ def verify(
         wgmma_impl=impl,
         profiler_spec=prof_spec,
     )
-    z = jax.block_until_ready(f(x, y))
+    z, runtime = profiler.measure(f, x, y)
 
     if rhs_transpose:
       dimension_numbers = ((1,), (1,)), ((), ())
@@ -420,8 +420,11 @@ def verify(
         preferred_element_type=jnp.float32,
     )
     np.testing.assert_allclose(z, ref, atol=1e-3, rtol=1e-3)
+    return runtime
 
 
 if __name__ == "__main__":
   m, k, n = 33 * 128, 2048, 4 * 128
-  verify(m=m, k=k, n=n)
+  runtime = verify(m=m, k=k, n=n)
+  tflops = float(2 * k * m * n) / (runtime / 1e3) / 1e12
+  print(f"{runtime * 1000:.1f} us = {tflops:.1f} TFLOPS")
