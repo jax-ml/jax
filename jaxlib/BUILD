@@ -194,6 +194,7 @@ pybind_extension(
         "//jaxlib:kernel_nanobind_helpers",
         "@xla//third_party/python_runtime:headers",
         "@xla//xla:status",
+        "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla:util",
         "@xla//xla/pjrt:status_casters",
         "@xla//xla/pjrt/c:pjrt_c_api_gpu_extension_hdrs",

@@ -22,7 +22,6 @@ import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src import xla_bridge as xb
 from jax._src.lib import xla_extension_version
 
 import numpy as np
@@ -328,9 +327,6 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
   )
   @jtu.run_on_devices("cuda")
   def testCaiToJax(self, shape, dtype):
-    # TODO(b/324133505) enable this test for PJRT C API
-    if xb.using_pjrt_c_api():
-      self.skipTest("CUDA Array Interface support is incomplete in the PJRT C API")
     rng = jtu.rand_default(self.rng())
     x = rng(shape, dtype)
 
