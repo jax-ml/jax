@@ -898,8 +898,9 @@ class VectorLayoutInferer {
         if (some_layout->tiling()[0] == 1) {
           offsets[0] = std::nullopt;
         }
-        *some_layout = VectorLayout(some_layout->bitwidth(), offsets,
-                                   default_tiling_, some_layout->implicit_dim());
+        *some_layout =
+            VectorLayout(some_layout->bitwidth(), offsets, default_tiling_,
+                         some_layout->implicit_dim());
       }
       auto &layout = *some_layout;
       if (layout.implicit_dim() != ImplicitDim::kNone) {
@@ -1410,44 +1411,32 @@ class VectorLayoutInferer {
 
   LogicalResult infer(vector::TransposeOp op) {
     auto permutation = op.getPermutation();
+    TPU_CHECK_OP(permutation.size() > 1,
+                 "Vector and scalar transpose should be a no-op and removed");
+
     auto some_layout = getLayout(op.getVector());
     TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
     auto &layout = *some_layout;
     auto src_ty = op.getSourceVectorType();
     TPU_CHECK_OP(permutation.size() == src_ty.getRank(),
                  "Transpose permutation has incorrect rank");
-    if (layout.implicit_dim() == ImplicitDim::kNone) {
-      TPU_CHECK_OP((layout.offsets() == LayoutOffsets{0, 0}),
-                   "Padded transposes unsupported");
-      auto xlu_width = target_shape_[1];
-      for (int64_t s : src_ty.getShape().take_back(2)) {
-        TPU_CHECK_OP(s % xlu_width == 0, "Padded transposes unsupported");
-      }
-      for (auto dim : permutation.drop_back(2)) {
-        TPU_CHECK_OP(
-            dim < src_ty.getRank() - 2,
-            "Unsupported transpose permutation - minor dims into major");
-      }
-      for (auto dim : permutation.take_back(2)) {
-        TPU_CHECK_OP(
-            dim >= src_ty.getRank() - 2,
-            "Unsupported transpose permutation - major dims into minor");
-      }
-      Layout required_layout = some_layout;
-      if (permutation.size() < 2) {
-        return failure();
-      }
-      // Require native tiling if we're going to use the XLU.
-      if (permutation[permutation.size() - 1] == permutation.size() - 2) {
-        auto native_tiling = nativeTiling(layout.bitwidth());
-        required_layout = VectorLayout(layout.bitwidth(), layout.offsets(),
-                                       native_tiling, ImplicitDim::kNone);
-      }
-      setLayout(op, required_layout, required_layout);
-      return success();
+    for (auto dim : permutation.drop_back(2)) {
+      TPU_CHECK_OP(dim < src_ty.getRank() - 2,
+                   "Unsupported transpose permutation - minor dims into major");
     }
-    op.emitOpError("Unsupported transpose");
-    return failure();
+    for (auto dim : permutation.take_back(2)) {
+      TPU_CHECK_OP(dim >= src_ty.getRank() - 2,
+                   "Unsupported transpose permutation - major dims into minor");
+    }
+    Layout required_layout = some_layout;
+    // Require native tiling if we're going to use the XLU.
+    if (permutation[permutation.size() - 1] == permutation.size() - 2) {
+      auto native_tiling = nativeTiling(layout.bitwidth());
+      required_layout = VectorLayout(layout.bitwidth(), LayoutOffsets{0, 0},
+                                     native_tiling, ImplicitDim::kNone);
+    }
+    setLayout(op, required_layout, required_layout);
+    return success();
   }
 
   LogicalResult inferExt(Operation *op) {
