@@ -26,6 +26,7 @@
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #
+import inspect
 import os
 import sys
 
@@ -63,9 +64,9 @@ extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.autosummary',
     'sphinx.ext.intersphinx',
+    'sphinx.ext.linkcode',
     'sphinx.ext.mathjax',
     'sphinx.ext.napoleon',
-    'sphinx.ext.viewcode',
     'matplotlib.sphinxext.plot_directive',
     'myst_nb',
     "sphinx_remove_toctrees",
@@ -303,3 +304,25 @@ autodoc_type_aliases = {
 
 # Remove auto-generated API docs from sidebars. They take too long to build.
 remove_from_toctrees = ["_autosummary/*"]
+
+# Customize code links via sphinx.ext.linkcode
+
+def linkcode_resolve(domain, info):
+  import jax
+
+  if domain != 'py':
+    return None
+  if not info['module']:
+    return None
+  if not info['fullname']:
+    return None
+  try:
+    mod = sys.modules.get(info['module'])
+    obj = getattr(mod, info['fullname'])
+    filename = inspect.getsourcefile(obj)
+    source, linenum = inspect.getsourcelines(obj)
+  except:
+    return None
+  filename = os.path.relpath(filename, start=os.path.dirname(jax.__file__))
+  lines = f"#L{linenum}-L{linenum + len(source)}" if linenum else ""
+  return f"https://github.com/google/jax/blob/main/jax/{filename}{lines}"
