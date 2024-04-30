@@ -284,12 +284,16 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpuGetErrorString cudaGetErrorString
 #define gpuMemcpy cudaMemcpy
 #define gpuMemcpyAsync cudaMemcpyAsync
+#define gpuMemcpyDefault cudaMemcpyDefault
 #define gpuMemcpyDeviceToDevice cudaMemcpyDeviceToDevice
 #define gpuMemcpyHostToDevice cudaMemcpyHostToDevice
 #define gpuMemcpyDeviceToHost cudaMemcpyDeviceToHost
 #define gpuStreamSynchronize cudaStreamSynchronize
 #define gpuStreamWaitEvent cudaStreamWaitEvent
 #define gpuSuccess cudaSuccess
+
+#define gpuPointerGetAttributes cudaPointerGetAttributes
+#define gpuPointerAttributes cudaPointerAttributes
 
 namespace jax::JAX_GPU_NAMESPACE {
 namespace {
@@ -492,12 +496,16 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpuGetLastError hipGetLastError
 #define gpuGetErrorString hipGetErrorString
 #define gpuMemcpyAsync hipMemcpyAsync
+#define gpuMemcpyDefault hipMemcpyDefault
 #define gpuMemcpyDeviceToDevice hipMemcpyDeviceToDevice
 #define gpuMemcpyHostToDevice hipMemcpyHostToDevice
 #define gpuMemcpyDeviceToHost hipMemcpyDeviceToHost
 #define gpuStreamSynchronize hipStreamSynchronize
 #define gpuStreamWaitEvent hipStreamWaitEvent
 #define gpuSuccess hipSuccess
+
+#define gpuPointerGetAttributes hipPointerGetAttributes
+#define gpuPointerAttributes hipPointerAttributes
 
 #define gpuCtxGetDevice hipCtxGetDevice
 #define gpuCtxGetCurrent hipCtxGetCurrent

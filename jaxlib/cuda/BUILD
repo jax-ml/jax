@@ -524,10 +524,40 @@ pybind_extension(
     ],
 )
 
+pybind_extension(
+    name = "_dlpack",
+    srcs = ["//jaxlib/gpu:dlpack.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    features = ["-use_header_modules"],
+    module_name = "_dlpack",
+    deps = [
+        ":cuda_gpu_kernel_helpers",
+        ":cuda_vendor",
+        "//jaxlib:kernel_nanobind_helpers",
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/ffi/api:ffi",
+        "@xla//xla/tsl/cuda:cudart",
+        "@com_google_absl//absl/cleanup",
+        "@com_google_absl//absl/log",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/types:span",
+        "@dlpack",
+        "@local_config_cuda//cuda:cuda_headers",
+        "@nanobind",
+    ],
+)
+
 py_library(
     name = "cuda_gpu_support",
     deps = [
         ":_blas",
+        ":_dlpack",
         ":_linalg",
         ":_prng",
         ":_rnn",

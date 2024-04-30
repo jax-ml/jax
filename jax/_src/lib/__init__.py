@@ -104,6 +104,11 @@ try:
 except ImportError:
   cuda_versions = None
 
+if version >= (0, 4, 27):
+  import jaxlib.gpu_dlpack as gpu_dlpack  # pytype: disable=import-error
+else:
+  gpu_dlpack = None  # type: ignore[assignment]
+
 import jaxlib.gpu_solver as gpu_solver  # pytype: disable=import-error
 import jaxlib.gpu_sparse as gpu_sparse  # pytype: disable=import-error
 import jaxlib.gpu_prng as gpu_prng  # pytype: disable=import-error

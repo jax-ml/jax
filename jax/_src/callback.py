@@ -264,7 +264,7 @@ def pure_callback(
   Args:
     callback: function to execute on the host. The callback is assumed to be a pure
       function (i.e. one without side-effects): if an impure function is passed, it
-      may behave in unexpected ways, particularly under transformation.
+      may behave in unexpected ways, particularly under transformations.
     result_shape_dtypes: pytree whose leaves have ``shape`` and ``dtype`` attributes,
       whose structure matches the expected output of the callback function at runtime.
       :class:`jax.ShapeDtypeStruct` is often used to define leaf values.
@@ -273,7 +273,7 @@ def pure_callback(
       be invoked.
     vectorized: boolean specifying whether the callback function can operate in a
       vectorized manner.
-    **kwargs: keyword arguments to be passed to the callback function
+    **kwargs: keyword arguments to be passed to the callback function.
 
   Returns:
     result: a pytree of :class:`jax.Array` objects whose structure matches that of

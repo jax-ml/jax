@@ -27,6 +27,7 @@ exports_files(srcs = [
     "blas.cc",
     "blas_kernels.cc",
     "blas_kernels.h",
+    "dlpack.cc",
     "gpu_kernel_helpers.cc",
     "gpu_kernel_helpers.h",
     "gpu_kernels.cc",

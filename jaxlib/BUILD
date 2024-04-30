@@ -36,6 +36,7 @@ py_library_providing_imports_info(
     srcs = [
         "ducc_fft.py",
         "gpu_common_utils.py",
+        "gpu_dlpack.py",
         "gpu_linalg.py",
         "gpu_prng.py",
         "gpu_rnn.py",
@@ -71,6 +72,7 @@ py_library_providing_imports_info(
         "//jaxlib/mlir:vector_dialect",
         "//jaxlib/mosaic",
         "//jaxlib/triton",
+        "@ml_dtypes",
     ] + if_building_mosaic_gpu(["//jaxlib/mosaic/gpu:mosaic_gpu"]),
 )
 
