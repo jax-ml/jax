@@ -662,7 +662,7 @@ class VectorLayoutInferer {
     }
     auto layout = VectorLayout(bitwidth, {0, 0}, nativeTiling(bitwidth),
                                ImplicitDim::kNone);
-    setLayout(op, layout, layout);
+    setLayout(op, {layout, kNoLayout}, layout);
     return success();
   }
 
