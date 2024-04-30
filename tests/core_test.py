@@ -385,6 +385,11 @@ class CoreTest(jtu.JaxTestCase):
     self.assertLen(e1.outvars, 1)  # only primal out, no residuals
     self.assertEqual(e1.outvars[0].aval.shape, (3, 3))  # only primal out shape
 
+  def test_jaxpr_replace_debug_info_with_none(self):
+    jaxpr = make_jaxpr(simple_fun)(1.0, 2.0).jaxpr
+    self.assertIsNotNone(jaxpr.debug_info)
+    self.assertIsNone(jaxpr.replace(debug_info=None).debug_info)
+
 
 @jtu.with_config(jax_pprint_use_color=False)
 class JaxprTypeChecks(jtu.JaxTestCase):

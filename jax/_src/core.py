@@ -198,16 +198,19 @@ class Jaxpr:
   def _repr_pretty_(self, p, cycle):
     return p.text(self.pretty_print(use_color=True))
 
-  def replace(self, *, constvars=None, invars=None, outvars=None, eqns=None,
-              effects=None, debug_info=None):
-    constvars = self.constvars if constvars is None else constvars
-    invars =  self.invars if invars is None else invars
-    outvars = self.outvars if outvars is None else outvars
-    eqns = self.eqns if eqns is None else eqns
-    effects = self.effects if effects is None else effects
-    debug_info = self.debug_info if debug_info is None else debug_info
-    return Jaxpr(constvars=constvars, invars=invars, outvars=outvars, eqns=eqns,
-                 effects=effects, debug_info=debug_info)
+  def replace(self, **kwargs):
+    jaxpr = Jaxpr(
+        constvars=kwargs.pop("constvars", self.constvars),
+        invars=kwargs.pop("invars", self.invars),
+        outvars=kwargs.pop("outvars", self.outvars),
+        eqns=kwargs.pop("eqns", self.eqns),
+        effects=kwargs.pop("effects", self.effects),
+        debug_info=kwargs.pop("debug_info", self.debug_info),
+    )
+    if kwargs:
+      raise ValueError(f"Unknown keyword arguments: {kwargs}")
+    return jaxpr
+
 
 def join_effects(*effects: Effects) -> Effects:
   return set().union(*effects) if effects else no_effects
