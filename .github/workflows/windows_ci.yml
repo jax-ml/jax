@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        os: [windows-2022-32core]
+        os: [win-2019-16core]
         arch: [AMD64]
         pyver: ['3.9']
     name: ${{ matrix.os }} CI build
@@ -41,7 +41,7 @@ jobs:
 
       - name: Build wheels
         env:
-          BAZEL_VC: "C:\\Program Files\\Microsoft Visual Studio\\2022\\Enterprise\\VC"
+          BAZEL_VC: "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Enterprise\\VC"
           JAXLIB_NIGHTLY: true  # Tag the wheels as dev versions
         run: |
           cd jax
