@@ -617,7 +617,7 @@ def as_gpu_kernel(
 
   dump_low_level(module)
 
-  pass_manager = _get_mosaic_gpu_pipeline()
+  pass_manager = _get_mosaic_gpu_pipeline("fatbin")
   if mosaic_gpu_print_after_all.value:
     pass_manager.enable_ir_printing()
   pass_manager.run(module.operation)
@@ -681,7 +681,7 @@ def dump_low_level(module):
   module = ir.Module.parse(
       module.operation.get_asm(binary=True, enable_debug_info=True)
   )
-  pm = _get_mosaic_gpu_pipeline()
+  pm = _get_mosaic_gpu_pipeline("isa")
   pm.run(module.operation)
 
   for op in module.body:
@@ -720,31 +720,32 @@ def dump_low_level(module):
             print(sass.decode())
 
 
-def _get_mosaic_gpu_pipeline() -> PassManager:
-  return PassManager.parse("""builtin.module(
-      convert-nvgpu-to-nvvm,
-      gpu-kernel-outlining{data-layout-str=},
-      convert-vector-to-scf{full-unroll=false lower-tensors=false target-rank=1},
-      convert-scf-to-cf,
-      convert-nvvm-to-llvm,
-      expand-strided-metadata,
-      nvvm-attach-target{O=3 chip=sm_90a fast=false features=+ptx80 ftz=false  module= triple=nvptx64-nvidia-cuda},
-      lower-affine,
-      convert-arith-to-llvm{index-bitwidth=0},
-      convert-index-to-llvm{index-bitwidth=64},
-      canonicalize{  max-iterations=10 max-num-rewrites=-1 region-simplify=true test-convergence=false top-down=true},
-      cse,
-      gpu.module(strip-debuginfo),
-      gpu.module(convert-gpu-to-nvvm{has-redux=false index-bitwidth=64 use-bare-ptr-memref-call-conv=false}),
-      gpu.module(canonicalize{  max-iterations=10 max-num-rewrites=-1 region-simplify=true test-convergence=false top-down=true}),
-      gpu.module(cse),
-      gpu.module(reconcile-unrealized-casts),
-      gpu-to-llvm{gpu-binary-annotation=gpu.binary use-bare-pointers-for-host=false use-bare-pointers-for-kernels=false},
-      gpu-module-to-binary{format=fatbin},
-      convert-math-to-llvm{approximate-log1p=true},
-      canonicalize{  max-iterations=10 max-num-rewrites=-1 region-simplify=true test-convergence=false top-down=true},
-      cse,
-      reconcile-unrealized-casts,
-      gpu-launch-lowering,
-      convert-func-to-llvm{index-bitwidth=0 use-bare-ptr-memref-call-conv=false}
-  )""")
+def _get_mosaic_gpu_pipeline(kernel_format) -> PassManager:
+  passes = [
+      "convert-nvgpu-to-nvvm",
+      "gpu-kernel-outlining{data-layout-str=}",
+      "convert-vector-to-scf{full-unroll=false lower-tensors=false target-rank=1}",
+      "convert-scf-to-cf",
+      "convert-nvvm-to-llvm",
+      "expand-strided-metadata",
+      "nvvm-attach-target{O=3 chip=sm_90a fast=false features=+ptx80 ftz=false  module= triple=nvptx64-nvidia-cuda}",
+      "lower-affine",
+      "convert-arith-to-llvm{index-bitwidth=0}",
+      "convert-index-to-llvm{index-bitwidth=64}",
+      "canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=true test-convergence=false top-down=true}",
+      "cse",
+      "gpu.module(strip-debuginfo)",
+      "gpu.module(convert-gpu-to-nvvm{has-redux=false index-bitwidth=64 use-bare-ptr-memref-call-conv=false})",
+      "gpu.module(canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=true test-convergence=false top-down=true})",
+      "gpu.module(cse)",
+      "gpu.module(reconcile-unrealized-casts)",
+      "gpu-to-llvm{gpu-binary-annotation=gpu.binary use-bare-pointers-for-host=false use-bare-pointers-for-kernels=false}",
+      "gpu-module-to-binary{format=" + kernel_format + "}",
+      "convert-math-to-llvm{approximate-log1p=true}",
+      "canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=true test-convergence=false top-down=true}",
+      "cse",
+      "reconcile-unrealized-casts",
+      *(["gpu-launch-lowering"] if kernel_format in {"bin", "fatbin"} else []),
+      "convert-func-to-llvm{index-bitwidth=0 use-bare-ptr-memref-call-conv=false}",
+  ]
+  return PassManager.parse(f"builtin.module({','.join(passes)})")
