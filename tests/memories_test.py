@@ -1132,6 +1132,30 @@ class DevicePutTest(jtu.JaxTestCase):
     self._check_device_put_addressable_shards(
         out2, np_inp * np_inp * 2, s_host, 'pinned_host')
 
+  def test_parameter_streaming_with_scalar_and_constant(self):
+    mesh = jtu.create_global_mesh((2, 4), ("x", "y"))
+    scalar_inp = 1
+    s_host = NamedSharding(mesh, P(), memory_kind="pinned_host")
+
+    @functools.partial(jax.jit, out_shardings=s_host)
+    def f(scalar_input):
+      y = jax.device_put(scalar_input, s_host)
+      z = 2
+      w = jax.device_put(z, s_host)
+      return y, w
+
+    compiled = f.lower(scalar_inp).compile()  # doesn't crash
+    compiled_text = compiled.as_text()
+    self.assertRegex(compiled_text, r"entry_computation_layout=.*S\(5\)}")
+
+    out1, out2 = f(scalar_inp)
+    self._check_device_put_addressable_shards(
+        out1, scalar_inp, s_host, "pinned_host", index=False
+    )
+    self._check_device_put_addressable_shards(
+        out2, 2, s_host, "pinned_host", index=False
+    )
+
   def test_identity_jit_host_to_device_and_vice_versa(self):
     mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
     np_inp = np.arange(16).reshape(8, 2)
