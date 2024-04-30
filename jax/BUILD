@@ -463,6 +463,7 @@ pytype_strict_library(
         ":dtypes",
         ":effects",
         ":pretty_printer",
+        ":sharding_impls",
         ":source_info_util",
         ":traceback_util",
         ":tree_util",
