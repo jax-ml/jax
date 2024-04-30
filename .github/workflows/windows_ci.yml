@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        os: [win-2019-16core]
+        os: [windows-2022-32core]
         arch: [AMD64]
         pyver: ['3.9']
     name: ${{ matrix.os }} CI build
