@@ -118,16 +118,14 @@ def _mosaic_gpu_lowering_rule(ctx, *args, module, out_types, gmem_scratch_bytes)
       module, opt_level=3, shared_libs=shared_libs, enable_object_dump=False
   )
   ctx.module_context.add_keepalive(engine)
-  func_ptr = engine.lookup("main")
-
-  # Run the compile-time initialization.
-  kernel_params_ptr = (ctypes.c_void_p * 1)()
-  engine.invoke("main_init", kernel_params_ptr)
-  kernel_params = kernel_params_ptr[0]
+  launch_func_ptr = ctypes.cast(engine.lookup("main"), ctypes.c_void_p)
+  init_func_ptr = ctypes.cast(engine.lookup("main_init"), ctypes.c_void_p)
+  # Make sure we won't get accidental hits due to address reuse.
+  mosaic_gpu_lib._mosaic_gpu_ext.invalidate_cache(init_func_ptr.value)
 
   trampoline_args = (ctypes.c_void_p * 2)()
-  trampoline_args[0] = ctypes.cast(func_ptr, ctypes.c_void_p)
-  trampoline_args[1] = ctypes.cast(kernel_params, ctypes.c_void_p)
+  trampoline_args[0] = launch_func_ptr
+  trampoline_args[1] = init_func_ptr
   ctx.module_context.add_keepalive(trampoline_args)
   ptr_bytes = ctypes.cast(trampoline_args, ctypes.c_void_p).value.to_bytes(
       8, byteorder="little"
@@ -340,7 +338,8 @@ class LaunchContext:
           ]
           func.call([], "mosaic_gpu_init_tma_desc", args)
         def cast_tma_desc(device_ptr):
-          nvvm.prefetch_tensormap(device_ptr)
+          # TODO(apaszke): Investigate why prefetching can cause launch failures
+          # nvvm.prefetch_tensormap(device_ptr)
           return builtin.unrealized_conversion_cast(
               [tensor_map_ty], [device_ptr]
           )

@@ -77,6 +77,7 @@ def measure(f, *args):
     @jax.jit
     def run(*args):
       return _record_event(f(*_record_event(args, start_event)), end_event)
+    jax.block_until_ready(run(*args))  # Warmup.
     results = jax.block_until_ready(run(*args))
     elapsed = mosaic_gpu_lib._mosaic_gpu_ext._gpu_event_elapsed(
         start_event, end_event

@@ -274,7 +274,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
     copy_runfiles(
         dst_dir=jaxlib_dir / "mosaic" / "gpu",
         src_files=[
-            "__main__/jaxlib/mosaic/gpu/libmlir_cuda_runtime.so",
+            "__main__/jaxlib/mosaic/gpu/libmosaic_gpu_runtime.so",
         ],
     )
 
