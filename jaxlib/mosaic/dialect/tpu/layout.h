@@ -139,11 +139,11 @@ class RectangularVregBounds : public VRegDataBounds {
 // . . . . .    . . . . .
 // . . a b c    d e . . .
 // . . f g h    i j . . .
-// . . . . .    . . . . .
+// . . k l m    n o . . .
 //
 //   vreg 3      vreg 4
-// . . k l m    n o . . .
 // . . p q r    s t . . .
+// . . . . .    . . . . .
 // . . . . .    . . . . .
 // . . . . .    . . . . .
 //
