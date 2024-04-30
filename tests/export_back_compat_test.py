@@ -573,11 +573,12 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data)
 
   def test_cuda_threefry2x32(self):
+    # TODO(frostig): remove after 2024-11-01
     def func(x):
       return jax.random.uniform(x, (2, 4), dtype=np.float32)
 
     data = self.load_testdata(cuda_threefry2x32.data_2023_03_15)
-    self.run_one_test(func, data)
+    self.run_one_test(func, data, expect_current_custom_calls=[])
 
   def test_sharding(self):
     # Tests "Sharding", "SPMDShardToFullShape", "SPMDFullToShardShape" on TPU
