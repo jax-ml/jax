@@ -251,7 +251,9 @@ class CompilationCacheTest(jtu.JaxTestCase):
         warnings.catch_warnings(record=True) as w,
       ):
         mock_put.side_effect = RuntimeError("test error")
-        self.assertEqual(f(2), 4)
+        self.assertEqual(f(2).item(), 4)
+        if len(w) != 1:
+          print("Warnings:", [str(w_) for w_ in w], flush=True)
         self.assertLen(w, 1)
         self.assertIn(
             (
@@ -274,23 +276,16 @@ class CompilationCacheTest(jtu.JaxTestCase):
         mock_get.side_effect = RuntimeError("test error")
         # Calling assertEqual with the jitted f will generate two PJIT
         # executables: Equal and the lambda function itself.
-        self.assertEqual(f(2), 4)
-        if len(w) > 2:
+        self.assertEqual(f(2).item(), 4)
+        if len(w) != 1:
           print("Warnings:", [str(w_) for w_ in w], flush=True)
-        self.assertLen(w, 2)
+        self.assertLen(w, 1)
         self.assertIn(
             (
                 "Error reading persistent compilation cache entry "
                 "for 'jit__lambda_': RuntimeError: test error"
             ),
             str(w[0].message),
-        )
-        self.assertIn(
-            (
-                "Error reading persistent compilation cache entry "
-                "for 'jit_equal': RuntimeError: test error"
-            ),
-            str(w[1].message),
         )
 
   def test_min_entry_size(self):
