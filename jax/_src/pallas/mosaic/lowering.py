@@ -666,6 +666,7 @@ def jaxpr_subcomp(
               " inval"
               f" types={map(lambda t: getattr(t, 'type', None), invals)}\nIn"
               f" jaxpr:\n{jaxpr}"
+              f"\nException: {e}"
           ) from e
       else:
         raise NotImplementedError(
