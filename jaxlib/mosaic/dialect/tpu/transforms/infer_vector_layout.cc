@@ -26,6 +26,7 @@ limitations under the License.
 #include <variant>
 
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVectorExtras.h"
 #include "llvm/Support/raw_ostream.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
@@ -976,10 +977,37 @@ class VectorLayoutInferer {
         "Only 32-bit types supported");
     auto layout = getLayout(op.getVector());
     TPU_CHECK_OP(layout.has_value(), "missing vector layout");
-    setLayout(op,
-              VectorLayout(kNativeBitwidth, {0, 0}, layout->tiling(),
-                           layout->implicit_dim()),
-              kNoLayout);
+    if (VectorType res_vty = dyn_cast<VectorType>(op.getResult().getType());
+        res_vty != nullptr) {
+      if (res_vty.getRank() == 1 &&
+          layout->implicit_dim() == ImplicitDim::kNone) {
+        const int64_t second_minor_idx = op.getStaticPosition().back();
+        const LayoutOffset second_minor_offset = layout->offsets()[0];
+        const LayoutOffset res_second_minor_offset =
+            second_minor_offset.has_value()
+                ? (*second_minor_offset + second_minor_idx) %
+                      layout->vregSlice(target_shape_)[0]
+                : LayoutOffset();
+        TPU_CHECK_OP(!res_second_minor_offset.has_value() ||
+                         *res_second_minor_offset < layout->tiling()[0],
+                     "Not implemented: Slice does not start on the first tile "
+                     "of a VReg");
+        setLayout(op, layout,
+                  VectorLayout(layout->bitwidth(),
+                               {res_second_minor_offset, layout->offsets()[1]},
+                               layout->tiling(), ImplicitDim::kSecondMinor));
+      } else {
+        TPU_CHECK_OP(layout->layout_rank() <= res_vty.getRank(),
+                     "Internal error: Layout has too many dimensions for "
+                     "vector type (invalid vector.extract?)")
+        setLayout(op, layout, layout);
+      }
+    } else {
+      setLayout(op,
+                VectorLayout(kNativeBitwidth, {0, 0}, layout->tiling(),
+                             layout->implicit_dim()),
+                kNoLayout);
+    }
     return success();
   }
 
@@ -1080,22 +1108,37 @@ class VectorLayoutInferer {
   LogicalResult infer(vector::ExtractStridedSliceOp op) {
     auto input_layout = getLayout(op.getVector());
     TPU_CHECK_OP(input_layout, "missing vector layout");
-    TPU_CHECK_OP(input_layout->implicit_dim() == ImplicitDim::kNone,
-                 "only 2D layouts supported");
     TPU_CHECK_OP(op.getType().getElementTypeBitWidth() == 32,
                  "Only 32-bit types supported");
-    auto offsets = op.getOffsets().getValue();
-    auto strides = op.getStrides().getValue();
-    for (auto offset_attr : offsets.take_back(2)) {
-      int off = offset_attr.cast<IntegerAttr>().getInt();
-      TPU_CHECK_OP(off == 0, "Only zero-offset slices supported.");
+    auto offsets_attr = op.getOffsets().getValue();
+    auto strides_attr = op.getStrides().getValue();
+    auto offsets = llvm::map_to_vector(offsets_attr, [](auto attr) {
+      return cast<IntegerAttr>(attr).getInt();
+    });
+    input_layout->insertImplicit(offsets, 0);
+    auto vreg_slice = input_layout->vregSlice(target_shape_);
+    LayoutOffsets new_layout_offsets;
+    if (input_layout->offsets()[0].has_value()) {
+      new_layout_offsets[0] =
+          (*(offsets.end() - 2) + *input_layout->offsets()[0]) % vreg_slice[0];
     }
-    for (auto stride : strides) {
+    if (input_layout->offsets()[1].has_value()) {
+      new_layout_offsets[1] =
+          (*(offsets.end() - 1) + *input_layout->offsets()[1]) % vreg_slice[1];
+    }
+    TPU_CHECK_OP(
+        new_layout_offsets[0].value_or(0) < input_layout->tiling()[0] &&
+            new_layout_offsets[1].value_or(0) < input_layout->tiling()[1],
+        "Not implemented: Resulting offsets are not in first tile within vreg");
+    for (auto stride : strides_attr) {
       TPU_CHECK_OP(stride.cast<IntegerAttr>().getInt() == 1,
                    "Only trivial strides supported.");
     }
 
-    setLayout(op, input_layout, input_layout);
+    setLayout(
+        op, input_layout,
+        VectorLayout(input_layout->bitwidth(), new_layout_offsets,
+                     input_layout->tiling(), input_layout->implicit_dim()));
     return success();
   }
 
