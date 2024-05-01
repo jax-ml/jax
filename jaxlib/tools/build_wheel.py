@@ -283,9 +283,12 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
       dst_dir=jaxlib_dir / "mlir",
       src_files=[
           "__main__/jaxlib/mlir/ir.py",
+          "__main__/jaxlib/mlir/ir.pyi",
           "__main__/jaxlib/mlir/passmanager.py",
+          "__main__/jaxlib/mlir/passmanager.pyi",
       ] + if_has_mosaic_gpu([
           "__main__/jaxlib/mlir/execution_engine.py",
+          "__main__/jaxlib/mlir/execution_engine.pyi",
       ]),
   )
   copy_runfiles(

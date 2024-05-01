@@ -44,7 +44,10 @@ symlink_inputs(
     name = "ir",
     rule = py_library,
     symlinked_inputs = {"srcs": {
-        ".": ["@llvm-project//mlir/python:IRPyFiles"],
+        ".": [
+            "@llvm-project//mlir/python:IRPyFiles",
+            "@llvm-project//mlir/python:IRPyIFiles",
+        ],
     }},
     deps = [
         ":mlir",
@@ -197,7 +200,10 @@ symlink_inputs(
     name = "pass_manager",
     rule = py_library,
     symlinked_inputs = {"srcs": {
-        ".": ["@llvm-project//mlir/python:PassManagerPyFiles"],
+        ".": [
+            "@llvm-project//mlir/python:PassManagerPyFiles",
+            "@llvm-project//mlir/python:PassManagerPyIFiles",
+        ],
     }},
     deps = [
         ":mlir",
@@ -224,6 +230,7 @@ symlink_inputs(
     symlinked_inputs = {"srcs": {
         ".": [
             "@llvm-project//mlir/python:ExecutionEnginePyFiles",
+            "@llvm-project//mlir/python:ExecutionEnginePyIFiles",
         ],
     }},
     deps = [
