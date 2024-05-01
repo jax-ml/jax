@@ -6027,9 +6027,12 @@ class NumpyDocTests(jtu.JaxTestCase):
       'matrix_transpose',
       'nonzero',
       'transpose',
+      'ravel',
+      'reshape',
       'vectorize',
       'where',
     }
+
     for name in dir(jnp):
       if name in known_exceptions or name.startswith('_'):
         continue
