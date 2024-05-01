@@ -1268,18 +1268,28 @@ def lower_jaxpr_to_fun(
     ir_donated_args = util.flatten(
         [[is_donated] * len(types) for is_donated, types in zip(xla_donated_args, input_types)])
 
+  # TODO(yashkatariya): Treat wsc on output and out_shardings as the same when
+  # lowering to stableHLO.
   ir_result_shardings = None
   if result_shardings is not None:
-    out_avals = [None] * (num_tokens + num_output_tokens) + list(jaxpr.out_avals)
     ir_result_shardings = util.flatten(
         [[_to_physical_op_sharding(a, s)] * len(types)
-         for a, s, types in zip(out_avals, result_shardings, output_types)])
-    del out_avals
+         for a, s, types in zip(output_avals, result_shardings, output_types)])
 
   ir_result_memory_kinds = None
+  custom_call_ir_result_memory_kinds = None
   if result_memory_kinds is not None:
-    ir_result_memory_kinds = util.flatten(
-        [[mk] * len(types) for mk, types in zip(result_memory_kinds, output_types)])
+    res, custom_call_res = [], []
+    for a, mk, types in zip(output_avals, result_memory_kinds, output_types):
+      if a is not core.abstract_token and a.memory_kind is not None and mk is None:  # type: ignore
+        res.append([a.memory_kind] * len(types))  # type: ignore
+      else:
+        res.append([mk] * len(types))
+      # To add the custom call on the output to signal a transfer, only do it
+      # if memory kind comes from out_shardings on `jit`.
+      custom_call_res.append([mk] * len(types))
+    ir_result_memory_kinds = util.flatten(res)
+    custom_call_ir_result_memory_kinds = util.flatten(custom_call_res)
 
   ir_result_layouts = None
   if result_layouts is not None:
@@ -1465,10 +1475,11 @@ def lower_jaxpr_to_fun(
 
     # Insert a custom call if output is on host because XLA needs that to do the
     # transfer.
-    if ir_result_memory_kinds is not None:
+    if custom_call_ir_result_memory_kinds is not None and name == "main":
       flat_outputs = [
           o if mk is None else wrap_with_memory_kind(o, mk, o_aval)
-          for o, mk, o_aval in zip(flat_outputs, ir_result_memory_kinds, output_avals)]
+          for o, mk, o_aval in zip(
+              flat_outputs, custom_call_ir_result_memory_kinds, output_avals)]
 
     if ir_result_shardings is not None and name == "main":
       flat_outputs = [

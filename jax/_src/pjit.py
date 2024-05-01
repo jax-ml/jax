@@ -2334,7 +2334,12 @@ def _sharding_constraint_impl(x, sharding, resource_env, unconstrained_dims):
 
 sharding_constraint_p = core.Primitive("sharding_constraint")
 sharding_constraint_p.def_impl(_sharding_constraint_impl)
-sharding_constraint_p.def_abstract_eval(lambda x, **_: x)
+def _sharding_constraint_abstract_eval(x_aval, sharding, resource_env,
+                                       unconstrained_dims):
+  if config.enable_sharding_in_avals.value and isinstance(sharding, NamedSharding):
+    return x_aval.update(spec=sharding.spec, memory_kind=sharding.memory_kind)
+  return x_aval
+sharding_constraint_p.def_abstract_eval(_sharding_constraint_abstract_eval)
 ad.deflinear2(sharding_constraint_p,
               lambda ct, _, **params: (sharding_constraint_p.bind(ct, **params),))
 

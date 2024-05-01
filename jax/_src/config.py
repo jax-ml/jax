@@ -216,6 +216,7 @@ def trace_context():
           disable_jit.value,
           debug_key_reuse.value,
           jax_xla_profile_version.value,
+          enable_sharding_in_avals.value,
           # Technically this affects jaxpr->stablehlo lowering, not tracing.
           hlo_source_file_canonicalization_regex.value)
 
@@ -948,6 +949,12 @@ debug_key_reuse = define_bool_state(
           ' usage tracked, and incorrect reuse of a previously-used key will lead to'
           ' an error. Currently enabling this leads to a small Python overhead on'
           ' every call to a JIT-compiled function with keys as inputs or outputs.'))
+
+enable_sharding_in_avals = define_bool_state(
+    name='jax_enable_sharding_in_avals',
+    default=False,
+    upgrade=True,
+    help=('Experimental option which adds partition specs to avals.'))
 
 check_tracer_leaks = define_bool_state(
     name='jax_check_tracer_leaks',

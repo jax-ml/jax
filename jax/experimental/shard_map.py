@@ -31,6 +31,7 @@ from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import array
 from jax._src import callback
+from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import debugging
@@ -488,6 +489,8 @@ def _check_shapedarray(aval: core.AbstractValue) -> core.ShapedArray:
 def _shard_aval(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
                 ) -> core.AbstractValue:
   if isinstance(aval, core.ShapedArray):
+    if config.enable_sharding_in_avals.value:
+      aval = aval.strip_spec().strip_memory_kind()
     return aval.update(tuple(sz // prod(mesh.shape[n] for n in names.get(i, ()))
                              for i, sz in enumerate(aval.shape)))
   else:
@@ -496,10 +499,12 @@ def _shard_aval(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
 def _unshard_aval(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
                  ) -> core.AbstractValue:
   if isinstance(aval, core.ShapedArray):
+    spec = _names_to_pspec(names) if config.enable_sharding_in_avals.value else None
     return aval.update(tuple(sz * prod(mesh.shape[n] for n in names.get(i, ()))
                              for i, sz in enumerate(aval.shape)),
                        named_shape={k: v for k, v in aval.named_shape.items()
-                                    if k not in mesh.shape})
+                                    if k not in mesh.shape},
+                       spec=spec)
   else:
     raise NotImplementedError  # TODO(mattjj): add table with handlers
 

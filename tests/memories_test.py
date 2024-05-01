@@ -1156,6 +1156,22 @@ class DevicePutTest(jtu.JaxTestCase):
         out2, 2, s_host, "pinned_host", index=False
     )
 
+  @config.enable_sharding_in_avals(True)
+  def test_weight_offload_with_dp_on_output(self):
+    _, s_dev, np_inp, inp_dev = _create_inputs(
+        (8, 2), P("x", "y"), mem_kind="device")
+    s_host = s_dev.with_memory_kind('pinned_host')
+
+    @jax.jit
+    def f(x):
+      x = x * 2
+      y = jax.device_put(x, s_host)
+      return y
+
+    out_host = f(inp_dev)
+    self._check_device_put_addressable_shards(
+        out_host, np_inp * 2, s_host, 'pinned_host')
+
   def test_identity_jit_host_to_device_and_vice_versa(self):
     mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
     np_inp = np.arange(16).reshape(8, 2)
