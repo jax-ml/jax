@@ -83,19 +83,11 @@ async def create_async_array_from_callback(
 
 
 def _get_metadata(arr):
-  if arr.dtype == jnp.bfloat16:
-    # Tensorstore uses 'bfloat16', not '<V2'.
-    dtype = 'bfloat16'
-  else:
-    dtype = np.dtype(arr.dtype).str
   local_shape = arr.addressable_data(0).shape
   return {
-      'compressor': {
-          'id': 'zstd'
-      },
+      'compressor': {'id': 'zstd'},
       'shape': arr.shape,
       'chunks': np.array(np.maximum(1, local_shape)),
-      'dtype': dtype,
   }
 
 
@@ -219,6 +211,10 @@ async def async_serialize(
   # a 'cast' driver).
   if not _spec_has_metadata(tensorstore_spec):
     tensorstore_spec['metadata'] = _get_metadata(arr_inp)
+
+  # Set dtype if it's not in spec
+  if 'dtype' not in tensorstore_spec:
+    tensorstore_spec['dtype'] = jnp.dtype(arr_inp.dtype).name
 
   # If primary_host is None, all hosts will checkpoint. This is used
   # for checkpointing to local filesystem.
