@@ -435,7 +435,7 @@ _dtype_kinds: dict[str, set] = {
 }
 
 
-def isdtype(dtype: DTypeLike, kind: str | DType | tuple[str | DType, ...]) -> bool:
+def isdtype(dtype: DTypeLike, kind: str | DTypeLike | tuple[str | DTypeLike, ...]) -> bool:
   """Returns a boolean indicating whether a provided dtype is of a specified kind.
 
   Args:
@@ -458,18 +458,25 @@ def isdtype(dtype: DTypeLike, kind: str | DType | tuple[str | DType, ...]) -> bo
     True or False
   """
   the_dtype = np.dtype(dtype)
-  kind_tuple: tuple[DType | str, ...] = kind if isinstance(kind, tuple) else (kind,)
+  kind_tuple: tuple[str | DTypeLike, ...] = (
+    kind if isinstance(kind, tuple) else (kind,)
+  )
   options: set[DType] = set()
   for kind in kind_tuple:
-    if isinstance(kind, str):
-      if kind not in _dtype_kinds:
-        raise ValueError(f"Unrecognized {kind=} expected one of {list(_dtype_kinds.keys())}")
+    if isinstance(kind, str) and kind in _dtype_kinds:
       options.update(_dtype_kinds[kind])
-    elif isinstance(kind, np.dtype):
-      options.add(kind)
-    else:
-      # TODO(jakevdp): should we handle scalar types or ScalarMeta here?
-      raise TypeError(f"Expected kind to be a dtype, string, or tuple; got {kind=}")
+      continue
+    try:
+      _dtype = np.dtype(kind)
+    except TypeError as e:
+      if isinstance(kind, str):
+        raise ValueError(
+          f"Unrecognized {kind=} expected one of {list(_dtype_kinds.keys())}, "
+          "or a compatible input for jnp.dtype()")
+      raise TypeError(
+        f"Expected kind to be a dtype, string, or tuple; got {kind=}"
+      ) from e
+    options.add(_dtype)
   return the_dtype in options
 
 
