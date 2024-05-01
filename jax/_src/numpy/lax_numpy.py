@@ -2538,9 +2538,7 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
               cai=cai, gpu_backend=backend, device_id=device_id
           )
         else:
-          object = xc._xla.cuda_array_interface_to_buffer(
-              cai=cai, gpu_backend=backend
-          )
+          object = xc._xla.cuda_array_interface_to_buffer(cai, backend)
 
   object = tree_map(lambda leaf: leaf.__jax_array__()
                     if hasattr(leaf, "__jax_array__") else leaf, object)
