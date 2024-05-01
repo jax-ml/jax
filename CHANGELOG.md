@@ -60,6 +60,8 @@ Remember to align the itemized text with the first line of an item within a list
     {attr}`jax.Array.addressable_shards` and {meth}`jax.Array.addressable_data`.
   * The `condition`, `x`, and `y` parameters of `jax.numpy.where` are now
     positional-only, following deprecation of the keywords in JAX v0.4.21.
+  * Non-array arguments to functions in {mod}`jax.lax.linalg` now must be
+    specified by keyword. Previously, this raised a DeprecationWarning.
 
 * Bug fixes
   * {func}`jax.numpy.astype` will now always return a copy when `copy=True`.
