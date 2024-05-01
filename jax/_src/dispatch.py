@@ -465,7 +465,11 @@ def _device_put_impl(
 
 device_put_p = core.Primitive('device_put')
 device_put_p.def_impl(_device_put_impl)
-device_put_p.def_abstract_eval(lambda x, device=None, src=None: x)
+def _device_put_abstract_eval(x_aval, device=None, src=None):
+  if config.enable_sharding_in_avals.value and isinstance(device, NamedSharding):
+    return x_aval.update(spec=device.spec, memory_kind=device.memory_kind)
+  return x_aval
+device_put_p.def_abstract_eval(_device_put_abstract_eval)
 
 def device_put_transpose_rule(ct, _, device, src):
   return [device_put_p.bind(ct, device=src, src=device)]

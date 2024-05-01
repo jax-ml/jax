@@ -49,7 +49,7 @@ from jax._src.api_util import (
     argnums_partial_except, flatten_axes, flatten_fun, flatten_fun_nokwargs,
     donation_vector, shaped_abstractify, check_callable, resolve_argnums,
     argnames_partial_except, debug_info, result_paths, jaxpr_debug_info,
-    hoist_obj_attrs)
+    hoist_obj_attrs, sharding_abstractify)
 from jax._src.errors import JAXTypeError
 from jax._src.interpreters import partial_eval as pe
 from jax._src.partition_spec import PartitionSpec
@@ -609,6 +609,10 @@ def _infer_params(jit_info, args, kwargs):
       in_layouts_treedef, in_layouts_leaves,
       in_avals, in_tree, dbg, device_or_backend_set, have_kwargs)
 
+  if config.enable_sharding_in_avals.value and not config.dynamic_shapes.value:
+    in_type = in_avals = add_shardings_to_avals(
+        explicit_args, in_avals, in_shardings_flat)
+
   jaxpr, consts, out_shardings_flat, out_layouts_flat, attrs_tracked = _pjit_jaxpr(
       flat_fun, out_shardings_treedef, out_shardings_leaves,
       out_layouts_treedef, out_layouts_leaves, in_type, dbg,
@@ -645,6 +649,19 @@ def _infer_params(jit_info, args, kwargs):
   )
   return (consts + args_flat, in_type, params, in_tree, out_tree(),
           donated_invars, dbg.arg_names if dbg else None, attrs_tracked)
+
+
+def add_shardings_to_avals(args_flat, in_avals, in_shardings_flat):
+  sharded_avals = []
+  for arg, aval, in_s in zip(args_flat, in_avals, in_shardings_flat):
+    sharded_aval = sharding_abstractify(arg, aval)
+    if sharded_aval.spec is None and isinstance(in_s, NamedSharding):  # type: ignore
+      sharded_aval = sharded_aval.update(spec=in_s.spec)
+    if sharded_aval.memory_kind is None and isinstance(in_s, NamedSharding):  # type: ignore
+      sharded_aval = sharded_aval.update(memory_kind=in_s.memory_kind)
+    sharded_avals.append(sharded_aval)
+  return tuple(sharded_avals)
+
 
 def _extract_implicit_args(
   in_type: Sequence[tuple[core.AbstractValue, bool]],
@@ -1677,8 +1694,13 @@ def _pjit_typecheck(ctx_factory, *in_atoms, jaxpr, **params):
 core.custom_typechecks[pjit_p] = _pjit_typecheck
 
 
-def _pjit_abstract_eval(*args, jaxpr, **_):
-  return jaxpr.out_avals, jaxpr.effects
+def _pjit_abstract_eval(*args, jaxpr, in_shardings, out_shardings, **_):
+  out_avals = [
+      a.update(spec=s.spec, memory_kind=s.memory_kind)
+      if config.enable_sharding_in_avals.value and isinstance(s, NamedSharding)
+      else a for a, s in zip(jaxpr.out_avals, out_shardings)
+  ]
+  return out_avals, jaxpr.effects
 pjit_p.def_effectful_abstract_eval(_pjit_abstract_eval)
 
 
@@ -2334,7 +2356,12 @@ def _sharding_constraint_impl(x, sharding, resource_env, unconstrained_dims):
 
 sharding_constraint_p = core.Primitive("sharding_constraint")
 sharding_constraint_p.def_impl(_sharding_constraint_impl)
-sharding_constraint_p.def_abstract_eval(lambda x, **_: x)
+def _sharding_constraint_abstract_eval(x_aval, sharding, resource_env,
+                                       unconstrained_dims):
+  if config.enable_sharding_in_avals.value and isinstance(sharding, NamedSharding):
+    return x_aval.update(spec=sharding.spec, memory_kind=sharding.memory_kind)
+  return x_aval
+sharding_constraint_p.def_abstract_eval(_sharding_constraint_abstract_eval)
 ad.deflinear2(sharding_constraint_p,
               lambda ct, _, **params: (sharding_constraint_p.bind(ct, **params),))
 

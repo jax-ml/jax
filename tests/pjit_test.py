@@ -4064,6 +4064,59 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertLen(specialized.jaxpr.eqns, 1)
     self.assertEqual(specialized.out_tree.num_leaves, 1)
 
+  @config.enable_sharding_in_avals(True)
+  def test_sharding_in_types_wsc(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    s = NamedSharding(mesh, P('x', 'y'))
+    arr = jax.device_put(np_inp, s)
+
+    @jax.jit
+    def g(x):
+      return x * 2
+
+    @jax.jit
+    def f(x):
+      x = with_sharding_constraint(x, NamedSharding(mesh, P('x')))
+      x = g(x)  # tracing cache miss expected
+      x = with_sharding_constraint(x, NamedSharding(mesh, P()))
+      x = g(x)  # tracing cache miss expected
+      x = with_sharding_constraint(x, NamedSharding(mesh, P(None, 'y')))
+      return x
+
+    with jtu.count_jit_tracing_cache_miss() as count:
+      jaxpr = f.specialize(arr).jaxpr
+    self.assertEqual(jaxpr.out_avals[0].spec, P(None, 'y'))
+
+    # 1 miss for `f`, 2 for `jnp.sin` inside `g` and 2 misses for `g` since the
+    # aval has different shardings due to wsc.
+    self.assertEqual(count[0], 5)
+
+    out = f(arr)
+    self.assertArraysEqual(out, np_inp * 4)
+
+  @config.enable_sharding_in_avals(True)
+  def test_cache_hit_avals_shardings_inner_jit(self):
+    mesh = jtu.create_global_mesh((2,), ('x',))
+    s = NamedSharding(mesh, P('x'))
+    arr = jax.device_put(jnp.arange(8), s)
+
+    @partial(jax.jit, out_shardings=s)
+    def f(x):
+      return x * 2
+
+    @jax.jit
+    def g(x_s):
+      self.assertEqual(x_s.spec, P('x'))
+      y_s = f(x_s)
+      self.assertEqual(y_s.spec, P('x'))
+      out = f(y_s)
+      return out
+
+    with jtu.count_jit_tracing_cache_miss() as count:
+      g(arr)
+    self.assertEqual(count[0], 3)
+
 
 class TempSharding(Sharding):
 

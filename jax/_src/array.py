@@ -44,7 +44,7 @@ from jax._src.interpreters import xla
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     SingleDeviceSharding, XLACompatibleSharding, PmapSharding,
-    device_replica_id_map, hashed_index)
+    device_replica_id_map, hashed_index, NamedSharding)
 from jax._src.layout import DeviceLocalLayout, Layout, AutoLayout
 from jax._src.typing import ArrayLike, DLDeviceType
 from jax._src.util import safe_zip, unzip3, use_cpp_class, use_cpp_method
@@ -832,6 +832,14 @@ core.pytype_aval_mappings[ArrayImpl] = abstract_arrays.canonical_concrete_aval
 xla.pytype_aval_mappings[ArrayImpl] = op.attrgetter('aval')
 xla.canonicalize_dtype_handlers[ArrayImpl] = pxla.identity
 api_util._shaped_abstractify_handlers[ArrayImpl] = op.attrgetter('aval')
+
+def _array_sharding_handler(arg, aval):
+  if arg._committed and isinstance(arg.sharding, NamedSharding):
+    return aval.update(
+        spec=arg.sharding.spec, memory_kind=arg.sharding.memory_kind)
+  return aval
+api_util._sharding_abstractify_handlers[ArrayImpl] = _array_sharding_handler
+
 # TODO(jakevdp) replace this with true inheritance at the C++ level.
 basearray.Array.register(ArrayImpl)
 

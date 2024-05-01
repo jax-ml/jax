@@ -1462,6 +1462,35 @@ class ShardMapTest(jtu.JaxTestCase):
 
     jax.jit(jax.grad(lambda x: bar(x).sum()))(jnp.arange(8.))  # doesn't crash
 
+  @config.enable_sharding_in_avals(True)
+  def test_sharding_avals_shmap(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, s)
+
+    @partial(shard_map, mesh=mesh, in_specs=P('x'), out_specs=P('x'))
+    def g(x):
+      return x * 2
+
+    @jax.jit
+    def f(x):
+      y = x * 3
+      self.assertIsNone(y.spec)
+      y = jax.lax.with_sharding_constraint(y, NamedSharding(mesh, P(None, 'y')))
+      self.assertEqual(y.spec, P(None, 'y'))
+      z = g(y)
+      self.assertEqual(z.spec, P('x'))
+      return z
+
+    out = f(arr)
+    self.assertArraysEqual(out, np_inp * 6)
+    jaxpr = f.specialize(arr).jaxpr
+    self.assertEqual(jaxpr.out_avals[0].spec, P('x'))
+    for eqn in jaxpr.eqns:
+      if str(eqn.primitive) == 'shard_map':
+        self.assertIsNone(eqn.params['jaxpr'].invars[0].aval.spec)
+
   @parameterized.parameters(it.product([True, False], repeat=2))
   def test_res_forwarding_optimization(self, jit, remat):
     mesh = jtu.create_global_mesh((4,), ('i',))

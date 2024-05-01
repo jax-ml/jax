@@ -562,6 +562,14 @@ def _dtype(x):
   except ValueError:
     return dtypes.result_type(getattr(x, 'dtype'))
 
+
+def sharding_abstractify(arg, aval):
+  handler = _sharding_abstractify_handlers.get(type(arg), None)
+  return handler(arg, aval) if handler is not None else aval
+
+_sharding_abstractify_handlers: dict[Any, Callable[[Any, Any], core.ShapedArray]] = {}
+
+
 def _shaped_abstractify_slow(x):
   try:
     return core.raise_to_shaped(

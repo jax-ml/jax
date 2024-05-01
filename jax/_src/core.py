@@ -43,7 +43,7 @@ from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
     TracerIntegerConversionError, UnexpectedTracerError)
 from jax._src import linear_util as lu
-
+from jax._src.sharding_impls import get_array_mapping, ParsedPartitionSpec
 from jax._src import source_info_util
 from jax._src.util import (safe_zip, safe_map, curry, tuple_insert,
                            tuple_delete, as_hashable_function,
@@ -1716,17 +1716,34 @@ def _invalid_shape_error(shape: Shape, context: str=""):
 
   return TypeError(msg)
 
+@functools.lru_cache(maxsize=1024)
+def spec_to_mapping(spec):
+  parsed_pspec = ParsedPartitionSpec.from_user_input(spec, 'aval spec')
+  d = get_array_mapping(parsed_pspec)
+  return ", ".join(f"{k}: {v}" for k, v in d.items())  # type: ignore
+
 class ShapedArray(UnshapedArray):
-  __slots__ = ['shape', 'named_shape']
+  __slots__ = ['shape', 'named_shape', 'spec', 'memory_kind']
   array_abstraction_level = 2
 
-  def __init__(self, shape, dtype, weak_type=False, named_shape=None):
+  # TOOD(yashkatariya): Ideally spec and memory_kind will be in one object,
+  # but for now, let's keep it separate for prototyping.
+  def __init__(self, shape, dtype, weak_type=False, named_shape=None,
+               spec=None, memory_kind=None):
     self.shape = canonicalize_shape(shape)
     self.dtype = _dtype_object(dtype)
     self.weak_type = weak_type
     self.named_shape = {} if named_shape is None else dict(named_shape)
+    if (not config.enable_sharding_in_avals.value and
+        (spec is not None or memory_kind is not None)):
+      raise ValueError(
+          "To add specs or memory kind to avals, `jax_enable_sharding_in_avals`"
+          " should be set to True.")
+    self.spec = spec
+    self.memory_kind = memory_kind
 
-  def update(self, shape=None, dtype=None, weak_type=None, named_shape=None):
+  def update(self, shape=None, dtype=None, weak_type=None, named_shape=None,
+             **kwargs):
     if shape is None:
       shape = self.shape
     if dtype is None:
@@ -1735,7 +1752,13 @@ class ShapedArray(UnshapedArray):
       weak_type = self.weak_type
     if named_shape is None:
       named_shape = self.named_shape
-    return ShapedArray(shape, dtype, weak_type, named_shape)
+    # This is so that we can update with `spec=None`.
+    spec = kwargs.pop('spec', self.spec)
+    memory_kind = kwargs.pop('memory_kind', self.memory_kind)
+    if kwargs:
+      raise ValueError(f"Unknown keyword arguments: {kwargs}")
+    return ShapedArray(shape, dtype, weak_type, named_shape, spec,
+                       memory_kind)
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self:
@@ -1751,19 +1774,23 @@ class ShapedArray(UnshapedArray):
     return (type(self) is type(other)
             and self.dtype == other.dtype and self.shape == other.shape
             and self.weak_type == other.weak_type
-            and self.named_shape == other.named_shape)
+            and self.named_shape == other.named_shape
+            and self.spec == other.spec
+            and self.memory_kind == other.memory_kind)
 
   def __hash__(self):
     # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
     # objects, e.g. `np.zeros(3).dtype is np.zeros(4).dtype`, or we can use
     # the unique character code via hash(self.dtype.char)
     return hash((self.shape, self.dtype, self.weak_type,
-                 tuple(self.named_shape.items())))
+                 tuple(self.named_shape.items()), self.spec, self.memory_kind))
 
   def at_least_vspace(self):
     return ShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
-                       self.weak_type, self.named_shape)
+                       self.weak_type, self.named_shape, self.spec,
+                       self.memory_kind)
 
+  # TODO(yashkatariya): Handle spec and memory_kind here.
   def join(self, other):
     if definitely_equal_shape(self.shape, other.shape) and self.dtype == other.dtype:
       weak_type = self.weak_type and other.weak_type
@@ -1777,14 +1804,23 @@ class ShapedArray(UnshapedArray):
   def str_short(self, short_dtypes=False):
     dt_str =  _short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
     shapestr = ','.join(map(str, self.shape))
-    if self.named_shape:
-      named_shapestr = ','.join(f'{k}:{v}' for k, v in self.named_shape.items())
-      return f'{dt_str}[{shapestr};{named_shapestr}]'
+    if self.named_shape or self.spec:
+      named_shapestr = (
+          f";{','.join(f'{k}:{v}' for k, v in self.named_shape.items())}"
+          if self.named_shape else '')
+      spec_str = spec_to_mapping(self.spec) if self.spec is not None else ''
+      return f"{dt_str}[{shapestr}{named_shapestr}]{{{spec_str}}}"
     else:
       return f'{dt_str}[{shapestr}]'
 
   def strip_named_shape(self):
     return self.update(named_shape={})
+
+  def strip_spec(self):
+    return self.update(spec=None)
+
+  def strip_memory_kind(self):
+    return self.update(memory_kind=None)
 
   def _len(self, ignored_tracer):
     try:
