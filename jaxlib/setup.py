@@ -102,6 +102,7 @@ setup(
             'mosaic/python/*.py',
             'mosaic/python/*.so',
             'mlir/*.py',
+            'mlir/*.pyi',
             'mlir/dialects/*.py',
             'mlir/dialects/gpu/*.py',
             'mlir/dialects/gpu/passes/*.py',
