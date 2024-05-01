@@ -33,6 +33,12 @@ Remember to align the itemized text with the first line of an item within a list
     be created and threaded in and out of computations to build up dependency.
     The singleton object `core.token` has been removed, users now should create
     and use fresh `core.Token` objects instead.
+  * On GPU, the Threefry PRNG implementation no longer lowers to a kernel call
+    by default. This choice can improve runtime memory usage at a compile-time
+    cost. Prior behavior, which produces a kernel call, can be recovered with
+    `jax.config.update('jax_threefry_gpu_kernel_lowering', True)`. If the new
+    default causes issues, please file a bug. Otherwise, we intend to remove
+    this flag in a future release.
 
 * Deprecations & Removals
   * Pallas now exclusively uses XLA for compiling kernels on GPU. The old
