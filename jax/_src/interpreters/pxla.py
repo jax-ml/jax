@@ -2046,7 +2046,7 @@ def _discharge_refs_jaxpr(closed_jaxpr, in_shardings, in_layouts,
     assert next(out_layouts_, None) is None
   else:
     inout_aliases = mut = None
-    if any(isinstance(e, core.InternalMutableArray) for e in closed_jaxpr.effects):
+    if any(isinstance(e, core.InternalMutableArrayEffect) for e in closed_jaxpr.effects):
       closed_jaxpr = _discharge_internal_refs(closed_jaxpr)
 
   return (closed_jaxpr, inout_aliases, mut, in_shardings, in_layouts,
