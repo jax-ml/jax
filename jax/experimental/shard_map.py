@@ -1300,6 +1300,7 @@ def _shard_map_partial_eval(trace, shard_map_p, f, tracers, mesh, in_names,
   in_pvals = [t.pval for t in tracers]
   in_knowns, in_avals, in_consts = pe.partition_pvals(in_pvals)
   unk_in_names, known_in_names = pe.partition_list(in_knowns, in_names)
+  used_names = {n for names in known_in_names for ns in names.values() for n in ns}
   in_avals_sharded = map(partial(_shard_aval, mesh), unk_in_names, in_avals)
   f = pe.trace_to_subjaxpr_nounits_fwd2(f, trace.main, False)
   f = _promote_scalar_residuals(f)
@@ -1311,7 +1312,7 @@ def _shard_map_partial_eval(trace, shard_map_p, f, tracers, mesh, in_names,
     in_fwd, out_fwd, out_knowns, _, jaxpr, _ = aux()
     _, out_known_names = pe.partition_list(out_knowns, out_names_thunk())
     num_res = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
-    return (*out_known_names, *({0: (*mesh.axis_names,)},) * num_res)
+    return (*out_known_names, *({0: (*used_names,)},) * num_res)
 
   known_params = dict(mesh=mesh, in_names=(*known_in_names,),
                       out_names_thunk=known_out_names, check_rep=check_rep,
@@ -1326,7 +1327,7 @@ def _shard_map_partial_eval(trace, shard_map_p, f, tracers, mesh, in_names,
   res = subs_list2(in_fwd, out_fwd, in_consts, out_consts, non_fwd_res)
   res_names = [known_in_names[f1] if f1 is not None else
                known_out_names_[f2] if f2 is not None else
-               {0: (*mesh.axis_names,)} for f1, f2 in zip(in_fwd, out_fwd)]
+               {0: (*used_names,)} for f1, f2 in zip(in_fwd, out_fwd)]
   unk_in_names = (*res_names,) + ({},) * len(env) + (*unk_in_names,)
   const_tracers = map(trace.new_instantiated_const, res)
   env_tracers = map(trace.full_raise, env)
@@ -1348,6 +1349,7 @@ pe.JaxprTrace.process_shard_map = _shard_map_partial_eval
 def _shard_map_partial_eval_post_process(
     trace, tracers, mesh, in_names, out_names_thunk, check_rep, rewrite, auto):
   del check_rep
+  used_names = {n for names in in_names for ns in names.values() for n in ns}
   unk_tracers = [t for t in tracers if not t.is_known()]
   jaxpr, res, env = pe.tracers_to_jaxpr([], unk_tracers)
   # TODO(mattjj): output forwarding optimization
@@ -1368,7 +1370,7 @@ def _shard_map_partial_eval_post_process(
     const_tracers = map(trace.new_instantiated_const, res_)
     env_tracers = map(trace.full_raise, env)
 
-    staged_in_names = ({0: (*mesh.axis_names,)},) * len(res_) + ({},) * len(env)
+    staged_in_names = ({0: (*used_names,)},) * len(res_) + ({},) * len(env)
     staged_params = dict(jaxpr=jaxpr_, mesh=mesh, in_names=staged_in_names,
                          out_names=(*out_names_unknown,), check_rep=False,
                          rewrite=rewrite, auto=auto)
@@ -1387,7 +1389,7 @@ def _shard_map_partial_eval_post_process(
   def out_names_transform(out_names):
     nonlocal out_names_unknown
     out_names_unknown, out_names_known = partition_list(out_knowns, out_names)
-    return (*out_names_known,) + ({0: (*mesh.axis_names,)},) * len(res)
+    return (*out_names_known,) + ({0: (*used_names,)},) * len(res)
   out_names_unknown: list | None = None
 
   return out, (todo, out_names_transform)
