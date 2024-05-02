@@ -1615,20 +1615,6 @@ _STR_TO_EVICTION_POLICY = {str(e): e for e in tt_dialect.EvictionPolicy}
 _STR_TO_CACHE_MODIFIER = {str(c): c for c in tt_dialect.CacheModifier}
 
 
-def _infer_load_return_type(ptr: ir.Value) -> ir.Type:
-  if ir.RankedTensorType.isinstance(ptr.type):
-    ptr_type = ir.RankedTensorType(ptr.type)
-    element_type = tt_dialect.PointerType(ptr_type.element_type)
-    return ir.RankedTensorType.get(
-        ptr_type.shape,
-        element_type.pointee_type,
-        ptr_type.encoding,
-    )
-  else:
-    ptr_type = tt_dialect.PointerType(ptr.type)
-    return ptr_type.pointee_type
-
-
 def _load(
     ptr: ir.Value,
     mask: ir.Value | None = None,
@@ -1685,7 +1671,6 @@ def _load(
     other = _ir_cast(other, pointee_type, signed=False)
 
   result = tt_dialect.load(
-      _infer_load_return_type(ptr),
       ptr,
       mask=mask,
       other=other,
@@ -1928,7 +1913,17 @@ def _dot(
     else:
       max_num_imprecise_acc = 0
 
-  return tt_dialect.dot(x, y, acc, allow_tf32, max_num_imprecise_acc)
+  # Ideally replace all allow_tf32 usages with InputPrecision directly
+  input_precision = tt_dialect.InputPrecision.IEEE
+  if allow_tf32:
+    input_precision = tt_dialect.InputPrecision.TF32
+  return tt_dialect.dot(
+      x,
+      y,
+      acc,
+      input_precision=input_precision,
+      max_num_imprecise_acc=max_num_imprecise_acc,
+  )
 
 
 _TF32_PRECISIONS = (lax.Precision.HIGH, lax.Precision.DEFAULT)
