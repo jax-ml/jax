@@ -1251,7 +1251,8 @@ def new_base_main(trace_type: type[Trace],
 
 @contextmanager
 def pop_level(level: int):
-  level = max(level, 1)  # don't pop the base
+  if level == 0:
+    return (yield)
   prev, thread_local_state.trace_state.trace_stack.stack = \
       thread_local_state.trace_state.trace_stack.stack, \
       thread_local_state.trace_state.trace_stack.stack[:level]
