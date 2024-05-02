@@ -22,8 +22,6 @@ from typing import Callable
 import warnings
 
 import numpy as np
-import scipy.signal as osp_signal
-from scipy.fft import next_fast_len as osp_fft_next_fast_len
 
 import jax
 import jax.numpy.fft
@@ -114,7 +112,9 @@ def fftconvolve(in1: ArrayLike, in2: ArrayLike, mode: str = "full",
 
 def _fftconvolve_unbatched(in1: Array, in2: Array, mode: str) -> Array:
   full_shape = tuple(s1 + s2 - 1 for s1, s2 in zip(in1.shape, in2.shape))
-  fft_shape = tuple(osp_fft_next_fast_len(s) for s in full_shape)
+
+  # TODO(jakevdp): potentially use next_fast_len to evaluate with a more efficient shape.
+  fft_shape = full_shape  # tuple(next_fast_len(s) for s in full_shape)
 
   if mode == 'valid':
     no_swap = all(s1 >= s2 for s1, s2 in zip(in1.shape, in2.shape))
@@ -1058,9 +1058,18 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
   xsubs = ifunc(Zxx, axis=-2, n=nfft)[..., :nperseg_int, :]
 
   # Get window as array
-  if isinstance(window, (str, tuple)):
-    win = osp_signal.get_window(window, nperseg_int)
-    win = jnp.asarray(win, dtype=xsubs.dtype)
+  if window == 'hann':
+    # Implement the default case without scipy
+    win = jnp.sin(jnp.linspace(0, jnp.pi, nperseg_int, endpoint=False)) ** 2
+    win = win.astype(xsubs.dtype)
+  elif isinstance(window, (str, tuple)):
+    # TODO(jakevdp): implement get_window() in JAX to remove optional scipy dependency
+    try:
+      from scipy.signal import get_window
+    except ImportError as err:
+      raise ImportError(f"scipy must be available to use {window=}") from err
+    win = get_window(window, nperseg_int)
+    win = jnp.array(win, dtype=xsubs.dtype)
   else:
     win = jnp.asarray(window)
     if len(win.shape) != 1:
