@@ -1035,7 +1035,7 @@ def dirichlet(key: KeyArrayLike,
   The values are distributed according to the probability density function:
 
   .. math::
-     f(\{x_i\}; \{\alpha_i\}) = \propto \prod_{i=1}^k x_i^{\alpha_i - 1}
+     f(\{x_i\}; \{\alpha_i\}) \propto \prod_{i=1}^k x_i^{\alpha_i - 1}
 
   Where :math:`k` is the dimension, and :math:`\{x_i\}` satisfies
 
@@ -1760,7 +1760,7 @@ def chisquare(key: KeyArrayLike,
   The values are distributed according to the probability density function:
 
   .. math::
-     f(x; \nu) \propto x^{k/2 - 1}e^{-x/2}
+     f(x; \nu) \propto x^{\nu/2 - 1}e^{-x/2}
 
   on the domain :math:`0 < x < \infty`, where :math:`\nu > 0` represents the
   degrees of freedom, given by the parameter ``df``.
@@ -1813,7 +1813,7 @@ def f(key: KeyArrayLike,
   The values are distributed according to the probability density function:
 
   .. math::
-     f(x; \nu) \propto x^{\nu_1/2 - 1}\left(1 + \frac{\nu_1}{\nu_2}x\right)^{
+     f(x; \nu_1, \nu_2) \propto x^{\nu_1/2 - 1}\left(1 + \frac{\nu_1}{\nu_2}x\right)^{
       -(\nu_1 + \nu_2) / 2}
 
   on the domain :math:`0 < x < \infty`. Here :math:`\nu_1` is the degrees of
@@ -1877,7 +1877,7 @@ def rademacher(key: KeyArrayLike,
   .. math::
      f(k) = \frac{1}{2}(\delta(k - 1) + \delta(k + 1))
 
-  on the domain :math:`k \in \{-1, 1}`, where `\delta(x)` is the dirac delta function.
+  on the domain :math:`k \in \{-1, 1\}`, where :math:`\delta(x)` is the dirac delta function.
 
   Args:
     key: a PRNG key.
@@ -2145,7 +2145,7 @@ def rayleigh(key: KeyArrayLike,
   .. math::
      f(x;\sigma) \propto xe^{-x^2/(2\sigma^2)}
 
-  on the domain :math:`-\infty < x < \infty`, and where `\sigma > 0` is the scale
+  on the domain :math:`-\infty < x < \infty`, and where :math:`\sigma > 0` is the scale
   parameter of the distribution.
 
   Args:
