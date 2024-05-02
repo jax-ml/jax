@@ -2445,14 +2445,20 @@ def _aval_to_default_layouts(aval):
   # Row major order is default for `NumPy`.
   return [list(range(aval.ndim - 1, -1, -1)) for aval in avals]
 
+
 def emit_python_callback(
-    ctx: LoweringRuleContext, callback, token: Any | None,
-    operands: Sequence[ir.Value], operand_avals: Sequence[core.ShapedArray],
+    ctx: LoweringRuleContext,
+    callback,
+    token: Any | None,
+    operands: Sequence[ir.Value],
+    operand_avals: Sequence[core.ShapedArray],
     result_avals: Sequence[core.ShapedArray],
-    has_side_effect: bool, *, sharding: xc.OpSharding | None = None,
+    *,
+    has_side_effect: bool,
+    sharding: xc.OpSharding | None = None,
     operand_layouts: Sequence[Sequence[int] | None] | None = None,
     result_layouts: Sequence[Sequence[int] | None] | None = None,
-    ) -> tuple[Sequence[ir.Value], Any, Any]:
+) -> tuple[Sequence[ir.Value], Any, Any]:
   """Emits MLIR that calls back to a provided Python function."""
   if len(ctx.module_context.platforms) > 1:
     raise NotImplementedError("multi-platform lowering for python_callback")

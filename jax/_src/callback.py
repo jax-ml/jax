@@ -234,7 +234,7 @@ def pure_callback_lowering(
       list(args),
       ctx.avals_in,
       ctx.avals_out,
-      False,
+      has_side_effect=False,
       sharding=op_sharding,
   )
   return result
@@ -436,7 +436,7 @@ def io_callback_lowering(ctx, *args, callback, sharding, ordered, **params):
         list(args),
         ctx.avals_in,
         ctx.avals_out,
-        True,
+        has_side_effect=True,
         sharding=op_sharding,
     )
     ctx.set_tokens_out(mlir.TokenSet({_OrderedIOEffect: (token,)}))
@@ -448,7 +448,7 @@ def io_callback_lowering(ctx, *args, callback, sharding, ordered, **params):
         list(args),
         ctx.avals_in,
         ctx.avals_out,
-        True,
+        has_side_effect=True,
         sharding=op_sharding,
     )
   return result
