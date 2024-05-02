@@ -2885,6 +2885,9 @@ def precision_attr(precision: Precision) -> ir.ArrayAttr:
 def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                        precision, preferred_element_type: np.dtype | None,
                        platform: str = "default"):
+  def _is_fp8_mixed_precision_matmul(_lhs_dtypes, _rhs_dtypes):
+      fp8_dtypes = (dtypes.float8_e4m3fn, dtypes.float8_e5m2)
+      return _lhs_dtypes in fp8_dtypes and _rhs_dtypes in fp8_dtypes
   del preferred_element_type  # Implied by the output aval
   lhs_aval, rhs_aval = ctx.avals_in
   lhs_dtype, rhs_dtype = lhs_aval.dtype, rhs_aval.dtype
@@ -2907,11 +2910,13 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                                core.ShapedArray(rhs_aval.shape, aval_out.dtype))
         lhs_dtype = rhs_dtype = aval_out.dtype
     else:  # cpu and gpu
-      lhs = mlir.convert_hlo(ctx, lhs, lhs_aval,
-                             core.ShapedArray(lhs_aval.shape, aval_out.dtype))
-      rhs = mlir.convert_hlo(ctx, rhs, rhs_aval,
-                             core.ShapedArray(rhs_aval.shape, aval_out.dtype))
-      lhs_dtype = rhs_dtype = aval_out.dtype
+      # Do not convert mixed fp8 types to output type.
+      if not _is_fp8_mixed_precision_matmul(lhs_dtype, rhs_dtype):
+        lhs = mlir.convert_hlo(ctx, lhs, lhs_aval,
+                              core.ShapedArray(lhs_aval.shape, aval_out.dtype))
+        rhs = mlir.convert_hlo(ctx, rhs, rhs_aval,
+                              core.ShapedArray(rhs_aval.shape, aval_out.dtype))
+        lhs_dtype = rhs_dtype = aval_out.dtype
 
   # TODO(b/195364460): Work around slow XLA/CPU implementation of float16 matmul
   if platform == "cpu":
