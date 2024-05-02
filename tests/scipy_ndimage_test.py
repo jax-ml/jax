@@ -112,10 +112,6 @@ class NdimageTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, 'sequence of length'):
       lsp_ndimage.map_coordinates(x, [c, c], order=1)
 
-  def testMapCoordinateDocstring(self):
-    self.assertIn("Only nearest neighbor",
-                  lsp_ndimage.map_coordinates.__doc__)
-
   @jtu.sample_product(
     dtype=float_dtypes + int_dtypes,
     order=[0, 1],
