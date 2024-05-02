@@ -1,6 +1,16 @@
 ``jax.scipy`` module
 ====================
 
+jax.scipy.cluster
+-----------------
+
+.. automodule:: jax.scipy.cluster.vq
+
+.. autosummary::
+   :toctree: _autosummary
+   
+   vq
+
 jax.scipy.fft
 -------------
 
