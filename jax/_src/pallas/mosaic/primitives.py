@@ -230,10 +230,11 @@ def semaphore_signal(
     *,
     device_id: int | jax.Array | None | tuple[int | jax.Array, ...] = None,
     device_id_type: DeviceIdType = DeviceIdType.MESH,
+    core_index: int | jax.Array | None = None,
 ):
   ref, indexers = _get_ref_and_indexers(sem_or_view)
   inc = jnp.asarray(inc, dtype=jnp.int32)
-  args = [ref, indexers, inc, device_id]
+  args = [ref, indexers, inc, device_id, core_index]
   flat_args, args_tree = tree_util.tree_flatten(args)
   semaphore_signal_p.bind(
       *flat_args,
@@ -249,7 +250,7 @@ def _semaphore_signal_abstract_eval(
     device_id_type: DeviceIdType,
 ):
   del device_id_type
-  sem_aval, sem_indexers_avals, value_aval, device_id_avals = (
+  sem_aval, sem_indexers_avals, value_aval, device_id_avals, core_index_aval = (
       tree_util.tree_unflatten(args_tree, avals)
   )
   check_sem_avals(sem_aval, sem_indexers_avals, "signal")
@@ -274,6 +275,7 @@ def _semaphore_signal_pp_eqn(eqn: jax_core.JaxprEqn,
       sem_indexers,
       value,
       device_ids,
+      _,
   ) = tree_util.tree_unflatten(tree, invars)
   out = pp.concat([
       pp.text('semaphore_signal'),
