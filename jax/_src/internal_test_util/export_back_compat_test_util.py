@@ -17,7 +17,9 @@ Since we have to guarantee 6 months of backward compatibility for the
 JAX serialized format, we need to guarantee that custom calls continue to
 work as before. We test this here.
 
-The tests in this file refer to the test data in ./back_compat_testdata.
+The tests in this file refer to the test data in
+jax/_src/internal_test_util/export_back_compat_test_data.
+
 There is one test for each version of a custom call target, e.g.,
 `test_ducc_fft` tests the FFT custom calls on CPU.
 Only custom call targets tested here should be listed in
@@ -32,11 +34,12 @@ test here to remove it after 6 months.
 
 Write the JAX function `func` that exercises the custom call `foo_call` you
 want, then pick some inputs, and then add this to the new test to get started.
+Add the following code to your test file, e.g., `export_back_compat_test.py`.
 
   import dataclasses
   from jax._src.internal_test_util import export_back_compat_test_util as bctu
 
-  class BackCompatTest(bctu.CompatTestBase)
+  class CompatTest(bctu.CompatTestBase)
     ...
 
     def test_foo_call(self):
@@ -48,13 +51,13 @@ want, then pick some inputs, and then add this to the new test to get started.
 
 The test will fail, but will save to a file the test data you will need. The
 file name will be printed in the logs. Create a new
-file ./back_compat_testdata/foo_call.py and paste the test data that
-you will see printed in the logs.
+file jax/_src/internal_test_util/export_back_compat_test_data/foo_call.py
+and paste the test data that you will see printed in the logs.
 
 Name the literal `data_YYYYY_MM_DD` to include the date of serializaton
 (for readability only). Then add to this file:
 
-  from jax.experimental.jax2tf.tests.back_compat_testdata import foo_call
+  from jax._src.internal_test_util.export_back_compat_test_data import foo_call
 
 then update `test_custom_call_coverage`, and then update your `test_foo_call`:
 

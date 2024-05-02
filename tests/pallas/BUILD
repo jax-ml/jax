@@ -244,3 +244,35 @@ jax_test(
         "//jax:pallas_tpu_ops",
     ] + py_deps("absl/testing") + py_deps("absl/flags") + py_deps("numpy") + py_deps("hypothesis"),
 )
+
+jax_test(
+    name = "export_back_compat_pallas_test",
+    srcs = ["export_back_compat_pallas_test.py"],
+    config_tags_overrides = {
+        "gpu_a100_x32": {
+            "ondemand": False,  # Include in presubmit.
+        },
+    },
+    disable_backends = [
+        "cpu",
+        "tpu",
+    ],
+    disable_configs = [
+        "gpu",
+        "gpu_x32",
+        "gpu_a100",
+        "gpu_h100",
+        "gpu_p100_x32",
+        "gpu_pjrt_c_api",
+    ],
+    enable_configs = [
+        "gpu_a100_x32",
+        "gpu_h100_x32",
+    ],
+    tags = [],
+    deps = [
+        "//jax:internal_export_back_compat_test_data",
+        "//jax:internal_export_back_compat_test_util",
+        "//jax:pallas_gpu",
+    ],
+)

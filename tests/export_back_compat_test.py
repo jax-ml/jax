@@ -28,6 +28,7 @@ import numpy as np
 import jax
 from jax import lax
 from jax.experimental.export import _export
+
 from jax._src.internal_test_util import export_back_compat_test_util as bctu
 
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_ducc_fft
@@ -64,8 +65,9 @@ from jax._src import test_util as jtu
 config.parse_flags_with_absl()
 
 
-@jtu.with_config(jax_legacy_prng_key='allow',
+@jtu.with_config(jax_legacy_prng_key="allow",
                  jax_debug_key_reuse=False,
+                 jax_include_full_tracebacks_in_locations=False,
                  jax_threefry_gpu_kernel_lowering=True)
 class CompatTest(bctu.CompatTestBase):
   def test_dummy(self):
@@ -131,6 +133,7 @@ class CompatTest(bctu.CompatTestBase):
     covered_targets = covered_targets.union({
       "tf.call_tf_function",  # tested in jax2tf/tests/back_compat_tf_test.py
       "tpu_custom_call",  # tested separately
+      "__gpu$xla.gpu.triton",  # tested in pallas/export_back_compat_pallas_test.py
     })
     not_covered = targets_to_cover.difference(covered_targets)
     self.assertEmpty(not_covered,

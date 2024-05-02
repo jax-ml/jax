@@ -200,7 +200,10 @@ py_library(
 py_library(
     name = "internal_export_back_compat_test_data",
     testonly = 1,
-    srcs = glob(["_src/internal_test_util/export_back_compat_test_data/*.py"]),
+    srcs = glob([
+        "_src/internal_test_util/export_back_compat_test_data/*.py",
+        "_src/internal_test_util/export_back_compat_test_data/pallas/*.py",
+    ]),
     visibility = [
         ":internal",
     ],
