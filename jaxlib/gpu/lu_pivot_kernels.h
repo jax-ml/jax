@@ -16,29 +16,22 @@ limitations under the License.
 #ifndef JAXLIB_GPU_LU_PIVOT_KERNELS_H_
 #define JAXLIB_GPU_LU_PIVOT_KERNELS_H_
 
-#include <cstddef>
 #include <cstdint>
-#include <string>
 
 #include "jaxlib/gpu/vendor.h"
-#include "xla/service/custom_call_status.h"
+#include "xla/ffi/api/c_api.h"
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
 
-struct LuPivotsToPermutationDescriptor {
-  std::int64_t batch_size;
-  std::int32_t pivot_size;
-  std::int32_t permutation_size;
-};
+void LaunchLuPivotsToPermutationKernel(gpuStream_t stream,
+                                       std::int64_t batch_size,
+                                       std::int32_t pivot_size,
+                                       std::int32_t permutation_size,
+                                       const std::int32_t* pivots,
+                                       std::int32_t* permutation);
 
-void LaunchLuPivotsToPermutationKernel(
-    gpuStream_t stream, void** buffers,
-    LuPivotsToPermutationDescriptor descriptor);
-
-void LuPivotsToPermutation(gpuStream_t stream, void** buffers,
-                           const char* opaque, size_t opaque_len,
-                           XlaCustomCallStatus* status);
+XLA_FFI_Error* LuPivotsToPermutation(XLA_FFI_CallFrame* call_frame);
 
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax
