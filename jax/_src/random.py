@@ -246,7 +246,7 @@ def fold_in(key: KeyArrayLike, data: IntegerArray) -> KeyArray:
 
   Args:
     key: a PRNG key (from ``key``, ``split``, ``fold_in``).
-    data: a 32bit integer representing data to be folded in to the key.
+    data: a 32-bit integer representing data to be folded into the key.
 
   Returns:
     A new PRNG key that is a deterministic function of the inputs and is
@@ -624,7 +624,7 @@ def choice(key: KeyArrayLike,
       e.g., ``(m, n)``, then ``m * n`` samples are drawn.  Default is (),
       in which case a single value is returned.
     replace : boolean.  Whether the sample is with or without replacement.
-      default is True.
+      Default is True.
     p : 1-D array-like, The probabilities associated with each entry in a.
       If not given the sample assumes a uniform distribution over all
       entries in a.

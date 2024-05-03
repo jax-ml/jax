@@ -470,7 +470,7 @@ def io_callback(
   For more explanation, see `External Callbacks`_.
 
   Args:
-    callback: function to execute on the host. It is assumet to be an impure function.
+    callback: function to execute on the host. It is assumed to be an impure function.
       If ``callback`` is pure, using :func:`jax.pure_callback` instead may lead to
       more efficient execution.
     result_shape_dtypes: pytree whose leaves have ``shape`` and ``dtype`` attributes,
