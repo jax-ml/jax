@@ -1146,19 +1146,24 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   if exported.uses_shape_polymorphism:
     ctx.module_context.shape_poly_state.uses_dim_vars = True
 
-  axis_context = ctx.module_context.axis_context
-  if isinstance(axis_context, sharding_impls.ShardingContext):
-    num_devices = axis_context.num_devices
-  elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
-    num_devices = axis_context.mesh.size
-  else:
-    raise NotImplementedError(type(axis_context))
-  if num_devices != exported.nr_devices:
-    raise NotImplementedError(
-      f"Exported module {exported.fun_name} was lowered for "
-      f"{exported.nr_devices} devices and is called in a context with "
-      f"{num_devices} devices"
-    )
+  # Only check num_devices matches the number of devices at export if exported
+  # with > 1 device. NB: this may not catch all cases where users export a
+  # computation that uses shard constraints or shard_map with a single
+  # device mesh.
+  if exported.nr_devices > 1:
+    axis_context = ctx.module_context.axis_context
+    if isinstance(axis_context, sharding_impls.ShardingContext):
+      num_devices = axis_context.num_devices
+    elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
+      num_devices = axis_context.mesh.size
+    else:
+      raise NotImplementedError(type(axis_context))
+    if num_devices != exported.nr_devices:
+      raise NotImplementedError(
+        f"Exported module {exported.fun_name} was lowered for "
+        f"{exported.nr_devices} devices and is called in a context with "
+        f"{num_devices} devices"
+      )
 
   # Apply in_shardings
   args = tuple(

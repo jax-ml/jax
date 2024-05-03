@@ -902,6 +902,28 @@ class JaxExportTest(jtu.JaxTestCase):
         in_shardings=(jax.sharding.NamedSharding(mesh1, P("x", None)),)
       )(a)
 
+  def test_model_replication(self):
+    if len(jax.devices()) < 2:
+      self.skipTest("Need at least 2 devices")
+
+    @jax.jit
+    def f_jax(x):
+      return jnp.sum(x ** 2, axis=0)
+
+    a = jnp.arange(jax.device_count() * 100, dtype=np.float32).reshape(
+        (jax.device_count(), 100)
+    )
+    res_native = f_jax(a)
+    exp = get_exported(f_jax)(a)
+    self.assertEqual(exp.nr_devices, 1)
+
+    run_devices = jax.devices()
+    run_mesh = Mesh(run_devices, "i")
+    b = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P("i")))
+
+    res_exported = export.call_exported(exp)(b)
+    self.assertAllClose(res_native, res_exported)
+
   @jtu.parameterized_filterable(
     kwargs=[
       dict(testcase_name=f"_poly={poly}", poly=poly)
