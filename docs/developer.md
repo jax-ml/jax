@@ -418,7 +418,7 @@ notebooks; for example:
 
 ```
 pip install jupytext==1.16.0
-jupytext --sync docs/notebooks/quickstart.ipynb
+jupytext --sync docs/notebooks/thinking_in_jax.ipynb
 ```
 
 The jupytext version should match that specified in

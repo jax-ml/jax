@@ -11,6 +11,7 @@ or deployed codebases.
    :maxdepth: 1
    :caption: Debugging and Performance
 
+   notebooks/thinking_in_jax
    profiling
    device_memory_profiling
    debugging/index
