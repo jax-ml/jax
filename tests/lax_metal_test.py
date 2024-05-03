@@ -2049,7 +2049,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertAllClose(np_input, expected_np_input_after_call)
     self.assertAllClose(jnp_input, expected_jnp_input_after_call)
 
-  @unittest.skip("Jax-metal fail to convert 1D convolution op.")
   @jtu.sample_product(
     mode=['full', 'same', 'valid'],
     op=['convolve', 'correlate'],
@@ -2071,7 +2070,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=True, tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-  @unittest.skip("Jax-metal fail to convert 1D convolution op.")
   @jtu.sample_product(
     mode=['full', 'same', 'valid'],
     op=['convolve', 'correlate'],
