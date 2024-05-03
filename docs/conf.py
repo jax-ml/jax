@@ -27,6 +27,7 @@
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 #
 import inspect
+import operator
 import os
 import sys
 
@@ -318,7 +319,11 @@ def linkcode_resolve(domain, info):
     return None
   try:
     mod = sys.modules.get(info['module'])
-    obj = getattr(mod, info['fullname'])
+    obj = operator.attrgetter(info['fullname'])(mod)
+    if isinstance(obj, property):
+        obj = obj.fget
+    if hasattr(obj, '__wrapped__'):  # jit decorated functions
+        obj = obj.__wrapped__
     filename = inspect.getsourcefile(obj)
     source, linenum = inspect.getsourcelines(obj)
   except:
