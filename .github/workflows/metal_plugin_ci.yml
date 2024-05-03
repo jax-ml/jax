@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false # don't cancel all jobs on failure
       matrix:
-        jaxlib-version: ["plugin_latest"]
+        jaxlib-version: ["plugin_latest", "nightly"]
     name: "Jax-Metal plugin test (jaxlib=${{ matrix.jaxlib-version }})"
     runs-on: [self-hosted, macOS, ARM64]
 
@@ -32,13 +32,14 @@ jobs:
           python3 -m venv ${GITHUB_WORKSPACE}/jax-metal-venv
           source  ${GITHUB_WORKSPACE}/jax-metal-venv/bin/activate
           pip install -U pip numpy wheel
-          pip install jax-metal absl-py pytest
+          pip install absl-py pytest
           if [[ "${{ matrix.jaxlib-version }}" == "nightly" ]]; then
             pip install --pre jaxlib \
               -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_releases.html
           fi;
           cd jax
           pip install .
+          pip install jax-metal
       - name: Run test
         run: |
           source  ${GITHUB_WORKSPACE}/jax-metal-venv/bin/activate
