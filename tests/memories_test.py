@@ -1196,6 +1196,24 @@ class DevicePutTest(jtu.JaxTestCase):
     out_s = NamedSharding(mesh, P(None, None, "z"), memory_kind="device")
     self.assertEqual(out_hbm.sharding, out_s)
 
+  def test_host_compute(self):
+    @functools.partial(jax.jit, backend="host")
+    def g(x):
+      return x * x
+
+    @functools.partial(jax.jit, donate_argnums=0)
+    def f(x):
+      y = x * 2
+      y_host = jax.device_put(
+          y, SingleDeviceSharding(jax.devices()[0], memory_kind="pinned_host")
+      )
+      return g(y_host)
+
+    x = jnp.arange(32)
+    print(f.lower(x).as_text())
+    print(f.lower(x).as_text("hlo"))
+    compiled = f.lower(x).compile()
+
 
 class ActivationOffloadingTest(jtu.JaxTestCase):
 

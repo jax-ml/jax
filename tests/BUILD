@@ -232,7 +232,7 @@ jax_test(
     name = "memories_test",
     srcs = ["memories_test.py"],
     shard_count = {
-        "tpu": 5,
+        "tpu": 1,
     },
 )
 
