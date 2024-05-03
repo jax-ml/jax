@@ -6017,45 +6017,35 @@ class NumpyDocTests(jtu.JaxTestCase):
   def test_lax_numpy_docstrings(self):
     # Test that docstring wrapping & transformation didn't fail.
 
-    # Functions that have their own docstrings & don't wrap numpy.
-    known_exceptions = {
-      'argwhere',
-      'flatnonzero',
-      'fromfile',
-      'fromiter',
-      'frompyfunc',
-      'matrix_transpose',
-      'nonzero',
-      'transpose',
-      'ravel',
-      'reshape',
-      'vectorize',
-      'where',
-    }
+    unimplemented = ['fromfile', 'fromiter']
 
     for name in dir(jnp):
-      if name in known_exceptions or name.startswith('_'):
+      if name.startswith('_') or name in unimplemented:
         continue
 
-      # We only check signatures of functions.
       obj = getattr(jnp, name)
+
       if isinstance(obj, type) or not callable(obj):
-        continue
-
-      # Some jnp functions are imported from numpy or jax.dtypes directly.
-      if any(obj is getattr(mod, obj.__name__, None) for mod in [np, dtypes]):
-        continue
-
-      wrapped_fun = obj.__np_wrapped__
-      if wrapped_fun is None:
-        continue
-
-      # If the wrapped function has a docstring, obj should too
-      if wrapped_fun.__doc__ and not obj.__doc__:
-        raise Exception(f"jnp.{name} does not contain wrapped docstring.")
-
-      if obj.__doc__ and "*Original docstring below.*" not in obj.__doc__:
-        raise Exception(f"jnp.{name} does not have a wrapped docstring.")
+        # Skip docstring checks for non-functions
+        pass
+      elif hasattr(np, name) and obj is getattr(np, name):
+        # Some APIs are imported directly from NumPy; we don't check these.
+        pass
+      elif hasattr(obj, '__np_wrapped__'):
+        # Functions decorated with @implements(...) should have __np_wrapped__
+        wrapped_fun = obj.__np_wrapped__
+        if wrapped_fun is not None:
+          # If the wrapped function has a docstring, obj should too
+          if wrapped_fun.__doc__ and not obj.__doc__:
+            raise Exception(f"jnp.{name} does not contain wrapped docstring.")
+          if obj.__doc__ and "*Original docstring below.*" not in obj.__doc__:
+            raise Exception(f"jnp.{name} does not have a wrapped docstring.")
+      else:
+        # Other functions should have nontrivial docs including "Args" and "Returns".
+        doc = obj.__doc__
+        self.assertNotEmpty(doc)
+        self.assertIn("Args:", doc, msg=f"'Args:' not found in docstring of jnp.{name}")
+        self.assertIn("Returns:", doc, msg=f"'Returns:' not found in docstring of jnp.{name}")
 
   @parameterized.named_parameters(
     {"testcase_name": "_jit" if jit else "", "jit": jit} for jit in [True, False])
