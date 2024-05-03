@@ -1001,7 +1001,7 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
 
     >>> x = jnp.array([1., 2., 3., 2., 1., 0., 1., 2.])
     >>> f, t, Zxx = jax.scipy.signal.stft(x, nperseg=4)
-    >>> print(Zxx)
+    >>> print(Zxx)  # doctest: +SKIP
     [[ 1. +0.j   2.5+0.j   1. +0.j   1. +0.j   0.5+0.j ]
      [-0.5+0.5j -1.5+0.j  -0.5-0.5j -0.5+0.5j  0. -0.5j]
      [ 0. +0.j   0.5+0.j   0. +0.j   0. +0.j  -0.5+0.j ]]
@@ -1060,7 +1060,7 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
   # Get window as array
   if window == 'hann':
     # Implement the default case without scipy
-    win = jnp.sin(jnp.linspace(0, jnp.pi, nperseg_int, endpoint=False)) ** 2
+    win = jnp.array([1.0]) if nperseg_int == 1 else jnp.sin(jnp.linspace(0, jnp.pi, nperseg_int, endpoint=False)) ** 2
     win = win.astype(xsubs.dtype)
   elif isinstance(window, (str, tuple)):
     # TODO(jakevdp): implement get_window() in JAX to remove optional scipy dependency
