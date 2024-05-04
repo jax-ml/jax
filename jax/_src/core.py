@@ -418,11 +418,20 @@ class Primitive:
   def get_bind_params(self, params):
     return [], params
 
-
 def _effect_free_abstract_eval(abstract_eval):
   def abstract_eval_(*args, **kwargs):
     return abstract_eval(*args, **kwargs), no_effects
   return abstract_eval_
+
+def effectful_bind(prim, *args, **params):
+  main = thread_local_state.trace_state.trace_stack.stack.pop()
+  trace = main.with_cur_sublevel()
+  try:
+    out = trace.process_primitive(prim, map(trace.full_raise, args), params)
+  finally:
+    thread_local_state.trace_state.trace_stack.push(main)
+  return map(full_lower, out) if prim.multiple_results else full_lower(out)
+
 
 # -------------------- lifting --------------------
 

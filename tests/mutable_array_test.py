@@ -223,5 +223,18 @@ class MutableArrayTest(jtu.JaxTestCase):
     _, xs = doit()
     self.assertAllClose(xs, (np.arange(5) * 2), check_dtypes=False)
 
+  @parameterized.parameters([True, False])
+  def test_vmap_error(self, jit):
+    x_mut = core.mutable_array(0)
+
+    def f(_):
+      x_mut[...] += 1
+
+    if jit:
+      f = jax.jit(f)
+
+    with self.assertRaisesRegex(Exception, "closes over mutable arrays"):
+      jax.vmap(f)(jnp.arange(3))
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

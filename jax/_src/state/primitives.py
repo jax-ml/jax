@@ -111,6 +111,7 @@ def ref_get(ref_or_view: Any, idx: Indexer | None = None) -> Array:
 #   x:Ref{f32[3]}[i, j] <- a
 swap_p = core.Primitive("swap")
 swap_p.def_impl(partial(dispatch.apply_primitive, swap_p))
+swap_p.def_custom_bind(partial(core.effectful_bind, swap_p))
 
 def ref_swap(ref_or_view: AbstractRef | RefView, idx: Indexer | None, value: Array,
              _function_name: str = "ref_swap") -> Array:
@@ -351,6 +352,8 @@ def _swap_jvp(primals: list[Any], tangents: list[Any], **params: Any):
   assert isinstance(ref_primal.aval, AbstractRef)
   ref_tangent, x_tangent, *_ = tangents
   assert isinstance(ref_tangent.aval, AbstractRef)
+  if type(ref_tangent) is type(x_tangent) is ad_util.Zero:
+    return swap_p.bind(ref_primal, x_primal, *idx, **params), x_tangent
   x_tangent = ad_util.instantiate(x_tangent)
   return (swap_p.bind(ref_primal, x_primal, *idx, **params),  # type: ignore[arg-type]
           swap_p.bind(ref_tangent, x_tangent, *idx, **params))  # type: ignore[arg-type]
@@ -494,6 +497,10 @@ def _get_vmap(batched_args, batched_dims, *, tree):
 batching.primitive_batchers[get_p] = _get_vmap
 
 def _swap_vmap(batched_args, batched_dims, *, tree):
+  ref, val, *flat_idxs = batched_args
+  ref_dim, val_dim, *flat_idx_dims = batched_dims
+  if ref_dim is None:
+    raise Exception("can't vmap a function that closes over mutable arrays")
   axis_size, = {x.shape[d] for x, d in zip(batched_args, batched_dims)
                 if d is not batching.not_mapped}
   ref, val, *flat_idxs = batched_args

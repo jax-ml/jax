@@ -400,7 +400,7 @@ class BatchTrace(Trace):
     return partial(axis_primitive_batchers[primitive],
         frame.size, frame.name, frame.main_trace.trace_type)
 
-  def get_frame(self, vals, dims) -> core.AxisEnvFrame:
+  def get_frame(self, vals, dims, effs) -> core.AxisEnvFrame | None:
     if any(d is not not_mapped for d in dims):
       sizes = (x.shape[d] if type(d) is int else d.size
                for x, d in zip(vals, dims) if d is not not_mapped)
@@ -408,27 +408,29 @@ class BatchTrace(Trace):
     else:
       axis_size = None  # can't be inferred from data
     if self.axis_name is core.no_axis_name:
-      assert axis_size is not None  # must be inferable from data
-      return core.AxisEnvFrame(self.axis_name, axis_size, self.main)
+      assert axis_size is not None or effs
+      if axis_size is not None:
+        return core.AxisEnvFrame(self.axis_name, axis_size, self.main)
+      else:
+        return None
     frame = core.axis_frame(self.axis_name, self.main)
     assert axis_size is None or axis_size == frame.size, (axis_size, frame.size)
     assert frame.main_trace is self.main
     return frame
 
   def process_primitive(self, primitive, tracers, params):
-    if config.dynamic_shapes.value:
-      primitive.abstract_eval(*(t.aval for t in tracers), **params)
+    _, effs = primitive.abstract_eval(*(t.aval for t in tracers), **params)
     vals_in, dims_in = unzip2((t.val, t.batch_dim) for t in tracers)
     is_axis_primitive = primitive in axis_primitive_batchers
     used_names = core.used_axis_names(primitive, params)
     if is_axis_primitive and _main_trace_for_axis_names(self.main, used_names):
-      frame = self.get_frame(vals_in, dims_in)
+      frame = self.get_frame(vals_in, dims_in, effs)
       batcher_primitive = self.get_axis_primitive_batcher(primitive, frame)
       val_out, dim_out = batcher_primitive(vals_in, dims_in, **params)
-    elif all(bdim is not_mapped for bdim in dims_in):
+    elif not effs and all(bdim is not_mapped for bdim in dims_in):
       return primitive.bind(*vals_in, **params)
     else:
-      frame = self.get_frame(vals_in, dims_in)
+      frame = self.get_frame(vals_in, dims_in, effs)
       batched_primitive = self.get_primitive_batcher(primitive, frame)
       val_out, dim_out = batched_primitive(vals_in, dims_in, **params)
     src = source_info_util.current()
