@@ -1716,6 +1716,41 @@ class ShardMapTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(ValueError, "in_specs refers to 'j'"):
       f(v)
 
+  def test_vmap_grad_shmap_spmd_axis_name_residuals(self):
+    # https://github.com/google/jax/pull/21032
+    mesh = jtu.create_global_mesh((4, 2), ('i', 'j'))
+
+    @partial(
+      shard_map,
+      mesh=mesh,
+      in_specs=P('j'),
+      out_specs=P('j'),
+      )
+    def f(x):
+      return jnp.sin(x)
+
+    xs = jnp.arange(4 * 16.).reshape(4, 16)
+
+    jax.vmap(jax.grad(lambda x: f(x).sum()), spmd_axis_name='i')(xs)  # don't crash
+
+  def test_vmap_grad_remat_shmap_spmd_axis_name_residuals(self):
+    # https://github.com/google/jax/pull/21056
+    mesh = jtu.create_global_mesh((4, 2), ('i', 'j'))
+
+    @partial(jax.remat, policy=lambda *_, **__: True)
+    @partial(
+      shard_map,
+      mesh=mesh,
+      in_specs=P('j'),
+      out_specs=P('j'),
+      )
+    def f(x):
+      return jnp.sin(x)
+
+    xs = jnp.arange(4 * 16.).reshape(4, 16)
+
+    jax.vmap(jax.grad(lambda x: f(x).sum()), spmd_axis_name='i')(xs)  # don't crash
+
 
 class FunSpec(NamedTuple):
   name: str
