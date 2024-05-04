@@ -1274,6 +1274,9 @@ def _shard_map_batch(
                    for ax in names} for names, d in zip(in_names, in_dims)]
   spmd_axis_name = trace.spmd_axis_name
   if spmd_axis_name is not None:
+    used = {n for names in in_names for ns in names.values() for n in ns}
+    if set(spmd_axis_name) & used:
+      raise ValueError("vmap spmd_axis_name cannot appear in shard_map in_specs")
     new_in_names = [{**ns, d:spmd_axis_name} if d is not batching.not_mapped  # type: ignore
                     else ns for ns, d in zip(new_in_names, in_dims)]
   @as_hashable_function(closure=out_names_thunk)
@@ -1306,6 +1309,9 @@ def _batch_out_names(spmd_axis_name, dims, out_names):
   out_names_ = [{ax + (d is not batching.not_mapped and d <= ax): names[ax]
                   for ax in names} for names, d in zip(out_names, dims)]
   if spmd_axis_name is not None:
+    used = {n for names in out_names for ns in names.values() for n in ns}
+    if set(spmd_axis_name) & used:
+      raise ValueError("vmap spmd_axis_name cannot appear in shard_map out_specs")
     out_names_ = [{**ns, d:spmd_axis_name} if d is not batching.not_mapped
                   else ns for ns, d in zip(out_names_, dims)]
   return out_names_

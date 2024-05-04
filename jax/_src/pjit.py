@@ -2458,6 +2458,13 @@ mlir.register_lowering(sharding_constraint_p,
 def _sharding_constraint_batcher(insert_axis, spmd_axis_name, axis_size,
                                  axis_name, main_type, vals_in, dims_in,
                                  sharding, resource_env, unconstrained_dims):
+  if spmd_axis_name is not None and isinstance(sharding, NamedSharding):
+    used = {n for ns in sharding.spec
+            for n in (ns if isinstance(ns, tuple) else (ns,))}
+    if set(spmd_axis_name) & used:
+      raise ValueError("vmap spmd_axis_name cannot appear in "
+                       "with_sharding_constraint spec, but got spec"
+                       f"{sharding}")
   x, = vals_in
   d, = dims_in
   # None means unconstrained in ParsedPartitionSpec

@@ -1798,6 +1798,37 @@ class ShardMapTest(jtu.JaxTestCase):
       ir.as_text()
     )
 
+  def test_vmap_spmd_axis_name_error(self):
+    mesh = jtu.create_global_mesh((4, 2), ('i', 'j'))
+
+    @partial(
+      shard_map,
+      mesh=mesh,
+      in_specs=P('i'),
+      out_specs=P('i'),
+      )
+    def f(x):
+      return jnp.sin(x)
+
+    xs = jnp.arange(4 * 16.).reshape(4, 16)
+    with self.assertRaisesRegex(ValueError, "spmd_axis_name cannot appear"):
+      jax.vmap(f, spmd_axis_name='i')(xs)
+
+    @partial(
+      shard_map,
+      mesh=mesh,
+      in_specs=P('j'),
+      out_specs=P(('i', 'j')),
+      check_rep=False,
+      )
+    def g(x):
+      return jnp.sin(x)
+
+    xs = jnp.arange(4 * 16.).reshape(4, 16)
+    with self.assertRaisesRegex(ValueError, "spmd_axis_name cannot appear"):
+      jax.vmap(g, spmd_axis_name='i')(xs)
+
+
 class FunSpec(NamedTuple):
   name: str
   num_inputs: int

@@ -1303,6 +1303,16 @@ class PJitTest(jtu.BufferDonationTestCase):
             """).strip(),
     )
 
+  def test_with_sharding_constraint_vmap_spmd_axis_name_error(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+
+    def f(x):
+      return jax.lax.with_sharding_constraint(x, NamedSharding(mesh, P('x')))
+
+    xs = jnp.arange(4 * 16.).reshape(4, 16)
+    with self.assertRaisesRegex(ValueError, "spmd_axis_name"):
+      jax.vmap(f, spmd_axis_name='x')(xs)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class CustomPartitionerTest(jtu.JaxTestCase):
@@ -4270,8 +4280,7 @@ class PJitErrorTest(jtu.JaxTestCase):
         r".*rank at least 2, but was applied to a value of rank 1", re.M | re.S)
     with self.assertRaisesRegex(ValueError, error):
       pjit(
-          lambda x: with_sharding_constraint(x, spec),
-          in_shardings=None,
+          lambda x: with_sharding_constraint(x, spec), in_shardings=None,
           out_shardings=None,
       )(x)
 
