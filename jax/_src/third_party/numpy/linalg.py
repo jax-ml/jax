@@ -62,52 +62,6 @@ def cond(x, p=None):
   return r
 
 
-@implements(np.linalg.tensorinv)
-def tensorinv(a, ind=2):
-  check_arraylike('jnp.linalg.tensorinv', a)
-  a = jnp.asarray(a)
-  oldshape = a.shape
-  prod = 1
-  if ind > 0:
-    invshape = oldshape[ind:] + oldshape[:ind]
-    for k in oldshape[ind:]:
-      prod *= k
-  else:
-    raise ValueError("Invalid ind argument.")
-  a = a.reshape(prod, -1)
-  ia = la.inv(a)
-  return ia.reshape(*invshape)
-
-
-@implements(np.linalg.tensorsolve)
-def tensorsolve(a, b, axes=None):
-  check_arraylike('jnp.linalg.tensorsolve', a, b)
-  a = jnp.asarray(a)
-  b = jnp.asarray(b)
-  an = a.ndim
-  if axes is not None:
-    allaxes = list(range(0, an))
-    for k in axes:
-      allaxes.remove(k)
-      allaxes.insert(an, k)
-
-    a = a.transpose(allaxes)
-
-  Q = a.shape[-(an - b.ndim):]
-
-  prod = 1
-  for k in Q:
-    prod *= k
-
-  a = a.reshape(-1, prod)
-  b = b.ravel()
-
-  res = jnp.asarray(la.solve(a, b))
-  res = res.reshape(Q)
-
-  return res
-
-
 @implements(np.linalg.multi_dot)
 def multi_dot(arrays, *, precision=None):
   check_arraylike('jnp.linalg.multi_dot', *arrays)
