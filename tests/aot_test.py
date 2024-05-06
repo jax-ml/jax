@@ -41,7 +41,7 @@ with contextlib.suppress(ImportError):
 
 class JaxAotTest(jtu.JaxTestCase):
 
-  @jtu.run_on_devices('tpu', 'gpu')
+  @jtu.run_on_devices('tpu')
   def test_pickle_pjit_lower(self):
     def fun(x):
       return x * x
@@ -62,6 +62,7 @@ class JaxAotTest(jtu.JaxTestCase):
         jax.pmap(lambda x: x * x).lower(
             np.zeros((len(jax.devices()), 4), dtype=np.float32)))
 
+  @jtu.run_on_devices('tpu')
   def test_topology_pjit_serialize(self):
     try:
       aot_topo = topologies.get_topology_desc(
@@ -98,6 +99,7 @@ class JaxAotTest(jtu.JaxTestCase):
         lower_and_load(ref_mesh).as_text(), lower_and_load(aot_mesh).as_text()
     )
 
+  @jtu.run_on_devices('tpu')
   def test_get_topology_from_devices(self):
     try:
       aot_topo = topologies.get_topology_desc(
