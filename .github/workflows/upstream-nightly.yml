@@ -54,6 +54,8 @@ jobs:
             --upgrade \
             numpy \
             scipy
+          python -c "import numpy; print(f'numpy.__version__=')"
+          python -c "import scipy; print(f'scipy.__version__=')"
       - name: Install JAX
         run: |
           pip install .[ci]
