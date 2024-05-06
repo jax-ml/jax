@@ -76,18 +76,3 @@ def finfo(type, /) -> FInfo:
     smallest_normal=float(info.smallest_normal),
     dtype=jnp.dtype(type)
   )
-
-# TODO(micky774): Update utility to only promote integral types
-def _promote_to_default_dtype(x):
-  if x.dtype.kind == 'b':
-    return x
-  elif x.dtype.kind == 'i':
-    return x.astype(jnp.int_)
-  elif x.dtype.kind == 'u':
-    return x.astype(jnp.uint)
-  elif x.dtype.kind == 'f':
-    return x.astype(jnp.float_)
-  elif x.dtype.kind == 'c':
-    return x.astype(jnp.complex_)
-  else:
-    raise ValueError(f"Unrecognized {x.dtype=}")

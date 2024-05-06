@@ -791,13 +791,8 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     rng = jtu.rand_some_zero(self.rng())
 
     def np_mock_op(x, axis=None, dtype=None, include_initial=False):
-      kind = x.dtype.kind
-      if (dtype is None and kind in {'i', 'u'}
-          and x.dtype.itemsize*8 < int(config.default_dtype_bits.value)):
-        dtype = dtypes.canonicalize_dtype(dtypes._default_types[kind])
       axis = axis or 0
-      x = x.astype(dtype=dtype or x.dtype)
-      out = jnp.cumsum(x, axis=axis)
+      out = np.cumsum(x, axis=axis, dtype=dtype or x.dtype)
       if include_initial:
         zeros_shape = list(x.shape)
         zeros_shape[axis] = 1

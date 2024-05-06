@@ -3364,13 +3364,6 @@ def trace(a: ArrayLike, offset: int = 0, axis1: int = 0, axis2: int = 1,
   dtypes.check_user_dtype_supported(dtype, "trace")
 
   a_shape = shape(a)
-  if dtype is None:
-    dtype = _dtype(a)
-    if issubdtype(dtype, integer):
-      default_int = dtypes.canonicalize_dtype(int)
-      if iinfo(dtype).bits < iinfo(default_int).bits:
-        dtype = default_int
-
   a = moveaxis(a, (axis1, axis2), (-2, -1))
 
   # Mask out the diagonal and reduce.
