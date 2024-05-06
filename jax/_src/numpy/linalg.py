@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from functools import partial
+import math
 import warnings
 
 import numpy as np
@@ -1832,3 +1833,94 @@ def diagonal(x: ArrayLike, /, *, offset: int = 0) -> Array:
   """
   check_arraylike('jnp.linalg.diagonal', x)
   return jnp.diagonal(x, offset=offset, axis1=-2, axis2=-1)
+
+
+def tensorinv(a: ArrayLike, ind: int = 2) -> Array:
+  """Compute the tensor inverse of an array.
+
+  JAX implementation of :func:`numpy.linalg.tensorinv`.
+
+  This computes the inverse of the :func:`~jax.numpy.linalg.tensordot`
+  operation with the same ``ind`` value.
+
+  Args:
+    a: array to be inverted. Must have ``prod(a.shape[:ind]) == prod(a.shape[ind:])``
+    ind: positive integer specifying the number of indices in the tensor product.
+
+  Returns:
+    array of shape ``(*a.shape[ind:], *a.shape[:ind])`` containing the
+    tensor inverse of ``a``.
+
+  See also:
+    - :func:`jax.numpy.linalg.tensordot`
+    - :func:`jax.numpy.linalg.tensorsolve`
+
+  Example:
+    >>> key = jax.random.key(1337)
+    >>> x = jax.random.normal(key, shape=(2, 2, 4))
+    >>> xinv = jnp.linalg.tensorinv(x, 2)
+    >>> xinv_x = jnp.linalg.tensordot(xinv, x, axes=2)
+    >>> jnp.allclose(xinv_x, jnp.eye(4), atol=1E-4)
+    Array(True, dtype=bool)
+  """
+  check_arraylike("tensorinv", a)
+  arr = jnp.asarray(a)
+  ind = operator.index(ind)
+  if ind <= 0:
+    raise ValueError(f"ind must be a positive integer; got {ind=}")
+  contracting_shape, batch_shape = arr.shape[:ind], arr.shape[ind:]
+  flatshape = (math.prod(contracting_shape), math.prod(batch_shape))
+  if flatshape[0] != flatshape[1]:
+    raise ValueError("tensorinv is only possible when the product of the first"
+                     " `ind` dimensions equals that of the remaining dimensions."
+                     f" got {arr.shape=} with {ind=}.")
+  return inv(arr.reshape(flatshape)).reshape(*batch_shape, *contracting_shape)
+
+
+def tensorsolve(a: ArrayLike, b: ArrayLike, axes: tuple[int, ...] | None = None) -> Array:
+  """Solve the tensor equation a x = b for x.
+
+  JAX implementation of :func:`numpy.linalg.tensorsolve`.
+
+  Args:
+    a: input array. After reordering via ``axes`` (see below), shape must be
+      ``(*b.shape, *x.shape)``.
+    b: right-hand-side array.
+    axes: optional tuple specifying axes of ``a`` that should be moved to the end
+
+  Returns:
+    array x such that after reordering of axes of ``a``, ``tensordot(a, x, x.ndim)``
+    is equivalent to ``b``.
+
+  See also:
+    - :func:`jax.numpy.linalg.tensordot`
+    - :func:`jax.numpy.linalg.tensorinv`
+
+  Examples:
+    >>> key1, key2 = jax.random.split(jax.random.key(8675309))
+    >>> a = jax.random.normal(key1, shape=(2, 2, 4))
+    >>> b = jax.random.normal(key2, shape=(2, 2))
+    >>> x = jnp.linalg.tensorsolve(a, b)
+    >>> x.shape
+    (4,)
+
+    Now show that ``x`` can be used to reconstruct ``b`` using
+    :func:`~jax.numpy.linalg.tensordot`:
+
+    >>> b_reconstructed = jnp.linalg.tensordot(a, x, axes=x.ndim)
+    >>> jnp.allclose(b, b_reconstructed)
+    Array(True, dtype=bool)
+  """
+  check_arraylike("tensorsolve", a, b)
+  a_arr, b_arr = jnp.asarray(a), jnp.asarray(b)
+  if axes is not None:
+    a_arr = jnp.moveaxis(a_arr, axes, len(axes) * (a_arr.ndim - 1,))
+  out_shape = a_arr.shape[b_arr.ndim:]
+  if a_arr.shape[:b_arr.ndim] != b_arr.shape:
+    raise ValueError("After moving axes to end, leading shape of a must match shape of b."
+                     f" got a.shape={a_arr.shape}, b.shape={b_arr.shape}")
+  if b_arr.size != math.prod(out_shape):
+    raise ValueError("Input arrays must have prod(a.shape[:b.ndim]) == prod(a.shape[b.ndim:]);"
+                     f" got a.shape={a_arr.shape}, b.ndim={b_arr.ndim}.")
+  a_arr = a_arr.reshape(b_arr.size, math.prod(out_shape))
+  return solve(a_arr, b_arr.ravel()).reshape(out_shape)
