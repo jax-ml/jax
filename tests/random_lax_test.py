@@ -65,6 +65,9 @@ class LaxRandomTest(jtu.JaxTestCase):
     # whether RBG keys may be involved, but that's no longer exact.
     if config.enable_custom_prng.value and samples.dtype == jnp.bfloat16:
       return
+    # kstest does not understand bfloat16 input, so cast to float32.
+    if samples.dtype == jnp.bfloat16:
+      samples = samples.astype('float32')
     # kstest fails for infinities starting in scipy 1.12
     # (https://github.com/scipy/scipy/issues/20386)
     # TODO(jakevdp): remove this logic if/when fixed upstream.
