@@ -260,7 +260,7 @@ def write_bazelrc(*, python_bin_path, remote_build,
                   cuda_toolkit_path, cudnn_install_path,
                   cuda_version, cudnn_version, rocm_toolkit_path,
                   cpu, cuda_compute_capabilities,
-                  rocm_amdgpu_targets, bazel_options, target_cpu_features,
+                  rocm_amdgpu_targets, target_cpu_features,
                   wheel_cpu, enable_mkl_dnn, use_clang, clang_path,
                   clang_major_version, enable_cuda, enable_nccl, enable_rocm,
                   build_gpu_plugin, enable_mosaic_gpu):
@@ -279,11 +279,11 @@ def write_bazelrc(*, python_bin_path, remote_build,
       f.write(f'build --action_env CLANG_COMPILER_PATH="{clang_path}"\n')
       f.write(f'build --repo_env CC="{clang_path}"\n')
       f.write(f'build --repo_env BAZEL_COMPILER="{clang_path}"\n')
-      bazel_options.append("--copt=-Wno-error=unused-command-line-argument\n")
-      if clang_major_version in (16, 17):
+      f.write('build --copt=-Wno-error=unused-command-line-argument\n')
+      if clang_major_version in (16, 17, 18):
         # Necessary due to XLA's old version of upb. See:
         # https://github.com/openxla/xla/blob/c4277a076e249f5b97c8e45c8cb9d1f554089d76/.bazelrc#L505
-        bazel_options.append("--copt=-Wno-gnu-offsetof-extensions\n")
+        f.write("build --copt=-Wno-gnu-offsetof-extensions\n")
 
     if cuda_toolkit_path:
       tf_cuda_paths.append(cuda_toolkit_path)
@@ -316,8 +316,6 @@ def write_bazelrc(*, python_bin_path, remote_build,
     if cpu is not None:
       f.write(f"build --cpu={cpu}\n")
 
-    for o in bazel_options:
-      f.write(f"build {o}\n")
     if target_cpu_features == "release":
       if wheel_cpu == "x86_64":
         f.write("build --config=avx_windows\n" if is_windows()
@@ -529,7 +527,8 @@ def main():
   parser.add_argument(
       "--bazel_options",
       action="append", default=[],
-      help="Additional options to pass to bazel.")
+      help="Additional options to pass to the main Bazel command to be "
+           "executed, e.g. `run`.")
   parser.add_argument(
       "--output_path",
       default=os.path.join(cwd, "dist"),
@@ -647,7 +646,6 @@ def main():
       cpu=args.target_cpu,
       cuda_compute_capabilities=args.cuda_compute_capabilities,
       rocm_amdgpu_targets=args.rocm_amdgpu_targets,
-      bazel_options=args.bazel_options,
       target_cpu_features=args.target_cpu_features,
       wheel_cpu=wheel_cpu,
       enable_mkl_dnn=args.enable_mkl_dnn,
@@ -666,41 +664,51 @@ def main():
 
   print("\nBuilding XLA and installing it in the jaxlib source tree...")
 
+  command_base = (
+    bazel_path,
+    *args.bazel_startup_options,
+    "run",
+    "--verbose_failures=true",
+    *args.bazel_options,
+  )
   if not args.build_cuda_kernel_plugin and not args.build_cuda_pjrt_plugin:
-    command = ([bazel_path] + args.bazel_startup_options +
-      ["run", "--verbose_failures=true"] +
-      ["//jaxlib/tools:build_wheel", "--",
+    build_cpu_wheel_command = [
+      *command_base,
+      "//jaxlib/tools:build_wheel", "--",
       f"--output_path={output_path}",
       f"--jaxlib_git_hash={get_githash()}",
-      f"--cpu={wheel_cpu}"])
+      f"--cpu={wheel_cpu}"
+    ]
     if args.build_gpu_plugin:
-      command.append("--skip_gpu_kernels")
+      build_cpu_wheel_command.append("--skip_gpu_kernels")
     if args.editable:
-      command += ["--editable"]
-    print(" ".join(command))
-    shell(command)
+      build_cpu_wheel_command.append("--editable")
+    print(" ".join(build_cpu_wheel_command))
+    shell(build_cpu_wheel_command)
 
   if args.build_gpu_plugin or args.build_cuda_kernel_plugin:
-    build_cuda_kernels_command = ([bazel_path] + args.bazel_startup_options +
-      ["run", "--verbose_failures=true"] +
-      ["//jaxlib/tools:build_cuda_kernels_wheel", "--",
+    build_cuda_kernels_command = [
+      *command_base,
+      "//jaxlib/tools:build_cuda_kernels_wheel", "--",
       f"--output_path={output_path}",
       f"--jaxlib_git_hash={get_githash()}",
       f"--cpu={wheel_cpu}",
-      f"--cuda_version={args.gpu_plugin_cuda_version}"])
+      f"--cuda_version={args.gpu_plugin_cuda_version}"
+    ]
     if args.editable:
       build_cuda_kernels_command.append("--editable")
     print(" ".join(build_cuda_kernels_command))
     shell(build_cuda_kernels_command)
 
   if args.build_gpu_plugin or args.build_cuda_pjrt_plugin:
-    build_pjrt_plugin_command = ([bazel_path] + args.bazel_startup_options +
-      ["run", "--verbose_failures=true"] +
-      ["//jaxlib/tools:build_gpu_plugin_wheel", "--",
+    build_pjrt_plugin_command = [
+      *command_base,
+      "//jaxlib/tools:build_gpu_plugin_wheel", "--",
       f"--output_path={output_path}",
       f"--jaxlib_git_hash={get_githash()}",
       f"--cpu={wheel_cpu}",
-      f"--cuda_version={args.gpu_plugin_cuda_version}"])
+      f"--cuda_version={args.gpu_plugin_cuda_version}"
+    ]
     if args.editable:
       build_pjrt_plugin_command.append("--editable")
     print(" ".join(build_pjrt_plugin_command))
