@@ -17,7 +17,7 @@ jobs:
     strategy:
       fail-fast: false # don't cancel all jobs on failure
       matrix:
-        jaxlib-version: ["plugin_latest", "nightly"]
+        jaxlib-version: ["pypi_latest", "nightly"]
     name: "Jax-Metal plugin test (jaxlib=${{ matrix.jaxlib-version }})"
     runs-on: [self-hosted, macOS, ARM64]
 
