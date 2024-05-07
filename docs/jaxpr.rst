@@ -103,8 +103,8 @@ Here there are no constvars, ``a`` and ``b`` are the input variables
 and they correspond respectively to
 ``first`` and ``second`` function parameters. The scalar literal ``3.0`` is kept
 inline.
-The ``reduce_sum`` primitive has named parameters ``axes`` and ``input_shape``, in
-addition to the operand ``e``.
+The ``reduce_sum`` primitive has named parameter ``axes``, in addition to the 
+operand ``e``.
 
 Note that even though execution of a program that calls into JAX builds a jaxpr,
 Python-level control-flow and Python-level functions execute normally.
