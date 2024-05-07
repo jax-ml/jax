@@ -31,6 +31,7 @@ from jax._src.numpy.linalg import (
   matrix_power as matrix_power,
   matrix_rank as matrix_rank,
   matrix_transpose as matrix_transpose,
+  multi_dot as multi_dot,
   norm as norm,
   outer as outer,
   pinv as pinv,
@@ -47,5 +48,4 @@ from jax._src.numpy.linalg import (
 )
 from jax._src.third_party.numpy.linalg import (
   cond as cond,
-  multi_dot as multi_dot,
 )

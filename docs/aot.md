@@ -1,3 +1,5 @@
+(ahead-of-time-lowering)=
+
 # Ahead-of-time lowering and compilation
 
 JAX offers several transformations, such as `jax.jit` and `jax.pmap`, returning
