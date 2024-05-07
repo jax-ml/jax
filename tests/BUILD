@@ -1477,6 +1477,15 @@ jax_test(
     ],
 )
 
+py_test(
+    name = "pretty_printer_test",
+    srcs = ["pretty_printer_test.py"],
+    deps = [
+        "//jax",
+        "//jax:test_util",
+    ],
+)
+
 exports_files(
     [
         "api_test.py",

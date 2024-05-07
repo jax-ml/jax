@@ -149,51 +149,11 @@ class Jaxpr:
   def pretty_print(self, *, source_info=False, print_shapes=True,
                    custom_pp_eqn_rules=True, name_stack=False,
                    print_effects: bool = False, **kwargs):
-    context = JaxprPpContext()
-    settings = JaxprPpSettings(
-        source_info=source_info,
-        print_shapes=print_shapes,
-        custom_pp_eqn_rules=custom_pp_eqn_rules,
-        name_stack=name_stack,
-        print_effects=print_effects)
-
-    # Compute how many times each jaxpr is used.
-    names = defaultdict[Jaxpr, str](lambda: "jaxpr")
-    jaxpr_counts = Counter[Jaxpr]()
-    s = deque([self])
-    while s:
-      jaxpr = s.popleft()
-      jaxpr_counts[jaxpr] += 1
-      for eqn in jaxpr.eqns:
-        # TODO(slebedev): Come up with a more elaborate heuristic for name=.
-        name = eqn.params.get("name")
-        if name is None:
-          s.extend(jaxprs_in_params(eqn.params))
-          continue
-        name = name.strip("<>")  # <lambda> -> lambda
-        for subjaxpr in jaxprs_in_params(eqn.params):
-          s.append(subjaxpr)
-          names.setdefault(subjaxpr, name)
-
-    # Pull jaxprs occurring more than once to the top-level, making sure
-    # that their names are unique.
-    docs = []
-    name_counts = Counter[str]()
-    for jaxpr, c in jaxpr_counts.items():
-      if c == 1:
-        continue
-      name = names[jaxpr]
-      if (count := name_counts[name]) > 0:
-        name_counts[name] += 1
-        name += str(count)
-        name_counts[name] += 1
-      else:
-        name_counts[name] += 1
-      docs.append(pp_top_level_jaxpr(name, jaxpr, context, settings))
-      context.used_names.add(name)
-      context.top_level_jaxprs[jaxpr] = name
-    docs.append(pp_jaxpr(self, context, settings))
-    return pp.concat(docs).format(**kwargs)
+    doc = pp_toplevel_jaxpr(
+      self, source_info=source_info, print_shapes=print_shapes,
+      custom_pp_eqn_rules=custom_pp_eqn_rules, name_stack=name_stack,
+      print_effects=print_effects)
+    return doc.format(**kwargs)
 
   def _repr_pretty_(self, p, cycle):
     return p.text(self.pretty_print(use_color=True))
@@ -210,6 +170,7 @@ class Jaxpr:
     if kwargs:
       raise ValueError(f"Unknown keyword arguments: {kwargs}")
     return jaxpr
+
 
 
 def join_effects(*effects: Effects) -> Effects:
@@ -3164,6 +3125,55 @@ def _check_map(ctx_factory, prim, in_avals, params):
 
 # ------------------- Jaxpr printed representation -------------------
 
+def pp_toplevel_jaxpr(jaxpr_to_print, *, source_info=False, print_shapes=True,
+                      custom_pp_eqn_rules=True, name_stack=False,
+                      print_effects: bool = False) -> pp.Doc:
+    context = JaxprPpContext()
+    settings = JaxprPpSettings(
+        source_info=source_info,
+        print_shapes=print_shapes,
+        custom_pp_eqn_rules=custom_pp_eqn_rules,
+        name_stack=name_stack,
+        print_effects=print_effects)
+
+    # Compute how many times each jaxpr is used.
+    names = defaultdict[Jaxpr, str](lambda: "jaxpr")
+    jaxpr_counts = Counter[Jaxpr]()
+    s = deque([jaxpr_to_print])
+    while s:
+      jaxpr = s.popleft()
+      jaxpr_counts[jaxpr] += 1
+      for eqn in jaxpr.eqns:
+        # TODO(slebedev): Come up with a more elaborate heuristic for name=.
+        name = eqn.params.get("name")
+        if name is None:
+          s.extend(jaxprs_in_params(eqn.params))
+          continue
+        name = name.strip("<>")  # <lambda> -> lambda
+        for subjaxpr in jaxprs_in_params(eqn.params):
+          s.append(subjaxpr)
+          names.setdefault(subjaxpr, name)
+
+    # Pull jaxprs occurring more than once to the top-level, making sure
+    # that their names are unique.
+    docs = []
+    name_counts = Counter[str]()
+    for jaxpr, c in jaxpr_counts.items():
+      if c == 1:
+        continue
+      name = names[jaxpr]
+      if (count := name_counts[name]) > 0:
+        name_counts[name] += 1
+        name += str(count)
+        name_counts[name] += 1
+      else:
+        name_counts[name] += 1
+      docs.append(pp_top_level_jaxpr(name, jaxpr, context, settings))
+      context.used_names.add(name)
+      context.top_level_jaxprs[jaxpr] = name
+    docs.append(pp_jaxpr(jaxpr_to_print, context, settings))
+    return pp.concat(docs)
+
 
 class JaxprPpSettings(NamedTuple):
   print_shapes: bool = True
@@ -3253,7 +3263,9 @@ def pp_eqn(eqn: JaxprEqn, context: JaxprPpContext, settings: JaxprPpSettings
            ) -> pp.Doc:
   rule = (_pp_eqn if not settings.custom_pp_eqn_rules else
           pp_eqn_rules.get(eqn.primitive, _pp_eqn))
-  return rule(eqn, context, settings)  # type: ignore[operator]
+  doc = rule(eqn, context, settings)  # type: ignore[operator]
+  user_frame = source_info_util.user_frame(eqn.source_info)
+  return doc if user_frame is None else pp.source_map(doc, user_frame)
 
 def _pp_eqn(eqn, context, settings, params=None) -> pp.Doc:
   annotation = (source_info_util.summarize(eqn.source_info)
