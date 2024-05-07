@@ -105,40 +105,40 @@ def get_githash():
 
 # Bazel
 
-BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/6.1.2/"
+BAZEL_BASE_URI = "https://github.com/bazelbuild/bazel/releases/download/6.5.0/"
 BazelPackage = collections.namedtuple("BazelPackage",
                                       ["base_uri", "file", "sha256"])
 bazel_packages = {
     ("Linux", "x86_64"):
         BazelPackage(
             base_uri=None,
-            file="bazel-6.1.2-linux-x86_64",
+            file="bazel-6.5.0-linux-x86_64",
             sha256=
-            "e89747d63443e225b140d7d37ded952dacea73aaed896bca01ccd745827c6289"),
+            "a40ac69263440761199fcb8da47ad4e3f328cbe79ffbf4ecc14e5ba252857307"),
     ("Linux", "aarch64"):
         BazelPackage(
             base_uri=None,
-            file="bazel-6.1.2-linux-arm64",
+            file="bazel-6.5.0-linux-arm64",
             sha256=
-            "1c9b249e315601c3703c41668a1204a8fdf0eba7f0f2b7fc38253bad1d1969c7"),
+            "5afe973cadc036496cac66f1414ca9be36881423f576db363d83afc9084c0c2f"),
     ("Darwin", "x86_64"):
         BazelPackage(
             base_uri=None,
-            file="bazel-6.1.2-darwin-x86_64",
+            file="bazel-6.5.0-darwin-x86_64",
             sha256=
-            "22d4b605ce6a7aad92d4f387458cc68de9907a2efa08f9b8bda244c2b6010561"),
+            "bbf9c2c03bac48e0514f46db0295027935535d91f6d8dcd960c53393559eab29"),
     ("Darwin", "arm64"):
         BazelPackage(
             base_uri=None,
-            file="bazel-6.1.2-darwin-arm64",
+            file="bazel-6.5.0-darwin-arm64",
             sha256=
-            "30cdf85af055ca8fdab7de592b1bd64f940955e3f63ed5c503c4e93d0112bd9d"),
+            "c6b6dc17efcdf13fba484c6fe0b6c3361b888ae7b9573bc25a2dbe8c502448eb"),
     ("Windows", "AMD64"):
         BazelPackage(
             base_uri=None,
-            file="bazel-6.1.2-windows-x86_64.exe",
+            file="bazel-6.5.0-windows-x86_64.exe",
             sha256=
-            "47e7f65a3bfa882910f76e2107b4298b28ace33681bd0279e25a8f91551913c0"),
+            "6eae8e7f28e1b68b833503d1a58caf139c11e52de19df0d787d974653a0ea4c6"),
 }
 
 
@@ -201,7 +201,7 @@ def get_bazel_paths(bazel_path_flag):
 
 def get_bazel_path(bazel_path_flag):
   """Returns the path to a Bazel binary, downloading Bazel if not found. Also,
-  checks Bazel's version is at least newer than 5.1.1
+  checks Bazel's version is at least newer than 6.5.0
 
   A manual version check is needed only for really old bazel versions.
   Newer bazel releases perform their own version check against .bazelversion
@@ -210,11 +210,11 @@ def get_bazel_path(bazel_path_flag):
   """
   for path in filter(None, get_bazel_paths(bazel_path_flag)):
     version = get_bazel_version(path)
-    if version is not None and version >= (5, 1, 1):
+    if version is not None and version >= (6, 5, 0):
       return path, ".".join(map(str, version))
 
   print("Cannot find or download a suitable version of bazel."
-        "Please install bazel >= 5.1.1.")
+        "Please install bazel >= 6.5.0.")
   sys.exit(-1)
 
 
@@ -260,10 +260,10 @@ def write_bazelrc(*, python_bin_path, remote_build,
                   cuda_toolkit_path, cudnn_install_path,
                   cuda_version, cudnn_version, rocm_toolkit_path,
                   cpu, cuda_compute_capabilities,
-                  rocm_amdgpu_targets, bazel_options, target_cpu_features,
+                  rocm_amdgpu_targets, target_cpu_features,
                   wheel_cpu, enable_mkl_dnn, use_clang, clang_path,
                   clang_major_version, enable_cuda, enable_nccl, enable_rocm,
-                  build_gpu_plugin):
+                  build_gpu_plugin, enable_mosaic_gpu):
   tf_cuda_paths = []
 
   with open("../.jax_configure.bazelrc", "w") as f:
@@ -279,11 +279,11 @@ def write_bazelrc(*, python_bin_path, remote_build,
       f.write(f'build --action_env CLANG_COMPILER_PATH="{clang_path}"\n')
       f.write(f'build --repo_env CC="{clang_path}"\n')
       f.write(f'build --repo_env BAZEL_COMPILER="{clang_path}"\n')
-      bazel_options.append("--copt=-Wno-error=unused-command-line-argument\n")
-      if clang_major_version in (16, 17):
+      f.write('build --copt=-Wno-error=unused-command-line-argument\n')
+      if clang_major_version in (16, 17, 18):
         # Necessary due to XLA's old version of upb. See:
         # https://github.com/openxla/xla/blob/c4277a076e249f5b97c8e45c8cb9d1f554089d76/.bazelrc#L505
-        bazel_options.append("--copt=-Wno-gnu-offsetof-extensions\n")
+        f.write("build --copt=-Wno-gnu-offsetof-extensions\n")
 
     if cuda_toolkit_path:
       tf_cuda_paths.append(cuda_toolkit_path)
@@ -316,8 +316,6 @@ def write_bazelrc(*, python_bin_path, remote_build,
     if cpu is not None:
       f.write(f"build --cpu={cpu}\n")
 
-    for o in bazel_options:
-      f.write(f"build {o}\n")
     if target_cpu_features == "release":
       if wheel_cpu == "x86_64":
         f.write("build --config=avx_windows\n" if is_windows()
@@ -337,6 +335,8 @@ def write_bazelrc(*, python_bin_path, remote_build,
       if use_clang:
         f.write("build --config=nvcc_clang\n")
         f.write(f"build --action_env=CLANG_CUDA_COMPILER_PATH={clang_path}\n")
+      if enable_mosaic_gpu:
+        f.write("build --config=mosaic_gpu")
     if enable_rocm:
       f.write("build --config=rocm\n")
       if not enable_nccl:
@@ -527,7 +527,8 @@ def main():
   parser.add_argument(
       "--bazel_options",
       action="append", default=[],
-      help="Additional options to pass to bazel.")
+      help="Additional options to pass to the main Bazel command to be "
+           "executed, e.g. `run`.")
   parser.add_argument(
       "--output_path",
       default=os.path.join(cwd, "dist"),
@@ -541,6 +542,10 @@ def main():
       "--editable",
       action="store_true",
       help="Create an 'editable' jaxlib build instead of a wheel.")
+  add_boolean_argument(
+      parser,
+      "enable_mosaic_gpu",
+      help_str="Should we build with Mosaic GPU? VERY EXPERIMENTAL.")
   add_boolean_argument(
       parser,
       "configure_only",
@@ -641,7 +646,6 @@ def main():
       cpu=args.target_cpu,
       cuda_compute_capabilities=args.cuda_compute_capabilities,
       rocm_amdgpu_targets=args.rocm_amdgpu_targets,
-      bazel_options=args.bazel_options,
       target_cpu_features=args.target_cpu_features,
       wheel_cpu=wheel_cpu,
       enable_mkl_dnn=args.enable_mkl_dnn,
@@ -652,6 +656,7 @@ def main():
       enable_nccl=args.enable_nccl,
       enable_rocm=args.enable_rocm,
       build_gpu_plugin=args.build_gpu_plugin,
+      enable_mosaic_gpu=args.enable_mosaic_gpu,
   )
 
   if args.configure_only:
@@ -659,41 +664,51 @@ def main():
 
   print("\nBuilding XLA and installing it in the jaxlib source tree...")
 
+  command_base = (
+    bazel_path,
+    *args.bazel_startup_options,
+    "run",
+    "--verbose_failures=true",
+    *args.bazel_options,
+  )
   if not args.build_cuda_kernel_plugin and not args.build_cuda_pjrt_plugin:
-    command = ([bazel_path] + args.bazel_startup_options +
-      ["run", "--verbose_failures=true"] +
-      ["//jaxlib/tools:build_wheel", "--",
+    build_cpu_wheel_command = [
+      *command_base,
+      "//jaxlib/tools:build_wheel", "--",
       f"--output_path={output_path}",
       f"--jaxlib_git_hash={get_githash()}",
-      f"--cpu={wheel_cpu}"])
+      f"--cpu={wheel_cpu}"
+    ]
     if args.build_gpu_plugin:
-      command.append("--include_gpu_plugin_extension")
+      build_cpu_wheel_command.append("--skip_gpu_kernels")
     if args.editable:
-      command += ["--editable"]
-    print(" ".join(command))
-    shell(command)
+      build_cpu_wheel_command.append("--editable")
+    print(" ".join(build_cpu_wheel_command))
+    shell(build_cpu_wheel_command)
 
   if args.build_gpu_plugin or args.build_cuda_kernel_plugin:
-    build_cuda_kernels_command = ([bazel_path] + args.bazel_startup_options +
-      ["run", "--verbose_failures=true"] +
-      ["//jaxlib/tools:build_cuda_kernels_wheel", "--",
+    build_cuda_kernels_command = [
+      *command_base,
+      "//jaxlib/tools:build_cuda_kernels_wheel", "--",
       f"--output_path={output_path}",
       f"--jaxlib_git_hash={get_githash()}",
       f"--cpu={wheel_cpu}",
-      f"--cuda_version={args.gpu_plugin_cuda_version}"])
+      f"--cuda_version={args.gpu_plugin_cuda_version}"
+    ]
     if args.editable:
       build_cuda_kernels_command.append("--editable")
     print(" ".join(build_cuda_kernels_command))
     shell(build_cuda_kernels_command)
 
   if args.build_gpu_plugin or args.build_cuda_pjrt_plugin:
-    build_pjrt_plugin_command = ([bazel_path] + args.bazel_startup_options +
-      ["run", "--verbose_failures=true"] +
-      ["//jaxlib/tools:build_gpu_plugin_wheel", "--",
+    build_pjrt_plugin_command = [
+      *command_base,
+      "//jaxlib/tools:build_gpu_plugin_wheel", "--",
       f"--output_path={output_path}",
       f"--jaxlib_git_hash={get_githash()}",
       f"--cpu={wheel_cpu}",
-      f"--cuda_version={args.gpu_plugin_cuda_version}"])
+      f"--cuda_version={args.gpu_plugin_cuda_version}"
+    ]
     if args.editable:
       build_pjrt_plugin_command.append("--editable")
     print(" ".join(build_pjrt_plugin_command))

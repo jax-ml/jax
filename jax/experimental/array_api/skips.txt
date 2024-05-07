@@ -11,3 +11,14 @@ array_api_tests/test_special_cases.py::test_unary
 
 # fft test suite is buggy as of 83f0bcdc
 array_api_tests/test_fft.py
+
+# Pending implementation update for proper dtype promotion behavior,
+# see https://github.com/data-apis/array-api-tests/issues/234
+array_api_tests/test_statistical_functions.py::test_sum
+array_api_tests/test_statistical_functions.py::test_prod
+array_api_tests/test_linalg.py::test_trace
+
+# Pending bugfix, see https://github.com/data-apis/array-api-tests/issues/256
+array_api_tests/test_signatures.py::test_func_signature[logical_and]
+array_api_tests/test_signatures.py::test_func_signature[logical_or]
+array_api_tests/test_signatures.py::test_func_signature[logical_xor]

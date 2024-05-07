@@ -17,6 +17,7 @@
 load("//jaxlib:symlink_files.bzl", "symlink_files")
 load(
     "//jaxlib:jax.bzl",
+    "if_building_mosaic_gpu",
     "if_windows",
     "py_library_providing_imports_info",
     "pybind_extension",
@@ -70,7 +71,7 @@ py_library_providing_imports_info(
         "//jaxlib/mlir:vector_dialect",
         "//jaxlib/mosaic",
         "//jaxlib/triton",
-    ],
+    ] + if_building_mosaic_gpu(["//jaxlib/mosaic/gpu:mosaic_gpu"]),
 )
 
 symlink_files(
@@ -193,6 +194,7 @@ pybind_extension(
         "//jaxlib:kernel_nanobind_helpers",
         "@xla//third_party/python_runtime:headers",
         "@xla//xla:status",
+        "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla:util",
         "@xla//xla/pjrt:status_casters",
         "@xla//xla/pjrt/c:pjrt_c_api_gpu_extension_hdrs",

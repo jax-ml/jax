@@ -862,6 +862,50 @@ def register_pytree_with_keys_class(cls: U) -> U:
   return cls
 
 
+def register_dataclass(
+    nodetype: type, data_fields: list[str], meta_fields: list[str]
+):
+  """Extends the set of types that are considered internal nodes in pytrees.
+
+  This differs from ``register_pytree_with_keys_class`` in that the C++
+  registries use the optimized C++ dataclass builtin instead of the argument
+  functions.
+
+  Args:
+    nodetype: a Python type to treat as an internal pytree node.
+    meta_fields: auxiliary data field names.
+    data_fields: data field names.
+  """
+  if xla_extension_version < 259:
+    raise NotImplementedError(
+        "Registering dataclasses is only supported in jaxlib>=0.4.26."
+    )
+
+  def flatten_with_keys(x):
+    meta = tuple(getattr(x, name) for name in meta_fields)
+    data = tuple((GetAttrKey(name), getattr(x, name)) for name in data_fields)
+    return data, meta
+
+  def unflatten_func(meta, data):
+    meta_args = tuple(zip(meta_fields, meta))
+    data_args = tuple(zip(data_fields, data))
+    kwargs = dict(meta_args + data_args)
+    return nodetype(**kwargs)
+
+  def flatten_func(x):
+    meta = tuple(getattr(x, name) for name in meta_fields)
+    data = tuple(getattr(x, name) for name in data_fields)
+    return data, meta
+
+  default_registry.register_dataclass_node(nodetype, data_fields, meta_fields)
+  none_leaf_registry.register_dataclass_node(nodetype, data_fields, meta_fields)
+  dispatch_registry.register_dataclass_node(nodetype, data_fields, meta_fields)
+  _registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
+  _registry_with_keypaths[nodetype] = _RegistryWithKeypathsEntry(
+      flatten_with_keys, unflatten_func
+  )
+
+
 def register_static(cls: type[H]) -> type[H]:
   """Registers `cls` as a pytree with no leaves.
 

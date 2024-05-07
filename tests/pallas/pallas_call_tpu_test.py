@@ -1751,6 +1751,199 @@ class PallasCallWhileLoopTest(PallasTPUTest):
     )(*(jnp.array([[x]]) for x in (2, 6)))
     np.testing.assert_array_equal(r, 4)
 
+  def test_non_range_while_loop(self):
+    """Tests lowering of a while_loop which cannot reduce to a fori_loop."""
+
+    def kernel(x_ref, r_ref):
+      @pl.when(pl.program_id(0) == 0)
+      def _():
+        pl.store(r_ref, (0, 0), 0)
+
+      def cond(state):
+        i, s = state
+        return jnp.logical_and(i < 1024, s < 1024)
+
+      def body(state):
+        i, s = state
+        sl = sl = jax.lax.div(i, 128)
+        l = jax.lax.rem(i, 128)
+        v = pl.load(x_ref, (0, sl, l))
+        return i + 1, s + v
+
+      i = jnp.int32(0)
+      s = pl.load(r_ref, (0, 0))
+
+      i, s = jax.lax.while_loop(cond, body, (i, s))
+      pl.store(r_ref, (0, 0), s)
+
+    x = jnp.arange(4096)
+    x = jnp.reshape(x, [4, 8, 128])
+
+    r = pl.pallas_call(
+        kernel,
+        grid=(4,),
+        out_specs=pl.BlockSpec(block_shape=(1, 1), memory_space=pltpu.SMEM),
+        out_shape=jax.ShapeDtypeStruct([1, 1], jnp.int32),
+        in_specs=[
+            pl.BlockSpec(
+                lambda i: (i, 0, 0),
+                block_shape=(1, 8, 128),
+                memory_space=pltpu.SMEM,
+            )
+        ],
+    )(x)
+    np.testing.assert_array_equal(r, [[1035]])
+
+  def test_vector_carry_while_loop(self):
+    """Tests lowering of a while_loop which carries a vector quantity."""
+
+    def kernel(x_ref, r_ref):
+
+      def cond(v):
+        return v[0, 0] < 16
+
+      def body(v):
+        return v * 2
+
+      r_ref[:] = jax.lax.while_loop(cond, body, x_ref[:])
+
+    x = jnp.full((8, 128), 3, dtype=jnp.int32)
+    fn = pl.pallas_call(
+        kernel,
+        grid=(1,),
+        in_specs=[pl.BlockSpec(lambda i: (0, 0), (8, 128))],
+        out_specs=pl.BlockSpec(lambda i: (0, 0), (8, 128)),
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.int32),
+    )
+    r = fn(x)
+    reduced = jnp.sum(r)
+    # 3 -> 6 -> 12 -> 24
+    np.testing.assert_array_equal(reduced, 1024 * 24)
+
+  @parameterized.named_parameters(
+      ('1x128', (1, 128)),
+      ('2x128', (2, 128)),
+      ('4x128', (4, 128)),
+      ('8x128', (8, 128)),
+      ('8x256', (8, 256)),
+  )
+  def test_while_loop_carry_memref(self, shape):
+    """Tests a while loop carrying a memref."""
+
+    # TODO(hmckenzie): Investigate further why this occurs.
+    if shape == (1, 128):
+      self.skipTest('memref<1x128> inexplicably doubles to 2x128.')
+
+    def kernel(out_ref, bound):
+      def cond(i):
+        return i < bound
+
+      def body(i):
+        out_ref[0, i] = 2
+        return i + 1
+
+      jax.lax.while_loop(cond, body, 0)
+
+    x = jnp.asarray([1, 1, 1, 1])
+    x = jnp.asarray(x)
+    x = jnp.pad(x, (0, np.prod(shape) - 4), constant_values=0)
+    x = jnp.reshape(x, shape)
+    kernel = partial(kernel, bound=x.shape[1])
+
+    fn = pl.pallas_call(
+        kernel,
+        grid=(1,),
+        out_specs=[
+            pl.BlockSpec(
+                lambda i: (0, 0), block_shape=shape, memory_space=pltpu.SMEM
+            ),
+        ],
+        out_shape=[
+            jax.ShapeDtypeStruct(shape, jnp.int32),
+        ],
+    )
+    y = fn()[0]
+    np.testing.assert_array_equal(y[0, 0], 2)
+    np.testing.assert_array_equal(y[0, 1], 2)
+    np.testing.assert_array_equal(y[0, 2], 2)
+    np.testing.assert_array_equal(y[0, 3], 2)
+
+  def test_nested_while_loop(self):
+    """Tests lowering a nested while_loop."""
+
+    def kernel(in_key_ref, out_segment_count, out_size_ref, key_count):
+      # Compute the length of contiguous segments of keys.
+
+      def inner_cond(carry):
+        i, prev_key = carry
+        sl = sl = jax.lax.div(i, 128)
+        l = jax.lax.rem(i, 128)
+        key = jax.lax.cond(
+            i < key_count, lambda i: in_key_ref[sl, l], lambda i: -1, i
+        )
+        return jnp.logical_and(i < key_count, key == prev_key)
+
+      def inner_body(carry):
+        i, key = carry
+        return i + 1, key
+
+      def outer_cond(carry):
+        i, _ = carry
+        return i < key_count
+
+      def outer_body(carry):
+        i, next_out_idx = carry
+        sl = sl = jax.lax.div(i, 128)
+        l = jax.lax.rem(i, 128)
+        key = in_key_ref[sl, l]
+        end, _ = jax.lax.while_loop(inner_cond, inner_body, (i + 1, key))
+
+        sl = sl = jax.lax.div(next_out_idx, 128)
+        l = jax.lax.rem(next_out_idx, 128)
+        out_size_ref[sl, l] = end - i
+        return end, next_out_idx + 1
+
+      _, count = jax.lax.while_loop(outer_cond, outer_body, (0, 0))
+      out_segment_count[0, 0] = count
+
+    keys = [4, 4, 4, 3, 2, 2, 7, 7, 7, 7]
+    keys = jnp.asarray(keys)
+    real_keys = keys.shape[0]
+    key_count = 1024
+    keys = jnp.pad(keys, (0, key_count - real_keys), constant_values=32768)
+    keys = jnp.reshape(keys, (8, 128))
+    kernel_fn = partial(kernel, key_count=key_count)
+
+    fn = pl.pallas_call(
+        kernel_fn,
+        grid=(1,),
+        in_specs=[
+            # keys.
+            pl.BlockSpec(
+                lambda i: (0, 0),
+                block_shape=(8, 128),
+                memory_space=pltpu.SMEM,
+            ),
+        ],
+        out_specs=[
+            # Segments found.
+            pl.BlockSpec(block_shape=(1, 1), memory_space=pltpu.SMEM),
+            # Segment sizes.
+            pl.BlockSpec(block_shape=(8, 128), memory_space=pltpu.SMEM),
+        ],
+        out_shape=[
+            jax.ShapeDtypeStruct((1, 1), jnp.int32),
+            jax.ShapeDtypeStruct((8, 128), jnp.int32),
+        ],
+    )
+    count, sizes = fn(keys)
+    np.testing.assert_equal(count[0, 0], jnp.asarray(5))
+    np.testing.assert_equal(sizes[0, 0], jnp.asarray(3))
+    np.testing.assert_equal(sizes[0, 1], jnp.asarray(1))
+    np.testing.assert_equal(sizes[0, 2], jnp.asarray(2))
+    np.testing.assert_equal(sizes[0, 3], jnp.asarray(4))
+    np.testing.assert_equal(sizes[0, 4], jnp.asarray(key_count - real_keys))
+
 
 class PallasCallPipelineTest(parameterized.TestCase):
 
@@ -2049,7 +2242,7 @@ class PallasCallPipelineTest(parameterized.TestCase):
         del prologue_args
 
         @pl.when(is_start)
-        @pltpu.trace('sync_and_bwd_init')
+        @jax.named_scope('sync_and_bwd_init')
         def _sync_and_bwd_init():
           # barrier at start
           barrier_sem = pltpu.get_barrier_semaphore()
@@ -2062,7 +2255,7 @@ class PallasCallPipelineTest(parameterized.TestCase):
           initial_bwd_copy.wait()
 
         @pl.when(jnp.logical_and(step != steps - 1, phase == 0))
-        @pltpu.trace('send_next_dma')
+        @jax.named_scope('send_next_dma')
         def _send_next_dma():
           bwd_copy.start()
           @pl.when(jnp.logical_not(is_start))
@@ -2079,13 +2272,13 @@ class PallasCallPipelineTest(parameterized.TestCase):
       def epilogue(epilogue_args: pltpu.PipelineCallbackArgs):
 
         @pl.when(is_start)
-        @pltpu.trace('fwd_init')
+        @jax.named_scope('fwd_init')
         def _fwd_init():
           initial_fwd_copy.wait()
           fwd_copy.start()
 
         @pl.when(jnp.logical_and(step != steps - 1, phase == 1))
-        @pltpu.trace('wait_on_prev_dma')
+        @jax.named_scope('wait_on_prev_dma')
         def _wait_on_prev_dma():
           bwd_copy.wait()
           fwd_copy.wait()
@@ -2123,7 +2316,7 @@ class PallasCallPipelineTest(parameterized.TestCase):
             ),
         )
 
-      with pltpu.trace('dots'):
+      with jax.named_scope('dots'):
 
         pipeline(
             lhs_scratch_ref.at[phase, working_slot],

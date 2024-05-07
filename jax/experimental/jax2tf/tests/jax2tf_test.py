@@ -970,8 +970,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       self.assertIn("my_test_function_jax/mul", self.TfToHlo(run_tf))
     else:
       graph_def = str(tf.function(run_tf, autograph=False).get_concrete_function().graph.as_graph_def())
-      if "my_test_function_jax/pjit_fn_/Mul" not in graph_def:
-        self.assertIn("my_test_function_jax/jit_fn_/Mul", graph_def)
+      if "my_test_function_jax/pjit_multiply_/Mul" not in graph_def:
+        self.assertIn("my_test_function_jax/jit_multiply_/Mul", graph_def)
 
   def test_bfloat16_constant(self):
     # Re: https://github.com/google/jax/issues/3942

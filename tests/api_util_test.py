@@ -43,7 +43,8 @@ class ApiUtilTest(jtu.JaxTestCase):
             expected += (False,)
           self.assertEqual(
               expected,
-              api_util.donation_vector(donate_argnums, (), args, kwargs))
+              api_util.donation_vector(donate_argnums, (),
+                                       jax.tree.structure((args, kwargs))))
 
   @parameterized.parameters(
       ((0,), (0,)),

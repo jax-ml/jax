@@ -2413,6 +2413,14 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         len(str(jax.xla_computation(scan)(c, xs).as_hlo_text())),
         len(str(jax.xla_computation(scan_unrolled)(c, xs).as_hlo_text())))
 
+  def test_scan_xs_none(self):
+    def f(h, _):
+      return h + 1, None
+
+    length = 20
+    h, _ = lax.scan(f, 0, length=length)
+    self.assertEqual(h, length)
+
   def test_disable_jit_cond_with_vmap(self):
     # https://github.com/google/jax/issues/3093
     def fn(t):
@@ -2503,7 +2511,8 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     scan_fun = lambda c, xs: lax.scan(f, c, xs)
 
     def new_jaxpr():
-      jaxpr = jax.make_jaxpr(scan_fun)(c, xs).jaxpr
+      # partial avoids a cache_hit in make_jaxpr.
+      jaxpr = jax.make_jaxpr(partial(scan_fun))(c, xs).jaxpr
       scan = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'scan')
       return jaxpr, scan
 

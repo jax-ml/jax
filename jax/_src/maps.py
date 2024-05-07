@@ -534,7 +534,7 @@ def xmap(fun: Callable,
     args_flat, in_tree = tree_flatten(args)
     fun_flat, out_tree = flatten_fun_nokwargs(lu.wrap_init(fun), in_tree)
     if donate_argnums:
-      donated_invars = donation_vector(donate_argnums, (), args, {})
+      donated_invars = donation_vector(donate_argnums, (), in_tree, kws=False)
     else:
       donated_invars = (False,) * len(args_flat)
     in_axes_flat = _flatten_axes("xmap in_axes", in_tree, in_axes, tupled_args=True)
@@ -715,7 +715,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
         core.ClosedJaxpr(jaxpr, consts), 'jit', name,
         (UNSPECIFIED,) * len(in_avals), (UNSPECIFIED,) * len(out_avals),
         (None,) * len(in_avals), (None,) * len(out_avals),
-        donated_invars, in_avals, keep_unused=True, inline=False,
+        donated_invars, keep_unused=True, inline=False,
         devices_from_context=None, lowering_parameters=lowering_parameters)
 
 

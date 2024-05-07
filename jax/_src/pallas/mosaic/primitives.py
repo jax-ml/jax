@@ -15,7 +15,6 @@
 """Module for Pallas:TPU-specific JAX primitives and functions."""
 from __future__ import annotations
 
-import contextlib
 import dataclasses
 import enum
 from typing import Any, Callable
@@ -101,10 +100,6 @@ def _bitcast_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, ty):
 
 mlir.register_lowering(bitcast_p, _bitcast_lowering_rule)
 
-trace_start_p = jax_core.Primitive('trace_start')
-trace_start_p.multiple_results = True
-
-
 roll_p = jax_core.Primitive("roll")
 
 
@@ -155,39 +150,6 @@ def _roll_lowering_rule(
 
 
 mlir.register_lowering(roll_p, _roll_lowering_rule)
-
-
-@trace_start_p.def_impl
-def _trace_start_impl(*, message: str, level: int):
-  del message, level
-  return []
-
-@trace_start_p.def_abstract_eval
-def _trace_start_abstract_eval(*, message: str, level: int):
-  del message, level
-  return []
-
-mlir.register_lowering(trace_start_p, lambda ctx, **_: [])
-
-
-trace_stop_p = jax_core.Primitive('trace_stop')
-trace_stop_p.multiple_results = True
-
-@trace_stop_p.def_impl
-def _trace_stop_impl():
-  return []
-
-@trace_stop_p.def_abstract_eval
-def _trace_stop_abstract_eval():
-  return []
-
-mlir.register_lowering(trace_stop_p, lambda ctx: [])
-
-@contextlib.contextmanager
-def trace(message: str, level: int = 10):
-  trace_start_p.bind(message=message, level=level)
-  yield
-  trace_stop_p.bind()
 
 
 run_scoped_p = jax_core.Primitive('run_scoped')
@@ -268,10 +230,11 @@ def semaphore_signal(
     *,
     device_id: int | jax.Array | None | tuple[int | jax.Array, ...] = None,
     device_id_type: DeviceIdType = DeviceIdType.MESH,
+    core_index: int | jax.Array | None = None,
 ):
   ref, indexers = _get_ref_and_indexers(sem_or_view)
   inc = jnp.asarray(inc, dtype=jnp.int32)
-  args = [ref, indexers, inc, device_id]
+  args = [ref, indexers, inc, device_id, core_index]
   flat_args, args_tree = tree_util.tree_flatten(args)
   semaphore_signal_p.bind(
       *flat_args,
@@ -287,7 +250,7 @@ def _semaphore_signal_abstract_eval(
     device_id_type: DeviceIdType,
 ):
   del device_id_type
-  sem_aval, sem_indexers_avals, value_aval, device_id_avals = (
+  sem_aval, sem_indexers_avals, value_aval, device_id_avals, core_index_aval = (
       tree_util.tree_unflatten(args_tree, avals)
   )
   check_sem_avals(sem_aval, sem_indexers_avals, "signal")
@@ -312,6 +275,7 @@ def _semaphore_signal_pp_eqn(eqn: jax_core.JaxprEqn,
       sem_indexers,
       value,
       device_ids,
+      _,
   ) = tree_util.tree_unflatten(tree, invars)
   out = pp.concat([
       pp.text('semaphore_signal'),
@@ -543,6 +507,24 @@ def async_copy(src_ref, dst_ref, sem):
 
 def make_async_remote_copy(src_ref, dst_ref, send_sem, recv_sem, device_id,
                            device_id_type: DeviceIdType = DeviceIdType.MESH):
+  """Creates a description of a remote copy operation.
+
+  Copies data from src_ref on the current device to dst_ref on the device
+  specified by device_id. Both semaphores should be waited on using the
+  descriptor on both source and target devices.
+
+  Note that device_id can also refer to the current device.
+
+  Args:
+    src_ref: The source Reference.
+    dst_ref: The destination Reference.
+    send_sem: The semaphore on the source device.
+    recv_sem: The semaphore on the destination device.
+    device_id: The device id of the destination device.
+    device_id_type: The type of the device id.
+  Returns:
+    An AsyncCopyDescriptor.
+  """
   src_ref, src_indexers = _get_ref_and_indexers(src_ref)
   send_sem, send_sem_indexers = _get_ref_and_indexers(send_sem)
   dst_ref, dst_indexers = _get_ref_and_indexers(dst_ref)
@@ -576,4 +558,24 @@ def _get_barrier_semaphore_abstract_eval():
   )
 
 def get_barrier_semaphore():
+  """Returns a barrier semaphore.
+
+  This function returns a barrier semaphore based on the collective_id of the
+  current pallas kernel.
+
+  It's very important that the semaphore is wait-ed back down to 0, or else the
+  semaphores will become corrupted.
+
+  It's also very important that the collective_id is different for each pallas
+  kernel with communication. E.g. if you have two pallas kernels, one that syncs
+  across the X axis of the device mesh and the second that syncs across the Y
+  axis, they must have different collective_ids.
+  However it is legal for two kernels that perform the same synchronization
+  pattern (e.g. only communicating with neighbours on the same mesh axis)
+  to share a collective_id. However, if in doubt, prefer not sharing
+  collective_ids, as doing so incorrectly can lead to silent data corruption or
+  crashes.
+  Note that re-using the same collective_id doesn't guarantee that the same
+  semaphore is provided by XLA.
+  """
   return get_barrier_semaphore_p.bind()

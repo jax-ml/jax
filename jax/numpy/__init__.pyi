@@ -8,6 +8,7 @@ from jax._src import core as _core
 from jax._src import dtypes as _dtypes
 from jax._src.lax.lax import PrecisionLike
 from jax._src.lax.slicing import GatherScatterMode
+from jax._src.lib import Device
 from jax._src.numpy.index_tricks import _Mgrid, _Ogrid, CClass as _CClass, RClass as _RClass
 from jax._src.typing import (
     Array, ArrayLike, DType, DTypeLike,
@@ -21,8 +22,7 @@ _T = TypeVar('_T')
 
 _Axis = Union[None, int, Sequence[int]]
 
-# TODO(jakevdp): use xla_client.Device here
-_Device = Any
+_Device = Device
 
 ComplexWarning: type
 
@@ -83,11 +83,11 @@ def argpartition(a: ArrayLike, kth: int, axis: int = ...) -> Array: ...
 def argsort(
     a: ArrayLike,
     axis: Optional[int] = ...,
-    kind: str | None = ...,
-    order: None = ...,
     *,
     stable: builtins.bool = ...,
     descending: builtins.bool = ...,
+    kind: str | None = ...,
+    order: None = ...,
 ) -> Array: ...
 def argwhere(
     a: ArrayLike,
@@ -115,7 +115,7 @@ def asarray(
 ) -> Array: ...
 def asin(x: ArrayLike, /) -> Array: ...
 def asinh(x: ArrayLike, /) -> Array: ...
-def astype(a: ArrayLike, dtype: Optional[DTypeLike], /, *, copy: builtins.bool = ...) -> Array: ...
+def astype(a: ArrayLike, dtype: Optional[DTypeLike], /, *, copy: builtins.bool = ..., device: _Device | _Sharding | None = ...) -> Array: ...
 def atan(x: ArrayLike, /) -> Array: ...
 def atan2(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 def atanh(x: ArrayLike, /) -> Array: ...
@@ -366,7 +366,7 @@ def fmax(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 def fmin(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 def fmod(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 def frexp(x: ArrayLike, /) -> tuple[Array, Array]: ...
-def from_dlpack(x: Any, /, *, device: _Device | None = None,
+def from_dlpack(x: Any, /, *, device: _Device | _Sharding | None = None,
                 copy: builtins.bool | None = None) -> Array: ...
 def frombuffer(buffer: Union[bytes, Any], dtype: DTypeLike = ...,
                count: int = ..., offset: int = ...) -> Array: ...
@@ -737,11 +737,11 @@ sometrue = any
 def sort(
     a: ArrayLike,
     axis: Optional[int] = ...,
-    kind: str | None = ...,
-    order: None = ...,
     *,
     stable: builtins.bool = ...,
     descending: builtins.bool = ...,
+    kind: str | None = ...,
+    order: None = ...,
 ) -> Array: ...
 def sort_complex(a: ArrayLike) -> Array: ...
 def split(

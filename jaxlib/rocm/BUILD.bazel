@@ -201,9 +201,9 @@ cc_library(
         ":hip_gpu_kernel_helpers",
         ":hip_lu_pivot_kernels_impl",
         ":hip_vendor",
-        "//jaxlib:kernel_helpers",
         "@local_config_rocm//rocm:rocm_headers",
-        "@xla//xla/service:custom_call_status",
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/ffi/api:ffi",
     ],
 )
 
@@ -214,9 +214,8 @@ rocm_library(
     deps = [
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
-        "//jaxlib:kernel_helpers",
         "@local_config_rocm//rocm:rocm_headers",
-        "@xla//xla/service:custom_call_status",
+        "@xla//xla/ffi/api:c_api",
     ],
 )
 
@@ -295,8 +294,6 @@ cc_library(
         ":hip_vendor",
         ":triton_utils",
         "//jaxlib/gpu:triton_cc_proto",
-        "@xla//xla/service:custom_call_status",
-        "@xla//xla/stream_executor/gpu:asm_compiler",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
@@ -306,6 +303,8 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
+        "@xla//xla/service:custom_call_status",
+        "@xla//xla/stream_executor/gpu:asm_compiler",
         "@xla//xla/tsl/util:env_var",
     ],
 )
@@ -347,6 +346,7 @@ pybind_extension(
         "@nanobind",
     ],
 )
+
 py_library(
     name = "rocm_gpu_support",
     deps = [

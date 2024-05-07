@@ -17,17 +17,17 @@ import dataclasses
 import functools
 import pickle
 import re
+from typing import TypeVar
 import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
-
 import jax
-from jax import tree_util
 from jax import flatten_util
+from jax import tree_util
 from jax._src import test_util as jtu
 from jax._src.lib import xla_extension_version
-from jax._src.tree_util import prefix_errors, flatten_one_level
+from jax._src.tree_util import flatten_one_level, prefix_errors
 import jax.numpy as jnp
 
 
@@ -144,6 +144,27 @@ class FlatCache:
       data, meta = tree_util.tree_flatten(tree_util.tree_unflatten(meta, data))
     return FlatCache(None, leaves=data, treedef=meta)
 
+_T = TypeVar("_T")
+
+
+# Inspired by Flax.
+def pytree_node_dataclass(clz: _T, **kwargs) -> _T:
+  data_clz = dataclasses.dataclass(**kwargs)(clz)  # type: ignore
+  meta_fields = []
+  data_fields = []
+  for field_info in dataclasses.fields(data_clz):
+    is_pytree_node = field_info.metadata.get("pytree_node", True)
+    if is_pytree_node:
+      data_fields.append(field_info.name)
+    else:
+      meta_fields.append(field_info.name)
+
+  jax.tree_util.register_dataclass(
+      data_clz, data_fields, meta_fields
+  )
+
+  return data_clz
+
 
 @tree_util.register_static
 class StaticInt(int):
@@ -185,19 +206,11 @@ TREES = (
     ([3, ATuple(foo=(3, ATuple(foo=3, bar=None)), bar={"baz": 34})],),
     ([AnObject(3, None, [4, "foo"])],),
     ([AnObject2(3, None, [4, "foo"])],),
-    (Special(2, 3.),),
+    (Special(2, 3.0),),
     ({"a": 1, "b": 2},),
     (StaticInt(1),),
     (StaticTuple((2, 3)),),
     (StaticDict(foo=4, bar=5),),
-    (collections.OrderedDict([("foo", 34), ("baz", 101), ("something", -42)]),),
-    (collections.defaultdict(dict,
-                             [("foo", 34), ("baz", 101), ("something", -42)]),),
-    (ANamedTupleSubclass(foo="hello", bar=3.5),),
-    (FlatCache(None),),
-    (FlatCache(1),),
-    (FlatCache({"a": [1, 2]}),),
-    (BlackBox(value=2),),
 )
 
 
@@ -219,6 +232,44 @@ TREE_STRINGS = (
     "PyTreeDef(CustomNode(StaticTuple[(2, 3)], []))",
     "PyTreeDef(CustomNode(StaticDict[{'foo': 4, 'bar': 5}], []))",
 )
+
+if xla_extension_version >= 259:
+
+  @pytree_node_dataclass
+  class ADataclass:
+    x: tuple[int, int]
+    y: int
+
+  @pytree_node_dataclass
+  class ADataclassWithMeta:
+    x: tuple[int, int]
+    y: int
+    z: int = dataclasses.field(metadata={"pytree_node": False})
+
+  TREES += (
+      (ADataclass(x=(1, 2), y=3),),
+      (ADataclassWithMeta(x=(1, 2), y=3, z=4),),
+  )
+  TREE_STRINGS += (
+      "PyTreeDef(CustomNode(ADataclass[()], [(*, *), *]))",
+      "PyTreeDef(CustomNode(ADataclassWithMeta[(4,)], [(*, *), *]))",
+  )
+
+
+TREES += (
+    (collections.OrderedDict([("foo", 34), ("baz", 101), ("something", -42)]),),
+    (
+        collections.defaultdict(
+            dict, [("foo", 34), ("baz", 101), ("something", -42)]
+        ),
+    ),
+    (ANamedTupleSubclass(foo="hello", bar=3.5),),
+    (FlatCache(None),),
+    (FlatCache(1),),
+    (FlatCache({"a": [1, 2]}),),
+    (BlackBox(value=2),),
+)
+
 
 # pytest expects "tree_util_test.ATuple"
 STRS = []
@@ -582,6 +633,7 @@ class TreeTest(jtu.JaxTestCase):
   def testStringRepresentation(self, tree, correct_string):
     """Checks that the string representation of a tree works."""
     treedef = tree_util.tree_structure(tree)
+    print(TREES)
     self.assertRegex(str(treedef), correct_string)
 
   def testTreeDefWithEmptyDictStringRepresentation(self):

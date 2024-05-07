@@ -144,3 +144,5 @@ def _cuda_path() -> str | None:
 cuda_path = _cuda_path()
 
 transfer_guard_lib = xla_client._xla.transfer_guard_lib
+
+Device = xla_client._xla.Device

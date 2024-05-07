@@ -47,9 +47,9 @@ from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import utils as lax_utils
-from jax._src.lib.mlir import ir
 from jax._src.lib import gpu_prng
 from jax._src.lib import xla_client as xc
+from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.array_methods import (
     _array_operators, _set_array_base_attributes, _IndexUpdateHelper)
@@ -1003,7 +1003,19 @@ def _threefry2x32_lowering(key1, key2, x1, x2, use_rolled_loops=True):
   return tuple(x)
 
 
-def _threefry2x32_gpu_lowering(lowering_func, ctx, k1, k2, x1, x2):
+_threefry2x32_lowering_rule = mlir.lower_fun(
+    partial(_threefry2x32_lowering, use_rolled_loops=False),
+    multiple_results=True)
+
+_threefry2x32_cpu_lowering_rule = mlir.lower_fun(
+    partial(_threefry2x32_lowering, use_rolled_loops=True),
+    multiple_results=True)
+
+
+def _threefry2x32_gpu_lowering_rule(lowering_func, ctx, k1, k2, x1, x2):
+  if not config.threefry_gpu_kernel_lowering.value:  # back to default lowering
+    return _threefry2x32_lowering_rule(ctx, k1, k2, x1, x2)
+
   aval_out, aval_out_2 = ctx.avals_out
   assert aval_out == aval_out_2
   k1_aval, k2_aval, x1_aval, x2_aval = ctx.avals_in
@@ -1036,19 +1048,17 @@ threefry2x32_p.multiple_results = True
 threefry2x32_p.def_impl(partial(dispatch.apply_primitive, threefry2x32_p))
 threefry2x32_p.def_abstract_eval(_threefry2x32_abstract_eval)
 batching.defbroadcasting(threefry2x32_p)
-mlir.register_lowering(threefry2x32_p, mlir.lower_fun(
-    partial(_threefry2x32_lowering, use_rolled_loops=False),
-    multiple_results=True))
-mlir.register_lowering(threefry2x32_p, mlir.lower_fun(
-    partial(_threefry2x32_lowering, use_rolled_loops=True),
-    multiple_results=True), platform='cpu')
+mlir.register_lowering(
+    threefry2x32_p, _threefry2x32_lowering_rule)
+mlir.register_lowering(
+    threefry2x32_p, _threefry2x32_cpu_lowering_rule, platform='cpu')
 mlir.register_lowering(
     threefry2x32_p,
-    partial(_threefry2x32_gpu_lowering, gpu_prng.cuda_threefry2x32),
+    partial(_threefry2x32_gpu_lowering_rule, gpu_prng.cuda_threefry2x32),
     platform='cuda')
 mlir.register_lowering(
     threefry2x32_p,
-    partial(_threefry2x32_gpu_lowering, gpu_prng.rocm_threefry2x32),
+    partial(_threefry2x32_gpu_lowering_rule, gpu_prng.rocm_threefry2x32),
     platform='rocm')
 
 

@@ -161,6 +161,7 @@ MAIN_NAMESPACE = {
   'tan',
   'tanh',
   'tensordot',
+  'tile',
   'tril',
   'triu',
   'trunc',
@@ -232,13 +233,13 @@ class ArrayAPISmokeTest(absltest.TestCase):
   """Smoke test for the array API."""
 
   def test_main_namespace(self):
-    self.assertSetEqual(names(array_api), MAIN_NAMESPACE)
+    self.assertContainsSubset(MAIN_NAMESPACE, names(array_api))
 
   def test_linalg_namespace(self):
-    self.assertSetEqual(names(array_api.linalg), LINALG_NAMESPACE)
+    self.assertContainsSubset(LINALG_NAMESPACE, names(array_api.linalg))
 
   def test_fft_namespace(self):
-    self.assertSetEqual(names(array_api.fft), FFT_NAMESPACE)
+    self.assertContainsSubset(FFT_NAMESPACE, names(array_api.fft))
 
   def test_array_namespace_method(self):
     x = array_api.arange(20)

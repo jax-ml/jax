@@ -309,7 +309,7 @@ def _block_copy(
     if accum_allocation is not None:
 
       def accum():
-        with tpu_primitives.trace("ep_accum_copy"):
+        with jax.named_scope("ep_accum_copy"):
           accum_dtype = jnp.float32
           if vmem_ref.dtype == jnp.int32:
             accum_dtype = jnp.int32
@@ -330,7 +330,7 @@ def _block_copy(
     if accum_allocation is not None:
 
       def accum():
-        with tpu_primitives.trace("ep_accum_store"):
+        with jax.named_scope("ep_accum_store"):
 
           def zero_accum():
             accum_vmem_ref = accum_allocation.vmem_ref
@@ -852,7 +852,7 @@ def emit_pipeline_with_allocations(
         next_indices = _get_next_indices(grid, indices)
         copy_indices = (prev_indices, indices, next_indices)
 
-        with tpu_primitives.trace("ep_wait_input"):
+        with jax.named_scope("ep_wait_input"):
           input_copy_args = [
               pipeline_specs.input,
               pipeline_refs.input,
@@ -918,7 +918,7 @@ def emit_pipeline_with_allocations(
             )
             return next_in_buffers, next_in_out_buffers
 
-          @tpu_primitives.trace("ep_run_epilogue")
+          @jax.named_scope("ep_run_epilogue")
           def run_epilogue():
             if epilogue is None:
               return pipeline_buffers.input, pipeline_buffers.in_out
@@ -948,7 +948,7 @@ def emit_pipeline_with_allocations(
               start_next_iteration_in_block_copies,
           )
 
-        with tpu_primitives.trace("ep_kernel"):
+        with jax.named_scope("ep_kernel"):
 
           def grab_body_ref(
               spec_with_nones,
@@ -1034,7 +1034,7 @@ def emit_pipeline_with_allocations(
               in_out_existing_allocations,
           )
 
-        with tpu_primitives.trace("ep_wait_output"):
+        with jax.named_scope("ep_wait_output"):
 
           def run_out_prologue():
             if out_prologue is not None:
@@ -1074,7 +1074,7 @@ def emit_pipeline_with_allocations(
                   force_skip=skip_out_prologue_wait,
               )
 
-          @tpu_primitives.trace("ep_wait_prev_iteration_out_block_copies")
+          @jax.named_scope("ep_wait_prev_iteration_out_block_copies")
           def wait_prev_iteration_out_block_copies():
             tree_util.tree_map(
                 partial(
@@ -1169,8 +1169,8 @@ def emit_pipeline_with_allocations(
           pipeline_buffers,
       )
 
-      with tpu_primitives.trace("ep_end_pipeline"):
-        with tpu_primitives.trace("ep_wait_output"):
+      with jax.named_scope("ep_end_pipeline"):
+        with jax.named_scope("ep_wait_output"):
           if out_epilogue is not None:
             skip_out_epilogue_wait = out_epilogue(
                 PipelineCallbackArgs(

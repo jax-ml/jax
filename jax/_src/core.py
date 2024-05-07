@@ -149,65 +149,29 @@ class Jaxpr:
   def pretty_print(self, *, source_info=False, print_shapes=True,
                    custom_pp_eqn_rules=True, name_stack=False,
                    print_effects: bool = False, **kwargs):
-    context = JaxprPpContext()
-    settings = JaxprPpSettings(
-        source_info=source_info,
-        print_shapes=print_shapes,
-        custom_pp_eqn_rules=custom_pp_eqn_rules,
-        name_stack=name_stack,
-        print_effects=print_effects)
-
-    # Compute how many times each jaxpr is used.
-    names = defaultdict[Jaxpr, str](lambda: "jaxpr")
-    jaxpr_counts = Counter[Jaxpr]()
-    s = deque([self])
-    while s:
-      jaxpr = s.popleft()
-      jaxpr_counts[jaxpr] += 1
-      for eqn in jaxpr.eqns:
-        # TODO(slebedev): Come up with a more elaborate heuristic for name=.
-        name = eqn.params.get("name")
-        if name is None:
-          s.extend(jaxprs_in_params(eqn.params))
-          continue
-        name = name.strip("<>")  # <lambda> -> lambda
-        for subjaxpr in jaxprs_in_params(eqn.params):
-          s.append(subjaxpr)
-          names.setdefault(subjaxpr, name)
-
-    # Pull jaxprs occurring more than once to the top-level, making sure
-    # that their names are unique.
-    docs = []
-    name_counts = Counter[str]()
-    for jaxpr, c in jaxpr_counts.items():
-      if c == 1:
-        continue
-      name = names[jaxpr]
-      if (count := name_counts[name]) > 0:
-        name_counts[name] += 1
-        name += str(count)
-        name_counts[name] += 1
-      else:
-        name_counts[name] += 1
-      docs.append(pp_top_level_jaxpr(name, jaxpr, context, settings))
-      context.used_names.add(name)
-      context.top_level_jaxprs[jaxpr] = name
-    docs.append(pp_jaxpr(self, context, settings))
-    return pp.concat(docs).format(**kwargs)
+    doc = pp_toplevel_jaxpr(
+      self, source_info=source_info, print_shapes=print_shapes,
+      custom_pp_eqn_rules=custom_pp_eqn_rules, name_stack=name_stack,
+      print_effects=print_effects)
+    return doc.format(**kwargs)
 
   def _repr_pretty_(self, p, cycle):
     return p.text(self.pretty_print(use_color=True))
 
-  def replace(self, *, constvars=None, invars=None, outvars=None, eqns=None,
-              effects=None, debug_info=None):
-    constvars = self.constvars if constvars is None else constvars
-    invars =  self.invars if invars is None else invars
-    outvars = self.outvars if outvars is None else outvars
-    eqns = self.eqns if eqns is None else eqns
-    effects = self.effects if effects is None else effects
-    debug_info = self.debug_info if debug_info is None else debug_info
-    return Jaxpr(constvars=constvars, invars=invars, outvars=outvars, eqns=eqns,
-                 effects=effects, debug_info=debug_info)
+  def replace(self, **kwargs):
+    jaxpr = Jaxpr(
+        constvars=kwargs.pop("constvars", self.constvars),
+        invars=kwargs.pop("invars", self.invars),
+        outvars=kwargs.pop("outvars", self.outvars),
+        eqns=kwargs.pop("eqns", self.eqns),
+        effects=kwargs.pop("effects", self.effects),
+        debug_info=kwargs.pop("debug_info", self.debug_info),
+    )
+    if kwargs:
+      raise ValueError(f"Unknown keyword arguments: {kwargs}")
+    return jaxpr
+
+
 
 def join_effects(*effects: Effects) -> Effects:
   return set().union(*effects) if effects else no_effects
@@ -423,7 +387,8 @@ class Primitive:
     return self.bind_with_trace(find_top_trace(args), args, params)
 
   def bind_with_trace(self, trace, args, params):
-    out = trace.process_primitive(self, map(trace.full_raise, args), params)
+    with pop_level(trace.level):
+      out = trace.process_primitive(self, map(trace.full_raise, args), params)
     return map(full_lower, out) if self.multiple_results else full_lower(out)
 
   def def_impl(self, impl):
@@ -1246,6 +1211,18 @@ def new_base_main(trace_type: type[Trace],
       if leaked_tracers: raise leaked_tracer_error("trace", t(), leaked_tracers)
 
 @contextmanager
+def pop_level(level: int):
+  if level == 0:
+    return (yield)
+  prev, thread_local_state.trace_state.trace_stack.stack = \
+      thread_local_state.trace_state.trace_stack.stack, \
+      thread_local_state.trace_state.trace_stack.stack[:level]
+  try:
+    yield
+  finally:
+    thread_local_state.trace_state.trace_stack.stack = prev
+
+@contextmanager
 def ensure_compile_time_eval():
   """Context manager to ensure evaluation at trace/compile time (or error).
 
@@ -1635,6 +1612,70 @@ class UnshapedArray(AbstractValue):
            "UnshapedArray instances to ever be produced.")
     raise TypeError(msg)
 
+def _canonicalize_dimension(dim: DimSize) -> DimSize:
+  # Dimensions are most commonly integral (by far), so we check that first.
+  try:
+    return operator.index(dim)
+  except TypeError as e:
+    type_error = e
+  if isinstance(dim, Tracer) and config.dynamic_shapes.value:
+    if not (dim.ndim == 0 and (dtypes.issubdtype(dim.dtype, np.integer)
+                               or isinstance(dim.dtype, bint))):
+      raise TypeError(f"Dimensions must be integer scalars; got {dim.ndim=} {dim.dtype=}")
+    return dim
+  elif (config.dynamic_shapes.value and isinstance(dim, DArray) and
+        type(dim._aval.dtype) is bint and not dim._aval.shape):
+    return dim
+  elif is_dim(dim):
+    return dim
+  else:
+    raise type_error
+
+def canonicalize_shape(shape: Shape, context: str="") -> tuple[Any, ...]:
+  """Canonicalizes and checks for errors in a user-provided shape value.
+
+  Args:
+    shape: a Python value that represents a shape.
+
+  Returns:
+    A tuple of canonical dimension values.
+  """
+  try:
+    return tuple(unsafe_map(_canonicalize_dimension, shape))
+  except TypeError:
+    pass
+  raise _invalid_shape_error(shape, context)
+
+def canonicalize_dim(d: DimSize, context: str="") -> DimSize:
+  """Canonicalizes and checks for errors in a user-provided shape dimension value.
+
+  Args:
+    f: a Python value that represents a dimension.
+
+  Returns:
+    A canonical dimension value.
+  """
+  return canonicalize_shape((d,), context)[0]
+
+def _invalid_shape_error(shape: Shape, context: str=""):
+  if config.dynamic_shapes.value:
+    msg = ("Shapes must be 1D sequences of integer scalars, "
+           f"got {shape}")
+  else:
+    msg = ("Shapes must be 1D sequences of concrete values of integer type, "
+           f"got {shape}.")
+  if context:
+    msg += f" {context}."
+  if not config.dynamic_shapes.value and any(
+         isinstance(x, Tracer) and isinstance(get_aval(x), ShapedArray)
+         and not isinstance(get_aval(x), ConcreteArray) for x in shape):
+    msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
+            "smaller subfunctions.")
+    for x in shape:
+      if isinstance(x, Tracer) and hasattr(x, "_origin_msg"):
+        msg += x._origin_msg()
+
+  return TypeError(msg)
 
 class ShapedArray(UnshapedArray):
   __slots__ = ['shape', 'named_shape']
@@ -1935,13 +1976,15 @@ def mutable_array(init_val):
   return mutable_array_p.bind(init_val)
 mutable_array_p = Primitive('mutable_array')
 
-class InternalMutableArray(effects.Effect):
+class InternalMutableArrayEffect(effects.Effect):
   pass
+internal_mutable_array_effect = InternalMutableArrayEffect()
+effects.control_flow_allowed_effects.add_type(InternalMutableArrayEffect)
 
 @mutable_array_p.def_effectful_abstract_eval
 def mutable_array_abstract_eval(init_aval):
   from jax._src.state.types import AbstractRef  # type: ignore[import]
-  return AbstractRef(init_aval), {InternalMutableArray}
+  return AbstractRef(init_aval), {internal_mutable_array_effect}
 
 @mutable_array_p.def_impl
 def _mutable_array_impl(init_val):
@@ -1960,9 +2003,18 @@ class AbstractToken(AbstractValue):
   def at_least_vspace(self): return self
 abstract_token: AbstractToken = AbstractToken()
 
+# Singleton shaped array used by all abstract tokens when shape/dtype is needed.
+token_shaped_array: ShapedArray = ShapedArray((0,), np.dtype(np.bool_))
+
 # Concrete token object
-class Token: pass
-token: Token = Token()
+class Token:
+  # The underlying data wrapped by the token, could be used to threaded in and
+  # out of computations to build up data dependency.
+  _buf: Array
+  def __init__(self, buf):
+    self._buf = buf
+  def block_until_ready(self):
+    self._buf.block_until_ready()
 pytype_aval_mappings[Token] = lambda _: abstract_token
 
 
@@ -2120,71 +2172,6 @@ def dimension_as_value(d: DimSize):
   # For shape_poly._DimPolynomial
   if hasattr(d, "dimension_as_value"): return d.dimension_as_value()
   return operator.index(d)
-
-def _canonicalize_dimension(dim: DimSize) -> DimSize:
-  # Dimensions are most commonly integral (by far), so we check that first.
-  try:
-    return operator.index(dim)
-  except TypeError as e:
-    type_error = e
-  if isinstance(dim, Tracer) and config.dynamic_shapes.value:
-    if not (dim.ndim == 0 and (dtypes.issubdtype(dim.dtype, np.integer)
-                               or isinstance(dim.dtype, bint))):
-      raise TypeError(f"Dimensions must be integer scalars; got {dim.ndim=} {dim.dtype=}")
-    return dim
-  elif (config.dynamic_shapes.value and isinstance(dim, DArray) and
-        type(dim._aval.dtype) is bint and not dim._aval.shape):
-    return dim
-  elif is_dim(dim):
-    return dim
-  else:
-    raise type_error
-
-def canonicalize_shape(shape: Shape, context: str="") -> tuple[Any, ...]:
-  """Canonicalizes and checks for errors in a user-provided shape value.
-
-  Args:
-    shape: a Python value that represents a shape.
-
-  Returns:
-    A tuple of canonical dimension values.
-  """
-  try:
-    return tuple(unsafe_map(_canonicalize_dimension, shape))
-  except TypeError:
-    pass
-  raise _invalid_shape_error(shape, context)
-
-def canonicalize_dim(d: DimSize, context: str="") -> DimSize:
-  """Canonicalizes and checks for errors in a user-provided shape dimension value.
-
-  Args:
-    f: a Python value that represents a dimension.
-
-  Returns:
-    A canonical dimension value.
-  """
-  return canonicalize_shape((d,), context)[0]
-
-def _invalid_shape_error(shape: Shape, context: str=""):
-  if config.dynamic_shapes.value:
-    msg = ("Shapes must be 1D sequences of integer scalars, "
-           f"got {shape}")
-  else:
-    msg = ("Shapes must be 1D sequences of concrete values of integer type, "
-           f"got {shape}.")
-  if context:
-    msg += f" {context}."
-  if not config.dynamic_shapes.value and any(
-         isinstance(x, Tracer) and isinstance(get_aval(x), ShapedArray)
-         and not isinstance(get_aval(x), ConcreteArray) for x in shape):
-    msg += ("\nIf using `jit`, try using `static_argnums` or applying `jit` to "
-            "smaller subfunctions.")
-    for x in shape:
-      if isinstance(x, Tracer) and hasattr(x, "_origin_msg"):
-        msg += x._origin_msg()
-
-  return TypeError(msg)
 
 class SomeTracer:
   __slots__ = ()
@@ -3138,6 +3125,55 @@ def _check_map(ctx_factory, prim, in_avals, params):
 
 # ------------------- Jaxpr printed representation -------------------
 
+def pp_toplevel_jaxpr(jaxpr_to_print, *, source_info=False, print_shapes=True,
+                      custom_pp_eqn_rules=True, name_stack=False,
+                      print_effects: bool = False) -> pp.Doc:
+    context = JaxprPpContext()
+    settings = JaxprPpSettings(
+        source_info=source_info,
+        print_shapes=print_shapes,
+        custom_pp_eqn_rules=custom_pp_eqn_rules,
+        name_stack=name_stack,
+        print_effects=print_effects)
+
+    # Compute how many times each jaxpr is used.
+    names = defaultdict[Jaxpr, str](lambda: "jaxpr")
+    jaxpr_counts = Counter[Jaxpr]()
+    s = deque([jaxpr_to_print])
+    while s:
+      jaxpr = s.popleft()
+      jaxpr_counts[jaxpr] += 1
+      for eqn in jaxpr.eqns:
+        # TODO(slebedev): Come up with a more elaborate heuristic for name=.
+        name = eqn.params.get("name")
+        if name is None:
+          s.extend(jaxprs_in_params(eqn.params))
+          continue
+        name = name.strip("<>")  # <lambda> -> lambda
+        for subjaxpr in jaxprs_in_params(eqn.params):
+          s.append(subjaxpr)
+          names.setdefault(subjaxpr, name)
+
+    # Pull jaxprs occurring more than once to the top-level, making sure
+    # that their names are unique.
+    docs = []
+    name_counts = Counter[str]()
+    for jaxpr, c in jaxpr_counts.items():
+      if c == 1:
+        continue
+      name = names[jaxpr]
+      if (count := name_counts[name]) > 0:
+        name_counts[name] += 1
+        name += str(count)
+        name_counts[name] += 1
+      else:
+        name_counts[name] += 1
+      docs.append(pp_top_level_jaxpr(name, jaxpr, context, settings))
+      context.used_names.add(name)
+      context.top_level_jaxprs[jaxpr] = name
+    docs.append(pp_jaxpr(jaxpr_to_print, context, settings))
+    return pp.concat(docs)
+
 
 class JaxprPpSettings(NamedTuple):
   print_shapes: bool = True
@@ -3227,7 +3263,9 @@ def pp_eqn(eqn: JaxprEqn, context: JaxprPpContext, settings: JaxprPpSettings
            ) -> pp.Doc:
   rule = (_pp_eqn if not settings.custom_pp_eqn_rules else
           pp_eqn_rules.get(eqn.primitive, _pp_eqn))
-  return rule(eqn, context, settings)  # type: ignore[operator]
+  doc = rule(eqn, context, settings)  # type: ignore[operator]
+  user_frame = source_info_util.user_frame(eqn.source_info)
+  return doc if user_frame is None else pp.source_map(doc, user_frame)
 
 def _pp_eqn(eqn, context, settings, params=None) -> pp.Doc:
   annotation = (source_info_util.summarize(eqn.source_info)

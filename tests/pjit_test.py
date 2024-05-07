@@ -4027,6 +4027,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
     f(inps)  # doesn't crash
 
   def test_spmd_preserves_input_sharding_vmap_grad(self):
+    if xla_extension_version < 258:
+      self.skipTest('Requires xla_extension_version >= 258')
+
     # https://github.com/google/jax/issues/20710
     n_devices = jax.device_count()
     sharding = PositionalSharding(jax.devices())
@@ -4052,6 +4055,14 @@ class ArrayPjitTest(jtu.JaxTestCase):
     jax.grad(lambda p: model(p, x).sum())(params)  # doesn't crash
 
     jax.vmap(jax.grad(model), in_axes=(None, 0))(params, x)  # doesn't crash
+
+  def test_jit_specialize(self):
+    def f(x):
+      return x * 2
+
+    specialized = jax.jit(f).specialize(jnp.arange(8))
+    self.assertLen(specialized.jaxpr.eqns, 1)
+    self.assertEqual(specialized.out_tree.num_leaves, 1)
 
 
 class TempSharding(Sharding):

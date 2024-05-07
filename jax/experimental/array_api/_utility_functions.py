@@ -20,15 +20,8 @@ from jax._src.sharding import Sharding
 from jax._src.lib import xla_client as xc
 from jax._src import dtypes as _dtypes, config
 
-def all(x, /, *, axis=None, keepdims=False):
-  """Tests whether all input array elements evaluate to True along a specified axis."""
-  return jax.numpy.all(x, axis=axis, keepdims=keepdims)
-
-
-def any(x, /, *, axis=None, keepdims=False):
-  """Tests whether any input array element evaluates to True along a specified axis."""
-  return jax.numpy.any(x, axis=axis, keepdims=keepdims)
-
+# TODO(micky774): Add to jax.numpy.util when finalizing jax.experimental.array_api
+# deprecation
 class __array_namespace_info__:
 
   def __init__(self):

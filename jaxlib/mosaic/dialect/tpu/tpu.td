@@ -480,25 +480,27 @@ def TPU_GetBarrierSemaphoreOp : TPU_Op<"sem_barrier"> {
   let hasVerifier = 1;
 }
 
-def TPU_SemaphoreSignalOp : TPU_Op<"sem_signal"> {
+def TPU_SemaphoreSignalOp : TPU_Op<"sem_signal", [AttrSizedOperandSegments]> {
   let arguments = (ins
     MemRefOf<[TPU_SemaphoreType]>:$semaphore,
     I32:$amount,
-    Optional<I32>:$device_id // For remote DMAs
+    Optional<I32>:$device_id, // For remote DMAs
+    Optional<I32>:$core_id // For megacore
   );
   let assemblyFormat = [{
-    $semaphore `,` $amount (`,` $device_id^)? attr-dict `:` type($semaphore)
+    $semaphore `,` $amount (`,` $device_id^)? (`,` $core_id^)? attr-dict `:` type($semaphore)
   }];
   let hasVerifier = 1;
 }
 
-def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [SameVariadicOperandSize]> {
+def TPU_EnqueueDMAOp : TPU_Op<"enqueue_dma", [AttrSizedOperandSegments]> {
   let arguments = (ins
     AnyMemRef:$source,
     Optional<MemRefOf<[TPU_DMASemaphoreType]>>:$source_semaphore, // For remote DMAs
     AnyMemRef:$target,
     MemRefOf<[TPU_DMASemaphoreType]>:$target_semaphore,
-    Optional<I32>:$device_id // For remote DMAs
+    Optional<I32>:$device_id, // For remote DMAs
+    Optional<I32>:$core_id // For megacore
   );
   let hasVerifier = 1;
 }

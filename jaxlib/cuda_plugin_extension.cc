@@ -19,6 +19,7 @@ limitations under the License.
 #include <utility>
 
 #include "nanobind/nanobind.h"
+#include "third_party/gpus/cuda/include/cuda.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_gpu_extension.h"
@@ -35,13 +36,6 @@ namespace xla {
 namespace {
 Status RegisterCustomCallTarget(const PJRT_Api* c_api, nb::str fn_name,
                                 nb::capsule fn, int api_version) {
-  static const char* const kName = "xla._CUSTOM_CALL_TARGET";
-  if (std::string_view(fn.name()) != kName) {
-    return InvalidArgument(
-        "Argument to RegisterCustomCallTargetRegistry was not a "
-        "xla._CUSTOM_CALL_TARGET capsule.");
-  }
-
   if (c_api->extension_start == nullptr) {
     return Unimplemented("The plugin does not have extension.");
   }
@@ -76,6 +70,18 @@ nb::dict Registrations() {
       jax::EncapsulateFunction(xla::XlaPythonGpuCallback);
   return dict;
 }
+
+static std::string ToString(CUresult result) {
+  const char* error_name;
+  if (cuGetErrorName(result, &error_name)) {
+    return absl::StrCat("UNKNOWN ERROR (", static_cast<int>(result), ")");
+  }
+  const char* error_string;
+  if (cuGetErrorString(result, &error_string)) {
+    return error_name;
+  }
+  return absl::StrCat(error_name, ": ", error_string);
+}
 }  // namespace
 
 NB_MODULE(cuda_plugin_extension, m) {
@@ -91,5 +97,24 @@ NB_MODULE(cuda_plugin_extension, m) {
       nb::arg("c_api"), nb::arg("fn_name"), nb::arg("fn"),
       nb::arg("xla_platform_name"), nb::arg("api_version") = 0);
   m.def("registrations", &Registrations);
+  m.def(
+      "get_device_ordinal",
+      [](std::intptr_t data_value) {
+        if (data_value == 0) {
+          return 0;
+        }
+        int device_ordinal;
+        void* data_ptr = reinterpret_cast<void*>(data_value);
+        CUresult result =
+            cuPointerGetAttribute(static_cast<void*>(&device_ordinal),
+                                  CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL,
+                                  reinterpret_cast<CUdeviceptr>(data_ptr));
+        if (result != CUDA_SUCCESS) {
+          xla::ThrowIfError(absl::InvalidArgumentError(absl::StrCat(
+              "Not able to get the device_ordinal: ", ToString(result))));
+        }
+        return device_ordinal;
+      },
+      nb::arg("data_value"));
 }
 }  // namespace xla

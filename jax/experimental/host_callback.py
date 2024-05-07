@@ -586,9 +586,8 @@ def _raise_if_using_outfeed_with_pjrt_c_api(backend: xb.XlaBackend):
   """Should be called whenever outfeed (or infeed) will be used."""
   if xb.using_pjrt_c_api(backend):
     raise NotImplementedError(
-        "host_callback functionality isn't supported with the new Cloud TPU "
-        "runtime. See https://jax.readthedocs.io/en/latest/debugging/index.html"
-        " and "
+        "host_callback functionality isn't supported with PJRT C API. "
+        "See https://jax.readthedocs.io/en/latest/debugging/index.html and "
         "https://jax.readthedocs.io/en/latest/notebooks/external_callbacks.html"
         " for alternatives. Please file a feature request at "
         "https://github.com/google/jax/issues if none of the alternatives are "

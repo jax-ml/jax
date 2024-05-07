@@ -462,7 +462,7 @@ def _make_jit_wrapper(jit_info: PjitInfo):
         '_experimental_lowering_parameters', mlir.LoweringParameters())
 
     (args_flat, flat_global_in_avals, params, in_tree, out_tree,
-     donated_invars, arg_names, ()) = _infer_params(jit_info, args, kwargs)
+     donated_invars, arg_names, _) = _infer_params(jit_info, args, kwargs)
     try:
       lowering = _resolve_and_lower(
           args_flat, **params, lowering_parameters=lowering_parameters)
@@ -490,9 +490,15 @@ def _make_jit_wrapper(jit_info: PjitInfo):
            for x, s in zip(params['jaxpr'].out_avals, out_s)]
     return tree_unflatten(out_tree, out)
 
+  @api_boundary
+  def specialize(*args, **kwargs) -> stages.Specialized:
+    _, _, params, _, out_tree, _, _, _ = _infer_params(jit_info, args, kwargs)
+    return stages.Specialized(params['jaxpr'], out_tree)
+
   wrapped = _cpp_pjit(jit_info)
   wrapped.lower = lower
   wrapped.eval_shape = eval_shape
+  wrapped.specialize = specialize
   return wrapped
 
 
@@ -556,8 +562,7 @@ def _infer_params(jit_info, args, kwargs):
   flat_fun, explicit_args = hoist_obj_attrs(flat_fun, explicit_args)
 
   if (donate_argnums or donate_argnames) and not config.debug_nans.value:
-    donated_invars = donation_vector(
-        donate_argnums, donate_argnames, dyn_args, dyn_kwargs)
+    donated_invars = donation_vector(donate_argnums, donate_argnames, in_tree)
   else:
     donated_invars = (False,) * len(explicit_args)
   del donate_argnums, donate_argnames
@@ -685,6 +690,9 @@ class JitWrapped(stages.Wrapped):
 
   def eval_shape(self, *args, **kwargs):
     """See ``jax.eval_shape``."""
+    raise NotImplementedError
+
+  def specialize(self, *args, **kwargs) -> stages.Specialized:
     raise NotImplementedError
 
 
@@ -1594,7 +1602,7 @@ def _pjit_lower_cached(
   else:
     return pxla.lower_sharding_computation(
         jaxpr, api_name, name, in_shardings, out_shardings,
-        in_layouts, out_layouts, tuple(donated_invars), tuple(jaxpr.in_avals),
+        in_layouts, out_layouts, tuple(donated_invars),
         keep_unused=keep_unused, inline=inline,
         devices_from_context=(
             None if mesh is None or mesh.empty else list(mesh.devices.flat)),
@@ -2339,6 +2347,8 @@ def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding,
   # NamedSharding. So update the NamedSharding to have the manual axes.
   if isinstance(axis_ctx, sharding_impls.SPMDAxisContext):
     mesh = resource_env.physical_mesh
+    if mesh.empty and isinstance(sharding, NamedSharding):
+      mesh = sharding.mesh
     parsed_pspec = parse_flatten_op_sharding(
         sharding._to_xla_hlo_sharding(aval.ndim), mesh)[0]
     sharding = NamedSharding._from_parsed_pspec(

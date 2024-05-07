@@ -67,7 +67,9 @@ filterwarnings = [
     "ignore:numpy.ufunc size changed",
     "ignore:.*experimental feature",
     "ignore:The distutils.* is deprecated.*:DeprecationWarning",
+    "default:Error reading persistent compilation cache entry for 'jit_equal'",
     "default:Error reading persistent compilation cache entry for 'jit__lambda_'",
+    "default:Error writing persistent compilation cache entry for 'jit_equal'",
     "default:Error writing persistent compilation cache entry for 'jit__lambda_'",
     "ignore:backend and device argument on jit is deprecated.*:DeprecationWarning",
     # TODO(skyewm): remove when jaxlib >= 0.4.12 is released (needs
@@ -86,6 +88,7 @@ filterwarnings = [
     "ignore:jax.extend.mlir.dialects.mhlo is deprecated.*:DeprecationWarning",
     "ignore:jax.experimental.maps and .* are deprecated.*:DeprecationWarning",
     "ignore:The host_callback APIs are deprecated .*:DeprecationWarning",
+    "ignore:.*is not JSON-serializable. Using the repr instead.",
 ]
 doctest_optionflags = [
     "NUMBER",

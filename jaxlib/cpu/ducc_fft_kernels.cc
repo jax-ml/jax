@@ -98,23 +98,8 @@ void DuccFftImpl(void *out, void *operand, jax::DuccFftDtype dtype,
 }  // namespace
 
 
-// TODO(b/287702203): this must be kept until EOY 2023 for backwards
+// TODO(b/311175955): this must be kept until May 2024 for backwards
 // of serialized functions using fft.
-void DuccFft(void *out, void **in, XlaCustomCallStatus *) {
-  const DuccFftDescriptor *descriptor = GetDuccFftDescriptor(in[0]);
-  shape_t shape(descriptor->shape()->begin(), descriptor->shape()->end());
-  stride_t strides_in(descriptor->strides_in()->begin(),
-                      descriptor->strides_in()->end());
-  stride_t strides_out(descriptor->strides_out()->begin(),
-                       descriptor->strides_out()->end());
-  shape_t axes(descriptor->axes()->begin(), descriptor->axes()->end());
-
-  DuccFftImpl(out, in[1], descriptor->dtype(), descriptor->fft_type(),
-              shape, strides_in, strides_out, axes,
-              descriptor->forward(), descriptor->scale());
-}
-
-
 void DynamicDuccFft(void *out, void **in, XlaCustomCallStatus *) {
   // in[0]=descriptor, in[1]=operand,
   // in[2]=shape, in[3]=strides_in, in[4]=strides_out, in[5]=scale.

@@ -1625,6 +1625,132 @@ class ShardMapTest(jtu.JaxTestCase):
     jtu.check_grads(f, (list(jnp.arange(float(num_args))[:,None]),), order=1,
                     modes=['rev'], atol=1e-3, rtol=1e-3)
 
+  def test_partial_auto(self):
+    mesh = jtu.create_global_mesh((2, 2), ('i', 'j'))
+
+    def g(x):
+      x = jax.lax.with_sharding_constraint(
+          x, jax.sharding.NamedSharding(mesh, P(None, 'j')))
+      return x * x
+
+    @jax.jit
+    def f(x):
+      x = shard_map(g, mesh,
+                    in_specs=P('i', None),
+                    out_specs=P('i', None),
+                    check_rep=False,
+                    auto=frozenset({'j'}))(x)
+      return jax.lax.with_sharding_constraint(
+          x, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+
+    v = jnp.arange(32.).reshape(4, 8)
+    v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+    self.assertAllClose(v*v, f(v), check_dtypes=False)
+
+  def test_partial_auto_error_wsc_manual(self):
+    mesh = jtu.create_global_mesh((2, 2), ('i', 'j'))
+
+    def g(x):
+      x = jax.lax.with_sharding_constraint(
+          x, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+      return x * x
+
+    @jax.jit
+    def f(x):
+      x = shard_map(g, mesh,
+                    in_specs=P('i', None),
+                    out_specs=P('i', None),
+                    check_rep=False,
+                    auto=frozenset({'j'}))(x)
+      return jax.lax.with_sharding_constraint(
+          x, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+
+    v = jnp.arange(32.).reshape(4, 8)
+    v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+    with self.assertRaisesRegex(ValueError, "manual"):
+      f(v)
+
+  def test_partial_auto_error_invalid_auto(self):
+    mesh = jtu.create_global_mesh((2, 2), ('i', 'j'))
+
+    def g(x):
+      x = jax.lax.with_sharding_constraint(
+          x, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+      return x * x
+
+    @jax.jit
+    def f(x):
+      x = shard_map(g, mesh,
+                    in_specs=P('i', None),
+                    out_specs=P('i', None),
+                    check_rep=False,
+                    auto=frozenset({'k'}))(x)
+      return jax.lax.with_sharding_constraint(
+          x, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+
+    v = jnp.arange(32.).reshape(4, 8)
+    v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+    with self.assertRaisesRegex(ValueError, "to be a subset of mesh.axis_names"):
+      f(v)
+
+  def test_partial_auto_error_wrong_in_specs(self):
+    mesh = jtu.create_global_mesh((2, 2), ('i', 'j'))
+
+    def g(x):
+      x = jax.lax.with_sharding_constraint(
+          x, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+      return x * x
+
+    @jax.jit
+    def f(x):
+      x = shard_map(g, mesh,
+                    in_specs=P('i', 'j'),
+                    out_specs=P('i', None),
+                    check_rep=False,
+                    auto=frozenset({'j'}))(x)
+      return jax.lax.with_sharding_constraint(
+          x, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+
+    v = jnp.arange(32.).reshape(4, 8)
+    v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+    with self.assertRaisesRegex(ValueError, "in_specs refers to 'j'"):
+      f(v)
+
+  def test_vmap_grad_shmap_spmd_axis_name_residuals(self):
+    # https://github.com/google/jax/pull/21032
+    mesh = jtu.create_global_mesh((4, 2), ('i', 'j'))
+
+    @partial(
+      shard_map,
+      mesh=mesh,
+      in_specs=P('j'),
+      out_specs=P('j'),
+      )
+    def f(x):
+      return jnp.sin(x)
+
+    xs = jnp.arange(4 * 16.).reshape(4, 16)
+
+    jax.vmap(jax.grad(lambda x: f(x).sum()), spmd_axis_name='i')(xs)  # don't crash
+
+  def test_vmap_grad_remat_shmap_spmd_axis_name_residuals(self):
+    # https://github.com/google/jax/pull/21056
+    mesh = jtu.create_global_mesh((4, 2), ('i', 'j'))
+
+    @partial(jax.remat, policy=lambda *_, **__: True)
+    @partial(
+      shard_map,
+      mesh=mesh,
+      in_specs=P('j'),
+      out_specs=P('j'),
+      )
+    def f(x):
+      return jnp.sin(x)
+
+    xs = jnp.arange(4 * 16.).reshape(4, 16)
+
+    jax.vmap(jax.grad(lambda x: f(x).sum()), spmd_axis_name='i')(xs)  # don't crash
+
 
 class FunSpec(NamedTuple):
   name: str
@@ -1991,8 +2117,6 @@ class CustomPartitionerTest(jtu.JaxTestCase):
   def skip_if_custom_partitioning_not_supported(self):
     if jtu.is_cloud_tpu():
       raise unittest.SkipTest("Custom partitioning is not supported on libtpu.")
-    if xla_bridge.using_pjrt_c_api():
-      raise unittest.SkipTest('custom partitioning not implemented in PJRT C API')
 
   def test_custom_partitioning(self):
     self.skip_if_custom_partitioning_not_supported()

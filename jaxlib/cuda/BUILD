@@ -37,6 +37,7 @@ cc_library(
     defines = ["JAX_GPU_CUDA=1"],
     visibility = ["//visibility:public"],
     deps = [
+        "@xla//xla/tsl/cuda:cupti",
         "@local_config_cuda//cuda:cuda_headers",
         "@local_config_cuda//cuda:cudnn_header",
     ],
@@ -280,8 +281,8 @@ cc_library(
         ":cuda_gpu_kernel_helpers",
         ":cuda_lu_pivot_kernels_impl",
         ":cuda_vendor",
-        "//jaxlib:kernel_helpers",
-        "@xla//xla/service:custom_call_status",
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/ffi/api:ffi",
         "@local_config_cuda//cuda:cuda_headers",
     ],
 )
@@ -295,7 +296,7 @@ cuda_library(
     deps = [
         ":cuda_gpu_kernel_helpers",
         ":cuda_vendor",
-        "//jaxlib:kernel_helpers",
+        "@xla//xla/ffi/api:c_api",
         "@xla//xla/service:custom_call_status",
         "@local_config_cuda//cuda:cuda_headers",
     ],
@@ -406,6 +407,7 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",

@@ -110,7 +110,7 @@ class CliDebuggerTest(jtu.JaxTestCase):
       return y
     expected = _format_multiline(r"""
     Entering jdb:
-    (jdb) array(2., dtype=float32)
+    (jdb) Array(2., dtype=float32)
     (jdb) """)
     f(jnp.array(2., jnp.float32))
     jax.effects_barrier()
@@ -126,7 +126,7 @@ class CliDebuggerTest(jtu.JaxTestCase):
       return y
     expected = _format_multiline(r"""
     Entering jdb:
-    (jdb) (array(2., dtype=float32), array(3., dtype=float32))
+    (jdb) (Array(2., dtype=float32), Array(3., dtype=float32))
     (jdb) """)
     f(jnp.array(2., jnp.float32))
     jax.effects_barrier()
@@ -196,7 +196,7 @@ class CliDebuggerTest(jtu.JaxTestCase):
     ->        y = f\(x\)
               return jnp\.exp\(y\)
     .*
-    \(jdb\) array\(2\., dtype=float32\)
+    \(jdb\) Array\(2\., dtype=float32\)
     \(jdb\) > .*debugger_test\.py\([0-9]+\)
             def f\(x\):
               y = jnp\.sin\(x\)
@@ -225,9 +225,9 @@ class CliDebuggerTest(jtu.JaxTestCase):
       return jnp.exp(y)
     expected = _format_multiline(r"""
     Entering jdb:
-    (jdb) array(3., dtype=float32)
+    (jdb) Array(3., dtype=float32)
     (jdb) Entering jdb:
-    (jdb) array(6., dtype=float32)
+    (jdb) Array(6., dtype=float32)
     (jdb) """)
     g(jnp.array(2., jnp.float32))
     jax.effects_barrier()
@@ -249,9 +249,9 @@ class CliDebuggerTest(jtu.JaxTestCase):
       return jnp.exp(y)
     expected = _format_multiline(r"""
     Entering jdb:
-    (jdb) array(1., dtype=float32)
+    (jdb) Array(1., dtype=float32)
     (jdb) Entering jdb:
-    (jdb) array(2., dtype=float32)
+    (jdb) Array(2., dtype=float32)
     (jdb) """)
     g(jnp.arange(2., dtype=jnp.float32))
     jax.effects_barrier()
@@ -274,9 +274,9 @@ class CliDebuggerTest(jtu.JaxTestCase):
       return jnp.exp(y)
     expected = _format_multiline(r"""
     Entering jdb:
-    \(jdb\) array\(.*, dtype=float32\)
+    \(jdb\) Array\(.*, dtype=float32\)
     \(jdb\) Entering jdb:
-    \(jdb\) array\(.*, dtype=float32\)
+    \(jdb\) Array\(.*, dtype=float32\)
     \(jdb\) """)
     g(jnp.arange(2., dtype=jnp.float32))
     jax.effects_barrier()
@@ -302,7 +302,7 @@ class CliDebuggerTest(jtu.JaxTestCase):
         out_shardings=jax.sharding.PartitionSpec("dev"),
     )
     with jax.sharding.Mesh(np.array(jax.devices()), ["dev"]):
-      arr = (1 + np.arange(8)).astype(np.int32)
+      arr = (1 + jnp.arange(8)).astype(np.int32)
       expected = _format_multiline(r"""
       Entering jdb:
       \(jdb\) {}

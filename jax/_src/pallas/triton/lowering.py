@@ -21,7 +21,7 @@ import dataclasses
 import functools
 import math
 import operator
-from typing import Any, Callable
+from typing import Any, Callable, TypeVar
 
 import jax
 from jax import lax
@@ -39,6 +39,7 @@ from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax.control_flow import for_loop
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import math as math_dialect
@@ -56,10 +57,11 @@ from jax._src.util import split_list
 import jax.numpy as jnp
 import numpy as np
 
-
 # TODO(sharadmv): Enable type checking.
 # mypy: ignore-errors
 # pytype: skip-file
+
+_T = TypeVar("_T")
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -165,6 +167,13 @@ def _bcast(
 
 
 triton_lowering_rules = {}
+
+
+def register_lowering(primitive: jax_core.Primitive) -> Callable[[_T], _T]:
+  def wrapper(fn):
+    triton_lowering_rules[primitive] = fn
+    return fn
+  return wrapper
 
 
 def _process_grid_to_3d_grid(grid_mapping: GridMapping):
@@ -1676,8 +1685,14 @@ def _load(
   if other is not None:
     other = _ir_cast(other, pointee_type, signed=False)
 
+  if jaxlib_version < (0, 4, 27):
+    # TODO(slebedev): Remove once the minimum jaxlib version is 0.4.27.
+    extra_args = (_infer_load_return_type(ptr),)
+  else:
+    extra_args = ()
+
   result = tt_dialect.load(
-      _infer_load_return_type(ptr),
+      *extra_args,
       ptr,
       mask=mask,
       other=other,
@@ -1920,7 +1935,23 @@ def _dot(
     else:
       max_num_imprecise_acc = 0
 
-  return tt_dialect.dot(x, y, acc, allow_tf32, max_num_imprecise_acc)
+  if jaxlib_version < (0, 4, 27):
+    # TODO(slebedev): Remove once the minimum jaxlib version is 0.4.27.
+    extra_kwargs = dict(allow_tf32=allow_tf32)
+  else:
+    # Ideally, replace all allow_tf32 usages with InputPrecision directly.
+    input_precision = tt_dialect.InputPrecision.IEEE
+    if allow_tf32:
+      input_precision = tt_dialect.InputPrecision.TF32
+    extra_kwargs = dict(input_precision=input_precision)
+
+  return tt_dialect.dot(
+      x,
+      y,
+      acc,
+      max_num_imprecise_acc=max_num_imprecise_acc,
+      **extra_kwargs
+  )
 
 
 _TF32_PRECISIONS = (lax.Precision.HIGH, lax.Precision.DEFAULT)

@@ -317,8 +317,7 @@ LogicalResult GetBarrierSemaphoreOp::verify() {
 LogicalResult SemaphoreSignalOp::verify() {
   auto sem_type = getMemRefType(getSemaphore());
   if (sem_type.getRank() != 0) {
-    emitOpError("Semaphore reference must be rank 0");
-    return failure();
+    return emitOpError("Semaphore reference must be rank 0");
   }
   return success();
 }
@@ -328,14 +327,19 @@ LogicalResult EnqueueDMAOp::verify() {
   if (source_sem) {
     auto source_sem_type = getMemRefType(getSourceSemaphore());
     if (source_sem_type.getRank() != 0) {
-      emitOpError("DMA source semaphore reference must be rank 0");
-      return failure();
+      return emitOpError("DMA source semaphore reference must be rank 0");
     }
   }
   auto target_sem_type = getMemRefType(getTargetSemaphore());
   if (target_sem_type.getRank() != 0) {
-    emitOpError("DMA target semaphore must be rank 0");
-    return failure();
+    return emitOpError("DMA target semaphore must be rank 0");
+  }
+  if (getDeviceId() || getCoreId()) {
+    if (!getSourceSemaphore()) {
+      return emitOpError(
+          "DMA source semaphore must be specified when "
+          "device_id or core_id is specified");
+    }
   }
   return success();
 }

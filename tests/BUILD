@@ -667,6 +667,7 @@ jax_test(
     name = "nn_test",
     srcs = ["nn_test.py"],
     shard_count = {
+        "cpu": 10,
         "tpu": 10,
         "gpu": 10,
     },
@@ -809,7 +810,7 @@ jax_test(
     },
     shard_count = {
         "cpu": 40,
-        "gpu": 30,
+        "gpu": 40,
         "tpu": 40,
     },
     tags = ["noasan"],  # Times out
@@ -981,6 +982,30 @@ jax_test(
         "//jax:experimental_sparse",
         "//jax:sparse_test_util",
     ] + py_deps("scipy"),
+)
+
+jax_test(
+    name = "sparse_nm_test",
+    srcs = ["sparse_nm_test.py"],
+    config_tags_overrides = {
+        "gpu_a100": {
+            "ondemand": False,  # Include in presubmit.
+        },
+    },
+    disable_backends = [
+        "cpu",
+        "gpu",
+        "tpu",
+    ],
+    enable_configs = [
+        "gpu_a100",
+        # TODO(b/337303303): re-enable the test
+        # "gpu_h100",
+    ],
+    deps = [
+        "//jax:experimental_sparse",
+        "//jax:pallas_gpu",
+    ],
 )
 
 jax_test(
@@ -1265,6 +1290,11 @@ jax_test(
 )
 
 jax_test(
+    name = "mutable_array_test",
+    srcs = ["mutable_array_test.py"],
+)
+
+jax_test(
     name = "for_loop_test",
     srcs = ["for_loop_test.py"],
     shard_count = {
@@ -1444,6 +1474,15 @@ jax_test(
     tags = ["multiaccelerator"],
     deps = [
         "//jax:fused_attention_stablehlo",
+    ],
+)
+
+py_test(
+    name = "pretty_printer_test",
+    srcs = ["pretty_printer_test.py"],
+    deps = [
+        "//jax",
+        "//jax:test_util",
     ],
 )
 

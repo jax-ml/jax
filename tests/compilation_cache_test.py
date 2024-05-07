@@ -251,7 +251,9 @@ class CompilationCacheTest(jtu.JaxTestCase):
         warnings.catch_warnings(record=True) as w,
       ):
         mock_put.side_effect = RuntimeError("test error")
-        self.assertEqual(f(2), 4)
+        self.assertEqual(f(2).item(), 4)
+        if len(w) != 1:
+          print("Warnings:", [str(w_) for w_ in w], flush=True)
         self.assertLen(w, 1)
         self.assertIn(
             (
@@ -272,8 +274,10 @@ class CompilationCacheTest(jtu.JaxTestCase):
         warnings.catch_warnings(record=True) as w,
       ):
         mock_get.side_effect = RuntimeError("test error")
-        self.assertEqual(f(2), 4)
-        if len(w) > 1:
+        # Calling assertEqual with the jitted f will generate two PJIT
+        # executables: Equal and the lambda function itself.
+        self.assertEqual(f(2).item(), 4)
+        if len(w) != 1:
           print("Warnings:", [str(w_) for w_ in w], flush=True)
         self.assertLen(w, 1)
         self.assertIn(

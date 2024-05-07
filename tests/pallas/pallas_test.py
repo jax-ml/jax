@@ -1670,6 +1670,52 @@ class PallasOpsTest(PallasTest):
 
     np.testing.assert_allclose(f(), kernel())
 
+  @parameterized.parameters("float16", "bfloat16", "float32")
+  def test_approx_tanh(self, dtype):
+    if self.INTERPRET:
+      self.skipTest("approx_tanh is not supported in interpreter mode")
+    if dtype == "bfloat16" and not self.check_gpu_capability_at_least(90):
+      self.skipTest("tanh.approx.bf16 requires a GPU with capability >= sm90")
+
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((4,), dtype), grid=1
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = plgpu.approx_tanh(x_ref[...])
+
+    x = jnp.asarray([-1, 0.42, 0.24, 1]).astype(dtype)
+    # We upcast to float32 because NumPy <2.0 does not handle custom dtypes
+    # properly. See https://github.com/google/jax/issues/11014.
+    np.testing.assert_allclose(
+        kernel(x).astype(jnp.float32),
+        jnp.tanh(x).astype(jnp.float32),
+        atol=5e-3,
+        rtol=5e-3,
+    )
+
+  def test_elementwise_inline_asm(self):
+    if self.INTERPRET:
+      self.skipTest(
+          "elementwise_inline_asm is not supported in interpreter mode"
+      )
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((256,), jnp.float16),
+        grid=1,
+    )
+    def kernel(x_ref, o_ref):
+      [o_ref[...]] = plgpu.elementwise_inline_asm(
+          "tanh.approx.f16x2 $0, $1;",
+          args=[x_ref[...]],
+          constraints="=r,r",
+          pack=2,
+          result_shape_dtypes=[jax.ShapeDtypeStruct(x_ref.shape, x_ref.dtype)],
+      )
+
+    x = jnp.arange(256).astype(jnp.float16)
+    np.testing.assert_allclose(kernel(x), jnp.tanh(x), atol=5e-3, rtol=5e-3)
+
 
 class PallasOpsInterpretTest(PallasOpsTest):
   INTERPRET = True

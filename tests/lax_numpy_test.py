@@ -195,11 +195,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
 
   @parameterized.parameters(
-    [dtype for dtype in [jnp.bool, jnp.uint8, jnp.uint16, jnp.uint32,
-                         jnp.uint64, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
-                         jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64,
-                         jnp.complex64, jnp.complex128]
-     if dtype == dtypes.canonicalize_dtype(dtype)])
+      [dtype for dtype in [
+          jnp.bool,
+          jnp.uint4, jnp.uint8, jnp.uint16, jnp.uint32, jnp.uint64,
+          jnp.int4, jnp.int8, jnp.int16, jnp.int32, jnp.int64,
+          jnp.bfloat16, jnp.float16, jnp.float32, jnp.float64,
+          jnp.complex64, jnp.complex128]
+       if dtype == dtypes.canonicalize_dtype(dtype)])
   def testDtypeWrappers(self, dtype):
     arr = dtype(0)
     self.assertIsInstance(arr, jax.Array)
@@ -321,17 +323,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-  @jtu.sample_product(shape=all_shapes, dtype=all_dtypes)
+  @jtu.sample_product(shape=nonzerodim_shapes, dtype=all_dtypes)
   def testNonzero(self, shape, dtype):
     rng = jtu.rand_some_zero(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    with jtu.ignore_warning(category=DeprecationWarning,
-                            message="Calling nonzero on 0d arrays.*"):
-      self._CheckAgainstNumpy(np.nonzero, jnp.nonzero, args_maker, check_dtypes=False)
+    self._CheckAgainstNumpy(np.nonzero, jnp.nonzero, args_maker, check_dtypes=False)
 
   @jtu.sample_product(
     [dict(shape=shape, fill_value=fill_value)
-      for shape in nonempty_array_shapes
+      for shape in nonempty_nonscalar_array_shapes
       for fill_value in [None, -1, shape or (1,)]
      ],
     dtype=all_dtypes,
@@ -349,17 +349,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         return tuple(np.concatenate([arg, np.full(size - len(arg), fval, arg.dtype)])
                      for fval, arg in safe_zip(fillvals, result))
     jnp_fun = lambda x: jnp.nonzero(x, size=size, fill_value=fill_value)
-    with jtu.ignore_warning(category=DeprecationWarning,
-                            message="Calling nonzero on 0d arrays.*"):
-      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
-      self._CompileAndCheck(jnp_fun, args_maker)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
-  @jtu.sample_product(shape=all_shapes, dtype=all_dtypes)
+  @jtu.sample_product(shape=nonzerodim_shapes, dtype=all_dtypes)
   def testFlatNonzero(self, shape, dtype):
     rng = jtu.rand_some_zero(self.rng())
-    np_fun = jtu.ignore_warning(
-      category=DeprecationWarning,
-      message="Calling nonzero on 0d arrays.*")(np.flatnonzero)
+    np_fun = np.flatnonzero
     jnp_fun = jnp.flatnonzero
     args_maker = lambda: [rng(shape, dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
@@ -369,7 +365,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    shape=nonempty_array_shapes,
+    shape=nonempty_nonscalar_array_shapes,
     dtype=all_dtypes,
     fill_value=[None, -1, 10, (-1,), (10,)],
     size=[1, 5, 10],
@@ -377,7 +373,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testFlatNonzeroSize(self, shape, dtype, size, fill_value):
     rng = jtu.rand_some_zero(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    @jtu.ignore_warning(category=DeprecationWarning, message="Calling nonzero on 0d arrays.*")
     def np_fun(x):
       result = np.flatnonzero(x)
       if size <= len(result):
@@ -389,24 +384,20 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-  @jtu.sample_product(shape=all_shapes, dtype=all_dtypes)
+  @jtu.sample_product(shape=nonzerodim_shapes, dtype=all_dtypes)
   def testArgWhere(self, shape, dtype):
     rng = jtu.rand_some_zero(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
-    with jtu.ignore_warning(category=DeprecationWarning,
-                            message="Calling nonzero on 0d arrays.*"):
-      self._CheckAgainstNumpy(np.argwhere, jnp.argwhere, args_maker, check_dtypes=False)
+    self._CheckAgainstNumpy(np.argwhere, jnp.argwhere, args_maker, check_dtypes=False)
 
     # JIT compilation requires specifying a size statically. Full test of this
     # behavior is in testNonzeroSize().
     jnp_fun = lambda x: jnp.argwhere(x, size=np.size(x) // 2)
-    with jtu.ignore_warning(category=DeprecationWarning,
-                            message="Calling nonzero on 0d arrays.*"):
-      self._CompileAndCheck(jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
     [dict(shape=shape, fill_value=fill_value)
-      for shape in nonempty_array_shapes
+      for shape in nonempty_nonscalar_array_shapes
       for fill_value in [None, -1, shape or (1,)]
      ],
     dtype=all_dtypes,
@@ -425,10 +416,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
                         for fval, arg in safe_zip(fillvals, result.T)]).T
     jnp_fun = lambda x: jnp.argwhere(x, size=size, fill_value=fill_value)
 
-    with jtu.ignore_warning(category=DeprecationWarning,
-                            message="Calling nonzero on 0d arrays.*"):
-      self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
-      self._CompileAndCheck(jnp_fun, args_maker)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
     [dict(np_op=getattr(np, rec.name), jnp_op=getattr(jnp, rec.name),
@@ -1308,6 +1297,22 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, jnp.float32), rng(shape, dtype)]
     self._CheckAgainstNumpy(np.extract, jnp.extract, args_maker)
 
+  @jtu.sample_product(shape=nonempty_array_shapes, dtype=all_dtypes)
+  def testExtractSize(self, shape, dtype):
+    rng = jtu.rand_some_zero(self.rng())
+    args_maker = lambda: [rng(shape, jnp.float32), rng(shape, dtype)]
+    def jnp_fun(condition, arr):
+      return jnp.extract(condition, arr, size=jnp.size(arr) - 1)
+    def np_fun(condition, arr):
+      size = jnp.size(arr) - 1
+      out = np.extract(condition, arr)
+      result = np.zeros(np.size(arr) - 1, dtype=dtype)
+      size = min(len(out), size)
+      result[:size] = out[:size]
+      return result
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
   @jtu.sample_product(
     [dict(ncond=ncond, nfunc=nfunc)
       for ncond in [1, 2, 3]
@@ -1526,6 +1531,37 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
   @jtu.sample_product(
+    [dict(shape=shape, axis=axis)
+      for shape in all_shapes
+      for axis in list(range(len(shape)))
+    ],
+    dtype=all_dtypes,
+  )
+  def testCompressSize(self, shape, dtype, axis):
+    rng = jtu.rand_default(self.rng())
+    if shape in scalar_shapes or len(shape) == 0:
+      cond_shape = (0,)
+    elif axis is None:
+      cond_shape = (math.prod(shape),)
+    else:
+      cond_shape = (shape[axis],)
+    args_maker = lambda: [rng(cond_shape, bool), rng(shape, dtype)]
+
+    def np_fun(condition, a, axis=axis, fill_value=1):
+      # assuming size = a.shape[axis]
+      out = np.compress(condition, a, axis=axis)
+      result = np.full_like(a, fill_value)
+      result[tuple(slice(s) for s in out.shape)] = out
+      return result
+
+    def jnp_fun(condition, a, axis=axis, fill_value=1):
+      return jnp.compress(condition, a, axis=axis,
+                          size=a.shape[axis], fill_value=fill_value)
+
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
     shape=[(2, 3)],
     dtype=int_dtypes,
     # condition entries beyond axis size must be zero.
@@ -1557,8 +1593,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
     args_maker = lambda: [rng(cond_shape, jnp.float32), rng(shape, dtype)]
 
-    np_fun = lambda condition, x: np.compress(condition, x, axis=axis)
-    jnp_fun = lambda condition, x: x.compress(condition, axis=axis)
+    np_fun = lambda condition, x: np.asarray(x).compress(condition, axis=axis)
+    jnp_fun = lambda condition, x: jnp.asarray(x).compress(condition, axis=axis)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
   @jtu.sample_product(
@@ -3881,6 +3917,26 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
+  @jtu.sample_product(
+    change_dtype=[True, False],
+    copy=[True, False],
+  )
+  def testAstypeCopy(self, change_dtype, copy):
+    dtype = 'float32' if change_dtype else 'int32'
+    expect_copy = change_dtype or copy
+    x = jnp.arange(5, dtype='int32')
+    y = x.astype(dtype, copy=copy)
+
+    self.assertEqual(y.dtype, dtype)
+    y.delete()
+    self.assertNotEqual(x.is_deleted(), expect_copy)
+
+  def testAstypeComplexDowncast(self):
+    x = jnp.array(2.0+1.5j, dtype='complex64')
+    msg = "Casting from complex to non-complex dtypes will soon raise "
+    with self.assertWarns(DeprecationWarning, msg=msg):
+      x.astype('float32')
+
   def testAstypeInt4(self):
     # Test converting from int4 to int8
     x = np.array([1, -2, -3, 4, -8, 7], dtype=jnp.int4)
@@ -4488,24 +4544,20 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
-    shape=all_shapes,
+    shape=nonzerodim_shapes,
     dtype=all_dtypes,
   )
   def testWhereOneArgument(self, shape, dtype):
     rng = jtu.rand_some_zero(self.rng())
     args_maker = lambda: [rng(shape, dtype)]
 
-    with jtu.ignore_warning(category=DeprecationWarning,
-                            message="Calling nonzero on 0d arrays.*"):
-      self._CheckAgainstNumpy(np.where, jnp.where, args_maker, check_dtypes=False)
+    self._CheckAgainstNumpy(np.where, jnp.where, args_maker, check_dtypes=False)
 
     # JIT compilation requires specifying a size statically. Full test of
     # this behavior is in testNonzeroSize().
     jnp_fun = lambda x: jnp.where(x, size=np.size(x) // 2)
 
-    with jtu.ignore_warning(category=DeprecationWarning,
-                            message="Calling nonzero on 0d arrays.*"):
-      self._CompileAndCheck(jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
     shapes=filter(_shapes_are_broadcast_compatible,
@@ -4547,6 +4599,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     # maximal set of dtypes.
     dtypes=itertools.combinations_with_replacement(all_dtypes, 3),
   )
+  @jax.numpy_rank_promotion('allow')
   def testSelect(self, n, shapes, dtypes):
     dtypes = dtypes[:n+1]
     rng = jtu.rand_default(self.rng())
@@ -5891,6 +5944,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'partition': ['kind', 'order'],
       'percentile': ['weights'],
       'quantile': ['weights'],
+      'reshape': ['shape', 'copy'],
       'row_stack': ['casting'],
       'stack': ['casting'],
       'std': ['correction', 'mean'],
@@ -6010,32 +6064,35 @@ class NumpyDocTests(jtu.JaxTestCase):
   def test_lax_numpy_docstrings(self):
     # Test that docstring wrapping & transformation didn't fail.
 
-    # Functions that have their own docstrings & don't wrap numpy.
-    known_exceptions = {'fromfile', 'fromiter', 'frompyfunc', 'vectorize'}
+    unimplemented = ['fromfile', 'fromiter']
 
     for name in dir(jnp):
-      if name in known_exceptions or name.startswith('_'):
+      if name.startswith('_') or name in unimplemented:
         continue
 
-      # We only check signatures of functions.
       obj = getattr(jnp, name)
+
       if isinstance(obj, type) or not callable(obj):
-        continue
-
-      # Some jnp functions are imported from numpy or jax.dtypes directly.
-      if any(obj is getattr(mod, obj.__name__, None) for mod in [np, dtypes]):
-        continue
-
-      wrapped_fun = obj.__np_wrapped__
-      if wrapped_fun is None:
-        continue
-
-      # If the wrapped function has a docstring, obj should too
-      if wrapped_fun.__doc__ and not obj.__doc__:
-        raise Exception(f"jnp.{name} does not contain wrapped docstring.")
-
-      if obj.__doc__ and "*Original docstring below.*" not in obj.__doc__:
-        raise Exception(f"jnp.{name} does not have a wrapped docstring.")
+        # Skip docstring checks for non-functions
+        pass
+      elif hasattr(np, name) and obj is getattr(np, name):
+        # Some APIs are imported directly from NumPy; we don't check these.
+        pass
+      elif hasattr(obj, '__np_wrapped__'):
+        # Functions decorated with @implements(...) should have __np_wrapped__
+        wrapped_fun = obj.__np_wrapped__
+        if wrapped_fun is not None:
+          # If the wrapped function has a docstring, obj should too
+          if wrapped_fun.__doc__ and not obj.__doc__:
+            raise Exception(f"jnp.{name} does not contain wrapped docstring.")
+          if obj.__doc__ and "*Original docstring below.*" not in obj.__doc__:
+            raise Exception(f"jnp.{name} does not have a wrapped docstring.")
+      else:
+        # Other functions should have nontrivial docs including "Args" and "Returns".
+        doc = obj.__doc__
+        self.assertNotEmpty(doc)
+        self.assertIn("Args:", doc, msg=f"'Args:' not found in docstring of jnp.{name}")
+        self.assertIn("Returns:", doc, msg=f"'Returns:' not found in docstring of jnp.{name}")
 
   @parameterized.named_parameters(
     {"testcase_name": "_jit" if jit else "", "jit": jit} for jit in [True, False])

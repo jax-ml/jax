@@ -35,8 +35,27 @@ py_library_providing_imports_info(
     deps = [
         ":lowering",
         ":pallas_call_registration",
+        ":primitives",
         "//jax/_src/lib",
     ],
+)
+
+pytype_strict_library(
+    name = "primitives",
+    srcs = ["primitives.py"],
+    deps = [
+        ":lowering",
+        "//jax",
+        "//jax:ad_util",
+        "//jax:api_util",
+        "//jax:core",
+        "//jax:mlir",
+        "//jax:partial_eval",
+        "//jax:source_info_util",
+        "//jax:util",
+        "//jax/_src/lib",
+        "//jax/_src/pallas",
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(

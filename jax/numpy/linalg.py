@@ -40,12 +40,12 @@ from jax._src.numpy.linalg import (
   svd as svd,
   svdvals as svdvals,
   tensordot as tensordot,
+  tensorinv as tensorinv,
+  tensorsolve as tensorsolve,
   vector_norm as vector_norm,
   vecdot as vecdot,
 )
 from jax._src.third_party.numpy.linalg import (
   cond as cond,
   multi_dot as multi_dot,
-  tensorinv as tensorinv,
-  tensorsolve as tensorsolve,
 )
