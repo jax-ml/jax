@@ -13,6 +13,15 @@ different builds for different operating systems and accelerators.
   ```
 * **GPU (NVIDIA, CUDA 12, x86_64)**
   ```
+  pip install -U "jax[cuda12]"
+  ```
+
+* **GPU (NVIDIA, CUDA 12, x86_64) legacy**
+
+You should prefer `jax[cuda12]`, which uses the common CPU jaxlib and adds GPU
+support as a plugin. The monolithic `jax[cuda12_pip]` option will be removed in
+a future JAX release.
+  ```
   pip install -U "jax[cuda12_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
   ```
 
@@ -96,6 +105,11 @@ pip install --upgrade pip
 
 # NVIDIA CUDA 12 installation
 # Note: wheels only available on linux.
+pip install --upgrade "jax[cuda12]"
+
+# Legacy way of NVIDIA CUDA 12 installation. You should prefer `jax[cuda12]`,
+# which uses the common CPU jaxlib and adds GPU support as a plugin. The
+# monolithic `jax[cuda12_pip]` option will be removed in a future JAX release.
 pip install --upgrade "jax[cuda12_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 ```
 
@@ -201,6 +215,13 @@ pip install -U libtpu-nightly -f https://storage.googleapis.com/jax-releases/lib
 ```
 
 - `jaxlib` NVIDIA GPU (CUDA 12):
+
+```bash
+pip install -U --pre jaxlib -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_releases.html
+pip install -U --pre jax-cuda12-pjrt jax-cuda12-plugin -f https://storage.googleapis.com/jax-releases/jax_cuda_plugin_nightly_releases.html
+```
+
+- `jaxlib` NVIDIA GPU (CUDA 12) legacy:
 
 ```bash
 pip install -U --pre jaxlib -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_cuda12_releases.html
