@@ -59,19 +59,32 @@ py_extension(
     ],
 )
 
-py_extension(
+pybind_extension(
     name = "_mlirExecutionEngine",
     srcs = [
         "@llvm-project//mlir:lib/Bindings/Python/ExecutionEngineModule.cpp",
     ],
     copts = COPTS,
     linkopts = LINKOPTS,
+    pytype_srcs = [
+        ":_mlirExecutionEnginePyi",
+    ],
     deps = [
         ":jaxlib_mlir_capi_shared_library",
         "@llvm-project//mlir:CAPIExecutionEngineHeaders",
         "@llvm-project//mlir:MLIRBindingsPythonHeadersAndDeps",
         "@pybind11",
     ],
+)
+
+symlink_inputs(
+    name = "_mlirExecutionEnginePyi",
+    rule = filegroup,
+    symlinked_inputs = {"srcs": {
+        ".": [
+            "@llvm-project//mlir/python:ExecutionEnginePyIFiles",
+        ],
+    }},
 )
 
 py_extension(

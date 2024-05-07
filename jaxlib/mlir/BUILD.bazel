@@ -230,7 +230,6 @@ symlink_inputs(
     symlinked_inputs = {"srcs": {
         ".": [
             "@llvm-project//mlir/python:ExecutionEnginePyFiles",
-            "@llvm-project//mlir/python:ExecutionEnginePyIFiles",
         ],
     }},
     deps = [
