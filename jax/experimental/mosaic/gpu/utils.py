@@ -376,7 +376,7 @@ def memref_unfold(ref: ir.Value, dim, factors) -> ir.Value:
     assoc.append(list(range(dim, dim + len(factors))))
     assoc.extend([d + len(factors) - 1] for d in range(dim + 1, ref_ty.rank))
   assert len(assoc) == ref_ty.rank
-  return memref.expand_shape(new_ty, ref, assoc)
+  return memref.expand_shape(new_ty, ref, assoc, [], new_ty.shape)
 
 
 def memref_unsqueeze(ref: ir.Value, dim) -> ir.Value:
