@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.27
+## jax 0.4.28
+
+## jaxlib 0.4.28
+
+## jax 0.4.27 (May 7, 2024)
 
 * New Functionality
   * Added {func}`jax.numpy.unstack` and {func}`jax.numpy.cumulative_sum`,
@@ -78,7 +82,7 @@ Remember to align the itemized text with the first line of an item within a list
     dtype as the input array. This may result in some increased memory usage.
     The default value is set to `copy=False` to preserve backwards compatability.
 
-## jaxlib 0.4.27
+## jaxlib 0.4.27 (May 7, 2024)
 
 ## jax 0.4.26 (April 3, 2024)
 
