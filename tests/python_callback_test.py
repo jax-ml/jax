@@ -31,7 +31,6 @@ from jax._src import maps
 from jax._src import test_util as jtu
 from jax._src import util
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
 from jax._src.maps import xmap
 from jax.experimental import io_callback
 from jax.experimental import pjit
@@ -803,7 +802,6 @@ class PureCallbackTest(jtu.JaxTestCase):
         ValueError, "Pure callbacks do not support JVP."):
       f(2.)
 
-  @unittest.skipIf(xla_extension_version < 245, "jaxlib version too old")
   def test_error_propagation(self):
     def throws_error_fn(x):
       raise RuntimeError("Errors should propagate.")
@@ -815,7 +813,6 @@ class PureCallbackTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(Exception, "Errors should propagate."):
       print(np.array(f(2.0)), flush=True)
 
-  @unittest.skipIf(xla_extension_version < 250, "jaxlib version too old")
   def test_reentrant_error_propagation(self):
     reentrant_fn = jax.jit(jnp.sin).lower(2.0).compile()
 

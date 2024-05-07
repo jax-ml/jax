@@ -59,7 +59,6 @@ from jax.interpreters import mlir
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
@@ -420,7 +419,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     jax.tree.map(self.assertDeleted, y_tree)
     jax.tree.map(self.assertDeleted, z_tree)
 
-  @unittest.skipIf(xla_extension_version < 220, 'jaxlib version too old')
   @jtu.run_on_devices('tpu')
   def testBufferDonationWithOutputShardingInferenceAndTokens(self):
     mesh = jtu.create_global_mesh((2,), 'x')
@@ -4027,9 +4025,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     f(inps)  # doesn't crash
 
   def test_spmd_preserves_input_sharding_vmap_grad(self):
-    if xla_extension_version < 258:
-      self.skipTest('Requires xla_extension_version >= 258')
-
     # https://github.com/google/jax/issues/20710
     n_devices = jax.device_count()
     sharding = PositionalSharding(jax.devices())
@@ -4068,8 +4063,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
 class TempSharding(Sharding):
 
   def __init__(self, devices):
-    if xla_extension_version >= 235:
-      super().__init__()
+    super().__init__()
     self._devices = devices
     self._internal_device_list = xc.DeviceList(tuple(self._devices))
 

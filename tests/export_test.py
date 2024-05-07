@@ -40,7 +40,6 @@ from jax._src import effects
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import mlir
-from jax._src.lib import xla_extension_version
 
 from jax._src.lib.mlir.dialects import hlo
 
@@ -1261,8 +1260,6 @@ class JaxExportTest(jtu.JaxTestCase):
 
     mlir_outer_module_str = str(lowered_outer.compiler_ir())
     if exp.mlir_module_serialization_version >= _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
-      if xla_extension_version < 260:
-        main_expected_re = main_expected_re.replace("!stablehlo.token", "tensor<0xi1>")
       self.assertRegex(mlir_outer_module_str, main_expected_re)
 
     res = jax.jit(f_outer)(x)

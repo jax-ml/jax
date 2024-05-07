@@ -49,7 +49,6 @@ from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import dialects
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
@@ -98,7 +97,7 @@ def dense_int_array(xs) -> ir.DenseIntElementsAttr | ir.DenseI64ArrayAttr:
 
 # TODO: b/321794305 - delete this when jaxlib is on StableHLO API v6 or higher
 def dense_int_array_v6(xs) -> ir.DenseIntElementsAttr | ir.DenseI64ArrayAttr:
-  if hlo.get_api_version() < 6 or xc.mlir_api_version < 55:
+  if hlo.get_api_version() < 6:
     return dense_int_elements(xs)
   return ir.DenseI64ArrayAttr.get(np.asarray(xs, np.int64))
 
@@ -113,7 +112,7 @@ def dense_bool_elements(xs: Sequence[bool]) -> ir.DenseElementsAttr:
 
 def dense_bool_array(xs: Sequence[bool]) -> ir.DenseElementsAttr | ir.DenseBoolArrayAttr:
   # TODO: b/321794305 - remove this check when jaxlib is on StableHLO API v6 or higher
-  if hlo.get_api_version() < 6 or xc.mlir_api_version < 55:
+  if hlo.get_api_version() < 6:
     return dense_bool_elements(xs)
   return ir.DenseBoolArrayAttr.get(xs)
 
@@ -971,9 +970,7 @@ def lower_jaxpr_to_module(
     attrs["sym_name"] = ir.StringAttr.get(module_name)
     attrs["mhlo.num_replicas"] = i32_attr(num_replicas)
     attrs["mhlo.num_partitions"] = i32_attr(num_partitions)
-    replace_tokens_with_dummy = lowering_parameters.replace_tokens_with_dummy
-    if xla_extension_version >= 260:
-      replace_tokens_with_dummy = False
+    replace_tokens_with_dummy = False
     lower_jaxpr_to_fun(
         ctx, "main", jaxpr, ordered_effects,
         name_stack=name_stack,

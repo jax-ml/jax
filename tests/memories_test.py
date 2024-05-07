@@ -23,7 +23,6 @@ import jax
 from jax import lax
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
-from jax._src.lib import xla_extension_version
 from jax._src import config
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.numpy as jnp
@@ -1250,7 +1249,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
 
     compiled_stats = compiled_f.memory_analysis()
     if compiled_stats is not None and jtu.test_device_matches(["tpu"]):
-      if xla_extension_version >= 240 and jtu.pjrt_c_api_version_at_least(0, 43):
+      if jtu.pjrt_c_api_version_at_least(0, 43):
         self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
   def test_remat_scan_jaxpr_offloadable(self):
@@ -1309,7 +1308,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
 
     compiled_stats = compiled_f.memory_analysis()
     if compiled_stats is not None:
-      if xla_extension_version >= 240 and jtu.pjrt_c_api_version_at_least(0, 43):
+      if jtu.pjrt_c_api_version_at_least(0, 43):
         self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
   def test_remat_scan_layout_change_offloadable(self):
@@ -1351,12 +1350,10 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
 
     compiled_stats = compiled_f.memory_analysis()
     if compiled_stats is not None:
-      if xla_extension_version >= 240 and jtu.pjrt_c_api_version_at_least(0, 43):
+      if jtu.pjrt_c_api_version_at_least(0, 43):
         self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
   def test_remat_checkpoint_dots_with_no_batch_dims(self):
-    if not jtu.test_device_matches(["tpu"]) and xla_extension_version < 247:
-      self.skipTest("Test requires a newer jaxlib")
     policy = jax.checkpoint_policies.offload_dot_with_no_batch_dims(
         "device", "pinned_host")
 
@@ -1385,7 +1382,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
 
     compiled_stats = compiled_f.memory_analysis()
     if compiled_stats is not None and jtu.test_device_matches(["tpu"]):
-      if xla_extension_version >= 240 and jtu.pjrt_c_api_version_at_least(0, 43):
+      if jtu.pjrt_c_api_version_at_least(0, 43):
         self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
 if __name__ == "__main__":

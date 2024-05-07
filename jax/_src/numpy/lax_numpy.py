@@ -62,7 +62,7 @@ from jax._src.core import ShapedArray, ConcreteArray
 from jax._src.lax.lax import (_array_copy, _sort_lt_comparator,
                               _sort_le_comparator, PrecisionLike)
 from jax._src.lax import lax as lax_internal
-from jax._src.lib import xla_client as xc, xla_extension_version
+from jax._src.lib import xla_client as xc
 from jax._src.numpy import reductions
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
@@ -2526,19 +2526,14 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     if hasattr(object, '__jax_array__'):
       object = object.__jax_array__()
     elif hasattr(object, '__cuda_array_interface__'):
-      if xla_extension_version >= 237:
-        cai = object.__cuda_array_interface__
-        backend = xla_bridge.get_backend("cuda")
-        if cuda_plugin_extension is None:
-          device_id = None
-        else:
-          device_id = cuda_plugin_extension.get_device_ordinal(cai["data"][0])
-        if xla_extension_version >= 261:
-          object = xc._xla.cuda_array_interface_to_buffer(
-              cai=cai, gpu_backend=backend, device_id=device_id
-          )
-        else:
-          object = xc._xla.cuda_array_interface_to_buffer(cai, backend)
+      cai = object.__cuda_array_interface__
+      backend = xla_bridge.get_backend("cuda")
+      if cuda_plugin_extension is None:
+        device_id = None
+      else:
+        device_id = cuda_plugin_extension.get_device_ordinal(cai["data"][0])
+      object = xc._xla.cuda_array_interface_to_buffer(
+          cai=cai, gpu_backend=backend, device_id=device_id)
 
   object = tree_map(lambda leaf: leaf.__jax_array__()
                     if hasattr(leaf, "__jax_array__") else leaf, object)

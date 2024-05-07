@@ -35,7 +35,6 @@ from jax._src import util
 from jax._src import xla_bridge
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.partition_spec import PartitionSpec
 
 import numpy as np
@@ -190,10 +189,6 @@ def named_sharding_to_xla_hlo_sharding(
     axis_names = self.mesh.axis_names
     for manual_axis in self._manual_axes:
       special_axes[axis_names.index(manual_axis)] = xc.OpSharding.Type.MANUAL
-      if xla_extension_version < 259:
-        if manual_axis in array_mapping:   # type: ignore
-          raise ValueError(f"manual axis {repr(manual_axis)} in {repr(self)} "
-                           "cannot be used as a sharded axis")
 
   replicated_mesh_axes = []
   for i, (axis_name, axis_val) in enumerate(mesh_shape.items()):
@@ -296,13 +291,6 @@ class NamedSharding(XLACompatibleSharding):
     self._memory_kind = memory_kind
     self._manual_axes = _manual_axes
     self._parsed_pspec = preprocess(self.mesh, self.spec, _parsed_pspec)
-
-  # TODO(phawkins): remove this method when jaxlib 0.4.26 or newer is the
-  # minimum. This method is called by the C++ sharding implementation in earlier
-  # versions.
-  if xla_extension_version < 243:
-    def _preprocess(self):
-      self._parsed_pspec = preprocess(self.mesh, self.spec, self._parsed_pspec)
 
   def __repr__(self):
     mesh_repr = ", ".join(f"'{k}': {v}" for k, v in self.mesh.shape.items())
@@ -683,8 +671,7 @@ class PositionalSharding(XLACompatibleSharding):
 
   def __init__(self, devices: Sequence[xc.Device] | np.ndarray,
                *, memory_kind: str | None = None):
-    if xla_extension_version >= 235:
-      super().__init__()
+    super().__init__()
     if not isinstance(devices, np.ndarray):
       devices = np.array(devices, dtype='object')
     if not devices.size:

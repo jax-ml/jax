@@ -36,7 +36,6 @@ from jax._src import profiler
 from jax._src import tree_util
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib import xla_extension as xe
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
@@ -708,21 +707,13 @@ def make_array_from_callback(
     return pxla.batched_device_put(
         aval, sharding, per_device_values, devices, committed=True)
 
-  # After minimum jaxlib version >= 0.4.26, merge this condition into the
-  # following if block.
-  if xla_extension_version >= 256 and isinstance(first_value, ArrayImpl):
-    maybe_default_layout = pxla._maybe_get_default_layout(
-        Layout(dll, sharding), None, sharding, aval)
-    layout_eq = first_value.layout.device_local_layout == maybe_default_layout
-  else:
-    layout_eq = True
-
   if (isinstance(first_value, ArrayImpl)
       and first_value._committed
       and sharding.is_fully_replicated
       and first_value.is_fully_replicated
       and first_value.sharding._device_assignment == tuple(devices)
-      and layout_eq):
+      and (first_value.layout.device_local_layout ==
+           pxla._maybe_get_default_layout(Layout(dll, sharding), None, sharding, aval))):
     return first_value
 
   if dll is not None:

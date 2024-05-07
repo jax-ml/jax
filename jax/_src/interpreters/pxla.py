@@ -62,7 +62,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.layout import DeviceLocalLayout, AutoLayout, Layout
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec
@@ -1800,15 +1799,9 @@ class SemanticallyEqualShardings:
 
   def __init__(self, shardings: tuple[GSPMDSharding | UnspecifiedValue, ...],
                avals: tuple[core.AbstractValue]):
-    if xla_extension_version < 241:
-      gspmd_shardings = [
-          s if is_unspecified_or_auto(s) or a is core.abstract_token
-          else to_gspmd_sharding(s, a.ndim)  # type: ignore
-          for s, a in zip(shardings, avals)]
-    else:
-      gspmd_shardings = [
-          s if is_unspecified_or_auto(s) else to_gspmd_sharding(s, a.ndim)  # type: ignore
-          for s, a in zip(shardings, avals)]
+    gspmd_shardings = [
+        s if is_unspecified_or_auto(s) else to_gspmd_sharding(s, a.ndim)  # type: ignore
+        for s, a in zip(shardings, avals)]
     self._gspmd_shardings = gspmd_shardings
     self.shardings = shardings
     self.avals = avals
@@ -2017,13 +2010,9 @@ def to_gspmd_sharding(s: sharding_impls.XLACompatibleSharding,
                       ndim: int) -> GSPMDSharding:
   if isinstance(s, GSPMDSharding):
     return s
-  if xla_extension_version >= 234:
-    return GSPMDSharding(s._device_assignment, s._to_xla_hlo_sharding(ndim),
-                         memory_kind=s.memory_kind,
-                         _device_list=getattr(s, '_internal_device_list', None))
-  else:
-    return GSPMDSharding(s._device_assignment, s._to_xla_hlo_sharding(ndim),
-                         memory_kind=s.memory_kind)
+  return GSPMDSharding(s._device_assignment, s._to_xla_hlo_sharding(ndim),
+                        memory_kind=s.memory_kind,
+                        _device_list=getattr(s, '_internal_device_list', None))
 
 
 # Dummy function which is a no-op in OSS since enhanced barrier is switched on
@@ -2120,10 +2109,6 @@ def lower_sharding_computation(
       any(not is_unspecified(i) for i in in_shardings) or
       any(not is_unspecified(js) for js, _ in jaxpr_sharding) or
       any(not is_unspecified(o) for o in out_shardings))
-
-  if xla_extension_version < 241:
-    gs = GSPMDSharding.get_replicated(device_assignment)
-    in_shardings = tuple(gs if is_unspecified(i) else i for i in in_shardings)
 
   da_object = _create_da_object(tuple(device_assignment))
 
@@ -2391,38 +2376,6 @@ class MeshComputation(stages.XlaLowering):
           f"'{backend.platform}'. Use compile().cost_analysis() for "  # type: ignore
           "post-compilation cost estimates.")
     return xe.hlo_module_cost_analysis(backend, self.hlo().as_hlo_module())
-
-
-if xla_extension_version < 229:
-  def _get_input_indices(
-      avals: Sequence[ShapedArray],
-      shardings: Sequence[sharding_impls.XLACompatibleSharding],
-      da_object: xc.DeviceList | Sequence[xc.Device],  # type: ignore
-  ) -> Sequence[tuple[Index | None, ...]]:
-
-    input_indices = []
-    if not isinstance(da_object, xc.DeviceList):
-      da_object = _create_da_object(tuple(da_object))
-    num_addressable_devices = len(da_object.addressable_device_list)
-
-    def _get_replicated_slices(num_addressable_devices: int, ndim: int | None):
-      if ndim is None:
-        return ((slice(None),),) * num_addressable_devices
-      else:
-        return ((slice(None),) * ndim,) * num_addressable_devices
-
-    for aval, sharding in zip(avals, shardings):
-      if aval is core.abstract_token:
-        index = _get_replicated_slices(num_addressable_devices, None)
-      else:
-        if sharding.is_fully_replicated:
-          index = _get_replicated_slices(num_addressable_devices, aval.ndim)
-        else:
-          index = tuple(
-              sharding.addressable_devices_indices_map(aval.shape).values())  # type: ignore
-      input_indices.append(index)
-
-    return input_indices
 
 
 def get_out_shardings_from_executable(
@@ -2716,8 +2669,7 @@ def _cached_compilation(computation, name, mesh, spmd_lowering,
         get_logical_mesh_ids(list(mesh.shape.values()))
         .reshape(-1))
   compile_options.parameter_is_tupled_arguments = tuple_args
-  if xla_extension_version >= 241:
-    opts.allow_spmd_sharding_propagation_to_parameters = list(allow_prop_to_inputs)
+  opts.allow_spmd_sharding_propagation_to_parameters = list(allow_prop_to_inputs)
   opts.allow_spmd_sharding_propagation_to_output = list(allow_prop_to_outputs)
 
   with dispatch.log_elapsed_time(
@@ -2835,13 +2787,7 @@ class UnloadedMeshExecutable:
   all_args_info: AllArgsInfo | None
 
   def build_unsafe_call(self):
-    if xla_extension_version >= 229:
-      handle_args = InputsHandler(self.input_shardings)
-    else:
-      input_indices = _get_input_indices(self.input_avals, self.input_shardings,
-                                         self.device_assignment)
-      handle_args = InputsHandler(
-          self.input_shardings, self.xla_executable.local_devices(), input_indices)
+    handle_args = InputsHandler(self.input_shardings)
     handle_outs = global_avals_to_results_handler(
         self.output_avals, self.output_shardings, self.committed)  # type: ignore  # arg-type
 
@@ -2928,10 +2874,9 @@ class UnloadedMeshExecutable:
     else:
       if pmap_nreps == 1:
         assert mesh is None
-        if xla_extension_version >= 241:
-          in_shardings = _maybe_get_and_check_in_shardings(
-              xla_executable, in_shardings, tuple(da), global_in_avals,
-              len(ordered_effects))
+        in_shardings = _maybe_get_and_check_in_shardings(
+            xla_executable, in_shardings, tuple(da), global_in_avals,
+            len(ordered_effects))
         out_shardings = _maybe_get_and_check_out_shardings(
             xla_executable, out_shardings, tuple(da), global_out_avals,
             len(ordered_effects), all_default_mem_kind)
@@ -3096,19 +3041,9 @@ class MeshExecutable(stages.XlaExecutable):
         fastpath_data = None
       return outs, fastpath_data
 
-    if xla_extension_version >= 226:
-      return xc._xla.pjit(
-          self.unsafe_call.name, None, aot_cache_miss, [], [], [],
-          tree_util.dispatch_registry,
-          shard_arg if xla_extension_version >= 229 else temp_shard_arg)  # type: ignore
-    else:
-      return xc._xla.pjit(self.unsafe_call.name, None, aot_cache_miss, [], [], [],  # type: ignore
-                          tree_util.dispatch_registry)
-
-
-# TODO(yashkatariya): Remove once minimum jaxlib version is 0.4.24
-def temp_shard_arg(arg, devices, arg_indices, sharding, canonicalize=True):
-  return shard_arg(arg, sharding)
+    return xc._xla.pjit(
+        self.unsafe_call.name, None, aot_cache_miss, [], [], [],
+        tree_util.dispatch_registry, shard_arg)  # type: ignore
 
 
 def check_arg_avals_for_call(ref_avals, arg_avals,
@@ -3216,7 +3151,7 @@ def check_array_xla_sharding_layout_match(
           f"with: {xs} for arg {name} with shape: {arg.aval.str_short()}",
           'sharding'))
 
-    if (xla_extension_version >= 249 and not db_xs and arg._committed and
+    if (not db_xs and arg._committed and
         arg.layout.device_local_layout is not None and xl is not None and
         arg.layout.device_local_layout != xl):
       errors.append(

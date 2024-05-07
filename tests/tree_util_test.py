@@ -18,7 +18,6 @@ import functools
 import pickle
 import re
 from typing import TypeVar
-import unittest
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -26,7 +25,6 @@ import jax
 from jax import flatten_util
 from jax import tree_util
 from jax._src import test_util as jtu
-from jax._src.lib import xla_extension_version
 from jax._src.tree_util import flatten_one_level, prefix_errors
 import jax.numpy as jnp
 
@@ -233,27 +231,25 @@ TREE_STRINGS = (
     "PyTreeDef(CustomNode(StaticDict[{'foo': 4, 'bar': 5}], []))",
 )
 
-if xla_extension_version >= 259:
+@pytree_node_dataclass
+class ADataclass:
+  x: tuple[int, int]
+  y: int
 
-  @pytree_node_dataclass
-  class ADataclass:
-    x: tuple[int, int]
-    y: int
+@pytree_node_dataclass
+class ADataclassWithMeta:
+  x: tuple[int, int]
+  y: int
+  z: int = dataclasses.field(metadata={"pytree_node": False})
 
-  @pytree_node_dataclass
-  class ADataclassWithMeta:
-    x: tuple[int, int]
-    y: int
-    z: int = dataclasses.field(metadata={"pytree_node": False})
-
-  TREES += (
-      (ADataclass(x=(1, 2), y=3),),
-      (ADataclassWithMeta(x=(1, 2), y=3, z=4),),
-  )
-  TREE_STRINGS += (
-      "PyTreeDef(CustomNode(ADataclass[()], [(*, *), *]))",
-      "PyTreeDef(CustomNode(ADataclassWithMeta[(4,)], [(*, *), *]))",
-  )
+TREES += (
+    (ADataclass(x=(1, 2), y=3),),
+    (ADataclassWithMeta(x=(1, 2), y=3, z=4),),
+)
+TREE_STRINGS += (
+    "PyTreeDef(CustomNode(ADataclass[()], [(*, *), *]))",
+    "PyTreeDef(CustomNode(ADataclassWithMeta[(4,)], [(*, *), *]))",
+)
 
 
 TREES += (
@@ -829,7 +825,6 @@ class TreeTest(jtu.JaxTestCase):
     leaves, _ = tree_util.tree_flatten_with_path(ATuple2(1, 'hi'))
     self.assertLen(leaves, 1)
 
-  @unittest.skipIf(xla_extension_version < 247, "Requires jaxlib>=0.4.26")
   def testBadFlattenNonTuple(self):
     t = BadFlattenNonTuple(3, 4)
     with self.assertRaisesRegex(
@@ -839,7 +834,6 @@ class TreeTest(jtu.JaxTestCase):
     ):
       tree_util.tree_flatten(t)
 
-  @unittest.skipIf(xla_extension_version < 247, "Requires jaxlib>=0.4.26")
   def testBadFlattenBadArityTuple(self):
     t = BadFlattenBadArityTuple(3, 4)
     with self.assertRaisesRegex(
@@ -849,7 +843,6 @@ class TreeTest(jtu.JaxTestCase):
     ):
       tree_util.tree_flatten(t)
 
-  @unittest.skipIf(xla_extension_version < 247, "Requires jaxlib>=0.4.26")
   def testBadFlattenNonIterableLeaves(self):
     t = BadFlattenNonIterableLeaves(3, 4)
     with self.assertRaisesRegex(

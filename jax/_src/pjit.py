@@ -61,7 +61,6 @@ from jax._src.interpreters import pxla
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.sharding_impls import (
     NamedSharding, XLACompatibleSharding, GSPMDSharding,
     SingleDeviceSharding, PmapSharding, AUTO, UNSPECIFIED, UnspecifiedValue,
@@ -311,19 +310,12 @@ def _cpp_pjit(jit_info: PjitInfo):
     return outs, maybe_fastpath_data
 
   fun = jit_info.fun
-  if xla_extension_version >= 226:
-    cpp_pjit_f = xc._xla.pjit(  # type: ignore
-      getattr(fun, "__name__", "<unnamed function>"),
-      fun, cache_miss, jit_info.static_argnums, jit_info.static_argnames,
-      jit_info.donate_argnums, tree_util.dispatch_registry,
-      pxla.shard_arg if xla_extension_version >= 229 else pxla.temp_shard_arg,  # type: ignore
-      _get_cpp_global_cache(jit_info.has_explicit_sharding))  # type: ignore
-  else:
-    cpp_pjit_f = xc._xla.pjit(  # type: ignore
-      getattr(fun, "__name__", "<unnamed function>"),
-      fun, cache_miss, jit_info.static_argnums, jit_info.static_argnames,
-      jit_info.donate_argnums, tree_util.dispatch_registry,
-      _get_cpp_global_cache(jit_info.has_explicit_sharding))
+  cpp_pjit_f = xc._xla.pjit(  # type: ignore
+    getattr(fun, "__name__", "<unnamed function>"),
+    fun, cache_miss, jit_info.static_argnums, jit_info.static_argnames,
+    jit_info.donate_argnums, tree_util.dispatch_registry,
+    pxla.shard_arg,  # type: ignore
+    _get_cpp_global_cache(jit_info.has_explicit_sharding))  # type: ignore
 
   cpp_pjitted_f = wraps(fun)(cpp_pjit_f)
   cpp_pjitted_f._fun = fun
@@ -1548,16 +1540,11 @@ def _pjit_call_impl(*args, jaxpr,
   donated_argnums = [i for i, d in enumerate(donated_invars) if d]
   has_explicit_sharding = _pjit_explicit_sharding(
       in_shardings, out_shardings, None, None)
-  if xla_extension_version >= 226:
-    return xc._xla.pjit(
-        name, f, call_impl_cache_miss, [], [], donated_argnums,
-        tree_util.dispatch_registry,
-        pxla.shard_arg if xla_extension_version >= 229 else pxla.temp_shard_arg,  # type: ignore
-        _get_cpp_global_cache(has_explicit_sharding))(*args)
-  else:
-    return xc._xla.pjit(name, f, call_impl_cache_miss, [], [], donated_argnums,  # type: ignore
-                        tree_util.dispatch_registry,
-                        _get_cpp_global_cache(has_explicit_sharding))(*args)
+  return xc._xla.pjit(
+      name, f, call_impl_cache_miss, [], [], donated_argnums,
+      tree_util.dispatch_registry,
+      pxla.shard_arg,  # type: ignore
+      _get_cpp_global_cache(has_explicit_sharding))(*args)
 
 pjit_p.def_impl(_pjit_call_impl)
 
@@ -1807,12 +1794,9 @@ def _pjit_batcher_for_sharding(
     tad = list(new_op.tile_assignment_dimensions)
     tad.insert(dim, 1)
     new_op.tile_assignment_dimensions = tad
-    if xla_extension_version >= 234:
-      new_gs = GSPMDSharding(
-          s._device_assignment, new_op,  # type: ignore
-          _device_list=getattr(s, '_internal_device_list', None))
-    else:
-      new_gs = GSPMDSharding(s._device_assignment, new_op)  # type: ignore
+    new_gs = GSPMDSharding(
+        s._device_assignment, new_op,  # type: ignore
+        _device_list=getattr(s, '_internal_device_list', None))
     return pxla._get_out_sharding_from_orig_sharding([new_gs], [None], s, None)[0]  # type: ignore
   else:
     if isinstance(s, NamedSharding):

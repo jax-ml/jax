@@ -45,7 +45,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
-from jax._src.lib import xla_extension_version
 from jax._src.util import NumpyComplexWarning
 
 config.parse_flags_with_absl()
@@ -3616,7 +3615,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     elif name == 'log10':
       regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'ninf.imag', 'pinf.imag', 'ninfj.imag', 'pinfj.imag', 'zero.imag')
 
-    elif name == 'log1p' and xla_extension_version < 254:
+    elif name == 'log1p':
         regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real', 'neg.real', 'pos.real',
                                        'negj.real', 'posj.real', 'ninf.real', 'ninfj.real', 'pinfj.real')
 
@@ -3629,7 +3628,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
       if dtype == np.complex128:
         regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'pos.imag', 'negj', 'posj', 'ninf', 'pinf', 'mpos.imag')
 
-    elif name == 'expm1' and xla_extension_version < 250:
+    elif name == 'expm1':
       regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'pinf', 'mq1', 'mq2', 'mq3', 'mq4', 'mneg', 'mpos')
 
     elif name == 'sinc':
@@ -3694,10 +3693,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
         regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj')
 
     elif name == 'arctanh':
-      if xla_extension_version < 254:
-        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mpos.imag')
-      else:
-        regions_with_inaccuracies_keep('pos.imag', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mpos.imag')
+      regions_with_inaccuracies_keep('pos.imag', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mpos.imag')
 
     elif name in {'cos', 'sin'}:
       regions_with_inaccuracies_keep('ninf.imag', 'pinf.imag')
@@ -3741,11 +3737,11 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
         with jtu.ignore_warning(category=RuntimeWarning, message="overflow encountered in.*"):
           self.assertAllClose(
             normalized_result_slice, normalized_expected_slice, atol=atol,
-            err_msg=f"{name} in {region_name}, {is_cpu=} {is_cuda=}, {xla_extension_version=}\n{inexact_samples}")
+            err_msg=f"{name} in {region_name}, {is_cpu=} {is_cuda=},\n{inexact_samples}")
 
       if kind == 'failure' and region_name in regions_with_inaccuracies:
         try:
-          with self.assertRaises(AssertionError, msg=f"{name} in {region_name}, {is_cpu=} {is_cuda=}, {xla_extension_version=}"):
+          with self.assertRaises(AssertionError, msg=f"{name} in {region_name}, {is_cpu=} {is_cuda=}"):
             with jtu.ignore_warning(category=RuntimeWarning, message="overflow encountered in.*"):
               self.assertAllClose(normalized_result_slice, normalized_expected_slice)
         except AssertionError as msg:
