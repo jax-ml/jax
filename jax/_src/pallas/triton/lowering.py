@@ -39,6 +39,7 @@ from jax._src import util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax.control_flow import for_loop
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import math as math_dialect
@@ -1615,6 +1616,20 @@ _STR_TO_EVICTION_POLICY = {str(e): e for e in tt_dialect.EvictionPolicy}
 _STR_TO_CACHE_MODIFIER = {str(c): c for c in tt_dialect.CacheModifier}
 
 
+def _infer_load_return_type(ptr: ir.Value) -> ir.Type:
+  if ir.RankedTensorType.isinstance(ptr.type):
+    ptr_type = ir.RankedTensorType(ptr.type)
+    element_type = tt_dialect.PointerType(ptr_type.element_type)
+    return ir.RankedTensorType.get(
+        ptr_type.shape,
+        element_type.pointee_type,
+        ptr_type.encoding,
+    )
+  else:
+    ptr_type = tt_dialect.PointerType(ptr.type)
+    return ptr_type.pointee_type
+
+
 def _load(
     ptr: ir.Value,
     mask: ir.Value | None = None,
@@ -1670,7 +1685,14 @@ def _load(
   if other is not None:
     other = _ir_cast(other, pointee_type, signed=False)
 
+  if jaxlib_version < (0, 4, 27):
+    # TODO(slebedev): Remove once the minimum jaxlib version is 0.4.27.
+    extra_args = (_infer_load_return_type(ptr),)
+  else:
+    extra_args = ()
+
   result = tt_dialect.load(
+      *extra_args,
       ptr,
       mask=mask,
       other=other,
@@ -1913,16 +1935,22 @@ def _dot(
     else:
       max_num_imprecise_acc = 0
 
-  # Ideally replace all allow_tf32 usages with InputPrecision directly
-  input_precision = tt_dialect.InputPrecision.IEEE
-  if allow_tf32:
-    input_precision = tt_dialect.InputPrecision.TF32
+  if jaxlib_version < (0, 4, 27):
+    # TODO(slebedev): Remove once the minimum jaxlib version is 0.4.27.
+    extra_kwargs = dict(allow_tf32=allow_tf32)
+  else:
+    # Ideally, replace all allow_tf32 usages with InputPrecision directly.
+    input_precision = tt_dialect.InputPrecision.IEEE
+    if allow_tf32:
+      input_precision = tt_dialect.InputPrecision.TF32
+    extra_kwargs = dict(input_precision=input_precision)
+
   return tt_dialect.dot(
       x,
       y,
       acc,
-      input_precision=input_precision,
       max_num_imprecise_acc=max_num_imprecise_acc,
+      **extra_kwargs
   )
 
 
