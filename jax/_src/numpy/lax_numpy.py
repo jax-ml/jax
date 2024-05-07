@@ -5036,6 +5036,10 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None) ->
          for elt in (i.start, i.stop, i.step)):
     return None
 
+  if any(i is Ellipsis for i in idx):
+    # Remove ellipses and add trailing `slice(None)`.
+    idx = _canonicalize_tuple_index(arr.ndim, idx=idx)
+
   simple_revs = {i for i, ind in enumerate(idx) if _is_simple_reverse_slice(ind)}
   int_indices = {i for i, (ind, size) in enumerate(zip(idx, arr.shape))
                  if _is_valid_integer_index_for_slice(ind, size, mode)}
