@@ -83,11 +83,11 @@ def argpartition(a: ArrayLike, kth: int, axis: int = ...) -> Array: ...
 def argsort(
     a: ArrayLike,
     axis: Optional[int] = ...,
-    kind: str | None = ...,
-    order: None = ...,
     *,
     stable: builtins.bool = ...,
     descending: builtins.bool = ...,
+    kind: str | None = ...,
+    order: None = ...,
 ) -> Array: ...
 def argwhere(
     a: ArrayLike,
@@ -737,11 +737,11 @@ sometrue = any
 def sort(
     a: ArrayLike,
     axis: Optional[int] = ...,
-    kind: str | None = ...,
-    order: None = ...,
     *,
     stable: builtins.bool = ...,
     descending: builtins.bool = ...,
+    kind: str | None = ...,
+    order: None = ...,
 ) -> Array: ...
 def sort_complex(a: ArrayLike) -> Array: ...
 def split(
