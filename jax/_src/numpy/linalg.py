@@ -1611,18 +1611,19 @@ def vector_norm(x: ArrayLike, /, *, axis: int | None = None, keepdims: bool = Fa
 
 
 def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1) -> Array:
-  """Compute the (batched) vector dot product of two arrays.
+  """Compute the (batched) vector conjugate dot product of two arrays.
 
   JAX implementation of :func:`numpy.linalg.vecdot`.
 
   Args:
     x1: left-hand side array.
-    x2: right-hand side array. Size of ``x2[axis]`` must match size of ``x1[axis]``.
+    x2: right-hand side array. Size of ``x2[axis]`` must match size of ``x1[axis]``,
+      and remaining dimensions must be broadcast-compatible.
     axis: axis along which to compute the dot product (default: -1)
 
   Returns:
-    array containing the dot product of ``x1`` and ``x2`` along ``axis``. The
-    non-contracted dimensions are broadcast together.
+    array containing the conjugate dot product of ``x1`` and ``x2`` along ``axis``.
+    The non-contracted dimensions are broadcast together.
 
   See also:
     - :func:`jax.numpy.vecdot`: similar API in the ``jax.numpy`` namespace.
@@ -1636,7 +1637,6 @@ def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1) -> Array:
     >>> x2 = jnp.array([4, 5, 6])
     >>> jnp.linalg.vecdot(x1, x2)
     Array(32, dtype=int32)
-
 
     Batched vector dot product of two 2D arrays:
 
@@ -1657,7 +1657,7 @@ def matmul(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 
   Args:
     x1: first input array, of shape ``(..., N)``.
-    x2: second input array. Must have shape ``(N,)`` or ``(..., M, N)``.
+    x2: second input array. Must have shape ``(N,)`` or ``(..., N, M)``.
       In the multi-dimensional case, leading dimensions must be broadcast-compatible
       with the leading dimensions of ``x1``.
 
@@ -1718,14 +1718,14 @@ def tensordot(x1: ArrayLike, x2: ArrayLike, /, *,
     array containing the tensor dot product of the inputs
 
   See also:
-    :func:`jax.numpy.tensordot`: equivalent API in the :mod:`jax.numpy` namespace.
-    :func:`jax.numpy.einsum`: NumPy API for more general tensor contractions.
-    :func:`jax.lax.dot_general`: XLA API for more general tensor contractions.
+    - :func:`jax.numpy.tensordot`: equivalent API in the :mod:`jax.numpy` namespace.
+    - :func:`jax.numpy.einsum`: NumPy API for more general tensor contractions.
+    - :func:`jax.lax.dot_general`: XLA API for more general tensor contractions.
 
   Examples:
     >>> x1 = jnp.arange(24.).reshape(2, 3, 4)
     >>> x2 = jnp.ones((3, 4, 5))
-    >>> jnp.tensordot(x1, x2)
+    >>> jnp.linalg.tensordot(x1, x2)
     Array([[ 66.,  66.,  66.,  66.,  66.],
            [210., 210., 210., 210., 210.]], dtype=float32)
 
@@ -1756,7 +1756,7 @@ def tensordot(x1: ArrayLike, x2: ArrayLike, /, *,
            [19, 26, 33]], dtype=int32)
 
     Setting ``axes=0`` for one-dimensional inputs is equivalent to
-    ``jnp.linalg.outer``:
+    :func:`jax.numpy.linalg.outer`:
 
     >>> x1 = jnp.array([1, 2])
     >>> x2 = jnp.array([1, 2, 3])
