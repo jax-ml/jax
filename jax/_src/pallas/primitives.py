@@ -303,19 +303,25 @@ def _load_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
     raise NotImplementedError("Only one indexer supported in discharge rule.")
   idx = indexers[0]
   if all((isinstance(s, Slice) or not s.shape) for s in idx.indices):
-    # TODO(b/329733289): support strided load/store in interpret mode.
-    for s in idx.indices:
-      if isinstance(s, Slice) and s.stride > 1:
-        raise NotImplementedError("Unimplemented stride support.")
     indices = idx.indices
     scalar_dims = [not isinstance(s, Slice) and not s.shape for s in indices]
     slice_starts = [s.start if isinstance(s, Slice) else s for s in indices]
     slice_sizes = tuple(s.size if isinstance(s, Slice) else 1 for s in indices)
-    out_ones = lax.dynamic_slice(ref, slice_starts, slice_sizes=slice_sizes)
+    slice_strides = tuple(s.stride if isinstance(s, Slice) else 1 for s in indices)
+    indices = [start + lax.iota(jnp.int32, size) * stride for (start, size, stride)
+                            in zip(slice_starts, slice_sizes, slice_strides)]
+    indices = tuple(jnp.meshgrid(*indices, indexing='ij'))
+    if mask is not None:
+      # masked loads set to index first element in array
+      indices = tuple(jnp.where(mask, indexs, 0) for indexs in indices)
+    out_ones = ref[indices]
     out_indexer = tuple(0 if scalar else slice(None) for scalar in scalar_dims)
     out = out_ones[out_indexer]
   elif all(not isinstance(s, Slice) for s in idx.indices):
-    out = ref[idx.indices]
+    indices = idx.indices
+    if mask is not None:
+      indices = tuple(jnp.where(mask, indexs, 0) for indexs in indices)
+    out = ref[indices]
   else:
     raise NotImplementedError
   if mask is not None and other is not None:
@@ -407,34 +413,42 @@ def _swap_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
   if len(indexers) > 1:
     raise NotImplementedError("Only one indexer supported in discharge rule.")
   idx = indexers[0]
-  if all((isinstance(s, Slice) or not s.shape) for s in idx.indices):
-    # TODO(b/329733289): support strided load/store in interpret mode.
-    for s in idx.indices:
-      if isinstance(s, Slice) and s.stride > 1:
-        raise NotImplementedError("Unimplemented stride support.")
+  if all((isinstance(s, Slice) or not s.shape) for s in idx.indices) or all(not isinstance(s, Slice) for s in idx.indices):
     indices = idx.indices
-    scalar_dims = [
-        i
-        for i, s in enumerate(indices)
-        if not isinstance(s, Slice) and not s.shape
-    ]
-    slice_starts = [s.start if isinstance(s, Slice) else s for s in indices]
-    slice_sizes = tuple(s.size if isinstance(s, Slice) else 1 for s in indices)
-    out = lax.dynamic_slice(ref, slice_starts, slice_sizes=slice_sizes)
-    out = jnp.squeeze(out, scalar_dims)
+    if all((isinstance(s, Slice) or not s.shape) for s in idx.indices):
+      scalar_dims = [
+          i
+          for i, s in enumerate(indices)
+          if not isinstance(s, Slice) and not s.shape
+      ]
+      val = jnp.expand_dims(val, scalar_dims)
+      if (mask is not None):
+        mask = jnp.expand_dims(mask, scalar_dims)
+      slice_starts = [s.start if isinstance(s, Slice) else s for s in indices]
+      slice_sizes = tuple(s.size if isinstance(s, Slice) else 1 for s in indices)
+      slice_strides = tuple(s.stride if isinstance(s, Slice) else 1 for s in indices)
+      indices = [start + lax.iota(jnp.int32, size) * stride for (start, size, stride)
+                              in zip(slice_starts, slice_sizes, slice_strides)]
+      indices = tuple(jnp.meshgrid(*indices, indexing='ij'))
+
+    if (mask is not None):
+      # masked indexs do not occur, we simulate by using first element in array as dummy
+      is_first_element = (jnp.stack(indices) == 0).all(0)
+      first_element_index = is_first_element.nonzero(size=1)
+      swap_first_element = lax.select(is_first_element.any(), mask[first_element_index][0], False)
+      indices = tuple(jnp.where(mask, indexs, 0) for indexs in indices)
+    out = ref[indices]
     if mask is not None:
-      out_ = out
       out = jnp.where(mask, out, val)
-      val = jnp.where(mask, val, out_)
-    val = jnp.expand_dims(val, scalar_dims)
-    x_new = lax.dynamic_update_slice(ref, val, start_indices=slice_starts)
-  elif all(not isinstance(s, Slice) for s in idx.indices):
-    out = ref[idx.indices]
-    if mask is not None:
-      out_ = out
-      out = jnp.where(mask, out, val)
-      val = jnp.where(mask, val, out_)
-    x_new = ref.at[idx.indices].set(val)
+      # This is all to deal with masked OOB indexing occuring, we reserve
+      # the first element in the array for masked indexing
+      # so first element requires special attention
+      val = jnp.where(mask, val,
+        lax.select(is_first_element.any() & swap_first_element,
+          val[first_element_index][0],
+          ref[(0,)*len(ref.shape)],
+        ))
+    x_new = ref.at[indices].set(val)
   else:
     raise NotImplementedError
   return (x_new,) + (None,) * (len(in_avals) - 1), out

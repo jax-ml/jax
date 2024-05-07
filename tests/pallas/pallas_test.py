@@ -527,6 +527,85 @@ class PallasCallTest(PallasTest):
     np.testing.assert_array_equal(out[0], jnp.where(mask, y, x))
     np.testing.assert_array_equal(out[1], jnp.where(mask, x, y))
 
+  def test_empty_masked_swap(self):
+    m, n = 16, 32
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(jax.ShapeDtypeStruct((m, n), jnp.float32),) * 2,
+        grid=1,
+        input_output_aliases={0: 0, 1: 1},
+    )
+    def masked_swap(_, _2, mask_ref, x_ref, y_ref):
+      x = x_ref[:]
+      y = pl.swap(y_ref, (slice(None),), x, mask=mask_ref[:])
+      x_ref[:] = y
+
+    x = random.normal(random.key(0), (m, n))
+    y = random.normal(random.key(1), (m, n))
+    mask = jnp.zeros((m, n), dtype=bool)
+    out = masked_swap(x, y, mask)
+    np.testing.assert_array_equal(out[0], jnp.where(mask, y, x))
+    np.testing.assert_array_equal(out[1], jnp.where(mask, x, y))
+
+  def test_masked_oob_swap(self):
+    m, n = 32, 32
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(jax.ShapeDtypeStruct((m//2, n//2), jnp.float32), jax.ShapeDtypeStruct((m, n), jnp.float32)),
+        grid=1,
+        input_output_aliases={0: 0, 1: 1},
+    )
+    def masked_idx_swap(_, _2, mask_ref, idx_ref, x_ref, y_ref):
+      x = x_ref[:]
+      y = pl.swap(y_ref, (idx_ref[0], idx_ref[1]), x, mask=mask_ref[:])
+      x_ref[:] = y
+    val_shape = (m//2, n//2)
+    x = random.normal(random.key(0), val_shape)
+    y = random.normal(random.key(1), (m, n))
+    mask = random.bernoulli(random.key(2), shape=val_shape)
+    # Set of unique indices, some of which are OOB
+    idx = jnp.stack(jnp.unravel_index(random.choice(random.key(3), jnp.arange(m*n*4), shape=val_shape, replace=False), (m*2,n*2)))
+    in_bounds_mask = jnp.stack([ind < bound for ind, bound in zip(idx, y.shape)]).all(0)
+    mask = mask & in_bounds_mask
+    out = masked_idx_swap(x, y, mask, idx)
+
+    # the unjittable masked indexing equivalent
+    unmasked_idx = tuple(idx[:,mask])
+    x_new = x.at[mask].set(y[unmasked_idx])
+    y_new = y.at[unmasked_idx].set(x[mask])
+    np.testing.assert_array_equal(out[0], x_new)
+    np.testing.assert_array_equal(out[1], y_new)
+
+  def test_masked_oob_swap_slice(self):
+    m = 32
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(jax.ShapeDtypeStruct((m//2,), jnp.float32), jax.ShapeDtypeStruct((m,), jnp.float32)),
+        grid=1,
+        input_output_aliases={0: 0, 1: 1},
+    )
+    def masked_oob_swap_slice(_, _2, mask_ref, start_idx_ref, x_ref, y_ref):
+      x = x_ref[:]
+      y = pl.swap(y_ref, (pl.dslice(start_idx_ref[()], m//2)), x, mask=mask_ref[:])
+      x_ref[:] = y
+
+    x = random.normal(random.key(0), (m//2,))
+    y = random.normal(random.key(1), (m,))
+    slice_start = random.randint(random.key(2), (1,), m//2, m)[0]
+    indices = jnp.arange(m//2) + slice_start
+    mask = indices < m
+    out = masked_oob_swap_slice(x, y, mask, slice_start)
+
+    # the unjittable masked indexing equivalent
+    unmasked_idx = indices[mask]
+    x_new = x.at[mask].set(y[unmasked_idx])
+    y_new = y.at[unmasked_idx].set(x[mask])
+    np.testing.assert_array_equal(out[0], x_new)
+    np.testing.assert_array_equal(out[1], y_new)
+
   def test_unused_ref(self):
     m, n = 16, 32
     @functools.partial(
