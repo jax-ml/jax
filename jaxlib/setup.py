@@ -112,6 +112,7 @@ setup(
             'mlir/_mlir_libs/*.so',
             'mlir/_mlir_libs/*.pyd',
             'mlir/_mlir_libs/*.py',
+            'mlir/_mlir_libs/*.pyi',
             'rocm/*',
             'triton/*.py',
             'triton/*.pyi',

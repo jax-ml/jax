@@ -287,7 +287,6 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
           "__main__/jaxlib/mlir/passmanager.pyi",
       ] + if_has_mosaic_gpu([
           "__main__/jaxlib/mlir/execution_engine.py",
-          "__main__/jaxlib/mlir/execution_engine.pyi",
       ]),
   )
   copy_runfiles(
@@ -387,6 +386,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
           f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsLLVM.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsNvgpu.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/_mlirExecutionEngine.{pyext}",
+          "__main__/jaxlib/mlir/_mlir_libs/_mlirExecutionEngine.pyi",
           f"__main__/jaxlib/mlir/_mlir_libs/_mlirGPUPasses.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/_mosaic_gpu_ext.{pyext}",
       ]),
