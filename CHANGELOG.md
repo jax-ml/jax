@@ -8,6 +8,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.28
 
+* Deprecations & removals
+  * The ``kind`` argument to {func}`jax.numpy.sort` and {func}`jax.numpy.argsort`
+    is now removed. Use `stable=True` or `stable=False` instead.
+
 ## jaxlib 0.4.28
 
 ## jax 0.4.27 (May 7, 2024)
@@ -73,8 +77,6 @@ Remember to align the itemized text with the first line of an item within a list
     {func}`~jax.numpy.apply_over_axes`, {func}`~jax.numpy.inner`,
     {func}`~jax.numpy.outer`, {func}`~jax.numpy.cross`,
     {func}`~jax.numpy.kron`, and {func}`~jax.numpy.lexsort`.
-  * The ``kind`` argument to {func}`jax.numpy.sort` and {func}`jax.numpy.argsort`
-    is now removed. Use `stable=True` or `stable=False` instead.
 
 * Bug fixes
   * {func}`jax.numpy.astype` will now always return a copy when `copy=True`.
