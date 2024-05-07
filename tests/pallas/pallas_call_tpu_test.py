@@ -1701,7 +1701,7 @@ class PallasCallWhileLoopTest(PallasTPUTest):
       def body(carry):
         io, j = carry
         i = io - 128
-        sl = sl = jax.lax.div(i, 128)
+        sl = jax.lax.div(i, 128)
         l = jax.lax.rem(i, 128)
         v = x_ref[0, sl, l]
         s = pl.load(r_ref, (0, 0))
