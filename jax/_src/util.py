@@ -38,6 +38,7 @@ T = TypeVar("T")
 T1 = TypeVar("T1")
 T2 = TypeVar("T2")
 T3 = TypeVar("T3")
+F = TypeVar("F", bound=Callable)
 
 
 if TYPE_CHECKING:
@@ -285,8 +286,8 @@ def split_merge(predicate, xs):
 
   return lhs, rhs, merge
 
-def cache(max_size=4096):
-  def wrap(f):
+def cache(max_size: int | None = 4096) -> Callable[[F], F]:
+  def wrap(f: F) -> F:
     @functools.lru_cache(max_size)
     def cached(_, *args, **kwargs):
       return f(*args, **kwargs)
@@ -300,12 +301,12 @@ def cache(max_size=4096):
 
     wrapper.cache_clear = cached.cache_clear
     wrapper.cache_info = cached.cache_info
-    return wrapper
+    return cast(F, wrapper)
   return wrap
 
 memoize = cache(max_size=None)
 
-def weakref_lru_cache(call: Callable, maxsize=2048):
+def weakref_lru_cache(call: F, maxsize=2048) -> F:
   """
   Least recently used cache decorator with weakref support.
 
@@ -316,7 +317,7 @@ def weakref_lru_cache(call: Callable, maxsize=2048):
   global _weakref_lru_caches
   cached_call = xc.weakref_lru_cache(config.trace_context, call, maxsize)
   _weakref_lru_caches.add(cached_call)
-  return cached_call
+  return cast(F, cached_call)
 
 _weakref_lru_caches = weakref.WeakSet()  # type: ignore
 
