@@ -375,7 +375,6 @@ class FragmentedArray:
     if ref_ty.shape != self.shape:
       raise ValueError((ref_ty.shape, self.shape))
     smem_1d = mgpu.memref_fold(ref, 0, len(ref_ty.shape))
-    assert isinstance(self.layout, WGStridedFragLayout)
     for idx, reg in zip(self.layout.thread_vec_idxs(), self.registers.flat):
       vector.store(reg, smem_1d, idx)
 
@@ -383,7 +382,7 @@ class FragmentedArray:
     """Stores accumulator to a 2D memref. Not optimized at the moment."""
     assert self.layout == WGMMA_LAYOUT
     index = ir.IndexType.get()
-    m, n = self.shape  # pytype: disable=bad-unpacking
+    m, n = self.shape
     ref_ty = ir.MemRefType(ref.type)
     if ref_ty.shape != [m, n]:
       raise ValueError(ref.type, (m, n))
@@ -410,15 +409,44 @@ class FragmentedArray:
   def store_tiled(self, ref, swizzle: int | None):
     if self.layout != WGMMA_LAYOUT:
       raise NotImplementedError
-    bw = mgpu.bytewidth(self.mlir_dtype)
-    m, n = self.shape  # pytype: disable=bad-unpacking
+    dtype = self.mlir_dtype
+    bw = mgpu.bytewidth(dtype)
+    m, n = self.shape
     assert m % 64 == 0  # This is implied by the layout.
-    if n % 32 != 0:
-      raise NotImplementedError
     cols_per_tile = 128 // bw
     expected_shape = [m // 64, n // cols_per_tile, 64, cols_per_tile]
     if ir.MemRefType(ref.type).shape != expected_shape:
       raise ValueError(ref.type, (m, n))
+    for get, _, idxs in self.transfer_tiled(self.shape, dtype, swizzle):
+      vector.store(get(self.registers), ref, idxs)
+
+  @classmethod
+  def load_tiled(cls, ref, swizzle: int | None):
+    ref_ty = ir.MemRefType(ref.type)
+    dtype = ref_ty.element_type
+    bw = mgpu.bytewidth(dtype)
+    m_tiles, n_tiles, m_tile_size, n_tile_size = ref_ty.shape
+    if m_tile_size != 64 or n_tile_size != (128 // bw):
+      raise ValueError
+    m, n = m_tiles * m_tile_size, n_tiles * n_tile_size
+    assert m % 64 == 0  # This is implied by the layout.
+    registers = np.full(
+        (m_tiles, n // 8, 2, 1),
+        vector.splat(ir.VectorType.get((2,), dtype), c(0, dtype)),
+        dtype=object,
+    )
+    for _, update, idxs in cls.transfer_tiled((m, n), dtype, swizzle):
+      update(registers, vector.load(ir.VectorType.get((2,), dtype), ref, idxs))
+    return cls(_registers=registers, _layout=WGMMA_LAYOUT)
+
+  @staticmethod
+  def transfer_tiled(shape, dtype, swizzle: int | None):
+    bw = mgpu.bytewidth(dtype)
+    cols_per_tile = 128 // bw
+    m, n = shape
+    if n % 32 != 0:
+      raise NotImplementedError
+    cols_per_tile = 128 // bw
     if swizzle != 128:
       raise NotImplementedError("Only 128B swizzle supported")
     index = ir.IndexType.get()
@@ -461,10 +489,17 @@ class FragmentedArray:
             col = arith.xori(col, col_swizzle_bits)
             reg_idx_even = col_subidx_even + col_group * (cols_per_tile // 8)
             reg_idx_odd = col_subidx_odd + col_group * (cols_per_tile // 8)
-            value_even = self.registers[row_group, reg_idx_even, row_subidx, 0]
-            value_odd = self.registers[row_group, reg_idx_odd, row_subidx, 0]
-            value = arith.select(is_even_row, value_even, value_odd)
-            vector.store(value, ref, [c(row_group), c(col_group), row, col])
+            even_idx = row_group, reg_idx_even, row_subidx, 0
+            odd_idx = row_group, reg_idx_odd, row_subidx, 0
+            idx = c(row_group), c(col_group), row, col
+            def get_register(regs, even_idx=even_idx, odd_idx=odd_idx):
+              value_even = regs[even_idx]
+              value_odd = regs[odd_idx]
+              return arith.select(is_even_row, value_even, value_odd)
+            def update_registers(regs, new, even_idx=even_idx, odd_idx=odd_idx):
+              regs[even_idx] = arith.select(is_even_row, new, regs[even_idx])
+              regs[odd_idx] = arith.select(is_even_row, regs[odd_idx], new)
+            yield get_register, update_registers, idx
 
   def tree_flatten(self):
     return list(self.registers.flat), (self.layout, self.registers.shape)

@@ -15,6 +15,7 @@
 """Tests for Mosaic GPU DSL functions and utilities."""
 
 import operator
+from functools import partial
 from typing import Optional
 
 from absl.testing import absltest, parameterized
@@ -381,11 +382,12 @@ class WGMMATest(TestCase):
     np.testing.assert_array_equal(iota, expected)
 
   @parameterized.named_parameters(
-      ("f32", ir.F32Type, jnp.float32),
-      ("f16", ir.F16Type, jnp.float16),
+      ("f32", ir.F32Type.get, jnp.float32),
+      ("f16", ir.F16Type.get, jnp.float16),
+      ("i8", partial(ir.IntegerType.get_signless, 8), jnp.int8),
   )
   def test_store_tiled(self, mlir_dtype_cls, jax_dtype):
-    mlir_dtype = mlir_dtype_cls.get()
+    mlir_dtype = mlir_dtype_cls()
     m = 128
     n = 256
     tiling = (64, 128 // bytewidth(mlir_dtype))
@@ -401,6 +403,33 @@ class WGMMATest(TestCase):
     iota = mosaic_gpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (), expected, expected
     )()
+    np.testing.assert_array_equal(iota, expected)
+
+  @parameterized.named_parameters(
+      ("f32", ir.F32Type.get, jnp.float32),
+      ("f16", ir.F16Type.get, jnp.float16),
+      ("i8", partial(ir.IntegerType.get_signless, 8), jnp.int8),
+  )
+  def test_load_tiled(self, mlir_dtype_cls, jax_dtype):
+    mlir_dtype = mlir_dtype_cls()
+    m = 128
+    n = 256 // bytewidth(mlir_dtype)
+    tiling = (64, 128 // bytewidth(mlir_dtype))
+    def kernel(ctx, in_, out, smem):
+      del ctx
+      smem1, smem2 = smem
+      copy(in_, smem1, swizzle=128)
+      t = mgpu.FragmentedArray.load_tiled(smem1, swizzle=128)
+      t.store_tiled(smem2, swizzle=128)
+      copy(smem2, out, swizzle=128)
+    expected = (
+        np.arange(m * n, dtype=jax_dtype)
+        .reshape(m // tiling[0], tiling[0], n // tiling[1], tiling[1])
+        .transpose(0, 2, 1, 3)
+    )
+    iota = mosaic_gpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), expected, expected, (expected,) * 2
+    )(expected)
     np.testing.assert_array_equal(iota, expected)
 
   @parameterized.product(
