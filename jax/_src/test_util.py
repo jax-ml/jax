@@ -57,7 +57,7 @@ from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
 from jax._src.util import unzip2
 from jax._src.public_test_util import (  # noqa: F401
     _assert_numpy_allclose, _check_dtypes_match, _default_tolerance, _dtype, check_close, check_grads,
-    check_jvp, check_vjp, default_gradient_tolerance, default_tolerance, tolerance)
+    check_jvp, check_vjp, default_gradient_tolerance, default_tolerance, tolerance, rand_like)
 from jax._src import xla_bridge
 
 
