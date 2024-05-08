@@ -11,6 +11,9 @@ Remember to align the itemized text with the first line of an item within a list
 * Deprecations & removals
   * The ``kind`` argument to {func}`jax.numpy.sort` and {func}`jax.numpy.argsort`
     is now removed. Use `stable=True` or `stable=False` instead.
+  * Removed ``get_compute_capability`` from the ``jax.experimental.pallas.gpu``
+    module. Use the ``compute_capability`` attribute of a GPU device, returned
+    by {func}`jax.devices` or {func}`jax.local_devices`, instead.
 
 ## jaxlib 0.4.28
 

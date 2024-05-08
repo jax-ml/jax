@@ -22,7 +22,6 @@ import jax
 import jax.numpy as jnp
 from jax import dtypes
 from jax._src import test_util as jtu
-from jax.experimental.pallas import gpu as plgpu
 from jax.experimental.sparse import nm
 
 jax.config.parse_flags_with_absl()
@@ -33,13 +32,9 @@ class SpmmTest(jtu.JaxTestCase):
     if not jtu.test_device_matches(["gpu"]):
       self.skipTest("Only works on GPU")
     if (jtu.test_device_matches(["cuda"]) and
-        not self.check_gpu_capability_at_least(80)):
+        not jtu.is_device_gpu_at_least("8.0")):
       self.skipTest("Only works on GPUs with capability >= sm80")
     super().setUp()
-
-  def check_gpu_capability_at_least(self, capability,
-                                    device: int = 0):
-    return plgpu.get_compute_capability(device) >= capability
 
   # ----- Test different input shapes
   @parameterized.product(
