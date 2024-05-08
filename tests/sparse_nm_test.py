@@ -32,7 +32,7 @@ class SpmmTest(jtu.JaxTestCase):
     if not jtu.test_device_matches(["gpu"]):
       self.skipTest("Only works on GPU")
     if (jtu.test_device_matches(["cuda"]) and
-        not jtu.is_device_gpu_at_least("8.0")):
+        not jtu.is_cuda_compute_capability_at_least("8.0")):
       self.skipTest("Only works on GPUs with capability >= sm80")
     super().setUp()
 

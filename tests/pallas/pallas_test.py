@@ -134,7 +134,7 @@ class PallasTest(parameterized.TestCase):
       if not jtu.test_device_matches(["gpu"]):
         self.skipTest("Only works on GPU")
       if (jtu.test_device_matches(["cuda"]) and
-          not jtu.is_device_gpu_at_least("8.0")):
+          not jtu.is_cuda_compute_capability_at_least("8.0")):
         self.skipTest("Only works on GPUs with capability >= sm80")
 
     super().setUp()
@@ -1649,7 +1649,8 @@ class PallasOpsTest(PallasTest):
   def test_approx_tanh(self, dtype):
     if self.INTERPRET:
       self.skipTest("approx_tanh is not supported in interpreter mode")
-    if dtype == "bfloat16" and not jtu.is_device_gpu_at_least("9.0"):
+    if (dtype == "bfloat16" and
+        not jtu.is_cuda_compute_capability_at_least("9.0")):
       self.skipTest("tanh.approx.bf16 requires a GPU with capability >= sm90")
 
     @functools.partial(
