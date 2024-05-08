@@ -1486,6 +1486,15 @@ py_test(
     ],
 )
 
+py_test(
+    name = "sourcemap_test",
+    srcs = ["sourcemap_test.py"],
+    deps = [
+        "//jax",
+        "//jax:test_util",
+    ],
+)
+
 exports_files(
     [
         "api_test.py",
