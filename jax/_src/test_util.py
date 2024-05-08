@@ -419,6 +419,12 @@ def is_device_tpu(version: int | None = None, variant: str = "") -> bool:
     return "v5 lite" in device_kind
   return expected_version in device_kind
 
+def is_device_gpu_at_least(capability: str) -> bool:
+  if device_under_test() != "gpu":
+    return False
+  d, *_ = jax.local_devices(backend="gpu")
+  return d.compute_capability >= capability
+
 def _get_device_tags():
   """returns a set of tags defined for the device under test"""
   if is_device_rocm():
