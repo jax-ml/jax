@@ -79,6 +79,7 @@ setup(
         'opt_einsum',
         'scipy>=1.9',
         "scipy>=1.11.1; python_version>='3.12'",
+        "typing_extensions>=4.8.0",
         # Required by xla_bridge.discover_pjrt_plugins for forwards compat with
         # Python versions < 3.10. Can be dropped when 3.10 is the minimum
         # required Python version.

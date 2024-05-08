@@ -21,7 +21,8 @@ from functools import partial
 import itertools as it
 import logging
 import operator
-from typing import (Any, Callable, Generic, TypeVar, overload, TYPE_CHECKING, cast)
+from typing import (Any, Callable, Generic, Protocol, TypeVar, overload, TYPE_CHECKING, cast)
+from typing_extensions import ParamSpec
 import weakref
 
 import numpy as np
@@ -39,6 +40,8 @@ T1 = TypeVar("T1")
 T2 = TypeVar("T2")
 T3 = TypeVar("T3")
 F = TypeVar("F", bound=Callable)
+P = ParamSpec("P")
+V = TypeVar("V", covariant=True)
 
 
 if TYPE_CHECKING:
@@ -286,8 +289,14 @@ def split_merge(predicate, xs):
 
   return lhs, rhs, merge
 
-def cache(max_size: int | None = 4096) -> Callable[[F], F]:
-  def wrap(f: F) -> F:
+class CachedFunction(Protocol, Generic[P, V]):
+  def __call__(self, *args: P.args, **kwargs: P.kwargs) -> V: ...
+  def cache_clear(self) -> None: ...
+  def cache_info(self) -> functools._CacheInfo: ...
+
+
+def cache(max_size: int | None = 4096) -> Callable[[Callable[P, V]], CachedFunction[P, V]]:
+  def wrap(f):
     @functools.lru_cache(max_size)
     def cached(_, *args, **kwargs):
       return f(*args, **kwargs)
@@ -301,7 +310,7 @@ def cache(max_size: int | None = 4096) -> Callable[[F], F]:
 
     wrapper.cache_clear = cached.cache_clear
     wrapper.cache_info = cached.cache_info
-    return cast(F, wrapper)
+    return wrapper
   return wrap
 
 memoize = cache(max_size=None)
@@ -317,7 +326,7 @@ def weakref_lru_cache(call: F, maxsize=2048) -> F:
   global _weakref_lru_caches
   cached_call = xc.weakref_lru_cache(config.trace_context, call, maxsize)
   _weakref_lru_caches.add(cached_call)
-  return cast(F, cached_call)
+  return cached_call
 
 _weakref_lru_caches = weakref.WeakSet()  # type: ignore
 
