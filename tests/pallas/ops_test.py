@@ -41,7 +41,7 @@ class OpsTest(jtu.JaxTestCase):
       if jtu.device_under_test() == "cpu":
         self.skipTest("Only interpreter mode supported on CPU")
       if (jtu.test_device_matches(["cuda"]) and
-          not jtu.is_device_gpu_at_least("8.0")):
+          not jtu.is_cuda_compute_capability_at_least("8.0")):
         self.skipTest("Only works on GPUs with capability >= sm80")
 
   @classmethod

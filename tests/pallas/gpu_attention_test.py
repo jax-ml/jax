@@ -38,7 +38,7 @@ class DecodeAttentionTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if not jtu.is_device_gpu_at_least("8.0"):
+    if not jtu.is_cuda_compute_capability_at_least("8.0"):
       self.skipTest("Fused attention only works on GPUs with capability >= sm80")
 
   @parameterized.named_parameters(*[
