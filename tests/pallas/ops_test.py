@@ -16,9 +16,12 @@
 
 import functools
 
+import numpy as np
 from absl.testing import absltest
 from absl.testing import parameterized
+
 import jax
+import jax.numpy as jnp
 from jax import lax
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
@@ -26,9 +29,6 @@ try:
   from jax.experimental.pallas import gpu as plgpu
 except ImportError:
   plgpu = None
-import jax.numpy as jnp
-import numpy as np
-
 
 jax.config.parse_flags_with_absl()
 
