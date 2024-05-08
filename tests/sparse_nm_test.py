@@ -13,20 +13,17 @@
 # limitations under the License.
 
 import math
+
+import numpy as np
 from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
+import jax.numpy as jnp
 from jax import dtypes
 from jax._src import test_util as jtu
+from jax.experimental.pallas import gpu as plgpu
 from jax.experimental.sparse import nm
-import jax.numpy as jnp
-import numpy as np
-
-try:
-  from jax.experimental.pallas import gpu as plgpu
-except ImportError:
-  plgpu = None
 
 jax.config.parse_flags_with_absl()
 
@@ -42,8 +39,6 @@ class SpmmTest(jtu.JaxTestCase):
 
   def check_gpu_capability_at_least(self, capability,
                                     device: int = 0):
-    if plgpu is None:
-      return False
     return plgpu.get_compute_capability(device) >= capability
 
   # ----- Test different input shapes

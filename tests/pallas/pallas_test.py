@@ -32,19 +32,16 @@ from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import state
 from jax._src.lax.control_flow.for_loop import for_loop
-from jax._src.lib import version as jaxlib_version
 from jax._src.pallas.pallas_call import _trace_to_jaxpr
-if jaxlib_version >= (0, 4, 24) and sys.platform != "win32":
+if sys.platform != "win32":
+  # Triton does not support Windows.
   from jax._src.pallas.triton.lowering import LoweringError
 else:
   LoweringError = Exception
 from jax.interpreters import partial_eval as pe
 import jax.numpy as jnp
 from jax.experimental import pallas as pl
-try:
-  from jax.experimental.pallas import gpu as plgpu
-except ImportError:
-  plgpu = None
+from jax.experimental.pallas import gpu as plgpu
 from jax.experimental.pallas.ops import attention
 from jax.experimental.pallas.ops import layer_norm
 from jax.experimental.pallas.ops import rms_norm
@@ -148,8 +145,6 @@ class PallasTest(parameterized.TestCase):
 
   def check_gpu_capability_at_least(self, capability,
                                     device: int = 0):
-    if plgpu is None:
-      return False
     if self.INTERPRET:
       return True
     return plgpu.get_compute_capability(device) >= capability
@@ -1500,9 +1495,6 @@ class PallasOpsTest(PallasTest):
       for fn, dtype in itertools.product(*args)
   )
   def test_elementwise(self, fn, dtype):
-    if fn is jnp.exp2 and jaxlib_version < (0, 4, 26):
-      self.skipTest("Requires jaxlib 0.4.26 or later")
-
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), dtype), grid=1
     )
