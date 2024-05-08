@@ -8,6 +8,9 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.28
 
+* Bug fixes
+  * Reverted a change to `make_jaxpr` that was breaking Equinox (#21116).
+
 * Deprecations & removals
   * The ``kind`` argument to {func}`jax.numpy.sort` and {func}`jax.numpy.argsort`
     is now removed. Use `stable=True` or `stable=False` instead.
@@ -15,9 +18,21 @@ Remember to align the itemized text with the first line of an item within a list
     module. Use the ``compute_capability`` attribute of a GPU device, returned
     by {func}`jax.devices` or {func}`jax.local_devices`, instead.
 
+* Changes
+  * The minimum jaxlib version of this release is 0.4.27.
+
 ## jaxlib 0.4.28
+
+* Bug fixes
   * Fixes a memory corruption bug in the type name of Array and JIT Python
     objects in Python 3.10 or earlier.
+  * Fixed a warning `'+ptx84' is not a recognized feature for this target`
+    under CUDA 12.4.
+  * Fixed a slow compilation problem on CPU.
+
+* Changes
+  * The Windows build is now built with Clang instead of MSVC.
+
 
 ## jax 0.4.27 (May 7, 2024)
 
