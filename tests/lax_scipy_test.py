@@ -339,8 +339,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     def scipy_fun(z, m=l_max, n=l_max):
       # scipy only supports scalar inputs for z, so we must loop here.
-      vals, derivs = zip(*(osp_special.lpmn(m, n, zi) for zi in z))
-      return np.dstack(vals), np.dstack(derivs)
+      vals, derivs = zip(*(osp_special.lpmn(m, n, zi) for zi in z.astype('float64')))
+      return np.dstack(vals).astype(z.dtype), np.dstack(derivs).astype(z.dtype)
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, rtol=1e-5,
                             atol=3e-3, check_dtypes=False)
@@ -360,7 +360,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     def scipy_fun(z, m=l_max, n=l_max):
       # scipy only supports scalar inputs for z, so we must loop here.
-      vals, _ = zip(*(osp_special.lpmn(m, n, zi) for zi in z))
+      vals, _ = zip(*(osp_special.lpmn(m, n, zi) for zi in z.astype('float64')))
       a = np.dstack(vals)
 
       # apply the normalization
@@ -372,7 +372,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
           c1 = (4.0 * np.pi) * osp_special.factorial(l + m)
           c2 = np.sqrt(c0 / c1)
           a_normalized[m, l] = c2 * a[m, l]
-      return a_normalized
+      return a_normalized.astype(z.dtype)
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,
                             rtol=1e-5, atol=1e-5, check_dtypes=False)
