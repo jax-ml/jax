@@ -208,6 +208,20 @@ jax_test(
 )
 
 jax_test(
+    name = "pallas_pipeline_tpu_test",
+    srcs = ["pallas_pipeline_tpu_test.py"],
+    disable_backends = [
+        "gpu",
+    ],
+    main = "pallas_pipeline_tpu_test.py",
+    deps = [
+        "//jax:extend",
+        "//jax:pallas_tpu",
+        "//jax:pallas_tpu_ops",
+    ],
+)
+
+jax_test(
     name = "paged_attention_kernel_test",
     srcs = ["paged_attention_kernel_test.py"],
     disable_backends = [
