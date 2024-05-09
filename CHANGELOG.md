@@ -16,6 +16,8 @@ Remember to align the itemized text with the first line of an item within a list
     by {func}`jax.devices` or {func}`jax.local_devices`, instead.
 
 ## jaxlib 0.4.28
+  * Fixes a memory corruption bug in the type name of Array and JIT Python
+    objects in Python 3.10 or earlier.
 
 ## jax 0.4.27 (May 7, 2024)
 
