@@ -6,6 +6,10 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
+## jax 0.4.29
+
+## jaxlib 0.4.29
+
 ## jax 0.4.28
 
 * Bug fixes
