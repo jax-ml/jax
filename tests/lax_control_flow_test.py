@@ -2511,8 +2511,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     scan_fun = lambda c, xs: lax.scan(f, c, xs)
 
     def new_jaxpr():
-      # partial avoids a cache_hit in make_jaxpr.
-      jaxpr = jax.make_jaxpr(partial(scan_fun))(c, xs).jaxpr
+      jaxpr = jax.make_jaxpr(scan_fun)(c, xs).jaxpr
       scan = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'scan')
       return jaxpr, scan
 

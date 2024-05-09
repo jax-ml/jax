@@ -409,15 +409,6 @@ class CompiledCallParams(NamedTuple):
   out_tree: tree_util.PyTreeDef
 
 
-# TODO(yashkatariya): Make Specialized inherit from `Stage`.
-class Specialized:
-  __slots__ = ["jaxpr", "out_tree"]
-
-  def __init__(self, jaxpr: core.ClosedJaxpr, out_tree):
-    self.jaxpr = jaxpr
-    self.out_tree = out_tree
-
-
 class Compiled(Stage):
   """Compiled representation of a function specialized to types/values.
 
