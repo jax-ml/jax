@@ -589,11 +589,21 @@ def _shard_map_lowering(ctx, *in_nodes, jaxpr, mesh, in_names, out_names,
              ctx.avals_out, out_nodes_)
 mlir.register_lowering(shard_map_p, _shard_map_lowering)
 
+def _make_scoped_manual_sharding(ctx, mesh, axes):
+  axis_ctx = ctx.module_context.axis_context
+  if isinstance(axis_ctx, sharding_impls.SPMDAxisContext):
+    manual_axes = axis_ctx.manual_axes
+  else:
+    manual_axes = frozenset({})
+  return NamedSharding(
+      mesh, sharding_impls.array_mapping_to_axis_resources(axes),  # type: ignore
+      _manual_axes=manual_axes)
+
 def _xla_shard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
                aval_in, aval_out, x):
   manual_proto = pxla.manual_proto(aval_in, frozenset(mesh.axis_names) - auto, mesh)
   axes = {name: i for i, ns in names.items() for name in ns}
-  ns = NamedSharding(mesh, sharding_impls.array_mapping_to_axis_resources(axes))  # type: ignore
+  ns = _make_scoped_manual_sharding(ctx, mesh, axes)
   if dtypes.issubdtype(aval_in.dtype, dtypes.extended):
     ns = aval_in.dtype._rules.physical_sharding(aval_in, ns)
     aval_in = core.physical_aval(aval_in)
@@ -607,7 +617,7 @@ def _xla_unshard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
                  aval_in, aval_out, xs):
   x, = xs
   axes = {name: i for i, ns in names.items() for name in ns}
-  ns = NamedSharding(mesh, sharding_impls.array_mapping_to_axis_resources(axes))  # type: ignore
+  ns = _make_scoped_manual_sharding(ctx, mesh, axes)
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
     ns = aval_out.dtype._rules.physical_sharding(aval_out, ns)
     aval_out = core.physical_aval(aval_out)
