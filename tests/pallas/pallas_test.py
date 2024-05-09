@@ -1512,6 +1512,8 @@ class PallasOpsTest(PallasTest):
 
   @parameterized.parameters("float32", "float64")
   def test_nextafter(self, dtype):
+    if jtu.test_device_matches(["tpu"]) and dtype == "float64":
+        self.skipTest("float64 disabled on TPU.")
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((4,), dtype), grid=1
     )
