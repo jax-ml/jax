@@ -893,7 +893,9 @@ def isrealobj(x: Any) -> bool:
   return not iscomplexobj(x)
 
 
-def reshape(a: ArrayLike, newshape: DimSize | Shape, order: str = "C") -> Array:
+def reshape(
+    a: ArrayLike, shape: DimSize | Shape | None = None, order: str = "C", *,
+    newshape: DimSize | Shape | DeprecatedArg = DeprecatedArg()) -> Array:
   """Return a reshaped copy of an array.
 
   JAX implementation of :func:`numpy.reshape`, implemented in terms of
@@ -901,7 +903,7 @@ def reshape(a: ArrayLike, newshape: DimSize | Shape, order: str = "C") -> Array:
 
   Args:
     a: input array to reshape
-    newshape: integer or sequence of integers giving the new shape, which must match the
+    shape: integer or sequence of integers giving the new shape, which must match the
       size of the input array. If any single dimension is given size ``-1``, it will be
       replaced with a value such that the output has the correct size.
     order: ``'F'`` or ``'C'``, specifies whether the reshape should apply column-major
@@ -961,12 +963,31 @@ def reshape(a: ArrayLike, newshape: DimSize | Shape, order: str = "C") -> Array:
   """
   __tracebackhide__ = True
   util.check_arraylike("reshape", a)
+
+  # TODO(micky774): deprecated 2024-5-9, remove after deprecation expires.
+  if not isinstance(newshape, DeprecatedArg):
+    if shape is not None:
+      raise ValueError(
+        "jnp.reshape received both `shape` and `newshape` arguments. Note that "
+        "using `newshape` is deprecated, please only use `shape` instead."
+      )
+    warnings.warn(
+      "The newshape argument of jax.numpy.reshape is deprecated and setting it "
+      "will soon raise an error. To avoid an error in the future, and to "
+      "suppress this warning, please use the shape argument instead.",
+      DeprecationWarning, stacklevel=2)
+    shape = newshape
+    del newshape
+  elif shape is None:
+    raise TypeError(
+      "jnp.shape requires passing a `shape` argument, but none was given."
+    )
   try:
     # forward to method for ndarrays
-    return a.reshape(newshape, order=order)  # type: ignore[call-overload,union-attr]
+    return a.reshape(shape, order=order)  # type: ignore[call-overload,union-attr]
   except AttributeError:
     pass
-  return asarray(a).reshape(newshape, order=order)
+  return asarray(a).reshape(shape, order=order)
 
 
 @partial(jit, static_argnames=('order',), inline=True)

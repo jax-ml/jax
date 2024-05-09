@@ -18,7 +18,7 @@ import jax
 from jax import Array
 
 
-# TODO(micky774): Deprecate newshape-->shape in for array API 2023.12
+# TODO(micky774): Implement copy
 def reshape(x: Array, /, shape: tuple[int, ...], *, copy: bool | None = None) -> Array:
   """Reshapes an array without changing its data."""
   del copy  # unused
