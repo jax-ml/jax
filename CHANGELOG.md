@@ -17,6 +17,8 @@ Remember to align the itemized text with the first line of an item within a list
   * Removed ``get_compute_capability`` from the ``jax.experimental.pallas.gpu``
     module. Use the ``compute_capability`` attribute of a GPU device, returned
     by {func}`jax.devices` or {func}`jax.local_devices`, instead.
+  * The ``newshape`` argument to {func}`jax.numpy.reshape`is being deprecated
+    and will soon be removed. Use `shape` instead.
 
 * Changes
   * The minimum jaxlib version of this release is 0.4.27.
