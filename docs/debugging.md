@@ -124,7 +124,7 @@ Here is an example of what a debugger session might look like:
 
 @jax.jit
 def f(x):
-  y, z = jnp.sin(x, jnp.cos(x))
+  y, z = jnp.sin(x), jnp.cos(x)
   jax.debug.breakpoint()
   return y * z
 f(2.) # ==> Pauses during execution
