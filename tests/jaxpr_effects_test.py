@@ -296,7 +296,8 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    self.enter_context(config.enable_x64(False))
+    if not config.enable_x64.value:
+      raise unittest.SkipTest("Test requires X64")
     self._old_lowering = mlir._lowerings[effect_p]
     def _effect_lowering(ctx, *, effect):
       if effects.ordered_effects.contains(effect):

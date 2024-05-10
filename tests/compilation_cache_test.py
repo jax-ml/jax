@@ -63,6 +63,7 @@ def increment_event_count(event):
 
 @jtu.with_config(
     jax_enable_compilation_cache=True,
+    jax_compilation_cache_dir="", # will be updated by test cases
     jax_raise_persistent_cache_errors=True,
     jax_persistent_cache_min_compile_time_secs=0,
     jax_persistent_cache_min_entry_size_bytes=0,
@@ -451,6 +452,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
 
 @jtu.with_config(
     jax_enable_compilation_cache=False,
+    jax_compilation_cache_dir="", # will be updated by test cases
     jax_persistent_cache_min_compile_time_secs=0,
     jax_persistent_cache_min_entry_size_bytes=0,
 )
@@ -458,7 +460,6 @@ class CompilationCacheDisabledTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-
     cc.reset_cache()
 
   def tearDown(self):

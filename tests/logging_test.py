@@ -103,31 +103,35 @@ class LoggingTest(jtu.JaxTestCase):
       jax.jit(lambda x: x + 1)(1)
     self.assertEmpty(log_output.getvalue())
 
-    # Turn on all debug logging.
-    jax.config.update("jax_debug_log_modules", "jax")
-    with capture_jax_logs() as log_output:
-      jax.jit(lambda x: x + 1)(1)
-    self.assertIn("Finished tracing + transforming", log_output.getvalue())
-    self.assertIn("Compiling <lambda>", log_output.getvalue())
+    original_value = jax.config.jax_debug_log_modules
+    try:
+      # Turn on all debug logging.
+      jax.config.update("jax_debug_log_modules", "jax")
+      with capture_jax_logs() as log_output:
+        jax.jit(lambda x: x + 1)(1)
+      self.assertIn("Finished tracing + transforming", log_output.getvalue())
+      self.assertIn("Compiling <lambda>", log_output.getvalue())
 
-    # Turn off all debug logging.
-    jax.config.update("jax_debug_log_modules", None)
-    with capture_jax_logs() as log_output:
-      jax.jit(lambda x: x + 1)(1)
-    self.assertEmpty(log_output.getvalue())
+      # Turn off all debug logging.
+      jax.config.update("jax_debug_log_modules", None)
+      with capture_jax_logs() as log_output:
+        jax.jit(lambda x: x + 1)(1)
+      self.assertEmpty(log_output.getvalue())
 
-    # Turn on one module.
-    jax.config.update("jax_debug_log_modules", "jax._src.dispatch")
-    with capture_jax_logs() as log_output:
-      jax.jit(lambda x: x + 1)(1)
-    self.assertIn("Finished tracing + transforming", log_output.getvalue())
-    self.assertNotIn("Compiling <lambda>", log_output.getvalue())
+      # Turn on one module.
+      jax.config.update("jax_debug_log_modules", "jax._src.dispatch")
+      with capture_jax_logs() as log_output:
+        jax.jit(lambda x: x + 1)(1)
+      self.assertIn("Finished tracing + transforming", log_output.getvalue())
+      self.assertNotIn("Compiling <lambda>", log_output.getvalue())
 
-    # Turn everything off again.
-    jax.config.update("jax_debug_log_modules", None)
-    with capture_jax_logs() as log_output:
-      jax.jit(lambda x: x + 1)(1)
-    self.assertEmpty(log_output.getvalue())
+      # Turn everything off again.
+      jax.config.update("jax_debug_log_modules", None)
+      with capture_jax_logs() as log_output:
+        jax.jit(lambda x: x + 1)(1)
+      self.assertEmpty(log_output.getvalue())
+    finally:
+      jax.config.update("jax_debug_log_modules", original_value)
 
 
 if __name__ == "__main__":

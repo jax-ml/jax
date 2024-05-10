@@ -1005,6 +1005,7 @@ class JaxTestCase(parameterized.TestCase):
   #   assert core.reset_trace_state()
 
   def setUp(self):
+    self._starting_config = jax.config.values.copy()
     super().setUp()
     self._original_config = {}
     for key, value in self._default_config.items():
@@ -1020,6 +1021,20 @@ class JaxTestCase(parameterized.TestCase):
     for key, value in self._original_config.items():
       config.update(key, value)
     super().tearDown()
+    self._assertConfigUnchanged(self._starting_config)
+
+  def _assertConfigUnchanged(self, config_values):
+    if config_values == jax.config.values:
+      return
+    self.assertIsInstance(config_values, dict)
+    class NotPresent:
+      def __repr__(self):
+        return "<not present>"
+    differing = {k: (jax.config.values.get(k, NotPresent()), config_values.get(k, NotPresent()))
+                 for k in (jax.config.values.keys() | config_values.keys())
+                 if (k not in jax.config.values or k not in jax.config.values
+                     or jax.config.values[k] != config_values[k])}
+    raise AssertionError(f"Test changed global config values. Differning values are: {differing}")
 
   @classmethod
   def setUpClass(cls):
