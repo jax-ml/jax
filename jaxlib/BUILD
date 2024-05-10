@@ -18,6 +18,7 @@ load("//jaxlib:symlink_files.bzl", "symlink_files")
 load(
     "//jaxlib:jax.bzl",
     "if_building_mosaic_gpu",
+    "if_windows",
     "py_library_providing_imports_info",
     "pybind_extension",
     "pytype_library",
@@ -28,13 +29,6 @@ licenses(["notice"])
 package(
     default_applicable_licenses = [],
     default_visibility = ["//:__subpackages__"],
-)
-
-# This makes xla_extension module accessible from jax._src.lib.
-genrule(
-    name = "xla_extension_py",
-    outs = ["xla_extension.py"],
-    cmd = "echo 'from xla.xla.python.xla_extension import *\n' > $@",
 )
 
 py_library_providing_imports_info(
@@ -53,8 +47,8 @@ py_library_providing_imports_info(
         "lapack.py",
         ":version",
         ":xla_client",
-        ":xla_extension_py",
     ],
+    data = [":xla_extension"],
     lib_rule = pytype_library,
     deps = [
         ":cpu_feature_guard",
@@ -77,7 +71,6 @@ py_library_providing_imports_info(
         "//jaxlib/mlir:vector_dialect",
         "//jaxlib/mosaic",
         "//jaxlib/triton",
-        "@xla//xla/python:xla_extension",
     ] + if_building_mosaic_gpu(["//jaxlib/mosaic/gpu:mosaic_gpu"]),
 )
 
@@ -91,6 +84,16 @@ symlink_files(
 symlink_files(
     name = "xla_client",
     srcs = ["@xla//xla/python:xla_client"],
+    dst = ".",
+    flatten = True,
+)
+
+symlink_files(
+    name = "xla_extension",
+    srcs = if_windows(
+        ["@xla//xla/python:xla_extension.pyd"],
+        ["@xla//xla/python:xla_extension.so"],
+    ),
     dst = ".",
     flatten = True,
 )
