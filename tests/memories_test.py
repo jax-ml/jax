@@ -1195,6 +1195,22 @@ class DevicePutTest(jtu.JaxTestCase):
     out_s = NamedSharding(mesh, P(None, None, "z"), memory_kind="device")
     self.assertEqual(out_hbm.sharding, out_s)
 
+  def test_output_streaming(self):
+    mesh = jtu.create_global_mesh((1, 1), ("x", "y"))
+    np_inp = np.arange(16.0).reshape(8, 2)
+    s_hbm = NamedSharding(mesh, P("x", "y"), memory_kind="device")
+    s_host = NamedSharding(mesh, P("x", "y"), memory_kind="pinned_host")
+    arr_hbm = jax.device_put(np_inp, s_hbm)
+
+    @functools.partial(jax.jit, out_shardings=s_host)
+    def f(xs):
+      out_tpu = xs + 1.0
+      return out_tpu
+
+    out_host = f(arr_hbm)
+    self.assertArraysEqual(out_host, np_inp + 1.0)
+    self.assertEqual(out_host.sharding, s_host)
+
 
 class ActivationOffloadingTest(jtu.JaxTestCase):
 
