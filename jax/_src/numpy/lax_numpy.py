@@ -4260,12 +4260,17 @@ def tensordot(a: ArrayLike, b: ArrayLike,
   return lax_internal._convert_element_type(result, preferred_element_type, output_weak_type)
 
 
+class Unoptimized(opt_einsum.paths.PathOptimizer):
+  """Unoptimized path for einsum."""
+  def __call__(self, inputs, *args, **kwargs):
+    return [(0, 1)] * (len(inputs) - 1)
+
 @overload
 def einsum(
     subscript: str, /,
     *operands: ArrayLike,
     out: None = None,
-    optimize: str | bool = "optimal",
+    optimize: str | bool | list[tuple[int, ...]] = "optimal",
     precision: PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
@@ -4277,7 +4282,7 @@ def einsum(
     axes: Sequence[Any], /,
     *operands: ArrayLike | Sequence[Any],
     out: None = None,
-    optimize: str | bool = "optimal",
+    optimize: str | bool | list[tuple[int, ...]] = "optimal",
     precision: PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
@@ -4287,7 +4292,7 @@ def einsum(
     subscripts, /,
     *operands,
     out: None = None,
-    optimize: str | bool = "optimal",
+    optimize: str | bool | list[tuple[int, ...]] = "optimal",
     precision: PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
@@ -4305,9 +4310,12 @@ def einsum(
   Args:
     subscripts: string containing axes names separated by commas.
     *operands: sequence of one or more arrays corresponding to the subscripts.
-    optimize: determine whether to optimize the order of computation. In JAX
-      this defaults to ``"optimize"`` which produces optimized expressions via
-      the opt_einsum_ package.
+    optimize: specify how to optimize the order of computation. In JAX this defaults
+      to ``"optimal"`` which produces optimized expressions via the opt_einsum_
+      package. Other options are ``True`` (same as ``"optimal"``), ``False``
+      (unoptimized), or any string supported by ``opt_einsum``, which
+      includes ``"auto"``, ``"greedy"``, ``"eager"``, and others. It may also
+      be a pre-computed path (see :func:`~jax.numpy.einsum_path`)
     precision: either ``None`` (default), which means the default precision for
       the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
       ``Precision.HIGH`` or ``Precision.HIGHEST``).
@@ -4320,6 +4328,9 @@ def einsum(
 
   Returns:
     array containing the result of the einstein summation.
+
+  See also:
+    :func:`jax.numpy.einsum_path`
 
   Examples:
     The mechanics of ``einsum`` are perhaps best demonstrated by example. Here we
@@ -4498,7 +4509,7 @@ def einsum(
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.einsum is not supported.")
   spec = operands[0] if isinstance(operands[0], str) else None
-  optimize = 'optimal' if optimize is True else optimize
+  path_type = 'optimal' if optimize is True else Unoptimized() if optimize is False else optimize
 
   # Allow handling of shape polymorphism
   non_constant_dim_types = {
@@ -4512,7 +4523,7 @@ def einsum(
     contract_path = _poly_einsum_handlers.get(ty, _default_poly_einsum_handler)
   # using einsum_call=True here is an internal api for opt_einsum... sorry
   operands, contractions = contract_path(
-        *operands, einsum_call=True, use_blas=True, optimize=optimize)
+        *operands, einsum_call=True, use_blas=True, optimize=path_type)
 
   contractions = tuple((a, frozenset(b), c) for a, b, c, *_ in contractions)
 
