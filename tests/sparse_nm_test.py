@@ -21,6 +21,7 @@ from absl.testing import parameterized
 import jax
 import jax.numpy as jnp
 from jax import dtypes
+from jax._src import config
 from jax._src import test_util as jtu
 from jax.experimental.sparse import nm
 
@@ -135,13 +136,13 @@ class SpmmTest(jtu.JaxTestCase):
     rhs = jnp.zeros((batch, tile_k, tile_n), dtype=jnp.bfloat16)
     meta = jnp.zeros((batch, tile_m, tile_k // 16), dtype=jnp.uint16)
 
-    # Check types
-    with self.assertRaisesRegex(TypeError, "Unsupported lhs input type"):
-      nm.nm_spmm(jnp.zeros(lhs.shape, dtype=jnp.int64), rhs, meta)
-    with self.assertRaisesRegex(TypeError, "Unsupported rhs input type"):
-      nm.nm_spmm(lhs, jnp.zeros(rhs.shape, dtype=jnp.int64), meta)
-    with self.assertRaisesRegex(TypeError, "Unsupported output type"):
-      nm.nm_spmm(lhs, rhs, meta, output_dtype=jnp.int64)
+    if config.enable_x64.value:
+      with self.assertRaisesRegex(TypeError, "Unsupported lhs input type"):
+        nm.nm_spmm(jnp.zeros(lhs.shape, dtype=jnp.int64), rhs, meta)
+      with self.assertRaisesRegex(TypeError, "Unsupported rhs input type"):
+        nm.nm_spmm(lhs, jnp.zeros(rhs.shape, dtype=jnp.int64), meta)
+      with self.assertRaisesRegex(TypeError, "Unsupported output type"):
+        nm.nm_spmm(lhs, rhs, meta, output_dtype=jnp.int64)
 
     # Check dimension numbers
     nm_spmm_with_dnums = lambda c, b: nm.nm_spmm(
