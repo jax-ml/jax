@@ -4051,6 +4051,15 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     jax.vmap(jax.grad(model), in_axes=(None, 0))(params, x)  # doesn't crash
 
+  def test_jit_token_input(self):
+    x = jnp.arange(8)
+    token = jax.lax.create_token(None)
+    device = jax.devices()[0]
+    x = jax.device_put(x, device=device)
+    out1, out2 = jax.jit(lambda x, t: (x, t))(x, token)
+    self.assertArraysEqual(out1, x)
+    self.assertIsInstance(out2, core.Token)
+
 
 class TempSharding(Sharding):
 

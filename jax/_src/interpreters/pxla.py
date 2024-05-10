@@ -2528,7 +2528,8 @@ def _get_out_sharding_from_orig_sharding(
   out = []
   orig_handler = _orig_out_sharding_handlers[type(orig_in_s)]
   for o, out_aval in safe_zip(out_shardings, out_avals):
-    if isinstance(o, sharding_impls.GSPMDSharding):
+    if (isinstance(o, sharding_impls.GSPMDSharding) and
+        out_aval is not core.abstract_token):
       # Only return the same input sharding object if the OpShardings and
       # in_aval.ndim and out_aval.ndim match. This is because if OpSharding is
       # replicated then, it doesn't encode the ndim in it. The devices

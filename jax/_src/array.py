@@ -933,13 +933,6 @@ def _array_shard_arg(x, sharding):
 pxla.shard_arg_handlers[ArrayImpl] = _array_shard_arg
 
 
-def _token_shard_arg(x, sharding):
-  return _array_shard_arg(x._buf, sharding)
-
-
-pxla.shard_arg_handlers[core.Token] = _token_shard_arg
-
-
 def _array_global_result_handler(global_aval, out_sharding, committed):
   if global_aval.dtype == dtypes.float0:
     return lambda _: np.zeros(global_aval.shape, dtypes.float0)  # type: ignore
@@ -951,22 +944,6 @@ def _array_global_result_handler(global_aval, out_sharding, committed):
   )
 pxla.global_result_handlers[core.ShapedArray] = _array_global_result_handler
 pxla.global_result_handlers[core.ConcreteArray] = _array_global_result_handler
-
-
-def _token_global_result_handler(global_aval, out_sharding, committed):
-  array_handler = _array_global_result_handler(
-      core.token_shaped_array, out_sharding, committed
-  )
-
-  def wrapper(*args, **kwargs):
-    out_buf = array_handler(*args, **kwargs)
-    return core.Token(out_buf)
-
-  return wrapper
-
-
-pxla.global_result_handlers[core.AbstractToken] = _token_global_result_handler
-
 
 # Only used for Arrays that come out of pmap.
 def _array_local_result_handler(aval, sharding, indices):
@@ -980,3 +957,21 @@ def _array_local_result_handler(aval, sharding, indices):
   )
 pxla.local_result_handlers[core.ShapedArray] = _array_local_result_handler
 pxla.local_result_handlers[core.ConcreteArray] = _array_local_result_handler
+
+
+# Token handlers
+
+def _token_shard_arg(x, sharding):
+  return _array_shard_arg(x._buf, sharding)
+pxla.shard_arg_handlers[core.Token] = _token_shard_arg
+
+
+def _token_global_result_handler(global_aval, out_sharding, committed):
+  array_handler = _array_global_result_handler(
+      core.token_shaped_array, out_sharding, committed)
+
+  def wrapper(*args, **kwargs):
+    out_buf = array_handler(*args, **kwargs)
+    return core.Token(out_buf)
+  return wrapper
+pxla.global_result_handlers[core.AbstractToken] = _token_global_result_handler
