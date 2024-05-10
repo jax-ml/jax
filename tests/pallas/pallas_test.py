@@ -16,7 +16,6 @@ import contextlib
 import functools
 import itertools
 import os
-import sys
 import unittest
 
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
@@ -29,23 +28,18 @@ from jax import lax
 from jax import random
 from jax._src import config
 from jax._src import linear_util as lu
-from jax._src import test_util as jtu
 from jax._src import state
+from jax._src import test_util as jtu
 from jax._src.lax.control_flow.for_loop import for_loop
 from jax._src.pallas.pallas_call import _trace_to_jaxpr
-if sys.platform != "win32":
-  # Triton does not support Windows.
-  from jax._src.pallas.triton.lowering import LoweringError
-else:
-  LoweringError = Exception
-from jax.interpreters import partial_eval as pe
-import jax.numpy as jnp
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import gpu as plgpu
 from jax.experimental.pallas.ops import attention
 from jax.experimental.pallas.ops import layer_norm
 from jax.experimental.pallas.ops import rms_norm
 from jax.experimental.pallas.ops import softmax
+from jax.interpreters import partial_eval as pe
+import jax.numpy as jnp
 import numpy as np
 
 
@@ -1596,7 +1590,7 @@ class PallasOpsTest(PallasTest):
 
     x = jnp.array([2.4, 4.2]).astype(dtype)
     y = jnp.array([4.2, 2.4]).astype(dtype)
-    with self.assertRaises(LoweringError):
+    with self.assertRaises(Exception):
       kernel(x, y)
 
   BINARY_OPS = [
