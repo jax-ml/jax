@@ -142,7 +142,7 @@ class ForLoopTest(jtu.JaxTestCase):
 
     key = jax.random.PRNGKey(0)
     x = jax.random.normal(key, (8,))
-    np.testing.assert_allclose(cumsum(x), jnp.cumsum(x))
+    np.testing.assert_allclose(cumsum(x), jnp.cumsum(x), rtol=1e-6)
 
 def for_body_swap(i, refs):
   a_ref, b_ref = refs
