@@ -204,6 +204,7 @@ def jax_test(
             test_tags += ["manual"]
         if backend == "gpu":
             test_tags += tf_cuda_tests_tags()
+            deps = list(deps) + ["//jax:pallas_gpu"]
         native.py_test(
             name = name + "_" + backend,
             srcs = srcs,
