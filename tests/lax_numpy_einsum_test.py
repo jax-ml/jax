@@ -411,6 +411,27 @@ class EinsumTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=1E-4)
     self._CompileAndCheck(jnp_fun, args_maker, rtol=1E-4)
 
+  @jtu.sample_product(
+    [
+      {'signature': 'i->', 'shapes': [(3,)]},
+      {'signature': 'ii->i', 'shapes': [(4, 4)]},
+      {'signature': 'ij,jk', 'shapes': [(3, 4), (4, 3)]},
+      {'signature': 'ij,jkl,klm', 'shapes': [(2, 2), (2, 3, 4), (3, 4, 2)]},
+    ],
+    optimize=[True, False, 'optimal', 'auto', 'greedy', 'eager'],
+    dtype=[np.dtype('float32')],
+  )
+  @jtu.skip_on_devices('tpu')
+  def test_einsum_path_optimization_modes(self, signature, shapes, optimize, dtype):
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype) for shape in shapes]
+    def jnp_fun(*args, signature=signature, optimize=optimize):
+      path, _ = jnp.einsum_path(signature, *args, optimize=optimize)
+      return jnp.einsum(signature, *args, optimize=path)
+    np_fun = partial(np.einsum, signature)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, rtol=1E-4)
+    self._CompileAndCheck(jnp_fun, args_maker, rtol=1E-4)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
