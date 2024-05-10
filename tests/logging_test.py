@@ -15,6 +15,7 @@
 import contextlib
 import io
 import logging
+import os
 import platform
 import subprocess
 import sys
@@ -70,9 +71,17 @@ class LoggingTest(jtu.JaxTestCase):
     """)
     python = sys.executable
     assert "python" in python
+    env_variables = {"TF_CPP_MIN_LOG_LEVEL": "1"}
+    if os.getenv("PYTHONPATH"):
+      env_variables["PYTHONPATH"] = os.getenv("PYTHONPATH")
+    if os.getenv("LD_LIBRARY_PATH"):
+      env_variables["LD_LIBRARY_PATH"] = os.getenv("LD_LIBRARY_PATH")
     # Make sure C++ logging is at default level for the test process.
-    proc = subprocess.run([python, "-c", program], capture_output=True,
-                          env={"TF_CPP_MIN_LOG_LEVEL": "1"})
+    proc = subprocess.run(
+        [python, "-c", program],
+        capture_output=True,
+        env=env_variables,
+    )
 
     lines = proc.stdout.split(b"\n")
     lines.extend(proc.stderr.split(b"\n"))
