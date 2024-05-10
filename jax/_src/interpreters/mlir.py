@@ -880,6 +880,7 @@ def lower_jaxpr_to_module(
     num_partitions: int = 1,
     all_default_mem_kind: bool = True,
     input_output_aliases: None | tuple[int | None, ...] = None,
+    propagated_out_mem_kinds: tuple[None | str, ...] | None = None,
     lowering_parameters: LoweringParameters,
 ) -> LoweringResult:
   """Lowers a top-level jaxpr to an MLIR module.
@@ -988,7 +989,8 @@ def lower_jaxpr_to_module(
         arg_memory_kinds=arg_memory_kinds,
         result_memory_kinds=result_memory_kinds,
         arg_layouts=in_layouts,
-        result_layouts=out_layouts)
+        result_layouts=out_layouts,
+        propagated_out_mem_kinds=propagated_out_mem_kinds)
 
   try:
     if not ctx.module.operation.verify():
@@ -1137,6 +1139,7 @@ def lower_jaxpr_to_fun(
     result_memory_kinds: Sequence[str | None] | None = None,
     arg_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
     result_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
+    propagated_out_mem_kinds: tuple[None | str, ...] | None = None,
 ) -> func_dialect.FuncOp:
   """Lowers jaxpr and its callees to an IR function.
 
@@ -1200,6 +1203,8 @@ def lower_jaxpr_to_fun(
   input_types = [*dim_var_types, *token_types, *input_types]
   output_avals = [core.abstract_token] * (len(output_token_types) + num_tokens) + jaxpr.out_avals
   output_types = [*output_token_types, *token_types, *output_types]
+  if propagated_out_mem_kinds is None:
+    propagated_out_mem_kinds = (None,) * len(output_avals)
 
   if input_output_aliases is not None:
     token_input_output_aliases = [None] * (num_dim_vars + num_tokens)
@@ -1267,16 +1272,30 @@ def lower_jaxpr_to_fun(
 
   ir_result_shardings = None
   if result_shardings is not None:
-    out_avals = [None] * (num_tokens + num_output_tokens) + list(jaxpr.out_avals)
     ir_result_shardings = util.flatten(
         [[_to_physical_op_sharding(a, s)] * len(types)
-         for a, s, types in zip(out_avals, result_shardings, output_types)])
-    del out_avals
+         for a, s, types in zip(output_avals, result_shardings, output_types)])
 
   ir_result_memory_kinds = None
+  custom_call_ir_result_memory_kinds = None
   if result_memory_kinds is not None:
-    ir_result_memory_kinds = util.flatten(
-        [[mk] * len(types) for mk, types in zip(result_memory_kinds, output_types)])
+    res, custom_call_res = [], []
+    for pom, mk, types in zip(propagated_out_mem_kinds, result_memory_kinds,
+                              output_types):
+      if pom is not None and mk is None:
+        res.append([pom] * len(types))  # type: ignore
+      else:
+        if pom is not None and mk is not None and pom != mk:
+          raise AssertionError(
+              f"propagated out memory kind ({pom}) does not match the memory"
+              f" kind specified in out_shardings of jit ({mk})")
+        res.append([mk] * len(types))  # type: ignore
+      # To add the custom call on the output to signal a transfer, only do it
+      # if memory kind comes from out_shardings on `jit` and result_memory_kinds
+      # comes from out_shardings on `jit`.
+      custom_call_res.append([mk] * len(types))
+    ir_result_memory_kinds = util.flatten(res)
+    custom_call_ir_result_memory_kinds = util.flatten(custom_call_res)
 
   ir_result_layouts = None
   if result_layouts is not None:
@@ -1462,10 +1481,11 @@ def lower_jaxpr_to_fun(
 
     # Insert a custom call if output is on host because XLA needs that to do the
     # transfer.
-    if ir_result_memory_kinds is not None:
+    if custom_call_ir_result_memory_kinds is not None and name == "main":
       flat_outputs = [
           o if mk is None else wrap_with_memory_kind(o, mk, o_aval)
-          for o, mk, o_aval in zip(flat_outputs, ir_result_memory_kinds, output_avals)]
+          for o, mk, o_aval in zip(
+              flat_outputs, custom_call_ir_result_memory_kinds, output_avals)]
 
     if ir_result_shardings is not None and name == "main":
       flat_outputs = [

@@ -1882,6 +1882,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
                             in_layouts, out_layouts, num_devices, device_assignment,
                             donated_invars, name_stack, all_default_mem_kind,
                             inout_aliases: None | tuple[None | int, ...],
+                            propagated_out_mem_kinds: tuple[None | str, ...],
                             lowering_parameters: mlir.LoweringParameters):
   jaxpr = closed_jaxpr.jaxpr
   in_shardings = semantic_in_shardings._gspmd_shardings
@@ -1959,6 +1960,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
         num_partitions=num_partitions,
         all_default_mem_kind=all_default_mem_kind,
         input_output_aliases=inout_aliases,
+        propagated_out_mem_kinds=propagated_out_mem_kinds,
         lowering_parameters=lowering_parameters)
   tuple_args = dispatch.should_tuple_args(len(global_in_avals), backend.platform)
   unordered_effects = list(
@@ -1995,6 +1997,39 @@ def are_all_shardings_default_mem_kind(da_object, shardings):
     if i.memory_kind != default_mem_kind:
       return False
   return True
+
+memory_kind_propagate_rule = {}  # type: ignore
+
+@weakref_lru_cache
+def get_out_memory_kinds_via_propagation(closed_jaxpr: core.ClosedJaxpr
+                                         ) -> tuple[None | str]:
+  env = {}  # type: ignore
+  jaxpr = closed_jaxpr.jaxpr
+
+  def read(var):
+    if type(var) is core.Literal:
+      return None
+    return env[var]
+
+  def write(var, val):
+    env[var] = val
+
+  def _default_rule(prim, num_outvars, *_, **__):
+    return [None] * num_outvars if prim.multiple_results else None
+
+  safe_map(write, jaxpr.invars, [None] * len(jaxpr.invars))
+  safe_map(write, jaxpr.constvars, [None] * len(jaxpr.constvars))
+
+  for eqn in jaxpr.eqns:
+    in_mem_kinds = safe_map(read, eqn.invars)
+    rule = memory_kind_propagate_rule.get(
+        eqn.primitive, partial(_default_rule, eqn.primitive, len(eqn.outvars)))
+    out_mem_kinds = rule(*in_mem_kinds, **eqn.params)
+    if not eqn.primitive.multiple_results:
+      out_mem_kinds = [out_mem_kinds]
+    safe_map(write, eqn.outvars, out_mem_kinds)
+  return tuple(safe_map(read, jaxpr.outvars))
+
 
 MaybeLayout = Sequence[Union[DeviceLocalLayout, AutoLayout, None]]
 
@@ -2116,6 +2151,13 @@ def lower_sharding_computation(
       da_object,
       it.chain(in_shardings, out_shardings, [js for js, _ in jaxpr_sharding]))  # type: ignore
 
+  # TODO(yashkatariya): Remove this when XLA can propagate memory kinds or when
+  # JAX puts memory kinds in the types of jaxpr.
+  if not all_default_mem_kind:
+    propagated_out_mem_kinds = get_out_memory_kinds_via_propagation(closed_jaxpr)
+  else:
+    propagated_out_mem_kinds = (None,) * len(global_out_avals)
+
   spmd_mode_check(da_object, inline)
 
   # 2. Build up the HLO
@@ -2131,7 +2173,7 @@ def lower_sharding_computation(
        semantic_out_shardings, in_layouts, out_layouts, len(da_object),
        tuple(da_object) if prim_requires_devices else None, donated_invars,
        name_stack, all_default_mem_kind, inout_aliases,
-       lowering_parameters=lowering_parameters)
+       propagated_out_mem_kinds, lowering_parameters=lowering_parameters)
 
   # backend and device_assignment is passed through to MeshExecutable because
   # if keep_unused=False and all in_shardings are pruned, then there is no way

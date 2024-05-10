@@ -497,3 +497,9 @@ def _common_device_put_lowering(ctx, x, *, device, src):
         f" platforms {ctx.module_context.platforms}")
   return [x]
 mlir.register_lowering(device_put_p, _common_device_put_lowering)
+
+def _propagate_mem_kind_dp(xm, device=None, src=None):
+  if isinstance(device, (XLACompatibleSharding, TransferToMemoryKind)):
+    return device.memory_kind
+  return None
+pxla.memory_kind_propagate_rule[device_put_p] = _propagate_mem_kind_dp

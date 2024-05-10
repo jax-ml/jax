@@ -1211,6 +1211,40 @@ class DevicePutTest(jtu.JaxTestCase):
     self.assertArraysEqual(out_host, np_inp + 1.0)
     self.assertEqual(out_host.sharding, s_host)
 
+  def test_weight_offload_with_dp_on_output(self):
+    _, s_dev, np_inp, inp_dev = _create_inputs(
+        (8, 2), P("x", "y"), mem_kind="device")
+    s_host = s_dev.with_memory_kind('pinned_host')
+
+    @jax.jit
+    def f(x):
+      x = x * 2
+      y = jax.device_put(x, s_host)
+      return y
+
+    out_host = f(inp_dev)
+    self._check_device_put_addressable_shards(
+        out_host, np_inp * 2, s_host, 'pinned_host')
+
+  def test_output_streaming_inside_scan(self):
+    mesh = jtu.create_global_mesh((1, 1, 2), ("x", "y", "z"))
+    np_inp = np.arange(4096).reshape(16, 16, 16)
+    s_hbm = NamedSharding(mesh, P(None, "y", "z"), memory_kind="device")
+    arr_hbm = jax.device_put(np_inp, s_hbm)
+
+    @jax.jit
+    def f(xs):
+      def body(carry, x):
+        out_tpu = x + carry
+        return carry, jax.device_put(
+            out_tpu, NamedSharding(mesh, P("y", "z"), memory_kind="pinned_host"))
+      _, res = jax.lax.scan(body, 1, xs)
+      return res
+
+    out = f(arr_hbm)
+    self.assertArraysEqual(out, np_inp + 1)
+    self.assertEqual(out.sharding.memory_kind, 'pinned_host')
+
 
 class ActivationOffloadingTest(jtu.JaxTestCase):
 

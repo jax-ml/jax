@@ -42,6 +42,7 @@ from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
+from jax._src.interpreters import pxla
 from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lax import windowed_reductions
@@ -1299,6 +1300,11 @@ pe.dce_rules[scan_p] = _scan_dce_rule
 state_discharge.register_discharge_rule(scan_p)(_scan_state_discharge_rule)
 # TODO(mattjj,frostig): un-comment this pp rule
 # core.pp_eqn_rules[scan_p] = _scan_pp_rule
+
+def _propagate_mem_kind_scan(*xm, reverse, length, num_consts, num_carry, jaxpr,
+                             linear, unroll, _split_transpose):
+  return pxla.get_out_memory_kinds_via_propagation(jaxpr)
+pxla.memory_kind_propagate_rule[scan_p] = _propagate_mem_kind_scan
 
 ### while_loop
 
