@@ -1730,6 +1730,15 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     f_switch_tf = jax2tf.convert(f_switch, enable_xla=False)
     self.assertIn("switch_case", self.TfToHlo(f_switch_tf, np.pi))
 
+  @jtu.skip_on_flag("jax2tf_default_native_serialization", False)
+  def test_ragged_dot(self):
+    dtype = np.float32
+    m, k, n, num_groups = 5, 4, 3, 2
+    lhs = np.arange(m * k, dtype=dtype).reshape((m, k))
+    rhs = np.arange(num_groups * k * n, dtype=dtype).reshape((num_groups, k, n))
+    group_sizes = np.array([3, 2], dtype=np.int32)
+    self.ConvertAndCompare(jax.lax.ragged_dot, lhs, rhs, group_sizes)
+
 
 @jtu.with_config(jax_enable_custom_prng=True)
 class Jax2tfWithCustomPRNGTest(tf_test_util.JaxToTfTestCase):

@@ -1178,6 +1178,33 @@ class LaxTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(numpy_op, op, args_maker)
 
   @jtu.sample_product(
+      [
+          {'m': 5, 'k': 4, 'n': 3, 'num_groups': 1},
+          {'m': 10, 'k': 9, 'n': 8, 'num_groups': 2},
+      ],
+      dtype=jtu.dtypes.numeric,
+  )
+  def testRaggedDot(self, m, k, n, num_groups, dtype):
+    """Tests ragged_dot.
+
+    The ragged_dot is tested against numpy reference implementation, and by running JAX compilation.
+
+    Raises:
+      SkipTest: in the case dtype is not supported.
+    """
+    lhs_shape = (m, k)
+    rhs_shape = (num_groups, k, n)
+    def group_sizes(m, num_groups):
+      ends_no_final = jnp.sort(self.rng().choice(m, size=num_groups - 1))
+      ends = jnp.concatenate([ends_no_final, jnp.array([m], dtype=ends_no_final.dtype)])
+      starts = jnp.concatenate([jnp.zeros(1, dtype=ends_no_final.dtype), ends_no_final])
+      return ends - starts
+    rng = jtu.rand_small(self.rng())
+    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype), group_sizes(m, num_groups)]
+    self._CompileAndCheck(lax.ragged_dot, args_maker)
+    self._CheckAgainstNumpy(lax_reference.ragged_dot, lax.ragged_dot, args_maker)
+
+  @jtu.sample_product(
       shape=[(), (2, 3)],
       dtype=lax_test_util.default_dtypes,
       broadcast_sizes=[(), (2,), (1, 2)],
