@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.28
+## jax 0.4.29
+
+## jaxlib 0.4.29
+
+## jax 0.4.28 (May 9, 2024)
 
 * Bug fixes
   * Reverted a change to `make_jaxpr` that was breaking Equinox (#21116).
@@ -23,7 +27,7 @@ Remember to align the itemized text with the first line of an item within a list
 * Changes
   * The minimum jaxlib version of this release is 0.4.27.
 
-## jaxlib 0.4.28
+## jaxlib 0.4.28 (May 9, 2024)
 
 * Bug fixes
   * Fixes a memory corruption bug in the type name of Array and JIT Python
