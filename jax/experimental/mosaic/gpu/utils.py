@@ -185,13 +185,35 @@ def fori(bound, carrys):
   return wrapper
 
 
-def get_warp_idx():
+def thread_idx():
   i32 = ir.IntegerType.get_signless(32)
-  tidx = arith.index_cast(i32, gpu.thread_id(gpu.Dimension.x))
-  warp_idx = arith.shrui(tidx, c(5, tidx.type))
+  as_i32 = lambda x: arith.index_cast(i32, x)
+  tidx = as_i32(gpu.thread_id(gpu.Dimension.x))
+  stride = as_i32(gpu.block_dim(gpu.Dimension.x))
+  for dim in (gpu.Dimension.y, gpu.Dimension.z):
+    tidx = arith.addi(tidx, arith.muli(as_i32(gpu.thread_id(dim)), stride))
+    stride = arith.muli(stride, as_i32(gpu.block_dim(dim)))
+  return tidx
+
+
+def warp_idx(sync=True):
+  i32 = ir.IntegerType.get_signless(32)
+  warp_idx = arith.shrui(thread_idx(), c(5, i32))
+  if not sync:
+    return warp_idx
   mask = c(0xFFFFFFFF, i32)
   return nvvm.shfl_sync(
       warp_idx.type, mask, warp_idx, c(0, i32), c(0x1F, i32), nvvm.ShflKind.idx
+  )
+
+def warpgroup_idx(sync=True):
+  i32 = ir.IntegerType.get_signless(32)
+  wg_idx = arith.shrui(thread_idx(), c(7, i32))
+  if not sync:
+    return wg_idx
+  mask = c(0xFFFFFFFF, i32)
+  return nvvm.shfl_sync(
+      wg_idx.type, mask, wg_idx, c(0, i32), c(0x1F, i32), nvvm.ShflKind.idx
   )
 
 
@@ -211,7 +233,7 @@ def once():
     yield
     return
 
-  warp = get_warp_idx()
+  warp = warp_idx()
   first_warp = arith.cmpi(arith.CmpIPredicate.eq, warp, c(0, warp.type))
   elected = nvvm.elect_sync(ir.IntegerType.get_signless(1))
   should_run = arith.andi(first_warp, elected)
@@ -314,7 +336,9 @@ def memref_fold(ref: ir.Value, dim, fold_rank) -> ir.Value:
   new_shape = list(ref_ty.shape)
   new_shape[dim : dim + fold_rank] = [np.prod(new_shape[dim : dim + fold_rank])]
   identity = ir.AffineMapAttr.get(ir.AffineMap.get_identity(ref_ty.rank))
-  if ref_ty.layout == identity:
+  contig_strided_1d = ir.Attribute.parse("strided<[1]>")
+  # Not sure why but MLIR expects the strided 1D layout to disappear in this op.
+  if ref_ty.layout == identity or ref_ty.layout == contig_strided_1d:
     new_layout = ir.AffineMapAttr.get(
         ir.AffineMap.get_identity(ref_ty.rank - fold_rank + 1)
     )
@@ -466,13 +490,14 @@ def commit_shared():
 
 class BarrierArray:
 
-  def __init__(self, num_barriers):
+  def __init__(self, num_barriers: int, arrival_count: int = 1):
     barrier_group_ty = ir.Type.parse(
         "!nvgpu.mbarrier.group<memorySpace=#gpu.address_space<workgroup>,"
         f" num_barriers={num_barriers}>"
     )
 
     self.value = nvgpu.mbarrier_create(barrier_group_ty)
+    self.num_barriers = num_barriers
     index = ir.IndexType.get()
     if num_barriers > 32:
       raise NotImplementedError("Only up to 32 barriers per group supported")
@@ -481,7 +506,7 @@ class BarrierArray:
     memref.store(c(0, i32), self.phases, [])
     with once():
       for i in range(num_barriers):
-        nvgpu.mbarrier_init(self.value, c(1, index), c(i, index))
+        nvgpu.mbarrier_init(self.value, c(arrival_count, index), c(i, index))
 
   def __getitem__(self, offset: ir.Value | int):
     if isinstance(offset, int):
@@ -511,6 +536,10 @@ class Barrier:
     new_parities = arith.xori(parities, bitmask)
     memref.store(new_parities, self.barrier_array.phases, [])
     self.wait_parity(parity)
+
+  def arrive(self):
+    token_ty = ir.Type.parse("!nvgpu.mbarrier.token")
+    nvgpu.mbarrier_arrive(token_ty, self.barrier_array.value, self.offset)
 
 
 class Partition:
