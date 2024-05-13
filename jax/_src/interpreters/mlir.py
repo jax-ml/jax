@@ -1188,8 +1188,6 @@ def lower_jaxpr_to_fun(
   input_types = [*dim_var_types, *token_types, *input_types]
   output_avals = [core.abstract_token] * (len(output_token_types) + num_tokens) + jaxpr.out_avals
   output_types = [*output_token_types, *token_types, *output_types]
-  if propagated_out_mem_kinds is None:
-    propagated_out_mem_kinds = (None,) * len(output_avals)
 
   if input_output_aliases is not None:
     token_input_output_aliases = [None] * (num_dim_vars + num_tokens)
@@ -1264,6 +1262,8 @@ def lower_jaxpr_to_fun(
   ir_result_memory_kinds = None
   custom_call_ir_result_memory_kinds = None
   if result_memory_kinds is not None:
+    if propagated_out_mem_kinds is None:
+      propagated_out_mem_kinds = (None,) * len(result_memory_kinds)
     res, custom_call_res = [], []
     for pom, mk, types in zip(propagated_out_mem_kinds, result_memory_kinds,
                               output_types):
