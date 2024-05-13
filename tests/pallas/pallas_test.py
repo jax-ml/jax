@@ -16,6 +16,7 @@ import contextlib
 import functools
 import itertools
 import os
+import sys
 import unittest
 
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
@@ -33,7 +34,6 @@ from jax._src import test_util as jtu
 from jax._src.lax.control_flow.for_loop import for_loop
 from jax._src.pallas.pallas_call import _trace_to_jaxpr
 from jax.experimental import pallas as pl
-from jax.experimental.pallas import gpu as plgpu
 from jax.experimental.pallas.ops import attention
 from jax.experimental.pallas.ops import layer_norm
 from jax.experimental.pallas.ops import rms_norm
@@ -41,6 +41,11 @@ from jax.experimental.pallas.ops import softmax
 from jax.interpreters import partial_eval as pe
 import jax.numpy as jnp
 import numpy as np
+
+if sys.platform != "win32":
+  from jax.experimental.pallas import gpu as plgpu
+else:
+  plgpu = None
 
 
 # TODO(sharadmv): Update signatures of pallas_call to correct inputs/outputs.
@@ -129,7 +134,9 @@ class PallasTest(parameterized.TestCase):
         self.skipTest("Only works on GPU")
       if (jtu.test_device_matches(["cuda"]) and
           not jtu.is_cuda_compute_capability_at_least("8.0")):
-        self.skipTest("Only works on GPUs with capability >= sm80")
+        self.skipTest("Only works on GPU with capability >= sm80")
+      if sys.platform == "win32":
+        self.skipTest("Only works on non-Windows platforms")
 
     super().setUp()
     _trace_to_jaxpr.cache_clear()
