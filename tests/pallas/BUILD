@@ -33,9 +33,6 @@ jax_test(
     srcs = [
         "pallas_test.py",
     ],
-    backend_tags = {
-        "gpu": ["noasan"],  # https://github.com/openai/triton/issues/2918
-    },
     config_tags_overrides = {
         "gpu_a100_x32": {
             "ondemand": False,  # Include in presubmit.
@@ -50,6 +47,7 @@ jax_test(
         "gpu_x32",
         "gpu_a100",
         "gpu_h100",
+        "gpu_p100",
         "gpu_p100_x32",
     ],
     enable_configs = [
@@ -58,6 +56,7 @@ jax_test(
     ],
     shard_count = 4,
     deps = [
+        "//jax:pallas",
         "//jax:pallas_gpu",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
@@ -67,9 +66,6 @@ jax_test(
     srcs = [
         "gpu_attention_test.py",
     ],
-    backend_tags = {
-        "gpu": ["noasan"],  # https://github.com/openai/triton/issues/2918
-    },
     config_tags_overrides = {
         "gpu_a100_x32": {
             "ondemand": False,  # Include in presubmit.
@@ -83,17 +79,18 @@ jax_test(
         "gpu",
         "gpu_x32",
         "gpu_p100",
+        "gpu_p100_x32",
         "gpu_a100",
         "gpu_h100",
     ],
     enable_configs = [
         "gpu_a100_x32",
-        "gpu_p100_x32",
         "gpu_h100_x32",
     ],
     shard_count = 1,
     deps = [
-        "//jax:pallas_gpu",
+        "//jax:pallas",
+        "//jax:pallas_gpu",  # build_cleaner: keep
         "//jax:pallas_gpu_ops",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
@@ -103,9 +100,6 @@ jax_test(
     srcs = [
         "ops_test.py",
     ],
-    backend_tags = {
-        "gpu": ["noasan"],  # https://github.com/openai/triton/issues/2918
-    },
     config_tags_overrides = {
         "gpu_a100_x32": {
             "ondemand": False,  # Include in presubmit.
@@ -128,6 +122,7 @@ jax_test(
     ],
     deps = [
         "//jax:pallas",
+        "//jax:pallas_gpu",  # build_cleaner: keep
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
@@ -276,6 +271,7 @@ jax_test(
         "gpu_x32",
         "gpu_a100",
         "gpu_h100",
+        "gpu_p100",
         "gpu_p100_x32",
         "gpu_pjrt_c_api",
     ],
@@ -287,6 +283,7 @@ jax_test(
     deps = [
         "//jax:internal_export_back_compat_test_data",
         "//jax:internal_export_back_compat_test_util",
-        "//jax:pallas_gpu",
+        "//jax:pallas",
+        "//jax:pallas_gpu",  # build_cleaner: keep
     ],
 )
