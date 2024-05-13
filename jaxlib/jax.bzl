@@ -46,6 +46,8 @@ jax_internal_test_harnesses_visibility = []
 jax_test_util_visibility = []
 loops_visibility = []
 
+build_mosaic_gpu = False
+
 def py_deps(_package):
     """Returns the Bazel deps for Python package `package`."""
 

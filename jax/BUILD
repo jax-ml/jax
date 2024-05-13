@@ -18,6 +18,7 @@ load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
+    "build_mosaic_gpu",
     "if_building_jaxlib",
     "jax_extend_internal_users",
     "jax_extra_deps",
@@ -73,7 +74,7 @@ config_setting(
 # If this flag is true, jaxlib will be built with Mosaic GPU. VERY EXPERIMENTAL.
 bool_flag(
     name = "build_mosaic_gpu",
-    build_setting_default = False,
+    build_setting_default = build_mosaic_gpu,
 )
 
 config_setting(
