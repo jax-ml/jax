@@ -15,38 +15,42 @@ limitations under the License.
 
 #include "jaxlib/gpu/lu_pivot_kernels.h"
 
-#include <string_view>
+#include <cstdint>
+#include <string>
 
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/vendor.h"
-#include "jaxlib/kernel_helpers.h"
-#include "xla/service/custom_call_status.h"
+#include "xla/ffi/api/c_api.h"
+#include "xla/ffi/api/ffi.h"
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
-namespace {
 
-absl::Status LuPivotsToPermutation_(gpuStream_t stream, void** buffers,
-                                    const char* opaque,
-                                    std::size_t opaque_len) {
-  auto s =
-      UnpackDescriptor<LuPivotsToPermutationDescriptor>(opaque, opaque_len);
-  JAX_RETURN_IF_ERROR(s.status());
-  LaunchLuPivotsToPermutationKernel(stream, buffers, **s);
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuGetLastError()));
-  return absl::OkStatus();
-}
+namespace ffi = xla::ffi;
 
-}  // namespace
-
-void LuPivotsToPermutation(gpuStream_t stream, void** buffers,
-                           const char* opaque, size_t opaque_len,
-                           XlaCustomCallStatus* status) {
-  auto s = LuPivotsToPermutation_(stream, buffers, opaque, opaque_len);
-  if (!s.ok()) {
-    std::string_view message = s.message();
-    XlaCustomCallStatusSetFailure(status, message.data(), message.length());
-  }
+XLA_FFI_Error* LuPivotsToPermutation(XLA_FFI_CallFrame* call_frame) {
+  static const auto* kImpl =
+      ffi::Ffi::Bind()
+          .Ctx<ffi::PlatformStream<gpuStream_t>>()
+          .Attr<std::int64_t>("batch_size")
+          .Attr<std::int32_t>("pivot_size")
+          .Attr<std::int32_t>("permutation_size")
+          .Arg<ffi::Buffer<ffi::DataType::S32>>()
+          .Ret<ffi::Buffer<ffi::DataType::S32>>()
+          .To([](gpuStream_t stream, std::int64_t batch_size,
+                 std::int32_t pivot_size, std::int32_t permutation_size,
+                 auto pivots, auto permutation) -> ffi::Error {
+            LaunchLuPivotsToPermutationKernel(stream, batch_size, pivot_size,
+                                              permutation_size, pivots.data,
+                                              permutation->data);
+            if (auto status = JAX_AS_STATUS(gpuGetLastError()); !status.ok()) {
+              return ffi::Error(static_cast<XLA_FFI_Error_Code>(status.code()),
+                                std::string(status.message()));
+            }
+            return ffi::Error::Success();
+          })
+          .release();
+  return kImpl->Call(call_frame);
 }
 
 }  // namespace JAX_GPU_NAMESPACE

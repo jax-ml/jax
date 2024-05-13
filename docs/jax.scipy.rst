@@ -1,6 +1,16 @@
 ``jax.scipy`` module
 ====================
 
+jax.scipy.cluster
+-----------------
+
+.. automodule:: jax.scipy.cluster.vq
+
+.. autosummary::
+   :toctree: _autosummary
+   
+   vq
+
 jax.scipy.fft
 -------------
 
@@ -93,6 +103,7 @@ jax.scipy.signal
    correlate
    correlate2d
    csd
+   detrend
    istft
    stft
    welch
@@ -146,6 +157,7 @@ jax.scipy.special
    gammainc
    gammaincc
    gammaln
+   gammasgn
    hyp1f1
    i0
    i0e
@@ -394,6 +406,7 @@ jax.scipy.stats.poisson
 
    logpmf
    pmf
+   cdf
 
 jax.scipy.stats.t
 ~~~~~~~~~~~~~~~~~

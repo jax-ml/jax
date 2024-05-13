@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import collections
 from collections.abc import Generator, Hashable, Iterable, Sequence
-from functools import partial
+from functools import partial, lru_cache
 import inspect
 import math
 import typing
@@ -65,7 +65,6 @@ from jax._src.api_util import (
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib import pmap_lib
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (PmapSharding, TransferToMemoryKind,
@@ -157,60 +156,37 @@ def jit(
   """Sets up ``fun`` for just-in-time compilation with XLA.
 
   Args:
-    fun: Function to be jitted. ``fun`` should be a pure function, as
-      side-effects may only be executed once.
+    fun: Function to be jitted. ``fun`` should be a pure function.
 
-      The arguments and return value of ``fun`` should be arrays,
-      scalars, or (nested) standard Python containers (tuple/list/dict) thereof.
-      Positional arguments indicated by ``static_argnums`` can be anything at
-      all, provided they are hashable and have an equality operation defined.
-      Static arguments are included as part of a compilation cache key, which is
-      why hash and equality operators must be defined.
-
-      JAX keeps a weak reference to ``fun`` for use as a compilation cache key,
-      so the object ``fun`` must be weakly-referenceable. Most :class:`Callable`
-      objects will already satisfy this requirement.
-    in_shardings: Pytree of structure matching that of arguments to ``fun``,
-      with all actual arguments replaced by resource assignment specifications.
-      It is also valid to specify a pytree prefix (e.g. one value in place of a
-      whole subtree), in which case the leaves get broadcast to all values in
-      that subtree.
-
-      The ``in_shardings`` argument is optional. JAX will infer the shardings
-      from the input :py:class:`jax.Array`'s and defaults to replicating the input
-      if the sharding cannot be inferred.
-
-      The valid resource assignment specifications are:
-        - :py:class:`XLACompatibleSharding`, which will decide how the value
-            will be partitioned. With this, using a mesh context manager is not
-            required.
-        - :py:obj:`None`, will give JAX the freedom to choose whatever sharding
-          it wants.
-          For in_shardings, JAX will mark is as replicated but this behavior
-          can change in the future.
-          For out_shardings, we will rely on the XLA GSPMD partitioner to
-          determine the output shardings.
-
-      The size of every dimension has to be a multiple of the total number of
-      resources assigned to it. This is similar to pjit's in_shardings.
-    out_shardings: Like ``in_shardings``, but specifies resource
-      assignment for function outputs. This is similar to pjit's
-      out_shardings.
-
-      The ``out_shardings`` argument is optional. If not specified, :py:func:`jax.jit`
-      will use GSPMD's sharding propagation to figure out what the sharding of the
-      output(s) should be.
-    static_argnums: An optional int or collection of ints that specify which
-      positional arguments to treat as static (compile-time constant).
-      Operations that only depend on static arguments will be constant-folded in
-      Python (during tracing), and so the corresponding argument values can be
-      any Python object.
+      The arguments and return value of ``fun`` should be arrays, scalar, or
+      (nested) standard Python containers (tuple/list/dict) thereof. Positional
+      arguments indicated by ``static_argnums`` can be any hashable type. Static
+      arguments are included as part of a compilation cache key, which is why
+      hash and equality operators must be defined. JAX keeps a weak reference to
+      ``fun`` for use as a compilation cache key, so the object ``fun`` must be
+      weakly-referenceable.
+    in_shardings: optional, a :py:class:`Sharding` or pytree with
+      :py:class:`Sharding` leaves and structure that is a tree prefix of the
+      positional arguments tuple to ``fun``. If provided, the positional
+      arguments passed to ``fun`` must have shardings that are compatible with
+      ``in_shardings`` or an error is raised, and the compiled computation has
+      input shardings corresponding to ``in_shardings``. If not provided, the
+      compiled computation's input shardings are inferred from argument
+      shardings.
+    out_shardings: optional, a :py:class:`Sharding` or pytree with
+      :py:class:`Sharding` leaves and structure that is a tree prefix of the
+      output of ``fun``. If provided, it has the same effect as applying
+      corresponding :py:func:`jax.lax.with_sharding_constraint`s to the output
+      of ``fun``.
+    static_argnums: optional, an int or collection of ints that specify which
+      positional arguments to treat as static (trace- and compile-time
+      constant).
 
       Static arguments should be hashable, meaning both ``__hash__`` and
-      ``__eq__`` are implemented, and immutable. Calling the jitted function
-      with different values for these constants will trigger recompilation.
-      Arguments that are not arrays or containers thereof must be marked as
-      static.
+      ``__eq__`` are implemented, and immutable. Otherwise they can be arbitrary
+      Python objects. Calling the jitted function with different values for
+      these constants will trigger recompilation. Arguments that are not
+      array-like or containers thereof must be marked as static.
 
       If neither ``static_argnums`` nor ``static_argnames`` is provided, no
       arguments are treated as static. If ``static_argnums`` is not provided but
@@ -221,17 +197,18 @@ def jit(
       provided, ``inspect.signature`` is not used, and only actual
       parameters listed in either ``static_argnums`` or ``static_argnames`` will
       be treated as static.
-    static_argnames: An optional string or collection of strings specifying
+    static_argnames: optional, a string or collection of strings specifying
       which named arguments to treat as static (compile-time constant). See the
       comment on ``static_argnums`` for details. If not
       provided but ``static_argnums`` is set, the default is based on calling
       ``inspect.signature(fun)`` to find corresponding named arguments.
-    donate_argnums: Specify which positional argument buffers are "donated" to
-      the computation. It is safe to donate argument buffers if you no longer
-      need them once the computation has finished. In some cases XLA can make
-      use of donated buffers to reduce the amount of memory needed to perform a
+    donate_argnums: optional, collection of integers to specify which positional
+      argument buffers can be overwritten by the computation and marked deleted
+      in the caller. It is safe to donate argument buffers if you no longer need
+      them once the computation has started. In some cases XLA can make use of
+      donated buffers to reduce the amount of memory needed to perform a
       computation, for example recycling one of your input buffers to store a
-      result. You should not reuse buffers that you donate to a computation, JAX
+      result. You should not reuse buffers that you donate to a computation; JAX
       will raise an error if you try to. By default, no argument buffers are
       donated.
 
@@ -247,15 +224,16 @@ def jit(
 
       For more details on buffer donation see the
       `FAQ <https://jax.readthedocs.io/en/latest/faq.html#buffer-donation>`_.
-    donate_argnames: An optional string or collection of strings specifying
+    donate_argnames: optional, a string or collection of strings specifying
       which named arguments are donated to the computation. See the
       comment on ``donate_argnums`` for details. If not
       provided but ``donate_argnums`` is set, the default is based on calling
       ``inspect.signature(fun)`` to find corresponding named arguments.
-    keep_unused: If `False` (the default), arguments that JAX determines to be
-      unused by `fun` *may* be dropped from resulting compiled XLA executables.
-      Such arguments will not be transferred to the device nor provided to the
-      underlying executable. If `True`, unused arguments will not be pruned.
+    keep_unused: optional boolean. If `False` (the default), arguments that JAX
+      determines to be unused by `fun` *may* be dropped from resulting compiled
+      XLA executables. Such arguments will not be transferred to the device nor
+      provided to the underlying executable. If `True`, unused arguments will
+      not be pruned.
     device: This is an experimental feature and the API is likely to change.
       Optional, the Device the jitted function will run on. (Available devices
       can be retrieved via :py:func:`jax.devices`.) The default is inherited
@@ -264,9 +242,8 @@ def jit(
     backend: This is an experimental feature and the API is likely to change.
       Optional, a string representing the XLA backend: ``'cpu'``, ``'gpu'``, or
       ``'tpu'``.
-    inline: Specify whether this function should be inlined into enclosing
-      jaxprs (rather than being represented as an application of the xla_call
-      primitive with its own subjaxpr). Default False.
+    inline: Optional boolean. Specify whether this function should be inlined
+      into enclosing jaxprs. Default False.
 
   Returns:
     A wrapped version of ``fun``, set up for just-in-time compilation.
@@ -287,8 +264,8 @@ def jit(
     [-0.54485  0.27744 -0.29255 -0.91421 -0.62452 -0.24748
     -0.85743 -0.78232  0.76827  0.59566 ]
 
-    To pass arguments such as ``static_argnames`` when decorating a function, a common
-    pattern is to use :func:`functools.partial`:
+    To pass arguments such as ``static_argnames`` when decorating a function, a
+    common pattern is to use :func:`functools.partial`:
 
     >>> from functools import partial
     >>>
@@ -535,7 +512,7 @@ def xla_computation(fun: Callable,
     f, dyn_args = argnums_partial_except(f, static_argnums, args, allow_invalid=False)
     args_flat, in_tree = tree_flatten((dyn_args, kwargs))
     if donate_argnums:
-      donated_invars = donation_vector(donate_argnums, (), dyn_args, kwargs)
+      donated_invars = donation_vector(donate_argnums, (), in_tree)
     else:
       donated_invars = (False,) * len(args_flat)
 
@@ -567,11 +544,7 @@ def xla_computation(fun: Callable,
           result_shardings=None,
           lowering_parameters=mlir.LoweringParameters())
 
-      if xla_extension_version >= 244:
-        m = mlir.module_to_bytecode(lowering_result.module)
-      else:
-        m = mlir.module_to_string(lowering_result.module)
-
+      m = mlir.module_to_bytecode(lowering_result.module)
       built = xc._xla.mlir.mlir_module_to_xla_computation(
           m, use_tuple_args=tuple_args, return_tuple=True)
     out_shapes_flat = [
@@ -1657,7 +1630,7 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
   args, in_tree = tree_flatten((dyn_args, kwargs))
 
   if donate_tuple and not config.debug_nans.value:
-    donated_invars = donation_vector(donate_tuple, (), dyn_args, kwargs)
+    donated_invars = donation_vector(donate_tuple, (), in_tree)
   else:
     donated_invars = (False,) * len(args)
   try:
@@ -1834,8 +1807,7 @@ def _cpp_pmap(
 
   cpp_mapped_f = pmap_lib.pmap(
       fun, cache_miss, static_broadcasted_tuple,
-      pxla.shard_arg if xla_extension_version >= 229 else pxla.temp_shard_arg,  # type: ignore
-      pytree_registry=tree_util.default_registry)
+      pxla.shard_arg, pytree_registry=tree_util.default_registry)  # type: ignore
   _pmap_cache_clears.add(cpp_mapped_f)
 
   pmap_f = wraps(fun)(cpp_mapped_f)
@@ -2439,7 +2411,7 @@ def make_jaxpr(fun: Callable,
 
 def _infer_src_sharding(src, x) -> Sharding | None:
   if src is not None:
-    return src
+    return src  # type: ignore
   if isinstance(x, array.ArrayImpl):
     return x.sharding
   elif isinstance(x, core.Tracer):
@@ -2451,9 +2423,11 @@ def _infer_src_sharding(src, x) -> Sharding | None:
 
 # TODO(yashkatariya): Generalize is_compatible_aval (maybe renamed) and use that
 # to check if shardings are compatible with the input.
-def _check_sharding(x, s):
+@lru_cache(maxsize=2048)
+def _check_sharding(aval, s):
   if isinstance(s, Sharding):
-    aval = shaped_abstractify(x)
+    if isinstance(aval, core.AbstractToken):
+      aval = core.token_shaped_array
     if isinstance(s, XLACompatibleSharding) and not isinstance(s, PmapSharding):
       pjit.pjit_check_aval_sharding(
           (s,), (aval,), None, "device_put args", allow_uneven_sharding=False)
@@ -2468,10 +2442,10 @@ def device_put(
 
   Args:
     x: An array, scalar, or (nested) standard Python container thereof.
-    device: The (optional) :py:class:`Device`, `Sharding`, or a (nested)
-      `Sharding` in standard Python container (must be a tree prefix of ``x``),
-      representing the device(s) to which ``x`` should be transferred. If
-      given, then the result is committed to the device(s).
+    device: The (optional) :py:class:`Device`, :py:class:`Sharding`, or a
+      (nested) :py:class:`Sharding` in standard Python container (must be a tree
+      prefix of ``x``), representing the device(s) to which ``x`` should be
+      transferred. If given, then the result is committed to the device(s).
 
   Returns:
     A copy of ``x`` that resides on ``device``.
@@ -2491,21 +2465,20 @@ def device_put(
          isinstance(device, (xc.Device, Sharding, TransferToMemoryKind))) and
         (src is None or
          isinstance(src, (xc.Device, Sharding, TransferToMemoryKind)))):
-      for leaf in tree_leaves(x):
-        _check_sharding(leaf, s=device)
-      return tree_map(
-          lambda y: dispatch.device_put_p.bind(
-              y, device=device, src=_infer_src_sharding(src, y)), x)
+      def _map(y):
+        _check_sharding(shaped_abstractify(y), s=device)
+        return dispatch.device_put_p.bind(
+            y, device=device, src=_infer_src_sharding(src, y))
+      return tree_map(_map, x)
 
     x_flat, treedef = tree_flatten(x)
     device_flat = flatten_axes("device_put device", treedef, device)
     src_flat = flatten_axes("device_put source", treedef, src)
-    for x_leaf, device_leaf in zip(x_flat, device_flat):
-      _check_sharding(x_leaf, device_leaf)
-    out_flat = [
-        dispatch.device_put_p.bind(xf, device=d, src=_infer_src_sharding(s, xf))
-        for xf, d, s in zip(x_flat, device_flat, src_flat)
-    ]
+    out_flat = []
+    for xf, d, s in zip(x_flat, device_flat, src_flat):
+      _check_sharding(shaped_abstractify(xf), d)
+      out_flat.append(dispatch.device_put_p.bind(
+          xf, device=d, src=_infer_src_sharding(s, xf)))
     return tree_unflatten(treedef, out_flat)
 
 
@@ -2951,9 +2924,6 @@ def block_until_ready(x):
     except AttributeError:
       return x
 
-  if xla_extension_version < 246:
-    return tree_map(try_to_block, x)
-
   arrays = []
   for leaf in tree_leaves(x):
     if isinstance(leaf, array.ArrayImpl):
@@ -2996,7 +2966,11 @@ def live_arrays(platform=None):
   return xb.get_backend(platform).live_arrays()
 
 def clear_caches():
-  """Clear all compilation and staging caches."""
+  """Clear all compilation and staging caches.
+
+  This doesn't clear the persistent cache; to disable it (e.g. for benchmarks),
+  set the jax_enable_compilation_cache config option to False.
+  """
   # Clear all lu.cache and util.weakref_lru_cache instances (used for staging
   # and Python-dispatch compiled executable caches).
   lu.clear_all_caches()

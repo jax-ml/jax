@@ -124,7 +124,7 @@ def callback_effect_lowering(ctx: mlir.LoweringRuleContext, *args, callback, out
 
   out_op, token_out, _ = mlir.emit_python_callback(
       ctx, callback, token_in, list(args), list(ctx.avals_in),
-      list(ctx.avals_out), True)
+      list(ctx.avals_out), has_side_effect=True)
   if token_out:
     ctx.set_tokens_out(ctx.tokens_in.update_tokens(mlir.TokenSet({effect:
       token_out})))
@@ -373,55 +373,6 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
         'incorrect set of output token.'):
       f.lower(2.)
 
-  def test_lowering_ordered_effect_should_create_tokens(self):
-
-    def effect_lowering(ctx, *, effect):
-      ctx.set_tokens_out(ctx.tokens_in)
-      return []
-    mlir.register_lowering(effect_p, effect_lowering)
-
-    @jax.jit
-    def f(x):
-      effect_p.bind(effect=foo_effect)
-      return x + 1.
-    module = f.lower(2.).compiler_ir()
-    main = module.body.operations[0]
-    first_op = main.body.blocks[0].operations[0]
-    self.assertIn('hlo.create_token', first_op.operation.name)
-
-    @jax.jit
-    def f(x):
-      effect_p.bind(effect=foo_effect)
-      effect_p.bind(effect=foo2_effect)
-      return x + 1.
-    module = f.lower(2.).compiler_ir()
-    main = module.body.operations[0]
-    first_op = main.body.blocks[0].operations[0]
-    self.assertIn('hlo.create_token', first_op.operation.name)
-    second_op = main.body.blocks[0].operations[1]
-    self.assertIn('hlo.create_token', second_op.operation.name)
-
-    @jax.jit
-    def f(x):
-      effect_p.bind(effect=foo_effect)
-      return x + 1.
-    module = f.lower(2.).compiler_ir()
-    main = module.body.operations[0]
-    first_op = main.body.blocks[0].operations[0]
-    self.assertIn('hlo.create_token', first_op.operation.name)
-
-    @jax.jit
-    def f(x):
-      effect_p.bind(effect=foo_effect)
-      effect_p.bind(effect=foo2_effect)
-      return x + 1.
-    module = f.lower(2.).compiler_ir()
-    main = module.body.operations[0]
-    first_op = main.body.blocks[0].operations[0]
-    self.assertIn('hlo.create_token', first_op.operation.name)
-    second_op = main.body.blocks[0].operations[1]
-    self.assertIn('hlo.create_token', second_op.operation.name)
-
   def test_nontrivial_lowering_with_ordered_effect_should_consume_token(self):
 
     mlir.register_lowering(effect_p, function_effect_lowering)
@@ -432,12 +383,11 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
       return x + 1.
     module = f.lower(2.).compiler_ir()
     main = module.body.operations[0]
-    first_op = main.body.blocks[0].operations[0]
-    self.assertIn('hlo.create_token', first_op.operation.name)
-    second_op = main.body.blocks[0].operations[1]
-    self.assertEqual(second_op.operation.name, "func.call")
-    self.assertEqual(str(second_op.attributes["callee"]), "@effect")
-    self.assertEqual(second_op.operands[0].owner, first_op)
+    call_op = main.body.blocks[0].operations[0]
+
+    self.assertEqual(call_op.operation.name, 'func.call')
+    self.assertEqual(str(call_op.attributes['callee']), '@effect')
+
     func = module.body.operations[1]
     self.assertEqual(func.name.value, "effect")
     self.assertIn('hlo.token', str(func.type.inputs[0]))
@@ -477,23 +427,24 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
     self.assertLen(list(result_types), 1)
     self.assertEqual(str(result_types[0]), 'tensor<f32>')
 
-  def test_lowered_jaxpr_with_ordered_effects_takes_in_dummy_inputs(self):
+  def test_lowered_jaxpr_with_ordered_effects_takes_token_inputs(self):
     @jax.jit
     def f(x):
       effect_p.bind(effect=foo_effect)
       return x + 1.
     module = f.lower(1.).compiler_ir()
     input_types = module.body.operations[0].type.inputs
-    # First argument should be dummy token
+    token_type = '!stablehlo.token'
+    # First argument should be a token
     self.assertLen(list(input_types), 2)
-    self.assertEqual(str(input_types[0]), 'tensor<0xi1>')
+    self.assertEqual(str(input_types[0]), token_type)
 
-    # First output should be dummy token
+    # First output should be a token
     result_types = module.body.operations[0].type.results
     self.assertLen(list(result_types), 2)
-    self.assertEqual(str(result_types[0]), 'tensor<0xi1>')
+    self.assertEqual(str(result_types[0]), token_type)
 
-  def test_lowered_jaxpr_with_multiple_ordered_effects_takes_in_dummy_inputs(self):
+  def test_lowered_jaxpr_with_multiple_ordered_effects_takes_in_tokens(self):
     @jax.jit
     def f(x):
       effect_p.bind(effect=foo_effect)
@@ -501,16 +452,17 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
       return x + 1.
     module = f.lower(1.).compiler_ir()
     input_types = module.body.operations[0].type.inputs
-    # First two arguments should be dummy values
+    token_type = '!stablehlo.token'
+    # First two arguments should be token values
     self.assertLen(list(input_types), 3)
-    self.assertEqual(str(input_types[0]), 'tensor<0xi1>')
-    self.assertEqual(str(input_types[1]), 'tensor<0xi1>')
+    self.assertEqual(str(input_types[0]), token_type)
+    self.assertEqual(str(input_types[1]), token_type)
 
-    # First two outputs should be dummy values
+    # First two outputs should be token values
     result_types = module.body.operations[0].type.results
     self.assertLen(list(result_types), 3)
-    self.assertEqual(str(result_types[0]), 'tensor<0xi1>')
-    self.assertEqual(str(result_types[1]), 'tensor<0xi1>')
+    self.assertEqual(str(result_types[0]), token_type)
+    self.assertEqual(str(result_types[1]), token_type)
 
   def test_can_lower_and_run_jaxpr_with_ordered_effects(self):
     @jax.jit

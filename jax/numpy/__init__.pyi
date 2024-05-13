@@ -8,6 +8,7 @@ from jax._src import core as _core
 from jax._src import dtypes as _dtypes
 from jax._src.lax.lax import PrecisionLike
 from jax._src.lax.slicing import GatherScatterMode
+from jax._src.lib import Device
 from jax._src.numpy.index_tricks import _Mgrid, _Ogrid, CClass as _CClass, RClass as _RClass
 from jax._src.typing import (
     Array, ArrayLike, DType, DTypeLike,
@@ -21,8 +22,7 @@ _T = TypeVar('_T')
 
 _Axis = Union[None, int, Sequence[int]]
 
-# TODO(jakevdp): use xla_client.Device here
-_Device = Any
+_Device = Device
 
 ComplexWarning: type
 
@@ -83,11 +83,11 @@ def argpartition(a: ArrayLike, kth: int, axis: int = ...) -> Array: ...
 def argsort(
     a: ArrayLike,
     axis: Optional[int] = ...,
-    kind: str | None = ...,
-    order: None = ...,
     *,
     stable: builtins.bool = ...,
     descending: builtins.bool = ...,
+    kind: str | None = ...,
+    order: None = ...,
 ) -> Array: ...
 def argwhere(
     a: ArrayLike,
@@ -115,7 +115,7 @@ def asarray(
 ) -> Array: ...
 def asin(x: ArrayLike, /) -> Array: ...
 def asinh(x: ArrayLike, /) -> Array: ...
-def astype(a: ArrayLike, dtype: Optional[DTypeLike], /, *, copy: builtins.bool = ...) -> Array: ...
+def astype(a: ArrayLike, dtype: Optional[DTypeLike], /, *, copy: builtins.bool = ..., device: _Device | _Sharding | None = ...) -> Array: ...
 def atan(x: ArrayLike, /) -> Array: ...
 def atan2(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 def atanh(x: ArrayLike, /) -> Array: ...
@@ -241,6 +241,9 @@ def cumprod(a: ArrayLike, axis: _Axis = ..., dtype: DTypeLike = ...,
 cumproduct = cumprod
 def cumsum(a: ArrayLike, axis: _Axis = ..., dtype: DTypeLike = ...,
            out: None = ...) -> Array: ...
+def cumulative_sum(x: ArrayLike, /, *, axis: int | None = ...,
+                   dtype: DTypeLike | None = ...,
+                   include_initial: bool = ...) -> Array: ...
 
 def deg2rad(x: ArrayLike, /) -> Array: ...
 degrees = rad2deg
@@ -283,7 +286,7 @@ def einsum(
     subscript: str, /,
     *operands: ArrayLike,
     out: None = ...,
-    optimize: str = "optimal",
+    optimize: Union[str, builtins.bool, list[tuple[int, ...]]] = ...,
     precision: PrecisionLike = ...,
     preferred_element_type: Optional[DTypeLike] = ...,
     _use_xeinsum: builtins.bool = False,
@@ -296,7 +299,7 @@ def einsum(
     axes: Sequence[Any], /,
     *operands: Union[ArrayLike, Sequence[Any]],
     out: None = ...,
-    optimize: str = "optimal",
+    optimize: Union[str, builtins.bool, list[tuple[int, ...]]] = ...,
     precision: PrecisionLike = ...,
     preferred_element_type: Optional[DTypeLike] = ...,
     _use_xeinsum: builtins.bool = False,
@@ -307,14 +310,33 @@ def einsum(
     subscripts, /,
     *operands,
     out: None = ...,
-    optimize: str = ...,
+    optimize: Union[str, builtins.bool, list[tuple[int, ...]]] = ...,
     precision: PrecisionLike = ...,
     preferred_element_type: Optional[DTypeLike] = ...,
     _use_xeinsum: builtins.bool = ...,
     _dot_general: Callable[..., Array] = ...,
 ) -> Array: ...
 
-def einsum_path(subscripts, *operands, optimize =  ...): ...
+@overload
+def einsum_path(
+    subscripts: str, /,
+    *operands: ArrayLike,
+    optimize: Union[str, builtins.bool, list[tuple[int, ...]]] =  ...,
+) -> tuple[list[tuple[int, ...]], Any]: ...
+@overload
+def einsum_path(
+    arr: ArrayLike,
+    axes: Sequence[Any], /,
+    *operands: Union[ArrayLike, Sequence[Any]],
+    optimize: Union[str, builtins.bool, list[tuple[int, ...]]] =  ...,
+) -> tuple[list[tuple[int, ...]], Any]: ...
+@overload
+def einsum_path(
+    subscripts, /,
+    *operands: ArrayLike,
+    optimize: Union[str, builtins.bool, list[tuple[int, ...]]] =  ...,
+) -> tuple[list[tuple[int, ...]], Any]: ...
+
 def empty(shape: Any, dtype: Optional[DTypeLike] = ...,
           device: Optional[Union[_Device, _Sharding]] = ...) -> Array: ...
 def empty_like(prototype: Union[ArrayLike, DuckTypedArray],
@@ -363,7 +385,7 @@ def fmax(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 def fmin(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 def fmod(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 def frexp(x: ArrayLike, /) -> tuple[Array, Array]: ...
-def from_dlpack(x: Any, /, *, device: _Device | None = None,
+def from_dlpack(x: Any, /, *, device: _Device | _Sharding | None = None,
                 copy: builtins.bool | None = None) -> Array: ...
 def frombuffer(buffer: Union[bytes, Any], dtype: DTypeLike = ...,
                count: int = ..., offset: int = ...) -> Array: ...
@@ -687,7 +709,8 @@ def remainder(x: ArrayLike, y: ArrayLike, /) -> Array: ...
 def repeat(a: ArrayLike, repeats: ArrayLike, axis: Optional[int] = ..., *,
            total_repeat_length: Optional[int] = ...) -> Array: ...
 def reshape(
-    a: ArrayLike, newshape: Union[DimSize, Shape], order: str = ...
+    a: ArrayLike, shape: Union[DimSize, Shape] = ...,
+    newshape: Union[DimSize, Shape] | None = ..., order: str = ...
 ) -> Array: ...
 
 def resize(a: ArrayLike, new_shape: Shape) -> Array: ...
@@ -734,11 +757,11 @@ sometrue = any
 def sort(
     a: ArrayLike,
     axis: Optional[int] = ...,
-    kind: str | None = ...,
-    order: None = ...,
     *,
     stable: builtins.bool = ...,
     descending: builtins.bool = ...,
+    kind: str | None = ...,
+    order: None = ...,
 ) -> Array: ...
 def sort_complex(a: ArrayLike) -> Array: ...
 def split(

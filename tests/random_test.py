@@ -385,6 +385,16 @@ class PrngTest(jtu.JaxTestCase):
         random.key_data(random.fold_in(make_key(seed), 4)),
         np.array([2285895361,  433833334], dtype='uint32'))
 
+  @jtu.run_on_devices("gpu")
+  def test_threefry_gpu_kernel_lowering(self):
+    f = lambda key: jax.random.uniform(key, (1,))
+    with jax._src.config.threefry_gpu_kernel_lowering(False):
+      hlo_text = jax.jit(f).lower(jax.random.key(17)).as_text()
+      self.assertNotIn("cu_threefry2x32", hlo_text)
+    with jax._src.config.threefry_gpu_kernel_lowering(True):
+      hlo_text = jax.jit(f).lower(jax.random.key(17)).as_text()
+      self.assertIn("cu_threefry2x32", hlo_text)
+
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
   def test_random_seed_offset(self, make_key):
     k1 = make_key(17)
@@ -1211,9 +1221,9 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     key = random.key(123)
     keys = random.split(key, 4)
 
-    newshape = (2, 2)
-    key_func = partial(jnp.reshape, newshape=newshape)
-    arr_func = partial(jnp.reshape, newshape=(*newshape, *key._impl.key_shape))
+    shape = (2, 2)
+    key_func = partial(jnp.reshape, shape=shape)
+    arr_func = partial(jnp.reshape, shape=(*shape, *key._impl.key_shape))
 
     self.check_shape(key_func, keys)
     self.check_against_reference(key_func, arr_func, keys)
@@ -1281,7 +1291,7 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     keys = random.split(key, 4).reshape(2, 2)
 
     key_func = jnp.ravel
-    arr_func = partial(jnp.reshape, newshape=(4, *key._impl.key_shape))
+    arr_func = partial(jnp.reshape, shape=(4, *key._impl.key_shape))
 
     self.check_shape(key_func, keys)
     self.check_against_reference(key_func, arr_func, keys)

@@ -131,6 +131,15 @@ def split_list(args: Sequence[T], ns: Sequence[int]) -> list[list[T]]:
   lists.append(args)
   return lists
 
+def split_list_checked(args: Sequence[T], ns: Sequence[int]) -> list[list[T]]:
+  args = list(args)
+  assert sum(ns) == len(args)
+  lists = []
+  for n in ns:
+    lists.append(args[:n])
+    args = args[n:]
+  return lists
+
 def partition_list(bs: Sequence[bool], l: Sequence[T]) -> tuple[list[T], list[T]]:
   assert len(bs) == len(l)
   lists = [], []  # type: ignore

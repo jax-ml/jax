@@ -26,7 +26,6 @@ import jax
 from jax import lax
 from jax import numpy as jnp
 from jax.experimental import export
-from jax.experimental.export import _export
 from jax.experimental import pjit
 from jax.experimental.shard_map import shard_map
 from jax.sharding import NamedSharding
@@ -213,6 +212,32 @@ class JaxExportTest(jtu.JaxTestCase):
     f1 = export.call_exported(exp_f)
     self.assertAllClose(f(x), f1(x))
 
+  def test_jit_static_arg(self):
+
+    with self.subTest("static_argnames"):
+
+      @functools.partial(jax.jit, static_argnames=["c"])
+      def f(x, *, c):
+        return c * jnp.sin(x)
+
+      x = np.arange(4, dtype=np.float32)
+      exp_f = get_exported(f)(x, c=0.1)
+
+      f1 = export.call_exported(exp_f)
+      self.assertAllClose(f(x, c=0.1), f1(x))
+
+    with self.subTest("static_argnums"):
+
+      @functools.partial(jax.jit, static_argnums=[1])
+      def g(x, c):
+        return c * jnp.sin(x)
+
+      x = np.arange(4, dtype=np.float32)
+      exp_g = get_exported(g)(x, 0.1)
+
+      g1 = export.call_exported(exp_g)
+      self.assertAllClose(g(x, 0.1), g1(x))
+
   def test_call_exported_lambda(self):
     # When we export a lambda, the exported.fun_name is not a valid MLIR function name
     f = lambda x: jnp.sin(x)
@@ -220,6 +245,24 @@ class JaxExportTest(jtu.JaxTestCase):
     exp_f = get_exported(f)(x)
     f1 = export.call_exported(exp_f)
     self.assertAllClose(f(x), f1(x))
+
+  def test_call_name_conflict(self):
+    @jax.jit
+    def inner(x):
+      # The lowering will contain a _where private function
+      return jnp.where(x > 0, jnp.ones_like(x), jnp.zeros_like(x))
+
+    x = jnp.arange(-20, 20, dtype=np.int32)
+    exp_inner = export.export(inner)(x)
+    self.assertIn("@_where(", str(exp_inner.mlir_module()))
+
+    @jax.jit
+    def outer(x):
+      # There should be no conflict on _where
+      x = export.call(exp_inner)(x)
+      return inner(x)
+
+    export.export(outer)(x)
 
   def test_call_twice_exported(self):
     def f(x): return jnp.sin(x)
@@ -494,7 +537,6 @@ class JaxExportTest(jtu.JaxTestCase):
             r"Expected current \(from args\[0\]\) scope .*"
             r"and found for 'w' \(args\[1\]\) scope .*", re.DOTALL)):
       get_exported(f)(x_poly_spec, y_poly_spec)
-
 
   @jtu.parameterized_filterable(
     kwargs=[
@@ -858,6 +900,82 @@ class JaxExportTest(jtu.JaxTestCase):
         in_shardings=(jax.sharding.NamedSharding(mesh1, P("x", None)),)
       )(a)
 
+  def test_call_with_different_no_of_devices(self):
+    if jax.local_device_count() < 2:
+      self.skipTest("Need at least 2 devices")
+
+    @jax.jit
+    def f_without_shardings(x):
+      return jnp.sum(x ** 2, axis=0)
+
+    a = jnp.arange(jax.local_device_count() * 10, dtype=np.float32).reshape(
+        (jax.local_device_count(), 10)
+    )
+    res_native = f_without_shardings(a)
+    exp = get_exported(f_without_shardings)(a)
+    self.assertEqual(exp.nr_devices, 1)
+
+    run_devices = jax.local_devices()
+    run_mesh = Mesh(run_devices, "i")
+    b = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P("i")))
+
+    res_exported = export.call_exported(exp)(b)
+    self.assertAllClose(res_native, res_exported)
+
+  def test_call_with_different_no_of_devices_error_has_in_shardings(self):
+    if jax.local_device_count() < 2:
+      self.skipTest("Need at least 2 devices")
+
+    mesh_1 = Mesh(jax.local_devices()[:1], "i")
+    @functools.partial(pjit.pjit,
+                       in_shardings=NamedSharding(mesh_1, P("i")))
+    def f_with_sharding(x):
+      return jnp.sum(x ** 2, axis=0)
+
+    a = jnp.arange(jax.device_count() * 10, dtype=np.float32).reshape(
+        (jax.device_count(), 10)
+    )
+    exp = get_exported(f_with_sharding)(a)
+    self.assertEqual(exp.nr_devices, 1)
+
+    run_devices = jax.local_devices()
+    run_mesh = Mesh(run_devices, "i")
+    b = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P("i")))
+
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Exported module .* was lowered for 1 devices and is called in a "
+        f"context with {jax.local_device_count()} devices.* module contains "
+        "non-replicated sharding annotations"):
+      export.call_exported(exp)(b)
+
+  def test_call_with_different_no_of_devices_error_has_sharding_constraint(self):
+    if jax.device_count() < 2:
+      self.skipTest("Need at least 2 devices")
+
+    mesh_1 = Mesh(jax.local_devices()[:1], "i")
+    @jax.jit
+    def f_with_sharding(x):
+      x = jax.lax.with_sharding_constraint(x, NamedSharding(mesh_1, P("i")))
+      return jnp.sum(x ** 2, axis=0)
+
+    a = jnp.arange(jax.device_count() * 10, dtype=np.float32).reshape(
+        (jax.device_count(), 10)
+    )
+    exp = get_exported(f_with_sharding)(a)
+    self.assertEqual(exp.nr_devices, 1)
+
+    run_devices = jax.local_devices()
+    run_mesh = Mesh(run_devices, "i")
+    b = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P("i")))
+
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Exported module .* was lowered for 1 devices and is called in a "
+        f"context with {jax.local_device_count()} devices.* module contains "
+        "non-replicated sharding annotations"):
+      export.call_exported(exp)(b)
+
   @jtu.parameterized_filterable(
     kwargs=[
       dict(testcase_name=f"_poly={poly}", poly=poly)
@@ -1154,14 +1272,10 @@ class JaxExportTest(jtu.JaxTestCase):
       )
 
     exp = get_exported(f_jax)(x)
-    if exp.mlir_module_serialization_version >= _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
-      self.assertEqual(["ForTestingOrderedEffect1()", "ForTestingOrderedEffect2()"],
-                       sorted(str(e) for e in exp.ordered_effects))
-      self.assertEqual(["ForTestingUnorderedEffect1()"],
-                       [str(e) for e in exp.unordered_effects])
-    else:
-      self.assertEqual([], [str(e) for e in exp.ordered_effects])
-      self.assertEqual([], [str(e) for e in exp.unordered_effects])
+    self.assertEqual(["ForTestingOrderedEffect1()", "ForTestingOrderedEffect2()"],
+                     sorted(str(e) for e in exp.ordered_effects))
+    self.assertEqual(["ForTestingUnorderedEffect1()"],
+                     [str(e) for e in exp.unordered_effects])
     mlir_module_str = str(exp.mlir_module())
 
     # Inner functions use stablehlo.token for all versions
@@ -1184,17 +1298,11 @@ class JaxExportTest(jtu.JaxTestCase):
       # Results
       r"!stablehlo.token .*jax.token = true.*"
       r"!stablehlo.token .*jax.token = true.*")
-    if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
-      wrapped_main_expected_re = wrapped_main_expected_re.replace("!stablehlo.token", "tensor<0xi1>")
     self.assertRegex(mlir_module_str, wrapped_main_expected_re)
 
-    if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
-      # The main function does not have tokens
-      self.assertNotRegex(mlir_module_str, r"@main.*token")
-    else:
-      # The main function takes tokens and has the same type as the wrapped main
-      main_expected_re = wrapped_main_expected_re.replace("@_wrapped_jax_export_main", "@main")
-      self.assertRegex(mlir_module_str, main_expected_re)
+    # The main function takes tokens and has the same type as the wrapped main
+    main_expected_re = wrapped_main_expected_re.replace("@_wrapped_jax_export_main", "@main")
+    self.assertRegex(mlir_module_str, main_expected_re)
 
     # Now call the exported from a function that uses its own effects
     def f_outer(x):
@@ -1206,19 +1314,13 @@ class JaxExportTest(jtu.JaxTestCase):
         export.call_exported(exp)(x))
 
     lowered_outer = jax.jit(f_outer).lower(x)
-    if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
-      self.assertEqual(["ForTestingOrderedEffect2()"],
-                       [str(e) for e in lowered_outer._lowering.compile_args["ordered_effects"]])
-    else:
-      self.assertEqual(["ForTestingOrderedEffect1()", "ForTestingOrderedEffect2()"],
-                       sorted(str(e) for e in lowered_outer._lowering.compile_args["ordered_effects"]))
+    self.assertEqual(["ForTestingOrderedEffect1()", "ForTestingOrderedEffect2()"],
+                     sorted(str(e) for e in lowered_outer._lowering.compile_args["ordered_effects"]))
     self.assertEqual(["ForTestingUnorderedEffect1()"],
                      sorted([str(e) for e in lowered_outer._lowering.compile_args["unordered_effects"]]))
 
     mlir_outer_module_str = str(lowered_outer.compiler_ir())
-    if exp.mlir_module_serialization_version >= _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
-      main_expected_re = main_expected_re.replace("!stablehlo.token", "tensor<0xi1>")
-      self.assertRegex(mlir_outer_module_str, main_expected_re)
+    self.assertRegex(mlir_outer_module_str, main_expected_re)
 
     res = jax.jit(f_outer)(x)
     self.assertAllClose(2. * 2. * x + 10. + 4. * 2. * x, res)
@@ -1244,21 +1346,15 @@ class JaxExportTest(jtu.JaxTestCase):
       r"%arg3: tensor<\?x\?xf32>.*\) -> \("
       # Results
       r"!stablehlo.token {jax.token = true.*, tensor<\?x\?xf32>.*\)")
-    if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
-      wrapped_main_expected_re = wrapped_main_expected_re.replace("!stablehlo.token", "tensor<0xi1>")
     self.assertRegex(mlir_module_str, wrapped_main_expected_re)
 
-    if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
-      # The main function does not have tokens
-      self.assertNotRegex(mlir_module_str, r"@main.*token")
-    else:
-      main_expected_re = (
-        r"@main\("
-        r"%arg0: !stablehlo.token {jax.token = true.*, "
-        r"%arg1: tensor<\?x\?xf32>.*\) -> \("
-        # Results
-        r"!stablehlo.token {jax.token = true.*, tensor<\?x\?xf32>.*\)")
-      self.assertRegex(mlir_module_str, main_expected_re)
+    main_expected_re = (
+      r"@main\("
+      r"%arg0: !stablehlo.token {jax.token = true.*, "
+      r"%arg1: tensor<\?x\?xf32>.*\) -> \("
+      # Results
+      r"!stablehlo.token {jax.token = true.*, tensor<\?x\?xf32>.*\)")
+    self.assertRegex(mlir_module_str, main_expected_re)
 
     res = export.call_exported(exp)(x)
     self.assertAllClose(10. + 2. * x, res)
@@ -1291,22 +1387,16 @@ class JaxExportTest(jtu.JaxTestCase):
       r"%arg4: tensor<\?x\?xf32>.*\) -> \("
       # Results
       r"!stablehlo.token {jax.token = true.*, tensor<\?x\?xf32>.*\)")
-    if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
-      wrapped_main_expected_re = wrapped_main_expected_re.replace("!stablehlo.token", "tensor<0xi1>")
     self.assertRegex(mlir_module_str, wrapped_main_expected_re)
 
-    if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
-      # The main function does not have tokens
-      self.assertNotRegex(mlir_module_str, r"@main.*token")
-    else:
-      main_expected_re = (
-        r"@main\("
-        r"%arg0: tensor<i..> {jax.global_constant = \"_platform_index\".*, "
-        r"%arg1: !stablehlo.token {jax.token = true.*, "
-        r"%arg2: tensor<\?x\?xf32>.*\) -> \("
-        # Results
-        r"!stablehlo.token {jax.token = true.*, tensor<\?x\?xf32>.*\)")
-      self.assertRegex(mlir_module_str, main_expected_re)
+    main_expected_re = (
+      r"@main\("
+      r"%arg0: tensor<i..> {jax.global_constant = \"_platform_index\".*, "
+      r"%arg1: !stablehlo.token {jax.token = true.*, "
+      r"%arg2: tensor<\?x\?xf32>.*\) -> \("
+      # Results
+      r"!stablehlo.token {jax.token = true.*, tensor<\?x\?xf32>.*\)")
+    self.assertRegex(mlir_module_str, main_expected_re)
     res = export.call_exported(exp)(x)
     self.assertAllClose(10. + _testing_multi_platform_fun_expected(x),
                         res)
@@ -1328,12 +1418,8 @@ class JaxExportTest(jtu.JaxTestCase):
     f_jax = jax.jit(f_jax, donate_argnums=(0,))
     exp = export.export(f_jax)(x)
     mlir_module_str = str(exp.mlir_module())
-    if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
-      self.assertRegex(mlir_module_str, r"@main.*tf.aliasing_output = 0")
-      self.assertRegex(mlir_module_str, r"@_wrapped_jax_export_main.*tf.aliasing_output = 1")
-    else:
-      self.assertRegex(mlir_module_str, r"@main.*tf.aliasing_output = 1")
-      self.assertRegex(mlir_module_str, r"@_wrapped_jax_export_main.*tf.aliasing_output = 1")
+    self.assertRegex(mlir_module_str, r"@main.*tf.aliasing_output = 1")
+    self.assertRegex(mlir_module_str, r"@_wrapped_jax_export_main.*tf.aliasing_output = 1")
 
   @jtu.parameterized_filterable(
     kwargs=[
@@ -1353,6 +1439,29 @@ class JaxExportTest(jtu.JaxTestCase):
         effect_class_name="ForTestingOrderedEffect" + name)
     with self.assertRaisesRegex(Exception, expect_error):
       _ = get_exported(f_jax)(jax.ShapeDtypeStruct((3, 4), x.dtype))
+
+  @jtu.parameterized_filterable(
+    kwargs=[
+        {"m": 5, "k": 4, "n": 3, "group_sizes": [5]},
+        {"m": 10, "k": 9, "n": 8, "group_sizes": [3, 7]},
+    ])
+  def test_ragged_dot(self, m, k, n, group_sizes):
+    def f_jax(x, y, gs):
+      return jax.lax.ragged_dot(x, y, gs)
+    dtype = np.float32
+    group_sizes = np.array(group_sizes, dtype=np.int32)
+    lhs = np.arange(m * k, dtype=dtype).reshape((m, k))
+    num_groups = group_sizes.shape[0]
+    rhs = np.arange(num_groups * k * n, dtype=dtype).reshape((num_groups, k, n))
+    res_native = f_jax(lhs, rhs, group_sizes)
+
+    exp_f = get_exported(f_jax)(
+        jax.ShapeDtypeStruct(lhs.shape, dtype=lhs.dtype),
+        jax.ShapeDtypeStruct(rhs.shape, dtype=rhs.dtype),
+        jax.ShapeDtypeStruct(group_sizes.shape, dtype=group_sizes.dtype),
+    )
+    res_exported = export.call_exported(exp_f)(lhs, rhs, group_sizes)
+    self.assertAllClose(res_native, res_exported)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

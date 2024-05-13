@@ -61,7 +61,6 @@ from jax._src.interpreters import pxla
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.sharding_impls import (
     NamedSharding, XLACompatibleSharding, GSPMDSharding,
     SingleDeviceSharding, PmapSharding, AUTO, UNSPECIFIED, UnspecifiedValue,
@@ -311,19 +310,12 @@ def _cpp_pjit(jit_info: PjitInfo):
     return outs, maybe_fastpath_data
 
   fun = jit_info.fun
-  if xla_extension_version >= 226:
-    cpp_pjit_f = xc._xla.pjit(  # type: ignore
-      getattr(fun, "__name__", "<unnamed function>"),
-      fun, cache_miss, jit_info.static_argnums, jit_info.static_argnames,
-      jit_info.donate_argnums, tree_util.dispatch_registry,
-      pxla.shard_arg if xla_extension_version >= 229 else pxla.temp_shard_arg,  # type: ignore
-      _get_cpp_global_cache(jit_info.has_explicit_sharding))  # type: ignore
-  else:
-    cpp_pjit_f = xc._xla.pjit(  # type: ignore
-      getattr(fun, "__name__", "<unnamed function>"),
-      fun, cache_miss, jit_info.static_argnums, jit_info.static_argnames,
-      jit_info.donate_argnums, tree_util.dispatch_registry,
-      _get_cpp_global_cache(jit_info.has_explicit_sharding))
+  cpp_pjit_f = xc._xla.pjit(  # type: ignore
+    getattr(fun, "__name__", "<unnamed function>"),
+    fun, cache_miss, jit_info.static_argnums, jit_info.static_argnames,
+    jit_info.donate_argnums, tree_util.dispatch_registry,
+    pxla.shard_arg,  # type: ignore
+    _get_cpp_global_cache(jit_info.has_explicit_sharding))  # type: ignore
 
   cpp_pjitted_f = wraps(fun)(cpp_pjit_f)
   cpp_pjitted_f._fun = fun
@@ -462,7 +454,7 @@ def _make_jit_wrapper(jit_info: PjitInfo):
         '_experimental_lowering_parameters', mlir.LoweringParameters())
 
     (args_flat, flat_global_in_avals, params, in_tree, out_tree,
-     donated_invars, arg_names, ()) = _infer_params(jit_info, args, kwargs)
+     donated_invars, arg_names, _) = _infer_params(jit_info, args, kwargs)
     try:
       lowering = _resolve_and_lower(
           args_flat, **params, lowering_parameters=lowering_parameters)
@@ -556,8 +548,7 @@ def _infer_params(jit_info, args, kwargs):
   flat_fun, explicit_args = hoist_obj_attrs(flat_fun, explicit_args)
 
   if (donate_argnums or donate_argnames) and not config.debug_nans.value:
-    donated_invars = donation_vector(
-        donate_argnums, donate_argnames, dyn_args, dyn_kwargs)
+    donated_invars = donation_vector(donate_argnums, donate_argnames, in_tree)
   else:
     donated_invars = (False,) * len(explicit_args)
   del donate_argnums, donate_argnames
@@ -737,19 +728,10 @@ def pjit(
     processes run the same :func:`~pjit`'d function in the same order.
 
     When running in this configuration, the mesh should contain devices across
-    all processes. However, any input argument dimensions partitioned over
-    multi-process mesh axes should be of size equal to the corresponding *local*
-    mesh axis size, and outputs will be similarly sized according to the local
-    mesh. ``fun`` will still be executed across *all* devices in the mesh,
+    all processes. All inputs arguments must be globally shaped.
+    ``fun`` will still be executed across *all* devices in the mesh,
     including those from other processes, and will be given a global view of the
-    data spread across multiple processes as a single array. However, outside
-    of :func:`~pjit` every process only "sees" its local piece of the input and output,
-    corresponding to its local sub-mesh.
-
-    This means that each process's participating local devices must form a
-    _contiguous_ local sub-mesh within the full global mesh. A contiguous
-    sub-mesh is one where all of its devices are adjacent within the global
-    mesh, and form a rectangular prism.
+    data spread across multiple processes as a single array.
 
     The SPMD model also requires that the same multi-process :func:`~pjit`'d
     functions must be run in the same order on all processes, but they can be
@@ -1540,16 +1522,11 @@ def _pjit_call_impl(*args, jaxpr,
   donated_argnums = [i for i, d in enumerate(donated_invars) if d]
   has_explicit_sharding = _pjit_explicit_sharding(
       in_shardings, out_shardings, None, None)
-  if xla_extension_version >= 226:
-    return xc._xla.pjit(
-        name, f, call_impl_cache_miss, [], [], donated_argnums,
-        tree_util.dispatch_registry,
-        pxla.shard_arg if xla_extension_version >= 229 else pxla.temp_shard_arg,  # type: ignore
-        _get_cpp_global_cache(has_explicit_sharding))(*args)
-  else:
-    return xc._xla.pjit(name, f, call_impl_cache_miss, [], [], donated_argnums,  # type: ignore
-                        tree_util.dispatch_registry,
-                        _get_cpp_global_cache(has_explicit_sharding))(*args)
+  return xc._xla.pjit(
+      name, f, call_impl_cache_miss, [], [], donated_argnums,
+      tree_util.dispatch_registry,
+      pxla.shard_arg,  # type: ignore
+      _get_cpp_global_cache(has_explicit_sharding))(*args)
 
 pjit_p.def_impl(_pjit_call_impl)
 
@@ -1594,7 +1571,7 @@ def _pjit_lower_cached(
   else:
     return pxla.lower_sharding_computation(
         jaxpr, api_name, name, in_shardings, out_shardings,
-        in_layouts, out_layouts, tuple(donated_invars), tuple(jaxpr.in_avals),
+        in_layouts, out_layouts, tuple(donated_invars),
         keep_unused=keep_unused, inline=inline,
         devices_from_context=(
             None if mesh is None or mesh.empty else list(mesh.devices.flat)),
@@ -1799,12 +1776,9 @@ def _pjit_batcher_for_sharding(
     tad = list(new_op.tile_assignment_dimensions)
     tad.insert(dim, 1)
     new_op.tile_assignment_dimensions = tad
-    if xla_extension_version >= 234:
-      new_gs = GSPMDSharding(
-          s._device_assignment, new_op,  # type: ignore
-          _device_list=getattr(s, '_internal_device_list', None))
-    else:
-      new_gs = GSPMDSharding(s._device_assignment, new_op)  # type: ignore
+    new_gs = GSPMDSharding(
+        s._device_assignment, new_op,  # type: ignore
+        _device_list=getattr(s, '_internal_device_list', None))
     return pxla._get_out_sharding_from_orig_sharding([new_gs], [None], s, None)[0]  # type: ignore
   else:
     if isinstance(s, NamedSharding):
@@ -2339,6 +2313,8 @@ def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding,
   # NamedSharding. So update the NamedSharding to have the manual axes.
   if isinstance(axis_ctx, sharding_impls.SPMDAxisContext):
     mesh = resource_env.physical_mesh
+    if mesh.empty and isinstance(sharding, NamedSharding):
+      mesh = sharding.mesh
     parsed_pspec = parse_flatten_op_sharding(
         sharding._to_xla_hlo_sharding(aval.ndim), mesh)[0]
     sharding = NamedSharding._from_parsed_pspec(

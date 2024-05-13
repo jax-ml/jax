@@ -210,6 +210,7 @@ def trace_context():
           dynamic_shapes.value, numpy_dtype_promotion.value,
           default_device.value, random_seed_offset.value,
           threefry_partitionable.value,
+          threefry_gpu_kernel_lowering.value,
           softmax_custom_jvp.value,
           enable_memories.value,
           disable_jit.value,
@@ -376,7 +377,8 @@ def define_bool_state(
   an error.
   """
   if not isinstance(default, bool):
-    raise TypeError(f"Default value must be of type bool, got {default}")
+    raise TypeError(f"Default value must be of type bool, got {default} "
+                    f"of type {getattr(type(default), '__name__', type(default))}")
   default = bool_env(name.upper(), default)
   name = name.lower()
   if upgrade:
@@ -420,7 +422,8 @@ def define_enum_state(
     A contextmanager to control the thread-local state value.
   """
   if not isinstance(default, str):
-    raise TypeError(f"Default value must be of type str, got {default}")
+    raise TypeError(f"Default value must be of type str, got {default} "
+                    f"of type {getattr(type(default), '__name__', type(default))}")
   name = name.lower()
   default = os.getenv(name.upper(), default)
   if default not in enum_values:
@@ -476,7 +479,8 @@ def define_optional_enum_state(
     A contextmanager to control the thread-local state value.
   """
   if default is not None and not isinstance(default, str):
-    raise TypeError(f"Default value must be of type str or None, got {default}")
+    raise TypeError(f"Default value must be of type str or None, got {default} "
+                    f"of type {getattr(type(default), '__name__', type(default))}")
   name = name.lower()
   default = os.getenv(name.upper(), default)
   if default is not None and default not in enum_values:
@@ -526,7 +530,8 @@ def define_int_state(
     A contextmanager to control the thread-local state value.
   """
   if not isinstance(default, int):
-    raise TypeError(f"Default value must be of type int, got {default}")
+    raise TypeError(f"Default value must be of type int, got {default} "
+                    f"of type {getattr(type(default), '__name__', type(default))}")
   name = name.lower()
   default_env = os.getenv(name.upper())
   if default_env is not None:
@@ -572,7 +577,8 @@ def define_float_state(
     A contextmanager to control the thread-local state value.
   """
   if not isinstance(default, float):
-    raise TypeError(f"Default value must be of type float, got {default}")
+    raise TypeError(f"Default value must be of type float, got {default} "
+                    f"of type {getattr(type(default), '__name__', type(default))}")
   name = name.lower()
   default_env = os.getenv(name.upper())
   if default_env is not None:
@@ -624,7 +630,8 @@ def define_string_state(
     A contextmanager to control the thread-local state value.
   """
   if not isinstance(default, str):
-    raise TypeError(f"Default value must be of type str, got {default}")
+    raise TypeError(f"Default value must be of type str, got {default} "
+                    f"of type {getattr(type(default), '__name__', type(default))}")
 
   def validator(new_val):
     if not isinstance(new_val, str):
@@ -667,7 +674,8 @@ def define_optional_string_state(
     A contextmanager to control the thread-local state value.
   """
   if default is not None and not isinstance(default, str):
-    raise TypeError(f"Default value must be of type str or None, got {default}")
+    raise TypeError(f"Default value must be of type str or None, got {default} "
+                    f"of type {getattr(type(default), '__name__', type(default))}")
 
   def validator(new_val):
     if new_val is not None and not isinstance(new_val, str):
@@ -804,6 +812,7 @@ class _GlobalExtraJitContext(NamedTuple):
   dynamic_shapes: bool = False
   random_seed_offset: int = 0
   threefry_partitionable: bool = False
+  threefry_gpu_kernel_lowering: bool = False
   softmax_custom_jvp: bool = False
   xla_profile_version: int = 0
 
@@ -838,6 +847,7 @@ class _ThreadLocalExtraJitContext(NamedTuple):
   dynamic_shapes: bool | None = None
   random_seed_offset: int | None = None
   threefry_partitionable: bool | None = None
+  threefry_gpu_kernel_lowering: bool | None = None
   softmax_custom_jvp: bool | None = None
   xla_profile_version: int | None = None
 
@@ -968,7 +978,7 @@ debug_infs = define_bool_state(
 log_compiles = define_bool_state(
     name='jax_log_compiles',
     default=False,
-    help=('Log a message each time every time `jit` or `pmap` compiles an XLA '
+    help=('Log a message each time `jit` or `pmap` compiles an XLA '
           'computation. Logging is performed with `logging`. When this '
           'option is set, the log level is WARNING; otherwise the level is '
           'DEBUG.'))
@@ -1075,6 +1085,17 @@ threefry_partitionable = define_bool_state(
         threefry_partitionable=val),
     update_thread_local_hook=lambda val: update_thread_local_jit_state(
         threefry_partitionable=val))
+
+threefry_gpu_kernel_lowering = define_bool_state(
+    name='jax_threefry_gpu_kernel_lowering',
+    default=False,
+    help=('On GPU, lower threefry PRNG operations to a kernel implementation. '
+          'This makes compile times faster at a potential runtime memory '
+          'cost.'),
+    update_global_hook=lambda val: _update_global_jit_state(
+        threefry_gpu_kernel_lowering=val),
+    update_thread_local_hook=lambda val: update_thread_local_jit_state(
+        threefry_gpu_kernel_lowering=val))
 
 
 softmax_custom_jvp = define_bool_state(

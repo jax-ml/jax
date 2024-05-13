@@ -65,6 +65,20 @@ def _upcast_f16(dtype: DTypeLike) -> DType:
     return np.dtype('float32')
   return np.dtype(dtype)
 
+def _promote_integer_dtype(dtype: DTypeLike) -> DTypeLike:
+  # Note: NumPy always promotes to 64-bit; jax instead promotes to the
+  # default dtype as defined by dtypes.int_ or dtypes.uint.
+  if dtypes.issubdtype(dtype, np.bool_):
+    return dtypes.int_
+  elif dtypes.issubdtype(dtype, np.unsignedinteger):
+    if np.iinfo(dtype).bits < np.iinfo(dtypes.uint).bits:
+      return dtypes.uint
+  elif dtypes.issubdtype(dtype, np.integer):
+    if np.iinfo(dtype).bits < np.iinfo(dtypes.int_).bits:
+      return dtypes.int_
+  return dtype
+
+
 ReductionOp = Callable[[Any, Any], Any]
 
 def _reduction(a: ArrayLike, name: str, np_fun: Any, op: ReductionOp, init_val: ArrayLike,
@@ -103,16 +117,7 @@ def _reduction(a: ArrayLike, name: str, np_fun: Any, op: ReductionOp, init_val: 
   result_dtype = dtype or dtypes.dtype(a)
 
   if dtype is None and promote_integers:
-    # Note: NumPy always promotes to 64-bit; jax instead promotes to the
-    # default dtype as defined by dtypes.int_ or dtypes.uint.
-    if dtypes.issubdtype(result_dtype, np.bool_):
-      result_dtype = dtypes.int_
-    elif dtypes.issubdtype(result_dtype, np.unsignedinteger):
-      if np.iinfo(result_dtype).bits < np.iinfo(dtypes.uint).bits:
-        result_dtype = dtypes.uint
-    elif dtypes.issubdtype(result_dtype, np.integer):
-      if np.iinfo(result_dtype).bits < np.iinfo(dtypes.int_).bits:
-        result_dtype = dtypes.int_
+    result_dtype = _promote_integer_dtype(result_dtype)
 
   result_dtype = dtypes.canonicalize_dtype(result_dtype)
 
@@ -663,7 +668,8 @@ match the dtype of the input.
 """
 
 def _make_cumulative_reduction(np_reduction: Any, reduction: Callable[..., Array],
-                               fill_nan: bool = False, fill_value: ArrayLike = 0) -> CumulativeReduction:
+                               fill_nan: bool = False, fill_value: ArrayLike = 0,
+                               promote_integers: bool = False) -> CumulativeReduction:
   @implements(np_reduction, skip_params=['out'],
           lax_description=CUML_REDUCTION_LAX_DESCRIPTION)
   def cumulative_reduction(a: ArrayLike, axis: Axis = None,
@@ -691,12 +697,18 @@ def _make_cumulative_reduction(np_reduction: Any, reduction: Callable[..., Array
     if fill_nan:
       a = _where(lax_internal._isnan(a), _lax_const(a, fill_value), a)
 
-    if not dtype and dtypes.dtype(a) == np.bool_:
-      dtype = dtypes.canonicalize_dtype(dtypes.int_)
-    if dtype:
-      a = lax.convert_element_type(a, dtype)
+    result_type: DTypeLike = dtypes.dtype(dtype or a)
+    if dtype is None and promote_integers or dtypes.issubdtype(result_type, np.bool_):
+      result_type = _promote_integer_dtype(result_type)
+    result_type = dtypes.canonicalize_dtype(result_type)
 
-    return reduction(a, axis)
+    a = lax.convert_element_type(a, result_type)
+    result = reduction(a, axis)
+
+    # We downcast to boolean because we accumulate in integer types
+    if dtypes.issubdtype(dtype, np.bool_):
+      result = lax.convert_element_type(result, np.bool_)
+    return result
 
   return cumulative_reduction
 
@@ -707,6 +719,40 @@ nancumsum = _make_cumulative_reduction(np.nancumsum, lax.cumsum,
                                        fill_nan=True, fill_value=0)
 nancumprod = _make_cumulative_reduction(np.nancumprod, lax.cumprod,
                                         fill_nan=True, fill_value=1)
+_cumsum_with_promotion = _make_cumulative_reduction(
+  np.cumsum, lax.cumsum, fill_nan=False, promote_integers=True
+)
+
+@implements(getattr(np, 'cumulative_sum', None))
+def cumulative_sum(
+    x: ArrayLike, /, *, axis: int | None = None,
+    dtype: DTypeLike | None = None,
+    include_initial: bool = False) -> Array:
+  check_arraylike("cumulative_sum", x)
+  x = lax_internal.asarray(x)
+  if x.ndim == 0:
+    raise ValueError(
+      "The input must be non-scalar to take a cumulative sum, however a "
+      "scalar value or scalar array was given."
+    )
+  if axis is None:
+    axis = 0
+    if x.ndim > 1:
+      raise ValueError(
+        f"The input array has rank {x.ndim}, however axis was not set to an "
+        "explicit value. The axis argument is only optional for one-dimensional "
+        "arrays.")
+
+  axis = _canonicalize_axis(axis, x.ndim)
+  dtypes.check_user_dtype_supported(dtype)
+  out = _cumsum_with_promotion(x, axis=axis, dtype=dtype)
+  if include_initial:
+    zeros_shape = list(x.shape)
+    zeros_shape[axis] = 1
+    out = lax_internal.concatenate(
+      [lax_internal.full(zeros_shape, 0, dtype=out.dtype), out],
+      dimension=axis)
+  return out
 
 # Quantiles
 @implements(np.quantile, skip_params=['out', 'overwrite_input'])

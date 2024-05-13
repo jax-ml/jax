@@ -853,7 +853,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
       with contextlib.ExitStack() as stack:
         stack.enter_context(jax.transfer_guard_device_to_device(guard_level))
         stack.enter_context(jax.transfer_guard_device_to_host(guard_level))
-        if not (type_ == jnp.int32 or xla_bridge.using_pjrt_c_api()):
+        if type_ != jnp.int32:
           stack.enter_context(jax.transfer_guard_host_to_device(guard_level))
         yield
 

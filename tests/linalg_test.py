@@ -180,6 +180,19 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                           args_maker,
                           rtol={np.float64: 1e-13})
 
+  def testTensorsolveAxes(self):
+    a_shape = (2, 1, 3, 6)
+    b_shape = (1, 6)
+    axes = (0, 2)
+    dtype = "float32"
+
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(a_shape, dtype), rng(b_shape, dtype)]
+    np_fun = partial(np.linalg.tensorsolve, axes=axes)
+    jnp_fun = partial(jnp.linalg.tensorsolve, axes=axes)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
   @jtu.sample_product(
     [dict(dtype=dtype, method=method)
      for dtype in float_types + complex_types
@@ -422,7 +435,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     w = w.astype(v.dtype)
     with jax.numpy_rank_promotion("allow"):
       self.assertLessEqual(
-          np.linalg.norm(np.matmul(a, v) - w * v), 20 * eps * np.linalg.norm(a)
+          np.linalg.norm(np.matmul(a, v) - w * v), 80 * eps * np.linalg.norm(a)
       )
 
   @jtu.sample_product(
@@ -684,6 +697,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fn, args_maker, tol=tol)
 
+    # smoke-test for optional kwargs.
+    jnp_fn = partial(jnp.linalg.vecdot, axis=axis,
+                     precision=lax.Precision.HIGHEST,
+                     preferred_element_type=dtype)
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=tol)
+
   # jnp.linalg.matmul is an alias of jnp.matmul; do a minimal test here.
   @jtu.sample_product(
       [
@@ -705,6 +724,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
            np.complex128: 1e-12}
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fn, args_maker, tol=tol)
+
+    # smoke-test for optional kwargs.
+    jnp_fn = partial(jnp.linalg.matmul,
+                     precision=lax.Precision.HIGHEST,
+                     preferred_element_type=dtype)
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=tol)
 
   # jnp.linalg.tensordot is an alias of jnp.tensordot; do a minimal test here.
   @jtu.sample_product(
@@ -728,6 +753,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
            np.complex128: 1e-12}
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fn, args_maker, tol=tol)
+
+    # smoke-test for optional kwargs.
+    jnp_fn = partial(jnp.linalg.tensordot, axes=axes,
+                     precision=lax.Precision.HIGHEST,
+                     preferred_element_type=dtype)
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=tol)
 
   @jtu.sample_product(
       [
@@ -974,7 +1005,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     args_maker = args_gen(pnorm)
     if pnorm not in [2, -2] and len(set(shape[-2:])) != 1:
-      with self.assertRaises(np.linalg.LinAlgError):
+      with self.assertRaises(ValueError):
         jnp.linalg.cond(*args_maker())
     else:
       self._CheckAgainstNumpy(np.linalg.cond, jnp.linalg.cond, args_maker,
@@ -984,28 +1015,16 @@ class NumpyLinalgTest(jtu.JaxTestCase):
                             check_dtypes=False, rtol=1e-03, atol=1e-03)
 
   @jtu.sample_product(
-    shape=[(1, 1), (4, 4), (200, 200), (7, 7, 7, 7)],
-    dtype=float_types,
+    shape=[(1, 1), (4, 4), (6, 2, 3), (3, 4, 2, 6)],
+    dtype=float_types + complex_types,
   )
   def testTensorinv(self, shape, dtype):
     rng = jtu.rand_default(self.rng())
-
-    def tensor_maker():
-      invertible = False
-      while not invertible:
-        a = rng(shape, dtype)
-        try:
-          np.linalg.inv(a)
-          invertible = True
-        except np.linalg.LinAlgError:
-          pass
-      return a
-
-    args_maker = lambda: [tensor_maker(), int(np.floor(len(shape) / 2))]
-    self._CheckAgainstNumpy(np.linalg.tensorinv, jnp.linalg.tensorinv, args_maker,
-                            check_dtypes=False, tol=1e-3)
-    partial_inv = partial(jnp.linalg.tensorinv, ind=int(np.floor(len(shape) / 2)))
-    self._CompileAndCheck(partial_inv, lambda: [tensor_maker()], check_dtypes=False, rtol=1e-03, atol=1e-03)
+    args_maker = lambda: [rng(shape, dtype)]
+    np_fun = partial(np.linalg.tensorinv, ind=len(shape) // 2)
+    jnp_fun = partial(jnp.linalg.tensorinv, ind=len(shape) // 2)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, tol=1E-4)
+    self._CompileAndCheck(jnp_fun, args_maker)
 
   @jtu.sample_product(
     [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)

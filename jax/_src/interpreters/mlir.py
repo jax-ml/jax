@@ -97,7 +97,7 @@ def dense_int_array(xs) -> ir.DenseIntElementsAttr | ir.DenseI64ArrayAttr:
 
 # TODO: b/321794305 - delete this when jaxlib is on StableHLO API v6 or higher
 def dense_int_array_v6(xs) -> ir.DenseIntElementsAttr | ir.DenseI64ArrayAttr:
-  if hlo.get_api_version() < 6 or xc.mlir_api_version < 55:
+  if hlo.get_api_version() < 6:
     return dense_int_elements(xs)
   return ir.DenseI64ArrayAttr.get(np.asarray(xs, np.int64))
 
@@ -112,7 +112,7 @@ def dense_bool_elements(xs: Sequence[bool]) -> ir.DenseElementsAttr:
 
 def dense_bool_array(xs: Sequence[bool]) -> ir.DenseElementsAttr | ir.DenseBoolArrayAttr:
   # TODO: b/321794305 - remove this check when jaxlib is on StableHLO API v6 or higher
-  if hlo.get_api_version() < 6 or xc.mlir_api_version < 55:
+  if hlo.get_api_version() < 6:
     return dense_bool_elements(xs)
   return ir.DenseBoolArrayAttr.get(xs)
 
@@ -571,17 +571,6 @@ class LoweringParameters:
   # or multi-platform lowering.
   global_constant_computation: bool = False
 
-  # TODO(b/302258959): in JAX native execution we cannot lower the tokens
-  # to stablehlo.token for the top-level function, due to runtime limitations.
-  # Instead, we use dummy bool[0] arrays. This is controlled by setting
-  # replace_tokens_with_dummy to True (default). However, when exporting StableHLO
-  # we can use real tokens, because the resulting StableHLO will not be
-  # executed directly, but will be embedded as an inner function in a larger
-  # JAX or TensorFlow program. In these cases, replace_tokens_with_dummy must
-  # be set to False (for serialization versions >= 9).
-  # Once the PJRT is extended to use tokens, we can use tokens even in the
-  # native execution (and we can remove this parameter).
-  replace_tokens_with_dummy: bool = True
 
 @dataclasses.dataclass
 class TracebackCaches:
@@ -879,6 +868,7 @@ def lower_jaxpr_to_module(
     num_partitions: int = 1,
     all_default_mem_kind: bool = True,
     input_output_aliases: None | tuple[int | None, ...] = None,
+    propagated_out_mem_kinds: tuple[None | str, ...] | None = None,
     lowering_parameters: LoweringParameters,
 ) -> LoweringResult:
   """Lowers a top-level jaxpr to an MLIR module.
@@ -969,13 +959,10 @@ def lower_jaxpr_to_module(
     attrs["sym_name"] = ir.StringAttr.get(module_name)
     attrs["mhlo.num_replicas"] = i32_attr(num_replicas)
     attrs["mhlo.num_partitions"] = i32_attr(num_partitions)
-    replace_tokens_with_dummy = lowering_parameters.replace_tokens_with_dummy
     lower_jaxpr_to_fun(
         ctx, "main", jaxpr, ordered_effects,
         name_stack=name_stack,
         public=True,
-        create_tokens=replace_tokens_with_dummy,
-        replace_tokens_with_dummy=replace_tokens_with_dummy,
         num_output_tokens=0,
         replicated_args=replicated_args,
         arg_shardings=arg_shardings,
@@ -987,7 +974,8 @@ def lower_jaxpr_to_module(
         arg_memory_kinds=arg_memory_kinds,
         result_memory_kinds=result_memory_kinds,
         arg_layouts=in_layouts,
-        result_layouts=out_layouts)
+        result_layouts=out_layouts,
+        propagated_out_mem_kinds=propagated_out_mem_kinds)
 
   try:
     if not ctx.module.operation.verify():
@@ -1136,6 +1124,7 @@ def lower_jaxpr_to_fun(
     result_memory_kinds: Sequence[str | None] | None = None,
     arg_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
     result_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
+    propagated_out_mem_kinds: tuple[None | str, ...] | None = None,
 ) -> func_dialect.FuncOp:
   """Lowers jaxpr and its callees to an IR function.
 
@@ -1266,16 +1255,32 @@ def lower_jaxpr_to_fun(
 
   ir_result_shardings = None
   if result_shardings is not None:
-    out_avals = [None] * (num_tokens + num_output_tokens) + list(jaxpr.out_avals)
     ir_result_shardings = util.flatten(
         [[_to_physical_op_sharding(a, s)] * len(types)
-         for a, s, types in zip(out_avals, result_shardings, output_types)])
-    del out_avals
+         for a, s, types in zip(output_avals, result_shardings, output_types)])
 
   ir_result_memory_kinds = None
+  custom_call_ir_result_memory_kinds = None
   if result_memory_kinds is not None:
-    ir_result_memory_kinds = util.flatten(
-        [[mk] * len(types) for mk, types in zip(result_memory_kinds, output_types)])
+    if propagated_out_mem_kinds is None:
+      propagated_out_mem_kinds = (None,) * len(result_memory_kinds)
+    res, custom_call_res = [], []
+    for pom, mk, types in zip(propagated_out_mem_kinds, result_memory_kinds,
+                              output_types):
+      if pom is not None and mk is None:
+        res.append([pom] * len(types))  # type: ignore
+      else:
+        if pom is not None and mk is not None and pom != mk:
+          raise AssertionError(
+              f"propagated out memory kind ({pom}) does not match the memory"
+              f" kind specified in out_shardings of jit ({mk})")
+        res.append([mk] * len(types))  # type: ignore
+      # To add the custom call on the output to signal a transfer, only do it
+      # if memory kind comes from out_shardings on `jit` and result_memory_kinds
+      # comes from out_shardings on `jit`.
+      custom_call_res.append([mk] * len(types))
+    ir_result_memory_kinds = util.flatten(res)
+    custom_call_ir_result_memory_kinds = util.flatten(custom_call_res)
 
   ir_result_layouts = None
   if result_layouts is not None:
@@ -1445,7 +1450,7 @@ def lower_jaxpr_to_fun(
         outs.append(dummy_token())
     else:
       for eff in effects:
-        outs.append(tokens_out.get(eff))
+        outs.append(wrap_singleton_ir_values(tokens_out.get(eff)))
     for aval, out in zip(jaxpr.out_avals, out_vals):
       if replace_tokens_with_dummy and aval is core.abstract_token:
         outs.append(ir_constants(np.zeros((), np.bool_)))
@@ -1461,10 +1466,11 @@ def lower_jaxpr_to_fun(
 
     # Insert a custom call if output is on host because XLA needs that to do the
     # transfer.
-    if ir_result_memory_kinds is not None:
+    if custom_call_ir_result_memory_kinds is not None and name == "main":
       flat_outputs = [
           o if mk is None else wrap_with_memory_kind(o, mk, o_aval)
-          for o, mk, o_aval in zip(flat_outputs, ir_result_memory_kinds, output_avals)]
+          for o, mk, o_aval in zip(
+              flat_outputs, custom_call_ir_result_memory_kinds, output_avals)]
 
     if ir_result_shardings is not None and name == "main":
       flat_outputs = [
@@ -2220,7 +2226,8 @@ def xla_computation_to_mlir_module(xla_computation: xc.XlaComputation
 
 def merge_mlir_modules(dst_module: ir.Module,
                        sym_name: str,
-                       src_module: ir.Module) -> str:
+                       src_module: ir.Module,
+                       dst_symtab: ir.SymbolTable | None = None) -> str:
   """
   Args:
     dst_module: the module into which the contents of src_module should be
@@ -2231,6 +2238,7 @@ def merge_mlir_modules(dst_module: ir.Module,
     src_module: the module whose contents are to be alpha-renamed, set to
       private visibility, and merged into dst_module. src_module must contain
       exactly one symbol named "main".
+    dst_symtab: the symbol table of `dst_module`
 
       Functions in src_module will be renamed such that they do not collide with
       functions in dst_module.
@@ -2244,7 +2252,7 @@ def merge_mlir_modules(dst_module: ir.Module,
   assert dst_module.context == src_module.context
 
   src_symtab = ir.SymbolTable(src_module.operation)
-  dst_symtab = ir.SymbolTable(dst_module.operation)
+  dst_symtab = dst_symtab or ir.SymbolTable(dst_module.operation)
   used_names = set()
 
   # Rename all symbols in src_module that clash with names in dst_module, or
@@ -2282,6 +2290,7 @@ def merge_mlir_modules(dst_module: ir.Module,
 
   for op in src_module.body.operations:
     dst_module.body.append(op)
+    dst_symtab.insert(op)
 
   return renamings["main"]
 
@@ -2309,7 +2318,8 @@ def xla_fallback_lowering(prim: core.Primitive):
         ctx.avals_out, **params)
     xla_module = xla_computation_to_mlir_module(xla_computation)
     callee_name = merge_mlir_modules(
-        module_ctx.module, f"xla_fallback_{prim.name}", xla_module)
+        module_ctx.module, f"xla_fallback_{prim.name}", xla_module,
+        dst_symtab=module_ctx.symbol_table)
     output_types = map(aval_to_ir_types, ctx.avals_out)
     flat_output_types = util.flatten(output_types)
     output_type = (ir.TupleType.get_tuple(flat_output_types)
@@ -2437,14 +2447,20 @@ def _aval_to_default_layouts(aval):
   # Row major order is default for `NumPy`.
   return [list(range(aval.ndim - 1, -1, -1)) for aval in avals]
 
+
 def emit_python_callback(
-    ctx: LoweringRuleContext, callback, token: Any | None,
-    operands: Sequence[ir.Value], operand_avals: Sequence[core.ShapedArray],
+    ctx: LoweringRuleContext,
+    callback,
+    token: Any | None,
+    operands: Sequence[ir.Value],
+    operand_avals: Sequence[core.ShapedArray],
     result_avals: Sequence[core.ShapedArray],
-    has_side_effect: bool, *, sharding: xc.OpSharding | None = None,
+    *,
+    has_side_effect: bool,
+    sharding: xc.OpSharding | None = None,
     operand_layouts: Sequence[Sequence[int] | None] | None = None,
     result_layouts: Sequence[Sequence[int] | None] | None = None,
-    ) -> tuple[Sequence[ir.Value], Any, Any]:
+) -> tuple[Sequence[ir.Value], Any, Any]:
   """Emits MLIR that calls back to a provided Python function."""
   if len(ctx.module_context.platforms) > 1:
     raise NotImplementedError("multi-platform lowering for python_callback")

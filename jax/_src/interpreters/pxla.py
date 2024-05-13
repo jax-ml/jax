@@ -62,7 +62,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.layout import DeviceLocalLayout, AutoLayout, Layout
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec
@@ -123,21 +122,9 @@ shard_arg_handlers: dict[Any, Callable[[Any, Any], Any]] = {}
 
 
 @lru_cache(maxsize=1024)
-def get_addressable_devices_for_shard_arg(
-    s: sharding_impls.XLACompatibleSharding) -> tuple[xc.Device, ...]:
-  return s._addressable_device_assignment
-
-@lru_cache(maxsize=1024)
 def _get_replicated_slices(num_addressable_devices: int):
   return ((slice(None),),) * num_addressable_devices
 
-def _shard_token(x, sharding):
-  devices = get_addressable_devices_for_shard_arg(sharding)
-  indices = _get_replicated_slices(len(devices))
-  zeros = np.zeros((), dtype=np.dtype(np.bool_))
-  aval = api_util.shaped_abstractify(zeros)
-  return batched_device_put(aval, sharding, [zeros for _ in indices], devices)
-shard_arg_handlers[core.Token] = _shard_token
 
 def _masked_array_error(x, sharding):
   raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "
@@ -145,7 +132,7 @@ def _masked_array_error(x, sharding):
 shard_arg_handlers[np.ma.MaskedArray] = _masked_array_error
 
 def _shard_array(x, sharding):
-  devices = get_addressable_devices_for_shard_arg(sharding)
+  devices = sharding._addressable_device_assignment
   if x.dtype == dtypes.float0:
     x = np.zeros(x.shape, dtype=np.dtype(bool))
   aval = api_util.shaped_abstractify(x)
@@ -1148,8 +1135,9 @@ class ExecuteReplicated:
   def _add_tokens_to_inputs(self, input_bufs):
     if self.ordered_effects:
       tokens = [
-        dispatch.runtime_tokens.get_token_input(eff, self._local_devices)
-        for eff in self.ordered_effects]
+          dispatch.runtime_tokens.get_token_input(eff, self._local_devices)._buf
+          for eff in self.ordered_effects
+      ]
       input_bufs = [*tokens, *input_bufs]
     return input_bufs
 
@@ -1163,7 +1151,7 @@ class ExecuteReplicated:
     for eff, token_buf in zip(self.ordered_effects, token_bufs):
       assert len(token_buf) > 0
       if len(token_buf) == 1:
-        dispatch.runtime_tokens.set_token_result(eff, token_buf[0])
+        dispatch.runtime_tokens.set_token_result(eff, core.Token(token_buf[0]))
       else:
         token_devices = []
         for token in token_buf:
@@ -1173,7 +1161,9 @@ class ExecuteReplicated:
         global_token_array = jax.make_array_from_single_device_arrays(
             (0,), s, token_buf
         )
-        dispatch.runtime_tokens.set_token_result(eff, global_token_array)
+        dispatch.runtime_tokens.set_token_result(
+            eff, core.Token(global_token_array)
+        )
 
   @profiler.annotate_function
   def __call__(self, *args):
@@ -1741,30 +1731,28 @@ def prune_unused_inputs(
 
 
 @weakref_lru_cache
-def _dce_jaxpr(closed_jaxpr, global_in_avals, api_name, fun_name,
+def _dce_jaxpr(closed_jaxpr, api_name, fun_name,
                keep_unused, donated_invars, auto_spmd_lowering):
   name_stack = source_info_util.new_name_stack(wrap_name(fun_name, api_name))
 
   assert isinstance(closed_jaxpr, core.ClosedJaxpr)
   jaxpr = closed_jaxpr.jaxpr
-  global_out_avals = closed_jaxpr.out_avals
   consts = closed_jaxpr.consts
+  in_avals = closed_jaxpr.in_avals
 
   if (keep_unused or auto_spmd_lowering or
       any(hasattr(a, "shape") and not core.is_constant_shape(a.shape)
-          for a in global_in_avals)):
-    kept_var_idx = set(range(len(global_in_avals)))
+          for a in in_avals)):
+    kept_var_idx = set(range(len(in_avals)))
   else:
     jaxpr, kept_const_idx, kept_var_idx = prune_unused_inputs(jaxpr)
     consts = [c for i, c in enumerate(consts) if i in kept_const_idx]
-    global_in_avals = tuple(a for i, a in enumerate(global_in_avals) if i in kept_var_idx)
     donated_invars = tuple(x for i, x in enumerate(donated_invars) if i in kept_var_idx)
     del kept_const_idx
 
   jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
-  return (closed_jaxpr, global_in_avals, tuple(global_out_avals), donated_invars,
-          kept_var_idx, name_stack)
+  return closed_jaxpr, donated_invars, kept_var_idx, name_stack
 
 class MutationData(NamedTuple):
   in_mut: list[core.MutableArray]
@@ -1811,15 +1799,9 @@ class SemanticallyEqualShardings:
 
   def __init__(self, shardings: tuple[GSPMDSharding | UnspecifiedValue, ...],
                avals: tuple[core.AbstractValue]):
-    if xla_extension_version < 241:
-      gspmd_shardings = [
-          s if is_unspecified_or_auto(s) or a is core.abstract_token
-          else to_gspmd_sharding(s, a.ndim)  # type: ignore
-          for s, a in zip(shardings, avals)]
-    else:
-      gspmd_shardings = [
-          s if is_unspecified_or_auto(s) else to_gspmd_sharding(s, a.ndim)  # type: ignore
-          for s, a in zip(shardings, avals)]
+    gspmd_shardings = [
+        s if is_unspecified_or_auto(s) else to_gspmd_sharding(s, a.ndim)  # type: ignore
+        for s, a in zip(shardings, avals)]
     self._gspmd_shardings = gspmd_shardings
     self.shardings = shardings
     self.avals = avals
@@ -1900,6 +1882,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
                             in_layouts, out_layouts, num_devices, device_assignment,
                             donated_invars, name_stack, all_default_mem_kind,
                             inout_aliases: None | tuple[None | int, ...],
+                            propagated_out_mem_kinds: tuple[None | str, ...],
                             lowering_parameters: mlir.LoweringParameters):
   jaxpr = closed_jaxpr.jaxpr
   in_shardings = semantic_in_shardings._gspmd_shardings
@@ -1977,6 +1960,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
         num_partitions=num_partitions,
         all_default_mem_kind=all_default_mem_kind,
         input_output_aliases=inout_aliases,
+        propagated_out_mem_kinds=propagated_out_mem_kinds,
         lowering_parameters=lowering_parameters)
   tuple_args = dispatch.should_tuple_args(len(global_in_avals), backend.platform)
   unordered_effects = list(
@@ -2014,6 +1998,39 @@ def are_all_shardings_default_mem_kind(da_object, shardings):
       return False
   return True
 
+memory_kind_propagate_rule = {}  # type: ignore
+
+@weakref_lru_cache
+def get_out_memory_kinds_via_propagation(closed_jaxpr: core.ClosedJaxpr
+                                         ) -> tuple[None | str]:
+  env = {}  # type: ignore
+  jaxpr = closed_jaxpr.jaxpr
+
+  def read(var):
+    if type(var) is core.Literal:
+      return None
+    return env[var]
+
+  def write(var, val):
+    env[var] = val
+
+  def _default_rule(prim, num_outvars, *_, **__):
+    return [None] * num_outvars if prim.multiple_results else None
+
+  safe_map(write, jaxpr.invars, [None] * len(jaxpr.invars))
+  safe_map(write, jaxpr.constvars, [None] * len(jaxpr.constvars))
+
+  for eqn in jaxpr.eqns:
+    in_mem_kinds = safe_map(read, eqn.invars)
+    rule = memory_kind_propagate_rule.get(
+        eqn.primitive, partial(_default_rule, eqn.primitive, len(eqn.outvars)))
+    out_mem_kinds = rule(*in_mem_kinds, **eqn.params)
+    if not eqn.primitive.multiple_results:
+      out_mem_kinds = [out_mem_kinds]
+    safe_map(write, eqn.outvars, out_mem_kinds)
+  return tuple(safe_map(read, jaxpr.outvars))
+
+
 MaybeLayout = Sequence[Union[DeviceLocalLayout, AutoLayout, None]]
 
 
@@ -2028,13 +2045,36 @@ def to_gspmd_sharding(s: sharding_impls.XLACompatibleSharding,
                       ndim: int) -> GSPMDSharding:
   if isinstance(s, GSPMDSharding):
     return s
-  if xla_extension_version >= 234:
-    return GSPMDSharding(s._device_assignment, s._to_xla_hlo_sharding(ndim),
-                         memory_kind=s.memory_kind,
-                         _device_list=getattr(s, '_internal_device_list', None))
+  return GSPMDSharding(s._device_assignment, s._to_xla_hlo_sharding(ndim),
+                        memory_kind=s.memory_kind,
+                        _device_list=getattr(s, '_internal_device_list', None))
+
+
+# Dummy function which is a no-op in OSS since enhanced barrier is switched on
+# in OSS.
+def spmd_mode_check(da_object, inline):
+  return
+
+
+def _discharge_refs_jaxpr(closed_jaxpr, in_shardings, in_layouts,
+                          donated_invars, out_shardings, out_layouts):
+  if any(isinstance(e, RefEffect) for e in closed_jaxpr.effects):
+    closed_jaxpr, inout_aliases, mut = _discharge_refs(closed_jaxpr)
+    in_shardings = (*in_shardings,) + (UNSPECIFIED,) * len(mut.in_mut)
+    in_layouts = (*in_layouts,) + (None,) * len(mut.in_mut)
+    donated_invars = (*donated_invars,) + (False,) * len(mut.in_mut)
+    out_layouts_ = iter(zip(out_shardings, out_layouts))
+    out_shardings, out_layouts = unzip2(
+        next(out_layouts_) if i is None else (in_shardings[i], in_layouts[i])
+        for i in mut.out_mut)
+    assert next(out_layouts_, None) is None
   else:
-    return GSPMDSharding(s._device_assignment, s._to_xla_hlo_sharding(ndim),
-                         memory_kind=s.memory_kind)
+    inout_aliases = mut = None
+    if any(isinstance(e, core.InternalMutableArrayEffect) for e in closed_jaxpr.effects):
+      closed_jaxpr = _discharge_internal_refs(closed_jaxpr)
+
+  return (closed_jaxpr, inout_aliases, mut, in_shardings, in_layouts,
+          donated_invars, out_shardings, out_layouts)
 
 
 @profiler.annotate_function
@@ -2047,7 +2087,6 @@ def lower_sharding_computation(
     in_layouts: MaybeLayout,
     out_layouts: MaybeLayout,
     donated_invars: Sequence[bool],
-    global_in_avals: Sequence[core.ShapedArray],
     *,
     keep_unused: bool,
     inline: bool,
@@ -2065,34 +2104,23 @@ def lower_sharding_computation(
   auto_spmd_lowering = check_if_any_auto(
       it.chain.from_iterable([in_shardings, out_shardings]))  # type: ignore
 
-  all_args_info = AllArgsInfo(global_in_avals, closed_jaxpr.jaxpr.debug_info)
+  all_args_info = AllArgsInfo(closed_jaxpr.in_avals, closed_jaxpr.jaxpr.debug_info)
 
-  (closed_jaxpr, global_in_avals, global_out_avals, donated_invars,
-   kept_var_idx, name_stack) = _dce_jaxpr(
-      closed_jaxpr, global_in_avals, api_name, fun_name, keep_unused,
-      donated_invars, auto_spmd_lowering)
+  closed_jaxpr, donated_invars, kept_var_idx, name_stack = _dce_jaxpr(
+      closed_jaxpr, api_name, fun_name, keep_unused, donated_invars,
+      auto_spmd_lowering)
   in_shardings = tuple(s for i, s in enumerate(in_shardings) if i in kept_var_idx)
   in_layouts = tuple(l for i, l in enumerate(in_layouts) if i in kept_var_idx)
 
-  if any(isinstance(e, RefEffect) for e in closed_jaxpr.effects):
-    closed_jaxpr, inout_aliases, mut = _discharge_refs(closed_jaxpr)
-    in_shardings = (*in_shardings,) + (UNSPECIFIED,) * len(mut.in_mut)
-    in_layouts = (*in_layouts,) + (None,) * len(mut.in_mut)
-    donated_invars = (*donated_invars,) + (False,) * len(mut.in_mut)
-    out_layouts_ = iter(zip(out_shardings, out_layouts))
-    out_shardings, out_layouts = unzip2(
-        next(out_layouts_) if i is None else (in_shardings[i], in_layouts[i])
-        for i in mut.out_mut)
-    assert next(out_layouts_, None) is None
-    # TODO(yashkatariya): remove global_in_avals / global_out_avals
-    global_in_avals = closed_jaxpr.in_avals
-    global_out_avals = closed_jaxpr.out_avals
-  else:
-    inout_aliases = mut = None
-    if any(isinstance(e, core.InternalMutableArray) for e in closed_jaxpr.effects):
-      closed_jaxpr = _discharge_internal_refs(closed_jaxpr)
+  (closed_jaxpr, inout_aliases, mut, in_shardings, in_layouts,
+   donated_invars, out_shardings, out_layouts) = _discharge_refs_jaxpr(
+       closed_jaxpr, in_shardings, in_layouts, donated_invars, out_shardings,
+       out_layouts)
 
   jaxpr = closed_jaxpr.jaxpr
+  global_in_avals = closed_jaxpr.in_avals
+  global_out_avals = closed_jaxpr.out_avals
+
   assert len(out_shardings) == len(out_layouts) == len(global_out_avals), (
       len(out_shardings), len(out_layouts), len(global_out_avals))
 
@@ -2117,29 +2145,20 @@ def lower_sharding_computation(
       any(not is_unspecified(js) for js, _ in jaxpr_sharding) or
       any(not is_unspecified(o) for o in out_shardings))
 
-  if xla_extension_version < 241:
-    gs = GSPMDSharding.get_replicated(device_assignment)
-    in_shardings = tuple(gs if is_unspecified(i) else i for i in in_shardings)
-
   da_object = _create_da_object(tuple(device_assignment))
 
   all_default_mem_kind = are_all_shardings_default_mem_kind(
       da_object,
       it.chain(in_shardings, out_shardings, [js for js, _ in jaxpr_sharding]))  # type: ignore
 
-  if not da_object.is_fully_addressable:  # type: ignore
-    if inline and config.spmd_mode.value != 'allow_all':
-      raise RuntimeError(
-          "Running operations on `Array`s that are not fully addressable by this "
-          "process (i.e. `Array`s with data sharded across multiple devices and "
-          "processes.) is dangerous. It’s very important that all processes run "
-          "the same cross-process computations in the same order otherwise it "
-          "can lead to hangs. "
-          "If you’re not already familiar with JAX’s multi-process "
-          "programming model, please read "
-          "https://jax.readthedocs.io/en/latest/multi_process.html. "
-          "To fix this error, run your `jitted` computation inside "
-          "`with jax.spmd_mode('allow_all'):` context manager.")
+  # TODO(yashkatariya): Remove this when XLA can propagate memory kinds or when
+  # JAX puts memory kinds in the types of jaxpr.
+  if not all_default_mem_kind:
+    propagated_out_mem_kinds = get_out_memory_kinds_via_propagation(closed_jaxpr)
+  else:
+    propagated_out_mem_kinds = (None,) * len(global_out_avals)
+
+  spmd_mode_check(da_object, inline)
 
   # 2. Build up the HLO
   semantic_in_shardings = SemanticallyEqualShardings(
@@ -2154,7 +2173,7 @@ def lower_sharding_computation(
        semantic_out_shardings, in_layouts, out_layouts, len(da_object),
        tuple(da_object) if prim_requires_devices else None, donated_invars,
        name_stack, all_default_mem_kind, inout_aliases,
-       lowering_parameters=lowering_parameters)
+       propagated_out_mem_kinds, lowering_parameters=lowering_parameters)
 
   # backend and device_assignment is passed through to MeshExecutable because
   # if keep_unused=False and all in_shardings are pruned, then there is no way
@@ -2401,38 +2420,6 @@ class MeshComputation(stages.XlaLowering):
     return xe.hlo_module_cost_analysis(backend, self.hlo().as_hlo_module())
 
 
-if xla_extension_version < 229:
-  def _get_input_indices(
-      avals: Sequence[ShapedArray],
-      shardings: Sequence[sharding_impls.XLACompatibleSharding],
-      da_object: xc.DeviceList | Sequence[xc.Device],  # type: ignore
-  ) -> Sequence[tuple[Index | None, ...]]:
-
-    input_indices = []
-    if not isinstance(da_object, xc.DeviceList):
-      da_object = _create_da_object(tuple(da_object))
-    num_addressable_devices = len(da_object.addressable_device_list)
-
-    def _get_replicated_slices(num_addressable_devices: int, ndim: int | None):
-      if ndim is None:
-        return ((slice(None),),) * num_addressable_devices
-      else:
-        return ((slice(None),) * ndim,) * num_addressable_devices
-
-    for aval, sharding in zip(avals, shardings):
-      if aval is core.abstract_token:
-        index = _get_replicated_slices(num_addressable_devices, None)
-      else:
-        if sharding.is_fully_replicated:
-          index = _get_replicated_slices(num_addressable_devices, aval.ndim)
-        else:
-          index = tuple(
-              sharding.addressable_devices_indices_map(aval.shape).values())  # type: ignore
-      input_indices.append(index)
-
-    return input_indices
-
-
 def get_out_shardings_from_executable(
     xla_executable,
     device_assignment: Sequence[xc.Device],
@@ -2583,7 +2570,8 @@ def _get_out_sharding_from_orig_sharding(
   out = []
   orig_handler = _orig_out_sharding_handlers[type(orig_in_s)]
   for o, out_aval in safe_zip(out_shardings, out_avals):
-    if isinstance(o, sharding_impls.GSPMDSharding):
+    if (isinstance(o, sharding_impls.GSPMDSharding) and
+        out_aval is not core.abstract_token):
       # Only return the same input sharding object if the OpShardings and
       # in_aval.ndim and out_aval.ndim match. This is because if OpSharding is
       # replicated then, it doesn't encode the ndim in it. The devices
@@ -2724,8 +2712,7 @@ def _cached_compilation(computation, name, mesh, spmd_lowering,
         get_logical_mesh_ids(list(mesh.shape.values()))
         .reshape(-1))
   compile_options.parameter_is_tupled_arguments = tuple_args
-  if xla_extension_version >= 241:
-    opts.allow_spmd_sharding_propagation_to_parameters = list(allow_prop_to_inputs)
+  opts.allow_spmd_sharding_propagation_to_parameters = list(allow_prop_to_inputs)
   opts.allow_spmd_sharding_propagation_to_output = list(allow_prop_to_outputs)
 
   with dispatch.log_elapsed_time(
@@ -2843,13 +2830,7 @@ class UnloadedMeshExecutable:
   all_args_info: AllArgsInfo | None
 
   def build_unsafe_call(self):
-    if xla_extension_version >= 229:
-      handle_args = InputsHandler(self.input_shardings)
-    else:
-      input_indices = _get_input_indices(self.input_avals, self.input_shardings,
-                                         self.device_assignment)
-      handle_args = InputsHandler(
-          self.input_shardings, self.xla_executable.local_devices(), input_indices)
+    handle_args = InputsHandler(self.input_shardings)
     handle_outs = global_avals_to_results_handler(
         self.output_avals, self.output_shardings, self.committed)  # type: ignore  # arg-type
 
@@ -2936,10 +2917,9 @@ class UnloadedMeshExecutable:
     else:
       if pmap_nreps == 1:
         assert mesh is None
-        if xla_extension_version >= 241:
-          in_shardings = _maybe_get_and_check_in_shardings(
-              xla_executable, in_shardings, tuple(da), global_in_avals,
-              len(ordered_effects))
+        in_shardings = _maybe_get_and_check_in_shardings(
+            xla_executable, in_shardings, tuple(da), global_in_avals,
+            len(ordered_effects))
         out_shardings = _maybe_get_and_check_out_shardings(
             xla_executable, out_shardings, tuple(da), global_out_avals,
             len(ordered_effects), all_default_mem_kind)
@@ -3104,19 +3084,9 @@ class MeshExecutable(stages.XlaExecutable):
         fastpath_data = None
       return outs, fastpath_data
 
-    if xla_extension_version >= 226:
-      return xc._xla.pjit(
-          self.unsafe_call.name, None, aot_cache_miss, [], [], [],
-          tree_util.dispatch_registry,
-          shard_arg if xla_extension_version >= 229 else temp_shard_arg)  # type: ignore
-    else:
-      return xc._xla.pjit(self.unsafe_call.name, None, aot_cache_miss, [], [], [],  # type: ignore
-                          tree_util.dispatch_registry)
-
-
-# TODO(yashkatariya): Remove once minimum jaxlib version is 0.4.24
-def temp_shard_arg(arg, devices, arg_indices, sharding, canonicalize=True):
-  return shard_arg(arg, sharding)
+    return xc._xla.pjit(
+        self.unsafe_call.name, None, aot_cache_miss, [], [], [],
+        tree_util.dispatch_registry, shard_arg)  # type: ignore
 
 
 def check_arg_avals_for_call(ref_avals, arg_avals,
@@ -3224,7 +3194,7 @@ def check_array_xla_sharding_layout_match(
           f"with: {xs} for arg {name} with shape: {arg.aval.str_short()}",
           'sharding'))
 
-    if (xla_extension_version >= 249 and not db_xs and arg._committed and
+    if (not db_xs and arg._committed and
         arg.layout.device_local_layout is not None and xl is not None and
         arg.layout.device_local_layout != xl):
       errors.append(

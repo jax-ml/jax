@@ -40,7 +40,6 @@ from jax._src import ad_util
 from jax._src import core
 from jax._src import effects
 from jax._src import util
-from jax._src import xla_bridge
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
@@ -354,10 +353,7 @@ def _call_tf_impl(*args_jax_flat, callable_flat_tf, **_):
     if isinstance(res_tf, tf.Tensor) and jax_dtype.type in dlpack.SUPPORTED_DTYPES:
       res_tf_platform = tf.DeviceSpec.from_string(res_tf.backing_device).device_type
       res_jax_platform = res_tf_platform.lower()
-      # Skip using dlpack in PJRT C API runtime, because it currently fails
-      # with "PJRT C API does not support GetDefaultLayout".
-      # https://github.com/openxla/xla/blob/762bde36adf22792e91c38fe87cabe5af05bfadc/xla/pjrt/pjrt_c_api_client.h#L285-L289
-      if res_jax_platform in _DLPACK_PLATFORMS and not xla_bridge.using_pjrt_c_api():
+      if res_jax_platform in _DLPACK_PLATFORMS:
         res_dlpack = tf.experimental.dlpack.to_dlpack(res_tf)
         return jax.dlpack.from_dlpack(res_dlpack)
 
@@ -571,7 +567,8 @@ def _call_tf_lowering(
   callee_result_types = symtab["main"].type.results
   fn = mlir.merge_mlir_modules(ctx.module_context.module,
                                f"call_tf_{function_flat_tf.name}",
-                               submodule)
+                               submodule,
+                               dst_symtab=ctx.module_context.symbol_table)
   call = func_dialect.CallOp(callee_result_types,
                              ir.FlatSymbolRefAttr.get(fn),
                              tuple(args_op) + captured_ops)

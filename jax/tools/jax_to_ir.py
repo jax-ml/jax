@@ -238,12 +238,14 @@ def parse_shape_str(s):
     shape = ()
   return jax.core.ShapedArray(shape, dtype)
 
-_DT = {'pred': jnp.bool_,
-       'u8': jnp.uint8, 'u16': jnp.uint16, 'u32': jnp.uint32, 'u64': jnp.uint64,
-       's8': jnp.int8, 's16': jnp.int16, 's32': jnp.int32, 's64': jnp.int64,
-       'bf16': jnp.bfloat16,
-       'f16': jnp.float16, 'f32': jnp.float32, 'f64': jnp.float64,
-       'c64': jnp.complex64, 'c128': jnp.complex128}
+_DT = {
+    'pred': jnp.bool_,
+    'u4': jnp.uint4, 'u8': jnp.uint8, 'u16': jnp.uint16, 'u32': jnp.uint32, 'u64': jnp.uint64,
+    's4': jnp.int4, 's8': jnp.int8, 's16': jnp.int16, 's32': jnp.int32, 's64': jnp.int64,
+    'bf16': jnp.bfloat16,
+    'f16': jnp.float16, 'f32': jnp.float32, 'f64': jnp.float64,
+    'c64': jnp.complex64, 'c128': jnp.complex128
+}
 _SHAPE_RE = re.compile(f"^({'|'.join(_DT)})\\[\\s*(\\d*[\\s*,\\d+]*)\\s*\\]$")
 
 

@@ -112,10 +112,10 @@ def _eval_jaxpr_discharge_state(
   for eqn in jaxpr.eqns:
     if eqn.primitive is core.mutable_array_p:
       [invar], [outvar] = eqn.invars, eqn.outvars
-      init_val = env.read(invar)
-      env.write(outvar, init_val)
+      ans = env.read(invar)
       refs_to_discharge.add(id(outvar.aval))
-    elif any(id(v.aval) in refs_to_discharge for v in eqn.invars):
+    elif (any(id(v.aval) in refs_to_discharge for v in eqn.invars)
+         or core.internal_mutable_array_effect in eqn.effects ):
       if eqn.primitive not in _discharge_rules:
         raise NotImplementedError("No state discharge rule implemented for "
             f"primitive: {eqn.primitive}")
@@ -242,22 +242,23 @@ def _prepend_scatter(x, indexer, val, *, add=False):
 
 def _get_discharge(x, idx, tree):
   indexers = tree_util.tree_unflatten(tree, idx)
-  if len(indexers) > 1:
-    raise NotImplementedError("Only single indexer is supported.")
-  indexer = indexers[0]
-  if _is_trivial_indexer(indexer):
-    return x
-  # If everything in the indexer is a slice or ()-shaped, we can also
-  # use `lax.dynamic_slice` with 1-sized slices for ()-shaped indices.
-  # We need to squeeze out the 1-sized slices at the end.
-  if maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
-    starts, sizes, squeeze_dims = maybe_slice
-    y = lax_slicing.dynamic_slice(x, starts, sizes)
-    return lax.squeeze(y, squeeze_dims)
-  indexer = _convert_to_array_indexer(indexer)
-  if indexer is None:
-    return x
-  return x[None][(np.array(0, 'int32'), *indexer)]
+  result = x
+  for indexer in indexers:
+    if _is_trivial_indexer(indexer):
+      continue
+    if indexer is None:
+      continue
+    # If everything in the indexer is a slice or ()-shaped, we can also
+    # use `lax.dynamic_slice` with 1-sized slices for ()-shaped indices.
+    # We need to squeeze out the 1-sized slices at the end.
+    if maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
+      starts, sizes, squeeze_dims = maybe_slice
+      y = lax_slicing.dynamic_slice(result, starts, sizes)
+      result = lax.squeeze(y, squeeze_dims)
+    else:
+      indexer = _convert_to_array_indexer(indexer)
+      result = result[None][(np.array(0, "int32"), *indexer)]
+  return result
 
 def _indexer(idx, indexed_dims):
   idx_ = iter(idx)
@@ -276,23 +277,28 @@ def _swap_discharge_rule(
 
 def _swap_discharge(x, val, idx, tree):
   indexers = tree_util.tree_unflatten(tree, idx)
-  if len(indexers) > 1:
-    raise NotImplementedError("Only single indexer is supported.")
-  indexer = indexers[0]
-  if _is_trivial_indexer(indexer):
-    return x, val
-  # If everything in the indexer is a slice or ()-shaped, we can also
-  # use `lax.dynamic_slice` with 1-sized slices for ()-shaped indices.
-  # We need to squeeze out the 1-sized slices at the end.
-  if maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
-    starts, sizes, squeeze_dims = maybe_slice
-    x_old = lax_slicing.dynamic_slice(x, starts, sizes)
-    val = lax.expand_dims(val, squeeze_dims)
-    y = lax_slicing.dynamic_update_slice(x, val, starts)
-    return lax.squeeze(x_old, squeeze_dims), y
-  indexer = _convert_to_array_indexer(indexer)
-  x_old = _prepend_gather(x, indexer)
-  return x_old, _prepend_scatter(x, indexer, val)
+
+  result = x
+  result_val = val
+  for indexer in indexers:
+    if _is_trivial_indexer(indexer):
+      continue
+    # If everything in the indexer is a slice or ()-shaped, we can also
+    # use `lax.dynamic_slice` with 1-sized slices for ()-shaped indices.
+    # We need to squeeze out the 1-sized slices at the end.
+    if maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
+      starts, sizes, squeeze_dims = maybe_slice
+      result_old = lax_slicing.dynamic_slice(result, starts, sizes)
+      result_val = lax.expand_dims(result_val, squeeze_dims)
+      y = lax_slicing.dynamic_update_slice(result, result_val, starts)
+      result = lax.squeeze(result_old, squeeze_dims)
+      result_val = y
+    else:
+      indexer = _convert_to_array_indexer(indexer)
+      result_old = _prepend_gather(result, indexer)
+      result_val = _prepend_scatter(result, indexer, result_val)
+      result = result_old
+  return result, result_val
 
 @register_discharge_rule(addupdate_p)
 def _addupdate_discharge_rule(

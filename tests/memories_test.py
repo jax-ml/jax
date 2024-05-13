@@ -23,7 +23,6 @@ import jax
 from jax import lax
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
-from jax._src.lib import xla_extension_version
 from jax._src import config
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.numpy as jnp
@@ -1132,6 +1131,30 @@ class DevicePutTest(jtu.JaxTestCase):
     self._check_device_put_addressable_shards(
         out2, np_inp * np_inp * 2, s_host, 'pinned_host')
 
+  def test_parameter_streaming_with_scalar_and_constant(self):
+    mesh = jtu.create_global_mesh((2, 4), ("x", "y"))
+    scalar_inp = 1
+    s_host = NamedSharding(mesh, P(), memory_kind="pinned_host")
+
+    @functools.partial(jax.jit, out_shardings=s_host)
+    def f(scalar_input):
+      y = jax.device_put(scalar_input, s_host)
+      z = 2
+      w = jax.device_put(z, s_host)
+      return y, w
+
+    compiled = f.lower(scalar_inp).compile()  # doesn't crash
+    compiled_text = compiled.as_text()
+    self.assertRegex(compiled_text, r"entry_computation_layout=.*S\(5\)}")
+
+    out1, out2 = f(scalar_inp)
+    self._check_device_put_addressable_shards(
+        out1, scalar_inp, s_host, "pinned_host", index=False
+    )
+    self._check_device_put_addressable_shards(
+        out2, 2, s_host, "pinned_host", index=False
+    )
+
   def test_identity_jit_host_to_device_and_vice_versa(self):
     mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
     np_inp = np.arange(16).reshape(8, 2)
@@ -1151,6 +1174,76 @@ class DevicePutTest(jtu.JaxTestCase):
     out_host = g(arr_dev)
     self.assertArraysEqual(out_host, np_inp)
     self.assertEqual(out_host.sharding, s_host)
+
+  def test_parameter_streaming_inside_scan(self):
+    mesh = jtu.create_global_mesh((1, 1, 2), ("x", "y", "z"))
+    np_inp = np.arange(4096.0).reshape(16, 16, 16)
+    s_host = NamedSharding(mesh, P("x", "y", "z"), memory_kind="pinned_host")
+    arr_host = jax.device_put(np_inp, s_host)
+
+    @jax.jit
+    def f(xs):
+      def body(carry, x):
+        x_tpu = jax.device_put(x, TransferToMemoryKind("device"))
+        return carry, x_tpu + carry
+
+      return jax.lax.scan(body, 1.0, xs)
+
+    _, out_hbm = f(arr_host)
+    self.assertArraysEqual(out_hbm, np_inp + 1.0)
+    # Only expect the last dimension to have a named sharding.
+    out_s = NamedSharding(mesh, P(None, None, "z"), memory_kind="device")
+    self.assertEqual(out_hbm.sharding, out_s)
+
+  def test_output_streaming(self):
+    mesh = jtu.create_global_mesh((1, 1), ("x", "y"))
+    np_inp = np.arange(16.0).reshape(8, 2)
+    s_hbm = NamedSharding(mesh, P("x", "y"), memory_kind="device")
+    s_host = NamedSharding(mesh, P("x", "y"), memory_kind="pinned_host")
+    arr_hbm = jax.device_put(np_inp, s_hbm)
+
+    @functools.partial(jax.jit, out_shardings=s_host)
+    def f(xs):
+      out_tpu = xs + 1.0
+      return out_tpu
+
+    out_host = f(arr_hbm)
+    self.assertArraysEqual(out_host, np_inp + 1.0)
+    self.assertEqual(out_host.sharding, s_host)
+
+  def test_weight_offload_with_dp_on_output(self):
+    _, s_dev, np_inp, inp_dev = _create_inputs(
+        (8, 2), P("x", "y"), mem_kind="device")
+    s_host = s_dev.with_memory_kind('pinned_host')
+
+    @jax.jit
+    def f(x):
+      x = x * 2
+      y = jax.device_put(x, s_host)
+      return y
+
+    out_host = f(inp_dev)
+    self._check_device_put_addressable_shards(
+        out_host, np_inp * 2, s_host, 'pinned_host')
+
+  def test_output_streaming_inside_scan(self):
+    mesh = jtu.create_global_mesh((1, 1, 2), ("x", "y", "z"))
+    np_inp = np.arange(4096).reshape(16, 16, 16)
+    s_hbm = NamedSharding(mesh, P(None, "y", "z"), memory_kind="device")
+    arr_hbm = jax.device_put(np_inp, s_hbm)
+
+    @jax.jit
+    def f(xs):
+      def body(carry, x):
+        out_tpu = x + carry
+        return carry, jax.device_put(
+            out_tpu, NamedSharding(mesh, P("y", "z"), memory_kind="pinned_host"))
+      _, res = jax.lax.scan(body, 1, xs)
+      return res
+
+    out = f(arr_hbm)
+    self.assertArraysEqual(out, np_inp + 1)
+    self.assertEqual(out.sharding.memory_kind, 'pinned_host')
 
 
 class ActivationOffloadingTest(jtu.JaxTestCase):
@@ -1206,7 +1299,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
 
     compiled_stats = compiled_f.memory_analysis()
     if compiled_stats is not None and jtu.test_device_matches(["tpu"]):
-      if xla_extension_version >= 240 and jtu.pjrt_c_api_version_at_least(0, 43):
+      if jtu.pjrt_c_api_version_at_least(0, 43):
         self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
   def test_remat_scan_jaxpr_offloadable(self):
@@ -1265,7 +1358,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
 
     compiled_stats = compiled_f.memory_analysis()
     if compiled_stats is not None:
-      if xla_extension_version >= 240 and jtu.pjrt_c_api_version_at_least(0, 43):
+      if jtu.pjrt_c_api_version_at_least(0, 43):
         self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
   def test_remat_scan_layout_change_offloadable(self):
@@ -1307,12 +1400,10 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
 
     compiled_stats = compiled_f.memory_analysis()
     if compiled_stats is not None:
-      if xla_extension_version >= 240 and jtu.pjrt_c_api_version_at_least(0, 43):
+      if jtu.pjrt_c_api_version_at_least(0, 43):
         self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
   def test_remat_checkpoint_dots_with_no_batch_dims(self):
-    if not jtu.test_device_matches(["tpu"]) and xla_extension_version < 247:
-      self.skipTest("Test requires a newer jaxlib")
     policy = jax.checkpoint_policies.offload_dot_with_no_batch_dims(
         "device", "pinned_host")
 
@@ -1341,7 +1432,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
 
     compiled_stats = compiled_f.memory_analysis()
     if compiled_stats is not None and jtu.test_device_matches(["tpu"]):
-      if xla_extension_version >= 240 and jtu.pjrt_c_api_version_at_least(0, 43):
+      if jtu.pjrt_c_api_version_at_least(0, 43):
         self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
 if __name__ == "__main__":

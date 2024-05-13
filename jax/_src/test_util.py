@@ -57,7 +57,7 @@ from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
 from jax._src.util import unzip2
 from jax._src.public_test_util import (  # noqa: F401
     _assert_numpy_allclose, _check_dtypes_match, _default_tolerance, _dtype, check_close, check_grads,
-    check_jvp, check_vjp, default_gradient_tolerance, default_tolerance, tolerance)
+    check_jvp, check_vjp, default_gradient_tolerance, default_tolerance, tolerance, rand_like)
 from jax._src import xla_bridge
 
 
@@ -418,6 +418,12 @@ def is_device_tpu(version: int | None = None, variant: str = "") -> bool:
   if expected_version == "v5e":
     return "v5 lite" in device_kind
   return expected_version in device_kind
+
+def is_cuda_compute_capability_at_least(capability: str) -> bool:
+  if not is_device_cuda():
+    return False
+  d, *_ = jax.local_devices(backend="gpu")
+  return d.compute_capability >= capability
 
 def _get_device_tags():
   """returns a set of tags defined for the device under test"""
@@ -1289,7 +1295,8 @@ class _LazyDtypes:
 
   @_cached_property
   def all_integer(self):
-    return self.supported([np.int8, np.int16, np.int32, np.int64])
+    return self.supported([
+        _dtypes.int4, np.int8, np.int16, np.int32, np.int64])
 
   @_cached_property
   def unsigned(self):
@@ -1297,7 +1304,8 @@ class _LazyDtypes:
 
   @_cached_property
   def all_unsigned(self):
-    return self.supported([np.uint8, np.uint16, np.uint32, np.uint64])
+    return self.supported([
+        _dtypes.uint4, np.uint8, np.uint16, np.uint32, np.uint64])
 
   @_cached_property
   def complex(self):
@@ -1790,6 +1798,60 @@ class numpy_with_mpmath:
 
   def exp2(self, x):
     return x.context.exp(x * x.context.ln2)
+
+  def arcsin(self, x):
+    ctx = x.context
+    if isinstance(x, ctx.mpc):
+      # Workaround mpmath 1.3 bug in asin(+-inf+-infj) evaluation (see
+      # mpmath/mpmath#793).
+      # TODO(pearu): remove the if-block below when mpmath 1.4 or
+      # newer will be the required test dependency.
+      pi = ctx.pi
+      inf = ctx.inf
+      zero = ctx.zero
+      if ctx.isinf(x.real):
+        sign_real = -1 if x.real < 0 else 1
+        real = sign_real * pi / (4 if ctx.isinf(x.imag) else 2)
+        imag = -inf if x.imag < 0 else inf
+        return ctx.make_mpc((real._mpf_, imag._mpf_))
+      elif ctx.isinf(x.imag):
+        return ctx.make_mpc((zero._mpf_, x.imag._mpf_))
+
+      # On branch cut, mpmath.mp.asin returns different value compared
+      # to mpmath.fp.asin and numpy.arcsin (see
+      # mpmath/mpmath#786). The following if-block ensures
+      # compatibiliy with numpy.arcsin.
+      if x.real > 1 and x.imag == 0:
+        return ctx.asin(x).conjugate()
+
+    return ctx.asin(x)
+
+  def arcsinh(self, x):
+    ctx = x.context
+
+    if isinstance(x, ctx.mpc):
+      # Workaround mpmath 1.3 bug in asinh(+-inf+-infj) evaluation
+      # (see mpmath/mpmath#749).
+      # TODO(pearu): remove the if-block below when mpmath 1.4 or
+      # newer will be the required test dependency.
+      pi = ctx.pi
+      inf = ctx.inf
+      zero = ctx.zero
+      if ctx.isinf(x.imag):
+        sign_imag = -1 if x.imag < 0 else 1
+        real = -inf if x.real < 0 else inf
+        imag = sign_imag * pi / (4 if ctx.isinf(x.real) else 2)
+        return ctx.make_mpc((real._mpf_, imag._mpf_))
+      elif ctx.isinf(x.real):
+        return ctx.make_mpc((x.real._mpf_, zero._mpf_))
+
+      # On branch cut, mpmath.mp.asinh returns different value
+      # compared to mpmath.fp.asinh and numpy.arcsinh (see
+      # mpmath/mpmath#786).  The following if-block ensures
+      # compatibiliy with numpy.arcsinh.
+      if x.real == 0 and x.imag < -1:
+        return (-ctx.asinh(x)).conjugate()
+    return ctx.asinh(x)
 
   def normalize(self, exact, reference, value):
     """Normalize reference and value using precision defined by the

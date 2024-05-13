@@ -9,6 +9,14 @@
 #include "mlir-c/Dialect/Vector.h"
 #include "mlir-c/Transforms.h"
 #include "mlir/Bindings/Python/PybindAdaptors.h"
+#ifdef JAXLIB_MOSAIC_GPU
+#include "mlir-c/Dialect/GPU.h"
+#include "mlir-c/Dialect/NVGPU.h"
+#include "mlir-c/Dialect/NVVM.h"
+#include "mlir-c/Dialect/LLVM.h"
+#include "mlir-c/Conversion.h"
+#include "jaxlib/mlir/_mlir_libs/jaxlib_mlir_capi_shims.h"
+#endif
 
 #define REGISTER_DIALECT(name) \
     MlirDialectHandle name##_dialect = mlirGetDialectHandle__##name##__(); \
@@ -27,5 +35,18 @@ PYBIND11_MODULE(register_jax_dialects, m) {
     mlirRegisterTransformsPasses();
     // Transforms used by JAX.
     mlirRegisterTransformsStripDebugInfo();
+    // TODO(apaszke): Move those to Mosaic GPU C bindings.
+#ifdef JAXLIB_MOSAIC_GPU
+    REGISTER_DIALECT(gpu);
+    REGISTER_DIALECT(nvgpu);
+    REGISTER_DIALECT(nvvm);
+    REGISTER_DIALECT(llvm);
+    mlirRegisterGPUPasses();
+    mlirRegisterConversionPasses();
+    // TODO(apaszke): Upstream and remove those.
+    jaxMlirRegisterMemRefPasses();
+    jaxMlirRegisterInterfaceExternalModels(registry);
+    jaxMlirRegisterGPUToNVVMPipeline();
+#endif
   });
 }

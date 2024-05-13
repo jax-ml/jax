@@ -98,7 +98,7 @@ def start_trace(log_dir, create_perfetto_link: bool = False,
   The resulting trace can be viewed with TensorBoard. Note that TensorBoard
   doesn't need to be running when collecting the trace.
 
-  Only once trace may be collected a time. A RuntimeError will be raised if
+  Only one trace may be collected at a time. A RuntimeError will be raised if
   :func:`start_trace` is called while another trace is running.
 
   Args:
@@ -235,7 +235,7 @@ def trace(log_dir, create_perfetto_link=False, create_perfetto_trace=False):
   The resulting trace can be viewed with TensorBoard. Note that TensorBoard
   doesn't need to be running when collecting the trace.
 
-  Only once trace may be collected a time. A RuntimeError will be raised if a
+  Only one trace may be collected at a time. A RuntimeError will be raised if a
   trace is started while another trace is running.
 
   Args:

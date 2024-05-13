@@ -28,9 +28,9 @@ from jax._src.pallas.mosaic import dma_semaphore
 from jax._src.pallas.mosaic import device_id
 from jax._src.pallas.mosaic import emit_pipeline_with_allocations
 from jax._src.pallas.mosaic import emit_pipeline
-from jax._src.pallas.mosaic import PipelineCallbackArgs
-from jax._src.pallas.mosaic import PipelinePrefetchArgs
-from jax._src.pallas.mosaic import ManualPrefetchArgs
+from jax._src.pallas.mosaic import get_pipeline_schedule
+from jax._src.pallas.mosaic import make_pipeline_allocations
+from jax._src.pallas.mosaic import BufferedRef
 from jax._src.pallas.mosaic import encode_kernel_regeneration_metadata
 from jax._src.pallas.mosaic import extract_kernel_regeneration_metadata
 from jax._src.pallas.mosaic import get_barrier_semaphore
@@ -43,5 +43,4 @@ from jax._src.pallas.mosaic import semaphore
 from jax._src.pallas.mosaic import semaphore_read
 from jax._src.pallas.mosaic import semaphore_signal
 from jax._src.pallas.mosaic import semaphore_wait
-from jax._src.pallas.mosaic import trace
 from jax._src.tpu_custom_call import CostEstimate

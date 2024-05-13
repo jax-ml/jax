@@ -25,7 +25,6 @@ from typing import Any
 import jax
 from jax import core as jax_core
 from jax._src.interpreters import mlir
-from jax._src.lib import gpu_triton as triton_kernel_call_lib
 from jax._src.lib.mlir import ir
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.pallas_call import pallas_call_p
@@ -58,13 +57,10 @@ def _pallas_call_ttir_lowering(
     num_warps: int,
     num_stages: int,
 ):
-  # TODO(sharadmv): handle multiple devices, right now we assume device 0
-  # which is fine when we have multiple of the same GPU but this won't work in
-  # general.
-  device = 0
-  compute_capability = triton_kernel_call_lib.get_compute_capability(device)
+  # TODO(sharadmv): Handle multiple devices with different capabilities.
+  d, *_ = jax.local_devices(backend="gpu")
   cuda_options = dict(
-      compute_capability=compute_capability,
+      compute_capability=d.compute_capability,
       num_warps=num_warps,
       num_stages=num_stages,
       debug=debug,

@@ -514,7 +514,7 @@ def bcoo_transpose(mat: BCOO, *, permutation: Sequence[int]) -> BCOO:
       batch, sparse, and dense dimensions. The i’th axis of the returned array
       corresponds to the axis numbered permutation[i] of ``mat``. Transpose
       permutation currently does not support permuting batch axes with non-batch
-      axes nor permutating dense axes with non-dense axes.
+      axes nor permuting dense axes with non-dense axes.
 
   Returns:
     A BCOO-format array.
@@ -749,7 +749,7 @@ def _bcoo_dot_general_abstract_eval(lhs_data, lhs_indices, rhs, *, dimension_num
   n_batch, n_sparse, _, _ = _validate_bcoo(lhs_data, lhs_indices, lhs_spinfo.shape)
   if lhs_batch and max(lhs_batch) >= n_batch:
     raise NotImplementedError(
-      "bcoo_dot_general batch dimensions must be among the batch dimensions in the sparse representtaion.\n"
+      "bcoo_dot_general batch dimensions must be among the batch dimensions in the sparse representation.\n"
       f"got {lhs_batch=}, {n_batch=}")
 
   # TODO: support contraction of dense dimensions?

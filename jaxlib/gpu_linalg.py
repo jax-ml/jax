@@ -36,12 +36,16 @@ for cuda_module_name in [".cuda", "jax_cuda12_plugin"]:
 
 if _cuda_linalg:
   for _name, _value in _cuda_linalg.registrations().items():
-    xla_client.register_custom_call_target(_name, _value, platform="CUDA")
+    xla_client.register_custom_call_target(
+        _name, _value, platform="CUDA", api_version=1
+    )
 
 try:
   from .rocm import _linalg as _hip_linalg  # pytype: disable=import-error
   for _name, _value in _hip_linalg.registrations().items():
-    xla_client.register_custom_call_target(_name, _value, platform="ROCM")
+    xla_client.register_custom_call_target(
+        _name, _value, platform="ROCM", api_version=1
+    )
 except ImportError:
   _hip_linalg = None
 
@@ -53,6 +57,7 @@ def _lu_pivots_to_permutation_hlo(platform, gpu_linalg, pivots, *, permutation_s
   typ = ir.RankedTensorType(pivots.type)
   dims = typ.shape
   i32_type = ir.IntegerType.get_signless(32)
+  i64_type = ir.IntegerType.get_signless(64)
 
   assert typ.element_type == i32_type, typ
 
@@ -62,8 +67,6 @@ def _lu_pivots_to_permutation_hlo(platform, gpu_linalg, pivots, *, permutation_s
   if not gpu_linalg:
     raise GpuLibNotLinkedError()
 
-  opaque = gpu_linalg.lu_pivots_to_permutation_descriptor(
-      batch_size, pivot_size, permutation_size)
   pivots_layout = tuple(range(len(dims) - 1, -1, -1))
   permutations_layout = pivots_layout
   permutations_dims = list(dims)
@@ -71,11 +74,17 @@ def _lu_pivots_to_permutation_hlo(platform, gpu_linalg, pivots, *, permutation_s
   permutations_type = ir.RankedTensorType.get(permutations_dims, i32_type)
   return custom_call(
       f"{platform}_lu_pivots_to_permutation",
+      api_version=4,
       result_types=[permutations_type],
       operands=[pivots],
-      backend_config=opaque,
+      backend_config=dict(
+          batch_size=ir.IntegerAttr.get(i64_type, batch_size),
+          pivot_size=ir.IntegerAttr.get(i32_type, pivot_size),
+          permutation_size=ir.IntegerAttr.get(i32_type, permutation_size),
+      ),
       operand_layouts=[pivots_layout],
-      result_layouts=[permutations_layout]).results
+      result_layouts=[permutations_layout],
+  ).results
 
 cuda_lu_pivots_to_permutation = partial(_lu_pivots_to_permutation_hlo, "cu",
                                         _cuda_linalg)

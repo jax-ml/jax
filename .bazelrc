@@ -79,6 +79,11 @@ build:nvcc_clang --action_env=TF_CUDA_CLANG="1"
 build:nvcc_clang --action_env=TF_NVCC_CLANG="1"
 build:nvcc_clang --@local_config_cuda//:cuda_compiler=nvcc
 
+# Requires MSVC and LLVM to be installed
+build:win_clang --extra_toolchains=@local_config_cc//:cc-toolchain-x64_windows-clang-cl
+build:win_clang --extra_execution_platforms=//jax/tools/toolchains:x64_windows-clang-cl
+build:win_clang --compiler=clang-cl
+
 # Later Bazel flag values override earlier values.
 # TODO(jieying): remove enable_gpu and xla_python_enable_gpu from build:cuda
 # after the pluin is released.
@@ -110,6 +115,10 @@ build:cuda_clang --action_env=TF_CUDA_CLANG="1"
 build:cuda_clang --copt=-Wno-gnu-offsetof-extensions
 # Disable clang extention that rejects unknown arguments.
 build:cuda_clang --copt=-Qunused-arguments
+
+build:mosaic_gpu --@llvm-project//mlir:enable_cuda=true
+build:mosaic_gpu --copt=-DLLVM_HAS_NVPTX_TARGET=1
+build:mosaic_gpu --//jax:build_mosaic_gpu=true
 
 build:rocm --crosstool_top=@local_config_rocm//crosstool:toolchain
 build:rocm --define=using_rocm=true --define=using_rocm_hipcc=true

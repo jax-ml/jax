@@ -22,8 +22,6 @@ import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src import xla_bridge as xb
-from jax._src.lib import xla_extension_version
 
 import numpy as np
 
@@ -73,12 +71,11 @@ class DLPackTest(jtu.JaxTestCase):
   @jtu.sample_product(
     shape=all_shapes,
     dtype=dlpack_dtypes,
-    copy=[False, True, None]
+    copy=[False, True, None],
+    use_stream=[False, True],
   )
   @jtu.run_on_devices("gpu")
-  def testJaxRoundTrip(self, shape, dtype, copy):
-    if xb.using_pjrt_c_api():
-      self.skipTest("DLPack support is incomplete in the PJRT C API")  # TODO(skyewm)
+  def testJaxRoundTrip(self, shape, dtype, copy, use_stream):
     rng = jtu.rand_default(self.rng())
     np = rng(shape, dtype)
 
@@ -91,7 +88,11 @@ class DLPackTest(jtu.JaxTestCase):
     device = jax.devices("gpu")[0]
     y = jax.device_put(x, device)
     dl_device = y.__dlpack_device__()
-    dlpack = jax.dlpack.to_dlpack(y, copy=copy)
+    if use_stream:
+      stream = tuple(y.devices())[0].get_stream_for_external_ready_events()
+      dlpack = jax.dlpack.to_dlpack(y, copy=copy, stream=stream)
+    else:
+      dlpack = jax.dlpack.to_dlpack(y, copy=copy)
     z = jax.dlpack.from_dlpack(dlpack)
 
     self.assertEqual(z.devices(), {device})
@@ -235,7 +236,6 @@ class DLPackTest(jtu.JaxTestCase):
 class CudaArrayInterfaceTest(jtu.JaxTestCase):
 
   @jtu.skip_on_devices("cuda")
-  @unittest.skipIf(xla_extension_version < 228, "Requires newer jaxlib")
   def testCudaArrayInterfaceOnNonCudaFails(self):
     x = jnp.arange(5)
     self.assertFalse(hasattr(x, "__cuda_array_interface__"))
@@ -246,7 +246,6 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
       _ = x.__cuda_array_interface__
 
   @jtu.run_on_devices("cuda")
-  @unittest.skipIf(xla_extension_version < 233, "Requires newer jaxlib")
   def testCudaArrayInterfaceOnShardedArrayFails(self):
     devices = jax.local_devices()
     if len(devices) <= 1:
@@ -278,7 +277,6 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
     self.assertEqual(z.__array_interface__["typestr"], a["typestr"])
 
   @jtu.run_on_devices("cuda")
-  @unittest.skipIf(xla_extension_version < 228, "Requires newer jaxlib")
   def testCudaArrayInterfaceBfloat16Fails(self):
     rng = jtu.rand_default(self.rng())
     x = rng((2, 2), jnp.bfloat16)
@@ -301,7 +299,6 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
                      z.__cuda_array_interface__["data"][0])
     self.assertAllClose(x, cupy.asnumpy(z))
 
-  @unittest.skipIf(xla_extension_version < 237, "Requires newer jaxlib")
   @jtu.sample_product(
     shape=all_shapes,
     dtype=jtu.dtypes.supported(cuda_array_interface_dtypes),
@@ -318,16 +315,12 @@ class CudaArrayInterfaceTest(jtu.JaxTestCase):
                      z.__cuda_array_interface__["data"][0])
     self.assertAllClose(np.asarray(z), cupy.asnumpy(y))
 
-  @unittest.skipIf(xla_extension_version < 237, "Requires newer jaxlib")
   @jtu.sample_product(
     shape=all_shapes,
     dtype=jtu.dtypes.supported(cuda_array_interface_dtypes),
   )
   @jtu.run_on_devices("cuda")
   def testCaiToJax(self, shape, dtype):
-    # TODO(b/324133505) enable this test for PJRT C API
-    if xb.using_pjrt_c_api():
-      self.skipTest("CUDA Array Interface support is incomplete in the PJRT C API")
     rng = jtu.rand_default(self.rng())
     x = rng(shape, dtype)
 

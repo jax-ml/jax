@@ -45,8 +45,8 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
-from jax._src.lib import xla_extension_version
 from jax._src.util import NumpyComplexWarning
+from jax._src.tree_util import tree_map
 
 config.parse_flags_with_absl()
 
@@ -67,6 +67,22 @@ preferred_type_combinations = [
   (np.int8, np.float16), (np.int8, dtypes.bfloat16), (np.int8, np.float32), (np.int8, np.float64),
   (np.int16, np.float16), (np.int16, dtypes.bfloat16), (np.int16, np.float32), (np.int16, np.float64),
   (np.int32, np.float32), (np.int32, np.float64), (np.int64, np.float64)]
+
+
+def _reduce_custom_add(x, y):
+  return x + y
+
+def _reduce_custom_mul(x, y):
+  return x * y
+
+def _reduce_custom_sub(x, y):
+  return x - y
+
+def _reduce_custom_min(x, y):
+  return jnp.minimum(x, y)
+
+def _reduce_custom_max(x, y):
+  return jnp.maximum(x, y)
 
 
 class LaxTest(jtu.JaxTestCase):
@@ -1162,6 +1178,33 @@ class LaxTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(numpy_op, op, args_maker)
 
   @jtu.sample_product(
+      [
+          {'m': 5, 'k': 4, 'n': 3, 'num_groups': 1},
+          {'m': 10, 'k': 9, 'n': 8, 'num_groups': 2},
+      ],
+      dtype=jtu.dtypes.numeric,
+  )
+  def testRaggedDot(self, m, k, n, num_groups, dtype):
+    """Tests ragged_dot.
+
+    The ragged_dot is tested against numpy reference implementation, and by running JAX compilation.
+
+    Raises:
+      SkipTest: in the case dtype is not supported.
+    """
+    lhs_shape = (m, k)
+    rhs_shape = (num_groups, k, n)
+    def group_sizes(m, num_groups):
+      ends_no_final = jnp.sort(self.rng().choice(m, size=num_groups - 1))
+      ends = jnp.concatenate([ends_no_final, jnp.array([m], dtype=ends_no_final.dtype)])
+      starts = jnp.concatenate([jnp.zeros(1, dtype=ends_no_final.dtype), ends_no_final])
+      return ends - starts
+    rng = jtu.rand_small(self.rng())
+    args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype), group_sizes(m, num_groups)]
+    self._CompileAndCheck(lax.ragged_dot, args_maker)
+    self._CheckAgainstNumpy(lax_reference.ragged_dot, lax.ragged_dot, args_maker)
+
+  @jtu.sample_product(
       shape=[(), (2, 3)],
       dtype=lax_test_util.default_dtypes,
       broadcast_sizes=[(), (2,), (1, 2)],
@@ -1286,7 +1329,7 @@ class LaxTest(jtu.JaxTestCase):
     numpy_op = lambda x: lax_reference.squeeze(x, dimensions)
     self._CompileAndCheck(op, args_maker)
     self._CheckAgainstNumpy(numpy_op, op, args_maker)
-    check_grads(op, args_maker(), 2, ["fwd", "rev"], eps=1.)
+    check_grads(op, args_maker(), 3, ["fwd", "rev"], eps=1.)
 
   @jtu.sample_product(
     input_type=["np.array", "jnp.array", "float", "np.float32"],
@@ -1800,35 +1843,287 @@ class LaxTest(jtu.JaxTestCase):
     # we separately test the version that uses a concrete init_val because it
     # can hit different code paths
     def fun(operand):
-      return lax.reduce_window(operand, init_val, op, dims, strides, padding,
-                               base_dilation, window_dilation)
+      return lax.reduce_window(
+          operand,
+          init_val,
+          op,
+          dims,
+          strides,
+          padding,
+          base_dilation,
+          window_dilation,
+      )
 
     args_maker = lambda: [rng(shape, dtype)]
     self._CompileAndCheck(fun, args_maker)
 
+  # TODO(voz): I broke these out to their own test for 2 reasons:
+  # 1. I wanted to show that general ops work, there's a small subset of
+  # ops, specifically, the ones used in the test above, lax.add, lax.max, and
+  # lax.min that actually route to a monoid operator that *doesn't* pass JVP
+  # tests.
+  # 2. Slightly different parameterization.
   @jtu.sample_product(
-    [dict(shape=shape, dims=dims, strides=strides, padding=padding,
-          base_dilation=base_dilation, window_dilation=window_dilation)
-      for shape, dims, strides, padding, base_dilation, window_dilation in (
-        itertools.chain(
-          itertools.product(
-            [(4, 6)],
-            [(2, 1), (1, 2)],
-            [(1, 1), (2, 1), (1, 2)],
-            ["VALID", "SAME", [(0, 3), (1, 2)]],
-            [(1, 1), (2, 3)],
-            [(1, 1), (1, 2)]),
-          itertools.product(
-            [(3, 2, 4, 6)], [(1, 1, 2, 1), (2, 1, 2, 1)],
-            [(1, 2, 2, 1), (1, 1, 1, 1)],
-            ["VALID", "SAME", [(0, 1), (1, 0), (2, 3), (0, 2)]],
-            [(1, 1, 1, 1), (2, 1, 3, 2)],
-            [(1, 1, 1, 1), (1, 2, 2, 1)])))
-    ],
-    dtype=[np.float32],
+      [
+          dict(init_val=init_val, op=op, dtype=dtype)
+          for init_val, op, dtypes in [
+              (1, _reduce_custom_add, [np.float32]),
+              (0, _reduce_custom_mul, [np.float32]),
+              (0, _reduce_custom_sub, [np.float32]),
+          ]
+          for dtype in dtypes
+      ],
+      [
+          dict(
+              shape=shape,
+              dims=dims,
+              strides=strides,
+              padding=padding,
+              base_dilation=base_dilation,
+              window_dilation=window_dilation,
+          )
+          for shape, dims, strides, padding, base_dilation, window_dilation in (
+              itertools.chain(
+                  itertools.product(
+                      [(4, 6)],
+                      [(2, 1), (1, 2)],
+                      [(1, 1), (2, 1), (1, 2)],
+                      ['VALID', 'SAME', [(0, 3), (1, 2)]],
+                      [(1, 1), (2, 3)],
+                      [(1, 1), (1, 2)],
+                  ),
+                  itertools.product(
+                      [(3, 2, 4, 6)],
+                      [(1, 1, 2, 1), (2, 1, 2, 1)],
+                      [(1, 2, 2, 1), (1, 1, 1, 1)],
+                      ['VALID', 'SAME', [(0, 1), (1, 0), (2, 3), (0, 2)]],
+                      [(1, 1, 1, 1), (2, 1, 3, 2)],
+                      [(1, 1, 1, 1), (1, 2, 2, 1)],
+                  ),
+              )
+          )
+      ],
   )
+  @jtu.skip_on_devices('gpu') # jax.lax.mul has an XLA bug on GPU b/339071103
+  @jtu.skip_on_devices('tpu') # b/39342488
+  def testReduceWindowGeneralJVP(
+      self,
+      op,
+      init_val,
+      dtype,
+      shape,
+      dims,
+      strides,
+      padding,
+      base_dilation,
+      window_dilation,
+  ):
+    rng = jtu.rand_small(self.rng())
+    init_val = np.asarray(init_val, dtype=dtype)
+
+    def fun(operand, init_val):
+      return lax.reduce_window(
+          operand,
+          init_val,
+          op,
+          dims,
+          strides,
+          padding,
+          base_dilation,
+          window_dilation,
+      )
+
+    args_maker = lambda: [rng(shape, dtype), init_val]
+    self._CompileAndCheck(fun, args_maker)
+    args = args_maker()
+    init_val = args[1]
+
+    # we separately test the version that uses a concrete init_val because it
+    # can hit different code paths
+    def fun2(operand):
+      return lax.reduce_window(
+          operand,
+          init_val,
+          op,
+          dims,
+          strides,
+          padding,
+          base_dilation,
+          window_dilation,
+      )
+
+    args_maker = lambda: [rng(shape, dtype)]
+    self._CompileAndCheck(fun2, args_maker)
+
+    operand = args_maker()[0]
+    jtu.check_jvp(fun2, partial(jax.jvp, fun2), (operand,))
+    check_grads(fun2, (operand,), 3, ["fwd"], eps=1.)
+
+  @jtu.sample_product(
+      [
+          dict(init_val=init_val, op=op, dtype=dtype)
+          for init_val, op, dtypes in [
+              (-np.inf, lax.max, [np.float32]),
+              (np.inf, lax.min, [np.float32]),
+              (0, lax.add, [np.float32]),
+          ]
+          for dtype in dtypes
+      ],
+      [
+          dict(
+              shape=shape,
+              dims=dims,
+              strides=strides,
+              padding=padding,
+              base_dilation=base_dilation,
+              window_dilation=window_dilation,
+          )
+          for shape, dims, strides, padding, base_dilation, window_dilation in (
+              itertools.chain(
+                  itertools.product(
+                      [(4, 6)],
+                      [(2, 1), (1, 2)],
+                      [(1, 1), (2, 1), (1, 2)],
+                      ['VALID', 'SAME', [(0, 3), (1, 2)]],
+                      [(1, 1), (2, 3)],
+                      [(1, 1), (1, 2)],
+                  ),
+                  itertools.product(
+                      [(3, 2, 4, 6)],
+                      [(1, 1, 2, 1), (2, 1, 2, 1)],
+                      [(1, 2, 2, 1), (1, 1, 1, 1)],
+                      ['VALID', 'SAME', [(0, 1), (1, 0), (2, 3), (0, 2)]],
+                      [(1, 1, 1, 1), (2, 1, 3, 2)],
+                      [(1, 1, 1, 1), (1, 2, 2, 1)],
+                  ),
+              )
+          )
+      ],
+  )
+  @jtu.skip_on_devices('gpu') # jax.lax.mul has an XLA bug on GPU b/339071103
+  @jtu.skip_on_devices('tpu') # b/39342488
+  def testReduceWindowCustomSameAsMonoid(
+      self,
+      op,
+      init_val,
+      dtype,
+      shape,
+      dims,
+      strides,
+      padding,
+      base_dilation,
+      window_dilation,
+  ):
+    rng = jtu.rand_small(self.rng())
+    init_val = np.asarray(init_val, dtype=dtype)
+
+    def fun(op_, operand_):
+      return lax.reduce_window(
+          operand_,
+          init_val,
+          op_,
+          dims,
+          strides,
+          padding,
+          base_dilation,
+          window_dilation,
+      )
+
+    args_maker = lambda: [rng(shape, dtype)]
+    args = args_maker()
+    operand = args[0]
+    rng = np.random.RandomState(0)
+    tangent = tree_map(partial(jtu.rand_like, rng), operand)
+
+    # There are "special" paths for "monoid" ops that have
+    # their jvp defined separately, either for legacy reasons
+    # or for optimization - compare across both and prove
+    # that their jvp is the same.
+    # TODO(voz): Look into the "monoid" paths and collapse them as necessary.
+    # Especially when we go to add support for (1) recursive is_jvp (hessians),
+    # and (2) transpose?
+    custom_equiv = {
+        lax.max: _reduce_custom_max,
+        lax.min: _reduce_custom_min,
+        lax.add: _reduce_custom_add,
+    }
+    custom_op = custom_equiv[op]
+    custom_primals, custom_tangents = jax.jvp(
+        partial(fun, custom_op),
+        primals=(operand,),
+        tangents=(tangent,),
+    )
+    lax_primals, lax_tangents = jax.jvp(
+        partial(fun, op),
+        primals=(operand,),
+        tangents=(tangent,),
+    )
+    # tol = 1e-4
+    # None is sane defaults, but useful to have here for debugging.
+    tol = None
+    jtu.check_close(
+        lax_primals,
+        custom_primals,
+        atol=tol,
+        rtol=tol,
+        err_msg='Mismatched primal',
+    )
+    jtu.check_close(
+        lax_tangents,
+        custom_tangents,
+        atol=tol,
+        rtol=tol,
+        err_msg='Mismatched tangents',
+    )
+    # Numerical jvp comparison for min and max values
+    # does not work - the underlying implementation of the test util
+    # nans on infs.
+    if init_val.item() in (np.inf, -np.inf):
+      return
+    op_bound_fn = partial(fun, op)
+    jtu.check_jvp(
+        op_bound_fn,
+        partial(jax.jvp, op_bound_fn),
+        (operand,),
+    )
+    check_grads(partial(fun, op), [operand], 3, ["fwd"], eps=1.)
+    check_grads(partial(fun, custom_op), [operand], 3, ["fwd"], eps=1.)
+
   # TODO(b/183233858): variadic reduce-window is not implemented on XLA:GPU
-  @jtu.skip_on_devices("gpu")
+  @jtu.sample_product(
+      [
+          dict(
+              shape=shape,
+              dims=dims,
+              strides=strides,
+              padding=padding,
+              base_dilation=base_dilation,
+              window_dilation=window_dilation,
+          )
+          for shape, dims, strides, padding, base_dilation, window_dilation in (
+              itertools.chain(
+                  itertools.product(
+                      [(4, 6)],
+                      [(2, 1), (1, 2)],
+                      [(1, 1), (2, 1), (1, 2)],
+                      ['VALID', 'SAME', [(0, 3), (1, 2)]],
+                      [(1, 1), (2, 3)],
+                      [(1, 1), (1, 2)],
+                  ),
+                  itertools.product(
+                      [(3, 2, 4, 6)],
+                      [(1, 1, 2, 1), (2, 1, 2, 1)],
+                      [(1, 2, 2, 1), (1, 1, 1, 1)],
+                      ['VALID', 'SAME', [(0, 1), (1, 0), (2, 3), (0, 2)]],
+                      [(1, 1, 1, 1), (2, 1, 3, 2)],
+                      [(1, 1, 1, 1), (1, 2, 2, 1)],
+                  ),
+              )
+          )
+      ],
+      dtype=[np.float32],
+  )
+  @jtu.skip_on_devices('gpu')
   def testReduceWindowVariadic(self, dtype, shape, dims, strides, padding,
                                base_dilation, window_dilation):
     if (jtu.test_device_matches(["tpu"]) and
@@ -2727,21 +3022,20 @@ class LaxTest(jtu.JaxTestCase):
   def test_constant_folding_complex_to_real_scan_regression(self):
     # regression test for github.com/google/jax/issues/19059
     def g(hiddens):
-        hiddens_aug = jnp.vstack((hiddens[0], hiddens))
-        new_hiddens = hiddens_aug.copy()
-        diff = new_hiddens[:-1] - hiddens
-        diff = new_hiddens[:-1] - hiddens
-        out = jnp.trace(jnp.conj(diff).T @ diff).real
-        return jnp.array(out, dtype=jnp.complex64)
-
+      hiddens_aug = jnp.vstack((hiddens[0], hiddens))
+      new_hiddens = hiddens_aug.copy()
+      diff = new_hiddens[:-1] - hiddens
+      diff = new_hiddens[:-1] - hiddens
+      out = jnp.trace(jnp.conj(diff).T @ diff).real
+      return jnp.array(out, dtype=jnp.complex64)
 
     def _step(carry, arg):
-        primals, f_vjp = jax.vjp(
-            g,
-            jax.random.normal(jax.random.key(0), (9, 8), dtype=jnp.complex64),
-        )
-        out = f_vjp(np.array(1.0 + 0j, 'complex64'))[0]
-        return carry, carry
+      primals, f_vjp = jax.vjp(
+          g,
+          jax.random.normal(jax.random.key(0), (9, 8), dtype=jnp.complex64),
+      )
+      out = f_vjp(np.array(1.0 + 0j, 'complex64'))[0]
+      return carry, carry
 
     a, b = jax.lax.scan(_step, 0, jnp.arange(4, dtype=jnp.complex64))
 
@@ -3616,7 +3910,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     elif name == 'log10':
       regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'ninf.imag', 'pinf.imag', 'ninfj.imag', 'pinfj.imag', 'zero.imag')
 
-    elif name == 'log1p' and xla_extension_version < 254:
+    elif name == 'log1p':
         regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real', 'neg.real', 'pos.real',
                                        'negj.real', 'posj.real', 'ninf.real', 'ninfj.real', 'pinfj.real')
 
@@ -3629,7 +3923,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
       if dtype == np.complex128:
         regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'pos.imag', 'negj', 'posj', 'ninf', 'pinf', 'mpos.imag')
 
-    elif name == 'expm1' and xla_extension_version < 250:
+    elif name == 'expm1':
       regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'pinf', 'mq1', 'mq2', 'mq3', 'mq4', 'mneg', 'mpos')
 
     elif name == 'sinc':
@@ -3694,10 +3988,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
         regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj')
 
     elif name == 'arctanh':
-      if xla_extension_version < 254:
-        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mpos.imag')
-      else:
-        regions_with_inaccuracies_keep('pos.imag', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mpos.imag')
+      regions_with_inaccuracies_keep('pos.imag', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mpos.imag')
 
     elif name in {'cos', 'sin'}:
       regions_with_inaccuracies_keep('ninf.imag', 'pinf.imag')
@@ -3741,11 +4032,11 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
         with jtu.ignore_warning(category=RuntimeWarning, message="overflow encountered in.*"):
           self.assertAllClose(
             normalized_result_slice, normalized_expected_slice, atol=atol,
-            err_msg=f"{name} in {region_name}, {is_cpu=} {is_cuda=}, {xla_extension_version=}\n{inexact_samples}")
+            err_msg=f"{name} in {region_name}, {is_cpu=} {is_cuda=},\n{inexact_samples}")
 
       if kind == 'failure' and region_name in regions_with_inaccuracies:
         try:
-          with self.assertRaises(AssertionError, msg=f"{name} in {region_name}, {is_cpu=} {is_cuda=}, {xla_extension_version=}"):
+          with self.assertRaises(AssertionError, msg=f"{name} in {region_name}, {is_cpu=} {is_cuda=}"):
             with jtu.ignore_warning(category=RuntimeWarning, message="overflow encountered in.*"):
               self.assertAllClose(normalized_result_slice, normalized_expected_slice)
         except AssertionError as msg:

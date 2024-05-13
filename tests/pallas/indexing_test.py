@@ -24,6 +24,8 @@ from jax._src import test_util as jtu
 from jax._src import util
 from jax._src.state import indexing
 import numpy as np
+import jax.numpy as jnp
+from jax.experimental import pallas as pl
 
 try:
   import hypothesis as hp
@@ -196,6 +198,53 @@ class IndexerTest(jtu.JaxTestCase):
     self.assertTupleEqual((*indexer.int_indexer_shape, *rest_shape),
                           indexer.get_indexer_shape())
 
+
+  def test_multi_indexing_interpreter_only(self):
+    # Interpreter only test! YMMV actually compiling this.
+    def permute(left, right, left_out_ref, right_out_ref):
+      left_out = jnp.zeros_like(left)
+      left_out = left_out.at[:, 0].set(left[:, 0])
+      left_out = left_out.at[:, 1].set(right[:, 0])
+      left_out = left_out.at[:, 2:].set(left[:, 1:-1])
+
+      right_out = jnp.zeros_like(right)
+      right_out = right_out.at[:, :-1].set(right[:, 1:])
+      right_out = right_out.at[:, -1].set(left[:, -1])
+
+      left_out_ref[...] = left_out
+      right_out_ref[...] = right_out
+
+    def invoke_permutes(x_ref, y_ref, x_out_ref, y_out_ref):
+      shape = x_ref.shape
+      _, n = shape[-2], shape[-1]
+      x_ref = x_ref.at[: n // 2, : n // 2]
+      y_ref = y_ref.at[: n // 2, : n // 2]
+      x_out_ref = x_out_ref.at[: n // 2, : n // 2]
+      y_out_ref = y_out_ref.at[: n // 2, : n // 2]
+      permute(x_ref, y_ref, x_out_ref, y_out_ref)
+
+    n = 8
+    x = jnp.ones([n, n])
+    y = jnp.ones([n, n])
+    jitted_permute = jax.jit(invoke_permutes)
+    grid = (1,)
+    pl.pallas_call(
+        jitted_permute,
+        grid=grid,
+        out_shape=[
+            jax.ShapeDtypeStruct(x.shape, x.dtype),
+            jax.ShapeDtypeStruct(x.shape, y.dtype),
+        ],
+        in_specs=[
+            pl.BlockSpec(lambda i: (0, 0), x.shape),
+            pl.BlockSpec(lambda i: (0, 0), y.shape),
+        ],
+        out_specs=[
+            pl.BlockSpec(lambda i: (0, 0), x.shape),
+            pl.BlockSpec(lambda i: (0, 0), y.shape),
+        ],
+        interpret=True,
+    )(x, y)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

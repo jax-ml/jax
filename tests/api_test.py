@@ -58,6 +58,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.custom_batching
@@ -550,6 +551,42 @@ class JitTest(jtu.BufferDonationTestCase):
       result = f(x, x)
       result.block_until_ready()
 
+  @parameterized.named_parameters(
+      ('argnames', {'donate_argnames': ('z', 'y')}),
+      ('argnums', {'donate_argnums': (0, 1)})
+  )
+  def test_dict_donation(self, jit_kwargs):
+    @partial(jax.jit, **jit_kwargs)
+    def f(z, y, x):
+      return z, y, x
+
+    z = {'c': 3.}
+    y = {'b': 2.}
+    x = {'a': 1.}
+
+    _, kwargs_info = f.lower(z=z, y=y, x=x).args_info
+    self.assertTrue(kwargs_info['z']['c'].donated)
+    self.assertTrue(kwargs_info['y']['b'].donated)
+    self.assertFalse(kwargs_info['x']['a'].donated)
+
+  @parameterized.named_parameters(
+      ('argnames', {'donate_argnames': ('z', 'y')}),
+      ('argnums', {'donate_argnums': (0, 1)})
+  )
+  def test_dict_donation_args_kwargs(self, jit_kwargs):
+    @partial(jax.jit, **jit_kwargs)
+    def f(z, y, x):
+      return z, y, x
+
+    z = {'c': 3.}
+    y = {'b': 2.}
+    x = {'a': 1.}
+
+    args_info, kwargs_info = f.lower(z, y=y, x=x).args_info
+    self.assertTrue(args_info[0]['c'].donated)
+    self.assertTrue(kwargs_info['y']['b'].donated)
+    self.assertFalse(kwargs_info['x']['a'].donated)
+
   def test_intersecting_static_and_donate_argnames(self):
     with self.assertRaisesRegex(
         ValueError, "static_argnames and donate_argnames cannot intersect"):
@@ -666,6 +703,14 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertNotEqual(z3.unsafe_buffer_pointer(), x1.unsafe_buffer_pointer())
     self.assertEqual(z2, 1)
 
+  @unittest.skipIf(xla_extension_version < 264, "jaxlib version too old")
+  def test_print_token_buffer_error(self):
+    token = jax.lax.create_token()
+    with self.assertRaisesRegex(
+        RuntimeError, "Cannot convert a token-shape buffer to a numpy array."
+    ):
+      token._buf._value
+
   def test_trivial_computations_with_tokens(self):
     @jit
     def noop(arr, token):
@@ -673,8 +718,12 @@ class JitTest(jtu.BufferDonationTestCase):
 
     arr = jnp.ones(10)
     token = jax.lax.create_token()
+    _, out_token = noop(arr, token)
 
-    self.assertEqual(token, noop(arr, token)[1])
+    self.assertIsInstance(token, core.Token)
+    self.assertIsInstance(out_token, core.Token)
+    # Different token objects.
+    self.assertIsNot(token, out_token)
 
   def test_jit_bad_input(self):
     def f(x):
@@ -1225,7 +1274,6 @@ class JitTest(jtu.BufferDonationTestCase):
     )
     for s in ("\"x\"", "y['hi']", "args[0]", "args[1]", "kwargs['z']", "kwargs['w']"):
       self.assertNotIn(s, hlo_str)
-
 
   @parameterized.parameters([0, 2, [(0, 2)]])
   def test_jit_lower_arg_info_static_argnums(self, static_argnums):
@@ -3732,7 +3780,7 @@ class APITest(jtu.JaxTestCase):
     self.assertIsInstance(x, core.Token)
 
   def test_jit_capturing_token(self):
-    tok = core.token
+    tok = jax.lax.create_token()
     _, y = jax.jit(lambda x: (x + 2, tok))(7)
     self.assertIsInstance(y, core.Token)
 

@@ -29,27 +29,23 @@ from jax import lax
 from jax import random
 from jax._src import config
 from jax._src import linear_util as lu
-from jax._src import test_util as jtu
 from jax._src import state
+from jax._src import test_util as jtu
 from jax._src.lax.control_flow.for_loop import for_loop
-from jax._src.lib import version as jaxlib_version
 from jax._src.pallas.pallas_call import _trace_to_jaxpr
-if jaxlib_version >= (0, 4, 24) and sys.platform != "win32":
-  from jax._src.pallas.triton.lowering import LoweringError
-else:
-  LoweringError = Exception
-from jax.interpreters import partial_eval as pe
-import jax.numpy as jnp
 from jax.experimental import pallas as pl
-try:
-  from jax.experimental.pallas import gpu as plgpu
-except ImportError:
-  plgpu = None
 from jax.experimental.pallas.ops import attention
 from jax.experimental.pallas.ops import layer_norm
 from jax.experimental.pallas.ops import rms_norm
 from jax.experimental.pallas.ops import softmax
+from jax.interpreters import partial_eval as pe
+import jax.numpy as jnp
 import numpy as np
+
+if sys.platform != "win32":
+  from jax.experimental.pallas import gpu as plgpu
+else:
+  plgpu = None
 
 
 # TODO(sharadmv): Update signatures of pallas_call to correct inputs/outputs.
@@ -137,22 +133,16 @@ class PallasTest(parameterized.TestCase):
       if not jtu.test_device_matches(["gpu"]):
         self.skipTest("Only works on GPU")
       if (jtu.test_device_matches(["cuda"]) and
-          not self.check_gpu_capability_at_least(80)):
-        self.skipTest("Only works on GPUs with capability >= sm80")
+          not jtu.is_cuda_compute_capability_at_least("8.0")):
+        self.skipTest("Only works on GPU with capability >= sm80")
+      if sys.platform == "win32":
+        self.skipTest("Only works on non-Windows platforms")
 
     super().setUp()
     _trace_to_jaxpr.cache_clear()
 
   def pallas_call(self, *args, **kwargs):
     return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
-
-  def check_gpu_capability_at_least(self, capability,
-                                    device: int = 0):
-    if plgpu is None:
-      return False
-    if self.INTERPRET:
-      return True
-    return plgpu.get_compute_capability(device) >= capability
 
 
 class PallasCallTest(PallasTest):
@@ -341,11 +331,6 @@ class PallasCallTest(PallasTest):
       if block_size_m <= m and block_size_n <= n and block_size_k <= k
     ])
   def test_matmul(self, m, n, k, dtype, bm, bn, bk, gm):
-    if not self.INTERPRET and (
-        plgpu.get_compute_capability(0) <= 75
-        and (bm >= 128 or bn > 128 or bk > 32)
-    ):
-      raise unittest.SkipTest("Block sizes too big for sm70.")
     k1, k2 = random.split(random.key(0))
     x = random.normal(k1, (m, k), dtype=dtype)
     y = random.normal(k2, (k, n), dtype=dtype)
@@ -367,12 +352,6 @@ class PallasCallTest(PallasTest):
       if block_size_m <= m and block_size_n <= n and block_size_k <= k
     ])
   def test_matmul_block_spec(self, m, n, k, dtype, bm, bn, bk):
-    if not self.INTERPRET and (
-        plgpu.get_compute_capability(0) <= 75
-        and (bm >= 128 or bn > 128 or bk > 32)
-    ):
-      raise unittest.SkipTest("Block sizes too big for sm70.")
-
     k1, k2 = random.split(random.key(0))
     x = random.normal(k1, (m, k), dtype=dtype)
     y = random.normal(k2, (k, n), dtype=dtype)
@@ -1500,9 +1479,6 @@ class PallasOpsTest(PallasTest):
       for fn, dtype in itertools.product(*args)
   )
   def test_elementwise(self, fn, dtype):
-    if fn is jnp.exp2 and jaxlib_version < (0, 4, 26):
-      self.skipTest("Requires jaxlib 0.4.26 or later")
-
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), dtype), grid=1
     )
@@ -1537,6 +1513,8 @@ class PallasOpsTest(PallasTest):
 
   @parameterized.parameters("float32", "float64")
   def test_nextafter(self, dtype):
+    if jtu.test_device_matches(["tpu"]) and dtype == "float64":
+        self.skipTest("float64 disabled on TPU.")
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((4,), dtype), grid=1
     )
@@ -1619,7 +1597,7 @@ class PallasOpsTest(PallasTest):
 
     x = jnp.array([2.4, 4.2]).astype(dtype)
     y = jnp.array([4.2, 2.4]).astype(dtype)
-    with self.assertRaises(LoweringError):
+    with self.assertRaises(Exception):
       kernel(x, y)
 
   BINARY_OPS = [
@@ -1669,6 +1647,53 @@ class PallasOpsTest(PallasTest):
       o_ref[...] = f()
 
     np.testing.assert_allclose(f(), kernel())
+
+  @parameterized.parameters("float16", "bfloat16", "float32")
+  def test_approx_tanh(self, dtype):
+    if self.INTERPRET:
+      self.skipTest("approx_tanh is not supported in interpreter mode")
+    if (dtype == "bfloat16" and
+        not jtu.is_cuda_compute_capability_at_least("9.0")):
+      self.skipTest("tanh.approx.bf16 requires a GPU with capability >= sm90")
+
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((4,), dtype), grid=1
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = plgpu.approx_tanh(x_ref[...])
+
+    x = jnp.asarray([-1, 0.42, 0.24, 1]).astype(dtype)
+    # We upcast to float32 because NumPy <2.0 does not handle custom dtypes
+    # properly. See https://github.com/google/jax/issues/11014.
+    np.testing.assert_allclose(
+        kernel(x).astype(jnp.float32),
+        jnp.tanh(x).astype(jnp.float32),
+        atol=5e-3,
+        rtol=5e-3,
+    )
+
+  def test_elementwise_inline_asm(self):
+    if self.INTERPRET:
+      self.skipTest(
+          "elementwise_inline_asm is not supported in interpreter mode"
+      )
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((256,), jnp.float16),
+        grid=1,
+    )
+    def kernel(x_ref, o_ref):
+      [o_ref[...]] = plgpu.elementwise_inline_asm(
+          "tanh.approx.f16x2 $0, $1;",
+          args=[x_ref[...]],
+          constraints="=r,r",
+          pack=2,
+          result_shape_dtypes=[jax.ShapeDtypeStruct(x_ref.shape, x_ref.dtype)],
+      )
+
+    x = jnp.arange(256).astype(jnp.float16)
+    np.testing.assert_allclose(kernel(x), jnp.tanh(x), atol=5e-3, rtol=5e-3)
 
 
 class PallasOpsInterpretTest(PallasOpsTest):
@@ -2000,6 +2025,79 @@ class SoftmaxTest(PallasTest):
 
 class SoftmaxInterpreterTest(PallasTest):
   INTERPRET = True
+
+
+class PallasInterpretModeOutOfBoundsTest(PallasTest):
+
+  INTERPRET: bool = True
+
+  def test_interpret_mode_out_of_bounds_access(self):
+    block_size = 32
+    # Create input tensors which require a reduction along an axis
+    # not divisible by block_size.
+    x = jax.random.normal(jax.random.key(0), (block_size, block_size + 1))
+    y = jax.random.normal(jax.random.key(1), (block_size + 1, block_size))
+    expected = jnp.dot(x, y)
+
+    in_specs = [
+        pl.BlockSpec(lambda i, j, k: (i, k), (block_size, block_size)),
+        pl.BlockSpec(lambda i, j, k: (k, j), (block_size, block_size)),
+    ]
+    out_spec = pl.BlockSpec(lambda i, j, k: (i, j), (block_size, block_size))
+
+    def _unmasked_matmul_kernel(x_ref, y_ref, o_ref):
+      @pl.when(pl.program_id(2) == 0)
+      def _():
+        o_ref[...] = jnp.zeros_like(o_ref)
+
+      o_ref[...] += x_ref[...] @ y_ref[...]
+
+    out = pl.pallas_call(
+        _unmasked_matmul_kernel,
+        out_shape=expected,
+        grid=(1, 1, 2),
+        in_specs=in_specs,
+        out_specs=out_spec,
+        interpret=True,
+    )(x, y)
+
+    # With a naive matmul implementation, using uninitialized values (NaN) will
+    # cause the overall output to be NaN.
+    with self.subTest('UnmaskedIsNaN'):
+      np.testing.assert_allclose(
+          np.isnan(out), jnp.ones_like(out, dtype=jnp.bool_)
+      )
+
+    def _masked_matmul_kernel(x_ref, y_ref, o_ref):
+      @pl.when(pl.program_id(2) == 0)
+      def _():
+        o_ref[:, :] = jnp.zeros_like(o_ref)
+
+      # Create a validity mask for OOB values.
+      num_valid = x.shape[1] - pl.program_id(2) * block_size
+      num_valid = jnp.minimum(num_valid, block_size)
+      mask = jnp.tril(jnp.ones_like(x_ref[:, :]))[num_valid - 1][jnp.newaxis, :]
+      mask = jnp.repeat(mask, block_size, axis=0)
+
+      # Mask and multiply.
+      masked_x = jnp.where(mask, x_ref[:, :], 0.0)
+      masked_y = jnp.where(mask.T, y_ref[:, :], 0.0)
+      o_ref[:, :] += masked_x @ masked_y
+
+    out = pl.pallas_call(
+        _masked_matmul_kernel,
+        out_shape=expected,
+        grid=(1, 1, 2),
+        in_specs=in_specs,
+        out_specs=out_spec,
+        interpret=True,
+    )(x, y)
+
+    # With a masked matmul implementation, uninitialized values will be
+    # masked before computation. This should return the correct result.
+    with self.subTest('MaskedOutputIsCorrect'):
+      np.testing.assert_allclose(out, expected, atol=1e-5)
+
 
 if __name__ == "__main__":
   absltest.main()

@@ -572,6 +572,29 @@ class LoweringException(Exception):
   pass
 
 
+def _compute_name_stack_updates(
+    old_name_stack: list[str],
+    new_name_stack: list[str]
+) -> tuple[list[str], list[str]]:
+  """Computes the popped/pushed items to the name stack after an update.
+
+  Args:
+    old_name_stack: The name stack prior to the update.
+    new_name_stack: The name stack after the update.
+
+  Returns:
+    popped: A list of names popped from the name stack as part of the update.
+    pushed: A list of names pushed to the name stack as part of the update.
+  """
+  common_prefix_idx = 0
+  for i, (old, new) in enumerate(unsafe_zip(old_name_stack, new_name_stack)):
+    if old == new:
+      common_prefix_idx = i+1
+    else:
+      break
+  return old_name_stack[common_prefix_idx:], new_name_stack[common_prefix_idx:]
+
+
 def jaxpr_subcomp(
     ctx: LoweringContext, jaxpr: jax_core.Jaxpr, *args: ir.Value
 ) -> Sequence[ir.Value]:
@@ -595,6 +618,9 @@ def jaxpr_subcomp(
     block_shape_env[invar] = bs
   map(write_env, jaxpr.invars, args)
 
+  current_name_stack: list[str] = []
+  # TODO(justinfu): Handle transform scopes.
+  current_name_stack.extend([scope.name for scope in ctx.name_stack.stack])
   for eqn in jaxpr.eqns:
     invals = map(read_env, eqn.invars)
     source_info = eqn.source_info.replace(
@@ -615,6 +641,17 @@ def jaxpr_subcomp(
             [v.aval for v in eqn.outvars],
             block_shapes,
         )
+
+        # Insert trace_start and trace_stop ops on named_scope boundaries.
+        name_stack = [scope.name for scope in source_info.name_stack.stack]
+        popped, pushed = _compute_name_stack_updates(
+            current_name_stack, name_stack)
+        current_name_stack = name_stack
+        for _ in popped:
+          tpu.TraceStopOp()
+        for name in pushed:
+          tpu.TraceStartOp(message=name, level=10)
+
         try:
           ans = lowering_rules[eqn.primitive](
               rule_context, *invals, **eqn.params
@@ -629,6 +666,7 @@ def jaxpr_subcomp(
               " inval"
               f" types={map(lambda t: getattr(t, 'type', None), invals)}\nIn"
               f" jaxpr:\n{jaxpr}"
+              f"\nException: {e}"
           ) from e
       else:
         raise NotImplementedError(
@@ -1096,7 +1134,9 @@ def _dot_general_lowering_rule(
   else:
     raise NotImplementedError(ctx.avals_out[0].dtype)
   if any(len(a.shape) != 2 for a in ctx.avals_in):
-    raise NotImplementedError(ctx.avals_in)
+    raise NotImplementedError(
+        f"Only 2D tensors supported in dot; received: {ctx.avals_in}"
+    )
   lhs_aval, _ = ctx.avals_in
   # This is really a matrix-vector product. It only looks like matrix-matrix.
   if lhs_dims == (1,) and rhs_dims == (1,) and ctx.avals_in[1].shape[0] == 1:
@@ -1718,8 +1758,8 @@ lowering_rules[for_loop.for_p] = _for_lowering_rule
 
 
 def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
-                             jaxpr: jax_core.Jaxpr, start: int,
-                             num_steps: int, consts, *args,
+                             jaxpr: jax_core.Jaxpr, start: int | ir.Value,
+                             num_steps: int | ir.Value, consts, *args,
                              has_loop_index: bool,
                              unroll: int):
   def _run_body(i, args):
@@ -1736,7 +1776,11 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
       args = jaxpr_subcomp(lowering_context, jaxpr, *consts, *args)
     return args
 
-  if num_steps == unroll:
+  if (
+      not isinstance(start, ir.Value)
+      and not isinstance(num_steps, ir.Value)
+      and num_steps == unroll
+  ):
     # No need for an scf.For. We can just unroll completely
     for i in range(start, start + num_steps):
       args = _run_body(
@@ -1747,13 +1791,9 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
   if unroll != 1:
     raise NotImplementedError(
         f"Only unroll={num_steps=} and unroll=1 supported. Got {unroll=}.")
-  lbd = ir_constant(0, mlir_type=mlir.dtype_to_ir_type(jnp.dtype("int32")))
-  if isinstance(num_steps, int):
-    ubd = ir_constant(
-        num_steps, mlir_type=_dtype_to_ir_type(jnp.dtype("int32"))
-    )
-  else:
-    ubd = num_steps
+  i32 = jax_core.ShapedArray((), jnp.int32)
+  lbd = _ensure_mlir_value(start, i32)
+  ubd = arith.addi(lbd, _ensure_mlir_value(num_steps, i32))
   step = ir_constant(1, mlir_type=_dtype_to_ir_type(jnp.dtype("int32")))
   for_op = scf.ForOp(lbd, ubd, step, args)
   with ir.InsertionPoint(for_op.body):
@@ -1792,7 +1832,7 @@ def _scan_lowering_rule(
     linear: tuple[bool, ...],
     length: int,
     reverse: bool,
-    unroll: bool,
+    unroll: bool | int,
     num_consts: int,
     num_carry: int,
     _split_transpose: bool,
@@ -1808,9 +1848,9 @@ def _scan_lowering_rule(
   if jaxpr_consts: raise NotImplementedError
   del jaxpr_consts
 
-  jaxpr, has_loop_index = (
-      pallas_utils.pattern_match_scan_to_fori_loop(jaxpr, num_consts, num_carry)
-      )
+  jaxpr, has_loop_index = pallas_utils.pattern_match_scan_to_fori_loop(
+      jaxpr, num_consts, num_carry
+  )
   consts, args = split_list(args, [num_consts])
   consts_avals, args_avals = split_list(ctx.avals_in, [num_consts])
   if has_loop_index:
@@ -1833,6 +1873,33 @@ lowering_rules[lax.scan_p] = _scan_lowering_rule
 skip_mlir_conversions.add(lax.scan_p)
 
 
+def _lower_while_via_fori(
+    ctx: LoweringRuleContext,
+    *args,
+    fori_jaxpr,
+    cond_nconsts,
+    cond_jaxpr,
+    body_nconsts,
+    body_jaxpr,
+):
+  _, body_consts, carry = split_list(args, [cond_nconsts, body_nconsts])
+  (lb, ub), args = carry[:2], carry[2:]
+  for_out = _lower_jaxpr_to_for_loop(
+      ctx.replace(
+          block_shapes=ctx.block_shapes[: body_nconsts + 1]
+          + ctx.block_shapes[body_nconsts + 2 :],
+      ),
+      fori_jaxpr,
+      lb,
+      arith.subi(ub, lb),
+      body_consts,
+      *args,
+      has_loop_index=True,
+      unroll=1,
+  )
+  return [ub, ub, *for_out]
+
+
 def _while_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
@@ -1841,28 +1908,74 @@ def _while_lowering_rule(
     body_nconsts,
     body_jaxpr,
 ):
-  jaxpr, err = pallas_utils.pattern_match_while_to_fori_loop(
+  # First try to lower via a simpler fori loop, which may optimize better.
+  fori_jaxpr, err = pallas_utils.pattern_match_while_to_fori_loop(
       cond_jaxpr, cond_nconsts, body_jaxpr, body_nconsts
   )
-  if jaxpr is None:
-    raise NotImplementedError(err)
+  if fori_jaxpr is not None:
+    return _lower_while_via_fori(
+        ctx,
+        *args,
+        fori_jaxpr=fori_jaxpr,
+        cond_nconsts=cond_nconsts,
+        cond_jaxpr=cond_jaxpr,
+        body_nconsts=body_nconsts,
+        body_jaxpr=body_jaxpr,
+    )
 
-  _, body_consts, carry = split_list(args, [cond_nconsts, body_nconsts])
-  (lb, ub), args = carry[:2], carry[2:]
-  for_out = _lower_jaxpr_to_for_loop(
-      ctx.replace(
-          block_shapes=ctx.block_shapes[: body_nconsts + 1]
-          + ctx.block_shapes[body_nconsts + 2 :],
-      ),
-      jaxpr,
-      lb,
-      ub,
-      body_consts,
-      *args,
-      has_loop_index=True,
-      unroll=1,
+  # If we fail conversion to fori, fallback to an ordinary while loop.
+  cond_consts, body_consts, carry = split_list(
+      args, [cond_nconsts, body_nconsts]
   )
-  return [ub, ub, *for_out]
+  cond_const_block_shapes, body_const_block_shapes, carry_block_shapes = (
+      split_list(ctx.block_shapes, [cond_nconsts, body_nconsts])
+  )
+  cond_const_types = [a.type for a in cond_consts]
+  body_const_types = [a.type for a in body_consts]
+  carry_types = [a.type for a in carry]
+  all_types = [*cond_const_types, *body_const_types, *carry_types]
+  while_op = scf.WhileOp(all_types, args)
+
+  before_block = while_op.before.blocks.append(*all_types)
+  cond_consts_, _, carry_ = split_list(
+      before_block.arguments,
+      [cond_nconsts, body_nconsts],
+  )
+  cond_args = [*cond_consts_, *carry_]
+  with ir.InsertionPoint.at_block_begin(before_block):
+    [cond] = jaxpr_subcomp(
+        ctx.lowering_context.replace(
+            block_shapes=[*cond_const_block_shapes, *carry_block_shapes]
+        ),
+        cond_jaxpr.jaxpr,
+        *cond_args,
+    )
+    scf.condition(cond, before_block.arguments)
+
+  after_block = while_op.after.blocks.append(*all_types)
+  cond_consts_, body_consts_, carry_ = split_list(
+      after_block.arguments,
+      [cond_nconsts, body_nconsts],
+  )
+  all_args = [*cond_consts_, *body_consts_, *carry_]
+  cond_const_args, body_const_args, carry_args = split_list(
+      all_args, [cond_nconsts, body_nconsts]
+  )
+  with ir.InsertionPoint.at_block_begin(after_block):
+    loop_out = jaxpr_subcomp(
+        ctx.lowering_context.replace(
+            block_shapes=[*body_const_block_shapes, *carry_block_shapes],
+        ),
+        body_jaxpr.jaxpr,
+        *body_const_args,
+        *carry_args,
+    )
+    all_handles = [*cond_const_args, *body_const_args, *loop_out]
+    if all_handles:
+      scf.yield_(all_handles)
+
+  all_out = list(while_op.results_)
+  return all_out[cond_nconsts + body_nconsts :]
 
 
 lowering_rules[lax.while_p] = _while_lowering_rule
@@ -2042,21 +2155,6 @@ def _bitcast_lowering_rule(ctx: LoweringRuleContext, x, *, ty):
 
 lowering_rules[tpu_primitives.bitcast_p] = _bitcast_lowering_rule
 
-def _trace_start_lowering_rule(
-    ctx: LoweringRuleContext, *, message: str, level: int
-):
-  return tpu.TraceStartOp(message=message, level=level).results
-
-
-lowering_rules[tpu_primitives.trace_start_p] = _trace_start_lowering_rule
-
-
-def _trace_stop_lowering_rule(ctx: LoweringRuleContext):
-  return tpu.TraceStopOp().results
-
-
-lowering_rules[tpu_primitives.trace_stop_p] = _trace_stop_lowering_rule
-
 
 def _alloc_value(aval: jax_core.AbstractValue) -> ir.Value:
   if isinstance(aval, pl_core.AbstractMemoryRef):
@@ -2134,12 +2232,14 @@ def _semaphore_signal_lowering_rule(
     args_tree,
     device_id_type: tpu_primitives.DeviceIdType,
 ):
-  sem_aval, _, _, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
-  sem, indexers, value, device_id = tree_util.tree_unflatten(args_tree, args)
+  sem_aval, _, _, _, _ = tree_util.tree_unflatten(args_tree, ctx.avals_in)
+  sem, indexers, value, device_id, core_index = tree_util.tree_unflatten(args_tree, args)
   sem, _ = _index_ref(sem, sem_aval, sem_aval.shape, indexers)
   if device_id is not None:
     device_id = _device_id_to_logical(ctx, device_id, device_id_type)
-  return tpu.SemaphoreSignalOp(sem, value, device_id=device_id).results
+  return tpu.SemaphoreSignalOp(
+      sem, value, device_id=device_id, core_id=core_index
+  ).results
 
 
 lowering_rules[tpu_primitives.semaphore_signal_p] = (

@@ -205,12 +205,15 @@ class CheckpointTest(jtu.JaxTestCase):
       self.assertArraysEqual(np.asarray(s.data), np.array([], dtype=np.float32))
     self.assertEqual(m3.dtype, np.float32)
 
-  def test_checkpointing_with_bigger_shape_jax_array(self):
+  @parameterized.product(input_dtype=[np.int32, jax.numpy.bfloat16])
+  def test_checkpointing_with_bigger_shape_jax_array(self, input_dtype):
     global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     num = math.prod(global_input_shape)
 
-    global_input_data1 = np.arange(num, dtype=np.int32).reshape(global_input_shape)
+    global_input_data1 = np.arange(num, dtype=input_dtype).reshape(
+        global_input_shape
+    )
     def cb1(index):
       return global_input_data1[index]
     arr = array.make_array_from_callback(
@@ -250,12 +253,15 @@ class CheckpointTest(jtu.JaxTestCase):
     for l in m2.addressable_shards:
       self.assertArraysEqual(l.data, global_input_data1.astype('float32'))
 
-  def test_checkpointing_with_int4(self):
+  @parameterized.product(input_dtype=[jax.numpy.int4, jax.numpy.int8])
+  def test_checkpointing_with_int4(self, input_dtype):
     global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     global_input_shape = (8, 2)
     num = math.prod(global_input_shape)
 
-    global_input_data = np.arange(num, dtype=jax.numpy.int8).reshape(global_input_shape)
+    global_input_data = np.arange(num, dtype=input_dtype).reshape(
+        global_input_shape
+    )
     def cb(index):
       return global_input_data[index]
     arr = array.make_array_from_callback(

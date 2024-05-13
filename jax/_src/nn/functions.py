@@ -195,7 +195,7 @@ def sparse_sigmoid(x: ArrayLike) -> Array:
     \end{cases}
 
   This is the twin function of the ``sigmoid`` activation ensuring a zero output
-  for inputs less than -1, a 1 ouput for inputs greater than 1, and a linear
+  for inputs less than -1, a 1 output for inputs greater than 1, and a linear
   output for inputs between -1 and 1. It is the derivative of ``sparse_plus``.
 
   For more information, see `Learning with Fenchel-Young Losses (section 6.2)

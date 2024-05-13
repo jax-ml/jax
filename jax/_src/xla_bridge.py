@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from __future__ import annotations
 
+import atexit
 from collections.abc import Mapping
 import dataclasses
 from functools import lru_cache, partial
@@ -46,7 +47,6 @@ from jax._src.cloud_tpu_init import maybe_import_libtpu
 from jax._src.lib import cuda_versions
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 from jax._src.lib import jaxlib
 
 logger = logging.getLogger(__name__)
@@ -103,7 +103,14 @@ _MOCK_NUM_GPUS = config.DEFINE_integer(
 _CPU_ENABLE_GLOO_COLLECTIVES = config.DEFINE_bool(
     name="jax_cpu_enable_gloo_collectives",
     default=False,
-    help="If True, enable cross-process collectives on CPU using Gloo.",
+    help="Deprecated, please use jax_cpu_collectives_implementation instead.",
+)
+
+_CPU_COLLECTIVES_IMPLEMENTATION = config.DEFINE_string(
+    name='jax_cpu_collectives_implementation',
+    default='none',
+    help='Cross-process collective implementation used on CPU. Either "none", '
+         '"gloo" or "mpi"'
 )
 
 _CPU_ENABLE_ASYNC_DISPATCH = config.DEFINE_bool(
@@ -227,19 +234,30 @@ def register_backend_factory(name: str, factory: BackendFactory, *,
 
 def make_cpu_client() -> xla_client.Client:
   collectives: xla_client._xla.CpuCollectives | None = None
+
+  collectives_impl = _CPU_COLLECTIVES_IMPLEMENTATION.value
   if _CPU_ENABLE_GLOO_COLLECTIVES.value:
+      collectives_impl = 'gloo'
+      warnings.warn('Setting `jax_cpu_enable_gloo_collectives` is deprecated. '
+                    'Please use `jax.config.update('
+                    '"jax_cpu_collectives_implementation", "gloo")` instead.',
+                    DeprecationWarning,
+                    )
+  if collectives_impl == 'gloo':
     collectives = xla_client._xla.make_gloo_tcp_collectives(  # type: ignore
       distributed_client=distributed.global_state.client,
     )
-  if xla_extension_version >= 257:
-    return xla_client.make_cpu_client(  # type: ignore
-      asynchronous=_CPU_ENABLE_ASYNC_DISPATCH.value,
-      distributed_client=distributed.global_state.client,
-      node_id=distributed.global_state.process_id,
-      num_nodes=distributed.global_state.num_processes,
-      collectives=collectives,
-    )
+  elif collectives_impl == 'mpi':
+    collectives = xla_client._xla.make_mpi_collectives()  # type: ignore
+    collectives.Init()  # type: ignore
+    atexit.register(collectives.Finalize)  # type: ignore
+  elif collectives_impl != 'none':
+    collectives_impls = ['none', 'gloo', 'mpi']
+    raise RuntimeError(f"Unknown collectives implementation "
+                       f"{collectives_impl}. Available implementations are "
+                       f"{collectives_impls}.")
   return xla_client.make_cpu_client(  # type: ignore
+    asynchronous=_CPU_ENABLE_ASYNC_DISPATCH.value,
     distributed_client=distributed.global_state.client,
     node_id=distributed.global_state.process_id,
     num_nodes=distributed.global_state.num_processes,
@@ -674,13 +692,10 @@ def register_plugin(
     c_api = xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)  # type: ignore
     xla_client.profiler.register_plugin_profiler(c_api)
   else:
-    if xla_extension_version >= 236:
-      assert c_api is not None
-      xla_client.load_pjrt_plugin_with_c_api(plugin_name, c_api)
-  if xla_extension_version >= 239:
-    make_topology = partial(xla_client.make_c_api_device_topology, c_api)
-  else:
-    make_topology = None
+    assert c_api is not None
+    xla_client.load_pjrt_plugin_with_c_api(plugin_name, c_api)
+
+  make_topology = partial(xla_client.make_c_api_device_topology, c_api)
   experimental = plugin_name not in _nonexperimental_plugins
   register_backend_factory(plugin_name, factory, priority=priority,
                            fail_quietly=False, experimental=experimental,
@@ -1195,7 +1210,8 @@ def make_pjrt_tpu_topology(topology_name='', **kwargs):
       raise RuntimeError(
           "JAX TPU support not installed; cannot generate TPU topology. See"
           " https://github.com/google/jax#installation")
-    xla_client.load_pjrt_plugin_dynamically("tpu", library_path)
+    c_api = xla_client.load_pjrt_plugin_dynamically("tpu", library_path)
+    xla_client.profiler.register_plugin_profiler(c_api)
   assert xla_client.pjrt_plugin_loaded("tpu")
   if not xla_client.pjrt_plugin_initialized("tpu"):
     xla_client.initialize_pjrt_plugin("tpu")

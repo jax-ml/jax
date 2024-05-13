@@ -23,7 +23,6 @@ from jax._src import test_util as jtu
 from jax.sharding import NamedSharding, PartitionSpec as P
 from jax.experimental.shard_alike import shard_alike
 from jax.experimental.shard_map import shard_map
-from jax._src.lib import xla_extension_version
 
 jax.config.parse_flags_with_absl()
 
@@ -63,8 +62,6 @@ class ShardAlikeTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    if xla_extension_version < 227:
-      self.skipTest('Requires xla_extension_version >= 227')
 
   def test_basic(self):
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))

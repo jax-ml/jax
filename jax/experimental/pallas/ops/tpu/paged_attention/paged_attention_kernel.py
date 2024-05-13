@@ -256,6 +256,12 @@ def paged_flash_attention_kernel_inline_seq_dim(
 ):
   core_index, b, h = pl.program_id(0), pl.program_id(1), pl.program_id(2)
 
+  # Initialize the output HBM buffers to avoid accessing garbage memory inside
+  # the kernel body below.
+  m_ref[...] = jnp.full_like(m_ref, -jnp.inf)
+  l_ref[...] = jnp.zeros_like(l_ref)
+  o_ref[...] = jnp.zeros_like(o_ref)
+
   def body(i, _):
     paged_flash_attention_kernel(
         lengths_ref,

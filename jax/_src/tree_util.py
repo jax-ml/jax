@@ -25,7 +25,6 @@ from typing import Any, Callable, NamedTuple, TypeVar, Union, overload
 
 from jax._src import traceback_util
 from jax._src.lib import pytree
-from jax._src.lib import xla_extension_version
 from jax._src.util import safe_zip
 from jax._src.util import unzip2
 
@@ -583,50 +582,26 @@ def broadcast_prefix(prefix_tree: Any, full_tree: Any,
   tree_map(add_leaves, prefix_tree, full_tree, is_leaf=is_leaf)
   return result
 
-if xla_extension_version >= 248:
-  def flatten_one_level(pytree: Any) -> tuple[Iterable[Any], Hashable]:
-    """Flatten the given pytree node by one level.
 
-    Args:
-      pytree: A valid pytree node, either built-in or registered via
-        ``register_pytree_node`` or ``register_pytree_with_keys``.
+def flatten_one_level(pytree: Any) -> tuple[Iterable[Any], Hashable]:
+  """Flatten the given pytree node by one level.
 
-    Returns:
-      A pair of the pytree's flattened children and its hashable metadata.
+  Args:
+    pytree: A valid pytree node, either built-in or registered via
+      ``register_pytree_node`` or ``register_pytree_with_keys``.
 
-    Raises:
-      ValueError: If the given pytree is not a built-in or registered container
-      via ``register_pytree_node`` or ``register_pytree_with_keys``.
-    """
-    out = default_registry.flatten_one_level(pytree)
-    if out is None:
-      raise ValueError(f"can't tree-flatten type: {type(pytree)}")
-    else:
-      return out
-else:
-  def flatten_one_level(pytree: Any) -> tuple[Iterable[Any], Hashable]:
-    """Flatten the given pytree node by one level.
+  Returns:
+    A pair of the pytree's flattened children and its hashable metadata.
 
-    Args:
-      pytree: A valid pytree node, either built-in or registered via
-        ``register_pytree_node`` or ``register_pytree_with_keys``.
-
-    Returns:
-      A pair of the pytree's flattened children and its hashable metadata.
-
-    Raises:
-      ValueError: If the given pytree is not a built-in or registered container
-      via ``register_pytree_node`` or ``register_pytree_with_keys``.
-    """
-    handler = _registry.get(type(pytree))
-    if handler:
-      children, meta = handler.to_iter(pytree)
-      return list(children), meta
-    elif isinstance(pytree, tuple) and hasattr(pytree, '_fields'):
-      # handle namedtuple as a special case, based on heuristic
-      return [getattr(pytree, s) for s in pytree._fields], None
-    else:
-      raise ValueError(f"can't tree-flatten type: {type(pytree)}")
+  Raises:
+    ValueError: If the given pytree is not a built-in or registered container
+    via ``register_pytree_node`` or ``register_pytree_with_keys``.
+  """
+  out = default_registry.flatten_one_level(pytree)
+  if out is None:
+    raise ValueError(f"can't tree-flatten type: {type(pytree)}")
+  else:
+    return out
 
 def prefix_errors(prefix_tree: Any, full_tree: Any,
                   is_leaf: Callable[[Any], bool] | None = None,
@@ -862,6 +837,45 @@ def register_pytree_with_keys_class(cls: U) -> U:
   return cls
 
 
+def register_dataclass(
+    nodetype: type, data_fields: list[str], meta_fields: list[str]
+):
+  """Extends the set of types that are considered internal nodes in pytrees.
+
+  This differs from ``register_pytree_with_keys_class`` in that the C++
+  registries use the optimized C++ dataclass builtin instead of the argument
+  functions.
+
+  Args:
+    nodetype: a Python type to treat as an internal pytree node.
+    meta_fields: auxiliary data field names.
+    data_fields: data field names.
+  """
+  def flatten_with_keys(x):
+    meta = tuple(getattr(x, name) for name in meta_fields)
+    data = tuple((GetAttrKey(name), getattr(x, name)) for name in data_fields)
+    return data, meta
+
+  def unflatten_func(meta, data):
+    meta_args = tuple(zip(meta_fields, meta))
+    data_args = tuple(zip(data_fields, data))
+    kwargs = dict(meta_args + data_args)
+    return nodetype(**kwargs)
+
+  def flatten_func(x):
+    meta = tuple(getattr(x, name) for name in meta_fields)
+    data = tuple(getattr(x, name) for name in data_fields)
+    return data, meta
+
+  default_registry.register_dataclass_node(nodetype, data_fields, meta_fields)
+  none_leaf_registry.register_dataclass_node(nodetype, data_fields, meta_fields)
+  dispatch_registry.register_dataclass_node(nodetype, data_fields, meta_fields)
+  _registry[nodetype] = _RegistryEntry(flatten_func, unflatten_func)
+  _registry_with_keypaths[nodetype] = _RegistryWithKeypathsEntry(
+      flatten_with_keys, unflatten_func
+  )
+
+
 def register_static(cls: type[H]) -> type[H]:
   """Registers `cls` as a pytree with no leaves.
 
@@ -925,64 +939,37 @@ _generate_key_paths = generate_key_paths  # alias for backward compat
 
 
 # The overall logic should be same as PyTreeDef::FlattenIntoImpl
-if xla_extension_version >= 248:
-  def _generate_key_paths_(
-      key_path: KeyPath,
-      tree: Any,
-      is_leaf: Callable[[Any], bool] | None = None,
-  ) -> Iterable[tuple[KeyPath, Any]]:
-    if is_leaf and is_leaf(tree):
-      yield key_path, tree
-      return
-    key_handler = _registry_with_keypaths.get(type(tree))
-    if key_handler:
-      key_children, _ = key_handler.flatten_with_keys(tree)
-      for k, c in key_children:
-        yield from _generate_key_paths_((*key_path, k), c, is_leaf)
-      return
-
-    flat = default_registry.flatten_one_level(tree)
-    if flat is None:
-      yield key_path, tree  # strict leaf type
-      return
-
-    if (isinstance(tree, tuple) and hasattr(tree, '_fields') and
-        flat[1] == type(tree)):
-      # handle namedtuple as a special case, based on heuristic
-      key_children = [(GetAttrKey(s), getattr(tree, s)) for s in tree._fields]
-      for k, c in key_children:
-        yield from _generate_key_paths_((*key_path, k), c, is_leaf)
-      return
-
-    for i, c in enumerate(flat[0]):
-      k = FlattenedIndexKey(i)
+def _generate_key_paths_(
+    key_path: KeyPath,
+    tree: Any,
+    is_leaf: Callable[[Any], bool] | None = None,
+) -> Iterable[tuple[KeyPath, Any]]:
+  if is_leaf and is_leaf(tree):
+    yield key_path, tree
+    return
+  key_handler = _registry_with_keypaths.get(type(tree))
+  if key_handler:
+    key_children, _ = key_handler.flatten_with_keys(tree)
+    for k, c in key_children:
       yield from _generate_key_paths_((*key_path, k), c, is_leaf)
-else:
-  def _generate_key_paths_(
-      key_path: KeyPath,
-      tree: Any,
-      is_leaf: Callable[[Any], bool] | None = None,
-  ) -> Iterable[tuple[KeyPath, Any]]:
-    if is_leaf and is_leaf(tree):
-      yield key_path, tree
-      return
-    key_handler = _registry_with_keypaths.get(type(tree))
-    if key_handler:
-      key_children, _ = key_handler.flatten_with_keys(tree)
-      for k, c in key_children:
-        yield from _generate_key_paths_((*key_path, k), c, is_leaf)
-    elif handler := _registry.get(type(tree)):
-      children, _ = handler.to_iter(tree)
-      for i, c in enumerate(children):
-        k = FlattenedIndexKey(i)
-        yield from _generate_key_paths_((*key_path, k), c, is_leaf)
-    elif isinstance(tree, tuple) and hasattr(tree, '_fields'):
-      # handle namedtuple as a special case, based on heuristic
-      key_children = [(GetAttrKey(s), getattr(tree, s)) for s in tree._fields]
-      for k, c in key_children:
-        yield from _generate_key_paths_((*key_path, k), c, is_leaf)
-    else:
-      yield key_path, tree  # strict leaf type
+    return
+
+  flat = default_registry.flatten_one_level(tree)
+  if flat is None:
+    yield key_path, tree  # strict leaf type
+    return
+
+  if (isinstance(tree, tuple) and hasattr(tree, '_fields') and
+      flat[1] == type(tree)):
+    # handle namedtuple as a special case, based on heuristic
+    key_children = [(GetAttrKey(s), getattr(tree, s)) for s in tree._fields]
+    for k, c in key_children:
+      yield from _generate_key_paths_((*key_path, k), c, is_leaf)
+    return
+
+  for i, c in enumerate(flat[0]):
+    k = FlattenedIndexKey(i)
+    yield from _generate_key_paths_((*key_path, k), c, is_leaf)
 
 
 def tree_map_with_path(f: Callable[..., Any],

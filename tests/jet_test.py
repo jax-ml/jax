@@ -94,6 +94,8 @@ class JetTest(jtu.JaxTestCase):
                         check_dtypes=check_dtypes)
 
   @jtu.skip_on_devices("tpu")
+  # Default tolerance too tight on A100 after openxla/xla@a58070090
+  @jax.default_matmul_precision("float32")
   def test_dot(self):
     M, K, N = 2, 3, 4
     order = 3

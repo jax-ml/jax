@@ -13,7 +13,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        os: [win-2019-16core]
+        os: [windows-2019-32core]
         arch: [AMD64]
         pyver: ['3.9']
     name: ${{ matrix.os }} CI build
@@ -24,6 +24,9 @@ jobs:
         uses: styfle/cancel-workflow-action@85880fa0301c86cca9da44039ee3bb12d3bedbfa # ratchet: styfle/cancel-workflow-action@0.12.1
         with:
           access_token: ${{ github.token }}
+
+      - name: Install LLVM/Clang
+        run: choco install llvm --version=18.1.4 --yes
 
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
         with:
@@ -47,11 +50,14 @@ jobs:
           cd jax
           python -m pip install -r build/test-requirements.txt
           python -m pip uninstall -y matplotlib
-          python -m pip install --pre --upgrade numpy==2.0.0rc1 scipy==1.13.0
+          python -m pip install --pre --upgrade numpy==2.0.0rc2 scipy==1.13.0
           "C:\\msys64\\;C:\\msys64\\usr\\bin\\;" >> $env:GITHUB_PATH
-          python.exe build\build.py ('--bazel_options=--override_repository=xla=${{ github.workspace }}\xla' -replace '\\','\\') --bazel_options=--color=yes
+          python.exe build\build.py `
+            ('--bazel_options=--override_repository=xla=${{ github.workspace }}\xla' -replace '\\','\\') `
+            --bazel_options=--color=yes `
+            --bazel_options=--config=win_clang
 
-      - uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # ratchet: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # ratchet: actions/upload-artifact@v4
         with:
           name: wheels
           path: ${{ github.workspace }}\jax\dist\*.whl

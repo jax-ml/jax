@@ -69,9 +69,6 @@ Sharding = Union[xla_client.HloSharding, None]
 minimum_supported_serialization_version = 9
 maximum_supported_serialization_version = 9
 
-_VERSION_START_SUPPORT_SHAPE_ASSERTIONS = 7
-_VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS = 9
-
 
 class DisabledSafetyCheck:
   """A safety check should be skipped on (de)serialization.
@@ -106,11 +103,16 @@ class DisabledSafetyCheck:
 
   @classmethod
   def shape_assertions(cls) -> DisabledSafetyCheck:
-    """Allows invocations with shapes that do not meet the constraints.
+    """A noop. DEPRECATED.
 
-    Has effect on serialization (to suppress the generation of the assertions)
-    and also on deserialization (to suppress the checking of the assertions).
+    Was used previously to allow invocations with shapes that do not meet the
+    constraints. Has no effect anymore, shape assertions cannot be disabled.
     """
+    # TODO(necula): remove this after compatibility period. Was deprecated in
+    # May 2024.
+    warnings.warn(
+        "DisabledSafetyCheck.shape_assertions is deprecated, has no effect anymore",
+        DeprecationWarning, stacklevel=2)
     return DisabledSafetyCheck("shape_assertions")
 
   def is_custom_call(self) -> str | None:
@@ -344,10 +346,6 @@ def args_specs(
   return _shape_poly.symbolic_args_specs(args, polymorphic_shapes)
 
 
-
-def _keep_main_tokens(serialization_version: int) -> bool:
-  return serialization_version >= _VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS
-
 def export(fun_jax: Callable,
            *,
            lowering_platforms: Sequence[str] | None = None,
@@ -391,68 +389,58 @@ def export(fun_jax: Callable,
       # convert(f_jax), in which case a "jit" is implied. In that case we raise
       # an error if the lowered function contains non-replicated sharding annotations.
       wrapped_fun_jax = jax.jit(fun_jax)
-      allow_non_replicated_sharding = False
     else:
       # If we have a pjit or pmap already we do not wrap with another, and we
       # allow shardings.
       wrapped_fun_jax = fun_jax  # type: ignore
-      allow_non_replicated_sharding = True
 
     if lowering_platforms is not None:
       actual_lowering_platforms = tuple(lowering_platforms)
     else:
       actual_lowering_platforms = (default_lowering_platform(),)
 
-    # Do not include shape assertions if the version is < 7.
-    enable_shape_assertions = (
-        DisabledSafetyCheck.shape_assertions() not in disabled_checks and
-        version >= _VERSION_START_SUPPORT_SHAPE_ASSERTIONS)  # type: ignore
-    try:
-      prev_enable_shape_assertions = _shape_poly.thread_local_state.enable_shape_assertions
-      _shape_poly.thread_local_state.enable_shape_assertions = enable_shape_assertions
-      replace_tokens_with_dummy = not _keep_main_tokens(version)
+    # TODO: move to `lower`
+    symbolic_scope: tuple[_shape_poly.SymbolicScope, tree_util.KeyPath] | None = None
+    for k_path, aval in tree_util.tree_flatten_with_path((args_specs, kwargs_specs))[0]:
+      # Static args may has no `shape` attribute.
+      if not hasattr(aval, "shape"):
+        continue
+      for d in aval.shape:
+        if _shape_poly.is_symbolic_dim(d):
+          if symbolic_scope is None:
+            symbolic_scope = (d.scope, k_path)
+            continue
+          symbolic_scope[0]._check_same_scope(
+              d, when=f"when exporting {fun_name}",
+              self_descr=f"current (from {_shape_poly.args_kwargs_path_to_str(symbolic_scope[1])}) ",
+              other_descr=_shape_poly.args_kwargs_path_to_str(k_path))
 
-      symbolic_scope: tuple[_shape_poly.SymbolicScope, tree_util.KeyPath] | None = None
-      for k_path, aval in tree_util.tree_flatten_with_path((args_specs, kwargs_specs))[0]:
-        for d in aval.shape:
-          if _shape_poly.is_symbolic_dim(d):
-            if symbolic_scope is None:
-              symbolic_scope = (d.scope, k_path)
-              continue
-            symbolic_scope[0]._check_same_scope(
-                d, when=f"when exporting {fun_name}",
-                self_descr=f"current (from {_shape_poly.args_kwargs_path_to_str(symbolic_scope[1])}) ",
-                other_descr=_shape_poly.args_kwargs_path_to_str(k_path))
+    lowered = wrapped_fun_jax.lower(
+        *args_specs, **kwargs_specs,
+        _experimental_lowering_parameters=mlir.LoweringParameters(
+          platforms=actual_lowering_platforms,
+        ))
 
-      lowered = wrapped_fun_jax.lower(
-          *args_specs, **kwargs_specs,
-          _experimental_lowering_parameters=mlir.LoweringParameters(
-            platforms=actual_lowering_platforms,
-            replace_tokens_with_dummy=replace_tokens_with_dummy,
-          ))
+    lowering = lowered._lowering  # type: ignore
+    _check_lowering(lowering)
+    mlir_module = lowering.stablehlo()
 
-      lowering = lowered._lowering  # type: ignore
-      _check_lowering(lowering)
-      mlir_module = lowering.stablehlo()
-
-      args_avals_flat, _ = tree_util.tree_flatten(lowered.in_avals)
-      if "mut" in lowering.compile_args:
-        if lowering.compile_args["mut"]: raise NotImplementedError
-      if "kept_var_idx" in lowering.compile_args:
-        module_kept_var_idx = tuple(sorted(lowering.compile_args["kept_var_idx"]))
-      else:
-        # For pmap
-        module_kept_var_idx = tuple(range(len(args_avals_flat)))
-      shape_poly_state = lowering.compile_args["shape_poly_state"]
-      if (not all(core.is_constant_shape(a.shape) for a in args_avals_flat)
-          or lowering.compile_args.get("ordered_effects", [])):
-        mlir_module = _wrap_main_func(
-            mlir_module, args_avals_flat, args_kwargs_tree=lowered.in_tree,
-            has_platform_index_argument=shape_poly_state.has_platform_index_argument,
-            module_kept_var_idx=module_kept_var_idx,
-            serialization_version=version)
-    finally:
-      _shape_poly.thread_local_state.enable_shape_assertions = prev_enable_shape_assertions
+    args_avals_flat, _ = tree_util.tree_flatten(lowered.in_avals)
+    if "mut" in lowering.compile_args:
+      if lowering.compile_args["mut"]: raise NotImplementedError
+    if "kept_var_idx" in lowering.compile_args:
+      module_kept_var_idx = tuple(sorted(lowering.compile_args["kept_var_idx"]))
+    else:
+      # For pmap
+      module_kept_var_idx = tuple(range(len(args_avals_flat)))
+    shape_poly_state = lowering.compile_args["shape_poly_state"]
+    if (not all(core.is_constant_shape(a.shape) for a in args_avals_flat)
+        or lowering.compile_args.get("ordered_effects", [])):
+      mlir_module = _wrap_main_func(
+          mlir_module, args_avals_flat, args_kwargs_tree=lowered.in_tree,
+          has_platform_index_argument=shape_poly_state.has_platform_index_argument,
+          module_kept_var_idx=module_kept_var_idx,
+          serialization_version=version)
 
     with mlir_module.context:
       mlir_module_attrs = mlir_module.operation.attributes
@@ -480,13 +468,10 @@ def export(fun_jax: Callable,
         logging.info("Dumped the exported MLIR module to %s", dumped_to)
 
     _check_module(mlir_module,
-                  allow_non_replicated_sharding=allow_non_replicated_sharding,
                   disabled_checks=disabled_checks)
 
     ordered_effects = tuple(lowering.compile_args["ordered_effects"])
     unordered_effects = tuple(lowering.compile_args["unordered_effects"])
-    if version < _VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
-      ordered_effects = unordered_effects = ()
 
     nr_devices = len(lowering.compile_args["device_assignment"])
     def export_sharding(s: LoweringSharding,
@@ -633,17 +618,11 @@ def _wrap_main_func(
     assert token_result_idxs == list(range(0, nr_token_results))
     nr_array_results = len(orig_output_types) - nr_token_results
     assert nr_array_results >= 0
-    if _keep_main_tokens(serialization_version):
-      new_main_arg_indices = (tuple(range(0, nr_platform_index_args)) +
-                              tuple(range(nr_platform_index_args + nr_dim_args,
-                                          len(orig_input_types))))
-      new_main_result_indices = tuple(range(0, len(orig_output_types)))
-    else:
-      new_main_arg_indices = (
-        tuple(range(0, nr_platform_index_args)) +
-        tuple(range(nr_platform_index_args + nr_dim_args + nr_token_args,
-                    len(orig_input_types))))
-      new_main_result_indices = tuple(range(nr_token_results, len(orig_output_types)))
+    new_main_arg_indices = (
+        *range(nr_platform_index_args),
+        *range(nr_platform_index_args + nr_dim_args, len(orig_input_types)))
+    new_main_result_indices = tuple(range(0, len(orig_output_types)))
+
     new_main_input_types = [orig_input_types[idx] for idx in new_main_arg_indices]
     new_main_output_types = [orig_output_types[idx] for idx in new_main_result_indices]
     new_main_ftype = ir.FunctionType.get(new_main_input_types, new_main_output_types)
@@ -711,11 +690,8 @@ def _wrap_main_func(
         else:
           orig_main_args.append(arg)
       # Then the token arguments
-      if _keep_main_tokens(serialization_version):
-        orig_main_args.extend(
-          new_main_op.arguments[nr_platform_index_args: nr_platform_index_args + nr_token_args])
-      else:
-        orig_main_args.extend(list(mlir.dummy_token()) * nr_token_args)
+      orig_main_args.extend(
+        new_main_op.arguments[nr_platform_index_args: nr_platform_index_args + nr_token_args])
       # Then the array arguments. We insert a ConvertOp as the only use of
       # an input argument. This helps the downstream shape refinement because
       # it will set the type of input arguments to static shapes, and this
@@ -790,7 +766,8 @@ def _check_lowering(lowering) -> None:
 # Their backwards compatibility is tested by back_compat_test.py.
 _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "Sharding", "SPMDFullToShardShape", "SPMDShardToFullShape",
-    "ducc_fft", "dynamic_ducc_fft", "cu_threefry2x32",
+    "dynamic_ducc_fft", "cu_threefry2x32",
+    "__gpu$xla.gpu.triton",  # Pallas call on GPU
     # cholesky on CPU
     "lapack_spotrf", "lapack_dpotrf", "lapack_cpotrf", "lapack_zpotrf",
     # eigh on CPU
@@ -809,7 +786,7 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "lapack_sgesdd", "lapack_dgesdd", "lapack_cgesdd", "lapack_zgesdd",
     # qr on GPU
     "cusolver_geqrf", "cublas_geqrf_batched",
-    "cusolver_geqrf", "cusolver_orgqr",
+    "cusolver_orgqr",
     # qr and svd on TPU
     "Qr", "ProductOfElementaryHouseholderReflectors",
     # triangular_solve on CPU
@@ -840,17 +817,15 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
 check_sharding_pattern = re.compile(r"^({replicated}|{unknown shard_as.*}|"")$")
 
 def _check_module(mod: ir.Module, *,
-                  allow_non_replicated_sharding: bool,
-                  disabled_checks: Sequence[DisabledSafetyCheck]) -> None:
+                  disabled_checks: Sequence[DisabledSafetyCheck]) -> bool:
   """Run a number of checks on the module.
 
   Args:
-    allow_non_replicated_sharding: whether the module is allowed to contain
-      non_replicated sharding annotations.
     disabled_checks: the safety checks that are disabled.
+
+  Returns True if the module uses non-replicated shardings.
   """
   sharding_attr = ir.StringAttr.get("Sharding", mod.context)
-  shape_assertion_attr = ir.StringAttr.get("shape_assertion", mod.context)
   allowed_custom_call_targets: set[str] = copy.copy(_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE)
   for dc in disabled_checks:
     target = dc.is_custom_call()
@@ -861,20 +836,16 @@ def _check_module(mod: ir.Module, *,
       ir.StringAttr.get(target, mod.context)
       for target in allowed_custom_call_targets}
   disallowed_custom_call_ops: list[str] = []
+  module_uses_non_replicated_sharding = False
   def check_sharding(op: ir.Operation, loc: ir.Location):
-    if not allow_non_replicated_sharding:
-      try:
-        sharding = op.attributes["mhlo.sharding"]
-      except KeyError:
-        pass
-      else:
-        if not re.match(check_sharding_pattern, ir.StringAttr(sharding).value):
-          raise ValueError(
-              "Lowered function does not have a top-level pjit but it has"
-              f" non-replicated sharding annotations, e.g., {op} at {loc}.\nSee"
-              " https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#support-for-partitioning"
-              " for a discussion."
-          )
+    try:
+      sharding = op.attributes["mhlo.sharding"]
+    except KeyError:
+      pass
+    else:
+      if not re.match(check_sharding_pattern, ir.StringAttr(sharding).value):
+        nonlocal module_uses_non_replicated_sharding
+        module_uses_non_replicated_sharding = True
 
   def check_op(op: ir.Operation):
     op_name = op.operation.name
@@ -887,8 +858,6 @@ def _check_module(mod: ir.Module, *,
         disallowed_custom_call_ops.append(f"{op} at {op.location}")
       if call_target_name_attr == sharding_attr:
         check_sharding(op, op.location)
-      elif call_target_name_attr == shape_assertion_attr:
-        assert (DisabledSafetyCheck.shape_assertions() not in disabled_checks)
 
   def walk_operations(op):
     check_op(op)
@@ -905,6 +874,7 @@ def _check_module(mod: ir.Module, *,
            f"{disallowed_custom_call_ops_str}.\n"
            "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-lowering-supports-only-select-custom-calls")
     raise ValueError(msg)
+  return module_uses_non_replicated_sharding
 
 def expand_in_shardings(in_shardings: Sequence[LoweringSharding],
                         module_kept_var_idx: Sequence[int],
@@ -1141,6 +1111,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
                             exported: Exported):
   if exported.uses_shape_polymorphism:
     ctx.module_context.shape_poly_state.uses_dim_vars = True
+  submodule = ir.Module.parse(exported.mlir_module())
 
   axis_context = ctx.module_context.axis_context
   if isinstance(axis_context, sharding_impls.ShardingContext):
@@ -1150,17 +1121,27 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   else:
     raise NotImplementedError(type(axis_context))
   if num_devices != exported.nr_devices:
-    raise NotImplementedError(
-      f"Exported module {exported.fun_name} was lowered for "
-      f"{exported.nr_devices} devices and is called in a context with "
-      f"{num_devices} devices"
-    )
+    # In some special cases we allow running with a different number of devices
+    # than the function was exported for.
+    err_msg = ""
+    if exported.nr_devices != 1:
+      err_msg = "the module was lowered for more than 1 device."
+    elif (_check_module(submodule, disabled_checks=()) or
+          any(s is not None and not s.is_replicated()
+              for s in exported.in_shardings + exported.out_shardings)):
+      err_msg = "the module contains non-replicated sharding annotations."
+    if err_msg:
+      raise NotImplementedError(
+        f"Exported module {exported.fun_name} was lowered for "
+        f"{exported.nr_devices} devices and is called in a context with "
+        f"{num_devices} devices. This is disallowed because: {err_msg}"
+      )
 
   # Apply in_shardings
   args = tuple(
     wrap_with_sharding(ctx, x, x_aval, x_sharding)
     for x, x_aval, x_sharding in zip(args, ctx.avals_in, exported.in_shardings))
-  submodule = ir.Module.parse(exported.mlir_module())
+
   symtab = ir.SymbolTable(submodule.operation)
   # The called function may have been exported with polymorphic shapes and called
   # now with more refined shapes. We insert hlo.ConvertOp to ensure the module
@@ -1176,7 +1157,8 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   # TODO: maybe cache multiple calls
   fn = mlir.merge_mlir_modules(ctx.module_context.module,
                                f"call_exported_{exported.fun_name}",
-                               submodule)
+                               submodule,
+                               dst_symtab=ctx.module_context.symbol_table)
 
   submodule_args = []
   # All the platforms for the current lowering must be among the platforms
@@ -1222,10 +1204,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   else:
     assert len(lowering_platforms) == 1
 
-  if _keep_main_tokens(exported.mlir_module_serialization_version):
-    ordered_effects = exported.ordered_effects
-  else:
-    ordered_effects = ()
+  ordered_effects = exported.ordered_effects
   for eff in ordered_effects:
     token_in = ctx.tokens_in.get(eff)[0]
     submodule_args.append(token_in)

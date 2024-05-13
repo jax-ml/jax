@@ -21,7 +21,6 @@ import operator as op
 import numpy as np
 import functools
 from typing import Any, Callable, cast, TYPE_CHECKING
-import warnings
 from collections.abc import Sequence
 
 from jax._src import abstract_arrays
@@ -37,7 +36,6 @@ from jax._src import profiler
 from jax._src import tree_util
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib import xla_extension as xe
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
@@ -479,30 +477,15 @@ class ArrayImpl(basearray.Array):
     self._check_if_deleted()
     return self.sharding.device_set
 
-  # TODO(https://github.com/google/jax/issues/12380): Remove this when DA is
-  # deleted.
   @property
-  def device_buffer(self) -> ArrayImpl:
-    # Added 2023 Dec 6
-    warnings.warn(
-      "arr.device_buffer is deprecated. Use arr.addressable_data(0)",
-      DeprecationWarning, stacklevel=2)
-    self._check_if_deleted()
-    if len(self._arrays) == 1:
-      return self._arrays[0]
-    raise ValueError('Length of buffers is greater than 1. Please use '
-                     '`.device_buffers` instead.')
+  def device_buffer(self):
+    raise AttributeError(
+      "arr.device_buffer has been deprecated. Use arr.addressable_data(0)")
 
-  # TODO(https://github.com/google/jax/issues/12380): Remove this when SDA is
-  # deleted.
   @property
-  def device_buffers(self) -> Sequence[ArrayImpl]:
-    # Added 2023 Dec 6
-    warnings.warn(
-      "arr.device_buffers is deprecated. Use [x.data for x in arr.addressable_shards]",
-      DeprecationWarning, stacklevel=2)
-    self._check_if_deleted()
-    return cast(Sequence[ArrayImpl], self._arrays)
+  def device_buffers(self):
+    raise AttributeError(
+      "arr.device_buffers has been deprecated. Use [x.data for x in arr.addressable_shards]")
 
   def addressable_data(self, index: int) -> ArrayImpl:
     self._check_if_deleted()
@@ -724,21 +707,13 @@ def make_array_from_callback(
     return pxla.batched_device_put(
         aval, sharding, per_device_values, devices, committed=True)
 
-  # After minimum jaxlib version >= 0.4.26, merge this condition into the
-  # following if block.
-  if xla_extension_version >= 256 and isinstance(first_value, ArrayImpl):
-    maybe_default_layout = pxla._maybe_get_default_layout(
-        Layout(dll, sharding), None, sharding, aval)
-    layout_eq = first_value.layout.device_local_layout == maybe_default_layout
-  else:
-    layout_eq = True
-
   if (isinstance(first_value, ArrayImpl)
       and first_value._committed
       and sharding.is_fully_replicated
       and first_value.is_fully_replicated
       and first_value.sharding._device_assignment == tuple(devices)
-      and layout_eq):
+      and (first_value.layout.device_local_layout ==
+           pxla._maybe_get_default_layout(Layout(dll, sharding), None, sharding, aval))):
     return first_value
 
   if dll is not None:
@@ -928,20 +903,26 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
   return pxla.batched_device_put(x.aval, sharding, bufs, devices)
 
 
+@functools.lru_cache(maxsize=4096)
+def _sharding_indices_and_eq(src_sharding, shape, dst_sharding):
+  src_indices = src_sharding.addressable_devices_indices_map(shape).values()
+  dst_indices = dst_sharding.addressable_devices_indices_map(shape).values()
+  return dst_indices, tuple(src_indices) == tuple(dst_indices)
+
+
 def _array_shard_arg(x, sharding):
   x._check_if_deleted()
 
-  x_indices = x.sharding.addressable_devices_indices_map(x.shape).values()
-  indices = sharding.addressable_devices_indices_map(x.shape).values()
+  indices, same_indices = _sharding_indices_and_eq(x.sharding, x.shape, sharding)
   if not x.is_fully_addressable:
-    if tuple(x_indices) == tuple(indices):
+    if same_indices:
       return x
     else:
       raise NotImplementedError(
           "Cannot reshard an input that is not fully addressable")
   else:
-    devices = pxla.get_addressable_devices_for_shard_arg(sharding)
-    if tuple(x_indices) == tuple(indices):
+    devices = sharding._addressable_device_assignment
+    if same_indices:
       return xc.copy_array_to_devices_with_sharding(x, list(devices), sharding)
     # Resharding starts here:
     if dispatch.is_single_device_sharding(x.sharding):
@@ -963,8 +944,6 @@ def _array_global_result_handler(global_aval, out_sharding, committed):
   )
 pxla.global_result_handlers[core.ShapedArray] = _array_global_result_handler
 pxla.global_result_handlers[core.ConcreteArray] = _array_global_result_handler
-pxla.global_result_handlers[core.AbstractToken] = lambda *_: lambda *_: core.token
-
 
 # Only used for Arrays that come out of pmap.
 def _array_local_result_handler(aval, sharding, indices):
@@ -978,3 +957,21 @@ def _array_local_result_handler(aval, sharding, indices):
   )
 pxla.local_result_handlers[core.ShapedArray] = _array_local_result_handler
 pxla.local_result_handlers[core.ConcreteArray] = _array_local_result_handler
+
+
+# Token handlers
+
+def _token_shard_arg(x, sharding):
+  return _array_shard_arg(x._buf, sharding)
+pxla.shard_arg_handlers[core.Token] = _token_shard_arg
+
+
+def _token_global_result_handler(global_aval, out_sharding, committed):
+  array_handler = _array_global_result_handler(
+      core.token_shaped_array, out_sharding, committed)
+
+  def wrapper(*args, **kwargs):
+    out_buf = array_handler(*args, **kwargs)
+    return core.Token(out_buf)
+  return wrapper
+pxla.global_result_handlers[core.AbstractToken] = _token_global_result_handler

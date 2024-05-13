@@ -770,5 +770,64 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self.assertAllClose(expected, actual, atol=0)
 
 
+  @jtu.sample_product(
+    [dict(shape=shape, axis=axis)
+      for shape in all_shapes
+      for axis in list(
+        range(-len(shape), len(shape))
+      ) + ([None] if len(shape) == 1 else [])],
+    [dict(dtype=dtype, out_dtype=out_dtype)
+     for dtype in (all_dtypes+[None])
+     for out_dtype in (
+       complex_dtypes if np.issubdtype(dtype, np.complexfloating)
+       else all_dtypes
+      )
+    ],
+    include_initial=[False, True],
+  )
+  @jtu.ignore_warning(category=NumpyComplexWarning)
+  @jax.numpy_dtype_promotion('standard')  # This test explicitly exercises mixed type promotion
+  def testCumulativeSum(self, shape, axis, dtype, out_dtype, include_initial):
+    rng = jtu.rand_some_zero(self.rng())
+
+    def np_mock_op(x, axis=None, dtype=None, include_initial=False):
+      axis = axis or 0
+      out = np.cumsum(x, axis=axis, dtype=dtype or x.dtype)
+      if include_initial:
+        zeros_shape = list(x.shape)
+        zeros_shape[axis] = 1
+        out = jnp.concat([jnp.zeros(zeros_shape, dtype=out.dtype), out], axis=axis)
+      return out
+
+
+    # We currently "cheat" to ensure we have JAX arrays, not NumPy arrays as
+    # input because we rely on JAX-specific casting behavior
+    args_maker = lambda: [jnp.array(rng(shape, dtype))]
+    np_op = getattr(np, "cumulative_sum", np_mock_op)
+    kwargs = dict(axis=axis, dtype=out_dtype, include_initial=include_initial)
+
+    np_fun = lambda x: np_op(x, **kwargs)
+    jnp_fun = lambda x: jnp.cumulative_sum(x, **kwargs)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+
+  @jtu.sample_product(
+      shape=filter(lambda x: len(x) != 1, all_shapes), dtype=all_dtypes,
+      include_initial=[False, True])
+  def testCumulativeSumErrors(self, shape, dtype, include_initial):
+    rng = jtu.rand_some_zero(self.rng())
+    x = rng(shape, dtype)
+    rank = jnp.asarray(x).ndim
+    if rank == 0:
+      msg = r"The input must be non-scalar to take"
+      with self.assertRaisesRegex(ValueError, msg):
+        jnp.cumulative_sum(x, include_initial=include_initial)
+    elif rank > 1:
+      msg = r"The input array has rank \d*, however"
+      with self.assertRaisesRegex(ValueError, msg):
+        jnp.cumulative_sum(x, include_initial=include_initial)
+
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

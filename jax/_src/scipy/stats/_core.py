@@ -23,19 +23,30 @@ import jax.numpy as jnp
 from jax import jit
 from jax._src import dtypes
 from jax._src.api import vmap
-from jax._src.numpy.util import check_arraylike, implements, promote_args_inexact
+from jax._src.numpy.util import check_arraylike, promote_args_inexact
 from jax._src.typing import ArrayLike, Array
 from jax._src.util import canonicalize_axis
 
-import scipy
 
 ModeResult = namedtuple('ModeResult', ('mode', 'count'))
 
-@implements(scipy.stats.mode, lax_description="""\
-Currently the only supported nan_policy is 'propagate'
-""")
 @partial(jit, static_argnames=['axis', 'nan_policy', 'keepdims'])
 def mode(a: ArrayLike, axis: int | None = 0, nan_policy: str = "propagate", keepdims: bool = False) -> ModeResult:
+  """Compute the mode (most common value) along an axis of an array.
+
+  JAX implementation of :func:`scipy.stats.mode`.
+
+  Args:
+    a: arraylike
+    axis: int, default=0. Axis along which to compute the mode.
+    nan_policy: str. JAX only supports ``"propagate"``.
+    keepdims: bool, default=False. If true, reduced axes are left in the result
+      with size 1.
+
+  Returns:
+    A tuple of arrays, ``(mode, count)``. ``mode`` is the array of modal values,
+    and ``count`` is the number of times each value appears in the input array.
+  """
   check_arraylike("mode", a)
   x = jnp.atleast_1d(a)
 
@@ -90,9 +101,7 @@ def invert_permutation(i: Array) -> Array:
   """Helper function that inverts a permutation array."""
   return jnp.empty_like(i).at[i].set(jnp.arange(i.size, dtype=i.dtype))
 
-@implements(scipy.stats.rankdata, lax_description="""\
-Currently the only supported nan_policy is 'propagate'
-""")
+
 @partial(jit, static_argnames=["method", "axis", "nan_policy"])
 def rankdata(
   a: ArrayLike,
@@ -101,7 +110,33 @@ def rankdata(
   axis: int | None = None,
   nan_policy: str = "propagate",
 ) -> Array:
+  """Compute the rank of data along an array axis.
 
+  JAX implementation of :func:`scipy.stats.rankdata`.
+
+  Ranks begin at 1, and the *method* argument controls how ties are handled.
+
+  Args:
+    a: arraylike
+    method: str, default="average". Supported methods are
+      ``("average", "min", "max", "dense", "ordinal")``
+      For details, see the :func:`scipy.stats.rankdata` documentation.
+    axis: optional integer. If not specified, the input array is flattened.
+    nan_policy: str, JAX's implementation only supports ``"propagate"``.
+
+  Returns:
+    array of ranks along the specified axis.
+
+  Examples:
+
+    >>> x = jnp.array([10, 30, 20])
+    >>> rankdata(x)
+    Array([1., 3., 2.], dtype=float32)
+
+    >>> x = jnp.array([1, 3, 2, 3])
+    >>> rankdata(x)
+    Array([1. , 3.5, 2. , 3.5], dtype=float32)
+  """
   check_arraylike("rankdata", a)
 
   if nan_policy not in ["propagate", "omit", "raise"]:
@@ -148,11 +183,25 @@ def rankdata(
     return .5 * (count[dense] + count[dense - 1] + 1).astype(dtypes.canonicalize_dtype(jnp.float_))
   raise ValueError(f"unknown method '{method}'")
 
-@implements(scipy.stats.sem, lax_description="""\
-Currently the only supported nan_policies are 'propagate' and 'omit'
-""")
+
 @partial(jit, static_argnames=['axis', 'nan_policy', 'keepdims'])
 def sem(a: ArrayLike, axis: int | None = 0, ddof: int = 1, nan_policy: str = "propagate", *, keepdims: bool = False) -> Array:
+  """Compute the standard error of the mean.
+
+  JAX implementation of :func:`scipy.stats.sem`.
+
+  Args:
+    a: arraylike
+    axis: optional integer. If not specified, the input array is flattened.
+    ddof: integer, default=1. The degrees of freedom in the SEM computation.
+    nan_policy: str, default="propagate". JAX supports only "propagate" and
+      "omit".
+    keepdims: bool, default=False. If true, reduced axes are left in the result
+      with size 1.
+
+  Returns:
+    array
+  """
   b, = promote_args_inexact("sem", a)
   if axis is None:
     b = b.ravel()

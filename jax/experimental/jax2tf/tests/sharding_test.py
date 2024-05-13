@@ -456,55 +456,6 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
 
   @jtu.parameterized_filterable(
     kwargs=[
-      dict(testcase_name=f"_kind={kind}_in_shardings={in_shardings}_out_shardings={out_shardings}",
-           kind=kind, in_shardings=in_shardings, out_shardings=out_shardings)
-      for kind in ("pjit", "jit", "sharding_constraint")
-      for in_shardings in (
-          ("none", "P") if kind == "sharding_constraint" else
-          ("unspecified",) if kind == "jit" else
-          ("unspecified", "none", "P"))
-      for out_shardings in (
-          ("unspecified",) if kind in ["sharding_constraint", "jit"] else
-          ("unspecified", "none", "P"))
-  ])
-  def test_pjit_error_inner_sharding(self, kind="pjit", in_shardings="P",
-                                     out_shardings="none"):
-    # Check that we raise an error if there is no top-level pjit but we convert
-    # a function with non-replicated shardings (with native lowering).
-    shardings_map = dict(none=None, P=P("x"))
-
-    def f_jax(x):
-      if kind == "pjit":
-        pjit_kwargs = {}
-        if in_shardings != "unspecified":
-          pjit_kwargs["in_shardings"] = shardings_map[in_shardings]
-        if out_shardings != "unspecified":
-          pjit_kwargs["out_shardings"] = shardings_map[out_shardings]
-        res = pjit.pjit(lambda x: x * 2., **pjit_kwargs)(x)
-      elif kind == "jit":
-        res = jax.jit(lambda x: x * 2.)(x)
-      elif kind == "sharding_constraint":
-        res = jax.lax.with_sharding_constraint(x * 2., shardings_map[in_shardings])
-      else:
-        assert False
-      return res
-
-    expect_error = (in_shardings == "P" or out_shardings == "P")
-    shape = (8, 10)
-    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
-
-    f_tf = tf.function(jax2tf.convert(f_jax, native_serialization=True),
-                       autograph=False, jit_compile=True)
-    with contextlib.ExitStack() as stack:
-      if expect_error:
-        stack.enter_context(self.assertRaisesRegex(
-            ValueError,
-            "Lowered function does not have a top-level pjit but it has non-replicated sharding annotations"))
-      with Mesh(self.devices, axis_names=("x",)):
-        f_tf(x)
-
-  @jtu.parameterized_filterable(
-    kwargs=[
       dict(testcase_name=f"_func={func}", func=func)
       for func in ("pjit_sharded", "pjit_replicated",
                    "nested_pjit_sharded", "nested_pjit_replicated")

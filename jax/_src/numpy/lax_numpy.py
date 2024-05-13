@@ -29,6 +29,7 @@ import builtins
 import collections
 from collections.abc import Sequence
 from functools import partial
+import importlib
 import math
 import operator
 import types
@@ -61,7 +62,7 @@ from jax._src.core import ShapedArray, ConcreteArray
 from jax._src.lax.lax import (_array_copy, _sort_lt_comparator,
                               _sort_le_comparator, PrecisionLike)
 from jax._src.lax import lax as lax_internal
-from jax._src.lib import xla_client as xc, xla_extension_version
+from jax._src.lib import xla_client as xc
 from jax._src.numpy import reductions
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
@@ -74,6 +75,16 @@ from jax._src.util import (unzip2, subvals, safe_zip,
                            ceil_of_ratio, partition_list,
                            canonicalize_axis as _canonicalize_axis,
                            NumpyComplexWarning)
+
+for pkg_name in ['jax_cuda12_plugin', 'jax.jaxlib']:
+  try:
+    cuda_plugin_extension = importlib.import_module(
+        f'{pkg_name}.cuda_plugin_extension'
+    )
+  except ImportError:
+    cuda_plugin_extension = None  # type: ignore
+  else:
+    break
 
 newaxis = None
 T = TypeVar('T')
@@ -541,8 +552,78 @@ The JAX version of this function may in some cases return a copy rather than a
 view of the input.
 """
 
-@util.implements(np.transpose, lax_description=_ARRAY_VIEW_DOC)
 def transpose(a: ArrayLike, axes: Sequence[int] | None = None) -> Array:
+  """Return a transposed version of an N-dimensional array.
+
+  JAX implementation of :func:`jax.numpy.transpose`, implemented in terms of
+  :func:`jax.lax.transpose`.
+
+  Args:
+    a: input array
+    axes: optionally specify the permutation using a length-`a.ndim` sequence of integers
+      ``i`` satisfying ``0 <= i < a.ndim``. Defaults to ``range(a.ndim)[::-1]``, i.e
+      reverses the order of all axes.
+
+  Returns:
+    transposed copy of the array.
+
+  See Also:
+    - :func:`jax.Array.transpose`: equivalent function via an :class:`~jax.Array` method.
+    - :attr:`jax.Array.T`: equivalent function via an :class:`~jax.Array`  property.
+    - :func:`jax.numpy.matrix_transpose`: transpose the last two axes of an array. This is
+      suitable for working with batched 2D matrices.
+    - :func:`jax.numpy.swapaxes`: swap any two axes in an array.
+    - :func:`jax.numpy.moveaxis`: move an axis to another postion in the array.
+
+  Note:
+    Unlike :func:`numpy.transpose`, :func:`jax.numpy.transpose` will return a copy rather
+    than a view of the input array. However, under JIT, the compiler will optimize-away
+    such copies when possible, so this doesn't have performance impacts in practice.
+
+  Examples:
+    For a 1D array, the transpose is the identity:
+
+    >>> x = jnp.array([1, 2, 3, 4])
+    >>> jnp.transpose(x)
+    Array([1, 2, 3, 4], dtype=int32)
+
+    For a 2D array, the transpose is a matrix transpose:
+
+    >>> x = jnp.array([[1, 2],
+    ...                [3, 4]])
+    >>> jnp.transpose(x)
+    Array([[1, 3],
+           [2, 4]], dtype=int32)
+
+    For an N-dimensional array, the transpose reverses the order of the axes:
+
+    >>> x = jnp.zeros(shape=(3, 4, 5))
+    >>> jnp.transpose(x).shape
+    (5, 4, 3)
+
+    The ``axes`` argument can be specified to change this default behavior:
+
+    >>> jnp.transpose(x, (0, 2, 1)).shape
+    (3, 5, 4)
+
+    Since swapping the last two axes is a common operation, it can be done
+    via its own API, :func:`jax.numpy.matrix_transpose`:
+
+    >>> jnp.matrix_transpose(x).shape
+    (3, 5, 4)
+
+    For convenience, transposes may also be performed using the :meth:`jax.Array.transpose`
+    method or the :attr:`jax.Array.T` property:
+
+    >>> x = jnp.array([[1, 2],
+    ...                [3, 4]])
+    >>> x.transpose()
+    Array([[1, 3],
+           [2, 4]], dtype=int32)
+    >>> x.T
+    Array([[1, 3],
+           [2, 4]], dtype=int32)
+  """
   util.check_arraylike("transpose", a)
   axes_ = list(range(ndim(a))[::-1]) if axes is None else axes
   axes_ = [_canonicalize_axis(i, ndim(a)) for i in axes_]
@@ -555,19 +636,50 @@ def permute_dims(a: ArrayLike, /, axes: tuple[int, ...]) -> Array:
   return lax.transpose(a, axes)
 
 
-@util.implements(getattr(np, 'matrix_transpose', None))
 def matrix_transpose(x: ArrayLike, /) -> Array:
-  """Transposes the last two dimensions of x.
+  """Transpose the last two dimensions of an array.
 
-  Parameters
-  ----------
-  x : array_like
-      Input array. Must have ``x.ndim >= 2``.
+  JAX implementation of :func:`jax.numpy.matrix_transpose`, implemented in terms of
+  :func:`jax.lax.transpose`.
 
-  Returns
-  -------
-  xT : Array
-      Transposed array.
+  Args:
+    x: input array, Must have ``x.ndim >= 2``
+
+  Returns:
+    matrix-transposed copy of the array.
+
+  See Also:
+    - :attr:`jax.Array.mT`: same operation accessed via an :func:`~jax.Array` property.
+    - :func:`jax.numpy.transpose`: general multi-axis transpose
+
+  Note:
+    Unlike :func:`numpy.matrix_transpose`, :func:`jax.numpy.matrix_transpose` will return a
+    copy rather than a view of the input array. However, under JIT, the compiler will
+    optimize-away such copies when possible, so this doesn't have performance impacts in practice.
+
+  Examples:
+    Here is a 2x2x2 matrix representing a batched 2x2 matrix:
+
+    >>> x = jnp.array([[[1, 2],
+    ...                 [3, 4]],
+    ...                [[5, 6],
+    ...                 [7, 8]]])
+    >>> jnp.matrix_transpose(x)
+    Array([[[1, 3],
+            [2, 4]],
+    <BLANKLINE>
+           [[5, 7],
+            [6, 8]]], dtype=int32)
+
+    For convenience, you can perform the same transpose via the :attr:`~jax.Array.mT`
+    property of :class:`jax.Array`:
+
+    >>> x.mT
+    Array([[[1, 3],
+            [2, 4]],
+    <BLANKLINE>
+           [[5, 7],
+            [6, 8]]], dtype=int32)
   """
   util.check_arraylike("matrix_transpose", x)
   ndim = np.ndim(x)
@@ -781,21 +893,150 @@ def isrealobj(x: Any) -> bool:
   return not iscomplexobj(x)
 
 
-@util.implements(np.reshape, lax_description=_ARRAY_VIEW_DOC)
-def reshape(a: ArrayLike, newshape: DimSize | Shape, order: str = "C") -> Array:
+def reshape(
+    a: ArrayLike, shape: DimSize | Shape | None = None, order: str = "C", *,
+    newshape: DimSize | Shape | DeprecatedArg = DeprecatedArg()) -> Array:
+  """Return a reshaped copy of an array.
+
+  JAX implementation of :func:`numpy.reshape`, implemented in terms of
+  :func:`jax.lax.reshape`.
+
+  Args:
+    a: input array to reshape
+    shape: integer or sequence of integers giving the new shape, which must match the
+      size of the input array. If any single dimension is given size ``-1``, it will be
+      replaced with a value such that the output has the correct size.
+    order: ``'F'`` or ``'C'``, specifies whether the reshape should apply column-major
+      (fortran-style, ``"F"``) or row-major (C-style, ``"C"``) order; default is ``"C"``.
+      JAX does not support ``order="A"``.
+
+  Returns:
+    reshaped copy of input array with the specified shape.
+
+  Notes:
+    Unlike :func:`numpy.reshape`, :func:`jax.numpy.reshape` will return a copy rather
+    than a view of the input array. However, under JIT, the compiler will optimize-away
+    such copies when possible, so this doesn't have performance impacts in practice.
+
+  See Also:
+    - :meth:`jax.Array.reshape`: equivalent functionality via an array method.
+    - :func:`jax.numpy.ravel`: flatten an array into a 1D shape.
+    - :func:`jax.numpy.squeeze`: remove one or more length-1 axes from an array's shape.
+
+  Examples:
+    >>> x = jnp.array([[1, 2, 3],
+    ...                [4, 5, 6]])
+    >>> jnp.reshape(x, 6)
+    Array([1, 2, 3, 4, 5, 6], dtype=int32)
+    >>> jnp.reshape(x, (3, 2))
+    Array([[1, 2],
+           [3, 4],
+           [5, 6]], dtype=int32)
+
+    You can use ``-1`` to automatically compute a shape that is consistent with
+    the input size:
+
+    >>> jnp.reshape(x, -1)  # -1 is inferred to be 6
+    Array([1, 2, 3, 4, 5, 6], dtype=int32)
+    >>> jnp.reshape(x, (-1, 2))  # -1 is inferred to be 3
+    Array([[1, 2],
+           [3, 4],
+           [5, 6]], dtype=int32)
+
+    The default ordering of axes in the reshape is C-style row-major ordering.
+    To use Fortran-style column-major ordering, specify ``order='F'``:
+
+    >>> jnp.reshape(x, 6, order='F')
+    Array([1, 4, 2, 5, 3, 6], dtype=int32)
+    >>> jnp.reshape(x, (3, 2), order='F')
+    Array([[1, 5],
+           [4, 3],
+           [2, 6]], dtype=int32)
+
+    For convenience, this functionality is also available via the
+    :meth:`jax.Array.reshape` method:
+
+    >>> x.reshape(3, 2)
+    Array([[1, 2],
+           [3, 4],
+           [5, 6]], dtype=int32)
+  """
   __tracebackhide__ = True
   util.check_arraylike("reshape", a)
+
+  # TODO(micky774): deprecated 2024-5-9, remove after deprecation expires.
+  if not isinstance(newshape, DeprecatedArg):
+    if shape is not None:
+      raise ValueError(
+        "jnp.reshape received both `shape` and `newshape` arguments. Note that "
+        "using `newshape` is deprecated, please only use `shape` instead."
+      )
+    warnings.warn(
+      "The newshape argument of jax.numpy.reshape is deprecated and setting it "
+      "will soon raise an error. To avoid an error in the future, and to "
+      "suppress this warning, please use the shape argument instead.",
+      DeprecationWarning, stacklevel=2)
+    shape = newshape
+    del newshape
+  elif shape is None:
+    raise TypeError(
+      "jnp.shape requires passing a `shape` argument, but none was given."
+    )
   try:
     # forward to method for ndarrays
-    return a.reshape(newshape, order=order)  # type: ignore[call-overload,union-attr]
+    return a.reshape(shape, order=order)  # type: ignore[call-overload,union-attr]
   except AttributeError:
     pass
-  return asarray(a).reshape(newshape, order=order)
+  return asarray(a).reshape(shape, order=order)
 
 
-@util.implements(np.ravel, lax_description=_ARRAY_VIEW_DOC)
 @partial(jit, static_argnames=('order',), inline=True)
 def ravel(a: ArrayLike, order: str = "C") -> Array:
+  """Flatten array into a 1-dimensional shape.
+
+  JAX implementation of :func:`numpy.ravel`, implemented in terms of
+  :func:`jax.lax.reshape`.
+
+  ``ravel(arr, order=order)`` is equivalent to ``reshape(arr, -1, order=order)``.
+
+  Args:
+    a: array to be flattened.
+    order: ``'F'`` or ``'C'``, specifies whether the reshape should apply column-major
+      (fortran-style, ``"F"``) or row-major (C-style, ``"C"``) order; default is ``"C"``.
+      JAX does not support `order="A"` or `order="K"`.
+
+  Returns:
+    flattened copy of input array.
+
+  Notes:
+    Unlike :func:`numpy.ravel`, :func:`jax.numpy.ravel` will return a copy rather
+    than a view of the input array. However, under JIT, the compiler will optimize-away
+    such copies when possible, so this doesn't have performance impacts in practice.
+
+  See Also:
+    - :meth:`jax.Array.ravel`: equivalent functionality via an array method.
+    - :func:`jax.numpy.reshape`: general array reshape.
+
+  Examples:
+    >>> x = jnp.array([[1, 2, 3],
+    ...                [4, 5, 6]])
+
+    By default, ravel in C-style, row-major order
+
+    >>> jnp.ravel(x)
+    Array([1, 2, 3, 4, 5, 6], dtype=int32)
+
+    Optionally ravel in Fortran-style, column-major:
+
+    >>> jnp.ravel(x, order='F')
+    Array([1, 4, 2, 5, 3, 6], dtype=int32)
+
+    For convenience, the same functionality is availabel via the :meth:`jax.Array.ravel`
+    method:
+
+    >>> x.ravel()
+    Array([1, 2, 3, 4, 5, 6], dtype=int32)
+  """
   util.check_arraylike("ravel", a)
   if order == "K":
     raise NotImplementedError("Ravel not implemented for order='K'.")
@@ -887,8 +1128,63 @@ def resize(a: ArrayLike, new_shape: Shape) -> Array:
 
   return reshape(arr, new_shape)
 
-@util.implements(np.squeeze, lax_description=_ARRAY_VIEW_DOC)
+
 def squeeze(a: ArrayLike, axis: int | Sequence[int] | None = None) -> Array:
+  """Remove one or more length-1 axes from array
+
+  JAX implementation of :func:`numpy.sqeeze`, implemented via :func:`jax.lax.squeeze`.
+
+  Args:
+    a: input array
+    axis: integer or sequence of integers specifying axes to remove. If any specified
+      axis does not have a length of 1, an error is raised. If not specified, squeeze
+      all length-1 axes in ``a``.
+
+  Returns:
+    copy of ``a`` with length-1 axes removed.
+
+  Notes:
+    Unlike :func:`numpy.squeeze`, :func:`jax.numpy.squeeze` will return a copy rather
+    than a view of the input array. However, under JIT, the compiler will optimize-away
+    such copies when possible, so this doesn't have performance impacts in practice.
+
+  See Also:
+    - :func:`jax.numpy.expand_dims`: the inverse of ``squeeze``: add dimensions of length 1.
+    - :meth:`jax.Array.squeeze`: equivalent functionality via an array method.
+    - :func:`jax.lax.squeeze`: equivalent XLA API.
+    - :func:`jax.numpy.ravel`: flatten an array into a 1D shape.
+    - :func:`jax.numpy.reshape`: general array reshape.
+
+  Examples:
+    >>> x = jnp.array([[[0]], [[1]], [[2]]])
+    >>> x.shape
+    (3, 1, 1)
+
+    Squeeze all length-1 dimensions:
+
+    >>> jnp.squeeze(x)
+    Array([0, 1, 2], dtype=int32)
+    >>> _.shape
+    (3,)
+
+    Eqivalent while specifying the axes explicitly:
+
+    >>> jnp.squeeze(x, axis=(1, 2))
+    Array([0, 1, 2], dtype=int32)
+
+    Attempting to squeeze a non-unit axis results in an error:
+
+    >>> jnp.squeeze(x, axis=0)  # doctest: +IGNORE_EXCEPTION_DETAIL
+    Traceback (most recent call last):
+      ...
+    ValueError: cannot select an axis to squeeze out which has size not equal to one, got shape=(3, 1, 1) and dimensions=(0,)
+
+    For convenience, this functionality is also available via the
+    :meth:`jax.Array.squeeze` method:
+
+    >>> x.squeeze()
+    Array([0, 1, 2], dtype=int32)
+  """
   util.check_arraylike("squeeze", a)
   return _squeeze(asarray(a), _ensure_index_tuple(axis) if axis is not None else None)
 
@@ -903,25 +1199,171 @@ def _squeeze(a: Array, axis: tuple[int, ...]) -> Array:
   return lax.squeeze(a, axis)
 
 
-@util.implements(np.expand_dims)
 def expand_dims(a: ArrayLike, axis: int | Sequence[int]) -> Array:
+  """Insert dimensions of length 1 into array
+
+  JAX implementation of :func:`numpy.expand_dims`, implemented via
+  :func:`jax.lax.expand_dims`.
+
+  Args:
+    a: input array
+    axis: integer or sequence of integers specifying positions of axes to add.
+
+  Returns:
+    Copy of ``a`` with added dimensions.
+
+  Notes:
+    Unlike :func:`numpy.expand_dims`, :func:`jax.numpy.expand_dims` will return a copy
+    rather than a view of the input array. However, under JIT, the compiler will optimize
+    away such copies when possible, so this doesn't have performance impacts in practice.
+
+  See Also:
+    - :func:`jax.numpy.squeeze`: inverse of this operation, i.e. remove length-1 dimensions.
+    - :func:`jax.lax.expand_dims`: XLA version of this functionality.
+
+  Examples:
+    >>> x = jnp.array([1, 2, 3])
+    >>> x.shape
+    (3,)
+
+    Expand the leading dimension:
+
+    >>> jnp.expand_dims(x, 0)
+    Array([[1, 2, 3]], dtype=int32)
+    >>> _.shape
+    (1, 3)
+
+    Expand the trailing dimension:
+
+    >>> jnp.expand_dims(x, 1)
+    Array([[1],
+           [2],
+           [3]], dtype=int32)
+    >>> _.shape
+    (3, 1)
+
+    Expand multiple dimensions:
+
+    >>> jnp.expand_dims(x, (0, 1, 3))
+    Array([[[[1],
+             [2],
+             [3]]]], dtype=int32)
+    >>> _.shape
+    (1, 1, 3, 1)
+
+    Dimensions can also be expanded more succinctly by indexing with ``None``:
+
+    >>> x[None]  # equivalent to jnp.expand_dims(x, 0)
+    Array([[1, 2, 3]], dtype=int32)
+    >>> x[:, None]  # equivalent to jnp.expand_dims(x, 1)
+    Array([[1],
+           [2],
+           [3]], dtype=int32)
+    >>> x[None, None, :, None]  # equivalent to jnp.expand_dims(x, (0, 1, 3))
+    Array([[[[1],
+             [2],
+             [3]]]], dtype=int32)
+  """
   util.check_arraylike("expand_dims", a)
   axis = _ensure_index_tuple(axis)
   return lax.expand_dims(a, axis)
 
 
-@util.implements(np.swapaxes, lax_description=_ARRAY_VIEW_DOC)
 @partial(jit, static_argnames=('axis1', 'axis2'), inline=True)
 def swapaxes(a: ArrayLike, axis1: int, axis2: int) -> Array:
+  """Swap two axes of an array.
+
+  JAX implementation of :func:`numpy.swapaxes`, implemented in terms of
+  :func:`jax.lax.transpose`.
+
+  Args:
+    a: input array
+    axis1: index of first axis
+    axis2: index of second axis
+
+  Returns:
+    Copy of ``a`` with specified axes swapped.
+
+  Notes:
+    Unlike :func:`numpy.swapaxes`, :func:`jax.numpy.swapaxes` will return a copy rather
+    than a view of the input array. However, under JIT, the compiler will optimize away
+    such copies when possible, so this doesn't have performance impacts in practice.
+
+  See Also:
+    - :func:`jax.numpy.moveaxis`: move a single axis of an array.
+    - :func:`jax.numpy.rollaxis`: older API for ``moveaxis``.
+    - :func:`jax.lax.transpose`: more general axes permutations.
+    - :meth:`jax.Array.swapaxes`: same functionality via an array method.
+
+  Examples:
+    >>> a = jnp.ones((2, 3, 4, 5))
+    >>> jnp.swapaxes(a, 1, 3).shape
+    (2, 5, 4, 3)
+
+    Equivalent output via the ``swapaxes`` array method:
+
+    >>> a.swapaxes(1, 3).shape
+    (2, 5, 4, 3)
+
+    Equivalent output via :func:`~jax.numpy.transpose`:
+
+    >>> a.transpose(0, 3, 2, 1).shape
+    (2, 5, 4, 3)
+  """
   util.check_arraylike("swapaxes", a)
   perm = np.arange(ndim(a))
   perm[axis1], perm[axis2] = perm[axis2], perm[axis1]
   return lax.transpose(a, list(perm))
 
 
-@util.implements(np.moveaxis, lax_description=_ARRAY_VIEW_DOC)
 def moveaxis(a: ArrayLike, source: int | Sequence[int],
              destination: int | Sequence[int]) -> Array:
+  """Move an array axis to a new position
+
+  JAX implementation of :func:`numpy.moveaxis`, implemented in terms of
+  :func:`jax.lax.transpose`.
+
+  Args:
+    a: input array
+    source: index or indices of the axes to move.
+    destination: index or indices of the axes destinations
+
+  Returns:
+    Copy of ``a`` with axes moved from ``source`` to ``destination``.
+
+  Notes:
+    Unlike :func:`numpy.moveaxis`, :func:`jax.numpy.moveaxis` will return a copy rather
+    than a view of the input array. However, under JIT, the compiler will optimize away
+    such copies when possible, so this doesn't have performance impacts in practice.
+
+  See also:
+    - :func:`jax.numpy.swapaxes`: swap two axes.
+    - :func:`jax.numpy.rollaxis`: older API for moving an axis.
+    - :func:`jax.numpy.transpose`: general axes permutation.
+
+  Examples:
+    >>> a = jnp.ones((2, 3, 4, 5))
+
+    Move axis ``1`` to the end of the array:
+
+    >>> jnp.moveaxis(a, 1, -1).shape
+    (2, 4, 5, 3)
+
+    Move the last axis to position 1:
+
+    >>> jnp.moveaxis(a, -1, 1).shape
+    (2, 5, 3, 4)
+
+    Move multiple axes:
+
+    >>> jnp.moveaxis(a, (0, 1), (-1, -2)).shape
+    (4, 5, 3, 2)
+
+    This can also be accomplished via :func:`~jax.numpy.transpose`:
+
+    >>> a.transpose(2, 3, 1, 0).shape
+    (4, 5, 3, 2)
+  """
   util.check_arraylike("moveaxis", a)
   return _moveaxis(asarray(a), _ensure_index_tuple(source),
                    _ensure_index_tuple(destination))
@@ -1063,6 +1505,8 @@ def interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
   return jitted_interp(x, xp, fp, left, right, period)
 
 
+_DEPRECATED_WHERE_ARG = object()
+
 @overload  # type: ignore[no-overload-impl]
 def where(condition: ArrayLike, x: Literal[None] = None,
           y: Literal[None] = None, /, *, size: int | None = None,
@@ -1081,74 +1525,80 @@ def where(condition: ArrayLike, x: ArrayLike | None = None,
           fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None
           ) -> Array | tuple[Array, ...]: ...
 
-_DEPRECATED_WHERE_ARG = object()
 
-@util.implements(np.where,  # type: ignore[no-redef]
-  lax_description=_dedent("""
-    At present, JAX does not support JIT-compilation of the single-argument form
-    of :py:func:`jax.numpy.where` because its output shape is data-dependent. The
-    three-argument form does not have a data-dependent shape and can be JIT-compiled
-    successfully. Alternatively, you can use the optional ``size`` keyword to
-    statically specify the expected size of the output.\n\n
+def where(condition, x=None, y=None, /, *, size=None, fill_value=None):
+  """Select elements from two arrays based on a condition.
 
-    Special care is needed when the ``x`` or ``y`` input to
-    :py:func:`jax.numpy.where` could have a value of NaN.
-    Specifically, when a gradient is taken
-    with :py:func:`jax.grad` (reverse-mode differentiation), a NaN in either
-    ``x`` or ``y`` will propagate into the gradient, regardless of the value
-    of ``condition``.  More information on this behavior and workarounds
-    is available in the JAX FAQ:
-    https://jax.readthedocs.io/en/latest/faq.html#gradients-contain-nan-where-using-where"""),
-  extra_params=_dedent("""
-    size : int, optional
-        Only referenced when ``x`` and ``y`` are ``None``. If specified, the indices of the first
-        ``size`` elements of the result will be returned. If there are fewer elements than ``size``
-        indicates, the return value will be padded with ``fill_value``.
-    fill_value : array_like, optional
-        When ``size`` is specified and there are fewer than the indicated number of elements, the
-        remaining elements will be filled with ``fill_value``, which defaults to zero."""))
-def where(
-    acondition = None, if_true = None, if_false = None, /, *,
-    size=None, fill_value=None,
-    # Deprecated keyword-only names.
-    condition = _DEPRECATED_WHERE_ARG, x = _DEPRECATED_WHERE_ARG,
-    y = _DEPRECATED_WHERE_ARG
-) -> Array | tuple[Array, ...]:
-  if (condition is not _DEPRECATED_WHERE_ARG or x is not _DEPRECATED_WHERE_ARG
-      or y is not _DEPRECATED_WHERE_ARG):
-    # TODO(phawkins): deprecated Nov 17 2023, remove after deprecation expires.
-    warnings.warn(
-        "Passing condition, x, or y to jax.numpy.where via keyword arguments "
-        "is deprecated.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-  if condition is not _DEPRECATED_WHERE_ARG:
-    if acondition is not None:
-      raise ValueError("condition should be a positional-only argument")
-    acondition = condition
-  if x is not _DEPRECATED_WHERE_ARG:
-    if if_true is not None:
-      raise ValueError("x should be a positional-only argument")
-    if_true = x
-  if y is not _DEPRECATED_WHERE_ARG:
-    if if_false is not None:
-      raise ValueError("y should be a positional-only argument")
-    if_false = y
+  JAX implementation of :func:`numpy.where`.
 
-  if if_true is None and if_false is None:
-    util.check_arraylike("where", acondition)
-    return nonzero(acondition, size=size, fill_value=fill_value)
+  .. note::
+     when only ``condition`` is provided, ``jnp.where(condition)`` is equivalent
+     to ``jnp.nonzero(condition)``. For that case, refer to the documentation of
+     :func:`jax.numpy.nonzero`. The docstring below focuses on the case where
+     ``x`` and ``y`` are specified.
+
+  The three-term version of ``jnp.where`` lowers to :func:`jax.lax.select`.
+
+  Args:
+    condition: boolean array. Must be broadcast-compatible with ``x`` and ``y`` when
+      they are specified.
+    x: arraylike. Should be broadcast-compatible with ``condition`` and ``y``, and
+      typecast-compatible with ``y``.
+    y: arraylike. Should be broadcast-compatible with ``condition`` and ``x``, and
+      typecast-compatible with ``x``.
+    size: integer, only referenced when ``x`` and ``y`` are ``None``. For details,
+      see :func:`jax.numpy.nonzero`.
+    fill_value: only referenced when ``x`` and ``y`` are ``None``. For details,
+      see :func:`jax.numpy.nonzero`.
+
+  Returns:
+    An array of dtype ``jnp.result_type(x, y)`` with values drawn from ``x`` where ``condition``
+    is True, and from ``y`` where condition is ``False. If ``x`` and ``y`` are ``None``, the
+    function behaves differently; see `:func:`jax.numpy.nonzero` for a description of the return
+    type.
+
+  See Also:
+    - :func:`jax.numpy.nonzero`
+    - :func:`jax.numpy.argwhere`
+    - :func:`jax.lax.select`
+
+  Notes:
+    Special care is needed when the ``x`` or ``y`` input to :func:`jax.numpy.where` could
+    have a value of NaN. Specifically, when a gradient is taken with :func:`jax.grad`
+    (reverse-mode differentiation), a NaN in either ``x`` or ``y`` will propagate into the
+    gradient, regardless of the value of ``condition``.  More information on this behavior
+    and workarounds is available in the `JAX FAQ
+    <https://jax.readthedocs.io/en/latest/faq.html#gradients-contain-nan-where-using-where>`_.
+
+  Examples:
+    When ``x`` and ``y`` are not provided, ``where`` behaves equivalently to
+    :func:`jax.numpy.nonzero`:
+
+    >>> x = jnp.arange(10)
+    >>> jnp.where(x > 4)
+    (Array([5, 6, 7, 8, 9], dtype=int32),)
+    >>> jnp.nonzero(x > 4)
+    (Array([5, 6, 7, 8, 9], dtype=int32),)
+
+    When ``x`` and ``y`` are provided, ``where`` selects between them based on
+    the specified condition:
+
+    >>> jnp.where(x > 4, x, 0)
+    Array([0, 0, 0, 0, 0, 5, 6, 7, 8, 9], dtype=int32)
+  """
+  if x is None and y is None:
+    util.check_arraylike("where", condition)
+    return nonzero(condition, size=size, fill_value=fill_value)
   else:
-    util.check_arraylike("where", acondition, if_true, if_false)
+    util.check_arraylike("where", condition, x, y)
     if size is not None or fill_value is not None:
       raise ValueError("size and fill_value arguments cannot be used in "
                        "three-term where function.")
-    if if_true is None or if_false is None:
+    if x is None or y is None:
       raise ValueError("Either both or neither of the x and y arguments "
                        "should be provided to jax.numpy.where, got "
-                       f"{if_true} and {if_false}.")
-    return util._where(acondition, if_true, if_false)
+                       f"{x} and {y}.")
+    return util._where(condition, x, y)
 
 
 @util.implements(np.select)
@@ -1162,12 +1612,12 @@ def select(
     raise ValueError(msg.format(len(condlist), len(choicelist)))
   if len(condlist) == 0:
     raise ValueError("condlist must be non-empty")
-  choices = util.promote_dtypes(default, *choicelist)
-  choicelist = choices[1:]
-  output = choices[0]
-  for cond, choice in zip(condlist[::-1], choicelist[::-1]):
-    output = where(cond, choice, output)
-  return output
+  # Put the default at front with condition False because
+  # argmax returns zero for an array of False values.
+  choicelist = util.promote_dtypes(default, *choicelist)
+  conditions = stack(broadcast_arrays(False, *condlist))
+  idx = argmax(conditions.astype(bool), axis=0)
+  return lax.select_n(*broadcast_arrays(idx, *choicelist))
 
 
 @util.implements(np.bincount, lax_description="""\
@@ -1431,33 +1881,93 @@ def allclose(a: ArrayLike, b: ArrayLike, rtol: ArrayLike = 1e-05,
   return reductions.all(isclose(a, b, rtol, atol, equal_nan))
 
 
-_NONZERO_DOC = """\
-Because the size of the output of ``nonzero`` is data-dependent, the function is not
-typically compatible with JIT. The JAX version adds the optional ``size`` argument which
-must be specified statically for ``jnp.nonzero`` to be used within some of JAX's
-transformations.
-"""
-_NONZERO_EXTRA_PARAMS = """
-size : int, optional
-    If specified, the indices of the first ``size`` True elements will be returned. If there are
-    fewer unique elements than ``size`` indicates, the return value will be padded with ``fill_value``.
-fill_value : array_like, optional
-    When ``size`` is specified and there are fewer than the indicated number of elements, the
-    remaining elements will be filled with ``fill_value``, which defaults to zero.
-"""
-
-@util.implements(np.nonzero, lax_description=_NONZERO_DOC, extra_params=_NONZERO_EXTRA_PARAMS)
 def nonzero(a: ArrayLike, *, size: int | None = None,
             fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None
     ) -> tuple[Array, ...]:
+  """Return indices of nonzero elements of an array.
+
+  JAX implementation of :func:`numpy.nonzero`.
+
+  Because the size of the output of ``nonzero`` is data-dependent, the function
+  is not compatible with JIT and other transformations. The JAX version adds
+  the optional ``size`` argument which must be specified statically for
+  ``jnp.nonzero`` to be used within JAX's transformations.
+
+  Args:
+    a: N-dimensional array.
+    size: optional static integer specifying the number of nonzero entries to
+      return. If there are more nonzero elements than the specified ``size``,
+      then indices will be truncated at the end. If there are fewer nonzero
+      elements than the specified size, then indices will be padded with
+      ``fill_value``, which defaults to zero.
+    fill_value: optional padding value when ``size`` is specified. Defaults to 0.
+
+  Returns:
+    Tuple of JAX Arrays of length ``a.ndim``, containing the indices of each
+    nonzero value.
+
+  See also:
+    - :func:`jax.numpy flatnonzero`
+    - :func:`jax.numpy.where`
+
+  Examples:
+
+    One-dimensional array returns a length-1 tuple of indices:
+
+    >>> x = jnp.array([0, 5, 0, 6, 0, 7])
+    >>> jnp.nonzero(x)
+    (Array([1, 3, 5], dtype=int32),)
+
+    Two-dimensional array returns a length-2 tuple of indices:
+
+    >>> x = jnp.array([[0, 5, 0],
+    ...                [6, 0, 7]])
+    >>> jnp.nonzero(x)
+    (Array([0, 1, 1], dtype=int32), Array([1, 0, 2], dtype=int32))
+
+    In either case, the resulting tuple of indices can be used directly to extract
+    the nonzero values:
+
+    >>> indices = jnp.nonzero(x)
+    >>> x[indices]
+    Array([5, 6, 7], dtype=int32)
+
+    The output of ``nonzero`` has a dynamic shape, because the number of returned
+    indices depends on the contents of the input array. As such, it is incompatible
+    with JIT and other JAX transformations:
+
+    >>> x = jnp.array([0, 5, 0, 6, 0, 7])
+    >>> jax.jit(jnp.nonzero)(x)  # doctest: +IGNORE_EXCEPTION_DETAIL
+    Traceback (most recent call last):
+      ...
+    ConcretizationTypeError: Abstract tracer value encountered where concrete value is expected: traced array with shape int32[].
+    The size argument of jnp.nonzero must be statically specified to use jnp.nonzero within JAX transformations.
+
+    This can be addressed by passing a static ``size`` parameter to specify the
+    desired output shape:
+
+    >>> nonzero_jit = jax.jit(jnp.nonzero, static_argnames='size')
+    >>> nonzero_jit(x, size=3)
+    (Array([1, 3, 5], dtype=int32),)
+
+    If ``size`` does not match the true size, the result will be either truncated or padded:
+
+    >>> nonzero_jit(x, size=2)  # size < 3: indices are truncated
+    (Array([1, 3], dtype=int32),)
+    >>> nonzero_jit(x, size=5)  # size > 3: indices are padded with zeros.
+    (Array([1, 3, 5, 0, 0], dtype=int32),)
+
+    You can specify a custom fill value for the padding using the ``fill_value`` argument:
+
+    >>> nonzero_jit(x, size=5, fill_value=len(x))
+    (Array([1, 3, 5, 6, 6], dtype=int32),)
+  """
   util.check_arraylike("nonzero", a)
   arr = asarray(a)
   del a
   if ndim(arr) == 0:
-    # Added 2023 Dec 6
-    warnings.warn("Calling nonzero on 0d arrays is deprecated. Use `atleast_1d(arr).nonzero()",
-                  DeprecationWarning, stacklevel=2)
-  arr = atleast_1d(arr)
+    raise ValueError("Calling nonzero on 0d arrays is not allowed. "
+                     "Use jnp.atleast_1d(scalar).nonzero() instead.")
   mask = arr if arr.dtype == bool else (arr != 0)
   calculated_size = mask.sum() if size is None else size
   calculated_size = core.concrete_dim_or_error(calculated_size,
@@ -1478,9 +1988,49 @@ def nonzero(a: ArrayLike, *, size: int | None = None,
     out = tuple(where(fill_mask, fval, entry) for fval, entry in safe_zip(fill_value_tup, out))
   return out
 
-@util.implements(np.flatnonzero, lax_description=_NONZERO_DOC, extra_params=_NONZERO_EXTRA_PARAMS)
+
 def flatnonzero(a: ArrayLike, *, size: int | None = None,
                 fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None) -> Array:
+  """Return indices of nonzero elements in a flattened array
+
+  JAX implementation of :func:`numpy.flatnonzero`.
+
+  ``jnp.flatnonzero(x)`` is equivalent to ``nonzero(ravel(a))[0]``. For a full
+  discussion of the parameters to this function, refer to :func:`jax.numpy.nonzero`.
+
+  Args:
+    a: N-dimensional array.
+    size: optional static integer specifying the number of nonzero entries to
+      return. See :func:`jax.numpy.nonzero` for more discussion of this parameter.
+    fill_value: optional padding value when ``size`` is specified. Defaults to 0.
+      See :func:`jax.numpy.nonzero` for more discussion of this parameter.
+
+  Returns:
+    Array containing the indices of each nonzero value in the flattened array.
+
+  See Also:
+    - :func:`jax.numpy.nonzero`
+    - :func:`jax.numpy.where`
+
+  Examples:
+    >>> x = jnp.array([[0, 5, 0],
+    ...                [6, 0, 8]])
+    >>> jnp.flatnonzero(x)
+    Array([1, 3, 5], dtype=int32)
+
+    This is equivalent to calling :func:`~jax.numpy.nonzero` on the flattened
+    array, and extracting the first entry in the resulting tuple:
+
+    >>> jnp.nonzero(x.ravel())[0]
+    Array([1, 3, 5], dtype=int32)
+
+    The returned indices can be used to extract nonzero entries from the
+    flattened array:
+
+    >>> indices = jnp.flatnonzero(x)
+    >>> x.ravel()[indices]
+    Array([5, 6, 8], dtype=int32)
+  """
   return nonzero(ravel(a), size=size, fill_value=fill_value)[0]
 
 
@@ -2198,10 +2748,14 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     if hasattr(object, '__jax_array__'):
       object = object.__jax_array__()
     elif hasattr(object, '__cuda_array_interface__'):
-      if xla_extension_version >= 237:
-        cai = object.__cuda_array_interface__
-        backend = xla_bridge.get_backend("cuda")
-        object = xc._xla.cuda_array_interface_to_buffer(cai, backend)
+      cai = object.__cuda_array_interface__
+      backend = xla_bridge.get_backend("cuda")
+      if cuda_plugin_extension is None:
+        device_id = None
+      else:
+        device_id = cuda_plugin_extension.get_device_ordinal(cai["data"][0])
+      object = xc._xla.cuda_array_interface_to_buffer(
+          cai=cai, gpu_backend=backend, device_id=device_id)
 
   object = tree_map(lambda leaf: leaf.__jax_array__()
                     if hasattr(leaf, "__jax_array__") else leaf, object)
@@ -2274,17 +2828,42 @@ have slightly different behavior than :func:`numpy.astype` in some cases.
 In particular, the details of float-to-int and int-to-float casts are
 implementation dependent.
 """)
-def astype(x: ArrayLike, dtype: DTypeLike | None, /, *, copy: bool = True) -> Array:
+def astype(x: ArrayLike, dtype: DTypeLike | None,
+           /, *, copy: bool = False,
+           device: xc.Device | Sharding | None = None) -> Array:
   util.check_arraylike("astype", x)
   x_arr = asarray(x)
-  del copy  # unused in JAX
+
   if dtype is None:
     dtype = dtypes.canonicalize_dtype(float_)
   dtypes.check_user_dtype_supported(dtype, "astype")
-  # convert_element_type(complex, bool) has the wrong semantics.
-  if np.dtype(dtype) == bool and issubdtype(x_arr.dtype, complexfloating):
-    return (x_arr != _lax_const(x_arr, 0))
-  return lax.convert_element_type(x_arr, dtype)
+  if issubdtype(x_arr.dtype, complexfloating):
+    if dtypes.isdtype(dtype, ("integral", "real floating")):
+      warnings.warn(
+        "Casting from complex to real dtypes will soon raise a ValueError. "
+        "Please first use jnp.real or jnp.imag to take the real/imaginary "
+        "component of your input.",
+        DeprecationWarning, stacklevel=2
+      )
+    elif np.dtype(dtype) == bool:
+      # convert_element_type(complex, bool) has the wrong semantics.
+      x_arr = (x_arr != _lax_const(x_arr, 0))
+
+  # We offer a more specific warning than the usual ComplexWarning so we prefer
+  # to issue our warning.
+  with warnings.catch_warnings():
+    warnings.simplefilter("ignore", ComplexWarning)
+    return _place_array(
+      lax.convert_element_type(x_arr, dtype),
+      device=device, copy=copy,
+    )
+
+def _place_array(x, device=None, copy=None):
+  # TODO(micky774): Implement in future PRs as we formalize device placement
+  # semantics
+  if copy:
+    return _array_copy(x)
+  return x
 
 
 @util.implements(np.asarray, lax_description=_ARRAY_DOC)
@@ -2796,9 +3375,39 @@ def _i0_jvp(primals, tangents):
   primal_out, tangent_out = jax.jvp(i0.fun, primals, tangents)
   return primal_out, where(primals[0] == 0, 0.0, tangent_out)
 
-
-@util.implements(np.ix_)
 def ix_(*args: ArrayLike) -> tuple[Array, ...]:
+  """Return a multi-dimensional grid (open mesh) from N one-dimensional sequences.
+
+  JAX implementation of :func:`numpy.ix_`.
+
+  Args:
+    *args: N one-dimensional arrays
+
+  Returns:
+    Tuple of Jax arrays forming an open mesh, each with N dimensions.
+
+  See Also:
+    - :obj:`jax.numpy.ogrid`
+    - :obj:`jax.numpy.mgrid`
+    - :func:`jax.numpy.meshgrid`
+
+  Example:
+    >>> rows = jnp.array([0, 2])
+    >>> cols = jnp.array([1, 3])
+    >>> open_mesh = jnp.ix_(rows, cols)
+    >>> open_mesh
+    (Array([[0],
+          [2]], dtype=int32), Array([[1, 3]], dtype=int32))
+    >>> [grid.shape for grid in open_mesh]
+    [(2, 1), (1, 2)]
+    >>> x = jnp.array([[10, 20, 30, 40],
+    ...                [50, 60, 70, 80],
+    ...                [90, 100, 110, 120],
+    ...                [130, 140, 150, 160]])
+    >>> x[open_mesh]
+    Array([[ 20,  40],
+           [100, 120]], dtype=int32)
+  """
   util.check_arraylike("ix", *args)
   n = len(args)
   output = []
@@ -3002,13 +3611,6 @@ def trace(a: ArrayLike, offset: int = 0, axis1: int = 0, axis2: int = 1,
   dtypes.check_user_dtype_supported(dtype, "trace")
 
   a_shape = shape(a)
-  if dtype is None:
-    dtype = _dtype(a)
-    if issubdtype(dtype, integer):
-      default_int = dtypes.canonicalize_dtype(int)
-      if iinfo(dtype).bits < iinfo(default_int).bits:
-        dtype = default_int
-
   a = moveaxis(a, (axis1, axis2), (-2, -1))
 
   # Mask out the diagonal and reduce.
@@ -3219,17 +3821,6 @@ def append(
     return concatenate([arr, values], axis=axis)
 
 
-@util.implements(np.delete,
-  lax_description=_dedent("""
-    delete() usually requires the index specification to be static. If the index
-    is an integer array that is guaranteed to contain unique entries, you may
-    specify ``assume_unique_indices=True`` to perform the operation in a
-    manner that does not require static indices."""),
-  extra_params=_dedent("""
-    assume_unique_indices : int, optional (default=False)
-        In case of array-like integer (not boolean) indices, assume the indices are unique,
-        and perform the deletion in a way that is compatible with JIT and other JAX
-        transformations."""))
 def delete(
     arr: ArrayLike,
     obj: ArrayLike | slice,
@@ -3237,6 +3828,67 @@ def delete(
     *,
     assume_unique_indices: bool = False,
 ) -> Array:
+  """Delete entry or entries from an array.
+
+  JAX implementation of :func:`numpy.delete`.
+
+  Args:
+    arr: array from which entries will be deleted.
+    obj: index, indices, or slice to be deleted.
+    axis: axis along which entries will be deleted.
+    assume_unique_indices: In case of array-like integer (not boolean) indices,
+      assume the indices are unique, and perform the deletion in a way that is
+      compatible with JIT and other JAX transformations.
+
+  Returns:
+    Copy of ``arr`` with specified indices deleted.
+
+  Note:
+    ``delete()`` usually requires the index specification to be static. If the
+    index is an integer array that is guaranteed to contain unique entries, you
+    may specify ``assume_unique_indices=True`` to perform the operation in a
+    manner that does not require static indices.
+
+  Examples:
+    Delete entries from a 1D array:
+
+    >>> a = jnp.array([4, 5, 6, 7, 8, 9])
+    >>> jnp.delete(a, 2)
+    Array([4, 5, 7, 8, 9], dtype=int32)
+    >>> jnp.delete(a, slice(1, 4))  # delete a[1:4]
+    Array([4, 8, 9], dtype=int32)
+    >>> jnp.delete(a, slice(None, None, 2))  # delete a[::2]
+    Array([5, 7, 9], dtype=int32)
+
+    Delete entries from a 2D array along a specified axis:
+
+    >>> a2 = jnp.array([[4, 5, 6],
+    ...                 [7, 8, 9]])
+    >>> jnp.delete(a2, 1, axis=1)
+    Array([[4, 6],
+           [7, 9]], dtype=int32)
+
+    Delete multiple entries via a sequence of indices:
+
+    >>> indices = jnp.array([0, 1, 3])
+    >>> jnp.delete(a, indices)
+    Array([6, 8, 9], dtype=int32)
+
+    This will fail under :func:`~jax.jit` and other transformations, because
+    the output shape cannot be known with the possibility of duplicate indices:
+
+    >>> jax.jit(jnp.delete)(a, indices)  # doctest: +IGNORE_EXCEPTION_DETAIL
+    Traceback (most recent call last):
+      ...
+    ConcretizationTypeError: Abstract tracer value encountered where concrete value is expected: traced array with shape int32[3].
+
+    If you can ensure that the indices are unique, pass ``assume_unique_indices``
+    to allow this to be executed under JIT:
+
+    >>> jit_delete = jax.jit(jnp.delete, static_argnames=['assume_unique_indices'])
+    >>> jit_delete(a, indices, assume_unique_indices=True)
+    Array([6, 8, 9], dtype=int32)
+  """
   util.check_arraylike("delete", arr)
   if axis is None:
     arr = ravel(arr)
@@ -3347,8 +3999,7 @@ def insert(arr: ArrayLike, obj: ArrayLike | slice, values: ArrayLike,
 def apply_along_axis(
     func1d: Callable, axis: int, arr: ArrayLike, *args, **kwargs
 ) -> Array:
-  # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
-  util.check_arraylike("apply_along_axis", arr, emit_warning=True)
+  util.check_arraylike("apply_along_axis", arr)
   num_dims = ndim(arr)
   axis = _canonicalize_axis(axis, num_dims)
   func = lambda arr: func1d(arr, *args, **kwargs)
@@ -3362,8 +4013,7 @@ def apply_along_axis(
 @util.implements(np.apply_over_axes)
 def apply_over_axes(func: Callable[[ArrayLike, int], Array], a: ArrayLike,
                     axes: Sequence[int]) -> Array:
-  # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
-  util.check_arraylike("apply_over_axes", a, emit_warning=True)
+  util.check_arraylike("apply_over_axes", a)
   a_arr = asarray(a)
   for axis in axes:
     b = func(a_arr, axis)
@@ -3378,20 +4028,71 @@ def apply_over_axes(func: Callable[[ArrayLike, int], Array], a: ArrayLike,
 
 ### Tensor contraction operations
 
-
-_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION = """
-preferred_element_type : dtype, optional
-    If specified, accumulate results and return a result of the given data type.
-    If not specified, the accumulation dtype is determined from the type promotion
-    rules of the input array dtypes.
-"""
-
-@util.implements(np.dot, lax_description=_PRECISION_DOC,
-                 extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def dot(a: ArrayLike, b: ArrayLike, *,
         precision: PrecisionLike = None,
         preferred_element_type: DTypeLike | None = None) -> Array:
+  """Compute the dot product of two arrays.
+
+  JAX implementation of :func:`numpy.dot`.
+
+  This differs from :func:`jax.numpy.matmul` in two respects:
+
+  - if either ``a`` or ``b`` is a scalar, the result of ``dot`` is equivalent to
+    :func:`jax.numpy.multiply`, while the result of ``matmul`` is an error.
+  - if ``a`` and ``b`` have more than 2 dimensions, the batch indices are
+    stacked rather than broadcast.
+
+  Args:
+    a: first input array, of shape ``(..., N)``.
+    b: second input array. Must have shape ``(N,)`` or ``(..., N, M)``.
+      In the multi-dimensional case, leading dimensions must be broadcast-compatible
+      with the leading dimensions of ``a``.
+    precision: either ``None`` (default), which means the default precision for
+      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      such values indicating precision of ``a`` and ``b``.
+    preferred_element_type: either ``None`` (default), which means the default
+      accumulation type for the input types, or a datatype, indicating to
+      accumulate results to and return a result with that datatype.
+
+  Returns:
+    array containing the dot product of the inputs, with batch dimensions of
+    ``a`` and ``b`` stacked rather than broadcast.
+
+  See also:
+    - :func:`jax.numpy.matmul`: broadcasted batched matmul.
+    - :func:`jax.lax.dot_general`: general batched matrix multiplication.
+
+  Examples:
+    For scalar inputs, ``dot`` computes the element-wise product:
+
+    >>> x = jnp.array([1, 2, 3])
+    >>> jnp.dot(x, 2)
+    Array([2, 4, 6], dtype=int32)
+
+    For vector or matrix inputs, ``dot`` computes the vector or matrix product:
+
+    >>> M = jnp.array([[2, 3, 4],
+    ...                [5, 6, 7],
+    ...                [8, 9, 0]])
+    >>> jnp.dot(M, x)
+    Array([20, 38, 26], dtype=int32)
+    >>> jnp.dot(M, M)
+    Array([[ 51,  60,  29],
+           [ 96, 114,  62],
+           [ 61,  78,  95]], dtype=int32)
+
+    For higher-dimensional matrix products, batch dimensions are stacked, whereas
+    in :func:`~jax.numpy.matmul` they are broadcast. For example:
+
+    >>> a = jnp.zeros((3, 2, 4))
+    >>> b = jnp.zeros((3, 4, 1))
+    >>> jnp.dot(a, b).shape
+    (3, 2, 3, 1)
+    >>> jnp.matmul(a, b).shape
+    (3, 2, 1)
+  """
   util.check_arraylike("dot", a, b)
   dtypes.check_user_dtype_supported(preferred_element_type, "dot")
   a, b = asarray(a), asarray(b)
@@ -3419,14 +4120,64 @@ def dot(a: ArrayLike, b: ArrayLike, *,
   return lax_internal._convert_element_type(result, preferred_element_type, output_weak_type)
 
 
-@util.implements(np.matmul, module='numpy', lax_description=_PRECISION_DOC,
-                 extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def matmul(a: ArrayLike, b: ArrayLike, *,
            precision: PrecisionLike = None,
            preferred_element_type: DTypeLike | None = None,
            ) -> Array:
-  """Matrix Multiply."""
+  """Perform a matrix multiplication.
+
+  JAX implementation of :func:`numpy.matmul`.
+
+  Args:
+    a: first input array, of shape ``(..., N)``.
+    b: second input array. Must have shape ``(N,)`` or ``(..., N, M)``.
+      In the multi-dimensional case, leading dimensions must be broadcast-compatible
+      with the leading dimensions of ``a``.
+    precision: either ``None`` (default), which means the default precision for
+      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      such values indicating precision of ``a`` and ``b``.
+    preferred_element_type: either ``None`` (default), which means the default
+      accumulation type for the input types, or a datatype, indicating to
+      accumulate results to and return a result with that datatype.
+
+  Returns:
+    array containing the matrix product of the inputs. Shape is ``a.shape[:-1]``
+    if ``b.ndim == 1``, otherwise the shape is ``(..., M)``, where leading
+    dimensions of ``a`` and ``b`` are broadcast together.
+
+  See Also:
+    - :func:`jax.numpy.linalg.vecdot`: batched vector product.
+    - :func:`jax.numpy.linalg.tensordot`: batched tensor product.
+    - :func:`jax.lax.dot_general`: general N-dimensional batched dot product.
+
+  Examples:
+    Vector dot products:
+
+    >>> a = jnp.array([1, 2, 3])
+    >>> b = jnp.array([4, 5, 6])
+    >>> jnp.matmul(a, b)
+    Array(32, dtype=int32)
+
+    Matrix dot product:
+
+    >>> a = jnp.array([[1, 2, 3],
+    ...                [4, 5, 6]])
+    >>> b = jnp.array([[1, 2],
+    ...                [3, 4],
+    ...                [5, 6]])
+    >>> jnp.matmul(a, b)
+    Array([[22, 28],
+           [49, 64]], dtype=int32)
+
+    For convenience, in all cases you can do the same computation using
+    the ``@`` operator:
+
+    >>> a @ b
+    Array([[22, 28],
+           [49, 64]], dtype=int32)
+  """
   util.check_arraylike("matmul", a, b)
   dtypes.check_user_dtype_supported(preferred_element_type, "matmul")
   a, b = asarray(a), asarray(b)
@@ -3492,14 +4243,47 @@ def matmul(a: ArrayLike, b: ArrayLike, *,
   return lax_internal._convert_element_type(result, preferred_element_type, output_weak_type)
 
 
-@util.implements(np.vdot, lax_description=_PRECISION_DOC,
-                 extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def vdot(
     a: ArrayLike, b: ArrayLike, *,
     precision: PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
 ) -> Array:
+  """Perform a conjugate multiplication of two 1D vectors.
+
+  JAX implementation of :func:`numpy.vdot`.
+
+  Args:
+    a: first input array, if not 1D it will be flattened.
+    b: second input array, if not 1D it will be flattened. Must have ``a.size == b.size``.
+    precision: either ``None`` (default), which means the default precision for
+      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      such values indicating precision of ``a`` and ``b``.
+    preferred_element_type: either ``None`` (default), which means the default
+      accumulation type for the input types, or a datatype, indicating to
+      accumulate results to and return a result with that datatype.
+
+  Returns:
+    Scalar array (shape ``()``) containing the conjugate vector product of the inputs.
+
+  See Also:
+    - :func:`jax.numpy.vecdot`: batched vector product.
+    - :func:`jax.numpy.matmul`: general matrix multiplication.
+    - :func:`jax.lax.dot_general`: general N-dimensional batched dot product.
+
+  Examples:
+    >>> x = jnp.array([1j, 2j, 3j])
+    >>> y = jnp.array([1., 2., 3.])
+    >>> jnp.vdot(x, y)
+    Array(0.-14.j, dtype=complex64)
+
+    Note the difference between this and :func:`~jax.numpy.dot`, which does not
+    conjugate the first input when complex:
+
+    >>> jnp.dot(x, y)
+    Array(0.+14.j, dtype=complex64)
+  """
   util.check_arraylike("vdot", a, b)
   if issubdtype(_dtype(a), complexfloating):
     a = ufuncs.conj(a)
@@ -3507,14 +4291,51 @@ def vdot(
              preferred_element_type=preferred_element_type)
 
 
-@util.implements(
-    getattr(np, "vecdot", None), lax_description=_PRECISION_DOC,
-    extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION,
-    # TODO(phawkins): numpy.vecdot doesn't have a __module__ attribute.
-    module="numpy")
 def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
            precision: PrecisionLike = None,
            preferred_element_type: DTypeLike | None = None) -> Array:
+  """Perform a conjugate multiplication of two batched vectors.
+
+  JAX implementation of :func:`numpy.vecdot`.
+
+  Args:
+    a: left-hand side array.
+    b: right-hand side array. Size of ``b[axis]`` must match size of ``a[axis]``,
+      and remaining dimensions must be broadcast-compatible.
+    axis: axis along which to compute the dot product (default: -1)
+    precision: either ``None`` (default), which means the default precision for
+      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      such values indicating precision of ``a`` and ``b``.
+    preferred_element_type: either ``None`` (default), which means the default
+      accumulation type for the input types, or a datatype, indicating to
+      accumulate results to and return a result with that datatype.
+
+  Returns:
+    array containing the conjugate dot product of ``a`` and ``b`` along ``axis``.
+    The non-contracted dimensions are broadcast together.
+
+  See Also:
+    - :func:`jax.numpy.vdot`: flattened vector product.
+    - :func:`jax.numpy.matmul`: general matrix multiplication.
+    - :func:`jax.lax.dot_general`: general N-dimensional batched dot product.
+
+  Examples:
+    Vector conjugate-dot product of two 1D arrays:
+
+    >>> a = jnp.array([1j, 2j, 3j])
+    >>> b = jnp.array([4., 5., 6.])
+    >>> jnp.linalg.vecdot(a, b)
+    Array(0.-32.j, dtype=complex64)
+
+    Batched vector dot product of two 2D arrays:
+
+    >>> a = jnp.array([[1, 2, 3],
+    ...                [4, 5, 6]])
+    >>> b = jnp.array([[2, 3, 4]])
+    >>> jnp.linalg.vecdot(a, b, axis=-1)
+    Array([20, 47], dtype=int32)
+  """
   util.check_arraylike("jnp.vecdot", x1, x2)
   x1_arr, x2_arr = asarray(x1), asarray(x2)
   if x1_arr.shape[axis] != x2_arr.shape[axis]:
@@ -3525,12 +4346,81 @@ def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
                    signature="(n),(n)->()")(x1_arr, x2_arr)
 
 
-@util.implements(np.tensordot, lax_description=_PRECISION_DOC,
-                 extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 def tensordot(a: ArrayLike, b: ArrayLike,
               axes: int | Sequence[int] | Sequence[Sequence[int]] = 2,
               *, precision: PrecisionLike = None,
               preferred_element_type: DTypeLike | None = None) -> Array:
+  """Compute the tensor dot product of two N-dimensional arrays.
+
+  JAX implementation of :func:`numpy.linalg.tensordot`.
+
+  Args:
+    a: N-dimensional array
+    b: M-dimensional array
+    axes: integer or tuple of sequences of integers. If an integer `k`, then
+      sum over the last `k` axes of ``a`` and the first `k` axes of ``b``,
+      in order. If a tuple, then ``axes[0]`` specifies the axes of ``a`` and
+      ``axes[1]`` specifies the axes of ``b``.
+    precision: either ``None`` (default), which means the default precision for
+      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      such values indicating precision of ``a`` and ``b``.
+    preferred_element_type: either ``None`` (default), which means the default
+      accumulation type for the input types, or a datatype, indicating to
+      accumulate results to and return a result with that datatype.
+
+  Returns:
+    array containing the tensor dot product of the inputs
+
+  See also:
+    - :func:`jax.numpy.einsum`: NumPy API for more general tensor contractions.
+    - :func:`jax.lax.dot_general`: XLA API for more general tensor contractions.
+
+  Examples:
+    >>> x1 = jnp.arange(24.).reshape(2, 3, 4)
+    >>> x2 = jnp.ones((3, 4, 5))
+    >>> jnp.tensordot(x1, x2)
+    Array([[ 66.,  66.,  66.,  66.,  66.],
+           [210., 210., 210., 210., 210.]], dtype=float32)
+
+    Equivalent result when specifying the axes as explicit sequences:
+
+    >>> jnp.tensordot(x1, x2, axes=([1, 2], [0, 1]))
+    Array([[ 66.,  66.,  66.,  66.,  66.],
+           [210., 210., 210., 210., 210.]], dtype=float32)
+
+    Equivalent result via :func:`~jax.numpy.einsum`:
+
+    >>> jnp.einsum('ijk,jkm->im', x1, x2)
+    Array([[ 66.,  66.,  66.,  66.,  66.],
+           [210., 210., 210., 210., 210.]], dtype=float32)
+
+    Setting ``axes=1`` for two-dimensional inputs is equivalent to a matrix
+    multiplication:
+
+    >>> x1 = jnp.array([[1, 2],
+    ...                 [3, 4]])
+    >>> x2 = jnp.array([[1, 2, 3],
+    ...                 [4, 5, 6]])
+    >>> jnp.linalg.tensordot(x1, x2, axes=1)
+    Array([[ 9, 12, 15],
+           [19, 26, 33]], dtype=int32)
+    >>> x1 @ x2
+    Array([[ 9, 12, 15],
+           [19, 26, 33]], dtype=int32)
+
+    Setting ``axes=0`` for one-dimensional inputs is equivalent to
+    :func:`~jax.numpy.outer`:
+
+    >>> x1 = jnp.array([1, 2])
+    >>> x2 = jnp.array([1, 2, 3])
+    >>> jnp.linalg.tensordot(x1, x2, axes=0)
+    Array([[1, 2, 3],
+           [2, 4, 6]], dtype=int32)
+    >>> jnp.outer(x1, x2)
+    Array([[1, 2, 3],
+           [2, 4, 6]], dtype=int32)
+  """
   util.check_arraylike("tensordot", a, b)
   dtypes.check_user_dtype_supported(preferred_element_type, "tensordot")
   a, b = asarray(a), asarray(b)
@@ -3571,21 +4461,17 @@ def tensordot(a: ArrayLike, b: ArrayLike,
   return lax_internal._convert_element_type(result, preferred_element_type, output_weak_type)
 
 
-_EINSUM_DOC = _PRECISION_DOC + """\
-A tuple ``precision`` does not necessarily map to multiple arguments of ``einsum()``;
-rather, the specified ``precision`` is forwarded to each ``dot_general`` call used in
-the implementation.
-
-:func:`jax.numpy.einsum` also differs from :func:`numpy.einsum` in that the ``optimize``
-keyword defaults to ``"optimal"`` rather than ``False``.
-"""
+class Unoptimized(opt_einsum.paths.PathOptimizer):
+  """Unoptimized path for einsum."""
+  def __call__(self, inputs, *args, **kwargs):
+    return [(0, 1)] * (len(inputs) - 1)
 
 @overload
 def einsum(
     subscript: str, /,
     *operands: ArrayLike,
     out: None = None,
-    optimize: str = "optimal",
+    optimize: str | bool | list[tuple[int, ...]] = "optimal",
     precision: PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
@@ -3597,27 +4483,234 @@ def einsum(
     axes: Sequence[Any], /,
     *operands: ArrayLike | Sequence[Any],
     out: None = None,
-    optimize: str = "optimal",
+    optimize: str | bool | list[tuple[int, ...]] = "optimal",
     precision: PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
 ) -> Array: ...
 
-@util.implements(np.einsum, lax_description=_EINSUM_DOC, skip_params=['out'])
 def einsum(
     subscripts, /,
     *operands,
     out: None = None,
-    optimize: str = "optimal",
+    optimize: str | bool | list[tuple[int, ...]] = "optimal",
     precision: PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
 ) -> Array:
+  """Einstein summation
+
+  JAX implementation of :func:`numpy.einsum`.
+
+  ``einsum`` is a powerful and generic API for computing various reductions,
+  inner products, outer products, axis reorderings, and combinations thereof
+  across one or more input arrays. It has a somewhat complicated overloaded API;
+  the arguments below reflect the most common calling convention. The Examples
+  section below demonstrates some of the alternative calling conventions.
+
+  Args:
+    subscripts: string containing axes names separated by commas.
+    *operands: sequence of one or more arrays corresponding to the subscripts.
+    optimize: specify how to optimize the order of computation. In JAX this defaults
+      to ``"optimal"`` which produces optimized expressions via the opt_einsum_
+      package. Other options are ``True`` (same as ``"optimal"``), ``False``
+      (unoptimized), or any string supported by ``opt_einsum``, which
+      includes ``"auto"``, ``"greedy"``, ``"eager"``, and others. It may also
+      be a pre-computed path (see :func:`~jax.numpy.einsum_path`).
+    precision: either ``None`` (default), which means the default precision for
+      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``).
+    preferred_element_type: either ``None`` (default), which means the default
+      accumulation type for the input types, or a datatype, indicating to
+      accumulate results to and return a result with that datatype.
+    out: unsupported by JAX
+    _dot_general: optionally override the ``dot_general`` callable used by ``einsum``.
+      This parameter is experimental, and may be removed without warning at any time.
+
+  Returns:
+    array containing the result of the einstein summation.
+
+  See also:
+    :func:`jax.numpy.einsum_path`
+
+  Examples:
+    The mechanics of ``einsum`` are perhaps best demonstrated by example. Here we
+    show how to use ``einsum`` to compute a number of quantities from one or more
+    arrays. For more discussion and examples of ``einsum``, see the documentation
+    of :func:`numpy.einsum`.
+
+    >>> M = jnp.arange(16).reshape(4, 4)
+    >>> x = jnp.arange(4)
+    >>> y = jnp.array([5, 4, 3, 2])
+
+    **Vector product**
+
+    >>> jnp.einsum('i,i', x, y)
+    Array(16, dtype=int32)
+    >>> jnp.vecdot(x, y)
+    Array(16, dtype=int32)
+
+    Here are some alternative ``einsum`` calling conventions to comput the same
+    result:
+
+    >>> jnp.einsum('i,i->', x, y)  # explicit form
+    Array(16, dtype=int32)
+    >>> jnp.einsum(x, (0,), y, (0,))  # implicit form via indices
+    Array(16, dtype=int32)
+    >>> jnp.einsum(x, (0,), y, (0,), ())  # explicit form via indices
+    Array(16, dtype=int32)
+
+    **Matrix product**
+
+    >>> jnp.einsum('ij,j->i', M, x)  # explicit form
+    Array([14, 38, 62, 86], dtype=int32)
+    >>> jnp.matmul(M, x)
+    Array([14, 38, 62, 86], dtype=int32)
+
+    Here are some alternative ``einsum`` calling conventions to compute the same
+    result:
+
+    >>> jnp.einsum('ij,j', M, x) # implicit form
+    Array([14, 38, 62, 86], dtype=int32)
+    >>> jnp.einsum(M, (0, 1), x, (1,), (0,)) # explicit form via indices
+    Array([14, 38, 62, 86], dtype=int32)
+    >>> jnp.einsum(M, (0, 1), x, (1,))  # implicit form via indices
+    Array([14, 38, 62, 86], dtype=int32)
+
+    **Outer product**
+
+    >>> jnp.einsum("i,j->ij", x, y)
+    Array([[ 0,  0,  0,  0],
+           [ 5,  4,  3,  2],
+           [10,  8,  6,  4],
+           [15, 12,  9,  6]], dtype=int32)
+    >>> jnp.outer(x, y)
+    Array([[ 0,  0,  0,  0],
+           [ 5,  4,  3,  2],
+           [10,  8,  6,  4],
+           [15, 12,  9,  6]], dtype=int32)
+
+    Some other ways of computing outer products:
+
+    >>> jnp.einsum("i,j", x, y)  # implicit form
+    Array([[ 0,  0,  0,  0],
+           [ 5,  4,  3,  2],
+           [10,  8,  6,  4],
+           [15, 12,  9,  6]], dtype=int32)
+    >>> jnp.einsum(x, (0,), y, (1,), (0, 1))  # explicit form via indices
+    Array([[ 0,  0,  0,  0],
+           [ 5,  4,  3,  2],
+           [10,  8,  6,  4],
+           [15, 12,  9,  6]], dtype=int32)
+    >>> jnp.einsum(x, (0,), y, (1,))  # implicit form via indices
+    Array([[ 0,  0,  0,  0],
+           [ 5,  4,  3,  2],
+           [10,  8,  6,  4],
+           [15, 12,  9,  6]], dtype=int32)
+
+    **1D array sum**
+
+    >>> jnp.einsum("i->", x)  # requires explicit form
+    Array(6, dtype=int32)
+    >>> jnp.einsum(x, (0,), ())  # explicit form via indices
+    Array(6, dtype=int32)
+    >>> jnp.sum(x)
+    Array(6, dtype=int32)
+
+    **Sum along an axis**
+
+    >>> jnp.einsum("...j->...", M)  # requires explicit form
+    Array([ 6, 22, 38, 54], dtype=int32)
+    >>> jnp.einsum(M, (..., 0), (...,))  # explicit form via indices
+    Array([ 6, 22, 38, 54], dtype=int32)
+    >>> M.sum(-1)
+    Array([ 6, 22, 38, 54], dtype=int32)
+
+    **Matrix transpose**
+
+    >>> y = jnp.array([[1, 2, 3],
+    ...                [4, 5, 6]])
+    >>> jnp.einsum("ij->ji", y)  # explicit form
+    Array([[1, 4],
+           [2, 5],
+           [3, 6]], dtype=int32)
+    >>> jnp.einsum("ji", y)  # implicit form
+    Array([[1, 4],
+           [2, 5],
+           [3, 6]], dtype=int32)
+    >>> jnp.einsum(y, (1, 0))  # implicit form via indices
+    Array([[1, 4],
+           [2, 5],
+           [3, 6]], dtype=int32)
+    >>> jnp.einsum(y, (0, 1), (1, 0))  # explicit form via indices
+    Array([[1, 4],
+           [2, 5],
+           [3, 6]], dtype=int32)
+    >>> jnp.transpose(y)
+    Array([[1, 4],
+           [2, 5],
+           [3, 6]], dtype=int32)
+
+    **Matrix diagonal**
+
+    >>> jnp.einsum("ii->i", M)
+    Array([ 0,  5, 10, 15], dtype=int32)
+    >>> jnp.diagonal(M)
+    Array([ 0,  5, 10, 15], dtype=int32)
+
+    **Matrix trace**
+
+    >>> jnp.einsum("ii", M)
+    Array(30, dtype=int32)
+    >>> jnp.trace(M)
+    Array(30, dtype=int32)
+
+    **Tensor products**
+
+    >>> x = jnp.arange(30).reshape(2, 3, 5)
+    >>> y = jnp.arange(60).reshape(3, 4, 5)
+    >>> jnp.einsum('ijk,jlk->il', x, y)  # explicit form
+    Array([[ 3340,  3865,  4390,  4915],
+           [ 8290,  9940, 11590, 13240]], dtype=int32)
+    >>> jnp.tensordot(x, y, axes=[(1, 2), (0, 2)])
+    Array([[ 3340,  3865,  4390,  4915],
+           [ 8290,  9940, 11590, 13240]], dtype=int32)
+    >>> jnp.einsum('ijk,jlk', x, y)  # implicit form
+    Array([[ 3340,  3865,  4390,  4915],
+           [ 8290,  9940, 11590, 13240]], dtype=int32)
+    >>> jnp.einsum(x, (0, 1, 2), y, (1, 3, 2), (0, 3))  # explicit form via indices
+    Array([[ 3340,  3865,  4390,  4915],
+           [ 8290,  9940, 11590, 13240]], dtype=int32)
+    >>> jnp.einsum(x, (0, 1, 2), y, (1, 3, 2))  # implicit form via indices
+    Array([[ 3340,  3865,  4390,  4915],
+           [ 8290,  9940, 11590, 13240]], dtype=int32)
+
+    **Chained dot products**
+
+    >>> w = jnp.arange(5, 9).reshape(2, 2)
+    >>> x = jnp.arange(6).reshape(2, 3)
+    >>> y = jnp.arange(-2, 4).reshape(3, 2)
+    >>> z = jnp.array([[2, 4, 6], [3, 5, 7]])
+    >>> jnp.einsum('ij,jk,kl,lm->im', w, x, y, z)
+    Array([[ 481,  831, 1181],
+           [ 651, 1125, 1599]], dtype=int32)
+    >>> jnp.einsum(w, (0, 1), x, (1, 2), y, (2, 3), z, (3, 4))  # implicit, via indices
+    Array([[ 481,  831, 1181],
+           [ 651, 1125, 1599]], dtype=int32)
+    >>> w @ x @ y @ z  # direct chain of matmuls
+    Array([[ 481,  831, 1181],
+           [ 651, 1125, 1599]], dtype=int32)
+    >>> jnp.linalg.multi_dot([w, x, y, z])
+    Array([[ 481,  831, 1181],
+           [ 651, 1125, 1599]], dtype=int32)
+
+  .. _opt_einsum: https://github.com/dgasmith/opt_einsum
+  """
   operands = (subscripts, *operands)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.einsum is not supported.")
   spec = operands[0] if isinstance(operands[0], str) else None
-  optimize = 'optimal' if optimize is True else optimize
+  path_type = 'optimal' if optimize is True else Unoptimized() if optimize is False else optimize
 
   # Allow handling of shape polymorphism
   non_constant_dim_types = {
@@ -3631,7 +4724,7 @@ def einsum(
     contract_path = _poly_einsum_handlers.get(ty, _default_poly_einsum_handler)
   # using einsum_call=True here is an internal api for opt_einsum... sorry
   operands, contractions = contract_path(
-        *operands, einsum_call=True, use_blas=True, optimize=optimize)
+        *operands, einsum_call=True, use_blas=True, optimize=path_type)
 
   contractions = tuple((a, frozenset(b), c) for a, b, c, *_ in contractions)
 
@@ -3655,9 +4748,77 @@ def _default_poly_einsum_handler(*operands, **kwargs):
   contract_operands = [operands[mapping[id(d)]] for d in out_dummies]
   return contract_operands, contractions
 
-@util.implements(np.einsum_path)
-def einsum_path(subscripts, *operands, optimize='greedy'):
-  # using einsum_call=True here is an internal api for opt_einsum
+@overload
+def einsum_path(
+    subscripts: str, /,
+    *operands: ArrayLike,
+    optimize: bool | str | list[tuple[int, ...]] =  ...,
+) -> tuple[list[tuple[int, ...]], Any]: ...
+
+@overload
+def einsum_path(
+    arr: ArrayLike,
+    axes: Sequence[Any], /,
+    *operands: ArrayLike | Sequence[Any],
+    optimize: bool | str | list[tuple[int, ...]] =  ...,
+) -> tuple[list[tuple[int, ...]], Any]: ...
+
+def einsum_path(
+    subscripts, /,
+    *operands,
+    optimize: bool | str | list[tuple[int, ...]] = 'auto'
+  ) -> tuple[list[tuple[int, ...]], Any]:
+  """Evaluates the optimal contraction path without evaluating the einsum.
+
+  JAX implementation of :func:`jax.numpy.einsum_path`. This function calls into
+  the opt_einsum_ package, and makes use of its optimization routines.
+
+  Args:
+    subscripts: string containing axes names separated by commas.
+    *operands: sequence of one or more arrays corresponding to the subscripts.
+    optimize: specify how to optimize the order of computation. In JAX this defaults
+      to ``"auto"``. Other options are ``True`` (same as ``"optimize"``), ``False``
+      (unoptimized), or any string supported by ``opt_einsum``, which
+      includes ``"optimize"``,, ``"greedy"``, ``"eager"``, and others.
+
+  Returns:
+    A tuple containing the path that may be passed to :func:`~jax.numpy.einsum`, and a
+    printable object representing this optimal path.
+
+  Example:
+    >>> key1, key2, key3 = jax.random.split(jax.random.key(0), 3)
+    >>> x = jax.random.randint(key1, minval=-5, maxval=5, shape=(2, 3))
+    >>> y = jax.random.randint(key2, minval=-5, maxval=5, shape=(3, 100))
+    >>> z = jax.random.randint(key3, minval=-5, maxval=5, shape=(100, 5))
+    >>> path, path_info = jnp.einsum_path("ij,jk,kl", x, y, z, optimize="optimal")
+    >>> print(path)
+    [(1, 2), (0, 1)]
+    >>> print(path_info)
+          Complete contraction:  ij,jk,kl->il
+                Naive scaling:  4
+            Optimized scaling:  3
+              Naive FLOP count:  9.000e+3
+          Optimized FLOP count:  3.060e+3
+          Theoretical speedup:  2.941e+0
+          Largest intermediate:  1.500e+1 elements
+        --------------------------------------------------------------------------------
+        scaling        BLAS                current                             remaining
+        --------------------------------------------------------------------------------
+          3           GEMM              kl,jk->lj                             ij,lj->il
+          3           GEMM              lj,ij->il                                il->il
+
+    Use the computed path in :func:`~jax.numpy.einsum`:
+
+    >>> jnp.einsum("ij,jk,kl", x, y, z, optimize=path)
+    Array([[-539,  216,   95,  592,  209],
+           [ 527,   76,  285, -436, -529]], dtype=int32)
+
+  .. _opt_einsum: https://github.com/dgasmith/opt_einsum
+  """
+  if optimize is True:
+    optimize = 'optimal'
+  elif optimize is False:
+    optimize = Unoptimized()
   return opt_einsum.contract_path(subscripts, *operands, optimize=optimize)
 
 def _removechars(s, chars):
@@ -3814,15 +4975,54 @@ def _einsum(
   return lax_internal._convert_element_type(operands[0], preferred_element_type, output_weak_type)
 
 
-@util.implements(np.inner, lax_description=_PRECISION_DOC,
-                 extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def inner(
     a: ArrayLike, b: ArrayLike, *, precision: PrecisionLike = None,
     preferred_element_type: DType | None = None,
 ) -> Array:
-  # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
-  util.check_arraylike("inner", a, b, emit_warning=True)
+  """Compute the inner product of two arrays.
+
+  JAX implementation of :func:`numpy.inner`.
+
+  Unlike :func:`jax.numpy.matmul` or :func:`jax.numpy.dot`, this always performs
+  a contraction along the last dimension of each input.
+
+  Args:
+    a: array of shape ``(..., N)``
+    b: array of shape ``(..., N)``
+    precision: either ``None`` (default), which means the default precision for
+      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      such values indicating precision of ``a`` and ``b``.
+    preferred_element_type: either ``None`` (default), which means the default
+      accumulation type for the input types, or a datatype, indicating to
+      accumulate results to and return a result with that datatype.
+
+  Returns:
+    array of shape ``(*a.shape[:-1], *b.shape[:-1])`` containing the batched vector
+    product of the inputs.
+
+  See also:
+    - :func:`jax.numpy.vecdot`: conjugate multiplication along a specified axis.
+    - :func:`jax.numpy.tensordot`: general tensor multiplication.
+    - :func:`jax.numpy.matmul`: general batched matrix & vector multiplication.
+
+  Examples:
+    For 1D inputs, this implements standard (non-conjugate) vector multiplication:
+
+    >>> a = jnp.array([1j, 3j, 4j])
+    >>> b = jnp.array([4., 2., 5.])
+    >>> jnp.inner(a, b)
+    Array(0.+30.j, dtype=complex64)
+
+    For multi-dimensional inputs, batch dimensions are stacked rather than broadcast:
+
+    >>> a = jnp.ones((2, 3))
+    >>> b = jnp.ones((5, 3))
+    >>> jnp.inner(a, b).shape
+    (2, 5)
+  """
+  util.check_arraylike("inner", a, b)
   if ndim(a) == 0 or ndim(b) == 0:
     a = asarray(a, dtype=preferred_element_type)
     b = asarray(b, dtype=preferred_element_type)
@@ -3836,8 +5036,7 @@ def inner(
 def outer(a: ArrayLike, b: ArrayLike, out: None = None) -> Array:
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.outer is not supported.")
-  # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
-  util.check_arraylike("outer", a, b, emit_warning=True)
+  util.check_arraylike("outer", a, b)
   a, b = util.promote_dtypes(a, b)
   return ravel(a)[:, None] * ravel(b)[None, :]
 
@@ -3846,8 +5045,7 @@ def outer(a: ArrayLike, b: ArrayLike, out: None = None) -> Array:
 def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
           axis: int | None = None):
   # TODO(jakevdp): NumPy 2.0 deprecates 2D inputs. Follow suit here.
-  # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
-  util.check_arraylike("cross", a, b, emit_warning=True)
+  util.check_arraylike("cross", a, b)
   if axis is not None:
     axisa = axis
     axisb = axis
@@ -3874,8 +5072,7 @@ def cross(a, b, axisa: int = -1, axisb: int = -1, axisc: int = -1,
 @util.implements(np.kron)
 @jit
 def kron(a: ArrayLike, b: ArrayLike) -> Array:
-  # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
-  util.check_arraylike("kron", a, b, emit_warning=True)
+  util.check_arraylike("kron", a, b)
   a, b = util.promote_dtypes(a, b)
   if ndim(a) < ndim(b):
     a = expand_dims(a, range(ndim(b) - ndim(a)))
@@ -3910,36 +5107,66 @@ def vander(
 
 ### Misc
 
-_ARGWHERE_DOC = """\
-Because the size of the output of ``argwhere`` is data-dependent, the function is not
-typically compatible with JIT. The JAX version adds the optional ``size`` argument, which
-specifies the size of the leading dimension of the output - it must be specified statically
-for ``jnp.argwhere`` to be compiled with non-static operands. If ``size`` is specified,
-the indices of the first ``size`` True elements will be returned; if there are fewer
-nonzero elements than `size` indicates, the index arrays will be zero-padded.
-"""
-
-
-@util.implements(np.argwhere,
-  lax_description=_dedent("""
-    Because the size of the output of ``argwhere`` is data-dependent, the function is not
-    typically compatible with JIT. The JAX version adds the optional ``size`` argument which
-    must be specified statically for ``jnp.argwhere`` to be used within some of JAX's
-    transformations."""),
-  extra_params=_dedent("""
-    size : int, optional
-        If specified, the indices of the first ``size`` True elements will be returned. If there
-        are fewer results than ``size`` indicates, the return value will be padded with ``fill_value``.
-    fill_value : array_like, optional
-        When ``size`` is specified and there are fewer than the indicated number of elements, the
-        remaining elements will be filled with ``fill_value``, which defaults to zero."""))
 def argwhere(
     a: ArrayLike,
     *,
     size: int | None = None,
     fill_value: ArrayLike | None = None,
 ) -> Array:
-  result = transpose(vstack(nonzero(a, size=size, fill_value=fill_value)))
+  """Find the indices of nonzero array elements
+
+  JAX implementation of :func:`numpy.argwhere`.
+
+  ``jnp.argwhere(x)`` is essentially equivalent to ``jnp.column_stack(jnp.nonzero(x))``
+  with special handling for zero-dimensional (i.e. scalar) inputs.
+
+  Because the size of the output of ``argwhere`` is data-dependent, the function is not
+  typically compatible with JIT. The JAX version adds the optional ``size`` argument, which
+  specifies the size of the leading dimension of the output - it must be specified statically
+  for ``jnp.argwhere`` to be compiled with non-static operands. See :func:`jax.numpy.nonzero`
+  for a full discussion of ``size`` and its semantics.
+
+  Args:
+    a: array for which to find nonzero elements
+    size: optional integer specifying statically the number of expected nonzero elements.
+      This must be specified in order to use ``argwhere`` within JAX transformations like
+      :func:`jax.jit`. See :func:`jax.numpy.nonzero` for more information.
+    fill_value: optional array specifying the fill value when ``size`` is specified.
+      See :func:`jax.numpy.nonzero` for more information.
+
+  Returns:
+    a two-dimensional array of shape ``[size, x.ndim]``. If ``size`` is not specified as
+    an argument, it is equal to the number of nonzero elements in ``x``.
+
+  See Also:
+    - :func:`jax.numpy.where`
+    - :func:`jax.numpy.nonzero`
+
+  Examples:
+    Two-dimensional array:
+
+    >>> x = jnp.array([[1, 0, 2],
+    ...                [0, 3, 0]])
+    >>> jnp.argwhere(x)
+    Array([[0, 0],
+           [0, 2],
+           [1, 1]], dtype=int32)
+
+    Equivalent computation using :func:`jax.numpy.column_stack` and :func:`jax.numpy.nonzero`:
+
+    >>> jnp.column_stack(jnp.nonzero(x))
+    Array([[0, 0],
+           [0, 2],
+           [1, 1]], dtype=int32)
+
+    Special case for zero-dimensional (i.e. scalar) inputs:
+
+    >>> jnp.argwhere(1)
+    Array([], shape=(1, 0), dtype=int32)
+    >>> jnp.argwhere(0)
+    Array([], shape=(0, 0), dtype=int32)
+  """
+  result = transpose(vstack(nonzero(atleast_1d(a), size=size, fill_value=fill_value)))
   if ndim(a) == 0:
     return result[:0].reshape(result.shape[0], 0)
   return result.reshape(result.shape[0], ndim(a))
@@ -4043,30 +5270,29 @@ def _nanargmin(a, axis: int | None = None, keepdims : bool = False):
 
 
 @util.implements(np.sort, extra_params="""
-kind : deprecated; specify sort algorithm using stable=True or stable=False
-order : not supported
 stable : bool, default=True
     Specify whether to use a stable sort.
 descending : bool, default=False
     Specify whether to do a descending sort.
-    """)
+kind : deprecated; specify sort algorithm using stable=True or stable=False
+order : not supported
+""")
 @partial(jit, static_argnames=('axis', 'kind', 'order', 'stable', 'descending'))
 def sort(
     a: ArrayLike,
     axis: int | None = -1,
-    kind: str | None = None,
-    order: None = None, *,
+    *,
+    kind: None = None,
+    order: None = None,
     stable: bool = True,
     descending: bool = False,
 ) -> Array:
   util.check_arraylike("sort", a)
   if kind is not None:
-    # Deprecated 2024-01-05
-    warnings.warn("The 'kind' argument to sort has no effect, and is deprecated. "
-                  "Use stable=True or stable=False to specify sort stability.",
-                  category=DeprecationWarning, stacklevel=2)
+    raise TypeError("'kind' argument to sort is not supported. Use"
+                    " stable=True or stable=False to specify sort stability.")
   if order is not None:
-    raise ValueError("'order' argument to sort is not supported.")
+    raise TypeError("'order' argument to sort is not supported.")
   if axis is None:
     arr = ravel(a)
     axis = 0
@@ -4088,8 +5314,7 @@ def sort_complex(a: ArrayLike) -> Array:
 @partial(jit, static_argnames=('axis',))
 def lexsort(keys: Array | np.ndarray | Sequence[ArrayLike], axis: int = -1) -> Array:
   key_tuple = tuple(keys)
-  # TODO(jakevdp): Non-array input deprecated 2023-09-22; change to error.
-  util.check_arraylike("lexsort", *key_tuple, emit_warning=True)
+  util.check_arraylike("lexsort", *key_tuple)
   key_arrays = tuple(asarray(k) for k in key_tuple)
   if len(key_arrays) == 0:
     raise TypeError("need sequence of keys with len > 0 in lexsort")
@@ -4104,31 +5329,30 @@ def lexsort(keys: Array | np.ndarray | Sequence[ArrayLike], axis: int = -1) -> A
 
 
 @util.implements(np.argsort, extra_params="""
-kind : deprecated; specify sort algorithm using stable=True or stable=False
-order : not supported
 stable : bool, default=True
     Specify whether to use a stable sort.
 descending : bool, default=False
     Specify whether to do a descending sort.
+kind : deprecated; specify sort algorithm using stable=True or stable=False
+order : not supported
     """)
 @partial(jit, static_argnames=('axis', 'kind', 'order', 'stable', 'descending'))
 def argsort(
     a: ArrayLike,
     axis: int | None = -1,
-    kind: str | None = None,
+    *,
+    kind: None = None,
     order: None = None,
-    *, stable: bool = True,
+    stable: bool = True,
     descending: bool = False,
 ) -> Array:
   util.check_arraylike("argsort", a)
   arr = asarray(a)
   if kind is not None:
-    # Deprecated 2024-01-05
-    warnings.warn("The 'kind' argument to argsort has no effect, and is deprecated. "
-                  "Use stable=True or stable=False to specify sort stability.",
-                  category=DeprecationWarning, stacklevel=2)
+    raise TypeError("'kind' argument to argsort is not supported. Use"
+                    " stable=True or stable=False to specify sort stability.")
   if order is not None:
-    raise ValueError("'order' argument to argsort is not supported.")
+    raise TypeError("'order' argument to argsort is not supported.")
   if axis is None:
     arr = ravel(arr)
     axis = 0
@@ -4249,9 +5473,58 @@ def roll(a: ArrayLike, shift: ArrayLike | Sequence[int],
     return _roll_static(arr, shift, axis)
 
 
-@util.implements(np.rollaxis, lax_description=_ARRAY_VIEW_DOC)
 @partial(jit, static_argnames=('axis', 'start'))
 def rollaxis(a: ArrayLike, axis: int, start: int = 0) -> Array:
+  """Roll the specified axis to a given position.
+
+  JAX implementation of :func:`numpy.rollaxis`.
+
+  This function exists for compatibility with NumPy, but in most cases the newer
+  :func:`jax.numpy.moveaxis` instead, because the meaning of its arguments is
+  more intuitive.
+
+  Args:
+    a: input array.
+    axis: index of the axis to roll forward.
+    start: index toward which the axis will be rolled (default = 0). After
+      normalizing negative axes, if ``start <= axis``, the axis is rolled to
+      the ``start`` index; if ``start > axis``, the axis is rolled until the
+      position before ``start``.
+
+  Returns:
+    Copy of ``a`` with rolled axis.
+
+  Notes:
+    Unlike :func:`numpy.rollaxis`, :func:`jax.numpy.rollaxis` will return a copy rather
+    than a view of the input array. However, under JIT, the compiler will optimize away
+    such copies when possible, so this doesn't have performance impacts in practice.
+
+  See also:
+    - :func:`jax.numpy.moveaxis`: newer API with clearer semantics than ``rollaxis``;
+      this should be preferred to ``rollaxis`` in most cases.
+    - :func:`jax.numpy.swapaxes`: swap two axes.
+    - :func:`jax.numpy.transpose`: general permutation of axes.
+
+  Examples:
+    >>> a = jnp.ones((2, 3, 4, 5))
+
+    Roll axis 2 to the start of the array:
+
+    >>> jnp.rollaxis(a, 2).shape
+    (4, 2, 3, 5)
+
+    Roll axis 1 to the end of the array:
+
+    >>> jnp.rollaxis(a, 1, a.ndim).shape
+    (2, 4, 5, 3)
+
+    Equivalent of these two with :func:`~jax.numpy.moveaxis`
+
+    >>> jnp.moveaxis(a, 2, 0).shape
+    (4, 2, 3, 5)
+    >>> jnp.moveaxis(a, 1, -1).shape
+    (2, 4, 5, 3)
+  """
   util.check_arraylike("rollaxis", a)
   start = core.concrete_or_error(operator.index, start, "'start' argument of jnp.rollaxis()")
   a_ndim = ndim(a)
@@ -4579,6 +5852,10 @@ def _attempt_rewriting_take_via_slice(arr: Array, idx: Any, mode: str | None) ->
          for i in idx if isinstance(i, slice)
          for elt in (i.start, i.stop, i.step)):
     return None
+
+  if any(i is Ellipsis for i in idx):
+    # Remove ellipses and add trailing `slice(None)`.
+    idx = _canonicalize_tuple_index(arr.ndim, idx=idx)
 
   simple_revs = {i for i, ind in enumerate(idx) if _is_simple_reverse_slice(ind)}
   int_indices = {i for i, (ind, size) in enumerate(zip(idx, arr.shape))
@@ -5264,15 +6541,134 @@ def lcm(x1: ArrayLike, x2: ArrayLike) -> Array:
                ufuncs.multiply(x1, ufuncs.floor_divide(x2, d)))
 
 
-@util.implements(np.extract)
-def extract(condition: ArrayLike, arr: ArrayLike) -> Array:
-  return compress(ravel(condition), ravel(arr))
+def extract(condition: ArrayLike, arr: ArrayLike,
+            *, size: int | None = None, fill_value: ArrayLike = 0) -> Array:
+  """Return the elements of an array that satisfy a condition.
+
+  JAX implementation of :func:`numpy.extract`.
+
+  Args:
+    condition: array of conditions. Will be converted to boolean and flattened to 1D.
+    arr: array of values to extract. Will be flattened to 1D.
+    size: optional static size for output. Must be specified in order for ``extract``
+      to be compatible with JAX transformations like :func:`~jax.jit` or :func:`~jax.vmap`.
+    fill_value: if ``size`` is specified, fill padded entries with this value (default: 0).
+
+  Returns:
+    1D array of extracted entries . If ``size`` is specified, the result will have shape
+    ``(size,)`` and be right-padded with ``fill_value``. If ``size`` is not specified,
+    the output shape will depend on the number of True entries in ``condition``.
+
+  Notes:
+    This function does not require strict shape agreement between ``condition`` and ``arr``.
+    If ``condition.size > ``arr.size``, then ``condition`` will be truncated, and if
+    ``arr.size > condition.size``, then ``arr`` will be truncated.
+
+  See also:
+    :func:`jax.numpy.compress`: multi-dimensional version of ``extract``.
+
+  Examples:
+     Extract values from a 1D array:
+
+     >>> x = jnp.array([1, 2, 3, 4, 5, 6])
+     >>> mask = (x % 2 == 0)
+     >>> jnp.extract(mask, x)
+     Array([2, 4, 6], dtype=int32)
+
+     In the simplest case, this is equivalent to boolean indexing:
+
+     >>> x[mask]
+     Array([2, 4, 6], dtype=int32)
+
+     For use with JAX transformations, you can pass the ``size`` argument to
+     specify a static shape for the output, along with an optional ``fill_value``
+     that defaults to zero:
+
+     >>> jnp.extract(mask, x, size=len(x), fill_value=0)
+     Array([2, 4, 6, 0, 0, 0], dtype=int32)
+
+     Notice that unlike with boolean indexing, ``extract`` does not require strict
+     agreement between the sizes of the array and condition, and will effectively
+     truncate both to the minimium size:
+
+     >>> short_mask = jnp.array([False, True])
+     >>> jnp.extract(short_mask, x)
+     Array([2], dtype=int32)
+     >>> long_mask = jnp.array([True, False, True, False, False, False, False, False])
+     >>> jnp.extract(long_mask, x)
+     Array([1, 3], dtype=int32)
+  """
+  util.check_arraylike("extreact", condition, arr, fill_value)
+  return compress(ravel(condition), ravel(arr), size=size, fill_value=fill_value)
 
 
-@util.implements(np.compress, skip_params=['out'])
 def compress(condition: ArrayLike, a: ArrayLike, axis: int | None = None,
-             out: None = None) -> Array:
-  util.check_arraylike("compress", condition, a)
+             *, size: int | None = None, fill_value: ArrayLike = 0, out: None = None) -> Array:
+  """Compress an array along a given axis using a boolean condition.
+
+  JAX implementation of :func:`numpy.compress`.
+
+  Args:
+    condition: 1-dimensional array of conditions. Will be converted to boolean.
+    a: N-dimensional array of values.
+    axis: axis along which to compress. If None (default) then ``a`` will be
+      flattened, and axis will be set to 0.
+    size: optional static size for output. Must be specified in order for ``compress``
+      to be compatible with JAX transformations like :func:`~jax.jit` or :func:`~jax.vmap`.
+    fill_value: if ``size`` is specified, fill padded entries with this value (default: 0).
+    out: not implemented by JAX.
+
+  Returns:
+    An array of dimension ``a.ndim``, compressed along the specified axis.
+
+  See also:
+    - :func:`jax.numpy.extract`: 1D version of ``compress``.
+    - :meth:`jax.Array.compress`: equivalent functionality as an array method.
+
+  Notes:
+    This function does not require strict shape agreement between ``condition`` and ``a``.
+    If ``condition.size > a.shape[axis]``, then ``condition`` will be truncated, and if
+    ``a.shape[axis] > condition.size``, then ``a`` will be truncated.
+
+  Examples:
+    Compressing along the rows of a 2D array:
+
+    >>> a = jnp.array([[1,  2,  3,  4],
+    ...                [5,  6,  7,  8],
+    ...                [9,  10, 11, 12]])
+    >>> condition = jnp.array([True, False, True])
+    >>> jnp.compress(condition, a, axis=0)
+    Array([[ 1,  2,  3,  4],
+           [ 9, 10, 11, 12]], dtype=int32)
+
+    For convenience, you can equivalently use the :meth:`~jax.Array.compress`
+    method of JAX arrays:
+
+    >>> a.compress(condition, axis=0)
+    Array([[ 1,  2,  3,  4],
+           [ 9, 10, 11, 12]], dtype=int32)
+
+    Note that the condition need not match the shape of the specified axis;
+    here we compress the columns with the length-3 condition. Values beyond
+    the size of the condition are ignored:
+
+    >>> jnp.compress(condition, a, axis=1)
+    Array([[ 1,  3],
+           [ 5,  7],
+           [ 9, 11]], dtype=int32)
+
+    The optional ``size`` argument lets you specify a static output size so
+    that the output is statically-shaped, and so this function can be used
+    with transformations like :func:`~jax.jit` and :func:`~jax.vmap`:
+
+    >>> f = lambda c, a: jnp.extract(c, a, size=len(a), fill_value=0)
+    >>> mask = (a % 3 == 0)
+    >>> jax.vmap(f)(mask, a)
+    Array([[ 3,  0,  0,  0],
+           [ 6,  0,  0,  0],
+           [ 9, 12,  0,  0]], dtype=int32)
+  """
+  util.check_arraylike("compress", condition, a, fill_value)
   condition_arr = asarray(condition).astype(bool)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.compress is not supported.")
@@ -5284,10 +6680,20 @@ def compress(condition: ArrayLike, a: ArrayLike, axis: int | None = None,
   else:
     arr = moveaxis(a, axis, 0)
   condition_arr, extra = condition_arr[:arr.shape[0]], condition_arr[arr.shape[0]:]
-  if reductions.any(extra):
-    raise ValueError("condition contains entries that are out of bounds")
   arr = arr[:condition_arr.shape[0]]
-  return moveaxis(arr[condition_arr], 0, axis)
+
+  if size is None:
+    if reductions.any(extra):
+      raise ValueError("condition contains entries that are out of bounds")
+    result = arr[condition_arr]
+  elif not 0 <= size <= arr.shape[0]:
+    raise ValueError("size must be positive and not greater than the size of the array axis;"
+                     f" got {size=} for a.shape[axis]={arr.shape[0]}")
+  else:
+    mask = expand_dims(condition_arr, range(1, arr.ndim))
+    arr = where(mask, arr, array(fill_value, dtype=arr.dtype))
+    result = arr[argsort(condition_arr, stable=True, descending=True)][:size]
+  return moveaxis(result, 0, axis)
 
 
 @util.implements(np.cov)
