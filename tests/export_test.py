@@ -26,7 +26,6 @@ import jax
 from jax import lax
 from jax import numpy as jnp
 from jax.experimental import export
-from jax.experimental.export import _export
 from jax.experimental import pjit
 from jax.experimental.shard_map import shard_map
 from jax.sharding import NamedSharding
@@ -1197,14 +1196,10 @@ class JaxExportTest(jtu.JaxTestCase):
       )
 
     exp = get_exported(f_jax)(x)
-    if exp.mlir_module_serialization_version >= _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
-      self.assertEqual(["ForTestingOrderedEffect1()", "ForTestingOrderedEffect2()"],
-                       sorted(str(e) for e in exp.ordered_effects))
-      self.assertEqual(["ForTestingUnorderedEffect1()"],
-                       [str(e) for e in exp.unordered_effects])
-    else:
-      self.assertEqual([], [str(e) for e in exp.ordered_effects])
-      self.assertEqual([], [str(e) for e in exp.unordered_effects])
+    self.assertEqual(["ForTestingOrderedEffect1()", "ForTestingOrderedEffect2()"],
+                     sorted(str(e) for e in exp.ordered_effects))
+    self.assertEqual(["ForTestingUnorderedEffect1()"],
+                     [str(e) for e in exp.unordered_effects])
     mlir_module_str = str(exp.mlir_module())
 
     # Inner functions use stablehlo.token for all versions
@@ -1227,17 +1222,11 @@ class JaxExportTest(jtu.JaxTestCase):
       # Results
       r"!stablehlo.token .*jax.token = true.*"
       r"!stablehlo.token .*jax.token = true.*")
-    if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
-      wrapped_main_expected_re = wrapped_main_expected_re.replace("!stablehlo.token", "tensor<0xi1>")
     self.assertRegex(mlir_module_str, wrapped_main_expected_re)
 
-    if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
-      # The main function does not have tokens
-      self.assertNotRegex(mlir_module_str, r"@main.*token")
-    else:
-      # The main function takes tokens and has the same type as the wrapped main
-      main_expected_re = wrapped_main_expected_re.replace("@_wrapped_jax_export_main", "@main")
-      self.assertRegex(mlir_module_str, main_expected_re)
+    # The main function takes tokens and has the same type as the wrapped main
+    main_expected_re = wrapped_main_expected_re.replace("@_wrapped_jax_export_main", "@main")
+    self.assertRegex(mlir_module_str, main_expected_re)
 
     # Now call the exported from a function that uses its own effects
     def f_outer(x):
@@ -1249,18 +1238,13 @@ class JaxExportTest(jtu.JaxTestCase):
         export.call_exported(exp)(x))
 
     lowered_outer = jax.jit(f_outer).lower(x)
-    if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
-      self.assertEqual(["ForTestingOrderedEffect2()"],
-                       [str(e) for e in lowered_outer._lowering.compile_args["ordered_effects"]])
-    else:
-      self.assertEqual(["ForTestingOrderedEffect1()", "ForTestingOrderedEffect2()"],
-                       sorted(str(e) for e in lowered_outer._lowering.compile_args["ordered_effects"]))
+    self.assertEqual(["ForTestingOrderedEffect1()", "ForTestingOrderedEffect2()"],
+                     sorted(str(e) for e in lowered_outer._lowering.compile_args["ordered_effects"]))
     self.assertEqual(["ForTestingUnorderedEffect1()"],
                      sorted([str(e) for e in lowered_outer._lowering.compile_args["unordered_effects"]]))
 
     mlir_outer_module_str = str(lowered_outer.compiler_ir())
-    if exp.mlir_module_serialization_version >= _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
-      self.assertRegex(mlir_outer_module_str, main_expected_re)
+    self.assertRegex(mlir_outer_module_str, main_expected_re)
 
     res = jax.jit(f_outer)(x)
     self.assertAllClose(2. * 2. * x + 10. + 4. * 2. * x, res)
@@ -1286,21 +1270,15 @@ class JaxExportTest(jtu.JaxTestCase):
       r"%arg3: tensor<\?x\?xf32>.*\) -> \("
       # Results
       r"!stablehlo.token {jax.token = true.*, tensor<\?x\?xf32>.*\)")
-    if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
-      wrapped_main_expected_re = wrapped_main_expected_re.replace("!stablehlo.token", "tensor<0xi1>")
     self.assertRegex(mlir_module_str, wrapped_main_expected_re)
 
-    if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
-      # The main function does not have tokens
-      self.assertNotRegex(mlir_module_str, r"@main.*token")
-    else:
-      main_expected_re = (
-        r"@main\("
-        r"%arg0: !stablehlo.token {jax.token = true.*, "
-        r"%arg1: tensor<\?x\?xf32>.*\) -> \("
-        # Results
-        r"!stablehlo.token {jax.token = true.*, tensor<\?x\?xf32>.*\)")
-      self.assertRegex(mlir_module_str, main_expected_re)
+    main_expected_re = (
+      r"@main\("
+      r"%arg0: !stablehlo.token {jax.token = true.*, "
+      r"%arg1: tensor<\?x\?xf32>.*\) -> \("
+      # Results
+      r"!stablehlo.token {jax.token = true.*, tensor<\?x\?xf32>.*\)")
+    self.assertRegex(mlir_module_str, main_expected_re)
 
     res = export.call_exported(exp)(x)
     self.assertAllClose(10. + 2. * x, res)
@@ -1333,22 +1311,16 @@ class JaxExportTest(jtu.JaxTestCase):
       r"%arg4: tensor<\?x\?xf32>.*\) -> \("
       # Results
       r"!stablehlo.token {jax.token = true.*, tensor<\?x\?xf32>.*\)")
-    if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
-      wrapped_main_expected_re = wrapped_main_expected_re.replace("!stablehlo.token", "tensor<0xi1>")
     self.assertRegex(mlir_module_str, wrapped_main_expected_re)
 
-    if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
-      # The main function does not have tokens
-      self.assertNotRegex(mlir_module_str, r"@main.*token")
-    else:
-      main_expected_re = (
-        r"@main\("
-        r"%arg0: tensor<i..> {jax.global_constant = \"_platform_index\".*, "
-        r"%arg1: !stablehlo.token {jax.token = true.*, "
-        r"%arg2: tensor<\?x\?xf32>.*\) -> \("
-        # Results
-        r"!stablehlo.token {jax.token = true.*, tensor<\?x\?xf32>.*\)")
-      self.assertRegex(mlir_module_str, main_expected_re)
+    main_expected_re = (
+      r"@main\("
+      r"%arg0: tensor<i..> {jax.global_constant = \"_platform_index\".*, "
+      r"%arg1: !stablehlo.token {jax.token = true.*, "
+      r"%arg2: tensor<\?x\?xf32>.*\) -> \("
+      # Results
+      r"!stablehlo.token {jax.token = true.*, tensor<\?x\?xf32>.*\)")
+    self.assertRegex(mlir_module_str, main_expected_re)
     res = export.call_exported(exp)(x)
     self.assertAllClose(10. + _testing_multi_platform_fun_expected(x),
                         res)
@@ -1370,12 +1342,8 @@ class JaxExportTest(jtu.JaxTestCase):
     f_jax = jax.jit(f_jax, donate_argnums=(0,))
     exp = export.export(f_jax)(x)
     mlir_module_str = str(exp.mlir_module())
-    if exp.mlir_module_serialization_version < _export._VERSION_START_SUPPORT_EFFECTS_WITH_REAL_TOKENS:
-      self.assertRegex(mlir_module_str, r"@main.*tf.aliasing_output = 0")
-      self.assertRegex(mlir_module_str, r"@_wrapped_jax_export_main.*tf.aliasing_output = 1")
-    else:
-      self.assertRegex(mlir_module_str, r"@main.*tf.aliasing_output = 1")
-      self.assertRegex(mlir_module_str, r"@_wrapped_jax_export_main.*tf.aliasing_output = 1")
+    self.assertRegex(mlir_module_str, r"@main.*tf.aliasing_output = 1")
+    self.assertRegex(mlir_module_str, r"@_wrapped_jax_export_main.*tf.aliasing_output = 1")
 
   @jtu.parameterized_filterable(
     kwargs=[

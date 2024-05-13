@@ -42,7 +42,6 @@ import itertools
 import io
 import copy
 import operator as op
-import threading
 import tokenize
 from typing import Any, Callable, Union, overload
 import warnings
@@ -95,15 +94,6 @@ for more details.
     error_msg = f"{message}{InconclusiveDimensionOperation._help_msg}"
     # https://github.com/python/mypy/issues/5887
     super().__init__(error_msg)  # type: ignore
-
-class _ShapePolyThreadLocalState(threading.local):
-
-  def __init__(self):
-    # TODO(necula): this does not play well with some lowering caches, because
-    # this state is not part of the cache key.
-    self.enable_shape_assertions = True
-
-thread_local_state = _ShapePolyThreadLocalState()
 
 
 class Comparator(Enum):
@@ -1311,9 +1301,8 @@ def shape_assertion(assert_what: jax.Array,
       The format specifiers are sometimes processed with Python's
       `string::format` method, and sometimes with `llvm::formatv`.
   """
-  if thread_local_state.enable_shape_assertions:
-    shape_assertion_p.bind(assert_what, *error_message_inputs,
-                           error_message=error_message)
+  shape_assertion_p.bind(assert_what, *error_message_inputs,
+                         error_message=error_message)
 
 # A JAX primitive with no array arguments but with a dimension parameter
 # that is a DimExpr. The value of the primitive is the value of the dimension,

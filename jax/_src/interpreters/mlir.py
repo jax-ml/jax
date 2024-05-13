@@ -571,18 +571,6 @@ class LoweringParameters:
   # or multi-platform lowering.
   global_constant_computation: bool = False
 
-  # TODO(b/302258959): in JAX native execution we cannot lower the tokens
-  # to stablehlo.token for the top-level function, due to runtime limitations.
-  # Instead, we use dummy bool[0] arrays. This is controlled by setting
-  # replace_tokens_with_dummy to True (default). However, when exporting StableHLO
-  # we can use real tokens, because the resulting StableHLO will not be
-  # executed directly, but will be embedded as an inner function in a larger
-  # JAX or TensorFlow program. In these cases, replace_tokens_with_dummy must
-  # be set to False (for serialization versions >= 9).
-  # Once the PJRT is extended to use tokens, we can use tokens even in the
-  # native execution (and we can remove this parameter).
-  # This parameter can be removed when minimum xla_extension_version is >= 260.
-  replace_tokens_with_dummy: bool = True
 
 @dataclasses.dataclass
 class TracebackCaches:
@@ -971,13 +959,10 @@ def lower_jaxpr_to_module(
     attrs["sym_name"] = ir.StringAttr.get(module_name)
     attrs["mhlo.num_replicas"] = i32_attr(num_replicas)
     attrs["mhlo.num_partitions"] = i32_attr(num_partitions)
-    replace_tokens_with_dummy = False
     lower_jaxpr_to_fun(
         ctx, "main", jaxpr, ordered_effects,
         name_stack=name_stack,
         public=True,
-        create_tokens=replace_tokens_with_dummy,
-        replace_tokens_with_dummy=replace_tokens_with_dummy,
         num_output_tokens=0,
         replicated_args=replicated_args,
         arg_shardings=arg_shardings,
