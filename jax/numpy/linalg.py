@@ -17,6 +17,7 @@
 
 from jax._src.numpy.linalg import (
   cholesky as cholesky,
+  cond as cond,
   cross as cross,
   det as det,
   diagonal as diagonal,
@@ -45,7 +46,4 @@ from jax._src.numpy.linalg import (
   tensorsolve as tensorsolve,
   vector_norm as vector_norm,
   vecdot as vecdot,
-)
-from jax._src.third_party.numpy.linalg import (
-  cond as cond,
 )
