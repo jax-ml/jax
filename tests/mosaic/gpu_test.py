@@ -406,6 +406,54 @@ class WGMMATest(TestCase):
     np.testing.assert_array_equal(iota, expected)
 
   @parameterized.named_parameters(
+      ("bf16_i8",
+      ir.BF16Type.get, jnp.bfloat16,
+       lambda: ir.IntegerType.get_signless(8), jnp.int8),
+      ("i8_bf16",
+       lambda: ir.IntegerType.get_signless(8), jnp.int8,
+       ir.BF16Type.get, jnp.bfloat16),
+      ("i8_i8",
+       lambda: ir.IntegerType.get_signless(8), jnp.int8,
+       lambda: ir.IntegerType.get_signless(8), jnp.int8),
+  )
+  def test_convert_tiled(self,
+                         mlir_dtype_cls_from, jax_dtype_from,
+                         mlir_dtype_cls_to, jax_dtype_to):
+    mlir_dtype_from = mlir_dtype_cls_from()
+    mlir_dtype_to = mlir_dtype_cls_to()
+    m = 128
+    n = 256 // bytewidth(mlir_dtype_from)
+    def kernel(ctx, inp, out, smem):
+      del ctx
+      smem_from, smem_to = smem
+      copy(inp, smem_from, swizzle=128)
+      t = mgpu.FragmentedArray.load_tiled(smem_from, swizzle=128)
+      t = t.astype(mlir_dtype_to)
+      t.store_tiled(smem_to, swizzle=128)
+      copy(smem_to, out, swizzle=128)
+
+    from_tiling = (64, 128 // bytewidth(mlir_dtype_from))
+    to_tiling = (64, 128 // bytewidth(mlir_dtype_to))
+    expected_raw = self.prng.randint(
+        low=-127, high=127, size=(m, n), dtype=np.int8
+    )
+    expected = lambda jax_dtype, tiling: expected_raw.reshape(
+        m // tiling[0], tiling[0], n // tiling[1], tiling[1]
+    ).transpose(0, 2, 1, 3).astype(jax_dtype)
+
+    expected_from = expected(jax_dtype_from, from_tiling)
+    expected_to = expected(jax_dtype_to, to_tiling)
+    res = mosaic_gpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        expected_from,
+        expected_to,
+        (expected_from, expected_to),
+    )(expected_from)
+    np.testing.assert_array_equal(res, expected_to)
+
+  @parameterized.named_parameters(
       ("f32", ir.F32Type.get, jnp.float32),
       ("f16", ir.F16Type.get, jnp.float16),
       ("i8", partial(ir.IntegerType.get_signless, 8), jnp.int8),
