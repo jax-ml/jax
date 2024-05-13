@@ -2026,5 +2026,78 @@ class SoftmaxTest(PallasTest):
 class SoftmaxInterpreterTest(PallasTest):
   INTERPRET = True
 
+
+class PallasInterpretModeOutOfBoundsTest(PallasTest):
+
+  INTERPRET: bool = True
+
+  def test_interpret_mode_out_of_bounds_access(self):
+    block_size = 32
+    # Create input tensors which require a reduction along an axis
+    # not divisible by block_size.
+    x = jax.random.normal(jax.random.key(0), (block_size, block_size + 1))
+    y = jax.random.normal(jax.random.key(1), (block_size + 1, block_size))
+    expected = jnp.dot(x, y)
+
+    in_specs = [
+        pl.BlockSpec(lambda i, j, k: (i, k), (block_size, block_size)),
+        pl.BlockSpec(lambda i, j, k: (k, j), (block_size, block_size)),
+    ]
+    out_spec = pl.BlockSpec(lambda i, j, k: (i, j), (block_size, block_size))
+
+    def _unmasked_matmul_kernel(x_ref, y_ref, o_ref):
+      @pl.when(pl.program_id(2) == 0)
+      def _():
+        o_ref[...] = jnp.zeros_like(o_ref)
+
+      o_ref[...] += x_ref[...] @ y_ref[...]
+
+    out = pl.pallas_call(
+        _unmasked_matmul_kernel,
+        out_shape=expected,
+        grid=(1, 1, 2),
+        in_specs=in_specs,
+        out_specs=out_spec,
+        interpret=True,
+    )(x, y)
+
+    # With a naive matmul implementation, using uninitialized values (NaN) will
+    # cause the overall output to be NaN.
+    with self.subTest('UnmaskedIsNaN'):
+      np.testing.assert_allclose(
+          np.isnan(out), jnp.ones_like(out, dtype=jnp.bool_)
+      )
+
+    def _masked_matmul_kernel(x_ref, y_ref, o_ref):
+      @pl.when(pl.program_id(2) == 0)
+      def _():
+        o_ref[:, :] = jnp.zeros_like(o_ref)
+
+      # Create a validity mask for OOB values.
+      num_valid = x.shape[1] - pl.program_id(2) * block_size
+      num_valid = jnp.minimum(num_valid, block_size)
+      mask = jnp.tril(jnp.ones_like(x_ref[:, :]))[num_valid - 1][jnp.newaxis, :]
+      mask = jnp.repeat(mask, block_size, axis=0)
+
+      # Mask and multiply.
+      masked_x = jnp.where(mask, x_ref[:, :], 0.0)
+      masked_y = jnp.where(mask.T, y_ref[:, :], 0.0)
+      o_ref[:, :] += masked_x @ masked_y
+
+    out = pl.pallas_call(
+        _masked_matmul_kernel,
+        out_shape=expected,
+        grid=(1, 1, 2),
+        in_specs=in_specs,
+        out_specs=out_spec,
+        interpret=True,
+    )(x, y)
+
+    # With a masked matmul implementation, uninitialized values will be
+    # masked before computation. This should return the correct result.
+    with self.subTest('MaskedOutputIsCorrect'):
+      np.testing.assert_allclose(out, expected, atol=1e-5)
+
+
 if __name__ == "__main__":
   absltest.main()
