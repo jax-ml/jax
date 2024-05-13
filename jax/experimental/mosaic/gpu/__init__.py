@@ -192,7 +192,10 @@ class TileTransform(MemRefTransform):
             arith.divui(i, c(t, index))
             for i, t in zip(idx[-tiling_rank:], self.tiling)
         ),
-        *([c(0, index)] * tiling_rank),
+        *(
+            arith.remui(i, c(t, index))
+            for i, t in zip(idx[-tiling_rank:], self.tiling)
+        ),
     )
 
   def transform_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
