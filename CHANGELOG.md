@@ -8,6 +8,12 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.29
 
+* Changes
+  * Computations on the CPU backend may now be dispatched asynchronously in
+    more cases. Previously non-parallel computations were always dispatched
+    synchronously. You can recover the old behavior by setting
+    `jax.config.update('jax_cpu_enable_async_dispatch', False)`.
+
 ## jaxlib 0.4.29
 
 ## jax 0.4.28 (May 9, 2024)

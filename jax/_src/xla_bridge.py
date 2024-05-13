@@ -113,11 +113,9 @@ _CPU_COLLECTIVES_IMPLEMENTATION = config.DEFINE_string(
          '"gloo" or "mpi"'
 )
 
-# TODO(yueshengys): turn default back to True after resolving memory increase
-# issue.
 _CPU_ENABLE_ASYNC_DISPATCH = config.DEFINE_bool(
     name="jax_cpu_enable_async_dispatch",
-    default=False,
+    default=True,
     help="Only applies to non-parallel computations. If False, run computations"
     "inline without async dispatch.",
 )
