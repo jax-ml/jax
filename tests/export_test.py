@@ -1396,5 +1396,28 @@ class JaxExportTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(Exception, expect_error):
       _ = get_exported(f_jax)(jax.ShapeDtypeStruct((3, 4), x.dtype))
 
+  @jtu.parameterized_filterable(
+    kwargs=[
+        {"m": 5, "k": 4, "n": 3, "group_sizes": [5]},
+        {"m": 10, "k": 9, "n": 8, "group_sizes": [3, 7]},
+    ])
+  def test_ragged_dot(self, m, k, n, group_sizes):
+    def f_jax(x, y, gs):
+      return jax.lax.ragged_dot(x, y, gs)
+    dtype = np.float32
+    group_sizes = np.array(group_sizes, dtype=np.int32)
+    lhs = np.arange(m * k, dtype=dtype).reshape((m, k))
+    num_groups = group_sizes.shape[0]
+    rhs = np.arange(num_groups * k * n, dtype=dtype).reshape((num_groups, k, n))
+    res_native = f_jax(lhs, rhs, group_sizes)
+
+    exp_f = get_exported(f_jax)(
+        jax.ShapeDtypeStruct(lhs.shape, dtype=lhs.dtype),
+        jax.ShapeDtypeStruct(rhs.shape, dtype=rhs.dtype),
+        jax.ShapeDtypeStruct(group_sizes.shape, dtype=group_sizes.dtype),
+    )
+    res_exported = export.call_exported(exp_f)(lhs, rhs, group_sizes)
+    self.assertAllClose(res_native, res_exported)
+
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

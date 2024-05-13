@@ -1527,6 +1527,7 @@ tf_not_yet_impl = [
     "platform_index",
     "assert_consumed_value",
     "consume",
+    "ragged_dot",
 ]
 
 tf_impl[random_internal.random_clone_p] = lambda x: x

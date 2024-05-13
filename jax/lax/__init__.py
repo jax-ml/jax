@@ -152,6 +152,7 @@ from jax._src.lax.lax import (
   population_count_p as population_count_p,
   pow as pow,
   pow_p as pow_p,
+  ragged_dot as ragged_dot,
   real as real,
   real_p as real_p,
   reciprocal as reciprocal,
