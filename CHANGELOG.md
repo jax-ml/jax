@@ -21,6 +21,10 @@ Remember to align the itemized text with the first line of an item within a list
     * from {mod}`jax.interpreters.xla`: `backend_specific_translations`,
       `translations`, `register_translation`, `xla_destructure`,
       `TranslationRule`, `TranslationContext`, `XlaOp`.
+  * The ``tol`` argument of {func}`jax.numpy.linalg.matrix_rank` is being
+    deprecated and will soon be removed. Use `rtol` instead.
+  * The ``rcond`` argument of {func}`jax.numpy.linalg.pinv` is being
+    deprecated and will soon be removed. Use `rtol` instead.
 
 ## jaxlib 0.4.29
 
