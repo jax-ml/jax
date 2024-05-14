@@ -34,7 +34,6 @@ from jax._src import traceback_util
 from jax._src.interpreters import mlir
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
-from jax._src.xla_bridge import process_count
 import numpy as np
 
 
@@ -282,6 +281,9 @@ def compile_or_get_cached(
       module_name, cache_key, compile_options, backend)
   cache_retrieval_time = time.monotonic() - cache_retrieval_start
 
+
+  is_multi_process = (
+      len({device.process_index for device in devices.flatten()}) > 1)
   if retrieved_executable is not None:
     assert retrieved_compile_time is not None
     logger.debug("Persistent compilation cache hit for '%s'", module_name)
@@ -296,8 +298,8 @@ def compile_or_get_cached(
 
     return retrieved_executable
   elif (
-      process_count() > 1
-      and config.share_binary_between_hosts.value
+      config.share_binary_between_hosts.value
+      and is_multi_process
       and distributed.global_state.client is not None
       # Host callbacks are currently baked into the HLO module so we cant share
       # them.
@@ -311,10 +313,11 @@ def compile_or_get_cached(
         distributed.global_state.client,
         module_name,
         cache_key,
+        min(devices.flatten(), key=lambda device: device.id).process_index
     )
   elif (
-      process_count() > 1
-      and config.share_autotune_config_between_hosts.value
+      config.share_autotune_config_between_hosts.value
+      and is_multi_process
       and distributed.global_state.client is not None
   ):
     return _compile_and_write_autotune_config(
@@ -325,6 +328,7 @@ def compile_or_get_cached(
         distributed.global_state.client,
         module_name,
         cache_key,
+        min(devices.flatten(), key=lambda device: device.id).process_index
     )
   else:
     return _compile_and_write_cache(
@@ -347,6 +351,7 @@ def _compile_and_write_autotune_config(
     global_client: lib.xla_extension.DistributedRuntimeClient,
     module_name: str,
     cache_key: str,
+    first_process_id: int
 ) -> xc.LoadedExecutable:
   share_timeout = config.share_binary_between_hosts_timeout_ms.value
   debug_options = compile_options.executable_build_options.debug_options
@@ -374,9 +379,10 @@ def _compile_and_write_autotune_config(
         cache_key,
     )
 
-  if distributed.global_state.process_id == 0:
+  if distributed.global_state.process_id == first_process_id:
     debug_options.xla_gpu_dump_autotune_results_to = autotune_tmp_file
-    logger.debug("Compiling and dumping autotune for module: %s", module_name)
+    logger.debug("Process %d compiling and dumping autotune for module: %s",
+                 first_process_id, module_name)
     executable = _compile_and_write_cache(
         backend,
         computation,
@@ -404,9 +410,11 @@ def _compile_and_write_autotune_config(
     )
   else:
     logger.debug(
-        "Compiling module %s, waiting for config to be shared by cache_key %s",
+        "Compiling module %s, waiting for config to be shared by cache_key %s"
+        "from process %d",
         module_name,
         cache_key,
+        first_process_id
     )
     autotune_config = global_client.blocking_key_value_get_bytes(
         cache_key, share_timeout
@@ -451,6 +459,7 @@ def _compile_and_share_module(
     global_client: lib.xla_extension.DistributedRuntimeClient,
     module_name: str,
     cache_key: str,
+    first_process_id: int
 ) -> xc.LoadedExecutable:
   share_timeout = config.share_binary_between_hosts_timeout_ms.value
 
@@ -459,7 +468,9 @@ def _compile_and_share_module(
   if cache_key in _compile_and_share_module.modules_cache:
     return _compile_and_share_module.modules_cache[cache_key]
 
-  if distributed.global_state.process_id == 0:
+  if distributed.global_state.process_id == first_process_id:
+    logger.debug("Process %d compiling and sharing module: %s",
+                 first_process_id, module_name)
     executable = _compile_and_write_cache(
         backend,
         computation,
@@ -474,6 +485,8 @@ def _compile_and_share_module(
     )
     global_client.key_value_set_bytes(cache_key, serialized_executable)
   else:
+    logger.debug("Waiting for module: %s from process %d", module_name,
+                 first_process_id)
     serialized_executable = global_client.blocking_key_value_get_bytes(
         cache_key, share_timeout
     )
