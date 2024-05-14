@@ -2207,6 +2207,15 @@ class PythonPmapTest(jtu.JaxTestCase):
     y = jax.pmap(jax.scipy.linalg.expm)(jnp.array([x, x]))
     y.block_until_ready()  # doesn't crash
 
+  def test_pmap_of_prng_key(self):
+    # Regression test for https://github.com/google/jax/issues/20392
+    keys = jax.random.split(jax.random.key(0), jax.device_count())
+    result1 = jax.pmap(jax.random.bits)(keys)
+    with jtu.ignore_warning(
+        category=UserWarning, message="The jitted function foo includes a pmap"):
+      result2 = jax.jit(jax.pmap(jax.random.bits))(keys)
+    self.assertArraysEqual(result1, result2)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class CppPmapTest(PythonPmapTest):
