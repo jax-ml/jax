@@ -599,7 +599,7 @@ def kl_div(
   .. math::
 
      \mathrm{kl\_div}(p, q) = \begin{cases}
-       p\log(p/q) & p>0,q>0\\
+       p\log(p/q)-p+q & p>0,q>0\\
        q & p=0,q\ge 0\\
        \infty & \mathrm{otherwise}
     \end{cases}
