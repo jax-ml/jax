@@ -14,17 +14,15 @@
 
 import jax
 
-# TODO(micky774): Remove after deprecating tol-->rtol in jnp.linalg.matrix_rank
+# TODO(micky774): Remove after deprecation is completed (began 2024-5-14)
 def matrix_rank(x, /, *, rtol=None):
   """
   Returns the rank (i.e., number of non-zero singular values) of a matrix (or a stack of matrices).
   """
-  return jax.numpy.linalg.matrix_rank(x, tol=rtol)
+  return jax.numpy.linalg.matrix_rank(x, rtol)
 
-# TODO(micky774): Remove after deprecating rcond-->rtol in
-# jnp.linalg.pinv
 def pinv(x, /, *, rtol=None):
   """
   Returns the (Moore-Penrose) pseudo-inverse of a matrix (or a stack of matrices) x.
   """
-  return jax.numpy.linalg.pinv(x, rcond=rtol)
+  return jax.numpy.linalg.pinv(x, rtol)
