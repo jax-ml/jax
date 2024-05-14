@@ -3105,15 +3105,23 @@ def fromstring(string: str, dtype: DTypeLike = float, count: int = -1, *, sep: s
 
 
 @util.implements(np.eye)
-def eye(N: DimSize, M: DimSize | None = None, k: int = 0,
+def eye(N: DimSize, M: DimSize | None = None,
+        k: int | ArrayLike = 0,
         dtype: DTypeLike | None = None) -> Array:
   dtypes.check_user_dtype_supported(dtype, "eye")
+  if isinstance(k, int):
+    k = lax_internal._clip_int_to_valid_range(k, np.int32)
+  util.check_arraylike("eye", k)
+  offset = asarray(k)
+  if not (offset.shape == () and dtypes.issubdtype(offset.dtype, np.integer)):
+    raise ValueError(f"k must be a scalar integer; got {k}")
   N_int = core.canonicalize_dim(N, "'N' argument of jnp.eye()")
   M_int = N_int if M is None else core.canonicalize_dim(M, "'M' argument of jnp.eye()")
   if N_int < 0 or M_int < 0:
     raise ValueError(f"negative dimensions are not allowed, got {N} and {M}")
-  k = operator.index(k)
-  return lax_internal._eye(_jnp_dtype(dtype), (N_int, M_int), k)
+  i = lax.broadcasted_iota(offset.dtype, (N_int, M_int), 0)
+  j = lax.broadcasted_iota(offset.dtype, (N_int, M_int), 1)
+  return (i + offset == j).astype(dtype)
 
 
 @util.implements(np.identity)
@@ -3602,8 +3610,8 @@ def triu(m: ArrayLike, k: int = 0) -> Array:
 
 
 @util.implements(np.trace, skip_params=['out'])
-@partial(jit, static_argnames=('offset', 'axis1', 'axis2', 'dtype'))
-def trace(a: ArrayLike, offset: int = 0, axis1: int = 0, axis2: int = 1,
+@partial(jit, static_argnames=('axis1', 'axis2', 'dtype'))
+def trace(a: ArrayLike, offset: int | ArrayLike = 0, axis1: int = 0, axis2: int = 1,
           dtype: DTypeLike | None = None, out: None = None) -> Array:
   util.check_arraylike("trace", a)
   if out is not None:
