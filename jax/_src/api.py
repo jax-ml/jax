@@ -1846,7 +1846,7 @@ def _pmap_lower(fun, axis_name, in_axes, out_axes, static_broadcasted_tuple,
         fun, in_axes, out_axes, static_broadcasted_tuple, donate_tuple,
         devices, backend, axis_size, args, kwargs)
     abstract_args = list(map(shaped_abstractify, p.flat_args))
-    computation = pxla.lower_parallel_callable(
+    computation, closed_jaxpr = pxla.lower_parallel_callable(
         p.flat_fun, backend, axis_name,
         axis_size=p.local_axis_size, global_axis_size=p.global_axis_size,
         devices=p.devices,
@@ -1858,7 +1858,8 @@ def _pmap_lower(fun, axis_name, in_axes, out_axes, static_broadcasted_tuple,
         avals=abstract_args,
         lowering_parameters=lowering_parameters)
     return stages.Lowered.from_flat_info(
-        computation, p.in_tree, abstract_args, donate_tuple, p.out_tree())
+        computation, p.in_tree, abstract_args, donate_tuple, p.out_tree(),
+        fun_name=p.flat_fun.__name__, jaxpr=closed_jaxpr)
 
   return lower
 
