@@ -52,18 +52,13 @@ from jax._src.nn.functions import (
 # Deprecations
 
 _deprecations = {
-    # Added Nov 8, 2023:
+    # Finalized 2024-05-13; remove after 2024-08-13
     "normalize": (
         "jax.nn.normalize is deprecated. Use jax.nn.standardize instead.",
-        standardize,
+        None,
     ),
 }
 
-import typing
-if typing.TYPE_CHECKING:
-  normalize = standardize
-else:
-  from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  __getattr__ = _deprecation_getattr(__name__, _deprecations)
-  del _deprecation_getattr
-del typing
+from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+__getattr__ = _deprecation_getattr(__name__, _deprecations)
+del _deprecation_getattr

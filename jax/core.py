@@ -162,14 +162,14 @@ from jax._src.core import (
 
 from jax._src import core as _src_core
 _deprecations = {
-    # Added Oct 11, 2023:
+    # Finalized 2024-05-13; remove after 2024-08-13
     "DimSize": (
         "jax.core.DimSize is deprecated. Use DimSize = int | Any.",
-        _src_core.DimSize,
+        None,
     ),
     "Shape": (
         "jax.core.Shape is deprecated. Use Shape = Sequence[int | Any].",
-        _src_core.Shape,
+        None,
     ),
     # Added Dec 15, 2023
     "canonicalize_shape": (
@@ -192,8 +192,6 @@ _deprecations = {
 
 import typing
 if typing.TYPE_CHECKING:
-  DimSize = _src_core.DimSize
-  Shape = _src_core.Shape
   canonicalize_shape = _deprecated_canonicalize_shape
   dimension_as_value = _deprecated_dimension_as_value
   definitely_equal = _deprecated_definitely_equal
