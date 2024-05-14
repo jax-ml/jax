@@ -14,6 +14,7 @@
 # ==============================================================================
 """Utilities for code generator."""
 
+from collections.abc import Iterator
 import contextlib
 import dataclasses
 from typing import Any, Literal, Sequence
@@ -496,6 +497,7 @@ class BarrierArray:
         f" num_barriers={num_barriers}>"
     )
 
+    self.num_barriers = num_barriers
     self.value = nvgpu.mbarrier_create(barrier_group_ty)
     self.num_barriers = num_barriers
     index = ir.IndexType.get()
@@ -507,6 +509,10 @@ class BarrierArray:
     with once():
       for i in range(num_barriers):
         nvgpu.mbarrier_init(self.value, c(arrival_count, index), c(i, index))
+
+  def __iter__(self) -> Iterator["Barrier"]:
+    for offset in range(self.num_barriers):
+      yield self[offset]
 
   def __getitem__(self, offset: ir.Value | int):
     if isinstance(offset, int):

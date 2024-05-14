@@ -15,17 +15,16 @@
 """Module for calling pallas functions from JAX."""
 from __future__ import annotations
 
-import itertools
-from functools import partial
-from functools import reduce
-
-from typing import Any, Callable
 from collections.abc import Sequence
+import itertools
+from functools import partial, reduce
+from typing import Any, Callable
 
 import jax
 from jax import api_util
 from jax import tree_util
 from jax import lax
+from jax._src import config
 from jax._src import state
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -532,6 +531,16 @@ def _extract_function_name(f: Callable, name: str | None) -> str:
   return name
 
 
+_PALLAS_USE_MOSAIC_GPU = config.DEFINE_bool(
+    "jax_pallas_use_mosaic_gpu",
+    default=config.bool_env("JAX_PALLAS_USE_MOSAIC_GPU", False),
+    help=(
+        "If True, lower Pallas kernels to the experimental Mosaic GPU"
+        " dialect, instead of Trition IR."
+    ),
+)
+
+
 def _unsupported_lowering_error(platform: str) -> Exception:
   return ValueError(
       f"Cannot lower pallas_call on platform: {platform}. To use Pallas on GPU,"
@@ -560,7 +569,10 @@ def _pallas_call_lowering(
     raise ValueError("Only interpret mode is supported on CPU backend.")
   elif platform == "cuda" or platform == "rocm":
     try:
-      from jax._src.pallas.triton import pallas_call_registration  # type: ignore
+      if _PALLAS_USE_MOSAIC_GPU.value:
+        from jax._src.pallas.mosaic_gpu import pallas_call_registration  # type: ignore
+      else:
+        from jax._src.pallas.triton import pallas_call_registration  # type: ignore
     except ImportError:
       pass
     else:

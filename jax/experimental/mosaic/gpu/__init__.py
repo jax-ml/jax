@@ -530,7 +530,7 @@ def _launch(
     gpu.terminator()
 
 
-def as_gpu_kernel(
+def _lower_as_gpu_kernel(
     body,
     grid: tuple[int, ...],
     block: tuple[int, ...],
@@ -609,6 +609,31 @@ def as_gpu_kernel(
     main.func_op.attributes["llvm.emit_c_interface"] = ir.UnitAttr.get()
   module.operation.verify()
 
+  dump_low_level(module)
+
+  pass_manager = _get_mosaic_gpu_pipeline("fatbin")
+  if mosaic_gpu_print_after_all.value:
+    pass_manager.enable_ir_printing()
+  pass_manager.run(module.operation)
+
+  return module, out_shape, gmem_scratch_bytes, unwrap_output_tuple
+
+
+def as_gpu_kernel(
+    body,
+    grid: tuple[int, ...],
+    block: tuple[int, ...],
+    in_shape,
+    out_shape,
+    smem_scratch_shape,
+    prof_spec: profiler.ProfilerSpec | None = None,
+):
+  module, out_shape, gmem_scratch_bytes, unwrap_output_tuple = (
+      _lower_as_gpu_kernel(
+          body, grid, block, in_shape, out_shape, smem_scratch_shape, prof_spec
+      )
+  )
+
   expected_arg_treedef = jax.tree.structure(in_shape)
   def _check_args(args):
     arg_treedef = jax.tree.structure(args)
@@ -617,13 +642,6 @@ def as_gpu_kernel(
           f"Invalid argument structure: expected {expected_arg_treedef}, got"
           f" {arg_treedef}"
       )
-
-  dump_low_level(module)
-
-  pass_manager = _get_mosaic_gpu_pipeline("fatbin")
-  if mosaic_gpu_print_after_all.value:
-    pass_manager.enable_ir_printing()
-  pass_manager.run(module.operation)
 
   def bind(*args):
     return mosaic_gpu_p.bind(

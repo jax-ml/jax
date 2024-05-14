@@ -19,6 +19,7 @@ load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "if_building_jaxlib",
+    "if_building_mosaic_gpu",
     "jax_extend_internal_users",
     "jax_extra_deps",
     "jax_internal_export_back_compat_test_util_visibility",
@@ -669,7 +670,7 @@ pytype_strict_library(
     deps = [
         ":pallas",
         "//jax/_src/pallas/triton",
-    ],
+    ] + if_building_mosaic_gpu(["//third_party/py/jax/_src/pallas/mosaic_gpu"]),
 )
 
 # This target only supports sm_90 GPUs.
