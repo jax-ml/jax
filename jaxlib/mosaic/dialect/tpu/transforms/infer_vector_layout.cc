@@ -179,9 +179,8 @@ class VectorLayoutInferer {
         TPU_CHECK_OP(static_cast<bool>(in_ty) == static_cast<bool>(out_ty),
                      "Input and output are not both vectors?");
         if (in_ty) {
-          TPU_CHECK_OP(in_ty.getElementTypeBitWidth() == 1 &&
-                           out_ty.getElementTypeBitWidth() == 32,
-                       "Only 1 bit -> 32 bit extensison supported");
+          TPU_CHECK_OP(in_ty.getElementTypeBitWidth() == 1,
+                       "Only extending i1 is supported");
         }
         if (inferElementwise(&any_op, /*check_bitwidth=*/false).failed()) {
           return failure();
@@ -193,11 +192,7 @@ class VectorLayoutInferer {
         auto rhs_ty = dyn_cast<VectorType>(any_op.getOperand(1).getType());
         TPU_CHECK_OP(static_cast<bool>(lhs_ty) == static_cast<bool>(rhs_ty),
                      "Only one side of cmp is a vector?");
-        if (lhs_ty) {
-          TPU_CHECK_OP(lhs_ty.getElementTypeBitWidth() == kNativeBitwidth &&
-                           rhs_ty.getElementTypeBitWidth() == kNativeBitwidth,
-                       "Only 32-bit cmp supported");
-        }
+        // TODO(tlongeri): Check that TPU generation supports comparison.
         if (inferElementwise(&any_op, /*check_bitwidth=*/false).failed()) {
           return failure();
         }
