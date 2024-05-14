@@ -1528,6 +1528,7 @@ tf_not_yet_impl = [
     "assert_consumed_value",
     "consume",
     "ragged_dot",
+    "cholesky_update",
 ]
 
 tf_impl[random_internal.random_clone_p] = lambda x: x
