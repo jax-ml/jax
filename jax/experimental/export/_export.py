@@ -578,13 +578,7 @@ def _wrap_main_func(
     orig_main_name = ir.StringAttr(symbol_table.insert(orig_main)).value
 
     def is_token(typ, attrs):
-      if typ == mlir.token_type()[0]:
-        return True
-      # TODO(b/302258959): in older versions we cannot use the token type
-      try:
-        return ir.BoolAttr(ir.DictAttr(attrs)["jax.token"]).value
-      except KeyError:
-        return False
+      return (typ == mlir.token_type()[0])
 
     orig_input_types = orig_main.type.inputs
     arg_attrs = list(ir.ArrayAttr(orig_main.arg_attrs))
