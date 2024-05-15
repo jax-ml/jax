@@ -294,6 +294,8 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
 
   if isinstance(unroll, bool):
     unroll = max(length, 1) if unroll else 1
+  if unroll < 1:
+    raise ValueError("`unroll` must be a `bool` or a positive `int`.")
   if attrs_tracked:
     in_state = _get_states(attrs_tracked)
     in_carry, in_ext = split_list(in_flat, [num_carry])
