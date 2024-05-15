@@ -434,7 +434,7 @@ class WGMMATest(TestCase):
 
     from_tiling = (64, 128 // bytewidth(mlir_dtype_from))
     to_tiling = (64, 128 // bytewidth(mlir_dtype_to))
-    expected_raw = self.prng.randint(
+    expected_raw = self.prng.integers(
         low=-127, high=127, size=(m, n), dtype=np.int8
     )
     expected = lambda jax_dtype, tiling: expected_raw.reshape(
