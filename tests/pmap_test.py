@@ -2212,7 +2212,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     keys = jax.random.split(jax.random.key(0), jax.device_count())
     result1 = jax.pmap(jax.random.bits)(keys)
     with jtu.ignore_warning(
-        category=UserWarning, message="The jitted function foo includes a pmap"):
+        category=UserWarning, message="The jitted function bits includes a pmap"):
       result2 = jax.jit(jax.pmap(jax.random.bits))(keys)
     self.assertArraysEqual(result1, result2)
 
