@@ -88,7 +88,7 @@ jobs:
           PY_COLORS: 1
         run: |
           # Run single-accelerator tests in parallel
-          JAX_ENABLE_TPU_XDIST=true python3 -m pytest -n={{ matrix.tpu.core }} --tb=short \
+          JAX_ENABLE_TPU_XDIST=true python3 -m pytest -n=${{ matrix.tpu.core }} --tb=short \
             --maxfail=20 -m "not multiaccelerator" tests examples
           # Run multi-accelerator across all chips
           python3 -m pytest --tb=short --maxfail=20 -m "multiaccelerator" tests
