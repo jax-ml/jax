@@ -150,7 +150,7 @@ def _fftconvolve_unbatched(in1: Array, in2: Array, mode: str) -> Array:
 # Note: we do not re-use the code from jax.numpy.convolve here, because the handling
 # of padding differs slightly between the two implementations (particularly for
 # mode='same').
-def _convolve_nd(in1: Array, in2: Array, mode: str, boundary: str, *, precision: PrecisionLike) -> Array:
+def _convolve_nd(in1: Array, in2: Array, mode: str, boundary: str = 'fill', *, precision: PrecisionLike) -> Array:
   if mode not in ["full", "same", "valid"]:
     raise ValueError("mode must be one of ['full', 'same', 'valid']")
   if in1.ndim != in2.ndim:
@@ -166,10 +166,11 @@ def _convolve_nd(in1: Array, in2: Array, mode: str, boundary: str, *, precision:
 
   shape1 = in1.shape
   shape_o = in2.shape
-  M = jnp.maximum(shape1[0], shape_o[0])
-  N = jnp.maximum(shape1[1], shape_o[1])
-  if boundary == 'wrap' and mode != 'valid':
-    in1 = jnp.pad(in1, (M, N), mode='wrap')
+  if in1.ndim > 1:
+    M = shape1[0] if shape1[0] >= shape_o[0] else shape_o[0]
+    N = shape1[1] if shape1[1] >= shape_o[1] else shape_o[1]
+    if boundary == 'wrap' and mode != 'valid':
+      in1 = jnp.pad(in1, (M, N), mode='wrap')
 
   if swap:
     in1, in2 = in2, in1
@@ -189,13 +190,10 @@ def _convolve_nd(in1: Array, in2: Array, mode: str, boundary: str, *, precision:
   result = lax.conv_general_dilated(in1[None, None], in2[None, None], strides,
                                       padding, precision=precision)
 
-  if boundary == 'wrap':
-    if mode == 'same':
+  if boundary == 'wrap' and mode == 'same':
       return result[0, 0][M:M+shape1[0], M:M+shape1[1]]
-    elif mode == 'full':
+  elif boundary == 'wrap' and mode == 'full':
       return result[0, 0][M:M+shape1[0]+shape_o[0]-1, M:M+shape1[1]+shape_o[1]-1]
-    else:
-      return result[0, 0]
   else:
     return result[0, 0]
 
@@ -395,21 +393,21 @@ def correlate2d(in1: Array, in2: Array, mode: str = 'full', boundary: str = 'fil
 
   if mode == "same":
     in1, in2 = jnp.flip(in1), in2.conj()
-    result = jnp.flip(_convolve_nd(in1, in2, mode, precision=precision))
+    result = jnp.flip(_convolve_nd(in1, in2, mode, boundary, precision=precision))
   elif mode == "valid":
     if swap and not same_shape:
       in1, in2 = jnp.flip(in2), in1.conj()
-      result = _convolve_nd(in1, in2, mode, precision=precision)
+      result = _convolve_nd(in1, in2, mode, boundary, precision=precision)
     else:
       in1, in2 = jnp.flip(in1), in2.conj()
-      result = jnp.flip(_convolve_nd(in1, in2, mode, precision=precision))
+      result = jnp.flip(_convolve_nd(in1, in2, mode, boundary, precision=precision))
   else:
     if swap and boundary != 'wrap':
       in1, in2 = jnp.flip(in2), in1.conj()
-      result = _convolve_nd(in1, in2, mode, precision=precision).conj()
+      result = _convolve_nd(in1, in2, mode, boundary, precision=precision).conj()
     else:
       in1, in2 = jnp.flip(in1), in2.conj()
-      result = jnp.flip(_convolve_nd(in1, in2, mode, precision=precision))
+      result = jnp.flip(_convolve_nd(in1, in2, mode, boundary, precision=precision))
   return result
 
 
