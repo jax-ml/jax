@@ -424,7 +424,7 @@ def memref_unsqueeze(ref: ir.Value, dim) -> ir.Value:
     )
     assoc = [[d] for d in range(ref_ty.rank)]
     assoc[-1].append(ref_ty.rank)
-    return memref.expand_shape(new_ty, ref, assoc)
+    return memref.expand_shape(new_ty, ref, assoc, [], new_ty.shape)
   else:
     return memref_unfold(ref, dim, (1, None))
 
