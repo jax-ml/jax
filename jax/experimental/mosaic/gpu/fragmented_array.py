@@ -65,7 +65,15 @@ class WGStridedFragLayout:
     memref_type = ir.MemRefType(memref_ty)
     bw = mgpu.bytewidth(memref_type.element_type)
     assert 8 % bw == 0 and 8 // bw != 0, bw
-    return cls(shape=memref_type.shape, vec_size=8 // bw)
+    if np.prod(memref_type.shape) % WARPGROUP_SIZE != 0:
+      raise ValueError(
+          "Ref must have a number of elements that is a multiple of"
+          f" {WARPGROUP_SIZE}"
+      )
+    max_vec_size = np.prod(memref_type.shape) // WARPGROUP_SIZE
+    return cls(
+        shape=tuple(memref_type.shape), vec_size=min(8 // bw, max_vec_size)
+    )
 
   def thread_vec_idxs(self):
     """The indexes to be used for vector load/store WGStridedFragLayout.
@@ -73,10 +81,11 @@ class WGStridedFragLayout:
     Yields:
       The indices of the vector that correspond to the current thread.
     """
+    index = ir.IndexType.get()
     cardinality = np.prod(self.shape)
     assert cardinality % (WARPGROUP_SIZE * self.vec_size) == 0
     reg_num = cardinality // (WARPGROUP_SIZE * self.vec_size)
-    tidx = gpu.thread_id(gpu.Dimension.x)
+    tidx = arith.remui(gpu.thread_id(gpu.Dimension.x), c(WARPGROUP_SIZE, index))
     off = arith.muli(tidx, c(self.vec_size, tidx.type))
     for i in range(reg_num):
       yield [arith.addi(off, c(i * WARPGROUP_SIZE * self.vec_size, tidx.type))]
@@ -194,23 +203,43 @@ class FragmentedArray:
     return FragmentedArray(_registers=new_regs, _layout=self.layout)
 
   def __add__(self, other):
-    return self._pointwise(arith.addf, other)
+    if ir.FloatType.isinstance(self.mlir_dtype):
+      return self._pointwise(arith.addf, other)
+    elif ir.IntegerType.isinstance(self.mlir_dtype):
+      return self._pointwise(arith.addi, other)
+    else:
+      raise NotImplementedError(self.mlir_dtype)
 
   def __mul__(self, other):
-    return self._pointwise(arith.mulf, other)
+    if ir.FloatType.isinstance(self.mlir_dtype):
+      return self._pointwise(arith.mulf, other)
+    elif ir.IntegerType.isinstance(self.mlir_dtype):
+      return self._pointwise(arith.muli, other)
+    else:
+      raise NotImplementedError(self.mlir_dtype)
 
   def __sub__(self, other):
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError
     return self._pointwise(arith.subf, other)
 
   def __truediv__(self, other):
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError
     return self._pointwise(arith.divf, other)
 
   def max(self, other):
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError
     return self._pointwise(arith.maximumf, other)
 
   def exp(self, approx: bool = False):
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError
     def fast_exp(x):
       f32 = ir.F32Type.get()
+      if self.mlir_dtype != f32:
+        raise NotImplementedError
       log2e = arith.constant(f32, ir.FloatAttr.get(f32, 1.4426950408889634))
       if x.type == f32:
         scaled = arith.mulf(x, log2e)
@@ -372,10 +401,10 @@ class FragmentedArray:
 
   def _store_untiled_wg_strided(self, ref: ir.Value):
     ref_ty = ir.MemRefType(ref.type)
-    if ref_ty.shape != self.shape:
-      raise ValueError((ref_ty.shape, self.shape))
+    ref_shape = tuple(ref_ty.shape)
+    if ref_shape != self.shape:
+      raise ValueError((ref_shape, self.shape))
     smem_1d = mgpu.memref_fold(ref, 0, len(ref_ty.shape))
-    assert isinstance(self.layout, WGStridedFragLayout)
     for idx, reg in zip(self.layout.thread_vec_idxs(), self.registers.flat):
       vector.store(reg, smem_1d, idx)
 
@@ -383,7 +412,7 @@ class FragmentedArray:
     """Stores accumulator to a 2D memref. Not optimized at the moment."""
     assert self.layout == WGMMA_LAYOUT
     index = ir.IndexType.get()
-    m, n = self.shape  # pytype: disable=bad-unpacking
+    m, n = self.shape
     ref_ty = ir.MemRefType(ref.type)
     if ref_ty.shape != [m, n]:
       raise ValueError(ref.type, (m, n))
@@ -391,7 +420,7 @@ class FragmentedArray:
     def c(x):
       return arith.ConstantOp(index, ir.IntegerAttr.get(index, x))
 
-    tidx = gpu.thread_id(gpu.Dimension.x)
+    tidx = arith.remui(gpu.thread_id(gpu.Dimension.x), c(WARPGROUP_SIZE))
     lane_id = arith.remui(tidx, c(32))  # {0, 1, ..., 31}
     warp_id = arith.divui(tidx, c(32))  # {0, 1, 2, 3}
     row_base = arith.addi(
@@ -410,15 +439,44 @@ class FragmentedArray:
   def store_tiled(self, ref, swizzle: int | None):
     if self.layout != WGMMA_LAYOUT:
       raise NotImplementedError
-    bw = mgpu.bytewidth(self.mlir_dtype)
-    m, n = self.shape  # pytype: disable=bad-unpacking
+    dtype = self.mlir_dtype
+    bw = mgpu.bytewidth(dtype)
+    m, n = self.shape
     assert m % 64 == 0  # This is implied by the layout.
-    if n % 32 != 0:
-      raise NotImplementedError
     cols_per_tile = 128 // bw
     expected_shape = [m // 64, n // cols_per_tile, 64, cols_per_tile]
     if ir.MemRefType(ref.type).shape != expected_shape:
       raise ValueError(ref.type, (m, n))
+    for get, _, idxs in self.transfer_tiled(self.shape, dtype, swizzle):
+      vector.store(get(self.registers), ref, idxs)
+
+  @classmethod
+  def load_tiled(cls, ref, swizzle: int | None):
+    ref_ty = ir.MemRefType(ref.type)
+    dtype = ref_ty.element_type
+    bw = mgpu.bytewidth(dtype)
+    m_tiles, n_tiles, m_tile_size, n_tile_size = ref_ty.shape
+    if m_tile_size != 64 or n_tile_size != (128 // bw):
+      raise ValueError
+    m, n = m_tiles * m_tile_size, n_tiles * n_tile_size
+    assert m % 64 == 0  # This is implied by the layout.
+    registers = np.full(
+        (m_tiles, n // 8, 2, 1),
+        vector.splat(ir.VectorType.get((2,), dtype), c(0, dtype)),
+        dtype=object,
+    )
+    for _, update, idxs in cls.transfer_tiled((m, n), dtype, swizzle):
+      update(registers, vector.load(ir.VectorType.get((2,), dtype), ref, idxs))
+    return cls(_registers=registers, _layout=WGMMA_LAYOUT)
+
+  @staticmethod
+  def transfer_tiled(shape, dtype, swizzle: int | None):
+    bw = mgpu.bytewidth(dtype)
+    cols_per_tile = 128 // bw
+    m, n = shape
+    if n % 32 != 0:
+      raise NotImplementedError
+    cols_per_tile = 128 // bw
     if swizzle != 128:
       raise NotImplementedError("Only 128B swizzle supported")
     index = ir.IndexType.get()
@@ -426,7 +484,7 @@ class FragmentedArray:
     def c(x):
       return arith.ConstantOp(index, ir.IntegerAttr.get(index, x))
 
-    tidx = gpu.thread_id(gpu.Dimension.x)
+    tidx = arith.remui(gpu.thread_id(gpu.Dimension.x), c(WARPGROUP_SIZE))
     lane_id = arith.remui(tidx, c(32))  # {0, 1, ..., 31}
     warp_id = arith.divui(tidx, c(32))  # {0, 1, 2, 3}
     sub_row_base = arith.divui(lane_id, c(4))  # {0, 1, ..., 7}
@@ -461,10 +519,17 @@ class FragmentedArray:
             col = arith.xori(col, col_swizzle_bits)
             reg_idx_even = col_subidx_even + col_group * (cols_per_tile // 8)
             reg_idx_odd = col_subidx_odd + col_group * (cols_per_tile // 8)
-            value_even = self.registers[row_group, reg_idx_even, row_subidx, 0]
-            value_odd = self.registers[row_group, reg_idx_odd, row_subidx, 0]
-            value = arith.select(is_even_row, value_even, value_odd)
-            vector.store(value, ref, [c(row_group), c(col_group), row, col])
+            even_idx = row_group, reg_idx_even, row_subidx, 0
+            odd_idx = row_group, reg_idx_odd, row_subidx, 0
+            idx = c(row_group), c(col_group), row, col
+            def get_register(regs, even_idx=even_idx, odd_idx=odd_idx):
+              value_even = regs[even_idx]
+              value_odd = regs[odd_idx]
+              return arith.select(is_even_row, value_even, value_odd)
+            def update_registers(regs, new, even_idx=even_idx, odd_idx=odd_idx):
+              regs[even_idx] = arith.select(is_even_row, new, regs[even_idx])
+              regs[odd_idx] = arith.select(is_even_row, regs[odd_idx], new)
+            yield get_register, update_registers, idx
 
   def tree_flatten(self):
     return list(self.registers.flat), (self.layout, self.registers.shape)

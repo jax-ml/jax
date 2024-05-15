@@ -62,7 +62,7 @@ from jax._src.core import ShapedArray, ConcreteArray
 from jax._src.lax.lax import (_array_copy, _sort_lt_comparator,
                               _sort_le_comparator, PrecisionLike)
 from jax._src.lax import lax as lax_internal
-from jax._src.lib import xla_client as xc, xla_extension_version
+from jax._src.lib import xla_client as xc
 from jax._src.numpy import reductions
 from jax._src.numpy import ufuncs
 from jax._src.numpy import util
@@ -893,7 +893,9 @@ def isrealobj(x: Any) -> bool:
   return not iscomplexobj(x)
 
 
-def reshape(a: ArrayLike, newshape: DimSize | Shape, order: str = "C") -> Array:
+def reshape(
+    a: ArrayLike, shape: DimSize | Shape | None = None, order: str = "C", *,
+    newshape: DimSize | Shape | DeprecatedArg = DeprecatedArg()) -> Array:
   """Return a reshaped copy of an array.
 
   JAX implementation of :func:`numpy.reshape`, implemented in terms of
@@ -901,7 +903,7 @@ def reshape(a: ArrayLike, newshape: DimSize | Shape, order: str = "C") -> Array:
 
   Args:
     a: input array to reshape
-    newshape: integer or sequence of integers giving the new shape, which must match the
+    shape: integer or sequence of integers giving the new shape, which must match the
       size of the input array. If any single dimension is given size ``-1``, it will be
       replaced with a value such that the output has the correct size.
     order: ``'F'`` or ``'C'``, specifies whether the reshape should apply column-major
@@ -961,12 +963,31 @@ def reshape(a: ArrayLike, newshape: DimSize | Shape, order: str = "C") -> Array:
   """
   __tracebackhide__ = True
   util.check_arraylike("reshape", a)
+
+  # TODO(micky774): deprecated 2024-5-9, remove after deprecation expires.
+  if not isinstance(newshape, DeprecatedArg):
+    if shape is not None:
+      raise ValueError(
+        "jnp.reshape received both `shape` and `newshape` arguments. Note that "
+        "using `newshape` is deprecated, please only use `shape` instead."
+      )
+    warnings.warn(
+      "The newshape argument of jax.numpy.reshape is deprecated and setting it "
+      "will soon raise an error. To avoid an error in the future, and to "
+      "suppress this warning, please use the shape argument instead.",
+      DeprecationWarning, stacklevel=2)
+    shape = newshape
+    del newshape
+  elif shape is None:
+    raise TypeError(
+      "jnp.shape requires passing a `shape` argument, but none was given."
+    )
   try:
     # forward to method for ndarrays
-    return a.reshape(newshape, order=order)  # type: ignore[call-overload,union-attr]
+    return a.reshape(shape, order=order)  # type: ignore[call-overload,union-attr]
   except AttributeError:
     pass
-  return asarray(a).reshape(newshape, order=order)
+  return asarray(a).reshape(shape, order=order)
 
 
 @partial(jit, static_argnames=('order',), inline=True)
@@ -1107,8 +1128,63 @@ def resize(a: ArrayLike, new_shape: Shape) -> Array:
 
   return reshape(arr, new_shape)
 
-@util.implements(np.squeeze, lax_description=_ARRAY_VIEW_DOC)
+
 def squeeze(a: ArrayLike, axis: int | Sequence[int] | None = None) -> Array:
+  """Remove one or more length-1 axes from array
+
+  JAX implementation of :func:`numpy.sqeeze`, implemented via :func:`jax.lax.squeeze`.
+
+  Args:
+    a: input array
+    axis: integer or sequence of integers specifying axes to remove. If any specified
+      axis does not have a length of 1, an error is raised. If not specified, squeeze
+      all length-1 axes in ``a``.
+
+  Returns:
+    copy of ``a`` with length-1 axes removed.
+
+  Notes:
+    Unlike :func:`numpy.squeeze`, :func:`jax.numpy.squeeze` will return a copy rather
+    than a view of the input array. However, under JIT, the compiler will optimize-away
+    such copies when possible, so this doesn't have performance impacts in practice.
+
+  See Also:
+    - :func:`jax.numpy.expand_dims`: the inverse of ``squeeze``: add dimensions of length 1.
+    - :meth:`jax.Array.squeeze`: equivalent functionality via an array method.
+    - :func:`jax.lax.squeeze`: equivalent XLA API.
+    - :func:`jax.numpy.ravel`: flatten an array into a 1D shape.
+    - :func:`jax.numpy.reshape`: general array reshape.
+
+  Examples:
+    >>> x = jnp.array([[[0]], [[1]], [[2]]])
+    >>> x.shape
+    (3, 1, 1)
+
+    Squeeze all length-1 dimensions:
+
+    >>> jnp.squeeze(x)
+    Array([0, 1, 2], dtype=int32)
+    >>> _.shape
+    (3,)
+
+    Eqivalent while specifying the axes explicitly:
+
+    >>> jnp.squeeze(x, axis=(1, 2))
+    Array([0, 1, 2], dtype=int32)
+
+    Attempting to squeeze a non-unit axis results in an error:
+
+    >>> jnp.squeeze(x, axis=0)  # doctest: +IGNORE_EXCEPTION_DETAIL
+    Traceback (most recent call last):
+      ...
+    ValueError: cannot select an axis to squeeze out which has size not equal to one, got shape=(3, 1, 1) and dimensions=(0,)
+
+    For convenience, this functionality is also available via the
+    :meth:`jax.Array.squeeze` method:
+
+    >>> x.squeeze()
+    Array([0, 1, 2], dtype=int32)
+  """
   util.check_arraylike("squeeze", a)
   return _squeeze(asarray(a), _ensure_index_tuple(axis) if axis is not None else None)
 
@@ -1123,25 +1199,171 @@ def _squeeze(a: Array, axis: tuple[int, ...]) -> Array:
   return lax.squeeze(a, axis)
 
 
-@util.implements(np.expand_dims)
 def expand_dims(a: ArrayLike, axis: int | Sequence[int]) -> Array:
+  """Insert dimensions of length 1 into array
+
+  JAX implementation of :func:`numpy.expand_dims`, implemented via
+  :func:`jax.lax.expand_dims`.
+
+  Args:
+    a: input array
+    axis: integer or sequence of integers specifying positions of axes to add.
+
+  Returns:
+    Copy of ``a`` with added dimensions.
+
+  Notes:
+    Unlike :func:`numpy.expand_dims`, :func:`jax.numpy.expand_dims` will return a copy
+    rather than a view of the input array. However, under JIT, the compiler will optimize
+    away such copies when possible, so this doesn't have performance impacts in practice.
+
+  See Also:
+    - :func:`jax.numpy.squeeze`: inverse of this operation, i.e. remove length-1 dimensions.
+    - :func:`jax.lax.expand_dims`: XLA version of this functionality.
+
+  Examples:
+    >>> x = jnp.array([1, 2, 3])
+    >>> x.shape
+    (3,)
+
+    Expand the leading dimension:
+
+    >>> jnp.expand_dims(x, 0)
+    Array([[1, 2, 3]], dtype=int32)
+    >>> _.shape
+    (1, 3)
+
+    Expand the trailing dimension:
+
+    >>> jnp.expand_dims(x, 1)
+    Array([[1],
+           [2],
+           [3]], dtype=int32)
+    >>> _.shape
+    (3, 1)
+
+    Expand multiple dimensions:
+
+    >>> jnp.expand_dims(x, (0, 1, 3))
+    Array([[[[1],
+             [2],
+             [3]]]], dtype=int32)
+    >>> _.shape
+    (1, 1, 3, 1)
+
+    Dimensions can also be expanded more succinctly by indexing with ``None``:
+
+    >>> x[None]  # equivalent to jnp.expand_dims(x, 0)
+    Array([[1, 2, 3]], dtype=int32)
+    >>> x[:, None]  # equivalent to jnp.expand_dims(x, 1)
+    Array([[1],
+           [2],
+           [3]], dtype=int32)
+    >>> x[None, None, :, None]  # equivalent to jnp.expand_dims(x, (0, 1, 3))
+    Array([[[[1],
+             [2],
+             [3]]]], dtype=int32)
+  """
   util.check_arraylike("expand_dims", a)
   axis = _ensure_index_tuple(axis)
   return lax.expand_dims(a, axis)
 
 
-@util.implements(np.swapaxes, lax_description=_ARRAY_VIEW_DOC)
 @partial(jit, static_argnames=('axis1', 'axis2'), inline=True)
 def swapaxes(a: ArrayLike, axis1: int, axis2: int) -> Array:
+  """Swap two axes of an array.
+
+  JAX implementation of :func:`numpy.swapaxes`, implemented in terms of
+  :func:`jax.lax.transpose`.
+
+  Args:
+    a: input array
+    axis1: index of first axis
+    axis2: index of second axis
+
+  Returns:
+    Copy of ``a`` with specified axes swapped.
+
+  Notes:
+    Unlike :func:`numpy.swapaxes`, :func:`jax.numpy.swapaxes` will return a copy rather
+    than a view of the input array. However, under JIT, the compiler will optimize away
+    such copies when possible, so this doesn't have performance impacts in practice.
+
+  See Also:
+    - :func:`jax.numpy.moveaxis`: move a single axis of an array.
+    - :func:`jax.numpy.rollaxis`: older API for ``moveaxis``.
+    - :func:`jax.lax.transpose`: more general axes permutations.
+    - :meth:`jax.Array.swapaxes`: same functionality via an array method.
+
+  Examples:
+    >>> a = jnp.ones((2, 3, 4, 5))
+    >>> jnp.swapaxes(a, 1, 3).shape
+    (2, 5, 4, 3)
+
+    Equivalent output via the ``swapaxes`` array method:
+
+    >>> a.swapaxes(1, 3).shape
+    (2, 5, 4, 3)
+
+    Equivalent output via :func:`~jax.numpy.transpose`:
+
+    >>> a.transpose(0, 3, 2, 1).shape
+    (2, 5, 4, 3)
+  """
   util.check_arraylike("swapaxes", a)
   perm = np.arange(ndim(a))
   perm[axis1], perm[axis2] = perm[axis2], perm[axis1]
   return lax.transpose(a, list(perm))
 
 
-@util.implements(np.moveaxis, lax_description=_ARRAY_VIEW_DOC)
 def moveaxis(a: ArrayLike, source: int | Sequence[int],
              destination: int | Sequence[int]) -> Array:
+  """Move an array axis to a new position
+
+  JAX implementation of :func:`numpy.moveaxis`, implemented in terms of
+  :func:`jax.lax.transpose`.
+
+  Args:
+    a: input array
+    source: index or indices of the axes to move.
+    destination: index or indices of the axes destinations
+
+  Returns:
+    Copy of ``a`` with axes moved from ``source`` to ``destination``.
+
+  Notes:
+    Unlike :func:`numpy.moveaxis`, :func:`jax.numpy.moveaxis` will return a copy rather
+    than a view of the input array. However, under JIT, the compiler will optimize away
+    such copies when possible, so this doesn't have performance impacts in practice.
+
+  See also:
+    - :func:`jax.numpy.swapaxes`: swap two axes.
+    - :func:`jax.numpy.rollaxis`: older API for moving an axis.
+    - :func:`jax.numpy.transpose`: general axes permutation.
+
+  Examples:
+    >>> a = jnp.ones((2, 3, 4, 5))
+
+    Move axis ``1`` to the end of the array:
+
+    >>> jnp.moveaxis(a, 1, -1).shape
+    (2, 4, 5, 3)
+
+    Move the last axis to position 1:
+
+    >>> jnp.moveaxis(a, -1, 1).shape
+    (2, 5, 3, 4)
+
+    Move multiple axes:
+
+    >>> jnp.moveaxis(a, (0, 1), (-1, -2)).shape
+    (4, 5, 3, 2)
+
+    This can also be accomplished via :func:`~jax.numpy.transpose`:
+
+    >>> a.transpose(2, 3, 1, 0).shape
+    (4, 5, 3, 2)
+  """
   util.check_arraylike("moveaxis", a)
   return _moveaxis(asarray(a), _ensure_index_tuple(source),
                    _ensure_index_tuple(destination))
@@ -2526,19 +2748,14 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     if hasattr(object, '__jax_array__'):
       object = object.__jax_array__()
     elif hasattr(object, '__cuda_array_interface__'):
-      if xla_extension_version >= 237:
-        cai = object.__cuda_array_interface__
-        backend = xla_bridge.get_backend("cuda")
-        if cuda_plugin_extension is None:
-          device_id = None
-        else:
-          device_id = cuda_plugin_extension.get_device_ordinal(cai["data"][0])
-        if xla_extension_version >= 261:
-          object = xc._xla.cuda_array_interface_to_buffer(
-              cai=cai, gpu_backend=backend, device_id=device_id
-          )
-        else:
-          object = xc._xla.cuda_array_interface_to_buffer(cai, backend)
+      cai = object.__cuda_array_interface__
+      backend = xla_bridge.get_backend("cuda")
+      if cuda_plugin_extension is None:
+        device_id = None
+      else:
+        device_id = cuda_plugin_extension.get_device_ordinal(cai["data"][0])
+      object = xc._xla.cuda_array_interface_to_buffer(
+          cai=cai, gpu_backend=backend, device_id=device_id)
 
   object = tree_map(lambda leaf: leaf.__jax_array__()
                     if hasattr(leaf, "__jax_array__") else leaf, object)
@@ -2888,15 +3105,23 @@ def fromstring(string: str, dtype: DTypeLike = float, count: int = -1, *, sep: s
 
 
 @util.implements(np.eye)
-def eye(N: DimSize, M: DimSize | None = None, k: int = 0,
+def eye(N: DimSize, M: DimSize | None = None,
+        k: int | ArrayLike = 0,
         dtype: DTypeLike | None = None) -> Array:
   dtypes.check_user_dtype_supported(dtype, "eye")
+  if isinstance(k, int):
+    k = lax_internal._clip_int_to_valid_range(k, np.int32)
+  util.check_arraylike("eye", k)
+  offset = asarray(k)
+  if not (offset.shape == () and dtypes.issubdtype(offset.dtype, np.integer)):
+    raise ValueError(f"k must be a scalar integer; got {k}")
   N_int = core.canonicalize_dim(N, "'N' argument of jnp.eye()")
   M_int = N_int if M is None else core.canonicalize_dim(M, "'M' argument of jnp.eye()")
   if N_int < 0 or M_int < 0:
     raise ValueError(f"negative dimensions are not allowed, got {N} and {M}")
-  k = operator.index(k)
-  return lax_internal._eye(_jnp_dtype(dtype), (N_int, M_int), k)
+  i = lax.broadcasted_iota(offset.dtype, (N_int, M_int), 0)
+  j = lax.broadcasted_iota(offset.dtype, (N_int, M_int), 1)
+  return (i + offset == j).astype(dtype)
 
 
 @util.implements(np.identity)
@@ -3385,8 +3610,8 @@ def triu(m: ArrayLike, k: int = 0) -> Array:
 
 
 @util.implements(np.trace, skip_params=['out'])
-@partial(jit, static_argnames=('offset', 'axis1', 'axis2', 'dtype'))
-def trace(a: ArrayLike, offset: int = 0, axis1: int = 0, axis2: int = 1,
+@partial(jit, static_argnames=('axis1', 'axis2', 'dtype'))
+def trace(a: ArrayLike, offset: int | ArrayLike = 0, axis1: int = 0, axis2: int = 1,
           dtype: DTypeLike | None = None, out: None = None) -> Array:
   util.check_arraylike("trace", a)
   if out is not None:
@@ -3811,20 +4036,71 @@ def apply_over_axes(func: Callable[[ArrayLike, int], Array], a: ArrayLike,
 
 ### Tensor contraction operations
 
-
-_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION = """
-preferred_element_type : dtype, optional
-    If specified, accumulate results and return a result of the given data type.
-    If not specified, the accumulation dtype is determined from the type promotion
-    rules of the input array dtypes.
-"""
-
-@util.implements(np.dot, lax_description=_PRECISION_DOC,
-                 extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def dot(a: ArrayLike, b: ArrayLike, *,
         precision: PrecisionLike = None,
         preferred_element_type: DTypeLike | None = None) -> Array:
+  """Compute the dot product of two arrays.
+
+  JAX implementation of :func:`numpy.dot`.
+
+  This differs from :func:`jax.numpy.matmul` in two respects:
+
+  - if either ``a`` or ``b`` is a scalar, the result of ``dot`` is equivalent to
+    :func:`jax.numpy.multiply`, while the result of ``matmul`` is an error.
+  - if ``a`` and ``b`` have more than 2 dimensions, the batch indices are
+    stacked rather than broadcast.
+
+  Args:
+    a: first input array, of shape ``(..., N)``.
+    b: second input array. Must have shape ``(N,)`` or ``(..., N, M)``.
+      In the multi-dimensional case, leading dimensions must be broadcast-compatible
+      with the leading dimensions of ``a``.
+    precision: either ``None`` (default), which means the default precision for
+      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      such values indicating precision of ``a`` and ``b``.
+    preferred_element_type: either ``None`` (default), which means the default
+      accumulation type for the input types, or a datatype, indicating to
+      accumulate results to and return a result with that datatype.
+
+  Returns:
+    array containing the dot product of the inputs, with batch dimensions of
+    ``a`` and ``b`` stacked rather than broadcast.
+
+  See also:
+    - :func:`jax.numpy.matmul`: broadcasted batched matmul.
+    - :func:`jax.lax.dot_general`: general batched matrix multiplication.
+
+  Examples:
+    For scalar inputs, ``dot`` computes the element-wise product:
+
+    >>> x = jnp.array([1, 2, 3])
+    >>> jnp.dot(x, 2)
+    Array([2, 4, 6], dtype=int32)
+
+    For vector or matrix inputs, ``dot`` computes the vector or matrix product:
+
+    >>> M = jnp.array([[2, 3, 4],
+    ...                [5, 6, 7],
+    ...                [8, 9, 0]])
+    >>> jnp.dot(M, x)
+    Array([20, 38, 26], dtype=int32)
+    >>> jnp.dot(M, M)
+    Array([[ 51,  60,  29],
+           [ 96, 114,  62],
+           [ 61,  78,  95]], dtype=int32)
+
+    For higher-dimensional matrix products, batch dimensions are stacked, whereas
+    in :func:`~jax.numpy.matmul` they are broadcast. For example:
+
+    >>> a = jnp.zeros((3, 2, 4))
+    >>> b = jnp.zeros((3, 4, 1))
+    >>> jnp.dot(a, b).shape
+    (3, 2, 3, 1)
+    >>> jnp.matmul(a, b).shape
+    (3, 2, 1)
+  """
   util.check_arraylike("dot", a, b)
   dtypes.check_user_dtype_supported(preferred_element_type, "dot")
   a, b = asarray(a), asarray(b)
@@ -3852,14 +4128,64 @@ def dot(a: ArrayLike, b: ArrayLike, *,
   return lax_internal._convert_element_type(result, preferred_element_type, output_weak_type)
 
 
-@util.implements(np.matmul, module='numpy', lax_description=_PRECISION_DOC,
-                 extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def matmul(a: ArrayLike, b: ArrayLike, *,
            precision: PrecisionLike = None,
            preferred_element_type: DTypeLike | None = None,
            ) -> Array:
-  """Matrix Multiply."""
+  """Perform a matrix multiplication.
+
+  JAX implementation of :func:`numpy.matmul`.
+
+  Args:
+    a: first input array, of shape ``(..., N)``.
+    b: second input array. Must have shape ``(N,)`` or ``(..., N, M)``.
+      In the multi-dimensional case, leading dimensions must be broadcast-compatible
+      with the leading dimensions of ``a``.
+    precision: either ``None`` (default), which means the default precision for
+      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      such values indicating precision of ``a`` and ``b``.
+    preferred_element_type: either ``None`` (default), which means the default
+      accumulation type for the input types, or a datatype, indicating to
+      accumulate results to and return a result with that datatype.
+
+  Returns:
+    array containing the matrix product of the inputs. Shape is ``a.shape[:-1]``
+    if ``b.ndim == 1``, otherwise the shape is ``(..., M)``, where leading
+    dimensions of ``a`` and ``b`` are broadcast together.
+
+  See Also:
+    - :func:`jax.numpy.linalg.vecdot`: batched vector product.
+    - :func:`jax.numpy.linalg.tensordot`: batched tensor product.
+    - :func:`jax.lax.dot_general`: general N-dimensional batched dot product.
+
+  Examples:
+    Vector dot products:
+
+    >>> a = jnp.array([1, 2, 3])
+    >>> b = jnp.array([4, 5, 6])
+    >>> jnp.matmul(a, b)
+    Array(32, dtype=int32)
+
+    Matrix dot product:
+
+    >>> a = jnp.array([[1, 2, 3],
+    ...                [4, 5, 6]])
+    >>> b = jnp.array([[1, 2],
+    ...                [3, 4],
+    ...                [5, 6]])
+    >>> jnp.matmul(a, b)
+    Array([[22, 28],
+           [49, 64]], dtype=int32)
+
+    For convenience, in all cases you can do the same computation using
+    the ``@`` operator:
+
+    >>> a @ b
+    Array([[22, 28],
+           [49, 64]], dtype=int32)
+  """
   util.check_arraylike("matmul", a, b)
   dtypes.check_user_dtype_supported(preferred_element_type, "matmul")
   a, b = asarray(a), asarray(b)
@@ -3925,14 +4251,47 @@ def matmul(a: ArrayLike, b: ArrayLike, *,
   return lax_internal._convert_element_type(result, preferred_element_type, output_weak_type)
 
 
-@util.implements(np.vdot, lax_description=_PRECISION_DOC,
-                 extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def vdot(
     a: ArrayLike, b: ArrayLike, *,
     precision: PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
 ) -> Array:
+  """Perform a conjugate multiplication of two 1D vectors.
+
+  JAX implementation of :func:`numpy.vdot`.
+
+  Args:
+    a: first input array, if not 1D it will be flattened.
+    b: second input array, if not 1D it will be flattened. Must have ``a.size == b.size``.
+    precision: either ``None`` (default), which means the default precision for
+      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      such values indicating precision of ``a`` and ``b``.
+    preferred_element_type: either ``None`` (default), which means the default
+      accumulation type for the input types, or a datatype, indicating to
+      accumulate results to and return a result with that datatype.
+
+  Returns:
+    Scalar array (shape ``()``) containing the conjugate vector product of the inputs.
+
+  See Also:
+    - :func:`jax.numpy.vecdot`: batched vector product.
+    - :func:`jax.numpy.matmul`: general matrix multiplication.
+    - :func:`jax.lax.dot_general`: general N-dimensional batched dot product.
+
+  Examples:
+    >>> x = jnp.array([1j, 2j, 3j])
+    >>> y = jnp.array([1., 2., 3.])
+    >>> jnp.vdot(x, y)
+    Array(0.-14.j, dtype=complex64)
+
+    Note the difference between this and :func:`~jax.numpy.dot`, which does not
+    conjugate the first input when complex:
+
+    >>> jnp.dot(x, y)
+    Array(0.+14.j, dtype=complex64)
+  """
   util.check_arraylike("vdot", a, b)
   if issubdtype(_dtype(a), complexfloating):
     a = ufuncs.conj(a)
@@ -3940,14 +4299,51 @@ def vdot(
              preferred_element_type=preferred_element_type)
 
 
-@util.implements(
-    getattr(np, "vecdot", None), lax_description=_PRECISION_DOC,
-    extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION,
-    # TODO(phawkins): numpy.vecdot doesn't have a __module__ attribute.
-    module="numpy")
 def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
            precision: PrecisionLike = None,
            preferred_element_type: DTypeLike | None = None) -> Array:
+  """Perform a conjugate multiplication of two batched vectors.
+
+  JAX implementation of :func:`numpy.vecdot`.
+
+  Args:
+    a: left-hand side array.
+    b: right-hand side array. Size of ``b[axis]`` must match size of ``a[axis]``,
+      and remaining dimensions must be broadcast-compatible.
+    axis: axis along which to compute the dot product (default: -1)
+    precision: either ``None`` (default), which means the default precision for
+      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      such values indicating precision of ``a`` and ``b``.
+    preferred_element_type: either ``None`` (default), which means the default
+      accumulation type for the input types, or a datatype, indicating to
+      accumulate results to and return a result with that datatype.
+
+  Returns:
+    array containing the conjugate dot product of ``a`` and ``b`` along ``axis``.
+    The non-contracted dimensions are broadcast together.
+
+  See Also:
+    - :func:`jax.numpy.vdot`: flattened vector product.
+    - :func:`jax.numpy.matmul`: general matrix multiplication.
+    - :func:`jax.lax.dot_general`: general N-dimensional batched dot product.
+
+  Examples:
+    Vector conjugate-dot product of two 1D arrays:
+
+    >>> a = jnp.array([1j, 2j, 3j])
+    >>> b = jnp.array([4., 5., 6.])
+    >>> jnp.linalg.vecdot(a, b)
+    Array(0.-32.j, dtype=complex64)
+
+    Batched vector dot product of two 2D arrays:
+
+    >>> a = jnp.array([[1, 2, 3],
+    ...                [4, 5, 6]])
+    >>> b = jnp.array([[2, 3, 4]])
+    >>> jnp.linalg.vecdot(a, b, axis=-1)
+    Array([20, 47], dtype=int32)
+  """
   util.check_arraylike("jnp.vecdot", x1, x2)
   x1_arr, x2_arr = asarray(x1), asarray(x2)
   if x1_arr.shape[axis] != x2_arr.shape[axis]:
@@ -3958,12 +4354,81 @@ def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
                    signature="(n),(n)->()")(x1_arr, x2_arr)
 
 
-@util.implements(np.tensordot, lax_description=_PRECISION_DOC,
-                 extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 def tensordot(a: ArrayLike, b: ArrayLike,
               axes: int | Sequence[int] | Sequence[Sequence[int]] = 2,
               *, precision: PrecisionLike = None,
               preferred_element_type: DTypeLike | None = None) -> Array:
+  """Compute the tensor dot product of two N-dimensional arrays.
+
+  JAX implementation of :func:`numpy.linalg.tensordot`.
+
+  Args:
+    a: N-dimensional array
+    b: M-dimensional array
+    axes: integer or tuple of sequences of integers. If an integer `k`, then
+      sum over the last `k` axes of ``a`` and the first `k` axes of ``b``,
+      in order. If a tuple, then ``axes[0]`` specifies the axes of ``a`` and
+      ``axes[1]`` specifies the axes of ``b``.
+    precision: either ``None`` (default), which means the default precision for
+      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      such values indicating precision of ``a`` and ``b``.
+    preferred_element_type: either ``None`` (default), which means the default
+      accumulation type for the input types, or a datatype, indicating to
+      accumulate results to and return a result with that datatype.
+
+  Returns:
+    array containing the tensor dot product of the inputs
+
+  See also:
+    - :func:`jax.numpy.einsum`: NumPy API for more general tensor contractions.
+    - :func:`jax.lax.dot_general`: XLA API for more general tensor contractions.
+
+  Examples:
+    >>> x1 = jnp.arange(24.).reshape(2, 3, 4)
+    >>> x2 = jnp.ones((3, 4, 5))
+    >>> jnp.tensordot(x1, x2)
+    Array([[ 66.,  66.,  66.,  66.,  66.],
+           [210., 210., 210., 210., 210.]], dtype=float32)
+
+    Equivalent result when specifying the axes as explicit sequences:
+
+    >>> jnp.tensordot(x1, x2, axes=([1, 2], [0, 1]))
+    Array([[ 66.,  66.,  66.,  66.,  66.],
+           [210., 210., 210., 210., 210.]], dtype=float32)
+
+    Equivalent result via :func:`~jax.numpy.einsum`:
+
+    >>> jnp.einsum('ijk,jkm->im', x1, x2)
+    Array([[ 66.,  66.,  66.,  66.,  66.],
+           [210., 210., 210., 210., 210.]], dtype=float32)
+
+    Setting ``axes=1`` for two-dimensional inputs is equivalent to a matrix
+    multiplication:
+
+    >>> x1 = jnp.array([[1, 2],
+    ...                 [3, 4]])
+    >>> x2 = jnp.array([[1, 2, 3],
+    ...                 [4, 5, 6]])
+    >>> jnp.linalg.tensordot(x1, x2, axes=1)
+    Array([[ 9, 12, 15],
+           [19, 26, 33]], dtype=int32)
+    >>> x1 @ x2
+    Array([[ 9, 12, 15],
+           [19, 26, 33]], dtype=int32)
+
+    Setting ``axes=0`` for one-dimensional inputs is equivalent to
+    :func:`~jax.numpy.outer`:
+
+    >>> x1 = jnp.array([1, 2])
+    >>> x2 = jnp.array([1, 2, 3])
+    >>> jnp.linalg.tensordot(x1, x2, axes=0)
+    Array([[1, 2, 3],
+           [2, 4, 6]], dtype=int32)
+    >>> jnp.outer(x1, x2)
+    Array([[1, 2, 3],
+           [2, 4, 6]], dtype=int32)
+  """
   util.check_arraylike("tensordot", a, b)
   dtypes.check_user_dtype_supported(preferred_element_type, "tensordot")
   a, b = asarray(a), asarray(b)
@@ -4004,21 +4469,17 @@ def tensordot(a: ArrayLike, b: ArrayLike,
   return lax_internal._convert_element_type(result, preferred_element_type, output_weak_type)
 
 
-_EINSUM_DOC = _PRECISION_DOC + """\
-A tuple ``precision`` does not necessarily map to multiple arguments of ``einsum()``;
-rather, the specified ``precision`` is forwarded to each ``dot_general`` call used in
-the implementation.
-
-:func:`jax.numpy.einsum` also differs from :func:`numpy.einsum` in that the ``optimize``
-keyword defaults to ``"optimal"`` rather than ``False``.
-"""
+class Unoptimized(opt_einsum.paths.PathOptimizer):
+  """Unoptimized path for einsum."""
+  def __call__(self, inputs, *args, **kwargs):
+    return [(0, 1)] * (len(inputs) - 1)
 
 @overload
 def einsum(
     subscript: str, /,
     *operands: ArrayLike,
     out: None = None,
-    optimize: str = "optimal",
+    optimize: str | bool | list[tuple[int, ...]] = "optimal",
     precision: PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
@@ -4030,27 +4491,234 @@ def einsum(
     axes: Sequence[Any], /,
     *operands: ArrayLike | Sequence[Any],
     out: None = None,
-    optimize: str = "optimal",
+    optimize: str | bool | list[tuple[int, ...]] = "optimal",
     precision: PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
 ) -> Array: ...
 
-@util.implements(np.einsum, lax_description=_EINSUM_DOC, skip_params=['out'])
 def einsum(
     subscripts, /,
     *operands,
     out: None = None,
-    optimize: str = "optimal",
+    optimize: str | bool | list[tuple[int, ...]] = "optimal",
     precision: PrecisionLike = None,
     preferred_element_type: DTypeLike | None = None,
     _dot_general: Callable[..., Array] = lax.dot_general,
 ) -> Array:
+  """Einstein summation
+
+  JAX implementation of :func:`numpy.einsum`.
+
+  ``einsum`` is a powerful and generic API for computing various reductions,
+  inner products, outer products, axis reorderings, and combinations thereof
+  across one or more input arrays. It has a somewhat complicated overloaded API;
+  the arguments below reflect the most common calling convention. The Examples
+  section below demonstrates some of the alternative calling conventions.
+
+  Args:
+    subscripts: string containing axes names separated by commas.
+    *operands: sequence of one or more arrays corresponding to the subscripts.
+    optimize: specify how to optimize the order of computation. In JAX this defaults
+      to ``"optimal"`` which produces optimized expressions via the opt_einsum_
+      package. Other options are ``True`` (same as ``"optimal"``), ``False``
+      (unoptimized), or any string supported by ``opt_einsum``, which
+      includes ``"auto"``, ``"greedy"``, ``"eager"``, and others. It may also
+      be a pre-computed path (see :func:`~jax.numpy.einsum_path`).
+    precision: either ``None`` (default), which means the default precision for
+      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``).
+    preferred_element_type: either ``None`` (default), which means the default
+      accumulation type for the input types, or a datatype, indicating to
+      accumulate results to and return a result with that datatype.
+    out: unsupported by JAX
+    _dot_general: optionally override the ``dot_general`` callable used by ``einsum``.
+      This parameter is experimental, and may be removed without warning at any time.
+
+  Returns:
+    array containing the result of the einstein summation.
+
+  See also:
+    :func:`jax.numpy.einsum_path`
+
+  Examples:
+    The mechanics of ``einsum`` are perhaps best demonstrated by example. Here we
+    show how to use ``einsum`` to compute a number of quantities from one or more
+    arrays. For more discussion and examples of ``einsum``, see the documentation
+    of :func:`numpy.einsum`.
+
+    >>> M = jnp.arange(16).reshape(4, 4)
+    >>> x = jnp.arange(4)
+    >>> y = jnp.array([5, 4, 3, 2])
+
+    **Vector product**
+
+    >>> jnp.einsum('i,i', x, y)
+    Array(16, dtype=int32)
+    >>> jnp.vecdot(x, y)
+    Array(16, dtype=int32)
+
+    Here are some alternative ``einsum`` calling conventions to comput the same
+    result:
+
+    >>> jnp.einsum('i,i->', x, y)  # explicit form
+    Array(16, dtype=int32)
+    >>> jnp.einsum(x, (0,), y, (0,))  # implicit form via indices
+    Array(16, dtype=int32)
+    >>> jnp.einsum(x, (0,), y, (0,), ())  # explicit form via indices
+    Array(16, dtype=int32)
+
+    **Matrix product**
+
+    >>> jnp.einsum('ij,j->i', M, x)  # explicit form
+    Array([14, 38, 62, 86], dtype=int32)
+    >>> jnp.matmul(M, x)
+    Array([14, 38, 62, 86], dtype=int32)
+
+    Here are some alternative ``einsum`` calling conventions to compute the same
+    result:
+
+    >>> jnp.einsum('ij,j', M, x) # implicit form
+    Array([14, 38, 62, 86], dtype=int32)
+    >>> jnp.einsum(M, (0, 1), x, (1,), (0,)) # explicit form via indices
+    Array([14, 38, 62, 86], dtype=int32)
+    >>> jnp.einsum(M, (0, 1), x, (1,))  # implicit form via indices
+    Array([14, 38, 62, 86], dtype=int32)
+
+    **Outer product**
+
+    >>> jnp.einsum("i,j->ij", x, y)
+    Array([[ 0,  0,  0,  0],
+           [ 5,  4,  3,  2],
+           [10,  8,  6,  4],
+           [15, 12,  9,  6]], dtype=int32)
+    >>> jnp.outer(x, y)
+    Array([[ 0,  0,  0,  0],
+           [ 5,  4,  3,  2],
+           [10,  8,  6,  4],
+           [15, 12,  9,  6]], dtype=int32)
+
+    Some other ways of computing outer products:
+
+    >>> jnp.einsum("i,j", x, y)  # implicit form
+    Array([[ 0,  0,  0,  0],
+           [ 5,  4,  3,  2],
+           [10,  8,  6,  4],
+           [15, 12,  9,  6]], dtype=int32)
+    >>> jnp.einsum(x, (0,), y, (1,), (0, 1))  # explicit form via indices
+    Array([[ 0,  0,  0,  0],
+           [ 5,  4,  3,  2],
+           [10,  8,  6,  4],
+           [15, 12,  9,  6]], dtype=int32)
+    >>> jnp.einsum(x, (0,), y, (1,))  # implicit form via indices
+    Array([[ 0,  0,  0,  0],
+           [ 5,  4,  3,  2],
+           [10,  8,  6,  4],
+           [15, 12,  9,  6]], dtype=int32)
+
+    **1D array sum**
+
+    >>> jnp.einsum("i->", x)  # requires explicit form
+    Array(6, dtype=int32)
+    >>> jnp.einsum(x, (0,), ())  # explicit form via indices
+    Array(6, dtype=int32)
+    >>> jnp.sum(x)
+    Array(6, dtype=int32)
+
+    **Sum along an axis**
+
+    >>> jnp.einsum("...j->...", M)  # requires explicit form
+    Array([ 6, 22, 38, 54], dtype=int32)
+    >>> jnp.einsum(M, (..., 0), (...,))  # explicit form via indices
+    Array([ 6, 22, 38, 54], dtype=int32)
+    >>> M.sum(-1)
+    Array([ 6, 22, 38, 54], dtype=int32)
+
+    **Matrix transpose**
+
+    >>> y = jnp.array([[1, 2, 3],
+    ...                [4, 5, 6]])
+    >>> jnp.einsum("ij->ji", y)  # explicit form
+    Array([[1, 4],
+           [2, 5],
+           [3, 6]], dtype=int32)
+    >>> jnp.einsum("ji", y)  # implicit form
+    Array([[1, 4],
+           [2, 5],
+           [3, 6]], dtype=int32)
+    >>> jnp.einsum(y, (1, 0))  # implicit form via indices
+    Array([[1, 4],
+           [2, 5],
+           [3, 6]], dtype=int32)
+    >>> jnp.einsum(y, (0, 1), (1, 0))  # explicit form via indices
+    Array([[1, 4],
+           [2, 5],
+           [3, 6]], dtype=int32)
+    >>> jnp.transpose(y)
+    Array([[1, 4],
+           [2, 5],
+           [3, 6]], dtype=int32)
+
+    **Matrix diagonal**
+
+    >>> jnp.einsum("ii->i", M)
+    Array([ 0,  5, 10, 15], dtype=int32)
+    >>> jnp.diagonal(M)
+    Array([ 0,  5, 10, 15], dtype=int32)
+
+    **Matrix trace**
+
+    >>> jnp.einsum("ii", M)
+    Array(30, dtype=int32)
+    >>> jnp.trace(M)
+    Array(30, dtype=int32)
+
+    **Tensor products**
+
+    >>> x = jnp.arange(30).reshape(2, 3, 5)
+    >>> y = jnp.arange(60).reshape(3, 4, 5)
+    >>> jnp.einsum('ijk,jlk->il', x, y)  # explicit form
+    Array([[ 3340,  3865,  4390,  4915],
+           [ 8290,  9940, 11590, 13240]], dtype=int32)
+    >>> jnp.tensordot(x, y, axes=[(1, 2), (0, 2)])
+    Array([[ 3340,  3865,  4390,  4915],
+           [ 8290,  9940, 11590, 13240]], dtype=int32)
+    >>> jnp.einsum('ijk,jlk', x, y)  # implicit form
+    Array([[ 3340,  3865,  4390,  4915],
+           [ 8290,  9940, 11590, 13240]], dtype=int32)
+    >>> jnp.einsum(x, (0, 1, 2), y, (1, 3, 2), (0, 3))  # explicit form via indices
+    Array([[ 3340,  3865,  4390,  4915],
+           [ 8290,  9940, 11590, 13240]], dtype=int32)
+    >>> jnp.einsum(x, (0, 1, 2), y, (1, 3, 2))  # implicit form via indices
+    Array([[ 3340,  3865,  4390,  4915],
+           [ 8290,  9940, 11590, 13240]], dtype=int32)
+
+    **Chained dot products**
+
+    >>> w = jnp.arange(5, 9).reshape(2, 2)
+    >>> x = jnp.arange(6).reshape(2, 3)
+    >>> y = jnp.arange(-2, 4).reshape(3, 2)
+    >>> z = jnp.array([[2, 4, 6], [3, 5, 7]])
+    >>> jnp.einsum('ij,jk,kl,lm->im', w, x, y, z)
+    Array([[ 481,  831, 1181],
+           [ 651, 1125, 1599]], dtype=int32)
+    >>> jnp.einsum(w, (0, 1), x, (1, 2), y, (2, 3), z, (3, 4))  # implicit, via indices
+    Array([[ 481,  831, 1181],
+           [ 651, 1125, 1599]], dtype=int32)
+    >>> w @ x @ y @ z  # direct chain of matmuls
+    Array([[ 481,  831, 1181],
+           [ 651, 1125, 1599]], dtype=int32)
+    >>> jnp.linalg.multi_dot([w, x, y, z])
+    Array([[ 481,  831, 1181],
+           [ 651, 1125, 1599]], dtype=int32)
+
+  .. _opt_einsum: https://github.com/dgasmith/opt_einsum
+  """
   operands = (subscripts, *operands)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.einsum is not supported.")
   spec = operands[0] if isinstance(operands[0], str) else None
-  optimize = 'optimal' if optimize is True else optimize
+  path_type = 'optimal' if optimize is True else Unoptimized() if optimize is False else optimize
 
   # Allow handling of shape polymorphism
   non_constant_dim_types = {
@@ -4064,7 +4732,7 @@ def einsum(
     contract_path = _poly_einsum_handlers.get(ty, _default_poly_einsum_handler)
   # using einsum_call=True here is an internal api for opt_einsum... sorry
   operands, contractions = contract_path(
-        *operands, einsum_call=True, use_blas=True, optimize=optimize)
+        *operands, einsum_call=True, use_blas=True, optimize=path_type)
 
   contractions = tuple((a, frozenset(b), c) for a, b, c, *_ in contractions)
 
@@ -4088,9 +4756,77 @@ def _default_poly_einsum_handler(*operands, **kwargs):
   contract_operands = [operands[mapping[id(d)]] for d in out_dummies]
   return contract_operands, contractions
 
-@util.implements(np.einsum_path)
-def einsum_path(subscripts, *operands, optimize='greedy'):
-  # using einsum_call=True here is an internal api for opt_einsum
+@overload
+def einsum_path(
+    subscripts: str, /,
+    *operands: ArrayLike,
+    optimize: bool | str | list[tuple[int, ...]] =  ...,
+) -> tuple[list[tuple[int, ...]], Any]: ...
+
+@overload
+def einsum_path(
+    arr: ArrayLike,
+    axes: Sequence[Any], /,
+    *operands: ArrayLike | Sequence[Any],
+    optimize: bool | str | list[tuple[int, ...]] =  ...,
+) -> tuple[list[tuple[int, ...]], Any]: ...
+
+def einsum_path(
+    subscripts, /,
+    *operands,
+    optimize: bool | str | list[tuple[int, ...]] = 'auto'
+  ) -> tuple[list[tuple[int, ...]], Any]:
+  """Evaluates the optimal contraction path without evaluating the einsum.
+
+  JAX implementation of :func:`jax.numpy.einsum_path`. This function calls into
+  the opt_einsum_ package, and makes use of its optimization routines.
+
+  Args:
+    subscripts: string containing axes names separated by commas.
+    *operands: sequence of one or more arrays corresponding to the subscripts.
+    optimize: specify how to optimize the order of computation. In JAX this defaults
+      to ``"auto"``. Other options are ``True`` (same as ``"optimize"``), ``False``
+      (unoptimized), or any string supported by ``opt_einsum``, which
+      includes ``"optimize"``,, ``"greedy"``, ``"eager"``, and others.
+
+  Returns:
+    A tuple containing the path that may be passed to :func:`~jax.numpy.einsum`, and a
+    printable object representing this optimal path.
+
+  Example:
+    >>> key1, key2, key3 = jax.random.split(jax.random.key(0), 3)
+    >>> x = jax.random.randint(key1, minval=-5, maxval=5, shape=(2, 3))
+    >>> y = jax.random.randint(key2, minval=-5, maxval=5, shape=(3, 100))
+    >>> z = jax.random.randint(key3, minval=-5, maxval=5, shape=(100, 5))
+    >>> path, path_info = jnp.einsum_path("ij,jk,kl", x, y, z, optimize="optimal")
+    >>> print(path)
+    [(1, 2), (0, 1)]
+    >>> print(path_info)
+          Complete contraction:  ij,jk,kl->il
+                Naive scaling:  4
+            Optimized scaling:  3
+              Naive FLOP count:  9.000e+3
+          Optimized FLOP count:  3.060e+3
+          Theoretical speedup:  2.941e+0
+          Largest intermediate:  1.500e+1 elements
+        --------------------------------------------------------------------------------
+        scaling        BLAS                current                             remaining
+        --------------------------------------------------------------------------------
+          3           GEMM              kl,jk->lj                             ij,lj->il
+          3           GEMM              lj,ij->il                                il->il
+
+    Use the computed path in :func:`~jax.numpy.einsum`:
+
+    >>> jnp.einsum("ij,jk,kl", x, y, z, optimize=path)
+    Array([[-539,  216,   95,  592,  209],
+           [ 527,   76,  285, -436, -529]], dtype=int32)
+
+  .. _opt_einsum: https://github.com/dgasmith/opt_einsum
+  """
+  if optimize is True:
+    optimize = 'optimal'
+  elif optimize is False:
+    optimize = Unoptimized()
   return opt_einsum.contract_path(subscripts, *operands, optimize=optimize)
 
 def _removechars(s, chars):
@@ -4247,13 +4983,53 @@ def _einsum(
   return lax_internal._convert_element_type(operands[0], preferred_element_type, output_weak_type)
 
 
-@util.implements(np.inner, lax_description=_PRECISION_DOC,
-                 extra_params=_DOT_PREFERRED_ELEMENT_TYPE_DESCRIPTION)
 @partial(jit, static_argnames=('precision', 'preferred_element_type'), inline=True)
 def inner(
     a: ArrayLike, b: ArrayLike, *, precision: PrecisionLike = None,
     preferred_element_type: DType | None = None,
 ) -> Array:
+  """Compute the inner product of two arrays.
+
+  JAX implementation of :func:`numpy.inner`.
+
+  Unlike :func:`jax.numpy.matmul` or :func:`jax.numpy.dot`, this always performs
+  a contraction along the last dimension of each input.
+
+  Args:
+    a: array of shape ``(..., N)``
+    b: array of shape ``(..., N)``
+    precision: either ``None`` (default), which means the default precision for
+      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      such values indicating precision of ``a`` and ``b``.
+    preferred_element_type: either ``None`` (default), which means the default
+      accumulation type for the input types, or a datatype, indicating to
+      accumulate results to and return a result with that datatype.
+
+  Returns:
+    array of shape ``(*a.shape[:-1], *b.shape[:-1])`` containing the batched vector
+    product of the inputs.
+
+  See also:
+    - :func:`jax.numpy.vecdot`: conjugate multiplication along a specified axis.
+    - :func:`jax.numpy.tensordot`: general tensor multiplication.
+    - :func:`jax.numpy.matmul`: general batched matrix & vector multiplication.
+
+  Examples:
+    For 1D inputs, this implements standard (non-conjugate) vector multiplication:
+
+    >>> a = jnp.array([1j, 3j, 4j])
+    >>> b = jnp.array([4., 2., 5.])
+    >>> jnp.inner(a, b)
+    Array(0.+30.j, dtype=complex64)
+
+    For multi-dimensional inputs, batch dimensions are stacked rather than broadcast:
+
+    >>> a = jnp.ones((2, 3))
+    >>> b = jnp.ones((5, 3))
+    >>> jnp.inner(a, b).shape
+    (2, 5)
+  """
   util.check_arraylike("inner", a, b)
   if ndim(a) == 0 or ndim(b) == 0:
     a = asarray(a, dtype=preferred_element_type)
@@ -4705,9 +5481,58 @@ def roll(a: ArrayLike, shift: ArrayLike | Sequence[int],
     return _roll_static(arr, shift, axis)
 
 
-@util.implements(np.rollaxis, lax_description=_ARRAY_VIEW_DOC)
 @partial(jit, static_argnames=('axis', 'start'))
 def rollaxis(a: ArrayLike, axis: int, start: int = 0) -> Array:
+  """Roll the specified axis to a given position.
+
+  JAX implementation of :func:`numpy.rollaxis`.
+
+  This function exists for compatibility with NumPy, but in most cases the newer
+  :func:`jax.numpy.moveaxis` instead, because the meaning of its arguments is
+  more intuitive.
+
+  Args:
+    a: input array.
+    axis: index of the axis to roll forward.
+    start: index toward which the axis will be rolled (default = 0). After
+      normalizing negative axes, if ``start <= axis``, the axis is rolled to
+      the ``start`` index; if ``start > axis``, the axis is rolled until the
+      position before ``start``.
+
+  Returns:
+    Copy of ``a`` with rolled axis.
+
+  Notes:
+    Unlike :func:`numpy.rollaxis`, :func:`jax.numpy.rollaxis` will return a copy rather
+    than a view of the input array. However, under JIT, the compiler will optimize away
+    such copies when possible, so this doesn't have performance impacts in practice.
+
+  See also:
+    - :func:`jax.numpy.moveaxis`: newer API with clearer semantics than ``rollaxis``;
+      this should be preferred to ``rollaxis`` in most cases.
+    - :func:`jax.numpy.swapaxes`: swap two axes.
+    - :func:`jax.numpy.transpose`: general permutation of axes.
+
+  Examples:
+    >>> a = jnp.ones((2, 3, 4, 5))
+
+    Roll axis 2 to the start of the array:
+
+    >>> jnp.rollaxis(a, 2).shape
+    (4, 2, 3, 5)
+
+    Roll axis 1 to the end of the array:
+
+    >>> jnp.rollaxis(a, 1, a.ndim).shape
+    (2, 4, 5, 3)
+
+    Equivalent of these two with :func:`~jax.numpy.moveaxis`
+
+    >>> jnp.moveaxis(a, 2, 0).shape
+    (4, 2, 3, 5)
+    >>> jnp.moveaxis(a, 1, -1).shape
+    (2, 4, 5, 3)
+  """
   util.check_arraylike("rollaxis", a)
   start = core.concrete_or_error(operator.index, start, "'start' argument of jnp.rollaxis()")
   a_ndim = ndim(a)

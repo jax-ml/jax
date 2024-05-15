@@ -17,6 +17,7 @@ limitations under the License.
 // JAX-generated HLO code from outside of JAX.
 
 #include "jaxlib/gpu/blas_kernels.h"
+#include "jaxlib/gpu/cholesky_update_kernel.h"
 #include "jaxlib/gpu/lu_pivot_kernels.h"
 #include "jaxlib/gpu/prng_kernels.h"
 #include "jaxlib/gpu/rnn_kernels.h"
@@ -36,6 +37,8 @@ XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cublas_geqrf_batched", GeqrfBatched,
                                          "CUDA");
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cudnn_rnn", RNNForward, "CUDA");
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cudnn_rnn_bwd", RNNBackward, "CUDA");
+XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cu_cholesky_update",
+                                         CholeskyUpdate, "CUDA");
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cu_lu_pivots_to_permutation",
                                          LuPivotsToPermutation, "CUDA");
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cu_threefry2x32", ThreeFry2x32,

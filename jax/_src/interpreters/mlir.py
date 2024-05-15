@@ -49,7 +49,6 @@ from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import dialects
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
@@ -98,7 +97,7 @@ def dense_int_array(xs) -> ir.DenseIntElementsAttr | ir.DenseI64ArrayAttr:
 
 # TODO: b/321794305 - delete this when jaxlib is on StableHLO API v6 or higher
 def dense_int_array_v6(xs) -> ir.DenseIntElementsAttr | ir.DenseI64ArrayAttr:
-  if hlo.get_api_version() < 6 or xc.mlir_api_version < 55:
+  if hlo.get_api_version() < 6:
     return dense_int_elements(xs)
   return ir.DenseI64ArrayAttr.get(np.asarray(xs, np.int64))
 
@@ -113,7 +112,7 @@ def dense_bool_elements(xs: Sequence[bool]) -> ir.DenseElementsAttr:
 
 def dense_bool_array(xs: Sequence[bool]) -> ir.DenseElementsAttr | ir.DenseBoolArrayAttr:
   # TODO: b/321794305 - remove this check when jaxlib is on StableHLO API v6 or higher
-  if hlo.get_api_version() < 6 or xc.mlir_api_version < 55:
+  if hlo.get_api_version() < 6:
     return dense_bool_elements(xs)
   return ir.DenseBoolArrayAttr.get(xs)
 
@@ -572,18 +571,6 @@ class LoweringParameters:
   # or multi-platform lowering.
   global_constant_computation: bool = False
 
-  # TODO(b/302258959): in JAX native execution we cannot lower the tokens
-  # to stablehlo.token for the top-level function, due to runtime limitations.
-  # Instead, we use dummy bool[0] arrays. This is controlled by setting
-  # replace_tokens_with_dummy to True (default). However, when exporting StableHLO
-  # we can use real tokens, because the resulting StableHLO will not be
-  # executed directly, but will be embedded as an inner function in a larger
-  # JAX or TensorFlow program. In these cases, replace_tokens_with_dummy must
-  # be set to False (for serialization versions >= 9).
-  # Once the PJRT is extended to use tokens, we can use tokens even in the
-  # native execution (and we can remove this parameter).
-  # This parameter can be removed when minimum xla_extension_version is >= 260.
-  replace_tokens_with_dummy: bool = True
 
 @dataclasses.dataclass
 class TracebackCaches:
@@ -881,6 +868,7 @@ def lower_jaxpr_to_module(
     num_partitions: int = 1,
     all_default_mem_kind: bool = True,
     input_output_aliases: None | tuple[int | None, ...] = None,
+    propagated_out_mem_kinds: tuple[None | str, ...] | None = None,
     lowering_parameters: LoweringParameters,
 ) -> LoweringResult:
   """Lowers a top-level jaxpr to an MLIR module.
@@ -971,16 +959,10 @@ def lower_jaxpr_to_module(
     attrs["sym_name"] = ir.StringAttr.get(module_name)
     attrs["mhlo.num_replicas"] = i32_attr(num_replicas)
     attrs["mhlo.num_partitions"] = i32_attr(num_partitions)
-    replace_tokens_with_dummy = lowering_parameters.replace_tokens_with_dummy
-    if xla_extension_version >= 260:
-      replace_tokens_with_dummy = False
     lower_jaxpr_to_fun(
         ctx, "main", jaxpr, ordered_effects,
         name_stack=name_stack,
         public=True,
-        create_tokens=replace_tokens_with_dummy,
-        replace_tokens_with_dummy=replace_tokens_with_dummy,
-        num_output_tokens=0,
         replicated_args=replicated_args,
         arg_shardings=arg_shardings,
         result_shardings=result_shardings,
@@ -991,7 +973,8 @@ def lower_jaxpr_to_module(
         arg_memory_kinds=arg_memory_kinds,
         result_memory_kinds=result_memory_kinds,
         arg_layouts=in_layouts,
-        result_layouts=out_layouts)
+        result_layouts=out_layouts,
+        propagated_out_mem_kinds=propagated_out_mem_kinds)
 
   try:
     if not ctx.module.operation.verify():
@@ -1107,15 +1090,6 @@ class TokenSet:
         new_tokens.append((eff, self._tokens[eff]))
     return TokenSet(new_tokens)
 
-def dummy_token_type() -> Sequence[ir.Type]:
-  # TODO(b/302258959): For now HLO does not allow hlo.TokenType among
-  # arguments and results, so we use bool[0] to pass tokens to the
-  # top-level function only.
-  return aval_to_ir_types(core.ShapedArray((0,), np.bool_))
-
-def dummy_token() -> Sequence[ir.Value]:
-  return ir_constants(np.zeros(0, np.bool_))
-
 def lower_jaxpr_to_fun(
     ctx: ModuleContext,
     name: str,
@@ -1123,16 +1097,13 @@ def lower_jaxpr_to_fun(
     effects: Sequence[core.Effect],
     name_stack: source_info_util.NameStack,
     *,
-    create_tokens: bool = False,
     public: bool = False,
-    replace_tokens_with_dummy: bool = False,
     replicated_args: Sequence[bool] | None = None,
     arg_shardings: Sequence[XLACompatibleSharding | None] | None = None,
     result_shardings: Sequence[XLACompatibleSharding | None] | None = None,
     use_sharding_annotations: bool = True,
     input_output_aliases: Sequence[int | None] | None = None,
     xla_donated_args: Sequence[bool] | None = None,
-    num_output_tokens: int = 0,
     api_name: str = "jit",
     arg_names: Sequence[str | None] | None = None,
     result_names: Sequence[str | None] | None = None,
@@ -1140,6 +1111,7 @@ def lower_jaxpr_to_fun(
     result_memory_kinds: Sequence[str | None] | None = None,
     arg_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
     result_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
+    propagated_out_mem_kinds: tuple[None | str, ...] | None = None,
 ) -> func_dialect.FuncOp:
   """Lowers jaxpr and its callees to an IR function.
 
@@ -1152,11 +1124,7 @@ def lower_jaxpr_to_fun(
     jaxpr: the jaxpr to lower.
     effects: a sequence of `core.Effect`s corresponding to an ordering of tokens
       that will be created in or used by the lowered function.
-    create_tokens: if true, the HLO will create tokens and ignore dummy input
-      tokens. See b/302258959.
     public: if true, the function's visibility is set to "public".
-    replace_tokens_with_dummy: if true, token arguments/return values are
-      replaced with bool arrays of size [0]. See b/302258959.
     replicated_args: if present, annotates arguments as replicated.
     arg_shardings: sharding annotations for each argument (optional).
     result_shardings: sharding annotations for each result (optional).
@@ -1173,50 +1141,38 @@ def lower_jaxpr_to_fun(
   Returns:
     MLIR func op
   """
-  def aval_to_types(aval):
-    if replace_tokens_with_dummy and aval is core.abstract_token:
-      aval = core.ShapedArray((), np.dtype(np.bool_))
-    return aval_to_ir_types(aval)
 
   # The first dimension variable may be the platform index
   num_dim_vars = len(ctx.shape_poly_state.dim_vars)
   dim_var_avals = [core.ShapedArray((), dtypes.canonicalize_dtype(np.int64))] * num_dim_vars
-  dim_var_types = map(aval_to_types, dim_var_avals)
+  dim_var_types = map(aval_to_ir_types, dim_var_avals)
 
   # Function inputs: *dim_var_values, *tokens, *actual_inputs
-  input_types = map(aval_to_types, jaxpr.in_avals)
-  output_types = map(aval_to_types, jaxpr.out_avals)
+  input_types = map(aval_to_ir_types, jaxpr.in_avals)
+  output_types = map(aval_to_ir_types, jaxpr.out_avals)
   num_tokens = len(effects)
 
-  if create_tokens:
-    # TODO(b/302258959): Use actual tokens
-    token_types = [dummy_token_type() for _ in effects]
-    output_token_types = [dummy_token_type() for _ in range(num_output_tokens)]
-  else:
-    # If we aren't creating tokens they will be the initial inputs to the
-    # MLIR function.
-    output_token_types = []
-    token_types = [token_type() for _ in effects]
+  token_types = [token_type() for _ in effects]
   token_avals = [core.abstract_token] * num_tokens
   # Order of arguments: dim vars, tokens, array inputs
   input_avals = dim_var_avals + token_avals + jaxpr.in_avals
   input_types = [*dim_var_types, *token_types, *input_types]
-  output_avals = [core.abstract_token] * (len(output_token_types) + num_tokens) + jaxpr.out_avals
-  output_types = [*output_token_types, *token_types, *output_types]
+  output_avals = [core.abstract_token] * num_tokens + jaxpr.out_avals
+  output_types = [*token_types, *output_types]
 
   if input_output_aliases is not None:
     token_input_output_aliases = [None] * (num_dim_vars + num_tokens)
     input_output_aliases = [*token_input_output_aliases, *input_output_aliases]
     # Update the existing aliases to account for the new output values
     input_output_aliases = [None if a is None
-                            else a + num_output_tokens + num_tokens
+                            else a + num_tokens
                             for a in input_output_aliases]  # type: ignore
 
   if arg_shardings is not None:
     token_shardings = [None] * (num_dim_vars + num_tokens)
     arg_shardings = [*token_shardings, *arg_shardings]
   if result_shardings is not None:
-    token_shardings = [None] * (num_tokens + num_output_tokens)
+    token_shardings = [None] * num_tokens
     result_shardings = [*token_shardings, *result_shardings]
   if replicated_args is not None:
     token_replicated_args = [False] * (num_dim_vars + num_tokens)
@@ -1225,13 +1181,13 @@ def lower_jaxpr_to_fun(
     token_memory_kinds = [None] * (num_dim_vars + num_tokens)
     arg_memory_kinds = [*token_memory_kinds, *arg_memory_kinds]
   if result_memory_kinds is not None:
-    token_memory_kinds = [None] * (num_tokens + num_output_tokens)
+    token_memory_kinds = [None] * num_tokens
     result_memory_kinds = [*token_memory_kinds, *result_memory_kinds]
   if arg_layouts is not None:
     token_layouts = [None] * (num_dim_vars + num_tokens)
     arg_layouts = [*token_layouts, *arg_layouts]
   if result_layouts is not None:
-    token_layouts = [None] * (num_tokens + num_output_tokens)
+    token_layouts = [None] * num_tokens
     result_layouts = [*token_layouts, *result_layouts]
   if xla_donated_args is not None:
     xla_donated_args = [*([False] * (num_dim_vars + num_tokens)), *xla_donated_args]
@@ -1270,16 +1226,32 @@ def lower_jaxpr_to_fun(
 
   ir_result_shardings = None
   if result_shardings is not None:
-    out_avals = [None] * (num_tokens + num_output_tokens) + list(jaxpr.out_avals)
     ir_result_shardings = util.flatten(
         [[_to_physical_op_sharding(a, s)] * len(types)
-         for a, s, types in zip(out_avals, result_shardings, output_types)])
-    del out_avals
+         for a, s, types in zip(output_avals, result_shardings, output_types)])
 
   ir_result_memory_kinds = None
+  custom_call_ir_result_memory_kinds = None
   if result_memory_kinds is not None:
-    ir_result_memory_kinds = util.flatten(
-        [[mk] * len(types) for mk, types in zip(result_memory_kinds, output_types)])
+    if propagated_out_mem_kinds is None:
+      propagated_out_mem_kinds = (None,) * len(result_memory_kinds)
+    res, custom_call_res = [], []
+    for pom, mk, types in zip(propagated_out_mem_kinds, result_memory_kinds,
+                              output_types):
+      if pom is not None and mk is None:
+        res.append([pom] * len(types))  # type: ignore
+      else:
+        if pom is not None and mk is not None and pom != mk:
+          raise AssertionError(
+              f"propagated out memory kind ({pom}) does not match the memory"
+              f" kind specified in out_shardings of jit ({mk})")
+        res.append([mk] * len(types))  # type: ignore
+      # To add the custom call on the output to signal a transfer, only do it
+      # if memory kind comes from out_shardings on `jit` and result_memory_kinds
+      # comes from out_shardings on `jit`.
+      custom_call_res.append([mk] * len(types))
+    ir_result_memory_kinds = util.flatten(res)
+    custom_call_ir_result_memory_kinds = util.flatten(custom_call_res)
 
   ir_result_layouts = None
   if result_layouts is not None:
@@ -1426,35 +1398,17 @@ def lower_jaxpr_to_fun(
     _, token_args, unflattened_args = util.split_list(
         util.unflatten(flat_args, map(len, input_types)),
         [num_dim_vars, num_tokens])
-    if create_tokens:
-      tokens_in = TokenSet.create(effects)
-    else:
-      tokens_in = TokenSet(zip(effects, token_args))
-    args: list[list[ir.Value]] = []
-    for aval, arg in zip(jaxpr.in_avals, unflattened_args):
-      if replace_tokens_with_dummy and aval is core.abstract_token:
-        args.append([hlo.create_token()])
-      else:
-        args.append(arg)
+    tokens_in = TokenSet(zip(effects, token_args))
+    args: list[list[ir.Value]] = unflattened_args
     callee_name_stack = name_stack.extend(util.wrap_name(name, api_name))
     consts = [ir_constants(xla.canonicalize_dtype(x)) for x in jaxpr.consts]
     out_vals, tokens_out = jaxpr_subcomp(
         ctx, jaxpr.jaxpr, callee_name_stack, tokens_in,
         consts, *args, dim_var_values=dim_var_values)
     outs = []
-    if create_tokens:
-      for _ in range(num_output_tokens):
-        outs.append(dummy_token())
-      for _ in effects:
-        outs.append(dummy_token())
-    else:
-      for eff in effects:
-        outs.append(wrap_singleton_ir_values(tokens_out.get(eff)))
-    for aval, out in zip(jaxpr.out_avals, out_vals):
-      if replace_tokens_with_dummy and aval is core.abstract_token:
-        outs.append(ir_constants(np.zeros((), np.bool_)))
-      else:
-        outs.append(out)
+    for eff in effects:
+      outs.append(wrap_singleton_ir_values(tokens_out.get(eff)))
+    outs.extend(out_vals)
 
     flat_outputs = util.flatten(outs)
 
@@ -1465,10 +1419,11 @@ def lower_jaxpr_to_fun(
 
     # Insert a custom call if output is on host because XLA needs that to do the
     # transfer.
-    if ir_result_memory_kinds is not None:
+    if custom_call_ir_result_memory_kinds is not None and name == "main":
       flat_outputs = [
           o if mk is None else wrap_with_memory_kind(o, mk, o_aval)
-          for o, mk, o_aval in zip(flat_outputs, ir_result_memory_kinds, output_avals)]
+          for o, mk, o_aval in zip(
+              flat_outputs, custom_call_ir_result_memory_kinds, output_avals)]
 
     if ir_result_shardings is not None and name == "main":
       flat_outputs = [

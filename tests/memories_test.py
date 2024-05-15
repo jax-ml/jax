@@ -23,8 +23,8 @@ import jax
 from jax import lax
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
-from jax._src.lib import xla_extension_version
 from jax._src import config
+from jax._src.lib import xla_extension_version
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
@@ -65,7 +65,7 @@ def _create_inputs(shape, pspec, mem_kind=None):
 class ShardingMemoriesTest(jtu.JaxTestCase):
 
   def setUp(self):
-    if not jtu.test_device_matches(["tpu"]):
+    if xla_extension_version < 265 and not jtu.test_device_matches(["tpu"]):
       self.skipTest("Memories do not work on CPU and GPU backends yet.")
     # TODO(b/311021572)
     if jtu.is_cloud_tpu():
@@ -73,6 +73,10 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
     super().setUp()
     self.orig_memories_flag = config.enable_memories.value
     jax.config.update('jax_enable_memories', True)
+    if jtu.test_device_matches(["cpu"]):
+      self._default_memory_kind = "unpinned_host"
+    else:
+      self._default_memory_kind = "device"
 
   def tearDown(self):
     jax.config.update('jax_enable_memories', self.orig_memories_flag)
@@ -88,17 +92,17 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
     if name == "named_sharding":
       mesh = jtu.create_global_mesh((1,), "x")
       ns = NamedSharding(mesh, P("x"))
-      self.assertEqual(ns.memory_kind, "device")
+      self.assertEqual(ns.memory_kind, self._default_memory_kind)
     elif name == "positional_sharding":
       ps = PositionalSharding(jax.devices())
-      self.assertEqual(ps.memory_kind, "device")
+      self.assertEqual(ps.memory_kind, self._default_memory_kind)
     elif name == "single_device_sharding":
       ss = SingleDeviceSharding(jax.devices()[0])
-      self.assertEqual(ss.memory_kind, "device")
+      self.assertEqual(ss.memory_kind, self._default_memory_kind)
     else:
       assert name == "gspmd_sharding"
       gs = GSPMDSharding.get_replicated(jax.devices())
-      self.assertEqual(gs.memory_kind, "device")
+      self.assertEqual(gs.memory_kind, self._default_memory_kind)
 
   @parameterized.named_parameters(
       ("named_sharding", "named_sharding"),
@@ -109,26 +113,26 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
   def test_wrong_memory_kind(self, name):
     if name == "named_sharding":
       with self.assertRaisesRegex(
-          ValueError, "Could not find memory addressable by device TPU.*"
+          ValueError, "Could not find memory addressable by device.*"
       ):
         mesh = jtu.create_global_mesh((8,), ("x",))
         NamedSharding(mesh, P("x"), memory_kind="hbm")
     elif name == "positional_sharding":
       with self.assertRaisesRegex(
-          ValueError, "Could not find memory addressable by device TPU.*"
+          ValueError, "Could not find memory addressable by device.*"
       ):
         PositionalSharding(jax.devices(), memory_kind="gpu_hbm")
     elif name == "single_device_sharding":
       with self.assertRaisesRegex(
           ValueError,
-          "Could not find memory addressable by device TPU.*Device TPU.*"
+          "Could not find memory addressable by device.*Device.*"
           " can address the following memory kinds.*",
       ):
         SingleDeviceSharding(jax.devices()[0], memory_kind="host")
     else:
       assert name == "gspmd_sharding"
       with self.assertRaisesRegex(
-          ValueError, "Could not find memory addressable by device TPU.*"
+          ValueError, "Could not find memory addressable by device.*"
       ):
         GSPMDSharding.get_replicated(jax.devices(), memory_kind="my_host")
 
@@ -139,11 +143,13 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
       ("gspmd_sharding", "gspmd_sharding"),
   )
   def test_correct_tpu_memory_kind(self, name):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("TPU memory kind test.")
     if name == "named_sharding":
       mesh = jtu.create_global_mesh((8,), ("x",))
-      NamedSharding(mesh, P("x"), memory_kind="device")
+      NamedSharding(mesh, P("x"), memory_kind=self._default_memory_kind)
     elif name == "positional_sharding":
-      PositionalSharding(jax.devices(), memory_kind="device")
+      PositionalSharding(jax.devices(), memory_kind=self._default_memory_kind)
     elif name == "single_device_sharding":
       SingleDeviceSharding(jax.devices()[0], memory_kind="unpinned_host")
     else:
@@ -160,19 +166,19 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
     if name == "named_sharding":
       mesh = jtu.create_global_mesh((8,), ("x",))
       s1 = NamedSharding(mesh, P("x"))
-      s2 = NamedSharding(mesh, P("x"), memory_kind="device")
+      s2 = NamedSharding(mesh, P("x"), memory_kind=self._default_memory_kind)
       self.assertEqual(s1, s2)
     elif name == "positional_sharding":
       s1 = PositionalSharding(jax.devices())
-      s2 = PositionalSharding(jax.devices(), memory_kind="device")
+      s2 = PositionalSharding(jax.devices(), memory_kind=self._default_memory_kind)
       self.assertEqual(s1, s2)
     elif name == "single_device_sharding":
       s1 = SingleDeviceSharding(jax.devices()[0])
-      s2 = SingleDeviceSharding(jax.devices()[0], memory_kind="device")
+      s2 = SingleDeviceSharding(jax.devices()[0], memory_kind=self._default_memory_kind)
       self.assertEqual(s1, s2)
     elif name == "gspmd_sharding":
       s1 = GSPMDSharding.get_replicated(jax.devices())
-      s2 = GSPMDSharding.get_replicated(jax.devices(), memory_kind="device")
+      s2 = GSPMDSharding.get_replicated(jax.devices(), memory_kind=self._default_memory_kind)
       self.assertEqual(s1, s2)
 
   def test_sharding_equivalent(self):
@@ -182,11 +188,11 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
     gs1 = GSPMDSharding(
         tuple(mesh.devices.flat),
         ns1._to_xla_hlo_sharding(ndim),
-        memory_kind="device",
+        memory_kind=self._default_memory_kind,
     )
     self.assertTrue(ns1.is_equivalent_to(gs1, ndim))
 
-    ns2 = NamedSharding(mesh, P("x"), memory_kind="device")
+    ns2 = NamedSharding(mesh, P("x"), memory_kind=self._default_memory_kind)
     gs2 = GSPMDSharding(
         tuple(mesh.devices.flat), ns2._to_xla_hlo_sharding(ndim)
     )
@@ -194,7 +200,7 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
 
   def test_default_memory_kind(self):
     dev = jax.devices()[0]
-    self.assertEqual(dev.default_memory().kind, "device")
+    self.assertEqual(dev.default_memory().kind, self._default_memory_kind)
 
 
 class MemoriesComputationTest(jtu.BufferDonationTestCase):
@@ -1196,6 +1202,56 @@ class DevicePutTest(jtu.JaxTestCase):
     out_s = NamedSharding(mesh, P(None, None, "z"), memory_kind="device")
     self.assertEqual(out_hbm.sharding, out_s)
 
+  def test_output_streaming(self):
+    mesh = jtu.create_global_mesh((1, 1), ("x", "y"))
+    np_inp = np.arange(16.0).reshape(8, 2)
+    s_hbm = NamedSharding(mesh, P("x", "y"), memory_kind="device")
+    s_host = NamedSharding(mesh, P("x", "y"), memory_kind="pinned_host")
+    arr_hbm = jax.device_put(np_inp, s_hbm)
+
+    @functools.partial(jax.jit, out_shardings=s_host)
+    def f(xs):
+      out_tpu = xs + 1.0
+      return out_tpu
+
+    out_host = f(arr_hbm)
+    self.assertArraysEqual(out_host, np_inp + 1.0)
+    self.assertEqual(out_host.sharding, s_host)
+
+  def test_weight_offload_with_dp_on_output(self):
+    _, s_dev, np_inp, inp_dev = _create_inputs(
+        (8, 2), P("x", "y"), mem_kind="device")
+    s_host = s_dev.with_memory_kind('pinned_host')
+
+    @jax.jit
+    def f(x):
+      x = x * 2
+      y = jax.device_put(x, s_host)
+      return y
+
+    out_host = f(inp_dev)
+    self._check_device_put_addressable_shards(
+        out_host, np_inp * 2, s_host, 'pinned_host')
+
+  def test_output_streaming_inside_scan(self):
+    mesh = jtu.create_global_mesh((1, 1, 2), ("x", "y", "z"))
+    np_inp = np.arange(4096).reshape(16, 16, 16)
+    s_hbm = NamedSharding(mesh, P(None, "y", "z"), memory_kind="device")
+    arr_hbm = jax.device_put(np_inp, s_hbm)
+
+    @jax.jit
+    def f(xs):
+      def body(carry, x):
+        out_tpu = x + carry
+        return carry, jax.device_put(
+            out_tpu, NamedSharding(mesh, P("y", "z"), memory_kind="pinned_host"))
+      _, res = jax.lax.scan(body, 1, xs)
+      return res
+
+    out = f(arr_hbm)
+    self.assertArraysEqual(out, np_inp + 1)
+    self.assertEqual(out.sharding.memory_kind, 'pinned_host')
+
 
 class ActivationOffloadingTest(jtu.JaxTestCase):
 
@@ -1250,7 +1306,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
 
     compiled_stats = compiled_f.memory_analysis()
     if compiled_stats is not None and jtu.test_device_matches(["tpu"]):
-      if xla_extension_version >= 240 and jtu.pjrt_c_api_version_at_least(0, 43):
+      if jtu.pjrt_c_api_version_at_least(0, 43):
         self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
   def test_remat_scan_jaxpr_offloadable(self):
@@ -1309,7 +1365,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
 
     compiled_stats = compiled_f.memory_analysis()
     if compiled_stats is not None:
-      if xla_extension_version >= 240 and jtu.pjrt_c_api_version_at_least(0, 43):
+      if jtu.pjrt_c_api_version_at_least(0, 43):
         self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
   def test_remat_scan_layout_change_offloadable(self):
@@ -1351,12 +1407,10 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
 
     compiled_stats = compiled_f.memory_analysis()
     if compiled_stats is not None:
-      if xla_extension_version >= 240 and jtu.pjrt_c_api_version_at_least(0, 43):
+      if jtu.pjrt_c_api_version_at_least(0, 43):
         self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
   def test_remat_checkpoint_dots_with_no_batch_dims(self):
-    if not jtu.test_device_matches(["tpu"]) and xla_extension_version < 247:
-      self.skipTest("Test requires a newer jaxlib")
     policy = jax.checkpoint_policies.offload_dot_with_no_batch_dims(
         "device", "pinned_host")
 
@@ -1385,7 +1439,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
 
     compiled_stats = compiled_f.memory_analysis()
     if compiled_stats is not None and jtu.test_device_matches(["tpu"]):
-      if xla_extension_version >= 240 and jtu.pjrt_c_api_version_at_least(0, 43):
+      if jtu.pjrt_c_api_version_at_least(0, 43):
         self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
 if __name__ == "__main__":

@@ -499,16 +499,32 @@ FailureOr<BlockArgument> appendConstant(RewriteContext &ctx,
   return argument;
 }
 
-FailureOr<VectorType> getNativeVregType(
-    Type elem_ty, const std::array<int64_t, 2> target_shape) {
-  FAILUREOR_ASSIGN_OR_RETURN(const int8_t bitwidth,
-                             getTypeBitwidth<true>(elem_ty));
+FailureOr<VectorType> getNativeVregOrVmaskTypeImpl(
+    Type elem_ty, const int8_t bitwidth,
+    const std::array<int64_t, 2> target_shape) {
   if (bitwidth == 32) {
     return VectorType::get(target_shape, elem_ty);
   }
-  // bitwidth != 32
   return VectorType::get({target_shape[0], target_shape[1], 32 / bitwidth},
                          elem_ty);
+}
+
+FailureOr<VectorType> getNativeVregOrVmaskType(
+    Type elem_ty, const int8_t layout_bitwidth,
+    const std::array<int64_t, 2> target_shape) {
+  int8_t bitwidth = elem_ty.getIntOrFloatBitWidth();
+  if (bitwidth == 1) {
+    bitwidth = layout_bitwidth;
+  } else {
+    CHECK_EQ(bitwidth, layout_bitwidth);
+  }
+  return getNativeVregOrVmaskTypeImpl(elem_ty, bitwidth, target_shape);
+}
+
+FailureOr<VectorType> getNativeVregType(
+    Type elem_ty, const std::array<int64_t, 2> target_shape) {
+  return getNativeVregOrVmaskTypeImpl(elem_ty, elem_ty.getIntOrFloatBitWidth(),
+                                      target_shape);
 }
 
 // Returns empty vector on null attribute
@@ -610,7 +626,8 @@ LogicalResult elementwise_op_rule(RewriteContext &ctx, Operation &op,
 
   FAILUREOR_ASSIGN_OR_RETURN(
       const VectorType out_vreg_ty,
-      getNativeVregType(out_ty.getElementType(), ctx.target_shape));
+      getNativeVregOrVmaskType(out_ty.getElementType(), layout_out.bitwidth(),
+                               ctx.target_shape));
 
   NamedAttrList attributes(op.getAttrDictionary());
   attributes.erase("in_layout");

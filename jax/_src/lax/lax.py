@@ -784,6 +784,33 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionN
                             precision=canonicalize_precision(precision),
                             preferred_element_type=preferred_element_type)
 
+
+def ragged_dot(
+    lhs: Array,
+    rhs: Array,
+    group_sizes: Array,
+    precision: PrecisionLike = None,
+    preferred_element_type: DTypeLike | None = None,
+    group_offset: Array | None = None,
+    ) -> Array:
+  """Ragged matrix multiplication.
+
+  Args:
+    lhs: (m, k) shaped array.
+    rhs: (g, k, n) shaped array.
+    group_sizes: (g,) shaped array with integer element type, where g denotes   number of groups. The ith element indicates the size of ith group.
+    precision: Optional. Consistent with precision argument for :func:`jax.lax.dot`.
+    preferred_element_type: Optional. Consistent with precision argument for :func:`jax.lax.dot`.
+    group_offset: Optional. (1,) shaped array that ndicates the group in group_sizes to start computing from. If not specified, defaults to [0].
+
+  Results:
+    (m, n) shaped array with preferred_element_type element type.
+  """
+  return ragged_dot_p.bind(lhs, rhs, group_sizes,
+                            precision=canonicalize_precision(precision),
+                            preferred_element_type=preferred_element_type, group_offset=group_offset)
+
+
 def broadcast(operand: ArrayLike, sizes: Sequence[int]) -> Array:
   """Broadcasts an array, adding new leading dimensions
 
@@ -2885,6 +2912,9 @@ def precision_attr(precision: Precision) -> ir.ArrayAttr:
 def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                        precision, preferred_element_type: np.dtype | None,
                        platform: str = "default"):
+  def _is_fp8_mixed_precision_matmul(_lhs_dtypes, _rhs_dtypes):
+      fp8_dtypes = (dtypes.float8_e4m3fn, dtypes.float8_e5m2)
+      return _lhs_dtypes in fp8_dtypes and _rhs_dtypes in fp8_dtypes
   del preferred_element_type  # Implied by the output aval
   lhs_aval, rhs_aval = ctx.avals_in
   lhs_dtype, rhs_dtype = lhs_aval.dtype, rhs_aval.dtype
@@ -2907,11 +2937,13 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                                core.ShapedArray(rhs_aval.shape, aval_out.dtype))
         lhs_dtype = rhs_dtype = aval_out.dtype
     else:  # cpu and gpu
-      lhs = mlir.convert_hlo(ctx, lhs, lhs_aval,
-                             core.ShapedArray(lhs_aval.shape, aval_out.dtype))
-      rhs = mlir.convert_hlo(ctx, rhs, rhs_aval,
-                             core.ShapedArray(rhs_aval.shape, aval_out.dtype))
-      lhs_dtype = rhs_dtype = aval_out.dtype
+      # Do not convert mixed fp8 types to output type.
+      if not _is_fp8_mixed_precision_matmul(lhs_dtype, rhs_dtype):
+        lhs = mlir.convert_hlo(ctx, lhs, lhs_aval,
+                              core.ShapedArray(lhs_aval.shape, aval_out.dtype))
+        rhs = mlir.convert_hlo(ctx, rhs, rhs_aval,
+                              core.ShapedArray(rhs_aval.shape, aval_out.dtype))
+        lhs_dtype = rhs_dtype = aval_out.dtype
 
   # TODO(b/195364460): Work around slow XLA/CPU implementation of float16 matmul
   if platform == "cpu":
@@ -2944,6 +2976,62 @@ for platform in ["cpu", "tpu"]:
   mlir.register_lowering(dot_general_p,
                          partial(_dot_general_lower, platform=platform),
                          platform=platform)
+
+
+def _ragged_dot_shape_rule(lhs: Array, rhs: Array, group_sizes: Array, **_) -> Shape:
+  m, k = lhs.shape
+  group_count, rk, n = rhs.shape
+  if k != rk:
+    raise TypeError("ragged_dot requires that lhs.shape[1] == rhs.shape[1]: got {} and {}.".format(k, rk))
+  num_groups = group_sizes.shape[0]
+  if group_count != num_groups:
+    raise TypeError("ragged_dot requires that rhs.shape[0] == group_sizes.shape[0]: got {} and {}.".format(group_count, num_groups))
+  return (m, n)
+
+# DotDimensionNumbers used in the dot_general call for ragged_dot().
+_RAGGED_DOT_DOT_DIMENSION_NUMBERS: DotDimensionNumbers = (([2, 0], [1, 0]), ([], []))
+
+def _ragged_dot_dtype_rule(lhs: Array, rhs: Array, group_sizes: Array,
+                           precision,                          preferred_element_type: DTypeLike | None, **_) -> np.dtype:
+  if not dtypes.issubdtype(group_sizes.dtype, np.integer):
+    raise TypeError("ragged_dot requires that group_sizes.dtype is subtype of np.integer.")
+  # defer the output dtype to dot_general, which is part of the _ragged_dot_impl.
+  return _dot_general_dtype_rule(lhs, rhs, dimension_numbers=_RAGGED_DOT_DOT_DIMENSION_NUMBERS, precision=precision, preferred_element_type=preferred_element_type)
+
+ragged_dot_p = standard_primitive(_ragged_dot_shape_rule,
+                                  _ragged_dot_dtype_rule, 'ragged_dot')
+ragged_dot_p.def_impl(partial(dispatch.apply_primitive, ragged_dot_p))
+
+def _ragged_dot_impl(
+    lhs: Array,
+    rhs: Array,
+    group_sizes: Array,
+    precision: PrecisionLike = None,
+    preferred_element_type: DTypeLike | None = None,
+    group_offset: Array | None = None,
+    ) -> Array:
+  if group_offset is not None:
+    raise NotImplementedError("Unimplemented group_offset support.")
+  shape = (rhs.shape[0], lhs.shape[0], lhs.shape[1])
+  lhs = broadcast_in_dim(lhs, shape, [1, 2])
+  iota = broadcasted_iota(group_sizes.dtype, shape, 1)
+  group_ends = jax.lax.cumsum(group_sizes)
+  group_starts = concatenate(
+      [_zeros(group_sizes)[:1], group_ends[:-1]], dimension=0,
+  )
+  group_ends = broadcast_in_dim(group_ends, shape, (0,))
+  group_starts = broadcast_in_dim(group_starts, shape, (0,))
+  mask = bitwise_and(group_starts <= iota, iota < group_ends)
+  lhs = select(mask, lhs, _zeros(lhs))
+  return dot_general(
+      lhs,
+      rhs,
+      dimension_numbers=_RAGGED_DOT_DOT_DIMENSION_NUMBERS,
+      precision=precision,
+      preferred_element_type=preferred_element_type,
+  )
+
+mlir.register_lowering(ragged_dot_p, mlir.lower_fun(_ragged_dot_impl, multiple_results=False))
 
 
 def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):

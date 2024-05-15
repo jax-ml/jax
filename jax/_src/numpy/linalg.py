@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from functools import partial
+import itertools
 import math
 import warnings
 
@@ -28,12 +29,13 @@ from jax import jit, custom_jvp
 from jax import lax
 
 from jax._src.lax import lax as lax_internal
+from jax._src.lax.lax import PrecisionLike
 from jax._src.lax import linalg as lax_linalg
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.numpy import reductions, ufuncs
 from jax._src.numpy.util import promote_dtypes_inexact, check_arraylike
 from jax._src.util import canonicalize_axis
-from jax._src.typing import ArrayLike, Array
+from jax._src.typing import ArrayLike, Array, DTypeLike, DeprecatedArg
 
 
 class EighResult(NamedTuple):
@@ -390,7 +392,9 @@ def matrix_power(a: ArrayLike, n: int) -> Array:
 
 
 @jit
-def matrix_rank(M: ArrayLike, tol: ArrayLike | None = None) -> Array:
+def matrix_rank(
+  M: ArrayLike, rtol: ArrayLike | None = None, *,
+  tol: ArrayLike | DeprecatedArg | None = DeprecatedArg()) -> Array:
   """Compute the rank of a matrix.
 
   JAX implementation of :func:`numpy.linalg.matrix_rank`.
@@ -400,9 +404,10 @@ def matrix_rank(M: ArrayLike, tol: ArrayLike | None = None) -> Array:
 
   Args:
     a: array of shape ``(..., M, N)`` whose rank is to be computed.
-    tol: optional array of shape ``(...)`` specifying the tolerance. Singular values
-      smaller than `tol` are considered to be zero. If ``tol`` is None (the default),
-      a reasonable default is chosen based the floating point precision of the input.
+    rtol: optional array of shape ``(...)`` specifying the tolerance. Singular values
+      smaller than `rtol * largest_singular_value` are considered to be zero. If
+      ``rtol`` is None (the default), a reasonable default is chosen based the
+      floating point precision of the input.
 
   Returns:
     array of shape ``a.shape[-2]`` giving the matrix rank.
@@ -410,7 +415,7 @@ def matrix_rank(M: ArrayLike, tol: ArrayLike | None = None) -> Array:
   Notes:
     The rank calculation may be inaccurate for matrices with very small singular
     values or those that are numerically ill-conditioned. Consider adjusting the
-    ``tol`` parameter or using a more specialized rank computation method in such cases.
+    ``rtol`` parameter or using a more specialized rank computation method in such cases.
 
   Examples:
     >>> a = jnp.array([[1, 2],
@@ -424,14 +429,24 @@ def matrix_rank(M: ArrayLike, tol: ArrayLike | None = None) -> Array:
     Array(1, dtype=int32)
   """
   check_arraylike("jnp.linalg.matrix_rank", M)
+  # TODO(micky774): deprecated 2024-5-14, remove after deprecation expires.
+  if not isinstance(tol, DeprecatedArg):
+    rtol = tol
+    del tol
+    warnings.warn(
+      "The tol argument for linalg.matrix_rank is deprecated using it will soon raise "
+      "an error. To prepare for future releases, and suppress this warning, "
+      "please use rtol instead.",
+      DeprecationWarning, stacklevel=2
+    )
   M, = promote_dtypes_inexact(jnp.asarray(M))
   if M.ndim < 2:
     return (M != 0).any().astype(jnp.int32)
   S = svd(M, full_matrices=False, compute_uv=False)
-  if tol is None:
-    tol = S.max(-1) * np.max(M.shape[-2:]).astype(S.dtype) * jnp.finfo(S.dtype).eps
-  tol = jnp.expand_dims(tol, np.ndim(tol))
-  return reductions.sum(S > tol, axis=-1)
+  if rtol is None:
+    rtol = S.max(-1) * np.max(M.shape[-2:]).astype(S.dtype) * jnp.finfo(S.dtype).eps
+  rtol = jnp.expand_dims(rtol, np.ndim(rtol))
+  return reductions.sum(S > rtol, axis=-1)
 
 
 @custom_jvp
@@ -859,21 +874,21 @@ def eigvalsh(a: ArrayLike, UPLO: str | None = 'L') -> Array:
   return w
 
 
-@partial(custom_jvp, nondiff_argnums=(1, 2))
-@partial(jit, static_argnames=('hermitian',))
-def pinv(a: ArrayLike, rcond: ArrayLike | None = None,
-         hermitian: bool = False) -> Array:
+# TODO(micky774): deprecated 2024-5-14, remove wrapper after deprecation expires.
+def pinv(a: ArrayLike, rtol: ArrayLike | None = None,
+         hermitian: bool = False, *,
+         rcond: ArrayLike | DeprecatedArg | None = DeprecatedArg()) -> Array:
   """Compute the (Moore-Penrose) pseudo-inverse of a matrix.
 
   JAX implementation of :func:`numpy.linalg.pinv`.
 
   Args:
     a: array of shape ``(..., M, N)`` containing matrices to pseudo-invert.
-    rcond: float or array_like of shape ``a.shape[:-2]``. Specifies the cutoff
+    rtol: float or array_like of shape ``a.shape[:-2]``. Specifies the cutoff
       for small singular values.of shape ``(...,)``.
-      Cutoff for small singular values; singular values smaller than this value
-      are treated as zero. The default is determined based on the floating point
-      precision of the dtype.
+      Cutoff for small singular values; singular values smaller
+      ``rtol * largest_singular_value`` are treated as zero. The default is
+      determined based on the floating point precision of the dtype.
     hermitian: if True, then the input is assumed to be Hermitian, and a more
       efficient algorithm is used (default: False)
 
@@ -903,6 +918,22 @@ def pinv(a: ArrayLike, rcond: ArrayLike | None = None,
     >>> jnp.allclose(a_pinv @ a, jnp.eye(2), atol=1E-4)
     Array(True, dtype=bool)
   """
+  if not isinstance(rcond, DeprecatedArg):
+    rtol = rcond
+    del rcond
+    warnings.warn(
+      "The rcond argument for linalg.pinv is deprecated using it will soon "
+      "raise an error. To prepare for future releases, and suppress this "
+      "warning, please use rtol instead.",
+      DeprecationWarning, stacklevel=2
+    )
+
+  return _pinv(a, rtol, hermitian)
+
+
+@partial(custom_jvp, nondiff_argnums=(1, 2))
+@partial(jit, static_argnames=('hermitian'))
+def _pinv(a: ArrayLike, rtol: ArrayLike | None = None, hermitian: bool = False) -> Array:
   # Uses same algorithm as
   # https://github.com/numpy/numpy/blob/v1.17.0/numpy/linalg/linalg.py#L1890-L1979
   check_arraylike("jnp.linalg.pinv", a)
@@ -911,31 +942,31 @@ def pinv(a: ArrayLike, rcond: ArrayLike | None = None,
   if m == 0 or n == 0:
     return jnp.empty(arr.shape[:-2] + (n, m), arr.dtype)
   arr = ufuncs.conj(arr)
-  if rcond is None:
+  if rtol is None:
     max_rows_cols = max(arr.shape[-2:])
-    rcond = 10. * max_rows_cols * jnp.array(jnp.finfo(arr.dtype).eps)
-  rcond = jnp.asarray(rcond)
+    rtol = 10. * max_rows_cols * jnp.array(jnp.finfo(arr.dtype).eps)
+  rtol = jnp.asarray(rtol)
   u, s, vh = svd(arr, full_matrices=False, hermitian=hermitian)
-  # Singular values less than or equal to ``rcond * largest_singular_value``
+  # Singular values less than or equal to ``rtol * largest_singular_value``
   # are set to zero.
-  rcond = lax.expand_dims(rcond[..., jnp.newaxis], range(s.ndim - rcond.ndim - 1))
-  cutoff = rcond * s[..., 0:1]
+  rtol = lax.expand_dims(rtol[..., jnp.newaxis], range(s.ndim - rtol.ndim - 1))
+  cutoff = rtol * s[..., 0:1]
   s = jnp.where(s > cutoff, s, jnp.inf).astype(u.dtype)
   res = jnp.matmul(vh.mT, ufuncs.divide(u.mT, s[..., jnp.newaxis]),
                    precision=lax.Precision.HIGHEST)
   return lax.convert_element_type(res, arr.dtype)
 
 
-@pinv.defjvp
+@_pinv.defjvp
 @jax.default_matmul_precision("float32")
-def _pinv_jvp(rcond, hermitian, primals, tangents):
+def _pinv_jvp(rtol, hermitian, primals, tangents):
   # The Differentiation of Pseudo-Inverses and Nonlinear Least Squares Problems
   # Whose Variables Separate. Author(s): G. H. Golub and V. Pereyra. SIAM
   # Journal on Numerical Analysis, Vol. 10, No. 2 (Apr., 1973), pp. 413-432.
   # (via https://en.wikipedia.org/wiki/Moore%E2%80%93Penrose_inverse#Derivative)
   a, = primals  # m x n
   a_dot, = tangents
-  p = pinv(a, rcond=rcond, hermitian=hermitian)  # n x m
+  p = pinv(a, rtol=rtol, hermitian=hermitian)  # n x m
   if hermitian:
     # svd(..., hermitian=True) symmetrizes its input, and the JVP must match.
     a = _symmetrize(a)
@@ -1610,19 +1641,29 @@ def vector_norm(x: ArrayLike, /, *, axis: int | None = None, keepdims: bool = Fa
   return norm(x, axis=axis, keepdims=keepdims, ord=ord)
 
 
-def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1) -> Array:
-  """Compute the (batched) vector dot product of two arrays.
+def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1,
+           precision: PrecisionLike = None,
+           preferred_element_type: DTypeLike | None = None) -> Array:
+  """Compute the (batched) vector conjugate dot product of two arrays.
 
   JAX implementation of :func:`numpy.linalg.vecdot`.
 
   Args:
     x1: left-hand side array.
-    x2: right-hand side array. Size of ``x2[axis]`` must match size of ``x1[axis]``.
+    x2: right-hand side array. Size of ``x2[axis]`` must match size of ``x1[axis]``,
+      and remaining dimensions must be broadcast-compatible.
     axis: axis along which to compute the dot product (default: -1)
+    precision: either ``None`` (default), which means the default precision for
+      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      such values indicating precision of ``x1`` and ``x2``.
+    preferred_element_type: either ``None`` (default), which means the default
+      accumulation type for the input types, or a datatype, indicating to
+      accumulate results to and return a result with that datatype.
 
   Returns:
-    array containing the dot product of ``x1`` and ``x2`` along ``axis``. The
-    non-contracted dimensions are broadcast together.
+    array containing the conjugate dot product of ``x1`` and ``x2`` along ``axis``.
+    The non-contracted dimensions are broadcast together.
 
   See also:
     - :func:`jax.numpy.vecdot`: similar API in the ``jax.numpy`` namespace.
@@ -1637,7 +1678,6 @@ def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1) -> Array:
     >>> jnp.linalg.vecdot(x1, x2)
     Array(32, dtype=int32)
 
-
     Batched vector dot product of two 2D arrays:
 
     >>> x1 = jnp.array([[1, 2, 3],
@@ -1647,19 +1687,29 @@ def vecdot(x1: ArrayLike, x2: ArrayLike, /, *, axis: int = -1) -> Array:
     Array([20, 47], dtype=int32)
   """
   check_arraylike('jnp.linalg.vecdot', x1, x2)
-  return jnp.vecdot(x1, x2, axis=axis)
+  return jnp.vecdot(x1, x2, axis=axis, precision=precision,
+                    preferred_element_type=preferred_element_type)
 
 
-def matmul(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+def matmul(x1: ArrayLike, x2: ArrayLike, /, *,
+           precision: PrecisionLike = None,
+           preferred_element_type: DTypeLike | None = None) -> Array:
   """Perform a matrix multiplication.
 
   JAX implementation of :func:`numpy.linalg.matmul`.
 
   Args:
     x1: first input array, of shape ``(..., N)``.
-    x2: second input array. Must have shape ``(N,)`` or ``(..., M, N)``.
+    x2: second input array. Must have shape ``(N,)`` or ``(..., N, M)``.
       In the multi-dimensional case, leading dimensions must be broadcast-compatible
       with the leading dimensions of ``x1``.
+    precision: either ``None`` (default), which means the default precision for
+      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      such values indicating precision of ``x1`` and ``x2``.
+    preferred_element_type: either ``None`` (default), which means the default
+      accumulation type for the input types, or a datatype, indicating to
+      accumulate results to and return a result with that datatype.
 
   Returns:
     array containing the matrix product of the inputs. Shape is ``x1.shape[:-1]``
@@ -1697,11 +1747,14 @@ def matmul(x1: ArrayLike, x2: ArrayLike, /) -> Array:
            [49, 64]], dtype=int32)
   """
   check_arraylike('jnp.linalg.matmul', x1, x2)
-  return jnp.matmul(x1, x2)
+  return jnp.matmul(x1, x2, precision=precision,
+                    preferred_element_type=preferred_element_type)
 
 
 def tensordot(x1: ArrayLike, x2: ArrayLike, /, *,
-              axes: int | tuple[Sequence[int], Sequence[int]] = 2) -> Array:
+              axes: int | tuple[Sequence[int], Sequence[int]] = 2,
+              precision: PrecisionLike = None,
+              preferred_element_type: DTypeLike | None = None) -> Array:
   """Compute the tensor dot product of two N-dimensional arrays.
 
   JAX implementation of :func:`numpy.linalg.tensordot`.
@@ -1713,19 +1766,26 @@ def tensordot(x1: ArrayLike, x2: ArrayLike, /, *,
       sum over the last `k` axes of ``x1`` and the first `k` axes of ``x2``,
       in order. If a tuple, then ``axes[0]`` specifies the axes of ``x1`` and
       ``axes[1]`` specifies the axes of ``x2``.
+    precision: either ``None`` (default), which means the default precision for
+      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``) or a tuple of two
+      such values indicating precision of ``x1`` and ``x2``.
+    preferred_element_type: either ``None`` (default), which means the default
+      accumulation type for the input types, or a datatype, indicating to
+      accumulate results to and return a result with that datatype.
 
   Returns:
     array containing the tensor dot product of the inputs
 
   See also:
-    :func:`jax.numpy.tensordot`: equivalent API in the :mod:`jax.numpy` namespace.
-    :func:`jax.numpy.einsum`: NumPy API for more general tensor contractions.
-    :func:`jax.lax.dot_general`: XLA API for more general tensor contractions.
+    - :func:`jax.numpy.tensordot`: equivalent API in the :mod:`jax.numpy` namespace.
+    - :func:`jax.numpy.einsum`: NumPy API for more general tensor contractions.
+    - :func:`jax.lax.dot_general`: XLA API for more general tensor contractions.
 
   Examples:
     >>> x1 = jnp.arange(24.).reshape(2, 3, 4)
     >>> x2 = jnp.ones((3, 4, 5))
-    >>> jnp.tensordot(x1, x2)
+    >>> jnp.linalg.tensordot(x1, x2)
     Array([[ 66.,  66.,  66.,  66.,  66.],
            [210., 210., 210., 210., 210.]], dtype=float32)
 
@@ -1756,7 +1816,7 @@ def tensordot(x1: ArrayLike, x2: ArrayLike, /, *,
            [19, 26, 33]], dtype=int32)
 
     Setting ``axes=0`` for one-dimensional inputs is equivalent to
-    ``jnp.linalg.outer``:
+    :func:`jax.numpy.linalg.outer`:
 
     >>> x1 = jnp.array([1, 2])
     >>> x2 = jnp.array([1, 2, 3])
@@ -1768,7 +1828,8 @@ def tensordot(x1: ArrayLike, x2: ArrayLike, /, *,
            [2, 4, 6]], dtype=int32)
   """
   check_arraylike('jnp.linalg.tensordot', x1, x2)
-  return jnp.tensordot(x1, x2, axes=axes)
+  return jnp.tensordot(x1, x2, axes=axes, precision=precision,
+                       preferred_element_type=preferred_element_type)
 
 
 def svdvals(x: ArrayLike, /) -> Array:
@@ -1924,3 +1985,154 @@ def tensorsolve(a: ArrayLike, b: ArrayLike, axes: tuple[int, ...] | None = None)
                      f" got a.shape={a_arr.shape}, b.ndim={b_arr.ndim}.")
   a_arr = a_arr.reshape(b_arr.size, math.prod(out_shape))
   return solve(a_arr, b_arr.ravel()).reshape(out_shape)
+
+
+def multi_dot(arrays: Sequence[ArrayLike], *, precision: PrecisionLike = None) -> Array:
+  """Efficiently compute matrix products between a sequence of arrays.
+
+  JAX implementation of :func:`numpy.linalg.multi_dot`.
+
+  JAX internally uses the opt_einsum library to compute the most efficient
+  operation order.
+
+  Args:
+    arrays: sequence of arrays. All must be two-dimensional, except the first
+      and last which may be one-dimensional.
+    precision: either ``None`` (default), which means the default precision for
+      the backend, a :class:`~jax.lax.Precision` enum value (``Precision.DEFAULT``,
+      ``Precision.HIGH`` or ``Precision.HIGHEST``).
+
+  Returns:
+    an array representing the equivalent of ``reduce(jnp.matmul, arrays)``, but
+    evaluated in the optimal order.
+
+  This function exists because the cost of computing sequences of matmul operations
+  can differ vastly depending on the order in which the operations are evaluated.
+  For a single matmul, the number of floating point operations (flops) required to
+  compute a matrix product can be approximated this way:
+
+  >>> def approx_flops(x, y):
+  ...   # for 2D x and y, with x.shape[1] == y.shape[0]
+  ...   return 2 * x.shape[0] * x.shape[1] * y.shape[1]
+
+  Suppose we have three matrices that we'd like to multiply in sequence:
+
+  >>> key1, key2, key3 = jax.random.split(jax.random.key(0), 3)
+  >>> x = jax.random.normal(key1, shape=(200, 5))
+  >>> y = jax.random.normal(key2, shape=(5, 100))
+  >>> z = jax.random.normal(key3, shape=(100, 10))
+
+  Because of associativity of matrix products, there are two orders in which we might
+  evaluate the product ``x @ y @ z``, and both produce equivalent outputs up to floating
+  point precision:
+
+  >>> result1 = (x @ y) @ z
+  >>> result2 = x @ (y @ z)
+  >>> jnp.allclose(result1, result2, atol=1E-4)
+  Array(True, dtype=bool)
+
+  But the computational cost of these differ greatly:
+
+  >>> print("(x @ y) @ z flops:", approx_flops(x, y) + approx_flops(x @ y, z))
+  (x @ y) @ z flops: 600000
+  >>> print("x @ (y @ z) flops:", approx_flops(y, z) + approx_flops(x, y @ z))
+  x @ (y @ z) flops: 30000
+
+  The second approach is about 20x more efficient in terms of estimated flops!
+
+  ``multi_dot`` is a function that will automatically choose the fastest
+  computational path for such problems:
+
+  >>> result3 = jnp.linalg.multi_dot([x, y, z])
+  >>> jnp.allclose(result1, result3, atol=1E-4)
+  Array(True, dtype=bool)
+
+  We can use JAX's :ref:`ahead-of-time-lowering` tools to estimate the total flops
+  of each approach, and confirm that ``multi_dot`` is choosing the more efficient
+  option:
+
+  >>> jax.jit(lambda x, y, z: (x @ y) @ z).lower(x, y, z).cost_analysis()['flops']
+  600000.0
+  >>> jax.jit(lambda x, y, z: x @ (y @ z)).lower(x, y, z).cost_analysis()['flops']
+  30000.0
+  >>> jax.jit(jnp.linalg.multi_dot).lower([x, y, z]).cost_analysis()['flops']
+  30000.0
+  """
+  check_arraylike('jnp.linalg.multi_dot', *arrays)
+  arrs: list[Array] = list(map(jnp.asarray, arrays))
+  if len(arrs) < 2:
+    raise ValueError(f"multi_dot requires at least two arrays; got len(arrays)={len(arrs)}")
+  if not (arrs[0].ndim in (1, 2) and arrs[-1].ndim in (1, 2) and
+          all(a.ndim == 2 for a in arrs[1:-1])):
+    raise ValueError("multi_dot: input arrays must all be two-dimensional, except for"
+                     " the first and last array which may be 1 or 2 dimensional."
+                     f" Got array shapes {[a.shape for a in arrs]}")
+  if any(a.shape[-1] != b.shape[0] for a, b in zip(arrs[:-1], arrs[1:])):
+    raise ValueError("multi_dot: last dimension of each array must match first dimension"
+                     f" of following array. Got array shapes {[a.shape for a in arrs]}")
+  einsum_axes: list[tuple[int, ...]] = [(i, i+1) for i in range(len(arrs))]
+  if arrs[0].ndim == 1:
+    einsum_axes[0] = einsum_axes[0][1:]
+  if arrs[-1].ndim == 1:
+    einsum_axes[-1] = einsum_axes[-1][:1]
+  return jnp.einsum(*itertools.chain(*zip(arrs, einsum_axes)),  # type: ignore[arg-type, call-overload]
+                    optimize='optimal', precision=precision)
+
+
+@partial(jit, static_argnames=['p'])
+def cond(x: ArrayLike, p=None):
+  """Compute the condition number of a matrix.
+
+  JAX implementation of :func:`numpy.linalg.cond`.
+
+  The condition number is defined as ``norm(x, p) * norm(inv(x), p)``. For ``p = 2``
+  (the default), the condition number is the ratio of the largest to the smallest
+  singular value.
+
+  Args:
+    x: array of shape ``(..., M, N)`` for which to compute the condition number.
+    p: the order of the norm to use. One of ``{None, 1, -1, 2, -2, inf, -inf, 'fro'}``;
+      see :func:`jax.numpy.linalg.norm` for the meaning of these. The default is ``p = None``,
+      which is equivalent to ``p = 2``. If not in ``{None, 2, -2}`` then ``x`` must be square,
+      i.e. ``M = N``.
+
+  Returns:
+    array of shape ``x.shape[:-2]`` containing the condition number.
+
+  See also:
+    :func:`jax.numpy.linalg.norm`
+
+  Examples:
+
+    Well-conditioned matrix:
+
+    >>> x = jnp.array([[1, 2],
+    ...                [2, 1]])
+    >>> jnp.linalg.cond(x)
+    Array(3., dtype=float32)
+
+    Ill-conditioned matrix:
+
+    >>> x = jnp.array([[1, 2],
+    ...                [0, 0]])
+    >>> jnp.linalg.cond(x)
+    Array(inf, dtype=float32)
+  """
+  check_arraylike("cond", x)
+  arr = jnp.asarray(x)
+  if arr.ndim < 2:
+    raise ValueError(f"jnp.linalg.cond: input array must be at least 2D; got {arr.shape=}")
+  if arr.shape[-1] == 0 or arr.shape[-2] == 0:
+    raise ValueError(f"jnp.linalg.cond: input array must not be empty; got {arr.shape=}")
+  if p is None or p == 2:
+    s = svdvals(x)
+    return s[..., 0] / s[..., -1]
+  elif p == -2:
+    s = svdvals(x)
+    r = s[..., -1] / s[..., 0]
+  else:
+    if arr.shape[-2] != arr.shape[-1]:
+      raise ValueError(f"jnp.linalg.cond: for {p=}, array must be square; got {arr.shape=}")
+    r = norm(x, ord=p, axis=(-2, -1)) * norm(inv(x), ord=p, axis=(-2, -1))
+  # Convert NaNs to infs where original array has no NaNs.
+  return jnp.where(ufuncs.isnan(r) & ~ufuncs.isnan(x).any(axis=(-2, -1)), jnp.inf, r)

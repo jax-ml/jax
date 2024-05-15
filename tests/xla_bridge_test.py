@@ -26,7 +26,6 @@ from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.interpreters import xla
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 
 config.parse_flags_with_absl()
 
@@ -56,9 +55,7 @@ class XlaBridgeTest(jtu.JaxTestCase):
         num_replicas=1, num_partitions=1, fdo_profile=b"test_profile"
     )
     self.assertEqual(
-        compile_options.executable_build_options.fdo_profile,
-        b"test_profile" if xla_extension_version >= 242 else "test_profile"
-    )
+        compile_options.executable_build_options.fdo_profile, b"test_profile")
 
   def test_autofdo_profile(self):
 

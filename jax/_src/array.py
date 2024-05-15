@@ -36,7 +36,6 @@ from jax._src import profiler
 from jax._src import tree_util
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib import xla_extension as xe
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
@@ -708,21 +707,13 @@ def make_array_from_callback(
     return pxla.batched_device_put(
         aval, sharding, per_device_values, devices, committed=True)
 
-  # After minimum jaxlib version >= 0.4.26, merge this condition into the
-  # following if block.
-  if xla_extension_version >= 256 and isinstance(first_value, ArrayImpl):
-    maybe_default_layout = pxla._maybe_get_default_layout(
-        Layout(dll, sharding), None, sharding, aval)
-    layout_eq = first_value.layout.device_local_layout == maybe_default_layout
-  else:
-    layout_eq = True
-
   if (isinstance(first_value, ArrayImpl)
       and first_value._committed
       and sharding.is_fully_replicated
       and first_value.is_fully_replicated
       and first_value.sharding._device_assignment == tuple(devices)
-      and layout_eq):
+      and (first_value.layout.device_local_layout ==
+           pxla._maybe_get_default_layout(Layout(dll, sharding), None, sharding, aval))):
     return first_value
 
   if dll is not None:
@@ -942,13 +933,6 @@ def _array_shard_arg(x, sharding):
 pxla.shard_arg_handlers[ArrayImpl] = _array_shard_arg
 
 
-def _token_shard_arg(x, sharding):
-  return _array_shard_arg(x._buf, sharding)
-
-
-pxla.shard_arg_handlers[core.Token] = _token_shard_arg
-
-
 def _array_global_result_handler(global_aval, out_sharding, committed):
   if global_aval.dtype == dtypes.float0:
     return lambda _: np.zeros(global_aval.shape, dtypes.float0)  # type: ignore
@@ -960,22 +944,6 @@ def _array_global_result_handler(global_aval, out_sharding, committed):
   )
 pxla.global_result_handlers[core.ShapedArray] = _array_global_result_handler
 pxla.global_result_handlers[core.ConcreteArray] = _array_global_result_handler
-
-
-def _token_global_result_handler(global_aval, out_sharding, committed):
-  array_handler = _array_global_result_handler(
-      core.token_shaped_array, out_sharding, committed
-  )
-
-  def wrapper(*args, **kwargs):
-    out_buf = array_handler(*args, **kwargs)
-    return core.Token(out_buf)
-
-  return wrapper
-
-
-pxla.global_result_handlers[core.AbstractToken] = _token_global_result_handler
-
 
 # Only used for Arrays that come out of pmap.
 def _array_local_result_handler(aval, sharding, indices):
@@ -989,3 +957,21 @@ def _array_local_result_handler(aval, sharding, indices):
   )
 pxla.local_result_handlers[core.ShapedArray] = _array_local_result_handler
 pxla.local_result_handlers[core.ConcreteArray] = _array_local_result_handler
+
+
+# Token handlers
+
+def _token_shard_arg(x, sharding):
+  return _array_shard_arg(x._buf, sharding)
+pxla.shard_arg_handlers[core.Token] = _token_shard_arg
+
+
+def _token_global_result_handler(global_aval, out_sharding, committed):
+  array_handler = _array_global_result_handler(
+      core.token_shaped_array, out_sharding, committed)
+
+  def wrapper(*args, **kwargs):
+    out_buf = array_handler(*args, **kwargs)
+    return core.Token(out_buf)
+  return wrapper
+pxla.global_result_handlers[core.AbstractToken] = _token_global_result_handler

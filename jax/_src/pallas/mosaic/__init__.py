@@ -23,11 +23,11 @@ from jax._src.pallas.mosaic.core import TPUMemorySpace
 from jax._src.pallas.mosaic.kernel_regeneration_util import encode_kernel_regeneration_metadata
 from jax._src.pallas.mosaic.kernel_regeneration_util import extract_kernel_regeneration_metadata
 from jax._src.pallas.mosaic.lowering import LoweringException
+from jax._src.pallas.mosaic.pipeline import BufferedRef
 from jax._src.pallas.mosaic.pipeline import emit_pipeline
 from jax._src.pallas.mosaic.pipeline import emit_pipeline_with_allocations
-from jax._src.pallas.mosaic.pipeline import ManualPrefetchArgs
-from jax._src.pallas.mosaic.pipeline import PipelineCallbackArgs
-from jax._src.pallas.mosaic.pipeline import PipelinePrefetchArgs
+from jax._src.pallas.mosaic.pipeline import get_pipeline_schedule
+from jax._src.pallas.mosaic.pipeline import make_pipeline_allocations
 from jax._src.pallas.mosaic.primitives import async_copy
 from jax._src.pallas.mosaic.primitives import async_remote_copy
 from jax._src.pallas.mosaic.primitives import bitcast

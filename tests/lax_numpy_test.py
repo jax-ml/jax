@@ -2274,6 +2274,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     m=[None, 0, 1, 3, 4],
     k=range(-4, 4),
   )
+  def testEyeDynamicK(self, n, m, k, dtype):
+    np_fun = lambda k: np.eye(n, M=m, k=k, dtype=dtype)
+    jnp_fun = lambda k: jnp.eye(n, M=m, k=k, dtype=dtype)
+    args_maker = lambda: [k]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+    self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+    dtype=default_dtypes,
+    n=[0, 4],
+    m=[None, 0, 1, 3, 4],
+    k=range(-4, 4),
+  )
   def testTri(self, m, n, k, dtype):
     np_fun = lambda: np.tri(n, M=m, k=k, dtype=dtype)
     jnp_fun = lambda: jnp.tri(n, M=m, k=k, dtype=dtype)

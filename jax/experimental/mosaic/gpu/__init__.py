@@ -192,7 +192,10 @@ class TileTransform(MemRefTransform):
             arith.divui(i, c(t, index))
             for i, t in zip(idx[-tiling_rank:], self.tiling)
         ),
-        *([c(0, index)] * tiling_rank),
+        *(
+            arith.remui(i, c(t, index))
+            for i, t in zip(idx[-tiling_rank:], self.tiling)
+        ),
     )
 
   def transform_shape(self, shape: Sequence[int]) -> tuple[int, ...]:
@@ -485,6 +488,9 @@ def _launch(
   if profiler_spec is not None:
     smem_bytes += profiler_spec.smem_bytes(grid)
 
+  # TODO(cperivol): Query the shared memory size programmatically.
+  if smem_bytes > 228000:
+    raise ValueError(f"Mosaic GPU kernel exceeds available shared memory {smem_bytes=} > 228000")
   launch_op = gpu.LaunchOp(
       token.type, [token], *grid_vals, *block_vals,
       dynamicSharedMemorySize=c(smem_bytes, i32))
@@ -527,11 +533,11 @@ def _launch(
     gpu.terminator()
 
 
-def as_gpu_kernel(
+def _lower_as_gpu_kernel(
     body,
     grid: tuple[int, ...],
     block: tuple[int, ...],
-    in_shape,
+    in_shapes: tuple[Any, ...],
     out_shape,
     smem_scratch_shape,
     prof_spec: profiler.ProfilerSpec | None = None,
@@ -544,11 +550,7 @@ def as_gpu_kernel(
   def _shape_to_ref_ty(shape: jax.ShapeDtypeStruct) -> ir.MemRefType:
     return ir.MemRefType.get(shape.shape, mlir.dtype_to_ir_type(shape.dtype))
 
-  if isinstance(in_shape, list):
-    in_shape = tuple(in_shape)
-  elif not isinstance(in_shape, tuple):
-    in_shape = (in_shape,)
-  in_ref_tys = [_shape_to_ref_ty(t) for t in in_shape]
+  in_ref_tys = [_shape_to_ref_ty(t) for t in in_shapes]
 
   unwrap_output_tuple = False
   if isinstance(out_shape, list):
@@ -606,21 +608,44 @@ def as_gpu_kernel(
     main.func_op.attributes["llvm.emit_c_interface"] = ir.UnitAttr.get()
   module.operation.verify()
 
-  expected_arg_treedef = jax.tree.structure(in_shape)
-  def _check_args(args):
-    arg_treedef = jax.tree.structure(args)
-    if arg_treedef != expected_arg_treedef:
-      raise ValueError(
-          f"Invalid argument structure: expected {expected_arg_treedef}, got"
-          f" {arg_treedef}"
-      )
-
   dump_low_level(module)
 
   pass_manager = _get_mosaic_gpu_pipeline("fatbin")
   if mosaic_gpu_print_after_all.value:
     pass_manager.enable_ir_printing()
   pass_manager.run(module.operation)
+
+  return module, out_shape, gmem_scratch_bytes, unwrap_output_tuple
+
+
+def as_gpu_kernel(
+    body,
+    grid: tuple[int, ...],
+    block: tuple[int, ...],
+    in_shape,
+    out_shape,
+    smem_scratch_shape,
+    prof_spec: profiler.ProfilerSpec | None = None,
+):
+  if isinstance(in_shape, list):
+    in_shape = tuple(in_shape)
+  elif not isinstance(in_shape, tuple):
+    in_shape = (in_shape,)
+
+  module, out_shape, gmem_scratch_bytes, unwrap_output_tuple = (
+      _lower_as_gpu_kernel(
+          body, grid, block, in_shape, out_shape, smem_scratch_shape, prof_spec
+      )
+  )
+
+  expected_arg_treedef = jax.tree.structure(in_shape)
+  def _check_args(*args):
+    arg_treedef = jax.tree.structure(args)
+    if arg_treedef != expected_arg_treedef:
+      raise ValueError(
+          f"Invalid argument structure: expected {expected_arg_treedef}, got"
+          f" {arg_treedef}, ({args=})"
+      )
 
   def bind(*args):
     return mosaic_gpu_p.bind(
@@ -633,7 +658,7 @@ def as_gpu_kernel(
   if prof_spec is not None:
     @jax.jit
     def prof_kernel(*args):
-      _check_args(args)
+      _check_args(*args)
       *results, prof_buffer = bind(*args)
       def dump_profile(prof_buffer):
         out_file = os.path.join(
@@ -651,7 +676,7 @@ def as_gpu_kernel(
   else:
     @jax.jit
     def kernel(*args):
-      _check_args(args)
+      _check_args(*args)
       results = bind(*args)
       return results[0] if unwrap_output_tuple else results
     return kernel

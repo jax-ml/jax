@@ -174,7 +174,8 @@ def initialize(coordinator_address: str | None = None,
       have the coordinator service listen on one address/interface.
 
   Raises:
-    RuntimeError: If :func:`~jax.distributed.initialize` is called more than once.
+    RuntimeError: If :func:`~jax.distributed.initialize` is called more than once
+      or if called after the backend is already initialized.
 
   Example:
 

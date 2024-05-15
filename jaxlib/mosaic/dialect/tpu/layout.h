@@ -207,6 +207,15 @@ class RectangularVregBounds : public VRegDataBounds {
 //     one specified as an attribute.
 //   implicit_dim: If specified, the value has an implicit dim inserted in
 //     either minormost or second minormost position.
+//
+// Note: There is a special case when VectorLayout is used for an mlir::Value
+// of i1 type. In this case, we use it to represent a vmask, which has a smaller
+// bitwidth than a vreg. For these types, the packing() is accurate but the
+// bitwidth() is a lie, and the i1 value is replicated for every bit.
+// For example, if the vmask is 8 x 128 x 4 bits and packing() == 2, each 4-bit
+// register contains two logical bool values which are represented as either b11
+// or b00. Its usage is currently limited to MLIR arith.cmp and arith.select ops
+// but we might want to split out a separate class if it gets used more widely.
 class VectorLayout {
  public:
   enum class ImplicitDim {

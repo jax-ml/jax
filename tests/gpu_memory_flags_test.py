@@ -20,7 +20,6 @@ from absl.testing import absltest
 import jax
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.lib import xla_extension_version
 
 config.parse_flags_with_absl()
 
@@ -36,7 +35,6 @@ class GpuMemoryAllocationTest(absltest.TestCase):
       "XLA_PYTHON_CLIENT_ALLOCATOR" in os.environ,
       "Test does not work if the python client allocator has been overriden",
   )
-  @unittest.skipIf(xla_extension_version < 225, "jaxlib version too old")
   def test_gpu_memory_allocation(self):
     falsey_values = ("0", "False", "false")
     preallocate = (

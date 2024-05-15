@@ -43,6 +43,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src import linear_util as lu
 from jax._src import tree_util
+from jax._src.lib import xla_extension_version
 import jax.numpy as jnp
 
 from jax.experimental.custom_partitioning import custom_partitioning
@@ -1715,6 +1716,31 @@ class ShardMapTest(jtu.JaxTestCase):
     v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
     with self.assertRaisesRegex(ValueError, "in_specs refers to 'j'"):
       f(v)
+
+  @unittest.skipIf(xla_extension_version < 262, "Requires jaxlib 0.4.28")
+  def test_nested_partial_auto(self):
+    mesh = jtu.create_global_mesh((2, 2), ('i', 'j'))
+
+    def g(x):
+      return x * x
+
+    def h(x):
+      return shard_map(g, mesh,
+                    in_specs=P(None, 'j'),
+                    out_specs=P(None, 'j'))(x)
+
+    @jax.jit
+    def f(x):
+      return shard_map(h, mesh,
+                    in_specs=P('i', None),
+                    out_specs=P('i', None),
+                    check_rep=False,
+                    auto=frozenset({'j'}))(x)
+
+    v = jnp.arange(32.).reshape(4, 8)
+    v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+    self.assertAllClose(v*v, f(v), check_dtypes=False)
+
 
   def test_vmap_grad_shmap_spmd_axis_name_residuals(self):
     # https://github.com/google/jax/pull/21032

@@ -20,19 +20,12 @@ update these tests.
 from absl.testing import absltest
 
 import jax
+import jax.numpy as jnp
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.internal_test_util import export_back_compat_test_util as bctu
-
 from jax._src.internal_test_util.export_back_compat_test_data.pallas import cuda_add_one
-
 from jax.experimental import pallas as pl
-try:
-  from jax.experimental.pallas import gpu as plgpu
-except ImportError:
-  plgpu = None
-import jax.numpy as jnp
-
 
 config.parse_flags_with_absl()
 
@@ -46,7 +39,7 @@ class CompatTest(bctu.CompatTestBase):
     if not jtu.test_device_matches(["gpu"]):
       self.skipTest("Only works on GPU")
     if (jtu.test_device_matches(["cuda"]) and
-        (plgpu is None or plgpu.get_compute_capability(0) < 80)):
+        not jtu.is_cuda_compute_capability_at_least("8.0")):
       self.skipTest("Only works on GPUs with capability >= sm80")
     super().setUp()
 

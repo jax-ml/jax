@@ -15,17 +15,16 @@
 """Module for calling pallas functions from JAX."""
 from __future__ import annotations
 
-import itertools
-from functools import partial
-from functools import reduce
-
-from typing import Any, Callable
 from collections.abc import Sequence
+import itertools
+from functools import partial, reduce
+from typing import Any, Callable
 
 import jax
 from jax import api_util
 from jax import tree_util
 from jax import lax
+from jax._src import config
 from jax._src import state
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -82,6 +81,32 @@ def _maybe_dynamic_update_slice(start_idx, block_shape, value, update,
   update = lax.broadcast_in_dim(update, block_shape, broadcast_dims)
   assert update.shape == block_shape
   return lax.dynamic_update_slice(value, update, start_idx)
+
+def _pad_values_to_block_dimension(value,
+                                   block_shape):
+  """Pads values so the shape evenly divides into block dimensions.
+
+  For example, if values has a shape of (33, 2, 5) with a block_shape of
+  (32, 2, 4), this function will pad the value of shape to (64, 2, 8).
+
+  Args:
+    value: Array to be padded.
+    block_shape: Block shapes to use for padding. If None, no padding will
+      be performed.
+
+  Returns:
+    A padded array.
+  """
+  if block_shape is None:
+    return value
+  padded_shape = tuple(
+      ((v - 1) // b + 1) * b for v, b in zip(value.shape, block_shape)
+  )
+  if padded_shape != value.shape:
+    pad_width = tuple((0, a-b) for a, b in zip(padded_shape, value.shape))
+    pad_value = _uninitialized_value(shape=(), dtype=value.dtype)
+    value = jnp.pad(value, pad_width, constant_values=pad_value)
+  return value
 
 def _uninitialized_value(shape, dtype):
   if jnp.issubdtype(dtype, jnp.floating):
@@ -157,7 +182,29 @@ def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
             raise NotImplementedError("Padding with aliasing not supported.")
           x = lax.pad(x, jnp.zeros((), x.dtype), [(*p, 0) for p in padding])
       carry.append(x)
+
+    block_shapes_without_mapped_dims = [
+        None if block_mapping is None else block_mapping.block_shape
+        for block_mapping in grid_mapping.block_mappings
+    ]
+    is_indexing_dim = [
+        None if bm is None else tuple(b is pallas_core.mapped for b in bm)
+        for bm in block_shapes_without_mapped_dims
+    ]
+    block_shapes = [
+        None if (bm is None or iid is None)
+        else tuple(1 if i else b for i, b in zip(iid, bm))
+        for iid, bm in zip(is_indexing_dim, block_shapes_without_mapped_dims)
+    ]
+
+    # Pad values to evenly divide into block dimensions.
+    # This allows interpret mode to catch errors on OOB memory accesses
+    # by poisoning values with NaN. It also fixes an inconstency with
+    # lax.dynamic_slice where if the slice goes out of bounds, it will instead
+    # move the start_index backwards so the slice will fit in memory.
+    carry = map(_pad_values_to_block_dimension, carry, block_shapes)
     carry.extend(scratch_values)
+
     num_inout = len(args) + len(out)
     grid_start_indices = (jnp.int32(0),) * len(grid)
     if grid:
@@ -180,18 +227,6 @@ def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
         start_indices = [
             None if bm is None else bm.compute_start_indices(loop_idx, *scalars)
             for bm in grid_mapping.block_mappings]
-      block_shapes_without_mapped_dims = [
-          None if block_mapping is None else block_mapping.block_shape
-          for block_mapping in grid_mapping.block_mappings
-      ]
-      is_indexing_dim = [
-          None if bm is None else tuple(b is pallas_core.mapped for b in bm)
-          for bm in block_shapes_without_mapped_dims
-      ]
-      block_shapes = [
-          None if bm is None else tuple(1 if i else b for i, b in zip(iid, bm))
-          for iid, bm in zip(is_indexing_dim, block_shapes_without_mapped_dims)
-      ]
       blocks = map(_maybe_dynamic_slice, start_indices, block_shapes, carry,
                    is_indexing_dim)
       with pallas_core.grid_env(local_grid_env):
@@ -496,6 +531,16 @@ def _extract_function_name(f: Callable, name: str | None) -> str:
   return name
 
 
+_PALLAS_USE_MOSAIC_GPU = config.DEFINE_bool(
+    "jax_pallas_use_mosaic_gpu",
+    default=config.bool_env("JAX_PALLAS_USE_MOSAIC_GPU", False),
+    help=(
+        "If True, lower Pallas kernels to the experimental Mosaic GPU"
+        " dialect, instead of Trition IR."
+    ),
+)
+
+
 def _unsupported_lowering_error(platform: str) -> Exception:
   return ValueError(
       f"Cannot lower pallas_call on platform: {platform}. To use Pallas on GPU,"
@@ -524,7 +569,10 @@ def _pallas_call_lowering(
     raise ValueError("Only interpret mode is supported on CPU backend.")
   elif platform == "cuda" or platform == "rocm":
     try:
-      from jax._src.pallas.triton import pallas_call_registration  # type: ignore
+      if _PALLAS_USE_MOSAIC_GPU.value:
+        from jax._src.pallas.mosaic_gpu import pallas_call_registration  # type: ignore
+      else:
+        from jax._src.pallas.triton import pallas_call_registration  # type: ignore
     except ImportError:
       pass
     else:

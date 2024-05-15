@@ -205,7 +205,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
           "__main__/jaxlib/gpu_sparse.py",
           "__main__/jaxlib/version.py",
           "__main__/jaxlib/xla_client.py",
-          f"__main__/jaxlib/xla_extension.{pyext}",
+          f"xla/xla/python/xla_extension.{pyext}",
       ],
   )
   # This file is required by PEP-561. It marks jaxlib as package containing

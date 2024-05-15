@@ -697,6 +697,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fn, args_maker, tol=tol)
 
+    # smoke-test for optional kwargs.
+    jnp_fn = partial(jnp.linalg.vecdot, axis=axis,
+                     precision=lax.Precision.HIGHEST,
+                     preferred_element_type=dtype)
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=tol)
+
   # jnp.linalg.matmul is an alias of jnp.matmul; do a minimal test here.
   @jtu.sample_product(
       [
@@ -718,6 +724,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
            np.complex128: 1e-12}
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fn, args_maker, tol=tol)
+
+    # smoke-test for optional kwargs.
+    jnp_fn = partial(jnp.linalg.matmul,
+                     precision=lax.Precision.HIGHEST,
+                     preferred_element_type=dtype)
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=tol)
 
   # jnp.linalg.tensordot is an alias of jnp.tensordot; do a minimal test here.
   @jtu.sample_product(
@@ -741,6 +753,12 @@ class NumpyLinalgTest(jtu.JaxTestCase):
            np.complex128: 1e-12}
     self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=tol)
     self._CompileAndCheck(jnp_fn, args_maker, tol=tol)
+
+    # smoke-test for optional kwargs.
+    jnp_fn = partial(jnp.linalg.tensordot, axes=axes,
+                     precision=lax.Precision.HIGHEST,
+                     preferred_element_type=dtype)
+    self._CheckAgainstNumpy(np_fn, jnp_fn, args_maker, tol=tol)
 
   @jtu.sample_product(
       [
@@ -987,7 +1005,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
 
     args_maker = args_gen(pnorm)
     if pnorm not in [2, -2] and len(set(shape[-2:])) != 1:
-      with self.assertRaises(np.linalg.LinAlgError):
+      with self.assertRaises(ValueError):
         jnp.linalg.cond(*args_maker())
     else:
       self._CheckAgainstNumpy(np.linalg.cond, jnp.linalg.cond, args_maker,

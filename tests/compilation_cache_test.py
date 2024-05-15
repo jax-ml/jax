@@ -37,7 +37,6 @@ from jax._src import monitoring
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
 from jax._src.maps import xmap
 from jax.experimental.pjit import pjit
 from jax.sharding import PartitionSpec as P
@@ -72,9 +71,7 @@ class CompilationCacheTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    supported_platforms = ["tpu", "gpu"]
-    if xla_extension_version >= 253:
-      supported_platforms.append("cpu")
+    supported_platforms = ["tpu", "gpu", "cpu"]
 
     if not jtu.test_device_matches(supported_platforms):
       raise SkipTest(

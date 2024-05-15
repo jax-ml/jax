@@ -6,13 +6,52 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.28
+## jax 0.4.29
+
+* Deprecations
+  * Removed a number of previously-deprecated APIs:
+    * from {mod}`jax.core`: `non_negative_dim`, `DimSize`, `Shape`
+    * from {mod}`jax.lax`: `tie_in`
+    * from {mod}`jax.nn`: `normalize`
+    * from {mod}`jax.interpreters.xla`: `backend_specific_translations`,
+      `translations`, `register_translation`, `xla_destructure`,
+      `TranslationRule`, `TranslationContext`, `XlaOp`.
+  * The ``tol`` argument of {func}`jax.numpy.linalg.matrix_rank` is being
+    deprecated and will soon be removed. Use `rtol` instead.
+  * The ``rcond`` argument of {func}`jax.numpy.linalg.pinv` is being
+    deprecated and will soon be removed. Use `rtol` instead.
+
+## jaxlib 0.4.29
+
+## jax 0.4.28 (May 9, 2024)
+
+* Bug fixes
+  * Reverted a change to `make_jaxpr` that was breaking Equinox (#21116).
 
 * Deprecations & removals
   * The ``kind`` argument to {func}`jax.numpy.sort` and {func}`jax.numpy.argsort`
     is now removed. Use `stable=True` or `stable=False` instead.
+  * Removed ``get_compute_capability`` from the ``jax.experimental.pallas.gpu``
+    module. Use the ``compute_capability`` attribute of a GPU device, returned
+    by {func}`jax.devices` or {func}`jax.local_devices`, instead.
+  * The ``newshape`` argument to {func}`jax.numpy.reshape`is being deprecated
+    and will soon be removed. Use `shape` instead.
 
-## jaxlib 0.4.28
+* Changes
+  * The minimum jaxlib version of this release is 0.4.27.
+
+## jaxlib 0.4.28 (May 9, 2024)
+
+* Bug fixes
+  * Fixes a memory corruption bug in the type name of Array and JIT Python
+    objects in Python 3.10 or earlier.
+  * Fixed a warning `'+ptx84' is not a recognized feature for this target`
+    under CUDA 12.4.
+  * Fixed a slow compilation problem on CPU.
+
+* Changes
+  * The Windows build is now built with Clang instead of MSVC.
+
 
 ## jax 0.4.27 (May 7, 2024)
 
@@ -82,7 +121,7 @@ Remember to align the itemized text with the first line of an item within a list
   * {func}`jax.numpy.astype` will now always return a copy when `copy=True`.
     Previously, no copy would be made when the output array would have the same
     dtype as the input array. This may result in some increased memory usage.
-    The default value is set to `copy=False` to preserve backwards compatability.
+    The default value is set to `copy=False` to preserve backwards compatibility.
 
 ## jaxlib 0.4.27 (May 7, 2024)
 
@@ -187,7 +226,7 @@ Remember to align the itemized text with the first line of an item within a list
 * Changes
 
   * JAX lowering to StableHLO does not depend on physical devices anymore.
-    If your primitive wraps custom_paritioning or JAX callbacks in the lowering
+    If your primitive wraps custom_partitioning or JAX callbacks in the lowering
     rule i.e. function passed to `rule` parameter of `mlir.register_lowering` then add your
     primitive to `jax._src.dispatch.prim_requires_devices_during_lowering` set.
     This is needed because custom_partitioning and JAX callbacks need physical
@@ -1244,7 +1283,7 @@ Changes:
   * Added {func}`jax.random.ball`.
   * Added {func}`jax.default_device`.
   * Added a `python -m jax.collect_profile` script to manually capture program
-    traces as an alternative to the Tensorboard UI.
+    traces as an alternative to the TensorBoard UI.
   * Added a `jax.named_scope` context manager that adds profiler metadata to
     Python programs (similar to `jax.named_call`).
   * In scatter-update operations (i.e. :attr:`jax.numpy.ndarray.at`), unsafe implicit
@@ -2410,7 +2449,7 @@ Changes:
 * Added several new rules for `jax.experimental.jet` {jax-issue}`#2537`.
 * Fixed `jax.experimental.stax.BatchNorm` when `scale`/`center` isn't provided.
 * Fix some missing cases of broadcasting in `jax.numpy.einsum` {jax-issue}`#2512`.
-* Implement `jax.numpy.cumsum` and `jax.numpy.cumprod` in terms of a parallel prefix scan {jax-issue}`#2596` and make `reduce_prod` differentiable to arbitray order {jax-issue}`#2597`.
+* Implement `jax.numpy.cumsum` and `jax.numpy.cumprod` in terms of a parallel prefix scan {jax-issue}`#2596` and make `reduce_prod` differentiable to arbitrary order {jax-issue}`#2597`.
 * Add `batch_group_count` to `conv_general_dilated` {jax-issue}`#2635`.
 * Add docstring for `test_util.check_grads` {jax-issue}`#2656`.
 * Add `callback_transform` {jax-issue}`#2665`.

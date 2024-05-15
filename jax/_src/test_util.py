@@ -57,7 +57,7 @@ from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
 from jax._src.util import unzip2
 from jax._src.public_test_util import (  # noqa: F401
     _assert_numpy_allclose, _check_dtypes_match, _default_tolerance, _dtype, check_close, check_grads,
-    check_jvp, check_vjp, default_gradient_tolerance, default_tolerance, tolerance)
+    check_jvp, check_vjp, default_gradient_tolerance, default_tolerance, tolerance, rand_like)
 from jax._src import xla_bridge
 
 
@@ -418,6 +418,12 @@ def is_device_tpu(version: int | None = None, variant: str = "") -> bool:
   if expected_version == "v5e":
     return "v5 lite" in device_kind
   return expected_version in device_kind
+
+def is_cuda_compute_capability_at_least(capability: str) -> bool:
+  if not is_device_cuda():
+    return False
+  d, *_ = jax.local_devices(backend="gpu")
+  return d.compute_capability >= capability
 
 def _get_device_tags():
   """returns a set of tags defined for the device under test"""

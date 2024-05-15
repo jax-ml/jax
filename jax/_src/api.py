@@ -65,7 +65,6 @@ from jax._src.api_util import (
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.lib import pmap_lib
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (PmapSharding, TransferToMemoryKind,
@@ -545,11 +544,7 @@ def xla_computation(fun: Callable,
           result_shardings=None,
           lowering_parameters=mlir.LoweringParameters())
 
-      if xla_extension_version >= 244:
-        m = mlir.module_to_bytecode(lowering_result.module)
-      else:
-        m = mlir.module_to_string(lowering_result.module)
-
+      m = mlir.module_to_bytecode(lowering_result.module)
       built = xc._xla.mlir.mlir_module_to_xla_computation(
           m, use_tuple_args=tuple_args, return_tuple=True)
     out_shapes_flat = [
@@ -1812,8 +1807,7 @@ def _cpp_pmap(
 
   cpp_mapped_f = pmap_lib.pmap(
       fun, cache_miss, static_broadcasted_tuple,
-      pxla.shard_arg if xla_extension_version >= 229 else pxla.temp_shard_arg,  # type: ignore
-      pytree_registry=tree_util.default_registry)
+      pxla.shard_arg, pytree_registry=tree_util.default_registry)  # type: ignore
   _pmap_cache_clears.add(cpp_mapped_f)
 
   pmap_f = wraps(fun)(cpp_mapped_f)
@@ -2370,25 +2364,43 @@ def make_jaxpr(fun: Callable,
       g:f32[] = mul f c
     in (g,) }
   """
-  try:
-    hash(fun)
-    weakref.ref(fun)
-  except TypeError:
-    fun = partial(fun)
+  check_callable(fun)
+  static_argnums = _ensure_index_tuple(static_argnums)
+
+  def abstractify(args, kwargs):
+    flat_args, in_tree = tree_flatten((args, kwargs))
+    if abstracted_axes is None:
+      return map(shaped_abstractify, flat_args), in_tree, [True] * len(flat_args)
+    else:
+      axes_specs = _flat_axes_specs(abstracted_axes, *args, **kwargs)
+      in_type = pe.infer_lambda_input_type(axes_specs, flat_args)
+      in_avals, keep_inputs = unzip2(in_type)
+      return in_avals, in_tree, keep_inputs
 
   @wraps(fun)
   @api_boundary
   def make_jaxpr_f(*args, **kwargs):
+    f = lu.wrap_init(fun)
+    if static_argnums:
+      dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
+      f, args = argnums_partial(f, dyn_argnums, args)
+    in_avals, in_tree, keep_inputs = abstractify(args, kwargs)
+    in_type = tuple(zip(in_avals, keep_inputs))
+    f, out_tree = flatten_fun(f, in_tree)
+    f = lu.annotate(f, in_type)
+    debug_info = pe.debug_info(fun, in_tree, out_tree, True, 'make_jaxpr')
     with ExitStack() as stack:
       for axis_name, size in axis_env or []:
         stack.enter_context(core.extend_axis_env(axis_name, size, None))
-      specialized = jit(fun, static_argnums=static_argnums,
-                        abstracted_axes=abstracted_axes).specialize(*args, **kwargs)
+      jaxpr, out_type, consts = pe.trace_to_jaxpr_dynamic2(
+          f, debug_info=debug_info)
+    closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
     if return_shape:
-      out = [ShapeDtypeStruct(o.shape, o.dtype, getattr(o, 'named_shape', None))
-             for o in specialized.jaxpr.out_avals]
-      return specialized.jaxpr, tree_unflatten(specialized.out_tree, out)
-    return specialized.jaxpr
+      out_avals, _ = unzip2(out_type)
+      out_shapes_flat = [
+          ShapeDtypeStruct(a.shape, a.dtype, a.named_shape) for a in out_avals]
+      return closed_jaxpr, tree_unflatten(out_tree(), out_shapes_flat)
+    return closed_jaxpr
 
   make_jaxpr_f.__module__ = "jax"
   if hasattr(fun, "__qualname__"):
@@ -2911,9 +2923,6 @@ def block_until_ready(x):
       return x.block_until_ready()
     except AttributeError:
       return x
-
-  if xla_extension_version < 246:
-    return tree_map(try_to_block, x)
 
   arrays = []
   for leaf in tree_leaves(x):

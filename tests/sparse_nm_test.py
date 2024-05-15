@@ -13,20 +13,17 @@
 # limitations under the License.
 
 import math
+
+import numpy as np
 from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
+import jax.numpy as jnp
 from jax import dtypes
+from jax._src import config
 from jax._src import test_util as jtu
 from jax.experimental.sparse import nm
-import jax.numpy as jnp
-import numpy as np
-
-try:
-  from jax.experimental.pallas import gpu as plgpu
-except ImportError:
-  plgpu = None
 
 jax.config.parse_flags_with_absl()
 
@@ -36,15 +33,9 @@ class SpmmTest(jtu.JaxTestCase):
     if not jtu.test_device_matches(["gpu"]):
       self.skipTest("Only works on GPU")
     if (jtu.test_device_matches(["cuda"]) and
-        not self.check_gpu_capability_at_least(80)):
+        not jtu.is_cuda_compute_capability_at_least("8.0")):
       self.skipTest("Only works on GPUs with capability >= sm80")
     super().setUp()
-
-  def check_gpu_capability_at_least(self, capability,
-                                    device: int = 0):
-    if plgpu is None:
-      return False
-    return plgpu.get_compute_capability(device) >= capability
 
   # ----- Test different input shapes
   @parameterized.product(
@@ -145,13 +136,13 @@ class SpmmTest(jtu.JaxTestCase):
     rhs = jnp.zeros((batch, tile_k, tile_n), dtype=jnp.bfloat16)
     meta = jnp.zeros((batch, tile_m, tile_k // 16), dtype=jnp.uint16)
 
-    # Check types
-    with self.assertRaisesRegex(TypeError, "Unsupported lhs input type"):
-      nm.nm_spmm(jnp.zeros(lhs.shape, dtype=jnp.int64), rhs, meta)
-    with self.assertRaisesRegex(TypeError, "Unsupported rhs input type"):
-      nm.nm_spmm(lhs, jnp.zeros(rhs.shape, dtype=jnp.int64), meta)
-    with self.assertRaisesRegex(TypeError, "Unsupported output type"):
-      nm.nm_spmm(lhs, rhs, meta, output_dtype=jnp.int64)
+    if config.enable_x64.value:
+      with self.assertRaisesRegex(TypeError, "Unsupported lhs input type"):
+        nm.nm_spmm(jnp.zeros(lhs.shape, dtype=jnp.int64), rhs, meta)
+      with self.assertRaisesRegex(TypeError, "Unsupported rhs input type"):
+        nm.nm_spmm(lhs, jnp.zeros(rhs.shape, dtype=jnp.int64), meta)
+      with self.assertRaisesRegex(TypeError, "Unsupported output type"):
+        nm.nm_spmm(lhs, rhs, meta, output_dtype=jnp.int64)
 
     # Check dimension numbers
     nm_spmm_with_dnums = lambda c, b: nm.nm_spmm(

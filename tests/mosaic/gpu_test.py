@@ -15,6 +15,7 @@
 """Tests for Mosaic GPU DSL functions and utilities."""
 
 import operator
+from functools import partial
 from typing import Optional
 
 from absl.testing import absltest, parameterized
@@ -381,11 +382,12 @@ class WGMMATest(TestCase):
     np.testing.assert_array_equal(iota, expected)
 
   @parameterized.named_parameters(
-      ("f32", ir.F32Type, jnp.float32),
-      ("f16", ir.F16Type, jnp.float16),
+      ("f32", ir.F32Type.get, jnp.float32),
+      ("f16", ir.F16Type.get, jnp.float16),
+      ("i8", partial(ir.IntegerType.get_signless, 8), jnp.int8),
   )
   def test_store_tiled(self, mlir_dtype_cls, jax_dtype):
-    mlir_dtype = mlir_dtype_cls.get()
+    mlir_dtype = mlir_dtype_cls()
     m = 128
     n = 256
     tiling = (64, 128 // bytewidth(mlir_dtype))
@@ -401,6 +403,81 @@ class WGMMATest(TestCase):
     iota = mosaic_gpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (), expected, expected
     )()
+    np.testing.assert_array_equal(iota, expected)
+
+  @parameterized.named_parameters(
+      ("bf16_i8",
+      ir.BF16Type.get, jnp.bfloat16,
+       lambda: ir.IntegerType.get_signless(8), jnp.int8),
+      ("i8_bf16",
+       lambda: ir.IntegerType.get_signless(8), jnp.int8,
+       ir.BF16Type.get, jnp.bfloat16),
+      ("i8_i8",
+       lambda: ir.IntegerType.get_signless(8), jnp.int8,
+       lambda: ir.IntegerType.get_signless(8), jnp.int8),
+  )
+  def test_convert_tiled(self,
+                         mlir_dtype_cls_from, jax_dtype_from,
+                         mlir_dtype_cls_to, jax_dtype_to):
+    mlir_dtype_from = mlir_dtype_cls_from()
+    mlir_dtype_to = mlir_dtype_cls_to()
+    m = 128
+    n = 256 // bytewidth(mlir_dtype_from)
+    def kernel(ctx, inp, out, smem):
+      del ctx
+      smem_from, smem_to = smem
+      copy(inp, smem_from, swizzle=128)
+      t = mgpu.FragmentedArray.load_tiled(smem_from, swizzle=128)
+      t = t.astype(mlir_dtype_to)
+      t.store_tiled(smem_to, swizzle=128)
+      copy(smem_to, out, swizzle=128)
+
+    from_tiling = (64, 128 // bytewidth(mlir_dtype_from))
+    to_tiling = (64, 128 // bytewidth(mlir_dtype_to))
+    expected_raw = self.prng.integers(
+        low=-127, high=127, size=(m, n), dtype=np.int8
+    )
+    expected = lambda jax_dtype, tiling: expected_raw.reshape(
+        m // tiling[0], tiling[0], n // tiling[1], tiling[1]
+    ).transpose(0, 2, 1, 3).astype(jax_dtype)
+
+    expected_from = expected(jax_dtype_from, from_tiling)
+    expected_to = expected(jax_dtype_to, to_tiling)
+    res = mosaic_gpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (128, 1, 1),
+        expected_from,
+        expected_to,
+        (expected_from, expected_to),
+    )(expected_from)
+    np.testing.assert_array_equal(res, expected_to)
+
+  @parameterized.named_parameters(
+      ("f32", ir.F32Type.get, jnp.float32),
+      ("f16", ir.F16Type.get, jnp.float16),
+      ("i8", partial(ir.IntegerType.get_signless, 8), jnp.int8),
+  )
+  def test_load_tiled(self, mlir_dtype_cls, jax_dtype):
+    mlir_dtype = mlir_dtype_cls()
+    m = 128
+    n = 256 // bytewidth(mlir_dtype)
+    tiling = (64, 128 // bytewidth(mlir_dtype))
+    def kernel(ctx, in_, out, smem):
+      del ctx
+      smem1, smem2 = smem
+      copy(in_, smem1, swizzle=128)
+      t = mgpu.FragmentedArray.load_tiled(smem1, swizzle=128)
+      t.store_tiled(smem2, swizzle=128)
+      copy(smem2, out, swizzle=128)
+    expected = (
+        np.arange(m * n, dtype=jax_dtype)
+        .reshape(m // tiling[0], tiling[0], n // tiling[1], tiling[1])
+        .transpose(0, 2, 1, 3)
+    )
+    iota = mosaic_gpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), expected, expected, (expected,) * 2
+    )(expected)
     np.testing.assert_array_equal(iota, expected)
 
   @parameterized.product(
@@ -586,6 +663,49 @@ class WGMMATest(TestCase):
     rtol = 0 if k_steps == 1 else 2.2e-4
     np.testing.assert_allclose(z, ref, rtol=rtol, atol=0)
 
+
+class BarrierTest(TestCase):
+
+  def test_wg_communication(self):
+    i32 = ir.IntegerType.get_signless(32)
+    def kernel(ctx, dst, tmp):
+      del ctx  # Unused.
+      barriers = BarrierArray(3, arrival_count=128)
+      gpu.barrier()  # Make sure the barriers are initialized.
+      wg_idx = arith.divui(mgpu.warp_idx(), c(4, i32))
+      is_first_wg = arith.cmpi(arith.CmpIPredicate.eq, wg_idx, c(0, i32))
+      is_second_wg = arith.cmpi(arith.CmpIPredicate.eq, wg_idx, c(1, i32))
+      arr = mgpu.FragmentedArray.splat(
+          arith.addi(wg_idx, c(1, i32)),
+          (128,),
+          mgpu.WGStridedFragLayout((128,), 1),
+      )
+      with ir.InsertionPoint(scf.IfOp(is_first_wg).then_block):
+        arr.store_untiled(tmp)
+        barriers[0].arrive()  # Signal that tmp is ready.
+        barriers[1].wait()  # Wait for the other warp to produce tmp.
+        final_arr = arr + mgpu.FragmentedArray.load_strided(tmp)
+        final_arr.store_untiled(memref_slice(dst, 0))
+        scf.yield_([])
+      with ir.InsertionPoint(scf.IfOp(is_second_wg).then_block):
+        barriers[0].wait()
+        final_arr = arr + mgpu.FragmentedArray.load_strided(tmp)
+        barriers[2].arrive()
+        barriers[2].wait()  # Synchronize this warpgroup before we overwrite tmp.
+        arr.store_untiled(tmp)
+        barriers[1].arrive()  # Signal that tmp is ready.
+        final_arr.store_untiled(memref_slice(dst, 1))
+        scf.yield_([])
+    out_shape = jax.ShapeDtypeStruct((2, 128), jnp.int32)
+    y = mosaic_gpu.as_gpu_kernel(
+        kernel,
+        (1, 1, 1),
+        (2 * 128, 1, 1),
+        (),
+        out_shape,
+        jax.ShapeDtypeStruct((128,), jnp.int32),
+    )()
+    np.testing.assert_array_equal(y, np.full_like(y, 3, dtype=np.int32))
 
 class TMATest(TestCase):
 

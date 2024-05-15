@@ -18,7 +18,6 @@ import enum
 import jax
 from jax import random
 from jax._src.interpreters import mlir
-from jax._src import test_util as jtu
 from jax.experimental.mosaic import gpu as mosaic_gpu
 from jax.experimental.mosaic.gpu import profiler
 from jax.experimental.mosaic.gpu.dsl import *  # noqa: F403
@@ -192,13 +191,11 @@ def build_kernel(
   index = ir.IndexType.get()
   i8 = ir.IntegerType.get_signless(8)
 
-  # TODO(apaszke): Remove this.
-  block_tile_m, block_tile_n = tile_m, tile_n
-  m_blocks = m // block_tile_m
-  n_blocks = n // block_tile_n
-  assert m % block_tile_m == 0 and n % block_tile_n == 0
+  def safe_div(x, y):
+    assert x % y == 0
+    return x // y
 
-  grid = (m_blocks, n_blocks, 1)
+  grid = (safe_div(m, tile_m), safe_div(n, tile_n), 1)
   block = (128, 1, 1)
 
   def c(value, ty=index):
@@ -214,12 +211,12 @@ def build_kernel(
     memref.assume_alignment(c_device, 16)
 
     barrier_group = BarrierArray(stages)
+    m_start = arith.muli(c(tile_m), gpu.block_id(gpu.Dimension.x))
+    n_start = arith.muli(c(tile_n), gpu.block_id(gpu.Dimension.y))
 
-    def fetch(slot, mi, ni, ki):
+    def fetch(slot, ki):
       barrier = barrier_group[slot]
-      m_start = arith.muli(c(tile_m), mi)
       k_start = arith.muli(c(tile_k), ki)
-      n_start = arith.muli(c(tile_n), ni)
       lhs_tile_bytes = np.prod(lhs_tile.shape) * in_bytewidth
       rhs_tile_bytes = np.prod(rhs_tile.shape) * in_bytewidth
       txcount = c(lhs_tile_bytes + rhs_tile_bytes)
@@ -249,109 +246,91 @@ def build_kernel(
             **common_copy_args,
         )
 
-    m_steps = block_tile_m // tile_m
-    n_steps = block_tile_n // tile_n
     k_steps = k // tile_k
-    assert m_steps * tile_m == block_tile_m
-    assert n_steps * tile_n == block_tile_n
+    accs = wgmma_impl.zero_accs(tile_m, tile_n)
 
-    m_base = arith.muli(gpu.block_id(gpu.Dimension.x), c(m_steps))
-    n_base = arith.muli(gpu.block_id(gpu.Dimension.y), c(n_steps))
 
-    @fori(c(m_steps), ())
-    def _m_loop(m_step, _):
-      @fori(c(n_steps), ())
-      def _n_loop(n_step, _):
-        accs = wgmma_impl.zero_accs(tile_m, tile_n)
+    with ctx.named_region("TMA warmup"):
+      for i in range(stages):
+        fetch(c(i), c(i))
 
-        mi = arith.addi(m_base, m_step)
-        ni = arith.addi(n_base, n_step)
+    @fori(c(k_steps), accs)
+    def stage_loop_body(ki, accs):
+      si = arith.remui(ki, c(stages))
 
-        with ctx.named_region("TMA warmup"):
-          for i in range(stages):
-            fetch(c(i), mi, ni, c(i))
+      with ctx.named_region("TMA wait"):
+        barrier_group[si].wait()
 
-        @fori(c(k_steps), accs)
-        def stage_loop_body(ki, accs):
-          si = arith.remui(ki, c(stages))
-
-          with ctx.named_region("TMA wait"):
-            barrier_group[si].wait()
-
-          with ctx.named_region("WGMMA"):
-            a_slice = memref_slice(smem_scratch["lhs"], si)
-            b_slice = memref_slice(smem_scratch["rhs"], si)
-            b_order = (
-                WGMMALayout.COL_MAJOR if rhs_transpose else WGMMALayout.ROW_MAJOR
-            )
-            accs = wgmma_impl.wgmma(smem_scratch, accs, b_order, a_slice, b_slice)
-
-          with ctx.named_region("TMA start"):
-            tma_ki = arith.addi(ki, c(stages - 1))
-            do_tma = arith.cmpi(arith.CmpIPredicate.slt, tma_ki, c(k_steps))
-            not_first_step = arith.cmpi(arith.CmpIPredicate.ne, ki, c(0))
-            if_op = scf.IfOp(arith.andi(not_first_step, do_tma))
-            with ir.InsertionPoint(if_op.then_block):
-              tma_si = arith.remui(tma_ki, c(stages))
-              fetch(tma_si, mi, ni, tma_ki)
-              scf.yield_([])
-
-          return accs
-
-        # Wait until everyone is done with their WMMA
-        with ctx.named_region("WGMMA drain"):
-          nvvm.wgmma_wait_group_sync_aligned(0)
-
-        # We can repurpose the tile SMEM for the epilogue now
-        # TODO(apaszke): Add support for aliased SMEM allocations to the DSL
-        dynamic_smem = gpu.dynamic_shared_memory(
-            ir.MemRefType.get(
-                (ir.ShapedType.get_dynamic_size(),), i8, memory_space=smem
-            )
+      with ctx.named_region("WGMMA"):
+        a_slice = memref_slice(smem_scratch["lhs"], si)
+        b_slice = memref_slice(smem_scratch["rhs"], si)
+        b_order = (
+            WGMMALayout.COL_MAJOR if rhs_transpose else WGMMALayout.ROW_MAJOR
         )
-        with ctx.named_region("SMEM store"):
-          acc_val = wgmma_impl.get_result_tile(stage_loop_body.result)
-          acc_smem = memref.view(
-              ir.MemRefType.get(
-                  tile_shape((tile_m, tile_n), (64, 32)), f32, memory_space=smem
-              ),
-              dynamic_smem, c(0), [],
-          )
-          acc_val.store_tiled(acc_smem, swizzle=128)
-          gpu.barrier()
+        accs = wgmma_impl.wgmma(smem_scratch, accs, b_order, a_slice, b_slice)
 
-        with ctx.named_region("GMEM store"):
-          # Vectorized epilogue to move results from SMEM to GMEM
-          # TODO(apaszke): Make this into a proper copy function.
-          assert tile_n == 128  # TODO(apaszke): Support other sizes.
-          n_start = arith.muli(ni, c(tile_n))
-          m_start = arith.muli(mi, c(tile_m))
-          tidx = gpu.thread_id(gpu.Dimension.x)
-          warp_id = arith.divui(tidx, c(32))
-          lane_id = arith.remui(tidx, c(32))
-          n_store = arith.muli(lane_id, c(4))
-          col_group = arith.divui(lane_id, c(8))
-          n_load = arith.muli(arith.remui(lane_id, c(8)), c(4))
-          for_op = scf.ForOp(warp_id, c(tile_m), c(4))
-          with ir.InsertionPoint(for_op.body):
-            m_smem = for_op.induction_variable
-            m_within_tile = arith.remui(m_smem, c(64))
-            m_tile = arith.divui(m_smem, c(64))
-            swizzle_source = arith.shli(arith.remui(m_smem, c(8)), c(2))
-            n_acc = arith.xori(n_load, swizzle_source)
-            acc_part = vector.load(
-                ir.VectorType.get((4,), f32),
-                acc_smem,
-                [m_tile, col_group, m_within_tile, n_acc],
-            )
-            vector.store(
-                acc_part,
-                c_device,
-                [arith.addi(m_start, m_smem), arith.addi(n_start, n_store)],
-            )
-            scf.yield_([])
-        return ()
-      return ()
+      with ctx.named_region("TMA start"):
+        tma_ki = arith.addi(ki, c(stages - 1))
+        do_tma = arith.cmpi(arith.CmpIPredicate.slt, tma_ki, c(k_steps))
+        not_first_step = arith.cmpi(arith.CmpIPredicate.ne, ki, c(0))
+        if_op = scf.IfOp(arith.andi(not_first_step, do_tma))
+        with ir.InsertionPoint(if_op.then_block):
+          tma_si = arith.remui(tma_ki, c(stages))
+          fetch(tma_si, tma_ki)
+          scf.yield_([])
+
+      return accs
+
+    # Wait until everyone is done with their WMMA
+    with ctx.named_region("WGMMA drain"):
+      nvvm.wgmma_wait_group_sync_aligned(0)
+
+    # We can repurpose the tile SMEM for the epilogue now
+    # TODO(apaszke): Add support for aliased SMEM allocations to the DSL
+    dynamic_smem = gpu.dynamic_shared_memory(
+        ir.MemRefType.get(
+            (ir.ShapedType.get_dynamic_size(),), i8, memory_space=smem
+        )
+    )
+    with ctx.named_region("SMEM store"):
+      acc_val = wgmma_impl.get_result_tile(stage_loop_body.result)
+      acc_smem = memref.view(
+          ir.MemRefType.get(
+              tile_shape((tile_m, tile_n), (64, 32)), f32, memory_space=smem
+          ),
+          dynamic_smem, c(0), [],
+      )
+      acc_val.store_tiled(acc_smem, swizzle=128)
+      gpu.barrier()
+
+    with ctx.named_region("GMEM store"):
+      # Vectorized epilogue to move results from SMEM to GMEM
+      # TODO(apaszke): Make this into a proper copy function.
+      assert tile_n == 128  # TODO(apaszke): Support other sizes.
+      tidx = gpu.thread_id(gpu.Dimension.x)
+      warp_id = arith.divui(tidx, c(32))
+      lane_id = arith.remui(tidx, c(32))
+      n_store = arith.muli(lane_id, c(4))
+      col_group = arith.divui(lane_id, c(8))
+      n_load = arith.muli(arith.remui(lane_id, c(8)), c(4))
+      for_op = scf.ForOp(warp_id, c(tile_m), c(4))
+      with ir.InsertionPoint(for_op.body):
+        m_smem = for_op.induction_variable
+        m_within_tile = arith.remui(m_smem, c(64))
+        m_tile = arith.divui(m_smem, c(64))
+        swizzle_source = arith.shli(arith.remui(m_smem, c(8)), c(2))
+        n_acc = arith.xori(n_load, swizzle_source)
+        acc_part = vector.load(
+            ir.VectorType.get((4,), f32),
+            acc_smem,
+            [m_tile, col_group, m_within_tile, n_acc],
+        )
+        vector.store(
+            acc_part,
+            c_device,
+            [arith.addi(m_start, m_smem), arith.addi(n_start, n_store)],
+        )
+        scf.yield_([])
 
   rhs_shape = (n, k) if rhs_transpose else (k, n)
   return mosaic_gpu.as_gpu_kernel(

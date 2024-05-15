@@ -1951,6 +1951,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
                                   x[2]), None),
                    (jnp.array(0, 'int32'),) * 3, None, length=1)
 
+  @jax.enable_checks(False)
+  def testScanInvalidUnrollRaises(self):
+    with self.assertRaisesRegex(ValueError, "`unroll` must be"):
+      jax.lax.scan(lambda x, _: (x, x), 0, jnp.arange(5), unroll=-1)
+    with self.assertRaisesRegex(ValueError, "`unroll` must be"):
+      jax.lax.scan(lambda x, _: (x, x), 0, jnp.arange(5), unroll=0)
+
   @parameterized.named_parameters(
       {"testcase_name": f"_{scan_name}",
        "scan": scan_impl}
@@ -2511,8 +2518,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     scan_fun = lambda c, xs: lax.scan(f, c, xs)
 
     def new_jaxpr():
-      # partial avoids a cache_hit in make_jaxpr.
-      jaxpr = jax.make_jaxpr(partial(scan_fun))(c, xs).jaxpr
+      jaxpr = jax.make_jaxpr(scan_fun)(c, xs).jaxpr
       scan = next(eqn for eqn in jaxpr.eqns if eqn.primitive.name == 'scan')
       return jaxpr, scan
 

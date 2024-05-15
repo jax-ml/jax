@@ -31,7 +31,6 @@ from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.lib import xla_extension_version
 from jax._src.maps import xmap
 import numpy as np
 
@@ -374,56 +373,6 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
         'incorrect set of output token.'):
       f.lower(2.)
 
-  def test_lowering_ordered_effect_should_create_tokens(self):
-    if xla_extension_version >= 260:
-      self.skipTest('Not applicable anymore')
-    def effect_lowering(ctx, *, effect):
-      ctx.set_tokens_out(ctx.tokens_in)
-      return []
-    mlir.register_lowering(effect_p, effect_lowering)
-
-    @jax.jit
-    def f(x):
-      effect_p.bind(effect=foo_effect)
-      return x + 1.
-    module = f.lower(2.).compiler_ir()
-    main = module.body.operations[0]
-    first_op = main.body.blocks[0].operations[0]
-    self.assertIn('hlo.create_token', first_op.operation.name)
-
-    @jax.jit
-    def f(x):
-      effect_p.bind(effect=foo_effect)
-      effect_p.bind(effect=foo2_effect)
-      return x + 1.
-    module = f.lower(2.).compiler_ir()
-    main = module.body.operations[0]
-    first_op = main.body.blocks[0].operations[0]
-    self.assertIn('hlo.create_token', first_op.operation.name)
-    second_op = main.body.blocks[0].operations[1]
-    self.assertIn('hlo.create_token', second_op.operation.name)
-
-    @jax.jit
-    def f(x):
-      effect_p.bind(effect=foo_effect)
-      return x + 1.
-    module = f.lower(2.).compiler_ir()
-    main = module.body.operations[0]
-    first_op = main.body.blocks[0].operations[0]
-    self.assertIn('hlo.create_token', first_op.operation.name)
-
-    @jax.jit
-    def f(x):
-      effect_p.bind(effect=foo_effect)
-      effect_p.bind(effect=foo2_effect)
-      return x + 1.
-    module = f.lower(2.).compiler_ir()
-    main = module.body.operations[0]
-    first_op = main.body.blocks[0].operations[0]
-    self.assertIn('hlo.create_token', first_op.operation.name)
-    second_op = main.body.blocks[0].operations[1]
-    self.assertIn('hlo.create_token', second_op.operation.name)
-
   def test_nontrivial_lowering_with_ordered_effect_should_consume_token(self):
 
     mlir.register_lowering(effect_p, function_effect_lowering)
@@ -434,13 +383,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
       return x + 1.
     module = f.lower(2.).compiler_ir()
     main = module.body.operations[0]
-
-    if xla_extension_version < 260:
-      first_op = main.body.blocks[0].operations[0]
-      self.assertIn('hlo.create_token', first_op.operation.name)
-      call_op = main.body.blocks[0].operations[1]
-    else:
-      call_op = main.body.blocks[0].operations[0]
+    call_op = main.body.blocks[0].operations[0]
 
     self.assertEqual(call_op.operation.name, 'func.call')
     self.assertEqual(str(call_op.attributes['callee']), '@effect')
@@ -491,9 +434,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
       return x + 1.
     module = f.lower(1.).compiler_ir()
     input_types = module.body.operations[0].type.inputs
-    token_type = (
-        '!stablehlo.token' if xla_extension_version >= 260 else 'tensor<0xi1>'
-    )
+    token_type = '!stablehlo.token'
     # First argument should be a token
     self.assertLen(list(input_types), 2)
     self.assertEqual(str(input_types[0]), token_type)
@@ -511,9 +452,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
       return x + 1.
     module = f.lower(1.).compiler_ir()
     input_types = module.body.operations[0].type.inputs
-    token_type = (
-        '!stablehlo.token' if xla_extension_version >= 260 else 'tensor<0xi1>'
-    )
+    token_type = '!stablehlo.token'
     # First two arguments should be token values
     self.assertLen(list(input_types), 3)
     self.assertEqual(str(input_types[0]), token_type)

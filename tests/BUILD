@@ -632,6 +632,11 @@ jax_test(
 )
 
 jax_test(
+    name = "cholesky_update_test",
+    srcs = ["cholesky_update_test.py"],
+)
+
+jax_test(
     name = "metadata_test",
     srcs = ["metadata_test.py"],
     disable_backends = [
@@ -999,8 +1004,7 @@ jax_test(
     ],
     enable_configs = [
         "gpu_a100",
-        # TODO(b/337303303): re-enable the test
-        # "gpu_h100",
+        "gpu_h100",
     ],
     deps = [
         "//jax:experimental_sparse",
@@ -1381,13 +1385,9 @@ py_test(
     ],
 )
 
-py_test(
+jax_test(
     name = "logging_test",
     srcs = ["logging_test.py"],
-    deps = [
-        "//jax",
-        "//jax:test_util",
-    ],
 )
 
 jax_test(
@@ -1480,6 +1480,15 @@ jax_test(
 py_test(
     name = "pretty_printer_test",
     srcs = ["pretty_printer_test.py"],
+    deps = [
+        "//jax",
+        "//jax:test_util",
+    ],
+)
+
+py_test(
+    name = "sourcemap_test",
+    srcs = ["sourcemap_test.py"],
     deps = [
         "//jax",
         "//jax:test_util",

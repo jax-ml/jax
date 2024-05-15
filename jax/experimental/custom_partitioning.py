@@ -35,7 +35,6 @@ from jax._src.sharding_impls import _op_sharding_to_pos_sharding
 from jax._src import custom_api_util
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
-from jax._src.lib import xla_extension_version
 from jax._src.api_util import flatten_fun_nokwargs, argnums_partial
 
 
@@ -191,10 +190,6 @@ def _custom_partitioning_partition(arg_shapes, arg_shardings, result_shape,
       axis_context=axis_context.extend_manual(frozenset(mesh.axis_names)),
   )
   result_sharding = _pack_result_sharding(result_shape, result_shardings)
-  if xla_extension_version < 232:
-    built = xc._xla.mlir.mlir_module_to_xla_computation(
-        mlir.module_to_string(module), use_tuple_args=False, return_tuple=False)
-    return built, arg_shardings, result_sharding
   return mlir.module_to_bytecode(module), arg_shardings, result_sharding
 
 
@@ -520,8 +515,6 @@ def _custom_partitioning_lowering_rule(ctx: mlir.LoweringRuleContext, *values,
       partition, to_mesh_pspec_sharding, in_tree, out_tree,
       infer_sharding_from_operands, ctx.module_context, mesh, static_args)
   key = str(id(sharding_callback_info))
-  # TODO(parkers): Remove bytes registration when xla_extension_version > 211
-  _sharding_callbacks[key] = sharding_callback_info
   _sharding_callbacks[bytes(key, 'utf8')] = sharding_callback_info
   # We need to make sure `sharding_callback_info` is still alive when the SPMD
   # partitioner runs so we keep it alive by attaching it to the executable.
@@ -548,14 +541,13 @@ xc.register_custom_call_partitioner(  # pytype: disable=module-attr
     _custom_partitioning_propagate_user_sharding,
     _custom_partitioning_partition,
     _custom_partitioning_infer_sharding_from_operands, True)
-if xla_extension_version >= 252:
-  xb.register_plugin_callbacks(
-      partial(
-          xc.register_custom_call_partitioner,
-          name=_CUSTOM_PARTITIONING_CALL_NAME,
-          prop_user_sharding=_custom_partitioning_propagate_user_sharding,
-          partition=_custom_partitioning_partition,
-          infer_sharding_from_operands=_custom_partitioning_infer_sharding_from_operands,
-          can_side_effecting_have_replicated_sharding=True,
-      )
-  )
+xb.register_plugin_callbacks(
+    partial(
+        xc.register_custom_call_partitioner,
+        name=_CUSTOM_PARTITIONING_CALL_NAME,
+        prop_user_sharding=_custom_partitioning_propagate_user_sharding,
+        partition=_custom_partitioning_partition,
+        infer_sharding_from_operands=_custom_partitioning_infer_sharding_from_operands,
+        can_side_effecting_have_replicated_sharding=True,
+    )
+)

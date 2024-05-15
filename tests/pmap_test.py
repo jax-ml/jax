@@ -52,7 +52,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lax import parallel
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 from jax._src.util import safe_map, safe_zip
 
 config.parse_flags_with_absl()
@@ -1112,7 +1111,6 @@ class PythonPmapTest(jtu.JaxTestCase):
                      ((0, 1, 2, 3, 4, 5, 6, 7,),))  # order doesn't matter
 
   @jtu.run_on_devices("gpu")
-  @unittest.skipIf(xla_extension_version < 250, "Requires jaxlib 0.4.26")
   def testCollectiveBroadcast(self):
     device_count = jax.device_count()
     f = lambda x: lax.pbroadcast(x, source=0, axis_name='i')
@@ -1123,7 +1121,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @jtu.run_on_devices("gpu")
-  @unittest.skipIf(xla_extension_version < 250, "Requires jaxlib 0.4.26")
   def testCollectiveBroadcastVmap(self):
     device_count = jax.device_count()
     f = lambda x: lax.pbroadcast(x, source=0, axis_name='i')
@@ -1134,7 +1131,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @jtu.run_on_devices("gpu")
-  @unittest.skipIf(xla_extension_version < 250, "Requires jaxlib 0.4.26")
   def testCollectiveBroadcastGrad(self):
     device_count = jax.device_count()
     f = lambda x: lax.pbroadcast(x, source=0, axis_name='i')
@@ -2200,7 +2196,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     jax.vmap(jax.vmap(lambda x: 2 * x, axis_name='i'),
              axis_name='i')(jax.numpy.ones((1, 1)))  # don't crash
 
-  @unittest.skipIf(xla_extension_version < 252, "Requires jaxlib 0.4.26")
   @jtu.run_on_devices("cpu")
   def test_pmap_stack_size(self):
     # Regression test for https://github.com/google/jax/issues/20428
@@ -2211,6 +2206,15 @@ class PythonPmapTest(jtu.JaxTestCase):
     x = jnp.eye(200)
     y = jax.pmap(jax.scipy.linalg.expm)(jnp.array([x, x]))
     y.block_until_ready()  # doesn't crash
+
+  def test_pmap_of_prng_key(self):
+    # Regression test for https://github.com/google/jax/issues/20392
+    keys = jax.random.split(jax.random.key(0), jax.device_count())
+    result1 = jax.pmap(jax.random.bits)(keys)
+    with jtu.ignore_warning(
+        category=UserWarning, message="The jitted function bits includes a pmap"):
+      result2 = jax.jit(jax.pmap(jax.random.bits))(keys)
+    self.assertArraysEqual(result1, result2)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
