@@ -28,7 +28,7 @@ jobs:
         tpu: [
           {type: "v3-8", core: "4"},
           {type: "v4-8", core: "4"},
-          {type: "v5e-8", core:"8"}
+          {type: "v5e-8", core: "8"}
         ]
     name: "TPU test (jaxlib=${{ matrix.jaxlib-version }}, ${{ matrix.tpu.type }})"
     env:
