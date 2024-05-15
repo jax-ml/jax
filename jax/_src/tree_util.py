@@ -21,7 +21,7 @@ import functools
 from functools import partial
 import operator as op
 import textwrap
-from typing import Any, Callable, NamedTuple, TypeVar, Union, overload
+from typing import Any, Callable, NamedTuple, Sequence, TypeVar, Union, cast, overload
 
 from jax._src import traceback_util
 from jax._src.lib import pytree
@@ -32,8 +32,10 @@ from jax._src.util import unzip2
 traceback_util.register_exclusion(__file__)
 
 T = TypeVar("T")
+Tp = TypeVar("Tp", bound=type)
 U = TypeVar("U", bound=type[Any])
 H = TypeVar("H", bound=Hashable)
+
 
 Leaf = Any
 PyTreeDef = pytree.PyTreeDef
@@ -1111,3 +1113,78 @@ def _prefix_error(
      f"{prefix_tree_keys} and {full_tree_keys}")
   for k, t1, t2 in zip(prefix_tree_keys, prefix_tree_children, full_tree_children):
     yield from _prefix_error((*key_path, k), t1, t2)
+
+
+@overload
+def register_simple(cls: None = None, /, *,
+                    dynamic_attributes: Sequence[str] | None = None,
+                    static_attributes: Sequence[str] | None = None) -> Callable[[Tp], Tp]: ...
+
+@overload
+def register_simple(cls: Tp, /, *,
+                    dynamic_attributes: Sequence[str] | None = None,
+                    static_attributes: Sequence[str] | None = None) -> Tp: ...
+
+def register_simple(cls: type[T] | None = None, /, *,
+                    dynamic_attributes: Sequence[str] | None = None,
+                    static_attributes: Sequence[str] | None = None) -> type[T] | Callable[[Tp], type[Tp]]:
+  """Simple pytree registry API.
+
+  This is a helper function to register the simplest of pytrees, where the only
+  required logic for flattening is accessing attributes, and the only required
+  logic for unflattening is re-instantiating a class with those attributes.
+
+  Args:
+    cls: type to register
+    dynamic_attributes: sequence of string attributes which refer to dynamic values:
+      i.e. array values or pytrees of array values.
+    static_attributes: sequence of string attributes which refer to static values:
+      i.e. immutable & hashable attributes.
+
+  Returns:
+    Adds ``cls`` to the pytree registry, but otherwise returns it unmodified.
+
+  Example:
+    Here's an example of using ``register_simple`` to register a dataclass:
+
+    >>> from dataclasses import dataclass
+    >>>
+    >>> @jax.tree_util.register_simple(
+    ...     dynamic_attributes=['x', 'y'],
+    ...     static_attributes=['val'])
+    ... @dataclass
+    ... class MyContainer:
+    ...     x: jax.Array
+    ...     y: jax.Array
+    ...     val: str
+    ...
+    >>> val = MyContainer(jnp.ones(3), jnp.arange(3), 'name')
+    >>> leaves, tree = jax.tree.flatten(val)
+    >>> leaves
+    [Array([1., 1., 1.], dtype=float32), Array([0, 1, 2], dtype=int32)]
+    >>> tree
+    PyTreeDef(CustomNode(MyContainer[('name',)], [*, *]))
+    >>> jax.tree.unflatten(tree, leaves)
+    MyContainer(x=Array([1., 1., 1.], dtype=float32), y=Array([0, 1, 2], dtype=int32), val='name')
+    >>> val
+    MyContainer(x=Array([1., 1., 1.], dtype=float32), y=Array([0, 1, 2], dtype=int32), val='name')
+  """
+  dynamic_attrs: tuple[str, ...] = tuple(dynamic_attributes or [])
+  static_attrs: tuple[str, ...] = tuple(static_attributes or [])
+  del dynamic_attributes, static_attributes
+  if cls is None:
+    return lambda cls: register_simple(cls,
+        dynamic_attributes=dynamic_attrs,
+        static_attributes=static_attrs)
+  # Create immutable versions of inputs, as they'll be closed-over.
+  def _flatten(obj: T) -> tuple[_Children, _AuxData]:
+    children = cast(_Children, [getattr(obj, attr) for attr in dynamic_attrs])
+    aux_data = cast(_AuxData, tuple(getattr(obj, attr) for attr in static_attrs))
+    return children, aux_data
+  def _unflatten(aux_data: _AuxData, children: _Children) -> T:
+    obj = object.__new__(cls)
+    for attr, value in (*zip(dynamic_attrs, children), *zip(static_attrs, aux_data)):  # type: ignore[call-overload]
+      setattr(obj, attr, value)
+    return obj
+  register_pytree_node(cls, _flatten, _unflatten)
+  return cls

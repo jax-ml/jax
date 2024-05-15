@@ -54,6 +54,7 @@ from jax._src.tree_util import (
     register_pytree_with_keys_class as register_pytree_with_keys_class,
     register_dataclass as register_dataclass,
     register_pytree_with_keys as register_pytree_with_keys,
+    register_simple as register_simple,
     register_static as register_static,
     tree_all as tree_all,
     tree_flatten_with_path as tree_flatten_with_path,
