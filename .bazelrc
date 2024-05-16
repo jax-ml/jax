@@ -225,13 +225,13 @@ build:rbe_cpu_linux_base --host_platform="@ubuntu20.04-clang_manylinux2014-cuda1
 build:rbe_cpu_linux_base --platforms="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn8.9_config_platform//:platform"
 
 build:rbe_cpu_linux_py3.9 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn8.9_config_python3.9"
-build:rbe_cpu_linux_py3.9 --python_path="/usr/local/bin/python3.9"
+build:rbe_cpu_linux_py3.9 --repo_env HERMETIC_PYTHON_VERSION="3.9"
 build:rbe_cpu_linux_py3.10 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn8.9_config_python3.10"
-build:rbe_cpu_linux_py3.10 --python_path="/usr/local/bin/python3.10"
+build:rbe_cpu_linux_py3.10 --repo_env HERMETIC_PYTHON_VERSION="3.10"
 build:rbe_cpu_linux_py3.11 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn8.9_config_python3.11"
-build:rbe_cpu_linux_py3.11 --python_path="/usr/local/bin/python3.11"
+build:rbe_cpu_linux_py3.11 --repo_env HERMETIC_PYTHON_VERSION="3.11"
 build:rbe_cpu_linux_py3.12 --config=rbe_cpu_linux_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn8.9_config_python3.12"
-build:rbe_cpu_linux_py3.12 --python_path="/usr/local/bin/python3.12"
+build:rbe_cpu_linux_py3.12 --repo_env HERMETIC_PYTHON_VERSION="3.12"
 
 build:rbe_linux_cuda_base --config=rbe_linux
 build:rbe_linux_cuda_base --config=cuda
@@ -255,13 +255,13 @@ build:rbe_linux_cuda12.3_nvcc_base --repo_env=TF_NCCL_CONFIG_REPO="@ubuntu20.04-
 # RBE machines have an older CUDA driver version, so we have to enable driver forward compatibility
 build:rbe_linux_cuda12.3_nvcc_base --test_env=LD_LIBRARY_PATH=/usr/local/cuda/compat
 build:rbe_linux_cuda12.3_nvcc_py3.9 --config=rbe_linux_cuda12.3_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn8.9_config_python3.9"
-build:rbe_linux_cuda12.3_nvcc_py3.9 --python_path="/usr/local/bin/python3.9"
+build:rbe_linux_cuda12.3_nvcc_py3.9 --repo_env HERMETIC_PYTHON_VERSION="3.9"
 build:rbe_linux_cuda12.3_nvcc_py3.10 --config=rbe_linux_cuda12.3_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn8.9_config_python3.10"
-build:rbe_linux_cuda12.3_nvcc_py3.10 --python_path="/usr/local/bin/python3.10"
+build:rbe_linux_cuda12.3_nvcc_py3.10 --repo_env HERMETIC_PYTHON_VERSION="3.10"
 build:rbe_linux_cuda12.3_nvcc_py3.11 --config=rbe_linux_cuda12.3_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn8.9_config_python3.11"
-build:rbe_linux_cuda12.3_nvcc_py3.11 --python_path="/usr/local/bin/python3.11"
+build:rbe_linux_cuda12.3_nvcc_py3.11 --repo_env HERMETIC_PYTHON_VERSION="3.11"
 build:rbe_linux_cuda12.3_nvcc_py3.12 --config=rbe_linux_cuda12.3_nvcc_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn8.9_config_python3.12"
-build:rbe_linux_cuda12.3_nvcc_py3.12 --python_path="/usr/local/bin/python3.12"
+build:rbe_linux_cuda12.3_nvcc_py3.12 --repo_env HERMETIC_PYTHON_VERSION="3.12"
 
 # These you may need to change for your own GCP project.
 build:tensorflow_testing_rbe --project_id=tensorflow-testing

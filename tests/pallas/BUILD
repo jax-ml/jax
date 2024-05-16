@@ -251,7 +251,12 @@ jax_test(
     ],
     deps = [
         "//jax:pallas_tpu_ops",
-    ] + py_deps("absl/testing") + py_deps("absl/flags") + py_deps("numpy") + py_deps("hypothesis"),
+    ] + py_deps([
+        "absl/testing",
+        "absl/flags",
+        "numpy",
+        "hypothesis",
+    ]),
 )
 
 jax_test(
