@@ -111,7 +111,12 @@ def slab_alloc(slab: Slab, shape: DShape, dtype):
   return new_slab, slab_val
 
 def strides(xs):
-  return tuple(reversed(jnp.cumprod(jnp.array(list(reversed(xs))))))
+  s = 1
+  ss = []
+  for x in reversed(xs):
+    ss.append(s)
+    s *= x
+  return tuple(reversed(ss))
 
 def slab_slices(view, slice_base_e: DShape, slice_shape_e: SShape):
   view_shape_e = tile_shape(view.shape, view.dtype)
@@ -168,6 +173,53 @@ def slab_write(slab, view, slice_base: DShape, inval: jax.Array):
         new_slab, s, slab_addr, axis=0)
   return Slab(new_slab, slab.cursor)
 
+def elementwise(f, slab: Slab, x: SlabView, y: SlabView, out: SlabView):
+  if x.shape != y.shape:
+    raise ValueError(x.shape, y.shape)
+  if x.dtype != y.dtype:
+    raise ValueError(x.dtype, y.dtype)
+  # todo: check out as well
+  tiled_shape = map(xceil_div, x.shape, tile_shape(x.shape, x.dtype))
+  x_sz_p = xprod(tiled_shape) * tile_phrases(x.shape, x.dtype)
+  compute_tile_p = 16
+  num_whole_blocks = x_sz_p // compute_tile_p
+
+  def f_u32(a, b):
+    cast = lambda i: reinterpret_cast(i, a.shape, x.dtype)
+    return reinterpret_cast(f(cast(a), cast(b)), a.shape, jnp.dtype('uint32'))
+  
+  def body(i_b, mem):
+    i_p = i_b * compute_tile_p
+    x_slice = jax.lax.dynamic_slice_in_dim(mem, x.addr + i_p, compute_tile_p)
+    y_slice = jax.lax.dynamic_slice_in_dim(mem, y.addr + i_p, compute_tile_p)
+    z_slice = f_u32(x_slice, y_slice)
+    return jax.lax.dynamic_update_slice_in_dim(
+        mem, z_slice, out.addr + i_p, axis=0)
+  mem = jax.lax.fori_loop(0, num_whole_blocks, body, slab.data)
+  
+  epi_start_p = num_whole_blocks * compute_tile_p
+  epi_size_p = x_sz_p - epi_start_p
+  x_slice = jax.lax.dynamic_slice_in_dim(mem, x.addr + epi_start_p, compute_tile_p)
+  y_slice = jax.lax.dynamic_slice_in_dim(mem, y.addr + epi_start_p, compute_tile_p)
+  z_slice = f_u32(x_slice, y_slice)
+  return Slab(masked_store(mem, out.addr + epi_start_p, z_slice, epi_size_p), slab.cursor)
+
+def masked_store(mem, addr, update, num_p):
+  update_p = update.shape[0]
+  prev_val = jax.lax.dynamic_slice_in_dim(mem, addr, update_p)
+  new_val = jnp.where(jnp.arange(update_p)[:, None] < num_p, update, prev_val)
+  return jax.lax.dynamic_update_slice_in_dim(mem, new_val, addr, axis=0)
+
+def make_binop(op):
+  def binop(slab, x: SlabView, y: SlabView):
+    slab, out = slab_alloc(slab, x.shape, x.dtype)
+    slab = elementwise(op, slab, x, y, out)
+    return slab, out
+  return binop
+
+add = make_binop(jax.lax.add)
+mul = make_binop(jax.lax.mul)
+
 def parse_arr(i, s):
   shape = eval(s)
   z = 3 * i + jnp.arange(np.prod(shape), dtype=jnp.float32).reshape(shape)
@@ -186,30 +238,54 @@ def make_jaxpr_slab_read(slab, view, outval_shape):
   return jax.make_jaxpr(
       lambda slab: slab_read(slab, view, (0, 0), outval_shape))(slab)
 
+def slab_download(slab, v):
+  return slab_read(slab, v, (0,) * v.ndim(), v.shape)
+
+def slab_upload(slab, x):
+  slab, xv = slab_alloc(slab, x.shape, x.dtype)
+  slab = slab_write(slab, xv, (0,) * x.ndim, x)
+  return slab, xv
+
+def test_binop(op, ref_op, slab, x, y):
+  z = ref_op(x, y)
+  slab, xv = slab_upload(slab, x)
+  slab, yv = slab_upload(slab, y)
+  slab, zv = op(slab, xv, yv)
+  assert jnp.allclose(slab_download(slab, xv), x)
+  assert jnp.allclose(slab_download(slab, yv), y)
+  assert jnp.allclose(slab_download(slab, zv), z)
+
 def main(args):
   xs = map(parse_arr, range(len(args)), args)
 
   sz = xs[0].size
   shape = xs[0].shape
+  assert all(len(x.shape) == 2 for x in xs)
 
   slab = slab_make(1024)
+  print_seg('slab after init')
+  print(slab)
+
+  test_binop(add, jax.lax.add, slab, *xs)
+  test_binop(mul, jax.lax.mul, slab, *xs)
 
   vals = []
   for x in xs:
     slab, v = slab_alloc(slab, x.shape, x.dtype)
     vals.append(v)
-    print_seg('slab after init')
-    print(slab)
-
     slab = slab_write(slab, v, (0, 0), x)
     print_seg('slab after write')
-    print(slab)
     print_seg('slab_read result')
     print(slab_read(slab, v, (0, 0), x.shape))
-    print_seg('slab_write jaxpr')
-    print(make_jaxpr_slab_write(slab, v, x))
-    print_seg('slab_read jaxpr')
-    print(make_jaxpr_slab_read(slab, v, x.shape))
+
+  if len(vals) >= 2:
+    x, y, *_ = vals
+    slab, z = mul(slab, x, y)
+    print_seg('mul')
+    print(slab_read(slab, z, (0, 0), z.shape))
+    slab, w = add(slab, x, z)
+    print_seg('add')
+    print(slab_read(slab, w, (0, 0), w.shape))
 
 
 if __name__ == '__main__':
