@@ -26,17 +26,17 @@ repos:
     files: \.py$
 
 - repo: https://github.com/astral-sh/ruff-pre-commit
-  rev: v0.3.5
+  rev: v0.4.4
   hooks:
   - id: ruff
 
 - repo: https://github.com/pre-commit/mirrors-mypy
-  rev: 'v1.9.0'
+  rev: 'v1.10.0'
   hooks:
   - id: mypy
     files: (jax/|tests/typing_test\.py)
     exclude: jax/_src/basearray.py|jax/numpy/__init__.py  # Use pyi instead
-    additional_dependencies: [types-requests==2.31.0, jaxlib==0.4.23, ml_dtypes==0.3.2, numpy==1.26.3, scipy==1.11.4]
+    additional_dependencies: [types-requests==2.31.0, jaxlib==0.4.27, ml_dtypes==0.3.2, numpy==1.26.3, scipy==1.11.4]
     args: [--config=pyproject.toml]
 
 - repo: https://github.com/mwouts/jupytext

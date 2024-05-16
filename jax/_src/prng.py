@@ -1140,11 +1140,11 @@ def iota_2x32_shape_lowering(ctx, *, shape):
     if core.is_constant_dim(x):
       x_const = mlir.ir_constant(np.array(x, np.dtype('uint64')))
     else:
-      x_const, = mlir.eval_dynamic_shape(ctx, (x,))
+      x_shape, = mlir.eval_dynamic_shape(ctx, (x,))
       x_const = hlo.convert(
           ir.RankedTensorType.get(
-              (),
-              mlir.dtype_to_ir_type(np.dtype('uint64'))), x_const)
+              [],
+              mlir.dtype_to_ir_type(np.dtype('uint64'))), x_shape)
     x_bcast = mlir.broadcast_in_dim(ctx, x_const, aval_u64,
                                     broadcast_dimensions=[])
     return mlir.hlo.multiply(x_bcast, y)

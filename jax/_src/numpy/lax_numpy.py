@@ -868,7 +868,7 @@ def gradient(f: ArrayLike, *varargs: ArrayLike,
   if len(axis_tuple) == 0:
     return []
 
-  if min([s for i, s in enumerate(a.shape) if i in axis_tuple]) < 2:
+  if min(s for i, s in enumerate(a.shape) if i in axis_tuple) < 2:
     raise ValueError("Shape of array too small to calculate "
                      "a numerical gradient, "
                      "at least 2 elements are required.")

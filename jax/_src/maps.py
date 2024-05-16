@@ -20,7 +20,7 @@ import contextlib
 from functools import wraps, partial, partialmethod, lru_cache
 import itertools as it
 import math
-from typing import Callable, Any, NamedTuple, Union
+from typing import Callable, Any, NamedTuple, Union, cast as type_cast
 
 import numpy as np
 
@@ -631,7 +631,7 @@ def xmap(fun: Callable,
         no_kwargs=True)
 
   fun_mapped.lower = lower
-  return fun_mapped
+  return type_cast(stages.Wrapped, fun_mapped)
 
 def xmap_impl(fun: lu.WrappedFun, *args, name, in_axes, out_axes_thunk, donated_invars,
               global_axis_sizes, axis_resources, resource_env, backend,

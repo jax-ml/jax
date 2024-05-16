@@ -1483,7 +1483,7 @@ class ShardMapTest(jtu.JaxTestCase):
     e1, _, e2 = jaxpr.eqns
     self.assertLen(e1.outvars, 1)  # only primal output
     self.assertLen(e2.invars, 2)   # res and cotangent inputs
-    self.assertEqual(sum([e1.outvars[0] is v for v in e2.invars]), 1)
+    self.assertEqual(sum(e1.outvars[0] is v for v in e2.invars), 1)
 
   @parameterized.parameters(it.product([True, False], repeat=2))
   def test_res_forwarding_optimization_complex(self, jit, remat):
@@ -1506,7 +1506,7 @@ class ShardMapTest(jtu.JaxTestCase):
     e1, _, e2 = jaxpr.eqns
     self.assertLen(e1.outvars, 2)  # one primal and one res output
     self.assertLen(e2.invars, 4)   # two res and two cotangent inputs
-    self.assertEqual(sum([e1.outvars[-1] is v for v in e2.invars]), 1)
+    self.assertEqual(sum(e1.outvars[-1] is v for v in e2.invars), 1)
 
   @parameterized.parameters([True, False])
   def test_check_rep_failure_inside_rule(self, jit):

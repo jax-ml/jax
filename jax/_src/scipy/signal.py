@@ -627,7 +627,7 @@ def _spectral_helper(x: Array, y: ArrayLike | None, fs: ArrayLike = 1.0,
       return jnp.zeros(x.shape, freq_dtype), jnp.zeros(x.shape, freq_dtype), jnp.zeros(x.shape, result_dtype)
   else:
     if x.size == 0 or y_arr.size == 0:
-      shape = tuple_insert(outershape, min([x.shape[axis], y_arr.shape[axis]]), axis)
+      shape = tuple_insert(outershape, min(x.shape[axis], y_arr.shape[axis]), axis)
       return jnp.zeros(shape, freq_dtype), jnp.zeros(shape, freq_dtype), jnp.zeros(shape, result_dtype)
 
   # Move time-axis to the end
