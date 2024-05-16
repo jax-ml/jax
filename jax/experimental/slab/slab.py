@@ -144,23 +144,23 @@ def reinterpret_cast(x: jax.Array, shape: SShape, dtype: DType):
   return jax.lax.bitcast_convert_type(x.reshape(-1), dtype).reshape(shape)
 
 def slab_read(slab, view, slice_base: DShape, slice_shape: SShape):
-  view_shape_t = tile_shape(view.shape, view.dtype)
-  tiled_shape = map(xceil_div, view.shape, view_shape_t)
+  view_tile_shape = tile_shape(view.shape, view.dtype)
+  tiled_shape = map(xceil_div, slice_shape, view_tile_shape)
   slices = [
       jax.lax.dynamic_slice_in_dim(slab.data, addr, phrases)
       for addr, phrases in slab_slices(view, slice_base, slice_shape)]
   slice_mem = jnp.stack(slices, axis=0)
   return reinterpret_cast(
-      slice_mem, (*tiled_shape, *view_shape_t), view.dtype
+      slice_mem, (*tiled_shape, *view_tile_shape), view.dtype
       ).swapaxes(-2, -3).reshape(slice_shape)
 
 # TODO: just take vjp of slab_read
 def slab_write(slab, view, slice_base: DShape, inval: jax.Array):
   slice_shape = inval.shape
-  view_shape_t = tile_shape(view.shape, view.dtype)
-  tiled_shape = map(xceil_div, view.shape, view_shape_t)
+  view_tile_shape = tile_shape(view.shape, view.dtype)
+  tiled_shape = map(xceil_div, inval.shape, view_tile_shape)
   inval_linearized = inval.reshape(
-      *tiled_shape[:-1], view_shape_t[-2], tiled_shape[-1], view_shape_t[-1]
+      *tiled_shape[:-1], view_tile_shape[-2], tiled_shape[-1], view_tile_shape[-1]
       ).swapaxes(-2, -3)
   slice_mem = reinterpret_cast(inval_linearized, (-1, phrase_w),
                                jnp.dtype('uint32'))
@@ -210,15 +210,44 @@ def masked_store(mem, addr, update, num_p):
   new_val = jnp.where(jnp.arange(update_p)[:, None] < num_p, update, prev_val)
   return jax.lax.dynamic_update_slice_in_dim(mem, new_val, addr, axis=0)
 
-def make_binop(op):
+def _matmul(slab: Slab, lhs: SlabView, rhs: SlabView, out: SlabView):
+  dtype = lhs.dtype
+  n, k, m = (*lhs.shape, rhs.shape[1])
+  # todo: shape + dtype check
+  # dassert shapes are tile aligned
+  tile_n, tile_k, tile_m = 128, 128, 128
+  n_tiles = n // tile_n
+  k_tiles = k // tile_k
+  m_tiles = m // tile_m
+
+  mem = slab
+  def loop_n(ni, mem):
+    def loop_m(mi, mem):
+      acc = jnp.zeros((tile_n, tile_m), dtype=dtype)
+      def loop_k(ki, acc):
+        lhs_tile = slab_read(mem, lhs, (ni * tile_n, ki * tile_k), (tile_n, tile_k))
+        rhs_tile = slab_read(mem, rhs, (ki * tile_k, mi * tile_m), (tile_k, tile_m))
+        acc += lhs_tile @ rhs_tile
+        return acc
+      acc = jax.lax.fori_loop(0, k_tiles, loop_k, acc)
+      return slab_write(mem, out, (ni * tile_n, mi * tile_m), acc)
+    return jax.lax.fori_loop(0, m_tiles, loop_m, mem)
+  mem = jax.lax.fori_loop(0, n_tiles, loop_n, mem)
+  return mem
+
+def make_binop(op, ref_op):
   def binop(slab, x: SlabView, y: SlabView):
-    slab, out = slab_alloc(slab, x.shape, x.dtype)
-    slab = elementwise(op, slab, x, y, out)
+    out_sds = jax.eval_shape(ref_op,
+                             jax.ShapeDtypeStruct(x.shape, x.dtype),
+                             jax.ShapeDtypeStruct(y.shape, y.dtype))
+    slab, out = slab_alloc(slab, out_sds.shape, out_sds.dtype)
+    slab = op(slab, x, y, out)
     return slab, out
   return binop
 
-add = make_binop(jax.lax.add)
-mul = make_binop(jax.lax.mul)
+add = make_binop(partial(elementwise, jax.lax.add), jax.lax.add)
+mul = make_binop(partial(elementwise, jax.lax.mul), jax.lax.mul)
+matmul = make_binop(_matmul, lambda a, b: a @ b)
 
 def parse_arr(i, s):
   shape = eval(s)
@@ -268,6 +297,7 @@ def main(args):
 
   test_binop(add, jax.lax.add, slab, *xs)
   test_binop(mul, jax.lax.mul, slab, *xs)
+  test_binop(matmul, lambda a, b: a @ b, slab, xs[0], xs[1].T)
 
   vals = []
   for x in xs:
