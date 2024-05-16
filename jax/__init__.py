@@ -134,6 +134,7 @@ del ad, batching, mlir, partial_eval, pxla, xla
 from jax._src.array import (
     make_array_from_single_device_arrays as make_array_from_single_device_arrays,
     make_array_from_callback as make_array_from_callback,
+    make_array_from_process_local_data as make_array_from_process_local_data,
 )
 
 from jax._src.tree_util import (
