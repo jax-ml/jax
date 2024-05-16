@@ -190,16 +190,24 @@ class FragmentedArray:
         return reg_ty
 
   def _pointwise(self, op, *other):
+    array_args = []
     for o in other:
       if not isinstance(o, FragmentedArray):
-        return NotImplemented
+        if not isinstance(o, ir.Value):
+          raise NotImplementedError(o)
+
+        o = FragmentedArray.splat(o, shape=self.shape, layout=self.layout)
+
       if self.layout != o.layout:
         raise ValueError("Incompatible FragmentedArray layouts")
       if self.registers.shape != o.registers.shape:
         raise ValueError("Incompatible FragmentedArray shapes")
+
+      array_args.append(o)
     new_regs = np.empty_like(self.registers)
+
     for idx, reg in np.ndenumerate(self.registers):
-      new_regs[idx] = op(reg, *(o.registers[idx] for o in other))
+      new_regs[idx] = op(reg, *(o.registers[idx] for o in array_args))
     return FragmentedArray(_registers=new_regs, _layout=self.layout)
 
   def __add__(self, other):
