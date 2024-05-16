@@ -4060,6 +4060,32 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertArraysEqual(out1, x)
     self.assertIsInstance(out2, core.Token)
 
+  def test_uneven_sharding_wsc(self):
+    mesh = jtu.create_global_mesh(
+        (2, 1, 1, 1, 1), ('data', 'expert', 'fsdp', 'seq', 'model')
+    )
+
+    @jax.jit
+    def fn(key):
+      x = jnp.arange(113003)
+      x = with_sharding_constraint(x, P('data'))
+      y = jnp.arange(65536)
+      y = with_sharding_constraint(y.reshape(-1), P('data'))
+      z = jnp.concatenate([x, y], axis=0)
+      z = with_sharding_constraint(z, P('data'))
+      return x, y, z
+
+    with mesh:
+      x, y, z = fn(jax.random.key(42))
+
+    expected_x = np.arange(113003)
+    expected_y = np.arange(65536)
+    expected_z = np.concatenate([x, y], axis=0)
+
+    self.assertArraysEqual(expected_x.max(), x.max())
+    self.assertArraysEqual(expected_y.max(), y.max())
+    self.assertArraysEqual(expected_z.max(), z.max())
+
 
 class TempSharding(Sharding):
 
