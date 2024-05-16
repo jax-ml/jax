@@ -3135,7 +3135,7 @@ def _get_metadata_jit_pmap(local_devices, num_in_shardings, num_out_shardings):
   return in_shardings, out_shardings, committed, tuple(local_devices)
 
 
-@lru_cache
+@util.cache()
 def create_mesh_pspec_sharding(
     mesh: Mesh, pspec: PartitionSpec | None, parsed_pspec=None,
     memory_kind: str | None = None) -> sharding_impls.NamedSharding:
