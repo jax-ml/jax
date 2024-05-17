@@ -570,7 +570,7 @@ def _wrap_main_func(
   context = mlir.make_ir_context()
   with context, ir.Location.unknown(context):
     # Make a copy, do not mutate because it may be cached
-    wrapped_module = ir.Module.parse(mlir.module_to_bytecode(module))
+    wrapped_module = ir.Module.parse(mlir.module_to_bytecode(module))  # type: ignore
     symbol_table = ir.SymbolTable(wrapped_module.operation)
     orig_main = symbol_table["main"]
     orig_main.attributes["sym_visibility"] = ir.StringAttr.get("private")
@@ -1107,7 +1107,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   args = tuple(
     wrap_with_sharding(ctx, x, x_aval, x_sharding)
     for x, x_aval, x_sharding in zip(args, ctx.avals_in, exported.in_shardings))
-  submodule = ir.Module.parse(exported.mlir_module())
+  submodule = ir.Module.parse(exported.mlir_module())  # type: ignore
   symtab = ir.SymbolTable(submodule.operation)
   # The called function may have been exported with polymorphic shapes and called
   # now with more refined shapes. We insert hlo.ConvertOp to ensure the module
@@ -1126,7 +1126,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
                                submodule,
                                dst_symtab=ctx.module_context.symbol_table)
 
-  submodule_args = []
+  submodule_args: list[ir.Value] = []
   # All the platforms for the current lowering must be among the platforms
   # for which the callee was lowered.
   lowering_platforms = ctx.module_context.platforms

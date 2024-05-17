@@ -20,6 +20,8 @@ import functools
 from typing import Any, Callable
 from collections.abc import Sequence
 
+from jaxlib.mlir.ir import Module
+
 import jax
 from jax import core as jax_core
 from jax import lax
@@ -341,7 +343,7 @@ def lower_jaxpr_to_module(
     jaxpr: jax_core.Jaxpr,
     dimension_semantics: tuple[str | None, ...] | None,
     mesh: mesh_lib.Mesh | None = None
-) -> ir.Module:
+) -> tuple[Module, tuple[Any, ...]]:
   mosaic_grid_mapping = MosaicGridMapping(
       jaxpr, grid_mapping, dimension_semantics, mesh)
   mosaic_grid_mapping.maybe_compress_grid()
@@ -2199,7 +2201,7 @@ def _device_id_to_logical(
     device_ids = tree_util.tree_leaves(device_id)
     mesh_strides = ctx.lowering_context.mesh_context.mesh_strides
     def _linearize_mesh_indices(*indices):
-      return sum([a * b for a, b in zip(indices, mesh_strides)])
+      return sum(a * b for a, b in zip(indices, mesh_strides))
     lower_ctx = LoweringRuleContext(
         lowering_context=ctx.lowering_context,
         avals_in=[jax_core.ShapedArray((), jnp.int32)] * len(device_ids),

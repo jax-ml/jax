@@ -1774,7 +1774,7 @@ def broadcast_hlo(
   return out
 
 def _nary_lower_hlo(op: Callable, ctx,
-                    *args: ir.Value | Sequence[ir.Value],
+                    *args: ir.Value,
                     explicit_type=False, **params) -> Sequence[ir.Value]:
   """Lowers an elementwise operator to its MLIR equivalent.
 

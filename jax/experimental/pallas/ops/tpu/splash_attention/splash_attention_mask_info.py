@@ -426,7 +426,7 @@ def _process_mask(
   # MaskInfo class and runtime overhead to perform an indirect lookup. Since
   # having multiple masks per head-shard is not a common case we leave this for
   # future work.
-  max_masks_per_head_shard = max([len(x) for x in head_shard_to_mask_ids])
+  max_masks_per_head_shard = max(len(x) for x in head_shard_to_mask_ids)
   masks_per_head_shard = 1 if max_masks_per_head_shard == 1 else heads_per_shard
 
   unique_masks = [
@@ -697,7 +697,7 @@ def _process_mask(
       # maintain the SPMD paradigm.
       padding_axis = 1 if is_dkv else 2
 
-      max_size = max([x.shape[padding_axis] for x in block_mask_shards])
+      max_size = max(x.shape[padding_axis] for x in block_mask_shards)
       padded_block_mask_shards = []
       padded_data_next_shards = []
       padded_mask_next_shards = []
@@ -791,7 +791,7 @@ def _shrink_mask_info(
 
   # Pad each row in the non-zero indices to match the width of the longest
   # row. This avoids having jagged rows.
-  max_non_zero_cols = max([len(x) for x in grouped_non_zero_cols])
+  max_non_zero_cols = max(len(x) for x in grouped_non_zero_cols)
   padded_non_zero_cols = []
   padding = -1
   for row in grouped_non_zero_cols:
@@ -856,7 +856,7 @@ def _shrink_mask_info_dkv(
 
   # Pad each col in the non-zero indices to match the height of the longest
   # col. This avoids having jagged cols.
-  max_non_zero_rows = max([len(x) for x in grouped_non_zero_rows])
+  max_non_zero_rows = max(len(x) for x in grouped_non_zero_rows)
   padded_non_zero_rows = []
   padding = -1
   for col in grouped_non_zero_rows:

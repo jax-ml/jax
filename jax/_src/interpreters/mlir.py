@@ -27,7 +27,7 @@ import os
 import re
 import types
 import typing
-from typing import Any, Callable, NamedTuple, Protocol, Union
+from typing import Any, Callable, NamedTuple, Protocol, Union, cast as type_cast
 import warnings
 
 import numpy as np
@@ -87,19 +87,20 @@ lowerable_effects: effects_lib.EffectTypeSet = effects_lib.lowerable_effects
 # IR Helpers
 
 def dense_int_elements(xs) -> ir.DenseIntElementsAttr:
-  return ir.DenseIntElementsAttr.get(np.asarray(xs, np.int64))
+  return type_cast(ir.DenseIntElementsAttr,
+                   ir.DenseIntElementsAttr.get(np.asarray(xs, np.int64)))
 
-def dense_int_array(xs) -> ir.DenseIntElementsAttr | ir.DenseI64ArrayAttr:
+def dense_int_array(xs) -> ir.DenseElementsAttr | ir.DenseI64ArrayAttr:
   # TODO: b/321794305 - remove this check when jaxlib is on StableHLO API v5 or higher
   if hlo.get_api_version() < 5:
     return dense_int_elements(xs)
-  return ir.DenseI64ArrayAttr.get(np.asarray(xs, np.int64))
+  return ir.DenseI64ArrayAttr.get(np.asarray(xs, np.int64))  # type: ignore
 
 # TODO: b/321794305 - delete this when jaxlib is on StableHLO API v6 or higher
 def dense_int_array_v6(xs) -> ir.DenseIntElementsAttr | ir.DenseI64ArrayAttr:
   if hlo.get_api_version() < 6:
     return dense_int_elements(xs)
-  return ir.DenseI64ArrayAttr.get(np.asarray(xs, np.int64))
+  return ir.DenseI64ArrayAttr.get(np.asarray(xs, np.int64))  # type: ignore
 
 def dense_bool_elements(xs: Sequence[bool]) -> ir.DenseElementsAttr:
   a = np.packbits(np.array(xs, np.bool_), bitorder='little')
@@ -114,7 +115,7 @@ def dense_bool_array(xs: Sequence[bool]) -> ir.DenseElementsAttr | ir.DenseBoolA
   # TODO: b/321794305 - remove this check when jaxlib is on StableHLO API v6 or higher
   if hlo.get_api_version() < 6:
     return dense_bool_elements(xs)
-  return ir.DenseBoolArrayAttr.get(xs)
+  return ir.DenseBoolArrayAttr.get(xs)  # type: ignore
 
 def i32_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(32), i)
 def i64_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(64), i)
@@ -132,7 +133,7 @@ def shape_tensor(sizes: Sequence[int | ir.RankedTensorType]
       return hlo.reshape(int1d, d)
   ds = map(lower_dim, sizes)
   if not ds:
-    return ir_constant(np.array([], np.int32))
+    return type_cast(ir.RankedTensorType, ir_constant(np.array([], np.int32)))
   elif len(ds) == 1:
     return ds[0]
   else:
@@ -195,7 +196,7 @@ def _array_ir_types(aval: core.ShapedArray | core.DShapedArray
   aval = core.physical_aval(aval)  # type: ignore
   if not core.is_constant_shape(aval.shape):
     return _dynamic_array_ir_types(aval)  # type: ignore
-  return (ir.RankedTensorType.get(aval.shape, dtype_to_ir_type(aval.dtype)),)
+  return (ir.RankedTensorType.get(aval.shape, dtype_to_ir_type(aval.dtype)),)  # type: ignore
 
 def _dynamic_array_ir_types(aval: core.ShapedArray) -> Sequence[ir.Type]:
   dyn_size = ir.ShapedType.get_dynamic_size()
@@ -282,7 +283,7 @@ def _numpy_array_constant(x: np.ndarray | np.generic) -> Sequence[ir.Value]:
   if x.dtype == np.bool_:
     x = np.packbits(x, bitorder='little')  # type: ignore
   x = np.ascontiguousarray(x)
-  attr = ir.DenseElementsAttr.get(x, type=element_type, shape=shape)
+  attr = ir.DenseElementsAttr.get(x, type=element_type, shape=shape)  # type: ignore
   return (hlo.constant(attr),)
 
 
@@ -314,11 +315,11 @@ def _ndarray_constant_handler(val: np.ndarray | np.generic) -> Sequence[ir.Value
   elif np.any(np.equal(0, val.strides)) and val.size > 0:
     zero_stride_axes, = np.where(np.equal(0, val.strides))
     other_axes, = np.where(np.not_equal(0, val.strides))
-    collapsed_val = val[tuple(0 if ax in zero_stride_axes else slice(None) # type: ignore
-                              for ax in range(val.ndim))]  # type: ignore
+    collapsed_val = val[tuple(0 if ax in zero_stride_axes else slice(None)  # type: ignore
+                              for ax in range(val.ndim))]
     out = hlo.broadcast_in_dim(
         ir.RankedTensorType.get(
-            val.shape, dtype_to_ir_type(collapsed_val.dtype)),
+            val.shape, dtype_to_ir_type(collapsed_val.dtype)),  # type: ignore
         _numpy_array_constant(collapsed_val)[0],
         dense_int_array_v6(other_axes))
     return (out,)
@@ -738,7 +739,7 @@ def wrap_singleton_ir_values(x: ir.Value | Sequence[ir.Value]
 
 def flatten_lowering_ir_args(
     xs: Sequence[ir.Value | Sequence[ir.Value]]
-) -> Sequence[Sequence[ir.Value]]:
+) -> Sequence[ir.Value]:
   return util.flatten(map(wrap_singleton_ir_values, xs))
 
 _module_name_regex = re.compile(r"[^\w.-]")
@@ -863,7 +864,7 @@ def lower_jaxpr_to_module(
     in_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
     out_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
     arg_names: Sequence[str | None] | None = None,
-    result_names: Sequence[str | None] | None = None,
+    result_names: Sequence[str] | None = None,
     num_replicas: int = 1,
     num_partitions: int = 1,
     all_default_mem_kind: bool = True,
@@ -1106,7 +1107,7 @@ def lower_jaxpr_to_fun(
     xla_donated_args: Sequence[bool] | None = None,
     api_name: str = "jit",
     arg_names: Sequence[str | None] | None = None,
-    result_names: Sequence[str | None] | None = None,
+    result_names: Sequence[str] | None = None,
     arg_memory_kinds: Sequence[str | None] | None = None,
     result_memory_kinds: Sequence[str | None] | None = None,
     arg_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
@@ -1618,7 +1619,7 @@ def lower_per_platform(ctx: LoweringRuleContext,
                        default_rule: LoweringRule | None,
                        effects: effects_lib.Effects,
                        *rule_args: ir.Value,
-                       **rule_kwargs) -> ir.Value:
+                       **rule_kwargs) -> Sequence[ir.Value]:
   """Emits code for a primitive for the current lowering platform(s).
 
   For example, given
@@ -2039,9 +2040,8 @@ def compare_hlo(x, y, direction: str, comparison_type: str | None = None):
   """Creates CompareOp."""
   if comparison_type is None:
     elem_type = ir.RankedTensorType(x.type).element_type
-    if ir.IntegerType.isinstance(elem_type):
-      comparison_type = ("UNSIGNED" if ir.IntegerType.is_unsigned(elem_type)
-                         else "SIGNED")
+    if isinstance(elem_type, ir.IntegerType):
+      comparison_type = "UNSIGNED" if elem_type.is_unsigned else "SIGNED"
     else:
       comparison_type = "FLOAT"
 
@@ -2129,7 +2129,7 @@ def get_sharding_attr(sharding_proto: xc.OpSharding):
   # The MHLO to HLO conversion supports both, and the proto representation is
   # more compact.
   if len(sharding_proto.tile_assignment_devices) > 100:
-    return ir.StringAttr.get(sharding_proto.SerializeToString())
+    return ir.StringAttr.get(sharding_proto.SerializeToString())  # type: ignore
   else:
     return ir.StringAttr.get(repr(xc.HloSharding.from_proto(sharding_proto)))
 
@@ -2315,7 +2315,8 @@ def send_to_host(channel: int, token: hlo.TokenType, operand: Any,
 
 def receive_from_host(channel: int, token: hlo.TokenType,
                       out_aval: core.ShapedArray, name: str, *,
-                      sharding: xc.OpSharding | None = None) -> ir.Value:
+                      sharding: xc.OpSharding | None = None,
+) -> tuple[ir.Value, ir.Value]:
   channel_handle = hlo.ChannelHandle.get(channel, RECV_FROM_HOST_TYPE)
   recv_op = hlo.RecvOp([aval_to_ir_type(out_aval),
                         hlo.TokenType.get()], token, channel_handle,
@@ -2592,7 +2593,7 @@ def custom_call(
   if backend_config is None:
     backend_config_attr = ir.StringAttr.get("")
   elif isinstance(backend_config, (str, bytes)):
-    backend_config_attr = ir.StringAttr.get(backend_config)
+    backend_config_attr = ir.StringAttr.get(backend_config)  # type: ignore
   elif isinstance(backend_config, dict):
     # TODO(necula): it seems that the CustomCallOp constructor requires that
     # backend_config_attr be a string attribute, even though in some cases we
@@ -2661,8 +2662,8 @@ def custom_call(
   op = hlo.CustomCallOp.build_generic(results=result_types, operands=operands,
                                       attributes=attributes)
   if isinstance(backend_config, dict):
-    backend_config_attr = ir.DictAttr.get(backend_config)
-    op.operation.attributes["mhlo.backend_config"] = backend_config_attr
+    op.operation.attributes["mhlo.backend_config"] = ir.DictAttr.get(
+        backend_config)
   return op
 
 
@@ -2721,7 +2722,7 @@ def reduce_window(
         base_dilations=dense_int_array_v6(base_dilation),
         window_dilations=dense_int_array_v6(window_dilation),
         padding=ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64),
-                                            shape=(len(padding), 2)))
+                                            shape=[len(padding), 2]))
     reducer = rw.regions[0].blocks.append(*(scalar_types + scalar_types))
     with ir.InsertionPoint(reducer):
       hlo.return_(reducer_body(reducer))

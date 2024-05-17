@@ -217,9 +217,11 @@ def backend_compile(
     options: xc.CompileOptions,
     host_callbacks: Sequence[Any],
 ) -> xc.LoadedExecutable:
-  # Convert ir.Module to a string representation, unless the
-  # back-end expliclity flags the ability to handle a module directly
-  # (avoiding the overhead of back and forth conversions)
+  # Convert ir.Module to a string representation, unless the backend
+  # explicitly flags the ability to handle a module directly (avoiding the
+  # overhead of back and forth conversions).
+  # TODO(slebedev): Change the backend.compile() to accept ir.Module.
+  built_c: Any
   if getattr(backend, "needs_str_ir", True):
     built_c = mlir.module_to_bytecode(module)
   else:

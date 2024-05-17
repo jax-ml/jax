@@ -902,7 +902,9 @@ def _select_and_gather_add_lowering(
   double_word_out_aval = out_aval.update(dtype=double_word_dtype)
 
   def reducer_body(reducer: ir.Block) -> Sequence[ir.Value]:
-    x, y = reducer.arguments
+    x: ir.Value
+    y: ir.Value
+    x, y = reducer.arguments  # type: ignore
     assert select_prim is lax.ge_p or select_prim is lax.le_p
     cmp_op = "GE" if select_prim is lax.ge_p else "LE"
     out = hlo.SelectOp(mlir.compare_hlo(fst(x), fst(y), cmp_op), x, y)

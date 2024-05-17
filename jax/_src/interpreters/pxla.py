@@ -2000,7 +2000,7 @@ def are_all_shardings_default_mem_kind(da_object, shardings):
       return False
   return True
 
-memory_kind_propagate_rule = {}  # type: ignore
+memory_kind_propagate_rule: dict[Any, Any] = {}
 
 @weakref_lru_cache
 def get_out_memory_kinds_via_propagation(closed_jaxpr: core.ClosedJaxpr
@@ -2386,10 +2386,10 @@ def lower_mesh_computation(
       all_args_info=None)
 
 class MeshComputation(stages.XlaLowering):
-  _hlo: ir.Module | None
+  _hlo: ir.Module
   _executable: MeshExecutable | None
 
-  def __init__(self, name: str, hlo: ir.Module | None,
+  def __init__(self, name: str, hlo: ir.Module,
                donated_invars: Sequence[bool], **compile_args):
     self._name = name
     self._hlo = hlo
