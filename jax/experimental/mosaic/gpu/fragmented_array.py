@@ -37,6 +37,39 @@ c = utils.c
 
 
 @dataclasses.dataclass(frozen=True)
+class WGSplatFragLayout:
+  """A fragmented array where all the values are equal represented as a register per thread.
+
+  FragmentedArrays in this layout can be are always the result of a
+  splat, each thread in the warpgroup has a single copy of the value,
+  while the FragmentedArray pretends it has whatever shape the user
+  wants. This means we can trivially broadcast, reshape and do
+  elementwise operations with all other layouts.
+
+  Example:
+
+  To load a value in
+  ```
+  FragmentedArray.splat(memref.load(ref_1d, [1]), (10,20,2))
+  ```
+
+  A shape is always provided for sanity check reasons.
+
+  """
+
+  shape: tuple[int, ...] = ()
+
+  def can_broadcast_to(self, shape) -> bool:
+    """Check that the shape can be broadcast.
+
+    Only dimensions of size 1 can be broadcast. All other dimensions
+    must be the same as the argument shape.
+    """
+    return all(
+        dim1 == dim2 or dim1 == 1 for dim1, dim2 in zip(self.shape, shape))
+
+
+@dataclasses.dataclass(frozen=True)
 class WGMMAFragLayout:
   """[m, n] matrix, where m % 64 == 0 == n % 8."""
 
@@ -91,7 +124,7 @@ class WGStridedFragLayout:
       yield [arith.addi(off, c(i * WARPGROUP_SIZE * self.vec_size, tidx.type))]
 
 
-FragmentedLayout = WGStridedFragLayout | WGMMAFragLayout | WGMMARowFragLayout
+FragmentedLayout = WGSplatFragLayout | WGStridedFragLayout | WGMMAFragLayout | WGMMARowFragLayout
 
 
 WGMMA_LAYOUT = WGMMAFragLayout()
@@ -125,6 +158,12 @@ class FragmentedArray:
         (reg_size,) = ir.VectorType(_registers.flat[0].type).shape
         if np.prod(shape) != np.prod(_registers.shape) * WARPGROUP_SIZE * reg_size:
           raise ValueError((reg_size, shape, _registers.shape, WARPGROUP_SIZE), _registers.flat[0].type)
+
+      # Just a single register
+      case WGSplatFragLayout():
+        if _registers.size != 1:
+          raise ValueError(f"WGStridedFragLayout requires a single value {_registers.shape} ({_registers.size})")
+
       case _:
         raise NotImplementedError
 
@@ -141,7 +180,8 @@ class FragmentedArray:
     return cls(_registers=np.array(vecs), _layout=layout)
 
   @classmethod
-  def splat(cls, value, shape, layout):
+  def splat(cls, value, shape, layout=None):
+    layout = layout or WGSplatFragLayout(shape)
     match layout:
       case WGMMARowFragLayout():
         if len(shape) != 1:
@@ -156,10 +196,14 @@ class FragmentedArray:
           raise ValueError
         reg_shape = (shape[0] // 64, shape[1] // 8, 2, 1)
         value = vector.splat(ir.VectorType.get((2,), value.type), value)
-      case WGStridedFragLayout(shape=shape, vec_size=vec_size):
+      case WGStridedFragLayout(vec_size=vec_size):
+        assert shape == layout.shape
         elems = np.prod(shape)
         reg_shape = (elems // (WARPGROUP_SIZE * vec_size),)
         value = vector.splat(ir.VectorType.get((vec_size,), value.type), value)
+      case WGSplatFragLayout():
+        assert shape == layout.shape
+        reg_shape = ()
       case _:
         raise NotImplementedError(layout)
 
@@ -170,14 +214,16 @@ class FragmentedArray:
 
   @property
   def shape(self):
-    row_tiles = self.registers.shape[0]
     match self.layout:
       case WGMMAFragLayout():
-        col_tiles = self.registers.shape[1]
+        row_tiles, col_tiles = self.registers.shape[:2]
         return (row_tiles * 64, col_tiles * 8)
       case WGMMARowFragLayout():
+        row_tiles = self.registers.shape[0]
         return (row_tiles * 64,)
       case WGStridedFragLayout(shape):
+        return shape
+      case WGSplatFragLayout(shape=shape):
         return shape
 
   @property
@@ -186,11 +232,11 @@ class FragmentedArray:
     match self.layout:
       case WGMMAFragLayout() | WGStridedFragLayout():
         return ir.VectorType(reg_ty).element_type
-      case WGMMARowFragLayout():
+      case WGMMARowFragLayout() | WGSplatFragLayout():
         return reg_ty
 
   def _pointwise(self, op, *other):
-    array_args = []
+    other_arrs = []
     for o in other:
       if not isinstance(o, FragmentedArray):
         if not isinstance(o, ir.Value):
@@ -198,16 +244,21 @@ class FragmentedArray:
 
         o = FragmentedArray.splat(o, shape=self.shape, layout=self.layout)
 
-      if self.layout != o.layout:
-        raise ValueError("Incompatible FragmentedArray layouts")
-      if self.registers.shape != o.registers.shape:
-        raise ValueError("Incompatible FragmentedArray shapes")
+      if isinstance(o.layout, WGSplatFragLayout):
+        if not o.layout.can_broadcast_to(self.shape):
+          raise ValueError("Can't broadcast shape.")
+        o = FragmentedArray.splat(o.registers.flat[0], shape=self.shape, layout=self.layout)
+      else:
+        if self.layout != o.layout:
+          raise ValueError("Incompatible FragmentedArray layouts")
+        if self.registers.shape != o.registers.shape:
+          raise ValueError("Incompatible FragmentedArray shapes")
 
-      array_args.append(o)
+      other_arrs.append(o)
     new_regs = np.empty_like(self.registers)
 
     for idx, reg in np.ndenumerate(self.registers):
-      new_regs[idx] = op(reg, *(o.registers[idx] for o in array_args))
+      new_regs[idx] = op(reg, *(o.registers[idx] for o in other_arrs))
     return FragmentedArray(_registers=new_regs, _layout=self.layout)
 
   def __add__(self, other):
@@ -337,7 +388,7 @@ class FragmentedArray:
         new_reg_ty = ir.VectorType.get((2,), new_dtype)
       case WGStridedFragLayout(vec_size=vec_size):
         new_reg_ty = ir.VectorType.get((vec_size,), new_dtype)
-      case WGMMARowFragLayout():
+      case WGMMARowFragLayout() | WGSplatFragLayout():
         new_reg_ty = new_dtype
       case _:
         raise NotImplementedError(f"Unsupported layout {self.layout}")
@@ -379,6 +430,25 @@ class FragmentedArray:
         result = op(result, other_result)
       new_regs[row_tile, row_subtile] = result
     return FragmentedArray(_registers=new_regs, _layout=WGMMA_ROW_LAYOUT)
+
+  def broadcast(self, shape):
+    if not isinstance(self.layout, WGSplatFragLayout):
+      raise NotImplementedError(self.layout)
+
+    if not self.layout.can_broadcast_to(shape):
+      raise ValueError(f"Can't broadcast {self.shape} to {shape}")
+
+    return FragmentedArray(_registers=self.registers, _layout=WGSplatFragLayout(shape))
+
+  def reshape(self, shape):
+    if not isinstance(self.layout, WGSplatFragLayout):
+      raise NotImplementedError(self.layout)
+
+    if np.prod(shape) != np.prod(self.shape):
+      raise ValueError(f"Can't reshape {self.shape} to {shape}")
+
+    return FragmentedArray(_registers=self.registers, _layout=WGSplatFragLayout(shape))
+
 
   def broadcast_minor(self, n):
     if self.layout != WGMMA_ROW_LAYOUT:
