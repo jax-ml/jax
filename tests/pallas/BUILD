@@ -223,7 +223,7 @@ jax_test(
         "cpu",
         "gpu",
     ],
-    shard_count = 2,
+    shard_count = 5,
     tags = [
         "noasan",  # Times out.
         "nomsan",  # Times out.
