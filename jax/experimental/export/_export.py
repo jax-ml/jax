@@ -1224,7 +1224,7 @@ def wrap_with_deprecation_warning(f):
          "`from jax.experimental.export import export` you should use "
          "`from jax.experimental import export`.")
   def wrapped_f(*args, **kwargs):
-    warnings.warn(msg, DeprecationWarning)
+    warnings.warn(msg, DeprecationWarning, stacklevel=2)
     return f(*args, **kwargs)
   return wrapped_f
 
