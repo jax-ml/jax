@@ -42,11 +42,32 @@ class PallasCallTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
     )
     def add_one(x_ref, o_ref):
-      print(">>>", x_ref, o_ref)
       o_ref[...] = x_ref[...] + 1.0
 
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(add_one(x), x + 1.0)
+
+  def test_layer_norm(self):
+    eps = 1e-5
+    gamma = 1.0
+    beta = 1.0
+
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+    )
+    def layer_norm(x_ref, o_ref):
+      o_ref[...] = (x_ref[...] - jnp.mean(x_ref[...], keepdims=True)) * jax.lax.rsqrt(
+          jnp.var(x_ref[...], keepdims=True) + eps
+      ) * gamma + beta
+
+    def layer_norm_np(x):
+      return (x - np.mean(x, keepdims=True)) / np.sqrt(
+          np.var(x, keepdims=True) + eps
+      ) * gamma + beta
+
+    x = jax.random.uniform(jax.random.key(42), shape=(256,), dtype=jnp.float32)
+    np.testing.assert_allclose(layer_norm(x), layer_norm_np(x))
 
 
 if __name__ == "__main__":

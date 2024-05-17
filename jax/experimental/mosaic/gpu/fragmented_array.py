@@ -317,6 +317,9 @@ class FragmentedArray:
         raise NotImplementedError(x.type)
     return self._pointwise(fast_exp if approx else mlir_math.exp)
 
+  def rsqrt(self):
+    return self._pointwise(mlir_math.rsqrt)
+
   def __and__(self, other):
     if not ir.IntegerType.isinstance(self.mlir_dtype):
       raise ValueError(
@@ -396,6 +399,34 @@ class FragmentedArray:
       new_registers[idx] = convert(new_reg_ty, reg)
     return FragmentedArray(_registers=new_registers, _layout=self.layout)
 
+  def reduce_sum(self, scratch) -> ir.Value:
+    if not isinstance(self.layout, WGStridedFragLayout):
+      raise NotImplementedError(f"Unsupported layout {self.layout}")
+    result = c(0, self.mlir_dtype)
+    for reg in self.registers:
+      result = arith.addf(
+          result,
+          vector.reduction(self.mlir_dtype, vector.CombiningKind.ADD, reg),
+      )
+    scratch_ty = ir.MemRefType(scratch.type)
+    assert scratch_ty.element_type == self.mlir_dtype
+    assert scratch_ty.shape == [WARPGROUP_SIZE]
+    memref.store(result, scratch, [gpu.thread_id(gpu.Dimension.x)])
+    gpu.barrier()
+    zero_index = c(0, ir.IndexType.get())
+    with mgpu.once():
+      scratch_vec = vector.load(
+          ir.VectorType.get(scratch_ty.shape, self.mlir_dtype),
+          scratch,
+          [zero_index],
+      )
+      scratch_sum = vector.reduction(
+          self.mlir_dtype, vector.CombiningKind.ADD, scratch_vec
+      )
+      memref.store(scratch_sum, scratch, [zero_index])
+    gpu.barrier()
+    return memref.load(scratch, [zero_index])
+
   def reduce(self, op, axis):
     if self.layout != WGMMA_LAYOUT:
       raise NotImplementedError(self.layout)
@@ -435,12 +466,18 @@ class FragmentedArray:
     if not isinstance(self.layout, WGSplatFragLayout):
       raise NotImplementedError(self.layout)
 
+    if self.shape == shape:
+      return self
+
     if not self.layout.can_broadcast_to(shape):
       raise ValueError(f"Can't broadcast {self.shape} to {shape}")
 
     return FragmentedArray(_registers=self.registers, _layout=WGSplatFragLayout(shape))
 
   def reshape(self, shape):
+    if self.shape == shape:
+      return self
+
     if not isinstance(self.layout, WGSplatFragLayout):
       raise NotImplementedError(self.layout)
 
@@ -448,7 +485,6 @@ class FragmentedArray:
       raise ValueError(f"Can't reshape {self.shape} to {shape}")
 
     return FragmentedArray(_registers=self.registers, _layout=WGSplatFragLayout(shape))
-
 
   def broadcast_minor(self, n):
     if self.layout != WGMMA_ROW_LAYOUT:
