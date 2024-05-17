@@ -1055,24 +1055,26 @@ class JaxExportTest(jtu.JaxTestCase):
   @jtu.parameterized_filterable(
     kwargs=[
       dict(in_shardings=in_shardings, out_shardings=out_shardings,
-           with_mesh=with_mesh)
+           with_mesh_context=with_mesh_context)
       for in_shardings in ("missing", None, "P")
       for out_shardings in ("missing", None, "P")
-      for with_mesh in (True, False)
+      for with_mesh_context in (True, False)
   ])
   def test_grad_with_sharding(self, in_shardings="P", out_shardings=None,
-                              with_mesh=False):
+                              with_mesh_context=False):
     if len(jax.devices()) < 2:
       self.skipTest("Test requires at least 2 devices")
     x_shape = (10, 20)
     x = np.arange(np.prod(x_shape), dtype=np.float32).reshape(x_shape)
+    # The input has shape f32[10,20] and output f32[20,10] in order to
+    # distinguish them in the HLO.
     def f_jax(x):  # x: f32[10,20] -> f32[20,10]
       return jnp.sin(x.T)
 
     mesh = Mesh(jax.devices()[:2], "d")
     pjit_kwargs = {}
     # Use NamedShardings if we don't have a mesh_context
-    if with_mesh:
+    if with_mesh_context:
       sharding_None_d = P(None, "d")
       sharding_d_None = P("d", None)
     else:
@@ -1088,7 +1090,7 @@ class JaxExportTest(jtu.JaxTestCase):
     f_jax_pjit = pjit.pjit(f_jax, **pjit_kwargs)
 
     with contextlib.ExitStack() as stack:
-      if with_mesh:
+      if with_mesh_context:
         stack.enter_context(mesh)
       # Serialize higher-order gradiends
       exp = get_exported(f_jax_pjit, vjp_order=2)(x)
@@ -1098,50 +1100,62 @@ class JaxExportTest(jtu.JaxTestCase):
 
     vjp_module_str = str(exp_vjp.mlir_module())
 
+    # The MHLO attributes of the args and the result of the main function
+    # Arg0 are the primal inputs, arg1 are the output cotangent, res is the input cotangent
+    arg0_attrs, arg1_attrs, res_attrs = re.search(
+        r"func.func public @main\(%arg0: tensor<10x20xf32> (.*)"
+        r", %arg1: tensor<20x10xf32> (.*)"
+        r"\) -> \(tensor<10x20xf32> (.*)",  # the result
+        vjp_module_str).groups()
+
     if in_shardings == "P":
+      self.assertRegex(arg0_attrs, re.escape("{devices=[1,2]<=[2]}"))
+      self.assertRegex(res_attrs, re.escape("{devices=[1,2]<=[2]}"))
       primal_in_sharding = "{devices=[1,2]<=[2]}"
     else:
       primal_in_sharding = "{replicated}"
+      if with_mesh_context:
+        self.assertRegex(arg0_attrs, re.escape("replicated"))
+        self.assertRegex(res_attrs, re.escape("replicated"))
+      else:
+        # If there is no mesh context, we have used NamedSharding(None)
+        # and then the sharding is unspecified!
+        self.assertNotIn("mhlo.sharding", arg0_attrs)
+        self.assertNotIn("mhlo.sharding", res_attrs)
+
     if out_shardings == "P":
+      self.assertRegex(arg1_attrs, re.escape("{devices=[2,1]<=[2]}"))
       primal_out_sharding = "{devices=[2,1]<=[2]}"
     else:
       primal_out_sharding = "{replicated}"
+      if with_mesh_context:
+        self.assertRegex(arg1_attrs, re.escape("replicated"))
+      else:
+        self.assertNotIn("mhlo.sharding", arg1_attrs)
 
-    # TODO(b/326476605): Change the condition below if required.
-    if in_shardings == "P":
-      main = re.compile(
-        r"func.func public @main\(%arg0: tensor<10x20xf32>.*"
-        "mhlo.sharding = \"" + re.escape(primal_in_sharding) + "\""
-        r".*%arg1: tensor<20x10xf32>.*"
-        "mhlo.sharding = \"" + re.escape(primal_out_sharding) + "\""
-        # result
-        r".*->.*\(tensor<10x20xf32>.*"
-        "mhlo.sharding = \"" + re.escape(primal_in_sharding) + "\"")
-      self.assertRegex(vjp_module_str, main)
-
-    # Custom calls for the primal input shape all match primal_in_sharding
-    primal_in_calls = re.findall(
+    # Sharding custom calls for the primal input shape all match primal_in_sharding
+    primal_in_sharding_calls = re.findall(
       r"custom_call @Sharding.*mhlo.sharding = \"(.+)\".*:.*tensor<10x20xf32>",
       vjp_module_str)
     self.assertTrue(
-      all(s == primal_in_sharding for s in primal_in_calls),
-      primal_in_calls
+      all(s == primal_in_sharding for s in primal_in_sharding_calls),
+      primal_in_sharding_calls
     )
 
     # Custom calls for the primal output shape all match primal_out_sharding
-    primal_out_calls = re.findall(
+    primal_out_sharding_calls = re.findall(
       r"custom_call @Sharding.*mhlo.sharding = \"(.+)\".*:.*tensor<20x10xf32>",
       vjp_module_str)
     self.assertTrue(
-      all(s == primal_out_sharding for s in primal_out_calls),
-      primal_in_calls
+      all(s == primal_out_sharding for s in primal_out_sharding_calls),
+      primal_out_sharding_calls
     )
 
     # Call the exported gradient functions. In order to set the device context
     # we replicate the inputs. If we don't use a mesh context and there are
     # no shardings on inputs or outputs, then we have serialized for one
     # device.
-    if in_shardings != "P" and out_shardings != "P" and not with_mesh:
+    if in_shardings != "P" and out_shardings != "P" and not with_mesh_context:
       self.assertEqual(exp_vjp.nr_devices, 1)
       self.assertEqual(exp_vjp2.nr_devices, 1)
       call_mesh = Mesh(jax.devices()[:1], "e")

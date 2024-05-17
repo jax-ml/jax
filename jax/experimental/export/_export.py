@@ -899,27 +899,18 @@ def canonical_shardings(
     device_assignment: Sequence[jax.Device],
     in_shardings: Sequence[Sharding],
     out_shardings: Sequence[Sharding]
-    ) -> tuple[(pxla.UnspecifiedValue |
-                     Sequence[sharding.XLACompatibleSharding]),
-               (pxla.UnspecifiedValue |
-                     Sequence[sharding.XLACompatibleSharding])]:
+    ) -> tuple[Sequence[sharding.XLACompatibleSharding | None],
+               Sequence[sharding.XLACompatibleSharding | None]]:
   """Prepares canonical in_ and out_shardings for a pjit invocation.
 
-  The pjit front-end is picky about what in- and out-shardings it accepts,
-  e.g., if all are unspecified then the whole sharding should be the
-  sharding_impls.UNSPECIFIED object, otherwise the unspecified shardings are
-  replaced with the replicated sharding.
+  Turns the HloSharding into XLACompatibleSharding.
 
   Returns: a pair with the canonicalized input and output shardings.
   """
-  replicated_s = sharding.GSPMDSharding.get_replicated(device_assignment)
   def canonicalize(
-    ss: Sequence[Sharding]) -> (pxla.UnspecifiedValue |
-                                     Sequence[sharding.XLACompatibleSharding]):
-    if all(s is None for s in ss):
-      return sharding_impls.UNSPECIFIED
+    ss: Sequence[Sharding]) -> Sequence[sharding.XLACompatibleSharding | None]:
     return tuple(
-        sharding.GSPMDSharding(device_assignment, s) if s is not None else replicated_s
+        sharding.GSPMDSharding(device_assignment, s) if s is not None else None
         for s in ss)
   return (canonicalize(in_shardings), canonicalize(out_shardings))
 
