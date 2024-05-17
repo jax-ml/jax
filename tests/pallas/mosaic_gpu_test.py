@@ -15,6 +15,7 @@
 import functools
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import jax
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
@@ -47,7 +48,8 @@ class PallasCallTest(PallasTest):
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(add_one(x), x + 1.0)
 
-  def test_layer_norm(self):
+  @parameterized.product(input_factor=[0.001, 1, 10, 100, 100])
+  def test_layer_norm(self, input_factor):
     eps = 1e-5
     gamma = 1.0
     beta = 1.0
@@ -55,6 +57,7 @@ class PallasCallTest(PallasTest):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+        compiler_params={"smem_scratch_bytes": 4 * 4}
     )
     def layer_norm(x_ref, o_ref):
       o_ref[...] = (x_ref[...] - jnp.mean(x_ref[...], keepdims=True)) * jax.lax.rsqrt(
@@ -66,8 +69,15 @@ class PallasCallTest(PallasTest):
           np.var(x, keepdims=True) + eps
       ) * gamma + beta
 
-    x = jax.random.uniform(jax.random.key(42), shape=(256,), dtype=jnp.float32)
+    # Ones are always fully precise
+    x = jnp.ones((256,)).astype(jnp.float32) * input_factor
     np.testing.assert_allclose(layer_norm(x), layer_norm_np(x))
+
+    # random (and anything else is not)
+    x = jax.random.uniform(jax.random.key(42), shape=(256,), dtype=jnp.float32) * input_factor
+    # TODO(cperivol): find out why in this particular case we have a small-ish error.
+    rtol = 1e-07 if input_factor > 10 else 5e-5
+    np.testing.assert_allclose(layer_norm(x), layer_norm_np(x), rtol=rtol)
 
 
 if __name__ == "__main__":

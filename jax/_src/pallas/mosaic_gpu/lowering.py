@@ -56,6 +56,41 @@ class ModuleContext:
   grid_mapping: pl_core.GridMapping
   runtime_smem: ir.Value  # ir.MemRefType
 
+  def scratch_view(self, shapes: list[jax.ShapeDtypeStruct]) -> list[ir.Value]:
+    """Return memref views into the runtime scrath based on the shapes."""
+
+    smem_scratch_bytes = math.prod(ir.MemRefType(self.runtime_smem.type).shape)
+    required_scratch_bytes = sum(
+        math.prod(sh.shape) * jnp.dtype(sh.dtype).itemsize for sh in shapes
+    )
+    if smem_scratch_bytes < required_scratch_bytes:
+      raise ValueError(
+          f"Too few {smem_scratch_bytes=} provided (pass via compiler_params), we"
+          f" need {required_scratch_bytes} ({shapes=})"
+      )
+
+    views = []
+    off = 0
+    smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
+    for sh in shapes:
+      sh_bytes = math.prod(sh.shape) * jnp.dtype(sh.dtype).itemsize
+      strides = (*np.cumprod(sh.shape)[:-1:-1], 1)
+
+      # We need scratch to be able to store 128 items of x.
+      scratch = memref_dialect.subview(
+          self.runtime_smem,
+          offsets=[_index(off)],
+          sizes=[_index(sh_bytes)],
+          strides=[_index(i) for i in strides],
+      )
+      scratch_ty = ir.MemRefType.get(
+          [np.prod(sh.shape)], mlir.dtype_to_ir_type(sh.dtype), memory_space=smem
+      )
+      off += sh_bytes
+      views.append(memref_dialect.view(scratch_ty, scratch, _index(off), []))
+
+    return views
+
 
 @dataclasses.dataclass
 class LoweringRuleContext:
@@ -92,6 +127,7 @@ def lower_jaxpr_to_module(
     out_structs: tuple[jax.ShapeDtypeStruct, ...],
     jaxpr: jax_core.Jaxpr,
     name: str,
+    compiler_params: dict[str, Any],
 ) -> LoweringResult:
   assert len(jaxpr.outvars) == 0
   assert not grid_mapping.mapped_dims
@@ -145,8 +181,11 @@ def lower_jaxpr_to_module(
 
     launch_ctx.await_async_copy(0)
 
-  # TODO(cperivol): Allow the user to provide the size of the runtime shared memory.
-  extra_smem_scratch = [jax.ShapeDtypeStruct(shape=[4 * 4], dtype=np.int8)]
+  extra_smem_scratch = [
+      jax.ShapeDtypeStruct(
+          shape=[compiler_params.get("smem_scratch_bytes", 0)], dtype=np.int8
+      )
+  ]
   module, out_structs, gmem_scratch_bytes, _ = mosaic_gpu._lower_as_gpu_kernel(
       body,
       grid,
@@ -304,19 +343,9 @@ def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
   if axes != (0,):
     raise NotImplementedError("No support for axes other than 0 yet")
   [x_aval] = ctx.avals_in
-  # We need scratch to be able to store 128 items of x.
-  # TODO(cperivol): check that enough scratch size was provided
-  scratch = memref_dialect.subview(
-      ctx.module_context.runtime_smem,
-      offsets=[_index(0)],
-      sizes=[_index(4 * jnp.dtype(x_aval.dtype).itemsize)],
-      strides=[_index(1)],
+  [scratch] = ctx.module_context.scratch_view(
+      [jax.ShapeDtypeStruct(shape=(4,), dtype=x_aval.dtype)]
   )
-  smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
-  scratch_ty = ir.MemRefType.get(
-      [4], mlir.dtype_to_ir_type(x_aval.dtype), memory_space=smem
-  )
-  scratch = memref_dialect.view(scratch_ty, scratch, _index(0), [])
   return mgpu.FragmentedArray.splat(x.reduce_sum(scratch), ())
 
 
@@ -372,4 +401,4 @@ def _ir_constant(v: object, t: ir.Type) -> ir.Value:
 
 
 def _index(i: int) -> ir.Value:
-  return arith_dialect.constant(ir.IndexType.get(), i)
+  return arith_dialect.constant(ir.IndexType.get(), int(i))

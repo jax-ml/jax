@@ -410,8 +410,8 @@ class FragmentedArray:
           vector.reduction(self.mlir_dtype, vector.CombiningKind.ADD, reg),
       )
     scratch_ty = ir.MemRefType(scratch.type)
-    if scratch_ty.element_type != self.mlir_dtype or scratch_ty.shape != [WARPGROUP_SIZE]:
-      raise ValueError(f"Expected sheape={(WARPGROUP_SIZE,)}, {self.mlir_dtype} (got {scratch_ty})")
+    if scratch_ty.element_type != self.mlir_dtype or scratch_ty.shape != [4]:
+      raise ValueError(f"Expected shape={(4,)}, {self.mlir_dtype} (got {scratch_ty})")
 
     if ir.FloatType.isinstance(self.mlir_dtype):
       op = arith.addf
@@ -421,7 +421,7 @@ class FragmentedArray:
       raise NotImplementedError(self.mlir_dtype)
 
     warp_result = utils.warp_tree_reduce(result, op, 32)
-    warp_id = arith.remui(gpu.thread_id(gpu.Dimension.x), c(32, index))
+    warp_id = arith.divui(gpu.thread_id(gpu.Dimension.x), c(32, index))
     memref.store(warp_result, scratch, [warp_id])
     utils.commit_shared()
     zero_index = c(0, index)
