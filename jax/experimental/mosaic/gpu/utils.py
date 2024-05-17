@@ -38,9 +38,7 @@ import numpy as np
 WARPGROUP_SIZE: int = 128
 DYNAMIC = -9223372036854775808
 
-FLAGS = flags.FLAGS
-
-flags.DEFINE_bool("mosaic_gpu_debug", False, "Perform debug printing")
+_MOSAIC_GPU_DEBUG = flags.DEFINE_bool("mosaic_gpu_debug", False, "Perform debug printing")
 
 # pylint: disable=line-too-long, wildcard-import, missing-function-docstring, bad-continuation, g-bad-todo, protected-access, g-explicit-length-test, missing-class-docstring, g-doc-return-or-yield, g-inconsistent-quotes
 
@@ -113,7 +111,7 @@ def get_tensormap_descriptor(**attrs):
 
 
 def debug_print(fmt, *args, uniform=True):
-  if not FLAGS.mosaic_gpu_debug:
+  if not _MOSAIC_GPU_DEBUG.value:
     return
   type_formats = []
   new_args = []
