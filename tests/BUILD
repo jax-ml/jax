@@ -234,6 +234,9 @@ jax_test(
     shard_count = {
         "tpu": 5,
     },
+    deps = [
+        "//jax:experimental",
+    ],
 )
 
 jax_test(

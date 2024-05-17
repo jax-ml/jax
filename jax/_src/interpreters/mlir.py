@@ -694,8 +694,10 @@ class LoweringRuleContext:
   tokens_in: TokenSet
   tokens_out: TokenSet | None  # Mutable store for output containers
   axis_size_env: dict[core.Var, ir.Value] | None = None  # Dynamic axis sizes
-  dim_var_values: Sequence[ir.Value] = ()  # The values for the dimension variables
-                                           # in same order as module_context.shape_poly_state.dim_vars
+  # The values for the dimension variables in same order as
+  # module_context.shape_poly_state.dim_vars
+  dim_var_values: Sequence[ir.Value] = ()
+  compute_type: str | None = None
 
   def set_tokens_out(self, tokens_out: TokenSet):
     assert self.tokens_out is None, 'Should only set `tokens_out` once.'
@@ -1565,12 +1567,14 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
       effects = list(effects_lib.ordered_effects.filter_in(eqn.effects))
       tokens_in = tokens.subset(effects)
       avals_in = map(aval, eqn.invars)
+      compute_type = eqn.ctx.compute_type if eqn.ctx is not None else None
       rule_ctx = LoweringRuleContext(
           module_context=ctx, primitive=eqn.primitive,
           name_stack=source_info.name_stack,
           avals_in=avals_in,
           avals_out=map(aval, eqn.outvars), tokens_in=tokens_in,
-          tokens_out=None, dim_var_values=dim_var_values)
+          tokens_out=None, dim_var_values=dim_var_values,
+          compute_type=compute_type)
       if config.dynamic_shapes.value:
         axis_size_env = {d: read(d)[0]
                          for a in avals_in if type(a) is core.DShapedArray

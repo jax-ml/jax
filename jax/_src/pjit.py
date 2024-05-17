@@ -616,7 +616,6 @@ def _infer_params(jit_info, args, kwargs):
   assert (len(in_shardings_flat) == len(in_layouts_flat) ==
           len(donated_invars) == len(attrs_tracked) + len(consts) + len(args_flat))
 
-  # in_shardings and out_shardings here are all GSPMDSharding.
   params = dict(
       jaxpr=jaxpr,
       in_shardings=in_shardings_flat,
@@ -1681,6 +1680,14 @@ def _pjit_cached_lower_jaxpr_to_fun(ctx, name, jaxpr, effects, in_shardings,
     mod_ctx.cached_primitive_lowerings[key] = func
   return func
 
+def _map_compute_type(c_type):
+  if c_type == 'device_host':
+    return 'host'
+  elif c_type == 'device':
+    return 'dense'
+  raise ValueError('Invalid compute type received. Current supported values '
+                   'are `device_host` and `device`')
+
 
 def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
                    out_shardings, in_layouts, out_layouts, resource_env,
@@ -1700,6 +1707,10 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
   call = func_dialect.CallOp(flat_output_types,
                              ir.FlatSymbolRefAttr.get(func.name.value),
                              mlir.flatten_lowering_ir_args(args))
+  if ctx.compute_type is not None:
+    dict_attr = {"_xla_compute_type": ir.StringAttr.get(
+        _map_compute_type(ctx.compute_type))}
+    call.operation.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
   out_nodes = unflatten(call.results, map(len, output_types))
   tokens, out_nodes = split_list(out_nodes, [len(effects)])
   tokens_out = ctx.tokens_in.update_tokens(mlir.TokenSet(zip(effects, tokens)))
@@ -2117,7 +2128,7 @@ def dce_jaxpr_pjit_rule(used_outputs: list[bool], eqn: core.JaxprEqn
     new_eqn = core.new_jaxpr_eqn(
         [v for v, used in zip(eqn.invars, used_inputs) if used],
         [v for v, used in zip(eqn.outvars, used_outputs) if used],
-        eqn.primitive, new_params, dced_jaxpr.effects, eqn.source_info)
+        eqn.primitive, new_params, dced_jaxpr.effects, eqn.source_info, eqn.ctx)
     return used_inputs, new_eqn
 
 pe.dce_rules[pjit_p] = dce_jaxpr_pjit_rule

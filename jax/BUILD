@@ -301,6 +301,7 @@ py_library_providing_imports_info(
         ":cloud_tpu_init",
         ":compilation_cache_internal",
         ":compiler",
+        ":compute_on",
         ":config",
         ":core",
         ":custom_api_util",
@@ -711,6 +712,7 @@ pytype_strict_library(
     deps = [
         ":ad_util",
         ":api_util",
+        ":compute_on",
         ":config",
         ":core",
         ":dtypes",
@@ -776,6 +778,12 @@ pytype_strict_library(
         ":xla_bridge",
         "//jax/_src/lib",
     ],
+)
+
+pytype_strict_library(
+    name = "compute_on",
+    srcs = ["_src/compute_on.py"],
+    deps = [],
 )
 
 pytype_strict_library(

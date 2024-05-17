@@ -20,6 +20,7 @@ from collections.abc import (Collection, Generator, Hashable, Iterable,
                              MutableMapping)
 from contextlib import contextmanager
 from dataclasses import dataclass
+import dataclasses
 import functools
 from functools import partial, partialmethod, total_ordering
 import gc
@@ -259,6 +260,11 @@ def jaxpr_as_fun(closed_jaxpr: ClosedJaxpr, *args):
   return eval_jaxpr(closed_jaxpr.jaxpr, closed_jaxpr.consts, *args)
 
 
+@dataclasses.dataclass(frozen=True)
+class JaxprEqnContext:
+  compute_type: str | None
+
+
 class JaxprEqn(NamedTuple):
   invars: list[Atom]
   outvars: list[Var]
@@ -266,6 +272,7 @@ class JaxprEqn(NamedTuple):
   params: dict[str, Any]
   effects: Effects
   source_info: source_info_util.SourceInfo
+  ctx: JaxprEqnContext
 
   def __repr__(self):
     return str(pp_eqn(self, JaxprPpContext(), JaxprPpSettings())).rstrip()
@@ -278,6 +285,7 @@ class JaxprEqn(NamedTuple):
       params: dict[str, Any] | None = None,
       effects: Effects | None = None,
       source_info: source_info_util.SourceInfo | None = None,
+      ctx: JaxprEqnContext | None = None
   ):
     # It is slightly faster to rebuild the tuple directly than to call _replace.
     return JaxprEqn(
@@ -287,16 +295,19 @@ class JaxprEqn(NamedTuple):
       self.params if params is None else params,
       self.effects if effects is None else effects,
       self.source_info if source_info is None else source_info,
+      self.ctx if ctx is None else ctx,
     )
 
 
 # TODO(mattjj): call typecheck rules here, so we don't form bad eqns
-def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None):
+def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None,
+                  ctx=None):
   source_info = source_info or source_info_util.new_source_info()
+  ctx = ctx or JaxprEqnContext(None)
   if config.enable_checks.value:
     assert all(isinstance(x, (Var, Literal)) for x in  invars)
     assert all(isinstance(v,  Var)           for v in outvars)
-  return JaxprEqn(invars, outvars, primitive, params, effects, source_info)
+  return JaxprEqn(invars, outvars, primitive, params, effects, source_info, ctx)
 
 _var_counter = it.count()
 

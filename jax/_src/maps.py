@@ -1817,7 +1817,7 @@ def _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name = None):
                sharding=gspmd_sharding,
                unconstrained_dims=unconstrained_dims),
           set(),
-          eqn.source_info))
+          eqn.source_info, eqn.ctx))
   return jaxpr.replace(eqns=new_eqns)
 
 def _flatten_axes(what, tree, axes, tupled_args):

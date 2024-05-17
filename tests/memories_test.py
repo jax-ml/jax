@@ -33,6 +33,7 @@ from jax._src.sharding_impls import (NamedSharding, PositionalSharding,
                                      SingleDeviceSharding, GSPMDSharding,
                                      TransferToMemoryKind,
                                      common_devices_indices_map)
+from jax.experimental.compute_on import compute_on
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -1251,6 +1252,143 @@ class DevicePutTest(jtu.JaxTestCase):
     out = f(arr_hbm)
     self.assertArraysEqual(out, np_inp + 1)
     self.assertEqual(out.sharding.memory_kind, 'pinned_host')
+
+
+class ComputeOffload(jtu.JaxTestCase):
+
+  def setUp(self):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Memories do not work on CPU and GPU backends yet.")
+    super().setUp()
+    self.orig_memories_flag = config.enable_memories.value
+    jax.config.update('jax_enable_memories', True)
+
+  def tearDown(self):
+    jax.config.update('jax_enable_memories', self.orig_memories_flag)
+    super().tearDown()
+
+  def test_compute_on_basic(self):
+    out_s = SingleDeviceSharding(jax.devices()[0], memory_kind='pinned_host')
+
+    @compute_on('device_host')
+    @jax.jit
+    def g(x):
+      return x * 2
+
+    @jax.jit
+    def f(x):
+      y = g(x)
+      return y * 3
+
+    inp = jnp.arange(8)
+    out = f(inp)
+    self.assertArraysEqual(out, inp * 6)
+
+    lowered_text = f.lower(jnp.arange(8)).as_text()
+    self.assertIn('_xla_compute_type', lowered_text)
+
+    @functools.partial(jax.jit, out_shardings=out_s)
+    def h(x):
+      y = g(x)
+      return y * 3
+
+    out2 = h(inp)
+    self.assertArraysEqual(out, inp * 6)
+    self.assertEqual(out2.sharding.memory_kind, 'pinned_host')
+
+  def test_nested_compute_error(self):
+    @compute_on('device')
+    @jax.jit
+    def f0(x):
+      return x * 2
+
+    @compute_on('device_host')
+    @jax.jit
+    def f1(x):
+      return f0(x)
+
+    @jax.jit
+    def f2(x):
+      return f1(x)
+
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Nesting `compute_on` with different compute types is not supported"
+        " yet."):
+      f2(jnp.arange(8))
+
+  # def test_compute_on_grad(self):
+  #   @compute_on('device_host')
+  #   @jax.jit
+  #   def g(x):
+  #     return x * 2
+
+  #   def f(x):
+  #     y = g(x)
+  #     return jnp.sum(y * 3)
+
+  #   inp = jnp.arange(8)
+  #   jf = jax.jit(jax.grad(f))
+  #   out = jf(inp)
+  #   print(jax.jit(jax.grad(f)).lower(inp).as_text())
+
+  # def test_sharded_compute_on_host(self):
+  #   mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+  #   s = NamedSharding(mesh, P('x', 'y'))
+  #   np_inp = np.arange(16).reshape(8, 2)
+  #   arr = jax.device_put(np_inp, s)
+
+  #   @compute_on('device_host')
+  #   @jax.jit
+  #   def g(x):
+  #     return x * 2
+
+  #   @jax.jit
+  #   def f(x):
+  #     x = x * 3
+  #     return g(x)
+
+  #   out = f(arr)
+  #   self.assertEqual(out.sharding, s)
+  #   self.assertArraysEqual(out, np_inp * 6)
+
+  # def test_nested_no_op_compute(self):
+  #   @compute_on('device_host')
+  #   @jax.jit
+  #   def f0(x):
+  #     return x * 2
+
+  #   @compute_on('device_host')
+  #   @jax.jit
+  #   def f1(x):
+  #     return f0(x)
+
+  #   @jax.jit
+  #   def f2(x):
+  #     return f1(x)
+
+  #   print(f2.lower(jnp.arange(8)).as_text('hlo'))
+  #   out = f2(jnp.arange(8))
+
+  # def test_eager_compute(self):
+  #   inp = jnp.arange(8)
+  #   with compute_on('device_host'):
+  #     a = inp * 2
+  #   print(a)
+
+  # def test_compute_only_host(self):
+  #   @compute_on('device_host')
+  #   @jax.jit
+  #   def f(x):
+  #     return x * 2
+  #   f(jnp.arange(8))
+
+  # def test_per_annotation_wrapper(self):
+  #   @jax.jit
+  #   @compute_on('device_host')
+  #   def f(x):
+  #     return x * 2
+  #   f(jnp.arange(8))
 
 
 class ActivationOffloadingTest(jtu.JaxTestCase):
