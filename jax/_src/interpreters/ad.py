@@ -238,7 +238,8 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
       else:
         cts_in, = map(read_cotangent, eqn.outvars)
       name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
-      with source_info_util.user_context(eqn.source_info.traceback, name_stack=name_stack):
+      with source_info_util.user_context(
+          eqn.source_info.traceback, name_stack=name_stack), eqn.ctx:
         if eqn.primitive.call_primitive or eqn.primitive.map_primitive:
           cts_in_avals = [v.aval for v in eqn.outvars]
           params = dict(eqn.params)

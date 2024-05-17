@@ -226,16 +226,18 @@ class JaxprTrace(Trace['JaxprTracer']):
     out_aval, effects = primitive.abstract_eval(*avals, **params)
     name_stack = self._current_truncated_name_stack()
     source = source_info_util.current().replace(name_stack=name_stack)
+    eqn_ctx = core.JaxprEqnContext(compute_on.current_compute_type())
     if primitive.multiple_results:
       out_tracers = [JaxprTracer(self, PartialVal.unknown(aval), None)
                      for aval in out_aval]
-      eqn = new_eqn_recipe(tracers, out_tracers, primitive, params, effects, source)
+      eqn = new_eqn_recipe(tracers, out_tracers, primitive, params, effects,
+                           source, eqn_ctx)
       for t in out_tracers: t.recipe = eqn
       return out_tracers
     else:
       out_tracer = JaxprTracer(self, PartialVal.unknown(out_aval), None)
       out_tracer.recipe = new_eqn_recipe(tracers, [out_tracer], primitive,
-                                         params, effects, source)
+                                         params, effects, source, eqn_ctx)
       return out_tracer
 
   def process_call(self, primitive, f, tracers, params):
@@ -315,9 +317,10 @@ class JaxprTrace(Trace['JaxprTracer']):
                      for a in out_type]
     name_stack = self._current_truncated_name_stack()
     source = source_info_util.current().replace(name_stack=name_stack)
+    eqn_ctx = core.JaxprEqnContext(compute_on.current_compute_type())
     eqn = new_eqn_recipe((*res_tracers, *env_tracers, *unknown_arg_tracers),
                          out_tracers, primitive, staged_params, jaxpr.effects,
-                         source)
+                         source, eqn_ctx)
     for t in out_tracers: t.recipe = eqn
     return merge_lists(out_knowns, out_tracers, out_consts)
 
@@ -383,8 +386,10 @@ class JaxprTrace(Trace['JaxprTracer']):
                    for a in out_avals]
     effs = core.filter_named_axis_effects(jaxpr.effects, {params['axis_name']})
     src_info = source_info_util.current()
+    eqn_ctx = core.JaxprEqnContext(compute_on.current_compute_type())
     eqn = new_eqn_recipe((*const_tracers, *env_tracers, *unknown_arg_tracers),  # type: ignore[arg-type]
-                         out_tracers, primitive, staged_params, effs, src_info)
+                         out_tracers, primitive, staged_params, effs, src_info,
+                         eqn_ctx)
     for t in out_tracers: t.recipe = eqn
 
     return merge_lists(out_knowns, out_tracers, out_consts)
@@ -409,8 +414,9 @@ class JaxprTrace(Trace['JaxprTracer']):
       new_params = dict(new_params, call_jaxpr=convert_constvars_jaxpr(jaxpr))
       name_stack = self._current_truncated_name_stack()
       source = source_info_util.current().replace(name_stack=name_stack)
+      eqn_ctx = core.JaxprEqnContext(compute_on.current_compute_type())
       eqn = new_eqn_recipe(in_tracers, out_tracers, primitive, new_params,
-          jaxpr.effects, source)
+                           jaxpr.effects, source, eqn_ctx)
       for t in out_tracers: t.recipe = eqn
       return merge_lists(out_knowns, out_tracers, out_consts)
 
@@ -448,8 +454,10 @@ class JaxprTrace(Trace['JaxprTracer']):
                      for a in out_avals]
       name_stack = self._current_truncated_name_stack()
       source = source_info_util.current().replace(name_stack=name_stack)
+      eqn_ctx = core.JaxprEqnContext(compute_on.current_compute_type())
       eqn = new_eqn_recipe((*const_tracers, *env_tracers), out_tracers,
-                           primitive, staged_params, jaxpr.effects, source)
+                           primitive, staged_params, jaxpr.effects, source,
+                           eqn_ctx)
       for t in out_tracers: t.recipe = eqn
       return merge_lists(out_knowns, out_tracers, out_consts)
 
@@ -490,8 +498,9 @@ class JaxprTrace(Trace['JaxprTracer']):
                      for aval in params['out_types']]
       in_tracers = map(self.instantiate_const, tracers)
       new_params = dict(params, call=call)
+      eqn_ctx = core.JaxprEqnContext(compute_on.current_compute_type())
       eqn = new_eqn_recipe(in_tracers, out_tracers, prim, new_params,
-          core.no_effects, source_info_util.current())
+          core.no_effects, source_info_util.current(), eqn_ctx)
       for t in out_tracers: t.recipe = eqn
       return out_tracers
 
@@ -528,6 +537,7 @@ class JaxprTrace(Trace['JaxprTracer']):
 
     name_stack = self._current_truncated_name_stack()
     source = source_info_util.current().replace(name_stack=name_stack)
+    eqn_ctx = core.JaxprEqnContext(compute_on.current_compute_type())
     eqn = new_eqn_recipe((*res_tracers, *env_tracers, *tracers),
                          out_tracers, prim.initial_style,
                          dict(fun_jaxpr=closed_jaxpr,
@@ -535,7 +545,7 @@ class JaxprTrace(Trace['JaxprTracer']):
                               num_consts=len(res) + len(env),
                               bwd=bwd, out_trees=out_trees,
                               symbolic_zeros=symbolic_zeros),
-                         jaxpr.effects, source)
+                         jaxpr.effects, source, eqn_ctx)
     for t in out_tracers: t.recipe = eqn
     return merge_lists(out_knowns, out_tracers, out_consts)
 
@@ -876,14 +886,15 @@ class JaxprEqnRecipe(NamedTuple):
   params: dict[str, Any]
   effects: core.Effects
   source_info: source_info_util.SourceInfo
+  ctx: JaxprEqnContext
 
 def new_eqn_recipe(in_tracers: Sequence[JaxprTracer],
                    out_tracers: Sequence[JaxprTracer],
                    primitive: Primitive,
                    params: dict[str, Any],
                    effects: core.Effects,
-                   source_info: source_info_util.SourceInfo
-                  ) -> JaxprEqnRecipe:
+                   source_info: source_info_util.SourceInfo,
+                   ctx: JaxprEqnContext | None = None) -> JaxprEqnRecipe:
   # TODO(necula): move these checks to core.check_jaxpr, and call in more places
   if primitive.call_primitive or primitive.map_primitive:
     assert "call_jaxpr" in params
@@ -895,18 +906,21 @@ def new_eqn_recipe(in_tracers: Sequence[JaxprTracer],
     assert ("donated_invars" in params and
             len(params["donated_invars"]) == len(params["call_jaxpr"].invars))
   out_avals = [core.raise_to_shaped(t.aval) for t in out_tracers]
+  ctx = ctx or JaxprEqnContext(None)
   return JaxprEqnRecipe(object(), tuple(in_tracers), map(ref, out_tracers),
-                        out_avals, primitive, params, effects, source_info)
+                        out_avals, primitive, params, effects, source_info,
+                        ctx)
 
 
 def recipe_to_eqn(getvar: Callable[[JaxprTracer], Atom],
                   recipe: JaxprEqnRecipe) -> core.JaxprEqn:
-  (_, in_tracers, out_tracer_refs, out_avals, prim, params, eff, src) = recipe
+  (_, in_tracers, out_tracer_refs, out_avals, prim, params, eff, src,
+   ctx) = recipe
   invars  = [getvar(t) for t in in_tracers]
   out_tracers = [t_ref() for t_ref in out_tracer_refs]
   outvars = [DropVar(a) if t is None else getvar(t)  # type: ignore
              for a, t in zip(out_avals, out_tracers)]
-  return new_jaxpr_eqn(invars, outvars, prim, params, eff, src)
+  return new_jaxpr_eqn(invars, outvars, prim, params, eff, src, ctx)
 
 def tracers_to_jaxpr(
   in_tracers: Sequence[JaxprTracer],
@@ -959,7 +973,7 @@ def tracers_to_jaxpr(
         outvars = [DropVar(type_substitute(a)) if rf() is None else newvar(rf())
                    for a, rf in zip(r.out_avals, r.out_tracer_refs)]
         eqns.append(new_jaxpr_eqn(in_atoms, outvars, r.primitive, r.params,
-                                  r.effects, r.source_info))
+                                  r.effects, r.source_info, r.ctx))
         processed_eqn_ids.add(r.eqn_id)
     elif isinstance(r, LambdaBinding):
       if not any(t is in_tracer for in_tracer in in_tracers):

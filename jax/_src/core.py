@@ -18,9 +18,8 @@ from collections import Counter, defaultdict, deque, namedtuple
 from collections.abc import (Collection, Generator, Hashable, Iterable,
                              Iterator, Set, Sequence, MutableSet,
                              MutableMapping)
-from contextlib import contextmanager
+from contextlib import contextmanager, ContextDecorator, ExitStack
 from dataclasses import dataclass
-import dataclasses
 import functools
 from functools import partial, partialmethod, total_ordering
 import gc
@@ -40,6 +39,7 @@ import numpy as np
 from jax._src import dtypes
 from jax._src import config
 from jax._src import effects
+from jax._src import compute_on
 from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
     TracerIntegerConversionError, UnexpectedTracerError)
@@ -260,9 +260,24 @@ def jaxpr_as_fun(closed_jaxpr: ClosedJaxpr, *args):
   return eval_jaxpr(closed_jaxpr.jaxpr, closed_jaxpr.consts, *args)
 
 
-@dataclasses.dataclass(frozen=True)
-class JaxprEqnContext:
-  compute_type: str | None
+class JaxprEqnContext(ContextDecorator):
+
+  def __init__(self, compute_type: str | None):
+    self.compute_type = compute_type
+    self._exit_stack = ExitStack()
+    self._managers = [(compute_on.extend_compute_type, self.compute_type)]
+
+  def __enter__(self):
+    for manager, val in self._managers:
+      self._exit_stack.enter_context(manager(val))
+    return self
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    self._exit_stack.close()
+    return False
+
+  def __repr__(self):
+    return f'JaxprEqnContext(compute_type={self.compute_type})'
 
 
 class JaxprEqn(NamedTuple):

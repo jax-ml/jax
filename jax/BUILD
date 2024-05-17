@@ -463,6 +463,7 @@ pytype_strict_library(
         "_src/linear_util.py",
     ],
     deps = [
+        ":compute_on",
         ":config",
         ":dtypes",
         ":effects",

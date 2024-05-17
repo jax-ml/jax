@@ -45,6 +45,7 @@ from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import util
 from jax._src import xla_bridge as xb
+from jax._src import compute_on
 from jax._src.api_util import (
     argnums_partial_except, flatten_axes, flatten_fun, flatten_fun_nokwargs,
     donation_vector, shaped_abstractify, check_callable, resolve_argnums,
@@ -1962,12 +1963,13 @@ def _pjit_partial_eval(trace, *in_tracers,
       pe.JaxprTracer(trace, pe.PartialVal.unknown(aval), None)
       for aval in unknown_out_avals
   ]
+  eqn_ctx = core.JaxprEqnContext(compute_on.current_compute_type())
   eqn = pe.new_eqn_recipe((*unknown_tracers_in, *residual_tracers),
                           unknown_tracers_out,
                           pjit_p,
                           unknown_params,
                           unknown_jaxpr.effects,
-                          source_info_util.current())
+                          source_info_util.current(), eqn_ctx)
   for t in unknown_tracers_out: t.recipe = eqn
   return merge_lists(unknown_outs, known_out_vals, unknown_tracers_out)
 

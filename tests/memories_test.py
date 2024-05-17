@@ -1317,20 +1317,23 @@ class ComputeOffload(jtu.JaxTestCase):
         " yet."):
       f2(jnp.arange(8))
 
-  # def test_compute_on_grad(self):
-  #   @compute_on('device_host')
-  #   @jax.jit
-  #   def g(x):
-  #     return x * 2
+  def test_compute_on_grad(self):
+    @compute_on('device_host')
+    @jax.jit
+    def g(x):
+      return jnp.sin(x)
 
-  #   def f(x):
-  #     y = g(x)
-  #     return jnp.sum(y * 3)
+    def f(x):
+      y = g(x)
+      return jnp.sum(y)
 
-  #   inp = jnp.arange(8)
-  #   jf = jax.jit(jax.grad(f))
-  #   out = jf(inp)
-  #   print(jax.jit(jax.grad(f)).lower(inp).as_text())
+    inp = jnp.arange(8.)
+    jf = jax.jit(jax.grad(f))
+
+    jtu.check_grads(jf, (inp,), order=2)
+
+    lowered_text = jf.lower(inp).as_text()
+    self.assertEqual(lowered_text.count('_xla_compute_type = "host"'), 2)
 
   # def test_sharded_compute_on_host(self):
   #   mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
