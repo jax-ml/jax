@@ -400,6 +400,7 @@ class FragmentedArray:
     return FragmentedArray(_registers=new_registers, _layout=self.layout)
 
   def reduce_sum(self, scratch) -> ir.Value:
+    index = ir.IndexType.get()
     if not isinstance(self.layout, WGStridedFragLayout):
       raise NotImplementedError(f"Unsupported layout {self.layout}")
     result = c(0, self.mlir_dtype)
@@ -409,14 +410,24 @@ class FragmentedArray:
           vector.reduction(self.mlir_dtype, vector.CombiningKind.ADD, reg),
       )
     scratch_ty = ir.MemRefType(scratch.type)
-    assert scratch_ty.element_type == self.mlir_dtype
-    assert scratch_ty.shape == [WARPGROUP_SIZE]
-    memref.store(result, scratch, [gpu.thread_id(gpu.Dimension.x)])
-    gpu.barrier()
-    zero_index = c(0, ir.IndexType.get())
+    if scratch_ty.element_type != self.mlir_dtype or scratch_ty.shape != [WARPGROUP_SIZE]:
+      raise ValueError(f"Expected sheape={(WARPGROUP_SIZE,)}, {self.mlir_dtype} (got {scratch_ty})")
+
+    if ir.FloatType.isinstance(self.mlir_dtype):
+      op = arith.addf
+    elif ir.IntegerType.isinstance(self.mlir_dtype):
+      op = arith.addi
+    else:
+      raise NotImplementedError(self.mlir_dtype)
+
+    warp_result = utils.warp_tree_reduce(result, op, 32)
+    warp_id = arith.remui(gpu.thread_id(gpu.Dimension.x), c(32, index))
+    memref.store(warp_result, scratch, [warp_id])
+    utils.commit_shared()
+    zero_index = c(0, index)
     with mgpu.once():
       scratch_vec = vector.load(
-          ir.VectorType.get(scratch_ty.shape, self.mlir_dtype),
+          ir.VectorType.get((4,), self.mlir_dtype),
           scratch,
           [zero_index],
       )
@@ -424,7 +435,7 @@ class FragmentedArray:
           self.mlir_dtype, vector.CombiningKind.ADD, scratch_vec
       )
       memref.store(scratch_sum, scratch, [zero_index])
-    gpu.barrier()
+    utils.commit_shared()
     return memref.load(scratch, [zero_index])
 
   def reduce(self, op, axis):

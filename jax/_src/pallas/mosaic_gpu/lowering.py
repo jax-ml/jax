@@ -145,7 +145,8 @@ def lower_jaxpr_to_module(
 
     launch_ctx.await_async_copy(0)
 
-  extra_smem_scratch = [jax.ShapeDtypeStruct(shape=[128 * 4], dtype=np.int8)]
+  # TODO(cperivol): Allow the user to provide the size of the runtime shared memory.
+  extra_smem_scratch = [jax.ShapeDtypeStruct(shape=[4 * 4], dtype=np.int8)]
   module, out_structs, gmem_scratch_bytes, _ = mosaic_gpu._lower_as_gpu_kernel(
       body,
       grid,
@@ -304,15 +305,16 @@ def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
     raise NotImplementedError("No support for axes other than 0 yet")
   [x_aval] = ctx.avals_in
   # We need scratch to be able to store 128 items of x.
+  # TODO(cperivol): check that enough scratch size was provided
   scratch = memref_dialect.subview(
       ctx.module_context.runtime_smem,
       offsets=[_index(0)],
-      sizes=[_index(128 * jnp.dtype(x_aval.dtype).itemsize)],
+      sizes=[_index(4 * jnp.dtype(x_aval.dtype).itemsize)],
       strides=[_index(1)],
   )
   smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
   scratch_ty = ir.MemRefType.get(
-      [128], mlir.dtype_to_ir_type(x_aval.dtype), memory_space=smem
+      [4], mlir.dtype_to_ir_type(x_aval.dtype), memory_space=smem
   )
   scratch = memref_dialect.view(scratch_ty, scratch, _index(0), [])
   return mgpu.FragmentedArray.splat(x.reduce_sum(scratch), ())

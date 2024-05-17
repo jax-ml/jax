@@ -940,6 +940,26 @@ class FragmentedArrayTest(TestCase):
     np.testing.assert_array_equal(inp, result)
 
 
+  def test_warp_tree_reduce(self):
+    def kernel(ctx, out, *_):
+      del ctx
+      i32 = ir.IntegerType.get_signless(32)
+      tid = gpu.thread_id(gpu.Dimension.x)
+      value = arith.index_cast(i32, tid)
+      grp = warp_tree_reduce(value, arith.addi, 4)
+      memref.store(grp, out, [tid])
+
+    x = np.arange(128, dtype=jnp.int32)
+    result = mosaic_gpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), x, [],
+    )()
+    for i in range(0, 128, 4):
+      x[i:i + 4] = jnp.sum(x[i:i + 4])
+
+    np.testing.assert_array_equal(result, x)
+
+
+
 class ProfilerTest(TestCase):
 
   def test_measure(self):
