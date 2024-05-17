@@ -772,7 +772,7 @@ def eval_dynamic_shape(ctx: LoweringRuleContext,
         partial(core.evaluate_shape, shape, ctx.module_context.shape_poly_state.dim_vars),
         multiple_results=True)(ctx, *ctx.dim_var_values)
     return tuple(operator.index(d) if core.is_constant_dim(d) else d_ir
-                 for d, d_ir in zip(shape, util.flatten(res)))  # type: ignore
+                 for d, d_ir in zip(shape, util.flatten(res)))
 
 # TODO: replace usage of eval_dynamic_shape_as_vals with eval_dynamic_shape_as_ivals
 def eval_dynamic_shape_as_vals(ctx: LoweringRuleContext,
@@ -1169,7 +1169,7 @@ def lower_jaxpr_to_fun(
     # Update the existing aliases to account for the new output values
     input_output_aliases = [None if a is None
                             else a + num_tokens
-                            for a in input_output_aliases]  # type: ignore
+                            for a in input_output_aliases]
 
   if arg_shardings is not None:
     token_shardings = [None] * (num_dim_vars + num_tokens)
@@ -1242,7 +1242,7 @@ def lower_jaxpr_to_fun(
     for pom, mk, types in zip(propagated_out_mem_kinds, result_memory_kinds,
                               output_types):
       if pom is not None and mk is None:
-        res.append([pom] * len(types))  # type: ignore
+        res.append([pom] * len(types))
       else:
         if pom is not None and mk is not None and pom != mk:
           raise AssertionError(
@@ -1392,9 +1392,9 @@ def lower_jaxpr_to_fun(
 
     if ir_arg_shardings is not None and name == "main":
       flat_args = [
-          a.dtype._rules.replicate_trailing_dims(entry_lowering_ctx, o, a)  # type: ignore
+          a.dtype._rules.replicate_trailing_dims(entry_lowering_ctx, o, a)
           if (a is not core.abstract_token and
-              dtypes.issubdtype(a.dtype, dtypes.extended) and s is None) else o  # type: ignore
+              dtypes.issubdtype(a.dtype, dtypes.extended) and s is None) else o
           for o, s, a in zip(flat_args, ir_arg_shardings, input_avals)
       ]
 
@@ -1430,9 +1430,9 @@ def lower_jaxpr_to_fun(
 
     if ir_result_shardings is not None and name == "main":
       flat_outputs = [
-          a.dtype._rules.replicate_trailing_dims(entry_lowering_ctx, o, a)  # type: ignore
+          a.dtype._rules.replicate_trailing_dims(entry_lowering_ctx, o, a)
           if (a is not core.abstract_token and
-              dtypes.issubdtype(a.dtype, dtypes.extended) and s is None) else o  # type: ignore
+              dtypes.issubdtype(a.dtype, dtypes.extended) and s is None) else o
           for o, s, a in zip(flat_outputs, ir_result_shardings, output_avals)
       ]
 
@@ -1898,7 +1898,7 @@ def multi_broadcast_in_dim(ctx: LoweringRuleContext,
   out = []
   for op, op_aval in zip(ops, ops_avals):
     op_aval_shape = op_aval.shape  # type: ignore
-    if core.definitely_equal_shape(op_aval_shape, out_shape):  # type: ignore
+    if core.definitely_equal_shape(op_aval_shape, out_shape):
       out.append(op)
     else:
       assert len(op_aval_shape) <= len(out_shape), (op_aval_shape, out_shape)
@@ -2033,7 +2033,7 @@ def full_like_aval(ctx: LoweringRuleContext, value, aval: core.ShapedArray) -> i
 def add_jaxvals_lowering(ctx, x, y):
   if (isinstance(a := ctx.avals_in[0], core.ShapedArray) and
       dtypes.issubdtype(a.dtype, dtypes.extended)):
-    return lower_fun(lambda x, y: [a.dtype._rules.add(a.dtype, x, y)])(ctx, x, y)  # type: ignore
+    return lower_fun(lambda x, y: [a.dtype._rules.add(a.dtype, x, y)])(ctx, x, y)
   return [hlo.add(x, y)]
 register_lowering(ad_util.add_jaxvals_p, add_jaxvals_lowering)
 
@@ -2388,7 +2388,7 @@ def _emit_tpu_python_callback(
     recv_channels.append(channel)
   ifrt_callback = backend.make_python_callback_from_host_send_and_recv(
       _wrapped_callback, operand_shapes, result_shapes, send_channels,
-      recv_channels, pickle_util.dumps)  # type: ignore  # pylint: disable=missing-parameter
+      recv_channels, pickle_util.dumps)
   ctx.module_context.add_host_callback(ifrt_callback)
   return outputs, token
 

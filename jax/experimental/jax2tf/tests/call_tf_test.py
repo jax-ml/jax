@@ -37,7 +37,7 @@ from jax.experimental.jax2tf.tests import tf_test_util
 import numpy as np
 
 try:
-  import tensorflow as tf  # type: ignore[import]
+  import tensorflow as tf
 except ImportError:
   tf = None
 

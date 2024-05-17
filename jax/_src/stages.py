@@ -540,17 +540,17 @@ class Compiled(Stage):
       leaf = PytreeLeaf()
       this_dummy = tree_unflatten(in_tree, [leaf] * in_tree.num_leaves)
       other_dummy = tree_unflatten(
-          params.in_tree, [leaf] * params.in_tree.num_leaves)  # type: ignore
+          params.in_tree, [leaf] * params.in_tree.num_leaves)
       errs = list(tree_util.equality_errors(this_dummy, other_dummy))
       msg = []
       msg.append(
           "Function compiled with input pytree does not match the input pytree"
           f" it was called with. There are {len(errs)} mismatches, including:")
       for path, thing1, thing2, explanation in errs:
-        fst, *rest = path  # type: ignore
+        fst, *rest = path
         base = ['args', 'kwargs'][fst.idx]
         msg.append(
-            f"    * at {base}{keystr(rest)}, seen {thing2} but now given"  # type: ignore
+            f"    * at {base}{keystr(rest)}, seen {thing2} but now given"
             f" {thing1}, so {explanation}")
       raise TypeError('\n'.join(msg))
     try:

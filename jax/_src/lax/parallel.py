@@ -513,9 +513,9 @@ def xeinsum(spec: str, *operands):
   xs = list(operands)
   for idx, (in_subs, in_named) in enumerate(safe_zip(all_in_subs, all_in_named)):
     # if a subscript axis appears only in one input and not the output, reduce!
-    other_named = set().union(  # type: ignore
+    other_named = set().union(
         *[named for i, named in enumerate(all_in_named) if i != idx])
-    other_subs = set().union(  # type: ignore
+    other_subs = set().union(
         *[subs for i, subs in enumerate(all_in_subs) if i != idx])
 
     subs_reduce = list(set(in_subs) - {*out_subs, *other_subs})
@@ -862,7 +862,7 @@ def psum_bind(*args, axes, axis_index_groups):
       assert not pos_axes
       size = len(axis_index_groups[0])
     else:
-      size = math.prod([core.axis_frame(name).size for name in named_axes])  # type: ignore
+      size = math.prod([core.axis_frame(name).size for name in named_axes])
     return tuple(lax._const(x, size) * pos_reduce(x) for x in args)
   return core.AxisPrimitive.bind(
       psum_p, *args, axes=axes, axis_index_groups=axis_index_groups)

@@ -144,7 +144,7 @@ class SparsifyEnv:
     self._buffers = list(bufs)
 
   def _push(self, arr: Array) -> int:
-    self._buffers.append(jnp.asarray(arr))  # type: ignore
+    self._buffers.append(jnp.asarray(arr))
     return len(self._buffers) - 1
 
   def data(self, spvalue: SparsifyValue) -> Array:

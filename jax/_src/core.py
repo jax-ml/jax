@@ -417,11 +417,11 @@ class Primitive:
     return impl
 
   def def_abstract_eval(self, abstract_eval):
-    self.abstract_eval = _effect_free_abstract_eval(abstract_eval)  # type: ignore[assignment]
+    self.abstract_eval = _effect_free_abstract_eval(abstract_eval)
     return abstract_eval
 
   def def_effectful_abstract_eval(self, effectful_abstract_eval):
-    self.abstract_eval = effectful_abstract_eval  # type: ignore[assignment]
+    self.abstract_eval = effectful_abstract_eval
     return effectful_abstract_eval
 
   def def_custom_bind(self, bind):
@@ -1068,7 +1068,7 @@ def trace_state_clean() -> bool:
 def reset_trace_state() -> bool:
   """Resets the global trace state and returns True if it was already clean."""
   if not trace_state_clean():
-    thread_local_state.trace_state.__init__()  # type: ignore
+    thread_local_state.trace_state.__init__()
     return False
   else:
     return True
@@ -1342,11 +1342,11 @@ def find_top_trace(xs) -> Trace:
     top_tracer._assert_live()
     top_main = top_tracer._trace.main
   else:
-    top_main = None  # type: ignore
+    top_main = None
   dynamic = thread_local_state.trace_state.trace_stack.dynamic
   top_main = (dynamic if top_main is None or dynamic.level > top_main.level
               else top_main)
-  return top_main.with_cur_sublevel()  # type: ignore
+  return top_main.with_cur_sublevel()
 
 def get_referent(x: Any) -> Any:
   return x.get_referent() if isinstance(x, Tracer) else x
@@ -1839,7 +1839,7 @@ class ConcreteArray(ShapedArray):
 
 def primal_dtype_to_tangent_dtype(primal_dtype):
   if isinstance(primal_dtype, dtypes.ExtendedDType):
-    return primal_dtype._rules.tangent_dtype(primal_dtype)  # type: ignore
+    return primal_dtype._rules.tangent_dtype(primal_dtype)
   elif not dtypes.issubdtype(primal_dtype, np.inexact):
     return dtypes.float0
   else:
@@ -2005,12 +2005,12 @@ effects.control_flow_allowed_effects.add_type(InternalMutableArrayEffect)
 
 @mutable_array_p.def_effectful_abstract_eval
 def mutable_array_abstract_eval(init_aval):
-  from jax._src.state.types import AbstractRef  # type: ignore[import]
+  from jax._src.state.types import AbstractRef
   return AbstractRef(init_aval), {internal_mutable_array_effect}
 
 @mutable_array_p.def_impl
 def _mutable_array_impl(init_val):
-  from jax._src.state.types import AbstractRef  # type: ignore[import]
+  from jax._src.state.types import AbstractRef
   aval = raise_to_shaped(get_aval(init_val))
   return MutableArray(AbstractRef(aval), init_val)
 
@@ -2770,7 +2770,7 @@ def do_subst_axis_names_jaxpr(jaxpr: Jaxpr | ClosedJaxpr, subst: AxisSubst):
   var_map: dict[Var, Var] = {}
   invars = [subst_axis_names_var(v, subst, var_map) for v in jaxpr.invars]  # type: ignore[union-attr]
   constvars = [subst_axis_names_var(v, subst, var_map) for v in jaxpr.constvars]  # type: ignore[union-attr]
-  eqns = [subst_axis_names_eqn(eqn, subst, var_map) for eqn in jaxpr.eqns]  # type: ignore[union-attr]
+  eqns = [subst_axis_names_eqn(eqn, subst, var_map) for eqn in jaxpr.eqns]
   outvars: list[Atom] = [v if isinstance(v, Literal) else var_map[v] for v in jaxpr.outvars]  # type: ignore[union-attr]
   effects = subst_axis_names_effects(jaxpr.effects, subst)
   new_jaxpr = Jaxpr(constvars, invars, outvars, eqns, effects)
@@ -3053,8 +3053,8 @@ def substitute_vars_in_output_ty(
   result = []
   for aval in out_type:
     if type(aval) is DShapedArray:
-      shape = [in_atoms[d.val] if type(d) is InDBIdx else  # type: ignore
-               out_binders[d.val] if type(d) is OutDBIdx else  # type: ignore
+      shape = [in_atoms[d.val] if type(d) is InDBIdx else
+               out_binders[d.val] if type(d) is OutDBIdx else
                d for d in aval.shape]
       aval = aval.update(shape=tuple(shape))
     result.append(aval)

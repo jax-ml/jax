@@ -366,7 +366,7 @@ def ltg_batcher(insert_axis, spmd_axis_name, axis_size,
   new_parts = None if spmd_axis_name is None else spmd_axis_name
   new_pspec = list(pspec)
   new_pspec.insert(d, new_parts)
-  new_pspec = P(*new_pspec)  # type: ignore
+  new_pspec = P(*new_pspec)
   y = host_local_array_to_global_array_p.bind(
       x, global_mesh=global_mesh, pspec=new_pspec)
   return y, d

@@ -486,11 +486,11 @@ class PmapSharding(XLACompatibleSharding):
       return True
     return (self.sharding_spec == other.sharding_spec and
             self.devices.shape == other.devices.shape and
-            self._internal_device_list == other._internal_device_list)  # type: ignore
+            self._internal_device_list == other._internal_device_list)
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
-      self._hash = hash((self._internal_device_list, self.sharding_spec))  # type: ignore
+      self._hash = hash((self._internal_device_list, self.sharding_spec))
     return self._hash
 
   def __str__(self):
@@ -618,7 +618,7 @@ def _op_sharding_to_pos_sharding(
     device_assignment: Sequence[xc.Device],
     memory_kind: str | None = None) -> PositionalSharding:
   if isinstance(op_sharding, xc.OpSharding):
-    op_sharding = xc.HloSharding.from_proto(op_sharding)  # type: ignore
+    op_sharding = xc.HloSharding.from_proto(op_sharding)
 
   if op_sharding.is_replicated():
     return PositionalSharding(
@@ -851,11 +851,11 @@ class GSPMDSharding(XLACompatibleSharding):
       return True
     return (are_op_shardings_equal(self._hlo_sharding, other._hlo_sharding)
             and self.memory_kind == other.memory_kind
-            and self._internal_device_list == other._internal_device_list)  # type: ignore
+            and self._internal_device_list == other._internal_device_list)
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
-      self._hash = hash((self._internal_device_list, self._hlo_sharding_hash,  # type: ignore
+      self._hash = hash((self._internal_device_list, self._hlo_sharding_hash,
                         self.memory_kind))
     return self._hash
 
@@ -1339,7 +1339,7 @@ def explode_superdims(sizes, dims):
 def parse_flatten_op_sharding(hlo_sharding: xc.OpSharding | xc.HloSharding,
                               mesh: mesh_lib.Mesh) -> Sequence[ParsedPartitionSpec]:
   if isinstance(hlo_sharding, xc.OpSharding):
-    hlo_sharding = xc.HloSharding.from_proto(hlo_sharding)  # type: ignore
+    hlo_sharding = xc.HloSharding.from_proto(hlo_sharding)
   if hlo_sharding.tuple_elements():
     out: list[ParsedPartitionSpec] = []
     for s in hlo_sharding.tuple_elements():

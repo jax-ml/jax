@@ -570,7 +570,7 @@ def _pallas_call_lowering(
   elif platform == "cuda" or platform == "rocm":
     try:
       if _PALLAS_USE_MOSAIC_GPU.value:
-        from jax._src.pallas.mosaic_gpu import pallas_call_registration  # type: ignore
+        from jax._src.pallas.mosaic_gpu import pallas_call_registration
       else:
         from jax._src.pallas.triton import pallas_call_registration  # type: ignore
     except ImportError:

@@ -394,13 +394,13 @@ def _device_put_sharding_impl(x, aval, device):
     s = device
     if getattr(x, 'sharding', None) == s and getattr(x, '_committed', False):
       return x
-    if (not s.is_fully_addressable and  # type: ignore
+    if (not s.is_fully_addressable and
         isinstance(x, array.ArrayImpl) and not x.is_fully_addressable):
       # This has to be XLACompatible because _mcjax_reshard will run a
       # XLA computation.
       assert isinstance(s, XLACompatibleSharding)
       return _mcjax_reshard(x, s)
-    if not s.is_fully_addressable:  # type: ignore
+    if not s.is_fully_addressable:
       # TODO(yashkatariya,mattjj): Link to a doc about McJAX and jax.Array.
       raise ValueError(
           "device_put's second argument must be a Device or a Sharding which"

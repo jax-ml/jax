@@ -93,7 +93,7 @@ for more details.
   def __init__(self, message: str):
     error_msg = f"{message}{InconclusiveDimensionOperation._help_msg}"
     # https://github.com/python/mypy/issues/5887
-    super().__init__(error_msg)  # type: ignore
+    super().__init__(error_msg)
 
 
 class Comparator(Enum):
@@ -199,7 +199,7 @@ class _DimFactor:
     if c := cmp_comparable(self._size, other._size): return c
     if self.var is not None:
       return cmp_comparable(self.var, other.var)
-    if c := cmp_comparable(self.operation, other.operation): return c  # type: ignore
+    if c := cmp_comparable(self.operation, other.operation): return c
     return cmp_sequence(self.operands, other.operands,
                         lambda s_o, o_o: s_o._syntactic_cmp(o_o))
 
@@ -369,8 +369,8 @@ class _DimTerm:
     """
     Returns the product with another term. Example: (n^2*m) * n == n^3 * m.
     """
-    return _DimTerm(_DimExpr._linear_combination_sorted_pairs(self._factors, 0, 1,  # type: ignore[arg-type]
-                                                              other._factors, 0, 1))  # type: ignore[arg-type]
+    return _DimTerm(_DimExpr._linear_combination_sorted_pairs(self._factors, 0, 1,
+                                                              other._factors, 0, 1))
 
   def divide(self, divisor: _DimTerm) -> _DimTerm:
     """
@@ -378,12 +378,12 @@ class _DimTerm:
     if the result is not a term.
     For example, (n^3 * m) // n == n^2*m, but n // m fails.
     """
-    new_factors = _DimExpr._linear_combination_sorted_pairs(self._factors, 0, 1,  # type: ignore[arg-type]
-                                                            divisor._factors, 0, -1)  # type: ignore[arg-type]
+    new_factors = _DimExpr._linear_combination_sorted_pairs(self._factors, 0, 1,
+                                                            divisor._factors, 0, -1)
     for _, f_exp in new_factors:
       if f_exp <= 0:
         raise InconclusiveDimensionOperation(f"Cannot divide {self} by {divisor}.")
-    return _DimTerm(new_factors)  # type: ignore
+    return _DimTerm(new_factors)
 
   def evaluate(self, env: DimVarEnv):
     prod = lambda xs: functools.reduce(_evaluate_multiply, xs) if xs else core.dim_constant(1)
@@ -888,7 +888,7 @@ class _DimExpr:
 
         q = _DimExpr._from_term(qterm, qcount, self.scope)
         quotient += q
-        dividend -= q * divisor  # type: ignore[assignment]
+        dividend -= q * divisor
 
       dividend = int(dividend)  # type: ignore[assignment]
       if isinstance(divisor, _DimExpr):
@@ -896,7 +896,7 @@ class _DimExpr:
           raise InconclusiveDimensionOperation("")
         remainder = 0
       else:
-        q, r = divmod(dividend, int(divisor))  # type: ignore
+        q, r = divmod(dividend, int(divisor))
         quotient += q
         remainder = r
 
@@ -1505,7 +1505,7 @@ class _Parser:
 
     if core.is_constant_dim(expr) and self.like_shape is not None:
       like_shape_dim = self.like_shape[len(self.dimensions)]
-      if expr != like_shape_dim:  # type: ignore[operator]
+      if expr != like_shape_dim:
         raise self.parse_err(tok,
                              (f"different size {expr} for known dimension; "
                               f"like={self.like_shape}"))
@@ -1655,7 +1655,7 @@ class _Parser:
     e1, tok = self.expr(tok)
     tok = self.consume_token(tok, tokenize.RPAR)
     return _DimExpr._from_operation(op, e1,
-                                    scope=self.scope), tok  # type: ignore
+                                    scope=self.scope), tok
 
   def factor_binary_op(self, op: str, tok) -> tuple[DimSize, tokenize.TokenInfo]:
     tok = self.consume_token(tok, tokenize.LPAR)
@@ -1668,7 +1668,7 @@ class _Parser:
     if op == _DimFactor.MIN:
       return core.min_dim(e1, e2), tok
     return _DimExpr._from_operation(op, e1, e2,
-                                    scope=self.scope), tok  # type: ignore
+                                    scope=self.scope), tok
 
 
 def _evaluate_add(v1, v2):

@@ -627,7 +627,7 @@ def xmap(fun: Callable,
     in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])
     in_avals = in_tree.unflatten(avals_flat)
     return stages.Lowered.from_flat_info(
-        computation, in_tree, in_avals, donate_argnums, out_tree(),  # type: ignore
+        computation, in_tree, in_avals, donate_argnums, out_tree(),
         no_kwargs=True)
 
   fun_mapped.lower = lower
@@ -1839,7 +1839,7 @@ class NoQuotesStr(str):
 def _thread_local_flag_unsupported(_):
   raise RuntimeError("thread-local xmap flags not supported!")
 def _clear_compilation_cache(_):
-  make_xmap_callable.cache_clear()  # type: ignore
+  make_xmap_callable.cache_clear()
 
 def _ensure_spmd_and(f):
   def update(v):

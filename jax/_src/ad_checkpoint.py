@@ -660,7 +660,7 @@ def _transpose_jaxpr(jaxpr, in_lin, out_zeros):
 
   transposed_jaxpr_, _, consts, () = pe.trace_to_jaxpr_dynamic(transposed, in_avals)
   transposed_jaxpr = core.ClosedJaxpr(transposed_jaxpr_, consts)
-  return transposed_jaxpr, cell.in_cts_zero  # type: ignore
+  return transposed_jaxpr, cell.in_cts_zero
 
 def remat_vmap(spmd_axis_name, axis_size, axis_name, main_type, args, dims, *,
                jaxpr, **params):

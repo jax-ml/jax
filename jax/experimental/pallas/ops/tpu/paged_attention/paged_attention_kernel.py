@@ -515,8 +515,8 @@ def paged_attention(
         num_kv_heads // num_cores
         if megacore_mode == "kv_head"
         else num_kv_heads,
-    )  # type: ignore
-    dimension_sematics = ("parallel", "arbitrary", "arbitrary")  # type: ignore
+    )
+    dimension_sematics = ("parallel", "arbitrary", "arbitrary")
   else:
     kernel = paged_flash_attention_kernel
     grid = (

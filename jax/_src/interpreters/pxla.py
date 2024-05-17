@@ -165,7 +165,7 @@ def batched_device_put(aval: core.ShapedArray,
   if len(bufs) == len(xs):
     return array.ArrayImpl(
         aval, sharding, bufs, committed=committed, _skip_checks=True)
-  return xc.batched_device_put(aval, sharding, xs, list(devices), committed)  # type: ignore
+  return xc.batched_device_put(aval, sharding, xs, list(devices), committed)
 
 def _shard_aval(size, axis: int, aval):
   try:
@@ -584,7 +584,7 @@ class ParallelCallableInfo:
              if d.process_index == xb.process_index(self.backend)]
       assert len(out) > 0
     else:
-      out = None  # type: ignore
+      out = None
     return out
 
   @cached_property
@@ -641,7 +641,7 @@ def stage_parallel_callable(
     fun = _change_argument_ranks(fun, pci.in_axes, pci.out_axes_thunk)
   else:
     fun = orig_fun
-  with core.extend_axis_env(pci.axis_name, pci.global_axis_size, None):  # type: ignore
+  with core.extend_axis_env(pci.axis_name, pci.global_axis_size, None):
     with dispatch.log_elapsed_time(
         "Finished tracing + transforming {fun_name} for pmap in {elapsed_time} sec",
         fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
@@ -761,7 +761,7 @@ def lower_parallel_callable(
   tuple_args = dispatch.should_tuple_args(len(shards.global_sharded_avals),
                                           backend.platform)
   module_name = f"pmap_{fun.__name__}"
-  with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
+  with maybe_extend_axis_env(axis_name, global_axis_size, None):
     ordered_effects = list(
         effects.ordered_effects.filter_in(closed_jaxpr.effects))
     if ordered_effects:
@@ -1421,7 +1421,7 @@ def _pmap_lowering(ctx, *in_nodes, axis_name,
     if in_axis is not None else mlir.wrap_singleton_ir_values(in_node)
     for aval, in_node, in_axis in zip(in_avals, in_nodes, in_axes))
 
-  with maybe_extend_axis_env(axis_name, global_axis_size, None):  # type: ignore
+  with maybe_extend_axis_env(axis_name, global_axis_size, None):
     sub_ctx = ctx.module_context.replace(
         axis_context=sharding_impls.ReplicaAxisContext(new_env))
     sharded_outs, _ = mlir.jaxpr_subcomp(
@@ -1810,7 +1810,7 @@ class SemanticallyEqualShardings:
 
   def __hash__(self):
     return hash(tuple(
-        (s._hlo_sharding_hash, s.memory_kind)  # type: ignore
+        (s._hlo_sharding_hash, s.memory_kind)
         if isinstance(s, GSPMDSharding) else s for s in self._gspmd_shardings))
 
   def __eq__(self, other):
@@ -1974,7 +1974,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
 
 @lru_cache(maxsize=2048)
 def _create_da_object(  # pytype: disable=invalid-annotation
-    device_assignment: tuple[xc.Device, ...]) -> xc.DeviceList:  # type: ignore
+    device_assignment: tuple[xc.Device, ...]) -> xc.DeviceList:
   return xc.DeviceList(device_assignment)
 
 
@@ -2104,7 +2104,7 @@ def lower_sharding_computation(
   """
   # 1. Trace to jaxpr and preprocess/verify it
   auto_spmd_lowering = check_if_any_auto(
-      it.chain.from_iterable([in_shardings, out_shardings]))  # type: ignore
+      it.chain.from_iterable([in_shardings, out_shardings]))
 
   all_args_info = AllArgsInfo(closed_jaxpr.in_avals, closed_jaxpr.jaxpr.debug_info)
 
@@ -2151,7 +2151,7 @@ def lower_sharding_computation(
 
   all_default_mem_kind = are_all_shardings_default_mem_kind(
       da_object,
-      it.chain(in_shardings, out_shardings, [js for js, _ in jaxpr_sharding]))  # type: ignore
+      it.chain(in_shardings, out_shardings, [js for js, _ in jaxpr_sharding]))
 
   # TODO(yashkatariya): Remove this when XLA can propagate memory kinds or when
   # JAX puts memory kinds in the types of jaxpr.
@@ -2260,7 +2260,7 @@ def lower_mesh_computation(
       if isinstance(tiling_method, TileVectorize):
         tiling_transform = vtile_by_mesh
       elif isinstance(tiling_method, TileManual):
-        tiling_transform = lambda f, *args: vtile_manual(f, tiling_method.manual_axes, *args)  # type: ignore
+        tiling_transform = lambda f, *args: vtile_manual(f, tiling_method.manual_axes, *args)
         manual_axes = tiling_method.manual_axes
       else:
         raise NotImplementedError(f"Unrecognized tiling method: {tiling_method}")
@@ -2417,7 +2417,7 @@ class MeshComputation(stages.XlaLowering):
     if xb.using_pjrt_c_api(backend):
       raise NotImplementedError(
           "Lowered.cost_analysis not implemented on platform "
-          f"'{backend.platform}'. Use compile().cost_analysis() for "  # type: ignore
+          f"'{backend.platform}'. Use compile().cost_analysis() for "
           "post-compilation cost estimates.")
     return xe.hlo_module_cost_analysis(backend, self.hlo().as_hlo_module())
 
@@ -2651,7 +2651,7 @@ def _get_layouts_from_executable(
 
   assert all(isinstance(i, DeviceLocalLayout) for i in new_in_layouts)
   assert all(isinstance(o, DeviceLocalLayout) for o in new_out_layouts)
-  return new_in_layouts, new_out_layouts  # type: ignore
+  return new_in_layouts, new_out_layouts
 
 
 def get_logical_mesh_ids(mesh_shape):
@@ -2737,9 +2737,9 @@ def _maybe_get_and_check_in_shardings(
 
   If in_sharding is unspecified, then the sharding returned by XLA is returned.
   """
-  in_shardings_xla = _get_in_shardings_from_xla(  # type: ignore
+  in_shardings_xla = _get_in_shardings_from_xla(
       xla_executable, device_assignment, len(global_in_avals),
-      num_ordered_effects)  # type: ignore
+      num_ordered_effects)
   if in_shardings_xla is None:
     return in_shardings
 
@@ -2752,8 +2752,8 @@ def _maybe_get_and_check_in_shardings(
         xla_s = aval.dtype._rules.logical_sharding(aval, xla_s)
       new_in_shardings.append(xla_s)
     else:
-      xla_hlo_s = xla_s._to_xla_hlo_sharding(aval.ndim)  # type: ignore
-      orig_hlo_s = orig._to_xla_hlo_sharding(aval.ndim)  # type: ignore
+      xla_hlo_s = xla_s._to_xla_hlo_sharding(aval.ndim)
+      orig_hlo_s = orig._to_xla_hlo_sharding(aval.ndim)
       # MANUAL HloSharding comes from other partitioning frameworks.
       if (not dtypes.issubdtype(aval.dtype, dtypes.extended) and
           not xla_hlo_s.is_manual() and
@@ -2773,9 +2773,9 @@ def _maybe_get_and_check_out_shardings(
     xla_executable, out_shardings, device_assignment, global_out_avals,
     num_ordered_effects, all_default_mem_kind
   ):
-  out_shardings_xla = get_out_shardings_from_executable(  # type: ignore
+  out_shardings_xla = get_out_shardings_from_executable(
       xla_executable, device_assignment, len(global_out_avals),
-      num_ordered_effects, all_default_mem_kind)  # type: ignore
+      num_ordered_effects, all_default_mem_kind)
   if out_shardings_xla is None:
     return out_shardings
 
@@ -2788,13 +2788,13 @@ def _maybe_get_and_check_out_shardings(
         xla_s = aval.dtype._rules.logical_sharding(aval, xla_s)
       new_out_shardings.append(xla_s)
     else:
-      xla_hlo_s = xla_s._to_xla_hlo_sharding(aval.ndim)  # type: ignore
-      orig_hlo_s = orig._to_xla_hlo_sharding(aval.ndim)  # type: ignore
+      xla_hlo_s = xla_s._to_xla_hlo_sharding(aval.ndim)
+      orig_hlo_s = orig._to_xla_hlo_sharding(aval.ndim)
       # MANUAL HloSharding comes from other partitioning frameworks.
       if (not dtypes.issubdtype(aval.dtype, dtypes.extended) and
           not xla_hlo_s.is_manual() and
           (not op_shardings.are_op_shardings_equal(xla_hlo_s, orig_hlo_s) or
-           xla_s.memory_kind != orig.memory_kind)):  # type: ignore
+           xla_s.memory_kind != orig.memory_kind)):
         raise AssertionError(
             f"Unexpected XLA sharding override: (XLA) {xla_s} != {orig} "
             "(User sharding)")
@@ -2812,7 +2812,7 @@ def finalize_out_shardings(out_shardings, device_assignment):
 @dataclasses.dataclass
 class UnloadedMeshExecutable:
   xla_executable: Any
-  device_assignment: xc.DeviceList | Sequence[xc.Device]  # type: ignore
+  device_assignment: xc.DeviceList | Sequence[xc.Device]
   backend: xb.XlaBackend
   input_avals: Sequence[ShapedArray]
   input_shardings: Sequence[sharding_impls.XLACompatibleSharding]
@@ -2834,9 +2834,9 @@ class UnloadedMeshExecutable:
   def build_unsafe_call(self):
     handle_args = InputsHandler(self.input_shardings)
     handle_outs = global_avals_to_results_handler(
-        self.output_avals, self.output_shardings, self.committed)  # type: ignore  # arg-type
+        self.output_avals, self.output_shardings, self.committed)
 
-    unsafe_call = ExecuteReplicated(  # type: ignore  # assignment
+    unsafe_call = ExecuteReplicated(
         self.xla_executable, self.name, self.backend, handle_args,
         handle_outs, self.unordered_effects, self.ordered_effects, self.keepalive,
         bool(self.host_callbacks), self.kept_var_idx, self.mut)
@@ -2867,7 +2867,7 @@ class UnloadedMeshExecutable:
                keepalive: Any,
                kept_var_idx: set[int],
                backend: xb.XlaBackend,
-               device_assignment: xc.DeviceList | Sequence[xc.Device],  # type: ignore
+               device_assignment: xc.DeviceList | Sequence[xc.Device],
                committed: bool,
                in_layouts: MaybeLayout,
                out_layouts: MaybeLayout,
@@ -2939,7 +2939,7 @@ class UnloadedMeshExecutable:
 
     return UnloadedMeshExecutable(
         xla_executable=xla_executable,
-        device_assignment=da,  # type: ignore
+        device_assignment=da,
         backend=backend,
         input_avals=global_in_avals,
         input_shardings=in_shardings,  # type: ignore
@@ -2954,9 +2954,9 @@ class UnloadedMeshExecutable:
         kept_var_idx=kept_var_idx,
         mut=mut,
         auto_spmd_lowering=auto_spmd_lowering,
-        in_layouts=in_layouts,  # type: ignore
-        out_layouts=out_layouts,  # type: ignore
-        all_args_info=all_args_info).load()  # type: ignore
+        in_layouts=in_layouts,
+        out_layouts=out_layouts,
+        all_args_info=all_args_info).load()
 
 
 class MeshExecutableFastpathData(NamedTuple):
@@ -3088,7 +3088,7 @@ class MeshExecutable(stages.XlaExecutable):
 
     return xc._xla.pjit(
         self.unsafe_call.name, None, aot_cache_miss, [], [], [],
-        tree_util.dispatch_registry, shard_arg)  # type: ignore
+        tree_util.dispatch_registry, shard_arg)
 
 
 def check_arg_avals_for_call(ref_avals, arg_avals,

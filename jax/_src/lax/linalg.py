@@ -1594,7 +1594,7 @@ def _geqrf_cpu_gpu_lowering(geqrf_impl, batched_geqrf_impl, ctx, a, *,
     a_out, taus = batched_geqrf_impl(a_aval.dtype, a)
   else:
     if platform in ["cuda", "rocm"]:
-      a_out, taus, info_geqrf = geqrf_impl(a_aval.dtype, a)  # type: ignore
+      a_out, taus, info_geqrf = geqrf_impl(a_aval.dtype, a)
     else:
       a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, a_aval.shape)
       a_out, taus, info_geqrf = geqrf_impl(a_aval.dtype, a,
@@ -1708,7 +1708,7 @@ def _householder_product_cpu_gpu_lowering(orgqr_impl, ctx, a, taus, *,
       raise NotImplementedError(
           "Shape polymorphism for native serialization for householder_product "
           f"on GPU is not implemented; b/261671778; {a_aval.shape}")
-    a, info_orgqr = orgqr_impl(a_aval.dtype, a, taus)  # type: ignore
+    a, info_orgqr = orgqr_impl(a_aval.dtype, a, taus)
   else:
     a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, a_aval.shape)
     tau_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, taus_aval.shape)

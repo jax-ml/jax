@@ -421,7 +421,7 @@ def export(fun_jax: Callable,
           platforms=actual_lowering_platforms,
         ))
 
-    lowering = lowered._lowering  # type: ignore
+    lowering = lowered._lowering
     _check_lowering(lowering)
     mlir_module = lowering.stablehlo()
 
@@ -505,7 +505,7 @@ def export(fun_jax: Callable,
         mlir_module_serialized=mlir_module_serialized,
         module_kept_var_idx=module_kept_var_idx,
         uses_shape_polymorphism=shape_poly_state.uses_dim_vars,
-        mlir_module_serialization_version=version,  # type: ignore
+        mlir_module_serialization_version=version,
         _get_vjp=lambda exported: _export_native_vjp(fun_jax, exported))
 
   return do_export
