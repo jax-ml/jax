@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Union
+from typing import Any, Union, List
 
 from jax._src import core
 from jax._src import tree_util
@@ -190,9 +190,17 @@ class NDIndexer:
     if len(indices) == 1 and indices[0] is ...:
       indices = (slice(None),) * len(shape)
     if any(idx is ... for idx in indices):
-      # TODO(sharadmv,mattjj): support patterns that include ellipsis in them
-      #                        e.g. x[0, ..., 1].
-      raise NotImplementedError("Ellipsis in indexer not supported yet.")
+      new_indices : List[Any] = []
+      num_ellipsis = sum(1 for idx in indices if idx is ...)
+      if num_ellipsis > 1:
+        raise ValueError("Only one ellipsis is supported.")
+      for idx in indices:
+        if idx is ...:
+          expand = (slice(None),) * (len(shape) - len(indices) + 1)
+          new_indices.extend(expand)
+        else:
+          new_indices.append(idx)
+      indices = tuple(new_indices)
     if len(indices) > len(shape):
       raise ValueError("`indices` must not be longer than `shape`: "
                        f"{indices=}, {shape=}")
