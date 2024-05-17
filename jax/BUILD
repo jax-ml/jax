@@ -27,6 +27,7 @@ load(
     "jax_internal_test_harnesses_visibility",
     "jax_test_util_visibility",
     "jax_visibility",
+    "mosaic_gpu_internal_users",
     "mosaic_internal_users",
     "pallas_gpu_internal_users",
     "pallas_tpu_internal_users",
@@ -135,7 +136,7 @@ package_group(
     packages = [
         "//...",
         "//learning/brain/research/jax",
-    ],
+    ] + mosaic_gpu_internal_users,
 )
 
 # JAX-private test utilities.
