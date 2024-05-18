@@ -18,7 +18,7 @@ from collections import Counter, defaultdict, deque, namedtuple
 from collections.abc import (Collection, Generator, Hashable, Iterable,
                              Iterator, Set, Sequence, MutableSet,
                              MutableMapping)
-from contextlib import contextmanager, ContextDecorator, ExitStack
+from contextlib import contextmanager, ExitStack
 from dataclasses import dataclass
 import functools
 from functools import partial, partialmethod, total_ordering
@@ -260,27 +260,19 @@ def jaxpr_as_fun(closed_jaxpr: ClosedJaxpr, *args):
   return eval_jaxpr(closed_jaxpr.jaxpr, closed_jaxpr.consts, *args)
 
 
-class JaxprEqnContext(ContextDecorator):
-  compute_type: str | None
-  _exit_stack: ExitStack
-  _managers: list[tuple[Any, Any]]
+class JaxprEqnContext:
 
   def __init__(self, compute_type: str | None):
     self.compute_type = compute_type
-    self._exit_stack = ExitStack()
     self._managers = [(compute_on.extend_compute_type, self.compute_type)]
 
-  def __enter__(self):
-    for manager, val in self._managers:
-      self._exit_stack.enter_context(manager(val))
-    return self
-
-  def __exit__(self, exc_type, exc_value, traceback):
-    self._exit_stack.close()
-    return False
-
-  def __repr__(self):
-    return f'JaxprEqnContext(compute_type={self.compute_type})'
+  @property
+  @contextmanager
+  def manager(self):
+    with ExitStack() as stack:
+      for manager, val in self._managers:
+        stack.enter_context(manager(val))
+      yield
 
 
 class JaxprEqn(NamedTuple):
@@ -481,7 +473,8 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
     subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
     name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
     traceback = eqn.source_info.traceback if propagate_source_info else None
-    with source_info_util.user_context(traceback, name_stack=name_stack), eqn.ctx:
+    with source_info_util.user_context(
+        traceback, name_stack=name_stack), eqn.ctx.manager:
       ans = eqn.primitive.bind(*subfuns, *map(read, eqn.invars), **bind_params)
     if eqn.primitive.multiple_results:
       map(write, eqn.outvars, ans)
