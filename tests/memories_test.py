@@ -28,7 +28,7 @@ from jax._src.lib import xla_extension_version
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.numpy as jnp
 from jax.sharding import PartitionSpec as P
-from jax.ad_checkpoint import Offloadable, remat
+from jax.ad_checkpoint import Offloadable, remat, Recompute
 from jax._src.sharding_impls import (NamedSharding, PositionalSharding,
                                      SingleDeviceSharding, GSPMDSharding,
                                      TransferToMemoryKind,
@@ -46,7 +46,7 @@ def get_memory_kinds_from_executable(f, args):
 
 
 def _create_inputs(shape, pspec, mem_kind=None):
-  mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
+  mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
   np_inp = np.arange(math.prod(shape)).reshape(shape)
   s = NamedSharding(mesh, pspec, memory_kind=mem_kind)
   inp = jax.device_put(np_inp, s)
@@ -669,7 +669,7 @@ class MemoriesComputationTest(jtu.BufferDonationTestCase):
     self.assertArraysEqual(out2, np_inp2 @ np_inp2.T)
 
   def test_sharding_devices_indices_map_cache_hit(self):
-    mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
+    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
     shape = (8, 2)
     s1 = NamedSharding(mesh, P("x", "y"))
     s2 = NamedSharding(mesh, P("x", "y"), memory_kind="device")
@@ -682,7 +682,7 @@ class MemoriesComputationTest(jtu.BufferDonationTestCase):
     self.assertEqual(cache_info2.misses, cache_info1.misses)
 
   def test_jit_host_inputs_via_device_put_outside(self):
-    mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
+    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
     s_host = NamedSharding(mesh, P("x", "y"), memory_kind="unpinned_host")
     s_hbm = s_host.with_memory_kind("device")
     inp = jnp.arange(16).reshape(8, 2)
@@ -747,7 +747,7 @@ class MemoriesComputationTest(jtu.BufferDonationTestCase):
       ("host_to_hbm", "unpinned_host", "device")
   )
   def test_device_put_memory_kind_no_sharding(self, inp_mem_kind, out_mem_kind):
-    mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
+    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
     np_inp = np.arange(16).reshape(8, 2)
     s = NamedSharding(mesh, P("x", "y"), memory_kind=inp_mem_kind)
     inp = jax.device_put(np_inp, s)
@@ -773,7 +773,7 @@ class MemoriesComputationTest(jtu.BufferDonationTestCase):
   )
   def test_device_put_memory_kind_no_sharding_output(
       self, inp_mem_kind, out_mem_kind):
-    mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
+    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
     np_inp = np.arange(16).reshape(8, 2)
     s = NamedSharding(mesh, P("x", "y"), memory_kind=inp_mem_kind)
     inp = jax.device_put(np_inp, s)
@@ -798,7 +798,7 @@ class MemoriesComputationTest(jtu.BufferDonationTestCase):
   )
   def test_device_put_memory_kind_no_sharding_input(
       self, inp_mem_kind, out_mem_kind):
-    mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
+    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
     np_inp = np.arange(16).reshape(8, 2)
     s = NamedSharding(mesh, P("x", "y"), memory_kind=inp_mem_kind)
     inp = jax.device_put(np_inp, s)
@@ -946,7 +946,7 @@ class DevicePutTest(jtu.JaxTestCase):
 
   @parameterized.parameters("unpinned_host", "pinned_host")
   def test_device_put_host_to_hbm(self, host_memory_kind: str):
-    mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
+    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
     s_host = NamedSharding(mesh, P("y"), memory_kind=host_memory_kind)
     np_inp = np.arange(16).reshape(8, 2)
 
@@ -960,7 +960,7 @@ class DevicePutTest(jtu.JaxTestCase):
 
   @parameterized.parameters("unpinned_host", "pinned_host")
   def test_device_put_hbm_to_host(self, host_memory_kind: str):
-    mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
+    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
     s_host = NamedSharding(mesh, P("y"), memory_kind=host_memory_kind)
     inp = jnp.arange(16).reshape(8, 2)
 
@@ -1063,7 +1063,7 @@ class DevicePutTest(jtu.JaxTestCase):
 
   @parameterized.parameters("unpinned_host", "pinned_host")
   def test_device_put_numpy_array(self, host_memory_kind: str):
-    mesh = jtu.create_global_mesh((4, 2), ("x", "y"))
+    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
     np_inp = np.arange(16).reshape(8, 2)
     s_hbm = NamedSharding(mesh, P(("x", "y")), memory_kind="device")
     s_host = s_hbm.with_memory_kind(host_memory_kind)
@@ -1140,7 +1140,7 @@ class DevicePutTest(jtu.JaxTestCase):
         out2, np_inp * np_inp * 2, s_host, 'pinned_host')
 
   def test_parameter_streaming_with_scalar_and_constant(self):
-    mesh = jtu.create_global_mesh((2, 4), ("x", "y"))
+    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
     scalar_inp = 1
     s_host = NamedSharding(mesh, P(), memory_kind="pinned_host")
 
@@ -1335,6 +1335,52 @@ class ComputeOffload(jtu.JaxTestCase):
     lowered_text = jf.lower(inp).as_text()
     self.assertEqual(lowered_text.count('_xla_compute_type = "host"'), 2)
 
+  def test_compute_on_remat(self):
+    inp = jnp.arange(16.)
+
+    def policy(prim, *avals, **params):
+      return Recompute
+
+    @compute_on('device_host')
+    @jax.jit
+    def g(x):
+      x = jnp.sin(x)
+      x = jnp.sin(x)
+      x = jnp.sin(x)
+      return x
+
+    @functools.partial(remat, policy=policy)
+    def f(x):
+      x = g(x)
+      return jnp.sum(x)
+
+    # Execution test.
+    jf = jax.jit(jax.grad(f))
+    jf(inp)  # doesn't crash
+
+    lowered_text = jf.lower(inp).as_text()
+    self.assertEqual(lowered_text.count('_xla_compute_type = "host"'), 2)
+
+  def test_nested_no_op_compute(self):
+    @compute_on('device_host')
+    @jax.jit
+    def f0(x):
+      return x * 2
+
+    @compute_on('device_host')
+    @jax.jit
+    def f1(x):
+      x = x * 3
+      return f0(x)
+
+    @jax.jit
+    def f2(x):
+      return f1(x)
+
+    inp = jnp.arange(8)
+    out = f2(inp)
+    self.assertArraysEqual(out, inp * 6)
+
   # def test_sharded_compute_on_host(self):
   #   mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
   #   s = NamedSharding(mesh, P('x', 'y'))
@@ -1354,24 +1400,6 @@ class ComputeOffload(jtu.JaxTestCase):
   #   out = f(arr)
   #   self.assertEqual(out.sharding, s)
   #   self.assertArraysEqual(out, np_inp * 6)
-
-  # def test_nested_no_op_compute(self):
-  #   @compute_on('device_host')
-  #   @jax.jit
-  #   def f0(x):
-  #     return x * 2
-
-  #   @compute_on('device_host')
-  #   @jax.jit
-  #   def f1(x):
-  #     return f0(x)
-
-  #   @jax.jit
-  #   def f2(x):
-  #     return f1(x)
-
-  #   print(f2.lower(jnp.arange(8)).as_text('hlo'))
-  #   out = f2(jnp.arange(8))
 
   # def test_eager_compute(self):
   #   inp = jnp.arange(8)

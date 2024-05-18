@@ -33,6 +33,7 @@ from jax._src import effects
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
+from jax._src import compute_on
 from jax._src.api_util import flatten_fun, shaped_abstractify
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -558,9 +559,10 @@ def remat_partial_eval(trace, *tracers, jaxpr, **params):
   out_jaxpr_tracers = [pe.JaxprTracer(trace, pe.PartialVal.unknown(x.aval), None)
                        for x in jaxpr_unknown.outvars]
   new_params = dict(params, jaxpr=jaxpr_unknown, differentiated=True)
+  ctx = core.JaxprEqnContext(compute_on.current_compute_type())
   recipe = pe.new_eqn_recipe(in_jaxpr_tracers, out_jaxpr_tracers, remat_p,
                              new_params, jaxpr_unknown.effects,
-                             source_info_util.current())
+                             source_info_util.current(), ctx)
 
   # log info about saved residuals
   log_level = logging.WARNING if config.log_checkpoint_residuals.value else logging.DEBUG
@@ -687,7 +689,7 @@ def remat_dce(used_outputs: list[bool], eqn: core.JaxprEqn
     new_eqn = pe.new_jaxpr_eqn(
         [v for v, used in zip(eqn.invars, used_inputs) if used],
         [v for v, used in zip(eqn.outvars, used_outputs) if used],
-        eqn.primitive, new_params, new_jaxpr.effects, eqn.source_info)
+        eqn.primitive, new_params, new_jaxpr.effects, eqn.source_info, eqn.ctx)
     return used_inputs, new_eqn
 pe.dce_rules[remat_p] = remat_dce
 

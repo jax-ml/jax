@@ -261,6 +261,9 @@ def jaxpr_as_fun(closed_jaxpr: ClosedJaxpr, *args):
 
 
 class JaxprEqnContext(ContextDecorator):
+  compute_type: str | None
+  _exit_stack: ExitStack
+  _managers: list[tuple[Any, Any]]
 
   def __init__(self, compute_type: str | None):
     self.compute_type = compute_type
@@ -478,7 +481,7 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
     subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
     name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
     traceback = eqn.source_info.traceback if propagate_source_info else None
-    with source_info_util.user_context(traceback, name_stack=name_stack):
+    with source_info_util.user_context(traceback, name_stack=name_stack), eqn.ctx:
       ans = eqn.primitive.bind(*subfuns, *map(read, eqn.invars), **bind_params)
     if eqn.primitive.multiple_results:
       map(write, eqn.outvars, ans)
