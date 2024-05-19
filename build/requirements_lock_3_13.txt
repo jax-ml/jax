@@ -104,5 +104,3 @@ zstandard==0.22.0
 # The following packages are considered to be unsafe in a requirements file:
 setuptools==69.2.0
     # via -r build/test-requirements.txt
-
-jaxlib @ file:///usr/local/google/home/vam/_/_/54/jaxlib-0.4.27.dev20240416-cp313-cp313-manylinux2014_x86_64.whl
