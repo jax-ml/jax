@@ -179,7 +179,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       # TODO: Remove once tensorflow is 2.10.0 everywhere.
       if p.name == "optimization_barrier":
         continue
-      if p.name == "debug_callback":
+      if p.name == "debug_callback" or p.name == "debug_print":
         # TODO(sharadmv,necula): enable debug callbacks in TF
         continue
       if p.name == "pallas_call":

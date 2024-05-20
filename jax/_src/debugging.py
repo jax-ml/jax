@@ -21,7 +21,7 @@ import functools
 import logging
 import string
 import sys
-from typing import Any, Callable, Union
+from typing import Any, Callable, Union, cast
 import weakref
 
 import numpy as np
@@ -100,8 +100,8 @@ def debug_callback_abstract_eval(*flat_avals, callback: Callable[..., Any],
   del flat_avals, callback
   return [], {effect}
 
-def debug_callback_batching_rule(args, dims, **params):
-  """Unrolls the debug callback across the mapped axis."""
+def _unrolled_batching_rule(prim, args, dims, **params):
+  """Unrolls the primitive across the mapped axis."""
   axis_size = next(x.shape[i] for x, i in zip(args, dims)
                    if i is not None)
   # TODO(sharadmv): implement in terms of rolled loop unstead of
@@ -114,10 +114,13 @@ def debug_callback_batching_rule(args, dims, **params):
   outs = []
   for i in range(axis_size):
     args_idx = map(functools.partial(get_arg_at_dim, i), dims, args)
-    outs.append(debug_callback_p.bind(*args_idx, **params))
+    outs.append(prim.bind(*args_idx, **params))
   outs = [jnp.stack(xs) for xs in zip(*outs)]
   return outs, (0,) * len(outs)
-batching.primitive_batchers[debug_callback_p] = debug_callback_batching_rule
+
+batching.primitive_batchers[debug_callback_p] = functools.partial(
+    _unrolled_batching_rule, debug_callback_p
+)
 
 def debug_callback_jvp_rule(primals, tangents, **params):
   return debug_callback_p.bind(*primals, **params), []
@@ -126,12 +129,13 @@ ad.primitive_jvps[debug_callback_p] = debug_callback_jvp_rule
 def debug_callback_transpose_rule(*flat_args, callback: Callable[..., Any],
     effect: DebugEffect):
   del flat_args, callback, effect
-  raise ValueError("Transpose doesn't support debugging callbacks.")
+  raise ValueError("Transpose doesn't support jax.debug.callback.")
 ad.primitive_transposes[debug_callback_p] = debug_callback_transpose_rule
 
-def debug_callback_lowering(ctx, *args, effect, callback, **params):
 
-  axis_context = ctx.module_context.axis_context
+def _infer_sharding_from_axis_context(
+    axis_context: mlir.AxisContext
+) -> xc.OpSharding | None:
   if (isinstance(axis_context, sharding_impls.SPMDAxisContext) and
         set(axis_context.manual_axes) == set(axis_context.mesh.axis_names)):
     # If we have fully manual sharding during lowering, that means the JAX
@@ -153,20 +157,27 @@ def debug_callback_lowering(ctx, *args, effect, callback, **params):
   else:
     # When there's no SPMD partitioning going on, don't annotate a sharding.
     sharding = None
+  return sharding
 
+
+def debug_callback_lowering(ctx: mlir.LoweringRuleContext, *args, effect, callback, **params):
   def _callback(*flat_args):
     debug_callback_p.impl(
         *flat_args, effect=effect, callback=callback, **params)
     return ()
+
+  avals_in = cast(Sequence[core.ShapedArray], ctx.avals_in)
+  sharding = _infer_sharding_from_axis_context(ctx.module_context.axis_context)
   if effects.ordered_effects.contains(effect):
     [token] = ctx.tokens_in.get(effect)
+    # TODO(slebedev): Do we need to pass sharding here?
     result, token, _ = mlir.emit_python_callback(
-        ctx, _callback, token, list(args), ctx.avals_in, ctx.avals_out,
+        ctx, _callback, token, args, avals_in, ctx.avals_out,
         has_side_effect=True)
     ctx.set_tokens_out(mlir.TokenSet({effect: (token,)}))
   else:
     result, _, _ = mlir.emit_python_callback(
-        ctx, _callback, None, list(args), ctx.avals_in, ctx.avals_out,
+        ctx, _callback, None, args, avals_in, ctx.avals_out,
         has_side_effect=True, sharding=sharding)
   return result
 mlir.register_lowering(debug_callback_p, debug_callback_lowering,
@@ -176,7 +187,7 @@ mlir.register_lowering(
 mlir.register_lowering(
     debug_callback_p, debug_callback_lowering, platform="tpu")
 
-def _debug_callback_partial_eval_custom(saveable, unks_in, inst_in, eqn):
+def _debug_callback_partial_eval_custom(prim, saveable, unks_in, inst_in, eqn):
   # The default behavior for effectful primitives is to not stage them if
   # possible. For debug callback, we actually want it to be staged to
   # provide more information to the user. This rule bypasses partial_eval's
@@ -191,7 +202,7 @@ def _debug_callback_partial_eval_custom(saveable, unks_in, inst_in, eqn):
     # The usual case (if we have any unknowns, we need to stage it out)
     res = [v for v, inst in zip(eqn.invars, inst_in) if not inst]
     return None, eqn, [], [], res
-  if saveable(debug_callback_p, *[v.aval for v in eqn.invars], **eqn.params):
+  if saveable(prim, *[v.aval for v in eqn.invars], **eqn.params):
     # The policy is telling us we can save the debug callback.
     if all(inst_in):
       # If all of the inputs are instantiated, we also stage out the
@@ -204,8 +215,9 @@ def _debug_callback_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   # If we can't save the debug callback (thanks to the policy) we listen to
   # the policy and stage out the debug callback.
   return eqn, eqn, [], [], []
-pe.partial_eval_jaxpr_custom_rules[debug_callback_p] = (
-    _debug_callback_partial_eval_custom)
+pe.partial_eval_jaxpr_custom_rules[debug_callback_p] = functools.partial(
+    _debug_callback_partial_eval_custom, debug_callback_p
+)
 
 def debug_callback(callback: Callable[..., None], *args: Any,
                    ordered: bool = False, **kwargs: Any) -> None:
@@ -254,6 +266,89 @@ def debug_callback(callback: Callable[..., None], *args: Any,
     return ()
   debug_callback_p.bind(*flat_args, callback=_flat_callback, effect=effect)
 
+debug_print_p = core.Primitive("debug_print")
+debug_print_p.multiple_results = True
+
+
+def debug_print_impl_no_transfer(*flat_args, tree: Any, fmt: str) -> None:
+  args, kwargs = tree_util.tree_unflatten(tree, flat_args)
+  try:
+    sys.stdout.write(fmt.format(*args, **kwargs) + "\n")
+  except BaseException:
+    logger.exception("jax.debug.print failed")
+    raise
+
+
+@debug_print_p.def_impl
+def debug_print_impl(*flat_args, tree: Any, fmt: str, effect: DebugEffect):
+  del effect
+  try:
+    cpu_device, *_ = jax.local_devices(backend="cpu")
+  except RuntimeError as e:
+    raise RuntimeError(
+        "jax.debug.print failed to find a local CPU device to place the"
+        ' inputs on. Make sure "cpu" is listed in --jax_platforms or the'
+        " JAX_PLATFORMS environment variable."
+    ) from e
+  flat_args = jax.device_put(flat_args, cpu_device)
+  with jax.default_device(cpu_device):
+    debug_print_impl_no_transfer(*flat_args, tree=tree, fmt=fmt)
+  return ()
+
+
+@debug_print_p.def_effectful_abstract_eval
+def debug_print_abstract_eval(
+    *flat_args, tree: Any, fmt: str, effect: DebugEffect
+):
+  del flat_args, tree, fmt
+  return [], {effect}
+
+batching.primitive_batchers[debug_print_p] = functools.partial(
+    _unrolled_batching_rule, debug_print_p
+)
+
+pe.partial_eval_jaxpr_custom_rules[debug_print_p] = functools.partial(
+    _debug_callback_partial_eval_custom, debug_print_p
+)
+
+def debug_print_jvp_rule(primals, tangents, **params):
+  del tangents
+  return debug_print_p.bind(*primals, **params), []
+
+ad.primitive_jvps[debug_print_p] = debug_print_jvp_rule
+
+
+def debug_print_transpose_rule(*flat_args, tree: Any, fmt: str, effect: DebugEffect):
+  del flat_args, tree, fmt, effect
+  raise ValueError("Transpose doesn't support jax.debug.print.")
+
+ad.primitive_transposes[debug_print_p] = debug_print_transpose_rule
+
+
+def debug_print_lowering(ctx, *flat_args, tree, fmt, effect):
+  def _callback(*flat_args):
+    debug_print_p.impl(*flat_args, tree=tree, fmt=fmt, effect=effect)
+    return ()
+
+  sharding = _infer_sharding_from_axis_context(ctx.module_context.axis_context)
+  if effects.ordered_effects.contains(effect):
+    [token] = ctx.tokens_in.get(effect)
+    # TODO(slebedev): Do we need to pass sharding here?
+    result, token, _ = mlir.emit_python_callback(
+        ctx, _callback, token, flat_args, ctx.avals_in, ctx.avals_out,
+        has_side_effect=True)
+    ctx.set_tokens_out(mlir.TokenSet({effect: (token,)}))
+  else:
+    result, _, _ = mlir.emit_python_callback(
+        ctx, _callback, None, flat_args, ctx.avals_in, ctx.avals_out,
+        has_side_effect=True, sharding=sharding)
+  return result
+
+mlir.register_lowering(debug_print_p, debug_print_lowering, platform="cpu")
+mlir.register_lowering(debug_print_p, debug_print_lowering, platform="gpu")
+mlir.register_lowering(debug_print_p, debug_print_lowering, platform="tpu")
+
+
 class _DebugPrintFormatChecker(string.Formatter):
 
   def check_unused_args(self, used_args, args, kwargs):
@@ -270,8 +365,6 @@ class _DebugPrintFormatChecker(string.Formatter):
 
 formatter = _DebugPrintFormatChecker()
 
-def _format_print_callback(fmt: str, *args, **kwargs):
-  sys.stdout.write(fmt.format(*args, **kwargs) + "\n")
 
 def debug_print(fmt: str, *args, ordered: bool = False, **kwargs) -> None:
   """Prints values and works in staged out JAX functions.
@@ -308,8 +401,9 @@ def debug_print(fmt: str, *args, ordered: bool = False, **kwargs) -> None:
   # Check that we provide the correct arguments to be formatted
   formatter.format(fmt, *args, **kwargs)
 
-  debug_callback(functools.partial(_format_print_callback, fmt), *args,
-                 **kwargs, ordered=ordered)
+  flat_args, tree = tree_util.tree_flatten((args, kwargs))
+  effect = ordered_debug_effect if ordered else debug_effect
+  debug_print_p.bind(*flat_args, tree=tree, fmt=fmt, effect=effect)
 
 
 # Sharding visualization

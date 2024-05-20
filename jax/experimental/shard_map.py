@@ -896,6 +896,15 @@ def _debug_callback_eager_rule(mesh, *args, callback: Callable[..., Any],
   return []
 eager_rules[debugging.debug_callback_p] = _debug_callback_eager_rule
 
+def _debug_print_eager_rule(mesh, *args, tree, fmt, effect):
+  del effect
+  with core.eval_context():
+    all_blocks = zip(*map(list, args))
+  for (idx, device), blocks in zip(np.ndenumerate(mesh.devices), all_blocks):
+    debugging.debug_print_impl_no_transfer(*blocks, tree=tree, fmt=fmt)
+  return []
+eager_rules[debugging.debug_print_p] = _debug_print_eager_rule
+
 def _device_put_eager_rule(mesh, x, *, src, device):
   del mesh, src
   if device is None:
@@ -1130,6 +1139,12 @@ def _core_call_check(mesh, *in_rep, call_jaxpr, **kwargs):
 def _debug_callback_rule(mesh, *in_rep, **_):
   return []
 register_norewrite(debugging.debug_callback_p)
+
+
+@register_check(debugging.debug_print_p)
+def _debug_print_rule(mesh, *in_rep, **_):
+  return []
+register_norewrite(debugging.debug_print_p)
 
 
 @register_check(callback.pure_callback_p)

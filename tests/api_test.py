@@ -6445,8 +6445,8 @@ class JaxprTest(jtu.JaxTestCase):
       jax.debug.print("{}", x)
       return x
     jaxpr = jax.make_jaxpr(f)(np.int32(0))
-    self.assertEqual(jaxpr.eqns[0].primitive, debugging.debug_callback_p)
-    self.assertStartsWith(str(jaxpr.eqns[0]), "debug_callback[", )
+    self.assertEqual(jaxpr.eqns[0].primitive, debugging.debug_print_p)
+    self.assertStartsWith(str(jaxpr.eqns[0]), "debug_print[", )
 
 
 class DCETest(jtu.JaxTestCase):
