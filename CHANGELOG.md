@@ -20,6 +20,8 @@ Remember to align the itemized text with the first line of an item within a list
     deprecated and will soon be removed. Use `rtol` instead.
   * The ``rcond`` argument of {func}`jax.numpy.linalg.pinv` is being
     deprecated and will soon be removed. Use `rtol` instead.
+  * The deprecated `jax.config` submodule has been removed. To configure JAX
+    use `import jax` and then reference the config object via `jax.config`.
 
 ## jaxlib 0.4.29
 

@@ -178,9 +178,7 @@ from jax._src.array import Shard as Shard
 import jax.experimental.compilation_cache.compilation_cache as _ccache
 del _ccache
 
-# TODO(jakevdp): remove this when jax/config.py is removed.
 from jax._src.deprecations import register as _register_deprecation
-_register_deprecation("jax.config", "config-module")
 _register_deprecation("jax.experimental", "maps-module")
 del _register_deprecation
 
