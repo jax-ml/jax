@@ -14,12 +14,13 @@ limitations under the License.
 ==============================================================================*/
 
 #include "jaxlib/gpu/cholesky_update_kernel.h"
-
 #include <stdio.h>
 
+#ifdef JAX_GPU_HIP
+#include "rocm/include/hip/amd_detail/amd_hip_cooperative_groups.h"
+#else // JAX_GPU_CUDA
 #include "third_party/gpus/cuda/include/cooperative_groups.h"
-#include "jaxlib/gpu/vendor.h"
-
+#endif
 
 namespace cg = cooperative_groups;
 
@@ -88,10 +89,15 @@ void LaunchCholeskyUpdateKernelBody(
       reinterpret_cast<void*>(&uVector),
       reinterpret_cast<void*>(&nSize),
   };
-
+#ifdef JAX_GPU_HIP
+  hipLaunchCooperativeKernel(
+      (void*) CholeskyUpdateKernel<T>, grid_dim, block_dim, arg_ptrs,
+      /*dynamic_shared_mem_bytes=*/ 0, stream);
+#else // JAX_GPU_CUDA
   cudaLaunchCooperativeKernel(
       (void*) CholeskyUpdateKernel<T>, grid_dim, block_dim, arg_ptrs,
       /*dynamic_shared_mem_bytes=*/ 0, stream);
+#endif
 }
 
 
@@ -103,8 +109,13 @@ void LaunchCholeskyUpdateKernel(
   LinalgType type = descriptor.linalg_type;
 
   int dev = 0;
+#ifdef JAX_GPU_HIP
+  hipDeviceProp_t deviceProp;
+  hipGetDeviceProperties(&deviceProp, dev);
+#else // JAX_GPU_CUDA
   cudaDeviceProp deviceProp;
   cudaGetDeviceProperties(&deviceProp, dev);
+#endif
 
   int block_dim = deviceProp.maxThreadsPerBlock;
   int grid_dim = deviceProp.multiProcessorCount;
