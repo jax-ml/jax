@@ -454,6 +454,36 @@ class ShardingTest(tf_test_util.JaxToTfTestCase):
             (r"f32\[20,10\].*custom_call_target.*Sharding.*sharding.*devices=\[2,1\]", count_out_P),
         ])
 
+  def test_grad_sharding_different_mesh(self):
+    self.skipTest("TODO: fix the plumbing of device_assignment for jax2tf: https://github.com/google/jax/pull/21319")
+    # Convert with two similar meshes, the only difference being
+    # the order of the devices. grad should not fail.
+    # https://github.com/google/jax/issues/21314
+    def f_jax(x):
+      return jnp.sum(x * 2.)
+
+    mesh = Mesh(jax.local_devices(), "i")
+    # The same mesh with reversed order of devices
+    mesh_rev = Mesh(list(reversed(jax.local_devices())), "i")
+    shardings = NamedSharding(mesh, jax.sharding.PartitionSpec(("i",)))
+    shardings_rev = NamedSharding(mesh_rev, jax.sharding.PartitionSpec(("i",)))
+
+    f_tf = tf.function(jax2tf.convert(pjit.pjit(f_jax, in_shardings=shardings)))
+    f_tf_rev = tf.function(jax2tf.convert(pjit.pjit(f_jax, in_shardings=shardings_rev)))
+    inp = np.ones((jax.local_device_count(), 4), dtype=np.float32)
+
+    input_v = tf.Variable(inp)
+    with tf.GradientTape(persistent=True) as tape:
+      tape.watch(input_v)
+      res_tf = f_tf(input_v)
+      g = tape.gradient(res_tf, input_v)
+
+    with tf.GradientTape(persistent=True) as tape:
+      tape.watch(input_v)
+      res_tf_rev = f_tf_rev(input_v)
+      g_rev = tape.gradient(res_tf_rev, input_v)
+    self.assertAllClose(g, g_rev)
+
   @jtu.parameterized_filterable(
     kwargs=[
       dict(testcase_name=f"_func={func}", func=func)

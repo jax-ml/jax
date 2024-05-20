@@ -531,13 +531,15 @@ class NativeSerializationImpl(SerializationImpl):
 
   def get_vjp_fun(self) -> tuple[Callable,
                                  Sequence[core.AbstractValue]]:
+    # TODO(necula): use the actual device assignment from the primal function
+    device_assignment = jax.devices(jax.default_backend())[:self.exported.nr_devices]
     return _export._get_vjp_fun(self.fun_jax,
                                 in_tree=self.exported.in_tree,
                                 in_avals=self.exported.in_avals,
                                 in_shardings=self.exported.in_shardings,
                                 out_avals=self.exported.out_avals,
                                 out_shardings=self.exported.out_shardings,
-                                nr_devices=self.exported.nr_devices,
+                                device_assignment=device_assignment,
                                 apply_jit=True)
 
 class GraphSerializationImpl(SerializationImpl):
@@ -609,7 +611,7 @@ class GraphSerializationImpl(SerializationImpl):
                                 in_shardings=(None,) * len(self.args_avals_flat),
                                 out_avals=self.outs_avals,
                                 out_shardings=(None,) * len(self.outs_avals),
-                                nr_devices=1,  # Does not matter for unspecified shardings
+                                device_assignment=None,  # Not used when apply_jit = False
                                 apply_jit=False)
 
 
