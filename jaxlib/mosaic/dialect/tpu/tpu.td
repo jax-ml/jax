@@ -540,6 +540,11 @@ def TPU_YieldOp : TPU_Op<"yield", [Pure, ReturnLike, Terminator]> {
   let assemblyFormat = [{ attr-dict ($results^ `:` type($results))? }];
 }
 
+def TPU_DelayOp : TPU_Op<"delay"> {
+  let arguments = (ins I32:$nanos);
+  let results = (outs);
+}
+
 // Expands the granularity of mask to subelements.
 def TPU_MaskCastOp : TPU_Op<"mask_cast", [Pure]> {
   let arguments = (ins AnyVector:$input);

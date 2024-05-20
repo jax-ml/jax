@@ -2324,3 +2324,10 @@ def _get_barrier_semaphore_rule(ctx: LoweringRuleContext):
   memref_type = aval_to_ir_type(ctx.avals_out[0])
   return tpu.GetBarrierSemaphoreOp(memref_type).result
 lowering_rules[tpu_primitives.get_barrier_semaphore_p] = _get_barrier_semaphore_rule
+
+
+def _delay_rule(ctx: LoweringRuleContext, nanos: int):
+  return tpu.DelayOp(nanos).results
+
+
+lowering_rules[tpu_primitives.delay_p] = _delay_rule

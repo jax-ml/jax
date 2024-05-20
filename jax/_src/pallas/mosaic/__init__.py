@@ -31,6 +31,7 @@ from jax._src.pallas.mosaic.pipeline import make_pipeline_allocations
 from jax._src.pallas.mosaic.primitives import async_copy
 from jax._src.pallas.mosaic.primitives import async_remote_copy
 from jax._src.pallas.mosaic.primitives import bitcast
+from jax._src.pallas.mosaic.primitives import delay
 from jax._src.pallas.mosaic.primitives import device_id
 from jax._src.pallas.mosaic.primitives import DeviceIdType
 from jax._src.pallas.mosaic.primitives import get_barrier_semaphore
