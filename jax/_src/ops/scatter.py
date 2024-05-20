@@ -103,9 +103,6 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
   idx = jnp._merge_static_and_dynamic_indices(treedef, static_idx, dynamic_idx)
   indexer = jnp._index_to_gather(jnp.shape(x), idx,
                                  normalize_indices=normalize_indices)
-  # TODO(jakevdp): implement scalar boolean logic.
-  if indexer.scalar_bool_dims:
-    raise TypeError("Scalar boolean indices are not allowed in scatter.")
 
   # Avoid calling scatter if the slice shape is empty, both as a fast path and
   # to handle cases like zeros(0)[array([], int32)].
@@ -121,6 +118,9 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
   if indexer.reversed_y_dims:
     y = lax.rev(y, indexer.reversed_y_dims)
 
+  if indexer.scalar_bool_dims:
+    x = lax.expand_dims(x, indexer.scalar_bool_dims)
+
   # Transpose the gather dimensions into scatter dimensions (cf.
   # lax._gather_transpose_rule)
   dnums = lax.ScatterDimensionNumbers(
@@ -133,8 +133,9 @@ def _scatter_impl(x, y, scatter_op, treedef, static_idx, dynamic_idx,
     indices_are_sorted=indexer.indices_are_sorted or indices_are_sorted,
     unique_indices=indexer.unique_indices or unique_indices,
     mode=mode)
+  if indexer.scalar_bool_dims:
+    out = lax.squeeze(out, indexer.scalar_bool_dims)
   return lax_internal._convert_element_type(out, dtype, weak_type)
-
 
 
 def _get_identity(op, dtype):
