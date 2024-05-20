@@ -14,6 +14,7 @@
 # ==============================================================================
 """Matmul kernels for H100."""
 
+import contextlib
 import enum
 import jax
 from jax import random
@@ -136,6 +137,14 @@ class WGMMATF32x3Impl:
     return {"main": acc, "errs": acc_err}
 
 
+def mlir_context(f):
+  def wrap(*args, **kw):
+    with mlir.make_ir_context(), ir.Location.unknown():
+      return f(*args, **kw)
+
+  return wrap
+
+@mlir_context
 def build_kernel(
     m: int,
     k: int,
@@ -359,47 +368,46 @@ def verify(
     precision: F32Precision = F32Precision.DEFAULT,
 ):
   in_dtype = jnp.dtype(in_dtype)
-  with mlir.make_ir_context(), ir.Location.unknown():
-    kx, ky = random.split(random.key(1234))
-    x = random.uniform(kx, (m, k), dtype=in_dtype)
-    y = random.uniform(ky, (n, k) if rhs_transpose else (k, n), dtype=in_dtype)
+  kx, ky = random.split(random.key(1234))
+  x = random.uniform(kx, (m, k), dtype=in_dtype)
+  y = random.uniform(ky, (n, k) if rhs_transpose else (k, n), dtype=in_dtype)
 
-    match precision:
-      case F32Precision.DEFAULT:
-        impl = WGMMADefaultImpl
-      case F32Precision.TF32_X3:
-        impl = WGMMATF32x3Impl
+  match precision:
+    case F32Precision.DEFAULT:
+      impl = WGMMADefaultImpl
+    case F32Precision.TF32_X3:
+      impl = WGMMATF32x3Impl
 
-    prof_spec = profiler.ProfilerSpec(132 * 4096) if profile else None
-    f = build_kernel(
-        m,
-        k,
-        n,
-        stages=stages,
-        tile_m=tile_m,
-        in_dtype=in_dtype,
-        rhs_transpose=rhs_transpose,
-        wgmma_impl=impl,
-        profiler_spec=prof_spec,
+  prof_spec = profiler.ProfilerSpec(132 * 4096) if profile else None
+  f = build_kernel(
+      m,
+      k,
+      n,
+      stages=stages,
+      tile_m=tile_m,
+      in_dtype=in_dtype,
+      rhs_transpose=rhs_transpose,
+      wgmma_impl=impl,
+      profiler_spec=prof_spec,
+  )
+  z, runtime = profiler.measure(f, x, y)
+
+  if rhs_transpose:
+    dimension_numbers = ((1,), (1,)), ((), ())
+  else:
+    dimension_numbers = ((1,), (0,)), ((), ())
+  if in_dtype == jnp.dtype(jnp.float32):  # Account for the tf32 precision
+    exponent_bits, mantissa_bits = 8, 10
+    x, y = (
+        jax.lax.reduce_precision(v, exponent_bits, mantissa_bits)
+        for v in (x, y)
     )
-    z, runtime = profiler.measure(f, x, y)
-
-    if rhs_transpose:
-      dimension_numbers = ((1,), (1,)), ((), ())
-    else:
-      dimension_numbers = ((1,), (0,)), ((), ())
-    if in_dtype == jnp.dtype(jnp.float32):  # Account for the tf32 precision
-      exponent_bits, mantissa_bits = 8, 10
-      x, y = (
-          jax.lax.reduce_precision(v, exponent_bits, mantissa_bits)
-          for v in (x, y)
-      )
-    ref = jax.lax.dot_general(
-        x, y, dimension_numbers,
-        preferred_element_type=jnp.float32,
-    )
-    np.testing.assert_allclose(z, ref, atol=1e-3, rtol=1e-3)
-    return runtime
+  ref = jax.lax.dot_general(
+      x, y, dimension_numbers,
+      preferred_element_type=jnp.float32,
+  )
+  np.testing.assert_allclose(z, ref, atol=1e-3, rtol=1e-3)
+  return runtime
 
 
 if __name__ == "__main__":
