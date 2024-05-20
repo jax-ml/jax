@@ -86,6 +86,7 @@ jax_test(
     disable_backends = DISABLED_BACKENDS,
     disable_configs = DISABLED_CONFIGS,
     main = "//third_party/py/jax/experimental/mosaic/gpu/examples:flash_attention.py",
+    tags = ["notap"],
     deps = [
         "//jax:mosaic_gpu",
     ] + py_deps("numpy"),

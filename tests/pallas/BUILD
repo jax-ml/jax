@@ -289,6 +289,7 @@ jax_test(
     env = {
         "JAX_PALLAS_USE_MOSAIC_GPU": "1",
     },
+    tags = ["notap"],
     deps = [
         "//jax:pallas",
         "//jax:pallas_gpu",  # build_cleaner: keep
