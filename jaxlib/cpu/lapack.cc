@@ -13,9 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <complex>
-
 #include "nanobind/nanobind.h"
+#include "jaxlib/cpu/cpu_kernels.h"
 #include "jaxlib/cpu/lapack_kernels.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
 
@@ -23,6 +22,40 @@ namespace jax {
 namespace {
 
 namespace nb = nanobind;
+
+using ::xla::ffi::DataType;
+
+svd::ComputationMode GetSvdComputationMode(bool job_opt_compute_uv,
+                                           bool job_opt_full_matrices) {
+  if (!job_opt_compute_uv) {
+    return svd::ComputationMode::kNoComputeUVt;
+  } else if (!job_opt_full_matrices) {
+    return svd::ComputationMode::kComputeMinUVt;
+  }
+  return svd::ComputationMode::kComputeFullUVt;
+}
+
+template <DataType dtype>
+int64_t GesddGetWorkspaceSize(lapack_int m, lapack_int n,
+                              bool job_opt_compute_uv,
+                              bool job_opt_full_matrices) {
+  svd::ComputationMode mode =
+      GetSvdComputationMode(job_opt_compute_uv, job_opt_full_matrices);
+  return svd::SVDType<dtype>::GetWorkspaceSize(m, n, mode);
+};
+
+lapack_int GesddGetRealWorkspaceSize(lapack_int m, lapack_int n,
+                                     bool job_opt_compute_uv) {
+  svd::ComputationMode mode = GetSvdComputationMode(job_opt_compute_uv, true);
+  return svd::GetRealWorkspaceSize(m, n, mode);
+}
+
+// TODO(paruzelp): For some reason JAX prefers to assume a larger workspace
+//                 Might need to investigate if that is necessary.
+template <lapack_int (&f)(int64_t, eig::ComputationMode)>
+inline constexpr auto BoundWithEigvecs = +[](lapack_int n) {
+  return f(n, eig::ComputationMode::kComputeEigenvectors);
+};
 
 void GetLapackKernelsFromScipy() {
   static bool initialized = false;  // Protected by GIL
@@ -35,12 +68,11 @@ void GetLapackKernelsFromScipy() {
   auto blas_ptr = [&](const char* name) {
     return nb::cast<nb::capsule>(blas_capi[name]).data();
   };
-  Trsm<float>::fn = reinterpret_cast<Trsm<float>::FnType*>(blas_ptr("strsm"));
-  Trsm<double>::fn = reinterpret_cast<Trsm<double>::FnType*>(blas_ptr("dtrsm"));
-  Trsm<std::complex<float>>::fn =
-      reinterpret_cast<Trsm<std::complex<float>>::FnType*>(blas_ptr("ctrsm"));
-  Trsm<std::complex<double>>::fn =
-      reinterpret_cast<Trsm<std::complex<double>>::FnType*>(blas_ptr("ztrsm"));
+
+  AssignKernelFn<TriMatrixEquationSolver<DataType::F32>>(blas_ptr("strsm"));
+  AssignKernelFn<TriMatrixEquationSolver<DataType::F64>>(blas_ptr("dtrsm"));
+  AssignKernelFn<TriMatrixEquationSolver<DataType::C64>>(blas_ptr("ctrsm"));
+  AssignKernelFn<TriMatrixEquationSolver<DataType::C128>>(blas_ptr("ztrsm"));
 
   nb::module_ cython_lapack =
       nb::module_::import_("scipy.linalg.cython_lapack");
@@ -48,179 +80,113 @@ void GetLapackKernelsFromScipy() {
   auto lapack_ptr = [&](const char* name) {
     return nb::cast<nb::capsule>(lapack_capi[name]).data();
   };
-  Getrf<float>::fn =
-      reinterpret_cast<Getrf<float>::FnType*>(lapack_ptr("sgetrf"));
-  Getrf<double>::fn =
-      reinterpret_cast<Getrf<double>::FnType*>(lapack_ptr("dgetrf"));
-  Getrf<std::complex<float>>::fn =
-      reinterpret_cast<Getrf<std::complex<float>>::FnType*>(
-          lapack_ptr("cgetrf"));
-  Getrf<std::complex<double>>::fn =
-      reinterpret_cast<Getrf<std::complex<double>>::FnType*>(
-          lapack_ptr("zgetrf"));
-  Geqrf<float>::fn =
-      reinterpret_cast<Geqrf<float>::FnType*>(lapack_ptr("sgeqrf"));
-  Geqrf<double>::fn =
-      reinterpret_cast<Geqrf<double>::FnType*>(lapack_ptr("dgeqrf"));
-  Geqrf<std::complex<float>>::fn =
-      reinterpret_cast<Geqrf<std::complex<float>>::FnType*>(
-          lapack_ptr("cgeqrf"));
-  Geqrf<std::complex<double>>::fn =
-      reinterpret_cast<Geqrf<std::complex<double>>::FnType*>(
-          lapack_ptr("zgeqrf"));
-  Orgqr<float>::fn =
-      reinterpret_cast<Orgqr<float>::FnType*>(lapack_ptr("sorgqr"));
-  Orgqr<double>::fn =
-      reinterpret_cast<Orgqr<double>::FnType*>(lapack_ptr("dorgqr"));
-  Orgqr<std::complex<float>>::fn =
-      reinterpret_cast<Orgqr<std::complex<float>>::FnType*>(
-          lapack_ptr("cungqr"));
-  Orgqr<std::complex<double>>::fn =
-      reinterpret_cast<Orgqr<std::complex<double>>::FnType*>(
-          lapack_ptr("zungqr"));
-  Potrf<float>::fn =
-      reinterpret_cast<Potrf<float>::FnType*>(lapack_ptr("spotrf"));
-  Potrf<double>::fn =
-      reinterpret_cast<Potrf<double>::FnType*>(lapack_ptr("dpotrf"));
-  Potrf<std::complex<float>>::fn =
-      reinterpret_cast<Potrf<std::complex<float>>::FnType*>(
-          lapack_ptr("cpotrf"));
-  Potrf<std::complex<double>>::fn =
-      reinterpret_cast<Potrf<std::complex<double>>::FnType*>(
-          lapack_ptr("zpotrf"));
-  RealGesdd<float>::fn =
-      reinterpret_cast<RealGesdd<float>::FnType*>(lapack_ptr("sgesdd"));
-  RealGesdd<double>::fn =
-      reinterpret_cast<RealGesdd<double>::FnType*>(lapack_ptr("dgesdd"));
-  ComplexGesdd<std::complex<float>>::fn =
-      reinterpret_cast<ComplexGesdd<std::complex<float>>::FnType*>(
-          lapack_ptr("cgesdd"));
-  ComplexGesdd<std::complex<double>>::fn =
-      reinterpret_cast<ComplexGesdd<std::complex<double>>::FnType*>(
-          lapack_ptr("zgesdd"));
-  RealSyevd<float>::fn =
-      reinterpret_cast<RealSyevd<float>::FnType*>(lapack_ptr("ssyevd"));
-  RealSyevd<double>::fn =
-      reinterpret_cast<RealSyevd<double>::FnType*>(lapack_ptr("dsyevd"));
-  ComplexHeevd<std::complex<float>>::fn =
-      reinterpret_cast<ComplexHeevd<std::complex<float>>::FnType*>(
-          lapack_ptr("cheevd"));
-  ComplexHeevd<std::complex<double>>::fn =
-      reinterpret_cast<ComplexHeevd<std::complex<double>>::FnType*>(
-          lapack_ptr("zheevd"));
-  RealGeev<float>::fn =
-      reinterpret_cast<RealGeev<float>::FnType*>(lapack_ptr("sgeev"));
-  RealGeev<double>::fn =
-      reinterpret_cast<RealGeev<double>::FnType*>(lapack_ptr("dgeev"));
-  ComplexGeev<std::complex<float>>::fn =
-      reinterpret_cast<ComplexGeev<std::complex<float>>::FnType*>(
-          lapack_ptr("cgeev"));
-  ComplexGeev<std::complex<double>>::fn =
-      reinterpret_cast<ComplexGeev<std::complex<double>>::FnType*>(
-          lapack_ptr("zgeev"));
-  RealGees<float>::fn =
-      reinterpret_cast<RealGees<float>::FnType*>(lapack_ptr("sgees"));
-  RealGees<double>::fn =
-      reinterpret_cast<RealGees<double>::FnType*>(lapack_ptr("dgees"));
-  ComplexGees<std::complex<float>>::fn =
-      reinterpret_cast<ComplexGees<std::complex<float>>::FnType*>(
-          lapack_ptr("cgees"));
-  ComplexGees<std::complex<double>>::fn =
-      reinterpret_cast<ComplexGees<std::complex<double>>::FnType*>(
-          lapack_ptr("zgees"));
-  Gehrd<float>::fn =
-      reinterpret_cast<Gehrd<float>::FnType*>(lapack_ptr("sgehrd"));
-  Gehrd<double>::fn =
-      reinterpret_cast<Gehrd<double>::FnType*>(lapack_ptr("dgehrd"));
-  Gehrd<std::complex<float>>::fn =
-      reinterpret_cast<Gehrd<std::complex<float>>::FnType*>(
-          lapack_ptr("cgehrd"));
-  Gehrd<std::complex<double>>::fn =
-      reinterpret_cast<Gehrd<std::complex<double>>::FnType*>(
-          lapack_ptr("zgehrd"));
-  Sytrd<float>::fn =
-      reinterpret_cast<Sytrd<float>::FnType*>(lapack_ptr("ssytrd"));
-  Sytrd<double>::fn =
-      reinterpret_cast<Sytrd<double>::FnType*>(lapack_ptr("dsytrd"));
-  Sytrd<std::complex<float>>::fn =
-      reinterpret_cast<Sytrd<std::complex<float>>::FnType*>(
-          lapack_ptr("chetrd"));
-  Sytrd<std::complex<double>>::fn =
-      reinterpret_cast<Sytrd<std::complex<double>>::FnType*>(
-          lapack_ptr("zhetrd"));
+  AssignKernelFn<LuDecomposition<DataType::F32>>(lapack_ptr("sgetrf"));
+  AssignKernelFn<LuDecomposition<DataType::F64>>(lapack_ptr("dgetrf"));
+  AssignKernelFn<LuDecomposition<DataType::C64>>(lapack_ptr("cgetrf"));
+  AssignKernelFn<LuDecomposition<DataType::C128>>(lapack_ptr("zgetrf"));
+
+  AssignKernelFn<QrFactorization<DataType::F32>>(lapack_ptr("sgeqrf"));
+  AssignKernelFn<QrFactorization<DataType::F64>>(lapack_ptr("dgeqrf"));
+  AssignKernelFn<QrFactorization<DataType::C64>>(lapack_ptr("cgeqrf"));
+  AssignKernelFn<QrFactorization<DataType::C128>>(lapack_ptr("zgeqrf"));
+
+  AssignKernelFn<OrthogonalQr<DataType::F32>>(lapack_ptr("sorgqr"));
+  AssignKernelFn<OrthogonalQr<DataType::F64>>(lapack_ptr("dorgqr"));
+  AssignKernelFn<OrthogonalQr<DataType::C64>>(lapack_ptr("cungqr"));
+  AssignKernelFn<OrthogonalQr<DataType::C128>>(lapack_ptr("zungqr"));
+
+  AssignKernelFn<CholeskyFactorization<DataType::F32>>(lapack_ptr("spotrf"));
+  AssignKernelFn<CholeskyFactorization<DataType::F64>>(lapack_ptr("dpotrf"));
+  AssignKernelFn<CholeskyFactorization<DataType::C64>>(lapack_ptr("cpotrf"));
+  AssignKernelFn<CholeskyFactorization<DataType::C128>>(lapack_ptr("zpotrf"));
+
+  AssignKernelFn<svd::SVDType<DataType::F32>>(lapack_ptr("sgesdd"));
+  AssignKernelFn<svd::SVDType<DataType::F64>>(lapack_ptr("dgesdd"));
+  AssignKernelFn<svd::SVDType<DataType::C64>>(lapack_ptr("cgesdd"));
+  AssignKernelFn<svd::SVDType<DataType::C128>>(lapack_ptr("zgesdd"));
+
+  AssignKernelFn<EigenvalueDecompositionSymmetric<DataType::F32>>(
+      lapack_ptr("ssyevd"));
+  AssignKernelFn<EigenvalueDecompositionSymmetric<DataType::F64>>(
+      lapack_ptr("dsyevd"));
+  AssignKernelFn<EigenvalueDecompositionHermitian<DataType::C64>>(
+      lapack_ptr("cheevd"));
+  AssignKernelFn<EigenvalueDecompositionHermitian<DataType::C128>>(
+      lapack_ptr("zheevd"));
+
+  AssignKernelFn<EigenvalueDecomposition<DataType::F32>>(lapack_ptr("sgeev"));
+  AssignKernelFn<EigenvalueDecomposition<DataType::F64>>(lapack_ptr("dgeev"));
+  AssignKernelFn<EigenvalueDecompositionComplex<DataType::C64>>(
+      lapack_ptr("cgeev"));
+  AssignKernelFn<EigenvalueDecompositionComplex<DataType::C128>>(
+      lapack_ptr("zgeev"));
+
+  AssignKernelFn<SchurDecomposition<DataType::F32>>(lapack_ptr("sgees"));
+  AssignKernelFn<SchurDecomposition<DataType::F64>>(lapack_ptr("dgees"));
+  AssignKernelFn<SchurDecompositionComplex<DataType::C64>>(lapack_ptr("cgees"));
+  AssignKernelFn<SchurDecompositionComplex<DataType::C128>>(
+      lapack_ptr("zgees"));
+
+  AssignKernelFn<HessenbergDecomposition<DataType::F32>>(lapack_ptr("sgehrd"));
+  AssignKernelFn<HessenbergDecomposition<DataType::F64>>(lapack_ptr("dgehrd"));
+  AssignKernelFn<HessenbergDecomposition<DataType::C64>>(lapack_ptr("cgehrd"));
+  AssignKernelFn<HessenbergDecomposition<DataType::C128>>(lapack_ptr("zgehrd"));
+
+  AssignKernelFn<TridiagonalReduction<DataType::F32>>(lapack_ptr("ssytrd"));
+  AssignKernelFn<TridiagonalReduction<DataType::F64>>(lapack_ptr("dsytrd"));
+  AssignKernelFn<TridiagonalReduction<DataType::C64>>(lapack_ptr("chetrd"));
+  AssignKernelFn<TridiagonalReduction<DataType::C128>>(lapack_ptr("zhetrd"));
 
   initialized = true;
 }
 
 nb::dict Registrations() {
   nb::dict dict;
-  dict["blas_strsm"] = EncapsulateFunction(Trsm<float>::Kernel);
-  dict["blas_dtrsm"] = EncapsulateFunction(Trsm<double>::Kernel);
-  dict["blas_ctrsm"] = EncapsulateFunction(Trsm<std::complex<float>>::Kernel);
-  dict["blas_ztrsm"] = EncapsulateFunction(Trsm<std::complex<double>>::Kernel);
-  dict["lapack_sgetrf"] = EncapsulateFunction(Getrf<float>::Kernel);
-  dict["lapack_dgetrf"] = EncapsulateFunction(Getrf<double>::Kernel);
-  dict["lapack_cgetrf"] =
-      EncapsulateFunction(Getrf<std::complex<float>>::Kernel);
-  dict["lapack_zgetrf"] =
-      EncapsulateFunction(Getrf<std::complex<double>>::Kernel);
-  dict["lapack_sgeqrf"] = EncapsulateFunction(Geqrf<float>::Kernel);
-  dict["lapack_dgeqrf"] = EncapsulateFunction(Geqrf<double>::Kernel);
-  dict["lapack_cgeqrf"] =
-      EncapsulateFunction(Geqrf<std::complex<float>>::Kernel);
-  dict["lapack_zgeqrf"] =
-      EncapsulateFunction(Geqrf<std::complex<double>>::Kernel);
-  dict["lapack_sorgqr"] = EncapsulateFunction(Orgqr<float>::Kernel);
-  dict["lapack_dorgqr"] = EncapsulateFunction(Orgqr<double>::Kernel);
-  dict["lapack_cungqr"] =
-      EncapsulateFunction(Orgqr<std::complex<float>>::Kernel);
-  dict["lapack_zungqr"] =
-      EncapsulateFunction(Orgqr<std::complex<double>>::Kernel);
-  dict["lapack_spotrf"] = EncapsulateFunction(Potrf<float>::Kernel);
-  dict["lapack_dpotrf"] = EncapsulateFunction(Potrf<double>::Kernel);
-  dict["lapack_cpotrf"] =
-      EncapsulateFunction(Potrf<std::complex<float>>::Kernel);
-  dict["lapack_zpotrf"] =
-      EncapsulateFunction(Potrf<std::complex<double>>::Kernel);
-  dict["lapack_sgesdd"] = EncapsulateFunction(RealGesdd<float>::Kernel);
-  dict["lapack_dgesdd"] = EncapsulateFunction(RealGesdd<double>::Kernel);
-  dict["lapack_cgesdd"] =
-      EncapsulateFunction(ComplexGesdd<std::complex<float>>::Kernel);
-  dict["lapack_zgesdd"] =
-      EncapsulateFunction(ComplexGesdd<std::complex<double>>::Kernel);
-  dict["lapack_ssyevd"] = EncapsulateFunction(RealSyevd<float>::Kernel);
-  dict["lapack_dsyevd"] = EncapsulateFunction(RealSyevd<double>::Kernel);
-  dict["lapack_cheevd"] =
-      EncapsulateFunction(ComplexHeevd<std::complex<float>>::Kernel);
-  dict["lapack_zheevd"] =
-      EncapsulateFunction(ComplexHeevd<std::complex<double>>::Kernel);
-  dict["lapack_sgeev"] = EncapsulateFunction(RealGeev<float>::Kernel);
-  dict["lapack_dgeev"] = EncapsulateFunction(RealGeev<double>::Kernel);
-  dict["lapack_cgeev"] =
-      EncapsulateFunction(ComplexGeev<std::complex<float>>::Kernel);
-  dict["lapack_zgeev"] =
-      EncapsulateFunction(ComplexGeev<std::complex<double>>::Kernel);
 
-  dict["lapack_sgees"] = EncapsulateFunction(RealGees<float>::Kernel);
-  dict["lapack_dgees"] = EncapsulateFunction(RealGees<double>::Kernel);
-  dict["lapack_cgees"] =
-      EncapsulateFunction(ComplexGees<std::complex<float>>::Kernel);
-  dict["lapack_zgees"] =
-      EncapsulateFunction(ComplexGees<std::complex<double>>::Kernel);
-
-  dict["lapack_sgehrd"] = EncapsulateFunction(Gehrd<float>::Kernel);
-  dict["lapack_dgehrd"] = EncapsulateFunction(Gehrd<double>::Kernel);
-  dict["lapack_cgehrd"] =
-      EncapsulateFunction(Gehrd<std::complex<float>>::Kernel);
-  dict["lapack_zgehrd"] =
-      EncapsulateFunction(Gehrd<std::complex<double>>::Kernel);
-
-  dict["lapack_ssytrd"] = EncapsulateFunction(Sytrd<float>::Kernel);
-  dict["lapack_dsytrd"] = EncapsulateFunction(Sytrd<double>::Kernel);
-  dict["lapack_chetrd"] =
-      EncapsulateFunction(Sytrd<std::complex<float>>::Kernel);
-  dict["lapack_zhetrd"] =
-      EncapsulateFunction(Sytrd<std::complex<double>>::Kernel);
+  dict["blas_strsm"] = EncapsulateFunction(blas_strsm);
+  dict["blas_dtrsm"] = EncapsulateFunction(blas_dtrsm);
+  dict["blas_ctrsm"] = EncapsulateFunction(blas_ctrsm);
+  dict["blas_ztrsm"] = EncapsulateFunction(blas_ztrsm);
+  dict["lapack_sgetrf"] = EncapsulateFunction(lapack_sgetrf);
+  dict["lapack_dgetrf"] = EncapsulateFunction(lapack_dgetrf);
+  dict["lapack_cgetrf"] = EncapsulateFunction(lapack_cgetrf);
+  dict["lapack_zgetrf"] = EncapsulateFunction(lapack_zgetrf);
+  dict["lapack_sgeqrf"] = EncapsulateFunction(lapack_sgeqrf);
+  dict["lapack_dgeqrf"] = EncapsulateFunction(lapack_dgeqrf);
+  dict["lapack_cgeqrf"] = EncapsulateFunction(lapack_cgeqrf);
+  dict["lapack_zgeqrf"] = EncapsulateFunction(lapack_zgeqrf);
+  dict["lapack_sorgqr"] = EncapsulateFunction(lapack_sorgqr);
+  dict["lapack_dorgqr"] = EncapsulateFunction(lapack_dorgqr);
+  dict["lapack_cungqr"] = EncapsulateFunction(lapack_cungqr);
+  dict["lapack_zungqr"] = EncapsulateFunction(lapack_zungqr);
+  dict["lapack_spotrf"] = EncapsulateFunction(lapack_spotrf);
+  dict["lapack_dpotrf"] = EncapsulateFunction(lapack_dpotrf);
+  dict["lapack_cpotrf"] = EncapsulateFunction(lapack_cpotrf);
+  dict["lapack_zpotrf"] = EncapsulateFunction(lapack_zpotrf);
+  dict["lapack_sgesdd"] = EncapsulateFunction(lapack_sgesdd);
+  dict["lapack_dgesdd"] = EncapsulateFunction(lapack_dgesdd);
+  dict["lapack_cgesdd"] = EncapsulateFunction(lapack_cgesdd);
+  dict["lapack_zgesdd"] = EncapsulateFunction(lapack_zgesdd);
+  dict["lapack_ssyevd"] = EncapsulateFunction(lapack_ssyevd);
+  dict["lapack_dsyevd"] = EncapsulateFunction(lapack_dsyevd);
+  dict["lapack_cheevd"] = EncapsulateFunction(lapack_cheevd);
+  dict["lapack_zheevd"] = EncapsulateFunction(lapack_zheevd);
+  dict["lapack_sgeev"] = EncapsulateFunction(lapack_sgeev);
+  dict["lapack_dgeev"] = EncapsulateFunction(lapack_dgeev);
+  dict["lapack_cgeev"] = EncapsulateFunction(lapack_cgeev);
+  dict["lapack_zgeev"] = EncapsulateFunction(lapack_zgeev);
+  dict["lapack_sgees"] = EncapsulateFunction(lapack_sgees);
+  dict["lapack_dgees"] = EncapsulateFunction(lapack_dgees);
+  dict["lapack_cgees"] = EncapsulateFunction(lapack_cgees);
+  dict["lapack_zgees"] = EncapsulateFunction(lapack_zgees);
+  dict["lapack_sgehrd"] = EncapsulateFunction(lapack_sgehrd);
+  dict["lapack_dgehrd"] = EncapsulateFunction(lapack_dgehrd);
+  dict["lapack_cgehrd"] = EncapsulateFunction(lapack_cgehrd);
+  dict["lapack_zgehrd"] = EncapsulateFunction(lapack_zgehrd);
+  dict["lapack_ssytrd"] = EncapsulateFunction(lapack_ssytrd);
+  dict["lapack_dsytrd"] = EncapsulateFunction(lapack_dsytrd);
+  dict["lapack_chetrd"] = EncapsulateFunction(lapack_chetrd);
+  dict["lapack_zhetrd"] = EncapsulateFunction(lapack_zhetrd);
 
   return dict;
 }
@@ -228,60 +194,98 @@ nb::dict Registrations() {
 NB_MODULE(_lapack, m) {
   // Populates the LAPACK kernels from scipy on first call.
   m.def("initialize", GetLapackKernelsFromScipy);
-
   m.def("registrations", &Registrations);
-  m.def("lapack_sgeqrf_workspace", &Geqrf<float>::Workspace, nb::arg("m"),
-        nb::arg("n"));
-  m.def("lapack_dgeqrf_workspace", &Geqrf<double>::Workspace, nb::arg("m"),
-        nb::arg("n"));
-  m.def("lapack_cgeqrf_workspace", &Geqrf<std::complex<float>>::Workspace,
-        nb::arg("m"), nb::arg("n"));
-  m.def("lapack_zgeqrf_workspace", &Geqrf<std::complex<double>>::Workspace,
-        nb::arg("m"), nb::arg("n"));
-  m.def("lapack_sorgqr_workspace", &Orgqr<float>::Workspace, nb::arg("m"),
-        nb::arg("n"), nb::arg("k"));
-  m.def("lapack_dorgqr_workspace", &Orgqr<double>::Workspace, nb::arg("m"),
-        nb::arg("n"), nb::arg("k"));
-  m.def("lapack_cungqr_workspace", &Orgqr<std::complex<float>>::Workspace,
-        nb::arg("m"), nb::arg("n"), nb::arg("k"));
-  m.def("lapack_zungqr_workspace", &Orgqr<std::complex<double>>::Workspace,
-        nb::arg("m"), nb::arg("n"), nb::arg("k"));
-  m.def("gesdd_iwork_size", &GesddIworkSize, nb::arg("m"), nb::arg("n"));
-  m.def("sgesdd_work_size", &RealGesdd<float>::Workspace, nb::arg("m"),
-        nb::arg("n"), nb::arg("job_opt_compute_uv"),
-        nb::arg("job_opt_full_matrices"));
-  m.def("dgesdd_work_size", &RealGesdd<double>::Workspace, nb::arg("m"),
-        nb::arg("n"), nb::arg("job_opt_compute_uv"),
-        nb::arg("job_opt_full_matrices"));
-  m.def("cgesdd_rwork_size", &ComplexGesddRworkSize, nb::arg("m"), nb::arg("n"),
-        nb::arg("compute_uv"));
-  m.def("cgesdd_work_size", &ComplexGesdd<std::complex<float>>::Workspace,
-        nb::arg("m"), nb::arg("n"), nb::arg("job_opt_compute_uv"),
-        nb::arg("job_opt_full_matrices"));
-  m.def("zgesdd_work_size", &ComplexGesdd<std::complex<double>>::Workspace,
-        nb::arg("m"), nb::arg("n"), nb::arg("job_opt_compute_uv"),
-        nb::arg("job_opt_full_matrices"));
-  m.def("syevd_work_size", &SyevdWorkSize, nb::arg("n"));
-  m.def("syevd_iwork_size", &SyevdIworkSize, nb::arg("n"));
-  m.def("heevd_work_size", &HeevdWorkSize, nb::arg("n"));
-  m.def("heevd_rwork_size", &HeevdRworkSize, nb::arg("n"));
+  // Submodules
+  auto svd = m.def_submodule("svd");
+  auto eig = m.def_submodule("eig");
+  auto schur = m.def_submodule("schur");
+  // Enums
+  nb::enum_<svd::ComputationMode>(svd, "ComputationMode")
+      // kComputeVtOverwriteXPartialU is not implemented
+      .value("kComputeFullUVt", svd::ComputationMode::kComputeFullUVt)
+      .value("kComputeMinUVt", svd::ComputationMode::kComputeMinUVt)
+      .value("kNoComputeUVt", svd::ComputationMode::kNoComputeUVt);
+  nb::enum_<eig::ComputationMode>(eig, "ComputationMode")
+      .value("kComputeEigenvectors", eig::ComputationMode::kComputeEigenvectors)
+      .value("kNoEigenvectors", eig::ComputationMode::kNoEigenvectors);
+  nb::enum_<schur::ComputationMode>(schur, "ComputationMode")
+      .value("kNoComputeSchurVectors",
+             schur::ComputationMode::kNoComputeSchurVectors)
+      .value("kComputeSchurVectors",
+             schur::ComputationMode::kComputeSchurVectors);
+  nb::enum_<schur::Sort>(schur, "Sort")
+      .value("kNoSortEigenvalues", schur::Sort::kNoSortEigenvalues)
+      .value("kSortEigenvalues", schur::Sort::kSortEigenvalues);
 
-  m.def("lapack_sgehrd_workspace", &Gehrd<float>::Workspace, nb::arg("lda"),
-        nb::arg("n"), nb::arg("ilo"), nb::arg("ihi"));
-  m.def("lapack_dgehrd_workspace", &Gehrd<double>::Workspace, nb::arg("lda"),
-        nb::arg("n"), nb::arg("ilo"), nb::arg("ihi"));
-  m.def("lapack_cgehrd_workspace", &Gehrd<std::complex<float>>::Workspace,
-        nb::arg("lda"), nb::arg("n"), nb::arg("ilo"), nb::arg("ihi"));
-  m.def("lapack_zgehrd_workspace", &Gehrd<std::complex<double>>::Workspace,
-        nb::arg("lda"), nb::arg("n"), nb::arg("ilo"), nb::arg("ihi"));
-  m.def("lapack_ssytrd_workspace", &Sytrd<float>::Workspace, nb::arg("lda"),
+  m.def("lapack_sgeqrf_workspace",
+        &QrFactorization<DataType::F32>::GetWorkspaceSize, nb::arg("m"),
         nb::arg("n"));
-  m.def("lapack_dsytrd_workspace", &Sytrd<double>::Workspace, nb::arg("lda"),
+  m.def("lapack_dgeqrf_workspace",
+        &QrFactorization<DataType::F64>::GetWorkspaceSize, nb::arg("m"),
         nb::arg("n"));
-  m.def("lapack_chetrd_workspace", &Sytrd<std::complex<float>>::Workspace,
-        nb::arg("lda"), nb::arg("n"));
-  m.def("lapack_zhetrd_workspace", &Sytrd<std::complex<double>>::Workspace,
-        nb::arg("lda"), nb::arg("n"));
+  m.def("lapack_cgeqrf_workspace",
+        &QrFactorization<DataType::C64>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"));
+  m.def("lapack_zgeqrf_workspace",
+        &QrFactorization<DataType::C128>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"));
+  m.def("lapack_sorgqr_workspace",
+        &OrthogonalQr<DataType::F32>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"), nb::arg("k"));
+  m.def("lapack_dorgqr_workspace",
+        &OrthogonalQr<DataType::F64>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"), nb::arg("k"));
+  m.def("lapack_cungqr_workspace",
+        &OrthogonalQr<DataType::C64>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"), nb::arg("k"));
+  m.def("lapack_zungqr_workspace",
+        &OrthogonalQr<DataType::C128>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"), nb::arg("k"));
+  m.def("gesdd_iwork_size", &svd::GetIntWorkspaceSize, nb::arg("m"),
+        nb::arg("n"));
+  m.def("sgesdd_work_size", &svd::SVDType<DataType::F32>::GetWorkspaceSize,
+        nb::arg("m"), nb::arg("n"), nb::arg("mode"));
+  m.def("dgesdd_work_size", &svd::SVDType<DataType::F64>::GetWorkspaceSize,
+        nb::arg("m"), nb::arg("n"), nb::arg("mode"));
+  m.def("gesdd_rwork_size", &svd::GetRealWorkspaceSize, nb::arg("m"),
+        nb::arg("n"), nb::arg("mode"));
+  m.def("cgesdd_work_size", &svd::SVDType<DataType::C64>::GetWorkspaceSize,
+        nb::arg("m"), nb::arg("n"), nb::arg("mode"));
+  m.def("zgesdd_work_size", &svd::SVDType<DataType::C128>::GetWorkspaceSize,
+        nb::arg("m"), nb::arg("n"), nb::arg("mode"));
+  m.def("syevd_work_size", BoundWithEigvecs<eig::GetWorkspaceSize>,
+        nb::arg("n"));
+  m.def("syevd_iwork_size", BoundWithEigvecs<eig::GetIntWorkspaceSize>,
+        nb::arg("n"));
+  m.def("heevd_work_size", BoundWithEigvecs<eig::GetComplexWorkspaceSize>,
+        nb::arg("n"));
+  m.def("heevd_rwork_size", BoundWithEigvecs<eig::GetRealWorkspaceSize>,
+        nb::arg("n"));
+
+  m.def("lapack_sgehrd_workspace",
+        &HessenbergDecomposition<DataType::F32>::GetWorkspaceSize,
+        nb::arg("lda"), nb::arg("n"), nb::arg("ilo"), nb::arg("ihi"));
+  m.def("lapack_dgehrd_workspace",
+        &HessenbergDecomposition<DataType::F64>::GetWorkspaceSize,
+        nb::arg("lda"), nb::arg("n"), nb::arg("ilo"), nb::arg("ihi"));
+  m.def("lapack_cgehrd_workspace",
+        &HessenbergDecomposition<DataType::C64>::GetWorkspaceSize,
+        nb::arg("lda"), nb::arg("n"), nb::arg("ilo"), nb::arg("ihi"));
+  m.def("lapack_zgehrd_workspace",
+        &HessenbergDecomposition<DataType::C128>::GetWorkspaceSize,
+        nb::arg("lda"), nb::arg("n"), nb::arg("ilo"), nb::arg("ihi"));
+  m.def("lapack_ssytrd_workspace",
+        &TridiagonalReduction<DataType::F32>::GetWorkspaceSize, nb::arg("lda"),
+        nb::arg("n"));
+  m.def("lapack_dsytrd_workspace",
+        &TridiagonalReduction<DataType::F64>::GetWorkspaceSize, nb::arg("lda"),
+        nb::arg("n"));
+  m.def("lapack_chetrd_workspace",
+        &TridiagonalReduction<DataType::C64>::GetWorkspaceSize, nb::arg("lda"),
+        nb::arg("n"));
+  m.def("lapack_zhetrd_workspace",
+        &TridiagonalReduction<DataType::C128>::GetWorkspaceSize, nb::arg("lda"),
+        nb::arg("n"));
 }
 
 }  // namespace

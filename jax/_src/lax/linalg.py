@@ -1098,7 +1098,7 @@ def _triangular_solve_cpu_lower(
   if conjugate_a and not transpose_a:
     a = chlo.conj(a)
     conjugate_a = False
-  if len(a_aval.shape) == 2 and np.dtype(a_aval.dtype) in _cpu_lapack_types:
+  if np.dtype(a_aval.dtype) in _cpu_lapack_types:
     alpha = mlir.ir_constant(np.array(1, dtype=a_aval.dtype))
     b_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, b_aval.shape)
     return [lapack.trsm_hlo(
@@ -1106,8 +1106,7 @@ def _triangular_solve_cpu_lower(
       a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal,
       b_shape_vals=b_shape_vals)]
   else:
-    # Fall back to the HLO implementation for unsupported types or batching.
-    # TODO: Consider swapping XLA for LAPACK in batched case
+    # Fall back to the HLO implementation for unsupported types.
     if transpose_a:
       transpose = "ADJOINT" if conjugate_a else "TRANSPOSE"
     else:
@@ -2304,31 +2303,43 @@ def _schur_cpu_lowering(ctx, operand, *, compute_schur_vectors, sort_eig_vals,
                                 select=select_callable,
                                 a_shape_vals=a_shape_vals)
 
-  # Number of return values depends on value of sort_eig_vals.
-  T, vs, *_, info = gees_result
+  schur_form, _eig_vals, schur_vectors, _selected_eig_vals, info = gees_result
 
   ok = mlir.compare_hlo(
       info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
       "EQ", "SIGNED")
 
-  select_T_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-  T = _broadcasting_select_hlo(
+  select_schur_form_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
+  schur_form = _broadcasting_select_hlo(
       ctx,
-      mlir.broadcast_in_dim(ctx, ok, select_T_aval,
-                            broadcast_dimensions=range(len(batch_dims))),
-      select_T_aval,
-      T, ctx.avals_out[0],_nan_like_hlo(ctx, ctx.avals_out[0]), ctx.avals_out[0])
-  output = [T]
+      mlir.broadcast_in_dim(
+          ctx,
+          ok,
+          select_schur_form_aval,
+          broadcast_dimensions=range(len(batch_dims)),
+      ),
+      select_schur_form_aval,
+      schur_form,
+      ctx.avals_out[0],
+      _nan_like_hlo(ctx, ctx.avals_out[0]),
+      ctx.avals_out[0],
+  )
+  output = [schur_form]
   if compute_schur_vectors:
     select_vs_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
-    vs = _broadcasting_select_hlo(
+    schur_vectors = _broadcasting_select_hlo(
         ctx,
-        mlir.broadcast_in_dim(ctx, ok, select_vs_aval,
-                              broadcast_dimensions=range(len(batch_dims))),
+        mlir.broadcast_in_dim(
+            ctx, ok, select_vs_aval, broadcast_dimensions=range(len(batch_dims))
+        ),
         select_vs_aval,
-        vs, ctx.avals_out[1], _nan_like_hlo(ctx, ctx.avals_out[1]), ctx.avals_out[1])
+        schur_vectors,
+        ctx.avals_out[1],
+        _nan_like_hlo(ctx, ctx.avals_out[1]),
+        ctx.avals_out[1],
+    )
 
-    output.append(vs)
+    output.append(schur_vectors)
 
   return output
 
@@ -2458,7 +2469,7 @@ def tridiagonal(a: ArrayLike, *, lower=True
   first superdiagonal. ``taus`` contains the scalar factors of the elementary
   Householder reflectors.
   """
-  arr, d, e, taus, info = tridiagonal_p.bind(jnp.asarray(a), lower=lower)
+  arr, taus, d, e, info = tridiagonal_p.bind(jnp.asarray(a), lower=lower)
   nan = arr.dtype.type(jnp.nan)
   if jnp.issubdtype(arr.dtype, np.complexfloating):
     nan = nan + arr.dtype.type(jnp.nan * 1j)
@@ -2485,10 +2496,10 @@ def _tridiagonal_abstract_eval(a, *, lower):
   real_dtype = jnp.finfo(a.dtype).dtype
   return [
       a,
+      ShapedArray(a.shape[:-2] + (a.shape[-1],), a.dtype),
       ShapedArray(a.shape[:-2] + (a.shape[-1],), real_dtype),
       ShapedArray(a.shape[:-2] + (a.shape[-1] - 1,), real_dtype),
-      ShapedArray(a.shape[:-2] + (a.shape[-1] - 1,), a.dtype),
-      ShapedArray(a.shape[:-2], np.int32)
+      ShapedArray(a.shape[:-2], np.int32),
   ]
 
 tridiagonal_p = Primitive("tridiagonal")
