@@ -2704,7 +2704,7 @@ available in the JAX FAQ at :ref:`faq-data-placement` (full FAQ at
 https://jax.readthedocs.io/en/latest/faq.html).
 """
 
-deprecations.register(__name__, "array-none")
+deprecations.register("jax-numpy-array-none")
 
 @util.implements(np.array, lax_description=_ARRAY_DOC)
 def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
@@ -2762,7 +2762,7 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
   leaves = tree_leaves(object, is_leaf=lambda x: x is None)
   if any(leaf is None for leaf in leaves):
     # Added Nov 16 2023
-    if deprecations.is_accelerated(__name__, "array-none"):
+    if deprecations.is_accelerated("jax-numpy-array-none"):
       raise TypeError("None is not a valid value for jnp.array")
     warnings.warn(
       "None encountered in jnp.array(); this is currently treated as NaN. "
