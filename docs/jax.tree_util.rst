@@ -19,6 +19,7 @@ List of Functions
    register_pytree_node_class
    register_pytree_with_keys
    register_pytree_with_keys_class
+   register_static
    tree_all
    tree_flatten
    tree_flatten_with_path
