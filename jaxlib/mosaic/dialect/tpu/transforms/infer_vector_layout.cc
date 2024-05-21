@@ -678,12 +678,20 @@ class VectorLayoutInferer {
     }
     auto res_ty = op.getResult().getType();
     int8_t bitwidth = res_ty.getElementTypeBitWidth();
-    auto layout = (dimension >= res_rank - 2)
-                      ? VectorLayout(bitwidth, {0, 0}, nativeTiling(bitwidth),
-                                     ImplicitDim::kNone)
-                      : getLayout(op.getSources().front());
+    auto layout = getLayout(op.getSources().front());
+    // When concatenating vectors with replicated offsets, we want to reset the
+    // replicated offset to zero. Because we are not sure if the replicated
+    // value from each vector are same.
+    layout = VectorLayout(
+        layout->bitwidth(),
+        {layout->offsets()[0].value_or(0), layout->offsets()[1].value_or(0)},
+        layout->tiling(), layout->implicit_dim());
+    if (dimension >= res_rank - 2) {
+      layout = VectorLayout(bitwidth, {0, 0}, nativeTiling(bitwidth),
+                            ImplicitDim::kNone);
+    }
     SmallVector<Layout> in_layouts(op->getNumOperands(), layout);
-    setLayout(op, in_layouts, in_layouts.back());
+    setLayout(op, in_layouts, layout);
     return success();
   }
 
