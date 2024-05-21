@@ -118,6 +118,7 @@ setup(
             'triton/*.pyi',
             'triton/*.pyd',
             'triton/*.so',
+            'include/xla/ffi/api/*.h',
         ],
         'jaxlib.xla_extension': ['*.pyi'],
     },

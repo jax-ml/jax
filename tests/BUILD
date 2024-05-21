@@ -126,6 +126,15 @@ jax_test(
     deps = ["//jax:extend"],
 )
 
+py_test(
+    name = "ffi_test",
+    srcs = ["ffi_test.py"],
+    deps = [
+        "//jax",
+        "//jax:test_util",
+    ],
+)
+
 jax_test(
     name = "fft_test",
     srcs = ["fft_test.py"],
