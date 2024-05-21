@@ -187,6 +187,7 @@ pybind_extension(
     srcs = ["cuda_plugin_extension.cc"],
     module_name = "cuda_plugin_extension",
     deps = [
+        "@com_google_absl//absl/status",
         "@nanobind",
         "//jaxlib:kernel_nanobind_helpers",
         "@xla//third_party/python_runtime:headers",

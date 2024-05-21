@@ -19,6 +19,7 @@ limitations under the License.
 #include <utility>
 
 #include "nanobind/nanobind.h"
+#include "absl/status/status.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
@@ -26,7 +27,6 @@ limitations under the License.
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
 #include "xla/pjrt/status_casters.h"
 #include "xla/python/py_client_gpu.h"
-#include "xla/status.h"
 #include "xla/tsl/python/lib/core/numpy.h"
 #include "xla/util.h"
 
