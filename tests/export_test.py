@@ -1070,6 +1070,32 @@ class JaxExportTest(jtu.JaxTestCase):
     xbar2, = f_jax_vjp2((x,))
     self.assertAllClose(xbar2, g2[1])
 
+  def test_grad_sharding_different_mesh(self):
+    # Export and serialize with two similar meshes, the only difference being
+    # the order of the devices. grad and serialization should not fail.
+    # https://github.com/google/jax/issues/21314
+    def f(x):
+      return jnp.sum(x * 2.)
+
+    mesh = Mesh(jax.local_devices(), "i")
+    mesh_rev = Mesh(list(reversed(jax.local_devices())), "i")
+    shardings = NamedSharding(mesh, jax.sharding.PartitionSpec(("i",)))
+    shardings_rev = NamedSharding(mesh_rev, jax.sharding.PartitionSpec(("i",)))
+    input_no_shards = jnp.ones(shape=(jax.local_device_count(),))
+    input = jnp.ones(shape=(jax.local_device_count(),), device=shardings)
+    input_rev = jax.device_put(input_no_shards, device=shardings_rev)
+
+    exp = export.export(pjit.pjit(f, in_shardings=shardings))(input)
+    exp_rev = export.export(pjit.pjit(f, in_shardings=shardings_rev))(input_no_shards)
+
+    _ = export.serialize(exp, vjp_order=1)
+    _ = export.serialize(exp_rev, vjp_order=1)
+
+    g = jax.grad(export.call(exp_rev))(input_rev)
+    g_rev = jax.grad(export.call(exp))(input)
+    self.assertAllClose(g, g_rev)
+
+
   def test_multi_platform(self):
     x = np.arange(8, dtype=np.float32)
     exp = get_exported(_testing_multi_platform_func,

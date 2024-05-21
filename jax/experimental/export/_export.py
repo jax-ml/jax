@@ -506,7 +506,8 @@ def export(fun_jax: Callable,
         module_kept_var_idx=module_kept_var_idx,
         uses_shape_polymorphism=shape_poly_state.uses_dim_vars,
         mlir_module_serialization_version=version,  # type: ignore
-        _get_vjp=lambda exported: _export_native_vjp(fun_jax, exported))
+        _get_vjp=lambda exported: _export_native_vjp(fun_jax, exported,
+                                                     lowering.compile_args["device_assignment"]))
 
   return do_export
 
@@ -903,11 +904,13 @@ def _get_vjp_fun(primal_fun: Callable, *,
                  out_avals: Sequence[core.AbstractValue],
                  in_shardings: tuple[Sharding, ...],
                  out_shardings: tuple[Sharding, ...],
-                 nr_devices: int,
+                 device_assignment: Sequence[sharding_impls.Device] | None,
                  apply_jit: bool
                  ) -> tuple[Callable, Sequence[core.AbstractValue]]:
   # Since jax.vjp does not handle kwargs, it is easier to do all the work
   # here with flattened functions.
+  # apply_jit=False is only used for backwards compatibility with the graph
+  # graph serialization. When apply_jit=True, we must pass a device assignment.
   def fun_vjp_jax(*args_and_out_cts_flat_jax):
     # Takes a flat list of primals and output cotangents
     def flattened_primal_fun_jax(*args_flat):
@@ -926,10 +929,7 @@ def _get_vjp_fun(primal_fun: Callable, *,
                       map(lambda a: a.at_least_vspace(), out_avals)))
 
   if apply_jit:
-    # Prepare a device assignment. For exporting purposes, all it matters
-    # is the number of devices.
-    device_assignment = jax.devices(jax.default_backend())[:nr_devices]
-    assert len(device_assignment) == nr_devices
+    assert device_assignment is not None
     vjp_in_shardings, vjp_out_shardings = canonical_shardings(
       device_assignment,
       tuple(itertools.chain(in_shardings, out_shardings)),
@@ -940,7 +940,9 @@ def _get_vjp_fun(primal_fun: Callable, *,
   else:
     return fun_vjp_jax, vjp_in_avals
 
-def _export_native_vjp(primal_fun, primal: Exported) -> Exported:
+def _export_native_vjp(primal_fun,
+                       primal: Exported,
+                       device_assignment: Sequence[sharding_impls.Device]) -> Exported:
   # Export the VJP of `primal_fun_jax`. See documentation for Exported.vjp
   fun_vjp_jax, vjp_in_avals = _get_vjp_fun(primal_fun,
                                            in_tree=primal.in_tree,
@@ -948,7 +950,7 @@ def _export_native_vjp(primal_fun, primal: Exported) -> Exported:
                                            in_shardings=primal.in_shardings,
                                            out_avals=primal.out_avals,
                                            out_shardings=primal.out_shardings,
-                                           nr_devices=primal.nr_devices,
+                                           device_assignment=device_assignment,
                                            apply_jit=True)
   return export(fun_vjp_jax,
                 lowering_platforms=primal.lowering_platforms,
