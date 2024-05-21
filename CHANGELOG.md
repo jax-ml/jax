@@ -8,6 +8,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.29
 
+* New Functionality
+  * The {mod}`jax.numpy` module is now compliant with the Python array API
+    2023 standard.
+
 * Deprecations
   * Removed a number of previously-deprecated APIs:
     * from {mod}`jax.core`: `non_negative_dim`, `DimSize`, `Shape`
