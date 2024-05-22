@@ -5,9 +5,6 @@ NVCC = nvcc
 # the lines of:
 #   NVCCFLAGS += -I$(shell python -c 'import jax; print(jax.ffi.include_dir())')
 NVCCFLAGS += -I../xla/
-# Assumes pybind11 has been installed in the current environment, as simple as:
-#   pip install pybind11
-NVCCFLAGS += $(shell python -m pybind11 --includes)
 
 check: mul.so
 	python mul.py

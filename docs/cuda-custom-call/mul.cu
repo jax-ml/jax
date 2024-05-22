@@ -2,8 +2,6 @@
 #include <xla/ffi/api/api.h>
 #include <xla/ffi/api/ffi.h>
 
-#include <pybind11/pybind11.h>
-
 // an elementwise product with a grid stride loop
 __global__ void MulKernel(const float *a, const float *b, float *c, size_t n) {
   size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -24,7 +22,7 @@ void LaunchMulKernel(cudaStream_t stream,
 namespace ffi = xla::ffi;
 
 // XLA FFI binding wrapper around our host launcher function
-XLA_FFI_Error *Mul(XLA_FFI_CallFrame *call_frame) {
+extern "C" XLA_FFI_Error *Mul(XLA_FFI_CallFrame *call_frame) {
   static const auto *kImpl =
       ffi::Ffi::Bind()
           .Ctx<ffi::PlatformStream<cudaStream_t>>()
@@ -41,15 +39,4 @@ XLA_FFI_Error *Mul(XLA_FFI_CallFrame *call_frame) {
             return ffi::Error::Success();
       }).release();
   return kImpl->Call(call_frame);
-}
-
-// Python module that exposes a pointer to the XLA FFI wrapper function
-// pybind11 has explicit NVCC support, nanobind doesn't and fails at link time
-// A simpler (smaller?) implementation might skip adding Python bindings
-// altogether and instead build a capsule on the Python side using ctypes. A
-// convenience function to do that could be upstreamed to JAX.
-PYBIND11_MODULE(mul, m) {
-  pybind11::dict dict;
-  dict["mul"] = pybind11::capsule((void *)Mul, "xla._CUSTOM_CALL_TARGET");
-  m.attr("registrations") = dict;
 }

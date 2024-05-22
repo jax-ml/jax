@@ -6,7 +6,7 @@ from jax._src.lib.mlir import ir
 from jaxlib.hlo_helpers import custom_call
 from jax.interpreters import mlir
 
-import mul
+import ctypes
 
 # XLA needs uppercase, "cuda" isn't recognized
 XLA_PLATFORM = "CUDA"
@@ -20,10 +20,23 @@ XLA_CUSTOM_CALL_API_VERSION = 1
 # version 4 accepts MLIR dictionaries in backend_config
 STABLEHLO_CUSTOM_CALL_API_VERSION = 4
 
+mulso = ctypes.cdll.LoadLibrary('./mul.so')
+
+# I don't know why this more elaborate setup is needed, and simply
+#   capsule = ctypes.pythonapi.PyCapsule_New(mulso.Mul)
+# doesn't work: capsule degenerates to a Python int.
+# https://stackoverflow.com/questions/65056619/converting-ctypes-c-void-p-to-pycapsule
+def build_capsule(funcptr):
+    PyCapsule_Destructor = ctypes.CFUNCTYPE(None, ctypes.py_object)
+    PyCapsule_New = ctypes.pythonapi.PyCapsule_New
+    PyCapsule_New.restype = ctypes.py_object
+    PyCapsule_New.argtypes = (ctypes.c_void_p, ctypes.c_char_p, PyCapsule_Destructor)
+    return PyCapsule_New(mulso.Mul, None, PyCapsule_Destructor(0))
+
 # register the XLA FFI binding pointer with XLA under the name "mul"
 xla_client.register_custom_call_target(
     name="mul",
-    fn=mul.registrations["mul"],
+    fn=build_capsule(mulso.Mul),
     platform=XLA_PLATFORM,
     api_version=XLA_CUSTOM_CALL_API_VERSION
 )
