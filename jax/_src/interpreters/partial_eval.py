@@ -2502,7 +2502,8 @@ def _complete_specs(
   for x, spec in zip(args, partial_specs):
     for i, name in spec.items():
       d = sizes.setdefault(name, x.shape[i])
-      if d is not x.shape[i] and d != x.shape[i]: raise TypeError
+      if d is not x.shape[i] and d != x.shape[i]:
+        raise TypeError(f"Provided size {d} for {name} does not match prior associated name for {name} : {x.shape[i]}")
 
   # Introduce new names as needed for Tracers in shapes.
   named_tracers: dict[TracerId, AbstractedAxisName] = {

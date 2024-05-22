@@ -628,6 +628,20 @@ class DynamicShapeStagingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TypeError, msg):
       jax.make_jaxpr(jnp.ones)(jnp.ones((2, 2)))
 
+  def test_matmul_two_arg(self):
+    def f(x, y):
+      return jnp.matmul(x, y)
+
+    jaxpr = jax.make_jaxpr(f, abstracted_axes=({0: 'a_0', 1: 'a_1'}, {0: 'a_1', 1: 'a_2'}),)(jnp.ones((8, 4)), jnp.ones((4, 8)))
+
+  def test_matmul_two_arg_size_mismatch_name_validation(self):
+    def f(x, y):
+      return jnp.matmul(x, y)
+
+    with self.assertRaisesRegex(TypeError,
+                                 re.escape("Provided size 4 for a_1 does not match prior associated name for a_1 : 8")):
+      jaxpr = jax.make_jaxpr(f, abstracted_axes=({0: 'a_0', 1: 'a_1'}, {0: 'a_1', 1: 'a_2'}),)(jnp.ones((8, 4)), jnp.ones((8, 4)))
+
 @unittest.skip("Test does not work with jax.Array")
 @jtu.with_config(jax_dynamic_shapes=True, jax_numpy_rank_promotion="allow")
 class DynamicShapeAutodiffTest(jtu.JaxTestCase):
