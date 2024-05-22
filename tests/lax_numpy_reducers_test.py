@@ -572,6 +572,17 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
                             atol=tol)
 
   @jtu.sample_product(
+    jnp_fn=[jnp.var, jnp.std],
+    size=[0, 1, 2]
+  )
+  def testStdOrVarLargeDdofReturnsNan(self, jnp_fn, size):
+    # test for https://github.com/google/jax/issues/21330
+    x = jnp.arange(size)
+    self.assertTrue(np.isnan(jnp_fn(x, ddof=size)))
+    self.assertTrue(np.isnan(jnp_fn(x, ddof=size + 1)))
+    self.assertTrue(np.isnan(jnp_fn(x, ddof=size + 2)))
+
+  @jtu.sample_product(
     shape=[(5,), (10, 5)],
     dtype=all_dtypes,
     out_dtype=inexact_dtypes,
