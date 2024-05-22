@@ -22,6 +22,9 @@ Remember to align the itemized text with the first line of an item within a list
     deprecated and will soon be removed. Use `rtol` instead.
   * The deprecated `jax.config` submodule has been removed. To configure JAX
     use `import jax` and then reference the config object via `jax.config`.
+  * {mod}`jax.random` APIs no longer accept batched keys, where previously
+    some did unintentionally. Going forward, we recommend explicit use of
+    {func}`jax.vmap` in such cases.
 
 ## jaxlib 0.4.29
 
