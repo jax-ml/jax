@@ -540,7 +540,7 @@ xc.register_custom_call_partitioner(
     _CUSTOM_PARTITIONING_CALL_NAME,
     _custom_partitioning_propagate_user_sharding,
     _custom_partitioning_partition,
-    _custom_partitioning_infer_sharding_from_operands, True)
+    _custom_partitioning_infer_sharding_from_operands, True)  # type: ignore
 xb.register_plugin_callbacks(
     partial(
         xc.register_custom_call_partitioner,
