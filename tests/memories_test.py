@@ -1296,6 +1296,27 @@ class ComputeOffload(jtu.JaxTestCase):
     self.assertArraysEqual(out, inp * 6)
     self.assertEqual(out2.sharding.memory_kind, 'pinned_host')
 
+  def test_sharded_compute_on_host(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, s)
+
+    @compute_on('device_host')
+    @jax.jit
+    def g(x, y):
+      return x * y
+
+    @jax.jit
+    def f(x):
+      x = x * 3
+      return g(x, x)
+
+    out = f(arr)
+    expected_out = (np_inp * 3) * (np_inp * 3)
+    self.assertEqual(out.sharding, s)
+    self.assertArraysEqual(out, expected_out)
+
   def test_nested_compute_error(self):
     @compute_on('device')
     @jax.jit
