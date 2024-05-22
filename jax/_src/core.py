@@ -316,7 +316,7 @@ class JaxprEqn(NamedTuple):
 def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None,
                   ctx=None):
   source_info = source_info or source_info_util.new_source_info()
-  ctx = ctx or JaxprEqnContext(None)
+  ctx = ctx or JaxprEqnContext(compute_on.current_compute_type())
   if config.enable_checks.value:
     assert all(isinstance(x, (Var, Literal)) for x in  invars)
     assert all(isinstance(v,  Var)           for v in outvars)
