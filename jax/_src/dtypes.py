@@ -310,7 +310,15 @@ def coerce_to_array(x: Any, dtype: DTypeLike | None = None) -> np.ndarray:
   return np.asarray(x, dtype)
 
 iinfo = ml_dtypes.iinfo
-finfo = ml_dtypes.finfo
+
+# We cast finfo attributes from np.float to built-in python floats
+# for Array API compliance
+class finfo(ml_dtypes.finfo):
+  def __setattr__(self, name, value):
+    if isinstance(value, np.floating):
+      value = float(value)
+    object.__setattr__(self, name, value)
+
 
 def _issubclass(a: Any, b: Any) -> bool:
   """Determines if ``a`` is a subclass of ``b``.

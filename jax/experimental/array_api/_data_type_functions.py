@@ -64,8 +64,6 @@ class FInfo(NamedTuple):
     smallest_normal: float
     dtype: jnp.dtype
 
-# TODO(micky774): Update jax.numpy.finfo so that its attributes are python
-# floats
 def finfo(type, /) -> FInfo:
   info = jnp.finfo(type)
   return FInfo(
