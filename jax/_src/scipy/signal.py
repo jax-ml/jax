@@ -602,7 +602,7 @@ def _spectral_helper(x: Array, y: ArrayLike | None, fs: ArrayLike = 1.0,
   if nperseg is not None:  # if specified by user
     nperseg_int = jax.core.concrete_or_error(int, nperseg,
                                              "nperseg of windowed-FFT")
-    if nperseg_int < 1:  # type: ignore[operator]
+    if nperseg_int < 1:
       raise ValueError('nperseg must be a positive integer')
   # parse window; if array like, then set nperseg = win.shape
   win, nperseg_int = signal_helper._triage_segments(
@@ -610,7 +610,7 @@ def _spectral_helper(x: Array, y: ArrayLike | None, fs: ArrayLike = 1.0,
       input_length=x.shape[axis], dtype=x.dtype)
 
   if noverlap is None:
-    noverlap_int = nperseg_int // 2  # type: ignore[operator]
+    noverlap_int = nperseg_int // 2
   else:
     noverlap_int = jax.core.concrete_or_error(int, noverlap,
                                               "noverlap of windowed-FFT")

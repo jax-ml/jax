@@ -273,7 +273,7 @@ def argnums_partial_except(f: lu.WrappedFun, static_argnums: tuple[int, ...],
           f"to unexpected cache-misses. Static argument (index {i}) of type "
           f"{type(static_arg)} for function {f.__name__} is non-hashable.")
     else:
-      fixed_args.append(_HashableWithStrictTypeEquality(static_arg))  # type: ignore
+      fixed_args.append(_HashableWithStrictTypeEquality(static_arg))
 
   return _argnums_partial(f, dyn_argnums, tuple(fixed_args)), dyn_args
 
@@ -307,7 +307,7 @@ def argnames_partial_except(f: lu.WrappedFun, static_argnames: tuple[str, ...],
             f"to unexpected cache-misses. Static argument (name {k}) of type "
             f"{type(arg)} for function {f.__name__} is non-hashable.")
       else:
-        fixed_kwargs[k] = Hashable(arg)  # type: ignore
+        fixed_kwargs[k] = Hashable(arg)
 
   return _argnames_partial(f, WrapKwArgs(fixed_kwargs)), dyn_kwargs
 

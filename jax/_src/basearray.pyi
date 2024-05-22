@@ -57,12 +57,12 @@ class Array(abc.ABC):
   # Comparisons
 
   # these return bool for object, so ignore override errors.
-  def __lt__(self, other) -> Array: ...  # type: ignore[override]
-  def __le__(self, other) -> Array: ...  # type: ignore[override]
+  def __lt__(self, other) -> Array: ...
+  def __le__(self, other) -> Array: ...
   def __eq__(self, other) -> Array: ...  # type: ignore[override]
   def __ne__(self, other) -> Array: ...  # type: ignore[override]
-  def __gt__(self, other) -> Array: ...  # type: ignore[override]
-  def __ge__(self, other) -> Array: ...  # type: ignore[override]
+  def __gt__(self, other) -> Array: ...
+  def __ge__(self, other) -> Array: ...
 
   # Unary arithmetic
 

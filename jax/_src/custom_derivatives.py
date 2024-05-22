@@ -252,7 +252,7 @@ class custom_jvp(Generic[ReturnValue]):
       static_args = [args[i] for i in self.nondiff_argnums]
       jvp = _add_args(lu.wrap_init(self.jvp), static_args)
     else:
-      f_, dyn_args = lu.wrap_init(self.fun), args  # type: ignore
+      f_, dyn_args = lu.wrap_init(self.fun), args
       jvp = lu.wrap_init(self.jvp)
     args_flat, in_tree = tree_flatten(dyn_args)
     flat_fun, out_type1 = _flatten_fun_nokwargs(f_, in_tree)
@@ -359,9 +359,9 @@ class CustomJVPCallPrimitive(core.Primitive):
         fun, self, top_trace and top_trace.level, False)
     jvp, env_trace_todo2 = process_env_traces(
         jvp, self, top_trace and top_trace.level, True)
-    tracers = map(top_trace.full_raise, args)  # type: ignore
-    outs = top_trace.process_custom_jvp_call(self, fun, jvp, tracers,  # type: ignore
-                                             symbolic_zeros=symbolic_zeros)  # type: ignore
+    tracers = map(top_trace.full_raise, args)
+    outs = top_trace.process_custom_jvp_call(self, fun, jvp, tracers,
+                                             symbolic_zeros=symbolic_zeros)
     _, env_trace_todo = lu.merge_linear_aux(env_trace_todo1, env_trace_todo2)
     return core.apply_todos(env_trace_todo, map(core.full_lower, outs))
 
@@ -805,7 +805,7 @@ class CustomVJPCallPrimitive(core.CallPrimitive):
         fun, self, top_trace and top_trace.level, False)
     fwd, env_trace_todo2 = process_env_traces_fwd(
       fwd, top_trace and top_trace.level, out_trees)
-    tracers = map(top_trace.full_raise, args)  # type: ignore
+    tracers = map(top_trace.full_raise, args)
     bwd_ = lambda *args: bwd(*args)
     outs = top_trace.process_custom_vjp_call(self, fun, fwd, bwd_, tracers,
                                              out_trees=out_trees,

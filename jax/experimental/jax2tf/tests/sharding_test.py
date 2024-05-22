@@ -48,7 +48,7 @@ import jax.numpy as jnp
 
 import numpy as np
 
-import tensorflow as tf  # type: ignore[import]
+import tensorflow as tf
 
 config.parse_flags_with_absl()
 

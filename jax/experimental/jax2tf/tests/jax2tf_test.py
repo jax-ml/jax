@@ -46,9 +46,9 @@ from jax.experimental import pjit
 from jax.sharding import PartitionSpec as P
 
 import numpy as np
-import tensorflow as tf  # type: ignore[import]
+import tensorflow as tf
 # pylint: disable=g-direct-tensorflow-import
-from tensorflow.compiler.tf2xla.python import xla as tfxla  # type: ignore[import]
+from tensorflow.compiler.tf2xla.python import xla as tfxla
 # pylint: enable=g-direct-tensorflow-import
 
 config.parse_flags_with_absl()
@@ -1496,10 +1496,10 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       transformed_func = dict(
           none=func,
           jit=jax.jit(func),
-          jit_in_shardings_None=jax.jit(func, in_shardings=None),  # type: ignore
-          jit_in_shardings_P=jax.jit(func, in_shardings=(P("a"),)),  # type: ignore
+          jit_in_shardings_None=jax.jit(func, in_shardings=None),
+          jit_in_shardings_P=jax.jit(func, in_shardings=(P("a"),)),
           jit_in_shardings_Sharding=jax.jit(
-              func, in_shardings=(sharding.NamedSharding(mesh, P("a")),)),  # type: ignore
+              func, in_shardings=(sharding.NamedSharding(mesh, P("a")),)),
           pjit=pjit.pjit(func),
           pjit_in_shardings_None=pjit.pjit(func, in_shardings=None,
                                            out_shardings=None),

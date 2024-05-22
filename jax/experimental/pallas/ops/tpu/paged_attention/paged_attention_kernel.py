@@ -404,29 +404,29 @@ def paged_attention(
     The output of attention([batch_size, num_heads, head_dim]).
   """
   if isinstance(k_pages, quantization_utils.QuantizedTensor):
-    k_pages, k_scales_pages = k_pages.weight, k_pages.scales  # type: ignore[union-attr]
+    k_pages, k_scales_pages = k_pages.weight, k_pages.scales
     assert isinstance(k_scales_pages, jax.Array)  # For typing.
     k_scales_pages = jnp.broadcast_to(
-        k_scales_pages, (*k_scales_pages.shape[:-1], k_pages.shape[-1])  # type: ignore[union-attr]
+        k_scales_pages, (*k_scales_pages.shape[:-1], k_pages.shape[-1])
     )
   else:
     k_scales_pages = None
   if isinstance(v_pages, quantization_utils.QuantizedTensor):
-    v_pages, v_scales_pages = v_pages.weight, v_pages.scales  # type: ignore[union-attr]
+    v_pages, v_scales_pages = v_pages.weight, v_pages.scales
     assert isinstance(v_scales_pages, jax.Array)  # For typing.
     v_scales_pages = jnp.broadcast_to(
-        v_scales_pages, (*v_scales_pages.shape[:-1], v_pages.shape[-1])  # type: ignore[union-attr]
+        v_scales_pages, (*v_scales_pages.shape[:-1], v_pages.shape[-1])
     )
   else:
     v_scales_pages = None
 
   batch_size, num_heads, head_dim = q.shape
-  num_kv_heads, _, page_size, head_dim_k = k_pages.shape  # type: ignore[union-attr]
+  num_kv_heads, _, page_size, head_dim_k = k_pages.shape
   batch_size_paged_indices, pages_per_sequence = page_indices.shape
 
-  if k_pages.shape != v_pages.shape:  # type: ignore[union-attr]
+  if k_pages.shape != v_pages.shape:
     raise ValueError(
-        f"k_pages and v_pages must have the same shape. Got {k_pages.shape} and"  # type: ignore[union-attr]
+        f"k_pages and v_pages must have the same shape. Got {k_pages.shape} and"
         f" {v_pages.shape}"  # pytype: disable=attribute-error
     )
   if num_heads % num_kv_heads != 0:
@@ -515,8 +515,8 @@ def paged_attention(
         num_kv_heads // num_cores
         if megacore_mode == "kv_head"
         else num_kv_heads,
-    )  # type: ignore
-    dimension_sematics = ("parallel", "arbitrary", "arbitrary")  # type: ignore
+    )
+    dimension_sematics = ("parallel", "arbitrary", "arbitrary")
   else:
     kernel = paged_flash_attention_kernel
     grid = (
@@ -545,7 +545,7 @@ def paged_attention(
                 page_size,
                 head_dim,
             ),
-            k_pages.dtype,  # type: ignore[union-attr]
+            k_pages.dtype,
         ),  # k_pages buffer
         pltpu.VMEM(
             (
@@ -563,7 +563,7 @@ def paged_attention(
                 page_size,
                 head_dim,
             ),
-            v_pages.dtype,  # type: ignore[union-attr]
+            v_pages.dtype,
         ),  # v_pages buffer
         pltpu.VMEM(
             (
@@ -592,7 +592,7 @@ def paged_attention(
                 page_size,
                 head_dim,
             ),
-            k_pages.dtype,  # type: ignore[union-attr]
+            k_pages.dtype,
         ),  # k_pages buffer
         None,
         pltpu.VMEM(
@@ -602,7 +602,7 @@ def paged_attention(
                 page_size,
                 head_dim,
             ),
-            v_pages.dtype,  # type: ignore[union-attr]
+            v_pages.dtype,
         ),  # v_pages buffer
         None,
         pltpu.SemaphoreType.DMA,

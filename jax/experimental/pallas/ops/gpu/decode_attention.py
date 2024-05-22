@@ -82,7 +82,7 @@ def attn_forward_kernel(
     o_next = correction[:, None] * o_prev + o_curr
     return o_next, m_next, l_next
 
-  upper_bound = pl.cdiv(k_seq_len, block_k)  # type: ignore
+  upper_bound = pl.cdiv(k_seq_len, block_k)
   # o is left unscaled; it will be scaled in the final reduction step
   o, m_i, l_i = lax.fori_loop(0, upper_bound, body, (o, m_i, l_i))
 

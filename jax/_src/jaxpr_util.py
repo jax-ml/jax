@@ -152,7 +152,7 @@ def _pprof_profile(
     else:
       raw_frames = zip(*tb.raw_frames())
       frames = [loc[(code, lasti)] for code, lasti in raw_frames
-                if source_info_util.is_user_filename(code.co_filename)]  # type: ignore
+                if source_info_util.is_user_filename(code.co_filename)]
     samples.append({
        "location_id": frames,
        "value": [count],

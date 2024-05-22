@@ -188,7 +188,7 @@ def user_frames(source_info: SourceInfo) -> Iterator[Frame]:
   # frames, to allow testing this mechanism from tests.
   traceback = source_info.traceback
   code, lasti = traceback.raw_frames() if traceback else ([], [])
-  return (raw_frame_to_frame(code[i], lasti[i]) for i in range(len(code))  # type: ignore
+  return (raw_frame_to_frame(code[i], lasti[i]) for i in range(len(code))
           if is_user_filename(code[i].co_filename))
 
 @functools.lru_cache(maxsize=64)

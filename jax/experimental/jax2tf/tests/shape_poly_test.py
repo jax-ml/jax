@@ -50,7 +50,7 @@ import numpy as np
 
 from jax.experimental.jax2tf.tests import tf_test_util
 
-import tensorflow as tf  # type: ignore[import]
+import tensorflow as tf
 
 config.parse_flags_with_absl()
 
@@ -218,7 +218,7 @@ class PolyHarness(Harness):
     if not self.skip_jax_run:
       res_jax = f_jax(*args)
       if self.check_result:
-        res_tf = tf.nest.map_structure(lambda t: t.numpy(), res_tf)  # type: ignore
+        res_tf = tf.nest.map_structure(lambda t: t.numpy(), res_tf)
         custom_assert_lims = [
             l for l in self.limitations if l.custom_assert is not None]
         assert len(custom_assert_lims) <= 1, custom_assert_lims
@@ -2377,7 +2377,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
     PolyHarness("scatter_grad", "",
                 lambda *args: jax.grad(
                     lambda *args:
-                        jnp.sum(lax.scatter(  # type: ignore
+                        jnp.sum(lax.scatter(
                           *args,
                           indices_are_sorted=False,
                           unique_indices=False,
@@ -2392,7 +2392,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
     PolyHarness("scatter_grad", "poly_indices",
                 lambda *args: jax.grad(
                   lambda *args:
-                  jnp.sum(lax.scatter(  # type: ignore
+                  jnp.sum(lax.scatter(
                     *args,
                     indices_are_sorted=False,
                     unique_indices=False))

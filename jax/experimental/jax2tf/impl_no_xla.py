@@ -32,7 +32,7 @@ from jax._src import util
 from jax.experimental.jax2tf import jax2tf
 
 import numpy as np
-import tensorflow as tf  # type: ignore[import]
+import tensorflow as tf
 
 
 # Implementation rules for primitives when XLA is not linked in. These

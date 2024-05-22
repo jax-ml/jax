@@ -119,7 +119,7 @@ OptimizerState = namedtuple("OptimizerState",
 register_pytree_node(
     OptimizerState,
     lambda xs: ((xs.packed_state,), (xs.tree_def, xs.subtree_defs)),
-    lambda data, xs: OptimizerState(xs[0], data[0], data[1]))  # type: ignore[index]
+    lambda data, xs: OptimizerState(xs[0], data[0], data[1]))
 
 
 Array = Any

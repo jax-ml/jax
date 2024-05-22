@@ -78,7 +78,7 @@ class CompatTensoflowTest(bctu.CompatTestBase):
       return tf.identity(res, name="the_result")
 
     self.tf_func = tf_func
-    return tf_func(*data.inputs)  # type: ignore
+    return tf_func(*data.inputs)
 
   def serialize(
       self,

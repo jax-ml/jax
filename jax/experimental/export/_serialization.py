@@ -373,7 +373,7 @@ def _serialize_sharding(
     kind = ser_flatbuf.ShardingKind.unspecified
   else:
     kind = ser_flatbuf.ShardingKind.hlo_sharding
-    proto_bytes = s.to_proto().SerializeToString()  # type: ignore[union-attr]
+    proto_bytes = s.to_proto().SerializeToString()
     proto = builder.CreateByteVector(proto_bytes)
 
   ser_flatbuf.ShardingStart(builder)

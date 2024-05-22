@@ -59,7 +59,7 @@ def transformation_with_aux(
   return fun.wrap(gen, gen_static_args, out_store), out_thunk
 
 flatten_fun_nokwargs = transformation_with_aux(
-    api_util.flatten_fun_nokwargs.args[0])  # type: ignore[has-type]
+    api_util.flatten_fun_nokwargs.args[0])
 
 
 ### api
@@ -71,7 +71,7 @@ class custom_transpose:
 
   def __init__(self, fun: Callable):
     functools.update_wrapper(self, fun)
-    self.fun = fun  # type: ignore[assignment]
+    self.fun = fun
 
   __getattr__ = custom_api_util.forward_attr
 

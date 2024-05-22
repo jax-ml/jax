@@ -644,7 +644,7 @@ def _make_scoped_manual_sharding(ctx, mesh, axes):
   else:
     manual_axes = frozenset({})
   return NamedSharding(
-      mesh, sharding_impls.array_mapping_to_axis_resources(axes),  # type: ignore
+      mesh, sharding_impls.array_mapping_to_axis_resources(axes),  # pytype: disable=wrong-arg-types
       _manual_axes=manual_axes)
 
 def _xla_shard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
@@ -657,7 +657,7 @@ def _xla_shard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
     aval_in = core.physical_aval(aval_in)
   shard_proto = ns._to_xla_hlo_sharding(aval_in.ndim).to_proto()
   unspecified = set(range(aval_in.ndim)) if auto else set()
-  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, shard_proto,  # type: ignore
+  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, shard_proto,
                                   unspecified_dims=unspecified)
   return [mlir.wrap_with_full_to_shard_op(ctx, sx, aval_out, manual_proto, unspecified)]
 
@@ -674,7 +674,7 @@ def _xla_unshard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
   sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, manual_proto, unspecified_dims=unspecified)
   shard_proto = ns._to_xla_hlo_sharding(aval_out.ndim).to_proto()
   return mlir.wrap_with_shard_to_full_op(ctx, sx, aval_out, shard_proto,
-                                         unspecified)  # type: ignore
+                                         unspecified)
 
 def _pspec_mhlo_attrs(names: AxisNames, aval: core.AbstractValue) -> str:
   if isinstance(aval, core.ShapedArray):
@@ -1397,7 +1397,7 @@ def _shard_map_partial_eval(trace, shard_map_p, f, tracers, mesh, in_names,
   out_tracers = [pe.JaxprTracer(trace, pe.PartialVal.unknown(a), None)
                  for a in out_avals]
   effs = core.filter_named_axis_effects(jaxpr.effects, mesh.axis_names)
-  eqn = pe.new_eqn_recipe((*const_tracers, *env_tracers, *unk_arg_tracers),  # type: ignore[arg-type]
+  eqn = pe.new_eqn_recipe((*const_tracers, *env_tracers, *unk_arg_tracers),
                           out_tracers, shard_map_p, unk_params,
                           effs, source_info_util.current())
   for t in out_tracers: t.recipe = eqn

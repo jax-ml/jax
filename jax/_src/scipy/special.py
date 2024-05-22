@@ -754,7 +754,7 @@ def _zeta_series_expansion(x: ArrayLike, q: ArrayLike | None = None) -> Array:
   T = T0 * (dtype(0.5) + T1.sum(-1))
   return S + I + T
 
-zeta.defjvp(partial(jvp, _zeta_series_expansion))  # type: ignore[arg-type]
+zeta.defjvp(partial(jvp, _zeta_series_expansion))
 
 
 def polygamma(n: ArrayLike, x: ArrayLike) -> Array:

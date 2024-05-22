@@ -55,7 +55,7 @@ Index = tuple[slice, ...]
 PRNGKeyArray = Any  # TODO(jakevdp): fix cycles and import this.
 
 def _get_device(a: ArrayImpl) -> Device:
-  devices = a.sharding._internal_device_list  # type: ignore
+  devices = a.sharding._internal_device_list  # pytype: disable=attribute-error
   assert len(devices) == 1
   return devices[0]
 
@@ -273,11 +273,11 @@ class ArrayImpl(basearray.Array):
 
   def __hex__(self):
     core.check_integer_conversion(self)
-    return hex(self._value)  # type: ignore
+    return hex(self._value)
 
   def __oct__(self):
     core.check_integer_conversion(self)
-    return oct(self._value)  # type: ignore
+    return oct(self._value)
 
   def __index__(self):
     core.check_integer_conversion(self)
@@ -341,9 +341,9 @@ class ArrayImpl(basearray.Array):
     else:
       assert self.is_fully_replicated or self.is_fully_addressable
       if dispatch.is_single_device_sharding(self.sharding) or self.is_fully_replicated:
-        return (sl for chunk in self._chunk_iter(100) for sl in chunk._unstack())  # type: ignore
+        return (sl for chunk in self._chunk_iter(100) for sl in chunk._unstack())
       elif isinstance(self.sharding, PmapSharding):
-        return (self[i] for i in range(self.shape[0]))  # type: ignore
+        return (self[i] for i in range(self.shape[0]))
       else:
         # TODO(yashkatariya): Don't bounce to host and use `_chunk_iter` path
         # here after uneven partitioning support is added.
@@ -446,7 +446,7 @@ class ArrayImpl(basearray.Array):
       )
 
   def __reduce__(self):
-    fun, args, arr_state = self._value.__reduce__()  # type: ignore
+    fun, args, arr_state = self._value.__reduce__()
     aval_state = {'weak_type': self.aval.weak_type,
                   'named_shape': self.aval.named_shape}
     return (_reconstruct_array, (fun, args, arr_state, aval_state))
@@ -470,7 +470,7 @@ class ArrayImpl(basearray.Array):
   def on_device_size_in_bytes(self):
     """Returns the total global on-device size of the array in bytes."""
     arr = self._arrays[0]
-    per_shard_size = arr.on_device_size_in_bytes()  # type: ignore
+    per_shard_size = arr.on_device_size_in_bytes()
     return per_shard_size * len(self.sharding.device_set)
 
   def devices(self) -> set[Device]:
@@ -591,7 +591,7 @@ class ArrayImpl(basearray.Array):
 
     if self._npy_value is None:
       if self.is_fully_replicated:
-        self._npy_value = self._single_device_array_to_np_array()  # type: ignore
+        self._npy_value = self._single_device_array_to_np_array()
         self._npy_value.flags.writeable = False
         return cast(np.ndarray, self._npy_value)
 
@@ -610,7 +610,7 @@ class ArrayImpl(basearray.Array):
       npy_value = np.empty(self.shape, self.dtype)
       for i, ind in _cached_index_calc(self.sharding, self.shape):
         npy_value[ind] = self._arrays[i]._single_device_array_to_np_array()
-      self._npy_value = npy_value  # type: ignore
+      self._npy_value = npy_value
       self._npy_value.flags.writeable = False
     # https://docs.python.org/3/library/typing.html#typing.cast
     return cast(np.ndarray, self._npy_value)
@@ -970,7 +970,7 @@ def as_slice_indices(arr: Any, idx: Index) -> tuple[
       start_indices[dim] = sub_idx.start
       limit_indices[dim] = sub_idx.stop
 
-  return tuple(start_indices), tuple(limit_indices), tuple(removed_dims) # type: ignore
+  return tuple(start_indices), tuple(limit_indices), tuple(removed_dims)
 
 
 def shard_device_array(x, devices, indices, sharding):
@@ -1047,7 +1047,7 @@ pxla.shard_arg_handlers[ArrayImpl] = _array_shard_arg
 
 def _array_global_result_handler(global_aval, out_sharding, committed):
   if global_aval.dtype == dtypes.float0:
-    return lambda _: np.zeros(global_aval.shape, dtypes.float0)  # type: ignore
+    return lambda _: np.zeros(global_aval.shape, dtypes.float0)
   if dtypes.issubdtype(global_aval.dtype, dtypes.extended):
     return global_aval.dtype._rules.global_sharded_result_handler(
         global_aval, out_sharding, committed)
@@ -1060,7 +1060,7 @@ pxla.global_result_handlers[core.ConcreteArray] = _array_global_result_handler
 # Only used for Arrays that come out of pmap.
 def _array_local_result_handler(aval, sharding, indices):
   if aval.dtype == dtypes.float0:
-    return lambda _: np.zeros(aval.shape, dtypes.float0)  # type: ignore
+    return lambda _: np.zeros(aval.shape, dtypes.float0)
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     return aval.dtype._rules.local_sharded_result_handler(
         aval, sharding, indices)

@@ -313,12 +313,12 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   return tree_unflatten(out_tree, out)
 
 def _set_states(attrs_tracked, vals):
-  from jax.experimental.attrs import jax_setattr  # type: ignore
+  from jax.experimental.attrs import jax_setattr
   for ((obj, attr), val) in zip(attrs_tracked, vals):
     jax_setattr(obj, attr, val)
 
 def _get_states(attrs_tracked):
-  from jax.experimental.attrs import jax_getattr  # type: ignore
+  from jax.experimental.attrs import jax_getattr
   return [jax_getattr(obj, attr) for (obj, attr) in attrs_tracked]
 
 def _check_scan_carry_type(body_fun, in_carry, out_carry_tree, out_avals):
@@ -1628,7 +1628,7 @@ def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts:
   # carry to unknown. We need one last iteration to prepare the jaxpr.
   carry_uk = carry_init_uk
   for _ in range(1 + len(carry_uk)):
-    body_jaxpr_known, _, carry_out_uk, body_res_avals = pe.partial_eval_jaxpr_nounits(  # type: ignore
+    body_jaxpr_known, _, carry_out_uk, body_res_avals = pe.partial_eval_jaxpr_nounits(
         body_jaxpr, body_consts_uk + carry_uk, instantiate=carry_uk)
     if carry_out_uk == carry_uk:
       break
@@ -1637,7 +1637,7 @@ def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts:
   else:
     assert False, "Fixpoint not reached"
 
-  cond_jaxpr_known, _, cond_uk, _ = pe.partial_eval_jaxpr_nounits(  # type: ignore
+  cond_jaxpr_known, _, cond_uk, _ = pe.partial_eval_jaxpr_nounits(
       cond_jaxpr, cond_consts_uk + carry_uk, instantiate=False)
 
   if cond_uk[0] or all(not uk for uk in unknowns) or all(unknowns):
@@ -2205,7 +2205,7 @@ def _rng_bit_generator_batching_rule(batched_args, batch_dims, *, shape, dtype, 
   new_keys = jax.lax.dynamic_update_index_in_dim(keys, new_key, 0, axis=0)
   return (new_keys, bits), (0, 0)
 
-batching.primitive_batchers[lax.rng_bit_generator_p] = _rng_bit_generator_batching_rule  # type: ignore
+batching.primitive_batchers[lax.rng_bit_generator_p] = _rng_bit_generator_batching_rule
 
 ### associative_scan
 

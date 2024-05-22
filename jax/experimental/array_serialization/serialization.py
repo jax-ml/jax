@@ -75,7 +75,7 @@ async def create_async_array_from_callback(
 ):
   device_to_index_map = inp_sharding.devices_indices_map(global_shape)
   addressable_da = inp_sharding._addressable_device_assignment
-  future_arrays = [data_callback(device_to_index_map[d], d)  # type: ignore
+  future_arrays = [data_callback(device_to_index_map[d], d)
                    for d in addressable_da]
   dbs = await asyncio.gather(*future_arrays)
   return array.make_array_from_single_device_arrays(

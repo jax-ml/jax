@@ -1894,11 +1894,11 @@ def _initialize_outfeed_receiver(
       _callback_handler_data.receiver = outfeed_receiver_module.start(
           _callback_input_received, tuple(clients_with_outfeed),
           max_callback_queue_size_bytes,
-          compiler.get_compile_options(1, 1).executable_build_options)  # type:ignore
+          compiler.get_compile_options(1, 1).executable_build_options)
 
     def exit_handler():
       # Prevent logging usage during compilation, gives errors under pytest
-      dispatch._on_exit = True  # type: ignore[protected-access]
+      dispatch._on_exit = True
       if not _callback_handler_data.on_exit:
         _callback_handler_data.on_exit = True
         _deprecated_barrier_wait("at_exit")

@@ -218,7 +218,7 @@ def treedef_tuple(treedefs: Iterable[PyTreeDef]) -> PyTreeDef:
   See Also:
     - :func:`jax.tree_util.treedef_children`
   """
-  return pytree.tuple(default_registry, list(treedefs))  # type: ignore
+  return pytree.tuple(default_registry, list(treedefs))
 
 
 @export
@@ -658,7 +658,7 @@ def _flatten_defaultdict(d):
 register_pytree_node(
   collections.defaultdict,
   _flatten_defaultdict,
-  lambda s, values: collections.defaultdict(s[0], safe_zip(s[1], values)))  # type: ignore[index,call-overload]
+  lambda s, values: collections.defaultdict(s[0], safe_zip(s[1], values)))
 
 
 class _HashableCallableShim:
@@ -753,7 +753,7 @@ class Partial(functools.partial):
 register_pytree_node(
     Partial,
     lambda partial_: ((partial_.args, partial_.keywords), partial_.func),
-    lambda func, xs: Partial(func, *xs[0], **xs[1]),  # type: ignore[index]
+    lambda func, xs: Partial(func, *xs[0], **xs[1]),
 )
 
 

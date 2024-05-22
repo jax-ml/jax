@@ -343,7 +343,7 @@ def _get_jvp(primals: list[Any], tangents: list[Any], **params: Any):
   ref_tangent, *_ = tangents
   assert isinstance(ref_tangent.aval, AbstractRef)
   return (get_p.bind(ref_primal, *idx, **params),
-          get_p.bind(ref_tangent, *idx, **params))  # type: ignore[arg-type]
+          get_p.bind(ref_tangent, *idx, **params))
 ad.primitive_jvps[get_p] = _get_jvp
 
 def _swap_jvp(primals: list[Any], tangents: list[Any], **params: Any):
@@ -352,8 +352,8 @@ def _swap_jvp(primals: list[Any], tangents: list[Any], **params: Any):
   ref_tangent, x_tangent, *_ = tangents
   assert isinstance(ref_tangent.aval, AbstractRef)
   x_tangent = ad_util.instantiate(x_tangent)
-  return (swap_p.bind(ref_primal, x_primal, *idx, **params),  # type: ignore[arg-type]
-          swap_p.bind(ref_tangent, x_tangent, *idx, **params))  # type: ignore[arg-type]
+  return (swap_p.bind(ref_primal, x_primal, *idx, **params),
+          swap_p.bind(ref_tangent, x_tangent, *idx, **params))
 ad.primitive_jvps[swap_p] = _swap_jvp
 
 def addupdate_jvp_rule(primals: list[Any], tangents: list[Any], **params: Any):
