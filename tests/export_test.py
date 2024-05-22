@@ -949,6 +949,25 @@ class JaxExportTest(jtu.JaxTestCase):
         "non-replicated sharding annotations"):
       export.call_exported(exp)(b)
 
+  def test_call_with_different_no_of_devices_pmap(self):
+    if len(jax.devices()) < 2:
+      self.skipTest("Need at least 2 devices")
+
+    @jax.jit
+    def f_jax(x):
+      return jnp.sum(x ** 2, axis=0)
+
+    a = jnp.arange(100, dtype=jnp.float32).reshape((1, 100))
+    res_native = f_jax(a)
+    exp = get_exported(f_jax)(a)
+    self.assertEqual(exp.nr_devices, 1)
+
+    b = jnp.arange(jax.device_count() * 100, dtype=jnp.float32).reshape(
+        (-1, 1, 100)
+    )
+    res_exported = jax.pmap(export.call_exported(exp))(b)
+    self.assertAllClose(res_native, res_exported[0])
+
   def test_call_with_different_no_of_devices_error_has_sharding_constraint(self):
     if jax.device_count() < 2:
       self.skipTest("Need at least 2 devices")

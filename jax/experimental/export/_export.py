@@ -1122,6 +1122,8 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     num_devices = axis_context.num_devices
   elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
     num_devices = axis_context.mesh.size
+  elif isinstance(axis_context, sharding_impls.ReplicaAxisContext):
+    num_devices = axis_context.axis_env.nreps
   else:
     raise NotImplementedError(type(axis_context))
   if num_devices != exported.nr_devices:
