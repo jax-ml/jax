@@ -24,8 +24,10 @@ import tracemalloc as tm
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+import jax.numpy as jnp
 from jax._src import test_util as jtu
 from jax._src import array
+from jax._src import xla_bridge as xb
 from jax.sharding import NamedSharding, GSPMDSharding
 from jax.sharding import PartitionSpec as P
 from jax.experimental.array_serialization import serialization
@@ -66,7 +68,7 @@ class CheckpointTest(jtu.JaxTestCase):
     pspec = P('x', 'y')
     num = math.prod(inp_shape)
     sharding = NamedSharding(global_mesh, pspec)
-    src = jax.numpy.arange(num, dtype=np.int32).reshape(inp_shape)  # 8e9
+    src = jnp.arange(num, dtype=np.int32).reshape(inp_shape)  # 8e9
     inp = array.make_array_from_callback(
         inp_shape, sharding,
         lambda idx: src[idx])
@@ -205,7 +207,7 @@ class CheckpointTest(jtu.JaxTestCase):
       self.assertArraysEqual(np.asarray(s.data), np.array([], dtype=np.float32))
     self.assertEqual(m3.dtype, np.float32)
 
-  @parameterized.product(input_dtype=[np.int32, jax.numpy.bfloat16])
+  @parameterized.product(input_dtype=[np.int32, jnp.bfloat16])
   def test_checkpointing_with_bigger_shape_jax_array(self, input_dtype):
     global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     global_input_shape = (8, 2)
@@ -253,7 +255,7 @@ class CheckpointTest(jtu.JaxTestCase):
     for l in m2.addressable_shards:
       self.assertArraysEqual(l.data, global_input_data1.astype('float32'))
 
-  @parameterized.product(input_dtype=[jax.numpy.int4, jax.numpy.int8])
+  @parameterized.product(input_dtype=[jnp.int4, jnp.int8])
   def test_checkpointing_with_int4(self, input_dtype):
     global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     global_input_shape = (8, 2)
@@ -279,20 +281,20 @@ class CheckpointTest(jtu.JaxTestCase):
 
     ds = NamedSharding(jtu.create_global_mesh((4, 2), ('x', 'y')), P('x', 'y'))
 
-    target_dtype = jax.numpy.dtype('int4')
+    target_dtype = jnp.dtype('int4')
     m1, = serialization.run_deserialization([ds], tspecs, [(12, 2)],
                                             [target_dtype])
 
     # values bigger than 7 are converted properly.
     expected_data = {
-        0: jax.numpy.array([[0], [2], [4]], dtype=target_dtype),
-        1: jax.numpy.array([[1], [3], [5]], dtype=target_dtype),
-        2: jax.numpy.array([[6], [8], [10]], dtype=target_dtype),
-        3: jax.numpy.array([[7], [9], [11]], dtype=target_dtype),
-        4: jax.numpy.array([[12], [14], [0]], dtype=target_dtype),
-        5: jax.numpy.array([[13], [15], [0]], dtype=target_dtype),
-        6: jax.numpy.array([[0], [0], [0]], dtype=target_dtype),
-        7: jax.numpy.array([[0], [0], [0]], dtype=target_dtype),
+        0: jnp.array([[0], [2], [4]], dtype=target_dtype),
+        1: jnp.array([[1], [3], [5]], dtype=target_dtype),
+        2: jnp.array([[6], [8], [10]], dtype=target_dtype),
+        3: jnp.array([[7], [9], [11]], dtype=target_dtype),
+        4: jnp.array([[12], [14], [0]], dtype=target_dtype),
+        5: jnp.array([[13], [15], [0]], dtype=target_dtype),
+        6: jnp.array([[0], [0], [0]], dtype=target_dtype),
+        7: jnp.array([[0], [0], [0]], dtype=target_dtype),
     }
 
     for l in m1.addressable_shards:
@@ -458,6 +460,40 @@ class CheckpointTest(jtu.JaxTestCase):
     for s in out.addressable_shards:
       self.assertArraysEqual(s.data, np_inp[s.index])
 
+  def test_deserialization_with_int4(self):
+    if xb.using_pjrt_c_api() and xb.get_backend().platform == "gpu":
+      self.skipTest('b/342255612')
+
+    dtype = jnp.int4
+    shape = (8, 2)
+    arr = jnp.arange(np.prod(shape)).reshape(shape).astype(dtype)
+
+    ckpt_dir = pathlib.Path(self.create_tempdir('test_ckpt').full_path)
+
+    # Run serialization.
+    sharding = jax.sharding.GSPMDSharding.get_replicated(jax.devices())
+    tspecs = jax.tree_util.tree_map(
+        serialization.get_tensorstore_spec, [ckpt_dir]
+    )
+    manager = serialization.GlobalAsyncCheckpointManager()
+    manager.serialize(
+        [arr],
+        tspecs,
+        on_commit_callback=lambda: None,
+    )
+    manager.wait_until_finished()
+
+    # Run deserialization.
+    deserialized_arr, = serialization.run_deserialization(
+        shardings=[sharding],
+        tensorstore_specs=tspecs,
+        global_shapes=[shape],
+        dtypes=[dtype],
+    )
+
+    out = deserialized_arr.astype(jnp.int8)  # doesn't crash
+    self.assertEqual(out.dtype, jnp.int8)
+    self.assertArraysEqual(out + out, out * 2)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

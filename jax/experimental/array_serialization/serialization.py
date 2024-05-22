@@ -300,7 +300,7 @@ def estimate_read_memory_footprint(t: ts.TensorStore,
 
 
 async def async_deserialize(
-    in_sharding: sharding_impls.XLACompatibleSharding | Layout,
+    user_in_sharding: sharding_impls.XLACompatibleSharding | Layout,
     tensorstore_spec: ts.Spec | dict[str, Any],
     global_shape: Sequence[int] | None = None,
     dtype=None,
@@ -308,14 +308,14 @@ async def async_deserialize(
     context=TS_CONTEXT,
     assume_metadata: bool = False,
 ):
-  in_sharding = (in_sharding.sharding if isinstance(in_sharding, Layout) else  # type: ignore
-                 in_sharding)
+  in_sharding = (user_in_sharding.sharding
+                 if isinstance(user_in_sharding, Layout) else user_in_sharding)
   if not isinstance(in_sharding, sharding_impls.XLACompatibleSharding):
     raise ValueError(
         'sharding passed to deserialization should be specified, concrete and'
         f' an instance of `jax.XLACompatibleSharding`. Got {in_sharding}')
-  dll = (in_sharding.device_local_layout if isinstance(in_sharding, Layout)
-         else None)
+  dll = (user_in_sharding.device_local_layout
+         if isinstance(user_in_sharding, Layout) else None)
   t = await ts.open(
       tensorstore_spec,
       open=True,
@@ -338,6 +338,8 @@ async def async_deserialize(
     out = np.zeros(new_shard_shape, dtype=t.dtype.numpy_dtype)
     await ts.array(out)[ts.d[:].translate_to[requested_domain.origin]][
         restricted_domain].write(t[restricted_domain])
+    # Convert to jnp array so that layouts are initialized properly.
+    out = jnp.asarray(out)  # type: ignore
     if dtype is not None:
       # Cast while reloading on process to avoid 2 copies on device if the
       # casting is done on device.
