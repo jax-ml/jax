@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Module for pallas-specific JAX primitives and functions."""
+"""Pallas-specific JAX primitives."""
+
 from __future__ import annotations
+
 import enum
 import functools
-
+import string
 from typing import Any
 
 import jax
@@ -24,17 +26,19 @@ from jax import lax
 from jax import tree_util
 from jax._src import ad_util
 from jax._src import core as jax_core
+from jax._src import effects
 from jax._src import pretty_printer as pp
 from jax._src import state
-from jax._src.util import (safe_map, safe_zip)
+from jax._src import util
+from jax._src.interpreters import ad
+from jax._src.interpreters import batching
+from jax._src.pallas import core as pallas_core
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
 from jax._src.state import primitives as sp
-from jax._src.interpreters import ad
 from jax.interpreters import mlir
 import jax.numpy as jnp
 
-from jax._src.pallas import core as pallas_core
 
 # TODO(sharadmv): enable type checking
 # mypy: ignore-errors
@@ -43,8 +47,8 @@ partial = functools.partial
 Slice = indexing.Slice
 NDIndexer = indexing.NDIndexer
 
-map, unsafe_map = safe_map, map
-zip, unsafe_zip = safe_zip, zip
+map, unsafe_map = util.safe_map, map
+zip, unsafe_zip = util.safe_zip, zip
 
 program_id_p = jax_core.Primitive("program_id")
 
@@ -484,3 +488,95 @@ def dot(a, b, trans_a: bool = False, trans_b: bool = False,
       precision=precision,
       preferred_element_type=jnp.float32,
   )
+
+
+class PrintEffect(effects.Effect):
+  __str__ = lambda self: "Print"
+
+
+debug_print_effect = PrintEffect()
+
+# TODO(slebedev): Consider making the effect ordered.
+effects.lowerable_effects.add_type(PrintEffect)
+effects.control_flow_allowed_effects.add_type(PrintEffect)
+effects.remat_allowed_effects.add_type(PrintEffect)
+effects.custom_derivatives_allowed_effects.add_type(PrintEffect)
+
+
+debug_print_p = jax_core.Primitive("debug_print")
+debug_print_p.multiple_results = True
+
+
+def debug_print(fmt: str, *args: jax.ArrayLike):
+  """Prints scalar values from inside a Pallas kernel.
+
+  Args:
+    fmt: A format string to be included in the output. The restrictions on the
+      format string depend on the backend:
+        * On GPU, when using Triton, ``fmt`` must not contain any placeholders
+          (``{...}``), since it is always printed before any of the values.
+        * On GPU, when using the experimental Mosaic GPU backend, ``fmt`` must
+          contain a placeholder for each value to be printed. Format specs and
+          conversions are not supported.
+    *args: The scalar values to print.
+  """  # fmt: skip
+  has_placeholders = False
+  if fmt:
+    _, field_name, *_ = next(string.Formatter().parse(fmt))
+    has_placeholders = field_name is not None
+  return debug_print_p.bind(*args, fmt=fmt, has_placeholders=has_placeholders)
+
+
+@debug_print_p.def_impl
+def debug_print_impl(*args: Any, fmt: str, has_placeholders: bool):
+  if has_placeholders:
+    print(fmt.format(*args))
+  else:
+    print(fmt, *args)
+  return ()
+
+
+@debug_print_p.def_effectful_abstract_eval
+def debug_print_abstract_eval(*avals: Any, fmt: str, has_placeholders: bool):
+  del fmt
+  if any(aval.shape for aval in avals):
+    raise ValueError("Only scalar values are supported")
+  return [], {debug_print_effect}
+
+
+def debug_print_batching_rule(args, dims, **params):
+  """Unrolls the print primitive across the mapped axis."""
+  axis_size = next(x.shape[i] for x, i in zip(args, dims) if i is not None)
+
+  # TODO(sharadmv): implement in terms of rolled loop unstead of unrolled.
+  def get_arg_at_dim(i, dim, arg):
+    if dim is batching.not_mapped:
+      # Broadcast unmapped argument
+      return arg
+    return lax.index_in_dim(arg, i, axis=dim, keepdims=False)
+
+  outs = []
+  for i in range(axis_size):
+    args_idx = map(functools.partial(get_arg_at_dim, i), dims, args)
+    outs.append(debug_print_p.bind(*args_idx, **params))
+  outs = [jnp.stack(xs) for xs in zip(*outs)]
+  return outs, (0,) * len(outs)
+
+
+batching.primitive_batchers[debug_print_p] = functools.partial(
+    debug_print_batching_rule, debug_print_p
+)
+
+
+@functools.partial(mlir.register_lowering, debug_print_p)
+def debug_print_lowering_rule(ctx, *args, **params):
+  result, _, _ = mlir.emit_python_callback(
+      ctx,
+      functools.partial(debug_print_p.impl, **params),
+      None,
+      list(args),
+      ctx.avals_in,
+      ctx.avals_out,
+      has_side_effect=True,
+  )
+  return result

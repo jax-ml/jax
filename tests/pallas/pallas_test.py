@@ -1514,7 +1514,7 @@ class PallasOpsTest(PallasTest):
   @parameterized.parameters("float32", "float64")
   def test_nextafter(self, dtype):
     if jtu.test_device_matches(["tpu"]) and dtype == "float64":
-        self.skipTest("float64 disabled on TPU.")
+      self.skipTest("float64 disabled on TPU.")
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((4,), dtype), grid=1
     )
@@ -1695,6 +1695,31 @@ class PallasOpsTest(PallasTest):
     x = jnp.arange(256).astype(jnp.float16)
     np.testing.assert_allclose(kernel(x), jnp.tanh(x), atol=5e-3, rtol=5e-3)
 
+  def test_debug_print(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
+        grid=1,
+        compiler_params=dict(triton=dict(num_warps=1, num_stages=1))
+    )
+    def kernel(x_ref, o_ref):
+      pl.debug_print("It works!")
+
+    x = jnp.array([4.2, 2.4]).astype(jnp.float32)
+    kernel(x)
+
+  def test_debug_print_with_values(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
+        grid=1,
+        compiler_params=dict(triton=dict(num_warps=1, num_stages=1))
+    )
+    def kernel(x_ref, o_ref):
+      pl.debug_print("x[0] = ", x_ref[0])
+
+    x = jnp.array([4.2, 2.4]).astype(jnp.float32)
+    kernel(x)
 
 class PallasOpsInterpretTest(PallasOpsTest):
   INTERPRET = True

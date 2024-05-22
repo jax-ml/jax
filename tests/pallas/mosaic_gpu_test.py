@@ -79,6 +79,30 @@ class PallasCallTest(PallasTest):
     rtol = 1e-07 if input_factor > 10 else 5e-5
     np.testing.assert_allclose(layer_norm(x), layer_norm_np(x), rtol=rtol)
 
+  def test_print(self):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      pl.debug_print("It works!")
+
+    x = jnp.arange(256).astype(jnp.float32)
+    kernel(x)
+
+  def test_print_with_values(self):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      pl.debug_print("x[0] = {}", x_ref[0])
+
+    x = jnp.arange(256).astype(jnp.float32)
+    with self.assertRaises(Exception):
+      # TODO(slebedev): Remove assertRaises() once we support indexing.
+      kernel(x)
+
 
 if __name__ == "__main__":
   absltest.main()

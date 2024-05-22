@@ -20,6 +20,7 @@ from collections.abc import Sequence
 import dataclasses
 import functools
 import math
+import string
 from typing import Any, cast
 
 import jax
@@ -33,6 +34,7 @@ from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import memref as memref_dialect
 from jax._src.lib.mlir.dialects import nvgpu as nvgpu_dialect
 from jax._src.pallas import core as pl_core
+from jax._src.pallas import primitives
 from jax._src.state import primitives as sp
 from jax.experimental.mosaic import gpu as mosaic_gpu
 from jax.experimental.mosaic.gpu import dsl as mgpu
@@ -347,6 +349,35 @@ def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
       [jax.ShapeDtypeStruct(shape=(4,), dtype=x_aval.dtype)]
   )
   return mgpu.FragmentedArray.splat(x.reduce_sum(scratch), ())
+
+
+@register_lowering_rule(primitives.debug_print_p)
+def _debug_print_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args,
+    fmt,
+    has_placeholders,
+    _formatter=string.Formatter(),
+):
+  del has_placeholders
+  n_placeholders = 0
+  for _, field, spec, conversion in string.Formatter().parse(fmt):
+    if spec or conversion:
+      raise ValueError(
+          "The format string should not contain any format specs orconversions"
+      )
+    if field:
+      raise ValueError(
+          "The format string should not reference arguments by position or name"
+      )
+    n_placeholders += field is not None
+  if len(args) != n_placeholders:
+    raise TypeError(
+        f"The format string  expects {n_placeholders} "
+        f"argument{'' if n_placeholders == 1 else 's'}, but got {len(args)}"
+    )
+  mgpu.debug_print(fmt, *args)
+  return ()
 
 
 def _bcast(

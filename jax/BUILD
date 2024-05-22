@@ -685,6 +685,7 @@ py_library(
     ],
     deps = [
         ":config",
+        ":core",
         ":jax",
         ":mlir",
         "//jax/_src/lib",

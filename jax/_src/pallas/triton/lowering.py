@@ -1006,6 +1006,22 @@ for prim, fn in _JAX_TO_TRITON_SIGNED_BINARY.items():
   triton_lowering_rules[prim] = signed_rule
 
 
+@register_lowering(primitives.debug_print_p)
+def debug_print_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args: ir.Value,
+    fmt: str,
+    has_placeholders: bool,
+):
+  if has_placeholders:
+    raise ValueError(
+        "pl.debug_print() does not support placeholders when lowering to Triton"
+    )
+
+  tt_dialect.print_(f" {fmt}", hex=False, args=args)
+  return ()
+
+
 def _set_attr(v: ir.Value, name: str, attr: ir.Attribute) -> None:
   if not ir.BlockArgument.isinstance(v):
     v.owner.attributes[name] = attr

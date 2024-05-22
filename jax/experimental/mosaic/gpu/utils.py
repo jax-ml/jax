@@ -19,7 +19,6 @@ import contextlib
 import dataclasses
 from typing import Any, Literal, Sequence
 
-from absl import flags
 import jax
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
@@ -37,8 +36,6 @@ import numpy as np
 
 WARPGROUP_SIZE: int = 128
 DYNAMIC = -9223372036854775808
-
-_MOSAIC_GPU_DEBUG = flags.DEFINE_bool("mosaic_gpu_debug", False, "Perform debug printing")
 
 # pylint: disable=line-too-long, wildcard-import, missing-function-docstring, bad-continuation, g-bad-todo, protected-access, g-explicit-length-test, missing-class-docstring, g-doc-return-or-yield, g-inconsistent-quotes
 
@@ -111,8 +108,6 @@ def get_tensormap_descriptor(**attrs):
 
 
 def debug_print(fmt, *args, uniform=True):
-  if not _MOSAIC_GPU_DEBUG.value:
-    return
   type_formats = []
   new_args = []
   for arg in args:
