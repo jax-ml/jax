@@ -728,6 +728,7 @@ def register_lowering(prim: core.Primitive, rule: LoweringRule,
     # under "gpu" even though the platforms are now called "cuda" and "rocm".
     # TODO(phawkins): fix up users to specify either "cuda" or "rocm" and remove
     # this expansion.
+    platform = platform.lower()
     for p in xb.expand_platform_alias(platform):
       _platform_specific_lowerings[p][prim] = rule
   return rule
