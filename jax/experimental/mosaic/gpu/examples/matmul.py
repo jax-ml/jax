@@ -152,6 +152,7 @@ def build_kernel(
     in_dtype: jnp.dtype,
     stages: int = 2,
     tile_m: int = 128,
+    tile_n: int = 128,
     rhs_transpose: bool = False,
     wgmma_impl=WGMMADefaultImpl,
     profiler_spec: profiler.ProfilerSpec | None = None,
@@ -168,7 +169,8 @@ def build_kernel(
 
   in_bytewidth = bytewidth(in_mlir_dtype)
   in_128b_elems = 128 // in_bytewidth
-  tile_k, tile_n = in_128b_elems, 128
+  out_128b_elems = 128 // bytewidth(ir.F32Type.get())
+  tile_k = in_128b_elems
   if tile_m % 64 != 0:
     raise ValueError(f"{tile_m=} must be divisible by 64")
   if tile_n % in_128b_elems != 0:
@@ -195,6 +197,7 @@ def build_kernel(
   lhs_tile = jax.ShapeDtypeStruct(tile_shape((tile_m, tile_k), lhs_tiling), in_dtype)
   rhs_tiling = (in_128b_elems, in_128b_elems)
   rhs_tile = jax.ShapeDtypeStruct(tile_shape((tile_k, tile_n), rhs_tiling), in_dtype)
+  out_tiling = (64, out_128b_elems)
 
   f32 = ir.F32Type.get()
   index = ir.IndexType.get()
@@ -305,7 +308,8 @@ def build_kernel(
       acc_val = wgmma_impl.get_result_tile(stage_loop_body.result)
       acc_smem = memref.view(
           ir.MemRefType.get(
-              tile_shape((tile_m, tile_n), (64, 32)), f32, memory_space=smem
+              tile_shape((tile_m, tile_n), out_tiling), f32,
+              memory_space=smem
           ),
           dynamic_smem, c(0), [],
       )
@@ -315,30 +319,40 @@ def build_kernel(
     with ctx.named_region("GMEM store"):
       # Vectorized epilogue to move results from SMEM to GMEM
       # TODO(apaszke): Make this into a proper copy function.
-      assert tile_n == 128  # TODO(apaszke): Support other sizes.
+      warps_per_warpgroup = 4
+      lanes_per_warp = 32
+      n_out_tiling = out_tiling[-1]
       tidx = gpu.thread_id(gpu.Dimension.x)
-      warp_id = arith.divui(tidx, c(32))
-      lane_id = arith.remui(tidx, c(32))
-      n_store = arith.muli(lane_id, c(4))
-      col_group = arith.divui(lane_id, c(8))
-      n_load = arith.muli(arith.remui(lane_id, c(8)), c(4))
-      for_op = scf.ForOp(warp_id, c(tile_m), c(4))
+      warp_id = arith.divui(tidx, c(lanes_per_warp))
+      lane_id = arith.remui(tidx, c(lanes_per_warp))
+      # We store 4 f32 numbers for a block of 16B.
+      vector_len = 4
+      num_vectors = safe_div(tile_n, vector_len)
+      for_op = scf.ForOp(warp_id, c(tile_m), c(warps_per_warpgroup))
       with ir.InsertionPoint(for_op.body):
-        m_smem = for_op.induction_variable
-        m_within_tile = arith.remui(m_smem, c(64))
-        m_tile = arith.divui(m_smem, c(64))
-        swizzle_source = arith.shli(arith.remui(m_smem, c(8)), c(2))
-        n_acc = arith.xori(n_load, swizzle_source)
-        acc_part = vector.load(
-            ir.VectorType.get((4,), f32),
-            acc_smem,
-            [m_tile, col_group, m_within_tile, n_acc],
-        )
-        vector.store(
-            acc_part,
-            c_device,
-            [arith.addi(m_start, m_smem), arith.addi(n_start, n_store)],
-        )
+        nested_for_op = scf.ForOp(lane_id, c(num_vectors), c(lanes_per_warp))
+        with ir.InsertionPoint(nested_for_op.body):
+          vector_idx = nested_for_op.induction_variable
+          n_store = arith.muli(vector_idx, c(vector_len))
+          col_group = arith.divui(n_store, c(n_out_tiling))
+          n_load = arith.remui(n_store, c(n_out_tiling))
+
+          m_smem = for_op.induction_variable
+          m_within_tile = arith.remui(m_smem, c(64))
+          m_tile = arith.divui(m_smem, c(64))
+          swizzle_source = arith.shli(arith.remui(m_smem, c(8)), c(2))
+          n_acc = arith.xori(n_load, swizzle_source)
+          acc_part = vector.load(
+              ir.VectorType.get((vector_len,), f32),
+              acc_smem,
+              [m_tile, col_group, m_within_tile, n_acc],
+          )
+          vector.store(
+              acc_part,
+              c_device,
+              [arith.addi(m_start, m_smem), arith.addi(n_start, n_store)],
+          )
+          scf.yield_([])
         scf.yield_([])
 
   rhs_shape = (n, k) if rhs_transpose else (k, n)
@@ -362,6 +376,7 @@ def verify(
     n=(4 * 128),
     stages=4,
     tile_m=128,
+    tile_n=128,
     profile=False,
     in_dtype=jnp.float16,
     rhs_transpose=False,
@@ -385,6 +400,7 @@ def verify(
       n,
       stages=stages,
       tile_m=tile_m,
+      tile_n=tile_n,
       in_dtype=in_dtype,
       rhs_transpose=rhs_transpose,
       wgmma_impl=impl,
