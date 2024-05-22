@@ -19,6 +19,7 @@ import enum
 import jax
 from jax import random
 from jax._src.interpreters import mlir
+from jax._src import test_util as jtu  # DO NOT REMOVE! This defines flags.
 from jax.experimental.mosaic import gpu as mosaic_gpu
 from jax.experimental.mosaic.gpu import profiler
 from jax.experimental.mosaic.gpu.dsl import *  # noqa: F403
