@@ -1051,7 +1051,9 @@ class ParsedPartitionSpec:
       else:
         axis_spec = (axis_spec,)
       axis_specs.append(axis_spec)
-    return cls(entry, axis_specs)
+    new_entry = PartitionSpec(
+        *[tuple(e) if isinstance(e, (list, tuple)) else e for e in entry])
+    return cls(new_entry, axis_specs)
 
   def __hash__(self):
     return hash((self.partitions, self.sync))

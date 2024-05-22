@@ -3495,6 +3495,12 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
     self.assertEqual(cache_info2.misses, cache_info1.misses)
 
+  def test_list_in_pspec(self):
+    mesh = jtu.create_global_mesh((2,), ('x',))
+    with mesh:
+      out = with_sharding_constraint(jnp.arange(8), P(['x']))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
   def test_sharding_preserved_trivial(self):
     mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
     ns = NamedSharding(mesh, P('x'))
