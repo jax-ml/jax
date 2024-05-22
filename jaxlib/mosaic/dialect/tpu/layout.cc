@@ -441,8 +441,7 @@ bool VectorLayout::hasNativeTiling(
 SmallVector<int64_t> VectorLayout::implicitShape(
     ArrayRef<int64_t> shape) const {
   SmallVector<int64_t> implicit_shape(shape);
-  const int64_t num_implicit_dims = 2 - layout_rank();
-  implicit_shape.reserve(shape.size() + num_implicit_dims);
+  implicit_shape.reserve(shape.size() + num_implicit_dims());
   insertImplicit(implicit_shape, 1);
   return implicit_shape;
 }
@@ -478,29 +477,17 @@ std::unique_ptr<VRegDataBounds> VectorLayout::tileDataBounds(
   // TODO(apaszke): allow_replicated could have been generalized to specify
   // what action should be taken when a REPLICATED offset is encountered.
   // Right now it either disallows replication, or selects the whole dimension.
-  int64_t s, l;
-  switch (implicit_dim_) {
-    case ImplicitDim::kNone:
-      s = idxs[idxs.size() - 2];
-      l = idxs[idxs.size() - 1];
-      break;
-    case ImplicitDim::kMinor:
-      s = idxs[idxs.size() - 1];
-      l = 0;
-      break;
-    case ImplicitDim::kSecondMinor:
-      s = 0;
-      l = idxs[idxs.size() - 1];
-      break;
-  }
-
+  const std::array<int64_t, 2> tiled_idxs = getImplicitTiledDims(idxs, 0);
+  const int64_t s = tiled_idxs[0];
+  const int64_t l = tiled_idxs[1];
   const SmallVector<int64_t> tiles_implicit_shape =
       tileArrayImplicitShape(full_shape, target_shape);
-  const int64_t ns = tiles_implicit_shape[tiles_implicit_shape.size() - 2];
-  const int64_t nl = tiles_implicit_shape[tiles_implicit_shape.size() - 1];
-  const SmallVector<int64_t> implicit_shape = implicitShape(full_shape);
-  const int64_t is = implicit_shape[implicit_shape.size() - 2];
-  const int64_t il = implicit_shape[implicit_shape.size() - 1];
+  const int64_t ns = *(tiles_implicit_shape.end() - 2);
+  const int64_t nl = *(tiles_implicit_shape.end() - 1);
+  const std::array<int64_t, 2> shape_tiled_dims =
+      getImplicitTiledDims(full_shape, 1);
+  const int64_t is = shape_tiled_dims[0];
+  const int64_t il = shape_tiled_dims[1];
 
   if (!hasNaturalTopology(target_shape)) {
     if (!offsets_[0].has_value() || !offsets_[1].has_value()) {
@@ -588,27 +575,12 @@ bool VectorLayout::generalizes(
     if (shape.data() == nullptr) {
       return false;
     }
-    // If the second-minor dimension is of size 1, then it does not matter
-    // whether we have a second minor implicit dim or not.
-    bool ok = false;
-    if (((implicit_dim_ == ImplicitDim::kSecondMinor &&
-          other.implicit_dim_ == ImplicitDim::kNone) ||
-         (other.implicit_dim_ == ImplicitDim::kSecondMinor &&
-          implicit_dim_ == ImplicitDim::kNone)) &&
-        shape[shape.size() - 2] == 1) {
-      ok =  true;
-    }
-    // If sufficiently many trailing dimensions are of size 1, then it does not
-    // matter if we use implicit dims to insert more.
-    int max_rank = std::max(layout_rank(), other.layout_rank());
-    CHECK_GE(max_rank, 1);
-    CHECK_LE(max_rank, 2);
-    if (*(shape.end() - 1) == 1 && (max_rank == 1 || *(shape.end() - 2) == 1)) {
-      ok = true;
-    }
-    if (!ok) {
-      return false;
-    }
+    // Since we do not reorder axes, if the shapes resulting from inserting
+    // implicit dimensions resulting are the same in the 2 minormost dimensions
+    // for both layouts, then the elements must be laid out the same way (i.e.
+    // layouts are equivalent).
+    return getImplicitTiledDims(shape, 1) ==
+           other.getImplicitTiledDims(shape, 1);
   }
   if (tiling_ != other.tiling_) {
     // Don't fail yet!
@@ -658,26 +630,8 @@ std::optional<VectorLayout> VectorLayout::join(const VectorLayout& l,
   if (l.bitwidth_ != r.bitwidth_ || l.tiling_ != r.tiling_) {
     return std::nullopt;
   }
-  if (l.implicit_dim_ != r.implicit_dim_) {
-    if (shape.size() < 2) {
-      return std::nullopt;
-    }
-    ImplicitDim dim;
-    if (l.implicit_dim_ == ImplicitDim::kNone) {
-      dim = r.implicit_dim_;
-    } else if (r.implicit_dim_ == ImplicitDim::kNone) {
-      dim = l.implicit_dim_;
-    } else {
-      return std::nullopt;
-    }
-    if (dim == ImplicitDim::kMinor && shape[shape.size() - 1] == 1) {
-      // OK, they are equivalent.
-    } else if (dim == ImplicitDim::kSecondMinor &&
-               shape[shape.size() - 2] == 1) {
-      // OK, they are equivalent.
-    } else {
-      return std::nullopt;
-    }
+  if (l.getImplicitTiledDims(shape, 1) != r.getImplicitTiledDims(shape, 1)) {
+    return std::nullopt;
   }
   LayoutOffsets offsets;
   for (int i = 0; i < 2; ++i) {

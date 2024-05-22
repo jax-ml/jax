@@ -2960,15 +2960,14 @@ FailureOr<xla::Array<Value>> vector_extract_slice_impl(
   TPU_ASSERT_EQ_OP(num_indices, sizes.size());
 
   SmallVector<int64_t> full_sizes;
-  const int64_t num_implicit_dims = 2 - layout_in.layout_rank();
-  full_sizes.reserve(src_vector_rank + num_implicit_dims);
+  full_sizes.reserve(src_vector_rank + layout_in.num_implicit_dims());
   full_sizes.append(sizes.begin(), sizes.end());
   full_sizes.append(src_vector_shape.begin() + num_indices,
                     src_vector_shape.end());
-  layout_in.insertImplicit(full_sizes, 1); /*  */
+  layout_in.insertImplicit(full_sizes, 1);
 
   SmallVector<int64_t> full_offsets;
-  full_offsets.reserve(src_vector_rank + num_implicit_dims);
+  full_offsets.reserve(src_vector_rank + layout_in.num_implicit_dims());
   full_offsets.append(offsets.begin(), offsets.end());
   full_offsets.append(src_vector_rank - num_indices, 0);
   layout_in.insertImplicit(full_offsets, 0);

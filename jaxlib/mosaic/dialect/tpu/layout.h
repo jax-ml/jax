@@ -245,8 +245,17 @@ class VectorLayout {
   const std::array<int64_t, 2> &tiling() const { return tiling_; }
   ImplicitDim implicit_dim() const { return implicit_dim_; }
   int packing() const { return 32 / bitwidth_; }
+  int num_implicit_dims() const {
+    switch (implicit_dim_) {
+      case ImplicitDim::kNone:
+        return 0;
+      case ImplicitDim::kMinor:
+      case ImplicitDim::kSecondMinor:
+        return 1;
+    }
+  }
   // The number of minormost dimensions tiled by this layout.
-  int layout_rank() const { return 1 + (implicit_dim_ == ImplicitDim::kNone); }
+  int layout_rank() const { return 2 - num_implicit_dims(); }
 
   bool operator==(const VectorLayout &other) const;
   bool operator!=(const VectorLayout &other) const {
@@ -299,6 +308,27 @@ class VectorLayout {
       case ImplicitDim::kSecondMinor:
         vec.erase(vec.end() - static_cast<int64_t>(implicit_dim_));
         break;
+    }
+  }
+
+  // Returns the value of the tiled (2 minormost) dimensions of the given array
+  // with implicit dims inserted.
+  //
+  // Roughly equivalent to the following (but avoids vector allocation):
+  //
+  //   SmallVector<int64_t> vec = arr;
+  //   insertImplicit(arr, implicit_value);
+  //   return {*(vec.end() - 2), *(vec.end() - 1)};
+  std::array<int64_t, 2> getImplicitTiledDims(
+      const ArrayRef<int64_t> arr, const int64_t implicit_value) const {
+    CHECK_GE(arr.size(), layout_rank());
+    switch (implicit_dim_) {
+      case ImplicitDim::kNone:
+        return {*(arr.end() - 2), *(arr.end() - 1)};
+      case ImplicitDim::kMinor:
+        return {*(arr.end() - 1), implicit_value};
+      case ImplicitDim::kSecondMinor:
+        return {implicit_value, *(arr.end() - 1)};
     }
   }
 
