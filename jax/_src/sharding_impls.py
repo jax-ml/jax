@@ -567,7 +567,7 @@ class PmapSharding(XLACompatibleSharding):
   @property
   def memory_kind(self) -> str | None:
     try:
-      return self._internal_device_list.default_memory_kind  # type: ignore
+      return self._internal_device_list.default_memory_kind
     except:
       return None
 
@@ -586,7 +586,7 @@ class PmapSharding(XLACompatibleSharding):
 
   @functools.cached_property
   def is_fully_addressable(self) -> bool:
-    return self._internal_device_list.is_fully_addressable  # type: ignore
+    return self._internal_device_list.is_fully_addressable
 
   def shard_shape(self, global_shape: Shape) -> Shape:
     sharded_dim = None
@@ -900,7 +900,7 @@ class GSPMDSharding(XLACompatibleSharding):
 
   @functools.cached_property
   def is_fully_addressable(self) -> bool:
-    return self._internal_device_list.is_fully_addressable  # type: ignore
+    return self._internal_device_list.is_fully_addressable
 
   @classmethod
   def get_replicated(cls, device_assignment, *, memory_kind: str | None = None):
