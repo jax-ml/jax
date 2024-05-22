@@ -288,18 +288,6 @@ build:cross_compile_linux_arm64 --cpu=aarch64
 build:cross_compile_linux_arm64 --crosstool_top=@xla//tools/toolchains/cross_compile/cc:cross_compile_toolchain_suite
 
 build:rbe_cross_compile_base --config=rbe
-# JAX depends on some local Python headers that are configured as Genrule. They
-# are present on the local host machine but not on the remote execution machine,
-# leading to build failures. To resolve the issue, the following line is added
-# to make sure all Genrule targets are excuted locally.
-build:rbe_cross_compile_base --strategy=Genrule=standalone
-# Due to the above strategy, all Genrule commands are executed locally, but the
-# following actions invoke tools (E.g `flatc`, `llvm-tblgen`, etc.) that are
-# only executabe on the RBE (x86) machine, so the strategy_regexp options are
-# added to override and run the actions using remote strategy.
-build:rbe_cross_compile_base --strategy_regexp='Generating code from table.*=remote'
-build:rbe_cross_compile_base --strategy_regexp='Generating flatbuffer files.*=remote'
-build:rbe_cross_compile_base --strategy_regexp='Executing genrule @llvm-project.*=remote'
 
 # RBE cross-compile configs for Linux Aarch64
 build:rbe_cross_compile_linux_arm64 --config=cross_compile_linux_arm64
