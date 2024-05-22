@@ -1777,6 +1777,26 @@ class ShardMapTest(jtu.JaxTestCase):
 
     jax.vmap(jax.grad(lambda x: f(x).sum()), spmd_axis_name='i')(xs)  # don't crash
 
+  def test_grad_shmap_residuals_axis_names_in_mesh_order(self):
+    # https://github.com/google/jax/issues/21236
+    mesh = jtu.create_global_mesh((4, 2, 1, 1), ('i', 'j', 'k', 'a'))
+
+    @partial(
+      shard_map,
+      mesh=mesh,
+      in_specs=P('j'),
+      out_specs=P('j'),
+      )
+    def f(x):
+      return jnp.sin(x)
+
+    xs = jnp.arange(16.)
+
+    ir = jax.jit(jax.grad(lambda x: f(x).sum())).lower(xs)
+    self.assertIn(
+      '{jax.result_info = "[(\'i\', \'j\', \'k\', \'a\')]"}',
+      ir.as_text()
+    )
 
 class FunSpec(NamedTuple):
   name: str
