@@ -274,6 +274,9 @@ class JaxprEqnContext:
         stack.enter_context(manager(val))
       yield
 
+  def __repr__(self):
+    return f'JaxprEqnContext(compute_type={self.compute_type})'
+
 
 class JaxprEqn(NamedTuple):
   invars: list[Atom]

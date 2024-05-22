@@ -867,57 +867,6 @@ class MemoriesComputationTest(jtu.BufferDonationTestCase):
     self.assertIn("input_output_alias", lowered_text)
     self.assertDeleted(x)
 
-  def test_host_offload_in_custom_vjp(self):
-    if xb.using_pjrt_c_api():
-      raise unittest.SkipTest("GetOutputShardings not supported in PJRT C API")
-    @jax.custom_vjp
-    def f(x):
-      return jnp.sin(x)
-
-    def f_fwd(x):
-      y = x * 2
-      z = jax.device_put(y, TransferToMemoryKind('unpinned_host'))
-      return y, (x, z)
-
-    def f_bwd(res, tx):
-      x, z = res
-      y = x * 2
-      z2 = jax.device_put(y, TransferToMemoryKind('unpinned_host'))
-      return ((z == z2).astype(jnp.float32),)
-
-    f.defvjp(f_fwd, f_bwd)
-    g = jax.jit(jax.grad(lambda x: f(x).sum()))
-
-    x = jnp.ones(3) * 4
-    all_true = jnp.ones(3)
-    self.assertArraysEqual(g(x), all_true)
-
-  def test_host_offload_in_custom_vjp_sharded(self):
-    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
-    s = NamedSharding(mesh, P('x'))
-
-    @jax.custom_vjp
-    def f(x):
-      return jnp.sin(x)
-
-    def f_fwd(x):
-      y = x * 2
-      z = jax.device_put(y, s.with_memory_kind('unpinned_host'))
-      return y, (x, z)
-
-    def f_bwd(res, tx):
-      x, z = res
-      y = x * 2
-      z2 = jax.device_put(y, s.with_memory_kind('unpinned_host'))
-      return ((z == z2).astype(jnp.float32),)
-
-    f.defvjp(f_fwd, f_bwd)
-    g = jax.jit(jax.grad(lambda x: f(x).sum()))
-
-    x = jax.device_put(jnp.ones(4) * 4, s)
-    all_true = jnp.ones(4)
-    self.assertArraysEqual(g(x), all_true)
-
 
 class DevicePutTest(jtu.JaxTestCase):
 
@@ -1296,27 +1245,6 @@ class ComputeOffload(jtu.JaxTestCase):
     self.assertArraysEqual(out, inp * 6)
     self.assertEqual(out2.sharding.memory_kind, 'pinned_host')
 
-  def test_sharded_compute_on_host(self):
-    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
-    s = NamedSharding(mesh, P('x', 'y'))
-    np_inp = np.arange(16).reshape(8, 2)
-    arr = jax.device_put(np_inp, s)
-
-    @compute_on('device_host')
-    @jax.jit
-    def g(x, y):
-      return x * y
-
-    @jax.jit
-    def f(x):
-      x = x * 3
-      return g(x, x)
-
-    out = f(arr)
-    expected_out = (np_inp * 3) * (np_inp * 3)
-    self.assertEqual(out.sharding, s)
-    self.assertArraysEqual(out, expected_out)
-
   def test_nested_compute_error(self):
     @compute_on('device')
     @jax.jit
@@ -1383,6 +1311,11 @@ class ComputeOffload(jtu.JaxTestCase):
     self.assertEqual(lowered_text.count('_xla_compute_type = "host"'), 2)
 
   def test_nested_no_op_compute(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, s)
+
     @compute_on('device_host')
     @jax.jit
     def f0(x):
@@ -1398,29 +1331,109 @@ class ComputeOffload(jtu.JaxTestCase):
     def f2(x):
       return f1(x)
 
-    inp = jnp.arange(8)
-    out = f2(inp)
-    self.assertArraysEqual(out, inp * 6)
+    out = f2(arr)
+    self.assertArraysEqual(out, arr * 6)
+    self.assertEqual(out.sharding, s)
 
-  # def test_sharded_compute_on_host(self):
-  #   mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
-  #   s = NamedSharding(mesh, P('x', 'y'))
-  #   np_inp = np.arange(16).reshape(8, 2)
-  #   arr = jax.device_put(np_inp, s)
+  def test_sharded_compute_on_host(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, s)
 
-  #   @compute_on('device_host')
-  #   @jax.jit
-  #   def g(x):
-  #     return x * 2
+    @compute_on('device_host')
+    @jax.jit
+    def g(x, y):
+      return x * y
 
-  #   @jax.jit
-  #   def f(x):
-  #     x = x * 3
-  #     return g(x)
+    @jax.jit
+    def f(x):
+      x = x * 3
+      return g(x, x)
 
-  #   out = f(arr)
-  #   self.assertEqual(out.sharding, s)
-  #   self.assertArraysEqual(out, np_inp * 6)
+    out = f(arr)
+    expected_out = (np_inp * 3) * (np_inp * 3)
+    self.assertEqual(out.sharding, s)
+    self.assertArraysEqual(out, expected_out)
+
+  def test_host_offload_in_custom_vjp(self):
+    @jax.custom_vjp
+    def f(x):
+      return jnp.sin(x)
+
+    @compute_on('device_host')
+    @jax.jit
+    def eq(x, y):
+      return (x == y).astype(jnp.float32)
+
+    def f_fwd(x):
+      y = x * 2
+      z = jax.device_put(y, TransferToMemoryKind('pinned_host'))
+      return y, (x, z)
+
+    def f_bwd(res, tx):
+      x, z = res
+      y = x * 2
+      z2 = jax.device_put(y, TransferToMemoryKind('pinned_host'))
+      return (eq(z, z2),)
+
+    f.defvjp(f_fwd, f_bwd)
+    g = jax.jit(jax.grad(lambda x: f(x).sum()))
+
+    x = jnp.ones(3) * 4
+    all_true = jnp.ones(3)
+    self.assertArraysEqual(g(x), all_true)
+
+  def test_host_offload_in_custom_vjp_sharded(self):
+    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
+    s = NamedSharding(mesh, P('x'))
+
+    @jax.custom_vjp
+    def f(x):
+      return jnp.sin(x)
+
+    @compute_on('device_host')
+    @jax.jit
+    def eq(x, y):
+      return (x == y).astype(jnp.float32)
+
+    def f_fwd(x):
+      y = x * 2
+      z = jax.device_put(y, s.with_memory_kind('pinned_host'))
+      return y, (x, z)
+
+    def f_bwd(res, tx):
+      x, z = res
+      y = x * 2
+      z2 = jax.device_put(y, s.with_memory_kind('pinned_host'))
+      return (eq(z, z2),)
+
+    f.defvjp(f_fwd, f_bwd)
+    g = jax.jit(jax.grad(lambda x: f(x).sum()))
+
+    arr = jax.device_put(jnp.ones(4) * 4, s)
+    all_true = jnp.ones(4)
+    self.assertArraysEqual(g(arr), all_true)
+
+  def test_pure_host_data_and_compute(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'), memory_kind='pinned_host')
+    np_inp = np.arange(16).reshape(8, 2)
+    arr_host = jax.device_put(np_inp, s)
+
+    @compute_on('device_host')
+    @jax.jit
+    def g(x):
+      return x * x
+
+    @functools.partial(jax.jit, out_shardings=s)
+    def f(x):
+      return g(x)
+
+    out = f(arr_host)
+    self.assertEqual(out.sharding, s)
+    self.assertEqual(out.sharding.memory_kind, 'pinned_host')
+    self.assertArraysEqual(out, np_inp * np_inp)
 
   # def test_eager_compute(self):
   #   inp = jnp.arange(8)
