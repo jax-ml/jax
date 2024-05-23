@@ -344,9 +344,6 @@ def supported_dtypes():
   if device_under_test() == "tpu":
     types = {np.bool_, np.int8, np.int16, np.int32, np.uint8, np.uint16,
              np.uint32, _dtypes.bfloat16, np.float16, np.float32, np.complex64}
-  elif device_under_test() == "iree":
-    types = {np.bool_, np.int8, np.int16, np.int32, np.uint8, np.uint16,
-             np.uint32, np.float32}
   elif device_under_test() == "METAL":
     types = {np.int32, np.uint32, np.float32}
   else:
