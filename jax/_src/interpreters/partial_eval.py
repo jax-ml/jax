@@ -45,7 +45,8 @@ from jax._src.core import (Trace, Tracer, Jaxpr, Literal, get_aval,
                            InputType, OutputType, get_referent, JaxprEqnContext)
 from jax._src.state.types import AbstractRef
 from jax._src.tree_util import (PyTreeDef, treedef_tuple, tree_unflatten,
-                                KeyPath, generate_key_paths, keystr)
+                                tree_flatten, tree_structure, KeyPath, generate_key_paths,
+                                keystr)
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
                            as_hashable_function, weakref_lru_cache, subs_list)
@@ -1800,12 +1801,15 @@ class JaxprStackFrame:
   def add_eqn(self, eqn: core.JaxprEqn):
     self.eqns.append(eqn)
 
-  def to_jaxpr(self, out_tracers: Sequence[Tracer]
+  def to_jaxpr(self, trace: DynamicJaxprTrace, out_tracers: Sequence[Tracer]
                ) -> tuple[Jaxpr, list[Any], list[tuple[Any, str]]]:
     # It's not necessary, but we keep the tracer-to-var mapping injective:
     assert len(self.tracer_to_var) == len(set(self.tracer_to_var.values()))
     invars = self.attrs_vars + self.invars
-    state_outvars    = [self.tracer_to_var[id(t)] for t in get_states(self.attrs_tracked)]
+    state_ans, end_trees = unzip2(
+        tree_flatten(t) for t in get_states(self.attrs_tracked))
+    state_outvars = [self.tracer_to_var[id(trace.full_raise(x))]
+                     for xs in state_ans for x in xs]
     explicit_outvars = [self.tracer_to_var[id(t)] for t in out_tracers]
     outvars = state_outvars + explicit_outvars
     constvars, constvals = unzip2(self.constvar_to_val.items())
@@ -1813,8 +1817,9 @@ class JaxprStackFrame:
     jaxpr = Jaxpr(constvars, invars, outvars, self.eqns, jaxpr_effects)
     jaxpr, constvals = _const_folding_and_forwarding(jaxpr, constvals)
     jaxpr, constvals = _inline_literals(jaxpr, constvals)  # type: ignore
+    init_trees = [tree_structure(init_val) for init_val in self.attrs_inits]
     set_states(self.attrs_tracked, self.attrs_inits)
-    return jaxpr, list(constvals), self.attrs_tracked
+    return jaxpr, list(constvals), zip(init_trees, end_trees, self.attrs_tracked)
 
   def to_jaxpr2(self, out_tracers):
     # It's not necessary, but we keep the tracer-to-var mapping injective:
@@ -2362,7 +2367,7 @@ def trace_to_subjaxpr_dynamic(
     in_tracers_ = [t for t, keep in zip(in_tracers, keep_inputs) if keep]
     ans = fun.call_wrapped(*in_tracers_)
     out_tracers = map(trace.full_raise, ans)
-    jaxpr, consts, attrs_tracked = frame.to_jaxpr(out_tracers)
+    jaxpr, consts, attrs_tracked = frame.to_jaxpr(trace, out_tracers)
     del fun, main, trace, frame, in_tracers, out_tracers, ans
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   return jaxpr, [v.aval for v in jaxpr.outvars], consts, attrs_tracked

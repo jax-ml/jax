@@ -314,12 +314,20 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
 
 def _set_states(attrs_tracked, vals):
   from jax.experimental.attrs import jax_setattr
-  for ((obj, attr), val) in zip(attrs_tracked, vals):
+  valss = split_list(vals, [td.num_leaves for _, td, _ in attrs_tracked[:-1]])
+  for ((_, treedef, (obj, attr)), leaves) in zip(attrs_tracked, valss):
+    val = tree_unflatten(treedef, leaves)
     jax_setattr(obj, attr, val)
 
 def _get_states(attrs_tracked):
   from jax.experimental.attrs import jax_getattr
-  return [jax_getattr(obj, attr) for (obj, attr) in attrs_tracked]
+  vals = []
+  for treedef, _, (obj, attr) in attrs_tracked:
+    tree = jax_getattr(obj, attr)
+    leaves, treedef_ = tree_flatten(tree)
+    assert treedef == treedef_
+    vals.extend(leaves)
+  return vals
 
 def _check_scan_carry_type(body_fun, in_carry, out_carry_tree, out_avals):
   try:
