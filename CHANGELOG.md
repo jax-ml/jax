@@ -8,6 +8,9 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.29
 
+* Breaking changes
+  * JAX now requires ml_dtypes version 0.4.0 or newer.
+
 * Deprecations
   * Removed a number of previously-deprecated APIs:
     * from {mod}`jax.core`: `non_negative_dim`, `DimSize`, `Shape`

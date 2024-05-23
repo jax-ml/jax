@@ -42,8 +42,8 @@ try:
 except:
   pass
 else:
-  if _ml_dtypes_version < (0, 2, 0):
-    raise ValueError("JAX requires ml_dtypes version 0.2.0 or newer; "
+  if _ml_dtypes_version < (0, 4, 0):
+    raise ValueError("JAX requires ml_dtypes version 0.4.0 or newer; "
                      f"installed version is {ml_dtypes.__version__}.")
 
 export = set_module('jax.dtypes')
@@ -500,7 +500,7 @@ def _type_promotion_lattice(jax_numpy_dtype_promotion: str) -> dict[JAXType, lis
   This DAG maps each type to its immediately higher type on the lattice.
   """
   b1, = _bool_types
-  _uint4, u1, u2, u4, u8, _int4, i1, i2, i4, i8 = _int_types
+  uint4, u1, u2, u4, u8, int4, i1, i2, i4, i8 = _int_types
   *f1_types, bf, f2, f4, f8 = _float_types
   c4, c8 = _complex_types
   i_, f_, c_ = _weak_types
@@ -508,18 +508,13 @@ def _type_promotion_lattice(jax_numpy_dtype_promotion: str) -> dict[JAXType, lis
     out: dict[JAXType, list[JAXType]]
     out = {
       b1: [i_],
-      u1: [i2, u2], u2: [i4, u4], u4: [i8, u8], u8: [f_],
-      i_: [u1, i1], i1: [i2], i2: [i4], i4: [i8], i8: [f_],
+      uint4: [], u1: [i2, u2], u2: [i4, u4], u4: [i8, u8], u8: [f_],
+      i_: [uint4, int4, u1, i1],
+      int4: [], i1: [i2], i2: [i4], i4: [i8], i8: [f_],
       f_: [*f1_types, bf, f2, c_],
       **{t: [] for t in f1_types}, bf: [f4], f2: [f4], f4: [f8, c4], f8: [c8],
       c_: [c4], c4: [c8], c8: [],
     }
-    if _int4_dtype is not None:
-      out[i_].append(_int4_dtype)
-      out[_int4_dtype] = []
-    if _uint4_dtype is not None:
-      out[i_].append(_uint4_dtype)
-      out[_uint4_dtype] = []
     return out
   elif jax_numpy_dtype_promotion == 'strict':
     return {
