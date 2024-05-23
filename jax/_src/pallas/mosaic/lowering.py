@@ -15,21 +15,20 @@
 """Module for lowering JAX to Mosaic-compatible MLIR dialects."""
 from __future__ import annotations
 
+from collections.abc import Sequence
 import dataclasses
 import functools
+import string
 from typing import Any, Callable
-from collections.abc import Sequence
-
-from jaxlib.mlir.ir import Module
 
 import jax
 from jax import core as jax_core
 from jax import lax
 from jax import tree_util
+from jax._src import ad_util
 from jax._src import custom_derivatives
 from jax._src import debugging
 from jax._src import linear_util as lu
-from jax._src import ad_util
 from jax._src import mesh as mesh_lib
 from jax._src import pjit
 from jax._src import source_info_util
@@ -59,6 +58,7 @@ from jax._src.util import split_list
 from jax._src.util import unzip2
 from jax.experimental.mosaic.dialects import tpu
 import jax.numpy as jnp
+from jaxlib.mlir.ir import Module
 import numpy as np
 
 # TODO(sharadmv): enable type checking
@@ -2331,3 +2331,32 @@ def _delay_rule(ctx: LoweringRuleContext, nanos: int):
 
 
 lowering_rules[tpu_primitives.delay_p] = _delay_rule
+
+
+def _debug_print_rule(
+    ctx: LoweringRuleContext, *args, fmt: str, has_placeholders: bool
+):
+  primitives.check_debug_print_format(fmt, *args)
+  if has_placeholders:
+    if not all(
+        isinstance(arg.type, ir.IntegerType) and arg.type.width == 32
+        for arg in args
+    ):
+      raise TypeError(
+          "All arguments must be 32-bit integers when using"
+          " placeholders (`{...}`). If you need to print values of other types,"
+          " remove placeholders from the format string."
+      )
+
+    # TPU expects $0, $1 etc as placeholders.
+    tpu_fmt = "".join(
+        f"{text}${idx}"
+        for idx, (text, _, _, _) in enumerate(string.Formatter().parse(fmt))
+    )
+  else:
+    tpu_fmt = fmt
+  tpu.log(args, tpu_fmt, formatted=has_placeholders)
+  return ()
+
+
+lowering_rules[primitives.debug_print_p] = _debug_print_rule

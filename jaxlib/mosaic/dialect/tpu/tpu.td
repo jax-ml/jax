@@ -561,6 +561,16 @@ def TPU_GetIterationBoundOp : TPU_Op<"iteration_bound"> {
   let assemblyFormat = [{ $dim attr-dict `:` type($result) }];
 }
 
+def TPU_LogOp : TPU_Op<"log"> {
+  let arguments = (ins
+    Variadic<AnyType>:$inputs,
+    StrAttr:$tag,
+    DefaultValuedAttr<BoolAttr, "false">:$formatted
+  );
+  let results = (outs);
+  let assemblyFormat = [{ $tag attr-dict (`:`  `[` $inputs^ `]` `:` type($inputs))? }];
+}
+
 def DebugAssertInsertionPass : Pass<"debug-assert-insertion", "::mlir::func::FuncOp"> {
   let dependentDialects = [
     "::mlir::func::FuncDialect",

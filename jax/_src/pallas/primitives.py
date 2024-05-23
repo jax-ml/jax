@@ -518,6 +518,9 @@ def debug_print(fmt: str, *args: jax.ArrayLike):
         * On GPU, when using the experimental Mosaic GPU backend, ``fmt`` must
           contain a placeholder for each value to be printed. Format specs and
           conversions are not supported.
+        * In TPU, if ``fmt`` contains placeholders, all values must be 32-bit
+          integers. If there are no placeholders, the values are printed after
+          the format string.
     *args: The scalar values to print.
   """  # fmt: skip
   has_placeholders = False
@@ -525,6 +528,29 @@ def debug_print(fmt: str, *args: jax.ArrayLike):
     _, field_name, *_ = next(string.Formatter().parse(fmt))
     has_placeholders = field_name is not None
   return debug_print_p.bind(*args, fmt=fmt, has_placeholders=has_placeholders)
+
+
+def check_debug_print_format(
+    fmt: str, *args: jax.ArrayLike
+):
+  n_placeholders = 0
+  for _, field, spec, conversion in string.Formatter().parse(fmt):
+    if field is not None:
+      n_placeholders += 1
+    if spec or conversion:
+      raise ValueError(
+          "The format string should not contain any format specs or conversions"
+      )
+    if field:
+      raise ValueError(
+          "The format string should not reference arguments by position or name"
+      )
+
+  if len(args) != n_placeholders:
+    raise TypeError(
+        f"The format string expects {n_placeholders} "
+        f"argument{'' if n_placeholders == 1 else 's'}, but got {len(args)}"
+    )
 
 
 @debug_print_p.def_impl
@@ -538,7 +564,7 @@ def debug_print_impl(*args: Any, fmt: str, has_placeholders: bool):
 
 @debug_print_p.def_effectful_abstract_eval
 def debug_print_abstract_eval(*avals: Any, fmt: str, has_placeholders: bool):
-  del fmt
+  del fmt, has_placeholders
   if any(aval.shape for aval in avals):
     raise ValueError("Only scalar values are supported")
   return [], {debug_print_effect}

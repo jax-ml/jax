@@ -20,7 +20,6 @@ from collections.abc import Sequence
 import dataclasses
 import functools
 import math
-import string
 from typing import Any, cast
 
 import jax
@@ -356,26 +355,10 @@ def _debug_print_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
     fmt,
-    has_placeholders,
-    _formatter=string.Formatter(),
+    has_placeholders: bool,
 ):
   del has_placeholders
-  n_placeholders = 0
-  for _, field, spec, conversion in string.Formatter().parse(fmt):
-    if spec or conversion:
-      raise ValueError(
-          "The format string should not contain any format specs orconversions"
-      )
-    if field:
-      raise ValueError(
-          "The format string should not reference arguments by position or name"
-      )
-    n_placeholders += field is not None
-  if len(args) != n_placeholders:
-    raise TypeError(
-        f"The format string  expects {n_placeholders} "
-        f"argument{'' if n_placeholders == 1 else 's'}, but got {len(args)}"
-    )
+  primitives.check_debug_print_format(fmt, *args)
   mgpu.debug_print(fmt, *args)
   return ()
 
