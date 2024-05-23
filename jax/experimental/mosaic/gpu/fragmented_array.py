@@ -65,8 +65,7 @@ class WGSplatFragLayout:
     Only dimensions of size 1 can be broadcast. All other dimensions
     must be the same as the argument shape.
     """
-    return all(
-        dim1 == dim2 or dim1 == 1 for dim1, dim2 in zip(self.shape, shape))
+    return all(dim1 == dim2 or dim1 == 1 for dim1, dim2 in zip(self.shape[::-1], shape[::-1]))
 
 
 @dataclasses.dataclass(frozen=True)
