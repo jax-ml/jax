@@ -526,7 +526,7 @@ def _launch(
     smem_bytes += profiler_spec.smem_bytes(grid)
 
   # TODO(cperivol): Query the shared memory size programmatically.
-  if smem_bytes > 228000:
+  if smem_bytes > 228 * 1024:
     raise ValueError(f"Mosaic GPU kernel exceeds available shared memory {smem_bytes=} > 228000")
   launch_op = gpu.LaunchOp(
       token.type, [token], *grid_vals, *block_vals,

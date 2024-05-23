@@ -70,7 +70,8 @@ class MatmulTestCase(jtu.JaxTestCase):
           stages,
           tile_m=tile_m,
           tile_n=tile_n,
-          in_dtype=in_dtype,
+          lhs_dtype=in_dtype,
+          rhs_dtype=in_dtype,
           rhs_transpose=True,
       )
     except ValueError as e:
@@ -111,7 +112,8 @@ class MatmulTestCase(jtu.JaxTestCase):
           stages,
           tile_m=tile_m,
           tile_n=tile_n,
-          in_dtype=jnp.float32,
+          lhs_dtype=jnp.float32,
+          rhs_dtype=jnp.float32,
           rhs_transpose=True,
           precision=(
               matmul.F32Precision.TF32_X3
@@ -123,6 +125,28 @@ class MatmulTestCase(jtu.JaxTestCase):
       if "Mosaic GPU kernel exceeds available shared memory" in str(e):
         self.skipTest("Not enough shared memory for test, skipping.")
       raise e
+
+  @parameterized.parameters(
+      dict(m=55 * 128, n=95 * 128, k=48 * 128, stages=4, tile_m=128),
+      dict(m=55 * 128, n=45 * 128, k=48 * 128, stages=4, tile_m=128),
+      dict(m=64, n=95 * 128, k=48 * 128, stages=4, tile_m=64),
+      dict(m=64, n=45 * 128, k=48 * 128, stages=4, tile_m=64),
+  )
+  def test_mixed_matmul(self, m, k, n, stages, tile_m):
+    # RHS.element_size==1b so k_tile=128
+    if stages * 128 > k:
+      self.skipTest("Too many stages.")
+
+    matmul.verify(
+        m,
+        k,
+        n,
+        stages,
+        tile_m=tile_m,
+        rhs_transpose=False,
+        lhs_dtype=jnp.bfloat16,
+        rhs_dtype=jnp.int8,
+    )
 
 
 if __name__ == "__main__":

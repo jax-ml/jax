@@ -14,8 +14,9 @@
 # ==============================================================================
 """Matmul kernels for H100."""
 
-import contextlib
+import dataclasses
 import enum
+
 import jax
 from jax import random
 from jax._src.interpreters import mlir
@@ -41,6 +42,29 @@ import numpy as np
 SmemRef = ir.Value
 
 
+@dataclasses.dataclass(frozen=True)
+class Tiling:
+  m: int
+  n: int
+  k: int
+
+  @property
+  def mk(self):
+    return (self.m, self.k)
+
+  @property
+  def kn(self):
+    return (self.k, self.n)
+
+  @property
+  def nk(self):
+    return (self.n, self.k)
+
+  @property
+  def mn(self):
+    return (self.m, self.n)
+
+
 class F32Precision(enum.Enum):
   DEFAULT = enum.auto()
   TF32_X3 = enum.auto()
@@ -55,10 +79,12 @@ class WGMMADefaultImpl:
 
   @staticmethod
   def smem_shape_extra(
-      lhs_tile: jax.ShapeDtypeStruct,
-      rhs_tile: jax.ShapeDtypeStruct,
+      block_tiling: Tiling,
+      tma_tiling: Tiling,
+      lhs_dtype: jnp.dtype, rhs_dtype: jnp.dtype,
+      rhs_transpose: WGMMALayout,
   ) -> dict[str, jax.ShapeDtypeStruct]:
-    del lhs_tile, rhs_tile
+    del block_tiling, tma_tiling, lhs_dtype, rhs_dtype, rhs_transpose
     return {}
 
   @staticmethod
@@ -89,10 +115,15 @@ class WGMMATF32x3Impl:
 
   @staticmethod
   def smem_shape_extra(
-      lhs_tile: jax.ShapeDtypeStruct,
-      rhs_tile: jax.ShapeDtypeStruct,
+      block_tiling: Tiling,
+      tma_tiling: Tiling,
+      lhs_dtype: jnp.dtype, rhs_dtype: jnp.dtype,
+      rhs_transpose: bool,
   ) -> dict[str, jax.ShapeDtypeStruct]:
-    return {"lhs_err": lhs_tile, "rhs_err": rhs_tile}
+    del rhs_transpose
+    lhs_err = jax.ShapeDtypeStruct(shape=tile_shape(block_tiling.mk, tma_tiling.mk), dtype=lhs_dtype)
+    rhs_err = jax.ShapeDtypeStruct(shape=tile_shape(block_tiling.kn, tma_tiling.kn), dtype=rhs_dtype)
+    return {"lhs_err": lhs_err, "rhs_err": rhs_err}
 
   @staticmethod
   def get_result_tile(accs) -> FragmentedArray:
@@ -137,6 +168,59 @@ class WGMMATF32x3Impl:
     nvvm.wgmma_wait_group_sync_aligned(2)
     return {"main": acc, "errs": acc_err}
 
+class WGMMACvtRhsImpl:
+  """Mixed WGMMA implementation where B is converted to A."""
+
+  @staticmethod
+  def zero_accs(tile_m: int, tile_n: int) -> WGMMAAccumulator:
+    return WGMMADefaultImpl.zero_accs(tile_m, tile_n)
+
+  @staticmethod
+  def smem_shape_extra(
+      block_tiling: Tiling,
+      tma_tiling: Tiling,
+      lhs_dtype: jnp.dtype, rhs_dtype: jnp.dtype,
+      rhs_transpose: bool,
+  ) -> dict[str, jax.ShapeDtypeStruct]:
+    del rhs_dtype
+    if rhs_transpose:
+      raise NotImplementedError("Transpose requires more elaborate handling of tiling.")
+
+    if tma_tiling.k != 64:
+      raise ValueError(f"WGMMA layout needs the left tiling dimension to be 64 {tma_tiling.k=}")
+
+    # The second dim needs to be tma_tiling.k so it is 128b wide and
+    # the first dim needs to line up with the lhs dimension. That's
+    # why we have a strange (k, k) here.
+    cvt_shape = tile_shape(block_tiling.kn, (tma_tiling.k, tma_tiling.k))
+    return {"cvt": jax.ShapeDtypeStruct(shape=cvt_shape, dtype=lhs_dtype)}
+
+  @staticmethod
+  def get_result_tile(acc: WGMMAAccumulator) -> FragmentedArray:
+    return WGMMADefaultImpl.get_result_tile(acc)
+
+  @staticmethod
+  def wgmma(
+      smem_scratch: dict[str, SmemRef],  # pylint: disable=unused-argument
+      acc: WGMMAAccumulator,
+      b_order: WGMMALayout,
+      a_slice: SmemRef,
+      b_slice: SmemRef,
+  ) -> dict[str, WGMMAAccumulator]:
+    # Convert the load
+    arr = FragmentedArray.load_tiled(b_slice, swizzle=128)
+    cvt_ty = ir.MemRefType(smem_scratch["cvt"].type)
+    # TODO(cperivol): https://research.google/blog/mixed-input-matrix-multiplication-performance-optimizations/
+    arr = arr.astype(cvt_ty.element_type)
+    # Make sure no wgmma is running.
+    # TODO(cperivol): double buffer.
+    nvvm.wgmma_wait_group_sync_aligned(0)
+    arr.store_tiled(smem_scratch["cvt"], swizzle=128)
+    commit_shared()
+    nvvm.wgmma_fence_aligned()
+    return wgmma(acc, a_slice, smem_scratch["cvt"], b_order=b_order)
+
+
 
 def mlir_context(f):
   def wrap(*args, **kw):
@@ -147,10 +231,8 @@ def mlir_context(f):
 
 @mlir_context
 def build_kernel(
-    m: int,
-    k: int,
-    n: int,
-    in_dtype: jnp.dtype,
+    m, n, k,
+    lhs_dtype, rhs_dtype,
     stages: int = 2,
     tile_m: int = 128,
     tile_n: int = 128,
@@ -158,65 +240,57 @@ def build_kernel(
     wgmma_impl=WGMMADefaultImpl,
     profiler_spec: profiler.ProfilerSpec | None = None,
 ):
-  in_dtype = jnp.dtype(in_dtype)
-  if in_dtype == jnp.float16:
-    in_mlir_dtype = ir.F16Type.get()
-  elif in_dtype == jnp.bfloat16:
-    in_mlir_dtype = ir.BF16Type.get()
-  elif in_dtype == jnp.float32:
-    in_mlir_dtype = ir.F32Type.get()
-  else:
-    raise ValueError(f"Unsupported input dtype: {in_dtype}")
-
-  in_bytewidth = bytewidth(in_mlir_dtype)
-  in_128b_elems = 128 // in_bytewidth
   out_128b_elems = 128 // bytewidth(ir.F32Type.get())
-  tile_k = in_128b_elems
+  out_tiling = (64, out_128b_elems)
+  out_tile = jax.ShapeDtypeStruct(tile_shape((tile_m, tile_n), out_tiling), jnp.float32)
   if tile_m % 64 != 0:
     raise ValueError(f"{tile_m=} must be divisible by 64")
-  if tile_n % in_128b_elems != 0:
-    raise ValueError(
-        f"{tile_n=} must be divisible by 128 bytes ="
-        f" {in_128b_elems} {in_mlir_dtype} elements"
-    )
   if m % tile_m != 0:
     raise ValueError(f"{m=} must be divisible by {tile_m=}")
-  if k % (stages * tile_k) != 0:
-    raise ValueError(
-        f"k must be divisible by {stages=} * {tile_k=} (={stages * tile_k}),"
-        f" but got {k=}"
-    )
   if n % 64 != 0:
     raise ValueError(f"n must be divisible by 64, but got {n=}")
   if stages < 2:
     raise ValueError(f"Need at least 2 stages, but got {stages=}")
 
-  assert tile_k == in_128b_elems
-  lhs_tiling = (64, in_128b_elems)
-  lhs_tile = jax.ShapeDtypeStruct(tile_shape((tile_m, tile_k), lhs_tiling), in_dtype)
-  rhs_tiling = (in_128b_elems, in_128b_elems)
-  rhs_tile = jax.ShapeDtypeStruct(tile_shape((tile_k, tile_n), rhs_tiling), in_dtype)
-  out_tiling = (64, out_128b_elems)
-  out_tile = jax.ShapeDtypeStruct(tile_shape((tile_m, tile_n), out_tiling), jnp.float32)
+  smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
+  lhs_128b_elems = 128 // bytewidth(mlir.dtype_to_ir_type(lhs_dtype))
+  rhs_128b_elems = 128 // bytewidth(mlir.dtype_to_ir_type(rhs_dtype))
+  tile_k = max(lhs_128b_elems, rhs_128b_elems)
+
+  if tile_n % rhs_128b_elems != 0:
+    raise ValueError(
+        f"{tile_n=} must be divisible by 128 bytes ="
+        f" {((lhs_128b_elems, lhs_dtype), (rhs_128b_elems, rhs_dtype))}"
+    )
+
+  if k % (stages * tile_k) != 0:
+    raise ValueError(
+        f"k must be divisible by {stages=} * {tile_k=} (={stages * tile_k}),"
+        f" but got {k=}"
+    )
+
+  block_tiling = Tiling(m=tile_m, n=tile_n, k=tile_k)
+  tma_tiling = Tiling(m=64, n=rhs_128b_elems, k=lhs_128b_elems)
+  k_steps = k // block_tiling.k
 
   f32 = ir.F32Type.get()
   index = ir.IndexType.get()
 
   def safe_div(x, y):
-    assert x % y == 0
+    assert x % y == 0, (x, y)
     return x // y
 
-  grid = (safe_div(m, tile_m), safe_div(n, tile_n), 1)
+  grid = (safe_div(m, block_tiling.m), safe_div(n, block_tiling.n), 1)
   block = (128, 1, 1)
 
   def c(value, ty=index):
     return arith.ConstantOp(ty, ir.IntegerAttr.get(ty, value))
 
   compute_scratch_shapes = {
-      "lhs": jax.ShapeDtypeStruct((stages, *lhs_tile.shape), lhs_tile.dtype),
-      "rhs": jax.ShapeDtypeStruct((stages, *rhs_tile.shape), rhs_tile.dtype),
+      "lhs": jax.ShapeDtypeStruct((stages, *tile_shape(block_tiling.mk, tma_tiling.mk)), lhs_dtype),
+      "rhs": jax.ShapeDtypeStruct((stages, *tile_shape(block_tiling.kn, tma_tiling.kn)), rhs_dtype),
   }
-  compute_scratch_shapes |= wgmma_impl.smem_shape_extra(lhs_tile, rhs_tile)
+  compute_scratch_shapes |= wgmma_impl.smem_shape_extra(block_tiling, tma_tiling, lhs_dtype, rhs_dtype, rhs_transpose)
 
   epilogue_scratch_shapes = {
       "acc": jax.ShapeDtypeStruct(out_tile.shape, out_tile.dtype),
@@ -232,15 +306,15 @@ def build_kernel(
     memref.assume_alignment(c_device, 16)
 
     barrier_group = BarrierArray(stages)
-    m_start = arith.muli(c(tile_m), gpu.block_id(gpu.Dimension.x))
-    n_start = arith.muli(c(tile_n), gpu.block_id(gpu.Dimension.y))
+    m_start = arith.muli(c(block_tiling.m), gpu.block_id(gpu.Dimension.x))
+    n_start = arith.muli(c(block_tiling.n), gpu.block_id(gpu.Dimension.y))
 
     def fetch(slot, ki):
       barrier = barrier_group[slot]
-      k_start = arith.muli(c(tile_k), ki)
-      lhs_tile_bytes = np.prod(lhs_tile.shape) * in_bytewidth
-      rhs_tile_bytes = np.prod(rhs_tile.shape) * in_bytewidth
-      txcount = c(lhs_tile_bytes + rhs_tile_bytes)
+      k_start = arith.muli(c(block_tiling.k), ki)
+      lhs_tma_tile_bytes = np.prod(block_tiling.mk) * bytewidth(mlir.dtype_to_ir_type(lhs_dtype))
+      rhs_tma_tile_bytes = np.prod(block_tiling.kn) * bytewidth(mlir.dtype_to_ir_type(rhs_dtype))
+      txcount = c(lhs_tma_tile_bytes + rhs_tma_tile_bytes)
       common_copy_args = dict(
           swizzle=128, barrier=barrier, arrive=False, uniform=False,
       )
@@ -249,16 +323,16 @@ def build_kernel(
         ctx.async_copy(
             src_ref=a_device,
             dst_ref=memref_slice(compute_smem["lhs"], slot),
-            gmem_slice=(ds(m_start, tile_m), ds(k_start, tile_k)),
-            gmem_transform=mosaic_gpu.TileTransform(lhs_tiling),
+            gmem_slice=(ds(m_start, block_tiling.m), ds(k_start, block_tiling.k)),
+            gmem_transform=mosaic_gpu.TileTransform(tma_tiling.mk),
             **common_copy_args,
         )
-        rhs_slice = (ds(k_start, tile_k), ds(n_start, tile_n))
-        rhs_transform = (mosaic_gpu.TileTransform(rhs_tiling),)
+        rhs_slice = (ds(k_start, block_tiling.k), ds(n_start, block_tiling.n))
+        rhs_transform = (mosaic_gpu.TileTransform(tma_tiling.kn),)
         if rhs_transpose:
           rhs_slice = rhs_slice[::-1]
           rhs_transform += (mosaic_gpu.TransposeTransform((1, 0, 2, 3)),)
-          assert rhs_tiling[0] == rhs_tiling[1]  # No need to flip the tiling.
+          assert tma_tiling.n == tma_tiling.k, block_tiling  # No need to flip the tiling.
         ctx.async_copy(
             src_ref=b_device,
             dst_ref=memref_slice(compute_smem["rhs"], slot),
@@ -267,9 +341,7 @@ def build_kernel(
             **common_copy_args,
         )
 
-    k_steps = k // tile_k
-    accs = wgmma_impl.zero_accs(tile_m, tile_n)
-
+    accs = wgmma_impl.zero_accs(block_tiling.m, block_tiling.n)
 
     with ctx.named_region("TMA warmup"):
       for i in range(stages):
@@ -285,11 +357,11 @@ def build_kernel(
       with ctx.named_region("WGMMA"):
         a_slice = memref_slice(compute_smem["lhs"], si)
         b_slice = memref_slice(compute_smem["rhs"], si)
-        b_order = (
+        rhs_smem_order = (
             WGMMALayout.COL_MAJOR if rhs_transpose else WGMMALayout.ROW_MAJOR
         )
         accs = wgmma_impl.wgmma(
-            compute_smem, accs, b_order, a_slice, b_slice)
+            compute_smem, accs, rhs_smem_order, a_slice, b_slice)
 
       with ctx.named_region("TMA start"):
         tma_ki = arith.addi(ki, c(stages - 1))
@@ -352,20 +424,27 @@ def build_kernel(
           scf.yield_([])
         scf.yield_([])
 
-  rhs_shape = (n, k) if rhs_transpose else (k, n)
   return mosaic_gpu.as_gpu_kernel(
       _main,
       grid,
       block,
       (
-          jax.ShapeDtypeStruct((m, k), in_dtype),
-          jax.ShapeDtypeStruct(rhs_shape, in_dtype),
+          jax.ShapeDtypeStruct((m, k), lhs_dtype),
+          jax.ShapeDtypeStruct((n, k) if rhs_transpose else (k, n), rhs_dtype),
       ),
       jax.ShapeDtypeStruct((m, n), jnp.float32),
       smem_shape,
       profiler_spec,
   )
 
+
+def random_array(key, shape: tuple[int, ...], dtype: jnp.dtype):
+  if jax.dtypes.issubdtype(dtype, np.floating):
+    return random.uniform(key, shape, dtype=dtype)
+  elif jax.dtypes.issubdtype(dtype, np.integer):
+    return random.randint(key, shape, -127, 127, dtype)
+  else:
+    raise NotImplementedError(dtype)
 
 def verify(
     m=(33 * 128),
@@ -375,30 +454,40 @@ def verify(
     tile_m=128,
     tile_n=128,
     profile=False,
-    in_dtype=jnp.float16,
+    lhs_dtype=jnp.float16,
+    rhs_dtype=jnp.float16,
     rhs_transpose=False,
     precision: F32Precision = F32Precision.DEFAULT,
 ):
-  in_dtype = jnp.dtype(in_dtype)
-  kx, ky = random.split(random.key(1234))
-  x = random.uniform(kx, (m, k), dtype=in_dtype)
-  y = random.uniform(ky, (n, k) if rhs_transpose else (k, n), dtype=in_dtype)
+  # TODO(cperivol): Transpose is only supported for 16bit wgmma. ATM
+  # that means bf16 x bf16, f16 x f16 and bf16 x s8. When we get more
+  # general mixed precision this check will need to be more nuanced.
+  if not rhs_transpose and jnp.dtype(lhs_dtype).itemsize != 2:
+    raise ValueError(
+        "Implicit transpose can only happen for 16bit types (or mixed precision"
+        " that is underpinned by 16bit operations)."
+    )
 
-  match precision:
-    case F32Precision.DEFAULT:
-      impl = WGMMADefaultImpl
-    case F32Precision.TF32_X3:
-      impl = WGMMATF32x3Impl
+  kx, ky = random.split(random.key(1234))
+  x = random_array(kx, (m, k), lhs_dtype)
+  y = random_array(ky, (n, k) if rhs_transpose else (k, n), rhs_dtype)
+
+  if lhs_dtype != rhs_dtype:
+    impl = WGMMACvtRhsImpl
+  else:
+    match precision:
+      case F32Precision.DEFAULT:
+        impl = WGMMADefaultImpl
+      case F32Precision.TF32_X3:
+        impl = WGMMATF32x3Impl
 
   prof_spec = profiler.ProfilerSpec(132 * 4096) if profile else None
   f = build_kernel(
-      m,
-      k,
-      n,
+      m, n, k,
+      jnp.dtype(lhs_dtype), jnp.dtype(rhs_dtype),
       stages=stages,
       tile_m=tile_m,
       tile_n=tile_n,
-      in_dtype=in_dtype,
       rhs_transpose=rhs_transpose,
       wgmma_impl=impl,
       profiler_spec=prof_spec,
@@ -409,7 +498,7 @@ def verify(
     dimension_numbers = ((1,), (1,)), ((), ())
   else:
     dimension_numbers = ((1,), (0,)), ((), ())
-  if in_dtype == jnp.dtype(jnp.float32):  # Account for the tf32 precision
+  if lhs_dtype == jnp.dtype(jnp.float32):  # Account for the tf32 precision
     exponent_bits, mantissa_bits = 8, 10
     x, y = (
         jax.lax.reduce_precision(v, exponent_bits, mantissa_bits)
