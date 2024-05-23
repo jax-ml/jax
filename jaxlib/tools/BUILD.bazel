@@ -32,6 +32,9 @@ py_binary(
         "//jaxlib:setup.py",
         "@xla//xla/python:xla_client.py",
         "@xla//xla/python:xla_extension",
+        "@xla//xla/ffi/api:c_api.h",
+        "@xla//xla/ffi/api:api.h",
+        "@xla//xla/ffi/api:ffi.h",
     ] + if_windows([
         "//jaxlib/mlir/_mlir_libs:jaxlib_mlir_capi.dll",
     ]) + if_cuda([
