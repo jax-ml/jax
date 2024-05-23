@@ -281,7 +281,7 @@ def _read_most_recent_pjit_call_executable(jaxpr):
 
 def _cpp_pjit_evict_fn(self):
   self._clear_cache()
-  _create_pjit_jaxpr.evict_function(self._fun)
+  _create_pjit_jaxpr.evict_function(self._fun)  # pytype: disable=attribute-error
 
 
 # The entries are doubled here from the default 4096 because _pjit_call_impl
