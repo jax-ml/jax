@@ -355,12 +355,16 @@ async def async_deserialize(
     out = np.zeros(new_shard_shape, dtype=t.dtype.numpy_dtype)
     await ts.array(out)[ts.d[:].translate_to[requested_domain.origin]][
         restricted_domain].write(t[restricted_domain])
-    # Convert to jnp array so that layouts are initialized properly.
-    out = jnp.asarray(out)  # type: ignore
     if dtype is not None:
       # Cast while reloading on process to avoid 2 copies on device if the
       # casting is done on device.
       out = out.astype(dtype)
+    # Convert to jnp array so that layouts are initialized properly for
+    # sub-byte dtypes.
+    # TODO(yashkatariya): This is a band-aid fix. Figure out a better way to
+    # make this work.
+    if out.dtype == jnp.int4:
+      out = jnp.asarray(out)  # type: ignore
     result = jax.device_put(
         out, Layout(dll, jax.sharding.SingleDeviceSharding(device)))
     if byte_limiter is not None:
