@@ -58,7 +58,7 @@ jax_test(
     srcs = ["matmul_test.py"],
     disable_backends = DISABLED_BACKENDS,
     disable_configs = DISABLED_CONFIGS,
-    shard_count = 8,
+    shard_count = 16,
     deps = [
         "//jax:mosaic_gpu",
         "//jax/experimental/mosaic/gpu/examples:matmul",

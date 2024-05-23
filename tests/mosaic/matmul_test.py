@@ -42,33 +42,42 @@ class MatmulTestCase(jtu.JaxTestCase):
       n=(128, 256, 512, 2048),
       k=(128, 256, 512, 2048),
       stages=(2, 4),
-      # TODO(bchetioui): investigate CUDA_ERROR_ILLEGAL_ADDRESS error when
-      # increasing tile_m or tile_n to 256.
-      tile_m=(64, 128),
-      tile_n=(64, 128),
+      tile_m=(64, 128, 256),
+      tile_n=(64, 128, 256),
       in_dtype=(jnp.float16, jnp.bfloat16),  # f32 tested separately
   )
   def test_matmul(self, m, k, n, stages, tile_m, tile_n, in_dtype):
     if stages * (128 // jnp.dtype(in_dtype).itemsize) > k:
       self.skipTest("Too many stages.")
 
-    matmul.verify(
-        m,
-        k,
-        n,
-        stages,
-        tile_m=tile_m,
-        tile_n=tile_n,
-        in_dtype=in_dtype,
-        rhs_transpose=True,
-    )
+    if m < tile_m:
+      self.skipTest(f"No use in running a test with {m=} < {tile_m=}.")
+
+    if n < tile_n:
+      self.skipTest(f"No use in running a test with {n=} < {tile_n=}.")
+
+    try:
+      matmul.verify(
+          m,
+          k,
+          n,
+          stages,
+          tile_m=tile_m,
+          tile_n=tile_n,
+          in_dtype=in_dtype,
+          rhs_transpose=True,
+      )
+    except ValueError as e:
+      if "Mosaic GPU kernel exceeds available shared memory" in str(e):
+        self.skipTest("Not enough shared memory for test, skipping.")
+      raise e
 
   @parameterized.product(
       m=(128, 256, 512, 2048),
       n=(128, 256, 512, 2048),
       k=(128, 256, 512, 2048),
       stages=(2, 4),
-      tile_m=(64, 128),
+      tile_m=(64, 128, 256),
       tile_n=(64, 128, 256),
       high_precision=(False, True),
   )
@@ -76,16 +85,11 @@ class MatmulTestCase(jtu.JaxTestCase):
     if stages * (128 // jnp.dtype(jnp.float32).itemsize) > k:
       self.skipTest("Too many stages.")
 
+    if m < tile_m:
+      self.skipTest(f"No use in running a test with {m=} < {tile_m=}.")
+
     if n < tile_n:
       self.skipTest(f"No use in running a test with {n=} < {tile_n=}.")
-
-    # TODO(bchetioui): investigate why these combinations of parameters fail
-    # with error:
-    #   CUDA_ERROR_ILLEGAL_ADDRESS: an illegal memory access was encountered
-    if ((stages == 2 and tile_m == 64 and tile_n == 32) or
-        (stages == 2 and tile_m == 128 and tile_n == 256 and
-         not high_precision)):
-      self.skipTest("This combination of parameters is broken.")
 
     try:
       matmul.verify(
@@ -106,6 +110,7 @@ class MatmulTestCase(jtu.JaxTestCase):
     except ValueError as e:
       if "Mosaic GPU kernel exceeds available shared memory" in str(e):
         self.skipTest("Not enough shared memory for test, skipping.")
+      raise e
 
 
 if __name__ == "__main__":

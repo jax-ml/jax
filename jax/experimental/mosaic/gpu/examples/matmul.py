@@ -191,18 +191,16 @@ def build_kernel(
   if stages < 2:
     raise ValueError(f"Need at least 2 stages, but got {stages=}")
 
-  smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
-
   assert tile_k == in_128b_elems
   lhs_tiling = (64, in_128b_elems)
   lhs_tile = jax.ShapeDtypeStruct(tile_shape((tile_m, tile_k), lhs_tiling), in_dtype)
   rhs_tiling = (in_128b_elems, in_128b_elems)
   rhs_tile = jax.ShapeDtypeStruct(tile_shape((tile_k, tile_n), rhs_tiling), in_dtype)
   out_tiling = (64, out_128b_elems)
+  out_tile = jax.ShapeDtypeStruct(tile_shape((tile_m, tile_n), out_tiling), jnp.float32)
 
   f32 = ir.F32Type.get()
   index = ir.IndexType.get()
-  i8 = ir.IntegerType.get_signless(8)
 
   def safe_div(x, y):
     assert x % y == 0
@@ -214,13 +212,23 @@ def build_kernel(
   def c(value, ty=index):
     return arith.ConstantOp(ty, ir.IntegerAttr.get(ty, value))
 
-  smem_shape = {
+  compute_scratch_shapes = {
       "lhs": jax.ShapeDtypeStruct((stages, *lhs_tile.shape), lhs_tile.dtype),
       "rhs": jax.ShapeDtypeStruct((stages, *rhs_tile.shape), rhs_tile.dtype),
   }
-  smem_shape |= wgmma_impl.smem_shape_extra(lhs_tile, rhs_tile)
+  compute_scratch_shapes |= wgmma_impl.smem_shape_extra(lhs_tile, rhs_tile)
 
-  def _main(ctx, a_device, b_device, c_device, smem_scratch):
+  epilogue_scratch_shapes = {
+      "acc": jax.ShapeDtypeStruct(out_tile.shape, out_tile.dtype),
+  }
+
+  smem_shape = mosaic_gpu.Union(
+      [compute_scratch_shapes, epilogue_scratch_shapes])
+
+  def _main(ctx, a_device, b_device, c_device,
+            smem_union: mosaic_gpu.Union[mosaic_gpu.RefTree]):
+    compute_smem, epilogue_smem = smem_union.members
+
     memref.assume_alignment(c_device, 16)
 
     barrier_group = BarrierArray(stages)
@@ -240,7 +248,7 @@ def build_kernel(
         nvgpu.mbarrier_arrive_expect_tx(barrier_group.value, txcount, slot)
         ctx.async_copy(
             src_ref=a_device,
-            dst_ref=memref_slice(smem_scratch["lhs"], slot),
+            dst_ref=memref_slice(compute_smem["lhs"], slot),
             gmem_slice=(ds(m_start, tile_m), ds(k_start, tile_k)),
             gmem_transform=mosaic_gpu.TileTransform(lhs_tiling),
             **common_copy_args,
@@ -253,7 +261,7 @@ def build_kernel(
           assert rhs_tiling[0] == rhs_tiling[1]  # No need to flip the tiling.
         ctx.async_copy(
             src_ref=b_device,
-            dst_ref=memref_slice(smem_scratch["rhs"], slot),
+            dst_ref=memref_slice(compute_smem["rhs"], slot),
             gmem_slice=rhs_slice,
             gmem_transform=rhs_transform,
             **common_copy_args,
@@ -275,12 +283,13 @@ def build_kernel(
         barrier_group[si].wait()
 
       with ctx.named_region("WGMMA"):
-        a_slice = memref_slice(smem_scratch["lhs"], si)
-        b_slice = memref_slice(smem_scratch["rhs"], si)
+        a_slice = memref_slice(compute_smem["lhs"], si)
+        b_slice = memref_slice(compute_smem["rhs"], si)
         b_order = (
             WGMMALayout.COL_MAJOR if rhs_transpose else WGMMALayout.ROW_MAJOR
         )
-        accs = wgmma_impl.wgmma(smem_scratch, accs, b_order, a_slice, b_slice)
+        accs = wgmma_impl.wgmma(
+            compute_smem, accs, b_order, a_slice, b_slice)
 
       with ctx.named_region("TMA start"):
         tma_ki = arith.addi(ki, c(stages - 1))
@@ -298,22 +307,9 @@ def build_kernel(
     with ctx.named_region("WGMMA drain"):
       nvvm.wgmma_wait_group_sync_aligned(0)
 
-    # We can repurpose the tile SMEM for the epilogue now
-    # TODO(apaszke): Add support for aliased SMEM allocations to the DSL
-    dynamic_smem = gpu.dynamic_shared_memory(
-        ir.MemRefType.get(
-            (ir.ShapedType.get_dynamic_size(),), i8, memory_space=smem
-        )
-    )
     with ctx.named_region("SMEM store"):
       acc_val = wgmma_impl.get_result_tile(stage_loop_body.result)
-      acc_smem = memref.view(
-          ir.MemRefType.get(
-              tile_shape((tile_m, tile_n), out_tiling), f32,
-              memory_space=smem
-          ),
-          dynamic_smem, c(0), [],
-      )
+      acc_smem = epilogue_smem["acc"]
       acc_val.store_tiled(acc_smem, swizzle=128)
       gpu.barrier()
 
