@@ -46,7 +46,7 @@ parser.add_argument(
     "--jaxlib_git_hash",
     default="",
     required=True,
-    help="Git hash. Empty if unknown. Optional.",
+    help="Git hash. Empty if unknown. Required.",
 )
 parser.add_argument(
     "--cpu", default=None, required=True, help="Target CPU architecture. Required."
@@ -407,6 +407,14 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
       "__main__/jaxlib/triton/_triton_ops_gen.py", dst_dir=triton_dir
   )
 
+  copy_runfiles(
+    dst_dir=jaxlib_dir / "include" / "xla" / "ffi" / "api",
+    src_files=[
+        "xla/xla/ffi/api/c_api.h",
+        "xla/xla/ffi/api/api.h",
+        "xla/xla/ffi/api/ffi.h",
+    ],
+  )
 
 tmpdir = None
 sources_path = args.sources_path

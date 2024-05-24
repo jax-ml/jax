@@ -975,7 +975,9 @@ def _platform_index_lowering(ctx: mlir.LoweringRuleContext,
                              *,
                              platforms: Sequence[Sequence[str]],
                              has_default: bool):
-  def lower_constant(ctx: mlir.LoweringRuleContext, *, i: int) -> mlir.ir.Value:
+  def lower_constant(
+      ctx: mlir.LoweringRuleContext, *, i: int
+  ) -> Sequence[ir.Value]:
     return mlir.ir_constants(np.int32(i))
   platform_rules: dict[str, mlir.LoweringRule] = {}
   for i, ps in enumerate(platforms):

@@ -223,7 +223,7 @@ jax_test(
         "cpu",
         "gpu",
     ],
-    shard_count = 2,
+    shard_count = 5,
     tags = [
         "noasan",  # Times out.
         "nomsan",  # Times out.
@@ -251,7 +251,12 @@ jax_test(
     ],
     deps = [
         "//jax:pallas_tpu_ops",
-    ] + py_deps("absl/testing") + py_deps("absl/flags") + py_deps("numpy") + py_deps("hypothesis"),
+    ] + py_deps([
+        "absl/testing",
+        "absl/flags",
+        "numpy",
+        "hypothesis",
+    ]),
 )
 
 jax_test(
@@ -284,6 +289,7 @@ jax_test(
     env = {
         "JAX_PALLAS_USE_MOSAIC_GPU": "1",
     },
+    tags = ["notap"],
     deps = [
         "//jax:pallas",
         "//jax:pallas_gpu",  # build_cleaner: keep

@@ -1,4 +1,4 @@
-# Copyright 2018 The JAX Authors.
+# Copyright 2024 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,15 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import warnings
-from jax._src import deprecations
+from __future__ import annotations
 
-# Added February 16, 2024.
-_msg = ("Importing the jax.config submodule via `import jax.config` is deprecated."
-        " To configure JAX use `import jax` and then reference the config object"
-        " via `jax.config`.")
-if deprecations.is_accelerated("jax.config", "config-module"):
-  raise ImportError(_msg)
-else:
-  warnings.warn(_msg, DeprecationWarning, stacklevel=2)
-del deprecations, warnings, _msg
+import os
+
+from jax._src.lib import jaxlib
+
+
+def include_dir() -> str:
+  """Get the path to the directory containing header files bundled with jaxlib"""
+  jaxlib_dir = os.path.dirname(os.path.abspath(jaxlib.__file__))
+  return os.path.join(jaxlib_dir, "include")

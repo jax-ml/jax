@@ -900,6 +900,101 @@ class JaxExportTest(jtu.JaxTestCase):
         in_shardings=(jax.sharding.NamedSharding(mesh1, P("x", None)),)
       )(a)
 
+  def test_call_with_different_no_of_devices(self):
+    if jax.local_device_count() < 2:
+      self.skipTest("Need at least 2 devices")
+
+    @jax.jit
+    def f_without_shardings(x):
+      return jnp.sum(x ** 2, axis=0)
+
+    a = jnp.arange(jax.local_device_count() * 10, dtype=np.float32).reshape(
+        (jax.local_device_count(), 10)
+    )
+    res_native = f_without_shardings(a)
+    exp = get_exported(f_without_shardings)(a)
+    self.assertEqual(exp.nr_devices, 1)
+
+    run_devices = jax.local_devices()
+    run_mesh = Mesh(run_devices, "i")
+    b = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P("i")))
+
+    res_exported = export.call_exported(exp)(b)
+    self.assertAllClose(res_native, res_exported)
+
+  def test_call_with_different_no_of_devices_error_has_in_shardings(self):
+    if jax.local_device_count() < 2:
+      self.skipTest("Need at least 2 devices")
+
+    mesh_1 = Mesh(jax.local_devices()[:1], "i")
+    @functools.partial(pjit.pjit,
+                       in_shardings=NamedSharding(mesh_1, P("i")))
+    def f_with_sharding(x):
+      return jnp.sum(x ** 2, axis=0)
+
+    a = jnp.arange(jax.device_count() * 10, dtype=np.float32).reshape(
+        (jax.device_count(), 10)
+    )
+    exp = get_exported(f_with_sharding)(a)
+    self.assertEqual(exp.nr_devices, 1)
+
+    run_devices = jax.local_devices()
+    run_mesh = Mesh(run_devices, "i")
+    b = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P("i")))
+
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Exported module .* was lowered for 1 devices and is called in a "
+        f"context with {jax.local_device_count()} devices.* module contains "
+        "non-replicated sharding annotations"):
+      export.call_exported(exp)(b)
+
+  def test_call_with_different_no_of_devices_pmap(self):
+    if len(jax.devices()) < 2:
+      self.skipTest("Need at least 2 devices")
+
+    @jax.jit
+    def f_jax(x):
+      return jnp.sum(x ** 2, axis=0)
+
+    a = jnp.arange(100, dtype=jnp.float32).reshape((1, 100))
+    res_native = f_jax(a)
+    exp = get_exported(f_jax)(a)
+    self.assertEqual(exp.nr_devices, 1)
+
+    b = jnp.arange(jax.device_count() * 100, dtype=jnp.float32).reshape(
+        (-1, 1, 100)
+    )
+    res_exported = jax.pmap(export.call_exported(exp))(b)
+    self.assertAllClose(res_native, res_exported[0])
+
+  def test_call_with_different_no_of_devices_error_has_sharding_constraint(self):
+    if jax.device_count() < 2:
+      self.skipTest("Need at least 2 devices")
+
+    mesh_1 = Mesh(jax.local_devices()[:1], "i")
+    @jax.jit
+    def f_with_sharding(x):
+      x = jax.lax.with_sharding_constraint(x, NamedSharding(mesh_1, P("i")))
+      return jnp.sum(x ** 2, axis=0)
+
+    a = jnp.arange(jax.device_count() * 10, dtype=np.float32).reshape(
+        (jax.device_count(), 10)
+    )
+    exp = get_exported(f_with_sharding)(a)
+    self.assertEqual(exp.nr_devices, 1)
+
+    run_devices = jax.local_devices()
+    run_mesh = Mesh(run_devices, "i")
+    b = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P("i")))
+
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Exported module .* was lowered for 1 devices and is called in a "
+        f"context with {jax.local_device_count()} devices.* module contains "
+        "non-replicated sharding annotations"):
+      export.call_exported(exp)(b)
+
   @jtu.parameterized_filterable(
     kwargs=[
       dict(testcase_name=f"_poly={poly}", poly=poly)
@@ -1069,6 +1164,32 @@ class JaxExportTest(jtu.JaxTestCase):
     _, f_jax_vjp2 = jax.vjp(f_jax_vjp, x.T)
     xbar2, = f_jax_vjp2((x,))
     self.assertAllClose(xbar2, g2[1])
+
+  def test_grad_sharding_different_mesh(self):
+    # Export and serialize with two similar meshes, the only difference being
+    # the order of the devices. grad and serialization should not fail.
+    # https://github.com/google/jax/issues/21314
+    def f(x):
+      return jnp.sum(x * 2.)
+
+    mesh = Mesh(jax.local_devices(), "i")
+    mesh_rev = Mesh(list(reversed(jax.local_devices())), "i")
+    shardings = NamedSharding(mesh, jax.sharding.PartitionSpec(("i",)))
+    shardings_rev = NamedSharding(mesh_rev, jax.sharding.PartitionSpec(("i",)))
+    input_no_shards = jnp.ones(shape=(jax.local_device_count(),))
+    input = jnp.ones(shape=(jax.local_device_count(),), device=shardings)
+    input_rev = jax.device_put(input_no_shards, device=shardings_rev)
+
+    exp = export.export(pjit.pjit(f, in_shardings=shardings))(input)
+    exp_rev = export.export(pjit.pjit(f, in_shardings=shardings_rev))(input_no_shards)
+
+    _ = export.serialize(exp, vjp_order=1)
+    _ = export.serialize(exp_rev, vjp_order=1)
+
+    g = jax.grad(export.call(exp_rev))(input_rev)
+    g_rev = jax.grad(export.call(exp))(input)
+    self.assertAllClose(g, g_rev)
+
 
   def test_multi_platform(self):
     x = np.arange(8, dtype=np.float32)

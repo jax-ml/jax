@@ -8,6 +8,9 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.29
 
+* Breaking changes
+  * JAX now requires ml_dtypes version 0.4.0 or newer.
+
 * Deprecations
   * Removed a number of previously-deprecated APIs:
     * from {mod}`jax.core`: `non_negative_dim`, `DimSize`, `Shape`
@@ -20,8 +23,17 @@ Remember to align the itemized text with the first line of an item within a list
     deprecated and will soon be removed. Use `rtol` instead.
   * The ``rcond`` argument of {func}`jax.numpy.linalg.pinv` is being
     deprecated and will soon be removed. Use `rtol` instead.
+  * The deprecated `jax.config` submodule has been removed. To configure JAX
+    use `import jax` and then reference the config object via `jax.config`.
+  * {mod}`jax.random` APIs no longer accept batched keys, where previously
+    some did unintentionally. Going forward, we recommend explicit use of
+    {func}`jax.vmap` in such cases.
 
 ## jaxlib 0.4.29
+
+* Bug fixes
+  * Fixes a bug where XLA sharded some concatenation operations incorrectly,
+    which manifested as an incorrect output for cumulative reductions (#21403).
 
 ## jax 0.4.28 (May 9, 2024)
 

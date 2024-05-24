@@ -119,7 +119,7 @@ def _device_assignment_mismatch_error(fun_name, fails, args_flat, api_name,
   mismatched_args_msg = _find_arg_mismatch(arg_list, fails, fun_name)
 
   if len(mismatched_args_msg) == 2:
-    first, second = mismatched_args_msg  # type: ignore
+    first, second = mismatched_args_msg  # pytype: disable=bad-unpacking
     extra_msg = f" Got {first} and {second}"
   elif len(mismatched_args_msg) == 1:
     first, second  = fails
@@ -212,12 +212,12 @@ def _python_pjit_helper(jit_info, *args, **kwargs):
 
 
 def _set_states(attrs_tracked, vals):
-  from jax.experimental.attrs import jax_setattr  # type: ignore
+  from jax.experimental.attrs import jax_setattr
   for ((obj, attr), val) in zip(attrs_tracked, vals):
     jax_setattr(obj, attr, val)
 
 def _get_states(attrs_tracked):
-  from jax.experimental.attrs import jax_getattr  # type: ignore
+  from jax.experimental.attrs import jax_getattr
   return [jax_getattr(obj, attr) for (obj, attr) in attrs_tracked]
 
 
@@ -281,7 +281,7 @@ def _read_most_recent_pjit_call_executable(jaxpr):
 
 def _cpp_pjit_evict_fn(self):
   self._clear_cache()
-  _create_pjit_jaxpr.evict_function(self._fun)  # type: ignore
+  _create_pjit_jaxpr.evict_function(self._fun)  # pytype: disable=attribute-error
 
 
 # The entries are doubled here from the default 4096 because _pjit_call_impl
@@ -310,12 +310,12 @@ def _cpp_pjit(jit_info: PjitInfo):
     return outs, maybe_fastpath_data
 
   fun = jit_info.fun
-  cpp_pjit_f = xc._xla.pjit(  # type: ignore
+  cpp_pjit_f = xc._xla.pjit(
     getattr(fun, "__name__", "<unnamed function>"),
     fun, cache_miss, jit_info.static_argnums, jit_info.static_argnames,
     jit_info.donate_argnums, tree_util.dispatch_registry,
-    pxla.shard_arg,  # type: ignore
-    _get_cpp_global_cache(jit_info.has_explicit_sharding))  # type: ignore
+    pxla.shard_arg,
+    _get_cpp_global_cache(jit_info.has_explicit_sharding))
 
   cpp_pjitted_f = wraps(fun)(cpp_pjit_f)
   cpp_pjitted_f._fun = fun
@@ -616,7 +616,6 @@ def _infer_params(jit_info, args, kwargs):
   assert (len(in_shardings_flat) == len(in_layouts_flat) ==
           len(donated_invars) == len(attrs_tracked) + len(consts) + len(args_flat))
 
-  # in_shardings and out_shardings here are all GSPMDSharding.
   params = dict(
       jaxpr=jaxpr,
       in_shardings=in_shardings_flat,
@@ -660,7 +659,7 @@ def _extract_implicit_args(
           args[d1.val] = d2
         assert core.same_referent(args[d1.val], d2)
   assert all(x is not None for x in args)
-  return [x for x, (_, e) in zip(args, in_type) if not e]  # type: ignore
+  return [x for x, (_, e) in zip(args, in_type) if not e]  # pytype: disable=bad-return-type
 
 def _flat_axes_specs(abstracted_axes, *args, **kwargs
                      ) -> list[pe.AbstractedAxesSpec] | None:
@@ -1098,7 +1097,7 @@ def explain_tracing_cache_miss(
     for path, thing1, thing2, explanation in errs:
       fst, *path = path  # type: ignore
       base = ['args', 'kwargs'][fst.idx]
-      p(f"    * at {base}{keystr(path)}, seen {thing2} but now given {thing1},"  # type: ignore
+      p(f"    * at {base}{keystr(tuple(path))}, seen {thing2} but now given {thing1},"
         f"      so {explanation}")
     return done()
 
@@ -1393,7 +1392,7 @@ def _resolve_in_shardings(
           raise ValueError(
               'Memory kinds passed to jax.jit does not match memory kind on the'
               f' respective arg. Got pjit memory kind: {pjit_in_s.memory_kind}, '  # type: ignore
-              f'arg memory kind: {arg_s.memory_kind} for '  # type: ignore
+              f'arg memory kind: {arg_s.memory_kind} for '  # pytype: disable=attribute-error
               f'arg shape: {shaped_abstractify(arg).str_short()}')
         if (committed and
             not isinstance(arg_s, PmapSharding) and
@@ -1525,7 +1524,7 @@ def _pjit_call_impl(*args, jaxpr,
   return xc._xla.pjit(
       name, f, call_impl_cache_miss, [], [], donated_argnums,
       tree_util.dispatch_registry,
-      pxla.shard_arg,  # type: ignore
+      pxla.shard_arg,
       _get_cpp_global_cache(has_explicit_sharding))(*args)
 
 pjit_p.def_impl(_pjit_call_impl)
@@ -1681,6 +1680,14 @@ def _pjit_cached_lower_jaxpr_to_fun(ctx, name, jaxpr, effects, in_shardings,
     mod_ctx.cached_primitive_lowerings[key] = func
   return func
 
+def _map_compute_type(c_type):
+  if c_type == 'device_host':
+    return 'host'
+  elif c_type == 'device':
+    return 'dense'
+  raise ValueError('Invalid compute type received. Current supported values '
+                   'are `device_host` and `device`')
+
 
 def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
                    out_shardings, in_layouts, out_layouts, resource_env,
@@ -1700,6 +1707,10 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
   call = func_dialect.CallOp(flat_output_types,
                              ir.FlatSymbolRefAttr.get(func.name.value),
                              mlir.flatten_lowering_ir_args(args))
+  if ctx.compute_type is not None:
+    dict_attr = {"_xla_compute_type": ir.StringAttr.get(
+        _map_compute_type(ctx.compute_type))}
+    call.operation.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
   out_nodes = unflatten(call.results, map(len, output_types))
   tokens, out_nodes = split_list(out_nodes, [len(effects)])
   tokens_out = ctx.tokens_in.update_tokens(mlir.TokenSet(zip(effects, tokens)))
@@ -1772,17 +1783,17 @@ def _pjit_batcher_for_sharding(
   if not val:
     if sharding_impls.is_op_sharding_replicated(hlo_s):
       return s
-    new_op = hlo_s.to_proto().clone()  # type: ignore
+    new_op = hlo_s.to_proto().clone()
     tad = list(new_op.tile_assignment_dimensions)
     tad.insert(dim, 1)
     new_op.tile_assignment_dimensions = tad
     new_gs = GSPMDSharding(
         s._device_assignment, new_op,  # type: ignore
         _device_list=getattr(s, '_internal_device_list', None))
-    return pxla._get_out_sharding_from_orig_sharding([new_gs], [None], s, None)[0]  # type: ignore
+    return pxla._get_out_sharding_from_orig_sharding([new_gs], [None], s, None)[0]
   else:
     if isinstance(s, NamedSharding):
-      mesh = s.mesh  # type: ignore
+      mesh = s.mesh
     if mesh is None or mesh.empty:
       raise ValueError(
           'If you are using xmap or spmd_axis_name parameter of jax.vmap,'
@@ -1791,7 +1802,7 @@ def _pjit_batcher_for_sharding(
           ' `jax.sharding.NamedSharding` as an input can be transformed with'
           ' spmd_axis_name batching rules outside of an explicit mesh context'
           f' manager scope{s!r}')
-    parsed_pspec = parse_flatten_op_sharding(hlo_s, mesh)[0]  # type: ignore
+    parsed_pspec = parse_flatten_op_sharding(hlo_s, mesh)[0]
     parsed_pspec = parsed_pspec.insert_axis_partitions(dim, val)
     return NamedSharding._from_parsed_pspec(mesh, parsed_pspec)
 
@@ -2117,7 +2128,7 @@ def dce_jaxpr_pjit_rule(used_outputs: list[bool], eqn: core.JaxprEqn
     new_eqn = core.new_jaxpr_eqn(
         [v for v, used in zip(eqn.invars, used_inputs) if used],
         [v for v, used in zip(eqn.outvars, used_outputs) if used],
-        eqn.primitive, new_params, dced_jaxpr.effects, eqn.source_info)
+        eqn.primitive, new_params, dced_jaxpr.effects, eqn.source_info, eqn.ctx)
     return used_inputs, new_eqn
 
 pe.dce_rules[pjit_p] = dce_jaxpr_pjit_rule

@@ -20,7 +20,7 @@ import contextlib
 from functools import wraps, partial, partialmethod, lru_cache
 import itertools as it
 import math
-from typing import Callable, Any, NamedTuple, Union
+from typing import Callable, Any, NamedTuple, Union, cast as type_cast
 
 import numpy as np
 
@@ -627,11 +627,11 @@ def xmap(fun: Callable,
     in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])
     in_avals = in_tree.unflatten(avals_flat)
     return stages.Lowered.from_flat_info(
-        computation, in_tree, in_avals, donate_argnums, out_tree(),  # type: ignore
+        computation, in_tree, in_avals, donate_argnums, out_tree(),
         no_kwargs=True)
 
   fun_mapped.lower = lower
-  return fun_mapped
+  return type_cast(stages.Wrapped, fun_mapped)
 
 def xmap_impl(fun: lu.WrappedFun, *args, name, in_axes, out_axes_thunk, donated_invars,
               global_axis_sizes, axis_resources, resource_env, backend,
@@ -1817,7 +1817,7 @@ def _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name = None):
                sharding=gspmd_sharding,
                unconstrained_dims=unconstrained_dims),
           set(),
-          eqn.source_info))
+          eqn.source_info, eqn.ctx))
   return jaxpr.replace(eqns=new_eqns)
 
 def _flatten_axes(what, tree, axes, tupled_args):
@@ -1839,7 +1839,7 @@ class NoQuotesStr(str):
 def _thread_local_flag_unsupported(_):
   raise RuntimeError("thread-local xmap flags not supported!")
 def _clear_compilation_cache(_):
-  make_xmap_callable.cache_clear()  # type: ignore
+  make_xmap_callable.cache_clear()  # pytype: disable=attribute-error
 
 def _ensure_spmd_and(f):
   def update(v):

@@ -217,9 +217,11 @@ def backend_compile(
     options: xc.CompileOptions,
     host_callbacks: Sequence[Any],
 ) -> xc.LoadedExecutable:
-  # Convert ir.Module to a string representation, unless the
-  # back-end expliclity flags the ability to handle a module directly
-  # (avoiding the overhead of back and forth conversions)
+  # Convert ir.Module to a string representation, unless the backend
+  # explicitly flags the ability to handle a module directly (avoiding the
+  # overhead of back and forth conversions).
+  # TODO(slebedev): Change the backend.compile() to accept ir.Module.
+  built_c: Any
   if getattr(backend, "needs_str_ir", True):
     built_c = mlir.module_to_bytecode(module)
   else:
@@ -341,8 +343,8 @@ def compile_or_get_cached(
     )
 
 
-# The process with id 0 should compile the module and write an autotune config
-# to the K-V storage.
+# The process with the first_process_id should compile the module and write an
+# autotune config to the K-V storage.
 def _compile_and_write_autotune_config(
     backend: xc.Client,
     computation: ir.Module,
@@ -447,10 +449,8 @@ def _compile_and_write_autotune_config(
 
 _compile_and_write_autotune_config.autotune_configs_dir = None
 
-# The process with id 0 should compile the module and write it to the K-V
-# storage.
-# TODO: In case when the process with id 0 is not participating in computation
-# we need to choose another process to compile the module.
+# The process with the first_process_id should compile the module and write it
+# to the K-V storage.
 def _compile_and_share_module(
     backend: xc.Client,
     computation: ir.Module,

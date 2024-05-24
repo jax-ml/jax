@@ -70,11 +70,8 @@ def _isnan(x: ArrayLike) -> Array:
   return lax.ne(x, x)
 
 
-# TODO(jakevdp) Finalize batched input deprecation by setting error_on_batched=True.
-# FutureWarning Added 2024-01-17
 def _check_prng_key(name: str, key: KeyArrayLike, *,
-                    allow_batched: bool = False,
-                    error_on_batched: bool = False) -> tuple[KeyArray, bool]:
+                    allow_batched: bool = False) -> tuple[KeyArray, bool]:
   if isinstance(key, Array) and dtypes.issubdtype(key.dtype, dtypes.prng_key):
     wrapped_key = key
     wrapped = False
@@ -102,13 +99,8 @@ def _check_prng_key(name: str, key: KeyArrayLike, *,
     raise TypeError(f'unexpected PRNG key type {type(key)}')
 
   if (not allow_batched) and wrapped_key.ndim:
-    msg = (f"{name} accepts a single key, but was given a key array of "
-           f"shape {np.shape(key)} != (). Use jax.vmap for batching.")
-    if error_on_batched:
-      raise ValueError(msg)
-    else:
-      warnings.warn(msg + " In a future JAX version, this will be an error.",
-                    FutureWarning, stacklevel=3)
+    raise ValueError(f"{name} accepts a single key, but was given a key array of"
+                     f" shape {np.shape(key)} != (). Use jax.vmap for batching.")
 
   return wrapped_key, wrapped
 
@@ -252,7 +244,7 @@ def fold_in(key: KeyArrayLike, data: IntegerArray) -> KeyArray:
     A new PRNG key that is a deterministic function of the inputs and is
     statistically safe for producing a stream of new pseudo-random values.
   """
-  key, wrapped = _check_prng_key("fold_in", key, error_on_batched=True)
+  key, wrapped = _check_prng_key("fold_in", key)
   if np.ndim(data):
     raise TypeError("fold_in accepts a scalar, but was given an array of"
                     f"shape {np.shape(data)} != (). Use jax.vmap for batching.")
@@ -282,7 +274,7 @@ def split(key: KeyArrayLike, num: int | tuple[int, ...] = 2) -> KeyArray:
   Returns:
     An array-like object of `num` new PRNG keys.
   """
-  typed_key, wrapped = _check_prng_key("split", key, error_on_batched=True)
+  typed_key, wrapped = _check_prng_key("split", key)
   return _return_prng_keys(wrapped, _split(typed_key, num))
 
 
@@ -395,7 +387,7 @@ def uniform(key: KeyArrayLike,
                      f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.as_named_shape(shape)
-  return _uniform(key, shape, dtype, minval, maxval)  # type: ignore
+  return _uniform(key, shape, dtype, minval, maxval)
 
 @partial(jit, static_argnums=(1, 2))
 def _uniform(key, shape, dtype, minval, maxval) -> Array:
@@ -540,7 +532,7 @@ def shuffle(key: KeyArrayLike, x: ArrayLike, axis: int = 0) -> Array:
          "Use jax.random.permutation with independent=True.")
   warnings.warn(msg, FutureWarning)
   key, _ = _check_prng_key("shuffle", key)
-  return _shuffle(key, x, axis)  # type: ignore
+  return _shuffle(key, x, axis)
 
 
 def permutation(key: KeyArrayLike,
@@ -708,7 +700,7 @@ def normal(key: KeyArrayLike,
                      f"got {dtype}")
   dtype = dtypes.canonicalize_dtype(dtype)
   shape = core.as_named_shape(shape)
-  return _normal(key, shape, dtype)  # type: ignore
+  return _normal(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
 def _normal(key, shape, dtype) -> Array:
@@ -721,14 +713,14 @@ def _normal(key, shape, dtype) -> Array:
     _im = _normal_real(key_im, shape, real_dtype).astype(dtype)
     return (_re + 1j * _im) / sqrt2
   else:
-    return _normal_real(key, shape, dtype) # type: ignore
+    return _normal_real(key, shape, dtype)
 
 @partial(jit, static_argnums=(1, 2))
 def _normal_real(key, shape, dtype) -> Array:
   _check_shape("normal", shape)
   lo = np.nextafter(np.array(-1., dtype), np.array(0., dtype), dtype=dtype)
   hi = np.array(1., dtype)
-  u = uniform(key, shape, dtype, lo, hi)  # type: ignore[arg-type]
+  u = uniform(key, shape, dtype, lo, hi)
   return lax.mul(np.array(np.sqrt(2), dtype), lax.erf_inv(u))
 
 
@@ -780,7 +772,7 @@ def multivariate_normal(key: KeyArrayLike,
                      f"dtype, got {dtype}")
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _multivariate_normal(key, mean, cov, shape, dtype, method)  # type: ignore
+  return _multivariate_normal(key, mean, cov, shape, dtype, method)
 
 @partial(jit, static_argnums=(3, 4, 5))
 def _multivariate_normal(key, mean, cov, shape, dtype, method) -> Array:
@@ -855,7 +847,7 @@ def truncated_normal(key: KeyArrayLike,
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.as_named_shape(shape)
-  return _truncated_normal(key, lower, upper, shape, dtype)  # type: ignore
+  return _truncated_normal(key, lower, upper, shape, dtype)
 
 @partial(jit, static_argnums=(3, 4))
 def _truncated_normal(key, lower, upper, shape, dtype) -> Array:
@@ -913,7 +905,7 @@ def bernoulli(key: KeyArrayLike,
     msg = "bernoulli probability `p` must have a floating dtype, got {}."
     raise TypeError(msg.format(dtype))
   p = lax.convert_element_type(p, dtype)
-  return _bernoulli(key, p, shape)  # type: ignore
+  return _bernoulli(key, p, shape)
 
 @partial(jit, static_argnums=(2,))
 def _bernoulli(key, p, shape) -> Array:
@@ -2396,7 +2388,7 @@ def lognormal(key: KeyArrayLike,
   dtype = dtypes.canonicalize_dtype(dtype)
   if shape is not None:
     shape = core.canonicalize_shape(shape)
-  return _lognormal(key, sigma, shape, dtype)  # type: ignore
+  return _lognormal(key, sigma, shape, dtype)
 
 @partial(jit, static_argnums=(2, 3), inline=True)
 def _lognormal(key, sigma, shape, dtype) -> Array:

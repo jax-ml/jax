@@ -2075,7 +2075,7 @@ def multi_dot(arrays: Sequence[ArrayLike], *, precision: PrecisionLike = None) -
     einsum_axes[0] = einsum_axes[0][1:]
   if arrs[-1].ndim == 1:
     einsum_axes[-1] = einsum_axes[-1][:1]
-  return jnp.einsum(*itertools.chain(*zip(arrs, einsum_axes)),  # type: ignore[arg-type, call-overload]
+  return jnp.einsum(*itertools.chain(*zip(arrs, einsum_axes)),  # type: ignore[call-overload]
                     optimize='optimal', precision=precision)
 
 

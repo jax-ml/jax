@@ -579,3 +579,17 @@ def get_barrier_semaphore():
   semaphore is provided by XLA.
   """
   return get_barrier_semaphore_p.bind()
+
+delay_p = jax_core.Primitive("delay")
+delay_p.multiple_results = True
+
+
+@delay_p.def_abstract_eval
+def _delay_abstract_eval(nanos):
+  del nanos
+  return []
+
+
+def delay(nanos):
+  """Delays vector execution for the given number of nanosconds."""
+  delay_p.bind(nanos)

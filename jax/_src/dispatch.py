@@ -394,13 +394,13 @@ def _device_put_sharding_impl(x, aval, device):
     s = device
     if getattr(x, 'sharding', None) == s and getattr(x, '_committed', False):
       return x
-    if (not s.is_fully_addressable and  # type: ignore
+    if (not s.is_fully_addressable and
         isinstance(x, array.ArrayImpl) and not x.is_fully_addressable):
       # This has to be XLACompatible because _mcjax_reshard will run a
       # XLA computation.
       assert isinstance(s, XLACompatibleSharding)
       return _mcjax_reshard(x, s)
-    if not s.is_fully_addressable:  # type: ignore
+    if not s.is_fully_addressable:
       # TODO(yashkatariya,mattjj): Link to a doc about McJAX and jax.Array.
       raise ValueError(
           "device_put's second argument must be a Device or a Sharding which"
@@ -477,10 +477,10 @@ def _tpu_gpu_device_put_lowering(ctx, x, *, device, src):
       device.memory_kind is not None):
     aval, = ctx.avals_in
     out_aval, = ctx.avals_out
-    x = mlir.wrap_with_memory_kind(x, device.memory_kind, out_aval)
     if isinstance(device, XLACompatibleSharding):
       x = mlir.wrap_with_sharding_op(
           ctx, x, out_aval, device._to_xla_hlo_sharding(aval.ndim).to_proto())
+    x = mlir.wrap_with_memory_kind(x, device.memory_kind, out_aval)
     return [x]
   return [x]
 mlir.register_lowering(

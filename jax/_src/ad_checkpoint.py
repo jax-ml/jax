@@ -658,7 +658,7 @@ def _transpose_jaxpr(jaxpr, in_lin, out_zeros):
 
   transposed_jaxpr_, _, consts, () = pe.trace_to_jaxpr_dynamic(transposed, in_avals)
   transposed_jaxpr = core.ClosedJaxpr(transposed_jaxpr_, consts)
-  return transposed_jaxpr, cell.in_cts_zero  # type: ignore
+  return transposed_jaxpr, cell.in_cts_zero  # pytype: disable=attribute-error
 
 def remat_vmap(spmd_axis_name, axis_size, axis_name, main_type, args, dims, *,
                jaxpr, **params):
@@ -687,7 +687,7 @@ def remat_dce(used_outputs: list[bool], eqn: core.JaxprEqn
     new_eqn = pe.new_jaxpr_eqn(
         [v for v, used in zip(eqn.invars, used_inputs) if used],
         [v for v, used in zip(eqn.outvars, used_outputs) if used],
-        eqn.primitive, new_params, new_jaxpr.effects, eqn.source_info)
+        eqn.primitive, new_params, new_jaxpr.effects, eqn.source_info, eqn.ctx)
     return used_inputs, new_eqn
 pe.dce_rules[remat_p] = remat_dce
 

@@ -298,7 +298,7 @@ class Exported:
 
   _get_vjp: Callable[[Exported], Exported] | None
 
-  def mlir_module(self) -> ir.Module:
+  def mlir_module(self) -> str:
     return xla_client._xla.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
 
   def __str__(self):
@@ -421,7 +421,7 @@ def export(fun_jax: Callable,
           platforms=actual_lowering_platforms,
         ))
 
-    lowering = lowered._lowering  # type: ignore
+    lowering = lowered._lowering
     _check_lowering(lowering)
     mlir_module = lowering.stablehlo()
 
@@ -505,8 +505,9 @@ def export(fun_jax: Callable,
         mlir_module_serialized=mlir_module_serialized,
         module_kept_var_idx=module_kept_var_idx,
         uses_shape_polymorphism=shape_poly_state.uses_dim_vars,
-        mlir_module_serialization_version=version,  # type: ignore
-        _get_vjp=lambda exported: _export_native_vjp(fun_jax, exported))
+        mlir_module_serialization_version=version,
+        _get_vjp=lambda exported: _export_native_vjp(fun_jax, exported,
+                                                     lowering.compile_args["device_assignment"]))
 
   return do_export
 
@@ -570,7 +571,7 @@ def _wrap_main_func(
   context = mlir.make_ir_context()
   with context, ir.Location.unknown(context):
     # Make a copy, do not mutate because it may be cached
-    wrapped_module = ir.Module.parse(mlir.module_to_bytecode(module))
+    wrapped_module = ir.Module.parse(mlir.module_to_bytecode(module))  # type: ignore
     symbol_table = ir.SymbolTable(wrapped_module.operation)
     orig_main = symbol_table["main"]
     orig_main.attributes["sym_visibility"] = ir.StringAttr.get("private")
@@ -811,14 +812,15 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
 check_sharding_pattern = re.compile(r"^({replicated}|{unknown shard_as.*}|"")$")
 
 def _check_module(mod: ir.Module, *,
-                  disabled_checks: Sequence[DisabledSafetyCheck]) -> None:
+                  disabled_checks: Sequence[DisabledSafetyCheck]) -> bool:
   """Run a number of checks on the module.
 
   Args:
-    allow_non_replicated_sharding: whether the module is allowed to contain
-      non_replicated sharding annotations.
     disabled_checks: the safety checks that are disabled.
+
+  Returns True if the module uses non-replicated shardings.
   """
+  sharding_attr = ir.StringAttr.get("Sharding", mod.context)
   allowed_custom_call_targets: set[str] = copy.copy(_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE)
   for dc in disabled_checks:
     target = dc.is_custom_call()
@@ -829,13 +831,36 @@ def _check_module(mod: ir.Module, *,
       ir.StringAttr.get(target, mod.context)
       for target in allowed_custom_call_targets}
   disallowed_custom_call_ops: list[str] = []
+  module_uses_non_replicated_sharding = False
+  def check_sharding(op: ir.Operation, loc: ir.Location):
+    try:
+      sharding = op.attributes["mhlo.sharding"]
+    except KeyError:
+      pass
+    else:
+      nonlocal module_uses_non_replicated_sharding
+      try:
+        sharding_value = ir.StringAttr(sharding).value
+      except UnicodeDecodeError:
+        # The mhlo.sharding attribute may be in pretty-printed format, or
+        # as an encoding of an HloSharding protobuf in some rare situations.
+        # We handle the latter by conservatively assuming it is non-replicated.
+        module_uses_non_replicated_sharding = True
+      else:
+        if not re.match(check_sharding_pattern, sharding_value):
+          module_uses_non_replicated_sharding = True
 
   def check_op(op: ir.Operation):
     op_name = op.operation.name
-    if op_name == "stablehlo.custom_call":
+    if op_name == "func.func":
+      check_sharding(op.operation, op.location)
+
+    elif op_name == "stablehlo.custom_call":
       call_target_name_attr = op.operation.attributes["call_target_name"]
       if (call_target_name_attr not in allowed_custom_call_targets_attrs):
         disallowed_custom_call_ops.append(f"{op} at {op.location}")
+      if call_target_name_attr == sharding_attr:
+        check_sharding(op, op.location)
 
   def walk_operations(op):
     check_op(op)
@@ -852,6 +877,7 @@ def _check_module(mod: ir.Module, *,
            f"{disallowed_custom_call_ops_str}.\n"
            "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-lowering-supports-only-select-custom-calls")
     raise ValueError(msg)
+  return module_uses_non_replicated_sharding
 
 def expand_in_shardings(in_shardings: Sequence[LoweringSharding],
                         module_kept_var_idx: Sequence[int],
@@ -903,11 +929,13 @@ def _get_vjp_fun(primal_fun: Callable, *,
                  out_avals: Sequence[core.AbstractValue],
                  in_shardings: tuple[Sharding, ...],
                  out_shardings: tuple[Sharding, ...],
-                 nr_devices: int,
+                 device_assignment: Sequence[sharding_impls.Device] | None,
                  apply_jit: bool
                  ) -> tuple[Callable, Sequence[core.AbstractValue]]:
   # Since jax.vjp does not handle kwargs, it is easier to do all the work
   # here with flattened functions.
+  # apply_jit=False is only used for backwards compatibility with the graph
+  # graph serialization. When apply_jit=True, we must pass a device assignment.
   def fun_vjp_jax(*args_and_out_cts_flat_jax):
     # Takes a flat list of primals and output cotangents
     def flattened_primal_fun_jax(*args_flat):
@@ -926,10 +954,7 @@ def _get_vjp_fun(primal_fun: Callable, *,
                       map(lambda a: a.at_least_vspace(), out_avals)))
 
   if apply_jit:
-    # Prepare a device assignment. For exporting purposes, all it matters
-    # is the number of devices.
-    device_assignment = jax.devices(jax.default_backend())[:nr_devices]
-    assert len(device_assignment) == nr_devices
+    assert device_assignment is not None
     vjp_in_shardings, vjp_out_shardings = canonical_shardings(
       device_assignment,
       tuple(itertools.chain(in_shardings, out_shardings)),
@@ -940,7 +965,9 @@ def _get_vjp_fun(primal_fun: Callable, *,
   else:
     return fun_vjp_jax, vjp_in_avals
 
-def _export_native_vjp(primal_fun, primal: Exported) -> Exported:
+def _export_native_vjp(primal_fun,
+                       primal: Exported,
+                       device_assignment: Sequence[sharding_impls.Device]) -> Exported:
   # Export the VJP of `primal_fun_jax`. See documentation for Exported.vjp
   fun_vjp_jax, vjp_in_avals = _get_vjp_fun(primal_fun,
                                            in_tree=primal.in_tree,
@@ -948,7 +975,7 @@ def _export_native_vjp(primal_fun, primal: Exported) -> Exported:
                                            in_shardings=primal.in_shardings,
                                            out_avals=primal.out_avals,
                                            out_shardings=primal.out_shardings,
-                                           nr_devices=primal.nr_devices,
+                                           device_assignment=device_assignment,
                                            apply_jit=True)
   return export(fun_vjp_jax,
                 lowering_platforms=primal.lowering_platforms,
@@ -1088,26 +1115,38 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
                             exported: Exported):
   if exported.uses_shape_polymorphism:
     ctx.module_context.shape_poly_state.uses_dim_vars = True
+  submodule = ir.Module.parse(exported.mlir_module())
 
   axis_context = ctx.module_context.axis_context
   if isinstance(axis_context, sharding_impls.ShardingContext):
     num_devices = axis_context.num_devices
   elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
     num_devices = axis_context.mesh.size
+  elif isinstance(axis_context, sharding_impls.ReplicaAxisContext):
+    num_devices = axis_context.axis_env.nreps
   else:
     raise NotImplementedError(type(axis_context))
   if num_devices != exported.nr_devices:
-    raise NotImplementedError(
-      f"Exported module {exported.fun_name} was lowered for "
-      f"{exported.nr_devices} devices and is called in a context with "
-      f"{num_devices} devices"
-    )
+    # In some special cases we allow running with a different number of devices
+    # than the function was exported for.
+    err_msg = ""
+    if exported.nr_devices != 1:
+      err_msg = "the module was lowered for more than 1 device."
+    elif (_check_module(submodule, disabled_checks=()) or
+          any(s is not None and not s.is_replicated()
+              for s in exported.in_shardings + exported.out_shardings)):
+      err_msg = "the module contains non-replicated sharding annotations."
+    if err_msg:
+      raise NotImplementedError(
+        f"Exported module {exported.fun_name} was lowered for "
+        f"{exported.nr_devices} devices and is called in a context with "
+        f"{num_devices} devices. This is disallowed because: {err_msg}"
+      )
 
   # Apply in_shardings
   args = tuple(
     wrap_with_sharding(ctx, x, x_aval, x_sharding)
     for x, x_aval, x_sharding in zip(args, ctx.avals_in, exported.in_shardings))
-  submodule = ir.Module.parse(exported.mlir_module())
   symtab = ir.SymbolTable(submodule.operation)
   # The called function may have been exported with polymorphic shapes and called
   # now with more refined shapes. We insert hlo.ConvertOp to ensure the module
@@ -1126,7 +1165,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
                                submodule,
                                dst_symtab=ctx.module_context.symbol_table)
 
-  submodule_args = []
+  submodule_args: list[ir.Value] = []
   # All the platforms for the current lowering must be among the platforms
   # for which the callee was lowered.
   lowering_platforms = ctx.module_context.platforms
@@ -1224,7 +1263,7 @@ def wrap_with_deprecation_warning(f):
          "`from jax.experimental.export import export` you should use "
          "`from jax.experimental import export`.")
   def wrapped_f(*args, **kwargs):
-    warnings.warn(msg, DeprecationWarning)
+    warnings.warn(msg, DeprecationWarning, stacklevel=2)
     return f(*args, **kwargs)
   return wrapped_f
 

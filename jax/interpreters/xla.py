@@ -24,7 +24,7 @@ from jax._src.dispatch import (
 )
 
 from jax._src import xla_bridge as xb
-from jax._src.lib import xla_client as xc  # type: ignore
+from jax._src.lib import xla_client as xc
 
 xe = xc._xla
 Backend = xe.Client

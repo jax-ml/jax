@@ -171,9 +171,9 @@ def _minimize_lbfgs(
     # replacements for next iteration
     status = jnp.array(0)
     status = jnp.where(state.f_k - f_kp1 < ftol, 4, status)
-    status = jnp.where(state.ngev >= maxgrad, 3, status)  # type: ignore
-    status = jnp.where(state.nfev >= maxfun, 2, status)  # type: ignore
-    status = jnp.where(state.k >= maxiter, 1, status)  # type: ignore
+    status = jnp.where(state.ngev >= maxgrad, 3, status)
+    status = jnp.where(state.nfev >= maxfun, 2, status)
+    status = jnp.where(state.k >= maxiter, 1, status)
     status = jnp.where(ls_results.failed, 5, status)
 
     converged = jnp.linalg.norm(g_kp1, ord=norm) < gtol

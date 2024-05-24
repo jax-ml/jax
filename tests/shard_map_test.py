@@ -1483,7 +1483,7 @@ class ShardMapTest(jtu.JaxTestCase):
     e1, _, e2 = jaxpr.eqns
     self.assertLen(e1.outvars, 1)  # only primal output
     self.assertLen(e2.invars, 2)   # res and cotangent inputs
-    self.assertEqual(sum([e1.outvars[0] is v for v in e2.invars]), 1)
+    self.assertEqual(sum(e1.outvars[0] is v for v in e2.invars), 1)
 
   @parameterized.parameters(it.product([True, False], repeat=2))
   def test_res_forwarding_optimization_complex(self, jit, remat):
@@ -1506,7 +1506,7 @@ class ShardMapTest(jtu.JaxTestCase):
     e1, _, e2 = jaxpr.eqns
     self.assertLen(e1.outvars, 2)  # one primal and one res output
     self.assertLen(e2.invars, 4)   # two res and two cotangent inputs
-    self.assertEqual(sum([e1.outvars[-1] is v for v in e2.invars]), 1)
+    self.assertEqual(sum(e1.outvars[-1] is v for v in e2.invars), 1)
 
   @parameterized.parameters([True, False])
   def test_check_rep_failure_inside_rule(self, jit):
@@ -1777,6 +1777,26 @@ class ShardMapTest(jtu.JaxTestCase):
 
     jax.vmap(jax.grad(lambda x: f(x).sum()), spmd_axis_name='i')(xs)  # don't crash
 
+  def test_grad_shmap_residuals_axis_names_in_mesh_order(self):
+    # https://github.com/google/jax/issues/21236
+    mesh = jtu.create_global_mesh((4, 2, 1, 1), ('i', 'j', 'k', 'a'))
+
+    @partial(
+      shard_map,
+      mesh=mesh,
+      in_specs=P('j'),
+      out_specs=P('j'),
+      )
+    def f(x):
+      return jnp.sin(x)
+
+    xs = jnp.arange(16.)
+
+    ir = jax.jit(jax.grad(lambda x: f(x).sum())).lower(xs)
+    self.assertIn(
+      '{jax.result_info = "[(\'i\', \'j\', \'k\', \'a\')]"}',
+      ir.as_text()
+    )
 
 class FunSpec(NamedTuple):
   name: str

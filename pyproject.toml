@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 show_error_codes = true
 disable_error_code = "attr-defined, name-defined, annotation-unchecked"
 no_implicit_optional = true
+warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
 module = [
@@ -18,7 +19,6 @@ module = [
     "scipy.*",
     "libtpu.*",
     "jaxlib.mlir.*",
-    "iree.*",
     "rich.*",
     "optax.*",
     "flatbuffers.*",
@@ -86,8 +86,6 @@ filterwarnings = [
     "ignore:Special cases found for .* but none were parsed.*:UserWarning",
     # end array_api_tests-related warnings
     "ignore:jax.extend.mlir.dialects.mhlo is deprecated.*:DeprecationWarning",
-    "ignore:jax.experimental.maps and .* are deprecated.*:DeprecationWarning",
-    "ignore:The host_callback APIs are deprecated .*:DeprecationWarning",
     "ignore:.*is not JSON-serializable. Using the repr instead.",
 ]
 doctest_optionflags = [

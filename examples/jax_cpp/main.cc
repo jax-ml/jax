@@ -44,7 +44,6 @@ limitations under the License.
 #include "xla/literal_util.h"
 #include "xla/pjrt/cpu/cpu_client.h"
 #include "xla/pjrt/pjrt_client.h"
-#include "xla/status.h"
 #include "xla/statusor.h"
 #include "xla/tools/hlo_module_loader.h"
 #include "tsl/platform/init_main.h"

@@ -18,7 +18,7 @@ licenses(["notice"])
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//third_party/py/jax:internal"],
+    default_visibility = ["//third_party/py/jax:mosaic_gpu_users"],
 )
 
 exports_files(

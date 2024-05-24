@@ -74,25 +74,6 @@ def check_python_version(python_version):
     print("ERROR: JAX requires Python 3.9 or newer, found ", python_version)
     sys.exit(-1)
 
-def check_package_is_installed(python_bin_path, python_version, package):
-  args = [python_bin_path]
-  if python_version >= (3, 11):
-    args.append("-P")  # Don't include the current directory.
-  args += ["-c", f"import {package}"]
-  try:
-    shell(args)
-  except:
-   print(f"ERROR: jaxlib build requires package '{package}' to be installed.")
-   sys.exit(-1)
-
-def check_numpy_version(python_bin_path):
-  version = shell(
-      [python_bin_path, "-c", "import numpy as np; print(np.__version__)"])
-  numpy_version = tuple(map(int, version.split(".")[:2]))
-  if numpy_version < (1, 22):
-    print("ERROR: JAX requires NumPy 1.22 or newer, found " + version + ".")
-    sys.exit(-1)
-  return version
 
 def get_githash():
   try:
@@ -143,7 +124,7 @@ bazel_packages = {
 
 
 def download_and_verify_bazel():
-  """Downloads a bazel binary from Github, verifying its SHA256 hash."""
+  """Downloads a bazel binary from GitHub, verifying its SHA256 hash."""
   package = bazel_packages.get((platform.system(), platform.machine()))
   if package is None:
     return None
@@ -256,24 +237,21 @@ def get_clang_major_version(clang_path):
 
 
 
-def write_bazelrc(*, python_bin_path, remote_build,
+def write_bazelrc(*, remote_build,
                   cuda_toolkit_path, cudnn_install_path,
                   cuda_version, cudnn_version, rocm_toolkit_path,
                   cpu, cuda_compute_capabilities,
                   rocm_amdgpu_targets, target_cpu_features,
                   wheel_cpu, enable_mkl_dnn, use_clang, clang_path,
                   clang_major_version, enable_cuda, enable_nccl, enable_rocm,
-                  build_gpu_plugin, enable_mosaic_gpu):
+                  build_gpu_plugin, enable_mosaic_gpu, python_version):
   tf_cuda_paths = []
 
   with open("../.jax_configure.bazelrc", "w") as f:
-    if not remote_build and python_bin_path:
+    if not remote_build:
       f.write(textwrap.dedent("""\
         build --strategy=Genrule=standalone
-        build --repo_env PYTHON_BIN_PATH="{python_bin_path}"
-        build --action_env=PYENV_ROOT
-        build --python_path="{python_bin_path}"
-        """).format(python_bin_path=python_bin_path))
+        """))
 
     if use_clang:
       f.write(f'build --action_env CLANG_COMPILER_PATH="{clang_path}"\n')
@@ -343,8 +321,10 @@ def write_bazelrc(*, python_bin_path, remote_build,
         f.write("build --config=nonccl\n")
     if build_gpu_plugin:
       f.write("build --config=cuda_plugin\n")
-
-
+    if python_version:
+      f.write(
+        "build --repo_env HERMETIC_PYTHON_VERSION=\"{python_version}\"".format(
+            python_version=python_version))
 BANNER = r"""
      _   _  __  __
     | | / \ \ \/ /
@@ -404,8 +384,9 @@ def main():
       "GitHub.")
   parser.add_argument(
       "--python_bin_path",
-      help="Path to Python binary to use. The default is the Python "
-      "interpreter used to run the build script.")
+      help="Path to Python binary whose version to match while building with "
+      "hermetic python. The default is the Python interpreter used to run the "
+      "build script. DEPRECATED: use --python_version instead.")
   parser.add_argument(
       "--target_cpu_features",
       choices=["release", "native", "default"],
@@ -542,6 +523,10 @@ def main():
       "--editable",
       action="store_true",
       help="Create an 'editable' jaxlib build instead of a wheel.")
+  parser.add_argument(
+      "--python_version",
+      default=None,
+      help="hermetic python version, e.g., 3.10")
   add_boolean_argument(
       parser,
       "enable_mosaic_gpu",
@@ -551,6 +536,20 @@ def main():
       "configure_only",
       default=False,
       help_str="If true, writes a .bazelrc file but does not build jaxlib.")
+  add_boolean_argument(
+      parser,
+      "requirements_update",
+      default=False,
+      help_str="If true, writes a .bazelrc and updates requirements_lock.txt "
+               "for a corresponding version of Python but does not build "
+               "jaxlib.")
+  add_boolean_argument(
+      parser,
+      "requirements_nightly_update",
+      default=False,
+      help_str="Same as update_requirements, but will consider dev, nightly "
+               "and pre-release versions of packages.")
+
   args = parser.parse_args()
 
   logging.basicConfig()
@@ -587,17 +586,15 @@ def main():
   print(f"Bazel binary path: {bazel_path}")
   print(f"Bazel version: {bazel_version}")
 
-  python_bin_path = get_python_bin_path(args.python_bin_path)
-  print(f"Python binary path: {python_bin_path}")
-  python_version = get_python_version(python_bin_path)
-  print("Python version: {}".format(".".join(map(str, python_version))))
-  check_python_version(python_version)
-
-  numpy_version = check_numpy_version(python_bin_path)
-  print(f"NumPy version: {numpy_version}")
-  check_package_is_installed(python_bin_path, python_version, "wheel")
-  check_package_is_installed(python_bin_path, python_version, "build")
-  check_package_is_installed(python_bin_path, python_version, "setuptools")
+  if args.python_version:
+    python_version = args.python_version
+  else:
+    python_bin_path = get_python_bin_path(args.python_bin_path)
+    print(f"Python binary path: {python_bin_path}")
+    python_version = get_python_version(python_bin_path)
+    print("Python version: {}".format(".".join(map(str, python_version))))
+    check_python_version(python_version)
+    python_version = ".".join(map(str, python_version))
 
   print("Use clang: {}".format("yes" if args.use_clang else "no"))
   clang_path = args.clang_path
@@ -636,7 +633,6 @@ def main():
     print(f"ROCm amdgpu targets: {args.rocm_amdgpu_targets}")
 
   write_bazelrc(
-      python_bin_path=python_bin_path,
       remote_build=args.remote_build,
       cuda_toolkit_path=cuda_toolkit_path,
       cudnn_install_path=cudnn_install_path,
@@ -657,7 +653,22 @@ def main():
       enable_rocm=args.enable_rocm,
       build_gpu_plugin=args.build_gpu_plugin,
       enable_mosaic_gpu=args.enable_mosaic_gpu,
+      python_version=python_version,
   )
+
+  if args.requirements_update:
+    update_command = ([bazel_path] + args.bazel_startup_options +
+      ["run", "--verbose_failures=true", "//build:requirements.update"])
+    print(" ".join(update_command))
+    shell(update_command)
+    return
+
+  if args.requirements_nightly_update:
+    update_nightly_command = ([bazel_path] + args.bazel_startup_options +
+      ["run", "--verbose_failures=true", "//build:requirements_nightly.update"])
+    print(" ".join(update_nightly_command))
+    shell(update_nightly_command)
+    return
 
   if args.configure_only:
     return
@@ -671,6 +682,7 @@ def main():
     "--verbose_failures=true",
     *args.bazel_options,
   )
+
   if not args.build_cuda_kernel_plugin and not args.build_cuda_pjrt_plugin:
     build_cpu_wheel_command = [
       *command_base,

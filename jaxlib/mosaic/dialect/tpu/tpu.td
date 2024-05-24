@@ -540,6 +540,11 @@ def TPU_YieldOp : TPU_Op<"yield", [Pure, ReturnLike, Terminator]> {
   let assemblyFormat = [{ attr-dict ($results^ `:` type($results))? }];
 }
 
+def TPU_DelayOp : TPU_Op<"delay"> {
+  let arguments = (ins I32:$nanos);
+  let results = (outs);
+}
+
 // Expands the granularity of mask to subelements.
 def TPU_MaskCastOp : TPU_Op<"mask_cast", [Pure]> {
   let arguments = (ins AnyVector:$input);
@@ -554,6 +559,16 @@ def TPU_GetIterationBoundOp : TPU_Op<"iteration_bound"> {
   let arguments = (ins I32Attr:$dim);
   let results = (outs I32:$result);
   let assemblyFormat = [{ $dim attr-dict `:` type($result) }];
+}
+
+def TPU_LogOp : TPU_Op<"log"> {
+  let arguments = (ins
+    Variadic<AnyType>:$inputs,
+    StrAttr:$tag,
+    DefaultValuedAttr<BoolAttr, "false">:$formatted
+  );
+  let results = (outs);
+  let assemblyFormat = [{ $tag attr-dict (`:`  `[` $inputs^ `]` `:` type($inputs))? }];
 }
 
 def DebugAssertInsertionPass : Pass<"debug-assert-insertion", "::mlir::func::FuncOp"> {
@@ -638,7 +653,8 @@ def LinalgVectorizationPass : Pass<"linalg-vectorization", "::mlir::func::FuncOp
     "::mlir::vector::VectorDialect",
     "::mlir::tpu::TPUDialect",
   ];
-  let constructor = "::mlir::tpu::createLinalgVectorizationPass()";
+  let constructor = "::mlir::tpu::createLinalgVectorizationPass(false)";
+  let options = [Option<"supports_bf16_alu_instructions", "supports-bf16-alu-instructions", "bool", "", "">];
 }
 
 #endif  // TPU_ATTRS

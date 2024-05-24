@@ -548,8 +548,21 @@ bool layoutIsValidForValue(const Layout &l, const Value v,
                            const std::array<int64_t, 2> target_shape) {
   // l must be non-null iff v is of vector type
   if (const auto vty = dyn_cast<VectorType>(v.getType())) {
-    return l.has_value() && l->isValid(target_shape) &&
-           l->layout_rank() <= vty.getRank();
+    if (!l.has_value()) {
+      return false;
+    }
+
+    // Vector type should have the same bitwidth as the layout, except for the
+    // i1 special case, used for vmasks (see comment for VectorLayout class).
+    if (!vty.getElementType().isIntOrFloat()) {
+      return false;
+    }
+    const int8_t bitwidth = vty.getElementTypeBitWidth();
+    if (bitwidth != l->bitwidth() && bitwidth != 1) {
+      return false;
+    }
+
+    return l->isValid(target_shape) && l->layout_rank() <= vty.getRank();
   }
   return !l.has_value();
 }
@@ -2247,7 +2260,24 @@ LogicalResult tpu_iota_rule(RewriteContext &ctx, Operation &op,
     op.erase();
     return success();
   }
-  return op.emitOpError("Not implemented: Unsupported dimension");
+  // We take the iota over an untiled dimension.
+  CHECK_LT(*dimension, vty.getRank());
+  SmallVector<Value> tiles;
+  tiles.reserve(vty.getDimSize(*dimension));
+  for (int64_t i = 0; i < vty.getDimSize(*dimension); ++i) {
+    tiles.push_back(builder.create<arith::ConstantOp>(
+        native_vreg_ty,
+        DenseElementsAttr::get(native_vreg_ty,
+                               IntegerAttr::get(vty.getElementType(), i))));
+  }
+  xla::Array<Value> out_tiles(tile_array_shape);
+  out_tiles.Each([&](absl::Span<const int64_t> idxs, Value *v) {
+    *v = tiles[idxs[*dimension]];
+  });
+  op.replaceAllUsesWith(
+      assemble(builder, vty, layout_out, out_tiles, ctx.target_shape));
+  op.erase();
+  return success();
 }
 
 LogicalResult tpu_gather_rule(RewriteContext &ctx, Operation &op,
@@ -2947,15 +2977,14 @@ FailureOr<xla::Array<Value>> vector_extract_slice_impl(
   TPU_ASSERT_EQ_OP(num_indices, sizes.size());
 
   SmallVector<int64_t> full_sizes;
-  const int64_t num_implicit_dims = 2 - layout_in.layout_rank();
-  full_sizes.reserve(src_vector_rank + num_implicit_dims);
+  full_sizes.reserve(src_vector_rank + layout_in.num_implicit_dims());
   full_sizes.append(sizes.begin(), sizes.end());
   full_sizes.append(src_vector_shape.begin() + num_indices,
                     src_vector_shape.end());
-  layout_in.insertImplicit(full_sizes, 1); /*  */
+  layout_in.insertImplicit(full_sizes, 1);
 
   SmallVector<int64_t> full_offsets;
-  full_offsets.reserve(src_vector_rank + num_implicit_dims);
+  full_offsets.reserve(src_vector_rank + layout_in.num_implicit_dims());
   full_offsets.append(offsets.begin(), offsets.end());
   full_offsets.append(src_vector_rank - num_indices, 0);
   layout_in.insertImplicit(full_offsets, 0);
@@ -4531,6 +4560,30 @@ FailureOr<TypedValue<VectorType>> relayout(
           v.getLoc(), src_tiles.begin()->getType(), parts);
     });
     src = new_src;
+    src_tiles = std::move(src_tiles_retiled);
+  } else if (  // Handle retiling from (8, 128, -2) to (8, 128) for 32-bit data.
+               // This drops the implicit second minor dimension.
+      src.implicit_dim() == VectorLayout::ImplicitDim::kSecondMinor &&
+      dst.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+      src.bitwidth() == 32 && src.offsets() == dst.offsets() &&
+      src.offsets() == LayoutOffsets{0, 0} && src.tiling() == dst.tiling() &&
+      src.tiling() == std::array<int64_t, 2>{8, 128}) {
+    xla::Array<Value> src_tiles_retiled(
+        dst.tileArrayShape(vty.getShape(), target_shape));
+    src_tiles_retiled.Each(
+        [&](const absl::Span<const int64_t> idx, Value *tile) {
+          for (int dst_sl_idx = 0; dst_sl_idx < 8; ++dst_sl_idx) {
+            SmallVector<int64_t> src_idx(idx.begin(), idx.end());
+            auto second_minor_idx = idx.size() - 2;
+            src_idx[second_minor_idx] = 8 * idx[second_minor_idx] + dst_sl_idx;
+            if (src_idx[second_minor_idx] >= src_tiles.dim(second_minor_idx)) {
+              break;
+            }
+            *tile = copy_one_sublane(builder, src_tiles(src_idx), 0, *tile,
+                                     dst_sl_idx, target_shape);
+          }
+        });
+    src = dst;
     src_tiles = std::move(src_tiles_retiled);
   }
 

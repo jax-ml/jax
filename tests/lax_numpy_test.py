@@ -5960,9 +5960,9 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'reshape': ['shape', 'copy'],
       'row_stack': ['casting'],
       'stack': ['casting'],
-      'std': ['correction', 'mean'],
+      'std': ['mean'],
       'tri': ['like'],
-      'var': ['correction', 'mean'],
+      'var': ['mean'],
       'vstack': ['casting'],
       'zeros_like': ['subok', 'order']
     }

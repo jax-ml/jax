@@ -77,6 +77,7 @@ def pallas_call_lowering(
       out_shapes,
       jaxpr,
       name,
+      compiler_params,
   )
   if debug:
     print(lowering_result.module.operation)

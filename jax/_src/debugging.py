@@ -77,13 +77,20 @@ map, unsafe_map = util.safe_map, map
 def debug_callback_impl(*args, callback: Callable[..., Any],
                         effect: DebugEffect):
   del effect
-  cpu_device, *_ = jax.local_devices(backend="cpu")
+  try:
+    cpu_device, *_ = jax.local_devices(backend="cpu")
+  except RuntimeError as e:
+    raise RuntimeError(
+        "jax.debug.callback failed to find a local CPU device to place the"
+        " inputs on. Make sure \"cpu\" is listed in --jax_platforms or the"
+        " JAX_PLATFORMS environment variable."
+    ) from e
   args = jax.device_put(args, cpu_device)
   with jax.default_device(cpu_device):
     try:
       callback(*args)
     except BaseException:
-      logger.exception("jax.debug_callback failed")
+      logger.exception("jax.debug.callback failed")
       raise
   return ()
 
@@ -384,7 +391,7 @@ def _inspect_sharding_lowering_rule(ctx: mlir.LoweringRuleContext, value, *,
                    has_side_effect=ir.BoolAttr.get(True),
                    api_version=mlir.i32_attr(1),
                    called_computations=ir.ArrayAttr.get([]),
-                   backend_config=ir.StringAttr.get(key),
+                   backend_config=ir.StringAttr.get(key),  # type: ignore[arg-type]
                    operand_layouts=None,
                    result_layouts=None)
   return []
@@ -504,11 +511,11 @@ def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
       heights[chunk_idxs] = None
       widths[chunk_idxs]  = horiz_size / shape[0]
     slices.setdefault(chunk_idxs, set()).add(dev.id)
-  num_rows = max([a[0] for a in slices.keys()]) + 1
+  num_rows = max(a[0] for a in slices.keys()) + 1
   if len(list(slices.keys())[0]) == 1:
     num_cols = 1
   else:
-    num_cols = max([a[1] for a in slices.keys()]) + 1
+    num_cols = max(a[1] for a in slices.keys()) + 1
 
   color_iter = make_color_iter(color_map, num_rows, num_cols)
   table = rich.table.Table(show_header=False, show_lines=not use_color,

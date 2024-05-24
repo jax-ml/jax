@@ -134,6 +134,7 @@ del ad, batching, mlir, partial_eval, pxla, xla
 from jax._src.array import (
     make_array_from_single_device_arrays as make_array_from_single_device_arrays,
     make_array_from_callback as make_array_from_callback,
+    make_array_from_process_local_data as make_array_from_process_local_data,
 )
 
 from jax._src.tree_util import (
@@ -157,6 +158,7 @@ from jax import debug as debug
 from jax import dlpack as dlpack
 from jax import dtypes as dtypes
 from jax import errors as errors
+from jax import ffi as ffi
 from jax import image as image
 from jax import lax as lax
 from jax import monitoring as monitoring
@@ -177,10 +179,8 @@ from jax._src.array import Shard as Shard
 import jax.experimental.compilation_cache.compilation_cache as _ccache
 del _ccache
 
-# TODO(jakevdp): remove this when jax/config.py is removed.
 from jax._src.deprecations import register as _register_deprecation
-_register_deprecation("jax.config", "config-module")
-_register_deprecation("jax.experimental", "maps-module")
+_register_deprecation("jax-experimental-maps-module")
 del _register_deprecation
 
 _deprecations = {

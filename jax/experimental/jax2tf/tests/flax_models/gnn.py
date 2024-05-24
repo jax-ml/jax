@@ -152,7 +152,7 @@ class GraphConvNet(nn.Module):
         axis=0,
         total_repeat_length=sum_n_node)
     # We use the aggregation function to pool the nodes per graph.
-    pooled = self.pooling_fn(graphs.nodes, node_graph_indices, n_graph)  # type: ignore[call-arg]
+    pooled = self.pooling_fn(graphs.nodes, node_graph_indices, n_graph)
     return graphs._replace(globals=pooled)
 
   @nn.compact

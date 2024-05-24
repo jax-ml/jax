@@ -12,11 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from distutils import spawn
 import importlib
 import os
-import subprocess
-import sys
 
 from setuptools import setup, find_packages
 
@@ -44,21 +41,6 @@ _minimum_jaxlib_version = _version_module._minimum_jaxlib_version
 with open('README.md', encoding='utf-8') as f:
   _long_description = f.read()
 
-if 'PROTOC' in os.environ and os.path.exists(os.environ['PROTOC']):
-  protoc = os.environ['PROTOC']
-else:
-  protoc = spawn.find_executable('protoc')
-
-def generate_proto(source):
-  if not protoc or not os.path.exists(source):
-    return
-  protoc_command = [protoc, '-I.', '--python_out=.', source]
-  if subprocess.call(protoc_command) != 0:
-    sys.exit(-1)
-
-generate_proto("jax/experimental/australis/executable.proto")
-generate_proto("jax/experimental/australis/petri.proto")
-
 setup(
     name=project_name,
     version=__version__,
@@ -72,7 +54,7 @@ setup(
     package_data={'jax': ['py.typed', "*.pyi", "**/*.pyi"]},
     python_requires='>=3.9',
     install_requires=[
-        'ml_dtypes>=0.2.0',
+        'ml_dtypes>=0.4.0',
         'numpy>=1.22',
         "numpy>=1.23.2; python_version>='3.11'",
         "numpy>=1.26.0; python_version>='3.12'",
@@ -103,9 +85,6 @@ setup(
           'requests',  # necessary for jax.distributed.initialize
         ],
 
-        # $ pip install jax[australis]
-        'australis': ['protobuf>=3.13,<4'],
-
         # CUDA installations require adding the JAX CUDA releases URL, e.g.,
         # Cuda installation defaulting to a CUDA and Cudnn version defined above.
         # $ pip install jax[cuda] -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
@@ -119,7 +98,7 @@ setup(
         "nvidia-cuda-nvcc-cu12>=12.1.105",
         "nvidia-cuda-runtime-cu12>=12.1.105",
         # https://docs.nvidia.com/deeplearning/cudnn/developer/misc.html#cudnn-api-compatibility
-        "nvidia-cudnn-cu12>=8.9.2.26,<9.0",
+        "nvidia-cudnn-cu12>=9.0,<10.0",
         "nvidia-cufft-cu12>=11.0.2.54",
         "nvidia-cusolver-cu12>=11.4.5.107",
         "nvidia-cusparse-cu12>=12.1.0.106",
@@ -141,7 +120,7 @@ setup(
           "nvidia-cuda-cupti-cu12>=12.1.105",
           "nvidia-cuda-nvcc-cu12>=12.1.105",
           "nvidia-cuda-runtime-cu12>=12.1.105",
-          "nvidia-cudnn-cu12>=8.9.2.26,<9.0",
+          "nvidia-cudnn-cu12>=9.0,<10.0",
           "nvidia-cufft-cu12>=11.0.2.54",
           "nvidia-cusolver-cu12>=11.4.5.107",
           "nvidia-cusparse-cu12>=12.1.0.106",

@@ -18,7 +18,7 @@ from collections import Counter, defaultdict, deque, namedtuple
 from collections.abc import (Collection, Generator, Hashable, Iterable,
                              Iterator, Set, Sequence, MutableSet,
                              MutableMapping)
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 from dataclasses import dataclass
 import functools
 from functools import partial, partialmethod, total_ordering
@@ -39,6 +39,7 @@ import numpy as np
 from jax._src import dtypes
 from jax._src import config
 from jax._src import effects
+from jax._src import compute_on
 from jax._src.errors import (
     ConcretizationTypeError, TracerArrayConversionError, TracerBoolConversionError,
     TracerIntegerConversionError, UnexpectedTracerError)
@@ -79,7 +80,7 @@ class JaxprDebugInfo(NamedTuple):
   traced_for: str     # e.g. 'jit', 'scan', etc
   func_src_info: str  # e.g. f'{fun.__name__} at {filename}:{lineno}'
   arg_names: tuple[str | None, ...]     # e.g. ('args[0]', ... )
-  result_paths: tuple[str | None, ...]  # e.g. ('[0]', '[1]', ...)
+  result_paths: tuple[str, ...]  # e.g. ('[0]', '[1]', ...)
 
 class Jaxpr:
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
@@ -172,7 +173,6 @@ class Jaxpr:
     return jaxpr
 
 
-
 def join_effects(*effects: Effects) -> Effects:
   return set().union(*effects) if effects else no_effects
 
@@ -259,6 +259,29 @@ def jaxpr_as_fun(closed_jaxpr: ClosedJaxpr, *args):
   return eval_jaxpr(closed_jaxpr.jaxpr, closed_jaxpr.consts, *args)
 
 
+class JaxprEqnContext:
+
+  def __init__(self, compute_type: str | None, threefry_partitionable: bool):
+    self.compute_type = compute_type
+    self.threefry_partitionable = threefry_partitionable
+    self._managers = [
+        (compute_on.extend_compute_type, self.compute_type),
+        (config.threefry_partitionable.__call__, self.threefry_partitionable),
+    ]
+
+  @property
+  @contextmanager
+  def manager(self):
+    with ExitStack() as stack:
+      for manager, val in self._managers:
+        stack.enter_context(manager(val))
+      yield
+
+  def __repr__(self):
+    return (f"JaxprEqnContext(compute_type={self.compute_type},"
+            f"threefry_partitionable={self.threefry_partitionable})")
+
+
 class JaxprEqn(NamedTuple):
   invars: list[Atom]
   outvars: list[Var]
@@ -266,6 +289,7 @@ class JaxprEqn(NamedTuple):
   params: dict[str, Any]
   effects: Effects
   source_info: source_info_util.SourceInfo
+  ctx: JaxprEqnContext
 
   def __repr__(self):
     return str(pp_eqn(self, JaxprPpContext(), JaxprPpSettings())).rstrip()
@@ -278,6 +302,7 @@ class JaxprEqn(NamedTuple):
       params: dict[str, Any] | None = None,
       effects: Effects | None = None,
       source_info: source_info_util.SourceInfo | None = None,
+      ctx: JaxprEqnContext | None = None
   ):
     # It is slightly faster to rebuild the tuple directly than to call _replace.
     return JaxprEqn(
@@ -287,16 +312,20 @@ class JaxprEqn(NamedTuple):
       self.params if params is None else params,
       self.effects if effects is None else effects,
       self.source_info if source_info is None else source_info,
+      self.ctx if ctx is None else ctx,
     )
 
 
 # TODO(mattjj): call typecheck rules here, so we don't form bad eqns
-def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None):
+def new_jaxpr_eqn(invars, outvars, primitive, params, effects, source_info=None,
+                  ctx=None):
   source_info = source_info or source_info_util.new_source_info()
+  ctx = ctx or JaxprEqnContext(compute_on.current_compute_type(),
+                               config.threefry_partitionable.value)
   if config.enable_checks.value:
     assert all(isinstance(x, (Var, Literal)) for x in  invars)
     assert all(isinstance(v,  Var)           for v in outvars)
-  return JaxprEqn(invars, outvars, primitive, params, effects, source_info)
+  return JaxprEqn(invars, outvars, primitive, params, effects, source_info, ctx)
 
 _var_counter = it.count()
 
@@ -396,11 +425,11 @@ class Primitive:
     return impl
 
   def def_abstract_eval(self, abstract_eval):
-    self.abstract_eval = _effect_free_abstract_eval(abstract_eval)  # type: ignore[assignment]
+    self.abstract_eval = _effect_free_abstract_eval(abstract_eval)
     return abstract_eval
 
   def def_effectful_abstract_eval(self, effectful_abstract_eval):
-    self.abstract_eval = effectful_abstract_eval  # type: ignore[assignment]
+    self.abstract_eval = effectful_abstract_eval
     return effectful_abstract_eval
 
   def def_custom_bind(self, bind):
@@ -452,7 +481,8 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
     subfuns, bind_params = eqn.primitive.get_bind_params(eqn.params)
     name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
     traceback = eqn.source_info.traceback if propagate_source_info else None
-    with source_info_util.user_context(traceback, name_stack=name_stack):
+    with source_info_util.user_context(
+        traceback, name_stack=name_stack), eqn.ctx.manager:
       ans = eqn.primitive.bind(*subfuns, *map(read, eqn.invars), **bind_params)
     if eqn.primitive.multiple_results:
       map(write, eqn.outvars, ans)
@@ -1046,7 +1076,7 @@ def trace_state_clean() -> bool:
 def reset_trace_state() -> bool:
   """Resets the global trace state and returns True if it was already clean."""
   if not trace_state_clean():
-    thread_local_state.trace_state.__init__()  # type: ignore
+    thread_local_state.trace_state.__init__()
     return False
   else:
     return True
@@ -1320,11 +1350,11 @@ def find_top_trace(xs) -> Trace:
     top_tracer._assert_live()
     top_main = top_tracer._trace.main
   else:
-    top_main = None  # type: ignore
+    top_main = None
   dynamic = thread_local_state.trace_state.trace_stack.dynamic
   top_main = (dynamic if top_main is None or dynamic.level > top_main.level
               else top_main)
-  return top_main.with_cur_sublevel()  # type: ignore
+  return top_main.with_cur_sublevel()
 
 def get_referent(x: Any) -> Any:
   return x.get_referent() if isinstance(x, Tracer) else x
@@ -1817,7 +1847,7 @@ class ConcreteArray(ShapedArray):
 
 def primal_dtype_to_tangent_dtype(primal_dtype):
   if isinstance(primal_dtype, dtypes.ExtendedDType):
-    return primal_dtype._rules.tangent_dtype(primal_dtype)  # type: ignore
+    return primal_dtype._rules.tangent_dtype(primal_dtype)
   elif not dtypes.issubdtype(primal_dtype, np.inexact):
     return dtypes.float0
   else:
@@ -1983,12 +2013,12 @@ effects.control_flow_allowed_effects.add_type(InternalMutableArrayEffect)
 
 @mutable_array_p.def_effectful_abstract_eval
 def mutable_array_abstract_eval(init_aval):
-  from jax._src.state.types import AbstractRef  # type: ignore[import]
+  from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   return AbstractRef(init_aval), {internal_mutable_array_effect}
 
 @mutable_array_p.def_impl
 def _mutable_array_impl(init_val):
-  from jax._src.state.types import AbstractRef  # type: ignore[import]
+  from jax._src.state.types import AbstractRef  # pytype: disable=import-error
   aval = raise_to_shaped(get_aval(init_val))
   return MutableArray(AbstractRef(aval), init_val)
 
@@ -2384,6 +2414,8 @@ class ClosedCallPrimitive(CallPrimitive):
 
 closed_call_p: ClosedCallPrimitive = ClosedCallPrimitive('closed_call')
 closed_call_p.def_impl(call_impl)
+closed_call_p.def_effectful_abstract_eval(
+    lambda *_, call_jaxpr: (call_jaxpr.out_avals, call_jaxpr.effects))
 
 
 outfeed_primitives: set[Primitive] = set()
@@ -2748,7 +2780,7 @@ def do_subst_axis_names_jaxpr(jaxpr: Jaxpr | ClosedJaxpr, subst: AxisSubst):
   var_map: dict[Var, Var] = {}
   invars = [subst_axis_names_var(v, subst, var_map) for v in jaxpr.invars]  # type: ignore[union-attr]
   constvars = [subst_axis_names_var(v, subst, var_map) for v in jaxpr.constvars]  # type: ignore[union-attr]
-  eqns = [subst_axis_names_eqn(eqn, subst, var_map) for eqn in jaxpr.eqns]  # type: ignore[union-attr]
+  eqns = [subst_axis_names_eqn(eqn, subst, var_map) for eqn in jaxpr.eqns]
   outvars: list[Atom] = [v if isinstance(v, Literal) else var_map[v] for v in jaxpr.outvars]  # type: ignore[union-attr]
   effects = subst_axis_names_effects(jaxpr.effects, subst)
   new_jaxpr = Jaxpr(constvars, invars, outvars, eqns, effects)
@@ -2827,7 +2859,7 @@ custom_typechecks: dict[Primitive, Callable] = {}
 
 def _check_closed_call(_, *in_atoms, call_jaxpr):
   in_avals = [x.aval for x in in_atoms]
-  if list(in_avals) != list(call_jaxpr.in_avals):
+  if not all(map(typecompat, call_jaxpr.in_avals, in_avals)):
     raise JaxprTypeError("Closed call in_avals mismatch")
   return call_jaxpr.out_avals, call_jaxpr.effects
 custom_typechecks[closed_call_p] = _check_closed_call
@@ -3031,8 +3063,8 @@ def substitute_vars_in_output_ty(
   result = []
   for aval in out_type:
     if type(aval) is DShapedArray:
-      shape = [in_atoms[d.val] if type(d) is InDBIdx else  # type: ignore
-               out_binders[d.val] if type(d) is OutDBIdx else  # type: ignore
+      shape = [in_atoms[d.val] if type(d) is InDBIdx else
+               out_binders[d.val] if type(d) is OutDBIdx else
                d for d in aval.shape]
       aval = aval.update(shape=tuple(shape))
     result.append(aval)

@@ -64,7 +64,7 @@ setup(
         'scipy>=1.9',
         "scipy>=1.11.1; python_version>='3.12'",
         'numpy>=1.22',
-        'ml_dtypes>=0.2.0',
+        'ml_dtypes>=0.4.0',
     ],
     extras_require={
       'cuda12_pip': [
@@ -73,7 +73,7 @@ setup(
         "nvidia-cuda-nvcc-cu12>=12.1.105",
         "nvidia-cuda-runtime-cu12>=12.1.105",
         # https://docs.nvidia.com/deeplearning/cudnn/developer/misc.html#cudnn-api-compatibility
-        "nvidia-cudnn-cu12>=8.9.2.26,<9.0",
+        "nvidia-cudnn-cu12>=9.0,<10.0",
         "nvidia-cufft-cu12>=11.0.2.54",
         "nvidia-cusolver-cu12>=11.4.5.107",
         "nvidia-cusparse-cu12>=12.1.0.106",
@@ -118,6 +118,7 @@ setup(
             'triton/*.pyi',
             'triton/*.pyd',
             'triton/*.so',
+            'include/xla/ffi/api/*.h',
         ],
         'jaxlib.xla_extension': ['*.pyi'],
     },
