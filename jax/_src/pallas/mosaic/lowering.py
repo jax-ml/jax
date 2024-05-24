@@ -2360,3 +2360,19 @@ def _debug_print_rule(
 
 
 lowering_rules[primitives.debug_print_p] = _debug_print_rule
+
+
+def _prng_seed_lowering_rule(ctx: LoweringRuleContext, *seeds):
+  del ctx
+  return tpu.PRNGSeed32Op(seeds).results
+lowering_rules[tpu_primitives.prng_seed_p] = _prng_seed_lowering_rule
+
+
+def _prng_random_bits_lowering_rule(ctx: LoweringRuleContext, *, shape):
+  if len(shape) <= 1:
+    # TODO(b/342054464): Support implicit dims for PRNGRandomBitsOp.
+    raise NotImplementedError("random_bits only supports rank>=2 outputs.")
+  out_aval = ctx.avals_out[0]
+  out_type = aval_to_ir_type(out_aval)
+  return tpu.PRNGRandomBitsOp(out_type).result
+lowering_rules[tpu_primitives.prng_random_bits_p] = _prng_random_bits_lowering_rule

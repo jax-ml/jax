@@ -3953,6 +3953,43 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
   transpose_op->erase();
   return success();
 }
+
+LogicalResult prng_random_bits_rule(RewriteContext &ctx, Operation &op,
+                                    const ArrayRef<Layout> layouts_in,
+                                    const ArrayRef<Layout> layouts_out) {
+  TPU_ASSERT_EQ_OP(layouts_in.size(), 0);
+  TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
+  TPU_ASSERT_OP(layouts_out.front().has_value());
+
+  const VectorLayout &layout_out = *layouts_out.front();
+  tpu::PRNGRandomBitsOp rng_op = cast<tpu::PRNGRandomBitsOp>(op);
+  if (layout_out != VectorLayout(32, {0, 0}, ctx.target_shape,
+                                   VectorLayout::ImplicitDim::kNone)) {
+    return op.emitOpError(
+        "Unsupported output layout for ") << rng_op->getName();
+  }
+  OpBuilder builder(op.getContext());
+  builder.setInsertionPointAfter(&op);
+
+  VectorType vty = rng_op.getResult().getType();
+  TPU_ASSERT_OP(vty.getElementType().isInteger());
+  // Only 32-bit output supported currently.
+  TPU_ASSERT_OP(vty.getElementType().getIntOrFloatBitWidth() == 32);
+  xla::Array<Value> tiles(
+      layout_out.tileArrayShape(vty.getShape(), ctx.target_shape));
+  VectorType tile_ty = VectorType::get(ctx.target_shape, vty.getElementType());
+  tiles.Each([&](absl::Span<const int64_t> tile_idxs, Value * v) {
+    *v = builder.create<tpu::PRNGRandomBitsOp>(op.getLoc(), tile_ty);
+  });
+  const RollVectorsOp roll_vectors_op =
+      assemble(builder, vty, layout_out, tiles, ctx.target_shape);
+  rng_op->replaceUsesWithIf(roll_vectors_op, [&](OpOperand &operand) {
+    return operand.getOwner() != roll_vectors_op;
+  });
+  rng_op->erase();
+  return success();
+}
+
 const llvm::StringMap<rule_type> &rules() {
   static auto rules = new llvm::StringMap<rule_type>{
       {arith::ConstantOp::getOperationName(), arith_constant_rule},
@@ -3980,6 +4017,7 @@ const llvm::StringMap<rule_type> &rules() {
       {tpu::BitcastOp::getOperationName(), tpu_bitcast_rule},
       {tpu::TraceOp::getOperationName(), tpu_trace_rule},
       {tpu::AssumeLayoutOp::getOperationName(), tpu_assume_layout_rule},
+      {tpu::PRNGRandomBitsOp::getOperationName(), prng_random_bits_rule},
       {vector::BroadcastOp::getOperationName(), vector_broadcast_rule},
       {vector::ContractionOp::getOperationName(), vector_contract_rule},
       {vector::ExtractOp::getOperationName(), vector_extract_rule},

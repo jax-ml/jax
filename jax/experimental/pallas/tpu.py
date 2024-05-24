@@ -45,3 +45,5 @@ from jax._src.pallas.mosaic import semaphore_read
 from jax._src.pallas.mosaic import semaphore_signal
 from jax._src.pallas.mosaic import semaphore_wait
 from jax._src.tpu_custom_call import CostEstimate
+from jax._src.pallas.mosaic import prng_seed
+from jax._src.pallas.mosaic import prng_random_bits

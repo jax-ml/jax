@@ -561,6 +561,16 @@ def TPU_GetIterationBoundOp : TPU_Op<"iteration_bound"> {
   let assemblyFormat = [{ $dim attr-dict `:` type($result) }];
 }
 
+def TPU_PRNGSeed32Op : TPU_Op<"prng_set_seed_32"> {
+  let arguments = (ins Variadic<I32>:$seeds);
+  let results = (outs);
+}
+
+def TPU_PRNGRandomBitsOp : TPU_Op<"prng_random_bits"> {
+  let arguments = (ins);
+  let results = (outs AnyVector:$output);
+}
+
 def TPU_LogOp : TPU_Op<"log"> {
   let arguments = (ins
     Variadic<AnyType>:$inputs,
