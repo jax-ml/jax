@@ -710,6 +710,7 @@ jax_test(
     backend_tags = {
         "tpu": [
             "noasan",  # Times out under asan.
+            "requires-mem:16g",  # Under tsan on 2x2 this test exceeds the default 12G memory limit.
         ],
     },
     shard_count = {
