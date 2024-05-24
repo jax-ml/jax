@@ -17,7 +17,6 @@
 load("//jaxlib:symlink_files.bzl", "symlink_files")
 load(
     "//jaxlib:jax.bzl",
-    "if_building_mosaic_gpu",
     "py_library_providing_imports_info",
     "pybind_extension",
     "pytype_library",
@@ -68,6 +67,10 @@ py_library_providing_imports_info(
         "//jaxlib/mlir:func_dialect",
         "//jaxlib/mlir:ir",
         "//jaxlib/mlir:math_dialect",
+        "//jaxlib/mlir:gpu_dialect",
+        "//jaxlib/mlir:nvvm_dialect",
+        "//jaxlib/mlir:nvgpu_dialect",
+        "//jaxlib/mlir:llvm_dialect",
         "//jaxlib/mlir:memref_dialect",
         "//jaxlib/mlir:mhlo_dialect",
         "//jaxlib/mlir:pass_manager",
@@ -78,7 +81,7 @@ py_library_providing_imports_info(
         "//jaxlib/mosaic",
         "//jaxlib/triton",
         "@xla//xla/python:xla_extension",
-    ] + if_building_mosaic_gpu(["//jaxlib/mosaic/gpu:mosaic_gpu"]),
+    ],
 )
 
 symlink_files(

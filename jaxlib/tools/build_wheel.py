@@ -266,18 +266,6 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
       "__main__/jaxlib/mosaic/python/_tpu_gen.py", dst_dir=mosaic_python_dir
   )
 
-  has_mosaic_gpu = exists(f"__main__/jaxlib/mlir/_mlir_libs/_mosaic_gpu_ext.{pyext}")
-  def if_has_mosaic_gpu(extras):
-    return extras if has_mosaic_gpu else []
-
-  if has_mosaic_gpu:
-    copy_runfiles(
-        dst_dir=jaxlib_dir / "mosaic" / "gpu",
-        src_files=[
-            "__main__/jaxlib/mosaic/gpu/libmosaic_gpu_runtime.so",
-        ],
-    )
-
   copy_runfiles(
       dst_dir=jaxlib_dir / "mlir",
       src_files=[
@@ -285,9 +273,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
           "__main__/jaxlib/mlir/ir.pyi",
           "__main__/jaxlib/mlir/passmanager.py",
           "__main__/jaxlib/mlir/passmanager.pyi",
-      ] + if_has_mosaic_gpu([
-          "__main__/jaxlib/mlir/execution_engine.py",
-      ]),
+      ],
   )
   copy_runfiles(
       dst_dir=jaxlib_dir / "mlir" / "dialects",
@@ -307,6 +293,14 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
           "__main__/jaxlib/mlir/dialects/_stablehlo_ops_gen.py",
           "__main__/jaxlib/mlir/dialects/_vector_enum_gen.py",
           "__main__/jaxlib/mlir/dialects/_vector_ops_gen.py",
+          "__main__/jaxlib/mlir/dialects/_gpu_enum_gen.py",
+          "__main__/jaxlib/mlir/dialects/_gpu_ops_gen.py",
+          "__main__/jaxlib/mlir/dialects/_nvgpu_enum_gen.py",
+          "__main__/jaxlib/mlir/dialects/_nvgpu_ops_gen.py",
+          "__main__/jaxlib/mlir/dialects/_nvvm_enum_gen.py",
+          "__main__/jaxlib/mlir/dialects/_nvvm_ops_gen.py",
+          "__main__/jaxlib/mlir/dialects/_llvm_enum_gen.py",
+          "__main__/jaxlib/mlir/dialects/_llvm_ops_gen.py",
           "__main__/jaxlib/mlir/dialects/arith.py",
           "__main__/jaxlib/mlir/dialects/builtin.py",
           "__main__/jaxlib/mlir/dialects/chlo.py",
@@ -318,19 +312,10 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
           "__main__/jaxlib/mlir/dialects/sparse_tensor.py",
           "__main__/jaxlib/mlir/dialects/stablehlo.py",
           "__main__/jaxlib/mlir/dialects/vector.py",
-      ] + if_has_mosaic_gpu([
-          "__main__/jaxlib/mlir/dialects/_gpu_enum_gen.py",
-          "__main__/jaxlib/mlir/dialects/_gpu_ops_gen.py",
-          "__main__/jaxlib/mlir/dialects/_nvgpu_enum_gen.py",
-          "__main__/jaxlib/mlir/dialects/_nvgpu_ops_gen.py",
-          "__main__/jaxlib/mlir/dialects/_nvvm_enum_gen.py",
-          "__main__/jaxlib/mlir/dialects/_nvvm_ops_gen.py",
-          "__main__/jaxlib/mlir/dialects/_llvm_enum_gen.py",
-          "__main__/jaxlib/mlir/dialects/_llvm_ops_gen.py",
           "__main__/jaxlib/mlir/dialects/nvgpu.py",
           "__main__/jaxlib/mlir/dialects/nvvm.py",
           "__main__/jaxlib/mlir/dialects/llvm.py",
-      ]),
+      ],
   )
   copy_runfiles(
       dst_dir=jaxlib_dir / "mlir" / "extras",
@@ -338,19 +323,18 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
           "__main__/jaxlib/mlir/extras/meta.py",
       ],
   )
-  if has_mosaic_gpu:
-    copy_runfiles(
-        dst_dir=jaxlib_dir / "mlir" / "dialects" / "gpu",
-        src_files=[
-            "__main__/jaxlib/mlir/dialects/gpu/__init__.py",
-        ],
-    )
-    copy_runfiles(
-        dst_dir=jaxlib_dir / "mlir" / "dialects" / "gpu" / "passes",
-        src_files=[
-            "__main__/jaxlib/mlir/dialects/gpu/passes/__init__.py",
-        ],
-    )
+  copy_runfiles(
+      dst_dir=jaxlib_dir / "mlir" / "dialects" / "gpu",
+      src_files=[
+          "__main__/jaxlib/mlir/dialects/gpu/__init__.py",
+      ],
+  )
+  copy_runfiles(
+      dst_dir=jaxlib_dir / "mlir" / "dialects" / "gpu" / "passes",
+      src_files=[
+          "__main__/jaxlib/mlir/dialects/gpu/passes/__init__.py",
+      ],
+  )
 
 
   if build_utils.is_windows():
@@ -373,6 +357,10 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
           f"__main__/jaxlib/mlir/_mlir_libs/_tpu_ext.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/_stablehlo.{pyext}",
           f"__main__/jaxlib/mlir/_mlir_libs/register_jax_dialects.{pyext}",
+          f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsGPU.{pyext}",
+          f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsLLVM.{pyext}",
+          f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsNVGPU.{pyext}",
+          f"__main__/jaxlib/mlir/_mlir_libs/_mlirGPUPasses.{pyext}",
       ]
       + (
           []
@@ -381,15 +369,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
               f"__main__/jaxlib/mlir/_mlir_libs/_triton_ext.{pyext}",
               "__main__/jaxlib/mlir/_mlir_libs/_triton_ext.pyi",
           ]
-      ) + if_has_mosaic_gpu([
-          f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsGPU.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsLLVM.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_mlirDialectsNvgpu.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_mlirExecutionEngine.{pyext}",
-          "__main__/jaxlib/mlir/_mlir_libs/_mlirExecutionEngine.pyi",
-          f"__main__/jaxlib/mlir/_mlir_libs/_mlirGPUPasses.{pyext}",
-          f"__main__/jaxlib/mlir/_mlir_libs/_mosaic_gpu_ext.{pyext}",
-      ]),
+      ),
   )
 
   triton_dir = jaxlib_dir / "triton"

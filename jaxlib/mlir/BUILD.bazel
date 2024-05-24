@@ -225,20 +225,6 @@ symlink_inputs(
 )
 
 symlink_inputs(
-    name = "execution_engine",
-    rule = py_library,
-    symlinked_inputs = {"srcs": {
-        ".": [
-            "@llvm-project//mlir/python:ExecutionEnginePyFiles",
-        ],
-    }},
-    deps = [
-        ":mlir",
-        "//jaxlib/mlir/_mlir_libs:_mlirExecutionEngine",
-    ],
-)
-
-symlink_inputs(
     name = "nvgpu_dialect",
     rule = py_library,
     symlinked_inputs = {"srcs": {"dialects": [
@@ -248,7 +234,7 @@ symlink_inputs(
         ":core",
         ":ir",
         ":mlir",
-        "//jaxlib/mlir/_mlir_libs:_mlirDialectsNvgpu",
+        "//jaxlib/mlir/_mlir_libs:_mlirDialectsNVGPU",
     ],
 )
 

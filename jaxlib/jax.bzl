@@ -207,12 +207,6 @@ def if_building_jaxlib(if_building, if_not_building = ["@pypi_jaxlib//:pkg"]):
         "//conditions:default": if_not_building,
     })
 
-def if_building_mosaic_gpu(if_building, if_not_building = []):
-    return select({
-        "//jax:enable_mosaic_gpu": if_building,
-        "//conditions:default": if_not_building,
-    })
-
 # buildifier: disable=function-docstring
 def jax_test(
         name,

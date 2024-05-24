@@ -40,7 +40,6 @@ from jaxlib.mlir.dialects import llvm
 from jaxlib.mlir.dialects import memref
 from jaxlib.mlir.dialects import nvgpu
 from jaxlib.mlir.dialects import nvvm
-from jaxlib.mlir.execution_engine import ExecutionEngine
 from jaxlib.mlir.passmanager import PassManager
 import numpy as np
 
@@ -68,12 +67,10 @@ TMA_DESCRIPTOR_ALIGNMENT = 64
 c = mgpu.c  # This is too common to fully qualify.
 
 
-xla_client.register_custom_call_target(
-    "mosaic_gpu",
-    mosaic_gpu_lib._mosaic_gpu_ext._custom_call_capsule(),
-    platform="CUDA",
-)
-mosaic_gpu_lib._mosaic_gpu_ext.register_passes()
+RUNTIME_PATH = pathlib.Path(mosaic_gpu_lib._mosaic_gpu_ext.__file__).parent / "libmosaic_gpu_runtime.so"
+if RUNTIME_PATH.exists():
+  # Set this so that the custom call can find it
+  os.environ["MOSAIC_GPU_RUNTIME_LIB_PATH"] = str(RUNTIME_PATH)
 
 
 mosaic_gpu_dump_ptx = config.define_bool_state(
@@ -110,27 +107,6 @@ def _mosaic_gpu_abstract_eval(*_, module, out_types, gmem_scratch_bytes):
 
 def _mosaic_gpu_lowering_rule(ctx, *args, module, out_types, gmem_scratch_bytes):
   del out_types  # Unused.
-  runtime_path = (
-      pathlib.Path(mosaic_gpu_lib._mosaic_gpu_ext.__file__).parent.parent.parent
-      / "mosaic" / "gpu" / "libmosaic_gpu_runtime.so"
-  )
-  shared_libs = [str(runtime_path)] if runtime_path.exists() else []
-  engine = ExecutionEngine(
-      module, opt_level=3, shared_libs=shared_libs, enable_object_dump=False
-  )
-  ctx.module_context.add_keepalive(engine)
-  launch_func_ptr = ctypes.cast(engine.lookup("main"), ctypes.c_void_p)
-  init_func_ptr = ctypes.cast(engine.lookup("main_init"), ctypes.c_void_p)
-  # Make sure we won't get accidental hits due to address reuse.
-  mosaic_gpu_lib._mosaic_gpu_ext.invalidate_cache(init_func_ptr.value)
-
-  trampoline_args = (ctypes.c_void_p * 2)()
-  trampoline_args[0] = launch_func_ptr
-  trampoline_args[1] = init_func_ptr
-  ctx.module_context.add_keepalive(trampoline_args)
-  ptr_bytes = ctypes.cast(trampoline_args, ctypes.c_void_p).value.to_bytes(
-      8, byteorder="little"
-  )  # pytype: disable=attribute-error
   op = mlir.custom_call(
       "mosaic_gpu",
       result_types=[
@@ -140,7 +116,7 @@ def _mosaic_gpu_lowering_rule(ctx, *args, module, out_types, gmem_scratch_bytes)
           ),
       ],
       operands=args,
-      backend_config=ptr_bytes,
+      backend_config=module.operation.get_asm(binary=False, enable_debug_info=True),
   )
   return op.results[:-1]  # Skip the scratch space.
 
@@ -648,10 +624,10 @@ def _lower_as_gpu_kernel(
 
   dump_low_level(module)
 
-  pass_manager = _get_mosaic_gpu_pipeline("fatbin")
-  if mosaic_gpu_print_after_all.value:
-    pass_manager.enable_ir_printing()
-  pass_manager.run(module.operation)
+  # pass_manager = _get_mosaic_gpu_pipeline("fatbin")
+  # if mosaic_gpu_print_after_all.value:
+  #   pass_manager.enable_ir_printing()
+  # pass_manager.run(module.operation)
 
   return module, out_shape, gmem_scratch_bytes, unwrap_output_tuple
 
@@ -741,6 +717,7 @@ def dump_low_level(module):
   dump_sass = mosaic_gpu_dump_sass.value
   if not any([dump_ptx, dump_ptxas, dump_sass]):
     return
+  raise NotImplementedError
   module = ir.Module.parse(
       module.operation.get_asm(binary=True, enable_debug_info=True)
   )

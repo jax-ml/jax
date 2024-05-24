@@ -100,7 +100,7 @@ def prepare_cuda_plugin_wheel(sources_path: pathlib.Path, *, cpu, cuda_version):
       ],
   )
   copy_runfiles(
-      "xla/xla/pjrt/c/pjrt_c_api_gpu_plugin.so",
+      "__main__/jaxlib/tools/pjrt_c_api_gpu_plugin.so",
       dst_dir=plugin_dir,
       dst_filename="xla_cuda_plugin.so",
   )

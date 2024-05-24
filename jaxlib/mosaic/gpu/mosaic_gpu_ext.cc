@@ -5,7 +5,6 @@
 #include "absl/synchronization/mutex.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
-#include "jaxlib/mosaic/gpu/integrations/c/passes.h"
 #include "xla/service/custom_call_status.h"
 
 namespace jax::cuda {
@@ -79,7 +78,6 @@ void EventRecordCall(void* stream, void** buffers, char* opaque,
 NB_MODULE(_mosaic_gpu_ext, m) {
   m.def("_custom_call_capsule",
         []() { return EncapsulateFunction(MosaicKernelCall); });
-  m.def("register_passes", []() { return mlirMosaicGpuRegisterPasses(); });
   m.def("_gpu_event_create", []() {
     gpuEvent_t* event = new gpuEvent_t();
     gpuEventCreate(event, GPU_EVENT_DEFAULT);
