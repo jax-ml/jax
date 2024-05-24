@@ -467,7 +467,7 @@ def _var(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                      dtype=computation_dtype, keepdims=keepdims)
   normalizer = lax.sub(normalizer, lax.convert_element_type(ddof, computation_dtype))
   result = sum(centered, axis, dtype=computation_dtype, keepdims=keepdims, where=where)
-  return lax.div(result, normalizer).astype(dtype)
+  return _where(normalizer > 0, lax.div(result, normalizer).astype(dtype), np.nan)
 
 
 def _var_promote_types(a_dtype: DTypeLike, dtype: DTypeLike | None) -> tuple[DType, DType]:
