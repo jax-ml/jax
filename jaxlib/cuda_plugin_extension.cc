@@ -15,13 +15,13 @@ limitations under the License.
 #include <Python.h>
 
 #include <string>
-#include <string_view>
 #include <utility>
 
 #include "nanobind/nanobind.h"
 #include "absl/status/status.h"
 #include "third_party/gpus/cuda/include/cuda.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
+#include "xla/ffi/api/c_api.h"
 #include "xla/pjrt/c/pjrt_c_api.h"
 #include "xla/pjrt/c/pjrt_c_api_gpu_extension.h"
 #include "xla/pjrt/c/pjrt_c_api_helpers.h"
@@ -35,7 +35,8 @@ namespace nb = nanobind;
 namespace xla {
 namespace {
 Status RegisterCustomCallTarget(const PJRT_Api* c_api, nb::str fn_name,
-                                nb::capsule fn, int api_version) {
+                                nb::capsule fn, int api_version,
+                                XLA_FFI_Handler_Traits traits) {
   if (c_api->extension_start == nullptr) {
     return Unimplemented("The plugin does not have extension.");
   }
@@ -48,6 +49,10 @@ Status RegisterCustomCallTarget(const PJRT_Api* c_api, nb::str fn_name,
   }
   if (next == nullptr) {
     return Unimplemented("The plugin does not have a custom call extension.");
+  }
+
+  if (traits != 0) {
+    return Unimplemented("The plugin does not support custom call traits.");
   }
 
   PJRT_Gpu_Register_Custom_Call_Args args;
@@ -89,13 +94,15 @@ NB_MODULE(cuda_plugin_extension, m) {
   m.def(
       "register_custom_call_target",
       [](nb::capsule c_api, nb::str fn_name, nb::capsule fn,
-         nb::str xla_platform_name, int api_version) {
-        xla::ThrowIfError(
-            RegisterCustomCallTarget(static_cast<const PJRT_Api*>(c_api.data()),
-                                     fn_name, std::move(fn), api_version));
+         nb::str xla_platform_name, int api_version,
+         XLA_FFI_Handler_Traits traits) {
+        xla::ThrowIfError(RegisterCustomCallTarget(
+            static_cast<const PJRT_Api*>(c_api.data()), fn_name, std::move(fn),
+            api_version, traits));
       },
       nb::arg("c_api"), nb::arg("fn_name"), nb::arg("fn"),
-      nb::arg("xla_platform_name"), nb::arg("api_version") = 0);
+      nb::arg("xla_platform_name"), nb::arg("api_version") = 0,
+      nb::arg("traits") = 0);
   m.def("registrations", &Registrations);
   m.def(
       "get_device_ordinal",

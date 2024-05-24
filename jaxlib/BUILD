@@ -194,6 +194,7 @@ pybind_extension(
         "@xla//xla:status",
         "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla:util",
+        "@xla//xla/ffi/api:c_api",
         "@xla//xla/pjrt:status_casters",
         "@xla//xla/pjrt/c:pjrt_c_api_gpu_extension_hdrs",
         "@xla//xla/pjrt/c:pjrt_c_api_hdrs",
