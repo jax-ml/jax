@@ -249,11 +249,12 @@ async def async_serialize(
     else:
       await open_future
 
-  # `ts.open` runs twice for process 0 because for the first time, we just get
-  # the future to be awaited upon in the background thread. The second one runs
-  # with `assume_metadata=True` which does no I/O operation and returns the
-  # tensorstore object.
-  # For every process other than `0`, we open with `assume_metadata=True`.
+  # `ts.open` runs twice for process `primary_host` because for the first time,
+  # we just get the future to be awaited upon in the background thread. The
+  # second one runs with `assume_metadata=True` which does no I/O operation and
+  # returns the tensorstore object.
+  # For every process other than `primary_host`, we open with
+  # `assume_metadata=True`.
   t = await ts.open(
       ts.Spec(tensorstore_spec),
       open=True,
