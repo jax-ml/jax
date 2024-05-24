@@ -31,6 +31,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jaxlib 0.4.29
 
+* Bug fixes
+  * Fixes a bug where XLA sharded some concatenation operations incorrectly,
+    which manifested as an incorrect output for cumulative reductions (#21403).
+
 ## jax 0.4.28 (May 9, 2024)
 
 * Bug fixes
