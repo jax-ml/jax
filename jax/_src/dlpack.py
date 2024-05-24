@@ -24,6 +24,7 @@ from jax._src.lax.lax import _array_copy
 from jax._src.lib import xla_client
 from jax._src.typing import Array, DLDeviceType
 from jax._src.sharding import Sharding
+from jax._src.numpy.util import _place_array
 
 DLPACK_VERSION = (0, 8)
 MIN_DLPACK_VERSION = (0, 5)
@@ -148,19 +149,6 @@ def to_dlpack(x: Array, stream: int | Any | None = None,
       f"version ({max_version}) was requested."
     )
 
-def _place_array(_arr, device, dlpack_device, copy):
-  if device and dlpack_device != device:
-    if copy is not None and not copy:
-      raise ValueError(
-        f"Specified {device=} which requires a copy since the source device "
-        f"is {repr(dlpack_device)}, however copy=False. Set copy=True or "
-        "copy=None to perform the requested operation."
-      )
-    else:
-      return device_put(_arr, device)
-  if copy:
-    return jnp.array(_arr, copy=True)
-  return _arr
 
 def _legacy_from_dlpack(dlpack, device: xla_client.Device | None = None,
                         copy: bool | None = None):
@@ -194,8 +182,7 @@ def _legacy_from_dlpack(dlpack, device: xla_client.Device | None = None,
 
   _arr = jnp.asarray(xla_client._xla.dlpack_managed_tensor_to_buffer(
       dlpack, cpu_backend, gpu_backend))
-  dlpack_device, = _arr.devices()
-  return _place_array(_arr, device, dlpack_device, copy)
+  return _place_array(_arr, device, copy)
 
 def _from_dlpack(external_array, device: xla_client.Device | None = None,
                  copy: bool | None = None):
@@ -226,7 +213,7 @@ def _from_dlpack(external_array, device: xla_client.Device | None = None,
 
   _arr = jnp.asarray(xla_client._xla.dlpack_managed_tensor_to_buffer(
       dlpack, dlpack_device, stream))
-  return _place_array(_arr, device, dlpack_device, copy)
+  return _place_array(_arr, device, copy)
 
 def from_dlpack(external_array,
                 device: xla_client.Device | Sharding | None = None,

@@ -37,6 +37,9 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.28 (May 9, 2024)
 
+* New Functionality
+  * {func}`jax.numpy.astype` supports a new `device` keyword argument.
+
 * Bug fixes
   * Reverted a change to `make_jaxpr` that was breaking Equinox (#21116).
 

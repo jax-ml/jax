@@ -41,7 +41,7 @@ import jax
 import jax.ops
 from jax import lax
 from jax import numpy as jnp
-from jax.sharding import SingleDeviceSharding
+from jax.sharding import SingleDeviceSharding, PartitionSpec as P
 from jax.test_util import check_grads
 
 from jax._src import array
@@ -3931,18 +3931,42 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CompileAndCheck(jnp_op, args_maker)
 
   @jtu.sample_product(
-    change_dtype=[True, False],
+    [dict(dtype=dtype, new_dtype=new_dtype)
+      for dtype in all_dtypes
+      for new_dtype in (
+        complex_dtypes
+        if np.issubdtype(dtype, np.complexfloating)
+        else all_dtypes
+      )
+    ],
+    shape=array_shapes,
     copy=[True, False],
+    device_type=[None, "single", "shard"],
   )
-  def testAstypeCopy(self, change_dtype, copy):
-    dtype = 'float32' if change_dtype else 'int32'
-    expect_copy = change_dtype or copy
-    x = jnp.arange(5, dtype='int32')
-    y = x.astype(dtype, copy=copy)
+  @jtu.run_on_devices("gpu")
+  def testAstypePlacement(self, shape, dtype, new_dtype, copy, device_type):
+    rng = jtu.rand_default(self.rng())
+    x = jnp.asarray(rng(shape, dtype))
 
-    self.assertEqual(y.dtype, dtype)
+    if device_type is None:
+      device = None
+      expected_sharding = x.sharding
+    elif device_type == "single":
+      device = jax.devices("cpu")[0]
+      expected_sharding = SingleDeviceSharding(device)
+    else:
+      global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+      device = jax.sharding.NamedSharding(global_mesh, P('x', 'y'))
+      expected_sharding = device
+
+    expect_copy = (dtype != new_dtype) or copy or device
+
+    y = x.astype(new_dtype, copy=copy, device=device)
+    self.assertEqual(y.dtype, new_dtype)
+    self.assertEqual(y.sharding, expected_sharding)
     y.delete()
     self.assertNotEqual(x.is_deleted(), expect_copy)
+
 
   def testAstypeComplexDowncast(self):
     x = jnp.array(2.0+1.5j, dtype='complex64')

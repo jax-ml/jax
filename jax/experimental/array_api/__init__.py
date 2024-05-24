@@ -32,6 +32,12 @@ The ``xp`` namespace is the array API compliant analog of :mod:`jax.numpy`,
 and implements most of the API listed in the standard.
 
 .. _Python array API standard: https://data-apis.org/array-api/latest/
+
+
+Note that JAX may not always strictly adhere to array API device semantics when
+using ``jax.jit``. In particular, specifying the ``device`` argument is
+equivalent to calling ``jax.device_put(x, device)``. For up-to-date details on
+device placement, see the documentation of ``jax.device_put`` for more details.
 """
 
 from __future__ import annotations

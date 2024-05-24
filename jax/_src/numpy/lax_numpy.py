@@ -2853,17 +2853,13 @@ def astype(x: ArrayLike, dtype: DTypeLike | None,
   # to issue our warning.
   with warnings.catch_warnings():
     warnings.simplefilter("ignore", ComplexWarning)
-    return _place_array(
+    return util._place_array(
       lax.convert_element_type(x_arr, dtype),
-      device=device, copy=copy,
+      device=device,
+      # We translate between array API semantics of copy in _place_array, and
+      # the NumPy semantics of copy in astype.
+      copy=True if copy else None,
     )
-
-def _place_array(x, device=None, copy=None):
-  # TODO(micky774): Implement in future PRs as we formalize device placement
-  # semantics
-  if copy:
-    return _array_copy(x)
-  return x
 
 
 @util.implements(np.asarray, lax_description=_ARRAY_DOC)
