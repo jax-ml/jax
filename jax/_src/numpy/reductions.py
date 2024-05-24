@@ -433,13 +433,17 @@ def _average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
 @implements(np.var, skip_params=['out'])
 def var(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
         out: None = None, ddof: int = 0, keepdims: bool = False, *,
-        where: ArrayLike | None = None) -> Array:
-  return _var(a, _ensure_optional_axes(axis), dtype, out, ddof, keepdims,
+        where: ArrayLike | None = None, correction: int | float | None = None) -> Array:
+  if correction is None:
+    correction = ddof
+  elif not isinstance(ddof, int) or ddof != 0:
+    raise ValueError("ddof and correction can't be provided simultaneously.")
+  return _var(a, _ensure_optional_axes(axis), dtype, out, correction, keepdims,
               where=where)
 
 @partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def _var(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
-         out: None = None, ddof: int = 0, keepdims: bool = False, *,
+         out: None = None, correction: int | float = 0, keepdims: bool = False, *,
          where: ArrayLike | None = None) -> Array:
   check_arraylike("var", a)
   dtypes.check_user_dtype_supported(dtype, "var")
@@ -465,7 +469,7 @@ def _var(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
   else:
     normalizer = sum(_broadcast_to(where, np.shape(a)), axis,
                      dtype=computation_dtype, keepdims=keepdims)
-  normalizer = lax.sub(normalizer, lax.convert_element_type(ddof, computation_dtype))
+  normalizer = lax.sub(normalizer, lax.convert_element_type(correction, computation_dtype))
   result = sum(centered, axis, dtype=computation_dtype, keepdims=keepdims, where=where)
   return _where(normalizer > 0, lax.div(result, normalizer).astype(dtype), np.nan)
 
@@ -494,13 +498,17 @@ def _var_promote_types(a_dtype: DTypeLike, dtype: DTypeLike | None) -> tuple[DTy
 @implements(np.std, skip_params=['out'])
 def std(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
         out: None = None, ddof: int = 0, keepdims: bool = False, *,
-        where: ArrayLike | None = None) -> Array:
-  return _std(a, _ensure_optional_axes(axis), dtype, out, ddof, keepdims,
+        where: ArrayLike | None = None, correction: int | float | None = None) -> Array:
+  if correction is None:
+    correction = ddof
+  elif not isinstance(ddof, int) or ddof != 0:
+    raise ValueError("ddof and correction can't be provided simultaneously.")
+  return _std(a, _ensure_optional_axes(axis), dtype, out, correction, keepdims,
               where=where)
 
 @partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def _std(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
-         out: None = None, ddof: int = 0, keepdims: bool = False, *,
+         out: None = None, correction: int | float = 0, keepdims: bool = False, *,
          where: ArrayLike | None = None) -> Array:
   check_arraylike("std", a)
   dtypes.check_user_dtype_supported(dtype, "std")
@@ -508,7 +516,7 @@ def _std(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
     raise ValueError(f"dtype argument to jnp.std must be inexact; got {dtype}")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.std is not supported.")
-  return lax.sqrt(var(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims, where=where))
+  return lax.sqrt(var(a, axis=axis, dtype=dtype, correction=correction, keepdims=keepdims, where=where))
 
 
 @implements(np.ptp, skip_params=['out'])
