@@ -19,7 +19,6 @@ module = [
     "scipy.*",
     "libtpu.*",
     "jaxlib.mlir.*",
-    "iree.*",
     "rich.*",
     "optax.*",
     "flatbuffers.*",
