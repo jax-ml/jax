@@ -4123,6 +4123,20 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertArraysEqual(expected_y.max(), y.max())
     self.assertArraysEqual(expected_z.max(), z.max())
 
+  def test_threefry_partitionable_context_within_jit(self):
+    with jax.threefry_partitionable(False):
+      def f(x):
+        return x + jax.random.randint(jax.random.key(72), (), 0, 10)
+
+      def g(x):
+        with jax.threefry_partitionable(True):  # False by default
+          return x + jax.random.randint(jax.random.key(72), (), 0, 10)
+
+      h = jax.jit(g)
+
+      self.assertNotEqual(f(1), g(1))
+      self.assertEqual(g(1), h(1))
+
 
 class TempSharding(Sharding):
 

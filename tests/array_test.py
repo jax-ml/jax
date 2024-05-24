@@ -1253,18 +1253,18 @@ class RngShardingTest(jtu.JaxTestCase):
     x = array.make_array_from_callback(global_x.shape, s, lambda i: global_x[i])
 
     # check computation is fully partitioned and without any communication
-    jax.config.update('jax_threefry_partitionable', True)
-    unopt_txt = f.lower(x).as_text(dialect='hlo')
-    opt_txt = f.lower(x).compile().as_text()
-    self.assertIn(   f'[{n}]', unopt_txt)
-    self.assertNotIn(f'[{n}]', opt_txt)
-    self.assertNotIn('all-reduce', opt_txt)
-    self.assertNotIn('collective-permute', opt_txt)
+    with jax.threefry_partitionable(True):
+      unopt_txt = f.lower(x).as_text(dialect='hlo')
+      opt_txt = f.lower(x).compile().as_text()
+      self.assertIn(   f'[{n}]', unopt_txt)
+      self.assertNotIn(f'[{n}]', opt_txt)
+      self.assertNotIn('all-reduce', opt_txt)
+      self.assertNotIn('collective-permute', opt_txt)
 
-    # check against single-device reference
-    y = f(x)
-    y_ref1 = f(jax.device_put(x, jax.devices()[0]))
-    self.assertArraysEqual(y, y_ref1)
+      # check against single-device reference
+      y = f(x)
+      y_ref1 = f(jax.device_put(x, jax.devices()[0]))
+      self.assertArraysEqual(y, y_ref1)
 
   @parameterized.named_parameters(
       {"testcase_name": f"_{mesh_shape}_{pspec}",
@@ -1289,19 +1289,19 @@ class RngShardingTest(jtu.JaxTestCase):
     x = array.make_array_from_callback(global_x.shape, s, lambda i: global_x[i])
 
     # check computation is fully partitioned and without any communication
-    jax.config.update('jax_threefry_partitionable', True)
-    unopt_txt = f.lower(x).as_text(dialect='hlo')
-    opt_txt = f.lower(x).compile().as_text()
-    global_shape_fmt = ','.join(str(x) for x in global_shape)
-    self.assertIn(   f'[{global_shape_fmt}]', unopt_txt)
-    self.assertNotIn(f'[{global_shape_fmt}]', opt_txt)
-    self.assertNotIn('all-reduce', opt_txt)
-    self.assertNotIn('collective-permute', opt_txt)
+    with jax.threefry_partitionable(True):
+      unopt_txt = f.lower(x).as_text(dialect='hlo')
+      opt_txt = f.lower(x).compile().as_text()
+      global_shape_fmt = ','.join(str(x) for x in global_shape)
+      self.assertIn(   f'[{global_shape_fmt}]', unopt_txt)
+      self.assertNotIn(f'[{global_shape_fmt}]', opt_txt)
+      self.assertNotIn('all-reduce', opt_txt)
+      self.assertNotIn('collective-permute', opt_txt)
 
-    # check against single-device reference
-    y = f(x)
-    y_ref1 = f(jax.device_put(x, jax.devices()[0]))
-    self.assertArraysEqual(y, y_ref1)
+      # check against single-device reference
+      y = f(x)
+      y_ref1 = f(jax.device_put(x, jax.devices()[0]))
+      self.assertArraysEqual(y, y_ref1)
 
 
 if __name__ == '__main__':

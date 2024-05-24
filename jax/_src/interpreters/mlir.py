@@ -1547,7 +1547,8 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
     source_info = eqn.source_info.replace(
         name_stack=name_stack + eqn.source_info.name_stack)
     loc = _source_info_to_location(ctx, eqn.primitive, eqn.params, source_info)
-    with source_info_util.user_context(eqn.source_info.traceback), loc:
+    with (source_info_util.user_context(eqn.source_info.traceback), loc,
+          eqn.ctx.manager):
       override_rule = get_override_lowering_rule(eqn.primitive)
       platform_rules: dict[str, LoweringRule] = {}
       default_rule: LoweringRule | None = None
