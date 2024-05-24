@@ -343,8 +343,8 @@ def compile_or_get_cached(
     )
 
 
-# The process with id 0 should compile the module and write an autotune config
-# to the K-V storage.
+# The process with the first_process_id should compile the module and write an
+# autotune config to the K-V storage.
 def _compile_and_write_autotune_config(
     backend: xc.Client,
     computation: ir.Module,
@@ -449,10 +449,8 @@ def _compile_and_write_autotune_config(
 
 _compile_and_write_autotune_config.autotune_configs_dir = None
 
-# The process with id 0 should compile the module and write it to the K-V
-# storage.
-# TODO: In case when the process with id 0 is not participating in computation
-# we need to choose another process to compile the module.
+# The process with the first_process_id should compile the module and write it
+# to the K-V storage.
 def _compile_and_share_module(
     backend: xc.Client,
     computation: ir.Module,
