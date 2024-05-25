@@ -1682,7 +1682,11 @@ class DynamicJaxprTracer(core.Tracer):
     self.aval = aval
 
   def full_lower(self):
-    return self
+    var = self._trace.frame.tracer_to_var.get(id(self))
+    if var is None: return self
+    val = self._trace.frame.constvar_to_val.get(var)
+    if val is None: return self
+    return core.full_lower(val)
 
   def _contents(self):
     return ()
@@ -1877,7 +1881,6 @@ def _const_folding_and_forwarding(
     # if the application trivially maps some inputs to outputs, simplify
     if eqn.primitive in forwarding_rules and not has_input_effect:
       fwd_vars, new_eqn = forwarding_rules[eqn.primitive](eqn)
-      assert (new_eqn is None) == all(v is not None for v in fwd_vars)
       for v_orig, v_new in zip(eqn.outvars, fwd_vars):
         if v_new is not None: var_subs[v_orig] = v_new
       if new_eqn is None: continue

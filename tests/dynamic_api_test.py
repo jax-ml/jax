@@ -232,7 +232,7 @@ class DynamicShapeStagingTest(jtu.JaxTestCase):
     def f(n):
       m = 2 * n
       x = jnp.zeros(m)
-      return jax.jit(lambda: x)()
+      return jax.jit(jnp.sin)(x)
 
     # { lambda ; a:i32[]. let
     #     b:i32[] = mul a 2
@@ -517,7 +517,7 @@ class DynamicShapeStagingTest(jtu.JaxTestCase):
     self.assertIs(e.aval.shape[0], d)
 
   def test_jit_abstracted_axes_return_polymorphic_shape(self):
-    f = jax.jit(lambda x: x, abstracted_axes=('n',))
+    f = jax.jit(lambda x: jnp.sin(x), abstracted_axes=('n',))
     jaxpr = jax.make_jaxpr(f)(jnp.arange(3))  # doesn't crash
     # { lambda ; a:i32[3]. let
     #     b:i32[3] = pjit[

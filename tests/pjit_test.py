@@ -1282,22 +1282,22 @@ class PJitTest(jtu.BufferDonationTestCase):
     y = jnp.array([4.2, 2.4], dtype=jnp.float32)
     jaxpr = jax.make_jaxpr(g)(x, y)
     self.assertEqual(
-        jaxpr.pretty_print(),
+        jaxpr.pretty_print(use_color=False),
         textwrap.dedent("""
-            let f = { lambda ; a:f32[1]. let  in (a,) } in
-            let f1 = { lambda ; b:f32[2]. let  in (b,) } in
+            let f = { lambda ; a:f32[1]. let  in () } in
+            let f1 = { lambda ; b:f32[2]. let  in () } in
             { lambda ; c:f32[1] d:f32[2]. let
                 e:f32[2] = pjit[
                   name=g
                   jaxpr={ lambda ; g:f32[1] h:f32[2]. let
-                      i:f32[1] = pjit[name=f jaxpr=f] g
-                      j:f32[1] = pjit[name=f jaxpr=f] g
-                      k:f32[1] = mul i j
-                      l:f32[2] = pjit[name=f jaxpr=f1] h
-                      m:f32[2] = pjit[name=f jaxpr=f1] h
-                      n:f32[2] = mul l m
-                      o:f32[2] = add k n
-                    in (o,) }
+                      pjit[name=f jaxpr=f] g
+                      pjit[name=f jaxpr=f] g
+                      i:f32[1] = mul g g
+                      pjit[name=f jaxpr=f1] h
+                      pjit[name=f jaxpr=f1] h
+                      j:f32[2] = mul h h
+                      k:f32[2] = add i j
+                    in (k,) }
                 ] c d
               in (e,) }
             """).strip(),

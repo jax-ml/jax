@@ -1578,24 +1578,30 @@ def _pjit_lower_cached(
 
 
 def pjit_staging_rule(trace, *args, **params):
+  jaxpr, in_fwd, out_shardings, out_layouts = _pjit_forwarding(
+      params['jaxpr'], params['out_shardings'], params['out_layouts'])
+  params = dict(params, jaxpr=jaxpr, out_shardings=out_shardings,
+                out_layouts=out_layouts)
+
   if (params["inline"] and
       all(is_unspecified(i) for i in params["in_shardings"]) and
       all(is_unspecified(o) for o in params["out_shardings"]) and
       all(i is None for i in params["in_layouts"]) and
       all(o is None for o in params["out_layouts"])):
-    jaxpr = params['jaxpr']
+
     if config.dynamic_shapes.value:
       # Inline jaxpr doesn't handle dynamic shapes when inlining. If dynamic
       # shapes are enabled, use eval_jaxpr, which uses the tracing machinery,
       # but redundantly performs abstract evaluation again.
-      return core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, *args,
-                            propagate_source_info=False)
+      out_tracers = core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, *args,
+                                    propagate_source_info=False)
     else:
-      return pe.inline_jaxpr_into_trace(trace, jaxpr.jaxpr, jaxpr.consts, *args)
+      out_tracers = pe.inline_jaxpr_into_trace(
+          trace, jaxpr.jaxpr, jaxpr.consts, *args)
   elif config.dynamic_shapes.value:
     source_info = source_info_util.current()
     out_tracers = []
-    for aval in _out_type(params['jaxpr']):
+    for aval in _out_type(jaxpr):
       if type(aval) is core.DShapedArray:
         shape = [args[d.val] if type(d) is core.InDBIdx else
                  out_tracers[d.val] if type(d) is core.OutDBIdx else
@@ -1604,21 +1610,49 @@ def pjit_staging_rule(trace, *args, **params):
       out_tracers.append(pe.DynamicJaxprTracer(trace, aval, source_info))
     eqn = core.new_jaxpr_eqn(
       map(trace.getvar, args), map(trace.makevar, out_tracers), pjit_p, params,
-      params['jaxpr'].effects, source_info)
+      jaxpr.effects, source_info)
     trace.frame.add_eqn(eqn)
-    return out_tracers
-  elif any(isinstance(c, core.MutableArray) for c in params['jaxpr'].consts):
-    jaxpr, consts = pxla._move_mutable_consts(params['jaxpr'])
+  elif any(isinstance(c, core.MutableArray) for c in jaxpr.consts):
+    jaxpr, consts = pxla._move_mutable_consts(jaxpr)
     consts = map(trace.instantiate_const, consts)
     in_shardings = (*params['in_shardings'],) + (UNSPECIFIED,) * len(consts)
     in_layouts = (*params['in_layouts'],) + (None,) * len(consts)
     donated_invars = (*params['donated_invars'],) + (False,) * len(consts)
     new_params = dict(params, jaxpr=jaxpr, in_shardings=in_shardings,
                       in_layouts=in_layouts, donated_invars=donated_invars)
-    return trace.default_process_primitive(pjit_p, (*args, *consts), new_params)
+    out_tracers = trace.default_process_primitive(
+        pjit_p, (*args, *consts), new_params)
   else:
-    return trace.default_process_primitive(pjit_p, args, params)
+    out_tracers = trace.default_process_primitive(pjit_p, args, params)
+
+  out_tracers_ = iter(out_tracers)
+  out_tracers = [args[f] if type(f) is int else next(out_tracers_)
+                 for f in in_fwd]
+  assert next(out_tracers_, None) is None
+  return out_tracers
 pe.custom_staging_rules[pjit_p] = pjit_staging_rule
+
+
+def _pjit_forwarding(jaxpr, out_shardings, out_layouts):
+  in_fwd: list[int | None] = pe._jaxpr_forwarding(jaxpr.jaxpr)
+  in_fwd = [fwd if is_unspecified(os) and ol is None else None for fwd, os, ol
+            in zip(in_fwd, out_shardings, out_layouts)]
+  keep = [f is None for f in in_fwd]
+  jaxpr = pe.prune_closed_jaxpr_outputs(jaxpr, keep)
+  out_shardings = [o for o, k in zip(out_shardings, keep) if k]
+  out_layouts   = [o for o, k in zip(out_layouts  , keep) if k]
+  return jaxpr, in_fwd, out_shardings, out_layouts
+
+def pjit_forwarding_rule(eqn):
+  jaxpr, in_fwd, out_shardings, out_layouts = _pjit_forwarding(
+      eqn.params['jaxpr'], eqn.params['out_shardings'], eqn.params['out_layouts'])
+  new_outvars = [v for v, f in zip(eqn.outvars, in_fwd) if f is None]
+  new_params = dict(eqn.params, jaxpr=jaxpr, out_shardings=(*out_shardings,),
+                    out_layouts=(*out_layouts,))
+  new_eqn = eqn.replace(params=new_params, outvars=new_outvars)
+  fwd_vars = [eqn.invars[f] if f is not None else None for f in in_fwd]
+  return fwd_vars, new_eqn
+pe.forwarding_rules[pjit_p] = pjit_forwarding_rule
 
 
 # TODO(mattjj): remove/trivialize this when jaxprs have type annotation on them,

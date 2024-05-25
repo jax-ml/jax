@@ -4677,6 +4677,37 @@ class APITest(jtu.JaxTestCase):
     jtu.check_grads(f, (list(jnp.arange(float(num_args))),), order=1,
                     modes=['rev'], atol=1e-3, rtol=1e-3)
 
+  @jtu.run_on_devices("cpu")
+  def test_inner_jit_forwarding_happens(self):
+    jaxpr = jax.make_jaxpr(lambda: jax.jit(lambda x: x)(3))()
+    self.assertLen(jaxpr.jaxpr.outvars, 1)
+    self.assertIsInstance(jaxpr.jaxpr.outvars[0], core.Literal)
+    self.assertEqual(jaxpr.jaxpr.outvars[0].val, 3)
+
+  @parameterized.parameters(range(8))
+  @jtu.run_on_devices("cpu")
+  def test_inner_jit_forwarding_correctness(self, num_input_fwd):
+    num_args = 8
+    rng = np.random.RandomState(0)
+
+    @jax.jit
+    def f(inputs):
+      inputs = [inputs[i] for i in rng.permutation(num_args)]
+      outputs = (inputs[:num_input_fwd] +
+                 [jnp.sin(inputs[i]) for i in range(num_args - num_input_fwd)])
+      return [outputs[i] for i in rng.permutation(num_args)]
+
+    f2 = jax.jit(f)
+    inputs = list(jnp.arange(float(num_args)))
+    expected = f(inputs)
+    ans = f2(inputs)
+    for a, b in zip(ans, expected):
+      self.assertAllClose(a, b)
+
+  def test_inner_jit_forwarded_consts_stay_const(self):
+    out = jax.jit(lambda: int(jax.jit(lambda x: x)(3)))()  # don't crash
+    self.assertEqual(out, 3)
+
 
 class RematTest(jtu.JaxTestCase):
 
