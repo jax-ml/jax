@@ -2913,6 +2913,21 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     self.assertEqual(expect_a_dot, " dot(" in hlo)
     self.assertEqual(not expect_a_dot, " while(" in hlo)
 
+  def test_scan_lowering_doesnt_introduce_singleton(self):
+    b = 4
+    i = 2
+
+    def scan(y):
+      def body(carry, x):
+        return carry, jnp.dot(x, x)
+      return jax.lax.scan(body, 1.0, y, unroll=False)
+
+    fn = jax.jit(scan)
+
+    init = np.array(np.arange(b * i * i), dtype=np.float32).reshape((b, i, i))
+    hlo_text = fn.lower(init).as_text('hlo')
+    self.assertNotIn('4,1,2,2', hlo_text)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

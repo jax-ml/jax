@@ -392,13 +392,17 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
   consts, carry, xs_ = split_list(args, [num_consts, num_carry])
   _, y_avals = split_list(jaxpr.out_avals, [num_carry])
   num_trips, remainder = divmod(length, unroll)
-  if remainder:
-    if not reverse:
-      xs_, xs_rem = unzip2(_map(partial(_split_leading, num_trips*unroll), xs_))
-    else:
-      xs_rem, xs_ = unzip2(_map(partial(_split_leading, remainder), xs_))
-  xss = [lax.reshape(x, (num_trips, unroll, *x.shape[1:])) for x in xs_]
-  yss = _map(partial(_empty_array, (num_trips, unroll)), y_avals)
+  if unroll == 1:
+    xss = xs_
+    yss = _map(partial(_empty_array, (length,)), y_avals)
+  else:
+    if remainder:
+      if not reverse:
+        xs_, xs_rem = unzip2(_map(partial(_split_leading, num_trips*unroll), xs_))
+      else:
+        xs_rem, xs_ = unzip2(_map(partial(_split_leading, remainder), xs_))
+    xss = [lax.reshape(x, (num_trips, unroll, *x.shape[1:])) for x in xs_]
+    yss = _map(partial(_empty_array, (num_trips, unroll)), y_avals)
 
   def cond_fun(while_carry):
     i, _, _ = while_carry
@@ -413,6 +417,9 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
     return i_ + 1, carry, yss
   def inner(n, carry, xs):
     ys = []
+    if unroll == 1:
+      carry_y = eval_jaxpr_p.bind(*consts, *carry, *xs, jaxpr=jaxpr)
+      return split_list(carry_y, [num_carry])
     for i_ in range(n):
       i = n - i_ - 1 if reverse else i_
       x = [slicing.index_in_dim(x, i, keepdims=False) for x in xs]
@@ -425,7 +432,10 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
   if num_trips:
     i = lax._const(num_trips, 0)
     _, carry, yss = jax.lax.while_loop(cond_fun, body_fun, (i, carry, yss))
-  ys = [lax.reshape(ys, (num_trips * unroll, *ys.shape[2:])) for ys in yss]
+  if unroll != 1:
+    ys = [lax.reshape(ys, (num_trips * unroll, *ys.shape[2:])) for ys in yss]
+  else:
+    ys = yss
   if remainder:
     carry, ys_rem = inner(remainder, carry, xs_rem)
     ys = _map(_concat, ys, ys_rem) if not reverse else _map(_concat, ys_rem, ys)
