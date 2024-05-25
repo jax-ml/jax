@@ -217,11 +217,15 @@ class Array(abc.ABC):
   def unsafe_buffer_pointer(self) -> int: ...
 
 
+StaticScalar = Union[
+  np.bool_, np.number,  # NumPy scalar types
+  bool, int, float, complex,  # Python scalar types
+]
+
 ArrayLike = Union[
   Array,  # JAX array type
   np.ndarray,  # NumPy array type
-  np.bool_, np.number,  # NumPy scalar types
-  bool, int, float, complex,  # Python scalar types
+  StaticScalar,  # valid scalars
 ]
 
 
