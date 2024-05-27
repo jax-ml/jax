@@ -10,6 +10,8 @@ Remember to align the itemized text with the first line of an item within a list
 
 * Changes
   * The minimum NumPy version is now 1.24.
+  * {func}`jax.numpy.ceil`, {func}`jax.numpy.floor` and {func}`jax.numpy.trunc` now return the output
+    of the same dtype as the input, i.e. no longer upcast integer or boolean inputs to floating point.
 
 ## jaxlib 0.4.31
 
