@@ -29,8 +29,8 @@ from jax._src.lib import jaxlib
 #    attribute to use these functions.
 #
 # Taken from: https://docs.python.org/3/library/ctypes.html.
-#
-# More context here: https://stackoverflow.com/questions/24377845/ctype-why-specify-argtypes.
+# More context here:
+# https://stackoverflow.com/questions/24377845/ctype-why-specify-argtypes.
 #
 # Following this advice we annotate argument and return types of PyCapsule_New
 # before we call it. Example here:
