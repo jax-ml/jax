@@ -561,9 +561,9 @@ wheel==0.43.0 \
     --hash=sha256:465ef92c69fa5c5da2d1cf8ac40559a8c940886afcef87dcf14b9470862f1d85 \
     --hash=sha256:55c570405f142630c6b9f72fe09d9b67cf1477fcf543ae5b8dcb1f5b7377da81
     # via -r build/test-requirements.txt
-zipp==3.18.2 \
-    --hash=sha256:6278d9ddbcfb1f1089a88fde84481528b07b0e10474e09dcfe53dad4069fa059 \
-    --hash=sha256:dce197b859eb796242b0622af1b8beb0a722d52aa2f57133ead08edd5bf5374e
+zipp==3.19.0 \
+    --hash=sha256:952df858fb3164426c976d9338d3961e8e8b3758e2e059e0f754b8c4262625ee \
+    --hash=sha256:96dc6ad62f1441bcaccef23b274ec471518daf4fbbc580341204936a5a3dddec
     # via etils
 zstandard==0.22.0 \
     --hash=sha256:11f0d1aab9516a497137b41e3d3ed4bbf7b2ee2abc79e5c8b010ad286d7464bd \
