@@ -113,6 +113,7 @@ jax.Array (:code:`jax.Array`)
     Array
     make_array_from_callback
     make_array_from_single_device_arrays
+    make_array_from_process_local_data
 
 Vectorization (:code:`vmap`)
 ----------------------------
