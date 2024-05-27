@@ -20,17 +20,26 @@ XLA_CUSTOM_CALL_API_VERSION = 1
 # version 4 accepts MLIR dictionaries in backend_config
 STABLEHLO_CUSTOM_CALL_API_VERSION = 4
 
+# this string is how we identify the kernel to XLA:
+# - first we register a pointer to the kernel with XLA under this name
+# - then we "tell" JAX to emit StableHLO specifying this name to XLA
+XLA_CUSTOM_CALL_TARGET = "mul"
+
+# independently, the corresponding JAX primitive must also be named,
+# but it can have a name different from the XLA target
+JAX_PRIMITIVE = "mul"
+
 mulso = ctypes.cdll.LoadLibrary('./mul.so')
 
 # register the XLA FFI binding pointer with XLA under the name "mul"
 xla_client.register_custom_call_target(
-    name="mul",
+    name=XLA_CUSTOM_CALL_TARGET,
     fn=jax.ffi.build_capsule(mulso.Mul),
     platform=XLA_PLATFORM,
     api_version=XLA_CUSTOM_CALL_API_VERSION
 )
 
-mul_p = jax.core.Primitive("mul")
+mul_p = jax.core.Primitive(JAX_PRIMITIVE)
 def mul(a, b):
     return mul_p.bind(a, b)
 
@@ -49,7 +58,7 @@ def _mul_lowering(ctx, a, b):
     # default XLA layout that just means row major
     layout = range(len(shape)-1, -1, -1)
     return custom_call(
-        "mul",
+        XLA_CUSTOM_CALL_TARGET,
         api_version=STABLEHLO_CUSTOM_CALL_API_VERSION,
         result_types=[typ],  # same type as inputs
         operands=[a,b],
