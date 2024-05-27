@@ -35,8 +35,7 @@ from jax.numpy.linalg import (
   vector_norm as vector_norm,
 )
 
-# TODO(micky774): Add trace to jax.numpy.linalg
-from jax.numpy import trace as trace
+from jax.numpy.linalg import trace as trace
 
 from jax.experimental.array_api._linear_algebra_functions import (
   matrix_rank as matrix_rank,
