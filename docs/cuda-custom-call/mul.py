@@ -31,7 +31,7 @@ def build_capsule(funcptr):
     PyCapsule_New = ctypes.pythonapi.PyCapsule_New
     PyCapsule_New.restype = ctypes.py_object
     PyCapsule_New.argtypes = (ctypes.c_void_p, ctypes.c_char_p, PyCapsule_Destructor)
-    return PyCapsule_New(mulso.Mul, None, PyCapsule_Destructor(0))
+    return PyCapsule_New(funcptr, None, PyCapsule_Destructor(0))
 
 # register the XLA FFI binding pointer with XLA under the name "mul"
 xla_client.register_custom_call_target(
