@@ -848,6 +848,23 @@ class JaxExportTest(jtu.JaxTestCase):
     a = exp2.in_avals[0].shape[0]
     self.assertEqual(exp2.out_avals[0].shape, output_shape(a))
 
+  def test_poly_call_pmap(self):
+    if len(jax.devices()) < 2:
+      self.skipTest("Need at least 2 devices")
+    def f(x):  # x: f32[a, 4]
+      return x + jnp.arange(x.shape[0], dtype=x.dtype).reshape((x.shape[0], 1))
+
+    a, = export.symbolic_shape("a")
+    exp = export.export(f)(
+        jax.ShapeDtypeStruct((a, 4), np.float32))
+    f_exp = export.call_exported(exp)
+    x_jit = np.arange(12, dtype=np.float32).reshape((3, 4))
+    res_jit = jax.jit(f_exp)(x_jit)
+    self.assertAllClose(res_jit, f(x_jit))
+    x_pmap = np.arange(24, dtype=np.float32).reshape((2, 3, 4))
+    res_pmap = jax.pmap(f_exp)(x_pmap)
+    self.assertAllClose(res_pmap, jnp.stack([f(x) for x in x_pmap]))
+
   def test_with_sharding(self):
     nr_devices = 2
     if len(jax.devices()) < nr_devices:
@@ -1203,7 +1220,6 @@ class JaxExportTest(jtu.JaxTestCase):
     g = jax.grad(export.call(exp_rev))(input_rev)
     g_rev = jax.grad(export.call(exp))(input)
     self.assertAllClose(g, g_rev)
-
 
   def test_multi_platform(self):
     x = np.arange(8, dtype=np.float32)
