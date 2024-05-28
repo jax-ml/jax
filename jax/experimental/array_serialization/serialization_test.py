@@ -461,9 +461,6 @@ class CheckpointTest(jtu.JaxTestCase):
       self.assertArraysEqual(s.data, np_inp[s.index])
 
   def test_deserialization_with_int4(self):
-    if xb.using_pjrt_c_api() and xb.get_backend().platform == "gpu":
-      self.skipTest('b/342255612')
-
     dtype = jnp.int4
     shape = (8, 2)
     arr = jnp.arange(np.prod(shape)).reshape(shape).astype(dtype)
