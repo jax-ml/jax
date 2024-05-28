@@ -5725,12 +5725,13 @@ indexing in JAX.
 
 @util.implements(np.take_along_axis, update_doc=False,
         lax_description=TAKE_ALONG_AXIS_DOC)
-@partial(jit, static_argnames=('axis', 'mode'))
+@partial(jit, static_argnames=('axis', 'mode', 'fill_value'))
 def take_along_axis(
     arr: ArrayLike,
     indices: ArrayLike,
     axis: int | None,
     mode: str | lax.GatherScatterMode | None = None,
+    fill_value: StaticScalar | None = None,
 ) -> Array:
   util.check_arraylike("take_along_axis", arr, indices)
   a = asarray(arr)
@@ -5743,8 +5744,9 @@ def take_along_axis(
     if ndim(indices) != 1:
       msg = "take_along_axis indices must be 1D if axis=None, got shape {}"
       raise ValueError(msg.format(idx_shape))
-    return take_along_axis(a.ravel(), indices, 0)
-  rank = ndim(arr)
+    a = a.ravel()
+    axis = 0
+  rank = a.ndim
   if rank != ndim(indices):
     msg = "indices and arr must have the same number of dimensions; {} vs. {}"
     raise ValueError(msg.format(ndim(indices), a.ndim))
@@ -5812,7 +5814,7 @@ def take_along_axis(
     collapsed_slice_dims=tuple(collapsed_slice_dims),
     start_index_map=tuple(start_index_map))
   return lax.gather(a, gather_indices_arr, dnums, tuple(slice_sizes),
-                    mode="fill" if mode is None else mode)
+                    mode="fill" if mode is None else mode, fill_value=fill_value)
 
 
 ### Indexing
