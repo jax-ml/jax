@@ -1,5 +1,6 @@
 NVCC = nvcc
 NVCCFLAGS += -I$(shell python -c 'import jax; print(jax.ffi.include_dir())')
+NVCCFLAGS += -arch native
 
 check: foo.so
 	python foo.py

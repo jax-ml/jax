@@ -15,18 +15,9 @@ __global__ void FooKernel(const float *a, const float *b, float *c, size_t n) {
     c[i] = a[i] * (b[i] + 1.0f);
 }
 
-// host wrapper function that launches the kernel with hardcoded grid/block size
-void LaunchFooKernel(cudaStream_t stream,
-                     const float *a, const float *b, float *c, size_t n) {
-  const int block_dim = 128;
-  const int grid_dim = 1;
-  FooKernel<<<grid_dim, block_dim, /*dynamic_shared_mem_bytes=*/0, stream>>>(
-      a, b, c, n);
-}
-
 namespace ffi = xla::ffi;
 
-// XLA FFI binding wrapper around our host launcher function
+// XLA FFI binding wrapper that launches the kernel
 extern "C" XLA_FFI_Error *Foo(XLA_FFI_CallFrame *call_frame) {
   static const auto *kImpl =
       ffi::Ffi::Bind()
@@ -40,7 +31,27 @@ extern "C" XLA_FFI_Error *Foo(XLA_FFI_CallFrame *call_frame) {
                  ffi::Buffer<ffi::DataType::F32> b,
                  ffi::Result<ffi::Buffer<ffi::DataType::F32>> c,
                  size_t n) -> ffi::Error {
-            LaunchFooKernel(stream, a.data, b.data, c->data, n);
+            // Host function wrapper that launches the kernel with hardcoded
+            // grid/block size. Note, it uses types from XLA FFI. The return
+            // type must be ffi::Error. Buffer type provides buffer dimensions,
+            // so the "n" argument here is not strictly necessary, but it allows
+            // us to demonstrate the use of attributes (.Attr in the FFI handler
+            // definition above).
+            const int block_dim = 128;
+            const int grid_dim = 1;
+            // Note how we access regular Buffer data vs Result Buffer data:
+            FooKernel<<<grid_dim, block_dim, /*shared_mem=*/0, stream>>>(
+                a.data, b.data, c->data, n);
+            // Check for launch time errors. Note that this function may also
+            // return error codes from previous, asynchronous launches. This
+            // means that an error status returned here could have been caused
+            // by a different kernel previously launched by XLA.
+            cudaError_t last_error = cudaGetLastError();
+            if (last_error != cudaSuccess) {
+              return ffi::Error(XLA_FFI_Error_Code_INTERNAL,
+                                std::string("CUDA error: ") +
+                                cudaGetErrorString(last_error));
+            }
             return ffi::Error::Success();
       }).release();
   return kImpl->Call(call_frame);
