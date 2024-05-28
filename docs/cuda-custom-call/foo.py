@@ -132,7 +132,7 @@ def _foo_bwd_lowering(ctx, c_grad, a, b_plus_1):
 
 # construct a new JAX primitive
 foo_bwd_p = jax.core.Primitive(JAX_PRIMITIVE_BWD)
-# register the abstract evaluation rule for the forward primitive
+# register the abstract evaluation rule for the backward primitive
 foo_bwd_p.def_abstract_eval(_foo_bwd_abstract_eval)
 foo_bwd_p.multiple_results = True
 mlir.register_lowering(foo_bwd_p, _foo_bwd_lowering, platform=JAX_PLATFORM)
