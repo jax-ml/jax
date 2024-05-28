@@ -97,6 +97,18 @@ def TPU_ContractPrecisionEnum
     let assemblyFormat = "`<` $value `>`";
 }
 
+def TPU_PackFormat : I32EnumAttr<"PackFormat", "Pack format", [
+  I32EnumAttrCase<"kCompressed", 0, "compressed">,
+  I32EnumAttrCase<"kInterleaved", 1, "interleaved">
+]> {
+    let genSpecializedAttr = 0;
+    let cppNamespace = "::mlir::tpu";
+}
+
+def TPU_PackFormatEnum : EnumAttr<TPU_Dialect, TPU_PackFormat, "pack_format"> {
+    let assemblyFormat = "`<` $value `>`";
+}
+
 def TPU_TiledCase   : I32EnumAttrCase<"tiled", 0>;
 def TPU_LaneCase    : I32EnumAttrCase<"lanes", 1>;
 def TPU_SublaneCase : I32EnumAttrCase<"sublanes", 2>;
@@ -278,7 +290,10 @@ def TPU_UnpackSubelementsOp : TPU_Op<"unpack_subelements", [Pure]> {
 
 // Integer packs are always signed at the moment.
 def TPU_PackSubelementsOp : TPU_Op<"pack_subelements", [Pure]> {
-  let arguments = (ins Variadic<AnyVector>:$sources);
+  let arguments = (ins
+    Variadic<AnyVector>:$sources,
+    TPU_PackFormatEnum:$pack_format
+  );
   let results = (outs AnyVector:$output);
   let assemblyFormat = [{ $sources attr-dict `:` type($sources) `->` type($output) }];
 }
