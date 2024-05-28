@@ -632,6 +632,7 @@ py_test(
 
 jax_test(
     name = "linalg_test",
+    size = "large",
     srcs = ["linalg_test.py"],
     backend_tags = {
         "tpu": [
@@ -645,7 +646,7 @@ jax_test(
     shard_count = {
         "cpu": 40,
         "gpu": 40,
-        "tpu": 40,
+        "tpu": 50,
     },
 )
 
@@ -896,6 +897,7 @@ jax_test(
 
 jax_test(
     name = "scipy_signal_test",
+    size = "large",
     srcs = ["scipy_signal_test.py"],
     backend_tags = {
         "cpu": [
