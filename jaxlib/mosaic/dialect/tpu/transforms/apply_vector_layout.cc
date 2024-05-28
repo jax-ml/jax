@@ -3454,6 +3454,10 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
   using Tiling = std::array<int64_t, 2>;
   const VectorLayout &layout_in = *layouts_in.front();
   const VectorLayout &layout_out = *layouts_out.front();
+  TPU_ASSERT_EQ_OP(
+      layout_in.bitwidth(),
+      layout_out.bitwidth());  // This should be guaranteed through MLIR
+                               // verifier plus our layoutIsValidForValue check
   ImplicitLocOpBuilder builder(op.getLoc(), &op);
   auto shape_cast_op = cast<vector::ShapeCastOp>(op);
   const VectorType src_ty = shape_cast_op.getSourceVectorType();
@@ -3462,6 +3466,10 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
   const ArrayRef<int64_t> dst_shape = dst_ty.getShape();
   const int layout_rank = layout_in.layout_rank();
   bool no_op = false;
+  const std::array<int64_t, 2> src_vreg_slice =
+      layout_in.vregSlice(ctx.target_shape);
+  const std::array<int64_t, 2> dst_vreg_slice =
+      layout_out.vregSlice(ctx.target_shape);
   // TODO(tlongeri): It looks like this could probably be simplified by using
   // VectorLayout::implicitShape()
   if (layout_in == layout_out && src_ty.getShape().take_back(layout_rank) ==
@@ -3508,33 +3516,23 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
              layout_out.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
              layout_in.offsets() == layout_out.offsets() &&
              layout_in.offsets() == LayoutOffsets{0, 0} &&
-             layout_in.tiling() == Tiling{1, ctx.target_shape[1]} &&
-             layout_out.hasNaturalTopology(ctx.target_shape) &&
-             *(dst_shape.end() - 1) != *(src_shape.end() - 1) &&
-             *(dst_shape.end() - 1) == ctx.target_shape[1] &&
-             *(dst_shape.end() - 2) % ctx.target_shape[0] == 0 &&
-             *(src_shape.end() - 1) %
-                     (ctx.target_shape[0] * ctx.target_shape[1]) ==
-                 0 &&
-             (*(src_shape.end() - 2) == 1 ||
-              *(src_shape.end() - 2) % ctx.target_shape[0] == 0)) {
-    // Shapecast (..., m * 128) -> (..., 128).
+             layout_in.tiling()[0] == 1 &&
+             layout_out.hasNativeTiling(ctx.target_shape) &&
+             *(dst_shape.end() - 1) == dst_vreg_slice[1] &&
+             *(dst_shape.end() - 2) % dst_vreg_slice[0] == 0 &&
+             *(src_shape.end() - 1) % src_vreg_slice[1] == 0) {
+    // Shapecast (..., m * 128 * packing) -> (..., 128).
     no_op = true;
   } else if (layout_in.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
              layout_out.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
              layout_in.offsets() == LayoutOffsets{0, 0} &&
              layout_out.offsets() == LayoutOffsets{0, 0} &&
-             layout_in.hasNaturalTopology(ctx.target_shape) &&
-             layout_out.tiling() == Tiling{1, ctx.target_shape[1]} &&
-             *(src_shape.end() - 1) != *(dst_shape.end() - 1) &&
-             *(src_shape.end() - 1) == ctx.target_shape[1] &&
-             *(src_shape.end() - 2) % ctx.target_shape[0] == 0 &&
-             *(dst_shape.end() - 1) %
-                     (ctx.target_shape[0] * ctx.target_shape[1]) ==
-                 0 &&
-             (*(dst_shape.end() - 2) == 1 ||
-              *(dst_shape.end() - 2) % ctx.target_shape[0] == 0)) {
-    // Shapecast (..., 128) -> (..., m * 128).
+             layout_in.hasNativeTiling(ctx.target_shape) &&
+             layout_out.tiling()[0] == 1 &&
+             *(src_shape.end() - 1) == src_vreg_slice[1] &&
+             *(src_shape.end() - 2) % src_vreg_slice[0] == 0 &&
+             *(dst_shape.end() - 1) % dst_vreg_slice[1] == 0) {
+    // Shapecast (..., 128) -> (..., m * 128 * packing).
     no_op = true;
   }
   FAILUREOR_ASSIGN_OR_RETURN(

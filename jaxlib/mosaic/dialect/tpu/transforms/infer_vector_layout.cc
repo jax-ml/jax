@@ -1236,52 +1236,47 @@ class VectorLayoutInferer {
         setLayout(op, layout, layout);
         return success();
       }
+      const unsigned bitwidth = src_ty.getElementTypeBitWidth();
+      const auto native_tiling = nativeTiling(bitwidth);
       // Lane (un)tiling.
-      if (layout.tiling()[1] == target_shape_[1] &&
-          src_ty.getDimSize(src_ty.getRank() - 1) !=
+      if (src_ty.getDimSize(src_ty.getRank() - 1) !=
               res_shape[res_shape.size() - 1] &&
           src_ty.getDimSize(src_ty.getRank() - 1) % layout.tiling()[1] == 0 &&
           res_shape[res_shape.size() - 1] % layout.tiling()[1] == 0) {
-        // TODO(jevinjiang): support shapecast along lane with any bitwidth.
-        if (src_ty.getElementTypeBitWidth() != kNativeBitwidth) {
-          NYI("Shapecast along lane dimension when bitwidth is not 32");
-        }
-
-        // When we shapecast from input shape (..., m * target_shape_[1]) to
-        // output shape (..., target_shape_[1]), the reshape becomes no-op when
-        // input is densely packed with tiling (1, target_shape_[1]) and
-        // output has the native tiling.
+        const int packing = kNativeBitwidth / bitwidth;
+        const auto elements_per_vreg = native_tiling[0] * native_tiling[1];
+        // When we shapecast from input shape
+        // (..., m * target_shape_[1] * packing) to output shape
+        // (..., target_shape_[1]), the reshape becomes no-op when input is
+        // densely packed with tiling (1, target_shape_[1] * packing) and output
+        // has the native tiling.
         if (*(res_shape.end() - 1) == target_shape_[1] &&
-            *(res_shape.end() - 2) % target_shape_[0] == 0 &&
-            *(src_shape.end() - 1) % (target_shape_[0] * target_shape_[1]) ==
-                0 &&
-            (*(src_shape.end() - 2) == 1 ||
-             *(src_shape.end() - 2) % target_shape_[0] == 0)) {
-          // Inferring in_layout to have tiling (1, 128) triggers any
+            *(res_shape.end() - 2) % native_tiling[0] == 0 &&
+            *(src_shape.end() - 1) % elements_per_vreg == 0) {
+          // Inferring in_layout to have tiling (1, 128 * packing) triggers any
           // necessary relayout before shapecast.
-          setLayout(op,
-                    VectorLayout(layout.bitwidth(), {0, 0},
-                                 {1, target_shape_[1]}, ImplicitDim::kNone),
-                    VectorLayout(layout.bitwidth(), {0, 0}, default_tiling_,
-                                 ImplicitDim::kNone));
+          setLayout(
+              op,
+              VectorLayout(layout.bitwidth(), {0, 0},
+                           {1, target_shape_[1] * packing}, ImplicitDim::kNone),
+              VectorLayout(layout.bitwidth(), {0, 0}, native_tiling,
+                           ImplicitDim::kNone));
           return success();
         }
 
-        // When we shapecast from input shape (..., target_shape_[1]) to
-        // output shape (..., m * target_shape_[1]), the reshape becomes no-op
-        // when input has the native tiling and output is densely packed with
-        // tiling (1, target_shape_[1]).
+        // When we shapecast from input shape (..., target_shape_[1]) to output
+        // shape (..., m * target_shape_[1] * packing), the reshape becomes
+        // no-op when input has the native tiling and output is densely packed
+        // with tiling (1, target_shape_[1] * packing).
         if (*(src_shape.end() - 1) == target_shape_[1] &&
-            *(src_shape.end() - 2) % target_shape_[0] == 0 &&
-            *(res_shape.end() - 1) % (target_shape_[0] * target_shape_[1]) ==
-                0 &&
-            (*(res_shape.end() - 2) == 1 ||
-             *(res_shape.end() - 2) % target_shape_[0] == 0)) {
+            *(src_shape.end() - 2) % native_tiling[0] == 0 &&
+            *(res_shape.end() - 1) % elements_per_vreg == 0) {
           setLayout(op,
-                    VectorLayout(layout.bitwidth(), {0, 0}, default_tiling_,
+                    VectorLayout(layout.bitwidth(), {0, 0}, native_tiling,
                                  ImplicitDim::kNone),
                     VectorLayout(layout.bitwidth(), {0, 0},
-                                 {1, target_shape_[1]}, ImplicitDim::kNone));
+                                 {1, target_shape_[1] * packing},
+                                 ImplicitDim::kNone));
           return success();
         }
 
@@ -1289,8 +1284,6 @@ class VectorLayoutInferer {
         op.emitOpError("unsupported shape cast");
         return failure();
       }
-      unsigned bitwidth = src_ty.getElementTypeBitWidth();
-      auto native_tiling = nativeTiling(bitwidth);
       if (layout.tiling() != native_tiling) {
         layout = VectorLayout(bitwidth, layout.offsets(), native_tiling,
                               layout.implicit_dim());
