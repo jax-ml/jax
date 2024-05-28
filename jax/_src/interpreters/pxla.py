@@ -793,7 +793,8 @@ def lower_parallel_callable(
                          ordered_effects=ordered_effects,
                          keepalive=lowering_result.keepalive,
                          host_callbacks=lowering_result.host_callbacks,
-                         jaxpr_debug_info=closed_jaxpr.jaxpr.debug_info)
+                         jaxpr_debug_info=closed_jaxpr.jaxpr.debug_info,
+                         shape_poly_state=lowering_result.shape_poly_state)
 
 
 def _pmap_unmap_shaped_array(
@@ -906,7 +907,10 @@ class UnloadedPmapExecutable:
                host_callbacks: list[Any],
                keepalive: Any,
                jaxpr_debug_info: core.JaxprDebugInfo,
+               shape_poly_state: mlir.ShapePolyLoweringState | None = None,
                compiler_options=None):
+    if shape_poly_state is not None and shape_poly_state.uses_dim_vars:
+      hlo = mlir.refine_polymorphic_shapes(hlo)
     devices = pci.devices
     if devices is None:
       if shards.num_global_shards > xb.device_count(pci.backend):
