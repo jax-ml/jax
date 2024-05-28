@@ -228,6 +228,15 @@ class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_special.ndtri, lsp_special.ndtri, args_maker, rtol=rtol)
     self._CompileAndCheck(lsp_special.ndtri, args_maker, rtol=rtol)
 
+  def testRelEntrExtremeValues(self):
+    # Testing at the extreme values (bounds (0. and 1.) and outside the bounds).
+    dtype = jax.numpy.zeros(0).dtype  # default float dtype.
+    args_maker = lambda: [np.array([-2, -2, -2, -1, -1, -1, 0, 0, 0]).astype(dtype),
+                          np.array([-1, 0, 1, -1, 0, 1, -1, 0, 1]).astype(dtype)]
+    rtol = 1E-3 if jtu.test_device_matches(["tpu"]) else 1e-5
+    self._CheckAgainstNumpy(osp_special.rel_entr, lsp_special.rel_entr, args_maker, rtol=rtol)
+    self._CompileAndCheck(lsp_special.rel_entr, args_maker, rtol=rtol)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
