@@ -1079,11 +1079,18 @@ class LaxTest(jtu.JaxTestCase):
      for lhs_shape in [(3,), (4, 3)] for rhs_shape in [(3,), (3, 6)]],
     [dict(dtype_lhs=dtype_lhs, dtype_rhs=dtype_rhs)
      for dtype_lhs, dtype_rhs in [(dtypes.float8_e4m3fn, dtypes.float8_e5m2),
-                                  (dtypes.float8_e5m2, dtypes.float8_e4m3fn)]],
+                                  (dtypes.float8_e5m2, dtypes.float8_e4m3fn),
+                                  (dtypes.float8_e4m3fnuz, dtypes.float8_e5m2fnuz),
+                                  (dtypes.float8_e5m2fnuz, dtypes.float8_e4m3fnuz)]],
   )
   def test_mixed_fp8_dot_general(self, lhs_shape, rhs_shape, dtype_lhs, dtype_rhs):
     if jtu.test_device_matches(["tpu"]):
         raise SkipTest("Mixed fp8 precision matmul is not yet supported on TPU")
+    if not jtu.is_device_rocm() and (
+        dtype_lhs in [dtypes.float8_e4m3fnuz, dtypes.float8_e5m2fnuz] or
+        dtype_rhs in [dtypes.float8_e4m3fnuz, dtypes.float8_e5m2fnuz]
+    ):
+        raise SkipTest("float8_e4m3fnuz and float8_e5m2fnuz types are only supported on ROCm")
     rng = jtu.rand_default(self.rng())
     lhs = rng(lhs_shape, dtype=dtype_lhs)
     rhs = rng(rhs_shape, dtype=dtype_rhs)
