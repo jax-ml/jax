@@ -1951,6 +1951,13 @@ class LaxControlFlowTest(jtu.JaxTestCase):
                                   x[2]), None),
                    (jnp.array(0, 'int32'),) * 3, None, length=1)
 
+  @jax.enable_checks(False)
+  def testScanInvalidUnrollRaises(self):
+    with self.assertRaisesRegex(ValueError, "`unroll` must be"):
+      jax.lax.scan(lambda x, _: (x, x), 0, jnp.arange(5), unroll=-1)
+    with self.assertRaisesRegex(ValueError, "`unroll` must be"):
+      jax.lax.scan(lambda x, _: (x, x), 0, jnp.arange(5), unroll=0)
+
   @parameterized.named_parameters(
       {"testcase_name": f"_{scan_name}",
        "scan": scan_impl}
@@ -2905,6 +2912,21 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     expect_a_dot = (jtu.device_under_test() == "cpu")
     self.assertEqual(expect_a_dot, " dot(" in hlo)
     self.assertEqual(not expect_a_dot, " while(" in hlo)
+
+  def test_scan_lowering_doesnt_introduce_singleton(self):
+    b = 4
+    i = 2
+
+    def scan(y):
+      def body(carry, x):
+        return carry, jnp.dot(x, x)
+      return jax.lax.scan(body, 1.0, y, unroll=False)
+
+    fn = jax.jit(scan)
+
+    init = np.array(np.arange(b * i * i), dtype=np.float32).reshape((b, i, i))
+    hlo_text = fn.lower(init).as_text('hlo')
+    self.assertNotIn('4,1,2,2', hlo_text)
 
 
 if __name__ == '__main__':

@@ -75,10 +75,17 @@ def build_wheel(
   for wheel in glob.glob(os.path.join(sources_path, "dist", "*.whl")):
     output_file = os.path.join(output_path, os.path.basename(wheel))
     sys.stderr.write(f"Output wheel: {output_file}\n\n")
-    sys.stderr.write(f"To install the newly-built {package_name} wheel, run:\n")
+    sys.stderr.write(f"To install the newly-built {package_name} wheel " +
+                     "on system Python, run:\n")
     sys.stderr.write(f"  pip install {output_file} --force-reinstall\n\n")
-    shutil.copy(wheel, output_path)
 
+    py_version = ".".join(platform.python_version_tuple()[:-1])
+    sys.stderr.write(f"To install the newly-built {package_name} wheel " +
+                     "on hermetic Python, run:\n")
+    sys.stderr.write(f'  echo -e "\\n{output_file}" >> build/requirements.in\n')
+    sys.stderr.write("  bazel run //build:requirements.update" +
+                     f" --repo_env=HERMETIC_PYTHON_VERSION={py_version}\n\n")
+    shutil.copy(wheel, output_path)
 
 def build_editable(
     sources_path: str, output_path: str, package_name: str

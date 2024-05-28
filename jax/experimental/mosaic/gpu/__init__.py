@@ -17,12 +17,13 @@ from collections.abc import Callable
 import contextlib
 import ctypes
 import dataclasses
+import functools
 import os
 import pathlib
 import subprocess
 import tempfile
 import time
-from typing import Any, Sequence
+from typing import Any, Generic, Sequence, TypeVar
 
 import jax
 from jax._src import config
@@ -458,6 +459,39 @@ class LaunchContext:
     gpu.barrier()  # Groups are supposedly tracked per-thread
 
 
+# ShapeTrees currently can not contain unions.
+ShapeTree = Any
+RefTree = Any
+T = TypeVar('T')
+
+
+@dataclasses.dataclass(frozen=True)
+class Union(Generic[T]):
+  members: Sequence[T]
+
+
+def _count_buffer_bytes(shape_dtype: jax.ShapeDtypeStruct) -> int:
+  return np.prod(shape_dtype.shape) * np.dtype(shape_dtype.dtype).itemsize
+
+
+def _construct_smem_reftree(
+    dynamic_smem: ir.Value, smem_buffers: ShapeTree) -> RefTree:
+  index = ir.IndexType.get()
+  smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
+  flat_ref_tys, smem_buffer_tree = jax.tree.flatten(smem_buffers)
+  smem_refs = []
+  dynamic_smem_offset = 0
+  for ref_ty in flat_ref_tys:
+    mlir_dtype = mlir.dtype_to_ir_type(ref_ty.dtype)
+    tile_smem = memref.view(
+        ir.MemRefType.get(ref_ty.shape, mlir_dtype, memory_space=smem),
+        dynamic_smem, c(dynamic_smem_offset, index), [],
+    )
+    dynamic_smem_offset += _count_buffer_bytes(ref_ty)
+    smem_refs.append(tile_smem)
+  return jax.tree.unflatten(smem_buffer_tree, smem_refs)
+
+
 # TODO(apaszke): Inline this
 @contextlib.contextmanager
 def _launch(
@@ -465,7 +499,7 @@ def _launch(
     grid,
     block,
     gmem_scratch_ptr,
-    smem_buffers,
+    smem_buffers: ShapeTree | Union[ShapeTree],
     profiler_spec: profiler.ProfilerSpec | None = None,
     maybe_prof_buffer: ir.Value | None = None,
 ):
@@ -476,18 +510,24 @@ def _launch(
   i8 = ir.IntegerType.get_signless(8)
   grid_vals = [c(i, index) for i in grid]
   block_vals = [c(i, index) for i in block]
-  flat_refs, smem_buffer_tree = jax.tree.flatten(smem_buffers)
 
-  smem_ref_bytes = []
-  for ref_ty in flat_refs:
-    smem_ref_bytes.append(
-        np.prod(ref_ty.shape) * np.dtype(ref_ty.dtype).itemsize
-    )
+  if isinstance(smem_buffers, Union):
+    smem_disjoint_live_buffers_collections = smem_buffers.members
+    compute_smem_bytes = max(
+        sum(_count_buffer_bytes(l) for l in jax.tree.leaves(s))
+            for s in smem_buffers.members)
+  else:
+    smem_disjoint_live_buffers_collections = [smem_buffers]
+    compute_smem_bytes = sum(
+        _count_buffer_bytes(l) for l in jax.tree.leaves(smem_buffers))
 
-  smem_bytes = sum(smem_ref_bytes)
+  smem_bytes = compute_smem_bytes
   if profiler_spec is not None:
     smem_bytes += profiler_spec.smem_bytes(grid)
 
+  # TODO(cperivol): Query the shared memory size programmatically.
+  if smem_bytes > 228 * 1024:
+    raise ValueError(f"Mosaic GPU kernel exceeds available shared memory {smem_bytes=} > 228000")
   launch_op = gpu.LaunchOp(
       token.type, [token], *grid_vals, *block_vals,
       dynamicSharedMemorySize=c(smem_bytes, i32))
@@ -499,16 +539,12 @@ def _launch(
             (ir.ShapedType.get_dynamic_size(),), i8, memory_space=smem
         )
     )
-    smem_refs = []
-    dynamic_smem_offset = 0
-    for ref_ty, ref_bytes in zip(flat_refs, smem_ref_bytes):
-      mlir_dtype = mlir.dtype_to_ir_type(ref_ty.dtype)
-      tile_smem = memref.view(
-          ir.MemRefType.get(ref_ty.shape, mlir_dtype, memory_space=smem),
-          dynamic_smem, c(dynamic_smem_offset, index), [],
-      )
-      dynamic_smem_offset += ref_bytes
-      smem_refs.append(tile_smem)
+    smem_ref_trees = []
+
+    for smem_live_buffers_collection in smem_disjoint_live_buffers_collections:
+      smem_ref_tree = _construct_smem_reftree(
+          dynamic_smem, smem_live_buffers_collection)
+      smem_ref_trees.append(smem_ref_tree)
 
     if profiler_spec:
       prof_smem = memref.view(
@@ -516,27 +552,32 @@ def _launch(
               (profiler_spec.smem_i32_elements(grid=grid),),
               i32, memory_space=smem,
           ),
-          dynamic_smem, c(dynamic_smem_offset, index), [],
+          dynamic_smem, c(compute_smem_bytes, index), [],
       )
       prof = profiler.OnDeviceProfiler(
           profiler_spec, prof_smem, maybe_prof_buffer
       )
     else:
       prof = None
-    smem_ref_tree = jax.tree.unflatten(smem_buffer_tree, smem_refs)
+
+    if isinstance(smem_buffers, Union):
+      smem_ref_tree: Union[RefTree] = Union(smem_ref_trees)
+    else:
+      smem_ref_tree: RefTree = smem_ref_trees[0] if smem_ref_trees else []
+
     yield LaunchContext(launch_op, gmem_scratch_ptr, prof), smem_ref_tree
     if prof is not None:
       prof.finalize(grid=grid)
     gpu.terminator()
 
 
-def as_gpu_kernel(
+def _lower_as_gpu_kernel(
     body,
     grid: tuple[int, ...],
     block: tuple[int, ...],
-    in_shape,
+    in_shapes: tuple[Any, ...],
     out_shape,
-    smem_scratch_shape,
+    smem_scratch_shape: ShapeTree | Union[ShapeTree],
     prof_spec: profiler.ProfilerSpec | None = None,
 ):
   ptr_ty = ir.Type.parse("!llvm.ptr")
@@ -547,11 +588,7 @@ def as_gpu_kernel(
   def _shape_to_ref_ty(shape: jax.ShapeDtypeStruct) -> ir.MemRefType:
     return ir.MemRefType.get(shape.shape, mlir.dtype_to_ir_type(shape.dtype))
 
-  if isinstance(in_shape, list):
-    in_shape = tuple(in_shape)
-  elif not isinstance(in_shape, tuple):
-    in_shape = (in_shape,)
-  in_ref_tys = [_shape_to_ref_ty(t) for t in in_shape]
+  in_ref_tys = [_shape_to_ref_ty(t) for t in in_shapes]
 
   unwrap_output_tuple = False
   if isinstance(out_shape, list):
@@ -609,21 +646,44 @@ def as_gpu_kernel(
     main.func_op.attributes["llvm.emit_c_interface"] = ir.UnitAttr.get()
   module.operation.verify()
 
-  expected_arg_treedef = jax.tree.structure(in_shape)
-  def _check_args(args):
-    arg_treedef = jax.tree.structure(args)
-    if arg_treedef != expected_arg_treedef:
-      raise ValueError(
-          f"Invalid argument structure: expected {expected_arg_treedef}, got"
-          f" {arg_treedef}"
-      )
-
   dump_low_level(module)
 
   pass_manager = _get_mosaic_gpu_pipeline("fatbin")
   if mosaic_gpu_print_after_all.value:
     pass_manager.enable_ir_printing()
   pass_manager.run(module.operation)
+
+  return module, out_shape, gmem_scratch_bytes, unwrap_output_tuple
+
+
+def as_gpu_kernel(
+    body,
+    grid: tuple[int, ...],
+    block: tuple[int, ...],
+    in_shape,
+    out_shape,
+    smem_scratch_shape: ShapeTree | Union[ShapeTree],
+    prof_spec: profiler.ProfilerSpec | None = None,
+):
+  if isinstance(in_shape, list):
+    in_shape = tuple(in_shape)
+  elif not isinstance(in_shape, tuple):
+    in_shape = (in_shape,)
+
+  module, out_shape, gmem_scratch_bytes, unwrap_output_tuple = (
+      _lower_as_gpu_kernel(
+          body, grid, block, in_shape, out_shape, smem_scratch_shape, prof_spec
+      )
+  )
+
+  expected_arg_treedef = jax.tree.structure(in_shape)
+  def _check_args(*args):
+    arg_treedef = jax.tree.structure(args)
+    if arg_treedef != expected_arg_treedef:
+      raise ValueError(
+          f"Invalid argument structure: expected {expected_arg_treedef}, got"
+          f" {arg_treedef}, ({args=})"
+      )
 
   def bind(*args):
     return mosaic_gpu_p.bind(
@@ -636,7 +696,7 @@ def as_gpu_kernel(
   if prof_spec is not None:
     @jax.jit
     def prof_kernel(*args):
-      _check_args(args)
+      _check_args(*args)
       *results, prof_buffer = bind(*args)
       def dump_profile(prof_buffer):
         out_file = os.path.join(
@@ -654,7 +714,7 @@ def as_gpu_kernel(
   else:
     @jax.jit
     def kernel(*args):
-      _check_args(args)
+      _check_args(*args)
       results = bind(*args)
       return results[0] if unwrap_output_tuple else results
     return kernel

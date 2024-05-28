@@ -126,6 +126,15 @@ jax_test(
     deps = ["//jax:extend"],
 )
 
+py_test(
+    name = "ffi_test",
+    srcs = ["ffi_test.py"],
+    deps = [
+        "//jax",
+        "//jax:test_util",
+    ],
+)
+
 jax_test(
     name = "fft_test",
     srcs = ["fft_test.py"],
@@ -234,6 +243,9 @@ jax_test(
     shard_count = {
         "tpu": 5,
     },
+    deps = [
+        "//jax:experimental",
+    ],
 )
 
 jax_test(
@@ -632,6 +644,11 @@ jax_test(
 )
 
 jax_test(
+    name = "cholesky_update_test",
+    srcs = ["cholesky_update_test.py"],
+)
+
+jax_test(
     name = "metadata_test",
     srcs = ["metadata_test.py"],
     disable_backends = [
@@ -693,6 +710,7 @@ jax_test(
     backend_tags = {
         "tpu": [
             "noasan",  # Times out under asan.
+            "requires-mem:16g",  # Under tsan on 2x2 this test exceeds the default 12G memory limit.
         ],
     },
     shard_count = {
@@ -999,8 +1017,7 @@ jax_test(
     ],
     enable_configs = [
         "gpu_a100",
-        # TODO(b/337303303): re-enable the test
-        # "gpu_h100",
+        "gpu_h100",
     ],
     deps = [
         "//jax:experimental_sparse",
@@ -1347,7 +1364,7 @@ jax_test(
     disable_configs = [
         "gpu_a100",  # Numerical precision problems.
     ],
-    shard_count = 8,
+    shard_count = 15,
     deps = [
         "//jax:rnn",
     ],

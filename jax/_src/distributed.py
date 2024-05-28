@@ -80,7 +80,7 @@ class State:
       raise ValueError('coordinator_bind_address should be defined.')
 
     if local_device_ids:
-      visible_devices = ','.join(str(x) for x in local_device_ids) # type: ignore[union-attr]
+      visible_devices = ','.join(str(x) for x in local_device_ids)
       logger.info('JAX distributed initialized with visible devices: %s', visible_devices)
       config.update("jax_cuda_visible_devices", visible_devices)
       config.update("jax_rocm_visible_devices", visible_devices)
@@ -205,7 +205,8 @@ def initialize(coordinator_address: str | None = None,
       have the coordinator service listen on one address/interface.
 
   Raises:
-    RuntimeError: If :func:`~jax.distributed.initialize` is called more than once.
+    RuntimeError: If :func:`~jax.distributed.initialize` is called more than once
+      or if called after the backend is already initialized.
 
   Example:
 

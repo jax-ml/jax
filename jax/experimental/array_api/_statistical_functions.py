@@ -14,13 +14,12 @@
 
 import jax
 
-# TODO(micky774): Remove after deprecating ddof-->correction in jnp.std and
-# jnp.var
+
 def std(x, /, *, axis=None, correction=0.0, keepdims=False):
   """Calculates the standard deviation of the input array x."""
-  return jax.numpy.std(x, axis=axis, ddof=correction, keepdims=keepdims)
+  return jax.numpy.std(x, axis=axis, correction=correction, keepdims=keepdims)
 
 
 def var(x, /, *, axis=None, correction=0.0, keepdims=False):
   """Calculates the variance of the input array x."""
-  return jax.numpy.var(x, axis=axis, ddof=correction, keepdims=keepdims)
+  return jax.numpy.var(x, axis=axis, correction=correction, keepdims=keepdims)

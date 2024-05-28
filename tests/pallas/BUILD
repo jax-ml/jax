@@ -223,7 +223,7 @@ jax_test(
         "cpu",
         "gpu",
     ],
-    shard_count = 2,
+    shard_count = 5,
     tags = [
         "noasan",  # Times out.
         "nomsan",  # Times out.
@@ -251,7 +251,49 @@ jax_test(
     ],
     deps = [
         "//jax:pallas_tpu_ops",
-    ] + py_deps("absl/testing") + py_deps("absl/flags") + py_deps("numpy") + py_deps("hypothesis"),
+    ] + py_deps([
+        "absl/testing",
+        "absl/flags",
+        "numpy",
+        "hypothesis",
+    ]),
+)
+
+jax_test(
+    name = "mosaic_gpu_test",
+    srcs = [
+        "mosaic_gpu_test.py",
+    ],
+    config_tags_overrides = {
+        # TODO(slebedev): Switch to False once Mosaic GPU is unconditionally enabled.
+        "gpu_h100_x32": {
+            "ondemand": True,  # Include in presubmit.
+        },
+    },
+    disable_backends = [
+        "cpu",
+        "tpu",
+    ],
+    disable_configs = [
+        "gpu",
+        "gpu_x32",
+        "gpu_a100",
+        "gpu_a100_x32",
+        "gpu_p100",
+        "gpu_p100_x32",
+        "gpu_h100",
+    ],
+    enable_configs = [
+        "gpu_h100_x32",
+    ],
+    env = {
+        "JAX_PALLAS_USE_MOSAIC_GPU": "1",
+    },
+    tags = ["notap"],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_gpu",  # build_cleaner: keep
+    ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
 jax_test(

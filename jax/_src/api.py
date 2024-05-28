@@ -1807,7 +1807,7 @@ def _cpp_pmap(
 
   cpp_mapped_f = pmap_lib.pmap(
       fun, cache_miss, static_broadcasted_tuple,
-      pxla.shard_arg, pytree_registry=tree_util.default_registry)  # type: ignore
+      pxla.shard_arg, pytree_registry=tree_util.default_registry)
   _pmap_cache_clears.add(cpp_mapped_f)
 
   pmap_f = wraps(fun)(cpp_mapped_f)
@@ -2120,7 +2120,7 @@ def vjp(fun: Callable[..., tuple[T, U]], *primals: Any,
         has_aux: Literal[True],
         reduce_axes: Sequence[AxisName] = ()) -> tuple[T, Callable, U]:
   ...
-def vjp(  # type: ignore
+def vjp(
     fun: Callable, *primals, has_aux: bool = False, reduce_axes=()
   ) -> tuple[Any, Callable] | tuple[Any, Callable, Any]:
   """Compute a (reverse-mode) vector-Jacobian product of ``fun``.
@@ -2293,7 +2293,7 @@ def make_jaxpr(fun: Callable,  # type: ignore
   ...
 
 @overload
-def make_jaxpr(fun: Callable,  # type: ignore
+def make_jaxpr(fun: Callable,
                static_argnums: int | Iterable[int] = (),
                axis_env: Sequence[tuple[AxisName, int]] | None = None,
                return_shape: Literal[True] = ...,
@@ -2411,7 +2411,8 @@ def make_jaxpr(fun: Callable,
 
 def _infer_src_sharding(src, x) -> Sharding | None:
   if src is not None:
-    return src  # type: ignore
+    # TODO(slebedev): This looks like an error and needs investigation.
+    return src  # pytype: disable=bad-return-type
   if isinstance(x, array.ArrayImpl):
     return x.sharding
   elif isinstance(x, core.Tracer):

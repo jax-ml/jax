@@ -1282,22 +1282,22 @@ class PJitTest(jtu.BufferDonationTestCase):
     y = jnp.array([4.2, 2.4], dtype=jnp.float32)
     jaxpr = jax.make_jaxpr(g)(x, y)
     self.assertEqual(
-        jaxpr.pretty_print(),
+        jaxpr.pretty_print(use_color=False),
         textwrap.dedent("""
-            let f = { lambda ; a:f32[1]. let  in (a,) } in
-            let f1 = { lambda ; b:f32[2]. let  in (b,) } in
+            let f = { lambda ; a:f32[1]. let  in () } in
+            let f1 = { lambda ; b:f32[2]. let  in () } in
             { lambda ; c:f32[1] d:f32[2]. let
                 e:f32[2] = pjit[
                   name=g
                   jaxpr={ lambda ; g:f32[1] h:f32[2]. let
-                      i:f32[1] = pjit[name=f jaxpr=f] g
-                      j:f32[1] = pjit[name=f jaxpr=f] g
-                      k:f32[1] = mul i j
-                      l:f32[2] = pjit[name=f jaxpr=f1] h
-                      m:f32[2] = pjit[name=f jaxpr=f1] h
-                      n:f32[2] = mul l m
-                      o:f32[2] = add k n
-                    in (o,) }
+                      pjit[name=f jaxpr=f] g
+                      pjit[name=f jaxpr=f] g
+                      i:f32[1] = mul g g
+                      pjit[name=f jaxpr=f1] h
+                      pjit[name=f jaxpr=f1] h
+                      j:f32[2] = mul h h
+                      k:f32[2] = add i j
+                    in (k,) }
                 ] c d
               in (e,) }
             """).strip(),
@@ -1511,6 +1511,37 @@ class CustomPartitionerTest(jtu.JaxTestCase):
     x = np.asarray(np.random.randint(0, 20, (32,)), dtype=np.float32)
     pjit_f = pjit(jit_f, in_shardings=(P('x')), out_shardings=P('x'))
     self.assertArraysEqual(x, pjit_f(x))
+
+  @jtu.with_mesh([('x', 4)])
+  def test_custom_partitioner_with_scan(self):
+    self.skip_if_custom_partitioning_not_supported()
+
+    # This is a reproducer from https://github.com/google/jax/issues/20864.
+
+    @custom_partitioning
+    def f(x):
+      return jnp.sum(x)
+
+    def partition(mesh, arg_shapes, result_shape):
+      def lower_fn(xs):
+        def f(carry, x):
+          return carry + jax.lax.psum(jnp.sum(x), axis_name='x'), None
+
+        carry, _ = jax.lax.scan(f, 0, xs)
+        return carry
+
+      result_shardings = jax.tree.map(lambda x: x.sharding, result_shape)
+      arg_shardings = jax.tree.map(lambda x: x.sharding, arg_shapes)
+      return mesh, lower_fn, result_shardings, arg_shardings
+
+    f.def_partition(
+        partition,
+        infer_sharding_from_operands=lambda mesh, *_: NamedSharding(mesh, P()),
+        propagate_user_sharding=lambda _, user_shape: user_shape.sharding)
+
+    pjit_f = pjit(f, in_shardings=P(None, 'x'))
+    xs = jnp.ones([32, 16])
+    self.assertEqual(pjit_f(xs), xs.sum())
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
@@ -3464,6 +3495,12 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
     self.assertEqual(cache_info2.misses, cache_info1.misses)
 
+  def test_list_in_pspec(self):
+    mesh = jtu.create_global_mesh((2,), ('x',))
+    with mesh:
+      out = with_sharding_constraint(jnp.arange(8), P(['x']))
+    self.assertEqual(out.sharding, NamedSharding(mesh, P('x')))
+
   def test_sharding_preserved_trivial(self):
     mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
     ns = NamedSharding(mesh, P('x'))
@@ -4059,6 +4096,46 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out1, out2 = jax.jit(lambda x, t: (x, t))(x, token)
     self.assertArraysEqual(out1, x)
     self.assertIsInstance(out2, core.Token)
+
+  def test_uneven_sharding_wsc(self):
+    mesh = jtu.create_global_mesh(
+        (2, 1, 1, 1, 1), ('data', 'expert', 'fsdp', 'seq', 'model')
+    )
+
+    @jax.jit
+    def fn(key):
+      x = jnp.arange(113003)
+      x = with_sharding_constraint(x, P('data'))
+      y = jnp.arange(65536)
+      y = with_sharding_constraint(y.reshape(-1), P('data'))
+      z = jnp.concatenate([x, y], axis=0)
+      z = with_sharding_constraint(z, P('data'))
+      return x, y, z
+
+    with mesh:
+      x, y, z = fn(jax.random.key(42))
+
+    expected_x = np.arange(113003)
+    expected_y = np.arange(65536)
+    expected_z = np.concatenate([x, y], axis=0)
+
+    self.assertArraysEqual(expected_x.max(), x.max())
+    self.assertArraysEqual(expected_y.max(), y.max())
+    self.assertArraysEqual(expected_z.max(), z.max())
+
+  def test_threefry_partitionable_context_within_jit(self):
+    with jax.threefry_partitionable(False):
+      def f(x):
+        return x + jax.random.randint(jax.random.key(72), (), 0, 10)
+
+      def g(x):
+        with jax.threefry_partitionable(True):  # False by default
+          return x + jax.random.randint(jax.random.key(72), (), 0, 10)
+
+      h = jax.jit(g)
+
+      self.assertNotEqual(f(1), g(1))
+      self.assertEqual(g(1), h(1))
 
 
 class TempSharding(Sharding):

@@ -20,7 +20,7 @@ import inspect
 import itertools as it
 from math import prod
 import operator as op
-from typing import Any, Callable, Optional, TypeVar, Union
+from typing import Any, Callable, TypeVar, Union
 
 import numpy as np
 
@@ -29,7 +29,6 @@ import jax.numpy as jnp
 from jax.sharding import NamedSharding, PartitionSpec, Mesh
 from jax._src import ad_checkpoint
 from jax._src import ad_util
-from jax._src import array
 from jax._src import callback
 from jax._src import core
 from jax._src import custom_derivatives
@@ -52,8 +51,7 @@ from jax._src.lax import (lax, parallel as lax_parallel, slicing,
                           special, control_flow, ann)
 from jax._src.util import (HashableFunction, HashablePartial, unzip2, unzip3,
                            as_hashable_function, memoize, partition_list,
-                           merge_lists, split_list, subs_list2,
-                           weakref_lru_cache)
+                           merge_lists, split_list, subs_list2)
 from jax.api_util import flatten_fun_nokwargs, shaped_abstractify
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -82,6 +80,56 @@ AxisName = Hashable
 @traceback_util.api_boundary
 def shard_map(f: Callable, mesh: Mesh, in_specs: Specs, out_specs: Specs,
               check_rep: bool = True, auto: frozenset[AxisName] = frozenset()):
+  """Map a function over shards of data.
+
+  Note:
+    ``shard_map`` is an experimental API, and still subject to change. For an
+    introduction to sharded data, refer to :ref:`sharded-computation`. For a more
+    in-depth look at using ``shard_map``, refer to `SPMD multi-device parallelism with shard_map`_.
+
+  Args:
+    f: callable to be mapped. Each application of ``f``, or "instance" of ``f``,
+      takes as input a shard of the mapped-over arguments and produces a shard
+      of the output.
+    mesh: a ``jax.sharding.Mesh`` representing the array of devices over which
+      to shard the data and on which to execute instances of ``f``. The names of
+      the ``Mesh`` can be used in collective communication operations in ``f``.
+      This is typically created by a utility function like
+      :func:`jax.experimental.mesh_utils.create_device_mesh`.
+    in_specs: a pytree with :class:`~jax.sharding.PartitionSpec` instances as leaves,
+      with a tree structure that is a tree prefix of the args tuple to be mapped
+      over. Similar to :class:`~jax.sharding.NamedSharding`, each ``PartitionSpec``
+      represents how the corresponding argument (or subtree of arguments) should
+      be sharded along the named axes of ``mesh``. In each ``PartitionSpec``,
+      mentioning a ``mesh`` axis name at a position expresses sharding the
+      corresponding argument array axis along that positional axis; not
+      mentioning an axis name expresses replication.
+    out_specs: a pytree with :class:`~jax.sharding.PartitionSpec` instances as leaves,
+      with a tree structure that is a tree prefix of the output of ``f``. Each
+      ``PartitionSpec`` represents how the corresponding output shards should be
+      concatenated. In each ``PartitionSpec``, metioning a ``mesh`` axis name at
+      a position expresses concatenation of that mesh axis's shards along the
+      corresponding positional axis. Not mentioning a ``mesh`` axis name
+      expresses a promise that the output values are equal along that mesh axis,
+      and that rather than concatenating only a single value should be produced.
+    check_rep: If True (default) enable additional validity checks and automatic
+      differentiation optimizations. The validity checks concern whether any mesh
+      axis names not mentioned in ``out_specs`` are consistent with how the outputs
+      of ``f`` are replicated. Must be set False if using a Pallas kernel in ``f``.
+    auto: (experimental) an optional set of axis names from ``mesh`` over which we
+      do not shard the data or map the function, but rather we allow the
+      compiler to control sharding. These names cannot be used in ``in_specs``,
+      ``out_specs``, or in communication collectives in ``f``.
+
+  Returns:
+    A callable that applies the input function ``f`` across data sharded according to
+    the ``mesh`` and ``in_specs``.
+
+  Examples:
+    For examples, refer to :ref:`sharded-computation` or `SPMD multi-device parallelism with shard_map`_.
+
+  .. _SPMD multi-device parallelism with shard_map: https://jax.readthedocs.io/en/latest/notebooks/shard_map.html
+  """
   return _shard_map(f, mesh, in_specs, out_specs, check_rep, auto)
 
 def _shard_map(f: Callable, mesh: Mesh, in_specs: Specs,
@@ -596,7 +644,7 @@ def _make_scoped_manual_sharding(ctx, mesh, axes):
   else:
     manual_axes = frozenset({})
   return NamedSharding(
-      mesh, sharding_impls.array_mapping_to_axis_resources(axes),  # type: ignore
+      mesh, sharding_impls.array_mapping_to_axis_resources(axes),  # pytype: disable=wrong-arg-types
       _manual_axes=manual_axes)
 
 def _xla_shard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
@@ -609,7 +657,7 @@ def _xla_shard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
     aval_in = core.physical_aval(aval_in)
   shard_proto = ns._to_xla_hlo_sharding(aval_in.ndim).to_proto()
   unspecified = set(range(aval_in.ndim)) if auto else set()
-  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, shard_proto,  # type: ignore
+  sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, shard_proto,
                                   unspecified_dims=unspecified)
   return [mlir.wrap_with_full_to_shard_op(ctx, sx, aval_out, manual_proto, unspecified)]
 
@@ -626,7 +674,7 @@ def _xla_unshard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
   sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, manual_proto, unspecified_dims=unspecified)
   shard_proto = ns._to_xla_hlo_sharding(aval_out.ndim).to_proto()
   return mlir.wrap_with_shard_to_full_op(ctx, sx, aval_out, shard_proto,
-                                         unspecified)  # type: ignore
+                                         unspecified)
 
 def _pspec_mhlo_attrs(names: AxisNames, aval: core.AbstractValue) -> str:
   if isinstance(aval, core.ShapedArray):
@@ -1322,7 +1370,7 @@ def _shard_map_partial_eval(trace, shard_map_p, f, tracers, mesh, in_names,
     in_fwd, out_fwd, out_knowns, _, jaxpr, _ = aux()
     _, out_known_names = pe.partition_list(out_knowns, out_names_thunk())
     num_res = sum(f1 is None and f2 is None for f1, f2 in zip(in_fwd, out_fwd))
-    return (*out_known_names, *({0: (*all_names,)},) * num_res)
+    return (*out_known_names, *({0: all_names},) * num_res)
 
   known_params = dict(mesh=mesh, in_names=(*known_in_names,),
                       out_names_thunk=known_out_names, check_rep=check_rep,
@@ -1337,7 +1385,7 @@ def _shard_map_partial_eval(trace, shard_map_p, f, tracers, mesh, in_names,
   res = subs_list2(in_fwd, out_fwd, in_consts, out_consts, non_fwd_res)
   res_names = [known_in_names[f1] if f1 is not None else
                known_out_names_[f2] if f2 is not None else
-               {0: (*all_names,)} for f1, f2 in zip(in_fwd, out_fwd)]
+               {0: all_names} for f1, f2 in zip(in_fwd, out_fwd)]
   unk_in_names = (*res_names,) + ({},) * len(env) + (*unk_in_names,)
   const_tracers = map(trace.new_instantiated_const, res)
   env_tracers = map(trace.full_raise, env)
@@ -1349,7 +1397,7 @@ def _shard_map_partial_eval(trace, shard_map_p, f, tracers, mesh, in_names,
   out_tracers = [pe.JaxprTracer(trace, pe.PartialVal.unknown(a), None)
                  for a in out_avals]
   effs = core.filter_named_axis_effects(jaxpr.effects, mesh.axis_names)
-  eqn = pe.new_eqn_recipe((*const_tracers, *env_tracers, *unk_arg_tracers),  # type: ignore[arg-type]
+  eqn = pe.new_eqn_recipe((*const_tracers, *env_tracers, *unk_arg_tracers),
                           out_tracers, shard_map_p, unk_params,
                           effs, source_info_util.current())
   for t in out_tracers: t.recipe = eqn
@@ -1380,7 +1428,7 @@ def _shard_map_partial_eval_post_process(
     const_tracers = map(trace.new_instantiated_const, res_)
     env_tracers = map(trace.full_raise, env)
 
-    staged_in_names = ({0: (*all_names,)},) * len(res_) + ({},) * len(env)
+    staged_in_names = ({0: all_names},) * len(res_) + ({},) * len(env)
     staged_params = dict(jaxpr=jaxpr_, mesh=mesh, in_names=staged_in_names,
                          out_names=(*out_names_unknown,), check_rep=False,
                          rewrite=rewrite, auto=auto)
@@ -1399,7 +1447,7 @@ def _shard_map_partial_eval_post_process(
   def out_names_transform(out_names):
     nonlocal out_names_unknown
     out_names_unknown, out_names_known = partition_list(out_knowns, out_names)
-    return (*out_names_known,) + ({0: (*all_names,)},) * len(res)
+    return (*out_names_known,) + ({0: all_names},) * len(res)
   out_names_unknown: list | None = None
 
   return out, (todo, out_names_transform)
@@ -1512,7 +1560,7 @@ def _partial_eval_jaxpr_custom_rule(
   params_known, params_staged, all_names = _pe_custom_params(
       unks_in, inst_in, map(op.not_, unks_out), inst_out, in_fwd, out_fwd, which,
       dict(eqn.params, jaxpr=jaxpr_known), dict(eqn.params, jaxpr=jaxpr_staged))
-  residuals = [newvar(_unshard_aval(mesh, {0: (*all_names,)}, var.aval))
+  residuals = [newvar(_unshard_aval(mesh, {0: all_names}, var.aval))
                for var, w in zip(jaxpr_staged.invars[:num_res], which) if w]
   eqn_known = pe.new_jaxpr_eqn(ins_known, [*out_binders_known, *residuals],
                                eqn.primitive, params_known, jaxpr_known.effects,
@@ -1564,7 +1612,7 @@ def _pe_custom_params(unks_in, inst_in, kept_outs_known, kept_outs_staged,
   all_names = _all_mesh_names(mesh)
   in_names_known, _ = partition_list(unks_in, params_known['in_names'])
   _, out_names_known = partition_list(kept_outs_known, params_known['out_names'])
-  out_names_known = out_names_known + [{0: (*all_names,)}] * sum(which)
+  out_names_known = out_names_known + [{0: all_names}] * sum(which)
   new_params_known = dict(params_known, in_names=tuple(in_names_known),
                           out_names=tuple(out_names_known))
 
@@ -1572,7 +1620,7 @@ def _pe_custom_params(unks_in, inst_in, kept_outs_known, kept_outs_staged,
   _, in_names_staged = partition_list(inst_in, params_staged['in_names'])
   res_names = [in_names_known[f1] if f1 is not None else
                out_names_known[f2] if f2 is not None else
-               {0: (*all_names,)} for f1, f2 in zip(in_fwd, out_fwd)]
+               {0: all_names} for f1, f2 in zip(in_fwd, out_fwd)]
   in_names_staged = res_names + in_names_staged
   _, out_names_staged = partition_list(kept_outs_staged, params_staged['out_names'])
   new_params_staged = dict(params_staged, in_names=tuple(in_names_staged),
@@ -1581,12 +1629,12 @@ def _pe_custom_params(unks_in, inst_in, kept_outs_known, kept_outs_staged,
 
 
 # TODO(mattjj): remove this mechanism when we revise mesh scopes
-def _all_mesh_names(mesh: Mesh) -> set[AxisName]:
+def _all_mesh_names(mesh: Mesh) -> tuple[AxisName, ...]:
   stack = core.thread_local_state.trace_state.trace_stack.stack
   names = {n for frame in stack
            if (ns := frame.payload.get('spmd_axis_name', ())) is not None
            for n in ns}
-  return set(mesh.axis_names) - names
+  return tuple(name for name in mesh.axis_names if name not in names)
 
 
 # DCE

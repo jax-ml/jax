@@ -298,7 +298,7 @@ class Exported:
 
   _get_vjp: Callable[[Exported], Exported] | None
 
-  def mlir_module(self) -> ir.Module:
+  def mlir_module(self) -> str:
     return xla_client._xla.mlir.deserialize_portable_artifact(self.mlir_module_serialized)
 
   def __str__(self):
@@ -421,7 +421,7 @@ def export(fun_jax: Callable,
           platforms=actual_lowering_platforms,
         ))
 
-    lowering = lowered._lowering  # type: ignore
+    lowering = lowered._lowering
     _check_lowering(lowering)
     mlir_module = lowering.stablehlo()
 
@@ -505,8 +505,9 @@ def export(fun_jax: Callable,
         mlir_module_serialized=mlir_module_serialized,
         module_kept_var_idx=module_kept_var_idx,
         uses_shape_polymorphism=shape_poly_state.uses_dim_vars,
-        mlir_module_serialization_version=version,  # type: ignore
-        _get_vjp=lambda exported: _export_native_vjp(fun_jax, exported))
+        mlir_module_serialization_version=version,
+        _get_vjp=lambda exported: _export_native_vjp(fun_jax, exported,
+                                                     lowering.compile_args["device_assignment"]))
 
   return do_export
 
@@ -570,7 +571,7 @@ def _wrap_main_func(
   context = mlir.make_ir_context()
   with context, ir.Location.unknown(context):
     # Make a copy, do not mutate because it may be cached
-    wrapped_module = ir.Module.parse(mlir.module_to_bytecode(module))
+    wrapped_module = ir.Module.parse(mlir.module_to_bytecode(module))  # type: ignore
     symbol_table = ir.SymbolTable(wrapped_module.operation)
     orig_main = symbol_table["main"]
     orig_main.attributes["sym_visibility"] = ir.StringAttr.get("private")
@@ -578,13 +579,7 @@ def _wrap_main_func(
     orig_main_name = ir.StringAttr(symbol_table.insert(orig_main)).value
 
     def is_token(typ, attrs):
-      if typ == mlir.token_type()[0]:
-        return True
-      # TODO(b/302258959): in older versions we cannot use the token type
-      try:
-        return ir.BoolAttr(ir.DictAttr(attrs)["jax.token"]).value
-      except KeyError:
-        return False
+      return (typ == mlir.token_type()[0])
 
     orig_input_types = orig_main.type.inputs
     arg_attrs = list(ir.ArrayAttr(orig_main.arg_attrs))
@@ -843,9 +838,17 @@ def _check_module(mod: ir.Module, *,
     except KeyError:
       pass
     else:
-      if not re.match(check_sharding_pattern, ir.StringAttr(sharding).value):
-        nonlocal module_uses_non_replicated_sharding
+      nonlocal module_uses_non_replicated_sharding
+      try:
+        sharding_value = ir.StringAttr(sharding).value
+      except UnicodeDecodeError:
+        # The mhlo.sharding attribute may be in pretty-printed format, or
+        # as an encoding of an HloSharding protobuf in some rare situations.
+        # We handle the latter by conservatively assuming it is non-replicated.
         module_uses_non_replicated_sharding = True
+      else:
+        if not re.match(check_sharding_pattern, sharding_value):
+          module_uses_non_replicated_sharding = True
 
   def check_op(op: ir.Operation):
     op_name = op.operation.name
@@ -896,27 +899,18 @@ def canonical_shardings(
     device_assignment: Sequence[jax.Device],
     in_shardings: Sequence[Sharding],
     out_shardings: Sequence[Sharding]
-    ) -> tuple[(pxla.UnspecifiedValue |
-                     Sequence[sharding.XLACompatibleSharding]),
-               (pxla.UnspecifiedValue |
-                     Sequence[sharding.XLACompatibleSharding])]:
+    ) -> tuple[Sequence[sharding.XLACompatibleSharding | None],
+               Sequence[sharding.XLACompatibleSharding | None]]:
   """Prepares canonical in_ and out_shardings for a pjit invocation.
 
-  The pjit front-end is picky about what in- and out-shardings it accepts,
-  e.g., if all are unspecified then the whole sharding should be the
-  sharding_impls.UNSPECIFIED object, otherwise the unspecified shardings are
-  replaced with the replicated sharding.
+  Turns the HloSharding into XLACompatibleSharding.
 
   Returns: a pair with the canonicalized input and output shardings.
   """
-  replicated_s = sharding.GSPMDSharding.get_replicated(device_assignment)
   def canonicalize(
-    ss: Sequence[Sharding]) -> (pxla.UnspecifiedValue |
-                                     Sequence[sharding.XLACompatibleSharding]):
-    if all(s is None for s in ss):
-      return sharding_impls.UNSPECIFIED
+    ss: Sequence[Sharding]) -> Sequence[sharding.XLACompatibleSharding | None]:
     return tuple(
-        sharding.GSPMDSharding(device_assignment, s) if s is not None else replicated_s
+        sharding.GSPMDSharding(device_assignment, s) if s is not None else None
         for s in ss)
   return (canonicalize(in_shardings), canonicalize(out_shardings))
 
@@ -926,11 +920,13 @@ def _get_vjp_fun(primal_fun: Callable, *,
                  out_avals: Sequence[core.AbstractValue],
                  in_shardings: tuple[Sharding, ...],
                  out_shardings: tuple[Sharding, ...],
-                 nr_devices: int,
+                 device_assignment: Sequence[sharding_impls.Device] | None,
                  apply_jit: bool
                  ) -> tuple[Callable, Sequence[core.AbstractValue]]:
   # Since jax.vjp does not handle kwargs, it is easier to do all the work
   # here with flattened functions.
+  # apply_jit=False is only used for backwards compatibility with the graph
+  # graph serialization. When apply_jit=True, we must pass a device assignment.
   def fun_vjp_jax(*args_and_out_cts_flat_jax):
     # Takes a flat list of primals and output cotangents
     def flattened_primal_fun_jax(*args_flat):
@@ -949,10 +945,7 @@ def _get_vjp_fun(primal_fun: Callable, *,
                       map(lambda a: a.at_least_vspace(), out_avals)))
 
   if apply_jit:
-    # Prepare a device assignment. For exporting purposes, all it matters
-    # is the number of devices.
-    device_assignment = jax.devices(jax.default_backend())[:nr_devices]
-    assert len(device_assignment) == nr_devices
+    assert device_assignment is not None
     vjp_in_shardings, vjp_out_shardings = canonical_shardings(
       device_assignment,
       tuple(itertools.chain(in_shardings, out_shardings)),
@@ -963,7 +956,9 @@ def _get_vjp_fun(primal_fun: Callable, *,
   else:
     return fun_vjp_jax, vjp_in_avals
 
-def _export_native_vjp(primal_fun, primal: Exported) -> Exported:
+def _export_native_vjp(primal_fun,
+                       primal: Exported,
+                       device_assignment: Sequence[sharding_impls.Device]) -> Exported:
   # Export the VJP of `primal_fun_jax`. See documentation for Exported.vjp
   fun_vjp_jax, vjp_in_avals = _get_vjp_fun(primal_fun,
                                            in_tree=primal.in_tree,
@@ -971,7 +966,7 @@ def _export_native_vjp(primal_fun, primal: Exported) -> Exported:
                                            in_shardings=primal.in_shardings,
                                            out_avals=primal.out_avals,
                                            out_shardings=primal.out_shardings,
-                                           nr_devices=primal.nr_devices,
+                                           device_assignment=device_assignment,
                                            apply_jit=True)
   return export(fun_vjp_jax,
                 lowering_platforms=primal.lowering_platforms,
@@ -1118,6 +1113,8 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     num_devices = axis_context.num_devices
   elif isinstance(axis_context, sharding_impls.SPMDAxisContext):
     num_devices = axis_context.mesh.size
+  elif isinstance(axis_context, sharding_impls.ReplicaAxisContext):
+    num_devices = axis_context.axis_env.nreps
   else:
     raise NotImplementedError(type(axis_context))
   if num_devices != exported.nr_devices:
@@ -1141,7 +1138,6 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   args = tuple(
     wrap_with_sharding(ctx, x, x_aval, x_sharding)
     for x, x_aval, x_sharding in zip(args, ctx.avals_in, exported.in_shardings))
-
   symtab = ir.SymbolTable(submodule.operation)
   # The called function may have been exported with polymorphic shapes and called
   # now with more refined shapes. We insert hlo.ConvertOp to ensure the module
@@ -1160,7 +1156,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
                                submodule,
                                dst_symtab=ctx.module_context.symbol_table)
 
-  submodule_args = []
+  submodule_args: list[ir.Value] = []
   # All the platforms for the current lowering must be among the platforms
   # for which the callee was lowered.
   lowering_platforms = ctx.module_context.platforms
@@ -1258,7 +1254,7 @@ def wrap_with_deprecation_warning(f):
          "`from jax.experimental.export import export` you should use "
          "`from jax.experimental import export`.")
   def wrapped_f(*args, **kwargs):
-    warnings.warn(msg, DeprecationWarning)
+    warnings.warn(msg, DeprecationWarning, stacklevel=2)
     return f(*args, **kwargs)
   return wrapped_f
 

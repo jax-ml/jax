@@ -848,6 +848,23 @@ class JaxExportTest(jtu.JaxTestCase):
     a = exp2.in_avals[0].shape[0]
     self.assertEqual(exp2.out_avals[0].shape, output_shape(a))
 
+  def test_poly_call_pmap(self):
+    if len(jax.devices()) < 2:
+      self.skipTest("Need at least 2 devices")
+    def f(x):  # x: f32[a, 4]
+      return x + jnp.arange(x.shape[0], dtype=x.dtype).reshape((x.shape[0], 1))
+
+    a, = export.symbolic_shape("a")
+    exp = export.export(f)(
+        jax.ShapeDtypeStruct((a, 4), np.float32))
+    f_exp = export.call_exported(exp)
+    x_jit = np.arange(12, dtype=np.float32).reshape((3, 4))
+    res_jit = jax.jit(f_exp)(x_jit)
+    self.assertAllClose(res_jit, f(x_jit))
+    x_pmap = np.arange(24, dtype=np.float32).reshape((2, 3, 4))
+    res_pmap = jax.pmap(f_exp)(x_pmap)
+    self.assertAllClose(res_pmap, jnp.stack([f(x) for x in x_pmap]))
+
   def test_with_sharding(self):
     nr_devices = 2
     if len(jax.devices()) < nr_devices:
@@ -949,6 +966,25 @@ class JaxExportTest(jtu.JaxTestCase):
         "non-replicated sharding annotations"):
       export.call_exported(exp)(b)
 
+  def test_call_with_different_no_of_devices_pmap(self):
+    if len(jax.devices()) < 2:
+      self.skipTest("Need at least 2 devices")
+
+    @jax.jit
+    def f_jax(x):
+      return jnp.sum(x ** 2, axis=0)
+
+    a = jnp.arange(100, dtype=jnp.float32).reshape((1, 100))
+    res_native = f_jax(a)
+    exp = get_exported(f_jax)(a)
+    self.assertEqual(exp.nr_devices, 1)
+
+    b = jnp.arange(jax.device_count() * 100, dtype=jnp.float32).reshape(
+        (-1, 1, 100)
+    )
+    res_exported = jax.pmap(export.call_exported(exp))(b)
+    self.assertAllClose(res_native, res_exported[0])
+
   def test_call_with_different_no_of_devices_error_has_sharding_constraint(self):
     if jax.device_count() < 2:
       self.skipTest("Need at least 2 devices")
@@ -1036,24 +1072,26 @@ class JaxExportTest(jtu.JaxTestCase):
   @jtu.parameterized_filterable(
     kwargs=[
       dict(in_shardings=in_shardings, out_shardings=out_shardings,
-           with_mesh=with_mesh)
+           with_mesh_context=with_mesh_context)
       for in_shardings in ("missing", None, "P")
       for out_shardings in ("missing", None, "P")
-      for with_mesh in (True, False)
+      for with_mesh_context in (True, False)
   ])
   def test_grad_with_sharding(self, in_shardings="P", out_shardings=None,
-                              with_mesh=False):
+                              with_mesh_context=False):
     if len(jax.devices()) < 2:
       self.skipTest("Test requires at least 2 devices")
     x_shape = (10, 20)
     x = np.arange(np.prod(x_shape), dtype=np.float32).reshape(x_shape)
+    # The input has shape f32[10,20] and output f32[20,10] in order to
+    # distinguish them in the HLO.
     def f_jax(x):  # x: f32[10,20] -> f32[20,10]
       return jnp.sin(x.T)
 
     mesh = Mesh(jax.devices()[:2], "d")
     pjit_kwargs = {}
     # Use NamedShardings if we don't have a mesh_context
-    if with_mesh:
+    if with_mesh_context:
       sharding_None_d = P(None, "d")
       sharding_d_None = P("d", None)
     else:
@@ -1069,7 +1107,7 @@ class JaxExportTest(jtu.JaxTestCase):
     f_jax_pjit = pjit.pjit(f_jax, **pjit_kwargs)
 
     with contextlib.ExitStack() as stack:
-      if with_mesh:
+      if with_mesh_context:
         stack.enter_context(mesh)
       # Serialize higher-order gradiends
       exp = get_exported(f_jax_pjit, vjp_order=2)(x)
@@ -1079,50 +1117,62 @@ class JaxExportTest(jtu.JaxTestCase):
 
     vjp_module_str = str(exp_vjp.mlir_module())
 
+    # The MHLO attributes of the args and the result of the main function
+    # Arg0 are the primal inputs, arg1 are the output cotangent, res is the input cotangent
+    arg0_attrs, arg1_attrs, res_attrs = re.search(
+        r"func.func public @main\(%arg0: tensor<10x20xf32> (.*)"
+        r", %arg1: tensor<20x10xf32> (.*)"
+        r"\) -> \(tensor<10x20xf32> (.*)",  # the result
+        vjp_module_str).groups()
+
     if in_shardings == "P":
+      self.assertRegex(arg0_attrs, re.escape("{devices=[1,2]<=[2]}"))
+      self.assertRegex(res_attrs, re.escape("{devices=[1,2]<=[2]}"))
       primal_in_sharding = "{devices=[1,2]<=[2]}"
     else:
       primal_in_sharding = "{replicated}"
+      if with_mesh_context:
+        self.assertRegex(arg0_attrs, re.escape("replicated"))
+        self.assertRegex(res_attrs, re.escape("replicated"))
+      else:
+        # If there is no mesh context, we have used NamedSharding(None)
+        # and then the sharding is unspecified!
+        self.assertNotIn("mhlo.sharding", arg0_attrs)
+        self.assertNotIn("mhlo.sharding", res_attrs)
+
     if out_shardings == "P":
+      self.assertRegex(arg1_attrs, re.escape("{devices=[2,1]<=[2]}"))
       primal_out_sharding = "{devices=[2,1]<=[2]}"
     else:
       primal_out_sharding = "{replicated}"
+      if with_mesh_context:
+        self.assertRegex(arg1_attrs, re.escape("replicated"))
+      else:
+        self.assertNotIn("mhlo.sharding", arg1_attrs)
 
-    # TODO(b/326476605): Change the condition below if required.
-    if in_shardings == "P":
-      main = re.compile(
-        r"func.func public @main\(%arg0: tensor<10x20xf32>.*"
-        "mhlo.sharding = \"" + re.escape(primal_in_sharding) + "\""
-        r".*%arg1: tensor<20x10xf32>.*"
-        "mhlo.sharding = \"" + re.escape(primal_out_sharding) + "\""
-        # result
-        r".*->.*\(tensor<10x20xf32>.*"
-        "mhlo.sharding = \"" + re.escape(primal_in_sharding) + "\"")
-      self.assertRegex(vjp_module_str, main)
-
-    # Custom calls for the primal input shape all match primal_in_sharding
-    primal_in_calls = re.findall(
+    # Sharding custom calls for the primal input shape all match primal_in_sharding
+    primal_in_sharding_calls = re.findall(
       r"custom_call @Sharding.*mhlo.sharding = \"(.+)\".*:.*tensor<10x20xf32>",
       vjp_module_str)
     self.assertTrue(
-      all(s == primal_in_sharding for s in primal_in_calls),
-      primal_in_calls
+      all(s == primal_in_sharding for s in primal_in_sharding_calls),
+      primal_in_sharding_calls
     )
 
     # Custom calls for the primal output shape all match primal_out_sharding
-    primal_out_calls = re.findall(
+    primal_out_sharding_calls = re.findall(
       r"custom_call @Sharding.*mhlo.sharding = \"(.+)\".*:.*tensor<20x10xf32>",
       vjp_module_str)
     self.assertTrue(
-      all(s == primal_out_sharding for s in primal_out_calls),
-      primal_in_calls
+      all(s == primal_out_sharding for s in primal_out_sharding_calls),
+      primal_out_sharding_calls
     )
 
     # Call the exported gradient functions. In order to set the device context
     # we replicate the inputs. If we don't use a mesh context and there are
     # no shardings on inputs or outputs, then we have serialized for one
     # device.
-    if in_shardings != "P" and out_shardings != "P" and not with_mesh:
+    if in_shardings != "P" and out_shardings != "P" and not with_mesh_context:
       self.assertEqual(exp_vjp.nr_devices, 1)
       self.assertEqual(exp_vjp2.nr_devices, 1)
       call_mesh = Mesh(jax.devices()[:1], "e")
@@ -1145,6 +1195,31 @@ class JaxExportTest(jtu.JaxTestCase):
     _, f_jax_vjp2 = jax.vjp(f_jax_vjp, x.T)
     xbar2, = f_jax_vjp2((x,))
     self.assertAllClose(xbar2, g2[1])
+
+  def test_grad_sharding_different_mesh(self):
+    # Export and serialize with two similar meshes, the only difference being
+    # the order of the devices. grad and serialization should not fail.
+    # https://github.com/google/jax/issues/21314
+    def f(x):
+      return jnp.sum(x * 2.)
+
+    mesh = Mesh(jax.local_devices(), "i")
+    mesh_rev = Mesh(list(reversed(jax.local_devices())), "i")
+    shardings = NamedSharding(mesh, jax.sharding.PartitionSpec(("i",)))
+    shardings_rev = NamedSharding(mesh_rev, jax.sharding.PartitionSpec(("i",)))
+    input_no_shards = jnp.ones(shape=(jax.local_device_count(),))
+    input = jnp.ones(shape=(jax.local_device_count(),), device=shardings)
+    input_rev = jax.device_put(input_no_shards, device=shardings_rev)
+
+    exp = export.export(pjit.pjit(f, in_shardings=shardings))(input)
+    exp_rev = export.export(pjit.pjit(f, in_shardings=shardings_rev))(input_no_shards)
+
+    _ = export.serialize(exp, vjp_order=1)
+    _ = export.serialize(exp_rev, vjp_order=1)
+
+    g = jax.grad(export.call(exp_rev))(input_rev)
+    g_rev = jax.grad(export.call(exp))(input)
+    self.assertAllClose(g, g_rev)
 
   def test_multi_platform(self):
     x = np.arange(8, dtype=np.float32)

@@ -31,6 +31,7 @@ from jax._src.pallas.mosaic.pipeline import make_pipeline_allocations
 from jax._src.pallas.mosaic.primitives import async_copy
 from jax._src.pallas.mosaic.primitives import async_remote_copy
 from jax._src.pallas.mosaic.primitives import bitcast
+from jax._src.pallas.mosaic.primitives import delay
 from jax._src.pallas.mosaic.primitives import device_id
 from jax._src.pallas.mosaic.primitives import DeviceIdType
 from jax._src.pallas.mosaic.primitives import get_barrier_semaphore
@@ -42,6 +43,8 @@ from jax._src.pallas.mosaic.primitives import run_scoped
 from jax._src.pallas.mosaic.primitives import semaphore_read
 from jax._src.pallas.mosaic.primitives import semaphore_signal
 from jax._src.pallas.mosaic.primitives import semaphore_wait
+from jax._src.pallas.mosaic.primitives import prng_seed
+from jax._src.pallas.mosaic.primitives import prng_random_bits
 
 ANY = TPUMemorySpace.ANY
 CMEM = TPUMemorySpace.CMEM

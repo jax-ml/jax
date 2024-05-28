@@ -560,7 +560,7 @@ def _call_tf_lowering(
   else:
     result_shapes = result_shape.tuple_shapes()  # type: ignore
 
-  result_avals = tuple(map(canonical_res_aval, result_shapes))  # type: ignore
+  result_avals = tuple(map(canonical_res_aval, result_shapes))
 
   submodule = mlir.xla_computation_to_mlir_module(xla_comp)
   symtab = ir.SymbolTable(submodule.operation)

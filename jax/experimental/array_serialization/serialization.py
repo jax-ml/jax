@@ -75,7 +75,7 @@ async def create_async_array_from_callback(
 ):
   device_to_index_map = inp_sharding.devices_indices_map(global_shape)
   addressable_da = inp_sharding._addressable_device_assignment
-  future_arrays = [data_callback(device_to_index_map[d], d)  # type: ignore
+  future_arrays = [data_callback(device_to_index_map[d], d)
                    for d in addressable_da]
   dbs = await asyncio.gather(*future_arrays)
   return array.make_array_from_single_device_arrays(
@@ -193,6 +193,21 @@ async def async_serialize(
     primary_host: Optional[int] = 0,
     replica_id: int = 0,
 ):
+  """Serialize an array using TensorStore.
+
+  Args:
+    arr_inp: The array to serialize.
+    tensorstore_spec: The tensorstore spec to use.
+    commit_future: A list of futures that will be appended to. The futures can
+      be awaited asynchronously. If None, the futures will be awaited
+      synchronously by this method.
+    context: ts.Context instance.
+    primary_host: Primary host, which indicates the host that will be treated as
+      the "leader". If None, all hosts are treated as the primary. DO NOT USE
+      unless you are sure you know what you are doing.
+    replica_id: Allows overriding the shard replica id that will be saved.
+      DO NOT USE unless you are sure you know what you are doing.
+  """
   if (isinstance(arr_inp, array.ArrayImpl) and jax.process_count() > 1 and
       arr_inp.is_fully_addressable):
     raise ValueError(
@@ -202,7 +217,9 @@ async def async_serialize(
         f'the path "{tensorstore_spec["kvstore"]["path"]}".')
 
   if primary_host is None and is_remote_storage(tensorstore_spec):
-    raise ValueError(
+    # Not strictly an error because users may manually split directories into
+    # per-process subdirectories.
+    logging.warning(
         'When primary_host is set to None and remote storage is used,'
         ' serialization is not allowed, as this may lead to a race condition'
         ' between processes.'
@@ -232,11 +249,12 @@ async def async_serialize(
     else:
       await open_future
 
-  # `ts.open` runs twice for process 0 because for the first time, we just get
-  # the future to be awaited upon in the background thread. The second one runs
-  # with `assume_metadata=True` which does no I/O operation and returns the
-  # tensorstore object.
-  # For every process other than `0`, we open with `assume_metadata=True`.
+  # `ts.open` runs twice for process `primary_host` because for the first time,
+  # we just get the future to be awaited upon in the background thread. The
+  # second one runs with `assume_metadata=True` which does no I/O operation and
+  # returns the tensorstore object.
+  # For every process other than `primary_host`, we open with
+  # `assume_metadata=True`.
   t = await ts.open(
       ts.Spec(tensorstore_spec),
       open=True,
@@ -300,7 +318,7 @@ def estimate_read_memory_footprint(t: ts.TensorStore,
 
 
 async def async_deserialize(
-    in_sharding: sharding_impls.XLACompatibleSharding | Layout,
+    user_in_sharding: sharding_impls.XLACompatibleSharding | Layout,
     tensorstore_spec: ts.Spec | dict[str, Any],
     global_shape: Sequence[int] | None = None,
     dtype=None,
@@ -308,14 +326,14 @@ async def async_deserialize(
     context=TS_CONTEXT,
     assume_metadata: bool = False,
 ):
-  in_sharding = (in_sharding.sharding if isinstance(in_sharding, Layout) else  # type: ignore
-                 in_sharding)
+  in_sharding = (user_in_sharding.sharding
+                 if isinstance(user_in_sharding, Layout) else user_in_sharding)
   if not isinstance(in_sharding, sharding_impls.XLACompatibleSharding):
     raise ValueError(
         'sharding passed to deserialization should be specified, concrete and'
         f' an instance of `jax.XLACompatibleSharding`. Got {in_sharding}')
-  dll = (in_sharding.device_local_layout if isinstance(in_sharding, Layout)
-         else None)
+  dll = (user_in_sharding.device_local_layout
+         if isinstance(user_in_sharding, Layout) else None)
   t = await ts.open(
       tensorstore_spec,
       open=True,
@@ -342,6 +360,12 @@ async def async_deserialize(
       # Cast while reloading on process to avoid 2 copies on device if the
       # casting is done on device.
       out = out.astype(dtype)
+    # Convert to jnp array so that layouts are initialized properly for
+    # sub-byte dtypes.
+    # TODO(yashkatariya): This is a band-aid fix. Figure out a better way to
+    # make this work.
+    if out.dtype == jnp.int4:
+      out = jnp.asarray(out)  # type: ignore
     result = jax.device_put(
         out, Layout(dll, jax.sharding.SingleDeviceSharding(device)))
     if byte_limiter is not None:

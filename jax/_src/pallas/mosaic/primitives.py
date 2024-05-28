@@ -579,3 +579,47 @@ def get_barrier_semaphore():
   semaphore is provided by XLA.
   """
   return get_barrier_semaphore_p.bind()
+
+delay_p = jax_core.Primitive("delay")
+delay_p.multiple_results = True
+
+
+@delay_p.def_abstract_eval
+def _delay_abstract_eval(nanos):
+  del nanos
+  return []
+
+
+def delay(nanos):
+  """Delays vector execution for the given number of nanosconds."""
+  delay_p.bind(nanos)
+
+
+# RNG Ops
+prng_seed_p = jax_core.Primitive("prng_seed")
+prng_seed_p.multiple_results = True
+
+@prng_seed_p.def_abstract_eval
+def _(*_):
+  return []
+
+
+def prng_seed(*seeds: tuple[int | jax.Array, ...]) -> None:
+  """Sets the seed for PRNG.
+
+  Args:
+    seeds: One or more integer seeds for setting the PRNG seed. If
+      more than one seed is passed in, the seed material will be
+      mixed before setting the internal PRNG state.
+  """
+  prng_seed_p.bind(*seeds)
+
+prng_random_bits_p = jax_core.Primitive(
+    'prng_random_bits')
+
+@prng_random_bits_p.def_abstract_eval
+def _(*, shape):
+  return jax_core.ShapedArray(shape, jnp.dtype("int32"))
+
+def prng_random_bits(shape):
+  return prng_random_bits_p.bind(shape=shape)

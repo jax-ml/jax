@@ -519,7 +519,7 @@ def convert_element_type(operand: ArrayLike, new_dtype: DTypeLike) -> Array:
 def _convert_element_type(operand: ArrayLike, new_dtype: DTypeLike | None = None,
                           weak_type: bool = False):
   if hasattr(operand, '__jax_array__'):
-    operand = operand.__jax_array__()  # type: ignore
+    operand = operand.__jax_array__()
 
   if (dtypes.issubdtype(new_dtype, dtypes.extended) or
       dtypes.issubdtype(getattr(operand, 'dtype', None), dtypes.extended)):
@@ -1331,7 +1331,7 @@ def _delta(dtype: DTypeLike, shape: Shape, axes: Sequence[int]) -> Array:
   """This utility function exists for creating Kronecker delta arrays."""
   axes = map(int, axes)
   dtype = dtypes.canonicalize_dtype(dtype)
-  base_shape = tuple(np.take(shape, axes))  # type: ignore[arg-type]
+  base_shape = tuple(np.take(shape, axes))
   iotas = [broadcasted_iota(np.uint32, base_shape, i)
            for i in range(len(base_shape))]
   eyes = [eq(i1, i2) for i1, i2 in zip(iotas[:-1], iotas[1:])]
@@ -1456,7 +1456,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
       and getattr(x, '_committed', True)
       and not weak_type
       and fill_shape == np.shape(x)  # type: ignore[arg-type]
-  )  # type: ignore
+  )
   if use_x_sharding:
     # TODO(yashkatariya): Use shard_alike in tracing_mode once it is supported.
     sharding = x.sharding  # type: ignore
@@ -1594,7 +1594,7 @@ def zeros_like_array(x: ArrayLike) -> Array:
 def _add_arrays(x, y):
   if (isinstance(a := core.get_aval(x), ShapedArray) and
       dtypes.issubdtype(a.dtype, dtypes.extended)):
-    return dtype._rules.add(dtype, x, y)  # type: ignore
+    return dtype._rules.add(dtype, x, y)  # pytype: disable=attribute-error
   return add(x, y)
 
 for t in itertools.chain(
@@ -1774,7 +1774,7 @@ def broadcast_hlo(
   return out
 
 def _nary_lower_hlo(op: Callable, ctx,
-                    *args: ir.Value | Sequence[ir.Value],
+                    *args: ir.Value,
                     explicit_type=False, **params) -> Sequence[ir.Value]:
   """Lowers an elementwise operator to its MLIR equivalent.
 
@@ -2458,9 +2458,9 @@ def _convert_element_type_shape_rule(operand, *, new_dtype, weak_type):
 def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type):
   if (operand.dtype != new_dtype and
       ((dtypes.issubdtype(operand.dtype, dtypes.extended) and
-        not operand.dtype._rules.convert_from(operand.dtype, new_dtype)) or  # type: ignore
+        not operand.dtype._rules.convert_from(operand.dtype, new_dtype)) or
        (dtypes.issubdtype(new_dtype, dtypes.extended) and
-        not new_dtype._rules.convert_to(operand.dtype, new_dtype)))):  # type: ignore
+        not new_dtype._rules.convert_to(operand.dtype, new_dtype)))):
     raise ValueError(
         f"Cannot convert_element_type from {dtype_to_string(operand.dtype)} "
         f"to {dtype_to_string(new_dtype)}")
@@ -2763,7 +2763,7 @@ def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
   else:
     ans_batch, _, ans_y = ranges_like(x_batch, x_kept, y_kept)
   dims = ((ans_y, y_kept), (ans_batch, y_batch))
-  x_contract_sorted_by_y = list(np.take(x_contract, np.argsort(y_contract)))  # type: ignore[arg-type]
+  x_contract_sorted_by_y = list(np.take(x_contract, np.argsort(y_contract)))
   out_axes = np.argsort(list(x_batch) + x_kept + x_contract_sorted_by_y)
   x_bar = transpose(dot_general(g, y, dims, precision=precision,
                                 preferred_element_type=preferred_element_type),
@@ -2912,6 +2912,10 @@ def precision_attr(precision: Precision) -> ir.ArrayAttr:
 def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                        precision, preferred_element_type: np.dtype | None,
                        platform: str = "default"):
+  def _is_fp8_mixed_precision_matmul(_lhs_dtypes, _rhs_dtypes):
+    fp8_dtypes = (dtypes.float8_e4m3fn, dtypes.float8_e5m2,
+                  dtypes.float8_e5m2fnuz, dtypes.float8_e4m3fnuz)
+    return _lhs_dtypes in fp8_dtypes and _rhs_dtypes in fp8_dtypes
   del preferred_element_type  # Implied by the output aval
   lhs_aval, rhs_aval = ctx.avals_in
   lhs_dtype, rhs_dtype = lhs_aval.dtype, rhs_aval.dtype
@@ -2934,11 +2938,13 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                                core.ShapedArray(rhs_aval.shape, aval_out.dtype))
         lhs_dtype = rhs_dtype = aval_out.dtype
     else:  # cpu and gpu
-      lhs = mlir.convert_hlo(ctx, lhs, lhs_aval,
-                             core.ShapedArray(lhs_aval.shape, aval_out.dtype))
-      rhs = mlir.convert_hlo(ctx, rhs, rhs_aval,
-                             core.ShapedArray(rhs_aval.shape, aval_out.dtype))
-      lhs_dtype = rhs_dtype = aval_out.dtype
+      # Do not convert mixed fp8 types to output type.
+      if not _is_fp8_mixed_precision_matmul(lhs_dtype, rhs_dtype):
+        lhs = mlir.convert_hlo(ctx, lhs, lhs_aval,
+                              core.ShapedArray(lhs_aval.shape, aval_out.dtype))
+        rhs = mlir.convert_hlo(ctx, rhs, rhs_aval,
+                              core.ShapedArray(rhs_aval.shape, aval_out.dtype))
+        lhs_dtype = rhs_dtype = aval_out.dtype
 
   # TODO(b/195364460): Work around slow XLA/CPU implementation of float16 matmul
   if platform == "cpu":
@@ -3680,7 +3686,7 @@ def _transpose_lower(ctx, x, *, permutation):
 transpose_p = standard_primitive(_transpose_shape_rule, _input_dtype,
                                  'transpose')
 ad.deflinear2(transpose_p,
-              lambda t, _, permutation: [transpose(t, np.argsort(permutation))])  # type: ignore[arg-type]
+              lambda t, _, permutation: [transpose(t, np.argsort(permutation))])
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule
 mlir.register_lowering(transpose_p, _transpose_lower)
 pe.def_trivial_padding(transpose_p)
@@ -4644,7 +4650,7 @@ def _rng_bit_generator_weak_type_rule(key, *, shape, dtype, algorithm):
   return (key.weak_type, False)
 
 RandomAlgorithm = xops.RandomAlgorithm
-RandomAlgorithm.__str__ = lambda algorithm: algorithm.name  # type: ignore[assignment]
+RandomAlgorithm.__str__ = lambda algorithm: algorithm.name  # type: ignore[method-assign]
 
 def _rng_algorithm(algorithm: RandomAlgorithm):
   if algorithm == RandomAlgorithm.RNG_THREE_FRY:

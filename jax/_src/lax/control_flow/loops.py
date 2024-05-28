@@ -248,7 +248,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     ys = []
     maybe_reversed = reversed if reverse else lambda x: x
     for i in maybe_reversed(range(length)):
-      xs_slice = [_index_array(i, core.get_aval(x), x) for x in xs_flat]
+      xs_slice = [slicing.index_in_dim(x, i, keepdims=False) for x in xs_flat]
       carry, y = f(carry, tree_unflatten(xs_tree, xs_slice))
       ys.append(y)
     stack = lambda *ys: jax.numpy.stack(ys)
@@ -294,6 +294,8 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
 
   if isinstance(unroll, bool):
     unroll = max(length, 1) if unroll else 1
+  if unroll < 1:
+    raise ValueError("`unroll` must be a `bool` or a positive `int`.")
   if attrs_tracked:
     in_state = _get_states(attrs_tracked)
     in_carry, in_ext = split_list(in_flat, [num_carry])
@@ -311,12 +313,12 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   return tree_unflatten(out_tree, out)
 
 def _set_states(attrs_tracked, vals):
-  from jax.experimental.attrs import jax_setattr  # type: ignore
+  from jax.experimental.attrs import jax_setattr
   for ((obj, attr), val) in zip(attrs_tracked, vals):
     jax_setattr(obj, attr, val)
 
 def _get_states(attrs_tracked):
-  from jax.experimental.attrs import jax_getattr  # type: ignore
+  from jax.experimental.attrs import jax_getattr
   return [jax_getattr(obj, attr) for (obj, attr) in attrs_tracked]
 
 def _check_scan_carry_type(body_fun, in_carry, out_carry_tree, out_avals):
@@ -383,164 +385,79 @@ def _aval_mismatch_extra(a1: core.AbstractValue, a2: core.AbstractValue) -> str:
             'the shapes do not match' * shape_mismatch)
   return ''
 
-
-def _scan_impl_unrolled(*args, reverse, length, num_consts, num_carry, linear,
-                        f_impl, x_avals, y_avals):
-  consts, init, xs = split_list(args, [num_consts, num_carry])
-
-  carry = init
-  ys = []
-
-  for i in range(length):
-    i_ = length - i - 1 if reverse else i
-    x = _map(partial(_index_array, i_), x_avals, xs)
-    out = f_impl(*consts, *carry, *x)
-    carry, y = split_list(out, [num_carry])
-    ys.append(y)
-
-  ys = list(reversed(ys)) if reverse else ys
-  ys = list(zip(*ys))
-  ys = _map(_stack, y_avals, ys)
-  return (*carry, *ys)
-
-def _scan_impl_loop(*args, reverse, length, num_consts, num_carry, linear,
-                    f_impl, x_avals, y_avals):
-  consts, init, xs = split_list(args, [num_consts, num_carry])
-
-  def cond_fun(vals):
-    i, *_ = vals
-    return i < length
-
-  def body_fun(vals):
-    [i], carry, ys = split_list(vals, [1, num_carry])
-    i_ = length - i - 1 if reverse else i
-    # TODO(jakevdp)[key-reuse]: this key reuse logic is not quite right,
-    # because the scan body may consume any keys within it.
-    xs_unconsumed =  _map(jax.random.clone, xs)
-    x = _map(partial(_dynamic_index_array, i_), x_avals, xs_unconsumed)
-    out_flat = f_impl(*consts, *carry, *x)
-    carry_out, y_updates = split_list(out_flat, [num_carry])
-    ys_out = _map(partial(_update_array, i_), y_avals, ys, y_updates)
-    return [i + 1] + carry_out + ys_out
-
-  # TODO(jakevdp)[key-reuse]: mark xs consumed here if f_impl consumes them.
-
-  ys_init = _map(partial(_empty_array, length), y_avals)
-  if length == 0:
-    return init + ys_init
-  else:
-    init_val = [lax._const(length, 0)] + init + ys_init
-    _, *outs = while_loop(cond_fun, body_fun, init_val)
-    return outs
-
-def _scan_impl_block_unrolled(*args, reverse, length, num_consts, num_carry,
-                              linear, block_length, f_impl, x_avals, y_avals):
-  consts, init, xs = split_list(args, [num_consts, num_carry])
-
-  num_blocks, rem = divmod(length, block_length)
-  assert rem == 0
-
-  partition = partial(_partition_leading, num_blocks, block_length)
-  xs_block = _map(partition, x_avals, xs)
-
-  prepend_aval = partial(_prepend_dim_to_aval, block_length)
-  x_block_avals = _map(prepend_aval, x_avals)
-  y_block_avals = _map(prepend_aval, y_avals)
-
-  f_impl_block = partial(
-      _scan_impl_unrolled, reverse=reverse, length=block_length,
-      num_consts=num_consts, num_carry=num_carry, linear=linear,
-      f_impl=f_impl, x_avals=x_avals, y_avals=y_avals)
-
-  outs = _scan_impl_loop(
-      *consts, *init, *xs_block, reverse=reverse, length=num_blocks,
-      num_consts=num_consts, num_carry=num_carry, linear=linear,
-      f_impl=f_impl_block, x_avals=x_block_avals, y_avals=y_block_avals)
-
-  carry, ys_blocks = split_list(outs, [num_carry])
-  combine = partial(_combine_leading, num_blocks, block_length)
-  ys = _map(combine, y_avals, ys_blocks)
-  return (*carry, *ys)
-
+# TODO(mattjj): re-land #19819 version? simpler, but caused ~1 perf regression.
 def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
                unroll, _split_transpose):
   del _split_transpose
-  _, _, x_avals = split_list(jaxpr.in_avals, [num_consts, num_carry])
+  consts, carry, xs_ = split_list(args, [num_consts, num_carry])
   _, y_avals = split_list(jaxpr.out_avals, [num_carry])
-  f_impl = core.jaxpr_as_fun(jaxpr)
-
+  num_trips, remainder = divmod(length, unroll)
   if unroll == 1:
-    return _scan_impl_loop(
-        *args, reverse=reverse, length=length, num_consts=num_consts,
-        num_carry=num_carry, linear=linear, f_impl=f_impl, x_avals=x_avals,
-        y_avals=y_avals)
+    xss = xs_
+    yss = _map(partial(_empty_array, (length,)), y_avals)
+  else:
+    if remainder:
+      if not reverse:
+        xs_, xs_rem = unzip2(_map(partial(_split_leading, num_trips*unroll), xs_))
+      else:
+        xs_rem, xs_ = unzip2(_map(partial(_split_leading, remainder), xs_))
+    xss = [lax.reshape(x, (num_trips, unroll, *x.shape[1:])) for x in xs_]
+    yss = _map(partial(_empty_array, (num_trips, unroll)), y_avals)
 
-  consts, init, xs = split_list(args, [num_consts, num_carry])
-  num_blocks, rem = divmod(length, unroll)
-  length_div = num_blocks * unroll
+  def cond_fun(while_carry):
+    i, _, _ = while_carry
+    return i < num_trips
+  def body_fun(while_carry):
+    i_, carry, yss = while_carry
+    i = num_trips - i_ - 1 if reverse else i_
+    xs = [slicing.dynamic_index_in_dim(xs, i, keepdims=False) for xs in xss]
+    carry, ys = inner(unroll, carry, xs)
+    yss = [slicing.dynamic_update_index_in_dim(ys, upd, i, 0)
+           for ys, upd in zip(yss, ys)]
+    return i_ + 1, carry, yss
+  def inner(n, carry, xs):
+    ys = []
+    if unroll == 1:
+      carry_y = eval_jaxpr_p.bind(*consts, *carry, *xs, jaxpr=jaxpr)
+      return split_list(carry_y, [num_carry])
+    for i_ in range(n):
+      i = n - i_ - 1 if reverse else i_
+      x = [slicing.index_in_dim(x, i, keepdims=False) for x in xs]
+      carry_y = eval_jaxpr_p.bind(*consts, *carry, *x, jaxpr=jaxpr)
+      carry, y = split_list(carry_y, [num_carry])
+      ys.append(y)
+    ys = list(reversed(ys)) if reverse else ys
+    return carry, _map(jax.numpy.stack, zip(*ys))
 
-  if rem > 0:
-    if reverse:
-      split = partial(_split_leading_dim, rem)
-      xs_rem, xs = unzip2(_map(split, x_avals, xs))
-    else:
-      split = partial(_split_leading_dim, length_div)
-      xs, xs_rem = unzip2(_map(split, x_avals, xs))
+  if num_trips:
+    i = lax._const(num_trips, 0)
+    _, carry, yss = jax.lax.while_loop(cond_fun, body_fun, (i, carry, yss))
+  if unroll != 1:
+    ys = [lax.reshape(ys, (num_trips * unroll, *ys.shape[2:])) for ys in yss]
+  else:
+    ys = yss
+  if remainder:
+    carry, ys_rem = inner(remainder, carry, xs_rem)
+    ys = _map(_concat, ys, ys_rem) if not reverse else _map(_concat, ys_rem, ys)
+  return [*carry, *ys]
 
-  outs = _scan_impl_block_unrolled(
-      *consts, *init, *xs, reverse=reverse, length=length_div,
-      num_consts=num_consts, num_carry=num_carry, linear=linear,
-      block_length=unroll, f_impl=f_impl, x_avals=x_avals, y_avals=y_avals)
+def _split_leading(sz, x):
+  return (slicing.slice_in_dim(x, 0, sz),
+          slicing.slice_in_dim(x, sz, x.shape[0]))
 
-  carry, ys = split_list(outs, [num_carry])
+def _concat(a, b): return lax.concatenate([a, b], 0)
 
-  if rem > 0:
-    outs = _scan_impl_unrolled(
-        *consts, *carry, *xs_rem, reverse=reverse, length=rem,
-        num_consts=num_consts, num_carry=num_carry, linear=linear,
-        f_impl=f_impl, x_avals=x_avals, y_avals=y_avals)
-    carry, ys_rem = split_list(outs, [num_carry])
-    if reverse:
-      ys = _map(_concatenate, y_avals, ys_rem, ys)
-    else:
-      ys = _map(_concatenate, y_avals, ys, ys_rem)
+def _empty_array(prefix, aval):
+  return lax.broadcast(lax.empty(aval.dtype), (*prefix, *aval.shape))
 
-  return (*carry, *ys)
-
-def _stack(aval, vals):
-  vals = [lax.expand_dims(x, (0,)) for x in vals]
-  return lax.concatenate(vals, 0)
-
-def _concatenate(aval, x1, x2):
-  return lax.concatenate([x1, x2], 0)
-
-def _split_leading_dim(i, aval, x):
-  assert x.ndim >= 1
-  return (slicing.slice_in_dim(x, 0, i),
-          slicing.slice_in_dim(x, i, x.shape[0]))
-
-def _dynamic_index_array(i, aval, x):
-  return slicing.dynamic_index_in_dim(x, i, keepdims=False)
-
-def _index_array(i, aval, x):
-  return slicing.index_in_dim(x, i, keepdims=False)
-
-def _empty_array(sz, aval):
-  return lax.broadcast(lax.empty(aval.dtype), (sz, *aval.shape))
-
-def _update_array(i, aval, xs, x):
-  return slicing.dynamic_update_index_in_dim(xs, x, i, 0)
-
-def _partition_leading(sz0, sz1, aval, x):
-  assert x.ndim >= 1
-  assert x.shape[0] == sz0 * sz1
-  return lax.reshape(x, (sz0, sz1, *x.shape[1:]))
-
-def _combine_leading(sz0, sz1, aval, x):
-  assert x.ndim >= 2
-  assert x.shape[0] == sz0
-  assert x.shape[1] == sz1
-  return lax.collapse(x, 0, 2)
+eval_jaxpr_p = core.Primitive('eval_jaxpr')
+eval_jaxpr_p.multiple_results = True
+def _stage_jaxpr(trace, *tracers, jaxpr):
+  params = dict(call_jaxpr=jaxpr)
+  return trace.default_process_primitive(core.closed_call_p, tracers, params)
+pe.custom_staging_rules[eval_jaxpr_p] = _stage_jaxpr
+@eval_jaxpr_p.def_effectful_abstract_eval  # abstract eval only used for jax2tf
+def _stage_jaxpr_abstract_eval(*_, jaxpr): return jaxpr.out_avals, jaxpr.effects
 
 def _prepend_dim_to_aval(sz, aval):
   return core.unmapped_aval(sz, core.no_axis_name, 0, aval)
@@ -1626,7 +1543,7 @@ def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts:
   # carry to unknown. We need one last iteration to prepare the jaxpr.
   carry_uk = carry_init_uk
   for _ in range(1 + len(carry_uk)):
-    body_jaxpr_known, _, carry_out_uk, body_res_avals = pe.partial_eval_jaxpr_nounits(  # type: ignore
+    body_jaxpr_known, _, carry_out_uk, body_res_avals = pe.partial_eval_jaxpr_nounits(
         body_jaxpr, body_consts_uk + carry_uk, instantiate=carry_uk)
     if carry_out_uk == carry_uk:
       break
@@ -1635,7 +1552,7 @@ def _while_partial_eval(trace: pe.JaxprTrace, *tracers: pe.Tracer, cond_nconsts:
   else:
     assert False, "Fixpoint not reached"
 
-  cond_jaxpr_known, _, cond_uk, _ = pe.partial_eval_jaxpr_nounits(  # type: ignore
+  cond_jaxpr_known, _, cond_uk, _ = pe.partial_eval_jaxpr_nounits(
       cond_jaxpr, cond_consts_uk + carry_uk, instantiate=False)
 
   if cond_uk[0] or all(not uk for uk in unknowns) or all(unknowns):
@@ -2203,7 +2120,7 @@ def _rng_bit_generator_batching_rule(batched_args, batch_dims, *, shape, dtype, 
   new_keys = jax.lax.dynamic_update_index_in_dim(keys, new_key, 0, axis=0)
   return (new_keys, bits), (0, 0)
 
-batching.primitive_batchers[lax.rng_bit_generator_p] = _rng_bit_generator_batching_rule  # type: ignore
+batching.primitive_batchers[lax.rng_bit_generator_p] = _rng_bit_generator_batching_rule
 
 ### associative_scan
 
@@ -2447,16 +2364,11 @@ def _cumulative_reduction_primitive(name, reduce_fn, reduce_window_fn):
         mlir.cache_lowering(mlir.lower_fun(fn, multiple_results=False)),
         platform=platform)
 
-  if xla_extension_version >= 263:
+  if xla_extension_version >= 266:
     # In XLA, there's a rewriter for an O(N^2) reduce-window implementation.
-    # TODO(https://github.com/llvm/llvm-project/issues/91883): enable rewrite
-    # for CPU once the vectorizer crash is fixed..
-    for platform in ['cuda', 'rocm', 'tpu']:
-      register_lowering(
-          partial(cumred_reduce_window_impl, reduce_window_fn), platform
-      )
-
-    register_lowering(partial(associative_scan, reduce_fn))
+    register_lowering(
+        partial(cumred_reduce_window_impl, reduce_window_fn)
+    )
   else:
     # Older XLA versions only have this rewrite for TPU.
     register_lowering(

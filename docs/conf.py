@@ -212,7 +212,8 @@ nb_execution_excludepatterns = [
     # Requires accelerators
     'pallas/quickstart.*',
     'pallas/tpu/pipelining.*',
-    'sharded-computation.*'
+    'sharded-computation.*',
+    'distributed_data_loading.*'
 ]
 
 # -- Options for HTMLHelp output ---------------------------------------------

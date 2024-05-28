@@ -499,16 +499,32 @@ FailureOr<BlockArgument> appendConstant(RewriteContext &ctx,
   return argument;
 }
 
-FailureOr<VectorType> getNativeVregType(
-    Type elem_ty, const std::array<int64_t, 2> target_shape) {
-  FAILUREOR_ASSIGN_OR_RETURN(const int8_t bitwidth,
-                             getTypeBitwidth<true>(elem_ty));
+FailureOr<VectorType> getNativeVregOrVmaskTypeImpl(
+    Type elem_ty, const int8_t bitwidth,
+    const std::array<int64_t, 2> target_shape) {
   if (bitwidth == 32) {
     return VectorType::get(target_shape, elem_ty);
   }
-  // bitwidth != 32
   return VectorType::get({target_shape[0], target_shape[1], 32 / bitwidth},
                          elem_ty);
+}
+
+FailureOr<VectorType> getNativeVregOrVmaskType(
+    Type elem_ty, const int8_t layout_bitwidth,
+    const std::array<int64_t, 2> target_shape) {
+  int8_t bitwidth = elem_ty.getIntOrFloatBitWidth();
+  if (bitwidth == 1) {
+    bitwidth = layout_bitwidth;
+  } else {
+    CHECK_EQ(bitwidth, layout_bitwidth);
+  }
+  return getNativeVregOrVmaskTypeImpl(elem_ty, bitwidth, target_shape);
+}
+
+FailureOr<VectorType> getNativeVregType(
+    Type elem_ty, const std::array<int64_t, 2> target_shape) {
+  return getNativeVregOrVmaskTypeImpl(elem_ty, elem_ty.getIntOrFloatBitWidth(),
+                                      target_shape);
 }
 
 // Returns empty vector on null attribute
@@ -532,8 +548,21 @@ bool layoutIsValidForValue(const Layout &l, const Value v,
                            const std::array<int64_t, 2> target_shape) {
   // l must be non-null iff v is of vector type
   if (const auto vty = dyn_cast<VectorType>(v.getType())) {
-    return l.has_value() && l->isValid(target_shape) &&
-           l->layout_rank() <= vty.getRank();
+    if (!l.has_value()) {
+      return false;
+    }
+
+    // Vector type should have the same bitwidth as the layout, except for the
+    // i1 special case, used for vmasks (see comment for VectorLayout class).
+    if (!vty.getElementType().isIntOrFloat()) {
+      return false;
+    }
+    const int8_t bitwidth = vty.getElementTypeBitWidth();
+    if (bitwidth != l->bitwidth() && bitwidth != 1) {
+      return false;
+    }
+
+    return l->isValid(target_shape) && l->layout_rank() <= vty.getRank();
   }
   return !l.has_value();
 }
@@ -610,7 +639,8 @@ LogicalResult elementwise_op_rule(RewriteContext &ctx, Operation &op,
 
   FAILUREOR_ASSIGN_OR_RETURN(
       const VectorType out_vreg_ty,
-      getNativeVregType(out_ty.getElementType(), ctx.target_shape));
+      getNativeVregOrVmaskType(out_ty.getElementType(), layout_out.bitwidth(),
+                               ctx.target_shape));
 
   NamedAttrList attributes(op.getAttrDictionary());
   attributes.erase("in_layout");
@@ -2230,7 +2260,24 @@ LogicalResult tpu_iota_rule(RewriteContext &ctx, Operation &op,
     op.erase();
     return success();
   }
-  return op.emitOpError("Not implemented: Unsupported dimension");
+  // We take the iota over an untiled dimension.
+  CHECK_LT(*dimension, vty.getRank());
+  SmallVector<Value> tiles;
+  tiles.reserve(vty.getDimSize(*dimension));
+  for (int64_t i = 0; i < vty.getDimSize(*dimension); ++i) {
+    tiles.push_back(builder.create<arith::ConstantOp>(
+        native_vreg_ty,
+        DenseElementsAttr::get(native_vreg_ty,
+                               IntegerAttr::get(vty.getElementType(), i))));
+  }
+  xla::Array<Value> out_tiles(tile_array_shape);
+  out_tiles.Each([&](absl::Span<const int64_t> idxs, Value *v) {
+    *v = tiles[idxs[*dimension]];
+  });
+  op.replaceAllUsesWith(
+      assemble(builder, vty, layout_out, out_tiles, ctx.target_shape));
+  op.erase();
+  return success();
 }
 
 LogicalResult tpu_gather_rule(RewriteContext &ctx, Operation &op,
@@ -2617,8 +2664,11 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
   ImplicitLocOpBuilder builder(op.getLoc(), &op);
   vector::BroadcastOp broadcast_op = cast<vector::BroadcastOp>(op);
   const VectorType dst_ty = broadcast_op.getResult().getType();
+  const ArrayRef<int64_t> dst_shape = dst_ty.getShape();
   const SmallVector<int64_t> dst_tiles_shape =
-      layout_out.tileArrayShape(dst_ty.getShape(), ctx.target_shape);
+      layout_out.tileArrayShape(dst_shape, ctx.target_shape);
+  const SmallVector<int64_t> dst_tiles_implicit_shape =
+      layout_out.tileArrayImplicitShape(dst_shape, ctx.target_shape);
   if (auto src = dyn_cast<TypedValue<VectorType>>(broadcast_op.getSource())) {
     VectorType src_ty = src.getType();
     TPU_ASSERT_OP(maybe_layout_in.has_value());
@@ -2627,8 +2677,6 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
       return op.emitOpError(
           "Not implemented: Changing implicit dims mid-broadcast");
     }
-    const VectorLayout::ImplicitDim implicit_dim = layout_in.implicit_dim();
-    const int layout_rank = layout_in.layout_rank();
     const LayoutOffsets offsets_in = layout_in.offsets();
     const LayoutOffsets offsets_out = layout_out.offsets();
     if (layout_in.tiling() != layout_out.tiling()) {
@@ -2637,78 +2685,76 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
     auto tiling = layout_in.tiling();
 
     const int64_t expand_rank = dst_ty.getRank() - src_ty.getRank();
-    SmallVector<int64_t> src_shape_padded(expand_rank, -1);
     const ArrayRef<int64_t> src_shape = src_ty.getShape();
-    src_shape_padded.append(src_shape.begin(), src_shape.end());
-    const SmallVector<bool> dim_eq = llvm::map_to_vector(
-        llvm::zip(src_shape_padded, dst_ty.getShape()), [](auto tup) {
-          auto [i, o] = tup;
-          return i == o;
-        });
 
-    bool no_op = false;
-    switch (implicit_dim) {
-      case VectorLayout::ImplicitDim::kNone: {
-        const ArrayRef<bool> tiled_dim_eq = ArrayRef<bool>(dim_eq).take_back(2);
-        for (auto [in_off, out_off, eq] :
-             llvm::zip(offsets_in, offsets_out, tiled_dim_eq)) {
-          if (eq && in_off != out_off) {
-            return op.emitOpError(
-                "Not implemented: Changing offsets mid-broadcast");
-          }
-        }
-        no_op = layout_in.hasNaturalTopology(ctx.target_shape) &&
-                layout_out.hasNaturalTopology(ctx.target_shape) &&
-                llvm::all_of(llvm::zip_equal(offsets_in, tiled_dim_eq),
-                             [](auto tup) {
-                               auto [o, eq] = tup;
-                               return eq || !o.has_value();
-                             });
-      } break;
-      case VectorLayout::ImplicitDim::kMinor:
-      case VectorLayout::ImplicitDim::kSecondMinor:
-        if (dim_eq.back()) {
-          if (offsets_in != offsets_out) {
-            return op.emitOpError(
-                "Not implemented: Changing offsets mid-broadcast");
-          }
-          no_op = true;
-        } else if (implicit_dim == VectorLayout::ImplicitDim::kSecondMinor &&
-                   !offsets_in[1].has_value()) {
-          no_op = true;
-        } else if (implicit_dim == VectorLayout::ImplicitDim::kMinor &&
-                   !offsets_in[0].has_value()) {
-          no_op = true;
-        }
-        break;
+    SmallVector<int64_t> src_implicit_shape_padded;
+    // `is_logical_broadcast` stores whether each dimension of the implicit
+    // shape of the result is a broadcast. E.g. if the implicit shape goes from
+    // (2, 1, 3) to (4, 2, 5, 3) it's (true, false, true, false).
+    SmallVector<bool> is_logical_broadcast;
+    src_implicit_shape_padded.reserve(dst_shape.size() +
+                                      layout_in.num_implicit_dims());
+    is_logical_broadcast.reserve(dst_shape.size() +
+                                 layout_in.num_implicit_dims());
+    src_implicit_shape_padded.append(expand_rank, 1);
+    src_implicit_shape_padded.append(src_shape.begin(), src_shape.end());
+    for (auto [i, o] : llvm::zip(src_implicit_shape_padded, dst_shape)) {
+      TPU_ASSERT_OP(i == o || i == 1);  // Verifier should guarantee this.
+      is_logical_broadcast.push_back(i != o);
     }
-    TPU_ASSERT_OP(layout_rank);
-    if (src_ty.getShape().take_back(layout_rank) ==
-        dst_ty.getShape().take_back(layout_rank)) {
-      if (offsets_in != offsets_out) {
-        op.emitOpError("Not implemented: Changing offsets mid-broadcast");
+    layout_in.insertImplicit<int64_t>(src_implicit_shape_padded, 1);
+    layout_in.insertImplicit<bool>(is_logical_broadcast, false);
+
+    // Verify that the offsets are valid.
+    for (auto [is_logical_broadcast_on_dim, in_off, out_off] :
+         llvm::zip_equal(ArrayRef(is_logical_broadcast).take_back(2),
+                         offsets_in, offsets_out)) {
+      if (is_logical_broadcast_on_dim) {
+        if (out_off.has_value()) {
+          // There's no reason to ever assign a non-replicated offset to a
+          // broadcasted dimension in the output.
+          return op.emitOpError(
+              // TODO(tlongeri): This should never be implemented but the fuzzed
+              //                 tests expect a NotImplementedError, which
+              //                 is raised with a "Not implemented" (see
+              //                 NotImplementedDetector in tpu_ext.cc). Fix.
+              "Not implemented: Broadcast output expected to have replicated "
+              "offsets.");
+        }
+      } else {  // !is_logical_broadcast_on_dim
+        if (in_off != out_off) {
+          return op.emitOpError(
+              "Not implemented: Changing offsets mid-broadcast");
+        }
       }
-      no_op = true;
     }
 
+    // `needs_physical_broadcast` specifies whether we need to broadcast vregs
+    // vregs in the sublane and lane dimensions. We only need to do this if the
+    // corresponding dimension of the implicit shape is logically broadcast and
+    // if the input vregs are not already replicated along this dimension.
+    const std::array<bool, 2> needs_physical_broadcast{
+        *(is_logical_broadcast.end() - 2) && offsets_in[0].has_value(),
+        *(is_logical_broadcast.end() - 1) && offsets_in[1].has_value()};
     FAILUREOR_ASSIGN_OR_RETURN(
         xla::Array<Value> src_tiles,
-        disassemble(builder, layout_in, src, ctx.target_shape));
-    xla::Array<Value> dst_tiles(dst_tiles_shape);
-    if (no_op) {
+        disassemble(builder, layout_in, src, ctx.target_shape,
+                    /*use_implicit_shape=*/true));
+    xla::Array<Value> dst_tiles(dst_tiles_implicit_shape);
+    if (needs_physical_broadcast == std::array{false, false}) {  // No-op
       SmallVector<int64_t> reshape_dims(expand_rank, 1);
       const absl::Span<const int64_t> src_tiles_dims = src_tiles.dimensions();
       reshape_dims.append(src_tiles_dims.begin(), src_tiles_dims.end());
       src_tiles.Reshape(reshape_dims);
       dst_tiles.Each([&](const absl::Span<const int64_t> dst_idx, Value *tile) {
-        const SmallVector<int64_t> src_idx =
-            llvm::map_to_vector(llvm::zip_equal(dst_idx, dim_eq), [](auto tup) {
-              auto [i, eq] = tup;
-              return eq ? i : 0;
+        const SmallVector<int64_t> src_idx = llvm::map_to_vector(
+            llvm::zip_equal(dst_idx, is_logical_broadcast), [](auto tup) {
+              auto [i, is_logical_broadcast_on_dim] = tup;
+              return is_logical_broadcast_on_dim ? 0 : i;
             });
         *tile = src_tiles(src_idx);
       });
-    } else if (implicit_dim == VectorLayout::ImplicitDim::kNone) {
+    } else {
       if (layout_in.bitwidth() != 32) {
         return op.emitOpError(
             "Not implemented: Only 32-bit broadcast supported");
@@ -2717,8 +2763,8 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
         return op.emitOpError("Not implemented: unsupported tiling");
       }
       int64_t num_tiles = layout_in.tilesPerVreg(ctx.target_shape);
-      TPU_ASSERT_OP(!*(dim_eq.end() - 1) || !*(dim_eq.end() - 2));
-      if (*(dim_eq.end() - 1)) {  // Sublane broadcast
+      if (needs_physical_broadcast ==
+          std::array{true, false}) {  // Sublane broadcast
         if (num_tiles != 1) {
           return op.emitOpError(
               "Not implemented: Only native tiling supported");
@@ -2730,12 +2776,12 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
             SmallVector<int32_t>(ctx.target_shape[0], offset));
         src_tiles.Each([&](const absl::Span<const int64_t> src_idx,
                            Value *const src_tile) {
-          SmallVector<int64_t> dst_starts(dst_tiles_shape.size());
-          SmallVector<int64_t> dst_limits(dst_tiles_shape.size());
+          SmallVector<int64_t> dst_starts(dst_tiles_implicit_shape.size());
+          SmallVector<int64_t> dst_limits(dst_tiles_implicit_shape.size());
           for (int64_t i = 0; i < dst_tiles.num_dimensions(); ++i) {
-            if (i < expand_rank || !dim_eq[i]) {
+            if (i < expand_rank || is_logical_broadcast[i]) {
               dst_starts[i] = 0;
-              dst_limits[i] = dst_tiles_shape[i];
+              dst_limits[i] = dst_tiles_implicit_shape[i];
             } else {
               dst_starts[i] = src_idx[i - expand_rank];
               dst_limits[i] = dst_starts[i] + 1;
@@ -2746,7 +2792,8 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
                                  src_tile->getType(), *src_tile, indices, 0),
                              dst_starts, dst_limits);
         });
-      } else if (*(dim_eq.end() - 2)) {  // Lane broadcast
+      } else if (needs_physical_broadcast ==
+                 std::array{false, true}) {  // Lane broadcast
         TPU_ASSERT_EQ_OP(*(src_tiles.dimensions().end() - 1), 1);
         TPU_ASSERT_OP(offsets_in[1].has_value());
         const int64_t offset = *offsets_in[1];
@@ -2769,12 +2816,12 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
         }
         src_tiles.Each([&](const absl::Span<const int64_t> src_idx,
                            Value *const src_tile) {
-          SmallVector<int64_t> dst_starts(dst_tiles_shape.size());
-          SmallVector<int64_t> dst_limits(dst_tiles_shape.size());
+          SmallVector<int64_t> dst_starts(dst_tiles_implicit_shape.size());
+          SmallVector<int64_t> dst_limits(dst_tiles_implicit_shape.size());
           for (int64_t i = 0; i < dst_tiles.num_dimensions(); ++i) {
-            if (i < expand_rank || !dim_eq[i]) {
+            if (i < expand_rank || is_logical_broadcast[i]) {
               dst_starts[i] = 0;
-              dst_limits[i] = dst_tiles_shape[i];
+              dst_limits[i] = dst_tiles_implicit_shape[i];
             } else {
               dst_starts[i] = src_idx[i - expand_rank];
               dst_limits[i] = dst_starts[i] + 1;
@@ -2791,14 +2838,15 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
           updateSlice<Value>(dst_tiles, res_vreg, dst_starts, dst_limits);
         });
       } else {
-        return op.emitOpError("Not implemented");
+        TPU_ASSERT_OP((needs_physical_broadcast == std::array{true, true}));
+        return op.emitOpError(
+            "Not implemented: Broadcast in both sublanes and lanes");
       }
-    } else {
-      return op.emitOpError("Not implemented");
     }
-    broadcast_op.replaceAllUsesWith(
-        assemble(builder, dst_ty, layout_out, dst_tiles, ctx.target_shape)
-            .getOperation());
+    broadcast_op.replaceAllUsesWith(assemble(builder, dst_ty, layout_out,
+                                             dst_tiles, ctx.target_shape,
+                                             /*use_implicit_shape=*/true)
+                                        .getOperation());
     broadcast_op.erase();
     return success();
   } else if (layout_out.bitwidth() == 32 &&
@@ -2930,18 +2978,17 @@ FailureOr<xla::Array<Value>> vector_extract_slice_impl(
   TPU_ASSERT_EQ_OP(num_indices, sizes.size());
 
   SmallVector<int64_t> full_sizes;
-  const int64_t num_implicit_dims = 2 - layout_in.layout_rank();
-  full_sizes.reserve(src_vector_rank + num_implicit_dims);
+  full_sizes.reserve(src_vector_rank + layout_in.num_implicit_dims());
   full_sizes.append(sizes.begin(), sizes.end());
   full_sizes.append(src_vector_shape.begin() + num_indices,
                     src_vector_shape.end());
-  layout_in.insertImplicit(full_sizes, 1); /*  */
+  layout_in.insertImplicit<int64_t>(full_sizes, 1);
 
   SmallVector<int64_t> full_offsets;
-  full_offsets.reserve(src_vector_rank + num_implicit_dims);
+  full_offsets.reserve(src_vector_rank + layout_in.num_implicit_dims());
   full_offsets.append(offsets.begin(), offsets.end());
   full_offsets.append(src_vector_rank - num_indices, 0);
-  layout_in.insertImplicit(full_offsets, 0);
+  layout_in.insertImplicit<int64_t>(full_offsets, 0);
 
   // We currently only support no-op cases - that is, those where we effectively
   // just extract a slice of vregs without doing any operations (e.g. shifts) on
@@ -3407,6 +3454,10 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
   using Tiling = std::array<int64_t, 2>;
   const VectorLayout &layout_in = *layouts_in.front();
   const VectorLayout &layout_out = *layouts_out.front();
+  TPU_ASSERT_EQ_OP(
+      layout_in.bitwidth(),
+      layout_out.bitwidth());  // This should be guaranteed through MLIR
+                               // verifier plus our layoutIsValidForValue check
   ImplicitLocOpBuilder builder(op.getLoc(), &op);
   auto shape_cast_op = cast<vector::ShapeCastOp>(op);
   const VectorType src_ty = shape_cast_op.getSourceVectorType();
@@ -3415,6 +3466,10 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
   const ArrayRef<int64_t> dst_shape = dst_ty.getShape();
   const int layout_rank = layout_in.layout_rank();
   bool no_op = false;
+  const std::array<int64_t, 2> src_vreg_slice =
+      layout_in.vregSlice(ctx.target_shape);
+  const std::array<int64_t, 2> dst_vreg_slice =
+      layout_out.vregSlice(ctx.target_shape);
   // TODO(tlongeri): It looks like this could probably be simplified by using
   // VectorLayout::implicitShape()
   if (layout_in == layout_out && src_ty.getShape().take_back(layout_rank) ==
@@ -3461,33 +3516,23 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
              layout_out.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
              layout_in.offsets() == layout_out.offsets() &&
              layout_in.offsets() == LayoutOffsets{0, 0} &&
-             layout_in.tiling() == Tiling{1, ctx.target_shape[1]} &&
-             layout_out.hasNaturalTopology(ctx.target_shape) &&
-             *(dst_shape.end() - 1) != *(src_shape.end() - 1) &&
-             *(dst_shape.end() - 1) == ctx.target_shape[1] &&
-             *(dst_shape.end() - 2) % ctx.target_shape[0] == 0 &&
-             *(src_shape.end() - 1) %
-                     (ctx.target_shape[0] * ctx.target_shape[1]) ==
-                 0 &&
-             (*(src_shape.end() - 2) == 1 ||
-              *(src_shape.end() - 2) % ctx.target_shape[0] == 0)) {
-    // Shapecast (..., m * 128) -> (..., 128).
+             layout_in.tiling()[0] == 1 &&
+             layout_out.hasNativeTiling(ctx.target_shape) &&
+             *(dst_shape.end() - 1) == dst_vreg_slice[1] &&
+             *(dst_shape.end() - 2) % dst_vreg_slice[0] == 0 &&
+             *(src_shape.end() - 1) % src_vreg_slice[1] == 0) {
+    // Shapecast (..., m * 128 * packing) -> (..., 128).
     no_op = true;
   } else if (layout_in.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
              layout_out.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
              layout_in.offsets() == LayoutOffsets{0, 0} &&
              layout_out.offsets() == LayoutOffsets{0, 0} &&
-             layout_in.hasNaturalTopology(ctx.target_shape) &&
-             layout_out.tiling() == Tiling{1, ctx.target_shape[1]} &&
-             *(src_shape.end() - 1) != *(dst_shape.end() - 1) &&
-             *(src_shape.end() - 1) == ctx.target_shape[1] &&
-             *(src_shape.end() - 2) % ctx.target_shape[0] == 0 &&
-             *(dst_shape.end() - 1) %
-                     (ctx.target_shape[0] * ctx.target_shape[1]) ==
-                 0 &&
-             (*(dst_shape.end() - 2) == 1 ||
-              *(dst_shape.end() - 2) % ctx.target_shape[0] == 0)) {
-    // Shapecast (..., 128) -> (..., m * 128).
+             layout_in.hasNativeTiling(ctx.target_shape) &&
+             layout_out.tiling()[0] == 1 &&
+             *(src_shape.end() - 1) == src_vreg_slice[1] &&
+             *(src_shape.end() - 2) % src_vreg_slice[0] == 0 &&
+             *(dst_shape.end() - 1) % dst_vreg_slice[1] == 0) {
+    // Shapecast (..., 128) -> (..., m * 128 * packing).
     no_op = true;
   }
   FAILUREOR_ASSIGN_OR_RETURN(
@@ -3907,6 +3952,43 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
   transpose_op->erase();
   return success();
 }
+
+LogicalResult prng_random_bits_rule(RewriteContext &ctx, Operation &op,
+                                    const ArrayRef<Layout> layouts_in,
+                                    const ArrayRef<Layout> layouts_out) {
+  TPU_ASSERT_EQ_OP(layouts_in.size(), 0);
+  TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
+  TPU_ASSERT_OP(layouts_out.front().has_value());
+
+  const VectorLayout &layout_out = *layouts_out.front();
+  tpu::PRNGRandomBitsOp rng_op = cast<tpu::PRNGRandomBitsOp>(op);
+  if (layout_out != VectorLayout(32, {0, 0}, ctx.target_shape,
+                                   VectorLayout::ImplicitDim::kNone)) {
+    return op.emitOpError(
+        "Unsupported output layout for ") << rng_op->getName();
+  }
+  OpBuilder builder(op.getContext());
+  builder.setInsertionPointAfter(&op);
+
+  VectorType vty = rng_op.getResult().getType();
+  TPU_ASSERT_OP(vty.getElementType().isInteger());
+  // Only 32-bit output supported currently.
+  TPU_ASSERT_OP(vty.getElementType().getIntOrFloatBitWidth() == 32);
+  xla::Array<Value> tiles(
+      layout_out.tileArrayShape(vty.getShape(), ctx.target_shape));
+  VectorType tile_ty = VectorType::get(ctx.target_shape, vty.getElementType());
+  tiles.Each([&](absl::Span<const int64_t> tile_idxs, Value * v) {
+    *v = builder.create<tpu::PRNGRandomBitsOp>(op.getLoc(), tile_ty);
+  });
+  const RollVectorsOp roll_vectors_op =
+      assemble(builder, vty, layout_out, tiles, ctx.target_shape);
+  rng_op->replaceUsesWithIf(roll_vectors_op, [&](OpOperand &operand) {
+    return operand.getOwner() != roll_vectors_op;
+  });
+  rng_op->erase();
+  return success();
+}
+
 const llvm::StringMap<rule_type> &rules() {
   static auto rules = new llvm::StringMap<rule_type>{
       {arith::ConstantOp::getOperationName(), arith_constant_rule},
@@ -3934,6 +4016,7 @@ const llvm::StringMap<rule_type> &rules() {
       {tpu::BitcastOp::getOperationName(), tpu_bitcast_rule},
       {tpu::TraceOp::getOperationName(), tpu_trace_rule},
       {tpu::AssumeLayoutOp::getOperationName(), tpu_assume_layout_rule},
+      {tpu::PRNGRandomBitsOp::getOperationName(), prng_random_bits_rule},
       {vector::BroadcastOp::getOperationName(), vector_broadcast_rule},
       {vector::ContractionOp::getOperationName(), vector_contract_rule},
       {vector::ExtractOp::getOperationName(), vector_extract_rule},
@@ -3952,9 +4035,16 @@ const llvm::StringMap<rule_type> &rules() {
 RollVectorsOp assemble(OpBuilder &builder, VectorType vty,
                        const VectorLayout &layout,
                        const xla::Array<Value> &vals,
-                       const std::array<int64_t, 2> target_shape) {
-  CHECK(vals.dimensions() ==
-        layout.tileArrayShape(vty.getShape(), target_shape));
+                       const std::array<int64_t, 2> target_shape,
+                       const bool use_implicit_shape) {
+  // TODO(tlongeri): Maybe just add a parameter to tileArrayShape instead of
+  // having `tileArrayShape` and `tileArrayImplicitShape`.
+  SmallVector<int64_t> vreg_array_shape =
+      layout.tileArrayImplicitShape(vty.getShape(), target_shape);
+  if (!use_implicit_shape) {
+    layout.eraseImplicit(vreg_array_shape);
+  }
+  CHECK(vals.dimensions() == vreg_array_shape);
   CHECK_GT(vals.num_elements(), 0);
   Location loc = vals.begin()->getLoc();
   auto op =
@@ -3975,8 +4065,8 @@ RollVectorsOp assemble(OpBuilder &builder, VectorType vty,
 //   An ndarray of MLIR values representing the tiling of val given by layout.
 FailureOr<xla::Array<Value>> disassemble(
     OpBuilder &builder, const VectorLayout &layout,
-    const TypedValue<VectorType> val,
-    const std::array<int64_t, 2> target_shape) {
+    const TypedValue<VectorType> val, const std::array<int64_t, 2> target_shape,
+    const bool use_implicit_shape) {  // TODO(tlongeri): Remove default
   const auto vty = val.getType();
   const auto op_result = dyn_cast<OpResult>(val);
   if (op_result == nullptr) {
@@ -3990,8 +4080,13 @@ FailureOr<xla::Array<Value>> disassemble(
   TPU_ASSERT_LOC(val.getLoc(), def_layout.has_value());
   TPU_ASSERT_LOC(val.getLoc(),
                  def_layout->generalizes(layout, vty.getShape(), target_shape));
+  // TODO(tlongeri): Maybe just add a parameter to tileArrayShape instead of
+  // having `tileArrayShape` and `tileArrayImplicitShape`.
   SmallVector<int64_t> layout_shape =
-      layout.tileArrayShape(vty.getShape(), target_shape);
+      layout.tileArrayImplicitShape(vty.getShape(), target_shape);
+  if (!use_implicit_shape) {
+    layout.eraseImplicit(layout_shape);
+  }
   if (auto roll_vectors_op = dyn_cast<RollVectorsOp>(op)) {
     return XlaArrayFromShapeAndValues<Value>(layout_shape,
                                              roll_vectors_op->getOperands());
@@ -4514,6 +4609,30 @@ FailureOr<TypedValue<VectorType>> relayout(
           v.getLoc(), src_tiles.begin()->getType(), parts);
     });
     src = new_src;
+    src_tiles = std::move(src_tiles_retiled);
+  } else if (  // Handle retiling from (8, 128, -2) to (8, 128) for 32-bit data.
+               // This drops the implicit second minor dimension.
+      src.implicit_dim() == VectorLayout::ImplicitDim::kSecondMinor &&
+      dst.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+      src.bitwidth() == 32 && src.offsets() == dst.offsets() &&
+      src.offsets() == LayoutOffsets{0, 0} && src.tiling() == dst.tiling() &&
+      src.tiling() == std::array<int64_t, 2>{8, 128}) {
+    xla::Array<Value> src_tiles_retiled(
+        dst.tileArrayShape(vty.getShape(), target_shape));
+    src_tiles_retiled.Each(
+        [&](const absl::Span<const int64_t> idx, Value *tile) {
+          for (int dst_sl_idx = 0; dst_sl_idx < 8; ++dst_sl_idx) {
+            SmallVector<int64_t> src_idx(idx.begin(), idx.end());
+            auto second_minor_idx = idx.size() - 2;
+            src_idx[second_minor_idx] = 8 * idx[second_minor_idx] + dst_sl_idx;
+            if (src_idx[second_minor_idx] >= src_tiles.dim(second_minor_idx)) {
+              break;
+            }
+            *tile = copy_one_sublane(builder, src_tiles(src_idx), 0, *tile,
+                                     dst_sl_idx, target_shape);
+          }
+        });
+    src = dst;
     src_tiles = std::move(src_tiles_retiled);
   }
 

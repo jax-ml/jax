@@ -164,7 +164,7 @@ register_pytree_node(
     lambda obj: ((obj.grid, obj.values, obj.fill_value),
                  (obj.method, obj.bounds_error)),
     lambda aux, children: RegularGridInterpolator(
-        *children[:2],  # type: ignore[index]
+        *children[:2],
         *aux,
-        *children[2:]),  # type: ignore[index]
+        *children[2:]),
 )

@@ -56,7 +56,7 @@ def f(x):
 result = f(2)
 ```
 
-This works by passing the runtime value represented by `y` back to the host process, where the host can print the value.
+This works by passing the runtime value of `y` as a CPU {class}`jax.Array` back to the host process, where the host can print it.
 
 (external-callbacks-flavors-of-callback)=
 ## Flavors of callback

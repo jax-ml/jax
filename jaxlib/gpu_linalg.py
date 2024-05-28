@@ -15,6 +15,7 @@
 import functools
 from functools import partial
 import importlib
+import numpy as np
 import operator
 
 import jaxlib.mlir.ir as ir
@@ -36,8 +37,9 @@ for cuda_module_name in [".cuda", "jax_cuda12_plugin"]:
 
 if _cuda_linalg:
   for _name, _value in _cuda_linalg.registrations().items():
+    api_version = 0 if _name == "cu_cholesky_update" else 1
     xla_client.register_custom_call_target(
-        _name, _value, platform="CUDA", api_version=1
+        _name, _value, platform="CUDA", api_version=api_version
     )
 
 try:
@@ -90,3 +92,33 @@ cuda_lu_pivots_to_permutation = partial(_lu_pivots_to_permutation_hlo, "cu",
                                         _cuda_linalg)
 hip_lu_pivots_to_permutation = partial(
     _lu_pivots_to_permutation_hlo, "hip", _hip_linalg)
+
+
+
+def _cholesky_update_hlo(platform, gpu_linalg, r_matrix, w_vector, dtype):
+  """Cholesky update."""
+  del platform
+  r_type = ir.RankedTensorType(r_matrix.type)
+  dims = r_type.shape
+  assert dims[0] == dims[1]
+  n = dims[0]
+
+  if not gpu_linalg:
+    raise GpuLibNotLinkedError()
+
+  np_type = np.dtype(dtype)
+  opaque = gpu_linalg.build_cholesky_update_descriptor(np_type, n)
+
+  return custom_call(
+      "cu_cholesky_update",
+      operands = [r_matrix, w_vector],
+      result_types=[
+          ir.RankedTensorType.get((n, n), r_type.element_type),
+          ir.RankedTensorType.get((n,), r_type.element_type),
+      ],
+      operand_output_aliases={0: 0, 1: 1},
+      backend_config=opaque,
+  ).results[:1]
+
+
+cuda_cholesky_update = partial(_cholesky_update_hlo, "cu", _cuda_linalg)

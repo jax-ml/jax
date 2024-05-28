@@ -35,9 +35,9 @@ from jax.experimental import export
 from jax._src import config
 from jax._src import xla_bridge
 import numpy as np
-import tensorflow as tf  # type: ignore[import]
-from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
-from tensorflow.compiler.tf2xla.python import xla as tfxla  # type: ignore[import]
+import tensorflow as tf
+from tensorflow.compiler.xla import xla_data_pb2
+from tensorflow.compiler.tf2xla.python import xla as tfxla
 
 DType = Any
 
@@ -293,7 +293,7 @@ class JaxToTfTestCase(jtu.JaxTestCase):
         logging.info(log_message(f"Using tol={max_tol} due to {max_tol_lim}"))
 
       # Convert results to np.arrays
-      result_tf = tf.nest.map_structure(lambda t: t.numpy(), result_tf)  # type: ignore
+      result_tf = tf.nest.map_structure(lambda t: t.numpy(), result_tf)
 
       custom_assert_lim = [l for l in jax2tf_limits if l.custom_assert]
       assert len(custom_assert_lim) <= 1, f"Expecting at most one applicable limitation with custom_assert, found {custom_assert_lim}"

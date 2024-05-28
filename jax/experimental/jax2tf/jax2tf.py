@@ -71,20 +71,20 @@ from jax._src.lax import windowed_reductions as lax_windowed_reductions
 from jax._src.lib import xla_client
 from jax._src.numpy.ufuncs import logaddexp
 
-import tensorflow as tf  # type: ignore[import]
+import tensorflow as tf
 
 # These don't have public equivalents.
 # pylint: disable=g-direct-tensorflow-import
-from tensorflow.compiler.tf2xla.python import xla as tfxla  # type: ignore[import]
-from tensorflow.compiler.xla import xla_data_pb2  # type: ignore[import]
-from tensorflow.core.framework import attr_value_pb2  # type: ignore[import]
+from tensorflow.compiler.tf2xla.python import xla as tfxla
+from tensorflow.compiler.xla import xla_data_pb2
+from tensorflow.core.framework import attr_value_pb2
 try:
-  from tensorflow.python.compiler.xla.experimental import xla_sharding  # type: ignore[import]
+  from tensorflow.python.compiler.xla.experimental import xla_sharding
 except ModuleNotFoundError:
   # This can be removed when TF 2.10 support is no longer needed.
-  from tensorflow.compiler.xla.experimental.xla_sharding import xla_sharding  # type: ignore[import]
-from tensorflow.python.framework import ops as tf_ops  # type: ignore[import]
-from tensorflow.python.eager import context as tf_context  # type: ignore[import]
+  from tensorflow.compiler.xla.experimental.xla_sharding import xla_sharding
+from tensorflow.python.framework import ops as tf_ops
+from tensorflow.python.eager import context as tf_context
 # pylint: enable=g-direct-tensorflow-import
 
 NameStack = source_info_util.NameStack
@@ -531,13 +531,15 @@ class NativeSerializationImpl(SerializationImpl):
 
   def get_vjp_fun(self) -> tuple[Callable,
                                  Sequence[core.AbstractValue]]:
+    # TODO(necula): use the actual device assignment from the primal function
+    device_assignment = jax.devices(jax.default_backend())[:self.exported.nr_devices]
     return _export._get_vjp_fun(self.fun_jax,
                                 in_tree=self.exported.in_tree,
                                 in_avals=self.exported.in_avals,
                                 in_shardings=self.exported.in_shardings,
                                 out_avals=self.exported.out_avals,
                                 out_shardings=self.exported.out_shardings,
-                                nr_devices=self.exported.nr_devices,
+                                device_assignment=device_assignment,
                                 apply_jit=True)
 
 class GraphSerializationImpl(SerializationImpl):
@@ -609,7 +611,7 @@ class GraphSerializationImpl(SerializationImpl):
                                 in_shardings=(None,) * len(self.args_avals_flat),
                                 out_avals=self.outs_avals,
                                 out_shardings=(None,) * len(self.outs_avals),
-                                nr_devices=1,  # Does not matter for unspecified shardings
+                                device_assignment=None,  # Not used when apply_jit = False
                                 apply_jit=False)
 
 
@@ -778,7 +780,7 @@ def _make_custom_gradient_fn_tf(fun_jax,
 
       vjp_polymorphic_shapes = tuple(
         str(a.shape)  # Note: may be _DimExpr, not just DimVar
-        for a in vjp_in_avals)  # type: ignore
+        for a in vjp_in_avals)
       in_cts_flat = convert(
         fun_vjp_jax,
         with_gradient=with_gradient,
@@ -808,7 +810,7 @@ def _interpret_fun_jax(
     extra_name_stack: str | None,
     fresh_constant_cache: bool = False,
 ) -> tuple[tuple[TfVal, ...], tuple[core.ShapedArray, ...]]:
-  with core.new_base_main(TensorFlowTrace) as main:  # type: ignore
+  with core.new_base_main(TensorFlowTrace) as main:
     subtrace_fun = _interpret_subtrace(lu.wrap_init(fun_jax), main, args_avals)
     with _extended_name_stack(extra_name_stack):
       with core.new_sublevel():
@@ -1009,7 +1011,7 @@ def _interpret_subtrace(main: core.MainTrace,
       for val, aval in zip(in_vals, in_avals))
   outs = yield in_tracers, {}  # type: Sequence[TfVal]
   out_tracers: Iterable[TensorFlowTracer] = (
-      map(trace.full_raise, outs))  # type: ignore
+      map(trace.full_raise, outs))
   out_vals_with_avals: Sequence[tuple[TfVal, core.ShapedArray]] = (
       tuple((t.val, t.aval) for t in out_tracers))
   yield out_vals_with_avals
@@ -1056,7 +1058,7 @@ def _aval_to_tf_shape(aval: core.ShapedArray) -> tuple[int | None, ...]:
   """Generate a TF shape, possibly containing None for polymorphic dimensions."""
   aval = _jax_physical_aval(aval)
   return tuple(map(lambda d: None if export.is_symbolic_dim(d) else d,
-                   aval.shape))  # type: ignore[attr-defined]
+                   aval.shape))
 
 # In the TF world, we represent float0 as zeros of this type.
 # We pick bool because this is what JAX uses when it lowers float0 to HLO.
@@ -1226,22 +1228,22 @@ class TensorFlowTracer(core.Tracer):
         else:
           assert phys_aval.dtype == _to_jax_dtype(val.dtype), f"expected {phys_aval.dtype} == {val.dtype}"
 
-        for aval_dim, val_dim in zip(phys_aval.shape, val_shape):  # type: ignore[attr-defined]
+        for aval_dim, val_dim in zip(phys_aval.shape, val_shape):
           if val_dim is None:
-            assert export.is_symbolic_dim(aval_dim), f"expected {phys_aval.shape} == {val_shape}"  # type: ignore[attr-defined]
+            assert export.is_symbolic_dim(aval_dim), f"expected {phys_aval.shape} == {val_shape}"
           elif not export.is_symbolic_dim(aval_dim):
-            assert aval_dim == val_dim, f"expected {phys_aval.shape} == {val_shape}"  # type: ignore[attr-defined]
+            assert aval_dim == val_dim, f"expected {phys_aval.shape} == {val_shape}"
           else:
             # We have a TF value with known shape, and the abstract shape is a shape variable.
             try:
               aval_int = int(_eval_shape([aval_dim]))  # type: ignore
             except (TypeError, KeyError):
               continue
-            assert aval_int == val_dim, f"expected {phys_aval.shape} == {val_shape}. Found {aval_int} != {val_dim}."  # type: ignore
+            assert aval_int == val_dim, f"expected {phys_aval.shape} == {val_shape}. Found {aval_int} != {val_dim}."
 
     self.val = _tfval_to_tensor_jax_dtype(val,
                                           phys_aval.dtype,
-                                          memoize_constants=True)[0]  # type: ignore[attr-defined]
+                                          memoize_constants=True)[0]
 
   @property
   def aval(self):
@@ -1326,7 +1328,7 @@ class TensorFlowTrace(core.Trace):
       if impl_needs_avals:
         return impl(
             *args_tf,
-            _in_avals=args_avals,  # type: ignore
+            _in_avals=args_avals,
             _out_aval=out_aval,
             **params)
       else:
@@ -1368,7 +1370,7 @@ class TensorFlowTrace(core.Trace):
       out = [
           TensorFlowTracer(self, v, a)
           for v, a in zip(val_out, out_aval)
-      ]  # type: ignore
+      ]
     else:
       out = TensorFlowTracer(self, val_out, out_aval)  # type: ignore
 
@@ -1376,13 +1378,13 @@ class TensorFlowTrace(core.Trace):
     # TODO: adapt this to match polymorphic shapes
     if config.enable_checks.value:
       if primitive.multiple_results:
-        for o, expected_aval in zip(out, out_aval):  # type: ignore
+        for o, expected_aval in zip(out, out_aval):
           assert o.aval.strip_weak_type() == expected_aval.strip_weak_type(), (
               f"{primitive}: out.aval = {o.aval}; expected {expected_aval}")
       else:
         assert out.aval == out_aval, (  # type: ignore
             f"{primitive}: out.aval = {out.aval}; expected {out_aval}"
-        )  # type: ignore
+        )
     return out  # type: ignore
 
   def process_call(self, call_primitive: core.Primitive, fun: lu.WrappedFun,
@@ -1465,10 +1467,12 @@ class TensorFlowTrace(core.Trace):
 def _unexpected_primitive(p: core.Primitive, *args, **kwargs):
   assert False, f"Encountered unexpected primitive {p}"
 
-
-# Call primitives are inlined
 for unexpected in [core.call_p, maps.xmap_p]:
   tf_impl[unexpected] = partial(_unexpected_primitive, unexpected)
+
+tf_impl[lax_control_flow.loops.eval_jaxpr_p] = \
+    lambda *args, jaxpr: _interpret_jaxpr(
+        jaxpr, *args, fresh_constant_cache=False, extra_name_stack=None)
 
 # Primitives that are not yet implemented must be explicitly declared here.
 tf_not_yet_impl = [
@@ -1528,6 +1532,7 @@ tf_not_yet_impl = [
     "assert_consumed_value",
     "consume",
     "ragged_dot",
+    "cholesky_update",
 ]
 
 tf_impl[random_internal.random_clone_p] = lambda x: x
@@ -3024,7 +3029,7 @@ def _cond(index: TfVal, *operands: TfVal, branches: Sequence[core.ClosedJaxpr],
   ]
   # Same name stack as XLA translation of cond_p
   # Note: extend_name_stack is a contextmanager, which is callable as a decorator.
-  branches_tf = list(map(source_info_util.extend_name_stack("cond"),  # type: ignore[arg-type]
+  branches_tf = list(map(source_info_util.extend_name_stack("cond"),
       branches_tf))
   if len(branches) == 2:
     # `index` comes with tf.int32 type of casted boolean parameter.
@@ -3040,7 +3045,7 @@ def _while(*args: TfVal, cond_nconsts: int, cond_jaxpr: core.ClosedJaxpr,
            body_nconsts: int, body_jaxpr: core.ClosedJaxpr) -> Sequence[TfVal]:
   cond_consts, body_consts, init_carry = util.split_list(
       args, [cond_nconsts, body_nconsts])
-  if cond_jaxpr.out_avals[0].shape:  # type: ignore[attr-defined]
+  if cond_jaxpr.out_avals[0].shape:
     # The conditional is not a scalar, this must be a batched while
     return _batched_cond_while(
         *args,
@@ -3460,7 +3465,7 @@ def _xla_compatible_sharding_to_hlo_sharding(
     aval: core.ShapedArray) -> xla_client.HloSharding | None:
   if sharding_impls.is_unspecified(s):
     return None
-  return s._to_xla_hlo_sharding(aval.ndim)  # type: ignore[union-attr]
+  return s._to_xla_hlo_sharding(aval.ndim)
 
 def _shard_value(val: TfVal,
                  sd: xla_client.HloSharding | None, *,

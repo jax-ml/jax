@@ -15,19 +15,20 @@
 """Module for lowering JAX to Mosaic-compatible MLIR dialects."""
 from __future__ import annotations
 
+from collections.abc import Sequence
 import dataclasses
 import functools
+import string
 from typing import Any, Callable
-from collections.abc import Sequence
 
 import jax
 from jax import core as jax_core
 from jax import lax
 from jax import tree_util
+from jax._src import ad_util
 from jax._src import custom_derivatives
 from jax._src import debugging
 from jax._src import linear_util as lu
-from jax._src import ad_util
 from jax._src import mesh as mesh_lib
 from jax._src import pjit
 from jax._src import source_info_util
@@ -57,6 +58,7 @@ from jax._src.util import split_list
 from jax._src.util import unzip2
 from jax.experimental.mosaic.dialects import tpu
 import jax.numpy as jnp
+from jaxlib.mlir.ir import Module
 import numpy as np
 
 # TODO(sharadmv): enable type checking
@@ -341,7 +343,7 @@ def lower_jaxpr_to_module(
     jaxpr: jax_core.Jaxpr,
     dimension_semantics: tuple[str | None, ...] | None,
     mesh: mesh_lib.Mesh | None = None
-) -> ir.Module:
+) -> tuple[Module, tuple[Any, ...]]:
   mosaic_grid_mapping = MosaicGridMapping(
       jaxpr, grid_mapping, dimension_semantics, mesh)
   mosaic_grid_mapping.maybe_compress_grid()
@@ -2199,7 +2201,7 @@ def _device_id_to_logical(
     device_ids = tree_util.tree_leaves(device_id)
     mesh_strides = ctx.lowering_context.mesh_context.mesh_strides
     def _linearize_mesh_indices(*indices):
-      return sum([a * b for a, b in zip(indices, mesh_strides)])
+      return sum(a * b for a, b in zip(indices, mesh_strides))
     lower_ctx = LoweringRuleContext(
         lowering_context=ctx.lowering_context,
         avals_in=[jax_core.ShapedArray((), jnp.int32)] * len(device_ids),
@@ -2322,3 +2324,55 @@ def _get_barrier_semaphore_rule(ctx: LoweringRuleContext):
   memref_type = aval_to_ir_type(ctx.avals_out[0])
   return tpu.GetBarrierSemaphoreOp(memref_type).result
 lowering_rules[tpu_primitives.get_barrier_semaphore_p] = _get_barrier_semaphore_rule
+
+
+def _delay_rule(ctx: LoweringRuleContext, nanos: int):
+  return tpu.DelayOp(nanos).results
+
+
+lowering_rules[tpu_primitives.delay_p] = _delay_rule
+
+
+def _debug_print_rule(
+    ctx: LoweringRuleContext, *args, fmt: str, has_placeholders: bool
+):
+  primitives.check_debug_print_format(fmt, *args)
+  if has_placeholders:
+    if not all(
+        isinstance(arg.type, ir.IntegerType) and arg.type.width == 32
+        for arg in args
+    ):
+      raise TypeError(
+          "All arguments must be 32-bit integers when using"
+          " placeholders (`{...}`). If you need to print values of other types,"
+          " remove placeholders from the format string."
+      )
+
+    # TPU expects $0, $1 etc as placeholders.
+    tpu_fmt = "".join(
+        f"{text}${idx}"
+        for idx, (text, _, _, _) in enumerate(string.Formatter().parse(fmt))
+    )
+  else:
+    tpu_fmt = fmt
+  tpu.log(args, tpu_fmt, formatted=has_placeholders)
+  return ()
+
+
+lowering_rules[primitives.debug_print_p] = _debug_print_rule
+
+
+def _prng_seed_lowering_rule(ctx: LoweringRuleContext, *seeds):
+  del ctx
+  return tpu.PRNGSeed32Op(seeds).results
+lowering_rules[tpu_primitives.prng_seed_p] = _prng_seed_lowering_rule
+
+
+def _prng_random_bits_lowering_rule(ctx: LoweringRuleContext, *, shape):
+  if len(shape) <= 1:
+    # TODO(b/342054464): Support implicit dims for PRNGRandomBitsOp.
+    raise NotImplementedError("random_bits only supports rank>=2 outputs.")
+  out_aval = ctx.avals_out[0]
+  out_type = aval_to_ir_type(out_aval)
+  return tpu.PRNGRandomBitsOp(out_type).result
+lowering_rules[tpu_primitives.prng_random_bits_p] = _prng_random_bits_lowering_rule

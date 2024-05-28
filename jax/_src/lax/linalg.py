@@ -44,6 +44,7 @@ from jax._src.lib import gpu_linalg
 from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
 from jax._src.lib import lapack
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
@@ -166,6 +167,20 @@ def eigh(
       subset_by_index=subset_by_index,
   )
   return v, w
+
+
+def cholesky_update(r_matrix: ArrayLike, w_vector: ArrayLike) -> Array:
+  """Given a Cholesky decomposition A = R.T @ R and a vector w,
+  computes the Cholesky decomposition of A + w @ w.T in O(N^2) time.
+
+  Args:
+    r_matrix: An upper-triangular matrix (R) such that A = R.T @ R.
+    w_vector: A vector (w) for rank-1 update.
+
+  Returns:
+    A new R' matrix being the Cholesky decomposition of A + w @ w.T.
+  """
+  return cholesky_update_p.bind(r_matrix, w_vector)
 
 
 def lu_pivots_to_permutation(pivots: ArrayLike, permutation_size: int) -> Array:
@@ -465,6 +480,85 @@ def _cholesky_cpu_lowering(ctx, operand):
 
 mlir.register_lowering(
     cholesky_p, _cholesky_cpu_lowering, platform='cpu')
+
+# Cholesky update
+
+def _cholesky_update_abstract_eval(r_matrix, w_vector):
+  r_dtype = dtypes.canonicalize_dtype(r_matrix.dtype)
+  w_dtype = dtypes.canonicalize_dtype(w_vector.dtype)
+  if not (r_dtype == w_dtype and r_dtype in (np.float32, np.float64)):
+    raise NotImplementedError(
+        "Rank-1 Cholesky update is only implemented for float32 and float64.")
+  if not (r_matrix.ndim == 2 and w_vector.ndim == 1
+          and r_matrix.shape[-2] == r_matrix.shape[-1]
+          and r_matrix.shape[-2] == w_vector.shape[-1]):
+    raise ValueError(
+        "Rank-1 update to Cholesky decomposition takes a square matrix "
+        "and a vector as inputs. Got shapes {}, {} instead".format(
+            r_matrix.shape, w_vector.shape))
+  return ShapedArray(r_matrix.shape, r_matrix.dtype)
+
+def _cholesky_update_cuda_lowering_rule(ctx, r_matrix, w_vector):
+  r_matrix_aval, _ = ctx.avals_in
+  try:
+    [platform] = ctx.module_context.platforms
+  except ValueError:
+    raise ValueError(
+        "Can only lower cholesky_update on a single platform."
+    ) from None
+  if platform != "cuda":
+    raise NotImplementedError(
+        "Can only lower fast cholesky_update on CUDA."
+    )
+  if jaxlib_version < (0, 4, 29):
+    raise NotImplementedError(
+        f"The jaxlib version {jaxlib_version} is too old."
+        "Please update to at least 0.4.29.")
+  return gpu_linalg.cuda_cholesky_update(
+      r_matrix, w_vector, r_matrix_aval.dtype)
+
+
+def _cholesky_update_jax_fn(R, z):
+  def _drotg(x, y):
+    """Get coefs for Givens rotation in a numerically stable way."""
+    def _drotg_nonzero(x, y):
+      abs_x = jax.numpy.abs(x)
+      abs_y = jax.numpy.abs(y)
+      denominator = jnp.where(abs_x > abs_y, abs_x, abs_y)
+      x /= denominator
+      y /= denominator
+      rh = 1 / jax.numpy.sqrt(x ** 2 + y ** 2)
+      return x * rh, -y * rh
+    one_and_zero = (
+        jnp.array(1., dtype=x.dtype),
+        jnp.array(0., dtype=x.dtype),
+    )
+    return jax.lax.cond(y == 0, lambda x, y: one_and_zero, _drotg_nonzero, x, y)
+
+  def _drot(
+      first_vector: jax.Array, second_vector: jax.Array,
+      c_coef: float, s_coef: float) -> tuple[jax.Array, jax.Array]:
+    return (
+        c_coef * first_vector - s_coef * second_vector,
+        c_coef * second_vector + s_coef * first_vector)
+  n = z.shape[0]
+  for k in range(n):
+    c, s = _drotg(R[k, k], z[k])
+    row_k, z = _drot(R[k, :], z, c, s)
+    R = R.at[k, :].set(row_k)
+  return R
+
+cholesky_update_p = Primitive('cholesky_update')
+cholesky_update_p.multiple_results = False
+cholesky_update_p.def_abstract_eval(_cholesky_update_abstract_eval)
+cholesky_update_p.def_impl(partial(dispatch.apply_primitive, cholesky_update_p))
+
+mlir.register_lowering(
+    cholesky_update_p, _cholesky_update_cuda_lowering_rule, platform='cuda')
+
+mlir.register_lowering(
+    cholesky_update_p,
+    mlir.lower_fun(_cholesky_update_jax_fn, multiple_results=False))
 
 # Asymmetric eigendecomposition
 
@@ -1500,7 +1594,7 @@ def _geqrf_cpu_gpu_lowering(geqrf_impl, batched_geqrf_impl, ctx, a, *,
     a_out, taus = batched_geqrf_impl(a_aval.dtype, a)
   else:
     if platform in ["cuda", "rocm"]:
-      a_out, taus, info_geqrf = geqrf_impl(a_aval.dtype, a)  # type: ignore
+      a_out, taus, info_geqrf = geqrf_impl(a_aval.dtype, a)
     else:
       a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, a_aval.shape)
       a_out, taus, info_geqrf = geqrf_impl(a_aval.dtype, a,
@@ -1614,7 +1708,7 @@ def _householder_product_cpu_gpu_lowering(orgqr_impl, ctx, a, taus, *,
       raise NotImplementedError(
           "Shape polymorphism for native serialization for householder_product "
           f"on GPU is not implemented; b/261671778; {a_aval.shape}")
-    a, info_orgqr = orgqr_impl(a_aval.dtype, a, taus)  # type: ignore
+    a, info_orgqr = orgqr_impl(a_aval.dtype, a, taus)
   else:
     a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, a_aval.shape)
     tau_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, taus_aval.shape)

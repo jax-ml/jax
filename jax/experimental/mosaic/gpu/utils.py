@@ -14,11 +14,11 @@
 # ==============================================================================
 """Utilities for code generator."""
 
+from collections.abc import Iterator
 import contextlib
 import dataclasses
 from typing import Any, Literal, Sequence
 
-from absl import flags
 import jax
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
@@ -36,10 +36,6 @@ import numpy as np
 
 WARPGROUP_SIZE: int = 128
 DYNAMIC = -9223372036854775808
-
-FLAGS = flags.FLAGS
-
-flags.DEFINE_bool("mosaic_gpu_debug", False, "Perform debug printing")
 
 # pylint: disable=line-too-long, wildcard-import, missing-function-docstring, bad-continuation, g-bad-todo, protected-access, g-explicit-length-test, missing-class-docstring, g-doc-return-or-yield, g-inconsistent-quotes
 
@@ -112,8 +108,6 @@ def get_tensormap_descriptor(**attrs):
 
 
 def debug_print(fmt, *args, uniform=True):
-  if not FLAGS.mosaic_gpu_debug:
-    return
   type_formats = []
   new_args = []
   for arg in args:
@@ -423,7 +417,7 @@ def memref_unsqueeze(ref: ir.Value, dim) -> ir.Value:
     )
     assoc = [[d] for d in range(ref_ty.rank)]
     assoc[-1].append(ref_ty.rank)
-    return memref.expand_shape(new_ty, ref, assoc)
+    return memref.expand_shape(new_ty, ref, assoc, [], new_ty.shape)
   else:
     return memref_unfold(ref, dim, (1, None))
 
@@ -496,6 +490,7 @@ class BarrierArray:
         f" num_barriers={num_barriers}>"
     )
 
+    self.num_barriers = num_barriers
     self.value = nvgpu.mbarrier_create(barrier_group_ty)
     self.num_barriers = num_barriers
     index = ir.IndexType.get()
@@ -507,6 +502,10 @@ class BarrierArray:
     with once():
       for i in range(num_barriers):
         nvgpu.mbarrier_init(self.value, c(arrival_count, index), c(i, index))
+
+  def __iter__(self) -> Iterator["Barrier"]:
+    for offset in range(self.num_barriers):
+      yield self[offset]
 
   def __getitem__(self, offset: ir.Value | int):
     if isinstance(offset, int):
@@ -674,3 +673,26 @@ def tile_shape(shape, tiling):
       *(s // t for s, t in zip(shape[-tiling_rank:], tiling)),
       *tiling,
   )
+
+
+def warp_tree_reduce(value, op, group_size):
+  """Reduce a value across the warpgroup."""
+  assert 32 % group_size == 0 and group_size <= 32
+  i32 = ir.IntegerType.get_signless(32)
+  result = value
+  iters = np.log2(group_size)
+  if not iters.is_integer():
+    raise ValueError(f"Warp reduction group size should be a power of 2 (got {group_size})")
+  iters = int(iters)
+  for i in range(iters):
+    other_result = nvvm.shfl_sync(
+        result.type,
+        c(0xFFFFFFFF, i32),
+        result,
+        c(1 << i, i32),
+        c(0x1F, i32),
+        nvvm.ShflKind.bfly,
+    )
+    result = op(result, other_result)
+
+  return result

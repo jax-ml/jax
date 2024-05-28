@@ -193,7 +193,7 @@ def _legacy_from_dlpack(dlpack, device: xla_client.Device | None = None,
         pass
 
   _arr = jnp.asarray(xla_client._xla.dlpack_managed_tensor_to_buffer(
-      dlpack, cpu_backend, gpu_backend)) # type: ignore
+      dlpack, cpu_backend, gpu_backend))
   dlpack_device, = _arr.devices()
   return _place_array(_arr, device, dlpack_device, copy)
 
@@ -217,7 +217,7 @@ def _from_dlpack(external_array, device: xla_client.Device | None = None,
   dlpack_device = backend.device_from_local_hardware_id(device_id)
   try:
     stream = dlpack_device.get_stream_for_external_ready_events()
-  except xla_client.XlaRuntimeError as err:  # type: ignore
+  except xla_client.XlaRuntimeError as err:
     if "UNIMPLEMENTED" in str(err):
       stream = None
     else:

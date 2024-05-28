@@ -53,7 +53,7 @@ logger = logging.getLogger(__name__)
 
 jax_plugins: Any | None
 try:
-  import jax_plugins  # type: ignore
+  import jax_plugins  # pytype: disable=import-error
 except ModuleNotFoundError:
   jax_plugins = None
 except ImportError as e:
@@ -113,9 +113,11 @@ _CPU_COLLECTIVES_IMPLEMENTATION = config.DEFINE_string(
          '"gloo" or "mpi"'
 )
 
+# TODO(yueshengys): turn default back to True after resolving memory increase
+# issue.
 _CPU_ENABLE_ASYNC_DISPATCH = config.DEFINE_bool(
     name="jax_cpu_enable_async_dispatch",
-    default=True,
+    default=False,
     help="Only applies to non-parallel computations. If False, run computations"
     "inline without async dispatch.",
 )
@@ -244,19 +246,19 @@ def make_cpu_client() -> xla_client.Client:
                     DeprecationWarning,
                     )
   if collectives_impl == 'gloo':
-    collectives = xla_client._xla.make_gloo_tcp_collectives(  # type: ignore
+    collectives = xla_client._xla.make_gloo_tcp_collectives(
       distributed_client=distributed.global_state.client,
     )
   elif collectives_impl == 'mpi':
-    collectives = xla_client._xla.make_mpi_collectives()  # type: ignore
-    collectives.Init()  # type: ignore
-    atexit.register(collectives.Finalize)  # type: ignore
+    collectives = xla_client._xla.make_mpi_collectives()
+    collectives.Init()
+    atexit.register(collectives.Finalize)
   elif collectives_impl != 'none':
     collectives_impls = ['none', 'gloo', 'mpi']
     raise RuntimeError(f"Unknown collectives implementation "
                        f"{collectives_impl}. Available implementations are "
                        f"{collectives_impls}.")
-  return xla_client.make_cpu_client(  # type: ignore
+  return xla_client.make_cpu_client(
     asynchronous=_CPU_ENABLE_ASYNC_DISPATCH.value,
     distributed_client=distributed.global_state.client,
     node_id=distributed.global_state.process_id,
@@ -457,7 +459,7 @@ def make_gpu_client(
       num_nodes=num_nodes,
       platform_name=platform_name,
       allowed_devices=allowed_devices,
-      mock=use_mock_gpu_client,  # type: ignore[call-arg]
+      mock=use_mock_gpu_client,
   )
 
 
@@ -689,7 +691,7 @@ def register_plugin(
       'registering PJRT plugin %s from %s', plugin_name, library_path
   )
   if library_path is not None:
-    c_api = xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)  # type: ignore
+    c_api = xla_client.load_pjrt_plugin_dynamically(plugin_name, library_path)
     xla_client.profiler.register_plugin_profiler(c_api)
   else:
     assert c_api is not None

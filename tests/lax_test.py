@@ -1075,6 +1075,40 @@ class LaxTest(jtu.JaxTestCase):
     self.assertArraysAllClose(result_with_preferred_type, result_with_upcast_inputs)
 
   @jtu.sample_product(
+    [dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
+     for lhs_shape in [(3,), (4, 3)] for rhs_shape in [(3,), (3, 6)]],
+    [dict(dtype_lhs=dtype_lhs, dtype_rhs=dtype_rhs)
+     for dtype_lhs, dtype_rhs in [(dtypes.float8_e4m3fn, dtypes.float8_e5m2),
+                                  (dtypes.float8_e5m2, dtypes.float8_e4m3fn),
+                                  (dtypes.float8_e4m3fnuz, dtypes.float8_e5m2fnuz),
+                                  (dtypes.float8_e5m2fnuz, dtypes.float8_e4m3fnuz)]],
+  )
+  def test_mixed_fp8_dot_general(self, lhs_shape, rhs_shape, dtype_lhs, dtype_rhs):
+    if jtu.test_device_matches(["tpu"]):
+        raise SkipTest("Mixed fp8 precision matmul is not yet supported on TPU")
+    if not jtu.is_device_rocm() and (
+        dtype_lhs in [dtypes.float8_e4m3fnuz, dtypes.float8_e5m2fnuz] or
+        dtype_rhs in [dtypes.float8_e4m3fnuz, dtypes.float8_e5m2fnuz]
+    ):
+        raise SkipTest("float8_e4m3fnuz and float8_e5m2fnuz types are only supported on ROCm")
+    rng = jtu.rand_default(self.rng())
+    lhs = rng(lhs_shape, dtype=dtype_lhs)
+    rhs = rng(rhs_shape, dtype=dtype_rhs)
+    dot_general_result = lax.dot(
+        lhs, rhs,
+        preferred_element_type=jnp.float32
+    )
+
+    lhs_upcasted = lhs.astype(jnp.float32)
+    rhs_upcasted = rhs.astype(jnp.float32)
+    dot_general_result_upcasted = lax.dot(
+        lhs_upcasted, rhs_upcasted,
+        preferred_element_type=jnp.float32
+    )
+    self.assertArraysAllClose(
+        dot_general_result, dot_general_result_upcasted, rtol=1e-3, atol=1e-3)
+
+  @jtu.sample_product(
       [
           dict(lhs_shape=lhs_shape, rhs_shape=rhs_shape)
           for lhs_shape in [(3,), (4, 3)]

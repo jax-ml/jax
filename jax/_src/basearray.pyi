@@ -57,12 +57,12 @@ class Array(abc.ABC):
   # Comparisons
 
   # these return bool for object, so ignore override errors.
-  def __lt__(self, other) -> Array: ...  # type: ignore[override]
-  def __le__(self, other) -> Array: ...  # type: ignore[override]
+  def __lt__(self, other) -> Array: ...
+  def __le__(self, other) -> Array: ...
   def __eq__(self, other) -> Array: ...  # type: ignore[override]
   def __ne__(self, other) -> Array: ...  # type: ignore[override]
-  def __gt__(self, other) -> Array: ...  # type: ignore[override]
-  def __ge__(self, other) -> Array: ...  # type: ignore[override]
+  def __gt__(self, other) -> Array: ...
+  def __ge__(self, other) -> Array: ...
 
   # Unary arithmetic
 
@@ -108,6 +108,9 @@ class Array(abc.ABC):
   def __int__(self) -> int: ...
   def __float__(self) -> float: ...
   def __index__(self) -> int: ...
+
+  def __buffer__(self, flags: int) -> memoryview: ...
+  def __release_buffer__(self, view: memoryview) -> None: ...
 
   # np.ndarray methods:
   def all(self, axis: Optional[Union[int, Sequence[int]]] = None, out=None,
@@ -214,11 +217,15 @@ class Array(abc.ABC):
   def unsafe_buffer_pointer(self) -> int: ...
 
 
+StaticScalar = Union[
+  np.bool_, np.number,  # NumPy scalar types
+  bool, int, float, complex,  # Python scalar types
+]
+
 ArrayLike = Union[
   Array,  # JAX array type
   np.ndarray,  # NumPy array type
-  np.bool_, np.number,  # NumPy scalar types
-  bool, int, float, complex,  # Python scalar types
+  StaticScalar,  # valid scalars
 ]
 
 

@@ -92,7 +92,7 @@ def sharding_to_proto(sharding: SpatialSharding):
   proto = xc.OpSharding()
   if isinstance(sharding, tuple) and not isinstance(sharding[0], int):
     assert all(s is None or isinstance(s, tuple) for s in sharding)
-    return tuple_sharding_proto(list(map(sharding_to_proto, sharding)))  # type: ignore
+    return tuple_sharding_proto(list(map(sharding_to_proto, sharding)))
 
   if sharding is None:
     proto.type = xc.OpSharding.Type.REPLICATED

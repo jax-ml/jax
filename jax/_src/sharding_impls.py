@@ -25,18 +25,17 @@ import math
 from typing import Any, NamedTuple, Union, cast
 
 from jax._src import mesh as mesh_lib
-from jax._src.op_shardings import (
-    is_op_sharding_replicated, are_op_shardings_equal, get_num_ways_dim_sharded,
-    op_sharding_to_indices)
 from jax._src import sharding
 from jax._src import sharding_specs
 from jax._src import tree_util
 from jax._src import util
 from jax._src import xla_bridge
-from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 from jax._src.lib import xla_client as xc
+from jax._src.op_shardings import ( are_op_shardings_equal, get_num_ways_dim_sharded,
+    is_op_sharding_replicated,
+    op_sharding_to_indices)  # pyformat: disable
 from jax._src.partition_spec import PartitionSpec
-
+from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 import numpy as np
 
 
@@ -468,6 +467,7 @@ class PmapSharding(XLACompatibleSharding):
   """Describes a sharding used by :func:`jax.pmap`."""
   devices: np.ndarray
   sharding_spec: sharding_specs.ShardingSpec
+  _internal_device_list: xc.DeviceList
 
   @use_cpp_method()
   def __init__(self, devices: Sequence[Device] | np.ndarray,
@@ -487,11 +487,11 @@ class PmapSharding(XLACompatibleSharding):
       return True
     return (self.sharding_spec == other.sharding_spec and
             self.devices.shape == other.devices.shape and
-            self._internal_device_list == other._internal_device_list)  # type: ignore
+            self._internal_device_list == other._internal_device_list)
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
-      self._hash = hash((self._internal_device_list, self.sharding_spec))  # type: ignore
+      self._hash = hash((self._internal_device_list, self.sharding_spec))
     return self._hash
 
   def __str__(self):
@@ -567,7 +567,7 @@ class PmapSharding(XLACompatibleSharding):
   @property
   def memory_kind(self) -> str | None:
     try:
-      return self._internal_device_list.default_memory_kind  # type: ignore
+      return self._internal_device_list.default_memory_kind
     except:
       return None
 
@@ -586,7 +586,7 @@ class PmapSharding(XLACompatibleSharding):
 
   @functools.cached_property
   def is_fully_addressable(self) -> bool:
-    return self._internal_device_list.is_fully_addressable  # type: ignore
+    return self._internal_device_list.is_fully_addressable
 
   def shard_shape(self, global_shape: Shape) -> Shape:
     sharded_dim = None
@@ -619,7 +619,7 @@ def _op_sharding_to_pos_sharding(
     device_assignment: Sequence[xc.Device],
     memory_kind: str | None = None) -> PositionalSharding:
   if isinstance(op_sharding, xc.OpSharding):
-    op_sharding = xc.HloSharding.from_proto(op_sharding)  # type: ignore
+    op_sharding = xc.HloSharding.from_proto(op_sharding)
 
   if op_sharding.is_replicated():
     return PositionalSharding(
@@ -822,6 +822,7 @@ class GSPMDSharding(XLACompatibleSharding):
   _hlo_sharding: xc.HloSharding
   _memory_kind: str | None
   _device_list: xc.DeviceList | None
+  _internal_device_list: xc.DeviceList
 
   @use_cpp_method()
   def __init__(self, devices: Sequence[Device],
@@ -852,11 +853,11 @@ class GSPMDSharding(XLACompatibleSharding):
       return True
     return (are_op_shardings_equal(self._hlo_sharding, other._hlo_sharding)
             and self.memory_kind == other.memory_kind
-            and self._internal_device_list == other._internal_device_list)  # type: ignore
+            and self._internal_device_list == other._internal_device_list)
 
   def __hash__(self):
     if not hasattr(self, '_hash'):
-      self._hash = hash((self._internal_device_list, self._hlo_sharding_hash,  # type: ignore
+      self._hash = hash((self._internal_device_list, self._hlo_sharding_hash,
                         self.memory_kind))
     return self._hash
 
@@ -899,7 +900,7 @@ class GSPMDSharding(XLACompatibleSharding):
 
   @functools.cached_property
   def is_fully_addressable(self) -> bool:
-    return self._internal_device_list.is_fully_addressable  # type: ignore
+    return self._internal_device_list.is_fully_addressable
 
   @classmethod
   def get_replicated(cls, device_assignment, *, memory_kind: str | None = None):
@@ -1050,7 +1051,9 @@ class ParsedPartitionSpec:
       else:
         axis_spec = (axis_spec,)
       axis_specs.append(axis_spec)
-    return cls(entry, axis_specs)
+    new_entry = PartitionSpec(
+        *[tuple(e) if isinstance(e, (list, tuple)) else e for e in entry])
+    return cls(new_entry, axis_specs)
 
   def __hash__(self):
     return hash((self.partitions, self.sync))
@@ -1340,7 +1343,7 @@ def explode_superdims(sizes, dims):
 def parse_flatten_op_sharding(hlo_sharding: xc.OpSharding | xc.HloSharding,
                               mesh: mesh_lib.Mesh) -> Sequence[ParsedPartitionSpec]:
   if isinstance(hlo_sharding, xc.OpSharding):
-    hlo_sharding = xc.HloSharding.from_proto(hlo_sharding)  # type: ignore
+    hlo_sharding = xc.HloSharding.from_proto(hlo_sharding)
   if hlo_sharding.tuple_elements():
     out: list[ParsedPartitionSpec] = []
     for s in hlo_sharding.tuple_elements():
@@ -1376,3 +1379,54 @@ def parse_flatten_op_sharding(hlo_sharding: xc.OpSharding | xc.HloSharding,
         ParsedPartitionSpec('<internally generated spec>', partitions))]
   else:
     raise AssertionError("Unhandled OpSharding type. Please open a bug report!")
+
+
+def _slice_as_tuple(s: slice):
+  assert s.step is None
+  return (s.start, s.stop)
+
+
+def num_addressable_indices(
+    tensor_sharding: sharding.Sharding,
+    dim: int,
+    global_shape: Shape,
+) -> int:
+  """Returns the number of indices for given dimension this host has access to.
+
+  Each host can have multiple number of devices that are spanning
+  possibly discontiguous slices of data. This function computes the
+  total number of unique indices for dimension `dim` that any of its
+  addressable devices hold.
+
+  In most cases the addressable indices form a sparse grid (and in some
+  cases a subcube), and thus each host will hold the same of number of
+  indices for each dimension.  However, it is possible to design a mesh that
+  addressable shards form a complicated pattern. In that case, the returned
+  value is the number of indices that are addressable by at least one device.
+
+  For example, suppose the sharding looks like this: (number indicates
+  the host index)
+
+    1221
+    1221
+    0000
+
+  Then on host 1 and 2, both dim 0 (rows), and  dim=1 (cols) will have size 2,
+  while on host 0, dim 0  will have size 1, and dim 1 will have size 4.
+
+  Args:
+    tensor_sharding: Sharding of the tensor.
+    dim: dimension along which to compute the number of addressable indices.
+    global_shape: global shape of the tensor.
+
+  Returns:
+    The number of indices for dimension  `dim` that this host holds.
+  """
+  # TODO(sandler, yashkatariya): Consider making this function public.
+  addressables = tensor_sharding.addressable_devices_indices_map(global_shape)
+  addressables = cast(Mapping[sharding.Device, Index], addressables)
+  num_unique_slices = len({
+      _slice_as_tuple(addressable[dim]) for addressable in addressables.values()
+  })
+  shard_size = tensor_sharding.shard_shape(global_shape)[dim]
+  return shard_size * num_unique_slices

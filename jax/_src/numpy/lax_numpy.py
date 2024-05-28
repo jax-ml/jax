@@ -68,8 +68,8 @@ from jax._src.numpy import ufuncs
 from jax._src.numpy import util
 from jax._src.numpy.vectorize import vectorize
 from jax._src.typing import (
-  Array, ArrayLike, DimSize, DuckTypedArray,
-  DType, DTypeLike, Shape, DeprecatedArg
+  Array, ArrayLike, DeprecatedArg, DimSize, DuckTypedArray,
+  DType, DTypeLike, Shape, StaticScalar,
 )
 from jax._src.util import (unzip2, subvals, safe_zip,
                            ceil_of_ratio, partition_list,
@@ -95,9 +95,9 @@ T = TypeVar('T')
 def canonicalize_shape(shape: Any, context: str="") -> core.Shape:
   if (not isinstance(shape, (tuple, list)) and
       (getattr(shape, 'ndim', None) == 0 or ndim(shape) == 0)):
-    return core.canonicalize_shape((shape,), context)  # type: ignore
+    return core.canonicalize_shape((shape,), context)
   else:
-    return core.canonicalize_shape(shape, context)  # type: ignore
+    return core.canonicalize_shape(shape, context)
 
 # Common docstring additions:
 
@@ -868,7 +868,7 @@ def gradient(f: ArrayLike, *varargs: ArrayLike,
   if len(axis_tuple) == 0:
     return []
 
-  if min([s for i, s in enumerate(a.shape) if i in axis_tuple]) < 2:
+  if min(s for i, s in enumerate(a.shape) if i in axis_tuple) < 2:
     raise ValueError("Shape of array too small to calculate "
                      "a numerical gradient, "
                      "at least 2 elements are required.")
@@ -1507,7 +1507,7 @@ def interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
 
 _DEPRECATED_WHERE_ARG = object()
 
-@overload  # type: ignore[no-overload-impl]
+@overload
 def where(condition: ArrayLike, x: Literal[None] = None,
           y: Literal[None] = None, /, *, size: int | None = None,
           fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None
@@ -2398,7 +2398,7 @@ def pad(array: ArrayLike, pad_width: PadValueLike[int | Array | np.ndarray],
       'symmetric': ['reflect_type'],
   }
   try:
-    unsupported_kwargs = set(kwargs) - set(allowed_kwargs[mode])  # type: ignore[call-overload]
+    unsupported_kwargs = set(kwargs) - set(allowed_kwargs[mode])
   except KeyError:
     msg = "Unimplemented padding mode '{}' for np.pad."
     raise NotImplementedError(msg.format(mode))
@@ -2457,7 +2457,7 @@ def tile(A: ArrayLike, reps: DimSize | Sequence[DimSize]) -> Array:
   except TypeError:
     reps_tup: tuple[DimSize, ...] = (reps,)
   else:
-    reps_tup = tuple(reps)  # type: ignore[assignment,arg-type]
+    reps_tup = tuple(reps)  # type: ignore[arg-type]
   reps_tup = tuple(operator.index(rep) if core.is_constant_dim(rep) else rep
                    for rep in reps_tup)
   A_shape = (1,) * (len(reps_tup) - ndim(A)) + shape(A)
@@ -2704,7 +2704,7 @@ available in the JAX FAQ at :ref:`faq-data-placement` (full FAQ at
 https://jax.readthedocs.io/en/latest/faq.html).
 """
 
-deprecations.register(__name__, "array-none")
+deprecations.register("jax-numpy-array-none")
 
 @util.implements(np.array, lax_description=_ARRAY_DOC)
 def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
@@ -2762,7 +2762,7 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
   leaves = tree_leaves(object, is_leaf=lambda x: x is None)
   if any(leaf is None for leaf in leaves):
     # Added Nov 16 2023
-    if deprecations.is_accelerated(__name__, "array-none"):
+    if deprecations.is_accelerated("jax-numpy-array-none"):
       raise TypeError("None is not a valid value for jnp.array")
     warnings.warn(
       "None encountered in jnp.array(); this is currently treated as NaN. "
@@ -2798,7 +2798,7 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     if object:
       out = stack([asarray(elt, dtype=dtype) for elt in object])
     else:
-      out = np.array([], dtype=dtype)  # type: ignore[arg-type]
+      out = np.array([], dtype=dtype)
   elif _supports_buffer_protocol(object):
     object = memoryview(object)
     # TODO(jakevdp): update this once we support NumPy 2.0 semantics for the copy arg.
@@ -2881,7 +2881,7 @@ def asarray(a: Any, dtype: DTypeLike | None = None, order: str | None = None,
   dtypes.check_user_dtype_supported(dtype, "asarray")
   if dtype is not None:
     dtype = dtypes.canonicalize_dtype(dtype, allow_extended_dtype=True)  # type: ignore[assignment]
-  return array(a, dtype=dtype, copy=bool(copy), order=order)  # type: ignore
+  return array(a, dtype=dtype, copy=bool(copy), order=order)
 
 
 @util.implements(np.copy, lax_description=_ARRAY_DOC)
@@ -2967,7 +2967,7 @@ def full_like(a: ArrayLike | DuckTypedArray,
     return lax.full_like(a, fill_value, dtype, shape, sharding=_normalize_to_sharding(device))
   else:
     shape = np.shape(a) if shape is None else shape  # type: ignore[arg-type]
-    dtype = result_type(a) if dtype is None else dtype  # type: ignore[arg-type]
+    dtype = result_type(a) if dtype is None else dtype
     return jax.device_put(
         broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
 
@@ -3105,15 +3105,23 @@ def fromstring(string: str, dtype: DTypeLike = float, count: int = -1, *, sep: s
 
 
 @util.implements(np.eye)
-def eye(N: DimSize, M: DimSize | None = None, k: int = 0,
+def eye(N: DimSize, M: DimSize | None = None,
+        k: int | ArrayLike = 0,
         dtype: DTypeLike | None = None) -> Array:
   dtypes.check_user_dtype_supported(dtype, "eye")
+  if isinstance(k, int):
+    k = lax_internal._clip_int_to_valid_range(k, np.int32)
+  util.check_arraylike("eye", k)
+  offset = asarray(k)
+  if not (offset.shape == () and dtypes.issubdtype(offset.dtype, np.integer)):
+    raise ValueError(f"k must be a scalar integer; got {k}")
   N_int = core.canonicalize_dim(N, "'N' argument of jnp.eye()")
   M_int = N_int if M is None else core.canonicalize_dim(M, "'M' argument of jnp.eye()")
   if N_int < 0 or M_int < 0:
     raise ValueError(f"negative dimensions are not allowed, got {N} and {M}")
-  k = operator.index(k)
-  return lax_internal._eye(_jnp_dtype(dtype), (N_int, M_int), k)
+  i = lax.broadcasted_iota(offset.dtype, (N_int, M_int), 0)
+  j = lax.broadcasted_iota(offset.dtype, (N_int, M_int), 1)
+  return (i + offset == j).astype(dtype)
 
 
 @util.implements(np.identity)
@@ -3602,8 +3610,8 @@ def triu(m: ArrayLike, k: int = 0) -> Array:
 
 
 @util.implements(np.trace, skip_params=['out'])
-@partial(jit, static_argnames=('offset', 'axis1', 'axis2', 'dtype'))
-def trace(a: ArrayLike, offset: int = 0, axis1: int = 0, axis2: int = 1,
+@partial(jit, static_argnames=('axis1', 'axis2', 'dtype'))
+def trace(a: ArrayLike, offset: int | ArrayLike = 0, axis1: int = 0, axis2: int = 1,
           dtype: DTypeLike | None = None, out: None = None) -> Array:
   util.check_arraylike("trace", a)
   if out is not None:
@@ -4731,7 +4739,7 @@ def einsum(
   einsum = jit(_einsum, static_argnums=(1, 2, 3, 4), inline=True)
   if spec is not None:
     einsum = jax.named_call(einsum, name=spec)
-  return einsum(operands, contractions, precision,  # type: ignore[operator]
+  return einsum(operands, contractions, precision,
                 preferred_element_type, _dot_general)
 
 
@@ -5629,7 +5637,7 @@ def take(
     mode: str | None = None,
     unique_indices: bool = False,
     indices_are_sorted: bool = False,
-    fill_value: ArrayLike | None = None,
+    fill_value: StaticScalar | None = None,
 ) -> Array:
   return _take(a, indices, None if axis is None else operator.index(axis), out,
                mode, unique_indices=unique_indices, indices_are_sorted=indices_are_sorted,

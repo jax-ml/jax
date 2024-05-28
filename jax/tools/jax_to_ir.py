@@ -85,7 +85,7 @@ except ImportError:
 try:
   import tensorflow as tf
 except ImportError:
-  tf = None  # type: ignore
+  tf = None
 
 
 _FN = flags.DEFINE_string(

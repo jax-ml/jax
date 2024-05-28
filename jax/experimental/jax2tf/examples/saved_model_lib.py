@@ -29,8 +29,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, Callable, Optional, Union
 
-from jax.experimental import jax2tf  # type: ignore[import]
-import tensorflow as tf  # type: ignore[import]
+from jax.experimental import jax2tf
+import tensorflow as tf
 
 
 def convert_and_save_model(

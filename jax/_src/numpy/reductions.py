@@ -33,7 +33,7 @@ from jax._src.numpy.util import (
     _broadcast_to, check_arraylike, _complex_elem_type,
     promote_dtypes_inexact, promote_dtypes_numeric, _where, implements)
 from jax._src.lax import lax as lax_internal
-from jax._src.typing import Array, ArrayLike, DType, DTypeLike
+from jax._src.typing import Array, ArrayLike, DType, DTypeLike, DeprecatedArg
 from jax._src.util import (
     canonicalize_axis as _canonicalize_axis, maybe_named_axis,
     NumpyComplexWarning)
@@ -433,13 +433,17 @@ def _average(a: ArrayLike, axis: Axis = None, weights: ArrayLike | None = None,
 @implements(np.var, skip_params=['out'])
 def var(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
         out: None = None, ddof: int = 0, keepdims: bool = False, *,
-        where: ArrayLike | None = None) -> Array:
-  return _var(a, _ensure_optional_axes(axis), dtype, out, ddof, keepdims,
+        where: ArrayLike | None = None, correction: int | float | None = None) -> Array:
+  if correction is None:
+    correction = ddof
+  elif not isinstance(ddof, int) or ddof != 0:
+    raise ValueError("ddof and correction can't be provided simultaneously.")
+  return _var(a, _ensure_optional_axes(axis), dtype, out, correction, keepdims,
               where=where)
 
 @partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def _var(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
-         out: None = None, ddof: int = 0, keepdims: bool = False, *,
+         out: None = None, correction: int | float = 0, keepdims: bool = False, *,
          where: ArrayLike | None = None) -> Array:
   check_arraylike("var", a)
   dtypes.check_user_dtype_supported(dtype, "var")
@@ -465,9 +469,9 @@ def _var(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
   else:
     normalizer = sum(_broadcast_to(where, np.shape(a)), axis,
                      dtype=computation_dtype, keepdims=keepdims)
-  normalizer = lax.sub(normalizer, lax.convert_element_type(ddof, computation_dtype))
+  normalizer = lax.sub(normalizer, lax.convert_element_type(correction, computation_dtype))
   result = sum(centered, axis, dtype=computation_dtype, keepdims=keepdims, where=where)
-  return lax.div(result, normalizer).astype(dtype)
+  return _where(normalizer > 0, lax.div(result, normalizer).astype(dtype), np.nan)
 
 
 def _var_promote_types(a_dtype: DTypeLike, dtype: DTypeLike | None) -> tuple[DType, DType]:
@@ -494,13 +498,17 @@ def _var_promote_types(a_dtype: DTypeLike, dtype: DTypeLike | None) -> tuple[DTy
 @implements(np.std, skip_params=['out'])
 def std(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
         out: None = None, ddof: int = 0, keepdims: bool = False, *,
-        where: ArrayLike | None = None) -> Array:
-  return _std(a, _ensure_optional_axes(axis), dtype, out, ddof, keepdims,
+        where: ArrayLike | None = None, correction: int | float | None = None) -> Array:
+  if correction is None:
+    correction = ddof
+  elif not isinstance(ddof, int) or ddof != 0:
+    raise ValueError("ddof and correction can't be provided simultaneously.")
+  return _std(a, _ensure_optional_axes(axis), dtype, out, correction, keepdims,
               where=where)
 
 @partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def _std(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
-         out: None = None, ddof: int = 0, keepdims: bool = False, *,
+         out: None = None, correction: int | float = 0, keepdims: bool = False, *,
          where: ArrayLike | None = None) -> Array:
   check_arraylike("std", a)
   dtypes.check_user_dtype_supported(dtype, "std")
@@ -508,7 +516,7 @@ def _std(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
     raise ValueError(f"dtype argument to jnp.std must be inexact; got {dtype}")
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.std is not supported.")
-  return lax.sqrt(var(a, axis=axis, dtype=dtype, ddof=ddof, keepdims=keepdims, where=where))
+  return lax.sqrt(var(a, axis=axis, dtype=dtype, correction=correction, keepdims=keepdims, where=where))
 
 
 @implements(np.ptp, skip_params=['out'])
@@ -755,43 +763,45 @@ def cumulative_sum(
   return out
 
 # Quantiles
+
+# TODO(jakevdp): interpolation argument deprecated 2024-05-16
 @implements(np.quantile, skip_params=['out', 'overwrite_input'])
-@partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation',
-                               'keepdims', 'method'))
+@partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation', 'keepdims', 'method'))
 def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = None,
              out: None = None, overwrite_input: bool = False, method: str = "linear",
-             keepdims: bool = False, interpolation: None = None) -> Array:
+             keepdims: bool = False, *, interpolation: DeprecatedArg | str = DeprecatedArg()) -> Array:
   check_arraylike("quantile", a, q)
   if overwrite_input or out is not None:
     msg = ("jax.numpy.quantile does not support overwrite_input=True or "
            "out != None")
     raise ValueError(msg)
-  if interpolation is not None:
+  if not isinstance(interpolation, DeprecatedArg):
     warnings.warn("The interpolation= argument to 'quantile' is deprecated. "
-                  "Use 'method=' instead.", DeprecationWarning)
-  return _quantile(lax_internal.asarray(a), lax_internal.asarray(q), axis, interpolation or method, keepdims, False)
+                  "Use 'method=' instead.", DeprecationWarning, stacklevel=2)
+    method = interpolation
+  return _quantile(lax_internal.asarray(a), lax_internal.asarray(q), axis, method, keepdims, False)
 
+# TODO(jakevdp): interpolation argument deprecated 2024-05-16
 @implements(np.nanquantile, skip_params=['out', 'overwrite_input'])
-@partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation',
-                               'keepdims', 'method'))
+@partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation', 'keepdims', 'method'))
 def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = None,
                 out: None = None, overwrite_input: bool = False, method: str = "linear",
-                keepdims: bool = False, interpolation: None = None) -> Array:
+                keepdims: bool = False, *, interpolation: DeprecatedArg | str = DeprecatedArg()) -> Array:
   check_arraylike("nanquantile", a, q)
   if overwrite_input or out is not None:
     msg = ("jax.numpy.nanquantile does not support overwrite_input=True or "
            "out != None")
     raise ValueError(msg)
-  if interpolation is not None:
+  if not isinstance(interpolation, DeprecatedArg):
     warnings.warn("The interpolation= argument to 'nanquantile' is deprecated. "
-                  "Use 'method=' instead.", DeprecationWarning)
-  return _quantile(lax_internal.asarray(a), lax_internal.asarray(q), axis, interpolation or method, keepdims, True)
+                  "Use 'method=' instead.", DeprecationWarning, stacklevel=2)
+    method = interpolation
+  return _quantile(lax_internal.asarray(a), lax_internal.asarray(q), axis, method, keepdims, True)
 
 def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
-              interpolation: str, keepdims: bool, squash_nans: bool) -> Array:
-  if interpolation not in ["linear", "lower", "higher", "midpoint", "nearest"]:
-    raise ValueError("interpolation can only be 'linear', 'lower', 'higher', "
-                     "'midpoint', or 'nearest'")
+              method: str, keepdims: bool, squash_nans: bool) -> Array:
+  if method not in ["linear", "lower", "higher", "midpoint", "nearest"]:
+    raise ValueError("method can only be 'linear', 'lower', 'higher', 'midpoint', or 'nearest'")
   a, = promote_dtypes_inexact(a)
   keepdim = []
   if dtypes.issubdtype(a.dtype, np.complexfloating):
@@ -890,50 +900,57 @@ def _quantile(a: Array, q: Array, axis: int | tuple[int, ...] | None,
       high_weight = lax.broadcast_in_dim(high_weight, high_value.shape,
                                         broadcast_dimensions=(0,))
 
-  if interpolation == "linear":
+  if method == "linear":
     result = lax.add(lax.mul(low_value.astype(q.dtype), low_weight),
                      lax.mul(high_value.astype(q.dtype), high_weight))
-  elif interpolation == "lower":
+  elif method == "lower":
     result = low_value
-  elif interpolation == "higher":
+  elif method == "higher":
     result = high_value
-  elif interpolation == "nearest":
+  elif method == "nearest":
     pred = lax.le(high_weight, _lax_const(high_weight, 0.5))
     result = lax.select(pred, low_value, high_value)
-  elif interpolation == "midpoint":
+  elif method == "midpoint":
     result = lax.mul(lax.add(low_value, high_value), _lax_const(low_value, 0.5))
   else:
-    raise ValueError(f"interpolation={interpolation!r} not recognized")
+    raise ValueError(f"{method=!r} not recognized")
   if keepdims and keepdim:
     if q_ndim > 0:
       keepdim = [np.shape(q)[0], *keepdim]
     result = result.reshape(keepdim)
   return lax.convert_element_type(result, a.dtype)
 
+# TODO(jakevdp): interpolation argument deprecated 2024-05-16
 @implements(np.percentile, skip_params=['out', 'overwrite_input'])
-@partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation',
-                                   'keepdims', 'method'))
+@partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation', 'keepdims', 'method'))
 def percentile(a: ArrayLike, q: ArrayLike,
                axis: int | tuple[int, ...] | None = None,
                out: None = None, overwrite_input: bool = False, method: str = "linear",
-               keepdims: bool = False, interpolation: None = None) -> Array:
+               keepdims: bool = False, *, interpolation: str | DeprecatedArg = DeprecatedArg()) -> Array:
   check_arraylike("percentile", a, q)
   q, = promote_dtypes_inexact(q)
+  if not isinstance(interpolation, DeprecatedArg):
+    warnings.warn("The interpolation= argument to 'percentile' is deprecated. "
+                  "Use 'method=' instead.", DeprecationWarning, stacklevel=2)
+    method = interpolation
   return quantile(a, q / 100, axis=axis, out=out, overwrite_input=overwrite_input,
-                  interpolation=interpolation, method=method, keepdims=keepdims)
+                  method=method, keepdims=keepdims)
 
+# TODO(jakevdp): interpolation argument deprecated 2024-05-16
 @implements(np.nanpercentile, skip_params=['out', 'overwrite_input'])
-@partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation',
-                               'keepdims', 'method'))
+@partial(api.jit, static_argnames=('axis', 'overwrite_input', 'interpolation', 'keepdims', 'method'))
 def nanpercentile(a: ArrayLike, q: ArrayLike,
                   axis: int | tuple[int, ...] | None = None,
                   out: None = None, overwrite_input: bool = False, method: str = "linear",
-                  keepdims: bool = False, interpolation: None = None) -> Array:
+                  keepdims: bool = False, *, interpolation: str | DeprecatedArg = DeprecatedArg()) -> Array:
   check_arraylike("nanpercentile", a, q)
   q = ufuncs.true_divide(q, 100.0)
+  if not isinstance(interpolation, DeprecatedArg):
+    warnings.warn("The interpolation= argument to 'nanpercentile' is deprecated. "
+                  "Use 'method=' instead.", DeprecationWarning, stacklevel=2)
+    method = interpolation
   return nanquantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
-                     interpolation=interpolation, method=method,
-                     keepdims=keepdims)
+                     method=method, keepdims=keepdims)
 
 @implements(np.median, skip_params=['out', 'overwrite_input'])
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'keepdims'))

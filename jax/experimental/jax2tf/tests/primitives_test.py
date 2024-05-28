@@ -70,7 +70,7 @@ from jax.interpreters import mlir
 from jax._src.interpreters import xla
 
 import numpy as np
-import tensorflow as tf  # type: ignore[import]
+import tensorflow as tf
 
 config.parse_flags_with_absl()
 

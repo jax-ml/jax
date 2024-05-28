@@ -67,7 +67,7 @@ Shard = Any  # TODO(jakevdp): fix circular imports and import Shard
 Shape = tuple[int, ...]
 
 UINT_DTYPES = {
-    8: jnp.uint8, 16: jnp.uint16, 32: jnp.uint32, 64: jnp.uint64}  # type: ignore[has-type]
+    8: jnp.uint8, 16: jnp.uint16, 32: jnp.uint32, 64: jnp.uint64}
 
 # -- PRNG implementation interface
 
@@ -197,7 +197,7 @@ class PRNGKeyArray(jax.Array):
 
   _device = property(op.attrgetter('_base_array._device'))
   _committed = property(op.attrgetter('_base_array._committed'))
-  device = property(op.attrgetter('_base_array.device'))  # type: ignore[assignment]
+  device = property(op.attrgetter('_base_array.device'))
   devices = property(op.attrgetter('_base_array.devices'))  # type: ignore[assignment]
   is_fully_addressable = property(op.attrgetter('_base_array.is_fully_addressable'))  # type: ignore[assignment]
   is_fully_replicated = property(op.attrgetter('_base_array.is_fully_replicated'))  # type: ignore[assignment]
@@ -364,7 +364,7 @@ def get_logical_gspmd_sharding(aval, phys_sharding):
 
 def physical_hlo_sharding(aval, hlo_sharding: xc.HloSharding) -> xc.HloSharding:
   key_shape = aval.dtype._impl.key_shape
-  new_op_sharding = hlo_sharding.to_proto().clone()  # type: ignore
+  new_op_sharding = hlo_sharding.to_proto().clone()
   partitions, num_replicas = op_shardings.get_num_ways_dim_sharded(hlo_sharding)
   suffix = [] if num_replicas == 1 else [num_replicas]
   tad = partitions + [1] * len(key_shape) + suffix
@@ -1126,8 +1126,8 @@ def bcast_iotas_to_reshaped_iota(
     mul: Callable[[core.DimSize, ir.Value], ir.Value],
     shape: core.Shape,
     iotas: Sequence[ir.Value]) -> ir.Value:
-  strides: core.Shape = (*(np.cumprod(shape[1:][::-1])[::-1]), 1)  # type: ignore
-  return reduce(add, [mul(s, i) for i, s in zip(iotas, strides)])  # type: ignore
+  strides: core.Shape = (*(np.cumprod(shape[1:][::-1])[::-1]), 1)
+  return reduce(add, [mul(s, i) for i, s in zip(iotas, strides)])
 
 def iota_2x32_shape_lowering(ctx, *, shape):
   aval_out, _ = ctx.avals_out
@@ -1140,11 +1140,11 @@ def iota_2x32_shape_lowering(ctx, *, shape):
     if core.is_constant_dim(x):
       x_const = mlir.ir_constant(np.array(x, np.dtype('uint64')))
     else:
-      x_const, = mlir.eval_dynamic_shape(ctx, (x,))
+      x_shape, = mlir.eval_dynamic_shape(ctx, (x,))
       x_const = hlo.convert(
           ir.RankedTensorType.get(
-              (),
-              mlir.dtype_to_ir_type(np.dtype('uint64'))), x_const)
+              [],
+              mlir.dtype_to_ir_type(np.dtype('uint64'))), x_shape)
     x_bcast = mlir.broadcast_in_dim(ctx, x_const, aval_u64,
                                     broadcast_dimensions=[])
     return mlir.hlo.multiply(x_bcast, y)
@@ -1204,9 +1204,9 @@ def threefry_split(key: typing.Array, shape: Shape) -> typing.Array:
 @partial(jit, static_argnums=(1,))
 def _threefry_split(key, shape) -> typing.Array:
   if config.threefry_partitionable.value:
-    return _threefry_split_foldlike(key, shape)  # type: ignore
+    return _threefry_split_foldlike(key, shape)
   else:
-    return _threefry_split_original(key, shape)  # type: ignore
+    return _threefry_split_original(key, shape)
 
 @partial(jit, static_argnums=(1,), inline=True)
 def _threefry_split_original(key, shape) -> typing.Array:
