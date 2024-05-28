@@ -101,24 +101,29 @@ class Mpi4pyCluster(clusters.ClusterEnv):
     from mpi4py import MPI
     COMM_WORLD = MPI.COMM_WORLD
 
-    hostname = socket.gethostname()
-    # host_key = host_key %
-    all_hostnames = COMM_WORLD.gather(hostname, root=0)
+    # This is a previous method that is replaced with a different mpi split:
 
-    if COMM_WORLD.Get_rank() == 0:
-        # Order all the hostnames, and find unique ones
-        unique_hosts = unique(all_hostnames)
-        # Numpy automatically sorts them.
-    else:
-        unique_hosts = None
+    # hostname = socket.gethostname()
+    # # host_key = host_key %
+    # all_hostnames = COMM_WORLD.gather(hostname, root=0)
 
-    # Broadcast the list of hostnames:
-    unique_hosts = COMM_WORLD.bcast(unique_hosts, root=0)
+    # if COMM_WORLD.Get_rank() == 0:
+    #     # Order all the hostnames, and find unique ones
+    #     unique_hosts = unique(all_hostnames)
+    #     # Numpy automatically sorts them.
+    # else:
+    #     unique_hosts = None
 
-    # Find the integer for this host in the list of hosts:
-    i = int(where(unique_hosts == hostname)[0])
+    # # Broadcast the list of hostnames:
+    # unique_hosts = COMM_WORLD.bcast(unique_hosts, root=0)
 
-    new_comm = COMM_WORLD.Split(color=i)
+    # # Find the integer for this host in the list of hosts:
+    # i = int(where(unique_hosts == hostname)[0])
+
+    # new_comm = COMM_WORLD.Split(color=i)
+
+    # This is the alternative method that is simpler:
+    new_comm = COMM_WORLD.Split_type(MPI.COMM_TYPE_SHARED)
 
 
     # The rank in the new communicator - which is host-local only - IS the local rank:

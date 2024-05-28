@@ -37,6 +37,7 @@ class ClusterEnv:
     super().__init_subclass__(**kwargs)
     cls._cluster_types.append(cls)
 
+
   @classmethod
   # pytype: disable=bad-return-type
   def auto_detect_unset_distributed_params(cls,
@@ -61,7 +62,7 @@ class ClusterEnv:
       if env is None:
         logger.error(f"Automatic Distributed initialization can not proceed:"
                      f" {spec_detection_method} is not supported.")
-      if not env.is_env_present():
+      elif not env.is_env_present():
         logger.error(f"Automatic Distributed initialization can not proceed:"
                      f" {spec_detection_method} is supported but not functional in this environment.")
     else:

@@ -56,8 +56,8 @@ class State:
             num_processes,
             process_id,
             local_device_ids,
-            initialization_timeout,
             spec_detection_method,
+            initialization_timeout,
         )
     )
 
@@ -143,7 +143,7 @@ def initialize(coordinator_address: str | None = None,
                num_processes: int | None = None,
                process_id: int | None = None,
                local_device_ids: int | Sequence[int] | None = None,
-               spec_detect_method: str | None = None,
+               spec_detection_method: str | None = None,
                initialization_timeout: int = 300,
                coordinator_bind_address: str | None = None):
   """Initializes the JAX distributed system.
@@ -161,10 +161,10 @@ def initialize(coordinator_address: str | None = None,
   If you are using TPU, Slurm, or Open MPI, all arguments are optional: if omitted, they
   will be chosen automatically.
 
-  The ``spec_detect_method`` may be used to intentionally, automatically select the values for
+  The ``spec_detection_method`` may be used to intentionally, automatically select the values for
   arguments.  You may pass any of the automatic ``spec_detect_methods`` to this argument though 
   it is not necessary in the TPU, Slurm, or Open MPI cases.  For other MPI installations,
-  if you have a functional ``mpi4py`` installed, you may pass ``spec_detect_method="mpi4py"`` 
+  if you have a functional ``mpi4py`` installed, you may pass ``spec_detection_method="mpi4py"`` 
   to bootstrap the required arguments.
 
   Otherwise, you must provide the ``coordinator_address``,
@@ -191,7 +191,7 @@ def initialize(coordinator_address: str | None = None,
     local_device_ids: Restricts the visible devices of the current process to ``local_device_ids``.
       If ``None``, defaults to all local devices being visible to the process except when processes
       are launched via Slurm and Open MPI on GPUs. In that case, it will default to a single device per process.
-    spec_detect_method: An optional string to attempt to autodetect the configuration of the distributed
+    spec_detection_method: An optional string to attempt to autodetect the configuration of the distributed
       run.  Note that "mpi4py" method requires you to have a working ``mpi4py`` install in your environment, 
       and launch the applicatoin with an MPI-compatible job launcher such as ``mpiexec`` or ``mpirun``.  
       Legacy auto-detect options (OMPI, Slurm) remain enabled.
@@ -226,11 +226,8 @@ def initialize(coordinator_address: str | None = None,
     raise RuntimeError("jax.distributed.initialize() must be called before "
                         "any JAX computations are executed.")
   global_state.initialize(coordinator_address, num_processes, process_id,
-<<<<<<< HEAD
-                          local_device_ids, spec_detect_method, initialization_timeout)
-=======
-                          local_device_ids, initialization_timeout, coordinator_bind_address)
->>>>>>> 06cd05d1d6722e77744556983e99396d0c208774
+                          local_device_ids, spec_detection_method,
+                          initialization_timeout, coordinator_bind_address)
   atexit.register(shutdown)
 
 
