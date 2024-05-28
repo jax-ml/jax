@@ -14,6 +14,8 @@
 # ==============================================================================
 """Test different parameterizations of a matmul."""
 
+import os
+
 from absl.testing import absltest, parameterized
 from jax._src import config
 from jax._src import test_util as jtu
@@ -28,6 +30,8 @@ else:
 
 config.update("jax_traceback_filtering", "off")
 config.parse_flags_with_absl()
+os.environ["XLA_FLAGS"] = (
+    os.environ.get("XLA_FLAGS", "") + " --xla_gpu_autotune_level=0")
 
 
 class MatmulTestCase(jtu.JaxTestCase):
