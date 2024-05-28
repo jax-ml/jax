@@ -28,11 +28,11 @@ compute_on_context = ComputeOnContext()
 @contextmanager
 def extend_compute_type(c_type: str):
   compute_on_context.stack.append(c_type)
-  if len(set(filter(lambda x: x is not None, set(compute_on_context.stack)))) > 1:
-    raise NotImplementedError(
-        'Nesting `compute_on` with different compute types is not supported'
-        f' yet. Current stack: {compute_on_context.stack}')
   try:
+    if len(set(filter(lambda x: x is not None, set(compute_on_context.stack)))) > 1:
+      raise NotImplementedError(
+          'Nesting `compute_on` with different compute types is not supported'
+          f' yet. Current stack: {compute_on_context.stack}')
     yield compute_on_context.stack[-1]
   finally:
     compute_on_context.stack.pop()
