@@ -442,7 +442,7 @@ SmallVector<int64_t> VectorLayout::implicitShape(
     ArrayRef<int64_t> shape) const {
   SmallVector<int64_t> implicit_shape(shape);
   implicit_shape.reserve(shape.size() + num_implicit_dims());
-  insertImplicit(implicit_shape, 1);
+  insertImplicit<int64_t>(implicit_shape, 1);
   return implicit_shape;
 }
 

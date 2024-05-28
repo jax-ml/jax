@@ -893,48 +893,42 @@ class VectorLayoutInferer {
       TPU_CHECK_OP(res_ty.getRank() >= 2, "result rank below 2D unsupported");
       auto some_layout = getLayout(op.getSource());
       TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
+      auto &layout = *some_layout;
       // Since we can only do sublane broadcasts in the (8, 128) tiling, we
       // should always use that when sublane broadcasting is required.
-      if (src_ty.getDimSize(src_ty.getRank() - 2) !=
-          res_ty.getDimSize(res_ty.getRank() - 2)) {
-        if (some_layout->bitwidth() != kNativeBitwidth) {
+      if (*(src_ty.getShape().end() - 2) != *(res_ty.getShape().end() - 2)) {
+        if (layout.bitwidth() != kNativeBitwidth) {
           NYI("Only 32-bit broadcasts supported");
         }
-        LayoutOffsets offsets = some_layout->offsets();
+        LayoutOffsets offsets = layout.offsets();
         // At the moment relayout can only produce replicated sublanes when
         // converting to (8, 128) if the input was in (1, 128) tiling
-        if (some_layout->tiling()[0] == 1) {
+        if (layout.tiling()[0] == 1) {
           offsets[0] = std::nullopt;
         }
-        *some_layout =
-            VectorLayout(some_layout->bitwidth(), offsets, default_tiling_,
-                         some_layout->implicit_dim());
+        layout = VectorLayout(layout.bitwidth(), offsets, default_tiling_,
+                              layout.implicit_dim());
       }
-      auto &layout = *some_layout;
       if (layout.implicit_dim() != ImplicitDim::kNone) {
         VectorLayout layout_2d(layout.bitwidth(), layout.offsets(),
                                layout.tiling(), ImplicitDim::kNone);
         if (layout_2d.equivalentTo(layout, src_ty.getShape(), target_shape_)) {
+          // TODO(b/342237796): Stop preferring 2D layouts (if given the choice)
+          // and defer the work, if any, to relayout.
           layout = layout_2d;
-        } else {
-          op.emitOpError() << "Only 2D layouts supported";
-          return failure();
         }
       }
       auto src_tiled_shape = src_ty.getShape().take_back(2);
       auto dst_tiled_shape = res_ty.getShape().take_back(2);
       LayoutOffsets offsets = layout.offsets();
-      if (layout.bitwidth() == kNativeBitwidth &&
-          layout.tiling() == default_tiling_) {
-        for (int i = 0; i < 2; ++i) {
-          if (src_tiled_shape[i] != dst_tiled_shape[i]) {
-            offsets[i] = std::nullopt;
-          }
+      for (int i = 0; i < 2; ++i) {
+        if (src_tiled_shape[i] != dst_tiled_shape[i]) {
+          offsets[i] = std::nullopt;
         }
       }
-      setLayout(op, some_layout,
+      setLayout(op, layout,
                 VectorLayout(layout.bitwidth(), offsets, layout.tiling(),
-                             ImplicitDim::kNone));
+                             layout.implicit_dim()));
       return success();
     }
     op.emitOpError("unsupported broadcast source type");
@@ -1122,7 +1116,7 @@ class VectorLayoutInferer {
     auto offsets = llvm::map_to_vector(offsets_attr, [](auto attr) {
       return cast<IntegerAttr>(attr).getInt();
     });
-    input_layout->insertImplicit(offsets, 0);
+    input_layout->insertImplicit<int64_t>(offsets, 0);
     auto vreg_slice = input_layout->vregSlice(target_shape_);
     LayoutOffsets new_layout_offsets;
     if (input_layout->offsets()[0].has_value()) {

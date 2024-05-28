@@ -25,14 +25,17 @@ struct RewriteContext {
   MLIRContext *getMLIRContext() { return func.getContext(); }
 };
 
+// TODO(tlongeri): Remove default values for use_implicit_shape.
 RollVectorsOp assemble(OpBuilder &builder, VectorType vty,
                        const VectorLayout &layout,
                        const xla::Array<Value> &vals,
-                       std::array<int64_t, 2> target_shape);
+                       std::array<int64_t, 2> target_shape,
+                       bool use_implicit_shape = false);
 FailureOr<xla::Array<Value>> disassemble(OpBuilder &builder,
                                          const VectorLayout &layout,
                                          TypedValue<VectorType> val,
-                                         std::array<int64_t, 2> target_shape);
+                                         std::array<int64_t, 2> target_shape,
+                                         bool use_implicit_shape = false);
 
 // Rewrites the operation according to its layout annotations.
 //
