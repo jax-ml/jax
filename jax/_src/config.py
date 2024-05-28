@@ -935,6 +935,12 @@ jax_platforms = define_optional_string_state(
         'otherwise.'
         ))
 
+jax_pjrt_client_create_options = define_optional_string_state(
+    name='jax_pjrt_client_create_options',
+    default=None,
+    help=('A set of key-value pairs in the format of "k1:v1;k2:v2" strings '
+          'provided to a device platform pjrt client as extra arguments.'))
+
 enable_checks = define_bool_state(
     name='jax_enable_checks',
     default=False,

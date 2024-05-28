@@ -13,8 +13,9 @@
 # limitations under the License.
 
 import os
-from jax._src import hardware_utils
 from jax import version
+from jax._src import config
+from jax._src import hardware_utils
 
 running_in_cloud_tpu_vm: bool = False
 
@@ -73,3 +74,9 @@ def cloud_tpu_init() -> None:
   # this makes tensorstore serialization work better on TPU
   os.environ.setdefault('TENSORSTORE_CURL_LOW_SPEED_TIME_SECONDS', '60')
   os.environ.setdefault('TENSORSTORE_CURL_LOW_SPEED_LIMIT_BYTES', '256')
+
+  if config.jax_pjrt_client_create_options.value is None:
+    config.update(
+      'jax_pjrt_client_create_options',
+      f'ml_framework_name:JAX;ml_framework_version:{version.__version__}'
+      )

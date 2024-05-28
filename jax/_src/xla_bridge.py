@@ -47,6 +47,7 @@ from jax._src.cloud_tpu_init import maybe_import_libtpu
 from jax._src.lib import cuda_versions
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
+from jax._src.lib import xla_extension_version
 from jax._src.lib import jaxlib
 
 logger = logging.getLogger(__name__)
@@ -160,7 +161,13 @@ def tpu_client_timer_callback(timer_secs: float) -> xla_client.Client | None:
   t.start()
 
   try:
-    client = xla_client.make_tpu_client(_get_tpu_library_path())
+    if xla_extension_version >= 267:
+      client = xla_client.make_tpu_client( # type: ignore
+          _get_tpu_library_path(),
+          _options_from_jax_configs("tpu"))
+    else:
+      client = xla_client.make_tpu_client(
+          _get_tpu_library_path())
   finally:
     t.cancel()
 
@@ -618,16 +625,30 @@ def discover_pjrt_plugins() -> None:
 
 
 def _options_from_jax_configs(plugin_name):
-  if plugin_name != "cuda":
-    return {}
-
   options = {}
-  visible_devices = CUDA_VISIBLE_DEVICES.value
-  if visible_devices != 'all':
-    options['visible_devices'] = [int(x) for x in visible_devices.split(',')]
-  options['enable_mock_nccl'] = _USE_MOCK_GPU_CLIENT.value
-  if options['enable_mock_nccl']:
-    options['num_nodes'] = _MOCK_NUM_GPUS.value
+
+  pjrt_client_options = config.jax_pjrt_client_create_options.value
+  pjrt_client_option_list = []
+  if pjrt_client_options:
+    pjrt_client_option_list = pjrt_client_options.split(";")
+
+  for option in pjrt_client_option_list:
+    option_list = option.split(":")
+    if (len(option_list) != 2):
+      raise RuntimeError(
+          "Multiple ':' separators for option in "
+          f"jax_pjrt_client_create_options: '{option}'. "
+          "Should be in format 'key:value'")
+    options[option_list[0]] = option_list[1]
+
+  if plugin_name == "cuda":
+    visible_devices = CUDA_VISIBLE_DEVICES.value
+    if visible_devices != 'all':
+      options['visible_devices'] = [int(x) for x in visible_devices.split(',')]
+    options['enable_mock_nccl'] = _USE_MOCK_GPU_CLIENT.value
+    if options['enable_mock_nccl']:
+      options['num_nodes'] = _MOCK_NUM_GPUS.value
+
   return options
 
 
