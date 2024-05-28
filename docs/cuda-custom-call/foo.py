@@ -23,34 +23,37 @@ STABLEHLO_CUSTOM_CALL_API_VERSION = 4
 # this string is how we identify the kernel to XLA:
 # - first we register a pointer to the kernel with XLA under this name
 # - then we "tell" JAX to emit StableHLO specifying this name to XLA
-XLA_CUSTOM_CALL_TARGET = "mul"
+XLA_CUSTOM_CALL_TARGET = "foo"
 
 # independently, the corresponding JAX primitive must also be named,
-# but it can have a name different from the XLA target
-JAX_PRIMITIVE = "mul"
+# it can have a name different from the XLA target
+JAX_PRIMITIVE = "foo"
 
-mulso = ctypes.cdll.LoadLibrary('./mul.so')
+SHARED_LIBRARY = "./foo.so"
 
-# register the XLA FFI binding pointer with XLA under the name "mul"
+
+library = ctypes.cdll.LoadLibrary(SHARED_LIBRARY)
+
+# register the XLA FFI binding pointer with XLA
 xla_client.register_custom_call_target(
     name=XLA_CUSTOM_CALL_TARGET,
-    fn=jax.ffi.build_capsule(mulso.Mul),
+    fn=jax.ffi.build_capsule(library.Foo),
     platform=XLA_PLATFORM,
     api_version=XLA_CUSTOM_CALL_API_VERSION
 )
 
-mul_p = jax.core.Primitive(JAX_PRIMITIVE)
-def mul(a, b):
-    return mul_p.bind(a, b)
+foo_p = jax.core.Primitive(JAX_PRIMITIVE)
+def foo(a, b):
+    return foo_p.bind(a, b)
 
-def _mul_abstract_eval(a, b):
+def _foo_abstract_eval(a, b):
     assert a.shape == b.shape
     assert a.dtype == b.dtype
     return jax.core.ShapedArray(a.shape, a.dtype)
 
-mul_p.def_abstract_eval(_mul_abstract_eval)
+foo_p.def_abstract_eval(_foo_abstract_eval)
 
-def _mul_lowering(ctx, a, b):
+def _foo_lowering(ctx, a, b):
     typ = ir.RankedTensorType(a.type)
     shape = typ.shape
     u64 = ir.IntegerType.get_unsigned(64)
@@ -67,8 +70,10 @@ def _mul_lowering(ctx, a, b):
         result_layouts=[layout],
     ).results
 
-mlir.register_lowering(mul_p, _mul_lowering, platform=JAX_PLATFORM)
+mlir.register_lowering(foo_p, _foo_lowering, platform=JAX_PLATFORM)
 
 a = 2. * jnp.ones((2,3))
 b = 3. * jnp.ones((2,3))
-assert (jax.jit(mul)(a, b) == (6)).all()
+assert (jax.jit(foo)(a, b) == (2*(3+1))).all()
+
+#print(jax.grad(foo)(a, b))
