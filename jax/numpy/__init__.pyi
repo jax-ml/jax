@@ -11,8 +11,8 @@ from jax._src.lax.slicing import GatherScatterMode
 from jax._src.lib import Device
 from jax._src.numpy.index_tricks import _Mgrid, _Ogrid, CClass as _CClass, RClass as _RClass
 from jax._src.typing import (
-    Array, ArrayLike, DType, DTypeLike,
-    DimSize, DuckTypedArray, Shape, DeprecatedArg
+    Array, ArrayLike, DType, DTypeLike, DeprecatedArg,
+    DimSize, DuckTypedArray, Shape, StaticScalar,
 )
 from jax.numpy import fft as fft, linalg as linalg
 from jax.sharding import Sharding as _Sharding
@@ -804,7 +804,7 @@ def take(
     mode: Optional[str] = ...,
     unique_indices: builtins.bool = ...,
     indices_are_sorted: builtins.bool = ...,
-    fill_value: Optional[ArrayLike] = ...,
+    fill_value: Optional[StaticScalar] = ...,
 ) -> Array: ...
 def take_along_axis(
     arr: ArrayLike,

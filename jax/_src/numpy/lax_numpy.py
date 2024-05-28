@@ -68,8 +68,8 @@ from jax._src.numpy import ufuncs
 from jax._src.numpy import util
 from jax._src.numpy.vectorize import vectorize
 from jax._src.typing import (
-  Array, ArrayLike, DimSize, DuckTypedArray,
-  DType, DTypeLike, Shape, DeprecatedArg
+  Array, ArrayLike, DeprecatedArg, DimSize, DuckTypedArray,
+  DType, DTypeLike, Shape, StaticScalar,
 )
 from jax._src.util import (unzip2, subvals, safe_zip,
                            ceil_of_ratio, partition_list,
@@ -5637,7 +5637,7 @@ def take(
     mode: str | None = None,
     unique_indices: bool = False,
     indices_are_sorted: bool = False,
-    fill_value: ArrayLike | None = None,
+    fill_value: StaticScalar | None = None,
 ) -> Array:
   return _take(a, indices, None if axis is None else operator.index(axis), out,
                mode, unique_indices=unique_indices, indices_are_sorted=indices_are_sorted,
