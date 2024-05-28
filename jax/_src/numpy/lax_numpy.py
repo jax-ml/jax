@@ -1043,9 +1043,62 @@ def ravel(a: ArrayLike, order: str = "C") -> Array:
   return reshape(a, (size(a),), order)
 
 
-@util.implements(np.ravel_multi_index)
 def ravel_multi_index(multi_index: Sequence[ArrayLike], dims: Sequence[int],
                       mode: str = 'raise', order: str = 'C') -> Array:
+  """Convert multi-dimensional indices into flat indices.
+
+  JAX implementation of :func:`numpy.ravel_multi_index`
+
+  Args:
+    multi_index: sequence of integer arrays containing indices in each dimension.
+    dims: sequence of integer sizes; must have ``len(dims) == len(multi_index)``
+    mode: how to handle out-of bound indices. Options are
+
+      - ``"raise"`` (default): raise a ValueError. This mode is incompatible
+        with :func:`~jax.jit` or other JAX transformations.
+      - ``"clip"``: clip out-of-bound indices to valid range.
+      - ``"wrap"``: wrap out-of-bound indices to valid range.
+
+    order: ``"C"`` (default) or ``"F"``, specify whether to assume C-style
+      row-major order or Fortran-style column-major order.
+
+  Returns:
+    array of flattened indices
+
+  See also:
+    :func:`jax.numpy.unravel_index`: inverse of this function.
+
+  Example:
+    Define a 2-dimensional array and a sequence of indices of even values:
+
+    >>> x = jnp.array([[2., 3., 4.],
+    ...                [5., 6., 7.]])
+    >>> indices = jnp.where(x % 2 == 0)
+    >>> indices
+    (Array([0, 0, 1], dtype=int32), Array([0, 2, 1], dtype=int32))
+    >>> x[indices]
+    Array([2., 4., 6.], dtype=float32)
+
+    Compute the flattened indices:
+
+    >>> indices_flat = jnp.ravel_multi_index(indices, x.shape)
+    >>> indices_flat
+    Array([0, 2, 4], dtype=int32)
+
+    These flattened indices can be used to extract the same values from the
+    flattened ``x`` array:
+
+    >>> x_flat = x.ravel()
+    >>> x_flat
+    Array([2., 3., 4., 5., 6., 7.], dtype=float32)
+    >>> x_flat[indices_flat]
+    Array([2., 4., 6.], dtype=float32)
+
+    The original indices can be recovered with :func:`~jax.numpy.unravel_index`:
+
+    >>> jnp.unravel_index(indices_flat, x.shape)
+    (Array([0, 0, 1], dtype=int32), Array([0, 2, 1], dtype=int32))
+  """
   assert len(multi_index) == len(dims), f"len(multi_index)={len(multi_index)} != len(dims)={len(dims)}"
   dims = tuple(core.concrete_or_error(operator.index, d, "in `dims` argument of ravel_multi_index().") for d in dims)
   util.check_arraylike("ravel_multi_index", *multi_index)
@@ -1081,13 +1134,48 @@ def ravel_multi_index(multi_index: Sequence[ArrayLike], dims: Sequence[int],
   return result
 
 
-_UNRAVEL_INDEX_DOC = """\
-Unlike numpy's implementation of unravel_index, negative indices are accepted
-and out-of-bounds indices are clipped into the valid range.
-"""
-
-@util.implements(np.unravel_index, lax_description=_UNRAVEL_INDEX_DOC)
 def unravel_index(indices: ArrayLike, shape: Shape) -> tuple[Array, ...]:
+  """Convert flat indices into multi-dimensional indices.
+
+  JAX implementation of :func:`numpy.unravel_index`. The JAX version differs in
+  its treatment of out-of-bound indices: unlike NumPy, negative indices are
+  supported, and out-of-bound indices are clipped to the nearest valid value.
+
+  Args:
+    indices: integer array of flat indices
+    shape: shape of multidimensional array to index into
+
+  Returns:
+    Tuple of unraveled indices
+
+  See also:
+    :func:`jax.numpy.ravel_multi_index`: Inverse of this function.
+
+  Examples:
+    Start with a 1D array values and indices:
+
+    >>> x = jnp.array([2., 3., 4., 5., 6., 7.])
+    >>> indices = jnp.array([1, 3, 5])
+    >>> print(x[indices])
+    [3. 5. 7.]
+
+    Now if ``x`` is reshaped, ``unravel_indices`` can be used to convert
+    the flat indices into a tuple of indices that access the same entries:
+
+    >>> shape = (2, 3)
+    >>> x_2D = x.reshape(shape)
+    >>> indices_2D = jnp.unravel_index(indices, shape)
+    >>> indices_2D
+    (Array([0, 1, 1], dtype=int32), Array([1, 0, 2], dtype=int32))
+    >>> print(x_2D[indices_2D])
+    [3. 5. 7.]
+
+    The inverse function, ``ravel_multi_index``, can be used to obtain the
+    original indices:
+
+    >>> jnp.ravel_multi_index(indices_2D, shape)
+    Array([1, 3, 5], dtype=int32)
+  """
   util.check_arraylike("unravel_index", indices)
   indices_arr = asarray(indices)
   # Note: we do not convert shape to an array, because it may be passed as a
