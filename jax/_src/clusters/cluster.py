@@ -44,11 +44,8 @@ class ClusterEnv:
                                            num_processes: int | None,
                                            process_id: int | None,
                                            local_device_ids: Sequence[int] | None,
-<<<<<<< HEAD
                                            spec_detection_method: str | None,
-=======
                                            initialization_timeout: int | None,
->>>>>>> 06cd05d1d6722e77744556983e99396d0c208774
                                           ) -> tuple[str | None, int | None, int | None,
                                                      Sequence[int] | None]:
 
