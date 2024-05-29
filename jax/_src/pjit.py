@@ -1294,10 +1294,10 @@ def pjit_check_aval_sharding(
     name_str = f' with pytree key path {name}' if name else ''
     shape = aval.shape
     try:
-      # Sharding interfaces can implement `is_compatible_aval` as an optional
+      # Sharding interfaces can implement `check_compatible_aval` as an optional
       # method to raise a more meaningful error.
-      if hasattr(s, 'is_compatible_aval'):
-        s.is_compatible_aval(shape)
+      if hasattr(s, 'check_compatible_aval'):
+        s.check_compatible_aval(shape)
       else:
         s._to_xla_hlo_sharding(len(shape))
     except ValueError as e:

@@ -322,7 +322,7 @@ class NamedSharding(XLACompatibleSharding):
       return False
     return self.mesh is other.mesh or self.mesh == other.mesh
 
-  def is_compatible_aval(self, aval_shape: Shape):
+  def check_compatible_aval(self, aval_shape: Shape) -> None:
     assert self._parsed_pspec is not None
     if len(aval_shape) < len(self._parsed_pspec):
       extra_msg = (' For scalars the PartitionSpec should be P()'
@@ -716,7 +716,7 @@ class PositionalSharding(XLACompatibleSharding):
     new_ids = self._ids.sum(axis=axis, keepdims=keepdims)  # union
     return self._remake(self._devices, new_ids)
 
-  def is_compatible_aval(self, aval_shape: Shape) -> None:
+  def check_compatible_aval(self, aval_shape: Shape) -> None:
     if len(aval_shape) != len(self.shape):
       raise ValueError(
           f"Sharding {self} is only valid for values of rank "
@@ -872,7 +872,7 @@ class GSPMDSharding(XLACompatibleSharding):
     mem = '' if self._memory_kind is None else f', memory_kind={self._memory_kind}'
     return f'GSPMDSharding({self._hlo_sharding!r}{mem})'
 
-  def is_compatible_aval(self, aval_shape: Shape):
+  def check_compatible_aval(self, aval_shape: Shape) -> None:
     num_ways_dim_sharded, _ = get_num_ways_dim_sharded(self._hlo_sharding)
     if len(aval_shape) < len(num_ways_dim_sharded):
       raise ValueError(

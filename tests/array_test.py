@@ -923,7 +923,7 @@ class ShardingTest(jtu.JaxTestCase):
         r"Sharding NamedSharding\(mesh=Mesh\('replica': 1, 'data': 1, 'mdl': 2\), "
         r"spec=PartitionSpec\(None, \('mdl',\), None, None\).*\) is only "
         "valid for values of rank at least 4, but was applied to a value of rank 2"):
-      new_mps.is_compatible_aval(shape)
+      new_mps.check_compatible_aval(shape)
 
   def test_is_subclass(self):
     # array version of api_test.py::APITest::test_is_subclass
@@ -1188,7 +1188,7 @@ class ShardingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         r"For scalars the PartitionSpec should be P()"):
-      s.is_compatible_aval(shape)
+      s.check_compatible_aval(shape)
 
   def test_mesh_caching_during_construction(self):
     if jax.device_count() < 2:

@@ -2423,8 +2423,8 @@ def _infer_src_sharding(src, x) -> Sharding | None:
   return None
 
 
-# TODO(yashkatariya): Generalize is_compatible_aval (maybe renamed) and use that
-# to check if shardings are compatible with the input.
+# TODO(yashkatariya): Generalize check_compatible_aval (maybe renamed) and use
+# that to check if shardings are compatible with the input.
 @lru_cache(maxsize=2048)
 def _check_sharding(aval, s):
   if isinstance(s, Sharding):
