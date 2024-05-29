@@ -389,6 +389,7 @@ pytype_strict_library(
     name = "cloud_tpu_init",
     srcs = ["_src/cloud_tpu_init.py"],
     deps = [
+        ":config",
         ":hardware_utils",
         ":version",
     ],

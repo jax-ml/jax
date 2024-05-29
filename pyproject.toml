@@ -58,35 +58,16 @@ markers = [
 ]
 filterwarnings = [
     "error",
-    "ignore:The hookimpl.*:DeprecationWarning",
-    "ignore:No GPU/TPU found, falling back to CPU.:UserWarning",
-    "ignore:xmap is an experimental feature and probably has bugs!",
-    "ignore:the imp module is deprecated in favour of importlib.*:DeprecationWarning",
-    "ignore:can't resolve package from __spec__ or __package__:ImportWarning",
-    "ignore:Using or importing the ABCs.*:DeprecationWarning",
-    "ignore:numpy.ufunc size changed",
-    "ignore:.*experimental feature",
-    "ignore:The distutils.* is deprecated.*:DeprecationWarning",
-    "default:Error reading persistent compilation cache entry for 'jit_equal'",
-    "default:Error reading persistent compilation cache entry for 'jit__lambda_'",
-    "default:Error writing persistent compilation cache entry for 'jit_equal'",
-    "default:Error writing persistent compilation cache entry for 'jit__lambda_'",
-    "ignore:backend and device argument on jit is deprecated.*:DeprecationWarning",
-    # TODO(skyewm): remove when jaxlib >= 0.4.12 is released (needs
-    # https://github.com/openxla/xla/commit/fb9dc3db0999bf14c78d95cb7c3aa6815221ddc7)
-    "ignore:ml_dtypes.float8_e4m3b11 is deprecated.",
-    "ignore:JAX_USE_PJRT_C_API_ON_TPU=false will no longer be supported.*:UserWarning",
-    "ignore:np.find_common_type is deprecated.*:DeprecationWarning",
-    "ignore:jax.numpy.in1d is deprecated.*:DeprecationWarning",
+    "default:Error (reading|writing) persistent compilation cache entry for 'jit_equal'",
+    "default:Error (reading|writing) persistent compilation cache entry for 'jit__lambda_'",
+    "default:backend and device argument on jit is deprecated.*:DeprecationWarning",
+    "default:jax.extend.mlir.dialects.mhlo is deprecated.*:DeprecationWarning",
     # TODO(jakevdp): remove when array_api_tests stabilize
     # start array_api_tests-related warnings
-    "ignore:The numpy.array_api submodule is still experimental.*:UserWarning",
-    "ignore:case not machine-readable.*:UserWarning",
-    "ignore:not machine-readable.*:UserWarning",
-    "ignore:Special cases found for .* but none were parsed.*:UserWarning",
+    "default:.*not machine-readable.*:UserWarning",
+    "default:Special cases found for .* but none were parsed.*:UserWarning",
+    "default:.*is not JSON-serializable. Using the repr instead.",
     # end array_api_tests-related warnings
-    "ignore:jax.extend.mlir.dialects.mhlo is deprecated.*:DeprecationWarning",
-    "ignore:.*is not JSON-serializable. Using the repr instead.",
 ]
 doctest_optionflags = [
     "NUMBER",

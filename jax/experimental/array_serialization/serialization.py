@@ -216,14 +216,6 @@ async def async_serialize(
         f'between processes. Serialization have failed for the array with '
         f'the path "{tensorstore_spec["kvstore"]["path"]}".')
 
-  if primary_host is None and is_remote_storage(tensorstore_spec):
-    # Not strictly an error because users may manually split directories into
-    # per-process subdirectories.
-    logging.warning(
-        'When primary_host is set to None and remote storage is used,'
-        ' serialization is not allowed, as this may lead to a race condition'
-        ' between processes.'
-    )
   # 'metadata' may not be present at the top level (for example, if we are using
   # a 'cast' driver).
   if not _spec_has_metadata(tensorstore_spec):

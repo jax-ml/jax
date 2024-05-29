@@ -90,16 +90,7 @@ def dense_int_elements(xs) -> ir.DenseIntElementsAttr:
   return type_cast(ir.DenseIntElementsAttr,
                    ir.DenseIntElementsAttr.get(np.asarray(xs, np.int64)))
 
-def dense_int_array(xs) -> ir.DenseElementsAttr | ir.DenseI64ArrayAttr:
-  # TODO: b/321794305 - remove this check when jaxlib is on StableHLO API v5 or higher
-  if hlo.get_api_version() < 5:
-    return dense_int_elements(xs)
-  return ir.DenseI64ArrayAttr.get(np.asarray(xs, np.int64))  # type: ignore
-
-# TODO: b/321794305 - delete this when jaxlib is on StableHLO API v6 or higher
-def dense_int_array_v6(xs) -> ir.DenseIntElementsAttr | ir.DenseI64ArrayAttr:
-  if hlo.get_api_version() < 6:
-    return dense_int_elements(xs)
+def dense_int_array(xs) -> ir.DenseI64ArrayAttr:
   return ir.DenseI64ArrayAttr.get(np.asarray(xs, np.int64))  # type: ignore
 
 def dense_bool_elements(xs: Sequence[bool]) -> ir.DenseElementsAttr:
@@ -111,10 +102,7 @@ def dense_bool_elements(xs: Sequence[bool]) -> ir.DenseElementsAttr:
   return ir.DenseElementsAttr.get(
       a, type=ir.IntegerType.get_signless(1), shape=[len(xs)])
 
-def dense_bool_array(xs: Sequence[bool]) -> ir.DenseElementsAttr | ir.DenseBoolArrayAttr:
-  # TODO: b/321794305 - remove this check when jaxlib is on StableHLO API v6 or higher
-  if hlo.get_api_version() < 6:
-    return dense_bool_elements(xs)
+def dense_bool_array(xs: Sequence[bool]) -> ir.DenseBoolArrayAttr:
   return ir.DenseBoolArrayAttr.get(xs)  # type: ignore
 
 def i32_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(32), i)
@@ -321,7 +309,7 @@ def _ndarray_constant_handler(val: np.ndarray | np.generic) -> Sequence[ir.Value
         ir.RankedTensorType.get(
             val.shape, dtype_to_ir_type(collapsed_val.dtype)),  # type: ignore
         _numpy_array_constant(collapsed_val)[0],
-        dense_int_array_v6(other_axes))
+        dense_int_array(other_axes))
     return (out,)
   else:
     return _numpy_array_constant(val)
@@ -1694,7 +1682,11 @@ def lower_per_platform(ctx: LoweringRuleContext,
   assert kept_rules
   # If there is a single rule left just apply the rule, without conditionals.
   if len(kept_rules) == 1:
-   return kept_rules[0](ctx, *rule_args, **rule_kwargs)
+    output = kept_rules[0](ctx, *rule_args, **rule_kwargs)
+    wrapped_out = map(wrap_singleton_ir_values, output)
+    map(lambda o: wrap_compute_type_in_place(ctx, o.owner),
+        util.flatten(wrapped_out))
+    return output
 
   assert len(platforms) > 1 and len(kept_rules) >= 2, (platforms, kept_rules)
   assert len(ctx.dim_var_values) >= 1, "Must have a platform_index variable"
@@ -1728,6 +1720,8 @@ def lower_per_platform(ctx: LoweringRuleContext,
       except TypeError as e:
         raise ValueError("Output of translation rule must be iterable: "
                         f"{description}, got output {output}") from e
+      map(lambda o: wrap_compute_type_in_place(ctx, o.owner),
+          util.flatten(out_nodes))
       if inner_ctx.tokens_out is not None:
         assert len(ordered_effects) == len(inner_ctx.tokens_out)
         out_nodes = [inner_ctx.tokens_out.get(eff)
@@ -1866,6 +1860,21 @@ register_lowering(core.call_p, partial(core_call_lowering, name="core_call"))
 register_lowering(core.closed_call_p,
                   partial(core_call_lowering, name=None))
 
+def map_compute_type(c_type):
+  if c_type == 'device_host':
+    return 'host'
+  elif c_type == 'device':
+    return 'dense'
+  raise ValueError('Invalid compute type received. Current supported values '
+                   'are `device_host` and `device`')
+
+def wrap_compute_type_in_place(ctx, op):
+  if ctx.compute_type is not None:
+    dict_attr = {"_xla_compute_type": ir.StringAttr.get(
+        map_compute_type(ctx.compute_type))}
+    op.operation.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
+
+
 def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue, *,
                      broadcast_dimensions) -> ir.Value:
   # broadcast_dimension[i] is the axis of the result where the axis i of
@@ -1882,17 +1891,19 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
   else:
     if not core.is_constant_shape(aval_out.shape):  # type: ignore
       shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)  # type: ignore
-      return hlo.dynamic_broadcast_in_dim(
+      out = hlo.dynamic_broadcast_in_dim(
           aval_to_ir_type(aval_out), op,
           shape,
-          dense_int_array_v6(broadcast_dimensions),
+          dense_int_array(broadcast_dimensions),
       )
     else:
       assert all(d != ir.ShapedType.get_dynamic_size()
                  for d in aval_out.shape), aval_out  # type: ignore
-      return hlo.broadcast_in_dim(
+      out = hlo.broadcast_in_dim(
           aval_to_ir_type(aval_out), op,
-          dense_int_array_v6(broadcast_dimensions))
+          dense_int_array(broadcast_dimensions))
+    wrap_compute_type_in_place(ctx, out.owner)
+    return out
 
 def multi_broadcast_in_dim(ctx: LoweringRuleContext,
                            ops: Sequence[ir.Value],
@@ -2725,10 +2736,10 @@ def reduce_window(
     rw = hlo.ReduceWindowOp(
         list(map(aval_to_ir_type, out_avals)),
         operands, init_values,
-        dense_int_array_v6(window_dimensions),
-        window_strides=dense_int_array_v6(window_strides),
-        base_dilations=dense_int_array_v6(base_dilation),
-        window_dilations=dense_int_array_v6(window_dilation),
+        dense_int_array(window_dimensions),
+        window_strides=dense_int_array(window_strides),
+        base_dilations=dense_int_array(base_dilation),
+        window_dilations=dense_int_array(window_dilation),
         padding=ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64),
                                             shape=[len(padding), 2]))
     reducer = rw.regions[0].blocks.append(*(scalar_types + scalar_types))

@@ -1043,9 +1043,62 @@ def ravel(a: ArrayLike, order: str = "C") -> Array:
   return reshape(a, (size(a),), order)
 
 
-@util.implements(np.ravel_multi_index)
 def ravel_multi_index(multi_index: Sequence[ArrayLike], dims: Sequence[int],
                       mode: str = 'raise', order: str = 'C') -> Array:
+  """Convert multi-dimensional indices into flat indices.
+
+  JAX implementation of :func:`numpy.ravel_multi_index`
+
+  Args:
+    multi_index: sequence of integer arrays containing indices in each dimension.
+    dims: sequence of integer sizes; must have ``len(dims) == len(multi_index)``
+    mode: how to handle out-of bound indices. Options are
+
+      - ``"raise"`` (default): raise a ValueError. This mode is incompatible
+        with :func:`~jax.jit` or other JAX transformations.
+      - ``"clip"``: clip out-of-bound indices to valid range.
+      - ``"wrap"``: wrap out-of-bound indices to valid range.
+
+    order: ``"C"`` (default) or ``"F"``, specify whether to assume C-style
+      row-major order or Fortran-style column-major order.
+
+  Returns:
+    array of flattened indices
+
+  See also:
+    :func:`jax.numpy.unravel_index`: inverse of this function.
+
+  Example:
+    Define a 2-dimensional array and a sequence of indices of even values:
+
+    >>> x = jnp.array([[2., 3., 4.],
+    ...                [5., 6., 7.]])
+    >>> indices = jnp.where(x % 2 == 0)
+    >>> indices
+    (Array([0, 0, 1], dtype=int32), Array([0, 2, 1], dtype=int32))
+    >>> x[indices]
+    Array([2., 4., 6.], dtype=float32)
+
+    Compute the flattened indices:
+
+    >>> indices_flat = jnp.ravel_multi_index(indices, x.shape)
+    >>> indices_flat
+    Array([0, 2, 4], dtype=int32)
+
+    These flattened indices can be used to extract the same values from the
+    flattened ``x`` array:
+
+    >>> x_flat = x.ravel()
+    >>> x_flat
+    Array([2., 3., 4., 5., 6., 7.], dtype=float32)
+    >>> x_flat[indices_flat]
+    Array([2., 4., 6.], dtype=float32)
+
+    The original indices can be recovered with :func:`~jax.numpy.unravel_index`:
+
+    >>> jnp.unravel_index(indices_flat, x.shape)
+    (Array([0, 0, 1], dtype=int32), Array([0, 2, 1], dtype=int32))
+  """
   assert len(multi_index) == len(dims), f"len(multi_index)={len(multi_index)} != len(dims)={len(dims)}"
   dims = tuple(core.concrete_or_error(operator.index, d, "in `dims` argument of ravel_multi_index().") for d in dims)
   util.check_arraylike("ravel_multi_index", *multi_index)
@@ -1081,13 +1134,48 @@ def ravel_multi_index(multi_index: Sequence[ArrayLike], dims: Sequence[int],
   return result
 
 
-_UNRAVEL_INDEX_DOC = """\
-Unlike numpy's implementation of unravel_index, negative indices are accepted
-and out-of-bounds indices are clipped into the valid range.
-"""
-
-@util.implements(np.unravel_index, lax_description=_UNRAVEL_INDEX_DOC)
 def unravel_index(indices: ArrayLike, shape: Shape) -> tuple[Array, ...]:
+  """Convert flat indices into multi-dimensional indices.
+
+  JAX implementation of :func:`numpy.unravel_index`. The JAX version differs in
+  its treatment of out-of-bound indices: unlike NumPy, negative indices are
+  supported, and out-of-bound indices are clipped to the nearest valid value.
+
+  Args:
+    indices: integer array of flat indices
+    shape: shape of multidimensional array to index into
+
+  Returns:
+    Tuple of unraveled indices
+
+  See also:
+    :func:`jax.numpy.ravel_multi_index`: Inverse of this function.
+
+  Examples:
+    Start with a 1D array values and indices:
+
+    >>> x = jnp.array([2., 3., 4., 5., 6., 7.])
+    >>> indices = jnp.array([1, 3, 5])
+    >>> print(x[indices])
+    [3. 5. 7.]
+
+    Now if ``x`` is reshaped, ``unravel_indices`` can be used to convert
+    the flat indices into a tuple of indices that access the same entries:
+
+    >>> shape = (2, 3)
+    >>> x_2D = x.reshape(shape)
+    >>> indices_2D = jnp.unravel_index(indices, shape)
+    >>> indices_2D
+    (Array([0, 1, 1], dtype=int32), Array([1, 0, 2], dtype=int32))
+    >>> print(x_2D[indices_2D])
+    [3. 5. 7.]
+
+    The inverse function, ``ravel_multi_index``, can be used to obtain the
+    original indices:
+
+    >>> jnp.ravel_multi_index(indices_2D, shape)
+    Array([1, 3, 5], dtype=int32)
+  """
   util.check_arraylike("unravel_index", indices)
   indices_arr = asarray(indices)
   # Note: we do not convert shape to an array, because it may be passed as a
@@ -1620,18 +1708,68 @@ def select(
   return lax.select_n(*broadcast_arrays(idx, *choicelist))
 
 
-@util.implements(np.bincount, lax_description="""\
-Jax adds the optional `length` parameter which specifies the output length, and
-defaults to ``x.max() + 1``. It must be specified for bincount to be compiled
-with non-static operands. Values larger than the specified length will be discarded.
-If `length` is specified, `minlength` will be ignored.
-
-Additionally, while ``np.bincount`` raises an error if the input array contains
-negative values, ``jax.numpy.bincount`` clips negative values to zero.
-""")
 def bincount(x: ArrayLike, weights: ArrayLike | None = None,
              minlength: int = 0, *, length: int | None = None
              ) -> Array:
+  """Count the number of occurrences of each value in an integer array.
+
+  JAX implementation of :func:`numpy.bincount`.
+
+  For an array of positive integers ``x``, this function returns an array ``counts``
+  of size ``x.max() + 1``, such that ``counts[i]`` contains the number of occurrences
+  of the value ``i`` in ``x``.
+
+  The JAX version has a few differences from the NumPy version:
+
+  - In NumPy, passing an array ``x`` with negative entries will result in an error.
+    In JAX, negative values are clipped to zero.
+  - JAX adds an optional ``length`` parameter which can be used to statically specify
+    the length of the output array so that this function can be used with transformations
+    like :func:`jax.jit`. In this case, items larger than `length + 1` will be dropped.
+
+  Args:
+    x : N-dimensional array of positive integers
+    weights: optional array of weights associated with ``x``. If not specified, the
+      weight for each entry will be ``1``.
+    minlength: the minimum length of the output counts array.
+    length: the length of the output counts array. Must be specified statically for
+      ``bincount`` to be used with :func:`jax.jit` and other JAX transformations.
+
+  Returns:
+    An array of counts or summed weights reflecting the number of occurrances of values
+    in ``x``.
+
+  See Also:
+    - :func:`jax.numpy.histogram`
+    - :func:`jax.numpy.digitize`
+    - :func:`jax.numpy.unique_counts`
+
+  Examples:
+    Basic bincount:
+
+    >>> x = jnp.array([1, 1, 2, 3, 3, 3])
+    >>> jnp.bincount(x)
+    Array([0, 2, 1, 3], dtype=int32)
+
+    Weighted bincount:
+
+    >>> weights = jnp.array([1, 2, 3, 4, 5, 6])
+    >>> jnp.bincount(x, weights)
+    Array([ 0,  3,  3, 15], dtype=int32)
+
+    Specifying a static ``length`` makes this jit-compatible:
+
+    >>> jit_bincount = jax.jit(jnp.bincount, static_argnames=['length'])
+    >>> jit_bincount(x, length=5)
+    Array([0, 2, 1, 3, 0], dtype=int32)
+
+    Any negative numbers are clipped to the first bin, and numbers beyond the
+    specified ``length`` are dropped:
+
+    >>> x = jnp.array([-1, -1, 1, 3, 10])
+    >>> jnp.bincount(x, length=5)
+    Array([2, 1, 0, 1, 0], dtype=int32)
+  """
   util.check_arraylike("bincount", x)
   if not issubdtype(_dtype(x), integer):
     raise TypeError(f"x argument to bincount must have an integer type; got {_dtype(x)}")
@@ -5608,27 +5746,6 @@ def unpackbits(
   return swapaxes(unpacked, axis, -1)
 
 
-@util.implements(np.take, skip_params=['out'],
-        lax_description="""
-By default, JAX assumes that all indices are in-bounds. Alternative out-of-bound
-index semantics can be specified via the ``mode`` parameter (see below).
-""",
-        extra_params="""
-mode : string, default="fill"
-    Out-of-bounds indexing mode. The default mode="fill" returns invalid values
-    (e.g. NaN) for out-of bounds indices (see also ``fill_value`` below).
-    For more discussion of mode options, see :attr:`jax.numpy.ndarray.at`.
-fill_value : optional
-    The fill value to return for out-of-bounds slices when mode is 'fill'. Ignored
-    otherwise. Defaults to NaN for inexact types, the largest negative value for
-    signed types, the largest positive value for unsigned types, and True for booleans.
-unique_indices : bool, default=False
-    If True, the implementation will assume that the indices are unique,
-    which can result in more efficient execution on some backends.
-indices_are_sorted : bool, default=False
-    If True, the implementation will assume that the indices are sorted in
-    ascending order, which can lead to more efficient execution on some backends.
-""")
 def take(
     a: ArrayLike,
     indices: ArrayLike,
@@ -5639,6 +5756,78 @@ def take(
     indices_are_sorted: bool = False,
     fill_value: StaticScalar | None = None,
 ) -> Array:
+  """Take elements from an array.
+
+  JAX implementation of :func:`numpy.take`, implemented in terms of
+  :func:`jax.lax.gather`. JAX's behavior differs from NumPy in the case
+  of out-of-bound indices; see the ``mode`` parameter below.
+
+  Args:
+    a: array from which to take values.
+    indices: N-dimensional array of integer indices of values to take from the array.
+    axis: the axis along which to take values. If not specified, the array will
+      be flattened before indexing is applied.
+    mode: Out-of-bounds indexing mode, either ``"fill"`` or ``"clip"``. The default
+      ``mode="fill"`` returns invalid values (e.g. NaN) for out-of bounds indices;
+      the ``fill_value`` argument gives control over this value. For more discussion
+      of ``mode`` options, see :attr:`jax.numpy.ndarray.at`.
+    fill_value: The fill value to return for out-of-bounds slices when mode is 'fill'.
+      Ignored otherwise. Defaults to NaN for inexact types, the largest negative value for
+      signed types, the largest positive value for unsigned types, and True for booleans.
+    unique_indices: If True, the implementation will assume that the indices are unique,
+      which can result in more efficient execution on some backends. If set to True and
+      indices are not unique, the output is undefined.
+    indices_are_sorted : If True, the implementation will assume that the indices are
+      sorted in ascending order, which can lead to more efficient execution on some
+      backends. If set to True and indices are not sorted, the output is undefined.
+
+  Returns:
+    Array of values extracted from ``a``.
+
+  See also:
+    - :attr:`jax.numpy.ndarray.at`: take values via indexing syntax.
+    - :func:`jax.numpy.take_along_axis`: take values along an axis
+
+  Example:
+    >>> x = jnp.array([[1., 2., 3.],
+    ...                [4., 5., 6.]])
+    >>> indices = jnp.array([2, 0])
+
+    Passing no axis results in indexing into the flattened array:
+
+    >>> jnp.take(x, indices)
+    Array([3., 1.], dtype=float32)
+    >>> x.ravel()[indices]  # equivalent indexing syntax
+    Array([3., 1.], dtype=float32)
+
+    Passing an axis results ind applying the index to every subarray along the axis:
+
+    >>> jnp.take(x, indices, axis=1)
+    Array([[3., 1.],
+           [6., 4.]], dtype=float32)
+    >>> x[:, indices]  # equivalent indexing syntax
+    Array([[3., 1.],
+           [6., 4.]], dtype=float32)
+
+    Out-of-bound indices fill with invalid values. For float inputs, this is `NaN`:
+
+    >>> jnp.take(x, indices, axis=0)
+    Array([[nan, nan, nan],
+           [ 1.,  2.,  3.]], dtype=float32)
+    >>> x.at[indices].get(mode='fill', fill_value=jnp.nan)  # equivalent indexing syntax
+    Array([[nan, nan, nan],
+           [ 1.,  2.,  3.]], dtype=float32)
+
+    This default out-of-bound behavior can be adjusted using the ``mode`` parameter, for
+    example, we can instead clip to the last valid value:
+
+    >>> jnp.take(x, indices, axis=0, mode='clip')
+    Array([[4., 5., 6.],
+           [1., 2., 3.]], dtype=float32)
+    >>> x.at[indices].get(mode='clip')  # equivalent indexing syntax
+    Array([[4., 5., 6.],
+           [1., 2., 3.]], dtype=float32)
+  """
   return _take(a, indices, None if axis is None else operator.index(axis), out,
                mode, unique_indices=unique_indices, indices_are_sorted=indices_are_sorted,
                fill_value=fill_value)
@@ -5714,24 +5903,85 @@ def _normalize_index(index, axis_size):
     return lax.select(index < 0, lax.add(index, axis_size_val), index)
 
 
-TAKE_ALONG_AXIS_DOC = """
-Unlike :func:`numpy.take_along_axis`, :func:`jax.numpy.take_along_axis` takes
-an optional ``mode`` parameter controlling how out-of-bounds indices should be
-handled. By default, out-of-bounds indices yield invalid values (e.g., ``NaN``).
-See :attr:`jax.numpy.ndarray.at` for further discussion of out-of-bounds
-indexing in JAX.
-"""
-
-
-@util.implements(np.take_along_axis, update_doc=False,
-        lax_description=TAKE_ALONG_AXIS_DOC)
-@partial(jit, static_argnames=('axis', 'mode'))
+@partial(jit, static_argnames=('axis', 'mode', 'fill_value'))
 def take_along_axis(
     arr: ArrayLike,
     indices: ArrayLike,
     axis: int | None,
     mode: str | lax.GatherScatterMode | None = None,
+    fill_value: StaticScalar | None = None,
 ) -> Array:
+  """Take elements from an array.
+
+  JAX implementation of :func:`numpy.take_along_axis`, implemented in
+  terms of :func:`jax.lax.gather`. JAX's behavior differs from NumPy
+  in the case of out-of-bound indices; see the ``mode`` parameter below.
+
+  Args:
+    a: array from which to take values.
+    indices: array of integer indices. If ``axis`` is ``None``, must be one-dimensional.
+      If ``axis`` is not None, must have ``a.ndim == indices.ndim``, and ``a`` must be
+      broadcast-compaible with ``indices`` along dimensions other than ``axis``.
+    axis: the axis along which to take values. If not specified, the array will
+      be flattened before indexing is applied.
+    mode: Out-of-bounds indexing mode, either ``"fill"`` or ``"clip"``. The default
+      ``mode="fill"`` returns invalid values (e.g. NaN) for out-of bounds indices.
+      For more discussion of ``mode`` options, see :attr:`jax.numpy.ndarray.at`.
+
+  Returns:
+    Array of values extracted from ``a``.
+
+  See also:
+    - :attr:`jax.numpy.ndarray.at`: take values via indexing syntax.
+    - :func:`jax.numpy.take`: take the same indices along every axis slice.
+
+  Examples:
+    >>> x = jnp.array([[1., 2., 3.],
+    ...                [4., 5., 6.]])
+    >>> indices = jnp.array([[0, 2],
+    ...                      [1, 0]])
+    >>> jnp.take_along_axis(x, indices, axis=1)
+    Array([[1., 3.],
+           [5., 4.]], dtype=float32)
+    >>> x[jnp.arange(2)[:, None], indices]  # equivalent via indexing syntax
+    Array([[1., 3.],
+           [5., 4.]], dtype=float32)
+
+    Out-of-bound indices fill with invalid values. For float inputs, this is `NaN`:
+
+    >>> indices = jnp.array([[1, 0, 2]])
+    >>> jnp.take_along_axis(x, indices, axis=0)
+    Array([[ 4.,  2., nan]], dtype=float32)
+    >>> x.at[indices, jnp.arange(3)].get(
+    ...     mode='fill', fill_value=jnp.nan)  # equivalent via indexing syntax
+    Array([[ 4.,  2., nan]], dtype=float32)
+
+    ``take_along_axis`` is helpful for extracting values from multi-dimensional
+    argsorts and arg reductions. For, here we compute :func:`~jax.numpy.argsort`
+    indices along an axis, and use ``take_along_axis`` to construct the sorted
+    array:
+
+    >>> x = jnp.array([[5, 3, 4],
+    ...                [2, 7, 6]])
+    >>> indices = jnp.argsort(x, axis=1)
+    >>> indices
+    Array([[1, 2, 0],
+           [0, 2, 1]], dtype=int32)
+    >>> jnp.take_along_axis(x, indices, axis=1)
+    Array([[3, 4, 5],
+           [2, 6, 7]], dtype=int32)
+
+    Similarly, we can use :func:`~jax.numpy.argmin` with ``keepdims=True`` and
+    use ``take_along_axis`` to extract the minimum value:
+
+    >>> idx = jnp.argmin(x, axis=1, keepdims=True)
+    >>> idx
+    Array([[1],
+           [0]], dtype=int32)
+    >>> jnp.take_along_axis(x, idx, axis=1)
+    Array([[3],
+           [2]], dtype=int32)
+  """
   util.check_arraylike("take_along_axis", arr, indices)
   a = asarray(arr)
   index_dtype = dtypes.dtype(indices)
@@ -5743,8 +5993,9 @@ def take_along_axis(
     if ndim(indices) != 1:
       msg = "take_along_axis indices must be 1D if axis=None, got shape {}"
       raise ValueError(msg.format(idx_shape))
-    return take_along_axis(a.ravel(), indices, 0)
-  rank = ndim(arr)
+    a = a.ravel()
+    axis = 0
+  rank = a.ndim
   if rank != ndim(indices):
     msg = "indices and arr must have the same number of dimensions; {} vs. {}"
     raise ValueError(msg.format(ndim(indices), a.ndim))
@@ -5812,7 +6063,7 @@ def take_along_axis(
     collapsed_slice_dims=tuple(collapsed_slice_dims),
     start_index_map=tuple(start_index_map))
   return lax.gather(a, gather_indices_arr, dnums, tuple(slice_sizes),
-                    mode="fill" if mode is None else mode)
+                    mode="fill" if mode is None else mode, fill_value=fill_value)
 
 
 ### Indexing

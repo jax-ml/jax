@@ -31,7 +31,7 @@ pip install "jax[cpu]"
 ```
 or, for NVIDIA GPU:
 ```
-pip install -U "jax[cuda12_pip]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+pip install -U "jax[cuda12]"
 ```
 For more detailed platform-specific installation information, check out {ref}`installation`.
 

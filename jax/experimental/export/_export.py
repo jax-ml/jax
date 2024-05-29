@@ -514,26 +514,23 @@ def export(fun_jax: Callable,
 
 def _module_to_bytecode(module: ir.Module) -> bytes:
   mlir_str = mlir.module_to_bytecode(module)
-  if hlo.get_api_version() < 4:
-    target_version = hlo.get_earliest_forward_compatible_version()
-  else:
-    # `target_version` is used to manage situations when a StableHLO producer
-    # (in this case, jax2tf) and a StableHLO consumer were built using
-    # different versions of StableHLO.
-    #
-    # Each StableHLO version `producer_version` has a compatibility window,
-    # i.e. range of versions [`consumer_version_min`, `consumer_version_max`],
-    # where StableHLO portable artifacts serialized by `producer_version`
-    # can be deserialized by `consumer_version` within the window.
-    # See https://github.com/openxla/stablehlo/blob/main/docs/compatibility.md
-    # for the exact extent of these compatibility guarantees.
-    #
-    # `hlo.get_minimum_version()` returns `consumer_version_min`
-    # for the current version of StableHLO. We are using it here to maximize
-    # forward compatibility, i.e. to maximize how far into the past we can go
-    # and still have the payloads produced by `serialize_portable_artifact`
-    # compatible with potential consumers from the past.
-    target_version = hlo.get_minimum_version()
+  # `target_version` is used to manage situations when a StableHLO producer
+  # (in this case, jax2tf) and a StableHLO consumer were built using
+  # different versions of StableHLO.
+  #
+  # Each StableHLO version `producer_version` has a compatibility window,
+  # i.e. range of versions [`consumer_version_min`, `consumer_version_max`],
+  # where StableHLO portable artifacts serialized by `producer_version`
+  # can be deserialized by `consumer_version` within the window.
+  # See https://github.com/openxla/stablehlo/blob/main/docs/compatibility.md
+  # for the exact extent of these compatibility guarantees.
+  #
+  # `hlo.get_minimum_version()` returns `consumer_version_min`
+  # for the current version of StableHLO. We are using it here to maximize
+  # forward compatibility, i.e. to maximize how far into the past we can go
+  # and still have the payloads produced by `serialize_portable_artifact`
+  # compatible with potential consumers from the past.
+  target_version = hlo.get_minimum_version()
   module_serialized = xla_client._xla.mlir.serialize_portable_artifact(
       mlir_str, target_version)
   return module_serialized

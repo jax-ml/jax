@@ -672,7 +672,7 @@ def rel_entr(
   safe_q = jnp.where(both_gt_zero_mask, q, 1)
   log_val = lax.sub(_xlogx(safe_p), xlogy(safe_p, safe_q))
   result = jnp.where(
-      both_gt_zero_mask, log_val, jnp.where(one_zero_mask, q, jnp.inf)
+      both_gt_zero_mask, log_val, jnp.where(one_zero_mask, zero, jnp.inf)
   )
   return result
 

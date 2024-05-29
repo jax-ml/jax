@@ -14,6 +14,7 @@
 
 import functools
 import math
+import re
 from absl.testing import absltest
 from absl.testing import parameterized
 from absl import flags
@@ -630,8 +631,9 @@ class ComputeOffload(jtu.BufferDonationTestCase):
 
     jtu.check_grads(jf, (inp,), order=2)
 
-    lowered_text = jf.lower(inp).as_text()
-    self.assertEqual(lowered_text.count('_xla_compute_type = "host"'), 2)
+    lowered_text = jf.lower(inp).as_text('hlo')
+    out = re.findall(r"call.*to_apply.*_xla_compute_type", lowered_text)
+    self.assertLen(out, 2)
 
   def test_compute_on_remat(self):
     inp = jnp.arange(16.)
@@ -656,8 +658,9 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     jf = jax.jit(jax.grad(f))
     jf(inp)  # doesn't crash
 
-    lowered_text = jf.lower(inp).as_text()
-    self.assertEqual(lowered_text.count('_xla_compute_type = "host"'), 2)
+    lowered_text = jf.lower(inp).as_text('hlo')
+    out = re.findall(r"call.*to_apply.*_xla_compute_type", lowered_text)
+    self.assertLen(out, 2)
 
   def test_nested_no_op_compute(self):
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
@@ -784,25 +787,30 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertEqual(out.sharding.memory_kind, 'pinned_host')
     self.assertArraysEqual(out, np_inp * np_inp)
 
-  # def test_eager_compute(self):
-  #   inp = jnp.arange(8)
-  #   with compute_on('device_host'):
-  #     a = inp * 2
-  #   print(a)
+  def test_eager_compute(self):
+    inp = jnp.arange(8.)
+    with compute_on('device_host'):
+      out = inp * 2
+      out = jnp.sin(out)
+    self.assertArraysAllClose(out, jnp.sin(inp * 2))
 
-  # def test_compute_only_host(self):
-  #   @compute_on('device_host')
-  #   @jax.jit
-  #   def f(x):
-  #     return x * 2
-  #   f(jnp.arange(8))
+  def test_compute_per_annotation(self):
+    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
+    s = NamedSharding(mesh, P("x", "y"))
+    np_inp = np.arange(16.).reshape(8, 2)
+    arr = jax.device_put(np_inp, s)
 
-  # def test_per_annotation_wrapper(self):
-  #   @jax.jit
-  #   @compute_on('device_host')
-  #   def f(x):
-  #     return x * 2
-  #   f(jnp.arange(8))
+    @jax.jit
+    @compute_on('device_host')
+    def f(x):
+      return jnp.sin(x * 2)
+
+    # # sharded input
+    out = f(arr)
+    self.assertArraysAllClose(out, np.sin(np_inp * 2))
+
+    out2 = f(np_inp)
+    self.assertArraysAllClose(out2, np.sin(np_inp * 2))
 
   def test_jit_host_multi_outputs(self):
     _, s, np_inp, inp = _create_inputs((8, 2), P("x"))

@@ -983,8 +983,10 @@ def _pbroadcast_lowering(ctx, x, *, axis_name, source):
     return [group[source]] + list(group[:source]) + list(group[source + 1:])
   replica_groups = [source_to_front(group) for group in replica_groups]
   channel = ctx.module_context.new_channel()
+  channel_handle = hlo.ChannelHandle.get(channel, mlir.DEVICE_TO_DEVICE_TYPE)
   return hlo.CollectiveBroadcastOp(
-      x, replica_groups=_replica_groups_hlo(replica_groups)).results
+      x, replica_groups=_replica_groups_hlo(replica_groups),
+      channel_handle=channel_handle).results
 
 pbroadcast_p = core.AxisPrimitive('pbroadcast')
 pbroadcast_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
@@ -1271,7 +1273,7 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
     broadcast_dimensions = [i for i in range(len(new_shape)) if i != all_gather_dimension]
     x = hlo.broadcast_in_dim(
         mlir.aval_to_ir_type(x_aval.update(shape=new_shape)), x,
-        mlir.dense_int_array_v6(broadcast_dimensions))
+        mlir.dense_int_array(broadcast_dimensions))
   replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
                                     axis_index_groups)
   if is_spmd:
