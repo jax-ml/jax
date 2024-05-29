@@ -556,7 +556,7 @@ def parallel_callable(fun: lu.WrappedFun,
                       donated_invars: Sequence[bool],
                       is_explicit_global_axis_size: bool,
                       *avals):
-  pmap_computation = lower_parallel_callable(
+  pmap_computation, _ = lower_parallel_callable(
       fun, backend_name, axis_name, axis_size, global_axis_size, devices, name,
       in_axes, out_axes_thunk, donated_invars,
       is_explicit_global_axis_size, avals,
@@ -679,7 +679,7 @@ def lower_parallel_callable(
     is_explicit_global_axis_size: bool,
     avals: Sequence[core.AbstractValue],
     *,
-    lowering_parameters: mlir.LoweringParameters) -> PmapComputation:
+    lowering_parameters: mlir.LoweringParameters) -> tuple[PmapComputation, core.ClosedJaxpr]:
   # Determine global_axis_size for use in AxisEnv.
   # TODO(mattjj,skyewm): revive this check (inner_pmap always False now)
   # if xb.process_count() > 1 and global_axis_size is None and inner_pmap:
@@ -761,6 +761,7 @@ def lower_parallel_callable(
   tuple_args = dispatch.should_tuple_args(len(shards.global_sharded_avals),
                                           backend.platform)
   module_name = f"pmap_{fun.__name__}"
+  platforms = lowering_parameters.platforms or (backend.platform,)
   with maybe_extend_axis_env(axis_name, global_axis_size, None):
     ordered_effects = list(
         effects.ordered_effects.filter_in(closed_jaxpr.effects))
@@ -776,7 +777,7 @@ def lower_parallel_callable(
           closed_jaxpr,
           ordered_effects=ordered_effects,
           backend_or_name=backend,
-          platforms=lowering_parameters.platforms or (backend.platform,),
+          platforms=platforms,
           axis_context=sharding_impls.ReplicaAxisContext(axis_env),
           name_stack=name_stack,
           donated_args=donated_invars,
@@ -787,14 +788,16 @@ def lower_parallel_callable(
           result_names=jaxpr.debug_info and jaxpr.debug_info.result_paths,
           num_replicas=replicas.num_global_replicas,
           lowering_parameters=lowering_parameters)
-  return PmapComputation(lowering_result.module, pci=pci, replicas=replicas,
+  return PmapComputation(lowering_result.module,
+                         platforms=platforms,
+                         pci=pci, replicas=replicas,
                          shards=shards, tuple_args=tuple_args,
                          unordered_effects=unordered_effects,
                          ordered_effects=ordered_effects,
                          keepalive=lowering_result.keepalive,
                          host_callbacks=lowering_result.host_callbacks,
                          jaxpr_debug_info=closed_jaxpr.jaxpr.debug_info,
-                         shape_poly_state=lowering_result.shape_poly_state)
+                         shape_poly_state=lowering_result.shape_poly_state), closed_jaxpr
 
 
 def _pmap_unmap_shaped_array(
@@ -907,10 +910,13 @@ class UnloadedPmapExecutable:
                host_callbacks: list[Any],
                keepalive: Any,
                jaxpr_debug_info: core.JaxprDebugInfo,
+               platforms: Sequence[str],
                shape_poly_state: mlir.ShapePolyLoweringState | None = None,
                compiler_options=None):
+    del platforms
     if shape_poly_state is not None and shape_poly_state.uses_dim_vars:
       hlo = mlir.refine_polymorphic_shapes(hlo)
+
     devices = pci.devices
     if devices is None:
       if shards.num_global_shards > xb.device_count(pci.backend):
@@ -1941,7 +1947,6 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
         "The following ordered effects are not supported for "
         f"more than 1 device: {unsupported_effects}")
   ordered_effects = list(effects.ordered_effects.filter_in(closed_jaxpr.effects))
-
   with dispatch.log_elapsed_time(
         "Finished jaxpr to MLIR module conversion {fun_name} in {elapsed_time} sec",
         fun_name=str(name_stack), event=dispatch.JAXPR_TO_MLIR_MODULE_EVENT):
@@ -2141,6 +2146,7 @@ def lower_sharding_computation(
            for js, source_info in util.stable_unique(jaxpr_sharding))),
       devices_from_context)
 
+  platforms = lowering_parameters.platforms or (backend.platform,)
   # TODO(yashkatariya): Enable this when offload APIs are stable.
   # transfer_mem_kind_in_jaxpr = list(jaxpr_transfer_mem_kinds(jaxpr))
 
@@ -2204,6 +2210,7 @@ def lower_sharding_computation(
       kept_var_idx=kept_var_idx,
       mut=mut,
       backend=backend,
+      platforms=platforms,
       device_assignment=da_object,
       committed=committed,
       in_layouts=in_layouts,
@@ -2244,6 +2251,7 @@ def lower_mesh_computation(
     lowering_parameters: mlir.LoweringParameters) -> MeshComputation:
   assert not mesh.empty
   backend = xb.get_device_backend(mesh.devices.flat[0])
+  platforms = lowering_parameters.platforms or (backend.platform,)
   name_stack = source_info_util.new_name_stack(wrap_name(fun_name, api_name))
 
   global_axis_sizes = mesh.shape
@@ -2352,7 +2360,7 @@ def lower_mesh_computation(
           closed_jaxpr,
           ordered_effects=ordered_effects,
           backend_or_name=backend,
-          platforms=lowering_parameters.platforms or (backend.platform,),
+          platforms=platforms,
           axis_context=axis_ctx,
           name_stack=name_stack,
           donated_args=donated_invars,
@@ -2382,6 +2390,7 @@ def lower_mesh_computation(
       keepalive=lowering_result.keepalive,
       kept_var_idx=set(range(len(global_in_avals))),
       backend=backend,
+      platforms=platforms,
       device_assignment=_create_da_object(tuple(mesh.devices.flat)),
       committed=True,
       in_layouts=(None,) * len(global_in_avals),
@@ -2394,10 +2403,15 @@ class MeshComputation(stages.XlaLowering):
   _executable: MeshExecutable | None
 
   def __init__(self, name: str, hlo: ir.Module,
-               donated_invars: Sequence[bool], **compile_args):
+               donated_invars: Sequence[bool],
+               # TODO(necula): fix this when internal clients stop using this
+               # constructor directly.
+               platforms: Sequence[str] | None = None,
+               **compile_args):
     self._name = name
     self._hlo = hlo
     self._donated_invars = donated_invars
+    self._platforms = platforms
     self.compile_args = compile_args
     self._executable = None
 
