@@ -255,6 +255,20 @@ def count_pjit_cpp_cache_miss():
   finally:
     pjit_lib._pjit_lower = original_pjit_lower
 
+@contextmanager
+def count_cached_compilation_cache_miss():
+  original_cached_compilation = pxla._cached_compilation
+  count = [0]
+
+  def cached_compilation_and_count(*args, **kwargs):
+    count[0] += 1
+    return original_cached_compilation(*args, **kwargs)
+
+  pxla._cached_compilation = cached_compilation_and_count
+  try:
+    yield count
+  finally:
+    pxla._cached_compilation = original_cached_compilation
 
 @contextmanager
 def count_jit_tracing_cache_miss():

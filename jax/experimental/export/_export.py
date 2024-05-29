@@ -743,7 +743,8 @@ def _check_lowering(lowering) -> None:
       "tuple_args", "ordered_effects", "unordered_effects",
       "keepalive", "host_callbacks", "pmap_nreps", "committed",
       "device_assignment", "jaxpr_debug_info", "shape_poly_state",
-      "all_default_mem_kind", "in_layouts", "out_layouts", "all_args_info"]
+      "all_default_mem_kind", "in_layouts", "out_layouts", "all_args_info",
+      "pgle_profiler"]
   for compile_arg in lowering.compile_args.keys():
     if compile_arg not in allowed_compile_args:
       raise NotImplementedError(f"Unrecognized lowered.compile_args[{compile_arg}]")

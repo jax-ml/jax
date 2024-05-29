@@ -21,7 +21,7 @@ import logging
 import os
 import tempfile
 import time
-from typing import Any
+from typing import Any, Optional
 import warnings
 
 from jax._src import compilation_cache
@@ -243,6 +243,7 @@ def compile_or_get_cached(
     devices: np.ndarray,
     compile_options: xc.CompileOptions,
     host_callbacks: Sequence[Any],
+    pgle_profiler: profiler.PGLEProfiler | None = None,
 ) -> xc.LoadedExecutable:
   sym_name = computation.operation.attributes['sym_name']
   module_name = ir.StringAttr(sym_name).value
@@ -278,14 +279,55 @@ def compile_or_get_cached(
     return backend_compile(backend, computation, compile_options,
                            host_callbacks)
 
+  is_multi_process = (
+      len({device.process_index for device in devices.flatten()}) > 1)
+  min_device_process_id = (
+      min(devices.flatten(), key=lambda device: device.id).process_index)
+
+  # When PGLE is enabled there might be 3 types of situations:
+  # 1. PGLE profiled module (the one which was recompiled with FDO profile) is
+  # in the persistent cache. In this case the module should be returned from
+  # cache and PGLE should be disabled for this module. Is module is stored in
+  # the persistent cache under the "pgle_profiled_module_key" which calculated
+  # with replacing FDO profile with flag which identify that module were PGLE
+  # profiled.
+  # 2. PGLE profiled module is not in the persistent cache and the module is
+  # getting built with an FDO profile. In this case we need to share FDO profile
+  # with other processes and store the result under the
+  # "pgle_profiled_module_key" so later in case 1 we will be able to find the
+  # module.
+  # 3. PGLE profiled module is not in the persistent cache and the module is
+  # getting compiled to be PGLEd (FDO profile is empty). In this case we need to
+  # simply return the non-PGLE profiled module from the persistent cache.
+  if (config.enable_pgle.value
+      and config.pgle_profiling_runs.value > 0):
+    fdo_profile = compile_options.executable_build_options.fdo_profile
+    compile_options.executable_build_options.fdo_profile = b"pgle profiled"
+
+    pgle_profiled_module_key = compilation_cache.get_cache_key(
+        computation, devices, compile_options, backend)
+    compile_options.executable_build_options.fdo_profile = fdo_profile
+
+    if _is_executable_in_cache(pgle_profiled_module_key):
+      # Load PGLE profiled module from the persistent cache.
+      cache_key = pgle_profiled_module_key
+      if pgle_profiler is not None:
+        pgle_profiler.disable()
+    elif fdo_profile is not None and len(fdo_profile) > 0:
+      # Store module under PGLE profiled module cache key.
+      cache_key = pgle_profiled_module_key
+      if is_multi_process and distributed.global_state.client is not None:
+        compile_options.executable_build_options.fdo_profile = _share_fdo_profiles(
+          computation, devices, compile_options, backend,
+          distributed.global_state.client,
+          min_device_process_id
+        )
+
   cache_retrieval_start = time.monotonic()
   retrieved_executable, retrieved_compile_time = _cache_read(
       module_name, cache_key, compile_options, backend)
   cache_retrieval_time = time.monotonic() - cache_retrieval_start
 
-
-  is_multi_process = (
-      len({device.process_index for device in devices.flatten()}) > 1)
   if retrieved_executable is not None:
     assert retrieved_compile_time is not None
     logger.debug("Persistent compilation cache hit for '%s'", module_name)
@@ -315,7 +357,7 @@ def compile_or_get_cached(
         distributed.global_state.client,
         module_name,
         cache_key,
-        min(devices.flatten(), key=lambda device: device.id).process_index
+        min_device_process_id
     )
   elif (
       config.share_autotune_config_between_hosts.value
@@ -330,7 +372,7 @@ def compile_or_get_cached(
         distributed.global_state.client,
         module_name,
         cache_key,
-        min(devices.flatten(), key=lambda device: device.id).process_index
+        min_device_process_id
     )
   else:
     return _compile_and_write_cache(
@@ -341,6 +383,58 @@ def compile_or_get_cached(
         module_name,
         cache_key,
     )
+
+# The process that has the lowest device ID should share FDO profile before
+# compilation with other processes.
+def _share_fdo_profiles(
+    computation: ir.Module,
+    devices: np.ndarray,
+    compile_options: xc.CompileOptions,
+    backend: xc.Client,
+    global_client: lib.xla_extension.DistributedRuntimeClient,
+    min_process_id
+) -> Optional[bytes]:
+  sym_name = computation.operation.attributes['sym_name']
+  module_name = ir.StringAttr(sym_name).value
+  fdo_profile = compile_options.executable_build_options.fdo_profile
+  if fdo_profile is None or len(fdo_profile) == 0:
+    return fdo_profile
+
+  compile_options.executable_build_options.fdo_profile = b""
+  profile_key = (
+      compilation_cache.get_cache_key(
+          computation, devices, compile_options, backend
+      )
+      + "_fdo_sync"
+  )
+  if profile_key in _share_fdo_profiles.modules_profiles:
+    return _share_fdo_profiles.modules_profiles[profile_key]
+
+  share_timeout = config.share_binary_between_hosts_timeout_ms.value
+  if distributed.global_state.process_id == min_process_id:
+    logger.debug(
+        "Sharing FDO profile: %s. For module %s. Process %d.",
+        fdo_profile,
+        module_name,
+        min_process_id,
+    )
+    global_client.key_value_set_bytes(profile_key, fdo_profile)
+  else:
+    logger.debug(
+        "Waiting for FDO profile: %s. For module %s. Should be set by process %d.",
+        fdo_profile,
+        module_name,
+        min_process_id,
+    )
+    fdo_profile = global_client.blocking_key_value_get_bytes(
+        profile_key, share_timeout
+    )
+
+  _share_fdo_profiles.modules_profiles[profile_key] = fdo_profile
+  return fdo_profile
+
+
+_share_fdo_profiles.modules_profiles = {}
 
 
 # The process with the first_process_id should compile the module and write an
@@ -519,6 +613,20 @@ def _compile_and_write_cache(
       cache_key, compile_time, module_name, backend, executable, host_callbacks
   )
   return executable
+
+def _is_executable_in_cache(cache_key) -> bool:
+  """Checks if executable is presented in cache on a given key
+  """
+  try:
+    return compilation_cache.is_executable_in_cache(cache_key)
+  except Exception as ex:
+    if config.raise_persistent_cache_errors.value:
+      raise
+    warnings.warn(
+        f"Error reading persistent compilation cache entry for "
+        f"'{cache_key}': {type(ex).__name__}: {ex}")
+    return False
+
 
 def _cache_read(
     module_name: str, cache_key: str, compile_options: xc.CompileOptions,

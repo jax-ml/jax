@@ -38,6 +38,7 @@ from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
 from jax._src import op_shardings
+from jax._src import profiler
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import stages
@@ -58,6 +59,7 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import xla_client as xc
@@ -220,10 +222,13 @@ def _get_states(attrs_tracked):
   from jax.experimental.attrs import jax_getattr
   return [jax_getattr(obj, attr) for (obj, attr) in attrs_tracked]
 
+def _need_to_rebuild_with_fdo(pgle_profiler):
+  return (pgle_profiler is not None and pgle_profiler.is_enabled()
+          and not pgle_profiler.is_fdo_consumed())
 
 def _get_fastpath_data(
     executable, out_tree, args_flat, out_flat, attrs_tracked, effects,
-    consts, abstracted_axes,
+    consts, abstracted_axes, pgle_profiler
 ) -> Optional[pxla.MeshExecutableFastpathData]:
   out_reflattened, out_tree = pxla.reflatten_outputs_for_dispatch(out_tree, out_flat)
 
@@ -245,6 +250,7 @@ def _get_fastpath_data(
       and not (config.debug_key_reuse.value and any(
         hasattr(arg, 'dtype') and dtypes.issubdtype(arg.dtype, dtypes.prng_key)
         for arg in (*args_flat, *out_flat, *consts)))
+      and not _need_to_rebuild_with_fdo(pgle_profiler)
       )
 
   if use_fastpath:
@@ -271,6 +277,7 @@ def _get_fastpath_data(
 class _MostRecentPjitCallExecutable(threading.local):
   def __init__(self):
     self.weak_key_dict = weakref.WeakKeyDictionary()
+    self.weak_pgle_profiler_dict = weakref.WeakKeyDictionary()
 
 _most_recent_pjit_call_executable = _MostRecentPjitCallExecutable()
 
@@ -278,6 +285,11 @@ _most_recent_pjit_call_executable = _MostRecentPjitCallExecutable()
 def _read_most_recent_pjit_call_executable(jaxpr):
   return _most_recent_pjit_call_executable.weak_key_dict.get(jaxpr, None)
 
+
+def _read_pgle_profiler(jaxpr):
+  return _most_recent_pjit_call_executable.weak_pgle_profiler_dict.get(
+      jaxpr, None
+  )
 
 def _cpp_pjit_evict_fn(self):
   self._clear_cache()
@@ -304,10 +316,16 @@ def _cpp_pjit(jit_info: PjitInfo):
     outs, out_flat, out_tree, args_flat, jaxpr, attrs_tracked = _python_pjit_helper(
         jit_info, *args, **kwargs)
     executable = _read_most_recent_pjit_call_executable(jaxpr)
+    pgle_profiler = _read_pgle_profiler(jaxpr)
     maybe_fastpath_data = _get_fastpath_data(
         executable, out_tree, args_flat, out_flat, attrs_tracked, jaxpr.effects,
-        jaxpr.consts, jit_info.abstracted_axes)
-    return outs, maybe_fastpath_data
+        jaxpr.consts, jit_info.abstracted_axes,
+        pgle_profiler)
+
+    if xla_extension_version > 267:
+      return outs, maybe_fastpath_data, _need_to_rebuild_with_fdo(pgle_profiler)
+    else:
+      return outs, maybe_fastpath_data
 
   fun = jit_info.fun
   cpp_pjit_f = xc._xla.pjit(
@@ -1410,7 +1428,7 @@ def _resolve_in_shardings(
 def _resolve_and_lower(
     args, jaxpr, in_shardings, out_shardings, in_layouts,
     out_layouts, resource_env, donated_invars, name, keep_unused, inline,
-    lowering_parameters):
+    lowering_parameters, pgle_profiler=None):
   in_shardings = _resolve_in_shardings(
       args, in_shardings, out_shardings,
       resource_env.physical_mesh if resource_env is not None else None)
@@ -1419,20 +1437,43 @@ def _resolve_and_lower(
   lowered = _pjit_lower(
       jaxpr, in_shardings, out_shardings, in_layouts, out_layouts, resource_env,
       donated_invars, name, keep_unused, inline,
-      lowering_parameters=lowering_parameters)
+      lowering_parameters=lowering_parameters,
+      pgle_profiler=pgle_profiler)
   return lowered
-
 
 def _pjit_call_impl_python(
     *args, jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
     resource_env, donated_invars, name, keep_unused, inline):
   global _most_recent_pjit_call_executable
 
+  compile_options = None
+  pgle_profiler = None
+  pgle_profiler_dict = _most_recent_pjit_call_executable.weak_pgle_profiler_dict
+  if config.enable_pgle.value and config.pgle_profiling_runs.value > 0:
+    if jaxpr not in pgle_profiler_dict:
+      pgle_profiler_dict[jaxpr] = profiler.PGLEProfiler(
+          config.pgle_profiling_runs.value,
+          config.pgle_aggregation_percentile.value)
+
+    pgle_profiler = pgle_profiler_dict[jaxpr]
+    # The method below will return FDO profile when module was profiled
+    # config.jax_pgle_profiling_runs amount of times, otherwise the result will
+    # be None.
+    fdo_profile = pgle_profiler.consume_fdo_profile()
+    if fdo_profile is not None:
+      compile_options = {'fdo_profile': fdo_profile}
+
+  # TODO(patrios): Do not pass mutable profile session through cached lowering
+  # chain. Instead we need to move profilers dictionary to pxla module and use
+  # module as key. Right now we can't do that since there is no way to evict _pjit_lower_cached cache for in PGLE mode.
   compiled = _resolve_and_lower(
-      args, jaxpr=jaxpr, in_shardings=in_shardings, out_shardings=out_shardings,
-      in_layouts=in_layouts, out_layouts=out_layouts, resource_env=resource_env,
+      args, jaxpr=jaxpr, in_shardings=in_shardings,
+      out_shardings=out_shardings, in_layouts=in_layouts,
+      out_layouts=out_layouts, resource_env=resource_env,
       donated_invars=donated_invars, name=name, keep_unused=keep_unused,
-      inline=inline, lowering_parameters=mlir.LoweringParameters()).compile()
+      inline=inline, lowering_parameters=mlir.LoweringParameters(),
+      pgle_profiler=pgle_profiler
+  ).compile(compile_options)
 
   _most_recent_pjit_call_executable.weak_key_dict[jaxpr] = compiled
   # This check is expensive so only do it if enable_checks is on.
@@ -1508,10 +1549,14 @@ def _pjit_call_impl(*args, jaxpr,
         out_layouts=out_layouts, resource_env=resource_env,
         donated_invars=donated_invars, name=name, keep_unused=keep_unused,
         inline=inline)
+    pgle_profiler = _read_pgle_profiler(jaxpr)
     fastpath_data = _get_fastpath_data(
         compiled, tree_structure(out_flat), args, out_flat, [], jaxpr.effects,
-        jaxpr.consts, None)
-    return out_flat, fastpath_data
+        jaxpr.consts, None, pgle_profiler)
+    if xla_extension_version > 267:
+      return out_flat, fastpath_data, _need_to_rebuild_with_fdo(pgle_profiler)
+    else:
+      return out_flat, fastpath_data
 
   f = _get_jaxpr_as_fun(
       jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
@@ -1545,7 +1590,8 @@ def _pjit_lower_cached(
     keep_unused: bool,
     inline: bool,
     *,
-    lowering_parameters: mlir.LoweringParameters):
+    lowering_parameters: mlir.LoweringParameters,
+    pgle_profiler: profiler.PGLEProfiler | None):
   if resource_env is not None:
     pxla.resource_typecheck(jaxpr, resource_env, {}, lambda: "pjit")
 
@@ -1572,7 +1618,8 @@ def _pjit_lower_cached(
         keep_unused=keep_unused, inline=inline,
         devices_from_context=(
             None if mesh is None or mesh.empty else list(mesh.devices.flat)),
-        lowering_parameters=lowering_parameters)
+        lowering_parameters=lowering_parameters,
+        pgle_profiler=pgle_profiler)
 
 
 def pjit_staging_rule(trace, *args, **params):
