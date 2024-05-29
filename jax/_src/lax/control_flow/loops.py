@@ -314,7 +314,7 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
 
 def _set_states(attrs_tracked, vals):
   from jax.experimental.attrs import jax_setattr
-  valss = split_list(vals, [td.num_leaves for _, td, _ in attrs_tracked[:-1]])
+  valss = split_list_checked(vals, [td.num_leaves for _, td, _ in attrs_tracked])
   for ((_, treedef, (obj, attr)), leaves) in zip(attrs_tracked, valss):
     val = tree_unflatten(treedef, leaves)
     jax_setattr(obj, attr, val)

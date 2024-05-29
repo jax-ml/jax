@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Sequence, Iterable
 import dataclasses
 from functools import partial, lru_cache
@@ -1024,7 +1025,7 @@ def explain_tracing_cache_miss(
   if config.check_tracer_leaks.value: return
 
   def unpack(key):
-    transforms, (), _, (in_type, debug_info, _, inline), *_, ctx = key
+    transforms, (), _, (in_type, _, debug_info, _, inline), *_, ctx = key
     # TODO(dougalm,mattjj): enable cache miss explanation with attrs
     _, (_, (in_tree,)), *_ = transforms
     return in_tree, in_type, debug_info, inline.val, ctx
@@ -1210,12 +1211,16 @@ def _check_and_canonicalize_out_shardings(
 
 
 AttrRecord = tuple[object, str, PyTreeDef, list[core.AbstractValue]]
-_seen_attrs: dict[tuple[Callable, core.InputType],
-                  list[list[AttrRecord]]] = {}
+_seen_attrs = weakref.WeakKeyDictionary()  # type: ignore
+
+def seen_attrs_get(fun: lu.WrappedFun, in_type: core.InputType) -> list:
+  cache = _seen_attrs.setdefault(fun.f, defaultdict(list))
+  assert fun.in_type is None or fun.in_type == in_type
+  return cache[(fun.transforms, fun.params, in_type)]
 
 def _attr_token(fun, in_type):
   from jax.experimental.attrs import jax_getattr
-  cases = _seen_attrs.get((fun, in_type), [])
+  cases = seen_attrs_get(fun, in_type)
   for i, records in enumerate(cases):
     for obj, attr, treedef, avals in records:
       val = jax_getattr(obj, attr)
@@ -1231,7 +1236,7 @@ def _attr_update(fun, in_type, i, attrs_tracked):
   leaves = lambda obj, attr: tree_leaves(jax_getattr(obj, attr))
   records = [(obj, attr, init_tree, map(shaped_abstractify, leaves(obj, attr)))
              for init_tree, _, (obj, attr) in attrs_tracked]
-  cases = _seen_attrs.setdefault((fun, in_type), [])
+  cases = seen_attrs_get(fun, in_type)
   if i == len(cases):
     cases.append(records)
   else:

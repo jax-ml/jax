@@ -1802,7 +1802,7 @@ class JaxprStackFrame:
     self.eqns.append(eqn)
 
   def to_jaxpr(self, trace: DynamicJaxprTrace, out_tracers: Sequence[Tracer]
-               ) -> tuple[Jaxpr, list[Any], list[tuple[Any, str]]]:
+               ) -> tuple[Jaxpr, list[Any], list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]]:
     # It's not necessary, but we keep the tracer-to-var mapping injective:
     assert len(self.tracer_to_var) == len(set(self.tracer_to_var.values()))
     invars = self.attrs_vars + self.invars
@@ -2340,7 +2340,8 @@ def trace_to_jaxpr_dynamic(
     debug_info: DebugInfo | None = None,
     *,
     keep_inputs: list[bool] | None = None,
-) -> tuple[Jaxpr, list[AbstractValue], list[Any], list[tuple[Any, str]]]:
+) -> tuple[Jaxpr, list[AbstractValue], list[Any],
+           list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]]:
   with core.new_main(DynamicJaxprTrace, dynamic=True) as main:
     main.jaxpr_stack = ()  # type: ignore
     jaxpr, out_avals, consts, attrs_tracked = trace_to_subjaxpr_dynamic(
@@ -2356,7 +2357,8 @@ def trace_to_subjaxpr_dynamic(
     *,
     keep_inputs: Sequence[bool] | None = None,
     debug_info: DebugInfo | None = None,
-) -> tuple[Jaxpr, list[AbstractValue], list[Any], list[tuple[Any, str]]]:
+) -> tuple[Jaxpr, list[AbstractValue], list[Any],
+           list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]]:
   keep_inputs = [True] * len(in_avals) if keep_inputs is None else keep_inputs
 
   frame = JaxprStackFrame()

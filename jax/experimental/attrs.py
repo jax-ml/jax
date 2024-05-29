@@ -30,6 +30,7 @@ from jax._src.util import unzip2, safe_map, safe_zip, split_list
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
+JaxVal = Any
 Pytree = Any
 
 register = api_util.register_class_with_attrs
