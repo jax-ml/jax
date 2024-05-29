@@ -351,6 +351,7 @@ def export(fun_jax: Callable,
            *,
            lowering_platforms: Sequence[str] | None = None,
            disabled_checks: Sequence[DisabledSafetyCheck] = (),
+           _device_assignment_for_internal_jax2tf_use_only = None,
            ) -> Callable[..., Exported]:
   """Exports native serialization for a JAX function.
 
@@ -413,12 +414,15 @@ def export(fun_jax: Callable,
         _experimental_lowering_parameters=mlir.LoweringParameters(
           platforms=actual_lowering_platforms,
         ))
-    return _export_lowered(lowered, disabled_checks=disabled_checks)
+    return _export_lowered(
+        lowered, disabled_checks=disabled_checks,
+        _device_assignment_for_internal_jax2tf_use_only=_device_assignment_for_internal_jax2tf_use_only)
   return do_export
 
 def _export_lowered(
     lowered: stages.Lowered,
     disabled_checks: Sequence[DisabledSafetyCheck] = (),
+    _device_assignment_for_internal_jax2tf_use_only = None,
   ) -> Exported:
   version = config.jax_serialization_version.value
   if (version < minimum_supported_serialization_version or
@@ -498,6 +502,8 @@ def _export_lowered(
     for s, aval in zip(lowering.compile_args["out_shardings"], out_avals_flat))
 
   device_assignment = lowering.compile_args["device_assignment"]
+  if _device_assignment_for_internal_jax2tf_use_only is not None:
+    _device_assignment_for_internal_jax2tf_use_only[0] = device_assignment
   def _get_exported_vjp(exp_primal: Exported) -> Exported:
     # Turn the primal jaxpr into a function, in preparation for exporting
     # the VJP. Note that jaxpr_as_fun produces a function with flat arguments
