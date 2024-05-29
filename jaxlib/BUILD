@@ -40,7 +40,6 @@ genrule(
 py_library_providing_imports_info(
     name = "jaxlib",
     srcs = [
-        "ducc_fft.py",
         "gpu_common_utils.py",
         "gpu_linalg.py",
         "gpu_prng.py",
@@ -59,7 +58,6 @@ py_library_providing_imports_info(
     deps = [
         ":cpu_feature_guard",
         ":utils",
-        "//jaxlib/cpu:_ducc_fft",
         "//jaxlib/cpu:_lapack",
         "//jaxlib/mlir",
         "//jaxlib/mlir:arithmetic_dialect",

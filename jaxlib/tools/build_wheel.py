@@ -195,7 +195,6 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
           f"__main__/jaxlib/utils.{pyext}",
           "__main__/jaxlib/lapack.py",
           "__main__/jaxlib/hlo_helpers.py",
-          "__main__/jaxlib/ducc_fft.py",
           "__main__/jaxlib/gpu_prng.py",
           "__main__/jaxlib/gpu_linalg.py",
           "__main__/jaxlib/gpu_rnn.py",
@@ -218,7 +217,6 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
       dst_dir=jaxlib_dir / "cpu",
       src_files=[
           f"__main__/jaxlib/cpu/_lapack.{pyext}",
-          f"__main__/jaxlib/cpu/_ducc_fft.{pyext}",
       ],
   )
 

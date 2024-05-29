@@ -31,7 +31,6 @@ from jax.experimental.export import _export
 
 from jax._src.internal_test_util import export_back_compat_test_util as bctu
 
-from jax._src.internal_test_util.export_back_compat_test_data import cpu_ducc_fft
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_cholesky_lapack_potrf
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_eig_lapack_geev
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_eigh_cusolver_syev
@@ -108,7 +107,6 @@ class CompatTest(bctu.CompatTestBase):
     # Add here all the testdatas that should cover the targets guaranteed
     # stable
     covering_testdatas = [
-        cpu_ducc_fft.data_2023_06_14,
         cpu_cholesky_lapack_potrf.data_2023_06_19,
         cpu_eig_lapack_geev.data_2023_06_19,
         cpu_eigh_lapack_syev.data_2023_03_17,
@@ -145,16 +143,6 @@ class CompatTest(bctu.CompatTestBase):
                      msg=("The following custom call targets are declared "
                           "stable but are not covered by any tests: "
                           f"{not_covered}"))
-
-  def test_ducc_fft(self):
-    def func(x):
-      return lax.fft(x, fft_type="fft", fft_lengths=(4,))
-
-    # TODO(b/311175955): Remove this test and the corresponding custom calls.
-    # A newer lowering, with dynamic_ducc_fft.
-    data = self.load_testdata(cpu_ducc_fft.data_2023_06_14)
-    # FFT no longer lowers to a custom call.
-    self.run_one_test(func, data, expect_current_custom_calls=[])
 
   def cholesky_input(self, shape, dtype):
     a = jtu.rand_default(self.rng())(shape, dtype)

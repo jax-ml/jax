@@ -16,7 +16,6 @@ limitations under the License.
 // This file is not used by JAX itself, but exists to assist with running
 // JAX-generated HLO code from outside of JAX.
 #include <complex>
-#include "jaxlib/cpu/ducc_fft_kernels.h"
 #include "jaxlib/cpu/lapack_kernels.h"
 #include "xla/service/custom_call_target_registry.h"
 
@@ -105,8 +104,6 @@ XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM(
     "lapack_cgees", ComplexGees<std::complex<float>>::Kernel, "Host");
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM(
     "lapack_zgees", ComplexGees<std::complex<double>>::Kernel, "Host");
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM(
-    "dynamic_ducc_fft", DynamicDuccFft, "Host");
 
 }  // namespace
 }  // namespace jax
