@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from collections.abc import Sequence, Iterable
 import dataclasses
 from functools import partial, lru_cache
@@ -72,7 +73,7 @@ from jax._src.layout import Layout, DeviceLocalLayout, AutoLayout
 from jax._src.state import discharge as state_discharge, RefEffect, AbstractRef
 from jax._src.traceback_util import api_boundary
 from jax._src.tree_util import (
-    tree_flatten, tree_unflatten, treedef_is_leaf, tree_structure,
+    tree_flatten, tree_unflatten, treedef_is_leaf, tree_structure, tree_leaves,
     treedef_children, broadcast_prefix, all_leaves, prefix_errors, keystr,
     PyTreeDef, none_leaf_registry as none_lr)
 from jax._src.util import (
@@ -206,7 +207,8 @@ def _python_pjit_helper(jit_info, *args, **kwargs):
       raise AssertionError("Unreachable") from e
 
   if attrs_tracked:
-    final_states, out_flat = split_list(out_flat, [len(attrs_tracked)])
+    num_states_out = sum(end_tree.num_leaves for _, end_tree, _ in attrs_tracked)
+    final_states, out_flat = split_list(out_flat, [num_states_out])
     _set_states(attrs_tracked, final_states)
 
   outs = tree_unflatten(out_tree, out_flat)
@@ -215,12 +217,20 @@ def _python_pjit_helper(jit_info, *args, **kwargs):
 
 def _set_states(attrs_tracked, vals):
   from jax.experimental.attrs import jax_setattr
-  for ((obj, attr), val) in zip(attrs_tracked, vals):
+  valss = split_list(vals, [td.num_leaves for _, td, _ in attrs_tracked[:-1]])
+  for ((_, treedef, (obj, attr)), leaves) in zip(attrs_tracked, valss):
+    val = tree_unflatten(treedef, leaves)
     jax_setattr(obj, attr, val)
 
 def _get_states(attrs_tracked):
   from jax.experimental.attrs import jax_getattr
-  return [jax_getattr(obj, attr) for (obj, attr) in attrs_tracked]
+  vals = []
+  for treedef, _, (obj, attr) in attrs_tracked:
+    tree = jax_getattr(obj, attr)
+    leaves, treedef_ = tree_flatten(tree)
+    assert treedef == treedef_
+    vals.extend(leaves)
+  return vals
 
 def _need_to_rebuild_with_fdo(pgle_profiler):
   return (pgle_profiler is not None and pgle_profiler.is_enabled()
@@ -625,12 +635,14 @@ def _infer_params(jit_info, args, kwargs):
     implicit_args = []
   args_flat = [*implicit_args, *explicit_args]
 
-  num_extra_args = len(implicit_args) + len(attrs_tracked) + len(consts)
+  num_states_in = sum(init_tree.num_leaves for init_tree, _, _ in attrs_tracked)
+  num_states_out = sum(end_tree.num_leaves for _,  end_tree, _ in attrs_tracked)
+  num_extra_args = len(implicit_args) + num_states_in + len(consts)
   in_shardings_flat = (UNSPECIFIED,) * num_extra_args + in_shardings_flat
   in_layouts_flat = (None,) * num_extra_args + in_layouts_flat
   donated_invars = (False,) * num_extra_args + donated_invars
   assert (len(in_shardings_flat) == len(in_layouts_flat) ==
-          len(donated_invars) == len(attrs_tracked) + len(consts) + len(args_flat))
+          len(donated_invars) == num_states_in + len(consts) + len(args_flat))
 
   params = dict(
       jaxpr=jaxpr,
@@ -1031,7 +1043,7 @@ def explain_tracing_cache_miss(
   if config.check_tracer_leaks.value: return
 
   def unpack(key):
-    transforms, (), _, (in_type, debug_info, _, inline), *_, ctx = key
+    transforms, (), _, (in_type, _, debug_info, _, inline), *_, ctx = key
     # TODO(dougalm,mattjj): enable cache miss explanation with attrs
     _, (_, (in_tree,)), *_ = transforms
     return in_tree, in_type, debug_info, inline.val, ctx
@@ -1155,7 +1167,7 @@ def explain_tracing_cache_miss(
   return done()
 
 @partial(lu.cache, explain=explain_tracing_cache_miss)
-def _create_pjit_jaxpr(fun, in_type, debug_info, out_paths, ignored_inline):
+def _create_pjit_jaxpr(fun, in_type, attr_data, debug_info, out_paths, ignored_inline):
   del ignored_inline  # just for explain_cache_miss
   with dispatch.log_elapsed_time(
       "Finished tracing + transforming {fun_name} for pjit in {elapsed_time} sec",
@@ -1168,6 +1180,7 @@ def _create_pjit_jaxpr(fun, in_type, debug_info, out_paths, ignored_inline):
     else:
       jaxpr, global_out_avals, consts, attrs_tracked = pe.trace_to_jaxpr_dynamic(
           fun, in_type, debug_info=pe_debug)
+      # assert attr_data is sentinel or attr_data matches attrs_tracked
 
   # TODO(dougalm,mattjj): enable debug info with attrs_tracked
   if not config.dynamic_shapes.value and not attrs_tracked:
@@ -1215,11 +1228,45 @@ def _check_and_canonicalize_out_shardings(
   return out_shardings_flat, out_layouts_flat
 
 
+AttrRecord = tuple[object, str, PyTreeDef, list[core.AbstractValue]]
+_seen_attrs = weakref.WeakKeyDictionary()  # type: ignore
+
+def seen_attrs_get(fun: lu.WrappedFun, in_type: core.InputType) -> list:
+  cache = _seen_attrs.setdefault(fun.f, defaultdict(list))
+  assert fun.in_type is None or fun.in_type == in_type
+  return cache[(fun.transforms, fun.params, in_type)]
+
+def _attr_token(fun, in_type):
+  from jax.experimental.attrs import jax_getattr
+  cases = seen_attrs_get(fun, in_type)
+  for i, records in enumerate(cases):
+    for obj, attr, treedef, avals in records:
+      val = jax_getattr(obj, attr)
+      vals, treedef_ = tree_flatten(val)
+      avals_ = map(shaped_abstractify, vals)
+      if treedef != treedef_ or avals != avals_: break
+    else:
+      return i
+  return len(cases)
+
+def _attr_update(fun, in_type, i, attrs_tracked):
+  from jax.experimental.attrs import jax_getattr
+  leaves = lambda obj, attr: tree_leaves(jax_getattr(obj, attr))
+  records = [(obj, attr, init_tree, map(shaped_abstractify, leaves(obj, attr)))
+             for init_tree, _, (obj, attr) in attrs_tracked]
+  cases = seen_attrs_get(fun, in_type)
+  if i == len(cases):
+    cases.append(records)
+  else:
+    assert i < len(cases) and cases[i] == records
+
 def _pjit_jaxpr(fun, out_shardings_treedef, out_shardings_leaves,
                 out_layouts_treedef, out_layouts_leaves, in_type, debug_info,
                 device_or_backend_set, out_tree, result_paths, inline):
+  attr_token = _attr_token(fun, in_type)
   jaxpr, final_consts, out_type, attrs_tracked = _create_pjit_jaxpr(
-      fun, in_type, debug_info, result_paths, IgnoreKey(inline))
+      fun, in_type, attr_token, debug_info, result_paths, IgnoreKey(inline))
+  _attr_update(fun, in_type, attr_token, attrs_tracked)
   canonicalized_out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
       out_shardings_treedef, out_shardings_leaves, out_layouts_treedef,
       out_layouts_leaves, out_tree, tuple(out_type),
