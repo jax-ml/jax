@@ -389,26 +389,41 @@ def build_kernel(
       # TODO(apaszke): Make this into a proper copy function.
       warps_per_warpgroup = 4
       lanes_per_warp = 32
+      m_out_tiling = out_tiling[-2]
       n_out_tiling = out_tiling[-1]
       tidx = gpu.thread_id(gpu.Dimension.x)
       warp_id = arith.divui(tidx, c(lanes_per_warp))
       lane_id = arith.remui(tidx, c(lanes_per_warp))
       # We store 4 f32 numbers for a block of 16B.
       vector_len = 4
-      num_vectors = safe_div(tile_n, vector_len)
-      for_op = scf.ForOp(warp_id, c(tile_m), c(warps_per_warpgroup))
-      with ir.InsertionPoint(for_op.body):
-        nested_for_op = scf.ForOp(lane_id, c(num_vectors), c(lanes_per_warp))
-        with ir.InsertionPoint(nested_for_op.body):
-          vector_idx = nested_for_op.induction_variable
+      num_vectors_per_row = safe_div(tile_n, vector_len)
+      # Process several rows at once if it is necessary to fully exploit each
+      # warp.
+      if tile_n < lanes_per_warp * vector_len:
+        num_rows_per_warp = min(
+            safe_div(lanes_per_warp * vector_len, tile_n),
+            safe_div(tile_m, warps_per_warpgroup))
+      else:
+        num_rows_per_warp = 1
+      lanes_per_row = safe_div(lanes_per_warp, num_rows_per_warp)
+      lane_row_offset = arith.divui(lane_id, c(lanes_per_row))
+      lane_col_offset = arith.remui(lane_id, c(lanes_per_row))
+      warp_for_op = scf.ForOp(arith.muli(warp_id, c(num_rows_per_warp)),
+                              c(tile_m),
+                              c(warps_per_warpgroup * num_rows_per_warp))
+      with ir.InsertionPoint(warp_for_op.body):
+        start_row = warp_for_op.induction_variable
+        m_row_idx = arith.addi(start_row, lane_row_offset)
+        vector_for_op = scf.ForOp(lane_col_offset, c(num_vectors_per_row),
+                                  c(lanes_per_row))
+        with ir.InsertionPoint(vector_for_op.body):
+          vector_idx = vector_for_op.induction_variable
           n_store = arith.muli(vector_idx, c(vector_len))
           col_group = arith.divui(n_store, c(n_out_tiling))
           n_load = arith.remui(n_store, c(n_out_tiling))
-
-          m_smem = for_op.induction_variable
-          m_within_tile = arith.remui(m_smem, c(64))
-          m_tile = arith.divui(m_smem, c(64))
-          swizzle_source = arith.shli(arith.remui(m_smem, c(8)), c(2))
+          m_within_tile = arith.remui(m_row_idx, c(m_out_tiling))
+          m_tile = arith.divui(m_row_idx, c(m_out_tiling))
+          swizzle_source = arith.shli(arith.remui(m_row_idx, c(8)), c(2))
           n_acc = arith.xori(n_load, swizzle_source)
           acc_part = vector.load(
               ir.VectorType.get((vector_len,), f32),
@@ -418,7 +433,7 @@ def build_kernel(
           vector.store(
               acc_part,
               c_device,
-              [arith.addi(m_start, m_smem), arith.addi(n_start, n_store)],
+              [arith.addi(m_start, m_row_idx), arith.addi(n_start, n_store)],
           )
           scf.yield_([])
         scf.yield_([])
