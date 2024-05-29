@@ -2660,13 +2660,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     side=['left', 'right'],
     dtype=number_dtypes,
     method=['sort', 'scan', 'scan_unrolled', 'compare_all'],
+    use_sorter=[True, False],
   )
-  def testSearchsorted(self, ashape, vshape, side, dtype, method):
+  def testSearchsorted(self, ashape, vshape, side, dtype, method, use_sorter):
     rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [np.sort(rng(ashape, dtype)), rng(vshape, dtype)]
-    def np_fun(a, v):
-      return np.searchsorted(a, v, side=side).astype('int32')
-    jnp_fun = lambda a, v: jnp.searchsorted(a, v, side=side, method=method)
+    def args_maker():
+      a = rng(ashape, dtype)
+      v = rng(vshape, dtype)
+      return (a, v, np.argsort(a)) if use_sorter else (np.sort(a), v)
+    def np_fun(a, v, sorter=None):
+      return np.searchsorted(a, v, side=side, sorter=sorter).astype('int32')
+    def jnp_fun(a, v, sorter=None):
+      return jnp.searchsorted(a, v, side=side, method=method, sorter=sorter)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
