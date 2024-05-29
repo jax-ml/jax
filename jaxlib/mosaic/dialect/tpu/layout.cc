@@ -577,10 +577,12 @@ bool VectorLayout::generalizes(
     }
     // Since we do not reorder axes, if the shapes resulting from inserting
     // implicit dimensions resulting are the same in the 2 minormost dimensions
-    // for both layouts, then the elements must be laid out the same way (i.e.
-    // layouts are equivalent).
-    return getImplicitTiledDims(shape, 1) ==
-           other.getImplicitTiledDims(shape, 1);
+    // for both layouts, then the elements must be laid out the same way (before
+    // tiling).
+    if (getImplicitTiledDims(shape, 1) !=
+        other.getImplicitTiledDims(shape, 1)) {
+      return false;
+    }
   }
   if (tiling_ != other.tiling_) {
     // Don't fail yet!
