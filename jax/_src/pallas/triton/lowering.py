@@ -136,6 +136,10 @@ def _bcast_to(a: ir.Value, shape: tuple[int, ...]) -> ir.Value:
     a_type = ir.RankedTensorType(a.type)
     if a_type.shape == [*shape]:
       return a
+    if a_type.rank != len(shape) or not all(
+        a_type.shape[i] in (dim, 1) for i, dim in enumerate(shape)
+    ):
+      raise ValueError(f"Cannot broadcast from {a_type.shape} to {[*shape]}")
     return tt_dialect.broadcast(
         ir.RankedTensorType.get(shape, a_type.element_type, a_type.encoding), a
     )

@@ -452,6 +452,33 @@ class PallasCallTest(PallasTest):
     x = random.normal(key, (m, n))
     np.testing.assert_allclose(load(x), x + 1., atol=1e-5, rtol=1e-5)
 
+  @parameterized.parameters(
+      ((16, 32), (16,)),
+      ((16, 32), (32,)),
+      ((16, 32), (16, 31)),
+  )
+  def test_invalid_broadcasted_load(self, x_shape, mask_shape):
+    if self.INTERPRET:
+      self.skipTest("No broadcasting checks in pl.load in interepreter mode")
+
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.float32)
+    )
+    def kernel(x_ref, mask_ref, o_ref):
+      del o_ref  # Unused.
+      pl.load(x_ref, slice(None), mask=mask_ref[:])
+
+    x = jnp.ones(x_shape, dtype=jnp.float32)
+    mask = jnp.ones(mask_shape, dtype=jnp.bool_)
+    # assertRaises* methods do not support inspecting the __cause__, so
+    # we have to check it manually.
+    try:
+      kernel(x, mask)
+    except Exception as e:
+      self.assertIn("Cannot broadcast", str(e.__cause__))
+    else:
+      self.fail("Expected exception due to invalid broadcasting")
+
   def test_swap(self):
     m, n = 16, 32
 
