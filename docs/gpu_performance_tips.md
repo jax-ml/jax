@@ -23,6 +23,10 @@ code examples:
 
 ## XLA performance flags
 
+```{note}
+  JAX-Toolbox also has a page on [NVIDIA XLA performance FLAGS](https://github.com/NVIDIA/JAX-Toolbox/blob/main/rosetta/docs/GPU_performance.md).
+```
+
 The existence and exact behavior of XLA flags may be `jaxlib`-version dependent.
 
 As of `jaxlib==0.4.18` (released [Oct 6
