@@ -716,6 +716,13 @@ class PositionalSharding(XLACompatibleSharding):
     new_ids = self._ids.sum(axis=axis, keepdims=keepdims)  # union
     return self._remake(self._devices, new_ids)
 
+  def is_compatible_aval(self, aval_shape: Shape) -> None:
+    if len(aval_shape) != len(self.shape):
+      raise ValueError(
+          f"Sharding {self} is only valid for values of rank "
+          f"{len(self.shape)}, but was applied to a value of rank "
+          f"{len(aval_shape)}")
+
   @classmethod
   def _remake(
       cls, devices: tuple[xc.Device, ...], ids: np.ndarray,
