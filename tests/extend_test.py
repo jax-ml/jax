@@ -14,7 +14,9 @@
 
 import os
 import unittest
-from absl.testing import absltest
+
+import numpy as np
+from absl.testing import absltest, parameterized
 
 import jax
 import jax.extend as jex
@@ -22,11 +24,14 @@ import jax.numpy as jnp
 
 from jax._src import abstract_arrays
 from jax._src import api
+from jax._src import core
 from jax._src import linear_util
 from jax._src import prng
 from jax._src import test_util as jtu
+from jax._src.interpreters import mlir
+from jax._src.lib.mlir import ir
+from jax._src.extend import ffi
 from jax._src.lib import xla_extension_version
-
 
 jax.config.parse_flags_with_absl()
 
@@ -93,6 +98,26 @@ class FfiTest(jtu.JaxTestCase):
     base_dir = os.path.join(jex.ffi.include_dir(), "xla", "ffi", "api")
     for header in ["c_api.h", "api.h", "ffi.h"]:
       self.assertTrue(os.path.exists(os.path.join(base_dir, header)))
+
+  @parameterized.parameters(
+      [True, int(1), float(5.0),
+       np.int32(-5), np.float32(0.5)])
+  def testIrAttribute(sel, value):
+    with mlir.make_ir_context(), ir.Location.unknown():
+      const = mlir.ir_constant(value)
+      attr = ffi._ir_attribute(value)
+      assert const.type.element_type == attr.type
+
+  @parameterized.parameters([True, 1, 5.0, "param", np.float32(0.5)])
+  def testParams(self, param):
+    prim = core.Primitive("test_ffi")
+    prim.def_abstract_eval(lambda *args, **kwargs: args[0])
+    mlir.register_lowering(prim, jex.ffi.ffi_lowering("test_ffi"))
+
+    # TODO(dfm): Currently testing that lowering works with different types of
+    # parameters, but we should probably actually check the emitted HLO.
+    func = jax.jit(lambda *args: prim.bind(*args, param=param))
+    func.lower(jnp.linspace(0, 5, 10))
 
 
 if __name__ == "__main__":
