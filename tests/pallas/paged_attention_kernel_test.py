@@ -104,12 +104,8 @@ def _megacore_enabled():
   )
 
 
+@jtu.with_config(jax_numpy_dtype_promotion="standard")
 class PagedAttentionKernelTest(jtu.JaxTestCase):
-
-  def setUp(self):
-    super().setUp()
-    self.enter_context(jax.numpy_dtype_promotion("standard"))
-
   @parameterized.product(
       dtype=(jnp.float32, jnp.bfloat16),
       page_size=(16, 32, 64),

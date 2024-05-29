@@ -1021,6 +1021,26 @@ def config_context(**kwds):
     config.update(key, value)
 
 
+class NotPresent:
+  def __repr__(self):
+    return "<not present>"
+
+
+@contextmanager
+def assert_global_configs_unchanged():
+  starting_config = jax.config.values.copy()
+  yield
+  ending_config = jax.config.values
+
+  if starting_config == ending_config:
+    return
+  differing = {k: (starting_config.get(k, NotPresent()), ending_config.get(k, NotPresent()))
+                for k in (starting_config.keys() | ending_config.keys())
+                if (k not in starting_config or k not in ending_config
+                    or starting_config[k] != ending_config[k])}
+  raise AssertionError(f"Test changed global config values. Differing values are: {differing}")
+
+
 class JaxTestCase(parameterized.TestCase):
   """Base class for JAX tests including numerical checks and boilerplate."""
   _default_config = {
@@ -1040,6 +1060,8 @@ class JaxTestCase(parameterized.TestCase):
 
   def setUp(self):
     super().setUp()
+    self.enter_context(assert_global_configs_unchanged())
+
     # We use the adler32 hash for two reasons.
     # a) it is deterministic run to run, unlike hash() which is randomized.
     # b) it returns values in int32 range, which RandomState requires.
