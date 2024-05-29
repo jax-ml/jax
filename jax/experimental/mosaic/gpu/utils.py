@@ -502,6 +502,7 @@ class BarrierArray:
     with once():
       for i in range(num_barriers):
         nvgpu.mbarrier_init(self.value, c(arrival_count, index), c(i, index))
+    gpu.barrier()
 
   def __iter__(self) -> Iterator["Barrier"]:
     for offset in range(self.num_barriers):
