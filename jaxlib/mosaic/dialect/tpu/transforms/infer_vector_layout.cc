@@ -1019,6 +1019,10 @@ class VectorLayoutInferer {
                  "memref and vector rank mismatch");
     int64_t rank = res_ty.getRank();
     int8_t bitwidth = res_ty.getElementTypeBitWidth();
+    if (kNativeBitwidth % bitwidth != 0) {
+      return op.emitOpError("Unsupported bitwidth");
+    }
+    const int packing = kNativeBitwidth / bitwidth;
     auto maybe_tiling =
         verifyMemoryTiling(op, getMemRefLayout(op.getBase()).getTiles(),
                            src_ty.getRank(), src_ty.getElementTypeBitWidth());
@@ -1050,12 +1054,10 @@ class VectorLayoutInferer {
     }
     if (rank == 1) {
       TPU_CHECK_OP(tiling.size() == 1, "Expected 1D tiling in 1D loads");
+      const int64_t lane_tiling = packing * target_shape_[1];
       auto tile = tiling.front();
-      TPU_CHECK_OP(tile % target_shape_[1] == 0,
-                   "Unsupported tiling for 1D load");
+      TPU_CHECK_OP(tile % lane_tiling == 0, "Unsupported tiling for 1D load");
       CHECK_EQ(tile_offsets.size(), 1);
-      // TODO(tlongeri): Also pick a unique (canonical) tiling for packed types
-      const int64_t lane_tiling = bitwidth == 32 ? target_shape_[1] : tile;
       // TODO(apaszke): We could generate replicated loads for short values.
       setLayout(op, in_layout,
                 VectorLayout(bitwidth, {0, tile_offsets[0] % lane_tiling},
@@ -1372,6 +1374,10 @@ class VectorLayoutInferer {
                  "memref and vector rank mismatch");
     int64_t rank = ref_ty.getRank();
     int8_t bitwidth = store_ty.getElementTypeBitWidth();
+    if (kNativeBitwidth % bitwidth != 0) {
+      return op.emitOpError("Unsupported bitwidth");
+    }
+    const int packing = kNativeBitwidth / bitwidth;
     auto maybe_tiling =
         verifyMemoryTiling(op, getMemRefLayout(op.getBase()).getTiles(),
                            ref_ty.getRank(), ref_ty.getElementTypeBitWidth());
@@ -1402,11 +1408,10 @@ class VectorLayoutInferer {
     }
     if (rank == 1) {
       TPU_CHECK_OP(tiling.size() == 1, "Expected 1D tiling in 1D store");
+      const int64_t lane_tiling = packing * target_shape_[1];
       auto tile = tiling.front();
-      TPU_CHECK_OP(tile % target_shape_[1] == 0,
+      TPU_CHECK_OP(tile % lane_tiling == 0,
                    "Unsupported 1D tiling for 1D store");
-      // TODO(tlongeri): Also pick a unique (canonical) tiling for packed types
-      const int64_t lane_tiling = bitwidth == 32 ? target_shape_[1] : tile;
       CHECK_EQ(tile_offsets.size(), 1);
       store_layout =
           VectorLayout(bitwidth, {0, tile_offsets[0] % lane_tiling},
@@ -1806,6 +1811,7 @@ class VectorLayoutInferer {
   std::optional<absl::Span<const int64_t>> verifyMemoryTiling(
       Operation *op, ArrayRef<xla::Tile> mem_tiling, int64_t rank,
       int8_t bitwidth) {
+    const int packing = kNativeBitwidth / bitwidth;
     if (bitwidth == 32) {
       if (mem_tiling.size() != 1) {
         op->emitOpError("Only one-level tiling supported for 32-bit loads");
@@ -1822,7 +1828,7 @@ class VectorLayoutInferer {
         }
         auto first = mem_tiling[0].dimensions();
         auto second = mem_tiling[1].dimensions();
-        if (first.size() != 1 || first[0] % target_shape_[1] != 0) {
+        if (first.size() != 1 || first[0] % (packing * target_shape_[1]) != 0) {
           op->emitOpError("Invalid first-level tile in 1D memory op");
           return std::nullopt;
         }

@@ -2461,7 +2461,9 @@ LogicalResult vector_load_rule(RewriteContext &ctx, Operation &op,
   FAILUREOR_ASSIGN_OR_RETURN(
       Tiling memref_tiling,
       getMemRefTiling(load_op.getBase(), ctx.target_shape));
-  if (layout_out.tiling() != memref_tiling) {
+  if (memref_tiling != layout_out.tiling() &&
+      !(memref_tiling[0] == 1 && layout_out.tiling()[0] == 1 &&
+        memref_tiling[1] % layout_out.tiling()[1] == 0)) {
     // Now we can handle the case when tiling is (1, TARGET_SHAPE.lanes).
     // TODO(b/295393167): need to support strided load for bitwidth < 32.
     if (layout_out.bitwidth() != 32 ||
@@ -3659,7 +3661,9 @@ LogicalResult vector_store_rule(RewriteContext &ctx, Operation &op,
   FAILUREOR_ASSIGN_OR_RETURN(
       const Tiling memref_tiling,
       getMemRefTiling(store_op.getBase(), ctx.target_shape));
-  if (to_store_layout.tiling() != memref_tiling) {
+  if (memref_tiling != to_store_layout.tiling() &&
+      !(memref_tiling[0] == 1 && to_store_layout.tiling()[0] == 1 &&
+        memref_tiling[1] % to_store_layout.tiling()[1] == 0)) {
     // Now we can handle the case when tiling is (1, TARGET_SHAPE.lanes).
     // TODO(b/295393167): need to support strided store for bitwidth < 32.
     if (to_store_layout.bitwidth() != 32 ||
