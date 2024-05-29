@@ -7159,7 +7159,7 @@ def _searchsorted_via_compare_all(sorted_arr: Array, query: Array, side: str, dt
   return comparisons.sum(dtype=dtype, axis=0)
 
 
-@util.implements(np.searchsorted, skip_params=['sorter'],
+@util.implements(np.searchsorted,
   extra_params=_dedent("""
     method : str
         One of 'scan' (default), 'scan_unrolled', 'sort' or 'compare_all'. Controls the method used by the
@@ -7168,10 +7168,13 @@ def _searchsorted_via_compare_all(sorted_arr: Array, query: Array, side: str, dt
         'sort' is often more performant on accelerator backends like GPU and TPU
         (particularly when ``v`` is very large), and 'compare_all' can be most performant
         when ``a`` is very small."""))
-@partial(jit, static_argnames=('side', 'sorter', 'method'))
+@partial(jit, static_argnames=('side', 'method'))
 def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
-                 sorter: None = None, *, method: str = 'scan') -> Array:
-  util.check_arraylike("searchsorted", a, v)
+                 sorter: ArrayLike | None = None, *, method: str = 'scan') -> Array:
+  if sorter is None:
+    util.check_arraylike("searchsorted", a, v)
+  else:
+    util.check_arraylike("searchsorted", a, v, sorter)
   if side not in ['left', 'right']:
     raise ValueError(f"{side!r} is an invalid value for keyword 'side'. "
                      "Expected one of ['left', 'right'].")
@@ -7179,11 +7182,11 @@ def searchsorted(a: ArrayLike, v: ArrayLike, side: str = 'left',
     raise ValueError(
         f"{method!r} is an invalid value for keyword 'method'. "
         "Expected one of ['sort', 'scan', 'scan_unrolled', 'compare_all'].")
-  if sorter is not None:
-    raise NotImplementedError("sorter is not implemented")
   if ndim(a) != 1:
     raise ValueError("a should be 1-dimensional")
   a, v = util.promote_dtypes(a, v)
+  if sorter is not None:
+    a = a[sorter]
   dtype = int32 if len(a) <= np.iinfo(np.int32).max else int64
   if len(a) == 0:
     return zeros_like(v, dtype=dtype)

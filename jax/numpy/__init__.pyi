@@ -728,7 +728,7 @@ s_ = _np.s_
 save = _np.save
 savez = _np.savez
 def searchsorted(a: ArrayLike, v: ArrayLike, side: str = ...,
-                 sorter: None = ..., *, method: str = ...) -> Array: ...
+                 sorter: ArrayLike | None = ..., *, method: str = ...) -> Array: ...
 def select(
     condlist: Sequence[ArrayLike],
     choicelist: Sequence[ArrayLike],
