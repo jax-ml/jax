@@ -995,6 +995,16 @@ def promote_like_jnp(fun, inexact=False):
     return fun(*args, **kw)
   return wrapper
 
+@contextmanager
+def config_context(**kwds):
+  original_config = {}
+  for key, value in kwds.items():
+    original_config[key] = config._read(key)
+    config.update(key, value)
+  yield
+  for key, value in original_config.items():
+    config.update(key, value)
+
 
 class JaxTestCase(parameterized.TestCase):
   """Base class for JAX tests including numerical checks and boilerplate."""
@@ -1015,26 +1025,18 @@ class JaxTestCase(parameterized.TestCase):
 
   def setUp(self):
     super().setUp()
-    self._original_config = {}
-    for key, value in self._default_config.items():
-      self._original_config[key] = config._read(key)
-      config.update(key, value)
-
     # We use the adler32 hash for two reasons.
     # a) it is deterministic run to run, unlike hash() which is randomized.
     # b) it returns values in int32 range, which RandomState requires.
     self._rng = npr.RandomState(zlib.adler32(self._testMethodName.encode()))
 
-  def tearDown(self):
-    for key, value in self._original_config.items():
-      config.update(key, value)
-    super().tearDown()
-
   @classmethod
   def setUpClass(cls):
+    cls._compilation_cache_exit_stack = ExitStack()
+    stack = cls._compilation_cache_exit_stack
+    stack.enter_context(config_context(**cls._default_config))
+
     if TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
-      cls._compilation_cache_exit_stack = ExitStack()
-      stack = cls._compilation_cache_exit_stack
       stack.enter_context(config.enable_compilation_cache(True))
       stack.enter_context(config.raise_persistent_cache_errors(True))
       stack.enter_context(config.persistent_cache_min_compile_time_secs(0))
@@ -1046,8 +1048,7 @@ class JaxTestCase(parameterized.TestCase):
 
   @classmethod
   def tearDownClass(cls):
-    if TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
-      cls._compilation_cache_exit_stack.close()
+    cls._compilation_cache_exit_stack.close()
 
   def rng(self):
     return self._rng
