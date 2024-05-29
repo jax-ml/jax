@@ -1997,6 +1997,32 @@ _POLY_SHAPE_TEST_HARNESSES = [
                   + jnp.sin(x))),
                 arg_descriptors=[RandArg((3, 4), _f32)],
                 polymorphic_shapes=["b, ..."]),
+    [  # approx_max_k
+        # x: f32[b, {n}, 32] with n being either 8 or the symbol "n"
+        # we reduce on dim=1, with size n
+        # k is either the constant 4 or the symbol "k"
+        PolyHarness("approx_max_k", f"n_{n}_k_{k}_agg={agg}",
+                    lambda x, x_k, agg: lax.approx_max_k(
+                        x, k=x_k.shape[0], reduction_dimension=1,
+                        aggregate_to_topk=agg),
+                    arg_descriptors=[RandArg((3, 8, 32), _f32),
+                                     RandArg((4,), _f32),
+                                     StaticArg(agg)],
+                    polymorphic_shapes=[f"b, {n}, 32", f"{k},"],
+                    # k must be at most the reduction dimension size
+                    symbolic_constraints=[f"{k} <= {n}"],
+                    expect_error=(
+                        (NotImplementedError, "aggregate_to_topk=False") if (
+                            not agg and (isinstance(k, str) or
+                                          isinstance(n, str))) else
+                        # TODO(b/339398482) fix case with k symbolic
+                        (TypeError, "get") if (agg and isinstance(k, str)) else
+                        None
+                    ))
+        for n in [8, "n"]
+        for k in [4, "k"]
+        for agg in [True, False]
+    ],
     [  # arange
       PolyHarness("arange", name,
                   f_jax,
@@ -3304,6 +3330,7 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
     finally:
       for fname, _ in config_flags.items():
         jax.config.update(fname, prev_jax_config_flags[fname])
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
