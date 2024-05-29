@@ -19,6 +19,7 @@ from __future__ import annotations
 import unittest
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import jax
 from jax._src import test_util as jtu
 from jax._src import util
@@ -99,25 +100,18 @@ class IndexerTest(jtu.JaxTestCase):
   def test_invalid_ndindexer(self):
     indices = (0, 0, 0)
     shape = (5, 5)
-    with self.assertRaises(ValueError):
+    with self.assertRaisesRegex(
+        ValueError, "`indices` must not be longer than `shape`"
+    ):
       _ = NDIndexer.from_indices_shape(indices, shape)
 
-  def test_invalid_ndindexer_oob_int(self):
-    indices = (4, 0)
-    shape = (3, 5)
-    with self.assertRaises(ValueError):
-      _ = NDIndexer.from_indices_shape(indices, shape)
-
-  def test_invalid_ndindexer_oob_slice_start(self):
-    indices = (slice(3, 2), 0)
-    shape = (3, 5)
-    with self.assertRaises(ValueError):
-      _ = NDIndexer.from_indices_shape(indices, shape)
-
-  def test_invalid_ndindexer_oob_slice_end(self):
-    indices = (Slice(2, 2), 0)
-    shape = (3, 5)
-    with self.assertRaises(ValueError):
+  @parameterized.parameters(
+      ((4, 0), (3, 5)),
+      ((slice(3, 2), 0), (3, 5)),
+      ((Slice(2, 2), 0), (3, 5)),
+  )
+  def test_invalid_ndindexer_oob(self, indices, shape):
+    with self.assertRaisesRegex(ValueError, "Out of bound"):
       _ = NDIndexer.from_indices_shape(indices, shape)
 
   def test_ndindexer_with_padding(self):
@@ -125,6 +119,12 @@ class IndexerTest(jtu.JaxTestCase):
     shape = (5, 5)
     indexer = NDIndexer.from_indices_shape(indices, shape)
     self.assertTupleEqual(indexer.get_indexer_shape(), shape)
+
+  def test_ndindexer_with_ellipsis(self):
+    indices = (..., 4)
+    shape = (5, 5)
+    indexer = NDIndexer.from_indices_shape(indices, shape)
+    self.assertTupleEqual(indexer.get_indexer_shape(), (5,))
 
   def test_ndindexer_with_slices(self):
     indices = (slice(2, 3), slice(4, 7))
@@ -153,6 +153,14 @@ class IndexerTest(jtu.JaxTestCase):
     shape = (5, 5)
     indexer = NDIndexer.from_indices_shape(indices, shape)
     self.assertTupleEqual(indexer.get_indexer_shape(), (10, 20))
+
+  def test_ndindexer_with_arrays_and_invalid_broadcasting(self):
+    indices = (np.arange(10)[None], np.arange(20)[None, :])
+    shape = (5, 5)
+    with self.assertRaisesRegex(
+        ValueError, "Cannot broadcast shapes for indexing"
+    ):
+      indexer = NDIndexer.from_indices_shape(indices, shape)
 
   def test_indexer_with_all_types(self):
     indices = (0, slice(10), np.arange(5))
