@@ -514,11 +514,15 @@ class NativeSerializationImpl(SerializationImpl):
       _thread_local_state.call_tf_concrete_function_list = _prev_func_list
 
     self._restore_context = _restore_context
+    _exported_device_assignment = [None]
     self.exported = export.export(
         self.fun_jax,
         lowering_platforms=self.native_serialization_platforms,
-        disabled_checks=self.native_serialization_disabled_checks
+        disabled_checks=self.native_serialization_disabled_checks,
+        _device_assignment_for_internal_jax2tf_use_only=_exported_device_assignment,
     )(*self.args_specs, **self.kwargs_specs)
+    assert(_exported_device_assignment[0] is not None)
+    self.device_assignment = _exported_device_assignment[0]
 
   def after_conversion(self):
     self._restore_context()
@@ -531,15 +535,13 @@ class NativeSerializationImpl(SerializationImpl):
 
   def get_vjp_fun(self) -> tuple[Callable,
                                  Sequence[core.AbstractValue]]:
-    # TODO(necula): use the actual device assignment from the primal function
-    device_assignment = jax.devices(jax.default_backend())[:self.exported.nr_devices]
     return _export._get_vjp_fun(self.fun_jax,
                                 in_tree=self.exported.in_tree,
                                 in_avals=self.exported.in_avals,
                                 in_shardings=self.exported.in_shardings,
                                 out_avals=self.exported.out_avals,
                                 out_shardings=self.exported.out_shardings,
-                                device_assignment=device_assignment,
+                                device_assignment=self.device_assignment,
                                 apply_jit=True)
 
 class GraphSerializationImpl(SerializationImpl):
