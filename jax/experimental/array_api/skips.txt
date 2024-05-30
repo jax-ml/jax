@@ -23,6 +23,7 @@ array_api_tests/test_signatures.py::test_func_signature[logical_xor]
 array_api_tests/test_searching_functions.py::test_searchsorted
 
 # Various info functions not yet defined
+# Pending bugfix, see https://github.com/data-apis/array-api-tests/pull/262
 array_api_tests/test_has_names.py::test_has_names[info-capabilities]
 array_api_tests/test_has_names.py::test_has_names[info-default_device]
 array_api_tests/test_has_names.py::test_has_names[info-default_dtypes]
