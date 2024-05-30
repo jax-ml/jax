@@ -46,9 +46,10 @@ class PallasTPUTest(jtu.JaxTestCase):
   interpret: bool = False
 
   def setUp(self):
-    super().setUp()
     if not self.interpret and jtu.device_under_test() != 'tpu':
       self.skipTest('Only interpret mode supported on non-TPU')
+
+    super().setUp()
 
   def pallas_call(self, *args, **kwargs):
     return pl.pallas_call(*args, **kwargs, interpret=self.interpret)
@@ -527,9 +528,10 @@ class PallasCallInterpretDynamicGridTest(PallasCallDynamicGridTest):
 class PallasCallDMATest(parameterized.TestCase):
 
   def setUp(self):
-    super().setUp()
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('DMAs not supported on TPU generations <= 3')
+
+    super().setUp()
 
   def test_can_have_unspecified_memory_spaces(self):
     def kernel(x_ref, y_ref):
@@ -1137,11 +1139,12 @@ class PallasCallDMATest(parameterized.TestCase):
 class PallasCallRemoteDMATest(parameterized.TestCase):
 
   def setUp(self):
-    super().setUp()
     if jax.device_count() < 2:
       self.skipTest('Only >=2 devices are supported.')
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('Only works with TPU v5')
+
+    super().setUp()
 
   @parameterized.named_parameters(
       ('vmem', pltpu.TPUMemorySpace.VMEM),
@@ -1342,9 +1345,10 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
 class PallasCallTest(PallasTPUTest):
 
   def setUp(self):
-    super().setUp()
     if jtu.device_under_test() != 'tpu':
       self.skipTest('Test only works on TPU')
+
+    super().setUp()
 
   def test_cost_analysis(self):
     def kernel(x, y):
@@ -1415,9 +1419,10 @@ class PallasCallTest(PallasTPUTest):
 class PallasCallUnblockedIndexingTest(PallasTPUTest):
 
   def setUp(self):
-    super().setUp()
     if not self.interpret and jtu.device_under_test() != 'tpu':
       self.skipTest('Only interpret mode supported on non-TPU')
+
+    super().setUp()
 
   def test_unblocked_indexing(self):
     shape = (16 * 8, 128)
@@ -1479,9 +1484,10 @@ class PallasCallInterpreterUnblockedIndexingTest(
 class PallasUXTest(PallasTPUTest):
 
   def setUp(self):
-    super().setUp()
     if jtu.device_under_test() != 'tpu':
       self.skipTest('Test only works on TPU')
+
+    super().setUp()
 
   def test_mlir_location(self):
     # Make sure that MLIR locations are correctly propagated to primitives.
@@ -1502,9 +1508,10 @@ class PallasUXTest(PallasTPUTest):
 class PallasCallInputOutputAliasingTest(PallasTPUTest):
 
   def setUp(self):
-    super().setUp()
     if not self.interpret and jtu.device_under_test() != 'tpu':
       self.skipTest('Only interpret mode supported on non-TPU')
+
+    super().setUp()
 
   def test_basic_input_output_aliasing(self):
     # Input needs to be big so it doesn't fit in VMEM
@@ -1568,9 +1575,10 @@ class PallasCallInterpreterInputOutputAliasingTest(PallasTPUTest):
 class PallasMegacoreTest(PallasTPUTest):
 
   def setUp(self):
-    super().setUp()
     if jtu.device_under_test() != 'tpu':
       self.skipTest('Test only works on TPU')
+
+    super().setUp()
 
   def test_megacore_splitting(self):
     # We want to make sure a 3-sized dimension is split across megacore
@@ -1606,9 +1614,10 @@ class PallasMegacoreTest(PallasTPUTest):
 class PallasCallVmapTest(PallasTPUTest):
 
   def setUp(self):
-    super().setUp()
     if jtu.device_under_test() != 'tpu':
       self.skipTest('Test only works on TPU')
+
+    super().setUp()
 
   def test_scratch_input_vmap(self):
     """Test that vmapp-ing a kernel with scratch inputs works correctly."""
@@ -1648,9 +1657,10 @@ class PallasCallVmapTest(PallasTPUTest):
 class PallasCallControlFlowTest(PallasTPUTest):
 
   def setUp(self):
-    super().setUp()
     if jtu.device_under_test() != 'tpu':
       self.skipTest('Test only works on TPU')
+
+    super().setUp()
 
   def test_nested_conds(self):
     def kernel(y_ref):
@@ -1683,9 +1693,10 @@ class PallasCallControlFlowTest(PallasTPUTest):
 class PallasCallWhileLoopTest(PallasTPUTest):
 
   def setUp(self):
-    super().setUp()
     if jtu.device_under_test() != 'tpu':
       self.skipTest('Test only works on TPU')
+
+    super().setUp()
 
   def test_range_while_loop(self):
     """Tests lowering of a while_loop which can reduce to a fori_loop."""
@@ -1949,9 +1960,10 @@ class PallasCallWhileLoopTest(PallasTPUTest):
 class PallasCallReductionTest(PallasTPUTest):
 
   def setUp(self):
-    super().setUp()
     if jtu.device_under_test() != 'tpu':
       self.skipTest('Test only works on TPU')
+
+    super().setUp()
 
   def test_integer_sum(self):
     def kernel(x_ref, o_ref):
@@ -2004,9 +2016,10 @@ class PallasCallReductionTest(PallasTPUTest):
 class PallasCallDynamicDMATest(PallasTPUTest):
 
   def setUp(self):
-    super().setUp()
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('DMAs not supported on TPU generations <= 3')
+
+    super().setUp()
 
   def test_simple_tile_aligned_dynamic_size_dma(self):
 
@@ -2068,9 +2081,10 @@ class PallasCallDynamicDMATest(PallasTPUTest):
 class PallasCallComparisonTest(PallasTPUTest):
 
   def setUp(self):
-    super().setUp()
     if jtu.device_under_test() != 'tpu':
       self.skipTest('Test only works on TPU')
+
+    super().setUp()
 
   @parameterized.named_parameters(
       ('integer_1_1', (1, 1)),

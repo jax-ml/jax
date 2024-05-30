@@ -29,10 +29,10 @@ jax.config.parse_flags_with_absl()
 class PallasTest(jtu.JaxTestCase):
 
   def setUp(self):
-    super().setUp()
-
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Only works on a GPU with capability >= sm90")
+
+    super().setUp()
 
 
 class PallasCallTest(PallasTest):

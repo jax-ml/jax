@@ -76,11 +76,12 @@ def basic_matmul_kernel(
 class PallasCallPipelineTest(parameterized.TestCase):
 
   def setUp(self):
-    super().setUp()
     if jax.device_count() < 2:
       self.skipTest('Only >=2 devices are supported.')
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('Only works with TPU v5')
+
+    super().setUp()
 
   @parameterized.named_parameters(
       ('vmem', pltpu.TPUMemorySpace.VMEM),
@@ -176,11 +177,12 @@ class PallasCallPipelineTest(parameterized.TestCase):
 class PallasCallColectivePipelineTest(parameterized.TestCase):
 
   def setUp(self):
-    super().setUp()
     if jax.device_count() < 2:
       self.skipTest('Only >=2 devices are supported.')
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('Only works with TPU v5')
+
+    super().setUp()
 
   @parameterized.named_parameters(
       ('vmem', pltpu.TPUMemorySpace.VMEM, jnp.bfloat16, 2, 2, 2),

@@ -829,9 +829,10 @@ class PallasCallInterpreterTest(PallasCallTest):
 class PallasControlFlowTest(PallasTest):
 
   def setUp(self):
-    super().setUp()
     if self.INTERPRET:
       self.skipTest("Control flow not supported in interpreter mode yet.")
+
+    super().setUp()
 
   def test_loop_with_float64_carry(self):
     # Test that the jnp.zeros(f64) loop init_val is actually f64, and that

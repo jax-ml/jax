@@ -108,7 +108,7 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
-    jax.config.update("jax_numpy_dtype_promotion", "standard")
+    self.enter_context(jax.numpy_dtype_promotion("standard"))
 
   @parameterized.product(
       dtype=(jnp.float32, jnp.bfloat16),

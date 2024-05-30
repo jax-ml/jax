@@ -307,12 +307,13 @@ def attn_logits_soft_cap_strategy() -> hps.SearchStrategy[float | None]:
 class AttentionTest(jtu.JaxTestCase):
 
   def setUp(self):
-    super().setUp()
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Need TPU devices")
     # TODO(b/327487669): selectively re-enable tests that works on TPU v3.
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest("Not supported on TPU generations <= 3")
+
+    super().setUp()
 
   def _assert_allclose(self, x, y, **kwargs):
     if x.dtype == np.dtype(jnp.bfloat16):
