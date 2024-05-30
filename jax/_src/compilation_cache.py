@@ -34,6 +34,7 @@ from jax._src import monitoring
 from jax._src.gfile_cache import GFileCache
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
+from jax._src.lru_cache import LRUCache
 
 
 logger = logging.getLogger(__name__)
@@ -66,7 +67,20 @@ def set_once_cache_used(f) -> None:
 
 def get_file_cache(path: str) -> tuple[CacheInterface, str] | None:
   """Returns the file cache and the path to the cache."""
-  return GFileCache(path), path
+
+  def is_local_filesystem(path: str) -> bool:
+    return path.startswith("file://") or "://" not in path
+
+  # `LRUCache` currently only supports local filesystem. Therefore, if `path`
+  # is not on a local filesystem, instead of using `LRUCache`, we
+  # fallback to the old `GFileCache`, which does not support LRU eviction.
+  # TODO(ayx): Add cloud storage support for `LRUCache`, so that all these code
+  # can be removed.
+  if not is_local_filesystem(path):
+    return GFileCache(path), path
+
+  max_size = config.compilation_cache_max_size.value
+  return LRUCache(path, max_size=max_size), path
 
 
 def set_cache_dir(path) -> None:

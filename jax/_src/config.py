@@ -1281,6 +1281,18 @@ compilation_cache_dir = define_optional_string_state(
           '2. The value of this flag set in the command line or by default.'),
 )
 
+compilation_cache_max_size = define_int_state(
+    name='jax_compilation_cache_max_size',
+    default=-1,
+    help=('The maximum size (in bytes) allowed for the persistent compilation '
+          'cache. When set, the least recently accessed cache entry(s) '
+          'will be deleted once the total cache directory size '
+          'exceeds the specified limit. '
+          'Caching will be disabled if this value is set to 0. A '
+          'special value of -1 indicates no limit, allowing the cache '
+          'size to grow indefinitely.'),
+)
+
 default_dtype_bits = define_enum_state(
     name='jax_default_dtype_bits',
     enum_values=['32', '64'],
