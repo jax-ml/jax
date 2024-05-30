@@ -123,7 +123,7 @@ def matmul_block_spec(x, y, *, bm, bn, bk, interpret, debug=False):
   return matmul_kernel(x, y)
 
 
-class PallasTest(parameterized.TestCase):
+class PallasTest(jtu.JaxTestCase):
   INTERPRET = False
 
   def setUp(self):
@@ -459,7 +459,7 @@ class PallasCallTest(PallasTest):
   )
   def test_invalid_broadcasted_load(self, x_shape, mask_shape):
     if self.INTERPRET:
-      self.skipTest("No broadcasting checks in pl.load in interepreter mode")
+      self.skipTest("No broadcasting checks in pl.load in interpreter mode")
 
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.float32)
