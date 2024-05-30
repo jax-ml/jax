@@ -13,6 +13,7 @@
 # limitations under the License.
 
 load("@rules_python//python:defs.bzl", "py_library")
+load("//jaxlib:jax.bzl", "pybind_extension")
 
 package(
     default_applicable_licenses = [],
@@ -22,14 +23,7 @@ package(
 py_library(
     name = "mosaic_gpu",
     data = [":libmosaic_gpu_runtime.so"],
-    deps = [
-        "//jaxlib/mlir:execution_engine",
-        "//jaxlib/mlir:gpu_dialect",
-        "//jaxlib/mlir:llvm_dialect",
-        "//jaxlib/mlir:nvgpu_dialect",
-        "//jaxlib/mlir:nvvm_dialect",
-        "//jaxlib/mlir/_mlir_libs:_mosaic_gpu_ext",
-    ],
+    deps = [":_mosaic_gpu_ext"],
 )
 
 cc_library(
@@ -92,6 +86,72 @@ cc_library(
     srcs = ["runtime.cc"],
     deps = [
         "@local_config_cuda//cuda:cuda_headers",
+    ],
+)
+
+cc_library(
+    name = "custom_call",
+    srcs = ["custom_call.cc"],
+    deps = [
+        ":passes",
+        "@llvm-project//llvm:Support",
+        "@llvm-project//mlir:ArithDialect",
+        "@llvm-project//mlir:BuiltinToLLVMIRTranslation",
+        "@llvm-project//mlir:ConversionPasses",
+        "@llvm-project//mlir:ExecutionEngine",
+        "@llvm-project//mlir:ExecutionEngineUtils",
+        "@llvm-project//mlir:FuncDialect",
+        "@llvm-project//mlir:GPUDialect",
+        "@llvm-project//mlir:GPUToLLVMIRTranslation",
+        "@llvm-project//mlir:GPUTransforms",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:LLVMDialect",
+        "@llvm-project//mlir:LLVMToLLVMIRTranslation",
+        "@llvm-project//mlir:MathDialect",
+        "@llvm-project//mlir:MemRefDialect",
+        "@llvm-project//mlir:MemRefTransforms",
+        "@llvm-project//mlir:NVGPUDialect",
+        "@llvm-project//mlir:NVVMDialect",
+        "@llvm-project//mlir:NVVMTarget",
+        "@llvm-project//mlir:NVVMToLLVMIRTranslation",
+        "@llvm-project//mlir:Parser",
+        "@llvm-project//mlir:Pass",
+        "@llvm-project//mlir:SCFDialect",
+        "@llvm-project//mlir:Support",
+        "@llvm-project//mlir:Transforms",
+        "@llvm-project//mlir:VectorDialect",
+        "@xla//xla/service:custom_call_status",
+        "@xla//xla/service:custom_call_target_registry",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/synchronization",
+    ],
+    alwayslink = True,
+)
+
+pybind_extension(
+    name = "_mosaic_gpu_ext",
+    srcs = ["mosaic_gpu_ext.cc"],
+    copts = [
+        "-fexceptions",
+        "-fno-strict-aliasing",
+    ],
+    linkopts = select({
+        "@xla//xla/python:use_jax_cuda_pip_rpaths": [
+            "-Wl,-rpath,$$ORIGIN/../../../nvidia/cuda_runtime/lib",
+        ],
+        "//conditions:default": [],
+    }),
+    deps = [
+        "//jaxlib:kernel_nanobind_helpers",
+        "//jaxlib/cuda:cuda_vendor",
+        "@xla//xla/service:custom_call_status",
+        "@xla//xla/tsl/cuda:cudart",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/synchronization",
+        "@nanobind",
     ],
 )
 

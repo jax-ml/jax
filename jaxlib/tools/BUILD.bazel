@@ -61,12 +61,31 @@ py_test(
     ],
 )
 
+cc_binary(
+    name = "pjrt_c_api_gpu_plugin.so",
+    linkopts = [
+        "-Wl,--version-script,$(location @xla//xla/pjrt/c:pjrt_c_api_gpu_version_script.lds)",
+        "-Wl,--no-undefined",
+    ],
+    linkshared = True,
+    deps = [
+        "//jaxlib/mosaic/gpu:custom_call",
+        "@xla//xla/pjrt/c:pjrt_c_api_gpu",
+        "@xla//xla/pjrt/c:pjrt_c_api_gpu_version_script.lds",
+        "@xla//xla/service:gpu_plugin",
+    ] + if_cuda([
+        "@xla//xla/stream_executor:cuda_platform",
+    ]) + if_rocm([
+        "@xla//xla/stream_executor:rocm_platform",
+    ]),
+)
+
 py_binary(
     name = "build_gpu_plugin_wheel",
     srcs = ["build_gpu_plugin_wheel.py"],
     data = [
         "LICENSE.txt",
-        "@xla//xla/pjrt/c:pjrt_c_api_gpu_plugin.so",
+        ":pjrt_c_api_gpu_plugin.so",
     ] + if_cuda([
         "//jaxlib:version",
         "//jaxlib/cuda:cuda_gpu_support",
@@ -90,6 +109,7 @@ py_binary(
     data = [
         "LICENSE.txt",
     ] + if_cuda([
+        "//jaxlib/mosaic/gpu:mosaic_gpu",
         "//jaxlib:cuda_plugin_extension",
         "//jaxlib:version",
         "//jaxlib/cuda:cuda_gpu_support",

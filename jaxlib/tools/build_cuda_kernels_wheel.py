@@ -106,6 +106,8 @@ def prepare_wheel(
           f"__main__/jaxlib/cuda/_triton.{pyext}",
           f"__main__/jaxlib/cuda/_versions.{pyext}",
           f"__main__/jaxlib/cuda_plugin_extension.{pyext}",
+          f"__main__/jaxlib/mosaic/gpu/_mosaic_gpu_ext.{pyext}",
+          "__main__/jaxlib/mosaic/gpu/libmosaic_gpu_runtime.so",
           "__main__/jaxlib/version.py",
       ],
   )

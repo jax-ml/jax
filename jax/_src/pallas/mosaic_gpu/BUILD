@@ -14,13 +14,17 @@
 
 # Package for Mosaic-specific Pallas extensions
 
-load("//jaxlib:jax.bzl", "pytype_strict_library")
 load("@rules_python//python:defs.bzl", "py_library")
+load(
+    "//jaxlib:jax.bzl",
+    "py_deps",
+    "pytype_strict_library",
+)
 
 package(
     default_applicable_licenses = [],
     default_visibility = [
-        "//third_party/py/jax:internal",
+        "//:__subpackages__",
     ],
 )
 
@@ -37,10 +41,10 @@ pytype_strict_library(
     srcs = ["pallas_call_registration.py"],
     deps = [
         ":lowering",
-        "//third_party/py/jax",
-        "//third_party/py/jax:mlir",
-        "//third_party/py/jax:mosaic_gpu",
-        "//third_party/py/jax/_src/pallas",
+        "//jax",
+        "//jax:mlir",
+        "//jax:mosaic_gpu",
+        "//jax/_src/pallas",
     ],
 )
 
@@ -48,13 +52,12 @@ pytype_strict_library(
     name = "lowering",
     srcs = ["lowering.py"],
     deps = [
-        "//third_party/py/jax",
-        "//third_party/py/jax:core",
-        "//third_party/py/jax:mlir",
-        "//third_party/py/jax:mosaic_gpu",
-        "//third_party/py/jax:util",
-        "//third_party/py/jax/_src/lib",
-        "//third_party/py/jax/_src/pallas",
-        "//third_party/py/numpy",
-    ],
+        "//jax",
+        "//jax:core",
+        "//jax:mlir",
+        "//jax:mosaic_gpu",
+        "//jax:util",
+        "//jax/_src/lib",
+        "//jax/_src/pallas",
+    ] + py_deps("numpy"),
 )
