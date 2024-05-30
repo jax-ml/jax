@@ -214,7 +214,6 @@ py_library_providing_imports_info(
         "_src/dispatch.py",
         "_src/dlpack.py",
         "_src/earray.py",
-        "_src/ffi.py",
         "_src/flatten_util.py",
         "_src/interpreters/__init__.py",
         "_src/interpreters/ad.py",

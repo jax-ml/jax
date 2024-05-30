@@ -12,4 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from jax._src.ffi import include_dir as include_dir
+from jax._src.extend.ffi import include_dir as include_dir

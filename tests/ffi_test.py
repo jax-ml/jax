@@ -17,16 +17,25 @@ from __future__ import annotations
 import os
 import unittest
 
-from jax import ffi
+from absl.testing import absltest
+
+import jax
+import jax.extend as jex
+
 from jax._src import test_util as jtu
 from jax._src.lib import xla_extension_version
 
+jax.config.parse_flags_with_absl()
 
-class IncludeDirTest(jtu.JaxTestCase):
+
+class FfiTest(jtu.JaxTestCase):
 
   @unittest.skipIf(xla_extension_version < 265, "Requires jaxlib 0.4.29")
   def testHeadersExist(self):
-    base_dir = os.path.join(ffi.include_dir(), "xla", "ffi", "api")
+    base_dir = os.path.join(jex.ffi.include_dir(), "xla", "ffi", "api")
     for header in ["c_api.h", "api.h", "ffi.h"]:
-      print(os.path.join(base_dir, header))
       self.assertTrue(os.path.exists(os.path.join(base_dir, header)))
+
+
+if __name__ == "__main__":
+  absltest.main(testLoader=jtu.JaxTestLoader())

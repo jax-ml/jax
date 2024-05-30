@@ -126,13 +126,13 @@ jax_test(
     deps = ["//jax:extend"],
 )
 
-py_test(
+jax_test(
     name = "ffi_test",
     srcs = ["ffi_test.py"],
-    deps = [
-        "//jax",
-        "//jax:test_util",
-    ],
+    tags = [
+        # These features are not supported internally
+        "notap",
+    ]
 )
 
 jax_test(
