@@ -25,7 +25,6 @@ from jaxlib.mlir.dialects import math as mlir_math
 from jaxlib.mlir.dialects import memref
 from jaxlib.mlir.dialects import nvvm
 from jaxlib.mlir.dialects import vector
-from jaxlib.mlir.extras import types
 import numpy as np
 
 from . import dsl as mgpu
@@ -615,7 +614,8 @@ class FragmentedArray:
       )
     else:
       # We rely on canonicalization to clean up the selects.
-      is_even_row = arith.constant(types.bool(), ir.BoolAttr.get(True))
+      i1 = ir.IntegerType.get_signless(1)
+      is_even_row = arith.constant(i1, ir.BoolAttr.get(True))
     row_base = arith.addi(sub_row_base, arith.muli(warp_id, c(16)))
     col_base = arith.muli(arith.remui(lane_id, c(4)), c(2))  # {0, 2, 4, 6}
     # The swizzle pattern is constant for a given thread.
