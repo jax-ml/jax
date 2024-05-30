@@ -180,3 +180,11 @@ differently-ordered computations despite running the same program:
     `set` on current Python versions or `dict` [before Python 3.7](https://mail.python.org/pipermail/python-dev/2017-December/151283.html)
     may result in a different ordering on different processes, even with the
     same insertion order.
+
+## Dataset
+
+JAX don't have functions to load or do special dataset pre-processing.
+Try to make usre your libraries handle it in a performant way. For
+example, you want each process to only load and preprocess its own
+chunk of the data and not load all data and drop part the part it
+doesn't use.
