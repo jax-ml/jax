@@ -1305,6 +1305,18 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, lax_fun, args_maker)
     self._CompileAndCheck(lax_fun, args_maker)
 
+  def testTrace(self):
+    shape, dtype, offset, out_dtype = (3, 4), "float32", 0, None
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, dtype)]
+    lax_fun = partial(jnp.linalg.trace, offset=offset, dtype=out_dtype)
+    if jtu.numpy_version() >= (2, 0, 0):
+      np_fun = partial(np.linalg.trace, offset=offset)
+    else:
+      np_fun = partial(np.trace, offset=offset, axis1=-2, axis2=-1, dtype=out_dtype)
+    self._CheckAgainstNumpy(np_fun, lax_fun, args_maker)
+    self._CompileAndCheck(lax_fun, args_maker)
+
 
 class ScipyLinalgTest(jtu.JaxTestCase):
 
