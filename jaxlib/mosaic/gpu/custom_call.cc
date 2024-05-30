@@ -245,6 +245,7 @@ void MosaicGPUCustomCall(void* stream, void** buffers, char* opaque,
     XlaCustomCallStatusSetFailure(status,
                                   ctx_and_kernel.status().message().data(),
                                   ctx_and_kernel.status().message().size());
+    return;
   }
   void* args[3] = {&ctx_and_kernel->first, &stream, &buffers};
   ctx_and_kernel->second(args);
