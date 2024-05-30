@@ -67,7 +67,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding_impls import PmapSharding
-from jax._src.typing import Array, ArrayLike, DuckTypedArray, DTypeLike, Shape
+from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DTypeLike, Shape
 from jax._src.util import (cache, safe_zip, safe_map, canonicalize_axis,
                            split_list, NumpyComplexWarning)
 
@@ -85,9 +85,9 @@ T = TypeVar("T")
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
-def _clip_int_to_valid_range(val: int, dtype) -> int:
+def _clip_int_to_valid_range(val: DimSize, dtype) -> int:
   info = np.iinfo(dtype)
-  return builtins.max(info.min, builtins.min(int(val), info.max))
+  return core.max_dim(info.min, core.min_dim(val, info.max))
 
 def _validate_shapes(shapes: Sequence[Shape]):
   def _check_static_shape(shape: Shape):
@@ -1319,7 +1319,7 @@ def broadcasted_iota(dtype: DTypeLike, shape: Shape, dimension: int) -> Array:
   return iota_p.bind(*dynamic_shape, dtype=dtype, shape=tuple(static_shape),
                      dimension=dimension)
 
-def _eye(dtype: DTypeLike, shape: Shape, offset: int) -> Array:
+def _eye(dtype: DTypeLike, shape: Shape, offset: DimSize) -> Array:
   """Like numpy.eye, create a 2D array with ones on a diagonal."""
   offset = _clip_int_to_valid_range(offset, np.int32)
   dtype = dtypes.canonicalize_dtype(dtype)
@@ -1339,11 +1339,12 @@ def _delta(dtype: DTypeLike, shape: Shape, axes: Sequence[int]) -> Array:
                                        new_dtype=dtype, weak_type=False)
   return broadcast_in_dim(result, shape, axes)
 
-def _tri(dtype: DTypeLike, shape: Shape, offset: int) -> Array:
+def _tri(dtype: DTypeLike, shape: Shape, offset: DimSize) -> Array:
   """Like numpy.tri, create a 2D array with ones below a diagonal."""
   offset = _clip_int_to_valid_range(offset, np.int32)
   dtype = dtypes.canonicalize_dtype(dtype)
-  bool_tri = ge(add(broadcasted_iota(np.int32, shape, 0), np.int32(offset)),
+  bool_tri = ge(add(broadcasted_iota(np.int32, shape, 0),
+                    asarray(core.dimension_as_value(offset)).astype(np.int32)),
                 broadcasted_iota(np.int32, shape, 1))
   return convert_element_type_p.bind(bool_tri, new_dtype=dtype, weak_type=False)
 

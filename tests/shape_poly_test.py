@@ -3071,6 +3071,12 @@ _POLY_SHAPE_TEST_HARNESSES = [
                 lambda x: jnp.tri(x.shape[0], M=x.shape[0] + 2) + x,
                 arg_descriptors=[RandArg((3, 1), _f32)],
                 polymorphic_shapes=["b, ..."]),
+    PolyHarness("tril", "",
+                lambda x: jnp.tril(jnp.ones((x.shape[0], x.shape[0] + x.shape[1]),
+                                            dtype=_f32),
+                                   k=x.shape[1]),
+                arg_descriptors=[RandArg((3, 4), _f32)],
+                polymorphic_shapes=["m, n"]),
     [
       PolyHarness("triangular_solve",
                   f"shape={jtu.format_shape_dtype_string(a_shape, dtype)}_{left_side=}_{a_poly=}_{b_poly=}",
