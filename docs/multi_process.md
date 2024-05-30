@@ -188,3 +188,10 @@ Try to make usre your libraries handle it in a performant way. For
 example, you want each process to only load and preprocess its own
 chunk of the data and not load all data and drop part the part it
 doesn't use.
+
+## Job checkpointing
+
+If your job save its state, it is useful to spend sometimes to make
+sure it works as you want in multi-process.  Do you want all the nodes
+to writes all their states, even the replicated one? Each decision
+have different pros and cons here.
