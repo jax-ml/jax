@@ -44,7 +44,7 @@ library = ctypes.cdll.LoadLibrary(SHARED_LIBRARY)
 # register the XLA FFI binding pointer with XLA
 xla_client.register_custom_call_target(
     name=XLA_CUSTOM_CALL_TARGET_FWD,
-    fn=jax.ffi.build_capsule(library.FooFwd),
+    fn=jax.ffi.pycapsule(library.FooFwd),
     platform=XLA_PLATFORM,
     api_version=XLA_CUSTOM_CALL_API_VERSION
 )
@@ -94,7 +94,7 @@ mlir.register_lowering(foo_fwd_p, _foo_fwd_lowering, platform=JAX_PLATFORM)
 # register the XLA FFI binding pointer with XLA
 xla_client.register_custom_call_target(
     name=XLA_CUSTOM_CALL_TARGET_BWD,
-    fn=jax.ffi.build_capsule(library.FooBwd),
+    fn=jax.ffi.pycapsule(library.FooBwd),
     platform=XLA_PLATFORM,
     api_version=XLA_CUSTOM_CALL_API_VERSION
 )

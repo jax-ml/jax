@@ -58,6 +58,41 @@ def build_capsule(funcptr):
   PyCapsule_New.argtypes = (ctypes.c_void_p, ctypes.c_char_p, PyCapsule_Destructor)
   return PyCapsule_New(funcptr, None, PyCapsule_Destructor(0))
 
+def pycapsule(funcptr):
+  """Construct a PyCapsule out of a ctypes function pointer.
+
+  A typical use for this is registering custom call targets with XLA:
+
+    import ctypes
+    import jax
+    from jax.lib import xla_client
+
+    fooso = ctypes.cdll.LoadLibrary('./foo.so')
+    xla_client.register_custom_call_target(
+        name="bar",
+        fn=jax.ffi.pycapsule(fooso.bar),
+        platform=PLATFORM,
+        api_version=API_VERSION
+    )
+  """
+  # Note (https://docs.python.org/3/library/ctypes.html):
+  #
+  #  ctypes.pythonapi
+  #    An instance of PyDLL that exposes Python C API functions as attributes.
+  #    Note that all these functions are assumed to return C int, which is of
+  #    course not always the truth, so you have to assign the correct restype
+  #    attribute to use these functions.
+  #
+  # Following this advice we annotate argument and return types of
+  # PyCapsule_New before we call it, based on the example here:
+  # https://stackoverflow.com/questions/65056619/converting-ctypes-c-void-p-to-pycapsule
+  PyCapsule_Destructor = ctypes.CFUNCTYPE(None, ctypes.py_object)
+  PyCapsule_New = ctypes.pythonapi.PyCapsule_New
+  PyCapsule_New.restype = ctypes.py_object
+  PyCapsule_New.argtypes = (ctypes.c_void_p, ctypes.c_char_p, PyCapsule_Destructor)
+  return PyCapsule_New(funcptr, None, PyCapsule_Destructor(0))
+
+
 def include_dir() -> str:
   """Get the path to the directory containing header files bundled with jaxlib"""
   jaxlib_dir = os.path.dirname(os.path.abspath(jaxlib.__file__))
