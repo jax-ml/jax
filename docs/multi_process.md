@@ -118,6 +118,30 @@ computation on its local devices. You can see all available global devices via
 {func}`jax.devices()`. A process’s local devices are always a subset of the
 global devices.
 
+```{note}
+
+Even if XLA can do multi-process communication via devices specific
+libraries (i.e. NCCL on NVIDIA GPUS, ...). JAX isn't able to do it by
+itself. So some functions that work with
+single-process+multiple-devices doesn't work with multiple
+processes. For example, {func}`jax.device_put` don't work with
+multi-processes.
+
+JAX could try to hide this and it would be useful at medium scale.
+But at big scale, that won't work as you can't initialize the full
+weights in each process and have them drop the part it don't use.
+So we document how to think and work at *big* scale!
+
+To work at *big* scale require a different mindset. That mindset also
+works for single-process+multiple-GPUs cases, So it is safe to always
+use it.
+
+| Single process function | Multi processes function |
+| ----------------------- | -------------------------|
+| {func}`jax.device_put`  | ...                      |
+
+```
+
 ### Running multi-process computations
 
 So how do you actually run a computation involving cross-process communication?
