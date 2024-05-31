@@ -27,6 +27,7 @@ Subpackages
    jax.tree
    jax.tree_util
    jax.typing
+   jax.export
    jax.extend
    jax.example_libraries
    jax.experimental

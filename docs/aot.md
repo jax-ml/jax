@@ -35,8 +35,6 @@ way. An example:
 
 ```python
 >>> import jax
->>> import jax.numpy as jnp
->>> import numpy as np
 
 >>> def f(x, y): return 2 * x + y
 >>> x, y = 3, 4
@@ -65,6 +63,10 @@ module @jit_f attributes {mhlo.num_partitions = 1 : i32, mhlo.num_replicas = 1 :
 Array(10, dtype=int32, weak_type=True)
 
 ```
+
+Note that the lowered objects can be used only in the same process
+in which they were lowered. For exporting use cases,
+see the {ref}`export` APIs.
 
 See the {mod}`jax.stages` documentation for more details on what functionality
 the lowering and compiled functions provide.
@@ -139,10 +141,15 @@ module @jit_f attributes {mhlo.num_partitions = 1 : i32, mhlo.num_replicas = 1 :
     return %0 : tensor<i32>
   }
 }
+
 >>> lowered_with_x.compile()(5)
 Array(19, dtype=int32, weak_type=True)
 
 ```
+
+The result of `lower` is not safe to serialize directly for use
+in a different process.
+See {ref}`export` for additional APIs for this purpose.
 
 Note that `lower` here takes two arguments as usual, but the subsequent compiled
 function accepts only the remaining non-static second argument. The static first
@@ -194,7 +201,7 @@ Array([[ 1.,  5.,  9.],
 
 >>> jax.vmap(g_aot)(zs)  # doctest: +SKIP
 Traceback (most recent call last):
-TypeError: Cannot apply JAX transformations to a function lowered and compiled for a particular signature. Detected argument of Tracer type <class 'jax.interpreters.batching.BatchTracer'>.
+TypeError: Cannot apply JAX transformations to a function lowered and compiled for a particular signature. Detected argument of Tracer type <class 'jax._src.interpreters.batching.BatchTracer'>
 
 ```
 
