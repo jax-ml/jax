@@ -6090,9 +6090,10 @@ class NumpyDocTests(jtu.JaxTestCase):
     # Test that docstring wrapping & transformation didn't fail.
 
     unimplemented = ['fromfile', 'fromiter']
+    aliases = ['abs']
 
     for name in dir(jnp):
-      if name.startswith('_') or name in unimplemented:
+      if name.startswith('_') or name in unimplemented or name in aliases:
         continue
 
       obj = getattr(jnp, name)
