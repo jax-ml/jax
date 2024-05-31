@@ -437,6 +437,21 @@ class PallasCallTest(PallasTest):
     x = random.normal(key, (size,))
     np.testing.assert_allclose(add_one(x), x + 1., atol=1e-5, rtol=1e-5)
 
+  def test_strided_load(self):
+    if self.INTERPRET:
+      # TODO(b/329733289): Remove this once the bug is fixed.
+      self.skipTest("Strided load not yet supported in interpreter mode")
+
+    # Reproducer from https://github.com/google/jax/issues/20895.
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((4,), jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[::4]
+
+    x = jnp.arange(16, dtype=jnp.float32)
+    np.testing.assert_array_equal(kernel(x), x[::4])
+
   def test_broadcasted_load_store(self):
     m, n = 16, 32
     @functools.partial(

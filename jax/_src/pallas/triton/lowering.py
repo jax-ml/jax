@@ -1505,14 +1505,22 @@ def _compute_pointers_from_indices(
     else:
       index = next(indexer_iter)
     if isinstance(index, primitives.Slice):
-      # Handle slices with static and dynamic indices and static sizes
-      if isinstance(index.start, int):
-        ptr_dim_offset = _make_range(index.start, index.start + index.size)
-      else:
+      if index.is_dynamic_start:
+        # Compute the offset as start + range(0, size).
         ptr_dim_offset = _add(
             _bcast_to(index.start, [index.size]),
             _ir_cast(_make_range(0, index.size), index.start.type, signed=False),
         )
+      elif index.stride > 1:
+        # Compute the offset as start + range(0, size) * stride.
+        iota = _make_range(0, index.size)
+        ptr_dim_offset = _add(
+            _bcast_to(_i32_constant(index.start), [index.size]),
+            _mul(iota, _full(iota.type, index.stride)),
+        )
+      else:
+        ptr_dim_offset = _make_range(index.start, index.start + index.size)
+
       # We need to add broadcastable dimensions for the advanced int indexing
       # and for previous slices
       num_left_expand_dims = len(int_indexer_shape) + other_shape_idx
