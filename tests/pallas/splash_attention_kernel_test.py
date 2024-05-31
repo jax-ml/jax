@@ -517,21 +517,18 @@ class SplashAttentionTest(AttentionTest):
         atols["dk"] = 0.09
     else:
       raise NotImplementedError
-    with self.subTest("dv"):
-      self._assert_allclose(
-          dv_vanilla, dv_ref, atol=atols_v["dv"], rtol=rtols_v["dv"]
-      )
-      self._assert_allclose(dv, dv_ref, atol=atols["dv"], rtol=rtols["dv"])
-    with self.subTest("dq"):
-      self._assert_allclose(
-          dq_vanilla, dq_ref, atol=atols_v["dq"], rtol=rtols_v["dq"]
-      )
-      self._assert_allclose(dq, dq_ref, atol=atols["dq"], rtol=rtols["dq"])
-    with self.subTest("dk"):
-      self._assert_allclose(
-          dk_vanilla, dk_ref, atol=atols_v["dk"], rtol=rtols_v["dk"]
-      )
-      self._assert_allclose(dk, dk_ref, atol=atols["dk"], rtol=rtols["dk"])
+    self._assert_allclose(
+        dv_vanilla, dv_ref, atol=atols_v["dv"], rtol=rtols_v["dv"]
+    )
+    self._assert_allclose(dv, dv_ref, atol=atols["dv"], rtol=rtols["dv"])
+    self._assert_allclose(
+        dq_vanilla, dq_ref, atol=atols_v["dq"], rtol=rtols_v["dq"]
+    )
+    self._assert_allclose(dq, dq_ref, atol=atols["dq"], rtol=rtols["dq"])
+    self._assert_allclose(
+        dk_vanilla, dk_ref, atol=atols_v["dk"], rtol=rtols_v["dk"]
+    )
+    self._assert_allclose(dk, dk_ref, atol=atols["dk"], rtol=rtols["dk"])
 
   @parameterized.product(
       is_mqa=(False, True),
