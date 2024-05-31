@@ -60,14 +60,17 @@ class PallasCallTest(PallasTest):
         compiler_params={"smem_scratch_bytes": 4 * 4}
     )
     def layer_norm(x_ref, o_ref):
-      o_ref[...] = (x_ref[...] - jnp.mean(x_ref[...], keepdims=True)) * jax.lax.rsqrt(
-          jnp.var(x_ref[...], keepdims=True) + eps
-      ) * gamma + beta
+      x_mean = jnp.mean(x_ref[...])
+      x_centered = x_ref[...] - x_mean
+      o_ref[...] = (
+          x_centered * jax.lax.rsqrt(jnp.mean(x_centered**2) + eps) * gamma
+          + beta
+      )
 
     def layer_norm_np(x):
-      return (x - np.mean(x, keepdims=True)) / np.sqrt(
-          np.var(x, keepdims=True) + eps
-      ) * gamma + beta
+      x_mean = np.mean(x)
+      x_centered = x - x_mean
+      return (x_centered / np.sqrt(np.mean(x_centered**2) + eps) * gamma) + beta
 
     # Ones are always fully precise
     x = jnp.ones((256,)).astype(jnp.float32) * input_factor

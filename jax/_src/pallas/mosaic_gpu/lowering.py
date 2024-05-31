@@ -329,6 +329,7 @@ mosaic_lowering_rules.update({
 
 @register_lowering_rule(lax.integer_pow_p)
 def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, y):
+  x = _ensure_fa(x, *ctx.avals_in)
   if y == 2:
     return x * x
   return NotImplementedError
