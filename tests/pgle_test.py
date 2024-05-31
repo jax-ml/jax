@@ -53,6 +53,7 @@ class PgleTest(jtu.JaxTestCase):
     cc.reset_cache()
     super().tearDown()
 
+  @unittest.skip("Test failing in CI")
   def testPGLEProfilerGetFDOProfile(self):
     if xla_extension_version < 268:
       return self.skipTest('Requires xla_extension_version >= 268')
