@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import functools
 import math
 import re
@@ -592,6 +593,15 @@ class DevicePutTest(jtu.JaxTestCase):
     out = f(arr_hbm)
     self.assertArraysEqual(out, np_inp + 1)
     self.assertEqual(out.sharding.memory_kind, 'pinned_host')
+
+  def test_deepcopy(self):
+    mesh = jax.sharding.Mesh(jax.devices(), "x")
+    s_host = NamedSharding(mesh, P(), memory_kind="pinned_host")
+
+    t = jax.device_put(jnp.zeros((8, 2)), s_host)
+    t_copy = copy.deepcopy(t)
+    self.assertArraysEqual(t, t_copy)
+    self.assertEqual(t.shape, t_copy.shape)
 
 
 class ComputeOffload(jtu.BufferDonationTestCase):

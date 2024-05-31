@@ -1232,10 +1232,6 @@ def lower_jaxpr_to_fun(
       if pom is not None and mk is None:
         res.append([pom] * len(types))
       else:
-        if pom is not None and mk is not None and pom != mk:
-          raise AssertionError(
-              f"propagated out memory kind ({pom}) does not match the memory"
-              f" kind specified in out_shardings of jit ({mk})")
         res.append([mk] * len(types))  # type: ignore
       # To add the custom call on the output to signal a transfer, only do it
       # if memory kind comes from out_shardings on `jit` and result_memory_kinds
