@@ -138,7 +138,7 @@ use it.
 
 | Single process function | Multi processes function |
 | ----------------------- | -------------------------|
-| {func}`jax.device_put`  | ...                      |
+| {func}`jax.device_put`  | {func}`jax.make_array_from_process_local_data` |
 
 ```
 
@@ -208,14 +208,16 @@ differently-ordered computations despite running the same program:
 ## Dataset
 
 JAX don't have functions to load or do special dataset pre-processing.
-Try to make usre your libraries handle it in a performant way. For
+Try to make sure your libraries handle it in a performant way. For
 example, you want each process to only load and preprocess its own
-chunk of the data and not load all data and drop part the part it
-doesn't use.
+chunk of the data and not load all data and drop the part it doesn't
+use.
 
-## Job checkpointing
+## Model State Saving
 
 If your job save its state, it is useful to spend sometimes to make
 sure it works as you want in multi-process.  Do you want all the nodes
 to writes all their states, even the replicated one? Each decision
 have different pros and cons here.
+{func}`jax.experimental.array_serialization.serialization` and
+[Orbax](https://github.com/google/orbax) could help you here.
