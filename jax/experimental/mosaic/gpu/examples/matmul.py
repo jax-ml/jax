@@ -16,6 +16,7 @@
 
 import dataclasses
 import enum
+import functools
 
 import jax
 from jax import random
@@ -508,12 +509,16 @@ def verify(
         jax.lax.reduce_precision(v, exponent_bits, mantissa_bits)
         for v in (x, y)
     )
-  ref = jax.lax.dot_general(
-      x, y, dimension_numbers,
+
+  ref_f = functools.partial(
+      jax.lax.dot_general,
+      dimension_numbers=dimension_numbers,
       preferred_element_type=jnp.float32,
   )
+
+  ref, ref_runtime = profiler.measure(ref_f, x, y)
   np.testing.assert_allclose(z, ref, atol=1e-3, rtol=1e-3)
-  return runtime
+  return runtime, ref_runtime
 
 
 if __name__ == "__main__":
