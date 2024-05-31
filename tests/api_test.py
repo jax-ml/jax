@@ -9458,6 +9458,22 @@ class CustomVJPTest(jtu.JaxTestCase):
     finally:
       jax.config.update('jax_custom_vjp_disable_shape_check', False)
 
+  def test_bwd_rule_can_produce_list_or_tuple(self):
+    @jax.custom_vjp
+    def f(x, y):
+      return x * y
+
+    def f_fwd(x, y):
+      return f(x, y), (x, y)
+
+    def f_bwd(xy, g):
+      x, y = xy
+      return [g * y, x * g]  # list, not tuple
+
+    f.defvjp(f_fwd, f_bwd)
+
+    jax.grad(f)(1., 2.)  # don't crash
+
 
 def transpose_unary(f, x_example):
   def transposed(y):
