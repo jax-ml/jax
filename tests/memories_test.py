@@ -456,6 +456,53 @@ class DevicePutTest(jtu.JaxTestCase):
         out2, 2, s_host, "pinned_host", index=False
     )
 
+  def test_parameter_and_output_streaming_with_array(self):
+    mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
+    np_inp = np.arange(16).reshape(8, 2)
+    s_host = NamedSharding(mesh, P("x", "y"), memory_kind="pinned_host")
+    inp_host = jax.device_put(np_inp, s_host)
+
+    @functools.partial(jax.jit, out_shardings=(s_host, s_host))
+    def f(x):
+      return (x, x)
+
+    compiled = f.lower(inp_host).compile()  # doesn't crash
+    compiled_text = compiled.as_text()
+    if compiled_text is not None:
+      self.assertRegex(compiled_text, r"entry_computation_layout=.*S\(5\)}")
+
+    out1, out2 = f(inp_host)
+    self._check_device_put_addressable_shards(
+        out1, np_inp, s_host, "pinned_host"
+    )
+    self._check_device_put_addressable_shards(
+        out2, np_inp, s_host, "pinned_host"
+    )
+
+  def test_parameter_and_output_streaming_with_scalar(self):
+    mesh = jax.sharding.Mesh(jax.devices(), "axis")
+    s_host = jax.sharding.NamedSharding(
+        mesh, jax.sharding.PartitionSpec(), memory_kind="pinned_host"
+    )
+    scalar_inp = 1
+
+    @functools.partial(jax.jit, out_shardings=(s_host, s_host))
+    def f(x):
+      return (x, x)
+
+    compiled = f.lower(scalar_inp).compile()  # doesn't crash
+    compiled_text = compiled.as_text()
+    if compiled_text is not None:
+      self.assertRegex(compiled_text, r"entry_computation_layout=.*S\(5\)}")
+
+    out1, out2 = f(scalar_inp)
+    self._check_device_put_addressable_shards(
+        out1, scalar_inp, s_host, "pinned_host", index=False
+    )
+    self._check_device_put_addressable_shards(
+        out2, scalar_inp, s_host, "pinned_host", index=False
+    )
+
   def test_identity_jit_host_to_device_and_vice_versa(self):
     mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
     np_inp = np.arange(16).reshape(8, 2)
