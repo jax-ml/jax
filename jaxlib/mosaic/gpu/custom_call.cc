@@ -13,14 +13,24 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <fcntl.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
 #include <cstdint>
 #include <cstdlib>
+#include <fstream>
+#include <iostream>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 #include "absl/base/optimization.h"
 #include "absl/container/flat_hash_map.h"
+#include "absl/log/check.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/synchronization/mutex.h"
@@ -48,6 +58,7 @@ limitations under the License.
 #include "mlir/include/mlir/Parser/Parser.h"
 #include "mlir/include/mlir/Pass/PassManager.h"
 #include "mlir/include/mlir/Pass/PassRegistry.h"
+#include "mlir/include/mlir/Support/LLVM.h"
 #include "mlir/include/mlir/Support/LogicalResult.h"
 #include "mlir/include/mlir/Target/LLVM/NVVM/Target.h"
 #include "mlir/include/mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
@@ -64,25 +75,8 @@ namespace {
 using MosaicInitFunc = void(void***);
 using MosaicHostFunc = void(void**);
 
-void InitContext(mlir::MLIRContext* context) {
-  mlir::DialectRegistry registry;
-  registry.insert<mlir::arith::ArithDialect, mlir::func::FuncDialect,
-                  mlir::math::MathDialect, mlir::memref::MemRefDialect,
-                  mlir::scf::SCFDialect, mlir::vector::VectorDialect,
-                  mlir::gpu::GPUDialect, mlir::nvgpu::NVGPUDialect,
-                  mlir::NVVM::NVVMDialect, mlir::LLVM::LLVMDialect>();
-  mlir::gpu::registerOffloadingLLVMTranslationInterfaceExternalModels(registry);
-  mlir::NVVM::registerNVVMTargetInterfaceExternalModels(registry);
-  mlir::registerBuiltinDialectTranslation(registry);
-  mlir::registerGPUDialectTranslation(registry);
-  mlir::registerLLVMDialectTranslation(registry);
-  mlir::registerNVVMDialectTranslation(registry);
-  context->appendDialectRegistry(registry);
-  context->loadAllAvailableDialects();
-}
-
-absl::StatusOr<std::unique_ptr<mlir::ExecutionEngine>> Compile(
-    mlir::ModuleOp module) {
+mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
+    mlir::MLIRContext* ctx, mlir::gpu::CompilationTarget target) {
   static bool register_once = []() {
     llvm::InitializeNativeTarget();
     llvm::InitializeNativeTarget();
@@ -109,7 +103,7 @@ absl::StatusOr<std::unique_ptr<mlir::ExecutionEngine>> Compile(
     return true;
   }();
   (void)register_once;
-  auto pipeline = mlir::parsePassPipeline(
+  return mlir::parsePassPipeline(
       R"(
       builtin.module(
         convert-nvgpu-to-nvvm,
@@ -130,21 +124,176 @@ absl::StatusOr<std::unique_ptr<mlir::ExecutionEngine>> Compile(
         gpu.module(cse),
         gpu.module(reconcile-unrealized-casts),
         gpu-to-llvm{gpu-binary-annotation=gpu.binary use-bare-pointers-for-host=false use-bare-pointers-for-kernels=false},
-        gpu-module-to-binary{format=binary},
+        gpu-module-to-binary{format=)" +
+      mlir::gpu::stringifyCompilationTarget(target).str() + R"(},
         convert-math-to-llvm{approximate-log1p=true},
         canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=true test-convergence=false top-down=true},
         cse,
-        reconcile-unrealized-casts,
-        gpu-launch-lowering,
+        reconcile-unrealized-casts,)" +
+      (target != mlir::gpu::CompilationTarget::Assembly ? "gpu-launch-lowering,"
+                                                        : "") +
+      R"(
         convert-func-to-llvm{index-bitwidth=0 use-bare-ptr-memref-call-conv=false}
       )
   )");
-  if (mlir::failed(pipeline)) {
+}
+
+mlir::LogicalResult RunPasses(mlir::OpPassManager&& passes,
+                              mlir::ModuleOp module) {
+  mlir::PassManager pm(module.getContext());
+  *static_cast<mlir::OpPassManager*>(&pm) = std::move(passes);
+  return pm.run(module);
+}
+
+void InitContext(mlir::MLIRContext* context) {
+  mlir::DialectRegistry registry;
+  registry.insert<mlir::arith::ArithDialect, mlir::func::FuncDialect,
+                  mlir::math::MathDialect, mlir::memref::MemRefDialect,
+                  mlir::scf::SCFDialect, mlir::vector::VectorDialect,
+                  mlir::gpu::GPUDialect, mlir::nvgpu::NVGPUDialect,
+                  mlir::NVVM::NVVMDialect, mlir::LLVM::LLVMDialect>();
+  mlir::gpu::registerOffloadingLLVMTranslationInterfaceExternalModels(registry);
+  mlir::NVVM::registerNVVMTargetInterfaceExternalModels(registry);
+  mlir::registerBuiltinDialectTranslation(registry);
+  mlir::registerGPUDialectTranslation(registry);
+  mlir::registerLLVMDialectTranslation(registry);
+  mlir::registerNVVMDialectTranslation(registry);
+  context->appendDialectRegistry(registry);
+  context->loadAllAvailableDialects();
+}
+
+absl::Status RunCUDATool(const char* tool,
+                         const std::vector<const char*>& args,
+                         bool stderr_to_stdout = false) {
+  CHECK(!args.empty() && args.back() == nullptr);
+  const char * cuda_path_ptr = getenv("CUDA_ROOT");
+  if (!cuda_path_ptr) return absl::InternalError("Failed to get CUDA_ROOT");
+  std::string tool_path(cuda_path_ptr);
+  tool_path += "/bin/";
+  tool_path += tool;
+  pid_t child_pid;
+  posix_spawn_file_actions_t file_actions;
+  if (posix_spawn_file_actions_init(&file_actions)) {
+    return absl::InternalError("Failed to initialize spawn file actions");
+  }
+  if (posix_spawn_file_actions_adddup2(&file_actions, STDOUT_FILENO,
+                                       STDERR_FILENO)) {
+    return absl::InternalError("Failed to set up spawn file actions");
+  }
+  // execv is guaranteed by POSIX to not modify the args (other than
+  // replacing the whole process image), so the const_cast is valid.
+  if (posix_spawn(&child_pid, tool_path.c_str(), &file_actions, nullptr,
+                  const_cast<char* const*>(args.data()), environ)) {
+    return absl::InternalError("Process spawn failed");
+  }
+  int status;
+  if (waitpid(child_pid, &status, 0) == -1) {
+    return absl::InternalError("Failed to wait for CUDA tool invocation");
+  }
+  if (status != 0) return absl::InternalError("CUDA tool failed");
+  if (posix_spawn_file_actions_destroy(&file_actions) != 0) {
+    return absl::InternalError("Failed to clean up after posix_spawn");
+  }
+  return absl::OkStatus();
+}
+
+class TemporaryDirectory {
+ private:
+  TemporaryDirectory(std::string path) : path(std::move(path)) {}
+  // TODO(apaszke): Unlink in destructor.
+
+ public:
+  static absl::StatusOr<TemporaryDirectory> Create() {
+    std::string pattern = "/tmp/mosaic-gpu-XXXXXX";
+    if (mkdtemp(pattern.data()) == NULL) {
+      return absl::InternalError("Failed to create temporary directory");
+    }
+    return TemporaryDirectory(std::move(pattern));
+  }
+
+  std::string_view GetPath() { return path; }
+
+ private:
+  std::string path;
+};
+
+void DumpCompilationOutput(mlir::ModuleOp module) {
+  bool dump_ptx = getenv("MOSAIC_GPU_DUMP_PTX") != nullptr;
+  bool dump_ptxas = getenv("MOSAIC_GPU_DUMP_PTXAS") != nullptr;
+  bool dump_sass = getenv("MOSAIC_GPU_DUMP_SASS") != nullptr;
+  if (!dump_ptx && !dump_ptxas && !dump_sass) {
+    return;
+  }
+
+  module = module.clone();  // Prevent accidental modification.
+  auto passes = GetPassPipeline(module.getContext(),
+                                mlir::gpu::CompilationTarget::Assembly);
+  if (mlir::failed(passes) ||
+      mlir::failed(RunPasses(std::move(*passes), module))) {
+    return;
+  }
+  for (mlir::Operation& op : module.getBody()->getOperations()) {
+    auto binary = mlir::dyn_cast<mlir::gpu::BinaryOp>(&op);
+    if (!binary) { continue; }
+    auto objects = binary.getObjects();
+    if (objects.size() != 1) {
+      std::cerr << "Multiple objects per gpu.binary unsupported" << std::endl;
+      continue;
+    }
+    auto object = mlir::cast<mlir::gpu::ObjectAttr>(*objects.begin());
+    std::string ptx = object.getObject().getValue().str();
+    if (dump_ptx) {
+      std::cout << ptx << std::endl;
+    }
+    if (!dump_ptxas && !dump_sass) { continue; }  // We're done.
+    auto tmpdir = TemporaryDirectory::Create();
+    if (!tmpdir.ok()) {
+      std::cerr << "Failed to create a temporary directory" << std::endl;
+      continue;
+    }
+    std::string ptx_path = std::string(tmpdir->GetPath()) + "/kernel.ptx";
+    std::string elf_path = std::string(tmpdir->GetPath()) + "/kernel.o";
+    // Dump PTX into a file.
+    std::ofstream ptx_out(ptx_path.c_str());
+    if (!ptx_out) {
+      std::cerr << "Failed to write PTX to a file" << std::endl;
+      continue;
+    }
+    ptx_out << ptx << std::endl;
+    // Run ptxas to generate SASS.
+    std::vector<const char*> ptxas_args = {
+        "ptxas",          "--opt-level",   "3",
+        "--gpu-name",     "sm_90a",        "--output-file",
+        elf_path.c_str(), ptx_path.c_str()};
+    if (dump_ptxas) {
+      ptxas_args.push_back("-v");
+    }
+    ptxas_args.push_back(nullptr);
+    if (auto status = RunCUDATool("ptxas", ptxas_args); !status.ok()) {
+      std::cerr << "ptxas invocation failed: " << status.message() << std::endl;
+      continue;
+    }
+    if (!dump_sass) { continue; }  // We're done.
+    // Call nvdisasm to pretty-print SASS.
+    if (auto status = RunCUDATool(
+            "nvdisasm", {"nvdisasm", "-ndf", "-c", elf_path.c_str(), nullptr});
+        !status.ok()) {
+      std::cerr << "nvdisasm invocation failed: " << status.message()
+                << std::endl;
+      continue;
+    }
+  }
+}
+
+absl::StatusOr<std::unique_ptr<mlir::ExecutionEngine>> Compile(
+    mlir::ModuleOp module) {
+  DumpCompilationOutput(module);
+  auto passes = GetPassPipeline(module.getContext(),
+                                mlir::gpu::CompilationTarget::Binary);
+  if (mlir::failed(passes)) {
     return absl::InternalError("Failed to construct pass pipeline");
   }
-  mlir::PassManager pm(module.getContext());
-  *static_cast<mlir::OpPassManager*>(&pm) = std::move(*pipeline);
-  if (mlir::failed(pm.run(module))) {
+  if (mlir::failed(RunPasses(std::move(*passes), module))) {
     return absl::InternalError("Pass pipeline failed");
   }
 
