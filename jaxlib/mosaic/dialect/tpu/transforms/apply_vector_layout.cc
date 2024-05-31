@@ -913,16 +913,35 @@ LogicalResult scf_for_rule(RewriteContext &ctx, Operation &op,
   scf::ForOp for_op = cast<scf::ForOp>(op);
   TPU_ASSERT_EQ_OP(layouts_in.size(), for_op->getNumOperands());
   TPU_ASSERT_EQ_OP(layouts_out.size(), for_op->getNumResults());
-  if (!llvm::equal(layouts_in.drop_front(3), layouts_out)) {
-    return op.emitOpError(
-        "Expected matched layouts in scf.for's inputs and outputs");
-  }
   FAILUREOR_ASSIGN_OR_RETURN(
       const SmallVector<Layout> yield_in_layouts,
       getInLayouts(*for_op.getBody()->getTerminator(), ctx.target_shape));
-  if (!llvm::equal(ArrayRef<Layout>(yield_in_layouts), layouts_out)) {
-    return op.emitOpError(
-        "Expected matched layouts in scf.yield operands and scf.for's results");
+  int out_idx = 0;
+  for (auto [in_layout, yield_layout, out_layout, result] :
+       llvm::zip_equal(layouts_in.drop_front(3), yield_in_layouts, layouts_out,
+                       op.getResults())) {
+    if (auto vty = dyn_cast<VectorType>(result.getType())) {
+      TPU_ASSERT_OP(in_layout.has_value());
+      TPU_ASSERT_OP(yield_layout.has_value());
+      TPU_ASSERT_OP(out_layout.has_value());
+      if (in_layout.value() != yield_layout.value()) {
+        return op.emitOpError(
+                   "Not implemented: for loop input layout does not match with "
+                   "yield layout ")
+               << out_idx;
+      }
+      if (in_layout.value() != out_layout.value()) {
+        return op.emitOpError(
+                   "Not implemented: for loop input layout does not match with "
+                   "out layout ")
+               << out_idx;
+      }
+    } else {
+      TPU_ASSERT_EQ_OP(in_layout, kNoLayout);
+      TPU_ASSERT_EQ_OP(yield_layout, kNoLayout);
+      TPU_ASSERT_EQ_OP(out_layout, kNoLayout);
+    }
+    ++out_idx;
   }
 
   if (failed(applyLayoutBlock(ctx, *for_op.getBody()))) {
@@ -1047,28 +1066,51 @@ LogicalResult scf_while_rule(RewriteContext &ctx, Operation &op,
   // It takes multiple arguments -- the first being the decision to execute the
   // after region or branch to the exit.
   FAILUREOR_ASSIGN_OR_RETURN(
-      const SmallVector<Layout> condition_in_layouts,
+      const SmallVector<Layout> cond_in_layouts,
       getInLayouts(*while_op.getBeforeBody()->getTerminator(),
                    ctx.target_shape));
-  if (!llvm::equal(ArrayRef<Layout>(condition_in_layouts).drop_front(1),
-                   layouts_out)) {
-    return op.emitOpError(
-        "Mismatched layouts between scf.while result and its before region "
-        "condition.");
+
+  FAILUREOR_ASSIGN_OR_RETURN(
+      const SmallVector<Layout> yield_in_layouts,
+      getInLayouts(*while_op.getYieldOp(), ctx.target_shape));
+  int out_idx = 0;
+  for (auto [in_layout, cond_layout, yield_layout, out_layout, result] :
+       llvm::zip_equal(layouts_in,
+                       ArrayRef<Layout>(cond_in_layouts).drop_front(1),
+                       yield_in_layouts, layouts_out, op.getResults())) {
+    if (auto vty = dyn_cast<VectorType>(result.getType())) {
+      TPU_ASSERT_OP(in_layout.has_value());
+      TPU_ASSERT_OP(yield_layout.has_value());
+      TPU_ASSERT_OP(out_layout.has_value());
+      if (in_layout.value() != cond_layout.value()) {
+        return op.emitOpError(
+                   "Not implemented: while loop input layout does not match "
+                   "with condition layout ")
+               << out_idx;
+      }
+      if (in_layout.value() != yield_layout.value()) {
+        return op.emitOpError(
+                   "Not implemented: while loop input layout does not match "
+                   "with yield layout ")
+               << out_idx;
+      }
+      if (in_layout.value() != out_layout.value()) {
+        return op.emitOpError(
+                   "Not implemented: while loop input layout does not match "
+                   "with output layout ")
+               << out_idx;
+      }
+    } else {
+      TPU_ASSERT_EQ_OP(in_layout, kNoLayout);
+      TPU_ASSERT_EQ_OP(cond_layout, kNoLayout);
+      TPU_ASSERT_EQ_OP(yield_layout, kNoLayout);
+      TPU_ASSERT_EQ_OP(out_layout, kNoLayout);
+    }
+    ++out_idx;
   }
 
   if (failed(applyLayoutBlock(ctx, *while_op.getBeforeBody()))) {
     return failure();
-  }
-
-  FAILUREOR_ASSIGN_OR_RETURN(
-      const SmallVector<Layout> after_yield_in_layouts,
-      getInLayouts(*while_op.getYieldOp(), ctx.target_shape));
-  if (!layouts_out.empty() &&
-      ArrayRef<Layout>(after_yield_in_layouts) != layouts_out) {
-    return op.emitOpError(
-        "Not implemented: different layouts while's yield's operands and  "
-        "results");
   }
 
   if (failed(applyLayoutBlock(ctx, *while_op.getAfterBody()))) {
@@ -1221,17 +1263,42 @@ LogicalResult scf_if_rule(RewriteContext &ctx, Operation &op,
   TPU_ASSERT_OP(!layouts_in.front().has_value());
   ImplicitLocOpBuilder builder(op.getLoc(), &op);
   scf::IfOp if_op = cast<scf::IfOp>(op);
+  SmallVector<Layout, 4> then_yield_in_layouts;
+  SmallVector<Layout, 4> else_yield_in_layouts;
   FAILUREOR_ASSIGN_OR_RETURN(
-      const SmallVector<Layout> then_yield_in_layouts,
+      then_yield_in_layouts,
       getInLayouts(*if_op.thenYield(), ctx.target_shape));
-  // TODO(tlongeri): ArrayRef<Layout> conversion should not be necessary, fix
-  //                 after LLVM adds const qualifiers to ==/!= operators. Also
-  //                 applies to else_yield_in_layouts comparison below.
-  if (!layouts_out.empty() &&
-      ArrayRef<Layout>(then_yield_in_layouts) != layouts_out) {
-    return op.emitOpError(
-        "Not implemented: different layouts in then yield's operands and if's "
-        "results");
+  if (!if_op.getElseRegion().empty()) {
+    FAILUREOR_ASSIGN_OR_RETURN(
+        else_yield_in_layouts,
+        getInLayouts(*if_op.elseYield(), ctx.target_shape));
+  }
+  int out_idx = 0;
+  for (auto [then_layout, else_layout, result_layout, result] :
+       llvm::zip_equal(then_yield_in_layouts, else_yield_in_layouts,
+                       layouts_out, op.getResults())) {
+    if (auto vty = dyn_cast<VectorType>(result.getType())) {
+      TPU_ASSERT_OP(then_layout.has_value());
+      TPU_ASSERT_OP(else_layout.has_value());
+      TPU_ASSERT_OP(result_layout.has_value());
+      if (result_layout.value() != then_layout.value()) {
+        return op.emitOpError(
+                   "Not implemented: yield layout from then branch does not "
+                   "match with output layout ")
+               << out_idx;
+      }
+      if (result_layout.value() != else_layout.value()) {
+        return op.emitOpError(
+                   "Not implemented: yield layout from else branch does not "
+                   "match with output layout ")
+               << out_idx;
+      }
+    } else {
+      TPU_ASSERT_EQ_OP(then_layout, kNoLayout);
+      TPU_ASSERT_EQ_OP(else_layout, kNoLayout);
+      TPU_ASSERT_EQ_OP(result_layout, kNoLayout);
+    }
+    ++out_idx;
   }
   if (failed(applyLayoutBlock(ctx, *if_op.thenBlock()))) {
     return failure();
@@ -1240,15 +1307,6 @@ LogicalResult scf_if_rule(RewriteContext &ctx, Operation &op,
     TPU_ASSERT_EQ_OP(if_op->getNumResults(), 0);
     TPU_ASSERT_EQ_OP(layouts_out.size(), 0);
     return success();
-  }
-  FAILUREOR_ASSIGN_OR_RETURN(
-      const SmallVector<Layout> else_yield_in_layouts,
-      getInLayouts(*if_op.elseYield(), ctx.target_shape));
-  if (!layouts_out.empty() &&
-      ArrayRef<Layout>(else_yield_in_layouts) != layouts_out) {
-    return op.emitOpError(
-        "Not implemented: different layouts in else yield's operands and if's "
-        "results");
   }
   if (failed(applyLayoutBlock(ctx, *if_op.elseBlock()))) {
     return failure();
