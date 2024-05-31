@@ -686,7 +686,7 @@ The inner ``jnp.where`` may be needed in addition to the original one, e.g.::
 
   def my_log_or_y(x, y):
     """Return log(x) if x > 0 or y"""
-    return jnp.where(x > 0., jnp.log(jnp.where(x > 0., x, 1.), y)
+    return jnp.where(x > 0., jnp.log(jnp.where(x > 0., x, 1.)), y)
 
 
 Additional reading:
