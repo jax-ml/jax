@@ -40,10 +40,10 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.interpreters.batching import not_mapped
 from jax._src.lax import lax
-from jax._src.tree_util import (tree_flatten, tree_unflatten, tree_map,
-                                treedef_is_leaf, treedef_tuple,
-                                register_pytree_node_class, tree_leaves,
-                                tree_flatten_with_path, keystr)
+from jax._src.tree_util import (
+    tree_flatten, tree_unflatten, tree_map, treedef_is_leaf, treedef_tuple,
+    register_pytree_node_class, tree_leaves, tree_flatten_with_path, keystr,
+    treedef_children)
 from jax._src.util import (cache, safe_zip, safe_map, split_list, Unhashable,
                            unzip2)
 
@@ -729,6 +729,8 @@ def _flatten_bwd(in_tree, in_avals, out_trees, *args):
   py_res = tree_unflatten(res_tree, res)
   py_cts_out = tree_unflatten(out_tree, cts_out)
   py_cts_in = yield (py_res, py_cts_out), {}
+  if isinstance(py_cts_in, list) and len(py_cts_in) == len(treedef_children(in_tree)):
+    py_cts_in = tuple(py_cts_in)
   # For each None in py_cts_in, indicating an argument for which the rule
   # produces no cotangent, we replace it with a pytree with the structure of the
   # corresponding subtree of in_tree and with leaves of a non-pytree sentinel
@@ -764,7 +766,8 @@ def _flatten_bwd(in_tree, in_avals, out_trees, *args):
       if not core.typecompat(a.at_least_vspace(), a_ := ct.aval):
         msg = ("Custom VJP bwd rule produced a SymbolicZero with a shape/dtype "
                "that does not match the corresponding input tangent shape/dtype: "
-               f"the SymbolicZero had shape/dtype {a_.str_short()} while the "
+               f"at output{keystr(kp)} the SymbolicZero had shape/dtype "
+               f"{a_.str_short()} while the "
                f"corresponding input had shape/dtype {a.str_short()}. "
                "Consider just returning a None here instead of a SymbolicZero "
                "object.")
