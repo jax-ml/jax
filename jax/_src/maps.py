@@ -62,7 +62,7 @@ from jax._src.tree_util import (tree_flatten, tree_unflatten, all_leaves,
 from jax._src.util import (safe_map, safe_zip, HashableFunction, unzip2, unzip3,
                            as_hashable_function, distributed_debug_log,
                            tuple_insert, moveaxis, split_list, wrap_name,
-                           merge_lists, partition_list)
+                           merge_lists, partition_list, fun_name)
 
 source_info_util.register_exclusion(__file__)
 traceback_util.register_exclusion(__file__)
@@ -577,7 +577,7 @@ def xmap(fun: Callable,
         in_axes_flat, args_flat)
 
     params = dict(
-      name=getattr(fun, '__name__', '<unnamed function>'),
+      name=fun_name(fun),
       in_axes=tuple(in_axes_flat),
       out_axes_thunk=out_axes_thunk,
       donated_invars=donated_invars,

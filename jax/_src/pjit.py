@@ -79,7 +79,7 @@ from jax._src.tree_util import (
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps,
     distributed_debug_log, split_list, weakref_lru_cache,
-    merge_lists, flatten, unflatten, subs_list)
+    merge_lists, flatten, unflatten, subs_list, fun_name)
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -339,7 +339,7 @@ def _cpp_pjit(jit_info: PjitInfo):
 
   fun = jit_info.fun
   cpp_pjit_f = xc._xla.pjit(
-    getattr(fun, "__name__", "<unnamed function>"),
+    fun_name(fun),
     fun, cache_miss, jit_info.static_argnums, jit_info.static_argnames,
     jit_info.donate_argnums, tree_util.dispatch_registry,
     pxla.shard_arg,
@@ -652,7 +652,7 @@ def _infer_params(jit_info, args, kwargs):
       out_layouts=out_layouts_flat,
       resource_env=resource_env,
       donated_invars=donated_invars,
-      name=getattr(flat_fun, '__name__', '<unknown>'),
+      name=fun_name(flat_fun),
       keep_unused=keep_unused,
       inline=inline,
   )

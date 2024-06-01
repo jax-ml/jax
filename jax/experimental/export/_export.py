@@ -405,7 +405,7 @@ def export(fun_jax: Callable,
             symbolic_scope = (d.scope, k_path)
             continue
           symbolic_scope[0]._check_same_scope(
-              d, when=f"when exporting {getattr(wrapped_fun_jax, '__name__')}",
+              d, when=f"when exporting {util.fun_name(wrapped_fun_jax)}",
               self_descr=f"current (from {_shape_poly.args_kwargs_path_to_str(symbolic_scope[1])}) ",
               other_descr=_shape_poly.args_kwargs_path_to_str(k_path))
 

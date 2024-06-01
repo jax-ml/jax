@@ -360,6 +360,9 @@ class WrapKwArgs:
 def wrap_name(name, transform_name):
   return transform_name + '(' + name + ')'
 
+def fun_name(fun: Callable):
+  return getattr(fun, "__name__", "<unnamed function>")
+
 def canonicalize_axis(axis, num_dims) -> int:
   """Canonicalize an axis in [-num_dims, num_dims) to [0, num_dims)."""
   axis = operator.index(axis)
@@ -399,7 +402,7 @@ def wraps(
   """
   def wrapper(fun: T) -> T:
     try:
-      name = getattr(wrapped, "__name__", "<unnamed function>")
+      name = fun_name(wrapped)
       doc = getattr(wrapped, "__doc__", "") or ""
       fun.__dict__.update(getattr(wrapped, "__dict__", {}))
       fun.__annotations__ = getattr(wrapped, "__annotations__", {})
