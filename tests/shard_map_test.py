@@ -1646,6 +1646,10 @@ class ShardMapTest(jtu.JaxTestCase):
 
     v = jnp.arange(32.).reshape(4, 8)
     v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
+    self.assertIn(
+        'sharding={devices=[1,1,2,2]<=[4] last_tile_dims={manual, replicated}}',
+        f.lower(v).as_text('hlo'),
+    )
     self.assertAllClose(v*v, f(v), check_dtypes=False)
 
   def test_partial_auto_error_wsc_manual(self):
