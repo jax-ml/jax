@@ -538,6 +538,25 @@ class JaxExportTest(jtu.JaxTestCase):
             r"and found for 'w' \(args\[1\]\) scope .*", re.DOTALL)):
       get_exported(f)(x_poly_spec, y_poly_spec)
 
+  def test_poly_export_callable_with_no_name(self):
+    # This was reported by a user
+    class MyCallable:
+      def __call__(self, x):
+        return jnp.sin(x)
+
+      # This makes it look like a jitted-function
+      def lower(self, x,
+                _experimental_lowering_parameters=None):
+        return jax.jit(self.__call__).lower(
+            x,
+            _experimental_lowering_parameters=_experimental_lowering_parameters)
+
+    a, = export.symbolic_shape("a,")
+    # No error
+    _ = get_exported(MyCallable())(
+        jax.ShapeDtypeStruct((a, a), dtype=np.float32)
+    )
+
   @jtu.parameterized_filterable(
     kwargs=[
       dict(v=v)

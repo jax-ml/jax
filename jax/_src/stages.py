@@ -616,7 +616,7 @@ class Lowered(Stage):
       args_info,  # PyTree of ArgInfo
       out_tree: tree_util.PyTreeDef,
       no_kwargs: bool = False,
-      fun_name: str = "unknown",
+      fun_name: str = "<unnamed function>",
       jaxpr: core.ClosedJaxpr | None = None):
 
     self._lowering = lowering
@@ -634,7 +634,7 @@ class Lowered(Stage):
                      donate_argnums: tuple[int, ...],
                      out_tree: tree_util.PyTreeDef,
                      no_kwargs: bool = False,
-                     fun_name: str = "unknown",
+                     fun_name: str = "<unnamed function>",
                      jaxpr: core.ClosedJaxpr | None = None):
     """Initialize from flat info (``in_avals`` etc.) and an input PyTreeDef.
 
