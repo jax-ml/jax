@@ -87,7 +87,9 @@ class State:
     if process_id == 0:
       if self.service is not None:
         raise RuntimeError('distributed.initialize should only be called once.')
-      logger.info('Starting JAX distributed service on %s', coordinator_address)
+      logger.info(
+          'Starting JAX distributed service on %s', coordinator_bind_address
+      )
       self.service = xla_extension.get_distributed_runtime_service(
           coordinator_bind_address, num_processes)
 
