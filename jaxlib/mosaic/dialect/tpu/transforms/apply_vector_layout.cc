@@ -3319,12 +3319,10 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
     case vector::CombiningKind::ADD:
       neutral = builder.getF32FloatAttr(0);
       break;
-    case vector::CombiningKind::MAXNUMF:
     case vector::CombiningKind::MAXIMUMF: {
       // TODO(b/322836633): The semantics of maximumf don't match the lowering
       // for older TPU versions because older TPU versions don't respect the
-      // -0.0 vs +0.0 ordering. Keeping MAXNUMF for backward compatibility of
-      // serialized artifacts.
+      // -0.0 vs +0.0 ordering.
       neutral = builder.getFloatAttr(
           builder.getF32Type(),
           APFloat::getInf(APFloat::IEEEsingle(), /*Negative=*/true));
@@ -3418,7 +3416,6 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
     case vector::CombiningKind::ADD:
       tpu_kind = tpu::ReductionKind::SUM;
       break;
-    case vector::CombiningKind::MAXNUMF:
     case vector::CombiningKind::MAXIMUMF:
       tpu_kind = tpu::ReductionKind::MAX;
       break;
