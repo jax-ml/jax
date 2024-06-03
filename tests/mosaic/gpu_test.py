@@ -14,14 +14,13 @@
 # ==============================================================================
 """Tests for Mosaic GPU DSL functions and utilities."""
 
-import operator
 from functools import partial
+import operator
+import sys
 from typing import Optional
 
 from absl.testing import absltest, parameterized
-import numpy as np
 import jax
-import jax.numpy as jnp
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
@@ -29,7 +28,11 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
+import jax.numpy as jnp
+import numpy as np
 try:
+  if sys.version_info < (3, 10):
+    raise ImportError("Mosaic requires Python 3.10")
   import jax._src.lib.mosaic_gpu  # noqa: F401
   HAS_MOSAIC_GPU = True
 except ImportError:
@@ -156,6 +159,9 @@ class TestCase(parameterized.TestCase):
   def setUp(self):
     if not HAS_MOSAIC_GPU:
       self.skipTest("jaxlib built without Mosaic GPU")
+    if (not jtu.test_device_matches(["cuda"]) or
+        not jtu.is_cuda_compute_capability_at_least("9.0")):
+      self.skipTest("Only works on GPU with capability >= sm90")
     super().setUp()
     self.prng = np.random.default_rng(1234)
     self.ctx = mlir.make_ir_context()
@@ -939,7 +945,6 @@ class FragmentedArrayTest(TestCase):
     )(inp)
     np.testing.assert_array_equal(inp, result)
 
-
   def test_warp_tree_reduce(self):
     def kernel(ctx, out, *_):
       del ctx
@@ -957,7 +962,6 @@ class FragmentedArrayTest(TestCase):
       x[i:i + 4] = jnp.sum(x[i:i + 4])
 
     np.testing.assert_array_equal(result, x)
-
 
 
 class ProfilerTest(TestCase):
