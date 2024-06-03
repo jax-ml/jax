@@ -269,7 +269,7 @@ def _get_fastpath_data(
     kept_var_bitvec = [i in executable._kept_var_idx
                        for i in range(len(args_flat))]
     in_shardings = [
-        a.dtype._rules.physical_sharding(a, s)
+        sharding_impls.physical_sharding(a, s)
         if a is not core.abstract_token and dtypes.issubdtype(a.dtype, dtypes.extended)
         else s
         for s, a in zip(executable._in_shardings, executable.in_avals)

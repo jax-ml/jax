@@ -818,7 +818,7 @@ def _to_physical_op_sharding(
     return _to_physical_op_sharding(aval.inner_aval, sharding)
   assert isinstance(aval, (core.ShapedArray, core.DShapedArray))
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
-    sharding = aval.dtype._rules.physical_sharding(aval, sharding)
+    sharding = sharding_impls.physical_sharding(aval, sharding)
     aval = core.physical_aval(aval)
   return sharding._to_xla_hlo_sharding(aval.ndim).to_proto()  # type: ignore
 
@@ -1376,7 +1376,7 @@ def lower_jaxpr_to_fun(
 
     if ir_arg_shardings is not None and name == "main":
       flat_args = [
-          a.dtype._rules.replicate_trailing_dims(entry_lowering_ctx, o, a)  # pytype: disable=attribute-error
+          replicate_trailing_dims(entry_lowering_ctx, o, a)
           if (a is not core.abstract_token and
               dtypes.issubdtype(a.dtype, dtypes.extended) and s is None) else o  # pytype: disable=attribute-error
           for o, s, a in zip(flat_args, ir_arg_shardings, input_avals)
@@ -1417,7 +1417,7 @@ def lower_jaxpr_to_fun(
 
     if ir_result_shardings is not None and name == "main":
       flat_outputs = [
-          a.dtype._rules.replicate_trailing_dims(entry_lowering_ctx, o, a)  # pytype: disable=attribute-error
+          replicate_trailing_dims(entry_lowering_ctx, o, a)
           if (a is not core.abstract_token and
               dtypes.issubdtype(a.dtype, dtypes.extended) and s is None) else o  # pytype: disable=attribute-error
           for o, s, a in zip(flat_outputs, ir_result_shardings, output_avals)
@@ -1439,6 +1439,19 @@ def wrap_with_memory_kind(
   dict_attr = {"_xla_buffer_placement": ir.StringAttr.get(memory_kind)}
   op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
   return op.result
+
+
+def replicate_trailing_dims(ctx, val: ir.Value, aval) -> ir.Value:
+  # Set the sharding of extended dtypes to be UNCONSTRAINED
+  # (i.e. XLA will choose) on aval.shape.
+  # For the trailing dims i.e. the dimension of key_shape on the base_array,
+  # the sharding is set to be REPLICATED always.
+  # For example: if the key.shape is (8, 2) and key_data(key).shape is (8, 2, 2),
+  # then the sharding will be P(P.UNCONSTRAINED, P.UNCONSTRAINED, None).
+  # The below custom call achieves the sharding like above example.
+  return wrap_with_sharding_op(
+      ctx, val, aval, xc.HloSharding.replicate().to_proto(),
+      unspecified_dims=set(range(aval.ndim)))
 
 
 def _emit_lowering_rule_as_fun(lowering_rule,

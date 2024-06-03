@@ -2563,20 +2563,10 @@ def _register_out_sharding_handler(
 ) -> None:
   _orig_out_sharding_handlers[sharding_cls] = handler
 
-
-def _gspmd_to_named_sharding_via_mesh(
-    out_s: sharding_impls.GSPMDSharding,
-    mesh: Mesh) -> sharding_impls.NamedSharding:
-  parsed_pspec = sharding_impls.parse_flatten_op_sharding(
-      out_s._hlo_sharding, mesh)[0]
-  return create_mesh_pspec_sharding(
-      mesh, parsed_pspec.get_partition_spec(), parsed_pspec,
-      out_s.memory_kind)
-
 def _gspmd_to_named_sharding(
     out_s: sharding_impls.GSPMDSharding,
     orig_in_s: sharding_impls.NamedSharding) -> sharding_impls.NamedSharding:
-  return _gspmd_to_named_sharding_via_mesh(out_s, orig_in_s.mesh)
+  return sharding_impls._gspmd_to_named_sharding_via_mesh(out_s, orig_in_s.mesh)
 
 _register_out_sharding_handler(
     sharding_impls.NamedSharding, _gspmd_to_named_sharding)
@@ -2793,7 +2783,7 @@ def _maybe_get_and_check_in_shardings(
     if is_unspecified(orig):
       if (aval is not core.abstract_token and
           dtypes.issubdtype(aval.dtype, dtypes.extended)):
-        xla_s = aval.dtype._rules.logical_sharding(aval, xla_s)
+        xla_s = sharding_impls.logical_sharding(aval, xla_s)
       new_in_shardings.append(xla_s)
     else:
       xla_hlo_s = xla_s._to_xla_hlo_sharding(aval.ndim)
@@ -2829,7 +2819,7 @@ def _maybe_get_and_check_out_shardings(
     if is_unspecified(orig):
       if (aval is not core.abstract_token and
           dtypes.issubdtype(aval.dtype, dtypes.extended)):
-        xla_s = aval.dtype._rules.logical_sharding(aval, xla_s)
+        xla_s = sharding_impls.logical_sharding(aval, xla_s)
       new_out_shardings.append(xla_s)
     else:
       xla_hlo_s = xla_s._to_xla_hlo_sharding(aval.ndim)
@@ -3120,7 +3110,7 @@ class MeshExecutable(stages.XlaExecutable):
         kept_var_bitvec = [i in self._kept_var_idx
                            for i in range(len(args_flat))]
         in_shardings = [
-            a.dtype._rules.physical_sharding(a, s)
+            sharding_impls.physical_sharding(a, s)
             if a is not core.abstract_token and dtypes.issubdtype(a.dtype, dtypes.extended)
             else s
             for s, a in zip(self._in_shardings, self.in_avals)
@@ -3186,14 +3176,7 @@ def _get_metadata_jit_pmap(local_devices, num_in_shardings, num_out_shardings):
   return in_shardings, out_shardings, committed, tuple(local_devices)
 
 
-@util.cache()
-def create_mesh_pspec_sharding(
-    mesh: Mesh, pspec: PartitionSpec | None, parsed_pspec=None,
-    memory_kind: str | None = None) -> sharding_impls.NamedSharding:
-  if pspec is None:
-    pspec, parsed_pspec = PartitionSpec(), None
-  return sharding_impls.NamedSharding(mesh, pspec, _parsed_pspec=parsed_pspec,
-                                      memory_kind=memory_kind)
+create_mesh_pspec_sharding = sharding_impls.create_mesh_pspec_sharding
 
 
 def check_device_backend_on_shardings(shardings) -> bool:

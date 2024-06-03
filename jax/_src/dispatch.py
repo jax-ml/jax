@@ -48,8 +48,8 @@ from jax._src.monitoring import record_event_duration_secs
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
-    PmapSharding, SingleDeviceSharding, NamedSharding, XLACompatibleSharding,
-    GSPMDSharding, TransferToMemoryKind)
+    SingleDeviceSharding, NamedSharding, XLACompatibleSharding,
+    GSPMDSharding, TransferToMemoryKind, is_single_device_sharding)
 from jax._src.layout import Layout, DeviceLocalLayout
 
 
@@ -161,12 +161,6 @@ runtime_tokens: RuntimeTokenSet = RuntimeTokenSet()
 @atexit.register
 def wait_for_tokens():
   runtime_tokens.block_until_ready()
-
-
-def is_single_device_sharding(sharding: Sharding) -> bool:
-  # Special case PmapSharding here because PmapSharding maps away an axis
-  # and needs to be handled separately.test_pjit_single_device_sharding_add
-  return len(sharding.device_set) == 1 and not isinstance(sharding, PmapSharding)
 
 
 @contextlib.contextmanager

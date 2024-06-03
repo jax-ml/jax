@@ -579,25 +579,12 @@ class EArrayTest(jtu.JaxTestCase):
         return core.ShapedArray((), dtypes.dtype('float32'))
 
       @staticmethod
-      def replicate_trailing_dims(ctx, val, aval):
-        del ctx, aval
-        return val
-
-      @staticmethod
-      def logical_sharding(aval, phys_sharding):
-        return phys_sharding
-
-      @staticmethod
       def global_sharded_result_handler(aval, out_sharding, committed):
         phys_sharding = out_sharding  # unlike KeyTyRules, assume same shape
         phys_aval = core.physical_aval(aval)
         phys_handler_maker = pxla.global_result_handlers[core.ShapedArray]
         phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed)
         return lambda bufs: earray.EArray(aval, phys_handler(bufs))
-
-      @staticmethod
-      def physical_sharding(aval, sharding):
-        return sharding  # unlike KeyTyRules, assume same shape
 
     @dataclasses.dataclass(frozen=True)
     class FooTy(dtypes.ExtendedDType):

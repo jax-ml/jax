@@ -30,6 +30,7 @@ from jax._src import sharding_specs
 from jax._src import tree_util
 from jax._src import util
 from jax._src import xla_bridge
+from jax._src import core
 from jax._src.lib import xla_client as xc
 from jax._src.op_shardings import ( are_op_shardings_equal, get_num_ways_dim_sharded,
     is_op_sharding_replicated,
@@ -1437,3 +1438,111 @@ def num_addressable_indices(
   })
   shard_size = tensor_sharding.shard_shape(global_shape)[dim]
   return shard_size * num_unique_slices
+
+
+def physical_hlo_sharding(aval, hlo_sharding: xc.HloSharding) -> xc.HloSharding:
+  elt_aval = aval.dtype._rules.physical_element_aval(aval.dtype)
+  new_op_sharding = hlo_sharding.to_proto().clone()
+  partitions, num_replicas = get_num_ways_dim_sharded(hlo_sharding)
+  suffix = [] if num_replicas == 1 else [num_replicas]
+  tad = partitions + [1] * elt_aval.ndim + suffix
+  new_op_sharding.tile_assignment_dimensions = tad
+  return xc.HloSharding.from_proto(new_op_sharding)
+
+def is_single_device_sharding(sharding: sharding.Sharding) -> bool:
+  # Special case PmapSharding here because PmapSharding maps away an axis
+  # and needs to be handled separately.test_pjit_single_device_sharding_add
+  return len(sharding.device_set) == 1 and not isinstance(sharding, PmapSharding)
+
+def make_key_array_phys_sharding(aval, sharding):
+  if is_single_device_sharding(sharding):
+    return sharding
+  elif isinstance(sharding, PmapSharding):
+    elt_aval = aval.dtype._rules.physical_element_aval(aval.dtype)
+    trailing_sharding = [sharding_specs.NoSharding()] * elt_aval.ndim
+    phys_sharding_spec = sharding_specs.ShardingSpec(
+        sharding=(*sharding.sharding_spec.sharding, *trailing_sharding),
+        mesh_mapping=sharding.sharding_spec.mesh_mapping)
+    return PmapSharding(devices=sharding.devices,
+                        sharding_spec=phys_sharding_spec)
+  elif isinstance(sharding, NamedSharding):
+    elt_aval = aval.dtype._rules.physical_element_aval(aval.dtype)
+    trailing_spec = [None] * elt_aval.ndim
+    return NamedSharding(
+        sharding.mesh,
+        PartitionSpec(*sharding.spec, *trailing_spec))
+  else:
+    hlos = sharding._to_xla_hlo_sharding(aval.ndim)
+    return GSPMDSharding(
+        sharding._device_assignment, physical_hlo_sharding(aval, hlos))
+
+
+def physical_sharding(
+    aval, sharding: XLACompatibleSharding) -> XLACompatibleSharding:
+  return make_key_array_phys_sharding(aval, sharding)
+
+
+def get_logical_gspmd_sharding(aval, phys_sharding):
+  elt_aval = aval.dtype._rules.physical_element_aval(aval.dtype)
+  phys_hlo_sharding = phys_sharding._to_xla_hlo_sharding(
+      aval.ndim + elt_aval.ndim)
+  partitions, num_replicas = get_num_ways_dim_sharded(phys_hlo_sharding)
+  suffix = [] if num_replicas == 1 else [num_replicas]
+  # Create logical sharding by cutting off the replicated trailing dims.
+  logical_op_sharding = phys_hlo_sharding.to_proto().clone()
+  tad = partitions[:-elt_aval.ndim] + suffix
+  logical_op_sharding.tile_assignment_dimensions = tad
+  return GSPMDSharding(phys_sharding._device_assignment,
+                       xc.HloSharding.from_proto(logical_op_sharding))
+
+def check_replicated_trailing_dims(sharding: XLACompatibleSharding, aval):
+  if isinstance(sharding, PmapSharding):
+    return
+  phys_aval = core.physical_aval(aval)
+  hlo_s = sharding._to_xla_hlo_sharding(phys_aval.ndim)
+  partitions, _ = get_num_ways_dim_sharded(hlo_s)
+  num_trailing_dims = phys_aval.ndim - aval.ndim
+  if not all(i == 1 for i in partitions[-num_trailing_dims:]):
+    raise AssertionError(
+        "The trailing dims of extended dtypes should be replicated. Got"
+        f" sharding: {sharding}, partitions: {partitions}, "
+        f"num_trailing_dims: {num_trailing_dims}")
+
+def logical_sharding(aval, phys_sharding) -> XLACompatibleSharding:
+  # The trailing dims should always be replicated.
+  check_replicated_trailing_dims(phys_sharding, aval)
+
+  if is_single_device_sharding(phys_sharding):
+    return phys_sharding
+  elif isinstance(phys_sharding, PmapSharding):
+    elt_aval = aval.dtype._rules.physical_element_aval(aval.dtype)
+    logical_sharding_spec = sharding_specs.ShardingSpec(
+        sharding=phys_sharding.sharding_spec.sharding[:-elt_aval.ndim],
+        mesh_mapping=phys_sharding.sharding_spec.mesh_mapping)
+    return PmapSharding(devices=phys_sharding.devices,
+                        sharding_spec=logical_sharding_spec)
+  elif isinstance(phys_sharding, NamedSharding):
+    logical_gs = get_logical_gspmd_sharding(aval, phys_sharding)
+    return _gspmd_to_named_sharding_via_mesh(
+        logical_gs, phys_sharding.mesh)
+  else:
+    return get_logical_gspmd_sharding(aval, phys_sharding)
+
+
+@util.cache()
+def create_mesh_pspec_sharding(
+    mesh: mesh_lib.Mesh, pspec: PartitionSpec | None, parsed_pspec=None,
+    memory_kind: str | None = None) -> NamedSharding:
+  if pspec is None:
+    pspec, parsed_pspec = PartitionSpec(), None
+  return NamedSharding(mesh, pspec, _parsed_pspec=parsed_pspec,
+                       memory_kind=memory_kind)
+
+
+def _gspmd_to_named_sharding_via_mesh(
+    out_s: GSPMDSharding, mesh: mesh_lib.Mesh) -> NamedSharding:
+  parsed_pspec = parse_flatten_op_sharding(
+      out_s._hlo_sharding, mesh)[0]
+  return create_mesh_pspec_sharding(
+      mesh, parsed_pspec.get_partition_spec(), parsed_pspec,
+      out_s.memory_kind)

@@ -789,6 +789,7 @@ pytype_strict_library(
     srcs = ["_src/sharding_impls.py"],
     deps = [
         ":config",
+        ":core",
         ":mesh",
         ":op_shardings",
         ":partition_spec",

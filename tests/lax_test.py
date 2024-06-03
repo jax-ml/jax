@@ -3316,14 +3316,6 @@ class FooTyRules:
     return core.ShapedArray((2,), jnp.dtype('uint32'))
 
   @staticmethod
-  def logical_sharding(aval, phys_sharding):
-    return phys_sharding
-
-  @staticmethod
-  def physical_sharding(aval, sharding):
-    return sharding
-
-  @staticmethod
   def result_handler(sticky_device, aval):
     def handler(_, buf):
       buf.aval = core.ShapedArray(buf.shape, buf.dtype)
@@ -3340,14 +3332,6 @@ class FooTyRules:
         buf, = arr
       return FooArray(aval.shape, buf)
     return handler
-
-  @staticmethod
-  def replicate_trailing_dims(ctx, val, aval):
-    return val
-
-  @staticmethod
-  def check_replicated_trailing_dims(sharding: jax.sharding.GSPMDSharding, aval):
-    pass
 
 
 class FooTy(dtypes.ExtendedDType):
