@@ -489,42 +489,48 @@ class WGMMATest(TestCase):
   @parameterized.product(
       lhs_transpose=(False, True),
       rhs_transpose=(False, True),
-      mlir_dtype_cls=(ir.F16Type, ir.BF16Type, ir.F32Type),
+      in_mlir_dtype_cls=(ir.F16Type, ir.BF16Type, ir.F32Type),
       m=(64, 128, 192),
-      n=(32, 64, 128, 192),
+      n=(64, 128, 192),
       k_steps=(1, 2),
       tma_inputs=(False, True),
+      jax_out_dtype=(jnp.float16, jnp.float32),
   )
   def test_wgmma(
       self,
       m,
       n,
       k_steps,
-      mlir_dtype_cls,
+      in_mlir_dtype_cls,
       lhs_transpose,
       rhs_transpose,
       tma_inputs,
+      jax_out_dtype,
   ):
-    mlir_dtype = mlir_dtype_cls.get()
-    if ir.F32Type.isinstance(mlir_dtype):  # We actually use tf32 instead
-      jax_dtype = jnp.float32
+    if jax_out_dtype == jnp.float16 and in_mlir_dtype_cls is not ir.F16Type:
+      raise self.skipTest("Only f16 input is supported for f16 output.")
+
+    in_mlir_dtype = in_mlir_dtype_cls.get()
+    out_mlir_dtype = mlir.dtype_to_ir_type(jnp.dtype(jax_out_dtype))
+    if ir.F32Type.isinstance(in_mlir_dtype):  # We actually use tf32 instead
+      in_jax_dtype = jnp.float32
       if lhs_transpose or not rhs_transpose:
         self.skipTest("Transpose only supported in 16-bit WGMMA")
       exponent_bits, mantissa_bits = 8, 10  # Use tf32
-    elif bytewidth(mlir_dtype) == 2:
+    elif bytewidth(in_mlir_dtype) == 2:
       if n % 64 != 0:
         self.skipTest("16-bit WGMMA only supports n % 64 == 0")
-      if ir.F16Type.isinstance(mlir_dtype):
-        jax_dtype = jnp.float16
+      if ir.F16Type.isinstance(in_mlir_dtype):
+        in_jax_dtype = jnp.float16
         exponent_bits, mantissa_bits = 5, 10
-      elif ir.BF16Type.isinstance(mlir_dtype):
-        jax_dtype = jnp.bfloat16
+      elif ir.BF16Type.isinstance(in_mlir_dtype):
+        in_jax_dtype = jnp.bfloat16
         exponent_bits, mantissa_bits = 8, 7
       else:
-        raise NotImplementedError(mlir_dtype)
+        raise NotImplementedError(in_mlir_dtype)
     else:
-      raise NotImplementedError(mlir_dtype)
-    nk_tile = 128 // bytewidth(mlir_dtype)
+      raise NotImplementedError(in_mlir_dtype)
+    nk_tile = 128 // bytewidth(in_mlir_dtype)
     k = nk_tile * k_steps
     assert m % 64 == 0 and n % nk_tile == 0
     index = ir.IndexType.get()
@@ -586,7 +592,7 @@ class WGMMATest(TestCase):
                 dst=memref_slice(rhs_smem, (ki, ni)),
                 swizzle=128,
             )
-      init_acc = mgpu.WGMMAAccumulator.zero(m=m, n=n)
+      init_acc = mgpu.WGMMAAccumulator.zero(m=m, n=n, dtype=out_mlir_dtype)
       acc = mgpu.wgmma(
           init_acc, lhs_smem, rhs_smem,
           a_order=lhs_order, b_order=rhs_order,
@@ -600,14 +606,14 @@ class WGMMATest(TestCase):
       return jax.lax.reduce_precision(x, exponent_bits, mantissa_bits)
 
     x_shape = (k, m) if lhs_transpose else (m, k)
-    x = quantize(self.prng.uniform(-1, 1, x_shape)).astype(jax_dtype)
+    x = quantize(self.prng.uniform(-1, 1, x_shape)).astype(in_jax_dtype)
     y_shape = (n, k) if rhs_transpose else (k, n)
-    y = quantize(self.prng.uniform(-1, 1, y_shape)).astype(jax_dtype)
-    out_shape = jax.ShapeDtypeStruct((m, n), jnp.float32)
+    y = quantize(self.prng.uniform(-1, 1, y_shape)).astype(in_jax_dtype)
+    out_shape = jax.ShapeDtypeStruct((m, n), jax_out_dtype)
     scratch_shape = [
-        jax.ShapeDtypeStruct((m // 64, k // nk_tile, 64, nk_tile), jax_dtype),
+        jax.ShapeDtypeStruct((m // 64, k // nk_tile, 64, nk_tile), in_jax_dtype),
         jax.ShapeDtypeStruct(
-            (k // nk_tile, n // nk_tile, nk_tile, nk_tile), jax_dtype
+            (k // nk_tile, n // nk_tile, nk_tile, nk_tile), in_jax_dtype
         ),
     ]
     z = mosaic_gpu.as_gpu_kernel(
@@ -615,7 +621,8 @@ class WGMMATest(TestCase):
     )(x, y)
     x32, y32 = x.astype(np.float32), y.astype(np.float32)
     ref = (x32.T if lhs_transpose else x32) @ (y32.T if rhs_transpose else y32)
-    np.testing.assert_allclose(z, ref, atol=5e-6)
+    atol = 2e-2 if jax_out_dtype == jnp.float16 else 5e-6
+    np.testing.assert_allclose(z, ref, atol=atol)
 
   # TODO(apaszke): Add support for f32
   @parameterized.product(

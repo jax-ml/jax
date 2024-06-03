@@ -15,6 +15,7 @@
 
 import dataclasses
 import enum
+import functools
 import itertools
 
 import jax
@@ -53,11 +54,13 @@ class WGMMAAccumulator:
       self._value = wgmma_fence(_value)
 
   @classmethod
-  def zero(cls, m, n):
+  def zero(cls, m, n, dtype=None):
     if m % 64 or n % 8:
       raise ValueError
     f32 = ir.F32Type.get()
-    zero = arith.constant(f32, ir.FloatAttr.get(f32, 0.0))
+    if dtype is None:
+      dtype = f32
+    zero = arith.constant(dtype, ir.FloatAttr.get(dtype, 0.0))
     return cls(
         _value=mgpu.FragmentedArray.splat(zero, (m, n), mgpu.WGMMA_LAYOUT)
     )
@@ -145,6 +148,23 @@ def create_descriptor(
   return desc.result
 
 
+def _unpack_i32(vec_ty, r):
+  i32 = ir.IntegerType.get_signless(32)
+  return vector.bitcast(
+      vec_ty, vector.splat(ir.VectorType.get((1,), i32), r)
+  )
+
+
+def _supported_wgmma_types(dtype, abtype) -> bool:
+  input_types_are = lambda ty: ty.isinstance(abtype)
+  if ir.F32Type.isinstance(dtype):
+    return any(input_types_are(ty) for ty in (ir.FloatTF32Type, ir.BF16Type, ir.F16Type))
+  elif ir.F16Type.isinstance(dtype):
+    return input_types_are(ir.F16Type)
+  else:
+    return False
+
+
 def wgmma_m64k128B(
     acc: np.ndarray,  # of register Values
     a,
@@ -156,7 +176,11 @@ def wgmma_m64k128B(
     n: int,
     element_type: ir.Type,
 ):
-  f32 = ir.F32Type.get()
+  out_ty = ir.VectorType(acc.flat[0].type).element_type
+  if not _supported_wgmma_types(out_ty, element_type):
+    raise ValueError(f"Usupported wgmma types {(out_ty, element_type)=}")
+
+  f16 = ir.F16Type.get()
   i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
   index = ir.IndexType.get()
@@ -181,7 +205,26 @@ def wgmma_m64k128B(
     if a_transpose is None:
       raise ValueError
 
-  num_acc_regs = n // 2
+  if ir.F32Type.isinstance(out_ty):
+    num_acc_regs = n // 2
+    out_ty_field = out_ty
+    acc_regs = [  # pylint: disable=g-complex-comprehension
+        vector.extractelement(reg, position=c(pos, index))
+        for reg in acc.flat
+        for pos in range(2)
+    ]
+    to_acc_vec_regs = functools.partial(_as_fragmented_reg_ndarray, dtype=out_ty, shape=acc.shape)
+    acc_constraint = "f"
+  elif ir.F16Type.isinstance(out_ty):
+    num_acc_regs = n // 4
+    out_ty_field = i32
+    acc_regs = [_as_i32_reg(reg) for reg in acc.flat]
+    vec_ty = ir.VectorType(acc.flat[0].type)
+    to_acc_vec_regs = lambda regs : np.array([_unpack_i32(vec_ty, reg) for reg in regs]).reshape(acc.shape)
+    acc_constraint = "r"
+  else:
+    raise ValueError(f"WGMMA instruciton only supports f32 and f16 out (got {out_ty})")
+
   num_imm_regs = 4 if supports_transpose else 2
 
   if a_in_regs:
@@ -192,7 +235,7 @@ def wgmma_m64k128B(
   # Reference for i/o aliasing: https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html
   # Seems like it's not actually documented in LLVM IR docs.
   reg_constraints_list = (
-      ["=f"] * num_acc_regs  # accumulator registers
+      [f"={acc_constraint}"] * num_acc_regs  # accumulator registers
       + [str(i) for i in range(num_acc_regs)]  # we alias outputs as inputs, too.
       + a_reg_constraints  # a descriptor / registers
       + ["l"] * 1  # b descriptor
@@ -218,7 +261,7 @@ def wgmma_m64k128B(
   el_ty = element_type
   k_instr = 32 // bytewidth(element_type)
   wgmma_instr = (
-      f"wgmma.mma_async.sync.aligned.m64n{n}k{k_instr}.f32.{el_ty}.{el_ty} "
+      f"wgmma.mma_async.sync.aligned.m64n{n}k{k_instr}.{out_ty}.{el_ty}.{el_ty} "
       f"{acc_reg_vector}, {a_regs}, {b_desc_reg}, p, {imm_regs};"
   )
   ptx = f"{{ .reg .pred p; setp.ne.b32 p, {use_out_reg}, 0; {wgmma_instr} }}\n"
@@ -234,13 +277,8 @@ def wgmma_m64k128B(
     imms += [lc(int(b_transpose))]
   if acc.ndim != 4 or acc.shape[0] != 1 or acc.shape[2:] != (2, 1):
     raise ValueError(acc.shape)
-  acc_regs = [  # pylint: disable=g-complex-comprehension
-      vector.extractelement(reg, position=c(pos, index))
-      for reg in acc.flat
-      for pos in range(2)
-  ]
   acc_struct_type = ir.Type.parse(
-      f"!llvm.struct<({','.join('f32' for _ in acc_regs)})>"
+      f"!llvm.struct<({','.join(str(out_ty_field) for _ in acc_regs)})>"
   )
   for i in range(4):
     # Slice out the relevant part of A or advance the A descriptor.
@@ -270,9 +308,9 @@ def wgmma_m64k128B(
         has_side_effects=True,
     )
     acc_regs = [
-        llvm.extractvalue(f32, acc_struct, [i]) for i in range(len(acc_regs))
+        llvm.extractvalue(out_ty_field, acc_struct, [i]) for i in range(len(acc_regs))
     ]
-  return _as_fragmented_reg_ndarray(acc_regs, f32, acc.shape)
+  return to_acc_vec_regs(acc_regs)
 
 
 class WGMMALayout(enum.Enum):
@@ -451,12 +489,7 @@ def wgmma_fence(array: mgpu.FragmentedArray):
           regs, array.mlir_dtype, array.registers.shape
     )
   elif dtype == ir.F16Type.get() or dtype == ir.BF16Type.get():
-    regs = [
-        vector.bitcast(
-            src_vec_ty, vector.splat(ir.VectorType.get((1,), i32), r)
-        )
-        for r in regs
-    ]
+    regs = [_unpack_i32(src_vec_ty, r) for r in regs]
     registers = np.asarray(regs, dtype=object).reshape(array.registers.shape)
   else:
     raise NotImplementedError(dtype)
