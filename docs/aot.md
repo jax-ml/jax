@@ -45,12 +45,12 @@ way. An example:
 
 >>> # Print lowered HLO
 >>> print(lowered.as_text())
-module @jit_f.0 {
-  func.func public @main(%arg0: tensor<i32>, %arg1: tensor<i32>) -> tensor<i32> {
-    %0 = stablehlo.constant dense<2> : tensor<i32>
-    %1 = stablehlo.multiply %0, %arg0 : tensor<i32>
-    %2 = stablehlo.add %1, %arg1 : tensor<i32>
-    return %2 : tensor<i32>
+module @jit_f attributes {mhlo.num_partitions = 1 : i32, mhlo.num_replicas = 1 : i32} {
+  func.func public @main(%arg0: tensor<i32> {mhlo.layout_mode = "default"}, %arg1: tensor<i32> {mhlo.layout_mode = "default"}) -> (tensor<i32> {jax.result_info = "", mhlo.layout_mode = "default"}) {
+    %c = stablehlo.constant dense<2> : tensor<i32>
+    %0 = stablehlo.multiply %c, %arg0 : tensor<i32>
+    %1 = stablehlo.add %0, %arg1 : tensor<i32>
+    return %1 : tensor<i32>
   }
 }
 
@@ -62,7 +62,8 @@ module @jit_f.0 {
 
 >>> # Execute the compiled function!
 >>> compiled(x, y)
-DeviceArray(10, dtype=int32)
+Array(10, dtype=int32, weak_type=True)
+
 ```
 
 See the {mod}`jax.stages` documentation for more details on what functionality
@@ -83,7 +84,8 @@ that have `shape` and `dtype` attributes:
 ```python
 >>> i32_scalar = jax.ShapeDtypeStruct((), jnp.dtype('int32'))
 >>> jax.jit(f).lower(i32_scalar, i32_scalar).compile()(x, y)
-DeviceArray(10, dtype=int32)
+Array(10, dtype=int32)
+
 ```
 
 More generally, `lower` only needs its arguments to structurally supply what JAX
@@ -97,18 +99,21 @@ lowering raises an error:
 
 ```python
 >>> x_1d = y_1d = jnp.arange(3)
->>> jax.jit(f).lower(i32_scalar, i32_scalar).compile()(x_1d, y_1d)
+>>> jax.jit(f).lower(i32_scalar, i32_scalar).compile()(x_1d, y_1d)  # doctest: +IGNORE_EXCEPTION_DETAIL
 ...
+Traceback (most recent call last):
 TypeError: Argument types differ from the types for which this computation was compiled. The mismatches are:
 Argument 'x' compiled with int32[] and called with int32[3]
 Argument 'y' compiled with int32[] and called with int32[3]
 
 >>> x_f = y_f = jnp.float32(72.)
->>> jax.jit(f).lower(i32_scalar, i32_scalar).compile()(x_f, y_f)
+>>> jax.jit(f).lower(i32_scalar, i32_scalar).compile()(x_f, y_f)  # doctest: +IGNORE_EXCEPTION_DETAIL
 ...
+Traceback (most recent call last):
 TypeError: Argument types differ from the types for which this computation was compiled. The mismatches are:
 Argument 'x' compiled with int32[] and called with float32[]
 Argument 'y' compiled with int32[] and called with float32[]
+
 ```
 
 Relatedly, AOT-compiled functions [cannot be transformed by JAX's just-in-time
@@ -127,15 +132,16 @@ to invoke the resulting compiled function. Continuing with our example above:
 
 >>> # Lowered HLO, specialized to the *value* of the first argument (7)
 >>> print(lowered_with_x.as_text())
-module @jit_f.1 {
-  func.func public @main(%arg0: tensor<i32>) -> tensor<i32> {
-    %0 = stablehlo.constant dense<14> : tensor<i32>
-    %1 = stablehlo.add %0, %arg0 : tensor<i32>
-    return %1 : tensor<i32>
+module @jit_f attributes {mhlo.num_partitions = 1 : i32, mhlo.num_replicas = 1 : i32} {
+  func.func public @main(%arg0: tensor<i32> {mhlo.layout_mode = "default"}) -> (tensor<i32> {jax.result_info = "", mhlo.layout_mode = "default"}) {
+    %c = stablehlo.constant dense<14> : tensor<i32>
+    %0 = stablehlo.add %c, %arg0 : tensor<i32>
+    return %0 : tensor<i32>
   }
 }
 >>> lowered_with_x.compile()(5)
-DeviceArray(19, dtype=int32)
+Array(19, dtype=int32, weak_type=True)
+
 ```
 
 Note that `lower` here takes two arguments as usual, but the subsequent compiled
@@ -149,11 +155,13 @@ shape/dtype structure, it is necessary that the static first argument be a
 concrete value. Otherwise, lowering would err:
 
 ```python
->>> jax.jit(f, static_argnums=0).lower(i32_scalar, i32_scalar)
+>>> jax.jit(f, static_argnums=0).lower(i32_scalar, i32_scalar)  # doctest: +SKIP
+Traceback (most recent call last):
 TypeError: unsupported operand type(s) for *: 'int' and 'ShapeDtypeStruct'
 
 >>> jax.jit(f, static_argnums=0).lower(10, i32_scalar).compile()(5)
-DeviceArray(25, dtype=int32)
+Array(25, dtype=int32)
+
 ```
 
 ## AOT-compiled functions cannot be transformed
@@ -179,13 +187,15 @@ in transformations. Example:
 >>> g_aot = jax.jit(g).lower(z).compile()
 
 >>> jax.vmap(g_jit)(zs)
-DeviceArray([[ 1.,  5.,  9.],
-             [13., 17., 21.],
-             [25., 29., 33.],
-             [37., 41., 45.]], dtype=float32)
+Array([[ 1.,  5.,  9.],
+       [13., 17., 21.],
+       [25., 29., 33.],
+       [37., 41., 45.]], dtype=float32)
 
->>> jax.vmap(g_aot)(zs)
+>>> jax.vmap(g_aot)(zs)  # doctest: +SKIP
+Traceback (most recent call last):
 TypeError: Cannot apply JAX transformations to a function lowered and compiled for a particular signature. Detected argument of Tracer type <class 'jax.interpreters.batching.BatchTracer'>.
+
 ```
 
 A similar error is raised when `g_aot` is involved in autodiff
