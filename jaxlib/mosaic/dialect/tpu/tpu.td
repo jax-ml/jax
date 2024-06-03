@@ -392,6 +392,35 @@ def TPU_CreateMaskOp : TPU_Op<"create_mask", [Pure, SameVariadicOperandSize]> {
 }
 
 def TPU_CreateSubelementMaskOp : TPU_Op<"create_subelement_mask", [Pure]> {
+  let summary = "Create a mask masking contiguous rows of subelements.";
+  // TODO(tlongeri): Why don't we just get `num_subelems` from the result type?
+  //                 Taking a parameter and allowing a mismatch is confusing.
+  let description = [{
+    The "half-sublanes", "quarter-sublanes", etc. (unit is determined by
+    `num_subelems`) of the mask are masked in the range specified by `from` and
+    `to`.
+
+    - If `from <= to`, the range `[from, to)` is set and the rest is unset.
+    - If `to <= from`, the range `[to, from)` is unset and the rest is set.
+
+    All lanes are set identically.
+
+    Example:
+
+    ```mlir
+    %msk = tpu.create_subelement_mask 3, 9, 2 : vector<8x128x2xi1>
+    ```
+
+    This creates a mask `%msk` where, for all `lane`s, `%msk[*][lane][*]` is:
+
+    ```
+    [[0, 0], [0, 1], [1, 1], [1, 1], [1, 0], [0, 0], [0, 0], [0, 0]]
+    ```
+
+    It is currently only supported:
+    - In TPU v4, for `num_subelems` of 1 and 2.
+    - In TPU v5, for `num_subelems` of 1, 2, and 4.
+  }];
   let arguments = (ins
     I32Attr:$from,  // inclusive
     I32Attr:$to,  // exclusive
