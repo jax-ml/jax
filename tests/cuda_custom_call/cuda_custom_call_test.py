@@ -32,8 +32,8 @@ XLA_CUSTOM_CALL_TARGET_BWD = "foo-bwd"
 JAX_PRIMITIVE_FWD = "foo-fwd"
 JAX_PRIMITIVE_BWD = "foo-bwd"
 
-# paths in current directory need to be qualified with "./"
-SHARED_LIBRARY = "./foo.so"
+# relative paths need to be prefixed with "./"
+SHARED_LIBRARY = "tests/cuda_custom_call/libfoo.so"
 
 import os
 def lsr(indent='', path='.'):
