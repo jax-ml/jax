@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import functools
-
+import os
+import sys
+import tempfile
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -24,6 +27,21 @@ import numpy as np
 
 
 jax.config.parse_flags_with_absl()
+
+
+@contextlib.contextmanager
+def capture_stdout():
+  """Context manager to capture all stdout output and return it as a string."""
+  captured_output = [None]
+  with tempfile.NamedTemporaryFile(mode="w+t", delete=True) as f:
+    original_stdout_fd = sys.stdout.fileno()
+    os.dup2(f.fileno(), original_stdout_fd)
+    try:
+      yield captured_output
+    finally:
+      os.dup2(original_stdout_fd, sys.stdout.fileno())
+      f.seek(0)
+      captured_output[0] = f.read()
 
 
 class PallasTest(jtu.JaxTestCase):
@@ -57,7 +75,7 @@ class PallasCallTest(PallasTest):
     @functools.partial(
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
-        compiler_params={"smem_scratch_bytes": 4 * 4}
+        compiler_params={"smem_scratch_bytes": 4 * 4},
     )
     def layer_norm(x_ref, o_ref):
       x_mean = jnp.mean(x_ref[...])
@@ -77,7 +95,10 @@ class PallasCallTest(PallasTest):
     np.testing.assert_allclose(layer_norm(x), layer_norm_np(x))
 
     # random (and anything else is not)
-    x = jax.random.uniform(jax.random.key(42), shape=(256,), dtype=jnp.float32) * input_factor
+    x = (
+        jax.random.uniform(jax.random.key(42), shape=(256,), dtype=jnp.float32)
+        * input_factor
+    )
     # TODO(cperivol): find out why in this particular case we have a small-ish error.
     rtol = 1e-07 if input_factor > 10 else 5e-5
     np.testing.assert_allclose(layer_norm(x), layer_norm_np(x), rtol=rtol)
@@ -88,10 +109,14 @@ class PallasCallTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
     )
     def kernel(x_ref, o_ref):
+      del x_ref, o_ref
       pl.debug_print("It works!")
 
     x = jnp.arange(256).astype(jnp.float32)
-    kernel(x)
+    with capture_stdout() as captured_output:
+      kernel(x)
+
+    self.assertEqual(captured_output[0], "It works!\n")
 
   def test_print_with_values(self):
     @functools.partial(
@@ -99,6 +124,7 @@ class PallasCallTest(PallasTest):
         out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
     )
     def kernel(x_ref, o_ref):
+      del o_ref
       pl.debug_print("x[0] = {}", x_ref[0])
 
     x = jnp.arange(256).astype(jnp.float32)
