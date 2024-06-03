@@ -970,7 +970,7 @@ def lower_jaxpr_to_module(
   try:
     if not ctx.module.operation.verify():
       raise ValueError(
-          "Cannot lower jaxpr with verifier errors." +
+          "Cannot lower jaxpr with verifier errors. " +
           dump_module_message(ctx.module, "verification"))
   except ir.MLIRError as e:
     msg_lines = ["Cannot lower jaxpr with verifier errors:"]
@@ -981,7 +981,7 @@ def lower_jaxpr_to_module(
         emit_diagnostic_info(n)
     for d in e.error_diagnostics:
       emit_diagnostic_info(d)
-    raise ValueError("\n".join(msg_lines) +
+    raise ValueError("\n".join(msg_lines) + "\n" +
                      dump_module_message(ctx.module, "verification")) from e
 
   return LoweringResult(ctx.module, ctx.keepalives, ctx.host_callbacks,
