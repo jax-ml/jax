@@ -30,6 +30,7 @@ import importlib
 import json
 import logging
 import os
+from pathlib import Path
 import pkgutil
 import platform as py_platform
 import traceback
@@ -66,6 +67,7 @@ traceback_util.register_exclusion(__file__)
 XlaBackend = xla_client.Client
 
 MIN_COMPUTE_CAPABILITY = 52
+MIN_PTXAS_CUDA_VERSION = 12010
 
 # TODO(phawkins): Remove jax_xla_backend.
 _XLA_BACKEND = config.DEFINE_string(
@@ -278,6 +280,61 @@ register_backend_factory(
     "cpu", make_cpu_client, priority=0, fail_quietly=False
 )
 
+def _check_ptxas_compat() -> None:
+  import re
+  import subprocess
+  from glob import glob
+
+  cuda_path = None
+
+  # The pip-installed nvidia packages may have been installed in a separate
+  # location from JAX so we check for it specifically.
+  try:
+    import nvidia # type: ignore
+    nvidia_path = Path(nvidia.__file__).parent
+    cuda_path = nvidia_path.joinpath(Path("cuda_nvcc/bin"))
+  except ModuleNotFoundError:
+    pass
+
+  searchable_paths = [cuda_path] if cuda_path else []
+  from_PATH = os.environ.get("PATH", '').split(os.pathsep)
+  searchable_paths += [Path(path) for path in from_PATH]
+  found_ptxas = None
+  for path in searchable_paths:
+      ptxas_relpath = glob(str(path.joinpath("ptxas")))
+      if ptxas_relpath:
+        found_ptxas = path.joinpath(ptxas_relpath[0])
+        break
+
+  nvcc_pack = "nvidia-cuda-nvcc-cu12"
+  if found_ptxas is None:
+    raise RuntimeError(
+      f"ptxas binary not found -- please either install `{nvcc_pack}` via "
+      f"`pip install {nvcc_pack}`, or add the directory containing your ptxas "
+      "binary to your PATH environment variable."
+    )
+
+  args = (found_ptxas, "--version")
+  version_info = subprocess.run(args, capture_output=True).stdout.decode()
+  pattern = re.compile("release (.*?),")
+  match = re.search(pattern, version_info)
+  if match is None:
+    raise RuntimeError(
+      f"The ptxas found at {found_ptxas} could not be invoked -- if using a "
+      f"pip-provided ptxas, (e.g. from {nvcc_pack}) please try re-installing. "
+      "If using a PATH-specified ptxas, please correct your PATH variable to "
+      "include a directory containing a viable ptxas binary."
+    )
+  major, minor = match[1].split('.')
+  ptxas_version = int(major) * 1000 + int(minor) * 10
+  if ptxas_version < MIN_PTXAS_CUDA_VERSION:
+    raise RuntimeError(
+      f"The ptxas found at {found_ptxas} has cuda version {ptxas_version} "
+      "which is lower than the minimum supported compute capability "
+      f"({MIN_PTXAS_CUDA_VERSION}). Please either install `{nvcc_pack}` via "
+      f"`pip install {nvcc_pack}`, or add the directory containing a newer "
+      "version of ptxas binary to your PATH environment variable."
+    )
 
 def _check_cuda_compute_capability(devices_to_check):
   for idx in devices_to_check:
@@ -400,6 +457,7 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
   _version_check("cuPTI", cuda_versions.cupti_get_version,
                  cuda_versions.cupti_build_version,
                  min_supported_version=18)
+  _check_ptxas_compat()
   # TODO(jakevdp) remove these checks when minimum jaxlib is v0.4.21
   if hasattr(cuda_versions, "cublas_get_version"):
     _version_check("cuBLAS", cuda_versions.cublas_get_version,
