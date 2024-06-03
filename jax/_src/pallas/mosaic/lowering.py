@@ -1035,11 +1035,7 @@ def _reduce_max_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
 
   out_type = aval_to_ir_type(ctx.avals_out[0])
   if jnp.issubdtype(x_aval.dtype, jnp.floating):
-    # TODO(apaszke): Remove in 03/2024.
-    if hasattr(vector.CombiningKind, "MAXIMUMF"):
-      kind = vector.CombiningKind.MAXIMUMF
-    else:
-      kind = vector.CombiningKind.MAXF
+    kind = vector.CombiningKind.MAXIMUMF
     val = ir.FloatAttr.get(ir.F32Type.get(), float("-inf"))
     identity = ir.DenseElementsAttr.get_splat(out_type, val)
   elif jnp.issubdtype(x_aval.dtype, jnp.signedinteger):
