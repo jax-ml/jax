@@ -15,7 +15,7 @@
 """Module for calling pallas functions from JAX."""
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping
 from functools import partial, reduce
 import itertools
 from typing import Any, Callable
@@ -48,11 +48,10 @@ map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
 Grid = pallas_core.Grid
-BlockSpec = pallas_core.BlockSpec
+BlockSpecTree = pallas_core.BlockSpecTree
 GridSpec = pallas_core.GridSpec
 BlockMapping = pallas_core.BlockMapping
 GridMapping = pallas_core.GridMapping
-NoBlockSpec = pallas_core.NoBlockSpec
 no_block_spec = pallas_core.no_block_spec
 
 pallas_call_p = jax_core.Primitive('pallas_call')
@@ -608,14 +607,13 @@ def pallas_call(
     grid_spec: GridSpec | None = None,
     debug: bool = False,
     grid: Grid | None = None,
-    in_specs: Sequence[BlockSpec | NoBlockSpec] | NoBlockSpec = no_block_spec,
-    out_specs: BlockSpec | NoBlockSpec
-    | Sequence[BlockSpec | NoBlockSpec] = no_block_spec,
-    input_output_aliases: dict[int, int] = {},
+    in_specs: BlockSpecTree = no_block_spec,
+    out_specs: BlockSpecTree = no_block_spec,
+    input_output_aliases: Mapping[int, int] | None = None,
     interpret: bool = False,
     name: str | None = None,
-    compiler_params: dict[str, Any] | None = None,
-):
+    compiler_params: Mapping[str, Any] | None = None,
+) -> Callable[..., Any]:
   name = _extract_function_name(f, name)
   if compiler_params is None:
     compiler_params = {}
@@ -648,7 +646,7 @@ def pallas_call(
         out_shapes=tuple(flat_out_shapes), debug=debug,
         interpret=interpret,
         grid_mapping=grid_mapping,
-        input_output_aliases=tuple(input_output_aliases.items()),
+        input_output_aliases=tuple((input_output_aliases or {}).items()),
         compiler_params=compiler_params)
     out = tree_util.tree_unflatten(out_tree, out_flat)
     return out

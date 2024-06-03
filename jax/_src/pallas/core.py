@@ -272,6 +272,10 @@ class NoBlockSpec:
   pass
 no_block_spec = NoBlockSpec()
 
+
+BlockSpecTree = Union[BlockSpec, NoBlockSpec, Sequence["BlockSpecTree"]]
+
+
 @dataclasses.dataclass(init=False, unsafe_hash=True)
 class GridSpec:
   grid: Grid
@@ -283,12 +287,8 @@ class GridSpec:
   def __init__(
       self,
       grid: Grid | None = None,
-      in_specs: BlockSpec
-      | Sequence[BlockSpec | NoBlockSpec]
-      | NoBlockSpec = no_block_spec,
-      out_specs: BlockSpec
-      | Sequence[BlockSpec | NoBlockSpec]
-      | NoBlockSpec = no_block_spec,
+      in_specs: BlockSpecTree = no_block_spec,
+      out_specs: BlockSpecTree = no_block_spec,
   ):
     # Be more lenient for in/out_specs
     if isinstance(in_specs, list):
