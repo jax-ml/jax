@@ -259,7 +259,7 @@ def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
           if input_output_aliases:
             raise NotImplementedError("Padding with aliasing not supported.")
           pad_low, pad_high = zip(*padding)
-          limit_indices = [s - p for s, p in zip(out.shape, pad_high)]
+          limit_indices = [s - p for s, p in zip(o.shape, pad_high)]
           o = lax.slice(o, pad_low, limit_indices)
       out_nopad.append(o)
     return out_nopad
