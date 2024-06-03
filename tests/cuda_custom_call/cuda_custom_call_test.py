@@ -1,6 +1,8 @@
 import jax
+print(jax.__version__)
 import jax.numpy as jnp
 import numpy as np
+from jax.extend import ffi
 from jax.lib import xla_client
 from jax._src.lib.mlir import ir
 from jaxlib.hlo_helpers import custom_call
@@ -34,6 +36,17 @@ JAX_PRIMITIVE_BWD = "foo-bwd"
 # paths in current directory need to be qualified with "./"
 SHARED_LIBRARY = "./foo.so"
 
+import os
+def lsr(indent='', path='.'):
+    try:
+        for d in os.listdir(path):
+            print(indent+d)
+            lsr(indent=indent+' ', path=d)
+    except:
+        pass
+#lsr()
+print(os.getcwd())
+
 library = ctypes.cdll.LoadLibrary(SHARED_LIBRARY)
 
 
@@ -44,7 +57,7 @@ library = ctypes.cdll.LoadLibrary(SHARED_LIBRARY)
 # register the XLA FFI binding pointer with XLA
 xla_client.register_custom_call_target(
     name=XLA_CUSTOM_CALL_TARGET_FWD,
-    fn=jax.ffi.pycapsule(library.FooFwd),
+    fn=ffi.pycapsule(library.FooFwd),
     platform=XLA_PLATFORM,
     api_version=XLA_CUSTOM_CALL_API_VERSION
 )
@@ -94,7 +107,7 @@ mlir.register_lowering(foo_fwd_p, _foo_fwd_lowering, platform=JAX_PLATFORM)
 # register the XLA FFI binding pointer with XLA
 xla_client.register_custom_call_target(
     name=XLA_CUSTOM_CALL_TARGET_BWD,
-    fn=jax.ffi.pycapsule(library.FooBwd),
+    fn=ffi.pycapsule(library.FooBwd),
     platform=XLA_PLATFORM,
     api_version=XLA_CUSTOM_CALL_API_VERSION
 )

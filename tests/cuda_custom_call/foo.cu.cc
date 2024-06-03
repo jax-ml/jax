@@ -1,6 +1,6 @@
-#include <xla/ffi/api/c_api.h>
-#include <xla/ffi/api/api.h>
-#include <xla/ffi/api/ffi.h>
+#include "xla/ffi/api/c_api.h"
+#include "xla/ffi/api/api.h"
+#include "xla/ffi/api/ffi.h"
 
 namespace ffi = xla::ffi;
 

@@ -1,4 +1,17 @@
-load("//jaxlib:jax.bzl", "cuda_library")
+load("@rules_python//python:defs.bzl", "py_test")
+load(
+    "//jaxlib:jax.bzl",
+    "cuda_library",
+)
+
+py_test(
+    name = "cuda_custom_call_test",
+    srcs = ["cuda_custom_call_test.py"],
+    data = [":foo"],
+    deps = [
+        "//jax",
+    ]
+)
 
 cuda_library(
     name = "foo",
