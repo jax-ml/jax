@@ -96,7 +96,7 @@ typing-extensions==4.11.0
     # via etils
 wheel==0.43.0
     # via -r build/test-requirements.txt
-zipp==3.18.1
+zipp==3.19.1
     # via etils
 zstandard==0.22.0
     # via -r build/requirements.in
