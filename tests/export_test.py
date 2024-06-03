@@ -936,6 +936,31 @@ class JaxExportTest(jtu.JaxTestCase):
         in_shardings=(jax.sharding.NamedSharding(mesh1, P("x", None)),)
       )(a)
 
+  def test_input_shardings_unused_args(self):
+    nr_devices = 2
+    if len(jax.devices()) < nr_devices:
+      self.skipTest("Need at least 2 devices")
+    devices = jax.devices()[0:nr_devices]
+    export_mesh = Mesh(np.array(devices),
+                       axis_names=("x",))
+    a = np.arange(16 * 4, dtype=np.float32).reshape((16, 4))
+
+    f = jax.jit(lambda x, y: jnp.sin(x),
+                in_shardings=(jax.sharding.NamedSharding(export_mesh, P("x", None),),
+                              None),
+                out_shardings=(jax.sharding.NamedSharding(export_mesh, P("x", None),)))
+    exp = get_exported(f)(a, a)
+
+    # We can use other devices and other meshes for running
+    run_devices = devices[::-1]
+    run_mesh = Mesh(run_devices, "a")
+    run_input_shardings = exp.xla_compatible_in_shardings(run_mesh)
+    a_run = jax.device_put(a, run_input_shardings[0])
+    b_run = jax.device_put(a, run_input_shardings[1])
+    res = export.call(exp)(a_run, b_run)
+    self.assertEqual(res.addressable_shards[0].device, run_devices[0])
+    self.assertEqual(res.addressable_shards[1].device, run_devices[1])
+
   def test_call_with_different_no_of_devices(self):
     if jax.local_device_count() < 2:
       self.skipTest("Need at least 2 devices")

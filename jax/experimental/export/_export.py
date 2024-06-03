@@ -61,9 +61,7 @@ DType = Any
 Shape = jax._src.core.Shape
 # The values of input and output sharding from the lowering.
 LoweringSharding = Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue]
-
-# None means unspecified sharding
-Sharding = Union[xla_client.HloSharding, None]
+HloSharding = xla_client.HloSharding
 
 # See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions
 # for a description of the different versions.
@@ -153,7 +151,15 @@ class Exported:
         expressions in the shapes, with dimension variables among those in
         `in_avals.
     in_shardings: the flattened input shardings, as long as `in_avals`.
+        `None` means unspecified sharding.
+        Note that these do not include the mesh or the actual devices used in
+        the mesh. See `xla_compatible_in_shardings` for a way to turn these
+        into sharding specification that can be used with JAX APIs.
     out_shardings: the flattened output shardings, as long as `out_avals`.
+        `None` means unspecified sharding.
+        Note that these do not include the mesh or the actual devices used in
+        the mesh. See `xla_compatible_out_shardings` for a way to turn these
+        into sharding specification that can be used with JAX APIs.
     nr_devices: the number of devices that the module has been lowered for.
     lowering_platforms: a tuple containing at least one of 'tpu', 'cpu',
         'cuda', 'rocm'. See below for the calling convention for when
@@ -168,7 +174,7 @@ class Exported:
         See more versioning details at https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions.
     module_kept_var_idx: the sorted indices of the arguments among `in_avals` that
         must be passed to the module. The other arguments have been dropped
-        because they are not used. Same length as `in_shardings`.
+        because they are not used.
     uses_shape_polymorphism: whether the `mlir_module_serialized` uses shape
         polymorphism. This may be because `in_avals` contains dimension
         variables, or due to inner calls of Exported modules that have
@@ -284,8 +290,8 @@ class Exported:
   out_tree: tree_util.PyTreeDef
   out_avals: tuple[core.AbstractValue, ...]
 
-  in_shardings: tuple[Sharding, ...]
-  out_shardings: tuple[Sharding, ...]
+  in_shardings: tuple[HloSharding | None, ...]
+  out_shardings: tuple[HloSharding | None, ...]
   nr_devices: int
   lowering_platforms: tuple[str, ...]
   ordered_effects: tuple[effects.Effect, ...]
@@ -306,6 +312,55 @@ class Exported:
     # This is called to make a MLIR source location when we call an Exported, and we
     # do not want the entire serialized module to end up in locations.
     return f"Exported(fun_name={self.fun_name}, ...)"
+
+  def xla_compatible_in_shardings(
+      self,
+      mesh: sharding.Mesh) -> Sequence[sharding.XLACompatibleSharding | None]:
+    """Creates XLACompatibleShardings corresponding to self.in_shardings.
+
+    The Exported object stores `in_shardings` as HloShardings, which are
+    independent of a mesh or set of devices. This method constructs
+    XLACompatibleSharding that can be used in JAX APIs such as `jax.jit` or
+    `jax.device_put`.
+
+    Example usage:
+    >>> from jax.experimental import export
+    >>> exp_mesh = sharding.Mesh(jax.devices(), ("a",))
+    >>> exp = export.export(jax.jit(lambda x: jax.numpy.add(x, x),
+    ...     in_shardings=sharding.NamedSharding(exp_mesh, sharding.PartitionSpec("a")))
+    ...     )(np.arange(jax.device_count()))
+    >>> exp.in_shardings
+    ({devices=[8]<=[8]},)
+
+    # Create a mesh for running the exported object
+    >>> run_mesh = sharding.Mesh(jax.devices()[::-1], ("b",))
+    >>>
+    # Put the args and kwargs on the appropriate devices
+    >>> run_arg = jax.device_put(np.arange(jax.device_count()),
+    ...     exp.xla_compatible_in_shardings(run_mesh)[0])
+    >>> res = export.call(exp)(run_arg)
+    >>> res.addressable_shards
+    [Shard(device=CpuDevice(id=7), index=(slice(0, 1, None),), replica_id=0, data=[0]),
+     Shard(device=CpuDevice(id=6), index=(slice(1, 2, None),), replica_id=0, data=[2]),
+     Shard(device=CpuDevice(id=5), index=(slice(2, 3, None),), replica_id=0, data=[4]),
+     Shard(device=CpuDevice(id=4), index=(slice(3, 4, None),), replica_id=0, data=[6]),
+     Shard(device=CpuDevice(id=3), index=(slice(4, 5, None),), replica_id=0, data=[8]),
+     Shard(device=CpuDevice(id=2), index=(slice(5, 6, None),), replica_id=0, data=[10]),
+     Shard(device=CpuDevice(id=1), index=(slice(6, 7, None),), replica_id=0, data=[12]),
+     Shard(device=CpuDevice(id=0), index=(slice(7, 8, None),), replica_id=0, data=[14])]
+    """
+    return tuple(_hlo_sharding_to_xla_compatible_sharding(s, mesh)
+                 for s in self.in_shardings)
+
+  def xla_compatible_out_shardings(
+      self,
+      mesh: sharding.Mesh) -> Sequence[sharding.XLACompatibleSharding | None]:
+    """Creates XLACompatibleShardings corresponding to self.out_shardings.
+
+    See documentation for xla_compatible_in_shardings.
+    """
+    return tuple(_hlo_sharding_to_xla_compatible_sharding(s, mesh)
+                 for s in self.out_shardings)
 
   def has_vjp(self) -> bool:
     return self._get_vjp is not None
@@ -486,7 +541,7 @@ def _export_lowered(
 
   nr_devices = len(lowering.compile_args["device_assignment"])
   def export_sharding(s: LoweringSharding,
-                      aval: core.ShapedArray) -> Sharding:
+                      aval: core.ShapedArray) -> HloSharding | None:
     if sharding_impls.is_unspecified(s):
       return None
     return s._to_xla_hlo_sharding(aval.ndim)  # type: ignore[union-attr]
@@ -921,33 +976,28 @@ def expand_in_shardings(in_shardings: Sequence[LoweringSharding],
     all_in_shardings[idx] = in_s
   return tuple(all_in_shardings)
 
-# TODO(yashkatariya, necula): remove this function once we relax the checks
-# in the jit front-end.
-def canonical_shardings(
-    device_assignment: Sequence[jax.Device],
-    in_shardings: Sequence[Sharding],
-    out_shardings: Sequence[Sharding]
-    ) -> tuple[Sequence[sharding.XLACompatibleSharding | None],
-               Sequence[sharding.XLACompatibleSharding | None]]:
-  """Prepares canonical in_ and out_shardings for a pjit invocation.
+def _hlo_sharding_to_xla_compatible_sharding(
+    hlo_sharding: HloSharding | None,
+    mesh: sharding.Mesh) -> sharding.XLACompatibleSharding | None:
+  if hlo_sharding is None:
+    return None
+  return sharding_impls._gspmd_to_named_sharding_via_mesh(
+      _hlo_sharding_to_gspmd_sharding(hlo_sharding, tuple(mesh.devices.flat)),  # type: ignore[arg-type]
+      mesh)
 
-  Turns the HloSharding into XLACompatibleSharding.
-
-  Returns: a pair with the canonicalized input and output shardings.
-  """
-  def canonicalize(
-    ss: Sequence[Sharding]) -> Sequence[sharding.XLACompatibleSharding | None]:
-    return tuple(
-        sharding.GSPMDSharding(device_assignment, s) if s is not None else None
-        for s in ss)
-  return (canonicalize(in_shardings), canonicalize(out_shardings))
+def _hlo_sharding_to_gspmd_sharding(
+    hlo_sharding: HloSharding | None,
+    device_assignment: Sequence[jax.Device]) -> sharding.GSPMDSharding | None:
+  if hlo_sharding is None:
+    return None
+  return sharding.GSPMDSharding(device_assignment, hlo_sharding)
 
 def _get_vjp_fun(primal_fun: Callable, *,
                  in_tree: tree_util.PyTreeDef,
                  in_avals: Sequence[core.AbstractValue],
                  out_avals: Sequence[core.AbstractValue],
-                 in_shardings: tuple[Sharding, ...],
-                 out_shardings: tuple[Sharding, ...],
+                 in_shardings: tuple[HloSharding | None, ...],
+                 out_shardings: tuple[HloSharding | None, ...],
                  device_assignment: Sequence[sharding_impls.Device] | None,
                  apply_jit: bool,
                  flat_primal_fun: bool = False,
@@ -978,10 +1028,12 @@ def _get_vjp_fun(primal_fun: Callable, *,
 
   if apply_jit:
     assert device_assignment is not None
-    vjp_in_shardings, vjp_out_shardings = canonical_shardings(
-      device_assignment,
-      tuple(itertools.chain(in_shardings, out_shardings)),
-      in_shardings)
+    vjp_in_shardings = tuple(
+        _hlo_sharding_to_gspmd_sharding(s, device_assignment)
+        for s in itertools.chain(in_shardings, out_shardings))
+    vjp_out_shardings = tuple(
+        _hlo_sharding_to_gspmd_sharding(s, device_assignment)
+        for s in in_shardings)
     return pjit.pjit(fun_vjp_jax,
                      in_shardings=vjp_in_shardings,
                      out_shardings=vjp_out_shardings), vjp_in_avals
@@ -1251,7 +1303,7 @@ mlir.register_lowering(call_exported_p, _call_exported_lowering)
 def wrap_with_sharding(ctx: mlir.LoweringRuleContext,
                        x: ir.Value,
                        x_aval: core.AbstractValue,
-                       x_sharding: Sharding) -> ir.Value:
+                       x_sharding: HloSharding | None) -> ir.Value:
   if x_sharding is None:
     return x
   return mlir.wrap_with_sharding_op(
