@@ -10,6 +10,7 @@ py_test(
     data = [":foo"],
     deps = [
         "//jax",
+        "//jax:extend",
     ]
 )
 
