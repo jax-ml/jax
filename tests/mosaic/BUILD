@@ -66,21 +66,6 @@ jax_test(
 )
 
 jax_test(
-    name = "matmul",
-    srcs = ["//third_party/py/jax/experimental/mosaic/gpu/examples:matmul.py"],
-    disable_backends = DISABLED_BACKENDS,
-    disable_configs = DISABLED_CONFIGS,
-    main = "//third_party/py/jax/experimental/mosaic/gpu/examples:matmul.py",
-    tags = [
-        "manual",
-        "notap",
-    ],
-    deps = [
-        "//jax:mosaic_gpu",
-    ] + py_deps("absl/testing") + py_deps("numpy"),
-)
-
-jax_test(
     name = "flash_attention",
     srcs = ["//third_party/py/jax/experimental/mosaic/gpu/examples:flash_attention.py"],
     disable_backends = DISABLED_BACKENDS,

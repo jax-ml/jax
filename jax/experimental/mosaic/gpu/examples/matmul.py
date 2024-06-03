@@ -523,6 +523,7 @@ def verify(
 
 if __name__ == "__main__":
   m, k, n = 33 * 128, 2048, 4 * 128
-  runtime = verify(m=m, k=k, n=n)
+  runtime, ref_runtime = verify(m=m, k=k, n=n)
   tflops = float(2 * k * m * n) / (runtime / 1e3) / 1e12
-  print(f"{runtime * 1000:.1f} us = {tflops:.1f} TFLOPS")
+  print(f"Kernel:    {runtime * 1000:.1f} us = {tflops:.1f} TFLOPS")
+  print(f"Reference: {runtime * 1000:.1f} us = {tflops:.1f} TFLOPS")
