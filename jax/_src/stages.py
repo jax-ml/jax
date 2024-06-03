@@ -498,6 +498,11 @@ class Compiled(Stage):
   @property
   def input_shardings(self):  # PyTree[sharding.XLACompatibleSharding]
     shardings_flat = self._executable.input_shardings()
+    # Some input shardings got DCE'd
+    if self.in_tree.num_leaves > len(shardings_flat):
+      iter_shardings_flat = iter(shardings_flat)
+      shardings_flat = [next(iter_shardings_flat) if i in self._executable._kept_var_idx
+                        else None for i in range(self.in_tree.num_leaves)]
     return tree_util.tree_unflatten(self.in_tree, shardings_flat)  # pytype: disable=attribute-error
 
   @property

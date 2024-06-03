@@ -4181,6 +4181,16 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(s2.spec, P(P.UNCONSTRAINED, P.UNCONSTRAINED))
     self.assertEqual(u2, {0, 1})
 
+  def test_aot_sharding_dce(self):
+    inp = np.arange(8)
+
+    @jax.jit
+    def f(x, y):
+      return x
+
+    input_shardings, _ = f.lower(inp, inp).compile().input_shardings
+    self.assertLen(input_shardings, 2)
+
 
 class TempSharding(Sharding):
 
