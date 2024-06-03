@@ -1,5 +1,4 @@
 import jax
-print(jax.__version__)
 import jax.numpy as jnp
 import numpy as np
 from jax.extend import ffi
