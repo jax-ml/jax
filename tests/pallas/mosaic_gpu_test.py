@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import contextlib
 import functools
-import os
-import sys
-import tempfile
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -27,21 +23,6 @@ import numpy as np
 
 
 jax.config.parse_flags_with_absl()
-
-
-@contextlib.contextmanager
-def capture_stdout():
-  """Context manager to capture all stdout output and return it as a string."""
-  captured_output = [None]
-  with tempfile.NamedTemporaryFile(mode="w+t", delete=True) as f:
-    original_stdout_fd = sys.stdout.fileno()
-    os.dup2(f.fileno(), original_stdout_fd)
-    try:
-      yield captured_output
-    finally:
-      os.dup2(original_stdout_fd, sys.stdout.fileno())
-      f.seek(0)
-      captured_output[0] = f.read()
 
 
 class PallasTest(jtu.JaxTestCase):
@@ -113,10 +94,10 @@ class PallasCallTest(PallasTest):
       pl.debug_print("It works!")
 
     x = jnp.arange(256).astype(jnp.float32)
-    with capture_stdout() as captured_output:
-      kernel(x)
+    with jtu.capture_stdout() as output:
+      jax.block_until_ready(kernel(x))
 
-    self.assertEqual(captured_output[0], "It works!\n")
+    self.assertEqual(output(), "It works!\n")
 
   def test_print_with_values(self):
     @functools.partial(

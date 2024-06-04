@@ -807,7 +807,8 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
         lines = ["0: 0", "1: 2", "2: 4", "3: 6", "4: 8", "5: 10", "6: 12",
                  "7: 14", "Out: 7.0", ""]
         jax.effects_barrier()
-        self._assertLinesEqual(output(), "\n".join(lines))
+
+      self._assertLinesEqual(output(), "\n".join(lines))
 
   def test_unordered_print_with_xmap(self):
     def f(x):

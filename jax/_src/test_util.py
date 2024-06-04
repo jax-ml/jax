@@ -19,10 +19,10 @@ import datetime
 import functools
 from functools import partial
 import inspect
-import io
 import math
 import os
 import re
+import sys
 import tempfile
 import textwrap
 from typing import Any, Callable
@@ -178,11 +178,26 @@ def check_eq(xs, ys, err_msg=''):
 
 
 @contextmanager
-def capture_stdout() -> Generator[Callable[[], str], None, None]:
-  with unittest.mock.patch('sys.stdout', new_callable=io.StringIO) as fp:
-    def _read() -> str:
-      return fp.getvalue()
-    yield _read
+def capture_stdout() -> Generator[Callable[[], str | None], None, None]:
+  """Context manager to capture all stdout output."""
+
+  with tempfile.NamedTemporaryFile(mode="w+", delete=True) as f:
+    original_stdout = os.dup(sys.stdout.fileno())
+    os.dup2(f.fileno(), sys.stdout.fileno())
+
+    # if get_stdout returns not it means we are not done capturing
+    # stdout. it should only be used after the context has exited.
+    captured = None
+    get_stdout: Callable[[], str | None] = lambda: captured
+
+    try:
+      yield get_stdout
+    finally:
+      # Python also has its own buffers, make sure everything is flushed.
+      sys.stdout.flush()
+      f.seek(0)
+      captured = f.read()
+      os.dup2(original_stdout, sys.stdout.fileno())
 
 
 @contextmanager
