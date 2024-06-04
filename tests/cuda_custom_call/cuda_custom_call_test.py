@@ -35,17 +35,6 @@ JAX_PRIMITIVE_BWD = "foo-bwd"
 # note paths to files in current working directory need to be prefixed with "./"
 SHARED_LIBRARY = "tests/cuda_custom_call/libfoo.so"
 
-import os
-def lsr(indent='', path='.'):
-    try:
-        for d in os.listdir(path):
-            print(indent+d)
-            lsr(indent=indent+' ', path=d)
-    except:
-        pass
-#lsr()
-print(os.getcwd())
-
 library = ctypes.cdll.LoadLibrary(SHARED_LIBRARY)
 
 
