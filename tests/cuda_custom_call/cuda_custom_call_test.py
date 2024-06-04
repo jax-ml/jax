@@ -21,18 +21,18 @@ XLA_CUSTOM_CALL_API_VERSION = 1
 # version 4 accepts MLIR dictionaries in backend_config
 STABLEHLO_CUSTOM_CALL_API_VERSION = 4
 
-# this string is how we identify kernels to XLA:
+# these strings are how we identify kernels to XLA:
 # - first we register a pointer to the kernel with XLA under this name
 # - then we "tell" JAX to emit StableHLO specifying this name to XLA
 XLA_CUSTOM_CALL_TARGET_FWD = "foo-fwd"
 XLA_CUSTOM_CALL_TARGET_BWD = "foo-bwd"
 
-# independently, corresponding JAX primitive must also be named,
+# independently, corresponding JAX primitives must also be named,
 # names can be different from XLA targets, here they are the same
 JAX_PRIMITIVE_FWD = "foo-fwd"
 JAX_PRIMITIVE_BWD = "foo-bwd"
 
-# relative paths need to be prefixed with "./"
+# note paths to files in current working directory need to be prefixed with "./"
 SHARED_LIBRARY = "tests/cuda_custom_call/libfoo.so"
 
 import os
