@@ -86,7 +86,12 @@ def reduce(function: Callable[[T, Any], T],
 @functools.wraps(tree_util.tree_structure)
 def structure(tree: Any,
               is_leaf: None | (Callable[[Any], bool]) = None) -> tree_util.PyTreeDef:
-  return tree_util.tree_structure(tree, is_leaf)
+  # Normalize the PyTree structure to ensure consistency
+  def normalize(x):
+    return x if isinstance(x, (list, tuple, dict)) else [x]
+
+  normalized_tree = tree_util.tree_map(normalize, tree)
+  return tree_util.tree_structure(normalized_tree, is_leaf)
 
 
 @_add_doc("Alias of :func:`jax.tree_util.tree_transpose`.")
