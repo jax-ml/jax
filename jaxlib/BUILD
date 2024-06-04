@@ -53,6 +53,7 @@ py_library_providing_imports_info(
         ":xla_client",
         ":xla_extension_py",
     ],
+    data = [":ffi_headers"],
     lib_rule = pytype_library,
     deps = [
         ":cpu_feature_guard",
@@ -93,6 +94,13 @@ symlink_files(
     name = "xla_client",
     srcs = ["@xla//xla/python:xla_client"],
     dst = ".",
+    flatten = True,
+)
+
+symlink_files(
+    name = "ffi_headers",
+    srcs = ["@xla//xla/ffi/api:all_headers"],
+    dst = "include/xla/ffi/api",
     flatten = True,
 )
 

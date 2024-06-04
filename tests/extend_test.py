@@ -12,17 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import unittest
 from absl.testing import absltest
 
 import jax
 import jax.extend as jex
 import jax.numpy as jnp
 
-from jax._src import api
 from jax._src import abstract_arrays
+from jax._src import api
 from jax._src import linear_util
 from jax._src import prng
 from jax._src import test_util as jtu
+from jax._src.lib import xla_extension_version
+
 
 jax.config.parse_flags_with_absl()
 
@@ -80,6 +84,15 @@ class RandomTest(jtu.JaxTestCase):
     k = jax.random.wrap_key_data(data, impl=impl)
     self.assertEqual(k.shape, (3,))
     self.assertEqual(impl, jax.random.key_impl(k))
+
+
+class FfiTest(jtu.JaxTestCase):
+
+  @unittest.skipIf(xla_extension_version < 265, "Requires jaxlib 0.4.29")
+  def testHeadersExist(self):
+    base_dir = os.path.join(jex.ffi.include_dir(), "xla", "ffi", "api")
+    for header in ["c_api.h", "api.h", "ffi.h"]:
+      self.assertTrue(os.path.exists(os.path.join(base_dir, header)))
 
 
 if __name__ == "__main__":
