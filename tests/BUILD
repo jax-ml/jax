@@ -355,6 +355,7 @@ jax_test(
     name = "jax_jit_test",
     srcs = ["jax_jit_test.py"],
     main = "jax_jit_test.py",
+    tags = ["test_cpu_thunks"],
 )
 
 py_test(
