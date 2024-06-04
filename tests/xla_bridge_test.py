@@ -20,6 +20,7 @@ import warnings
 from absl import logging
 from absl.testing import absltest
 
+from jax import version
 from jax._src import compiler
 from jax._src import config
 from jax._src import test_util as jtu
@@ -202,7 +203,12 @@ class XlaBridgeTest(jtu.JaxTestCase):
     self.assertIn("name2", xb._backend_factories)
     self.assertEqual(registration.priority, 400)
     self.assertTrue(registration.experimental)
-    mock_make.assert_called_once_with("name1", {}, None)
+
+    options = {}
+    if xb.get_backend().platform == 'tpu' and xla_extension_version >= 267:
+      options["ml_framework_name"] = "JAX"
+      options["ml_framework_version"] = version.__version__
+    mock_make.assert_called_once_with("name1", options, None)
 
   def test_register_plugin_with_config(self):
     test_json_file_path = os.path.join(
@@ -229,16 +235,19 @@ class XlaBridgeTest(jtu.JaxTestCase):
     self.assertIn("name1", xb._backend_factories)
     self.assertEqual(registration.priority, 400)
     self.assertTrue(registration.experimental)
-    mock_make.assert_called_once_with(
-        "name1",
-        {
-            "int_option": 64,
-            "int_list_option": [32, 64],
-            "string_option": "string",
-            "float_option": 1.0,
-        },
-        None,
-    )
+
+    # The expectation is specified in example_pjrt_plugin_config.json.
+    options = {
+        "int_option": 64,
+        "int_list_option": [32, 64],
+        "string_option": "string",
+        "float_option": 1.0,
+        }
+    if xb.get_backend().platform == 'tpu' and xla_extension_version >= 267:
+      options["ml_framework_name"] = "JAX"
+      options["ml_framework_version"] = version.__version__
+
+    mock_make.assert_called_once_with("name1", options, None)
 
 
 class GetBackendTest(jtu.JaxTestCase):
