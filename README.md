@@ -414,7 +414,8 @@ community-supported conda build, and answers to some frequently-asked questions.
 Multiple Google research groups develop and share libraries for training neural
 networks in JAX. If you want a fully featured library for neural network
 training with examples and how-to guides, try
-[Flax](https://github.com/google/flax).
+[Flax](https://github.com/google/flax). Check out the new [NNX](https://flax.readthedocs.io/en/latest/nnx/index.html) API for a
+simplified development experience.
 
 Google X maintains the neural network library
 [Equinox](https://github.com/patrick-kidger/equinox). This is used as the
