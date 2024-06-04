@@ -160,14 +160,7 @@ def foo_fwd(a, b):
 
 def foo_bwd(res, c_grad):
     a, b_plus_1 = res
-    # needs this conversion from list to tuple (why is a list produced in the
-    # first place?), otherwise get this error:
-    #   TypeError: Custom VJP bwd rule must produce an output with the same
-    #   container (pytree) structure as the args tuple of the primal function,
-    #   and in particular must produce a tuple of length equal to the number of
-    #   arguments to the primal function, but got bwd output structure
-    #   PyTreeDef([*, *]) for primal input structure PyTreeDef((*, *)).
-    return tuple(foo_bwd_p.bind(c_grad, a, b_plus_1))
+    return foo_bwd_p.bind(c_grad, a, b_plus_1)
 
 @jax.custom_vjp
 def foo(a, b):
