@@ -346,6 +346,7 @@ jax_test(
 jax_test(
     name = "infeed_test",
     srcs = ["infeed_test.py"],
+    tags = ["test_cpu_thunks"],
     deps = [
         "//jax:experimental_host_callback",
     ],
