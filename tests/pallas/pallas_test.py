@@ -1459,6 +1459,27 @@ class PallasOpsTest(PallasTest):
     x = random.normal(key, (size,))
     np.testing.assert_allclose(kernel(x), x + 1.0, atol=1e-5, rtol=1e-5)
 
+  def test_masked_oob_load_store_slice(self):
+    n = 16
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(jax.ShapeDtypeStruct((n,), jnp.float32)),
+        grid=1,
+    )
+    def masked_oob_load_store_slice(x_ref, mask_ref, start_idx_ref, o_ref):
+      x = pl.load(x_ref, (pl.dslice(start_idx_ref[()], n)),
+                  mask=mask_ref[:], other=-1.)
+      pl.store(o_ref, (pl.dslice(None),), x)
+
+    x = random.normal(random.key(0), (n,))
+    slice_start = random.randint(random.key(2), (), 1, n)
+    indices = jnp.arange(n) + slice_start
+    mask = indices < n
+    out = masked_oob_load_store_slice(x, mask, slice_start)
+    o_new = jnp.where(mask, x[indices], jnp.full_like(x, -1.))
+    np.testing.assert_array_equal(out, o_new)
+
   def test_strided_load(self):
     if self.INTERPRET:
       # TODO(b/329733289): Remove this once the bug is fixed.
@@ -1558,6 +1579,35 @@ class PallasOpsTest(PallasTest):
     out = masked_swap(x, y, mask)
     np.testing.assert_array_equal(out[0], jnp.where(mask, y, x))
     np.testing.assert_array_equal(out[1], jnp.where(mask, x, y))
+
+  def test_masked_oob_swap_slice(self):
+    m, n = 32, 16
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(jax.ShapeDtypeStruct((n,), jnp.float32),
+                   jax.ShapeDtypeStruct((m,), jnp.float32)),
+        grid=1,
+        input_output_aliases={0: 0, 1: 1},
+    )
+    def masked_oob_swap_slice(_, _2, mask_ref, start_idx_ref, x_ref, y_ref):
+      x, mask = x_ref[:], mask_ref[:]
+      y = pl.swap(y_ref, (pl.dslice(start_idx_ref[()], n)), x, mask=mask)
+      x_ref[:] = y
+
+    x = random.normal(random.key(0), (n,))
+    y = random.normal(random.key(1), (m,))
+    slice_start = random.randint(random.key(2), (), m-n+1, m)
+    indices = jnp.arange(n) + slice_start
+    mask = indices < m
+    out = masked_oob_swap_slice(x, y, mask, slice_start)
+
+    # the unjittable masked indexing equivalent
+    unmasked_idx = indices[mask]
+    x_new = x.at[mask].set(y[unmasked_idx])
+    y_new = y.at[unmasked_idx].set(x[mask])
+    np.testing.assert_array_equal(out[0], x_new)
+    np.testing.assert_array_equal(out[1], y_new)
 
   @parameterized.named_parameters(
       ("add_i32", pl.atomic_add, np.array([1, 2, 3, 4], np.int32), np.sum),
