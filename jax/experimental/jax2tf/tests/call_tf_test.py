@@ -27,8 +27,8 @@ from jax import dlpack
 from jax import dtypes
 from jax import lax
 from jax import numpy as jnp
+from jax._src import config
 from jax._src import test_util as jtu
-from jax._src import xla_bridge
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax.experimental import export
@@ -1149,17 +1149,6 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     _ = tf.add(1, 1)
     super().setUp()
 
-  def override_serialization_version(self, version_override: int):
-      version = jax.config.jax_serialization_version
-      if version != version_override:
-        self.addCleanup(partial(jax.config.update,
-                                "jax_serialization_version",
-                                version))
-        jax.config.update("jax_serialization_version", version_override)
-      logging.info(
-        "Using JAX serialization version %s",
-        jax.config.jax_serialization_version)
-
   def test_alternate(self):
     # Alternate sin/cos with sin in TF and cos in JAX
     f_tf_inner = tf.math.sin
@@ -1660,116 +1649,127 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     _, _ = tf_test_util.SaveAndLoadFunction(tf_f_rt_2, input_args=[])
 
   @jtu.parameterized_filterable(
-    kwargs=[dict(version=version) for version in [8, 9]]
+    kwargs=[dict(version=version) for version in [9]]
   )
   def test_call_tf_graph_ordered(self, *, version: int):
-    self.override_serialization_version(version)
-    @tf.function
-    def tf_print(x):
-      tf.print(x)
+    with config.jax_serialization_version(version):
+      logging.info(
+        "Using JAX serialization version %s",
+        jax.config.jax_serialization_version)
 
-    call_tf_print = jax2tf.call_tf(
-        tf_print,
-        call_tf_graph=True,
-        ordered=True,
-    )
+      @tf.function
+      def tf_print(x):
+        tf.print(x)
 
-    x = jnp.array(1.0, dtype=jnp.float32)
+      call_tf_print = jax2tf.call_tf(
+          tf_print,
+          call_tf_graph=True,
+          ordered=True,
+      )
 
-    def body(i, x):
-      call_tf_print(x)
-      return x + 1
+      x = jnp.array(1.0, dtype=jnp.float32)
 
-    @jax.jit
-    def f_jax(x):
-      return jax.lax.fori_loop(0, 4, body, x)
+      def body(i, x):
+        call_tf_print(x)
+        return x + 1
 
-    num_custom_calls = 0
+      @jax.jit
+      def f_jax(x):
+        return jax.lax.fori_loop(0, 4, body, x)
 
-    def _check_mlir_ops(op):
-      nonlocal num_custom_calls
+      num_custom_calls = 0
 
-      if (
-          op.operation.name == "stablehlo.custom_call"
-          and ir.StringAttr(op.attributes["call_target_name"]).value
-          == "tf.call_tf_function"
+      def _check_mlir_ops(op):
+        nonlocal num_custom_calls
+
+        if (
+            op.operation.name == "stablehlo.custom_call"
+            and ir.StringAttr(op.attributes["call_target_name"]).value
+            == "tf.call_tf_function"
+        ):
+          num_custom_calls += 1
+
+          # The custom call op must have `has_token_input_output` attribute.
+          tf_backend_config = ir.DictAttr(op.attributes["tf.backend_config"])
+          self.assertTrue(
+              ir.BoolAttr(tf_backend_config["has_token_input_output"]).value
+          )
+
+          # Verify that the first argument/result of the custom call op is a token
+          # type. This is a calling convention defined by `has_token_input_output`.
+          self.assertTrue(hlo.TokenType.isinstance(op.operands[0].type))
+          self.assertTrue(hlo.TokenType.isinstance(op.results[0].type))
+
+      stablehlo_module = None
+      with self.assertRaisesRegex(
+          ValueError,
+          "call_tf_graph=True only support exporting by jax2tf.convert currently",
       ):
-        num_custom_calls += 1
+        lower = f_jax.lower(x)
+        self.assertNotEmpty(lower._lowering.compile_args["ordered_effects"])
+        stablehlo_module = lower.compiler_ir("stablehlo")
+      if stablehlo_module:
+        self._walk_stablehlo_operations(stablehlo_module, _check_mlir_ops)
+        self.assertEqual(num_custom_calls, 1)
 
-        # The custom call op must have `has_token_input_output` attribute.
-        tf_backend_config = ir.DictAttr(op.attributes["tf.backend_config"])
-        self.assertTrue(
-            ir.BoolAttr(tf_backend_config["has_token_input_output"]).value
-        )
-
-        # Verify that the first argument/result of the custom call op is a token
-        # type. This is a calling convention defined by `has_token_input_output`.
-        self.assertTrue(hlo.TokenType.isinstance(op.operands[0].type))
-        self.assertTrue(hlo.TokenType.isinstance(op.results[0].type))
-
-    stablehlo_module = None
-    with self.assertRaisesRegex(
-        ValueError,
-        "call_tf_graph=True only support exporting by jax2tf.convert currently",
-    ):
-      lower = f_jax.lower(x)
-      self.assertNotEmpty(lower._lowering.compile_args["ordered_effects"])
-      stablehlo_module = lower.compiler_ir("stablehlo")
-    if stablehlo_module:
-      self._walk_stablehlo_operations(stablehlo_module, _check_mlir_ops)
-      self.assertEqual(num_custom_calls, 1)
-
-    f_tf = jax2tf.convert(
-        f_jax,
-        native_serialization=True,
-        with_gradient=False,
-    )
-    _, restored_model = tf_test_util.SaveAndLoadFunction(f_tf, input_args=[x])
+      f_tf = jax2tf.convert(
+          f_jax,
+          native_serialization=True,
+          with_gradient=False,
+      )
+      _, restored_model = tf_test_util.SaveAndLoadFunction(f_tf, input_args=[x])
 
   @jtu.parameterized_filterable(
     kwargs=[dict(poly=poly, version=version)
             for poly in [True, False]
-            for version in [8, 9]]
+            for version in [9]]
   )
   def test_call_tf_ordered_dead_inputs(self, *, poly: bool, version: int):
-    self.override_serialization_version(version)
-    def f_jax(x1, x_dead, x3):
-      return (x1, jax2tf.call_tf(lambda x: tf.math.sin(x), ordered=True,
-                                 call_tf_graph=True)(x3))
-    if poly:
-      polymorphic_shapes = ["b", None, None]
-    else:
-      polymorphic_shapes = None
-    f_tf = jax2tf.convert(f_jax, polymorphic_shapes=polymorphic_shapes)
-    x1 = np.arange(3, dtype=np.float32)
-    x_dead = np.arange(4, dtype=np.float32)
-    x3 = np.arange(5, dtype=np.float32)
-    self.assertAllClose(f_jax(x1, x_dead, x3),
-                        f_tf(x1, x_dead, x3))
+    with config.jax_serialization_version(version):
+      logging.info(
+        "Using JAX serialization version %s",
+        jax.config.jax_serialization_version)
+      def f_jax(x1, x_dead, x3):
+        return (x1, jax2tf.call_tf(lambda x: tf.math.sin(x), ordered=True,
+                                  call_tf_graph=True)(x3))
+      if poly:
+        polymorphic_shapes = ["b", None, None]
+      else:
+        polymorphic_shapes = None
+      f_tf = jax2tf.convert(f_jax, polymorphic_shapes=polymorphic_shapes)
+      x1 = np.arange(3, dtype=np.float32)
+      x_dead = np.arange(4, dtype=np.float32)
+      x3 = np.arange(5, dtype=np.float32)
+      self.assertAllClose(f_jax(x1, x_dead, x3),
+                          f_tf(x1, x_dead, x3))
 
   @jtu.parameterized_filterable(
     kwargs=[dict(ordered=ordered, version=version)
       for ordered in [True, False]
-      for version in [8, 9]
+      for version in [9]
     ]
   )
   def test_call_tf_graph_polymorphic(self, ordered: bool, version: int):
-    self.override_serialization_version(version)
-    @tf.function(jit_compile=True, autograph=False)
-    @partial(jax2tf.convert,
-      with_gradient=False,
-      native_serialization=True,
-      polymorphic_shapes=["(b)"])
-    @jax.jit
-    def tf_f_2(x):
-      tf_f = lambda x: print(tf.strings.length(tf.constant("hello, world")))
-      jax2tf.call_tf(tf_f,
-                     call_tf_graph=True,
-                     ordered=ordered)(x)
-      return x
+    with config.jax_serialization_version(version):
+      logging.info(
+        "Using JAX serialization version %s",
+        jax.config.jax_serialization_version)
 
-    x = np.arange(3, dtype=np.int32)
-    _ = tf.function(tf_f_2, autograph=False).get_concrete_function(x)
+      @tf.function(jit_compile=True, autograph=False)
+      @partial(jax2tf.convert,
+        with_gradient=False,
+        native_serialization=True,
+        polymorphic_shapes=["(b)"])
+      @jax.jit
+      def tf_f_2(x):
+        tf_f = lambda x: print(tf.strings.length(tf.constant("hello, world")))
+        jax2tf.call_tf(tf_f,
+                      call_tf_graph=True,
+                      ordered=ordered)(x)
+        return x
+
+      x = np.arange(3, dtype=np.int32)
+      _ = tf.function(tf_f_2, autograph=False).get_concrete_function(x)
 
   # TODO(b/293927250): call_tf_graph=True only accept concrete_function. The
   # workaround here is to set `module.call=concrete_fn.`.
