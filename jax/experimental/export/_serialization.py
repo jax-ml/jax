@@ -14,6 +14,8 @@
 
 # Serialization and deserialization of export.Exported
 
+from __future__ import annotations
+
 from typing import Callable, TypeVar
 from collections.abc import Sequence
 from functools import partial
@@ -366,7 +368,7 @@ def _deserialize_aval(aval: ser_flatbuf.AbstractValue,
 
 
 def _serialize_sharding(
-    builder: flatbuffers.Builder, s: _export.Sharding
+    builder: flatbuffers.Builder, s: _export.HloSharding | None
 ) -> int:
   proto = None
   if s is None:
@@ -383,7 +385,7 @@ def _serialize_sharding(
   return ser_flatbuf.ShardingEnd(builder)
 
 
-def _deserialize_sharding(s: ser_flatbuf.Sharding) -> _export.Sharding:
+def _deserialize_sharding(s: ser_flatbuf.Sharding) -> _export.HloSharding | None:
   kind = s.Kind()
   if kind == ser_flatbuf.ShardingKind.unspecified:
     return None
