@@ -1154,7 +1154,7 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
       if version != version_override:
         self.addCleanup(partial(jax.config.update,
                                 "jax_serialization_version",
-                                version_override))
+                                version))
         jax.config.update("jax_serialization_version", version_override)
       logging.info(
         "Using JAX serialization version %s",
