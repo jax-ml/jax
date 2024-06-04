@@ -26,6 +26,9 @@ from jax import lax
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
 
+# Import mosaic for flag definitions
+from jax.experimental import mosaic as _  # noqa: F401
+
 
 jax.config.parse_flags_with_absl()
 
