@@ -308,7 +308,7 @@ def compile_or_get_cached(
         computation, devices, compile_options, backend)
     compile_options.executable_build_options.fdo_profile = fdo_profile
 
-    if _is_executable_in_cache(pgle_profiled_module_key):
+    if _is_executable_in_cache(backend, pgle_profiled_module_key):
       # Load PGLE profiled module from the persistent cache.
       cache_key = pgle_profiled_module_key
       if pgle_profiler is not None:
@@ -614,11 +614,11 @@ def _compile_and_write_cache(
   )
   return executable
 
-def _is_executable_in_cache(cache_key) -> bool:
+def _is_executable_in_cache(backend, cache_key) -> bool:
   """Checks if executable is presented in cache on a given key
   """
   try:
-    return compilation_cache.is_executable_in_cache(cache_key)
+    return compilation_cache.is_executable_in_cache(backend, cache_key)
   except Exception as ex:
     if config.raise_persistent_cache_errors.value:
       raise

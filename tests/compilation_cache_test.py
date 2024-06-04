@@ -231,9 +231,10 @@ class CompilationCacheTest(CompilationCacheTestCase):
   def test_cache_write_warning(self):
     f = jit(lambda x: x * x)
 
+    backend = xla_bridge.get_backend()
     with (
       config.raise_persistent_cache_errors(False),
-      mock.patch.object(cc._get_cache().__class__, "put") as mock_put,
+      mock.patch.object(cc._get_cache(backend).__class__, "put") as mock_put,
       warnings.catch_warnings(record=True) as w,
     ):
       mock_put.side_effect = RuntimeError("test error")
@@ -252,9 +253,10 @@ class CompilationCacheTest(CompilationCacheTestCase):
   def test_cache_read_warning(self):
     f = jit(lambda x: x * x)
 
+    backend = xla_bridge.get_backend()
     with (
       config.raise_persistent_cache_errors(False),
-      mock.patch.object(cc._get_cache().__class__, "get") as mock_get,
+      mock.patch.object(cc._get_cache(backend).__class__, "get") as mock_get,
       warnings.catch_warnings(record=True) as w,
     ):
       mock_get.side_effect = RuntimeError("test error")

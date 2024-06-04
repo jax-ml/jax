@@ -47,6 +47,7 @@ _cache_used: bool = False
 # Mutex to protect _cache_initialized and _cache_used.
 _cache_initialized_mutex = threading.Lock()
 
+_UNSUPPORTED_RUNTIMES: set[str] = set()
 
 def set_once_cache_used(f) -> None:
   """One-time setting of _cache_used.
@@ -134,10 +135,13 @@ def _initialize_cache() -> None:
       logger.debug("Initialized persistent compilation cache at %s", path)
 
 
-def _get_cache() -> CacheInterface | None:
+def _get_cache(backend) -> CacheInterface | None:
   # TODO(b/289098047): consider making this an API and changing the callers of
   # get_executable_and_time() and put_executable_and_time() to call get_cache()
   # and passing the result to them.
+  if backend.runtime_type in _UNSUPPORTED_RUNTIMES:
+    logger.debug("_get_cache: Unsupported runtime: %s", backend.runtime_type)
+    return None
   if _cache is None:
     _initialize_cache()  # initialization is done at most once; see above
   return _cache
@@ -158,9 +162,9 @@ def decompress_executable(executable):
     return zlib.decompress(executable)
 
 
-def is_executable_in_cache(cache_key: str) -> bool:
+def is_executable_in_cache(backend, cache_key: str) -> bool:
   """Checks if the executable is in the cache."""
-  cache = _get_cache()
+  cache = _get_cache(backend)
   if cache is None:
     return False
 
@@ -175,7 +179,7 @@ def get_executable_and_time(
   """Returns the cached executable and its compilation time if present, or None
   otherwise.
   """
-  cache = _get_cache()
+  cache = _get_cache(backend)
   if cache is None:
     logger.debug("get_executable_and_time: cache is disabled/not initialized")
     return None, None
@@ -201,7 +205,7 @@ def put_executable_and_time(
   """Adds the 'executable' and its compilation time to the cache, possibly
   evicting older entries.
   """
-  cache = _get_cache()
+  cache = _get_cache(backend)
   if cache is None:
     logger.debug("put_executable_and_time: cache is disabled/not initialized")
     return
