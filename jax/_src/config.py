@@ -702,7 +702,7 @@ def define_string_or_object_state(
   """Set up thread-local state and return a contextmanager for managing it.
 
   Similar to ``define_string_state``, except the context manager will accept
-  any object, not just a string. Any value passed via commandline flag or
+  any object, not just a string. Any value passed via command line flag or
   environment variable will be treated as a string.
 
   Args:

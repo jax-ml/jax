@@ -54,7 +54,7 @@ file name will be printed in the logs. Create a new
 file jax/_src/internal_test_util/export_back_compat_test_data/foo_call.py
 and paste the test data that you will see printed in the logs.
 
-Name the literal `data_YYYYY_MM_DD` to include the date of serializaton
+Name the literal `data_YYYYY_MM_DD` to include the date of serialization
 (for readability only). Then add to this file:
 
   from jax._src.internal_test_util.export_back_compat_test_data import foo_call
