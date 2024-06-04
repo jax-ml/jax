@@ -390,10 +390,16 @@ class PrngTest(jtu.JaxTestCase):
     f = lambda key: jax.random.uniform(key, (1,))
     with jax._src.config.threefry_gpu_kernel_lowering(False):
       hlo_text = jax.jit(f).lower(jax.random.key(17)).as_text()
-      self.assertNotIn("cu_threefry2x32", hlo_text)
+      if jtu.is_device_rocm():
+        self.assertNotIn("hip_threefry2x32", hlo_text)
+      else:
+        self.assertNotIn("cu_threefry2x32", hlo_text)
     with jax._src.config.threefry_gpu_kernel_lowering(True):
       hlo_text = jax.jit(f).lower(jax.random.key(17)).as_text()
-      self.assertIn("cu_threefry2x32", hlo_text)
+      if jtu.is_device_rocm():
+        self.assertIn("hip_threefry2x32", hlo_text)
+      else:
+        self.assertIn("cu_threefry2x32", hlo_text)
 
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
   def test_random_seed_offset(self, make_key):
