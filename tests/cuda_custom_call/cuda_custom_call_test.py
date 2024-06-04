@@ -1,13 +1,27 @@
+# This test is intentionally structured to stay close to what a standalone
+# JAX custom call integration might look like.
+# Test harness is found in a separate section towards the end of this file.
+
+import ctypes
+
+import numpy as np
+
 import jax
 import jax.numpy as jnp
-import numpy as np
 from jax.extend import ffi
 from jax.lib import xla_client
 from jax._src.lib.mlir import ir
 from jaxlib.hlo_helpers import custom_call
 from jax.interpreters import mlir
 
-import ctypes
+# start test boilerplate
+from absl.testing import absltest
+from jax._src import config
+from jax._src import test_util as jtu
+
+config.parse_flags_with_absl()
+# end test boilerplate
+
 
 # XLA needs uppercase, "cuda" isn't recognized
 XLA_PLATFORM = "CUDA"
@@ -162,14 +176,42 @@ foo.defvjp(foo_fwd, foo_bwd)
 #                                    Test                                     #
 #-----------------------------------------------------------------------------#
 
-a = 2. * jnp.ones((2,3))
-b = 3. * jnp.ones((2,3))
-assert (jax.jit(foo)(a, b) == (2*(3+1))).all()
+class CustomCallTest(jtu.JaxTestCase):
+    def test_fwd_interpretable(self):
+        shape = (2, 3)
+        a = 2. * jnp.ones(shape)
+        b = 3. * jnp.ones(shape)
+        observed = jax.jit(foo)(a, b)
+        expected = (2.*(3.+1.))
+        self.assertArraysEqual(observed, expected)
 
-def loss(a, b):
-    return jnp.sum(foo(a, b))
+    def test_bwd_interpretable(self):
+        shape = (2, 3)
+        a = 2. * jnp.ones(shape)
+        b = 3. * jnp.ones(shape)
+        def loss(a, b):
+            return jnp.sum(foo(a, b))
+        da_observed, db_observed = jax.jit(jax.grad(loss, argnums=(0,1)))(a, b)
+        da_expected = b+1
+        db_expected = a
+        self.assertArraysEqual(da_observed, da_expected)
+        self.assertArraysEqual(db_observed, db_expected)
 
-da, db = jax.jit(jax.grad(loss, argnums=(0,1)))(a, b)
+    def test_fwd_random(self):
+        shape = (2, 3)
+        akey, bkey = jax.random.split(jax.random.key(0))
+        a = jax.random.normal(key=akey, shape=shape)
+        b = jax.random.normal(key=bkey, shape=shape)
+        observed = jax.jit(foo)(a, b)
+        expected = a * (b+1)
+        self.assertArraysEqual(observed, expected)
 
-assert (da == (b+1)).all()
-assert (db == a).all()
+    def test_bwd_random(self):
+        shape = (2, 3)
+        akey, bkey = jax.random.split(jax.random.key(0))
+        a = jax.random.normal(key=akey, shape=shape)
+        b = jax.random.normal(key=bkey, shape=shape)
+        jtu.check_grads(f=jax.jit(foo), args=(a,b), order=1, modes=("rev",))
+
+if __name__ == "__main__":
+  absltest.main(testLoader=jtu.JaxTestLoader())
