@@ -215,6 +215,7 @@ def jax_test(
         env = {},
         shard_count = None,
         deps = [],
+        data = [],
         disable_backends = None,  # buildifier: disable=unused-variable
         backend_variant_args = {},  # buildifier: disable=unused-variable
         backend_tags = {},  # buildifier: disable=unused-variable
@@ -256,6 +257,7 @@ def jax_test(
                 "//jax:enable_build_cuda_plugin_from_source": ["//jax_plugins:gpu_plugin_only_test_deps"],
                 "//conditions:default": [],
             }),
+            data = data,
             shard_count = test_shards,
             tags = test_tags,
             main = main,
