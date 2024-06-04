@@ -1860,7 +1860,7 @@ def _f(key, dfnum, dfden, shape, dtype) -> Array:
 
 
 def rademacher(key: KeyArrayLike,
-               shape: Shape,
+               shape: Shape = (),
                dtype: DTypeLikeInt = int) -> Array:
   r"""Sample from a Rademacher distribution.
 
@@ -1873,7 +1873,7 @@ def rademacher(key: KeyArrayLike,
 
   Args:
     key: a PRNG key.
-    shape: The shape of the returned samples.
+    shape: The shape of the returned samples. Default ().
     dtype: The type used for samples.
 
   Returns:
