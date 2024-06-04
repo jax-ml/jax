@@ -17,6 +17,7 @@ import contextlib
 import ctypes
 import functools
 import json
+import math
 
 import jax
 from jax._src.interpreters import mlir
@@ -92,26 +93,40 @@ class ProfilerSpec:
   ENTER = 0
   EXIT = 1 << 31
 
-  def __init__(self, num_entries: int):
-    self.num_entries = num_entries
+  def __init__(self, entries_per_warpgroup: int):
+    self.entries_per_warpgroup = entries_per_warpgroup
     self.interned_names = {}
 
-  @property
-  def mlir_buffer_type(self) -> ir.Type:
+  def _num_warpgroups(
+      self, grid: tuple[int, ...], block: tuple[int, ...]
+  ) -> int:
+    if math.prod(block) % WARPGROUP_SIZE:
+      raise ValueError("Block size is not a multiple of warpgroup size")
+    return math.prod(grid) * math.prod(block) // WARPGROUP_SIZE
+
+  def mlir_buffer_type(
+      self, grid: tuple[int, ...], block: tuple[int, ...]
+  ) -> ir.Type:
     return ir.MemRefType.get(
-        (1 + self.num_entries,), ir.IntegerType.get_signless(32)
+        (self._num_warpgroups(grid, block) * self.entries_per_warpgroup,),
+        ir.IntegerType.get_signless(32),
     )
 
-  @property
-  def jax_buffer_type(self) -> ir.Type:
-    return jax.ShapeDtypeStruct((1 + self.num_entries,), jnp.uint32)
+  def jax_buffer_type(
+      self, grid: tuple[int, ...], block: tuple[int, ...]
+  ) -> ir.Type:
+    return jax.ShapeDtypeStruct(
+        (self._num_warpgroups(grid, block) * self.entries_per_warpgroup,),
+        jnp.uint32,
+    )
 
-  def smem_i32_elements(self, grid: tuple[int, ...]):
-    return int(self.num_entries // np.prod(grid))
+  def smem_i32_elements(self, block: tuple[int, ...]):
+    num_warpgroups = self._num_warpgroups((), block)
+    return int(num_warpgroups * self.entries_per_warpgroup)
 
-  def smem_bytes(self, grid: tuple[int, ...]):
+  def smem_bytes(self, block: tuple[int, ...]):
     bytes_per_entry = 4
-    return self.smem_i32_elements(grid) * bytes_per_entry
+    return self.smem_i32_elements(block) * bytes_per_entry
 
   def intern_name(self, name: str) -> int:
     if name_id := self.interned_names.get(name, None):
@@ -121,31 +136,31 @@ class ProfilerSpec:
       raise RuntimeError("Allocated too many names")
     return name_id
 
-  def dump(self, buffer, f):
+  def dump(self, buffer, f, grid: tuple[int, ...], block: tuple[int, ...]):
     buffer = np.asarray(buffer)
-    num_blocks = buffer[0]
-    per_block = self.num_entries // num_blocks
-    block_entries = buffer[1 : 1 + num_blocks * per_block].reshape(
-        num_blocks, per_block
+    num_blocks = math.prod(grid)
+    warpgroups_per_block = self._num_warpgroups((), block)
+    entries = buffer.reshape(
+        num_blocks, warpgroups_per_block, self.entries_per_warpgroup
     )
-    start_times = block_entries[:, :2].astype(np.int64)
-    start_times = (start_times[:, 0] << 32) + start_times[:, 1]
+    start_times = entries[..., :2].astype(np.int64)
+    start_times = (start_times[..., 0] << 32) + start_times[..., 1]
     start_times -= start_times.min()  # Normalize
-    entries_used = block_entries[:, 2]
-    if np.any(entries_used > per_block - 2):
+    entries_used = entries[..., 2]
+    if np.any(entries_used > self.entries_per_warpgroup - 2):
       raise RuntimeError("Insufficient space to capture a full trace")
-    block_traces = block_entries[:, 3:]
+    traces = entries[..., 3:]
     unintern = {v: k for k, v in self.interned_names.items()}
     events = []
-    for block_idx in range(num_blocks):
-      valid_entries = entries_used[block_idx] - 3
+    for block_idx, wg_idx in np.ndindex(num_blocks, warpgroups_per_block):
+      valid_entries = entries_used[block_idx, wg_idx] - 3
       local_clock_offset = None
-      assert valid_entries % 2 == 0
-      start_time = start_times[block_idx]
+      assert valid_entries % 2 == 0, valid_entries
+      start_time = start_times[block_idx, wg_idx]
       block_events = []
       for i in range(0, valid_entries, 2):
-        tag = block_traces[block_idx, i]
-        time = block_traces[block_idx, i + 1]
+        tag = traces[block_idx, wg_idx, i]
+        time = traces[block_idx, wg_idx, i + 1]
         if local_clock_offset is None:
           local_clock_offset = time
         time -= local_clock_offset
@@ -162,8 +177,8 @@ class ProfilerSpec:
             "name": name,
             "ph": "B" if begin else "E",
             "ts": float(start_time + time) / 1e3,
-            "pid": 0,
-            "tid": block_idx,
+            "pid": 1 + block_idx,
+            "tid": 1 + wg_idx,
         })
       else:  # If we didn't break
         events.extend(block_events)
@@ -177,12 +192,17 @@ class OnDeviceProfiler:
     # self.should_store = gpu.thread_id(gpu.Dimension.x)
     i32 = ir.IntegerType.get_signless(32)
     index = ir.IndexType.get()
-    num_blocks = c(1, index)
-    for dim in gpu.Dimension:
-      num_blocks = arith.muli(num_blocks, gpu.grid_dim(dim))
-    memref.store(arith.index_cast(i32, num_blocks), gmem_buffer, [c(0, index)])
-    self.entries_per_block = arith.divui(c(spec.num_entries, index), num_blocks)
-    self.smem_buffer = smem_buffer
+    self.entries_per_wg = spec.entries_per_warpgroup
+    wg_idx = warpgroup_idx(sync=False)
+    self.smem_buffer = memref_slice(
+        smem_buffer,
+        ds(
+            arith.index_cast(
+                index, arith.muli(wg_idx, c(self.entries_per_wg, i32))
+            ),
+            self.entries_per_wg,
+        ),
+    )
     self.gmem_buffer = gmem_buffer
     # Hopefully mem2reg will remove the allocation.
     self.offset = memref.alloca(ir.MemRefType.get((), i32), [], [])
@@ -213,51 +233,56 @@ class OnDeviceProfiler:
     yield
     store(ProfilerSpec.EXIT)
 
-  def finalize(self, grid):
+  def finalize(self, grid: tuple[int, ...], block: tuple[int, ...]):
     index = ir.IndexType.get()
     i32 = ir.IntegerType.get_signless(32)
 
+    gpu.barrier()   # Make sure all warpgroups are done.
+
     block_idx = c(0, index)
-    for dim in reversed(gpu.Dimension):  # pytype: disable=wrong-arg-types
+    for dim in gpu.Dimension:  # pytype: disable=wrong-arg-types
       block_idx = arith.addi(
           arith.muli(block_idx, gpu.grid_dim(dim)), gpu.block_id(dim)
       )
-    start_offset = arith.addi(
-        arith.muli(block_idx, self.entries_per_block), c(1, index)
+    wg_idx = warpgroup_idx(sync=False)
+    wg_per_block = math.prod(block) // WARPGROUP_SIZE
+    global_wg_idx = arith.addi(
+        arith.muli(block_idx, c(wg_per_block, index)),
+        arith.index_cast(index, wg_idx),
     )
-    block_gmem_buffer = memref.subview(
-        self.gmem_buffer, [start_offset], [self.spec.num_entries], [1],
+    start_offset = arith.muli(global_wg_idx, c(self.entries_per_wg, index))
+    wg_gmem_buffer = memref.subview(
+        self.gmem_buffer, [start_offset], [self.entries_per_wg], [1],
         result_type=ir.Type.parse(
-            f"memref<{self.spec.num_entries}xi32, strided<[1], offset: ?>>"
+            f"memref<{self.entries_per_wg}xi32, strided<[1], offset: ?>>"
         ),
     )
-    # TODO(apaszke): Either use globaltimer or delete
-    # memref.store(globaltimer("high"), block_gmem_buffer, [c(0, index)])
-    # memref.store(globaltimer("low"), block_gmem_buffer, [c(1, index)])
-    memref.store(c(0, i32), block_gmem_buffer, [c(0, index)])
-    memref.store(c(0, i32), block_gmem_buffer, [c(1, index)])
-    memref.store(
-        arith.addi(memref.load(self.offset, []), c(3, i32)),
-        block_gmem_buffer,
-        [c(2, index)],
-    )
-
+    thread_in_wg = arith.remui(thread_idx(), c(128, i32))
     if_first = scf.IfOp(
-        arith.cmpi(
-            arith.CmpIPredicate.eq, gpu.thread_id(gpu.Dimension.x), c(0, index)
-        )
+        arith.cmpi(arith.CmpIPredicate.eq, thread_in_wg, c(0, i32))
     )
     with ir.InsertionPoint(if_first.then_block):
+      # TODO(apaszke): Either use globaltimer or delete
+      # memref.store(globaltimer("high"), block_gmem_buffer, [c(0, index)])
+      # memref.store(globaltimer("low"), block_gmem_buffer, [c(1, index)])
+      memref.store(c(0, i32), wg_gmem_buffer, [c(0, index)])
+      memref.store(c(0, i32), wg_gmem_buffer, [c(1, index)])
+      memref.store(
+          arith.addi(memref.load(self.offset, []), c(3, i32)),
+          wg_gmem_buffer,
+          [c(2, index)],
+      )
+
       for_op = scf.ForOp(
           c(0, index),
-          c(self.spec.smem_i32_elements(grid) - 3, index),
+          c(self.entries_per_wg - 3, index),
           c(1, index),
       )
       with ir.InsertionPoint(for_op.body):
         x = memref.load(self.smem_buffer, [for_op.induction_variable])
         memref.store(
             x,
-            block_gmem_buffer,
+            wg_gmem_buffer,
             [arith.addi(for_op.induction_variable, c(3, index))],
         )
         scf.yield_([])

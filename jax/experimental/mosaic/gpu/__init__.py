@@ -482,7 +482,7 @@ def _launch(
 
   smem_bytes = compute_smem_bytes
   if profiler_spec is not None:
-    smem_bytes += profiler_spec.smem_bytes(grid)
+    smem_bytes += profiler_spec.smem_bytes(block=block)
 
   # TODO(cperivol): Query the shared memory size programmatically.
   if smem_bytes > 228 * 1024:
@@ -508,7 +508,7 @@ def _launch(
     if profiler_spec:
       prof_smem = memref.view(
           ir.MemRefType.get(
-              (profiler_spec.smem_i32_elements(grid=grid),),
+              (profiler_spec.smem_i32_elements(block=block),),
               i32, memory_space=smem,
           ),
           dynamic_smem, c(compute_smem_bytes, index), [],
@@ -526,7 +526,7 @@ def _launch(
 
     yield LaunchContext(launch_op, gmem_scratch_ptr, prof), smem_ref_tree
     if prof is not None:
-      prof.finalize(grid=grid)
+      prof.finalize(grid=grid, block=block)
     gpu.terminator()
 
 
@@ -557,8 +557,8 @@ def _lower_as_gpu_kernel(
     unwrap_output_tuple = True
   out_ref_tys = [_shape_to_ref_ty(t) for t in out_shape]
   if prof_spec is not None:
-    out_shape = (*out_shape, prof_spec.jax_buffer_type)
-    out_ref_tys.append(prof_spec.mlir_buffer_type)
+    out_shape = (*out_shape, prof_spec.jax_buffer_type(grid, block))
+    out_ref_tys.append(prof_spec.mlir_buffer_type(grid, block))
 
   module = ir.Module.create()
   with ir.InsertionPoint(module.body):
@@ -657,7 +657,7 @@ def as_gpu_kernel(
         )
         try:
           with open(out_file, "x") as f:
-            prof_spec.dump(prof_buffer, f)
+            prof_spec.dump(prof_buffer, f, grid=grid, block=block)
         except FileExistsError:
           pass  # TODO: Retry
       jax.debug.callback(dump_profile, prof_buffer)

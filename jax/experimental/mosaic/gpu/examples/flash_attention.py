@@ -336,7 +336,6 @@ if __name__ == "__main__":
   batch_size = 1
   num_q_heads = 4
   prof_spec = None
-  # prof_spec = profiler.ProfilerSpec((4 * 32) * 4096)
   param_it = itertools.product(
       (4096,), (4096,), (64, 128, 256), ExpImplementation
   )

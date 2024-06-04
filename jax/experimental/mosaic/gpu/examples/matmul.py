@@ -486,7 +486,7 @@ def verify(
       case F32Precision.TF32_X3:
         impl = WGMMATF32x3Impl
 
-  prof_spec = profiler.ProfilerSpec(132 * 4096) if profile else None
+  prof_spec = profiler.ProfilerSpec(4096) if profile else None
   f = build_kernel(
       m, n, k,
       jnp.dtype(lhs_dtype), jnp.dtype(rhs_dtype),
