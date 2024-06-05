@@ -150,7 +150,7 @@ def build_kernel(
       )
 
     def kv_copy_init(slot, kv_seq_base):
-      with once():
+      with single_thread():
         txcount = c(2 * blocks.kv * head_dim * bytewidth(f16))
         nvgpu.mbarrier_arrive_expect_tx(barriers.value, txcount, slot)
         k_tr = (

@@ -314,7 +314,7 @@ def build_kernel(
       common_copy_args = dict(
           swizzle=128, barrier=barrier, arrive=False, uniform=False,
       )
-      with once():
+      with single_thread():
         nvgpu.mbarrier_arrive_expect_tx(barrier_group.value, txcount, slot)
         ctx.async_copy(
             src_ref=a_device,

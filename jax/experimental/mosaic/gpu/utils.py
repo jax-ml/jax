@@ -130,7 +130,7 @@ def debug_print(fmt, *args, uniform=True):
       raise NotImplementedError(arg.type)
     type_formats.append(ty_format)
     new_args.append(arg)
-  ctx = once if uniform else contextlib.nullcontext
+  ctx = single_thread if uniform else contextlib.nullcontext
   with ctx():
     gpu.printf(fmt.format(*type_formats) + "\n", new_args)
 
@@ -219,11 +219,8 @@ _ONCE_REGION_ACTIVE = False
 
 
 @contextlib.contextmanager
-def once():
-  """Runs the context only from a single thread from the first warp.
-
-  The block is assumed to have a size of 1 in both y and z dimensions.
-  """
+def single_thread():
+  """Runs the context only from a single thread."""
   global _ONCE_REGION_ACTIVE
 
   if _ONCE_REGION_ACTIVE:
@@ -502,7 +499,7 @@ class BarrierArray:
     i32 = ir.IntegerType.get_signless(32)
     self.phases = memref.alloca(ir.MemRefType.get((), i32), [], [])
     memref.store(c(0, i32), self.phases, [])
-    with once():
+    with single_thread():
       for i in range(num_barriers):
         nvgpu.mbarrier_init(self.value, c(arrival_count, index), c(i, index))
     gpu.barrier()

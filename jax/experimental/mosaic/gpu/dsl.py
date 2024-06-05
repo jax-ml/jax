@@ -37,9 +37,9 @@ from .utils import (
     memref_transpose,
     memref_unfold,
     memref_unsqueeze,
-    once,
-    tile_shape,
+    single_thread,
     thread_idx,
+    tile_shape,
     warp_idx,
     warpgroup_idx,
 )
