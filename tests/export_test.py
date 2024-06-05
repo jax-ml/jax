@@ -369,6 +369,28 @@ class JaxExportTest(jtu.JaxTestCase):
     )(a)
     self.assertIn("disallowed_call_target", exp.mlir_module())
 
+  def test_lowering_parameters_for_export(self):
+    # Test that we propagate properly the LoweringParameters.for_export
+    test_primitive = core.Primitive("_test_primitive_for_export")
+    test_primitive.def_abstract_eval(lambda in_aval: in_aval)
+    def test_primitive_lowering(ctx, arg):
+      if ctx.module_context.lowering_parameters.for_export:
+        raise ValueError("Lowering for export not supported")
+      return mlir.hlo.AddOp(arg, arg).results
+
+    mlir.register_lowering(test_primitive, test_primitive_lowering)
+    self.addCleanup(lambda: mlir.register_lowering(test_primitive, None))
+
+    f = test_primitive.bind
+    a = np.arange(3, dtype=np.float32)
+    res = jax.jit(f)(a)  # Works with JIT
+    self.assertAllClose(res, a + a)
+    jax.jit(f).lower(a)  # Works with most AOT
+
+    with self.assertRaisesRegex(ValueError,
+        "Lowering for export not supported"):
+      export.export(f)(a)
+
   def test_grad(self):
     f = lambda x: jnp.sum(jnp.sin(x))
     x = np.arange(4, dtype=np.float32)

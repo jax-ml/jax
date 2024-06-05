@@ -467,7 +467,8 @@ def export(fun_jax: Callable,
     lowered = wrapped_fun_jax.lower(
         *args_specs, **kwargs_specs,
         _experimental_lowering_parameters=mlir.LoweringParameters(
-          platforms=actual_lowering_platforms,
+            platforms=actual_lowering_platforms,
+            for_export=True,
         ))
     return _export_lowered(
         lowered, disabled_checks=disabled_checks,
@@ -737,7 +738,8 @@ def _wrap_main_func(
           keepalives=[], channel_iterator=itertools.count(1),
           host_callbacks=[], module=wrapped_module, context=context,
           lowering_parameters=mlir.LoweringParameters(
-            global_constant_computation=True
+              global_constant_computation=True,
+              for_export=True,
           ))
       ctx = mlir.LoweringRuleContext(
         module_context=module_context,
