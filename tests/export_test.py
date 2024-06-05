@@ -148,15 +148,10 @@ def get_exported(fun, vjp_order=0,
     return export.deserialize(serialized)
   return serde_exported
 
-class JaxExportTest(jtu.JaxTestCase):
 
-  def override_serialization_version(self, version_override: int):
-    version = config.jax_serialization_version.value
-    if version != version_override:
-      self.enter_context(config.jax_serialization_version(version_override))
-    logging.info(
-        "Using JAX serialization version %s",
-        config.jax_serialization_version.value)
+# Run tests with the maximum supported version by default
+@jtu.with_config(jax_serialization_version=export.maximum_supported_serialization_version)
+class JaxExportTest(jtu.JaxTestCase):
 
   @classmethod
   def setUpClass(cls):
@@ -169,12 +164,6 @@ class JaxExportTest(jtu.JaxTestCase):
         continue
       cls.platforms.append(backend)
     super().setUpClass()
-
-  def setUp(self):
-    super().setUp()
-    # Run tests with the maximum supported version by default
-    self.override_serialization_version(
-        export.maximum_supported_serialization_version)
 
   def test_basic_export_only(self):
     def my_fun(x):
@@ -563,19 +552,22 @@ class JaxExportTest(jtu.JaxTestCase):
       for v in range(export.minimum_supported_serialization_version - 1,
                      export.maximum_supported_serialization_version + 2)])
   def test_poly_basic_versions(self, v: int):
-    self.override_serialization_version(v)
-    with contextlib.ExitStack() as e:
-      if not (export.minimum_supported_serialization_version <= v
-              <= export.maximum_supported_serialization_version):
-        e.enter_context(self.assertRaisesRegex(
-          ValueError,
-          f"The requested jax_serialization version {v} is outside the range of supported versions"))
+    with config.jax_serialization_version(v):
+      logging.info(
+          "Using JAX serialization version %s",
+          config.jax_serialization_version.value)
+      with contextlib.ExitStack() as e:
+        if not (export.minimum_supported_serialization_version <= v
+                <= export.maximum_supported_serialization_version):
+          e.enter_context(self.assertRaisesRegex(
+            ValueError,
+            f"The requested jax_serialization version {v} is outside the range of supported versions"))
 
-      exp = get_exported(jnp.sin)(
-          jax.ShapeDtypeStruct(export.symbolic_shape("w, h"), np.float32))
-      x = np.arange(30, dtype=np.float32).reshape((5, 6))
-      res = export.call_exported(exp)(x)
-      self.assertAllClose(res, np.sin(x))
+        exp = get_exported(jnp.sin)(
+            jax.ShapeDtypeStruct(export.symbolic_shape("w, h"), np.float32))
+        x = np.arange(30, dtype=np.float32).reshape((5, 6))
+        res = export.call_exported(exp)(x)
+        self.assertAllClose(res, np.sin(x))
 
   # A function is exported with f32[poly_spec] and is called with different arg
   # shapes. We use export.call_exported and we also run the shape check
@@ -1375,74 +1367,77 @@ class JaxExportTest(jtu.JaxTestCase):
       for v in range(export.minimum_supported_serialization_version,
                      export.maximum_supported_serialization_version + 1)])
   def test_ordered_effects_basic(self, *, v: int):
-    self.override_serialization_version(v)
-    x = np.arange(3, dtype=np.float32)
-    def f_jax(x):  # x: f32[3]
-      # Test also the calling convention for inner functions
-      def f_jax_inner(x):
+    with config.jax_serialization_version(v):
+      logging.info(
+          "Using JAX serialization version %s",
+          config.jax_serialization_version.value)
+      x = np.arange(3, dtype=np.float32)
+      def f_jax(x):  # x: f32[3]
+        # Test also the calling convention for inner functions
+        def f_jax_inner(x):
+          return (
+            testing_primitive_with_effect_p.bind(x, effect_class_name="ForTestingOrderedEffect2") +
+            testing_primitive_with_effect_p.bind(x, effect_class_name="ForTestingUnorderedEffect1"))
         return (
-          testing_primitive_with_effect_p.bind(x, effect_class_name="ForTestingOrderedEffect2") +
-          testing_primitive_with_effect_p.bind(x, effect_class_name="ForTestingUnorderedEffect1"))
-      return (
-        10. +
-        jax.jit(f_jax_inner)(x) +
-        testing_primitive_with_effect_p.bind(x, effect_class_name="ForTestingOrderedEffect1") +
-        testing_primitive_with_effect_p.bind(x, effect_class_name="ForTestingOrderedEffect2")
+          10. +
+          jax.jit(f_jax_inner)(x) +
+          testing_primitive_with_effect_p.bind(x, effect_class_name="ForTestingOrderedEffect1") +
+          testing_primitive_with_effect_p.bind(x, effect_class_name="ForTestingOrderedEffect2")
+        )
+
+      exp = get_exported(f_jax)(x)
+      self.assertEqual(["ForTestingOrderedEffect1()", "ForTestingOrderedEffect2()"],
+                      sorted(str(e) for e in exp.ordered_effects))
+      self.assertEqual(["ForTestingUnorderedEffect1()"],
+                      [str(e) for e in exp.unordered_effects])
+      mlir_module_str = str(exp.mlir_module())
+
+      # Inner functions use stablehlo.token for all versions
+      inner_fun_expected_re = (
+        r"func.func private @f_jax_inner\("
+        r"%arg0: !stablehlo.token .*jax.token = true.*"
+        r"%arg1: tensor<3xf32>.*->.*"
+        # Results
+        r"!stablehlo.token .*jax.token = true.*"
+        r"tensor<3xf32>"
       )
+      self.assertRegex(mlir_module_str, inner_fun_expected_re)
 
-    exp = get_exported(f_jax)(x)
-    self.assertEqual(["ForTestingOrderedEffect1()", "ForTestingOrderedEffect2()"],
-                     sorted(str(e) for e in exp.ordered_effects))
-    self.assertEqual(["ForTestingUnorderedEffect1()"],
-                     [str(e) for e in exp.unordered_effects])
-    mlir_module_str = str(exp.mlir_module())
+      # The wrapped_main function takens tokens after version 9, and takes
+      # i1[0] before version 9.
+      wrapped_main_expected_re = (
+        r"@_wrapped_jax_export_main\("
+        r"%arg0: !stablehlo.token .*jax.token = true.*"
+        r"%arg1: !stablehlo.token .*jax.token = true.*->.*"
+        # Results
+        r"!stablehlo.token .*jax.token = true.*"
+        r"!stablehlo.token .*jax.token = true.*")
+      self.assertRegex(mlir_module_str, wrapped_main_expected_re)
 
-    # Inner functions use stablehlo.token for all versions
-    inner_fun_expected_re = (
-      r"func.func private @f_jax_inner\("
-      r"%arg0: !stablehlo.token .*jax.token = true.*"
-      r"%arg1: tensor<3xf32>.*->.*"
-      # Results
-      r"!stablehlo.token .*jax.token = true.*"
-      r"tensor<3xf32>"
-    )
-    self.assertRegex(mlir_module_str, inner_fun_expected_re)
+      # The main function takes tokens and has the same type as the wrapped main
+      main_expected_re = wrapped_main_expected_re.replace("@_wrapped_jax_export_main", "@main")
+      self.assertRegex(mlir_module_str, main_expected_re)
 
-    # The wrapped_main function takens tokens after version 9, and takes
-    # i1[0] before version 9.
-    wrapped_main_expected_re = (
-      r"@_wrapped_jax_export_main\("
-      r"%arg0: !stablehlo.token .*jax.token = true.*"
-      r"%arg1: !stablehlo.token .*jax.token = true.*->.*"
-      # Results
-      r"!stablehlo.token .*jax.token = true.*"
-      r"!stablehlo.token .*jax.token = true.*")
-    self.assertRegex(mlir_module_str, wrapped_main_expected_re)
+      # Now call the exported from a function that uses its own effects
+      def f_outer(x):
+        return (
+          testing_primitive_with_effect_p.bind(
+            x, effect_class_name="ForTestingOrderedEffect2") +
+          testing_primitive_with_effect_p.bind(
+            x, effect_class_name="ForTestingUnorderedEffect1") +
+          export.call_exported(exp)(x))
 
-    # The main function takes tokens and has the same type as the wrapped main
-    main_expected_re = wrapped_main_expected_re.replace("@_wrapped_jax_export_main", "@main")
-    self.assertRegex(mlir_module_str, main_expected_re)
+      lowered_outer = jax.jit(f_outer).lower(x)
+      self.assertEqual(["ForTestingOrderedEffect1()", "ForTestingOrderedEffect2()"],
+                      sorted(str(e) for e in lowered_outer._lowering.compile_args["ordered_effects"]))
+      self.assertEqual(["ForTestingUnorderedEffect1()"],
+                      sorted([str(e) for e in lowered_outer._lowering.compile_args["unordered_effects"]]))
 
-    # Now call the exported from a function that uses its own effects
-    def f_outer(x):
-      return (
-        testing_primitive_with_effect_p.bind(
-          x, effect_class_name="ForTestingOrderedEffect2") +
-        testing_primitive_with_effect_p.bind(
-          x, effect_class_name="ForTestingUnorderedEffect1") +
-        export.call_exported(exp)(x))
+      mlir_outer_module_str = str(lowered_outer.compiler_ir())
+      self.assertRegex(mlir_outer_module_str, main_expected_re)
 
-    lowered_outer = jax.jit(f_outer).lower(x)
-    self.assertEqual(["ForTestingOrderedEffect1()", "ForTestingOrderedEffect2()"],
-                     sorted(str(e) for e in lowered_outer._lowering.compile_args["ordered_effects"]))
-    self.assertEqual(["ForTestingUnorderedEffect1()"],
-                     sorted([str(e) for e in lowered_outer._lowering.compile_args["unordered_effects"]]))
-
-    mlir_outer_module_str = str(lowered_outer.compiler_ir())
-    self.assertRegex(mlir_outer_module_str, main_expected_re)
-
-    res = jax.jit(f_outer)(x)
-    self.assertAllClose(2. * 2. * x + 10. + 4. * 2. * x, res)
+      res = jax.jit(f_outer)(x)
+      self.assertAllClose(2. * 2. * x + 10. + 4. * 2. * x, res)
 
   @jtu.parameterized_filterable(
     kwargs=[
@@ -1450,33 +1445,36 @@ class JaxExportTest(jtu.JaxTestCase):
       for v in range(export.minimum_supported_serialization_version,
                      export.maximum_supported_serialization_version + 1)])
   def test_ordered_effects_poly(self, *, v: int):
-    self.override_serialization_version(v)
-    x = np.arange(12, dtype=np.float32).reshape((3, 4))
-    def f_jax(x):  # x: f32[b1, b2]
-      return 10. + testing_primitive_with_effect_p.bind(x, effect_class_name="ForTestingOrderedEffect1")
-    exp = get_exported(f_jax)(jax.ShapeDtypeStruct(
-        export.symbolic_shape("b2, b1"), x.dtype))
-    mlir_module_str = str(exp.mlir_module())
-    wrapped_main_expected_re = (
-      r"@_wrapped_jax_export_main\("
-      r"%arg0: tensor<i..> {jax.global_constant = \"b1\".* "
-      r"%arg1: tensor<i..> {jax.global_constant = \"b2\".* "
-      r"%arg2: !stablehlo.token {jax.token = true.* "
-      r"%arg3: tensor<\?x\?xf32>.*\) -> \("
-      # Results
-      r"!stablehlo.token {jax.token = true.*, tensor<\?x\?xf32>.*\)")
-    self.assertRegex(mlir_module_str, wrapped_main_expected_re)
+    with config.jax_serialization_version(v):
+      logging.info(
+          "Using JAX serialization version %s",
+          config.jax_serialization_version.value)
+      x = np.arange(12, dtype=np.float32).reshape((3, 4))
+      def f_jax(x):  # x: f32[b1, b2]
+        return 10. + testing_primitive_with_effect_p.bind(x, effect_class_name="ForTestingOrderedEffect1")
+      exp = get_exported(f_jax)(jax.ShapeDtypeStruct(
+          export.symbolic_shape("b2, b1"), x.dtype))
+      mlir_module_str = str(exp.mlir_module())
+      wrapped_main_expected_re = (
+        r"@_wrapped_jax_export_main\("
+        r"%arg0: tensor<i..> {jax.global_constant = \"b1\".* "
+        r"%arg1: tensor<i..> {jax.global_constant = \"b2\".* "
+        r"%arg2: !stablehlo.token {jax.token = true.* "
+        r"%arg3: tensor<\?x\?xf32>.*\) -> \("
+        # Results
+        r"!stablehlo.token {jax.token = true.*, tensor<\?x\?xf32>.*\)")
+      self.assertRegex(mlir_module_str, wrapped_main_expected_re)
 
-    main_expected_re = (
-      r"@main\("
-      r"%arg0: !stablehlo.token {jax.token = true.*, "
-      r"%arg1: tensor<\?x\?xf32>.*\) -> \("
-      # Results
-      r"!stablehlo.token {jax.token = true.*, tensor<\?x\?xf32>.*\)")
-    self.assertRegex(mlir_module_str, main_expected_re)
+      main_expected_re = (
+        r"@main\("
+        r"%arg0: !stablehlo.token {jax.token = true.*, "
+        r"%arg1: tensor<\?x\?xf32>.*\) -> \("
+        # Results
+        r"!stablehlo.token {jax.token = true.*, tensor<\?x\?xf32>.*\)")
+      self.assertRegex(mlir_module_str, main_expected_re)
 
-    res = export.call_exported(exp)(x)
-    self.assertAllClose(10. + 2. * x, res)
+      res = export.call_exported(exp)(x)
+      self.assertAllClose(10. + 2. * x, res)
 
   @jtu.parameterized_filterable(
     kwargs=[
@@ -1484,41 +1482,44 @@ class JaxExportTest(jtu.JaxTestCase):
       for v in range(export.minimum_supported_serialization_version,
                      export.maximum_supported_serialization_version + 1)])
   def test_ordered_effects_multi_platform_and_poly(self, *, v: int):
-    self.override_serialization_version(v)
-    if jtu.device_under_test() == "gpu":
-      # The export is not applicable to GPU
-      raise unittest.SkipTest("Not intended for running on GPU")
-    x = np.ones((3, 4), dtype=np.float32)
-    def f_jax(x):  # x: f32[b1, b2]
-      return 10. + _testing_multi_platform_func(x,
-                                                effect_class_name="ForTestingOrderedEffect1")
-    exp = get_exported(
-        f_jax,
-        lowering_platforms=("cpu", "tpu")
-        )(jax.ShapeDtypeStruct(export.symbolic_shape("b1, b2"), x.dtype))
-    mlir_module_str = str(exp.mlir_module())
-    wrapped_main_expected_re = (
-      r"@_wrapped_jax_export_main\("
-      r"%arg0: tensor<i..> {jax.global_constant = \"_platform_index\".*, "
-      r"%arg1: tensor<i..> {jax.global_constant = \"b1\".*, "
-      r"%arg2: tensor<i..> {jax.global_constant = \"b2\".*, "
-      r"%arg3: !stablehlo.token {jax.token = true.*, "
-      r"%arg4: tensor<\?x\?xf32>.*\) -> \("
-      # Results
-      r"!stablehlo.token {jax.token = true.*, tensor<\?x\?xf32>.*\)")
-    self.assertRegex(mlir_module_str, wrapped_main_expected_re)
+    with config.jax_serialization_version(v):
+      logging.info(
+          "Using JAX serialization version %s",
+          config.jax_serialization_version.value)
+      if jtu.device_under_test() == "gpu":
+        # The export is not applicable to GPU
+        raise unittest.SkipTest("Not intended for running on GPU")
+      x = np.ones((3, 4), dtype=np.float32)
+      def f_jax(x):  # x: f32[b1, b2]
+        return 10. + _testing_multi_platform_func(x,
+                                                  effect_class_name="ForTestingOrderedEffect1")
+      exp = get_exported(
+          f_jax,
+          lowering_platforms=("cpu", "tpu")
+          )(jax.ShapeDtypeStruct(export.symbolic_shape("b1, b2"), x.dtype))
+      mlir_module_str = str(exp.mlir_module())
+      wrapped_main_expected_re = (
+        r"@_wrapped_jax_export_main\("
+        r"%arg0: tensor<i..> {jax.global_constant = \"_platform_index\".*, "
+        r"%arg1: tensor<i..> {jax.global_constant = \"b1\".*, "
+        r"%arg2: tensor<i..> {jax.global_constant = \"b2\".*, "
+        r"%arg3: !stablehlo.token {jax.token = true.*, "
+        r"%arg4: tensor<\?x\?xf32>.*\) -> \("
+        # Results
+        r"!stablehlo.token {jax.token = true.*, tensor<\?x\?xf32>.*\)")
+      self.assertRegex(mlir_module_str, wrapped_main_expected_re)
 
-    main_expected_re = (
-      r"@main\("
-      r"%arg0: tensor<i..> {jax.global_constant = \"_platform_index\".*, "
-      r"%arg1: !stablehlo.token {jax.token = true.*, "
-      r"%arg2: tensor<\?x\?xf32>.*\) -> \("
-      # Results
-      r"!stablehlo.token {jax.token = true.*, tensor<\?x\?xf32>.*\)")
-    self.assertRegex(mlir_module_str, main_expected_re)
-    res = export.call_exported(exp)(x)
-    self.assertAllClose(10. + _testing_multi_platform_fun_expected(x),
-                        res)
+      main_expected_re = (
+        r"@main\("
+        r"%arg0: tensor<i..> {jax.global_constant = \"_platform_index\".*, "
+        r"%arg1: !stablehlo.token {jax.token = true.*, "
+        r"%arg2: tensor<\?x\?xf32>.*\) -> \("
+        # Results
+        r"!stablehlo.token {jax.token = true.*, tensor<\?x\?xf32>.*\)")
+      self.assertRegex(mlir_module_str, main_expected_re)
+      res = export.call_exported(exp)(x)
+      self.assertAllClose(10. + _testing_multi_platform_fun_expected(x),
+                          res)
 
   @jtu.parameterized_filterable(
     kwargs=[
@@ -1526,19 +1527,23 @@ class JaxExportTest(jtu.JaxTestCase):
       for v in range(export.minimum_supported_serialization_version,
                      export.maximum_supported_serialization_version + 1)])
   def test_ordered_effects_with_donation(self, *, v: int):
-    self.override_serialization_version(v)
-    x = np.arange(3, dtype=np.float32)
+    with config.jax_serialization_version(v):
+      logging.info(
+          "Using JAX serialization version %s",
+          config.jax_serialization_version.value)
 
-    def f_jax(x):
-      return testing_primitive_with_effect_p.bind(
-          x, effect_class_name="ForTestingOrderedEffect1"
-      )
+      x = np.arange(3, dtype=np.float32)
 
-    f_jax = jax.jit(f_jax, donate_argnums=(0,))
-    exp = export.export(f_jax)(x)
-    mlir_module_str = str(exp.mlir_module())
-    self.assertRegex(mlir_module_str, r"@main.*tf.aliasing_output = 1")
-    self.assertRegex(mlir_module_str, r"@_wrapped_jax_export_main.*tf.aliasing_output = 1")
+      def f_jax(x):
+        return testing_primitive_with_effect_p.bind(
+            x, effect_class_name="ForTestingOrderedEffect1"
+        )
+
+      f_jax = jax.jit(f_jax, donate_argnums=(0,))
+      exp = export.export(f_jax)(x)
+      mlir_module_str = str(exp.mlir_module())
+      self.assertRegex(mlir_module_str, r"@main.*tf.aliasing_output = 1")
+      self.assertRegex(mlir_module_str, r"@_wrapped_jax_export_main.*tf.aliasing_output = 1")
 
   @jtu.parameterized_filterable(
     kwargs=[
