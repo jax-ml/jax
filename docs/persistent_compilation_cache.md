@@ -79,7 +79,7 @@ The JAX compilation cache works by hashing a number of parameters to create a si
 
 * The computation performed by the function captured by the non-optimized HLO of the JAX function being hashed
 * The Jaxlib version 
-* A number of XLA flags
+* All XLA flags except those listed as not having an impact
 * Device configuration captured in general, by the number of devices and the topology of the devices. Currently for GPUs, the topology only contains a string representation of the GPU name
 * Compression algorithm used to compress the compiled executable
 * Any custom hooks 
@@ -96,7 +96,7 @@ Once again the only process that compiles and writes to the compilation cache is
 
 ### Multiple process and multiple devices (on either single or multiple nodes)
 
-In this runtime the first time a program is run (the persistent cache is cold / empty) all processes will compile, but only the process with rank 0 in the global communication group will write to the persistent cache. In subsequent runs, all processes will attempt to read from the persistent cache, so it is important for the persistent cache to be in a shared file system (eg: NFS) or remote storage (eg: GFS). If the persistent cache is local to rank 0, then all processes will once again compile in subsequent runs as a result of a compilation cache miss. 
+In this runtime the first time a program is run (the persistent cache is cold / empty) all processes will compile, but only the process with rank 0 in the global communication group will write to the persistent cache. In subsequent runs, all processes will attempt to read from the persistent cache, so it is important for the persistent cache to be in a shared file system (eg: NFS) or remote storage (eg: GFS). If the persistent cache is local to rank 0, then all processes except rank 0 will once again compile in subsequent runs as a result of a compilation cache miss. 
 
 ## Logging cache activity
 
@@ -134,10 +134,13 @@ logging.getLogger("jax._src.cache_key").setLevel(logging.DEBUG)
 
 ## Pitfalls
 
-There are a couple of pitfalls that have currently been discovered, this is by no means an exhastive list and can change between versions of JAX, Jaxlib and XLA. 
+There are a couple of pitfalls that have currently been discovered:
 
-* Currently the persistent cache doesn't work with function that have host callbacks. This is because the HLO contains a pointer to the callback and changes from run to run even if the computation and compute infrastructure is exactly the same. In this situation, caching in completely avoided.
+* Currently the persistent cache doesn't work with function that have host callbacks. In this situation, caching in completely avoided. 
+  - This is because the HLO contains a pointer to the callback and changes from run to run even if the computation and compute infrastructure is exactly the same. 
 
-* When trying to cache a function that uses primitives that implement their own custom_partitioning, the HLO of the function contains a pointer to the custom_partitioning callback, and leads to different cache keys for the same computation across runs. In this situation, caching still proceeds, but a different key is produced every time, making the cache ineffective. 
+* Currently the persistent cache doesn't work with a function that uses primitives that implement their own custom_partitioning. 
+  - The HLO of the function contains a pointer to the custom_partitioning callback, and leads to different cache keys for the same computation across runs. 
+  - In this situation, caching still proceeds, but a different key is produced every time, making the cache ineffective. 
 
 
