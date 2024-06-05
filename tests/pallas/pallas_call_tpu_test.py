@@ -286,33 +286,38 @@ class PallasCallScalarPrefetchTest(PallasTPUTest):
       o_ref[...] = x_ref[...]
 
     s = jnp.array([4, 3, 2, 5, 3, 5, 2, 7], jnp.int32)
-    x = jnp.arange(8 * 8 * 128, dtype=jnp.int32).reshape((8 * 8, 128))
+    x = jnp.arange(2 * 8 * 8 * 128, dtype=jnp.int32).reshape((2, 8 * 8, 128))
 
     def _x_transform(i, s_ref):
       s = pl.load(s_ref, (i,))
       return (s, 0)
 
     s = jnp.tile(s[None], [2, 1])
-    x = jnp.tile(x[None], [2, 1, 1])
 
-    with self.assertRaises(NotImplementedError):
-      jax.vmap(
-          pl.pallas_call(
-              body,
-              out_shape=jax.ShapeDtypeStruct(x.shape[1:], x.dtype),
-              grid_spec=pltpu.PrefetchScalarGridSpec(
-                  num_scalar_prefetch=1,
-                  in_specs=[
-                      pl.BlockSpec(_x_transform, (x.shape[1] // 8, x.shape[2])),
-                  ],
-                  out_specs=pl.BlockSpec(
-                      lambda i, _: (i, 0), (x.shape[1] // 8, x.shape[2])
-                  ),
-                  grid=8,
+    @jax.jit
+    @jax.vmap
+    def kernel(s, x):
+      return pl.pallas_call(
+          body,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          grid_spec=pltpu.PrefetchScalarGridSpec(
+              num_scalar_prefetch=1,
+              in_specs=[
+                  pl.BlockSpec(_x_transform, (x.shape[0] // 8, x.shape[1])),
+              ],
+              out_specs=pl.BlockSpec(
+                  lambda i, _: (i, 0), (x.shape[0] // 8, x.shape[1])
               ),
-              interpret=self.interpret,
-          )
+              grid=8,
+          ),
+          interpret=self.interpret,
       )(s, x)
+
+    first = x[0, ...].reshape((1, 8, 8, -1))[:, s[0, ...]].reshape(x.shape[1:])
+    second = x[1, ...].reshape((1, 8, 8, -1))[:, s[1, ...]].reshape(x.shape[1:])
+
+    expected = jnp.stack([first, second])
+    np.testing.assert_allclose(kernel(s, x), expected)
 
 
 class PallasCallScalarPrefetchInterpretTest(PallasCallScalarPrefetchTest):
@@ -434,8 +439,11 @@ class PallasCallDynamicGridTest(PallasTPUTest):
           out_specs=pl.BlockSpec(lambda i: (0, 0), shape),
           out_shape=result_ty,
       )()
-    with self.assertRaises(NotImplementedError):
-      dynamic_kernel(jnp.array([4, 8], jnp.int32))
+    out = dynamic_kernel(jnp.array([4, 8], jnp.int32))
+    first = jnp.full(shape, fill_value=8.0, dtype=jnp.float32)
+    second = jnp.full(shape, fill_value=16.0, dtype=jnp.float32)
+    expected_out = jnp.stack([first, second], axis=0)
+    np.testing.assert_array_equal(out, expected_out)
 
   def test_vmap_dynamic_grid(self):
     shape = (8, 128)
