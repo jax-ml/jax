@@ -210,12 +210,11 @@ jax_test(
         "gpu",
     ],
     main = "pallas_pipeline_tpu_test.py",
-    shard_count = 2,
     deps = [
         "//jax:extend",
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
-    ] + py_deps("hypothesis"),
+    ],
 )
 
 jax_test(
