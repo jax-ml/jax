@@ -1395,9 +1395,10 @@ def _resolve_in_shardings(
     # not allow None as the sharding.
     if arg_s is None:
       continue
-    if not isinstance(arg_s, XLACompatibleSharding):
-      raise ValueError(f'One of the argument to pjit got sharding {arg_s} '
-                       'which is not a subclass of XLACompatibleSharding.')
+    if xla_extension_version < 270:
+      if not isinstance(arg_s, XLACompatibleSharding):
+        raise ValueError(f'One of the argument to pjit got sharding {arg_s} '
+                        'which is not a subclass of XLACompatibleSharding.')
     # Don't consider PmapSharding inputs as committed. They will get resharded
     # unconditionally.
     if isinstance(arg_s, PmapSharding):

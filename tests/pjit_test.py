@@ -44,7 +44,7 @@ from jax.sharding import PartitionSpec as P
 from jax.experimental import multihost_utils
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax._src import array
-from jax._src.sharding import Sharding
+from jax._src.sharding import Sharding, common_devices_indices_map
 from jax._src import op_shardings
 from jax._src import sharding_impls
 from jax._src.sharding_impls import (
@@ -2209,30 +2209,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertTrue(out2.sharding.is_equivalent_to(out.sharding, out.ndim))
     self.assertArraysEqual(out2, inp_data)
 
-  def test_not_xlacompatible_sharding_error(self):
-    shape = (8, 2)
-    inp_data = np.arange(math.prod(shape)).reshape(shape)
-    ts = TempSharding(jax.devices())
-    arr = array.make_array_from_callback(
-        shape, ts, lambda idx: inp_data[idx])
-    with self.assertRaisesRegex(
-        ValueError,
-        'One of the argument to pjit got sharding.*which is not a subclass of '
-        'XLACompatibleSharding.'):
-      pjit(lambda x: x)(arr)
-
-    with self.assertRaisesRegex(
-        ValueError,
-        'One of in_shardings leaf specifications got sharding.*which is '
-        'not a subclass of XLACompatibleSharding.'):
-      pjit(lambda x: x, in_shardings=ts)(arr)
-
-    with self.assertRaisesRegex(
-        ValueError,
-        'One of out_shardings leaf specifications got sharding.*which is '
-        'not a subclass of XLACompatibleSharding.'):
-      pjit(lambda x: x, out_shardings=ts)(arr)
-
   def test_array_enabled_non_empty_mesh_with_pspec(self):
     arr = jnp.array([1, 2, 3])
     with self.assertRaisesRegex(
@@ -2378,18 +2354,18 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out1 = f(arr)
     self.assertIsInstance(out1.sharding, NamedSharding)
     out1.sharding.devices_indices_map(shape)
-    cache_info1 = sharding_impls.common_devices_indices_map.cache_info()
+    cache_info1 = common_devices_indices_map.cache_info()
 
     out2 = f(out1)
     self.assertIsInstance(out2.sharding, NamedSharding)
     out2.sharding.devices_indices_map(shape)
-    cache_info2 = sharding_impls.common_devices_indices_map.cache_info()
+    cache_info2 = common_devices_indices_map.cache_info()
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
 
     out3 = f(out2)
     self.assertIsInstance(out3.sharding, NamedSharding)
     out3.sharding.devices_indices_map(shape)
-    cache_info3 = sharding_impls.common_devices_indices_map.cache_info()
+    cache_info3 = common_devices_indices_map.cache_info()
     self.assertEqual(cache_info3.hits, cache_info2.hits + 1)
 
   def test_aot_compile_in_tree_mismatch(self):
@@ -4202,32 +4178,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(out_info[1].sharding, None)
 
 
-class TempSharding(Sharding):
-
-  def __init__(self, devices):
-    super().__init__()
-    self._devices = devices
-    self._internal_device_list = xc.DeviceList(tuple(self._devices))
-
-  @property
-  def device_set(self):
-    return set(self._devices)
-
-  def devices_indices_map(self, global_shape):
-    return {d: (slice(None),) * len(global_shape) for d in self.device_set}
-
-  def shard_shape(self, global_shape):
-    return global_shape
-
-  @property
-  def memory_kind(self):
-    return None
-
-  @property
-  def is_fully_replicated(self):
-    return True
-
-
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")
 
@@ -4769,19 +4719,19 @@ class UtilTest(jtu.JaxTestCase):
 
     ops = GSPMDSharding(devices, op1)
     ops.devices_indices_map(shape)
-    cache_info1 = sharding_impls.gspmd_sharding_devices_indices_map.cache_info()
+    cache_info1 = common_devices_indices_map.cache_info()
 
     ops.devices_indices_map(shape)
-    cache_info2 = sharding_impls.gspmd_sharding_devices_indices_map.cache_info()
+    cache_info2 = common_devices_indices_map.cache_info()
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
 
     ops = GSPMDSharding(devices, op2)
     ops.devices_indices_map(shape)
-    cache_info3 = sharding_impls.gspmd_sharding_devices_indices_map.cache_info()
+    cache_info3 = common_devices_indices_map.cache_info()
     self.assertEqual(cache_info3.hits, cache_info2.hits + 1)
 
     ops.devices_indices_map(shape)
-    cache_info4 = sharding_impls.gspmd_sharding_devices_indices_map.cache_info()
+    cache_info4 = common_devices_indices_map.cache_info()
     self.assertEqual(cache_info4.hits, cache_info3.hits + 1)
 
   def test_op_sharding_semantically_replicated(self):

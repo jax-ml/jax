@@ -29,12 +29,11 @@ from jax._src import config
 from jax._src.lib import xla_extension_version
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.numpy as jnp
-from jax.sharding import PartitionSpec as P
 from jax.ad_checkpoint import Offloadable, remat, Recompute
+from jax._src.sharding import common_devices_indices_map
 from jax._src.sharding_impls import (NamedSharding, PositionalSharding,
                                      SingleDeviceSharding, GSPMDSharding,
-                                     TransferToMemoryKind,
-                                     common_devices_indices_map)
+                                     TransferToMemoryKind, PartitionSpec as P)
 from jax.experimental.compute_on import compute_on
 import numpy as np
 

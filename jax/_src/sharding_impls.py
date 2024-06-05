@@ -32,9 +32,9 @@ from jax._src import util
 from jax._src import xla_bridge
 from jax._src import core
 from jax._src.lib import xla_client as xc
-from jax._src.op_shardings import ( are_op_shardings_equal, get_num_ways_dim_sharded,
-    is_op_sharding_replicated,
-    op_sharding_to_indices)  # pyformat: disable
+from jax._src.lib import xla_extension_version
+from jax._src.op_shardings import (
+    are_op_shardings_equal, get_num_ways_dim_sharded, is_op_sharding_replicated)
 from jax._src.partition_spec import PartitionSpec
 from jax._src.util import safe_map, safe_zip, use_cpp_class, use_cpp_method
 import numpy as np
@@ -44,94 +44,12 @@ Shape = tuple[int, ...]
 Device = xc.Device
 Index = tuple[slice, ...]
 XLADeviceAssignment = tuple[Device, ...]
-
+# TODO(yashkatariya): Remove this after 3 months of deprecation.
+XLACompatibleSharding = sharding.Sharding
 
 @dataclasses.dataclass(frozen=True)
 class TransferToMemoryKind:
   memory_kind: str
-
-
-@functools.lru_cache(maxsize=4096)
-def common_devices_indices_map(s, global_shape: Shape) -> Mapping[Device, Index]:
-  hlo_sharding = s._to_xla_hlo_sharding(len(global_shape))
-  gspmd_sharding = GSPMDSharding(s._device_assignment, hlo_sharding)
-  return gspmd_sharding.devices_indices_map(global_shape)
-
-
-@functools.lru_cache(maxsize=4096)
-def _common_shard_shape(self, global_shape: Shape) -> Shape:
-  hlo_sharding = self._to_xla_hlo_sharding(len(global_shape))
-  if is_op_sharding_replicated(hlo_sharding):
-    return global_shape
-  partitions, _ = get_num_ways_dim_sharded(hlo_sharding)
-  assert len(partitions) == len(global_shape), (len(partitions), len(global_shape))
-  out = []
-  for dim, (s, p) in enumerate(safe_zip(global_shape, partitions)):
-    try:
-      quotient, remainder = divmod(s, p)
-    except TypeError:
-      # TODO Figure out how to partition dynamic shapes
-      raise NotImplementedError
-    if remainder != 0:
-      raise ValueError(
-          f"Sharding {self} implies that array axis {dim} is partitioned "
-          f"{p} times, but the dimension size is {s} "
-          f"(full shape: {global_shape}, "
-          f"per-dimension tiling factors: {partitions} should evenly divide "
-          "the shape)")
-    out.append(quotient)
-  return tuple(out)
-
-
-# Shardings that inherit from XLACompatibleSharding should implement the
-# `_device_assignment` property and `_to_xla_hlo_sharding` method.
-@use_cpp_class(xc.XLACompatibleSharding)
-class XLACompatibleSharding(sharding.Sharding):
-  """A :class:`Sharding` that describes shardings expressible to XLA.
-
-  Subclasses of :class:`XLACompatibleSharding` work with
-  all JAX APIs and transformations that use XLA.
-  """
-
-  # Abstract methods below that subclasses should implement.
-
-  @property
-  def _device_assignment(self) -> XLADeviceAssignment:
-    raise NotImplementedError('Subclasses should implement this method.')
-
-  def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
-    raise NotImplementedError('Subclasses should implement this method.')
-
-  #############################################################################
-  # Default implementations below that all subclasses will inherit.
-
-  def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
-    return common_devices_indices_map(self, global_shape)
-
-  @functools.cached_property
-  def _addressable_device_assignment(self) -> XLADeviceAssignment:
-    if self.is_fully_addressable:
-      return self._device_assignment
-    if hasattr(self, '_internal_device_list'):
-      return tuple(self._internal_device_list.addressable_device_list)
-    return tuple(d for d in self._device_assignment
-                 if d.process_index == d.client.process_index())
-
-  def shard_shape(self, global_shape: Shape) -> Shape:
-    return _common_shard_shape(self, global_shape)
-
-  def is_equivalent_to(self: XLACompatibleSharding,  # type: ignore
-                       other: XLACompatibleSharding, ndim: int) -> bool:
-    try:
-      return (are_op_shardings_equal(self._to_xla_hlo_sharding(ndim),
-                                      other._to_xla_hlo_sharding(ndim))
-              and self._internal_device_list == other._internal_device_list and  # type: ignore
-              self.memory_kind == other.memory_kind)
-    # NotImplementedError is raised by PmapSharding because it can't lower
-    # to OpSharding. So if `other` is a PmapSharding, default to a strict
-    # equality check.
-    except NotImplementedError:
-      return self == other
 
 
 @functools.lru_cache
@@ -815,15 +733,6 @@ class DeviceIdSet:
             self._ids == other._ids)
 
 
-@functools.lru_cache(maxsize=4096)
-def gspmd_sharding_devices_indices_map(
-    self, global_shape: Shape) -> Mapping[Device, Index]:
-  self.shard_shape(global_shape)  # raises a good error message
-  indices = op_sharding_to_indices(self._hlo_sharding, global_shape,
-                                    len(self._devices))
-  return dict(safe_zip(self._devices, indices))
-
-
 @use_cpp_class(xc.GSPMDSharding)
 class GSPMDSharding(XLACompatibleSharding):
   _devices: tuple[Device, ...]
@@ -891,9 +800,6 @@ class GSPMDSharding(XLACompatibleSharding):
 
   def with_memory_kind(self, kind: str) -> GSPMDSharding:
     return GSPMDSharding(self._devices, self._hlo_sharding, memory_kind=kind)
-
-  def devices_indices_map(self, global_shape: Shape) -> Mapping[Device, Index]:
-    return gspmd_sharding_devices_indices_map(self, global_shape)
 
   @property
   def _device_assignment(self) -> XLADeviceAssignment:
@@ -1148,9 +1054,10 @@ def prepare_axis_resources(axis_resources,
       if isinstance(entry, PmapSharding):
         raise ValueError(f'One of {what} got sharding {entry} which is not '
                          'allowed.')
-      if not isinstance(entry, XLACompatibleSharding):
-        raise ValueError(f'One of {what} got sharding {entry} which is not a '
-                         'subclass of XLACompatibleSharding.')
+      if xla_extension_version < 270:
+        if not isinstance(entry, XLACompatibleSharding):
+          raise ValueError(f'One of {what} got sharding {entry} which is not a '
+                          'subclass of XLACompatibleSharding.')
       new_entries.append(entry)
     else:
       new_entries.append(ParsedPartitionSpec.from_user_input(

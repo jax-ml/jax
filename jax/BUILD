@@ -764,6 +764,7 @@ pytype_strict_library(
     name = "sharding",
     srcs = ["_src/sharding.py"],
     deps = [
+        ":op_shardings",
         ":util",
         ":xla_bridge",
         "//jax/_src/lib",
