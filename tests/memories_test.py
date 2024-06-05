@@ -457,6 +457,8 @@ class DevicePutTest(jtu.JaxTestCase):
     )
 
   def test_parameter_and_output_streaming_with_array(self):
+    if xb.backend_xla_version() is not None and xb.backend_xla_version() < 2:
+      self.skipTest("This test requires an xla_version >= 2.")
     mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
     np_inp = np.arange(16).reshape(8, 2)
     s_host = NamedSharding(mesh, P("x", "y"), memory_kind="pinned_host")
@@ -578,6 +580,8 @@ class DevicePutTest(jtu.JaxTestCase):
         out_host, np_inp * 2, s_host, 'pinned_host')
 
   def test_output_streaming_inside_scan(self):
+    if xb.backend_xla_version() is not None and xb.backend_xla_version() < 2:
+      self.skipTest("This test requires an xla_version >= 2.")
     mesh = jtu.create_global_mesh((1, 1, 2), ("x", "y", "z"))
     np_inp = np.arange(4096).reshape(16, 16, 16)
     s_hbm = NamedSharding(mesh, P(None, "y", "z"), memory_kind="device")
@@ -597,6 +601,8 @@ class DevicePutTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding.memory_kind, 'pinned_host')
 
   def test_deepcopy(self):
+    if xb.backend_xla_version() is not None and xb.backend_xla_version() < 2:
+      self.skipTest("This test requires an xla_version >= 2.")
     mesh = jax.sharding.Mesh(jax.devices(), "x")
     s_host = NamedSharding(mesh, P(), memory_kind="pinned_host")
 
@@ -768,6 +774,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysEqual(out, expected_out)
 
   def test_host_offload_in_custom_vjp(self):
+    if xb.backend_xla_version() is not None and xb.backend_xla_version() < 2:
+      self.skipTest("This test requires an xla_version >= 2.")
     @jax.custom_vjp
     def f(x):
       return jnp.sin(x)
@@ -796,6 +804,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysEqual(g(x), all_true)
 
   def test_host_offload_in_custom_vjp_sharded(self):
+    if xb.backend_xla_version() is not None and xb.backend_xla_version() < 2:
+      self.skipTest("This test requires an xla_version >= 2.")
     mesh = jtu.create_global_mesh((2, 2), ("x", "y"))
     s = NamedSharding(mesh, P('x'))
 
@@ -827,6 +837,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysEqual(g(arr), all_true)
 
   def test_pure_host_data_and_compute(self):
+    if xb.backend_xla_version() is not None and xb.backend_xla_version() < 2:
+      self.skipTest("This test requires an xla_version >= 2.")
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'), memory_kind='pinned_host')
     np_inp = np.arange(16).reshape(8, 2)
@@ -872,6 +884,8 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysAllClose(out2, np.sin(np_inp * 2))
 
   def test_jit_host_multi_outputs(self):
+    if xb.backend_xla_version() is not None and xb.backend_xla_version() < 2:
+      self.skipTest("This test requires an xla_version >= 2.")
     _, s, np_inp, inp = _create_inputs((8, 2), P("x"))
 
     @jax.jit
