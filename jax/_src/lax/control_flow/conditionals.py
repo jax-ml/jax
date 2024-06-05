@@ -247,6 +247,14 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   if any(isinstance(op_aval, AbstractRef) for op_aval in ops_avals):
     raise ValueError("Cannot pass `Ref`s into `cond`.")
   true_jaxpr, false_jaxpr = jaxprs
+
+  true_fwds = pe._jaxpr_forwarding(true_jaxpr.jaxpr)
+  false_fwds = pe._jaxpr_forwarding(false_jaxpr.jaxpr)
+  in_fwd = [i if i == j else None for i, j in zip(true_fwds, false_fwds)]
+  keep = [f is None for f in in_fwd]
+  true_jaxpr = pe.prune_closed_jaxpr_outputs(true_jaxpr, keep)
+  false_jaxpr = pe.prune_closed_jaxpr_outputs(false_jaxpr, keep)
+
   out_tree, false_out_tree = out_trees
   if any(isinstance(out_aval, AbstractRef) for out_aval in
          true_jaxpr.out_avals + false_jaxpr.out_avals):
@@ -273,6 +281,9 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   out = cond_p.bind(
       index, *consts, *ops,
       branches=(false_jaxpr, true_jaxpr), linear=tuple(linear))
+  out_ = iter(out)
+  out = [next(out_) if fwd is None else ops[fwd] for fwd in in_fwd]
+  assert next(out_, None) is None
   return tree_unflatten(out_tree, out)
 
 @api_boundary

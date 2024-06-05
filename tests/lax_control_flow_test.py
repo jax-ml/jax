@@ -2928,6 +2928,17 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     hlo_text = fn.lower(init).as_text('hlo')
     self.assertNotIn('4,1,2,2', hlo_text)
 
+  def test_cond_vmap_forwarding_doesnt_promote(self):
+    def f(x, y):
+      x, y = jax.lax.cond(x < 3,
+                          lambda x, y: (x * 2, y),
+                          lambda x, y: (x * 3, y),
+                          x, y)
+      return x, y
+
+    jax.vmap(f, in_axes=(0, None), out_axes=(0, None)
+             )(jnp.arange(3), 3.)  # don't crash
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
