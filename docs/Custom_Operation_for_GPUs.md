@@ -752,7 +752,7 @@ class RmsNormBwdClass:
         return mesh, impl, output_shardings, arg_shardings
 register_primitive(RmsNormBwdClass)
 ```
-Plumbing to establish the forward and backward primtives with a custom_vjp rule as before:
+Plumbing to establish the forward and backward primitives with a custom_vjp rule as before:
 
 ```python
 @partial(jax.custom_vjp, nondiff_argnums=(2,))
