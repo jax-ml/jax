@@ -58,6 +58,7 @@ jax_test(
     deps = [
         "//jax:pallas",
         "//jax:pallas_gpu",
+        "//jax:pallas_gpu_ops",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 

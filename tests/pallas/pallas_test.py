@@ -32,10 +32,10 @@ from jax._src import test_util as jtu
 from jax._src.lax.control_flow.for_loop import for_loop
 from jax._src.pallas.pallas_call import _trace_to_jaxpr
 from jax.experimental import pallas as pl
-from jax.experimental.pallas.ops import attention
-from jax.experimental.pallas.ops import layer_norm
-from jax.experimental.pallas.ops import rms_norm
-from jax.experimental.pallas.ops import softmax
+from jax.experimental.pallas.ops.gpu import attention
+from jax.experimental.pallas.ops.gpu import layer_norm
+from jax.experimental.pallas.ops.gpu import rms_norm
+from jax.experimental.pallas.ops.gpu import softmax
 from jax.interpreters import partial_eval as pe
 import jax.numpy as jnp
 import numpy as np
