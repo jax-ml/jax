@@ -113,5 +113,5 @@ py_library(
         "//jax:api_util",
         "//jax:util",
         "//jax/_src/pallas",
-    ],
+    ] + py_deps("numpy"),
 )
