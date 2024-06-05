@@ -72,3 +72,72 @@ import jax
 
 jax.config.update("jax_compilation_cache_dir", "gs://jax-cache")
 ```
+
+## How it works
+
+The JAX compilation cache works by hashing a number of parameters to create a signature for a compiled function these are:
+
+* The computation performed by the function captured by the non-optimized HLO of the JAX function being hashed
+* The Jaxlib version 
+* A number of XLA flags
+* Device configuration captured in general, by the number of devices and the topology of the devices. Currently for GPUs, the topology only contains a string representation of the GPU name
+* Compression algorithm used to compress the compiled executable
+* Any custom hooks 
+
+When the signature for a function created using the parameters above matches that of a compiled function in the persistent cache, the function will not be compiled but just read and deserialized from the persistent cache. Below we outline some observed behavior of the persistent compilation cache in a variety of different runtimes as it relates to which processes write to the cache.
+
+### Single node with single process and single device
+
+This is the simplest runtime and the only process that compiles and writes to the compilation cache is the singular process. The number of devices does not matter to the cache key in this setup, only the type of device does. 
+
+### Single node with single process and multiple devices
+
+Once again the only process that compiles and writes to the compilation cache is the singular proess. The difference between this setup and the previous is that now the number of devices matters in addition to the type of device. 
+
+### Multiple process and multiple devices (on either single or multiple nodes)
+
+In this runtime the first time a program is run (the persistent cache is cold / empty) all processes will compile, but only the process with rank 0 in the global communication group will write to the persistent cache. In subsequent runs, all processes will attempt to read from the persistent cache, so it is important for the persistent cache to be in a shared file system (eg: NFS) or remote storage (eg: GFS). If the persistent cache is local to rank 0, then all processes will once again compile in subsequent runs as a result of a compilation cache miss. 
+
+## Logging cache activity
+
+It can be helpful to examine what exactly is happening with the persistent compilation cache for debugging. While there is no singular canonical way of debugging and examining what's happening in the compilation cache, here are a few suggestions on how to begin.
+
+### Examining cache misses
+
+To merely examine and understand why there are cache misses JAX includes a configuration flag that enables the logging of all cache misses (including persistent compilation cache misses) with their explanations. This can be enabled by setting the following configuration.
+
+```
+import jax
+
+jax.config.update("jax_explain_cache_misses", True)
+```
+
+### More finegrained control
+
+For more finegrained control, it is possible to configure the python logging module to focus on different aspects of the caching process. For example to log writes to the cache you can do the following to log just writes:
+
+```
+import jax
+import logging
+logging.root.addHandler(logging.StreamHandler()) # Unnecessary if there's a handler already
+logging.getLogger("jax._src.compilation_cache").setLevel(logging.DEBUG)
+```
+
+Or if you want to log cache key calculation you can do the following:
+
+```
+import jax
+import logging
+logging.root.addHandler(logging.StreamHandler()) # Unnecessary if there's a handler already
+logging.getLogger("jax._src.cache_key").setLevel(logging.DEBUG)
+```
+
+## Pitfalls
+
+There are a couple of pitfalls that have currently been discovered, this is by no means an exhastive list and can change between versions of JAX, Jaxlib and XLA. 
+
+* Currently the persistent cache doesn't work with function that have host callbacks. This is because the HLO contains a pointer to the callback and changes from run to run even if the computation and compute infrastructure is exactly the same. In this situation, caching in completely avoided.
+
+* When trying to cache a function that uses primitives that implement their own custom_partitioning, the HLO of the function contains a pointer to the custom_partitioning callback, and leads to different cache keys for the same computation across runs. In this situation, caching still proceeds, but a different key is produced every time, making the cache ineffective. 
+
+
