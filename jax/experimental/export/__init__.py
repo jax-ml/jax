@@ -25,7 +25,7 @@ from jax.experimental.export._export import (
 
     args_specs,  # TODO: deprecate
 )
-from jax.experimental.export._shape_poly import (
+from jax._src.export.shape_poly import (
     is_symbolic_dim,
     symbolic_shape,
     symbolic_args_specs,
@@ -35,4 +35,4 @@ from jax.experimental.export._serialization import (
     serialize,
     deserialize,
 )
-from jax.experimental.export import _shape_poly_decision
+from jax._src.export import shape_poly_decision

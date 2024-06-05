@@ -36,8 +36,6 @@ import re
 
 import jax
 from jax.experimental import export
-from jax.experimental.export import _shape_poly as shape_poly
-from jax.experimental.export import _shape_poly_decision as shape_poly_decision
 from jax.experimental import pjit
 from jax import lax
 import jax.numpy as jnp
@@ -46,6 +44,8 @@ from jax import random
 from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
+from jax._src.export import shape_poly
+from jax._src.export import shape_poly_decision
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lib import xla_client

@@ -52,7 +52,7 @@ from jax._src import tree_util
 from jax._src import util
 from jax._src import xla_bridge as xb
 
-from jax.experimental.export import _shape_poly
+from jax._src.export import shape_poly
 
 map = util.safe_map
 zip = util.safe_zip
@@ -399,7 +399,7 @@ def args_specs(
     # This was needed in some older jax2tf implementations
     args = tree_util.tree_map(lambda a: jax.ShapeDtypeStruct(* get_shape_and_dtype(a)),
                               args)
-  return _shape_poly.symbolic_args_specs(args, polymorphic_shapes)
+  return shape_poly.symbolic_args_specs(args, polymorphic_shapes)
 
 
 def export(fun_jax: Callable,
@@ -449,20 +449,20 @@ def export(fun_jax: Callable,
       actual_lowering_platforms = (default_lowering_platform(),)
 
     # TODO: move to `lower`
-    symbolic_scope: tuple[_shape_poly.SymbolicScope, tree_util.KeyPath] | None = None
+    symbolic_scope: tuple[shape_poly.SymbolicScope, tree_util.KeyPath] | None = None
     for k_path, aval in tree_util.tree_flatten_with_path((args_specs, kwargs_specs))[0]:
       # Static args may have no `shape` attribute.
       if not hasattr(aval, "shape"):
         continue
       for d in aval.shape:
-        if _shape_poly.is_symbolic_dim(d):
+        if shape_poly.is_symbolic_dim(d):
           if symbolic_scope is None:
             symbolic_scope = (d.scope, k_path)
             continue
           symbolic_scope[0]._check_same_scope(
               d, when=f"when exporting {util.fun_name(wrapped_fun_jax)}",
-              self_descr=f"current (from {_shape_poly.args_kwargs_path_to_str(symbolic_scope[1])}) ",
-              other_descr=_shape_poly.args_kwargs_path_to_str(k_path))
+              self_descr=f"current (from {shape_poly.args_kwargs_path_to_str(symbolic_scope[1])}) ",
+              other_descr=shape_poly.args_kwargs_path_to_str(k_path))
 
     lowered = wrapped_fun_jax.lower(
         *args_specs, **kwargs_specs,
@@ -649,7 +649,7 @@ def _wrap_main_func(
 
   Returns the wrapped module, without dimension and token arguments.
   """
-  dim_vars = _shape_poly.all_dim_vars(args_avals_flat)
+  dim_vars = shape_poly.all_dim_vars(args_avals_flat)
   context = mlir.make_ir_context()
   with context, ir.Location.unknown(context):
     # Make a copy, do not mutate because it may be cached
@@ -746,12 +746,12 @@ def _wrap_main_func(
         tokens_in=mlir.TokenSet(), tokens_out=None)
       # We compute dim_values from the array arguments.
       new_main_op_array_args = new_main_op.arguments[-nr_array_args:]
-      if _shape_poly.all_dim_vars(args_avals_flat):
+      if shape_poly.all_dim_vars(args_avals_flat):
         # TODO(necula): handle module_kept_var_idx in presence of shape
         # polymorphism. For now we ensured upstream that we keep all variables.
         assert len(set(module_kept_var_idx)) == len(args_avals_flat)
         dim_values = mlir.lower_fun(
-            functools.partial(_shape_poly.compute_dim_vars_from_arg_shapes,
+            functools.partial(shape_poly.compute_dim_vars_from_arg_shapes,
                               args_avals_flat, args_kwargs_tree=args_kwargs_tree),
             multiple_results=True)(ctx, *new_main_op_array_args)
       else:
@@ -1087,7 +1087,7 @@ def call(exported: Exported) -> Callable[..., jax.Array]:
           f"as when the function '{exported.fun_name}' was exported, but they "
           "have the following structural differences:\n" +
           ("\n".join(
-             f"   - {_shape_poly.args_kwargs_path_to_str(path)} is a {thing1} in the invocation and a "
+             f"   - {shape_poly.args_kwargs_path_to_str(path)} is a {thing1} in the invocation and a "
              f"{thing2} when exported, so {explanation}.\n"
              for path, thing1, thing2, explanation
              in tree_util.equality_errors(in_args, exp_in_args))))
@@ -1108,12 +1108,12 @@ def _call_exported_abstract_eval(
     *in_avals: core.AbstractValue,
     exported: Exported
     ) -> tuple[tuple[core.AbstractValue, ...], set[effects.Effect]]:
-  exported_dim_vars = _shape_poly.all_dim_vars(exported.in_avals)
+  exported_dim_vars = shape_poly.all_dim_vars(exported.in_avals)
   assert len(in_avals) == len(exported.in_avals)  # since the pytrees have the same structure
   # Check that the expected shapes match the actual ones
   for arg_idx, (exp_aval, actual_aval) in enumerate(zip(exported.in_avals, in_avals)):
     def pp_arg_dim(dim_idx: int | None) -> str:
-      return _shape_poly.pretty_print_dimension_descriptor(exported.in_tree,
+      return shape_poly.pretty_print_dimension_descriptor(exported.in_tree,
                                                           arg_idx, dim_idx)
     if len(exp_aval.shape) != len(actual_aval.shape):
       raise ValueError(
@@ -1135,11 +1135,11 @@ def _call_exported_abstract_eval(
               f"expected {exp_aval.shape} and called with {actual_aval.shape}")
 
   # Must express the exported_dim_vars in terms of the shapes in in_avals.
-  solution, shape_constraints, synth_dim_vars = _shape_poly.solve_dim_vars(
+  solution, shape_constraints, synth_dim_vars = shape_poly.solve_dim_vars(
       exported.in_avals, args_kwargs_tree=exported.in_tree)
   synthetic_env = {vname: in_avals[arg_idx].shape[dim_idx]
                    for (vname, arg_idx, dim_idx) in synth_dim_vars}
-  synthetic_eval = _shape_poly.CachingShapeEvaluator(**synthetic_env)
+  synthetic_eval = shape_poly.CachingShapeEvaluator(**synthetic_env)
   # We discharge all the constraints statically. This results in much simpler
   # composability (because we do not have to worry about the constraints of the
   # Exported called recursively; we only need to worry about entry-point
@@ -1331,7 +1331,7 @@ export.Exported = Exported
 export.call_exported = wrap_with_deprecation_warning(call_exported)
 export.DisabledSafetyCheck = DisabledSafetyCheck
 export.default_lowering_platform = wrap_with_deprecation_warning(default_lowering_platform)
-export.symbolic_shape = wrap_with_deprecation_warning(_shape_poly.symbolic_shape)
+export.symbolic_shape = wrap_with_deprecation_warning(shape_poly.symbolic_shape)
 export.args_specs = wrap_with_deprecation_warning(args_specs)
 export.minimum_supported_serialization_version = minimum_supported_serialization_version
 export.maximum_supported_serialization_version = maximum_supported_serialization_version

@@ -38,7 +38,6 @@ from jax import tree_util
 from jax import sharding
 from jax.experimental import export
 from jax.experimental.export import _export
-from jax.experimental.export import _shape_poly
 from jax.experimental.jax2tf import impl_no_xla
 from jax.interpreters import xla
 
@@ -61,6 +60,7 @@ from jax._src import random as random_internal
 from jax._src import source_info_util
 from jax._src import util
 from jax._src import shard_alike
+from jax._src.export import shape_poly
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
 from jax._src.lax import control_flow as lax_control_flow
@@ -88,7 +88,7 @@ from tensorflow.python.eager import context as tf_context
 # pylint: enable=g-direct-tensorflow-import
 
 NameStack = source_info_util.NameStack
-PolyShape = _shape_poly.PolyShape  # TODO: deprecate
+PolyShape = shape_poly.PolyShape  # TODO: deprecate
 DType = Any
 
 DisabledSafetyCheck = export.DisabledSafetyCheck
@@ -579,9 +579,9 @@ class GraphSerializationImpl(SerializationImpl):
         (self.args_specs, self.kwargs_specs))
     self.args_avals_flat = tuple(
         map(lambda a: core.raise_to_shaped(core.get_aval(a)), args_specs_flat))
-    dim_vars = _shape_poly.all_dim_vars(self.args_avals_flat)
+    dim_vars = shape_poly.all_dim_vars(self.args_avals_flat)
     dim_values, _ = _interpret_fun_jax(
-        partial(_shape_poly.compute_dim_vars_from_arg_shapes,
+        partial(shape_poly.compute_dim_vars_from_arg_shapes,
                 self.args_avals_flat, args_kwargs_tree=self.in_tree),
         self.args_flat_tf, self.args_avals_flat, self.name_stack)
 
@@ -1148,8 +1148,8 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
     return tf_val, jax_dtype
 
 
-def _eval_shape(shape: Sequence[_shape_poly.DimSize], dtype=None) -> Sequence[TfVal]:
-  # Returns a tuple of _shape_poly.dim_as_value_dtype
+def _eval_shape(shape: Sequence[shape_poly.DimSize], dtype=None) -> Sequence[TfVal]:
+  # Returns a tuple of shape_poly.dim_as_value_dtype
   # Used only for non-native lowering
   assert all(map(lambda x: x is not None, shape)), (
       f"Argument shape should be a valid JAX shape but got {shape}")
@@ -1174,7 +1174,7 @@ def _ensure_tf_shape_if_dynamic(x: TfVal, shape):
   return tf.ensure_shape(x, shape)
 
 
-def _assert_matching_abstract_shape(x: TfVal, shape: Sequence[_shape_poly.DimSize]):
+def _assert_matching_abstract_shape(x: TfVal, shape: Sequence[shape_poly.DimSize]):
   """Asserts that shape matches x.shape in the known dimensions and has
   dimension polynomials elsewhere."""
   # Ensures that the shape does not contain None; it should contain symbolic expressions.
@@ -3569,13 +3569,13 @@ def _dimension_size_jax2tf(op: TfVal, *, dimension, _in_avals, _out_aval):
   else:
     return dim_tf
 
-tf_impl_with_avals[_shape_poly.dimension_size_p] = _dimension_size_jax2tf
+tf_impl_with_avals[shape_poly.dimension_size_p] = _dimension_size_jax2tf
 
-def _dim_as_value_jax2tf(dim: _shape_poly.DimSize):
+def _dim_as_value_jax2tf(dim: shape_poly.DimSize):
   dim_tf, = _eval_shape((dim,))
   return dim_tf
 
-tf_impl[_shape_poly.dim_as_value_p] = _dim_as_value_jax2tf
+tf_impl[shape_poly.dim_as_value_p] = _dim_as_value_jax2tf
 
 def _shape_assertion_jax2tf(assert_what, *error_message_inputs,
                             error_message: str):
@@ -3585,7 +3585,7 @@ def _shape_assertion_jax2tf(assert_what, *error_message_inputs,
     message=error_message.format(*error_message_inputs))
   return []
 
-tf_impl[_shape_poly.shape_assertion_p] = _shape_assertion_jax2tf
+tf_impl[shape_poly.shape_assertion_p] = _shape_assertion_jax2tf
 
 def _reduce_precision(x, *, exponent_bits, mantissa_bits):
   return tfxla.reduce_precision(x, exponent_bits=exponent_bits,
