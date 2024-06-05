@@ -70,7 +70,7 @@ logger = logging.getLogger(__name__)
 
 async def create_async_array_from_callback(
     global_shape: array.Shape,
-    inp_sharding: sharding_impls.XLACompatibleSharding,
+    inp_sharding: jax.sharding.Sharding,
     data_callback: Callable[[array.Index, jax.Device], Awaitable[jax.Array]],
 ):
   device_to_index_map = inp_sharding.devices_indices_map(global_shape)
@@ -310,7 +310,7 @@ def estimate_read_memory_footprint(t: ts.TensorStore,
 
 
 async def async_deserialize(
-    user_in_sharding: sharding_impls.XLACompatibleSharding | Layout,
+    user_in_sharding: jax.sharding.Sharding | Layout,
     tensorstore_spec: ts.Spec | dict[str, Any],
     global_shape: Sequence[int] | None = None,
     dtype=None,
@@ -320,10 +320,10 @@ async def async_deserialize(
 ):
   in_sharding = (user_in_sharding.sharding
                  if isinstance(user_in_sharding, Layout) else user_in_sharding)
-  if not isinstance(in_sharding, sharding_impls.XLACompatibleSharding):
+  if not isinstance(in_sharding, jax.sharding.Sharding):
     raise ValueError(
         'sharding passed to deserialization should be specified, concrete and'
-        f' an instance of `jax.XLACompatibleSharding`. Got {in_sharding}')
+        f' an instance of `jax.sharding.Sharding`. Got {in_sharding}')
   dll = (user_in_sharding.device_local_layout
          if isinstance(user_in_sharding, Layout) else None)
   t = await ts.open(

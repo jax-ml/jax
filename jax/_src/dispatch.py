@@ -48,7 +48,7 @@ from jax._src.monitoring import record_event_duration_secs
 from jax._src.partition_spec import PartitionSpec
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
-    SingleDeviceSharding, NamedSharding, XLACompatibleSharding,
+    SingleDeviceSharding, NamedSharding,
     GSPMDSharding, TransferToMemoryKind, is_single_device_sharding)
 from jax._src.layout import Layout, DeviceLocalLayout
 
@@ -220,7 +220,7 @@ class SourceInfo(NamedTuple):
 
 def jaxpr_shardings(
     jaxpr: core.Jaxpr,
-) -> Iterator[tuple[XLACompatibleSharding, SourceInfo]]:
+) -> Iterator[tuple[Sharding, SourceInfo]]:
   from jax._src import pjit
   from jax.experimental import shard_map
 
@@ -241,7 +241,7 @@ def jaxpr_shardings(
                   for names in [*eqn.params['in_names'], *eqn.params['out_names']])
     elif eqn.primitive is device_put_p:
       s = eqn.params['device']
-      if isinstance(s, XLACompatibleSharding) and s.memory_kind is not None:
+      if isinstance(s, Sharding) and s.memory_kind is not None:
         source_info = SourceInfo(eqn.source_info, eqn.primitive.name)
         yield (s, source_info)
   for subjaxpr in core.subjaxprs(jaxpr):
@@ -392,7 +392,7 @@ def _device_put_sharding_impl(x, aval, device):
         isinstance(x, array.ArrayImpl) and not x.is_fully_addressable):
       # This has to be XLACompatible because _mcjax_reshard will run a
       # XLA computation.
-      assert isinstance(s, XLACompatibleSharding)
+      assert isinstance(s, Sharding)
       return _mcjax_reshard(x, s)
     if not s.is_fully_addressable:
       # TODO(yashkatariya,mattjj): Link to a doc about McJAX and jax.Array.
@@ -467,11 +467,11 @@ ad.deflinear2(device_put_p, device_put_transpose_rule)
 batching.defvectorized(device_put_p)
 
 def _tpu_gpu_device_put_lowering(ctx, x, *, device, src):
-  if (isinstance(device, (XLACompatibleSharding, TransferToMemoryKind)) and
+  if (isinstance(device, (Sharding, TransferToMemoryKind)) and
       device.memory_kind is not None):
     aval, = ctx.avals_in
     out_aval, = ctx.avals_out
-    if isinstance(device, XLACompatibleSharding):
+    if isinstance(device, Sharding):
       x = mlir.wrap_with_sharding_op(
           ctx, x, out_aval, device._to_xla_hlo_sharding(aval.ndim).to_proto())
     x = mlir.wrap_with_memory_kind(x, device.memory_kind, out_aval)
@@ -484,7 +484,7 @@ mlir.register_lowering(
 
 
 def _common_device_put_lowering(ctx, x, *, device, src):
-  if (isinstance(device, (XLACompatibleSharding, TransferToMemoryKind)) and
+  if (isinstance(device, (Sharding, TransferToMemoryKind)) and
       device.memory_kind is not None):
     raise NotImplementedError(
         "Passing memory_kind to device_put via Shardings is not supported on"
@@ -493,7 +493,7 @@ def _common_device_put_lowering(ctx, x, *, device, src):
 mlir.register_lowering(device_put_p, _common_device_put_lowering)
 
 def _propagate_mem_kind_dp(xm, device=None, src=None):
-  if isinstance(device, (XLACompatibleSharding, TransferToMemoryKind)):
+  if isinstance(device, (Sharding, TransferToMemoryKind)):
     return device.memory_kind
   return None
 pxla.memory_kind_propagate_rule[device_put_p] = _propagate_mem_kind_dp

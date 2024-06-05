@@ -158,7 +158,7 @@ def named_sharding_to_xla_hlo_sharding(
 
 
 @use_cpp_class(xc.NamedSharding)
-class NamedSharding(XLACompatibleSharding):
+class NamedSharding(sharding.Sharding):
   r"""A :class:`NamedSharding` expresses sharding using named axes.
 
   A :class:`NamedSharding` is a pair of a :class:`Mesh` of devices and
@@ -303,7 +303,7 @@ def get_replicated_hlo_sharding():
 
 
 @use_cpp_class(xc.SingleDeviceSharding)
-class SingleDeviceSharding(XLACompatibleSharding):
+class SingleDeviceSharding(sharding.Sharding):
   """A :class:`Sharding` that places its data on a single device.
 
   Args:
@@ -382,7 +382,7 @@ def pmap_sharding_devices_indices_map(
 
 
 @use_cpp_class(xc.PmapSharding)
-class PmapSharding(XLACompatibleSharding):
+class PmapSharding(sharding.Sharding):
   """Describes a sharding used by :func:`jax.pmap`."""
   devices: np.ndarray
   sharding_spec: sharding_specs.ShardingSpec
@@ -583,7 +583,7 @@ def _positional_sharding_to_xla_hlo_sharding(
   return xc.HloSharding.from_proto(pbuf)
 
 
-class PositionalSharding(XLACompatibleSharding):
+class PositionalSharding(sharding.Sharding):
   _devices: tuple[xc.Device, ...]
   _memory_kind: str | None
   _ids: np.ndarray  # dtype DeviceIdSet
@@ -690,7 +690,7 @@ class PositionalSharding(XLACompatibleSharding):
   def is_fully_replicated(self) -> bool:
     return self.shape == (1,) * self.ndim
 
-  # XLACompatibleSharding interface
+  # sharding.Sharding interface
 
   @property
   def _device_assignment(self) -> XLADeviceAssignment:
@@ -734,7 +734,7 @@ class DeviceIdSet:
 
 
 @use_cpp_class(xc.GSPMDSharding)
-class GSPMDSharding(XLACompatibleSharding):
+class GSPMDSharding(sharding.Sharding):
   _devices: tuple[Device, ...]
   _hlo_sharding: xc.HloSharding
   _memory_kind: str | None
@@ -1057,7 +1057,7 @@ def prepare_axis_resources(axis_resources,
       if xla_extension_version < 270:
         if not isinstance(entry, XLACompatibleSharding):
           raise ValueError(f'One of {what} got sharding {entry} which is not a '
-                          'subclass of XLACompatibleSharding.')
+                           'subclass of XLACompatibleSharding.')
       new_entries.append(entry)
     else:
       new_entries.append(ParsedPartitionSpec.from_user_input(
@@ -1071,7 +1071,7 @@ def _check_unique_resources(axis_resources, arg_name):
   for arg_axis_resources in axis_resources:
     if not arg_axis_resources: continue
     if (is_unspecified_or_auto(arg_axis_resources) or
-        isinstance(arg_axis_resources, XLACompatibleSharding)):
+        isinstance(arg_axis_resources, sharding.Sharding)):
       continue
     constrained_dims = [d for d in arg_axis_resources if d is not None]
     resource_counts = collections.Counter(
@@ -1385,7 +1385,7 @@ def make_key_array_phys_sharding(aval, sharding):
 
 
 def physical_sharding(
-    aval, sharding: XLACompatibleSharding) -> XLACompatibleSharding:
+    aval, sharding: sharding.Sharding) -> sharding.Sharding:
   return make_key_array_phys_sharding(aval, sharding)
 
 
@@ -1402,7 +1402,7 @@ def get_logical_gspmd_sharding(aval, phys_sharding):
   return GSPMDSharding(phys_sharding._device_assignment,
                        xc.HloSharding.from_proto(logical_op_sharding))
 
-def check_replicated_trailing_dims(sharding: XLACompatibleSharding, aval):
+def check_replicated_trailing_dims(sharding: sharding.Sharding, aval):
   if isinstance(sharding, PmapSharding):
     return
   phys_aval = core.physical_aval(aval)
@@ -1415,7 +1415,7 @@ def check_replicated_trailing_dims(sharding: XLACompatibleSharding, aval):
         f" sharding: {sharding}, partitions: {partitions}, "
         f"num_trailing_dims: {num_trailing_dims}")
 
-def logical_sharding(aval, phys_sharding) -> XLACompatibleSharding:
+def logical_sharding(aval, phys_sharding) -> sharding.Sharding:
   # The trailing dims should always be replicated.
   check_replicated_trailing_dims(phys_sharding, aval)
 

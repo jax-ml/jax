@@ -133,10 +133,8 @@ def _custom_partitioning_propagate_user_sharding(user_sharding, shape,
 
 
 def _to_hlo_sharding(sharding, num_dimensions):
-  if not isinstance(sharding, jax.sharding.XLACompatibleSharding):
-    raise ValueError(
-        "Custom Partitioning rules must return XLACompatibleShardings."
-    )
+  if not isinstance(sharding, jax.sharding.Sharding):
+    raise ValueError("Custom Partitioning rules must return Sharding.")
   return sharding._to_xla_hlo_sharding(num_dimensions)
 
 

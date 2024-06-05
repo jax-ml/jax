@@ -47,6 +47,7 @@ from jax._src import xla_bridge as xb
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout
+from jax._src.sharding import Sharding as JSharding
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
 from jax._src.lib.mlir import dialects
@@ -54,7 +55,6 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir import register_jax_dialects
-from jax._src.sharding_impls import XLACompatibleSharding
 from jax._src.state.types import AbstractRef
 
 map, unsafe_map = util.safe_map, map
@@ -735,7 +735,7 @@ def flatten_lowering_ir_args(
 _module_name_regex = re.compile(r"[^\w.-]")
 
 def sharded_aval(aval: core.AbstractValue,
-                 sharding: XLACompatibleSharding | None) -> core.AbstractValue:
+                 sharding: JSharding | None) -> core.AbstractValue:
   """Returns the new aval sharded based on sharding proto."""
   if sharding is None:
     return aval
@@ -809,11 +809,11 @@ _platforms_with_donation = ["cpu", "cuda", "rocm", "tpu"]
 
 
 def _to_physical_op_sharding(
-    aval: core.AbstractValue, sharding: XLACompatibleSharding | None,
+    aval: core.AbstractValue, sharding: JSharding | None,
 ) -> xc.OpSharding | None:
   if sharding is None:
     return None
-  assert isinstance(sharding, sharding_impls.XLACompatibleSharding)
+  assert isinstance(sharding, JSharding)
   if isinstance(aval, AbstractRef):
     return _to_physical_op_sharding(aval.inner_aval, sharding)
   assert isinstance(aval, (core.ShapedArray, core.DShapedArray))
@@ -831,10 +831,10 @@ def _to_xla_layout(layout: DeviceLocalLayout | None | AutoLayout) -> str | None:
   return layout._to_xla_layout()
 
 
-def _get_mem_kind(s: XLACompatibleSharding | None) -> str | None:
+def _get_mem_kind(s: JSharding | None) -> str | None:
   if s is None:
     return None
-  assert isinstance(s, sharding_impls.XLACompatibleSharding)
+  assert isinstance(s, JSharding)
   return s.memory_kind
 
 
@@ -849,8 +849,8 @@ def lower_jaxpr_to_module(
     name_stack: source_info_util.NameStack,
     donated_args: Sequence[bool],
     replicated_args: Sequence[bool] | None = None,
-    arg_shardings: Sequence[XLACompatibleSharding | None] | None = None,
-    result_shardings: Sequence[XLACompatibleSharding | None] | None = None,
+    arg_shardings: Sequence[JSharding | None] | None = None,
+    result_shardings: Sequence[JSharding | None] | None = None,
     in_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
     out_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
     arg_names: Sequence[str | None] | None = None,
@@ -1090,8 +1090,8 @@ def lower_jaxpr_to_fun(
     *,
     public: bool = False,
     replicated_args: Sequence[bool] | None = None,
-    arg_shardings: Sequence[XLACompatibleSharding | None] | None = None,
-    result_shardings: Sequence[XLACompatibleSharding | None] | None = None,
+    arg_shardings: Sequence[JSharding | None] | None = None,
+    result_shardings: Sequence[JSharding | None] | None = None,
     use_sharding_annotations: bool = True,
     input_output_aliases: Sequence[int | None] | None = None,
     xla_donated_args: Sequence[bool] | None = None,

@@ -42,7 +42,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension as xe
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
-    PmapSharding, SingleDeviceSharding, XLACompatibleSharding,
+    PmapSharding, SingleDeviceSharding,
     device_replica_id_map, hashed_index, num_addressable_indices)  # pyformat: disable
 from jax._src.typing import ArrayLike, DLDeviceType
 from jax._src.util import safe_zip, unzip3, use_cpp_class, use_cpp_method
@@ -218,9 +218,8 @@ class ArrayImpl(basearray.Array):
             f"{self.aval.str_short()} with sharding {self.sharding}")
 
     # Rearrange arrays based on the device assignment.
-    if isinstance(self.sharding, XLACompatibleSharding):
-      addressable_da = self.sharding._addressable_device_assignment
-      self._arrays = [device_id_to_buffer[device.id] for device in addressable_da]
+    addressable_da = self.sharding._addressable_device_assignment
+    self._arrays = [device_id_to_buffer[device.id] for device in addressable_da]
 
   @property
   def shape(self) -> Shape:

@@ -67,8 +67,7 @@ from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src.lib import pmap_lib
 from jax._src.sharding import Sharding
-from jax._src.sharding_impls import (PmapSharding, TransferToMemoryKind,
-                                     XLACompatibleSharding)
+from jax._src.sharding_impls import PmapSharding, TransferToMemoryKind
 from jax._src.layout import Layout, AutoLayout
 from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
@@ -2428,7 +2427,7 @@ def _check_sharding(aval, s):
   if isinstance(s, Sharding):
     if isinstance(aval, core.AbstractToken):
       aval = core.token_shaped_array
-    if isinstance(s, XLACompatibleSharding) and not isinstance(s, PmapSharding):
+    if not isinstance(s, PmapSharding):
       pjit.pjit_check_aval_sharding(
           (s,), (aval,), None, "device_put args", allow_uneven_sharding=False)
     s.shard_shape(aval.shape)  # should raise an Error if incompatible

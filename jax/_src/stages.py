@@ -72,7 +72,7 @@ class Executable(Protocol):
     # TODO(frostig): improve annotation (sequences of arrays/buffers)
     raise NotImplementedError
 
-  def input_shardings(self) -> Sequence[jax.sharding.XLACompatibleSharding]:
+  def input_shardings(self) -> Sequence[jax.sharding.Sharding]:
     """Flat sequence of input shardings.
 
     May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
@@ -80,7 +80,7 @@ class Executable(Protocol):
     """
     raise NotImplementedError
 
-  def output_shardings(self) -> Sequence[jax.sharding.XLACompatibleSharding]:
+  def output_shardings(self) -> Sequence[jax.sharding.Sharding]:
     """Flat sequence of output shardings.
 
     May raise ``NotImplementedError`` if unavailable, e.g. based on backend,
@@ -218,11 +218,11 @@ class XlaExecutable(Executable):
   def call(self, *args_flat) -> Sequence[Any]:
     raise NotImplementedError("must override")
 
-  def input_shardings(self) -> Sequence[jax.sharding.XLACompatibleSharding]:
+  def input_shardings(self) -> Sequence[jax.sharding.Sharding]:
     raise NotImplementedError(
         "compiled executable carries no input sharding information")
 
-  def output_shardings(self) -> Sequence[jax.sharding.XLACompatibleSharding]:
+  def output_shardings(self) -> Sequence[jax.sharding.Sharding]:
     raise NotImplementedError(
         "compiled executable carries no output sharding information")
 
@@ -503,7 +503,7 @@ class Compiled(Stage):
     return self._executable.runtime_executable()
 
   @property
-  def input_shardings(self):  # PyTree[sharding.XLACompatibleSharding]
+  def input_shardings(self):  # PyTree[sharding.Sharding]
     shardings_flat = self._executable.input_shardings()
     # Some input shardings got DCE'd
     if self.in_tree.num_leaves > len(shardings_flat):
@@ -513,7 +513,7 @@ class Compiled(Stage):
     return tree_util.tree_unflatten(self.in_tree, shardings_flat)  # pytype: disable=attribute-error
 
   @property
-  def output_shardings(self):  # PyTree[sharding.XLACompatibleSharding]
+  def output_shardings(self):  # PyTree[sharding.Sharding]
     shardings_flat = self._executable.output_shardings()
     return tree_util.tree_unflatten(self.out_tree, shardings_flat)  # pytype: disable=attribute-error
 

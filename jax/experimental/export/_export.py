@@ -60,7 +60,7 @@ zip = util.safe_zip
 DType = Any
 Shape = jax._src.core.Shape
 # The values of input and output sharding from the lowering.
-LoweringSharding = Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue]
+LoweringSharding = Union[sharding.Sharding, pxla.UnspecifiedValue]
 HloSharding = xla_client.HloSharding
 
 # See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions
@@ -315,12 +315,12 @@ class Exported:
 
   def xla_compatible_in_shardings(
       self,
-      mesh: sharding.Mesh) -> Sequence[sharding.XLACompatibleSharding | None]:
-    """Creates XLACompatibleShardings corresponding to self.in_shardings.
+      mesh: sharding.Mesh) -> Sequence[sharding.Sharding | None]:
+    """Creates Shardings corresponding to self.in_shardings.
 
     The Exported object stores `in_shardings` as HloShardings, which are
     independent of a mesh or set of devices. This method constructs
-    XLACompatibleSharding that can be used in JAX APIs such as `jax.jit` or
+    Sharding that can be used in JAX APIs such as `jax.jit` or
     `jax.device_put`.
 
     Example usage:
@@ -354,8 +354,8 @@ class Exported:
 
   def xla_compatible_out_shardings(
       self,
-      mesh: sharding.Mesh) -> Sequence[sharding.XLACompatibleSharding | None]:
-    """Creates XLACompatibleShardings corresponding to self.out_shardings.
+      mesh: sharding.Mesh) -> Sequence[sharding.Sharding | None]:
+    """Creates Shardings corresponding to self.out_shardings.
 
     See documentation for xla_compatible_in_shardings.
     """
@@ -978,7 +978,7 @@ def expand_in_shardings(in_shardings: Sequence[LoweringSharding],
 
 def _hlo_sharding_to_xla_compatible_sharding(
     hlo_sharding: HloSharding | None,
-    mesh: sharding.Mesh) -> sharding.XLACompatibleSharding | None:
+    mesh: sharding.Mesh) -> sharding.Sharding | None:
   if hlo_sharding is None:
     return None
   return sharding_impls._gspmd_to_named_sharding_via_mesh(

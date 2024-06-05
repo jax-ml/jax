@@ -66,6 +66,7 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec
+from jax._src.sharding import Sharding as JSharding
 from jax._src.sharding_impls import (
     ArrayMapping, ArrayMappingOrAutoOrUnspecified, AUTO, UNSPECIFIED,
     UnspecifiedValue, get_array_mapping as _get_array_mapping, is_auto,
@@ -114,9 +115,8 @@ def shard_arg(arg, sharding, canonicalize=True):
 
 
 @profiler.annotate_function
-def shard_args(
-    shardings: Sequence[sharding_impls.XLACompatibleSharding], args,
-) -> Sequence[jax.Array]:
+def shard_args(shardings: Sequence[JSharding], args
+               ) -> Sequence[jax.Array]:
   return [shard_arg(arg, shardings[i]) for i, arg in enumerate(args)]
 
 shard_arg_handlers: dict[Any, Callable[[Any, Any], Any]] = {}
@@ -155,7 +155,7 @@ def _shard_mutable_array(x, sharding):
 shard_arg_handlers[core.MutableArray] = _shard_mutable_array
 
 def batched_device_put(aval: core.ShapedArray,
-                       sharding: jax.sharding.Sharding, xs: Sequence[Any],
+                       sharding: JSharding, xs: Sequence[Any],
                        devices: Sequence[jax.Device], committed: bool = True):
   from jax._src import array
 
@@ -191,7 +191,7 @@ _shard_aval_handlers[ShapedArray] = _shard_abstract_array
 
 def local_aval_to_result_handler(
     aval: core.AbstractValue,
-    sharding: sharding_impls.XLACompatibleSharding,
+    sharding: JSharding,
     indices: tuple[Index, ...] | None,
 ) -> Callable[[list[xc.ArrayImpl]], Any]:
   """Returns a function for handling the raw buffers of a single output aval.
@@ -864,9 +864,9 @@ class UnloadedPmapExecutable:
   compiled: Any
   backend: xb.XlaBackend
   local_input_avals: Sequence[core.AbstractValue]
-  input_shardings: Sequence[sharding_impls.XLACompatibleSharding]
+  input_shardings: Sequence[JSharding]
   local_output_avals: Sequence[ShapedArray]
-  output_shardings: Sequence[sharding_impls.XLACompatibleSharding]
+  output_shardings: Sequence[JSharding]
   unordered_effects: list[core.Effect]
   ordered_effects: list[core.Effect]
   keepalive: Sequence[Any]
@@ -1096,7 +1096,7 @@ class ResultsHandler:
 
 def local_avals_to_results_handler(
     unmapped_local_out_avals: Sequence[ShapedArray],
-    local_shardings: Sequence[sharding_impls.XLACompatibleSharding]) -> ResultsHandler:
+    local_shardings: Sequence[JSharding]) -> ResultsHandler:
   out_indices = [tuple(s.devices_indices_map(aval.shape).values())
                  for s, aval in safe_zip(local_shardings, unmapped_local_out_avals)]
   handlers = [
@@ -1108,7 +1108,7 @@ def local_avals_to_results_handler(
 
 def global_avals_to_results_handler(
     global_out_avals: Sequence[ShapedArray],
-    shardings: Sequence[sharding_impls.XLACompatibleSharding],
+    shardings: Sequence[JSharding],
     committed: bool) -> ResultsHandler:
   handlers = [
       global_aval_to_result_handler(global_aval, s, committed)
@@ -1617,8 +1617,7 @@ TilingMethod = Union[TileVectorize, TileManual]
 
 
 def check_if_any_auto(
-    shardings: Iterable[(sharding_impls.XLACompatibleSharding |
-                              AUTO | UnspecifiedValue)]) -> bool:
+    shardings: Iterable[(JSharding | AUTO | UnspecifiedValue)]) -> bool:
   for s in shardings:
     if is_auto(s):
       return True
@@ -1683,7 +1682,7 @@ class DeviceAssignmentMismatchError(Exception):
 
 
 ShardingInfo = tuple[
-    Union[sharding_impls.XLACompatibleSharding, UnspecifiedValue, AUTO],
+    Union[JSharding, UnspecifiedValue, AUTO],
     MismatchType,
     Union[Any, None],  # Any is dispatch.SourceInfo to avoid circular imports
 ]
@@ -1740,7 +1739,7 @@ def _get_and_check_device_assignment(
     final_device_assignment = first_sharding_info[0]
   return xb.get_device_backend(final_device_assignment[0]), final_device_assignment
 
-MaybeSharding = Union[sharding_impls.XLACompatibleSharding, UnspecifiedValue]
+MaybeSharding = Union[JSharding, UnspecifiedValue]
 
 
 def prune_unused_inputs(
@@ -1928,8 +1927,8 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
   nreps = dispatch.jaxpr_replicas(jaxpr)
   _raise_warnings_or_errors_for_jit_of_pmap(nreps, backend, fun_name, jaxpr)
 
-  in_mlir_shardings: list[sharding_impls.XLACompatibleSharding | None] | None
-  out_mlir_shardings: list[sharding_impls.XLACompatibleSharding | None] | None
+  in_mlir_shardings: list[JSharding | None] | None
+  out_mlir_shardings: list[JSharding | None] | None
   axis_ctx: mlir.AxisContext
 
   if nreps == 1:
@@ -2068,8 +2067,7 @@ class AllArgsInfo(NamedTuple):
 
 
 @lru_cache(maxsize=2048)
-def to_gspmd_sharding(s: sharding_impls.XLACompatibleSharding,
-                      ndim: int) -> GSPMDSharding:
+def to_gspmd_sharding(s: JSharding, ndim: int) -> GSPMDSharding:
   if isinstance(s, GSPMDSharding):
     return s
   return GSPMDSharding(s._device_assignment, s._to_xla_hlo_sharding(ndim),
@@ -2242,11 +2240,11 @@ def lower_sharding_computation(
 
 def _to_logical_sharding(
     aval: core.AbstractValue, sharding: MaybeSharding | AUTO
-) -> sharding_impls.XLACompatibleSharding | None:
+) -> JSharding | None:
   if is_unspecified(sharding) or is_auto(sharding):
     return None
   elif isinstance(aval, (ShapedArray, DShapedArray, AbstractRef)):
-    assert isinstance(sharding, sharding_impls.XLACompatibleSharding)
+    assert isinstance(sharding, JSharding)
     return sharding
   elif isinstance(aval, core.AbstractToken):
     return None
@@ -2339,8 +2337,8 @@ def lower_mesh_computation(
   # 2. Build up the HLO
   tuple_args = dispatch.should_tuple_args(len(in_jaxpr_avals), backend.platform)
 
-  in_partitions: list[sharding_impls.XLACompatibleSharding | None] | None
-  out_partitions: list[sharding_impls.XLACompatibleSharding | None] | None
+  in_partitions: list[JSharding | None] | None
+  out_partitions: list[JSharding | None] | None
   axis_ctx: mlir.AxisContext
   if spmd_lowering:
     in_partitions = map(_to_logical_sharding, global_in_avals, in_shardings)
@@ -2554,7 +2552,7 @@ def _get_mesh_pspec_shardings_from_executable(
 
 _orig_out_sharding_handlers = {}
 
-_ShardingT = TypeVar("_ShardingT", bound=sharding_impls.XLACompatibleSharding)
+_ShardingT = TypeVar("_ShardingT", bound=JSharding)
 
 
 def _register_out_sharding_handler(
@@ -2849,9 +2847,9 @@ class UnloadedMeshExecutable:
   device_assignment: xc.DeviceList | Sequence[xc.Device]
   backend: xb.XlaBackend
   input_avals: Sequence[ShapedArray]
-  input_shardings: Sequence[sharding_impls.XLACompatibleSharding]
+  input_shardings: Sequence[JSharding]
   output_avals: Sequence[ShapedArray]
-  output_shardings: Sequence[sharding_impls.XLACompatibleSharding]
+  output_shardings: Sequence[JSharding]
   committed: bool
   name: str
   unordered_effects: list[core.Effect]
@@ -2891,9 +2889,8 @@ class UnloadedMeshExecutable:
                hlo: ir.Module,
                global_in_avals: Sequence[ShapedArray],
                global_out_avals: Sequence[ShapedArray],
-               in_shardings: Sequence[sharding_impls.XLACompatibleSharding | AUTO],
-               out_shardings: Sequence[(sharding_impls.XLACompatibleSharding | AUTO |
-                                        UnspecifiedValue)],
+               in_shardings: Sequence[JSharding | AUTO],
+               out_shardings: Sequence[(JSharding | AUTO | UnspecifiedValue)],
                spmd_lowering: bool,
                tuple_args: bool,
                auto_spmd_lowering: bool,
@@ -3000,8 +2997,8 @@ class UnloadedMeshExecutable:
 class MeshExecutableFastpathData(NamedTuple):
   xla_executable: xc.LoadedExecutable
   out_pytree_def: Any
-  in_shardings: Sequence[sharding_impls.XLACompatibleSharding]
-  out_shardings: Sequence[sharding_impls.XLACompatibleSharding]
+  in_shardings: Sequence[JSharding]
+  out_shardings: Sequence[JSharding]
   out_avals: Sequence[ShapedArray]
   out_committed: Sequence[bool]
   kept_var_bitvec: Iterable[bool]
@@ -3077,10 +3074,10 @@ class MeshExecutable(stages.XlaExecutable):
         self._kept_var_idx)
     return self.unsafe_call(*args)  # pylint: disable=not-callable
 
-  def input_shardings(self) -> Sequence[sharding_impls.XLACompatibleSharding]:
+  def input_shardings(self) -> Sequence[JSharding]:
     return self._in_shardings
 
-  def output_shardings(self) -> Sequence[sharding_impls.XLACompatibleSharding]:
+  def output_shardings(self) -> Sequence[JSharding]:
     return self._out_shardings
 
   def input_layouts(self):
@@ -3190,7 +3187,7 @@ def check_device_backend_on_shardings(shardings) -> bool:
 
 def check_array_xla_sharding_layout_match(
     args_after_dce,
-    in_xla_shardings: Sequence[sharding_impls.XLACompatibleSharding],
+    in_xla_shardings: Sequence[JSharding],
     in_xla_layouts: Sequence[DeviceLocalLayout],
     jaxpr_debug_info: core.JaxprDebugInfo | None,
     kept_var_idx: set[int]) -> None:

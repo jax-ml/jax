@@ -569,6 +569,7 @@ pytype_strict_library(
         ":partial_eval",
         ":path",
         ":pickle_util",
+        ":sharding",
         ":sharding_impls",
         ":source_info_util",
         ":state_types",
