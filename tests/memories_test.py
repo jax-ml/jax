@@ -481,6 +481,9 @@ class DevicePutTest(jtu.JaxTestCase):
     )
 
   def test_parameter_and_output_streaming_with_scalar(self):
+    if xb.backend_xla_version() is not None and xb.backend_xla_version() < 2:
+      self.skipTest("This test requires an xla_version >= 2.")
+
     mesh = jax.sharding.Mesh(jax.devices(), "axis")
     s_host = jax.sharding.NamedSharding(
         mesh, jax.sharding.PartitionSpec(), memory_kind="pinned_host"
