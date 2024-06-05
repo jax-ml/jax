@@ -99,12 +99,11 @@ _COMMON_TEST_PARAMETERS = [
 ]
 
 
+# TransferGuardTest disables `--jax_enable_checks` because it
+# can prematurely fetch the value of device arrays and make
+# device-to-host tests to incur no transfers unexpectedly.
+@jtu.with_config(jax_enable_checks=False)
 class TransferGuardTest(jtu.JaxTestCase):
-  # `_default_config` is used by `jtu.JaxTestCase` to update the JAX config for
-  # every test case. TransferGuardTest disables `--jax_enable_checks` because it
-  # can prematurely fetch the value of device arrays and make device-to-host
-  # tests to incur no transfers unexpectedly.
-  _default_config = {"jax_enable_checks": False}
 
   @contextlib.contextmanager
   def assertAllows(self, func_name):
