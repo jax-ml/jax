@@ -880,7 +880,7 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     # lu on TPU
     "LuDecomposition",
     # ApproxTopK on TPU
-    "ApproxTopK",
+    "ApproxTopK", "stablehlo.dynamic_approx_top_k",
     "tf.call_tf_function",  # From jax2tf.call_tf(func, call_tf_graph=True)
     "tpu_custom_call",  # Pallas/TPU kernels
     # TODO(burmako): maintain backwards compatibility for these, until they

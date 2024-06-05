@@ -50,6 +50,7 @@ from jax._src.internal_test_util.export_back_compat_test_data import tpu_Shardin
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_stablehlo_dynamic_reduce_window
 from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_rng_bit_generator
 from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_top_k
+from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_approx_top_k
 
 from jax.experimental import pjit
 from jax.experimental.shard_map import shard_map
@@ -61,6 +62,7 @@ from jax.sharding import PartitionSpec as P
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lib import cuda_versions
+from jax._src.lib import xla_client
 
 config.parse_flags_with_absl()
 
@@ -124,6 +126,7 @@ class CompatTest(bctu.CompatTestBase):
         stablehlo_dynamic_rng_bit_generator.data_2023_06_17,
         stablehlo_dynamic_top_k.data_2023_07_16,
         stablehlo_dynamic_top_k.data_2023_08_11,  # with shape_assertion
+        stablehlo_dynamic_approx_top_k.data_2024_05_30,
     ]
     # Some of the above are nested structures.
     covering_testdatas = itertools.chain(
@@ -584,7 +587,7 @@ class CompatTest(bctu.CompatTestBase):
   def test_sharding(self):
     # Tests "Sharding", "SPMDShardToFullShape", "SPMDFullToShardShape" on TPU
     if not jtu.test_device_matches(["tpu"]) or len(jax.devices()) < 2:
-     self.skipTest("Test runs only on TPU with at least 2 devices")
+      self.skipTest("Test runs only on TPU with at least 2 devices")
 
     # Must use exactly 2 devices for expected outputs from ppermute
     devices = jax.devices()[:2]
@@ -708,6 +711,46 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data_2,
                       polymorphic_shapes=("_, b",),
                       check_results=check_top_k_results)
+
+  def test_dynamic_approx_top_k(self):
+    if xla_client.mlir_api_version < 57:
+      self.skipTest("Requires newer jaxlib")
+    # stablehlo.dynamic_approx_top_k is used temporarily for a approx_top_k
+    # with dynamism
+    # This is the input that was used to generate the test_data
+    _ = np.arange(24, dtype=np.float32)
+
+    def func(a):  # a: f32[b + 4]
+      return lax.approx_max_k(a, k=a.shape[0] - 4)
+
+    data = self.load_testdata(stablehlo_dynamic_approx_top_k.data_2024_05_30)
+
+    def check_top_k_results(res_run, res_expected, *, rtol, atol):
+      a = data.inputs[0]
+      # The order of the results may be different, but should be the same ones
+      values_expected, _ = res_expected
+      values_run, indices_run = res_run
+      # Check that indices are correct
+      self.assertAllClose(
+          values_run,
+          a[indices_run],
+          atol=atol,
+          rtol=rtol,
+      )
+      self.assertAllClose(
+          np.sort(values_run), np.sort(values_expected), atol=atol, rtol=rtol
+      )
+
+    self.run_one_test(
+        func,
+        data,
+        polymorphic_shapes=("b + 4,",),
+        check_results=check_top_k_results,
+        expect_current_custom_calls=[
+            "stablehlo.dynamic_approx_top_k",
+            "shape_assertion",
+        ],
+    )
 
 
 if __name__ == "__main__":

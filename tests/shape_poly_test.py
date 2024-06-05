@@ -2015,8 +2015,7 @@ _POLY_SHAPE_TEST_HARNESSES = [
                         (NotImplementedError, "aggregate_to_topk=False") if (
                             not agg and (isinstance(k, str) or
                                           isinstance(n, str))) else
-                        # TODO(b/339398482) fix case with k symbolic
-                        (TypeError, "get") if (agg and isinstance(k, str)) else
+                        (NotImplementedError, "requires jaxlib version") if xla_client.mlir_api_version < 57 and agg and isinstance(k, str) else
                         None
                     ))
         for n in [8, "n"]
