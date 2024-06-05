@@ -1011,14 +1011,16 @@ def promote_like_jnp(fun, inexact=False):
   return wrapper
 
 @contextmanager
-def config_context(**kwds):
+def global_config_context(**kwds):
   original_config = {}
-  for key, value in kwds.items():
-    original_config[key] = config._read(key)
-    config.update(key, value)
-  yield
-  for key, value in original_config.items():
-    config.update(key, value)
+  try:
+    for key, value in kwds.items():
+      original_config[key] = config._read(key)
+      config.update(key, value)
+    yield
+  finally:
+    for key, value in original_config.items():
+      config.update(key, value)
 
 
 class NotPresent:
@@ -1071,7 +1073,7 @@ class JaxTestCase(parameterized.TestCase):
   def setUpClass(cls):
     cls._compilation_cache_exit_stack = ExitStack()
     stack = cls._compilation_cache_exit_stack
-    stack.enter_context(config_context(**cls._default_config))
+    stack.enter_context(global_config_context(**cls._default_config))
 
     if TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
       stack.enter_context(config.enable_compilation_cache(True))

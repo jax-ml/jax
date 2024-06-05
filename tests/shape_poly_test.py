@@ -3327,14 +3327,8 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
     if "random_gamma" in harness.group_name:
       config_flags = {**config_flags, "jax_debug_key_reuse": False}
 
-    prev_jax_config_flags = {fname: getattr(jax.config, fname) for fname in config_flags}
-    try:
-      for fname, fvalue in config_flags.items():
-        jax.config.update(fname, fvalue)
+    with jtu.global_config_context(**config_flags):
       harness.run_test(self)
-    finally:
-      for fname, _ in config_flags.items():
-        jax.config.update(fname, prev_jax_config_flags[fname])
 
 
 if __name__ == "__main__":
