@@ -21,12 +21,22 @@ import dataclasses
 from absl import logging
 from absl.testing import absltest
 from absl.testing import parameterized
+from jax._src import mesh as mesh_lib
 from jax._src import test_util
+from jax._src.sharding_impls import NamedSharding, PartitionSpec, local_to_global_shape
 from jax.experimental import mesh_utils
 from jax.sharding import Mesh  # pylint: disable=g-importing-member
 import numpy as np
 
 # pyformat: disable
+
+
+@dataclasses.dataclass(frozen=True)
+class MockClient:
+  """Mock client for testing, everything is done as process index 0."""
+  def process_index(self) -> int:
+    return 0
+
 
 @dataclasses.dataclass(frozen=True)
 class MockTpuDevice:
@@ -38,6 +48,7 @@ class MockTpuDevice:
   coords: Sequence[int]
   core_on_chip: int
   slice_index: int = 0
+  client: MockClient = dataclasses.field(default_factory=MockClient)
 
 
 def mock_tpu_devices(x, y, z, dev_kind, one_device_per_chip, num_slices=1,
@@ -206,6 +217,41 @@ class MeshUtilsTest(test_util.JaxTestCase):
             physical_mesh.shape[physical_axis]
         )
     self.assertArraysEqual(assignment, expected_assignment_matrix)
+
+  @parameterized.named_parameters(
+      ('2x2x1', mock_2x2x1_devices,),
+      ('2x2x4', mock_2x2x4_devices, ),
+      ('4x4x4', mock_4x4x4_devices,),
+      ('4x4x8', mock_4x4x8_devices,),
+      ('4x8x8', mock_4x8x8_devices, ),
+      ('8x8', mock_8x8_devices),
+  )
+  def test_create_device_mesh_has_computable_global_shape(self, devices):
+    def factorize(n, max_factors=3):
+      if max_factors == 1 or n == 1:
+        yield (n, ) * max_factors
+        return
+      for i in range(2, n+1):
+        if n % i == 0:
+          for remaining in factorize(n // i, max_factors=max_factors - 1):
+            yield (i, *remaining)
+    jax_devices = devices(True)
+    for mesh_shape in factorize(len(jax_devices), max_factors=3):
+      mesh = mesh_utils.create_device_mesh(mesh_shape, devices=jax_devices,
+                                           allow_split_physical_axes=True)
+      mesh = mesh_lib.Mesh(mesh, ('a', 'b', 'c'))
+      sharding = NamedSharding(mesh, PartitionSpec('a', 'b', 'c'))
+      computed_global_shape = local_to_global_shape(sharding, (1, 1, 1))
+      self.assertFalse(
+          np.any([x is None for x in computed_global_shape]),
+          f'{mesh_shape=}, {computed_global_shape=} is not uniform')
+
+      sharding = NamedSharding(mesh, PartitionSpec(('a', 'c',), 'b'))
+      computed_global_shape = local_to_global_shape(sharding, (1, 1, 1))
+      self.assertFalse(
+          np.any([x is None for x in computed_global_shape]),
+          f'{mesh_shape=}, {computed_global_shape=} is not uniform')
+
 
   @parameterized.named_parameters(
       ('2x2x1', mock_2x2x1_devices, [1, 1, 4], [(), (), (0, 1, 2)]),
