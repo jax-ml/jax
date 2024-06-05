@@ -1301,7 +1301,7 @@ class PallasOpsTest(PallasTest):
 
     x = jnp.array([4.2, 2.4]).astype(jnp.float32)
     with jtu.capture_stdout() as output:
-      kernel(x)
+      jax.block_until_ready(kernel(x))
 
     self.assertIn("It works!", output())
 
@@ -1317,7 +1317,7 @@ class PallasOpsTest(PallasTest):
 
     x = jnp.array([4.2, 2.4]).astype(jnp.float32)
     with jtu.capture_stdout() as output:
-      kernel(x)
+      jax.block_until_ready(kernel(x))
 
     self.assertIn("x[0] = 4.2", output())
 
