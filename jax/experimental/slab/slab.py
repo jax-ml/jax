@@ -267,25 +267,22 @@ def _matmul(slab: Slab, ins: Sequence[SlabView], out: SlabView):
   mem = jax.lax.fori_loop(0, n_tiles, loop_n, mem)
   return mem
 
-def make_allocating_op(op, ref_op):
+def make_allocating_op(op, type_rule):
   def made_op(slab, *xs: SlabView):
-    out_sds = jax.eval_shape(
-        ref_op, *[jax.ShapeDtypeStruct(x.shape, x.dtype) for x in xs])
-    slab, out = slab_alloc(slab, out_sds.shape, out_sds.dtype)
+    out_shape, out_dtype = type_rule(*xs)
+    slab, out = slab_alloc(slab, out_shape, out_dtype)
     slab = op(slab, xs, out)
     return slab, out
   return made_op
 
-add = make_allocating_op(partial(elementwise, jax.lax.add), jax.lax.add)
-mul = make_allocating_op(partial(elementwise, jax.lax.mul), jax.lax.mul)
-tanh = make_allocating_op(partial(elementwise, jax.lax.tanh), jax.lax.tanh)
-# TODO(frostig,mattjj): eval_shape fails
-#matmul = make_allocating_op(_matmul, lambda a, b: a @ b)
-def matmul(slab, av, bv):
-  out_shape = (av.shape[0], bv.shape[1])
-  slab, out = slab_alloc(slab, out_shape, av.dtype)
-  slab = _matmul(slab, (av, bv), out)
-  return slab, out
+add = make_allocating_op(partial(elementwise, jax.lax.add),
+                         lambda x, *_: (x.shape, x.dtype))
+mul = make_allocating_op(partial(elementwise, jax.lax.mul),
+                         lambda x, *_: (x.shape, x.dtype))
+tanh = make_allocating_op(partial(elementwise, jax.lax.tanh),
+                          lambda x, *_: (x.shape, x.dtype))
+matmul = make_allocating_op(_matmul,
+                            lambda a, b: ((a.shape[0], b.shape[1]), a.dtype))
 
 def parse_arr(i, s):
   shape = eval(s)
