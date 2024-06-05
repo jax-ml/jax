@@ -29,11 +29,15 @@ from jax._src import util
 
 import jax.experimental.slab.slab as sl
 
-jax.config.update('jax_dynamic_shapes', True)
-
 map, zip = util.safe_map, util.safe_zip
 
-make_djaxpr = jax.make_jaxpr
+def make_djaxpr(f, abstracted_axes, **make_jaxpr_kwargs):
+  def djaxpr_maker(*args, **kwargs):
+    with jax._src.config.dynamic_shapes(True):
+      jaxpr_maker = jax.make_jaxpr(
+          f, abstracted_axes=abstracted_axes, **make_jaxpr_kwargs)
+      return jaxpr_maker(*args, **kwargs)
+  return djaxpr_maker
 
 def _check_axis_size_conflicts(all_axes, sizes):
   if len(all_axes) != len(set(all_axes)):
@@ -58,8 +62,7 @@ def interp(djaxpr, abstracted_axes, dim_index, dtypes, slab, dims, addrs):
 def djit(f, abstracted_axes, **djit_kwargs):
   # TODO(frostig,mattjj): un/flatten f
   def f_wrapped(slab, *args):  # TODO(frostig,mattjj): kw support
-    djaxpr = make_djaxpr(
-        f, abstracted_axes=abstracted_axes, **djit_kwargs)(*args).jaxpr
+    djaxpr = make_djaxpr(f, abstracted_axes, **djit_kwargs)(*args).jaxpr
     slab, views = sl.chain(slab, sl.slab_upload, *args, unary=True)
     shapes = [x.shape for x in args]
     all_axes, sizes = util.unzip2(
@@ -132,7 +135,7 @@ def test(slab, xs):
   abstracted_axes = (('m', 'k'), ('k', 'n'))
 
   print_seg('djaxpr')
-  djaxpr = make_djaxpr(f, abstracted_axes=abstracted_axes)(a, b).jaxpr
+  djaxpr = make_djaxpr(f, abstracted_axes)(a, b).jaxpr
   print(djaxpr)
 
   print_seg('djax output')
