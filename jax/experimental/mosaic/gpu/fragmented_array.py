@@ -424,7 +424,7 @@ class FragmentedArray:
     memref.store(warp_result, scratch, [warp_id])
     utils.commit_shared()
     zero_index = c(0, index)
-    with mgpu.once():
+    with mgpu.single_thread():
       scratch_vec = vector.load(
           ir.VectorType.get((4,), self.mlir_dtype),
           scratch,

@@ -389,7 +389,7 @@ class LaunchContext:
     # nvgpu TMA instructions expect reversed indices...
     rev_dyn_based_indices = reversed(dyn_base_indices)
 
-    uniform_ctx = mgpu.once if uniform else contextlib.nullcontext
+    uniform_ctx = mgpu.single_thread if uniform else contextlib.nullcontext
 
     if gmem_ref is src_ref:
       with uniform_ctx():

@@ -151,7 +151,7 @@ def lower_jaxpr_to_module(
     # TODO(slebedev): Consider enforcing this in the mgpu.BarrierArray.
     [barrier] = mgpu.BarrierArray(1, arrival_count=1)
 
-    with mgpu.once():
+    with mgpu.single_thread():
       nvgpu_dialect.mbarrier_arrive_expect_tx(
           barrier.barrier_array.value,
           _index(
