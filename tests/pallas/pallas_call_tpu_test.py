@@ -2222,7 +2222,12 @@ class PallasCallPrintTest(PallasTPUTest):
       pl.debug_print('It works!')
 
     x = jnp.array([4.2, 2.4]).astype(jnp.float32)
-    kernel(x)
+    compiled_kernel = (
+        jax.jit(kernel)
+        .lower(x)
+        .compile({'xla_tpu_enable_log_recorder': 'true'})
+    )
+    compiled_kernel(x)
 
   def test_debug_print_with_values(self):
     @functools.partial(

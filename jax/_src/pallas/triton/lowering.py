@@ -1022,7 +1022,7 @@ def debug_print_lowering_rule(
         "pl.debug_print() does not support placeholders when lowering to Triton"
     )
 
-  tt_dialect.print_(f" {fmt}", hex=False, args=args)
+  tt_dialect.print_(f" {fmt} ", hex=False, args=args)
   return ()
 
 
