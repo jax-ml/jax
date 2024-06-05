@@ -4191,6 +4191,16 @@ class ArrayPjitTest(jtu.JaxTestCase):
     input_shardings, _ = f.lower(inp, inp).compile().input_shardings
     self.assertLen(input_shardings, 2)
 
+  def test_aot_out_info(self):
+    inp = np.arange(8, dtype=np.int32)
+    out_info = jax.jit(lambda x: x).lower((inp, inp)).out_info
+    self.assertEqual(out_info[0].shape, (8,))
+    self.assertEqual(out_info[1].shape, (8,))
+    self.assertEqual(out_info[0].dtype, np.int32)
+    self.assertEqual(out_info[1].dtype, np.int32)
+    self.assertEqual(out_info[0].sharding, None)
+    self.assertEqual(out_info[1].sharding, None)
+
 
 class TempSharding(Sharding):
 

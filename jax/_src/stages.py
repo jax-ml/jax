@@ -44,6 +44,7 @@ from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src.tree_util import tree_unflatten, keystr
 from jax._src import util
+from jax._src.sharding_impls import is_unspecified_or_auto
 from jax._src.layout import Layout
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
@@ -373,6 +374,12 @@ class ArgInfo:
   aval: core.AbstractValue
   donated: bool
 
+@dataclass
+class OutInfo:
+  shape: tuple[int, ...]
+  dtype: Any
+  sharding: jax.sharding.Sharding
+
 
 class Stage:
   args_info: Any  # PyTree of ArgInfo
@@ -658,6 +665,14 @@ class Lowered(Stage):
         make_args_info(in_tree, in_avals, donate_argnums),
         out_tree,
         no_kwargs=no_kwargs, fun_name=fun_name, jaxpr=jaxpr)
+
+  @property
+  def out_info(self):  # PyTree of OutInfo
+    out_avals = self._lowering.compile_args["global_out_avals"]
+    out_shardings = self._lowering.compile_args["out_shardings"]
+    return self.out_tree.unflatten(
+        [OutInfo(o.shape, o.dtype, None if is_unspecified_or_auto(s) else s)
+         for o, s in zip(out_avals, out_shardings)])
 
   def compile(
       self, compiler_options: CompilerOptions | None = None) -> Compiled:
