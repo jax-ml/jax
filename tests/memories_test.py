@@ -64,6 +64,7 @@ def _create_inputs(shape, pspec, mem_kind=None):
 # * nested jit
 
 
+@jtu.with_config(jax_enable_memories=True)
 class ShardingMemoriesTest(jtu.JaxTestCase):
 
   def setUp(self):
@@ -73,16 +74,10 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
     if jtu.is_cloud_tpu():
       self.skipTest("Experimental feature not yet implemented on Cloud TPU")
     super().setUp()
-    self.orig_memories_flag = config.enable_memories.value
-    jax.config.update('jax_enable_memories', True)
     if jtu.test_device_matches(["cpu"]):
       self._default_memory_kind = "unpinned_host"
     else:
       self._default_memory_kind = "device"
-
-  def tearDown(self):
-    jax.config.update('jax_enable_memories', self.orig_memories_flag)
-    super().tearDown()
 
   @parameterized.named_parameters(
       ("named_sharding", "named_sharding"),
@@ -206,18 +201,13 @@ class ShardingMemoriesTest(jtu.JaxTestCase):
     self.assertEqual(dev.default_memory().kind, self._default_memory_kind)
 
 
+@jtu.with_config(jax_enable_memories=True)
 class DevicePutTest(jtu.JaxTestCase):
 
   def setUp(self):
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Memories do not work on CPU and GPU backends yet.")
     super().setUp()
-    self.orig_memories_flag = config.enable_memories.value
-    jax.config.update('jax_enable_memories', True)
-
-  def tearDown(self):
-    jax.config.update('jax_enable_memories', self.orig_memories_flag)
-    super().tearDown()
 
   def _check_device_put_addressable_shards(
       self, out, inp, expected_sharding, expected_mem_kind, index=True):
@@ -612,18 +602,13 @@ class DevicePutTest(jtu.JaxTestCase):
     self.assertEqual(t.shape, t_copy.shape)
 
 
+@jtu.with_config(jax_enable_memories=True)
 class ComputeOffload(jtu.BufferDonationTestCase):
 
   def setUp(self):
     if not jtu.test_device_matches(["tpu"]):
       self.skipTest("Memories do not work on CPU and GPU backends yet.")
     super().setUp()
-    self.orig_memories_flag = config.enable_memories.value
-    jax.config.update('jax_enable_memories', True)
-
-  def tearDown(self):
-    jax.config.update('jax_enable_memories', self.orig_memories_flag)
-    super().tearDown()
 
   def _check_mem_kind(self, executable_kind, out_sharding, expected_kind):
     out_kind = out_sharding.memory_kind
@@ -1107,18 +1092,13 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertDeleted(x)
 
 
+@jtu.with_config(jax_enable_memories=True)
 class ActivationOffloadingTest(jtu.JaxTestCase):
 
   def setUp(self):
     if not jtu.test_device_matches(["tpu", "gpu"]):
       self.skipTest("Memories do not work on CPU backend.")
     super().setUp()
-    self.orig_memories_flag = config.enable_memories.value
-    jax.config.update('jax_enable_memories', True)
-
-  def tearDown(self):
-    jax.config.update('jax_enable_memories', self.orig_memories_flag)
-    super().tearDown()
 
   def test_remat_jaxpr_offloadable(self):
     mesh = jtu.create_global_mesh((2,), ("x",))
