@@ -181,7 +181,8 @@ def check_eq(xs, ys, err_msg=''):
 def capture_stdout() -> Generator[Callable[[], str | None], None, None]:
   """Context manager to capture all stdout output."""
 
-  with tempfile.NamedTemporaryFile(mode="w+", delete=True) as f:
+  # The encoding should also work on windows, the default doesn't necessarily.
+  with tempfile.NamedTemporaryFile(mode="w+", delete=True, encoding='utf-8') as f:
     original_stdout = os.dup(sys.stdout.fileno())
     os.dup2(f.fileno(), sys.stdout.fileno())
 
