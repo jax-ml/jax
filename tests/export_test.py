@@ -972,7 +972,7 @@ class JaxExportTest(jtu.JaxTestCase):
     # We can use other devices and other meshes for running
     run_devices = devices[::-1]
     run_mesh = Mesh(run_devices, "a")
-    run_input_shardings = exp.xla_compatible_in_shardings(run_mesh)
+    run_input_shardings = exp.in_shardings_jax(run_mesh)
     a_run = jax.device_put(a, run_input_shardings[0])
     b_run = jax.device_put(a, run_input_shardings[1])
     res = export.call(exp)(a_run, b_run)

@@ -79,10 +79,10 @@ def _serialize_exported(
   out_tree = _serialize_pytreedef(builder, exp.out_tree)
   out_avals = _serialize_array(builder, _serialize_aval, exp.out_avals)
   in_shardings = _serialize_array(
-      builder, _serialize_sharding, exp.in_shardings
+      builder, _serialize_sharding, exp.in_shardings_hlo
   )
   out_shardings = _serialize_array(
-      builder, _serialize_sharding, exp.out_shardings
+      builder, _serialize_sharding, exp.out_shardings_hlo
   )
   ordered_effects = _serialize_array(
       builder, _serialize_effect, exp.ordered_effects
@@ -212,8 +212,8 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> export.Exported:
       out_tree=out_tree,
       out_avals=out_avals,
       nr_devices=nr_devices,
-      in_shardings=in_shardings,
-      out_shardings=out_shardings,
+      in_shardings_hlo=in_shardings,
+      out_shardings_hlo=out_shardings,
       lowering_platforms=lowering_platforms,
       ordered_effects=ordered_effects,
       unordered_effects=unordered_effects,
