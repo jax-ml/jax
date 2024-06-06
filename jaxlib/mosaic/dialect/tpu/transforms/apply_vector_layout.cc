@@ -3523,41 +3523,18 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
   const ArrayRef<int64_t> src_shape = src_ty.getShape();
   const VectorType dst_ty = shape_cast_op.getResultVectorType();
   const ArrayRef<int64_t> dst_shape = dst_ty.getShape();
-  const int layout_rank = layout_in.layout_rank();
   bool no_op = false;
+  const std::array<int64_t, 2> src_tiled_dims =
+      layout_in.getImplicitTiledDims(src_shape, 1);
+  const std::array<int64_t, 2> dst_tiled_dims =
+      layout_out.getImplicitTiledDims(dst_shape, 1);
   const std::array<int64_t, 2> src_vreg_slice =
       layout_in.vregSlice(ctx.target_shape);
   const std::array<int64_t, 2> dst_vreg_slice =
       layout_out.vregSlice(ctx.target_shape);
-  // TODO(tlongeri): It looks like this could probably be simplified by using
-  // VectorLayout::implicitShape()
-  if (layout_in == layout_out && src_ty.getShape().take_back(layout_rank) ==
-                                     dst_ty.getShape().take_back(layout_rank)) {
-    no_op = true;
-  } else if (layout_in.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-             layout_out.implicit_dim() ==
-                 VectorLayout::ImplicitDim::kSecondMinor &&
-             layout_in.hasNativeTiling(ctx.target_shape) &&
-             layout_in.tiling() == layout_out.tiling() &&
-             layout_in.offsets() == layout_out.offsets() &&
-             *(src_shape.end() - 1) == *(dst_shape.end() - 1) &&
-             *(src_shape.end() - 2) == 1) {
-    no_op = true;
-  } else if (layout_in.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-             layout_out.implicit_dim() == VectorLayout::ImplicitDim::kMinor &&
-             layout_in.hasNaturalTopology(ctx.target_shape) &&
-             layout_in.tiling() == layout_out.tiling() &&
-             layout_in.offsets() == layout_out.offsets() &&
-             src_shape ==
-                 ArrayRef<int64_t>(layout_out.implicitShape(dst_shape))) {
-    no_op = true;
-  } else if (layout_in.implicit_dim() == VectorLayout::ImplicitDim::kMinor &&
-             layout_out.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-             layout_out.hasNaturalTopology(ctx.target_shape) &&
-             layout_in.tiling() == layout_out.tiling() &&
-             layout_in.offsets() == layout_out.offsets() &&
-             dst_shape ==
-                 ArrayRef<int64_t>(layout_in.implicitShape(src_shape))) {
+  if (layout_in.tiling() == layout_out.tiling() &&
+      layout_in.offsets() == layout_out.offsets() &&
+      src_tiled_dims == dst_tiled_dims) {
     no_op = true;
   } else if (  // Fold or unfold sublane dim, but keeping a whole number of
                // vregs.

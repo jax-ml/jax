@@ -1409,7 +1409,6 @@ class VectorLayoutInferer {
       if (res_ty.getRank() >= 2) {
         // Squeeze out the sublane dim.
         if (layout_shape[0] == 1 &&
-            res_shape.drop_back(1) == src_shape.drop_back(2) &&
             res_shape.back() == src_shape.back()) {
           setLayout(op, layout,
                     VectorLayout(bitwidth, layout.offsets(), layout.tiling(),
@@ -1427,28 +1426,28 @@ class VectorLayoutInferer {
           return success();
         }
       } else if (res_ty.getRank() == 1) {
-        bool all_one = true;
-        for (int64_t s : src_ty.getShape().drop_back(2)) {
-          all_one &= s == 1;
-        }
-        // Squeeze out everything, but lanes
-        if (layout_shape[0] == 1 && all_one &&
-            res_ty.getShape().back() == layout_shape[1]) {
+        // All dimensions have been folded into a single one
+
+        // Squeeze all but minor dimension
+        if (res_ty.getShape().back() == layout_shape[1]) {
+          // The condition implies that everything apart from the minor
+          // dimension is 1 in the source.
           setLayout(op, layout,
                     VectorLayout(bitwidth, layout.offsets(), layout.tiling(),
                                  ImplicitDim::kSecondMinor));
           return success();
         }
-        // Squeeze out everything, but sublanes
-        if (layout_shape[1] == 1 && all_one &&
-            res_ty.getShape().back() == layout_shape[0]) {
-          TPU_CHECK_OP(src_ty.getElementTypeBitWidth() == kNativeBitwidth,
-                       "only 32-bit shape casts supported");
+        // Squeeze all but second minor dimension
+        if (res_ty.getShape().back() == layout_shape[0]) {
+          // The condition implies that everything apart from the second minor
+          // dimension is 1 in the source
           setLayout(op, layout,
                     VectorLayout(kNativeBitwidth, layout.offsets(),
                                  layout.tiling(), ImplicitDim::kMinor));
           return success();
         }
+        // TODO(b/340625465): Add case where layout_shape is (1, 1) and we fold
+        //                    batch dimensions once we support 0-D layouts.
       }
     } else {
       // Nothing changes in the last dim.
