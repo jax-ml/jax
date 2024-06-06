@@ -1785,7 +1785,7 @@ class PallasCallWhileLoopTest(PallasTPUTest):
 
       def body(state):
         i, s = state
-        sl = sl = jax.lax.div(i, 128)
+        sl = jax.lax.div(i, 128)
         l = jax.lax.rem(i, 128)
         v = pl.load(x_ref, (0, sl, l))
         return i + 1, s + v
@@ -1896,7 +1896,7 @@ class PallasCallWhileLoopTest(PallasTPUTest):
 
       def inner_cond(carry):
         i, prev_key = carry
-        sl = sl = jax.lax.div(i, 128)
+        sl = jax.lax.div(i, 128)
         l = jax.lax.rem(i, 128)
         key = jax.lax.cond(
             i < key_count, lambda i: in_key_ref[sl, l], lambda i: -1, i
@@ -1913,12 +1913,12 @@ class PallasCallWhileLoopTest(PallasTPUTest):
 
       def outer_body(carry):
         i, next_out_idx = carry
-        sl = sl = jax.lax.div(i, 128)
+        sl = jax.lax.div(i, 128)
         l = jax.lax.rem(i, 128)
         key = in_key_ref[sl, l]
         end, _ = jax.lax.while_loop(inner_cond, inner_body, (i + 1, key))
 
-        sl = sl = jax.lax.div(next_out_idx, 128)
+        sl = jax.lax.div(next_out_idx, 128)
         l = jax.lax.rem(next_out_idx, 128)
         out_size_ref[sl, l] = end - i
         return end, next_out_idx + 1
