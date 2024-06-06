@@ -3540,13 +3540,12 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
                // vregs.
       layout_in.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
       layout_out.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-      layout_in.offsets() == LayoutOffsets{0, 0} &&
-      layout_out.offsets() == LayoutOffsets{0, 0} &&
+      layout_in.offsets()[0] == 0 &&
+      layout_in.offsets() == layout_out.offsets() &&
       layout_in.tiling() == layout_out.tiling() &&
-      layout_in.tiling()[1] == ctx.target_shape[1] &&
       *(dst_shape.end() - 1) == *(src_shape.end() - 1) &&
-      *(dst_shape.end() - 2) % layout_in.tiling()[0] == 0 &&
-      *(src_shape.end() - 2) % layout_in.tiling()[0] == 0) {
+      *(dst_shape.end() - 2) % dst_vreg_slice[0] == 0 &&
+      *(src_shape.end() - 2) % src_vreg_slice[0] == 0) {
     no_op = true;
   } else if (layout_in.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
              layout_out.implicit_dim() == VectorLayout::ImplicitDim::kNone &&

@@ -1334,6 +1334,7 @@ class VectorLayoutInferer {
     auto some_src_layout = getLayout(op.getSource());
     TPU_CHECK_OP(some_src_layout, "missing vector layout");
     auto layout = *some_src_layout;
+    const std::array<int64_t, 2> vreg_slice = layout.vregSlice(target_shape_);
     if (layout.implicit_dim() == ImplicitDim::kNone) {
       // Nothing changes in the last two dims.
       if (res_rank >= 2 && src_shape.take_back(2) == res_shape.take_back(2)) {
@@ -1341,13 +1342,14 @@ class VectorLayoutInferer {
         return success();
       }
       // Sublane (un)tiling.
-      if (res_rank >= 2 && layout.tiling()[1] == target_shape_[1] &&
-          src_ty.getDimSize(src_ty.getRank() - 1) ==
-              res_shape[res_shape.size() - 1] &&
-          src_ty.getDimSize(src_ty.getRank() - 2) % layout.tiling()[0] == 0 &&
-          res_shape[res_shape.size() - 2] % layout.tiling()[0] == 0) {
-        layout = VectorLayout(layout.bitwidth(), {0, 0}, layout.tiling(),
-                              layout.implicit_dim());
+      if (res_rank >= 2 && *(src_shape.end() - 1) == *(res_shape.end() - 1) &&
+          *(src_shape.end() - 2) % vreg_slice[0] == 0 &&
+          *(res_shape.end() - 2) % vreg_slice[0] == 0) {
+        // TODO(b/343808585): We shouldn't force second minor offset to 0 when
+        //                    unfolding, it's still a no-op, but we need to add
+        //                    support in apply-vector-layout.
+        layout = VectorLayout(layout.bitwidth(), {0, layout.offsets()[1]},
+                              layout.tiling(), layout.implicit_dim());
         setLayout(op, layout, layout);
         return success();
       }
