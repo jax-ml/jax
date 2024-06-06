@@ -8,7 +8,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.29
 
-* Breaking changes
+* Changes
+  * We anticipate that this will be the last release of JAX and jaxlib
+    supporting a monolithic CUDA jaxlib. Future releases will use the CUDA
+    plugin jaxlib (e.g. `pip install jax[cuda12]`).
   * JAX now requires ml_dtypes version 0.4.0 or newer.
 
 * Deprecations
@@ -34,8 +37,11 @@ Remember to align the itemized text with the first line of an item within a list
 ## jaxlib 0.4.29
 
 * Bug fixes
-  * Fixes a bug where XLA sharded some concatenation operations incorrectly,
+  * Fixed a bug where XLA sharded some concatenation operations incorrectly,
     which manifested as an incorrect output for cumulative reductions (#21403).
+  * Fixed a bug where XLA:CPU miscompiled certain matmul fusions
+    (https://github.com/openxla/xla/pull/13301).
+  * Fixes a compiler crash on GPU (https://github.com/google/jax/issues/21396).
 
 ## jax 0.4.28 (May 9, 2024)
 
