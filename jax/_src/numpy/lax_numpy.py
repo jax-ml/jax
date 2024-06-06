@@ -573,7 +573,7 @@ def transpose(a: ArrayLike, axes: Sequence[int] | None = None) -> Array:
     - :func:`jax.numpy.matrix_transpose`: transpose the last two axes of an array. This is
       suitable for working with batched 2D matrices.
     - :func:`jax.numpy.swapaxes`: swap any two axes in an array.
-    - :func:`jax.numpy.moveaxis`: move an axis to another postion in the array.
+    - :func:`jax.numpy.moveaxis`: move an axis to another position in the array.
 
   Note:
     Unlike :func:`numpy.transpose`, :func:`jax.numpy.transpose` will return a copy rather
@@ -1031,7 +1031,7 @@ def ravel(a: ArrayLike, order: str = "C") -> Array:
     >>> jnp.ravel(x, order='F')
     Array([1, 4, 2, 5, 3, 6], dtype=int32)
 
-    For convenience, the same functionality is availabel via the :meth:`jax.Array.ravel`
+    For convenience, the same functionality is available via the :meth:`jax.Array.ravel`
     method:
 
     >>> x.ravel()
@@ -1255,7 +1255,7 @@ def squeeze(a: ArrayLike, axis: int | Sequence[int] | None = None) -> Array:
     >>> _.shape
     (3,)
 
-    Eqivalent while specifying the axes explicitly:
+    Equivalent while specifying the axes explicitly:
 
     >>> jnp.squeeze(x, axis=(1, 2))
     Array([0, 1, 2], dtype=int32)
@@ -1736,7 +1736,7 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
       ``bincount`` to be used with :func:`jax.jit` and other JAX transformations.
 
   Returns:
-    An array of counts or summed weights reflecting the number of occurrances of values
+    An array of counts or summed weights reflecting the number of occurrences of values
     in ``x``.
 
   See Also:
@@ -4696,7 +4696,7 @@ def einsum(
     >>> jnp.vecdot(x, y)
     Array(16, dtype=int32)
 
-    Here are some alternative ``einsum`` calling conventions to comput the same
+    Here are some alternative ``einsum`` calling conventions to compute the same
     result:
 
     >>> jnp.einsum('i,i->', x, y)  # explicit form
@@ -6002,7 +6002,7 @@ def take_along_axis(
     a: array from which to take values.
     indices: array of integer indices. If ``axis`` is ``None``, must be one-dimensional.
       If ``axis`` is not None, must have ``a.ndim == indices.ndim``, and ``a`` must be
-      broadcast-compaible with ``indices`` along dimensions other than ``axis``.
+      broadcast-compatible with ``indices`` along dimensions other than ``axis``.
     axis: the axis along which to take values. If not specified, the array will
       be flattened before indexing is applied.
     mode: Out-of-bounds indexing mode, either ``"fill"`` or ``"clip"``. The default
@@ -6901,7 +6901,7 @@ def extract(condition: ArrayLike, arr: ArrayLike,
 
   Notes:
     This function does not require strict shape agreement between ``condition`` and ``arr``.
-    If ``condition.size > ``arr.size``, then ``condition`` will be truncated, and if
+    If ``condition.size > arr.size``, then ``condition`` will be truncated, and if
     ``arr.size > condition.size``, then ``arr`` will be truncated.
 
   See also:
@@ -6929,7 +6929,7 @@ def extract(condition: ArrayLike, arr: ArrayLike,
 
      Notice that unlike with boolean indexing, ``extract`` does not require strict
      agreement between the sizes of the array and condition, and will effectively
-     truncate both to the minimium size:
+     truncate both to the minimum size:
 
      >>> short_mask = jnp.array([False, True])
      >>> jnp.extract(short_mask, x)

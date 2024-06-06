@@ -174,7 +174,7 @@ def cho_solve(c_and_lower: tuple[ArrayLike, bool], b: ArrayLike,
   Args:
     c_and_lower: ``(c, lower)``, where ``c`` is an array of shape ``(..., N, N)``
       representing the lower or upper cholesky decomposition of the matrix, and
-      ``lower`` is a boolean specifying whethe this is the lower or upper decomposition.
+      ``lower`` is a boolean specifying whether this is the lower or upper decomposition.
     b: right-hand-side of linear system. Must have shape ``(..., N)``
     overwrite_a: unused by JAX
     check_finite: unused by JAX
@@ -513,7 +513,7 @@ def schur(a: ArrayLike, output: str = 'real') -> tuple[Array, Array]:
       transformation matrix.
 
   See also:
-    - :func:`jax.scipy.linalg.rsf2csf`: conver real Schur form to complex Schur form.
+    - :func:`jax.scipy.linalg.rsf2csf`: convert real Schur form to complex Schur form.
     - :func:`jax.lax.linalg.schur`: XLA-style API for Schur decomposition.
 
   Example:
@@ -888,7 +888,7 @@ def qr(a: ArrayLike, overwrite_a: bool = False, lwork: Any = None, mode: str = "
       - ``"economic"``: return `Q` of shape ``(M, K)`` and `R` of shape ``(K, N)``,
         where K = min(M, N).
 
-    pivoting: Not implemened in JAX.
+    pivoting: Not implemented in JAX.
     overwrite_a: unused in JAX
     lwork: unused in JAX
     check_finite: unused in JAX
@@ -906,7 +906,7 @@ def qr(a: ArrayLike, overwrite_a: bool = False, lwork: Any = None, mode: str = "
 
   See also:
     - :func:`jax.numpy.linalg.qr`: NumPy-style QR decomposition API
-    - :func:`jax.lax.linalg.qr`: XLA-style QR decompositon API
+    - :func:`jax.lax.linalg.qr`: XLA-style QR decomposition API
 
   Examples:
     Compute the QR decomposition of a matrix:
@@ -1105,7 +1105,7 @@ def solve_triangular(a: ArrayLike, b: ArrayLike, trans: int | str = 0, lower: bo
     >>> x
     Array([10. , -4. , -3.4], dtype=float32)
 
-    Confiriming that the result solves the system:
+    Confirming that the result solves the system:
 
     >>> jnp.allclose(A.T @ x, b)
     Array(True, dtype=bool)
@@ -1803,7 +1803,7 @@ def rsf2csf(T: ArrayLike, Z: ArrayLike, check_finite: bool = True) -> tuple[Arra
      [ 0.   -0.88 -0.35]
      [ 0.    2.37 -0.88]]
 
-    By contrast, the complex form is truely upper-triangular:
+    By contrast, the complex form is truly upper-triangular:
 
     >>> with jnp.printoptions(precision=2, suppress=True):
     ...   print(Tc)
