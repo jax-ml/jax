@@ -15,9 +15,7 @@
 
 Specific JAX primitive conversion tests are in primitives_test."""
 import collections
-from collections.abc import Sequence
 import contextlib
-import functools
 import math
 import os
 import re
@@ -52,6 +50,15 @@ from tensorflow.compiler.tf2xla.python import xla as tfxla
 # pylint: enable=g-direct-tensorflow-import
 
 config.parse_flags_with_absl()
+_exit_stack = contextlib.ExitStack()
+
+# TODO(necula): Remove once tensorflow is 2.10.0 everywhere.
+def setUpModule():
+  if not hasattr(tfxla, "optimization_barrier"):
+    _exit_stack.enter_context(jtu.global_config_context(jax_remat_opt_barrier=False))
+
+def tearDownModule():
+  _exit_stack.close()
 
 
 class Jax2TfTest(tf_test_util.JaxToTfTestCase):
@@ -1779,7 +1786,4 @@ class Jax2TfVersioningTest(tf_test_util.JaxToTfTestCase):
 
 
 if __name__ == "__main__":
-  # TODO: Remove once tensorflow is 2.10.0 everywhere.
-  if not hasattr(tfxla, "optimization_barrier"):
-    jax.config.update("jax_remat_opt_barrier", False)
   absltest.main(testLoader=jtu.JaxTestLoader())
