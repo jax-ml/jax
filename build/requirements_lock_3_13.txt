@@ -102,5 +102,5 @@ zstandard==0.22.0
     # via -r build/requirements.in
 
 # The following packages are considered to be unsafe in a requirements file:
-setuptools==69.2.0
+setuptools==70.0.0
     # via -r build/test-requirements.txt
