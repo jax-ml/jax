@@ -906,7 +906,7 @@ def unique_inverse(x: ArrayLike, /, *, size: int | None = None,
     >>> result = jnp.unique_inverse(x)
 
     The result is a :class:`~typing.NamedTuple` with two named attributes.
-    The ``values`` attribue contains the unique values from the array:
+    The ``values`` attribute contains the unique values from the array:
 
     >>> result.values
     Array([1, 3, 4], dtype=int32)
