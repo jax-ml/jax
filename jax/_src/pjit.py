@@ -498,8 +498,7 @@ def _make_jit_wrapper(jit_info: PjitInfo):
     donate_argnums = tuple(i for i, d in enumerate(donated_invars) if d)
     jaxpr = params["jaxpr"]
     return stages.Lowered.from_flat_info(
-        lowering, in_tree, jaxpr.in_avals, donate_argnums, out_tree,
-        fun_name=params["name"], jaxpr=jaxpr)
+        lowering, in_tree, jaxpr.in_avals, donate_argnums, out_tree)
 
   @api_boundary
   def eval_shape(*args, **kwargs):

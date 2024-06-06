@@ -556,9 +556,13 @@ class JaxExportTest(jtu.JaxTestCase):
         return jnp.sin(x)
 
       # This makes it look like a jitted-function
-      def lower(self, x,
-                _experimental_lowering_parameters=None):
+      def lower(self, x, _experimental_lowering_parameters=None):
         return jax.jit(self.__call__).lower(
+            x,
+            _experimental_lowering_parameters=_experimental_lowering_parameters)
+
+      def specialize(self, x, _experimental_lowering_parameters=None):
+        return jax.jit(self.__call__).specialize(
             x,
             _experimental_lowering_parameters=_experimental_lowering_parameters)
 

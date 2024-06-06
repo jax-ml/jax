@@ -617,7 +617,7 @@ def xmap(fun: Callable,
         '_experimental_lowering_platform', mlir.LoweringParameters())
     fun_flat, args_flat, params, in_tree, out_tree = infer_params(*args)
     avals_flat = [shaped_abstractify(arg) for arg in args_flat]
-    computation, jaxpr = make_xmap_callable(
+    computation = make_xmap_callable(
         fun_flat, params['name'], params['in_axes'], params['out_axes_thunk'],
         params['donated_invars'], params['global_axis_sizes'], params['axis_resources'],
         params['resource_env'], params['backend'], params['spmd_in_axes'],
@@ -627,8 +627,7 @@ def xmap(fun: Callable,
     in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])
     in_avals = in_tree.unflatten(avals_flat)
     return stages.Lowered.from_flat_info(
-        computation, in_tree, in_avals, donate_argnums, out_tree(),
-        no_kwargs=True, fun_name=params['name'], jaxpr=jaxpr)
+        computation, in_tree, in_avals, donate_argnums, out_tree())
 
   fun_mapped.lower = lower
   return type_cast(stages.Wrapped, fun_mapped)
@@ -637,7 +636,7 @@ def xmap_impl(fun: lu.WrappedFun, *args, name, in_axes, out_axes_thunk, donated_
               global_axis_sizes, axis_resources, resource_env, backend,
               spmd_in_axes, spmd_out_axes_thunk):
   in_avals = [core.raise_to_shaped(core.get_aval(arg)) for arg in args]
-  computation, _ = make_xmap_callable(
+  computation = make_xmap_callable(
       fun, name, in_axes, out_axes_thunk, donated_invars, global_axis_sizes,
       axis_resources, resource_env, backend,
       spmd_in_axes, spmd_out_axes_thunk,
@@ -709,7 +708,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
         in_shardings, out_shardings, donated_invars,
         use_spmd_lowering, in_avals,
         tiling_method=tiling_method,
-        lowering_parameters=lowering_parameters), jaxpr
+        lowering_parameters=lowering_parameters)
   else:
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(f, in_avals)
     return pxla.lower_sharding_computation(
@@ -717,7 +716,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
         (UNSPECIFIED,) * len(in_avals), (UNSPECIFIED,) * len(out_avals),
         (None,) * len(in_avals), (None,) * len(out_avals),
         donated_invars, keep_unused=True, inline=False,
-        devices_from_context=None, lowering_parameters=lowering_parameters), jaxpr
+        devices_from_context=None, lowering_parameters=lowering_parameters)
 
 
 class EvaluationPlan(NamedTuple):

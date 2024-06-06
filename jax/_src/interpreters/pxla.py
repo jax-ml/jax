@@ -557,7 +557,7 @@ def parallel_callable(fun: lu.WrappedFun,
                       donated_invars: Sequence[bool],
                       is_explicit_global_axis_size: bool,
                       *avals):
-  pmap_computation, _ = lower_parallel_callable(
+  pmap_computation = lower_parallel_callable(
       fun, backend_name, axis_name, axis_size, global_axis_size, devices, name,
       in_axes, out_axes_thunk, donated_invars,
       is_explicit_global_axis_size, avals,
@@ -665,6 +665,31 @@ def stage_parallel_callable(
   return jaxpr, consts, replicas, shards
 
 
+def get_pmap_jaxpr(
+    fun: lu.WrappedFun,
+    backend_name: str | None,
+    axis_name: core.AxisName,
+    axis_size: int,
+    global_axis_size: int,
+    devices: Sequence[xc.Device] | None,
+    name: str,
+    in_axes: Iterable[int | None],
+    out_axes_thunk: Callable[[], Sequence[int | None]],
+    avals: Sequence[core.AbstractValue]):
+  if devices is not None and backend_name is None:
+    backend = xb.get_device_backend(devices[0])
+  else:
+    backend = xb.get_backend(backend_name)
+
+  pci = ParallelCallableInfo(
+      name, backend, axis_name, axis_size, global_axis_size, devices,
+      in_axes, out_axes_thunk, avals)
+  jaxpr, consts, replicas, shards = stage_parallel_callable(pci, fun)
+  jaxpr = core.remove_named_axis_effects(jaxpr, {axis_name})
+  closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
+  return closed_jaxpr, backend, replicas, shards, pci
+
+
 @profiler.annotate_function
 def lower_parallel_callable(
     fun: lu.WrappedFun,
@@ -680,7 +705,7 @@ def lower_parallel_callable(
     is_explicit_global_axis_size: bool,
     avals: Sequence[core.AbstractValue],
     *,
-    lowering_parameters: mlir.LoweringParameters) -> tuple[PmapComputation, core.ClosedJaxpr]:
+    lowering_parameters: mlir.LoweringParameters) -> PmapComputation:
   # Determine global_axis_size for use in AxisEnv.
   # TODO(mattjj,skyewm): revive this check (inner_pmap always False now)
   # if xb.process_count() > 1 and global_axis_size is None and inner_pmap:
@@ -691,10 +716,10 @@ def lower_parallel_callable(
         f"Specified axis_size {global_axis_size} doesn't match received "
         f"axis_size {axis_size}.")
 
-  if devices is not None and backend_name is None:
-    backend = xb.get_device_backend(devices[0])
-  else:
-    backend = xb.get_backend(backend_name)
+  closed_jaxpr, backend, replicas, shards, pci = get_pmap_jaxpr(
+    fun, backend_name, axis_name, axis_size, global_axis_size, devices, name,
+    in_axes, out_axes_thunk, avals)
+  jaxpr = closed_jaxpr.jaxpr
 
   no_nested_sharding = False
   must_run_on_all_devices = False
@@ -711,10 +736,6 @@ def lower_parallel_callable(
         # devices). Nested sharding is ok in this case.
         must_run_on_all_devices = True
 
-  pci = ParallelCallableInfo(
-      name, backend, axis_name, axis_size, global_axis_size, devices,
-      in_axes, out_axes_thunk, avals)
-  jaxpr, consts, replicas, shards = stage_parallel_callable(pci, fun)
   if logger.isEnabledFor(logging.DEBUG):
     logger.debug("sharded_avals: %s", shards.sharded_avals)
     logger.debug("global_sharded_avals: %s", shards.global_sharded_avals)
@@ -756,8 +777,6 @@ def lower_parallel_callable(
   axis_env = sharding_impls.AxisEnv(
       replicas.num_global_replicas, (axis_name,), (global_axis_size,))
   name_stack = source_info_util.new_name_stack(wrap_name(name, 'pmap'))
-  jaxpr = core.remove_named_axis_effects(jaxpr, {axis_name})
-  closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   replicated_args = [axis is None for axis in in_axes]
   tuple_args = dispatch.should_tuple_args(len(shards.global_sharded_avals),
                                           backend.platform)
@@ -798,7 +817,7 @@ def lower_parallel_callable(
                          keepalive=lowering_result.keepalive,
                          host_callbacks=lowering_result.host_callbacks,
                          jaxpr_debug_info=closed_jaxpr.jaxpr.debug_info,
-                         shape_poly_state=lowering_result.shape_poly_state), closed_jaxpr
+                         shape_poly_state=lowering_result.shape_poly_state)
 
 
 def _pmap_unmap_shaped_array(
