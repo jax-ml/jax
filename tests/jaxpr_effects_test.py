@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import contextlib
 import functools
 import threading
 import unittest
@@ -133,18 +134,13 @@ def callback_effect_lowering(ctx: mlir.LoweringRuleContext, *args, callback, out
 mlir.register_lowering(callback_p, callback_effect_lowering)
 
 
-prev_xla_flags = None
-
+_exit_stack = contextlib.ExitStack()
 
 def setUpModule():
-  global prev_xla_flags
-  # This will control the CPU devices. On TPU we always have 2 devices
-  prev_xla_flags = jtu.set_host_platform_device_count(2)
+  _exit_stack.enter_context(jtu.set_host_platform_device_count(2))
 
-
-# Reset to previous configuration in case other test modules will be run.
 def tearDownModule():
-  prev_xla_flags()
+  _exit_stack.close()
 
 
 class JaxprEffectsTest(jtu.JaxTestCase):

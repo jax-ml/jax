@@ -15,11 +15,11 @@
 from __future__ import annotations
 
 from collections.abc import Sequence, Iterable, Iterator, Generator
+import contextlib
 from functools import partial
 import itertools as it
 import math
 import operator as op
-import os
 from types import SimpleNamespace
 from typing import Any, NamedTuple, Callable, TypeVar
 import unittest
@@ -36,7 +36,6 @@ from jax.sharding import PartitionSpec as P
 from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
-from jax._src import xla_bridge
 from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
 from jax._src.ad_checkpoint import saved_residuals
 from jax._src.interpreters import mlir
@@ -68,31 +67,17 @@ def create_inputs(a_sharding, b_sharding):
       jax.sharding.NamedSharding(mesh, b_sharding))
   return mesh, m1, m2
 
-# Run all tests with 8 CPU devices.
-prev_xla_flags = None
 
 # Run all tests with 8 CPU devices.
+_exit_stack = contextlib.ExitStack()
+
 def setUpModule():
-  global prev_xla_flags
-  prev_xla_flags = os.getenv("XLA_FLAGS")
-  flags_str = prev_xla_flags or ""
-  # Don't override user-specified device count, or other XLA flags.
-  if "xla_force_host_platform_device_count" not in flags_str:
-    os.environ["XLA_FLAGS"] = (flags_str +
-                               " --xla_force_host_platform_device_count=8")
-  # Clear any cached backends so new CPU backend will pick up the env var.
-  xla_bridge.get_backend.cache_clear()
-
+  _exit_stack.enter_context(jtu.set_host_platform_device_count(8))
   if len(jax.devices()) < 8:
     raise unittest.SkipTest("tests require 8 devices")
 
-# Reset to previous configuration in case other test modules will be run.
 def tearDownModule():
-  if prev_xla_flags is None:
-    del os.environ["XLA_FLAGS"]
-  else:
-    os.environ["XLA_FLAGS"] = prev_xla_flags
-  xla_bridge.get_backend.cache_clear()
+  _exit_stack.close()
 
 
 class ShardMapTest(jtu.JaxTestCase):

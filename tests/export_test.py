@@ -46,15 +46,13 @@ import numpy as np
 
 config.parse_flags_with_absl()
 
-prev_xla_flags = None
-def setUpModule():
-  global prev_xla_flags
-  # This will control the CPU devices. On TPU we always have 2 devices
-  prev_xla_flags = jtu.set_host_platform_device_count(2)
+_exit_stack = contextlib.ExitStack()
 
-# Reset to previous configuration in case other test modules will be run.
+def setUpModule():
+  _exit_stack.enter_context(jtu.set_host_platform_device_count(2))
+
 def tearDownModule():
-  prev_xla_flags()
+  _exit_stack.close()
 
 ### Setup for testing lowering with effects
 @dataclasses.dataclass(frozen=True)

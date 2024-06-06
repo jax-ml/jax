@@ -14,6 +14,7 @@
 """Tests for serialization and deserialization of GDA."""
 
 import asyncio
+import contextlib
 import math
 from functools import partial
 import re
@@ -36,17 +37,13 @@ import numpy as np
 import tensorstore as ts
 
 jax.config.parse_flags_with_absl()
-
-prev_xla_flags = None
+_exit_stack = contextlib.ExitStack()
 
 def setUpModule():
-  global prev_xla_flags
-  # This will control the CPU devices. On TPU we always have 2 devices
-  prev_xla_flags = jtu.set_host_platform_device_count(8)
+  _exit_stack.enter_context(jtu.set_host_platform_device_count(8))
 
-# Reset to previous configuration in case other test modules will be run.
 def tearDownModule():
-  prev_xla_flags()
+  _exit_stack.close()
 
 
 pattern = re.compile(r"\{(.*?):")
