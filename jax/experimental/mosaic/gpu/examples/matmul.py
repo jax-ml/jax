@@ -217,8 +217,9 @@ class WGMMACvtRhsImpl:
     nvvm.wgmma_wait_group_sync_aligned(0)
     arr.store_tiled(smem_scratch["cvt"], swizzle=128)
     commit_shared()
-    nvvm.wgmma_fence_aligned()
-    return wgmma(acc, a_slice, smem_scratch["cvt"], b_order=b_order)
+    acc = wgmma(acc, a_slice, smem_scratch["cvt"], b_order=b_order)
+    nvvm.wgmma_commit_group_sync_aligned()
+    return acc
 
 
 def mlir_context(f):
