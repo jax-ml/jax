@@ -11,9 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+# pyformat: disable
 from __future__ import annotations
 
-from collections.abc import Generator, Iterable, Mapping, Sequence
+from collections.abc import Generator, Iterable, Sequence
 from contextlib import ExitStack, contextmanager
 import datetime
 import functools
@@ -1961,101 +1963,3 @@ class numpy_with_mpmath:
       return worker(ctx, scale, exact, reference, value)
     else:
       assert 0  # unreachable
-
-
-def get_process_index_and_count(
-    tensor_sharding: jax.sharding.Sharding,
-    dim: int,
-    global_shape: tuple[int, ...],
-) -> tuple[int, int]:
-  """Returns current process index and total count for the given dimension.
-
-  This function facilitates mapping of process-level data to individual
-  devices. Each process can use its index to obtain the data corresponding
-  to that index. If process level data is sharded on multiple dimensions
-  this function can be used to build the cross product of indices in
-  each sharded axis. Processes that need to load the same data will have
-  the same index. For shardings whose per-process data is not distributed
-  on a grid, the number of distinct shards will be such that it is possible to
-  build the target shape while maintaining a "cube" shape of local-process data.
-
-  For example, in case of 4 hosts with sharding distributed like so:
-
-  1234
-  2143
-
-  For dim 0 (rows): all processes need to access all rows, so we return (0, 1)
-  For dim 1 (cols):
-     process 1 and 2 returns index 0 out of 2 (need cols 0 and 1),
-     process 3 and 4 returns index 1 out of 2 (need cols 2 and 3).
-
-  On the other hand, for a sharding like:
-
-  1212
-  3434
-
-  Dim 0 (rows): process 1 and 2 returns (0, 2), process 3 and 4 returns (1, 2)
-  Dim 1 (cols): process 1 and 3 returns (0, 2), process 2 and 4 returns (1, 2)
-
-  Note: This function requires sharding to be process uniform in dimension `dim`:
-   each process has the same number of addressable indices in that
-  dimension and all index sets across processes are either disjoint or the same.
-
-  For sharding to be process uniform the addressable shards doesn't need to
-  form contiguous subtensor, or even a sparse grid  and  in case of
-  interleaved high-dimensional tensor it is possible for sharding to be
-  process uniform only in some dimensions but not others.
-
-  For example:
-    1111 and 12 and 1212 and 1212
-    2222     21     2121     1212
-
-  are all sharding uniform, in both dimensions. However
-
-    1122
-    2121
-    1121
-    1222
-
-  is uniform in dimension 0 (both hosts access all rows), but
-  is not uniform in dimension 1 (host 1 accesses columns: 0, 1, and 3),
-  while host 2 accesses (0, 1, 2, 3).
-
-  Returns:
-    A tuple of (index, num_distinct_shards) for the given dimension.
-    It is guaranteed that `index` will cover 0 to `num_distinct_shards - 1`,
-    across all processes.
-
-  Raises:
-    ValueError if the sharding is not process uniform in dimension `dim`.
-  """
-  # TODO(sandler, yashkatariya): Consider making this function public.
-
-  if tensor_sharding.is_fully_addressable or tensor_sharding.is_fully_replicated:
-    return (0, 1)
-  # NB: For most types of shardings, global_shape is a superfluous argument
-  # and could be replaced by [d, d, ...., d, d], where d is the number of
-  # devices.
-  device_map: Mapping[jax.sharding.Device, jax.sharding.Index] = (
-      tensor_sharding.devices_indices_map(global_shape)
-  )
-
-  global_slice = {k: v[dim] for k, v in device_map.items()}
-  process_map: dict[int, set[tuple[int, int]]] = {}
-  all_slices = set()
-
-  current_pid = next(iter(tensor_sharding.addressable_devices)).process_index
-  for d, v in global_slice.items():
-    key = (v.start, v.stop)
-    process_map.setdefault(d.process_index, set()).add(key)
-    all_slices.add(key)
-  addressable = frozenset(process_map[current_pid])
-  slices_per_process = len(addressable)
-  if any(len(x) != slices_per_process for x in process_map.values()):
-    raise ValueError(f'{tensor_sharding=} is non-uniform on {dim=}')
-  unique_processes = list({frozenset(x) for x in process_map.values()})
-
-  # After removing duplicate processes each slide should appear exactly once.
-  if sum(len(h) for h in unique_processes) != len(all_slices):
-    raise ValueError(f'{tensor_sharding=} is non-uniform on {dim=}')
-  return (unique_processes.index(addressable), len(unique_processes))
