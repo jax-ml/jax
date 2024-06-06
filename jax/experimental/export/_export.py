@@ -150,15 +150,15 @@ class Exported:
     out_avals: the flat tuple of output abstract values. May contain dimension
         expressions in the shapes, with dimension variables among those in
         `in_avals.
-    in_shardings: the flattened input shardings, as long as `in_avals`.
-        `None` means unspecified sharding.
+    in_shardings_hlo: the flattened input shardings, a sequence as long
+        as `in_avals`. `None` means unspecified sharding.
         Note that these do not include the mesh or the actual devices used in
-        the mesh. See `xla_compatible_in_shardings` for a way to turn these
+        the mesh. See `in_shardings_jax` for a way to turn these
         into sharding specification that can be used with JAX APIs.
-    out_shardings: the flattened output shardings, as long as `out_avals`.
-        `None` means unspecified sharding.
+    out_shardings_hlo: the flattened output shardings, a sequence as long
+        as `out_avals`. `None` means unspecified sharding.
         Note that these do not include the mesh or the actual devices used in
-        the mesh. See `xla_compatible_out_shardings` for a way to turn these
+        the mesh. See `out_shardings_jax` for a way to turn these
         into sharding specification that can be used with JAX APIs.
     nr_devices: the number of devices that the module has been lowered for.
     lowering_platforms: a tuple containing at least one of 'tpu', 'cpu',
@@ -290,8 +290,8 @@ class Exported:
   out_tree: tree_util.PyTreeDef
   out_avals: tuple[core.AbstractValue, ...]
 
-  in_shardings: tuple[HloSharding | None, ...]
-  out_shardings: tuple[HloSharding | None, ...]
+  in_shardings_hlo: tuple[HloSharding | None, ...]
+  out_shardings_hlo: tuple[HloSharding | None, ...]
   nr_devices: int
   lowering_platforms: tuple[str, ...]
   ordered_effects: tuple[effects.Effect, ...]
@@ -313,12 +313,21 @@ class Exported:
     # do not want the entire serialized module to end up in locations.
     return f"Exported(fun_name={self.fun_name}, ...)"
 
-  def xla_compatible_in_shardings(
+  # For backwards compatibility
+  # TODO(necula): remove after September 2024.
+  @property
+  def in_shardings(self):
+    return self.in_shardings_hlo
+  @property
+  def out_shardings(self):
+    return self.out_shardings_hlo
+
+  def in_shardings_jax(
       self,
       mesh: sharding.Mesh) -> Sequence[sharding.Sharding | None]:
-    """Creates Shardings corresponding to self.in_shardings.
+    """Creates Shardings corresponding to self.in_shardings_hlo.
 
-    The Exported object stores `in_shardings` as HloShardings, which are
+    The Exported object stores `in_shardings_hlo` as HloShardings, which are
     independent of a mesh or set of devices. This method constructs
     Sharding that can be used in JAX APIs such as `jax.jit` or
     `jax.device_put`.
@@ -329,7 +338,7 @@ class Exported:
     >>> exp = export.export(jax.jit(lambda x: jax.numpy.add(x, x),
     ...     in_shardings=sharding.NamedSharding(exp_mesh, sharding.PartitionSpec("a")))
     ...     )(np.arange(jax.device_count()))
-    >>> exp.in_shardings
+    >>> exp.in_shardings_hlo
     ({devices=[8]<=[8]},)
 
     # Create a mesh for running the exported object
@@ -337,7 +346,7 @@ class Exported:
     >>>
     # Put the args and kwargs on the appropriate devices
     >>> run_arg = jax.device_put(np.arange(jax.device_count()),
-    ...     exp.xla_compatible_in_shardings(run_mesh)[0])
+    ...     exp.in_shardings_jax(run_mesh)[0])
     >>> res = export.call(exp)(run_arg)
     >>> res.addressable_shards
     [Shard(device=CpuDevice(id=7), index=(slice(0, 1, None),), replica_id=0, data=[0]),
@@ -350,17 +359,17 @@ class Exported:
      Shard(device=CpuDevice(id=0), index=(slice(7, 8, None),), replica_id=0, data=[14])]
     """
     return tuple(_hlo_sharding_to_xla_compatible_sharding(s, mesh)
-                 for s in self.in_shardings)
+                 for s in self.in_shardings_hlo)
 
-  def xla_compatible_out_shardings(
+  def out_shardings_jax(
       self,
       mesh: sharding.Mesh) -> Sequence[sharding.Sharding | None]:
-    """Creates Shardings corresponding to self.out_shardings.
+    """Creates Shardings corresponding to self.out_shardings_hlo.
 
-    See documentation for xla_compatible_in_shardings.
+    See documentation for in_shardings_jax.
     """
     return tuple(_hlo_sharding_to_xla_compatible_sharding(s, mesh)
-                 for s in self.out_shardings)
+                 for s in self.out_shardings_hlo)
 
   def has_vjp(self) -> bool:
     return self._get_vjp is not None
@@ -584,9 +593,9 @@ def _export_lowered(
     fun_vjp_jax, vjp_in_avals = _get_vjp_fun(fun_jax,
                                              in_tree=exp_primal.in_tree,
                                              in_avals=exp_primal.in_avals,
-                                             in_shardings=exp_primal.in_shardings,
+                                             in_shardings_hlo=exp_primal.in_shardings_hlo,
                                              out_avals=exp_primal.out_avals,
-                                             out_shardings=exp_primal.out_shardings,
+                                             out_shardings_hlo=exp_primal.out_shardings_hlo,
                                              device_assignment=device_assignment,
                                              apply_jit=True,
                                              flat_primal_fun=True)
@@ -600,8 +609,8 @@ def _export_lowered(
       out_tree=lowered.out_tree,
       in_avals=tuple(args_avals_flat),
       out_avals=tuple(out_avals_flat),
-      in_shardings=in_shardings,
-      out_shardings=out_shardings,
+      in_shardings_hlo=in_shardings,
+      out_shardings_hlo=out_shardings,
       nr_devices=nr_devices,
       lowering_platforms=lowering._platforms,
       ordered_effects=ordered_effects,
@@ -1013,8 +1022,8 @@ def _get_vjp_fun(primal_fun: Callable, *,
                  in_tree: tree_util.PyTreeDef,
                  in_avals: Sequence[core.AbstractValue],
                  out_avals: Sequence[core.AbstractValue],
-                 in_shardings: tuple[HloSharding | None, ...],
-                 out_shardings: tuple[HloSharding | None, ...],
+                 in_shardings_hlo: tuple[HloSharding | None, ...],
+                 out_shardings_hlo: tuple[HloSharding | None, ...],
                  device_assignment: Sequence[sharding_impls.Device] | None,
                  apply_jit: bool,
                  flat_primal_fun: bool = False,
@@ -1047,10 +1056,10 @@ def _get_vjp_fun(primal_fun: Callable, *,
     assert device_assignment is not None
     vjp_in_shardings = tuple(
         _hlo_sharding_to_gspmd_sharding(s, device_assignment)
-        for s in itertools.chain(in_shardings, out_shardings))
+        for s in itertools.chain(in_shardings_hlo, out_shardings_hlo))
     vjp_out_shardings = tuple(
         _hlo_sharding_to_gspmd_sharding(s, device_assignment)
-        for s in in_shardings)
+        for s in in_shardings_hlo)
     return pjit.pjit(fun_vjp_jax,
                      in_shardings=vjp_in_shardings,
                      out_shardings=vjp_out_shardings), vjp_in_avals
@@ -1210,7 +1219,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
       err_msg = "the module was lowered for more than 1 device."
     elif (_check_module(submodule, disabled_checks=()) or
           any(s is not None and not s.is_replicated()
-              for s in exported.in_shardings + exported.out_shardings)):
+              for s in exported.in_shardings_hlo + exported.out_shardings_hlo)):
       err_msg = "the module contains non-replicated sharding annotations."
     if err_msg:
       raise NotImplementedError(
@@ -1222,7 +1231,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   # Apply in_shardings
   args = tuple(
     wrap_with_sharding(ctx, x, x_aval, x_sharding)
-    for x, x_aval, x_sharding in zip(args, ctx.avals_in, exported.in_shardings))
+    for x, x_aval, x_sharding in zip(args, ctx.avals_in, exported.in_shardings_hlo))
   symtab = ir.SymbolTable(submodule.operation)
   # The called function may have been exported with polymorphic shapes and called
   # now with more refined shapes. We insert hlo.ConvertOp to ensure the module
@@ -1311,7 +1320,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   # Apply out_shardings
   results = tuple(
     wrap_with_sharding(ctx, x, x_aval, x_sharding)
-    for x, x_aval, x_sharding in zip(results, ctx.avals_out, exported.out_shardings)
+    for x, x_aval, x_sharding in zip(results, ctx.avals_out, exported.out_shardings_hlo)
   )
   return results
 

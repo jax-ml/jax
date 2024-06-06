@@ -17,6 +17,9 @@ Remember to align the itemized text with the first line of an item within a list
 * Deprecations
   * `jax.sharding.XLACompatibleSharding` is deprecated. Please use
     `jax.sharding.Sharding`.
+  * `jax.experimental.Exported.in_shardings` has been renamed as
+    `jax.experimental.Exported.in_shardings_hlo`. Same for `out_shardings`.
+    The old names will be removed after 3 months.
   * Removed a number of previously-deprecated APIs:
     * from {mod}`jax.core`: `non_negative_dim`, `DimSize`, `Shape`
     * from {mod}`jax.lax`: `tie_in`
@@ -33,6 +36,11 @@ Remember to align the itemized text with the first line of an item within a list
   * {mod}`jax.random` APIs no longer accept batched keys, where previously
     some did unintentionally. Going forward, we recommend explicit use of
     {func}`jax.vmap` in such cases.
+
+* New Functionality
+  * Added {func}`jax.experimental.Exported.in_shardings_jax` to construct
+    shardings that can be used with the JAX APIs from the HloShardings
+    that are stored in the `Exported` objects.
 
 ## jaxlib 0.4.29
 

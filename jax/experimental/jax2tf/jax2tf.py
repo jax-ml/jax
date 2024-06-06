@@ -538,9 +538,9 @@ class NativeSerializationImpl(SerializationImpl):
     return _export._get_vjp_fun(self.fun_jax,
                                 in_tree=self.exported.in_tree,
                                 in_avals=self.exported.in_avals,
-                                in_shardings=self.exported.in_shardings,
+                                in_shardings_hlo=self.exported.in_shardings_hlo,
                                 out_avals=self.exported.out_avals,
-                                out_shardings=self.exported.out_shardings,
+                                out_shardings_hlo=self.exported.out_shardings_hlo,
                                 device_assignment=self.device_assignment,
                                 apply_jit=True)
 
@@ -610,9 +610,9 @@ class GraphSerializationImpl(SerializationImpl):
     return _export._get_vjp_fun(self.fun_jax,
                                 in_tree=self.in_tree,
                                 in_avals=self.args_avals_flat,
-                                in_shardings=(None,) * len(self.args_avals_flat),
+                                in_shardings_hlo=(None,) * len(self.args_avals_flat),
                                 out_avals=self.outs_avals,
-                                out_shardings=(None,) * len(self.outs_avals),
+                                out_shardings_hlo=(None,) * len(self.outs_avals),
                                 device_assignment=None,  # Not used when apply_jit = False
                                 apply_jit=False)
 
@@ -916,7 +916,7 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
   # See b/255511660.
   kept_in_shardings = []
   for i in exported.module_kept_var_idx:
-    kept_in_shardings.append(exported.in_shardings[i])
+    kept_in_shardings.append(exported.in_shardings_hlo[i])
   args_flat_tf = tuple(
     map(partial(_shard_value,
                 skip_replicated_sharding=tf.executing_eagerly()),
@@ -933,7 +933,7 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
 
   res = list(map(partial(_shard_value,
                          skip_replicated_sharding=tf.executing_eagerly()),
-                 res, exported.out_shardings))
+                 res, exported.out_shardings_hlo))
   res = tuple(map(_convert_value, res, exported.out_avals))
   return res
 
