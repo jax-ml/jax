@@ -477,28 +477,17 @@ def _make_jit_wrapper(jit_info: PjitInfo):
 
   @api_boundary
   def lower(*args, **kwargs):
-    lowering_parameters = kwargs.pop(
-        '_experimental_lowering_parameters', mlir.LoweringParameters())
-
-    (args_flat, params, in_tree, out_tree,
-     donated_invars, arg_names, _) = _infer_params(jit_info, args, kwargs)
+    specialized = specialize(*args, **kwargs)
     try:
-      lowering = _resolve_and_lower(
-          args_flat, **params, lowering_parameters=lowering_parameters)
+      return specialized.lower()
     except pxla.DeviceAssignmentMismatchError as e:
       fails, = e.args
-      api_name = 'jit' if params['resource_env'] is None else 'pjit'
       fun = jit_info.fun
       fun_name = getattr(fun, '__qualname__',
                          getattr(fun, '__name__', str(fun)))
       msg = _device_assignment_mismatch_error(
-          fun_name, fails, args_flat, api_name, arg_names)
+          fun_name, fails, specialized._args_flat, 'jit', specialized._arg_names)
       raise ValueError(msg) from None
-
-    donate_argnums = tuple(i for i, d in enumerate(donated_invars) if d)
-    jaxpr = params["jaxpr"]
-    return stages.Lowered.from_flat_info(
-        lowering, in_tree, jaxpr.in_avals, donate_argnums, out_tree)
 
   @api_boundary
   def eval_shape(*args, **kwargs):
@@ -514,8 +503,8 @@ def _make_jit_wrapper(jit_info: PjitInfo):
     lowering_parameters = kwargs.pop(
         '_experimental_lowering_parameters', mlir.LoweringParameters())
 
-    args_flat, params, in_tree, out_tree, donated_invars, _, _ = _infer_params(
-        jit_info, args, kwargs)
+    (args_flat, params, in_tree, out_tree, donated_invars,
+     arg_names, _) = _infer_params(jit_info, args, kwargs)
 
     donate_argnums = tuple(i for i, d in enumerate(donated_invars) if d)
     jaxpr = params['jaxpr']
@@ -523,7 +512,7 @@ def _make_jit_wrapper(jit_info: PjitInfo):
     lower_callable = partial(_resolve_and_lower, args_flat, **params,
                              lowering_parameters=lowering_parameters)
     return stages.Specialized(jaxpr, args_info, params["name"], out_tree,
-                              lower_callable)
+                              lower_callable, args_flat, arg_names)
 
   wrapped = _cpp_pjit(jit_info)
   wrapped.lower = lower
@@ -654,7 +643,6 @@ def _infer_params(jit_info, args, kwargs):
   args_flat = [*implicit_args, *explicit_args]
 
   num_states_in = sum(init_tree.num_leaves for init_tree, _, _ in attrs_tracked)
-  num_states_out = sum(end_tree.num_leaves for _,  end_tree, _ in attrs_tracked)
   num_extra_args = len(implicit_args) + num_states_in + len(consts)
   in_shardings_flat = (UNSPECIFIED,) * num_extra_args + in_shardings_flat
   in_layouts_flat = (None,) * num_extra_args + in_layouts_flat

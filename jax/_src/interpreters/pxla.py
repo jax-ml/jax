@@ -557,11 +557,17 @@ def parallel_callable(fun: lu.WrappedFun,
                       donated_invars: Sequence[bool],
                       is_explicit_global_axis_size: bool,
                       *avals):
+  closed_jaxpr, xc_backend, replicas, shards, pci = get_pmap_jaxpr(
+      fun, backend_name, axis_name,
+      axis_size=axis_size, global_axis_size=global_axis_size,
+      devices=devices, name=fun.__name__, in_axes=in_axes,
+      out_axes_thunk=out_axes_thunk, avals=avals)
   pmap_computation = lower_parallel_callable(
-      fun, backend_name, axis_name, axis_size, global_axis_size, devices, name,
-      in_axes, out_axes_thunk, donated_invars,
+      fun, axis_name, axis_size, global_axis_size, devices, name,
+      in_axes, donated_invars,
       is_explicit_global_axis_size, avals,
-      lowering_parameters=mlir.LoweringParameters())
+      lowering_parameters=mlir.LoweringParameters(), closed_jaxpr=closed_jaxpr,
+      backend=xc_backend, replicas=replicas, shards=shards, pci=pci)
   pmap_executable = pmap_computation.compile()
   return WeakRefList([pmap_executable.unsafe_call, pmap_executable.fingerprint])
 
@@ -693,19 +699,22 @@ def get_pmap_jaxpr(
 @profiler.annotate_function
 def lower_parallel_callable(
     fun: lu.WrappedFun,
-    backend_name: str | None,
     axis_name: core.AxisName,
     axis_size: int,
     global_axis_size: int,
     devices: Sequence[xc.Device] | None,
     name: str,
     in_axes: Iterable[int | None],
-    out_axes_thunk: Callable[[], Sequence[int | None]],
     donated_invars: Sequence[bool],
     is_explicit_global_axis_size: bool,
     avals: Sequence[core.AbstractValue],
     *,
-    lowering_parameters: mlir.LoweringParameters) -> PmapComputation:
+    lowering_parameters: mlir.LoweringParameters,
+    closed_jaxpr: core.ClosedJaxpr,
+    backend: xc.Client,
+    replicas: ReplicaInfo,
+    shards: ShardInfo,
+    pci: ParallelCallableInfo) -> PmapComputation:
   # Determine global_axis_size for use in AxisEnv.
   # TODO(mattjj,skyewm): revive this check (inner_pmap always False now)
   # if xb.process_count() > 1 and global_axis_size is None and inner_pmap:
@@ -716,9 +725,6 @@ def lower_parallel_callable(
         f"Specified axis_size {global_axis_size} doesn't match received "
         f"axis_size {axis_size}.")
 
-  closed_jaxpr, backend, replicas, shards, pci = get_pmap_jaxpr(
-    fun, backend_name, axis_name, axis_size, global_axis_size, devices, name,
-    in_axes, out_axes_thunk, avals)
   jaxpr = closed_jaxpr.jaxpr
 
   no_nested_sharding = False

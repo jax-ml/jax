@@ -1812,6 +1812,10 @@ def _cpp_pmap(
   pmap_f = wraps(fun)(cpp_mapped_f)
 
   @api_boundary
+  def lower(*args, **kwargs):
+    return specialize(*args, **kwargs).lower()
+
+  @api_boundary
   def specialize(*args, **kwargs):
     lowering_parameters = kwargs.pop(
         '_experimental_lowering_parameters', mlir.LoweringParameters())
@@ -1819,18 +1823,7 @@ def _cpp_pmap(
         fun, in_axes, out_axes, static_broadcasted_tuple, donate_tuple,
         devices, backend, axis_size, args, kwargs)
     abstract_args = list(map(shaped_abstractify, p.flat_args))
-    lower_callable = partial(
-        pxla.lower_parallel_callable, p.flat_fun, backend, axis_name,
-        axis_size=p.local_axis_size, global_axis_size=p.global_axis_size,
-        devices=p.devices,
-        name=p.flat_fun.__name__,
-        in_axes=p.in_axes_flat,
-        out_axes_thunk=p.out_axes_thunk,
-        donated_invars=p.donated_invars,
-        is_explicit_global_axis_size=p.is_explicit_global_axis_size,
-        avals=abstract_args,
-        lowering_parameters=lowering_parameters)
-    jaxpr, _, _, _, _ = pxla.get_pmap_jaxpr(
+    closed_jaxpr, xc_backend, replicas, shards, pci = pxla.get_pmap_jaxpr(
         p.flat_fun, backend, axis_name,
         axis_size=p.local_axis_size, global_axis_size=p.global_axis_size,
         devices=p.devices,
@@ -1838,60 +1831,32 @@ def _cpp_pmap(
         in_axes=p.in_axes_flat,
         out_axes_thunk=p.out_axes_thunk,
         avals=abstract_args)
+    lower_callable = partial(
+        pxla.lower_parallel_callable, p.flat_fun, axis_name,
+        axis_size=p.local_axis_size, global_axis_size=p.global_axis_size,
+        devices=p.devices,
+        name=p.flat_fun.__name__,
+        in_axes=p.in_axes_flat,
+        donated_invars=p.donated_invars,
+        is_explicit_global_axis_size=p.is_explicit_global_axis_size,
+        avals=abstract_args,
+        lowering_parameters=lowering_parameters,
+        closed_jaxpr=closed_jaxpr,
+        backend=xc_backend,
+        replicas=replicas,
+        shards=shards,
+        pci=pci)
     args_info = stages.make_args_info(p.in_tree, abstract_args, donate_tuple)
-    return stages.Specialized(jaxpr, args_info, p.flat_fun.__name__,
+    return stages.Specialized(closed_jaxpr, args_info, p.flat_fun.__name__,
                               p.out_tree(), lower_callable)
 
-  pmap_f.lower = _pmap_lower(
-      fun, axis_name, in_axes, out_axes, static_broadcasted_tuple, devices,
-      backend, axis_size, donate_tuple)
+  pmap_f.lower = lower
   pmap_f.specialize = specialize
 
   return pmap_f
 
 _pmap_cache_clears = weakref.WeakSet()  # type: ignore
 
-
-def _pmap_lower(fun, axis_name, in_axes, out_axes, static_broadcasted_tuple,
-                devices, backend, axis_size, donate_tuple):  # noqa: F811
-  """Make a ``lower`` method for pmapped functions."""
-  # If the function we returned from ``pmap`` were a class instance,
-  # this might naturally be a method, with ``fun`` as a ``self`` and
-  # all the other arguments stored as attributes.
-  @api_boundary
-  def lower(*args, **kwargs) -> stages.Lowered:
-    """Lower a parallel-mapped form of this function for the given arguments.
-
-    A parallel-mapped and lowered function is staged out of Python and
-    translated to a compiler's input language, possibly in a
-    backend-dependent manner. It is ready for compilation but is not yet
-    compiled. It represents a function intended for SPMD execution on
-    multiple devices.
-
-    Returns:
-      A ``Lowered`` instance representing the post-map lowering.
-    """
-    lowering_parameters = kwargs.pop(
-        '_experimental_lowering_parameters', mlir.LoweringParameters())
-    p = _prepare_pmap(
-        fun, in_axes, out_axes, static_broadcasted_tuple, donate_tuple,
-        devices, backend, axis_size, args, kwargs)
-    abstract_args = list(map(shaped_abstractify, p.flat_args))
-    computation = pxla.lower_parallel_callable(
-        p.flat_fun, backend, axis_name,
-        axis_size=p.local_axis_size, global_axis_size=p.global_axis_size,
-        devices=p.devices,
-        name=p.flat_fun.__name__,
-        in_axes=p.in_axes_flat,
-        out_axes_thunk=p.out_axes_thunk,
-        donated_invars=p.donated_invars,
-        is_explicit_global_axis_size=p.is_explicit_global_axis_size,
-        avals=abstract_args,
-        lowering_parameters=lowering_parameters)
-    return stages.Lowered.from_flat_info(
-        computation, p.in_tree, abstract_args, donate_tuple, p.out_tree())
-
-  return lower
 
 def jvp(
     fun: Callable, primals, tangents, has_aux: bool = False
