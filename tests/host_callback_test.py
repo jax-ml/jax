@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Sequence
 from functools import partial
 import itertools
@@ -196,18 +197,13 @@ def helper_log_ir(name,
   logging.info(f"Optimized HLO[{name}]: {jax_optimized_hlo}")
 
 
-prev_xla_flags = None
-
+_exit_stack = contextlib.ExitStack()
 
 def setUpModule():
-  global prev_xla_flags
-  # This will control the CPU devices. On TPU we always have 2 devices
-  prev_xla_flags = jtu.set_host_platform_device_count(2)
+  _exit_stack.enter_context(jtu.set_host_platform_device_count(2))
 
-
-# Reset to previous configuration in case other test modules will be run.
 def tearDownModule():
-  prev_xla_flags()
+  _exit_stack.close()
 
 
 def assertMultiDeviceOutputEqual(tst: jtu.JaxTestCase,

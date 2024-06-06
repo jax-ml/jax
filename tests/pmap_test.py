@@ -15,11 +15,11 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import contextlib
 from functools import partial
 import itertools as it
 import gc
 import math
-import os
 from random import shuffle
 import re
 from typing import Union, cast
@@ -46,7 +46,6 @@ from jax._src import config
 from jax._src import sharding_impls
 from jax._src import sharding_specs
 from jax._src import test_util as jtu
-from jax._src import xla_bridge
 from jax._src.internal_test_util import lax_test_util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
@@ -56,7 +55,14 @@ from jax._src.util import safe_map, safe_zip
 
 config.parse_flags_with_absl()
 
-prev_xla_flags = None
+# Run all tests with 8 CPU devices.
+_exit_stack = contextlib.ExitStack()
+
+def setUpModule():
+  _exit_stack.enter_context(jtu.set_host_platform_device_count(8))
+
+def tearDownModule():
+  _exit_stack.close()
 
 compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
 
@@ -84,26 +90,6 @@ def slicer(x, bdim):
 def args_slicer(args, bdims):
   slicers = safe_map(slicer, args, bdims)
   return lambda i: [sl(i) for sl in slicers]
-
-# Run all tests with 8 CPU devices.
-def setUpModule():
-  global prev_xla_flags
-  prev_xla_flags = os.getenv("XLA_FLAGS")
-  flags_str = prev_xla_flags or ""
-  # Don't override user-specified device count, or other XLA flags.
-  if "xla_force_host_platform_device_count" not in flags_str:
-    os.environ["XLA_FLAGS"] = (flags_str +
-                               " --xla_force_host_platform_device_count=8")
-  # Clear any cached backends so new CPU backend will pick up the env var.
-  xla_bridge.get_backend.cache_clear()
-
-# Reset to previous configuration in case other test modules will be run.
-def tearDownModule():
-  if prev_xla_flags is None:
-    del os.environ["XLA_FLAGS"]
-  else:
-    os.environ["XLA_FLAGS"] = prev_xla_flags
-  xla_bridge.get_backend.cache_clear()
 
 ignore_jit_of_pmap_warning = partial(
   jtu.ignore_warning, message=".*jit-of-pmap.*")
