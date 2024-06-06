@@ -560,6 +560,9 @@ class LoweringParameters:
   # or multi-platform lowering.
   global_constant_computation: bool = False
 
+  # Signals that we are lowering for exporting.
+  for_export: bool = False
+
 
 @dataclasses.dataclass
 class TracebackCaches:
