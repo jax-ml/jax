@@ -4191,6 +4191,25 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertLen(specialized.in_avals[0], 1)
     self.assertLen(specialized.in_avals[1], 0)  # empty kwarg
 
+  def test_jit_specialize_lower_and_compile(self):
+    def f(x):
+      return x * 2
+
+    lowered = jax.jit(f).specialize(jnp.arange(8)).lower()
+    self.assertEqual(lowered.args_info[0][0].shape, (8,))
+
+    compiled = lowered.compile()
+    out = compiled(jnp.arange(8))
+    self.assertArraysEqual(out, np.arange(8) * 2)
+
+    # fast-forward
+    lowered2 = jax.jit(f).lower(jnp.arange(8))
+    self.assertEqual(lowered2.args_info[0][0].shape, (8,))
+
+    compiled2 = lowered2.compile()
+    out2 = compiled2(jnp.arange(8))
+    self.assertArraysEqual(out2, np.arange(8) * 2)
+
 
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")

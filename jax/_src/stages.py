@@ -426,17 +426,24 @@ class CompiledCallParams(NamedTuple):
 
 
 class Specialized(Stage):
-  __slots__ = ["jaxpr", "args_info", "_out_tree"]
+  __slots__ = ["jaxpr", "args_info", "fun_name", "_out_tree", "_lower_callable"]
 
-  def __init__(self, jaxpr: core.ClosedJaxpr, args_info, out_tree):
+  def __init__(self, jaxpr: core.ClosedJaxpr, args_info, fun_name, out_tree,
+               lower_callable):
     self.jaxpr = jaxpr
     self.args_info = args_info
+    self.fun_name = fun_name
     self._out_tree = out_tree
+    self._lower_callable = lower_callable
 
   @property
   def out_info(self):
     return self._out_tree.unflatten(
         [OutInfo(o.shape, o.dtype) for o in self.jaxpr.out_avals])
+
+  def lower(self):
+    lowering = self._lower_callable()
+    return Lowered(lowering, self.args_info, self._out_tree)
 
 
 class Compiled(Stage):
