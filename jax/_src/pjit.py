@@ -509,9 +509,19 @@ def _make_jit_wrapper(jit_info: PjitInfo):
            for x, s in zip(params['jaxpr'].out_avals, out_s)]
     return tree_unflatten(out_tree, out)
 
+  @api_boundary
+  def specialize(*args, **kwargs) -> stages.Specialized:
+    _, _, params, in_tree, out_tree, donated_invars, _, _ = _infer_params(
+        jit_info, args, kwargs)
+    donate_argnums = tuple(i for i, d in enumerate(donated_invars) if d)
+    jaxpr = params['jaxpr']
+    args_info = stages.make_args_info(in_tree, jaxpr.in_avals, donate_argnums)
+    return stages.Specialized(jaxpr, args_info, out_tree)
+
   wrapped = _cpp_pjit(jit_info)
   wrapped.lower = lower
   wrapped.eval_shape = eval_shape
+  wrapped.specialize = specialize
   return wrapped
 
 
@@ -704,6 +714,9 @@ class JitWrapped(stages.Wrapped):
 
   def eval_shape(self, *args, **kwargs):
     """See ``jax.eval_shape``."""
+    raise NotImplementedError
+
+  def specialize(self, *args, **kwargs) -> stages.Specialized:
     raise NotImplementedError
 
 

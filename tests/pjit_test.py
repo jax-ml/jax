@@ -4177,6 +4177,20 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(out_info[0].sharding, None)
     self.assertEqual(out_info[1].sharding, None)
 
+  def test_jit_specialize(self):
+    def f(x):
+      return x * 2
+
+    specialized = jax.jit(f).specialize(jnp.arange(8, dtype=jnp.int32))
+    self.assertLen(specialized.jaxpr.eqns, 1)
+    self.assertEqual(jax.tree.structure(specialized.out_info).num_leaves, 1)
+    self.assertEqual(specialized.out_info.shape, (8,))
+    self.assertEqual(specialized.out_info.dtype, jnp.int32)
+    # one for args, one for kwargs (though kwargs is empty)
+    self.assertLen(specialized.in_avals, 2)
+    self.assertLen(specialized.in_avals[0], 1)
+    self.assertLen(specialized.in_avals[1], 0)  # empty kwarg
+
 
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")

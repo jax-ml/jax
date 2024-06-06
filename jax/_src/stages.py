@@ -387,7 +387,7 @@ class ArgInfo:
 class OutInfo:
   shape: tuple[int, ...]
   dtype: jax.typing.DTypeLike
-  sharding: jax.sharding.Sharding
+  sharding: jax.sharding.Sharding | None = None
 
 
 class Stage:
@@ -423,6 +423,20 @@ class CompiledCallParams(NamedTuple):
   no_kwargs: bool
   in_tree: tree_util.PyTreeDef
   out_tree: tree_util.PyTreeDef
+
+
+class Specialized(Stage):
+  __slots__ = ["jaxpr", "args_info", "_out_tree"]
+
+  def __init__(self, jaxpr: core.ClosedJaxpr, args_info, out_tree):
+    self.jaxpr = jaxpr
+    self.args_info = args_info
+    self._out_tree = out_tree
+
+  @property
+  def out_info(self):
+    return self._out_tree.unflatten(
+        [OutInfo(o.shape, o.dtype) for o in self.jaxpr.out_avals])
 
 
 class Compiled(Stage):
