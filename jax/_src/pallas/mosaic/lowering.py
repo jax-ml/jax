@@ -1125,7 +1125,15 @@ def _dot_general_lowering_rule(
   (aval_out,) = ctx.avals_out
   out_type = aval_to_ir_type(aval_out)
   val_type = out_type.element_type
-  if any(cls.isinstance(val_type) for cls in [ir.BF16Type, ir.F32Type]):
+  if any(
+      cls.isinstance(val_type)
+      for cls in [
+          ir.BF16Type,
+          ir.F32Type,
+          ir.Float8E5M2Type,
+          ir.Float8E4M3FNType,
+      ]
+  ):
     val = ir.FloatAttr.get(val_type, 0.0)
   elif ir.IntegerType.isinstance(val_type):
     val = ir.IntegerAttr.get(val_type, 0)

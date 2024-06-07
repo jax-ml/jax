@@ -1653,8 +1653,9 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
     if (dyn_cast<arith::TruncFOp>(op)) {
       TPU_CHECK_OP(src_ty.getElementTypeBitWidth() == 32 &&
-                       dst_ty.getElementTypeBitWidth() == 16,
-                   "Only 32-bit to 16-bit truncation supported");
+                       (dst_ty.getElementTypeBitWidth() == 16 ||
+                        dst_ty.getElementTypeBitWidth() == 8),
+                   "Only 32-bit to 8-bit or 16-bit truncation supported");
     } else {
       TPU_CHECK_OP(src_ty.getElementTypeBitWidth() == 32,
                    "Only 32-bit truncation supported");

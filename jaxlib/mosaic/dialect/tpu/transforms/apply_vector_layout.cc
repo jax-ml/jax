@@ -875,9 +875,10 @@ LogicalResult arith_truncf_rule(RewriteContext &ctx, Operation &op,
   TPU_ASSERT_OP(layouts_out.front().has_value());
   auto truncf_op = cast<arith::TruncFOp>(op);
   if (layouts_in.front()->bitwidth() != 32 ||
-      layouts_out.front()->bitwidth() != 16) {
+      (layouts_out.front()->bitwidth() != 16 &&
+       layouts_out.front()->bitwidth() != 8)) {
     return op.emitOpError(
-        "Not implemented: Only 32-bit to 16-bit conversion supported");
+        "Not implemented: Only 32-bit to 16-or-8-bit conversion supported");
   }
   return trunc_op_rule_impl(ctx, truncf_op, *layouts_in.front(),
                             *layouts_out.front());
