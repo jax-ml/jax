@@ -14,18 +14,26 @@
 
 from __future__ import annotations
 
-import os
-import ctypes
 from collections.abc import Iterable, Mapping, Sequence
+import ctypes
+import functools
+import os
 from typing import Any
 
-import numpy as np
-
+from jax._src import core
+from jax._src import dispatch
 from jax._src import dtypes
+from jax._src import effects
+from jax._src import util
+from jax._src.callback import _check_shape_dtype, callback_batching_rule
+from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.lib import jaxlib
 from jax._src.lib.mlir import ir
-from jax._src.typing import DimSize
+from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray
+import numpy as np
+
+map, unsafe_map = util.safe_map, map
 
 
 def pycapsule(funcptr):
@@ -140,3 +148,110 @@ def _ir_attribute(obj: Any) -> ir.Attribute:
     elif isinstance(mlir_type, ir.FloatType):
       return ir.FloatAttr.get(mlir_type, obj)
   raise TypeError(f"Unsupported attribute type: {type(obj)}")
+
+
+ffi_call_p = core.Primitive("ffi_call")
+ffi_call_p.multiple_results = True
+ffi_call_p.def_impl(functools.partial(dispatch.apply_primitive, ffi_call_p))
+
+
+@ffi_call_p.def_abstract_eval
+def ffi_call_abstract_eval(
+    *avals_in,
+    result_avals: tuple[core.ShapedArray, ...],
+    platforms: tuple[str, ...],
+    target_names: tuple[str, ...],
+    vectorized: bool,
+    **kwargs: Any,
+):
+  del avals_in, platforms, target_names, vectorized, kwargs
+  return result_avals
+
+
+batching.primitive_batchers[ffi_call_p] = functools.partial(
+    callback_batching_rule, ffi_call_p
+)
+
+
+def ffi_call_lowering(
+    ctx: mlir.LoweringRuleContext,
+    *operands: ir.Value,
+    result_avals: tuple[core.ShapedArray, ...],
+    platforms: tuple[str, ...],
+    target_names: tuple[str, ...],
+    vectorized: bool,
+    **kwargs: Any,
+) -> Sequence[ir.Value]:
+  del result_avals, vectorized
+  return mlir.lower_per_platform(
+      ctx,
+      "ffi_call",
+      {
+          platform: ffi_lowering(target_name)
+          for platform, target_name in util.safe_zip(platforms, target_names)
+      },
+      None,
+      effects.no_effects,
+      *operands,
+      **kwargs,
+  )
+
+
+mlir.register_lowering(ffi_call_p, ffi_call_lowering)
+
+
+def ffi_call(
+    platform_target_names: Mapping[str, str],
+    result_shape_dtypes: DuckTypedArray | Sequence[DuckTypedArray],
+    *args: ArrayLike,
+    vectorized: bool = False,
+    **kwargs: Any,
+) -> Array | Sequence[Array]:
+  """Calls a foreign function interface (FFI) target.
+
+  TODO(dfm): Explain what vectorized does.
+
+  Args:
+    platform_target_names: a dictionary where the key is the platform name and
+      the value is the name of the XLA FFI custom call target that was
+      previously registered for that platform using
+      :func:`xla_client.register_custom_call_target`.
+    result_shape_dtypes: an object, or sequence of objects, with ``shape`` and
+      ``dtype`` attributes which are expected to match the shape and dtype of
+      the custom call output or outputs. :class:`jax.ShapeDtypeStruct` is often
+      used to define the elements of ``result_shape_dtypes``.
+    *args: the arguments passed to the custom call.
+    vectorized: boolean specifying whether the callback function can operate in
+      a vectorized manner, as described above.
+    **kwargs: keyword arguments that are passed as named attributes to the
+      custom call using XLA's FFI interface.
+
+  Returns:
+    One or more :class:`jax.Array` objects whose shapes and dtypes match
+    ``result_shape_dtypes``.
+  """
+  if "gpu" in platform_target_names:
+    raise ValueError("Use 'cuda' or 'rocm' instead of 'gpu' for ffi_call")
+  if isinstance(result_shape_dtypes, Sequence):
+    multiple_results = True
+    result_shape_dtypes_ = result_shape_dtypes
+  else:
+    multiple_results = False
+    result_shape_dtypes_ = (result_shape_dtypes,)
+  map(_check_shape_dtype, result_shape_dtypes_)
+  result_avals = [
+      core.ShapedArray(x.shape, x.dtype) for x in result_shape_dtypes_
+  ]
+  platforms, target_names = util.unzip2(platform_target_names.items())
+  results = ffi_call_p.bind(
+      *args,
+      result_avals=tuple(result_avals),
+      vectorized=vectorized,
+      platforms=platforms,
+      target_names=target_names,
+      **kwargs,
+  )
+  if multiple_results:
+    return results
+  else:
+    return results[0]
