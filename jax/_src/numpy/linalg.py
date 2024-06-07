@@ -1438,7 +1438,7 @@ def lstsq(a: ArrayLike, b: ArrayLike, rcond: float | None = None, *,
 
 
 def cross(x1: ArrayLike, x2: ArrayLike, /, *, axis=-1):
-  r"""Compute the corss-product of two 3D vectors
+  r"""Compute the cross-product of two 3D vectors
 
   JAX implementation of :func:`numpy.linalg.cross`
 
