@@ -2463,17 +2463,18 @@ def device_put(
       def _map(y):
         _check_sharding(shaped_abstractify(y), s=device)
         return dispatch.device_put_p.bind(
-            y, device=device, src=_infer_src_sharding(src, y))
+            y, devices=[device], srcs=[_infer_src_sharding(src, y)])[0]
       return tree_map(_map, x)
 
     x_flat, treedef = tree_flatten(x)
     device_flat = flatten_axes("device_put device", treedef, device)
     src_flat = flatten_axes("device_put source", treedef, src)
-    out_flat = []
-    for xf, d, s in zip(x_flat, device_flat, src_flat):
+    src_flat = tree_map(_infer_src_sharding, src_flat, x_flat)
+    for xf, d in zip(x_flat, device_flat):
       _check_sharding(shaped_abstractify(xf), d)
-      out_flat.append(dispatch.device_put_p.bind(
-          xf, device=d, src=_infer_src_sharding(s, xf)))
+    out_flat = dispatch.device_put_p.bind(
+        *x_flat, devices=device_flat, srcs=src_flat
+    )
     return tree_unflatten(treedef, out_flat)
 
 
