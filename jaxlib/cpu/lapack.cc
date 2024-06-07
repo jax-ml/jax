@@ -35,12 +35,11 @@ void GetLapackKernelsFromScipy() {
   auto blas_ptr = [&](const char* name) {
     return nb::cast<nb::capsule>(blas_capi[name]).data();
   };
-  Trsm<float>::fn = reinterpret_cast<Trsm<float>::FnType*>(blas_ptr("strsm"));
-  Trsm<double>::fn = reinterpret_cast<Trsm<double>::FnType*>(blas_ptr("dtrsm"));
-  Trsm<std::complex<float>>::fn =
-      reinterpret_cast<Trsm<std::complex<float>>::FnType*>(blas_ptr("ctrsm"));
-  Trsm<std::complex<double>>::fn =
-      reinterpret_cast<Trsm<std::complex<double>>::FnType*>(blas_ptr("ztrsm"));
+
+  AssignKernelFn<Trsm<float>>(blas_ptr("strsm"));
+  AssignKernelFn<Trsm<double>>(blas_ptr("dtrsm"));
+  AssignKernelFn<Trsm<std::complex<float>>>(blas_ptr("ctrsm"));
+  AssignKernelFn<Trsm<std::complex<double>>>(blas_ptr("ztrsm"));
 
   nb::module_ cython_lapack =
       nb::module_::import_("scipy.linalg.cython_lapack");
@@ -48,106 +47,55 @@ void GetLapackKernelsFromScipy() {
   auto lapack_ptr = [&](const char* name) {
     return nb::cast<nb::capsule>(lapack_capi[name]).data();
   };
-  Getrf<float>::fn =
-      reinterpret_cast<Getrf<float>::FnType*>(lapack_ptr("sgetrf"));
-  Getrf<double>::fn =
-      reinterpret_cast<Getrf<double>::FnType*>(lapack_ptr("dgetrf"));
-  Getrf<std::complex<float>>::fn =
-      reinterpret_cast<Getrf<std::complex<float>>::FnType*>(
-          lapack_ptr("cgetrf"));
-  Getrf<std::complex<double>>::fn =
-      reinterpret_cast<Getrf<std::complex<double>>::FnType*>(
-          lapack_ptr("zgetrf"));
-  Geqrf<float>::fn =
-      reinterpret_cast<Geqrf<float>::FnType*>(lapack_ptr("sgeqrf"));
-  Geqrf<double>::fn =
-      reinterpret_cast<Geqrf<double>::FnType*>(lapack_ptr("dgeqrf"));
-  Geqrf<std::complex<float>>::fn =
-      reinterpret_cast<Geqrf<std::complex<float>>::FnType*>(
-          lapack_ptr("cgeqrf"));
-  Geqrf<std::complex<double>>::fn =
-      reinterpret_cast<Geqrf<std::complex<double>>::FnType*>(
-          lapack_ptr("zgeqrf"));
-  Orgqr<float>::fn =
-      reinterpret_cast<Orgqr<float>::FnType*>(lapack_ptr("sorgqr"));
-  Orgqr<double>::fn =
-      reinterpret_cast<Orgqr<double>::FnType*>(lapack_ptr("dorgqr"));
-  Orgqr<std::complex<float>>::fn =
-      reinterpret_cast<Orgqr<std::complex<float>>::FnType*>(
-          lapack_ptr("cungqr"));
-  Orgqr<std::complex<double>>::fn =
-      reinterpret_cast<Orgqr<std::complex<double>>::FnType*>(
-          lapack_ptr("zungqr"));
-  Potrf<float>::fn =
-      reinterpret_cast<Potrf<float>::FnType*>(lapack_ptr("spotrf"));
-  Potrf<double>::fn =
-      reinterpret_cast<Potrf<double>::FnType*>(lapack_ptr("dpotrf"));
-  Potrf<std::complex<float>>::fn =
-      reinterpret_cast<Potrf<std::complex<float>>::FnType*>(
-          lapack_ptr("cpotrf"));
-  Potrf<std::complex<double>>::fn =
-      reinterpret_cast<Potrf<std::complex<double>>::FnType*>(
-          lapack_ptr("zpotrf"));
-  RealGesdd<float>::fn =
-      reinterpret_cast<RealGesdd<float>::FnType*>(lapack_ptr("sgesdd"));
-  RealGesdd<double>::fn =
-      reinterpret_cast<RealGesdd<double>::FnType*>(lapack_ptr("dgesdd"));
-  ComplexGesdd<std::complex<float>>::fn =
-      reinterpret_cast<ComplexGesdd<std::complex<float>>::FnType*>(
-          lapack_ptr("cgesdd"));
-  ComplexGesdd<std::complex<double>>::fn =
-      reinterpret_cast<ComplexGesdd<std::complex<double>>::FnType*>(
-          lapack_ptr("zgesdd"));
-  RealSyevd<float>::fn =
-      reinterpret_cast<RealSyevd<float>::FnType*>(lapack_ptr("ssyevd"));
-  RealSyevd<double>::fn =
-      reinterpret_cast<RealSyevd<double>::FnType*>(lapack_ptr("dsyevd"));
-  ComplexHeevd<std::complex<float>>::fn =
-      reinterpret_cast<ComplexHeevd<std::complex<float>>::FnType*>(
-          lapack_ptr("cheevd"));
-  ComplexHeevd<std::complex<double>>::fn =
-      reinterpret_cast<ComplexHeevd<std::complex<double>>::FnType*>(
-          lapack_ptr("zheevd"));
-  RealGeev<float>::fn =
-      reinterpret_cast<RealGeev<float>::FnType*>(lapack_ptr("sgeev"));
-  RealGeev<double>::fn =
-      reinterpret_cast<RealGeev<double>::FnType*>(lapack_ptr("dgeev"));
-  ComplexGeev<std::complex<float>>::fn =
-      reinterpret_cast<ComplexGeev<std::complex<float>>::FnType*>(
-          lapack_ptr("cgeev"));
-  ComplexGeev<std::complex<double>>::fn =
-      reinterpret_cast<ComplexGeev<std::complex<double>>::FnType*>(
-          lapack_ptr("zgeev"));
-  RealGees<float>::fn =
-      reinterpret_cast<RealGees<float>::FnType*>(lapack_ptr("sgees"));
-  RealGees<double>::fn =
-      reinterpret_cast<RealGees<double>::FnType*>(lapack_ptr("dgees"));
-  ComplexGees<std::complex<float>>::fn =
-      reinterpret_cast<ComplexGees<std::complex<float>>::FnType*>(
-          lapack_ptr("cgees"));
-  ComplexGees<std::complex<double>>::fn =
-      reinterpret_cast<ComplexGees<std::complex<double>>::FnType*>(
-          lapack_ptr("zgees"));
-  Gehrd<float>::fn =
-      reinterpret_cast<Gehrd<float>::FnType*>(lapack_ptr("sgehrd"));
-  Gehrd<double>::fn =
-      reinterpret_cast<Gehrd<double>::FnType*>(lapack_ptr("dgehrd"));
-  Gehrd<std::complex<float>>::fn =
-      reinterpret_cast<Gehrd<std::complex<float>>::FnType*>(
-          lapack_ptr("cgehrd"));
-  Gehrd<std::complex<double>>::fn =
-      reinterpret_cast<Gehrd<std::complex<double>>::FnType*>(
-          lapack_ptr("zgehrd"));
-  Sytrd<float>::fn =
-      reinterpret_cast<Sytrd<float>::FnType*>(lapack_ptr("ssytrd"));
-  Sytrd<double>::fn =
-      reinterpret_cast<Sytrd<double>::FnType*>(lapack_ptr("dsytrd"));
-  Sytrd<std::complex<float>>::fn =
-      reinterpret_cast<Sytrd<std::complex<float>>::FnType*>(
-          lapack_ptr("chetrd"));
-  Sytrd<std::complex<double>>::fn =
-      reinterpret_cast<Sytrd<std::complex<double>>::FnType*>(
-          lapack_ptr("zhetrd"));
+  AssignKernelFn<Getrf<float>>(lapack_ptr("sgetrf"));
+  AssignKernelFn<Getrf<double>>(lapack_ptr("dgetrf"));
+  AssignKernelFn<Getrf<std::complex<float>>>(lapack_ptr("cgetrf"));
+  AssignKernelFn<Getrf<std::complex<double>>>(lapack_ptr("zgetrf"));
+
+  AssignKernelFn<Geqrf<float>>(lapack_ptr("sgeqrf"));
+  AssignKernelFn<Geqrf<double>>(lapack_ptr("dgeqrf"));
+  AssignKernelFn<Geqrf<std::complex<float>>>(lapack_ptr("cgeqrf"));
+  AssignKernelFn<Geqrf<std::complex<double>>>(lapack_ptr("zgeqrf"));
+
+  AssignKernelFn<Orgqr<float>>(lapack_ptr("sorgqr"));
+  AssignKernelFn<Orgqr<double>>(lapack_ptr("dorgqr"));
+  AssignKernelFn<Orgqr<std::complex<float>>>(lapack_ptr("cungqr"));
+  AssignKernelFn<Orgqr<std::complex<double>>>(lapack_ptr("zungqr"));
+
+  AssignKernelFn<Potrf<float>>(lapack_ptr("spotrf"));
+  AssignKernelFn<Potrf<double>>(lapack_ptr("dpotrf"));
+  AssignKernelFn<Potrf<std::complex<float>>>(lapack_ptr("cpotrf"));
+  AssignKernelFn<Potrf<std::complex<double>>>(lapack_ptr("zpotrf"));
+
+  AssignKernelFn<RealGesdd<float>>(lapack_ptr("sgesdd"));
+  AssignKernelFn<RealGesdd<double>>(lapack_ptr("dgesdd"));
+  AssignKernelFn<ComplexGesdd<std::complex<float>>>(lapack_ptr("cgesdd"));
+  AssignKernelFn<ComplexGesdd<std::complex<double>>>(lapack_ptr("zgesdd"));
+
+  AssignKernelFn<RealSyevd<float>>(lapack_ptr("ssyevd"));
+  AssignKernelFn<RealSyevd<double>>(lapack_ptr("dsyevd"));
+  AssignKernelFn<ComplexHeevd<std::complex<float>>>(lapack_ptr("cheevd"));
+  AssignKernelFn<ComplexHeevd<std::complex<double>>>(lapack_ptr("zheevd"));
+
+  AssignKernelFn<RealGeev<float>>(lapack_ptr("sgeev"));
+  AssignKernelFn<RealGeev<double>>(lapack_ptr("dgeev"));
+  AssignKernelFn<ComplexGeev<std::complex<float>>>(lapack_ptr("cgeev"));
+  AssignKernelFn<ComplexGeev<std::complex<double>>>(lapack_ptr("zgeev"));
+
+  AssignKernelFn<RealGees<float>>(lapack_ptr("sgees"));
+  AssignKernelFn<RealGees<double>>(lapack_ptr("dgees"));
+  AssignKernelFn<ComplexGees<std::complex<float>>>(lapack_ptr("cgees"));
+  AssignKernelFn<ComplexGees<std::complex<double>>>(lapack_ptr("zgees"));
+
+  AssignKernelFn<Gehrd<float>>(lapack_ptr("sgehrd"));
+  AssignKernelFn<Gehrd<double>>(lapack_ptr("dgehrd"));
+  AssignKernelFn<Gehrd<std::complex<float>>>(lapack_ptr("cgehrd"));
+  AssignKernelFn<Gehrd<std::complex<double>>>(lapack_ptr("zgehrd"));
+
+  AssignKernelFn<Sytrd<float>>(lapack_ptr("ssytrd"));
+  AssignKernelFn<Sytrd<double>>(lapack_ptr("dsytrd"));
+  AssignKernelFn<Sytrd<std::complex<float>>>(lapack_ptr("chetrd"));
+  AssignKernelFn<Sytrd<std::complex<double>>>(lapack_ptr("zhetrd"));
 
   initialized = true;
 }

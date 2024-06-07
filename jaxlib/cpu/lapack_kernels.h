@@ -29,6 +29,16 @@ limitations under the License.
 namespace jax {
 
 typedef int lapack_int;
+template <typename KernelType>
+void AssignKernelFn(void* func) {
+  KernelType::fn = reinterpret_cast<typename KernelType::FnType*>(func);
+}
+
+template <typename KernelType>
+void AssignKernelFn(typename KernelType::FnType* func) {
+  KernelType::fn = func;
+}
+
 
 template <typename T>
 struct Trsm {
