@@ -427,10 +427,11 @@ class CompiledCallParams(NamedTuple):
 
 class Traced(Stage):
   __slots__ = ["jaxpr", "args_info", "fun_name", "_out_tree", "_lower_callable",
-               "_args_flat", "_arg_names"]
+               "_args_flat", "_arg_names", "_num_consts"]
 
   def __init__(self, jaxpr: core.ClosedJaxpr, args_info, fun_name, out_tree,
-               lower_callable, args_flat=None, arg_names=None):
+               lower_callable, args_flat=None, arg_names=None,
+               num_consts: int = 0):
     self.jaxpr = jaxpr
     self.args_info = args_info
     self.fun_name = fun_name
@@ -438,6 +439,7 @@ class Traced(Stage):
     self._lower_callable = lower_callable
     self._args_flat = args_flat
     self._arg_names = arg_names
+    self._num_consts = num_consts
 
   @property
   def out_info(self):

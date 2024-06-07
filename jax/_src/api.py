@@ -71,7 +71,8 @@ from jax._src.sharding_impls import PmapSharding, TransferToMemoryKind
 from jax._src.layout import Layout, AutoLayout
 from jax._src.traceback_util import api_boundary
 from jax._src import tree_util
-from jax._src.util import unzip2, safe_map, safe_zip, wrap_name, wraps
+from jax._src.util import (unzip2, safe_map, safe_zip, wrap_name, wraps,
+                           split_list)
 from jax._src import util
 
 from jax._src.interpreters import ad
@@ -2358,43 +2359,34 @@ def make_jaxpr(fun: Callable,
       g:f32[] = mul f c
     in (g,) }
   """
-  check_callable(fun)
-  static_argnums = _ensure_index_tuple(static_argnums)
-
-  def abstractify(args, kwargs):
-    flat_args, in_tree = tree_flatten((args, kwargs))
-    if abstracted_axes is None:
-      return map(shaped_abstractify, flat_args), in_tree, [True] * len(flat_args)
-    else:
-      axes_specs = _flat_axes_specs(abstracted_axes, *args, **kwargs)
-      in_type = pe.infer_lambda_input_type(axes_specs, flat_args)
-      in_avals, keep_inputs = unzip2(in_type)
-      return in_avals, in_tree, keep_inputs
+  try:
+    hash(fun)
+    weakref.ref(fun)
+  except TypeError:
+    fun = partial(fun)
 
   @wraps(fun)
   @api_boundary
   def make_jaxpr_f(*args, **kwargs):
-    f = lu.wrap_init(fun)
-    if static_argnums:
-      dyn_argnums = [i for i in range(len(args)) if i not in static_argnums]
-      f, args = argnums_partial(f, dyn_argnums, args)
-    in_avals, in_tree, keep_inputs = abstractify(args, kwargs)
-    in_type = tuple(zip(in_avals, keep_inputs))
-    f, out_tree = flatten_fun(f, in_tree)
-    f = lu.annotate(f, in_type)
-    debug_info = pe.debug_info(fun, in_tree, out_tree, True, 'make_jaxpr')
     with ExitStack() as stack:
       for axis_name, size in axis_env or []:
         stack.enter_context(core.extend_axis_env(axis_name, size, None))
-      jaxpr, out_type, consts = pe.trace_to_jaxpr_dynamic2(
-          f, debug_info=debug_info)
-    closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
+      traced = jit(fun, static_argnums=static_argnums,
+                   abstracted_axes=abstracted_axes).trace(*args, **kwargs)
+    # `jit` converts tracers in consts to args but that breaks the semantics of
+    # `make_jaxpr`. Hence convert the tracers in args back to consts in jaxpr.
+    if traced._num_consts:
+      consts, _ = split_list(traced._args_flat, [traced._num_consts])
+      jaxpr_ = pe.convert_invars_to_constvars(traced.jaxpr.jaxpr,
+                                              traced._num_consts)
+      jaxpr = core.ClosedJaxpr(jaxpr_, consts)
+    else:
+      jaxpr = traced.jaxpr
     if return_shape:
-      out_avals, _ = unzip2(out_type)
-      out_shapes_flat = [
-          ShapeDtypeStruct(a.shape, a.dtype, a.named_shape) for a in out_avals]
-      return closed_jaxpr, tree_unflatten(out_tree(), out_shapes_flat)
-    return closed_jaxpr
+      out = [ShapeDtypeStruct(o.shape, o.dtype, getattr(o, 'named_shape', None))
+             for o in jaxpr.out_avals]
+      return jaxpr, tree_unflatten(tree_structure(traced.out_info), out)
+    return jaxpr
 
   make_jaxpr_f.__module__ = "jax"
   if hasattr(fun, "__qualname__"):

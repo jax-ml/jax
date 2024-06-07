@@ -4058,6 +4058,16 @@ class APITest(jtu.JaxTestCase):
       return jnp.exp(dtype(0))
     f()  # doesn't error
 
+  def test_vmap_make_jaxpr_close_over_tracer(self):
+    def run(inp):
+      def f(x, y):
+        return x + y
+      g = lambda x: f(x, inp)
+      jaxpr = jax.make_jaxpr(g)(1)
+      return jax.core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, 1)
+
+    jax.vmap(run)(jnp.arange(2))  # doesn't crash
+
   def test_large_python_ints(self):
     with self.assertRaises(OverflowError):
       jnp.multiply(2 ** 100, 3.)
