@@ -345,4 +345,4 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
       _get_vjp=_get_vjp)
 
       # We use pjit in case there are shardings in the exported module.
-    return pjit.pjit(export.call_exported(exported))(*data.inputs)
+    return pjit.pjit(export.call(exported))(*data.inputs)

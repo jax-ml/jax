@@ -1283,7 +1283,7 @@ class PolyHarness(Harness):
       return None
     # Run the JAX natively and then the exported function and compare
     res_jax_native = f_jax(*args)
-    res_jax_exported = export.call_exported(exp)(*args)
+    res_jax_exported = export.call(exp)(*args)
     custom_assert_lims = [
         l for l in self.limitations if l.custom_assert is not None]
     assert len(custom_assert_lims) <= 1, custom_assert_lims
@@ -1408,7 +1408,7 @@ class ShapePolyTest(jtu.JaxTestCase):
     def f_jax(x, *, y):
       return x + jnp.sin(y)
 
-    f_exported = export.call_exported(
+    f_exported = export.call(
         export.export(f_jax)(jax.ShapeDtypeStruct(export.symbolic_shape("b"),
                                                   x.dtype),
                              y=jax.ShapeDtypeStruct(y.shape, y.dtype)))
@@ -1633,22 +1633,22 @@ class ShapePolyTest(jtu.JaxTestCase):
     exp = export.export(f)(x_spec)
 
     x_2 = np.arange(2, dtype=np.int32)
-    res_2 = export.call_exported(exp)(x_2)
+    res_2 = export.call(exp)(x_2)
     self.assertAllClose(x_2[0:2], res_2)
 
     x_4 = np.arange(4, dtype=np.int32)
-    res_4 = export.call_exported(exp)(x_4)
+    res_4 = export.call(exp)(x_4)
     self.assertAllClose(x_4[1:3], res_4)
 
     with self.assertRaisesRegex(
         ValueError,
         re.escape("Expected 'a - 2' to be greater or equal to 0, but found -1")):
-      export.call_exported(exp)(np.arange(1, dtype=np.int32))
+      export.call(exp)(np.arange(1, dtype=np.int32))
 
     with self.assertRaisesRegex(
         ValueError,
         re.escape("Expected '- a + 4' to be greater or equal to 0, but found -1")):
-      export.call_exported(exp)(np.arange(5, dtype=np.int32))
+      export.call(exp)(np.arange(5, dtype=np.int32))
 
   def test_caching_with_scopes(self):
     f_tracing_count = 0

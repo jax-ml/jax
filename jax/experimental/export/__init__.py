@@ -22,8 +22,6 @@ from jax.experimental.export._export import (
     call,
     DisabledSafetyCheck,
     default_lowering_platform,
-
-    args_specs,  # TODO: deprecate
 )
 from jax._src.export.shape_poly import (
     is_symbolic_dim,

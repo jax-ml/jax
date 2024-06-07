@@ -1334,30 +1334,3 @@ def wrap_with_sharding(ctx: mlir.LoweringRuleContext,
     return x
   return mlir.wrap_with_sharding_op(
     ctx, x, x_aval, x_sharding.to_proto())
-
-# TODO(necula): Previously, we had `from jax.experimental.export import export`
-# Now we want to simplify the usage, and export the public APIs directly
-# from `jax.experimental.export` and now `jax.experimental.export.export`
-# refers to the `export` function. Since there may still be users of the
-# old API in other packages, we add the old public API as attributes of the
-# exported function. We will clean this up after a deprecation period.
-def wrap_with_deprecation_warning(f):
-  msg = (f"You are using function `{f.__name__}` from "
-         "`jax.experimental.export.export`. You should instead use it directly "
-         "from `jax.experimental.export`. Instead of "
-         "`from jax.experimental.export import export` you should use "
-         "`from jax.experimental import export`.")
-  def wrapped_f(*args, **kwargs):
-    warnings.warn(msg, DeprecationWarning, stacklevel=2)
-    return f(*args, **kwargs)
-  return wrapped_f
-
-export.export = wrap_with_deprecation_warning(export)
-export.Exported = Exported
-export.call_exported = wrap_with_deprecation_warning(call_exported)
-export.DisabledSafetyCheck = DisabledSafetyCheck
-export.default_lowering_platform = wrap_with_deprecation_warning(default_lowering_platform)
-export.symbolic_shape = wrap_with_deprecation_warning(shape_poly.symbolic_shape)
-export.args_specs = wrap_with_deprecation_warning(args_specs)
-export.minimum_supported_serialization_version = minimum_supported_serialization_version
-export.maximum_supported_serialization_version = maximum_supported_serialization_version

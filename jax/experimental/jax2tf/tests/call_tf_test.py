@@ -787,7 +787,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
         logging.info("Running harness natively on %s", jax_device)
         native_res = f_jax(x_device)
         logging.info("Running exported harness on %s", jax_device)
-        exported_res = export.call_exported(exp)(x_device)
+        exported_res = export.call(exp)(x_device)
         self.assertAllClose(native_res, exported_res)
 
   def test_multi_platform_call_tf_graph(self):

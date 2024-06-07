@@ -13,6 +13,11 @@ Remember to align the itemized text with the first line of an item within a list
     supporting a monolithic CUDA jaxlib. Future releases will use the CUDA
     plugin jaxlib (e.g. `pip install jax[cuda12]`).
   * JAX now requires ml_dtypes version 0.4.0 or newer.
+  * Removed backwards-compatibility support for old usage of the
+    `jax.experimental.export` API. It is not possible anymore to use
+    `from jax.experimental.export import export`, and instead you should use
+    `from jax.experimental import export`.
+    The removed functionality has been deprecated since 0.4.24.
 
 * Deprecations
   * `jax.sharding.XLACompatibleSharding` is deprecated. Please use

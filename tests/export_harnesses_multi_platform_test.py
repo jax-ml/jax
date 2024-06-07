@@ -164,7 +164,7 @@ class PrimitiveTest(jtu.JaxTestCase):
       logging.info("Running harness natively on %s", device)
       native_res = func_jax(*device_args)
       logging.info("Running exported harness on %s", device)
-      exported_res = export.call_exported(exp)(*device_args)
+      exported_res = export.call(exp)(*device_args)
       if tol is not None:
         logging.info(f"Using non-standard tolerance {tol}")
       self.assertAllClose(native_res, exported_res, atol=tol, rtol=tol)
