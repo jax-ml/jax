@@ -66,6 +66,7 @@ _py_deps = {
     "cloudpickle": ["@pypi_cloudpickle//:pkg"],
     "colorama": ["@pypi_colorama//:pkg"],
     "epath": ["@pypi_etils//:pkg"],  # etils.epath
+    "filelock": ["@pypi_filelock//:pkg"],
     "flatbuffers": ["@pypi_flatbuffers//:pkg"],
     "hypothesis": ["@pypi_hypothesis//:pkg"],
     "importlib_metadata": get_importlib_metadata(),
