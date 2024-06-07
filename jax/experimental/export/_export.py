@@ -452,7 +452,7 @@ def export(fun_jax: Callable,
       # an error if the lowered function contains non-replicated sharding annotations.
       wrapped_fun_jax = jax.jit(fun_jax)
 
-    has_specialize = hasattr(wrapped_fun_jax, "specialize")
+    has_trace = hasattr(wrapped_fun_jax, "trace")
 
     if lowering_platforms is not None:
       actual_lowering_platforms = tuple(lowering_platforms)
@@ -475,15 +475,15 @@ def export(fun_jax: Callable,
               self_descr=f"current (from {shape_poly.args_kwargs_path_to_str(symbolic_scope[1])}) ",
               other_descr=shape_poly.args_kwargs_path_to_str(k_path))
 
-    if has_specialize:
-      specialized = wrapped_fun_jax.specialize(
+    if has_trace:
+      traced = wrapped_fun_jax.trace(
           *args_specs, **kwargs_specs,
           _experimental_lowering_parameters=mlir.LoweringParameters(
             platforms=actual_lowering_platforms,
             for_export=True,
           ))
-      jaxpr, fun_name = specialized.jaxpr, specialized.fun_name
-      lowered = specialized.lower()
+      jaxpr, fun_name = traced.jaxpr, traced.fun_name
+      lowered = traced.lower()
     else:
       lowered = wrapped_fun_jax.lower(
           *args_specs, **kwargs_specs,

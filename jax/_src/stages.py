@@ -425,7 +425,7 @@ class CompiledCallParams(NamedTuple):
   out_tree: tree_util.PyTreeDef
 
 
-class Specialized(Stage):
+class Traced(Stage):
   __slots__ = ["jaxpr", "args_info", "fun_name", "_out_tree", "_lower_callable",
                "_args_flat", "_arg_names"]
 

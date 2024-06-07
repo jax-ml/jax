@@ -1813,10 +1813,10 @@ def _cpp_pmap(
 
   @api_boundary
   def lower(*args, **kwargs):
-    return specialize(*args, **kwargs).lower()
+    return trace(*args, **kwargs).lower()
 
   @api_boundary
-  def specialize(*args, **kwargs):
+  def trace(*args, **kwargs):
     lowering_parameters = kwargs.pop(
         '_experimental_lowering_parameters', mlir.LoweringParameters())
     p = _prepare_pmap(
@@ -1847,11 +1847,11 @@ def _cpp_pmap(
         shards=shards,
         pci=pci)
     args_info = stages.make_args_info(p.in_tree, abstract_args, donate_tuple)
-    return stages.Specialized(closed_jaxpr, args_info, p.flat_fun.__name__,
-                              p.out_tree(), lower_callable)
+    return stages.Traced(closed_jaxpr, args_info, p.flat_fun.__name__,
+                         p.out_tree(), lower_callable)
 
   pmap_f.lower = lower
-  pmap_f.specialize = specialize
+  pmap_f.trace = trace
 
   return pmap_f
 

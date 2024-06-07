@@ -4159,25 +4159,25 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(out_info[0].sharding, None)
     self.assertEqual(out_info[1].sharding, None)
 
-  def test_jit_specialize(self):
+  def test_jit_trace(self):
     def f(x):
       return x * 2
 
-    specialized = jax.jit(f).specialize(jnp.arange(8, dtype=jnp.int32))
-    self.assertLen(specialized.jaxpr.eqns, 1)
-    self.assertEqual(jax.tree.structure(specialized.out_info).num_leaves, 1)
-    self.assertEqual(specialized.out_info.shape, (8,))
-    self.assertEqual(specialized.out_info.dtype, jnp.int32)
+    traced = jax.jit(f).trace(jnp.arange(8, dtype=jnp.int32))
+    self.assertLen(traced.jaxpr.eqns, 1)
+    self.assertEqual(jax.tree.structure(traced.out_info).num_leaves, 1)
+    self.assertEqual(traced.out_info.shape, (8,))
+    self.assertEqual(traced.out_info.dtype, jnp.int32)
     # one for args, one for kwargs (though kwargs is empty)
-    self.assertLen(specialized.in_avals, 2)
-    self.assertLen(specialized.in_avals[0], 1)
-    self.assertLen(specialized.in_avals[1], 0)  # empty kwarg
+    self.assertLen(traced.in_avals, 2)
+    self.assertLen(traced.in_avals[0], 1)
+    self.assertLen(traced.in_avals[1], 0)  # empty kwarg
 
-  def test_jit_specialize_lower_and_compile(self):
+  def test_jit_trace_lower_and_compile(self):
     def f(x):
       return x * 2
 
-    lowered = jax.jit(f).specialize(jnp.arange(8)).lower()
+    lowered = jax.jit(f).trace(jnp.arange(8)).lower()
     self.assertEqual(lowered.args_info[0][0].shape, (8,))
 
     compiled = lowered.compile()

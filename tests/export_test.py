@@ -559,8 +559,8 @@ class JaxExportTest(jtu.JaxTestCase):
             x,
             _experimental_lowering_parameters=_experimental_lowering_parameters)
 
-      def specialize(self, x, _experimental_lowering_parameters=None):
-        return jax.jit(self.__call__).specialize(
+      def trace(self, x, _experimental_lowering_parameters=None):
+        return jax.jit(self.__call__).trace(
             x,
             _experimental_lowering_parameters=_experimental_lowering_parameters)
 
