@@ -55,10 +55,11 @@ map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
 Grid = pallas_core.Grid
-BlockSpec = pallas_core.BlockSpec
 GridSpec = pallas_core.GridSpec
 BlockMapping = pallas_core.BlockMapping
 GridMapping = pallas_core.GridMapping
+BlockSpec = pallas_core.BlockSpec
+BlockSpecTree = pallas_core.BlockSpecTree
 NoBlockSpec = pallas_core.NoBlockSpec
 no_block_spec = pallas_core.no_block_spec
 
@@ -763,14 +764,13 @@ def pallas_call(
     grid_spec: GridSpec | None = None,
     debug: bool = False,
     grid: Grid | None = None,
-    in_specs: Sequence[BlockSpec | NoBlockSpec] | NoBlockSpec = no_block_spec,
-    out_specs: BlockSpec | NoBlockSpec
-    | Sequence[BlockSpec | NoBlockSpec] = no_block_spec,
+    in_specs: BlockSpecTree = no_block_spec,
+    out_specs: BlockSpecTree = no_block_spec,
     input_output_aliases: dict[int, int] = {},
     interpret: bool = False,
     name: str | None = None,
     compiler_params: dict[str, Any] | None = None,
-):
+) -> Callable[..., Any]:
   name = _extract_function_name(f, name)
   if compiler_params is None:
     compiler_params = {}

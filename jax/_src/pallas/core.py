@@ -15,13 +15,12 @@
 """Module for pallas-core functionality."""
 from __future__ import annotations
 
+from collections.abc import Iterator, Sequence
 import copy
-from collections.abc import Sequence
 import contextlib
 import dataclasses
 import functools
 from typing import Any, Callable, Union
-from collections.abc import Iterator
 
 from jax._src import api_util
 from jax._src import core as jax_core
@@ -32,9 +31,6 @@ from jax._src import util
 from jax._src.interpreters import partial_eval as pe
 from jax._src.state import discharge as state_discharge
 import jax.numpy as jnp
-
-# TODO(sharadmv): enable type checking
-# mypy: ignore-errors
 
 partial = functools.partial
 Grid = tuple[Union[int, jax_core.Array, None], ...]  # None indicates that the bound is dynamic.
@@ -156,6 +152,10 @@ class BlockSpec:
     return out
 
 
+# A PyTree of BlockSpec | NoBlockSpec.
+BlockSpecTree = Any
+
+
 @dataclasses.dataclass(frozen=True)
 class BlockMapping:
   block_shape: tuple[Mapped | int, ...]
@@ -201,7 +201,7 @@ class GridMapping:
   def static_grid(self) -> StaticGrid:
     if self.num_dynamic_grid_bounds:
       raise ValueError("Expected a grid with fully static bounds")
-    return self.grid  # typing: ignore
+    return self.grid  # type: ignore
 
 
 def _preprocess_grid(grid: Grid | int | None) -> Grid:
@@ -213,9 +213,9 @@ def _preprocess_grid(grid: Grid | int | None) -> Grid:
 
 
 def _convert_block_spec_to_block_mapping(
-    in_avals: list[jax_core.ShapedArray], block_spec: BlockSpec | None,
+    in_avals: Sequence[jax_core.ShapedArray], block_spec: BlockSpec,
     aval: jax_core.ShapedArray, in_tree: Any,
-    ) -> BlockSpec | None:
+) -> BlockMapping | None:
   if block_spec is no_block_spec:
     return None
   if block_spec.index_map is None:
@@ -283,12 +283,8 @@ class GridSpec:
   def __init__(
       self,
       grid: Grid | None = None,
-      in_specs: BlockSpec
-      | Sequence[BlockSpec | NoBlockSpec]
-      | NoBlockSpec = no_block_spec,
-      out_specs: BlockSpec
-      | Sequence[BlockSpec | NoBlockSpec]
-      | NoBlockSpec = no_block_spec,
+      in_specs: BlockSpecTree = no_block_spec,
+      out_specs: BlockSpecTree = no_block_spec,
   ):
     # Be more lenient for in/out_specs
     if isinstance(in_specs, list):
