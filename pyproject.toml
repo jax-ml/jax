@@ -44,14 +44,6 @@ module = [
 ]
 ignore_missing_imports = true
 
-[[tool.mypy.overrides]]
-module = [
-    "jax.interpreters.autospmd",
-    "jax.lax.lax_parallel",
-    "jax._src.internal_test_util.test_harnesses",
-]
-ignore_errors = true
-
 [tool.pytest.ini_options]
 markers = [
     "multiaccelerator: indicates that a test can make use of and possibly requires multiple accelerators",
