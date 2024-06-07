@@ -32,12 +32,12 @@ else:
   from jax.experimental.mosaic.gpu.examples import matmul
 
 
-config.update("jax_traceback_filtering", "off")
 config.parse_flags_with_absl()
 os.environ["XLA_FLAGS"] = (
     os.environ.get("XLA_FLAGS", "") + " --xla_gpu_autotune_level=0")
 
 
+@jtu.with_config(jax_traceback_filtering="off")
 class MatmulTestCase(jtu.JaxTestCase):
 
   def setUp(self):

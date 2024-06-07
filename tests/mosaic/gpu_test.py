@@ -47,7 +47,6 @@ else:
 
 
 # ruff: noqa: F405
-config.update("jax_traceback_filtering", "off")
 config.parse_flags_with_absl()
 
 def nd_loop(bounds, body, *, _idxs = ()):
@@ -164,16 +163,9 @@ class TestCase(parameterized.TestCase):
       self.skipTest("Only works on GPU with capability >= sm90")
     super().setUp()
     self.prng = np.random.default_rng(1234)
-    self.ctx = mlir.make_ir_context()
-    self.ctx.__enter__()
-    self.loc = ir.Location.unknown()
-    self.loc.__enter__()
-
-  def tearDown(self):
-    self.loc.__exit__(None, None, None)
-    self.ctx.__exit__(None, None, None)
-    del self.loc, self.ctx
-    super().tearDown()
+    self.enter_context(jtu.global_config_context(jax_traceback_filtering="off"))
+    self.enter_context(mlir.make_ir_context())
+    self.enter_context(ir.Location.unknown())
 
 
 class TestUtilTest(TestCase):

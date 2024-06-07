@@ -49,8 +49,6 @@ else:
 # TODO(sharadmv): Update signatures of pallas_call to correct inputs/outputs.
 # pylint: disable=no-value-for-parameter
 
-
-config.update("jax_traceback_filtering", "off")
 config.parse_flags_with_absl()
 
 @functools.partial(jax.jit, static_argnames=["bm", "bn", "gm", "bk",
@@ -121,6 +119,7 @@ def matmul_block_spec(x, y, *, bm, bn, bk, interpret, debug=False):
   return matmul_kernel(x, y)
 
 
+@jtu.with_config(jax_traceback_filtering="off")
 class PallasTest(jtu.JaxTestCase):
   INTERPRET = False
 
