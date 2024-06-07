@@ -36,6 +36,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas.primitives import uninitialized_value
 from jax._src.state import discharge as state_discharge
 from jax._src.state import primitives as sp
 from jax._src.util import (
@@ -110,16 +111,9 @@ def _pad_values_to_block_dimension(value,
   )
   if padded_shape != value.shape:
     pad_width = tuple((0, a-b) for a, b in zip(padded_shape, value.shape))
-    pad_value = _uninitialized_value(shape=(), dtype=value.dtype)
+    pad_value = uninitialized_value(shape=(), dtype=value.dtype)
     value = jnp.pad(value, pad_width, constant_values=pad_value)
   return value
-
-def _uninitialized_value(shape, dtype):
-  if jnp.issubdtype(dtype, jnp.floating):
-    return jnp.full(shape, jnp.nan, dtype)
-  elif jnp.issubdtype(dtype, jnp.integer):
-    return jnp.full(shape, jnp.iinfo(dtype).min, dtype)
-  raise NotImplementedError(dtype)
 
 def _get_next_indices(grid, indices):
   next_indices = []
@@ -176,7 +170,7 @@ def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
         hasattr(a, "shape") and hasattr(a, "dtype") for a in scratch_avals
     ):
       raise NotImplementedError(f"Cannot initialize scratch: {scratch_avals}")
-    scratch_values = [_uninitialized_value(a.shape, a.dtype)
+    scratch_values = [uninitialized_value(a.shape, a.dtype)
                       for a in scratch_avals]
 
     carry = []

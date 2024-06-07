@@ -298,6 +298,41 @@ def _load_jvp(primals, tangents, args_tree, **params):
 
 ad.primitive_jvps[load_p] = _load_jvp
 
+def uninitialized_value(shape, dtype):
+  if jnp.issubdtype(dtype, jnp.floating):
+    return jnp.full(shape, jnp.nan, dtype)
+  elif jnp.issubdtype(dtype, jnp.integer):
+    return jnp.full(shape, jnp.iinfo(dtype).min, dtype)
+  elif jnp.issubdtype(dtype, jnp.bool):
+    return jnp.full(shape, False, dtype)
+  raise NotImplementedError(dtype)
+
+def _pad_values_to_avoid_dynamic_slice_oob_shift(value,
+                                   slice_sizes, unpad=False):
+  """
+  DynamicSlice and DynamicUpdateSlice adjust the start index in cases where the
+  requested slice overruns the bounds of the array. This pads the array with
+  uninitialised values such that the requested slice will never overrun.
+
+  For example, if arr is [1.,2.,3.,4.] and a slice of size 4, start index 2 is
+  requested then the result will be [3.,4.,NaN,NaN] after padding, rather than
+  [1.,2.,3.,4.] from the unpadded array
+
+  unpad=True performs the inverse operation
+  """
+
+  padding_config = tuple((0, slice_size, 0) for slice_size in slice_sizes)
+  if unpad:
+    padding_config = tuple((-low, -high, -interior)
+                           for (low, high, interior) in padding_config)
+  padding_value = uninitialized_value(shape=(), dtype=value.dtype)
+  value = lax.pad(value,
+                  padding_config=padding_config,
+                  padding_value=padding_value)
+  return value
+
+_unpad_values_to_avoid_dynamic_slice_oob_shift = partial(
+  _pad_values_to_avoid_dynamic_slice_oob_shift, unpad=True)
 
 def _load_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
   del out_avals  # Unused.
@@ -315,6 +350,10 @@ def _load_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
     scalar_dims = [not isinstance(s, Slice) and not s.shape for s in indices]
     slice_starts = [s.start if isinstance(s, Slice) else s for s in indices]
     slice_sizes = tuple(s.size if isinstance(s, Slice) else 1 for s in indices)
+    # fixes an inconstency with lax.dynamic_slice where if the slice goes out
+    # of bounds, it will instead move the start_index backwards so the slice
+    # will fit in memory.
+    ref = _pad_values_to_avoid_dynamic_slice_oob_shift(ref, slice_sizes)
     out_ones = lax.dynamic_slice(ref, slice_starts, slice_sizes=slice_sizes)
     out_indexer = tuple(0 if scalar else slice(None) for scalar in scalar_dims)
     out = out_ones[out_indexer]
@@ -424,6 +463,10 @@ def _swap_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
     ]
     slice_starts = [s.start if isinstance(s, Slice) else s for s in indices]
     slice_sizes = tuple(s.size if isinstance(s, Slice) else 1 for s in indices)
+    # fixes an inconstency with lax.dynamic_update_slice where if the slice
+    # goes out of bounds, it will instead move the start_index backwards so the
+    # slice will fit in memory.
+    ref = _pad_values_to_avoid_dynamic_slice_oob_shift(ref, slice_sizes)
     out = lax.dynamic_slice(ref, slice_starts, slice_sizes=slice_sizes)
     out = jnp.squeeze(out, scalar_dims)
     if mask is not None:
@@ -432,6 +475,7 @@ def _swap_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
       val = jnp.where(mask, val, out_)
     val = jnp.expand_dims(val, scalar_dims)
     x_new = lax.dynamic_update_slice(ref, val, start_indices=slice_starts)
+    x_new = _unpad_values_to_avoid_dynamic_slice_oob_shift(x_new, slice_sizes)
   elif all(not isinstance(s, Slice) for s in idx.indices):
     out = ref[idx.indices]
     if mask is not None:
