@@ -1098,7 +1098,9 @@ def explain_tracing_cache_miss(
       f"    {', '.join(map(repr, kwarg_keys))}")
     dont_match = [set(t[1].node_data()[1]) for t in args_kwargs_trees  # type: ignore
                   if t != [args_tree, kwargs_tree]]
-    close_kwargs = min(dont_match, key=set(kwarg_keys).symmetric_difference)
+    close_kwargs = min(
+        dont_match, key=set(kwarg_keys).symmetric_difference, default=None
+    )
     if not close_kwargs:
       p("  closest seen is passing no keyword args")
     else:
