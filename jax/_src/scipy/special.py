@@ -2375,7 +2375,6 @@ def poch(z: ArrayLike, m: ArrayLike) -> Array:
   Notes:
     The JAX version supports only real-valued inputs.
   """
-  # Factorial definition when m is close to an integer, otherwise gamma definition.
   z, m = promote_args_inexact("poch", z, m)
 
   return jnp.where(m == 0., jnp.array(1, dtype=z.dtype), gamma(z + m) / gamma(z))
@@ -2412,6 +2411,8 @@ def _hyp1f1_serie(a, b, x):
   https://doi.org/10.48550/arXiv.1407.7786
   """
 
+  precision = jnp.finfo(x.dtype).eps
+
   def body(state):
     serie, k, term = state
     serie += term
@@ -2423,7 +2424,7 @@ def _hyp1f1_serie(a, b, x):
   def cond(state):
     serie, k, term = state
 
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > 1e-8)
+    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
 
   init = 1, 1, a / b * x
 
@@ -2437,6 +2438,8 @@ def _hyp1f1_asymptotic(a, b, x):
   https://doi.org/10.48550/arXiv.1407.7786
   """
 
+  precision = jnp.finfo(x.dtype).eps
+
   def body(state):
     serie, k, term = state
     serie += term
@@ -2448,7 +2451,7 @@ def _hyp1f1_asymptotic(a, b, x):
   def cond(state):
     serie, k, term = state
 
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > 1e-8)
+    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
 
   init = 1, 1, (b - a) * (1 - a) / x
   serie = lax.while_loop(cond, body, init)[0]
@@ -2464,6 +2467,8 @@ def _hyp1f1_a_derivative(a, b, x):
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/01/
   """
 
+  precision = jnp.finfo(x.dtype).eps
+
   def body(state):
     serie, k, term = state
     serie += term * (digamma(a + k) - digamma(a))
@@ -2475,7 +2480,7 @@ def _hyp1f1_a_derivative(a, b, x):
   def cond(state):
     serie, k, term = state
 
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > 1e-15)
+    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
 
   init = 0, 1, a / b * x
 
@@ -2490,6 +2495,8 @@ def _hyp1f1_b_derivative(a, b, x):
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/02/
   """
 
+  precision = jnp.finfo(x.dtype).eps
+
   def body(state):
     serie, k, term = state
     serie += term * (digamma(b) - digamma(b + k))
@@ -2501,7 +2508,7 @@ def _hyp1f1_b_derivative(a, b, x):
   def cond(state):
     serie, k, term = state
 
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > 1e-15)
+    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
 
   init = 0, 1, a / b * x
 
