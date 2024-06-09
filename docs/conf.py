@@ -189,9 +189,16 @@ html_css_files = [
 # -- Options for myst ----------------------------------------------
 myst_heading_anchors = 3  # auto-generate 3 levels of heading anchors
 myst_enable_extensions = ['dollarmath']
-nb_execution_mode = "force"
 nb_execution_allow_errors = False
 nb_merge_streams = True
+
+# On Read the Docs, we don't execute the notebooks unless specifically requested
+rtds_version = os.environ.get("READTHEDOCS_VERSION", None)
+print(f"READTHEDOCS_VERSION = {rtds_version}")
+if rtds_version:
+  nb_execution_mode = "off"
+else:
+  nb_execution_mode = "force"
 
 # Notebook cell execution timeout; defaults to 30.
 nb_execution_timeout = 100
