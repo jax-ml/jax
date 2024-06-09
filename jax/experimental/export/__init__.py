@@ -13,7 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 
-from jax.experimental.export._export import (
+from jax._src.export._export import (
     minimum_supported_serialization_version,
     maximum_supported_serialization_version,
     Exported,
@@ -29,7 +29,7 @@ from jax._src.export.shape_poly import (
     symbolic_args_specs,
     SymbolicScope,
 )
-from jax.experimental.export._serialization import (
+from jax._src.export.serialization import (
     serialize,
     deserialize,
 )

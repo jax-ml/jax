@@ -37,7 +37,6 @@ from jax import numpy as jnp
 from jax import tree_util
 from jax import sharding
 from jax.experimental import export
-from jax.experimental.export import _export
 from jax.experimental.jax2tf import impl_no_xla
 from jax.interpreters import xla
 
@@ -60,6 +59,7 @@ from jax._src import random as random_internal
 from jax._src import source_info_util
 from jax._src import util
 from jax._src import shard_alike
+from jax._src.export import _export
 from jax._src.export import shape_poly
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir

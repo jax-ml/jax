@@ -460,7 +460,7 @@ def export(fun_jax: Callable,
       actual_lowering_platforms = (default_lowering_platform(),)
 
     # TODO: move to `lower`
-    symbolic_scope: tuple[shape_poly.SymbolicScope, tree_util.KeyPath] | None = None
+    symbolic_scope: tuple[shape_poly.SymbolicScope, tree_util.KeyPath] | None = None  # type: ignore[invalid-annotation,unused-ignore]
     for k_path, aval in tree_util.tree_flatten_with_path((args_specs, kwargs_specs))[0]:
       # Static args may have no `shape` attribute.
       if not hasattr(aval, "shape"):
@@ -476,7 +476,7 @@ def export(fun_jax: Callable,
               other_descr=shape_poly.args_kwargs_path_to_str(k_path))
 
     if has_trace:
-      traced = wrapped_fun_jax.trace(
+      traced = wrapped_fun_jax.trace(  # type: ignore
           *args_specs, **kwargs_specs,
           _experimental_lowering_parameters=mlir.LoweringParameters(
             platforms=actual_lowering_platforms,
@@ -547,7 +547,7 @@ def _export_lowered(
   elif "shards" in lowering.compile_args:  # for PmapComputation
     out_avals_flat = lowering.compile_args["shards"].out_sharded_avals
   else:
-    out_avals_flat = lowered.compile_args["out_avals"]
+    out_avals_flat = lowered.compile_args["out_avals"]  # type: ignore
 
   # Log and then check the module.
   if logging.vlog_is_on(3):
@@ -612,7 +612,7 @@ def _export_lowered(
       in_shardings_hlo=in_shardings,
       out_shardings_hlo=out_shardings,
       nr_devices=nr_devices,
-      lowering_platforms=lowering._platforms,
+      lowering_platforms=lowering._platforms,  # type: ignore
       ordered_effects=ordered_effects,
       unordered_effects=unordered_effects,
       disabled_safety_checks=tuple(disabled_checks),
@@ -641,7 +641,7 @@ def _module_to_bytecode(module: ir.Module) -> bytes:
   # and still have the payloads produced by `serialize_portable_artifact`
   # compatible with potential consumers from the past.
   target_version = hlo.get_minimum_version()
-  module_serialized = xla_client._xla.mlir.serialize_portable_artifact(
+  module_serialized = xla_client._xla.mlir.serialize_portable_artifact(  # type: ignore
       mlir_str, target_version)
   return module_serialized
 
@@ -688,8 +688,8 @@ def _wrap_main_func(
     def is_token(typ, attrs):
       return (typ == mlir.token_type()[0])
 
-    orig_input_types = orig_main.type.inputs
-    arg_attrs = list(ir.ArrayAttr(orig_main.arg_attrs))
+    orig_input_types = orig_main.type.inputs  # type: ignore
+    arg_attrs = list(ir.ArrayAttr(orig_main.arg_attrs))  # type: ignore
     # The order of args: platform_index_arg, dim args, token args, array args.
     nr_platform_index_args = 1 if has_platform_index_argument else 0
     nr_dim_args = len(dim_vars)
@@ -711,8 +711,8 @@ def _wrap_main_func(
       orig_input_types, [nr_platform_index_args, nr_dim_args, nr_token_args])
 
     # The order of results: tokens, array results
-    orig_output_types = orig_main.type.results
-    result_attrs = list(ir.ArrayAttr(orig_main.result_attrs))
+    orig_output_types = orig_main.type.results  # type: ignore
+    result_attrs = list(ir.ArrayAttr(orig_main.result_attrs))  # type: ignore
     token_result_idxs = [i for i, (typ, attrs) in enumerate(zip(orig_output_types,
                                                                 result_attrs))
                          if is_token(typ, attrs)]
@@ -1138,6 +1138,8 @@ def _call_exported_abstract_eval(
   assert len(in_avals) == len(exported.in_avals)  # since the pytrees have the same structure
   # Check that the expected shapes match the actual ones
   for arg_idx, (exp_aval, actual_aval) in enumerate(zip(exported.in_avals, in_avals)):
+    exp_aval: core.ShapedArray = exp_aval  # type: ignore
+    actual_aval: core.ShapedArray = actual_aval  # type: ignore
     def pp_arg_dim(dim_idx: int | None) -> str:
       return shape_poly.pretty_print_dimension_descriptor(exported.in_tree,
                                                           arg_idx, dim_idx)
@@ -1181,10 +1183,10 @@ def _call_exported_abstract_eval(
   exported_dim_values = [synthetic_eval.evaluate(solution[var])
                          for var in exported_dim_vars]
   out_avals = tuple(
-      core.ShapedArray(core.evaluate_shape(out_aval.shape, exported_dim_vars,
+      core.ShapedArray(core.evaluate_shape(out_aval.shape, exported_dim_vars,  # type: ignore
                                            *exported_dim_values),
-                       dtype=out_aval.dtype, weak_type=out_aval.weak_type,
-                       named_shape=out_aval.named_shape)
+                       dtype=out_aval.dtype, weak_type=out_aval.weak_type,  # type: ignore
+                       named_shape=out_aval.named_shape)  # type: ignore
       for out_aval in exported.out_avals)
   return out_avals, set(exported.ordered_effects + exported.unordered_effects)
 

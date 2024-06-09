@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Serialization and deserialization of export.Exported
+# Serialization and deserialization of _export.Exported
 
 from __future__ import annotations
 
@@ -31,10 +31,10 @@ from jax._src import core
 from jax._src import dtypes
 from jax._src import effects
 from jax._src import tree_util
+from jax._src.export import serialization_generated as ser_flatbuf
+from jax._src.export import _export
+from jax._src.export import shape_poly
 from jax._src.lib import xla_client
-from jax.experimental.export import serialization_generated as ser_flatbuf
-from jax.experimental.export import _export
-from jax.experimental import export
 
 import numpy as np
 
@@ -47,7 +47,7 @@ SerT = TypeVar("SerT")
 # Version 2, Dec 16th, 2023, adds the f0 dtype.
 _SERIALIZATION_VERSION = 2
 
-def serialize(exp: export.Exported, vjp_order: int = 0) -> bytearray:
+def serialize(exp: _export.Exported, vjp_order: int = 0) -> bytearray:
   """Serialize an Exported.
 
   Args:
@@ -63,14 +63,14 @@ def serialize(exp: export.Exported, vjp_order: int = 0) -> bytearray:
   return builder.Output()
 
 
-def deserialize(ser: bytearray) -> export.Exported:
+def deserialize(ser: bytearray) -> _export.Exported:
   """Deserialize an Exported."""
   exp = ser_flatbuf.Exported.GetRootAsExported(ser)
   return _deserialize_exported(exp)
 
 
 def _serialize_exported(
-    builder: flatbuffers.Builder, exp: export.Exported, vjp_order: int
+    builder: flatbuffers.Builder, exp: _export.Exported, vjp_order: int
 ) -> int:
   # Serialize bottom-up
   fun_name = builder.CreateString(exp.fun_name)
@@ -150,7 +150,7 @@ def _serialize_array(
   return builder.EndVector()
 
 
-def _deserialize_exported(exp: ser_flatbuf.Exported) -> export.Exported:
+def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
   serialization_version = exp.SerializationVersion()
   if serialization_version != _SERIALIZATION_VERSION:
     raise NotImplementedError(
@@ -161,7 +161,7 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> export.Exported:
   _, in_tree = tree_util.tree_flatten(
       _deserialize_pytreedef_to_pytree(exp.InTree())
   )
-  scope = export.SymbolicScope(())  # TODO: serialize the constraints
+  scope = shape_poly.SymbolicScope(())  # TODO: serialize the constraints
   deser_aval = partial(_deserialize_aval, scope=scope)
   in_avals = _deserialize_tuple(
       exp.InAvalsLength, exp.InAvals, deser_aval
@@ -205,7 +205,7 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> export.Exported:
   if vjp := exp.Vjp():
     _get_vjp = lambda _: _deserialize_exported(vjp)
 
-  return export.Exported(
+  return _export.Exported(
       fun_name=fun_name,
       in_tree=in_tree,
       in_avals=in_avals,
@@ -356,7 +356,7 @@ def _deserialize_aval(aval: ser_flatbuf.AbstractValue,
   aval_kind = aval.Kind()
   if aval_kind == ser_flatbuf.AbstractValueKind.shapedArray:
     dtype = _dtype_kind_to_dtype[aval.Dtype()]
-    shape = export.symbolic_shape(
+    shape = shape_poly.symbolic_shape(
         ",".join(
             aval.Shape(i).decode("utf-8") for i in range(aval.ShapeLength())
         ),
@@ -445,16 +445,16 @@ def _deserialize_effect(eff: ser_flatbuf.Effect) -> core.Effect:
 
 
 def _serialize_disabled_safety_check(
-    builder: flatbuffers.Builder, check: export.DisabledSafetyCheck
+    builder: flatbuffers.Builder, check: _export.DisabledSafetyCheck
 ) -> int:
   custom_call_target_str = check.is_custom_call()
   custom_call_target = None
   if custom_call_target_str is not None:
     kind = ser_flatbuf.DisabledSafetyCheckKind.custom_call
     custom_call_target = builder.CreateString(custom_call_target_str)
-  elif check == export.DisabledSafetyCheck.platform():
+  elif check == _export.DisabledSafetyCheck.platform():
     kind = ser_flatbuf.DisabledSafetyCheckKind.platform
-  elif check == export.DisabledSafetyCheck.shape_assertions():
+  elif check == _export.DisabledSafetyCheck.shape_assertions():
     kind = ser_flatbuf.DisabledSafetyCheckKind.shape_assertions
   else:
     raise NotImplementedError(f"serializing DisabledSafetyCheck: {check}")
@@ -470,14 +470,14 @@ def _serialize_disabled_safety_check(
 
 def _deserialize_disabled_safety_check(
     sc: ser_flatbuf.DisabledSafetyCheck,
-) -> export.DisabledSafetyCheck:
+) -> _export.DisabledSafetyCheck:
   kind = sc.Kind()
   if kind == ser_flatbuf.DisabledSafetyCheckKind.custom_call:
-    return export.DisabledSafetyCheck.custom_call(
+    return _export.DisabledSafetyCheck.custom_call(
         sc.CustomCallTarget().decode("utf-8")
     )
   if kind == ser_flatbuf.DisabledSafetyCheckKind.platform:
-    return export.DisabledSafetyCheck.platform()
+    return _export.DisabledSafetyCheck.platform()
   if kind == ser_flatbuf.DisabledSafetyCheckKind.shape_assertions:
-    return export.DisabledSafetyCheck.shape_assertions()
+    return _export.DisabledSafetyCheck.shape_assertions()
   assert False, kind
