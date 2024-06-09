@@ -151,6 +151,12 @@ exclude_patterns = [
     'autodidax.md',
     'sharded-computation.md',
 ]
+if not full_docs_build:
+  exclude_patterns += ['jax.rst', 'jax.*.rst', 'jax_internal_api.rst']
+  suppress_warnings += [
+      'toc.excluded',
+      'ref.ref',  # 'Undefined label' warning
+  ]
 
 # The name of the Pygments (syntax highlighting) style to use.
 pygments_style = None
