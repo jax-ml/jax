@@ -979,7 +979,8 @@ def defvectorized(prim):
 
 def vectorized_batcher(prim, batched_args, batch_dims, **params):
   assert all(batch_dims[0] == bd for bd in batch_dims[1:]), batch_dims
-  return prim.bind(*batched_args, **params), batch_dims[0]
+  return (prim.bind(*batched_args, **params),
+          batch_dims if prim.multiple_results else batch_dims[0])
 
 def defbroadcasting(prim):
   primitive_batchers[prim] = partial(broadcast_batcher, prim)
