@@ -39,9 +39,11 @@ sys.path.insert(0, os.path.abspath('..'))
 # Unfortunately, this workaround makes Sphinx drop module-level documentation.
 # See https://github.com/google/jax/issues/3452.
 
-# Some execution details are dependent on whether or not we're running a pull
-# request preview on Read the Docs so we start by checking that out
-full_docs_build = False
+# By default we do a "full docs build" where we execute the notebooks, and
+# generate the API docs, but we skip some expensive steps when building the
+# a pull request preview on Read the Docs. If that PR has the "full docs build"
+# label, then we do still do the full build.
+full_docs_build = True
 if os.environ.get("READTHEDOCS_VERSION_TYPE", "") == "external":
   print("Executing a PR preview on Read the Docs")
   pr_number = os.environ.get("READTHEDOCS_VERSION", "")
@@ -53,13 +55,14 @@ if os.environ.get("READTHEDOCS_VERSION_TYPE", "") == "external":
     r = requests.get(url)
     if r.status_code == requests.codes.ok:
       labels = r.json()
+      print(f"Labels: {', '.join(a.get('name', '') for a in labels)}")
+      full_docs_build = any(a.get("name", "") == "full docs build" for a in labels)
+      if full_docs_build:
+        print("Running a full docs build")
+      else:
+        print("Skipping execution of notebooks and API docs")
     else:
-      labels = []
-
-    print(f"Labels: {', '.join(a.get('name', '') for a in labels)}")
-    full_docs_build = any(a.get("name", "") == "full docs build" for a in labels)
-    if full_docs_build:
-      print("Executing a full docs build")
+      print("Failed to get PR labels; running full docs build")
 
 # -- Project information -----------------------------------------------------
 
