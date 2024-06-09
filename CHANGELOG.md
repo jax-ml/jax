@@ -56,6 +56,13 @@ Remember to align the itemized text with the first line of an item within a list
     (https://github.com/openxla/xla/pull/13301).
   * Fixes a compiler crash on GPU (https://github.com/google/jax/issues/21396).
 
+* Deprecations
+  * `jax.tree.map(f, None, non-None)` now emits a `DeprecationWarning`, and will
+    raise an error in a future version of jax. `None` is only a tree-prefix of
+    itself. To preserve the current behavior, you can ask `jax.tree.map` to
+    treat `None` as a leaf value by writing:
+    `jax.tree.map(lambda x, y: None if x is None else f(x, y), a, b, is_leaf=lambda x: x is None)`.
+
 ## jax 0.4.28 (May 9, 2024)
 
 * Bug fixes
