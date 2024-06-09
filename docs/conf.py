@@ -39,6 +39,28 @@ sys.path.insert(0, os.path.abspath('..'))
 # Unfortunately, this workaround makes Sphinx drop module-level documentation.
 # See https://github.com/google/jax/issues/3452.
 
+# Some execution details are dependent on whether or not we're running a pull
+# request preview on Read the Docs so we start by checking that out
+full_docs_build = False
+if os.environ.get("READTHEDOCS_VERSION_TYPE", "") == "external":
+  print("Executing a PR preview on Read the Docs")
+  pr_number = os.environ.get("READTHEDOCS_VERSION", "")
+  if pr_number:
+    import requests
+
+    print(f"Fetching labels for PR #{pr_number}")
+    url = f"https://api.github.com/repos/google/jax/issues/{pr_number}/labels"
+    r = requests.get(url)
+    if r.status_code == requests.codes.ok:
+      labels = r.json()
+    else:
+      labels = []
+
+    print(f"Labels: {', '.join(a.get('name', '') for a in labels)}")
+    full_docs_build = any(a.get("name", "") == "full docs build" for a in labels)
+    if full_docs_build:
+      print("Executing a full docs build")
+
 # -- Project information -----------------------------------------------------
 
 project = 'JAX'
@@ -191,14 +213,7 @@ myst_heading_anchors = 3  # auto-generate 3 levels of heading anchors
 myst_enable_extensions = ['dollarmath']
 nb_execution_allow_errors = False
 nb_merge_streams = True
-
-# On Read the Docs, we don't execute the notebooks unless specifically requested
-rtds_version = os.environ.get("READTHEDOCS_VERSION", None)
-print(f"READTHEDOCS_VERSION = {rtds_version}")
-if rtds_version:
-  nb_execution_mode = "off"
-else:
-  nb_execution_mode = "force"
+nb_execution_mode = "force" if full_docs_build else "off"
 
 # Notebook cell execution timeout; defaults to 30.
 nb_execution_timeout = 100
