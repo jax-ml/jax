@@ -1564,7 +1564,7 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
 
   def test_xla_arr_sharding_mismatch(self):
     global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
-    global_input_shape = (4, 2)
+    global_input_shape = (6, 2)
     input_data = np.arange(
         math.prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
 
