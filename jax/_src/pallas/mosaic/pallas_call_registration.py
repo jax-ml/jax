@@ -96,7 +96,7 @@ def pallas_call_tpu_lowering_rule(
     return mosaic.as_tpu_kernel(
         mosaic_module,
         out_avals,
-        backend=ctx.module_context.backend,
+        backend="tpu",
         kernel_name=name,
         cost_estimate=mosaic_params.get("cost_estimate"),
         vmem_limit_bytes=mosaic_params.get("vmem_limit_bytes"),

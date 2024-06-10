@@ -76,9 +76,8 @@ def pallas_call_lowering(
     )
   triton_params = compiler_params.get("triton", compiler_params)
   num_warps = triton_params.pop("num_warps", 4)
-  if len(ctx.module_context.platforms) > 1:
-    raise NotImplementedError("multi-platform lowering for Pallas kernels")
-  if ctx.module_context.platforms[0] == "rocm":
+  [lowering_platform] = ctx.platforms or ctx.module_context.platforms
+  if lowering_platform == "rocm":
     num_stages = triton_params.pop("num_stages", 1)
   else:
     num_stages = triton_params.pop("num_stages", 3)

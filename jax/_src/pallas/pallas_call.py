@@ -720,38 +720,48 @@ def _pallas_call_lowering(
     impl = partial(_pallas_call_impl, **params, interpret=True)
     return mlir.lower_fun(impl, multiple_results=True)(ctx, *in_nodes)
 
-  try:
-    [platform] = ctx.module_context.platforms
-  except ValueError:
-    raise ValueError(
-        "Can only lower pallas_call on a single platform."
-    ) from None
-
-  if platform == "cpu":
+  def cpu_lowering(ctx: mlir.LoweringRuleContext,
+                   *in_nodes: mlir.ir.Value | Sequence[mlir.ir.Value],
+                   **params):
     raise ValueError("Only interpret mode is supported on CPU backend.")
-  elif platform == "cuda" or platform == "rocm":
+
+  def tpu_lowering(ctx: mlir.LoweringRuleContext,
+                   *in_nodes: mlir.ir.Value | Sequence[mlir.ir.Value],
+                   **params):
+    try:
+      from jax._src.pallas.mosaic import pallas_call_registration
+    except ImportError:
+      raise _unsupported_lowering_error("tpu")
+    else:
+      return pallas_call_registration.pallas_call_tpu_lowering_rule(
+          ctx, *in_nodes, **params
+      )
+
+  def gpu_lowering(ctx: mlir.LoweringRuleContext,
+                   *in_nodes: mlir.ir.Value | Sequence[mlir.ir.Value],
+                   **params):
     try:
       if _PALLAS_USE_MOSAIC_GPU.value:
         from jax._src.pallas.mosaic_gpu import pallas_call_registration
       else:
         from jax._src.pallas.triton import pallas_call_registration  # type: ignore
     except ImportError:
-      pass
+      raise _unsupported_lowering_error("gpu")
     else:
       return pallas_call_registration.pallas_call_lowering(
-          ctx, *in_nodes, interpret=interpret, **params
-      )
-  elif platform == "tpu":
-    try:
-      from jax._src.pallas.mosaic import pallas_call_registration  # type: ignore
-    except ImportError:
-      pass
-    else:
-      return pallas_call_registration.pallas_call_tpu_lowering_rule(
-          ctx, *in_nodes, interpret=interpret, **params
+          ctx, *in_nodes, **params
       )
 
-  raise _unsupported_lowering_error(platform)
+  return mlir.lower_per_platform(ctx, "pallas_call",
+                                 dict(cpu=cpu_lowering,
+                                      tpu=tpu_lowering,
+                                      cuda=gpu_lowering,
+                                      rocm=gpu_lowering),
+                                 None,  # default_rule
+                                 effects.no_effects,
+                                 *in_nodes,
+                                 interpret=interpret,
+                                 **params)
 
 
 mlir.register_lowering(pallas_call_p, _pallas_call_lowering)
