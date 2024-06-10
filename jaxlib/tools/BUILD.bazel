@@ -69,7 +69,6 @@ cc_binary(
     ],
     linkshared = True,
     deps = [
-        "//jaxlib/mosaic/gpu:custom_call",
         "@xla//xla/pjrt/c:pjrt_c_api_gpu",
         "@xla//xla/pjrt/c:pjrt_c_api_gpu_version_script.lds",
         "@xla//xla/service:gpu_plugin",
