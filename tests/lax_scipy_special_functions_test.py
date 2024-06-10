@@ -237,6 +237,24 @@ class LaxScipySpcialFunctionsTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(osp_special.rel_entr, lsp_special.rel_entr, args_maker, rtol=rtol)
     self._CompileAndCheck(lsp_special.rel_entr, args_maker, rtol=rtol)
 
+  def testBetaParameterDeprecation(self):
+    with self.assertNoWarnings():
+      lsp_special.beta(1, 1)
+      lsp_special.beta(1, b=1)
+      lsp_special.beta(a=1, b=1)
+    with self.assertWarns(DeprecationWarning):
+      lsp_special.beta(1, y=1)
+    with self.assertWarns(DeprecationWarning):
+      lsp_special.beta(a=1, y=1)
+    with self.assertWarns(DeprecationWarning):
+      lsp_special.beta(x=1, b=1)
+    with self.assertWarns(DeprecationWarning):
+      lsp_special.beta(x=1, y=1)
+    with self.assertRaises(TypeError), self.assertWarns(DeprecationWarning):
+      lsp_special.beta(1, x=1)
+    with self.assertRaises(TypeError), self.assertWarns(DeprecationWarning):
+      lsp_special.beta(b=1, y=1)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
