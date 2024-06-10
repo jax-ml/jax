@@ -311,6 +311,7 @@ class PallasCallScalarPrefetchTest(PallasTPUTest):
               grid=8,
           ),
           interpret=self.interpret,
+          compiler_params=dict(mosaic=dict(allow_input_fusion=[False, True])),
       )(s, x)
 
     first = x[0, ...].reshape((1, 8, 8, -1))[:, s[0, ...]].reshape(x.shape[1:])
