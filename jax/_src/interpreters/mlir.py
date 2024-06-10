@@ -781,6 +781,7 @@ class LoweringRuleContext:
   # Override module_context.platforms if not None. Used during multi-platform
   # lowering, when in a scope with a subset of the module_context.platforms.
   platforms: Sequence[str] | None = None
+  attributes: dict[str, str | int | bool] | None = None
 
   def set_tokens_out(self, tokens_out: TokenSet):
     assert self.tokens_out is None, 'Should only set `tokens_out` once.'
@@ -1790,11 +1791,17 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
       tokens_in = tokens.subset(effects)
       avals_in = map(aval, eqn.invars)
       rule_ctx = LoweringRuleContext(
-          module_context=ctx, primitive=eqn.primitive,
+          module_context=ctx,
+          primitive=eqn.primitive,
           name_stack=source_info.name_stack,
           avals_in=avals_in,
-          avals_out=map(aval, eqn.outvars), tokens_in=tokens_in,
-          tokens_out=None, jaxpr_eqn_ctx=eqn.ctx, dim_var_values=dim_var_values)
+          avals_out=map(aval, eqn.outvars),
+          tokens_in=tokens_in,
+          tokens_out=None,
+          dim_var_values=dim_var_values,
+          compute_type=compute_type,
+          attributes=eqn.ctx.attributes,
+      )
       if config.dynamic_shapes.value:
         axis_size_env = {d: read(d)
                          for a in avals_in if type(a) is core.DShapedArray
@@ -2123,6 +2130,23 @@ def wrap_compute_type_in_place(ctx, op):
     dict_attr = {"_xla_compute_type": ir.StringAttr.get(
         map_compute_type(ctx.jaxpr_eqn_ctx.compute_type))}
     op.operation.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
+
+
+def wrap_attributes_in_place(ctx, op):
+  ctx_attributes = {}
+  existing_attributes = {}
+  if ctx.attributes:
+    for k, v in ctx.attributes.items():
+      ctx_attributes[k] = ir.StringAttr.get(str(v).lower())
+    if isinstance(op, ir.Operation):
+      # combine with existing mhlo.frontend_attributes
+      op_attributes_dict = {attr.name: attr.attr for attr in op.attributes}
+      for k, attributes in op_attributes_dict.items():
+        if k == "mhlo.frontend_attributes":
+          existing_attributes.update(attributes)
+      op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(
+          ctx_attributes | existing_attributes
+      )
 
 
 def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue, *,
