@@ -513,8 +513,6 @@ cc_library(
     deps = [
         ":cuda_gpu_kernel_helpers",
         ":cuda_vendor",
-        "//jaxlib:absl_status_casters",
-        "//jaxlib:kernel_nanobind_helpers",
         "@xla//xla/tsl/cuda:cublas",
         "@xla//xla/tsl/cuda:cudart",
         "@xla//xla/tsl/cuda:cudnn",
@@ -522,6 +520,7 @@ cc_library(
         "@xla//xla/tsl/cuda:cupti",
         "@xla//xla/tsl/cuda:cusolver",
         "@xla//xla/tsl/cuda:cusparse",
+        "@com_google_absl//absl/base:dynamic_annotations",
     ],
 )
 
