@@ -20,9 +20,9 @@ from jax._src import tree_util
 T = TypeVar("T")
 
 
-def all(tree: Any) -> bool:
+def all(tree: Any, *, is_leaf: Callable[[Any], bool] | None = None) -> bool:
   """Alias of :func:`jax.tree_util.tree_all`."""
-  return tree_util.tree_all(tree)
+  return tree_util.tree_all(tree, is_leaf=is_leaf)
 
 
 def flatten(tree: Any,
