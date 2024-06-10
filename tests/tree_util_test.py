@@ -1153,6 +1153,14 @@ class TreeAliasTest(jtu.JaxTestCase):
       tree_util.tree_all(obj),
     )
 
+  def test_tree_all_is_leaf(self):
+    obj = [True, True, (True, False)]
+    is_leaf = lambda x: isinstance(x, tuple)
+    self.assertEqual(
+      jax.tree.all(obj, is_leaf=is_leaf),
+      tree_util.tree_all(obj, is_leaf=is_leaf),
+    )
+
   def test_tree_flatten(self):
     obj = [1, 2, (3, 4)]
     self.assertEqual(
@@ -1160,11 +1168,27 @@ class TreeAliasTest(jtu.JaxTestCase):
       tree_util.tree_flatten(obj),
     )
 
+  def test_tree_flatten_is_leaf(self):
+    obj = [1, 2, (3, 4)]
+    is_leaf = lambda x: isinstance(x, tuple)
+    self.assertEqual(
+      jax.tree.flatten(obj, is_leaf=is_leaf),
+      tree_util.tree_flatten(obj, is_leaf=is_leaf),
+    )
+
   def test_tree_leaves(self):
     obj = [1, 2, (3, 4)]
     self.assertEqual(
       jax.tree.leaves(obj),
       tree_util.tree_leaves(obj),
+    )
+
+  def test_tree_leaves_is_leaf(self):
+    obj = [1, 2, (3, 4)]
+    is_leaf = lambda x: isinstance(x, tuple)
+    self.assertEqual(
+      jax.tree.leaves(obj, is_leaf=is_leaf),
+      tree_util.tree_leaves(obj, is_leaf=is_leaf),
     )
 
   def test_tree_map(self):
@@ -1175,6 +1199,15 @@ class TreeAliasTest(jtu.JaxTestCase):
       tree_util.tree_map(func, obj),
     )
 
+  def test_tree_map_is_leaf(self):
+    func = lambda x: x * 2
+    obj = [1, 2, (3, 4)]
+    is_leaf = lambda x: isinstance(x, tuple)
+    self.assertEqual(
+      jax.tree.map(func, obj, is_leaf=is_leaf),
+      tree_util.tree_map(func, obj, is_leaf=is_leaf),
+    )
+
   def test_tree_reduce(self):
     func = lambda a, b: a + b
     obj = [1, 2, (3, 4)]
@@ -1183,11 +1216,28 @@ class TreeAliasTest(jtu.JaxTestCase):
       tree_util.tree_reduce(func, obj),
     )
 
+  def test_tree_reduce_is_leaf(self):
+    func = lambda a, b: a + b
+    obj = [(1, 2), (3, 4)]
+    is_leaf = lambda x: isinstance(x, tuple)
+    self.assertEqual(
+      jax.tree.reduce(func, obj, is_leaf=is_leaf),
+      tree_util.tree_reduce(func, obj, is_leaf=is_leaf),
+    )
+
   def test_tree_structure(self):
     obj = [1, 2, (3, 4)]
     self.assertEqual(
       jax.tree.structure(obj),
       tree_util.tree_structure(obj),
+    )
+
+  def test_tree_structure_is_leaf(self):
+    obj = [1, 2, (3, 4)]
+    is_leaf = lambda x: isinstance(x, tuple)
+    self.assertEqual(
+      jax.tree.structure(obj, is_leaf=is_leaf),
+      tree_util.tree_structure(obj, is_leaf=is_leaf),
     )
 
   def test_tree_transpose(self):

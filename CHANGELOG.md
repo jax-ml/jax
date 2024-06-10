@@ -18,6 +18,7 @@ Remember to align the itemized text with the first line of an item within a list
     `from jax.experimental.export import export`, and instead you should use
     `from jax.experimental import export`.
     The removed functionality has been deprecated since 0.4.24.
+  * Added `is_leaf` argument to {func}`jax.tree.all` & {func}`jax.tree_util.tree_all`.
 
 * Deprecations
   * `jax.sharding.XLACompatibleSharding` is deprecated. Please use

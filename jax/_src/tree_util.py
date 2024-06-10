@@ -623,11 +623,15 @@ def tree_reduce(function: Callable[[T, Any], T],
 
 
 @export
-def tree_all(tree: Any) -> bool:
+def tree_all(tree: Any, *, is_leaf: Callable[[Any], bool] | None = None) -> bool:
   """Call all() over the leaves of a tree.
 
   Args:
     tree: the pytree to evaluate
+    is_leaf : an optionally specified function that will be called at each
+      flattening step. It should return a boolean, which indicates whether the
+      flattening should traverse the current object, or if it should be stopped
+      immediately, with the whole subtree being treated as a leaf.
 
   Returns:
     result: boolean True or False
@@ -643,7 +647,7 @@ def tree_all(tree: Any) -> bool:
     - :func:`jax.tree_util.tree_reduce`
     - :func:`jax.tree_util.tree_leaves`
   """
-  return all(tree_leaves(tree))
+  return all(tree_leaves(tree, is_leaf=is_leaf))
 
 
 register_pytree_node(
