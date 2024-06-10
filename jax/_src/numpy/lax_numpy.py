@@ -1724,8 +1724,6 @@ def interp(x: ArrayLike, xp: ArrayLike, fp: ArrayLike,
   return jitted_interp(x, xp, fp, left, right, period)
 
 
-_DEPRECATED_WHERE_ARG = object()
-
 @overload
 def where(condition: ArrayLike, x: Literal[None] = None,
           y: Literal[None] = None, /, *, size: int | None = None,
