@@ -199,8 +199,8 @@ def beta(x: ArrayLike, y: ArrayLike) -> Array:
   where :math:`\Gamma` is the :func:`~jax.scipy.special.gamma` function.
 
   Args:
-    a: arraylike, real-valued. Parameter *a* of the beta distribution.
-    b: arraylike, real-valued. Parameter *b* of the beta distribution.
+    x: arraylike, real-valued. Parameter *a* of the beta distribution.
+    y: arraylike, real-valued. Parameter *b* of the beta distribution.
 
   Returns:
     array containing the values of the beta function.
