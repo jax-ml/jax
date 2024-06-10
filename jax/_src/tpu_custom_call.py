@@ -384,16 +384,12 @@ def as_tpu_kernel(
 ) -> Callable[..., Any]:
   """Turns an MLIR Mosaic kernel into a JAX-compatible function."""
   # We use jax.jit to make sure we hit the fast compilation cache.
-  some_tpu = jax.devices(backend)[0]
-  device_kind = some_tpu.device_kind
-  if not device_kind.startswith("TPU v"):
-    raise ValueError(f"Unrecognized TPU device kind: {device_kind}.")
+
   if vmem_limit_bytes is not None and not isinstance(vmem_limit_bytes, int):
     raise ValueError(
         "vmem_limit_bytes must be an int: provided with a"
         f" {type(vmem_limit_bytes)}."
     )
-  hardware_generation = int(device_kind[len("TPU v")])
   has_communication, has_custom_barrier = tpu.private_has_communication(
       module.operation
   )
@@ -405,6 +401,14 @@ def as_tpu_kernel(
         module.operation.get_asm(binary=True, enable_debug_info=True)
     )
     if needs_layout_passes and _MOSAIC_USE_PYTHON_PIPELINE.value:
+      some_tpu = jax.devices(backend)[0]
+      device_kind = some_tpu.device_kind
+      if not device_kind.startswith("TPU v"):
+        raise ValueError(
+            f"Unrecognized TPU device kind: {device_kind}. "
+            "tpu_custom_call cannot be lowered on a machine without TPUs "
+            "when mosaic_use_python_pipeline=True.")
+      hardware_generation = int(device_kind[len("TPU v")])
       module = _lower_tpu_kernel(module, hardware_generation)
       needs_hlo_passes = False
       needs_layout_passes = False
