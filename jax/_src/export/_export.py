@@ -333,10 +333,10 @@ class Exported:
     `jax.device_put`.
 
     Example usage:
-    >>> from jax.experimental import export
+    >>> from jax import export
     >>> exp_mesh = sharding.Mesh(jax.devices(), ("a",))
     >>> exp = export.export(jax.jit(lambda x: jax.numpy.add(x, x),
-    ...     in_shardings=sharding.NamedSharding(exp_mesh, sharding.PartitionSpec("a")))
+    ...                             in_shardings=sharding.NamedSharding(exp_mesh, sharding.PartitionSpec("a")))
     ...     )(np.arange(jax.device_count()))
     >>> exp.in_shardings_hlo
     ({devices=[8]<=[8]},)
@@ -347,7 +347,7 @@ class Exported:
     # Put the args and kwargs on the appropriate devices
     >>> run_arg = jax.device_put(np.arange(jax.device_count()),
     ...     exp.in_shardings_jax(run_mesh)[0])
-    >>> res = export.call(exp)(run_arg)
+    >>> res = exp.call(run_arg)
     >>> res.addressable_shards
     [Shard(device=CpuDevice(id=7), index=(slice(0, 1, None),), replica_id=0, data=[0]),
      Shard(device=CpuDevice(id=6), index=(slice(1, 2, None),), replica_id=0, data=[2]),
@@ -372,19 +372,53 @@ class Exported:
                  for s in self.out_shardings_hlo)
 
   def has_vjp(self) -> bool:
+    """Returns if this Exported supports VJP."""
     return self._get_vjp is not None
 
   def vjp(self) -> Exported:
     """Gets the exported VJP.
 
     Returns None if not available, which can happen if the Exported has been
-    loaded from an external format, without a VJP."""
+    loaded from an external format without a VJP.
+    """
     if self._get_vjp is None:
       raise ValueError("No VJP is available")
     return self._get_vjp(self)
 
+  def serialize(self,
+                vjp_order: int = 0) -> bytearray:
+    """Serializes an Exported.
+
+    Args:
+      vjp_order: The maximum vjp order to include. E.g., the value 2 means that we
+        serialize the primal functions and two orders of the `vjp` function. This
+        should allow 2nd order reverse mode differentiation of the deserialized
+        function. i.e., `jax.grad(jax.grad(f)).`
+    """
+    # Lazy load the serialization module, since flatbuffers is an optional
+    # dependency.
+    from jax._src.export.serialization import serialize
+    return serialize(self, vjp_order=vjp_order)
+
+  def call(self, *args, **kwargs):
+    return call_exported(self)(*args, **kwargs)
+
+
+def deserialize(blob: bytearray) -> Exported:
+  """Deserializes an Exported.
+
+  Args:
+    blob: a bytearray obtained from `Exported.serialize`.
+  """
+  # Lazy load the serialization module, since flatbuffers is an optional
+  # dependency.
+  from jax._src.export.serialization import deserialize
+  return deserialize(blob)
+
 
 def default_lowering_platform() -> str:
+  """Retrieves the default lowering platform for the exporting machine.
+  """
   # Canonicalize to turn 'gpu' into 'cuda' or 'rocm'
   return xb.canonicalize_platform(jax.default_backend())
 
@@ -411,13 +445,19 @@ def args_specs(
   return shape_poly.symbolic_args_specs(args, polymorphic_shapes)
 
 
-def export(fun_jax: Callable,
-           *,
-           lowering_platforms: Sequence[str] | None = None,
-           disabled_checks: Sequence[DisabledSafetyCheck] = (),
-           _device_assignment_for_internal_jax2tf_use_only = None,
-           ) -> Callable[..., Exported]:
+# TODO(necula): remove this once we remove jax.experimental.export.
+def export_back_compat(
+    fun_jax: Callable,
+    *,
+    lowering_platforms: Sequence[str] | None = None,
+    disabled_checks: Sequence[DisabledSafetyCheck] = (),
+    _device_assignment_for_internal_jax2tf_use_only = None,
+    ) -> Callable[..., Exported]:
   """Exports native serialization for a JAX function.
+
+  Note: this function exists only for internal usage by jax2tf and for
+    backwards compatibility with jax.experimental.export. Use
+    `jax.export` instead.
 
   Args:
     fun_jax: the function to lower and serialize.
@@ -496,6 +536,85 @@ def export(fun_jax: Callable,
         lowered, jaxpr, fun_name,
         disabled_checks=disabled_checks,
         _device_assignment_for_internal_jax2tf_use_only=_device_assignment_for_internal_jax2tf_use_only)
+  return do_export
+
+def export(
+    fun_jit: stages.Wrapped,
+    *,
+    lowering_platforms: Sequence[str] | None = None,
+    disabled_checks: Sequence[DisabledSafetyCheck] = (),
+    ) -> Callable[..., Exported]:
+  """Exports a JAX function for persistent serialization.
+
+  Args:
+    fun_jit: the function to export. Should be the result of `jit`.
+    lowering_platforms:
+        Optional sequence containing a subset of 'tpu', 'cpu',
+        'cuda', 'rocm'. If more than one platform is specified, then
+        the lowered code takes an argument specifying the platform.
+        If None, then use the default JAX backend.
+        The calling convention for multiple platforms is explained in the
+        `jax_export.Exported` docstring.
+    disabled_checks: the safety checks to disable. See docstring
+        of `DisabledSafetyCheck`.
+
+  Returns: a function that takes args and kwargs pytrees of jax.ShapeDtypeStruct,
+      or values with `.shape` and `.dtype` attributes, and returns an
+      `Exported`.
+
+  Usage:
+      >>> from jax import export
+      >>> exported: export.Exported = export.export(jnp.sin)(
+      ...     np.arange(4, dtype=np.float32))
+
+      # You can inspect the Exported object
+      >>> exported.in_avals
+      (ShapedArray(float32[4]),)
+      >>> blob: bytearray = exported.serialize()
+
+      # The serialized bytes are safe to use in a separate process
+      >>> rehydrated: export.Exported = export.deserialize(blob)
+      >>> rehydrated.fun_name
+      'sin'
+      >>> rehydrated.call(np.array([.1, .2, .3, .4], dtype=np.float32))
+      Array([0.09983342, 0.19866933, 0.29552022, 0.38941833], dtype=float32)
+  """
+  if not isinstance(fun_jit, stages.Wrapped):
+    raise ValueError(
+        f"Function to be exported must be the result of `jit` but is: {fun_jit}")
+  if lowering_platforms is not None:
+    actual_lowering_platforms = tuple(lowering_platforms)
+  else:
+    actual_lowering_platforms = (default_lowering_platform(),)
+
+  def do_export(*args_specs, **kwargs_specs) -> Exported:
+    # TODO: move to `lower`
+    symbolic_scope: tuple[shape_poly.SymbolicScope, tree_util.KeyPath] | None = None  # type: ignore[invalid-annotation,unused-ignore]
+    for k_path, aval in tree_util.tree_flatten_with_path((args_specs, kwargs_specs))[0]:
+      # Static args may have no `shape` attribute.
+      if not hasattr(aval, "shape"):
+        continue
+      for d in aval.shape:
+        if shape_poly.is_symbolic_dim(d):
+          if symbolic_scope is None:
+            symbolic_scope = (d.scope, k_path)
+            continue
+          symbolic_scope[0]._check_same_scope(
+              d, when=f"when exporting {util.fun_name(fun_jit)}",
+              self_descr=f"current (from {shape_poly.args_kwargs_path_to_str(symbolic_scope[1])}) ",
+              other_descr=shape_poly.args_kwargs_path_to_str(k_path))
+
+    traced = fun_jit.trace(  # type: ignore
+        *args_specs, **kwargs_specs,
+        _experimental_lowering_parameters=mlir.LoweringParameters(
+          platforms=actual_lowering_platforms,
+          for_export=True,
+        ))
+    jaxpr, fun_name = traced.jaxpr, traced.fun_name
+    lowered = traced.lower()
+    return _export_lowered(
+        lowered, jaxpr, fun_name,
+        disabled_checks=disabled_checks)
   return do_export
 
 def _export_lowered(
@@ -599,7 +718,7 @@ def _export_lowered(
                                              device_assignment=device_assignment,
                                              apply_jit=True,
                                              flat_primal_fun=True)
-    return export(fun_vjp_jax,
+    return export(fun_vjp_jax,  # type: ignore[arg-type]
                   lowering_platforms=exp_primal.lowering_platforms,
                   disabled_checks=exp_primal.disabled_safety_checks)(*vjp_in_avals)
 
@@ -816,7 +935,7 @@ def _wrap_main_func(
 
 def _check_lowering(lowering) -> None:
   if not isinstance(lowering, pxla.MeshComputation):
-    raise NotImplementedError(f"serialization is supported only for pjit. {lowering}")
+    raise NotImplementedError(f"serialization is supported only for jit. {lowering}")
 
   if lowering.compile_args["host_callbacks"] or lowering.compile_args["keepalive"]:
     raise NotImplementedError("serialization of host_callbacks is not yet implemented")

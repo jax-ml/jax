@@ -27,6 +27,7 @@ from absl.testing import absltest, parameterized
 import jax
 from jax import ad_checkpoint
 from jax import dtypes
+from jax import export
 from jax import lax
 from jax import numpy as jnp
 from jax import sharding
@@ -37,7 +38,6 @@ from jax._src import source_info_util
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax.experimental import jax2tf
-from jax.experimental import export
 from jax.experimental.jax2tf.tests import tf_test_util
 from jax.experimental.shard_map import shard_map
 from jax.experimental import pjit
@@ -1559,7 +1559,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       # Run the JAX native version, to check it works, and to fill caches.
       _ = func_to_convert(*args)
       exported = export.export(
-          func_to_convert,
+          (jax.jit(func_to_convert) if not hasattr(func_to_convert, "trace") else func_to_convert),
           lowering_platforms=("tpu",)
       )(*(core.ShapedArray(a.shape, a.dtype) for a in args))
 

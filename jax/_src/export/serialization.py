@@ -48,7 +48,7 @@ SerT = TypeVar("SerT")
 _SERIALIZATION_VERSION = 2
 
 def serialize(exp: _export.Exported, vjp_order: int = 0) -> bytearray:
-  """Serialize an Exported.
+  """Serializes an Exported.
 
   Args:
     exp: the Exported to serialize.
@@ -64,7 +64,7 @@ def serialize(exp: _export.Exported, vjp_order: int = 0) -> bytearray:
 
 
 def deserialize(ser: bytearray) -> _export.Exported:
-  """Deserialize an Exported."""
+  """Deserializes an Exported."""
   exp = ser_flatbuf.Exported.GetRootAsExported(ser)
   return _deserialize_exported(exp)
 

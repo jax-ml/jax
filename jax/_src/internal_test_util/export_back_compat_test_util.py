@@ -86,7 +86,7 @@ from numpy import array, float32
 
 import jax
 from jax import tree_util
-from jax.experimental import export
+from jax import export
 
 from jax.experimental import pjit
 
@@ -345,4 +345,4 @@ data_{datetime.date.today().strftime('%Y_%m_%d')} = dict(
       _get_vjp=_get_vjp)
 
       # We use pjit in case there are shardings in the exported module.
-    return pjit.pjit(export.call(exported))(*data.inputs)
+    return pjit.pjit(exported.call)(*data.inputs)

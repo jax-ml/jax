@@ -32,8 +32,8 @@ import re
 
 import jax
 from jax.experimental import jax2tf
-from jax.experimental import export
 from jax.experimental import pjit
+from jax import export
 from jax import lax
 import jax.numpy as jnp
 from jax import random
