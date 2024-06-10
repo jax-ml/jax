@@ -2412,6 +2412,12 @@ def _infer_src_sharding(src, x) -> Sharding | None:
 # that to check if shardings are compatible with the input.
 @lru_cache(maxsize=2048)
 def _check_sharding(aval, s):
+  if (s is not None and
+      not isinstance(s, (xc.Device, Sharding, Layout, TransferToMemoryKind))):
+    raise ValueError(
+        "`jax.device_put` only accepts `None`, `jax.sharding.Sharding`,"
+        " `jax.Device`, `Layout` or a pytree of these values. Received"
+        f" invalid value: {s}")
   if isinstance(s, Sharding):
     if isinstance(aval, core.AbstractToken):
       aval = core.token_shaped_array

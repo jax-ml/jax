@@ -4469,6 +4469,10 @@ class APITest(jtu.JaxTestCase):
     jax.clear_caches()
     self.assertEqual(f._cache_size, 0)
 
+  def test_invalid_value_device_put(self):
+    with self.assertRaisesRegex(ValueError, r".*Received invalid value.*"):
+      jax.device_put(jnp.arange(8), 'cpu')
+
   def test_clear_cache(self):
     @jax.jit
     def add(x):
