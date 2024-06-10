@@ -175,7 +175,7 @@ def ppf(q: ArrayLike, loc: ArrayLike = 0, scale: ArrayLike = 1) -> Array:
     scale: arraylike, distribution scale parameter
 
   Returns:
-    array of ppdf values.
+    array of ppf values.
 
   See Also:
     - :func:`jax.scipy.stats.norm.cdf`
