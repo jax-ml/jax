@@ -28,12 +28,15 @@ Key concepts:
   * Each process has a
     distinct set of *local* devices it can address. The *global* devices are the set
     of all devices across all processes.
-  * Use standard JAX parallelism APIs like {func}`~jax.pmap` and
-    {func}`~jax.experimental.maps.xmap`. Each process “sees” *local* input and
-    output to parallelized functions, but communication inside the computations
-    is *global*.
+  * Use standard JAX parallelism APIs like {func}`~jax.jit` (see
+    {doc}`/sharded-computation` tutorial) and
+    {func}`~jax.experimental.shard_map.shard_map`. jax.jit only accepts
+    globally shaped arrays. shard_map allows you to drop to per-device
+    shape.
   * Make sure all processes run the same parallel computations in the same
     order.
+  * Make sure all processes has the same number of local devices.
+  * Make sure all devices are the same (e.g., all V100, or all H100).
 
 ### Launching JAX processes
 
@@ -123,18 +126,13 @@ global devices.
 So how do you actually run a computation involving cross-process communication?
 **Use the same parallel evaluation APIs that you would in a single process!**
 
-For example, {func}`~jax.experimental.shard_map.shard_map` can be used to
-run a parallel computation across
-multiple processes. (If you’re not already familiar with how to use
-`shard_map` to run across multiple devices within a single process, check
-out the {doc}`/sharded-computation` tutorial.) Each process should call the
-same pmapped function and pass in arguments to be mapped across its *local*
-devices (i.e., the pmapped axis size is equal to the number of local devices).
-Similarly, the function will return outputs sharded across *local* devices only.
-Inside the function, however, collective communication operations are run across
-all *global* devices, across all processes. Conceptually, this can be thought of
-as running a pmap over a single array sharded across hosts, where each host
-“sees” only its local shard of the input and output.
+For example, {func}`~jax.experimental.shard_map.shard_map` can be used
+to run a parallel computation across multiple processes. (If you’re
+not already familiar with how to use `shard_map` to run across
+multiple devices within a single process, check out the
+{doc}`/sharded-computation` tutorial.)  Conceptually, this can be
+thought of as running a pmap over a single array sharded across hosts,
+where each host “sees” only its local shard of the input and output.
 
 Here’s an example of multi-process pmap in action:
 
@@ -151,12 +149,6 @@ Here’s an example of multi-process pmap in action:
 >>> jax.pmap(lambda x: jax.lax.psum(x, 'i'), axis_name='i')(xs)
 ShardedDeviceArray([32., 32., 32., 32., 32., 32., 32., 32.], dtype=float32)
 ```
-
-{func}`~jax.experimental.maps.xmap` works similarly when using a physical
-hardware mesh (see the {doc}`xmap tutorial</notebooks/xmap_tutorial>` if you’re
-not familiar with the single-process version). Like {func}`~jax.pmap` , the
-inputs and outputs are local and any parallel communication inside the xmapped
-function is global. The mesh is also global.
 
 **It’s very important that all processes run the same cross-process computations
 in the same order.** Running the same JAX Python program in each process is
