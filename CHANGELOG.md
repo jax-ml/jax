@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.29
+## jax 0.4.30
+
+## jaxlib 0.4.30
+
+## jax 0.4.29 (June 10, 2024)
 
 * Changes
   * We anticipate that this will be the last release of JAX and jaxlib
@@ -47,7 +51,7 @@ Remember to align the itemized text with the first line of an item within a list
     shardings that can be used with the JAX APIs from the HloShardings
     that are stored in the `Exported` objects.
 
-## jaxlib 0.4.29
+## jaxlib 0.4.29 (June 10, 2024)
 
 * Bug fixes
   * Fixed a bug where XLA sharded some concatenation operations incorrectly,
