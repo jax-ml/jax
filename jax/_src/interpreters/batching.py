@@ -258,7 +258,9 @@ def from_elt(trace: BatchTrace, axis_size: AxisSize, i: int,
              x: Elt, spec: MapSpec) -> Vmappable:
   handler = from_elt_handlers.get(type(x))
   if handler:
-    return handler(partial(from_elt, trace), axis_size, x, spec)
+    def _cont(axis_size, elt, axis):
+      return from_elt(trace, axis_size, i, elt, axis)
+    return handler(_cont, axis_size, x, spec)
   x_ = trace.full_raise(x)
   val, bdim = x_.val, x_.batch_dim
   if type(bdim) is RaggedAxis:
