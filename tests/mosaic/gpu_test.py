@@ -170,7 +170,7 @@ class TestCase(parameterized.TestCase):
 
 class TestUtilTest(TestCase):
 
-  def test_copy(self):
+  def test_copy_basic(self):
     def kernel(ctx, src, dst, _):
       copy(src, dst)
     x = jnp.arange(2 * 3 * 5).reshape(2, 5, 3)

@@ -171,7 +171,7 @@ void buildInitFunction(mlir::OpBuilder &module_builder,
       used_smem = builder.create<mlir::LLVM::ConstantOp>(
           loc, i32,
           builder.getI32IntegerAttr(
-              mlir::cast<mlir::IntegerAttr>(const_smem.getValue()).getSInt()));
+              mlir::cast<mlir::IntegerAttr>(const_smem.getValue()).getInt()));
     }
   }
   mlir::Value kernel_handle =

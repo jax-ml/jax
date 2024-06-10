@@ -37,7 +37,16 @@ limitations under the License.
 #include "llvm/include/llvm/ADT/SmallVector.h"
 #include "llvm/include/llvm/Support/CodeGen.h"
 #include "llvm/include/llvm/Support/TargetSelect.h"
+#include "mlir/include/mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
+#include "mlir/include/mlir/Conversion/ComplexToLLVM/ComplexToLLVM.h"
+#include "mlir/include/mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
+#include "mlir/include/mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
+#include "mlir/include/mlir/Conversion/IndexToLLVM/IndexToLLVM.h"
+#include "mlir/include/mlir/Conversion/MathToLLVM/MathToLLVM.h"
+#include "mlir/include/mlir/Conversion/MemRefToLLVM/MemRefToLLVM.h"
+#include "mlir/include/mlir/Conversion/NVVMToLLVM/NVVMToLLVM.h"
 #include "mlir/include/mlir/Conversion/Passes.h"
+#include "mlir/include/mlir/Conversion/UBToLLVM/UBToLLVM.h"
 #include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/include/mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/include/mlir/Dialect/GPU/IR/GPUDialect.h"
@@ -67,6 +76,7 @@ limitations under the License.
 #include "mlir/include/mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"
 #include "mlir/include/mlir/Transforms/Passes.h"
 #include "jaxlib/mosaic/gpu/launch_lowering.h"
+#include "jaxlib/mosaic/gpu/passes.h"
 #include "xla/service/custom_call_status.h"
 #include "xla/service/custom_call_target_registry.h"
 
@@ -100,6 +110,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mlir::memref::registerMemRefPasses();
     mlir::registerGPUPasses();
     mosaic::gpu::registerGpuLaunchLoweringPass();
+    mosaic::gpu::registerConvertGpuToLLVMPass();
     return true;
   }();
   (void)register_once;
@@ -123,7 +134,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         gpu.module(canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=true test-convergence=false top-down=true}),
         gpu.module(cse),
         gpu.module(reconcile-unrealized-casts),
-        gpu-to-llvm{gpu-binary-annotation=gpu.binary use-bare-pointers-for-host=false use-bare-pointers-for-kernels=false},
+        mosaic-convert-gpu-to-llvm,
         gpu-module-to-binary{format=)" +
       mlir::gpu::stringifyCompilationTarget(target).str() + R"(},
         convert-math-to-llvm{approximate-log1p=true},
@@ -152,6 +163,16 @@ void InitContext(mlir::MLIRContext* context) {
                   mlir::scf::SCFDialect, mlir::vector::VectorDialect,
                   mlir::gpu::GPUDialect, mlir::nvgpu::NVGPUDialect,
                   mlir::NVVM::NVVMDialect, mlir::LLVM::LLVMDialect>();
+  mlir::registerConvertNVVMToLLVMInterface(registry);
+  mlir::registerConvertComplexToLLVMInterface(registry);
+  mlir::registerConvertMemRefToLLVMInterface(registry);
+  mlir::registerConvertMathToLLVMInterface(registry);
+  mlir::registerConvertFuncToLLVMInterface(registry);
+  mlir::index::registerConvertIndexToLLVMInterface(registry);
+  mlir::cf::registerConvertControlFlowToLLVMInterface(registry);
+  mlir::ub::registerConvertUBToLLVMInterface(registry);  // Arith needs this
+  mlir::arith::registerConvertArithToLLVMInterface(registry);
+  mlir::registerFinalizeMemRefToLLVMConversionPass();
   mlir::gpu::registerOffloadingLLVMTranslationInterfaceExternalModels(registry);
   mlir::NVVM::registerNVVMTargetInterfaceExternalModels(registry);
   mlir::registerBuiltinDialectTranslation(registry);
