@@ -48,6 +48,7 @@ limitations under the License.
 #include "mlir/include/mlir/IR/Attributes.h"
 #include "mlir/include/mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/include/mlir/IR/OpDefinition.h"
+#include "mlir/include/mlir/IR/Visitors.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "xla/layout.h"
@@ -122,10 +123,7 @@ class VectorLayoutInferer {
 
   LogicalResult inferBlock(
       Block &block,
-      const std::function<LogicalResult(Operation *)> &match_terminator,
-      // TODO(jevinjiang): Propagate this flag deeper because it won't work when
-      // there is an op with blocks inside this block.
-      bool override_layout = false) {
+      const std::function<LogicalResult(Operation *)> &match_terminator) {
     for (Operation &any_op : block.without_terminator()) {
       VLOG(kLayoutLog) << Print(&any_op);
       if (any_op.hasAttr("in_layout") || any_op.hasAttr("out_layout")) {
@@ -134,8 +132,6 @@ class VectorLayoutInferer {
               any_op.hasAttr("in_layout") && any_op.hasAttr("out_layout"),
               "expect layout attributes in tpu::AssumeLayoutOp");
           continue;
-        } else if (override_layout) {
-          // Intend to override the layouts attribute.
         } else {
           any_op.emitOpError("layout attributes already attached");
           return failure();
@@ -508,35 +504,15 @@ class VectorLayoutInferer {
         op->getNumOperands() == 3 + op.getNumResults(),
         "expected num_operands is equal to 3 + num_results in scf.for");
 
-    SmallVector<Layout, 4> in_layouts = getLayoutFromOperands(op);
-    // Drop the first 3 layouts for lower bound, upper bound and step.
-    ArrayRef<Layout> arg_layouts = ArrayRef<Layout>(in_layouts).drop_front(3);
-    SmallVector<tpu::AssumeLayoutOp, 4> assume_layout_ops;
-    assume_layout_ops.reserve(arg_layouts.size());
-    // Use tpu.assume_layout to annotate every block argument with the layout of
-    // the corresponding operand in forOp and replace all uses of the block
-    // argument with the result of tpu.assume_layout.
-    ImplicitLocOpBuilder builder =
-        ImplicitLocOpBuilder::atBlockBegin(op.getLoc(), op.getBody());
-
-    // Drop the induction_variable and layouts of bounds+step (respectively).
-    for (auto [iter_arg, layout] : llvm::zip_equal(
-             op.getBody()->getArguments().drop_front(1), arg_layouts)) {
-      if (!dyn_cast<VectorType>(iter_arg.getType())) {
-        assume_layout_ops.push_back(nullptr);
-        continue;
-      }
-      auto assume_layout_op =
-          builder.create<AssumeLayoutOp>(iter_arg.getType(), iter_arg);
-      setLayout(assume_layout_op, layout, layout);
-      assume_layout_ops.push_back(assume_layout_op);
-      iter_arg.replaceUsesWithIf(assume_layout_op, [&](OpOperand &operand) {
-        return operand.getOwner() != assume_layout_op;
-      });
-    }
-
-    if (inferBlock(*op.getBody(), match_yield).failed()) {
-      return failure();
+    auto in_layouts = getLayoutFromOperands(op);
+    // Drop the input layouts for lower bound, upper bound. But keep the layout
+    // for step because it matches with induction variable in arguments.
+    auto arg_layouts = ArrayRef<Layout>(in_layouts).drop_front(2);
+    if (assumeLayoutsForBlockArgs(*op.getBody(), arg_layouts).failed() ||
+        inferBlock(*op.getBody(), match_yield).failed()) {
+      return op.emitOpError(
+          "failed to infer layout with initial layouts for body in "
+          "scf.for op");
     }
     auto yield_op = op.getBody()->getTerminator();
     auto yield_in_layouts = getLayoutFromOperands(yield_op);
@@ -546,7 +522,8 @@ class VectorLayoutInferer {
     int out_idx = 0;
     bool require_reinfer = false;
     for (auto [in_layout, yield_layout, result] :
-         llvm::zip_equal(ArrayRef<Layout>(in_layouts).drop_front(3),
+         llvm::zip_equal(arg_layouts.drop_front(
+                             1),  // Drop the layout for induction variable.
                          yield_in_layouts, op.getResults())) {
       if (auto vty = dyn_cast<VectorType>(result.getType())) {
         if (!in_layout.has_value()) {
@@ -586,24 +563,25 @@ class VectorLayoutInferer {
       ++out_idx;
     }
     if (require_reinfer) {
+      // Force same layouts in input layout but skip the first 3 layouts for
+      // lower bound, upper bound and step.
+      std::copy(out_layouts.begin(), out_layouts.end(), in_layouts.begin() + 3);
+
       // Terminator in the loop will carry layouts to the next loop but
       // the loop's block args' layouts are determined by the initial inputs. We
       // need to force the same layouts for all in order to make layouts be
       // consistent across all branches. To ensure that, we need to reprocess
       // layout inference for the entire body with the final consolidated
       // layout.
-      for (int64_t i = 0; i < out_layouts.size(); ++i) {
-        if (assume_layout_ops[i]) {
-          setLayout(assume_layout_ops[i], out_layouts[i], out_layouts[i]);
-        }
+      clearBlockLayouts(*op.getBody());
+      if (assumeLayoutsForBlockArgs(*op.getBody(),
+                                    ArrayRef<Layout>(in_layouts).drop_front(2))
+              .failed() ||
+          inferBlock(*op.getBody(), match_yield).failed()) {
+        return op.emitOpError(
+            "failed to infer layout with compatible layouts for body in "
+            "scf.for op");
       }
-      if (inferBlock(*op.getBody(), match_yield, /*override_layout=*/true)
-              .failed()) {
-        return op.emitOpError("failed to infer layout for scf.for op");
-      }
-      std::copy(out_layouts.begin(), out_layouts.end(),
-                in_layouts.begin() + 3);  // Skip first 3 layouts for lower
-                                          // bound, upper bound and step.
     }
     setInLayout(yield_op, out_layouts);
     setLayout(op, in_layouts, out_layouts);
@@ -622,53 +600,19 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(op.getNumRegions() == 2, "expected two blocks for scf.while");
 
     SmallVector<Layout, 4> in_layouts = getLayoutFromOperands(op);
-    SmallVector<tpu::AssumeLayoutOp, 4> before_assume_layout_ops;
-    before_assume_layout_ops.reserve(in_layouts.size());
-    SmallVector<tpu::AssumeLayoutOp, 4> after_assume_layout_ops;
-    after_assume_layout_ops.reserve(in_layouts.size());
 
-    // Use tpu.assume_layout to annotate every block argument with the layout of
-    // the corresponding operand in WhileOp and replace all uses of the block
-    // argument with the result of tpu.assume_layout.
-    ImplicitLocOpBuilder builder =
-        ImplicitLocOpBuilder::atBlockBegin(op.getLoc(), op.getBeforeBody());
-    for (auto [iter_arg, layout] :
-         llvm::zip_equal(op.getBeforeBody()->getArguments(), in_layouts)) {
-      if (!dyn_cast<VectorType>(iter_arg.getType())) {
-        before_assume_layout_ops.push_back(nullptr);
-        continue;
-      }
-      auto assume_layout_op =
-          builder.create<AssumeLayoutOp>(iter_arg.getType(), iter_arg);
-      setLayout(assume_layout_op, layout, layout);
-      before_assume_layout_ops.push_back(assume_layout_op);
-      iter_arg.replaceUsesWithIf(assume_layout_op, [&](OpOperand &operand) {
-        return operand.getOwner() != assume_layout_op;
-      });
-    }
-    if (inferBlock(*op.getBeforeBody(), match_condition).failed()) {
-      return failure();
+    if (assumeLayoutsForBlockArgs(*op.getBeforeBody(), in_layouts).failed() ||
+        inferBlock(*op.getBeforeBody(), match_condition).failed()) {
+      return op.emitOpError(
+          "failed to infer layout with initial layouts for before body in "
+          "scf.while op");
     }
 
-    builder =
-        ImplicitLocOpBuilder::atBlockBegin(op.getLoc(), op.getAfterBody());
-    for (auto [iter_arg, layout] :
-         llvm::zip_equal(op.getAfterBody()->getArguments(), in_layouts)) {
-      if (!dyn_cast<VectorType>(iter_arg.getType())) {
-        after_assume_layout_ops.push_back(nullptr);
-        continue;
-      }
-      auto assume_layout_op =
-          builder.create<AssumeLayoutOp>(iter_arg.getType(), iter_arg);
-      setLayout(assume_layout_op, layout, layout);
-      after_assume_layout_ops.push_back(assume_layout_op);
-      iter_arg.replaceUsesWithIf(assume_layout_op, [&](OpOperand &operand) {
-        return operand.getOwner() != assume_layout_op;
-      });
-    }
-
-    if (inferBlock(*op.getAfterBody(), match_yield).failed()) {
-      return failure();
+    if (assumeLayoutsForBlockArgs(*op.getAfterBody(), in_layouts).failed() ||
+        inferBlock(*op.getAfterBody(), match_yield).failed()) {
+      return op.emitOpError(
+          "failed to infer layout with initial layouts for after body in "
+          "scf.while op");
     }
 
     auto *cond_op = op.getBeforeBody()->getTerminator();
@@ -738,27 +682,26 @@ class VectorLayoutInferer {
       ++out_idx;
     }
     if (require_reinfer) {
+      clearBlockLayouts(*op.getBeforeBody());
+      clearBlockLayouts(*op.getAfterBody());
       // Terminator in the loop will carry layouts to the next loop but
       // the loop's block args' layouts are determined by the initial inputs. We
       // need to force the same layouts for all in order to make layouts be
       // consistent across all branches. To ensure that, we need to reprocess
       // layout inference for the entire body with the final consolidated
       // layout.
-      for (int64_t i = 0; i < out_layouts.size(); ++i) {
-        if (before_assume_layout_ops[i]) {
-          setLayout(before_assume_layout_ops[i], out_layouts[i],
-                    out_layouts[i]);
-        }
-        if (after_assume_layout_ops[i]) {
-          setLayout(after_assume_layout_ops[i], out_layouts[i], out_layouts[i]);
-        }
-      }
-      if (inferBlock(*op.getBeforeBody(), match_condition,
-                     /*override_layout=*/true)
+      if (assumeLayoutsForBlockArgs(*op.getBeforeBody(), out_layouts)
               .failed() ||
-          inferBlock(*op.getAfterBody(), match_yield, /*override_layout=*/true)
-              .failed()) {
-        return op.emitOpError("failed to infer layout for scf.while op");
+          inferBlock(*op.getBeforeBody(), match_condition).failed()) {
+        return op.emitOpError(
+            "failed to infer layout with compatible layouts for before body in "
+            "scf.while op");
+      }
+      if (assumeLayoutsForBlockArgs(*op.getAfterBody(), out_layouts).failed() ||
+          inferBlock(*op.getAfterBody(), match_yield).failed()) {
+        return op.emitOpError(
+            "failed to infer layout with compatible layouts for after body in "
+            "scf.while op");
       }
     }
     std::copy(out_layouts.begin(), out_layouts.end(),
@@ -1852,6 +1795,53 @@ class VectorLayoutInferer {
       return false;
     }
     return true;
+  }
+
+  LogicalResult assumeLayoutsForBlockArgs(Block &block,
+                                          ArrayRef<Layout> layouts) {
+    auto op = block.getParentOp();
+    if (layouts.size() != block.getNumArguments()) {
+      return op->emitOpError(
+          "Block arguments must have the same number of layouts");
+    }
+    // Use tpu.assume_layout to annotate every block argument with the layout of
+    // the corresponding operand and replace all uses of the block argument with
+    // the result of tpu.assume_layout.
+    ImplicitLocOpBuilder builder =
+        ImplicitLocOpBuilder::atBlockBegin(op->getLoc(), &block);
+    for (auto [iter_arg, layout] :
+         llvm::zip_equal(block.getArguments(), layouts)) {
+      if (!dyn_cast<VectorType>(iter_arg.getType())) {
+        continue;
+      }
+      if (llvm::any_of(iter_arg.getUsers(), [](Operation *user) {
+            return isa<tpu::AssumeLayoutOp>(user);
+          })) {
+        return op->emitOpError("Expected no assume layout for block arguments");
+      }
+      auto assume_layout_op =
+          builder.create<AssumeLayoutOp>(iter_arg.getType(), iter_arg);
+      setLayout(assume_layout_op, layout, layout);
+      iter_arg.replaceUsesWithIf(assume_layout_op, [&](OpOperand &operand) {
+        return operand.getOwner() != assume_layout_op;
+      });
+    }
+    return success();
+  }
+
+  void clearBlockLayouts(Block &block) {
+    block.walk([&](Operation *op) {
+      // We need to remove assume_layout ops in each block. Otherwise, we will
+      // create extra assume_layout ops for nested blocks.
+      if (auto assume_op = dyn_cast<tpu::AssumeLayoutOp>(op)) {
+        assume_op.getResult().replaceAllUsesWith(assume_op.getInput());
+        assume_op->erase();
+        return WalkResult::advance();
+      }
+      op->removeAttr("in_layout");
+      op->removeAttr("out_layout");
+      return WalkResult::advance();
+    });
   }
 
   void setInLayout(Operation *op, ArrayRef<Layout> in) {
