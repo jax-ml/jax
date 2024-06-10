@@ -632,6 +632,24 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertEqual(tpu_array.sharding, tpu_sharding)
     self.assertEqual(cpu_array.sharding, cpu_sharding)
 
+  def test_compute_no_inputs_host_replicated(self):
+    if xb.backend_xla_version() is not None and xb.backend_xla_version() < 3:
+      self.skipTest("This test requires an xla_version >= 3.")
+    mesh = jtu.create_global_mesh((4,), ('data'))
+
+    tpu_sharding = NamedSharding(mesh, P('data'))
+    cpu_sharding = NamedSharding(mesh, P(), memory_kind='pinned_host')
+
+    @functools.partial(jax.jit, out_shardings=(tpu_sharding, cpu_sharding))
+    def init():
+      tpu_array = jax.random.normal(jax.random.key(42), (16,16))
+      cpu_array = jax.random.normal(jax.random.key(42), (16,16))
+      return tpu_array, cpu_array
+
+    tpu_array, cpu_array = init()
+    self.assertEqual(tpu_array.sharding, tpu_sharding)
+    self.assertEqual(cpu_array.sharding, cpu_sharding)
+
   def test_compute_on_basic(self):
     out_s = SingleDeviceSharding(jax.devices()[0], memory_kind='pinned_host')
 
