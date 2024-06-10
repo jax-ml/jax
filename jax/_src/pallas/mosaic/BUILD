@@ -15,30 +15,12 @@
 # Package for Mosaic-specific Pallas extensions
 
 load("@rules_python//python:defs.bzl", "py_library")
-load(
-    "//jaxlib:jax.bzl",
-    "py_deps",
-    "py_library_providing_imports_info",
-)
+load("//jaxlib:jax.bzl", "py_deps")
 
 package(
     default_applicable_licenses = [],
     default_visibility = [
         "//:__subpackages__",
-    ],
-)
-
-py_library_providing_imports_info(
-    name = "mosaic",
-    srcs = ["__init__.py"],
-    lib_rule = py_library,
-    deps = [
-        ":core",
-        ":kernel_regeneration_util",
-        ":lowering",
-        ":pallas_call_registration",
-        ":pipeline",
-        ":primitives",
     ],
 )
 

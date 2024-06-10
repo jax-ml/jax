@@ -11,8 +11,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-"""Triton-specific Pallas APIs."""
-
-from jax._src.pallas.triton.primitives import approx_tanh
-from jax._src.pallas.triton.primitives import elementwise_inline_asm
