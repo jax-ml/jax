@@ -708,7 +708,10 @@ def LinalgVectorizationPass : Pass<"linalg-vectorization", "::mlir::func::FuncOp
     "::mlir::tpu::TPUDialect",
   ];
   let constructor = "::mlir::tpu::createLinalgVectorizationPass(false)";
-  let options = [Option<"supports_bf16_alu_instructions", "supports-bf16-alu-instructions", "bool", "", "">];
+  let options = [
+    Option<"supports_bf16_alu_instructions", "supports-bf16-alu-instructions", "bool", "", "">,
+    Option<"supports_bf16_matmul", "supports-bf16-matmul", "bool", "", "">,
+  ];
 }
 
 #endif  // TPU_ATTRS

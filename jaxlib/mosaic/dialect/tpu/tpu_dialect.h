@@ -64,7 +64,8 @@ std::unique_ptr<OperationPass<func::FuncOp>>
 createLogicalToPhysicalDeviceIdPass(int64_t total_devices);
 
 std::unique_ptr<OperationPass<func::FuncOp>> createLinalgVectorizationPass(
-    bool supports_bf16_alu_instructions = false);
+    bool supports_bf16_alu_instructions = false,
+    bool supports_bf16_matmul = false);
 
 std::unique_ptr<OperationPass<func::FuncOp>> createDebugAssertInsertionPass();
 
