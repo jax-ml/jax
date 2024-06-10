@@ -19,7 +19,6 @@ limitations under the License.
 #include <vector>
 
 #include "llvm/include/llvm/ADT/StringRef.h"
-#include "llvm/include/llvm/Support/Debug.h"
 #include "mlir/include/mlir/Conversion/GPUCommon/GPUCommonPass.h"
 #include "mlir/include/mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/include/mlir/Dialect/GPU/IR/GPUDialect.h"
@@ -45,7 +44,6 @@ class ConvertGpuToLLVMPass
   static constexpr llvm::StringLiteral kPassName = "ConvertGpuToLLVMPass";
 
   void runOnOperation() override {
-    llvm::DebugFlag = true;
     mlir::MLIRContext *ctx = &getContext();
     mlir::RewritePatternSet patterns(ctx);
     mlir::LLVMTypeConverter converter(ctx);
@@ -65,7 +63,6 @@ class ConvertGpuToLLVMPass
             .failed()) {
       signalPassFailure();
     }
-    llvm::DebugFlag = false;
   }
 };
 
