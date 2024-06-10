@@ -36,7 +36,7 @@ from jax import random
 from jax import numpy as jnp
 from jax import tree_util
 from jax import sharding
-from jax.experimental import export
+from jax import export
 from jax.experimental.jax2tf import impl_no_xla
 from jax.interpreters import xla
 
@@ -515,7 +515,7 @@ class NativeSerializationImpl(SerializationImpl):
 
     self._restore_context = _restore_context
     _exported_device_assignment = [None]
-    self.exported = export.export(
+    self.exported = _export.export_back_compat(
         self.fun_jax,
         lowering_platforms=self.native_serialization_platforms,
         disabled_checks=self.native_serialization_disabled_checks,

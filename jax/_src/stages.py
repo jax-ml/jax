@@ -32,7 +32,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, NamedTuple, Protocol, Union
+from typing import Any, NamedTuple, Protocol, Union, runtime_checkable
 import warnings
 
 import jax
@@ -756,8 +756,9 @@ class Lowered(Stage):
       return None
 
 
+@runtime_checkable
 class Wrapped(Protocol):
-  """A function ready to be specialized, lowered, and compiled.
+  """A function ready to be traced, lowered, and compiled.
 
   This protocol reflects the output of functions such as
   ``jax.jit``. Calling it results in JIT (just-in-time) lowering,

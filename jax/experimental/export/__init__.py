@@ -17,12 +17,13 @@ from jax._src.export._export import (
     minimum_supported_serialization_version,
     maximum_supported_serialization_version,
     Exported,
-    export,
     call_exported,  # TODO: deprecate
     call,
     DisabledSafetyCheck,
-    default_lowering_platform,
+    default_lowering_platform,  # TODO: deprecate
 )
+from jax._src.export._export import export_back_compat as export
+
 from jax._src.export.shape_poly import (
     is_symbolic_dim,
     symbolic_shape,
@@ -33,4 +34,6 @@ from jax._src.export.serialization import (
     serialize,
     deserialize,
 )
+# Import only to set the shape poly decision procedure
 from jax._src.export import shape_poly_decision
+del shape_poly_decision

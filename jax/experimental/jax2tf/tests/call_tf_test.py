@@ -25,13 +25,13 @@ from absl.testing import parameterized
 import jax
 from jax import dlpack
 from jax import dtypes
+from jax import export
 from jax import lax
 from jax import numpy as jnp
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
-from jax.experimental import export
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util
 import numpy as np
@@ -778,7 +778,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
 
     lowering_platforms = ("tpu", "cpu", "cuda")
 
-    exp = export.export(f_jax,
+    exp = export.export(jax.jit(f_jax),
                         lowering_platforms=lowering_platforms)(x)
     for jax_platform in jax_and_tf_platforms:
       with self.subTest(jax_platform):
@@ -787,7 +787,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
         logging.info("Running harness natively on %s", jax_device)
         native_res = f_jax(x_device)
         logging.info("Running exported harness on %s", jax_device)
-        exported_res = export.call(exp)(x_device)
+        exported_res = exp.call(x_device)
         self.assertAllClose(native_res, exported_res)
 
   def test_multi_platform_call_tf_graph(self):

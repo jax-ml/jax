@@ -31,9 +31,9 @@ from absl.testing import absltest
 import numpy as np
 
 import jax
+from jax import export
 from jax import lax
 from jax._src import test_util as jtu
-from jax.experimental import export
 from jax._src.internal_test_util import test_harnesses
 
 
@@ -152,7 +152,8 @@ class PrimitiveTest(jtu.JaxTestCase):
       )
 
     logging.info("Exporting harness for %s", lowering_platforms)
-    exp = export.export(func_jax, lowering_platforms=lowering_platforms)(*args)
+    exp = export.export(jax.jit(func_jax),
+                        lowering_platforms=lowering_platforms)(*args)
 
     for device in devices:
       if device.platform in skip_run_on_platforms:
@@ -164,7 +165,7 @@ class PrimitiveTest(jtu.JaxTestCase):
       logging.info("Running harness natively on %s", device)
       native_res = func_jax(*device_args)
       logging.info("Running exported harness on %s", device)
-      exported_res = export.call(exp)(*device_args)
+      exported_res = exp.call(*device_args)
       if tol is not None:
         logging.info(f"Using non-standard tolerance {tol}")
       self.assertAllClose(native_res, exported_res, atol=tol, rtol=tol)

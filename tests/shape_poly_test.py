@@ -35,7 +35,7 @@ import operator as op
 import re
 
 import jax
-from jax.experimental import export
+from jax import export
 from jax.experimental import pjit
 from jax import lax
 import jax.numpy as jnp
@@ -1267,7 +1267,7 @@ class PolyHarness(Harness):
       tst.assertEqual(getattr(jax.config, fname), fvalue, (
           f"Flag {fname} current value {getattr(jax.config, fname)} != {fvalue}"))
 
-    f_jax = self.dyn_fun
+    f_jax = jax.jit(self.dyn_fun)
     args = self.dyn_args_maker(tst.rng())
     args = jax.tree.map(jnp.array, args)
     args_specs = export.symbolic_args_specs(args, self.polymorphic_shapes,
@@ -1283,7 +1283,7 @@ class PolyHarness(Harness):
       return None
     # Run the JAX natively and then the exported function and compare
     res_jax_native = f_jax(*args)
-    res_jax_exported = export.call(exp)(*args)
+    res_jax_exported = exp.call(*args)
     custom_assert_lims = [
         l for l in self.limitations if l.custom_assert is not None]
     assert len(custom_assert_lims) <= 1, custom_assert_lims
@@ -1315,7 +1315,7 @@ def check_shape_poly(tst, f_jax: Callable, *,
                      symbolic_constraints: Sequence[str] = (),
                      expect_error=None) -> jax.Array | None:
   # Builds a PolyHarness and runs the test. See PolyHarness documentation.
-  h = PolyHarness("", "", f_jax,
+  h = PolyHarness("", "", jax.jit(f_jax),
                   arg_descriptors=arg_descriptors,
                   polymorphic_shapes=polymorphic_shapes,
                   symbolic_constraints=symbolic_constraints,
@@ -1408,11 +1408,10 @@ class ShapePolyTest(jtu.JaxTestCase):
     def f_jax(x, *, y):
       return x + jnp.sin(y)
 
-    f_exported = export.call(
-        export.export(f_jax)(jax.ShapeDtypeStruct(export.symbolic_shape("b"),
-                                                  x.dtype),
-                             y=jax.ShapeDtypeStruct(y.shape, y.dtype)))
-    self.assertAllClose(f_jax(x, y=y), f_exported(x, y=y))
+    exp = export.export(jax.jit(f_jax))(
+        jax.ShapeDtypeStruct(export.symbolic_shape("b"), x.dtype),
+        y=jax.ShapeDtypeStruct(y.shape, y.dtype))
+    self.assertAllClose(f_jax(x, y=y), exp.call(x, y=y))
 
   def test_arg_avals_errors(self):
     """Test error reporting for shape polymorphism."""
@@ -1617,8 +1616,8 @@ class ShapePolyTest(jtu.JaxTestCase):
         acc += jnp.sum(slice, axis=0)
       return acc
 
-    _ = export.export(f)(jax.ShapeDtypeStruct(export.symbolic_shape("a, b"),
-                                              np.int32))
+    _ = export.export(jax.jit(f))(
+        jax.ShapeDtypeStruct(export.symbolic_shape("a, b"), np.int32))
 
 
   def test_constraints_compile_time_check(self):
@@ -1630,29 +1629,30 @@ class ShapePolyTest(jtu.JaxTestCase):
     x_spec = jax.ShapeDtypeStruct(
         export.symbolic_shape("a",
                               constraints=["a >= 2", "a <= 4"]), np.int32)
-    exp = export.export(f)(x_spec)
+    exp = export.export(jax.jit(f))(x_spec)
 
     x_2 = np.arange(2, dtype=np.int32)
-    res_2 = export.call(exp)(x_2)
+    res_2 = exp.call(x_2)
     self.assertAllClose(x_2[0:2], res_2)
 
     x_4 = np.arange(4, dtype=np.int32)
-    res_4 = export.call(exp)(x_4)
+    res_4 = exp.call(x_4)
     self.assertAllClose(x_4[1:3], res_4)
 
     with self.assertRaisesRegex(
         ValueError,
         re.escape("Expected 'a - 2' to be greater or equal to 0, but found -1")):
-      export.call(exp)(np.arange(1, dtype=np.int32))
+      exp.call(np.arange(1, dtype=np.int32))
 
     with self.assertRaisesRegex(
         ValueError,
         re.escape("Expected '- a + 4' to be greater or equal to 0, but found -1")):
-      export.call(exp)(np.arange(5, dtype=np.int32))
+      exp.call(np.arange(5, dtype=np.int32))
 
   def test_caching_with_scopes(self):
     f_tracing_count = 0
     expected_a_bounds = (1, np.inf)
+    @jax.jit
     def f(x):  # x: i32[a]
       nonlocal f_tracing_count
       f_tracing_count += 1
