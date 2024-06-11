@@ -19,7 +19,7 @@ from collections.abc import Sequence
 import dataclasses
 import enum
 import functools
-from typing import Any, Union
+from typing import Any
 
 from jax._src import core as jax_core
 from jax._src import dtypes
@@ -28,15 +28,13 @@ from jax._src import util
 import jax.numpy as jnp
 from jax._src.pallas import core as pallas_core
 
-# TODO(sharadmv): enable type checking
-# mypy: ignore-errors
-
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
 partial = functools.partial
 Grid = pallas_core.Grid
 BlockSpec = pallas_core.BlockSpec
+BlockSpecTree = pallas_core.BlockSpecTree
 GridMapping = pallas_core.GridMapping
 NoBlockSpec = pallas_core.NoBlockSpec
 AbstractMemoryRef = pallas_core.AbstractMemoryRef
@@ -97,6 +95,7 @@ class SemaphoreType(enum.Enum):
   BARRIER = "barrier"
 
   def __call__(self, shape: tuple[int, ...]):
+    dtype: Any
     if self == SemaphoreType.DMA:
       dtype = DmaSemaphoreTy()
     elif self == SemaphoreType.BARRIER:
@@ -141,9 +140,6 @@ def _make_aval(obj: object) -> jax_core.AbstractValue:
     return obj.get_aval()
   raise ValueError(f"No registered conversion for {type(obj)}. "
                    "Only VMEM and SemaphoreType are supported.")
-
-
-BlockSpecTree = Union[BlockSpec, NoBlockSpec, Sequence["BlockSpecTree"]]
 
 
 @dataclasses.dataclass(init=False, unsafe_hash=True)

@@ -39,10 +39,6 @@ from jax._src.state import primitives as sp
 from jax.interpreters import mlir
 import jax.numpy as jnp
 
-
-# TODO(sharadmv): enable type checking
-# mypy: ignore-errors
-
 partial = functools.partial
 Slice = indexing.Slice
 NDIndexer = indexing.NDIndexer
@@ -64,6 +60,7 @@ program_id_p.def_custom_bind(program_id_bind)
 
 def _program_id_impl(*, axis: int):
   grid_env = pallas_core.current_grid_env()
+  assert grid_env
   return grid_env[axis].axis_index
 program_id_p.def_impl(_program_id_impl)
 
@@ -87,6 +84,7 @@ def _num_programs_bind(*, axis: int):
 @num_programs_p.def_impl
 def _num_programs_impl(*, axis: int):
   grid_env = pallas_core.current_grid_env()
+  assert grid_env
   return jnp.asarray(grid_env[axis].axis_size, dtype=jnp.int32)
 
 @num_programs_p.def_abstract_eval
@@ -569,7 +567,7 @@ def debug_print(fmt: str, *args: jax.ArrayLike):
   """  # fmt: skip
   has_placeholders = False
   if fmt:
-    _, field_name, *_ = next(string.Formatter().parse(fmt))
+    _, field_name, *_ = next(iter(string.Formatter().parse(fmt)))
     has_placeholders = field_name is not None
   return debug_print_p.bind(*args, fmt=fmt, has_placeholders=has_placeholders)
 
