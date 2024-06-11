@@ -56,8 +56,7 @@ class ConvertGpuToLLVMPass
                  converter.isLegal(op->getResultTypes());
         });
     auto symtab = mlir::SymbolTable(getOperation());
-    mlir::populateGpuToLLVMConversionPatterns(converter, patterns, "gpu.binary",
-                                              false, &symtab);
+    mlir::populateGpuToLLVMConversionPatterns(converter, patterns, false);
     if (mlir::applyPartialConversion(getOperation(), target,
                                      std::move(patterns))
             .failed()) {
