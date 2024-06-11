@@ -253,9 +253,7 @@ def lower_jaxpr_to_triton_module(
     in_shapes,
     grid_mapping: GridMapping,
     name: str,
-    cuda_options: Any,
 ) -> LoweringResult:
-  # TODO(slebedev): Use cuda_options= during lowering.
   jaxpr, _ = pe.dce_jaxpr(jaxpr, [True] * len(jaxpr.outvars), instantiate=True)
   with _new_ir_context(), ir.Location.unknown():
     module = ir.Module.create()
