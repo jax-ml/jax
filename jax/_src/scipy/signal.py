@@ -288,7 +288,8 @@ def convolve2d(in1: Array, in2: Array, mode: str = 'full', boundary: str = 'fill
   Examples:
     A few 2D convolution examples:
 
-    >>> x = jnp.arange(1, 10).reshape(3,3)
+    >>> x = jnp.array([[1, 2],
+    ...                [3, 4]])
     >>> y = jnp.array([[2, 1, 1],
     ...                [4, 3, 4],
     ...                [1, 3, 2]])
@@ -296,25 +297,24 @@ def convolve2d(in1: Array, in2: Array, mode: str = 'full', boundary: str = 'fill
     Full 2D convolution uses implicit zero-padding at the edges:
 
     >>> jax.scipy.signal.convolve2d(x, y, mode='full')
-    Array([[  2.,   5.,   9.,   5.,   3.],
-           [ 12.,  25.,  43.,  28.,  18.],
-           [ 31.,  60.,  99.,  68.,  39.],
-           [ 32.,  70., 117.,  87.,  48.],
-           [  7.,  29.,  47.,  43.,  18.]], dtype=float32)
+    Array([[ 2.,  5.,  3.,  2.],
+           [10., 22., 17., 12.],
+           [13., 30., 32., 20.],
+           [ 3., 13., 18.,  8.]], dtype=float32)
 
     Specifying ``mode = 'same'`` returns a centered 2D convolution of the same size
     as the first input:
 
     >>> jax.scipy.signal.convolve2d(x, y, mode='same')
-    Array([[ 25.,  43.,  28.],
-           [ 60.,  99.,  68.],
-           [ 70., 117.,  87.]], dtype=float32)
+    Array([[22., 17.],
+           [30., 32.]], dtype=float32)
 
     Specifying ``mode = 'valid'`` returns only the portion of 2D convolution
     where the two arrays fully overlap:
 
     >>> jax.scipy.signal.convolve2d(x, y, mode='valid')
-    Array([[99.]], dtype=float32)
+    Array([[22., 17.],
+           [30., 32.]], dtype=float32)
   """
   if boundary != 'fill' or fillvalue != 0:
     raise NotImplementedError("convolve2d() only supports boundary='fill', fillvalue=0")
@@ -422,33 +422,34 @@ def correlate2d(in1: Array, in2: Array, mode: str = 'full', boundary: str = 'fil
   Examples:
     A few 2D correlation examples:
 
-    >>> x = jnp.arange(1, 10).reshape(3,3)
-    >>> y = jnp.array([[2, 1, 1],
-    ...                [4, 3, 4],
-    ...                [1, 3, 2]])
+    >>> x = jnp.array([[2, 1, 3],
+    ...                [1, 3, 1],
+    ...                [4, 1, 2]])
+    >>> y = jnp.array([[1, 3],
+    ...                [4, 2]])
 
     Full 2D correlation uses implicit zero-padding at the edges:
 
     >>> jax.scipy.signal.correlate2d(x, y, mode='full')
-    Array([[  2.,   7.,  13.,  11.,   3.],
-           [ 12.,  33.,  53.,  40.,  18.],
-           [ 31.,  72., 111.,  80.,  39.],
-           [ 32.,  62., 107.,  75.,  48.],
-           [  7.,  15.,  31.,  25.,  18.]], dtype=float32)
+    Array([[ 4., 10., 10., 12.],
+           [ 8., 15., 24.,  7.],
+           [11., 28., 14.,  9.],
+           [12.,  7.,  7.,  2.]], dtype=float32)
 
     Specifying ``mode = 'same'`` returns a centered 2D correlation of the same
     size as the first input:
 
     >>> jax.scipy.signal.correlate2d(x, y, mode='same')
-    Array([[ 33.,  53.,  40.],
-           [ 72., 111.,  80.],
-           [ 62., 107.,  75.]], dtype=float32)
+    Array([[15., 24.,  7.],
+           [28., 14.,  9.],
+           [ 7.,  7.,  2.]], dtype=float32)
 
     Specifying ``mode = 'valid'`` returns only the portion of 2D correlation
     where the two arrays fully overlap:
 
     >>> jax.scipy.signal.correlate2d(x, y, mode='valid')
-    Array([[111.]], dtype=float32)
+    Array([[15., 24.],
+           [28., 14.]], dtype=float32)
   """
   if boundary != 'fill' or fillvalue != 0:
     raise NotImplementedError("correlate2d() only supports boundary='fill', fillvalue=0")
