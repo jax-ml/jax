@@ -78,9 +78,6 @@ def pallas_call_tpu_lowering_rule(
     mlir_ctx.load_all_available_dialects()
     tpu.register_dialect(mlir_ctx)
     dimension_semantics = mosaic_params.get("dimension_semantics", None)
-    kernel_regeneration_metadata = mosaic_params.get(
-        "kernel_regeneration_metadata"
-    )
     mosaic_module, extra_args = lowering.lower_jaxpr_to_module(
         mlir_ctx, grid_mapping, in_shapes, out_shapes, jaxpr,
         dimension_semantics=dimension_semantics, mesh=mesh)
@@ -101,11 +98,10 @@ def pallas_call_tpu_lowering_rule(
         out_avals,
         backend=ctx.module_context.backend,
         kernel_name=name,
-        kernel_regeneration_metadata=kernel_regeneration_metadata,
-        cost_estimate=mosaic_params.get("cost_estimate", None),
-        vmem_limit_bytes=mosaic_params.get("vmem_limit_bytes", None),
-        flags=mosaic_params.get("flags", None),
-        allow_input_fusion=mosaic_params.get("allow_input_fusion", None),
+        cost_estimate=mosaic_params.get("cost_estimate"),
+        vmem_limit_bytes=mosaic_params.get("vmem_limit_bytes"),
+        flags=mosaic_params.get("flags"),
+        allow_input_fusion=mosaic_params.get("allow_input_fusion"),
         input_output_aliases=input_output_aliases,
     )(
         *dynamic_grid_args,

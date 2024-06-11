@@ -195,7 +195,6 @@ def _tpu_custom_call_lowering(
     *in_nodes,  # pylint: disable=missing-function-docstring
     config: CustomCallBackendConfig,
     kernel_name: str | None,
-    kernel_regeneration_metadata: bytes | None,
     out_avals: Any,
     input_output_aliases: tuple[tuple[int, int], ...],
 ) -> ...:
@@ -248,15 +247,11 @@ def _tpu_custom_call_lowering(
       ]),
   )
 
-  # Add kernel_name and kernel_regeneration_metadata as attributes to the
-  # custom call op. This is because we do not want to pollute the backend_config
-  # with this information.
+  # Add kernel_name and kernel_metadata as attributes to the custom call op.
+  # This is because we do not want to pollute the backend_config with this
+  # information.
   if kernel_name is not None:
     call.attributes["kernel_name"] = ir.StringAttr.get(kernel_name)
-  if kernel_regeneration_metadata is not None:
-    call.attributes["kernel_regeneration_metadata"] = ir.StringAttr.get(
-        base64.b64encode(kernel_regeneration_metadata)
-    )
   if multiple_results:
     results = [stablehlo.get_tuple_element(call, mlir.i32_attr(i))
                for i in range(len(out_avals))]
@@ -376,7 +371,6 @@ def as_tpu_kernel(
     backend: str | xla_client.Client = "tpu",
     device_type: str | None = None,
     kernel_name: str | None = None,
-    kernel_regeneration_metadata: bytes | None = None,
     vmem_limit_bytes: int | None = None,
     flags: dict[str, bool | int | float] | None = None,
     allow_input_fusion: list[bool] | None = None,
@@ -435,7 +429,6 @@ def as_tpu_kernel(
       has_communication=has_communication,
       has_custom_barrier=has_custom_barrier,
       kernel_name=kernel_name,
-      kernel_regeneration_metadata=kernel_regeneration_metadata,
       cost_estimate=cost_estimate,
       vmem_limit_bytes=vmem_limit_bytes,
       flags=flags,
@@ -455,7 +448,6 @@ def _lowered_as_tpu_kernel(
     has_communication: bool = False,
     has_custom_barrier: bool = False,
     kernel_name: str | None = None,
-    kernel_regeneration_metadata: bytes | None = None,
     vmem_limit_bytes: int | None = None,
     flags: dict[str, bool | int | float] | None = None,
     allow_input_fusion: list[bool] | None = None,
@@ -496,7 +488,6 @@ def _lowered_as_tpu_kernel(
         *args,
         config=config,
         kernel_name=kernel_name,
-        kernel_regeneration_metadata=kernel_regeneration_metadata,
         out_avals=out_avals,
         input_output_aliases=input_output_aliases,
     )

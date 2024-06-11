@@ -78,14 +78,6 @@ py_library(
 )
 
 py_library(
-    name = "kernel_regeneration_util",
-    srcs = ["kernel_regeneration_util.py"],
-    deps = [
-        "//jax:mlir",
-    ],
-)
-
-py_library(
     name = "pipeline",
     srcs = ["pipeline.py"],
     deps = [
