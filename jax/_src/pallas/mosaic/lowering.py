@@ -31,6 +31,7 @@ from jax._src import debugging
 from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
 from jax._src import pjit
+from jax._src import prng
 from jax._src import source_info_util
 from jax._src import state
 from jax._src.interpreters import mlir
@@ -76,6 +77,12 @@ partial = functools.partial
 map, unsafe_map = safe_map, map  # pylint: disable=redefined-builtin
 zip, unsafe_zip = safe_zip, zip  # pylint: disable=redefined-builtin
 
+UNSIGNED_TO_SIGNED = {
+    np.dtype('uint8'): np.dtype('int8'),
+    np.dtype('uint16'): np.dtype('int16'),
+    np.dtype('uint32'): np.dtype('int32'),
+    np.dtype('uint64'): np.dtype('int64'),
+}
 
 @dataclasses.dataclass
 class MeshContext:
@@ -123,7 +130,13 @@ def _dtype_to_ir_type(dtype: jnp.dtype) -> ir.Type:
       return ir.Type.parse("!tpu.semaphore")
     else:
       raise NotImplementedError
-  return mlir.dtype_to_ir_type(dtype)
+  # TODO(justinfu): Remove after mosaic supports unsigned types.
+  # This conversion makes mosaic interpret all unsigned types as signed types.
+  type =  mlir.dtype_to_ir_type(dtype)
+  if isinstance(type, ir.IntegerType):
+    return ir.IntegerType.get_signless(type.width)
+  else:
+    return type
 
 def aval_to_ir_type(aval, shape=None, memory_space: TPUMemorySpace | None = None):
   if isinstance(aval, tpu_core.AbstractSemaphore):
@@ -1214,14 +1227,14 @@ def _convert_helper(x, *, to_dtype):
   if jnp.issubdtype(from_dtype, jnp.dtype("bool")):
     x = x.astype(jnp.int32)
     return _convert_helper(x, to_dtype=to_dtype)
-  if jnp.issubdtype(from_dtype, jnp.integer):
+  if jnp.issubdtype(from_dtype, jnp.signedinteger):
     if from_dtype.itemsize < 4:
       x = x.astype(jnp.int32)
     if jnp.issubdtype(to_dtype, jnp.floating) and to_dtype.itemsize < 4:
       x = x.astype(jnp.float32)
     return x.astype(to_dtype)
   if jnp.issubdtype(from_dtype, jnp.floating):
-    if jnp.issubdtype(to_dtype, jnp.integer):
+    if jnp.issubdtype(to_dtype, jnp.signedinteger):
       if from_dtype.itemsize < 4:
         x = x.astype(jnp.float32)
       if to_dtype.itemsize < 4:
@@ -1242,6 +1255,11 @@ def _convert_element_type_lowering_rule(
   out_aval = ctx.avals_out[0]
   old_dtype = ctx.avals_in[0].dtype
   out_type = aval_to_ir_type(out_aval)
+
+  # TODO(justinfu): Remove after mosaic supports unsigned types.
+  # This conversion makes mosaic interpret all unsigned types as signed types.
+  if np.issubdtype(new_dtype, jnp.unsignedinteger):
+    new_dtype = UNSIGNED_TO_SIGNED[new_dtype]
   if old_dtype == new_dtype:
     return x
   if jnp.issubdtype(old_dtype, jnp.floating) and jnp.issubdtype(
@@ -2158,9 +2176,16 @@ def _bitcast_lowering_rule(ctx: LoweringRuleContext, x, *, ty):
   (out_aval,) = ctx.avals_out
   return tpu.BitcastOp(aval_to_ir_type(out_aval), x).result
 
-
 lowering_rules[tpu_primitives.bitcast_p] = _bitcast_lowering_rule
 
+def _bitcast_convert_type_lowering_rule(
+    ctx: LoweringRuleContext, x, *, new_dtype):
+  (in_aval, ) = ctx.avals_in
+  (out_aval,) = ctx.avals_out
+  if in_aval.dtype.itemsize != new_dtype.itemsize:
+    raise NotImplementedError("Changing bitwidths not supported.")
+  return tpu.BitcastOp(aval_to_ir_type(out_aval), x).result
+lowering_rules[lax.bitcast_convert_type_p] = _bitcast_convert_type_lowering_rule
 
 def _alloc_value(aval: jax_core.AbstractValue) -> ir.Value:
   if isinstance(aval, pl_core.AbstractMemoryRef):
@@ -2380,3 +2405,41 @@ def _prng_random_bits_lowering_rule(ctx: LoweringRuleContext, *, shape):
   out_type = aval_to_ir_type(out_aval)
   return tpu.PRNGRandomBitsOp(out_type).result
 lowering_rules[tpu_primitives.prng_random_bits_p] = _prng_random_bits_lowering_rule
+
+
+def random_seed_lowering(ctx, seeds, *, impl):
+  seed_lowering = lower_fun(
+      impl.seed, multiple_results=False)
+  return seed_lowering(ctx, seeds)
+lowering_rules[prng.random_seed_p] = random_seed_lowering
+
+
+def random_bits_lowering(ctx, keys, *, bit_width, shape):
+  assert bit_width == 32, "Only 32-bit PRNG supported."
+  aval, = ctx.avals_in
+  impl = aval.dtype._impl
+  bits_lowering = lower_fun(
+      impl.random_bits, multiple_results=False)
+  return bits_lowering(ctx, keys, bit_width=bit_width, shape=shape)
+lowering_rules[prng.random_bits_p] = random_bits_lowering
+
+
+def random_fold_in_lowering(ctx, keys, msgs):
+  keys_aval, _ = ctx.avals_in
+  impl = keys_aval.dtype._impl
+  fold_in_lowering = lower_fun(
+      impl.fold_in, multiple_results=False)
+  return fold_in_lowering(ctx, keys, msgs)
+lowering_rules[prng.random_fold_in_p] = random_fold_in_lowering
+
+
+def random_unwrap_lowering(ctx, key):
+  del ctx
+  return key
+lowering_rules[prng.random_unwrap_p] = random_unwrap_lowering
+
+
+def random_wrap_lowering(ctx, key_data, *, impl):
+  del ctx, impl
+  return key_data
+lowering_rules[prng.random_wrap_p] = random_wrap_lowering

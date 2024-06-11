@@ -604,7 +604,7 @@ def _(*_):
   return []
 
 
-def prng_seed(*seeds: tuple[int | jax.Array, ...]) -> None:
+def prng_seed(*seeds: int | jax.Array) -> None:
   """Sets the seed for PRNG.
 
   Args:

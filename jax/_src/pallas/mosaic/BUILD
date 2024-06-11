@@ -97,3 +97,13 @@ py_library(
         "//jax/_src/pallas",
     ],
 )
+
+py_library(
+    name = "random",
+    srcs = ["random.py"],
+    deps = [
+        ":primitives",
+        "//jax",
+        "//jax:typing",
+    ] + py_deps("numpy"),
+)
