@@ -23,6 +23,7 @@ import itertools
 import operator
 from typing import Any, Callable, TypeVar
 
+import jax
 from jax.tree_util import tree_flatten, tree_unflatten
 from jax._src import ad_util
 from jax._src import config
@@ -248,13 +249,6 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
     raise ValueError("Cannot pass `Ref`s into `cond`.")
   true_jaxpr, false_jaxpr = jaxprs
 
-  true_fwds = pe._jaxpr_forwarding(true_jaxpr.jaxpr)
-  false_fwds = pe._jaxpr_forwarding(false_jaxpr.jaxpr)
-  in_fwd = [i if i == j else None for i, j in zip(true_fwds, false_fwds)]
-  keep = [f is None for f in in_fwd]
-  true_jaxpr = pe.prune_closed_jaxpr_outputs(true_jaxpr, keep)
-  false_jaxpr = pe.prune_closed_jaxpr_outputs(false_jaxpr, keep)
-
   out_tree, false_out_tree = out_trees
   if any(isinstance(out_aval, AbstractRef) for out_aval in
          true_jaxpr.out_avals + false_jaxpr.out_avals):
@@ -263,6 +257,14 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   _check_tree_and_avals("true_fun and false_fun output",
                         out_tree, true_jaxpr.out_avals,
                         false_out_tree, false_jaxpr.out_avals)
+  # prune passhtrough outputs
+  true_fwds = pe._jaxpr_forwarding(true_jaxpr.jaxpr)
+  false_fwds = pe._jaxpr_forwarding(false_jaxpr.jaxpr)
+  in_fwd = [i if i == j else None for i, j in zip(true_fwds, false_fwds)]
+  keep = [f is None for f in in_fwd]
+  true_jaxpr = pe.prune_closed_jaxpr_outputs(true_jaxpr, keep)
+  false_jaxpr = pe.prune_closed_jaxpr_outputs(false_jaxpr, keep)
+
   joined_effects = core.join_effects(true_jaxpr.effects, false_jaxpr.effects)
   disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:
@@ -281,8 +283,17 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
   out = cond_p.bind(
       index, *consts, *ops,
       branches=(false_jaxpr, true_jaxpr), linear=tuple(linear))
+  num_consts = len(consts)
   out_ = iter(out)
-  out = [next(out_) if fwd is None else ops[fwd] for fwd in in_fwd]
+
+  def _cast_to_array(x):
+    _copy = isinstance(x, np.bool_)
+    return jax.numpy.asarray(x, copy=_copy)
+
+  out = [
+    next(out_) if fwd is None else _cast_to_array(ops[fwd - num_consts])
+    for fwd in in_fwd
+  ]
   assert next(out_, None) is None
   return tree_unflatten(out_tree, out)
 
