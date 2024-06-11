@@ -83,6 +83,7 @@ class JaxprDebugInfo(NamedTuple):
   result_paths: tuple[str, ...]  # e.g. ('[0]', '[1]', ...)
 
 class Jaxpr:
+  _check_debug_info: bool = True
   __slots__ = ['__weakref__', '_constvars', '_invars', '_outvars', '_eqns',
                '_effects', '_debug_info']
 
@@ -139,8 +140,9 @@ class Jaxpr:
     self._eqns = list(eqns)
     self._effects = effects
     self._debug_info = debug_info
-    assert (not debug_info or len(debug_info.arg_names) == len(invars) and
-            len(debug_info.result_paths) == len(outvars))
+    if self._check_debug_info:
+      assert (not debug_info or len(debug_info.arg_names) == len(invars) and
+              len(debug_info.result_paths) == len(outvars))
 
   def __str__(self):
     return str(self.pretty_print())
