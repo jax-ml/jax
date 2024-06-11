@@ -80,7 +80,7 @@ pyproject-hooks==1.0.0
     # via build
 pytest==8.1.1
     # via pytest-xdist
-pytest-xdist==3.5.0
+pytest-xdist==3.6.1
     # via -r build/test-requirements.txt
 python-dateutil==2.9.0.post0
     # via matplotlib
