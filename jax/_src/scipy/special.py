@@ -17,7 +17,6 @@ from __future__ import annotations
 from functools import partial
 import operator
 from typing import cast, overload, Any
-import warnings
 
 import numpy as np
 
@@ -29,6 +28,7 @@ from jax import lax
 
 from jax._src import core
 from jax._src import custom_derivatives
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact, promote_dtypes_inexact
@@ -220,14 +220,14 @@ def beta(*args, **kwds):
   """
   # TODO(jakevdp): deprecation warning added 2024-06-10; finalize after 2024-09-10
   if 'x' in kwds:
-    warnings.warn("The `x` parameter of jax.scipy.special.beta is deprecated, use `a` instead.",
-                  category=DeprecationWarning, stacklevel=2)
+    msg = "The `x` parameter of jax.scipy.special.beta is deprecated, use `a` instead."
+    deprecations.warn('jax-scipy-beta-args', msg, stacklevel=2)
     if 'a' in kwds:
       raise TypeError("beta() got both parameter 'a' and parameter 'x'.")
     kwds['a'] = kwds.pop('x')
   if 'y' in kwds:
-    warnings.warn("The `y` parameter of jax.scipy.special.beta is deprecated, use `b` instead.",
-                  category=DeprecationWarning, stacklevel=2)
+    msg = "The `y` parameter of jax.scipy.special.beta is deprecated, use `b` instead."
+    deprecations.warn('jax-scipy-beta-args', msg, stacklevel=2)
     if 'b' in kwds:
       raise TypeError("beta() got both parameter 'b' and parameter 'y'.")
     kwds['b'] = kwds.pop('y')
