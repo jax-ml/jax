@@ -784,6 +784,7 @@ jax_test(
 jax_test(
     name = "qdwh_test",
     srcs = ["qdwh_test.py"],
+    shard_count = 10,
 )
 
 jax_test(
