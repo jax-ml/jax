@@ -71,7 +71,7 @@ from jax._src import config
 from jax._src import core
 from jax._src import traceback_util
 from jax._src.tree_util import tree_map
-from jax._src.util import curry
+from jax._src.util import curry, cache_clearing_funs
 
 
 traceback_util.register_exclusion(__file__)
@@ -359,17 +359,9 @@ def cache(call: Callable, *, explain: Callable | None = None):
 
   memoized_fun.cache_clear = fun_caches.clear  # type: ignore
   memoized_fun.evict_function = _evict_function  # type: ignore
-
   cache_clearing_funs.add(memoized_fun.cache_clear)
-
   return memoized_fun
 
-cache_clearing_funs = weakref.WeakSet()  # type: ignore
-
-def clear_all_caches():
-  global cache_clearing_funs
-  for clear in cache_clearing_funs:
-    clear()
 
 @partial(partial, tree_map)
 def _copy_main_traces(x):

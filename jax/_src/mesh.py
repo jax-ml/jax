@@ -91,7 +91,7 @@ class ResourceEnv(NamedTuple):
     return f"ResourceEnv(mesh=Mesh({mesh_repr}), {self.loops!r})"
 
 
-@functools.lru_cache(maxsize=128)
+@util.cache(max_size=128, trace_context_in_key=False)
 def _get_local_mesh(global_mesh: Mesh, process_index: int) -> Mesh:
   if global_mesh.empty:
       return global_mesh

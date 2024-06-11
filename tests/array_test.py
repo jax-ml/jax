@@ -31,6 +31,7 @@ from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
 from jax._src.util import safe_zip
+from jax._src.sharding import common_devices_indices_map
 from jax._src.sharding_impls import (_op_sharding_to_pos_sharding,
                                      pmap_sharding_devices_indices_map,
                                      NamedSharding, GSPMDSharding,
@@ -830,6 +831,15 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertListEqual(hlo_sharding.tile_assignment_dimensions(), [2, 4])
     self.assertListEqual(hlo_sharding.tile_assignment_devices(),
                          [0, 2, 4, 6, 1, 3, 5, 7])
+
+  def test_util_clear_cache(self):
+    mesh = jtu.create_global_mesh((1,), ('x',))
+    s = NamedSharding(mesh, P())
+    s.devices_indices_map((8,))
+    jax.clear_caches()
+    s.devices_indices_map((8,))
+    c = common_devices_indices_map.cache_info()
+    self.assertEqual(c.currsize, 1)
 
   @parameterized.named_parameters(
       ("mesh_x_y", P("x", "y")),

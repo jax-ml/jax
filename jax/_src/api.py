@@ -2964,9 +2964,9 @@ def clear_caches():
   This doesn't clear the persistent cache; to disable it (e.g. for benchmarks),
   set the jax_enable_compilation_cache config option to False.
   """
-  # Clear all lu.cache and util.weakref_lru_cache instances (used for staging
-  # and Python-dispatch compiled executable caches).
-  lu.clear_all_caches()
+  # Clear all lu.cache, util.cache and util.weakref_lru_cache instances
+  # (used for staging and Python-dispatch compiled executable caches).
+  util.clear_all_caches()
   util.clear_all_weakref_lru_caches()
 
   # Clear all C++ compiled executable caches for pjit

@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Sequence, Iterable
 import dataclasses
-from functools import partial, lru_cache
+from functools import partial
 import inspect
 import itertools as it
 import logging
@@ -1013,7 +1013,7 @@ class PytreeLeaf:
   def __repr__(self): return "pytree leaf"
 
 
-@lru_cache(maxsize=4096)
+@util.cache(max_size=4096, trace_context_in_key=False)
 def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
                                in_layouts_treedef, in_layouts_leaves,
                                in_avals, in_tree, debug_info,
@@ -1211,7 +1211,7 @@ def _create_pjit_jaxpr(fun, in_type, attr_data, debug_info, out_paths, ignored_i
   return closed_jaxpr, final_consts, global_out_avals, attrs_tracked
 
 
-@lru_cache(maxsize=4096)
+@util.cache(max_size=4096, trace_context_in_key=False)
 def _check_and_canonicalize_out_shardings(
     out_shardings_treedef, out_shardings_leaves, out_layouts_treedef,
     out_layouts_leaves, out_tree, out_type, debug_info, device_or_backend_set):

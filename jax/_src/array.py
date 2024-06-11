@@ -45,7 +45,7 @@ from jax._src.sharding_impls import (
     PmapSharding, SingleDeviceSharding,
     device_replica_id_map, hashed_index, num_addressable_indices, local_to_global_shape)  # pyformat: disable
 from jax._src.typing import ArrayLike, DLDeviceType
-from jax._src.util import safe_zip, unzip3, use_cpp_class, use_cpp_method
+from jax._src.util import safe_zip, unzip3, use_cpp_class, use_cpp_method, cache
 import numpy as np
 
 
@@ -120,7 +120,7 @@ def _reconstruct_array(fun, args, arr_state, aval_state):
   return jnp_value
 
 
-@functools.lru_cache(maxsize=4096)
+@cache(max_size=4096, trace_context_in_key=False)
 def _cached_index_calc(s, shape):
   map_ = s.addressable_devices_indices_map(shape)
   seen_h_indices = set()
@@ -133,7 +133,7 @@ def _cached_index_calc(s, shape):
   return l
 
 
-@functools.lru_cache(maxsize=4096)
+@cache(max_size=4096, trace_context_in_key=False)
 def _process_has_full_value_in_mcjax(s, shape):
   # Return False for single host as a fast path.
   if xla_bridge.process_count() == 1:
@@ -1081,7 +1081,7 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
   return pxla.batched_device_put(x.aval, sharding, bufs, devices)
 
 
-@functools.lru_cache(maxsize=4096)
+@cache(max_size=4096, trace_context_in_key=False)
 def _sharding_indices_and_eq(src_sharding, shape, dst_sharding):
   src_indices = src_sharding.addressable_devices_indices_map(shape).values()
   dst_indices = dst_sharding.addressable_devices_indices_map(shape).values()

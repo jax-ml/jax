@@ -52,7 +52,7 @@ class TransferToMemoryKind:
   memory_kind: str
 
 
-@functools.lru_cache
+@util.cache(max_size=128, trace_context_in_key=False)
 def _check_mesh_resource_axis(mesh, parsed_pspec, _manual_axes):
   try:
     for p in parsed_pspec:
@@ -75,7 +75,7 @@ def hashed_index(x) -> int:
   return hash(tuple((v.start, v.stop) if isinstance(v, slice) else v for v in x))
 
 
-@functools.lru_cache(maxsize=4096)
+@util.cache(max_size=4096, trace_context_in_key=False)
 def device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]:
   try:
     device_indices_map_fn = sharding.devices_indices_map
@@ -95,7 +95,7 @@ def device_replica_id_map(sharding, global_shape: Shape) -> Mapping[Device, int]
   return out
 
 
-@functools.lru_cache(maxsize=4096)
+@util.cache(max_size=4096, trace_context_in_key=False)
 def named_sharding_to_xla_hlo_sharding(
     self, num_dimensions: int) -> xc.HloSharding:
   mesh_shape = self.mesh.shape
@@ -297,7 +297,7 @@ class NamedSharding(sharding.Sharding):
     return named_sharding_to_xla_hlo_sharding(self, num_dimensions)
 
 
-@functools.lru_cache
+@util.cache(max_size=128, trace_context_in_key=False)
 def get_replicated_hlo_sharding():
   return xc.HloSharding.replicate()
 
@@ -373,7 +373,7 @@ class SingleDeviceSharding(sharding.Sharding):
     return True
 
 
-@functools.lru_cache(maxsize=4096)
+@util.cache(max_size=4096, trace_context_in_key=False)
 def pmap_sharding_devices_indices_map(
     self, global_shape: Shape) -> Mapping[Device, Index]:
   self.shard_shape(global_shape)  # raises a good error message
@@ -561,7 +561,7 @@ def _op_sharding_to_pos_sharding(
   return p
 
 
-@functools.lru_cache(maxsize=4096)
+@util.cache(max_size=4096, trace_context_in_key=False)
 def _positional_sharding_to_xla_hlo_sharding(
     self, num_dimensions: int) -> xc.HloSharding:
   if self.shape == (1,) * self.ndim:

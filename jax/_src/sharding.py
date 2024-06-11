@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 import functools
 
-from jax._src.util import safe_zip, use_cpp_class
+from jax._src.util import safe_zip, use_cpp_class, cache
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.op_shardings import (
@@ -30,7 +30,7 @@ Index = tuple[slice, ...]
 XLADeviceAssignment = Sequence[Device]
 
 
-@functools.lru_cache(maxsize=4096)
+@cache(max_size=4096, trace_context_in_key=False)
 def _addressable_devices_indices_map(
     sharding: Sharding, global_shape: Shape) -> Mapping[Device, Index | None]:
   global_map = sharding.devices_indices_map(global_shape)
@@ -42,7 +42,7 @@ def _addressable_devices_indices_map(
   return {d: ind for d, ind in global_map.items()
           if d.process_index == d.client.process_index()}
 
-@functools.lru_cache(maxsize=4096)
+@cache(max_size=4096, trace_context_in_key=False)
 def common_devices_indices_map(s, global_shape: Shape) -> Mapping[Device, Index]:
   s.shard_shape(global_shape)  # raises a good error message
   hlo_sharding = s._to_xla_hlo_sharding(len(global_shape))
@@ -51,7 +51,7 @@ def common_devices_indices_map(s, global_shape: Shape) -> Mapping[Device, Index]
   return dict(safe_zip(s._device_assignment, indices))
 
 
-@functools.lru_cache(maxsize=4096)
+@cache(max_size=4096, trace_context_in_key=False)
 def _common_shard_shape(self, global_shape: Shape) -> Shape:
   hlo_sharding = self._to_xla_hlo_sharding(len(global_shape))
   if is_op_sharding_replicated(hlo_sharding):
