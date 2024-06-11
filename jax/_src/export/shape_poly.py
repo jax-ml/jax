@@ -1717,10 +1717,10 @@ def _dimension_size_lowering_rule(ctx, arg, *, dimension):
 mlir.register_lowering(dimension_size_p, _dimension_size_lowering_rule)
 
 
-def all_dim_vars(args_avals: Sequence[core.AbstractValue]) -> Sequence[str]:
+def all_dim_vars(args_avals: Sequence[core.ShapedArray]) -> Sequence[str]:
   dim_vars: set[str] = set()
   for a in args_avals:
-    for d in a.shape:  # type: ignore[attribute-error,unused-ignore]
+    for d in a.shape:
       if is_symbolic_dim(d):
         dim_vars = dim_vars.union(d._get_vars())
   return sorted(dim_vars)
@@ -1911,7 +1911,7 @@ def pretty_print_dimension_descriptor(
 
 @util.cache()
 def solve_dim_vars(
-    args_avals: Sequence[core.AbstractValue],
+    args_avals: Sequence[core.ShapedArray],
     args_kwargs_tree: tree_util.PyTreeDef,
     ) -> tuple[DimVarEnv, ShapeConstraints, Sequence[tuple[str, int, int]]]:
   """Solves dimension variables in a called function's avals in terms of actual argument shapes.
@@ -1956,12 +1956,12 @@ def solve_dim_vars(
   # tuples with argument name and its polymorphic shape ('args[0]', '(a, a + b'))
   polymorphic_shape_specs: list[tuple[str, str]] = []
   for arg_idx, aval in enumerate(args_avals):
-    if all(not is_symbolic_dim(d) for d in aval.shape):  # type: ignore[attribute-error,unused-ignore]
+    if all(not is_symbolic_dim(d) for d in aval.shape):
       continue
     polymorphic_shape_specs.append(
       (pretty_print_dimension_descriptor(args_kwargs_tree, arg_idx, None),
-       str(aval.shape)))  # type: ignore[attribute-error,unused-ignore]
-    for dim_idx, aval_d in enumerate(aval.shape):  # type: ignore[attribute-error,unused-ignore]
+       str(aval.shape)))
+    for dim_idx, aval_d in enumerate(aval.shape):
       if is_symbolic_dim(aval_d):
         synth_dim_var = pretty_print_dimension_descriptor(args_kwargs_tree,
                                                           arg_idx, dim_idx)
@@ -1976,7 +1976,7 @@ def solve_dim_vars(
 
 
 def compute_dim_vars_from_arg_shapes(
-    args_avals: Sequence[core.AbstractValue],
+    args_avals: Sequence[core.ShapedArray],
     *actual_args: jax.Array,
     args_kwargs_tree: tree_util.PyTreeDef) -> Sequence[jax.Array]:
   """Computes values of dimension variables to unify args_avals with actual arguments.
