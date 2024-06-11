@@ -284,6 +284,37 @@ def convolve2d(in1: Array, in2: Array, mode: str = 'full', boundary: str = 'fill
     - :func:`jax.numpy.convolve`: 1D convolution
     - :func:`jax.scipy.signal.convolve`: ND convolution
     - :func:`jax.scipy.signal.correlate`: ND correlation
+
+  Examples:
+    A few 2D convolution examples:
+
+    >>> x = jnp.array([[1, 2],
+    ...                [3, 4]])
+    >>> y = jnp.array([[2, 1, 1],
+    ...                [4, 3, 4],
+    ...                [1, 3, 2]])
+
+    Full 2D convolution uses implicit zero-padding at the edges:
+
+    >>> jax.scipy.signal.convolve2d(x, y, mode='full')
+    Array([[ 2.,  5.,  3.,  2.],
+           [10., 22., 17., 12.],
+           [13., 30., 32., 20.],
+           [ 3., 13., 18.,  8.]], dtype=float32)
+
+    Specifying ``mode = 'same'`` returns a centered 2D convolution of the same size
+    as the first input:
+
+    >>> jax.scipy.signal.convolve2d(x, y, mode='same')
+    Array([[22., 17.],
+           [30., 32.]], dtype=float32)
+
+    Specifying ``mode = 'valid'`` returns only the portion of 2D convolution
+    where the two arrays fully overlap:
+
+    >>> jax.scipy.signal.convolve2d(x, y, mode='valid')
+    Array([[22., 17.],
+           [30., 32.]], dtype=float32)
   """
   if boundary != 'fill' or fillvalue != 0:
     raise NotImplementedError("convolve2d() only supports boundary='fill', fillvalue=0")
@@ -325,6 +356,29 @@ def correlate(in1: Array, in2: Array, mode: str = 'full', method: str = 'auto',
     - :func:`jax.numpy.correlate`: 1D cross-correlation
     - :func:`jax.scipy.signal.correlate2d`: 2D cross-correlation
     - :func:`jax.scipy.signal.convolve`: ND convolution
+
+  Examples:
+    A few 1D correlation examples:
+
+    >>> x = jnp.array([1, 2, 3, 2, 1])
+    >>> y = jnp.array([1, 3, 2])
+
+    Full 1D correlation uses implicit zero-padding at the edges:
+
+    >>> jax.scipy.signal.correlate(x, y, mode='full')
+    Array([ 2.,  7., 13., 15., 11.,  5.,  1.], dtype=float32)
+
+    Specifying ``mode = 'same'`` returns a centered 1D correlation of the same
+    size as the first input:
+
+    >>> jax.scipy.signal.correlate(x, y, mode='same')
+    Array([ 7., 13., 15., 11.,  5.], dtype=float32)
+
+    Specifying ``mode = 'valid'`` returns only the portion of 1D correlation
+    where the two arrays fully overlap:
+
+    >>> jax.scipy.signal.correlate(x, y, mode='valid')
+    Array([13., 15., 11.], dtype=float32)
   """
   return convolve(in1, jnp.flip(in2.conj()), mode, precision=precision, method=method)
 
@@ -364,6 +418,38 @@ def correlate2d(in1: Array, in2: Array, mode: str = 'full', boundary: str = 'fil
     - :func:`jax.numpy.correlate`: 1D cross-correlation
     - :func:`jax.scipy.signal.correlate`: ND cross-correlation
     - :func:`jax.scipy.signal.convolve`: ND convolution
+
+  Examples:
+    A few 2D correlation examples:
+
+    >>> x = jnp.array([[2, 1, 3],
+    ...                [1, 3, 1],
+    ...                [4, 1, 2]])
+    >>> y = jnp.array([[1, 3],
+    ...                [4, 2]])
+
+    Full 2D correlation uses implicit zero-padding at the edges:
+
+    >>> jax.scipy.signal.correlate2d(x, y, mode='full')
+    Array([[ 4., 10., 10., 12.],
+           [ 8., 15., 24.,  7.],
+           [11., 28., 14.,  9.],
+           [12.,  7.,  7.,  2.]], dtype=float32)
+
+    Specifying ``mode = 'same'`` returns a centered 2D correlation of the same
+    size as the first input:
+
+    >>> jax.scipy.signal.correlate2d(x, y, mode='same')
+    Array([[15., 24.,  7.],
+           [28., 14.,  9.],
+           [ 7.,  7.,  2.]], dtype=float32)
+
+    Specifying ``mode = 'valid'`` returns only the portion of 2D correlation
+    where the two arrays fully overlap:
+
+    >>> jax.scipy.signal.correlate2d(x, y, mode='valid')
+    Array([[15., 24.],
+           [28., 14.]], dtype=float32)
   """
   if boundary != 'fill' or fillvalue != 0:
     raise NotImplementedError("correlate2d() only supports boundary='fill', fillvalue=0")
