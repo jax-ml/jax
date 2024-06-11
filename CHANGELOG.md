@@ -46,6 +46,8 @@ Remember to align the itemized text with the first line of an item within a list
   * {mod}`jax.random` APIs no longer accept batched keys, where previously
     some did unintentionally. Going forward, we recommend explicit use of
     {func}`jax.vmap` in such cases.
+  * In {func}`jax.scipy.special.beta`, the `x` and `y` parameters have been
+    renamed to `a` and `b` for consistency with other `beta` APIs.
 
 * New Functionality
   * Added {func}`jax.experimental.Exported.in_shardings_jax` to construct
