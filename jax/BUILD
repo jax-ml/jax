@@ -390,6 +390,7 @@ pytype_strict_library(
         ":compilation_cache_interface",
         ":config",
         ":gfile_cache",
+        ":lru_cache",
         ":monitoring",
         ":path",
         "//jax/_src/lib",
@@ -413,6 +414,15 @@ pytype_strict_library(
         ":path",
         ":util",
     ],
+)
+
+pytype_strict_library(
+    name = "lru_cache",
+    srcs = ["_src/lru_cache.py"],
+    deps = [
+        ":compilation_cache_interface",
+        ":config",
+    ] + py_deps("filelock"),
 )
 
 pytype_strict_library(

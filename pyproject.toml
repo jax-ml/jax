@@ -12,6 +12,7 @@ warn_unused_ignores = true
 module = [
     "absl.*",
     "colorama.*",
+    "filelock.*",
     "importlib_metadata.*",
     "IPython.*",
     "numpy.*",

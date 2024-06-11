@@ -1135,6 +1135,16 @@ py_test(
     ],
 )
 
+py_test(
+    name = "lru_cache_test",
+    srcs = ["lru_cache_test.py"],
+    deps = [
+        "//jax",
+        "//jax:lru_cache",
+        "//jax:test_util",
+    ] + py_deps("filelock"),
+)
+
 jax_test(
     name = "compilation_cache_test",
     srcs = ["compilation_cache_test.py"],
