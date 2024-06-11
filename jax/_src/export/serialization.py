@@ -331,28 +331,24 @@ _dtype_kind_to_dtype = {
 
 
 def _serialize_aval(
-    builder: flatbuffers.Builder, aval: core.AbstractValue
+    builder: flatbuffers.Builder, aval: core.ShapedArray
 ) -> int:
-  aval_type = type(aval)
-  if aval_type is core.ShapedArray:
-    aval_kind = ser_flatbuf.AbstractValueKind.shapedArray
-    shape_offsets = [builder.CreateString(str(d)) for d in aval.shape]
-    ser_flatbuf.AbstractValueStartShapeVector(builder, len(aval.shape))
-    for d in reversed(shape_offsets):
-      builder.PrependUOffsetTRelative(d)
-    shape_vector_offset = builder.EndVector()
+  aval_kind = ser_flatbuf.AbstractValueKind.shapedArray
+  shape_offsets = [builder.CreateString(str(d)) for d in aval.shape]
+  ser_flatbuf.AbstractValueStartShapeVector(builder, len(aval.shape))
+  for d in reversed(shape_offsets):
+    builder.PrependUOffsetTRelative(d)
+  shape_vector_offset = builder.EndVector()
 
-    ser_flatbuf.AbstractValueStart(builder)
-    ser_flatbuf.AbstractValueAddKind(builder, aval_kind)
-    ser_flatbuf.AbstractValueAddShape(builder, shape_vector_offset)
-    ser_flatbuf.AbstractValueAddDtype(builder, _dtype_to_dtype_kind[aval.dtype])
-    return ser_flatbuf.AbstractValueEnd(builder)
-  else:
-    raise NotImplementedError(f"serializing AbstractValue: {aval}")
+  ser_flatbuf.AbstractValueStart(builder)
+  ser_flatbuf.AbstractValueAddKind(builder, aval_kind)
+  ser_flatbuf.AbstractValueAddShape(builder, shape_vector_offset)
+  ser_flatbuf.AbstractValueAddDtype(builder, _dtype_to_dtype_kind[aval.dtype])
+  return ser_flatbuf.AbstractValueEnd(builder)
 
 
 def _deserialize_aval(aval: ser_flatbuf.AbstractValue,
-                      scope) -> core.AbstractValue:
+                      scope) -> core.ShapedArray:
   aval_kind = aval.Kind()
   if aval_kind == ser_flatbuf.AbstractValueKind.shapedArray:
     dtype = _dtype_kind_to_dtype[aval.Dtype()]

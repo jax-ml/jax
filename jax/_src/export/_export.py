@@ -286,9 +286,9 @@ class Exported:
   """
   fun_name: str
   in_tree: tree_util.PyTreeDef
-  in_avals: tuple[core.AbstractValue, ...]
+  in_avals: tuple[core.ShapedArray, ...]
   out_tree: tree_util.PyTreeDef
-  out_avals: tuple[core.AbstractValue, ...]
+  out_avals: tuple[core.ShapedArray, ...]
 
   in_shardings_hlo: tuple[HloSharding | None, ...]
   out_shardings_hlo: tuple[HloSharding | None, ...]
@@ -1257,8 +1257,8 @@ def _call_exported_abstract_eval(
   assert len(in_avals) == len(exported.in_avals)  # since the pytrees have the same structure
   # Check that the expected shapes match the actual ones
   for arg_idx, (exp_aval, actual_aval) in enumerate(zip(exported.in_avals, in_avals)):
-    exp_aval: core.ShapedArray = exp_aval  # type: ignore
-    actual_aval: core.ShapedArray = actual_aval  # type: ignore
+    if not isinstance(actual_aval, core.ShapedArray):
+      raise ValueError(f"Expected ShapedArray but got: {actual_aval}")
     def pp_arg_dim(dim_idx: int | None) -> str:
       return shape_poly.pretty_print_dimension_descriptor(exported.in_tree,
                                                           arg_idx, dim_idx)
@@ -1302,10 +1302,10 @@ def _call_exported_abstract_eval(
   exported_dim_values = [synthetic_eval.evaluate(solution[var])
                          for var in exported_dim_vars]
   out_avals = tuple(
-      core.ShapedArray(core.evaluate_shape(out_aval.shape, exported_dim_vars,  # type: ignore
+      core.ShapedArray(core.evaluate_shape(out_aval.shape, exported_dim_vars,
                                            *exported_dim_values),
-                       dtype=out_aval.dtype, weak_type=out_aval.weak_type,  # type: ignore
-                       named_shape=out_aval.named_shape)  # type: ignore
+                       dtype=out_aval.dtype, weak_type=out_aval.weak_type,
+                       named_shape=out_aval.named_shape)
       for out_aval in exported.out_avals)
   return out_avals, set(exported.ordered_effects + exported.unordered_effects)
 

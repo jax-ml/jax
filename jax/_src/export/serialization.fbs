@@ -38,7 +38,7 @@ table PyTreeDef {
 
 enum AbstractValueKind: byte {
   shapedArray = 0,
-  abstractToken = 1,
+  abstractToken = 1,  // unused
 }
 
 enum DType: byte {

@@ -1489,10 +1489,10 @@ class JaxExportTest(jtu.JaxTestCase):
       self.assertAllClose(2. * 2. * x + 10. + 4. * 2. * x, res)
 
   @jtu.parameterized_filterable(
-    kwargs=[
-      dict(v=v)
-      for v in range(export.minimum_supported_serialization_version,
-                     export.maximum_supported_serialization_version + 1)])
+      kwargs=[
+          dict(v=v)
+          for v in range(export.minimum_supported_serialization_version,
+                         export.maximum_supported_serialization_version + 1)])
   def test_ordered_effects_poly(self, *, v: int):
     with config.jax_serialization_version(v):
       logging.info(
