@@ -65,13 +65,13 @@ HloSharding = xla_client.HloSharding
 
 """The minimum supported serialization version.
 
-See https://jax.readthedocs.io/en/latest/export.html#module-calling-convention#module-serialization-versions
+See https://jax.readthedocs.io/en/latest/export/export.html#serialization-version-numbers
 """
 minimum_supported_serialization_version = 9
 
 """The maximum supported serialization version.
 
-See https://jax.readthedocs.io/en/latest/export.html#module-calling-convention#module-serialization-versions
+See https://jax.readthedocs.io/en/latest/export/export.html#serialization-version-numbers
 """
 maximum_supported_serialization_version = 9
 

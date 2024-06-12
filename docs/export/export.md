@@ -584,6 +584,8 @@ scalar operands corresponding to the format specifiers.
             error_message=""Dimension variable 'h' must have integer value >= 1. Found {0}")
 ```
 
+(export-serialization-version)=
+
 ### Serialization version numbers
 
 We list here a history of the serialization version numbers:
