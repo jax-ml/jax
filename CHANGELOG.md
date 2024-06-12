@@ -8,6 +8,12 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.30
 
+* Changes
+  * JAX supports ml_dtypes >= 0.2. In 0.4.29 release, the ml_dtypes version was
+    bumped to 0.4.0 but this has been rolled back in this release to give users
+    of both TensorFlow and JAX more time to migrate to a newer TensorFlow
+    release.
+
 ## jaxlib 0.4.30
 
 ## jax 0.4.29 (June 10, 2024)
