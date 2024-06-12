@@ -784,6 +784,13 @@ jax_test(
 jax_test(
     name = "qdwh_test",
     srcs = ["qdwh_test.py"],
+    backend_tags = {
+        "tpu": [
+            "noasan",  # Times out
+            "nomsan",  # Times out
+            "notsan",  # Times out
+        ],
+    },
     shard_count = 10,
 )
 
