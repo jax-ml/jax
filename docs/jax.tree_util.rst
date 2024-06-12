@@ -20,19 +20,27 @@ List of Functions
    register_pytree_with_keys
    register_pytree_with_keys_class
    register_static
-   tree_all
-   tree_flatten
    tree_flatten_with_path
-   tree_leaves
    tree_leaves_with_path
-   tree_map
    tree_map_with_path
-   tree_reduce
-   tree_structure
-   tree_transpose
-   tree_unflatten
    treedef_children
    treedef_is_leaf
    treedef_tuple
    keystr
+
+Legacy APIs
+-----------
+These APIs are now accessed via :mod:`jax.tree`.
+
+.. autosummary::
+   :toctree: _autosummary
+
+   tree_all
+   tree_flatten
+   tree_leaves
+   tree_map
+   tree_reduce
+   tree_structure
+   tree_transpose
+   tree_unflatten
 
