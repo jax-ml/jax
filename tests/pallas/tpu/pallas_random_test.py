@@ -18,6 +18,7 @@ from absl.testing import parameterized
 import jax
 from jax import random as jax_random
 from jax._src import test_util as jtu
+from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import random as plrandom
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
@@ -26,6 +27,7 @@ import numpy as np
 
 
 jax.config.parse_flags_with_absl()
+
 
 class PRNGTest(jtu.JaxTestCase):
 
@@ -90,31 +92,62 @@ class PRNGTest(jtu.JaxTestCase):
     # Test stateful RNG using the jax.random API wrappers.
     def body(key_ref, o_ref):
       plrandom.set_seed(key_ref[...])
-      samples = plrandom.uniform(
+      o_ref[...] = plrandom.uniform(
           shape=o_ref[...].shape, minval=0.0, maxval=1.0)
-      o_ref[...] = samples
 
-    key = jax_random.key_data(jax_random.key(0, impl="rbg"))
+    rbg_key = jax_random.key(0, impl="rbg")
+    key = plrandom.to_pallas_key(rbg_key)
     o_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
-    result = pl.pallas_call(body, out_shape=o_shape)(key)
+    result = pl.pallas_call(
+        body,
+        in_specs=[pl.BlockSpec(memory_space=tpu_core.TPUMemorySpace.SMEM)],
+        out_shape=o_shape,
+    )(key)
     self.assertGreaterEqual(jnp.min(result), 0)
     self.assertLessEqual(jnp.max(result), 1.0)
 
   def test_stateless_uniform_sample(self):
     # Test keyed RNG using the jax.random API.
     def body(key_ref, o_ref):
-      key = jax_random.wrap_key_data(key_ref[...], impl="pallas")
-      samples = jax_random.uniform(
-          key, shape=o_ref[...].shape, minval=0.0, maxval=1.0)
-      o_ref[...] = samples
+      o_ref[...] = jax_random.uniform(
+          key_ref[...], shape=o_ref[...].shape, minval=0.0, maxval=1.0
+      )
 
     rbg_key = jax_random.key(0, impl="rbg")
-    pallas_key = plrandom.to_pallas_key(rbg_key)
-    key = jax_random.key_data(pallas_key)
+    key = plrandom.to_pallas_key(rbg_key)
     o_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
-    result = pl.pallas_call(body, out_shape=o_shape)(key)
+    result = pl.pallas_call(
+        body,
+        in_specs=[pl.BlockSpec(memory_space=tpu_core.TPUMemorySpace.SMEM)],
+        out_shape=o_shape,
+    )(key)
     self.assertGreaterEqual(jnp.min(result), 0)
     self.assertLessEqual(jnp.max(result), 1.0)
+
+  def test_fold_in(self):
+    # Test that folding in a value results in different random numbers.
+    def body(key_ref, o_ref):
+      key = key_ref[...]
+      o_ref[0, ...] = jax_random.uniform(
+          key, shape=o_ref[0, ...].shape, minval=0.0, maxval=1.0
+      )
+
+      key = jax_random.fold_in(key, 2)
+      o_ref[1, ...] = jax_random.uniform(
+          key, shape=o_ref[1, ...].shape, minval=0.0, maxval=1.0
+      )
+
+    rbg_key = jax_random.key(0, impl="rbg")
+    key = plrandom.to_pallas_key(rbg_key)
+    o_shape = jax.ShapeDtypeStruct((2, 8, 128), jnp.float32)
+    result = pl.pallas_call(
+        body,
+        in_specs=[pl.BlockSpec(memory_space=tpu_core.TPUMemorySpace.SMEM)],
+        out_shape=o_shape,
+    )(key)
+    result_a = result[0]
+    result_b = result[1]
+    np.testing.assert_array_compare(np.not_equal, result_a, result_b)
 
 
 if __name__ == "__main__":

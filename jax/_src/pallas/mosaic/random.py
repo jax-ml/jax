@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Any, Callable, Union
+from typing import Any, Callable
 
 import jax
 import numpy as np
@@ -24,8 +24,13 @@ from jax._src import prng as jax_prng
 
 
 Shape = jax_prng.Shape
+SampleFnType = Any
+KeylessSampleFnType = Callable[..., jax.Array]
+
+set_seed = prng_seed
+
 FOLD_IN_ROUNDS = 128
-SUPPORTED_CONVERSION_KEYS = ["rbg", "unsafe_rbg", "pallas"]
+SUPPORTED_CONVERSION_KEYS = ["rbg", "unsafe_rbg", "pallas_tpu"]
 
 def to_pallas_key(key: jax_prng.PRNGKeyArray) -> jax_prng.PRNGKeyArray:
   """Helper function for converting non-Pallas PRNG keys into Pallas keys."""
@@ -45,7 +50,7 @@ def to_pallas_key(key: jax_prng.PRNGKeyArray) -> jax_prng.PRNGKeyArray:
     raise ValueError(f"Key data must be at least {pallas_key_size} bytes.")
   pallas_key_data = jnp.ravel(key_data)[:pallas_key_size]
   pallas_key_data = jnp.reshape(pallas_key_data, tpu_key_impl.key_shape)
-  return jax_api_random.wrap_key_data(pallas_key_data, impl='pallas')
+  return jax_api_random.wrap_key_data(pallas_key_data, impl="pallas_tpu")
 
 def _seed_func(seed: jnp.int32):
   seed_data = jnp.zeros(tpu_key_impl.key_shape, dtype=jnp.int32)
@@ -53,12 +58,8 @@ def _seed_func(seed: jnp.int32):
 
 def _random_bits(key: typing.Array, bit_width: int, shape: Shape):
   if bit_width != 32:
-    raise NotImplementedError("Bit width must be 32")
-  if isinstance(key.dtype, jax_prng.KeyTy):
-    key_data = jax.random.key_data(key)
-  else:
-    key_data = key
-  prng_seed(key_data[0, 0])
+    raise ValueError("Bit width must be 32")
+  prng_seed(key)
   return prng_random_bits(shape)
 
 def _fold_in(key: jax_prng.PRNGKeyArray, data: typing.Array):
@@ -67,17 +68,17 @@ def _fold_in(key: jax_prng.PRNGKeyArray, data: typing.Array):
   # Because the TPU generates random numbers in (8, 128) blocks at once, we
   # can generate that many values without additional cost which will reduce
   # correlation between the old and new keys.
-  key_data = jax.random.key_data(key)
+  key_shape = tpu_key_impl.key_shape
 
   prng_seed(data)
   data_bits = prng_random_bits(
-      key_data.shape + (FOLD_IN_ROUNDS,)).astype(jnp.uint32)
-  prng_seed(key_data[0, 0])
+      key_shape + (FOLD_IN_ROUNDS,)).astype(jnp.uint32)
+  prng_seed(key)
   key_bits = prng_random_bits(
-      key_data.shape + (FOLD_IN_ROUNDS,)).astype(jnp.uint32)
+      key_shape + (FOLD_IN_ROUNDS,)).astype(jnp.uint32)
 
   mixed = key_bits[..., FOLD_IN_ROUNDS-1] ^ data_bits[..., FOLD_IN_ROUNDS-1]
-  assert mixed.shape == key_data.shape
+  assert mixed.shape == key_shape
   impl: jax_prng.PRNGSpec = jax.random.key_impl(key)  # type: ignore
   return jax.random.wrap_key_data(mixed, impl=impl)
 
@@ -86,13 +87,12 @@ def _split(key: typing.Array, shape: Shape):
   raise NotImplementedError()
 
 tpu_key_impl = jax_prng.PRNGImpl(
-   # Use a 2D key since pallas only supports 2D tiling.
-   key_shape=(1, 1),
+   key_shape=(1,),
    seed=_seed_func,
    split=_split,
    random_bits=_random_bits,
    fold_in=_fold_in,
-   name="pallas",
+   name="pallas_tpu",
    tag="pl"
 )
 jax_prng.register_prng(tpu_key_impl)
@@ -135,26 +135,6 @@ tpu_internal_stateful_impl = jax_prng.PRNGImpl(
 )
 jax_prng.register_prng(tpu_internal_stateful_impl)
 
-def set_seed(seed: Union[jnp.int32, jax.Array]):
-  """Sets the seed for PRNG.
-
-  Args:
-    seeds: An integer seed for setting the PRNG seed.
-  """
-  if isinstance(seed, jax.Array):
-    if seed.ndim != 1:
-      raise ValueError("Seed data must be a scalar or 1D array")
-    # TODO(justinfu): Mosaic currently only supports indexing by 0
-    # for scalar results when using vector.extract
-    # After support is added, use all seed data.
-    prng_seed(seed[0])
-  else:
-    prng_seed(seed)
-
-
-SampleFnType = Any
-KeylessSampleFnType = Callable[..., jax.Array]
-
 def _make_stateful_sampler(sampler: SampleFnType) -> KeylessSampleFnType:
   """Converts a jax.random sampling function to a stateful version.
 
@@ -174,8 +154,8 @@ def _make_stateful_sampler(sampler: SampleFnType) -> KeylessSampleFnType:
     return sampler(placeholder_key, *args, **kwargs)
   # Remove key argument from docstring.
   doc_lines = filter(
-      lambda line: 'key:' not in line, sampler.__doc__.split('\n'))
-  new_sampler.__doc__ = '\n'.join(doc_lines)
+      lambda line: "key:" not in line, sampler.__doc__.split("\n"))
+  new_sampler.__doc__ = "\n".join(doc_lines)
   return new_sampler
 
 bits = _make_stateful_sampler(jax_api_random.bits)
