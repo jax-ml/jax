@@ -32,6 +32,7 @@ or deployed codebases.
    :caption: Run Time
 
    aot
+   export/index
    errors
    transfer_guard
 

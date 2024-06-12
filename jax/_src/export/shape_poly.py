@@ -982,7 +982,7 @@ class SymbolicScope:
 
   Holds the constraints on symbolic expressions.
 
-  See [the README](https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#user-specified-symbolic-constraints)
+  See [the README](https://jax.readthedocs.io/en/latest/export/shape_poly.html#user-specified-symbolic-constraints)
   for more details.
 
   Args:
@@ -1194,6 +1194,8 @@ def _convertible_to_poly(p: DimSize) -> bool:
   return isinstance(p, _DimExpr) or _convertible_to_int(p)
 
 def is_symbolic_dim(p: DimSize) -> bool:
+  """Checks if a dimension is symbolic.
+  """
   return isinstance(p, _DimExpr)
 
 def is_poly_dim(p: DimSize) -> bool:
@@ -1856,7 +1858,7 @@ class ShapeConstraints:
   def shape_assertions(self, eval: CachingShapeEvaluator) -> None:
     """Computes the shape assertions for the set of constraints.
 
-    See jax_export._wrap_main_func docstring.
+    See jax_export.Exported docstring.
     """
     # We want to report the errors in the same order as `check_statically`.
     # So, we process them in order, in case some fail statically, and we

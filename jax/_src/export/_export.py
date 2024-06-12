@@ -63,28 +63,35 @@ Shape = jax._src.core.Shape
 LoweringSharding = Union[sharding.Sharding, pxla.UnspecifiedValue]
 HloSharding = xla_client.HloSharding
 
-# See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions
-# for a description of the different versions.
+"""The minimum supported serialization version.
+
+See https://jax.readthedocs.io/en/latest/export.html#module-calling-convention#module-serialization-versions
+"""
 minimum_supported_serialization_version = 9
+
+"""The maximum supported serialization version.
+
+See https://jax.readthedocs.io/en/latest/export.html#module-calling-convention#module-serialization-versions
+"""
 maximum_supported_serialization_version = 9
 
 
 class DisabledSafetyCheck:
-  """A safety check should be skipped on (de)serialization.
+  """A safety check that should be skipped on (de)serialization.
 
   Most of these checks are performed on serialization, but some are deferred to
   deserialization. The list of disabled checks is attached to the serialization,
-  e.g., as a sequence of string attributes to `jax_export.Exported` or of
+  e.g., as a sequence of string attributes to `jax.export.Exported` or of
   `tf.XlaCallModuleOp`.
 
-  You can disable more deserialization safety checks by passing
-  `TF_XLA_FLAGS=--tf_xla_call_module_disabled_checks=platform`.
+  When using jax2tf, you can disable more deserialization safety checks
+  by passing `TF_XLA_FLAGS=--tf_xla_call_module_disabled_checks=platform`.
   """
   _impl: str
 
   @classmethod
   def platform(cls) -> DisabledSafetyCheck:
-    """Allows the execution platform to differ from the serialization platform.
+    """Allows the compilation platform to differ from the export platform.
 
     Has effect only on deserialization.
     """
@@ -102,7 +109,7 @@ class DisabledSafetyCheck:
 
   @classmethod
   def shape_assertions(cls) -> DisabledSafetyCheck:
-    """A noop. DEPRECATED.
+    """DEPRECATED: A noop.
 
     Was used previously to allow invocations with shapes that do not meet the
     constraints. Has no effect anymore, shape assertions cannot be disabled.
@@ -149,7 +156,7 @@ class Exported:
     out_tree: a PyTreeDef describing the result of the lowered JAX function.
     out_avals: the flat tuple of output abstract values. May contain dimension
         expressions in the shapes, with dimension variables among those in
-        `in_avals.
+        `in_avals`.
     in_shardings_hlo: the flattened input shardings, a sequence as long
         as `in_avals`. `None` means unspecified sharding.
         Note that these do not include the mesh or the actual devices used in
@@ -162,16 +169,17 @@ class Exported:
         into sharding specification that can be used with JAX APIs.
     nr_devices: the number of devices that the module has been lowered for.
     lowering_platforms: a tuple containing at least one of 'tpu', 'cpu',
-        'cuda', 'rocm'. See below for the calling convention for when
+        'cuda', 'rocm'. See https://jax.readthedocs.io/en/latest/export.html#module-calling-convention
+        for the calling convention for when
         there are multiple lowering platforms.
     ordered_effects: the ordered effects present in the serialized module.
-        This is present from serialization version 9. See below for the
-        calling convention in presence of ordered effects.
+        This is present from serialization version 9. See https://jax.readthedocs.io/en/latest/export.html#module-calling-convention
+        for the calling convention in presence of ordered effects.
     unordered_effects: the unordered effects present in the serialized module.
         This is present from serialization version 9.
     mlir_module_serialized: the serialized lowered VHLO module.
     mlir_module_serialization_version: a version number for the serialized module.
-        See more versioning details at https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions.
+        See more versioning details at https://jax.readthedocs.io/en/latest/export.html#module-calling-convention#module-serialization-versions.
     module_kept_var_idx: the sorted indices of the arguments among `in_avals` that
         must be passed to the module. The other arguments have been dropped
         because they are not used.
@@ -189,100 +197,7 @@ class Exported:
         for each primal output. It returns a tuple with the cotangents
         corresponding to the flattened primal inputs.
 
-  Calling convention for the exported module (for latest supported version):
-
-  The `mlir_module` has a `main` function that takes an optional first
-  platform index argument if the module supports multiple platforms
-  (`len(lowering_platforms) > 1`), followed by the token arguments corresponding
-  to the ordered effects, followed by the kept array
-  arguments (corresponding to `module_kept_var_idx` and `in_avals`).
-  The platform index is a i32 or i64 scalar encoding the index of the current
-  compilation platform into the `lowering_platforms` sequence.
-
-  Inner functions use a different calling convention: an optional
-  platform index argument, optional dimension variable arguments
-  (scalar tensors of type i32 or i64),
-  followed by optional token arguments (in presence of ordered effects),
-  followed by the regular array arguments.
-  The dimension arguments correspond to the dimension variables appearing in
-  the `args_avals`, in sorted order of their names.
-
-  Consider the lowering of a function with one array argument of type "f32[w,
-  2 * h]", where "w" and "h" are two dimension variables.
-  Assume that we use multi-platform lowering, and we have
-  one ordered effect. The `main` function will be as follows:
-
-      func public main(
-            platform_index: i32 {jax.global_constant="_platform_index"},
-            token_in: token,
-            arg: f32[?, ?]) {
-         arg_w = hlo.get_dimension_size(arg, 0)
-         dim1 = hlo.get_dimension_size(arg, 1)
-         arg_h = hlo.floordiv(dim1, 2)
-         call _check_shape_assertions(arg)  # See below
-         token = new_token()
-         token_out, res = call _wrapped_jax_export_main(platform_index,
-                                                        arg_h,
-                                                        arg_w,
-                                                        token_in,
-                                                        arg)
-         return token_out, res
-      }
-
-  The actual computation is in `_wrapped_jax_export_main`, taking also
-  the values of `h` and `w` dimension variables.
-
-  The signature of the `_wrapped_jax_export_main` is:
-
-      func private _wrapped_jax_export_main(
-          platform_index: i32 {jax.global_constant="_platform_index"},
-          arg_h: i32 {jax.global_constant="h"},
-          arg_w: i32 {jax.global_constant="w"},
-          arg_token: stablehlo.token {jax.token=True},
-          arg: f32[?, ?]) -> (stablehlo.token, ...)
-
-  Prior to serialization version 9 the calling convention for effects is
-  different: the `main` function does not take or return a token. Instead
-  the function creates dummy tokens of type `i1[0]` and passes them to the
-  `_wrapped_jax_export_main`. The `_wrapped_jax_export_main`
-  takes dummy tokens of type `i1[0]` and will create internally real
-  tokens to pass to the inner functions. The inner functions use real
-  tokens (both before and after serialization version 9)
-
-  Also starting with serialization version 9, function arguments that contain
-  the platform index or the dimension variable values have a
-  `jax.global_constant` string attribute whose value is the name of the
-  global constant, either `_platform_index` or a dimension variable name.
-  The global constant name may be empty if it is not known.
-  Some global constant computations use inner functions, e.g., for
-  `floor_divide`. The arguments of such functions have a `jax.global_constant`
-  attribute for all attributes, meaning that the result of the function is
-  also a global constant.
-
-  Note that `main` contains a call to `_check_shape_assertions.
-  JAX tracing assumes that `arg.shape[1]` is even, and that both `w` and `h`
-  have values >= 1. We must check these constraints when we invoke the
-  module. We use a special custom call `@shape_assertion` that takes
-  a boolean first operand, a string `error_message` attribute that may contain
-  format specifiers `{0}`, `{1}`, ..., and a variadic number of integer
-  scalar operands corresponding to the format specifiers.
-
-       func private _check_shape_assertions(arg: f32[?, ?]) {
-         # Check that w is >= 1
-         arg_w = hlo.get_dimension_size(arg, 0)
-         custom_call @shape_assertion(arg_w >= 1, arg_w,
-            error_message="Dimension variable 'w' must have integer value >= 1. Found {0}")
-         # Check that dim1 is even
-         dim1 = hlo.get_dimension_size(arg, 1)
-         custom_call @shape_assertion(dim1 % 2 == 0, dim1,
-            error_message="Dimension variable 'h' must have integer value >= 1. Found non-zero remainder {0}")
-         # Check that h >= 1
-         arg_h = hlo.floordiv(dim1, 2)
-         custom_call @shape_assertion(arg_h >= 1, arg_h,
-            error_message=""Dimension variable 'h' must have integer value >= 1. Found {0}")
-
-  If we `call_exported` with this module we perform these checks
-  statically (in `call_exported_abstract_eval`).
+  See a [description of the calling convention for the `mlir_module`](https://jax.readthedocs.io/en/latest/export.html#module_calling_convention).
   """
   fun_name: str
   in_tree: tree_util.PyTreeDef
@@ -417,7 +332,9 @@ def deserialize(blob: bytearray) -> Exported:
 
 
 def default_lowering_platform() -> str:
-  """Retrieves the default lowering platform for the exporting machine.
+  """Retrieves the default lowering platform.
+
+  One of: `tpu`, `cpu`, `cuda`, `rocm`.
   """
   # Canonicalize to turn 'gpu' into 'cuda' or 'rocm'
   return xb.canonicalize_platform(jax.default_backend())
@@ -458,6 +375,7 @@ def export_back_compat(
   Note: this function exists only for internal usage by jax2tf and for
     backwards compatibility with jax.experimental.export. Use
     `jax.export` instead.
+    See https://jax.readthedocs.io/en/latest/export.html
 
   Args:
     fun_jax: the function to lower and serialize.
@@ -466,8 +384,8 @@ def export_back_compat(
         'cuda', 'rocm'. If more than one platform is specified, then
         the lowered code takes an argument specifying the platform.
         If None, then use the default JAX backend.
-        The calling convention for multiple platforms is explained in the
-        `jax_export.Exported` docstring.
+        The calling convention for multiple platforms is explained
+        at https://jax.readthedocs.io/en/latest/export.html#module-calling-convention.
     disabled_checks: the safety checks to disable. See docstring
         of `DisabledSafetyCheck`.
 
@@ -547,32 +465,33 @@ def export(
   """Exports a JAX function for persistent serialization.
 
   Args:
-    fun_jit: the function to export. Should be the result of `jit`.
+    fun_jit: the function to export. Should be the result of `jax.jit`.
     lowering_platforms:
         Optional sequence containing a subset of 'tpu', 'cpu',
         'cuda', 'rocm'. If more than one platform is specified, then
         the lowered code takes an argument specifying the platform.
         If None, then use the default JAX backend.
-        The calling convention for multiple platforms is explained in the
-        `jax_export.Exported` docstring.
-    disabled_checks: the safety checks to disable. See docstring
-        of `DisabledSafetyCheck`.
+        The calling convention for multiple platforms is explained at
+        https://jax.readthedocs.io/en/latest/export.html#module-calling-convention.
+    disabled_checks: the safety checks to disable. See documentation for
+        of `jax.export.DisabledSafetyCheck`.
 
-  Returns: a function that takes args and kwargs pytrees of jax.ShapeDtypeStruct,
+  Returns: a function that takes args and kwargs pytrees of {class}`jax.ShapeDtypeStruct`,
       or values with `.shape` and `.dtype` attributes, and returns an
       `Exported`.
 
   Usage:
+
       >>> from jax import export
       >>> exported: export.Exported = export.export(jnp.sin)(
       ...     np.arange(4, dtype=np.float32))
-
-      # You can inspect the Exported object
+      >>>
+      >>> # You can inspect the Exported object
       >>> exported.in_avals
       (ShapedArray(float32[4]),)
       >>> blob: bytearray = exported.serialize()
-
-      # The serialized bytes are safe to use in a separate process
+      >>>
+      >>> # The serialized bytes are safe to use in a separate process
       >>> rehydrated: export.Exported = export.deserialize(blob)
       >>> rehydrated.fun_name
       'sin'
@@ -776,11 +695,10 @@ def _wrap_main_func(
 ) -> ir.Module:
   """Wraps the lowered module with a new "main" handling dimension arguments.
 
-  See calling convention documentation for `jax_export.Exported`.
+  See calling convention documentation https://jax.readthedocs.io/en/latest/export.html#module-calling-convention.
 
   Args:
-    module: the HLO module as obtained from lowering. See the calling convention
-      for inner functions in `jax_export.Exported`.
+    module: the HLO module as obtained from lowering.
     args_avals_flat: the avals for all the arguments of the lowered function,
       which correspond to the array arguments of the `module`.
     args_kwargs_tree: the PyTreeDef corresponding to `(args, kwargs)`, for error
@@ -1343,7 +1261,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
               for s in exported.in_shardings_hlo + exported.out_shardings_hlo)):
       err_msg = "the module contains non-replicated sharding annotations."
     if err_msg:
-      raise NotImplementedError(
+      raise ValueError(
         f"Exported module {exported.fun_name} was lowered for "
         f"{exported.nr_devices} devices and is called in a context with "
         f"{num_devices} devices. This is disallowed because: {err_msg}"

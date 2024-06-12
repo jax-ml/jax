@@ -965,12 +965,12 @@ class JaxExportTest(jtu.JaxTestCase):
 
     # Test error reporting
     with self.assertRaisesRegex(
-        NotImplementedError,
+        ValueError,
         "Exported module .* was lowered for 2 devices and is called in a context with 1 device"):
       _ = exp.call(a)
 
     with self.assertRaisesRegex(
-        NotImplementedError,
+        ValueError,
         "Exported module .* was lowered for 2 devices and is called in a context with 1 device"):
       mesh1 = Mesh(jax.devices()[0:1], axis_names=("x",))
       _ = jax.jit(
@@ -1046,7 +1046,7 @@ class JaxExportTest(jtu.JaxTestCase):
     b = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P("i")))
 
     with self.assertRaisesRegex(
-        NotImplementedError,
+        ValueError,
         "Exported module .* was lowered for 1 devices and is called in a "
         f"context with {jax.local_device_count()} devices.* module contains "
         "non-replicated sharding annotations"):
@@ -1092,7 +1092,7 @@ class JaxExportTest(jtu.JaxTestCase):
     b = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P("i")))
 
     with self.assertRaisesRegex(
-        NotImplementedError,
+        ValueError,
         "Exported module .* was lowered for 1 devices and is called in a "
         f"context with {jax.local_device_count()} devices.* module contains "
         "non-replicated sharding annotations"):
