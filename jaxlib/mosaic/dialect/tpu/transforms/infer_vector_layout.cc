@@ -1277,6 +1277,7 @@ class VectorLayoutInferer {
     auto some_src_layout = getLayout(op.getSource());
     TPU_CHECK_OP(some_src_layout, "missing vector layout");
     auto layout = *some_src_layout;
+    const unsigned bitwidth = src_ty.getElementTypeBitWidth();
     const std::array<int64_t, 2> vreg_slice = layout.vregSlice(target_shape_);
     if (layout.implicit_dim() == ImplicitDim::kNone) {
       // Nothing changes in the last two dims.
@@ -1296,7 +1297,6 @@ class VectorLayoutInferer {
         setLayout(op, layout, layout);
         return success();
       }
-      const unsigned bitwidth = src_ty.getElementTypeBitWidth();
       const auto native_tiling = nativeTiling(bitwidth);
       // Lane (un)tiling.
       if (src_ty.getDimSize(src_ty.getRank() - 1) !=
@@ -1400,22 +1400,23 @@ class VectorLayoutInferer {
         setLayout(op, layout, layout);
         return success();
       }
-      TPU_CHECK_OP(src_ty.getElementTypeBitWidth() == kNativeBitwidth,
-                   "only 32-bit shape casts supported");
       // Insert a singleton innermost dim.
       if (res_ty.getRank() == src_ty.getRank() + 1 &&
           src_ty.getDimSize(src_rank - 1) == res_ty.getDimSize(res_rank - 2) &&
           res_ty.getDimSize(res_rank - 1) == 1) {
         if (layout.implicit_dim() == ImplicitDim::kMinor) {
           setLayout(op, layout,
-                    VectorLayout(kNativeBitwidth, layout.offsets(),
-                                 default_tiling_, ImplicitDim::kNone));
+                    VectorLayout(bitwidth, layout.offsets(), layout.tiling(),
+                                 ImplicitDim::kNone));
         } else {
+          TPU_CHECK_OP(bitwidth == kNativeBitwidth,
+                       "Insertion of minor dim that is not a no-op only "
+                       "supported for 32-bit types");
           TPU_CHECK_OP(layout.implicit_dim() == ImplicitDim::kSecondMinor,
                        "unexpected implicit dim value");
           setLayout(op, layout,
-                    VectorLayout(kNativeBitwidth, {0, std::nullopt},
-                                 default_tiling_, ImplicitDim::kNone));
+                    VectorLayout(bitwidth, {0, std::nullopt}, default_tiling_,
+                                 ImplicitDim::kNone));
         }
         return success();
       }
