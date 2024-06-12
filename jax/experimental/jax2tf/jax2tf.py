@@ -388,13 +388,13 @@ def convert(fun_jax: Callable,
 
     args_jax_specs = tree_util.tree_map(jax_arg_spec_from_tf, args_tf)
     args_specs = export.symbolic_args_specs(
-        args_jax_specs, polymorphic_shapes=polymorphic_shapes,
-        symbolic_constraints=polymorphic_constraints)
+        args_jax_specs, polymorphic_shapes,
+        constraints=polymorphic_constraints)
     # The polymorphic_shapes argument refers to positional arguments only.
     # We assume None for the kwargs.
     kwargs_jax_specs = tree_util.tree_map(jax_arg_spec_from_tf, kwargs_tf)
     kwargs_specs = export.symbolic_args_specs(
-        kwargs_jax_specs, polymorphic_shapes=None)
+        kwargs_jax_specs, None)
     combined_args_tf = (args_tf, kwargs_tf)
     args_flat_tf: Sequence[TfVal]
     args_flat_tf, args_kwargs_tree = tree_util.tree_flatten(combined_args_tf)
@@ -677,7 +677,7 @@ def eval_polymorphic_shape(fun_jax: Callable,
   """
   def do_eval_polymorphic_shape(*args_specs) -> Any:
     args_poly_specs = export.symbolic_args_specs(
-        args_specs, polymorphic_shapes=polymorphic_shapes)
+        args_specs, polymorphic_shapes)
     res_poly_spec = jax.eval_shape(fun_jax, *args_poly_specs)
     # TODO(necula): For now we export the polymorphic shapes using `str`.
     res_polymorphic_shape = tree_util.tree_map(lambda r: str(r.shape), res_poly_spec)

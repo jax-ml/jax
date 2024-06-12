@@ -1271,7 +1271,7 @@ class PolyHarness(Harness):
     args = self.dyn_args_maker(tst.rng())
     args = jax.tree.map(jnp.array, args)
     args_specs = export.symbolic_args_specs(args, self.polymorphic_shapes,
-                                   symbolic_constraints=self.symbolic_constraints)
+        constraints=self.symbolic_constraints)
 
     if self.expect_error is not None:
       with tst.assertRaisesRegex(self.expect_error[0], self.expect_error[1]):
@@ -3290,7 +3290,7 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
 
     if harness.group_name == "vmap_eigh" and jtu.test_device_matches(["gpu"]):
       # For eigh on GPU with shape polymorphism under native serialization,
-      # we use a different lowering for small matrices. See README.md.
+      # we use a different lowering for small matrices.
       shape = harness.original_harness.params["shape"]
       if 0 < shape[-1] <= 32:
         harness.check_result = False

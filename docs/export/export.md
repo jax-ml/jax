@@ -188,27 +188,29 @@ as in the following example:
 >>> import jax
 >>> from jax import export
 >>> from jax import lax
+>>> from jax._src import core
 >>> from jax._src.interpreters import mlir
-
->>> # override the lowering rule for sin to use a custom call `my_new_sin`
->>> _ = mlir.register_lowering(lax.sin_p, lambda ctx, o: mlir.custom_call("my_new_sin", operands=[o], result_types=[o.type]).results)
->>> print(jax.jit(lax.sin).lower(1.).compiler_ir())
-module @jit_sin attributes {mhlo.num_partitions = 1 : i32, mhlo.num_replicas = 1 : i32} {
+>>> # Define a new primitive backed by a custom call
+>>> new_prim = core.Primitive("new_prim")
+>>> _ = new_prim.def_abstract_eval(lambda x: x)
+>>> _ = mlir.register_lowering(new_prim, lambda ctx, o: mlir.custom_call("my_new_prim", operands=[o], result_types=[o.type]).results)
+>>> print(jax.jit(new_prim.bind).lower(1.).compiler_ir())
+module @jit_bind attributes {mhlo.num_partitions = 1 : i32, mhlo.num_replicas = 1 : i32} {
   func.func public @main(%arg0: tensor<f32> {mhlo.layout_mode = "default"}) -> (tensor<f32> {jax.result_info = "", mhlo.layout_mode = "default"}) {
-    %0 = stablehlo.custom_call @my_new_sin(%arg0) {api_version = 2 : i32} : (tensor<f32>) -> tensor<f32>
+    %0 = stablehlo.custom_call @my_new_prim(%arg0) {api_version = 2 : i32} : (tensor<f32>) -> tensor<f32>
     return %0 : tensor<f32>
   }
 }
 
 >>> # If we try to export, we get an error
->>> export.export(jax.jit(lax.sin))(1.)  # doctest: +IGNORE_EXCEPTION_DETAIL
+>>> export.export(jax.jit(new_prim.bind))(1.)  # doctest: +IGNORE_EXCEPTION_DETAIL
 Traceback (most recent call last):
-ValueError: Cannot serialize code with custom calls whose targets have no compatibility guarantees: my_new_sin
+ValueError: Cannot serialize code with custom calls whose targets have no compatibility guarantees: my_new_bind
 
 >>> # We can avoid the error if we pass a `DisabledSafetyCheck.custom_call`
 >>> exp = export.export(
-...    jax.jit(lax.sin),
-...    disabled_checks=[export.DisabledSafetyCheck.custom_call("my_new_sin")])(1.)
+...    jax.jit(new_prim.bind),
+...    disabled_checks=[export.DisabledSafetyCheck.custom_call("my_new_prim")])(1.)
 
 ```
 
