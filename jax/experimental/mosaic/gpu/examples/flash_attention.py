@@ -55,6 +55,7 @@ class ExpImplementation(enum.StrEnum):
 def build_kernel(
     batch_size: int,
     q_heads: int,
+    kv_heads: int,
     q_seq_len: int,
     kv_seq_len: int,
     head_dim: int,
@@ -62,16 +63,12 @@ def build_kernel(
     prof_spec: profiler.ProfilerSpec | None = None,
     exp_impl: ExpImplementation = ExpImplementation.EXACT,
 ):
-  q_shape = jax.ShapeDtypeStruct(
-      (q_heads, q_seq_len, head_dim), jnp.float16
-  )
-  kv_shape = jax.ShapeDtypeStruct(
-      (1, kv_seq_len, head_dim), jnp.float16
-  )
   if batch_size != 1:
     raise NotImplementedError
   if blocks.stages < 2:
     raise ValueError("Kernel requires at least 2 stages.")
+  if q_heads % kv_heads:
+    raise ValueError("kv_heads must divide q_heads.")
   if q_seq_len % blocks.q:
     raise ValueError
   if kv_seq_len % blocks.kv:
@@ -84,6 +81,14 @@ def build_kernel(
     raise NotImplementedError
   if blocks.stages * blocks.kv > kv_seq_len:
     raise NotImplementedError
+
+  q_shape = jax.ShapeDtypeStruct(
+      (q_heads, q_seq_len, head_dim), jnp.float16
+  )
+  kv_shape = jax.ShapeDtypeStruct(
+      (kv_heads, kv_seq_len, head_dim), jnp.float16
+  )
+  q_heads_per_kv_head = q_heads // kv_heads
 
   def exp(x: FragmentedArray) -> FragmentedArray:
     return x.exp(approx=exp_impl == ExpImplementation.APPROX)
@@ -132,7 +137,7 @@ def build_kernel(
     barriers = BarrierArray(blocks.stages + 1)
     qo_smem, k_smem, v_smem = smem_scratch
 
-    batch_idx, q_seq_base, head_idx = block_partition.get_base(
+    batch_idx, q_seq_base, q_head_idx = block_partition.get_base(
         gpu.block_id(gpu.Dimension.x),
         gpu.block_id(gpu.Dimension.y),
         gpu.block_id(gpu.Dimension.z),
@@ -142,12 +147,14 @@ def build_kernel(
     with ctx.named_region("Q TMA start"):
       ctx.async_copy(
           src_ref=q_gmem,
-          gmem_slice=(head_idx, ds(q_seq_base, blocks.q)),
+          gmem_slice=(q_head_idx, ds(q_seq_base, blocks.q)),
           gmem_transform=mosaic_gpu.TileTransform(tiling),
           dst_ref=qo_smem,
           barrier=barriers[blocks.stages],
           swizzle=128,
       )
+
+    kv_head_idx = arith.divui(q_head_idx, c(q_heads_per_kv_head))
 
     def kv_copy_init(slot, kv_seq_base):
       with single_thread():
@@ -162,7 +169,7 @@ def build_kernel(
           ctx.async_copy(
               dst_ref=memref_slice(smem, slot),
               src_ref=gmem,
-              gmem_slice=(0, ds(kv_seq_base, blocks.kv)),
+              gmem_slice=(kv_head_idx, ds(kv_seq_base, blocks.kv)),
               gmem_transform=t,
               barrier=barriers[slot],
               arrive=False,
@@ -276,7 +283,7 @@ def build_kernel(
       ctx.async_copy(
           src_ref=qo_smem,
           dst_ref=out_gmem,
-          gmem_slice=(head_idx, ds(q_seq_base, blocks.q)),
+          gmem_slice=(q_head_idx, ds(q_seq_base, blocks.q)),
           gmem_transform=mosaic_gpu.TileTransform(tiling),
           swizzle=128,
       )
@@ -292,24 +299,26 @@ def benchmark_and_verify(
     q_seq_len,
     kv_seq_len,
     num_q_heads,
+    num_kv_heads,
     head_dim,
     **kwargs,
 ) -> float:
   with mlir.make_ir_context(), ir.Location.unknown():
-    kq, kk, kv = random.split(random.PRNGKey(1234), 3)
+    kq, kk, kv = random.split(random.key(1234), 3)
     q = random.normal(
         kq, (batch_size, num_q_heads, q_seq_len, head_dim), dtype=jnp.float16
     )
     k = random.normal(
-        kk, (batch_size, 1, kv_seq_len, head_dim), dtype=jnp.float16
+        kk, (batch_size, num_kv_heads, kv_seq_len, head_dim), dtype=jnp.float16
     )
     v = random.normal(
-        kv, (batch_size, 1, kv_seq_len, head_dim), dtype=jnp.float16
+        kv, (batch_size, num_kv_heads, kv_seq_len, head_dim), dtype=jnp.float16
     )
 
     f = build_kernel(
         batch_size=batch_size,
         q_heads=num_q_heads,
+        kv_heads=num_kv_heads,
         q_seq_len=q_seq_len,
         kv_seq_len=kv_seq_len,
         head_dim=head_dim,
@@ -322,12 +331,15 @@ def benchmark_and_verify(
     q = q.astype(jnp.float32)
     k = k.astype(jnp.float32)
     v = v.astype(jnp.float32)
-    logits = jnp.einsum("bhqc,bxkc->bhqk", q, k)
+    q_reshaped = q.reshape(
+        batch_size, num_kv_heads, num_q_heads // num_kv_heads, q_seq_len,
+        head_dim)
+    logits = jnp.einsum("bxhqc,bxkc->bxhqk", q_reshaped, k)
     m = logits.max(axis=-1)
     unnormalized = jnp.exp(logits - m[..., None])
     l = unnormalized.sum(axis=-1)
     weights = unnormalized / l[..., None]
-    expected = jnp.einsum("bhqk,bxkc->bhqc", weights, v)
+    expected = jnp.einsum("bxhqk,bxkc->bxhqc", weights, v).reshape(*q.shape)
     np.testing.assert_allclose(out, expected, atol=2e-3, rtol=2e-3)
     return runtime
 
@@ -335,6 +347,7 @@ def benchmark_and_verify(
 if __name__ == "__main__":
   batch_size = 1
   num_q_heads = 4
+  num_kv_heads = 1
   prof_spec = None
   param_it = itertools.product(
       (4096,), (4096,), (64, 128, 256), ExpImplementation
@@ -345,6 +358,7 @@ if __name__ == "__main__":
         q_seq_len,
         kv_seq_len,
         num_q_heads,
+        num_kv_heads,
         head_dim,
         prof_spec=prof_spec,
         exp_impl=exp_impl,
