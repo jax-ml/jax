@@ -220,7 +220,7 @@ present on the exporting machine:
 
 ```python
 >>> from jax import export
->>> export.default_lowering_platform()
+>>> export.default_export_platform()
 'cpu'
 
 ```
@@ -242,15 +242,15 @@ on multiple platforms.
 >>> from jax import export
 >>> from jax import lax
 
->>> # You can specify the lowering_platform, e.g., `tpu`, `cpu`, `cuda`, `rocm`
+>>> # You can specify the export platform, e.g., `tpu`, `cpu`, `cuda`, `rocm`
 >>> # even if the current machine does not have that accelerator.
->>> exp = export.export(jax.jit(lax.cos), lowering_platforms=['tpu'])(1.)
+>>> exp = export.export(jax.jit(lax.cos), platforms=['tpu'])(1.)
 
 >>> # But you will get an error if you try to compile `exp`
 >>> # on a machine that does not have TPUs.
 >>> exp.call(1.)  # doctest: +IGNORE_EXCEPTION_DETAIL
 Traceback (most recent call last):
-ValueError: The exported function 'cos' was lowered for platforms '('tpu',)' but it is used on '('cpu',)'.
+ValueError: Function 'cos' was lowered for platforms '('tpu',)' but it is used on '('cpu',)'.
 
 >>> # We can avoid the error if we pass a `DisabledSafetyCheck.platform`
 >>> # parameter to `export`, e.g., because you have reasons to believe
@@ -449,52 +449,52 @@ on multiple devices, and the compiler will shard the function appropriately:
 
 ```
 
-## Module serialization versions
+## Calling convention versions
 
 The JAX export support has evolved over time, e.g., to support
 effects. In order to support compatibility (see [compatibility guarantees](#compatibility-guarantees))
-we maintain a serialization version for each `Exported`.
-As of June 2024, all modules are serialized with version 9
-(the latest, see [all serialization versions](#serialization-version-numbers)):
+we maintain a calling convention version for each `Exported`.
+As of June 2024, all function exported with version 9
+(the latest, see [all calling convention versions](#calling-convention-versions)):
 
 ```python
 >>> from jax import export
 >>> exp: export.Exported = export.export(jnp.cos)(1.)
->>> exp.mlir_module_serialization_version
+>>> exp.calling_convention_version
 9
 
 ```
 
 At any given time, the export APIs may support a range
-of serialization versions. You can control which serialization
-version to use using the `--jax-serialization-version` flag
-or the `JAX_SERIALIZATION_VERSION` environment variable:
+of calling convention versions. You can control which calling convention
+version to use using the `--jax-export-calling-convention-version` flag
+or the `JAX_EXPORT_CALLING_CONVENTION_VERSION` environment variable:
 
 ```python
 >>> from jax import export
->>> (export.minimum_supported_serialization_version, export.maximum_supported_serialization_version)
+>>> (export.minimum_supported_calling_convention_version, export.maximum_supported_calling_convention_version)
 (9, 9)
 
 >>> from jax._src import config
->>> with config.jax_serialization_version(9):
+>>> with config.jax_export_calling_convention_version(9):
 ...  exp = export.export(jnp.cos)(1.)
-...  exp.mlir_module_serialization_version
+...  exp.calling_convention_version
 9
 
 ```
 
 We reserve the right to remove support for
-generating or consuming serialization versions older than 6 months.
+generating or consuming calling convention versions older than 6 months.
 
 ### Module calling convention
 
 The `Exported.mlir_module` has a `main` function that takes an optional first
 platform index argument if the module supports multiple platforms
-(`len(lowering_platforms) > 1`), followed by the token arguments corresponding
+(`len(platforms) > 1`), followed by the token arguments corresponding
 to the ordered effects, followed by the kept array
 arguments (corresponding to `module_kept_var_idx` and `in_avals`).
 The platform index is a i32 or i64 scalar encoding the index of the current
-compilation platform into the `lowering_platforms` sequence.
+compilation platform into the `platforms` sequence.
 
 Inner functions use a different calling convention: an optional
 platform index argument, optional dimension variable arguments
@@ -542,15 +542,15 @@ The signature of the `_wrapped_jax_export_main` is:
           arg: f32[?, ?]) -> (stablehlo.token, ...)
 ```
 
-Prior to serialization version 9 the calling convention for effects was
+Prior to calling convention version 9 the calling convention for effects was
 different: the `main` function does not take or return a token. Instead
 the function creates dummy tokens of type `i1[0]` and passes them to the
 `_wrapped_jax_export_main`. The `_wrapped_jax_export_main`
 takes dummy tokens of type `i1[0]` and will create internally real
 tokens to pass to the inner functions. The inner functions use real
-tokens (both before and after serialization version 9)
+tokens (both before and after calling convention version 9)
 
-Also starting with serialization version 9, function arguments that contain
+Also starting with calling convention version 9, function arguments that contain
 the platform index or the dimension variable values have a
 `jax.global_constant` string attribute whose value is the name of the
 global constant, either `_platform_index` or a dimension variable name.
@@ -584,11 +584,11 @@ scalar operands corresponding to the format specifiers.
             error_message=""Dimension variable 'h' must have integer value >= 1. Found {0}")
 ```
 
-(export-serialization-version)=
+(export-calling-convention-version)=
 
-### Serialization version numbers
+### Calling convention versions
 
-We list here a history of the serialization version numbers:
+We list here a history of the calling convention version numbers:
 
   * Version 1 used MHLO & CHLO to serialize the code, not supported anymore.
   * Version 2 supports StableHLO & CHLO. Used from October 2022. Not supported
@@ -622,7 +622,7 @@ We list here a history of the serialization version numbers:
     and the default since October 21st, 2023 (JAX 0.4.20).
   * Version 9 adds support for effects.
     See the docstring for `export.Exported` for the precise calling convention.
-    In this serialization version we also tag the platform index and the
+    In this calling convention version we also tag the platform index and the
     dimension variables arguments with `jax.global_constant` attributes.
     Supported by XlaCallModule since October 27th, 2023,
     available in JAX since October 20th, 2023 (JAX 0.4.20),

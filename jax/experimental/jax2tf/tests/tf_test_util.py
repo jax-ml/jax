@@ -180,18 +180,18 @@ class JaxToTfTestCase(jtu.JaxTestCase):
     # We run the tests using the maximum version supported, even though
     # the default serialization version may be held back for a while to
     # ensure compatibility
-    version = config.jax_serialization_version.value
+    version = config.jax_export_calling_convention_version.value
     if self.use_max_serialization_version:
       # Use the largest supported by both export and tfxla.call_module
-      version = min(export.maximum_supported_serialization_version,
+      version = min(export.maximum_supported_calling_convention_version,
                     tfxla.call_module_maximum_supported_version())
       self.assertGreaterEqual(version,
-                              export.minimum_supported_serialization_version)
-      self.enter_context(config.jax_serialization_version(version))
+                              export.minimum_supported_calling_convention_version)
+      self.enter_context(config.jax_export_calling_convention_version(version))
     logging.info(
       "Using JAX serialization version %s (export.max_version %s, tf.XlaCallModule max version %s)",
       version,
-      export.maximum_supported_serialization_version,
+      export.maximum_supported_calling_convention_version,
       tfxla.call_module_maximum_supported_version())
 
     with contextlib.ExitStack() as stack:

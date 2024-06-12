@@ -12,23 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 __all__ = ["DisabledSafetyCheck", "Exported", "export", "deserialize",
-           "maximum_supported_serialization_version",
-           "minimum_supported_serialization_version",
-           "default_lowering_platform",
+           "maximum_supported_calling_convention_version",
+           "minimum_supported_calling_convention_version",
+           "default_export_platform",
            "SymbolicScope", "is_symbolic_dim",
            "symbolic_shape", "symbolic_args_specs"]
 
-from jax._src.export._export import DisabledSafetyCheck as DisabledSafetyCheck
-from jax._src.export._export import Exported as Exported
-from jax._src.export._export import export as export
-from jax._src.export._export import deserialize as deserialize
-from jax._src.export._export import maximum_supported_serialization_version as maximum_supported_serialization_version
-from jax._src.export._export import minimum_supported_serialization_version as minimum_supported_serialization_version
-from jax._src.export._export import default_lowering_platform as default_lowering_platform
+from jax._src.export._export import (
+  DisabledSafetyCheck,
+  Exported,
+  export,
+  deserialize,
+  maximum_supported_calling_convention_version,
+  minimum_supported_calling_convention_version,
+  default_export_platform)
 
 from jax._src.export import shape_poly_decision  # Import only to set the decision procedure
 del shape_poly_decision
-from jax._src.export.shape_poly import SymbolicScope as SymbolicScope
-from jax._src.export.shape_poly import is_symbolic_dim as is_symbolic_dim
-from jax._src.export.shape_poly import symbolic_shape as symbolic_shape
-from jax._src.export.shape_poly import symbolic_args_specs as symbolic_args_specs
+from jax._src.export.shape_poly import (
+  SymbolicScope,
+  is_symbolic_dim,
+  symbolic_shape,
+  symbolic_args_specs)

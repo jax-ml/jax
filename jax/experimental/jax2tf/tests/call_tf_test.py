@@ -1652,10 +1652,10 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     kwargs=[dict(version=version) for version in [9]]
   )
   def test_call_tf_graph_ordered(self, *, version: int):
-    with config.jax_serialization_version(version):
+    with config.jax_export_calling_convention_version(version):
       logging.info(
         "Using JAX serialization version %s",
-        jax.config.jax_serialization_version)
+        jax.config.jax_export_calling_convention_version)
 
       @tf.function
       def tf_print(x):
@@ -1725,10 +1725,10 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
             for version in [9]]
   )
   def test_call_tf_ordered_dead_inputs(self, *, poly: bool, version: int):
-    with config.jax_serialization_version(version):
+    with config.jax_export_calling_convention_version(version):
       logging.info(
         "Using JAX serialization version %s",
-        jax.config.jax_serialization_version)
+        jax.config.jax_export_calling_convention_version)
       def f_jax(x1, x_dead, x3):
         return (x1, jax2tf.call_tf(lambda x: tf.math.sin(x), ordered=True,
                                   call_tf_graph=True)(x3))
@@ -1750,10 +1750,10 @@ class RoundTripToTfTest(tf_test_util.JaxToTfTestCase):
     ]
   )
   def test_call_tf_graph_polymorphic(self, ordered: bool, version: int):
-    with config.jax_serialization_version(version):
+    with config.jax_export_calling_convention_version(version):
       logging.info(
         "Using JAX serialization version %s",
-        jax.config.jax_serialization_version)
+        jax.config.jax_export_calling_convention_version)
 
       @tf.function(jit_compile=True, autograph=False)
       @partial(jax2tf.convert,

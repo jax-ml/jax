@@ -547,7 +547,7 @@ class Exported(object):
         return o == 0
 
     # Exported
-    def LoweringPlatforms(self, j):
+    def Platforms(self, j):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(22))
         if o != 0:
             a = self._tab.Vector(o)
@@ -555,14 +555,14 @@ class Exported(object):
         return ""
 
     # Exported
-    def LoweringPlatformsLength(self):
+    def PlatformsLength(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(22))
         if o != 0:
             return self._tab.VectorLen(o)
         return 0
 
     # Exported
-    def LoweringPlatformsIsNone(self):
+    def PlatformsIsNone(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(22))
         return o == 0
 
@@ -666,7 +666,7 @@ class Exported(object):
         return o == 0
 
     # Exported
-    def MlirModuleSerializationVersion(self):
+    def CallingConventionVersion(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(32))
         if o != 0:
             return self._tab.Get(flatbuffers.number_types.Uint16Flags, o + self._tab.Pos)
@@ -700,7 +700,7 @@ class Exported(object):
         return o == 0
 
     # Exported
-    def UsesShapePolymorphism(self):
+    def UsesGlobalConstants(self):
         o = flatbuffers.number_types.UOffsetTFlags.py_type(self._tab.Offset(36))
         if o != 0:
             return bool(self._tab.Get(flatbuffers.number_types.BoolFlags, o + self._tab.Pos))
@@ -758,10 +758,10 @@ def ExportedAddOutShardings(builder, outShardings):
 def ExportedStartOutShardingsVector(builder, numElems):
     return builder.StartVector(4, numElems, 4)
 
-def ExportedAddLoweringPlatforms(builder, loweringPlatforms):
-    builder.PrependUOffsetTRelativeSlot(9, flatbuffers.number_types.UOffsetTFlags.py_type(loweringPlatforms), 0)
+def ExportedAddPlatforms(builder, platforms):
+    builder.PrependUOffsetTRelativeSlot(9, flatbuffers.number_types.UOffsetTFlags.py_type(platforms), 0)
 
-def ExportedStartLoweringPlatformsVector(builder, numElems):
+def ExportedStartPlatformsVector(builder, numElems):
     return builder.StartVector(4, numElems, 4)
 
 def ExportedAddOrderedEffects(builder, orderedEffects):
@@ -788,8 +788,8 @@ def ExportedAddMlirModuleSerialized(builder, mlirModuleSerialized):
 def ExportedStartMlirModuleSerializedVector(builder, numElems):
     return builder.StartVector(1, numElems, 1)
 
-def ExportedAddMlirModuleSerializationVersion(builder, mlirModuleSerializationVersion):
-    builder.PrependUint16Slot(14, mlirModuleSerializationVersion, 0)
+def ExportedAddCallingConventionVersion(builder, callingConventionVersion):
+    builder.PrependUint16Slot(14, callingConventionVersion, 0)
 
 def ExportedAddModuleKeptVarIdx(builder, moduleKeptVarIdx):
     builder.PrependUOffsetTRelativeSlot(15, flatbuffers.number_types.UOffsetTFlags.py_type(moduleKeptVarIdx), 0)
@@ -797,8 +797,8 @@ def ExportedAddModuleKeptVarIdx(builder, moduleKeptVarIdx):
 def ExportedStartModuleKeptVarIdxVector(builder, numElems):
     return builder.StartVector(2, numElems, 2)
 
-def ExportedAddUsesShapePolymorphism(builder, usesShapePolymorphism):
-    builder.PrependBoolSlot(16, usesShapePolymorphism, 0)
+def ExportedAddUsesGlobalConstants(builder, usesGlobalConstants):
+    builder.PrependBoolSlot(16, usesGlobalConstants, 0)
 
 def ExportedAddVjp(builder, vjp):
     builder.PrependUOffsetTRelativeSlot(17, flatbuffers.number_types.UOffsetTFlags.py_type(vjp), 0)

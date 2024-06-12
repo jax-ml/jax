@@ -14,13 +14,13 @@
 # ==============================================================================
 
 from jax._src.export._export import (
-    minimum_supported_serialization_version,
-    maximum_supported_serialization_version,
-    Exported,
-    call_exported,  # TODO: deprecate
-    call,
-    DisabledSafetyCheck,
-    default_lowering_platform,  # TODO: deprecate
+  minimum_supported_calling_convention_version,
+  maximum_supported_calling_convention_version,
+  Exported,
+  call_exported,  # TODO: deprecate
+  call,
+  DisabledSafetyCheck,
+  default_lowering_platform,  # TODO: deprecate
 )
 from jax._src.export._export import export_back_compat as export
 
