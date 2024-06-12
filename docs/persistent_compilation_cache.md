@@ -11,7 +11,7 @@ The compilation cache is enabled when the
 is set. This should be done prior to the first compilation. Set the location as
 follows:
 
-```
+```python
 import jax
 
 # Make sure this is called before jax runs any operations!
@@ -27,7 +27,7 @@ is an alternate way of setting `cache-location`.
 
 `cache-location` can be a directory on the local filesystem. For example:
 
-```
+```python
 import jax
 
 jax.config.update("jax_compilation_cache_dir", "/tmp/jax-cache")
@@ -67,7 +67,7 @@ Cloud Storage (GCS) bucket. We recommend the following configuration:
 Assuming that `gs://jax-cache` is the GCS bucket, set `cache-location` as
 follows:
 
-```
+```python
 import jax
 
 jax.config.update("jax_compilation_cache_dir", "gs://jax-cache")
@@ -79,7 +79,7 @@ The JAX compilation cache works by hashing a number of parameters to create a si
 
 * The computation performed by the function captured by the non-optimized HLO of the JAX function being hashed
 * The Jaxlib version 
-* All XLA flags except those listed as not having an impact
+* Relevant XLA compilation flags
 * Device configuration captured in general, by the number of devices and the topology of the devices. Currently for GPUs, the topology only contains a string representation of the GPU name
 * Compression algorithm used to compress the compiled executable
 * Any custom hooks 
@@ -106,30 +106,10 @@ It can be helpful to examine what exactly is happening with the persistent compi
 
 To merely examine and understand why there are cache misses JAX includes a configuration flag that enables the logging of all cache misses (including persistent compilation cache misses) with their explanations. This can be enabled by setting the following configuration.
 
-```
+```python
 import jax
 
 jax.config.update("jax_explain_cache_misses", True)
-```
-
-### More finegrained control
-
-For more finegrained control, it is possible to configure the python logging module to focus on different aspects of the caching process. For example to log writes to the cache you can do the following to log just writes:
-
-```
-import jax
-import logging
-logging.root.addHandler(logging.StreamHandler()) # Unnecessary if there's a handler already
-logging.getLogger("jax._src.compilation_cache").setLevel(logging.DEBUG)
-```
-
-Or if you want to log cache key calculation you can do the following:
-
-```
-import jax
-import logging
-logging.root.addHandler(logging.StreamHandler()) # Unnecessary if there's a handler already
-logging.getLogger("jax._src.cache_key").setLevel(logging.DEBUG)
 ```
 
 ## Pitfalls
