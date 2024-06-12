@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import tempfile
 import time
 
@@ -29,6 +30,9 @@ class LRUCacheTestCase(jtu.JaxTestCase):
   path: pathlib.Path | None
 
   def setUp(self):
+    if importlib.util.find_spec("filelock") is None:
+      self.skipTest("filelock is not installed")
+
     super().setUp()
     tmpdir = tempfile.TemporaryDirectory()
     self.enter_context(tmpdir)
