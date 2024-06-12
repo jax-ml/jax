@@ -1176,7 +1176,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
 
   def test_remat_jaxpr_offloadable(self):
     mesh = jtu.create_global_mesh((2,), ("x",))
-    inp = jax.device_put(np.arange(16.), NamedSharding(mesh, P("x")))
+    inp = jax.device_put(np.zeros(67108864), NamedSharding(mesh, P("x")))
 
     def policy(prim, *avals, **params):
       return Offloadable(src="device", dst="pinned_host")
