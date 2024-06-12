@@ -370,7 +370,7 @@ def supported_dtypes():
   return types
 
 def is_device_rocm():
-  return xla_bridge.get_backend().platform_version.startswith('rocm')
+  return 'rocm' in xla_bridge.get_backend().platform_version
 
 def is_device_cuda():
   return 'cuda' in xla_bridge.get_backend().platform_version
