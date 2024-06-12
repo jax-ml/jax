@@ -82,9 +82,23 @@ The JAX compilation cache works by hashing a number of parameters to create a si
 * Relevant XLA compilation flags
 * Device configuration captured in general, by the number of devices and the topology of the devices. Currently for GPUs, the topology only contains a string representation of the GPU name
 * Compression algorithm used to compress the compiled executable
-* Any custom hooks 
+* Any custom hooks
 
-When the signature for a function created using the parameters above matches that of a compiled function in the persistent cache, the function will not be compiled but just read and deserialized from the persistent cache. Below we outline some observed behavior of the persistent compilation cache in a variety of different runtimes as it relates to which processes write to the cache.
+When the signature for a function created using the parameters above matches that of a compiled function in the persistent cache, the function will not be compiled but just read and deserialized from the persistent cache. 
+
+### Compile time dependent caching
+
+JAX only caches executables that take a certain amount of time to compile. This threshold is controlled by the `jax_persistent_cache_min_compile_time_secs` configuration option. To cache every executable that is compiled regardless of compile time, set this value to zero:
+
+```python
+import jax
+
+jax.config.update("jax_persistent_cache_min_compile_time_secs", 0)
+```
+
+## Different Runtimes
+
+Below we outline some observed behavior of the persistent compilation cache in a variety of different runtimes as it relates to which processes write to the cache.
 
 ### Single node with single process and single device
 
