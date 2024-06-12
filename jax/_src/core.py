@@ -889,6 +889,9 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
       f"The unsafe_buffer_pointer() method was called on {self._error_repr()}."
       f"{self._origin_msg()}")
 
+
+setattr(Tracer, "__hash__", None)
+
 # these can be used to set up forwarding of properties and instance methods from
 # Tracer instances to the underlying avals
 aval_property = namedtuple("aval_property", ["fget"])

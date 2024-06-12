@@ -624,6 +624,11 @@ class JaxArrayTest(jtu.JaxTestCase):
             output_shardings._to_xla_hlo_sharding(x_dummy.ndim),
             s._to_xla_hlo_sharding(x_dummy.ndim)))
 
+  def test_tracer_unhashable(self):
+    with self.assertRaisesRegex(
+        TypeError, "unhashable type: 'DynamicJaxprTracer'"):
+      jax.jit(hash)(1)
+
   def test_shape_dtype_struct_sharding_pjit(self):
     mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
     s = jax.sharding.NamedSharding(mesh, P('x', 'y'))
