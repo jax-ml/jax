@@ -43,11 +43,12 @@ class ExportTest(jtu.JaxTestCase):
     a = np.arange(8)
     exp = export.export(
         add_vectors,
-        # TODO(necula): Make this test work on GPU also
-        lowering_platforms=["tpu"],
+        lowering_platforms=["tpu", "cuda"],
     )(a, a)
 
-    if jtu.device_under_test() == "tpu":
+    if (jtu.device_under_test() == "tpu" or
+        (jtu.device_under_test() == "gpu" and
+         jtu.is_cuda_compute_capability_at_least("8.0"))):
       res = export.call(exp)(a, a)
       self.assertAllClose(res, a + a)
 

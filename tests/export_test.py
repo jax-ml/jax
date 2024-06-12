@@ -13,6 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+from collections.abc import Sequence
 import contextlib
 import dataclasses
 import functools
@@ -1368,6 +1369,64 @@ class JaxExportTest(jtu.JaxTestCase):
                   module_str)
     res2 = exp2.call(x)
     self.assertAllClose(res2, _testing_multi_platform_fun_expected(x))
+
+  def test_multi_platform_mlir_lower_fun_with_platform_specific_primitives(self):
+    # A primitive with multiple lowering rules, which themselves involve
+    # tracing primitives with per-platform rules, using mlir.lower_fun.
+    # This situation arises for Pallas lowering.
+    def times_n_lowering(n: int, ctx: mlir.LoweringRuleContext,
+                         x: mlir.ir.Value) -> Sequence[mlir.ir.Value]:
+      # Lowering n * x
+      res = x
+      for i in range(n - 1):
+        res = mlir.hlo.AddOp(res, x)
+      return res.results
+
+    times_2 = core.Primitive("__testing_times_2")  # x2 for cpu
+    times_2.def_abstract_eval(lambda x: x)
+    # Define lowering rules only for the relevant platforms, ensure there
+    # is no error about missing lowering rules
+    mlir.register_lowering(times_2, functools.partial(times_n_lowering, 2),
+                           "cpu")
+
+    times_3 = core.Primitive("__testing_times_3")  # x3 for cuda
+    times_3.def_abstract_eval(lambda x: x)
+    mlir.register_lowering(times_3, functools.partial(times_n_lowering, 3),
+                           "cuda")
+
+    times_4 = core.Primitive("__testing_times_4")  # x4 for tpu
+    times_4.def_abstract_eval(lambda x: x)
+    mlir.register_lowering(times_4, functools.partial(times_n_lowering, 4),
+                           "tpu")
+
+    times_2_or_3 = core.Primitive("__testing_times_2_or_3")  # x2 for cpu, x3 for cuda
+    times_2_or_3.def_abstract_eval(lambda x: x)
+    mlir.register_lowering(times_2_or_3,
+                           mlir.lower_fun(times_2.bind,
+                                          multiple_results=False), "cpu")
+    mlir.register_lowering(times_2_or_3,
+                           mlir.lower_fun(times_3.bind,
+                                          multiple_results=False), "cuda")
+
+    times_2_or_3_or_4 = core.Primitive("__testing_times_2_or_3_or_4")  # x2 for cpu, x3 for cuda, x4 for tpu
+    times_2_or_3_or_4.def_abstract_eval(lambda x: x)
+    times_2_or_3_or_4_lowering_cpu_cuda = mlir.lower_fun(times_2_or_3.bind,
+                                                         multiple_results=False)
+    for platform in ["cpu", "cuda"]:
+      mlir.register_lowering(times_2_or_3_or_4,
+                             times_2_or_3_or_4_lowering_cpu_cuda,
+                             platform)
+    mlir.register_lowering(times_2_or_3_or_4, mlir.lower_fun(times_4.bind,
+                                                             multiple_results=False),
+                           "tpu")
+
+    @jax.jit
+    def f(x):
+      return times_2_or_3_or_4.bind(x)
+    x = np.float32(42.)
+    exp = export.export(f, lowering_platforms=["cpu", "cuda", "tpu"])(x)
+    expected = x * np.float32(dict(cpu=2, gpu=3, tpu=4)[jtu.device_under_test()])
+    self.assertAllClose(exp.call(x), expected)
 
   def test_multi_platform_and_poly(self):
     if jtu.test_device_matches(["gpu"]):
