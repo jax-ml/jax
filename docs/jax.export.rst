@@ -34,3 +34,14 @@ Functions related to shape polymorphism
   symbolic_args_specs
   is_symbolic_dim
   SymbolicScope
+
+Constants
+---------
+
+.. data:: jax.export.minimum_supported_serialization_version
+
+   The minimum supported serialization version; see :ref:`export-serialization-version`.
+
+.. data:: jax.export.maximum_supported_serialization_version
+
+   The maximum supported serialization version; see :ref:`export-serialization-version`.
