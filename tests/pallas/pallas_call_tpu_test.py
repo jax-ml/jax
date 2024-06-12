@@ -14,8 +14,11 @@
 
 """Test TPU-specific extensions to pallas_call."""
 
+import contextlib
 import functools
+import io
 import re
+import sys
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
@@ -40,6 +43,15 @@ jax.config.parse_flags_with_absl()
 P = jax.sharding.PartitionSpec
 
 partial = functools.partial
+
+@contextlib.contextmanager
+def string_stdout():
+  """Redirects stdout to a string."""
+  initial_stdout = sys.stdout
+  stringio = io.StringIO()
+  sys.stdout = stringio
+  yield stringio
+  sys.stdout = initial_stdout
 
 
 class PallasTPUTest(jtu.JaxTestCase):
@@ -2255,6 +2267,58 @@ class PallasCallPrintTest(PallasTPUTest):
     )
     compiled_kernel(x)
 
+
+class PallasCallTraceTest(PallasTPUTest):
+  interpret: bool = False
+
+  def parse_debug_string(self, debug_string):
+    jaxpr, mlir = debug_string.split('module')
+    return {'jaxpr': jaxpr, 'mlir': mlir}
+
+  def test_trace_start_stop_match(self):
+    def kernel(o_ref):
+      with jax.named_scope('scope1'):
+        o_ref[...] = jnp.zeros_like(o_ref[...])
+
+    with string_stdout() as msg:
+      _ = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        debug=True,
+      )()
+      # TODO(justinfu): Add an official lowering API to get the MLIR.
+      mlir = self.parse_debug_string(msg.getvalue())['mlir']
+
+    num_start = mlir.count('tpu.trace_start')
+    num_stop = mlir.count('tpu.trace_stop')
+    self.assertEqual(num_start, 1)
+    self.assertEqual(num_stop, 1)
+
+  def test_run_scoped(self):
+    def kernel(o_ref):
+      def scope1():
+        with jax.named_scope('scope1'):
+          o_ref[...] = jnp.zeros_like(o_ref[...])
+      pltpu.run_scoped(scope1)
+
+      def scope2():
+        with jax.named_scope('scope2'):
+          o_ref[...] = o_ref[...] + 1
+      pltpu.run_scoped(scope2)
+
+    with string_stdout() as msg:
+      _ = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        debug=True,
+      )()
+      # TODO(justinfu): Add an official lowering API to get the MLIR.
+      mlir = self.parse_debug_string(msg.getvalue())['mlir']
+
+    num_start = mlir.count('tpu.trace_start')
+    num_stop = mlir.count('tpu.trace_stop')
+    self.assertEqual(num_start, 2)
+    self.assertEqual(num_stop, 2)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

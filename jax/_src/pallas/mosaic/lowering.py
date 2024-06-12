@@ -644,9 +644,10 @@ def jaxpr_subcomp(
     block_shape_env[invar] = bs
   map(write_env, jaxpr.invars, args)
 
+  initial_name_stack = [scope.name for scope in ctx.name_stack.stack]
   current_name_stack: list[str] = []
   # TODO(justinfu): Handle transform scopes.
-  current_name_stack.extend([scope.name for scope in ctx.name_stack.stack])
+  current_name_stack.extend(initial_name_stack)
   for eqn in jaxpr.eqns:
     invals = map(read_env, eqn.invars)
     source_info = eqn.source_info.replace(
@@ -703,6 +704,14 @@ def jaxpr_subcomp(
         map(write_env, eqn.outvars, ans)
       else:
         write_env(eqn.outvars[0], ans)
+
+  # Drain the name stack at the end of a jaxpr and insert trace_stop ops.
+  popped, pushed = _compute_name_stack_updates(
+      current_name_stack, initial_name_stack)
+  for _ in popped:
+    tpu.TraceStopOp()
+  assert len(pushed) == 0
+
   outvals = map(read_env, jaxpr.outvars)
   outvals = [
       ir_constant(x) if isinstance(var, jax_core.Literal) else x
