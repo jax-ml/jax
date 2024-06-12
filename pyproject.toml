@@ -54,7 +54,6 @@ filterwarnings = [
     "error",
     "default:Error (reading|writing) persistent compilation cache entry for 'jit_equal'",
     "default:Error (reading|writing) persistent compilation cache entry for 'jit__lambda_'",
-    "default:backend and device argument on jit is deprecated.*:DeprecationWarning",
     "default:jax.extend.mlir.dialects.mhlo is deprecated.*:DeprecationWarning",
     # TODO(jakevdp): remove when array_api_tests stabilize
     # start array_api_tests-related warnings
