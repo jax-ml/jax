@@ -855,6 +855,35 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     all_true = jnp.ones(4)
     self.assertArraysEqual(g(arr), all_true)
 
+  def test_scan_offload(self):
+    np_inp = jnp.arange(4096).reshape(16, 16, 16)
+
+    @jax.jit
+    def f(xs):
+      def body(carry, x):
+        with compute_on('device_host'):
+          out_tpu = x + carry
+        return carry, out_tpu
+      _, res = jax.lax.scan(body, 1, xs)
+      return res
+
+    out = f(np_inp)
+    self.assertArraysEqual(out, np_inp + 1)
+
+    @compute_on('device_host')
+    @jax.jit
+    def body2(carry, x):
+      out_tpu = x + carry
+      return carry, out_tpu
+
+    @jax.jit
+    def f2(xs):
+      _, res = jax.lax.scan(body2, 1, xs)
+      return res
+
+    out2 = f2(np_inp)
+    self.assertArraysEqual(out2, np_inp + 1)
+
   def test_pure_host_data_and_compute(self):
     if xb.backend_xla_version() is not None and xb.backend_xla_version() < 2:
       self.skipTest("This test requires an xla_version >= 2.")
