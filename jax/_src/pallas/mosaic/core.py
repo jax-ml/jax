@@ -39,7 +39,6 @@ GridMapping = pallas_core.GridMapping
 NoBlockSpec = pallas_core.NoBlockSpec
 AbstractMemoryRef = pallas_core.AbstractMemoryRef
 no_block_spec = pallas_core.no_block_spec
-_preprocess_grid = pallas_core._preprocess_grid
 _convert_block_spec_to_block_mapping = pallas_core._convert_block_spec_to_block_mapping
 split_list = util.split_list
 

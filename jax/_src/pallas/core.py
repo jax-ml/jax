@@ -126,22 +126,12 @@ blocked = Blocked()
 IndexingMode = Union[Blocked, Unblocked]
 
 
-@dataclasses.dataclass(init=False, unsafe_hash=True)
+@dataclasses.dataclass(unsafe_hash=True)
 class BlockSpec:
-  index_map: Callable[..., Any] | None
-  block_shape: tuple[int | None, ...] | None
-  memory_space: Any
-  indexing_mode: IndexingMode
-
-  def __init__(self, index_map: Callable[..., Any] | None = None,
-               block_shape: tuple[int | None, ...] | None = None,
-               memory_space: Any = None, indexing_mode: IndexingMode = blocked):
-    self.index_map = index_map
-    if block_shape is not None and not isinstance(block_shape, tuple):
-      block_shape = tuple(block_shape)
-    self.block_shape = block_shape
-    self.memory_space = memory_space
-    self.indexing_mode = indexing_mode
+  index_map: Callable[..., Any] | None = None
+  block_shape: tuple[int | None, ...] | None = None
+  memory_space: Any | None = None
+  indexing_mode: IndexingMode = blocked
 
   def compute_index(self, *args):
     assert self.index_map is not None
