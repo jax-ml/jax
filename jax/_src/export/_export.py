@@ -553,7 +553,7 @@ def export(
               self_descr=f"current (from {shape_poly.args_kwargs_path_to_str(symbolic_scope[1])}) ",
               other_descr=shape_poly.args_kwargs_path_to_str(k_path))
 
-    traced = fun_jit.trace(  # type: ignore
+    traced = fun_jit.trace(
         *args_specs, **kwargs_specs,
         _experimental_lowering_parameters=mlir.LoweringParameters(
           platforms=actual_lowering_platforms,

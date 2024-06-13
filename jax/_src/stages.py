@@ -770,6 +770,17 @@ class Wrapped(Protocol):
     """Executes the wrapped function, lowering and compiling as needed."""
     raise NotImplementedError
 
+  def trace(self, *args, **kwargs) -> Traced:
+    """Trace this function explicitly for the given arguments.
+
+    A traced function is staged out of Python and translated to a jaxpr. It is
+    ready for lowering but not yet lowered.
+
+    Returns:
+      A ``Traced`` instance representing the tracing.
+    """
+    raise NotImplementedError
+
   def lower(self, *args, **kwargs) -> Lowered:
     """Lower this function explicitly for the given arguments.
 
