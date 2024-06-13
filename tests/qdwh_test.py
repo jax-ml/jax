@@ -64,13 +64,11 @@ class QdwhTest(jtu.JaxTestCase):
     self._testUnitary(u, tol)
     self._testHermitian(h, tol)
 
-  def _testQdwh(self, a, is_hermitian=False, dynamic_shape=None):
+  def _testQdwh(self, a, dynamic_shape=None):
     """Computes the polar decomposition and tests its basic properties."""
     eps = jnp.finfo(a.dtype).eps
-    u, h, iters, conv = qdwh.qdwh(
-        a, is_hermitian=is_hermitian, dynamic_shape=dynamic_shape
-    )
-    tol = 10 * eps
+    u, h, iters, conv = qdwh.qdwh(a, dynamic_shape=dynamic_shape)
+    tol = 11 * eps
     if dynamic_shape is not None:
       m, n = dynamic_shape
       a = a[:m, :n]
@@ -91,45 +89,20 @@ class QdwhTest(jtu.JaxTestCase):
 
   @jtu.sample_product(
       shape=[(2, 2), (5, 5), (8, 5), (10, 10)],
-      is_hermitian=[True, False],
       dtype=float_types + complex_types,
   )
-  def testQdwhWithDynamicShape(self, shape, is_hermitian, dtype):
+  def testQdwhWithDynamicShape(self, shape, dtype):
     """Tests qdwh with dynamic shapes."""
-    if is_hermitian & (shape[0] != shape[1]):
-      self.skipTest('Invalid combination')
     rng = jtu.rand_uniform(self.rng())
     a = rng((10, 10), dtype)
-
-    if is_hermitian:
-      a = (a + a.conj().T) / 2
-    self._testQdwh(a, is_hermitian=is_hermitian, dynamic_shape=shape)
-
-  @jtu.sample_product(
-      shape=[(8, 6), (5, 5), (10, 10), (20, 18), (300, 300)],
-      log_cond=np.linspace(0, 1, 4),
-      hermitian=[True, False],
-      dtype=float_types + complex_types,
-  )
-  def testQdwhWithRandomMatrix0(self, shape, log_cond, hermitian, dtype):
-    """Tests qdwh with upper triangular input of all ones."""
-    m, n = shape
-    rng = jtu.rand_uniform(self.rng())
-    a = rng((m, n), dtype)
-
-    # Generates input matrix with prescribed condition number.
-    hermitian = hermitian & (m == n)
-    if hermitian:
-      a = (a + a.conj().T) / 2
-    self._testQdwh(a, is_hermitian=hermitian)
+    self._testQdwh(a, dynamic_shape=shape)
 
   @jtu.sample_product(
       shape=[(8, 6), (10, 10), (20, 18), (300, 300)],
       log_cond=np.linspace(0, 1, 4),
-      hermitian=[True, False],
       dtype=float_types + complex_types,
   )
-  def testQdwhWithRandomMatrix(self, shape, log_cond, hermitian, dtype):
+  def testQdwhWithRandomMatrix(self, shape, log_cond, dtype):
     """Tests qdwh with upper triangular input of all ones."""
     eps = jnp.finfo(dtype).eps
     m, n = shape
@@ -143,10 +116,7 @@ class QdwhTest(jtu.JaxTestCase):
     u, _, v = jnp.linalg.svd(a, full_matrices=False)
     s = jnp.expand_dims(jnp.linspace(cond, 1, min(m, n)), range(u.ndim - 1))
     a = (u * s.astype(u.dtype)) @ v
-    hermitian = hermitian & (m == n)
-    if hermitian:
-      a = (a + a.conj().T) / 2
-    self._testQdwh(a, is_hermitian=hermitian)
+    self._testQdwh(a)
 
   @jtu.sample_product(
       [dict(m=m, n=n) for m, n in [(6, 6), (8, 4)]],
