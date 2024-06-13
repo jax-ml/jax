@@ -1392,6 +1392,8 @@ class ScipyLinalgTest(jtu.JaxTestCase):
     self.assertAllClose(us, actual_us)
 
   @jtu.skip_on_devices("cpu", "tpu")
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message="backend and device argument")
   def testLuCPUBackendOnGPU(self):
     # tests running `lu` on cpu when a gpu is present.
     jit(jsp.linalg.lu, backend="cpu")(np.ones((2, 2)))  # does not crash

@@ -179,8 +179,10 @@ class MultiDeviceTest(jtu.JaxTestCase):
     self.assertIsInstance(f(), jax.Array)
     self.assert_uncommitted_to_device(f(), devices[0])
     self.assert_uncommitted_to_device(jax.jit(f)(), devices[0])
-    self.assert_committed_to_device(jax.jit(f, device=devices[1])(),
-                                    devices[1])
+    with jtu.ignore_warning(category=DeprecationWarning,
+                            message="backend and device argument"):
+      self.assert_committed_to_device(jax.jit(f, device=devices[1])(),
+                                      devices[1])
 
   def test_reshape(self):
     devices = self.get_devices()
