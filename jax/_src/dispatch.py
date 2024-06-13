@@ -324,7 +324,7 @@ def _check_special(name: str, dtype: np.dtype, buf: basearray.Array) -> None:
 
 def _put_x(x, s: Sharding, aval: core.AbstractValue, committed: bool):
   result_handler = pxla.global_aval_to_result_handler(aval, s, committed)
-  return result_handler(pxla.shard_arg(x, s))
+  return result_handler(pxla.shard_args([s], [x])[0])
 
 def _override_get_device_assignment(sharding, *args, **kwargs):
   da = sharding._device_assignment

@@ -40,6 +40,7 @@ from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout, Layout
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension as xe
+from jax._src.lib import xla_extension_version
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
     PmapSharding, SingleDeviceSharding,
@@ -1068,7 +1069,7 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
     if not candidates_list:
       # This array isn't sharded correctly. Reshard it via host roundtrip.
       # TODO(skye): more efficient reshard?
-      return pxla.shard_arg(x._value, sharding, canonicalize=False)
+      return pxla.shard_args([sharding], [x._value], canonicalize=False)[0]
     # Try to find a candidate buffer already on the correct device,
     # otherwise copy one of them.
     for buf in candidates_list:
@@ -1088,25 +1089,50 @@ def _sharding_indices_and_eq(src_sharding, shape, dst_sharding):
   return dst_indices, tuple(src_indices) == tuple(dst_indices)
 
 
-def _array_shard_arg(x, sharding):
-  x._check_if_deleted()
+def _array_shard_arg(xs, shardings):
+  results = []
+  batch_xs, batch_devs, batch_shardings, batch_indices = [], [], [], []
+  for i, (x, sharding) in enumerate(safe_zip(xs, shardings)):
+    x._check_if_deleted()
 
-  indices, same_indices = _sharding_indices_and_eq(x.sharding, x.shape, sharding)
-  if not x.is_fully_addressable:
-    if same_indices:
-      return x
+    indices, same_indices = _sharding_indices_and_eq(
+        x.sharding, x.shape, sharding)
+    if not x.is_fully_addressable:
+      if same_indices:
+        results.append(x)
+      else:
+        raise NotImplementedError(
+            "Cannot reshard an input that is not fully addressable")
     else:
-      raise NotImplementedError(
-          "Cannot reshard an input that is not fully addressable")
+      devices = sharding._addressable_device_assignment
+      if same_indices:
+        # Add a placeholder result that will be filled in later.
+        results.append(None)
+        # Accumulate arguments to `batched_copy_array_to_devices_with_sharding`.
+        batch_xs.append(x)
+        batch_devs.append(list(devices))
+        batch_shardings.append(sharding)
+        batch_indices.append(i)
+      # Resharding starts here:
+      elif dispatch.is_single_device_sharding(x.sharding):
+        results.append(shard_device_array(x, devices, indices, sharding))
+      else:
+        results.append(
+            shard_sharded_device_array_slow_path(x, devices, indices, sharding))
+
+  if xla_extension_version < 271:
+    copy_outs = [
+        xc.copy_array_to_devices_with_sharding(x, d, s)  # pytype: disable=module-attr
+        for x, d, s in safe_zip(batch_xs, batch_devs, batch_shardings)
+    ]
   else:
-    devices = sharding._addressable_device_assignment
-    if same_indices:
-      return xc.copy_array_to_devices_with_sharding(x, list(devices), sharding)
-    # Resharding starts here:
-    if dispatch.is_single_device_sharding(x.sharding):
-      return shard_device_array(x, devices, indices, sharding)
-    else:
-      return shard_sharded_device_array_slow_path(x, devices, indices, sharding)
+    copy_outs = xc.batched_copy_array_to_devices_with_sharding(
+        batch_xs, batch_devs, batch_shardings)
+  for i, copy_out in safe_zip(batch_indices, copy_outs):
+    assert results[i] is None
+    results[i] = copy_out
+  return results
+
 
 pxla.shard_arg_handlers[ArrayImpl] = _array_shard_arg
 
@@ -1139,8 +1165,8 @@ pxla.local_result_handlers[core.ConcreteArray] = _array_local_result_handler
 
 # Token handlers
 
-def _token_shard_arg(x, sharding):
-  return _array_shard_arg(x._buf, sharding)
+def _token_shard_arg(xs, shardings):
+  return _array_shard_arg([x._buf for x in xs], shardings)
 pxla.shard_arg_handlers[core.Token] = _token_shard_arg
 
 

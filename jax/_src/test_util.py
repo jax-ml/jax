@@ -50,6 +50,7 @@ from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.numpy.util import promote_dtypes, promote_dtypes_inexact
 from jax._src.public_test_util import (  # noqa: F401
     _assert_numpy_allclose, _check_dtypes_match, _default_tolerance, _dtype, check_close, check_grads,
@@ -244,18 +245,32 @@ def count_primitive_compiles():
 
 @contextmanager
 def count_device_put_fast_path_hit():
-  original_fn = xc.copy_array_to_devices_with_sharding
-  count = [0]
+  if xla_extension_version < 271:
+    original_fn = xc.copy_array_to_devices_with_sharding
+    count = [0]
 
-  def copy_array_to_devices_with_sharding_and_count(*args, **kwargs):
-    count[0] += 1
-    return original_fn(*args, **kwargs)
+    def copy_array_to_devices_with_sharding_and_count(*args, **kwargs):
+      count[0] += 1
+      return original_fn(*args, **kwargs)
 
-  xc.copy_array_to_devices_with_sharding = copy_array_to_devices_with_sharding_and_count
-  try:
-    yield count
-  finally:
-    xc.copy_array_to_devices_with_sharding = original_fn
+    xc.copy_array_to_devices_with_sharding = copy_array_to_devices_with_sharding_and_count
+    try:
+      yield count
+    finally:
+      xc.copy_array_to_devices_with_sharding = original_fn
+  else:
+    original_fn = xc.batched_copy_array_to_devices_with_sharding
+    count = [0]
+
+    def batched_copy_array_to_devices_with_sharding_and_count(*args, **kwargs):
+      count[0] += 1
+      return original_fn(*args, **kwargs)
+
+    xc.batched_copy_array_to_devices_with_sharding = batched_copy_array_to_devices_with_sharding_and_count
+    try:
+      yield count
+    finally:
+      xc.batched_copy_array_to_devices_with_sharding = original_fn
 
 
 @contextmanager
