@@ -31,7 +31,7 @@ import ml_dtypes
 import numpy as np
 
 from jax._src import config
-from jax._src.typing import DType, DTypeLike
+from jax._src.typing import Array, DType, DTypeLike
 from jax._src.util import set_module, StrictABC
 
 from jax._src import traceback_util
@@ -741,6 +741,12 @@ def result_type(*args: Any, return_weak_type_flag: bool = False) -> DType | tupl
   return (dtype, weak_type) if return_weak_type_flag else dtype  # type: ignore[return-value]
 
 def check_user_dtype_supported(dtype, fun_name=None):
+  if isinstance(dtype, Array):
+    # Deprecation warning added 2024 June 13.
+    warnings.warn("Passing an array as a dtype argument is deprecated; "
+                  "instead of dtype=arr use dtype=arr.dtype.",
+                  category=DeprecationWarning, stacklevel=3)
+    return  # no further check needed, as array dtypes have already been validated.
   if issubdtype(dtype, extended):
     return
   # Avoid using `dtype in [...]` because of numpy dtype equality overloading.

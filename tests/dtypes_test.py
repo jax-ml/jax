@@ -565,6 +565,15 @@ class DtypesTest(jtu.JaxTestCase):
       dtype = np.dtype('float32')
     dtypes.check_user_dtype_supported(MyDtype())
 
+  def test_check_dtype_array(self):
+    x = jnp.arange(4)
+    msg = "Passing an array as a dtype argument is deprecated"
+    with self.assertWarnsRegex(DeprecationWarning, msg):
+      dtypes.check_user_dtype_supported(x)
+    with self.assertWarnsRegex(DeprecationWarning, msg):
+      jax.jit(dtypes.check_user_dtype_supported)(x)
+
+
 class EArrayTest(jtu.JaxTestCase):
 
   @parameterized.parameters([True, False])
