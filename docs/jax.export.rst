@@ -20,9 +20,9 @@ Functions
 
   export
   deserialize
-  minimum_supported_serialization_version
-  maximum_supported_serialization_version
-  default_lowering_platform
+  minimum_supported_calling_convention_version
+  maximum_supported_calling_convention_version
+  default_export_platform
 
 Functions related to shape polymorphism
 ---------------------------------------
@@ -40,8 +40,8 @@ Constants
 
 .. data:: jax.export.minimum_supported_serialization_version
 
-   The minimum supported serialization version; see :ref:`export-serialization-version`.
+   The minimum supported serialization version; see :ref:`export-calling-convention-version`.
 
 .. data:: jax.export.maximum_supported_serialization_version
 
-   The maximum supported serialization version; see :ref:`export-serialization-version`.
+   The maximum supported serialization version; see :ref:`export-calling-convention-version`.

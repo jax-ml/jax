@@ -1313,7 +1313,7 @@ dim_as_value_p.def_abstract_eval(lambda dim: core.dim_value_aval())
 def dim_as_value_impl(dim: DimSize):
   raise NotImplementedError(
       "Evaluation rule for 'dim_as_value' is not implemented. "
-      "It seems that you are using shape polymorphism outside jax2tf.")
+      "It seems that you are using shape polymorphism outside jax.export.")
 
 dim_as_value_p.def_impl(dim_as_value_impl)
 def _dim_as_value(dim: DimSize):

@@ -119,16 +119,16 @@ table Exported {
   in_shardings: [Sharding];
   out_shardings: [Sharding];
 
-  lowering_platforms: [string];
+  platforms: [string];
 
   ordered_effects: [Effect];
   unordered_effects: [Effect];
   disabled_checks: [DisabledSafetyCheck];
 
   mlir_module_serialized: [byte];
-  mlir_module_serialization_version: uint16;
+  calling_convention_version: uint16;
   module_kept_var_idx: [uint16];
-  uses_shape_polymorphism: bool;
+  uses_global_constants: bool;
 
   vjp: Exported;
 }

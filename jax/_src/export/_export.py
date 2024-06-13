@@ -63,17 +63,10 @@ Shape = jax._src.core.Shape
 LoweringSharding = Union[sharding.Sharding, pxla.UnspecifiedValue]
 HloSharding = xla_client.HloSharding
 
-"""The minimum supported serialization version.
-
-See https://jax.readthedocs.io/en/latest/export/export.html#serialization-version-numbers
-"""
-minimum_supported_serialization_version = 9
-
-"""The maximum supported serialization version.
-
-See https://jax.readthedocs.io/en/latest/export/export.html#serialization-version-numbers
-"""
-maximum_supported_serialization_version = 9
+# The minimum and maximum supported calling convention version.
+# See https://jax.readthedocs.io/en/latest/export.html#module-calling-convention#calling-conventions-versions
+minimum_supported_calling_convention_version = 9
+maximum_supported_calling_convention_version = 9
 
 
 class DisabledSafetyCheck:
@@ -168,23 +161,25 @@ class Exported:
         the mesh. See `out_shardings_jax` for a way to turn these
         into sharding specification that can be used with JAX APIs.
     nr_devices: the number of devices that the module has been lowered for.
-    lowering_platforms: a tuple containing at least one of 'tpu', 'cpu',
+    platforms: a tuple containing at least one of 'tpu', 'cpu',
         'cuda', 'rocm'. See https://jax.readthedocs.io/en/latest/export.html#module-calling-convention
         for the calling convention for when
-        there are multiple lowering platforms.
+        there are multiple export platforms.
     ordered_effects: the ordered effects present in the serialized module.
         This is present from serialization version 9. See https://jax.readthedocs.io/en/latest/export.html#module-calling-convention
         for the calling convention in presence of ordered effects.
     unordered_effects: the unordered effects present in the serialized module.
         This is present from serialization version 9.
     mlir_module_serialized: the serialized lowered VHLO module.
-    mlir_module_serialization_version: a version number for the serialized module.
-        See more versioning details at https://jax.readthedocs.io/en/latest/export.html#module-calling-convention#module-serialization-versions.
+    calling_convention_version: a version number for the calling
+        convention of the exported module.
+        See more versioning details at https://jax.readthedocs.io/en/latest/export.html#calling-convention-versions.
     module_kept_var_idx: the sorted indices of the arguments among `in_avals` that
         must be passed to the module. The other arguments have been dropped
         because they are not used.
-    uses_shape_polymorphism: whether the `mlir_module_serialized` uses shape
-        polymorphism. This may be because `in_avals` contains dimension
+    uses_global_constants: whether the `mlir_module_serialized` uses shape
+        polymorphism or multi-platform export.
+        This may be because `in_avals` contains dimension
         variables, or due to inner calls of Exported modules that have
         dimension variables or platform index arguments. Such modules need
         shape refinement before XLA compilation.
@@ -197,7 +192,7 @@ class Exported:
         for each primal output. It returns a tuple with the cotangents
         corresponding to the flattened primal inputs.
 
-  See a [description of the calling convention for the `mlir_module`](https://jax.readthedocs.io/en/latest/export.html#module_calling_convention).
+  See a [description of the calling convention for the `mlir_module`](https://jax.readthedocs.io/en/latest/export.html#module-calling-convention).
   """
   fun_name: str
   in_tree: tree_util.PyTreeDef
@@ -208,15 +203,15 @@ class Exported:
   in_shardings_hlo: tuple[HloSharding | None, ...]
   out_shardings_hlo: tuple[HloSharding | None, ...]
   nr_devices: int
-  lowering_platforms: tuple[str, ...]
+  platforms: tuple[str, ...]
   ordered_effects: tuple[effects.Effect, ...]
   unordered_effects: tuple[effects.Effect, ...]
   disabled_safety_checks: Sequence[DisabledSafetyCheck]
 
   mlir_module_serialized: bytes
-  mlir_module_serialization_version: int
+  calling_convention_version: int
   module_kept_var_idx: tuple[int, ...]
-  uses_shape_polymorphism: bool
+  uses_global_constants: bool
 
   _get_vjp: Callable[[Exported], Exported] | None
 
@@ -286,6 +281,33 @@ class Exported:
     return tuple(_hlo_sharding_to_xla_compatible_sharding(s, mesh)
                  for s in self.out_shardings_hlo)
 
+  # For backwards compatibility
+  # TODO(necula): remove after September 2024.
+  @property
+  def lowering_platforms(self):
+    """DEPRECATED."""
+    warnings.warn("lowering_platform is deprecated. Use .platforms instead.",
+                  DeprecationWarning, stacklevel=2)
+    return self.platforms
+
+  # For backwards compatibility
+  # TODO(necula): remove after September 2024.
+  @property
+  def mlir_module_serialization_version(self):
+    """DEPRECATED."""
+    warnings.warn("mlir_module_serialization_version is deprecated. Use .calling_convention_version instead.",
+                  DeprecationWarning, stacklevel=2)
+    return self.calling_convention_version
+
+  # For backwards compatibility
+  # TODO(necula): remove after September 2024.
+  @property
+  def uses_shape_polymorphism(self):
+    """DEPRECATED."""
+    warnings.warn("uses_shape_polymorphism is deprecated. Use .uses_global_constants instead.",
+                  DeprecationWarning, stacklevel=2)
+    return self.uses_global_constants
+
   def has_vjp(self) -> bool:
     """Returns if this Exported supports VJP."""
     return self._get_vjp is not None
@@ -331,13 +353,15 @@ def deserialize(blob: bytearray) -> Exported:
   return deserialize(blob)
 
 
-def default_lowering_platform() -> str:
-  """Retrieves the default lowering platform.
+def default_export_platform() -> str:
+  """Retrieves the default export platform.
 
   One of: `tpu`, `cpu`, `cuda`, `rocm`.
   """
   # Canonicalize to turn 'gpu' into 'cuda' or 'rocm'
   return xb.canonicalize_platform(jax.default_backend())
+
+default_lowering_platform = default_export_platform
 
 def shape_and_dtype_jax_array(a) -> tuple[Sequence[int | None], DType]:
   """Returns the shape and dtype of a jax.Array or a j"""
@@ -415,7 +439,7 @@ def export_back_compat(
     if lowering_platforms is not None:
       actual_lowering_platforms = tuple(lowering_platforms)
     else:
-      actual_lowering_platforms = (default_lowering_platform(),)
+      actual_lowering_platforms = (default_export_platform(),)
 
     # TODO: move to `lower`
     symbolic_scope: tuple[shape_poly.SymbolicScope, tree_util.KeyPath] | None = None  # type: ignore[invalid-annotation,unused-ignore]
@@ -459,6 +483,7 @@ def export_back_compat(
 def export(
     fun_jit: stages.Wrapped,
     *,
+    platforms: Sequence[str] | None = None,
     lowering_platforms: Sequence[str] | None = None,
     disabled_checks: Sequence[DisabledSafetyCheck] = (),
     ) -> Callable[..., Exported]:
@@ -466,13 +491,14 @@ def export(
 
   Args:
     fun_jit: the function to export. Should be the result of `jax.jit`.
-    lowering_platforms:
+    platforms:
         Optional sequence containing a subset of 'tpu', 'cpu',
         'cuda', 'rocm'. If more than one platform is specified, then
-        the lowered code takes an argument specifying the platform.
+        the exported code takes an argument specifying the platform.
         If None, then use the default JAX backend.
         The calling convention for multiple platforms is explained at
         https://jax.readthedocs.io/en/latest/export.html#module-calling-convention.
+    lowering_platforms: DEPRECATED, use `platforms`.
     disabled_checks: the safety checks to disable. See documentation for
         of `jax.export.DisabledSafetyCheck`.
 
@@ -501,10 +527,14 @@ def export(
   if not isinstance(fun_jit, stages.Wrapped):
     raise ValueError(
         f"Function to be exported must be the result of `jit` but is: {fun_jit}")
-  if lowering_platforms is not None:
-    actual_lowering_platforms = tuple(lowering_platforms)
+  if platforms is not None and lowering_platforms is not None:
+    raise ValueError("Cannot use both `platforms` and `lowering_platforms`")
+  if platforms is None and lowering_platforms is not None:
+    platforms = lowering_platforms
+  if platforms is not None:
+    actual_lowering_platforms = tuple(platforms)
   else:
-    actual_lowering_platforms = (default_lowering_platform(),)
+    actual_lowering_platforms = (default_export_platform(),)
 
   def do_export(*args_specs, **kwargs_specs) -> Exported:
     # TODO: move to `lower`
@@ -542,13 +572,13 @@ def _export_lowered(
     disabled_checks: Sequence[DisabledSafetyCheck] = (),
     _device_assignment_for_internal_jax2tf_use_only = None,
   ) -> Exported:
-  version = config.jax_serialization_version.value
-  if (version < minimum_supported_serialization_version or
-      version > maximum_supported_serialization_version):
+  version = config.jax_export_calling_convention_version.value
+  if (version < minimum_supported_calling_convention_version or
+      version > maximum_supported_calling_convention_version):
     raise ValueError(
-      f"The requested jax_serialization version {version} is outside the "
-      f"range of supported versions [{minimum_supported_serialization_version}"
-      f"..{maximum_supported_serialization_version}]")
+      f"The requested export calling convention version {version} is outside the "
+      f"range of supported versions [{minimum_supported_calling_convention_version}"
+      f"..{maximum_supported_calling_convention_version}]")
 
   lowering = lowered._lowering
   _check_lowering(lowering)
@@ -638,7 +668,7 @@ def _export_lowered(
                                              apply_jit=True,
                                              flat_primal_fun=True)
     return export(fun_vjp_jax,  # type: ignore[arg-type]
-                  lowering_platforms=exp_primal.lowering_platforms,
+                  platforms=exp_primal.platforms,
                   disabled_checks=exp_primal.disabled_safety_checks)(*vjp_in_avals)
 
   return Exported(
@@ -650,14 +680,14 @@ def _export_lowered(
       in_shardings_hlo=in_shardings,
       out_shardings_hlo=out_shardings,
       nr_devices=nr_devices,
-      lowering_platforms=lowering._platforms,  # type: ignore
+      platforms=lowering._platforms,  # type: ignore
       ordered_effects=ordered_effects,
       unordered_effects=unordered_effects,
       disabled_safety_checks=tuple(disabled_checks),
       mlir_module_serialized=mlir_module_serialized,
       module_kept_var_idx=module_kept_var_idx,
-      uses_shape_polymorphism=shape_poly_state.uses_dim_vars,
-      mlir_module_serialization_version=version,
+      uses_global_constants=shape_poly_state.uses_dim_vars,
+      calling_convention_version=version,
       _get_vjp=_get_exported_vjp)
 
 def _module_to_bytecode(module: ir.Module) -> bytes:
@@ -1237,7 +1267,7 @@ call_exported_p.def_impl(_call_exported_impl)
 
 def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
                             exported: Exported):
-  if exported.uses_shape_polymorphism:
+  if exported.uses_global_constants:
     ctx.module_context.shape_poly_state.uses_dim_vars = True
   submodule = ir.Module.parse(exported.mlir_module())
 
@@ -1255,14 +1285,14 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     # than the function was exported for.
     err_msg = ""
     if exported.nr_devices != 1:
-      err_msg = "the module was lowered for more than 1 device."
+      err_msg = "the function was exported for more than 1 device."
     elif (_check_module(submodule, disabled_checks=()) or
           any(s is not None and not s.is_replicated()
               for s in exported.in_shardings_hlo + exported.out_shardings_hlo)):
-      err_msg = "the module contains non-replicated sharding annotations."
+      err_msg = "the function contains non-replicated sharding annotations."
     if err_msg:
       raise ValueError(
-        f"Exported module {exported.fun_name} was lowered for "
+        f"Function {exported.fun_name} was exported for "
         f"{exported.nr_devices} devices and is called in a context with "
         f"{num_devices} devices. This is disallowed because: {err_msg}"
       )
@@ -1296,18 +1326,18 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
 
   callee_lowering_platform_index: list[int] = []
   for platform in lowering_platforms:
-    if platform in exported.lowering_platforms:
+    if platform in exported.platforms:
       callee_lowering_platform_index.append(
-        exported.lowering_platforms.index(platform))
+        exported.platforms.index(platform))
     elif DisabledSafetyCheck.platform() in exported.disabled_safety_checks:
       callee_lowering_platform_index.append(0)
     else:
       raise ValueError(
-          f"The exported function '{exported.fun_name}' was lowered for "
-          f"platforms '{exported.lowering_platforms}' but it is used "
+          f"Function '{exported.fun_name}' was exported for "
+          f"platforms '{exported.platforms}' but it is used "
           f"on '{lowering_platforms}'.")
 
-  if len(exported.lowering_platforms) > 1:
+  if len(exported.platforms) > 1:
     # The exported module takes a platform index argument
     if len(lowering_platforms) > 1:
       current_platform_idx = ctx.dim_var_values[0]
