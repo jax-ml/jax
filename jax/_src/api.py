@@ -483,6 +483,14 @@ def xla_computation(fun: Callable,
     raise ValueError(
         "out_parts has been deprecated. Please use the ahead of time APIs. You"
         " can read more here: https://jax.readthedocs.io/en/latest/aot.html")
+  if axis_env is not None:
+    raise ValueError(
+        "axis_env has been deprecated. Please use the ahead of time APIs. You"
+        " can read more here: https://jax.readthedocs.io/en/latest/aot.html")
+  if tuple_args:
+    raise ValueError(
+        "tuple_args has been deprecated. Please use the ahead of time APIs. You"
+        " can read more here: https://jax.readthedocs.io/en/latest/aot.html")
 
   check_callable(fun)
   static_argnums = _ensure_index_tuple(static_argnums)

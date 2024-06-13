@@ -24,6 +24,10 @@ Remember to align the itemized text with the first line of an item within a list
   * Hashing of tracers is deprecated, and will lead to a `TypeError` in a future JAX
     release. This previously was the case, but there was an inadvertent regression in
     the last several JAX releases.
+  * `axis_env` and `tuple_args` arguments of `jax.xla_computation` have been
+    deprecated. `jax.xla_computation` itself will be deprecated in a future
+    release. You can use JAX's AOT APIs e.g.
+    `jax.jit(f).lower(*args).compiler_ir('hlo')`
 
 ## jaxlib 0.4.30
 

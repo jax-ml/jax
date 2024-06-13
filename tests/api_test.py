@@ -2833,47 +2833,12 @@ class APITest(jtu.JaxTestCase):
     self.assertIn('cosine', c.as_hlo_text())
     self.assertIn('sine', c.as_hlo_text())
 
-    def f(x):
-      return x - lax.psum(x, 'i')
-    axis_env = [('i', 4)]
-    c = api.xla_computation(f, axis_env=axis_env)(2)
-    self.assertIn('all-reduce', c.as_hlo_text())
-    self.assertIn('replica_groups={{0,1,2,3}}', c.as_hlo_text())
-
-    def g(x):
-      rowsum = lax.psum(x, 'i')
-      colsum = lax.psum(x, 'j')
-      allsum = lax.psum(x, ('i', 'j'))
-      return rowsum, colsum, allsum
-    axis_env = [('i', 4), ('j', 2)]
-    c = api.xla_computation(g, axis_env=axis_env)(5.)
-    self.assertIn('all-reduce', c.as_hlo_text())
-    self.assertIn('replica_groups={{0,2,4,6},{1,3,5,7}}', c.as_hlo_text())
-    self.assertIn('replica_groups={{0,1},{2,3},{4,5},{6,7}}', c.as_hlo_text())
-    self.assertIn('replica_groups={{0,1,2,3,4,5,6,7}}', c.as_hlo_text())
-
-    def h(x):
-      rowsum = lax.psum(x, 'i', axis_index_groups=[[0, 1], [2, 3]])
-      colsum = lax.psum(x, 'j')
-      return rowsum, colsum
-    axis_env = [('i', 4), ('j', 2)]
-    c = api.xla_computation(h, axis_env=axis_env)(5.)
-    self.assertIn('all-reduce', c.as_hlo_text())
-    self.assertIn('replica_groups={{0,2},{4,6},{1,3},{5,7}}', c.as_hlo_text())
-    self.assertIn('replica_groups={{0,1},{2,3},{4,5},{6,7}}', c.as_hlo_text())
-
   def test_xla_computation_args(self):
     def foo(x, y, z):
       return x + y + z
 
     c = api.xla_computation(foo)(1., 2., 3.)
     self.assertEqual(len(c.program_shape().parameter_shapes()), 3)
-
-    c = api.xla_computation(foo, tuple_args=True)(1., 2., 3.)
-    param_shapes = c.program_shape().parameter_shapes()
-    self.assertEqual(len(param_shapes), 1)
-    self.assertEqual(param_shapes[0].xla_element_type(),
-                     xla_client.PrimitiveType.TUPLE)
 
   def test_xla_computation_duck_typing(self):
     def foo(x, y, z):
@@ -2885,12 +2850,6 @@ class APITest(jtu.JaxTestCase):
 
     c = api.xla_computation(foo)(x, y, z)
     self.assertEqual(len(c.program_shape().parameter_shapes()), 3)
-
-    c = api.xla_computation(foo, tuple_args=True)(1., 2., 3.)
-    param_shapes = c.program_shape().parameter_shapes()
-    self.assertEqual(len(param_shapes), 1)
-    self.assertEqual(param_shapes[0].xla_element_type(),
-                     xla_client.PrimitiveType.TUPLE)
 
   def test_compiler_ir(self):
     # TODO(phawkins): merge these tests with the `xla_computation` tests.
@@ -2936,10 +2895,6 @@ class APITest(jtu.JaxTestCase):
                 api.ShapeDtypeStruct(shape=(2,), dtype=jnp.float32))
     self.assertEqual(shape_tree, expected)
 
-  def test_xla_computation_psum_constant(self):
-    f = lambda: jax.lax.psum(1, "i")
-    api.xla_computation(f, axis_env=[("i", 2)])()  # doesn't crash
-
   @jtu.ignore_warning(message="Some donated buffers were not usable")
   def test_xla_computation_donate_argnums(self):
     api.xla_computation(lambda x: None, donate_argnums=(0,))(3)  # doesn't crash
@@ -2950,20 +2905,6 @@ class APITest(jtu.JaxTestCase):
       y = lax.all_gather(
               x, axis_name=axis_name)
       return y * lax.axis_index(axis_name).astype(jnp.float32)
-
-    input_x = jnp.ones((5,6,4), dtype=jnp.float32)
-    axis_env = [(axis_name, jax.local_device_count())]
-    _ = api.xla_computation(fn, axis_env=axis_env, backend='cpu')(input_x)
-
-  def test_xla_computation_axis_env(self):
-    def fn(x):
-      z = x * jax.lax.axis_index('i').astype(jnp.float32)
-      def inner_fn(carry, a):
-        return carry + a, ()
-      return jax.lax.scan(inner_fn, jnp.zeros_like(z[0]), z)
-
-    x = jnp.ones((5, 6, 4), dtype=jnp.float32)
-    _ = jax.xla_computation(fn, axis_env=(('i', 8),), backend='cpu')(x)
 
   def test_concurrent_device_get_and_put(self):
     def f(x):
