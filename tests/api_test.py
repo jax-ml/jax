@@ -229,7 +229,9 @@ class JitTest(jtu.BufferDonationTestCase):
 
   def test_jit_device(self):
     device = jax.devices()[-1]
-    x = jit(lambda x: x, device=device)(3.)
+    with jtu.ignore_warning(category=DeprecationWarning,
+                            message="backend and device argument"):
+      x = jit(lambda x: x, device=device)(3.)
     _check_instance(self, x)
     self.assertEqual(x.devices(), {device})
 

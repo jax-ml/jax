@@ -105,6 +105,8 @@ class MultiBackendTest(jtu.JaxTestCase):
     self.assertRaises(ValueError, lambda: fun(x, y))
 
   @jtu.sample_product(backend=['cpu', 'gpu', 'tpu'])
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message="backend and device argument")
   def testGpuMultiBackendOpByOpReturn(self, backend):
     if backend not in ('cpu', jtu.device_under_test()):
       raise SkipTest("Backend is not CPU or the device under test")
@@ -119,6 +121,8 @@ class MultiBackendTest(jtu.JaxTestCase):
     self.assertEqual(list(w.devices())[0].platform, backend)
 
   @jtu.skip_on_devices("cpu")  # test can only fail with non-cpu backends
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message="backend and device argument")
   def testJitCpu(self):
     @partial(jax.jit, backend='cpu')
     def get_arr(scale):
@@ -135,6 +139,8 @@ class MultiBackendTest(jtu.JaxTestCase):
     self.assertEqual(c.devices(), {jax.devices('cpu')[0]})
 
   @jtu.skip_on_devices("cpu")  # test can only fail with non-cpu backends
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message="backend and device argument")
   def test_closed_over_values_device_placement(self):
     # see https://github.com/google/jax/issues/1431
     def f(): return jnp.add(3., 4.)
@@ -144,6 +150,8 @@ class MultiBackendTest(jtu.JaxTestCase):
                      {jax.devices('cpu')[0]})
 
   @jtu.skip_on_devices("cpu")  # test only makes sense on non-cpu backends
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message="backend and device argument")
   def test_jit_on_nondefault_backend(self):
     cpus = jax.devices("cpu")
     self.assertNotEmpty(cpus)
