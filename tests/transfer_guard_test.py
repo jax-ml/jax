@@ -104,6 +104,11 @@ _COMMON_TEST_PARAMETERS = [
 # device-to-host tests to incur no transfers unexpectedly.
 @jtu.with_config(jax_enable_checks=False)
 class TransferGuardTest(jtu.JaxTestCase):
+  def setUp(self):
+    super().setUp()
+    # Nearly all test methods use the deprecated device argument to JIT.
+    self.enter_context(jtu.ignore_warning(category=DeprecationWarning,
+                                          message="backend and device argument"))
 
   @contextlib.contextmanager
   def assertAllows(self, func_name):

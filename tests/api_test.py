@@ -262,10 +262,12 @@ class JitTest(jtu.BufferDonationTestCase):
 
     with jax.default_device(test_device):
       # Explicit `device` or `backend` argument to jit overrides default_device
-      self.assertEqual(
-          module(f, device=system_default_device)(1).devices(),
-          system_default_devices)
-      out = module(f, backend="cpu")(1)
+      with jtu.ignore_warning(category=DeprecationWarning,
+                              message="backend and device argument"):
+        self.assertEqual(
+            module(f, device=system_default_device)(1).devices(),
+            system_default_devices)
+        out = module(f, backend="cpu")(1)
       self.assertEqual(next(iter(out.devices())).platform, "cpu")
 
       # Sticky input device overrides default_device
@@ -858,8 +860,10 @@ class JitTest(jtu.BufferDonationTestCase):
   @jtu.skip_on_devices("cpu")
   def test_explicit_backend(self, module):
     f = lambda x: x + 1
-    jitted_f = module(f, backend=jtu.device_under_test())
-    jitted_f_cpu = module(f, backend="cpu")
+    with jtu.ignore_warning(category=DeprecationWarning,
+                            message="backend and device argument"):
+      jitted_f = module(f, backend=jtu.device_under_test())
+      jitted_f_cpu = module(f, backend="cpu")
 
     result = jitted_f(1.)
     result_cpu = jitted_f_cpu(1.)
@@ -874,8 +878,10 @@ class JitTest(jtu.BufferDonationTestCase):
   def test_device_to_device_copy_between_backends(self, module):
     # b/186624243
     f = lambda x: x + 1
-    jitted_f = module(f, backend=jtu.device_under_test())
-    jitted_f_cpu = module(f, backend="cpu")
+    with jtu.ignore_warning(category=DeprecationWarning,
+                            message="backend and device argument"):
+      jitted_f = module(f, backend=jtu.device_under_test())
+      jitted_f_cpu = module(f, backend="cpu")
 
     x = np.arange(30).reshape(1, 10, 3)
     result = jitted_f(x)
@@ -886,6 +892,8 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(result_cpu_2, x + 4)
 
   @jtu.skip_on_devices("cpu")
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message="backend and device argument")
   def test_mismatched_nested_backends(self):
     @partial(jax.jit, backend=jtu.device_under_test())
     def f(x):

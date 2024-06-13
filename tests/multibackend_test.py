@@ -82,6 +82,8 @@ class MultiBackendTest(jtu.JaxTestCase):
               (None, 'cpu'), (None, 'gpu'), (None, 'tpu'),
     ],
   )
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message="backend and device argument")
   def testMultiBackendNestedJitConflict(self, ordering):
     outer, inner = ordering
     if outer not in ('cpu', jtu.device_under_test(), None):
