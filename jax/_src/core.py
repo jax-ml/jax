@@ -13,7 +13,6 @@
 # limitations under the License.
 from __future__ import annotations
 
-import collections  # noqa: F401
 from collections import Counter, defaultdict, deque, namedtuple
 from collections.abc import (Collection, Generator, Hashable, Iterable,
                              Iterator, Set, Sequence, MutableSet,
@@ -36,6 +35,7 @@ from weakref import ref
 
 import numpy as np
 
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import config
 from jax._src import effects
@@ -667,6 +667,18 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
   ndim = _aval_property('ndim')
   size = _aval_property('size')
   shape = _aval_property('shape')
+
+  def __hash__(self):
+    # TODO(jakevdp) finalize this deprecation and set __hash__ = None
+    # Warning added 2024-06-13
+    if deprecations.is_accelerated('tracer-hash'):
+      raise TypeError(f"unhashable type: {type(self)}")
+    # Use FutureWarning rather than DeprecationWarning because hash is likely
+    # not called directly by the user, so we want to warn at all stacklevels.
+    warnings.warn(
+      f"unhashable type: {type(self)}. Attempting to hash a tracer will lead to an"
+      " error in a future JAX release.", category=FutureWarning)
+    return super().__hash__()
 
   def __init__(self, trace: Trace):
     self._trace = trace

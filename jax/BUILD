@@ -464,6 +464,7 @@ pytype_strict_library(
     deps = [
         ":compute_on",
         ":config",
+        ":deprecations",
         ":dtypes",
         ":effects",
         ":pretty_printer",

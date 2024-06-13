@@ -19,6 +19,9 @@ Remember to align the itemized text with the first line of an item within a list
 * Deprecations
   * Internal pretty-printing tools `jax.core.pp_*` are deprecated, and will be removed
     in a future release.
+  * Hashing of tracers is deprecated, and will lead to a `TypeError` in a future JAX
+    release. This previously was the case, but there was an inadvertent regression in
+    the last several JAX releases.
 
 ## jaxlib 0.4.30
 
