@@ -558,6 +558,13 @@ class DtypesTest(jtu.JaxTestCase):
     _, new_scale = jax.jit(jax.grad(outer, (0, 1)))(jnp.float32(3.14), scale)
     self.assertAllClose(new_scale, jnp.float32(1.0))
 
+  def test_check_dtype_non_hashable(self):
+    # regression test for issue with checking non-hashable custom dtype
+    class MyDtype:
+      __hash__ = None
+      dtype = np.dtype('float32')
+    dtypes.check_user_dtype_supported(MyDtype())
+
 class EArrayTest(jtu.JaxTestCase):
 
   @parameterized.parameters([True, False])
