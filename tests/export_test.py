@@ -232,6 +232,8 @@ class JaxExportTest(jtu.JaxTestCase):
                                 "Function to be exported must be the result of `jit`"):
       _ = export.export(lambda x: jnp.sin(x))
 
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message="The jax.experimental.export module is deprecated")
   def test_export_experimental_back_compat(self):
     from jax.experimental import export
     # Can export a lambda, without jit

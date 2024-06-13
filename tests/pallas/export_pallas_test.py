@@ -17,7 +17,7 @@
 from absl.testing import absltest
 import jax
 from jax._src import test_util as jtu
-from jax.experimental import export
+from jax import export
 # Import mosaic for flag definitions
 from jax.experimental import mosaic as _  # noqa: F401
 from jax.experimental import pallas as pl
@@ -49,7 +49,7 @@ class ExportTest(jtu.JaxTestCase):
     if (jtu.device_under_test() == "tpu" or
         (jtu.device_under_test() == "gpu" and
          jtu.is_cuda_compute_capability_at_least("8.0"))):
-      res = export.call(exp)(a, a)
+      res = exp.call(a, a)
       self.assertAllClose(res, a + a)
 
 
