@@ -16,6 +16,9 @@ Remember to align the itemized text with the first line of an item within a list
   * jax now depends on jaxlib directly. This change was enabled by the CUDA
     plugin switch: there are no longer multiple jaxlib variants. You can install
     a CPU-only jax with `pip install jax`, no extras required.
+* Deprecations
+  * Internal pretty-printing tools `jax.core.pp_*` are deprecated, and will be removed
+    in a future release.
 
 ## jaxlib 0.4.30
 
