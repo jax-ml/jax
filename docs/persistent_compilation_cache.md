@@ -138,3 +138,40 @@ There are a couple of pitfalls that have currently been discovered:
   - In this situation, caching still proceeds, but a different key is produced every time, making the cache ineffective. 
 
 
+### Working around custom_partitioning
+
+As mentioned, the compilation cache doesn't work with a function that is composed of primitives that implement custom_partitioning. However, it is possible to use shard_map to circumvent custom_partitioning for those primitives that do implement it and make the compilation cache work as expected:
+
+Let's pretend we have a function `F` that implements a layernorm followed by a matrix multiplication using a primitive `LayerNorm` that implements custom_partitioning:
+
+```python
+import jax
+
+def F(x1, x2, gamma, beta):
+   ln_out = LayerNorm(x1, gamma, beta)
+   return ln_out @ x2
+```
+If we were to merely compile this function without shard_map, the cache key for `layernorm_matmul_without_shard_map` would be different everytime we ran the same code:
+
+```python
+layernorm_matmul_without_shard_map = jax.jit(F, in_shardings=(...), out_sharding=(...))(x1, x2, gamma, beta)
+```
+
+However, if we were to wrap the layernorm primitive in shard_map and define a function G that performs the same computation, the cache key for `layernorm_matmul_with_shard_map` will be the same everytime despite `LayerNorm` being implementing custom_partitioning:
+
+```python
+import jax
+from jax.experimental.shard_map import shard_map
+
+def G(x1, x2, gamma, beta, mesh, ispecs, ospecs):
+   ln_out = shard_map(LayerNorm, mesh, in_specs=ispecs, out_specs=ospecs, check_rep=False)(x1, x2, gamma, beta)
+   return ln_out @ x2
+
+ispecs = jax.sharding.PartitionSpec(...)
+ospecs = jax.sharding.PartitionSpec(...)
+mesh = jax.sharding.Mesh(...)
+layernorm_matmul_with_shard_map = jax.jit(G, static_argnames=['mesh', 'ispecs', 'ospecs'])(x1, x2, gamma, beta, mesh, ispecs, ospecs)
+```
+
+Note that the primitive that implements custom_partitioning must be wrapped in shard_map for this work around. It is insufficient to wrap the outer function `F` in shard_map. 
+
