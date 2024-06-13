@@ -48,6 +48,7 @@ from jax.numpy import (
     add as add,
     all as all,
     any as any,
+    arange as arange,
     argmax as argmax,
     argmin as argmin,
     argsort as argsort,
@@ -83,6 +84,7 @@ from jax.numpy import (
     exp as exp,
     expand_dims as expand_dims,
     expm1 as expm1,
+    eye as eye,
     flip as flip,
     float32 as float32,
     float64 as float64,
@@ -183,9 +185,7 @@ from jax.experimental.array_api._manipulation_functions import (
 )
 
 from jax.experimental.array_api._creation_functions import (
-    arange as arange,
     asarray as asarray,
-    eye as eye,
     linspace as linspace,
 )
 

@@ -3603,8 +3603,25 @@ def fromstring(string: str, dtype: DTypeLike = float, count: int = -1, *, sep: s
   return asarray(np.fromstring(string=string, dtype=dtype, count=count, sep=sep))
 
 
-@util.implements(np.eye)
+@util.implements(np.eye, extra_params="""
+device : :py:class:`Device`, :py:class:`Sharding`, optional
+  The (optional) :py:class:`Device`, :py:class:`Sharding`,
+  representing the device(s) to which created array should be
+  transferred. If given, then the result is committed to the device(s).
+""")
 def eye(N: DimSize, M: DimSize | None = None,
+        k: int | ArrayLike = 0,
+        dtype: DTypeLike | None = None,
+        *, device: xc.Device | Sharding | None = None) -> Array:
+  # TODO(vfdev-5): optimize putting the array directly on the device specified
+  # instead of putting it on default device and then on the specific device
+  output = _eye(N, M=M, k=k, dtype=dtype)
+  if device is not None:
+    return jax.device_put(output, device=device)
+  return output
+
+
+def _eye(N: DimSize, M: DimSize | None = None,
         k: int | ArrayLike = 0,
         dtype: DTypeLike | None = None) -> Array:
   dtypes.check_user_dtype_supported(dtype, "eye")
@@ -3629,7 +3646,7 @@ def identity(n: DimSize, dtype: DTypeLike | None = None) -> Array:
   return eye(n, dtype=dtype)
 
 
-@util.implements(np.arange,lax_description= """
+@util.implements(np.arange, lax_description= """
 .. note::
 
    Using ``arange`` with the ``step`` argument can lead to precision errors,
@@ -3638,8 +3655,25 @@ def identity(n: DimSize, dtype: DTypeLike | None = None) -> Array:
    To avoid precision errors, consider using an expression like
    ``(jnp.arange(-600, 600) * .01).astype(jnp.bfloat16)`` to generate a sequence in a higher precision
    and then convert it to the desired lower precision.
-""")
+""", extra_params="""
+device : :py:class:`Device`, :py:class:`Sharding`, optional
+  The (optional) :py:class:`Device`, :py:class:`Sharding`,
+  representing the device(s) to which created array should be
+  transferred. If given, then the result is committed to the device(s).
+"""
+)
 def arange(start: DimSize, stop: DimSize | None = None,
+           step: DimSize | None = None, dtype: DTypeLike | None = None,
+           *, device: xc.Device | Sharding | None = None) -> Array:
+  # TODO(vfdev-5): optimize putting the array directly on the device specified
+  # instead of putting it on default device and then on the specific device
+  output = _arange(start, stop=stop, step=step, dtype=dtype)
+  if device is not None:
+    return jax.device_put(output, device=device)
+  return output
+
+
+def _arange(start: DimSize, stop: DimSize | None = None,
            step: DimSize | None = None, dtype: DTypeLike | None = None) -> Array:
   dtypes.check_user_dtype_supported(dtype, "arange")
   if not config.dynamic_shapes.value:

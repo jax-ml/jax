@@ -2989,6 +2989,30 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self.assertEqual(out.sharding, sharding)
 
   @jtu.sample_product(
+      func=[
+        lambda dtype, device: jnp.arange(5, dtype=dtype, device=device),
+        lambda dtype, device: jnp.eye(5, 6, dtype=dtype, device=device),
+      ],
+      dtype=default_dtypes,
+  )
+  def testArangeEyeWithDevice(self, func, dtype):
+    device = jax.devices()[-1]
+    out = func(dtype=dtype, device=device)
+    self.assertEqual(out.devices(), {device})
+
+  @jtu.sample_product(
+      func=[
+        lambda dtype, device: jnp.arange(5, dtype=dtype, device=device),
+        lambda dtype, device: jnp.eye(5, 6, dtype=dtype, device=device),
+      ],
+      dtype=default_dtypes,
+  )
+  def testArangeEyeWithSharding(self, func, dtype):
+    sharding = SingleDeviceSharding(jax.devices()[-1])
+    out = func(dtype=dtype, device=sharding)
+    self.assertEqual(out.sharding, sharding)
+
+  @jtu.sample_product(
       func=[jnp.empty_like, jnp.zeros_like, jnp.ones_like, jnp.full_like],
       shape=array_shapes,
       dtype=default_dtypes,
@@ -4796,10 +4820,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     expected = jtu.with_jax_dtype_defaults(np.arange)(5)
     self.assertAllClose(ans, expected)
 
-  @jtu.sample_product(args=[(5,), (0, 5)])
-  def testArangeJaxpr(self, args):
-    jaxpr = jax.make_jaxpr(lambda: jnp.arange(*args))()
-    self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
+  @jtu.sample_product(
+    args=[(5,), (0, 5)],
+    specify_device=[True, False],
+  )
+  def testArangeJaxpr(self, args, specify_device):
+    device = jax.devices()[-1] if specify_device else None
+    kwargs = {"device": device}
+    jaxpr = jax.make_jaxpr(lambda: jnp.arange(*args, **kwargs))()
+    # We have 2 statements in jaxpr:
+    # [a:i32[5] = iota[dimension=0 dtype=int32 shape=(5,)],
+    #  a:i32[5] = device_put[devices=[None] srcs=[None]] b]
+    num_eqs = 2 if device is not None else 1
+    self.assertEqual(len(jaxpr.jaxpr.eqns), num_eqs)
     self.assertEqual(jaxpr.jaxpr.eqns[0].primitive, lax.iota_p)
 
   def testIssue830(self):
@@ -5941,7 +5974,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'empty_like': ['subok', 'order'],
       'einsum': ['kwargs'],
       'einsum_path': ['einsum_call'],
-      'eye': ['device', 'order', 'like'],
+      'eye': ['order', 'like'],
       'hstack': ['casting'],
       'identity': ['like'],
       'isin': ['kind'],
