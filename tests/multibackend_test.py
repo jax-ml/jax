@@ -34,6 +34,8 @@ class MultiBackendTest(jtu.JaxTestCase):
   """Tests jit targeting to different backends."""
 
   @jtu.sample_product(backend=['cpu', 'gpu', 'tpu', None])
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message="backend and device argument")
   def testMultiBackend(self, backend):
     if backend not in ('cpu', jtu.device_under_test(), None):
       raise SkipTest("Backend is not CPU or the device under test")
@@ -52,6 +54,8 @@ class MultiBackendTest(jtu.JaxTestCase):
   @jtu.sample_product(
     ordering=[('cpu', None), ('gpu', None), ('tpu', None), (None, None)]
   )
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message="backend and device argument")
   def testMultiBackendNestedJit(self, ordering):
     outer, inner = ordering
     if outer not in ('cpu', jtu.device_under_test(), None):
