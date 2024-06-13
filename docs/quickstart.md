@@ -27,7 +27,7 @@ This document provides a quick overview of essential JAX features, so you can ge
 
 JAX can be installed for CPU on Linux, Windows, and macOS directly from the [Python Package Index](https://pypi.org/project/jax/):
 ```
-pip install "jax[cpu]"
+pip install jax
 ```
 or, for NVIDIA GPU:
 ```
