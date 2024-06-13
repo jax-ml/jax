@@ -22,16 +22,6 @@ Remember to align the itemized text with the first line of an item within a list
   * Internal pretty-printing tools `jax.core.pp_*` are deprecated, and will be removed
     in a future release.
 
-* Deprecations
-  * `jax.experimental.export` is deprecated. Use `jax.export` instead.
-    See the [migration guide](https://jax.readthedocs.io/en/latest/export/export.html#migration-guide-from-jax-experimental-export).
-
-* New functionality
-  * Added an API for exporting and serializing JAX functions. This used
-    to exist in `jax.experimental.export` (which is being deprecated),
-    and will now live in `jax.export`.
-    See the [documentation](https://jax.readthedocs.io/en/latest/export/index.html).
-
 ## jaxlib 0.4.30
 
   * Support for monolithic CUDA jaxlibs has been dropped. You must use the
