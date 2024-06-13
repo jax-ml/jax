@@ -47,7 +47,7 @@ _utils_c = c
 
 
 # TODO(apaszke): Implement a Q-scaled, base2 exp implementation.
-class ExpImplementation(enum.StrEnum):
+class ExpImplementation(enum.Enum):
   EXACT = enum.auto()
   APPROX = enum.auto()
 
@@ -371,6 +371,6 @@ if __name__ == "__main__":
     optimal_time = matmul_flops / peak_flops * 1e6  # us
     achieved_tc_util = optimal_time / runtime_us * 100
     print(
-        f"{kv_seq_len=:<6} {q_seq_len=:<6} {num_q_heads=:<4} {head_dim=:<6} exp_impl={str(exp_impl):<6}:"
+        f"{kv_seq_len=:<6} {q_seq_len=:<6} {num_q_heads=:<4} {head_dim=:<6} exp_impl={exp_impl.name:<6}:"
         f"  {runtime_us:<7.1f}us = {achieved_tc_util:4.1f}% TC utilization"
     )
