@@ -55,6 +55,7 @@ py_extension(
         ":jaxlib_mlir_capi_shared_library",
         "@llvm-project//mlir:MLIRBindingsPythonCoreNoCAPI",
         "@llvm-project//mlir:MLIRBindingsPythonHeaders",
+        "@llvm-project//mlir:CAPITransformsObjects",
     ],
 )
 
