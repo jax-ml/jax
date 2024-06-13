@@ -188,7 +188,7 @@ def convolve(in1: Array, in2: Array, mode: str = 'full', method: str = 'auto',
              precision: PrecisionLike = None) -> Array:
   """Convolution of two N-dimensional arrays.
 
-  JAX implementation of :func:`jax.scipy.signal.convolve`.
+  JAX implementation of :func:`scipy.signal.convolve`.
 
   Args:
     in1: left-hand input to the convolution.
@@ -253,7 +253,7 @@ def convolve2d(in1: Array, in2: Array, mode: str = 'full', boundary: str = 'fill
                fillvalue: float = 0, precision: PrecisionLike = None) -> Array:
   """Convolution of two 2-dimensional arrays.
 
-  JAX implementation of :func:`jax.scipy.signal.convolve2d`.
+  JAX implementation of :func:`scipy.signal.convolve2d`.
 
   Args:
     in1: left-hand input to the convolution. Must have ``in1.ndim == 2``.
@@ -327,7 +327,7 @@ def correlate(in1: Array, in2: Array, mode: str = 'full', method: str = 'auto',
               precision: PrecisionLike = None) -> Array:
   """Cross-correlation of two N-dimensional arrays.
 
-  JAX implementation of :func:`jax.scipy.signal.correlate`.
+  JAX implementation of :func:`scipy.signal.correlate`.
 
   Args:
     in1: left-hand input to the cross-correlation.
@@ -387,7 +387,7 @@ def correlate2d(in1: Array, in2: Array, mode: str = 'full', boundary: str = 'fil
                 fillvalue: float = 0, precision: PrecisionLike = None) -> Array:
   """Cross-correlation of two 2-dimensional arrays.
 
-  JAX implementation of :func:`jax.scipy.signal.correlate2d`.
+  JAX implementation of :func:`scipy.signal.correlate2d`.
 
   Args:
     in1: left-hand input to the cross-correlation. Must have ``in1.ndim == 2``.
