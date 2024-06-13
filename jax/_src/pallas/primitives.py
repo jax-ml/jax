@@ -49,19 +49,20 @@ zip, unsafe_zip = util.safe_zip, zip
 program_id_p = jax_core.Primitive("program_id")
 
 def program_id(axis: int) -> jax.Array:
+  """Returns the kernel execution position along the given axis of the grid."""
   return program_id_p.bind(axis=axis)
 
 def program_id_bind(*, axis: int):
   grid_env = pallas_core.current_grid_env()
   if grid_env:
-    return grid_env[axis].axis_index
+    return grid_env[axis].index
   return jax_core.Primitive.bind(program_id_p, axis=axis)
 program_id_p.def_custom_bind(program_id_bind)
 
 def _program_id_impl(*, axis: int):
   grid_env = pallas_core.current_grid_env()
   assert grid_env
-  return grid_env[axis].axis_index
+  return grid_env[axis].index
 program_id_p.def_impl(_program_id_impl)
 
 def _program_id_abstract_eval(**_):
@@ -72,20 +73,21 @@ program_id_p.def_abstract_eval(_program_id_abstract_eval)
 num_programs_p = jax_core.Primitive("num_programs")
 
 def num_programs(axis: int) -> jax.Array:
+  """Returns the size of the grid along the given axis."""
   return num_programs_p.bind(axis=axis)
 
 @num_programs_p.def_custom_bind
 def _num_programs_bind(*, axis: int):
   grid_env = pallas_core.current_grid_env()
   if grid_env:
-    return jnp.asarray(grid_env[axis].axis_size, dtype=jnp.int32)
+    return jnp.asarray(grid_env[axis].size, dtype=jnp.int32)
   return jax_core.Primitive.bind(num_programs_p, axis=axis)
 
 @num_programs_p.def_impl
 def _num_programs_impl(*, axis: int):
   grid_env = pallas_core.current_grid_env()
   assert grid_env
-  return jnp.asarray(grid_env[axis].axis_size, dtype=jnp.int32)
+  return jnp.asarray(grid_env[axis].size, dtype=jnp.int32)
 
 @num_programs_p.def_abstract_eval
 def _num_programs_abstract_eval(**_):
@@ -461,7 +463,7 @@ def _swap_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
     ]
     slice_starts = [s.start if isinstance(s, Slice) else s for s in indices]
     slice_sizes = tuple(s.size if isinstance(s, Slice) else 1 for s in indices)
-    # fixes an inconstency with lax.dynamic_update_slice where if the slice
+    # Fixes an inconsistency with lax.dynamic_update_slice where if the slice
     # goes out of bounds, it will instead move the start_index backwards so the
     # slice will fit in memory.
     ref = _pad_values_to_avoid_dynamic_slice_oob_shift(ref, slice_sizes)

@@ -219,7 +219,7 @@ def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
     def body(carry):
       i, loop_idx, *carry = carry
       local_grid_env = tuple(
-          (idx, b)
+          pallas_core.GridAxis(idx, b)
           for dim, (idx, b) in enumerate(zip(loop_idx, grid))
           if dim not in grid_mapping.mapped_dims
       )

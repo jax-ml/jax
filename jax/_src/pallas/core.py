@@ -22,6 +22,7 @@ import dataclasses
 import functools
 from typing import Any, Callable, Union
 
+import jax
 from jax._src import api_util
 from jax._src import core as jax_core
 from jax._src import linear_util as lu
@@ -83,25 +84,27 @@ def _ref_raise_to_shaped(ref_aval: AbstractMemoryRef, weak_type):
 jax_core.raise_to_shaped_mappings[AbstractMemoryRef] = _ref_raise_to_shaped
 
 
-@dataclasses.dataclass
-class GridEnv:
-  axis_index: Any
-  axis_size: int
+@dataclasses.dataclass(frozen=True)
+class GridAxis:
+  index: jax.Array
+  size: int
 
-_grid_env_stack: list[tuple[GridEnv, ...]] = []
+# Stores the kernel execution position and the size along grid axes.
+GridEnv = Sequence[GridAxis]
+
+_grid_env_stack: list[GridEnv] = []
 
 
 @contextlib.contextmanager
-def grid_env(env: tuple[tuple[Any, int], ...]) -> Iterator[None]:
-  _grid_env_stack.append(tuple(GridEnv(axis_index, axis_size)
-                               for axis_index, axis_size in env))
+def grid_env(env: GridEnv) -> Iterator[None]:
+  _grid_env_stack.append(env)
   try:
     yield
   finally:
     _grid_env_stack.pop()
 
 
-def current_grid_env() -> tuple[GridEnv, ...] | None:
+def current_grid_env() -> GridEnv | None:
   if not _grid_env_stack:
     return None
   return _grid_env_stack[-1]
