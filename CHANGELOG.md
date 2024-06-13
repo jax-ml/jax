@@ -13,8 +13,15 @@ Remember to align the itemized text with the first line of an item within a list
     bumped to 0.4.0 but this has been rolled back in this release to give users
     of both TensorFlow and JAX more time to migrate to a newer TensorFlow
     release.
+  * jax now depends on jaxlib directly. This change was enabled by the CUDA
+    plugin switch: there are no longer multiple jaxlib variants. You can install
+    a CPU-only jax with `pip install jax`, no extras required.
 
 ## jaxlib 0.4.30
+
+  * Support for monolithic CUDA jaxlibs has been dropped. You must use the
+    plugin-based installation (`pip install jax[cuda12]` or
+    `pip install jax[cuda12_local]`).
 
 ## jax 0.4.29 (June 10, 2024)
 
