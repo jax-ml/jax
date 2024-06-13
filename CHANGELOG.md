@@ -13,9 +13,11 @@ Remember to align the itemized text with the first line of an item within a list
     bumped to 0.4.0 but this has been rolled back in this release to give users
     of both TensorFlow and JAX more time to migrate to a newer TensorFlow
     release.
+  * `jax.experimental.mesh_utils` can now create an efficient mesh for TPU v5e.
   * jax now depends on jaxlib directly. This change was enabled by the CUDA
     plugin switch: there are no longer multiple jaxlib variants. You can install
     a CPU-only jax with `pip install jax`, no extras required.
+
 * Deprecations
   * Internal pretty-printing tools `jax.core.pp_*` are deprecated, and will be removed
     in a future release.
