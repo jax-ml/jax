@@ -35,8 +35,12 @@ cc_library(
     copts = ["-fexceptions"],
     features = ["-use_header_modules"],
     deps = [
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/ffi/api:ffi",
         "@xla//xla/service:custom_call_status",
+        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:dynamic_annotations",
+        "@com_google_absl//absl/strings:str_format",
     ],
 )
 
@@ -50,6 +54,7 @@ cc_library(
 pybind_extension(
     name = "_lapack",
     srcs = ["lapack.cc"],
+    hdrs = ["lapack.h"],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
@@ -63,6 +68,7 @@ pybind_extension(
     deps = [
         ":lapack_kernels",
         "//jaxlib:kernel_nanobind_helpers",
+        "@xla//xla/ffi/api:ffi",
         "@nanobind",
     ],
 )
@@ -70,10 +76,13 @@ pybind_extension(
 cc_library(
     name = "cpu_kernels",
     srcs = ["cpu_kernels.cc"],
+    hdrs = ["lapack.h"],
     visibility = ["//visibility:public"],
     deps = [
         ":lapack_kernels",
         ":lapack_kernels_using_lapack",
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/ffi/api:ffi",
         "@xla//xla/service:custom_call_target_registry",
     ],
     alwayslink = 1,
