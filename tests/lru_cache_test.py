@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import multiprocessing
 import tempfile
 import time
 
@@ -145,6 +146,35 @@ class LRUCacheTest(LRUCacheTestCase):
       cache.put("cache-a", b"aaaa")
     self.assertIsNone(cache.get("cache-a"))
     self.assertEqual(set(self.path.glob("cache-*")), set())
+
+  def test_multiprocess(self):
+    large_number = 1024
+
+    bytes_a = b"a" * (large_number + 1)
+    bytes_b = b"a" * (large_number + 1)
+
+    cache = LRUCache(self.name, max_size=large_number * 2)
+
+    def call_multiple_puts_and_gets():
+      for _ in range(128):
+        cache.put("cache-a", bytes_a)
+        cache.put("cache-b", bytes_b)
+        self.assertIn(cache.get("cache-a"), (None, bytes_a))
+        self.assertIn(cache.get("cache-b"), (None, bytes_b))
+
+    processes: list[multiprocessing.Process] = []
+    for _ in range(128):
+      p = multiprocessing.Process(target=call_multiple_puts_and_gets)
+      p.start()
+      processes.append(p)
+    for p in processes:
+      p.join()
+
+    # `FileNotFoundError` must not occur
+    self.assertTrue(all(process.exitcode == 0 for process in processes))
+
+    self.assertIn(cache.get("cache-a"), (None, bytes_a))
+    self.assertIn(cache.get("cache-b"), (None, bytes_b))
 
 
 if __name__ == "__main__":
