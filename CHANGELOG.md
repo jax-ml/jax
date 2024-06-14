@@ -30,6 +30,8 @@ Remember to align the itemized text with the first line of an item within a list
     the last several JAX releases.
   * `jax.experimental.export` is deprecated. Use {mod}`jax.export` instead.
     See the [migration guide](https://jax.readthedocs.io/en/latest/export/export.html#migration-guide-from-jax-experimental-export).
+  * Passing an array in place of a dtype is now deprecated in most cases; e.g. for arrays
+    `x` and `y`, `x.astype(y)` will raise a warning. To silence it use `x.astype(y.dtype)`.
 
 ## jaxlib 0.4.30
 
