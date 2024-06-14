@@ -423,6 +423,7 @@ class PallasCallDynamicGridTest(PallasTPUTest):
       return self.pallas_call(
           kernel,
           grid=(steps * 2,),
+          in_specs=[pl.BlockSpec(lambda i: (0, 0), shape)],
           out_specs=pl.BlockSpec(lambda i: (0, 0), shape),
           out_shape=result_ty,
       )(x)
