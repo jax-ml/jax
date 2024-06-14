@@ -182,42 +182,6 @@ Toolbox](https://github.com/NVIDIA/JAX-Toolbox) containers, which are
 bleeding edge containers containing nightly releases of jax and some
 models/frameworks.
 
-## JAX nightly installation
-
-Nightly releases reflect the state of the main JAX repository at the time they are
-built, and may not pass the full test suite.
-
-- `jax`:
-
-```bash
-pip install -U --pre jax -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
-```
-
-- `jaxlib` CPU:
-
-```bash
-pip install -U --pre jaxlib -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
-```
-
-- `jaxlib` Google Cloud TPU:
-
-```bash
-pip install -U --pre jaxlib -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
-pip install -U libtpu-nightly -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
-```
-
-- `jaxlib` NVIDIA GPU (CUDA 12):
-
-```bash
-pip install -U --pre jaxlib jax-cuda12-pjrt jax-cuda12-plugin -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
-```
-
-- `jaxlib` NVIDIA GPU (CUDA 12) legacy:
-
-```bash
-pip install -U --pre jaxlib -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_cuda12_releases.html
-```
-
 (install-google-tpu)=
 ## Google Cloud TPU
 
@@ -294,6 +258,39 @@ Go to the `conda-forge`
 [jax](https://github.com/conda-forge/jax-feedstock#installing-jax) repositories
 for more details.
 
+
+## JAX nightly installation
+
+Nightly releases reflect the state of the main JAX repository at the time they are
+built, and may not pass the full test suite.
+
+- CPU only:
+
+```bash
+pip install -U --pre jax -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
+```
+
+- Google Cloud TPU:
+
+```bash
+pip install -U --pre jax[tpu] -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+```
+
+- NVIDIA GPU (CUDA 12):
+
+```bash
+pip install -U --pre jax[cuda12] -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
+```
+
+- NVIDIA GPU (CUDA 12) legacy:
+
+Use the following for historical nightly releases of monolithic CUDA jaxlibs.
+You most likely do not want this; no further monolithic CUDA jaxlibs will be
+built and those that exist will expire by Sep 2024. Use the "CUDA 12" option above.
+
+```bash
+pip install -U --pre jaxlib -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_cuda12_releases.html
+```
 
 (building-jax-from-source)=
 ## Building JAX from source
