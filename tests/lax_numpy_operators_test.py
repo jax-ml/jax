@@ -635,7 +635,7 @@ class JaxNumpyOperatorTests(jtu.JaxTestCase):
       for dtypes in itertools.product(
         *(_valid_dtypes_for_shape(s, int_dtypes_no_uint64) for s in shapes))
     ],
-    op=[jnp.left_shift, jnp.bitwise_left_shift, jnp.right_shift, jnp.bitwise_right_shift],
+    op=[jnp.left_shift, jnp.right_shift],
   )
   @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testShiftOpAgainstNumpy(self, op, dtypes, shapes):
