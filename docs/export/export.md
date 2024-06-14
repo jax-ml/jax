@@ -630,6 +630,29 @@ We list here a history of the calling convention version numbers:
     This is the only supported version as of 27th of March, 2024.
 
 
+## Migration guide from jax.experimental.export
 
+On June 14, 2014 we deprecated the `jax.experimental.export` APIs
+in favor of `jax.export` APIs. There have been some minor changes:
+
+  * `jax.experimental.export.export`:
+    * The old function used to allow any Python callable, or the result of
+      `jax.jit`. Now only the latter is accepted. You have to manually apply
+      `jax.jit` to the function to export before calling `export`.
+    * The old `lowering_parameters` kwarg is now named `platforms`
+  * `jax.experimental.export.default_lowering_platform()` is now
+    at {func}`jax.export.default_export_platform`.
+  * `jax.experimental.export.call` is now a method of the {class}`jax.export.Exported` object.
+    Instead of `export.call(exp)` you should use `exp.call`.
+  * `jax.experimental.export.serialize` is now a method of the {class}`jax.export.Exported`
+    object. Instead of `export.serialize(exp)` you should use `exp.serialize()`.
+  * The configuration flag `--jax-serialization-version` is deprecated.
+    Use `--jax-export-calling-convention-version`.
+  * The value `jax.experimental.export.minimum_supported_serialization_version`
+    is now at `jax.export.minimum_supported_calling_convention_version`.
+  * The following fields of {class}`jax.export.Exported` have been renamed
+     * `uses_shape_polymorphism` is now `uses_global_constants`
+     * `mlir_module_serialization_version` is now `calling_convention_version`
+     * `lowering_platforms` is now `platforms`.
 
 
