@@ -857,7 +857,7 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
   kept_args_avals = [aval for i, aval in enumerate(exported.in_avals) if i in exported.module_kept_var_idx]
   kept_args_flat_tf = [atf for i, atf in enumerate(args_flat_tf) if i in exported.module_kept_var_idx]
 
-  version = exported.mlir_module_serialization_version
+  version = exported.calling_convention_version
 
   try:
     get_max_supported_version = tfxla.call_module_maximum_supported_version
@@ -890,7 +890,7 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
       has_token_input_output=False
   )
 
-  call_module_attrs["platforms"] = tuple(p.upper() for p in exported.lowering_platforms)
+  call_module_attrs["platforms"] = tuple(p.upper() for p in exported.platforms)
   if version >= 6:
     call_module_attrs["disabled_checks"] = tuple(
         str(dc)
