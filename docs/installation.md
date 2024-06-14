@@ -203,7 +203,7 @@ pip install -U --pre jaxlib -f https://storage.googleapis.com/jax-releases/jax_n
 
 ```bash
 pip install -U --pre jaxlib -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
-pip install -U libtpu-nightly -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+pip install -U libtpu-nightly --pre -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 ```
 
 - `jaxlib` NVIDIA GPU (CUDA 12):
