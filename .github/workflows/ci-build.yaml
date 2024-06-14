@@ -136,6 +136,7 @@ jobs:
     - name: Test documentation
       env:
         XLA_FLAGS: "--xla_force_host_platform_device_count=8"
+        JAX_TRACEBACK_FILTERING: "off"
         JAX_ARRAY: 1
         PY_COLORS: 1
       run: |

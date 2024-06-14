@@ -1807,7 +1807,8 @@ def _cpp_pmap(
 
   cpp_mapped_f = pmap_lib.pmap(
       fun, cache_miss, static_broadcasted_tuple,
-      pxla.shard_arg, pytree_registry=tree_util.default_registry)
+      lambda x, s: pxla.shard_args([s], [x])[0],
+      pytree_registry=tree_util.default_registry)
   _pmap_cache_clears.add(cpp_mapped_f)
 
   pmap_f = wraps(fun)(cpp_mapped_f)

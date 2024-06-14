@@ -93,8 +93,8 @@ def _serialize_exported(
   disabled_safety_checks = _serialize_array(
       builder, _serialize_disabled_safety_check, exp.disabled_safety_checks
   )
-  lowering_platforms = _serialize_array(
-      builder, lambda b, p: b.CreateString(p), exp.lowering_platforms
+  platforms = _serialize_array(
+      builder, lambda b, p: b.CreateString(p), exp.platforms
   )
   mlir_module_serialized = builder.CreateByteVector(exp.mlir_module_serialized)
   module_kept_var_idx = builder.CreateNumpyVector(
@@ -121,17 +121,17 @@ def _serialize_exported(
   ser_flatbuf.ExportedAddNrDevices(builder, exp.nr_devices)
   ser_flatbuf.ExportedAddInShardings(builder, in_shardings)
   ser_flatbuf.ExportedAddOutShardings(builder, out_shardings)
-  ser_flatbuf.ExportedAddLoweringPlatforms(builder, lowering_platforms)
+  ser_flatbuf.ExportedAddPlatforms(builder, platforms)
   ser_flatbuf.ExportedAddOrderedEffects(builder, ordered_effects)
   ser_flatbuf.ExportedAddUnorderedEffects(builder, unordered_effects)
   ser_flatbuf.ExportedAddDisabledChecks(builder, disabled_safety_checks)
   ser_flatbuf.ExportedAddMlirModuleSerialized(builder, mlir_module_serialized)
-  ser_flatbuf.ExportedAddMlirModuleSerializationVersion(
-      builder, exp.mlir_module_serialization_version
+  ser_flatbuf.ExportedAddCallingConventionVersion(
+      builder, exp.calling_convention_version
   )
   ser_flatbuf.ExportedAddModuleKeptVarIdx(builder, module_kept_var_idx)
-  ser_flatbuf.ExportedAddUsesShapePolymorphism(
-      builder, exp.uses_shape_polymorphism
+  ser_flatbuf.ExportedAddUsesGlobalConstants(
+      builder, exp.uses_global_constants
   )
   if vjp is not None:
     ser_flatbuf.ExportedAddVjp(builder, vjp)
@@ -179,9 +179,9 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
   out_shardings = _deserialize_tuple(
       exp.OutShardingsLength, exp.OutShardings, _deserialize_sharding
   )
-  lowering_platforms = _deserialize_tuple(
-      exp.LoweringPlatformsLength,
-      exp.LoweringPlatforms,
+  platforms = _deserialize_tuple(
+      exp.PlatformsLength,
+      exp.Platforms,
       lambda v: v.decode("utf-8"),
   )
   ordered_effects = _deserialize_tuple(
@@ -197,9 +197,9 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
   )
 
   mlir_module_serialized = exp.MlirModuleSerializedAsNumpy().tobytes()
-  mlir_module_serialization_version = exp.MlirModuleSerializationVersion()
+  calling_convention_version = exp.CallingConventionVersion()
   module_kept_var_idx = tuple(exp.ModuleKeptVarIdxAsNumpy().tolist())
-  uses_shape_polymorphism = exp.UsesShapePolymorphism()
+  uses_global_constants = exp.UsesGlobalConstants()
 
   _get_vjp = None
   if vjp := exp.Vjp():
@@ -214,14 +214,14 @@ def _deserialize_exported(exp: ser_flatbuf.Exported) -> _export.Exported:
       nr_devices=nr_devices,
       in_shardings_hlo=in_shardings,
       out_shardings_hlo=out_shardings,
-      lowering_platforms=lowering_platforms,
+      platforms=platforms,
       ordered_effects=ordered_effects,
       unordered_effects=unordered_effects,
       disabled_safety_checks=disabled_safety_checks,
       mlir_module_serialized=mlir_module_serialized,
-      mlir_module_serialization_version=mlir_module_serialization_version,
+      calling_convention_version=calling_convention_version,
       module_kept_var_idx=module_kept_var_idx,
-      uses_shape_polymorphism=uses_shape_polymorphism,
+      uses_global_constants=uses_global_constants,
       _get_vjp=_get_vjp,
   )
 

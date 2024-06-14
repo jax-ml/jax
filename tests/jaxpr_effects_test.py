@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import contextlib
-import functools
 import threading
 import unittest
 
@@ -562,23 +561,22 @@ class EffectOrderingTest(jtu.JaxTestCase):
       log.append(x)
       return ()
 
-    @functools.partial(jax.jit, device=jax.devices()[0])
+    @jax.jit
     def f(x):
       # Expensive computation
       x = x.dot(x)
       x = jnp.log(x.sum())
       return callback_p.bind(x, callback=log_value, effect=log_effect, out_avals=[])
 
-    @functools.partial(jax.jit, device=jax.devices()[1])
+    @jax.jit
     def g(x):
       return callback_p.bind(x, callback=log_value, effect=log_effect, out_avals=[])
 
-    f(jnp.ones((500, 500)))
-    g(3.)
-    f(jnp.ones((500, 500)))
-    g(3.)
-    f(jnp.ones((500, 500)))
-    g(3.)
+    x = jax.device_put(jnp.ones((500, 500)), jax.devices()[0])
+    y = jax.device_put(3., jax.devices()[1])
+    for _ in range(3):
+      f(x)
+      g(y)
     jax.effects_barrier()
     f_, g_ = float(jnp.log(1.25e8)), 3.
     expected_log = [f_, g_, f_, g_, f_, g_]

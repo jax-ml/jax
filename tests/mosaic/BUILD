@@ -76,3 +76,14 @@ jax_test(
         "//jax:mosaic_gpu",
     ] + py_deps("numpy"),
 )
+
+jax_test(
+    name = "flash_attention_test",
+    srcs = ["flash_attention_test.py"],
+    disable_backends = DISABLED_BACKENDS,
+    disable_configs = DISABLED_CONFIGS,
+    deps = [
+        "//jax:mosaic_gpu",
+        "//jax/experimental/mosaic/gpu/examples:flash_attention",
+    ] + py_deps("absl/testing"),
+)

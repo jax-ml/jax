@@ -219,7 +219,7 @@ def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
     def body(carry):
       i, loop_idx, *carry = carry
       local_grid_env = tuple(
-          (idx, b)
+          pallas_core.GridAxis(idx, b)
           for dim, (idx, b) in enumerate(zip(loop_idx, grid))
           if dim not in grid_mapping.mapped_dims
       )
@@ -518,6 +518,26 @@ def _pallas_call_batching_rule(
       return x
     return jnp.squeeze(x, axis=bdim)
 
+  axis_size, = {x.shape[d] for x, d in zip(args, dims)
+                if d is not batching.not_mapped}
+  if axis_size == 1:
+    # Why are we even vmapping?
+    args = map(_maybe_squeeze_out_bdim, args, dims)
+    out = pallas_call_p.bind(
+        *args,
+        jaxpr=jaxpr,
+        name=name,
+        in_shapes=in_shapes,
+        out_shapes=out_shapes,
+        which_linear=which_linear,
+        grid_mapping=grid_mapping,
+        input_output_aliases=input_output_aliases,
+        debug=debug,
+        interpret=interpret,
+        compiler_params=compiler_params,
+    )
+    return [jnp.expand_dims(x, 0) for x in out], (0,) * len(out)
+
   # The first num_dynamic_grid_bounds arguments are size-1 arrays that store
   # the size of the dynamic bounds.
   dynamic_grid_args, args = split_list(
@@ -588,8 +608,6 @@ def _pallas_call_batching_rule(
 
   if not dims:
     raise NotImplementedError("vmapping pallas_call with no arguments.")
-  axis_size, = {x.shape[d] for x, d in zip(args, dims)
-                if d is not batching.not_mapped}
   block_mappings = grid_mapping.block_mappings
   avals = [v.aval for v in jaxpr.invars]
   # How should we pick output dimensions? This actually matters because XLA
@@ -720,38 +738,48 @@ def _pallas_call_lowering(
     impl = partial(_pallas_call_impl, **params, interpret=True)
     return mlir.lower_fun(impl, multiple_results=True)(ctx, *in_nodes)
 
-  try:
-    [platform] = ctx.module_context.platforms
-  except ValueError:
-    raise ValueError(
-        "Can only lower pallas_call on a single platform."
-    ) from None
-
-  if platform == "cpu":
+  def cpu_lowering(ctx: mlir.LoweringRuleContext,
+                   *in_nodes: mlir.ir.Value | Sequence[mlir.ir.Value],
+                   **params):
     raise ValueError("Only interpret mode is supported on CPU backend.")
-  elif platform == "cuda" or platform == "rocm":
+
+  def tpu_lowering(ctx: mlir.LoweringRuleContext,
+                   *in_nodes: mlir.ir.Value | Sequence[mlir.ir.Value],
+                   **params):
+    try:
+      from jax._src.pallas.mosaic import pallas_call_registration
+    except ImportError:
+      raise _unsupported_lowering_error("tpu")
+    else:
+      return pallas_call_registration.pallas_call_tpu_lowering_rule(
+          ctx, *in_nodes, **params
+      )
+
+  def gpu_lowering(ctx: mlir.LoweringRuleContext,
+                   *in_nodes: mlir.ir.Value | Sequence[mlir.ir.Value],
+                   **params):
     try:
       if _PALLAS_USE_MOSAIC_GPU.value:
         from jax._src.pallas.mosaic_gpu import pallas_call_registration
       else:
         from jax._src.pallas.triton import pallas_call_registration  # type: ignore
     except ImportError:
-      pass
+      raise _unsupported_lowering_error("gpu")
     else:
       return pallas_call_registration.pallas_call_lowering(
-          ctx, *in_nodes, interpret=interpret, **params
-      )
-  elif platform == "tpu":
-    try:
-      from jax._src.pallas.mosaic import pallas_call_registration  # type: ignore
-    except ImportError:
-      pass
-    else:
-      return pallas_call_registration.pallas_call_tpu_lowering_rule(
-          ctx, *in_nodes, interpret=interpret, **params
+          ctx, *in_nodes, **params
       )
 
-  raise _unsupported_lowering_error(platform)
+  return mlir.lower_per_platform(ctx, "pallas_call",
+                                 dict(cpu=cpu_lowering,
+                                      tpu=tpu_lowering,
+                                      cuda=gpu_lowering,
+                                      rocm=gpu_lowering),
+                                 None,  # default_rule
+                                 effects.no_effects,
+                                 *in_nodes,
+                                 interpret=interpret,
+                                 **params)
 
 
 mlir.register_lowering(pallas_call_p, _pallas_call_lowering)

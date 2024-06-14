@@ -22,6 +22,7 @@ import dataclasses
 import functools
 from typing import Any, Callable, Union
 
+import jax
 from jax._src import api_util
 from jax._src import core as jax_core
 from jax._src import linear_util as lu
@@ -83,25 +84,27 @@ def _ref_raise_to_shaped(ref_aval: AbstractMemoryRef, weak_type):
 jax_core.raise_to_shaped_mappings[AbstractMemoryRef] = _ref_raise_to_shaped
 
 
-@dataclasses.dataclass
-class GridEnv:
-  axis_index: Any
-  axis_size: int
+@dataclasses.dataclass(frozen=True)
+class GridAxis:
+  index: jax.Array
+  size: int
 
-_grid_env_stack: list[tuple[GridEnv, ...]] = []
+# Stores the kernel execution position and the size along grid axes.
+GridEnv = Sequence[GridAxis]
+
+_grid_env_stack: list[GridEnv] = []
 
 
 @contextlib.contextmanager
-def grid_env(env: tuple[tuple[Any, int], ...]) -> Iterator[None]:
-  _grid_env_stack.append(tuple(GridEnv(axis_index, axis_size)
-                               for axis_index, axis_size in env))
+def grid_env(env: GridEnv) -> Iterator[None]:
+  _grid_env_stack.append(env)
   try:
     yield
   finally:
     _grid_env_stack.pop()
 
 
-def current_grid_env() -> tuple[GridEnv, ...] | None:
+def current_grid_env() -> GridEnv | None:
   if not _grid_env_stack:
     return None
   return _grid_env_stack[-1]
@@ -126,22 +129,12 @@ blocked = Blocked()
 IndexingMode = Union[Blocked, Unblocked]
 
 
-@dataclasses.dataclass(init=False, unsafe_hash=True)
+@dataclasses.dataclass(unsafe_hash=True)
 class BlockSpec:
-  index_map: Callable[..., Any] | None
-  block_shape: tuple[int | None, ...] | None
-  memory_space: Any
-  indexing_mode: IndexingMode
-
-  def __init__(self, index_map: Callable[..., Any] | None = None,
-               block_shape: tuple[int | None, ...] | None = None,
-               memory_space: Any = None, indexing_mode: IndexingMode = blocked):
-    self.index_map = index_map
-    if block_shape is not None and not isinstance(block_shape, tuple):
-      block_shape = tuple(block_shape)
-    self.block_shape = block_shape
-    self.memory_space = memory_space
-    self.indexing_mode = indexing_mode
+  index_map: Callable[..., Any] | None = None
+  block_shape: tuple[int | None, ...] | None = None
+  memory_space: Any | None = None
+  indexing_mode: IndexingMode = blocked
 
   def compute_index(self, *args):
     assert self.index_map is not None

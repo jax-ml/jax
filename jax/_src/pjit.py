@@ -343,7 +343,7 @@ def _cpp_pjit(jit_info: PjitInfo):
     fun_name(fun),
     fun, cache_miss, jit_info.static_argnums, jit_info.static_argnames,
     jit_info.donate_argnums, tree_util.dispatch_registry,
-    pxla.shard_arg,
+    lambda x, sharding: pxla.shard_args([sharding], [x])[0],
     _get_cpp_global_cache(jit_info.has_explicit_sharding))
 
   cpp_pjitted_f = wraps(fun)(cpp_pjit_f)
@@ -1636,7 +1636,7 @@ def _pjit_call_impl(*args, jaxpr,
   return xc._xla.pjit(
       name, f, call_impl_cache_miss, [], [], donated_argnums,
       tree_util.dispatch_registry,
-      pxla.shard_arg,
+      lambda x, sharding: pxla.shard_args([sharding], [x])[0],
       _get_cpp_global_cache(has_explicit_sharding))(*args)
 
 pjit_p.def_impl(_pjit_call_impl)

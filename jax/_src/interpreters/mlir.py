@@ -585,6 +585,8 @@ class ModuleContext:
   ip: ir.InsertionPoint
   symbol_table: ir.SymbolTable
   backend_or_name: str | xb.XlaBackend | None
+  # The lowering platforms for the module. Can be more than one only when
+  # exporting.
   platforms: Sequence[str]
   axis_context: AxisContext
   keepalives: list[Any]
@@ -689,6 +691,9 @@ class LoweringRuleContext:
   # module_context.shape_poly_state.dim_vars
   dim_var_values: Sequence[ir.Value] = ()
   compute_type: str | None = None
+  # Override module_context.platforms if not None. Used during multi-platform
+  # lowering, when in a scope with a subset of the module_context.platforms.
+  platforms: Sequence[str] | None = None
 
   def set_tokens_out(self, tokens_out: TokenSet):
     assert self.tokens_out is None, 'Should only set `tokens_out` once.'
@@ -1662,7 +1667,7 @@ def lower_per_platform(ctx: LoweringRuleContext,
    rule_args: the args of the lowering rules.
    rule_kwargs: the kwargs of the lowering rules.
   """
-  platforms: Sequence[str] = ctx.module_context.platforms
+  platforms: Sequence[str] = ctx.platforms or ctx.module_context.platforms
   # Special case the common case (single-platform lowering)
   if len(platforms) == 1:
     rule = platform_rules.get(platforms[0], default_rule)
@@ -1723,7 +1728,10 @@ def lower_per_platform(ctx: LoweringRuleContext,
                       index=rule_idx_op,
                       num_branches=len(kept_rules))
   for i, rule in enumerate(kept_rules):
-    inner_ctx = ctx.replace()
+    platforms_for_this_rule = [p
+                               for p, rule_idx in platform_to_kept_rules_idx.items()
+                               if rule_idx == i]
+    inner_ctx = ctx.replace(platforms=platforms_for_this_rule)
     branch = case_op.regions[i].blocks.append()
     with ir.InsertionPoint(branch):
       output = rule(inner_ctx, *rule_args, **rule_kwargs)
@@ -1764,7 +1772,7 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
 
   The returned function does not use `avals_out`, so callers may pass any value
   as `avals_out`."""
-  def f_lowered(ctx, *args, **params):
+  def f_lowered(ctx: LoweringRuleContext, *args, **params):
     f = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
     wrapped_fun = lu.wrap_init(f, params)
 
@@ -1774,11 +1782,12 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
       # case, we need to form a jaxpr with leading binders for those axis size
       # arguments (by computing an InputType and using trace_to_jaxpr_dynamic2),
       # and we need to call jaxpr_subcomp with these arguments made explicit.
+      assert ctx.axis_size_env is not None
       args = (*ctx.axis_size_env.values(), *args)
       idx = {d: core.DBIdx(i) for i, d in enumerate(ctx.axis_size_env)}
       i32_aval = core.ShapedArray((), np.dtype('int32'))
       implicit_args = [(i32_aval, False)] * len(ctx.axis_size_env)
-      explicit_args = [(a.update(shape=tuple(idx.get(d, d) for d in a.shape))
+      explicit_args = [(a.update(shape=tuple(idx.get(d, d) for d in a.shape))  # type: ignore
                         if type(a) is core.DShapedArray else a, True)
                        for a in ctx.avals_in]
       wrapped_fun = lu.annotate(wrapped_fun, (*implicit_args, *explicit_args))
@@ -1787,8 +1796,12 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
       jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
       # TODO(frostig,mattjj): check ctx.avals_out against jaxpr avals out?
 
+    if ctx.platforms is not None:
+      sub_context = ctx.module_context.replace(platforms=ctx.platforms)
+    else:
+      sub_context = ctx.module_context
     out, tokens = jaxpr_subcomp(
-        ctx.module_context, jaxpr, ctx.name_stack, ctx.tokens_in,
+        sub_context, jaxpr, ctx.name_stack, ctx.tokens_in,
         _ir_consts(consts), *map(wrap_singleton_ir_values, args),
         dim_var_values=ctx.dim_var_values)
     ctx.set_tokens_out(tokens)

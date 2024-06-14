@@ -41,7 +41,7 @@ from jax._src import distributed
 from jax._src import hardware_utils
 from jax._src import traceback_util
 from jax._src import util
-from jax._src.cloud_tpu_init import maybe_import_libtpu
+from jax._src.cloud_tpu_init import get_tpu_library_path
 from jax._src.lib import cuda_versions
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
@@ -133,17 +133,6 @@ _at_fork_handler_installed = False
 # Backends
 
 
-def _get_tpu_library_path() -> str | None:
-  path_from_env = os.getenv("TPU_LIBRARY_PATH")
-  if path_from_env is not None:
-    return path_from_env
-
-  libtpu_module = maybe_import_libtpu()
-  if libtpu_module is not None:
-    return libtpu_module.get_library_path()
-
-  return None
-
 
 def tpu_client_timer_callback(timer_secs: float) -> xla_client.Client | None:
   def _log_warning():
@@ -160,11 +149,11 @@ def tpu_client_timer_callback(timer_secs: float) -> xla_client.Client | None:
   try:
     if xla_extension_version >= 267:
       client = xla_client.make_tpu_client( # type: ignore
-          _get_tpu_library_path(),
+          get_tpu_library_path(),
           _options_from_jax_configs("tpu"))
     else:
       client = xla_client.make_tpu_client(
-          _get_tpu_library_path())
+          get_tpu_library_path())
   finally:
     t.cancel()
 
@@ -1223,7 +1212,7 @@ def make_pjrt_topology(platform: str, topology_name='', **kwargs):
 # TODO(parkers): Get rid of this in favor of a generic way to get topologies.
 def make_pjrt_tpu_topology(topology_name='', **kwargs):
   if not xla_client.pjrt_plugin_loaded("tpu"):
-    library_path = _get_tpu_library_path()
+    library_path = get_tpu_library_path()
     if library_path is None:
       raise RuntimeError(
           "JAX TPU support not installed; cannot generate TPU topology. See"

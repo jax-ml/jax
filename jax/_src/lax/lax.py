@@ -2264,6 +2264,8 @@ def _add_inverse(r, x, y):
   yr = r - x
   return xr, yr
 
+# Note: although XLA allows add(bool, bool) -> bool, we prohibit it in lax.add
+# because it has ambiguous semantics (e.g. XLA uses XOR, numpy uses OR).
 # TODO(slebedev): Why does mypy fail to infer the type here?
 add_p: Primitive = standard_naryop([_num, _num], 'add')
 ad.primitive_jvps[add_p] = _add_jvp
@@ -2318,7 +2320,7 @@ def _mul_inverse(r, x, y):
   yr = r / x
   return xr, yr
 
-mul_p = standard_naryop([_num, _num], 'mul')
+mul_p = standard_naryop([_any, _any], 'mul')
 ad.defjvp(mul_p,
           lambda xdot, x, y: mul(xdot, y),
           lambda ydot, x, y: mul(x, ydot))

@@ -16,6 +16,7 @@ import os
 from jax import version
 from jax._src import config
 from jax._src import hardware_utils
+from typing import Optional
 
 running_in_cloud_tpu_vm: bool = False
 
@@ -32,6 +33,18 @@ def maybe_import_libtpu():
     return None
   else:
     return libtpu
+
+
+def get_tpu_library_path() -> Optional[str]:
+  path_from_env = os.getenv("TPU_LIBRARY_PATH")
+  if path_from_env is not None and os.path.isfile(path_from_env):
+    return path_from_env
+
+  libtpu_module = maybe_import_libtpu()
+  if libtpu_module is not None:
+    return libtpu_module.get_library_path()
+
+  return None
 
 
 def jax_force_tpu_init() -> bool:
@@ -57,9 +70,9 @@ def cloud_tpu_init() -> None:
   global running_in_cloud_tpu_vm
 
   # Exit early if we're not running on a Cloud TPU VM or libtpu isn't installed.
-  libtpu_module = maybe_import_libtpu()
+  libtpu_path = get_tpu_library_path()
   num_tpu_chips = hardware_utils.num_available_tpu_chips_and_device_id()[0]
-  if (libtpu_module is None or num_tpu_chips == 0) and not jax_force_tpu_init():
+  if (libtpu_path is None or num_tpu_chips == 0) and not jax_force_tpu_init():
     return
 
   running_in_cloud_tpu_vm = True
@@ -68,6 +81,7 @@ def cloud_tpu_init() -> None:
   os.environ.setdefault('JAX_PLATFORMS', 'tpu,cpu')
   os.environ['TPU_ML_PLATFORM'] = 'JAX'
   os.environ['TPU_ML_PLATFORM_VERSION'] = version.__version__
+  os.environ['ENABLE_RUNTIME_UPTIME_TELEMETRY'] = '1'
   if hardware_utils.tpu_enhanced_barrier_supported():
     os.environ["LIBTPU_INIT_ARGS"] = os.environ.get("LIBTPU_INIT_ARGS","") + " --xla_tpu_use_enhanced_launch_barrier=true"
 

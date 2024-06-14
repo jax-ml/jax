@@ -3,6 +3,8 @@ on:
   schedule:
     - cron: "0 12 * * *" # Daily at 12:00 UTC
   workflow_dispatch: # allows triggering the workflow run manually
+  pull_request:
+    types: [ labeled ] # allow force-windows-run label
 
 env:
   DISTUTILS_USE_SDK: 1
@@ -10,6 +12,7 @@ env:
 
 jobs:
   win-wheels:
+    if: ${{ (github.event.action != 'labeled') || (github.event.label.name == 'windows:force-run')}}
     strategy:
       fail-fast: true
       matrix:
@@ -26,7 +29,7 @@ jobs:
           access_token: ${{ github.token }}
 
       - name: Install LLVM/Clang
-        run: choco install llvm --version=18.1.4 --yes --no-progress
+        run: choco install llvm --version=18.1.4 --yes --no-progress --allow-downgrade
 
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
         with:

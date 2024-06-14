@@ -558,6 +558,22 @@ class DtypesTest(jtu.JaxTestCase):
     _, new_scale = jax.jit(jax.grad(outer, (0, 1)))(jnp.float32(3.14), scale)
     self.assertAllClose(new_scale, jnp.float32(1.0))
 
+  def test_check_dtype_non_hashable(self):
+    # regression test for issue with checking non-hashable custom dtype
+    class MyDtype:
+      __hash__ = None
+      dtype = np.dtype('float32')
+    dtypes.check_user_dtype_supported(MyDtype())
+
+  def test_check_dtype_array(self):
+    x = jnp.arange(4)
+    msg = "Passing an array as a dtype argument is deprecated"
+    with self.assertWarnsRegex(DeprecationWarning, msg):
+      dtypes.check_user_dtype_supported(x)
+    with self.assertWarnsRegex(DeprecationWarning, msg):
+      jax.jit(dtypes.check_user_dtype_supported)(x)
+
+
 class EArrayTest(jtu.JaxTestCase):
 
   @parameterized.parameters([True, False])

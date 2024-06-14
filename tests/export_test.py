@@ -13,6 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
+from collections.abc import Sequence
 import contextlib
 import dataclasses
 import functools
@@ -149,7 +150,7 @@ def get_exported(fun: Callable, vjp_order=0,
 
 
 # Run tests with the maximum supported version by default
-@jtu.with_config(jax_serialization_version=export.maximum_supported_serialization_version)
+@jtu.with_config(jax_export_calling_convention_version=export.maximum_supported_calling_convention_version)
 class JaxExportTest(jtu.JaxTestCase):
 
   @classmethod
@@ -172,7 +173,7 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertEqual("my_fun", exp.fun_name)
     expected_lowering_platform = xb.canonicalize_platform(jax.default_backend())
     self.assertEqual((expected_lowering_platform,),
-                     exp.lowering_platforms)
+                     exp.platforms)
     self.assertEqual(jax.tree.flatten(((1,), {}))[1], exp.in_tree)
     self.assertEqual((core.ShapedArray((4,), dtype=np.float32),), exp.in_avals)
     self.assertEqual((core.ShapedArray((4,), dtype=np.float32),), exp.out_avals)
@@ -186,7 +187,7 @@ class JaxExportTest(jtu.JaxTestCase):
     exp = get_exported(jax.jit(f), lowering_platforms=("cpu",))((a, b), a=a, b=b)
     a_aval = core.ShapedArray(a.shape, a.dtype)
     b_aval = core.ShapedArray(b.shape, b.dtype)
-    self.assertEqual(exp.lowering_platforms, ("cpu",))
+    self.assertEqual(exp.platforms, ("cpu",))
     args = ((a, b),)
     kwargs = dict(a=a, b=b)
     self.assertEqual(exp.in_tree, jax.tree.flatten((args, kwargs))[1])
@@ -231,6 +232,8 @@ class JaxExportTest(jtu.JaxTestCase):
                                 "Function to be exported must be the result of `jit`"):
       _ = export.export(lambda x: jnp.sin(x))
 
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message="The jax.experimental.export module is deprecated")
   def test_export_experimental_back_compat(self):
     from jax.experimental import export
     # Can export a lambda, without jit
@@ -330,12 +333,12 @@ class JaxExportTest(jtu.JaxTestCase):
         r"Dtype mismatch for args\[0\]"):
       exp_f.call(f32_4.astype(np.float16), b=f32_4)
 
-  def test_default_lowering_platform(self):
+  def test_default_export_platform(self):
     test_platform = jtu.device_under_test()
     if test_platform == "gpu": test_platform = "cuda"
-    self.assertEqual(export.default_lowering_platform(), test_platform)
+    self.assertEqual(export.default_export_platform(), test_platform)
     exp = export.export(jnp.sin)(1.)
-    self.assertEqual(exp.lowering_platforms, (export.default_lowering_platform(),))
+    self.assertEqual(exp.platforms, (export.default_export_platform(),))
 
   @jtu.parameterized_filterable(
     testcase_name=lambda kw: kw["platform"],
@@ -349,7 +352,7 @@ class JaxExportTest(jtu.JaxTestCase):
       raise unittest.SkipTest("Uninteresting scenario")
 
     with self.assertRaisesRegex(
-        ValueError, "The exported function .* was lowered for platform"):
+        ValueError, "Function .* was exported for platform"):
       exp_f.call(a)
 
     # Now try with the platform check disabled
@@ -520,7 +523,7 @@ class JaxExportTest(jtu.JaxTestCase):
 
     # Peek at the module
     module_str = exp.mlir_module()
-    self.assertEqual(config.jax_serialization_version.value >= 7,
+    self.assertEqual(config.jax_export_calling_convention_version.value >= 7,
                      "shape_assertion" in module_str)
     self.assertIn("jax.uses_shape_polymorphism = true", module_str)
     wrapped_main_expected_re = (
@@ -595,19 +598,19 @@ class JaxExportTest(jtu.JaxTestCase):
   @jtu.parameterized_filterable(
     kwargs=[
       dict(v=v)
-      for v in range(export.minimum_supported_serialization_version - 1,
-                     export.maximum_supported_serialization_version + 2)])
+      for v in range(export.minimum_supported_calling_convention_version - 1,
+                     export.maximum_supported_calling_convention_version + 2)])
   def test_poly_basic_versions(self, v: int):
-    with config.jax_serialization_version(v):
+    with config.jax_export_calling_convention_version(v):
       logging.info(
-          "Using JAX serialization version %s",
-          config.jax_serialization_version.value)
+          "Using JAX calling convention version %s",
+          config.jax_export_calling_convention_version.value)
       with contextlib.ExitStack() as e:
-        if not (export.minimum_supported_serialization_version <= v
-                <= export.maximum_supported_serialization_version):
+        if not (export.minimum_supported_calling_convention_version <= v
+                <= export.maximum_supported_calling_convention_version):
           e.enter_context(self.assertRaisesRegex(
             ValueError,
-            f"The requested jax_serialization version {v} is outside the range of supported versions"))
+            f"The requested export calling convention version {v} is outside the range of supported versions"))
 
         exp = get_exported(jnp.sin)(
             jax.ShapeDtypeStruct(export.symbolic_shape("w, h"), np.float32))
@@ -655,7 +658,7 @@ class JaxExportTest(jtu.JaxTestCase):
     disabled_checks = ()
     exp_f = get_exported(jax.jit(f), disabled_checks=disabled_checks)(
         jax.ShapeDtypeStruct(export.symbolic_shape(poly_spec), np.float32))
-    self.assertEqual(exp_f.uses_shape_polymorphism, poly_spec != "3,4,12")
+    self.assertEqual(exp_f.uses_global_constants, poly_spec != "3,4,12")
     arg = np.arange(np.prod(arg_shape),
                     dtype=arg_dtype).reshape(arg_shape)  # arg : f32[3,4,12]
 
@@ -758,7 +761,7 @@ class JaxExportTest(jtu.JaxTestCase):
     inner_exp = get_exported(jax.jit(inner))(
         jax.ShapeDtypeStruct(export.symbolic_shape(inner_poly_spec), np.float32))
 
-    self.assertEqual(inner_exp.uses_shape_polymorphism,
+    self.assertEqual(inner_exp.uses_global_constants,
                      (inner_poly_spec != "3,4,12"))
     def outer(x):  # x: outer_poly_spec
       # Use an addition to test that the shapes are refined properly for the
@@ -776,7 +779,7 @@ class JaxExportTest(jtu.JaxTestCase):
     if expect_error_outer_exp is not None:
       return
 
-    self.assertEqual(outer_exp.uses_shape_polymorphism,
+    self.assertEqual(outer_exp.uses_global_constants,
                      (inner_poly_spec != "3,4,12" or outer_poly_spec != "3,4,12"))
 
     with contextlib.ExitStack() as stack:
@@ -964,13 +967,13 @@ class JaxExportTest(jtu.JaxTestCase):
 
     # Test error reporting
     with self.assertRaisesRegex(
-        NotImplementedError,
-        "Exported module .* was lowered for 2 devices and is called in a context with 1 device"):
+        ValueError,
+        "Function .* was exported for 2 devices and is called in a context with 1 device"):
       _ = exp.call(a)
 
     with self.assertRaisesRegex(
-        NotImplementedError,
-        "Exported module .* was lowered for 2 devices and is called in a context with 1 device"):
+        ValueError,
+        "Function .* was exported for 2 devices and is called in a context with 1 device"):
       mesh1 = Mesh(jax.devices()[0:1], axis_names=("x",))
       _ = jax.jit(
         exp.call,
@@ -1045,9 +1048,9 @@ class JaxExportTest(jtu.JaxTestCase):
     b = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P("i")))
 
     with self.assertRaisesRegex(
-        NotImplementedError,
-        "Exported module .* was lowered for 1 devices and is called in a "
-        f"context with {jax.local_device_count()} devices.* module contains "
+        ValueError,
+        "Function .* was exported for 1 devices and is called in a "
+        f"context with {jax.local_device_count()} devices.* function contains "
         "non-replicated sharding annotations"):
       exp.call(b)
 
@@ -1091,9 +1094,9 @@ class JaxExportTest(jtu.JaxTestCase):
     b = jax.device_put(a, jax.sharding.NamedSharding(run_mesh, P("i")))
 
     with self.assertRaisesRegex(
-        NotImplementedError,
-        "Exported module .* was lowered for 1 devices and is called in a "
-        f"context with {jax.local_device_count()} devices.* module contains "
+        ValueError,
+        "Function .* was exported for 1 devices and is called in a "
+        f"context with {jax.local_device_count()} devices.* function contains "
         "non-replicated sharding annotations"):
       exp.call(b)
 
@@ -1136,7 +1139,7 @@ class JaxExportTest(jtu.JaxTestCase):
     f_r = exp.call
     with self.assertRaisesRegex(
         Exception,
-        "Exported module .* was lowered for 2 devices and is "
+        "Function .* was exported for 2 devices and is "
         "called in a context with 1 devices"):
       _ = f_r(a)  # A is all on the default device
 
@@ -1310,7 +1313,7 @@ class JaxExportTest(jtu.JaxTestCase):
     x = np.arange(8, dtype=np.float32)
     exp = get_exported(jax.jit(_testing_multi_platform_func),
                        lowering_platforms=("tpu", "cpu", "cuda","rocm"))(x)
-    self.assertEqual(exp.lowering_platforms, ("tpu", "cpu", "cuda", "rocm"))
+    self.assertEqual(exp.platforms, ("tpu", "cpu", "cuda", "rocm"))
     module_str = str(exp.mlir_module())
     expected_main_re = (
       r"@main\("
@@ -1333,7 +1336,7 @@ class JaxExportTest(jtu.JaxTestCase):
     x = np.arange(5, dtype=np.float32)
     exp = get_exported(jax.jit(lambda x: _testing_multi_platform_func(jnp.sin(x))),
                        lowering_platforms=("cpu", "tpu", "cuda","rocm"))(x)
-    self.assertEqual(exp.lowering_platforms, ("cpu", "tpu", "cuda","rocm"))
+    self.assertEqual(exp.platforms, ("cpu", "tpu", "cuda","rocm"))
 
     # Now serialize the call to the exported using a different sequence of
     # lowering platforms, but included in the lowering platforms for the
@@ -1359,7 +1362,7 @@ class JaxExportTest(jtu.JaxTestCase):
     x = np.arange(5, dtype=np.float32)
     exp = get_exported(jax.jit(_testing_multi_platform_func),
                        lowering_platforms=("cpu", "tpu", "cuda","rocm"))(x)
-    self.assertEqual(exp.lowering_platforms, ("cpu", "tpu", "cuda", "rocm"))
+    self.assertEqual(exp.platforms, ("cpu", "tpu", "cuda", "rocm"))
 
     # Now serialize the call for the current platform.
     exp2 = get_exported(jax.jit(exp.call))(x)
@@ -1368,6 +1371,64 @@ class JaxExportTest(jtu.JaxTestCase):
                   module_str)
     res2 = exp2.call(x)
     self.assertAllClose(res2, _testing_multi_platform_fun_expected(x))
+
+  def test_multi_platform_mlir_lower_fun_with_platform_specific_primitives(self):
+    # A primitive with multiple lowering rules, which themselves involve
+    # tracing primitives with per-platform rules, using mlir.lower_fun.
+    # This situation arises for Pallas lowering.
+    def times_n_lowering(n: int, ctx: mlir.LoweringRuleContext,
+                         x: mlir.ir.Value) -> Sequence[mlir.ir.Value]:
+      # Lowering n * x
+      res = x
+      for i in range(n - 1):
+        res = mlir.hlo.AddOp(res, x)
+      return res.results
+
+    times_2 = core.Primitive("__testing_times_2")  # x2 for cpu
+    times_2.def_abstract_eval(lambda x: x)
+    # Define lowering rules only for the relevant platforms, ensure there
+    # is no error about missing lowering rules
+    mlir.register_lowering(times_2, functools.partial(times_n_lowering, 2),
+                           "cpu")
+
+    times_3 = core.Primitive("__testing_times_3")  # x3 for cuda
+    times_3.def_abstract_eval(lambda x: x)
+    mlir.register_lowering(times_3, functools.partial(times_n_lowering, 3),
+                           "cuda")
+
+    times_4 = core.Primitive("__testing_times_4")  # x4 for tpu
+    times_4.def_abstract_eval(lambda x: x)
+    mlir.register_lowering(times_4, functools.partial(times_n_lowering, 4),
+                           "tpu")
+
+    times_2_or_3 = core.Primitive("__testing_times_2_or_3")  # x2 for cpu, x3 for cuda
+    times_2_or_3.def_abstract_eval(lambda x: x)
+    mlir.register_lowering(times_2_or_3,
+                           mlir.lower_fun(times_2.bind,
+                                          multiple_results=False), "cpu")
+    mlir.register_lowering(times_2_or_3,
+                           mlir.lower_fun(times_3.bind,
+                                          multiple_results=False), "cuda")
+
+    times_2_or_3_or_4 = core.Primitive("__testing_times_2_or_3_or_4")  # x2 for cpu, x3 for cuda, x4 for tpu
+    times_2_or_3_or_4.def_abstract_eval(lambda x: x)
+    times_2_or_3_or_4_lowering_cpu_cuda = mlir.lower_fun(times_2_or_3.bind,
+                                                         multiple_results=False)
+    for platform in ["cpu", "cuda"]:
+      mlir.register_lowering(times_2_or_3_or_4,
+                             times_2_or_3_or_4_lowering_cpu_cuda,
+                             platform)
+    mlir.register_lowering(times_2_or_3_or_4, mlir.lower_fun(times_4.bind,
+                                                             multiple_results=False),
+                           "tpu")
+
+    @jax.jit
+    def f(x):
+      return times_2_or_3_or_4.bind(x)
+    x = np.float32(42.)
+    exp = export.export(f, lowering_platforms=["cpu", "cuda", "tpu"])(x)
+    expected = x * np.float32(dict(cpu=2, gpu=3, tpu=4)[jtu.device_under_test()])
+    self.assertAllClose(exp.call(x), expected)
 
   def test_multi_platform_and_poly(self):
     if jtu.test_device_matches(["gpu"]):
@@ -1413,13 +1474,13 @@ class JaxExportTest(jtu.JaxTestCase):
   @jtu.parameterized_filterable(
     kwargs=[
       dict(v=v)
-      for v in range(export.minimum_supported_serialization_version,
-                     export.maximum_supported_serialization_version + 1)])
+      for v in range(export.minimum_supported_calling_convention_version,
+                     export.maximum_supported_calling_convention_version + 1)])
   def test_ordered_effects_basic(self, *, v: int):
-    with config.jax_serialization_version(v):
+    with config.jax_export_calling_convention_version(v):
       logging.info(
           "Using JAX serialization version %s",
-          config.jax_serialization_version.value)
+          config.jax_export_calling_convention_version.value)
       x = np.arange(3, dtype=np.float32)
       def f_jax(x):  # x: f32[3]
         # Test also the calling convention for inner functions
@@ -1491,13 +1552,13 @@ class JaxExportTest(jtu.JaxTestCase):
   @jtu.parameterized_filterable(
       kwargs=[
           dict(v=v)
-          for v in range(export.minimum_supported_serialization_version,
-                         export.maximum_supported_serialization_version + 1)])
+          for v in range(export.minimum_supported_calling_convention_version,
+                         export.maximum_supported_calling_convention_version + 1)])
   def test_ordered_effects_poly(self, *, v: int):
-    with config.jax_serialization_version(v):
+    with config.jax_export_calling_convention_version(v):
       logging.info(
           "Using JAX serialization version %s",
-          config.jax_serialization_version.value)
+          config.jax_export_calling_convention_version.value)
       x = np.arange(12, dtype=np.float32).reshape((3, 4))
       def f_jax(x):  # x: f32[b1, b2]
         return 10. + testing_primitive_with_effect_p.bind(x, effect_class_name="ForTestingOrderedEffect1")
@@ -1528,13 +1589,13 @@ class JaxExportTest(jtu.JaxTestCase):
   @jtu.parameterized_filterable(
     kwargs=[
       dict(v=v)
-      for v in range(export.minimum_supported_serialization_version,
-                     export.maximum_supported_serialization_version + 1)])
+      for v in range(export.minimum_supported_calling_convention_version,
+                     export.maximum_supported_calling_convention_version + 1)])
   def test_ordered_effects_multi_platform_and_poly(self, *, v: int):
-    with config.jax_serialization_version(v):
+    with config.jax_export_calling_convention_version(v):
       logging.info(
           "Using JAX serialization version %s",
-          config.jax_serialization_version.value)
+          config.jax_export_calling_convention_version.value)
       if jtu.device_under_test() == "gpu":
         # The export is not applicable to GPU
         raise unittest.SkipTest("Not intended for running on GPU")
@@ -1573,13 +1634,13 @@ class JaxExportTest(jtu.JaxTestCase):
   @jtu.parameterized_filterable(
     kwargs=[
       dict(v=v)
-      for v in range(export.minimum_supported_serialization_version,
-                     export.maximum_supported_serialization_version + 1)])
+      for v in range(export.minimum_supported_calling_convention_version,
+                     export.maximum_supported_calling_convention_version + 1)])
   def test_ordered_effects_with_donation(self, *, v: int):
-    with config.jax_serialization_version(v):
+    with config.jax_export_calling_convention_version(v):
       logging.info(
           "Using JAX serialization version %s",
-          config.jax_serialization_version.value)
+          config.jax_export_calling_convention_version.value)
 
       x = np.arange(3, dtype=np.float32)
 

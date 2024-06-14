@@ -21,6 +21,7 @@ import warnings
 
 import jax
 from jax import core as jax_core
+from jax._src import core as jax_src_core
 from jax._src import sharding_impls
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
@@ -90,13 +91,20 @@ def pallas_call_tpu_lowering_rule(
       for a in input_output_aliases
   )
   out_avals = [jax_core.ShapedArray(s.shape, s.dtype) for s in out_shapes]
+
+  # Replace in_avals to physical avals.
+  # This step is required for mapping logical types to physical types.
+  # (e.g. PRNG key -> uint32[2])
+  physical_avals = [jax_src_core.physical_aval(aval) for aval in ctx.avals_in]
+  ctx = ctx.replace(avals_in=physical_avals)
+
   def _lower_fun(*args):
     # Dynamic grid bounds have to go at the front.
     dynamic_grid_args, args = args[:num_dyn_bounds], args[num_dyn_bounds:],
     return mosaic.as_tpu_kernel(
         mosaic_module,
         out_avals,
-        backend=ctx.module_context.backend,
+        backend="tpu",
         kernel_name=name,
         cost_estimate=mosaic_params.get("cost_estimate"),
         vmem_limit_bytes=mosaic_params.get("vmem_limit_bytes"),

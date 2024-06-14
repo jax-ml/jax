@@ -13,6 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include "jaxlib/cpu/lapack.h"
+
 #include <complex>
 
 #include "nanobind/nanobind.h"
@@ -23,6 +25,8 @@ namespace jax {
 namespace {
 
 namespace nb = nanobind;
+
+using ::xla::ffi::DataType;
 
 void GetLapackKernelsFromScipy() {
   static bool initialized = false;  // Protected by GIL
@@ -66,6 +70,10 @@ void GetLapackKernelsFromScipy() {
   AssignKernelFn<Potrf<double>>(lapack_ptr("dpotrf"));
   AssignKernelFn<Potrf<std::complex<float>>>(lapack_ptr("cpotrf"));
   AssignKernelFn<Potrf<std::complex<double>>>(lapack_ptr("zpotrf"));
+  AssignKernelFn<CholeskyFactorization<DataType::F32>>(lapack_ptr("spotrf"));
+  AssignKernelFn<CholeskyFactorization<DataType::F64>>(lapack_ptr("dpotrf"));
+  AssignKernelFn<CholeskyFactorization<DataType::C64>>(lapack_ptr("cpotrf"));
+  AssignKernelFn<CholeskyFactorization<DataType::C128>>(lapack_ptr("zpotrf"));
 
   AssignKernelFn<RealGesdd<float>>(lapack_ptr("sgesdd"));
   AssignKernelFn<RealGesdd<double>>(lapack_ptr("dgesdd"));
@@ -170,14 +178,20 @@ nb::dict Registrations() {
   dict["lapack_zhetrd"] =
       EncapsulateFunction(Sytrd<std::complex<double>>::Kernel);
 
+  dict["lapack_spotrf_ffi"] = EncapsulateFunction(lapack_spotrf_ffi);
+  dict["lapack_dpotrf_ffi"] = EncapsulateFunction(lapack_dpotrf_ffi);
+  dict["lapack_cpotrf_ffi"] = EncapsulateFunction(lapack_cpotrf_ffi);
+  dict["lapack_zpotrf_ffi"] = EncapsulateFunction(lapack_zpotrf_ffi);
+
   return dict;
 }
 
 NB_MODULE(_lapack, m) {
   // Populates the LAPACK kernels from scipy on first call.
   m.def("initialize", GetLapackKernelsFromScipy);
-
   m.def("registrations", &Registrations);
+
+  // Old-style LAPACK Workspace Size Queries
   m.def("lapack_sgeqrf_workspace", &Geqrf<float>::Workspace, nb::arg("m"),
         nb::arg("n"));
   m.def("lapack_dgeqrf_workspace", &Geqrf<double>::Workspace, nb::arg("m"),

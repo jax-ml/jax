@@ -111,7 +111,8 @@ def _use_cholesky(u, m, n, params):
 
   return e * u + a_minus_e * z
 
-def _qdwh(x, m, n, is_hermitian, max_iterations, eps):
+
+def _qdwh(x, m, n, max_iterations, eps):
   """QR-based dynamically weighted Halley iteration for polar decomposition."""
 
   # Estimates `alpha` and `beta = alpha * l`, where `alpha` is an estimate of
@@ -172,8 +173,6 @@ def _qdwh(x, m, n, is_hermitian, max_iterations, eps):
 
     u_prev = u
     u = update_fn(u, m, n, params)
-    if is_hermitian:
-      u = (u + u.T.conj()) / 2.0
 
     is_not_converged = True
     if test_convergence:
@@ -243,11 +242,12 @@ def qdwh(
   """QR-based dynamically weighted Halley iteration for polar decomposition.
 
   Args:
-    x: A full-rank matrix, with shape `M x N`. The matrix may be
-      padded up to that size from a smaller true shape (``dynamic_shape``).
-    is_hermitian: True if `x` is Hermitian. Default to `False`.
-    eps: The final result will satisfy
-      ``|x_k - x_k-1| < |x_k| * (4*eps)**(1/3)`` where `x_k` is the iterate.
+    x: A full-rank matrix, with shape `M x N`. The matrix may be padded up to
+      that size from a smaller true shape (``dynamic_shape``).
+    is_hermitian: True if `x` is Hermitian. Default to `False`. This parameter
+      is currently unused, but exists for backward compatibility.
+    eps: The final result will satisfy ``|x_k - x_k-1| < |x_k| *
+      (4*eps)**(1/3)`` where `x_k` is the iterate.
     max_iterations: Iterations will terminate after this many steps even if the
       above is unsatisfied.
     dynamic_shape: the unpadded shape as an ``(m, n)`` tuple; optional.
@@ -258,6 +258,7 @@ def qdwh(
     and `is_converged`, whose value is `True` when the convergence is achieved
     within the maximum number of iterations.
   """
+  # TODO: Possibly take advantage of Hermitian inputs to speed up the QDWH step.
   is_hermitian = core.concrete_or_error(
       bool, is_hermitian, 'The `is_hermitian` argument must be statically '
       'specified to use `qdwh` within JAX transformations.')
@@ -279,7 +280,6 @@ def qdwh(
     m, n = M, N
 
   with jax.default_matmul_precision('float32'):
-    u, h, num_iters, is_converged = _qdwh(x, m, n, is_hermitian, max_iterations,
-                                          eps)
+    u, h, num_iters, is_converged = _qdwh(x, m, n, max_iterations, eps)
 
   return u, h, num_iters, is_converged

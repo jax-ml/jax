@@ -64,12 +64,16 @@ class QdwhTest(jtu.JaxTestCase):
     self._testUnitary(u, tol)
     self._testHermitian(h, tol)
 
-  def _testQdwh(self, a, is_hermitian=False):
+  def _testQdwh(self, a, dynamic_shape=None):
     """Computes the polar decomposition and tests its basic properties."""
     eps = jnp.finfo(a.dtype).eps
-
-    u, h, iters, conv = qdwh.qdwh(a, is_hermitian=is_hermitian)
-    tol = 10 * eps
+    u, h, iters, conv = qdwh.qdwh(a, dynamic_shape=dynamic_shape)
+    tol = 11 * eps
+    if dynamic_shape is not None:
+      m, n = dynamic_shape
+      a = a[:m, :n]
+      u = u[:m, :n]
+      h = h[:n, :n]
     self._testPolarDecomposition(a, u, h, tol=tol)
 
   @jtu.sample_product(
@@ -84,12 +88,21 @@ class QdwhTest(jtu.JaxTestCase):
     self._testQdwh(a)
 
   @jtu.sample_product(
-      shape=[(8, 6), (10, 10), (20, 18), (300, 300)],
-      log_cond=np.linspace(0, 1, 4),
-      hermitian=[True, False],
+      shape=[(2, 2), (5, 5), (8, 5), (10, 10)],
       dtype=float_types + complex_types,
   )
-  def testQdwhWithRandomMatrix(self, shape, log_cond, hermitian, dtype):
+  def testQdwhWithDynamicShape(self, shape, dtype):
+    """Tests qdwh with dynamic shapes."""
+    rng = jtu.rand_uniform(self.rng())
+    a = rng((10, 10), dtype)
+    self._testQdwh(a, dynamic_shape=shape)
+
+  @jtu.sample_product(
+      shape=[(8, 6), (10, 10), (20, 18), (300, 300)],
+      log_cond=np.linspace(0, 1, 4),
+      dtype=float_types + complex_types,
+  )
+  def testQdwhWithRandomMatrix(self, shape, log_cond, dtype):
     """Tests qdwh with upper triangular input of all ones."""
     eps = jnp.finfo(dtype).eps
     m, n = shape
@@ -103,10 +116,7 @@ class QdwhTest(jtu.JaxTestCase):
     u, _, v = jnp.linalg.svd(a, full_matrices=False)
     s = jnp.expand_dims(jnp.linspace(cond, 1, min(m, n)), range(u.ndim - 1))
     a = (u * s.astype(u.dtype)) @ v
-    hermitian = hermitian & (m == n)
-    if hermitian:
-      a = (a + a.conj().T) / 2
-    self._testQdwh(a, is_hermitian=hermitian)
+    self._testQdwh(a)
 
   @jtu.sample_product(
       [dict(m=m, n=n) for m, n in [(6, 6), (8, 4)]],

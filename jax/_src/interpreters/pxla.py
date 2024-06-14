@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import enum
 from contextlib import contextmanager
+import collections
 from collections import namedtuple
 from collections.abc import Sequence, Iterable
 import dataclasses
@@ -108,18 +109,40 @@ ShardingSpec = sharding_specs.ShardingSpec
 
 def identity(x): return x
 
-def shard_arg(arg, sharding, canonicalize=True):
-  if canonicalize:
-    arg = xla.canonicalize_dtype(arg)
-  return shard_arg_handlers[type(arg)](arg, sharding)
-
-
 @profiler.annotate_function
-def shard_args(shardings: Sequence[JSharding], args
-               ) -> Sequence[jax.Array]:
-  return [shard_arg(arg, shardings[i]) for i, arg in enumerate(args)]
+def shard_args(shardings: Sequence[JSharding], args, canonicalize=True) -> Sequence[xc.ArrayImpl]:
+  # Fast path for one argument.
+  if len(args) == 1:
+    arg = args[0]
+    if canonicalize:
+      arg = xla.canonicalize_dtype(arg)
+    return shard_arg_handlers[type(arg)]([arg], shardings)
 
-shard_arg_handlers: dict[Any, Callable[[Any, Any], Any]] = {}
+  # type(arg) -> (indices, args, shardings)
+  batches = collections.defaultdict(lambda: ([], [], []))  # type: ignore
+  for i, (arg, sharding) in enumerate(safe_zip(args, shardings)):
+    if canonicalize:
+      arg = xla.canonicalize_dtype(arg)
+    batch = batches[type(arg)]
+    batch[0].append(i)
+    batch[1].append(arg)
+    batch[2].append(sharding)
+
+  # Call `shard_arg_handlers` per batch and build a flat list of arrays returned
+  # from each call in the same order as `args`. Since `batches` is grouped by
+  # types, we cannot simply flatten the results and we have to use the original
+  # indices to put each array back to its original position.
+  results: list[jax.Array | None] = [None] * len(args)
+  for t, (indices, a, s) in batches.items():
+    outs = shard_arg_handlers[t](a, s)
+    for i, out in safe_zip(indices, outs):
+      results[i] = out
+
+  assert all(result is not None for result in results)
+  return results
+
+
+shard_arg_handlers: dict[Any, Callable[[Sequence[Any], Sequence[Any]], Sequence[Any]]] = {}
 
 
 @lru_cache(maxsize=1024)
@@ -127,31 +150,34 @@ def _get_replicated_slices(num_addressable_devices: int):
   return ((slice(None),),) * num_addressable_devices
 
 
-def _masked_array_error(x, sharding):
+def _masked_array_error(xs, shardings):
   raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "
                    "Use arr.filled() to convert the value to a standard numpy array.")
 shard_arg_handlers[np.ma.MaskedArray] = _masked_array_error
 
-def _shard_array(x, sharding):
-  devices = sharding._addressable_device_assignment
-  if x.dtype == dtypes.float0:
-    x = np.zeros(x.shape, dtype=np.dtype(bool))
-  aval = api_util.shaped_abstractify(x)
-  if sharding.is_fully_replicated:
-    shards = [x] * len(devices)
-  else:
-    indices = tuple(sharding.addressable_devices_indices_map(x.shape).values())
-    shards = [x[i] for i in indices]
-  return batched_device_put(aval, sharding, shards, devices)
+def _shard_array(xs, shardings):
+  results = []
+  for x, sharding in safe_zip(xs, shardings):
+    devices = sharding._addressable_device_assignment
+    if x.dtype == dtypes.float0:
+      x = np.zeros(x.shape, dtype=np.dtype(bool))
+    aval = api_util.shaped_abstractify(x)
+    if sharding.is_fully_replicated:
+      shards = [x] * len(devices)
+    else:
+      indices = tuple(sharding.addressable_devices_indices_map(x.shape).values())
+      shards = [x[i] for i in indices]
+    results.append(batched_device_put(aval, sharding, shards, devices))
+  return results
 for _t in array_types:
   shard_arg_handlers[_t] = _shard_array
 
-def _shard_darray(x, sharding):
-  return shard_arg(x._data, sharding)
+def _shard_darray(xs, shardings):
+  return shard_args(shardings, [x._data for x in xs])
 shard_arg_handlers[core.DArray] = _shard_darray
 
-def _shard_mutable_array(x, sharding):
-  return shard_arg(x._buf, sharding)
+def _shard_mutable_array(xs, shardings):
+  return shard_args(shardings, [x._buf for x in xs])
 shard_arg_handlers[core.MutableArray] = _shard_mutable_array
 
 def batched_device_put(aval: core.ShapedArray,
@@ -3151,7 +3177,7 @@ class MeshExecutable(stages.XlaExecutable):
 
     return xc._xla.pjit(
         self.unsafe_call.name, None, aot_cache_miss, [], [], [],
-        tree_util.dispatch_registry, shard_arg)
+        tree_util.dispatch_registry, lambda x, s: shard_args([s], [x])[0])
 
 
 def check_arg_avals_for_call(ref_avals, arg_avals,

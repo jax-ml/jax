@@ -467,10 +467,11 @@ xla.pytype_aval_mappings[PRNGKeyArray] = lambda x: x.aval
 xla.canonicalize_dtype_handlers[PRNGKeyArray] = lambda x: x
 
 
-def key_array_shard_arg_handler(x: PRNGKeyArray, sharding):
-  arr = x._base_array
-  phys_sharding = physical_sharding(x.aval, sharding)
-  return pxla.shard_arg_handlers[type(arr)](arr, phys_sharding)
+def key_array_shard_arg_handler(xs: Sequence[PRNGKeyArray], shardings):
+  arrs = [x._base_array for x in xs]
+  phys_shardings = [physical_sharding(x.aval, sharding)
+                    for x, sharding in zip(xs, shardings)]
+  return pxla.shard_args(phys_shardings, arrs)
 
 
 pxla.shard_arg_handlers[PRNGKeyArray] = key_array_shard_arg_handler

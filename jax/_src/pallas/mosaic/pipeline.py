@@ -393,7 +393,8 @@ class Scheduler:
     self.next_indices = _get_indices(self.next_step, self.grid)
 
   def grid_env(self):
-    return pallas_core.grid_env(zip(self.indices, self.grid))
+    return pallas_core.grid_env(
+        list(map(pallas_core.GridAxis, self.indices, self.grid)))
 
   def has_changed(self, buffered_ref):
     indices = buffered_ref.compute_index(*self.indices)

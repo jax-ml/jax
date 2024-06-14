@@ -912,13 +912,21 @@ jax2tf_default_native_serialization = define_bool_state(
 
 jax_serialization_version = define_int_state(
     name='jax_serialization_version',
-    # Note: bump the default serialization version at least one month after
+    default=int_env('JAX_SERIALIZATION_VERSION', 0),  # We use 0 to detect default.
+    help=(
+        'DEPRECATED: use jax_export_calling_convention_version.'
+    )
+)
+
+jax_export_calling_convention_version = define_int_state(
+    name='jax_export_calling_convention_version',
+    # Note: bump the default calling convention version at least one month after
     # we update XlaCallModule to support the new version, so that serialized
     # modules are forward compatible with deployed versions of XlaCallModule.
     # Version 9 of XlaCallModule is supported since October 27th, 2023.
-    default=int_env('JAX_SERIALIZATION_VERSION', 9),
+    default=int_env('JAX_EXPORT_CALLING_CONVENTION_VERSION', 9),
     help=(
-        'The version number to use for native serialization. This must be '
+        'The calling convention version number to use for exporting. This must be '
         'within the range of versions supported by the tf.XlaCallModule '
         'used in your deployment environment. '
         'See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions.'

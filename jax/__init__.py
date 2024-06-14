@@ -181,6 +181,7 @@ del _ccache
 from jax._src.deprecations import register as _register_deprecation
 _register_deprecation("jax-experimental-maps-module")
 _register_deprecation('jax-scipy-beta-args')
+_register_deprecation('tracer-hash')
 del _register_deprecation
 
 _deprecations = {
