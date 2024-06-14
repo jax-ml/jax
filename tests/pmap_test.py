@@ -1803,8 +1803,8 @@ class PythonPmapTest(jtu.JaxTestCase):
         res = fv(x)
       return res
 
-    x = random.normal(random.PRNGKey(1), (80, 5))
-    y = random.normal(random.PRNGKey(1), (10, 5))
+    x = random.normal(random.PRNGKey(1), (40, 5))
+    y = random.normal(random.PRNGKey(1), (5, 5))
 
     result1 = vmap(lambda b: matrix_vector(x, b, True))(y)       # vmap + pmap
     result2 = lax.map(lambda b: matrix_vector(x, b, False), y)   # map + map
