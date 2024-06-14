@@ -707,7 +707,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
         f, 'xmap', name, mesh,
         in_shardings, out_shardings, donated_invars,
         use_spmd_lowering, in_avals,
-        tiling_method=tiling_method,
+        tiling_method=tiling_method, lowering_platforms=None,
         lowering_parameters=lowering_parameters)
   else:
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(f, in_avals)
@@ -716,7 +716,8 @@ def make_xmap_callable(fun: lu.WrappedFun,
         (UNSPECIFIED,) * len(in_avals), (UNSPECIFIED,) * len(out_avals),
         (None,) * len(in_avals), (None,) * len(out_avals),
         donated_invars, keep_unused=True, inline=False,
-        devices_from_context=None, lowering_parameters=lowering_parameters)
+        devices_from_context=None, lowering_platforms=None,
+        lowering_parameters=lowering_parameters, pgle_profiler=None)
 
 
 class EvaluationPlan(NamedTuple):
