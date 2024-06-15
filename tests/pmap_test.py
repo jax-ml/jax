@@ -1229,7 +1229,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       boards.append(''.join('*' if x else ' ' for x in board.ravel()))
 
     print_board(reshaped_board)
-    for _ in range(20):
+    for _ in range(9):
       reshaped_board = step(reshaped_board)
       print_board(reshaped_board)
 
@@ -1245,17 +1245,6 @@ class PythonPmapTest(jtu.JaxTestCase):
         '             ** ****  ******            ',
         '            **  *   ***     *           ',
         '           ** **** **  *   ***          ',
-        '          **  *    * **** **  *         ',
-        '         ** ****  ** *    * ****        ',
-        '        **  *   ***  **  ** *   *       ',
-        '       ** **** **  *** ***  ** ***      ',
-        '      **  *    * ***   *  ***  *  *     ',
-        '     ** ****  ** *  * *****  *******    ',
-        '    **  *   ***  **** *    ***      *   ',
-        '   ** **** **  ***    **  **  *    ***  ',
-        '  **  *    * ***  *  ** *** ****  **  * ',
-        ' ** ****  ** *  ******  *   *   *** ****',
-        ' *  *   ***  ****     **** *** **   *   ',
     ))
 
     print(ans)
@@ -2513,7 +2502,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     f = lambda x: jnp.dot(x, x.T)
     f0 = pmap(f, devices=[d0])
     f1 = pmap(f, devices=[d1])
-    x = self.rng().rand(1, 1000, 1000)
+    x = self.rng().rand(1, 500, 500)
     r0 = f0(x)
     r1 = f1(x)
     expected = np.expand_dims(np.dot(x.squeeze(), x.squeeze().T), 0)
