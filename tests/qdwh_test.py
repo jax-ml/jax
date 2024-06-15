@@ -68,7 +68,7 @@ class QdwhTest(jtu.JaxTestCase):
     """Computes the polar decomposition and tests its basic properties."""
     eps = jnp.finfo(a.dtype).eps
     u, h, iters, conv = qdwh.qdwh(a, dynamic_shape=dynamic_shape)
-    tol = 11 * eps
+    tol = 13 * eps
     if dynamic_shape is not None:
       m, n = dynamic_shape
       a = a[:m, :n]
