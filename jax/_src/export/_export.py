@@ -1051,7 +1051,7 @@ def _check_module(mod: ir.Module, *,
     msg = ("Cannot serialize code with custom calls whose targets have no "
            "compatibility guarantees. Examples are:\n"
            f"{disallowed_custom_call_ops_str}.\n"
-           "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-lowering-supports-only-select-custom-calls")
+           "See https://jax.readthedocs.io/en/latest/export/export.html#compatibility-guarantees-for-custom-calls")
     raise ValueError(msg)
   return module_uses_non_replicated_sharding
 

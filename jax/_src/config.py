@@ -929,7 +929,7 @@ jax_export_calling_convention_version = define_int_state(
         'The calling convention version number to use for exporting. This must be '
         'within the range of versions supported by the tf.XlaCallModule '
         'used in your deployment environment. '
-        'See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions.'
+        'See https://jax.readthedocs.io/en/latest/export/shape_poly.html#calling-convention-versions.'
     )
 )
 
