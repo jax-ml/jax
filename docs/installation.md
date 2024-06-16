@@ -153,7 +153,7 @@ To install, run:
 ```bash
 pip install --upgrade pip
 
-# Installs the wheel compatible with NVIDIA CUDA 12 and cuDNN 8.9 or newer.
+# Installs the wheel compatible with NVIDIA CUDA 12 and cuDNN 9.0 or newer.
 # Note: wheels only available on linux.
 pip install --upgrade "jax[cuda12_local]"
 ```
