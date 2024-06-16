@@ -9,14 +9,14 @@ different builds for different operating systems and accelerators.
 
 * **CPU-only (Linux/macOS/Windows)**
   ```
-  pip install -U jax[cpu]
+  pip install -U "jax[cpu]"
   ```
 * **GPU (NVIDIA, CUDA 12)**
   ```
   pip install -U "jax[cuda12]"
   ```
 
-* **TPU (Google Cloud TPU VM) **
+* **TPU (Google Cloud TPU VM)**
   ```
   pip install -U "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
   ```
