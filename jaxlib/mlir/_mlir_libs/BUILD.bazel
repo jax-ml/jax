@@ -31,6 +31,8 @@ package(
 COPTS = [
     "-fexceptions",
     "-frtti",
+    # TODO(jpienaar): Temporarily disable.
+    "-UMLIR_ENABLE_PDL_IN_PATTERNMATCH",
 ]
 
 LINKOPTS = select({
@@ -55,7 +57,6 @@ py_extension(
         ":jaxlib_mlir_capi_shared_library",
         "@llvm-project//mlir:MLIRBindingsPythonCoreNoCAPI",
         "@llvm-project//mlir:MLIRBindingsPythonHeaders",
-        "@llvm-project//mlir:CAPITransformsObjects",
     ],
 )
 
