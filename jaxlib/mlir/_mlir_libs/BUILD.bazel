@@ -31,8 +31,6 @@ package(
 COPTS = [
     "-fexceptions",
     "-frtti",
-    # TODO(jpienaar): Temporarily disable.
-    "-UMLIR_ENABLE_PDL_IN_PATTERNMATCH",
 ]
 
 LINKOPTS = select({
