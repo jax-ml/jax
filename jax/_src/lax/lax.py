@@ -801,7 +801,7 @@ def ragged_dot(
     group_sizes: (g,) shaped array with integer element type, where g denotes   number of groups. The ith element indicates the size of ith group.
     precision: Optional. Consistent with precision argument for :func:`jax.lax.dot`.
     preferred_element_type: Optional. Consistent with precision argument for :func:`jax.lax.dot`.
-    group_offset: Optional. (1,) shaped array that ndicates the group in group_sizes to start computing from. If not specified, defaults to [0].
+    group_offset: Optional. (1,) shaped array that indicates the group in group_sizes to start computing from. If not specified, defaults to [0].
 
   Results:
     (m, n) shaped array with preferred_element_type element type.
@@ -1444,7 +1444,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
       If not specified, the output will have the same sharding as the input,
       with a few exceptions/limitations in particular:
       1. Sharding is not available during tracing, thus this will rely on jit.
-      2. If x is weakly typed or uncomitted, will use default sharding.
+      2. If x is weakly typed or uncommitted, will use default sharding.
       3. Shape is not None and is different from x.shape, default will be used.
 
   Returns:
@@ -5114,7 +5114,7 @@ def remaining(original, *removed_lists):
 
 
 def canonicalize_precision(precision: PrecisionLike) -> tuple[Precision, Precision] | None:
-  """Turns an API precision specification, into a pair of enumeration values.
+  """Turns an API precision specification into a pair of enumeration values.
 
   The API can take the precision as a string, or int, and either as a single
   value to apply to both operands, or as a sequence of two values.

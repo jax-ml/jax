@@ -15,7 +15,7 @@
 """A JIT-compatible library for QDWH-based singular value decomposition.
 
 QDWH is short for QR-based dynamically weighted Halley iteration. The Halley
-iteration implemented through QR decmopositions is numerically stable and does
+iteration implemented through QR decompositions is numerically stable and does
 not require solving a linear system involving the iteration matrix or
 computing its inversion. This is desirable for multicore and heterogeneous
 computing systems.
@@ -59,7 +59,7 @@ def _svd_tall_and_square_input(
   Args:
     a: A matrix of shape `m x n` with `m >= n`.
     hermitian: True if `a` is Hermitian.
-    compute_uv: Whether to compute also `u` and `v` in addition to `s`.
+    compute_uv: Whether to also compute `u` and `v` in addition to `s`.
     max_iterations: The predefined maximum number of iterations of QDWH.
 
   Returns:
@@ -126,11 +126,11 @@ def svd(
     full_matrices: If True, `u` and `vh` have the shapes `m x m` and `n x n`,
       respectively. If False, the shapes are `m x k` and `k x n`, respectively,
       where `k = min(m, n)`.
-    compute_uv: Whether to compute also `u` and `v` in addition to `s`.
+    compute_uv: Whether to also compute `u` and `v` in addition to `s`.
     hermitian: True if `a` is Hermitian.
     max_iterations: The predefined maximum number of iterations of QDWH.
     subset_by_index: Optional 2-tuple [start, end] indicating the range of
-      indices of singular componenets to compute. For example, if
+      indices of singular components to compute. For example, if
       ``subset_by_index`` = [0,2], then ``svd`` computes the two largest
       singular values (and their singular vectors if `compute_uv` is true.
 

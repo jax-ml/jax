@@ -528,7 +528,7 @@ def unique(ar: ArrayLike, return_index: bool = False, return_inverse: bool = Fal
     return_index: if True, also return the indices in ``ar`` where each value occurs
     return_inverse: if True, also return the indices that can be used to reconstruct
       ``ar`` from the unique values.
-    return_counts: if True, also return the number of occurances of each unique value.
+    return_counts: if True, also return the number of occurrences of each unique value.
     axis: if specified, compute unique values along the specified axis. If None (default),
       then flatten ``ar`` before computing the unique values.
     equal_nan: if True, consider NaN values equivalent when determining uniqueness.
@@ -546,8 +546,8 @@ def unique(ar: ArrayLike, return_index: bool = False, return_inverse: bool = Fal
         specified, shape is ``(*ar.shape[:axis], n_unique, *ar.shape[axis + 1:])``.
     - ``unique_index``:
         *(returned only if return_index is True)* An array of shape ``(n_unique,)``. Contains
-        the indices of the first occurance of each unique value in ``ar``. For 1D inputs,
-        ``ar[unique_index]`` is equivlent to ``unique_values``.
+        the indices of the first occurrence of each unique value in ``ar``. For 1D inputs,
+        ``ar[unique_index]`` is equivalent to ``unique_values``.
     - ``unique_inverse``:
         *(returned only if return_inverse is True)* An array of shape ``(ar.size,)`` if ``axis``
         is None, or of shape ``(1, 1, ..., ar.shape[axis], 1, ... 1)`` if ``axis`` is specified.
@@ -555,7 +555,7 @@ def unique(ar: ArrayLike, return_index: bool = False, return_inverse: bool = Fal
         ``unique_values[unique_inverse]`` is equivalent to ``ar``.
     - ``unique_counts``:
         *(returned only if return_counts is True)* An array of shape ``(n_unique,)``.
-        Contains the number of occurances of each unique value in ``ar``.
+        Contains the number of occurrences of each unique value in ``ar``.
 
   See also:
     - :func:`jax.numpy.unique_counts`: shortcut to ``unique(arr, return_counts=True)``.
@@ -619,7 +619,7 @@ def unique(ar: ArrayLike, return_index: bool = False, return_inverse: bool = Fal
     **Returning indices**
 
     If you set ``return_index=True``, then ``unique`` returns the indices of the
-    first occurance of each unique value:
+    first occurrence of each unique value:
 
     >>> x = jnp.array([3, 4, 1, 3, 1])
     >>> values, indices = jnp.unique(x, return_index=True)
@@ -660,7 +660,7 @@ def unique(ar: ArrayLike, return_index: bool = False, return_inverse: bool = Fal
 
     **Returning counts**
 
-    If you set ``return_counts=True``, then ``unique`` returns the number of occurances
+    If you set ``return_counts=True``, then ``unique`` returns the number of occurrences
     within the input for every unique value:
 
     >>> x = jnp.array([3, 4, 1, 3, 1])
@@ -671,7 +671,7 @@ def unique(ar: ArrayLike, return_index: bool = False, return_inverse: bool = Fal
     [2 2 1]
 
     For multi-dimensional arrays, this also returns a 1D array of counts
-    indicating number of occurances along the specified axis:
+    indicating number of occurrences along the specified axis:
 
     >>> values, counts = jnp.unique(M, axis=0, return_counts=True)
     >>> print(values)
@@ -748,13 +748,13 @@ def unique_all(x: ArrayLike, /, *, size: int | None = None,
     - ``values``:
         an array of shape ``(n_unique,)`` containing the unique values from ``x``.
     - ``indices``:
-        An array of shape ``(n_unique,)``. Contains the indices of the first occurance of
-        each unique value in ``x``. For 1D inputs, ``x[indices]`` is equivlent to ``values``.
+        An array of shape ``(n_unique,)``. Contains the indices of the first occurrence of
+        each unique value in ``x``. For 1D inputs, ``x[indices]`` is equivalent to ``values``.
     - ``inverse_indices``:
         An array of shape ``x.shape``. Contains the indices within ``values`` of each value
         in ``x``. For 1D inputs, ``values[inverse_indices]`` is equivalent to ``x``.
     - ``counts``:
-        An array of shape ``(n_unique,)``. Contains the number of occurances of each unique
+        An array of shape ``(n_unique,)``. Contains the number of occurrences of each unique
         value in ``x``.
 
   See also:
@@ -770,7 +770,7 @@ def unique_all(x: ArrayLike, /, *, size: int | None = None,
     >>> result = jnp.unique_all(x)
 
     The result is a :class:`~typing.NamedTuple` with four named attributes.
-    The ``values`` attribue contains the unique values from the array:
+    The ``values`` attribute contains the unique values from the array:
 
     >>> result.values
     Array([1, 3, 4], dtype=int32)
@@ -829,7 +829,7 @@ def unique_counts(x: ArrayLike, /, *, size: int | None = None,
     - ``values``:
         an array of shape ``(n_unique,)`` containing the unique values from ``x``.
     - ``counts``:
-        An array of shape ``(n_unique,)``. Contains the number of occurances of each unique
+        An array of shape ``(n_unique,)``. Contains the number of occurrences of each unique
         value in ``x``.
 
   See also:
@@ -846,7 +846,7 @@ def unique_counts(x: ArrayLike, /, *, size: int | None = None,
     >>> result = jnp.unique_counts(x)
 
     The result is a :class:`~typing.NamedTuple` with two named attributes.
-    The ``values`` attribue contains the unique values from the array:
+    The ``values`` attribute contains the unique values from the array:
 
     >>> result.values
     Array([1, 3, 4], dtype=int32)
