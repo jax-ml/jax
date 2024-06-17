@@ -592,8 +592,9 @@ def parallel_callable(fun: lu.WrappedFun,
       fun, axis_name, axis_size, global_axis_size, devices, name,
       in_axes, donated_invars,
       is_explicit_global_axis_size, avals,
-      lowering_parameters=mlir.LoweringParameters(), closed_jaxpr=closed_jaxpr,
-      backend=xc_backend, replicas=replicas, shards=shards, pci=pci)
+      lowering_platforms=None, lowering_parameters=mlir.LoweringParameters(),
+      closed_jaxpr=closed_jaxpr, backend=xc_backend, replicas=replicas,
+      shards=shards, pci=pci)
   pmap_executable = pmap_computation.compile()
   return WeakRefList([pmap_executable.unsafe_call, pmap_executable.fingerprint])
 
@@ -735,6 +736,7 @@ def lower_parallel_callable(
     is_explicit_global_axis_size: bool,
     avals: Sequence[core.AbstractValue],
     *,
+    lowering_platforms: tuple[str, ...] | None,
     lowering_parameters: mlir.LoweringParameters,
     closed_jaxpr: core.ClosedJaxpr,
     backend: xc.Client,
@@ -813,7 +815,7 @@ def lower_parallel_callable(
   tuple_args = dispatch.should_tuple_args(len(shards.global_sharded_avals),
                                           backend.platform)
   module_name = f"pmap_{fun.__name__}"
-  platforms = lowering_parameters.platforms or (backend.platform,)
+  platforms = lowering_platforms or (backend.platform,)
   with maybe_extend_axis_env(axis_name, global_axis_size, None):
     ordered_effects = list(
         effects.ordered_effects.filter_in(closed_jaxpr.effects))
@@ -1956,6 +1958,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
                             donated_invars, name_stack, all_default_mem_kind,
                             inout_aliases: None | tuple[None | int, ...],
                             propagated_out_mem_kinds: tuple[None | str, ...],
+                            platforms: tuple[str, ...],
                             lowering_parameters: mlir.LoweringParameters):
   jaxpr = closed_jaxpr.jaxpr
   in_shardings = semantic_in_shardings._gspmd_shardings
@@ -2016,8 +2019,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
         closed_jaxpr,
         ordered_effects=ordered_effects,
         backend_or_name=backend,
-        # Optionally, override the lowering platform
-        platforms=lowering_parameters.platforms or (backend.platform,),
+        platforms=platforms,
         axis_context=axis_ctx,
         name_stack=name_stack,
         donated_args=donated_invars,
@@ -2166,9 +2168,10 @@ def lower_sharding_computation(
     *,
     keep_unused: bool,
     inline: bool,
-    devices_from_context: Sequence[xc.Device] | None = None,
+    devices_from_context: Sequence[xc.Device] | None,
+    lowering_platforms: tuple[str, ...] | None,
     lowering_parameters: mlir.LoweringParameters,
-    pgle_profiler: profiler.PGLEProfiler | None = None,
+    pgle_profiler: profiler.PGLEProfiler | None,
 ) -> MeshComputation:
   """Lowers a computation to XLA. It can take arbitrary shardings as input.
 
@@ -2212,7 +2215,7 @@ def lower_sharding_computation(
            for js, source_info in util.stable_unique(jaxpr_sharding))),
       devices_from_context)
 
-  platforms = lowering_parameters.platforms or (backend.platform,)
+  platforms = lowering_platforms or (backend.platform,)
   # TODO(yashkatariya): Enable this when offload APIs are stable.
   # transfer_mem_kind_in_jaxpr = list(jaxpr_transfer_mem_kinds(jaxpr))
 
@@ -2252,7 +2255,8 @@ def lower_sharding_computation(
        semantic_out_shardings, in_layouts, out_layouts, len(da_object),
        tuple(da_object) if prim_requires_devices else None, donated_invars,
        name_stack, all_default_mem_kind, inout_aliases,
-       propagated_out_mem_kinds, lowering_parameters=lowering_parameters)
+       propagated_out_mem_kinds, platforms,
+       lowering_parameters=lowering_parameters)
 
   # backend and device_assignment is passed through to MeshExecutable because
   # if keep_unused=False and all in_shardings are pruned, then there is no way
@@ -2316,10 +2320,11 @@ def lower_mesh_computation(
     spmd_lowering: bool,
     global_in_avals: Sequence[core.ShapedArray],
     tiling_method: TilingMethod | None,
+    lowering_platforms: tuple[str, ...] | None,
     lowering_parameters: mlir.LoweringParameters) -> MeshComputation:
   assert not mesh.empty
   backend = xb.get_device_backend(mesh.devices.flat[0])
-  platforms = lowering_parameters.platforms or (backend.platform,)
+  platforms = lowering_platforms or (backend.platform,)
   name_stack = source_info_util.new_name_stack(wrap_name(fun_name, api_name))
 
   global_axis_sizes = mesh.shape

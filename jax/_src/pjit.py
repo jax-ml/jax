@@ -500,16 +500,13 @@ def _make_jit_wrapper(jit_info: PjitInfo):
 
   @api_boundary
   def trace(*args, **kwargs) -> stages.Traced:
-    lowering_parameters = kwargs.pop(
-        '_experimental_lowering_parameters', mlir.LoweringParameters())
-
     (args_flat, params, in_avals, in_tree, out_tree, donated_invars,
      arg_names, num_consts, _) = _infer_params(jit_info, args, kwargs)
 
     donate_argnums = tuple(i for i, d in enumerate(donated_invars) if d)
     args_info = stages.make_args_info(in_tree, in_avals, donate_argnums)
     lower_callable = partial(_resolve_and_lower, args_flat, **params,
-                             lowering_parameters=lowering_parameters)
+                             pgle_profiler=None)
     return stages.Traced(params['jaxpr'], args_info, params["name"], out_tree,
                          lower_callable, args_flat, arg_names, num_consts)
 
@@ -1497,7 +1494,7 @@ def _resolve_in_shardings(
 def _resolve_and_lower(
     args, jaxpr, in_shardings, out_shardings, in_layouts,
     out_layouts, resource_env, donated_invars, name, keep_unused, inline,
-    lowering_parameters, pgle_profiler=None):
+    lowering_platforms, lowering_parameters, pgle_profiler):
   in_shardings = _resolve_in_shardings(
       args, in_shardings, out_shardings,
       resource_env.physical_mesh if resource_env is not None else None)
@@ -1506,6 +1503,7 @@ def _resolve_and_lower(
   lowered = _pjit_lower(
       jaxpr, in_shardings, out_shardings, in_layouts, out_layouts, resource_env,
       donated_invars, name, keep_unused, inline,
+      lowering_platforms=lowering_platforms,
       lowering_parameters=lowering_parameters,
       pgle_profiler=pgle_profiler)
   return lowered
@@ -1540,7 +1538,8 @@ def _pjit_call_impl_python(
       out_shardings=out_shardings, in_layouts=in_layouts,
       out_layouts=out_layouts, resource_env=resource_env,
       donated_invars=donated_invars, name=name, keep_unused=keep_unused,
-      inline=inline, lowering_parameters=mlir.LoweringParameters(),
+      inline=inline, lowering_platforms=None,
+      lowering_parameters=mlir.LoweringParameters(),
       pgle_profiler=pgle_profiler
   ).compile(compile_options)
 
@@ -1659,6 +1658,7 @@ def _pjit_lower_cached(
     keep_unused: bool,
     inline: bool,
     *,
+    lowering_platforms: tuple[str, ...] | None,
     lowering_parameters: mlir.LoweringParameters,
     pgle_profiler: profiler.PGLEProfiler | None):
   if resource_env is not None:
@@ -1679,6 +1679,7 @@ def _pjit_lower_cached(
       jaxpr, api_name, name, mesh,
       in_shardings, out_shardings, donated_invars,
       True, jaxpr.in_avals, tiling_method=None,
+      lowering_platforms=lowering_platforms,
       lowering_parameters=lowering_parameters)
   else:
     return pxla.lower_sharding_computation(
@@ -1687,6 +1688,7 @@ def _pjit_lower_cached(
         keep_unused=keep_unused, inline=inline,
         devices_from_context=(
             None if mesh is None or mesh.empty else list(mesh.devices.flat)),
+        lowering_platforms=lowering_platforms,
         lowering_parameters=lowering_parameters,
         pgle_profiler=pgle_profiler)
 

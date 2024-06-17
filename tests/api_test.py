@@ -4728,6 +4728,13 @@ class APITest(jtu.JaxTestCase):
     out = jax.jit(lambda: int(jax.jit(lambda x: x)(3)))()  # don't crash
     self.assertEqual(out, 3)
 
+  def test_lowering_platform_aot(self):
+    @jax.jit
+    def f(x):
+      return x * 2
+
+    f.trace(jnp.arange(8)).lower(lowering_platforms=('tpu',))  # doesn't crash
+
 
 class RematTest(jtu.JaxTestCase):
 
@@ -10731,9 +10738,11 @@ class OverrideLoweringTest(jtu.JaxTestCase):
     rules = ((jax.lax.sharding_constraint_p, wsc_as_noop),)
     lowered_ir = (
         jax.jit(f)
-        .lower(jax.ShapeDtypeStruct((2, 4), dtype=jnp.bfloat16),
-               _experimental_lowering_parameters=mlir.LoweringParameters(
-                 override_lowering_rules=rules)).as_text())
+        .trace(jax.ShapeDtypeStruct((2, 4), dtype=jnp.bfloat16))
+        .lower(_private_parameters=mlir.LoweringParameters(
+            override_lowering_rules=rules))
+        .as_text()
+    )
     self.assertNotIn("stablehlo.custom_call @Sharding", lowered_ir)
 
 
