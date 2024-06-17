@@ -39,7 +39,7 @@ jax_test(
         "notap",
     ],
     deps = [
-        "//third_party/py/jax:extend",
+        "//jax:extend",
     ],
 )
 
