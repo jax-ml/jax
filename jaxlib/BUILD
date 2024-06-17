@@ -200,7 +200,6 @@ pybind_extension(
         "@nanobind",
         "//jaxlib:kernel_nanobind_helpers",
         "@xla//third_party/python_runtime:headers",
-        "@xla//xla:status",
         "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla:util",
         "@xla//xla/ffi/api:c_api",
