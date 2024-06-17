@@ -200,7 +200,6 @@ OnDeviceProfiler = profiler.OnDeviceProfiler
 @dataclasses.dataclass()
 class LaunchContext:
   launch_op: gpu.LaunchOp
-  gmem_scratch_ptr: ir.Value
   profiler: OnDeviceProfiler | None = None
   next_scratch_offset: int = 0
   host_scratch_init: list[Callable[[ir.Value], None]] = dataclasses.field(
@@ -240,14 +239,21 @@ class LaunchContext:
     alloc_base = self.next_scratch_offset
     self.next_scratch_offset += size
     def host_init_wrapped(host_ptr):
-      with ir.InsertionPoint(self.launch_op):
-        host_init(
-            llvm.getelementptr(ptr_ty, host_ptr, [], [alloc_base], i8)
-        )
+      host_init(
+          llvm.getelementptr(ptr_ty, host_ptr, [], [alloc_base], i8)
+      )
     self.host_scratch_init.append(host_init_wrapped)
+
     with ir.InsertionPoint.at_block_begin(self.launch_op.body.blocks[0]):
+      ptr_ty = ir.Type.parse("!llvm.ptr")
+      const_ptr_ty = ir.Type.parse("!llvm.ptr<4>")
+      gmem_scratch_ptr = llvm.call_intrinsic(
+          ptr_ty,
+          "llvm.nvvm.ptr.constant.to.gen.p0.p4",
+          [llvm.mlir_addressof(const_ptr_ty, "global_scratch")],
+      )
       return device_init(llvm.getelementptr(
-          ptr_ty, self.gmem_scratch_ptr, [], [alloc_base], i8
+          ptr_ty, gmem_scratch_ptr, [], [alloc_base], i8
       ))
 
   def _get_tma_desc(
@@ -276,43 +282,43 @@ class LaunchContext:
           ref = t.apply(ref)
         ref_ty = ir.MemRefType(ref.type)
 
-        i64 = ir.IntegerType.get_signless(64)
-        ptr_ty = ir.Type.parse("!llvm.ptr")
-        def init_tma_desc(host_ptr):
-          _, offset, *sizes_and_strides = memref.extract_strided_metadata(ref)
-          aligned_ptr_idx = memref.extract_aligned_pointer_as_index(ref)
-          as_i64 = lambda i: arith.index_cast(i64, i)
-          alloc_ptr = llvm.inttoptr(ptr_ty, as_i64(aligned_ptr_idx))
-          llvm_dyn = -2147483648  # TODO(apaszke): Improve the MLIR bindings...
-          base_ptr = llvm.getelementptr(
-              ptr_ty, alloc_ptr, [as_i64(offset)], [llvm_dyn], ref_ty.element_type,
-          )
-          rank = ref_ty.rank
-          assert rank * 2 == len(sizes_and_strides)
-          args = [
-              host_ptr,
-              base_ptr,
-              c(utils.bytewidth(ref_ty.element_type), i64),
-              c(rank, i64),
-              utils.pack_array([as_i64(i) for i in sizes_and_strides[:rank]]),
-              utils.pack_array([as_i64(i) for i in sizes_and_strides[rank:]]),
-              c(0 if swizzle is None else swizzle, i64),
-              utils.pack_array([c(v, i64) for v in transformed_slice_shape]),
-          ]
-          func.call([], "mosaic_gpu_init_tma_desc", args)
-        def cast_tma_desc(device_ptr):
-          # TODO(apaszke): Investigate why prefetching can cause launch failures
-          # nvvm.prefetch_tensormap(device_ptr)
-          return builtin.unrealized_conversion_cast(
-              [tensor_map_ty], [device_ptr]
-          )
-        tma_desc = self._alloc_scratch(
-            TMA_DESCRIPTOR_BYTES,
-            alignment=TMA_DESCRIPTOR_ALIGNMENT,
-            host_init=init_tma_desc,
-            device_init=cast_tma_desc,
+      i64 = ir.IntegerType.get_signless(64)
+      ptr_ty = ir.Type.parse("!llvm.ptr")
+      def init_tma_desc(host_ptr):
+        _, offset, *sizes_and_strides = memref.extract_strided_metadata(ref)
+        aligned_ptr_idx = memref.extract_aligned_pointer_as_index(ref)
+        as_i64 = lambda i: arith.index_cast(i64, i)
+        alloc_ptr = llvm.inttoptr(ptr_ty, as_i64(aligned_ptr_idx))
+        llvm_dyn = -2147483648  # TODO(apaszke): Improve the MLIR bindings...
+        base_ptr = llvm.getelementptr(
+            ptr_ty, alloc_ptr, [as_i64(offset)], [llvm_dyn], ref_ty.element_type,
         )
-        self.tma_descriptors[tma_desc_key] = tma_desc
+        rank = ref_ty.rank
+        assert rank * 2 == len(sizes_and_strides)
+        args = [
+            host_ptr,
+            base_ptr,
+            c(utils.bytewidth(ref_ty.element_type), i64),
+            c(rank, i64),
+            utils.pack_array([as_i64(i) for i in sizes_and_strides[:rank]]),
+            utils.pack_array([as_i64(i) for i in sizes_and_strides[rank:]]),
+            c(0 if swizzle is None else swizzle, i64),
+            utils.pack_array([c(v, i64) for v in transformed_slice_shape]),
+        ]
+        func.call([], "mosaic_gpu_init_tma_desc", args)
+      def cast_tma_desc(device_ptr):
+        # TODO(apaszke): Investigate why prefetching can cause launch failures
+        # nvvm.prefetch_tensormap(device_ptr)
+        return builtin.unrealized_conversion_cast(
+            [tensor_map_ty], [device_ptr]
+        )
+      tma_desc = self._alloc_scratch(
+          TMA_DESCRIPTOR_BYTES,
+          alignment=TMA_DESCRIPTOR_ALIGNMENT,
+          host_init=init_tma_desc,
+          device_init=cast_tma_desc,
+      )
+      self.tma_descriptors[tma_desc_key] = tma_desc
     return tma_desc
 
   def async_copy(
@@ -457,7 +463,6 @@ def _launch(
     token,
     grid,
     block,
-    gmem_scratch_ptr,
     smem_buffers: ShapeTree | Union[ShapeTree],
     profiler_spec: profiler.ProfilerSpec | None = None,
     maybe_prof_buffer: ir.Value | None = None,
@@ -524,7 +529,7 @@ def _launch(
     else:
       smem_ref_tree: RefTree = smem_ref_trees[0] if smem_ref_trees else []
 
-    yield LaunchContext(launch_op, gmem_scratch_ptr, prof), smem_ref_tree
+    yield LaunchContext(launch_op, prof), smem_ref_tree
     if prof is not None:
       prof.finalize(grid=grid, block=block)
     gpu.terminator()
@@ -542,6 +547,7 @@ def _lower_as_gpu_kernel(
   ptr_ty = ir.Type.parse("!llvm.ptr")
   token_ty = ir.Type.parse("!gpu.async.token")
   i8 = ir.IntegerType.get_signless(8)
+  i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
 
   def _shape_to_ref_ty(shape: jax.ShapeDtypeStruct) -> ir.MemRefType:
@@ -564,23 +570,25 @@ def _lower_as_gpu_kernel(
   with ir.InsertionPoint(module.body):
     _declare_runtime_functions()
     gmem_scratch_bytes = 0
-    @func.FuncOp.from_py_func(ptr_ty, ptr_ty)
-    def main(token_ptr, buffers):
+    global_scratch = llvm.GlobalOp(
+        ir.Type.parse("!llvm.array<0 x i8>"),  # We don't know the shape yet.
+        "global_scratch",
+        ir.Attribute.parse("#llvm.linkage<external>"),
+        addr_space=ir.IntegerAttr.get(i32, 4),  # GPU constant memory.
+    )
+    @func.FuncOp.from_py_func(ptr_ty, ptr_ty, ptr_ty)
+    def main(token_ptr, buffers, gmem_scratch_ptr):
       nonlocal gmem_scratch_bytes
       token = builtin.unrealized_conversion_cast([token_ty], [token_ptr])
       arg_refs = []
-      i = -1
       for i, ref_ty in enumerate([*in_ref_tys, *out_ref_tys]):
         ptr = llvm.LoadOp(ptr_ty, llvm.GEPOp(ptr_ty, buffers, [], [i], ptr_ty))
         arg_refs.append(utils.ptr_as_memref(ptr, ir.MemRefType(ref_ty)))
-      gmem_scratch_ptr = llvm.LoadOp(
-          ptr_ty, llvm.GEPOp(ptr_ty, buffers, [], [i + 1], ptr_ty)
-      )
       in_refs = arg_refs[:len(in_ref_tys)]
       out_refs = arg_refs[len(in_ref_tys):]
       prof_buffer = out_refs.pop() if prof_spec is not None else None
       with _launch(
-          token, grid, block, gmem_scratch_ptr, smem_scratch_shape,
+          token, grid, block, smem_scratch_shape,
           prof_spec, prof_buffer
       ) as (launch_ctx, smem_refs):
         body(launch_ctx, *in_refs, *out_refs, smem_refs)
@@ -592,6 +600,9 @@ def _lower_as_gpu_kernel(
         host_scratch_ptr = llvm.alloca(ptr_ty, c(gmem_scratch_bytes, i64), i8)
         for init_callback in launch_ctx.host_scratch_init:
           init_callback(host_scratch_ptr)
+        global_scratch.global_type = ir.TypeAttr.get(
+            ir.Type.parse("!llvm.array<" + str(gmem_scratch_bytes) + " x i8>")
+        )
         func.call(
             [],
             "mosaic_gpu_memcpy_async_h2d",
@@ -603,6 +614,9 @@ def _lower_as_gpu_kernel(
             ],
         )
     main.func_op.attributes["llvm.emit_c_interface"] = ir.UnitAttr.get()
+  sym_tab = ir.SymbolTable(module.operation)
+  sym_tab.insert(main.func_op)
+  sym_tab.insert(global_scratch)
   module.operation.verify()
 
   return module, out_shape, gmem_scratch_bytes, unwrap_output_tuple

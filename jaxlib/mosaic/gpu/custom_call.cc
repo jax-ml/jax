@@ -25,9 +25,11 @@ limitations under the License.
 #include <memory>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
+#include "jaxlib/gpu/vendor.h"
 #include "absl/base/optimization.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/log/check.h"
@@ -82,7 +84,7 @@ limitations under the License.
 
 namespace {
 
-using MosaicInitFunc = void(void***);
+using MosaicInitFunc = void(void****);
 using MosaicHostFunc = void(void**);
 
 mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
@@ -339,16 +341,20 @@ absl::StatusOr<std::unique_ptr<mlir::ExecutionEngine>> Compile(
 class CompiledKernel {
  public:
   CompiledKernel(std::unique_ptr<mlir::ExecutionEngine> engine, void* ctx,
-                 MosaicHostFunc* host_launch)
-      : engine_(std::move(engine)), ctx_(ctx), host_launch_(host_launch) {}
+                 void* scratch_addr, MosaicHostFunc* host_launch)
+      : engine_(std::move(engine)),
+        ctx_(ctx),
+        scratch_addr_(scratch_addr),
+        host_launch_(host_launch) {}
 
-  std::pair<void*, MosaicHostFunc*> GetHostLaunch() {
-    return std::make_pair(ctx_, host_launch_);
+  std::tuple<void*, void*, MosaicHostFunc*> GetHostLaunch() {
+    return std::make_tuple(ctx_, scratch_addr_, host_launch_);
   }
 
  private:
   std::unique_ptr<mlir::ExecutionEngine> engine_;
   void* ctx_;  // TODO(apaszke): Destroy this properly
+  void* scratch_addr_;
   MosaicHostFunc* host_launch_;
 };
 
@@ -363,7 +369,7 @@ GetKernelCache() {
 // Each compiled kernel has a unique init func, and each kernel is used from
 // a single HLO module. So it should be safe to not include the CUDA context
 // in the key.
-absl::StatusOr<std::pair<void*, MosaicHostFunc*>> CompileAndInit(
+absl::StatusOr<std::tuple<void*, void*, MosaicHostFunc*>> CompileAndInit(
     uint64_t kernel_id, const char* module) {
   auto cache_and_mutex = GetKernelCache();
   auto* cache = cache_and_mutex.first;
@@ -398,12 +404,20 @@ absl::StatusOr<std::pair<void*, MosaicHostFunc*>> CompileAndInit(
     if (!init || !main) {
       return absl::InternalError("Failed to retrieve kernel function");
     }
-    void* ctx;
-    void** ptr_to_ctx = &ctx;
-    reinterpret_cast<MosaicInitFunc*>(*init)(&ptr_to_ctx);
+    void* module_ptr = nullptr;
+    void* kernel_ptr = nullptr;
+    void** module_ptr_ptr = &module_ptr;
+    void** kernel_ptr_ptr = &kernel_ptr;
+    void*** init_args[2] = {&module_ptr_ptr, &kernel_ptr_ptr};
+    reinterpret_cast<MosaicInitFunc*>(*init)(init_args);
+    CUmodule module = static_cast<CUmodule>(module_ptr);
+    CUdeviceptr scratch_addr;
+    cuModuleGetGlobal(&scratch_addr, nullptr, module, "global_scratch");
     cache->insert_or_assign(
-        kernel_id, CompiledKernel(std::move(*maybe_engine), ctx,
-                                  reinterpret_cast<MosaicHostFunc*>(*main)));
+        kernel_id,
+        CompiledKernel(std::move(*maybe_engine), kernel_ptr,
+                       reinterpret_cast<void*>(scratch_addr),
+                       reinterpret_cast<MosaicHostFunc*>(*main)));
   }
   return cache->at(kernel_id).GetHostLaunch();
 }
@@ -418,8 +432,9 @@ void MosaicGPUCustomCall(void* stream, void** buffers, char* opaque,
                                   ctx_and_kernel.status().message().size());
     return;
   }
-  void* args[3] = {&ctx_and_kernel->first, &stream, &buffers};
-  ctx_and_kernel->second(args);
+  void* args[4] = {&std::get<0>(*ctx_and_kernel), &stream, &buffers,
+                   &std::get<1>(*ctx_and_kernel)};
+  std::get<2>(*ctx_and_kernel)(args);
 }
 
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("mosaic_gpu", &MosaicGPUCustomCall,

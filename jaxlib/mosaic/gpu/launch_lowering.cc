@@ -128,8 +128,7 @@ void buildInitFunction(mlir::OpBuilder &module_builder,
   auto i32 = mlir::IntegerType::get(init_func.getContext(), 32);
   auto ptr_ty = mlir::LLVM::LLVMPointerType::get(init_func.getContext());
   mlir::Location loc = init_func.getLoc();
-  auto builder =
-      mlir::OpBuilder::atBlockBegin(&init_func.getBody().emplaceBlock());
+  auto builder = mlir::OpBuilder::atBlockBegin(init_func.addEntryBlock());
   auto binary_global_decl = module_builder.create<mlir::LLVM::GlobalOp>(
       loc,
       mlir::LLVM::LLVMArrayType::get(builder.getI8Type(),
@@ -180,7 +179,11 @@ void buildInitFunction(mlir::OpBuilder &module_builder,
               loc, "mosaic_gpu_get_function", ptr_ty,
               mlir::ValueRange{module_handle, kernel_name_ptr, used_smem})
           .getResult(0);
-  builder.create<mlir::func::ReturnOp>(loc, kernel_handle);
+  builder.create<mlir::LLVM::StoreOp>(loc, module_handle,
+                                      init_func.getArgument(0));
+  builder.create<mlir::LLVM::StoreOp>(loc, kernel_handle,
+                                      init_func.getArgument(1));
+  builder.create<mlir::func::ReturnOp>(loc);
 }
 
 mlir::LogicalResult launchPreloadedKernel(mlir::func::FuncOp func,
@@ -253,7 +256,7 @@ class GpuLaunchLoweringPass : public ::mlir::OperationPass<mlir::ModuleOp> {
         auto module_builder = mlir::OpBuilder::atBlockBegin(module.getBody());
         auto init_func = module_builder.create<mlir::func::FuncOp>(
             op.getLoc(), func.getName().str() + "_init",
-            mlir::FunctionType::get(func->getContext(), {}, {ptr_ty}));
+            mlir::FunctionType::get(func->getContext(), {ptr_ty, ptr_ty}, {}));
         init_func->setAttr(mlir::LLVM::LLVMDialect::getEmitCWrapperAttrName(),
                            mlir::UnitAttr::get(func->getContext()));
         bool had_launch = false;

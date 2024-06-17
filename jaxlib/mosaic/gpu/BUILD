@@ -104,6 +104,7 @@ cc_library(
     srcs = ["custom_call.cc"],
     deps = [
         ":passes",
+        "//jaxlib/cuda:cuda_vendor",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:ArithToLLVM",
