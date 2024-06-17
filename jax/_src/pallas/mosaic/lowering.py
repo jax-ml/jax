@@ -451,7 +451,9 @@ def lower_jaxpr_to_module(
       m.body.append(mlir_func)
       sym_tab.insert(mlir_func)
     func_op.attributes["window_params"] = ir.ArrayAttr.get(window_params)
-    static_grid = [MLIR_DYNAMIC if b is None else b for b in grid]
+    static_grid = [
+        MLIR_DYNAMIC if b is pl_core.dynamic_grid_dim else b for b in grid
+    ]
     func_op.attributes["iteration_bounds"] = ir.DenseI64ArrayAttr.get(static_grid)
 
   func_op.attributes["scalar_prefetch"] = ir.IntegerAttr.get(
@@ -1019,7 +1021,6 @@ def _prng_key_load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree
     )
     load_ops.append(memref.LoadOp(ref, starts).result)
   return KeyScalarBundle(scalars=load_ops)
-
 
 
 lowering_rules[primitives.load_p] = _load_lowering_rule

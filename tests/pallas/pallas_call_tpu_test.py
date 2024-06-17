@@ -339,6 +339,46 @@ class PallasCallScalarPrefetchInterpretTest(PallasCallScalarPrefetchTest):
 
 class PallasCallDynamicGridTest(PallasTPUTest):
 
+  def test_can_query_grid_statically_via_num_programs(self):
+
+    def kernel(_):
+      num_programs = pl.num_programs(0)
+      self.assertIsInstance(num_programs, int)
+      self.assertEqual(num_programs, 2)
+
+    pl.pallas_call(kernel, out_shape=None, grid=(2,))()
+
+  def test_can_query_grid_statically_via_num_programs_in_block_spec(self):
+
+    def kernel(*_):
+      pass
+
+    def x_index_map(_):
+      num_programs = pl.num_programs(0)
+      self.assertIsInstance(num_programs, int)
+      self.assertEqual(num_programs, 2)
+      return 0
+    pl.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(x_index_map, (8, 128))],
+        out_shape=None,
+        grid=(2,),
+    )(jnp.ones((8, 128)))
+
+  def test_dynamic_grid_has_dynamic_size(self):
+
+    def kernel(_):
+      num_programs = pl.num_programs(0)
+      self.assertIsInstance(num_programs, int, msg=type(num_programs))
+      self.assertEqual(num_programs, 2)
+      num_programs = pl.num_programs(1)
+      self.assertIsInstance(num_programs, jax.Array)
+
+    @jax.jit
+    def outer(x):
+      pl.pallas_call(kernel, out_shape=None, grid=(2, x))()
+    outer(2)
+
   def test_dynamic_grid(self):
     shape = (8, 128)
     result_ty = jax.ShapeDtypeStruct(shape, jnp.float32)
@@ -496,7 +536,7 @@ class PallasCallDynamicGridTest(PallasTPUTest):
           out_shape=jax.ShapeDtypeStruct((1, 1), jnp.int32),
       )()
 
-    self.assertEqual(dynamic_kernel(4), 8)
+    self.assertEqual(dynamic_kernel(np.int32(4)), 8)
 
   @parameterized.parameters(range(1, 4))
   def test_vmap_num_programs(self, num_vmaps):
@@ -540,7 +580,7 @@ class PallasCallDynamicGridTest(PallasTPUTest):
       )(x)
 
     x = np.arange(4 * 8 * 128., dtype=np.int32).reshape((4 * 8, 128))
-    np.testing.assert_array_equal(dynamic_kernel(4, x), x[8:16])
+    np.testing.assert_array_equal(dynamic_kernel(np.int32(4), x), x[8:16])
 
 
 class PallasCallInterpretDynamicGridTest(PallasCallDynamicGridTest):
