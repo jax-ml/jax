@@ -40,8 +40,6 @@ from jax._src.pallas.primitives import uninitialized_value
 from jax._src.state import discharge as state_discharge
 from jax._src.state import primitives as sp
 from jax._src.util import (
-    merge_lists,
-    partition_list,
     safe_map,
     safe_zip,
     split_list,
@@ -669,23 +667,36 @@ def _pallas_call_batching_rule(
 batching.primitive_batchers[pallas_call_p] = _pallas_call_batching_rule
 
 def _hoist_consts_to_refs(jaxpr: jax_core.Jaxpr) -> jax_core.Jaxpr:
-  all_const_avals = [var.aval for var in jaxpr.constvars]
-  is_const_ref = [isinstance(var.aval, state.AbstractRef) for var in
-                  jaxpr.constvars]
-  const_avals, const_ref_avals = partition_list(is_const_ref, all_const_avals)
-  const_avals = map(state.AbstractRef, const_avals)
-  merged_const_avals = merge_lists(is_const_ref, const_avals, const_ref_avals)
-  arg_avals = [var.aval for var in jaxpr.invars]
-  in_avals = [*merged_const_avals, *arg_avals]
-  num_consts = len(merged_const_avals)
+  """Hoists the constants in the given jaxpr into invars.
+
+  Args:
+    jaxpr: The jaxpr.
+
+  Returns:
+    A new jaxpr where the constants were hoisted into invars as ``Ref``s.
+    The invars for the constants are added *before* any existing invars.
+  """
+  if not jaxpr.constvars:
+    return jaxpr  # Nothing to hoist.
+
+  is_const_ref = [
+      isinstance(var.aval, state.AbstractRef) for var in jaxpr.constvars
+  ]
+  const_avals = [
+      var.aval if is_ref else state.AbstractRef(var.aval)
+      for is_ref, var in zip(is_const_ref, jaxpr.constvars)
+  ]
+  in_avals = const_avals + [var.aval for var in jaxpr.invars]
 
   def _hoist(*consts_args):
-    all_consts, args = split_list(consts_args, [num_consts])
-    consts, const_refs = partition_list(is_const_ref, all_consts)
+    all_consts, args = split_list(consts_args, [len(const_avals)])
     # We immediately read the const values out of the `Ref`s.
-    consts = map(lambda x: sp.ref_get(x, ()), consts)
-    all_consts = merge_lists(is_const_ref, consts, const_refs)
+    all_consts = [
+        c if is_ref else sp.ref_get(c, ())
+        for is_ref, c in zip(is_const_ref, all_consts)
+    ]
     return jax_core.eval_jaxpr(jaxpr, all_consts, *args)
+
   hoisted_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(_hoist), in_avals)
   assert not consts, "All consts should have been converted to refs"
