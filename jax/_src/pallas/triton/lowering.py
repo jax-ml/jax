@@ -308,7 +308,9 @@ def lower_jaxpr_to_triton_module(
           if block_mapping is not None
           else None
           for shape_dtype, block_mapping, start_idx in zip(
-              in_shapes, grid_mapping.block_mappings, start_indices
+              (*in_shapes, *[()] * grid_mapping.num_constant_operands),
+              grid_mapping.block_mappings,
+              start_indices,
           )
       ]
       () = lower_jaxpr_to_triton_ir(ctx, jaxpr, block_infos, *entry.arguments)
@@ -336,11 +338,12 @@ def lower_jaxpr_to_triton_ir(
   def write_env(var: jax_core.Var, val):
     env[var] = val
 
-  if block_infos is None:
-    block_infos = [None] * len(jaxpr.invars)
-  for invar, block_info in zip(jaxpr.invars, block_infos):
-    block_info_env[invar] = block_info
+  if block_infos is not None:
+    for invar, block_info in zip(jaxpr.invars, block_infos):
+      block_info_env[invar] = block_info
+
   map(write_env, jaxpr.invars, args)
+
   for eqn in jaxpr.eqns:
     invals = map(read_env, eqn.invars)
     if eqn.primitive not in triton_lowering_rules:
@@ -371,6 +374,7 @@ def lower_jaxpr_to_triton_ir(
       map(write_env, eqn.outvars, outvals)
     else:
       write_env(eqn.outvars[0], outvals)
+
   return map(read_env, jaxpr.outvars)
 
 

@@ -702,7 +702,13 @@ def _trace_to_jaxpr(fun: Callable, grid_spec: GridSpec, flat_in_avals,
       lu.wrap_init(fun), jaxpr_in_tree)
   debug = pe.debug_info(fun, jaxpr_in_tree, out_tree_thunk, False, "pallas_call")
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, jaxpr_flat_avals, debug)
-  jaxpr = _hoist_consts_to_refs(jaxpr)
+  if consts:
+    jaxpr = _hoist_consts_to_refs(jaxpr)
+    # Pad ``block_mappings`` to account for the hoisted constants.
+    grid_mapping = grid_mapping.replace(
+        block_mappings=(*grid_mapping.block_mappings, *[None] * len(consts)),
+        num_constant_operands=len(consts),
+    )
   return grid_mapping, jaxpr, consts, out_tree_thunk()
 
 def _extract_function_name(f: Callable, name: str | None) -> str:

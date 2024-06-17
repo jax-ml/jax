@@ -206,6 +206,20 @@ class PallasCallTest(PallasTest):
     for i in range(5):
       np.testing.assert_allclose(index(x, i), x[i])
 
+  def test_hoisted_consts(self):
+    # See https://github.com/google/jax/issues/21557.
+    x = jnp.zeros(32)
+    indices = jnp.arange(4).reshape((2, 2))
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+    )
+    def kernel(src, dst):
+      dst[indices] = src[indices]
+
+    jax.block_until_ready(kernel(x))
+
   def test_vector_slicing(self):
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),

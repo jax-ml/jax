@@ -180,9 +180,11 @@ class BlockMapping:
 class GridMapping:
   grid: Grid
   block_mappings: tuple[BlockMapping | None, ...]
-  mapped_dims: tuple[int, ...]
-  num_index_operands: int
-  num_scratch_operands: int
+  mapped_dims: tuple[int, ...] = ()
+  num_index_operands: int = 0
+  num_scratch_operands: int = 0
+  # Number of constants hoisted to operands by ``_hoist_consts_to_refs``.
+  num_constant_operands: int = 0
 
   replace = dataclasses.replace
 
@@ -336,8 +338,8 @@ class GridSpec:
         partial(_convert_block_spec_to_block_mapping, grid_avals,
                 in_tree=grid_tree), out_specs, out_ref_avals)
     grid_mapping = GridMapping(
-        self.grid, (*in_block_mappings, *out_block_mappings), (),
-        num_index_operands=0, num_scratch_operands=0)
+        self.grid, (*in_block_mappings, *out_block_mappings)
+    )
     jaxpr_in_avals = tree_util.tree_unflatten(in_tree, in_ref_avals)
     jaxpr_out_avals = tree_util.tree_unflatten(out_tree, out_ref_avals)
     if not isinstance(jaxpr_out_avals, (tuple, list)):
