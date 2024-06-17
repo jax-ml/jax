@@ -419,6 +419,45 @@ struct ContractionBitwidthConvert
   const bool supports_bf16_matmul_;
 };
 
+// Rewrite `vector.multi_dim_reduction` with bf16 source/accumulator/output into
+// a multi_dim_reduction with f32 source/accumulator/output, where the source
+// and accumulator are extended and the result is truncated.
+// TODO(b/324596736): Make the rewrite conditional on the target supporting
+// bf16 reductions.
+struct MultiDimReductionBitwidthConvert
+    : public OpRewritePattern<vector::MultiDimReductionOp> {
+  using OpRewritePattern<vector::MultiDimReductionOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(vector::MultiDimReductionOp op,
+                                PatternRewriter &rewriter) const override {
+    // Below we rely on the contract that the source operand, accumulator, and
+    // result have the same element type.
+    auto src_ty = op.getSourceVectorType();
+    if (!src_ty.getElementType().isBF16()) {
+      return rewriter.notifyMatchFailure(op, "not bf16 reduction");
+    }
+
+    auto res_ty = dyn_cast<VectorType>(op.getResult().getType());
+    if (!res_ty) {
+      return rewriter.notifyMatchFailure(op, "not vector reduction");
+    }
+
+    auto reduction = rewriter.create<vector::MultiDimReductionOp>(
+        op.getLoc(),
+        rewriter.create<arith::ExtFOp>(
+            op.getLoc(),
+            VectorType::get(src_ty.getShape(), rewriter.getF32Type()),
+            op.getSource()),
+        rewriter.create<arith::ExtFOp>(
+            op.getLoc(),
+            VectorType::get(res_ty.getShape(), rewriter.getF32Type()),
+            op.getAcc()),
+        op.getReductionMask(), op.getKind());
+    rewriter.replaceOpWithNewOp<arith::TruncFOp>(op, res_ty, reduction);
+    return success();
+  }
+};
+
 struct LinalgVectorizationPass
     : public impl::LinalgVectorizationPassBase<LinalgVectorizationPass> {
   explicit LinalgVectorizationPass(
@@ -472,6 +511,7 @@ struct LinalgVectorizationPass
                                            supports_bf16_alu_instructions);
     }
     patterns.add<ContractionBitwidthConvert>(supports_bf16_matmul, ctx);
+    patterns.add<MultiDimReductionBitwidthConvert>(ctx);
 
     // We do not want to apply the vector patterns above to the ops that are
     // unrelated to the original linalg op.
@@ -480,7 +520,8 @@ struct LinalgVectorizationPass
       if (dyn_cast<linalg::LinalgOp>(op) ||
           dyn_cast<vector::TransferReadOp>(op) ||
           dyn_cast<vector::TransferWriteOp>(op) ||
-          dyn_cast<vector::ContractionOp>(op)) {
+          dyn_cast<vector::ContractionOp>(op) ||
+          dyn_cast<vector::MultiDimReductionOp>(op)) {
         linalgOps.push_back(op);
       }
     });
