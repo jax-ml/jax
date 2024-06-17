@@ -38,7 +38,7 @@ kiwisolver==1.4.5
     # via matplotlib
 markdown-it-py==3.0.0
     # via rich
-matplotlib==3.8.3
+matplotlib==3.9.0
     # via -r build/requirements.in
 mdurl==0.1.2
     # via markdown-it-py
