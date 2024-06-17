@@ -896,13 +896,13 @@ def _debug_callback_eager_rule(mesh, *args, callback: Callable[..., Any],
   return []
 eager_rules[debugging.debug_callback_p] = _debug_callback_eager_rule
 
-def _device_put_eager_rule(mesh, x, *, src, device):
-  del mesh, src
-  if device is None:
-    return x
-  else:
-    raise ValueError("device_put with explicit device not allowed within "
-                     f"shard_map-decorated functions, but got device {device}")
+def _device_put_eager_rule(mesh, *xs, srcs, devices):
+  del mesh, srcs
+  for device in devices:
+    if device is not None:
+      raise ValueError("device_put with explicit device not allowed within "
+                       f"shard_map-decorated functions, but got device {device}")
+  return xs
 eager_rules[dispatch.device_put_p] = _device_put_eager_rule
 
 # New primitives for efficient transposition
@@ -1145,8 +1145,8 @@ register_norewrite(callback.io_callback_p)
 
 
 @register_check(dispatch.device_put_p)
-def _device_put_rule(mesh, x, **_):
-  return x
+def _device_put_rule(mesh, *xs, **_):
+  return list(xs)
 register_norewrite(dispatch.device_put_p)
 
 

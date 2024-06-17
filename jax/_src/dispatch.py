@@ -18,6 +18,7 @@ from __future__ import annotations
 import atexit
 from collections.abc import Iterator, Sequence
 import contextlib
+import dataclasses
 from functools import partial
 import itertools
 import time
@@ -240,10 +241,9 @@ def jaxpr_shardings(
       yield from ((NamedSharding(eqn.params['mesh'], _names_to_pspec(names)), source_info)
                   for names in [*eqn.params['in_names'], *eqn.params['out_names']])
     elif eqn.primitive is device_put_p:
-      s = eqn.params['device']
-      if isinstance(s, Sharding) and s.memory_kind is not None:
-        source_info = SourceInfo(eqn.source_info, eqn.primitive.name)
-        yield (s, source_info)
+      source_info = SourceInfo(eqn.source_info, eqn.primitive.name)
+      yield from ((s, source_info) for s in eqn.params['devices']
+                  if isinstance(s, Sharding) and s.memory_kind is not None)
   for subjaxpr in core.subjaxprs(jaxpr):
     yield from jaxpr_shardings(subjaxpr)
 
@@ -322,10 +322,6 @@ def _check_special(name: str, dtype: np.dtype, buf: basearray.Array) -> None:
       raise FloatingPointError(f"invalid value (inf) encountered in {name}")
 
 
-def _put_x(x, s: Sharding, aval: core.AbstractValue, committed: bool):
-  result_handler = pxla.global_aval_to_result_handler(aval, s, committed)
-  return result_handler(pxla.shard_args([s], [x])[0])
-
 def _override_get_device_assignment(sharding, *args, **kwargs):
   da = sharding._device_assignment
   return xb.get_device_backend(da[0]), da
@@ -381,6 +377,25 @@ def _mcjax_reshard(x, target_sharding):
     pxla._get_and_check_device_assignment.fn = _orig_get_and_check_device_assignment
 
 
+@dataclasses.dataclass(frozen=True)
+class _DeferredShardArg:
+  """Deferred call to `pxla.shard_args`.
+
+  Per-array impls return this object instead of a result array to indicate a
+  deferred `shard_args` call. `_batched_device_put_impl` then batches all
+  `_DeferredShardArg` objects into a single `shard_args` call.
+  """
+
+  x: Any
+  s: Sharding
+  aval: core.AbstractValue
+  committed: bool
+
+  @property
+  def result_handler(self):
+    return pxla.global_aval_to_result_handler(self.aval, self.s, self.committed)
+
+
 def _device_put_sharding_impl(x, aval, device):
   from jax._src import array
 
@@ -402,7 +417,7 @@ def _device_put_sharding_impl(x, aval, device):
           " trying to use device_put in multi-controller JAX which is not"
           " supported. Please use jax.make_array_from_single_device_arrays API"
           " or pass device or Sharding which represents addressable devices.")
-    return _put_x(x, s, aval, True)
+    return _DeferredShardArg(x, s, aval, True)
 
   # Only `Device` exists below. `Sharding` instance is handled above.
   if isinstance(x, array.ArrayImpl):
@@ -418,12 +433,15 @@ def _device_put_sharding_impl(x, aval, device):
 
   sh = SingleDeviceSharding(pxla._get_default_device()
                             if device is None else device)
-  return _put_x(x, sh, aval, device is not None)
+  return _DeferredShardArg(x, sh, aval, device is not None)
+
 
 def _device_put_impl(
     x,
-    device: Device | Sharding | Layout | None = None,
-    src: Device | Sharding | Layout | None = None):
+    *,
+    device: Device | Sharding | Layout | None,
+    src: Device | Sharding | Layout | None,
+):
   if (isinstance(device, TransferToMemoryKind) or
       isinstance(src, TransferToMemoryKind)):
     raise ValueError(
@@ -457,43 +475,95 @@ def _device_put_impl(
   return _device_put_sharding_impl(x, aval, device)
 
 
+def _batched_device_put_impl(
+    *xs,
+    devices: Sequence[Device | Sharding | Layout | None],
+    srcs: Sequence[Device | Sharding | Layout | None],
+):
+  ys = []
+  shard_arg_indices, shard_arg_xs, shard_arg_shardings = [], [], []
+  for i, (x, device, src) in enumerate(zip(xs, devices, srcs)):
+    y = _device_put_impl(x, device=device, src=src)
+    if isinstance(y, _DeferredShardArg):
+      shard_arg_indices.append(i)
+      shard_arg_xs.append(y.x)
+      shard_arg_shardings.append(y.s)
+    ys.append(y)
+
+  if shard_arg_xs:
+    # Batch shard_arg calls. Helps improve efficiency for backends that support
+    # efficient batch transfer.
+    shard_arg_results = pxla.shard_args(shard_arg_shardings, shard_arg_xs)
+    for i, shard_arg_result in zip(shard_arg_indices, shard_arg_results):
+      assert isinstance(ys[i], _DeferredShardArg)
+      ys[i] = ys[i].result_handler(shard_arg_result)
+
+  return ys
+
+
 device_put_p = core.Primitive('device_put')
-device_put_p.def_impl(_device_put_impl)
-device_put_p.def_abstract_eval(lambda x, device=None, src=None: x)
+device_put_p.multiple_results = True
+device_put_p.def_impl(_batched_device_put_impl)
+device_put_p.def_abstract_eval(lambda *xs, devices, srcs: xs)
 
-def device_put_transpose_rule(ct, _, device, src):
-  return [device_put_p.bind(ct, device=src, src=device)]
-ad.deflinear2(device_put_p, device_put_transpose_rule)
-batching.defvectorized(device_put_p)
+def _device_put_transpose(cts, *_, devices, srcs):
+  results = [None] * len(cts)
+  dp_args = []
+  for i, (ct, device, src) in enumerate(zip(cts, devices, srcs)):
+    if type(ct) is not ad.Zero:
+      dp_args.append((i, ct, device, src))
+  if dp_args:
+    indices, args, devices, srcs = list(zip(*dp_args))
+    ys = device_put_p.bind(*args, devices=srcs, srcs=devices)
+    for i, y in zip(indices, ys):
+      results[i] = y
+  return results
+ad.primitive_jvps[device_put_p] = partial(ad.linear_jvp, device_put_p)
+ad.primitive_transposes[device_put_p] = _device_put_transpose
 
-def _tpu_gpu_device_put_lowering(ctx, x, *, device, src):
-  if (isinstance(device, (Sharding, TransferToMemoryKind)) and
-      device.memory_kind is not None):
-    aval, = ctx.avals_in
-    out_aval, = ctx.avals_out
-    if isinstance(device, Sharding):
-      x = mlir.wrap_with_sharding_op(
-          ctx, x, out_aval, device._to_xla_hlo_sharding(aval.ndim).to_proto())
-    x = mlir.wrap_with_memory_kind(x, device.memory_kind, out_aval)
-    return [x]
-  return [x]
+def _device_put_batcher(batched_args, batch_dims, **params):
+  mapped_batch_dims = [bd for bd in batch_dims if bd is not batching.not_mapped]
+  assert not mapped_batch_dims or all(
+      mapped_batch_dims[0] == bd for bd in mapped_batch_dims[1:]
+  ), batch_dims
+  return device_put_p.bind(*batched_args, **params), batch_dims
+batching.primitive_batchers[device_put_p] = _device_put_batcher
+
+def _tpu_gpu_device_put_lowering(ctx, *xs, devices, srcs):
+  def lower(x, device, src):
+    if (isinstance(device, (Sharding, TransferToMemoryKind)) and
+        device.memory_kind is not None):
+      aval, = ctx.avals_in
+      out_aval, = ctx.avals_out
+      if isinstance(device, Sharding):
+        x = mlir.wrap_with_sharding_op(
+            ctx, x, out_aval, device._to_xla_hlo_sharding(aval.ndim).to_proto())
+      x = mlir.wrap_with_memory_kind(x, device.memory_kind, out_aval)
+      return x
+    return x
+  return list(map(lower, xs, devices, srcs))
 mlir.register_lowering(
   device_put_p, _tpu_gpu_device_put_lowering, platform='tpu')
 mlir.register_lowering(
   device_put_p, _tpu_gpu_device_put_lowering, platform='gpu')
 
 
-def _common_device_put_lowering(ctx, x, *, device, src):
-  if (isinstance(device, (Sharding, TransferToMemoryKind)) and
-      device.memory_kind is not None):
-    raise NotImplementedError(
-        "Passing memory_kind to device_put via Shardings is not supported on"
-        f" platforms {ctx.module_context.platforms}")
-  return [x]
+def _common_device_put_lowering(ctx, *xs, devices, srcs):
+  for device in devices:
+    if (isinstance(device, (Sharding, TransferToMemoryKind)) and
+        device.memory_kind is not None):
+      raise NotImplementedError(
+          "Passing memory_kind to device_put via Shardings is not supported on"
+          f" platforms {ctx.module_context.platforms}")
+  return xs
 mlir.register_lowering(device_put_p, _common_device_put_lowering)
 
-def _propagate_mem_kind_dp(xm, device=None, src=None):
-  if isinstance(device, (Sharding, TransferToMemoryKind)):
-    return device.memory_kind
-  return None
+def _propagate_mem_kind_dp(*xm, devices=None, srcs=None):
+  memory_kinds = []
+  for device in devices:
+    if isinstance(device, (Sharding, TransferToMemoryKind)):
+      memory_kinds.append(device.memory_kind)
+    else:
+      memory_kinds.append(None)
+  return memory_kinds
 pxla.memory_kind_propagate_rule[device_put_p] = _propagate_mem_kind_dp

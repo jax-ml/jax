@@ -679,12 +679,10 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
 
 def _maybe_put(x):
   if isinstance(x, np.ndarray):
-    return dispatch._put_x(
-        x,
-        jax.sharding.SingleDeviceSharding(jax.local_devices(backend='cpu')[0]),
-        shaped_abstractify(x),
-        False,
-    )
+    aval = shaped_abstractify(x)
+    s = jax.sharding.SingleDeviceSharding(jax.local_devices(backend='cpu')[0])
+    result_handler = pxla.global_aval_to_result_handler(aval, s, False)
+    return result_handler(pxla.shard_args([s], [x]))
   else:
     return x
 
