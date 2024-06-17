@@ -587,7 +587,7 @@ class PallasCallInterpretDynamicGridTest(PallasCallDynamicGridTest):
   interpret: bool = True
 
 
-class PallasCallDMATest(parameterized.TestCase):
+class PallasCallDMATest(PallasTPUTest):
 
   def setUp(self):
     if not jtu.is_device_tpu_at_least(4):
@@ -601,7 +601,7 @@ class PallasCallDMATest(parameterized.TestCase):
       del x_ref, y_ref
 
     x = jnp.ones((8, 128), dtype=jnp.float32)
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         in_specs=[pl.BlockSpec(None, None, pltpu.TPUMemorySpace.ANY)],
         out_specs=pl.BlockSpec(None, None, pltpu.TPUMemorySpace.ANY),
@@ -636,7 +636,7 @@ class PallasCallDMATest(parameterized.TestCase):
 
       pltpu.run_scoped(body, pltpu.VMEM((8, 128), jnp.float32))
 
-    o = pl.pallas_call(
+    o = self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )()
@@ -653,7 +653,7 @@ class PallasCallDMATest(parameterized.TestCase):
         y_ref[...] = 4 * x_ref[...]
       pltpu.run_scoped(body, pltpu.VMEM((8, 128), jnp.float32))
 
-    o = pl.pallas_call(
+    o = self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )()
@@ -665,7 +665,7 @@ class PallasCallDMATest(parameterized.TestCase):
         pass
       pltpu.run_scoped(body, pltpu.SemaphoreType.DMA)
 
-    jax.block_until_ready(pl.pallas_call(
+    jax.block_until_ready(self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )())
@@ -677,7 +677,7 @@ class PallasCallDMATest(parameterized.TestCase):
       pltpu.run_scoped(body, pltpu.SemaphoreType.DMA,
                        pltpu.SemaphoreType.REGULAR)
 
-    jax.block_until_ready(pl.pallas_call(
+    jax.block_until_ready(self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )())
@@ -692,7 +692,7 @@ class PallasCallDMATest(parameterized.TestCase):
       pltpu.run_scoped(body, pltpu.SemaphoreType.DMA((4,)),
                        pltpu.SemaphoreType.REGULAR((3,)))
 
-    jax.block_until_ready(pl.pallas_call(
+    jax.block_until_ready(self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )())
@@ -704,6 +704,7 @@ class PallasCallDMATest(parameterized.TestCase):
       self.assertTrue(jnp.issubdtype(dma_sems.dtype, pltpu.dma_semaphore))
       self.assertTrue(jnp.issubdtype(sems.dtype, pltpu.semaphore))
 
+    # TODO(b/345534352): Add interpret support for REGULAR semaphore.
     jax.block_until_ready(
         pl.pallas_call(
             kernel,
@@ -738,6 +739,7 @@ class PallasCallDMATest(parameterized.TestCase):
         pltpu.semaphore_wait(sem)
       pltpu.run_scoped(body3, pltpu.SemaphoreType.REGULAR)
 
+    # TODO(b/345534352): Add interpret support for semaphore signal/wait.
     jax.block_until_ready(pl.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
@@ -761,6 +763,7 @@ class PallasCallDMATest(parameterized.TestCase):
         pltpu.semaphore_wait(sems.at[2])
       pltpu.run_scoped(body, pltpu.SemaphoreType.REGULAR((3,)))
 
+    # TODO(b/345534352): Add interpret support for semaphore signal/wait.
     jax.block_until_ready(pl.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
@@ -785,6 +788,7 @@ class PallasCallDMATest(parameterized.TestCase):
         pltpu.semaphore_wait(sems.at[i, 2])
       pltpu.run_scoped(body, pltpu.SemaphoreType.REGULAR((4, 3)))
 
+    # TODO(b/345534352): Add interpret support for semaphore signal/wait.
     jax.block_until_ready(pl.pallas_call(
         kernel,
         in_specs=[],
@@ -808,6 +812,7 @@ class PallasCallDMATest(parameterized.TestCase):
 
       pltpu.run_scoped(body, pltpu.SemaphoreType.REGULAR((m, n)))
 
+    # TODO(b/345534352): Add interpret support for semaphore signal/wait.
     y = jax.block_until_ready(
         pl.pallas_call(
             kernel,
@@ -826,7 +831,7 @@ class PallasCallDMATest(parameterized.TestCase):
                          sem).wait()
       pltpu.run_scoped(body, pltpu.SemaphoreType.DMA)
     x = jnp.arange(8 * 128.).reshape((8, 128))
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
@@ -842,6 +847,8 @@ class PallasCallDMATest(parameterized.TestCase):
         pltpu.async_copy(x_hbm_ref.at[pl.ds(8), :], y_hbm_ref.at[:, pl.ds(128)],
                          sem).wait()
       pltpu.run_scoped(body, pltpu.SemaphoreType.DMA((1,)))
+
+    # TODO(b/345534352): Add interpret support for nonscalar semaphores.
     with self.assertRaisesRegex(ValueError, 'Cannot signal'):
       x = jnp.arange(8 * 128.).reshape((8, 128))
       pl.pallas_call(
@@ -860,6 +867,8 @@ class PallasCallDMATest(parameterized.TestCase):
                          sem.at[0]).wait()
       pltpu.run_scoped(body, pltpu.SemaphoreType.DMA((1,)))
     x = jnp.arange(8 * 128.).reshape((8, 128))
+
+    # TODO(b/345534352): Add interpret support for nonscalar semaphores.
     y = pl.pallas_call(
         kernel,
         in_specs=[
@@ -881,7 +890,7 @@ class PallasCallDMATest(parameterized.TestCase):
         ).wait()
       pltpu.run_scoped(body, pltpu.SemaphoreType.DMA)
     x = jnp.arange(2 * 8 * 128.).reshape((2, 8, 128))
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
@@ -901,7 +910,7 @@ class PallasCallDMATest(parameterized.TestCase):
       pltpu.run_scoped(body, pltpu.VMEM((8, 128), jnp.float32),
                        pltpu.SemaphoreType.DMA)
     x = jnp.arange(8 * 128.).reshape((8, 128))
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
@@ -918,7 +927,7 @@ class PallasCallDMATest(parameterized.TestCase):
       pltpu.run_scoped(body, pltpu.VMEM((8, 128), jnp.float32),
                        pltpu.SemaphoreType.DMA)
     x = jnp.arange(8 * 128.).reshape((8, 128))
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
@@ -936,7 +945,7 @@ class PallasCallDMATest(parameterized.TestCase):
                        pltpu.VMEM((8, 128), jnp.float32),
                        pltpu.SemaphoreType.DMA)
     x = jnp.arange(8 * 128.).reshape((8, 128))
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY)],
         out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
@@ -952,7 +961,7 @@ class PallasCallDMATest(parameterized.TestCase):
       pltpu.run_scoped(body, pltpu.SMEM((8, 128), jnp.float32),
                        pltpu.SemaphoreType.DMA)
     x = 4 * jnp.ones((8, 128), jnp.float32)
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
@@ -970,7 +979,7 @@ class PallasCallDMATest(parameterized.TestCase):
       pltpu.run_scoped(body, pltpu.SMEM((1, 2), jnp.float32),
                        pltpu.SemaphoreType.DMA)
     x = jnp.arange(8 * 128.).reshape((8, 128))
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
@@ -987,7 +996,7 @@ class PallasCallDMATest(parameterized.TestCase):
         pltpu.async_copy(x_ref, y_ref, sem).wait()
       pltpu.run_scoped(body, pltpu.SemaphoreType.DMA)
     x = jnp.arange(8 * 128.).reshape((8, 128))
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
@@ -1010,7 +1019,7 @@ class PallasCallDMATest(parameterized.TestCase):
         dma2.wait()
       pltpu.run_scoped(body, pltpu.SemaphoreType.DMA)
     x = jnp.arange(2 * 8 * 128.).reshape((16, 128))
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
@@ -1033,7 +1042,7 @@ class PallasCallDMATest(parameterized.TestCase):
         dma2.wait()
       pltpu.run_scoped(body, pltpu.SemaphoreType.DMA)
     x = jnp.arange(2 * 8 * 128.).reshape((2, 8, 128))
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
@@ -1059,7 +1068,7 @@ class PallasCallDMATest(parameterized.TestCase):
           dma2.wait()
       pltpu.run_scoped(body, pltpu.SemaphoreType.DMA)
     x = jnp.arange(3 * 2 * 8 * 128.).reshape((3, 2, 8, 128))
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
@@ -1083,7 +1092,7 @@ class PallasCallDMATest(parameterized.TestCase):
       pltpu.run_scoped(body, pltpu.SemaphoreType.DMA)
     x = jnp.arange(2 * 8 * 128.).reshape((2, 8, 128))
     with self.assertRaises(Exception):
-      _ = pl.pallas_call(
+      _ = self.pallas_call(
           kernel,
           in_specs=[
               pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
@@ -1155,6 +1164,7 @@ class PallasCallDMATest(parameterized.TestCase):
       pltpu.semaphore_wait(sem)
       pltpu.async_copy(x_bbm_ref, y_ref, dma_sem).wait()
 
+    # TODO(b/345534352): Add interpret support for semaphore signal/wait.
     x = jnp.arange(8 * 128.).reshape((8, 128))
     y = pl.pallas_call(
         kernel,
@@ -1179,7 +1189,7 @@ class PallasCallDMATest(parameterized.TestCase):
     def kernel(index, x, y, sem):
       pltpu.async_copy(x.at[index[0]], y.at[:], sem).wait()
 
-    run = pl.pallas_call(kernel,
+    run = self.pallas_call(kernel,
                          grid_spec=pltpu.PrefetchScalarGridSpec(
                              num_scalar_prefetch=1,
                              in_specs=[
@@ -1196,7 +1206,6 @@ class PallasCallDMATest(parameterized.TestCase):
       y = run(jnp.array([i], dtype=jnp.int32), x)
       np.testing.assert_array_equal(y, i)
       del y
-
 
 class PallasCallRemoteDMATest(parameterized.TestCase):
 
@@ -2307,6 +2316,117 @@ class PallasCallPrintTest(PallasTPUTest):
         .compile({'xla_tpu_enable_log_recorder': 'true'})
     )
     compiled_kernel(x)
+
+
+class PallasCallTPUInterpretTest(PallasTPUTest):
+
+  def test_local_dma(self):
+    def test_kernel(x_ref,
+                o_ref,
+                copy_sem,
+                ):
+      o_ref[...] = jnp.zeros_like(o_ref[...])
+      input_to_output_copy = pltpu.make_async_copy(
+          src_ref=x_ref.at[0:8],
+          dst_ref=o_ref.at[0:8],
+          sem=copy_sem,
+      )
+      input_to_output_copy.start()
+      input_to_output_copy.wait()
+
+    out_shape = (jax.ShapeDtypeStruct((9, 128), jnp.float32))
+    grid_spec = pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            in_specs=[
+                pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+            ],
+            scratch_shapes=(
+                [pltpu.SemaphoreType.DMA]
+            )
+        )
+
+    kernel = pl.pallas_call(
+        test_kernel,
+        out_shape=out_shape,
+        grid_spec=grid_spec,
+        interpret=True
+    )
+    x = jax.random.normal(jax.random.key(0), shape=(16, 128))
+    result = kernel(x)
+    np.testing.assert_array_equal(result[0:8], x[0:8])
+    np.testing.assert_array_equal(result[8:], jnp.zeros_like(result[8:]))
+
+  @parameterized.parameters(('left',), ('right',))
+  def test_remote_dma_ppermute(self, permutation):
+    if jax.device_count() <= 1:
+      self.skipTest('Test requires multiple devices.')
+    num_devices = jax.device_count()
+    if permutation == 'left':
+      permute_fn = lambda x: lax.rem(x + num_devices - 1, num_devices)
+    else:
+      permute_fn = lambda x: lax.rem(x + num_devices + 1, num_devices)
+
+    # Construct a kernel which performs a ppermute based on permute_fn.
+    def test_kernel(x_ref,
+                    o_ref,
+                    copy_send_sem,
+                    copy_recv_sem,
+                ):
+      o_ref[...] = jnp.zeros_like(o_ref[...])
+      my_id = lax.axis_index('x')
+      dst_device = permute_fn(my_id)
+      input_to_output_copy = pltpu.make_async_remote_copy(
+          src_ref=x_ref,
+          dst_ref=o_ref,
+          send_sem=copy_send_sem,
+          recv_sem=copy_recv_sem,
+          device_id=dst_device,
+          device_id_type=pltpu.DeviceIdType.LOGICAL,
+      )
+      input_to_output_copy.start()
+      input_to_output_copy.wait()
+
+    out_shape = (jax.ShapeDtypeStruct((8, 128), jnp.float32))
+    grid_spec = pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            in_specs=[
+                pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+            ],
+            scratch_shapes=(
+                [pltpu.SemaphoreType.DMA] * 2
+            )
+        )
+
+    devices = mesh_utils.create_device_mesh((1, num_devices))
+    mesh = jax.sharding.Mesh(devices, P(None, 'x'))
+    sharding = jax.sharding.NamedSharding(mesh, P(None, 'x'))
+    unsharded_arr = jax.random.normal(
+        jax.random.key(0), shape=(8, 128 * num_devices))
+    sharded_arr = jax.device_put(unsharded_arr, sharding)
+
+    kernel = pl.pallas_call(
+        test_kernel,
+        out_shape=out_shape,
+        grid_spec=grid_spec,
+        interpret=True
+    )
+    compiled_func = jax.jit(shard_map.shard_map(
+      kernel,
+      mesh=mesh,
+      in_specs=P(None, 'x'),
+      out_specs=P(None, 'x'),
+      check_rep=False))
+    result = compiled_func(sharded_arr)
+
+    perm = tuple((src, permute_fn(src)) for src in range(num_devices))
+    perm = jax.tree_util.tree_map(int, perm)
+    def lax_permute(x):
+      return lax.ppermute(x, 'x', perm)
+    expected = jax.jit(shard_map.shard_map(lax_permute,
+                                   mesh=mesh,
+                                   in_specs=P(None, 'x'),
+                                   out_specs=P(None, 'x')))(sharded_arr)
+    np.testing.assert_array_equal(result, expected)
 
 
 class PallasCallTraceTest(PallasTPUTest):

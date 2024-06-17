@@ -114,6 +114,30 @@ def _pad_values_to_block_dimension(value,
     value = jnp.pad(value, pad_width, constant_values=pad_value)
   return value
 
+def _logical_to_interpret_mode_dtype(dtype):
+  """Converts logical dtypes into JAX dtypes for interpret mode.
+
+  This function is used to convert device-specific dtypes that have no
+  corresponding equivalent in JAX/XLA into a type that can be executed
+  by the XLA interpreter (e.g. TPU semaphores -> int32).
+  """
+  if (hasattr(dtype, "_rules") and
+      hasattr(dtype._rules, "pallas_interpret_element_aval")):
+    return dtype._rules.pallas_interpret_element_aval(dtype).dtype
+  return dtype
+
+def _logical_aval_to_interpret_mode_aval(aval):
+  """Logical to interpret mode aval conversion."""
+  if isinstance(aval, pallas_core.AbstractMemoryRef):
+    inner_aval = _logical_aval_to_interpret_mode_aval(aval.inner_aval)
+    return aval.update(inner_aval=inner_aval)
+  if isinstance(aval, jax_core.ShapedArray):
+    inner_dtype = _logical_to_interpret_mode_dtype(aval.dtype)
+    return jax_core.ShapedArray(aval.shape,
+                                inner_dtype,
+                                weak_type=aval.weak_type, named_shape=aval.named_shape)
+  return aval
+
 def _get_next_indices(grid, indices):
   next_indices = []
   carry = True
@@ -707,9 +731,11 @@ def _hoist_consts_to_refs(jaxpr: jax_core.Jaxpr) -> jax_core.Jaxpr:
 
 @weakref_lru_cache
 def _trace_to_jaxpr(fun: Callable, grid_spec: GridSpec, flat_in_avals,
-                    flat_out_avals, in_tree, out_tree):
+                    flat_out_avals, in_tree, out_tree, interpret: bool):
   avals, grid_mapping = grid_spec.get_grid_mapping(flat_in_avals, in_tree,
                                                    flat_out_avals, out_tree)
+  if interpret:
+    avals = jax.tree_util.tree_map(_logical_aval_to_interpret_mode_aval, avals)
   jaxpr_flat_avals, jaxpr_in_tree = tree_util.tree_flatten(avals)
   wrapped_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
       lu.wrap_init(fun), jaxpr_in_tree)
@@ -842,7 +868,7 @@ def pallas_call(
                            for v in flat_out_shapes)
     grid_mapping, jaxpr, consts, _ = _trace_to_jaxpr(
         f, grid_spec, flat_in_avals, flat_out_avals, in_tree,
-        out_tree)
+        out_tree, interpret=interpret)
     which_linear = (False,) * len(flat_args)
     out_flat = pallas_call_p.bind(
         *dynamic_grid_bounds, *consts, *flat_args,

@@ -62,8 +62,14 @@ class semaphore(semaphore_dtype): pass
 class dma_semaphore(semaphore_dtype): pass
 class barrier_semaphore(semaphore_dtype): pass
 
+class AbstractSemaphoreTyRules:
+  @staticmethod
+  def pallas_interpret_element_aval(_) -> jax_core.ShapedArray:
+    return jax_core.ShapedArray((), jnp.dtype('int32'))
+
 class AbstractSemaphoreTy(dtypes.ExtendedDType):
   name: str
+  _rules = AbstractSemaphoreTyRules
 
   def __repr__(self) -> str:
     return self.name
