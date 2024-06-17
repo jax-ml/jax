@@ -399,6 +399,20 @@ class DevicePutTest(jtu.JaxTestCase):
     self._check_device_put_addressable_shards(
         out_host, py_inp, s_host, host_memory_kind, index=False)
 
+  def test_device_put_inside_jit(self):
+    _, s_host, np_inp, inp_host = _create_inputs(
+        (8, 2), P("x", "y"), mem_kind="pinned_host")
+    s_dev = s_host.with_memory_kind("device")
+
+    @jax.jit
+    def f(a, b):
+      x, y = jax.device_put((a, b), s_dev)
+      return x * y
+
+    out = f(inp_host, inp_host)
+    self._check_device_put_addressable_shards(
+        out, np_inp * np_inp, s_dev, "device")
+
   def test_parameter_streaming(self):
     _, s_host, np_inp, inp_host = _create_inputs(
         (8, 2), P("x", "y"), mem_kind="pinned_host")
