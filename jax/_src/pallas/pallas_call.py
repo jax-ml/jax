@@ -153,8 +153,7 @@ def _pallas_call_impl(*args, jaxpr, name, out_shapes, which_linear,
       if i in oi_map:
         out.append(args[oi_map[i]])
       else:
-        # TODO(sharadmv): use unitialized values for outputs
-        out.append(jnp.zeros(out_shape.shape, out_shape.dtype))
+        out.append(uninitialized_value(out_shape.shape, out_shape.dtype))
     scalars, args = split_list(args, [grid_mapping.num_index_operands])  # type: ignore
     # invars: [*scalar_prefetch, *inputs, *outputs, *scratch]
     num_invars = len(jaxpr.invars)
