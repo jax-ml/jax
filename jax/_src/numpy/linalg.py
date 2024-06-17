@@ -795,7 +795,7 @@ def eigh(a: ArrayLike, UPLO: str | None = None,
   Args:
     a: array of shape ``(..., M, M)``, containing the Hermitian (if complex)
       or symmetric (if real) matrix.
-    UPLO: specifies whether the calculation isdone with the lower triangular
+    UPLO: specifies whether the calculation is done with the lower triangular
       part of ``a`` (``'L'``, default) or the upper triangular part (``'U'``).
     symmetrize_input: if True (default) then input is symmetrized, which leads
       to better behavior under automatic differentiation.
@@ -1249,7 +1249,7 @@ def qr(a: ArrayLike, mode: str = "reduced") -> Array | QRResult:
 
   See also:
     - :func:`jax.scipy.linalg.qr`: SciPy-style QR decomposition API
-    - :func:`jax.lax.linalg.qr`: XLA-style QR decompositon API
+    - :func:`jax.lax.linalg.qr`: XLA-style QR decomposition API
 
   Examples:
     Compute the QR decomposition of a matrix:
@@ -1443,7 +1443,7 @@ def cross(x1: ArrayLike, x2: ArrayLike, /, *, axis=-1):
   JAX implementation of :func:`numpy.linalg.cross`
 
   Args:
-    x1: N-dimesional array, with ``x1.shape[axis] == 3``
+    x1: N-dimensional array, with ``x1.shape[axis] == 3``
     x2: N-dimensional array, with ``x2.shape[axis] == 3``, and other axes
       broadcast-compatible with ``x1``.
     axis: axis along which to take the cross product (default: -1).
