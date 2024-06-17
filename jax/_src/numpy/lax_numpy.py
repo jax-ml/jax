@@ -693,7 +693,7 @@ view of the input.
 def transpose(a: ArrayLike, axes: Sequence[int] | None = None) -> Array:
   """Return a transposed version of an N-dimensional array.
 
-  JAX implementation of :func:`jax.numpy.transpose`, implemented in terms of
+  JAX implementation of :func:`numpy.transpose`, implemented in terms of
   :func:`jax.lax.transpose`.
 
   Args:
@@ -777,7 +777,7 @@ def permute_dims(a: ArrayLike, /, axes: tuple[int, ...]) -> Array:
 def matrix_transpose(x: ArrayLike, /) -> Array:
   """Transpose the last two dimensions of an array.
 
-  JAX implementation of :func:`jax.numpy.matrix_transpose`, implemented in terms of
+  JAX implementation of :func:`numpy.matrix_transpose`, implemented in terms of
   :func:`jax.lax.transpose`.
 
   Args:
@@ -5225,7 +5225,7 @@ def einsum_path(
   ) -> tuple[list[tuple[int, ...]], Any]:
   """Evaluates the optimal contraction path without evaluating the einsum.
 
-  JAX implementation of :func:`jax.numpy.einsum_path`. This function calls into
+  JAX implementation of :func:`numpy.einsum_path`. This function calls into
   the opt_einsum_ package, and makes use of its optimization routines.
 
   Args:
