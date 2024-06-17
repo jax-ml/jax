@@ -215,7 +215,7 @@ class _DimFactor:
         return env[self.var]
       except KeyError:
         err_msg = (
-            f"Encountered dimension variable '{self.var}' that is not appearing in the shapes of the used function arguments.\n"
+            f"Encountered dimension variable '{self.var}' that is not appearing in the shapes of the function arguments.\n"
             "Please see https://jax.readthedocs.io/en/latest/export/shape_poly.html#dimension-variables-must-be-solvable-from-the-input-shapes for more details.")
         raise KeyError(err_msg)
     else:
