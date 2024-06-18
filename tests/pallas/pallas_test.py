@@ -1119,6 +1119,17 @@ class PallasOpsTest(PallasTest):
       y = jnp.array([1, 2, 3, 4]).astype(y_dtype)
       np.testing.assert_allclose(kernel(x, y), lax.pow(x, y))
 
+  @parameterized.parameters(0, 1, 2, 3, 4, 5, -1, -2, -3)
+  def test_integer_pow(self, y):
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((4,), jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[:] = lax.integer_pow(x_ref[...], y)
+
+    x = jnp.array([1, 2, 3, 4]).astype(jnp.float32) / 10
+    np.testing.assert_allclose(kernel(x), lax.integer_pow(x, y))
+
   @parameterized.parameters("float32", "float64")
   def test_nextafter(self, dtype):
     if jtu.test_device_matches(["tpu"]) and dtype == "float64":
