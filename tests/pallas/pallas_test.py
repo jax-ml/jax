@@ -982,6 +982,21 @@ class PallasCallVmapTest(PallasTest):
     out_ref = jnp.arange(2, 10)
     np.testing.assert_allclose(out, out_ref)
 
+  def test_vmap_of_kernel_with_input_output_aliases_different_axes(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((4,), jnp.int32),
+        debug=False,
+        input_output_aliases={0: 0},
+        grid=(),
+    )
+    def add(x_ref, o_ref):
+      o_ref[()] = x_ref[()] + 1
+
+    out = jax.vmap(add, in_axes=1)(jnp.arange(8).reshape((4, 2)))
+    out_ref = jnp.arange(1, 9).reshape((4, 2)).swapaxes(0, 1)
+    np.testing.assert_allclose(out, out_ref)
+
   def test_vmap_of_slicing_kernel_different_axes(self):
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), jnp.int32),
