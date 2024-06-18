@@ -23,6 +23,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import lax
+from jax._src import checkify
 from jax._src import state
 from jax._src import test_util as jtu
 from jax._src.interpreters import partial_eval as pe
@@ -2480,6 +2481,109 @@ class PallasCallTraceTest(PallasTPUTest):
     num_stop = mlir.count('tpu.trace_stop')
     self.assertEqual(num_start, 2)
     self.assertEqual(num_stop, 2)
+
+
+class PallasCallTPUCheckifyTest(PallasTPUTest):
+  interpret: bool = True
+
+  @parameterized.parameters((2,), (5,), (6,), (7,))
+  def test_checkify_with_scalar_prefetch(self, threshold):
+    def body(scalar_ref, x_ref, o_ref):
+      scalar = scalar_ref[pl.program_id(0)]
+      o_ref[...] = x_ref[...]
+      checkify.check(scalar < threshold, 'failed on value {x}', x=scalar)
+
+    s = jnp.array([4, 3, 2, 6, 3, 5, 2, 7], jnp.int32)
+    x = jnp.arange(8 * 8 * 128, dtype=jnp.int32).reshape((8 * 8, 128))
+
+    def _x_transform(i, s_ref):
+      s = pl.load(s_ref, (i,))
+      return (s, 0)
+
+    pallas_call = self.pallas_call(
+        body,
+        out_shape=jax.ShapeDtypeStruct(x.shape, jnp.int32),
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=1,
+            in_specs=[
+                pl.BlockSpec(_x_transform, (x.shape[0] // 8, x.shape[1])),
+            ],
+            out_specs=pl.BlockSpec(lambda i, _: (i, 0),
+                                   (x.shape[0] // 8, x.shape[1])),
+            grid=8,
+        ),
+    )
+    checked_call = checkify.checkify(pallas_call)
+    err, out = checked_call(s, x)
+    expected_error_value = s[jnp.argmax(s >= threshold)]
+    with self.assertRaisesRegex(
+        checkify.JaxRuntimeError, f'failed on value {expected_error_value}'):
+      err.throw()
+    np.testing.assert_allclose(out, x.reshape((8, 8, -1))[s].reshape(x.shape))
+
+  def test_checkify_with_scratch(self):
+    def body(x_ref, o_ref, scratch_ref):
+      scratch_ref[...] = x_ref[...]
+      o_ref[...] = scratch_ref[...]
+      all_nequal = ~jnp.all(o_ref[...] == x_ref[...])
+      checkify.check(all_nequal, 'x_ref equals o_ref id=({x}, {y})',
+                     x=pl.program_id(0), y=pl.program_id(1))
+
+    x = jax.random.uniform(jax.random.key(0), (128, 128), dtype=jnp.float32)
+    pallas_call = self.pallas_call(
+        body,
+        out_shape=jax.ShapeDtypeStruct(x.shape, jnp.float32),
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            in_specs=[
+                pl.BlockSpec(lambda i, j: (i, j), (32, 32)),
+            ],
+            out_specs=pl.BlockSpec(lambda i, j: (i, j), (32, 32)),
+            scratch_shapes=[pltpu.VMEM((32, 32), dtype=jnp.float32)],
+            grid=(4, 4),
+        ),
+    )
+    checked_call = checkify.checkify(pallas_call)
+    err, out = checked_call(x)
+    with self.assertRaisesRegex(
+        checkify.JaxRuntimeError, r'x_ref equals o_ref id=\(0, 0\)'):
+      err.throw()
+    np.testing.assert_allclose(out, x)
+
+  @parameterized.parameters((4,), (9,))
+  def test_checkify_with_dynamic_grid(self, iteration):
+    grid_size = 4
+    shape = (8, 128)
+    result_ty = jax.ShapeDtypeStruct(shape, jnp.float32)
+
+    def kernel(y_ref):
+      @pl.when(pl.program_id(0) == 0)
+      def _init():
+        y_ref[...] = jnp.zeros_like(y_ref)
+      y_ref[...] += 1
+      @pl.when(pl.program_id(0) == iteration)
+      def _():
+        checkify.check(False, f"error on iteration {iteration}")
+
+    @jax.jit
+    def dynamic_kernel(steps):
+      pallas_call = self.pallas_call(
+          kernel,
+          grid=(steps * 2,),
+          out_specs=pl.BlockSpec(lambda i: (0, 0), shape),
+          out_shape=result_ty,
+      )
+      return checkify.checkify(pallas_call)()
+
+    err, result = dynamic_kernel(jnp.int32(grid_size))
+    if iteration < grid_size * 2:
+      with self.assertRaisesRegex(
+          checkify.JaxRuntimeError, f"error on iteration {iteration}"):
+        err.throw()
+    np.testing.assert_array_equal(
+        result, np.full(shape, grid_size * 2.0, np.float32)
+    )
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
