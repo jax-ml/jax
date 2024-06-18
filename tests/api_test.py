@@ -2953,6 +2953,7 @@ class APITest(jtu.JaxTestCase):
     axis_env = [(axis_name, jax.local_device_count())]
     _ = api.xla_computation(fn, axis_env=axis_env, backend='cpu')(input_x)
 
+  @jtu.unaccelerate_getattr_deprecation(jax, 'xla_computation')
   def test_xla_computation_axis_env(self):
     def fn(x):
       z = x * jax.lax.axis_index('i').astype(jnp.float32)
@@ -10564,8 +10565,8 @@ class BufferDonationTest(jtu.BufferDonationTestCase):
 
 class NamedCallTest(jtu.JaxTestCase):
 
+  @jtu.unaccelerate_getattr_deprecation(jax, 'xla_computation')
   def test_default_name(self):
-
     @api.named_call
     def my_test_function(x):
       return x**2

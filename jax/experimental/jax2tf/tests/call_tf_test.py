@@ -674,6 +674,7 @@ class CallTfTest(tf_test_util.JaxToTfTestCase):
     lower_no_effect = jax.jit(jax2tf.call_tf(tf.math.sin, has_side_effects=False)).lower(x)
     self.assertEmpty(lower_no_effect._lowering.compile_args["unordered_effects"])
 
+  @jtu.unaccelerate_getattr_deprecation(jax, 'xla_computation')
   def test_module_documentation(self):
     def cos_tf(x):
       return tf.math.cos(x)
