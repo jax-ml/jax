@@ -62,7 +62,6 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.layout import DeviceLocalLayout, AutoLayout, Layout
-from jax._src.lib import xla_extension_version
 from jax._src.lib import xla_client as xc
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
@@ -3175,10 +3174,7 @@ class MeshExecutable(stages.XlaExecutable):
             self.unsafe_call.in_handler.input_indices)
       else:
         fastpath_data = None
-      if xla_extension_version > 267:
-        return outs, fastpath_data, False  # Do not remove cache entry
-      else:
-        return outs, fastpath_data
+      return outs, fastpath_data, False  # Do not remove cache entry
 
     return xc._xla.pjit(
         self.unsafe_call.name, None, aot_cache_miss, [], [], [],
