@@ -1,4 +1,4 @@
-# Copyright 2023 The JAX Authors.
+# Copyright 2024 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,10 +15,8 @@
 import functools
 import importlib
 import logging
-import os
 import pathlib
 import platform
-import sys
 
 from jax._src.lib import xla_client
 import jax._src.xla_bridge as xb
@@ -39,16 +37,17 @@ logger = logging.getLogger(__name__)
 
 
 def _get_library_path():
+  base_path = pathlib.Path(__file__).resolve().parent
   installed_path = (
-      pathlib.Path(__file__).resolve().parent / 'xla_rocm_plugin.so'
+      base_path / 'xla_rocm_plugin.so'
   )
   if installed_path.exists():
     return installed_path
 
-  local_path = os.path.join(
-      os.path.dirname(__file__), 'pjrt_c_api_gpu_plugin.so'
+  local_path = (
+      base_path / 'pjrt_c_api_gpu_plugin.so'
   )
-  if os.path.exists(local_path):
+  if local_path.exists():
     logger.debug(
         'Native library %s does not exist. This most likely indicates an issue'
         ' with how %s was built or installed. Fallback to local test'

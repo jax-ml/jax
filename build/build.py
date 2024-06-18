@@ -434,13 +434,13 @@ def main():
           "plugin is still experimental and is not ready for use yet."
       ),
   )
-  add_boolean_argument(
-      parser,
-      "build_gpu_kernel_plugin",
-      default=False,
-      help_str=(
-          "Are we building the cuda/rocm kernel plugin? jaxlib will not be built "
-          "when this flag is True."
+  parser.add_argument(
+      "--build_gpu_kernel_plugin",
+      choices=["cuda", "rocm"],
+      default="",
+      help=(
+          "Specify 'cuda' or 'rocm' to build the respective kernel plugin."
+          " When this flag is set, jaxlib will not be built."
       ),
   )
   add_boolean_argument(
@@ -693,7 +693,7 @@ def main():
     *args.bazel_options,
   )
   
-  if not args.build_gpu_kernel_plugin and not args.build_gpu_pjrt_plugin:
+  if args.build_gpu_kernel_plugin == "" and not args.build_gpu_pjrt_plugin:
     build_cpu_wheel_command = [
       *command_base,
       "//jaxlib/tools:build_wheel", "--",
@@ -708,7 +708,8 @@ def main():
     print(" ".join(build_cpu_wheel_command))
     shell(build_cpu_wheel_command)
 
-  if args.build_gpu_plugin or args.build_gpu_kernel_plugin:
+  if args.build_gpu_plugin or (args.build_gpu_kernel_plugin == "cuda") or \
+      (args.build_gpu_kernel_plugin == "rocm"):
     build_gpu_kernels_command = [
       *command_base,
       "//jaxlib/tools:build_gpu_kernels_wheel", "--",
