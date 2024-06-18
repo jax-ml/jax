@@ -750,27 +750,38 @@ LogicalResult ext_op_rule_impl(RewriteContext &ctx, OpTy op,
       const VectorType res_vreg_ty,
       getNativeVregType(result_ty.getElementType(), ctx.target_shape));
   if (layout_in.implicit_dim() != layout_out.implicit_dim()) {
-    return op.emitOpError("Not implemented: Change of layout during the cast");
+    return op.emitOpError(
+        "Not implemented: Change of implicit dim during the cast");
   }
   if (layout_in.offsets() != layout_out.offsets()) {
     return op.emitOpError("Not implemented: Change of offsets during the cast");
   }
-  if (layout_in.tiling() != layout_out.tiling()) {
-    return op.emitOpError("Not implemented: Changing tiling during the cast");
-  }
-  auto tiling = layout_in.tiling();
-  if (ctx.target_shape[0] % tiling[0] != 0 ||
-      ctx.target_shape[1] != tiling[1]) {
-    return op.emitOpError("Not implemented: tiling not supported");
-  }
   const int packing = layout_in.packing();
-  output_vregs.Each([&](absl::Span<const int64_t> idxs, Value *v) {
-    SmallVector<int64_t> input_vreg_idxs(toArrayRef(idxs));
-    input_vreg_idxs.back() /= packing;
-    const int64_t vreg_part = idxs.back() % packing;
-    *v = builder.create<UnpackSubelementsOp>(
-        res_vreg_ty, input_vregs(input_vreg_idxs), vreg_part);
-  });
+  if (layout_in.hasNativeTiling(ctx.target_shape)) {
+    output_vregs.Each([&](absl::Span<const int64_t> idxs, Value *v) {
+      SmallVector<int64_t> input_vreg_idxs(toArrayRef(idxs));
+      int64_t vreg_part = *(input_vreg_idxs.end() - 2) % packing;
+      *(input_vreg_idxs.end() - 2) /= packing;
+      *v = builder.create<UnpackSubelementsOp>(
+          res_vreg_ty, input_vregs(input_vreg_idxs), vreg_part);
+    });
+  } else {
+    if (layout_in.tiling() != layout_out.tiling()) {
+      return op.emitOpError("Not implemented: Changing tiling during the cast");
+    }
+    auto tiling = layout_in.tiling();
+    if (ctx.target_shape[0] % tiling[0] != 0 ||
+        ctx.target_shape[1] != tiling[1]) {
+      return op.emitOpError("Not implemented: tiling not supported");
+    }
+    output_vregs.Each([&](absl::Span<const int64_t> idxs, Value *v) {
+      SmallVector<int64_t> input_vreg_idxs(toArrayRef(idxs));
+      input_vreg_idxs.back() /= packing;
+      const int64_t vreg_part = idxs.back() % packing;
+      *v = builder.create<UnpackSubelementsOp>(
+          res_vreg_ty, input_vregs(input_vreg_idxs), vreg_part);
+    });
+  }
   if (layout_out.implicit_dim() != VectorLayout::ImplicitDim::kNone) {
     output_vregs.Reshape(output_vregs_shape);
   }

@@ -1573,13 +1573,21 @@ class VectorLayoutInferer {
     if (default_tiling_[0] % layout.tiling()[0] == 0 &&
         default_tiling_[1] == layout.tiling()[1]) {
       src_layout = layout;
+      dst_layout = VectorLayout(32, layout.offsets(), src_layout->tiling(),
+                                layout.implicit_dim());
+    } else if (layout.tiling() ==
+               nativeTiling(src_ty.getElementTypeBitWidth())) {
+      // If the source is already in native tiling, we can unpack it directly.
+      src_layout = layout;
+      dst_layout = VectorLayout(32, layout.offsets(), default_tiling_,
+                                layout.implicit_dim());
     } else {
       // TODO(b/335863273): we should also reduce offsets.
       src_layout = VectorLayout(layout.bitwidth(), layout.offsets(),
                                 default_tiling_, layout.implicit_dim());
+      dst_layout = VectorLayout(32, layout.offsets(), default_tiling_,
+                                layout.implicit_dim());
     }
-    dst_layout = VectorLayout(32, layout.offsets(), src_layout->tiling(),
-                              layout.implicit_dim());
     setLayout(op, src_layout, dst_layout);
     return success();
   }
