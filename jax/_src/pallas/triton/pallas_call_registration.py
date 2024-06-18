@@ -87,7 +87,7 @@ def pallas_call_lowering(
     print(grid_mapping)
 
   lowering_result = lowering.lower_jaxpr_to_triton_module(
-      jaxpr, (*in_shapes, *out_shapes), grid_mapping, name,
+      jaxpr, (*in_shapes, *out_shapes), grid_mapping, name, lowering_platform
   )
   module_op = lowering_result.module.operation
   if debug:
