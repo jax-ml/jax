@@ -47,7 +47,7 @@ try:
 except ImportError:
   FLAGS = {}
 
-_MOSAIC_USE_PYTHON_PIPELINE = config.define_bool_state(
+_MOSAIC_USE_PYTHON_PIPELINE = config.bool_state(
     name="mosaic_use_python_pipeline",
     default=False,
     help=(
@@ -57,7 +57,7 @@ _MOSAIC_USE_PYTHON_PIPELINE = config.define_bool_state(
     ),
 )
 
-_MOSAIC_ALLOW_HLO = config.define_bool_state(
+_MOSAIC_ALLOW_HLO = config.bool_state(
     name="jax_mosaic_allow_hlo",
     default=False,
     help="Allow hlo dialects in Mosaic",
