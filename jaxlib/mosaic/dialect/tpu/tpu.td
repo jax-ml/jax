@@ -605,6 +605,12 @@ def TPU_GetIterationBoundOp : TPU_Op<"iteration_bound"> {
   let assemblyFormat = [{ $dim attr-dict `:` type($result) }];
 }
 
+def TPU_GetInternalScratchOp : TPU_Op<"internal_scratch">  {
+  let arguments = (ins);
+  let results = (outs AnyMemRef:$result);
+  let assemblyFormat = [{ attr-dict `:` type($result) }];
+}
+
 def TPU_PRNGSeed32Op : TPU_Op<"prng_set_seed_32"> {
   let arguments = (ins Variadic<I32>:$seeds);
   let results = (outs);
@@ -695,6 +701,7 @@ def ApplyVectorLayoutPass : Pass<"tpu-apply-vector-layout", "::mlir::func::FuncO
     Option<"sublane_count", "sublane-count", "int", /*default=*/"8", "">,
     Option<"mxu_contracting_size", "mxu-contracting-size", "int", /*default=*/"128", "">,
     Option<"mxu_noncontracting_size", "mxu-noncontracting-size", "int", /*default=*/"128", "">,
+    Option<"max_sublanes_in_scratch", "max-sublanes-in-scratch", "int", /*default=*/"0", "">,
   ];
 }
 

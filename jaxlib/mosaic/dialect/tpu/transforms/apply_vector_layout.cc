@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <functional>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <tuple>
 #include <utility>
@@ -154,6 +155,36 @@ FailureOr<Value> maskOOB(RewriteContext &ctx, OpBuilder &builder,
       DenseElementsAttr::get(neutral_vec_ty, neutral));
   return builder
       .create<arith::SelectOp>(value.getLoc(), mask, value, neutral_vec)
+      .getResult();
+}
+
+// Get the address of pre-allocated internal scratch space with requested shape.
+//
+// Arguments:
+//   shape: The shape of the requested scratch space.
+//   elem_ty: The type of the elements in the requested scratch space.
+//
+// Returns:
+//   A memref of the requested shape and type.
+FailureOr<Value> getInternalScratch(RewriteContext &ctx, OpBuilder &builder,
+                                    Location loc, ArrayRef<int64_t> shape,
+                                    Type elem_ty) {
+  if (shape.empty()) {
+    return failure();
+  }
+  if (shape.back() % ctx.target_shape[1] != 0) {
+    return failure();
+  }
+  int sublane_count =
+      std::accumulate(shape.begin(), shape.end(), 1, std::multiplies<int>()) /
+      ctx.target_shape[1];
+  if (sublane_count > ctx.max_sublanes_in_scratch) {
+    return failure();
+  }
+  FAILUREOR_ASSIGN_OR_RETURN(
+      MemRefType scratch_ref_ty,
+      inferMemref(MemRefType::get(shape, elem_ty), ctx.hardware_generation));
+  return builder.create<tpu::GetInternalScratchOp>(loc, scratch_ref_ty)
       .getResult();
 }
 
@@ -5024,12 +5055,14 @@ struct ApplyVectorLayoutPass
     : public impl::ApplyVectorLayoutPassBase<ApplyVectorLayoutPass> {
   ApplyVectorLayoutPass(int hardware_generation_, int lane_count_,
                         int sublane_count_, int mxu_contracting_size_,
-                        int mxu_noncontracting_size_) {
+                        int mxu_noncontracting_size_,
+                        int max_sublanes_in_scratch_) {
     hardware_generation = hardware_generation_;
     sublane_count = sublane_count_;
     lane_count = lane_count_;
     mxu_contracting_size = mxu_contracting_size_;
     mxu_noncontracting_size = mxu_noncontracting_size_;
+    max_sublanes_in_scratch = max_sublanes_in_scratch_;
   }
   void runOnOperation() override {
     // Fail if hardware_generation has not been set from the default value.
@@ -5041,7 +5074,8 @@ struct ApplyVectorLayoutPass
     RewriteContext ctx{func,
                        hardware_generation,
                        {sublane_count, lane_count},
-                       {mxu_contracting_size, mxu_noncontracting_size}};
+                       {mxu_contracting_size, mxu_noncontracting_size},
+                       max_sublanes_in_scratch};
     if (failed(applyLayoutFunc(ctx, func))) {
       signalPassFailure();
       return;
@@ -5051,10 +5085,11 @@ struct ApplyVectorLayoutPass
 
 std::unique_ptr<OperationPass<func::FuncOp>> createApplyVectorLayoutPass(
     int hardware_generation, int lane_count, int sublane_count,
-    int mxu_contracting_size, int mxu_noncontracting_size) {
+    int mxu_contracting_size, int mxu_noncontracting_size,
+    int max_sublanes_in_scratch) {
   return std::make_unique<ApplyVectorLayoutPass>(
       hardware_generation, lane_count, sublane_count, mxu_contracting_size,
-      mxu_noncontracting_size);
+      mxu_noncontracting_size, max_sublanes_in_scratch);
 }
 
 }  // namespace mlir::tpu
