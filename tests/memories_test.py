@@ -26,7 +26,6 @@ from jax import lax
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src import config
-from jax._src.lib import xla_extension_version
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.numpy as jnp
 from jax.ad_checkpoint import Offloadable, remat, Recompute
@@ -68,8 +67,6 @@ def _create_inputs(shape, pspec, mem_kind=None):
 class ShardingMemoriesTest(jtu.JaxTestCase):
 
   def setUp(self):
-    if xla_extension_version < 265 and not jtu.test_device_matches(["tpu"]):
-      self.skipTest("Memories do not work on CPU and GPU backends yet.")
     # TODO(b/311021572)
     if jtu.is_cloud_tpu():
       self.skipTest("Experimental feature not yet implemented on Cloud TPU")

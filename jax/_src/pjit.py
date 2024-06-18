@@ -60,13 +60,12 @@ from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import xla_client as xc
 from jax._src import sharding
 from jax._src.sharding_impls import (
-    NamedSharding, XLACompatibleSharding, GSPMDSharding,
+    NamedSharding, GSPMDSharding,
     SingleDeviceSharding, PmapSharding, AUTO, UNSPECIFIED, UnspecifiedValue,
     ParsedPartitionSpec, SpecSync, get_single_pspec, is_auto, is_unspecified,
     is_unspecified_or_auto, prepare_axis_resources, parse_flatten_op_sharding)
@@ -333,10 +332,7 @@ def _cpp_pjit(jit_info: PjitInfo):
         jaxpr.consts, jit_info.abstracted_axes,
         pgle_profiler)
 
-    if xla_extension_version > 267:
-      return outs, maybe_fastpath_data, _need_to_rebuild_with_fdo(pgle_profiler)
-    else:
-      return outs, maybe_fastpath_data
+    return outs, maybe_fastpath_data, _need_to_rebuild_with_fdo(pgle_profiler)
 
   fun = jit_info.fun
   cpp_pjit_f = xc._xla.pjit(
@@ -1403,10 +1399,6 @@ def _resolve_in_shardings(
     # not allow None as the sharding.
     if arg_s is None:
       continue
-    if xla_extension_version < 270:
-      if not isinstance(arg_s, XLACompatibleSharding):
-        raise ValueError(f'One of the argument to pjit got sharding {arg_s} '
-                         'which is not a subclass of XLACompatibleSharding.')
     # Don't consider PmapSharding inputs as committed. They will get resharded
     # unconditionally.
     if isinstance(arg_s, PmapSharding):
@@ -1621,10 +1613,7 @@ def _pjit_call_impl(*args, jaxpr,
     fastpath_data = _get_fastpath_data(
         compiled, tree_structure(out_flat), args, out_flat, [], jaxpr.effects,
         jaxpr.consts, None, pgle_profiler)
-    if xla_extension_version > 267:
-      return out_flat, fastpath_data, _need_to_rebuild_with_fdo(pgle_profiler)
-    else:
-      return out_flat, fastpath_data
+    return out_flat, fastpath_data, _need_to_rebuild_with_fdo(pgle_profiler)
 
   f = _get_jaxpr_as_fun(
       jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,

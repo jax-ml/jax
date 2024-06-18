@@ -45,7 +45,6 @@ from jax._src.cloud_tpu_init import get_tpu_library_path
 from jax._src.lib import cuda_versions
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 
 logger = logging.getLogger(__name__)
 
@@ -147,13 +146,9 @@ def tpu_client_timer_callback(timer_secs: float) -> xla_client.Client | None:
   t.start()
 
   try:
-    if xla_extension_version >= 267:
-      client = xla_client.make_tpu_client( # type: ignore
-          get_tpu_library_path(),
-          _options_from_jax_configs("tpu"))
-    else:
-      client = xla_client.make_tpu_client(
-          get_tpu_library_path())
+    client = xla_client.make_tpu_client( # type: ignore
+        get_tpu_library_path(),
+        _options_from_jax_configs("tpu"))
   finally:
     t.cancel()
 

@@ -58,7 +58,6 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.custom_batching
@@ -707,7 +706,6 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertNotEqual(z3.unsafe_buffer_pointer(), x1.unsafe_buffer_pointer())
     self.assertEqual(z2, 1)
 
-  @unittest.skipIf(xla_extension_version < 264, "jaxlib version too old")
   def test_print_token_buffer_error(self):
     token = jax.lax.create_token()
     with self.assertRaisesRegex(
