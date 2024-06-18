@@ -72,8 +72,8 @@ class LRUCache(CacheInterface):
       self.max_size = max_size
       self.lock_timeout_secs = lock_timeout_secs
 
-      lock_path = self.path / ".lockfile"
-      self.lock = filelock.FileLock(lock_path)
+      self.lock_path = self.path / ".lockfile"
+      self.lock = filelock.FileLock(self.lock_path)
 
   def get(self, key: str) -> bytes | None:
     """Retrieves the cached value for the given key.
@@ -157,7 +157,7 @@ class LRUCache(CacheInterface):
     h: list[tuple[int, pathlib.Path, int]] = []
     dir_size = 0
     for file in self.path.iterdir():
-      if file.is_file():
+      if file.is_file() and file != self.lock_path:
         file_size = file.stat().st_size
         file_mtime = file.stat().st_mtime_ns
 
