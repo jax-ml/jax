@@ -174,7 +174,7 @@ class PallasCallPipelineTest(parameterized.TestCase):
     np.testing.assert_allclose(z, jnp.dot(x, y) + jnp.dot(x, y))
 
 
-class PallasCallColectivePipelineTest(parameterized.TestCase):
+class PallasCallCollectivePipelineTest(parameterized.TestCase):
 
   def setUp(self):
     if jax.device_count() < 2:
@@ -1261,6 +1261,91 @@ class PallasCallColectivePipelineTest(parameterized.TestCase):
         expected_out.astype(jnp.float32),
         atol=1 if out_dtype == jnp.float32 else 5,
     )
+
+
+class PallasCallMegacoreTest(parameterized.TestCase):
+
+  def setUp(self):
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Only works with TPU v4')
+
+    super().setUp()
+
+  def test_megacore_mul(self):
+    x = jax.random.uniform(jax.random.key(0), (512, 512))
+
+    def matmul_pipeline(x_ref, y_ref):
+      y_ref[...] = x_ref[...] * 2
+
+    def matmul_kernel(x_ref, y_ref):
+      pltpu.emit_pipeline(
+          matmul_pipeline,
+          grid=(4, 4),
+          in_specs=[
+              pl.BlockSpec(lambda i, j: (i, j), (128, 128)),
+          ],
+          out_specs=pl.BlockSpec(lambda i, j: (i, j), (128, 128)),
+          core_axis=0,
+          dimension_semantics=(pltpu.ARBITRARY, pltpu.PARALLEL)
+      )(x_ref, y_ref)
+
+    num_cores = jax.devices()[0].num_cores
+    func = pl.pallas_call(
+        matmul_kernel,
+        out_shape=jax.ShapeDtypeStruct((512, 512), jnp.float32),
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.ANY),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+        grid=(num_cores,),
+        compiler_params=dict(mosaic=dict(dimension_semantics=('parallel',))),
+    )
+    np.testing.assert_allclose(func(x), x * 2)
+
+  @parameterized.parameters(
+      (1024, 1024, 1024, 256, 512, 256),
+      (768, 1024, 1024, 256, 512, 256),
+      (1024, 1024, 768, 256, 512, 256),
+  )
+  def test_megacore_matmul(self, m, k, n, bm, bk, bn):
+    k1, k2 = jax.random.split(jax.random.key(42))
+    x = jax.random.uniform(k1, (m, k))
+    y = jax.random.uniform(k2, (k, n))
+
+    def matmul_pipeline(x_ref, y_ref, z_ref):
+      @pl.when(pl.program_id(2) == 0)
+      def _():
+        z_ref[...] = jnp.zeros_like(z_ref)
+      z_ref[...] += x_ref[...] @ y_ref[...]
+
+    def matmul_kernel(x_ref, y_ref, z_ref, *, bm, bk, bn):
+      m, k = x_ref.shape
+      _, n = y_ref.shape
+      pltpu.emit_pipeline(
+          matmul_pipeline,
+          grid=(m // bm, n // bn, k // bk),
+          in_specs=[
+              pl.BlockSpec(lambda i, j, k: (i, k), (bm, bk)),
+              pl.BlockSpec(lambda i, j, k: (k, j), (bk, bn)),
+          ],
+          out_specs=pl.BlockSpec(lambda i, j, k: (i, j), (bm, bn)),
+          core_axis=0,
+          dimension_semantics=(pltpu.PARALLEL, pltpu.PARALLEL, pltpu.ARBITRARY)
+      )(x_ref, y_ref, z_ref)
+
+    num_cores = jax.devices()[0].num_cores
+    func = pl.pallas_call(
+        functools.partial(matmul_kernel, bm=bm, bk=bk, bn=bn),
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pltpu.ANY),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+        grid=(num_cores,),
+        compiler_params=dict(mosaic=dict(dimension_semantics=('parallel',))),
+    )
+    np.testing.assert_allclose(func(x, y), x @ y, atol=7e-5)
 
 
 if __name__ == '__main__':
