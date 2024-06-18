@@ -6,7 +6,11 @@ Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.30
+## jax 0.4.31
+
+## jaxlib 0.4.31
+
+## jax 0.4.30 (June 18, 2024)
 
 * Changes
   * JAX supports ml_dtypes >= 0.2. In 0.4.29 release, the ml_dtypes version was
@@ -43,7 +47,7 @@ Remember to align the itemized text with the first line of an item within a list
       `jax.jit(fn).trace(*args, **kwargs).lower(lowering_platforms=('tpu',)).compiler_ir('hlo')`.
 
 
-## jaxlib 0.4.30
+## jaxlib 0.4.30 (June 18, 2024)
 
   * Support for monolithic CUDA jaxlibs has been dropped. You must use the
     plugin-based installation (`pip install jax[cuda12]` or
