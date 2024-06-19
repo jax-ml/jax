@@ -109,6 +109,9 @@ def pallas_call_tpu_lowering_rule(
         flags=mosaic_params.get("flags"),
         allow_input_fusion=mosaic_params.get("allow_input_fusion"),
         input_output_aliases=input_output_aliases,
+        internal_scratch_in_bytes=mosaic_params.get(
+            "internal_scratch_in_bytes"
+        ),
     )(
         *dynamic_grid_args,
         *extra_args,

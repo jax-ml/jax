@@ -1487,6 +1487,27 @@ class PallasCallTest(PallasTPUTest):
     compiled = jax.jit(f).lower(x, y).compile().as_text()
     assert re.search(r'fusion.*kind=kCustom.*fused_computation', compiled)
 
+  def test_set_internal_scratch_size(self):
+    shape = (128, 128)
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...]
+
+    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    requested_bytes = 128 * 4
+    with self.assertRaisesRegex(
+        Exception,
+        f'Requested internal scratch size {requested_bytes} needs to be at'
+        ' least',
+    ):
+      pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+          compiler_params=dict(
+              mosaic=dict(internal_scratch_in_bytes=requested_bytes)
+          ),
+      )(x)
+
 
 class PallasCallUnblockedIndexingTest(PallasTPUTest):
 
