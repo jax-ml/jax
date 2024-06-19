@@ -943,6 +943,15 @@ jax_export_calling_convention_version = int_state(
     )
 )
 
+export_ignore_forward_compatibility = bool_state(
+    name='jax_export_ignore_forward_compatibility',
+    default=bool_env('JAX_EXPORT_IGNORE_FORWARD_COMPATIBILIY', False),
+    help=(
+        'Whether to ignore the forward compatibility lowering rules. '
+        'See file:///Users/necula/Source/jax/docs/build/html/export/export.html#ensuring-forward-and-backward-compatibility.'
+    )
+)
+
 jax_platforms = optional_string_state(
     name='jax_platforms',
     default=None,
