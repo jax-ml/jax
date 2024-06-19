@@ -911,6 +911,17 @@ class JaxExportTest(jtu.JaxTestCase):
     a = exp2.in_avals[0].shape[0]
     self.assertEqual(exp2.out_avals[0].shape, output_shape(a))
 
+  def test_with_donation(self):
+    f = jax.jit(jnp.sin, donate_argnums=(0,))
+    x = np.arange(3, dtype=np.float32)
+    exp = export.export(f)(x)
+
+    def caller(x):
+      y = exp.call(x)
+      return x + y
+    res = jax.jit(caller)(x)
+    self.assertAllClose(res, x + np.sin(x))
+
   def test_poly_call_pmap(self):
     if len(jax.devices()) < 2:
       self.skipTest("Need at least 2 devices")
@@ -1312,7 +1323,7 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform(self):
     x = np.arange(8, dtype=np.float32)
     exp = get_exported(jax.jit(_testing_multi_platform_func),
-                       lowering_platforms=("tpu", "cpu", "cuda","rocm"))(x)
+                       lowering_platforms=("tpu", "cpu", "cuda", "rocm"))(x)
     self.assertEqual(exp.platforms, ("tpu", "cpu", "cuda", "rocm"))
     module_str = str(exp.mlir_module())
     expected_main_re = (
@@ -1335,14 +1346,14 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform_nested(self):
     x = np.arange(5, dtype=np.float32)
     exp = get_exported(jax.jit(lambda x: _testing_multi_platform_func(jnp.sin(x))),
-                       lowering_platforms=("cpu", "tpu", "cuda","rocm"))(x)
-    self.assertEqual(exp.platforms, ("cpu", "tpu", "cuda","rocm"))
+                       lowering_platforms=("cpu", "tpu", "cuda", "rocm"))(x)
+    self.assertEqual(exp.platforms, ("cpu", "tpu", "cuda", "rocm"))
 
     # Now serialize the call to the exported using a different sequence of
     # lowering platforms, but included in the lowering platforms for the
     # nested exported.
     exp2 = get_exported(jax.jit(exp.call),
-                        lowering_platforms=("cpu", "cuda","rocm"))(x)
+                        lowering_platforms=("cpu", "cuda", "rocm"))(x)
 
     # Ensure that we do not have multiple lowerings of the exported function
     exp2_module_str = str(exp2.mlir_module())
@@ -1361,7 +1372,7 @@ class JaxExportTest(jtu.JaxTestCase):
   def test_multi_platform_nested_inside_single_platform_export(self):
     x = np.arange(5, dtype=np.float32)
     exp = get_exported(jax.jit(_testing_multi_platform_func),
-                       lowering_platforms=("cpu", "tpu", "cuda","rocm"))(x)
+                       lowering_platforms=("cpu", "tpu", "cuda", "rocm"))(x)
     self.assertEqual(exp.platforms, ("cpu", "tpu", "cuda", "rocm"))
 
     # Now serialize the call for the current platform.
@@ -1429,6 +1440,31 @@ class JaxExportTest(jtu.JaxTestCase):
     exp = export.export(f, lowering_platforms=["cpu", "cuda", "tpu"])(x)
     expected = x * np.float32(dict(cpu=2, gpu=3, tpu=4)[jtu.device_under_test()])
     self.assertAllClose(exp.call(x), expected)
+
+  def test_multi_platform_unknown_platform(self):
+    x = np.arange(8, dtype=np.float32)
+    exp = get_exported(jax.jit(jnp.sin),
+                       lowering_platforms=("tpu", "cpu", "cuda", "other"))(x)
+    self.assertEqual(exp.platforms, ("tpu", "cpu", "cuda", "other"))
+
+
+  def test_multi_platform_with_donation(self):
+    f = jax.jit(jnp.sin, donate_argnums=(0,))
+    x = np.arange(3, dtype=np.float32)
+    exp = export.export(f, platforms=["cpu", "tpu"])(x)
+    if jtu.device_under_test() not in ["cpu", "tpu"]:
+      self.skipTest("other platform")
+
+    def caller(x):
+      y = exp.call(x)
+      return x + y
+    res = jax.jit(caller)(x)
+    self.assertAllClose(res, x + np.sin(x))
+
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "In multi-platform lowering either all or no lowering platforms should support donation"):
+      export.export(f, platforms=["cpu", "tpu", "other"])(x)
 
   def test_multi_platform_and_poly(self):
     if jtu.test_device_matches(["gpu"]):
@@ -1696,6 +1732,7 @@ class JaxExportTest(jtu.JaxTestCase):
     )
     res_exported = exp_f.call(lhs, rhs, group_sizes)
     self.assertAllClose(res_native, res_exported)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
