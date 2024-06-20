@@ -246,8 +246,9 @@ def transformation(gen, fun: WrappedFun, *gen_static_args) -> WrappedFun:
   return fun.wrap(gen, gen_static_args, None)
 
 @curry
-def transformation_with_aux(gen, fun: WrappedFun, *gen_static_args,
-                            use_eq_store=False) -> tuple[WrappedFun, Any]:
+def transformation_with_aux(
+    gen, fun: WrappedFun, *gen_static_args, use_eq_store: bool = False
+) -> tuple[WrappedFun, Callable[[], Any]]:
   """Adds one more transformation with auxiliary output to a WrappedFun."""
   out_store = Store() if not use_eq_store else EqualStore()
   out_thunk = lambda: out_store.val

@@ -23,7 +23,7 @@ import itertools as it
 import logging
 import operator as op
 import weakref
-from typing import Callable, NamedTuple, Any, Union, Optional
+from typing import Callable, NamedTuple, Any, Union, Optional, cast
 import threading
 import warnings
 
@@ -170,33 +170,33 @@ class PjitInfo(NamedTuple):
 
 
 def _python_pjit_helper(jit_info, *args, **kwargs):
-  (args_flat, params, in_avals, _, out_tree, _, arg_names, _,
-   attrs_tracked) = _infer_params(jit_info, args, kwargs)
+  p = _infer_params(jit_info, args, kwargs)
 
+  args_flat = p.args_flat
   for arg in args_flat:
     dispatch.check_arg(arg)
 
-  if attrs_tracked:
-    init_states = _get_states(attrs_tracked)
+  if p.attrs_tracked:
+    init_states = _get_states(p.attrs_tracked)
     args_flat = [*init_states, *args_flat]
 
   try:
-    out_flat = pjit_p.bind(*args_flat, **params)
+    out_flat = pjit_p.bind(*args_flat, **p.params)
   except pxla.DeviceAssignmentMismatchError as e:
     fails, = e.args
-    api_name = 'jit' if params['resource_env'] is None else 'pjit'
+    api_name = 'jit' if p.params['resource_env'] is None else 'pjit'
     fun = jit_info.fun
     fun_name = getattr(fun, '__qualname__', getattr(fun, '__name__', str(fun)))
     msg = _device_assignment_mismatch_error(
-        fun_name, fails, args_flat, api_name, arg_names)
+        fun_name, fails, args_flat, api_name, p.arg_names)
     raise ValueError(msg) from None
   except xla.InvalidInputException as e:
-    arg_names = [''] * len(args_flat) if arg_names is None else arg_names
+    arg_names = [''] * len(args_flat) if p.arg_names is None else p.arg_names
     # Run canonicalization again to figure out which arg failed.
-    if params['jaxpr'].consts:
+    if p.params['jaxpr'].consts:
       raise TypeError(e.args[0]) from e
     else:
-      for arg, name, aval in zip(args_flat, arg_names, in_avals):
+      for arg, name, aval in zip(args_flat, arg_names, p.in_avals):
         try:
           xla.canonicalize_dtype(arg)
         except xla.InvalidInputException as _:
@@ -206,13 +206,13 @@ def _python_pjit_helper(jit_info, *args, **kwargs):
               f' {type(arg)} is not a valid JAX type.') from e
       raise AssertionError("Unreachable") from e
 
-  if attrs_tracked:
-    num_states_out = sum(end_tree.num_leaves for _, end_tree, _ in attrs_tracked)
+  if p.attrs_tracked:
+    num_states_out = sum(end_tree.num_leaves for _, end_tree, _ in p.attrs_tracked)
     final_states, out_flat = split_list(out_flat, [num_states_out])
-    _set_states(attrs_tracked, final_states)
+    _set_states(p.attrs_tracked, final_states)
 
-  outs = tree_unflatten(out_tree, out_flat)
-  return outs, out_flat, out_tree, args_flat, params['jaxpr'], attrs_tracked
+  outs = tree_unflatten(p.out_tree, out_flat)
+  return outs, out_flat, p.out_tree, args_flat, p.params['jaxpr'], p.attrs_tracked
 
 
 def _set_states(attrs_tracked, vals):
@@ -487,24 +487,23 @@ def _make_jit_wrapper(jit_info: PjitInfo):
 
   @api_boundary
   def eval_shape(*args, **kwargs):
-    _, params, _, _, out_tree, _, _, _, _ = _infer_params(jit_info, args, kwargs)
-    out_s = [None if is_unspecified(s) else s for s in params['out_shardings']]
+    p = _infer_params(jit_info, args, kwargs)
+    out_s = [None if is_unspecified(s) else s for s in p.params['out_shardings']]
     # TODO(yashkatariya): Add `Layout` to SDS.
     out = [api.ShapeDtypeStruct(x.shape, x.dtype, x.named_shape, sharding=s)
-           for x, s in zip(params['jaxpr'].out_avals, out_s)]
-    return tree_unflatten(out_tree, out)
+           for x, s in zip(p.params['jaxpr'].out_avals, out_s)]
+    return tree_unflatten(p.out_tree, out)
 
   @api_boundary
   def trace(*args, **kwargs) -> stages.Traced:
-    (args_flat, params, in_avals, in_tree, out_tree, donated_invars,
-     arg_names, num_consts, _) = _infer_params(jit_info, args, kwargs)
-
-    donate_argnums = tuple(i for i, d in enumerate(donated_invars) if d)
-    args_info = stages.make_args_info(in_tree, in_avals, donate_argnums)
-    lower_callable = partial(_resolve_and_lower, args_flat, **params,
+    p = _infer_params(jit_info, args, kwargs)
+    donate_argnums = tuple(i for i, d in enumerate(p.donated_invars) if d)
+    args_info = stages.make_args_info(p.in_tree, p.in_avals, donate_argnums)
+    lower_callable = partial(_resolve_and_lower, p.args_flat, **p.params,
                              pgle_profiler=None)
-    return stages.Traced(params['jaxpr'], args_info, params["name"], out_tree,
-                         lower_callable, args_flat, arg_names, num_consts)
+    return stages.Traced(
+        p.params['jaxpr'], args_info, p.params["name"],p.out_tree,
+        lower_callable, p.args_flat, p.arg_names, p.num_consts)
 
   wrapped = _cpp_pjit(jit_info)
   wrapped.lower = lower
@@ -529,26 +528,33 @@ def make_jit(fun: Callable, in_shardings: Any, out_shardings: Any,
   return _make_jit_wrapper(jit_info)
 
 
-def _infer_params(jit_info, args, kwargs):
-  (fun, fun_sourceinfo, fun_signature, user_specified_in_shardings,
-   in_shardings_treedef, in_shardings_leaves, out_shardings_treedef,
-   out_shardings_leaves, in_layouts_treedef, in_layouts_leaves,
-   out_layouts_treedef, out_layouts_leaves, static_argnums, static_argnames,
-   donate_argnums, donate_argnames, device, backend, keep_unused, inline,
-   abstracted_axes, _, use_resource_env) = jit_info
+class PjitParams(NamedTuple):
+  args_flat: list[Any]
+  params: dict[str, Any]
+  in_avals: tuple[core.AbstractValue, ...]
+  in_tree: PyTreeDef
+  out_tree: PyTreeDef
+  donated_invars: tuple[bool, ...]
+  arg_names: tuple[str, ...] | None
+  num_consts: int
+  attrs_tracked: list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]
 
+
+def _infer_params(
+    ji: PjitInfo, args: tuple[Any, ...], kwargs: dict[str, Any]
+) -> PjitParams:
   have_kwargs = bool(kwargs)
-  if have_kwargs and user_specified_in_shardings:
+  if have_kwargs and ji.user_specified_in_shardings:
     raise ValueError(
         "pjit does not support kwargs when in_shardings is specified.")
 
-  if use_resource_env:
+  if ji.use_resource_env:
     # We need to fetch the mesh from inside the wrapped function, because
     # meshes are dynamically scoped (i.e., with a context manager).
     resource_env = mesh_lib.thread_resources.env
     pjit_mesh = resource_env.physical_mesh
     jit_name = 'pjit'
-    if (backend or device) and not pjit_mesh.empty:
+    if (ji.backend or ji.device) and not pjit_mesh.empty:
       raise ValueError(
           "Mesh context manager should not be used with jit when backend or "
           "device is also specified as an argument to jit.")
@@ -557,47 +563,48 @@ def _infer_params(jit_info, args, kwargs):
     pjit_mesh = None
     jit_name = 'jit'
 
+  axes_specs = _flat_axes_specs(ji.abstracted_axes, *args, **kwargs)
 
-  axes_specs = _flat_axes_specs(abstracted_axes, *args, **kwargs)
-
-  dbg = debug_info(jit_name, fun_sourceinfo, fun_signature, args, kwargs,
-                   static_argnums, static_argnames)
-  f = lu.wrap_init(fun)
+  dbg = debug_info(jit_name, ji.fun_sourceinfo, ji.fun_signature, args, kwargs,
+                   ji.static_argnums, ji.static_argnames)
+  f = lu.wrap_init(ji.fun)
   f, res_paths = result_paths(f)
-  f, dyn_args = argnums_partial_except(f, static_argnums, args, allow_invalid=True)
+  f, dyn_args = argnums_partial_except(f, ji.static_argnums, args, allow_invalid=True)
   del args
 
-  f, dyn_kwargs = argnames_partial_except(f, static_argnames, kwargs)
+  f, dyn_kwargs = argnames_partial_except(f, ji.static_argnames, kwargs)
   explicit_args, in_tree = tree_flatten((dyn_args, dyn_kwargs))
   flat_fun, out_tree = flatten_fun(f, in_tree)
   flat_fun, explicit_args = hoist_obj_attrs(flat_fun, explicit_args)
 
-  if (donate_argnums or donate_argnames) and not config.debug_nans.value:
-    donated_invars = donation_vector(donate_argnums, donate_argnames, in_tree)
+  if (ji.donate_argnums or ji.donate_argnames) and not config.debug_nans.value:
+    donated_invars = donation_vector(ji.donate_argnums, ji.donate_argnames, in_tree)
   else:
     donated_invars = (False,) * len(explicit_args)
-  del donate_argnums, donate_argnames
 
   # If backend or device is set as an arg on jit, then resolve them to
   # in_shardings and out_shardings as if user passed in in_shardings
   # and out_shardings.
-  device_or_backend_set = bool(backend or device)
+  device_or_backend_set = bool(ji.backend or ji.device)
   if device_or_backend_set:
-    sharding = _create_sharding_with_device_backend(device, backend)
+    sharding = _create_sharding_with_device_backend(ji.device, ji.backend)
     leaves, treedef = tree_flatten(sharding)
     in_shardings_leaves = out_shardings_leaves = tuple(leaves)
     in_shardings_treedef = out_shardings_treedef = treedef
   else:
     in_shardings_leaves = tuple(
         _create_sharding_for_array(pjit_mesh, x, 'in_shardings', jit_name)
-        for x in in_shardings_leaves)
+        for x in ji.in_shardings_leaves)
+    in_shardings_treedef = ji.in_shardings_treedef
     out_shardings_leaves = tuple(
         _create_sharding_for_array(pjit_mesh, x, 'out_shardings', jit_name)
-        for x in out_shardings_leaves)
+        for x in ji.out_shardings_leaves)
+    out_shardings_treedef = ji.out_shardings_treedef
 
   assert None not in in_shardings_leaves
   assert None not in out_shardings_leaves
 
+  in_type: Union[core.InputType, tuple[core.AbstractValue, ...]]
   if config.dynamic_shapes.value:
     in_type = pe.infer_lambda_input_type(axes_specs, explicit_args)
     in_avals = tuple(a for a, e in in_type if e)
@@ -617,19 +624,25 @@ def _infer_params(jit_info, args, kwargs):
 
   in_shardings_flat, in_layouts_flat = _process_in_axis_resources(
       in_shardings_treedef, in_shardings_leaves,
-      in_layouts_treedef, in_layouts_leaves,
+      ji.in_layouts_treedef, ji.in_layouts_leaves,
       in_avals, in_tree, dbg, device_or_backend_set, have_kwargs)
 
-  jaxpr, consts, out_shardings_flat, out_layouts_flat, attrs_tracked = _pjit_jaxpr(
-      flat_fun, out_shardings_treedef, out_shardings_leaves,
-      out_layouts_treedef, out_layouts_leaves, in_type, dbg,
-      device_or_backend_set, HashableFunction(out_tree, closure=()),
-      HashableFunction(res_paths, closure=()), inline)
+  attr_token = _attr_token(flat_fun, in_type)
+  jaxpr, consts, out_type, attrs_tracked = _create_pjit_jaxpr(
+      flat_fun, in_type, attr_token, dbg,
+      HashableFunction(res_paths, closure=()),
+      IgnoreKey(ji.inline))
+  _attr_update(flat_fun, in_type, attr_token, attrs_tracked)
+  out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
+      out_shardings_treedef, out_shardings_leaves, ji.out_layouts_treedef,
+      ji.out_layouts_leaves, HashableFunction(out_tree, closure=()),
+      tuple(out_type), jaxpr.jaxpr.debug_info, device_or_backend_set)
 
   assert len(explicit_args) == len(in_shardings_flat) == len(in_layouts_flat)
 
   if config.dynamic_shapes.value:
-    implicit_args = _extract_implicit_args(in_type, explicit_args)
+    implicit_args = _extract_implicit_args(
+        cast(core.InputType, in_type), explicit_args)
   else:
     implicit_args = []
   args_flat = [*implicit_args, *explicit_args]
@@ -651,12 +664,13 @@ def _infer_params(jit_info, args, kwargs):
       resource_env=resource_env,
       donated_invars=donated_invars,
       name=fun_name(flat_fun),
-      keep_unused=keep_unused,
-      inline=inline,
+      keep_unused=ji.keep_unused,
+      inline=ji.inline,
   )
-  return (consts + args_flat, params, in_avals, in_tree, out_tree(),
-          donated_invars, dbg.arg_names if dbg else None, len(consts),
-          attrs_tracked)
+  return PjitParams(consts + args_flat, params, in_avals, in_tree, out_tree(),
+                    donated_invars, dbg.arg_names if dbg else None, len(consts),
+                    attrs_tracked)
+
 
 def _extract_implicit_args(
   in_type: Sequence[tuple[core.AbstractValue, bool]],
@@ -1171,7 +1185,15 @@ def explain_tracing_cache_miss(
   return done()
 
 @partial(lu.cache, explain=explain_tracing_cache_miss)
-def _create_pjit_jaxpr(fun, in_type, attr_data, debug_info, out_paths, ignored_inline):
+def _create_pjit_jaxpr(
+    fun: lu.WrappedFun,
+    in_type: core.InputType | Sequence[core.AbstractValue],
+    attr_data: int,
+    debug_info: lu.TracingDebugInfo,
+    out_paths: Callable,
+    ignored_inline: IgnoreKey
+) -> tuple[core.ClosedJaxpr, list[Any], list[core.AbstractValue],
+           list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]]:
   del ignored_inline  # just for explain_cache_miss
   with dispatch.log_elapsed_time(
       "Finished tracing + transforming {fun_name} for pjit in {elapsed_time} sec",
@@ -1179,7 +1201,7 @@ def _create_pjit_jaxpr(fun, in_type, attr_data, debug_info, out_paths, ignored_i
     pe_debug = debug_info and pe.debug_info_final(fun, debug_info.traced_for)
     if config.dynamic_shapes.value:
       jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic2(
-          lu.annotate(fun, in_type), debug_info=pe_debug)
+          lu.annotate(fun, cast(core.InputType, in_type)), debug_info=pe_debug)
       attrs_tracked = []
     else:
       jaxpr, global_out_avals, consts, attrs_tracked = pe.trace_to_jaxpr_dynamic(
@@ -1235,12 +1257,18 @@ def _check_and_canonicalize_out_shardings(
 AttrRecord = tuple[object, str, PyTreeDef, list[core.AbstractValue]]
 _seen_attrs = weakref.WeakKeyDictionary()  # type: ignore
 
-def seen_attrs_get(fun: lu.WrappedFun, in_type: core.InputType) -> list:
+def seen_attrs_get(
+    fun: lu.WrappedFun,
+    in_type: core.InputType | tuple[core.AbstractValue, ...]
+) -> list:
   cache = _seen_attrs.setdefault(fun.f, defaultdict(list))
   assert fun.in_type is None or fun.in_type == in_type
   return cache[(fun.transforms, fun.params, in_type)]
 
-def _attr_token(fun, in_type):
+def _attr_token(
+    fun: lu.WrappedFun,
+    in_type: core.InputType | tuple[core.AbstractValue, ...]
+) -> int:
   from jax.experimental.attrs import jax_getattr
   cases = seen_attrs_get(fun, in_type)
   for i, records in enumerate(cases):
@@ -1263,20 +1291,6 @@ def _attr_update(fun, in_type, i, attrs_tracked):
     cases.append(records)
   else:
     assert i < len(cases) and cases[i] == records
-
-def _pjit_jaxpr(fun, out_shardings_treedef, out_shardings_leaves,
-                out_layouts_treedef, out_layouts_leaves, in_type, debug_info,
-                device_or_backend_set, out_tree, result_paths, inline):
-  attr_token = _attr_token(fun, in_type)
-  jaxpr, final_consts, out_type, attrs_tracked = _create_pjit_jaxpr(
-      fun, in_type, attr_token, debug_info, result_paths, IgnoreKey(inline))
-  _attr_update(fun, in_type, attr_token, attrs_tracked)
-  canonicalized_out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
-      out_shardings_treedef, out_shardings_leaves, out_layouts_treedef,
-      out_layouts_leaves, out_tree, tuple(out_type),
-      jaxpr.jaxpr.debug_info, device_or_backend_set)
-  return (jaxpr, final_consts, canonicalized_out_shardings_flat,
-          out_layouts_flat, attrs_tracked)
 
 
 @dataclasses.dataclass(frozen=True)
