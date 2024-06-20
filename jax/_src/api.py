@@ -1226,7 +1226,7 @@ def vmap(fun: F,
 
       path, _ = pairs[e.leaf_idx]
       raise ValueError(f'at vmap out_axes{keystr(path)}, got axis spec {e.dst} '
-                       f'but output was batched on axis {e.src}')
+                       f'but output was batched on axis {e.src}') from None
     return tree_unflatten(out_tree(), out_flat)
 
   return cast(F, vmap_f)
