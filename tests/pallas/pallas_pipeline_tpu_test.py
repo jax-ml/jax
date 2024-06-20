@@ -40,7 +40,7 @@ if CAN_USE_HYPOTHESIS:
       database=None,
       derandomize=True,
       deadline=None,
-      max_examples=50,
+      max_examples=200,
       print_blob=True,
   )
   hp.settings.load_profile('deterministic')
@@ -1351,6 +1351,7 @@ class PallasCallMegacoreTest(parameterized.TestCase):
       (1024, 1024, 1024, 256, 512, 256),
       (768, 1024, 1024, 256, 512, 256),
       (1024, 1024, 768, 256, 512, 256),
+      (768, 1024, 768, 256, 512, 256),
   )
   def test_megacore_matmul(self, m, k, n, bm, bk, bn):
     k1, k2 = jax.random.split(jax.random.key(42))
@@ -1366,9 +1367,10 @@ class PallasCallMegacoreTest(parameterized.TestCase):
     def matmul_kernel(x_ref, y_ref, z_ref, *, bm, bk, bn):
       m, k = x_ref.shape
       _, n = y_ref.shape
+      assert k % bk == 0
       pltpu.emit_pipeline(
           matmul_pipeline,
-          grid=(m // bm, n // bn, k // bk),
+          grid=(pl.cdiv(m, bm), pl.cdiv(n, bn), pl.cdiv(k, bk)),
           in_specs=[
               pl.BlockSpec(lambda i, j, k: (i, k), (bm, bk)),
               pl.BlockSpec(lambda i, j, k: (k, j), (bk, bn)),
@@ -1403,30 +1405,23 @@ if CAN_USE_HYPOTHESIS:
 
     def kernel(x_hbm_ref, y_hbm_ref, o_hbm_ref):
 
-      # Partition iteration space according to number of cores
-      core_index = pl.program_id(0)
-      num_cores = pl.num_programs(0)
-      num_m_iters = pl.cdiv(m, bm)
-      # Floor divide to get number of iterations per core
-      iterations_per_core = jax.lax.div(num_m_iters, num_cores)
-      # Last core gets the remainder of iterations
-      num_iters_on_this_core = jnp.where(
-          core_index == num_cores - 1,
-          iterations_per_core + jax.lax.rem(num_m_iters, num_cores),
-          iterations_per_core,
-      )
-      m_offset = core_index * iterations_per_core
-      grid = (num_iters_on_this_core, pl.cdiv(n, bn), pl.cdiv(k, bk))
+      grid = (pl.cdiv(m, bm), pl.cdiv(n, bn), pl.cdiv(k, bk))
 
       def run(acc_scratch_ref):
         pltpu.emit_pipeline(
             partial(basic_matmul_kernel, acc_scratch_ref=acc_scratch_ref, k=k),
             in_specs=[
-                pl.BlockSpec(lambda i, j, k: (m_offset + i, k), (bm, bk)),
+                pl.BlockSpec(lambda i, j, k: (i, k), (bm, bk)),
                 pl.BlockSpec(lambda i, j, k: (k, j), (bk, bn)),
             ],
-            out_specs=pl.BlockSpec(lambda i, j, k: (m_offset + i, j), (bm, bn)),
+            out_specs=pl.BlockSpec(lambda i, j, k: (i, j), (bm, bn)),
             grid=grid,
+            core_axis=0,
+            dimension_semantics=(
+                pltpu.PARALLEL,
+                pltpu.PARALLEL,
+                pltpu.ARBITRARY,
+            ),
         )(x_hbm_ref, y_hbm_ref, o_hbm_ref)
 
       accum_dtype = (
