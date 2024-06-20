@@ -110,6 +110,7 @@ def get_tensormap_descriptor(**attrs):
 
 
 def debug_print(fmt, *args, uniform=True):
+  # return
   type_formats = []
   new_args = []
   for arg in args:
@@ -527,8 +528,11 @@ class BarrierArray:
       yield self[offset]
 
   def __getitem__(self, offset: ir.Value | int):
+    index = ir.IndexType.get()
     if isinstance(offset, int):
-      offset = c(offset, ir.IndexType.get())
+      offset = c(offset, index)
+    if ir.IntegerType.isinstance(offset.type):
+      offset = arith.index_castui(index, offset)
     return Barrier(self, offset)
 
 
