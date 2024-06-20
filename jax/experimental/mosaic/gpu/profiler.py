@@ -70,16 +70,21 @@ def _record_event(args, event):
       treedef, record_event_p.bind(*flat_args, event=event)
   )
 
-def measure(f, *args):
+def measure(f, *args, **kwargs):
   # TODO(apaszke): Raise if this is called under jit.
   start_event = mosaic_gpu_lib._mosaic_gpu_ext._gpu_event_create()
   end_event = mosaic_gpu_lib._mosaic_gpu_ext._gpu_event_create()
   try:
+
     @jax.jit
-    def run(*args):
-      return _record_event(f(*_record_event(args, start_event)), end_event)
-    jax.block_until_ready(run(*args))  # Warmup.
-    results = jax.block_until_ready(run(*args))
+    def run(*args, **kwargs):
+      flat_args, treedef = jax.tree.flatten((args, kwargs))
+      flat_args = _record_event(flat_args, start_event)
+      args, kwargs = jax.tree.unflatten(treedef, flat_args)
+      return _record_event(f(*args, **kwargs), end_event)
+
+    jax.block_until_ready(run(*args, **kwargs))  # Warmup.
+    results = jax.block_until_ready(run(*args, **kwargs))
     elapsed = mosaic_gpu_lib._mosaic_gpu_ext._gpu_event_elapsed(
         start_event, end_event
     )
