@@ -10,6 +10,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jaxlib 0.4.31
 
+* Bug fixes
+  * Fixed a bug that meant that negative static_argnums to a jit were mishandled
+    by the jit dispatch fast path.
+
 ## jax 0.4.30 (June 18, 2024)
 
 * Changes
