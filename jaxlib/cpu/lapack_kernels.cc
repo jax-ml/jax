@@ -194,6 +194,41 @@ template struct Getrf<double>;
 template struct Getrf<std::complex<float>>;
 template struct Getrf<std::complex<double>>;
 
+// FFI Kernel
+
+template <ffi::DataType dtype>
+ffi::Error LuDecomposition<dtype>::Kernel(
+    ffi::Buffer<dtype> x, ffi::ResultBuffer<dtype> x_out,
+    ffi::ResultBuffer<LapackIntDtype> ipiv,
+    ffi::ResultBuffer<LapackIntDtype> info) {
+  auto [batch_count, x_rows, x_cols] = SplitBatch2D(x.dimensions);
+  auto* x_out_data = x_out->data;
+  auto* ipiv_data = ipiv->data;
+  auto* info_data = info->data;
+
+  CopyIfDiffBuffer(x, x_out);
+
+  auto x_rows_v = CastNoOverflow<lapack_int>(x_rows);
+  auto x_cols_v = CastNoOverflow<lapack_int>(x_cols);
+  auto x_leading_dim_v = x_rows_v;
+
+  const int64_t x_out_step{x_rows * x_cols};
+  const int64_t ipiv_step{std::min(x_rows, x_cols)};
+  for (int64_t i = 0; i < batch_count; ++i) {
+    fn(&x_rows_v, &x_cols_v, x_out_data, &x_leading_dim_v, ipiv_data,
+       info_data);
+    x_out_data += x_out_step;
+    ipiv_data += ipiv_step;
+    ++info_data;
+  }
+  return ffi::Error::Success();
+}
+
+template struct LuDecomposition<ffi::DataType::F32>;
+template struct LuDecomposition<ffi::DataType::F64>;
+template struct LuDecomposition<ffi::DataType::C64>;
+template struct LuDecomposition<ffi::DataType::C128>;
+
 //== QR Factorization ==//
 
 // lapack geqrf
