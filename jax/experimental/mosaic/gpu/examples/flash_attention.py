@@ -265,16 +265,9 @@ def build_kernel(
 
       perform_schedule_barrier()
 
-      # For small head_dim we're not really constrained by the register budget.
-      # Even though unfusing the adds should have negative performance impact,
-      # it ends up emitting slightly better code for unclear reasons.
-      duplicate_acc = head_dim == 64  # TODO(apaszke): Investigate why.
       with ctx.named_region("PV issue"):
-        if duplicate_acc:
-          acc_update = WGMMAAccumulator.zero(*acc.shape)
-        else:
-          acc_update = WGMMAAccumulator.from_registers(acc)
         v = memref_slice(v_smem, slot)
+        acc_update = WGMMAAccumulator.from_registers(acc)
         acc_update = wgmma(acc_update, p, v)
         nvvm.wgmma_commit_group_sync_aligned()
 
@@ -291,10 +284,7 @@ def build_kernel(
 
       with ctx.named_region("PV wait"):
         nvvm.wgmma_wait_group_sync_aligned(0)
-        if duplicate_acc:
-          acc += acc_update.value  # We can now safely extract the update.
-        else:
-          acc = acc_update.value
+        acc = acc_update.value
 
       return acc, m_i, l_i
 
