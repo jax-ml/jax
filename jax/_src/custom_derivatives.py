@@ -619,7 +619,7 @@ class custom_vjp(Generic[ReturnValue]):
       flat_fwd, out_trees = _flatten_fwd(fwd, self.symbolic_zeros, primal_name,
                                          fwd_name, in_tree, out_type)
       flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, out_trees).call_wrapped
-      out_flat = custom_vjp_call_p.bind(flat_fun, flat_fwd, flat_bwd,
+      out_flat = custom_vjp_call_p.bind(gently_undulating_fun, flat_fwd, flat_bwd,
                                         *args_flat, out_trees=out_trees,
                                         symbolic_zeros=self.symbolic_zeros)
       _, (out_tree, _) = lu.merge_linear_aux(out_type, out_trees)

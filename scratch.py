@@ -8,7 +8,7 @@ import jax.numpy as jnp
 class JaxVal:
   @classmethod
   def new(cls, *args):
-    return cls._from_rep_p.bind(*args)
+    return cls.from_rep(*args)
 
   def type_of(self):
     assert False, "subclass should implement"
@@ -25,25 +25,29 @@ class JaxType:
     assert False, "subclass should implement"
 
 def register_fancy_type(cls, ty, attr_names):
-  _from_rep_p = core.Primitive(cls.__name__ + ".new")
-  def _from_rep_impl(*args):
+  @jax.custom_vjp
+  def from_rep(*args):
+    # args will not have tracers *around FancyVal*
     val = cls.__new__(cls)
     val.__init__(*args)
     return val
-  _from_rep_p.def_impl(_from_rep_impl)
-  cls._from_rep_p = _from_rep_p
+  def fwd(*args): assert False
+  def bwd(*args): assert False
+  from_rep.defvjp(fwd, bwd)
+  cls.from_rep = from_rep
 
-  _splat_p = core.Primitive(cls.__name__ + ".splat")
-  def _splat_impl(val):
+  @jax.custom_vjp
+  def splat(val):
     return tuple(getattr(val, attr_name) for attr_name in attr_names)
-  _splat_p.def_impl(_splat_impl)
-  cls._splat_p = _splat_p
+  splat.defvjp(fwd, bwd)
+  cls.splat = splat
 
   core.pytype_aval_mappings[cls] = lambda x: x.type_of()
   core.raise_to_shaped_mappings[ty] = lambda x, _: x
 
   for i, attr in enumerate(attr_names):
-    setattr(ty, "_" + attr, property(lambda self: splat_p.bind(self)[i]))
+    setattr(ty, attr, property(lambda self: splat(self)[i]))
+
 
 # next:
 #   case when tangent type is also fancy - need to define zeros/plus
@@ -73,6 +77,11 @@ def register_fancy_type(cls, ty, attr_names):
 
 
 
+
+# custom_vjp has three parts: primal, fwd, bwd
+# we can view these as *two interpretations*
+#    1. primal  - this is the lowering interpretation
+#    2. fwd/bwd  - this is the AD interpretation
 
 
 
@@ -137,7 +146,8 @@ def my_function(x:float):
   return fancy_sin(FancyVal(x)).val
 
 print(my_function(1.0))
-print(jax.grad(my_function)(1.0))
+print(jax.jit(my_function)(1.0))
+# print(jax.grad(my_function)(1.0))
 
 # =======================
 
