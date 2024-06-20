@@ -17,6 +17,8 @@
 from collections.abc import Iterator
 import contextlib
 import dataclasses
+import enum
+import functools
 from typing import Any, Literal, Sequence
 
 import jax
@@ -116,10 +118,8 @@ def debug_print(fmt, *args, uniform=True):
       ty_format = "%llu"
     if ir.IntegerType.isinstance(arg.type):
       width = ir.IntegerType(arg.type).width
-      if width == 64:
-        ty_format = "%llu"
-      elif width == 1:
-        ty_format = "%llu"
+      ty_format = "%llu"
+      if width < 64:
         arg = arith.extui(ir.IntegerType.get_signless(64), arg)
     if ir.F32Type.isinstance(arg.type):
       ty_format = "%f"
@@ -130,7 +130,11 @@ def debug_print(fmt, *args, uniform=True):
       raise NotImplementedError(arg.type)
     type_formats.append(ty_format)
     new_args.append(arg)
-  ctx = single_thread if uniform else contextlib.nullcontext
+  ctx = (
+      functools.partial(single_thread, per_block=False)
+      if uniform
+      else contextlib.nullcontext
+  )
   with ctx():
     gpu.printf(fmt.format(*type_formats) + "\n", new_args)
 
@@ -214,31 +218,45 @@ def warpgroup_idx(sync=True):
   return _warp_bcast(wg_idx) if sync else wg_idx
 
 
+class ThreadSubset(enum.IntEnum):
+  WARPGROUP = enum.auto()
+  BLOCK = enum.auto()
+
+
 # True withon `once()` contexts.
-_ONCE_REGION_ACTIVE = False
+_ONCE_PER: ThreadSubset | None = None
 
 
 @contextlib.contextmanager
-def single_thread():
-  """Runs the context only from a single thread."""
-  global _ONCE_REGION_ACTIVE
+def single_thread(per_block=True):
+  """Runs the context only from a single thread.
 
-  if _ONCE_REGION_ACTIVE:
+  Args:
+    per_block: If True, only one thread per block will run the context.
+      Otherwise, only one thread per warp group will run the context.
+  """
+  global _ONCE_PER
+  scope = ThreadSubset.BLOCK if per_block else ThreadSubset.WARPGROUP
+  # If we're already in a single-thread context, we don't have to do anything.
+  if _ONCE_PER is not None and _ONCE_PER >= scope:
     yield
     return
 
   warp = warp_idx()
+  if not per_block:
+    warp = arith.remui(warp, c(4, warp.type))
   first_warp = arith.cmpi(arith.CmpIPredicate.eq, warp, c(0, warp.type))
   elected = nvvm.elect_sync(ir.IntegerType.get_signless(1))
   should_run = arith.andi(first_warp, elected)
   if_op = scf.IfOp(should_run)
-  _ONCE_REGION_ACTIVE = True
+  prev_scope = _ONCE_PER
+  _ONCE_PER = scope
   try:
     with ir.InsertionPoint(if_op.then_block):
       yield
       scf.YieldOp([])
   finally:
-    _ONCE_REGION_ACTIVE = False
+    _ONCE_PER = prev_scope
 
 
 def clock():
@@ -499,7 +517,7 @@ class BarrierArray:
     i32 = ir.IntegerType.get_signless(32)
     self.phases = memref.alloca(ir.MemRefType.get((), i32), [], [])
     memref.store(c(0, i32), self.phases, [])
-    with single_thread():
+    with single_thread(per_block=True):
       for i in range(num_barriers):
         nvgpu.mbarrier_init(self.value, c(arrival_count, index), c(i, index))
     gpu.barrier()

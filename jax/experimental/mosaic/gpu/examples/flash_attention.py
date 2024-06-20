@@ -13,9 +13,11 @@
 # limitations under the License.
 # ==============================================================================
 
+import contextlib
 import dataclasses
 import enum
 import itertools
+import os
 
 from absl import app
 import jax
@@ -63,13 +65,15 @@ def build_kernel(
     prof_spec: profiler.ProfilerSpec | None = None,
     exp_impl: ExpImplementation = ExpImplementation.EXACT,
 ):
+  wgs_per_block = 2
+
   if batch_size != 1:
     raise NotImplementedError
   if blocks.stages < 2:
     raise ValueError("Kernel requires at least 2 stages.")
   if q_heads % kv_heads:
     raise ValueError("kv_heads must divide q_heads.")
-  if q_seq_len % blocks.q:
+  if q_seq_len % (blocks.q * wgs_per_block):
     raise ValueError
   if kv_seq_len % blocks.kv:
     raise ValueError
@@ -96,7 +100,7 @@ def build_kernel(
   block_partition = Partition(
       elements=(batch_size, q_seq_len, q_heads),
       partition=(0, 1, 2),
-      chunk_size=(1, blocks.q, 1),
+      chunk_size=(1, blocks.q * wgs_per_block, 1),
   )
 
   index = ir.IndexType.get()
@@ -104,10 +108,10 @@ def build_kernel(
   f32 = ir.F32Type.get()
 
   grid = block_partition.num_chunks
-  block = (128, 1, 1)
+  block = (wgs_per_block * 128, 1, 1)
   tiling = (64, 64)
   qo_scratch = jax.ShapeDtypeStruct(
-      tile_shape((blocks.q, head_dim), tiling), jnp.float16
+      (wgs_per_block, *tile_shape((blocks.q, head_dim), tiling)), jnp.float16
   )
   k_scratch = jax.ShapeDtypeStruct(
       tile_shape((blocks.stages, head_dim, blocks.kv), tiling), jnp.float16
@@ -134,30 +138,48 @@ def build_kernel(
       out_gmem,
       smem_scratch,
   ):
-    barriers = BarrierArray(blocks.stages + 1)
+    barriers = BarrierArray(blocks.stages + wgs_per_block)
+    schedule_barrier = BarrierArray(1, arrival_count=256)[0]
+    def perform_schedule_barrier():
+      schedule_barrier.arrive()
+      schedule_barrier.wait()
+    wg_idx = warpgroup_idx(sync=True)
     qo_smem, k_smem, v_smem = smem_scratch
+    qo_smem = memref_slice(qo_smem, arith.index_cast(index, wg_idx))
+
+    @contextlib.contextmanager
+    def only_wg(idx):
+      i32 = ir.IntegerType.get_signless(32)
+      is_wg = arith.cmpi(arith.CmpIPredicate.eq, wg_idx, c(idx, i32))
+      with ir.InsertionPoint(scf.IfOp(is_wg).then_block):
+        yield
+        scf.yield_([])
 
     batch_idx, q_seq_base, q_head_idx = block_partition.get_base(
         gpu.block_id(gpu.Dimension.x),
         gpu.block_id(gpu.Dimension.y),
         gpu.block_id(gpu.Dimension.z),
     )
+    q_seq_base = arith.addi(
+        q_seq_base, arith.muli(arith.index_cast(index, wg_idx), c(blocks.q))
+    )
     del batch_idx
 
+    q_barrier = arith.addi(c(blocks.stages), arith.index_cast(index, wg_idx))
     with ctx.named_region("Q TMA start"):
       ctx.async_copy(
           src_ref=q_gmem,
           gmem_slice=(q_head_idx, ds(q_seq_base, blocks.q)),
           gmem_transform=mosaic_gpu.TileTransform(tiling),
           dst_ref=qo_smem,
-          barrier=barriers[blocks.stages],
+          barrier=barriers[q_barrier],
           swizzle=128,
       )
 
     kv_head_idx = arith.divui(q_head_idx, c(q_heads_per_kv_head))
 
     def kv_copy_init(slot, kv_seq_base):
-      with single_thread():
+      with single_thread(per_block=False):
         txcount = c(2 * blocks.kv * head_dim * bytewidth(f16))
         nvgpu.mbarrier_arrive_expect_tx(barriers.value, txcount, slot)
         k_tr = (
@@ -178,12 +200,12 @@ def build_kernel(
           )
 
     loop_partition = Partition1D(kv_seq_len, chunk_size=blocks.kv)
-    with ctx.named_region("KV TMA warmup"):
+    with only_wg(1), ctx.named_region("KV TMA warmup"):
       for i in range(blocks.stages - 1):
         kv_copy_init(c(i), loop_partition.get_base(c(i)))
 
     with ctx.named_region("Q TMA wait"):
-      barriers[blocks.stages].wait()
+      barriers[q_barrier].wait()
 
     m_i = FragmentedArray.splat(
         c(-jnp.inf, f32), shape=(blocks.q,), layout=WGMMA_ROW_LAYOUT
@@ -195,7 +217,10 @@ def build_kernel(
         c(0, f32), shape=(blocks.q, head_dim), layout=WGMMA_LAYOUT
     )
 
-    with ctx.named_region("KV TMA wait"):
+    with only_wg(1):
+      perform_schedule_barrier()
+
+    with only_wg(0):
       barriers[c(0)].wait()
 
     @fori(c(loop_partition.num_chunks), (acc, m_i, l_i))
@@ -211,7 +236,7 @@ def build_kernel(
         nvvm.wgmma_commit_group_sync_aligned()
 
       # We hide the TMA overhead by overlapping it with the QK matmul.
-      with ctx.named_region("KV TMA start"):
+      with only_wg(1), ctx.named_region("KV TMA start"):
         tma_step = arith.addi(kv_step, c(blocks.stages - 1))
         tma_slot = arith.remui(tma_step, c(blocks.stages))
         tma_step_in_bounds = arith.cmpi(
@@ -221,6 +246,8 @@ def build_kernel(
         with ir.InsertionPoint(if_op.then_block):
           kv_copy_init(tma_slot, loop_partition.get_base(tma_step))
           scf.yield_([])
+
+      perform_schedule_barrier()
 
       with ctx.named_region("QK wait"):
         nvvm.wgmma_wait_group_sync_aligned(0)
@@ -234,6 +261,9 @@ def build_kernel(
         acc *= alpha.broadcast_minor(head_dim)
         l_i *= alpha
         l_i += p.reduce(arith.addf, axis=1)
+        p = p.astype(f16)
+
+      perform_schedule_barrier()
 
       # For small head_dim we're not really constrained by the register budget.
       # Even though unfusing the adds should have negative performance impact,
@@ -245,11 +275,11 @@ def build_kernel(
         else:
           acc_update = WGMMAAccumulator.from_registers(acc)
         v = memref_slice(v_smem, slot)
-        acc_update = wgmma(acc_update, p.astype(f16), v)
+        acc_update = wgmma(acc_update, p, v)
         nvvm.wgmma_commit_group_sync_aligned()
 
       # We hide the barrier overhead by overlapping it with the PV matmul.
-      with ctx.named_region("KV TMA wait"):
+      with only_wg(0), ctx.named_region("KV TMA wait"):
         wait_step = arith.addi(kv_step, c(1))
         wait_slot = arith.remui(wait_step, c(blocks.stages))
         wait_step_in_bounds = arith.cmpi(
@@ -267,6 +297,10 @@ def build_kernel(
           acc = acc_update.value
 
       return acc, m_i, l_i
+
+    with only_wg(0):
+      perform_schedule_barrier()
+
     acc, m_i, l_i = kv_loop.results
     del m_i
     # TODO(apaszke): Invert and multiply to avoid expensive divisions.
@@ -314,7 +348,6 @@ def benchmark_and_verify(
     v = random.normal(
         kv, (batch_size, num_kv_heads, kv_seq_len, head_dim), dtype=jnp.float16
     )
-
     f = build_kernel(
         batch_size=batch_size,
         q_heads=num_q_heads,
@@ -322,7 +355,6 @@ def benchmark_and_verify(
         q_seq_len=q_seq_len,
         kv_seq_len=kv_seq_len,
         head_dim=head_dim,
-        blocks=BlockSizes(q=64, kv=64, stages=2),
         **kwargs,
     )
     out, runtime = profiler.measure(f, q[0], k[0], v[0])
@@ -349,28 +381,40 @@ if __name__ == "__main__":
   num_q_heads = 4
   num_kv_heads = 1
   prof_spec = None
-  param_it = itertools.product(
-      (4096,), (4096,), (64, 128, 256), ExpImplementation
-  )
-  for kv_seq_len, q_seq_len, head_dim, exp_impl in param_it:
-    runtime_ms = benchmark_and_verify(
-        batch_size,
-        q_seq_len,
-        kv_seq_len,
-        num_q_heads,
-        num_kv_heads,
-        head_dim,
-        prof_spec=prof_spec,
-        exp_impl=exp_impl,
-    )
-    runtime_us = runtime_ms * 1e3
-    matmul_flops = (
-        4 * q_seq_len * kv_seq_len * head_dim * num_q_heads * batch_size
-    )
-    peak_flops = 1e15  # f16 TensorCore peak = 1000TFLOPS
-    optimal_time = matmul_flops / peak_flops * 1e6  # us
-    achieved_tc_util = optimal_time / runtime_us * 100
+  problem_it = itertools.product((4096,), (4096,), (64, 128, 256))
+  for kv_seq_len, q_seq_len, head_dim in problem_it:
     print(
-        f"{kv_seq_len=:<6} {q_seq_len=:<6} {num_q_heads=:<4} {head_dim=:<6} exp_impl={exp_impl.name:<6}:"
-        f"  {runtime_us:<7.1f}us = {achieved_tc_util:4.1f}% TC utilization"
+        "===="
+        f" {kv_seq_len=:<6} {q_seq_len=:<6} {num_q_heads=:<4} {head_dim=:<6} ===="
     )
+    param_it = itertools.product(
+        ExpImplementation, (64,), (64, 128, 256),
+    )
+    for exp_impl, block_q, block_kv in param_it:
+      try:
+        runtime_ms = benchmark_and_verify(
+            batch_size,
+            q_seq_len,
+            kv_seq_len,
+            num_q_heads,
+            num_kv_heads,
+            head_dim,
+            prof_spec=prof_spec,
+            exp_impl=exp_impl,
+            blocks=BlockSizes(q=block_q, kv=block_kv, stages=2),
+        )
+      except ValueError as e:
+        if "exceeds available shared memory" in e.args[0]:
+          continue
+        raise
+      runtime_us = runtime_ms * 1e3
+      matmul_flops = (
+          4 * q_seq_len * kv_seq_len * head_dim * num_q_heads * batch_size
+      )
+      peak_flops = 1e15  # f16 TensorCore peak = 1000TFLOPS
+      optimal_time = matmul_flops / peak_flops * 1e6  # us
+      achieved_tc_util = optimal_time / runtime_us * 100
+      print(
+          f"exp_impl={exp_impl.name:<6} block_q={block_q:<4}block_kv={block_kv:<4}:  {runtime_us:<7.1f}us"
+          f" = {achieved_tc_util:4.1f}% TC utilization"
+      )
