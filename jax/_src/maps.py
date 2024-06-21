@@ -116,7 +116,7 @@ class SerialLoop:
   jointly over chunks of multiple axes (with the usual requirement that they
   do not coincide in a named shape of any value in the program).
 
-  Example::
+  Examples:
 
       # Processes `x` in a vectorized way, but in 20 micro-batches.
       xmap(f, in_axes=['i'], out_axes=[i], axis_resources={'i': SerialLoop(20)})(x)
@@ -161,7 +161,7 @@ def serial_loop(name: ResourceAxisName, length: int):
     name: Name of the loop in the resource environment.
     length: Number of iterations.
 
-  Example::
+  Examples:
 
     >>> x = jnp.linspace(0, jnp.pi, 4)
     ...

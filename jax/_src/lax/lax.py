@@ -1241,7 +1241,7 @@ def top_k(operand: ArrayLike, k: int) -> tuple[Array, Array]:
     - :func:`jax.lax.approx_max_k`
     - :func:`jax.lax.approx_min_k`
 
-  Example:
+  Examples:
     Find the largest three values, and their indices, within an array:
 
     >>> x = jnp.array([9., 3., 6., 4., 10.])

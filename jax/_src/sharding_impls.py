@@ -183,7 +183,7 @@ class NamedSharding(sharding.Sharding):
     mesh: A :class:`jax.sharding.Mesh` object.
     spec: A :class:`jax.sharding.PartitionSpec` object.
 
-  Example:
+  Examples:
 
     >>> from jax.sharding import Mesh
     >>> from jax.sharding import PartitionSpec as P
@@ -308,7 +308,7 @@ class SingleDeviceSharding(sharding.Sharding):
   Args:
     device: A single :py:class:`Device`.
 
-  Example:
+  Examples:
 
     >>> single_device_sharding = jax.sharding.SingleDeviceSharding(
     ...     jax.devices()[0])

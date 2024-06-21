@@ -653,7 +653,7 @@ def make_array_from_callback(
   Returns:
     A ``jax.Array`` via data fetched from ``data_callback``.
 
-  Example:
+  Examples:
 
     >>> import math
     >>> from jax.sharding import Mesh
