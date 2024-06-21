@@ -1316,6 +1316,40 @@ class PallasCallMegacoreTest(parameterized.TestCase):
 
     super().setUp()
 
+  def test_can_partition_nondivisible_grid_with_dynamic_dimensions(self):
+
+    def mul_pipeline(x_ref, y_ref):
+      y_ref[...] = x_ref[...] * 2
+
+    def mul_kernel(iters_ref, x_ref, y_ref):
+      pltpu.emit_pipeline(
+          mul_pipeline,
+          grid=(iters_ref[0], 5),
+          in_specs=[
+              pl.BlockSpec(lambda i, j: (i, j), (128, 128)),
+          ],
+          out_specs=pl.BlockSpec(lambda i, j: (i, j), (128, 128)),
+          core_axis=0,
+          dimension_semantics=(pltpu.PARALLEL, pltpu.PARALLEL),
+      )(x_ref, y_ref)
+
+    num_cores = jax.devices()[0].num_cores
+    func = pl.pallas_call(
+        mul_kernel,
+        out_shape=jax.ShapeDtypeStruct((640, 640), jnp.float32),
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=1,
+            in_specs=[
+                pl.BlockSpec(memory_space=pltpu.ANY),
+            ],
+            out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+            grid=(num_cores,),
+        ),
+        compiler_params=dict(mosaic=dict(dimension_semantics=('parallel',))),
+    )
+    x = jax.random.uniform(jax.random.key(0), (640, 640))
+    np.testing.assert_allclose(func(jnp.array([5]), x), x * 2)
+
   def test_megacore_mul(self):
     x = jax.random.uniform(jax.random.key(0), (512, 512))
 

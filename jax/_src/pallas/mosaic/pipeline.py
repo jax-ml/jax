@@ -826,7 +826,8 @@ def _partition_grid(
     # the largest dimension and try to divide it as evenly as possible.
     # TODO(sharadmv): take the product of many nondivisible dimensions to
     # potentially divide it more evenly
-    largest_parallel_dimension = max(grid[i] for i in parallel_dimensions)  # type: ignore
+    largest_parallel_dimension = max(grid[i] for i in parallel_dimensions
+                                     if isinstance(grid[i], int))  # type: ignore
     partition_dimension, *_ = [
         i
         for i, d in enumerate(grid)
