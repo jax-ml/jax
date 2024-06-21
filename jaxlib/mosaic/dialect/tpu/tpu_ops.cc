@@ -24,8 +24,8 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
-#include "mlir/include/mlir/IR/BuiltinTypes.h"
-#include "mlir/include/mlir/IR/IRMapping.h"
+#include "third_party/llvm/llvm-project/mlir/include/mlir/IR/BuiltinTypes.h"
+#include "third_party/llvm/llvm-project/mlir/include/mlir/IR/IRMapping.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 
 namespace mlir {

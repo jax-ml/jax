@@ -27,9 +27,9 @@ limitations under the License.
 #include "mlir/IR/Visitors.h"
 #include "mlir/Pass/Pass.h"  // IWYU pragma: keep
 #include "mlir/Support/LLVM.h"
-#include "mlir/include/mlir/IR/OpDefinition.h"
-#include "mlir/include/mlir/IR/OperationSupport.h"
-#include "mlir/include/mlir/Support/LogicalResult.h"
+#include "third_party/llvm/llvm-project/mlir/include/mlir/IR/OpDefinition.h"
+#include "third_party/llvm/llvm-project/mlir/include/mlir/IR/OperationSupport.h"
+#include "third_party/llvm/llvm-project/mlir/include/mlir/Support/LogicalResult.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 
 namespace mlir::tpu {

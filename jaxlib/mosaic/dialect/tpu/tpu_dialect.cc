@@ -32,7 +32,7 @@ limitations under the License.
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "absl/hash/hash.h"
-#include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
+#include "third_party/llvm/llvm-project/mlir/include/mlir/Dialect/Arith/IR/Arith.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.cc.inc"
 #include "jaxlib/mosaic/dialect/tpu/tpu_enums.cc.inc"
 #include "xla/layout.h"
