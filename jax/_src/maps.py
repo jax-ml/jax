@@ -62,7 +62,7 @@ from jax._src.tree_util import (tree_flatten, tree_unflatten, all_leaves,
 from jax._src.util import (safe_map, safe_zip, HashableFunction, unzip2, unzip3,
                            as_hashable_function, distributed_debug_log,
                            tuple_insert, moveaxis, split_list, wrap_name,
-                           merge_lists, partition_list)
+                           merge_lists, partition_list, fun_name)
 
 source_info_util.register_exclusion(__file__)
 traceback_util.register_exclusion(__file__)
@@ -116,7 +116,7 @@ class SerialLoop:
   jointly over chunks of multiple axes (with the usual requirement that they
   do not coincide in a named shape of any value in the program).
 
-  Example::
+  Examples:
 
       # Processes `x` in a vectorized way, but in 20 micro-batches.
       xmap(f, in_axes=['i'], out_axes=[i], axis_resources={'i': SerialLoop(20)})(x)
@@ -161,7 +161,7 @@ def serial_loop(name: ResourceAxisName, length: int):
     name: Name of the loop in the resource environment.
     length: Number of iterations.
 
-  Example::
+  Examples:
 
     >>> x = jnp.linspace(0, jnp.pi, 4)
     ...
@@ -577,7 +577,7 @@ def xmap(fun: Callable,
         in_axes_flat, args_flat)
 
     params = dict(
-      name=getattr(fun, '__name__', '<unnamed function>'),
+      name=fun_name(fun),
       in_axes=tuple(in_axes_flat),
       out_axes_thunk=out_axes_thunk,
       donated_invars=donated_invars,
@@ -627,8 +627,7 @@ def xmap(fun: Callable,
     in_tree = treedef_tuple([in_tree, tree_flatten({})[1]])
     in_avals = in_tree.unflatten(avals_flat)
     return stages.Lowered.from_flat_info(
-        computation, in_tree, in_avals, donate_argnums, out_tree(),
-        no_kwargs=True)
+        computation, in_tree, in_avals, donate_argnums, out_tree())
 
   fun_mapped.lower = lower
   return type_cast(stages.Wrapped, fun_mapped)
@@ -637,11 +636,12 @@ def xmap_impl(fun: lu.WrappedFun, *args, name, in_axes, out_axes_thunk, donated_
               global_axis_sizes, axis_resources, resource_env, backend,
               spmd_in_axes, spmd_out_axes_thunk):
   in_avals = [core.raise_to_shaped(core.get_aval(arg)) for arg in args]
-  xmap_callable = make_xmap_callable(
+  computation = make_xmap_callable(
       fun, name, in_axes, out_axes_thunk, donated_invars, global_axis_sizes,
       axis_resources, resource_env, backend,
       spmd_in_axes, spmd_out_axes_thunk,
-      mlir.LoweringParameters(), *in_avals).compile().unsafe_call
+      mlir.LoweringParameters(), *in_avals)
+  xmap_callable = computation.compile().unsafe_call
   distributed_debug_log(("Running xmapped function", name),
                         ("python function", fun.f),
                         ("mesh", resource_env.physical_mesh),
@@ -707,7 +707,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
         f, 'xmap', name, mesh,
         in_shardings, out_shardings, donated_invars,
         use_spmd_lowering, in_avals,
-        tiling_method=tiling_method,
+        tiling_method=tiling_method, lowering_platforms=None,
         lowering_parameters=lowering_parameters)
   else:
     jaxpr, out_avals, consts = pe.trace_to_jaxpr_final(f, in_avals)
@@ -716,7 +716,8 @@ def make_xmap_callable(fun: lu.WrappedFun,
         (UNSPECIFIED,) * len(in_avals), (UNSPECIFIED,) * len(out_avals),
         (None,) * len(in_avals), (None,) * len(out_avals),
         donated_invars, keep_unused=True, inline=False,
-        devices_from_context=None, lowering_parameters=lowering_parameters)
+        devices_from_context=None, lowering_platforms=None,
+        lowering_parameters=lowering_parameters, pgle_profiler=None)
 
 
 class EvaluationPlan(NamedTuple):
@@ -1849,7 +1850,7 @@ def _ensure_spmd_and(f):
   return update
 
 
-SPMD_LOWERING = config.define_bool_state(
+SPMD_LOWERING = config.bool_state(
     name="experimental_xmap_spmd_lowering",
     default=False,
     help=("When set, multi-device xmap computations will be compiled through "
@@ -1857,7 +1858,7 @@ SPMD_LOWERING = config.define_bool_state(
           "Not supported on CPU!"),
     update_global_hook=_clear_compilation_cache,
     update_thread_local_hook=_thread_local_flag_unsupported)
-SPMD_LOWERING_MANUAL = config.define_bool_state(
+SPMD_LOWERING_MANUAL = config.bool_state(
     name="experimental_xmap_spmd_lowering_manual",
     default=False,
     help=("When set, multi-device xmap computations will be compiled using "
@@ -1866,7 +1867,7 @@ SPMD_LOWERING_MANUAL = config.define_bool_state(
           "Requires experimental_xmap_spmd_lowering!"),
     update_global_hook=_ensure_spmd_and(_clear_compilation_cache),
     update_thread_local_hook=_thread_local_flag_unsupported)
-_ENSURE_FIXED_SHARDING = config.define_bool_state(
+_ENSURE_FIXED_SHARDING = config.bool_state(
     name="experimental_xmap_ensure_fixed_sharding",
     default=False,
     help=("When set and `experimental_xmap_spmd_lowering` is enabled, the lowering will "

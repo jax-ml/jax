@@ -45,6 +45,9 @@ config.parse_flags_with_absl()
 
 
 PRNG_IMPLS = list(prng_internal.prngs.items())
+# Remove Pallas keys from this test, which do not run in XLA.
+PRNG_IMPLS = [
+    (name, impl) for (name, impl) in PRNG_IMPLS if "pallas" not in name]
 
 
 class OnX64(enum.Enum):
@@ -390,10 +393,16 @@ class PrngTest(jtu.JaxTestCase):
     f = lambda key: jax.random.uniform(key, (1,))
     with jax._src.config.threefry_gpu_kernel_lowering(False):
       hlo_text = jax.jit(f).lower(jax.random.key(17)).as_text()
-      self.assertNotIn("cu_threefry2x32", hlo_text)
+      if jtu.is_device_rocm():
+        self.assertNotIn("hip_threefry2x32", hlo_text)
+      else:
+        self.assertNotIn("cu_threefry2x32", hlo_text)
     with jax._src.config.threefry_gpu_kernel_lowering(True):
       hlo_text = jax.jit(f).lower(jax.random.key(17)).as_text()
-      self.assertIn("cu_threefry2x32", hlo_text)
+      if jtu.is_device_rocm():
+        self.assertIn("hip_threefry2x32", hlo_text)
+      else:
+        self.assertIn("cu_threefry2x32", hlo_text)
 
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
   def test_random_seed_offset(self, make_key):

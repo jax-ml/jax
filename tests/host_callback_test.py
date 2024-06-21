@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Sequence
 from functools import partial
 import itertools
@@ -196,18 +197,13 @@ def helper_log_ir(name,
   logging.info(f"Optimized HLO[{name}]: {jax_optimized_hlo}")
 
 
-prev_xla_flags = None
-
+_exit_stack = contextlib.ExitStack()
 
 def setUpModule():
-  global prev_xla_flags
-  # This will control the CPU devices. On TPU we always have 2 devices
-  prev_xla_flags = jtu.set_host_platform_device_count(2)
+  _exit_stack.enter_context(jtu.set_host_platform_device_count(2))
 
-
-# Reset to previous configuration in case other test modules will be run.
 def tearDownModule():
-  prev_xla_flags()
+  _exit_stack.close()
 
 
 def assertMultiDeviceOutputEqual(tst: jtu.JaxTestCase,
@@ -248,14 +244,16 @@ class HostCallbackImportsTest(jtu.JaxTestCase):
 class HostCallbackTapTest(jtu.JaxTestCase):
 
   def setUp(self):
-    super().setUp()
-    self.enter_context(jtu.ignore_warning(
-      category=DeprecationWarning, message="The host_callback APIs are deprecated"))
+    # skipping here skips teardown, so do this before super().setUp().
     if jtu.test_device_matches(["gpu"]) and jax.device_count() > 1:
       raise SkipTest("host_callback broken on multi-GPU platforms (#6447)")
     if xla_bridge.using_pjrt_c_api():
       raise SkipTest("host_callback not implemented in PJRT C API")
-
+    super().setUp()
+    self.enter_context(jtu.ignore_warning(
+      category=DeprecationWarning, message="The host_callback APIs are deprecated"))
+    self.enter_context(jtu.ignore_warning(
+      category=DeprecationWarning, message="backend and device argument"))
     testing_stream.reset()
     testing_stream._test_method_name = self._testMethodName
     self.old_flags = os.getenv("XLA_FLAGS", "")
@@ -443,8 +441,12 @@ class HostCallbackTapTest(jtu.JaxTestCase):
 
     logging.info("%s: %s", self._testMethodName,
                  jax.make_jaxpr(func)(1))
-    logging.info("%s: %s", self._testMethodName,
-                 jax.xla_computation(func, backend=jtu.device_under_test())(1).as_hlo_text())
+    logging.info(
+        "%s: %s",
+        self._testMethodName,
+        jax.jit(func)
+        .trace(1)
+        .lower(lowering_platforms=(jtu.device_under_test(),)).as_text("hlo"))
     self.assertEqual(2, jax.jit(func)(1))
     hcb.barrier_wait()
 
@@ -2044,13 +2046,16 @@ class HostCallbackCallTest(jtu.JaxTestCase):
   """Tests for hcb.call"""
 
   def setUp(self):
-    super().setUp()
-    self.enter_context(jtu.ignore_warning(
-      category=DeprecationWarning, message="The host_callback APIs are deprecated"))
+    # skipping here skips teardown, so do this before super().setUp().
     if jtu.test_device_matches(["gpu"]) and jax.device_count() > 1:
       raise SkipTest("host_callback broken on multi-GPU platforms (#6447)")
     if xla_bridge.using_pjrt_c_api():
       raise SkipTest("host_callback not implemented in PJRT C API")
+    super().setUp()
+    self.enter_context(jtu.ignore_warning(
+      category=DeprecationWarning, message="The host_callback APIs are deprecated"))
+    self.enter_context(jtu.ignore_warning(
+      category=DeprecationWarning, message="backend and device argument"))
 
     testing_stream.reset()
     testing_stream._test_method_name = self._testMethodName

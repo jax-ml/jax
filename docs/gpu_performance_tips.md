@@ -23,6 +23,10 @@ code examples:
 
 ## XLA performance flags
 
+```{note}
+  JAX-Toolbox also has a page on [NVIDIA XLA performance FLAGS](https://github.com/NVIDIA/JAX-Toolbox/blob/main/rosetta/docs/GPU_performance.md).
+```
+
 The existence and exact behavior of XLA flags may be `jaxlib`-version dependent.
 
 As of `jaxlib==0.4.18` (released [Oct 6
@@ -107,3 +111,12 @@ os.environ.update({
 
 These NCCL flags could improve single-host communication speed. These flags
 don't seem useful for multi-host communication yet.
+
+## Multi-Process
+
+We recommand using one process per GPU and not one per node.  In some
+cases, this can speed up jitted computation. The
+{func}`jax.distributed.initialize` API will automatically understand
+that configuration when run under SLURM. However, this only a rule of
+thumb and it may be useful to test both one process per GPU and one
+process per node on your use case.

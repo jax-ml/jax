@@ -23,8 +23,8 @@ import math
 
 import numpy as np
 
-from jax.experimental.export import _shape_poly
-from jax.experimental.export._shape_poly import (
+from jax._src.export import shape_poly
+from jax._src.export.shape_poly import (
   _DimExpr, _DimTerm, _DimFactor,
   SymbolicScope,
   DimSize,
@@ -43,7 +43,7 @@ def bounds_decision(e: DimSize,
   decision = _DecisionByElimination.build(e.scope)
   return decision.bounds(e, prec, add_implicit_constraints=True)
 
-_shape_poly._bounds_decision = bounds_decision
+shape_poly._bounds_decision = bounds_decision
 
 
 class _DecisionByElimination:
@@ -183,7 +183,7 @@ class _DecisionByElimination:
     lead_t_constraints.add((cmp, lead_t_k, e))
 
   def combine_term_with_existing(self, t: _DimTerm, t_k: int, *,
-                                 scope: _shape_poly.SymbolicScope,
+                                 scope: shape_poly.SymbolicScope,
                                  only_smaller_than_t=True,
                                  ) -> Sequence[tuple[Comparator,
                                                      _DimExpr,
@@ -292,7 +292,7 @@ class _DecisionByElimination:
                                prec: BoundsPrecision) -> tuple[float, float]:
     """The lower and upper bounds of e[i:].
 
-    See comments about soundness and `cmp_with` in the `_shape_poly.bounds_decision`` method.
+    See comments about soundness and `cmp_with` in the `shape_poly.bounds_decision`` method.
     Returns (lower-bound, upper-bound)
     """
     if i >= len(e): return (0, 0)

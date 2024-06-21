@@ -63,8 +63,7 @@ def sdpa_train(query: Array,
   out, sdpa_vjp = jax.vjp(
       partial(dot_product_attention, scale=scale, mask_type=mask_type,
               dropout_rate=dropout_rate,
-              qkv_layout="BNTH" if is_bnth else "BTNH",
-              is_training=True),
+              qkv_layout="BNTH" if is_bnth else "BTNH"),
       query, key, value, bias, mask, q_seqlen, kv_seqlen)
   query_grad, key_grad, value_grad, bias_grad, _, _, _ = sdpa_vjp(grad)
   if bias is not None and len(bias.shape) == 3:

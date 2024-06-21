@@ -47,6 +47,7 @@ from jax._src import xla_bridge as xb
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters import xla
 from jax._src.layout import AutoLayout, DeviceLocalLayout
+from jax._src.sharding import Sharding as JSharding
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
 from jax._src.lib.mlir import dialects
@@ -54,7 +55,6 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.lib.mlir import register_jax_dialects
-from jax._src.sharding_impls import XLACompatibleSharding
 from jax._src.state.types import AbstractRef
 
 map, unsafe_map = util.safe_map, map
@@ -67,14 +67,14 @@ Value = Any  # = ir.Value
 # mypy implicitly sets this variable to true when type checking.
 MYPY = False
 
-_JAX_DUMP_IR_TO = config.DEFINE_string(
+_JAX_DUMP_IR_TO = config.string_flag(
     'jax_dump_ir_to', os.getenv('JAX_DUMP_IR_TO', ''),
     help="Path to which the IR that is emitted by JAX should be dumped as "
          "text files. If omitted, JAX will not dump IR. "
          "Supports the special value 'sponge' to pick the path from the "
          "environment variable TEST_UNDECLARED_OUTPUTS_DIR.")
 
-_JAX_INCLUDE_DEBUG_INFO_IN_DUMPS = config.DEFINE_string(
+_JAX_INCLUDE_DEBUG_INFO_IN_DUMPS = config.string_flag(
   'jax_include_debug_info_in_dumps',
   os.getenv('JAX_INCLUDE_DEBUG_INFO_IN_DUMPS', "True"),
   help="Determine whether or not to keep debug symbols and location information "
@@ -90,16 +90,7 @@ def dense_int_elements(xs) -> ir.DenseIntElementsAttr:
   return type_cast(ir.DenseIntElementsAttr,
                    ir.DenseIntElementsAttr.get(np.asarray(xs, np.int64)))
 
-def dense_int_array(xs) -> ir.DenseElementsAttr | ir.DenseI64ArrayAttr:
-  # TODO: b/321794305 - remove this check when jaxlib is on StableHLO API v5 or higher
-  if hlo.get_api_version() < 5:
-    return dense_int_elements(xs)
-  return ir.DenseI64ArrayAttr.get(np.asarray(xs, np.int64))  # type: ignore
-
-# TODO: b/321794305 - delete this when jaxlib is on StableHLO API v6 or higher
-def dense_int_array_v6(xs) -> ir.DenseIntElementsAttr | ir.DenseI64ArrayAttr:
-  if hlo.get_api_version() < 6:
-    return dense_int_elements(xs)
+def dense_int_array(xs) -> ir.DenseI64ArrayAttr:
   return ir.DenseI64ArrayAttr.get(np.asarray(xs, np.int64))  # type: ignore
 
 def dense_bool_elements(xs: Sequence[bool]) -> ir.DenseElementsAttr:
@@ -111,10 +102,7 @@ def dense_bool_elements(xs: Sequence[bool]) -> ir.DenseElementsAttr:
   return ir.DenseElementsAttr.get(
       a, type=ir.IntegerType.get_signless(1), shape=[len(xs)])
 
-def dense_bool_array(xs: Sequence[bool]) -> ir.DenseElementsAttr | ir.DenseBoolArrayAttr:
-  # TODO: b/321794305 - remove this check when jaxlib is on StableHLO API v6 or higher
-  if hlo.get_api_version() < 6:
-    return dense_bool_elements(xs)
+def dense_bool_array(xs: Sequence[bool]) -> ir.DenseBoolArrayAttr:
   return ir.DenseBoolArrayAttr.get(xs)  # type: ignore
 
 def i32_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(32), i)
@@ -321,7 +309,7 @@ def _ndarray_constant_handler(val: np.ndarray | np.generic) -> Sequence[ir.Value
         ir.RankedTensorType.get(
             val.shape, dtype_to_ir_type(collapsed_val.dtype)),  # type: ignore
         _numpy_array_constant(collapsed_val)[0],
-        dense_int_array_v6(other_axes))
+        dense_int_array(other_axes))
     return (out,)
   else:
     return _numpy_array_constant(val)
@@ -558,19 +546,15 @@ class LoweringParameters:
   # existing Jax rules.
   override_lowering_rules: tuple[tuple[core.Primitive, LoweringRule]] | None = None
 
-  # The current lowering platforms, a non-empty tuple containing some of
-  # 'cpu', 'cuda', 'rocm', 'tpu'. If the tuple has multiple entries we are
-  # doing multi-platform lowering, otherwise it can specify cross-platform
-  # lowering. The value None specifies the default lowering platform.
-  # This is used only in export and jax2tf.
-  platforms: tuple[str, ...] | None = None
-
   # Signals that the entire computation being lowered operates on global
   # constants. This will result in adding jax.global_constant attributes
   # to the arguments of all functions that are created, e.g., floor_divide.
   # This is used only in export and jax2tf in presence of shape polymorphism
   # or multi-platform lowering.
   global_constant_computation: bool = False
+
+  # Signals that we are lowering for exporting.
+  for_export: bool = False
 
 
 @dataclasses.dataclass
@@ -594,6 +578,8 @@ class ModuleContext:
   ip: ir.InsertionPoint
   symbol_table: ir.SymbolTable
   backend_or_name: str | xb.XlaBackend | None
+  # The lowering platforms for the module. Can be more than one only when
+  # exporting.
   platforms: Sequence[str]
   axis_context: AxisContext
   keepalives: list[Any]
@@ -628,8 +614,7 @@ class ModuleContext:
       module: ir.Module | None = None,
       ip: ir.InsertionPoint | None = None,
       symbol_table: ir.SymbolTable | None = None,
-      cached_primitive_lowerings: None | (dict[Any,
-                                                func_dialect.FuncOp]) = None,
+      cached_primitive_lowerings: None | (dict[Any, func_dialect.FuncOp]) = None,
       traceback_caches: None | TracebackCaches = None,
       shape_poly_state = None):
 
@@ -698,6 +683,9 @@ class LoweringRuleContext:
   # module_context.shape_poly_state.dim_vars
   dim_var_values: Sequence[ir.Value] = ()
   compute_type: str | None = None
+  # Override module_context.platforms if not None. Used during multi-platform
+  # lowering, when in a scope with a subset of the module_context.platforms.
+  platforms: Sequence[str] | None = None
 
   def set_tokens_out(self, tokens_out: TokenSet):
     assert self.tokens_out is None, 'Should only set `tokens_out` once.'
@@ -747,7 +735,7 @@ def flatten_lowering_ir_args(
 _module_name_regex = re.compile(r"[^\w.-]")
 
 def sharded_aval(aval: core.AbstractValue,
-                 sharding: XLACompatibleSharding | None) -> core.AbstractValue:
+                 sharding: JSharding | None) -> core.AbstractValue:
   """Returns the new aval sharded based on sharding proto."""
   if sharding is None:
     return aval
@@ -821,16 +809,16 @@ _platforms_with_donation = ["cpu", "cuda", "rocm", "tpu"]
 
 
 def _to_physical_op_sharding(
-    aval: core.AbstractValue, sharding: XLACompatibleSharding | None,
+    aval: core.AbstractValue, sharding: JSharding | None,
 ) -> xc.OpSharding | None:
   if sharding is None:
     return None
-  assert isinstance(sharding, sharding_impls.XLACompatibleSharding)
+  assert isinstance(sharding, JSharding)
   if isinstance(aval, AbstractRef):
     return _to_physical_op_sharding(aval.inner_aval, sharding)
   assert isinstance(aval, (core.ShapedArray, core.DShapedArray))
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
-    sharding = aval.dtype._rules.physical_sharding(aval, sharding)
+    sharding = sharding_impls.physical_sharding(aval, sharding)
     aval = core.physical_aval(aval)
   return sharding._to_xla_hlo_sharding(aval.ndim).to_proto()  # type: ignore
 
@@ -843,10 +831,10 @@ def _to_xla_layout(layout: DeviceLocalLayout | None | AutoLayout) -> str | None:
   return layout._to_xla_layout()
 
 
-def _get_mem_kind(s: XLACompatibleSharding | None) -> str | None:
+def _get_mem_kind(s: JSharding | None) -> str | None:
   if s is None:
     return None
-  assert isinstance(s, sharding_impls.XLACompatibleSharding)
+  assert isinstance(s, JSharding)
   return s.memory_kind
 
 
@@ -861,8 +849,8 @@ def lower_jaxpr_to_module(
     name_stack: source_info_util.NameStack,
     donated_args: Sequence[bool],
     replicated_args: Sequence[bool] | None = None,
-    arg_shardings: Sequence[XLACompatibleSharding | None] | None = None,
-    result_shardings: Sequence[XLACompatibleSharding | None] | None = None,
+    arg_shardings: Sequence[JSharding | None] | None = None,
+    result_shardings: Sequence[JSharding | None] | None = None,
     in_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
     out_layouts: Sequence[DeviceLocalLayout | None | AutoLayout] | None = None,
     arg_names: Sequence[str | None] | None = None,
@@ -952,8 +940,7 @@ def lower_jaxpr_to_module(
                       channel_iterator=channel_iter,
                       host_callbacks=host_callbacks,
                       lowering_parameters=lowering_parameters,
-                      shape_poly_state=ShapePolyLoweringState(
-                          dim_vars, lowering_parameters.platforms))
+                      shape_poly_state=ShapePolyLoweringState(dim_vars, platforms))
   with ctx.context, ir.Location.unknown(ctx.context):
     # Remove module name characters that XLA would alter. This ensures that
     # XLA computation preserves the module name.
@@ -982,7 +969,7 @@ def lower_jaxpr_to_module(
   try:
     if not ctx.module.operation.verify():
       raise ValueError(
-          "Cannot lower jaxpr with verifier errors." +
+          "Cannot lower jaxpr with verifier errors. " +
           dump_module_message(ctx.module, "verification"))
   except ir.MLIRError as e:
     msg_lines = ["Cannot lower jaxpr with verifier errors:"]
@@ -993,7 +980,7 @@ def lower_jaxpr_to_module(
         emit_diagnostic_info(n)
     for d in e.error_diagnostics:
       emit_diagnostic_info(d)
-    raise ValueError("\n".join(msg_lines) +
+    raise ValueError("\n".join(msg_lines) + "\n" +
                      dump_module_message(ctx.module, "verification")) from e
 
   return LoweringResult(ctx.module, ctx.keepalives, ctx.host_callbacks,
@@ -1102,8 +1089,8 @@ def lower_jaxpr_to_fun(
     *,
     public: bool = False,
     replicated_args: Sequence[bool] | None = None,
-    arg_shardings: Sequence[XLACompatibleSharding | None] | None = None,
-    result_shardings: Sequence[XLACompatibleSharding | None] | None = None,
+    arg_shardings: Sequence[JSharding | None] | None = None,
+    result_shardings: Sequence[JSharding | None] | None = None,
     use_sharding_annotations: bool = True,
     input_output_aliases: Sequence[int | None] | None = None,
     xla_donated_args: Sequence[bool] | None = None,
@@ -1244,10 +1231,6 @@ def lower_jaxpr_to_fun(
       if pom is not None and mk is None:
         res.append([pom] * len(types))
       else:
-        if pom is not None and mk is not None and pom != mk:
-          raise AssertionError(
-              f"propagated out memory kind ({pom}) does not match the memory"
-              f" kind specified in out_shardings of jit ({mk})")
         res.append([mk] * len(types))  # type: ignore
       # To add the custom call on the output to signal a transfer, only do it
       # if memory kind comes from out_shardings on `jit` and result_memory_kinds
@@ -1392,7 +1375,7 @@ def lower_jaxpr_to_fun(
 
     if ir_arg_shardings is not None and name == "main":
       flat_args = [
-          a.dtype._rules.replicate_trailing_dims(entry_lowering_ctx, o, a)  # pytype: disable=attribute-error
+          replicate_trailing_dims(entry_lowering_ctx, o, a)
           if (a is not core.abstract_token and
               dtypes.issubdtype(a.dtype, dtypes.extended) and s is None) else o  # pytype: disable=attribute-error
           for o, s, a in zip(flat_args, ir_arg_shardings, input_avals)
@@ -1433,7 +1416,7 @@ def lower_jaxpr_to_fun(
 
     if ir_result_shardings is not None and name == "main":
       flat_outputs = [
-          a.dtype._rules.replicate_trailing_dims(entry_lowering_ctx, o, a)  # pytype: disable=attribute-error
+          replicate_trailing_dims(entry_lowering_ctx, o, a)
           if (a is not core.abstract_token and
               dtypes.issubdtype(a.dtype, dtypes.extended) and s is None) else o  # pytype: disable=attribute-error
           for o, s, a in zip(flat_outputs, ir_result_shardings, output_avals)
@@ -1455,6 +1438,19 @@ def wrap_with_memory_kind(
   dict_attr = {"_xla_buffer_placement": ir.StringAttr.get(memory_kind)}
   op.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
   return op.result
+
+
+def replicate_trailing_dims(ctx, val: ir.Value, aval) -> ir.Value:
+  # Set the sharding of extended dtypes to be UNCONSTRAINED
+  # (i.e. XLA will choose) on aval.shape.
+  # For the trailing dims i.e. the dimension of key_shape on the base_array,
+  # the sharding is set to be REPLICATED always.
+  # For example: if the key.shape is (8, 2) and key_data(key).shape is (8, 2, 2),
+  # then the sharding will be P(P.UNCONSTRAINED, P.UNCONSTRAINED, None).
+  # The below custom call achieves the sharding like above example.
+  return wrap_with_sharding_op(
+      ctx, val, aval, xc.HloSharding.replicate().to_proto(),
+      unspecified_dims=set(range(aval.ndim)))
 
 
 def _emit_lowering_rule_as_fun(lowering_rule,
@@ -1662,7 +1658,7 @@ def lower_per_platform(ctx: LoweringRuleContext,
    rule_args: the args of the lowering rules.
    rule_kwargs: the kwargs of the lowering rules.
   """
-  platforms: Sequence[str] = ctx.module_context.platforms
+  platforms: Sequence[str] = ctx.platforms or ctx.module_context.platforms
   # Special case the common case (single-platform lowering)
   if len(platforms) == 1:
     rule = platform_rules.get(platforms[0], default_rule)
@@ -1694,7 +1690,11 @@ def lower_per_platform(ctx: LoweringRuleContext,
   assert kept_rules
   # If there is a single rule left just apply the rule, without conditionals.
   if len(kept_rules) == 1:
-   return kept_rules[0](ctx, *rule_args, **rule_kwargs)
+    output = kept_rules[0](ctx, *rule_args, **rule_kwargs)
+    wrapped_out = map(wrap_singleton_ir_values, output)
+    map(lambda o: wrap_compute_type_in_place(ctx, o.owner),
+        util.flatten(wrapped_out))
+    return output
 
   assert len(platforms) > 1 and len(kept_rules) >= 2, (platforms, kept_rules)
   assert len(ctx.dim_var_values) >= 1, "Must have a platform_index variable"
@@ -1719,7 +1719,10 @@ def lower_per_platform(ctx: LoweringRuleContext,
                       index=rule_idx_op,
                       num_branches=len(kept_rules))
   for i, rule in enumerate(kept_rules):
-    inner_ctx = ctx.replace()
+    platforms_for_this_rule = [p
+                               for p, rule_idx in platform_to_kept_rules_idx.items()
+                               if rule_idx == i]
+    inner_ctx = ctx.replace(platforms=platforms_for_this_rule)
     branch = case_op.regions[i].blocks.append()
     with ir.InsertionPoint(branch):
       output = rule(inner_ctx, *rule_args, **rule_kwargs)
@@ -1728,6 +1731,8 @@ def lower_per_platform(ctx: LoweringRuleContext,
       except TypeError as e:
         raise ValueError("Output of translation rule must be iterable: "
                         f"{description}, got output {output}") from e
+      map(lambda o: wrap_compute_type_in_place(ctx, o.owner),
+          util.flatten(out_nodes))
       if inner_ctx.tokens_out is not None:
         assert len(ordered_effects) == len(inner_ctx.tokens_out)
         out_nodes = [inner_ctx.tokens_out.get(eff)
@@ -1758,7 +1763,7 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
 
   The returned function does not use `avals_out`, so callers may pass any value
   as `avals_out`."""
-  def f_lowered(ctx, *args, **params):
+  def f_lowered(ctx: LoweringRuleContext, *args, **params):
     f = fun if multiple_results else lambda *args, **kw: (fun(*args, **kw),)
     wrapped_fun = lu.wrap_init(f, params)
 
@@ -1768,11 +1773,12 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
       # case, we need to form a jaxpr with leading binders for those axis size
       # arguments (by computing an InputType and using trace_to_jaxpr_dynamic2),
       # and we need to call jaxpr_subcomp with these arguments made explicit.
+      assert ctx.axis_size_env is not None
       args = (*ctx.axis_size_env.values(), *args)
       idx = {d: core.DBIdx(i) for i, d in enumerate(ctx.axis_size_env)}
       i32_aval = core.ShapedArray((), np.dtype('int32'))
       implicit_args = [(i32_aval, False)] * len(ctx.axis_size_env)
-      explicit_args = [(a.update(shape=tuple(idx.get(d, d) for d in a.shape))
+      explicit_args = [(a.update(shape=tuple(idx.get(d, d) for d in a.shape))  # type: ignore
                         if type(a) is core.DShapedArray else a, True)
                        for a in ctx.avals_in]
       wrapped_fun = lu.annotate(wrapped_fun, (*implicit_args, *explicit_args))
@@ -1781,8 +1787,12 @@ def lower_fun(fun: Callable, multiple_results: bool = True) -> Callable:
       jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun, ctx.avals_in)
       # TODO(frostig,mattjj): check ctx.avals_out against jaxpr avals out?
 
+    if ctx.platforms is not None:
+      sub_context = ctx.module_context.replace(platforms=ctx.platforms)
+    else:
+      sub_context = ctx.module_context
     out, tokens = jaxpr_subcomp(
-        ctx.module_context, jaxpr, ctx.name_stack, ctx.tokens_in,
+        sub_context, jaxpr, ctx.name_stack, ctx.tokens_in,
         _ir_consts(consts), *map(wrap_singleton_ir_values, args),
         dim_var_values=ctx.dim_var_values)
     ctx.set_tokens_out(tokens)
@@ -1866,6 +1876,21 @@ register_lowering(core.call_p, partial(core_call_lowering, name="core_call"))
 register_lowering(core.closed_call_p,
                   partial(core_call_lowering, name=None))
 
+def map_compute_type(c_type):
+  if c_type == 'device_host':
+    return 'host'
+  elif c_type == 'device':
+    return 'dense'
+  raise ValueError('Invalid compute type received. Current supported values '
+                   'are `device_host` and `device`')
+
+def wrap_compute_type_in_place(ctx, op):
+  if ctx.compute_type is not None:
+    dict_attr = {"_xla_compute_type": ir.StringAttr.get(
+        map_compute_type(ctx.compute_type))}
+    op.operation.attributes["mhlo.frontend_attributes"] = ir.DictAttr.get(dict_attr)
+
+
 def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue, *,
                      broadcast_dimensions) -> ir.Value:
   # broadcast_dimension[i] is the axis of the result where the axis i of
@@ -1882,17 +1907,19 @@ def broadcast_in_dim(ctx: LoweringRuleContext, op, aval_out: core.AbstractValue,
   else:
     if not core.is_constant_shape(aval_out.shape):  # type: ignore
       shape = eval_dynamic_shape_as_tensor(ctx, aval_out.shape)  # type: ignore
-      return hlo.dynamic_broadcast_in_dim(
+      out = hlo.dynamic_broadcast_in_dim(
           aval_to_ir_type(aval_out), op,
           shape,
-          dense_int_array_v6(broadcast_dimensions),
+          dense_int_array(broadcast_dimensions),
       )
     else:
       assert all(d != ir.ShapedType.get_dynamic_size()
                  for d in aval_out.shape), aval_out  # type: ignore
-      return hlo.broadcast_in_dim(
+      out = hlo.broadcast_in_dim(
           aval_to_ir_type(aval_out), op,
-          dense_int_array_v6(broadcast_dimensions))
+          dense_int_array(broadcast_dimensions))
+    wrap_compute_type_in_place(ctx, out.owner)
+    return out
 
 def multi_broadcast_in_dim(ctx: LoweringRuleContext,
                            ops: Sequence[ir.Value],
@@ -2725,10 +2752,10 @@ def reduce_window(
     rw = hlo.ReduceWindowOp(
         list(map(aval_to_ir_type, out_avals)),
         operands, init_values,
-        dense_int_array_v6(window_dimensions),
-        window_strides=dense_int_array_v6(window_strides),
-        base_dilations=dense_int_array_v6(base_dilation),
-        window_dilations=dense_int_array_v6(window_dilation),
+        dense_int_array(window_dimensions),
+        window_strides=dense_int_array(window_strides),
+        base_dilations=dense_int_array(base_dilation),
+        window_dilations=dense_int_array(window_dilation),
         padding=ir.DenseIntElementsAttr.get(np.asarray(padding, np.int64),
                                             shape=[len(padding), 2]))
     reducer = rw.regions[0].blocks.append(*(scalar_types + scalar_types))

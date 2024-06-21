@@ -26,6 +26,24 @@ from jax.experimental import shard_map
 from jax.experimental.pallas import tpu as pltpu
 import jax.numpy as jnp
 import numpy as np
+try:
+  import hypothesis as hp
+  import hypothesis.strategies as hps
+  CAN_USE_HYPOTHESIS = True
+except (ModuleNotFoundError, ImportError):
+  CAN_USE_HYPOTHESIS = False
+
+
+if CAN_USE_HYPOTHESIS:
+  hp.settings.register_profile(
+      'deterministic',
+      database=None,
+      derandomize=True,
+      deadline=None,
+      max_examples=200,
+      print_blob=True,
+  )
+  hp.settings.load_profile('deterministic')
 
 
 jax.config.parse_flags_with_absl()
@@ -55,20 +73,52 @@ def basic_matmul_kernel(
     out_ref,
     acc_scratch_ref,
     *,
-    acc_steps: int,
+    k: int,
 ):
-  @pl.when(pl.program_id(2) == 0)
+  k_index = pl.program_id(2)
+  num_k = pl.num_programs(2)
+  bk = lhs_ref.shape[1]
+  @pl.when(k_index == 0)
   def _zero_acc():
     acc_scratch_ref[...] = jnp.zeros(
         acc_scratch_ref.shape, acc_scratch_ref.dtype)
 
-  acc_scratch_ref[...] += jnp.dot(
-      lhs_ref[...],
-      rhs_ref[...],
-      preferred_element_type=acc_scratch_ref.dtype,
-  )
+  divisible_k = k % bk == 0
+  if divisible_k:
+    acc_scratch_ref[...] += jnp.dot(
+        lhs_ref[...],
+        rhs_ref[...],
+        preferred_element_type=acc_scratch_ref.dtype,
+    )
+  else:
+    def _last_block():
+      accum_dtype = acc_scratch_ref.dtype
+      lhs_mask = (
+          k_index * bk + jax.lax.broadcasted_iota(jnp.int32, lhs_ref.shape, 1)
+          < k
+      )
+      rhs_mask = (
+          k_index * bk + jax.lax.broadcasted_iota(jnp.int32, rhs_ref.shape, 0)
+          < k
+      )
+      dtype = lhs_ref.dtype
+      lhs = lhs_ref[...].astype(accum_dtype)
+      lhs = jnp.where(lhs_mask, lhs, 0).astype(dtype)
+      rhs = rhs_ref[...].astype(accum_dtype)
+      rhs = jnp.where(rhs_mask, rhs, 0).astype(dtype)
+      acc_scratch_ref[...] += jnp.dot(
+          lhs, rhs, preferred_element_type=acc_scratch_ref.dtype)
+    def _not_last_block():
+      acc_scratch_ref[...] += jnp.dot(
+          lhs_ref[...],
+          rhs_ref[...],
+          preferred_element_type=acc_scratch_ref.dtype,
+      )
+    jax.lax.cond(
+       k_index == num_k - 1, _last_block, _not_last_block
+    )
 
-  @pl.when(pl.program_id(2) == acc_steps - 1)
+  @pl.when(k_index == num_k - 1)
   def _reduce_out():
     out_ref[...] = acc_scratch_ref[...].astype(out_ref.dtype)
 
@@ -76,11 +126,12 @@ def basic_matmul_kernel(
 class PallasCallPipelineTest(parameterized.TestCase):
 
   def setUp(self):
-    super().setUp()
     if jax.device_count() < 2:
       self.skipTest('Only >=2 devices are supported.')
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('Only works with TPU v5')
+
+    super().setUp()
 
   @parameterized.named_parameters(
       ('vmem', pltpu.TPUMemorySpace.VMEM),
@@ -173,14 +224,15 @@ class PallasCallPipelineTest(parameterized.TestCase):
     np.testing.assert_allclose(z, jnp.dot(x, y) + jnp.dot(x, y))
 
 
-class PallasCallColectivePipelineTest(parameterized.TestCase):
+class PallasCallCollectivePipelineTest(parameterized.TestCase):
 
   def setUp(self):
-    super().setUp()
     if jax.device_count() < 2:
       self.skipTest('Only >=2 devices are supported.')
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('Only works with TPU v5')
+
+    super().setUp()
 
   @parameterized.named_parameters(
       ('vmem', pltpu.TPUMemorySpace.VMEM, jnp.bfloat16, 2, 2, 2),
@@ -206,9 +258,8 @@ class PallasCallColectivePipelineTest(parameterized.TestCase):
 
     sharded_k = k // num_devices
     inner_grid = (n // tn, m // tm, sharded_k // tk)
-    acc_steps = (sharded_k // tk)
 
-    inner_kernel = partial(basic_matmul_kernel, acc_steps=acc_steps)
+    inner_kernel = partial(basic_matmul_kernel, k=sharded_k)
 
     inner_allocs = [
         pltpu.BufferedRef.input(
@@ -504,9 +555,8 @@ class PallasCallColectivePipelineTest(parameterized.TestCase):
     sharded_k = k // num_devices
     half_m = m // 2
     inner_grid = (n // tn, half_m // tm, sharded_k // tk)
-    acc_steps = (sharded_k // tk)
 
-    inner_kernel = partial(basic_matmul_kernel, acc_steps=acc_steps)
+    inner_kernel = partial(basic_matmul_kernel, k=sharded_k)
 
     inner_allocs = [
         pltpu.BufferedRef.input(
@@ -745,10 +795,9 @@ class PallasCallColectivePipelineTest(parameterized.TestCase):
     sharded_k = k // num_devices
     inner_grid = (n // tn, sharded_m // tm, sharded_k // tk)
     outer_steps = num_devices // 2
-    acc_steps = sharded_k // tk
     reduce_grid = (sharded_m // tm,)
 
-    inner_kernel = partial(basic_matmul_kernel, acc_steps=acc_steps)
+    inner_kernel = partial(basic_matmul_kernel, k=sharded_k)
 
     def reduce_kernel(
         out_ref,  # [tm, tn]
@@ -1030,9 +1079,7 @@ class PallasCallColectivePipelineTest(parameterized.TestCase):
     sharded_k = k // num_devices
     inner_grid = (n // tn, half_m // tm, sharded_k // tk)
     outer_steps = num_devices
-    acc_steps = sharded_k // tk
-
-    inner_kernel = partial(basic_matmul_kernel, acc_steps=acc_steps)
+    inner_kernel = partial(basic_matmul_kernel, k=sharded_k)
 
     inner_allocs = [
         pltpu.BufferedRef.input(
@@ -1259,6 +1306,213 @@ class PallasCallColectivePipelineTest(parameterized.TestCase):
         expected_out.astype(jnp.float32),
         atol=1 if out_dtype == jnp.float32 else 5,
     )
+
+
+class PallasCallMegacoreTest(parameterized.TestCase):
+
+  def setUp(self):
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('Only works with TPU v4')
+
+    super().setUp()
+
+  def test_can_partition_nondivisible_grid_with_dynamic_dimensions(self):
+
+    def mul_pipeline(x_ref, y_ref):
+      y_ref[...] = x_ref[...] * 2
+
+    def mul_kernel(iters_ref, x_ref, y_ref):
+      pltpu.emit_pipeline(
+          mul_pipeline,
+          grid=(iters_ref[0], 5),
+          in_specs=[
+              pl.BlockSpec(lambda i, j: (i, j), (128, 128)),
+          ],
+          out_specs=pl.BlockSpec(lambda i, j: (i, j), (128, 128)),
+          core_axis=0,
+          dimension_semantics=(pltpu.PARALLEL, pltpu.PARALLEL),
+      )(x_ref, y_ref)
+
+    num_cores = jax.devices()[0].num_cores
+    func = pl.pallas_call(
+        mul_kernel,
+        out_shape=jax.ShapeDtypeStruct((640, 640), jnp.float32),
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=1,
+            in_specs=[
+                pl.BlockSpec(memory_space=pltpu.ANY),
+            ],
+            out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+            grid=(num_cores,),
+        ),
+        compiler_params=dict(mosaic=dict(dimension_semantics=('parallel',))),
+    )
+    x = jax.random.uniform(jax.random.key(0), (640, 640))
+    np.testing.assert_allclose(func(jnp.array([5]), x), x * 2)
+
+  def test_megacore_mul(self):
+    x = jax.random.uniform(jax.random.key(0), (512, 512))
+
+    def matmul_pipeline(x_ref, y_ref):
+      y_ref[...] = x_ref[...] * 2
+
+    def matmul_kernel(x_ref, y_ref):
+      pltpu.emit_pipeline(
+          matmul_pipeline,
+          grid=(4, 4),
+          in_specs=[
+              pl.BlockSpec(lambda i, j: (i, j), (128, 128)),
+          ],
+          out_specs=pl.BlockSpec(lambda i, j: (i, j), (128, 128)),
+          core_axis=0,
+          dimension_semantics=(pltpu.ARBITRARY, pltpu.PARALLEL)
+      )(x_ref, y_ref)
+
+    num_cores = jax.devices()[0].num_cores
+    func = pl.pallas_call(
+        matmul_kernel,
+        out_shape=jax.ShapeDtypeStruct((512, 512), jnp.float32),
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.ANY),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+        grid=(num_cores,),
+        compiler_params=dict(mosaic=dict(dimension_semantics=('parallel',))),
+    )
+    np.testing.assert_allclose(func(x), x * 2)
+
+  @parameterized.parameters(
+      (1024, 1024, 1024, 256, 512, 256),
+      (768, 1024, 1024, 256, 512, 256),
+      (1024, 1024, 768, 256, 512, 256),
+      (768, 1024, 768, 256, 512, 256),
+  )
+  def test_megacore_matmul(self, m, k, n, bm, bk, bn):
+    k1, k2 = jax.random.split(jax.random.key(42))
+    x = jax.random.uniform(k1, (m, k))
+    y = jax.random.uniform(k2, (k, n))
+
+    def matmul_pipeline(x_ref, y_ref, z_ref):
+      @pl.when(pl.program_id(2) == 0)
+      def _():
+        z_ref[...] = jnp.zeros_like(z_ref)
+      z_ref[...] += x_ref[...] @ y_ref[...]
+
+    def matmul_kernel(x_ref, y_ref, z_ref, *, bm, bk, bn):
+      m, k = x_ref.shape
+      _, n = y_ref.shape
+      assert k % bk == 0
+      pltpu.emit_pipeline(
+          matmul_pipeline,
+          grid=(pl.cdiv(m, bm), pl.cdiv(n, bn), pl.cdiv(k, bk)),
+          in_specs=[
+              pl.BlockSpec(lambda i, j, k: (i, k), (bm, bk)),
+              pl.BlockSpec(lambda i, j, k: (k, j), (bk, bn)),
+          ],
+          out_specs=pl.BlockSpec(lambda i, j, k: (i, j), (bm, bn)),
+          core_axis=0,
+          dimension_semantics=(pltpu.PARALLEL, pltpu.PARALLEL, pltpu.ARBITRARY)
+      )(x_ref, y_ref, z_ref)
+
+    num_cores = jax.devices()[0].num_cores
+    func = pl.pallas_call(
+        functools.partial(matmul_kernel, bm=bm, bk=bk, bn=bn),
+        out_shape=jax.ShapeDtypeStruct((m, n), jnp.float32),
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pltpu.ANY),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+        grid=(num_cores,),
+        compiler_params=dict(mosaic=dict(dimension_semantics=('parallel',))),
+    )
+    np.testing.assert_allclose(func(x, y), x @ y, atol=7e-5)
+
+
+if CAN_USE_HYPOTHESIS:
+
+  @partial(jax.jit, static_argnames=['bm', 'bk', 'bn'])
+  def matmul(x: jax.Array, y: jax.Array, *, bm: int, bk: int, bn: int):
+
+    m, k = x.shape
+    _, n = y.shape
+
+    def kernel(x_hbm_ref, y_hbm_ref, o_hbm_ref):
+
+      grid = (pl.cdiv(m, bm), pl.cdiv(n, bn), pl.cdiv(k, bk))
+
+      def run(acc_scratch_ref):
+        pltpu.emit_pipeline(
+            partial(basic_matmul_kernel, acc_scratch_ref=acc_scratch_ref, k=k),
+            in_specs=[
+                pl.BlockSpec(lambda i, j, k: (i, k), (bm, bk)),
+                pl.BlockSpec(lambda i, j, k: (k, j), (bk, bn)),
+            ],
+            out_specs=pl.BlockSpec(lambda i, j, k: (i, j), (bm, bn)),
+            grid=grid,
+            core_axis=0,
+            dimension_semantics=(
+                pltpu.PARALLEL,
+                pltpu.PARALLEL,
+                pltpu.ARBITRARY,
+            ),
+        )(x_hbm_ref, y_hbm_ref, o_hbm_ref)
+
+      accum_dtype = (
+          jnp.float32 if jnp.issubdtype(x.dtype, jnp.floating) else jnp.int32
+      )
+      pltpu.run_scoped(run, pltpu.VMEM((bm, bn), accum_dtype))
+
+    num_cores = jax.devices()[0].num_cores
+    return pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((m, n), x.dtype),
+        in_specs=[
+            pl.BlockSpec(memory_space=pltpu.ANY),
+            pl.BlockSpec(memory_space=pltpu.ANY),
+        ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.ANY),
+        grid=(num_cores,),
+    )(x, y)
+
+  class PaddedPipelineEmitterTest(parameterized.TestCase):
+
+    def setUp(self):
+      super().setUp()
+      if not jtu.is_device_tpu_at_least(4):
+        self.skipTest('Only TPU v4+ allowed.')
+
+    @hp.given(
+        hps.sampled_from(['float32', 'bfloat16', 'int8']),
+        hps.integers(1, 1024),
+        hps.integers(1, 1024),
+        hps.integers(1, 1024),
+        hps.sampled_from([8, 16, 32, 128, 256, 512]),
+        hps.sampled_from([128, 256, 512]),
+        hps.sampled_from([128, 256, 512]),
+        hps.integers(0, 4),
+    )
+    def test_padded_matmul(self, dtype, m, k, n, bm, bk, bn, seed):
+      hp.assume(bm <= m)
+      hp.assume(bn <= n)
+      hp.assume(bk <= k)
+      if dtype == 'bfloat16':
+        hp.assume(bm >= 16)
+      if dtype == 'int8':
+        hp.assume(bm >= 32)
+        hp.assume(jtu.is_device_tpu_at_least(5))
+      k1, k2 = jax.random.split(jax.random.key(seed))
+      x = jax.random.normal(k1, (m, k), jnp.float32).astype(dtype)
+      y = jax.random.normal(k2, (k, n), jnp.float32).astype(dtype)
+
+      out = matmul(x, y, bm=bm, bk=bk, bn=bn)
+      expected = x @ y
+      atol = rtol = 1e-5
+      if dtype == 'bfloat16':
+        out = out.astype('float32')
+        expected = expected.astype('float32')
+        atol = rtol = 1e-2
+      np.testing.assert_allclose(out, expected, atol=atol, rtol=rtol)
 
 
 if __name__ == '__main__':

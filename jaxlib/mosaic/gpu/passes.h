@@ -1,4 +1,4 @@
-/* Copyright 2020 The JAX Authors.
+/* Copyright 2024 The JAX Authors.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -13,18 +13,15 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#ifndef JAXLIB_CPU_DUCC_FFT_KERNELS_H_
-#define JAXLIB_CPU_DUCC_FFT_KERNELS_H_
+#ifndef JAXLIB_MOSAIC_GPU_CONVERT_GPU_TO_LLVM_H_
+#define JAXLIB_MOSAIC_GPU_CONVERT_GPU_TO_LLVM_H_
 
-#include "xla/service/custom_call_status.h"
+namespace mosaic {
+namespace gpu {
 
-namespace jax {
+void registerConvertGpuToLLVMPass();
 
+}  // namespace gpu
+}  // namespace mosaic
 
-// TODO(b/311175955): this must be kept until May 2024 for backwards
-// of serialized functions using fft.
-void DynamicDuccFft(void* out, void** in, XlaCustomCallStatus*);
-
-}  // namespace jax
-
-#endif  // JAXLIB_CPU_DUCC_FFT_KERNELS_H_
+#endif  // JAXLIB_MOSAIC_GPU_CONVERT_GPU_TO_LLVM_H_

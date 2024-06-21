@@ -15,9 +15,7 @@
 
 Specific JAX primitive conversion tests are in primitives_test."""
 import collections
-from collections.abc import Sequence
 import contextlib
-import functools
 import math
 import os
 import re
@@ -29,6 +27,7 @@ from absl.testing import absltest, parameterized
 import jax
 from jax import ad_checkpoint
 from jax import dtypes
+from jax import export
 from jax import lax
 from jax import numpy as jnp
 from jax import sharding
@@ -39,7 +38,6 @@ from jax._src import source_info_util
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax.experimental import jax2tf
-from jax.experimental import export
 from jax.experimental.jax2tf.tests import tf_test_util
 from jax.experimental.shard_map import shard_map
 from jax.experimental import pjit
@@ -52,6 +50,15 @@ from tensorflow.compiler.tf2xla.python import xla as tfxla
 # pylint: enable=g-direct-tensorflow-import
 
 config.parse_flags_with_absl()
+_exit_stack = contextlib.ExitStack()
+
+# TODO(necula): Remove once tensorflow is 2.10.0 everywhere.
+def setUpModule():
+  if not hasattr(tfxla, "optimization_barrier"):
+    _exit_stack.enter_context(jtu.global_config_context(jax_remat_opt_barrier=False))
+
+def tearDownModule():
+  _exit_stack.close()
 
 
 class Jax2TfTest(tf_test_util.JaxToTfTestCase):
@@ -1307,7 +1314,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     shape = (3, 2)
     x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
 
-    jax_comp = jax.xla_computation(f_while)(x)
+    jax_comp = jax.jit(f_while).lower(x).compiler_ir('hlo')
     backend = xb.get_backend()
     modules = backend.compile(jax_comp).hlo_modules()
     jax_opt_hlo = modules[0].to_string()
@@ -1552,7 +1559,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       # Run the JAX native version, to check it works, and to fill caches.
       _ = func_to_convert(*args)
       exported = export.export(
-          func_to_convert,
+          (jax.jit(func_to_convert) if not hasattr(func_to_convert, "trace") else func_to_convert),
           lowering_platforms=("tpu",)
       )(*(core.ShapedArray(a.shape, a.dtype) for a in args))
 
@@ -1779,7 +1786,4 @@ class Jax2TfVersioningTest(tf_test_util.JaxToTfTestCase):
 
 
 if __name__ == "__main__":
-  # TODO: Remove once tensorflow is 2.10.0 everywhere.
-  if not hasattr(tfxla, "optimization_barrier"):
-    jax.config.update("jax_remat_opt_barrier", False)
   absltest.main(testLoader=jtu.JaxTestLoader())

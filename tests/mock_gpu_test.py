@@ -24,23 +24,14 @@ from jax.sharding import PartitionSpec as P
 import numpy as np
 
 jax.config.parse_flags_with_absl()
+NUM_SHARDS = 16
 
 
+@jtu.with_config(use_mock_gpu_client=True, mock_num_gpus=NUM_SHARDS)
 class MockGPUTest(jtu.JaxTestCase):
 
-  def setUp(self):
-    super().setUp()
-    jax.config.update('use_mock_gpu_client', True)
-
-  def tearDown(self):
-    jax.config.update('use_mock_gpu_client', False)
-    jax.config.update('mock_num_gpus', 1)
-    super().tearDown()
-
   def testMockWithSharding(self):
-    num_shards = 16
-    jax.config.update('mock_num_gpus', num_shards)
-    mesh = jtu.create_global_mesh((num_shards,), ('x',))
+    mesh = jtu.create_global_mesh((NUM_SHARDS,), ('x',))
     @partial(
         jax.jit,
         in_shardings=NamedSharding(mesh, P('x',)),

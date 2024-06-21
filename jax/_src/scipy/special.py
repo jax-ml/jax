@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from functools import partial
 import operator
-from typing import cast, Any
+from typing import cast, overload, Any
 
 import numpy as np
 
@@ -28,6 +28,7 @@ from jax import lax
 
 from jax._src import core
 from jax._src import custom_derivatives
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact, promote_dtypes_inexact
@@ -186,8 +187,16 @@ def factorial(n: ArrayLike, exact: bool = False) -> Array:
   n, = promote_args_inexact("factorial", n)
   return jnp.where(n < 0, 0, lax.exp(lax.lgamma(n + 1)))
 
+@overload
+def beta(a: ArrayLike, b: ArrayLike) -> Array: ...
 
-def beta(x: ArrayLike, y: ArrayLike) -> Array:
+@overload
+def beta(a: ArrayLike, *, y: ArrayLike) -> Array: ...
+
+@overload
+def beta(*, x: ArrayLike, y: ArrayLike) -> Array: ...
+
+def beta(*args, **kwds):
   r"""The beta function
 
   JAX implementation of :obj:`scipy.special.beta`.
@@ -209,9 +218,27 @@ def beta(x: ArrayLike, y: ArrayLike) -> Array:
     - :func:`jax.scipy.special.gamma`
     - :func:`jax.scipy.special.betaln`
   """
-  x, y = promote_args_inexact("beta", x, y)
-  sign = gammasgn(x) * gammasgn(y) * gammasgn(x + y)
-  return sign * lax.exp(betaln(x, y))
+  # TODO(jakevdp): deprecation warning added 2024-06-10; finalize after 2024-09-10
+  if 'x' in kwds:
+    msg = "The `x` parameter of jax.scipy.special.beta is deprecated, use `a` instead."
+    deprecations.warn('jax-scipy-beta-args', msg, stacklevel=2)
+    if 'a' in kwds:
+      raise TypeError("beta() got both parameter 'a' and parameter 'x'.")
+    kwds['a'] = kwds.pop('x')
+  if 'y' in kwds:
+    msg = "The `y` parameter of jax.scipy.special.beta is deprecated, use `b` instead."
+    deprecations.warn('jax-scipy-beta-args', msg, stacklevel=2)
+    if 'b' in kwds:
+      raise TypeError("beta() got both parameter 'b' and parameter 'y'.")
+    kwds['b'] = kwds.pop('y')
+  if extra := kwds.keys() - {'a', 'b'}:
+    raise TypeError(f"beta() got unexpected keyword arguments {list(extra)}")
+  return _beta(*args, **kwds)
+
+def _beta(a, b):
+  a, b = promote_args_inexact("beta", a, b)
+  sign = gammasgn(a) * gammasgn(b) * gammasgn(a + b)
+  return sign * lax.exp(betaln(a, b))
 
 
 def betainc(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
@@ -616,24 +643,7 @@ def kl_div(
     - :func:`jax.scipy.special.rel_entr`
   """
   p, q = promote_args_inexact("kl_div", p, q)
-  zero = _lax_const(p, 0.0)
-  both_gt_zero_mask = lax.bitwise_and(lax.gt(p, zero), lax.gt(q, zero))
-  one_zero_mask = lax.bitwise_and(lax.eq(p, zero), lax.ge(q, zero))
-
-  safe_p = jnp.where(both_gt_zero_mask, p, 1)
-  safe_q = jnp.where(both_gt_zero_mask, q, 1)
-
-  log_val = lax.sub(
-      lax.add(
-          lax.sub(_xlogx(safe_p), xlogy(safe_p, safe_q)),
-          safe_q,
-      ),
-      safe_p,
-  )
-  result = jnp.where(
-      both_gt_zero_mask, log_val, jnp.where(one_zero_mask, q, np.inf)
-  )
-  return result
+  return rel_entr(p, q) - p + q
 
 
 def rel_entr(
@@ -672,7 +682,7 @@ def rel_entr(
   safe_q = jnp.where(both_gt_zero_mask, q, 1)
   log_val = lax.sub(_xlogx(safe_p), xlogy(safe_p, safe_q))
   result = jnp.where(
-      both_gt_zero_mask, log_val, jnp.where(one_zero_mask, q, jnp.inf)
+      both_gt_zero_mask, log_val, jnp.where(one_zero_mask, zero, jnp.inf)
   )
   return result
 
@@ -2375,7 +2385,6 @@ def poch(z: ArrayLike, m: ArrayLike) -> Array:
   Notes:
     The JAX version supports only real-valued inputs.
   """
-  # Factorial definition when m is close to an integer, otherwise gamma definition.
   z, m = promote_args_inexact("poch", z, m)
 
   return jnp.where(m == 0., jnp.array(1, dtype=z.dtype), gamma(z + m) / gamma(z))
@@ -2412,6 +2421,8 @@ def _hyp1f1_serie(a, b, x):
   https://doi.org/10.48550/arXiv.1407.7786
   """
 
+  precision = jnp.finfo(x.dtype).eps
+
   def body(state):
     serie, k, term = state
     serie += term
@@ -2423,7 +2434,7 @@ def _hyp1f1_serie(a, b, x):
   def cond(state):
     serie, k, term = state
 
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > 1e-8)
+    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
 
   init = 1, 1, a / b * x
 
@@ -2437,6 +2448,8 @@ def _hyp1f1_asymptotic(a, b, x):
   https://doi.org/10.48550/arXiv.1407.7786
   """
 
+  precision = jnp.finfo(x.dtype).eps
+
   def body(state):
     serie, k, term = state
     serie += term
@@ -2448,7 +2461,7 @@ def _hyp1f1_asymptotic(a, b, x):
   def cond(state):
     serie, k, term = state
 
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > 1e-8)
+    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
 
   init = 1, 1, (b - a) * (1 - a) / x
   serie = lax.while_loop(cond, body, init)[0]
@@ -2464,6 +2477,8 @@ def _hyp1f1_a_derivative(a, b, x):
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/01/
   """
 
+  precision = jnp.finfo(x.dtype).eps
+
   def body(state):
     serie, k, term = state
     serie += term * (digamma(a + k) - digamma(a))
@@ -2475,7 +2490,7 @@ def _hyp1f1_a_derivative(a, b, x):
   def cond(state):
     serie, k, term = state
 
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > 1e-15)
+    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
 
   init = 0, 1, a / b * x
 
@@ -2490,6 +2505,8 @@ def _hyp1f1_b_derivative(a, b, x):
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/02/
   """
 
+  precision = jnp.finfo(x.dtype).eps
+
   def body(state):
     serie, k, term = state
     serie += term * (digamma(b) - digamma(b + k))
@@ -2501,7 +2518,7 @@ def _hyp1f1_b_derivative(a, b, x):
   def cond(state):
     serie, k, term = state
 
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > 1e-15)
+    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
 
   init = 0, 1, a / b * x
 

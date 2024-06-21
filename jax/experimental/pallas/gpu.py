@@ -14,5 +14,5 @@
 
 """Triton-specific Pallas APIs."""
 
-from jax._src.pallas.triton import approx_tanh
-from jax._src.pallas.triton import elementwise_inline_asm
+from jax._src.pallas.triton.primitives import approx_tanh
+from jax._src.pallas.triton.primitives import elementwise_inline_asm

@@ -47,11 +47,12 @@ from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src import pjit
 from jax._src import sharding_impls
 from jax._src import source_info_util
+from jax._src import stages
 from jax._src import tree_util
 from jax._src import util
 from jax._src import xla_bridge as xb
 
-from jax.experimental.export import _shape_poly
+from jax._src.export import shape_poly
 
 map = util.safe_map
 zip = util.safe_zip
@@ -59,33 +60,31 @@ zip = util.safe_zip
 DType = Any
 Shape = jax._src.core.Shape
 # The values of input and output sharding from the lowering.
-LoweringSharding = Union[sharding.XLACompatibleSharding, pxla.UnspecifiedValue]
+LoweringSharding = Union[sharding.Sharding, pxla.UnspecifiedValue]
+HloSharding = xla_client.HloSharding
 
-# None means unspecified sharding
-Sharding = Union[xla_client.HloSharding, None]
-
-# See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions
-# for a description of the different versions.
-minimum_supported_serialization_version = 9
-maximum_supported_serialization_version = 9
+# The minimum and maximum supported calling convention version.
+# See https://jax.readthedocs.io/en/latest/export.html#module-calling-convention#calling-conventions-versions
+minimum_supported_calling_convention_version = 9
+maximum_supported_calling_convention_version = 9
 
 
 class DisabledSafetyCheck:
-  """A safety check should be skipped on (de)serialization.
+  """A safety check that should be skipped on (de)serialization.
 
   Most of these checks are performed on serialization, but some are deferred to
   deserialization. The list of disabled checks is attached to the serialization,
-  e.g., as a sequence of string attributes to `jax_export.Exported` or of
+  e.g., as a sequence of string attributes to `jax.export.Exported` or of
   `tf.XlaCallModuleOp`.
 
-  You can disable more deserialization safety checks by passing
-  `TF_XLA_FLAGS=--tf_xla_call_module_disabled_checks=platform`.
+  When using jax2tf, you can disable more deserialization safety checks
+  by passing `TF_XLA_FLAGS=--tf_xla_call_module_disabled_checks=platform`.
   """
   _impl: str
 
   @classmethod
   def platform(cls) -> DisabledSafetyCheck:
-    """Allows the execution platform to differ from the serialization platform.
+    """Allows the compilation platform to differ from the export platform.
 
     Has effect only on deserialization.
     """
@@ -103,7 +102,7 @@ class DisabledSafetyCheck:
 
   @classmethod
   def shape_assertions(cls) -> DisabledSafetyCheck:
-    """A noop. DEPRECATED.
+    """DEPRECATED: A noop.
 
     Was used previously to allow invocations with shapes that do not meet the
     constraints. Has no effect anymore, shape assertions cannot be disabled.
@@ -150,26 +149,37 @@ class Exported:
     out_tree: a PyTreeDef describing the result of the lowered JAX function.
     out_avals: the flat tuple of output abstract values. May contain dimension
         expressions in the shapes, with dimension variables among those in
-        `in_avals.
-    in_shardings: the flattened input shardings, as long as `in_avals`.
-    out_shardings: the flattened output shardings, as long as `out_avals`.
+        `in_avals`.
+    in_shardings_hlo: the flattened input shardings, a sequence as long
+        as `in_avals`. `None` means unspecified sharding.
+        Note that these do not include the mesh or the actual devices used in
+        the mesh. See `in_shardings_jax` for a way to turn these
+        into sharding specification that can be used with JAX APIs.
+    out_shardings_hlo: the flattened output shardings, a sequence as long
+        as `out_avals`. `None` means unspecified sharding.
+        Note that these do not include the mesh or the actual devices used in
+        the mesh. See `out_shardings_jax` for a way to turn these
+        into sharding specification that can be used with JAX APIs.
     nr_devices: the number of devices that the module has been lowered for.
-    lowering_platforms: a tuple containing at least one of 'tpu', 'cpu',
-        'cuda', 'rocm'. See below for the calling convention for when
-        there are multiple lowering platforms.
+    platforms: a tuple containing at least one of 'tpu', 'cpu',
+        'cuda', 'rocm'. See https://jax.readthedocs.io/en/latest/export.html#module-calling-convention
+        for the calling convention for when
+        there are multiple export platforms.
     ordered_effects: the ordered effects present in the serialized module.
-        This is present from serialization version 9. See below for the
-        calling convention in presence of ordered effects.
+        This is present from serialization version 9. See https://jax.readthedocs.io/en/latest/export.html#module-calling-convention
+        for the calling convention in presence of ordered effects.
     unordered_effects: the unordered effects present in the serialized module.
         This is present from serialization version 9.
     mlir_module_serialized: the serialized lowered VHLO module.
-    mlir_module_serialization_version: a version number for the serialized module.
-        See more versioning details at https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-serialization-versions.
+    calling_convention_version: a version number for the calling
+        convention of the exported module.
+        See more versioning details at https://jax.readthedocs.io/en/latest/export.html#calling-convention-versions.
     module_kept_var_idx: the sorted indices of the arguments among `in_avals` that
         must be passed to the module. The other arguments have been dropped
-        because they are not used. Same length as `in_shardings`.
-    uses_shape_polymorphism: whether the `mlir_module_serialized` uses shape
-        polymorphism. This may be because `in_avals` contains dimension
+        because they are not used.
+    uses_global_constants: whether the `mlir_module_serialized` uses shape
+        polymorphism or multi-platform export.
+        This may be because `in_avals` contains dimension
         variables, or due to inner calls of Exported modules that have
         dimension variables or platform index arguments. Such modules need
         shape refinement before XLA compilation.
@@ -182,119 +192,26 @@ class Exported:
         for each primal output. It returns a tuple with the cotangents
         corresponding to the flattened primal inputs.
 
-  Calling convention for the exported module (for latest supported version):
-
-  The `mlir_module` has a `main` function that takes an optional first
-  platform index argument if the module supports multiple platforms
-  (`len(lowering_platforms) > 1`), followed by the token arguments corresponding
-  to the ordered effects, followed by the kept array
-  arguments (corresponding to `module_kept_var_idx` and `in_avals`).
-  The platform index is a i32 or i64 scalar encoding the index of the current
-  compilation platform into the `lowering_platforms` sequence.
-
-  Inner functions use a different calling convention: an optional
-  platform index argument, optional dimension variable arguments
-  (scalar tensors of type i32 or i64),
-  followed by optional token arguments (in presence of ordered effects),
-  followed by the regular array arguments.
-  The dimension arguments correspond to the dimension variables appearing in
-  the `args_avals`, in sorted order of their names.
-
-  Consider the lowering of a function with one array argument of type "f32[w,
-  2 * h]", where "w" and "h" are two dimension variables.
-  Assume that we use multi-platform lowering, and we have
-  one ordered effect. The `main` function will be as follows:
-
-      func public main(
-            platform_index: i32 {jax.global_constant="_platform_index"},
-            token_in: token,
-            arg: f32[?, ?]) {
-         arg_w = hlo.get_dimension_size(arg, 0)
-         dim1 = hlo.get_dimension_size(arg, 1)
-         arg_h = hlo.floordiv(dim1, 2)
-         call _check_shape_assertions(arg)  # See below
-         token = new_token()
-         token_out, res = call _wrapped_jax_export_main(platform_index,
-                                                        arg_h,
-                                                        arg_w,
-                                                        token_in,
-                                                        arg)
-         return token_out, res
-      }
-
-  The actual computation is in `_wrapped_jax_export_main`, taking also
-  the values of `h` and `w` dimension variables.
-
-  The signature of the `_wrapped_jax_export_main` is:
-
-      func private _wrapped_jax_export_main(
-          platform_index: i32 {jax.global_constant="_platform_index"},
-          arg_h: i32 {jax.global_constant="h"},
-          arg_w: i32 {jax.global_constant="w"},
-          arg_token: stablehlo.token {jax.token=True},
-          arg: f32[?, ?]) -> (stablehlo.token, ...)
-
-  Prior to serialization version 9 the calling convention for effects is
-  different: the `main` function does not take or return a token. Instead
-  the function creates dummy tokens of type `i1[0]` and passes them to the
-  `_wrapped_jax_export_main`. The `_wrapped_jax_export_main`
-  takes dummy tokens of type `i1[0]` and will create internally real
-  tokens to pass to the inner functions. The inner functions use real
-  tokens (both before and after serialization version 9)
-
-  Also starting with serialization version 9, function arguments that contain
-  the platform index or the dimension variable values have a
-  `jax.global_constant` string attribute whose value is the name of the
-  global constant, either `_platform_index` or a dimension variable name.
-  The global constant name may be empty if it is not known.
-  Some global constant computations use inner functions, e.g., for
-  `floor_divide`. The arguments of such functions have a `jax.global_constant`
-  attribute for all attributes, meaning that the result of the function is
-  also a global constant.
-
-  Note that `main` contains a call to `_check_shape_assertions.
-  JAX tracing assumes that `arg.shape[1]` is even, and that both `w` and `h`
-  have values >= 1. We must check these constraints when we invoke the
-  module. We use a special custom call `@shape_assertion` that takes
-  a boolean first operand, a string `error_message` attribute that may contain
-  format specifiers `{0}`, `{1}`, ..., and a variadic number of integer
-  scalar operands corresponding to the format specifiers.
-
-       func private _check_shape_assertions(arg: f32[?, ?]) {
-         # Check that w is >= 1
-         arg_w = hlo.get_dimension_size(arg, 0)
-         custom_call @shape_assertion(arg_w >= 1, arg_w,
-            error_message="Dimension variable 'w' must have integer value >= 1. Found {0}")
-         # Check that dim1 is even
-         dim1 = hlo.get_dimension_size(arg, 1)
-         custom_call @shape_assertion(dim1 % 2 == 0, dim1,
-            error_message="Dimension variable 'h' must have integer value >= 1. Found non-zero remainder {0}")
-         # Check that h >= 1
-         arg_h = hlo.floordiv(dim1, 2)
-         custom_call @shape_assertion(arg_h >= 1, arg_h,
-            error_message=""Dimension variable 'h' must have integer value >= 1. Found {0}")
-
-  If we `call_exported` with this module we perform these checks
-  statically (in `call_exported_abstract_eval`).
+  See a [description of the calling convention for the `mlir_module`](https://jax.readthedocs.io/en/latest/export.html#module-calling-convention).
   """
   fun_name: str
   in_tree: tree_util.PyTreeDef
-  in_avals: tuple[core.AbstractValue, ...]
+  in_avals: tuple[core.ShapedArray, ...]
   out_tree: tree_util.PyTreeDef
-  out_avals: tuple[core.AbstractValue, ...]
+  out_avals: tuple[core.ShapedArray, ...]
 
-  in_shardings: tuple[Sharding, ...]
-  out_shardings: tuple[Sharding, ...]
+  in_shardings_hlo: tuple[HloSharding | None, ...]
+  out_shardings_hlo: tuple[HloSharding | None, ...]
   nr_devices: int
-  lowering_platforms: tuple[str, ...]
+  platforms: tuple[str, ...]
   ordered_effects: tuple[effects.Effect, ...]
   unordered_effects: tuple[effects.Effect, ...]
   disabled_safety_checks: Sequence[DisabledSafetyCheck]
 
   mlir_module_serialized: bytes
-  mlir_module_serialization_version: int
+  calling_convention_version: int
   module_kept_var_idx: tuple[int, ...]
-  uses_shape_polymorphism: bool
+  uses_global_constants: bool
 
   _get_vjp: Callable[[Exported], Exported] | None
 
@@ -306,22 +223,145 @@ class Exported:
     # do not want the entire serialized module to end up in locations.
     return f"Exported(fun_name={self.fun_name}, ...)"
 
+  # For backwards compatibility
+  # TODO(necula): remove after September 2024.
+  @property
+  def in_shardings(self):
+    return self.in_shardings_hlo
+  @property
+  def out_shardings(self):
+    return self.out_shardings_hlo
+
+  def in_shardings_jax(
+      self,
+      mesh: sharding.Mesh) -> Sequence[sharding.Sharding | None]:
+    """Creates Shardings corresponding to self.in_shardings_hlo.
+
+    The Exported object stores `in_shardings_hlo` as HloShardings, which are
+    independent of a mesh or set of devices. This method constructs
+    Sharding that can be used in JAX APIs such as `jax.jit` or
+    `jax.device_put`.
+
+    Example usage:
+    >>> from jax import export
+    >>> exp_mesh = sharding.Mesh(jax.devices(), ("a",))
+    >>> exp = export.export(jax.jit(lambda x: jax.numpy.add(x, x),
+    ...                             in_shardings=sharding.NamedSharding(exp_mesh, sharding.PartitionSpec("a")))
+    ...     )(np.arange(jax.device_count()))
+    >>> exp.in_shardings_hlo
+    ({devices=[8]<=[8]},)
+
+    # Create a mesh for running the exported object
+    >>> run_mesh = sharding.Mesh(jax.devices()[::-1], ("b",))
+    >>>
+    # Put the args and kwargs on the appropriate devices
+    >>> run_arg = jax.device_put(np.arange(jax.device_count()),
+    ...     exp.in_shardings_jax(run_mesh)[0])
+    >>> res = exp.call(run_arg)
+    >>> res.addressable_shards
+    [Shard(device=CpuDevice(id=7), index=(slice(0, 1, None),), replica_id=0, data=[0]),
+     Shard(device=CpuDevice(id=6), index=(slice(1, 2, None),), replica_id=0, data=[2]),
+     Shard(device=CpuDevice(id=5), index=(slice(2, 3, None),), replica_id=0, data=[4]),
+     Shard(device=CpuDevice(id=4), index=(slice(3, 4, None),), replica_id=0, data=[6]),
+     Shard(device=CpuDevice(id=3), index=(slice(4, 5, None),), replica_id=0, data=[8]),
+     Shard(device=CpuDevice(id=2), index=(slice(5, 6, None),), replica_id=0, data=[10]),
+     Shard(device=CpuDevice(id=1), index=(slice(6, 7, None),), replica_id=0, data=[12]),
+     Shard(device=CpuDevice(id=0), index=(slice(7, 8, None),), replica_id=0, data=[14])]
+    """
+    return tuple(_hlo_sharding_to_xla_compatible_sharding(s, mesh)
+                 for s in self.in_shardings_hlo)
+
+  def out_shardings_jax(
+      self,
+      mesh: sharding.Mesh) -> Sequence[sharding.Sharding | None]:
+    """Creates Shardings corresponding to self.out_shardings_hlo.
+
+    See documentation for in_shardings_jax.
+    """
+    return tuple(_hlo_sharding_to_xla_compatible_sharding(s, mesh)
+                 for s in self.out_shardings_hlo)
+
+  # For backwards compatibility
+  # TODO(necula): remove after September 2024.
+  @property
+  def lowering_platforms(self):
+    """DEPRECATED."""
+    warnings.warn("lowering_platform is deprecated. Use .platforms instead.",
+                  DeprecationWarning, stacklevel=2)
+    return self.platforms
+
+  # For backwards compatibility
+  # TODO(necula): remove after September 2024.
+  @property
+  def mlir_module_serialization_version(self):
+    """DEPRECATED."""
+    warnings.warn("mlir_module_serialization_version is deprecated. Use .calling_convention_version instead.",
+                  DeprecationWarning, stacklevel=2)
+    return self.calling_convention_version
+
+  # For backwards compatibility
+  # TODO(necula): remove after September 2024.
+  @property
+  def uses_shape_polymorphism(self):
+    """DEPRECATED."""
+    warnings.warn("uses_shape_polymorphism is deprecated. Use .uses_global_constants instead.",
+                  DeprecationWarning, stacklevel=2)
+    return self.uses_global_constants
+
   def has_vjp(self) -> bool:
+    """Returns if this Exported supports VJP."""
     return self._get_vjp is not None
 
   def vjp(self) -> Exported:
     """Gets the exported VJP.
 
     Returns None if not available, which can happen if the Exported has been
-    loaded from an external format, without a VJP."""
+    loaded from an external format without a VJP.
+    """
     if self._get_vjp is None:
       raise ValueError("No VJP is available")
     return self._get_vjp(self)
 
+  def serialize(self,
+                vjp_order: int = 0) -> bytearray:
+    """Serializes an Exported.
 
-def default_lowering_platform() -> str:
+    Args:
+      vjp_order: The maximum vjp order to include. E.g., the value 2 means that we
+        serialize the primal functions and two orders of the `vjp` function. This
+        should allow 2nd order reverse mode differentiation of the deserialized
+        function. i.e., `jax.grad(jax.grad(f)).`
+    """
+    # Lazy load the serialization module, since flatbuffers is an optional
+    # dependency.
+    from jax._src.export.serialization import serialize
+    return serialize(self, vjp_order=vjp_order)
+
+  def call(self, *args, **kwargs):
+    return call_exported(self)(*args, **kwargs)
+
+
+def deserialize(blob: bytearray) -> Exported:
+  """Deserializes an Exported.
+
+  Args:
+    blob: a bytearray obtained from `Exported.serialize`.
+  """
+  # Lazy load the serialization module, since flatbuffers is an optional
+  # dependency.
+  from jax._src.export.serialization import deserialize
+  return deserialize(blob)
+
+
+def default_export_platform() -> str:
+  """Retrieves the default export platform.
+
+  One of: `tpu`, `cpu`, `cuda`, `rocm`.
+  """
   # Canonicalize to turn 'gpu' into 'cuda' or 'rocm'
   return xb.canonicalize_platform(jax.default_backend())
+
+default_lowering_platform = default_export_platform
 
 def shape_and_dtype_jax_array(a) -> tuple[Sequence[int | None], DType]:
   """Returns the shape and dtype of a jax.Array or a j"""
@@ -343,15 +383,23 @@ def args_specs(
     # This was needed in some older jax2tf implementations
     args = tree_util.tree_map(lambda a: jax.ShapeDtypeStruct(* get_shape_and_dtype(a)),
                               args)
-  return _shape_poly.symbolic_args_specs(args, polymorphic_shapes)
+  return shape_poly.symbolic_args_specs(args, polymorphic_shapes)
 
 
-def export(fun_jax: Callable,
-           *,
-           lowering_platforms: Sequence[str] | None = None,
-           disabled_checks: Sequence[DisabledSafetyCheck] = (),
-           ) -> Callable[..., Exported]:
+# TODO(necula): remove this once we remove jax.experimental.export.
+def export_back_compat(
+    fun_jax: Callable,
+    *,
+    lowering_platforms: Sequence[str] | None = None,
+    disabled_checks: Sequence[DisabledSafetyCheck] = (),
+    _device_assignment_for_internal_jax2tf_use_only = None,
+    ) -> Callable[..., Exported]:
   """Exports native serialization for a JAX function.
+
+  Note: this function exists only for internal usage by jax2tf and for
+    backwards compatibility with jax.experimental.export. Use
+    `jax.export` instead.
+    See https://jax.readthedocs.io/en/latest/export.html
 
   Args:
     fun_jax: the function to lower and serialize.
@@ -360,8 +408,8 @@ def export(fun_jax: Callable,
         'cuda', 'rocm'. If more than one platform is specified, then
         the lowered code takes an argument specifying the platform.
         If None, then use the default JAX backend.
-        The calling convention for multiple platforms is explained in the
-        `jax_export.Exported` docstring.
+        The calling convention for multiple platforms is explained
+        at https://jax.readthedocs.io/en/latest/export.html#module-calling-convention.
     disabled_checks: the safety checks to disable. See docstring
         of `DisabledSafetyCheck`.
 
@@ -374,167 +422,275 @@ def export(fun_jax: Callable,
       def f_jax(*args, **kwargs): ...
       exported = jax_export.export(f_jax)(*args, **kwargs)
   """
-  fun_name = getattr(fun_jax, "__name__", "unknown")
-  version = config.jax_serialization_version.value
-  if (version < minimum_supported_serialization_version or
-      version > maximum_supported_serialization_version):
-    raise ValueError(
-      f"The requested jax_serialization version {version} is outside the "
-      f"range of supported versions [{minimum_supported_serialization_version}"
-      f"..{maximum_supported_serialization_version}]")
 
   def do_export(*args_specs, **kwargs_specs) -> Exported:
-    if not hasattr(fun_jax, "lower"):
+    if hasattr(fun_jax, "trace"):
+      # If we have a pjit or pmap already we do not wrap with another, and we
+      # allow shardings.
+      wrapped_fun_jax = fun_jax
+    else:
       # We support convert(pjit(f_jax)) and convert(jit(f_jax)) but also
       # convert(f_jax), in which case a "jit" is implied. In that case we raise
       # an error if the lowered function contains non-replicated sharding annotations.
       wrapped_fun_jax = jax.jit(fun_jax)
-    else:
-      # If we have a pjit or pmap already we do not wrap with another, and we
-      # allow shardings.
-      wrapped_fun_jax = fun_jax  # type: ignore
 
     if lowering_platforms is not None:
       actual_lowering_platforms = tuple(lowering_platforms)
     else:
-      actual_lowering_platforms = (default_lowering_platform(),)
+      actual_lowering_platforms = (default_export_platform(),)
 
     # TODO: move to `lower`
-    symbolic_scope: tuple[_shape_poly.SymbolicScope, tree_util.KeyPath] | None = None
+    symbolic_scope: tuple[shape_poly.SymbolicScope, tree_util.KeyPath] | None = None  # type: ignore[invalid-annotation,unused-ignore]
     for k_path, aval in tree_util.tree_flatten_with_path((args_specs, kwargs_specs))[0]:
-      # Static args may has no `shape` attribute.
+      # Static args may have no `shape` attribute.
       if not hasattr(aval, "shape"):
         continue
       for d in aval.shape:
-        if _shape_poly.is_symbolic_dim(d):
+        if shape_poly.is_symbolic_dim(d):
           if symbolic_scope is None:
             symbolic_scope = (d.scope, k_path)
             continue
           symbolic_scope[0]._check_same_scope(
-              d, when=f"when exporting {fun_name}",
-              self_descr=f"current (from {_shape_poly.args_kwargs_path_to_str(symbolic_scope[1])}) ",
-              other_descr=_shape_poly.args_kwargs_path_to_str(k_path))
+              d, when=f"when exporting {util.fun_name(wrapped_fun_jax)}",
+              self_descr=f"current (from {shape_poly.args_kwargs_path_to_str(symbolic_scope[1])}) ",
+              other_descr=shape_poly.args_kwargs_path_to_str(k_path))
 
-    lowered = wrapped_fun_jax.lower(
-        *args_specs, **kwargs_specs,
-        _experimental_lowering_parameters=mlir.LoweringParameters(
-          platforms=actual_lowering_platforms,
-        ))
-
-    lowering = lowered._lowering
-    _check_lowering(lowering)
-    mlir_module = lowering.stablehlo()
-
-    args_avals_flat, _ = tree_util.tree_flatten(lowered.in_avals)
-    if "mut" in lowering.compile_args:
-      if lowering.compile_args["mut"]: raise NotImplementedError
-    if "kept_var_idx" in lowering.compile_args:
-      module_kept_var_idx = tuple(sorted(lowering.compile_args["kept_var_idx"]))
-    else:
-      # For pmap
-      module_kept_var_idx = tuple(range(len(args_avals_flat)))
-    shape_poly_state = lowering.compile_args["shape_poly_state"]
-    if (not all(core.is_constant_shape(a.shape) for a in args_avals_flat)
-        or lowering.compile_args.get("ordered_effects", [])):
-      mlir_module = _wrap_main_func(
-          mlir_module, args_avals_flat, args_kwargs_tree=lowered.in_tree,
-          has_platform_index_argument=shape_poly_state.has_platform_index_argument,
-          module_kept_var_idx=module_kept_var_idx,
-          serialization_version=version)
-
-    with mlir_module.context:
-      mlir_module_attrs = mlir_module.operation.attributes
-      mlir_module_attrs["jax.uses_shape_polymorphism"] = (
-          mlir.ir.BoolAttr.get(shape_poly_state.uses_dim_vars))
-
-    mlir_module_serialized = _module_to_bytecode(mlir_module)
-
-    # Figure out the result types and shapes
-    if "global_out_avals" in lowering.compile_args:
-      # This is currently the case for pjit
-      out_avals_flat = lowering.compile_args["global_out_avals"]
-    elif "shards" in lowering.compile_args:  # for PmapComputation
-      out_avals_flat = lowering.compile_args["shards"].out_sharded_avals
-    else:
-      out_avals_flat = lowered.compile_args["out_avals"]
-
-    # Log and then check the module.
-    if logging.vlog_is_on(3):
-      logmsg = (f"version={version} "
-                f"lowering_platforms={actual_lowering_platforms} "
-                f"disabled_checks={disabled_checks}")
-      logging.info("Lowered JAX module: %s\n", logmsg)
-      if dumped_to := mlir.dump_module_to_file(mlir_module, "export"):
-        logging.info("Dumped the exported MLIR module to %s", dumped_to)
-
-    _check_module(mlir_module,
-                  disabled_checks=disabled_checks)
-
-    ordered_effects = tuple(lowering.compile_args["ordered_effects"])
-    unordered_effects = tuple(lowering.compile_args["unordered_effects"])
-
-    nr_devices = len(lowering.compile_args["device_assignment"])
-    def export_sharding(s: LoweringSharding,
-                        aval: core.ShapedArray) -> Sharding:
-      if sharding_impls.is_unspecified(s):
-        return None
-      return s._to_xla_hlo_sharding(aval.ndim)  # type: ignore[union-attr]
-
-    all_in_shardings = expand_in_shardings(lowering.compile_args["in_shardings"],
-                                           module_kept_var_idx,
-                                           len(args_avals_flat))
-    in_shardings = tuple(
-      export_sharding(s, aval)
-      for s, aval in zip(all_in_shardings, args_avals_flat))
-    out_shardings = tuple(
-      export_sharding(s, aval)
-      for s, aval in zip(lowering.compile_args["out_shardings"], out_avals_flat))
-    return Exported(
-        fun_name=fun_name,
-        in_tree=lowered.in_tree,
-        out_tree=lowered.out_tree,
-        in_avals=tuple(args_avals_flat),
-        out_avals=tuple(out_avals_flat),
-        in_shardings=in_shardings,
-        out_shardings=out_shardings,
-        nr_devices=nr_devices,
+    traced = wrapped_fun_jax.trace(*args_specs, **kwargs_specs)
+    lowered = traced.lower(
         lowering_platforms=actual_lowering_platforms,
-        ordered_effects=ordered_effects,
-        unordered_effects=unordered_effects,
-        disabled_safety_checks=tuple(disabled_checks),
-        mlir_module_serialized=mlir_module_serialized,
-        module_kept_var_idx=module_kept_var_idx,
-        uses_shape_polymorphism=shape_poly_state.uses_dim_vars,
-        mlir_module_serialization_version=version,
-        _get_vjp=lambda exported: _export_native_vjp(fun_jax, exported,
-                                                     lowering.compile_args["device_assignment"]))
-
+        _private_parameters=mlir.LoweringParameters(for_export=True))
+    return _export_lowered(
+        lowered, traced.jaxpr, traced.fun_name,
+        disabled_checks=disabled_checks,
+        _device_assignment_for_internal_jax2tf_use_only=_device_assignment_for_internal_jax2tf_use_only)
   return do_export
 
+def export(
+    fun_jit: stages.Wrapped,
+    *,
+    platforms: Sequence[str] | None = None,
+    lowering_platforms: Sequence[str] | None = None,
+    disabled_checks: Sequence[DisabledSafetyCheck] = (),
+    ) -> Callable[..., Exported]:
+  """Exports a JAX function for persistent serialization.
+
+  Args:
+    fun_jit: the function to export. Should be the result of `jax.jit`.
+    platforms:
+        Optional sequence containing a subset of 'tpu', 'cpu',
+        'cuda', 'rocm'. If more than one platform is specified, then
+        the exported code takes an argument specifying the platform.
+        If None, then use the default JAX backend.
+        The calling convention for multiple platforms is explained at
+        https://jax.readthedocs.io/en/latest/export.html#module-calling-convention.
+    lowering_platforms: DEPRECATED, use `platforms`.
+    disabled_checks: the safety checks to disable. See documentation for
+        of `jax.export.DisabledSafetyCheck`.
+
+  Returns: a function that takes args and kwargs pytrees of {class}`jax.ShapeDtypeStruct`,
+      or values with `.shape` and `.dtype` attributes, and returns an
+      `Exported`.
+
+  Usage:
+
+      >>> from jax import export
+      >>> exported: export.Exported = export.export(jnp.sin)(
+      ...     np.arange(4, dtype=np.float32))
+      >>>
+      >>> # You can inspect the Exported object
+      >>> exported.in_avals
+      (ShapedArray(float32[4]),)
+      >>> blob: bytearray = exported.serialize()
+      >>>
+      >>> # The serialized bytes are safe to use in a separate process
+      >>> rehydrated: export.Exported = export.deserialize(blob)
+      >>> rehydrated.fun_name
+      'sin'
+      >>> rehydrated.call(np.array([.1, .2, .3, .4], dtype=np.float32))
+      Array([0.09983342, 0.19866933, 0.29552022, 0.38941833], dtype=float32)
+  """
+  if not isinstance(fun_jit, stages.Wrapped):
+    raise ValueError(
+        f"Function to be exported must be the result of `jit` but is: {fun_jit}")
+  if platforms is not None and lowering_platforms is not None:
+    raise ValueError("Cannot use both `platforms` and `lowering_platforms`")
+  if platforms is None and lowering_platforms is not None:
+    platforms = lowering_platforms
+  if platforms is not None:
+    actual_lowering_platforms = tuple(platforms)
+  else:
+    actual_lowering_platforms = (default_export_platform(),)
+
+  def do_export(*args_specs, **kwargs_specs) -> Exported:
+    # TODO: move to `lower`
+    symbolic_scope: tuple[shape_poly.SymbolicScope, tree_util.KeyPath] | None = None  # type: ignore[invalid-annotation,unused-ignore]
+    for k_path, aval in tree_util.tree_flatten_with_path((args_specs, kwargs_specs))[0]:
+      # Static args may have no `shape` attribute.
+      if not hasattr(aval, "shape"):
+        continue
+      for d in aval.shape:
+        if shape_poly.is_symbolic_dim(d):
+          if symbolic_scope is None:
+            symbolic_scope = (d.scope, k_path)
+            continue
+          symbolic_scope[0]._check_same_scope(
+              d, when=f"when exporting {util.fun_name(fun_jit)}",
+              self_descr=f"current (from {shape_poly.args_kwargs_path_to_str(symbolic_scope[1])}) ",
+              other_descr=shape_poly.args_kwargs_path_to_str(k_path))
+
+    traced = fun_jit.trace(*args_specs, **kwargs_specs)
+    lowered = traced.lower(
+        lowering_platforms=actual_lowering_platforms,
+        _private_parameters=mlir.LoweringParameters(for_export=True))
+    return _export_lowered(
+        lowered, traced.jaxpr, traced.fun_name,
+        disabled_checks=disabled_checks)
+  return do_export
+
+def _export_lowered(
+    lowered: stages.Lowered,
+    jaxpr: core.ClosedJaxpr, fun_name: str,
+    disabled_checks: Sequence[DisabledSafetyCheck] = (),
+    _device_assignment_for_internal_jax2tf_use_only = None,
+  ) -> Exported:
+  version = config.jax_export_calling_convention_version.value
+  if (version < minimum_supported_calling_convention_version or
+      version > maximum_supported_calling_convention_version):
+    raise ValueError(
+      f"The requested export calling convention version {version} is outside the "
+      f"range of supported versions [{minimum_supported_calling_convention_version}"
+      f"..{maximum_supported_calling_convention_version}]")
+
+  lowering = lowered._lowering
+  _check_lowering(lowering)
+  mlir_module = lowering.stablehlo()
+
+  args_avals_flat, _ = tree_util.tree_flatten(lowered.in_avals)
+  if "mut" in lowering.compile_args:
+    if lowering.compile_args["mut"]: raise NotImplementedError
+  if "kept_var_idx" in lowering.compile_args:
+    module_kept_var_idx = tuple(sorted(lowering.compile_args["kept_var_idx"]))
+  else:
+    # For pmap
+    module_kept_var_idx = tuple(range(len(args_avals_flat)))
+  shape_poly_state = lowering.compile_args["shape_poly_state"]
+  if (not all(core.is_constant_shape(a.shape) for a in args_avals_flat)
+      or lowering.compile_args.get("ordered_effects", [])):
+    mlir_module = _wrap_main_func(
+        mlir_module, args_avals_flat, args_kwargs_tree=lowered.in_tree,
+        has_platform_index_argument=shape_poly_state.has_platform_index_argument,
+        module_kept_var_idx=module_kept_var_idx,
+        serialization_version=version)
+
+  with mlir_module.context:
+    mlir_module_attrs = mlir_module.operation.attributes
+    mlir_module_attrs["jax.uses_shape_polymorphism"] = (
+        mlir.ir.BoolAttr.get(shape_poly_state.uses_dim_vars))
+
+  mlir_module_serialized = _module_to_bytecode(mlir_module)
+
+  # Figure out the result types and shapes
+  if "global_out_avals" in lowering.compile_args:
+    # This is currently the case for pjit
+    out_avals_flat = lowering.compile_args["global_out_avals"]
+  elif "shards" in lowering.compile_args:  # for PmapComputation
+    out_avals_flat = lowering.compile_args["shards"].out_sharded_avals
+  else:
+    out_avals_flat = lowered.compile_args["out_avals"]  # type: ignore
+
+  # Log and then check the module.
+  if logging.vlog_is_on(3):
+    logmsg = (f"version={version} "
+              f"lowering_platforms={lowering.compile_args['platforms']} "
+              f"disabled_checks={disabled_checks}")
+    logging.info("Lowered JAX module: %s\n", logmsg)
+    if dumped_to := mlir.dump_module_to_file(mlir_module, "export"):
+      logging.info("Dumped the exported MLIR module to %s", dumped_to)
+
+  _check_module(mlir_module,
+                disabled_checks=disabled_checks)
+
+  ordered_effects = tuple(lowering.compile_args["ordered_effects"])
+  unordered_effects = tuple(lowering.compile_args["unordered_effects"])
+
+  nr_devices = len(lowering.compile_args["device_assignment"])
+  def export_sharding(s: LoweringSharding,
+                      aval: core.ShapedArray) -> HloSharding | None:
+    if sharding_impls.is_unspecified(s):
+      return None
+    return s._to_xla_hlo_sharding(aval.ndim)  # type: ignore[union-attr]
+
+  all_in_shardings = expand_in_shardings(lowering.compile_args["in_shardings"],
+                                         module_kept_var_idx,
+                                         len(args_avals_flat))
+  in_shardings = tuple(
+    export_sharding(s, aval)
+    for s, aval in zip(all_in_shardings, args_avals_flat))
+  out_shardings = tuple(
+    export_sharding(s, aval)
+    for s, aval in zip(lowering.compile_args["out_shardings"], out_avals_flat))
+
+  device_assignment = lowering.compile_args["device_assignment"]
+  if _device_assignment_for_internal_jax2tf_use_only is not None:
+    _device_assignment_for_internal_jax2tf_use_only[0] = device_assignment
+  def _get_exported_vjp(exp_primal: Exported) -> Exported:
+    # Turn the primal jaxpr into a function, in preparation for exporting
+    # the VJP. Note that jaxpr_as_fun produces a function with flat arguments
+    assert(jaxpr is not None)  # None only when the lowered was created outside JAX
+    fun_jax = core.jaxpr_as_fun(jaxpr)
+
+    fun_vjp_jax, vjp_in_avals = _get_vjp_fun(fun_jax,
+                                             in_tree=exp_primal.in_tree,
+                                             in_avals=exp_primal.in_avals,
+                                             in_shardings_hlo=exp_primal.in_shardings_hlo,
+                                             out_avals=exp_primal.out_avals,
+                                             out_shardings_hlo=exp_primal.out_shardings_hlo,
+                                             device_assignment=device_assignment,
+                                             apply_jit=True,
+                                             flat_primal_fun=True)
+    return export(fun_vjp_jax,  # type: ignore[arg-type]
+                  platforms=exp_primal.platforms,
+                  disabled_checks=exp_primal.disabled_safety_checks)(*vjp_in_avals)
+
+  return Exported(
+      fun_name=fun_name,
+      in_tree=lowered.in_tree,
+      out_tree=lowered.out_tree,
+      in_avals=tuple(args_avals_flat),
+      out_avals=tuple(out_avals_flat),
+      in_shardings_hlo=in_shardings,
+      out_shardings_hlo=out_shardings,
+      nr_devices=nr_devices,
+      platforms=lowering._platforms,  # type: ignore
+      ordered_effects=ordered_effects,
+      unordered_effects=unordered_effects,
+      disabled_safety_checks=tuple(disabled_checks),
+      mlir_module_serialized=mlir_module_serialized,
+      module_kept_var_idx=module_kept_var_idx,
+      uses_global_constants=shape_poly_state.uses_dim_vars,
+      calling_convention_version=version,
+      _get_vjp=_get_exported_vjp)
 
 def _module_to_bytecode(module: ir.Module) -> bytes:
   mlir_str = mlir.module_to_bytecode(module)
-  if hlo.get_api_version() < 4:
-    target_version = hlo.get_earliest_forward_compatible_version()
-  else:
-    # `target_version` is used to manage situations when a StableHLO producer
-    # (in this case, jax2tf) and a StableHLO consumer were built using
-    # different versions of StableHLO.
-    #
-    # Each StableHLO version `producer_version` has a compatibility window,
-    # i.e. range of versions [`consumer_version_min`, `consumer_version_max`],
-    # where StableHLO portable artifacts serialized by `producer_version`
-    # can be deserialized by `consumer_version` within the window.
-    # See https://github.com/openxla/stablehlo/blob/main/docs/compatibility.md
-    # for the exact extent of these compatibility guarantees.
-    #
-    # `hlo.get_minimum_version()` returns `consumer_version_min`
-    # for the current version of StableHLO. We are using it here to maximize
-    # forward compatibility, i.e. to maximize how far into the past we can go
-    # and still have the payloads produced by `serialize_portable_artifact`
-    # compatible with potential consumers from the past.
-    target_version = hlo.get_minimum_version()
-  module_serialized = xla_client._xla.mlir.serialize_portable_artifact(
+  # `target_version` is used to manage situations when a StableHLO producer
+  # (in this case, jax2tf) and a StableHLO consumer were built using
+  # different versions of StableHLO.
+  #
+  # Each StableHLO version `producer_version` has a compatibility window,
+  # i.e. range of versions [`consumer_version_min`, `consumer_version_max`],
+  # where StableHLO portable artifacts serialized by `producer_version`
+  # can be deserialized by `consumer_version` within the window.
+  # See https://github.com/openxla/stablehlo/blob/main/docs/compatibility.md
+  # for the exact extent of these compatibility guarantees.
+  #
+  # `hlo.get_minimum_version()` returns `consumer_version_min`
+  # for the current version of StableHLO. We are using it here to maximize
+  # forward compatibility, i.e. to maximize how far into the past we can go
+  # and still have the payloads produced by `serialize_portable_artifact`
+  # compatible with potential consumers from the past.
+  target_version = hlo.get_minimum_version()
+  module_serialized = xla_client._xla.mlir.serialize_portable_artifact(  # type: ignore
       mlir_str, target_version)
   return module_serialized
 
@@ -550,11 +706,10 @@ def _wrap_main_func(
 ) -> ir.Module:
   """Wraps the lowered module with a new "main" handling dimension arguments.
 
-  See calling convention documentation for `jax_export.Exported`.
+  See calling convention documentation https://jax.readthedocs.io/en/latest/export.html#module-calling-convention.
 
   Args:
-    module: the HLO module as obtained from lowering. See the calling convention
-      for inner functions in `jax_export.Exported`.
+    module: the HLO module as obtained from lowering.
     args_avals_flat: the avals for all the arguments of the lowered function,
       which correspond to the array arguments of the `module`.
     args_kwargs_tree: the PyTreeDef corresponding to `(args, kwargs)`, for error
@@ -567,7 +722,7 @@ def _wrap_main_func(
 
   Returns the wrapped module, without dimension and token arguments.
   """
-  dim_vars = _shape_poly.all_dim_vars(args_avals_flat)
+  dim_vars = shape_poly.all_dim_vars(args_avals_flat)
   context = mlir.make_ir_context()
   with context, ir.Location.unknown(context):
     # Make a copy, do not mutate because it may be cached
@@ -581,8 +736,8 @@ def _wrap_main_func(
     def is_token(typ, attrs):
       return (typ == mlir.token_type()[0])
 
-    orig_input_types = orig_main.type.inputs
-    arg_attrs = list(ir.ArrayAttr(orig_main.arg_attrs))
+    orig_input_types = orig_main.type.inputs  # type: ignore
+    arg_attrs = list(ir.ArrayAttr(orig_main.arg_attrs))  # type: ignore
     # The order of args: platform_index_arg, dim args, token args, array args.
     nr_platform_index_args = 1 if has_platform_index_argument else 0
     nr_dim_args = len(dim_vars)
@@ -604,8 +759,8 @@ def _wrap_main_func(
       orig_input_types, [nr_platform_index_args, nr_dim_args, nr_token_args])
 
     # The order of results: tokens, array results
-    orig_output_types = orig_main.type.results
-    result_attrs = list(ir.ArrayAttr(orig_main.result_attrs))
+    orig_output_types = orig_main.type.results  # type: ignore
+    result_attrs = list(ir.ArrayAttr(orig_main.result_attrs))  # type: ignore
     token_result_idxs = [i for i, (typ, attrs) in enumerate(zip(orig_output_types,
                                                                 result_attrs))
                          if is_token(typ, attrs)]
@@ -655,7 +810,8 @@ def _wrap_main_func(
           keepalives=[], channel_iterator=itertools.count(1),
           host_callbacks=[], module=wrapped_module, context=context,
           lowering_parameters=mlir.LoweringParameters(
-            global_constant_computation=True
+              global_constant_computation=True,
+              for_export=True,
           ))
       ctx = mlir.LoweringRuleContext(
         module_context=module_context,
@@ -664,12 +820,12 @@ def _wrap_main_func(
         tokens_in=mlir.TokenSet(), tokens_out=None)
       # We compute dim_values from the array arguments.
       new_main_op_array_args = new_main_op.arguments[-nr_array_args:]
-      if _shape_poly.all_dim_vars(args_avals_flat):
+      if shape_poly.all_dim_vars(args_avals_flat):
         # TODO(necula): handle module_kept_var_idx in presence of shape
         # polymorphism. For now we ensured upstream that we keep all variables.
         assert len(set(module_kept_var_idx)) == len(args_avals_flat)
         dim_values = mlir.lower_fun(
-            functools.partial(_shape_poly.compute_dim_vars_from_arg_shapes,
+            functools.partial(shape_poly.compute_dim_vars_from_arg_shapes,
                               args_avals_flat, args_kwargs_tree=args_kwargs_tree),
             multiple_results=True)(ctx, *new_main_op_array_args)
       else:
@@ -708,7 +864,7 @@ def _wrap_main_func(
 
 def _check_lowering(lowering) -> None:
   if not isinstance(lowering, pxla.MeshComputation):
-    raise NotImplementedError(f"serialization is supported only for pjit. {lowering}")
+    raise NotImplementedError(f"serialization is supported only for jit. {lowering}")
 
   if lowering.compile_args["host_callbacks"] or lowering.compile_args["keepalive"]:
     raise NotImplementedError("serialization of host_callbacks is not yet implemented")
@@ -716,13 +872,14 @@ def _check_lowering(lowering) -> None:
   # safe to add it to the allowed_compile_args if it does not change the semantics
   # or the calling convention of the lowered module.
   allowed_compile_args = [
-      "backend", "mesh", "global_in_avals",
+      "backend", "platforms", "mesh", "global_in_avals",
       "global_out_avals", "in_shardings", "out_shardings", "kept_var_idx",
       "mut", "spmd_lowering", "auto_spmd_lowering",
       "tuple_args", "ordered_effects", "unordered_effects",
       "keepalive", "host_callbacks", "pmap_nreps", "committed",
       "device_assignment", "jaxpr_debug_info", "shape_poly_state",
-      "all_default_mem_kind", "in_layouts", "out_layouts", "all_args_info"]
+      "all_default_mem_kind", "in_layouts", "out_layouts", "all_args_info",
+      "pgle_profiler"]
   for compile_arg in lowering.compile_args.keys():
     if compile_arg not in allowed_compile_args:
       raise NotImplementedError(f"Unrecognized lowered.compile_args[{compile_arg}]")
@@ -761,7 +918,7 @@ def _check_lowering(lowering) -> None:
 # Their backwards compatibility is tested by back_compat_test.py.
 _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "Sharding", "SPMDFullToShardShape", "SPMDShardToFullShape",
-    "dynamic_ducc_fft", "cu_threefry2x32",
+    "cu_threefry2x32",
     "__gpu$xla.gpu.triton",  # Pallas call on GPU
     # cholesky on CPU
     "lapack_spotrf", "lapack_dpotrf", "lapack_cpotrf", "lapack_zpotrf",
@@ -797,7 +954,7 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     # lu on TPU
     "LuDecomposition",
     # ApproxTopK on TPU
-    "ApproxTopK",
+    "ApproxTopK", "stablehlo.dynamic_approx_top_k",
     "tf.call_tf_function",  # From jax2tf.call_tf(func, call_tf_graph=True)
     "tpu_custom_call",  # Pallas/TPU kernels
     # TODO(burmako): maintain backwards compatibility for these, until they
@@ -875,7 +1032,7 @@ def _check_module(mod: ir.Module, *,
     msg = ("Cannot serialize code with custom calls whose targets have no "
            "compatibility guarantees. Examples are:\n"
            f"{disallowed_custom_call_ops_str}.\n"
-           "See https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#native-lowering-supports-only-select-custom-calls")
+           "See https://jax.readthedocs.io/en/latest/export/export.html#compatibility-guarantees-for-custom-calls")
     raise ValueError(msg)
   return module_uses_non_replicated_sharding
 
@@ -893,49 +1050,38 @@ def expand_in_shardings(in_shardings: Sequence[LoweringSharding],
     all_in_shardings[idx] = in_s
   return tuple(all_in_shardings)
 
-# TODO(yashkatariya, necula): remove this function once we relax the checks
-# in the jit front-end.
-def canonical_shardings(
-    device_assignment: Sequence[jax.Device],
-    in_shardings: Sequence[Sharding],
-    out_shardings: Sequence[Sharding]
-    ) -> tuple[(pxla.UnspecifiedValue |
-                     Sequence[sharding.XLACompatibleSharding]),
-               (pxla.UnspecifiedValue |
-                     Sequence[sharding.XLACompatibleSharding])]:
-  """Prepares canonical in_ and out_shardings for a pjit invocation.
+def _hlo_sharding_to_xla_compatible_sharding(
+    hlo_sharding: HloSharding | None,
+    mesh: sharding.Mesh) -> sharding.Sharding | None:
+  if hlo_sharding is None:
+    return None
+  return sharding_impls._gspmd_to_named_sharding_via_mesh(
+      _hlo_sharding_to_gspmd_sharding(hlo_sharding, tuple(mesh.devices.flat)),  # type: ignore[arg-type]
+      mesh)
 
-  The pjit front-end is picky about what in- and out-shardings it accepts,
-  e.g., if all are unspecified then the whole sharding should be the
-  sharding_impls.UNSPECIFIED object, otherwise the unspecified shardings are
-  replaced with the replicated sharding.
-
-  Returns: a pair with the canonicalized input and output shardings.
-  """
-  replicated_s = sharding.GSPMDSharding.get_replicated(device_assignment)
-  def canonicalize(
-    ss: Sequence[Sharding]) -> (pxla.UnspecifiedValue |
-                                     Sequence[sharding.XLACompatibleSharding]):
-    if all(s is None for s in ss):
-      return sharding_impls.UNSPECIFIED
-    return tuple(
-        sharding.GSPMDSharding(device_assignment, s) if s is not None else replicated_s
-        for s in ss)
-  return (canonicalize(in_shardings), canonicalize(out_shardings))
+def _hlo_sharding_to_gspmd_sharding(
+    hlo_sharding: HloSharding | None,
+    device_assignment: Sequence[jax.Device]) -> sharding.GSPMDSharding | None:
+  if hlo_sharding is None:
+    return None
+  return sharding.GSPMDSharding(device_assignment, hlo_sharding)
 
 def _get_vjp_fun(primal_fun: Callable, *,
                  in_tree: tree_util.PyTreeDef,
                  in_avals: Sequence[core.AbstractValue],
                  out_avals: Sequence[core.AbstractValue],
-                 in_shardings: tuple[Sharding, ...],
-                 out_shardings: tuple[Sharding, ...],
+                 in_shardings_hlo: tuple[HloSharding | None, ...],
+                 out_shardings_hlo: tuple[HloSharding | None, ...],
                  device_assignment: Sequence[sharding_impls.Device] | None,
-                 apply_jit: bool
+                 apply_jit: bool,
+                 flat_primal_fun: bool = False,
                  ) -> tuple[Callable, Sequence[core.AbstractValue]]:
   # Since jax.vjp does not handle kwargs, it is easier to do all the work
   # here with flattened functions.
   # apply_jit=False is only used for backwards compatibility with the graph
   # graph serialization. When apply_jit=True, we must pass a device assignment.
+  # flat_primal_fun=False is used only from jax2tf, and it means that the
+  # `primal_fun` takes PyTree `*args` and `**kwargs`.
   def fun_vjp_jax(*args_and_out_cts_flat_jax):
     # Takes a flat list of primals and output cotangents
     def flattened_primal_fun_jax(*args_flat):
@@ -946,7 +1092,8 @@ def _get_vjp_fun(primal_fun: Callable, *,
 
     args_flat_jax, out_cts_flat_jax = util.split_list(args_and_out_cts_flat_jax,
                                                       [len(in_avals)])
-    _, pullback_jax = jax.vjp(flattened_primal_fun_jax, *args_flat_jax)
+    _, pullback_jax = jax.vjp(primal_fun if flat_primal_fun else flattened_primal_fun_jax,
+                              *args_flat_jax)
     return pullback_jax(out_cts_flat_jax)
 
   vjp_in_avals = list(
@@ -955,31 +1102,17 @@ def _get_vjp_fun(primal_fun: Callable, *,
 
   if apply_jit:
     assert device_assignment is not None
-    vjp_in_shardings, vjp_out_shardings = canonical_shardings(
-      device_assignment,
-      tuple(itertools.chain(in_shardings, out_shardings)),
-      in_shardings)
+    vjp_in_shardings = tuple(
+        _hlo_sharding_to_gspmd_sharding(s, device_assignment)
+        for s in itertools.chain(in_shardings_hlo, out_shardings_hlo))
+    vjp_out_shardings = tuple(
+        _hlo_sharding_to_gspmd_sharding(s, device_assignment)
+        for s in in_shardings_hlo)
     return pjit.pjit(fun_vjp_jax,
                      in_shardings=vjp_in_shardings,
                      out_shardings=vjp_out_shardings), vjp_in_avals
   else:
     return fun_vjp_jax, vjp_in_avals
-
-def _export_native_vjp(primal_fun,
-                       primal: Exported,
-                       device_assignment: Sequence[sharding_impls.Device]) -> Exported:
-  # Export the VJP of `primal_fun_jax`. See documentation for Exported.vjp
-  fun_vjp_jax, vjp_in_avals = _get_vjp_fun(primal_fun,
-                                           in_tree=primal.in_tree,
-                                           in_avals=primal.in_avals,
-                                           in_shardings=primal.in_shardings,
-                                           out_avals=primal.out_avals,
-                                           out_shardings=primal.out_shardings,
-                                           device_assignment=device_assignment,
-                                           apply_jit=True)
-  return export(fun_vjp_jax,
-                lowering_platforms=primal.lowering_platforms,
-                disabled_checks=primal.disabled_safety_checks)(*vjp_in_avals)
 
 ### Calling the exported function
 
@@ -1028,7 +1161,7 @@ def call(exported: Exported) -> Callable[..., jax.Array]:
           f"as when the function '{exported.fun_name}' was exported, but they "
           "have the following structural differences:\n" +
           ("\n".join(
-             f"   - {_shape_poly.args_kwargs_path_to_str(path)} is a {thing1} in the invocation and a "
+             f"   - {shape_poly.args_kwargs_path_to_str(path)} is a {thing1} in the invocation and a "
              f"{thing2} when exported, so {explanation}.\n"
              for path, thing1, thing2, explanation
              in tree_util.equality_errors(in_args, exp_in_args))))
@@ -1049,12 +1182,14 @@ def _call_exported_abstract_eval(
     *in_avals: core.AbstractValue,
     exported: Exported
     ) -> tuple[tuple[core.AbstractValue, ...], set[effects.Effect]]:
-  exported_dim_vars = _shape_poly.all_dim_vars(exported.in_avals)
+  exported_dim_vars = shape_poly.all_dim_vars(exported.in_avals)
   assert len(in_avals) == len(exported.in_avals)  # since the pytrees have the same structure
   # Check that the expected shapes match the actual ones
   for arg_idx, (exp_aval, actual_aval) in enumerate(zip(exported.in_avals, in_avals)):
+    if not isinstance(actual_aval, core.ShapedArray):
+      raise ValueError(f"Expected ShapedArray but got: {actual_aval}")
     def pp_arg_dim(dim_idx: int | None) -> str:
-      return _shape_poly.pretty_print_dimension_descriptor(exported.in_tree,
+      return shape_poly.pretty_print_dimension_descriptor(exported.in_tree,
                                                           arg_idx, dim_idx)
     if len(exp_aval.shape) != len(actual_aval.shape):
       raise ValueError(
@@ -1076,11 +1211,11 @@ def _call_exported_abstract_eval(
               f"expected {exp_aval.shape} and called with {actual_aval.shape}")
 
   # Must express the exported_dim_vars in terms of the shapes in in_avals.
-  solution, shape_constraints, synth_dim_vars = _shape_poly.solve_dim_vars(
+  solution, shape_constraints, synth_dim_vars = shape_poly.solve_dim_vars(
       exported.in_avals, args_kwargs_tree=exported.in_tree)
   synthetic_env = {vname: in_avals[arg_idx].shape[dim_idx]
                    for (vname, arg_idx, dim_idx) in synth_dim_vars}
-  synthetic_eval = _shape_poly.CachingShapeEvaluator(**synthetic_env)
+  synthetic_eval = shape_poly.CachingShapeEvaluator(**synthetic_env)
   # We discharge all the constraints statically. This results in much simpler
   # composability (because we do not have to worry about the constraints of the
   # Exported called recursively; we only need to worry about entry-point
@@ -1113,7 +1248,7 @@ call_exported_p.def_impl(_call_exported_impl)
 
 def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
                             exported: Exported):
-  if exported.uses_shape_polymorphism:
+  if exported.uses_global_constants:
     ctx.module_context.shape_poly_state.uses_dim_vars = True
   submodule = ir.Module.parse(exported.mlir_module())
 
@@ -1131,14 +1266,14 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     # than the function was exported for.
     err_msg = ""
     if exported.nr_devices != 1:
-      err_msg = "the module was lowered for more than 1 device."
+      err_msg = "the function was exported for more than 1 device."
     elif (_check_module(submodule, disabled_checks=()) or
           any(s is not None and not s.is_replicated()
-              for s in exported.in_shardings + exported.out_shardings)):
-      err_msg = "the module contains non-replicated sharding annotations."
+              for s in exported.in_shardings_hlo + exported.out_shardings_hlo)):
+      err_msg = "the function contains non-replicated sharding annotations."
     if err_msg:
-      raise NotImplementedError(
-        f"Exported module {exported.fun_name} was lowered for "
+      raise ValueError(
+        f"Function {exported.fun_name} was exported for "
         f"{exported.nr_devices} devices and is called in a context with "
         f"{num_devices} devices. This is disallowed because: {err_msg}"
       )
@@ -1146,7 +1281,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   # Apply in_shardings
   args = tuple(
     wrap_with_sharding(ctx, x, x_aval, x_sharding)
-    for x, x_aval, x_sharding in zip(args, ctx.avals_in, exported.in_shardings))
+    for x, x_aval, x_sharding in zip(args, ctx.avals_in, exported.in_shardings_hlo))
   symtab = ir.SymbolTable(submodule.operation)
   # The called function may have been exported with polymorphic shapes and called
   # now with more refined shapes. We insert hlo.ConvertOp to ensure the module
@@ -1172,18 +1307,18 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
 
   callee_lowering_platform_index: list[int] = []
   for platform in lowering_platforms:
-    if platform in exported.lowering_platforms:
+    if platform in exported.platforms:
       callee_lowering_platform_index.append(
-        exported.lowering_platforms.index(platform))
+        exported.platforms.index(platform))
     elif DisabledSafetyCheck.platform() in exported.disabled_safety_checks:
       callee_lowering_platform_index.append(0)
     else:
       raise ValueError(
-          f"The exported function '{exported.fun_name}' was lowered for "
-          f"platforms '{exported.lowering_platforms}' but it is used "
+          f"Function '{exported.fun_name}' was exported for "
+          f"platforms '{exported.platforms}' but it is used "
           f"on '{lowering_platforms}'.")
 
-  if len(exported.lowering_platforms) > 1:
+  if len(exported.platforms) > 1:
     # The exported module takes a platform index argument
     if len(lowering_platforms) > 1:
       current_platform_idx = ctx.dim_var_values[0]
@@ -1235,7 +1370,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
   # Apply out_shardings
   results = tuple(
     wrap_with_sharding(ctx, x, x_aval, x_sharding)
-    for x, x_aval, x_sharding in zip(results, ctx.avals_out, exported.out_shardings)
+    for x, x_aval, x_sharding in zip(results, ctx.avals_out, exported.out_shardings_hlo)
   )
   return results
 
@@ -1244,35 +1379,8 @@ mlir.register_lowering(call_exported_p, _call_exported_lowering)
 def wrap_with_sharding(ctx: mlir.LoweringRuleContext,
                        x: ir.Value,
                        x_aval: core.AbstractValue,
-                       x_sharding: Sharding) -> ir.Value:
+                       x_sharding: HloSharding | None) -> ir.Value:
   if x_sharding is None:
     return x
   return mlir.wrap_with_sharding_op(
     ctx, x, x_aval, x_sharding.to_proto())
-
-# TODO(necula): Previously, we had `from jax.experimental.export import export`
-# Now we want to simplify the usage, and export the public APIs directly
-# from `jax.experimental.export` and now `jax.experimental.export.export`
-# refers to the `export` function. Since there may still be users of the
-# old API in other packages, we add the old public API as attributes of the
-# exported function. We will clean this up after a deprecation period.
-def wrap_with_deprecation_warning(f):
-  msg = (f"You are using function `{f.__name__}` from "
-         "`jax.experimental.export.export`. You should instead use it directly "
-         "from `jax.experimental.export`. Instead of "
-         "`from jax.experimental.export import export` you should use "
-         "`from jax.experimental import export`.")
-  def wrapped_f(*args, **kwargs):
-    warnings.warn(msg, DeprecationWarning, stacklevel=2)
-    return f(*args, **kwargs)
-  return wrapped_f
-
-export.export = wrap_with_deprecation_warning(export)
-export.Exported = Exported
-export.call_exported = wrap_with_deprecation_warning(call_exported)
-export.DisabledSafetyCheck = DisabledSafetyCheck
-export.default_lowering_platform = wrap_with_deprecation_warning(default_lowering_platform)
-export.symbolic_shape = wrap_with_deprecation_warning(_shape_poly.symbolic_shape)
-export.args_specs = wrap_with_deprecation_warning(args_specs)
-export.minimum_supported_serialization_version = minimum_supported_serialization_version
-export.maximum_supported_serialization_version = maximum_supported_serialization_version

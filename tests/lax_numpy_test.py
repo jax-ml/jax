@@ -2660,13 +2660,18 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     side=['left', 'right'],
     dtype=number_dtypes,
     method=['sort', 'scan', 'scan_unrolled', 'compare_all'],
+    use_sorter=[True, False],
   )
-  def testSearchsorted(self, ashape, vshape, side, dtype, method):
+  def testSearchsorted(self, ashape, vshape, side, dtype, method, use_sorter):
     rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [np.sort(rng(ashape, dtype)), rng(vshape, dtype)]
-    def np_fun(a, v):
-      return np.searchsorted(a, v, side=side).astype('int32')
-    jnp_fun = lambda a, v: jnp.searchsorted(a, v, side=side, method=method)
+    def args_maker():
+      a = rng(ashape, dtype)
+      v = rng(vshape, dtype)
+      return (a, v, np.argsort(a)) if use_sorter else (np.sort(a), v)
+    def np_fun(a, v, sorter=None):
+      return np.searchsorted(a, v, side=side, sorter=sorter).astype('int32')
+    def jnp_fun(a, v, sorter=None):
+      return jnp.searchsorted(a, v, side=side, method=method, sorter=sorter)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
@@ -4483,6 +4488,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     x = jnp.ones((4, 0, 3), dtype=jnp.int32)
     np.testing.assert_array_equal(x, jnp.take_along_axis(x, x, axis=1))
 
+  def testTakeAlongAxisOptionalArgs(self):
+    x = jnp.arange(5.0)
+    ind = jnp.array([0, 2, 4, 6])
+    expected = jnp.array([0.0, 2.0, 4.0, 10.0], dtype=x.dtype)
+    actual = jnp.take_along_axis(x, ind, axis=None, mode='fill', fill_value=10.0)
+    self.assertArraysEqual(expected, actual)
+
   @jtu.sample_product(
     dtype=inexact_dtypes,
     shape=[0, 5],
@@ -5973,7 +5985,7 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'clip': ['x', 'max', 'min'],
       'einsum': ['subscripts', 'precision'],
       'einsum_path': ['subscripts'],
-      'take_along_axis': ['mode'],
+      'take_along_axis': ['mode', 'fill_value'],
       'fill_diagonal': ['inplace'],
     }
 
@@ -6078,9 +6090,10 @@ class NumpyDocTests(jtu.JaxTestCase):
     # Test that docstring wrapping & transformation didn't fail.
 
     unimplemented = ['fromfile', 'fromiter']
+    aliases = ['abs']
 
     for name in dir(jnp):
-      if name.startswith('_') or name in unimplemented:
+      if name.startswith('_') or name in unimplemented or name in aliases:
         continue
 
       obj = getattr(jnp, name)

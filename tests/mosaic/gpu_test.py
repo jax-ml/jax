@@ -14,14 +14,13 @@
 # ==============================================================================
 """Tests for Mosaic GPU DSL functions and utilities."""
 
-import operator
 from functools import partial
+import operator
+import sys
 from typing import Optional
 
 from absl.testing import absltest, parameterized
-import numpy as np
 import jax
-import jax.numpy as jnp
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
@@ -29,7 +28,11 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
+import jax.numpy as jnp
+import numpy as np
 try:
+  if sys.version_info < (3, 10):
+    raise ImportError("Mosaic requires Python 3.10")
   import jax._src.lib.mosaic_gpu  # noqa: F401
   HAS_MOSAIC_GPU = True
 except ImportError:
@@ -44,7 +47,6 @@ else:
 
 
 # ruff: noqa: F405
-config.update("jax_traceback_filtering", "off")
 config.parse_flags_with_absl()
 
 def nd_loop(bounds, body, *, _idxs = ()):
@@ -156,23 +158,19 @@ class TestCase(parameterized.TestCase):
   def setUp(self):
     if not HAS_MOSAIC_GPU:
       self.skipTest("jaxlib built without Mosaic GPU")
+    if (not jtu.test_device_matches(["cuda"]) or
+        not jtu.is_cuda_compute_capability_at_least("9.0")):
+      self.skipTest("Only works on GPU with capability >= sm90")
     super().setUp()
     self.prng = np.random.default_rng(1234)
-    self.ctx = mlir.make_ir_context()
-    self.ctx.__enter__()
-    self.loc = ir.Location.unknown()
-    self.loc.__enter__()
-
-  def tearDown(self):
-    self.loc.__exit__(None, None, None)
-    self.ctx.__exit__(None, None, None)
-    del self.loc, self.ctx
-    super().tearDown()
+    self.enter_context(jtu.global_config_context(jax_traceback_filtering="off"))
+    self.enter_context(mlir.make_ir_context())
+    self.enter_context(ir.Location.unknown())
 
 
 class TestUtilTest(TestCase):
 
-  def test_copy(self):
+  def test_copy_basic(self):
     def kernel(ctx, src, dst, _):
       copy(src, dst)
     x = jnp.arange(2 * 3 * 5).reshape(2, 5, 3)
@@ -483,42 +481,48 @@ class WGMMATest(TestCase):
   @parameterized.product(
       lhs_transpose=(False, True),
       rhs_transpose=(False, True),
-      mlir_dtype_cls=(ir.F16Type, ir.BF16Type, ir.F32Type),
+      in_mlir_dtype_cls=(ir.F16Type, ir.BF16Type, ir.F32Type),
       m=(64, 128, 192),
-      n=(32, 64, 128, 192),
+      n=(64, 128, 192),
       k_steps=(1, 2),
       tma_inputs=(False, True),
+      jax_out_dtype=(jnp.float16, jnp.float32),
   )
   def test_wgmma(
       self,
       m,
       n,
       k_steps,
-      mlir_dtype_cls,
+      in_mlir_dtype_cls,
       lhs_transpose,
       rhs_transpose,
       tma_inputs,
+      jax_out_dtype,
   ):
-    mlir_dtype = mlir_dtype_cls.get()
-    if ir.F32Type.isinstance(mlir_dtype):  # We actually use tf32 instead
-      jax_dtype = jnp.float32
+    if jax_out_dtype == jnp.float16 and in_mlir_dtype_cls is not ir.F16Type:
+      raise self.skipTest("Only f16 input is supported for f16 output.")
+
+    in_mlir_dtype = in_mlir_dtype_cls.get()
+    out_mlir_dtype = mlir.dtype_to_ir_type(jnp.dtype(jax_out_dtype))
+    if ir.F32Type.isinstance(in_mlir_dtype):  # We actually use tf32 instead
+      in_jax_dtype = jnp.float32
       if lhs_transpose or not rhs_transpose:
         self.skipTest("Transpose only supported in 16-bit WGMMA")
       exponent_bits, mantissa_bits = 8, 10  # Use tf32
-    elif bytewidth(mlir_dtype) == 2:
+    elif bytewidth(in_mlir_dtype) == 2:
       if n % 64 != 0:
         self.skipTest("16-bit WGMMA only supports n % 64 == 0")
-      if ir.F16Type.isinstance(mlir_dtype):
-        jax_dtype = jnp.float16
+      if ir.F16Type.isinstance(in_mlir_dtype):
+        in_jax_dtype = jnp.float16
         exponent_bits, mantissa_bits = 5, 10
-      elif ir.BF16Type.isinstance(mlir_dtype):
-        jax_dtype = jnp.bfloat16
+      elif ir.BF16Type.isinstance(in_mlir_dtype):
+        in_jax_dtype = jnp.bfloat16
         exponent_bits, mantissa_bits = 8, 7
       else:
-        raise NotImplementedError(mlir_dtype)
+        raise NotImplementedError(in_mlir_dtype)
     else:
-      raise NotImplementedError(mlir_dtype)
-    nk_tile = 128 // bytewidth(mlir_dtype)
+      raise NotImplementedError(in_mlir_dtype)
+    nk_tile = 128 // bytewidth(in_mlir_dtype)
     k = nk_tile * k_steps
     assert m % 64 == 0 and n % nk_tile == 0
     index = ir.IndexType.get()
@@ -580,7 +584,7 @@ class WGMMATest(TestCase):
                 dst=memref_slice(rhs_smem, (ki, ni)),
                 swizzle=128,
             )
-      init_acc = mgpu.WGMMAAccumulator.zero(m=m, n=n)
+      init_acc = mgpu.WGMMAAccumulator.zero(m=m, n=n, dtype=out_mlir_dtype)
       acc = mgpu.wgmma(
           init_acc, lhs_smem, rhs_smem,
           a_order=lhs_order, b_order=rhs_order,
@@ -594,14 +598,14 @@ class WGMMATest(TestCase):
       return jax.lax.reduce_precision(x, exponent_bits, mantissa_bits)
 
     x_shape = (k, m) if lhs_transpose else (m, k)
-    x = quantize(self.prng.uniform(-1, 1, x_shape)).astype(jax_dtype)
+    x = quantize(self.prng.uniform(-1, 1, x_shape)).astype(in_jax_dtype)
     y_shape = (n, k) if rhs_transpose else (k, n)
-    y = quantize(self.prng.uniform(-1, 1, y_shape)).astype(jax_dtype)
-    out_shape = jax.ShapeDtypeStruct((m, n), jnp.float32)
+    y = quantize(self.prng.uniform(-1, 1, y_shape)).astype(in_jax_dtype)
+    out_shape = jax.ShapeDtypeStruct((m, n), jax_out_dtype)
     scratch_shape = [
-        jax.ShapeDtypeStruct((m // 64, k // nk_tile, 64, nk_tile), jax_dtype),
+        jax.ShapeDtypeStruct((m // 64, k // nk_tile, 64, nk_tile), in_jax_dtype),
         jax.ShapeDtypeStruct(
-            (k // nk_tile, n // nk_tile, nk_tile, nk_tile), jax_dtype
+            (k // nk_tile, n // nk_tile, nk_tile, nk_tile), in_jax_dtype
         ),
     ]
     z = mosaic_gpu.as_gpu_kernel(
@@ -609,7 +613,8 @@ class WGMMATest(TestCase):
     )(x, y)
     x32, y32 = x.astype(np.float32), y.astype(np.float32)
     ref = (x32.T if lhs_transpose else x32) @ (y32.T if rhs_transpose else y32)
-    np.testing.assert_allclose(z, ref, atol=5e-6)
+    atol = 2e-2 if jax_out_dtype == jnp.float16 else 5e-6
+    np.testing.assert_allclose(z, ref, atol=atol)
 
   # TODO(apaszke): Add support for f32
   @parameterized.product(
@@ -939,7 +944,6 @@ class FragmentedArrayTest(TestCase):
     )(inp)
     np.testing.assert_array_equal(inp, result)
 
-
   def test_warp_tree_reduce(self):
     def kernel(ctx, out, *_):
       del ctx
@@ -957,7 +961,6 @@ class FragmentedArrayTest(TestCase):
       x[i:i + 4] = jnp.sum(x[i:i + 4])
 
     np.testing.assert_array_equal(result, x)
-
 
 
 class ProfilerTest(TestCase):

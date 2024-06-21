@@ -20,8 +20,6 @@ XLA. There are also a handful of related casting utilities.
 """
 from __future__ import annotations
 
-from __future__ import annotations
-
 import atexit
 from collections.abc import Mapping
 import dataclasses
@@ -32,22 +30,21 @@ import logging
 import os
 import pkgutil
 import platform as py_platform
-import traceback
 import sys
 import threading
+import traceback
 from typing import Any, Callable, Union
 import warnings
 
 from jax._src import config
 from jax._src import distributed
+from jax._src import hardware_utils
 from jax._src import traceback_util
 from jax._src import util
-from jax._src import hardware_utils
-from jax._src.cloud_tpu_init import maybe_import_libtpu
+from jax._src.cloud_tpu_init import get_tpu_library_path
 from jax._src.lib import cuda_versions
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
-from jax._src.lib import jaxlib
 
 logger = logging.getLogger(__name__)
 
@@ -67,46 +64,46 @@ XlaBackend = xla_client.Client
 MIN_COMPUTE_CAPABILITY = 52
 
 # TODO(phawkins): Remove jax_xla_backend.
-_XLA_BACKEND = config.DEFINE_string(
+_XLA_BACKEND = config.string_flag(
     'jax_xla_backend', '',
     'Deprecated, please use --jax_platforms instead.')
-BACKEND_TARGET = config.DEFINE_string(
+BACKEND_TARGET = config.string_flag(
     'jax_backend_target',
     os.getenv('JAX_BACKEND_TARGET', '').lower(),
     'Either "local" or "rpc:address" to connect to a remote service target.')
 # TODO(skye): warn when this is used once we test out --jax_platforms a bit
-_PLATFORM_NAME = config.DEFINE_string(
+_PLATFORM_NAME = config.string_flag(
     'jax_platform_name',
     os.getenv('JAX_PLATFORM_NAME', '').lower(),
     'Deprecated, please use --jax_platforms instead.')
-CUDA_VISIBLE_DEVICES = config.DEFINE_string(
+CUDA_VISIBLE_DEVICES = config.string_flag(
     'jax_cuda_visible_devices', 'all',
     'Restricts the set of CUDA devices that JAX will use. Either "all", or a '
     'comma-separate list of integer device IDs.')
-_ROCM_VISIBLE_DEVICES = config.DEFINE_string(
+_ROCM_VISIBLE_DEVICES = config.string_flag(
     'jax_rocm_visible_devices', 'all',
     'Restricts the set of ROCM devices that JAX will use. Either "all", or a '
     'comma-separate list of integer device IDs.')
 
-_USE_MOCK_GPU_CLIENT = config.DEFINE_bool(
+_USE_MOCK_GPU_CLIENT = config.bool_flag(
     name="use_mock_gpu_client",
     default=False,
     help="If True, use a mock GPU client instead of a real one.",
 )
 
-_MOCK_NUM_GPUS = config.DEFINE_integer(
+_MOCK_NUM_GPUS = config.int_flag(
     name="mock_num_gpus",
     default=1,
     help="Mock GPU client number of gpus.",
 )
 
-_CPU_ENABLE_GLOO_COLLECTIVES = config.DEFINE_bool(
+_CPU_ENABLE_GLOO_COLLECTIVES = config.bool_flag(
     name="jax_cpu_enable_gloo_collectives",
     default=False,
     help="Deprecated, please use jax_cpu_collectives_implementation instead.",
 )
 
-_CPU_COLLECTIVES_IMPLEMENTATION = config.DEFINE_string(
+_CPU_COLLECTIVES_IMPLEMENTATION = config.string_flag(
     name='jax_cpu_collectives_implementation',
     default='none',
     help='Cross-process collective implementation used on CPU. Either "none", '
@@ -115,7 +112,7 @@ _CPU_COLLECTIVES_IMPLEMENTATION = config.DEFINE_string(
 
 # TODO(yueshengys): turn default back to True after resolving memory increase
 # issue.
-_CPU_ENABLE_ASYNC_DISPATCH = config.DEFINE_bool(
+_CPU_ENABLE_ASYNC_DISPATCH = config.bool_flag(
     name="jax_cpu_enable_async_dispatch",
     default=False,
     help="Only applies to non-parallel computations. If False, run computations"
@@ -135,17 +132,6 @@ _at_fork_handler_installed = False
 # Backends
 
 
-def _get_tpu_library_path() -> str | None:
-  path_from_env = os.getenv("TPU_LIBRARY_PATH")
-  if path_from_env is not None:
-    return path_from_env
-
-  libtpu_module = maybe_import_libtpu()
-  if libtpu_module is not None:
-    return libtpu_module.get_library_path()
-
-  return None
-
 
 def tpu_client_timer_callback(timer_secs: float) -> xla_client.Client | None:
   def _log_warning():
@@ -160,7 +146,9 @@ def tpu_client_timer_callback(timer_secs: float) -> xla_client.Client | None:
   t.start()
 
   try:
-    client = xla_client.make_tpu_client(_get_tpu_library_path())
+    client = xla_client.make_tpu_client( # type: ignore
+        get_tpu_library_path(),
+        _options_from_jax_configs("tpu"))
   finally:
     t.cancel()
 
@@ -393,19 +381,16 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
   _version_check("cuPTI", cuda_versions.cupti_get_version,
                  cuda_versions.cupti_build_version,
                  min_supported_version=18)
-  # TODO(jakevdp) remove these checks when minimum jaxlib is v0.4.21
-  if hasattr(cuda_versions, "cublas_get_version"):
-    _version_check("cuBLAS", cuda_versions.cublas_get_version,
-                   cuda_versions.cublas_build_version,
-                   # Ignore patch versions.
-                   scale_for_comparison=100,
-                   min_supported_version=120100)
-  if hasattr(cuda_versions, "cusparse_get_version"):
-    _version_check("cuSPARSE", cuda_versions.cusparse_get_version,
-                   cuda_versions.cusparse_build_version,
-                   # Ignore patch versions.
-                   scale_for_comparison=100,
-                   min_supported_version=12100)
+  _version_check("cuBLAS", cuda_versions.cublas_get_version,
+                 cuda_versions.cublas_build_version,
+                 # Ignore patch versions.
+                 scale_for_comparison=100,
+                 min_supported_version=120100)
+  _version_check("cuSPARSE", cuda_versions.cusparse_get_version,
+                 cuda_versions.cusparse_build_version,
+                 # Ignore patch versions.
+                 scale_for_comparison=100,
+                 min_supported_version=12100)
 
   errors = []
   debug_results = []
@@ -427,7 +412,7 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
 
 
 def make_gpu_client(
-    *, platform_name: str, visible_devices_flag: config.FlagHolder[str]
+    *, platform_name: str, visible_devices_flag: config.Flag[str]
 ) -> xla_client.Client:
   visible_devices = visible_devices_flag.value
   allowed_devices = None
@@ -447,11 +432,12 @@ def make_gpu_client(
       print('Skipped CUDA versions constraints check due to the '
             'JAX_SKIP_CUDA_CONSTRAINTS_CHECK env var being set.')
 
-    # TODO(micky774): remove this check when minimum jaxlib is v0.4.26
-    if jaxlib.version.__version_info__ >= (0, 4, 26):
-      devices_to_check = (allowed_devices if allowed_devices else
-                          range(cuda_versions.cuda_device_count()))
-      _check_cuda_compute_capability(devices_to_check)
+    devices_to_check = (
+        allowed_devices
+        if allowed_devices
+        else range(cuda_versions.cuda_device_count())
+    )
+    _check_cuda_compute_capability(devices_to_check)
 
   return xla_client.make_gpu_client(
       distributed_client=distributed.global_state.client,
@@ -618,16 +604,30 @@ def discover_pjrt_plugins() -> None:
 
 
 def _options_from_jax_configs(plugin_name):
-  if plugin_name != "cuda":
-    return {}
-
   options = {}
-  visible_devices = CUDA_VISIBLE_DEVICES.value
-  if visible_devices != 'all':
-    options['visible_devices'] = [int(x) for x in visible_devices.split(',')]
-  options['enable_mock_nccl'] = _USE_MOCK_GPU_CLIENT.value
-  if options['enable_mock_nccl']:
-    options['num_nodes'] = _MOCK_NUM_GPUS.value
+
+  pjrt_client_options = config.jax_pjrt_client_create_options.value
+  pjrt_client_option_list = []
+  if pjrt_client_options:
+    pjrt_client_option_list = pjrt_client_options.split(";")
+
+  for option in pjrt_client_option_list:
+    option_list = option.split(":")
+    if (len(option_list) != 2):
+      raise RuntimeError(
+          "Multiple ':' separators for option in "
+          f"jax_pjrt_client_create_options: '{option}'. "
+          "Should be in format 'key:value'")
+    options[option_list[0]] = option_list[1]
+
+  if plugin_name == "cuda":
+    visible_devices = CUDA_VISIBLE_DEVICES.value
+    if visible_devices != 'all':
+      options['visible_devices'] = [int(x) for x in visible_devices.split(',')]
+    options['enable_mock_nccl'] = _USE_MOCK_GPU_CLIENT.value
+    if options['enable_mock_nccl']:
+      options['num_nodes'] = _MOCK_NUM_GPUS.value
+
   return options
 
 
@@ -1207,7 +1207,7 @@ def make_pjrt_topology(platform: str, topology_name='', **kwargs):
 # TODO(parkers): Get rid of this in favor of a generic way to get topologies.
 def make_pjrt_tpu_topology(topology_name='', **kwargs):
   if not xla_client.pjrt_plugin_loaded("tpu"):
-    library_path = _get_tpu_library_path()
+    library_path = get_tpu_library_path()
     if library_path is None:
       raise RuntimeError(
           "JAX TPU support not installed; cannot generate TPU topology. See"

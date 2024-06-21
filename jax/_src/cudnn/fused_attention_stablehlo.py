@@ -309,23 +309,29 @@ def check_compute_capability(cc):
 
 def _dot_product_attention_fwd(
     query, key, value, bias, mask, q_seqlen, kv_seqlen, scale, seed,
-    dropout_rate, variadic_args, mask_type, layout, is_training):
+    dropout_rate, variadic_args, mask_type, layout, cudnn_version):
+  # check if flash attention is supported for this attention pattern
+  check_is_flash_attention(
+      query, key, layout, cudnn_version, bias is not None, False)
   outputs = _dot_product_attention_fwd_p_wrapper.bind(
       query, key, value, bias, mask, q_seqlen, kv_seqlen, scale=scale,
       seed=seed, dropout_rate=dropout_rate, variadic_args=variadic_args,
-      mask_type=mask_type, layout=layout, is_training=is_training)
+      mask_type=mask_type, layout=layout, is_training=False)
   output = outputs[0]
   return output
 
 def _dot_product_attention_fwd_rule(
     query, key, value, bias, mask, q_seqlen, kv_seqlen, scale, seed,
-    dropout_rate, variadic_args, mask_type, layout, is_training):
+    dropout_rate, variadic_args, mask_type, layout, cudnn_version):
+  # check if flash attention is supported for this attention pattern
+  check_is_flash_attention(
+      query, key, layout, cudnn_version, bias is not None, True)
   outputs = _dot_product_attention_fwd_p_wrapper.bind(
       query, key, value, bias, mask, q_seqlen, kv_seqlen, scale=scale,
       seed=seed, dropout_rate=dropout_rate, variadic_args=variadic_args,
-      mask_type=mask_type, layout=layout, is_training=is_training)
+      mask_type=mask_type, layout=layout, is_training=True)
   res = (query, key, value, bias, mask, q_seqlen, kv_seqlen,
-         outputs[1], outputs[0]) if is_training else None
+         outputs[1], outputs[0])
   return outputs[0], res
 
 def _dot_product_attention_bwd_rule(
@@ -907,11 +913,11 @@ def _dot_product_attention(query: Array,
                            variadic_args: tuple[bool, ...],
                            mask_type: bool,
                            layout: int,
-                           is_training: bool):
+                           cudnn_version: int):
   output = _dot_product_attention_fwd(
       query, key, value, bias, mask, q_seqlen, kv_seqlen, scale=scale,
       seed=seed, dropout_rate=dropout_rate, variadic_args=variadic_args,
-      mask_type=mask_type, layout=layout, is_training=is_training)
+      mask_type=mask_type, layout=layout, cudnn_version=cudnn_version)
   return output
 
 # _dot_product_attention_fwd must have the same func signature as _dot_product_attention
@@ -930,8 +936,7 @@ def dot_product_attention(query: Array,
                           mask_type: MaskType = MaskType.NO_MASK,
                           seed: int = 42,
                           dropout_rate: float = 0.,
-                          qkv_layout: str = "BTNH",
-                          is_training = False):
+                          qkv_layout: str = "BTNH"):
   """Computes dot-product attention given query (Q), key (K), and value (V).
 
   This function serves as the core operation for applying attention
@@ -963,7 +968,6 @@ def dot_product_attention(query: Array,
     dropout_rate: Dropout rate.
     qkv_layout: Layout string, with supported formats being BTNH, BNTH, BSNH,
                 BNSH.
-    is_training: choose to save activation or not.
 
   Returns:
     Output of the same shape as the query.
@@ -978,14 +982,11 @@ def dot_product_attention(query: Array,
     bias = bias.reshape((1,) * (4 - len(bias.shape)) + bias.shape)
   # check if input shape and data type is compatiable
   check_layout(query, key, value, bias, q_seqlen, kv_seqlen, layout)
-  # check if flash attention is supported for this attention pattern
-  check_is_flash_attention(
-      query, key, layout, cudnn_version, bias is not None, is_training)
   if has_padding(mask_type) and (q_seqlen is None or kv_seqlen is None):
     raise ValueError("Require q_seqlen and kv_seqlen to generate padding mask")
   has_bias = bias is not None
   has_mask = mask is not None
-  has_dbias = has_bias and is_training and \
+  has_dbias = has_bias and \
     should_export_dbias(bias.shape, query.shape, layout)  # type: ignore[union-attr]
   variadic_args = (has_bias, has_mask, has_dbias)
   if bias is None:
@@ -998,6 +999,6 @@ def dot_product_attention(query: Array,
     kv_seqlen = jnp.zeros(0, dtype=query.dtype)
   output = _dot_product_attention(
       query, key, value, bias, mask, q_seqlen, kv_seqlen, scale, seed,
-      dropout_rate, variadic_args, mask_type, layout.value, is_training
+      dropout_rate, variadic_args, mask_type, layout.value, cudnn_version
   )
   return output

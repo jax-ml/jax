@@ -103,7 +103,7 @@ def cholesky(a: ArrayLike, *, upper: bool = False) -> Array:
     - :func:`jax.scipy.linalg.cholesky`: SciPy-style Cholesky API
     - :func:`jax.lax.linalg.cholesky`: XLA-style Cholesky API
 
-  Example:
+  Examples:
     A small real Hermitian positive-definite matrix:
 
     >>> x = jnp.array([[2., 1.],
@@ -250,7 +250,7 @@ def svd(
     - :func:`jax.scipy.linalg.svd`: SciPy-style SVD API
     - :func:`jax.lax.linalg.svd`: XLA-style SVD API
 
-  Example:
+  Examples:
     Consider the SVD of a small real-valued array:
 
     >>> x = jnp.array([[1., 2., 3.],
@@ -496,7 +496,7 @@ def _slogdet_qr(a: Array) -> tuple[Array, Array]:
 @partial(jit, static_argnames=('method',))
 def slogdet(a: ArrayLike, *, method: str | None = None) -> SlogdetResult:
   """
-  Computes the sign and (natural) logarithm of the determinant of an array.
+  Compute the sign and (natural) logarithm of the determinant of an array.
 
   JAX implementation of :func:`numpy.linalg.slotdet`.
 
@@ -662,7 +662,7 @@ def _det_3x3(a: Array) -> Array:
 @jit
 def det(a: ArrayLike) -> Array:
   """
-  Computes the determinant of an array.
+  Compute the determinant of an array.
 
   JAX implementation of :func:`numpy.linalg.det`.
 
@@ -706,7 +706,7 @@ def _det_jvp(primals, tangents):
 
 def eig(a: ArrayLike) -> tuple[Array, Array]:
   """
-  Computes the eigenvalues and eigenvectors of a square array.
+  Compute the eigenvalues and eigenvectors of a square array.
 
   JAX implementation of :func:`numpy.linalg.eig`.
 
@@ -750,7 +750,7 @@ def eig(a: ArrayLike) -> tuple[Array, Array]:
 @jit
 def eigvals(a: ArrayLike) -> Array:
   """
-  Computes the eigenvalues of a general matrix.
+  Compute the eigenvalues of a general matrix.
 
   JAX implementation of :func:`numpy.linalg.eigvals`.
 
@@ -788,14 +788,14 @@ def eigvals(a: ArrayLike) -> Array:
 def eigh(a: ArrayLike, UPLO: str | None = None,
          symmetrize_input: bool = True) -> EighResult:
   """
-  Computes the eigenvalues and eigenvectors of a Hermitian matrix.
+  Compute the eigenvalues and eigenvectors of a Hermitian matrix.
 
   JAX implementation of :func:`numpy.linalg.eigh`.
 
   Args:
     a: array of shape ``(..., M, M)``, containing the Hermitian (if complex)
       or symmetric (if real) matrix.
-    UPLO: specifies whether the calculation isdone with the lower triangular
+    UPLO: specifies whether the calculation is done with the lower triangular
       part of ``a`` (``'L'``, default) or the upper triangular part (``'U'``).
     symmetrize_input: if True (default) then input is symmetrized, which leads
       to better behavior under automatic differentiation.
@@ -842,7 +842,7 @@ def eigh(a: ArrayLike, UPLO: str | None = None,
 @partial(jit, static_argnames=('UPLO',))
 def eigvalsh(a: ArrayLike, UPLO: str | None = 'L') -> Array:
   """
-  Computes the eigenvalues of a Hermitian matrix.
+  Compute the eigenvalues of a Hermitian matrix.
 
   JAX implementation of :func:`numpy.linalg.eigvalsh`.
 
@@ -1007,7 +1007,7 @@ def inv(a: ArrayLike) -> Array:
     - :func:`jax.scipy.linalg.inv`: SciPy-style API for matrix inverse
     - :func:`jax.numpy.linalg.solve`: direct linear solver
 
-  Example:
+  Examples:
     Compute the inverse of a 3x3 matrix
 
     >>> a = jnp.array([[1., 2., 3.],
@@ -1249,7 +1249,7 @@ def qr(a: ArrayLike, mode: str = "reduced") -> Array | QRResult:
 
   See also:
     - :func:`jax.scipy.linalg.qr`: SciPy-style QR decomposition API
-    - :func:`jax.lax.linalg.qr`: XLA-style QR decompositon API
+    - :func:`jax.lax.linalg.qr`: XLA-style QR decomposition API
 
   Examples:
     Compute the QR decomposition of a matrix:
@@ -1316,7 +1316,7 @@ def solve(a: ArrayLike, b: ArrayLike) -> Array:
     - :func:`jax.scipy.linalg.solve`: SciPy-style API for solving linear systems.
     - :func:`jax.lax.custom_linear_solve`: matrix-free linear solver.
 
-  Example:
+  Examples:
     A simple 3x3 linear system:
 
     >>> A = jnp.array([[1., 2., 3.],
@@ -1422,7 +1422,7 @@ def lstsq(a: ArrayLike, b: ArrayLike, rcond: float | None = None, *,
     - ``rank`` is the rank of the matrix ``a``.
     - ``s`` is the singular values of the matrix ``a``.
 
-  Example:
+  Examples:
     >>> a = jnp.array([[1, 2],
     ...                [3, 4]])
     >>> b = jnp.array([5, 6])
@@ -1438,12 +1438,12 @@ def lstsq(a: ArrayLike, b: ArrayLike, rcond: float | None = None, *,
 
 
 def cross(x1: ArrayLike, x2: ArrayLike, /, *, axis=-1):
-  r"""Compute the corss-product of two 3D vectors
+  r"""Compute the cross-product of two 3D vectors
 
   JAX implementation of :func:`numpy.linalg.cross`
 
   Args:
-    x1: N-dimesional array, with ``x1.shape[axis] == 3``
+    x1: N-dimensional array, with ``x1.shape[axis] == 3``
     x2: N-dimensional array, with ``x2.shape[axis] == 3``, and other axes
       broadcast-compatible with ``x1``.
     axis: axis along which to take the cross product (default: -1).
@@ -1454,7 +1454,7 @@ def cross(x1: ArrayLike, x2: ArrayLike, /, *, axis=-1):
   See Also:
     :func:`jax.numpy.cross`: more flexible cross-product API.
 
-  Example:
+  Examples:
 
     Showing that :math:`\hat{x} \times \hat{y} = \hat{z}`:
 
@@ -1497,7 +1497,7 @@ def outer(x1: ArrayLike, x2: ArrayLike, /) -> Array:
   See also:
     :func:`jax.numpy.outer`: similar function in the main :mod:`jax.numpy` module.
 
-  Example:
+  Examples:
     >>> x1 = jnp.array([1, 2, 3])
     >>> x2 = jnp.array([4, 5, 6])
     >>> jnp.linalg.outer(x1, x2)
@@ -1599,7 +1599,7 @@ def matrix_transpose(x: ArrayLike, /) -> Array:
 
 def vector_norm(x: ArrayLike, /, *, axis: int | None = None, keepdims: bool = False,
                 ord: int | str = 2) -> Array:
-  """Computes the vector norm of a vector or batch of vectors.
+  """Compute the vector norm of a vector or batch of vectors.
 
   JAX implementation of :func:`numpy.linalg.vector_norm`.
 
@@ -1846,7 +1846,7 @@ def svdvals(x: ArrayLike, /) -> Array:
   See also:
     :func:`jax.numpy.linalg.svd`: compute singular values and singular vectors
 
-  Example:
+  Examples:
     >>> x = jnp.array([[1, 2, 3],
     ...                [4, 5, 6]])
     >>> jnp.linalg.svdvals(x)
@@ -1916,7 +1916,7 @@ def tensorinv(a: ArrayLike, ind: int = 2) -> Array:
     - :func:`jax.numpy.linalg.tensordot`
     - :func:`jax.numpy.linalg.tensorsolve`
 
-  Example:
+  Examples:
     >>> key = jax.random.key(1337)
     >>> x = jax.random.normal(key, shape=(2, 2, 4))
     >>> xinv = jnp.linalg.tensorinv(x, 2)
@@ -2136,3 +2136,47 @@ def cond(x: ArrayLike, p=None):
     r = norm(x, ord=p, axis=(-2, -1)) * norm(inv(x), ord=p, axis=(-2, -1))
   # Convert NaNs to infs where original array has no NaNs.
   return jnp.where(ufuncs.isnan(r) & ~ufuncs.isnan(x).any(axis=(-2, -1)), jnp.inf, r)
+
+
+def trace(x: ArrayLike, /, *,
+          offset: int = 0, dtype: DTypeLike | None = None) -> Array:
+  """Compute the trace of a matrix.
+
+  JAX implementation of :func:`numpy.linalg.trace`.
+
+  Args:
+    x: array of shape ``(..., M, N)`` and whose innermost two
+      dimensions form MxN matrices for which to take the trace.
+    offset: positive or negative offset from the main diagonal
+      (default: 0).
+    dtype: data type of the returned array (default: ``None``). If ``None``,
+      then output dtype will match the dtype of ``x``, promoted to default
+      precision in the case of integer types.
+
+  Returns:
+    array of batched traces with shape ``x.shape[:-2]``
+
+  See also:
+    - :func:`jax.numpy.trace`: similar API in the ``jax.numpy`` namespace.
+
+  Examples:
+    Trace of a single matrix:
+
+    >>> x = jnp.array([[1,  2,  3,  4],
+    ...                [5,  6,  7,  8],
+    ...                [9, 10, 11, 12]])
+    >>> jnp.linalg.trace(x)
+    Array(18, dtype=int32)
+    >>> jnp.linalg.trace(x, offset=1)
+    Array(21, dtype=int32)
+    >>> jnp.linalg.trace(x, offset=-1, dtype="float32")
+    Array(15., dtype=float32)
+
+    Batched traces:
+
+    >>> x = jnp.arange(24).reshape(2, 3, 4)
+    >>> jnp.linalg.trace(x)
+    Array([15, 51], dtype=int32)
+  """
+  check_arraylike('jnp.linalg.trace', x)
+  return jnp.trace(x, offset=offset, axis1=-2, axis2=-1, dtype=dtype)

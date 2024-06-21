@@ -218,16 +218,86 @@ atanh = _one_to_one_unop(getattr(np, "atanh", np.arctanh), lax.atanh, True)
 atan2 = _one_to_one_binop(getattr(np, "atan2", np.arctan2), lax.atan2, True)
 
 
-@implements(getattr(np, 'bitwise_count', None), module='numpy')
 @jit
 def bitwise_count(x: ArrayLike, /) -> Array:
+  r"""Counts the number of 1 bits in the binary representation of the absolute value
+  of each element of ``x``.
+
+  LAX-backend implementation of :func:`numpy.bitwise_count`.
+
+  Args:
+    x: Input array, only accepts integer subtypes
+
+  Returns:
+    An array-like object containing the binary 1 bit counts of the absolute value of
+    each element in ``x``, with the same shape as ``x`` of dtype uint8.
+
+  Examples:
+    >>> x1 = jnp.array([64, 32, 31, 20])
+    >>> # 64 = 0b1000000, 32 = 0b100000, 31 = 0b11111, 20 = 0b10100
+    >>> jnp.bitwise_count(x1)
+    Array([1, 1, 5, 2], dtype=uint8)
+
+    >>> x2 = jnp.array([-16, -7, 7])
+    >>> # |-16| = 0b10000, |-7| = 0b111, 7 = 0b111
+    >>> jnp.bitwise_count(x2)
+    Array([1, 3, 3], dtype=uint8)
+
+    >>> x3 = jnp.array([[2, -7],[-9, 7]])
+    >>> # 2 = 0b10, |-7| = 0b111, |-9| = 0b1001, 7 = 0b111
+    >>> jnp.bitwise_count(x3)
+    Array([[1, 3],
+           [2, 3]], dtype=uint8)
+  """
   x, = promote_args_numeric("bitwise_count", x)
   # Following numpy we take the absolute value and return uint8.
   return lax.population_count(abs(x)).astype('uint8')
 
-@implements(np.right_shift, module='numpy')
 @partial(jit, inline=True)
 def right_shift(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+  r"""Right shift the bits of ``x1`` to the amount specified in ``x2``.
+
+  LAX-backend implementation of :func:`numpy.right_shift`.
+
+  Args:
+    x1: Input array, only accepts unsigned integer subtypes
+    x2: The amount of bits to shift each element in ``x1`` to the right, only accepts
+      integer subtypes
+
+  Returns:
+    An array-like object containing the right shifted elements of ``x1`` by the
+    amount specified in ``x2``, with the same shape as the broadcasted shape of
+    ``x1`` and ``x2``.
+
+  Note:
+    If ``x1.shape != x2.shape``, they must be compatible for broadcasting to a
+    shared shape, this shared shape will also be the shape of the output. Right shifting
+    a scalar x1 by scalar x2 is equivalent to ``x1 // 2**x2``.
+
+  Examples:
+    >>> def print_binary(x):
+    ...   return [bin(int(val)) for val in x]
+
+    >>> x1 = jnp.array([1, 2, 4, 8])
+    >>> print_binary(x1)
+    ['0b1', '0b10', '0b100', '0b1000']
+    >>> x2 = 1
+    >>> result = jnp.right_shift(x1, x2)
+    >>> result
+    Array([0, 1, 2, 4], dtype=int32)
+    >>> print_binary(result)
+    ['0b0', '0b1', '0b10', '0b100']
+
+    >>> x1 = 16
+    >>> print_binary([x1])
+    ['0b10000']
+    >>> x2 = jnp.array([1, 2, 3, 4])
+    >>> result = jnp.right_shift(x1, x2)
+    >>> result
+    Array([8, 4, 2, 1], dtype=int32)
+    >>> print_binary(result)
+    ['0b1000', '0b100', '0b10', '0b1']
+  """
   x1, x2 = promote_args_numeric(np.right_shift.__name__, x1, x2)
   lax_fn = lax.shift_right_logical if \
     np.issubdtype(x1.dtype, np.unsignedinteger) else lax.shift_right_arithmetic
@@ -241,13 +311,46 @@ def bitwise_right_shift(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     np.issubdtype(x1.dtype, np.unsignedinteger) else lax.shift_right_arithmetic
   return lax_fn(x1, x2)
 
-@implements(np.absolute, module='numpy')
+
 @partial(jit, inline=True)
 def absolute(x: ArrayLike, /) -> Array:
+  r"""Calculate the absolute value element-wise.
+
+  LAX-backend implementation of :func:`numpy.absolute`.
+
+  This is the same function as :func:`jax.numpy.abs`.
+
+  Args:
+    x: Input array
+
+  Returns:
+    An array-like object containing the absolute value of each element in ``x``,
+    with the same shape as ``x``. For complex valued input, :math:`a + ib`,
+    the absolute value is :math:`\sqrt{a^2+b^2}`.
+
+  Examples:
+    >>> x1 = jnp.array([5, -2, 0, 12])
+    >>> jnp.absolute(x1)
+    Array([ 5,  2,  0, 12], dtype=int32)
+
+    >>> x2 = jnp.array([[ 8, -3, 1],[ 0, 9, -6]])
+    >>> jnp.absolute(x2)
+    Array([[8, 3, 1],
+           [0, 9, 6]], dtype=int32)
+
+    >>> x3 = jnp.array([8 + 15j, 3 - 4j, -5 + 0j])
+    >>> jnp.absolute(x3)
+    Array([17.,  5.,  5.], dtype=float32)
+  """
   check_arraylike('absolute', x)
   dt = dtypes.dtype(x)
   return lax.asarray(x) if dt == np.bool_ or dtypes.issubdtype(dt, np.unsignedinteger) else lax.abs(x)
-abs = implements(np.abs, module='numpy')(absolute)
+
+
+@partial(jit, inline=True)
+def abs(x: ArrayLike, /) -> Array:
+  """Alias of :func:`jax.numpy.absolute`."""
+  return absolute(x)
 
 
 @implements(np.rint, module='numpy')

@@ -151,7 +151,7 @@ def lower_jaxpr_to_module(
     # TODO(slebedev): Consider enforcing this in the mgpu.BarrierArray.
     [barrier] = mgpu.BarrierArray(1, arrival_count=1)
 
-    with mgpu.once():
+    with mgpu.single_thread():
       nvgpu_dialect.mbarrier_arrive_expect_tx(
           barrier.barrier_array.value,
           _index(
@@ -329,6 +329,7 @@ mosaic_lowering_rules.update({
 
 @register_lowering_rule(lax.integer_pow_p)
 def _integer_pow_lowering_rule(ctx: LoweringRuleContext, x, y):
+  x = _ensure_fa(x, *ctx.avals_in)
   if y == 2:
     return x * x
   return NotImplementedError

@@ -19,7 +19,6 @@ load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "if_building_jaxlib",
-    "if_building_mosaic_gpu",
     "jax_extend_internal_users",
     "jax_extra_deps",
     "jax_internal_export_back_compat_test_util_visibility",
@@ -69,19 +68,6 @@ config_setting(
     name = "enable_build_cuda_plugin_from_source",
     flag_values = {
         ":build_cuda_plugin_from_source": "True",
-    },
-)
-
-# If this flag is true, jaxlib will be built with Mosaic GPU. VERY EXPERIMENTAL.
-bool_flag(
-    name = "build_mosaic_gpu",
-    build_setting_default = False,
-)
-
-config_setting(
-    name = "enable_mosaic_gpu",
-    flag_values = {
-        ":build_mosaic_gpu": "True",
     },
 )
 
@@ -228,7 +214,6 @@ py_library_providing_imports_info(
         "_src/dispatch.py",
         "_src/dlpack.py",
         "_src/earray.py",
-        "_src/ffi.py",
         "_src/flatten_util.py",
         "_src/interpreters/__init__.py",
         "_src/interpreters/ad.py",
@@ -249,6 +234,7 @@ py_library_providing_imports_info(
             "_src/debugger/**/*.py",
             "_src/extend/**/*.py",
             "_src/image/**/*.py",
+            "_src/export/**/*.py",
             "_src/lax/**/*.py",
             "_src/nn/**/*.py",
             "_src/numpy/**/*.py",
@@ -335,7 +321,7 @@ py_library_providing_imports_info(
         ":xla",
         ":xla_bridge",
         "//jax/_src/lib",
-    ] + py_deps("numpy") + py_deps("scipy") + py_deps("opt_einsum") + jax_extra_deps,
+    ] + py_deps("numpy") + py_deps("scipy") + py_deps("opt_einsum") + py_deps("flatbuffers") + jax_extra_deps,
 )
 
 pytype_strict_library(
@@ -389,7 +375,9 @@ pytype_strict_library(
     name = "cloud_tpu_init",
     srcs = ["_src/cloud_tpu_init.py"],
     deps = [
+        ":config",
         ":hardware_utils",
+        ":version",
     ],
 )
 
@@ -402,6 +390,7 @@ pytype_strict_library(
         ":compilation_cache_interface",
         ":config",
         ":gfile_cache",
+        ":lru_cache",
         ":monitoring",
         ":path",
         "//jax/_src/lib",
@@ -425,6 +414,15 @@ pytype_strict_library(
         ":path",
         ":util",
     ],
+)
+
+pytype_strict_library(
+    name = "lru_cache",
+    srcs = ["_src/lru_cache.py"],
+    deps = [
+        ":compilation_cache_interface",
+        ":config",
+    ] + py_deps("filelock"),
 )
 
 pytype_strict_library(
@@ -466,6 +464,7 @@ pytype_strict_library(
     deps = [
         ":compute_on",
         ":config",
+        ":deprecations",
         ":dtypes",
         ":effects",
         ":pretty_printer",
@@ -581,6 +580,7 @@ pytype_strict_library(
         ":partial_eval",
         ":path",
         ":pickle_util",
+        ":sharding",
         ":sharding_impls",
         ":source_info_util",
         ":state_types",
@@ -613,6 +613,7 @@ pytype_strict_library(
         exclude = [
             "experimental/pallas/gpu.py",
             "experimental/pallas/tpu.py",
+            "experimental/pallas/ops/gpu/**/*.py",
             "experimental/pallas/ops/tpu/**/*.py",
         ],
     ),
@@ -633,9 +634,14 @@ pytype_strict_library(
         ":pallas_tpu_users",
     ],
     deps = [
-        ":pallas",  # buildcleaner: keep
+        ":pallas",  # build_cleaner: keep
         ":tpu_custom_call",
-        "//jax/_src/pallas/mosaic",
+        "//jax/_src/pallas/mosaic:core",
+        "//jax/_src/pallas/mosaic:lowering",
+        "//jax/_src/pallas/mosaic:pallas_call_registration",  # build_cleaner: keep
+        "//jax/_src/pallas/mosaic:pipeline",
+        "//jax/_src/pallas/mosaic:primitives",
+        "//jax/_src/pallas/mosaic:random",
     ],
 )
 
@@ -673,8 +679,10 @@ pytype_strict_library(
     ],
     deps = [
         ":pallas",
-        "//jax/_src/pallas/triton",
-    ] + if_building_mosaic_gpu(["//third_party/py/jax/_src/pallas/mosaic_gpu"]),
+        "//jax/_src/pallas/mosaic_gpu:pallas_call_registration",  # build_cleaner: keep
+        "//jax/_src/pallas/triton:pallas_call_registration",  # build_cleaner: keep
+        "//jax/_src/pallas/triton:primitives",
+    ],
 )
 
 # This target only supports sm_90 GPUs.
@@ -690,10 +698,8 @@ py_library(
         ":jax",
         ":mlir",
         "//jax/_src/lib",
-        "//third_party/py/absl/flags",
         "//jaxlib/mlir:arithmetic_dialect",
         "//jaxlib/mlir:builtin_dialect",
-        "//jaxlib/mlir:execution_engine",
         "//jaxlib/mlir:func_dialect",
         "//jaxlib/mlir:gpu_dialect",
         "//jaxlib/mlir:ir",
@@ -705,8 +711,7 @@ py_library(
         "//jaxlib/mlir:pass_manager",
         "//jaxlib/mlir:scf_dialect",
         "//jaxlib/mlir:vector_dialect",
-        "//third_party/py/numpy",
-    ],
+    ] + py_deps("absl/flags") + py_deps("numpy"),
 )
 
 pytype_strict_library(
@@ -777,6 +782,7 @@ pytype_strict_library(
     name = "sharding",
     srcs = ["_src/sharding.py"],
     deps = [
+        ":op_shardings",
         ":util",
         ":xla_bridge",
         "//jax/_src/lib",
@@ -804,6 +810,7 @@ pytype_strict_library(
     srcs = ["_src/sharding_impls.py"],
     deps = [
         ":config",
+        ":core",
         ":mesh",
         ":op_shardings",
         ":partition_spec",

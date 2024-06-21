@@ -35,6 +35,7 @@ jax_test(
     name = "api_test",
     srcs = ["api_test.py"],
     shard_count = 10,
+    tags = ["test_cpu_thunks"],
 )
 
 jax_test(
@@ -124,15 +125,6 @@ jax_test(
     name = "extend_test",
     srcs = ["extend_test.py"],
     deps = ["//jax:extend"],
-)
-
-py_test(
-    name = "ffi_test",
-    srcs = ["ffi_test.py"],
-    deps = [
-        "//jax",
-        "//jax:test_util",
-    ],
 )
 
 jax_test(
@@ -269,6 +261,9 @@ jax_test(
 jax_test(
     name = "layout_test",
     srcs = ["layout_test.py"],
+    backend_tags = {
+        "tpu": ["requires-mem:16g"],  # Under tsan on 2x2 this test exceeds the default 12G memory limit.
+    },
     tags = ["multiaccelerator"],
 )
 
@@ -318,6 +313,9 @@ jax_test(
 jax_test(
     name = "array_test",
     srcs = ["array_test.py"],
+    backend_tags = {
+        "tpu": ["requires-mem:16g"],  # Under tsan on 2x2 this test exceeds the default 12G memory limit.
+    },
     tags = ["multiaccelerator"],
     deps = [
         "//jax:experimental",
@@ -349,6 +347,7 @@ jax_test(
 jax_test(
     name = "infeed_test",
     srcs = ["infeed_test.py"],
+    tags = ["test_cpu_thunks"],
     deps = [
         "//jax:experimental_host_callback",
     ],
@@ -358,6 +357,7 @@ jax_test(
     name = "jax_jit_test",
     srcs = ["jax_jit_test.py"],
     main = "jax_jit_test.py",
+    tags = ["test_cpu_thunks"],
 )
 
 py_test(
@@ -785,6 +785,14 @@ jax_test(
 jax_test(
     name = "qdwh_test",
     srcs = ["qdwh_test.py"],
+    backend_tags = {
+        "tpu": [
+            "noasan",  # Times out
+            "nomsan",  # Times out
+            "notsan",  # Times out
+        ],
+    },
+    shard_count = 10,
 )
 
 jax_test(
@@ -1134,6 +1142,16 @@ py_test(
         "//jax:gfile_cache",
         "//jax:test_util",
     ],
+)
+
+py_test(
+    name = "lru_cache_test",
+    srcs = ["lru_cache_test.py"],
+    deps = [
+        "//jax",
+        "//jax:lru_cache",
+        "//jax:test_util",
+    ] + py_deps("filelock"),
 )
 
 jax_test(

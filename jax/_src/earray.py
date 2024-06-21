@@ -20,6 +20,7 @@ from jax._src import api_util
 from jax._src import basearray
 from jax._src import core
 from jax._src import tree_util
+from jax._src import sharding_impls
 from jax._src.interpreters import pxla
 from jax._src.interpreters import xla
 from jax._src.util import safe_zip, safe_map
@@ -80,7 +81,7 @@ class EArray(basearray.Array):
   @property
   def sharding(self):
     phys_sharding = self._data.sharding
-    return self.aval.dtype._rules.logical_sharding(self.aval, phys_sharding)
+    return sharding_impls.logical_sharding(self.aval, phys_sharding)
 
   # TODO(mattjj): not implemented below here, need more methods from ArrayImpl
 
@@ -97,10 +98,11 @@ class EArray(basearray.Array):
 
 # TODO(mattjj): _set_array_base_attributes
 
-def _earray_shard_arg_handler(x, sharding):
-  arr = x._data
-  phys_sharding = x.aval.dtype._rules.physical_sharding(x.aval, sharding)
-  return pxla.shard_arg_handlers[type(arr)](arr, phys_sharding)
+def _earray_shard_arg_handler(xs, shardings):
+  arrs = [x._data for x in xs]
+  phys_shardings = [sharding_impls.physical_sharding(x.aval, sharding)
+                    for x, sharding in zip(xs, shardings)]
+  return pxla.shard_args(phys_shardings, arrs)
 pxla.shard_arg_handlers[EArray] = _earray_shard_arg_handler
 
 api_util._shaped_abstractify_handlers[EArray] = lambda self: self.aval

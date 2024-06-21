@@ -64,23 +64,8 @@ setup(
         'scipy>=1.9',
         "scipy>=1.11.1; python_version>='3.12'",
         'numpy>=1.22',
-        'ml_dtypes>=0.4.0',
+        'ml_dtypes>=0.2.0',
     ],
-    extras_require={
-      'cuda12_pip': [
-        "nvidia-cublas-cu12>=12.1.3.1",
-        "nvidia-cuda-cupti-cu12>=12.1.105",
-        "nvidia-cuda-nvcc-cu12>=12.1.105",
-        "nvidia-cuda-runtime-cu12>=12.1.105",
-        # https://docs.nvidia.com/deeplearning/cudnn/developer/misc.html#cudnn-api-compatibility
-        "nvidia-cudnn-cu12>=9.0,<10.0",
-        "nvidia-cufft-cu12>=11.0.2.54",
-        "nvidia-cusolver-cu12>=11.4.5.107",
-        "nvidia-cusparse-cu12>=12.1.0.106",
-        "nvidia-nccl-cu12>=2.18.1",
-        "nvidia-nvjitlink-cu12>=12.1.105",
-      ],
-    },
     url='https://github.com/google/jax',
     license='Apache-2.0',
     classifiers=[

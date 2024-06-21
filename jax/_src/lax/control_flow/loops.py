@@ -50,7 +50,6 @@ from jax._src.lax.control_flow.common import (
     _abstractify, _avals_short, _check_tree_and_avals, _initial_style_jaxpr,
     _initial_style_jaxpr_attrs, _make_closed_jaxpr_attrs, _prune_zeros,
     _typecheck_param)
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.numpy.ufuncs import logaddexp
@@ -314,12 +313,20 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
 
 def _set_states(attrs_tracked, vals):
   from jax.experimental.attrs import jax_setattr
-  for ((obj, attr), val) in zip(attrs_tracked, vals):
+  valss = split_list_checked(vals, [td.num_leaves for _, td, _ in attrs_tracked])
+  for ((_, treedef, (obj, attr)), leaves) in zip(attrs_tracked, valss):
+    val = tree_unflatten(treedef, leaves)
     jax_setattr(obj, attr, val)
 
 def _get_states(attrs_tracked):
   from jax.experimental.attrs import jax_getattr
-  return [jax_getattr(obj, attr) for (obj, attr) in attrs_tracked]
+  vals = []
+  for treedef, _, (obj, attr) in attrs_tracked:
+    tree = jax_getattr(obj, attr)
+    leaves, treedef_ = tree_flatten(tree)
+    assert treedef == treedef_
+    vals.extend(leaves)
+  return vals
 
 def _check_scan_carry_type(body_fun, in_carry, out_carry_tree, out_avals):
   try:
@@ -392,13 +399,17 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
   consts, carry, xs_ = split_list(args, [num_consts, num_carry])
   _, y_avals = split_list(jaxpr.out_avals, [num_carry])
   num_trips, remainder = divmod(length, unroll)
-  if remainder:
-    if not reverse:
-      xs_, xs_rem = unzip2(_map(partial(_split_leading, num_trips*unroll), xs_))
-    else:
-      xs_rem, xs_ = unzip2(_map(partial(_split_leading, remainder), xs_))
-  xss = [lax.reshape(x, (num_trips, unroll, *x.shape[1:])) for x in xs_]
-  yss = _map(partial(_empty_array, (num_trips, unroll)), y_avals)
+  if unroll == 1:
+    xss = xs_
+    yss = _map(partial(_empty_array, (length,)), y_avals)
+  else:
+    if remainder:
+      if not reverse:
+        xs_, xs_rem = unzip2(_map(partial(_split_leading, num_trips*unroll), xs_))
+      else:
+        xs_rem, xs_ = unzip2(_map(partial(_split_leading, remainder), xs_))
+    xss = [lax.reshape(x, (num_trips, unroll, *x.shape[1:])) for x in xs_]
+    yss = _map(partial(_empty_array, (num_trips, unroll)), y_avals)
 
   def cond_fun(while_carry):
     i, _, _ = while_carry
@@ -413,6 +424,9 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
     return i_ + 1, carry, yss
   def inner(n, carry, xs):
     ys = []
+    if unroll == 1:
+      carry_y = eval_jaxpr_p.bind(*consts, *carry, *xs, jaxpr=jaxpr)
+      return split_list(carry_y, [num_carry])
     for i_ in range(n):
       i = n - i_ - 1 if reverse else i_
       x = [slicing.index_in_dim(x, i, keepdims=False) for x in xs]
@@ -425,7 +439,10 @@ def _scan_impl(*args, reverse, length, num_consts, num_carry, jaxpr, linear,
   if num_trips:
     i = lax._const(num_trips, 0)
     _, carry, yss = jax.lax.while_loop(cond_fun, body_fun, (i, carry, yss))
-  ys = [lax.reshape(ys, (num_trips * unroll, *ys.shape[2:])) for ys in yss]
+  if unroll != 1:
+    ys = [lax.reshape(ys, (num_trips * unroll, *ys.shape[2:])) for ys in yss]
+  else:
+    ys = yss
   if remainder:
     carry, ys_rem = inner(remainder, carry, xs_rem)
     ys = _map(_concat, ys, ys_rem) if not reverse else _map(_concat, ys_rem, ys)
@@ -661,12 +678,10 @@ def _scan_partial_eval(trace, *tracers, reverse, length, num_consts, num_carry,
 
 def _maybe_put(x):
   if isinstance(x, np.ndarray):
-    return dispatch._put_x(
-        x,
-        jax.sharding.SingleDeviceSharding(jax.local_devices(backend='cpu')[0]),
-        shaped_abstractify(x),
-        False,
-    )
+    aval = shaped_abstractify(x)
+    s = jax.sharding.SingleDeviceSharding(jax.local_devices(backend='cpu')[0])
+    result_handler = pxla.global_aval_to_result_handler(aval, s, False)
+    return result_handler(pxla.shard_args([s], [x]))
   else:
     return x
 
@@ -2354,25 +2369,12 @@ def _cumulative_reduction_primitive(name, reduce_fn, reduce_window_fn):
         mlir.cache_lowering(mlir.lower_fun(fn, multiple_results=False)),
         platform=platform)
 
-  if xla_extension_version >= 266:
-    # In XLA, there's a rewriter for an O(N^2) reduce-window implementation.
-    register_lowering(
-        partial(cumred_reduce_window_impl, reduce_window_fn)
-    )
-  else:
-    # Older XLA versions only have this rewrite for TPU.
-    register_lowering(
-        partial(cumred_reduce_window_impl, reduce_window_fn), 'tpu'
-    )
-    # Default for platforms not treated specially below.
-    register_lowering(partial(associative_scan, reduce_fn))
-
-    # On GPU, we choose between window reduction and associative scan
-    # based on the input size.
-    for platform in ['cuda', 'rocm']:
-      register_lowering(
-          partial(cumred_gpu_impl, reduce_window_fn, reduce_fn), platform
-      )
+  # For jax-metal, until reduce_window legalization is better supported.
+  register_lowering(partial(associative_scan, reduce_fn), 'METAL')
+  # In XLA, there's a rewriter for an O(N^2) reduce-window implementation.
+  register_lowering(
+      partial(cumred_reduce_window_impl, reduce_window_fn)
+  )
 
   return reducer_p
 

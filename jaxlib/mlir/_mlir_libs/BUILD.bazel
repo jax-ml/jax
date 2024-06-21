@@ -14,7 +14,6 @@
 
 load(
     "//jaxlib:jax.bzl",
-    "if_building_mosaic_gpu",
     "if_windows",
     "py_extension",
     "pybind_extension",
@@ -59,34 +58,6 @@ py_extension(
     ],
 )
 
-pybind_extension(
-    name = "_mlirExecutionEngine",
-    srcs = [
-        "@llvm-project//mlir:lib/Bindings/Python/ExecutionEngineModule.cpp",
-    ],
-    copts = COPTS,
-    linkopts = LINKOPTS,
-    pytype_srcs = [
-        ":_mlirExecutionEnginePyi",
-    ],
-    deps = [
-        ":jaxlib_mlir_capi_shared_library",
-        "@llvm-project//mlir:CAPIExecutionEngineHeaders",
-        "@llvm-project//mlir:MLIRBindingsPythonHeadersAndDeps",
-        "@pybind11",
-    ],
-)
-
-symlink_inputs(
-    name = "_mlirExecutionEnginePyi",
-    rule = filegroup,
-    symlinked_inputs = {"srcs": {
-        ".": [
-            "@llvm-project//mlir/python:ExecutionEnginePyIFiles",
-        ],
-    }},
-)
-
 py_extension(
     name = "_mlirDialectsGPU",
     srcs = [
@@ -118,7 +89,7 @@ py_extension(
 )
 
 py_extension(
-    name = "_mlirDialectsNvgpu",
+    name = "_mlirDialectsNVGPU",
     srcs = [
         "@llvm-project//mlir:lib/Bindings/Python/DialectNVGPU.cpp",
     ],
@@ -225,33 +196,6 @@ pybind_extension(
     ],
 )
 
-pybind_extension(
-    name = "_mosaic_gpu_ext",
-    srcs = ["mosaic_gpu_ext.cc"],
-    copts = [
-        "-fexceptions",
-        "-fno-strict-aliasing",
-    ],
-    linkopts = select({
-        "@xla//xla/python:use_jax_cuda_pip_rpaths": [
-            "-Wl,-rpath,$$ORIGIN/../../../nvidia/cuda_runtime/lib",
-        ],
-        "//conditions:default": [],
-    }),
-    visibility = ["//third_party/py/jax:__subpackages__"],
-    deps = [
-        ":jaxlib_mlir_capi_shared_library",
-        "//jaxlib:kernel_nanobind_helpers",
-        "//jaxlib/cuda:cuda_vendor",
-        "//jaxlib/mosaic/gpu:mlir_capi",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/synchronization",
-        "@nanobind",
-        "@xla//xla/service:custom_call_status",
-        "@xla//xla/tsl/cuda:cudart",
-    ],
-)
-
 symlink_inputs(
     name = "_mlir_libs",
     rule = py_library,
@@ -295,28 +239,25 @@ cc_library(
 py_extension(
     name = "register_jax_dialects",
     srcs = ["register_jax_dialects.cc"],
-    copts = COPTS + if_building_mosaic_gpu(["-DJAXLIB_MOSAIC_GPU"]),
+    copts = COPTS,
     linkopts = LINKOPTS,
     deps = [
         ":jaxlib_mlir_capi_shared_library",
         "@llvm-project//mlir:CAPIArithHeaders",
+        "@llvm-project//mlir:CAPIGPUHeaders",
         "@llvm-project//mlir:CAPIIRHeaders",
+        "@llvm-project//mlir:CAPILLVMHeaders",
         "@llvm-project//mlir:CAPIMathHeaders",
         "@llvm-project//mlir:CAPIMemRefHeaders",
+        "@llvm-project//mlir:CAPINVGPUHeaders",
+        "@llvm-project//mlir:CAPINVVMHeaders",
         "@llvm-project//mlir:CAPISCFHeaders",
         "@llvm-project//mlir:CAPITransformsHeaders",
         "@llvm-project//mlir:CAPIVectorHeaders",
         "@llvm-project//mlir:MLIRBindingsPythonHeaders",
         "@local_config_python//:headers",
         "@pybind11",
-    ] + if_building_mosaic_gpu([
-        ":jaxlib_mlir_capi_shims_hdrs",
-        "@llvm-project//mlir:CAPIGPUHeaders",
-        "@llvm-project//mlir:CAPINVGPUHeaders",
-        "@llvm-project//mlir:CAPINVVMHeaders",
-        "@llvm-project//mlir:CAPILLVMHeaders",
-        "@llvm-project//mlir:CAPIConversionHeaders",
-    ]),
+    ],
 )
 
 ##---------------------------------------------------------------------------##
@@ -404,9 +345,13 @@ cc_library(
     deps = [
         "//jaxlib/mosaic:tpu_dialect_capi_objects",
         "@llvm-project//mlir:CAPIArithObjects",
+        "@llvm-project//mlir:CAPIGPUObjects",
         "@llvm-project//mlir:CAPIIRObjects",
+        "@llvm-project//mlir:CAPILLVMObjects",
         "@llvm-project//mlir:CAPIMathObjects",
         "@llvm-project//mlir:CAPIMemRefObjects",
+        "@llvm-project//mlir:CAPINVGPUObjects",
+        "@llvm-project//mlir:CAPINVVMObjects",
         "@llvm-project//mlir:CAPISCFObjects",
         "@llvm-project//mlir:CAPISparseTensorObjects",
         "@llvm-project//mlir:CAPITransformsObjects",
@@ -420,16 +365,7 @@ cc_library(
         [
             "//jaxlib/triton:triton_dialect_capi_objects",
         ],
-    ) + if_building_mosaic_gpu([
-        ":jaxlib_mlir_capi_shims",
-        "//jaxlib/mosaic/gpu:mlir_capi_objects",
-        "@llvm-project//mlir:CAPIConversionObjects",
-        "@llvm-project//mlir:CAPIExecutionEngineObjects",
-        "@llvm-project//mlir:CAPIGPUObjects",
-        "@llvm-project//mlir:CAPILLVMObjects",
-        "@llvm-project//mlir:CAPINVGPUObjects",
-        "@llvm-project//mlir:CAPINVVMObjects",
-    ]),
+    ),
 )
 
 cc_binary(

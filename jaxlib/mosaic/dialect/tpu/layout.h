@@ -286,7 +286,8 @@ class VectorLayout {
     return {tiling_[0], tilesPerVreg(target_shape) * tiling_[1]};
   }
 
-  void insertImplicit(SmallVector<int64_t> &vec, int64_t value) const {
+  template <typename T>
+  void insertImplicit(SmallVector<T> &vec, T value) const {
     CHECK_GE(vec.size(), layout_rank());
     switch (implicit_dim_) {
       case ImplicitDim::kNone:
@@ -299,7 +300,8 @@ class VectorLayout {
     }
   }
 
-  void eraseImplicit(SmallVector<int64_t> &vec) const {
+  template <typename T>
+  void eraseImplicit(SmallVector<T> &vec) const {
     CHECK_GE(vec.size(), 2);
     switch (implicit_dim_) {
       case ImplicitDim::kNone:

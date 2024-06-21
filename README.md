@@ -400,8 +400,8 @@ Some standouts:
 
 | Hardware   | Instructions                                                                                                    |
 |------------|-----------------------------------------------------------------------------------------------------------------|
-| CPU        | `pip install -U "jax[cpu]"`                                                                                       |
-| NVIDIA GPU on x86_64 | `pip install -U "jax[cuda12]"`        |
+| CPU        | `pip install -U jax`                                                                                            |
+| NVIDIA GPU | `pip install -U "jax[cuda12]"`                                                                                  |
 | Google TPU | `pip install -U "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html`                 |
 | AMD GPU    | Use [Docker](https://hub.docker.com/r/rocm/jax) or [build from source](https://jax.readthedocs.io/en/latest/developer.html#additional-notes-for-building-a-rocm-jaxlib-for-amd-gpus). |
 | Apple GPU  | Follow [Apple's instructions](https://developer.apple.com/metal/jax/).                                          |
@@ -418,7 +418,8 @@ community-supported conda build, and answers to some frequently-asked questions.
 Multiple Google research groups develop and share libraries for training neural
 networks in JAX. If you want a fully featured library for neural network
 training with examples and how-to guides, try
-[Flax](https://github.com/google/flax).
+[Flax](https://github.com/google/flax). Check out the new [NNX](https://flax.readthedocs.io/en/latest/nnx/index.html) API for a
+simplified development experience.
 
 Google X maintains the neural network library
 [Equinox](https://github.com/patrick-kidger/equinox). This is used as the

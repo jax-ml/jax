@@ -30,16 +30,17 @@ os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 # pylint: disable=no-value-for-parameter
 
 
-config.update("jax_traceback_filtering", "off")
 config.parse_flags_with_absl()
 
 
+@jtu.with_config(jax_traceback_filtering="off")
 class DecodeAttentionTest(jtu.JaxTestCase):
 
   def setUp(self):
-    super().setUp()
     if not jtu.is_cuda_compute_capability_at_least("8.0"):
       self.skipTest("Fused attention only works on GPUs with capability >= sm80")
+
+    super().setUp()
 
   @parameterized.named_parameters(*[
       (

@@ -12,14 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
+# Note: import <name> as <name> is required for names to be exported.
+# See PEP 484 & https://github.com/google/jax/issues/7570
 
-import os
-
-from jax._src.lib import jaxlib
-
-
-def include_dir() -> str:
-  """Get the path to the directory containing header files bundled with jaxlib"""
-  jaxlib_dir = os.path.dirname(os.path.abspath(jaxlib.__file__))
-  return os.path.join(jaxlib_dir, "include")
+from jax._src.extend.ffi import (
+    ffi_lowering as ffi_lowering,
+    include_dir as include_dir,
+    pycapsule as pycapsule,
+)

@@ -66,6 +66,7 @@ _py_deps = {
     "cloudpickle": ["@pypi_cloudpickle//:pkg"],
     "colorama": ["@pypi_colorama//:pkg"],
     "epath": ["@pypi_etils//:pkg"],  # etils.epath
+    "filelock": ["@pypi_filelock//:pkg"],
     "flatbuffers": ["@pypi_flatbuffers//:pkg"],
     "hypothesis": ["@pypi_hypothesis//:pkg"],
     "importlib_metadata": get_importlib_metadata(),
@@ -207,12 +208,6 @@ def if_building_jaxlib(if_building, if_not_building = ["@pypi_jaxlib//:pkg"]):
         "//conditions:default": if_not_building,
     })
 
-def if_building_mosaic_gpu(if_building, if_not_building = []):
-    return select({
-        "//jax:enable_mosaic_gpu": if_building,
-        "//conditions:default": if_not_building,
-    })
-
 # buildifier: disable=function-docstring
 def jax_test(
         name,
@@ -221,6 +216,7 @@ def jax_test(
         env = {},
         shard_count = None,
         deps = [],
+        data = [],
         disable_backends = None,  # buildifier: disable=unused-variable
         backend_variant_args = {},  # buildifier: disable=unused-variable
         backend_tags = {},  # buildifier: disable=unused-variable
@@ -262,6 +258,7 @@ def jax_test(
                 "//jax:enable_build_cuda_plugin_from_source": ["//jax_plugins:gpu_plugin_only_test_deps"],
                 "//conditions:default": [],
             }),
+            data = data,
             shard_count = test_shards,
             tags = test_tags,
             main = main,

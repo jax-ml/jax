@@ -142,7 +142,7 @@ def rankdata(
   if nan_policy not in ["propagate", "omit", "raise"]:
     raise ValueError(
       f"Illegal nan_policy value {nan_policy!r}; expected one of "
-      "{'propoagate', 'omit', 'raise'}"
+      "{'propagate', 'omit', 'raise'}"
     )
   if nan_policy == "omit":
     raise NotImplementedError(

@@ -1271,7 +1271,7 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
     broadcast_dimensions = [i for i in range(len(new_shape)) if i != all_gather_dimension]
     x = hlo.broadcast_in_dim(
         mlir.aval_to_ir_type(x_aval.update(shape=new_shape)), x,
-        mlir.dense_int_array_v6(broadcast_dimensions))
+        mlir.dense_int_array(broadcast_dimensions))
   replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
                                     axis_index_groups)
   if is_spmd:
@@ -1540,10 +1540,10 @@ def psum_scatter(x, axis_name, *, scatter_dimension=0, axis_index_groups=None,
       When ``False`` (the default value), the size of dimension in
       ``scatter_dimension`` must match the size of axis ``axis_name`` (or the
       group size if ``axis_index_groups`` is given). After scattering the
-      all-reduce result along ``scatter_dimension``, the output is sequeezed by
+      all-reduce result along ``scatter_dimension``, the output is squeezed by
       removing ``scatter_dimension``, so the result has lower rank than the
       input. When ``True``, the size of dimension in ``scatter_dimension`` must
-      be dividible by the size of axis ``axis_name`` (or the group size if
+      be divisible by the size of axis ``axis_name`` (or the group size if
       ``axis_index_groups`` is given), and the ``scatter_dimension`` axis is
       preserved (so the result has the same rank as the input).
 

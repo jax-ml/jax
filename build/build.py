@@ -244,7 +244,7 @@ def write_bazelrc(*, remote_build,
                   rocm_amdgpu_targets, target_cpu_features,
                   wheel_cpu, enable_mkl_dnn, use_clang, clang_path,
                   clang_major_version, enable_cuda, enable_nccl, enable_rocm,
-                  build_gpu_plugin, enable_mosaic_gpu, python_version):
+                  build_gpu_plugin, python_version):
   tf_cuda_paths = []
 
   with open("../.jax_configure.bazelrc", "w") as f:
@@ -313,8 +313,6 @@ def write_bazelrc(*, remote_build,
       if use_clang:
         f.write("build --config=nvcc_clang\n")
         f.write(f"build --action_env=CLANG_CUDA_COMPILER_PATH={clang_path}\n")
-      if enable_mosaic_gpu:
-        f.write("build --config=mosaic_gpu")
     if enable_rocm:
       f.write("build --config=rocm\n")
       if not enable_nccl:
@@ -529,10 +527,6 @@ def main():
       help="hermetic python version, e.g., 3.10")
   add_boolean_argument(
       parser,
-      "enable_mosaic_gpu",
-      help_str="Should we build with Mosaic GPU? VERY EXPERIMENTAL.")
-  add_boolean_argument(
-      parser,
       "configure_only",
       default=False,
       help_str="If true, writes a .bazelrc file but does not build jaxlib.")
@@ -652,7 +646,6 @@ def main():
       enable_nccl=args.enable_nccl,
       enable_rocm=args.enable_rocm,
       build_gpu_plugin=args.build_gpu_plugin,
-      enable_mosaic_gpu=args.enable_mosaic_gpu,
       python_version=python_version,
   )
 

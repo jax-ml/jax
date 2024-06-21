@@ -495,6 +495,7 @@ jax.numpy.linalg
   tensordot
   tensorinv
   tensorsolve
+  trace
   vector_norm
   vecdot
 

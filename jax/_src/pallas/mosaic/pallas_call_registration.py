@@ -21,6 +21,7 @@ import warnings
 
 import jax
 from jax import core as jax_core
+from jax._src import core as jax_src_core
 from jax._src import sharding_impls
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
@@ -35,7 +36,6 @@ def pallas_call_tpu_lowering_rule(
     ctx: mlir.LoweringRuleContext, *in_nodes,
     jaxpr: jax_core.Jaxpr,
     name: str,
-    which_linear: tuple[bool, ...],
     grid_mapping: core.GridMapping,
     input_output_aliases: tuple[tuple[int, int], ...],
     in_shapes: tuple[jax.ShapeDtypeStruct, ...],
@@ -48,7 +48,6 @@ def pallas_call_tpu_lowering_rule(
     return mlir.lower_fun(pallas_call_p.impl, multiple_results=True)(
         ctx, *in_nodes, jaxpr=jaxpr, name=name, out_shapes=out_shapes,
         in_shapes=in_shapes,
-        which_linear=which_linear,
         interpret=interpret, debug=debug,
         input_output_aliases=input_output_aliases,
         grid_mapping=grid_mapping,
@@ -78,9 +77,6 @@ def pallas_call_tpu_lowering_rule(
     mlir_ctx.load_all_available_dialects()
     tpu.register_dialect(mlir_ctx)
     dimension_semantics = mosaic_params.get("dimension_semantics", None)
-    kernel_regeneration_metadata = mosaic_params.get(
-        "kernel_regeneration_metadata"
-    )
     mosaic_module, extra_args = lowering.lower_jaxpr_to_module(
         mlir_ctx, grid_mapping, in_shapes, out_shapes, jaxpr,
         dimension_semantics=dimension_semantics, mesh=mesh)
@@ -93,20 +89,29 @@ def pallas_call_tpu_lowering_rule(
       for a in input_output_aliases
   )
   out_avals = [jax_core.ShapedArray(s.shape, s.dtype) for s in out_shapes]
+
+  # Replace in_avals to physical avals.
+  # This step is required for mapping logical types to physical types.
+  # (e.g. PRNG key -> uint32[2])
+  physical_avals = [jax_src_core.physical_aval(aval) for aval in ctx.avals_in]
+  ctx = ctx.replace(avals_in=physical_avals)
+
   def _lower_fun(*args):
     # Dynamic grid bounds have to go at the front.
     dynamic_grid_args, args = args[:num_dyn_bounds], args[num_dyn_bounds:],
     return mosaic.as_tpu_kernel(
         mosaic_module,
         out_avals,
-        backend=ctx.module_context.backend,
+        backend="tpu",
         kernel_name=name,
-        kernel_regeneration_metadata=kernel_regeneration_metadata,
-        cost_estimate=mosaic_params.get("cost_estimate", None),
-        vmem_limit_bytes=mosaic_params.get("vmem_limit_bytes", None),
-        flags=mosaic_params.get("flags", None),
-        allow_input_fusion=mosaic_params.get("allow_input_fusion", None),
+        cost_estimate=mosaic_params.get("cost_estimate"),
+        vmem_limit_bytes=mosaic_params.get("vmem_limit_bytes"),
+        flags=mosaic_params.get("flags"),
+        allow_input_fusion=mosaic_params.get("allow_input_fusion"),
         input_output_aliases=input_output_aliases,
+        internal_scratch_in_bytes=mosaic_params.get(
+            "internal_scratch_in_bytes"
+        ),
     )(
         *dynamic_grid_args,
         *extra_args,

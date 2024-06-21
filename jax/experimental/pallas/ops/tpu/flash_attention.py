@@ -1099,7 +1099,7 @@ def _flash_attention_bwd_dkv(
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             grid=grid,
-            in_specs=in_specs,  # type: ignore
+            in_specs=in_specs,
             out_specs=out_specs,
             scratch_shapes=scratch_shapes,
         ),
@@ -1444,8 +1444,8 @@ def _flash_attention_bwd_dq(
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             grid=grid,
-            in_specs=in_specs,  # type: ignore
-            out_specs=out_specs,  # type: ignore
+            in_specs=in_specs,
+            out_specs=out_specs,
             scratch_shapes=scratch_shapes,
         ),
         out_shape=out_shapes,

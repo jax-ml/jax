@@ -653,7 +653,7 @@ def _xla_shard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
   axes = {name: i for i, ns in names.items() for name in ns}
   ns = _make_scoped_manual_sharding(ctx, mesh, axes)
   if dtypes.issubdtype(aval_in.dtype, dtypes.extended):
-    ns = aval_in.dtype._rules.physical_sharding(aval_in, ns)
+    ns = sharding_impls.physical_sharding(aval_in, ns)
     aval_in = core.physical_aval(aval_in)
   shard_proto = ns._to_xla_hlo_sharding(aval_in.ndim).to_proto()
   unspecified = set(range(aval_in.ndim)) if auto else set()
@@ -667,7 +667,7 @@ def _xla_unshard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
   axes = {name: i for i, ns in names.items() for name in ns}
   ns = _make_scoped_manual_sharding(ctx, mesh, axes)
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
-    ns = aval_out.dtype._rules.physical_sharding(aval_out, ns)
+    ns = sharding_impls.physical_sharding(aval_out, ns)
     aval_out = core.physical_aval(aval_out)
   unspecified = set(range(aval_out.ndim)) if auto else set()
   manual_proto = pxla.manual_proto(aval_in, frozenset(mesh.axis_names) - auto, mesh)
@@ -896,13 +896,13 @@ def _debug_callback_eager_rule(mesh, *args, callback: Callable[..., Any],
   return []
 eager_rules[debugging.debug_callback_p] = _debug_callback_eager_rule
 
-def _device_put_eager_rule(mesh, x, *, src, device):
-  del mesh, src
-  if device is None:
-    return x
-  else:
-    raise ValueError("device_put with explicit device not allowed within "
-                     f"shard_map-decorated functions, but got device {device}")
+def _device_put_eager_rule(mesh, *xs, srcs, devices):
+  del mesh, srcs
+  for device in devices:
+    if device is not None:
+      raise ValueError("device_put with explicit device not allowed within "
+                       f"shard_map-decorated functions, but got device {device}")
+  return xs
 eager_rules[dispatch.device_put_p] = _device_put_eager_rule
 
 # New primitives for efficient transposition
@@ -1145,8 +1145,8 @@ register_norewrite(callback.io_callback_p)
 
 
 @register_check(dispatch.device_put_p)
-def _device_put_rule(mesh, x, **_):
-  return x
+def _device_put_rule(mesh, *xs, **_):
+  return list(xs)
 register_norewrite(dispatch.device_put_p)
 
 
@@ -1274,6 +1274,9 @@ def _shard_map_batch(
                    for ax in names} for names, d in zip(in_names, in_dims)]
   spmd_axis_name = trace.spmd_axis_name
   if spmd_axis_name is not None:
+    used = {n for names in in_names for ns in names.values() for n in ns}
+    if set(spmd_axis_name) & used:
+      raise ValueError("vmap spmd_axis_name cannot appear in shard_map in_specs")
     new_in_names = [{**ns, d:spmd_axis_name} if d is not batching.not_mapped  # type: ignore
                     else ns for ns, d in zip(new_in_names, in_dims)]
   @as_hashable_function(closure=out_names_thunk)
@@ -1306,6 +1309,9 @@ def _batch_out_names(spmd_axis_name, dims, out_names):
   out_names_ = [{ax + (d is not batching.not_mapped and d <= ax): names[ax]
                   for ax in names} for names, d in zip(out_names, dims)]
   if spmd_axis_name is not None:
+    used = {n for names in out_names for ns in names.values() for n in ns}
+    if set(spmd_axis_name) & used:
+      raise ValueError("vmap spmd_axis_name cannot appear in shard_map out_specs")
     out_names_ = [{**ns, d:spmd_axis_name} if d is not batching.not_mapped
                   else ns for ns, d in zip(out_names_, dims)]
   return out_names_

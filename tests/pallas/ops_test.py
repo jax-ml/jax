@@ -26,6 +26,9 @@ from jax import lax
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
 
+# Import mosaic for flag definitions
+from jax.experimental import mosaic as _  # noqa: F401
+
 
 jax.config.parse_flags_with_absl()
 
@@ -34,7 +37,6 @@ class OpsTest(jtu.JaxTestCase):
   INTERPRET = False
 
   def setUp(self):
-    super().setUp()
     if jax.config.x64_enabled:
       self.skipTest("Only works in 32-bit")
     if not self.INTERPRET:
@@ -43,6 +45,8 @@ class OpsTest(jtu.JaxTestCase):
       if (jtu.test_device_matches(["cuda"]) and
           not jtu.is_cuda_compute_capability_at_least("8.0")):
         self.skipTest("Only works on GPUs with capability >= sm80")
+
+    super().setUp()
 
   @classmethod
   def pallas_call(cls, *args, **kwargs):

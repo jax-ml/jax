@@ -1,4 +1,3 @@
-from collections.abc import Callable
 # Copyright 2024 The JAX Authors. All Rights Reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,10 +13,12 @@ from collections.abc import Callable
 # limitations under the License.
 # ==============================================================================
 
+from collections.abc import Callable
 import contextlib
 import ctypes
 import dataclasses
 import functools
+import itertools
 import os
 import pathlib
 import subprocess
@@ -40,7 +41,6 @@ from jaxlib.mlir.dialects import llvm
 from jaxlib.mlir.dialects import memref
 from jaxlib.mlir.dialects import nvgpu
 from jaxlib.mlir.dialects import nvvm
-from jaxlib.mlir.execution_engine import ExecutionEngine
 from jaxlib.mlir.passmanager import PassManager
 import numpy as np
 
@@ -68,34 +68,10 @@ TMA_DESCRIPTOR_ALIGNMENT = 64
 c = mgpu.c  # This is too common to fully qualify.
 
 
-xla_client.register_custom_call_target(
-    "mosaic_gpu",
-    mosaic_gpu_lib._mosaic_gpu_ext._custom_call_capsule(),
-    platform="CUDA",
-)
-mosaic_gpu_lib._mosaic_gpu_ext.register_passes()
-
-
-mosaic_gpu_dump_ptx = config.define_bool_state(
-    name="mosaic_gpu_dump_ptx",
-    default=config.bool_env("MOSAIC_GPU_DUMP_PTX", False),
-    help="If set, prints the kernel PTX",
-)
-mosaic_gpu_dump_ptxas = config.define_bool_state(
-    name="mosaic_gpu_dump_ptxas",
-    default=config.bool_env("MOSAIC_GPU_DUMP_PTXAS", False),
-    help="If set, prints the ptxas verbose output",
-)
-mosaic_gpu_dump_sass = config.define_bool_state(
-    name="mosaic_gpu_dump_sass",
-    default=config.bool_env("MOSAIC_GPU_DUMP_SASS", False),
-    help="If set, prints the kernel SASS",
-)
-mosaic_gpu_print_after_all = config.define_bool_state(
-    name='mosaic_gpu_print_after_all',
-    default=config.bool_env('MOSAIC_GPU_PRINT_AFTER_ALL', False),
-    help="If set, prints the kernel module after every pass",
-)
+RUNTIME_PATH = pathlib.Path(mosaic_gpu_lib._mosaic_gpu_ext.__file__).parent / "libmosaic_gpu_runtime.so"
+if RUNTIME_PATH.exists():
+  # Set this so that the custom call can find it
+  os.environ["MOSAIC_GPU_RUNTIME_LIB_PATH"] = str(RUNTIME_PATH)
 
 
 mosaic_gpu_p = jax.core.Primitive("mosaic_gpu_p")
@@ -107,30 +83,12 @@ def _mosaic_gpu_abstract_eval(*_, module, out_types, gmem_scratch_bytes):
   del module, gmem_scratch_bytes  # Unused.
   return [jax._src.core.ShapedArray(t.shape, t.dtype) for t in out_types]
 
+# TODO(apaszke): Implement a proper system for managing kernel lifetimes
+kernel_idx = itertools.count()
 
 def _mosaic_gpu_lowering_rule(ctx, *args, module, out_types, gmem_scratch_bytes):
   del out_types  # Unused.
-  runtime_path = (
-      pathlib.Path(mosaic_gpu_lib._mosaic_gpu_ext.__file__).parent.parent.parent
-      / "mosaic" / "gpu" / "libmosaic_gpu_runtime.so"
-  )
-  shared_libs = [str(runtime_path)] if runtime_path.exists() else []
-  engine = ExecutionEngine(
-      module, opt_level=3, shared_libs=shared_libs, enable_object_dump=False
-  )
-  ctx.module_context.add_keepalive(engine)
-  launch_func_ptr = ctypes.cast(engine.lookup("main"), ctypes.c_void_p)
-  init_func_ptr = ctypes.cast(engine.lookup("main_init"), ctypes.c_void_p)
-  # Make sure we won't get accidental hits due to address reuse.
-  mosaic_gpu_lib._mosaic_gpu_ext.invalidate_cache(init_func_ptr.value)
-
-  trampoline_args = (ctypes.c_void_p * 2)()
-  trampoline_args[0] = launch_func_ptr
-  trampoline_args[1] = init_func_ptr
-  ctx.module_context.add_keepalive(trampoline_args)
-  ptr_bytes = ctypes.cast(trampoline_args, ctypes.c_void_p).value.to_bytes(
-      8, byteorder="little"
-  )  # pytype: disable=attribute-error
+  idx_bytes = next(kernel_idx).to_bytes(8, byteorder="little")
   op = mlir.custom_call(
       "mosaic_gpu",
       result_types=[
@@ -140,7 +98,8 @@ def _mosaic_gpu_lowering_rule(ctx, *args, module, out_types, gmem_scratch_bytes)
           ),
       ],
       operands=args,
-      backend_config=ptr_bytes,
+      backend_config=idx_bytes
+      + module.operation.get_asm(binary=True, enable_debug_info=True),
   )
   return op.results[:-1]  # Skip the scratch space.
 
@@ -241,7 +200,6 @@ OnDeviceProfiler = profiler.OnDeviceProfiler
 @dataclasses.dataclass()
 class LaunchContext:
   launch_op: gpu.LaunchOp
-  gmem_scratch_ptr: ir.Value
   profiler: OnDeviceProfiler | None = None
   next_scratch_offset: int = 0
   host_scratch_init: list[Callable[[ir.Value], None]] = dataclasses.field(
@@ -281,14 +239,21 @@ class LaunchContext:
     alloc_base = self.next_scratch_offset
     self.next_scratch_offset += size
     def host_init_wrapped(host_ptr):
-      with ir.InsertionPoint(self.launch_op):
-        host_init(
-            llvm.getelementptr(ptr_ty, host_ptr, [], [alloc_base], i8)
-        )
+      host_init(
+          llvm.getelementptr(ptr_ty, host_ptr, [], [alloc_base], i8)
+      )
     self.host_scratch_init.append(host_init_wrapped)
+
     with ir.InsertionPoint.at_block_begin(self.launch_op.body.blocks[0]):
+      ptr_ty = ir.Type.parse("!llvm.ptr")
+      const_ptr_ty = ir.Type.parse("!llvm.ptr<4>")
+      gmem_scratch_ptr = llvm.call_intrinsic(
+          ptr_ty,
+          "llvm.nvvm.ptr.constant.to.gen.p0.p4",
+          [llvm.mlir_addressof(const_ptr_ty, "global_scratch")],
+      )
       return device_init(llvm.getelementptr(
-          ptr_ty, self.gmem_scratch_ptr, [], [alloc_base], i8
+          ptr_ty, gmem_scratch_ptr, [], [alloc_base], i8
       ))
 
   def _get_tma_desc(
@@ -317,43 +282,43 @@ class LaunchContext:
           ref = t.apply(ref)
         ref_ty = ir.MemRefType(ref.type)
 
-        i64 = ir.IntegerType.get_signless(64)
-        ptr_ty = ir.Type.parse("!llvm.ptr")
-        def init_tma_desc(host_ptr):
-          _, offset, *sizes_and_strides = memref.extract_strided_metadata(ref)
-          aligned_ptr_idx = memref.extract_aligned_pointer_as_index(ref)
-          as_i64 = lambda i: arith.index_cast(i64, i)
-          alloc_ptr = llvm.inttoptr(ptr_ty, as_i64(aligned_ptr_idx))
-          llvm_dyn = -2147483648  # TODO(apaszke): Improve the MLIR bindings...
-          base_ptr = llvm.getelementptr(
-              ptr_ty, alloc_ptr, [as_i64(offset)], [llvm_dyn], ref_ty.element_type,
-          )
-          rank = ref_ty.rank
-          assert rank * 2 == len(sizes_and_strides)
-          args = [
-              host_ptr,
-              base_ptr,
-              c(utils.bytewidth(ref_ty.element_type), i64),
-              c(rank, i64),
-              utils.pack_array([as_i64(i) for i in sizes_and_strides[:rank]]),
-              utils.pack_array([as_i64(i) for i in sizes_and_strides[rank:]]),
-              c(0 if swizzle is None else swizzle, i64),
-              utils.pack_array([c(v, i64) for v in transformed_slice_shape]),
-          ]
-          func.call([], "mosaic_gpu_init_tma_desc", args)
-        def cast_tma_desc(device_ptr):
-          # TODO(apaszke): Investigate why prefetching can cause launch failures
-          # nvvm.prefetch_tensormap(device_ptr)
-          return builtin.unrealized_conversion_cast(
-              [tensor_map_ty], [device_ptr]
-          )
-        tma_desc = self._alloc_scratch(
-            TMA_DESCRIPTOR_BYTES,
-            alignment=TMA_DESCRIPTOR_ALIGNMENT,
-            host_init=init_tma_desc,
-            device_init=cast_tma_desc,
+      i64 = ir.IntegerType.get_signless(64)
+      ptr_ty = ir.Type.parse("!llvm.ptr")
+      def init_tma_desc(host_ptr):
+        _, offset, *sizes_and_strides = memref.extract_strided_metadata(ref)
+        aligned_ptr_idx = memref.extract_aligned_pointer_as_index(ref)
+        as_i64 = lambda i: arith.index_cast(i64, i)
+        alloc_ptr = llvm.inttoptr(ptr_ty, as_i64(aligned_ptr_idx))
+        llvm_dyn = -2147483648  # TODO(apaszke): Improve the MLIR bindings...
+        base_ptr = llvm.getelementptr(
+            ptr_ty, alloc_ptr, [as_i64(offset)], [llvm_dyn], ref_ty.element_type,
         )
-        self.tma_descriptors[tma_desc_key] = tma_desc
+        rank = ref_ty.rank
+        assert rank * 2 == len(sizes_and_strides)
+        args = [
+            host_ptr,
+            base_ptr,
+            c(utils.bytewidth(ref_ty.element_type), i64),
+            c(rank, i64),
+            utils.pack_array([as_i64(i) for i in sizes_and_strides[:rank]]),
+            utils.pack_array([as_i64(i) for i in sizes_and_strides[rank:]]),
+            c(0 if swizzle is None else swizzle, i64),
+            utils.pack_array([c(v, i64) for v in transformed_slice_shape]),
+        ]
+        func.call([], "mosaic_gpu_init_tma_desc", args)
+      def cast_tma_desc(device_ptr):
+        # TODO(apaszke): Investigate why prefetching can cause launch failures
+        # nvvm.prefetch_tensormap(device_ptr)
+        return builtin.unrealized_conversion_cast(
+            [tensor_map_ty], [device_ptr]
+        )
+      tma_desc = self._alloc_scratch(
+          TMA_DESCRIPTOR_BYTES,
+          alignment=TMA_DESCRIPTOR_ALIGNMENT,
+          host_init=init_tma_desc,
+          device_init=cast_tma_desc,
+      )
+      self.tma_descriptors[tma_desc_key] = tma_desc
     return tma_desc
 
   def async_copy(
@@ -430,7 +395,11 @@ class LaunchContext:
     # nvgpu TMA instructions expect reversed indices...
     rev_dyn_based_indices = reversed(dyn_base_indices)
 
-    uniform_ctx = mgpu.once if uniform else contextlib.nullcontext
+    uniform_ctx = (
+        functools.partial(mgpu.single_thread, per_block=False)
+        if uniform
+        else contextlib.nullcontext
+    )
 
     if gmem_ref is src_ref:
       with uniform_ctx():
@@ -498,7 +467,6 @@ def _launch(
     token,
     grid,
     block,
-    gmem_scratch_ptr,
     smem_buffers: ShapeTree | Union[ShapeTree],
     profiler_spec: profiler.ProfilerSpec | None = None,
     maybe_prof_buffer: ir.Value | None = None,
@@ -523,7 +491,7 @@ def _launch(
 
   smem_bytes = compute_smem_bytes
   if profiler_spec is not None:
-    smem_bytes += profiler_spec.smem_bytes(grid)
+    smem_bytes += profiler_spec.smem_bytes(block=block)
 
   # TODO(cperivol): Query the shared memory size programmatically.
   if smem_bytes > 228 * 1024:
@@ -549,7 +517,7 @@ def _launch(
     if profiler_spec:
       prof_smem = memref.view(
           ir.MemRefType.get(
-              (profiler_spec.smem_i32_elements(grid=grid),),
+              (profiler_spec.smem_i32_elements(block=block),),
               i32, memory_space=smem,
           ),
           dynamic_smem, c(compute_smem_bytes, index), [],
@@ -565,9 +533,9 @@ def _launch(
     else:
       smem_ref_tree: RefTree = smem_ref_trees[0] if smem_ref_trees else []
 
-    yield LaunchContext(launch_op, gmem_scratch_ptr, prof), smem_ref_tree
+    yield LaunchContext(launch_op, prof), smem_ref_tree
     if prof is not None:
-      prof.finalize(grid=grid)
+      prof.finalize(grid=grid, block=block)
     gpu.terminator()
 
 
@@ -583,6 +551,7 @@ def _lower_as_gpu_kernel(
   ptr_ty = ir.Type.parse("!llvm.ptr")
   token_ty = ir.Type.parse("!gpu.async.token")
   i8 = ir.IntegerType.get_signless(8)
+  i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
 
   def _shape_to_ref_ty(shape: jax.ShapeDtypeStruct) -> ir.MemRefType:
@@ -598,30 +567,32 @@ def _lower_as_gpu_kernel(
     unwrap_output_tuple = True
   out_ref_tys = [_shape_to_ref_ty(t) for t in out_shape]
   if prof_spec is not None:
-    out_shape = (*out_shape, prof_spec.jax_buffer_type)
-    out_ref_tys.append(prof_spec.mlir_buffer_type)
+    out_shape = (*out_shape, prof_spec.jax_buffer_type(grid, block))
+    out_ref_tys.append(prof_spec.mlir_buffer_type(grid, block))
 
   module = ir.Module.create()
   with ir.InsertionPoint(module.body):
     _declare_runtime_functions()
     gmem_scratch_bytes = 0
-    @func.FuncOp.from_py_func(ptr_ty, ptr_ty)
-    def main(token_ptr, buffers):
+    global_scratch = llvm.GlobalOp(
+        ir.Type.parse("!llvm.array<0 x i8>"),  # We don't know the shape yet.
+        "global_scratch",
+        ir.Attribute.parse("#llvm.linkage<external>"),
+        addr_space=ir.IntegerAttr.get(i32, 4),  # GPU constant memory.
+    )
+    @func.FuncOp.from_py_func(ptr_ty, ptr_ty, ptr_ty)
+    def main(token_ptr, buffers, gmem_scratch_ptr):
       nonlocal gmem_scratch_bytes
       token = builtin.unrealized_conversion_cast([token_ty], [token_ptr])
       arg_refs = []
-      i = -1
       for i, ref_ty in enumerate([*in_ref_tys, *out_ref_tys]):
         ptr = llvm.LoadOp(ptr_ty, llvm.GEPOp(ptr_ty, buffers, [], [i], ptr_ty))
         arg_refs.append(utils.ptr_as_memref(ptr, ir.MemRefType(ref_ty)))
-      gmem_scratch_ptr = llvm.LoadOp(
-          ptr_ty, llvm.GEPOp(ptr_ty, buffers, [], [i + 1], ptr_ty)
-      )
       in_refs = arg_refs[:len(in_ref_tys)]
       out_refs = arg_refs[len(in_ref_tys):]
       prof_buffer = out_refs.pop() if prof_spec is not None else None
       with _launch(
-          token, grid, block, gmem_scratch_ptr, smem_scratch_shape,
+          token, grid, block, smem_scratch_shape,
           prof_spec, prof_buffer
       ) as (launch_ctx, smem_refs):
         body(launch_ctx, *in_refs, *out_refs, smem_refs)
@@ -633,6 +604,9 @@ def _lower_as_gpu_kernel(
         host_scratch_ptr = llvm.alloca(ptr_ty, c(gmem_scratch_bytes, i64), i8)
         for init_callback in launch_ctx.host_scratch_init:
           init_callback(host_scratch_ptr)
+        global_scratch.global_type = ir.TypeAttr.get(
+            ir.Type.parse("!llvm.array<" + str(gmem_scratch_bytes) + " x i8>")
+        )
         func.call(
             [],
             "mosaic_gpu_memcpy_async_h2d",
@@ -644,14 +618,10 @@ def _lower_as_gpu_kernel(
             ],
         )
     main.func_op.attributes["llvm.emit_c_interface"] = ir.UnitAttr.get()
+  sym_tab = ir.SymbolTable(module.operation)
+  sym_tab.insert(main.func_op)
+  sym_tab.insert(global_scratch)
   module.operation.verify()
-
-  dump_low_level(module)
-
-  pass_manager = _get_mosaic_gpu_pipeline("fatbin")
-  if mosaic_gpu_print_after_all.value:
-    pass_manager.enable_ir_printing()
-  pass_manager.run(module.operation)
 
   return module, out_shape, gmem_scratch_bytes, unwrap_output_tuple
 
@@ -705,7 +675,7 @@ def as_gpu_kernel(
         )
         try:
           with open(out_file, "x") as f:
-            prof_spec.dump(prof_buffer, f)
+            prof_spec.dump(prof_buffer, f, grid=grid, block=block)
         except FileExistsError:
           pass  # TODO: Retry
       jax.debug.callback(dump_profile, prof_buffer)
@@ -733,82 +703,3 @@ def _declare_runtime_functions():
   func.FuncOp(
       "mosaic_gpu_memcpy_async_h2d", memcpy_async_type, visibility="private"
   )
-
-
-def dump_low_level(module):
-  dump_ptx = mosaic_gpu_dump_ptx.value
-  dump_ptxas = mosaic_gpu_dump_ptxas.value
-  dump_sass = mosaic_gpu_dump_sass.value
-  if not any([dump_ptx, dump_ptxas, dump_sass]):
-    return
-  module = ir.Module.parse(
-      module.operation.get_asm(binary=True, enable_debug_info=True)
-  )
-  pm = _get_mosaic_gpu_pipeline("isa")
-  pm.run(module.operation)
-
-  for op in module.body:
-    if op.OPERATION_NAME == "gpu.binary":
-      objects = ir.ArrayAttr(op.objects)
-      if len(objects) != 1:
-        raise NotImplementedError("Expected a single object")
-      obj = str(objects[0])
-      start = obj.find('assembly = "') + len('assembly = "')
-      end = obj.find('"', start)
-      ptx = obj[start:end]
-      ptx = ptx.replace("\\09", "\t").replace("\\0A", "\n")[:-3]
-      if dump_ptx:
-        print(ptx)
-      if dump_ptxas or dump_sass:
-        with tempfile.TemporaryDirectory() as tmp:
-          ptx_path = os.path.join(tmp, "kernel.ptx")
-          with open(ptx_path, "w") as f:
-            f.write(ptx)
-          elf_path = os.path.join(tmp, 'kernel.o')
-          v_flag = "-v" if dump_ptxas else ""
-          ptxas_flags = f"{v_flag} --opt-level 3 --gpu-name sm_90a"
-          ptxas_out = subprocess.check_output(
-              f"{PTXAS_PATH} {ptxas_flags} --output-file {elf_path} {ptx_path}",
-              stderr=subprocess.STDOUT,
-              shell=True,
-          )
-          if dump_ptxas:
-            print(ptxas_out.decode())
-          if dump_sass:
-            sass = subprocess.check_output(
-                f"{NVDISASM_PATH} -ndf -c {elf_path}",
-                stderr=subprocess.STDOUT,
-                shell=True,
-            )
-            print(sass.decode())
-
-
-def _get_mosaic_gpu_pipeline(kernel_format) -> PassManager:
-  passes = [
-      "convert-nvgpu-to-nvvm",
-      "gpu-kernel-outlining{data-layout-str=}",
-      "convert-vector-to-scf{full-unroll=false lower-tensors=false target-rank=1}",
-      "convert-scf-to-cf",
-      "convert-nvvm-to-llvm",
-      "expand-strided-metadata",
-      "nvvm-attach-target{O=3 chip=sm_90a fast=false features=+ptx80 ftz=false  module= triple=nvptx64-nvidia-cuda}",
-      "lower-affine",
-      "convert-arith-to-llvm{index-bitwidth=0}",
-      "convert-index-to-llvm{index-bitwidth=64}",
-      "canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=true test-convergence=false top-down=true}",
-      "cse",
-      "gpu.module(strip-debuginfo)",
-      "gpu.module(convert-gpu-to-nvvm{has-redux=false index-bitwidth=64 use-bare-ptr-memref-call-conv=false})",
-      "gpu.module(canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=true test-convergence=false top-down=true})",
-      "gpu.module(cse)",
-      "gpu.module(reconcile-unrealized-casts)",
-      "gpu-to-llvm{gpu-binary-annotation=gpu.binary use-bare-pointers-for-host=false use-bare-pointers-for-kernels=false}",
-      "gpu-module-to-binary{format=" + kernel_format + "}",
-      "convert-math-to-llvm{approximate-log1p=true}",
-      "canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=true test-convergence=false top-down=true}",
-      "cse",
-      "reconcile-unrealized-casts",
-      *(["gpu-launch-lowering"] if kernel_format in {"bin", "fatbin"} else []),
-      "convert-func-to-llvm{index-bitwidth=0 use-bare-ptr-memref-call-conv=false}",
-  ]
-  return PassManager.parse(f"builtin.module({','.join(passes)})")

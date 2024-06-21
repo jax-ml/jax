@@ -17,7 +17,6 @@
 load("//jaxlib:symlink_files.bzl", "symlink_files")
 load(
     "//jaxlib:jax.bzl",
-    "if_building_mosaic_gpu",
     "py_library_providing_imports_info",
     "pybind_extension",
     "pytype_library",
@@ -40,7 +39,6 @@ genrule(
 py_library_providing_imports_info(
     name = "jaxlib",
     srcs = [
-        "ducc_fft.py",
         "gpu_common_utils.py",
         "gpu_linalg.py",
         "gpu_prng.py",
@@ -55,21 +53,25 @@ py_library_providing_imports_info(
         ":xla_client",
         ":xla_extension_py",
     ],
+    data = [":ffi_headers"],
     lib_rule = pytype_library,
     deps = [
         ":cpu_feature_guard",
         ":utils",
-        "//jaxlib/cpu:_ducc_fft",
         "//jaxlib/cpu:_lapack",
         "//jaxlib/mlir",
         "//jaxlib/mlir:arithmetic_dialect",
         "//jaxlib/mlir:builtin_dialect",
         "//jaxlib/mlir:chlo_dialect",
         "//jaxlib/mlir:func_dialect",
+        "//jaxlib/mlir:gpu_dialect",
         "//jaxlib/mlir:ir",
+        "//jaxlib/mlir:llvm_dialect",
         "//jaxlib/mlir:math_dialect",
         "//jaxlib/mlir:memref_dialect",
         "//jaxlib/mlir:mhlo_dialect",
+        "//jaxlib/mlir:nvgpu_dialect",
+        "//jaxlib/mlir:nvvm_dialect",
         "//jaxlib/mlir:pass_manager",
         "//jaxlib/mlir:scf_dialect",
         "//jaxlib/mlir:sparse_tensor_dialect",
@@ -78,7 +80,7 @@ py_library_providing_imports_info(
         "//jaxlib/mosaic",
         "//jaxlib/triton",
         "@xla//xla/python:xla_extension",
-    ] + if_building_mosaic_gpu(["//jaxlib/mosaic/gpu:mosaic_gpu"]),
+    ],
 )
 
 symlink_files(
@@ -92,6 +94,13 @@ symlink_files(
     name = "xla_client",
     srcs = ["@xla//xla/python:xla_client"],
     dst = ".",
+    flatten = True,
+)
+
+symlink_files(
+    name = "ffi_headers",
+    srcs = ["@xla//xla/ffi/api:all_headers"],
+    dst = "include/xla/ffi/api",
     flatten = True,
 )
 
@@ -191,7 +200,6 @@ pybind_extension(
         "@nanobind",
         "//jaxlib:kernel_nanobind_helpers",
         "@xla//third_party/python_runtime:headers",
-        "@xla//xla:status",
         "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla:util",
         "@xla//xla/ffi/api:c_api",

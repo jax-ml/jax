@@ -191,11 +191,11 @@ if CAN_USE_HYPOTHESIS:
   class GroupedMatmulTest(jtu.JaxTestCase):
 
     def setUp(self):
-      super().setUp()
-      self.key = jax.random.PRNGKey(1234)
-
       if not jtu.test_device_matches(["tpu"]):
         self.skipTest("Test requires TPU device.")
+
+      super().setUp()
+      self.key = jax.random.PRNGKey(1234)
 
     def assert_allclose(
         self,

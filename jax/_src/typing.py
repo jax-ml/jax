@@ -34,6 +34,7 @@ import enum
 from jax._src.basearray import (
     Array as Array,
     ArrayLike as ArrayLike,
+    StaticScalar as StaticScalar,
 )
 
 DType = np.dtype

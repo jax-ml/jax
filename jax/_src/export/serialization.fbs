@@ -20,7 +20,7 @@
 //  3.  Add back the licence comment at the start
 //
 
-namespace jax.experimental.export.serialization;
+namespace jax.export.serialization;
 
 enum PyTreeDefKind: byte {
   leaf = 0,
@@ -38,7 +38,7 @@ table PyTreeDef {
 
 enum AbstractValueKind: byte {
   shapedArray = 0,
-  abstractToken = 1,
+  abstractToken = 1,  // unused
 }
 
 enum DType: byte {
@@ -119,16 +119,16 @@ table Exported {
   in_shardings: [Sharding];
   out_shardings: [Sharding];
 
-  lowering_platforms: [string];
+  platforms: [string];
 
   ordered_effects: [Effect];
   unordered_effects: [Effect];
   disabled_checks: [DisabledSafetyCheck];
 
   mlir_module_serialized: [byte];
-  mlir_module_serialization_version: uint16;
+  calling_convention_version: uint16;
   module_kept_var_idx: [uint16];
-  uses_shape_polymorphism: bool;
+  uses_global_constants: bool;
 
   vjp: Exported;
 }

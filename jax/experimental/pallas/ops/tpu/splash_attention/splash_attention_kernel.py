@@ -16,10 +16,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 import dataclasses
 import enum
 import functools
-from typing import Any, Callable, Literal, NamedTuple, Union, Optional, overload
+from typing import Any, Callable, Literal, NamedTuple, Optional, Union, overload
 
 import jax
 from jax import ad_checkpoint
@@ -89,10 +90,13 @@ MaskFunctionType = Callable[..., jax.Array]
 
 
 def get_kernel_name(
-    is_mqa: bool, save_residuals: bool, is_segmented: bool, phase: str
+    block_metadata: Mapping[str, Any],
+    is_mqa: bool,
+    save_residuals: bool,
+    is_segmented: bool,
+    phase: str,
 ) -> str:
   """Returns a unique name for all SplashAttention kernel variants."""
-
   assert phase == "dq" or phase == "dkv" or phase == "fwd"
   # Saving residuals is supported only for the fwd phase.
   assert not save_residuals or phase == "fwd"
@@ -103,7 +107,9 @@ def get_kernel_name(
     residuals = "_no_residuals"
   attention_type = "mqa" if is_mqa else "mha"
   segments = "_segmented" if is_segmented else ""
-  return f"splash_{attention_type}_{phase}{segments}{residuals}"
+  return f"splash_{attention_type}_{phase}{segments}{residuals}_" + "_".join(
+      f"{k}={v}" for k, v in sorted(block_metadata.items())
+  )
 
 
 # Reference attention implementations
@@ -1054,28 +1060,17 @@ def _splash_attention_forward(
     out_shapes += [None]
     out_specs += [None]
 
-  # Attach useful metadata to the custom-call HLO op.
-  # Having this information available in an HLO-dump or xprof is valuable for
-  # debugging and performance investigation.
-  metadata_dict = dict(
-      block_sizes=dataclasses.asdict(block_sizes),
-      is_mqa=is_mqa,
-      save_residuals=save_residuals,
-      mask_value=mask_value,
-      is_segmented=segment_ids is not None,
-      attn_logits_soft_cap=attn_logits_soft_cap,
-      residual_checkpoint_name=residual_checkpoint_name,
-  )
-
-  mosaic_params = pltpu.encode_kernel_regeneration_metadata(metadata_dict)
-
-  mosaic_params.update(
+  mosaic_params = dict(
       dimension_semantics=("parallel", "arbitrary", "arbitrary"),
       flags={"XLA_TPU_FORCE_LP_LLO_SCHEDULER": True},
   )
 
   kernel_name = get_kernel_name(
-      is_mqa, save_residuals, segment_ids is not None, "fwd"
+      dataclasses.asdict(block_sizes),
+      is_mqa=is_mqa,
+      save_residuals=save_residuals,
+      is_segmented=segment_ids is not None,
+      phase="fwd",
   )
 
   if fwd_mask_info.data_next is not None:
@@ -1526,28 +1521,24 @@ def _splash_attention_bwd_dq(
   )
   num_scalar_prefetch = 3
 
-  # Attach useful metadata to the custom-call HLO op.
-  # Having this information available in an HLO-dump or xprof is valuable for
-  # debugging and performance investigation.
-  metadata_dict = dict(
-      block_q_dq=bq,
-      block_kv_dq=bkv,
-      q_layout=q_layout,
-      k_layout=k_layout,
-      v_layout=v_layout,
-      is_mqa=is_mqa,
-      mask_value=mask_value,
-      is_segmented=segment_ids is not None,
-      attn_logits_soft_cap=attn_logits_soft_cap,
-  )
-
-  mosaic_params = pltpu.encode_kernel_regeneration_metadata(metadata_dict)
-  mosaic_params.update(
+  mosaic_params = dict(
       dimension_semantics=("arbitrary", "arbitrary", "arbitrary"),
       flags={"XLA_TPU_FORCE_LP_LLO_SCHEDULER": True},
   )
 
-  kernel_name = get_kernel_name(is_mqa, False, segment_ids is not None, "dq")
+  kernel_name = get_kernel_name(
+      dict(
+          block_q_dq=bq,
+          block_kv_dq=bkv,
+          q_layout=q_layout,
+          k_layout=k_layout,
+          v_layout=v_layout,
+      ),
+      is_mqa=is_mqa,
+      save_residuals=False,
+      is_segmented=segment_ids is not None,
+      phase="dq",
+  )
   with jax.named_scope(kernel_name):
     _, dq = pl.pallas_call(
         kernel,
@@ -2072,35 +2063,30 @@ def _splash_attention_bwd_dkv(
   )
   num_scalar_prefetch = 3
 
-  # Attach useful metadata to the custom-call HLO op.
-  # Having this information available in an HLO-dump or xprof is valuable for
-  # debugging and performance investigation.
-  metadata_dict = dict(
-      block_q_dkv=bq,
-      block_kv_dkv=bkv,
-      block_kv_dkv_compute=bkv_compute,
-      q_layout=q_layout,
-      k_layout=k_layout,
-      v_layout=v_layout,
-      use_fused_bwd_kernel=use_fused_bwd_kernel,
-      is_mqa=is_mqa,
-      mask_value=mask_value,
-      is_segmented=segment_ids is not None,
-      attn_logits_soft_cap=attn_logits_soft_cap,
-  )
-
-  mosaic_params = pltpu.encode_kernel_regeneration_metadata(metadata_dict)
   # We set all dimensions to arbitrary because:
   # 1) for kv_seq_len, the splash attention prefetch schedule assumes no
   #    megacore
   # 2) for heads, we are reducing over heads
   # 3) for q_seq_len, we are reducing over it to compute dkv
-  mosaic_params.update(
+  mosaic_params = dict(
       dimension_semantics=("arbitrary", "arbitrary", "arbitrary"),
       flags={"XLA_TPU_FORCE_LP_LLO_SCHEDULER": True},
   )
 
-  kernel_name = get_kernel_name(is_mqa, False, segment_ids is not None, "dkv")
+  kernel_name = get_kernel_name(
+      dict(
+          block_q_dkv=bq,
+          block_kv_dkv=bkv,
+          block_kv_dkv_compute=bkv_compute,
+          q_layout=q_layout,
+          k_layout=k_layout,
+          v_layout=v_layout,
+      ),
+      is_mqa=is_mqa,
+      save_residuals=False,
+      is_segmented=segment_ids is not None,
+      phase="dkv",
+  )
   with jax.named_scope(kernel_name):
     _, _, _, dq_unreduced, dk, dv = pl.pallas_call(
         kernel,

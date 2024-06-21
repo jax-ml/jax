@@ -87,8 +87,6 @@ import jaxlib.utils as utils
 import jaxlib.xla_client as xla_client
 import jaxlib.lapack as lapack
 
-import jaxlib.ducc_fft as ducc_fft
-
 xla_extension = xla_client._xla
 pytree = xla_client._xla.pytree
 jax_jit = xla_client._xla.jax_jit
@@ -102,7 +100,10 @@ gc.callbacks.append(_xla_gc_callback)
 try:
   import jaxlib.cuda._versions as cuda_versions  # pytype: disable=import-error
 except ImportError:
-  cuda_versions = None
+  try:
+    import jax_cuda12_plugin._versions as cuda_versions  # pytype: disable=import-error
+  except ImportError:
+    cuda_versions = None
 
 import jaxlib.gpu_solver as gpu_solver  # pytype: disable=import-error
 import jaxlib.gpu_sparse as gpu_sparse  # pytype: disable=import-error

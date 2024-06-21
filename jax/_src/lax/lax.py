@@ -67,7 +67,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding_impls import PmapSharding
-from jax._src.typing import Array, ArrayLike, DuckTypedArray, DTypeLike, Shape
+from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DTypeLike, Shape
 from jax._src.util import (cache, safe_zip, safe_map, canonicalize_axis,
                            split_list, NumpyComplexWarning)
 
@@ -85,9 +85,9 @@ T = TypeVar("T")
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
-def _clip_int_to_valid_range(val: int, dtype) -> int:
+def _clip_int_to_valid_range(val: DimSize, dtype) -> int:
   info = np.iinfo(dtype)
-  return builtins.max(info.min, builtins.min(int(val), info.max))
+  return core.max_dim(info.min, core.min_dim(val, info.max))
 
 def _validate_shapes(shapes: Sequence[Shape]):
   def _check_static_shape(shape: Shape):
@@ -801,7 +801,7 @@ def ragged_dot(
     group_sizes: (g,) shaped array with integer element type, where g denotes   number of groups. The ith element indicates the size of ith group.
     precision: Optional. Consistent with precision argument for :func:`jax.lax.dot`.
     preferred_element_type: Optional. Consistent with precision argument for :func:`jax.lax.dot`.
-    group_offset: Optional. (1,) shaped array that ndicates the group in group_sizes to start computing from. If not specified, defaults to [0].
+    group_offset: Optional. (1,) shaped array that indicates the group in group_sizes to start computing from. If not specified, defaults to [0].
 
   Results:
     (m, n) shaped array with preferred_element_type element type.
@@ -1232,12 +1232,24 @@ def top_k(operand: ArrayLike, k: int) -> tuple[Array, Array]:
     k: integer specifying the number of top entries.
 
   Returns:
-    values: array containing the top k values along the last axis.
-    indices: array containing the indices corresponding to values.
+    A tuple ``(values, indices)`` where
+
+    - ``values`` is an array containing the top k values along the last axis.
+    - ``indices`` is an array containing the indices corresponding to values.
 
   See also:
-  - :func:`jax.lax.approx_max_k`
-  - :func:`jax.lax.approx_min_k`
+    - :func:`jax.lax.approx_max_k`
+    - :func:`jax.lax.approx_min_k`
+
+  Examples:
+    Find the largest three values, and their indices, within an array:
+
+    >>> x = jnp.array([9., 3., 6., 4., 10.])
+    >>> values, indices = jax.lax.top_k(x, 3)
+    >>> values
+    Array([10.,  9.,  6.], dtype=float32)
+    >>> indices
+    Array([4, 0, 2], dtype=int32)
   """
   if core.is_constant_dim(k):
     k = int(k)
@@ -1319,7 +1331,7 @@ def broadcasted_iota(dtype: DTypeLike, shape: Shape, dimension: int) -> Array:
   return iota_p.bind(*dynamic_shape, dtype=dtype, shape=tuple(static_shape),
                      dimension=dimension)
 
-def _eye(dtype: DTypeLike, shape: Shape, offset: int) -> Array:
+def _eye(dtype: DTypeLike, shape: Shape, offset: DimSize) -> Array:
   """Like numpy.eye, create a 2D array with ones on a diagonal."""
   offset = _clip_int_to_valid_range(offset, np.int32)
   dtype = dtypes.canonicalize_dtype(dtype)
@@ -1339,11 +1351,12 @@ def _delta(dtype: DTypeLike, shape: Shape, axes: Sequence[int]) -> Array:
                                        new_dtype=dtype, weak_type=False)
   return broadcast_in_dim(result, shape, axes)
 
-def _tri(dtype: DTypeLike, shape: Shape, offset: int) -> Array:
+def _tri(dtype: DTypeLike, shape: Shape, offset: DimSize) -> Array:
   """Like numpy.tri, create a 2D array with ones below a diagonal."""
   offset = _clip_int_to_valid_range(offset, np.int32)
   dtype = dtypes.canonicalize_dtype(dtype)
-  bool_tri = ge(add(broadcasted_iota(np.int32, shape, 0), np.int32(offset)),
+  bool_tri = ge(add(broadcasted_iota(np.int32, shape, 0),
+                    asarray(core.dimension_as_value(offset)).astype(np.int32)),
                 broadcasted_iota(np.int32, shape, 1))
   return convert_element_type_p.bind(bool_tri, new_dtype=dtype, weak_type=False)
 
@@ -1431,7 +1444,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
       If not specified, the output will have the same sharding as the input,
       with a few exceptions/limitations in particular:
       1. Sharding is not available during tracing, thus this will rely on jit.
-      2. If x is weakly typed or uncomitted, will use default sharding.
+      2. If x is weakly typed or uncommitted, will use default sharding.
       3. Shape is not None and is different from x.shape, default will be used.
 
   Returns:
@@ -1760,7 +1773,7 @@ def broadcast_hlo(
   for aval, arg in zip(avals, args):
     if aval.shape != aval_out.shape:
       assert len(aval.shape) <= len(aval_out.shape), (aval, aval_out)
-      dims = mlir.dense_int_array_v6(
+      dims = mlir.dense_int_array(
           range(len(aval_out.shape) - len(aval.shape), len(aval_out.shape)))
       if any(isinstance(d, ir.Value) for d in aval_out.shape):
         arg = hlo.dynamic_broadcast_in_dim(
@@ -2913,8 +2926,9 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                        precision, preferred_element_type: np.dtype | None,
                        platform: str = "default"):
   def _is_fp8_mixed_precision_matmul(_lhs_dtypes, _rhs_dtypes):
-      fp8_dtypes = (dtypes.float8_e4m3fn, dtypes.float8_e5m2)
-      return _lhs_dtypes in fp8_dtypes and _rhs_dtypes in fp8_dtypes
+    fp8_dtypes = (dtypes.float8_e4m3fn, dtypes.float8_e5m2,
+                  dtypes.float8_e5m2fnuz, dtypes.float8_e4m3fnuz)
+    return _lhs_dtypes in fp8_dtypes and _rhs_dtypes in fp8_dtypes
   del preferred_element_type  # Implied by the output aval
   lhs_aval, rhs_aval = ctx.avals_in
   lhs_dtype, rhs_dtype = lhs_aval.dtype, rhs_aval.dtype
@@ -3962,7 +3976,7 @@ def _reduce_lower(ctx, *values, computation, jaxpr, dimensions):
   operands, init_values = util.split_list(values, [len(values) // 2])
   init_value_avals = ctx.avals_in[len(values) // 2:]
   op = hlo.ReduceOp([mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
-                    operands, init_values, mlir.dense_int_array_v6(dimensions))
+                    operands, init_values, mlir.dense_int_array(dimensions))
   ir_types = [mlir.aval_to_ir_type(aval) for aval in init_value_avals]
   reducer = op.regions[0].blocks.append(*(ir_types + ir_types))
   with ir.InsertionPoint(reducer):
@@ -4173,7 +4187,7 @@ def _unary_reduce_lower(reducer, unit_factory, ctx, x, *, axes):
   dtype = aval_out.dtype
   op = hlo.ReduceOp([mlir.aval_to_ir_type(aval_out)], [x],
                     mlir.ir_constants(unit_factory(aval_out.dtype)),
-                    mlir.dense_int_array_v6(axes))
+                    mlir.dense_int_array(axes))
   scalar_type = mlir.aval_to_ir_type(core.ShapedArray((), dtype))
   reducer_region = op.regions[0].blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(reducer_region):
@@ -4788,7 +4802,9 @@ mlir.register_lowering(copy_p, lambda ctx, x: [x])
 ad.deflinear(copy_p, lambda t: [copy_p.bind(t)])
 pe.def_trivial_padding(copy_p)
 batching.defvectorized(copy_p)
-
+def _propagate_mem_kind_copy(in_mem_kind):
+  return in_mem_kind
+pxla.memory_kind_propagate_rule[copy_p] = _propagate_mem_kind_copy
 
 def rng_bit_generator(key, shape, dtype=np.uint32,
                       algorithm=RandomAlgorithm.RNG_DEFAULT):
@@ -5098,7 +5114,7 @@ def remaining(original, *removed_lists):
 
 
 def canonicalize_precision(precision: PrecisionLike) -> tuple[Precision, Precision] | None:
-  """Turns an API precision specification, into a pair of enumeration values.
+  """Turns an API precision specification into a pair of enumeration values.
 
   The API can take the precision as a string, or int, and either as a single
   value to apply to both operands, or as a sequence of two values.
@@ -5206,14 +5222,6 @@ class BIntRules:
     return handler
 
   @staticmethod
-  def logical_sharding(aval, phys_sharding):
-    return phys_sharding
-
-  @staticmethod
-  def physical_sharding(aval, sharding):
-    return sharding
-
-  @staticmethod
   def convert_from(bint_dtype, other_dtype) -> bool:
     return other_dtype in (np.dtype('int32'), np.dtype('int64'))
 
@@ -5221,12 +5229,5 @@ class BIntRules:
   def convert_to(other_dtype, bint_dtype) -> bool:
     return other_dtype in (np.dtype('int32'), np.dtype('int64'))
 
-  @staticmethod
-  def replicate_trailing_dims(ctx, val: ir.Value, aval) -> ir.Value:
-    return val
-
-  @staticmethod
-  def check_replicated_trailing_dims(sharding: jax.sharding.GSPMDSharding, aval):
-    pass
 
 core.bint._rules = BIntRules

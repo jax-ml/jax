@@ -31,7 +31,7 @@ import ml_dtypes
 import numpy as np
 
 from jax._src import config
-from jax._src.typing import DType, DTypeLike
+from jax._src.typing import Array, DType, DTypeLike
 from jax._src.util import set_module, StrictABC
 
 from jax._src import traceback_util
@@ -42,8 +42,8 @@ try:
 except:
   pass
 else:
-  if _ml_dtypes_version < (0, 4, 0):
-    raise ValueError("JAX requires ml_dtypes version 0.4.0 or newer; "
+  if _ml_dtypes_version < (0, 2, 0):
+    raise ValueError("JAX requires ml_dtypes version 0.2.0 or newer; "
                      f"installed version is {ml_dtypes.__version__}.")
 
 export = set_module('jax.dtypes')
@@ -500,7 +500,7 @@ def _type_promotion_lattice(jax_numpy_dtype_promotion: str) -> dict[JAXType, lis
   This DAG maps each type to its immediately higher type on the lattice.
   """
   b1, = _bool_types
-  uint4, u1, u2, u4, u8, int4, i1, i2, i4, i8 = _int_types
+  _uint4, u1, u2, u4, u8, _int4, i1, i2, i4, i8 = _int_types
   *f1_types, bf, f2, f4, f8 = _float_types
   c4, c8 = _complex_types
   i_, f_, c_ = _weak_types
@@ -508,13 +508,18 @@ def _type_promotion_lattice(jax_numpy_dtype_promotion: str) -> dict[JAXType, lis
     out: dict[JAXType, list[JAXType]]
     out = {
       b1: [i_],
-      uint4: [], u1: [i2, u2], u2: [i4, u4], u4: [i8, u8], u8: [f_],
-      i_: [uint4, int4, u1, i1],
-      int4: [], i1: [i2], i2: [i4], i4: [i8], i8: [f_],
+      u1: [i2, u2], u2: [i4, u4], u4: [i8, u8], u8: [f_],
+      i_: [u1, i1], i1: [i2], i2: [i4], i4: [i8], i8: [f_],
       f_: [*f1_types, bf, f2, c_],
       **{t: [] for t in f1_types}, bf: [f4], f2: [f4], f4: [f8, c4], f8: [c8],
       c_: [c4], c4: [c8], c8: [],
     }
+    if _int4_dtype is not None:
+      out[i_].append(_int4_dtype)
+      out[_int4_dtype] = []
+    if _uint4_dtype is not None:
+      out[i_].append(_uint4_dtype)
+      out[_uint4_dtype] = []
     return out
   elif jax_numpy_dtype_promotion == 'strict':
     return {
@@ -736,6 +741,12 @@ def result_type(*args: Any, return_weak_type_flag: bool = False) -> DType | tupl
   return (dtype, weak_type) if return_weak_type_flag else dtype  # type: ignore[return-value]
 
 def check_user_dtype_supported(dtype, fun_name=None):
+  if isinstance(dtype, Array):
+    # Deprecation warning added 2024 June 13.
+    warnings.warn("Passing an array as a dtype argument is deprecated; "
+                  "instead of dtype=arr use dtype=arr.dtype.",
+                  category=DeprecationWarning, stacklevel=3)
+    return  # no further check needed, as array dtypes have already been validated.
   if issubdtype(dtype, extended):
     return
   # Avoid using `dtype in [...]` because of numpy dtype equality overloading.
@@ -747,14 +758,14 @@ def check_user_dtype_supported(dtype, fun_name=None):
     msg = f"JAX only supports number and bool dtypes, got dtype {dtype}"
     msg += f" in {fun_name}" if fun_name else ""
     raise TypeError(msg)
-  if dtype is not None and np_dtype != canonicalize_dtype(dtype):
+  if dtype is not None and np_dtype != canonicalize_dtype(np_dtype):
     msg = ("Explicitly requested dtype {} {} is not available, "
            "and will be truncated to dtype {}. To enable more dtypes, set the "
            "jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell "
            "environment variable. "
            "See https://github.com/google/jax#current-gotchas for more.")
     fun_name = f"requested in {fun_name}" if fun_name else ""
-    truncated_dtype = canonicalize_dtype(dtype).name
+    truncated_dtype = canonicalize_dtype(np_dtype).name
     warnings.warn(msg.format(dtype, fun_name, truncated_dtype), stacklevel=3)
 
 def safe_to_cast(input_dtype_or_value: Any,

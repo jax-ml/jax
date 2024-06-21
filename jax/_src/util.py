@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Iterable, Iterator, Sequence
+import dataclasses
 import functools
 from functools import partial
 import itertools as it
@@ -285,7 +286,18 @@ def split_merge(predicate, xs):
 
   return lhs, rhs, merge
 
-def cache(max_size=4096):
+
+@dataclasses.dataclass(frozen=True)
+class _IgnoreKey:
+
+  def __hash__(self):
+    return hash(self.__class__)
+
+  def __eq__(self, other):
+    return isinstance(other, _IgnoreKey)
+
+
+def cache(max_size=4096, trace_context_in_key=True):
   def wrap(f):
     @functools.lru_cache(max_size)
     def cached(_, *args, **kwargs):
@@ -295,13 +307,23 @@ def cache(max_size=4096):
     def wrapper(*args, **kwargs):
       if config.check_tracer_leaks.value:
         return f(*args, **kwargs)
-      else:
+      elif trace_context_in_key:
         return cached(config.trace_context(), *args, **kwargs)
+      else:
+        return cached(_IgnoreKey(), *args, **kwargs)
 
     wrapper.cache_clear = cached.cache_clear
     wrapper.cache_info = cached.cache_info
+    cache_clearing_funs.add(wrapper.cache_clear)
     return wrapper
   return wrap
+
+cache_clearing_funs = weakref.WeakSet()  # type: ignore
+
+def clear_all_caches():
+  global cache_clearing_funs
+  for clear in cache_clearing_funs:
+    clear()
 
 memoize = cache(max_size=None)
 
@@ -360,6 +382,9 @@ class WrapKwArgs:
 def wrap_name(name, transform_name):
   return transform_name + '(' + name + ')'
 
+def fun_name(fun: Callable):
+  return getattr(fun, "__name__", "<unnamed function>")
+
 def canonicalize_axis(axis, num_dims) -> int:
   """Canonicalize an axis in [-num_dims, num_dims) to [0, num_dims)."""
   axis = operator.index(axis)
@@ -399,7 +424,7 @@ def wraps(
   """
   def wrapper(fun: T) -> T:
     try:
-      name = getattr(wrapped, "__name__", "<unnamed function>")
+      name = fun_name(wrapped)
       doc = getattr(wrapped, "__doc__", "") or ""
       fun.__dict__.update(getattr(wrapped, "__dict__", {}))
       fun.__annotations__ = getattr(wrapped, "__annotations__", {})

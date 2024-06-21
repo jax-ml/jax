@@ -15,6 +15,9 @@ python_init_repositories(
         "3.12": "//build:requirements_lock_3_12.txt",
         "3.13": "//build:requirements_lock_3_13.txt",
     },
+    local_wheel_workspaces = ["//jaxlib:jax.bzl"],
+    local_wheel_dist_folder = "../dist",
+    default_python_version = "system",
 )
 
 load("@xla//third_party/py:python_init_toolchains.bzl", "python_init_toolchains")

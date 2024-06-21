@@ -217,11 +217,15 @@ class Array(abc.ABC):
   def unsafe_buffer_pointer(self) -> int: ...
 
 
+StaticScalar = Union[
+  np.bool_, np.number,  # NumPy scalar types
+  bool, int, float, complex,  # Python scalar types
+]
+
 ArrayLike = Union[
   Array,  # JAX array type
   np.ndarray,  # NumPy array type
-  np.bool_, np.number,  # NumPy scalar types
-  bool, int, float, complex,  # Python scalar types
+  StaticScalar,  # valid scalars
 ]
 
 
@@ -233,10 +237,10 @@ class _IndexUpdateHelper:
 
 class _IndexUpdateRef:
   def get(self, indices_are_sorted: bool = False, unique_indices: bool = False,
-          mode: Optional[str] = None, fill_value: Optional[ArrayLike] = None) -> Array: ...
+          mode: Optional[str] = None, fill_value: Optional[StaticScalar] = None) -> Array: ...
   def set(self, values: Any,
           indices_are_sorted: bool = False, unique_indices: bool = False,
-          mode: Optional[str] = None, fill_value: Optional[ArrayLike] = None) -> Array: ...
+          mode: Optional[str] = None, fill_value: Optional[StaticScalar] = None) -> Array: ...
   def add(self, values: Any, indices_are_sorted: bool = False,
           unique_indices: bool = False, mode: Optional[str] = None) -> Array: ...
   def mul(self, values: Any, indices_are_sorted: bool = False,

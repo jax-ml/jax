@@ -133,10 +133,8 @@ def _custom_partitioning_propagate_user_sharding(user_sharding, shape,
 
 
 def _to_hlo_sharding(sharding, num_dimensions):
-  if not isinstance(sharding, jax.sharding.XLACompatibleSharding):
-    raise ValueError(
-        "Custom Partitioning rules must return XLACompatibleShardings."
-    )
+  if not isinstance(sharding, jax.sharding.Sharding):
+    raise ValueError("Custom Partitioning rules must return Sharding.")
   return sharding._to_xla_hlo_sharding(num_dimensions)
 
 
@@ -301,7 +299,7 @@ class custom_partitioning:
   Positional arguments can be specified as static using static_argnums. JAX uses
   :code:`inspect.signature(fun)` to resolve these positional arguments.
 
-  Example:
+  Examples:
 
     As an example, assume we want to enhance the existing ``jax.numpy.fft.fft``. This function computes
     the discrete Fourier transform of an N-dimensional input along the last dimension, and is batched

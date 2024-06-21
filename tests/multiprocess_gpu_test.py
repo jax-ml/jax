@@ -28,7 +28,6 @@ import numpy as np
 import jax
 from jax._src import core
 from jax._src import distributed
-from jax._src import maps
 from jax._src import test_util as jtu
 from jax._src import util
 from jax.experimental import pjit
@@ -224,6 +223,7 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
     os.environ.get("SLURM_JOB_NUM_NODES", None) != "2",
     "Slurm environment with at least two nodes needed!")
 @jtu.pytest_mark_if_available('SlurmMultiNodeGpuTest')
+@jtu.with_config(experimental_xmap_spmd_lowering=True)
 class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
 
   def sorted_devices(self):
@@ -255,16 +255,6 @@ class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
     assert [d.id for d in device_mesh.flat
            ] == [0, 2, 4, 6, 1, 3, 5, 7, 8, 10, 12, 14, 9, 11, 13, 15]
     return jax.sharding.Mesh(device_mesh, ("x", "y"))
-
-  def setUp(self):
-    super().setUp()
-    self.xmap_spmd_lowering_enabled = maps.SPMD_LOWERING.value
-    jax.config.update("experimental_xmap_spmd_lowering", True)
-
-  def tearDown(self):
-    jax.config.update("experimental_xmap_spmd_lowering",
-                      self.xmap_spmd_lowering_enabled)
-    super().tearDown()
 
   def test_gpu_multi_node_initialize_and_psum(self):
 
