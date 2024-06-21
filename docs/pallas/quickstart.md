@@ -14,6 +14,8 @@ kernelspec:
 
 # Pallas Quickstart
 
+<!--* freshness: { reviewed: '2024-04-08' } *-->
+
 Pallas is an extension to JAX that enables writing custom kernels for GPU and TPU. Pallas allows you to use the same JAX functions and APIs but operates at a *lower* level of abstraction.
 
 Specifically, Pallas requires users to think about memory access and how to divide up computations across multiple compute units in a hardware accelerator. On GPUs, Pallas lowers to Triton and on TPUs, Pallas lowers to Mosaic.

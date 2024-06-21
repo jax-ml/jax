@@ -15,6 +15,8 @@ kernelspec:
 
 # Pipelining and `BlockSpec`s
 
+<!--* freshness: { reviewed: '2024-04-08' } *-->
+
 +++ {"id": "gAJDZh1gBh-h"}
 
 In this guide we'll cover how memory spaces in TPU work and how to write pipelines in Pallas that overlap memory I/O with compute.

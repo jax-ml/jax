@@ -1,5 +1,7 @@
 # GPU performance tips
 
+<!--* freshness: { reviewed: '2024-06-10' } *-->
+
 This document focuses on performance tips for neural network workloads
 
 ## Matmul precision

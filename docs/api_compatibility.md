@@ -2,6 +2,8 @@
 
 # API compatibility
 
+<!--* freshness: { reviewed: '2023-07-18' } *-->
+
 JAX is constantly evolving, and we want to be able to make improvements to its
 APIs. That said, we want to minimize churn for the JAX user community, and we
 try to make breaking changes rarely.

@@ -1,6 +1,8 @@
 (installation)=
 # Installing JAX
 
+<!--* freshness: { reviewed: '2024-06-18' } *-->
+
 Using JAX requires installing two packages: `jax`, which is pure Python and
 cross-platform, and `jaxlib` which contains compiled binaries, and requires
 different builds for different operating systems and accelerators.
