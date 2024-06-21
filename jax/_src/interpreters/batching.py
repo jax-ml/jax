@@ -1129,7 +1129,7 @@ def matchaxis(axis_name, sz, src, dst, x, sum_match=False):
 
 class SpecMatchError(Exception):
   def __init__(self, leaf_idx, src, dst):
-    self.leaf_idx  = leaf_idx
+    self.leaf_idx = leaf_idx
     self.src = src
     self.dst = dst
 

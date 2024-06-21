@@ -1218,8 +1218,6 @@ def vmap(fun: F,
           spmd_axis_name=spmd_axis_name
       ).call_wrapped(*args_flat)
     except batching.SpecMatchError as e:
-      # TODO this is a bit circular, maybe there's a better way to get paths..
-      # let's look at how shard_map organizes things?
       out_axes_flat = flatten_axes("vmap out_axes", out_tree(), out_axes)
       out_axes_full = tree_unflatten(out_tree(), out_axes_flat)
       pairs, _ = tree_flatten_with_path(out_axes_full, is_leaf=lambda x: x is None)
