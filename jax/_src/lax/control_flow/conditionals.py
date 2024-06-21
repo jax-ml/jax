@@ -953,7 +953,19 @@ def platform_dependent(*args: Any,
   # Use a switch, to get the proper transformation rules for free. Since
   # platform index has no dependence on the input data, it won't be vectorized
   # under vmap.
-  return switch(platform_index, branches, *args)
+  # If the switch and the platform_index_p above are in the same compilation
+  # unit then constant-folding will remove the unnecessary branches. However,
+  # if we run in eager mode the switch below cannot be constant-folded and
+  # the compilation may fail if some of the branches contain custom calls not
+  # recognized on the compilation platform. Detect eager mode and keep only the
+  # needed branch.
+  try:
+    platform_index_concrete = core.concrete_or_error(operator.index, platform_index)
+  except core.ConcretizationTypeError:
+    return switch(platform_index, branches, *args)
+  else:
+    assert 0 <= platform_index_concrete < len(branches)
+    return branches[platform_index_concrete](*args)
 
 # A primitive to compute the index of a platform into a list of platforms.
 # Args:
