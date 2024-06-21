@@ -53,6 +53,7 @@ from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src import debugging
+from jax._src import pjit as pjit_lib
 from jax._src.ad_checkpoint import saved_residuals
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
@@ -2588,7 +2589,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_eval_shape_trace_cache_share(self):
     def f(x):
-      return x * 2
+      return x
 
     inp = np.arange(8)
 
@@ -2596,8 +2597,32 @@ class APITest(jtu.JaxTestCase):
       jax.eval_shape(f, inp)
       jax.jit(f)(inp)
 
-    # one for `f` and another for mul (`x * 2`) which is jitted.
-    self.assertEqual(count[0], 2)
+    self.assertEqual(count[0], 1)
+
+  @unittest.skipIf(xla_extension_version <= 273, "requires jaxlib 0.4.31")
+  def test_jit_infer_params_cache(self):
+    def f(x):
+      return x
+
+    f_jit = jax.jit(f)
+
+    def g(x):
+      x = f_jit(x)  # noqa: F821
+      x = f_jit(x)  # noqa: F821
+      return x
+
+    g_jit = jax.jit(g)
+
+    inp = np.arange(8)
+    with jtu.count_jit_infer_params_cache_miss() as count:
+      g_jit(inp)
+
+    self.assertDictEqual(count, {f: 1, g: 1})
+    cache_size = pjit_lib._infer_params_cached.cache_info().currsize
+    del count, f, f_jit, g, g_jit
+    # Cache should only keep a weak reference to f and g.
+    self.assertLess(pjit_lib._infer_params_cached.cache_info().currsize,
+                    cache_size, msg=pjit_lib._infer_params_cached.cache_keys())
 
   def test_eval_shape_out_shardings(self):
     s = jax.sharding.SingleDeviceSharding(jax.devices()[0])

@@ -905,5 +905,23 @@ def benchmark_lorentz63_cache_hits(state):
     jax.make_jaxpr(lambda x: training_step(x, 100, unroll=True))(x)
 
 
+@google_benchmark.register
+def jit_add_chain(state):
+  SIZE = 100
+
+  @jax.jit
+  def g(x, y):
+    return lax.add(x, y)
+
+  x = jax.random.normal(jax.random.PRNGKey(0), (2, 2))
+  while state:
+    @jax.jit
+    def f(x):
+      for i in range(SIZE):
+        x = g(x, x)
+      return x
+    f(x).block_until_ready()
+
+
 if __name__ == "__main__":
   google_benchmark.main()
