@@ -87,7 +87,6 @@ def _downcast_to_small_type(array: np.ndarray) -> np.ndarray:
     ValueError: if the input array is not np.int32 or if its elements are not
     all positive.
   """
-
   if array.dtype != np.int32:
     raise ValueError('Expected int32 input.')
 
@@ -120,7 +119,6 @@ def _check_mask(mask: mask_lib.Mask) -> None:
   Raises:
     ValueError: the mask is invalid.
   """
-
   assert len(mask.shape) == 2
 
   exception_message = (
@@ -349,7 +347,6 @@ def _process_mask(
     ValueError: if the input mask is invalid or the block sizes are not
     compatible with the mask sizes.
   """
-
   if len(mask.shape) != 3:
     raise ValueError(f'Expected a 3-dim mask, instead got: {mask.shape=}')
 

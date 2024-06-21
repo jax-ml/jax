@@ -93,7 +93,6 @@ def minimize_bfgs(
   Returns:
     Optimization result.
   """
-
   if maxiter is None:
     maxiter = jnp.size(x0) * 200
 
