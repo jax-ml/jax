@@ -1876,8 +1876,9 @@ def _const_folding_and_forwarding(
     # if any inputs are constants and we have a constant-folding rule, apply it
     has_input_effect = any(isinstance(eff, effects.JaxprInputEffect)
                            for eff in eqn.effects)
-    if (eqn.primitive in const_fold_rules and any(v in consts for v in eqn.invars)
-        and not has_input_effect):
+    if (eqn.primitive in const_fold_rules and
+        any(v in consts for v in eqn.invars if isinstance(v, Var)) and
+        not has_input_effect):
       consts_in = [consts.get(v) if isinstance(v, Var) else None
                    for v in eqn.invars]
       consts_out, new_eqn = const_fold_rules[eqn.primitive](consts_in, eqn)
@@ -1928,7 +1929,8 @@ def _inline_literals(
                                                    has_input_effect)
           if type(c) in core.literalable_types and not np.shape(c) and not e}
   def lit(a: Atom) -> Literal | None:
-      return lits.get(a) if isinstance(a, Var) else None
+      return (a if isinstance(a, Literal) else lits.get(a) if isinstance(a, Var)
+              else None)
   newname: Callable[[AbstractValue], Var] = core.gensym()
   newvars: dict[Var, Var] = {}
   newvar = lambda aval: newname(_substitute_vars_in_type(lits, newvars, aval))
@@ -1940,8 +1942,9 @@ def _inline_literals(
       return [d for d in aval.shape if isinstance(d, Var)]
     return []
 
-  used = {v for eqn in jaxpr.eqns for invar in eqn.invars
-          for v in it.chain([invar], vars_in_shape(invar.aval))}
+  used = {v for eqn in jaxpr.eqns for atom in eqn.invars
+          for v in it.chain([atom], vars_in_shape(atom.aval))
+          if isinstance(atom, Var)}
   used |= {v for outvar in jaxpr.outvars
            for v in it.chain([outvar], vars_in_shape(outvar.aval))}
   new_constvars = [var(v) for v in jaxpr.constvars if v in used and not lit(v)]
@@ -1950,7 +1953,7 @@ def _inline_literals(
   new_invars = [var(v) for v in jaxpr.invars]
   new_eqns = []
   for eqn in jaxpr.eqns:
-    invars = [lit(v) or var(v) for v in eqn.invars]
+    invars = [lit(x) or var(x) for x in eqn.invars]
     outvars = [var(v) if v in used else dropvar(v.aval) for v in eqn.outvars]
     new_eqns.append(eqn.replace(invars=invars, outvars=outvars))
   new_outvars = [lit(v) or var(v) for v in jaxpr.outvars]
@@ -2794,38 +2797,32 @@ def instantiate_const_at(trace: JaxprTrace, instantiate: bool, tracer):
   else:
     return tracer
 
-def inline_jaxpr_into_trace(trace: DynamicJaxprTrace, jaxpr: Jaxpr, consts,
-                            *args) -> list[Any]:
+def inline_jaxpr_into_trace(
+    trace: DynamicJaxprTrace, jaxpr: Jaxpr, consts: Sequence[Any],
+    *arg_tracers: DynamicJaxprTracer) -> list[Any]:
   # This function is conceptually the same thing as just calling eval_jaxpr,
-  # but doesn't redo abstract evaluation: we know the shapes from the jaxpr.
-  def read(v: Atom) -> Any:
-    return v.val if isinstance(v, Literal) else env[v]
+  const_tracers = map(trace.new_const, consts)
+  constvars = map(trace.getvar, const_tracers)
+  argvars = map(trace.getvar, arg_tracers)
+  env: dict[Var, Var] = dict(zip([*jaxpr.constvars, *jaxpr.invars],
+                                 [*constvars, *argvars]))
 
-  def write(v: Var, val: Any) -> None:
-    if config.enable_checks.value and not config.dynamic_shapes.value:
-      assert core.typecheck(v.aval, val), (v.aval, val)
-    env[v] = val
-
-  env: dict[Var, Any] = {}
-  map(write, jaxpr.constvars, consts)
-  map(write, jaxpr.invars, args)
-  lu = core.last_used(jaxpr)
-  source_info = source_info_util.current()
+  src = source_info_util.current()
   for eqn in jaxpr.eqns:
-    ins = map(read, eqn.invars)
-    out_tracers = [DynamicJaxprTracer(trace, a.aval, source_info)
-                   for a in eqn.outvars]
-    invars = [trace.getvar(trace.full_raise(x)) for x in ins]
-    outvars = map(trace.makevar, out_tracers)
-    if eqn.source_info.name_stack:
-      eqn_source_info = source_info.replace(
-          name_stack=source_info.name_stack + eqn.source_info.name_stack)
-    else:
-      eqn_source_info = source_info
+    invars = [x if isinstance(x, Literal) else env[x] for x in eqn.invars]
+    outvars = [Var('', v.aval) for v in eqn.outvars]
+    src_ = (src if not eqn.source_info.name_stack else
+            src.replace(name_stack=src.name_stack + eqn.source_info.name_stack))
+    trace.frame.add_eqn(core.new_jaxpr_eqn(invars, outvars, eqn.primitive,
+                                           eqn.params, eqn.effects, src_))
+    map(env.setdefault, eqn.outvars, outvars)
 
-    new_eqn = core.new_jaxpr_eqn(invars, outvars, eqn.primitive, eqn.params,
-                                 eqn.effects, eqn_source_info)
-    trace.frame.add_eqn(new_eqn)
-    map(write, eqn.outvars, out_tracers)
-    core.clean_up_dead_vars(eqn, env, lu)
-  return map(read, jaxpr.outvars)
+  tracer_env: dict[Var, Any] = dict(zip([*jaxpr.constvars, *jaxpr.invars],
+                                        [*consts, *arg_tracers]))
+  def new_tracer(atom):
+    tracer = DynamicJaxprTracer(trace, atom.aval, src)
+    trace.frame.tracers.append(tracer)
+    trace.frame.tracer_to_var[id(tracer)] = env[atom]
+    return tracer
+  return [x.val if isinstance(x, Literal) else tracer_env[x] if x in tracer_env
+          else new_tracer(x) for x in jaxpr.outvars]
