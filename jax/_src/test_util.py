@@ -1501,7 +1501,7 @@ def register_event_duration_listener(callback):
 def set_env(**kwargs):
   """Context manager to temporarily set/unset one or more environment variables.
 
-  Example:
+  Examples:
 
     >>> import os
     >>> os.environ['my_var'] = 'original'

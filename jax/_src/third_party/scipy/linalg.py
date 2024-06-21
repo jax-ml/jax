@@ -65,7 +65,7 @@ def funm(A: ArrayLike, func: Callable[[Array], Array],
     close to zero, the SciPy function may return a real-valued array, whereas
     the JAX implementation will return a complex-valued array.
 
-  Example:
+  Examples:
     Applying an arbitrary matrix function:
 
     >>> A = jnp.array([[1., 2.], [3., 4.]])

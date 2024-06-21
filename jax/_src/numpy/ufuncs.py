@@ -232,7 +232,7 @@ def bitwise_count(x: ArrayLike, /) -> Array:
     An array-like object containing the binary 1 bit counts of the absolute value of
     each element in ``x``, with the same shape as ``x`` of dtype uint8.
 
-  Example:
+  Examples:
     >>> x1 = jnp.array([64, 32, 31, 20])
     >>> # 64 = 0b1000000, 32 = 0b100000, 31 = 0b11111, 20 = 0b10100
     >>> jnp.bitwise_count(x1)
@@ -274,7 +274,7 @@ def right_shift(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     shared shape, this shared shape will also be the shape of the output. Right shifting
     a scalar x1 by scalar x2 is equivalent to ``x1 // 2**x2``.
 
-  Example:
+  Examples:
     >>> def print_binary(x):
     ...   return [bin(int(val)) for val in x]
 
@@ -328,7 +328,7 @@ def absolute(x: ArrayLike, /) -> Array:
     with the same shape as ``x``. For complex valued input, :math:`a + ib`,
     the absolute value is :math:`\sqrt{a^2+b^2}`.
 
-  Example:
+  Examples:
     >>> x1 = jnp.array([5, -2, 0, 12])
     >>> jnp.absolute(x1)
     Array([ 5,  2,  0, 12], dtype=int32)

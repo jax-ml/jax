@@ -119,7 +119,9 @@ class Config:
     registers an absl boolean flag, with the same name.
 
     This is the recommended method to call if you use `app.run(main)` and you
-    need JAX flags.  Example:
+    need JAX flags.
+
+    Examples:
 
     ```python
     from absl import app
@@ -370,7 +372,7 @@ def bool_state(
   Returns:
     A contextmanager to control the thread-local state value.
 
-  Example:
+  Examples:
 
     ENABLE_FOO = config.bool_state(
         name='jax_enable_foo',

@@ -180,7 +180,7 @@ class custom_jvp(Generic[ReturnValue]):
     Returns:
       None.
 
-    Example::
+    Examples:
 
       @jax.custom_jvp
       def f(x, y):
@@ -212,7 +212,7 @@ class custom_jvp(Generic[ReturnValue]):
     Returns:
       None.
 
-    Example::
+    Examples:
 
       @jax.custom_jvp
       def f(x, y):
@@ -567,7 +567,7 @@ class custom_vjp(Generic[ReturnValue]):
     Returns:
       None.
 
-    Example::
+    Examples:
 
       @jax.custom_vjp
       def f(x, y):

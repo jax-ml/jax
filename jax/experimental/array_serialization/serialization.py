@@ -412,7 +412,7 @@ class GlobalAsyncCheckpointManagerBase(util.StrictABC):
   is finished, checkpoint for step 2 will need to be blocked. Maintaining a
   class allows to maintain that state.
 
-  Example:
+  Examples:
 
   Below is a simplified training loop:
 

@@ -872,7 +872,7 @@ def flip(m: ArrayLike, axis: int | Sequence[int] | None = None) -> Array:
     - :func:`jax.numpy.fliplr`: reverse the order along axis 1 (left/right)
     - :func:`jax.numpy.flipud`: reverse the order along axis 0 (up/down)
 
-  Example:
+  Examples:
     >>> x1 = jnp.array([[1, 2],
     ...                 [3, 4]])
     >>> jnp.flip(x1)
@@ -936,7 +936,7 @@ def fliplr(m: ArrayLike) -> Array:
     - :func:`jax.numpy.flip`: reverse the order along the given axis
     - :func:`jax.numpy.flipud`: reverse the order along axis 0
 
-  Example:
+  Examples:
     >>> x = jnp.array([[1, 2],
     ...                [3, 4]])
     >>> jnp.fliplr(x)
@@ -962,7 +962,7 @@ def flipud(m: ArrayLike) -> Array:
     - :func:`jax.numpy.flip`: reverse the order along the given axis
     - :func:`jax.numpy.fliplr`: reverse the order along axis 1
 
-  Example:
+  Examples:
     >>> x = jnp.array([[1, 2],
     ...                [3, 4]])
     >>> jnp.flipud(x)
@@ -1000,7 +1000,7 @@ def angle(z: ArrayLike, deg: bool = False) -> Array:
     An array of counterclockwise angle of each element of ``z``, with the same
     shape as ``z`` of dtype float.
 
-  Example:
+  Examples:
 
     If ``z`` is a number
 
@@ -1337,7 +1337,7 @@ def ravel_multi_index(multi_index: Sequence[ArrayLike], dims: Sequence[int],
   See also:
     :func:`jax.numpy.unravel_index`: inverse of this function.
 
-  Example:
+  Examples:
     Define a 2-dimensional array and a sequence of indices of even values:
 
     >>> x = jnp.array([[2., 3., 4.],
@@ -3804,7 +3804,7 @@ def ix_(*args: ArrayLike) -> tuple[Array, ...]:
     - :obj:`jax.numpy.mgrid`
     - :func:`jax.numpy.meshgrid`
 
-  Example:
+  Examples:
     >>> rows = jnp.array([0, 2])
     >>> cols = jnp.array([1, 3])
     >>> open_mesh = jnp.ix_(rows, cols)
@@ -5240,7 +5240,7 @@ def einsum_path(
     A tuple containing the path that may be passed to :func:`~jax.numpy.einsum`, and a
     printable object representing this optimal path.
 
-  Example:
+  Examples:
     >>> key1, key2, key3 = jax.random.split(jax.random.key(0), 3)
     >>> x = jax.random.randint(key1, minval=-5, maxval=5, shape=(2, 3))
     >>> y = jax.random.randint(key2, minval=-5, maxval=5, shape=(3, 100))
@@ -6178,7 +6178,7 @@ def take(
     - :attr:`jax.numpy.ndarray.at`: take values via indexing syntax.
     - :func:`jax.numpy.take_along_axis`: take values along an axis
 
-  Example:
+  Examples:
     >>> x = jnp.array([[1., 2., 3.],
     ...                [4., 5., 6.]])
     >>> indices = jnp.array([2, 0])
