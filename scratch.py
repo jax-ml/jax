@@ -1,14 +1,73 @@
+import pdb, sys, traceback
+def info(type, value, tb):
+    traceback.print_exception(type, value, tb)
+    pdb.pm()
+sys.excepthook = info
+
+from functools import partial
+from typing import Any
+
 import numpy as np
+
 import jax
-from jax._src import core
 import jax.numpy as jnp
 
+from jax._src import core
+
 # ========= in jax =======
+
+class HiPrimitive(core.Primitive):
+  pass
+
+from jax._src.interpreters import partial_eval as pe
+from jax._src import linear_util as lu
+from jax._src.util import safe_map as map, safe_zip as zip
+from jax._src.api_util import flatten_fun_nokwargs
+from jax._src.tree_util import tree_flatten, tree_unflatten
+
+def hijax_to_lojax(hi_jaxpr: core.ClosedJaxpr) -> core.ClosedJaxpr:
+  # TODO not to_rep... tree flattening would be perfect! but all we have are
+  # types... want values...
+  lo_in_avals = [x.to_rep() if isinstance(x, JaxType) else x
+                  for x in hi_jaxpr.in_avals]
+  flat_lo_in_avals, in_tree = tree_flatten(lo_in_avals)
+  f = lu.wrap_init(partial(_eval_hi_to_lo, hi_jaxpr.jaxpr, hi_jaxpr.consts))
+  f, out_tree = flatten_fun_nokwargs(f, in_tree)
+  lo_jaxpr, _, lo_consts, () = pe.trace_to_jaxpr_dynamic(f, flat_lo_in_avals)
+  breakpoint()
+  return core.ClosedJaxpr(lo_jaxpr, lo_consts)
+
+LoVal = Any  # Tracer | list[Tracer]
+LoVal_ = Any  # Tracer | HiType[Tracer]
+
+def _eval_hi_to_lo(jaxpr, consts, *args: LoVal):
+  args_ = [
+
+  def read(x: core.Atom) -> LoVal:
+    return x.val if isinstance(x, core.Literal) else env[x]
+
+  def write(v: core.Var, val: LoVal) -> None:
+    env[v] = val
+
+  env: dict[core.Var, LoVal] = {}
+  map(write, jaxpr.invars, args)
+  map(write, jaxpr.constvars, consts)
+  for e in jaxpr.eqns:
+    if isinstance(e.primitive, HiPrimitive):
+      breakpoint()
+      pass
+    else:
+      breakpoint()
+      pass
+  return map(read, jaxpr.outvars)
+
+
+
 
 class JaxVal:
   @classmethod
   def new(cls, *args):
-    return cls.from_rep(*args)
+    return cls._from_rep_p.bind(*args)
 
   def type_of(self):
     assert False, "subclass should implement"
@@ -25,77 +84,31 @@ class JaxType:
     assert False, "subclass should implement"
 
 def register_fancy_type(cls, ty, attr_names):
-  @jax.custom_vjp
-  def from_rep(*args):
-    # args will not have tracers *around FancyVal*
+  _from_rep_p = core.Primitive(cls.__name__ + ".new")
+  def _from_rep_impl(*args):
     val = cls.__new__(cls)
     val.__init__(*args)
     return val
-  def fwd(*args): assert False
-  def bwd(*args): assert False
-  from_rep.defvjp(fwd, bwd)
-  cls.from_rep = from_rep
+  _from_rep_p.def_impl(_from_rep_impl)
+  _from_rep_p.def_abstract_eval(lambda _: ty())
+  cls._from_rep_p = _from_rep_p
+  ty._from_rep_impl = _from_rep_impl  # TODO
 
-  @jax.custom_vjp
-  def splat(val):
+  _splat_p = core.Primitive(cls.__name__ + ".splat")
+  _splat_p.multiple_results = True
+  def _splat_impl(val):
     return tuple(getattr(val, attr_name) for attr_name in attr_names)
-  splat.defvjp(fwd, bwd)
-  cls.splat = splat
+  _splat_p.def_impl(_splat_impl)
+  _splat_p.def_abstract_eval(lambda ty: (ty.to_rep(),) )
+  cls._splat_p = _splat_p
 
   core.pytype_aval_mappings[cls] = lambda x: x.type_of()
   core.raise_to_shaped_mappings[ty] = lambda x, _: x
 
   for i, attr in enumerate(attr_names):
-    setattr(ty, attr, property(lambda self: splat(self)[i]))
+    setattr(ty, attr, core.aval_property(lambda self: _splat_p.bind(self)[i]))
 
-
-# next:
-#   case when tangent type is also fancy - need to define zeros/plus
-#   defining derivative rules. two options
-#      1. treat splat/new as ordinary primitives
-#           * need to define other rules for them (some at user level?)
-#             or lower after AD??
-#      2. OR just use custom_vjp which has solved some version of those
-#         problems already
-#   vmap/scan? either we make use custom_vjp instead of
-#    primitive or we some other way tell jax that vmap/vjp commute
-
-
-
-# problem: we seem to need to have the user specify not just ad rules but vmap,
-# xla lowering etc. How do we avoid that? We hope to avoid it because AD is all
-# we care to override and once AD is "done" we should be able to expand
-# everything in terms of underlying representations and use the already-existing
-# rules on those.
-
-# related problem: how to do things "after AD"
-
-#   dex-style: make vmap a primitive. Do AD first (going under a vmap and
-#   differentiating its body)
-#   custom_vjp-style - somehow does the same thing?
-
-
-
-
-
-# custom_vjp has three parts: primal, fwd, bwd
-# we can view these as *two interpretations*
-#    1. primal  - this is the lowering interpretation
-#    2. fwd/bwd  - this is the AD interpretation
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+  ty.str_short = lambda t, short_dtypes=False: ty.__name__
 
 # ============== in library land ========
 
@@ -121,8 +134,11 @@ class FancyValCls(JaxVal):
     return t.astype(np.float32)
 
 class FancyType(JaxType):
+  def to_rep(self):
+    return core.ShapedArray((), np.dtype("float32"))
+
   def tangent_type_of(self):
-    return jax.ShapeDtypeStruct((), np.dtype("float16"))
+    return core.ShapedArray((), np.dtype("float16"))
 
 register_fancy_type(FancyValCls, FancyType, ["val"])
 
@@ -135,19 +151,18 @@ def fancy_sin(x):
 def fancy_sin_fwd(x):
   assert False
 
-def fancy_sin_bwd(residuals, t):
+def fancy_sin_bwd(rest):
   assert False
 
 fancy_sin.defvjp(fancy_sin_fwd, fancy_sin_bwd)
 
 # ============== in user land ========
 
-def my_function(x:float):
-  return fancy_sin(FancyVal(x)).val
+if __name__ == '__main__':
+  def my_function(x:float):
+    return fancy_sin(FancyVal(x)).val
 
-print(my_function(1.0))
-print(jax.jit(my_function)(1.0))
-# print(jax.grad(my_function)(1.0))
-
-# =======================
+  # print(my_function(1.0))
+  print(jax.jit(my_function)(1.0))
+  # print(jax.grad(my_function)(1.0))
 

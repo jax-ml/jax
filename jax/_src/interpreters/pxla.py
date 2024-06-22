@@ -2190,6 +2190,9 @@ def lower_sharding_computation(
       auto_spmd_lowering)
   in_shardings = tuple(s for i, s in enumerate(in_shardings) if i in kept_var_idx)
   in_layouts = tuple(l for i, l in enumerate(in_layouts) if i in kept_var_idx)
+  
+  import scratch
+  closed_jaxpr = scratch.hijax_to_lojax(closed_jaxpr)
 
   (closed_jaxpr, inout_aliases, mut, in_shardings, in_layouts,
    donated_invars, out_shardings, out_layouts) = _discharge_refs_jaxpr(
