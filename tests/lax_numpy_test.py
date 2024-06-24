@@ -6082,10 +6082,10 @@ class NumpyDocTests(jtu.JaxTestCase):
     # Test that docstring wrapping & transformation didn't fail.
 
     unimplemented = ['fromfile', 'fromiter']
-    aliases = ['abs']
+    aliases = ['abs', 'acos', 'acosh', 'asin', 'asinh', 'atan', 'atanh', 'atan2']
 
     for name in dir(jnp):
-      if name.startswith('_') or name in unimplemented or name in aliases:
+      if name.startswith('_') or name in unimplemented:
         continue
 
       obj = getattr(jnp, name)
@@ -6105,6 +6105,8 @@ class NumpyDocTests(jtu.JaxTestCase):
             raise Exception(f"jnp.{name} does not contain wrapped docstring.")
           if obj.__doc__ and "*Original docstring below.*" not in obj.__doc__:
             raise Exception(f"jnp.{name} does not have a wrapped docstring.")
+      elif name in aliases:
+        assert "Alias of" in obj.__doc__
       else:
         # Other functions should have nontrivial docs including "Args" and "Returns".
         doc = obj.__doc__

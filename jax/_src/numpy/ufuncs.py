@@ -57,23 +57,6 @@ def _replace_inf(x: ArrayLike) -> Array:
   return lax.select(isposinf(real(x)), lax._zeros(x), x)
 
 
-def _one_to_one_unop(
-    numpy_fn: Callable[..., Any], lax_fn: UnOp,
-    promote_to_inexact: bool = False, lax_doc: bool = False) -> UnOp:
-  if promote_to_inexact:
-    fn = lambda x, /: lax_fn(*promote_args_inexact(numpy_fn.__name__, x))
-  else:
-    fn = lambda x, /: lax_fn(*promote_args(numpy_fn.__name__, x))
-  fn.__name__ = numpy_fn.__name__
-  fn.__qualname__ = f"jax.numpy.{numpy_fn.__name__}"
-  fn = jit(fn, inline=True)
-  if lax_doc:
-    doc = dedent('\n\n'.join(lax_fn.__doc__.split('\n\n')[1:])).strip()  # type: ignore[union-attr]
-    return implements(numpy_fn, lax_description=doc, module='numpy')(fn)
-  else:
-    return implements(numpy_fn, module='numpy')(fn)
-
-
 def _one_to_one_binop(
     numpy_fn: Callable[..., Any], lax_fn: BinOp,
     promote_to_inexact: bool = False, lax_doc: bool = False,
@@ -143,43 +126,145 @@ def _logical_op(np_op: Callable[..., Any], bitwise_op: UnOp | BinOp) -> UnOp | B
     return bitwise_op(*promote_args(np_op.__name__, *args))
   return op
 
-@jit
-def _arccosh(x: ArrayLike, /) -> Array:
-  # Note: arccosh is multi-valued for complex input, and lax.acosh uses a different
-  # convention than np.arccosh.
-  out = lax.acosh(*promote_args_inexact("arccosh", x))
-  if dtypes.issubdtype(out.dtype, np.complexfloating):
-    out = _where(real(out) < 0, lax.neg(out), out)
-  return out
+@implements(np.fabs, module='numpy')
+@partial(jit, inline=True)
+def fabs(x: ArrayLike, /) -> Array:
+  return lax.abs(*promote_args_inexact('fabs', x))
 
-fabs = _one_to_one_unop(np.fabs, lax.abs, True)
-bitwise_invert = _one_to_one_unop(getattr(np, 'bitwise_invert', np.invert), lax.bitwise_not)
-bitwise_invert = _one_to_one_unop(getattr(np, 'bitwise_invert', np.invert), lax.bitwise_not)
-bitwise_not = _one_to_one_unop(np.bitwise_not, lax.bitwise_not)
-invert = _one_to_one_unop(np.invert, lax.bitwise_not)
-negative = _one_to_one_unop(np.negative, lax.neg)
-positive = _one_to_one_unop(np.positive, lambda x: lax.asarray(x))
-floor = _one_to_one_unop(np.floor, lax.floor, True)
-ceil = _one_to_one_unop(np.ceil, lax.ceil, True)
-exp = _one_to_one_unop(np.exp, lax.exp, True)
-log = _one_to_one_unop(np.log, lax.log, True)
-expm1 = _one_to_one_unop(np.expm1, lax.expm1, True)
-log1p = _one_to_one_unop(np.log1p, lax.log1p, True)
-sin = _one_to_one_unop(np.sin, lax.sin, True)
-cos = _one_to_one_unop(np.cos, lax.cos, True)
-tan = _one_to_one_unop(np.tan, lax.tan, True)
-arcsin = _one_to_one_unop(np.arcsin, lax.asin, True)
-arccos = _one_to_one_unop(np.arccos, lax.acos, True)
-arctan = _one_to_one_unop(np.arctan, lax.atan, True)
-sinh = _one_to_one_unop(np.sinh, lax.sinh, True)
-cosh = _one_to_one_unop(np.cosh, lax.cosh, True)
-arcsinh = _one_to_one_unop(np.arcsinh, lax.asinh, True)
-arccosh = _one_to_one_unop(np.arccosh, _arccosh, True)
-tanh = _one_to_one_unop(np.tanh, lax.tanh, True)
-arctanh = _one_to_one_unop(np.arctanh, lax.atanh, True)
-sign = _one_to_one_unop(np.sign, lax.sign)
-sqrt = _one_to_one_unop(np.sqrt, lax.sqrt, True)
-cbrt = _one_to_one_unop(np.cbrt, lax.cbrt, True)
+@implements(getattr(np, 'bitwise_invert', np.invert), module='numpy')
+@partial(jit, inline=True)
+def bitwise_invert(x: ArrayLike, /) -> Array:
+  return lax.bitwise_not(*promote_args('bitwise_invert', x))
+
+@implements(np.bitwise_not, module='numpy')
+@partial(jit, inline=True)
+def bitwise_not(x: ArrayLike, /) -> Array:
+  return lax.bitwise_not(*promote_args('bitwise_not', x))
+
+@implements(np.invert, module='numpy')
+@partial(jit, inline=True)
+def invert(x: ArrayLike, /) -> Array:
+  return lax.bitwise_not(*promote_args('invert', x))
+
+@implements(np.negative, module='numpy')
+@partial(jit, inline=True)
+def negative(x: ArrayLike, /) -> Array:
+  return lax.neg(*promote_args('negative', x))
+
+@implements(np.positive, module='numpy')
+@partial(jit, inline=True)
+def positive(x: ArrayLike, /) -> Array:
+  return lax.asarray(*promote_args('positive', x))
+
+@implements(np.sign, module='numpy')
+@partial(jit, inline=True)
+def sign(x: ArrayLike, /) -> Array:
+  return lax.sign(*promote_args('sign', x))
+
+@implements(np.floor, module='numpy')
+@partial(jit, inline=True)
+def floor(x: ArrayLike, /) -> Array:
+  return lax.floor(*promote_args_inexact('floor', x))
+
+@implements(np.ceil, module='numpy')
+@partial(jit, inline=True)
+def ceil(x: ArrayLike, /) -> Array:
+  return lax.ceil(*promote_args_inexact('ceil', x))
+
+@implements(np.exp, module='numpy')
+@partial(jit, inline=True)
+def exp(x: ArrayLike, /) -> Array:
+  return lax.exp(*promote_args_inexact('exp', x))
+
+@implements(np.log, module='numpy')
+@partial(jit, inline=True)
+def log(x: ArrayLike, /) -> Array:
+  return lax.log(*promote_args_inexact('log', x))
+
+@implements(np.expm1, module='numpy')
+@partial(jit, inline=True)
+def expm1(x: ArrayLike, /) -> Array:
+  return lax.expm1(*promote_args_inexact('expm1', x))
+
+@implements(np.log1p, module='numpy')
+@partial(jit, inline=True)
+def log1p(x: ArrayLike, /) -> Array:
+  return lax.log1p(*promote_args_inexact('log1p', x))
+
+@implements(np.sin, module='numpy')
+@partial(jit, inline=True)
+def sin(x: ArrayLike, /) -> Array:
+  return lax.sin(*promote_args_inexact('sin', x))
+
+@implements(np.cos, module='numpy')
+@partial(jit, inline=True)
+def cos(x: ArrayLike, /) -> Array:
+  return lax.cos(*promote_args_inexact('cos', x))
+
+@implements(np.tan, module='numpy')
+@partial(jit, inline=True)
+def tan(x: ArrayLike, /) -> Array:
+  return lax.tan(*promote_args_inexact('tan', x))
+
+@implements(np.arcsin, module='numpy')
+@partial(jit, inline=True)
+def arcsin(x: ArrayLike, /) -> Array:
+  return lax.asin(*promote_args_inexact('arcsin', x))
+
+@implements(np.arccos, module='numpy')
+@partial(jit, inline=True)
+def arccos(x: ArrayLike, /) -> Array:
+  return lax.acos(*promote_args_inexact('arccos', x))
+
+@implements(np.arctan, module='numpy')
+@partial(jit, inline=True)
+def arctan(x: ArrayLike, /) -> Array:
+  return lax.atan(*promote_args_inexact('arctan', x))
+
+@implements(np.sinh, module='numpy')
+@partial(jit, inline=True)
+def sinh(x: ArrayLike, /) -> Array:
+  return lax.sinh(*promote_args_inexact('sinh', x))
+
+@implements(np.cosh, module='numpy')
+@partial(jit, inline=True)
+def cosh(x: ArrayLike, /) -> Array:
+  return lax.cosh(*promote_args_inexact('cosh', x))
+
+@implements(np.arcsinh, module='numpy')
+@partial(jit, inline=True)
+def arcsinh(x: ArrayLike, /) -> Array:
+  return lax.asinh(*promote_args_inexact('arcsinh', x))
+
+@implements(np.arccosh, module='numpy')
+@jit
+def arccosh(x: ArrayLike, /) -> Array:
+  # Note: arccosh is multi-valued for complex input, and lax.acosh
+  # uses a different convention than np.arccosh.
+  result = lax.acosh(*promote_args_inexact("arccosh", x))
+  if dtypes.issubdtype(result.dtype, np.complexfloating):
+    result = _where(real(result) < 0, lax.neg(result), result)
+  return result
+
+@implements(np.tanh, module='numpy')
+@partial(jit, inline=True)
+def tanh(x: ArrayLike, /) -> Array:
+  return lax.tanh(*promote_args_inexact('tanh', x))
+
+@implements(np.arctanh, module='numpy')
+@partial(jit, inline=True)
+def arctanh(x: ArrayLike, /) -> Array:
+  return lax.atanh(*promote_args_inexact('arctanh', x))
+
+@implements(np.sqrt, module='numpy')
+@partial(jit, inline=True)
+def sqrt(x: ArrayLike, /) -> Array:
+  return lax.sqrt(*promote_args_inexact('sqrt', x))
+
+@implements(np.cbrt, module='numpy')
+@partial(jit, inline=True)
+def cbrt(x: ArrayLike, /) -> Array:
+  return lax.cbrt(*promote_args_inexact('cbrt', x))
 
 add = _maybe_bool_binop(np.add, lax.add, lax.bitwise_or)
 bitwise_and = _one_to_one_binop(np.bitwise_and, lax.bitwise_and)
@@ -208,15 +293,40 @@ logical_or: BinOp = _logical_op(np.logical_or, lax.bitwise_or)
 logical_xor: BinOp = _logical_op(np.logical_xor, lax.bitwise_xor)
 
 # Array API aliases
-# TODO(jakevdp): directly reference np_fun when minimum numpy version is 2.0
-acos = _one_to_one_unop(getattr(np, "acos", np.arccos), lax.acos, True)
-acosh = _one_to_one_unop(getattr(np, "acosh", np.arccosh), _arccosh, True)
-asin = _one_to_one_unop(getattr(np, "asin", np.arcsin), lax.asin, True)
-asinh = _one_to_one_unop(getattr(np, "asinh", np.arcsinh), lax.asinh, True)
-atan = _one_to_one_unop(getattr(np, "atan", np.arctan), lax.atan, True)
-atanh = _one_to_one_unop(getattr(np, "atanh", np.arctanh), lax.atanh, True)
-atan2 = _one_to_one_binop(getattr(np, "atan2", np.arctan2), lax.atan2, True)
+@partial(jit, inline=True)
+def acos(x: ArrayLike, /) -> Array:
+  """Alias of :func:`jax.numpy.arccos`"""
+  return arccos(*promote_args('acos', x))
 
+@partial(jit, inline=True)
+def acosh(x: ArrayLike, /) -> Array:
+  """Alias of :func:`jax.numpy.arccosh`"""
+  return arccosh(*promote_args('acosh', x))
+
+@partial(jit, inline=True)
+def asin(x: ArrayLike, /) -> Array:
+  """Alias of :func:`jax.numpy.arcsin`"""
+  return arcsin(*promote_args('asin', x))
+
+@partial(jit, inline=True)
+def asinh(x: ArrayLike, /) -> Array:
+  """Alias of :func:`jax.numpy.arcsinh`"""
+  return arcsinh(*promote_args('asinh', x))
+
+@partial(jit, inline=True)
+def atan(x: ArrayLike, /) -> Array:
+  """Alias of :func:`jax.numpy.arctan`"""
+  return arctan(*promote_args('atan', x))
+
+@partial(jit, inline=True)
+def atanh(x: ArrayLike, /) -> Array:
+  """Alias of :func:`jax.numpy.arctanh`"""
+  return arctanh(*promote_args('atanh', x))
+
+@partial(jit, inline=True)
+def atan2(x: ArrayLike, y: ArrayLike, /) -> Array:
+  """Alias of :func:`jax.numpy.arctan2`"""
+  return arctan2(*promote_args('atan2', x, y))
 
 @jit
 def bitwise_count(x: ArrayLike, /) -> Array:
