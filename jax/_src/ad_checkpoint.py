@@ -247,7 +247,7 @@ def checkpoint(fun: Callable, *, prevent_cse: bool = True,
 
   Here, the same value is produced whether or not the :func:`jax.checkpoint`
   decorator is present. When the decorator is not present, the values
-  ``jnp.cos(2.0)`` and ``jnp.cos(jnp.sin(2.0))`` are computed on the forward
+  ``jnp.sin(2.0)`` and ``jnp.sin(jnp.sin(2.0))`` are computed on the forward
   pass and are stored for use in the backward pass, because they are needed
   on the backward pass and depend only on the primal inputs. When using
   :func:`jax.checkpoint`, the forward pass will compute only the primal outputs
