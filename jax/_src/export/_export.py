@@ -161,10 +161,10 @@ class Exported:
         the mesh. See `out_shardings_jax` for a way to turn these
         into sharding specification that can be used with JAX APIs.
     nr_devices: the number of devices that the module has been lowered for.
-    platforms: a tuple containing at least one of 'tpu', 'cpu',
-        'cuda', 'rocm'. See https://jax.readthedocs.io/en/latest/export.html#module-calling-convention
-        for the calling convention for when
-        there are multiple export platforms.
+    platforms: a tuple containing the platforms for which the function should
+        be exported. The set of platforms in JAX is open-ended; users can
+        add platforms. JAX built-in platforms are: 'tpu', 'cpu', 'cuda', 'rocm'.
+        See https://jax.readthedocs.io/en/latest/export/export.html#cross-platform-and-multi-platform-export.
     ordered_effects: the ordered effects present in the serialized module.
         This is present from serialization version 9. See https://jax.readthedocs.io/en/latest/export.html#module-calling-convention
         for the calling convention in presence of ordered effects.
