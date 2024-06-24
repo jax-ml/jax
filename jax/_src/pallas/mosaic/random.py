@@ -11,26 +11,29 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Any, Callable
+from typing import Callable, Optional
 
 import jax
 import numpy as np
 from jax import numpy as jnp
 from jax import random as jax_api_random
+from jax._src import blocked_sampler
 from jax._src import typing
 from jax._src.pallas.mosaic.primitives import prng_seed
 from jax._src.pallas.mosaic.primitives import prng_random_bits
+from jax._src.pallas import primitives
 from jax._src import prng as jax_prng
 
 
 Shape = jax_prng.Shape
-SampleFnType = Any
+SampleFnType = blocked_sampler.SampleFn
 KeylessSampleFnType = Callable[..., jax.Array]
 
 set_seed = prng_seed
 
 FOLD_IN_ROUNDS = 128
 SUPPORTED_CONVERSION_KEYS = ["rbg", "unsafe_rbg", "pallas_tpu"]
+
 
 def to_pallas_key(key: jax_prng.PRNGKeyArray) -> jax_prng.PRNGKeyArray:
   """Helper function for converting non-Pallas PRNG keys into Pallas keys."""
@@ -79,15 +82,16 @@ def _fold_in(key: jax_prng.PRNGKeyArray, data: typing.Array):
 
   mixed = key_bits[..., FOLD_IN_ROUNDS-1] ^ data_bits[..., FOLD_IN_ROUNDS-1]
   assert mixed.shape == key_shape
-  impl: jax_prng.PRNGSpec = jax.random.key_impl(key)  # type: ignore
-  return jax.random.wrap_key_data(mixed, impl=impl)
+  return jax.random.wrap_key_data(mixed, impl="pallas_tpu")
 
 def _split(key: typing.Array, shape: Shape):
   del key, shape
   raise NotImplementedError()
 
 tpu_key_impl = jax_prng.PRNGImpl(
-   key_shape=(1,),
+   # Pallas currently only supports 2D+ windows, so set the key_shape
+   # to be 2D to have better compatibility with setting BlockSpecs.
+   key_shape=(1, 1),
    seed=_seed_func,
    split=_split,
    random_bits=_random_bits,
@@ -152,11 +156,63 @@ def _make_stateful_sampler(sampler: SampleFnType) -> KeylessSampleFnType:
     placeholder_key = jax_api_random.key(0, impl=tpu_internal_stateful_impl)
     return sampler(placeholder_key, *args, **kwargs)
   # Remove key argument from docstring.
-  doc_lines = filter(
-      lambda line: "key:" not in line, sampler.__doc__.split("\n"))
-  new_sampler.__doc__ = "\n".join(doc_lines)
+  if sampler.__doc__:
+    doc_lines = filter(
+        lambda line: "key:" not in line, sampler.__doc__.split("\n"))
+    new_sampler.__doc__ = "\n".join(doc_lines)
   return new_sampler
 
-bits = _make_stateful_sampler(jax_api_random.bits)
-uniform = _make_stateful_sampler(jax_api_random.uniform)
-bernoulli = _make_stateful_sampler(jax_api_random.bernoulli)
+bits = _make_stateful_sampler(jax_api_random.bits)  # type: ignore
+uniform = _make_stateful_sampler(jax_api_random.uniform)  # type: ignore
+bernoulli = _make_stateful_sampler(jax_api_random.bernoulli)  # type: ignore
+
+
+def sample_block(sampler_fn: SampleFnType,
+                 global_key: jax_prng.PRNGKeyArray,
+                 block_size: Shape,
+                 tile_size: Shape,
+                 total_size: Shape,
+                 block_index: Optional[tuple[typing.ArrayLike, ...]] = None,
+                 **kwargs) -> jax.Array:
+  """Samples a block of random values with invariance guarantees.
+
+  `sample_block` allows the sampling of identical blocks of random values
+  across kernels with different block shapes and iteration orders. Each call
+  to `sample_block` returns a `block_size`-shaped array of random samples
+  corresponding to the `block_index`.
+
+  `tile_size` should be chosen such that it is a divisor to all block sizes
+  one needs to be invariant to. The larger the `tile_size`, the more
+  efficient the sampling process wil be and therefore the best choice is
+  typically the greatest common divisor between all possible block sizes.
+
+  Args:
+    sampler_fn: A sampling function that consumes a key and returns
+      random samples.
+    global_key: The global key to use for sampling.
+    block_size: The shape of an individual block.
+    tile_size: The shape of a `tile`, which is the smallest unit at
+      which samples are generated. This should be selected to be a divisor
+      of all block sizes one needs to be invariant to.
+    total_size: The total size of the array to sample.
+    block_index: The index denoting which block to generate keys for. Defaults
+      to the program_id for each block axis.
+    **kwargs: Additional arguments to pass to the sampler_fn.
+
+  Returns:
+    A `block_size` shaped array of samples for the current block corresponding
+    to `block_index`.
+  """
+  if len(block_size) != len(tile_size):
+    raise ValueError(f"block_size ({len(block_size)}) and tile_size "
+                     f"({len(tile_size)}) must have the same length.")
+
+  if block_index is None:
+    num_axes = len(block_size)
+    block_index = tuple(
+      primitives.program_id(axis) for axis in range(num_axes))
+
+  keys = blocked_sampler.blocked_fold_in(
+      global_key, total_size, block_size, tile_size, block_index)
+  return blocked_sampler.sample_block(
+      sampler_fn, keys, block_size, tile_size, **kwargs)

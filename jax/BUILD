@@ -205,6 +205,7 @@ py_library_providing_imports_info(
         "_src/ad_checkpoint.py",
         "_src/api.py",
         "_src/array.py",
+        "_src/blocked_sampler.py",
         "_src/callback.py",
         "_src/checkify.py",
         "_src/custom_batching.py",

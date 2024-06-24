@@ -18,7 +18,6 @@ from absl.testing import parameterized
 import jax
 from jax import random as jax_random
 from jax._src import test_util as jtu
-from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import random as plrandom
 from jax.experimental import pallas as pl
 from jax.experimental.pallas import tpu as pltpu
@@ -100,7 +99,7 @@ class PRNGTest(jtu.JaxTestCase):
     o_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
     result = pl.pallas_call(
         body,
-        in_specs=[pl.BlockSpec(memory_space=tpu_core.TPUMemorySpace.SMEM)],
+        in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM)],
         out_shape=o_shape,
     )(key)
     self.assertGreaterEqual(jnp.min(result), 0)
@@ -118,7 +117,7 @@ class PRNGTest(jtu.JaxTestCase):
     o_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
     result = pl.pallas_call(
         body,
-        in_specs=[pl.BlockSpec(memory_space=tpu_core.TPUMemorySpace.SMEM)],
+        in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM)],
         out_shape=o_shape,
     )(key)
     self.assertGreaterEqual(jnp.min(result), 0)
@@ -142,12 +141,62 @@ class PRNGTest(jtu.JaxTestCase):
     o_shape = jax.ShapeDtypeStruct((2, 8, 128), jnp.float32)
     result = pl.pallas_call(
         body,
-        in_specs=[pl.BlockSpec(memory_space=tpu_core.TPUMemorySpace.SMEM)],
+        in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM)],
         out_shape=o_shape,
     )(key)
     result_a = result[0]
     result_b = result[1]
     np.testing.assert_array_compare(np.not_equal, result_a, result_b)
+
+
+class BlockInvarianceTest(parameterized.TestCase):
+
+  def setUp(self):
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Need TPU devices")
+    super().setUp()
+
+  def test_block_invariance(self):
+
+    def make_kernel_body(index_map):
+      def body(key_ref, o_ref):
+        key = key_ref[0, 0]
+        samples = plrandom.sample_block(
+            jax.random.uniform,
+            key,
+            block_size=o_ref[...].shape,
+            tile_size=(16, 128),
+            total_size=(64, 512),
+            block_index=index_map(pl.program_id(0), pl.program_id(1)),
+            minval=0.0,
+            maxval=1.0)
+        o_ref[...] = samples
+      return body
+
+    global_key = jax_random.key(0, impl="pallas_tpu")
+    o_shape = jnp.ones((64, 512), dtype=jnp.float32)
+    key_spec = pl.BlockSpec(lambda i, j: (0, 0),
+                            block_shape=(1, 1),
+                            memory_space=pltpu.TPUMemorySpace.SMEM)
+    out_spec = pl.BlockSpec(lambda i, j: (i, j), block_shape=(16, 128))
+    result_16x128 = pl.pallas_call(
+        make_kernel_body(index_map=lambda i, j: (i, j)),
+        out_shape=o_shape,
+        in_specs=[key_spec],
+        out_specs=out_spec,
+        grid=(4, 4),
+    )(global_key)
+
+    out_spec = pl.BlockSpec(lambda i, j: (j, i), block_shape=(32, 256))
+    result_32x256 = pl.pallas_call(
+        make_kernel_body(index_map=lambda i, j: (j, i)),
+        in_specs=[key_spec],
+        out_shape=o_shape,
+        out_specs=out_spec,
+        grid=(2, 2),
+    )(global_key)
+    np.testing.assert_array_equal(result_16x128, result_32x256)
+
 
 
 if __name__ == "__main__":
