@@ -677,6 +677,7 @@ def host_local_array_to_global_array(state):
     multihost_utils.host_local_array_to_global_array(
         (input_data, input_data), global_mesh, (in_pspec, in_pspec))
 
+
 @google_benchmark.register
 @google_benchmark.option.arg_names(['num_args'])
 @google_benchmark.option.args([1])
@@ -872,6 +873,21 @@ def bench_make_array_from_callback_fully_replicated_sharding(state):
 
   while state:
     jax.make_array_from_callback(shape, s, np_arr.__getitem__)
+
+
+@google_benchmark.register
+@google_benchmark.option.unit(google_benchmark.kMillisecond)
+def bench_make_array_from_callback_sharded(state):
+  global_mesh = create_mesh((4, 2), ('x', 'y'), state)
+  input_shape = (8, 2)
+  input_data = np.arange(math.prod(input_shape)).reshape(input_shape)
+
+  def callback(index):
+    return input_data[index]
+
+  s = jax.NamedSharding(global_mesh, jax.sharding.PartitionSpec('x', 'y'))
+  while state:
+    jax.make_array_from_callback((8, 2), s, callback)
 
 @google_benchmark.register
 @google_benchmark.option.unit(google_benchmark.kMillisecond)
