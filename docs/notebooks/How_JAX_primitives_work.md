@@ -173,6 +173,7 @@ that are already written in terms of those primitives, such as those in `jax.num
 
 import jax.numpy as jnp
 import numpy as np
+from jax._src import api
 
 @trace("multiply_add_numpy")
 def multiply_add_numpy(x, y, z):
