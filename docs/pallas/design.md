@@ -1,5 +1,7 @@
 # Pallas Design
 
+<!--* freshness: { reviewed: '2024-04-15' } *-->
+
 In this document, we explain the initial Pallas design. This is a snapshot of some of the earlier design decisions made and Pallas's specific APIs might have changed since.
 
 ## Introduction

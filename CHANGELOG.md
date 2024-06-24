@@ -8,6 +8,9 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.31
 
+* Changes
+  * The minimum NumPy version is now 1.24.
+
 ## jaxlib 0.4.31
 
 * Bug fixes

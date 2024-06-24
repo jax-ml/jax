@@ -1087,6 +1087,11 @@ jax_test(
     main = "third_party/scipy/line_search_test.py",
 )
 
+jax_test(
+    name = "blocked_sampler_test",
+    srcs = ["blocked_sampler_test.py"],
+)
+
 py_test(
     name = "tree_util_test",
     srcs = ["tree_util_test.py"],

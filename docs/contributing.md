@@ -1,5 +1,7 @@
 # Contributing to JAX
 
+<!--* freshness: { reviewed: '2023-11-16' } *-->
+
 Everyone can contribute to JAX, and we value everyone's contributions. There are several
 ways to contribute, including:
 

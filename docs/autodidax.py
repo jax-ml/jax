@@ -31,6 +31,8 @@
 
 # # Autodidax: JAX core from scratch
 #
+# <!--* freshness: { reviewed: '2024-04-08' } *-->
+#
 # Ever want to learn how JAX works, but the implementation seemed impenetrable?
 # Well, you're in luck! By reading this tutorial, you'll learn every big idea in
 # JAX's core system. You'll even get clued into our weird jargon!

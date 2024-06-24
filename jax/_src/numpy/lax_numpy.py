@@ -127,8 +127,37 @@ get_printoptions = np.get_printoptions
 printoptions = np.printoptions
 set_printoptions = np.set_printoptions
 
-@util.implements(np.iscomplexobj)
 def iscomplexobj(x: Any) -> bool:
+  """Check if the input is a complex number or an array containing complex elements.
+
+  JAX implementation of :func:`numpy.iscomplexobj`.
+
+  The function evaluates based on input type rather than value.
+  Inputs with zero imaginary parts are still considered complex.
+
+  Args:
+    x: input object to check.
+
+  Returns:
+    True if ``x`` is a complex number or an array containing at least one complex element,
+    False otherwise.
+
+  See Also:
+    - :func:`jax.numpy.isrealobj`
+    - :func:`jax.numpy.iscomplex`
+
+  Examples:
+    >>> jnp.iscomplexobj(True)
+    False
+    >>> jnp.iscomplexobj(0)
+    False
+    >>> jnp.iscomplexobj(jnp.array([1, 2]))
+    False
+    >>> jnp.iscomplexobj(1+2j)
+    True
+    >>> jnp.iscomplexobj(jnp.array([0, 1+2j]))
+    True
+  """
   if x is None:
     return False
   try:
@@ -972,9 +1001,26 @@ def flipud(m: ArrayLike) -> Array:
   util.check_arraylike("flipud", m)
   return _flip(asarray(m), 0)
 
-@util.implements(np.iscomplex)
 @jit
 def iscomplex(x: ArrayLike) -> Array:
+  """Return boolean array showing where the input is complex.
+
+  JAX implementation of :func:`numpy.iscomplex`.
+
+  Args:
+    x: Input array to check.
+
+  Returns:
+    A new array containing boolean values indicating complex elements.
+
+  See Also:
+    - :func:`jax.numpy.iscomplexobj`
+    - :func:`jax.numpy.isrealobj`
+
+  Examples:
+    >>> jnp.iscomplex(jnp.array([True, 0, 1, 2j, 1+2j]))
+    Array([False, False, False, True, True], dtype=bool)
+  """
   i = ufuncs.imag(x)
   return lax.ne(i, _lax_const(i, 0))
 

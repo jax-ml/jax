@@ -57,33 +57,46 @@ def _roots_with_zeros(p: Array, num_leading_zeros: Array | int) -> Array:
   return _where(arange(roots.size) < roots.size - num_leading_zeros, roots, complex(np.nan, np.nan))
 
 
-@implements(np.roots, lax_description="""\
-Unlike the numpy version of this function, the JAX version returns the roots in
-a complex array regardless of the values of the roots. Additionally, the jax
-version of this function adds the ``strip_zeros`` function which must be set to
-False for the function to be compatible with JIT and other JAX transformations.
-With ``strip_zeros=False``, if your coefficients have leading zeros, the
-roots will be padded with NaN values:
-
->>> coeffs = jnp.array([0, 1, 2])
-
-# The default behavior matches numpy and strips leading zeros:
->>> jnp.roots(coeffs)
-Array([-2.+0.j], dtype=complex64)
-
-# With strip_zeros=False, extra roots are set to NaN:
->>> jnp.roots(coeffs, strip_zeros=False)
-Array([-2. +0.j, nan+nanj], dtype=complex64)
-""",
-extra_params="""
-strip_zeros : bool, default=True
-    If set to True, then leading zeros in the coefficients will be stripped, similar
-    to :func:`numpy.roots`. If set to False, leading zeros will not be stripped, and
-    undefined roots will be represented by NaN values in the function output.
-    ``strip_zeros`` must be set to ``False`` for the function to be compatible with
-    :func:`jax.jit` and other JAX transformations.
-""")
 def roots(p: ArrayLike, *, strip_zeros: bool = True) -> Array:
+  r"""Returns the roots of a polynomial given the coefficients ``p``.
+
+  JAX implementations of :func:`numpy.roots`.
+
+  Args:
+    p: Array of polynomial coefficients having rank-1.
+    strip_zeros : bool, default=True. If True, then leading zeros in the
+      coefficients will be stripped, similar to :func:`numpy.roots`. If set to
+      False, leading zeros will not be stripped, and undefined roots will be
+      represented by NaN values in the function output. ``strip_zeros`` must be
+      set to ``False`` for the function to be compatible with :func:`jax.jit` and
+      other JAX transformations.
+
+  Returns:
+    An array containing the roots of the polynomial.
+
+  Note:
+    Unlike ``np.roots`` of this function, the ``jnp.roots`` returns the roots
+    in a complex array regardless of the values of the roots.
+
+  See Also:
+    - :func:`jax.numpy.poly`: Finds the polynomial coefficients of the given
+      sequence of roots.
+    - :func:`jax.numpy.polyfit`: Least squares polynomial fit to data.
+    - :func:`jax.numpy.polyval`: Evaluate a polynomial at specific values.
+
+  Examples:
+    >>> coeffs = jnp.array([0, 1, 2])
+
+    The default behavior matches numpy and strips leading zeros:
+
+    >>> jnp.roots(coeffs)
+    Array([-2.+0.j], dtype=complex64)
+
+    With ``strip_zeros=False``, extra roots are set to NaN:
+
+    >>> jnp.roots(coeffs, strip_zeros=False)
+    Array([-2. +0.j, nan+nanj], dtype=complex64)
+  """
   check_arraylike("roots", p)
   p_arr = atleast_1d(promote_dtypes_inexact(p)[0])
   if p_arr.ndim != 1:
@@ -102,15 +115,108 @@ def roots(p: ArrayLike, *, strip_zeros: bool = True) -> Array:
     return _roots_with_zeros(p_arr, num_leading_zeros)
 
 
-_POLYFIT_DOC = """\
-Unlike NumPy's implementation of polyfit, :py:func:`jax.numpy.polyfit` will not warn on rank reduction, which indicates an ill conditioned matrix
-Also, it works best on rcond <= 10e-3 values.
-"""
-@implements(np.polyfit, lax_description=_POLYFIT_DOC)
 @partial(jit, static_argnames=('deg', 'rcond', 'full', 'cov'))
 def polyfit(x: Array, y: Array, deg: int, rcond: float | None = None,
             full: bool = False, w: Array | None = None, cov: bool = False
             ) -> Array | tuple[Array, ...]:
+  r"""Least squares polynomial fit to data.
+
+  Jax implementation of :func:`numpy.polyfit`.
+
+  Given a set of data points ``(x, y)`` and degree of polynomial ``deg``, the
+  function finds a polynomial equation of the form:
+
+  .. math::
+
+	   y = p(x) = p[0] x^{deg} + p[1] x^{deg - 1} + ... + p[deg]
+
+  Args:
+    x: Array of data points of shape ``(M,)``.
+    y: Array of data points of shape ``(M,)`` or ``(M, K)``.
+    deg: Degree of the polynomials. It must be specified statically.
+    rcond: Relative condition number of the fit. Default value is ``len(x) * eps``.
+       It must be specified statically.
+    full: Switch that controls the return value. Default is ``False`` which
+      restricts the return value to the array of polynomail coefficients ``p``.
+      If ``True``, the function returns a tuple ``(p, resids, rank, s, rcond)``.
+      It must be specified statically.
+    w: Array of weights of shape ``(M,)``. If None, all data points are considered
+      to have equal weight. If not None, the weight :math:`w_i` is applied to the
+      unsquared residual of :math:`y_i - \widehat{y}_i` at :math:`x_i`, where
+      :math:`\widehat{y}_i` is the fitted value of :math:`y_i`. Default is None.
+    cov: Boolean or string. If ``True``, returns the covariance matrix scaled
+      by ``resids/(M-deg-1)`` along with ploynomial coefficients. If
+      ``cov='unscaled'``, returns the unscaaled version of covariance matrix.
+      Default is ``False``. ``cov`` is ignored if ``full=True``. It must be
+      specified statically.
+
+  Returns:
+    - An array polynomial coefficients ``p`` if ``full=False`` and ``cov=False``.
+
+    - A tuple of arrays ``(p, resids, rank, s, rcond)`` if ``full=True``. Where
+
+      - ``p`` is an array of shape ``(M,)`` or ``(M, K)`` containing the polynomial
+        coefficients.
+      - ``resids`` is the sum of squared residual of shape () or (K,).
+      - ``rank`` is the rank of the matrix ``x``.
+      - ``s`` is the singular values of the matrix ``x``.
+      - ``rcond`` as the array.
+    - A tuple of arrays ``(p, C)`` if ``full=False`` and ``cov=True``. Where
+
+      - ``p`` is an array of shape ``(M,)`` or ``(M, K)`` containing the polynomial
+        coefficients.
+      - ``C`` is the covariance matrix of polynomial coefficients of shape
+        ``(deg + 1, deg + 1)`` or ``(deg + 1, deg + 1, 1)``.
+
+  Note:
+    Unlike :func:`numpy.polyfit` implementation of polyfit, :func:`jax.numpy.polyfit`
+    will not warn on rank reduction, which indicates an ill conditioned matrix.
+
+  See Also:
+    - :func:`jax.numpy.poly`: Finds the polynomial coefficients of the given
+      sequence of roots.
+    - :func:`jax.numpy.polyval`: Evaluate a polynomial at specific values.
+    - :func:`jax.numpy.roots`: Computes the roots of a polynomial for given
+      coefficients.
+
+  Examples:
+    >>> x = jnp.array([3., 6., 9., 4.])
+    >>> y = jnp.array([[0, 1, 2],
+    ...                [2, 5, 7],
+    ...                [8, 4, 9],
+    ...                [1, 6, 3]])
+    >>> p = jnp.polyfit(x, y, 2)
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(p)
+    [[ 0.2  -0.35 -0.14]
+     [-1.17  4.47  2.96]
+     [ 1.95 -8.21 -5.93]]
+
+    If ``full=True``, returns a tuple of arrays as follows:
+
+    >>> p, resids, rank, s, rcond = jnp.polyfit(x, y, 2, full=True)
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print("Polynomial Coefficients:", "\n", p, "\n",
+    ...         "Residuals:", resids, "\n",
+    ...         "Rank:", rank, "\n",
+    ...         "s:", s, "\n",
+    ...         "rcond:", rcond)
+    Polynomial Coefficients:
+    [[ 0.2  -0.35 -0.14]
+    [-1.17  4.47  2.96]
+    [ 1.95 -8.21 -5.93]]
+    Residuals: [0.37 5.94 0.61]
+    Rank: 3
+    s: [1.67 0.47 0.04]
+    rcond: 4.7683716e-07
+
+    If ``cov=True`` and ``full=False``, returns a tuple of arrays having
+    polynomial coefficients and covariance matrix.
+
+    >>> p, C = jnp.polyfit(x, y, 2, cov=True)
+    >>> p.shape, C.shape
+    ((3, 3), (3, 3, 1))
+  """
   check_arraylike("polyfit", x, y)
   deg = core.concrete_or_error(int, deg, "deg must be int")
   order = deg + 1
@@ -175,21 +281,63 @@ def polyfit(x: Array, y: Array, deg: int, rcond: float | None = None,
     return c
 
 
-_POLY_DOC = """\
-This differs from np.poly when an integer array is given.
-np.poly returns a result with dtype float64 in this case.
-jax returns a result with an inexact type, but not necessarily
-float64.
-
-This also differs from np.poly when the input array strictly
-contains pairs of complex conjugates, e.g. [1j, -1j, 1-1j, 1+1j].
-np.poly returns an array with a real dtype in such cases.
-jax returns an array with a complex dtype in such cases.
-"""
-
-@implements(np.poly, lax_description=_POLY_DOC)
 @jit
 def poly(seq_of_zeros: Array) -> Array:
+  r"""Returns the coefficients of a polynomial for the given sequence of roots.
+
+  JAX implementation of :func:`numpy.poly`.
+
+  Args:
+    seq_of_zeros: A scalar or an array of roots of the polynomial of shape ``(M,)``
+      or ``(M, M)``.
+
+  Returns:
+    An array containing the coefficients of the polynomial. The dtype of the
+    output is always promoted to inexact.
+
+  Note:
+
+    :func:`jax.numpy.poly` differs from :func:`numpy.poly`:
+
+    - When the input is a scalar, ``np.poly`` raises a ``TypeError``, whereas
+      ``jnp.poly`` treats scalars the same as length-1 arrays.
+    - For complex-valued or square-shaped inputs, ``jnp.poly`` always returns
+      complex coefficients, whereas ``np.poly`` may return real or complex
+      depending on their values.
+
+  See also:
+    - :func:`jax.numpy.polyfit`: Least squares polynomial fit.
+    - :func:`jax.numpy.polyval`: Evaluate a polynomial at specific values.
+    - :func:`jax.numpy.roots`: Computes the roots of a polynomial for given
+      coefficients.
+
+  Example:
+
+    Scalar inputs:
+
+    >>> jnp.poly(1)
+    Array([ 1., -1.], dtype=float32)
+
+    Input array with integer values:
+
+    >>> x = jnp.array([1, 2, 3])
+    >>> jnp.poly(x)
+    Array([ 1., -6., 11., -6.], dtype=float32)
+
+    Input array with complex conjugates:
+
+    >>> x = jnp.array([2, 1+2j, 1-2j])
+    >>> jnp.poly(x)
+    Array([  1.+0.j,  -4.+0.j,   9.+0.j, -10.+0.j], dtype=complex64)
+
+    Input array as square matrix with real valued inputs:
+
+    >>> x = jnp.array([[2, 1, 5],
+    ...                [3, 4, 7],
+    ...                [1, 3, 5]])
+    >>> jnp.round(jnp.poly(x))
+    Array([  1.+0.j, -11.-0.j,   9.+0.j, -15.+0.j], dtype=complex64)
+  """
   check_arraylike('poly', seq_of_zeros)
   seq_of_zeros, = promote_dtypes_inexact(seq_of_zeros)
   seq_of_zeros = atleast_1d(seq_of_zeros)
@@ -214,16 +362,60 @@ def poly(seq_of_zeros: Array) -> Array:
   return a
 
 
-@implements(np.polyval, lax_description="""\
-The ``unroll`` parameter is JAX specific. It does not effect correctness but can
-have a major impact on performance for evaluating high-order polynomials. The
-parameter controls the number of unrolled steps with ``lax.scan`` inside the
-``polyval`` implementation. Consider setting ``unroll=128`` (or even higher) to
-improve runtime performance on accelerators, at the cost of increased
-compilation time.
-""")
 @partial(jit, static_argnames=['unroll'])
 def polyval(p: Array, x: Array, *, unroll: int = 16) -> Array:
+  r"""Evaluates the polynomial at specific values.
+
+  JAX implementations of :func:`numpy.polyval`.
+
+  For the 1D-polynomial coefficients ``p`` of length ``M``, the function returns
+  the value:
+
+  .. math::
+
+    p_0 x^{M - 1} + p_1 x^{M - 2} + ... + p_{M - 1}
+
+  Args:
+    p: An array of polynomial coefficients of shape ``(M,)``.
+    x: A number or an array of numbers.
+    unroll: A number used to control the number of unrolled steps with
+      ``lax.scan``. It must be specified statically.
+
+  Returns:
+    An array of same shape as ``x``.
+
+  Note:
+
+    The ``unroll`` parameter is JAX specific. It does not affect correctness but
+    can have a major impact on performance for evaluating high-order polynomials.
+    The parameter controls the number of unrolled steps with ``lax.scan`` inside
+    the ``jnp.polyval`` implementation. Consider setting ``unroll=128`` (or even
+    higher) to improve runtime performance on accelerators, at the cost of
+    increased compilation time.
+
+  See also:
+    - :func:`jax.numpy.polyfit`: Least squares polynomial fit.
+    - :func:`jax.numpy.poly`: Finds the coefficients of a polynomial with given
+      roots.
+    - :func:`jax.numpy.roots`: Computes the roots of a polynomial for given
+      coefficients.
+
+  Example:
+    >>> p = jnp.array([2, 5, 1])
+    >>> jnp.polyval(p, 3)
+    Array(34., dtype=float32)
+
+    If ``x`` is a 2D array, ``polyval`` returns 2D-array with same shape as
+    that of ``x``:
+
+    >>> x = jnp.array([[2, 1, 5],
+    ...                [3, 4, 7],
+    ...                [1, 3, 5]])
+    >>> jnp.polyval(p, x)
+    Array([[ 19.,   8.,  76.],
+           [ 34.,  53., 134.],
+           [  8.,  34.,  76.]], dtype=float32)
+  """
   check_arraylike("polyval", p, x)
   p, x = promote_dtypes_inexact(p, x)
   shape = lax.broadcast_shapes(p.shape[1:], x.shape)
@@ -242,9 +434,53 @@ def polyadd(a1: Array, a2: Array) -> Array:
     return a2.at[-a1.shape[0]:].add(a1)
 
 
-@implements(np.polyint)
 @partial(jit, static_argnames=('m',))
 def polyint(p: Array, m: int = 1, k: int | None = None) -> Array:
+  r"""Returns the coefficients of the integration of specified order of a polynomial.
+
+  JAX implementation of :func:`numpy.polyint`.
+
+  Args:
+    p: An array of polynomial coefficients.
+    m: Order of integration. Default is 1. It must be specified statically.
+    k: Scalar or array of ``m`` integration constant (s).
+
+  Returns:
+    An array of coefficients of integrated polynomial.
+
+  See also:
+    - :func:`jax.numpy.polyder`: Computes the coefficients of the derivative of
+      a polynomial.
+    - :func:`jax.numpy.polyval`: Evaluates a polynomial at specific values.
+
+  Examples:
+
+    The first order integration of the polynomial :math:`12 x^2 + 12 x + 6` is
+    :math:`4 x^3 + 6 x^2 + 6 x`.
+
+    >>> p = jnp.array([12, 12, 6])
+    >>> jnp.polyint(p)
+    Array([4., 6., 6., 0.], dtype=float32)
+
+    Since the constant ``k`` is not provided, the result included ``0`` at the end.
+    If the constant ``k`` is provided:
+
+    >>> jnp.polyint(p, k=4)
+    Array([4., 6., 6., 4.], dtype=float32)
+
+    and the second order integration is :math:`x^4 + 2 x^3 + 3 x`:
+
+    >>> jnp.polyint(p, m=2)
+    Array([1., 2., 3., 0., 0.], dtype=float32)
+
+    When ``m>=2``, the constants ``k`` should be provided as an array having
+    ``m`` elements. The second order integration of the polynomial
+    :math:`12 x^2 + 12 x + 6` with the constants ``k=[4, 5]`` is
+    :math:`x^4 + 2 x^3 + 3 x^2 + 4 x + 5`:
+
+    >>> jnp.polyint(p, m=2, k=jnp.array([4, 5]))
+    Array([1., 2., 3., 4., 5.], dtype=float32)
+  """
   m = core.concrete_or_error(operator.index, m, "'m' argument of jnp.polyint")
   k = 0 if k is None else k
   check_arraylike("polyint", p, k)
@@ -265,9 +501,43 @@ def polyint(p: Array, m: int = 1, k: int | None = None) -> Array:
     return true_divide(concatenate((p, k_arr)), coeff)
 
 
-@implements(np.polyder)
 @partial(jit, static_argnames=('m',))
 def polyder(p: Array, m: int = 1) -> Array:
+  r"""Returns the coefficients of the derivative of specified order of a polynomial.
+
+  JAX implementation of :func:`numpy.polyder`.
+
+  Args:
+    p: Array of polynomials coefficients.
+    m: Order of differentiation (positive integer). Default is 1. It must be
+      specified statically.
+
+  Returns:
+    An array of polynomial coefficients representing the derivative.
+
+  Note:
+    :func:`jax.numpy.polyder` differs from :func:`numpy.polyder` when an integer
+    array is given. NumPy returns the result with dtype ``int`` whereas JAX
+    returns the result with dtype ``float``.
+
+  See also:
+    - :func:`jax.numpy.polyint`: Computes the integral of polynomial.
+    - :func:`jax.numpy.polyval`: Evaluates a polynomial at specific values.
+
+  Examples:
+
+    The first order derivative of the polynomial :math:`2 x^3 - 5 x^2 + 3 x - 1`
+    is :math:`6 x^2 - 10 x +3`:
+
+    >>> p = jnp.array([2, -5, 3, -1])
+    >>> jnp.polyder(p)
+    Array([  6., -10.,   3.], dtype=float32)
+
+    and its second order derivative is :math:`12 x - 10`:
+
+    >>> jnp.polyder(p, m=2)
+    Array([ 12., -10.], dtype=float32)
+  """
   check_arraylike("polyder", p)
   m = core.concrete_or_error(operator.index, m, "'m' argument of jnp.polyder")
   p, = promote_dtypes_inexact(p)

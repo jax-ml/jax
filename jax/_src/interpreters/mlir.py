@@ -886,7 +886,8 @@ def lower_jaxpr_to_module(
   platforms_with_donation = [p for p in platforms
                              if p in _platforms_with_donation]
   if platforms_with_donation:
-    if len(platforms_with_donation) != len(platforms):
+    if len(platforms_with_donation) != len(platforms) and (
+        xla_donated_args or any(donated_args)):
       raise NotImplementedError(
         "In multi-platform lowering either all or no lowering platforms "
         f"should support donation. Lowering for {platforms} of which "
