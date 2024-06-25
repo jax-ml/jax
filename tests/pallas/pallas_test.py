@@ -1080,7 +1080,7 @@ class PallasOpsTest(PallasTest):
           [jnp.abs, jnp.negative],
           ["int16", "int32", "int64", "float16", "float32", "float64"],
       ),
-      ([jnp.ceil, jnp.floor], ["float32", "float64"]),
+      ([jnp.ceil, jnp.floor], ["float32", "float64", "int32"]),
       (
           [jnp.exp, jnp.exp2, jnp.sin, jnp.cos, jnp.log, jnp.sqrt],
           ["float16", "float32", "float64"],
