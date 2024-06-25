@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import base64
 import collections.abc
+from collections.abc import Sequence
 import dataclasses
 import functools
 import io
@@ -33,13 +34,10 @@ from jax._src import sharding_impls
 from jax._src.interpreters import mlir
 from jax._src.lib import tpu
 from jax._src.lib import xla_client
-from jax._src.lib.mlir.dialects import hlo
 from jax.interpreters import xla
 from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import mhlo
-from jaxlib.mlir.dialects import stablehlo
 from jaxlib.mlir.passmanager import PassManager
-import numpy as np
 
 try:
   from absl import flags
@@ -185,13 +183,8 @@ def _tpu_custom_call_abstract_eval(*_, out_avals, **__):
   return out_avals
 
 
-def _aval_to_layout(aval):
-  arange = np.arange(aval.ndim, dtype=np.dtype(np.int64))[::-1].copy()
-  return ir.DenseIntElementsAttr.get(arange, type=ir.IndexType.get())
-
-
-def _avals_to_layouts(avals):
-  return ir.ArrayAttr.get([_aval_to_layout(a) for a in avals])
+def _avals_to_layouts(avals) -> Sequence[Sequence[int]]:
+  return [tuple(range(a.ndim - 1, -1, -1)) for a in avals]
 
 
 def _tpu_custom_call_lowering(
@@ -203,13 +196,7 @@ def _tpu_custom_call_lowering(
     input_output_aliases: tuple[tuple[int, int], ...],
 ) -> ...:
   i32_type = ir.IntegerType.get_signless(32)
-  multiple_results = len(out_avals) > 1
-  if multiple_results:
-    result_type = ir.TupleType.get_tuple(
-        [mlir.aval_to_ir_type(aval) for aval in out_avals]
-    )
-  else:
-    result_type = mlir.aval_to_ir_type(out_avals[0])
+  result_types = [mlir.aval_to_ir_type(aval) for aval in out_avals]
   axis_context = ctx.module_context.axis_context
   if isinstance(axis_context, sharding_impls.SPMDAxisContext):
     if axis_context.manual_axes != frozenset(axis_context.mesh.axis_names):
@@ -227,41 +214,23 @@ def _tpu_custom_call_lowering(
     raise NotImplementedError(
         "Replica lowering for Mosaic kernels not implemented."
     )
-  call = stablehlo.CustomCallOp(
-      [result_type],
-      in_nodes,
-      call_target_name=ir.StringAttr.get(b"tpu_custom_call"),
-      has_side_effect=ir.BoolAttr.get(False),
-      backend_config=ir.StringAttr.get(config.to_json()),
-      api_version=ir.IntegerAttr.get(i32_type, 1),
-      called_computations=ir.ArrayAttr.get([]),
-      operand_layouts=_avals_to_layouts(ctx.avals_in),
-      result_layouts=_avals_to_layouts(ctx.avals_out),
-      output_operand_aliases=ir.ArrayAttr.get([
-          hlo.OutputOperandAlias.get(
-              # if len(result_types) == 1 then the aliasing refers implicitly to
-              # the only output.
-              output_tuple_indices=[output_idx]
-              if len(out_avals) > 1
-              else [],
-              operand_index=input_idx,
-              operand_tuple_indices=[],
-          )
-          for input_idx, output_idx in input_output_aliases
-      ]),
-  )
-
+  extra_attributes = {}
   # Add kernel_name and kernel_metadata as attributes to the custom call op.
   # This is because we do not want to pollute the backend_config with this
   # information.
   if kernel_name is not None:
-    call.attributes["kernel_name"] = ir.StringAttr.get(kernel_name)
-  if multiple_results:
-    results = [stablehlo.get_tuple_element(call, mlir.i32_attr(i))
-               for i in range(len(out_avals))]
-  else:
-    results = call.results
-  return results
+    extra_attributes = dict(kernel_name=ir.StringAttr.get(kernel_name))
+  call = mlir.custom_call(
+      "tpu_custom_call",
+      result_types=result_types,
+      operands=in_nodes,
+      backend_config=config.to_json(),
+      api_version=1,
+      operand_output_aliases=dict(input_output_aliases),
+      operand_layouts=_avals_to_layouts(ctx.avals_in),
+      result_layouts=_avals_to_layouts(ctx.avals_out),
+      extra_attributes=extra_attributes)
+  return call.results
 
 
 mlir.register_lowering(tpu_custom_call_p, _tpu_custom_call_lowering,
