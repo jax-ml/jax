@@ -170,7 +170,7 @@ class _LimitInFlightBytes:
     self._cv = asyncio.Condition(lock=asyncio.Lock())
 
   async def wait_for_bytes(self, requested_bytes):
-    if requested_bytes >= self._max_bytes:
+    if requested_bytes > self._max_bytes:
       raise ValueError('Requested more bytes than we reserved space for: '
                        f'{requested_bytes} > {self._max_bytes}')
     async with self._cv:
