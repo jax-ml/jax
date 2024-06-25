@@ -276,10 +276,77 @@ def _reduce_min(a: ArrayLike, axis: Axis = None, out: None = None,
                     axis=axis, out=out, keepdims=keepdims,
                     initial=initial, where_=where, parallel_reduce=lax.pmin)
 
-@implements(np.min, skip_params=['out'])
+
 def min(a: ArrayLike, axis: Axis = None, out: None = None,
         keepdims: bool = False, initial: ArrayLike | None = None,
         where: ArrayLike | None = None) -> Array:
+  r"""Return the minimum of array elements along a given axis.
+
+  JAX implementation of :func:`numpy.min`.
+
+  Args:
+    a: Input array.
+    axis: Axis along which the minimum to be computed. If axis=None, the minimum
+      is computed along both the axes. Default=None.
+    keepdims: bool, default=False. If true, reduced axes are left in the result
+      with size 1.
+    initial: int or array, Default=None. Initial value for the minimum.
+    where: int or array, default=None. The elements to be used in the minimum.
+      Array should be broadcast compatible to the input. ``initial`` must be
+      specified when ``where`` is used.
+    out: Unused by JAX.
+
+  Returns:
+    An array of minimum values along the given axis.
+
+  See also:
+    - :func:`jax.numpy.max`: Compute the maximum of array elements along a given
+      axis.
+    - :func:`jax.numpy.sum`: Compute the sum of array elements along a given axis.
+    - :func:`jax.numpy.prod`: Compute the product of array elements along a given
+      axis.
+
+  Examples:
+
+    By default, the minimum is computed along all the axes.
+
+    >>> x = jnp.array([[2, 5, 1, 6],
+    ...                [3, 7, 2, 4],
+    ...                [8, 4, 1, 3]])
+    >>> jnp.min(x)
+    Array(1, dtype=int32)
+
+    If ``axis=1``, the minimum is computed along axis 1.
+
+    >>> jnp.min(x, axis=1)
+    Array([1, 2, 1], dtype=int32)
+
+    If ``keepdims=True``, ``ndim`` of the output will be same of that of the input.
+
+    >>> jnp.min(x, axis=1, keepdims=True)
+    Array([[1],
+          [2],
+          [1]], dtype=int32)
+
+    To include only specific elements in computing the minimum, you can use
+    ``where``. ``where`` can either have same dimension as input
+    
+    >>> where=jnp.array([[1, 0, 1, 0],
+    ...                  [0, 0, True, 1],
+    ...                  [1, 1, 1, False]])
+    >>> jnp.min(x, axis=1, keepdims=True, initial=5, where=where)
+    Array([[1],
+          [2],
+          [1]], dtype=int32)
+
+    or must be broadcast compatible with input.
+
+    >>> where = jnp.array([[1],
+    ...                    [0],
+    ...                    [True]])
+    >>> jnp.min(x, axis=0, keepdims=True, initial=5, where=where)
+    Array([[2, 4, 1, 3]], dtype=int32)
+  """
   return _reduce_min(a, axis=_ensure_optional_axes(axis), out=out,
                      keepdims=keepdims, initial=initial, where=where)
 
@@ -307,7 +374,13 @@ def any(a: ArrayLike, axis: Axis = None, out: None = None,
   return _reduce_any(a, axis=_ensure_optional_axes(axis), out=out,
                      keepdims=keepdims, where=where)
 
-amin = min
+def amin(a: ArrayLike, axis: Axis = None, out: None = None,
+        keepdims: bool = False, initial: ArrayLike | None = None,
+        where: ArrayLike | None = None) -> Array:
+  r"""Alias of :func:`jax.numpy.min`."""
+  return min(a, axis=axis, out=out, keepdims=keepdims,
+             initial=initial, where=where)
+
 amax = max
 
 def _axis_size(a: ArrayLike, axis: int | Sequence[int]):
