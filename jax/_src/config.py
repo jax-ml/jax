@@ -276,6 +276,8 @@ class State(Generic[_T]):
             type(self).__name__))
 
   def _set(self, value: _T) -> None:
+    if self._validator:
+      self._validator(value)
     self._value = value
     if self._update_global_hook:
       self._update_global_hook(value)

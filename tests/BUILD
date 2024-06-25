@@ -76,6 +76,11 @@ jax_test(
 )
 
 jax_test(
+    name = "config_test",
+    srcs = ["config_test.py"],
+)
+
+jax_test(
     name = "core_test",
     srcs = ["core_test.py"],
     shard_count = {
