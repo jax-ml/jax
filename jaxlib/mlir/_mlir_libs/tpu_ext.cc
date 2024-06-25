@@ -588,7 +588,13 @@ PYBIND11_MODULE(_tpu_ext, m) {
           "  shape: An optional shape of the vector to which both layouts "
           "apply. More layouts are considered equivalent when the shape is "
           "specified. Also see the docstring of the generalizes method.")
-      .def("__eq__", mlirTpuVectorLayoutEquals);
+      .def("__eq__", mlirTpuVectorLayoutEquals)
+      .def("__repr__",
+           [](MlirTpuVectorLayout self) {
+             std::string str;
+             mlirTpuVectorLayoutPrint(self, printToString, &str);
+             return str;
+           });
 
   // TODO(tlongeri): Can we make the first parameter a VectorType?
   m.def("assemble",
