@@ -286,8 +286,8 @@ def min(a: ArrayLike, axis: Axis = None, out: None = None,
 
   Args:
     a: Input array.
-    axis: Axis along which the minimum to be computed. If axis=None, the minimum
-      is computed along both the axes. Default=None.
+    axis: int or array, default=None. Axis along which the minimum to be computed.
+      If None, the minimum is computed along all the axes. 
     keepdims: bool, default=False. If true, reduced axes are left in the result
       with size 1.
     initial: int or array, Default=None. Initial value for the minimum.
@@ -311,41 +311,41 @@ def min(a: ArrayLike, axis: Axis = None, out: None = None,
     By default, the minimum is computed along all the axes.
 
     >>> x = jnp.array([[2, 5, 1, 6],
-    ...                [3, 7, 2, 4],
-    ...                [8, 4, 1, 3]])
+    ...                [3, -7, -2, 4],
+    ...                [8, -4, 1, -3]])
     >>> jnp.min(x)
-    Array(1, dtype=int32)
+    Array(-7, dtype=int32)
 
     If ``axis=1``, the minimum is computed along axis 1.
 
     >>> jnp.min(x, axis=1)
-    Array([1, 2, 1], dtype=int32)
+    Array([ 1, -7, -4], dtype=int32)
 
     If ``keepdims=True``, ``ndim`` of the output will be same of that of the input.
 
     >>> jnp.min(x, axis=1, keepdims=True)
-    Array([[1],
-          [2],
-          [1]], dtype=int32)
+    Array([[ 1],
+           [-7],
+           [-4]], dtype=int32)
 
     To include only specific elements in computing the minimum, you can use
     ``where``. ``where`` can either have same dimension as input
-    
+
     >>> where=jnp.array([[1, 0, 1, 0],
-    ...                  [0, 0, True, 1],
-    ...                  [1, 1, 1, False]])
-    >>> jnp.min(x, axis=1, keepdims=True, initial=5, where=where)
-    Array([[1],
-          [2],
-          [1]], dtype=int32)
+    ...                  [0, 0, 1, 1],
+    ...                  [1, 1, 1, 0]], dtype=bool)
+    >>> jnp.min(x, axis=1, keepdims=True, initial=0, where=where)
+    Array([[ 0],
+           [-2],
+           [-4]], dtype=int32)
 
     or must be broadcast compatible with input.
 
-    >>> where = jnp.array([[1],
-    ...                    [0],
-    ...                    [True]])
-    >>> jnp.min(x, axis=0, keepdims=True, initial=5, where=where)
-    Array([[2, 4, 1, 3]], dtype=int32)
+    >>> where = jnp.array([[False],
+    ...                    [False],
+    ...                    [False]])
+    >>> jnp.min(x, axis=0, keepdims=True, initial=0, where=where)
+    Array([[0, 0, 0, 0]], dtype=int32)
   """
   return _reduce_min(a, axis=_ensure_optional_axes(axis), out=out,
                      keepdims=keepdims, initial=initial, where=where)
