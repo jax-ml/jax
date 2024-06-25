@@ -1026,9 +1026,26 @@ def iscomplex(x: ArrayLike) -> Array:
   i = ufuncs.imag(x)
   return lax.ne(i, _lax_const(i, 0))
 
-@util.implements(np.isreal)
 @jit
 def isreal(x: ArrayLike) -> Array:
+  """Return boolean array showing where the input is real.
+
+  JAX implementation of :func:`numpy.isreal`.
+
+  Args:
+    x: input array to check.
+
+  Returns:
+    A new array containing boolean values indicating real elements.
+
+  See Also:
+    - :func:`jax.numpy.iscomplex`
+    - :func:`jax.numpy.isrealobj`
+
+  Examples:
+    >>> jnp.isreal(jnp.array([False, 0j, 1, 2.1, 1+2j]))
+    Array([ True,  True,  True,  True, False], dtype=bool)
+  """
   i = ufuncs.imag(x)
   return lax.eq(i, _lax_const(i, 0))
 
@@ -1205,8 +1222,37 @@ def gradient(f: ArrayLike, *varargs: ArrayLike,
   return a_grad[0] if len(axis_tuple) == 1 else a_grad
 
 
-@util.implements(np.isrealobj)
 def isrealobj(x: Any) -> bool:
+  """Check if the input is not a complex number or an array containing complex elements.
+
+  JAX implementation of :func:`numpy.isrealobj`.
+
+  The function evaluates based on input type rather than value.
+  Inputs with zero imaginary parts are still considered complex.
+
+  Args:
+    x: input object to check.
+
+  Returns:
+    False if ``x`` is a complex number or an array containing at least one complex element,
+    True otherwise.
+
+  See Also:
+    - :func:`jax.numpy.iscomplexobj`
+    - :func:`jax.numpy.isreal`
+
+  Examples:
+    >>> jnp.isrealobj(0)
+    True
+    >>> jnp.isrealobj(1.2)
+    True
+    >>> jnp.isrealobj(jnp.array([1, 2]))
+    True
+    >>> jnp.isrealobj(1+2j)
+    False
+    >>> jnp.isrealobj(jnp.array([0, 1+2j]))
+    False
+  """
   return not iscomplexobj(x)
 
 
