@@ -4433,7 +4433,7 @@ class PJitErrorTest(jtu.JaxTestCase):
     x = jnp.ones([])
     p = [None, None, None]
 
-    pjit(lambda x: x, (p,), p)([x, x, x])  # OK
+    pjit(lambda x: x, in_shardings=(p,), out_shardings=p)([x, x, x])  # OK
 
     error = re.escape(
         "pjit in_shardings specification must be a tree prefix of the "
@@ -4443,14 +4443,14 @@ class PJitErrorTest(jtu.JaxTestCase):
         "arguments. But pjit in_shardings is the wrong length: got a "
         "tuple or list of length 3 for an args tuple of length 2.")
     with self.assertRaisesRegex(ValueError, error):
-      pjit(lambda x, y: x, p, p)(x, x)
+      pjit(lambda x, y: x, in_shardings=p, out_shardings=p)(x, x)
 
     Foo = namedtuple('Foo', ['x'])
     error = "in_shardings is not a tuple.*might need to be wrapped"
     with self.assertRaisesRegex(ValueError, error):
-      pjit(lambda x: x, Foo(None), Foo(None))(Foo(x))
+      pjit(lambda x: x, in_shardings=Foo(None), out_shardings=Foo(None))(Foo(x))
 
-    pjit(lambda x: x, (Foo(None),), Foo(None))(Foo(x))  # OK w/ singleton tuple
+    pjit(lambda x: x, in_shardings=(Foo(None),), out_shardings=Foo(None))(Foo(x))  # OK w/ singleton tuple
 
     # TODO(apaszke,mattjj): Disable implicit list casts and enable this
     # error = ("it looks like pjit in_axis_resources might need to be wrapped in "
@@ -4475,7 +4475,7 @@ class PJitErrorTest(jtu.JaxTestCase):
         "key path\n"
         "    pjit out_shardings\n")
     with self.assertRaisesRegex(ValueError, error):
-      pjit(lambda x: x, (p,), [p, None])([x, x, x])  # Error, we raise a generic tree mismatch message
+      pjit(lambda x: x, in_shardings=(p,), out_shardings=[p, None])([x, x, x])  # Error, we raise a generic tree mismatch message
 
   @jtu.with_mesh([('x', 2)])
   def testNestedDifferentResources(self):

@@ -13,6 +13,12 @@ Remember to align the itemized text with the first line of an item within a list
   * {func}`jax.numpy.ceil`, {func}`jax.numpy.floor` and {func}`jax.numpy.trunc` now return the output
     of the same dtype as the input, i.e. no longer upcast integer or boolean inputs to floating point.
 
+* Deprecations
+  * `fun` argument of `jax.jit` is the positional-only arg while the rest of the
+    arguments are now marked as keyword-only. As a backward-compatibility step
+    passing keyword-only arguments positionally yields a warning, but in a
+    future JAX release passing keyword-only arguments positionally will fail.
+
 ## jaxlib 0.4.31
 
 * Bug fixes

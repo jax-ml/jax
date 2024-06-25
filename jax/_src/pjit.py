@@ -35,6 +35,7 @@ from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
@@ -799,8 +800,10 @@ class JitWrapped(stages.Wrapped):
 
 # in_shardings and out_shardings can't be None as the default value
 # because `None` means that the input is fully replicated.
+@deprecations.warn_on_positional_kwargs  # Added on June 26, 2024
 def pjit(
     fun: Callable,
+    *,
     in_shardings=UNSPECIFIED,
     out_shardings=UNSPECIFIED,
     static_argnums: int | Sequence[int] | None = None,

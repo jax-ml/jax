@@ -45,6 +45,7 @@ from jax._src import api_util
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
+from jax._src import deprecations
 from jax._src import effects
 from jax._src import array
 from jax._src import basearray
@@ -139,8 +140,10 @@ config.debug_infs._add_hooks(_update_debug_special_global,
 float0 = dtypes.float0
 
 
+@deprecations.warn_on_positional_kwargs  # Added on June 26, 2024
 def jit(
   fun: Callable,
+  *,
   in_shardings=sharding_impls.UNSPECIFIED,
   out_shardings=sharding_impls.UNSPECIFIED,
   static_argnums: int | Sequence[int] | None = None,
