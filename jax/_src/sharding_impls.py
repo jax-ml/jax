@@ -635,7 +635,7 @@ class PositionalSharding(sharding.Sharding):
     return self._remake(self._devices, new_ids)
 
   def check_compatible_aval(self, aval_shape: Shape) -> None:
-    if len(aval_shape) != len(self.shape):
+    if len(aval_shape) != len(self.shape) and not self.is_fully_replicated:
       raise ValueError(
           f"Sharding {self} is only valid for values of rank "
           f"{len(self.shape)}, but was applied to a value of rank "

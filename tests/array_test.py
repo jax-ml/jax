@@ -959,6 +959,10 @@ class ShardingTest(jtu.JaxTestCase):
     # memory kind also appears in the repr but only for TPU.
     self.assertIn('GSPMDSharding({replicated}', repr(s2))
 
+  def test_positional_sharding_fully_replicated(self):
+    sharding = PositionalSharding(jax.devices())
+    jax.device_put(jnp.array(1), sharding.replicate())  # doesn't crash
+
   @parameterized.named_parameters(
       ("mesh_x_y",              P("x", "y"),   (4, 2), (),   False),
       ("mesh_x",                P("x"),        (4, 2), (1,), False),
@@ -989,6 +993,8 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertTrue(op_shardings.are_op_shardings_equal(op1, op2))
 
   def test_positional_sharding_aval_compatible(self):
+    if jax.device_count() < 2:
+      self.skipTest('Requires >=2 devices')
     sharding = PositionalSharding(jax.devices()).reshape(1, jax.device_count())
     x = jax.random.uniform(jax.random.key(42), (256, 20, 1000))
     with self.assertRaisesRegex(
