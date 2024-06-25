@@ -452,15 +452,6 @@ def main():
           "when this flag is True."
       ),
   )
-  add_boolean_argument(
-      parser,
-      "build_rocm_pjrt_plugin",
-      default=False,
-      help_str=(
-          "Are we building the rocm pjrt plugin? jaxlib will not be built "
-          "when this flag is True."
-      ),
-  )
   parser.add_argument(
       "--gpu_plugin_cuda_version",
       choices=["11", "12"],
