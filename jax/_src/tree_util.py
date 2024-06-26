@@ -14,14 +14,14 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Hashable, Iterable
+from collections.abc import Callable, Hashable, Iterable, Sequence
 from dataclasses import dataclass
 import difflib
 import functools
 from functools import partial
 import operator as op
 import textwrap
-from typing import Any, Callable, NamedTuple, Sequence, TypeVar, Union, overload
+from typing import Any, NamedTuple, TypeVar, Union, overload
 
 from jax._src import traceback_util
 from jax._src.lib import pytree

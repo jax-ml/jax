@@ -13,11 +13,11 @@
 # limitations under the License.
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from functools import partial, reduce
 import math
 import operator as op
-from typing import Any, Callable, NamedTuple
+from typing import Any, NamedTuple
 
 import numpy as np
 

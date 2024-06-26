@@ -16,11 +16,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 import dataclasses
 import enum
 import functools
-from typing import Any, Callable, Literal, NamedTuple, Optional, Union, overload
+from typing import Any, Literal, NamedTuple, Optional, Union, overload
 
 import jax
 from jax import ad_checkpoint

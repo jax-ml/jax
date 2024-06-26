@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import collections
 import collections.abc
+from collections.abc import Callable
 import concurrent.futures
 from contextlib import contextmanager
 import copy
@@ -33,7 +34,7 @@ import re
 import subprocess
 import sys
 import types
-from typing import Callable, NamedTuple
+from typing import NamedTuple
 import unittest
 import weakref
 

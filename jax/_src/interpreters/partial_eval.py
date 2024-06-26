@@ -14,13 +14,13 @@
 from __future__ import annotations
 
 from collections import namedtuple
-from collections.abc import Sequence, Hashable
+from collections.abc import Callable, Sequence, Hashable
 from contextlib import contextmanager, AbstractContextManager
 from functools import partial
 import inspect
 import itertools as it
 import operator as op
-from typing import Any, Callable, NamedTuple, Union
+from typing import Any, NamedTuple, Union
 from weakref import ref
 
 import numpy as np

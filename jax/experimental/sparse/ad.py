@@ -14,9 +14,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import itertools
-from typing import Any, Callable, Union
+from typing import Any
 
 import jax
 from jax._src import core

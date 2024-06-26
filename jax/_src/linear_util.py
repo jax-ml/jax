@@ -63,8 +63,9 @@ data must be immutable, because it will be stored in function memoization tables
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import partial
-from typing import Any, Callable, NamedTuple
+from typing import Any, NamedTuple
 import weakref
 
 from jax._src import config

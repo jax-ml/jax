@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Sequence, Iterable
+from collections.abc import Callable, Sequence, Iterable
 import dataclasses
 from functools import partial
 import inspect
@@ -23,7 +23,7 @@ import itertools as it
 import logging
 import operator as op
 import weakref
-from typing import Callable, NamedTuple, Any, Union, Optional, cast
+from typing import NamedTuple, Any, Union, cast
 import threading
 import warnings
 
@@ -245,7 +245,7 @@ def _need_to_rebuild_with_fdo(pgle_profiler):
 def _get_fastpath_data(
     executable, out_tree, args_flat, out_flat, attrs_tracked, effects,
     consts, abstracted_axes, pgle_profiler
-) -> Optional[pxla.MeshExecutableFastpathData]:
+) -> pxla.MeshExecutableFastpathData | None:
   out_reflattened, out_tree = pxla.reflatten_outputs_for_dispatch(out_tree, out_flat)
 
   use_fastpath = (
@@ -608,7 +608,7 @@ def _infer_params_impl(
   assert None not in in_shardings_leaves
   assert None not in out_shardings_leaves
 
-  in_type: Union[core.InputType, tuple[core.AbstractValue, ...]]
+  in_type: core.InputType | tuple[core.AbstractValue, ...]
   if config.dynamic_shapes.value:
     in_type = pe.infer_lambda_input_type(axes_specs, explicit_args)
     in_avals = tuple(a for a, e in in_type if e)

@@ -21,7 +21,7 @@ XLA. There are also a handful of related casting utilities.
 from __future__ import annotations
 
 import atexit
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 import dataclasses
 from functools import lru_cache, partial
 import importlib
@@ -32,7 +32,7 @@ import pkgutil
 import platform as py_platform
 import threading
 import traceback
-from typing import Any, Callable, Union
+from typing import Any, Union
 import warnings
 
 from jax._src import config

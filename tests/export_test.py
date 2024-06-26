@@ -13,7 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import contextlib
 import dataclasses
 import functools
@@ -21,7 +21,6 @@ import logging
 import math
 import re
 import unittest
-from typing import Callable
 
 from absl.testing import absltest
 import jax

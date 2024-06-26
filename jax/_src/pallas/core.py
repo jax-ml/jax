@@ -15,13 +15,13 @@
 """Module for pallas-core functionality."""
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 import copy
 import contextlib
 import dataclasses
 import functools
 import threading
-from typing import Any, Callable, Union
+from typing import Any, Union
 
 import jax
 from jax._src import api_util

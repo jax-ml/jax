@@ -14,12 +14,12 @@
 # ==============================================================================
 """Utilities for code generator."""
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 import contextlib
 import dataclasses
 import enum
 import functools
-from typing import Any, Literal, Sequence
+from typing import Any, Literal
 
 import jax
 from jaxlib.mlir import ir

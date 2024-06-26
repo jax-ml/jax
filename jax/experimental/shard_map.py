@@ -13,14 +13,14 @@
 # limitations under the License.
 from __future__ import annotations
 
-from collections.abc import Hashable, Sequence
+from collections.abc import Callable, Hashable, Sequence
 import enum
 from functools import partial
 import inspect
 import itertools as it
 from math import prod
 import operator as op
-from typing import Any, Callable, TypeVar, Union
+from typing import Any, TypeVar, Union
 
 import numpy as np
 

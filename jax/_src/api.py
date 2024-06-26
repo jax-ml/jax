@@ -23,12 +23,12 @@ arrays.
 from __future__ import annotations
 
 import collections
-from collections.abc import Generator, Hashable, Iterable, Sequence
+from collections.abc import Callable, Generator, Hashable, Iterable, Sequence
 from functools import partial, lru_cache
 import inspect
 import math
 import typing
-from typing import (Any, Callable, Literal, NamedTuple, TypeVar, overload,
+from typing import (Any, Literal, NamedTuple, TypeVar, overload,
                     cast)
 import weakref
 

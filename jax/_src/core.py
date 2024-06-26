@@ -14,8 +14,8 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict, deque, namedtuple
-from collections.abc import (Collection, Generator, Hashable, Iterable,
-                             Iterator, Set, Sequence, MutableSet,
+from collections.abc import (Callable, Collection, Generator, Hashable,
+                             Iterable, Iterator, Set, Sequence, MutableSet,
                              MutableMapping)
 from contextlib import contextmanager, ExitStack
 from dataclasses import dataclass
@@ -28,7 +28,7 @@ import math
 import operator
 import threading
 import types
-from typing import (Any, Callable, ClassVar, Generic, NamedTuple, TypeVar,
+from typing import (Any, ClassVar, Generic, NamedTuple, TypeVar,
                     cast, overload, Union)
 import warnings
 from weakref import ref

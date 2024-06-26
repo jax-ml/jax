@@ -15,12 +15,13 @@
 """Module for emitting custom TPU pipelines within a Pallas call."""
 from __future__ import annotations
 
+from collections.abc import Sequence
 import dataclasses
 import enum
 import functools
 import itertools
 import operator
-from typing import Optional, Union, Any, Sequence
+from typing import Union, Any
 
 import jax
 from jax import lax
@@ -201,12 +202,12 @@ class BufferedRef:
   spec: pl.BlockSpec       # static metadata
   dtype: Any               # static metadata
   buffer_type: BufferType  # static metadata
-  vmem_ref: Optional[REF]
-  accum_ref: Optional[REF]
-  current_slot: Optional[ArrayRef]
-  next_slot: Optional[ArrayRef]
-  sem_recv: Optional[SemaphoreType]
-  sem_send: Optional[SemaphoreType]
+  vmem_ref: REF | None
+  accum_ref: REF | None
+  current_slot: ArrayRef | None
+  next_slot: ArrayRef | None
+  sem_recv: SemaphoreType | None
+  sem_send: SemaphoreType | None
 
   def tree_flatten(self):
     return ((self.vmem_ref, self.accum_ref, self.current_slot,
@@ -218,7 +219,7 @@ class BufferedRef:
     return cls(*meta, *data)
 
   @classmethod
-  def create(cls, spec, dtype, buffer_type) -> 'BufferedRef':
+  def create(cls, spec, dtype, buffer_type) -> BufferedRef:
     """Create a BufferedRef.
 
     Args:
@@ -810,9 +811,9 @@ def _partition_grid(
       if isinstance(grid[i], int) and grid[i] % num_cores == 0
   }
   if divisible_dimensions:
-    first_divisible_dimension, *_ = [
+    first_divisible_dimension, *_ = (
         i for i in range(len(dimension_semantics)) if i in divisible_dimensions
-    ]
+    )
     partitioned_dim_size = grid[first_divisible_dimension] // num_cores
     partitioned_dim_offset = pl.program_id(core_axis) * partitioned_dim_size
     new_grid = jax_util.tuple_update(
@@ -828,11 +829,11 @@ def _partition_grid(
     # potentially divide it more evenly
     largest_parallel_dimension = max(grid[i] for i in parallel_dimensions
                                      if isinstance(grid[i], int))  # type: ignore
-    partition_dimension, *_ = [
+    partition_dimension, *_ = (
         i
         for i, d in enumerate(grid)
         if isinstance(d, int) and d == largest_parallel_dimension
-    ]
+    )
     base_num_iters, rem = divmod(grid[partition_dimension], num_cores)
     assert rem > 0, rem
     # We have some remainder iterations that we need to assign somewhere. We

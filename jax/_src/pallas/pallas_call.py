@@ -15,10 +15,10 @@
 """Module for calling pallas functions from JAX."""
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import partial, reduce
 import itertools
-from typing import Any, Callable
+from typing import Any
 
 import jax
 from jax import api_util

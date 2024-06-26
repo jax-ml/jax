@@ -17,13 +17,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import copy
 import dataclasses
 import functools
 import itertools
 import re
-from typing import Any, Callable, Union
+from typing import Any, Union
 import warnings
 
 from absl import logging

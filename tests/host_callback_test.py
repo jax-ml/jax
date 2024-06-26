@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import partial
 import itertools
 import logging
@@ -23,7 +23,6 @@ import os
 import re
 import threading
 import time
-from typing import Callable
 import unittest
 from unittest import skip, SkipTest
 

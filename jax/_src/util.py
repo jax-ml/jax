@@ -15,14 +15,14 @@
 from __future__ import annotations
 
 import abc
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 import dataclasses
 import functools
 from functools import partial
 import itertools as it
 import logging
 import operator
-from typing import (Any, Callable, Generic, TypeVar, overload, TYPE_CHECKING, cast)
+from typing import (Any, Generic, TypeVar, overload, TYPE_CHECKING, cast)
 import weakref
 
 import numpy as np

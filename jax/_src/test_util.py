@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Generator, Iterable, Sequence
+from collections.abc import Callable, Generator, Iterable, Sequence
 from contextlib import ExitStack, contextmanager
 import datetime
 import functools
@@ -28,7 +28,7 @@ import re
 import sys
 import tempfile
 import textwrap
-from typing import Any, Callable
+from typing import Any
 import unittest
 import warnings
 import zlib

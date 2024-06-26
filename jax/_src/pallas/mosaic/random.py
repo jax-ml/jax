@@ -11,7 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Callable, Optional
+
+from collections.abc import Callable
 
 import jax
 import numpy as np
@@ -172,7 +173,7 @@ def sample_block(sampler_fn: SampleFnType,
                  block_size: Shape,
                  tile_size: Shape,
                  total_size: Shape,
-                 block_index: Optional[tuple[typing.ArrayLike, ...]] = None,
+                 block_index: tuple[typing.ArrayLike, ...] | None = None,
                  **kwargs) -> jax.Array:
   """Samples a block of random values with invariance guarantees.
 

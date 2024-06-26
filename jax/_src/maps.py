@@ -15,12 +15,12 @@
 from __future__ import annotations
 
 from collections import OrderedDict, abc
-from collections.abc import Iterable, Sequence, Mapping
+from collections.abc import Callable, Iterable, Sequence, Mapping
 import contextlib
 from functools import wraps, partial, partialmethod, lru_cache
 import itertools as it
 import math
-from typing import Callable, Any, NamedTuple, Union, cast as type_cast
+from typing import Any, NamedTuple, Union, cast as type_cast
 
 import numpy as np
 
