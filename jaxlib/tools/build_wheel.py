@@ -238,7 +238,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
             f"__main__/jaxlib/cuda/_versions.{pyext}",
         ],
     )
-  if exists(f"__main__/jaxlib/rocm/_solver.{pyext}"):
+  if exists(f"__main__/jaxlib/rocm/_solver.{pyext}") and not skip_gpu_kernels:
     copy_runfiles(
         dst_dir=jaxlib_dir / "rocm",
         src_files=[
