@@ -92,7 +92,7 @@ six==1.16.0
     # via python-dateutil
 sortedcontainers==2.4.0
     # via hypothesis
-typing-extensions==4.11.0
+typing-extensions==4.12.2
     # via etils
 wheel==0.43.0
     # via -r build/test-requirements.txt
