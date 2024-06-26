@@ -9,7 +9,10 @@ Remember to align the itemized text with the first line of an item within a list
 ## jax 0.4.31
 
 * Changes
-  * The minimum NumPy version is now 1.24.
+  * The minimum Python version is now 3.10. 3.10 will remain the minimum
+    supported version until July 2025.
+  * The minimum NumPy version is now 1.24. NumPy 1.24 will remain the minimum
+    supported version until December 2024.
   * {func}`jax.numpy.ceil`, {func}`jax.numpy.floor` and {func}`jax.numpy.trunc` now return the output
     of the same dtype as the input, i.e. no longer upcast integer or boolean inputs to floating point.
 

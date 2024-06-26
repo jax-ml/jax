@@ -16,7 +16,6 @@
 
 from functools import partial
 import operator
-import sys
 from typing import Optional
 
 from absl.testing import absltest, parameterized
@@ -31,8 +30,6 @@ from jax._src.lib.mlir.dialects import vector
 import jax.numpy as jnp
 import numpy as np
 try:
-  if sys.version_info < (3, 10):
-    raise ImportError("Mosaic requires Python 3.10")
   import jax._src.lib.mosaic_gpu  # noqa: F401
   HAS_MOSAIC_GPU = True
 except ImportError:

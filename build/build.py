@@ -70,8 +70,8 @@ def get_python_version(python_bin_path):
   return major, minor
 
 def check_python_version(python_version):
-  if python_version < (3, 9):
-    print("ERROR: JAX requires Python 3.9 or newer, found ", python_version)
+  if python_version < (3, 10):
+    print("ERROR: JAX requires Python 3.10 or newer, found ", python_version)
     sys.exit(-1)
 
 

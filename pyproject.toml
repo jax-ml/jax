@@ -13,7 +13,6 @@ module = [
     "absl.*",
     "colorama.*",
     "filelock.*",
-    "importlib_metadata.*",
     "IPython.*",
     "numpy.*",
     "opt_einsum.*",

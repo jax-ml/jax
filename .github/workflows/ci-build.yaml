@@ -1,8 +1,8 @@
 name: CI
 
 # We test all supported Python versions as follows:
-# - 3.10  : Documentation build
-# - 3.10  : Part of Matrix with NumPy dispatch
+# - 3.10 : Documentation build
+# - 3.10 : Part of Matrix with NumPy dispatch
 # - 3.10 : Part of Matrix
 # - 3.11 : Part of Matrix
 

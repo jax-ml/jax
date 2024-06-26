@@ -59,7 +59,7 @@ setup(
     author='JAX team',
     author_email='jax-dev@google.com',
     packages=['jaxlib', 'jaxlib.xla_extension'],
-    python_requires='>=3.9',
+    python_requires='>=3.10',
     install_requires=[
         'scipy>=1.9',
         "scipy>=1.11.1; python_version>='3.12'",
@@ -69,7 +69,6 @@ setup(
     url='https://github.com/google/jax',
     license='Apache-2.0',
     classifiers=[
-        "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Programming Language :: Python :: 3.11",
         "Programming Language :: Python :: 3.12",

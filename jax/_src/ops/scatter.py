@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-import sys
 from typing import Callable, Union
 import warnings
 
@@ -36,11 +35,8 @@ from jax._src.numpy.util import check_arraylike, promote_dtypes
 from jax._src.typing import Array, ArrayLike
 
 
-if sys.version_info >= (3, 10):
-    from types import EllipsisType
-    SingleIndex = int | slice | Sequence[int] | Array | EllipsisType | None
-else:
-    SingleIndex = Union[int, slice, Sequence[int], Array, None]
+from types import EllipsisType
+SingleIndex = int | slice | Sequence[int] | Array | EllipsisType | None
 Index = Union[SingleIndex, tuple[SingleIndex, ...]]
 Scalar = Union[complex, float, int, np.number]
 
