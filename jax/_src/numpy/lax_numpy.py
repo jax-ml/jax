@@ -3389,11 +3389,40 @@ def copy(a: ArrayLike, order: str | None = None) -> Array:
   return array(a, copy=True, order=order)
 
 
-@util.implements(np.zeros_like)
 def zeros_like(a: ArrayLike | DuckTypedArray,
                dtype: DTypeLike | None = None,
                shape: Any = None, *,
                device: xc.Device | Sharding | None = None) -> Array:
+  """Create an array full of zeros with the same shape and dtype as an array.
+
+  JAX implementation of :func:`numpy.zeros_like`.
+
+  Args:
+    a: Array-like object with ``shape`` and ``dtype`` attributes.
+    shape: optionally override the shape of the created array.
+    dtype: optionally override the dtype of the created array.
+    device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
+      to which the created array will be committed.
+
+  Returns:
+    Array of the specified shape and dtype, on the specified device if specified.
+
+  See also:
+    - :func:`jax.numpy.zeros`
+    - :func:`jax.numpy.empty_like`
+    - :func:`jax.numpy.ones_like`
+    - :func:`jax.numpy.full_like`
+
+  Examples:
+    >>> x = jnp.arange(4)
+    >>> jnp.zeros_like(x)
+    Array([0, 0, 0, 0], dtype=int32)
+    >>> jnp.zeros_like(x, dtype=bool)
+    Array([False, False, False, False], dtype=bool)
+    >>> jnp.zeros_like(x, shape=(2, 3))
+    Array([[0, 0, 0],
+           [0, 0, 0]], dtype=int32)
+  """
   if not (hasattr(a, 'dtype') and hasattr(a, 'shape')):  # support duck typing
     util.check_arraylike("zeros_like", a)
   dtypes.check_user_dtype_supported(dtype, "zeros_like")
@@ -3402,11 +3431,40 @@ def zeros_like(a: ArrayLike | DuckTypedArray,
   return lax.full_like(a, 0, dtype, shape, sharding=_normalize_to_sharding(device))
 
 
-@util.implements(np.ones_like)
 def ones_like(a: ArrayLike | DuckTypedArray,
               dtype: DTypeLike | None = None,
               shape: Any = None, *,
               device: xc.Device | Sharding | None = None) -> Array:
+  """Create an array of ones with the same shape and dtype as an array.
+
+  JAX implementation of :func:`numpy.ones_like`.
+
+  Args:
+    a: Array-like object with ``shape`` and ``dtype`` attributes.
+    shape: optionally override the shape of the created array.
+    dtype: optionally override the dtype of the created array.
+    device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
+      to which the created array will be committed.
+
+  Returns:
+    Array of the specified shape and dtype, on the specified device if specified.
+
+  See also:
+    - :func:`jax.numpy.empty`
+    - :func:`jax.numpy.zeros_like`
+    - :func:`jax.numpy.ones_like`
+    - :func:`jax.numpy.full_like`
+
+  Examples:
+    >>> x = jnp.arange(4)
+    >>> jnp.ones_like(x)
+    Array([1, 1, 1, 1], dtype=int32)
+    >>> jnp.ones_like(x, dtype=bool)
+    Array([ True,  True,  True,  True], dtype=bool)
+    >>> jnp.ones_like(x, shape=(2, 3))
+    Array([[1, 1, 1],
+           [1, 1, 1]], dtype=int32)
+  """
   if not (hasattr(a, 'dtype') and hasattr(a, 'shape')):  # support duck typing
     util.check_arraylike("ones_like", a)
   dtypes.check_user_dtype_supported(dtype, "ones_like")
@@ -3415,13 +3473,42 @@ def ones_like(a: ArrayLike | DuckTypedArray,
   return lax.full_like(a, 1, dtype, shape, sharding=_normalize_to_sharding(device))
 
 
-@util.implements(np.empty_like, lax_description="""\
-Because XLA cannot create uninitialized arrays, the JAX version will
-return an array initialized with zeros.""")
 def empty_like(prototype: ArrayLike | DuckTypedArray,
                dtype: DTypeLike | None = None,
                shape: Any = None, *,
                device: xc.Device | Sharding | None = None) -> Array:
+  """Create an empty array with the same shape and dtype as an array.
+
+  JAX implementation of :func:`numpy.empty_like`. Because XLA cannot create
+  an un-initialized array, :func:`jax.numpy.empty` will always return an
+  array full of zeros.
+
+  Args:
+    a: Array-like object with ``shape`` and ``dtype`` attributes.
+    shape: optionally override the shape of the created array.
+    dtype: optionally override the dtype of the created array.
+    device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
+      to which the created array will be committed.
+
+  Returns:
+    Array of the specified shape and dtype, on the specified device if specified.
+
+  See also:
+    - :func:`jax.numpy.empty`
+    - :func:`jax.numpy.zeros_like`
+    - :func:`jax.numpy.ones_like`
+    - :func:`jax.numpy.full_like`
+
+  Examples:
+    >>> x = jnp.arange(4)
+    >>> jnp.empty_like(x)
+    Array([0, 0, 0, 0], dtype=int32)
+    >>> jnp.empty_like(x, dtype=bool)
+    Array([False, False, False, False], dtype=bool)
+    >>> jnp.empty_like(x, shape=(2, 3))
+    Array([[0, 0, 0],
+           [0, 0, 0]], dtype=int32)
+  """
   if not (hasattr(prototype, 'dtype') and hasattr(prototype, 'shape')):  # support duck typing
     util.check_arraylike("empty_like", prototype)
   dtypes.check_user_dtype_supported(dtype, "empty_like")
@@ -3435,10 +3522,43 @@ def _normalize_to_sharding(device: xc.Device | Sharding | None) -> Sharding | No
     return device
 
 
-@util.implements(np.full)
 def full(shape: Any, fill_value: ArrayLike,
          dtype: DTypeLike | None = None, *,
          device: xc.Device | Sharding | None = None) -> Array:
+  """Create an array full of a specified value.
+
+  JAX implementation of :func:`numpy.full`.
+
+  Args:
+    shape: int or sequence of ints specifying the shape of the created array.
+    fill_value: scalar or array with which to fill the created array.
+    dtype: optional dtype for the created array; defaults to the dtype of the
+      fill value.
+    device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
+      to which the created array will be committed.
+
+  Returns:
+    Array of the specified shape and dtype, on the specified device if specified.
+
+  See also:
+    - :func:`jax.numpy.full_like`
+    - :func:`jax.numpy.empty`
+    - :func:`jax.numpy.zeros`
+    - :func:`jax.numpy.ones`
+
+  Examples:
+    >>> jnp.full(4, 2, dtype=float)
+    Array([2., 2., 2., 2.], dtype=float32)
+    >>> jnp.full((2, 3), 0, dtype=bool)
+    Array([[False, False, False],
+           [False, False, False]], dtype=bool)
+
+    `fill_value` may also be an array that is broadcast to the specified shape:
+
+    >>> jnp.full((2, 3), fill_value=jnp.arange(3))
+    Array([[0, 1, 2],
+           [0, 1, 2]], dtype=int32)
+  """
   dtypes.check_user_dtype_supported(dtype, "full")
   util.check_arraylike("full", fill_value)
 
@@ -3450,11 +3570,46 @@ def full(shape: Any, fill_value: ArrayLike,
         broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
 
 
-@util.implements(np.full_like)
 def full_like(a: ArrayLike | DuckTypedArray,
               fill_value: ArrayLike, dtype: DTypeLike | None = None,
               shape: Any = None, *,
               device: xc.Device | Sharding | None = None) -> Array:
+  """Create an array full of a specified value with the same shape and dtype as an array.
+
+  JAX implementation of :func:`numpy.full_like`.
+
+  Args:
+    a: Array-like object with ``shape`` and ``dtype`` attributes.
+    fill_value: scalar or array with which to fill the created array.
+    shape: optionally override the shape of the created array.
+    dtype: optionally override the dtype of the created array.
+    device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
+      to which the created array will be committed.
+
+  Returns:
+    Array of the specified shape and dtype, on the specified device if specified.
+
+  See also:
+    - :func:`jax.numpy.full`
+    - :func:`jax.numpy.empty_like`
+    - :func:`jax.numpy.zeros_like`
+    - :func:`jax.numpy.ones_like`
+
+  Examples:
+    >>> x = jnp.arange(4.0)
+    >>> jnp.full_like(x, 2)
+    Array([2., 2., 2., 2.], dtype=float32)
+    >>> jnp.full_like(x, 0, shape=(2, 3))
+    Array([[0., 0., 0.],
+           [0., 0., 0.]], dtype=float32)
+
+    `fill_value` may also be an array that is broadcast to the specified shape:
+
+    >>> x = jnp.arange(6).reshape(2, 3)
+    >>> jnp.full_like(x, fill_value=jnp.array([[1], [2]]))
+    Array([[1, 1, 1],
+           [2, 2, 2]], dtype=int32)
+  """
   if hasattr(a, 'dtype') and hasattr(a, 'shape'):  # support duck typing
     util.check_arraylike("full_like", 0, fill_value)
   else:
@@ -3471,9 +3626,34 @@ def full_like(a: ArrayLike | DuckTypedArray,
         broadcast_to(asarray(fill_value, dtype=dtype), shape), device)
 
 
-@util.implements(np.zeros)
 def zeros(shape: Any, dtype: DTypeLike | None = None, *,
           device: xc.Device | Sharding | None = None) -> Array:
+  """Create an array full of zeros.
+
+  JAX implementation of :func:`numpy.zeros`.
+
+  Args:
+    shape: int or sequence of ints specifying the shape of the created array.
+    dtype: optional dtype for the created array; defaults to floating point.
+    device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
+      to which the created array will be committed.
+
+  Returns:
+    Array of the specified shape and dtype, on the specified device if specified.
+
+  See also:
+    - :func:`jax.numpy.zeros_like`
+    - :func:`jax.numpy.empty`
+    - :func:`jax.numpy.ones`
+    - :func:`jax.numpy.full`
+
+  Examples:
+    >>> jnp.zeros(4)
+    Array([0., 0., 0., 0.], dtype=float32)
+    >>> jnp.zeros((2, 3), dtype=bool)
+    Array([[False, False, False],
+           [False, False, False]], dtype=bool)
+  """
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
   if (m := _check_forgot_shape_tuple("zeros", shape, dtype)): raise TypeError(m)
@@ -3481,9 +3661,35 @@ def zeros(shape: Any, dtype: DTypeLike | None = None, *,
   shape = canonicalize_shape(shape)
   return lax.full(shape, 0, _jnp_dtype(dtype), sharding=_normalize_to_sharding(device))
 
-@util.implements(np.ones)
+
 def ones(shape: Any, dtype: DTypeLike | None = None, *,
          device: xc.Device | Sharding | None = None) -> Array:
+  """Create an array full of ones.
+
+  JAX implementation of :func:`numpy.ones`.
+
+  Args:
+    shape: int or sequence of ints specifying the shape of the created array.
+    dtype: optional dtype for the created array; defaults to floating point.
+    device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
+      to which the created array will be committed.
+
+  Returns:
+    Array of the specified shape and dtype, on the specified device if specified.
+
+  See also:
+    - :func:`jax.numpy.ones_like`
+    - :func:`jax.numpy.empty`
+    - :func:`jax.numpy.zeros`
+    - :func:`jax.numpy.full`
+
+  Examples:
+    >>> jnp.ones(4)
+    Array([1., 1., 1., 1.], dtype=float32)
+    >>> jnp.ones((2, 3), dtype=bool)
+    Array([[ True,  True,  True],
+           [ True,  True,  True]], dtype=bool)
+  """
   if isinstance(shape, types.GeneratorType):
     raise TypeError("expected sequence object with len >= 0 or a single integer")
   if (m := _check_forgot_shape_tuple("ones", shape, dtype)): raise TypeError(m)
@@ -3491,11 +3697,37 @@ def ones(shape: Any, dtype: DTypeLike | None = None, *,
   dtypes.check_user_dtype_supported(dtype, "ones")
   return lax.full(shape, 1, _jnp_dtype(dtype), sharding=_normalize_to_sharding(device))
 
-@util.implements(np.empty, lax_description="""\
-Because XLA cannot create uninitialized arrays, the JAX version will
-return an array initialized with zeros.""")
+
 def empty(shape: Any, dtype: DTypeLike | None = None, *,
           device: xc.Device | Sharding | None = None) -> Array:
+  """Create an empty array.
+
+  JAX implementation of :func:`numpy.empty`. Because XLA cannot create an
+  un-initialized array, :func:`jax.numpy.empty` will always return an array
+  full of zeros.
+
+  Args:
+    shape: int or sequence of ints specifying the shape of the created array.
+    dtype: optional dtype for the created array; defaults to floating point.
+    device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
+      to which the created array will be committed.
+
+  Returns:
+    Array of the specified shape and dtype, on the specified device if specified.
+
+  See also:
+    - :func:`jax.numpy.empty_like`
+    - :func:`jax.numpy.zeros`
+    - :func:`jax.numpy.ones`
+    - :func:`jax.numpy.full`
+
+  Examples:
+    >>> jnp.empty(4)
+    Array([0., 0., 0., 0.], dtype=float32)
+    >>> jnp.empty((2, 3), dtype=bool)
+    Array([[False, False, False],
+           [False, False, False]], dtype=bool)
+  """
   if (m := _check_forgot_shape_tuple("empty", shape, dtype)): raise TypeError(m)
   dtypes.check_user_dtype_supported(dtype, "empty")
   return zeros(shape, dtype, device=device)
