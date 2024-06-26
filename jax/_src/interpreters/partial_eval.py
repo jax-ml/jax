@@ -1857,10 +1857,11 @@ class JaxprStackFrame:
       produced = set(eqn.outvars) & active_vars
       if produced:
         active_vars.difference_update(produced)
-        active_vars.update(eqn.invars)
+        active_vars.update({v for v in eqn.invars if type(v) is Var})
     invar_positions = [i for i, v in enumerate(self.invars) if v in active_vars]
     constvars = active_vars & set(self.constvar_to_val)
-    const_eqns = [eqn for eqn in self.eqns if set(eqn.invars) & constvars]
+    const_eqns = [eqn for eqn in self.eqns
+                  if {v for v in eqn.invars if type(v) is Var} & constvars]
     return invar_positions, const_eqns
 
 def _const_folding_and_forwarding(
