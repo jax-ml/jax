@@ -683,7 +683,7 @@ def main():
     "--verbose_failures=true",
     *args.bazel_options,
   )
-  
+
   if args.build_gpu_kernel_plugin == "" and not args.build_gpu_pjrt_plugin:
     build_cpu_wheel_command = [
       *command_base,
