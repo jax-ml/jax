@@ -30,7 +30,6 @@ import logging
 import os
 import pkgutil
 import platform as py_platform
-import sys
 import threading
 import traceback
 from typing import Any, Callable, Union
@@ -570,12 +569,7 @@ def discover_pjrt_plugins() -> None:
     logger.debug("No jax_plugins namespace packages available")
 
   # Augment with advertised entrypoints.
-  if sys.version_info < (3, 10):
-    # Use the backport library because it provides a forward-compatible
-    # implementation.
-    from importlib_metadata import entry_points
-  else:
-    from importlib.metadata import entry_points
+  from importlib.metadata import entry_points
 
   for entry_point in entry_points(group="jax_plugins"):
     logger.debug("Discovered entry-point based JAX plugin: %s",
