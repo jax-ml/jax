@@ -22,7 +22,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 GPU_LOCK = threading.Lock()
 LAST_CODE = 0
-base_dir="./logs"
+base_dir = "./logs"
 
 def extract_filename(path):
   base_name = os.path.basename(path)
