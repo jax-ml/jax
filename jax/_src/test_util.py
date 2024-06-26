@@ -13,7 +13,6 @@
 # limitations under the License.
 
 # pyformat: disable
-from __future__ import annotations
 
 import collections
 from collections.abc import Callable, Generator, Iterable, Sequence

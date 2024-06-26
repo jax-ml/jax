@@ -14,8 +14,6 @@
 
 # Lowering of jaxprs into XLA (HLO) computations.
 
-from __future__ import annotations
-
 from collections import defaultdict
 from collections.abc import Callable, Sequence
 import dataclasses

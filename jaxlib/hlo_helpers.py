@@ -14,8 +14,6 @@
 
 """A small library of helpers for use in jaxlib to build MLIR operations."""
 
-from __future__ import annotations
-
 from collections.abc import Callable, Sequence
 from functools import partial
 from typing import Union

@@ -13,8 +13,6 @@
 # limitations under the License.
 """Utilities for synchronizing and communication across multiple hosts."""
 
-from __future__ import annotations
-
 from functools import partial, lru_cache
 from typing import Optional
 import zlib

@@ -19,8 +19,6 @@ cross-platform lowering mode. The actual mechanism for multi-platform and
 cross-platform lowering is tested in export_test.py.
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 import math
 import re

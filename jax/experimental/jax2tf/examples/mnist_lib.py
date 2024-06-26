@@ -19,8 +19,6 @@ moving parts, at the expense of code size), and another using Flax.
 See README.md for how these are used.
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable, Sequence
 import functools
 import logging

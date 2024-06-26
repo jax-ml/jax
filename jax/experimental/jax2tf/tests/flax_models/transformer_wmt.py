@@ -22,8 +22,6 @@ https://github.com/google/flax/tree/main/examples/wmt
 # pytype: disable=wrong-keyword-args
 # pytype: disable=attribute-error
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from typing import Any
 

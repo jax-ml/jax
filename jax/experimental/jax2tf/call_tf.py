@@ -23,8 +23,6 @@ https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#callin
 
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable, Sequence
 import dataclasses
 import functools

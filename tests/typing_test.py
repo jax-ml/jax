@@ -18,8 +18,6 @@ This test is meant to be both a runtime test and a static type annotation test,
 so it should be checked with pytype/mypy as well as being run with pytest.
 """
 
-from __future__ import annotations
-
 from typing import Any, TYPE_CHECKING
 
 import jax

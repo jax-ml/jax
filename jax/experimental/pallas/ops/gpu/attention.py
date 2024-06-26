@@ -13,7 +13,6 @@
 # limitations under the License.
 
 """Module containing fused attention forward and backward pass."""
-from __future__ import annotations
 
 import functools
 from typing import Any, Optional

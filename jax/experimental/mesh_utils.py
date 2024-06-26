@@ -14,8 +14,6 @@
 # ==============================================================================
 """Utils for building a device mesh."""
 
-from __future__ import annotations
-
 import collections
 from collections.abc import Callable, Generator, MutableMapping, Sequence
 import itertools

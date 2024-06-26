@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
-
 from concurrent.futures import ThreadPoolExecutor
 import contextlib
 from functools import partial

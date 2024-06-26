@@ -14,8 +14,6 @@
 
 """Implementation of Sparse Flash Attention, a.k.a. "Splash" attention."""
 
-from __future__ import annotations
-
 from collections.abc import Callable, Mapping
 import dataclasses
 import enum

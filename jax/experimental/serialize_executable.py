@@ -13,8 +13,6 @@
 # limitations under the License.
 """Pickling support for precompiled binaries."""
 
-from __future__ import annotations
-
 import pickle
 import io
 from typing import Optional, Union

@@ -17,7 +17,6 @@
 The full test suite for the array API is run via the array-api-tests CI;
 this is just a minimal smoke test to catch issues early.
 """
-from __future__ import annotations
 
 from types import ModuleType
 

@@ -24,8 +24,6 @@ currently saved file with the saved one.
 
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable, Sequence
 import contextlib
 import dataclasses

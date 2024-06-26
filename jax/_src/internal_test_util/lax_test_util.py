@@ -17,8 +17,6 @@
 # only, and may be changed or removed at any time and without any deprecation
 # cycle.
 
-from __future__ import annotations
-
 import collections
 import itertools
 from typing import Union, cast

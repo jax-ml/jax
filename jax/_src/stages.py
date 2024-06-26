@@ -28,7 +28,6 @@ Finally, this module defines a couple more classes to commonly adapt our
 various internal XLA-backed lowerings and executables into the lowering and
 executable protocols described above.
 """
-from __future__ import annotations
 
 import functools
 from collections.abc import Sequence

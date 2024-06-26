@@ -50,8 +50,6 @@ For more details, see the design note:
 https://jax.readthedocs.io/en/latest/jep/10657-sequencing-effects.html.
 """
 
-from __future__ import annotations
-
 from collections.abc import Iterable, Set
 from typing import Any
 

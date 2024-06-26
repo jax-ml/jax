@@ -33,8 +33,6 @@ SIAM Journal on Matrix Analysis and Applications 31, no. 5 (2010): 2700-2720.
 https://epubs.siam.org/doi/abs/10.1137/090774999
 """
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 import functools
 import operator

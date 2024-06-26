@@ -13,8 +13,6 @@
 # limitations under the License.
 """Sparse test utilities."""
 
-from __future__ import annotations
-
 from collections.abc import Callable, Iterable, Iterator, Sequence
 import functools
 import itertools

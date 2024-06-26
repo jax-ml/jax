@@ -14,8 +14,6 @@
 
 """Utilities for the building JAX related python packages."""
 
-from __future__ import annotations
-
 import os
 import pathlib
 import platform

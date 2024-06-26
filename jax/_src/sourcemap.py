@@ -16,8 +16,6 @@
 An implementation of sourcemaps following `TC39 <https://tc39.es/source-map>`_.
 """
 
-from __future__ import annotations
-
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 import json

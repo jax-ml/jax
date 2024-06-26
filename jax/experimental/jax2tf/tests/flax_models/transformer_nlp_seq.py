@@ -16,8 +16,6 @@
 https://github.com/google/flax/tree/main/examples/lm1b
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from typing import Any
 

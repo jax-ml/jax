@@ -13,8 +13,6 @@
 # limitations under the License.
 """Implementation of pmap and related functionality."""
 
-from __future__ import annotations
-
 import enum
 from contextlib import contextmanager
 import collections

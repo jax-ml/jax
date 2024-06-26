@@ -24,8 +24,6 @@ To see the proposal that led to the development of these tools, see
 https://github.com/google/jax/pull/11859/.
 """
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 from typing import Any, Protocol, Union
 import numpy as np

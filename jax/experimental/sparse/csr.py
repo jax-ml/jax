@@ -13,7 +13,6 @@
 # limitations under the License.
 
 """CSR (compressed sparse row) matrix object and associated primitives."""
-from __future__ import annotations
 
 from functools import partial
 import operator

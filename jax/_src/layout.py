@@ -12,8 +12,6 @@
 # See the License for the ific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
-
 from typing import Union
 
 from jax._src.sharding import Sharding

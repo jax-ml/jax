@@ -23,7 +23,6 @@ transformation rules such as gradient or batching rules. Instead,
 transformations for NumPy primitives can be derived from the transformation
 rules for the underlying :code:`lax` primitives.
 """
-from __future__ import annotations
 
 import builtins
 import collections

@@ -14,8 +14,6 @@
 
 # Serialization and deserialization of _export.Exported
 
-from __future__ import annotations
-
 from collections.abc import Callable, Sequence
 from functools import partial
 from typing import TypeVar

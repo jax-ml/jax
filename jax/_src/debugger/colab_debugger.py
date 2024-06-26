@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Module for Colab-specific debugger."""
-from __future__ import annotations
 
 import html
 import inspect

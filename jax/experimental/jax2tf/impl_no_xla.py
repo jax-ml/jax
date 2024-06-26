@@ -13,8 +13,6 @@
 # limitations under the License.
 """Workarounds for jax2tf transforms when XLA is not linked in."""
 
-from __future__ import annotations
-
 import builtins
 from collections.abc import Callable, Sequence
 import dataclasses

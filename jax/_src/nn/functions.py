@@ -14,8 +14,6 @@
 
 """Shared neural network activations and other functions."""
 
-from __future__ import annotations
-
 from functools import partial
 import operator
 import numpy as np

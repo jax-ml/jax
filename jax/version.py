@@ -14,7 +14,6 @@
 
 # This file is included as part of both jax and jaxlib. It is also
 # eval()-ed by setup.py, so it should not have any dependencies.
-from __future__ import annotations
 
 import datetime
 import os

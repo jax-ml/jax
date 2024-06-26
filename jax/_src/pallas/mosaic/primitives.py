@@ -13,7 +13,6 @@
 # limitations under the License.
 
 """Module for Pallas:TPU-specific JAX primitives and functions."""
-from __future__ import annotations
 
 from collections.abc import Callable
 import dataclasses

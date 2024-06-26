@@ -13,8 +13,6 @@
 # limitations under the License.
 """Array serialization and deserialization."""
 
-from __future__ import annotations
-
 import abc
 import asyncio
 from collections.abc import Awaitable, Callable, Sequence

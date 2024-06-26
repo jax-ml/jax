@@ -13,7 +13,6 @@
 # limitations under the License.
 
 """Module for calling pallas functions from JAX."""
-from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from functools import partial, reduce

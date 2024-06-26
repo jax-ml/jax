@@ -13,8 +13,6 @@
 # limitations under the License.
 """Sharding utilities"""
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 import itertools
 from typing import Union

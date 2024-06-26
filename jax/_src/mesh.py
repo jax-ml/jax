@@ -13,8 +13,6 @@
 # limitations under the License.
 """Definitions of Mesh and ResourceEnv."""
 
-from __future__ import annotations
-
 import collections
 from collections.abc import Hashable, Sequence
 import contextlib

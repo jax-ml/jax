@@ -15,8 +15,6 @@
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/google/jax/issues/7570
 
-from __future__ import annotations
-
 from jax._src.interpreters.ad import (
   CustomJVPException as CustomJVPException,
   CustomVJPException as CustomVJPException,

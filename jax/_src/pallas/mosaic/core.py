@@ -13,7 +13,6 @@
 # limitations under the License.
 
 """Contains TPU-specific Pallas abstractions."""
-from __future__ import annotations
 
 from collections.abc import Sequence
 import dataclasses

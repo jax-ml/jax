@@ -13,7 +13,6 @@
 # limitations under the License.
 
 """Tests for splash_attention."""
-from __future__ import annotations
 
 from collections.abc import Callable
 import dataclasses

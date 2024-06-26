@@ -14,8 +14,6 @@
 
 """Utilities for the Jaxpr IR."""
 
-from __future__ import annotations
-
 from collections import Counter, defaultdict
 from collections.abc import Callable
 import gzip

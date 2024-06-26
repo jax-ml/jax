@@ -14,8 +14,6 @@
 
 """Module containing fused layer norm forward and backward pass."""
 
-from __future__ import annotations
-
 import functools
 
 from typing import Optional

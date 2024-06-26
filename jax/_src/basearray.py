@@ -14,8 +14,6 @@
 
 # Note that type annotations for this file are defined in basearray.pyi
 
-from __future__ import annotations
-
 import abc
 import numpy as np
 from typing import Any, Union

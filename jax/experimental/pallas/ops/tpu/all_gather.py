@@ -22,7 +22,7 @@ The kernel assumes a ring structure on a single mesh axis. It takes the local
 chunk, splits it in two, and sends each of the half-chunks in each direction
 (left and right) until every device has received the half chunks.
 """
-from __future__ import annotations
+
 import functools
 
 from collections.abc import Sequence

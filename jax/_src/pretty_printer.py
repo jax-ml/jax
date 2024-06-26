@@ -25,8 +25,6 @@
 # Annotations. https://ayazhafiz.com/articles/21/strictly-annotated
 #
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 import enum
 from functools import partial

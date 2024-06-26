@@ -17,8 +17,6 @@ See the back_compat_test_util module docstring for how to setup and update
 these tests.
 """
 
-from __future__ import annotations
-
 import base64
 from collections.abc import Callable, Sequence
 import io

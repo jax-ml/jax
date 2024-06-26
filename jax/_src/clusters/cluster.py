@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 import logging
 from jax._src.cloud_tpu_init import running_in_cloud_tpu_vm

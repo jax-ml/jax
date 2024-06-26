@@ -34,8 +34,6 @@ and implements most of the API listed in the standard.
 .. _Python array API standard: https://data-apis.org/array-api/latest/
 """
 
-from __future__ import annotations
-
 from jax.experimental.array_api._version import __array_api_version__ as __array_api_version__
 
 from jax.experimental.array_api import fft as fft

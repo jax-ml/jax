@@ -27,8 +27,6 @@
 # This encoding is assumed by various parts of the system, e.g. generating
 # replica groups for collective operations.
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 import itertools
 import math

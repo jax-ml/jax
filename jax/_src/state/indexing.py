@@ -14,8 +14,6 @@
 
 """Contains shared logic and abstractions for Pallas indexing ops."""
 
-from __future__ import annotations
-
 import dataclasses
 from typing import Any, Union
 

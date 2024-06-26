@@ -36,8 +36,6 @@ The limitations are used to filter out from tests the harnesses that are known
 to fail. A Limitation is specific to a harness.
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable, Iterable, Sequence
 import operator
 import os

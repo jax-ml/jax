@@ -89,8 +89,6 @@ Example Usage:
 .. _Optax: https://github.com/deepmind/optax
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from typing import Any, NamedTuple
 

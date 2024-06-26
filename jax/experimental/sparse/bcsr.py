@@ -13,7 +13,6 @@
 # limitations under the License.
 
 """BCSR (Bached compressed row) matrix object and associated primitives."""
-from __future__ import annotations
 
 from collections.abc import Sequence
 from functools import partial

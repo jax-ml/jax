@@ -13,8 +13,6 @@
 # limitations under the License.
 """Tests for the shape-polymorphic export."""
 
-from __future__ import annotations
-
 import enum
 from collections.abc import Callable, Sequence
 import cProfile

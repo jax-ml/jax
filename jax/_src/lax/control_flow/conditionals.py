@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Module for conditional control flow primitives."""
-from __future__ import annotations
 
 import collections
 from collections.abc import Callable, Sequence

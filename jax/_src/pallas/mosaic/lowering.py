@@ -13,7 +13,6 @@
 # limitations under the License.
 
 """Module for lowering JAX to Mosaic-compatible MLIR dialects."""
-from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 import dataclasses

@@ -30,8 +30,6 @@ Further down are some examples of potential high-level wrappers for sparse objec
 (API should be considered unstable and subject to change).
 """
 
-from __future__ import annotations
-
 from functools import partial
 import operator
 from typing import Optional, Union

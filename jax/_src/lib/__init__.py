@@ -15,8 +15,6 @@
 # This module is largely a wrapper around `jaxlib` that performs version
 # checking on import.
 
-from __future__ import annotations
-
 import gc
 import pathlib
 import re

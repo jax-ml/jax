@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Module for discharging state primitives."""
-from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 import dataclasses

@@ -13,7 +13,6 @@
 # limitations under the License.
 
 """Tests the simple all_gather kernel."""
-from __future__ import annotations
 
 from absl.testing import absltest
 import jax

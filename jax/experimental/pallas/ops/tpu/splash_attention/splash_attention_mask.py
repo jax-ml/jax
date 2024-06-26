@@ -14,8 +14,6 @@
 
 """Mini-mask creation library."""
 
-from __future__ import annotations
-
 from collections.abc import Callable, Sequence
 import dataclasses
 from typing import Any

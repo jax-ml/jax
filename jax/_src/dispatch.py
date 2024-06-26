@@ -13,7 +13,6 @@
 # limitations under the License.
 
 # Primitive dispatch and jit dispatch.
-from __future__ import annotations
 
 import atexit
 from collections.abc import Callable, Iterator, Sequence

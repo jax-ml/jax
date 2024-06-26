@@ -13,7 +13,6 @@
 # limitations under the License.
 
 """BCOO (Bached coordinate format) matrix object and associated primitives."""
-from __future__ import annotations
 
 from collections.abc import Sequence
 import functools

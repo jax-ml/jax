@@ -61,7 +61,6 @@ compare as equal only if they compute the same function. The static and the
 dynamic positional arguments for the generators, and also the auxiliary output
 data must be immutable, because it will be stored in function memoization tables.
 """
-from __future__ import annotations
 
 from collections.abc import Callable
 from functools import partial

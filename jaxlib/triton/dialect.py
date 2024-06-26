@@ -16,8 +16,6 @@
 
 """Python bindings for the MLIR Triton dialect."""
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 
 from jaxlib.mlir._mlir_libs._triton_ext import (

@@ -13,7 +13,6 @@
 # limitations under the License.
 
 """Module for emitting custom TPU pipelines within a Pallas call."""
-from __future__ import annotations
 
 from collections.abc import Sequence
 import dataclasses

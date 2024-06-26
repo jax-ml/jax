@@ -24,8 +24,6 @@ control over what metadata is saved in the SavedModel. Please copy and
 customize this function as needed.
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable, Sequence
 from typing import Any
 

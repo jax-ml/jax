@@ -13,7 +13,6 @@
 # limitations under the License.
 
 """COO (coordinate format) matrix object and associated primitives."""
-from __future__ import annotations
 
 from collections.abc import Sequence
 from functools import partial

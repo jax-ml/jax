@@ -14,8 +14,6 @@
 
 """Tests for Pallas indexing logic and abstractions."""
 
-from __future__ import annotations
-
 import unittest
 
 from absl.testing import absltest

@@ -25,8 +25,6 @@ This implementation is primarily used on TPU, but it can in principle work on
 CPU and GPU also.
 """
 
-from __future__ import annotations
-
 from functools import partial
 from typing import NamedTuple
 

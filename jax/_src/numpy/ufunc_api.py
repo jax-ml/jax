@@ -14,8 +14,6 @@
 
 """Tools to create numpy-style ufuncs."""
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from functools import partial
 import math

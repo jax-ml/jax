@@ -13,8 +13,6 @@
 # limitations under the License.
 """Tests for the shape-polymorphic jax2tf conversion."""
 
-from __future__ import annotations
-
 from collections.abc import Callable, Sequence
 import contextlib
 import math

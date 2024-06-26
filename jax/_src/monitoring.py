@@ -21,8 +21,6 @@ A typical listener callback is to send an event to a metrics collector for
 aggregation/exporting.
 """
 
-from __future__ import annotations
-
 from typing import Protocol
 
 

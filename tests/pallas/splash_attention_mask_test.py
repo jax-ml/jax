@@ -13,7 +13,6 @@
 # limitations under the License.
 
 """Tests for splash_attention_masks."""
-from __future__ import annotations
 
 from absl.testing import absltest
 from absl.testing import parameterized

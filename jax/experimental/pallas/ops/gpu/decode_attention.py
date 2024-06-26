@@ -13,7 +13,6 @@
 # limitations under the License.
 
 """Module containing decode attention."""
-from __future__ import annotations
 
 import functools
 from typing import Any

@@ -13,8 +13,6 @@
 # limitations under the License.
 """All the models to convert."""
 
-from __future__ import annotations
-
 from collections.abc import Callable, Sequence
 import dataclasses
 import functools

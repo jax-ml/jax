@@ -19,8 +19,6 @@
 This is done dynamically in order to avoid circular imports.
 """
 
-from __future__ import annotations
-
 __all__ = ['register_jax_array_methods']
 
 import abc

@@ -13,7 +13,6 @@
 # limitations under the License.
 
 """Module for pallas-core functionality."""
-from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
 import copy

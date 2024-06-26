@@ -19,8 +19,6 @@
 # b) the set of supported types (e.g., bfloat16),
 # so we need our own implementation that deviates from NumPy in places.
 
-from __future__ import annotations
-
 import abc
 import builtins
 import functools

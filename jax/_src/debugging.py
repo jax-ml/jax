@@ -13,8 +13,6 @@
 # limitations under the License.
 """Module for JAX debugging primitives and related functionality."""
 
-from __future__ import annotations
-
 import importlib.util
 from collections.abc import Callable, Sequence
 import functools

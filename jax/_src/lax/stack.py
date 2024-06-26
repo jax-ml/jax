@@ -18,8 +18,6 @@ Used as a helper for expressing recursive algorithms such as QDWH-eig for
 Eigendecomposition on TPU.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 import jax

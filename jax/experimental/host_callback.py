@@ -499,8 +499,6 @@ Still to do:
 
 """
 
-from __future__ import annotations
-
 import atexit
 import enum
 from collections.abc import Callable, Sequence

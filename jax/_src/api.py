@@ -20,7 +20,6 @@ arguments and outputs. The Python containers handled are pytrees (see
 tree_util.py), which include nested tuples/lists/dicts, where the leaves are
 arrays.
 """
-from __future__ import annotations
 
 import collections
 from collections.abc import Callable, Generator, Hashable, Iterable, Sequence

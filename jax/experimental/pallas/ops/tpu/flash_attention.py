@@ -13,7 +13,6 @@
 # limitations under the License.
 
 """Flash Attention TPU kernel."""
-from __future__ import annotations
 
 import dataclasses
 import functools

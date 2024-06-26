@@ -13,8 +13,6 @@
 # limitations under the License.
 """Module for the common control flow utilities."""
 
-from __future__ import annotations
-
 from collections.abc import Callable, Sequence
 import os
 from functools import partial

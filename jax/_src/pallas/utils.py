@@ -14,7 +14,6 @@
 
 """Pallas utility functions."""
 
-from __future__ import annotations
 from typing import overload
 
 import jax

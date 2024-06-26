@@ -13,7 +13,6 @@
 # limitations under the License.
 
 # Lowering and execution path that converts jaxprs into MLIR.
-from __future__ import annotations
 
 import collections
 from collections.abc import Callable, Iterator, Sequence

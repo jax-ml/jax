@@ -17,8 +17,6 @@ Common neural network layer initializers, consistent with definitions
 used in Keras and Sonnet.
 """
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 import math
 import typing

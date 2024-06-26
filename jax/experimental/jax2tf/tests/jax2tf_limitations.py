@@ -13,8 +13,6 @@
 # limitations under the License.
 """See primitives_test docstring for how the Jax2TfLimitations are used."""
 
-from __future__ import annotations
-
 from collections.abc import Callable, Sequence
 import itertools
 from typing import Any

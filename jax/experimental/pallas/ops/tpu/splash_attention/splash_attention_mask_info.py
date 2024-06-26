@@ -13,7 +13,6 @@
 # limitations under the License.
 
 """Mini-mask creation library."""
-from __future__ import annotations
 
 import collections
 from collections.abc import Callable

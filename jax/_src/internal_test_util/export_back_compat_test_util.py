@@ -68,8 +68,6 @@ then update `test_custom_call_coverage`, and then update your `test_foo_call`:
 
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable, Iterable, Sequence
 import dataclasses
 import datetime

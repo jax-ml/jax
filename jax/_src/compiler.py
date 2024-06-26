@@ -14,8 +14,6 @@
 
 # Interface to the compiler
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 import logging
 import os
