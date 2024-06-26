@@ -1416,7 +1416,7 @@ numpy_rank_promotion = enum_state(
 
 default_matmul_precision = optional_enum_state(
     name='jax_default_matmul_precision',
-    enum_values=['bfloat16', 'tensorfloat32', 'float32'],
+    enum_values=['default', 'high', 'highest', 'bfloat16', 'tensorfloat32', 'float32'],
     default=None,
     help=('Control the default matmul and conv precision for 32bit inputs.\n\n'
 
