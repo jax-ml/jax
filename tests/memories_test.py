@@ -34,6 +34,7 @@ from jax._src.sharding_impls import (NamedSharding, PositionalSharding,
                                      SingleDeviceSharding, GSPMDSharding,
                                      TransferToMemoryKind, PartitionSpec as P)
 from jax.experimental.compute_on import compute_on
+from jax.experimental.shard_map import shard_map
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -1164,6 +1165,26 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     lowered_text = f.lower(x).as_text("hlo")
     self.assertIn("input_output_alias", lowered_text)
     self.assertDeleted(x)
+
+  def test_compute_offload_inside_shmap(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, s)
+
+    @compute_on('device_host')
+    @jax.jit
+    def g(x):
+      return x * 2
+
+    def f(x):
+      x = x * 3
+      y = g(x)
+      return y * 4
+
+    out = jax.jit(shard_map(f, mesh=mesh, in_specs=P('x', 'y'),
+                            out_specs=P('x', 'y')))(arr)
+    self.assertArraysEqual(out, np_inp * 24)
 
 
 @jtu.with_config(jax_enable_memories=True)
