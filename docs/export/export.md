@@ -578,8 +578,8 @@ scalar operands corresponding to the format specifiers.
             error_message="Dimension variable 'w' must have integer value >= 1. Found {0}")
          # Check that dim1 is even
          dim1 = hlo.get_dimension_size(arg, 1)
-         custom_call @shape_assertion(dim1 % 2 == 0, dim1,
-            error_message="Dimension variable 'h' must have integer value >= 1. Found non-zero remainder {0}")
+         custom_call @shape_assertion(dim1 % 2 == 0, dim1 % 2,
+            error_message="Division had remainder {0} when computing the value of 'h')
          # Check that h >= 1
          arg_h = hlo.floordiv(dim1, 2)
          custom_call @shape_assertion(arg_h >= 1, arg_h,
