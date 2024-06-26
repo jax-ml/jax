@@ -2959,16 +2959,6 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                               core.ShapedArray(rhs_aval.shape, aval_out.dtype))
         lhs_dtype = rhs_dtype = aval_out.dtype
 
-  # TODO(b/195364460): Work around slow XLA/CPU implementation of float16 matmul
-  if platform == "cpu":
-    if lhs_dtype == np.float16:
-      lhs = mlir.convert_hlo(ctx, lhs, lhs_aval,
-                             core.ShapedArray(lhs_aval.shape, np.float32))
-
-    if rhs_dtype == np.float16:
-      rhs = mlir.convert_hlo(ctx, rhs, rhs_aval,
-                             core.ShapedArray(rhs_aval.shape, np.float32))
-
 
   dot_dnums = hlo.DotDimensionNumbers.get(
       lhs_batching_dimensions=list(lhs_batch),
