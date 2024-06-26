@@ -101,7 +101,7 @@ exclude = [
 ]
 line-length = 88
 indent-width = 2
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 ignore = [
@@ -115,6 +115,8 @@ ignore = [
     "F841",
     # Raise with from clause inside except block
     "B904",
+    # Zip without explicit strict parameter
+    "B905",
 ]
 select = [
     "B9",
