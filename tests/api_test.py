@@ -4765,6 +4765,14 @@ class APITest(jtu.JaxTestCase):
 
     f.trace(jnp.arange(8)).lower(lowering_platforms=('tpu',))  # doesn't crash
 
+  def test_no_double_dots_in_error_message(self):
+    @jax.jit
+    def f(x):
+      return 1 if x > 0 else 0
+
+    with self.assertRaisesRegex(TracerBoolConversionError, r"with shape bool\[\]\.[^\.]"):
+      f(0)
+
 
 class RematTest(jtu.JaxTestCase):
 
