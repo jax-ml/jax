@@ -335,7 +335,8 @@ class JaxExportTest(jtu.JaxTestCase):
 
   def test_default_export_platform(self):
     test_platform = jtu.device_under_test()
-    if test_platform == "gpu": test_platform = "cuda"
+    if test_platform == "gpu":
+      test_platform = "rocm" if jtu.is_device_rocm() else "cuda"
     self.assertEqual(export.default_export_platform(), test_platform)
     exp = export.export(jnp.sin)(1.)
     self.assertEqual(exp.platforms, (export.default_export_platform(),))
@@ -1402,8 +1403,11 @@ class JaxExportTest(jtu.JaxTestCase):
     mlir.register_lowering(times_2, functools.partial(times_n_lowering, 2),
                            "cpu")
 
-    times_3 = core.Primitive("__testing_times_3")  # x3 for cuda
+    times_3 = core.Primitive("__testing_times_3")  # x3 for cuda and rocm
     times_3.def_abstract_eval(lambda x: x)
+
+    mlir.register_lowering(times_3, functools.partial(times_n_lowering, 3),
+                           "rocm")
     mlir.register_lowering(times_3, functools.partial(times_n_lowering, 3),
                            "cuda")
 
@@ -1412,22 +1416,27 @@ class JaxExportTest(jtu.JaxTestCase):
     mlir.register_lowering(times_4, functools.partial(times_n_lowering, 4),
                            "tpu")
 
-    times_2_or_3 = core.Primitive("__testing_times_2_or_3")  # x2 for cpu, x3 for cuda
+    times_2_or_3 = core.Primitive("__testing_times_2_or_3")  # x2 for cpu, x3 for cuda and rocm
     times_2_or_3.def_abstract_eval(lambda x: x)
     mlir.register_lowering(times_2_or_3,
                            mlir.lower_fun(times_2.bind,
                                           multiple_results=False), "cpu")
+
+    mlir.register_lowering(times_2_or_3,
+                           mlir.lower_fun(times_3.bind,
+                                          multiple_results=False), "rocm")
     mlir.register_lowering(times_2_or_3,
                            mlir.lower_fun(times_3.bind,
                                           multiple_results=False), "cuda")
 
-    times_2_or_3_or_4 = core.Primitive("__testing_times_2_or_3_or_4")  # x2 for cpu, x3 for cuda, x4 for tpu
+    times_2_or_3_or_4 = core.Primitive("__testing_times_2_or_3_or_4")  # x2 for cpu, x3 for cuda and rocm, x4 for tpu
     times_2_or_3_or_4.def_abstract_eval(lambda x: x)
-    times_2_or_3_or_4_lowering_cpu_cuda = mlir.lower_fun(times_2_or_3.bind,
+    times_2_or_3_or_4_lowering_cpu_gpu = mlir.lower_fun(times_2_or_3.bind,
                                                          multiple_results=False)
-    for platform in ["cpu", "cuda"]:
+
+    for platform in ["cpu", "cuda", "rocm"]:
       mlir.register_lowering(times_2_or_3_or_4,
-                             times_2_or_3_or_4_lowering_cpu_cuda,
+                             times_2_or_3_or_4_lowering_cpu_gpu,
                              platform)
     mlir.register_lowering(times_2_or_3_or_4, mlir.lower_fun(times_4.bind,
                                                              multiple_results=False),
@@ -1437,7 +1446,7 @@ class JaxExportTest(jtu.JaxTestCase):
     def f(x):
       return times_2_or_3_or_4.bind(x)
     x = np.float32(42.)
-    exp = export.export(f, lowering_platforms=["cpu", "cuda", "tpu"])(x)
+    exp = export.export(f, lowering_platforms=["cpu", "cuda", "rocm", "tpu"])(x)
     expected = x * np.float32(dict(cpu=2, gpu=3, tpu=4)[jtu.device_under_test()])
     self.assertAllClose(exp.call(x), expected)
 
