@@ -13,7 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 import contextlib
 import ctypes
 import dataclasses
@@ -24,7 +24,7 @@ import pathlib
 import subprocess
 import tempfile
 import time
-from typing import Any, Generic, Sequence, TypeVar
+from typing import Any, Generic, TypeVar
 
 import jax
 from jax._src import config

@@ -15,12 +15,12 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import enum
 import functools
 import math
 import operator as op
-from typing import Any, Callable, TYPE_CHECKING, cast
+from typing import Any, TYPE_CHECKING, cast
 
 from jax._src import abstract_arrays
 from jax._src import api

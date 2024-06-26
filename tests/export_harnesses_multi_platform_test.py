@@ -21,9 +21,9 @@ cross-platform lowering is tested in export_test.py.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import math
 import re
-from typing import Callable
 
 from absl import logging
 from absl.testing import absltest

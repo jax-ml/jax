@@ -15,13 +15,13 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import functools
 from functools import partial
 import inspect
 import itertools
 import operator
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 
 import jax
 from jax.tree_util import tree_flatten, tree_unflatten

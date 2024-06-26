@@ -13,11 +13,11 @@
 # limitations under the License.
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import dataclasses
 import functools
 import itertools as it
-from typing import Callable, TypeVar, Any, Union
+from typing import TypeVar, Any, Union
 
 import numpy as np
 

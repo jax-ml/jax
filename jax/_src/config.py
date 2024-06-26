@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Hashable, Iterator, Sequence
+from collections.abc import Callable, Hashable, Iterator, Sequence
 import contextlib
 import functools
 import itertools
@@ -22,9 +22,7 @@ import logging
 import os
 import sys
 import threading
-from typing import (
-    Any, Callable, Generic, NamedTuple, NoReturn, Protocol, TypeVar, cast,
-)
+from typing import Any, Generic, NamedTuple, NoReturn, Protocol, TypeVar, cast
 
 from jax._src import lib
 from jax._src.lib import jax_jit

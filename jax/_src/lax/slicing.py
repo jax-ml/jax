@@ -14,12 +14,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import enum
 import operator
 from functools import partial
 import math
-from typing import Callable, NamedTuple
+from typing import NamedTuple
 import weakref
 
 import numpy as np

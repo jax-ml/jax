@@ -17,16 +17,15 @@ from __future__ import annotations
 
 import abc
 import asyncio
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from functools import partial
 import itertools
 import logging
 import os
 import re
-import sys
 import threading
 import time
-from typing import Any, Callable, Optional, Union
+from typing import Any
 
 import jax
 from jax._src import array
@@ -130,7 +129,7 @@ def get_tensorstore_spec(ckpt_path: str, ocdbt: bool = False):
   return spec
 
 
-def is_remote_storage(tspec: Union[dict[str, Any], str]) -> bool:
+def is_remote_storage(tspec: dict[str, Any] | str) -> bool:
   """Detect if user is using cloud storages.
 
   This can detect common defines and unable to detect some corner cases such as
@@ -190,7 +189,7 @@ async def async_serialize(
     tensorstore_spec,
     commit_future=None,
     context=TS_CONTEXT,
-    primary_host: Optional[int] = 0,
+    primary_host: int | None = 0,
     replica_id: int = 0,
 ):
   """Serialize an array using TensorStore.

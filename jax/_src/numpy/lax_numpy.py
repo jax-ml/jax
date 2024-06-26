@@ -27,13 +27,13 @@ from __future__ import annotations
 
 import builtins
 import collections
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import partial
 import importlib
 import math
 import operator
 import types
-from typing import (cast, overload, Any, Callable, Literal, NamedTuple,
+from typing import (cast, overload, Any, Literal, NamedTuple,
                     Protocol, TypeVar, Union)
 from textwrap import dedent as _dedent
 import warnings

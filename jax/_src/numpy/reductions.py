@@ -15,11 +15,11 @@
 from __future__ import annotations
 
 import builtins
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import partial
 import math
 import operator
-from typing import overload, Any, Callable, Literal, Protocol, Union
+from typing import overload, Any, Literal, Protocol, Union
 import warnings
 
 import numpy as np

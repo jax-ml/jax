@@ -503,14 +503,14 @@ from __future__ import annotations
 
 import atexit
 import enum
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import functools
 import itertools
 import logging
 import math
 import threading
 import traceback
-from typing import Any, Callable, cast
+from typing import Any, cast
 
 import jax
 from jax._src import api

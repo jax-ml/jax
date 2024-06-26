@@ -16,13 +16,13 @@
 from __future__ import annotations
 
 import atexit
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 import contextlib
 import dataclasses
 from functools import partial
 import itertools
 import time
-from typing import Any, Callable, NamedTuple
+from typing import Any, NamedTuple
 import logging
 import threading
 

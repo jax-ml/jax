@@ -19,15 +19,14 @@ import enum
 from contextlib import contextmanager
 import collections
 from collections import namedtuple
-from collections.abc import Sequence, Iterable
+from collections.abc import Callable, Sequence, Iterable, Iterator
 import dataclasses
 from functools import partial, lru_cache, cached_property
 import itertools as it
 import logging
 import math
 import threading
-from typing import Any, Callable, NamedTuple, TypeVar, Union, cast
-from collections.abc import Iterator
+from typing import Any, NamedTuple, TypeVar, Union, cast
 import warnings
 
 import numpy as np

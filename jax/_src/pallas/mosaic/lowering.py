@@ -15,11 +15,11 @@
 """Module for lowering JAX to Mosaic-compatible MLIR dialects."""
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import dataclasses
 import functools
 import string
-from typing import Any, Callable
+from typing import Any
 
 import jax
 from jax import core as jax_core

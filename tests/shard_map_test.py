@@ -14,14 +14,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence, Iterable, Iterator, Generator
+from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 import contextlib
 from functools import partial
 import itertools as it
 import math
 import operator as op
 from types import SimpleNamespace
-from typing import Any, NamedTuple, Callable, TypeVar
+from typing import Any, NamedTuple, TypeVar
 import unittest
 
 from absl.testing import absltest

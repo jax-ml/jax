@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 import dataclasses
 import functools
 from functools import partial
@@ -27,7 +27,7 @@ import os
 import re
 import types
 import typing
-from typing import Any, Callable, NamedTuple, Protocol, Union, cast as type_cast
+from typing import Any, NamedTuple, Protocol, Union, cast as type_cast
 import warnings
 
 import numpy as np
