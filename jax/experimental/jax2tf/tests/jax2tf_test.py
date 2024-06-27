@@ -52,6 +52,8 @@ from tensorflow.compiler.tf2xla.python import xla as tfxla
 config.parse_flags_with_absl()
 _exit_stack = contextlib.ExitStack()
 
+# Small change to trigger test run.
+
 # TODO(necula): Remove once tensorflow is 2.10.0 everywhere.
 def setUpModule():
   if not hasattr(tfxla, "optimization_barrier"):
