@@ -290,7 +290,7 @@ def _lower_tpu_kernel(
     ]
     pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
     pipeline.run(module.operation)
-    dump_mlir(module, "post-simplify")
+    dump_mlir(module, "post-infer-memref-layout-simplify")
 
     try:
       on_device_checks = FLAGS["xla_mosaic_on_device_checks"].value
@@ -318,20 +318,28 @@ def _lower_tpu_kernel(
     pipeline.run(module.operation)
     dump_mlir(module, "post-infer-vector-layout")
 
+    sl_cnt = 8
+    l_cnt = 128
     mxu_size = 128 if hardware_generation < 6 else 256
     pipeline = [
-        "func.func(tpu-apply-vector-layout{sublane-count=8 lane-count=128"
+        "func.func(tpu-apply-vector-layout{"
+        f" sublane-count={sl_cnt} lane-count={l_cnt}"
         f" hardware-generation={hardware_generation}"
         f" mxu-contracting-size={mxu_size} mxu-noncontracting-size={mxu_size}"
+        f" max-sublanes-in-scratch={sl_cnt * (sl_cnt + 1)}"
         "})"
     ]
     pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
     pipeline.run(module.operation)
     dump_mlir(module, "post-apply-vector-layout")
 
-    pipeline = PassManager.parse("builtin.module(canonicalize)")
+    pipeline = [
+        "canonicalize",
+        "cse",
+    ]
+    pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
     pipeline.run(module.operation)
-    dump_mlir(module, "pre-lower-to-llo")
+    dump_mlir(module, "post-apply-vector-layout-simplify")
 
     return module
 
@@ -481,6 +489,6 @@ def dump_mlir(module: ir.Module, name: str):
   if should_dump == "sponge":
     outdir = os.environ.get("TEST_UNDECLARED_OUTPUTS_DIR", None)
     if outdir:
-      path = os.path.join(outdir, f"{time.time_ns()}-mosaic-dump-{name}.txt")
+      path = os.path.join(outdir, f"{time.time_ns()}-mosaic-dump-{name}-py.txt")
       with open(path, "w") as f:
         f.write(str(module))
