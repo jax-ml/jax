@@ -1040,13 +1040,8 @@ class TraceState:
 
 
 def _update_thread_local_jit_state(dynamic):
-  # Copies the MainTrace instance, removing any .debug_info or .jaxpr_stack
-  # fields that should not be kept alive as part of a cache key.
-  # TODO(mattjj): split debug_info and jaxpr_stack out of MainTrace.
-  # TODO(mattjj): add a test that verifies that JIT-ted functions are not kept
-  # alive by the JIT cache, particularly for nested JIT-ted functions.
-  copy = MainTrace(dynamic.level, dynamic.trace_type, **dynamic.payload)
-  config.update_thread_local_jit_state(dynamic_trace_state=copy)
+  state = (dynamic.level, dynamic.trace_type)
+  config.update_thread_local_jit_state(dynamic_trace_state=state)
 
 
 # The global state of the tracer is accessed by a thread-local object.
@@ -1071,8 +1066,8 @@ def _initialize_jax_jit_thread_local_state():
   tls = jax_jit.thread_local_state()
   if tls.extra_jit_context is None:
     dynamic = thread_local_state.trace_state.trace_stack.dynamic
-    copy = MainTrace(dynamic.level, dynamic.trace_type, **dynamic.payload)
-    config.update_thread_local_jit_state(dynamic_trace_state=copy)
+    state = (dynamic.level, dynamic.trace_type)
+    config.update_thread_local_jit_state(dynamic_trace_state=state)
 
 
 jax_jit.set_thread_local_state_initialization_callback(

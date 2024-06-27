@@ -873,7 +873,7 @@ class _ThreadLocalStateCache(threading.local):
 
   The extra_jit_context in jax_jit.thread_local_state() may get updated and thus
   incurring dispatch overhead for comparing this python object during jit calls.
-  We want to duduplicate the objects that have the same hash/equality to also
+  We want to deduplicate the objects that have the same hash/equality to also
   have the same object ID, since the equality check is much faster if the object
   IDs match.
   """
