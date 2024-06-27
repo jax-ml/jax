@@ -100,28 +100,7 @@ class Mpi4pyCluster(clusters.ClusterEnv):
     # a selection of the local process ID.
     from mpi4py import MPI
     COMM_WORLD = MPI.COMM_WORLD
-
-    # This is a previous method that is replaced with a different mpi split:
-
-    # hostname = socket.gethostname()
-    # # host_key = host_key %
-    # all_hostnames = COMM_WORLD.gather(hostname, root=0)
-
-    # if COMM_WORLD.Get_rank() == 0:
-    #     # Order all the hostnames, and find unique ones
-    #     unique_hosts = unique(all_hostnames)
-    #     # Numpy automatically sorts them.
-    # else:
-    #     unique_hosts = None
-
-    # # Broadcast the list of hostnames:
-    # unique_hosts = COMM_WORLD.bcast(unique_hosts, root=0)
-
-    # # Find the integer for this host in the list of hosts:
-    # i = int(where(unique_hosts == hostname)[0])
-
-    # new_comm = COMM_WORLD.Split(color=i)
-
+    
     # This is the alternative method that is simpler:
     new_comm = COMM_WORLD.Split_type(MPI.COMM_TYPE_SHARED)
 
