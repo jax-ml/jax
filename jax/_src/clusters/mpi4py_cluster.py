@@ -29,21 +29,7 @@ class Mpi4pyCluster(clusters.ClusterEnv):
 
   @classmethod
   def is_env_present(cls) -> bool:
-    # Why include and opt_in?  Enables this class to conform to
-    # every other ClusterEnv subclass while always being rejected
-    # as viable, except in the express case where we request to check
-    # it explicitly.
 
-    # in many HPC clusters, the variables `https_proxy` and `http_proxy`
-    # are set to enable access to normally unreachable network locations.
-    # For example, `pip install ...` fails on compute nodes without them.
-
-    # Unfortunately, these variables break the jax distributed init.
-    # The user needs to unset them, but I don't want to modify the global
-    # python os.environ here for them (bad practice)
-
-    # And I also don't know what the right way to raise a complaint here is
-    
     # Relies on mpi4py:
     return find_spec("mpi4py") is not None
 
@@ -76,7 +62,6 @@ class Mpi4pyCluster(clusters.ClusterEnv):
 
     # Broadcast the host_ip to all ranks:
     hostname = COMM_WORLD.bcast(hostname, root=0)
-    # host_ip = COMM_WORLD.bcast(host_ip, root=0)
 
 
     return hostname
