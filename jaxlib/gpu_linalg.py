@@ -66,12 +66,8 @@ def _lu_pivots_to_permutation_hlo(platform, gpu_linalg, pivots, *, permutation_s
   typ = ir.RankedTensorType(pivots.type)
   dims = typ.shape
   i32_type = ir.IntegerType.get_signless(32)
-  i64_type = ir.IntegerType.get_signless(64)
 
   assert typ.element_type == i32_type, typ
-
-  batch_size = _prod(dims[:-1])
-  pivot_size = dims[-1]
 
   if not gpu_linalg:
     raise GpuLibNotLinkedError()
@@ -87,8 +83,6 @@ def _lu_pivots_to_permutation_hlo(platform, gpu_linalg, pivots, *, permutation_s
       result_types=[permutations_type],
       operands=[pivots],
       backend_config=dict(
-          batch_size=ir.IntegerAttr.get(i64_type, batch_size),
-          pivot_size=ir.IntegerAttr.get(i32_type, pivot_size),
           permutation_size=ir.IntegerAttr.get(i32_type, permutation_size),
       ),
       operand_layouts=[pivots_layout],
