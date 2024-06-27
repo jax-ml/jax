@@ -51,7 +51,7 @@ class WGMMAAccumulator:
       raise ValueError("Only WGMMA layouts supported in WGMMAAccumulator")
     self.value = _value
     if _sync:
-      self._value = wgmma_fence(_value)
+      self.value = wgmma_fence(_value)
 
   @classmethod
   def zero(cls, m, n, dtype=None):
