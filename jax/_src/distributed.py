@@ -163,11 +163,11 @@ def initialize(coordinator_address: str | None = None,
   If you are using TPU, Slurm, or Open MPI, all arguments are optional: if omitted, they
   will be chosen automatically.
 
-  The ``spec_detection_method`` may be used to intentionally, automatically select the values for
-  arguments.  You may pass any of the automatic ``spec_detect_methods`` to this argument though 
-  it is not necessary in the TPU, Slurm, or Open MPI cases.  For other MPI installations,
-  if you have a functional ``mpi4py`` installed, you may pass ``spec_detection_method="mpi4py"`` 
-  to bootstrap the required arguments.
+  The ``spec_detection_method`` may be used to choose a specific method for detecting those 
+  distributed arguments. You may pass any of the automatic ``spec_detect_methods`` to this 
+  argument though it is not necessary in the TPU, Slurm, or Open MPI cases.  For other MPI 
+  installations, if you have a functional ``mpi4py`` installed, you may pass 
+  ``spec_detection_method="mpi4py"`` to bootstrap the required arguments.
 
   Otherwise, you must provide the ``coordinator_address``,
   ``num_processes``, and ``process_id`` arguments to :func:`~jax.distributed.initialize`.
