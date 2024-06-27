@@ -315,6 +315,8 @@ def linkcode_resolve(domain, info):
     return None
   if not info['fullname']:
     return None
+  if info['module'].split(".")[0] != 'jax':
+     return None
   try:
     mod = sys.modules.get(info['module'])
     obj = operator.attrgetter(info['fullname'])(mod)
