@@ -156,6 +156,9 @@ mlir::LogicalResult RunPasses(mlir::OpPassManager&& passes,
                               mlir::ModuleOp module) {
   mlir::PassManager pm(module.getContext());
   *static_cast<mlir::OpPassManager*>(&pm) = std::move(passes);
+  if (getenv("MOSAIC_GPU_DUMP_MLIR_PASSES") != nullptr) {
+    pm.enableIRPrinting();
+  }
   return pm.run(module);
 }
 
