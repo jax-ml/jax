@@ -648,22 +648,26 @@ if TYPE_CHECKING:
 else:
 
   class Precision(enum.Enum):
-    """Precision enum for lax functions
+    """Precision enum for lax matrix multiply related functions.
 
-    The `precision` argument to JAX functions generally controls the tradeoff
-    between speed and accuracy for array computations on accelerator backends,
-    (i.e. TPU and GPU). Members are:
+    The device-dependent `precision` argument to JAX functions generally
+    controls the tradeoff between speed and accuracy for array computations on
+    accelerator backends, (i.e. TPU and GPU). Has no impact on CPU backends.
+    This only has an effect on float32 computations, and does not affect the
+    input/output datatypes. Members are:
 
     DEFAULT:
-      Fastest mode, but least accurate. Performs computations in bfloat16.
-      Aliases: ``'default'``, ``'fastest'``, ``'bfloat16'``.
+      Fastest mode, but least accurate. On TPU: performs float32 computations in
+      bfloat16. On GPU: uses tensorfloat32 if available (e.g. on A100 and H100
+      GPUs), otherwise standard float32 (e.g. on V100 GPUs). Aliases:
+      ``'default'``, ``'fastest'``.
     HIGH:
-      Slower but more accurate. Performs float32 computations in 3 bfloat16
-      passes, or using tensorfloat32 where available. Aliases: ``'high'``,
-      ``'bfloat16_3x'``, ``'tensorfloat32'``.
+      Slower but more accurate. On TPU: performs float32 computations in 3
+      bfloat16 passes. On GPU: uses tensorfloat32 where available, otherwise
+      float32. Aliases: ``'high'``..
     HIGHEST:
-      Slowest but most accurate. Performs computations in float32 or float64
-      as applicable. Aliases: ``'highest'``, ``'float32'``.
+      Slowest but most accurate. On TPU: performs float32 computations in 6
+      bfloat16. Aliases: ``'highest'``. On GPU: uses float32.
     """
 
     DEFAULT = 0
