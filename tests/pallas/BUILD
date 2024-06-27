@@ -58,6 +58,7 @@ jax_test(
     deps = [
         "//jax:pallas",
         "//jax:pallas_gpu",
+        "//jax:pallas_gpu_ops",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
@@ -209,11 +210,12 @@ jax_test(
         "gpu",
     ],
     main = "pallas_pipeline_tpu_test.py",
+    shard_count = 2,
     deps = [
         "//jax:extend",
         "//jax:pallas_tpu",
         "//jax:pallas_tpu_ops",
-    ],
+    ] + py_deps("hypothesis"),
 )
 
 jax_test(
@@ -327,5 +329,34 @@ jax_test(
         "//jax:internal_export_back_compat_test_util",
         "//jax:pallas",
         "//jax:pallas_gpu",  # build_cleaner: keep
+    ],
+)
+
+jax_test(
+    name = "export_pallas_test",
+    srcs = ["export_pallas_test.py"],
+    config_tags_overrides = {
+        "gpu_a100_x32": {
+            "ondemand": False,  # Include in presubmit.
+        },
+    },
+    disable_configs = [
+        "gpu",
+        "gpu_x32",
+        "gpu_a100",
+        "gpu_h100",
+        "gpu_p100",
+        "gpu_p100_x32",
+        "gpu_pjrt_c_api",
+    ],
+    enable_configs = [
+        "gpu_a100_x32",
+    ],
+    tags = [],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_gpu",  # build_cleaner: keep
+        "//jax:pallas_tpu",  # build_cleaner: keep
+        "//jax/experimental/export",
     ],
 )

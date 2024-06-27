@@ -39,10 +39,6 @@ from jax._src.state import primitives as sp
 from jax.interpreters import mlir
 import jax.numpy as jnp
 
-
-# TODO(sharadmv): enable type checking
-# mypy: ignore-errors
-
 partial = functools.partial
 Slice = indexing.Slice
 NDIndexer = indexing.NDIndexer
@@ -53,41 +49,42 @@ zip, unsafe_zip = util.safe_zip, zip
 program_id_p = jax_core.Primitive("program_id")
 
 def program_id(axis: int) -> jax.Array:
+  """Returns the kernel execution position along the given axis of the grid."""
   return program_id_p.bind(axis=axis)
 
 def program_id_bind(*, axis: int):
   grid_env = pallas_core.current_grid_env()
   if grid_env:
-    return grid_env[axis].axis_index
+    return grid_env[axis].index
+  frame = pallas_core.axis_frame()
+  # Query the size of the axis to make sure its a valid axis (and error
+  # otherwise).
+  _ = frame.size(axis)
   return jax_core.Primitive.bind(program_id_p, axis=axis)
 program_id_p.def_custom_bind(program_id_bind)
-
-def _program_id_impl(*, axis: int):
-  grid_env = pallas_core.current_grid_env()
-  return grid_env[axis].axis_index
-program_id_p.def_impl(_program_id_impl)
 
 def _program_id_abstract_eval(**_):
   return jax_core.ShapedArray((), jnp.int32)
 program_id_p.def_abstract_eval(_program_id_abstract_eval)
 
-
 num_programs_p = jax_core.Primitive("num_programs")
 
-def num_programs(axis: int) -> jax.Array:
+def num_programs(axis: int) -> int | jax.Array:
+  """Returns the size of the grid along the given axis."""
   return num_programs_p.bind(axis=axis)
 
 @num_programs_p.def_custom_bind
 def _num_programs_bind(*, axis: int):
+  # We might be using a local grid env
   grid_env = pallas_core.current_grid_env()
   if grid_env:
-    return jnp.asarray(grid_env[axis].axis_size, dtype=jnp.int32)
-  return jax_core.Primitive.bind(num_programs_p, axis=axis)
-
-@num_programs_p.def_impl
-def _num_programs_impl(*, axis: int):
-  grid_env = pallas_core.current_grid_env()
-  return jnp.asarray(grid_env[axis].axis_size, dtype=jnp.int32)
+    return grid_env[axis].size
+  # Otherwise, we look up the size of the grid in the axis env
+  frame = pallas_core.axis_frame()
+  size = frame.size(axis)
+  if size is pallas_core.dynamic_grid_dim:
+    return jax_core.Primitive.bind(num_programs_p, axis=axis)
+  return size
 
 @num_programs_p.def_abstract_eval
 def _num_programs_abstract_eval(**_):
@@ -298,6 +295,41 @@ def _load_jvp(primals, tangents, args_tree, **params):
 
 ad.primitive_jvps[load_p] = _load_jvp
 
+def uninitialized_value(shape, dtype):
+  if jnp.issubdtype(dtype, jnp.floating):
+    return jnp.full(shape, jnp.nan, dtype)
+  elif jnp.issubdtype(dtype, jnp.integer):
+    return jnp.full(shape, jnp.iinfo(dtype).min, dtype)
+  elif jnp.issubdtype(dtype, jnp.bool):
+    return jnp.full(shape, False, dtype)
+  raise NotImplementedError(dtype)
+
+def _pad_values_to_avoid_dynamic_slice_oob_shift(value,
+                                   slice_sizes, unpad=False):
+  """
+  DynamicSlice and DynamicUpdateSlice adjust the start index in cases where the
+  requested slice overruns the bounds of the array. This pads the array with
+  uninitialised values such that the requested slice will never overrun.
+
+  For example, if arr is [1.,2.,3.,4.] and a slice of size 4, start index 2 is
+  requested then the result will be [3.,4.,NaN,NaN] after padding, rather than
+  [1.,2.,3.,4.] from the unpadded array
+
+  unpad=True performs the inverse operation
+  """
+
+  padding_config = tuple((0, slice_size, 0) for slice_size in slice_sizes)
+  if unpad:
+    padding_config = tuple((-low, -high, -interior)
+                           for (low, high, interior) in padding_config)
+  padding_value = uninitialized_value(shape=(), dtype=value.dtype)
+  value = lax.pad(value,
+                  padding_config=padding_config,
+                  padding_value=padding_value)
+  return value
+
+_unpad_values_to_avoid_dynamic_slice_oob_shift = partial(
+  _pad_values_to_avoid_dynamic_slice_oob_shift, unpad=True)
 
 def _load_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
   del out_avals  # Unused.
@@ -315,6 +347,10 @@ def _load_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
     scalar_dims = [not isinstance(s, Slice) and not s.shape for s in indices]
     slice_starts = [s.start if isinstance(s, Slice) else s for s in indices]
     slice_sizes = tuple(s.size if isinstance(s, Slice) else 1 for s in indices)
+    # fixes an inconstency with lax.dynamic_slice where if the slice goes out
+    # of bounds, it will instead move the start_index backwards so the slice
+    # will fit in memory.
+    ref = _pad_values_to_avoid_dynamic_slice_oob_shift(ref, slice_sizes)
     out_ones = lax.dynamic_slice(ref, slice_starts, slice_sizes=slice_sizes)
     out_indexer = tuple(0 if scalar else slice(None) for scalar in scalar_dims)
     out = out_ones[out_indexer]
@@ -424,6 +460,10 @@ def _swap_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
     ]
     slice_starts = [s.start if isinstance(s, Slice) else s for s in indices]
     slice_sizes = tuple(s.size if isinstance(s, Slice) else 1 for s in indices)
+    # Fixes an inconsistency with lax.dynamic_update_slice where if the slice
+    # goes out of bounds, it will instead move the start_index backwards so the
+    # slice will fit in memory.
+    ref = _pad_values_to_avoid_dynamic_slice_oob_shift(ref, slice_sizes)
     out = lax.dynamic_slice(ref, slice_starts, slice_sizes=slice_sizes)
     out = jnp.squeeze(out, scalar_dims)
     if mask is not None:
@@ -432,6 +472,7 @@ def _swap_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
       val = jnp.where(mask, val, out_)
     val = jnp.expand_dims(val, scalar_dims)
     x_new = lax.dynamic_update_slice(ref, val, start_indices=slice_starts)
+    x_new = _unpad_values_to_avoid_dynamic_slice_oob_shift(x_new, slice_sizes)
   elif all(not isinstance(s, Slice) for s in idx.indices):
     out = ref[idx.indices]
     if mask is not None:
@@ -525,7 +566,7 @@ def debug_print(fmt: str, *args: jax.ArrayLike):
   """  # fmt: skip
   has_placeholders = False
   if fmt:
-    _, field_name, *_ = next(string.Formatter().parse(fmt))
+    _, field_name, *_ = next(iter(string.Formatter().parse(fmt)))
     has_placeholders = field_name is not None
   return debug_print_p.bind(*args, fmt=fmt, has_placeholders=has_placeholders)
 

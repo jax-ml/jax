@@ -25,7 +25,7 @@ def logpmf(k: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Array:
 
   JAX implementation of :obj:`scipy.stats.bernoulli` ``logpmf``
 
-  The Bernoulli probablility mass function is defined as
+  The Bernoulli probability mass function is defined as
 
   .. math::
 
@@ -62,7 +62,7 @@ def pmf(k: ArrayLike, p: ArrayLike, loc: ArrayLike = 0) -> Array:
 
   JAX implementation of :obj:`scipy.stats.bernoulli` ``pmf``
 
-  The Bernoulli probablility mass function is defined as
+  The Bernoulli probability mass function is defined as
 
   .. math::
 

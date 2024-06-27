@@ -17,16 +17,15 @@ import functools
 import itertools
 import os
 import sys
-import unittest
 
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 
 from absl.testing import absltest
 from absl.testing import parameterized
-
 import jax
 from jax import lax
 from jax import random
+from jax._src import checkify
 from jax._src import config
 from jax._src import linear_util as lu
 from jax._src import state
@@ -34,10 +33,10 @@ from jax._src import test_util as jtu
 from jax._src.lax.control_flow.for_loop import for_loop
 from jax._src.pallas.pallas_call import _trace_to_jaxpr
 from jax.experimental import pallas as pl
-from jax.experimental.pallas.ops import attention
-from jax.experimental.pallas.ops import layer_norm
-from jax.experimental.pallas.ops import rms_norm
-from jax.experimental.pallas.ops import softmax
+from jax.experimental.pallas.ops.gpu import attention
+from jax.experimental.pallas.ops.gpu import layer_norm
+from jax.experimental.pallas.ops.gpu import rms_norm
+from jax.experimental.pallas.ops.gpu import softmax
 from jax.interpreters import partial_eval as pe
 import jax.numpy as jnp
 import numpy as np
@@ -51,8 +50,6 @@ else:
 # TODO(sharadmv): Update signatures of pallas_call to correct inputs/outputs.
 # pylint: disable=no-value-for-parameter
 
-
-config.update("jax_traceback_filtering", "off")
 config.parse_flags_with_absl()
 
 @functools.partial(jax.jit, static_argnames=["bm", "bn", "gm", "bk",
@@ -123,7 +120,8 @@ def matmul_block_spec(x, y, *, bm, bn, bk, interpret, debug=False):
   return matmul_kernel(x, y)
 
 
-class PallasTest(parameterized.TestCase):
+@jtu.with_config(jax_traceback_filtering="off")
+class PallasTest(jtu.JaxTestCase):
   INTERPRET = False
 
   def setUp(self):
@@ -209,6 +207,20 @@ class PallasCallTest(PallasTest):
     for i in range(5):
       np.testing.assert_allclose(index(x, i), x[i])
 
+  def test_hoisted_consts(self):
+    # See https://github.com/google/jax/issues/21557.
+    x = jnp.zeros(32)
+    indices = jnp.arange(4).reshape((2, 2))
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+    )
+    def kernel(src, dst):
+      dst[indices] = src[indices]
+
+    jax.block_until_ready(kernel(x))
+
   def test_vector_slicing(self):
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
@@ -222,100 +234,6 @@ class PallasCallTest(PallasTest):
       idx = jnp.arange(i, i + 2)
       np.testing.assert_allclose(index(x, idx), x[idx])
 
-  def test_num_programs(self):
-    @functools.partial(
-        self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((4,), jnp.int32),
-        grid=4,
-    )
-    def kernel(o_ref):
-      o_ref[pl.program_id(0)] = pl.num_programs(0)
-
-    np.testing.assert_array_equal(
-        kernel(), np.asarray([4, 4, 4, 4], dtype=np.int32)
-    )
-
-  def test_where_broadcasting(self):
-    @functools.partial(
-        self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((4, 2, 2), jnp.float32),
-        grid=1)
-    def copyitem(x_ref, in_idx_ref, out_idx_ref, o_ref):
-      mask = (jnp.arange(o_ref.shape[0]) == out_idx_ref[()])[:, None, None]
-      o_ref[...] = jnp.where(mask, x_ref[in_idx_ref[()]], 0)
-
-    x = jnp.arange(7 * 2 * 2.).reshape(7, 2, 2)
-    for ii in range(7):
-      for oi in range(4):
-        out = copyitem(x, ii, oi)
-        self.assertEqual((4, 2, 2), out.shape)
-        np.testing.assert_allclose(out[:oi], jnp.zeros_like(out[:oi]))
-        np.testing.assert_allclose(out[oi], x[ii])
-        np.testing.assert_allclose(out[oi + 1:], jnp.zeros_like(out[oi + 1:]))
-
-  @parameterized.parameters(*[
-    ((), (2,), ()),
-    ((1,), (2,), (0,)),
-    ((1, 1), (2, 2), (0, 1)),
-    ((), (2, 2), ()),
-  ])
-  def test_broadcast_in_dim(self, in_shape, out_shape, dims):
-    @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct(out_shape, jnp.float32),
-        grid=1)
-    def f(x_ref, o_ref):
-      x = x_ref[...]
-      o_ref[...] = jax.lax.broadcast_in_dim(x, out_shape, dims)
-
-    x = jnp.arange(int(np.prod(in_shape)), dtype=jnp.float32).reshape(in_shape)
-    expected = jax.lax.broadcast_in_dim(x, out_shape, dims)
-    np.testing.assert_allclose(f(x), expected)
-
-  @parameterized.parameters(*[
-    ((2, 4), (8,)),
-    ((2, 4), (8, 1)),
-    ((2, 4), (1, 8)),
-    ((64,), (32, 2)),
-  ])
-  def test_reshape(self, in_shape, out_shape):
-    # TODO(sharadmv): re-enable when `reshape` works again
-    if not self.INTERPRET:
-      self.skipTest("Reshape not yet supported in Triton-MLIR")
-    @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct(out_shape, jnp.float32),
-        grid=1)
-    def f(x_ref, o_ref):
-      o_ref[...] = x_ref[...].reshape(out_shape)
-
-    x = jnp.arange(int(np.prod(in_shape)), dtype=jnp.float32).reshape(in_shape)
-    expected = x.reshape(out_shape)
-    np.testing.assert_allclose(f(x), expected)
-
-  @parameterized.parameters(*[
-    ((), (1,)),
-    ((), (1, 1)),
-    ((2, 4), (2, 4)),
-    ((2, 4), (2, 4, 1)),
-    ((2, 4, 1), (2, 4)),
-    ((2, 4), (1, 2, 4)),
-    ((1, 2, 4), (2, 4)),
-    ((2, 4), (2, 1, 4)),
-    ((1, 2, 1, 4, 1), (2, 4)),
-    ((2, 4,), (1, 2, 1, 4)),
-    ((2, 4,), (1, 2, 4, 1)),
-    ((1, 2, 4, 1), (1, 2, 1, 4, 1)),
-  ])
-  def test_reshape_noop_or_singleton_dims(self, in_shape, out_shape):
-    @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct(out_shape, jnp.float32),
-        grid=1)
-    def f(x_ref, o_ref):
-      o_ref[...] = x_ref[...].reshape(out_shape)
-
-    x = jnp.arange(int(np.prod(in_shape)), dtype=jnp.float32).reshape(in_shape)
-    expected = x.reshape(out_shape)
-    np.testing.assert_allclose(f(x), expected)
-
   @parameterized.named_parameters(*[
     (f"m_{m}_n_{n}_k_{k}_dtype_{dtype}_bm_{block_size_m}_"
      f"bn_{block_size_n}_bk_{block_size_k}_gm_{group_size_m}", m, n, k, dtype,
@@ -325,7 +243,7 @@ class PallasCallTest(PallasTest):
       for n in [512, 1024]
       for dtype in ["float32", "float16"]
       for block_size_m in [64, 128]
-      for block_size_n in [128, 256]
+      for block_size_n in [64, 128]
       for block_size_k in [32]
       for group_size_m in [8]
       if block_size_m <= m and block_size_n <= n and block_size_k <= k
@@ -347,7 +265,7 @@ class PallasCallTest(PallasTest):
       for n in [512, 1024]
       for dtype in ["float32", "float16"]
       for block_size_m in [64, 128]
-      for block_size_n in [128, 256]
+      for block_size_n in [64, 128]
       for block_size_k in [32]
       if block_size_m <= m and block_size_n <= n and block_size_k <= k
     ])
@@ -357,33 +275,6 @@ class PallasCallTest(PallasTest):
     y = random.normal(k2, (k, n), dtype=dtype)
     out, expected = matmul_block_spec(x, y, bm=bm, bn=bn, bk=bk,
                                       interpret=self.INTERPRET), jnp.matmul(x, y)
-    np.testing.assert_allclose(out, expected, atol=0.05, rtol=0.05)
-
-  @parameterized.product(
-      size=[16, 32, 64],
-      dtype=["float32", "float16"],
-      trans_a=[False, True],
-      trans_b=[False, True],
-  )
-  def test_dot(self, size, dtype, trans_a, trans_b):
-    if trans_a or trans_b:
-      # TODO(slebedev): Remove this once the problematic Triton pass is fixed.
-      raise unittest.SkipTest(
-          "Triton crashes if any of the operands are transposed")
-
-    @functools.partial(
-        self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((size, size), dtype),
-        grid=1)
-    def dot(x_ref, y_ref, o_ref):
-      x = x_ref[:, :]
-      y = y_ref[:, :]
-      o_ref[:, :] = pl.dot(x, y, trans_a, trans_b).astype(o_ref.dtype)
-
-    k1, k2 = random.split(random.key(0))
-    x = random.normal(k1, (size, size), dtype=dtype)
-    y = random.normal(k2, (size, size), dtype=dtype)
-    out, expected = dot(x, y), jnp.dot(x, y)
     np.testing.assert_allclose(out, expected, atol=0.05, rtol=0.05)
 
   @parameterized.named_parameters(*(
@@ -415,83 +306,6 @@ class PallasCallTest(PallasTest):
     x = random.normal(key, [batch_size, size], dtype=dtype)
     np.testing.assert_allclose(softmax(x), jax.nn.softmax(x, axis=-1),
         atol=1e-5, rtol=1e-5)
-
-  @parameterized.parameters(*(
-      (size, block_size)
-      for size in [1, 2, 64, 129, 1021]
-      for block_size in [1, 2, 32, 64, 128]
-  ))
-  def test_masked_load_store(self, size, block_size):
-    @functools.partial(self.pallas_call,
-        out_shape=(
-          jax.ShapeDtypeStruct((size,), jnp.float32)
-          ),
-        grid=pl.cdiv(size, block_size))
-    def add_one(x_ref, o_ref):
-      idx = pl.program_id(0) * block_size + jnp.arange(block_size)
-      mask = idx < x_ref.shape[0]
-      x = pl.load(x_ref, (idx,), mask=mask)
-      pl.store(o_ref, (idx,), x + 1., mask=mask)
-
-    key = random.key(0)
-    x = random.normal(key, (size,))
-    np.testing.assert_allclose(add_one(x), x + 1., atol=1e-5, rtol=1e-5)
-
-  def test_broadcasted_load_store(self):
-    m, n = 16, 32
-    @functools.partial(
-        self.pallas_call,
-        out_shape=(
-          jax.ShapeDtypeStruct((m, n), jnp.float32)
-          ), grid=1)
-    def load(x_ref, o_ref):
-      x = pl.load(x_ref, (jnp.arange(m)[:, None], jnp.arange(n)[None, :]))
-      pl.store(o_ref, (jnp.arange(m)[:, None], jnp.arange(n)[None, :]), x + 1.)
-
-    key = random.key(0)
-    x = random.normal(key, (m, n))
-    np.testing.assert_allclose(load(x), x + 1., atol=1e-5, rtol=1e-5)
-
-  def test_swap(self):
-    m, n = 16, 32
-
-    @functools.partial(
-        self.pallas_call,
-        out_shape=(jax.ShapeDtypeStruct((m, n), jnp.float32),) * 2,
-        grid=1,
-        input_output_aliases={0: 0, 1: 1},
-    )
-    def swap(_, _2, x_ref, y_ref):
-      x = x_ref[:]
-      y = pl.swap(y_ref, (slice(None),), x)
-      x_ref[:] = y
-
-    x = random.normal(random.key(0), (m, n))
-    y = random.normal(random.key(1), (m, n))
-    out = swap(x, y)
-    np.testing.assert_array_equal(out[0], y)
-    np.testing.assert_array_equal(out[1], x)
-
-  def test_masked_swap(self):
-    m, n = 16, 32
-
-    @functools.partial(
-        self.pallas_call,
-        out_shape=(jax.ShapeDtypeStruct((m, n), jnp.float32),) * 2,
-        grid=1,
-        input_output_aliases={0: 0, 1: 1},
-    )
-    def masked_swap(_, _2, mask_ref, x_ref, y_ref):
-      x = x_ref[:]
-      y = pl.swap(y_ref, (slice(None),), x, mask=mask_ref[:])
-      x_ref[:] = y
-
-    x = random.normal(random.key(0), (m, n))
-    y = random.normal(random.key(1), (m, n))
-    mask = random.bernoulli(random.key(2), shape=(m, n))
-    out = masked_swap(x, y, mask)
-    np.testing.assert_array_equal(out[0], jnp.where(mask, y, x))
-    np.testing.assert_array_equal(out[1], jnp.where(mask, x, y))
 
   def test_unused_ref(self):
     m, n = 16, 32
@@ -533,167 +347,6 @@ class PallasCallTest(PallasTest):
     expected = x + 1
     np.testing.assert_allclose(out, expected)
 
-  @parameterized.named_parameters(*[
-      ("add_i32", pl.atomic_add, np.array([1, 2, 3, 4], np.int32), np.sum),
-      ("max_i", pl.atomic_max, np.array([1, 2, 3, 4], np.int32), np.max),
-      ("min_i32", pl.atomic_min, np.array([1, 2, 3, 4], np.int32), np.min),
-      ("add_f16", pl.atomic_add, np.array([1, 2, 3, 4], np.float16), np.sum),
-      ("add_f32", pl.atomic_add, np.array([1, 2, 3, 4], np.float32), np.sum),
-      ("max_f32", pl.atomic_max, np.array([1, 2, 3, 4], np.float32), np.max),
-      ("min_f32", pl.atomic_min, np.array([1, 2, 3, 4], np.float32), np.min),
-  ])
-  def test_scalar_atomic(self, op, value, numpy_op):
-
-    @functools.partial(
-        self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((), value.dtype),
-        grid=value.shape[0],
-        input_output_aliases={1: 0})
-    def atomic_kernel(x_ref, _, o_ref):
-      pid = pl.program_id(axis=0)
-      op(o_ref, (), x_ref[pid])
-    if op == pl.atomic_add:
-      neutral = np.array(0, dtype=value.dtype)
-    elif op == pl.atomic_max:
-      if np.issubdtype(value.dtype, np.integer):
-        neutral = np.array(np.iinfo(value.dtype).min, value.dtype)
-      else:
-        neutral = np.array(-float('inf'), value.dtype)
-    elif op == pl.atomic_min:
-      if np.issubdtype(value.dtype, np.integer):
-        neutral = np.array(np.iinfo(value.dtype).max, value.dtype)
-      else:
-        neutral = np.array(float('inf'), value.dtype)
-    elif op == pl.atomic_or:
-      neutral = np.array(False, value.dtype)
-    else:
-      raise NotImplementedError()
-    out = atomic_kernel(value, neutral)
-    np.testing.assert_allclose(out, numpy_op(value))
-
-  @parameterized.parameters(*[(0,), (1,)])
-  def test_array_atomic_add(self, axis):
-    m, n = 32, 8
-    if axis == 0:
-      grid = m
-    else:
-      grid = n
-    out_shape = jax.ShapeDtypeStruct((n if axis == 0 else m,), jnp.float32)
-    @functools.partial(
-        self.pallas_call,
-        out_shape=out_shape,
-        grid=grid,
-        input_output_aliases={1: 0})
-    def reduce(x_ref, _, y_ref):
-      i = pl.program_id(axis=0)
-      if axis == 0:
-        idx = (i, jnp.arange(n))
-      else:
-        idx = (jnp.arange(m), i)
-      x = pl.load(x_ref, idx)
-      pl.atomic_add(y_ref, (jnp.arange(y.shape[0]),), x)
-    x = random.normal(random.key(0), (m, n))
-    y = jnp.zeros(out_shape.shape, out_shape.dtype)
-    y = reduce(x, y)
-    y_ref = np.sum(x, axis=axis)
-    np.testing.assert_allclose(y, y_ref, atol=1e-2, rtol=1e-2)
-
-  @parameterized.parameters(False, True)
-  def test_reduce_only_dim(self, use_store):
-    m = 32
-    x = random.normal(random.key(0), (m,), dtype=jnp.float32)
-    out_shape = jax.ShapeDtypeStruct((), x.dtype)
-    @functools.partial(
-        self.pallas_call,
-        out_shape=out_shape,
-        grid=1, debug=False)
-    def reduce(x_ref, y_ref):
-      x = pl.load(x_ref, (jnp.arange(m),))
-      y = jnp.sum(x, axis=-1)
-      if use_store:
-        pl.store(y_ref, (), y)
-      else:
-        y_ref[...] = y
-    y = reduce(x)
-    y_ref = jnp.sum(x, axis=-1)
-    np.testing.assert_allclose(y, y_ref, atol=1e-2, rtol=1e-2)
-
-  @parameterized.named_parameters(*[
-    (f"{op_name}_{dtype}_{axis}", op, dtype, axis)
-    for op_name, op in [
-        ("add", jnp.sum),
-        ("max", jnp.max),
-        ("min", jnp.min),
-        ("argmax", jnp.argmax),
-        ("argmin", jnp.argmin),
-    ]
-    for axis in [0, 1, (1,), (0, 1)]
-    for dtype in ["float16", "float32", "int32", "uint32"]
-    if isinstance(axis, int) or "arg" not in op_name
-    ])
-  def test_array_reduce(self, op, dtype, axis):
-    m, n = 32, 8
-    out_dtype = dtype
-    if op in {jnp.argmin, jnp.argmax}:
-      out_dtype = jnp.int32
-    def make_x(key):
-      if jnp.issubdtype(dtype, jnp.integer):
-        return random.permutation(
-          key, jnp.arange(m * n, dtype=dtype), independent=True
-        ).reshape(m, n)
-      else:
-        return random.normal(key, (m, n), dtype=dtype)
-    out_shape = jax.ShapeDtypeStruct(
-        op(make_x(random.key(0)), axis=axis).shape, out_dtype)
-    if isinstance(axis, int):
-      grid = tuple(a for i, a in enumerate((m, n)) if i != axis)
-    else:
-      grid = tuple(a for i, a in enumerate((m, n)) if i not in axis)
-    @functools.partial(
-        self.pallas_call,
-        out_shape=out_shape,
-        grid=grid)
-    def reduce(x_ref, y_ref):
-      x = pl.load(x_ref, (jnp.arange(m)[:, None], jnp.arange(n)[None]))
-      y = op(x, axis=axis)
-      pl.store(y_ref, tuple(jnp.arange(d) for d in y.shape), y)
-    for i, key in enumerate(random.split(random.key(0), 20)):
-      x = make_x(key)
-      y = reduce(x)
-      y_ref = op(x, axis=axis)
-      np.testing.assert_allclose(y, y_ref, atol=1e-2, rtol=1e-2, err_msg=i)
-
-  @parameterized.named_parameters(*[
-      (f"{dtype}_{axis}", dtype, axis)
-      for axis in [0, 1]
-      for dtype in ["float16", "float32", "int32", "uint32"]
-      if isinstance(axis, int)
-  ])
-  def test_cumsum(self, dtype, axis):
-    m, n = 32, 8
-    out_dtype = dtype
-    def make_x(key):
-      if jnp.issubdtype(dtype, jnp.integer):
-        return random.permutation(
-          key, jnp.arange(m * n, dtype=dtype), independent=True
-        ).reshape(m, n)
-      else:
-        return random.normal(key, (m, n), dtype=dtype)
-    out_shape = jax.ShapeDtypeStruct((m, n), out_dtype)
-    grid = ()
-    @functools.partial(
-        self.pallas_call,
-        out_shape=out_shape,
-        grid=grid)
-    def reduce(x_ref, y_ref):
-      x = x_ref[...]
-      y_ref[...] = jnp.cumsum(x, axis=axis)
-    for i, key in enumerate(random.split(random.key(0), 20)):
-      x = make_x(key)
-      y = reduce(x)
-      y_ref = jnp.cumsum(x, axis=axis)
-      np.testing.assert_allclose(y, y_ref, atol=1e-2, rtol=1e-2, err_msg=i)
-
   def test_using_pallas_slice(self):
     m, n = 32, 4
     out_shape = jax.ShapeDtypeStruct((4, n), jnp.float32)
@@ -727,52 +380,6 @@ class PallasCallTest(PallasTest):
     self.assertEqual(f(x), 2.)
     self.assertEqual(trace_count, 1)
 
-  @parameterized.parameters(*[
-    (0, 0, 1),
-    (0, 1, 1),
-    (1, 0, 1),
-    (1, 1, 1),
-    (2, 1, 1),
-    (2, 1, 1),
-  ])
-  def test_atomic_cas(self, init_value, cmp, new_value):
-    @functools.partial(
-        self.pallas_call, out_shape=(
-          jax.ShapeDtypeStruct((), jnp.int32),
-          jax.ShapeDtypeStruct((), jnp.int32)),
-        input_output_aliases={0: 0})
-    def swap(_, lock_ref, out_ref):
-      out_ref[()] = pl.atomic_cas(lock_ref, cmp, new_value)
-
-    lock, out = swap(init_value)
-    np.testing.assert_allclose(lock, new_value if cmp == init_value else
-                               init_value)
-    np.testing.assert_allclose(out, init_value)
-
-  @parameterized.parameters(*[
-    1, 2, 3, 4, 8
-  ])
-  def test_atomic_counter(self, num_threads):
-    if self.INTERPRET:
-      self.skipTest("While loop not supported in interpreter mode.")
-
-    @functools.partial(
-        self.pallas_call, out_shape=(
-          jax.ShapeDtypeStruct((), jnp.int32),
-          jax.ShapeDtypeStruct((), jnp.int32)),
-        input_output_aliases={0: 0, 1: 1},
-        grid=(num_threads,))
-    def increment(_, __, lock_ref, counter_ref):
-      def _cond(_):
-        return pl.atomic_cas(lock_ref, 0, 1) == 1
-      lax.while_loop(_cond, lambda a: a, 0)
-      counter_ref[...] += 1
-      pl.atomic_xchg(lock_ref, (), 0)
-
-    lock, count = increment(0, 0)
-    np.testing.assert_allclose(lock, 0)
-    np.testing.assert_allclose(count, num_threads)
-
   def test_custom_jvp_call(self):
     @functools.partial(jax.custom_jvp, nondiff_argnums=(1,))
     def softmax(x, axis=-1):
@@ -802,9 +409,10 @@ class PallasCallInterpreterTest(PallasCallTest):
 class PallasControlFlowTest(PallasTest):
 
   def setUp(self):
-    super().setUp()
     if self.INTERPRET:
       self.skipTest("Control flow not supported in interpreter mode yet.")
+
+    super().setUp()
 
   def test_loop_with_float64_carry(self):
     # Test that the jnp.zeros(f64) loop init_val is actually f64, and that
@@ -1374,6 +982,21 @@ class PallasCallVmapTest(PallasTest):
     out_ref = jnp.arange(2, 10)
     np.testing.assert_allclose(out, out_ref)
 
+  def test_vmap_of_kernel_with_input_output_aliases_different_axes(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((4,), jnp.int32),
+        debug=False,
+        input_output_aliases={0: 0},
+        grid=(),
+    )
+    def add(x_ref, o_ref):
+      o_ref[()] = x_ref[()] + 1
+
+    out = jax.vmap(add, in_axes=1)(jnp.arange(8).reshape((4, 2)))
+    out_ref = jnp.arange(1, 9).reshape((4, 2)).swapaxes(0, 1)
+    np.testing.assert_allclose(out, out_ref)
+
   def test_vmap_of_slicing_kernel_different_axes(self):
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), jnp.int32),
@@ -1457,7 +1080,7 @@ class PallasOpsTest(PallasTest):
           [jnp.abs, jnp.negative],
           ["int16", "int32", "int64", "float16", "float32", "float64"],
       ),
-      ([jnp.ceil, jnp.floor], ["float32", "float64"]),
+      ([jnp.ceil, jnp.floor], ["float32", "float64", "int32"]),
       (
           [jnp.exp, jnp.exp2, jnp.sin, jnp.cos, jnp.log, jnp.sqrt],
           ["float16", "float32", "float64"],
@@ -1510,6 +1133,17 @@ class PallasOpsTest(PallasTest):
       x = jnp.array([1, 2, 3, 4]).astype(x_dtype)
       y = jnp.array([1, 2, 3, 4]).astype(y_dtype)
       np.testing.assert_allclose(kernel(x, y), lax.pow(x, y))
+
+  @parameterized.parameters(0, 1, 2, 3, 4, 5, -1, -2, -3)
+  def test_integer_pow(self, y):
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((4,), jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[:] = lax.integer_pow(x_ref[...], y)
+
+    x = jnp.array([1, 2, 3, 4]).astype(jnp.float32) / 10
+    np.testing.assert_allclose(kernel(x), lax.integer_pow(x, y))
 
   @parameterized.parameters("float32", "float64")
   def test_nextafter(self, dtype):
@@ -1629,7 +1263,11 @@ class PallasOpsTest(PallasTest):
       o_ref[...] = f(x_ref[...], y_ref[...])
 
     x = jnp.array([1, 3, -4, -6, 2, 5, 4, -7]).astype(dtype)
-    y = jnp.array([3, 1, -4, -5, 2, -2, 2, 4]).astype(dtype)
+    if (f == jnp.bitwise_left_shift):
+      y = jnp.array([3, 1, 4, 5, 2, 2, 2, 4]).astype(dtype)
+    else:
+      y = jnp.array([3, 1, -4, -5, 2, -2, 2, 4]).astype(dtype)
+
     np.testing.assert_allclose(f(x, y), kernel(x, y))
 
   @parameterized.parameters(
@@ -1706,7 +1344,11 @@ class PallasOpsTest(PallasTest):
       pl.debug_print("It works!")
 
     x = jnp.array([4.2, 2.4]).astype(jnp.float32)
-    kernel(x)
+    with jtu.capture_stdout() as output:
+      jax.block_until_ready(kernel(x))
+      jax.effects_barrier()
+
+    self.assertIn("It works!", output())
 
   def test_debug_print_with_values(self):
     @functools.partial(
@@ -1716,10 +1358,520 @@ class PallasOpsTest(PallasTest):
         compiler_params=dict(triton=dict(num_warps=1, num_stages=1))
     )
     def kernel(x_ref, o_ref):
-      pl.debug_print("x[0] = ", x_ref[0])
+      pl.debug_print("x[0] =", x_ref[0])
 
     x = jnp.array([4.2, 2.4]).astype(jnp.float32)
-    kernel(x)
+    with jtu.capture_stdout() as output:
+      jax.block_until_ready(kernel(x))
+      jax.effects_barrier()
+
+    self.assertIn("x[0] = 4.2", output())
+
+  @parameterized.parameters(
+      ((2, 4), (8,)),
+      ((2, 4), (8, 1)),
+      ((2, 4), (1, 8)),
+      ((64,), (32, 2)),
+  )
+  def test_reshape(self, in_shape, out_shape):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(out_shape, jnp.float32),
+        grid=1,
+    )
+    def f(x_ref, o_ref):
+      o_ref[...] = x_ref[...].reshape(out_shape)
+
+    x = jnp.arange(int(np.prod(in_shape)), dtype=jnp.float32).reshape(in_shape)
+    expected = x.reshape(out_shape)
+    np.testing.assert_allclose(f(x), expected)
+
+  @parameterized.parameters(
+      # fmt: off
+      ((), (1,)),
+      ((), (1, 1)),
+      ((2, 4), (2, 4)),
+      ((2, 4), (2, 4, 1)),
+      ((2, 4, 1), (2, 4)),
+      ((2, 4), (1, 2, 4)),
+      ((1, 2, 4), (2, 4)),
+      ((2, 4), (2, 1, 4)),
+      ((1, 2, 1, 4, 1), (2, 4)),
+      ((2, 4,), (1, 2, 1, 4)),
+      ((2, 4,), (1, 2, 4, 1)),
+      ((1, 2, 4, 1), (1, 2, 1, 4, 1)),
+      # fmt: on
+  )
+  def test_reshape_noop_or_singleton_dims(self, in_shape, out_shape):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(out_shape, jnp.float32),
+        grid=1,
+    )
+    def f(x_ref, o_ref):
+      o_ref[...] = x_ref[...].reshape(out_shape)
+
+    x = jnp.arange(int(np.prod(in_shape)), dtype=jnp.float32).reshape(in_shape)
+    expected = x.reshape(out_shape)
+    np.testing.assert_allclose(f(x), expected)
+
+  def test_num_programs(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((4,), jnp.int32),
+        grid=4,
+    )
+    def kernel(o_ref):
+      o_ref[pl.program_id(0)] = pl.num_programs(0)
+
+    np.testing.assert_array_equal(
+        kernel(), np.asarray([4, 4, 4, 4], dtype=np.int32)
+    )
+
+  def test_where_broadcasting(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((4, 2, 2), jnp.float32),
+        grid=1,
+    )
+    def copyitem(x_ref, in_idx_ref, out_idx_ref, o_ref):
+      mask = (jnp.arange(o_ref.shape[0]) == out_idx_ref[()])[:, None, None]
+      o_ref[...] = jnp.where(mask, x_ref[in_idx_ref[()]], 0)
+
+    x = jnp.arange(7 * 2 * 2.0).reshape(7, 2, 2)
+    for ii in range(7):
+      for oi in range(4):
+        out = copyitem(x, ii, oi)
+        self.assertEqual((4, 2, 2), out.shape)
+        np.testing.assert_allclose(out[:oi], jnp.zeros_like(out[:oi]))
+        np.testing.assert_allclose(out[oi], x[ii])
+        np.testing.assert_allclose(out[oi + 1 :], jnp.zeros_like(out[oi + 1 :]))
+
+  @parameterized.parameters(
+      ((), (2,), ()),
+      ((1,), (2,), (0,)),
+      ((1, 1), (2, 2), (0, 1)),
+      ((), (2, 2), ()),
+  )
+  def test_broadcast_in_dim(self, in_shape, out_shape, dims):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct(out_shape, jnp.float32),
+        grid=1,
+    )
+    def f(x_ref, o_ref):
+      x = x_ref[...]
+      o_ref[...] = jax.lax.broadcast_in_dim(x, out_shape, dims)
+
+    x = jnp.arange(int(np.prod(in_shape)), dtype=jnp.float32).reshape(in_shape)
+    expected = jax.lax.broadcast_in_dim(x, out_shape, dims)
+    np.testing.assert_allclose(f(x), expected)
+
+  @parameterized.product(
+      size=[16, 32, 64],
+      dtype=["float32", "float16"],
+      trans_x=[False, True],
+      trans_y=[False, True],
+  )
+  def test_dot(self, size, dtype, trans_x, trans_y):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((size, size), dtype),
+        grid=1,
+    )
+    def dot(x_ref, y_ref, o_ref):
+      x = x_ref[:, :]
+      y = y_ref[:, :]
+      o_ref[:, :] = pl.dot(x, y, trans_x, trans_y).astype(o_ref.dtype)
+
+    k1, k2 = random.split(random.key(0))
+    x = random.normal(k1, (size, size), dtype=dtype)
+    y = random.normal(k2, (size, size), dtype=dtype)
+    out = dot(x, y)
+    expected = jnp.dot(x.T if trans_x else x, y.T if trans_y else y)
+    np.testing.assert_allclose(out, expected, atol=0.05, rtol=0.05)
+
+  @parameterized.product(
+      size=[1, 2, 64, 129, 1021],
+      block_size=[1, 2, 32, 64, 128],
+  )
+  def test_masked_load_store(self, size, block_size):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(jax.ShapeDtypeStruct((size,), jnp.float32)),
+        grid=pl.cdiv(size, block_size),
+    )
+    def kernel(x_ref, o_ref):
+      idx = pl.program_id(0) * block_size + jnp.arange(block_size)
+      mask = idx < x_ref.shape[0]
+      x = pl.load(x_ref, (idx,), mask=mask)
+      pl.store(o_ref, (idx,), x + 1.0, mask=mask)
+
+    key = random.key(0)
+    x = random.normal(key, (size,))
+    np.testing.assert_allclose(kernel(x), x + 1.0, atol=1e-5, rtol=1e-5)
+
+  def test_masked_oob_load_store_slice(self):
+    n = 16
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(jax.ShapeDtypeStruct((n,), jnp.float32)),
+        grid=1,
+    )
+    def masked_oob_load_store_slice(x_ref, mask_ref, start_idx_ref, o_ref):
+      x = pl.load(x_ref, (pl.dslice(start_idx_ref[()], n)),
+                  mask=mask_ref[:], other=-1.)
+      pl.store(o_ref, (pl.dslice(None),), x)
+
+    x = random.normal(random.key(0), (n,))
+    slice_start = random.randint(random.key(2), (), 1, n)
+    indices = jnp.arange(n) + slice_start
+    mask = indices < n
+    out = masked_oob_load_store_slice(x, mask, slice_start)
+    o_new = jnp.where(mask, x[indices], jnp.full_like(x, -1.))
+    np.testing.assert_array_equal(out, o_new)
+
+  def test_strided_load(self):
+    if self.INTERPRET:
+      # TODO(b/329733289): Remove this once the bug is fixed.
+      self.skipTest("Strided load not yet supported in interpreter mode")
+
+    # Reproducer from https://github.com/google/jax/issues/20895.
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((4,), jnp.float32),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[::4]
+
+    x = jnp.arange(16, dtype=jnp.float32)
+    np.testing.assert_array_equal(kernel(x), x[::4])
+
+  def test_broadcasted_load_store(self):
+    m, n = 16, 32
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(jax.ShapeDtypeStruct((m, n), jnp.float32)),
+        grid=1,
+    )
+    def load(x_ref, o_ref):
+      x = pl.load(x_ref, (jnp.arange(m)[:, None], jnp.arange(n)[None, :]))
+      pl.store(o_ref, (jnp.arange(m)[:, None], jnp.arange(n)[None, :]), x + 1.0)
+
+    key = random.key(0)
+    x = random.normal(key, (m, n))
+    np.testing.assert_allclose(load(x), x + 1.0, atol=1e-5, rtol=1e-5)
+
+  @parameterized.parameters(
+      ((16, 32), (16,)),
+      ((16, 32), (32,)),
+      ((16, 32), (16, 31)),
+  )
+  def test_invalid_broadcasted_load(self, x_shape, mask_shape):
+    if self.INTERPRET:
+      self.skipTest("No broadcasting checks in pl.load in interpreter mode")
+
+    @functools.partial(
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.float32)
+    )
+    def kernel(x_ref, mask_ref, o_ref):
+      del o_ref  # Unused.
+      pl.load(x_ref, slice(None), mask=mask_ref[:])
+
+    x = jnp.ones(x_shape, dtype=jnp.float32)
+    mask = jnp.ones(mask_shape, dtype=jnp.bool_)
+    # assertRaises* methods do not support inspecting the __cause__, so
+    # we have to check it manually.
+    try:
+      kernel(x, mask)
+    except Exception as e:
+      self.assertIn("Cannot broadcast", str(e.__cause__))
+    else:
+      self.fail("Expected exception due to invalid broadcasting")
+
+  def test_swap(self):
+    m, n = 16, 32
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(jax.ShapeDtypeStruct((m, n), jnp.float32),) * 2,
+        grid=1,
+        input_output_aliases={0: 0, 1: 1},
+    )
+    def swap(_, _2, x_ref, y_ref):
+      x = x_ref[:]
+      y = pl.swap(y_ref, (slice(None),), x)
+      x_ref[:] = y
+
+    x = random.normal(random.key(0), (m, n))
+    y = random.normal(random.key(1), (m, n))
+    out = swap(x, y)
+    np.testing.assert_array_equal(out[0], y)
+    np.testing.assert_array_equal(out[1], x)
+
+  def test_masked_swap(self):
+    m, n = 16, 32
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(jax.ShapeDtypeStruct((m, n), jnp.float32),) * 2,
+        grid=1,
+        input_output_aliases={0: 0, 1: 1},
+    )
+    def masked_swap(_, _2, mask_ref, x_ref, y_ref):
+      x = x_ref[:]
+      y = pl.swap(y_ref, (slice(None),), x, mask=mask_ref[:])
+      x_ref[:] = y
+
+    x = random.normal(random.key(0), (m, n))
+    y = random.normal(random.key(1), (m, n))
+    mask = random.bernoulli(random.key(2), shape=(m, n))
+    out = masked_swap(x, y, mask)
+    np.testing.assert_array_equal(out[0], jnp.where(mask, y, x))
+    np.testing.assert_array_equal(out[1], jnp.where(mask, x, y))
+
+  def test_masked_oob_swap_slice(self):
+    m, n = 32, 16
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=(jax.ShapeDtypeStruct((n,), jnp.float32),
+                   jax.ShapeDtypeStruct((m,), jnp.float32)),
+        grid=1,
+        input_output_aliases={0: 0, 1: 1},
+    )
+    def masked_oob_swap_slice(_, _2, mask_ref, start_idx_ref, x_ref, y_ref):
+      x, mask = x_ref[:], mask_ref[:]
+      y = pl.swap(y_ref, (pl.dslice(start_idx_ref[()], n)), x, mask=mask)
+      x_ref[:] = y
+
+    x = random.normal(random.key(0), (n,))
+    y = random.normal(random.key(1), (m,))
+    slice_start = random.randint(random.key(2), (), m-n+1, m)
+    indices = jnp.arange(n) + slice_start
+    mask = indices < m
+    out = masked_oob_swap_slice(x, y, mask, slice_start)
+
+    # the unjittable masked indexing equivalent
+    unmasked_idx = indices[mask]
+    x_new = x.at[mask].set(y[unmasked_idx])
+    y_new = y.at[unmasked_idx].set(x[mask])
+    np.testing.assert_array_equal(out[0], x_new)
+    np.testing.assert_array_equal(out[1], y_new)
+
+  @parameterized.named_parameters(
+      ("add_i32", pl.atomic_add, np.array([1, 2, 3, 4], np.int32), np.sum),
+      ("max_i", pl.atomic_max, np.array([1, 2, 3, 4], np.int32), np.max),
+      ("min_i32", pl.atomic_min, np.array([1, 2, 3, 4], np.int32), np.min),
+      ("add_f16", pl.atomic_add, np.array([1, 2, 3, 4], np.float16), np.sum),
+      ("add_f32", pl.atomic_add, np.array([1, 2, 3, 4], np.float32), np.sum),
+      ("max_f32", pl.atomic_max, np.array([1, 2, 3, 4], np.float32), np.max),
+      ("min_f32", pl.atomic_min, np.array([1, 2, 3, 4], np.float32), np.min),
+  )
+  def test_scalar_atomic(self, op, value, numpy_op):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((), value.dtype),
+        grid=value.shape[0],
+        input_output_aliases={1: 0},
+    )
+    def atomic_kernel(x_ref, _, o_ref):
+      pid = pl.program_id(axis=0)
+      op(o_ref, (), x_ref[pid])
+
+    if op == pl.atomic_add:
+      neutral = np.array(0, dtype=value.dtype)
+    elif op == pl.atomic_max:
+      if np.issubdtype(value.dtype, np.integer):
+        neutral = np.array(np.iinfo(value.dtype).min, value.dtype)
+      else:
+        neutral = np.array(-float("inf"), value.dtype)
+    elif op == pl.atomic_min:
+      if np.issubdtype(value.dtype, np.integer):
+        neutral = np.array(np.iinfo(value.dtype).max, value.dtype)
+      else:
+        neutral = np.array(float("inf"), value.dtype)
+    elif op == pl.atomic_or:
+      neutral = np.array(False, value.dtype)
+    else:
+      raise NotImplementedError()
+    out = atomic_kernel(value, neutral)
+    np.testing.assert_allclose(out, numpy_op(value))
+
+  @parameterized.parameters((0,), (1,))
+  def test_array_atomic_add(self, axis):
+    m, n = 32, 8
+    if axis == 0:
+      grid = m
+    else:
+      grid = n
+    out_shape = jax.ShapeDtypeStruct((n if axis == 0 else m,), jnp.float32)
+
+    @functools.partial(
+        self.pallas_call,
+        out_shape=out_shape,
+        grid=grid,
+        input_output_aliases={1: 0},
+    )
+    def reduce(x_ref, _, y_ref):
+      i = pl.program_id(axis=0)
+      if axis == 0:
+        idx = (i, jnp.arange(n))
+      else:
+        idx = (jnp.arange(m), i)
+      x = pl.load(x_ref, idx)
+      pl.atomic_add(y_ref, (jnp.arange(y.shape[0]),), x)
+
+    x = random.normal(random.key(0), (m, n))
+    y = jnp.zeros(out_shape.shape, out_shape.dtype)
+    y = reduce(x, y)
+    y_ref = np.sum(x, axis=axis)
+    np.testing.assert_allclose(y, y_ref, atol=1e-2, rtol=1e-2)
+
+  @parameterized.parameters(
+      (0, 0, 1),
+      (0, 1, 1),
+      (1, 0, 1),
+      (1, 1, 1),
+      (2, 1, 1),
+      (2, 1, 1),
+  )
+  def test_atomic_cas(self, init_value, cmp, new_value):
+    @functools.partial(
+        self.pallas_call, out_shape=(
+          jax.ShapeDtypeStruct((), jnp.int32),
+          jax.ShapeDtypeStruct((), jnp.int32)),
+        input_output_aliases={0: 0})
+    def swap(_, lock_ref, out_ref):
+      out_ref[()] = pl.atomic_cas(lock_ref, cmp, new_value)
+
+    lock, out = swap(init_value)
+    np.testing.assert_allclose(lock, new_value if cmp == init_value else
+                               init_value)
+    np.testing.assert_allclose(out, init_value)
+
+  @parameterized.parameters(1, 2, 3, 4, 8)
+  def test_atomic_counter(self, num_threads):
+    if self.INTERPRET:
+      self.skipTest("While loop not supported in interpreter mode.")
+
+    @functools.partial(
+        self.pallas_call, out_shape=(
+          jax.ShapeDtypeStruct((), jnp.int32),
+          jax.ShapeDtypeStruct((), jnp.int32)),
+        input_output_aliases={0: 0, 1: 1},
+        grid=(num_threads,))
+    def increment(_, __, lock_ref, counter_ref):
+      def _cond(_):
+        return pl.atomic_cas(lock_ref, 0, 1) == 1
+      lax.while_loop(_cond, lambda a: a, 0)
+      counter_ref[...] += 1
+      pl.atomic_xchg(lock_ref, (), 0)
+
+    lock, count = increment(0, 0)
+    np.testing.assert_allclose(lock, 0)
+    np.testing.assert_allclose(count, num_threads)
+
+  @parameterized.parameters(False, True)
+  def test_reduce_only_dim(self, use_store):
+    m = 32
+    x = random.normal(random.key(0), (m,), dtype=jnp.float32)
+    out_shape = jax.ShapeDtypeStruct((), x.dtype)
+
+    @functools.partial(
+        self.pallas_call, out_shape=out_shape, grid=1, debug=False
+    )
+    def reduce(x_ref, y_ref):
+      x = pl.load(x_ref, (jnp.arange(m),))
+      y = jnp.sum(x, axis=-1)
+      if use_store:
+        pl.store(y_ref, (), y)
+      else:
+        y_ref[...] = y
+
+    y = reduce(x)
+    y_ref = jnp.sum(x, axis=-1)
+    np.testing.assert_allclose(y, y_ref, atol=1e-2, rtol=1e-2)
+
+  @parameterized.named_parameters(*[
+      (f"{op_name}_{dtype}_{axis}", op, dtype, axis)
+      for op_name, op in [
+          ("add", jnp.sum),
+          ("max", jnp.max),
+          ("min", jnp.min),
+          ("argmax", jnp.argmax),
+          ("argmin", jnp.argmin),
+      ]
+      for axis in [0, 1, (1,), (0, 1)]
+      for dtype in ["float16", "float32", "int32", "uint32"]
+      if isinstance(axis, int) or "arg" not in op_name
+  ])
+  def test_array_reduce(self, op, dtype, axis):
+    m, n = 32, 8
+    out_dtype = dtype
+    if op in {jnp.argmin, jnp.argmax}:
+      out_dtype = jnp.int32
+
+    def make_x(key):
+      if jnp.issubdtype(dtype, jnp.integer):
+        return random.permutation(
+            key, jnp.arange(m * n, dtype=dtype), independent=True
+        ).reshape(m, n)
+      else:
+        return random.normal(key, (m, n), dtype=dtype)
+
+    out_shape = jax.ShapeDtypeStruct(
+        op(make_x(random.key(0)), axis=axis).shape, out_dtype
+    )
+    if isinstance(axis, int):
+      grid = tuple(a for i, a in enumerate((m, n)) if i != axis)
+    else:
+      grid = tuple(a for i, a in enumerate((m, n)) if i not in axis)
+
+    @functools.partial(self.pallas_call, out_shape=out_shape, grid=grid)
+    def reduce(x_ref, y_ref):
+      x = pl.load(x_ref, (jnp.arange(m)[:, None], jnp.arange(n)[None]))
+      y = op(x, axis=axis)
+      pl.store(y_ref, tuple(jnp.arange(d) for d in y.shape), y)
+
+    for i, key in enumerate(random.split(random.key(0), 20)):
+      x = make_x(key)
+      y = reduce(x)
+      y_ref = op(x, axis=axis)
+      np.testing.assert_allclose(y, y_ref, atol=1e-2, rtol=1e-2, err_msg=i)
+
+  @parameterized.product(
+      axis=[0, 1],
+      dtype=["float16", "float32", "int32", "uint32"],
+  )
+  def test_cumsum(self, dtype, axis):
+    m, n = 32, 8
+    out_dtype = dtype
+
+    def make_x(key):
+      if jnp.issubdtype(dtype, jnp.integer):
+        return random.permutation(
+            key, jnp.arange(m * n, dtype=dtype), independent=True
+        ).reshape(m, n)
+      else:
+        return random.normal(key, (m, n), dtype=dtype)
+
+    out_shape = jax.ShapeDtypeStruct((m, n), out_dtype)
+    grid = ()
+
+    @functools.partial(self.pallas_call, out_shape=out_shape, grid=grid)
+    def reduce(x_ref, y_ref):
+      x = x_ref[...]
+      y_ref[...] = jnp.cumsum(x, axis=axis)
+
+    for i, key in enumerate(random.split(random.key(0), 20)):
+      x = make_x(key)
+      y = reduce(x)
+      y_ref = jnp.cumsum(x, axis=axis)
+      np.testing.assert_allclose(y, y_ref, atol=1e-2, rtol=1e-2, err_msg=i)
+
 
 class PallasOpsInterpretTest(PallasOpsTest):
   INTERPRET = True
@@ -2022,16 +2174,11 @@ class RmsNormInterpreterTest(PallasTest):
 
 class SoftmaxTest(PallasTest):
 
-  @parameterized.parameters(
-      (shape, dtype)
-      for shape in [(1024, 125), (4, 1024, 125)]
-      for dtype in (jnp.bfloat16, jnp.float16, jnp.float32)
+  @parameterized.product(
+      shape=[(1024, 125), (4, 1024, 125)],
+      dtype=[jnp.bfloat16, jnp.float16, jnp.float32]
   )
   def test_softmax(self, shape, dtype):
-    # TODO(bchetioui): add Triton bug reference when filed
-    if dtype == jnp.bfloat16:
-      raise absltest.SkipTest("Disabled due to Triton lowering bug")
-
     x = jax.random.normal(random.key(0), shape, dtype=dtype)
 
     atol, rtol = {
@@ -2040,9 +2187,11 @@ class SoftmaxTest(PallasTest):
         jnp.float32: (1e-7, 1e-6),
     }[dtype]
 
+    # We upcast to float32 because NumPy <2.0 does not handle custom dtypes
+    # properly. See https://github.com/google/jax/issues/11014.
     np.testing.assert_allclose(
-        softmax.softmax(x, axis=-1),
-        jax.nn.softmax(x, axis=-1),
+        softmax.softmax(x, axis=-1).astype(jnp.float32),
+        jax.nn.softmax(x, axis=-1).astype(jnp.float32),
         atol=atol,
         rtol=rtol,
     )
@@ -2133,6 +2282,115 @@ class PallasInterpretModeOutOfBoundsTest(PallasTest):
     # masked before computation. This should return the correct result.
     with self.subTest('MaskedOutputIsCorrect'):
       np.testing.assert_allclose(out, expected, atol=atol)
+
+
+class PallasCheckifyTest(PallasTest):
+  # TODO(b/346651778): Support non-interpret mode checkify.
+  INTERPRET: bool = True
+
+  def test_no_checkify(self,):
+      def kernel(y_ref):
+        y_ref[...] = jnp.zeros_like(y_ref[...])
+      out_shape = jax.ShapeDtypeStruct((2, 2), jnp.float32)
+      pallas_call = self.pallas_call(kernel,
+                                   out_shape=out_shape)
+      checked_call = checkify.checkify(pallas_call)
+      err, result = checked_call()
+      err.throw()  # Should not raise.
+      np.testing.assert_allclose(result, jnp.zeros_like(result))
+
+  def test_does_not_clobber_previous_error(self,):
+      def kernel(y_ref):
+        y_ref[...] = jnp.zeros_like(y_ref[...])
+        checkify.check(False, "error in kernel")
+      out_shape = jax.ShapeDtypeStruct((2, 2), jnp.float32)
+      pallas_call = self.pallas_call(kernel,
+                                   out_shape=out_shape)
+      def error_before_call():
+        checkify.check(False, "error before call")
+        return pallas_call()
+      checked_call = checkify.checkify(error_before_call)
+      err, result = checked_call()
+      with self.assertRaisesRegex(
+          checkify.JaxRuntimeError, "error before call"):
+        err.throw()
+      np.testing.assert_allclose(result, jnp.zeros_like(result))
+
+  @parameterized.parameters((False,), (True,))
+  def test_trivial_check(self, assert_cond):
+      def kernel(x_ref, y_ref):
+        y_ref[...] = x_ref[...]
+        checkify.check(assert_cond, "pallas check failed")
+      input = jnp.arange(4, dtype=jnp.int32)
+      out_shape = jax.ShapeDtypeStruct(input.shape, input.dtype)
+      pallas_call = self.pallas_call(kernel,
+                                   out_shape=out_shape)
+      checked_call = checkify.checkify(pallas_call)
+      err, result = checked_call(input)
+      if not assert_cond:
+        with self.assertRaisesRegex(
+            checkify.JaxRuntimeError, "pallas check failed"):
+          err.throw()
+      np.testing.assert_allclose(result, input)
+
+  def test_nan_error(self):
+      def kernel(x_ref, y_ref):
+        y_ref[...] = jnp.log(x_ref[...])
+      input = jnp.arange(4, dtype=jnp.float32) - 2
+      out_shape = jax.ShapeDtypeStruct(input.shape, input.dtype)
+      pallas_call = self.pallas_call(kernel,
+                                   out_shape=out_shape)
+      checked_call = checkify.checkify(pallas_call,
+                                       errors=checkify.all_checks)
+      err, result = checked_call(input)
+      with self.assertRaisesRegex(
+          checkify.JaxRuntimeError, "nan generated by primitive: log"):
+        err.throw()
+      is_nan = jnp.isnan(result)
+      np.testing.assert_allclose(is_nan, input < 0)
+
+  def test_nan_error_with_assertion(self):
+      # TODO(b/346842088): Fix check asserts clobbering other errors.
+      self.skipTest('Known failure.')
+      # Test NaN error is not clobbered by an assertion failure
+      def kernel(x_ref, y_ref):
+        y_ref[...] = jnp.log(x_ref[...])
+        checkify.check(False, "do not raise")
+      input = jnp.arange(4, dtype=jnp.float32) - 10
+      out_shape = jax.ShapeDtypeStruct(input.shape, input.dtype)
+      pallas_call = self.pallas_call(kernel,
+                                     out_shape=out_shape)
+      checked_call = checkify.checkify(pallas_call,
+                                       errors=checkify.all_checks)
+      err, _ = checked_call(input)
+      with self.assertRaisesRegex(
+          checkify.JaxRuntimeError, "nan generated by primitive: log"):
+        err.throw()
+
+  @parameterized.parameters((5, 0), (8, 3), (4, 3))
+  def test_checkify_returns_first_error_in_grid(
+      self, num_loops, fail_iteration):
+    # Check that checkify returns the first error that occurs
+    # TODO(justinfu): This test doesn't make sense on GPU, where threads run
+    # in parallel. Update checkify to return a grid of errors.
+    def kernel(x_ref, _):
+      value = jnp.squeeze(x_ref[...])
+      checkify.check(
+          value < fail_iteration, "failed on loop {itr}", itr=value)
+    input_arr = jnp.arange(num_loops, dtype=jnp.float32)
+    in_specs = [pl.BlockSpec(lambda x : (x,), (1,))]
+    out_shape = jax.ShapeDtypeStruct((1,), dtype=jnp.float32)
+    pallas_call = self.pallas_call(kernel,
+                                 grid=(num_loops,),
+                                 in_specs=in_specs,
+                                 out_shape=out_shape)
+
+    checked_call = checkify.checkify(pallas_call,
+                                     errors=checkify.all_checks)
+    err, _ = checked_call(input_arr)
+    with self.assertRaisesRegex(
+        checkify.JaxRuntimeError, f"failed on loop {fail_iteration}"):
+      err.throw()
 
 
 if __name__ == "__main__":

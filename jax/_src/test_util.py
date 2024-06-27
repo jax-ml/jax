@@ -11,21 +11,24 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+# pyformat: disable
 from __future__ import annotations
 
-from collections.abc import Generator, Iterable, Mapping, Sequence
+import collections
+from collections.abc import Callable, Generator, Iterable, Sequence
 from contextlib import ExitStack, contextmanager
 import datetime
 import functools
 from functools import partial
 import inspect
-import io
 import math
 import os
 import re
+import sys
 import tempfile
 import textwrap
-from typing import Any, Callable
+from typing import Any
 import unittest
 import warnings
 import zlib
@@ -63,18 +66,18 @@ import numpy.random as npr
 # jax.test_util. Functionality appearing here is for internal use only, and
 # may be changed or removed at any time and without any deprecation cycle.
 
-_TEST_DUT = config.DEFINE_string(
+_TEST_DUT = config.string_flag(
     'jax_test_dut', '',
     help=
     'Describes the device under test in case special consideration is required.'
 )
 
-NUM_GENERATED_CASES = config.DEFINE_integer(
+NUM_GENERATED_CASES = config.int_flag(
   'jax_num_generated_cases',
   int(os.getenv('JAX_NUM_GENERATED_CASES', '10')),
   help='Number of generated cases to test')
 
-_MAX_CASES_SAMPLING_RETRIES = config.DEFINE_integer(
+_MAX_CASES_SAMPLING_RETRIES = config.int_flag(
   'max_cases_sampling_retries',
   int(os.getenv('JAX_MAX_CASES_SAMPLING_RETRIES', '100')),
   'Number of times a failed test sample should be retried. '
@@ -82,23 +85,23 @@ _MAX_CASES_SAMPLING_RETRIES = config.DEFINE_integer(
   'sampling process is terminated.'
 )
 
-_SKIP_SLOW_TESTS = config.DEFINE_bool(
+_SKIP_SLOW_TESTS = config.bool_flag(
     'jax_skip_slow_tests',
     config.bool_env('JAX_SKIP_SLOW_TESTS', False),
     help='Skip tests marked as slow (> 5 sec).'
 )
 
-_TEST_TARGETS = config.DEFINE_string(
+_TEST_TARGETS = config.string_flag(
   'test_targets', os.getenv('JAX_TEST_TARGETS', ''),
   'Regular expression specifying which tests to run, called via re.search on '
   'the test name. If empty or unspecified, run all tests.'
 )
-_EXCLUDE_TEST_TARGETS = config.DEFINE_string(
+_EXCLUDE_TEST_TARGETS = config.string_flag(
   'exclude_test_targets', os.getenv('JAX_EXCLUDE_TEST_TARGETS', ''),
   'Regular expression specifying which tests NOT to run, called via re.search '
   'on the test name. If empty or unspecified, run all tests.'
 )
-TEST_WITH_PERSISTENT_COMPILATION_CACHE = config.DEFINE_bool(
+TEST_WITH_PERSISTENT_COMPILATION_CACHE = config.bool_flag(
     'jax_test_with_persistent_compilation_cache',
     config.bool_env('JAX_TEST_WITH_PERSISTENT_COMPILATION_CACHE', False),
     help='If enabled, the persistent compilation cache will be enabled for all '
@@ -177,12 +180,39 @@ def check_eq(xs, ys, err_msg=''):
   tree_all(tree_map(assert_close, xs, ys))
 
 
+# TODO(yashkatariya): Make this context manager check for deprecation message
+# in OSS.
 @contextmanager
-def capture_stdout() -> Generator[Callable[[], str], None, None]:
-  with unittest.mock.patch('sys.stdout', new_callable=io.StringIO) as fp:
-    def _read() -> str:
-      return fp.getvalue()
-    yield _read
+def unaccelerate_getattr_deprecation(module, name):
+  message, prev_attr = module._deprecations[name]
+  module._deprecations[name] = (message, getattr(module, f"_deprecated_{name}"))
+  try:
+    yield
+  finally:
+    module._deprecations[name] = (message, prev_attr)
+
+@contextmanager
+def capture_stdout() -> Generator[Callable[[], str | None], None, None]:
+  """Context manager to capture all stdout output."""
+
+  # The encoding should also work on windows, the default doesn't necessarily.
+  with tempfile.NamedTemporaryFile(mode="w+", delete=True, encoding='utf-8') as f:
+    original_stdout = os.dup(sys.stdout.fileno())
+    os.dup2(f.fileno(), sys.stdout.fileno())
+
+    # if get_stdout returns not it means we are not done capturing
+    # stdout. it should only be used after the context has exited.
+    captured = None
+    get_stdout: Callable[[], str | None] = lambda: captured
+
+    try:
+      yield get_stdout
+    finally:
+      # Python also has its own buffers, make sure everything is flushed.
+      sys.stdout.flush()
+      f.seek(0)
+      captured = f.read()
+      os.dup2(original_stdout, sys.stdout.fileno())
 
 
 @contextmanager
@@ -226,18 +256,18 @@ def count_primitive_compiles():
 
 @contextmanager
 def count_device_put_fast_path_hit():
-  original_fn = xc.copy_array_to_devices_with_sharding
+  original_fn = xc.batched_copy_array_to_devices_with_sharding
   count = [0]
 
-  def copy_array_to_devices_with_sharding_and_count(*args, **kwargs):
+  def batched_copy_array_to_devices_with_sharding_and_count(*args, **kwargs):
     count[0] += 1
     return original_fn(*args, **kwargs)
 
-  xc.copy_array_to_devices_with_sharding = copy_array_to_devices_with_sharding_and_count
+  xc.batched_copy_array_to_devices_with_sharding = batched_copy_array_to_devices_with_sharding_and_count
   try:
     yield count
   finally:
-    xc.copy_array_to_devices_with_sharding = original_fn
+    xc.batched_copy_array_to_devices_with_sharding = original_fn
 
 
 @contextmanager
@@ -255,6 +285,20 @@ def count_pjit_cpp_cache_miss():
   finally:
     pjit_lib._pjit_lower = original_pjit_lower
 
+@contextmanager
+def count_cached_compilation_cache_miss():
+  original_cached_compilation = pxla._cached_compilation
+  count = [0]
+
+  def cached_compilation_and_count(*args, **kwargs):
+    count[0] += 1
+    return original_cached_compilation(*args, **kwargs)
+
+  pxla._cached_compilation = cached_compilation_and_count
+  try:
+    yield count
+  finally:
+    pxla._cached_compilation = original_cached_compilation
 
 @contextmanager
 def count_jit_tracing_cache_miss():
@@ -271,6 +315,21 @@ def count_jit_tracing_cache_miss():
     yield count
   finally:
     pjit_lib._create_pjit_jaxpr = original_create_pjit_jaxpr
+
+@contextmanager
+def count_jit_infer_params_cache_miss():
+  original_infer_params_impl = pjit_lib._infer_params_impl
+  count = collections.defaultdict(int)
+
+  def infer_params_impl_and_count(fun, *args, **kw):
+    count[fun] += 1
+    return original_infer_params_impl(fun, *args, **kw)
+
+  pjit_lib._infer_params_impl = infer_params_impl_and_count
+  try:
+    yield count
+  finally:
+    pjit_lib._infer_params_impl = original_infer_params_impl
 
 
 @contextmanager
@@ -356,7 +415,7 @@ def supported_dtypes():
   return types
 
 def is_device_rocm():
-  return xla_bridge.get_backend().platform_version.startswith('rocm')
+  return 'rocm' in xla_bridge.get_backend().platform_version
 
 def is_device_cuda():
   return 'cuda' in xla_bridge.get_backend().platform_version
@@ -474,8 +533,13 @@ def device_supports_buffer_donation():
   )
 
 
+@contextmanager
 def set_host_platform_device_count(nr_devices: int):
-  """Returns a closure that undoes the operation."""
+  """Context manager to set host platform device count if not specified by user.
+
+  This should only be used by tests at the top level in setUpModule(); it will
+  not work correctly if applied to individual test cases.
+  """
   prev_xla_flags = os.getenv("XLA_FLAGS")
   flags_str = prev_xla_flags or ""
   # Don't override user-specified device count, or other XLA flags.
@@ -484,13 +548,14 @@ def set_host_platform_device_count(nr_devices: int):
                                f" --xla_force_host_platform_device_count={nr_devices}")
   # Clear any cached backends so new CPU backend will pick up the env var.
   xla_bridge.get_backend.cache_clear()
-  def undo():
+  try:
+    yield
+  finally:
     if prev_xla_flags is None:
       del os.environ["XLA_FLAGS"]
     else:
       os.environ["XLA_FLAGS"] = prev_xla_flags
     xla_bridge.get_backend.cache_clear()
-  return undo
 
 
 def skip_on_flag(flag_name, skip_value):
@@ -517,6 +582,18 @@ def pytest_mark_if_available(marker: str):
       return func_or_class
     return getattr(pytest.mark, marker)(func_or_class)
   return wrap
+
+
+def is_running_under_pytest():
+  return "pytest" in sys.modules
+
+
+def skip_under_pytest(reason: str):
+  """A decorator for test methods to skip the test when run under pytest."""
+  reason = "Running under pytest: " + reason
+  def skip(test_method):
+    return unittest.skipIf(is_running_under_pytest(), reason)(test_method)
+  return skip
 
 
 def format_test_name_suffix(opname, shapes, dtypes):
@@ -981,6 +1058,38 @@ def promote_like_jnp(fun, inexact=False):
     return fun(*args, **kw)
   return wrapper
 
+@contextmanager
+def global_config_context(**kwds):
+  original_config = {}
+  try:
+    for key, value in kwds.items():
+      original_config[key] = config._read(key)
+      config.update(key, value)
+    yield
+  finally:
+    for key, value in original_config.items():
+      config.update(key, value)
+
+
+class NotPresent:
+  def __repr__(self):
+    return "<not present>"
+
+
+@contextmanager
+def assert_global_configs_unchanged():
+  starting_config = jax.config.values.copy()
+  yield
+  ending_config = jax.config.values
+
+  if starting_config == ending_config:
+    return
+  differing = {k: (starting_config.get(k, NotPresent()), ending_config.get(k, NotPresent()))
+                for k in (starting_config.keys() | ending_config.keys())
+                if (k not in starting_config or k not in ending_config
+                    or starting_config[k] != ending_config[k])}
+  raise AssertionError(f"Test changed global config values. Differing values are: {differing}")
+
 
 class JaxTestCase(parameterized.TestCase):
   """Base class for JAX tests including numerical checks and boilerplate."""
@@ -1001,26 +1110,20 @@ class JaxTestCase(parameterized.TestCase):
 
   def setUp(self):
     super().setUp()
-    self._original_config = {}
-    for key, value in self._default_config.items():
-      self._original_config[key] = config._read(key)
-      config.update(key, value)
+    self.enter_context(assert_global_configs_unchanged())
 
     # We use the adler32 hash for two reasons.
     # a) it is deterministic run to run, unlike hash() which is randomized.
     # b) it returns values in int32 range, which RandomState requires.
     self._rng = npr.RandomState(zlib.adler32(self._testMethodName.encode()))
 
-  def tearDown(self):
-    for key, value in self._original_config.items():
-      config.update(key, value)
-    super().tearDown()
-
   @classmethod
   def setUpClass(cls):
+    cls._compilation_cache_exit_stack = ExitStack()
+    stack = cls._compilation_cache_exit_stack
+    stack.enter_context(global_config_context(**cls._default_config))
+
     if TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
-      cls._compilation_cache_exit_stack = ExitStack()
-      stack = cls._compilation_cache_exit_stack
       stack.enter_context(config.enable_compilation_cache(True))
       stack.enter_context(config.raise_persistent_cache_errors(True))
       stack.enter_context(config.persistent_cache_min_compile_time_secs(0))
@@ -1032,8 +1135,7 @@ class JaxTestCase(parameterized.TestCase):
 
   @classmethod
   def tearDownClass(cls):
-    if TEST_WITH_PERSISTENT_COMPILATION_CACHE.value:
-      cls._compilation_cache_exit_stack.close()
+    cls._compilation_cache_exit_stack.close()
 
   def rng(self):
     return self._rng
@@ -1415,7 +1517,7 @@ def register_event_duration_listener(callback):
 def set_env(**kwargs):
   """Context manager to temporarily set/unset one or more environment variables.
 
-  Example:
+  Examples:
 
     >>> import os
     >>> os.environ['my_var'] = 'original'
@@ -1906,101 +2008,3 @@ class numpy_with_mpmath:
       return worker(ctx, scale, exact, reference, value)
     else:
       assert 0  # unreachable
-
-
-def get_process_index_and_count(
-    tensor_sharding: jax.sharding.Sharding,
-    dim: int,
-    global_shape: tuple[int, ...],
-) -> tuple[int, int]:
-  """Returns current process index and total count for the given dimension.
-
-  This function facilitates mapping of process-level data to individual
-  devices. Each process can use its index to obtain the data corresponding
-  to that index. If process level data is sharded on multiple dimensions
-  this function can be used to build the cross product of indices in
-  each sharded axis. Processes that need to load the same data will have
-  the same index. For shardings whose per-process data is not distributed
-  on a grid, the number of distinct shards will be such that it is possible to
-  build the target shape while maintaining a "cube" shape of local-process data.
-
-  For example, in case of 4 hosts with sharding distributed like so:
-
-  1234
-  2143
-
-  For dim 0 (rows): all processes need to access all rows, so we return (0, 1)
-  For dim 1 (cols):
-     process 1 and 2 returns index 0 out of 2 (need cols 0 and 1),
-     process 3 and 4 returns index 1 out of 2 (need cols 2 and 3).
-
-  On the other hand, for a sharding like:
-
-  1212
-  3434
-
-  Dim 0 (rows): process 1 and 2 returns (0, 2), process 3 and 4 returns (1, 2)
-  Dim 1 (cols): process 1 and 3 returns (0, 2), process 2 and 4 returns (1, 2)
-
-  Note: This function requires sharding to be process uniform in dimension `dim`:
-   each process has the same number of addressable indices in that
-  dimension and all index sets across processes are either disjoint or the same.
-
-  For sharding to be process uniform the addressable shards doesn't need to
-  form contiguous subtensor, or even a sparse grid  and  in case of
-  interleaved high-dimensional tensor it is possible for sharding to be
-  process uniform only in some dimensions but not others.
-
-  For example:
-    1111 and 12 and 1212 and 1212
-    2222     21     2121     1212
-
-  are all sharding uniform, in both dimensions. However
-
-    1122
-    2121
-    1121
-    1222
-
-  is uniform in dimension 0 (both hosts access all rows), but
-  is not uniform in dimension 1 (host 1 accesses columns: 0, 1, and 3),
-  while host 2 accesses (0, 1, 2, 3).
-
-  Returns:
-    A tuple of (index, num_distinct_shards) for the given dimension.
-    It is guaranteed that `index` will cover 0 to `num_distinct_shards - 1`,
-    across all processes.
-
-  Raises:
-    ValueError if the sharding is not process uniform in dimension `dim`.
-  """
-  # TODO(sandler, yashkatariya): Consider making this function public.
-
-  if tensor_sharding.is_fully_addressable or tensor_sharding.is_fully_replicated:
-    return (0, 1)
-  # NB: For most types of shardings, global_shape is a superfluous argument
-  # and could be replaced by [d, d, ...., d, d], where d is the number of
-  # devices.
-  device_map: Mapping[jax.sharding.Device, jax.sharding.Index] = (
-      tensor_sharding.devices_indices_map(global_shape)
-  )
-
-  global_slice = {k: v[dim] for k, v in device_map.items()}
-  process_map: dict[int, set[tuple[int, int]]] = {}
-  all_slices = set()
-
-  current_pid = next(iter(tensor_sharding.addressable_devices)).process_index
-  for d, v in global_slice.items():
-    key = (v.start, v.stop)
-    process_map.setdefault(d.process_index, set()).add(key)
-    all_slices.add(key)
-  addressable = frozenset(process_map[current_pid])
-  slices_per_process = len(addressable)
-  if any(len(x) != slices_per_process for x in process_map.values()):
-    raise ValueError(f'{tensor_sharding=} is non-uniform on {dim=}')
-  unique_processes = list({frozenset(x) for x in process_map.values()})
-
-  # After removing duplicate processes each slide should appear exactly once.
-  if sum(len(h) for h in unique_processes) != len(all_slices):
-    raise ValueError(f'{tensor_sharding=} is non-uniform on {dim=}')
-  return (unique_processes.index(addressable), len(unique_processes))

@@ -47,9 +47,9 @@ Array([-1.2655463 , -0.52060574, -0.14522289, -0.10817424,
        -0.15574613], dtype=float32)
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import functools
-from typing import Any, Callable, NamedTuple, Optional
+from typing import Any, NamedTuple
 
 import numpy as np
 

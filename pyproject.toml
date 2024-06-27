@@ -12,7 +12,7 @@ warn_unused_ignores = true
 module = [
     "absl.*",
     "colorama.*",
-    "importlib_metadata.*",
+    "filelock.*",
     "IPython.*",
     "numpy.*",
     "opt_einsum.*",
@@ -40,16 +40,9 @@ module = [
     "jax.experimental.jax2tf.tests.flax_models",
     "jax.experimental.jax2tf.tests.back_compat_testdata",
     "setuptools.*",
+    "jax_cuda12_plugin.*",
 ]
 ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = [
-    "jax.interpreters.autospmd",
-    "jax.lax.lax_parallel",
-    "jax._src.internal_test_util.test_harnesses",
-]
-ignore_errors = true
 
 [tool.pytest.ini_options]
 markers = [
@@ -60,8 +53,8 @@ filterwarnings = [
     "error",
     "default:Error (reading|writing) persistent compilation cache entry for 'jit_equal'",
     "default:Error (reading|writing) persistent compilation cache entry for 'jit__lambda_'",
-    "default:backend and device argument on jit is deprecated.*:DeprecationWarning",
     "default:jax.extend.mlir.dialects.mhlo is deprecated.*:DeprecationWarning",
+    "default:jax.xla_computation is deprecated. Please use the AOT APIs.*:DeprecationWarning",
     # TODO(jakevdp): remove when array_api_tests stabilize
     # start array_api_tests-related warnings
     "default:.*not machine-readable.*:UserWarning",
@@ -108,7 +101,7 @@ exclude = [
 ]
 line-length = 88
 indent-width = 2
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 ignore = [
@@ -122,6 +115,8 @@ ignore = [
     "F841",
     # Raise with from clause inside except block
     "B904",
+    # Zip without explicit strict parameter
+    "B905",
 ]
 select = [
     "B9",

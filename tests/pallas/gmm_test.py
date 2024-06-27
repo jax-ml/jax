@@ -14,7 +14,7 @@
 
 import functools
 import itertools
-from typing import Any, Union
+from typing import Any
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -114,7 +114,7 @@ if CAN_USE_HYPOTHESIS:
       shape: tuple[int, ...],
       key: jax.Array,
       dtype: jnp.dtype,
-      limit: Union[int, None] = None,
+      limit: int | None = None,
   ) -> jnp.ndarray:
     if limit is None:
       limit = 1 / np.prod(shape)
@@ -191,11 +191,11 @@ if CAN_USE_HYPOTHESIS:
   class GroupedMatmulTest(jtu.JaxTestCase):
 
     def setUp(self):
-      super().setUp()
-      self.key = jax.random.PRNGKey(1234)
-
       if not jtu.test_device_matches(["tpu"]):
         self.skipTest("Test requires TPU device.")
+
+      super().setUp()
+      self.key = jax.random.PRNGKey(1234)
 
     def assert_allclose(
         self,

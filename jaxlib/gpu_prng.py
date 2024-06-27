@@ -41,12 +41,19 @@ if _cuda_prng:
   for _name, _value in _cuda_prng.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 
-try:
-  from .rocm import _prng as _hip_prng  # pytype: disable=import-error
+for rocm_module_name in [".rocm", "jax_rocm60_plugin"]:
+  try:
+    _hip_prng = importlib.import_module(
+        f"{rocm_module_name}._prng", package="jaxlib"
+    )
+  except ImportError:
+    _hip_prng = None
+  else:
+    break
+
+if _hip_prng:
   for _name, _value in _hip_prng.registrations().items():
     xla_client.register_custom_call_target(_name, _value, platform="ROCM")
-except ImportError:
-  _hip_prng = None
 
 _prod = lambda xs: functools.reduce(operator.mul, xs, 1)
 

@@ -44,6 +44,7 @@ from jax._src.numpy.linalg import (
   tensordot as tensordot,
   tensorinv as tensorinv,
   tensorsolve as tensorsolve,
+  trace as trace,
   vector_norm as vector_norm,
   vecdot as vecdot,
 )

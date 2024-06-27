@@ -14,12 +14,16 @@
 
 """Test TPU-specific extensions to pallas_call."""
 
+import contextlib
 import functools
+import io
 import re
+import sys
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax import lax
+from jax._src import checkify
 from jax._src import state
 from jax._src import test_util as jtu
 from jax._src.interpreters import partial_eval as pe
@@ -41,14 +45,24 @@ P = jax.sharding.PartitionSpec
 
 partial = functools.partial
 
+@contextlib.contextmanager
+def string_stdout():
+  """Redirects stdout to a string."""
+  initial_stdout = sys.stdout
+  stringio = io.StringIO()
+  sys.stdout = stringio
+  yield stringio
+  sys.stdout = initial_stdout
+
 
 class PallasTPUTest(jtu.JaxTestCase):
   interpret: bool = False
 
   def setUp(self):
-    super().setUp()
     if not self.interpret and jtu.device_under_test() != 'tpu':
       self.skipTest('Only interpret mode supported on non-TPU')
+
+    super().setUp()
 
   def pallas_call(self, *args, **kwargs):
     return pl.pallas_call(*args, **kwargs, interpret=self.interpret)
@@ -285,33 +299,39 @@ class PallasCallScalarPrefetchTest(PallasTPUTest):
       o_ref[...] = x_ref[...]
 
     s = jnp.array([4, 3, 2, 5, 3, 5, 2, 7], jnp.int32)
-    x = jnp.arange(8 * 8 * 128, dtype=jnp.int32).reshape((8 * 8, 128))
+    x = jnp.arange(2 * 8 * 8 * 128, dtype=jnp.int32).reshape((2, 8 * 8, 128))
 
     def _x_transform(i, s_ref):
       s = pl.load(s_ref, (i,))
       return (s, 0)
 
     s = jnp.tile(s[None], [2, 1])
-    x = jnp.tile(x[None], [2, 1, 1])
 
-    with self.assertRaises(NotImplementedError):
-      jax.vmap(
-          pl.pallas_call(
-              body,
-              out_shape=jax.ShapeDtypeStruct(x.shape[1:], x.dtype),
-              grid_spec=pltpu.PrefetchScalarGridSpec(
-                  num_scalar_prefetch=1,
-                  in_specs=[
-                      pl.BlockSpec(_x_transform, (x.shape[1] // 8, x.shape[2])),
-                  ],
-                  out_specs=pl.BlockSpec(
-                      lambda i, _: (i, 0), (x.shape[1] // 8, x.shape[2])
-                  ),
-                  grid=8,
+    @jax.jit
+    @jax.vmap
+    def kernel(s, x):
+      return pl.pallas_call(
+          body,
+          out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+          grid_spec=pltpu.PrefetchScalarGridSpec(
+              num_scalar_prefetch=1,
+              in_specs=[
+                  pl.BlockSpec(_x_transform, (x.shape[0] // 8, x.shape[1])),
+              ],
+              out_specs=pl.BlockSpec(
+                  lambda i, _: (i, 0), (x.shape[0] // 8, x.shape[1])
               ),
-              interpret=self.interpret,
-          )
+              grid=8,
+          ),
+          interpret=self.interpret,
+          compiler_params=dict(mosaic=dict(allow_input_fusion=[False, True])),
       )(s, x)
+
+    first = x[0, ...].reshape((1, 8, 8, -1))[:, s[0, ...]].reshape(x.shape[1:])
+    second = x[1, ...].reshape((1, 8, 8, -1))[:, s[1, ...]].reshape(x.shape[1:])
+
+    expected = jnp.stack([first, second])
+    np.testing.assert_allclose(kernel(s, x), expected)
 
 
 class PallasCallScalarPrefetchInterpretTest(PallasCallScalarPrefetchTest):
@@ -319,6 +339,46 @@ class PallasCallScalarPrefetchInterpretTest(PallasCallScalarPrefetchTest):
 
 
 class PallasCallDynamicGridTest(PallasTPUTest):
+
+  def test_can_query_grid_statically_via_num_programs(self):
+
+    def kernel(_):
+      num_programs = pl.num_programs(0)
+      self.assertIsInstance(num_programs, int)
+      self.assertEqual(num_programs, 2)
+
+    pl.pallas_call(kernel, out_shape=None, grid=(2,))()
+
+  def test_can_query_grid_statically_via_num_programs_in_block_spec(self):
+
+    def kernel(*_):
+      pass
+
+    def x_index_map(_):
+      num_programs = pl.num_programs(0)
+      self.assertIsInstance(num_programs, int)
+      self.assertEqual(num_programs, 2)
+      return 0
+    pl.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(x_index_map, (8, 128))],
+        out_shape=None,
+        grid=(2,),
+    )(jnp.ones((8, 128)))
+
+  def test_dynamic_grid_has_dynamic_size(self):
+
+    def kernel(_):
+      num_programs = pl.num_programs(0)
+      self.assertIsInstance(num_programs, int, msg=type(num_programs))
+      self.assertEqual(num_programs, 2)
+      num_programs = pl.num_programs(1)
+      self.assertIsInstance(num_programs, jax.Array)
+
+    @jax.jit
+    def outer(x):
+      pl.pallas_call(kernel, out_shape=None, grid=(2, x))()
+    outer(2)
 
   def test_dynamic_grid(self):
     shape = (8, 128)
@@ -404,6 +464,7 @@ class PallasCallDynamicGridTest(PallasTPUTest):
       return self.pallas_call(
           kernel,
           grid=(steps * 2,),
+          in_specs=[pl.BlockSpec(lambda i: (0, 0), shape)],
           out_specs=pl.BlockSpec(lambda i: (0, 0), shape),
           out_shape=result_ty,
       )(x)
@@ -433,8 +494,11 @@ class PallasCallDynamicGridTest(PallasTPUTest):
           out_specs=pl.BlockSpec(lambda i: (0, 0), shape),
           out_shape=result_ty,
       )()
-    with self.assertRaises(NotImplementedError):
-      dynamic_kernel(jnp.array([4, 8], jnp.int32))
+    out = dynamic_kernel(jnp.array([4, 8], jnp.int32))
+    first = jnp.full(shape, fill_value=8.0, dtype=jnp.float32)
+    second = jnp.full(shape, fill_value=16.0, dtype=jnp.float32)
+    expected_out = jnp.stack([first, second], axis=0)
+    np.testing.assert_array_equal(out, expected_out)
 
   def test_vmap_dynamic_grid(self):
     shape = (8, 128)
@@ -473,7 +537,7 @@ class PallasCallDynamicGridTest(PallasTPUTest):
           out_shape=jax.ShapeDtypeStruct((1, 1), jnp.int32),
       )()
 
-    self.assertEqual(dynamic_kernel(4), 8)
+    self.assertEqual(dynamic_kernel(np.int32(4)), 8)
 
   @parameterized.parameters(range(1, 4))
   def test_vmap_num_programs(self, num_vmaps):
@@ -517,19 +581,20 @@ class PallasCallDynamicGridTest(PallasTPUTest):
       )(x)
 
     x = np.arange(4 * 8 * 128., dtype=np.int32).reshape((4 * 8, 128))
-    np.testing.assert_array_equal(dynamic_kernel(4, x), x[8:16])
+    np.testing.assert_array_equal(dynamic_kernel(np.int32(4), x), x[8:16])
 
 
 class PallasCallInterpretDynamicGridTest(PallasCallDynamicGridTest):
   interpret: bool = True
 
 
-class PallasCallDMATest(parameterized.TestCase):
+class PallasCallDMATest(PallasTPUTest):
 
   def setUp(self):
-    super().setUp()
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('DMAs not supported on TPU generations <= 3')
+
+    super().setUp()
 
   def test_can_have_unspecified_memory_spaces(self):
     def kernel(x_ref, y_ref):
@@ -537,7 +602,7 @@ class PallasCallDMATest(parameterized.TestCase):
       del x_ref, y_ref
 
     x = jnp.ones((8, 128), dtype=jnp.float32)
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         in_specs=[pl.BlockSpec(None, None, pltpu.TPUMemorySpace.ANY)],
         out_specs=pl.BlockSpec(None, None, pltpu.TPUMemorySpace.ANY),
@@ -572,7 +637,7 @@ class PallasCallDMATest(parameterized.TestCase):
 
       pltpu.run_scoped(body, pltpu.VMEM((8, 128), jnp.float32))
 
-    o = pl.pallas_call(
+    o = self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )()
@@ -589,7 +654,7 @@ class PallasCallDMATest(parameterized.TestCase):
         y_ref[...] = 4 * x_ref[...]
       pltpu.run_scoped(body, pltpu.VMEM((8, 128), jnp.float32))
 
-    o = pl.pallas_call(
+    o = self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )()
@@ -601,7 +666,7 @@ class PallasCallDMATest(parameterized.TestCase):
         pass
       pltpu.run_scoped(body, pltpu.SemaphoreType.DMA)
 
-    jax.block_until_ready(pl.pallas_call(
+    jax.block_until_ready(self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )())
@@ -613,7 +678,7 @@ class PallasCallDMATest(parameterized.TestCase):
       pltpu.run_scoped(body, pltpu.SemaphoreType.DMA,
                        pltpu.SemaphoreType.REGULAR)
 
-    jax.block_until_ready(pl.pallas_call(
+    jax.block_until_ready(self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )())
@@ -628,7 +693,7 @@ class PallasCallDMATest(parameterized.TestCase):
       pltpu.run_scoped(body, pltpu.SemaphoreType.DMA((4,)),
                        pltpu.SemaphoreType.REGULAR((3,)))
 
-    jax.block_until_ready(pl.pallas_call(
+    jax.block_until_ready(self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )())
@@ -640,6 +705,7 @@ class PallasCallDMATest(parameterized.TestCase):
       self.assertTrue(jnp.issubdtype(dma_sems.dtype, pltpu.dma_semaphore))
       self.assertTrue(jnp.issubdtype(sems.dtype, pltpu.semaphore))
 
+    # TODO(b/345534352): Add interpret support for REGULAR semaphore.
     jax.block_until_ready(
         pl.pallas_call(
             kernel,
@@ -674,6 +740,7 @@ class PallasCallDMATest(parameterized.TestCase):
         pltpu.semaphore_wait(sem)
       pltpu.run_scoped(body3, pltpu.SemaphoreType.REGULAR)
 
+    # TODO(b/345534352): Add interpret support for semaphore signal/wait.
     jax.block_until_ready(pl.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
@@ -697,6 +764,7 @@ class PallasCallDMATest(parameterized.TestCase):
         pltpu.semaphore_wait(sems.at[2])
       pltpu.run_scoped(body, pltpu.SemaphoreType.REGULAR((3,)))
 
+    # TODO(b/345534352): Add interpret support for semaphore signal/wait.
     jax.block_until_ready(pl.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
@@ -721,6 +789,7 @@ class PallasCallDMATest(parameterized.TestCase):
         pltpu.semaphore_wait(sems.at[i, 2])
       pltpu.run_scoped(body, pltpu.SemaphoreType.REGULAR((4, 3)))
 
+    # TODO(b/345534352): Add interpret support for semaphore signal/wait.
     jax.block_until_ready(pl.pallas_call(
         kernel,
         in_specs=[],
@@ -744,6 +813,7 @@ class PallasCallDMATest(parameterized.TestCase):
 
       pltpu.run_scoped(body, pltpu.SemaphoreType.REGULAR((m, n)))
 
+    # TODO(b/345534352): Add interpret support for semaphore signal/wait.
     y = jax.block_until_ready(
         pl.pallas_call(
             kernel,
@@ -762,7 +832,7 @@ class PallasCallDMATest(parameterized.TestCase):
                          sem).wait()
       pltpu.run_scoped(body, pltpu.SemaphoreType.DMA)
     x = jnp.arange(8 * 128.).reshape((8, 128))
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
@@ -778,6 +848,8 @@ class PallasCallDMATest(parameterized.TestCase):
         pltpu.async_copy(x_hbm_ref.at[pl.ds(8), :], y_hbm_ref.at[:, pl.ds(128)],
                          sem).wait()
       pltpu.run_scoped(body, pltpu.SemaphoreType.DMA((1,)))
+
+    # TODO(b/345534352): Add interpret support for nonscalar semaphores.
     with self.assertRaisesRegex(ValueError, 'Cannot signal'):
       x = jnp.arange(8 * 128.).reshape((8, 128))
       pl.pallas_call(
@@ -796,6 +868,8 @@ class PallasCallDMATest(parameterized.TestCase):
                          sem.at[0]).wait()
       pltpu.run_scoped(body, pltpu.SemaphoreType.DMA((1,)))
     x = jnp.arange(8 * 128.).reshape((8, 128))
+
+    # TODO(b/345534352): Add interpret support for nonscalar semaphores.
     y = pl.pallas_call(
         kernel,
         in_specs=[
@@ -817,7 +891,7 @@ class PallasCallDMATest(parameterized.TestCase):
         ).wait()
       pltpu.run_scoped(body, pltpu.SemaphoreType.DMA)
     x = jnp.arange(2 * 8 * 128.).reshape((2, 8, 128))
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
@@ -837,7 +911,7 @@ class PallasCallDMATest(parameterized.TestCase):
       pltpu.run_scoped(body, pltpu.VMEM((8, 128), jnp.float32),
                        pltpu.SemaphoreType.DMA)
     x = jnp.arange(8 * 128.).reshape((8, 128))
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
@@ -854,7 +928,7 @@ class PallasCallDMATest(parameterized.TestCase):
       pltpu.run_scoped(body, pltpu.VMEM((8, 128), jnp.float32),
                        pltpu.SemaphoreType.DMA)
     x = jnp.arange(8 * 128.).reshape((8, 128))
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
@@ -872,7 +946,7 @@ class PallasCallDMATest(parameterized.TestCase):
                        pltpu.VMEM((8, 128), jnp.float32),
                        pltpu.SemaphoreType.DMA)
     x = jnp.arange(8 * 128.).reshape((8, 128))
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY)],
         out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
@@ -888,7 +962,7 @@ class PallasCallDMATest(parameterized.TestCase):
       pltpu.run_scoped(body, pltpu.SMEM((8, 128), jnp.float32),
                        pltpu.SemaphoreType.DMA)
     x = 4 * jnp.ones((8, 128), jnp.float32)
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
@@ -906,7 +980,7 @@ class PallasCallDMATest(parameterized.TestCase):
       pltpu.run_scoped(body, pltpu.SMEM((1, 2), jnp.float32),
                        pltpu.SemaphoreType.DMA)
     x = jnp.arange(8 * 128.).reshape((8, 128))
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
@@ -923,7 +997,7 @@ class PallasCallDMATest(parameterized.TestCase):
         pltpu.async_copy(x_ref, y_ref, sem).wait()
       pltpu.run_scoped(body, pltpu.SemaphoreType.DMA)
     x = jnp.arange(8 * 128.).reshape((8, 128))
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
@@ -946,7 +1020,7 @@ class PallasCallDMATest(parameterized.TestCase):
         dma2.wait()
       pltpu.run_scoped(body, pltpu.SemaphoreType.DMA)
     x = jnp.arange(2 * 8 * 128.).reshape((16, 128))
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
@@ -969,7 +1043,7 @@ class PallasCallDMATest(parameterized.TestCase):
         dma2.wait()
       pltpu.run_scoped(body, pltpu.SemaphoreType.DMA)
     x = jnp.arange(2 * 8 * 128.).reshape((2, 8, 128))
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
@@ -995,7 +1069,7 @@ class PallasCallDMATest(parameterized.TestCase):
           dma2.wait()
       pltpu.run_scoped(body, pltpu.SemaphoreType.DMA)
     x = jnp.arange(3 * 2 * 8 * 128.).reshape((3, 2, 8, 128))
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         in_specs=[
             pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
@@ -1019,7 +1093,7 @@ class PallasCallDMATest(parameterized.TestCase):
       pltpu.run_scoped(body, pltpu.SemaphoreType.DMA)
     x = jnp.arange(2 * 8 * 128.).reshape((2, 8, 128))
     with self.assertRaises(Exception):
-      _ = pl.pallas_call(
+      _ = self.pallas_call(
           kernel,
           in_specs=[
               pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
@@ -1091,6 +1165,7 @@ class PallasCallDMATest(parameterized.TestCase):
       pltpu.semaphore_wait(sem)
       pltpu.async_copy(x_bbm_ref, y_ref, dma_sem).wait()
 
+    # TODO(b/345534352): Add interpret support for semaphore signal/wait.
     x = jnp.arange(8 * 128.).reshape((8, 128))
     y = pl.pallas_call(
         kernel,
@@ -1115,7 +1190,7 @@ class PallasCallDMATest(parameterized.TestCase):
     def kernel(index, x, y, sem):
       pltpu.async_copy(x.at[index[0]], y.at[:], sem).wait()
 
-    run = pl.pallas_call(kernel,
+    run = self.pallas_call(kernel,
                          grid_spec=pltpu.PrefetchScalarGridSpec(
                              num_scalar_prefetch=1,
                              in_specs=[
@@ -1133,15 +1208,15 @@ class PallasCallDMATest(parameterized.TestCase):
       np.testing.assert_array_equal(y, i)
       del y
 
-
 class PallasCallRemoteDMATest(parameterized.TestCase):
 
   def setUp(self):
-    super().setUp()
     if jax.device_count() < 2:
       self.skipTest('Only >=2 devices are supported.')
     if not jtu.is_device_tpu_at_least(5):
       self.skipTest('Only works with TPU v5')
+
+    super().setUp()
 
   @parameterized.named_parameters(
       ('vmem', pltpu.TPUMemorySpace.VMEM),
@@ -1342,9 +1417,10 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
 class PallasCallTest(PallasTPUTest):
 
   def setUp(self):
-    super().setUp()
     if jtu.device_under_test() != 'tpu':
       self.skipTest('Test only works on TPU')
+
+    super().setUp()
 
   def test_cost_analysis(self):
     def kernel(x, y):
@@ -1411,13 +1487,35 @@ class PallasCallTest(PallasTPUTest):
     compiled = jax.jit(f).lower(x, y).compile().as_text()
     assert re.search(r'fusion.*kind=kCustom.*fused_computation', compiled)
 
+  def test_set_internal_scratch_size(self):
+    shape = (128, 128)
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...]
+
+    x = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    requested_bytes = 128 * 4
+    with self.assertRaisesRegex(
+        Exception,
+        f'Requested internal scratch size {requested_bytes} needs to be at'
+        ' least',
+    ):
+      pl.pallas_call(
+          kernel,
+          out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
+          compiler_params=dict(
+              mosaic=dict(internal_scratch_in_bytes=requested_bytes)
+          ),
+      )(x)
+
 
 class PallasCallUnblockedIndexingTest(PallasTPUTest):
 
   def setUp(self):
-    super().setUp()
     if not self.interpret and jtu.device_under_test() != 'tpu':
       self.skipTest('Only interpret mode supported on non-TPU')
+
+    super().setUp()
 
   def test_unblocked_indexing(self):
     shape = (16 * 8, 128)
@@ -1479,9 +1577,10 @@ class PallasCallInterpreterUnblockedIndexingTest(
 class PallasUXTest(PallasTPUTest):
 
   def setUp(self):
-    super().setUp()
     if jtu.device_under_test() != 'tpu':
       self.skipTest('Test only works on TPU')
+
+    super().setUp()
 
   def test_mlir_location(self):
     # Make sure that MLIR locations are correctly propagated to primitives.
@@ -1502,9 +1601,10 @@ class PallasUXTest(PallasTPUTest):
 class PallasCallInputOutputAliasingTest(PallasTPUTest):
 
   def setUp(self):
-    super().setUp()
     if not self.interpret and jtu.device_under_test() != 'tpu':
       self.skipTest('Only interpret mode supported on non-TPU')
+
+    super().setUp()
 
   def test_basic_input_output_aliasing(self):
     # Input needs to be big so it doesn't fit in VMEM
@@ -1568,9 +1668,10 @@ class PallasCallInterpreterInputOutputAliasingTest(PallasTPUTest):
 class PallasMegacoreTest(PallasTPUTest):
 
   def setUp(self):
-    super().setUp()
     if jtu.device_under_test() != 'tpu':
       self.skipTest('Test only works on TPU')
+
+    super().setUp()
 
   def test_megacore_splitting(self):
     # We want to make sure a 3-sized dimension is split across megacore
@@ -1606,9 +1707,10 @@ class PallasMegacoreTest(PallasTPUTest):
 class PallasCallVmapTest(PallasTPUTest):
 
   def setUp(self):
-    super().setUp()
     if jtu.device_under_test() != 'tpu':
       self.skipTest('Test only works on TPU')
+
+    super().setUp()
 
   def test_scratch_input_vmap(self):
     """Test that vmapp-ing a kernel with scratch inputs works correctly."""
@@ -1648,9 +1750,10 @@ class PallasCallVmapTest(PallasTPUTest):
 class PallasCallControlFlowTest(PallasTPUTest):
 
   def setUp(self):
-    super().setUp()
     if jtu.device_under_test() != 'tpu':
       self.skipTest('Test only works on TPU')
+
+    super().setUp()
 
   def test_nested_conds(self):
     def kernel(y_ref):
@@ -1683,9 +1786,10 @@ class PallasCallControlFlowTest(PallasTPUTest):
 class PallasCallWhileLoopTest(PallasTPUTest):
 
   def setUp(self):
-    super().setUp()
     if jtu.device_under_test() != 'tpu':
       self.skipTest('Test only works on TPU')
+
+    super().setUp()
 
   def test_range_while_loop(self):
     """Tests lowering of a while_loop which can reduce to a fori_loop."""
@@ -1766,7 +1870,7 @@ class PallasCallWhileLoopTest(PallasTPUTest):
 
       def body(state):
         i, s = state
-        sl = sl = jax.lax.div(i, 128)
+        sl = jax.lax.div(i, 128)
         l = jax.lax.rem(i, 128)
         v = pl.load(x_ref, (0, sl, l))
         return i + 1, s + v
@@ -1877,7 +1981,7 @@ class PallasCallWhileLoopTest(PallasTPUTest):
 
       def inner_cond(carry):
         i, prev_key = carry
-        sl = sl = jax.lax.div(i, 128)
+        sl = jax.lax.div(i, 128)
         l = jax.lax.rem(i, 128)
         key = jax.lax.cond(
             i < key_count, lambda i: in_key_ref[sl, l], lambda i: -1, i
@@ -1894,12 +1998,12 @@ class PallasCallWhileLoopTest(PallasTPUTest):
 
       def outer_body(carry):
         i, next_out_idx = carry
-        sl = sl = jax.lax.div(i, 128)
+        sl = jax.lax.div(i, 128)
         l = jax.lax.rem(i, 128)
         key = in_key_ref[sl, l]
         end, _ = jax.lax.while_loop(inner_cond, inner_body, (i + 1, key))
 
-        sl = sl = jax.lax.div(next_out_idx, 128)
+        sl = jax.lax.div(next_out_idx, 128)
         l = jax.lax.rem(next_out_idx, 128)
         out_size_ref[sl, l] = end - i
         return end, next_out_idx + 1
@@ -1949,9 +2053,10 @@ class PallasCallWhileLoopTest(PallasTPUTest):
 class PallasCallReductionTest(PallasTPUTest):
 
   def setUp(self):
-    super().setUp()
     if jtu.device_under_test() != 'tpu':
       self.skipTest('Test only works on TPU')
+
+    super().setUp()
 
   def test_integer_sum(self):
     def kernel(x_ref, o_ref):
@@ -2004,9 +2109,10 @@ class PallasCallReductionTest(PallasTPUTest):
 class PallasCallDynamicDMATest(PallasTPUTest):
 
   def setUp(self):
-    super().setUp()
     if not jtu.is_device_tpu_at_least(4):
       self.skipTest('DMAs not supported on TPU generations <= 3')
+
+    super().setUp()
 
   def test_simple_tile_aligned_dynamic_size_dma(self):
 
@@ -2068,9 +2174,10 @@ class PallasCallDynamicDMATest(PallasTPUTest):
 class PallasCallComparisonTest(PallasTPUTest):
 
   def setUp(self):
-    super().setUp()
     if jtu.device_under_test() != 'tpu':
       self.skipTest('Test only works on TPU')
+
+    super().setUp()
 
   @parameterized.named_parameters(
       ('integer_1_1', (1, 1)),
@@ -2208,7 +2315,12 @@ class PallasCallPrintTest(PallasTPUTest):
       pl.debug_print('It works!')
 
     x = jnp.array([4.2, 2.4]).astype(jnp.float32)
-    kernel(x)
+    compiled_kernel = (
+        jax.jit(kernel)
+        .lower(x)
+        .compile({'xla_tpu_enable_log_recorder': 'true'})
+    )
+    compiled_kernel(x)
 
   def test_debug_print_with_values(self):
     @functools.partial(
@@ -2226,6 +2338,272 @@ class PallasCallPrintTest(PallasTPUTest):
         .compile({'xla_tpu_enable_log_recorder': 'true'})
     )
     compiled_kernel(x)
+
+
+class PallasCallTPUInterpretTest(PallasTPUTest):
+
+  def test_local_dma(self):
+    def test_kernel(x_ref,
+                o_ref,
+                copy_sem,
+                ):
+      o_ref[...] = jnp.zeros_like(o_ref[...])
+      input_to_output_copy = pltpu.make_async_copy(
+          src_ref=x_ref.at[0:8],
+          dst_ref=o_ref.at[0:8],
+          sem=copy_sem,
+      )
+      input_to_output_copy.start()
+      input_to_output_copy.wait()
+
+    out_shape = (jax.ShapeDtypeStruct((9, 128), jnp.float32))
+    grid_spec = pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            in_specs=[
+                pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+            ],
+            scratch_shapes=(
+                [pltpu.SemaphoreType.DMA]
+            )
+        )
+
+    kernel = pl.pallas_call(
+        test_kernel,
+        out_shape=out_shape,
+        grid_spec=grid_spec,
+        interpret=True
+    )
+    x = jax.random.normal(jax.random.key(0), shape=(16, 128))
+    result = kernel(x)
+    np.testing.assert_array_equal(result[0:8], x[0:8])
+    np.testing.assert_array_equal(result[8:], jnp.zeros_like(result[8:]))
+
+  @parameterized.parameters(('left',), ('right',))
+  def test_remote_dma_ppermute(self, permutation):
+    if jax.device_count() <= 1:
+      self.skipTest('Test requires multiple devices.')
+    num_devices = jax.device_count()
+    if permutation == 'left':
+      permute_fn = lambda x: lax.rem(x + num_devices - 1, num_devices)
+    else:
+      permute_fn = lambda x: lax.rem(x + num_devices + 1, num_devices)
+
+    # Construct a kernel which performs a ppermute based on permute_fn.
+    def test_kernel(x_ref,
+                    o_ref,
+                    copy_send_sem,
+                    copy_recv_sem,
+                ):
+      o_ref[...] = jnp.zeros_like(o_ref[...])
+      my_id = lax.axis_index('x')
+      dst_device = permute_fn(my_id)
+      input_to_output_copy = pltpu.make_async_remote_copy(
+          src_ref=x_ref,
+          dst_ref=o_ref,
+          send_sem=copy_send_sem,
+          recv_sem=copy_recv_sem,
+          device_id=dst_device,
+          device_id_type=pltpu.DeviceIdType.LOGICAL,
+      )
+      input_to_output_copy.start()
+      input_to_output_copy.wait()
+
+    out_shape = (jax.ShapeDtypeStruct((8, 128), jnp.float32))
+    grid_spec = pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            in_specs=[
+                pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+            ],
+            scratch_shapes=(
+                [pltpu.SemaphoreType.DMA] * 2
+            )
+        )
+
+    devices = mesh_utils.create_device_mesh((1, num_devices))
+    mesh = jax.sharding.Mesh(devices, P(None, 'x'))
+    sharding = jax.sharding.NamedSharding(mesh, P(None, 'x'))
+    unsharded_arr = jax.random.normal(
+        jax.random.key(0), shape=(8, 128 * num_devices))
+    sharded_arr = jax.device_put(unsharded_arr, sharding)
+
+    kernel = pl.pallas_call(
+        test_kernel,
+        out_shape=out_shape,
+        grid_spec=grid_spec,
+        interpret=True
+    )
+    compiled_func = jax.jit(shard_map.shard_map(
+      kernel,
+      mesh=mesh,
+      in_specs=P(None, 'x'),
+      out_specs=P(None, 'x'),
+      check_rep=False))
+    result = compiled_func(sharded_arr)
+
+    perm = tuple((src, permute_fn(src)) for src in range(num_devices))
+    perm = jax.tree_util.tree_map(int, perm)
+    def lax_permute(x):
+      return lax.ppermute(x, 'x', perm)
+    expected = jax.jit(shard_map.shard_map(lax_permute,
+                                   mesh=mesh,
+                                   in_specs=P(None, 'x'),
+                                   out_specs=P(None, 'x')))(sharded_arr)
+    np.testing.assert_array_equal(result, expected)
+
+
+class PallasCallTraceTest(PallasTPUTest):
+  interpret: bool = False
+
+  def parse_debug_string(self, debug_string):
+    jaxpr, mlir = debug_string.split('module')
+    return {'jaxpr': jaxpr, 'mlir': mlir}
+
+  def test_trace_start_stop_match(self):
+    def kernel(o_ref):
+      with jax.named_scope('scope1'):
+        o_ref[...] = jnp.zeros_like(o_ref[...])
+
+    with string_stdout() as msg:
+      _ = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        debug=True,
+      )()
+      # TODO(justinfu): Add an official lowering API to get the MLIR.
+      mlir = self.parse_debug_string(msg.getvalue())['mlir']
+
+    num_start = mlir.count('tpu.trace_start')
+    num_stop = mlir.count('tpu.trace_stop')
+    self.assertEqual(num_start, 1)
+    self.assertEqual(num_stop, 1)
+
+  def test_run_scoped(self):
+    def kernel(o_ref):
+      def scope1():
+        with jax.named_scope('scope1'):
+          o_ref[...] = jnp.zeros_like(o_ref[...])
+      pltpu.run_scoped(scope1)
+
+      def scope2():
+        with jax.named_scope('scope2'):
+          o_ref[...] = o_ref[...] + 1
+      pltpu.run_scoped(scope2)
+
+    with string_stdout() as msg:
+      _ = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        debug=True,
+      )()
+      # TODO(justinfu): Add an official lowering API to get the MLIR.
+      mlir = self.parse_debug_string(msg.getvalue())['mlir']
+
+    num_start = mlir.count('tpu.trace_start')
+    num_stop = mlir.count('tpu.trace_stop')
+    self.assertEqual(num_start, 2)
+    self.assertEqual(num_stop, 2)
+
+
+class PallasCallTPUCheckifyTest(PallasTPUTest):
+  interpret: bool = True
+
+  @parameterized.parameters((2,), (5,), (6,), (7,))
+  def test_checkify_with_scalar_prefetch(self, threshold):
+    def body(scalar_ref, x_ref, o_ref):
+      scalar = scalar_ref[pl.program_id(0)]
+      o_ref[...] = x_ref[...]
+      checkify.check(scalar < threshold, 'failed on value {x}', x=scalar)
+
+    s = jnp.array([4, 3, 2, 6, 3, 5, 2, 7], jnp.int32)
+    x = jnp.arange(8 * 8 * 128, dtype=jnp.int32).reshape((8 * 8, 128))
+
+    def _x_transform(i, s_ref):
+      s = pl.load(s_ref, (i,))
+      return (s, 0)
+
+    pallas_call = self.pallas_call(
+        body,
+        out_shape=jax.ShapeDtypeStruct(x.shape, jnp.int32),
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=1,
+            in_specs=[
+                pl.BlockSpec(_x_transform, (x.shape[0] // 8, x.shape[1])),
+            ],
+            out_specs=pl.BlockSpec(lambda i, _: (i, 0),
+                                   (x.shape[0] // 8, x.shape[1])),
+            grid=8,
+        ),
+    )
+    checked_call = checkify.checkify(pallas_call)
+    err, out = checked_call(s, x)
+    expected_error_value = s[jnp.argmax(s >= threshold)]
+    with self.assertRaisesRegex(
+        checkify.JaxRuntimeError, f'failed on value {expected_error_value}'):
+      err.throw()
+    np.testing.assert_allclose(out, x.reshape((8, 8, -1))[s].reshape(x.shape))
+
+  def test_checkify_with_scratch(self):
+    def body(x_ref, o_ref, scratch_ref):
+      scratch_ref[...] = x_ref[...]
+      o_ref[...] = scratch_ref[...]
+      all_nequal = ~jnp.all(o_ref[...] == x_ref[...])
+      checkify.check(all_nequal, 'x_ref equals o_ref id=({x}, {y})',
+                     x=pl.program_id(0), y=pl.program_id(1))
+
+    x = jax.random.uniform(jax.random.key(0), (128, 128), dtype=jnp.float32)
+    pallas_call = self.pallas_call(
+        body,
+        out_shape=jax.ShapeDtypeStruct(x.shape, jnp.float32),
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            in_specs=[
+                pl.BlockSpec(lambda i, j: (i, j), (32, 32)),
+            ],
+            out_specs=pl.BlockSpec(lambda i, j: (i, j), (32, 32)),
+            scratch_shapes=[pltpu.VMEM((32, 32), dtype=jnp.float32)],
+            grid=(4, 4),
+        ),
+    )
+    checked_call = checkify.checkify(pallas_call)
+    err, out = checked_call(x)
+    with self.assertRaisesRegex(
+        checkify.JaxRuntimeError, r'x_ref equals o_ref id=\(0, 0\)'):
+      err.throw()
+    np.testing.assert_allclose(out, x)
+
+  @parameterized.parameters((4,), (9,))
+  def test_checkify_with_dynamic_grid(self, iteration):
+    grid_size = 4
+    shape = (8, 128)
+    result_ty = jax.ShapeDtypeStruct(shape, jnp.float32)
+
+    def kernel(y_ref):
+      @pl.when(pl.program_id(0) == 0)
+      def _init():
+        y_ref[...] = jnp.zeros_like(y_ref)
+      y_ref[...] += 1
+      @pl.when(pl.program_id(0) == iteration)
+      def _():
+        checkify.check(False, f"error on iteration {iteration}")
+
+    @jax.jit
+    def dynamic_kernel(steps):
+      pallas_call = self.pallas_call(
+          kernel,
+          grid=(steps * 2,),
+          out_specs=pl.BlockSpec(lambda i: (0, 0), shape),
+          out_shape=result_ty,
+      )
+      return checkify.checkify(pallas_call)()
+
+    err, result = dynamic_kernel(jnp.int32(grid_size))
+    if iteration < grid_size * 2:
+      with self.assertRaisesRegex(
+          checkify.JaxRuntimeError, f"error on iteration {iteration}"):
+        err.throw()
+    np.testing.assert_array_equal(
+        result, np.full(shape, grid_size * 2.0, np.float32)
+    )
 
 
 if __name__ == '__main__':

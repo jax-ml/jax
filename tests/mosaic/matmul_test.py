@@ -28,18 +28,22 @@ except ImportError:
 else:
   from jax.experimental.mosaic.gpu.examples import matmul
 
-config.update("jax_traceback_filtering", "off")
+
 config.parse_flags_with_absl()
 os.environ["XLA_FLAGS"] = (
     os.environ.get("XLA_FLAGS", "") + " --xla_gpu_autotune_level=0")
 
 
+@jtu.with_config(jax_traceback_filtering="off")
 class MatmulTestCase(jtu.JaxTestCase):
 
   def setUp(self):
     super().setUp()
     if matmul is None:
       self.skipTest("Mosaic GPU not available.")
+    if (not jtu.test_device_matches(["cuda"]) or
+        not jtu.is_cuda_compute_capability_at_least("9.0")):
+      self.skipTest("Only works on GPU with capability >= sm90")
 
   @parameterized.product(
       m=(128, 256, 512, 2048),
@@ -59,12 +63,6 @@ class MatmulTestCase(jtu.JaxTestCase):
 
     if n < tile_n:
       self.skipTest(f"No use in running a test with {n=} < {tile_n=}.")
-
-    # TODO(bchetioui): investigate why this test case fails with error
-    #  Illegal barrier arrive operation
-    # under memcheck.
-    if tile_m == 64 and tile_n == 64 and stages == 2:
-      self.skipTest("Broken test case---skipping.")
 
     try:
       matmul.verify(
@@ -101,12 +99,6 @@ class MatmulTestCase(jtu.JaxTestCase):
 
     if n < tile_n:
       self.skipTest(f"No use in running a test with {n=} < {tile_n=}.")
-
-    # TODO(bchetioui): investigate why this test case fails with error
-    #  Illegal barrier arrive operation
-    # under memcheck.
-    if tile_m == 64 and tile_n == 64 and stages == 2:
-      self.skipTest("Broken test case---skipping.")
 
     try:
       matmul.verify(

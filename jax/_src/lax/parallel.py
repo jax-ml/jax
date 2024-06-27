@@ -983,10 +983,8 @@ def _pbroadcast_lowering(ctx, x, *, axis_name, source):
     return [group[source]] + list(group[:source]) + list(group[source + 1:])
   replica_groups = [source_to_front(group) for group in replica_groups]
   channel = ctx.module_context.new_channel()
-  channel_handle = hlo.ChannelHandle.get(channel, mlir.DEVICE_TO_DEVICE_TYPE)
   return hlo.CollectiveBroadcastOp(
-      x, replica_groups=_replica_groups_hlo(replica_groups),
-      channel_handle=channel_handle).results
+      x, replica_groups=_replica_groups_hlo(replica_groups)).results
 
 pbroadcast_p = core.AxisPrimitive('pbroadcast')
 pbroadcast_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
@@ -1542,10 +1540,10 @@ def psum_scatter(x, axis_name, *, scatter_dimension=0, axis_index_groups=None,
       When ``False`` (the default value), the size of dimension in
       ``scatter_dimension`` must match the size of axis ``axis_name`` (or the
       group size if ``axis_index_groups`` is given). After scattering the
-      all-reduce result along ``scatter_dimension``, the output is sequeezed by
+      all-reduce result along ``scatter_dimension``, the output is squeezed by
       removing ``scatter_dimension``, so the result has lower rank than the
       input. When ``True``, the size of dimension in ``scatter_dimension`` must
-      be dividible by the size of axis ``axis_name`` (or the group size if
+      be divisible by the size of axis ``axis_name`` (or the group size if
       ``axis_index_groups`` is given), and the ``scatter_dimension`` axis is
       preserved (so the result has the same rank as the input).
 

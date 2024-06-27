@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from collections import OrderedDict, namedtuple
-import os
+import contextlib
 import re
 from functools import partial
 import logging
@@ -32,7 +32,6 @@ import jax
 import jax.numpy as jnp
 from jax._src import core
 from jax._src import config
-from jax._src import maps
 from jax._src import test_util as jtu
 from jax import dtypes
 from jax import stages
@@ -44,7 +43,7 @@ from jax.sharding import PartitionSpec as P
 from jax.experimental import multihost_utils
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax._src import array
-from jax._src.sharding import Sharding
+from jax._src.sharding import Sharding, common_devices_indices_map
 from jax._src import op_shardings
 from jax._src import sharding_impls
 from jax._src.sharding_impls import (
@@ -63,32 +62,15 @@ from jax._src.util import curry, unzip2
 
 config.parse_flags_with_absl()
 
-prev_xla_flags = None
-prev_spmd_lowering_flag = None
-
+# Run all tests with 8 CPU devices.
+_exit_stack = contextlib.ExitStack()
 
 def setUpModule():
-  global prev_xla_flags
-  prev_xla_flags = os.getenv("XLA_FLAGS")
-  flags_str = prev_xla_flags or ""
-  # Don't override user-specified device count, or other XLA flags.
-  if "xla_force_host_platform_device_count" not in flags_str:
-    os.environ["XLA_FLAGS"] = (flags_str +
-                               " --xla_force_host_platform_device_count=8")
-  # Clear any cached backends so new CPU backend will pick up the env var.
-  xla_bridge.get_backend.cache_clear()
-  global prev_spmd_lowering_flag
-  prev_spmd_lowering_flag = maps.SPMD_LOWERING.value
-  config.update('experimental_xmap_spmd_lowering', True)
+  _exit_stack.enter_context(jtu.set_host_platform_device_count(8))
+  _exit_stack.enter_context(jtu.global_config_context(experimental_xmap_spmd_lowering=True))
 
 def tearDownModule():
-  if prev_xla_flags is None:
-    del os.environ["XLA_FLAGS"]
-  else:
-    os.environ["XLA_FLAGS"] = prev_xla_flags
-  xla_bridge.get_backend.cache_clear()
-  config.update('experimental_xmap_spmd_lowering', prev_spmd_lowering_flag)
-
+  _exit_stack.close()
 
 def create_array(global_shape, global_mesh, mesh_axes, global_data=None,
                  dtype=np.float32):
@@ -1303,6 +1285,16 @@ class PJitTest(jtu.BufferDonationTestCase):
             """).strip(),
     )
 
+  def test_with_sharding_constraint_vmap_spmd_axis_name_error(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+
+    def f(x):
+      return jax.lax.with_sharding_constraint(x, NamedSharding(mesh, P('x')))
+
+    xs = jnp.arange(4 * 16.).reshape(4, 16)
+    with self.assertRaisesRegex(ValueError, "spmd_axis_name"):
+      jax.vmap(f, spmd_axis_name='x')(xs)
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class CustomPartitionerTest(jtu.JaxTestCase):
@@ -1572,7 +1564,7 @@ class AutoShardingPjitTest(jtu.JaxTestCase):
 
   def test_xla_arr_sharding_mismatch(self):
     global_mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
-    global_input_shape = (4, 2)
+    global_input_shape = (6, 2)
     input_data = np.arange(
         math.prod(global_input_shape), dtype=np.float32).reshape(global_input_shape)
 
@@ -2199,30 +2191,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertTrue(out2.sharding.is_equivalent_to(out.sharding, out.ndim))
     self.assertArraysEqual(out2, inp_data)
 
-  def test_not_xlacompatible_sharding_error(self):
-    shape = (8, 2)
-    inp_data = np.arange(math.prod(shape)).reshape(shape)
-    ts = TempSharding(jax.devices())
-    arr = array.make_array_from_callback(
-        shape, ts, lambda idx: inp_data[idx])
-    with self.assertRaisesRegex(
-        ValueError,
-        'One of the argument to pjit got sharding.*which is not a subclass of '
-        'XLACompatibleSharding.'):
-      pjit(lambda x: x)(arr)
-
-    with self.assertRaisesRegex(
-        ValueError,
-        'One of in_shardings leaf specifications got sharding.*which is '
-        'not a subclass of XLACompatibleSharding.'):
-      pjit(lambda x: x, in_shardings=ts)(arr)
-
-    with self.assertRaisesRegex(
-        ValueError,
-        'One of out_shardings leaf specifications got sharding.*which is '
-        'not a subclass of XLACompatibleSharding.'):
-      pjit(lambda x: x, out_shardings=ts)(arr)
-
   def test_array_enabled_non_empty_mesh_with_pspec(self):
     arr = jnp.array([1, 2, 3])
     with self.assertRaisesRegex(
@@ -2368,18 +2336,18 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out1 = f(arr)
     self.assertIsInstance(out1.sharding, NamedSharding)
     out1.sharding.devices_indices_map(shape)
-    cache_info1 = sharding_impls.common_devices_indices_map.cache_info()
+    cache_info1 = common_devices_indices_map.cache_info()
 
     out2 = f(out1)
     self.assertIsInstance(out2.sharding, NamedSharding)
     out2.sharding.devices_indices_map(shape)
-    cache_info2 = sharding_impls.common_devices_indices_map.cache_info()
+    cache_info2 = common_devices_indices_map.cache_info()
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
 
     out3 = f(out2)
     self.assertIsInstance(out3.sharding, NamedSharding)
     out3.sharding.devices_indices_map(shape)
-    cache_info3 = sharding_impls.common_devices_indices_map.cache_info()
+    cache_info3 = common_devices_indices_map.cache_info()
     self.assertEqual(cache_info3.hits, cache_info2.hits + 1)
 
   def test_aot_compile_in_tree_mismatch(self):
@@ -2496,6 +2464,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
         r"pjit inside pjit with device ids \[0, 1, 2, 3\].*"):
       my_nested_pjit(committed_inp, committed_inp, committed_inp)
 
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message="backend and device argument")
   def test_jit_device_with_sharding_constraint_error(self):
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
 
@@ -2921,7 +2891,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
 
-    f = pjit(mul, device=jax.devices()[1])
+    with jtu.ignore_warning(category=DeprecationWarning,
+                            message="backend and device argument"):
+      f = pjit(mul, device=jax.devices()[1])
     x = jnp.arange(8).reshape(4, 2)
     f_out = f(x)
     f_out2 = f(f_out)
@@ -2936,7 +2908,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
 
-    h = pjit(mul, device=jax.devices()[-1])
+    with jtu.ignore_warning(category=DeprecationWarning,
+                            message="backend and device argument"):
+      h = pjit(mul, device=jax.devices()[-1])
     h_out = h(y)
     cache_info3 = pjit_lib._pjit_lower_cached.cache_info()
     _check(h_out, jax.devices()[-1], y)
@@ -2956,7 +2930,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out = pjit(lambda x: x * 2)(y)
 
     expected_device = jax.devices()[2]
-    final_out = pjit(lambda x: x * 3, device=expected_device)(out)
+    with jtu.ignore_warning(category=DeprecationWarning,
+                            message="backend and device argument"):
+      final_out = pjit(lambda x: x * 3, device=expected_device)(out)
 
     self.assertEqual(final_out.devices(), {expected_device})
     self.assertLen(final_out.sharding.device_set, 1)
@@ -2970,7 +2946,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.assertArraysEqual(out, expected_out)
 
     x = jnp.arange(8)
-    g = pjit(lambda x: x, backend='tpu')
+    with jtu.ignore_warning(category=DeprecationWarning,
+                            message="backend and device argument"):
+      g = pjit(lambda x: x, backend='tpu')
     g_out = g(x)
     _check(g_out, jax.devices()[0], x)
 
@@ -2983,8 +2961,10 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.skipTest('Test requires more >1 device.')
     # Add a constant captured by the nested pjit to make things more complicated
     h = jnp.arange(4.)
-    f = pjit(lambda x: x.sum(1) * h.sum(), device=jax.devices()[1])
-    g = pjit(lambda x: f(jnp.sin(x * 4 + 2)), device=jax.devices()[1])
+    with jtu.ignore_warning(category=DeprecationWarning,
+                            message="backend and device argument"):
+      f = pjit(lambda x: x.sum(1) * h.sum(), device=jax.devices()[1])
+      g = pjit(lambda x: f(jnp.sin(x * 4 + 2)), device=jax.devices()[1])
     jtu.check_grads(g, (jnp.arange(16.).reshape((4, 4)) / 100,), order=2)
 
   def test_pjit_device_backend_axis_resources_error(self):
@@ -2993,13 +2973,17 @@ class ArrayPjitTest(jtu.JaxTestCase):
         ValueError,
         'If backend or device is specified on jit, then '
         'in_shardings should not be specified.'):
-      pjit(lambda x: x, in_shardings=s, backend='cpu')
+      with jtu.ignore_warning(category=DeprecationWarning,
+                              message="backend and device argument"):
+        pjit(lambda x: x, in_shardings=s, backend='cpu')
 
     with self.assertRaisesRegex(
         ValueError,
         'If backend or device is specified on jit, then '
         'out_shardings should not be specified.'):
-      pjit(lambda x: x, out_shardings=s, device=jax.devices()[0])
+      with jtu.ignore_warning(category=DeprecationWarning,
+                              message="backend and device argument"):
+        pjit(lambda x: x, out_shardings=s, device=jax.devices()[0])
 
   def test_check_arg_error(self):
     sds = jax.ShapeDtypeStruct((4, 2), np.int32)
@@ -3014,7 +2998,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
   def test_pjit_device_backend_both_error(self):
     with self.assertRaisesRegex(
         ValueError, "can't specify both a device and a backend for jit"):
-      pjit(lambda x: x, device=jax.devices()[0], backend='cpu')
+      with jtu.ignore_warning(category=DeprecationWarning,
+                              message="backend and device argument"):
+        pjit(lambda x: x, device=jax.devices()[0], backend='cpu')
 
   def test_pjit_mesh_with_device_or_backend_error(self):
     mesh = jtu.create_global_mesh((1,), ('x',))
@@ -3023,7 +3009,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
           ValueError,
           "Mesh context manager should not be used with jit when backend or "
           "device is also specified as an argument to jit."):
-        pjit(lambda x: x, device=jax.devices()[0])(jnp.arange(8))
+        with jtu.ignore_warning(category=DeprecationWarning,
+                                message="backend and device argument"):
+          pjit(lambda x: x, device=jax.devices()[0])(jnp.arange(8))
 
   def test_pjit_inline(self):
     @partial(pjit, inline=False)
@@ -3171,7 +3159,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     mesh = jtu.create_global_mesh((1,), ('x',))
     with self.assertRaisesRegex(
         RuntimeError,
-        "jax.jit only supports `XLACompatibleSharding`s being passed to "
+        "jax.jit only supports `Sharding`s being passed to "
         "in_shardings"):
       with mesh:
         jax.jit(lambda x: x, in_shardings=P('x'),
@@ -3240,7 +3228,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     with jtu.count_pjit_cpp_cache_miss() as count:
       for _ in range(10):
-        pjit(lambda x: x * 2, device=jax.devices()[0])(inp)
+        with jtu.ignore_warning(category=DeprecationWarning,
+                                message="backend and device argument"):
+          pjit(lambda x: x * 2, device=jax.devices()[0])(inp)
     self.assertEqual(count[0], 10)
 
     pf = pjit(lambda x: x * 2, in_shardings=s, out_shardings=s)
@@ -3249,7 +3239,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
         pf(inp)
     self.assertEqual(count[0], 1)
 
-    pf1 = pjit(lambda x: x * 2, device=jax.devices()[0])
+    with jtu.ignore_warning(category=DeprecationWarning,
+                            message="backend and device argument"):
+      pf1 = pjit(lambda x: x * 2, device=jax.devices()[0])
     with jtu.count_pjit_cpp_cache_miss() as count:
       for _ in range(10):
         pf1(inp)
@@ -3664,7 +3656,9 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertNotEqual(x.sharding, y.sharding)
 
   def test_vmap_pjit_single_device(self):
-    jf = pjit(lambda x: x, device=jax.devices()[0])
+    with jtu.ignore_warning(category=DeprecationWarning,
+                            message="backend and device argument"):
+      jf = pjit(lambda x: x, device=jax.devices()[0])
     out = jax.vmap(jf)(jnp.ones((3,)))  # doesn't crash
     self.assertIsInstance(out.sharding, SingleDeviceSharding)
 
@@ -3681,8 +3675,10 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertEqual(out.devices(), {jax.devices()[0]})
     self.assertArraysEqual(out, np_inp)
 
-    out2 = jax.jit(identity, device=jax.devices()[0])(
-        jax.device_put(np_inp, NamedSharding(mesh, P('x'))))
+    with jtu.ignore_warning(category=DeprecationWarning,
+                            message="backend and device argument"):
+      out2 = jax.jit(identity, device=jax.devices()[0])(
+          jax.device_put(np_inp, NamedSharding(mesh, P('x'))))
     self.assertEqual(out2.devices(), {jax.devices()[0]})
     self.assertArraysEqual(out2, np_inp)
 
@@ -4137,31 +4133,92 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.assertNotEqual(f(1), g(1))
       self.assertEqual(g(1), h(1))
 
+  def test_wsc_vmap_unconstrained_spmd_axis_name(self):
+    def get_wsc_eqn_sharding(jaxpr):
+      for eqn in jaxpr.eqns:
+        if str(eqn.primitive) == 'sharding_constraint':
+          return eqn.params['sharding'], eqn.params['unconstrained_dims']
+      for s in core.subjaxprs(jaxpr):
+        return get_wsc_eqn_sharding(s)
 
-class TempSharding(Sharding):
+    mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
+    inp = jnp.ones((10, 10))
 
-  def __init__(self, devices):
-    super().__init__()
-    self._devices = devices
-    self._internal_device_list = xc.DeviceList(tuple(self._devices))
+    def a_function(x):
+      return with_sharding_constraint(x, NamedSharding(mesh, P(P.UNCONSTRAINED)))
 
-  @property
-  def device_set(self):
-    return set(self._devices)
+    def vmap_the_function_spmd(y):
+      return jax.vmap(a_function, spmd_axis_name='x')(y)
 
-  def devices_indices_map(self, global_shape):
-    return {d: (slice(None),) * len(global_shape) for d in self.device_set}
+    f1 = jax.jit(vmap_the_function_spmd)
+    f1(inp)  # doesn't crash
+    jaxpr1 = jax.make_jaxpr(f1)(inp)
+    s1, u1 = get_wsc_eqn_sharding(jaxpr1)
+    self.assertEqual(s1.spec, P('x', P.UNCONSTRAINED))
+    self.assertEqual(u1, {1})
 
-  def shard_shape(self, global_shape):
-    return global_shape
+    def vmap_the_function_no_spmd(y):
+      return jax.vmap(a_function)(y)
 
-  @property
-  def memory_kind(self):
-    return None
+    f2 = jax.jit(vmap_the_function_no_spmd)
+    f2(inp)  # doesn't crash
+    jaxpr2 = jax.make_jaxpr(f2)(inp)
+    s2, u2 = get_wsc_eqn_sharding(jaxpr2)
+    self.assertEqual(s2.spec, P(P.UNCONSTRAINED, P.UNCONSTRAINED))
+    self.assertEqual(u2, {0, 1})
 
-  @property
-  def is_fully_replicated(self):
-    return True
+  def test_aot_sharding_dce(self):
+    inp = np.arange(8)
+
+    @jax.jit
+    def f(x, y):
+      return x
+
+    input_shardings, _ = f.lower(inp, inp).compile().input_shardings
+    self.assertLen(input_shardings, 2)
+
+  def test_aot_out_info(self):
+    inp = np.arange(8, dtype=np.int32)
+    out_info = jax.jit(lambda x: x).lower((inp, inp)).out_info
+    self.assertEqual(out_info[0].shape, (8,))
+    self.assertEqual(out_info[1].shape, (8,))
+    self.assertEqual(out_info[0].dtype, np.int32)
+    self.assertEqual(out_info[1].dtype, np.int32)
+    self.assertEqual(out_info[0].sharding, None)
+    self.assertEqual(out_info[1].sharding, None)
+
+  def test_jit_trace(self):
+    def f(x):
+      return x * 2
+
+    traced = jax.jit(f).trace(jnp.arange(8, dtype=jnp.int32))
+    self.assertLen(traced.jaxpr.eqns, 1)
+    self.assertEqual(jax.tree.structure(traced.out_info).num_leaves, 1)
+    self.assertEqual(traced.out_info.shape, (8,))
+    self.assertEqual(traced.out_info.dtype, jnp.int32)
+    # one for args, one for kwargs (though kwargs is empty)
+    self.assertLen(traced.in_avals, 2)
+    self.assertLen(traced.in_avals[0], 1)
+    self.assertLen(traced.in_avals[1], 0)  # empty kwarg
+
+  def test_jit_trace_lower_and_compile(self):
+    def f(x):
+      return x * 2
+
+    lowered = jax.jit(f).trace(jnp.arange(8)).lower()
+    self.assertEqual(lowered.args_info[0][0].shape, (8,))
+
+    compiled = lowered.compile()
+    out = compiled(jnp.arange(8))
+    self.assertArraysEqual(out, np.arange(8) * 2)
+
+    # fast-forward
+    lowered2 = jax.jit(f).lower(jnp.arange(8))
+    self.assertEqual(lowered2.args_info[0][0].shape, (8,))
+
+    compiled2 = lowered2.compile()
+    out2 = compiled2(jnp.arange(8))
+    self.assertArraysEqual(out2, np.arange(8) * 2)
 
 
 def spec_regex(s):
@@ -4270,8 +4327,7 @@ class PJitErrorTest(jtu.JaxTestCase):
         r".*rank at least 2, but was applied to a value of rank 1", re.M | re.S)
     with self.assertRaisesRegex(ValueError, error):
       pjit(
-          lambda x: with_sharding_constraint(x, spec),
-          in_shardings=None,
+          lambda x: with_sharding_constraint(x, spec), in_shardings=None,
           out_shardings=None,
       )(x)
 
@@ -4706,19 +4762,19 @@ class UtilTest(jtu.JaxTestCase):
 
     ops = GSPMDSharding(devices, op1)
     ops.devices_indices_map(shape)
-    cache_info1 = sharding_impls.gspmd_sharding_devices_indices_map.cache_info()
+    cache_info1 = common_devices_indices_map.cache_info()
 
     ops.devices_indices_map(shape)
-    cache_info2 = sharding_impls.gspmd_sharding_devices_indices_map.cache_info()
+    cache_info2 = common_devices_indices_map.cache_info()
     self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
 
     ops = GSPMDSharding(devices, op2)
     ops.devices_indices_map(shape)
-    cache_info3 = sharding_impls.gspmd_sharding_devices_indices_map.cache_info()
+    cache_info3 = common_devices_indices_map.cache_info()
     self.assertEqual(cache_info3.hits, cache_info2.hits + 1)
 
     ops.devices_indices_map(shape)
-    cache_info4 = sharding_impls.gspmd_sharding_devices_indices_map.cache_info()
+    cache_info4 = common_devices_indices_map.cache_info()
     self.assertEqual(cache_info4.hits, cache_info3.hits + 1)
 
   def test_op_sharding_semantically_replicated(self):

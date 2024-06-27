@@ -14,11 +14,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import functools
 from functools import partial
 import logging
-from typing import Any, Callable
+from typing import Any
 import types
 
 import numpy as np

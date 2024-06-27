@@ -2,6 +2,7 @@ absl-py
 build
 cloudpickle
 colorama>=0.4.4
+filelock
 flatbuffers
 hypothesis
 mpmath>=1.3

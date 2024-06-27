@@ -16,6 +16,7 @@
 
 import dataclasses
 import enum
+import functools
 
 import jax
 from jax import random
@@ -216,9 +217,9 @@ class WGMMACvtRhsImpl:
     nvvm.wgmma_wait_group_sync_aligned(0)
     arr.store_tiled(smem_scratch["cvt"], swizzle=128)
     commit_shared()
-    nvvm.wgmma_fence_aligned()
-    return wgmma(acc, a_slice, smem_scratch["cvt"], b_order=b_order)
-
+    acc = wgmma(acc, a_slice, smem_scratch["cvt"], b_order=b_order)
+    nvvm.wgmma_commit_group_sync_aligned()
+    return acc
 
 
 def mlir_context(f):
@@ -239,7 +240,8 @@ def build_kernel(
     wgmma_impl=WGMMADefaultImpl,
     profiler_spec: profiler.ProfilerSpec | None = None,
 ):
-  out_128b_elems = 128 // bytewidth(ir.F32Type.get())
+  f32 = ir.F32Type.get()
+  out_128b_elems = 128 // bytewidth(f32)
   out_tiling = (64, out_128b_elems)
   out_tile = jax.ShapeDtypeStruct(tile_shape((tile_m, tile_n), out_tiling), jnp.float32)
   if tile_m % 64 != 0:
@@ -251,9 +253,10 @@ def build_kernel(
   if stages < 2:
     raise ValueError(f"Need at least 2 stages, but got {stages=}")
 
-  smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
-  lhs_128b_elems = 128 // bytewidth(mlir.dtype_to_ir_type(lhs_dtype))
-  rhs_128b_elems = 128 // bytewidth(mlir.dtype_to_ir_type(rhs_dtype))
+  lhs_elem_bytes = bytewidth(mlir.dtype_to_ir_type(lhs_dtype))
+  rhs_elem_bytes = bytewidth(mlir.dtype_to_ir_type(rhs_dtype))
+  lhs_128b_elems = 128 // lhs_elem_bytes
+  rhs_128b_elems = 128 // rhs_elem_bytes
   tile_k = max(lhs_128b_elems, rhs_128b_elems)
 
   if tile_n % rhs_128b_elems != 0:
@@ -262,18 +265,13 @@ def build_kernel(
         f" {((lhs_128b_elems, lhs_dtype), (rhs_128b_elems, rhs_dtype))}"
     )
 
-  if k % (stages * tile_k) != 0:
-    raise ValueError(
-        f"k must be divisible by {stages=} * {tile_k=} (={stages * tile_k}),"
-        f" but got {k=}"
-    )
+  if k % tile_k != 0:
+    raise ValueError(f"k must be divisible by {tile_k=}, but got {k=}")
 
   block_tiling = Tiling(m=tile_m, n=tile_n, k=tile_k)
   tma_tiling = Tiling(m=64, n=rhs_128b_elems, k=lhs_128b_elems)
   k_steps = k // block_tiling.k
-
-  f32 = ir.F32Type.get()
-  index = ir.IndexType.get()
+  stages = min(stages, k_steps)
 
   def safe_div(x, y):
     assert x % y == 0, (x, y)
@@ -282,8 +280,8 @@ def build_kernel(
   grid = (safe_div(m, block_tiling.m), safe_div(n, block_tiling.n), 1)
   block = (128, 1, 1)
 
-  def c(value, ty=index):
-    return arith.ConstantOp(ty, ir.IntegerAttr.get(ty, value))
+  c = arith.ConstantOp.create_index
+  divmod = lambda x, y: (arith.divui(x, c(y)), arith.remui(x, c(y)))
 
   compute_scratch_shapes = {
       "lhs": jax.ShapeDtypeStruct((stages, *tile_shape(block_tiling.mk, tma_tiling.mk)), lhs_dtype),
@@ -311,13 +309,13 @@ def build_kernel(
     def fetch(slot, ki):
       barrier = barrier_group[slot]
       k_start = arith.muli(c(block_tiling.k), ki)
-      lhs_tma_tile_bytes = np.prod(block_tiling.mk) * bytewidth(mlir.dtype_to_ir_type(lhs_dtype))
-      rhs_tma_tile_bytes = np.prod(block_tiling.kn) * bytewidth(mlir.dtype_to_ir_type(rhs_dtype))
+      lhs_tma_tile_bytes = int(np.prod(block_tiling.mk) * lhs_elem_bytes)
+      rhs_tma_tile_bytes = int(np.prod(block_tiling.kn) * rhs_elem_bytes)
       txcount = c(lhs_tma_tile_bytes + rhs_tma_tile_bytes)
       common_copy_args = dict(
           swizzle=128, barrier=barrier, arrive=False, uniform=False,
       )
-      with once():
+      with single_thread():
         nvgpu.mbarrier_arrive_expect_tx(barrier_group.value, txcount, slot)
         ctx.async_copy(
             src_ref=a_device,
@@ -389,26 +387,35 @@ def build_kernel(
       # TODO(apaszke): Make this into a proper copy function.
       warps_per_warpgroup = 4
       lanes_per_warp = 32
-      n_out_tiling = out_tiling[-1]
-      tidx = gpu.thread_id(gpu.Dimension.x)
-      warp_id = arith.divui(tidx, c(lanes_per_warp))
-      lane_id = arith.remui(tidx, c(lanes_per_warp))
+      m_out_tiling, n_out_tiling = out_tiling[-2:]
+      warp_id, lane_id = divmod(gpu.thread_id(gpu.Dimension.x), lanes_per_warp)
       # We store 4 f32 numbers for a block of 16B.
       vector_len = 4
-      num_vectors = safe_div(tile_n, vector_len)
-      for_op = scf.ForOp(warp_id, c(tile_m), c(warps_per_warpgroup))
-      with ir.InsertionPoint(for_op.body):
-        nested_for_op = scf.ForOp(lane_id, c(num_vectors), c(lanes_per_warp))
-        with ir.InsertionPoint(nested_for_op.body):
-          vector_idx = nested_for_op.induction_variable
+      num_vectors_per_row = safe_div(tile_n, vector_len)
+      # Process several rows at once if it is necessary to fully exploit each
+      # warp.
+      if tile_n < lanes_per_warp * vector_len:
+        num_rows_per_warp = min(
+            safe_div(lanes_per_warp * vector_len, tile_n),
+            safe_div(tile_m, warps_per_warpgroup))
+      else:
+        num_rows_per_warp = 1
+      lanes_per_row = safe_div(lanes_per_warp, num_rows_per_warp)
+      lane_row_offset, lane_col_offset = divmod(lane_id, lanes_per_row)
+      warp_for_op = scf.ForOp(arith.muli(warp_id, c(num_rows_per_warp)),
+                              c(tile_m),
+                              c(warps_per_warpgroup * num_rows_per_warp))
+      with ir.InsertionPoint(warp_for_op.body):
+        start_row = warp_for_op.induction_variable
+        m_row_idx = arith.addi(start_row, lane_row_offset)
+        vector_for_op = scf.ForOp(lane_col_offset, c(num_vectors_per_row),
+                                  c(lanes_per_row))
+        with ir.InsertionPoint(vector_for_op.body):
+          vector_idx = vector_for_op.induction_variable
           n_store = arith.muli(vector_idx, c(vector_len))
-          col_group = arith.divui(n_store, c(n_out_tiling))
-          n_load = arith.remui(n_store, c(n_out_tiling))
-
-          m_smem = for_op.induction_variable
-          m_within_tile = arith.remui(m_smem, c(64))
-          m_tile = arith.divui(m_smem, c(64))
-          swizzle_source = arith.shli(arith.remui(m_smem, c(8)), c(2))
+          col_group, n_load = divmod(n_store, n_out_tiling)
+          m_tile, m_within_tile = divmod(m_row_idx, m_out_tiling)
+          swizzle_source = arith.shli(arith.remui(m_row_idx, c(8)), c(2))
           n_acc = arith.xori(n_load, swizzle_source)
           acc_part = vector.load(
               ir.VectorType.get((vector_len,), f32),
@@ -418,7 +425,7 @@ def build_kernel(
           vector.store(
               acc_part,
               c_device,
-              [arith.addi(m_start, m_smem), arith.addi(n_start, n_store)],
+              [arith.addi(m_start, m_row_idx), arith.addi(n_start, n_store)],
           )
           scf.yield_([])
         scf.yield_([])
@@ -480,7 +487,7 @@ def verify(
       case F32Precision.TF32_X3:
         impl = WGMMATF32x3Impl
 
-  prof_spec = profiler.ProfilerSpec(132 * 4096) if profile else None
+  prof_spec = profiler.ProfilerSpec(4096) if profile else None
   f = build_kernel(
       m, n, k,
       jnp.dtype(lhs_dtype), jnp.dtype(rhs_dtype),
@@ -503,16 +510,21 @@ def verify(
         jax.lax.reduce_precision(v, exponent_bits, mantissa_bits)
         for v in (x, y)
     )
-  ref = jax.lax.dot_general(
-      x, y, dimension_numbers,
+
+  ref_f = functools.partial(
+      jax.lax.dot_general,
+      dimension_numbers=dimension_numbers,
       preferred_element_type=jnp.float32,
   )
+
+  ref, ref_runtime = profiler.measure(ref_f, x, y)
   np.testing.assert_allclose(z, ref, atol=1e-3, rtol=1e-3)
-  return runtime
+  return runtime, ref_runtime
 
 
 if __name__ == "__main__":
   m, k, n = 33 * 128, 2048, 4 * 128
-  runtime = verify(m=m, k=k, n=n)
+  runtime, ref_runtime = verify(m=m, k=k, n=n)
   tflops = float(2 * k * m * n) / (runtime / 1e3) / 1e12
-  print(f"{runtime * 1000:.1f} us = {tflops:.1f} TFLOPS")
+  print(f"Kernel:    {runtime * 1000:.1f} us = {tflops:.1f} TFLOPS")
+  print(f"Reference: {runtime * 1000:.1f} us = {tflops:.1f} TFLOPS")

@@ -283,6 +283,10 @@ cc_library(
         ":cuda_vendor",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings:str_format",
         "@local_config_cuda//cuda:cuda_headers",
     ],
 )
@@ -296,7 +300,7 @@ cuda_library(
     deps = [
         ":cuda_gpu_kernel_helpers",
         ":cuda_vendor",
-        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/ffi/api:ffi",
         "@xla//xla/service:custom_call_status",
         "@local_config_cuda//cuda:cuda_headers",
     ],
@@ -513,8 +517,6 @@ cc_library(
     deps = [
         ":cuda_gpu_kernel_helpers",
         ":cuda_vendor",
-        "//jaxlib:absl_status_casters",
-        "//jaxlib:kernel_nanobind_helpers",
         "@xla//xla/tsl/cuda:cublas",
         "@xla//xla/tsl/cuda:cudart",
         "@xla//xla/tsl/cuda:cudnn",
@@ -522,6 +524,7 @@ cc_library(
         "@xla//xla/tsl/cuda:cupti",
         "@xla//xla/tsl/cuda:cusolver",
         "@xla//xla/tsl/cuda:cusparse",
+        "@com_google_absl//absl/base:dynamic_annotations",
     ],
 )
 
@@ -575,6 +578,7 @@ py_library(
         ":_sparse",
         ":_triton",
         ":_versions",
+        "//jaxlib/mosaic/gpu:mosaic_gpu",
     ],
 )
 

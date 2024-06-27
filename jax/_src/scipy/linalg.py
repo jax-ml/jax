@@ -78,7 +78,7 @@ def cholesky(a: ArrayLike, lower: bool = False, overwrite_a: bool = False,
    - :func:`jax.scipy.linalg.cho_factor`
    - :func:`jax.scipy.linalg.cho_solve`
 
-  Example:
+  Examples:
     A small real Hermitian positive-definite matrix:
 
     >>> x = jnp.array([[2., 1.],
@@ -130,7 +130,7 @@ def cho_factor(a: ArrayLike, lower: bool = False, overwrite_a: bool = False,
     - :func:`jax.scipy.linalg.cholesky`
     - :func:`jax.scipy.linalg.cho_solve`
 
-  Example:
+  Examples:
     A small real Hermitian positive-definite matrix:
 
     >>> x = jnp.array([[2., 1.],
@@ -174,7 +174,7 @@ def cho_solve(c_and_lower: tuple[ArrayLike, bool], b: ArrayLike,
   Args:
     c_and_lower: ``(c, lower)``, where ``c`` is an array of shape ``(..., N, N)``
       representing the lower or upper cholesky decomposition of the matrix, and
-      ``lower`` is a boolean specifying whethe this is the lower or upper decomposition.
+      ``lower`` is a boolean specifying whether this is the lower or upper decomposition.
     b: right-hand-side of linear system. Must have shape ``(..., N)``
     overwrite_a: unused by JAX
     check_finite: unused by JAX
@@ -186,7 +186,7 @@ def cho_solve(c_and_lower: tuple[ArrayLike, bool], b: ArrayLike,
     - :func:`jax.scipy.linalg.cholesky`
     - :func:`jax.scipy.linalg.cho_factor`
 
-  Example:
+  Examples:
     A small real Hermitian positive-definite matrix:
 
     >>> x = jnp.array([[2., 1.],
@@ -288,7 +288,7 @@ def svd(a: ArrayLike, full_matrices: bool = True, compute_uv: bool = True,
     - :func:`jax.numpy.linalg.svd`: NumPy-style SVD API
     - :func:`jax.lax.linalg.svd`: XLA-style SVD API
 
-  Example:
+  Examples:
     Consider the SVD of a small real-valued array:
 
     >>> x = jnp.array([[1., 2., 3.],
@@ -415,7 +415,7 @@ def eigh(a: ArrayLike, b: ArrayLike | None = None, lower: bool = True,
          type: int = 1, check_finite: bool = True) -> Array | tuple[Array, Array]:
   """Compute eigenvalues and eigenvectors for a Hermitian matrix
 
-  JAX implementation of :func:`jax.scipy.linalg.eigh`.
+  JAX implementation of :func:`scipy.linalg.eigh`.
 
   Args:
     a: Hermitian input array of shape ``(..., N, N)``
@@ -513,10 +513,10 @@ def schur(a: ArrayLike, output: str = 'real') -> tuple[Array, Array]:
       transformation matrix.
 
   See also:
-    - :func:`jax.scipy.linalg.rsf2csf`: conver real Schur form to complex Schur form.
+    - :func:`jax.scipy.linalg.rsf2csf`: convert real Schur form to complex Schur form.
     - :func:`jax.lax.linalg.schur`: XLA-style API for Schur decomposition.
 
-  Example:
+  Examples:
     A Schur decomposition of a 3x3 matrix:
 
     >>> a = jnp.array([[1., 2., 3.],
@@ -570,7 +570,7 @@ def inv(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True) -> A
     - :func:`jax.numpy.linalg.inv`: NumPy-style API for matrix inverse
     - :func:`jax.scipy.linalg.solve`: direct linear solver
 
-  Example:
+  Examples:
     Compute the inverse of a 3x3 matrix
 
     >>> a = jnp.array([[1., 2., 3.],
@@ -630,7 +630,7 @@ def lu_factor(a: ArrayLike, overwrite_a: bool = False, check_finite: bool = True
     - :func:`jax.scipy.linalg.lu`
     - :func:`jax.scipy.linalg.lu_solve`
 
-  Example:
+  Examples:
     Solving a small linear system via LU factorization:
 
     >>> a = jnp.array([[2., 1.],
@@ -686,7 +686,7 @@ def lu_solve(lu_and_piv: tuple[Array, ArrayLike], b: ArrayLike, trans: int = 0,
     - :func:`jax.scipy.linalg.lu`
     - :func:`jax.scipy.linalg.lu_factor`
 
-  Example:
+  Examples:
     Solving a small linear system via LU factorization:
 
     >>> a = jnp.array([[2., 1.],
@@ -784,7 +784,7 @@ def lu(a: ArrayLike, permute_l: bool = False, overwrite_a: bool = False,
     - :func:`jax.lax.linalg.lu`: XLA-style API for LU decomposition.
     - :func:`jax.scipy.linalg.lu_solve`: LU-based linear solver.
 
-  Example:
+  Examples:
     An LU decomposition of a 3x3 matrix:
 
     >>> a = jnp.array([[1., 2., 3.],
@@ -888,7 +888,7 @@ def qr(a: ArrayLike, overwrite_a: bool = False, lwork: Any = None, mode: str = "
       - ``"economic"``: return `Q` of shape ``(M, K)`` and `R` of shape ``(K, N)``,
         where K = min(M, N).
 
-    pivoting: Not implemened in JAX.
+    pivoting: Not implemented in JAX.
     overwrite_a: unused in JAX
     lwork: unused in JAX
     check_finite: unused in JAX
@@ -906,7 +906,7 @@ def qr(a: ArrayLike, overwrite_a: bool = False, lwork: Any = None, mode: str = "
 
   See also:
     - :func:`jax.numpy.linalg.qr`: NumPy-style QR decomposition API
-    - :func:`jax.lax.linalg.qr`: XLA-style QR decompositon API
+    - :func:`jax.lax.linalg.qr`: XLA-style QR decomposition API
 
   Examples:
     Compute the QR decomposition of a matrix:
@@ -999,7 +999,7 @@ def solve(a: ArrayLike, b: ArrayLike, lower: bool = False,
     - :func:`jax.numpy.linalg.solve`: NumPy-style API for solving linear systems.
     - :func:`jax.lax.custom_linear_solve`: matrix-free linear solver.
 
-  Example:
+  Examples:
     A simple 3x3 linear system:
 
     >>> A = jnp.array([[1., 2., 3.],
@@ -1083,7 +1083,7 @@ def solve_triangular(a: ArrayLike, b: ArrayLike, trans: int | str = 0, lower: bo
   See also:
     :func:`jax.scipy.linalg.solve`: Solve a general linear system.
 
-  Example:
+  Examples:
     A simple 3x3 triangular linear system:
 
     >>> A = jnp.array([[1., 2., 3.],
@@ -1105,7 +1105,7 @@ def solve_triangular(a: ArrayLike, b: ArrayLike, trans: int | str = 0, lower: bo
     >>> x
     Array([10. , -4. , -3.4], dtype=float32)
 
-    Confiriming that the result solves the system:
+    Confirming that the result solves the system:
 
     >>> jnp.allclose(A.T @ x, b)
     Array(True, dtype=bool)
@@ -1137,6 +1137,32 @@ def expm(A: ArrayLike, *, upper_triangular: bool = False, max_squarings: int = 1
 
   See Also:
     :func:`jax.scipy.linalg.expm_frechet`
+
+  Examples:
+
+    ``expm`` is the matrix exponential, and has similar properties to the more
+    familiar scalar exponential. For scalars ``a`` and ``b``, :math:`e^{a + b}
+    = e^a e^b`. However, for matrices, this property only holds when ``A`` and
+    ``B`` commute (``AB = BA``). In this case, ``expm(A+B) = expm(A) @ expm(B)``
+
+    >>> A = jnp.array([[2, 0],
+    ...                [0, 1]])
+    >>> B = jnp.array([[3, 0],
+    ...                [0, 4]])
+    >>> jnp.allclose(jax.scipy.linalg.expm(A+B),
+    ...              jax.scipy.linalg.expm(A) @ jax.scipy.linalg.expm(B),
+    ...              rtol=0.0001)
+    Array(True, dtype=bool)
+
+    If a matrix ``X`` is invertible, then
+    ``expm(X @ A @ inv(X)) = X @ expm(A) @ inv(X)``
+
+    >>> X = jnp.array([[3, 1],
+    ...                [2, 5]])
+    >>> X_inv = jax.scipy.linalg.inv(X)
+    >>> jnp.allclose(jax.scipy.linalg.expm(X @ A @ X_inv),
+    ...              X @ jax.scipy.linalg.expm(A) @ X_inv)
+    Array(True, dtype=bool)
   """
   A, = promote_dtypes_inexact(A)
 
@@ -1358,7 +1384,7 @@ def block_diag(*arrs: ArrayLike) -> Array:
     2D block-diagonal array constructed by placing the input arrays
     along the diagonal.
 
-  Example:
+  Examples:
     >>> A = jnp.ones((1, 1))
     >>> B = jnp.ones((2, 2))
     >>> C = jnp.ones((3, 3))
@@ -1642,6 +1668,36 @@ def polar(a: ArrayLike, side: str = 'right', *, method: str = 'qdwh', eps: float
     ``posdef`` is either :math:`n \times n` or :math:`m \times m` depending on
     whether ``side`` is ``"right"`` or ``"left"``, respectively.
 
+  Examples:
+
+    Polar decomposition of a 3x3 matrix:
+
+    >>> a = jnp.array([[1., 2., 3.],
+    ...                [5., 4., 2.],
+    ...                [3., 2., 1.]])
+    >>> U, P = jax.scipy.linalg.polar(a)
+
+    U is a Unitary Matrix:
+
+    >>> jnp.round(U.T @ U)
+    Array([[ 1., -0., -0.],
+           [-0.,  1.,  0.],
+           [-0.,  0.,  1.]], dtype=float32)
+
+    P is positive-semidefinite Matrix:
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...     print(P)
+    [[4.79 3.25 1.23]
+     [3.25 3.06 2.01]
+     [1.23 2.01 2.91]]
+
+    The original matrix can be reconstructed by multiplying the U and P:
+
+    >>> a_reconstructed = U @ P
+    >>> jnp.allclose(a, a_reconstructed)
+    Array(True, dtype=bool)
+
   .. _QDWH: https://epubs.siam.org/doi/abs/10.1137/090774999
   """
   arr = jnp.asarray(a)
@@ -1730,7 +1786,7 @@ def sqrtm(A: ArrayLike, blocksize: int = 1) -> Array:
   See Also:
     :func:`jax.scipy.linalg.expm`
 
-  Example:
+  Examples:
     >>> a = jnp.array([[1., 2., 3.],
     ...                [2., 4., 2.],
     ...                [3., 2., 1.]])
@@ -1780,7 +1836,7 @@ def rsf2csf(T: ArrayLike, Z: ArrayLike, check_finite: bool = True) -> tuple[Arra
   See Also:
     :func:`jax.scipy.linalg.schur`: Schur decomposition
 
-  Example:
+  Examples:
     >>> A = jnp.array([[0., 3., 3.],
     ...                [0., 1., 2.],
     ...                [2., 0., 1.]])
@@ -1803,7 +1859,7 @@ def rsf2csf(T: ArrayLike, Z: ArrayLike, check_finite: bool = True) -> tuple[Arra
      [ 0.   -0.88 -0.35]
      [ 0.    2.37 -0.88]]
 
-    By contrast, the complex form is truely upper-triangular:
+    By contrast, the complex form is truly upper-triangular:
 
     >>> with jnp.printoptions(precision=2, suppress=True):
     ...   print(Tc)
@@ -1905,7 +1961,7 @@ def hessenberg(a: ArrayLike, *, calc_q: bool = False, overwrite_a: bool = False,
     - ``H`` has shape ``(..., N, N)`` and is the Hessenberg form of ``a``
     - ``Q`` has shape ``(..., N, N)`` and is the associated unitary matrix
 
-  Example:
+  Examples:
     Computing the Hessenberg form of a 4x4 matrix
 
     >>> a = jnp.array([[1., 2., 3., 4.],

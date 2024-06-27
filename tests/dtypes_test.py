@@ -558,6 +558,22 @@ class DtypesTest(jtu.JaxTestCase):
     _, new_scale = jax.jit(jax.grad(outer, (0, 1)))(jnp.float32(3.14), scale)
     self.assertAllClose(new_scale, jnp.float32(1.0))
 
+  def test_check_dtype_non_hashable(self):
+    # regression test for issue with checking non-hashable custom dtype
+    class MyDtype:
+      __hash__ = None
+      dtype = np.dtype('float32')
+    dtypes.check_user_dtype_supported(MyDtype())
+
+  def test_check_dtype_array(self):
+    x = jnp.arange(4)
+    msg = "Passing an array as a dtype argument is deprecated"
+    with self.assertWarnsRegex(DeprecationWarning, msg):
+      dtypes.check_user_dtype_supported(x)
+    with self.assertWarnsRegex(DeprecationWarning, msg):
+      jax.jit(dtypes.check_user_dtype_supported)(x)
+
+
 class EArrayTest(jtu.JaxTestCase):
 
   @parameterized.parameters([True, False])
@@ -579,25 +595,12 @@ class EArrayTest(jtu.JaxTestCase):
         return core.ShapedArray((), dtypes.dtype('float32'))
 
       @staticmethod
-      def replicate_trailing_dims(ctx, val, aval):
-        del ctx, aval
-        return val
-
-      @staticmethod
-      def logical_sharding(aval, phys_sharding):
-        return phys_sharding
-
-      @staticmethod
       def global_sharded_result_handler(aval, out_sharding, committed):
         phys_sharding = out_sharding  # unlike KeyTyRules, assume same shape
         phys_aval = core.physical_aval(aval)
         phys_handler_maker = pxla.global_result_handlers[core.ShapedArray]
         phys_handler = phys_handler_maker(phys_aval, phys_sharding, committed)
         return lambda bufs: earray.EArray(aval, phys_handler(bufs))
-
-      @staticmethod
-      def physical_sharding(aval, sharding):
-        return sharding  # unlike KeyTyRules, assume same shape
 
     @dataclasses.dataclass(frozen=True)
     class FooTy(dtypes.ExtendedDType):

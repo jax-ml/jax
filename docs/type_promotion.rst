@@ -226,7 +226,7 @@ context manager:
   >>> x = jnp.float32(1)
   >>> y = jnp.int32(1)
   >>> with jax.numpy_dtype_promotion('strict'):
-  ...   z = x + y  # doctest: +IGNORE_EXCEPTION_DETAIL
+  ...   z = x + y  # doctest: +SKIP
   ...
   Traceback (most recent call last):
   TypePromotionError: Input dtypes ('float32', 'int32') have no available implicit

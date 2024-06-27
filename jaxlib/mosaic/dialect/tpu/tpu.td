@@ -232,6 +232,7 @@ def TPU_StridedStoreOp : TPU_Op<"strided_store"> {
   let hasVerifier = 1;
 }
 
+// TODO(jevinjiang): deprecate to use dynamic_rotate.
 def TPU_RotateOp : TPU_Op<"rotate", [Pure, SameOperandsAndResultType]> {
   let arguments = (ins
     AnyVector:$value,
@@ -245,6 +246,23 @@ def TPU_RotateOp : TPU_Op<"rotate", [Pure, SameOperandsAndResultType]> {
   let results = (outs AnyVector:$result);
   let assemblyFormat = [{
     $value `by` $amount `dim` $dimension (`stride` $stride `stride_dim` $stride_dimension^)? attr-dict `:` type($value)
+  }];
+  let hasVerifier = 1;
+}
+
+def TPU_DynamicRotateOp : TPU_Op<"dynamic_rotate", [Pure]> {
+  let arguments = (ins
+    AnyVector:$value,
+    I32:$amount,
+    SI32Attr:$dimension,
+    // When the stride is specified, the rotation amount for each index on the
+    // stride dimension will be (amount + stride * index).
+    OptionalAttr<SI32Attr>:$stride,
+    OptionalAttr<SI32Attr>:$stride_dimension
+  );
+  let results = (outs AnyVector:$result);
+  let assemblyFormat = [{
+    $value `by` $amount `dim` $dimension attr-dict `:` type($value) `,` type($amount)  `->` type($result)
   }];
   let hasVerifier = 1;
 }
@@ -392,6 +410,35 @@ def TPU_CreateMaskOp : TPU_Op<"create_mask", [Pure, SameVariadicOperandSize]> {
 }
 
 def TPU_CreateSubelementMaskOp : TPU_Op<"create_subelement_mask", [Pure]> {
+  let summary = "Create a mask masking contiguous rows of subelements.";
+  // TODO(tlongeri): Why don't we just get `num_subelems` from the result type?
+  //                 Taking a parameter and allowing a mismatch is confusing.
+  let description = [{
+    The "half-sublanes", "quarter-sublanes", etc. (unit is determined by
+    `num_subelems`) of the mask are masked in the range specified by `from` and
+    `to`.
+
+    - If `from <= to`, the range `[from, to)` is set and the rest is unset.
+    - If `to <= from`, the range `[to, from)` is unset and the rest is set.
+
+    All lanes are set identically.
+
+    Example:
+
+    ```mlir
+    %msk = tpu.create_subelement_mask 3, 9, 2 : vector<8x128x2xi1>
+    ```
+
+    This creates a mask `%msk` where, for all `lane`s, `%msk[*][lane][*]` is:
+
+    ```
+    [[0, 0], [0, 1], [1, 1], [1, 1], [1, 0], [0, 0], [0, 0], [0, 0]]
+    ```
+
+    It is currently only supported:
+    - In TPU v4, for `num_subelems` of 1 and 2.
+    - In TPU v5, for `num_subelems` of 1, 2, and 4.
+  }];
   let arguments = (ins
     I32Attr:$from,  // inclusive
     I32Attr:$to,  // exclusive
@@ -576,6 +623,12 @@ def TPU_GetIterationBoundOp : TPU_Op<"iteration_bound"> {
   let assemblyFormat = [{ $dim attr-dict `:` type($result) }];
 }
 
+def TPU_GetInternalScratchOp : TPU_Op<"internal_scratch">  {
+  let arguments = (ins);
+  let results = (outs AnyMemRef:$result);
+  let assemblyFormat = [{ attr-dict `:` type($result) }];
+}
+
 def TPU_PRNGSeed32Op : TPU_Op<"prng_set_seed_32"> {
   let arguments = (ins Variadic<I32>:$seeds);
   let results = (outs);
@@ -666,6 +719,7 @@ def ApplyVectorLayoutPass : Pass<"tpu-apply-vector-layout", "::mlir::func::FuncO
     Option<"sublane_count", "sublane-count", "int", /*default=*/"8", "">,
     Option<"mxu_contracting_size", "mxu-contracting-size", "int", /*default=*/"128", "">,
     Option<"mxu_noncontracting_size", "mxu-noncontracting-size", "int", /*default=*/"128", "">,
+    Option<"max_sublanes_in_scratch", "max-sublanes-in-scratch", "int", /*default=*/"0", "">,
   ];
 }
 
@@ -679,7 +733,10 @@ def LinalgVectorizationPass : Pass<"linalg-vectorization", "::mlir::func::FuncOp
     "::mlir::tpu::TPUDialect",
   ];
   let constructor = "::mlir::tpu::createLinalgVectorizationPass(false)";
-  let options = [Option<"supports_bf16_alu_instructions", "supports-bf16-alu-instructions", "bool", "", "">];
+  let options = [
+    Option<"supports_bf16_alu_instructions", "supports-bf16-alu-instructions", "bool", "", "">,
+    Option<"supports_bf16_matmul", "supports-bf16-matmul", "bool", "", "">,
+  ];
 }
 
 #endif  // TPU_ATTRS

@@ -15,9 +15,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import itertools
-from typing import Any, Callable, Optional, Union
+from typing import Any
 
 import jax
 from jax import lax
@@ -756,7 +756,11 @@ class Jax2TfLimitation(test_harnesses.Limitation):
             enabled=(str(harness.params["fft_type"]) in ["FftType.IFFT",
                                                          "FftType.IRFFT"])),
         # TODO: very high tolerance
-        custom_numeric(tol=1e-3, modes=("eager", "graph", "compiled")),
+        custom_numeric(tol=1e-3, modes=("eager", "graph", "compiled"),
+                       native_serialization=Jax2TfLimitation.FOR_NON_NATIVE),
+        custom_numeric(tol=1e-5, modes=("eager", "graph", "compiled"),
+                       native_serialization=Jax2TfLimitation.FOR_NATIVE,
+                       devices=("cpu",)),
     ]
 
   @classmethod

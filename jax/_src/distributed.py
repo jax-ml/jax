@@ -102,7 +102,9 @@ class State:
     if process_id == 0:
       if self.service is not None:
         raise RuntimeError('distributed.initialize should only be called once.')
-      logger.info('Starting JAX distributed service on %s', coordinator_address)
+      logger.info(
+          'Starting JAX distributed service on %s', coordinator_bind_address
+      )
       self.service = xla_extension.get_distributed_runtime_service(
           coordinator_bind_address, num_processes)
 
@@ -208,7 +210,7 @@ def initialize(coordinator_address: str | None = None,
     RuntimeError: If :func:`~jax.distributed.initialize` is called more than once
       or if called after the backend is already initialized.
 
-  Example:
+  Examples:
 
   Suppose there are two GPU processes, and process 0 is the designated coordinator
   with address ``10.0.0.1:1234``. To initialize the GPU cluster, run the

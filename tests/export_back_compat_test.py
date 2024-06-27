@@ -27,11 +27,10 @@ import numpy as np
 
 import jax
 from jax import lax
-from jax.experimental.export import _export
+from jax._src.export import _export
 
 from jax._src.internal_test_util import export_back_compat_test_util as bctu
 
-from jax._src.internal_test_util.export_back_compat_test_data import cpu_ducc_fft
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_cholesky_lapack_potrf
 from jax._src.internal_test_util.export_back_compat_test_data import cpu_eig_lapack_geev
 from jax._src.internal_test_util.export_back_compat_test_data import cuda_eigh_cusolver_syev
@@ -51,6 +50,7 @@ from jax._src.internal_test_util.export_back_compat_test_data import tpu_Shardin
 from jax._src.internal_test_util.export_back_compat_test_data import tpu_stablehlo_dynamic_reduce_window
 from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_rng_bit_generator
 from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_top_k
+from jax._src.internal_test_util.export_back_compat_test_data import stablehlo_dynamic_approx_top_k
 
 from jax.experimental import pjit
 from jax.experimental.shard_map import shard_map
@@ -108,7 +108,6 @@ class CompatTest(bctu.CompatTestBase):
     # Add here all the testdatas that should cover the targets guaranteed
     # stable
     covering_testdatas = [
-        cpu_ducc_fft.data_2023_06_14,
         cpu_cholesky_lapack_potrf.data_2023_06_19,
         cpu_eig_lapack_geev.data_2023_06_19,
         cpu_eigh_lapack_syev.data_2023_03_17,
@@ -126,6 +125,7 @@ class CompatTest(bctu.CompatTestBase):
         stablehlo_dynamic_rng_bit_generator.data_2023_06_17,
         stablehlo_dynamic_top_k.data_2023_07_16,
         stablehlo_dynamic_top_k.data_2023_08_11,  # with shape_assertion
+        stablehlo_dynamic_approx_top_k.data_2024_05_30,
     ]
     # Some of the above are nested structures.
     covering_testdatas = itertools.chain(
@@ -145,16 +145,6 @@ class CompatTest(bctu.CompatTestBase):
                      msg=("The following custom call targets are declared "
                           "stable but are not covered by any tests: "
                           f"{not_covered}"))
-
-  def test_ducc_fft(self):
-    def func(x):
-      return lax.fft(x, fft_type="fft", fft_lengths=(4,))
-
-    # TODO(b/311175955): Remove this test and the corresponding custom calls.
-    # A newer lowering, with dynamic_ducc_fft.
-    data = self.load_testdata(cpu_ducc_fft.data_2023_06_14)
-    # FFT no longer lowers to a custom call.
-    self.run_one_test(func, data, expect_current_custom_calls=[])
 
   def cholesky_input(self, shape, dtype):
     a = jtu.rand_default(self.rng())(shape, dtype)
@@ -596,7 +586,7 @@ class CompatTest(bctu.CompatTestBase):
   def test_sharding(self):
     # Tests "Sharding", "SPMDShardToFullShape", "SPMDFullToShardShape" on TPU
     if not jtu.test_device_matches(["tpu"]) or len(jax.devices()) < 2:
-     self.skipTest("Test runs only on TPU with at least 2 devices")
+      self.skipTest("Test runs only on TPU with at least 2 devices")
 
     # Must use exactly 2 devices for expected outputs from ppermute
     devices = jax.devices()[:2]
@@ -720,6 +710,44 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data_2,
                       polymorphic_shapes=("_, b",),
                       check_results=check_top_k_results)
+
+  def test_dynamic_approx_top_k(self):
+    # stablehlo.dynamic_approx_top_k is used temporarily for a approx_top_k
+    # with dynamism
+    # This is the input that was used to generate the test_data
+    _ = np.arange(24, dtype=np.float32)
+
+    def func(a):  # a: f32[b + 4]
+      return lax.approx_max_k(a, k=a.shape[0] - 4)
+
+    data = self.load_testdata(stablehlo_dynamic_approx_top_k.data_2024_05_30)
+
+    def check_top_k_results(res_run, res_expected, *, rtol, atol):
+      a = data.inputs[0]
+      # The order of the results may be different, but should be the same ones
+      values_expected, _ = res_expected
+      values_run, indices_run = res_run
+      # Check that indices are correct
+      self.assertAllClose(
+          values_run,
+          a[indices_run],
+          atol=atol,
+          rtol=rtol,
+      )
+      self.assertAllClose(
+          np.sort(values_run), np.sort(values_expected), atol=atol, rtol=rtol
+      )
+
+    self.run_one_test(
+        func,
+        data,
+        polymorphic_shapes=("b + 4,",),
+        check_results=check_top_k_results,
+        expect_current_custom_calls=[
+            "stablehlo.dynamic_approx_top_k",
+            "shape_assertion",
+        ],
+    )
 
 
 if __name__ == "__main__":

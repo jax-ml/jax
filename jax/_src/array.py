@@ -15,12 +15,12 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import enum
 import functools
 import math
 import operator as op
-from typing import Any, Callable, TYPE_CHECKING, cast
+from typing import Any, TYPE_CHECKING, cast
 
 from jax._src import abstract_arrays
 from jax._src import api
@@ -42,10 +42,10 @@ from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension as xe
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import (
-    PmapSharding, SingleDeviceSharding, XLACompatibleSharding,
-    device_replica_id_map, hashed_index, num_addressable_indices)  # pyformat: disable
+    PmapSharding, SingleDeviceSharding,
+    device_replica_id_map, hashed_index, num_addressable_indices, local_to_global_shape)  # pyformat: disable
 from jax._src.typing import ArrayLike, DLDeviceType
-from jax._src.util import safe_zip, unzip3, use_cpp_class, use_cpp_method
+from jax._src.util import safe_zip, unzip3, use_cpp_class, use_cpp_method, cache
 import numpy as np
 
 
@@ -120,7 +120,7 @@ def _reconstruct_array(fun, args, arr_state, aval_state):
   return jnp_value
 
 
-@functools.lru_cache(maxsize=4096)
+@cache(max_size=4096, trace_context_in_key=False)
 def _cached_index_calc(s, shape):
   map_ = s.addressable_devices_indices_map(shape)
   seen_h_indices = set()
@@ -133,7 +133,7 @@ def _cached_index_calc(s, shape):
   return l
 
 
-@functools.lru_cache(maxsize=4096)
+@cache(max_size=4096, trace_context_in_key=False)
 def _process_has_full_value_in_mcjax(s, shape):
   # Return False for single host as a fast path.
   if xla_bridge.process_count() == 1:
@@ -218,9 +218,8 @@ class ArrayImpl(basearray.Array):
             f"{self.aval.str_short()} with sharding {self.sharding}")
 
     # Rearrange arrays based on the device assignment.
-    if isinstance(self.sharding, XLACompatibleSharding):
-      addressable_da = self.sharding._addressable_device_assignment
-      self._arrays = [device_id_to_buffer[device.id] for device in addressable_da]
+    addressable_da = self.sharding._addressable_device_assignment
+    self._arrays = [device_id_to_buffer[device.id] for device in addressable_da]
 
   @property
   def shape(self) -> Shape:
@@ -654,7 +653,7 @@ def make_array_from_callback(
   Returns:
     A ``jax.Array`` via data fetched from ``data_callback``.
 
-  Example:
+  Examples:
 
     >>> import math
     >>> from jax.sharding import Mesh
@@ -735,7 +734,7 @@ def make_array_from_callback(
 def make_array_from_process_local_data(
     sharding: Sharding,
     local_data: np.ndarray,
-    global_shape: tuple[int, ...],
+    global_shape: Shape | None = None,
 ) -> ArrayImpl:
   # pyformat: disable
   """Creates distributed tensor using the data available in process.
@@ -744,26 +743,38 @@ def make_array_from_process_local_data(
   assumes that the data is available in the process and takes care of the
   index wrangling.
 
-  Note, if the two hosts are replicas, host_local_data should be identical as
-  well.
-  Each dimension of the shape of host_local_data should either match
-  global_shape or the # indices the devices on this process need to
-  address. For example if dimension $i$ is fully sharded then this size would be
-  `per_device_shape[i] * jax.local_device_count()`.
-
-  If the shape matches global shape, each device slice will just lookup
-  the slice in the local_data. In the latter case the global slice of each
-  device will be mapped into local slice of `local_data` array. For example,
-  if given process only addresses slices (8, 12) and  (24, 28), then
-  these slices will be mapped into (0, 4) and (4, 8) of the `local_data`.
-
-  This function can be used to create tensors from dataset feeding pipelines.
-
-  The most common case is when the sharding is fully sharded across the batch
+  The most common case is when the sharding is sharded across the batch
   dimension and each host just loads its corresponding sub-batch. This function
-  supports more general case as well, such as multi-host replication
-  but you would need to compute the size and the contents of process-local data
-  correctly to satisfy the replication constraints.
+  supports more general cases as well, such as mixed multi-host and multi-axis
+  replication and sharding but you would need to compute the size and the
+  contents of process-local data correctly to satisfy the sharding constraints.
+
+  In particular, if any two hosts are replicas, host_local_data should be
+  identical as well.
+
+  The global_shape is optional. If not provided it will be be inferred from
+  the local_data and sharding, under the assumption that
+  each host represents only their own data for uniform sharding. If sharding
+  is non-uniform, (see note below) an exception will be raised.
+
+  Setting global_shape explicitly allows for finer grain control and works with
+  non-uniform shardings. Each dimension of global_shape must either match
+  host_local_data, or match the inferred global shape of the sharding (in which
+  case it is equivalent to setting it to None, but is more explicit).
+
+  For example if dimension `i` is fully sharded then this size would be
+  `per_device_shape[i] * jax.local_device_count()`.  Each device will be mapped
+  into local slice of `local_data` array. For example, if given process
+  addresses slices (8, 12) and  (24, 28), then these slices will be mapped
+  into (0, 4) and (4, 8) of the `local_data`.
+
+  For each dimension where global_shapes matches local_shape, each device
+  will lookup the slice in the local_data. For example if
+  global_shape == local_data.shape, the local data is assumed to be the
+  actual target array that will be sharded into device.
+
+  If global_shape is the same as local_data.shape, then the data must
+  be the same across all hosts.
 
   Examples:
     >>> from jax.sharding import PartitionSpec as P
@@ -785,19 +796,71 @@ def make_array_from_process_local_data(
     >>> assert output_global_array.addressable_data(0).shape == per_device_shape
     >>> assert output_global_array.shape == global_shape
 
+  NB: While most shardings are uniform, It is possible to design am exotic
+  sharding mesh where each process's  devices will be arranged in a non-grid
+  like pattern in some dimensions, or for indices to overlap non-trivially.
+  Such sharding is called "non-uniform" in those dimensions. In that case,
+  the global shape along those directions must match local shape as there is
+  no meaningful way to represent all needed
+  per-process data in non-overlapping fashion. For example for global_shape 4x4
+  if sharding looks like this:
+
+      0123
+      2103
+      4675
+      4567
+
+  with 4 processes, containing devices (0,1), (2, 3), (4, 5), (6, 7) respectively.
+  Then the data for each host look like
+
+      xx..    ..xx     ....    ....
+      .xx.    x..x     ....    ....
+      ....    ....     x..x    .xx.
+      ....    ....     xx..    ..xx
+
+  the sharding is uniform on rows (each host requires either rows 1-2, or rows 3-4)
+  and non-uniform on columns (hosts require overlapping but not matching
+  set of columns). Thus local data must have the shape 2x4 or 4x4
+  for all hosts, even though each  host can potentially fit into 2x2 shape.
+  In this case user must provide global_shape explicitly and for
+  local_shape=(2, 4), potentially valid global shapes are (2, 4) and (4, 4).
+
+  On the other hand for sharding:
+
+      0213   x.x.  .x.x.  ....  ....
+      0213   x.x.  .x.x.  ....  ....
+      4657   ....  ....   .x.x  x.x.
+      4657   ....  ....   .x.x  x.x.
+
+  for local_shape=(2, 2) this function can accept a choice of 2x2, 2x4, 4x2
+  and 4x4 global shapes. Setting global_shape to None, is equivalent to
+  setting it to (4, 4) in this case.
+
   Args:
     sharding: sharding of the global tensor.
     host_local_data: data on the host to be placed on local devices. Each
       dimension should either match global_shape, or match
       num_addressable_indices(dim).
-    global_shape: the target shape of the global tensor. In some cases this
-      parameter can be inferred from sharding and host_local_data, however it is
-      useful to catch common sharding errors.
+    global_shape: the target shape of the global tensor. If None,
+      will infer from host_local_data and sharding.
 
   Returns:
-    Tensor that will have sharding=sharding.
+    Tensor that will have sharding=sharding and of shape global_shape.
   """
   # pyformat: enable
+  # TODO(sandler): consider supporting partially specified global_shape or
+  # making local_to_global_shape available in the api.
+  local_shape = local_data.shape
+  if global_shape is None:
+    global_shape = local_to_global_shape(sharding, local_shape)  # type: ignore[assignment]
+    assert global_shape is not None
+    if None in global_shape:
+      raise ValueError(
+          "Unable to compute global_shape due to non-uniform sharding."
+          f" Specify global shape directly. Partially computed {global_shape=}."
+      )
+  elif None in global_shape:
+    raise ValueError(f"{global_shape=} has Nones. This is not supported.")
   shard_shape = sharding.shard_shape(global_shape)
   full_dim = []
   for i, (data_dim, global_dim) in enumerate(
@@ -1005,7 +1068,7 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
     if not candidates_list:
       # This array isn't sharded correctly. Reshard it via host roundtrip.
       # TODO(skye): more efficient reshard?
-      return pxla.shard_arg(x._value, sharding, canonicalize=False)
+      return pxla.shard_args([sharding], [x._value], canonicalize=False)[0]
     # Try to find a candidate buffer already on the correct device,
     # otherwise copy one of them.
     for buf in candidates_list:
@@ -1018,32 +1081,51 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
   return pxla.batched_device_put(x.aval, sharding, bufs, devices)
 
 
-@functools.lru_cache(maxsize=4096)
+@cache(max_size=4096, trace_context_in_key=False)
 def _sharding_indices_and_eq(src_sharding, shape, dst_sharding):
   src_indices = src_sharding.addressable_devices_indices_map(shape).values()
   dst_indices = dst_sharding.addressable_devices_indices_map(shape).values()
   return dst_indices, tuple(src_indices) == tuple(dst_indices)
 
 
-def _array_shard_arg(x, sharding):
-  x._check_if_deleted()
+def _array_shard_arg(xs, shardings):
+  results = []
+  batch_xs, batch_devs, batch_shardings, batch_indices = [], [], [], []
+  for i, (x, sharding) in enumerate(safe_zip(xs, shardings)):
+    x._check_if_deleted()
 
-  indices, same_indices = _sharding_indices_and_eq(x.sharding, x.shape, sharding)
-  if not x.is_fully_addressable:
-    if same_indices:
-      return x
+    indices, same_indices = _sharding_indices_and_eq(
+        x.sharding, x.shape, sharding)
+    if not x.is_fully_addressable:
+      if same_indices:
+        results.append(x)
+      else:
+        raise NotImplementedError(
+            "Cannot reshard an input that is not fully addressable")
     else:
-      raise NotImplementedError(
-          "Cannot reshard an input that is not fully addressable")
-  else:
-    devices = sharding._addressable_device_assignment
-    if same_indices:
-      return xc.copy_array_to_devices_with_sharding(x, list(devices), sharding)
-    # Resharding starts here:
-    if dispatch.is_single_device_sharding(x.sharding):
-      return shard_device_array(x, devices, indices, sharding)
-    else:
-      return shard_sharded_device_array_slow_path(x, devices, indices, sharding)
+      devices = sharding._addressable_device_assignment
+      if same_indices:
+        # Add a placeholder result that will be filled in later.
+        results.append(None)
+        # Accumulate arguments to `batched_copy_array_to_devices_with_sharding`.
+        batch_xs.append(x)
+        batch_devs.append(list(devices))
+        batch_shardings.append(sharding)
+        batch_indices.append(i)
+      # Resharding starts here:
+      elif dispatch.is_single_device_sharding(x.sharding):
+        results.append(shard_device_array(x, devices, indices, sharding))
+      else:
+        results.append(
+            shard_sharded_device_array_slow_path(x, devices, indices, sharding))
+
+  copy_outs = xc.batched_copy_array_to_devices_with_sharding(
+      batch_xs, batch_devs, batch_shardings)
+  for i, copy_out in safe_zip(batch_indices, copy_outs):
+    assert results[i] is None
+    results[i] = copy_out
+  return results
+
 
 pxla.shard_arg_handlers[ArrayImpl] = _array_shard_arg
 
@@ -1076,8 +1158,8 @@ pxla.local_result_handlers[core.ConcreteArray] = _array_local_result_handler
 
 # Token handlers
 
-def _token_shard_arg(x, sharding):
-  return _array_shard_arg(x._buf, sharding)
+def _token_shard_arg(xs, shardings):
+  return _array_shard_arg([x._buf for x in xs], shardings)
 pxla.shard_arg_handlers[core.Token] = _token_shard_arg
 
 

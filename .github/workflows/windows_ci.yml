@@ -3,6 +3,8 @@ on:
   schedule:
     - cron: "0 12 * * *" # Daily at 12:00 UTC
   workflow_dispatch: # allows triggering the workflow run manually
+  pull_request:
+    types: [ labeled ] # allow force-windows-run label
 
 env:
   DISTUTILS_USE_SDK: 1
@@ -10,13 +12,14 @@ env:
 
 jobs:
   win-wheels:
+    if: ${{ (github.event.action != 'labeled') || (github.event.label.name == 'windows:force-run')}}
     strategy:
       fail-fast: true
       matrix:
         os: [windows-2019-32core]
         arch: [AMD64]
-        pyver: ['3.9']
-    name: ${{ matrix.os }} CI build
+        pyver: ['3.10']
+    name: Windows CI build
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -26,16 +29,11 @@ jobs:
           access_token: ${{ github.token }}
 
       - name: Install LLVM/Clang
-        run: choco install llvm --version=18.1.4 --yes
+        run: choco install llvm --version=18.1.4 --yes --no-progress --allow-downgrade
 
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
         with:
           path: jax
-
-      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
-        with:
-          repository: openxla/xla
-          path: xla
 
       - uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d # ratchet:actions/setup-python@v5
         with:
@@ -49,11 +47,9 @@ jobs:
         run: |
           cd jax
           python -m pip install -r build/test-requirements.txt
-          python -m pip uninstall -y matplotlib
-          python -m pip install --pre --upgrade numpy==2.0.0rc2 scipy==1.13.0
+          python -m pip install --upgrade numpy==2.0.0 scipy==1.13.1
           "C:\\msys64\\;C:\\msys64\\usr\\bin\\;" >> $env:GITHUB_PATH
           python.exe build\build.py `
-            ('--bazel_options=--override_repository=xla=${{ github.workspace }}\xla' -replace '\\','\\') `
             --bazel_options=--color=yes `
             --bazel_options=--config=win_clang
 

@@ -16,6 +16,8 @@ kernelspec:
 
 # 🔪 JAX - The Sharp Bits 🔪
 
+<!--* freshness: { reviewed: '2024-06-03' } *-->
+
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/Common_Gotchas_in_JAX.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/google/jax/blob/main/docs/notebooks/Common_Gotchas_in_JAX.ipynb)
 
 +++ {"id": "4k5PVzEo2uJO"}
@@ -1143,6 +1145,7 @@ Many such cases are discussed in detail in the sections above; here we list seve
 
   >>> jnp.arange(254.0, 258.0).astype('uint8')
   Array([254, 255, 255, 255], dtype=uint8)
+
   ```
   This sort of mismatch would typically arise when casting extreme values from floating to integer types or vice versa.
 

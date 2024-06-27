@@ -15,7 +15,6 @@
 """PagedAttention TPU kernel."""
 
 import functools
-from typing import Optional, Union
 
 import jax
 from jax import lax
@@ -364,14 +363,14 @@ def paged_flash_attention_kernel_inline_seq_dim(
 )
 def paged_attention(
     q: jax.Array,
-    k_pages: Union[jax.Array, quantization_utils.QuantizedTensor],
-    v_pages: Union[jax.Array, quantization_utils.QuantizedTensor],
+    k_pages: jax.Array | quantization_utils.QuantizedTensor,
+    v_pages: jax.Array | quantization_utils.QuantizedTensor,
     lengths: jax.Array,
     page_indices: jax.Array,
     *,
     mask_value: float = DEFAULT_MASK_VALUE,
     pages_per_compute_block: int,
-    megacore_mode: Optional[str] = None,
+    megacore_mode: str | None = None,
     inline_seq_dim: bool = True,
 ) -> jax.Array:
   """Paged grouped query attention.

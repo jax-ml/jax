@@ -124,7 +124,7 @@ from jax._src.api import ShapeDtypeStruct as ShapeDtypeStruct
 from jax._src.api import value_and_grad as value_and_grad
 from jax._src.api import vjp as vjp
 from jax._src.api import vmap as vmap
-from jax._src.api import xla_computation as xla_computation
+from jax._src.api import xla_computation as _deprecated_xla_computation
 from jax._src.sharding_impls import NamedSharding as NamedSharding
 
 # Force import, allowing jax.interpreters.* to be used after import jax.
@@ -158,7 +158,6 @@ from jax import debug as debug
 from jax import dlpack as dlpack
 from jax import dtypes as dtypes
 from jax import errors as errors
-from jax import ffi as ffi
 from jax import image as image
 from jax import lax as lax
 from jax import monitoring as monitoring
@@ -181,6 +180,8 @@ del _ccache
 
 from jax._src.deprecations import register as _register_deprecation
 _register_deprecation("jax-experimental-maps-module")
+_register_deprecation('jax-scipy-beta-args')
+_register_deprecation('tracer-hash')
 del _register_deprecation
 
 _deprecations = {
@@ -225,11 +226,16 @@ _deprecations = {
     "jax.clear_backends is deprecated.",
     _deprecated_clear_backends
   ),
+  "xla_computation": (
+      "jax.xla_computation is deprecated. Please use the AOT APIs.",
+      _deprecated_xla_computation
+  ),
 }
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
   from jax._src.api import clear_backends as clear_backends
+  from jax._src.api import xla_computation as xla_computation
   from jax._src.tree_util import treedef_is_leaf as treedef_is_leaf
   from jax._src.tree_util import tree_flatten as tree_flatten
   from jax._src.tree_util import tree_leaves as tree_leaves

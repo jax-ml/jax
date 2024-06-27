@@ -17,7 +17,6 @@
 load(
     "//jaxlib:jax.bzl",
     "py_deps",
-    "py_library_providing_imports_info",
     "pytype_strict_library",
 )
 
@@ -25,18 +24,6 @@ package(
     default_applicable_licenses = [],
     default_visibility = [
         "//:__subpackages__",
-    ],
-)
-
-py_library_providing_imports_info(
-    name = "triton",
-    srcs = ["__init__.py"],
-    lib_rule = pytype_strict_library,
-    deps = [
-        ":lowering",
-        ":pallas_call_registration",
-        ":primitives",
-        "//jax/_src/lib",
     ],
 )
 

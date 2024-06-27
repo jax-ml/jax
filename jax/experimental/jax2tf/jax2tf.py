@@ -15,7 +15,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from functools import partial
 import contextlib
 import math
@@ -23,7 +23,7 @@ import operator
 import os
 import re
 import threading
-from typing import Any, Callable, Union
+from typing import Any, Union
 import warnings
 
 from absl import logging
@@ -36,9 +36,7 @@ from jax import random
 from jax import numpy as jnp
 from jax import tree_util
 from jax import sharding
-from jax.experimental import export
-from jax.experimental.export import _export
-from jax.experimental.export import _shape_poly
+from jax import export
 from jax.experimental.jax2tf import impl_no_xla
 from jax.interpreters import xla
 
@@ -61,6 +59,8 @@ from jax._src import random as random_internal
 from jax._src import source_info_util
 from jax._src import util
 from jax._src import shard_alike
+from jax._src.export import _export
+from jax._src.export import shape_poly
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
 from jax._src.lax import control_flow as lax_control_flow
@@ -88,7 +88,7 @@ from tensorflow.python.eager import context as tf_context
 # pylint: enable=g-direct-tensorflow-import
 
 NameStack = source_info_util.NameStack
-PolyShape = _shape_poly.PolyShape  # TODO: deprecate
+PolyShape = shape_poly.PolyShape  # TODO: deprecate
 DType = Any
 
 DisabledSafetyCheck = export.DisabledSafetyCheck
@@ -388,13 +388,13 @@ def convert(fun_jax: Callable,
 
     args_jax_specs = tree_util.tree_map(jax_arg_spec_from_tf, args_tf)
     args_specs = export.symbolic_args_specs(
-        args_jax_specs, polymorphic_shapes=polymorphic_shapes,
-        symbolic_constraints=polymorphic_constraints)
+        args_jax_specs, polymorphic_shapes,
+        constraints=polymorphic_constraints)
     # The polymorphic_shapes argument refers to positional arguments only.
     # We assume None for the kwargs.
     kwargs_jax_specs = tree_util.tree_map(jax_arg_spec_from_tf, kwargs_tf)
     kwargs_specs = export.symbolic_args_specs(
-        kwargs_jax_specs, polymorphic_shapes=None)
+        kwargs_jax_specs, None)
     combined_args_tf = (args_tf, kwargs_tf)
     args_flat_tf: Sequence[TfVal]
     args_flat_tf, args_kwargs_tree = tree_util.tree_flatten(combined_args_tf)
@@ -514,11 +514,15 @@ class NativeSerializationImpl(SerializationImpl):
       _thread_local_state.call_tf_concrete_function_list = _prev_func_list
 
     self._restore_context = _restore_context
-    self.exported = export.export(
+    _exported_device_assignment = [None]
+    self.exported = _export.export_back_compat(
         self.fun_jax,
         lowering_platforms=self.native_serialization_platforms,
-        disabled_checks=self.native_serialization_disabled_checks
+        disabled_checks=self.native_serialization_disabled_checks,
+        _device_assignment_for_internal_jax2tf_use_only=_exported_device_assignment,
     )(*self.args_specs, **self.kwargs_specs)
+    assert(_exported_device_assignment[0] is not None)
+    self.device_assignment = _exported_device_assignment[0]
 
   def after_conversion(self):
     self._restore_context()
@@ -531,15 +535,13 @@ class NativeSerializationImpl(SerializationImpl):
 
   def get_vjp_fun(self) -> tuple[Callable,
                                  Sequence[core.AbstractValue]]:
-    # TODO(necula): use the actual device assignment from the primal function
-    device_assignment = jax.devices(jax.default_backend())[:self.exported.nr_devices]
     return _export._get_vjp_fun(self.fun_jax,
                                 in_tree=self.exported.in_tree,
                                 in_avals=self.exported.in_avals,
-                                in_shardings=self.exported.in_shardings,
+                                in_shardings_hlo=self.exported.in_shardings_hlo,
                                 out_avals=self.exported.out_avals,
-                                out_shardings=self.exported.out_shardings,
-                                device_assignment=device_assignment,
+                                out_shardings_hlo=self.exported.out_shardings_hlo,
+                                device_assignment=self.device_assignment,
                                 apply_jit=True)
 
 class GraphSerializationImpl(SerializationImpl):
@@ -577,9 +579,9 @@ class GraphSerializationImpl(SerializationImpl):
         (self.args_specs, self.kwargs_specs))
     self.args_avals_flat = tuple(
         map(lambda a: core.raise_to_shaped(core.get_aval(a)), args_specs_flat))
-    dim_vars = _shape_poly.all_dim_vars(self.args_avals_flat)
+    dim_vars = shape_poly.all_dim_vars(self.args_avals_flat)
     dim_values, _ = _interpret_fun_jax(
-        partial(_shape_poly.compute_dim_vars_from_arg_shapes,
+        partial(shape_poly.compute_dim_vars_from_arg_shapes,
                 self.args_avals_flat, args_kwargs_tree=self.in_tree),
         self.args_flat_tf, self.args_avals_flat, self.name_stack)
 
@@ -608,9 +610,9 @@ class GraphSerializationImpl(SerializationImpl):
     return _export._get_vjp_fun(self.fun_jax,
                                 in_tree=self.in_tree,
                                 in_avals=self.args_avals_flat,
-                                in_shardings=(None,) * len(self.args_avals_flat),
+                                in_shardings_hlo=(None,) * len(self.args_avals_flat),
                                 out_avals=self.outs_avals,
-                                out_shardings=(None,) * len(self.outs_avals),
+                                out_shardings_hlo=(None,) * len(self.outs_avals),
                                 device_assignment=None,  # Not used when apply_jit = False
                                 apply_jit=False)
 
@@ -675,7 +677,7 @@ def eval_polymorphic_shape(fun_jax: Callable,
   """
   def do_eval_polymorphic_shape(*args_specs) -> Any:
     args_poly_specs = export.symbolic_args_specs(
-        args_specs, polymorphic_shapes=polymorphic_shapes)
+        args_specs, polymorphic_shapes)
     res_poly_spec = jax.eval_shape(fun_jax, *args_poly_specs)
     # TODO(necula): For now we export the polymorphic shapes using `str`.
     res_polymorphic_shape = tree_util.tree_map(lambda r: str(r.shape), res_poly_spec)
@@ -855,7 +857,7 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
   kept_args_avals = [aval for i, aval in enumerate(exported.in_avals) if i in exported.module_kept_var_idx]
   kept_args_flat_tf = [atf for i, atf in enumerate(args_flat_tf) if i in exported.module_kept_var_idx]
 
-  version = exported.mlir_module_serialization_version
+  version = exported.calling_convention_version
 
   try:
     get_max_supported_version = tfxla.call_module_maximum_supported_version
@@ -888,7 +890,7 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
       has_token_input_output=False
   )
 
-  call_module_attrs["platforms"] = tuple(p.upper() for p in exported.lowering_platforms)
+  call_module_attrs["platforms"] = tuple(p.upper() for p in exported.platforms)
   if version >= 6:
     call_module_attrs["disabled_checks"] = tuple(
         str(dc)
@@ -914,7 +916,7 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
   # See b/255511660.
   kept_in_shardings = []
   for i in exported.module_kept_var_idx:
-    kept_in_shardings.append(exported.in_shardings[i])
+    kept_in_shardings.append(exported.in_shardings_hlo[i])
   args_flat_tf = tuple(
     map(partial(_shard_value,
                 skip_replicated_sharding=tf.executing_eagerly()),
@@ -931,7 +933,7 @@ def _run_exported_as_tf(args_flat_tf: Sequence[TfVal],
 
   res = list(map(partial(_shard_value,
                          skip_replicated_sharding=tf.executing_eagerly()),
-                 res, exported.out_shardings))
+                 res, exported.out_shardings_hlo))
   res = tuple(map(_convert_value, res, exported.out_avals))
   return res
 
@@ -1146,8 +1148,8 @@ def _tfval_to_tensor_jax_dtype(val: TfVal,
     return tf_val, jax_dtype
 
 
-def _eval_shape(shape: Sequence[_shape_poly.DimSize], dtype=None) -> Sequence[TfVal]:
-  # Returns a tuple of _shape_poly.dim_as_value_dtype
+def _eval_shape(shape: Sequence[shape_poly.DimSize], dtype=None) -> Sequence[TfVal]:
+  # Returns a tuple of shape_poly.dim_as_value_dtype
   # Used only for non-native lowering
   assert all(map(lambda x: x is not None, shape)), (
       f"Argument shape should be a valid JAX shape but got {shape}")
@@ -1172,7 +1174,7 @@ def _ensure_tf_shape_if_dynamic(x: TfVal, shape):
   return tf.ensure_shape(x, shape)
 
 
-def _assert_matching_abstract_shape(x: TfVal, shape: Sequence[_shape_poly.DimSize]):
+def _assert_matching_abstract_shape(x: TfVal, shape: Sequence[shape_poly.DimSize]):
   """Asserts that shape matches x.shape in the known dimensions and has
   dimension polynomials elsewhere."""
   # Ensures that the shape does not contain None; it should contain symbolic expressions.
@@ -1545,7 +1547,7 @@ def _add(x: TfVal, y: TfVal) -> TfVal:
 
 
 tf_impl[ad_util.add_jaxvals_p] = _add
-tf_impl[dispatch.device_put_p] = lambda x, device=None, src=None: x
+tf_impl[dispatch.device_put_p] = lambda *xs, devices=None, srcs=None: xs
 tf_impl[lax_internal.copy_p] = lambda x: x
 
 def _shard_alike(*args: TfVal, **_):
@@ -3461,7 +3463,7 @@ def split_to_logical_devices(tensor: TfVal,
 
 
 def _xla_compatible_sharding_to_hlo_sharding(
-    s: sharding.XLACompatibleSharding,
+    s: sharding.Sharding,
     aval: core.ShapedArray) -> xla_client.HloSharding | None:
   if sharding_impls.is_unspecified(s):
     return None
@@ -3513,8 +3515,8 @@ def _shard_value(val: TfVal,
 
 def _pjit(*args: TfVal,
           jaxpr: core.ClosedJaxpr,
-          in_shardings: Sequence[sharding.XLACompatibleSharding],
-          out_shardings: Sequence[sharding.XLACompatibleSharding],
+          in_shardings: Sequence[sharding.Sharding],
+          out_shardings: Sequence[sharding.Sharding],
           in_layouts, out_layouts,
           resource_env: mesh.ResourceEnv,
           donated_invars,
@@ -3547,7 +3549,7 @@ tf_impl_with_avals[pjit.pjit_p] = _pjit
 
 
 def _pjit_sharding_constraint(arg: TfVal, *,
-                              sharding: sharding.XLACompatibleSharding,
+                              sharding: sharding.Sharding,
                               resource_env: mesh.ResourceEnv,
                               _in_avals: Sequence[core.ShapedArray],
                               _out_aval: core.ShapedArray,
@@ -3567,13 +3569,13 @@ def _dimension_size_jax2tf(op: TfVal, *, dimension, _in_avals, _out_aval):
   else:
     return dim_tf
 
-tf_impl_with_avals[_shape_poly.dimension_size_p] = _dimension_size_jax2tf
+tf_impl_with_avals[shape_poly.dimension_size_p] = _dimension_size_jax2tf
 
-def _dim_as_value_jax2tf(dim: _shape_poly.DimSize):
+def _dim_as_value_jax2tf(dim: shape_poly.DimSize):
   dim_tf, = _eval_shape((dim,))
   return dim_tf
 
-tf_impl[_shape_poly.dim_as_value_p] = _dim_as_value_jax2tf
+tf_impl[shape_poly.dim_as_value_p] = _dim_as_value_jax2tf
 
 def _shape_assertion_jax2tf(assert_what, *error_message_inputs,
                             error_message: str):
@@ -3583,7 +3585,7 @@ def _shape_assertion_jax2tf(assert_what, *error_message_inputs,
     message=error_message.format(*error_message_inputs))
   return []
 
-tf_impl[_shape_poly.shape_assertion_p] = _shape_assertion_jax2tf
+tf_impl[shape_poly.shape_assertion_p] = _shape_assertion_jax2tf
 
 def _reduce_precision(x, *, exponent_bits, mantissa_bits):
   return tfxla.reduce_precision(x, exponent_bits=exponent_bits,

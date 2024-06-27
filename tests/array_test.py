@@ -15,7 +15,6 @@
 
 import contextlib
 import math
-import os
 import unittest
 
 from absl.testing import absltest
@@ -25,15 +24,18 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 from jax._src import core
+from jax._src import deprecations
 from jax._src import dispatch
 from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
 from jax._src.util import safe_zip
+from jax._src.sharding import common_devices_indices_map
 from jax._src.sharding_impls import (_op_sharding_to_pos_sharding,
                                      pmap_sharding_devices_indices_map,
-                                     NamedSharding, GSPMDSharding)
+                                     NamedSharding, GSPMDSharding,
+                                     PositionalSharding)
 from jax.experimental.pjit import pjit
 from jax.experimental import multihost_utils
 from jax.sharding import PartitionSpec as P
@@ -42,33 +44,18 @@ from jax._src import prng
 
 jax.config.parse_flags_with_absl()
 
-
-prev_xla_flags = None
-
 with contextlib.suppress(ImportError):
   import pytest
   pytestmark = pytest.mark.multiaccelerator
 
-
 # Run all tests with 8 CPU devices.
-def setUpModule():
-  global prev_xla_flags
-  prev_xla_flags = os.getenv("XLA_FLAGS")
-  flags_str = prev_xla_flags or ""
-  # Don't override user-specified device count, or other XLA flags.
-  if "xla_force_host_platform_device_count" not in flags_str:
-    os.environ["XLA_FLAGS"] = (flags_str +
-                               " --xla_force_host_platform_device_count=8")
-  # Clear any cached backends so new CPU backend will pick up the env var.
-  xb.get_backend.cache_clear()
+_exit_stack = contextlib.ExitStack()
 
-# Reset to previous configuration in case other test modules will be run.
+def setUpModule():
+  _exit_stack.enter_context(jtu.set_host_platform_device_count(8))
+
 def tearDownModule():
-  if prev_xla_flags is None:
-    del os.environ["XLA_FLAGS"]
-  else:
-    os.environ["XLA_FLAGS"] = prev_xla_flags
-  xb.get_backend.cache_clear()
+  _exit_stack.close()
 
 
 def create_array(shape, sharding, global_data=None):
@@ -610,6 +597,22 @@ class JaxArrayTest(jtu.JaxTestCase):
     x = jnp.array([1, 2, 3])
     self.assertIsInstance(x.addressable_data(0), array.ArrayImpl)
 
+  def test_array_not_hashable(self):
+    x = jnp.arange(4)
+    with self.assertRaisesRegex(TypeError, "unhashable type"):
+      hash(x)
+
+    @jax.jit
+    def check_tracer_hash(x):
+      self.assertIsInstance(hash(x), int)
+
+    if deprecations.is_accelerated('tracer-hash'):
+      with self.assertRaisesRegex(TypeError, "unhashable type"):
+        check_tracer_hash(x)
+    else:
+      with self.assertWarnsRegex(FutureWarning, "unhashable type"):
+        check_tracer_hash(x)
+
   def test_shape_dtype_struct_sharding_jit(self):
     mesh = jtu.create_global_mesh((8,), ('x'))
     s = jax.sharding.NamedSharding(mesh, P('x'))
@@ -845,6 +848,15 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertListEqual(hlo_sharding.tile_assignment_devices(),
                          [0, 2, 4, 6, 1, 3, 5, 7])
 
+  def test_util_clear_cache(self):
+    mesh = jtu.create_global_mesh((1,), ('x',))
+    s = NamedSharding(mesh, P())
+    s.devices_indices_map((8,))
+    jax.clear_caches()
+    s.devices_indices_map((8,))
+    c = common_devices_indices_map.cache_info()
+    self.assertEqual(c.currsize, 1)
+
   @parameterized.named_parameters(
       ("mesh_x_y", P("x", "y")),
       ("mesh_x", P("x")),
@@ -922,7 +934,7 @@ class ShardingTest(jtu.JaxTestCase):
         r"Sharding NamedSharding\(mesh=Mesh\('replica': 1, 'data': 1, 'mdl': 2\), "
         r"spec=PartitionSpec\(None, \('mdl',\), None, None\).*\) is only "
         "valid for values of rank at least 4, but was applied to a value of rank 2"):
-      new_mps.is_compatible_aval(shape)
+      new_mps.check_compatible_aval(shape)
 
   def test_is_subclass(self):
     # array version of api_test.py::APITest::test_is_subclass
@@ -946,6 +958,10 @@ class ShardingTest(jtu.JaxTestCase):
     s2 = jax.sharding.GSPMDSharding(jax.devices(), op2)
     # memory kind also appears in the repr but only for TPU.
     self.assertIn('GSPMDSharding({replicated}', repr(s2))
+
+  def test_positional_sharding_fully_replicated(self):
+    sharding = PositionalSharding(jax.devices())
+    jax.device_put(jnp.array(1), sharding.replicate())  # doesn't crash
 
   @parameterized.named_parameters(
       ("mesh_x_y",              P("x", "y"),   (4, 2), (),   False),
@@ -975,6 +991,17 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertEqual(mps.shard_shape(value_shape),
                      devices_sharding.shard_shape(value_shape))
     self.assertTrue(op_shardings.are_op_shardings_equal(op1, op2))
+
+  def test_positional_sharding_aval_compatible(self):
+    if jax.device_count() < 2:
+      self.skipTest('Requires >=2 devices')
+    sharding = PositionalSharding(jax.devices()).reshape(1, jax.device_count())
+    x = jax.random.uniform(jax.random.key(42), (256, 20, 1000))
+    with self.assertRaisesRegex(
+        ValueError,
+        'Sharding PositionalSharding.*is only valid for values of rank 2, but'
+        ' was applied to a value of rank 3'):
+      jax.lax.with_sharding_constraint(x, sharding)
 
   @parameterized.named_parameters(
       ("2d_mesh_x_y",              (4, 2), P("x", "y")),
@@ -1178,7 +1205,7 @@ class ShardingTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError,
         r"For scalars the PartitionSpec should be P()"):
-      s.is_compatible_aval(shape)
+      s.check_compatible_aval(shape)
 
   def test_mesh_caching_during_construction(self):
     if jax.device_count() < 2:
@@ -1221,6 +1248,18 @@ class ShardingTest(jtu.JaxTestCase):
     msg = "jax.make_array_from_single_device_arrays requires a list of concrete arrays"
     with self.assertRaisesRegex(ValueError, msg):
       jax.jit(f)(x)
+
+  def test_make_array_from_single_device_arrays_bad_inputs(self):
+    x = jnp.arange(10)
+    mesh = jtu.create_global_mesh((2,), ('x',))
+    s = jax.sharding.NamedSharding(mesh, P('x'))
+    x = jax.device_put(x, s)
+
+    msg = ("When making an array from single-device arrays the input arrays "
+           "must have one shard each. An argument array had 2 shard\\(s\\).")
+    with self.assertRaisesRegex(ValueError, msg):
+      jax.make_array_from_single_device_arrays(x.shape, s, [x, x])
+
 
   def test_gspmd_sharding_hash_eq(self):
     mesh = jtu.create_global_mesh((1, 1, 1), ('x', 'y', 'z'))

@@ -69,7 +69,7 @@ def relu(x: ArrayLike) -> Array:
   Returns:
     An array.
 
-  Example:
+  Examples:
     >>> jax.nn.relu(jax.numpy.array([-2., -1., -0.5, 0, 0.5, 1., 2.]))
     Array([0. , 0. , 0. , 0. , 0.5, 1. , 2. ], dtype=float32)
 
@@ -512,6 +512,10 @@ def log_softmax(x: ArrayLike,
   Returns:
     An array.
 
+  Note:
+    If any input values are ``+inf``, the result will be all ``NaN``: this reflects the
+    fact that ``inf / inf`` is not well-defined in the context of floating-point math.
+
   See also:
     :func:`softmax`
   """
@@ -556,6 +560,10 @@ def softmax(x: ArrayLike,
 
   Returns:
     An array.
+
+  Note:
+    If any input values are ``+inf``, the result will be all ``NaN``: this reflects the
+    fact that ``inf / inf`` is not well-defined in the context of floating-point math.
 
   See also:
     :func:`log_softmax`

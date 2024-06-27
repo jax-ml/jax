@@ -15,11 +15,11 @@
 """Module for lowering JAX to Mosaic-compatible MLIR dialects."""
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import dataclasses
 import functools
 import string
-from typing import Any, Callable
+from typing import Any
 
 import jax
 from jax import core as jax_core
@@ -28,9 +28,11 @@ from jax import tree_util
 from jax._src import ad_util
 from jax._src import custom_derivatives
 from jax._src import debugging
+from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import mesh as mesh_lib
 from jax._src import pjit
+from jax._src import prng
 from jax._src import source_info_util
 from jax._src import state
 from jax._src.interpreters import mlir
@@ -76,6 +78,12 @@ partial = functools.partial
 map, unsafe_map = safe_map, map  # pylint: disable=redefined-builtin
 zip, unsafe_zip = safe_zip, zip  # pylint: disable=redefined-builtin
 
+UNSIGNED_TO_SIGNED = {
+    np.dtype('uint8'): np.dtype('int8'),
+    np.dtype('uint16'): np.dtype('int16'),
+    np.dtype('uint32'): np.dtype('int32'),
+    np.dtype('uint64'): np.dtype('int64'),
+}
 
 @dataclasses.dataclass
 class MeshContext:
@@ -123,7 +131,13 @@ def _dtype_to_ir_type(dtype: jnp.dtype) -> ir.Type:
       return ir.Type.parse("!tpu.semaphore")
     else:
       raise NotImplementedError
-  return mlir.dtype_to_ir_type(dtype)
+  # TODO(justinfu): Remove after mosaic supports unsigned types.
+  # This conversion makes mosaic interpret all unsigned types as signed types.
+  type =  mlir.dtype_to_ir_type(dtype)
+  if isinstance(type, ir.IntegerType):
+    return ir.IntegerType.get_signless(type.width)
+  else:
+    return type
 
 def aval_to_ir_type(aval, shape=None, memory_space: TPUMemorySpace | None = None):
   if isinstance(aval, tpu_core.AbstractSemaphore):
@@ -137,6 +151,15 @@ def aval_to_ir_type(aval, shape=None, memory_space: TPUMemorySpace | None = None
       raise ValueError(f"Cannot allocate {aval.sem_type}.")
     memspace = _memory_space_to_tpu_memspace(TPUMemorySpace.SEMAPHORE)
     return ir.MemRefType.get((), sem_type, memory_space=memspace)
+  if dtypes.issubdtype(aval.dtype, dtypes.prng_key):
+    shape = aval.dtype._impl.key_shape
+    if memory_space is None:
+      memory_space = TPUMemorySpace.SMEM
+    if memory_space != TPUMemorySpace.SMEM:
+      raise ValueError(f"PRNG keys must be stored in SMEM. Got {memory_space}")
+    memspace = _memory_space_to_tpu_memspace(memory_space)
+    return ir.MemRefType.get(shape, _dtype_to_ir_type(np.dtype(np.uint32)),
+                             memory_space=memspace)
   if isinstance(aval, state.AbstractRef):
     if shape is None:
       shape = aval.shape
@@ -428,7 +451,9 @@ def lower_jaxpr_to_module(
       m.body.append(mlir_func)
       sym_tab.insert(mlir_func)
     func_op.attributes["window_params"] = ir.ArrayAttr.get(window_params)
-    static_grid = [MLIR_DYNAMIC if b is None else b for b in grid]
+    static_grid = [
+        MLIR_DYNAMIC if b is pl_core.dynamic_grid_dim else b for b in grid
+    ]
     func_op.attributes["iteration_bounds"] = ir.DenseI64ArrayAttr.get(static_grid)
 
   func_op.attributes["scalar_prefetch"] = ir.IntegerAttr.get(
@@ -613,16 +638,18 @@ def jaxpr_subcomp(
     return atom.val if isinstance(atom, jax_core.Literal) else env[atom]
 
   def write_env(var: jax_core.Var, val):
-    assert isinstance(val, ir.Value), type(val)
+    is_valid_type = isinstance(val, (ir.Value, KeyScalarBundle))
+    assert is_valid_type, type(val)
     env[var] = val
 
   for invar, bs in zip(jaxpr.invars, ctx.block_shapes):
     block_shape_env[invar] = bs
   map(write_env, jaxpr.invars, args)
 
+  initial_name_stack = [scope.name for scope in ctx.name_stack.stack]
   current_name_stack: list[str] = []
   # TODO(justinfu): Handle transform scopes.
-  current_name_stack.extend([scope.name for scope in ctx.name_stack.stack])
+  current_name_stack.extend(initial_name_stack)
   for eqn in jaxpr.eqns:
     invals = map(read_env, eqn.invars)
     source_info = eqn.source_info.replace(
@@ -679,6 +706,14 @@ def jaxpr_subcomp(
         map(write_env, eqn.outvars, ans)
       else:
         write_env(eqn.outvars[0], ans)
+
+  # Drain the name stack at the end of a jaxpr and insert trace_stop ops.
+  popped, pushed = _compute_name_stack_updates(
+      current_name_stack, initial_name_stack)
+  for _ in popped:
+    tpu.TraceStopOp()
+  assert len(pushed) == 0
+
   outvals = map(read_env, jaxpr.outvars)
   outvals = [
       ir_constant(x) if isinstance(var, jax_core.Literal) else x
@@ -689,6 +724,8 @@ def jaxpr_subcomp(
 
 def _ensure_mlir_value(val, aval):
   if isinstance(val, ir.Value):
+    return val
+  if isinstance(val, KeyScalarBundle):
     return val
   elif isinstance(val, (np.generic, np.ndarray, int, float)):
     return ir_constant(val, _dtype_to_ir_type(aval.dtype))
@@ -885,6 +922,21 @@ def _index_ref(ref, ref_aval, ref_block_shape, indexers):
                                          ref_block_shape)
   return ref, ref_block_shape
 
+@dataclasses.dataclass(frozen=True)
+class KeyScalarBundle:
+  """A container class for PRNG key data.
+
+  We pass around keys as a KeyScalarBundle in the lowering pass rather than
+  as a vector, since we want the key data to live in scalar registers rather
+  than vector registers. This special dataclass exists so we can return
+  multiple scalar values from load_op, because the load_op primitive does
+  not allow multiple results.
+
+  Attributes:
+    scalars: A list of OpResults representing scalar key data during the
+      lowering pass.
+  """
+  scalars: list[ir.OpResult]
 
 def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
   ref, indexers, mask, _ = args_tree.unflatten(args_flat)
@@ -903,6 +955,12 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
   is_smem_load = str(ref_type.memory_space) == "#tpu.memory_space<smem>"
   ref_aval, *_ = ctx.avals_in
   (aval_out,) = ctx.avals_out
+  if isinstance(aval_out.dtype, prng.KeyTy):
+    if not is_smem_load:
+      raise ValueError("PRNG keys must be loaded from SMEM. Did you set "
+                       "the memory space to TPUMemorySpace.SMEM in the "
+                       "BlockSpec for the PRNG key input?")
+    return _prng_key_load_lowering_rule(ctx, *args_flat, args_tree=args_tree)
   if not is_smem_load and not ref_block_shape:
     raise NotImplementedError(
         "Indexing into a ()-shaped Ref not yet supported on TPU.")
@@ -933,6 +991,37 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
   vec_type = ir.VectorType.get(aval_out.shape,
                                _dtype_to_ir_type(aval_out.dtype))
   return vector.ShapeCastOp(vec_type, load_val).result
+
+def _prng_key_load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree) -> KeyScalarBundle:
+  """Lowering rule for loading PRNG keys from SMEM.
+
+  PRNG key loads are currently lowered as a list of scalar loads from SMEM,
+  rather than a single vector load.
+  We store these scalars in a bundle type called KeyScalarBundle, which has
+  special case handling for functions that consume the key such as set_seed.
+  """
+  ref, _, _, _ = args_tree.unflatten(args_flat)
+  (aval_out,) = ctx.avals_out
+  assert isinstance(aval_out.dtype, prng.KeyTy)
+  ref_block_shape = aval_out.dtype._impl.key_shape
+
+  if len(ref_block_shape) != 2:
+    raise NotImplementedError("Seed key_data must be 2D.")
+  if tuple(ref_block_shape) != (1, 1):
+    raise NotImplementedError(
+      f"Seed key_data of shape != (1, 1) not supported. Got: {ref_block_shape}")
+
+  load_ops = []
+  for i in range(ref_block_shape[0]):
+    idx = NDIndexer(indices=(0, i), shape=ref_block_shape,
+                    int_indexer_shape=tuple())
+    starts, _, _, _, _ = _indexer_to_start_size_stride(
+        idx,
+        ref_block_shape,
+        cast_to_index=True,
+    )
+    load_ops.append(memref.LoadOp(ref, starts).result)
+  return KeyScalarBundle(scalars=load_ops)
 
 
 lowering_rules[primitives.load_p] = _load_lowering_rule
@@ -1035,11 +1124,7 @@ def _reduce_max_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
 
   out_type = aval_to_ir_type(ctx.avals_out[0])
   if jnp.issubdtype(x_aval.dtype, jnp.floating):
-    # TODO(apaszke): Remove in 03/2024.
-    if hasattr(vector.CombiningKind, "MAXIMUMF"):
-      kind = vector.CombiningKind.MAXIMUMF
-    else:
-      kind = vector.CombiningKind.MAXF
+    kind = vector.CombiningKind.MAXIMUMF
     val = ir.FloatAttr.get(ir.F32Type.get(), float("-inf"))
     identity = ir.DenseElementsAttr.get_splat(out_type, val)
   elif jnp.issubdtype(x_aval.dtype, jnp.signedinteger):
@@ -1129,7 +1214,15 @@ def _dot_general_lowering_rule(
   (aval_out,) = ctx.avals_out
   out_type = aval_to_ir_type(aval_out)
   val_type = out_type.element_type
-  if any(cls.isinstance(val_type) for cls in [ir.BF16Type, ir.F32Type]):
+  if any(
+      cls.isinstance(val_type)
+      for cls in [
+          ir.BF16Type,
+          ir.F32Type,
+          ir.Float8E5M2Type,
+          ir.Float8E4M3FNType,
+      ]
+  ):
     val = ir.FloatAttr.get(val_type, 0.0)
   elif ir.IntegerType.isinstance(val_type):
     val = ir.IntegerAttr.get(val_type, 0)
@@ -1210,14 +1303,14 @@ def _convert_helper(x, *, to_dtype):
   if jnp.issubdtype(from_dtype, jnp.dtype("bool")):
     x = x.astype(jnp.int32)
     return _convert_helper(x, to_dtype=to_dtype)
-  if jnp.issubdtype(from_dtype, jnp.integer):
+  if jnp.issubdtype(from_dtype, jnp.signedinteger):
     if from_dtype.itemsize < 4:
       x = x.astype(jnp.int32)
     if jnp.issubdtype(to_dtype, jnp.floating) and to_dtype.itemsize < 4:
       x = x.astype(jnp.float32)
     return x.astype(to_dtype)
   if jnp.issubdtype(from_dtype, jnp.floating):
-    if jnp.issubdtype(to_dtype, jnp.integer):
+    if jnp.issubdtype(to_dtype, jnp.signedinteger):
       if from_dtype.itemsize < 4:
         x = x.astype(jnp.float32)
       if to_dtype.itemsize < 4:
@@ -1238,6 +1331,11 @@ def _convert_element_type_lowering_rule(
   out_aval = ctx.avals_out[0]
   old_dtype = ctx.avals_in[0].dtype
   out_type = aval_to_ir_type(out_aval)
+
+  # TODO(justinfu): Remove after mosaic supports unsigned types.
+  # This conversion makes mosaic interpret all unsigned types as signed types.
+  if np.issubdtype(new_dtype, jnp.unsignedinteger):
+    new_dtype = UNSIGNED_TO_SIGNED[new_dtype]
   if old_dtype == new_dtype:
     return x
   if jnp.issubdtype(old_dtype, jnp.floating) and jnp.issubdtype(
@@ -2091,9 +2189,11 @@ lowering_rules[tpu_primitives.repeat_p] = _repeat_lowering_rule
 
 
 def _roll_lowering_rule(
-    ctx: LoweringRuleContext, x, *, shift, axis, stride, stride_axis
+    ctx: LoweringRuleContext, x, shift, *, axis, stride, stride_axis
 ):
-  return tpu.RotateOp(
+  (out_aval,) = ctx.avals_out
+  return tpu.DynamicRotateOp(
+      aval_to_ir_type(out_aval),
       x,
       shift,
       axis,
@@ -2154,9 +2254,16 @@ def _bitcast_lowering_rule(ctx: LoweringRuleContext, x, *, ty):
   (out_aval,) = ctx.avals_out
   return tpu.BitcastOp(aval_to_ir_type(out_aval), x).result
 
-
 lowering_rules[tpu_primitives.bitcast_p] = _bitcast_lowering_rule
 
+def _bitcast_convert_type_lowering_rule(
+    ctx: LoweringRuleContext, x, *, new_dtype):
+  (in_aval, ) = ctx.avals_in
+  (out_aval,) = ctx.avals_out
+  if in_aval.dtype.itemsize != new_dtype.itemsize:
+    raise NotImplementedError("Changing bitwidths not supported.")
+  return tpu.BitcastOp(aval_to_ir_type(out_aval), x).result
+lowering_rules[lax.bitcast_convert_type_p] = _bitcast_convert_type_lowering_rule
 
 def _alloc_value(aval: jax_core.AbstractValue) -> ir.Value:
   if isinstance(aval, pl_core.AbstractMemoryRef):
@@ -2364,6 +2471,16 @@ lowering_rules[primitives.debug_print_p] = _debug_print_rule
 
 def _prng_seed_lowering_rule(ctx: LoweringRuleContext, *seeds):
   del ctx
+  # In the KeyScalarBundle case we unpack the bundle and set the seed with
+  # the list of scalars.
+  if len(seeds) == 1 and isinstance(seeds[0], KeyScalarBundle):
+    return tpu.PRNGSeed32Op(seeds[0].scalars).results
+  # For integer seeds, we can set the seed directly as PRNGSeed32Op natively
+  # takes in a list of integers as input.
+  all_integers = all(isinstance(seed.type, ir.IntegerType) for seed in seeds)
+  if not all_integers:
+    seed_types = [seed.type for seed in seeds]
+    raise ValueError(f"All seed data must be scalar integers. Got {seed_types}")
   return tpu.PRNGSeed32Op(seeds).results
 lowering_rules[tpu_primitives.prng_seed_p] = _prng_seed_lowering_rule
 
@@ -2376,3 +2493,58 @@ def _prng_random_bits_lowering_rule(ctx: LoweringRuleContext, *, shape):
   out_type = aval_to_ir_type(out_aval)
   return tpu.PRNGRandomBitsOp(out_type).result
 lowering_rules[tpu_primitives.prng_random_bits_p] = _prng_random_bits_lowering_rule
+
+
+def random_seed_lowering(ctx, seeds, *, impl):
+  seed_lowering = lower_fun(
+      impl.seed, multiple_results=False)
+  return seed_lowering(ctx, seeds)
+lowering_rules[prng.random_seed_p] = random_seed_lowering
+
+
+def random_bits_lowering(ctx, keys, *, bit_width, shape):
+  assert bit_width == 32, "Only 32-bit PRNG supported."
+  aval, = ctx.avals_in
+  impl = aval.dtype._impl
+  bits_lowering = lower_fun(
+      impl.random_bits, multiple_results=False)
+  return bits_lowering(ctx, keys, bit_width=bit_width, shape=shape)
+lowering_rules[prng.random_bits_p] = random_bits_lowering
+
+
+def random_fold_in_lowering(ctx, keys, msgs):
+  keys_aval, _ = ctx.avals_in
+  impl = keys_aval.dtype._impl
+  fold_in_lowering = lower_fun(
+      impl.fold_in, multiple_results=False)
+  return fold_in_lowering(ctx, keys, msgs)
+lowering_rules[prng.random_fold_in_p] = random_fold_in_lowering
+
+
+def random_unwrap_lowering(ctx, key):
+  del ctx, key
+  raise NotImplementedError("key_data not implemented.")
+lowering_rules[prng.random_unwrap_p] = random_unwrap_lowering
+
+
+def random_wrap_lowering(ctx, key_data, *, impl):
+  del ctx, impl
+  if isinstance(key_data.type, ir.VectorType):
+    # If the key data lives in vregs, need to unpack it to sregs.
+    key_data_list = []
+    key_data_shape = key_data.type.shape
+    if len(key_data_shape) != 2:
+      raise NotImplementedError("Seed key_data must be 2D.")
+    if tuple(key_data_shape) != (1, 1):
+      raise NotImplementedError(
+        "Seed key_data of shape != (1, 1) not supported. "
+        f"Got: {key_data_shape}")
+    for i in range(key_data_shape[1]):
+      key_data_list.append(vector.ExtractOp(key_data, [], [0, i]))
+    return KeyScalarBundle(scalars=key_data_list)
+  if isinstance(key_data, KeyScalarBundle):
+    return key_data
+  else:
+    raise NotImplementedError(f"key_data wrap {type(key_data)}")
+
+lowering_rules[prng.random_wrap_p] = random_wrap_lowering

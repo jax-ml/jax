@@ -14,6 +14,8 @@ kernelspec:
 
 # Quickstart
 
+<!--* freshness: { reviewed: '2024-06-13' } *-->
+
 **JAX a library for array-oriented numerical computation (*à la* [NumPy](https://numpy.org/)), with automatic differentiation and JIT compilation to enable high-performance machine learning research**.
 
 This document provides a quick overview of essential JAX features, so you can get started with JAX quickly:
@@ -27,7 +29,7 @@ This document provides a quick overview of essential JAX features, so you can ge
 
 JAX can be installed for CPU on Linux, Windows, and macOS directly from the [Python Package Index](https://pypi.org/project/jax/):
 ```
-pip install "jax[cpu]"
+pip install jax
 ```
 or, for NVIDIA GPU:
 ```

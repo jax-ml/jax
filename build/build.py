@@ -70,8 +70,8 @@ def get_python_version(python_bin_path):
   return major, minor
 
 def check_python_version(python_version):
-  if python_version < (3, 9):
-    print("ERROR: JAX requires Python 3.9 or newer, found ", python_version)
+  if python_version < (3, 10):
+    print("ERROR: JAX requires Python 3.10 or newer, found ", python_version)
     sys.exit(-1)
 
 
@@ -244,7 +244,7 @@ def write_bazelrc(*, remote_build,
                   rocm_amdgpu_targets, target_cpu_features,
                   wheel_cpu, enable_mkl_dnn, use_clang, clang_path,
                   clang_major_version, enable_cuda, enable_nccl, enable_rocm,
-                  build_gpu_plugin, enable_mosaic_gpu, python_version):
+                  build_gpu_plugin, python_version):
   tf_cuda_paths = []
 
   with open("../.jax_configure.bazelrc", "w") as f:
@@ -313,14 +313,15 @@ def write_bazelrc(*, remote_build,
       if use_clang:
         f.write("build --config=nvcc_clang\n")
         f.write(f"build --action_env=CLANG_CUDA_COMPILER_PATH={clang_path}\n")
-      if enable_mosaic_gpu:
-        f.write("build --config=mosaic_gpu")
     if enable_rocm:
       f.write("build --config=rocm\n")
       if not enable_nccl:
         f.write("build --config=nonccl\n")
     if build_gpu_plugin:
-      f.write("build --config=cuda_plugin\n")
+      if enable_cuda:
+        f.write("build --config=cuda_plugin\n")
+      elif enable_rocm:
+        f.write("build --config=rocm_plugin\n")
     if python_version:
       f.write(
         "build --repo_env HERMETIC_PYTHON_VERSION=\"{python_version}\"".format(
@@ -433,21 +434,21 @@ def main():
           "plugin is still experimental and is not ready for use yet."
       ),
   )
-  add_boolean_argument(
-      parser,
-      "build_cuda_kernel_plugin",
-      default=False,
-      help_str=(
-          "Are we building the cuda kernel plugin? jaxlib will not be built "
-          "when this flag is True."
+  parser.add_argument(
+      "--build_gpu_kernel_plugin",
+      choices=["cuda", "rocm"],
+      default="",
+      help=(
+          "Specify 'cuda' or 'rocm' to build the respective kernel plugin."
+          " When this flag is set, jaxlib will not be built."
       ),
   )
   add_boolean_argument(
       parser,
-      "build_cuda_pjrt_plugin",
+      "build_gpu_pjrt_plugin",
       default=False,
       help_str=(
-          "Are we building the cuda pjrt plugin? jaxlib will not be built "
+          "Are we building the cuda/rocm pjrt plugin? jaxlib will not be built "
           "when this flag is True."
       ),
   )
@@ -456,6 +457,11 @@ def main():
       choices=["11", "12"],
       default="12",
       help="Which CUDA major version the gpu plugin is for.")
+  parser.add_argument(
+      "--gpu_plugin_rocm_version",
+      choices=["60"],
+      default="60",
+      help="Which ROCM major version the gpu plugin is for.")
   add_boolean_argument(
       parser,
       "enable_rocm",
@@ -527,10 +533,6 @@ def main():
       "--python_version",
       default=None,
       help="hermetic python version, e.g., 3.10")
-  add_boolean_argument(
-      parser,
-      "enable_mosaic_gpu",
-      help_str="Should we build with Mosaic GPU? VERY EXPERIMENTAL.")
   add_boolean_argument(
       parser,
       "configure_only",
@@ -652,7 +654,6 @@ def main():
       enable_nccl=args.enable_nccl,
       enable_rocm=args.enable_rocm,
       build_gpu_plugin=args.build_gpu_plugin,
-      enable_mosaic_gpu=args.enable_mosaic_gpu,
       python_version=python_version,
   )
 
@@ -683,7 +684,7 @@ def main():
     *args.bazel_options,
   )
 
-  if not args.build_cuda_kernel_plugin and not args.build_cuda_pjrt_plugin:
+  if args.build_gpu_kernel_plugin == "" and not args.build_gpu_pjrt_plugin:
     build_cpu_wheel_command = [
       *command_base,
       "//jaxlib/tools:build_wheel", "--",
@@ -698,29 +699,44 @@ def main():
     print(" ".join(build_cpu_wheel_command))
     shell(build_cpu_wheel_command)
 
-  if args.build_gpu_plugin or args.build_cuda_kernel_plugin:
-    build_cuda_kernels_command = [
+  if args.build_gpu_plugin or (args.build_gpu_kernel_plugin == "cuda") or \
+      (args.build_gpu_kernel_plugin == "rocm"):
+    build_gpu_kernels_command = [
       *command_base,
-      "//jaxlib/tools:build_cuda_kernels_wheel", "--",
+      "//jaxlib/tools:build_gpu_kernels_wheel", "--",
       f"--output_path={output_path}",
       f"--jaxlib_git_hash={get_githash()}",
       f"--cpu={wheel_cpu}",
-      f"--cuda_version={args.gpu_plugin_cuda_version}"
     ]
+    if args.enable_cuda:
+      build_gpu_kernels_command.append(f"--enable-cuda={args.enable_cuda}")
+      build_gpu_kernels_command.append(f"--platform_version={args.gpu_plugin_cuda_version}")
+    elif args.enable_rocm:
+      build_gpu_kernels_command.append(f"--enable-rocm={args.enable_rocm}")
+      build_gpu_kernels_command.append(f"--platform_version={args.gpu_plugin_rocm_version}")
+    else:
+      raise ValueError("Unsupported GPU plugin backend. Choose either 'cuda' or 'rocm'.")
     if args.editable:
-      build_cuda_kernels_command.append("--editable")
-    print(" ".join(build_cuda_kernels_command))
-    shell(build_cuda_kernels_command)
+      build_gpu_kernels_command.append("--editable")
+    print(" ".join(build_gpu_kernels_command))
+    shell(build_gpu_kernels_command)
 
-  if args.build_gpu_plugin or args.build_cuda_pjrt_plugin:
+  if args.build_gpu_plugin or args.build_gpu_pjrt_plugin:
     build_pjrt_plugin_command = [
       *command_base,
       "//jaxlib/tools:build_gpu_plugin_wheel", "--",
       f"--output_path={output_path}",
       f"--jaxlib_git_hash={get_githash()}",
       f"--cpu={wheel_cpu}",
-      f"--cuda_version={args.gpu_plugin_cuda_version}"
     ]
+    if args.enable_cuda:
+      build_pjrt_plugin_command.append(f"--enable-cuda={args.enable_cuda}")
+      build_pjrt_plugin_command.append(f"--platform_version={args.gpu_plugin_cuda_version}")
+    elif args.enable_rocm:
+      build_pjrt_plugin_command.append(f"--enable-rocm={args.enable_rocm}")
+      build_pjrt_plugin_command.append(f"--platform_version={args.gpu_plugin_rocm_version}")
+    else:
+      raise ValueError("Unsupported GPU plugin backend. Choose either 'cuda' or 'rocm'.")
     if args.editable:
       build_pjrt_plugin_command.append("--editable")
     print(" ".join(build_pjrt_plugin_command))

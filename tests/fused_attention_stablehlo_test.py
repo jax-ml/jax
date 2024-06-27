@@ -14,7 +14,6 @@
 
 from functools import partial
 from absl.testing import absltest
-from typing import Optional
 import os
 
 os.environ["XLA_FLAGS"] = \
@@ -43,8 +42,8 @@ def sdpa_train(query: Array,
                key: Array,
                value: Array,
                grad: Array,
-               bias: Optional[Array] = None,
-               mask: Optional[Array] = None,
+               bias: Array | None = None,
+               mask: Array | None = None,
                scale: float = 0.5,
                mask_type: MaskType = MaskType.NO_MASK,
                is_bnth: bool = False,
@@ -63,8 +62,7 @@ def sdpa_train(query: Array,
   out, sdpa_vjp = jax.vjp(
       partial(dot_product_attention, scale=scale, mask_type=mask_type,
               dropout_rate=dropout_rate,
-              qkv_layout="BNTH" if is_bnth else "BTNH",
-              is_training=True),
+              qkv_layout="BNTH" if is_bnth else "BTNH"),
       query, key, value, bias, mask, q_seqlen, kv_seqlen)
   query_grad, key_grad, value_grad, bias_grad, _, _, _ = sdpa_vjp(grad)
   if bias is not None and len(bias.shape) == 3:
@@ -75,8 +73,8 @@ def sdpa_train(query: Array,
 def sdpa_ref(query: Array,
       key: Array,
       value: Array,
-      bias: Optional[Array] = None,
-      mask: Optional[Array] = None,
+      bias: Array | None = None,
+      mask: Array | None = None,
       scale: float = 0.5,
       mask_type: MaskType = MaskType.NO_MASK,
       dropout_rate: float = 0.1) -> Array:
@@ -151,8 +149,8 @@ def sdpa_train_ref(query: Array,
             key: Array,
             value: Array,
             grad: Array,
-            bias: Optional[Array] = None,
-            mask: Optional[Array] = None,
+            bias: Array | None = None,
+            mask: Array | None = None,
             scale: float = 0.5,
             mask_type: MaskType = MaskType.NO_MASK,
             dropout_rate: float = 0.1) -> Array:

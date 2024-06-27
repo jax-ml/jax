@@ -16,7 +16,6 @@ import collections
 import contextlib
 import functools
 import logging
-import textwrap
 import time
 import unittest
 
@@ -41,22 +40,13 @@ import numpy as np
 
 config.parse_flags_with_absl()
 
-
-def _format_multiline(text):
-  return textwrap.dedent(text).lstrip()
-
-prev_xla_flags = None
-
+_exit_stack = contextlib.ExitStack()
 
 def setUpModule():
-  global prev_xla_flags
-  # This will control the CPU devices. On TPU we always have 2 devices
-  prev_xla_flags = jtu.set_host_platform_device_count(2)
+  _exit_stack.enter_context(jtu.set_host_platform_device_count(2))
 
-
-# Reset to previous configuration in case other test modules will be run.
 def tearDownModule():
-  prev_xla_flags()
+  _exit_stack.close()
 
 map, unsafe_map = util.safe_map, map
 

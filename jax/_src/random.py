@@ -403,8 +403,10 @@ def _uniform(key, shape, dtype, minval, maxval) -> Array:
   finfo = jnp.finfo(dtype)
   nbits, nmant = finfo.bits, finfo.nmant
 
-  if nbits not in (16, 32, 64):
-    raise TypeError(f"uniform only accepts 16-, 32-, or 64-bit dtypes, got {dtype}.")
+  if nbits not in (8, 16, 32, 64):
+    raise TypeError(
+        f"uniform only accepts 8-, 16-, 32-, or 64-bit dtypesgot {dtype}."
+    )
 
   rng_bits = nbits
   if nmant < 8:
@@ -1860,7 +1862,7 @@ def _f(key, dfnum, dfden, shape, dtype) -> Array:
 
 
 def rademacher(key: KeyArrayLike,
-               shape: Shape,
+               shape: Shape = (),
                dtype: DTypeLikeInt = int) -> Array:
   r"""Sample from a Rademacher distribution.
 
@@ -1873,7 +1875,7 @@ def rademacher(key: KeyArrayLike,
 
   Args:
     key: a PRNG key.
-    shape: The shape of the returned samples.
+    shape: The shape of the returned samples. Default ().
     dtype: The type used for samples.
 
   Returns:
@@ -2354,7 +2356,6 @@ def _triangular(key, left, mode, right, shape, dtype) -> Array:
   return tri
 
 
-
 def lognormal(key: KeyArrayLike,
               sigma: RealArray = np.float32(1),
               shape: Shape | None = None,
@@ -2619,7 +2620,7 @@ def clone(key):
   Outside the context of key reuse checking (see :mod:`jax.experimental.key_reuse`)
   this function operates as an identity.
 
-  Example:
+  Examples:
 
     >>> import jax
     >>> key = jax.random.key(0)

@@ -17,16 +17,15 @@ from __future__ import annotations
 
 import abc
 import asyncio
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from functools import partial
 import itertools
 import logging
 import os
 import re
-import sys
 import threading
 import time
-from typing import Any, Callable, Optional, Union
+from typing import Any
 
 import jax
 from jax._src import array
@@ -70,7 +69,7 @@ logger = logging.getLogger(__name__)
 
 async def create_async_array_from_callback(
     global_shape: array.Shape,
-    inp_sharding: sharding_impls.XLACompatibleSharding,
+    inp_sharding: jax.sharding.Sharding,
     data_callback: Callable[[array.Index, jax.Device], Awaitable[jax.Array]],
 ):
   device_to_index_map = inp_sharding.devices_indices_map(global_shape)
@@ -130,7 +129,7 @@ def get_tensorstore_spec(ckpt_path: str, ocdbt: bool = False):
   return spec
 
 
-def is_remote_storage(tspec: Union[dict[str, Any], str]) -> bool:
+def is_remote_storage(tspec: dict[str, Any] | str) -> bool:
   """Detect if user is using cloud storages.
 
   This can detect common defines and unable to detect some corner cases such as
@@ -170,7 +169,7 @@ class _LimitInFlightBytes:
     self._cv = asyncio.Condition(lock=asyncio.Lock())
 
   async def wait_for_bytes(self, requested_bytes):
-    if requested_bytes >= self._max_bytes:
+    if requested_bytes > self._max_bytes:
       raise ValueError('Requested more bytes than we reserved space for: '
                        f'{requested_bytes} > {self._max_bytes}')
     async with self._cv:
@@ -190,7 +189,7 @@ async def async_serialize(
     tensorstore_spec,
     commit_future=None,
     context=TS_CONTEXT,
-    primary_host: Optional[int] = 0,
+    primary_host: int | None = 0,
     replica_id: int = 0,
 ):
   """Serialize an array using TensorStore.
@@ -310,7 +309,7 @@ def estimate_read_memory_footprint(t: ts.TensorStore,
 
 
 async def async_deserialize(
-    user_in_sharding: sharding_impls.XLACompatibleSharding | Layout,
+    user_in_sharding: jax.sharding.Sharding | Layout,
     tensorstore_spec: ts.Spec | dict[str, Any],
     global_shape: Sequence[int] | None = None,
     dtype=None,
@@ -320,10 +319,10 @@ async def async_deserialize(
 ):
   in_sharding = (user_in_sharding.sharding
                  if isinstance(user_in_sharding, Layout) else user_in_sharding)
-  if not isinstance(in_sharding, sharding_impls.XLACompatibleSharding):
+  if not isinstance(in_sharding, jax.sharding.Sharding):
     raise ValueError(
         'sharding passed to deserialization should be specified, concrete and'
-        f' an instance of `jax.XLACompatibleSharding`. Got {in_sharding}')
+        f' an instance of `jax.sharding.Sharding`. Got {in_sharding}')
   dll = (user_in_sharding.device_local_layout
          if isinstance(user_in_sharding, Layout) else None)
   t = await ts.open(
@@ -412,7 +411,7 @@ class GlobalAsyncCheckpointManagerBase(util.StrictABC):
   is finished, checkpoint for step 2 will need to be blocked. Maintaining a
   class allows to maintain that state.
 
-  Example:
+  Examples:
 
   Below is a simplified training loop:
 

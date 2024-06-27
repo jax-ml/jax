@@ -13,10 +13,9 @@
 # limitations under the License.
 from __future__ import annotations
 
-import collections  # noqa: F401
 from collections import Counter, defaultdict, deque, namedtuple
-from collections.abc import (Collection, Generator, Hashable, Iterable,
-                             Iterator, Set, Sequence, MutableSet,
+from collections.abc import (Callable, Collection, Generator, Hashable,
+                             Iterable, Iterator, Set, Sequence, MutableSet,
                              MutableMapping)
 from contextlib import contextmanager, ExitStack
 from dataclasses import dataclass
@@ -29,13 +28,14 @@ import math
 import operator
 import threading
 import types
-from typing import (Any, Callable, ClassVar, Generic, NamedTuple, TypeVar,
+from typing import (Any, ClassVar, Generic, NamedTuple, TypeVar,
                     cast, overload, Union)
 import warnings
 from weakref import ref
 
 import numpy as np
 
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import config
 from jax._src import effects
@@ -62,7 +62,7 @@ zip, unsafe_zip = safe_zip, zip
 map, unsafe_map = safe_map, map
 
 
-_TRACER_ERROR_NUM_TRACEBACK_FRAMES = config.DEFINE_integer(
+_TRACER_ERROR_NUM_TRACEBACK_FRAMES = config.int_flag(
     'jax_tracer_error_num_traceback_frames',
     config.int_env('JAX_TRACER_ERROR_NUM_TRACEBACK_FRAMES', 5),
     help='Set the number of stack frames in JAX tracer error messages.'
@@ -668,13 +668,25 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
   size = _aval_property('size')
   shape = _aval_property('shape')
 
+  def __hash__(self):
+    # TODO(jakevdp) finalize this deprecation and set __hash__ = None
+    # Warning added 2024-06-13
+    if deprecations.is_accelerated('tracer-hash'):
+      raise TypeError(f"unhashable type: {type(self)}")
+    # Use FutureWarning rather than DeprecationWarning because hash is likely
+    # not called directly by the user, so we want to warn at all stacklevels.
+    warnings.warn(
+      f"unhashable type: {type(self)}. Attempting to hash a tracer will lead to an"
+      " error in a future JAX release.", category=FutureWarning)
+    return super().__hash__()
+
   def __init__(self, trace: Trace):
     self._trace = trace
 
   def _error_repr(self):
     if self.aval is None:
       return f"traced array with aval {self.aval}"
-    return f"traced array with shape {raise_to_shaped(self.aval).str_short()}."
+    return f"traced array with shape {raise_to_shaped(self.aval).str_short()}"
 
   def __array__(self, *args, **kw):
     raise TracerArrayConversionError(self)
@@ -1028,13 +1040,8 @@ class TraceState:
 
 
 def _update_thread_local_jit_state(dynamic):
-  # Copies the MainTrace instance, removing any .debug_info or .jaxpr_stack
-  # fields that should not be kept alive as part of a cache key.
-  # TODO(mattjj): split debug_info and jaxpr_stack out of MainTrace.
-  # TODO(mattjj): add a test that verifies that JIT-ted functions are not kept
-  # alive by the JIT cache, particularly for nested JIT-ted functions.
-  copy = MainTrace(dynamic.level, dynamic.trace_type, **dynamic.payload)
-  config.update_thread_local_jit_state(dynamic_trace_state=copy)
+  state = (dynamic.level, dynamic.trace_type)
+  config.update_thread_local_jit_state(dynamic_trace_state=state)
 
 
 # The global state of the tracer is accessed by a thread-local object.
@@ -1059,8 +1066,8 @@ def _initialize_jax_jit_thread_local_state():
   tls = jax_jit.thread_local_state()
   if tls.extra_jit_context is None:
     dynamic = thread_local_state.trace_state.trace_stack.dynamic
-    copy = MainTrace(dynamic.level, dynamic.trace_type, **dynamic.payload)
-    config.update_thread_local_jit_state(dynamic_trace_state=copy)
+    state = (dynamic.level, dynamic.trace_type)
+    config.update_thread_local_jit_state(dynamic_trace_state=state)
 
 
 jax_jit.set_thread_local_state_initialization_callback(
@@ -1767,6 +1774,7 @@ class ShapedArray(UnshapedArray):
 
   def str_short(self, short_dtypes=False):
     dt_str =  _short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
+    dt_str = dt_str.replace('void', 'float0')
     shapestr = ','.join(map(str, self.shape))
     if self.named_shape:
       named_shapestr = ','.join(f'{k}:{v}' for k, v in self.named_shape.items())

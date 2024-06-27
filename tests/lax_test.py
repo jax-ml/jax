@@ -45,7 +45,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.internal_test_util import lax_test_util
 from jax._src.lax import lax as lax_internal
-from jax._src.util import NumpyComplexWarning
+from jax._src.util import NumpyComplexWarning, safe_zip
 from jax._src.tree_util import tree_map
 
 config.parse_flags_with_absl()
@@ -3316,14 +3316,6 @@ class FooTyRules:
     return core.ShapedArray((2,), jnp.dtype('uint32'))
 
   @staticmethod
-  def logical_sharding(aval, phys_sharding):
-    return phys_sharding
-
-  @staticmethod
-  def physical_sharding(aval, sharding):
-    return sharding
-
-  @staticmethod
   def result_handler(sticky_device, aval):
     def handler(_, buf):
       buf.aval = core.ShapedArray(buf.shape, buf.dtype)
@@ -3340,14 +3332,6 @@ class FooTyRules:
         buf, = arr
       return FooArray(aval.shape, buf)
     return handler
-
-  @staticmethod
-  def replicate_trailing_dims(ctx, val, aval):
-    return val
-
-  @staticmethod
-  def check_replicated_trailing_dims(sharding: jax.sharding.GSPMDSharding, aval):
-    pass
 
 
 class FooTy(dtypes.ExtendedDType):
@@ -3410,11 +3394,14 @@ class FooArray:
   size = property(lambda self: self.data.size // 2)
   ndim = property(lambda self: self.data.ndim - 1)
 
-def shard_foo_array_handler(x, sharding):
-  device, = sharding._addressable_device_assignment
-  aval = core.raise_to_shaped(core.get_aval(x.data))
-  return pxla.batched_device_put(
-      aval, jax.sharding.SingleDeviceSharding(device), [x.data], [device])
+def shard_foo_array_handler(xs, shardings):
+  results = []
+  for x, sharding in safe_zip(xs, shardings):
+    device, = sharding._addressable_device_assignment
+    aval = core.raise_to_shaped(core.get_aval(x.data))
+    results.append(pxla.batched_device_put(
+        aval, jax.sharding.SingleDeviceSharding(device), [x.data], [device]))
+  return results
 
 def foo_array_constant_handler(x):
   return array._array_mlir_constant_handler(x.data)
