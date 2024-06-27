@@ -171,6 +171,10 @@ IndexingMode = Union[Blocked, Unblocked]
 
 @dataclasses.dataclass(unsafe_hash=True)
 class BlockSpec:
+  """Specifies how an array should be sliced for each iteration of a kernel.
+
+  See :ref:`pallas_blockspec` for more details.
+  """
   index_map: Callable[..., Any] | None = None
   block_shape: tuple[int | None, ...] | None = None
   memory_space: Any | None = None
