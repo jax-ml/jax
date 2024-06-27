@@ -800,10 +800,11 @@ pytype_strict_library(
     name = "layout",
     srcs = ["_src/layout.py"],
     deps = [
+        ":dtypes",
         ":sharding",
         ":sharding_impls",
         "//jax/_src/lib",
-    ],
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(

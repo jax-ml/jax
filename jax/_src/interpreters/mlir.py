@@ -824,12 +824,15 @@ def _to_physical_op_sharding(
   return sharding._to_xla_hlo_sharding(aval.ndim).to_proto()  # type: ignore
 
 
-def _to_xla_layout(layout: DeviceLocalLayout | None | AutoLayout) -> str | None:
+def _to_xla_layout(layout: DeviceLocalLayout | None | AutoLayout,
+                   aval: core.AbstractValue) -> str | None:
   if layout is None:
     return "default"
   if isinstance(layout, AutoLayout):
     return "auto"
-  return layout._to_xla_layout()
+  if aval is core.abstract_token:
+    return "default"
+  return layout._to_xla_layout(aval.dtype)  # type: ignore
 
 
 def _get_mem_kind(s: JSharding | None) -> str | None:
@@ -1194,11 +1197,9 @@ def lower_jaxpr_to_fun(
 
   ir_arg_shardings = None
   if arg_shardings is not None:
-    in_avals = [None] * (num_dim_vars + num_tokens) + list(jaxpr.in_avals)
     ir_arg_shardings = util.flatten(
         [[_to_physical_op_sharding(a, s)] * len(types)
-         for a, s, types in zip(in_avals, arg_shardings, input_types)])
-    del in_avals
+         for a, s, types in zip(input_avals, arg_shardings, input_types)])
 
   ir_arg_memory_kinds = None
   if arg_memory_kinds is not None:
@@ -1208,8 +1209,8 @@ def lower_jaxpr_to_fun(
   ir_arg_layouts = None
   if arg_layouts is not None:
     ir_arg_layouts = util.flatten(
-        [[_to_xla_layout(l)] * len(types)
-         for l, types in zip(arg_layouts, input_types)])
+        [[_to_xla_layout(l, a)] * len(types)
+         for l, a, types in zip(arg_layouts, input_avals, input_types)])
 
   ir_donated_args = None
   if xla_donated_args is not None:
@@ -1244,8 +1245,8 @@ def lower_jaxpr_to_fun(
   ir_result_layouts = None
   if result_layouts is not None:
     ir_result_layouts = util.flatten(
-        [[_to_xla_layout(l)] * len(types)
-         for l, types in zip(result_layouts, output_types)])
+        [[_to_xla_layout(l, a)] * len(types)
+         for l, a, types in zip(result_layouts, output_avals, output_types)])
 
   if (
       replicated_args is not None
@@ -2169,6 +2170,29 @@ def get_sharding_attr(sharding_proto: xc.OpSharding):
     return ir.StringAttr.get(sharding_proto.SerializeToString())  # type: ignore
   else:
     return ir.StringAttr.get(repr(xc.HloSharding.from_proto(sharding_proto)))
+
+
+def wrap_with_layout_op(ctx: LoweringRuleContext,
+                        x: ir.Value,
+                        aval_out: core.AbstractValue,
+                        layout: DeviceLocalLayout,
+                        aval_in: core.AbstractValue):
+  result_type = aval_to_ir_type(aval_out)
+  out_shape = core.physical_aval(aval_out).shape  # type: ignore
+  if core.is_constant_shape(out_shape):
+    result_shapes = None
+  else:
+    result_shapes = [eval_dynamic_shape_as_tensor(ctx, out_shape)]
+
+  op = custom_call('LayoutConstraint', result_types=[result_type], operands=[x],
+                   api_version=1,
+                   result_shapes=result_shapes,
+                   # Set operand layouts to anything. XLA will ignore it.
+                   operand_layouts=[list(range(aval_in.ndim))],  # type: ignore
+                   # TODO(yashkatariya): Figure out how to pass tiling to the
+                   # custom call.
+                   result_layouts=[layout.major_to_minor[::-1]])
+  return op.result
 
 
 # MLIR lowerings for lax primitives

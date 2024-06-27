@@ -506,7 +506,8 @@ class ArrayImpl(basearray.Array):
     if self.is_deleted():
       return Layout(None, self.sharding)
     try:
-      return Layout(DeviceLocalLayout(self._pjrt_layout), self.sharding)
+      return Layout(DeviceLocalLayout.from_pjrt_layout(self._pjrt_layout),
+                    self.sharding)
     except xe.XlaRuntimeError as e:
       msg, *_ = e.args
       if type(msg) is str and msg.startswith("UNIMPLEMENTED"):
