@@ -15,6 +15,9 @@ Remember to align the itemized text with the first line of an item within a list
     supported version until December 2024.
   * {func}`jax.numpy.ceil`, {func}`jax.numpy.floor` and {func}`jax.numpy.trunc` now return the output
     of the same dtype as the input, i.e. no longer upcast integer or boolean inputs to floating point.
+  * `libdevice.10.bc` is no longer bundled with CUDA wheels. It must be
+    installed either as a part of local CUDA installation, or via NVIDIA's CUDA
+    pip wheels.
 
 ## jaxlib 0.4.31
 
