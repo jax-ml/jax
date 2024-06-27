@@ -415,7 +415,7 @@ def eigh(a: ArrayLike, b: ArrayLike | None = None, lower: bool = True,
          type: int = 1, check_finite: bool = True) -> Array | tuple[Array, Array]:
   """Compute eigenvalues and eigenvectors for a Hermitian matrix
 
-  JAX implementation of :func:`jax.scipy.linalg.eigh`.
+  JAX implementation of :func:`scipy.linalg.eigh`.
 
   Args:
     a: Hermitian input array of shape ``(..., N, N)``
