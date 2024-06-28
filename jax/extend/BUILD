@@ -33,6 +33,7 @@ pytype_strict_library(
         ":linear_util",
         ":random",
         ":source_info_util",
+        ":xla_bridge",
     ],
 )
 
@@ -76,4 +77,12 @@ pytype_strict_library(
     name = "ffi",
     srcs = ["ffi.py"],
     deps = ["//jax"],
+)
+
+pytype_strict_library(
+    name = "xla_bridge",
+    srcs = ["xla_bridge.py"],
+    deps = [
+        "//jax:xla_bridge",
+    ],
 )

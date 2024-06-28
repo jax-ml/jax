@@ -27,6 +27,7 @@ from jax._src import core
 from jax._src import linear_util
 from jax._src import prng
 from jax._src import test_util as jtu
+from jax._src import xla_bridge
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.extend import ffi
@@ -55,6 +56,7 @@ class ExtendTest(jtu.JaxTestCase):
     self.assertIs(jex.linear_util.transformation, linear_util.transformation)
     self.assertIs(jex.linear_util.transformation_with_aux, linear_util.transformation_with_aux)
     self.assertIs(jex.linear_util.wrap_init, linear_util.wrap_init)
+    self.assertIs(jex.xla_bridge.register_backend_factory, xla_bridge.register_backend_factory)
 
 
 class RandomTest(jtu.JaxTestCase):
