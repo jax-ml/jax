@@ -675,7 +675,40 @@ class ComputeOffload(jtu.BufferDonationTestCase):
       return y * 3
 
     out2 = h(inp)
-    self.assertArraysEqual(out, inp * 6)
+    self.assertArraysEqual(out2, inp * 6)
+    self.assertEqual(out2.sharding.memory_kind, 'pinned_host')
+
+  def test_compute_on_reduction(self):
+    out_s = SingleDeviceSharding(jax.devices()[0], memory_kind='pinned_host')
+
+    @compute_on('device_host')
+    @jax.jit
+    def g(x):
+      # Reduction generates multiple host computations (inside a single host
+      # computation module): the main one and a reduction body.
+      return jnp.sum(x)
+
+    @jax.jit
+    def f(x):
+      y = g(x)
+      z = jnp.sum(x)
+      return y * z
+
+    inp = jnp.arange(8)
+    out = f(inp)
+    self.assertArraysEqual(out, np.sum(inp) * np.sum(inp))
+
+    lowered_text = f.lower(jnp.arange(8)).as_text()
+    self.assertIn('_xla_compute_type', lowered_text)
+
+    @functools.partial(jax.jit, out_shardings=out_s)
+    def h(x):
+      y = g(x)
+      z = jnp.sum(x)
+      return y * z
+
+    out2 = h(inp)
+    self.assertArraysEqual(out2, np.sum(inp) * np.sum(inp))
     self.assertEqual(out2.sharding.memory_kind, 'pinned_host')
 
   def test_nested_compute_error(self):
