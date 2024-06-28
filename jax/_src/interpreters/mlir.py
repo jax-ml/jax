@@ -554,7 +554,11 @@ class LoweringParameters:
   global_constant_computation: bool = False
 
   # Signals that we are lowering for exporting.
+
   for_export: bool = False
+  # See usage in https://jax.readthedocs.io/en/latest/export.html#ensuring-forward-and-backward-compatibility
+  # We have this here to ensure it is reflected in the cache keys
+  export_ignore_forward_compatibility: bool = False
 
 
 @dataclasses.dataclass
