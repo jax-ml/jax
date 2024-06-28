@@ -574,7 +574,7 @@ bool VectorLayout::generalizes(
     if (tiling_[0] == 1 && other.tiling_[0] == 1 &&
         ((implicit_dim_ == ImplicitDim::kSecondMinor &&
           other.implicit_dim_ == ImplicitDim::kNone) ||
-         (implicit_dim_ == ImplicitDim::kNone ||
+         (implicit_dim_ == ImplicitDim::kNone &&
           other.implicit_dim_ == ImplicitDim::kSecondMinor))) {
       // If the tiling is (1, n), we can always squeeze an implicit 2nd minor
       // dimension without having to combine vregs.
