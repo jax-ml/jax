@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import abc
 from collections.abc import Callable, Iterable, Iterator, Sequence
-import dataclasses
 import functools
 from functools import partial
 import itertools as it
@@ -287,14 +286,7 @@ def split_merge(predicate, xs):
   return lhs, rhs, merge
 
 
-@dataclasses.dataclass(frozen=True)
-class _IgnoreKey:
-
-  def __hash__(self):
-    return hash(self.__class__)
-
-  def __eq__(self, other):
-    return isinstance(other, _IgnoreKey)
+def _ignore(): return None
 
 
 def cache(max_size=4096, trace_context_in_key=True):
@@ -307,10 +299,8 @@ def cache(max_size=4096, trace_context_in_key=True):
     def wrapper(*args, **kwargs):
       if config.check_tracer_leaks.value:
         return f(*args, **kwargs)
-      elif trace_context_in_key:
-        return cached(config.trace_context(), *args, **kwargs)
-      else:
-        return cached(_IgnoreKey(), *args, **kwargs)
+      return cached(config.trace_context() if trace_context_in_key else _ignore(),
+                    *args, **kwargs)
 
     wrapper.cache_clear = cached.cache_clear
     wrapper.cache_info = cached.cache_info
