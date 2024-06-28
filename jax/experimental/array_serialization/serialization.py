@@ -185,7 +185,7 @@ class _LimitInFlightBytes:
       self._cv.notify_all()
 
 
-def transfer_shard_to_host(shard: array.Shard) -> np.ndarray:
+async def transfer_shard_to_host(shard: array.Shard) -> np.ndarray:
   data = shard.data
   has_pinned_host = any(
       m.kind == "pinned_host" for m in shard.device.addressable_memories())
@@ -194,6 +194,8 @@ def transfer_shard_to_host(shard: array.Shard) -> np.ndarray:
     sharding = jax.sharding.SingleDeviceSharding(shard.device,
         memory_kind="pinned_host")
     data = jax.device_put(data, sharding)
+    # Allow other transfers to be scheduled simultaneously
+    await asyncio.sleep(0)
     # Ensure that jax.Array's internal numpy array can be zero-copied.
     # Tensorstore implicitly converts the written data to a numpy array,
     # and would otherwise silently copy host-to-host.
@@ -277,7 +279,7 @@ async def async_serialize(
 
   async def _write_array(shard):
     if shard.replica_id == replica_id:
-      data = transfer_shard_to_host(shard)
+      data = await transfer_shard_to_host(shard)
       write_future = t[shard.index].write(
           data,
           # Avoid additional copy of input array into the TensorStore chunk
