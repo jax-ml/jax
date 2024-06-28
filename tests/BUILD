@@ -1465,7 +1465,6 @@ jax_test(
     ],
     deps = [
         "//jax:internal_test_harnesses",
-        "//jax/experimental/export",
     ],
 )
 
@@ -1488,7 +1487,6 @@ jax_test(
     ],
     deps = [
         "//jax:internal_test_harnesses",
-        "//jax/experimental/export",
     ],
 )
 

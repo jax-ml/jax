@@ -181,7 +181,6 @@ py_library(
     ] + jax_internal_export_back_compat_test_util_visibility,
     deps = [
         ":jax",
-        "//jax/experimental/export",
     ] + py_deps("numpy"),
 )
 
