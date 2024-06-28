@@ -96,7 +96,6 @@ def create_descriptor(
     stride_byte_offset: int,
     swizzle: int | None,
     memory_space: int | None = None,
-    nvgpu_type=None,
 ):
   i64 = ir.IntegerType.get_signless(64)
   ptr_val = llvm.ptrtoint(i64, utils.memref_ptr(memref_arg, memory_space))
@@ -104,22 +103,25 @@ def create_descriptor(
     swizzle_encoding = 0
   elif swizzle == 128:
     swizzle_encoding = 1
+  elif swizzle == 64:
+    swizzle_encoding = 2
+  elif swizzle == 32:
+    swizzle_encoding = 3
   else:
     raise NotImplementedError(swizzle)
   encoded_base_addr = llvm.LShrOp(
       llvm.AndOp(ptr_val, c(0x3FFFF, i64)), c(4, i64)
   )
+  # We ignore the offset
   desc_const = (
       (wgmma_encode(leading_byte_offset) << 16)
       | (wgmma_encode(stride_byte_offset) << 32)
-      |
-      # We ignore the offset
-      (swizzle_encoding << 62)
   )
-  desc = llvm.OrOp(encoded_base_addr, c(desc_const, i64))
-  if nvgpu_type is not None:
-    desc = builtin.UnrealizedConversionCastOp([nvgpu_type], [desc])
-  return desc.result
+  desc = llvm.or_(
+      arith.shli(c(swizzle_encoding, i64), c(62, i64)), c(desc_const, i64)
+  )
+  desc = llvm.or_(encoded_base_addr, desc)
+  return desc
 
 
 def _unpack_i32(vec_ty, r):
@@ -139,7 +141,7 @@ def _supported_wgmma_types(dtype, abtype) -> bool:
     return False
 
 
-def wgmma_m64k128B(
+def wgmma_m64(
     acc: np.ndarray,  # of register Values
     a,
     b_descriptor: ir.Value,
@@ -148,19 +150,19 @@ def wgmma_m64k128B(
     a_k_stride: int | None,
     b_k_stride: int,
     n: int,
+    swizzle: int,
     element_type: ir.Type,
 ):
   out_ty = ir.VectorType(acc.flat[0].type).element_type
   if not _supported_wgmma_types(out_ty, element_type):
     raise ValueError(f"Usupported wgmma types {(out_ty, element_type)=}")
 
-  f16 = ir.F16Type.get()
   i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
   index = ir.IndexType.get()
   if b_k_stride % 16:
     raise ValueError
-  if n % (128 // bytewidth(element_type)):
+  if n % (swizzle // bytewidth(element_type)):
     raise ValueError
   # Only 16-bit types support transposes
   supports_transpose = bytewidth(element_type) == 2
@@ -254,7 +256,7 @@ def wgmma_m64k128B(
   acc_struct_type = ir.Type.parse(
       f"!llvm.struct<({','.join(str(out_ty_field) for _ in acc_regs)})>"
   )
-  for i in range(4):
+  for i in range((swizzle // bytewidth(element_type)) // k_instr):
     # Slice out the relevant part of A or advance the A descriptor.
     if a_in_regs:
       a_slice = a[:, (i * 16) : ((i + 1) * 16)]
@@ -299,6 +301,7 @@ def wgmma(
     a,
     b,
     *,
+    swizzle: int  = 128,
     # Order only applies within each tile!
     a_order: WGMMALayout | None = None,
     b_order: WGMMALayout = WGMMALayout.ROW_MAJOR,
@@ -319,7 +322,7 @@ def wgmma(
   if (element_type := a_element_type) != b_ty.element_type:
     raise ValueError
   element_bytewidth = bytewidth(element_type)
-  kn_tile = 128 // element_bytewidth
+  kn_tile = swizzle // element_bytewidth
 
   groups_k, groups_n = b_ty.shape[:2]
   if b_ty.shape[2:] != [kn_tile, kn_tile]:
@@ -346,26 +349,33 @@ def wgmma(
     if a_order is None:
       a_order = WGMMALayout.ROW_MAJOR
 
+  if a_order == WGMMALayout.COL_MAJOR and swizzle != 128:
+    # Not sure what the layout is like, since the tiles aren't square.
+    raise NotImplementedError
+
   row_major = WGMMALayout.ROW_MAJOR
   col_major = WGMMALayout.COL_MAJOR
+  tnsp_lbo = swizzle * (swizzle // 32)
+  sbo = swizzle // 2
   a_desc_fields = dict(
-      leading_byte_offset=((1 if a_order == row_major else 512) << 4),
-      stride_byte_offset=(64 << 4),
-      swizzle=128,
+      leading_byte_offset=(1 if a_order == row_major else tnsp_lbo) << 4,
+      stride_byte_offset=sbo << 4,
+      swizzle=swizzle,
       memory_space=3,
   )
   b_desc_fields = dict(
-      leading_byte_offset=((512 if b_order == row_major else 1) << 4),
-      stride_byte_offset=(64 << 4),
-      swizzle=128,
+      leading_byte_offset=(tnsp_lbo if b_order == row_major else 1) << 4,
+      stride_byte_offset=sbo << 4,
+      swizzle=swizzle,
       memory_space=3,
   )
   wgmma_params = dict(
       a_transpose=a_order == col_major,
       b_transpose=b_order == row_major,
-      a_k_stride=(2 if a_order == row_major else 128) * 16,
-      b_k_stride=(128 if b_order == row_major else 2) * 16,
+      a_k_stride=(2 if a_order == row_major else 128) << 4,
+      b_k_stride=(swizzle if b_order == row_major else 2) << 4,
       n=(groups_n * kn_tile),
+      swizzle=swizzle,
       element_type=ir.FloatTF32Type.get()
       if ir.F32Type.isinstance(element_type)
       else element_type,
@@ -381,13 +391,13 @@ def wgmma(
     a_strides, _ = ir.MemRefType(a.type).get_strides_and_offset()
     a_byte_strides = [s * element_bytewidth for s in a_strides]
     a_m_byte_stride, a_k_byte_stride = a_byte_strides[:2]
-    if a_byte_strides[2:] != [128, element_bytewidth]:
+    if a_byte_strides[2:] != [swizzle, element_bytewidth]:
       raise ValueError(a_byte_strides)
   b_desc_base = create_descriptor(b, **b_desc_fields)
   b_strides, _ = b_ty.get_strides_and_offset()
   b_byte_strides = [s * element_bytewidth for s in b_strides]
   b_k_byte_stride = b_byte_strides[0]
-  if b_byte_strides[1:] != [128 * kn_tile, 128, element_bytewidth]:
+  if b_byte_strides[1:] != [swizzle * kn_tile, swizzle, element_bytewidth]:
     raise ValueError(b_byte_strides)
 
   i64 = ir.IntegerType.get_signless(64)
@@ -402,7 +412,7 @@ def wgmma(
             c(wgmma_encode(mi * a_m_byte_stride + ki * a_k_byte_stride), i64),
         )
       b_k = llvm_add(b_desc_base, c(wgmma_encode(ki * b_k_byte_stride), i64))
-      new_acc_regs[mi : mi + 1] = wgmma_m64k128B(
+      new_acc_regs[mi : mi + 1] = wgmma_m64(
           new_acc_regs[mi : mi + 1], a_mk, b_k, **wgmma_params
       )
   return WGMMAAccumulator(
