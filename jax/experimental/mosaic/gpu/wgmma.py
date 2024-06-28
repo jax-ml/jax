@@ -28,6 +28,7 @@ from jaxlib.mlir.dialects import vector
 import numpy as np
 
 from . import dsl as mgpu
+from . import utils
 
 # mypy: ignore-errors
 
@@ -85,35 +86,8 @@ def wgmma_encode(x: int):
   return result
 
 
-def llvm_mul(x, y):
-  return llvm.mul(x, y, overflow_flags=llvm.IntegerOverflowFlags.none)
-
-
 def llvm_add(x, y):
   return llvm.add(x, y, overflow_flags=llvm.IntegerOverflowFlags.none)
-
-
-def get_memref_base(memref_arg, memory_space=None):
-  i64 = ir.IntegerType.get_signless(64)
-  memref_ty = ir.MemRefType(memref_arg.type)
-  if len(memref_ty.shape) == 0:
-    raise NotImplementedError
-  elem_bytewidth = bytewidth(memref_ty.element_type)
-  rank = len(memref_ty.shape)
-  # TODO: Read out memory space from memref
-  space = "" if memory_space is None else "<" + str(memory_space) + ">"
-  ptr_ty = ir.Type.parse("!llvm.ptr" + space)
-  desc_ty = ir.Type.parse(
-      f"!llvm.struct<({ptr_ty}, {ptr_ty}, i64, array<{rank} x i64>,"
-      f" array<{rank} x i64>)>"
-  )
-  desc = builtin.UnrealizedConversionCastOp([desc_ty], [memref_arg])
-  aligned_ptr = llvm.extractvalue(ptr_ty, desc, [1])
-  offset_elems = llvm.extractvalue(i64, desc, [2])
-  offset_bytes = llvm_mul(offset_elems, c(elem_bytewidth, i64))
-  return llvm.inttoptr(
-      ptr_ty, llvm_add(llvm.ptrtoint(i64, aligned_ptr), offset_bytes)
-  )
 
 
 def create_descriptor(
@@ -125,7 +99,7 @@ def create_descriptor(
     nvgpu_type=None,
 ):
   i64 = ir.IntegerType.get_signless(64)
-  ptr_val = llvm.ptrtoint(i64, get_memref_base(memref_arg, memory_space))
+  ptr_val = llvm.ptrtoint(i64, utils.memref_ptr(memref_arg, memory_space))
   if swizzle is None:
     swizzle_encoding = 0
   elif swizzle == 128:

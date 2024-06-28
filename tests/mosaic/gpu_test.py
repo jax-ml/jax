@@ -715,7 +715,7 @@ class TMATest(TestCase):
       shape=((64, 64), (5, 64), (2, 3, 5, 64)),
       dtype=(jnp.float16, jnp.float32),
   )
-  def test_tma_load(self, swizzle, shape, dtype):
+  def test_tma_load_basic(self, swizzle, shape, dtype):
     if dtype == jnp.float32:
       shape = (*shape[:-1], shape[-1] // 2)
     i1 = ir.IntegerType.get_signless(1)
