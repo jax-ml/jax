@@ -91,8 +91,7 @@ def dense_int_elements(xs) -> ir.DenseIntElementsAttr:
   return type_cast(ir.DenseIntElementsAttr,
                    ir.DenseIntElementsAttr.get(np.asarray(xs, np.int64)))
 
-def dense_int_array(xs) -> ir.DenseI64ArrayAttr:
-  return ir.DenseI64ArrayAttr.get(np.asarray(xs, np.int64))  # type: ignore
+dense_int_array = ir.DenseI64ArrayAttr.get
 
 def dense_bool_elements(xs: Sequence[bool]) -> ir.DenseElementsAttr:
   a = np.packbits(np.array(xs, np.bool_), bitorder='little')
@@ -310,7 +309,7 @@ def _ndarray_constant_handler(val: np.ndarray | np.generic) -> Sequence[ir.Value
         ir.RankedTensorType.get(
             val.shape, dtype_to_ir_type(collapsed_val.dtype)),  # type: ignore
         _numpy_array_constant(collapsed_val)[0],
-        dense_int_array(other_axes))
+        dense_int_array(other_axes))  # type: ignore
     return (out,)
   else:
     return _numpy_array_constant(val)
