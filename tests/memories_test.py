@@ -54,23 +54,10 @@ def _create_inputs(shape, pspec, mem_kind=None):
   return mesh, s, np_inp, inp
 
 
-# Tests TODO
-# * wsc with memory_kinds
-# * shard_map
-# * AOT
-# * autodiff tests (jtu.check_grads)
-# * scan tests
-# * jaxpr checks for primitive running on different mem kinds
-# * nested jit
-
-
 @jtu.with_config(jax_enable_memories=True)
 class ShardingMemoriesTest(jtu.JaxTestCase):
 
   def setUp(self):
-    # TODO(b/311021572)
-    if jtu.is_cloud_tpu():
-      self.skipTest("Experimental feature not yet implemented on Cloud TPU")
     super().setUp()
     if jtu.test_device_matches(["cpu"]):
       self._default_memory_kind = "unpinned_host"
