@@ -174,6 +174,12 @@ and external users should:
 The compatibility guarantees do not apply if you bypass the `jax.export` APIs
 to obtain the StableHLO code.
 
+In order to ensure forward compatibility, when we change the JAX lowering rules
+to use a new custom call target, JAX will refrain for 3 weeks to use the new
+target. To use the latest lowering rules, you can pass the
+`--jax_export_ignore_forward_compatibility=1` configuration flag
+or the `JAX_EXPORT_IGNORE_FORWARD_COMPATIBILITY=1` environment variable.
+
 Only a subset of custom calls are guaranteed stable and have
 compatibility guarantees ([see list](https://github.com/search?q=repo%3Agoogle%2Fjax%20_CUSTOM_CALL_TARGETS_GUARANTEED_STABLE&type=code)).
 We continuously

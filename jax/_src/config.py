@@ -948,7 +948,7 @@ export_ignore_forward_compatibility = bool_state(
     default=bool_env('JAX_EXPORT_IGNORE_FORWARD_COMPATIBILIY', False),
     help=(
         'Whether to ignore the forward compatibility lowering rules. '
-        'See file:///Users/necula/Source/jax/docs/build/html/export/export.html#ensuring-forward-and-backward-compatibility.'
+        'See https://jax.readthedocs.io/en/latest/export/export.html#compatibility-guarantees-for-custom-calls.'
     )
 )
 
