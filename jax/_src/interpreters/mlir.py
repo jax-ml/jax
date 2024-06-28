@@ -1558,7 +1558,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
         default_rule = override_rule
       else:
         # First the platform-specific rules
-        for p in ctx.platforms:
+        for p in _platforms_for_eqn_ctx(eqn.ctx) or ctx.platforms:
           if eqn.primitive in _platform_specific_lowerings[p]:
             platform_rules[p] = _platform_specific_lowerings[p][eqn.primitive]
           elif eqn.primitive in xla._backend_specific_translations[p]:
@@ -1620,6 +1620,16 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
   return map(read, jaxpr.outvars), tokens
 
 
+def _platforms_for_eqn_ctx(eqn_ctx: core.JaxprEqnContext | None
+                           ) -> tuple[str, ...]:
+  """Returns platforms to override based on compute type of jaxpr equation."""
+  if eqn_ctx is None:
+    return ()
+  if eqn_ctx.compute_type == 'device_host':
+    return ('cpu',)
+  return ()
+
+
 def lower_per_platform(ctx: LoweringRuleContext,
                        description: str,
                        platform_rules: dict[str, LoweringRule],
@@ -1661,7 +1671,8 @@ def lower_per_platform(ctx: LoweringRuleContext,
    rule_args: the args of the lowering rules.
    rule_kwargs: the kwargs of the lowering rules.
   """
-  platforms: Sequence[str] = ctx.platforms or ctx.module_context.platforms
+  platforms: Sequence[str] = (_platforms_for_eqn_ctx(ctx.jaxpr_eqn_ctx) or
+                              ctx.platforms or ctx.module_context.platforms)
   # Special case the common case (single-platform lowering)
   if len(platforms) == 1:
     rule = platform_rules.get(platforms[0], default_rule)

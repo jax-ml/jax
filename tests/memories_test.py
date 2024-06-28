@@ -1186,6 +1186,37 @@ class ComputeOffload(jtu.BufferDonationTestCase):
                             out_specs=P('x', 'y')))(arr)
     self.assertArraysEqual(out, np_inp * 24)
 
+  def test_qr_decomposition_offload(self):
+    shape = (3, 3)
+    dtype = np.float32
+    operand = jnp.reshape(jnp.arange(math.prod(shape), dtype=dtype), shape)
+
+    @compute_on("device_host")
+    @jax.jit
+    def g(x):
+      return lax.linalg.qr(x, full_matrices=True)
+
+    @jax.jit
+    def f(x):
+      x, _ = lax.linalg.qr(x, full_matrices=True)
+      x, _ = g(x)
+      return x
+
+    out = f(operand)  # doesn't crash
+    lowered_text = f.lower(operand).as_text()
+    self.assertIn('@lapack_sgeqrf', lowered_text)
+    self.assertIn('@Qr', lowered_text)
+
+    @jax.jit
+    def h(x):
+      x, _ = lax.linalg.qr(x, full_matrices=True)
+      x, _ = lax.linalg.qr(x, full_matrices=True)
+      return x
+
+    expected_out = h(operand)
+
+    self.assertArraysAllClose(out, expected_out, rtol=1e-3)
+
 
 @jtu.with_config(jax_enable_memories=True)
 class ActivationOffloadingTest(jtu.JaxTestCase):
