@@ -17,7 +17,6 @@ from typing import TypeAlias, Union, Sequence, Optional, Any, Callable, TypeVar
 from contextlib import contextmanager
 from dataclasses import dataclass
 
-import numpy as np
 from util import *
 
 # === pre-declared aliases to avoid toposorting issues ===
@@ -45,6 +44,10 @@ class Var:
     return f'v{s}:{str(self.ty)}'
   def __hash__(self): return id(self)
   def __eq__(self, other): return self is other
+
+  # these methods defer to the type
+  def __getitem__(self, ix):
+    return self.ty._getitem(self, ix)
 
 Atom : TypeAlias = Var | JaxVal
 
@@ -194,16 +197,6 @@ current_emitter = CurrentEmitter(eval_emitter)
 def emit(p, args, funargs=()):
   return current_emitter.emitter.emit(p, args, funargs)
 
-def canonicalize_pyval(x:Any) -> Atom:
-  if isinstance(x, Atom):
-    return x
-  if isinstance(x, float):
-    return FloatVal(x)
-  if isinstance(x, bool):
-    return BoolVal(x)
-  else:
-    raise Exception("Unrecognized type: " + str(x))
-
 # The callable should take the emitter *implicitly*
 def py_function_as_lazy_jaxpr(f:Callable, arg_types) -> LazyJaxpr:
   return LazyJaxpr(arg_types, WithExplicitEmitter(f))
@@ -217,92 +210,25 @@ class WithExplicitEmitter:
     with set_current_emitter(emitter):
       return self.f(*args)
 
-# === low-jax types ===
+# === loose-to-strict conversion ===
 
-@dataclass
-class FloatVal(JaxVal):
-  val : float
-  @property
-  def ty(self): return float_type
-  def __str__(self): return str(self.val)
+PyVal : TypeAlias = Any
+pyval_canonicalizers = {}
 
-class FloatType(JaxType):
-  def __eq__(self, other):
-    return isinstance(other, FloatType)
-  def __str__(self): return "float"
+def register_canonicalizer(t, f):
+  pyval_canonicalizers[t] = f
 
-float_type = FloatType()
-
-@dataclass
-class BoolVal(JaxVal):
-  val : bool
-  @property
-  def ty(self): return bool_type
-  def __str__(self): return str(self.val)
-
-class BoolType(JaxType):
-  def __eq__(self, other):
-    return isinstance(other, BoolType)
-  def __str__(self): return "bool"
-
-bool_type = BoolType()
+def canonicalize_pyval(x: PyVal) -> Atom:
+  if isinstance(x, JaxVal):
+    return x
+  elif isinstance(x, Var):
+    return x
+  elif type(x) in pyval_canonicalizers:
+    return pyval_canonicalizers[type(x)](x)
+  else:
+    raise TypeError(f'Unrecognized type: {type(x)}')
 
 # === trace-to-jaxpr utility. For debugging and staging out of python only ===
 
 def trace_to_jaxpr(f, arg_types:list[JaxType]) -> Jaxpr:
   return py_function_as_lazy_jaxpr(f, arg_types).materialize()
-
-# === low-jax ops ===
-
-class Sin(Op):
-  def impl(self, x): return FloatVal(np.sin(x.val))
-  def result_type(self, x_ty): return x_ty
-  def __str__(self): return "sin"
-
-class Add(Op):
-  def impl(self, x, y): return FloatVal(x.val + y.val)
-  def result_type(self, x_ty, y_ty):
-    assert x_ty == y_ty, (x_ty, y_ty)
-    return x_ty
-  def __str__(self): return "add"
-
-@dataclass
-class Cond(Hof):
-  def impl(self, p:JaxVal, then_fun:LazyJaxpr, else_fun:LazyJaxpr):
-    if p:
-      return then_fun.run(eval_emitter)
-    else:
-      return else_fun.run(eval_emitter)
-
-  def result_type(self, p_ty:JaxType, then_fun_ty:JaxprType, else_fun_ty:JaxprType):
-    assert p_ty is bool_type
-    assert then_fun_ty.result_type == else_fun_ty.result_type
-    return then_fun_ty.result_type
-
-  def __str__(self): return "cond"
-
-# === user-exposed primitives ===
-
-def sin(x):
-  x = canonicalize_pyval(x)
-  return emit(Sin(), (x,))
-
-def add(x, y):
-  x = canonicalize_pyval(x)
-  y = canonicalize_pyval(y)
-  return emit(Add(), (x, y))
-
-def cond(p, then_fun, else_fun):
-  p = canonicalize_pyval(p)
-  then_fun = py_function_as_lazy_jaxpr(then_fun, ())
-  else_fun = py_function_as_lazy_jaxpr(else_fun, ())
-  return emit(Cond(), (p,), (then_fun, else_fun))
-
-# === testing it out ===
-
-def foo():
-  x = add(1.0, 2.0)
-  return cond(False, lambda: add(x, sin(1.0)), lambda: 1.0)
-
-print(foo())
-print(trace_to_jaxpr(foo, []))
