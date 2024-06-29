@@ -45,6 +45,15 @@ from jax._src.lib.mlir.dialects import hlo
 
 import numpy as np
 
+try:
+  import flatbuffers
+  CAN_USE_FLATBUFFERS = True
+except (ModuleNotFoundError, ImportError):
+  CAN_USE_FLATBUFFERS = False
+
+if not CAN_USE_FLATBUFFERS:
+  raise unittest.SkipTest("tests require flatbuffers")
+
 config.parse_flags_with_absl()
 
 _exit_stack = contextlib.ExitStack()
