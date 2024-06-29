@@ -20,7 +20,7 @@ def bfgs(fun: Callable,
             print('{}\t{}\t{}'.format(x_0, fun(x_0), k))
         if jax.numpy.linalg.norm(dk) >= epsilon:
             alpha = wolfe(fun, gradient, x_0, dk)
-            delta = alpha * dk # sk, same as learning_date * grad
+            delta = alpha * dk # sk, same as learning_date * grad(corrected by hessian and jax.grad)
             x_0 += delta[0]
             yk = jax.grad(fun)(x_0) - gradient
             hess_delta = hessian.dot(delta.T)
