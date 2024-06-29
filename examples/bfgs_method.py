@@ -11,7 +11,7 @@ def bfgs(fun: Callable,
     Hessian-based BFGS Method.
     '''
     assert all(list(map(is_float, x_0)))
-    x_0 = jax.numpy.array(x_0)
+    x_0 = jax.numpy.array(x_0) # same as params
     while 1:
         gradient = jax.grad(fun)(x_0)
         hessian = jax.hessian(fun)(x_0)
@@ -20,7 +20,7 @@ def bfgs(fun: Callable,
             print('{}\t{}\t{}'.format(x_0, fun(x_0), k))
         if jax.numpy.linalg.norm(dk) >= epsilon:
             alpha = wolfe(fun, gradient, x_0, dk)
-            delta = alpha * dk # sk
+            delta = alpha * dk # sk, same as learning_date * grad
             x_0 += delta[0]
             yk = jax.grad(fun)(x_0) - gradient
             hess_delta = hessian.dot(delta.T)
