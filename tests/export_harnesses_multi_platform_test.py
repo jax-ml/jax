@@ -60,6 +60,8 @@ _known_failures_gpu = make_disjunction_regexp(
 # CUDA lowering.
 _skip_cuda_lowering_unless_have_gpus = make_disjunction_regexp(
     "svd_", "lu_", "eigh_", "qr_", "custom_linear_", "tridiagonal_solve_",
+    # TODO(b/350111820): random should work once we enable FFI threefry2x32
+    "random_",
 )
 
 
@@ -204,9 +206,11 @@ class PrimitiveTest(jtu.JaxTestCase):
     self.export_and_compare_to_native(f, x)
 
   def test_random_with_threefry_gpu_kernel_lowering(self):
+    # TODO(b/350111820): fix the FFI registration mechanism
+    self.skipTest("b/350111820: fix the FFI registration mechanism")
     if jaxlib_version < (0, 4, 31):
       self.skipTest("jaxlib.version < 0.4.31")
-    # On GPU we use a custom call for thrteefry2x32
+    # On GPU we use a custom call for threefry2x32
     with config.threefry_gpu_kernel_lowering(True):
       # TODO(b/338022728): clean up forward compatibility mode.
       with config.export_ignore_forward_compatibility(True):

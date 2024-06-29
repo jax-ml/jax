@@ -918,10 +918,13 @@ def _threefry2x32_gpu_lowering_rule(lowering_func, ctx, k1, k2, x1, x2):
 
   # TODO(b/338022728): when we export, use the old custom call target for now.
   # Make forward_compatibility_mode False after 3 weeks.
-  lowering_parameters = ctx.module_context.lowering_parameters
-  forward_compatibility_mode = (
-      lowering_parameters.for_export and
-      not lowering_parameters.export_ignore_forward_compatibility)
+  # TODO(b/350111820): figure out why we cannot use the new cu_threefry2x32_ffi
+  # in Kokoro tests. For now, use the old cu_threefry2x32.
+  # lowering_parameters = ctx.module_context.lowering_parameters
+  # forward_compatibility_mode = (
+  #     lowering_parameters.for_export and
+  #     not lowering_parameters.export_ignore_forward_compatibility)
+  forward_compatibility_mode = True
 
   aval_out, aval_out_2 = ctx.avals_out
   assert aval_out == aval_out_2
