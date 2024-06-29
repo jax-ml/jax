@@ -1050,7 +1050,18 @@ basearray.Array.register(ArrayImpl)
 
 
 def _array_mlir_constant_handler(val):
-  return mlir.ir_constants(val._value)
+  try:
+    return mlir.ir_constants(val._value)
+  except RuntimeError as e:
+    # TODO(yashkatariya): Ideally we would catch a custom exception from
+    # `_value` function in ArrayImpl instead of checking the error string.
+    if 'Fetching value for `jax.Array` that spans non-addressable' in str(e):
+      raise RuntimeError(
+          "Closing over jax.Array that spans non-addressable (non process"
+          " local) devices is not allowed. Please pass such arrays as arguments"
+          f" to the function. Got jax.Array: {val.aval.str_short()}") from e
+    raise
+
 mlir.register_constant_handler(ArrayImpl, _array_mlir_constant_handler)
 
 
