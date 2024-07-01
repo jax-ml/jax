@@ -1471,23 +1471,31 @@ def parameterized_filterable(*,
     testcase_name: Callable[[dict[str, Any]], str] | None = None,
     one_containing: str | None = None,
 ):
-  """
-  Decorator for named parameterized tests, with filtering.
+  """Decorator for named parameterized tests, with filtering support.
 
-  Works like parameterized.named_parameters, except that it supports the
-  `one_containing` option. This is useful to select only one of the tests,
-  and to leave the test name unchanged (helps with specifying the desired test
-  when debugging).
+  Works like ``parameterized.named_parameters``, except that it sanitizes the test
+  names so that we can use ``pytest -k`` and ``python test.py -k`` test filtering.
+  This means, e.g., that many special characters are replaced with `_`.
+  It also supports the ``one_containing`` arg to select one of the tests, while
+  leaving the name unchanged, which is useful for IDEs to be able to easily
+  pick up the enclosing test name.
+
+  Usage:
+     @jtu.parameterized_filterable(
+       # one_containing="a_4",
+       [dict(a=4, b=5),
+        dict(a=5, b=4)])
+     def test_my_test(self, *, a, b): ...
 
   Args:
     kwargs: Each entry is a set of kwargs to be passed to the test function.
     testcase_name: Optionally, a function to construct the testcase_name from
-      one kwargs dict. If not given then kwarg may contain `testcase_name` and
-      if not, the test case name is constructed as `str(kwarg)`.
+      one kwargs dict. If not given then ``kwargs`` may contain ``testcase_name`` and
+      otherwise the test case name is constructed as ``str(kwarg)``.
       We sanitize the test names to work with -k test filters. See
-      `sanitize_test_name`.
-    one_containing: If given, then leave the test name unchanged, and use
-      only one `kwargs` whose `testcase_name` includes `one_containing`.
+      ``sanitize_test_name``.
+    one_containing: If given, then leaves the test name unchanged, and use
+      only one of the ``kwargs`` whose `testcase_name` includes ``one_containing``.
   """
   # Ensure that all kwargs contain a testcase_name
   kwargs_with_testcase_name: Sequence[dict[str, Any]]

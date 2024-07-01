@@ -461,6 +461,29 @@ class PallasCallTest(PallasBaseTest):
 
     np.testing.assert_allclose(softmax_kernel(x), jax.nn.softmax(x), atol=1e-7)
 
+  @jtu.skip_on_devices("gpu")  # TODO: RET_CHECK failure
+  def test_block_spec_with_padding(self):
+    def f(*, shape, block_shape):
+      def kernel(o1_ref):
+        assert o1_ref.shape == block_shape
+        o1_ref[...] = jnp.full(o1_ref.shape, pl.program_id(0))
+
+      return self.pallas_call(kernel,
+                              jax.ShapeDtypeStruct(shape, dtype=np.int32),
+                              grid=((shape[0] + block_shape[0] - 1) // block_shape[0],),
+                              out_specs=pl.BlockSpec(block_shape, lambda i: i))()
+    # No padding
+    pids = f(shape=(8,), block_shape=(2,))
+    self.assertAllClose(pids,
+                        np.array([0, 0, 1, 1, 2, 2, 3, 3], dtype=np.int32))
+    # Pad the last block
+    pids = f(shape=(8,), block_shape=(3,))
+    self.assertAllClose(pids,
+                        np.array([0, 0, 0, 1, 1, 1, 2, 2], dtype=np.int32))
+    # Works even if the shape is smaller than 1 block
+    pids = f(shape=(3,), block_shape=(8,))
+    self.assertAllClose(pids,
+                        np.array([0, 0, 0], dtype=np.int32))
 
 class PallasCallInterpreterTest(PallasCallTest):
   INTERPRET = True

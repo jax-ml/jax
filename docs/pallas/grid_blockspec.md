@@ -104,11 +104,11 @@ the overall array). Each block index is then multiplied by the
 corresponding axis size from `block_shape`
 to get the actual element index on the corresponding array axis.
 
-```{note}
-This documentation applies to the case when the block shape divides
-the array shape.
-The documentation for the other cases is pending.
-```
+If the block shape does not divide evenly the overall shape then the
+last iteration on each axis will still receive references to blocks
+of `block_shape` but the elements that are out-of-bounds are padded
+on input and discarded on output. Note that at least one of the
+elements in each block must be within bounds.
 
 More precisely, the slices for each axis of the input `x` of
 shape `x_shape` are computed as in the function `slice_for_invocation`
@@ -125,10 +125,9 @@ below:
 ...   assert len(x_shape) == len(x_spec.block_shape) == len(block_indices)
 ...   elem_indices = []
 ...   for x_size, block_size, block_idx in zip(x_shape, x_spec.block_shape, block_indices):
-...     assert block_size <= x_size  # Blocks must be smaller than the array
 ...     start_idx = block_idx * block_size
-...     # For now, we document only the case when the entire iteration is in bounds
-...     assert start_idx + block_size <= x_size
+...     # At least one element of the block must be within bounds
+...     assert start_idx < x_size
 ...     elem_indices.append(slice(start_idx, start_idx + block_size))
 ...   return elem_indices
 
@@ -139,15 +138,22 @@ For example:
 >>> slices_for_invocation(x_shape=(100, 100),
 ...                       x_spec = pl.BlockSpec((10, 20), lambda i, j: (i, j)),
 ...                       grid = (10, 5),
-...                       invocation_indices = (2, 3))
-[slice(20, 30, None), slice(60, 80, None)]
+...                       invocation_indices = (2, 4))
+[slice(20, 30, None), slice(80, 100, None)]
 
 >>> # Same shape of the array and blocks, but we iterate over each block 4 times
 >>> slices_for_invocation(x_shape=(100, 100),
 ...                       x_spec = pl.BlockSpec((10, 20), lambda i, j, k: (i, j)),
 ...                       grid = (10, 5, 4),
-...                       invocation_indices = (2, 3, 0))
-[slice(20, 30, None), slice(60, 80, None)]
+...                       invocation_indices = (2, 4, 0))
+[slice(20, 30, None), slice(80, 100, None)]
+
+>>> # An example when the block is partially out-of-bounds in the 2nd axis.
+>>> slices_for_invocation(x_shape=(100, 90),
+...                       x_spec = pl.BlockSpec((10, 20), lambda i, j: (i, j)),
+...                       grid = (10, 5),
+...                       invocation_indices = (2, 4))
+[slice(20, 30, None), slice(80, 100, None)]
 
 ```
 
@@ -185,6 +191,20 @@ For example:
  [20 20 20 21 21 21]
  [30 30 30 31 31 31]
  [30 30 30 31 31 31]]
+
+>>> # An example with out-of-bounds accesses
+>>> show_invocations(x_shape=(7, 5), block_shape=(2, 3), grid=(4, 2))
+[[ 0  0  0  1  1]
+ [ 0  0  0  1  1]
+ [10 10 10 11 11]
+ [10 10 10 11 11]
+ [20 20 20 21 21]
+ [20 20 20 21 21]
+ [30 30 30 31 31]]
+
+>>> # It is allowed for the shape to be smaller than block_shape
+>>> show_invocations(x_shape=(1, 2), block_shape=(2, 3), grid=(1, 1))
+[[0 0]]
 
 ```
 
