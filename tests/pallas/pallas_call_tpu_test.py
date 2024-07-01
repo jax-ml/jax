@@ -2610,5 +2610,100 @@ class PallasCallTPUCheckifyTest(PallasTPUTest):
     )
 
 
+class MiscellaneousTest(PallasTPUTest):
+  """Tests for recently reported bugs; only pass in interpret mode."""
+
+  interpret: bool = True
+
+  def test_float32_stack(self):
+    """b/347761105"""
+    x = np.arange(128, dtype=jnp.float32).reshape(1, 128)
+    y = x + 128
+
+    def kernel(x_ref, y_ref, out_ref):
+      out_ref[...] = jnp.stack([x_ref[...], y_ref[...]], axis=1)
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct((1, 2, 128), jnp.float32)
+    )(x, y)
+    np.testing.assert_array_equal(out, np.stack([x, y], axis=1))
+
+  def test_lane_to_chunk_reshape_bf16(self):
+    """b/348038320"""
+    x = np.arange(256 * 1024, dtype=jnp.bfloat16).reshape(1, 256, 1024)
+
+    def kernel(x_ref, out_ref):
+      out_ref[...] = jnp.reshape(x_ref[...], (1, 256, 8, 128))
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct((1, 256, 8, 128), jnp.bfloat16)
+    )(x)
+    np.testing.assert_array_equal(out, np.reshape(x, (1, 256, 8, 128)))
+
+  def test_lane_to_chunk_broadcast_fp32(self):
+    """b/348033362"""
+    x = np.arange(256 * 128, dtype=jnp.float32).reshape(1, 256, 128)
+
+    def kernel(x_ref, out_ref):
+      out_ref[...] = jnp.broadcast_to(
+          jnp.expand_dims(x_ref[...], 2), (1, 256, 8, 128)
+      )
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct((1, 256, 8, 128), jnp.float32)
+    )(x)
+    np.testing.assert_array_equal(
+        out, np.broadcast_to(np.expand_dims(x, 2), (1, 256, 8, 128))
+    )
+
+  def test_lane_dynamic_slice(self):
+    """b/346849973"""
+    x = np.arange(128, dtype=jnp.float32)
+
+    def kernel(x_ref, out_ref):
+      out_ref[...] = lax.dynamic_slice_in_dim(x_ref[...], 64, 1, 0)
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct((1,), jnp.float32)
+    )(x)
+    np.testing.assert_array_equal(out, x[64:65])
+
+  def test_lane_broadcast_bf16(self):
+    """b/346654106"""
+    x = np.arange(256, dtype=jnp.bfloat16).reshape(256, 1)
+
+    def kernel(x_ref, out_ref):
+      out_ref[...] = jnp.broadcast_to(x_ref[...], (256, 512))
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct((256, 512), jnp.bfloat16)
+    )(x)
+    np.testing.assert_array_equal(out, np.broadcast_to(x, (256, 512)))
+
+  def test_bfloat16_to_uint32_bitcast(self):
+    """b/347771903"""
+    x = np.arange(16 * 2 * 256, dtype=jnp.bfloat16).reshape(16, 2, 256)
+
+    def kernel(x_ref, out_ref):
+      out_ref[...] = pltpu.bitcast(x_ref[...], jnp.uint32)
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct((16, 1, 256), jnp.uint32)
+    )(x)
+    # FIXME: Add correctness test for result.
+
+  def test_roll_partial(self):
+    """b/337384645"""
+    x = np.arange(8192, dtype=jnp.float32).reshape(128, 64)
+
+    def kernel(x_ref, out_ref):
+      out_ref[...] = pltpu.roll(x_ref[...], 3, 1)
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct((128, 64), jnp.float32)
+    )(x)
+    np.testing.assert_array_equal(out, np.roll(x, 3, 1))
+
+
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
