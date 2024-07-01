@@ -317,7 +317,8 @@ def clear_all_caches():
 
 memoize = cache(max_size=None)
 
-def weakref_lru_cache(call: Callable, maxsize=2048):
+def weakref_lru_cache(call: Callable, maxsize=2048,
+                      trace_context_in_key: bool = True):
   """
   Least recently used cache decorator with weakref support.
 
@@ -326,7 +327,9 @@ def weakref_lru_cache(call: Callable, maxsize=2048):
   behave similar to `functools.lru_cache`.
   """
   global _weakref_lru_caches
-  cached_call = xc.weakref_lru_cache(config.trace_context, call, maxsize)
+  cached_call = xc.weakref_lru_cache(
+      config.trace_context if trace_context_in_key else _ignore,
+      call, maxsize)
   _weakref_lru_caches.add(cached_call)
   return cached_call
 
