@@ -214,7 +214,13 @@ def _tpu_custom_call_lowering(
     raise NotImplementedError(
         "Replica lowering for Mosaic kernels not implemented."
     )
-  extra_attributes = {}
+  if all(core.is_constant_shape(aval_out.shape) for aval_out in ctx.avals_out):
+    result_shapes = None
+  else:
+    result_shapes = [
+        mlir.shape_tensor(mlir.eval_dynamic_shape(ctx, aval_out.shape))
+        for aval_out in ctx.avals_out]
+  extra_attributes = None
   # Add kernel_name and kernel_metadata as attributes to the custom call op.
   # This is because we do not want to pollute the backend_config with this
   # information.
@@ -229,7 +235,9 @@ def _tpu_custom_call_lowering(
       operand_output_aliases=dict(input_output_aliases),
       operand_layouts=_avals_to_layouts(ctx.avals_in),
       result_layouts=_avals_to_layouts(ctx.avals_out),
+      result_shapes=result_shapes,
       extra_attributes=extra_attributes)
+
   return call.results
 
 
