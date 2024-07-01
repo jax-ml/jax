@@ -55,6 +55,35 @@ For an end-to-end transformer library built on JAX, see MaxText_.
       :class-card: developer-docs
 
 
+Installation
+------------
+
+The easiest way to install JAX is with pip_:
+
+.. tab-set::
+
+    .. tab-item:: CPU
+
+       .. code-block:: bash
+
+          pip install -U jax
+
+    .. tab-item:: GPU (CUDA)
+
+       .. code-block:: bash
+
+          pip install -U "jax[cuda12]"
+
+    .. tab-item:: TPU (Google Cloud)
+
+       .. code-block:: bash
+
+          pip install -U "jax[tpu]" -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
+
+For more information about supported accelerators and platforms, and for other
+installation options, continue to :ref:`installation`.
+
+
 .. toctree::
    :hidden:
    :maxdepth: 1
@@ -97,3 +126,4 @@ For an end-to-end transformer library built on JAX, see MaxText_.
 .. _Orbax: https://orbax.readthedocs.io/
 .. _Optax: https://optax.readthedocs.io/
 .. _MaxText: https://github.com/google/maxtext/
+.. _pip: https://pip.pypa.io/
