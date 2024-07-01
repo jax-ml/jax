@@ -17,12 +17,11 @@ from __future__ import annotations
 from jax._src import clusters
 import socket
 
-from numpy import unique, where
-
 from importlib.util import find_spec
 
+
 class Mpi4pyCluster(clusters.ClusterEnv):
-  
+
 
   name: str = "mpi4py"
   opt_in_only_method: bool = True
@@ -40,7 +39,7 @@ class Mpi4pyCluster(clusters.ClusterEnv):
     # Then broadcast the hostname and port.
 
 
-    from mpi4py import MPI
+    from mpi4py import MPI #type: ignore
     # Get the global communicator:
     COMM_WORLD = MPI.COMM_WORLD
 
@@ -52,12 +51,12 @@ class Mpi4pyCluster(clusters.ClusterEnv):
 
         # Apparently, we want to pick a port in an ephemeral range...
         port_id = hash(hostname) % 2**12 + (65535 - 2**12 + 1)
-        
+
         hostname = f'{hostname}:{port_id}'
 
     else:
-        hostname = None
-   
+        hostname = "None"
+
 
 
     # Broadcast the host_ip to all ranks:
@@ -76,7 +75,7 @@ class Mpi4pyCluster(clusters.ClusterEnv):
   def get_process_id(cls) -> int:
     from mpi4py import MPI
     return int(MPI.COMM_WORLD.Get_rank())
-  
+
   @classmethod
   def get_local_process_id(cls) -> int | None:
 
@@ -85,7 +84,7 @@ class Mpi4pyCluster(clusters.ClusterEnv):
     # a selection of the local process ID.
     from mpi4py import MPI
     COMM_WORLD = MPI.COMM_WORLD
-    
+
     # This is the alternative method that is simpler:
     new_comm = COMM_WORLD.Split_type(MPI.COMM_TYPE_SHARED)
 
