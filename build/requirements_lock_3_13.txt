@@ -72,7 +72,7 @@ portpicker==1.6.0
     # via -r build/test-requirements.txt
 psutil==5.9.8
     # via portpicker
-pygments==2.17.2
+pygments==2.18.0
     # via rich
 pyparsing==3.1.2
     # via matplotlib
