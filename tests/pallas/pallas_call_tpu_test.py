@@ -604,8 +604,12 @@ class PallasCallDMATest(PallasTPUTest):
     x = jnp.ones((8, 128), dtype=jnp.float32)
     y = self.pallas_call(
         kernel,
-        in_specs=[pl.BlockSpec(None, None, pltpu.TPUMemorySpace.ANY)],
-        out_specs=pl.BlockSpec(None, None, pltpu.TPUMemorySpace.ANY),
+        in_specs=[
+            pl.BlockSpec(None, None, memory_space=pltpu.TPUMemorySpace.ANY)
+        ],
+        out_specs=pl.BlockSpec(
+            None, None, memory_space=pltpu.TPUMemorySpace.ANY
+        ),
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )(x)
     jax.block_until_ready(y)

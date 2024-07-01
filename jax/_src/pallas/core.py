@@ -16,12 +16,14 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Sequence
-import copy
 import contextlib
+import copy
 import dataclasses
 import functools
+import inspect
 import threading
 from typing import Any, Union
+import warnings
 
 import jax
 from jax._src import api_util
@@ -169,16 +171,47 @@ blocked = Blocked()
 IndexingMode = Union[Blocked, Unblocked]
 
 
+_BLOCK_SPECSIG = inspect.Signature.from_callable(
+    lambda index_map, block_shape: ...
+)
+
 @dataclasses.dataclass(unsafe_hash=True)
 class BlockSpec:
   """Specifies how an array should be sliced for each iteration of a kernel.
 
   See :ref:`pallas_blockspec` for more details.
   """
-  index_map: Callable[..., Any] | None = None
   block_shape: tuple[int | None, ...] | None = None
-  memory_space: Any | None = None
-  indexing_mode: IndexingMode = blocked
+  index_map: Callable[..., Any] | None = None
+  memory_space: Any | None = dataclasses.field(kw_only=True, default=None)
+  indexing_mode: IndexingMode = dataclasses.field(kw_only=True, default=blocked)
+
+  def __init__(
+      self,
+      *args,
+      memory_space: Any | None = None,
+      indexing_mode: IndexingMode = blocked,
+      **kwargs: Any,
+  ) -> None:
+    bound_args = _BLOCK_SPECSIG.bind_partial(*args, **kwargs)
+    block_shape = bound_args.arguments.get("block_shape", None)
+    index_map = bound_args.arguments.get("index_map", None)
+    if callable(block_shape):
+      # TODO(slebedev): Remove this code path and update the signature of
+      # __init__ after October 1, 2024.
+      warnings.warn(
+          "BlockSpec now expects ``block_shape`` to be passed before"
+          " ``index_map``. Update your code by swapping the order of these"
+          " arguments. For example, ``pl.BlockSpace(lambda i: i, (42,))``"
+          " should be written as ``pl.BlockSpec((42,), lambda i: i)``.",
+          DeprecationWarning,
+      )
+      index_map, block_shape = block_shape, index_map
+
+    self.block_shape = block_shape
+    self.index_map = index_map
+    self.memory_space = memory_space
+    self.indexing_mode = indexing_mode
 
   def compute_index(self, *args):
     assert self.index_map is not None
