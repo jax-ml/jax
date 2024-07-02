@@ -87,7 +87,7 @@ class TupleType(JaxType):
 
   def _getitem(self, tup, idx):
     if isinstance(idx, int):
-      return emit(ProjectTuple(idx), (tup,))
+      return emit_primitive(ProjectTuple(idx), (tup,))
 
 class ProjectTuple(Op):
   i : int
@@ -107,33 +107,30 @@ class ConstructTuple(Op):
 # === ops ===
 
 class Sin(Op):
-  def impl(self, x): return Array(np.sin(x.val))
+  def impl(self, _, x): return Array(np.sin(x.val))
   def result_type(self, x_ty): return x_ty
   def __str__(self): return "sin"
 
 def sin(x):
-  x = canonicalize_pyval(x)
-  return emit(Sin(), (x,))
+  return emit_primitive(Sin(), (x,))
 
 class Add(Op):
-  def impl(self, x, y): return Array(x.val + y.val)
+  def impl(self, _, x, y): return Array(x.val + y.val)
   def result_type(self, x_ty, y_ty):
     assert x_ty == y_ty, (x_ty, y_ty)
     return x_ty
   def __str__(self): return "add"
 
 def add(x, y):
-  x = canonicalize_pyval(x)
-  y = canonicalize_pyval(y)
-  return emit(Add(), (x, y))
+  return emit_primitive(Add(), (x, y))
 
 @dataclass
-class Cond(Hof):
-  def impl(self, p:JaxVal, then_fun:LazyJaxpr, else_fun:LazyJaxpr):
+class Cond(JaxprHof):
+  def impl(self, _, p:JaxVal, then_fun:Jaxpr, else_fun:Jaxpr):
     if p:
-      return then_fun.run(eval_emitter)
+      return apply_jaxpr(eval_emitter, then_fun, ())
     else:
-      return else_fun.run(eval_emitter)
+      return apply_jaxpr(eval_emitter, else_fun, ())
 
   def result_type(self, p_ty:JaxType, then_fun_ty:JaxprType, else_fun_ty:JaxprType):
     assert p_ty == jax_bool
@@ -142,8 +139,8 @@ class Cond(Hof):
 
   def __str__(self): return "cond"
 
+
 def cond(p, then_fun, else_fun):
-  p = canonicalize_pyval(p)
-  then_fun = py_function_as_lazy_jaxpr(then_fun, ())
-  else_fun = py_function_as_lazy_jaxpr(else_fun, ())
-  return emit(Cond(), (p,), (then_fun, else_fun))
+  then_fun = trace_to_jaxpr(then_fun, ())
+  else_fun = trace_to_jaxpr(else_fun, ())
+  return emit_primitive(Cond(), (p,), (then_fun, else_fun))

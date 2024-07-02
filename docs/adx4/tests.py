@@ -20,11 +20,19 @@ from dataclasses import dataclass
 from core import *
 from ops import  *
 
+def fun0():
+  x = add(1.0, 2.0)
+  return x
+
+print(fun0())
+print(trace_to_jaxpr(fun0, []))
+
 def fun1():
   x = add(1.0, 2.0)
   return cond(False, lambda: add(x, sin(1.0)), lambda: 1.0)
 
 print(fun1())
+print("============")
 print(trace_to_jaxpr(fun1, []))
 
 def fun2(xy):
