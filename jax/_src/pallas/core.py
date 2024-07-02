@@ -309,13 +309,24 @@ def _convert_block_spec_to_block_mapping(
   else:
     compute_index = block_spec.compute_index
     block_shape = block_spec.block_shape
-  block_shape = tuple(
+  block_shape_ = tuple(
       mapped if s is None else s for s in block_shape)
-  flat_fun, _ = api_util.flatten_fun(lu.wrap_init(compute_index), in_tree)
+  flat_fun, _ = api_util.flatten_fun(
+      lu.wrap_init(compute_index), in_tree
+  )
   with tracing_grid_env(grid, mapped_dims):
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+    jaxpr, out_avals, consts, () = pe.trace_to_jaxpr_dynamic(
+        flat_fun, in_avals,
+    )
+    if len(out_avals) != len(block_shape):
+      raise ValueError(
+          f"Index map must return {len(aval.shape)} values to match"
+          f" {block_shape=}. Currently returning {len(out_avals)} values."
+      )
   return BlockMapping(
-      block_shape, jax_core.ClosedJaxpr(jaxpr, consts), block_spec.indexing_mode
+      block_shape_,
+      jax_core.ClosedJaxpr(jaxpr, consts),
+      block_spec.indexing_mode,
   )
 
 
@@ -323,6 +334,11 @@ def _tile_ref(ref: state.AbstractRef, block_shape: tuple[int, ...] | None
              ) -> state.AbstractRef:
   if block_shape is None:
     return ref
+  if len(ref.shape) != len(block_shape):
+    raise ValueError(
+        f"Block shape {block_shape=} must have same length as array shape"
+        f" {ref.shape=}"
+    )
   shape = tuple(s for s in block_shape if s is not None)
   return ref.update(inner_aval=ref.inner_aval.update(shape=shape))
 

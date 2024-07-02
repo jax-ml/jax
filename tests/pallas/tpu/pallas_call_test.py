@@ -68,6 +68,148 @@ class PallasTPUTest(jtu.JaxTestCase):
     return pl.pallas_call(*args, **kwargs, interpret=self.interpret)
 
 
+class PallasCallBlockSpecTest(PallasTPUTest):
+
+  def test_block_spec_with_wrong_block_shape_errors(self):
+    def body(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    x = jnp.ones((16, 128))
+    with self.assertRaisesRegex(
+        ValueError,
+        'Block shape .* must have same length as array shape .*',
+    ):
+      _ = pl.pallas_call(
+          body,
+          in_specs=[pl.BlockSpec((128,), lambda i: (i, 0))],  # WRONG
+          out_specs=pl.BlockSpec((8, 128,), lambda i: (i, 0)),
+          out_shape=x,
+          grid=(2,)
+      )(x)
+
+  def test_block_spec_with_index_map_that_accepts_wrong_number_of_args_errors(
+      self,
+  ):
+    def body(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    x = jnp.ones((16, 128))
+    with self.assertRaisesRegex(
+        TypeError,
+        'missing 1 required positional argument: \'j\'',
+    ):
+      pl.pallas_call(
+          body,
+          in_specs=[pl.BlockSpec((8, 128), lambda i, j: (i, 0))],  # WRONG
+          out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+          out_shape=x,
+          grid=(2,)
+      )(x)
+
+  def test_block_spec_with_index_map_that_returns_wrong_number_of_values_errors(
+      self,
+  ):
+    def body(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    x = jnp.ones((16, 128))
+    with self.assertRaisesRegex(
+        ValueError,
+        r'Index map must return 2 values to match block_shape=\(8, 128\).'
+        ' Currently returning 1 values.',
+    ):
+      _ = pl.pallas_call(
+          body,
+          in_specs=[pl.BlockSpec((8, 128), lambda i: (i,))],  # WRONG
+          out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
+          out_shape=x,
+          grid=(2,),
+      )(x)
+
+  def test_prefetch_scalar_block_spec_with_wrong_block_shape_errors(self):
+    def body(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    x = jnp.ones((16, 128))
+    with self.assertRaisesRegex(
+        ValueError,
+        'Block shape .* must have same length as array shape .*',
+    ):
+      _ = pl.pallas_call(
+          body,
+          grid_spec=pltpu.PrefetchScalarGridSpec(
+              num_scalar_prefetch=0,
+              in_specs=[pl.BlockSpec((128,), lambda i: (i, 0))],  # WRONG
+              out_specs=pl.BlockSpec(
+                  (
+                      8,
+                      128,
+                  ),
+                  lambda i: (i, 0),
+              ),
+              grid=(2,),
+          ),
+          out_shape=x,
+      )(x)
+
+  def test_prefetch_scalar_block_spec_with_index_map_that_accepts_wrong_number_of_args_errors(
+      self,
+  ):
+    def body(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    x = jnp.ones((16, 128))
+    with self.assertRaisesRegex(
+        TypeError,
+        'missing 1 required positional argument: \'j\'',
+    ):
+      _ = pl.pallas_call(
+          body,
+          grid_spec=pltpu.PrefetchScalarGridSpec(
+              num_scalar_prefetch=0,
+              in_specs=[pl.BlockSpec((8, 128,), lambda i, j: (i, 0))],  # WRONG
+              out_specs=pl.BlockSpec(
+                  (
+                      8,
+                      128,
+                  ),
+                  lambda i: (i, 0),
+              ),
+              grid=(2,),
+          ),
+          out_shape=x,
+      )(x)
+
+  def test_prefetch_scalar_block_spec_with_index_map_that_returns_wrong_number_of_values_errors(
+      self,
+  ):
+    def body(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    x = jnp.ones((16, 128))
+    with self.assertRaisesRegex(
+        ValueError,
+        r'Index map must return 2 values to match block_shape=\(8, 128\).'
+        ' Currently returning 1 values.',
+    ):
+      _ = pl.pallas_call(
+          body,
+          grid_spec=pltpu.PrefetchScalarGridSpec(
+              num_scalar_prefetch=0,
+              in_specs=[pl.BlockSpec((8, 128,), lambda i: (i,))],  # WRONG
+              out_specs=pl.BlockSpec(
+                  (
+                      8,
+                      128,
+                  ),
+                  lambda i: (i, 0),
+              ),
+              grid=(2,),
+          ),
+          out_shape=x,
+      )(x)
+
+
 class PallasCallScalarPrefetchTest(PallasTPUTest):
 
   def test_trivial_scalar_prefetch(self):
@@ -363,7 +505,7 @@ class PallasCallDynamicGridTest(PallasTPUTest):
       num_programs = pl.num_programs(0)
       self.assertIsInstance(num_programs, int)
       self.assertEqual(num_programs, 2)
-      return 0
+      return 0, 0
     pl.pallas_call(
         kernel,
         in_specs=[pl.BlockSpec((8, 128), x_index_map)],
