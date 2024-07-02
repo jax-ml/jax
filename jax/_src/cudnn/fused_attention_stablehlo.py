@@ -73,6 +73,15 @@ def should_export_dbias(bias_shape, query_shape, layout) -> bool:
     _, _, q_N, _ = query_shape
   return b_B == 1 and b_N == q_N
 
+def get_large_negative_number(dtype):
+  # temp WAR as cuDNN has a bug for subtraction between two large negative value
+  if dtype == jnp.bfloat16:
+    return jnp.asarray(-2 << 40, dtype=dtype)
+  elif dtype == jnp.float16:
+    return jnp.asarray(-2 << 14, dtype=dtype)
+  else:
+    raise ValueError("Unsupported dtype for inputs.")
+
 def _normalize_layout(layout: str) -> AttentionLayout:
   layout_upper = layout.upper()
   if layout_upper in ["BSNH", "BNSH", "BTNH", "BNTH"]:
@@ -197,7 +206,7 @@ def create_dot_product_attention_backend_config(batch,
   backend_config = json.dumps(backend_config)
   return backend_config
 
-# mapping from (is_bwd, has_dropout, has_mask, has_bias) to custom call name
+# mapping from (is_bwd, has_dropout, has_bias) to custom call name
 _custom_name_maps = {
   # fMHA forward call targets.
   (False, False, False): "__cudnn$fmhaSoftmax",
@@ -308,68 +317,68 @@ def check_compute_capability(cc):
       raise RuntimeError("Require compute capability in " + str(cc))
 
 def _dot_product_attention_fwd(
-    query, key, value, bias, mask, q_seqlen, kv_seqlen, scale, seed,
+    query, key, value, bias, q_seqlen, kv_seqlen, scale, seed,
     dropout_rate, variadic_args, mask_type, layout, cudnn_version):
   # check if flash attention is supported for this attention pattern
   check_is_flash_attention(
       query, key, layout, cudnn_version, bias is not None, False)
   outputs = _dot_product_attention_fwd_p_wrapper.bind(
-      query, key, value, bias, mask, q_seqlen, kv_seqlen, scale=scale,
+      query, key, value, bias, q_seqlen, kv_seqlen, scale=scale,
       seed=seed, dropout_rate=dropout_rate, variadic_args=variadic_args,
       mask_type=mask_type, layout=layout, is_training=False)
   output = outputs[0]
   return output
 
 def _dot_product_attention_fwd_rule(
-    query, key, value, bias, mask, q_seqlen, kv_seqlen, scale, seed,
+    query, key, value, bias, q_seqlen, kv_seqlen, scale, seed,
     dropout_rate, variadic_args, mask_type, layout, cudnn_version):
   # check if flash attention is supported for this attention pattern
   check_is_flash_attention(
       query, key, layout, cudnn_version, bias is not None, True)
   outputs = _dot_product_attention_fwd_p_wrapper.bind(
-      query, key, value, bias, mask, q_seqlen, kv_seqlen, scale=scale,
+      query, key, value, bias, q_seqlen, kv_seqlen, scale=scale,
       seed=seed, dropout_rate=dropout_rate, variadic_args=variadic_args,
       mask_type=mask_type, layout=layout, is_training=True)
-  res = (query, key, value, bias, mask, q_seqlen, kv_seqlen,
+  res = (query, key, value, bias, q_seqlen, kv_seqlen,
          outputs[1], outputs[0])
   return outputs[0], res
 
 def _dot_product_attention_bwd_rule(
     scale, seed, dropout_rate, variadic_args, mask_type, layout, is_training,
     res, grad_output):
-  (query, key, value, bias, mask, q_seqlen, kv_seqlen, activation,
+  (query, key, value, bias, q_seqlen, kv_seqlen, activation,
    fwd_output) = res
   grads = _dot_product_attention_bwd_p_wrapper.bind(
-      query, key, value, bias, mask, q_seqlen, kv_seqlen, activation,
+      query, key, value, bias, q_seqlen, kv_seqlen, activation,
       fwd_output, grad_output, scale=scale, seed=seed,
       dropout_rate=dropout_rate, variadic_args=variadic_args,
       mask_type=mask_type, layout=layout,
   )
-  grads = (*grads,) + (None,) * (7 - len(grads))
+  grads = (*grads,) + (None,) * (6 - len(grads))
   return grads
 
 def _dot_product_attention_fwd_impl(
-    query, key, value, bias, mask, q_seqlen, kv_seqlen, scale, seed,
+    query, key, value, bias, q_seqlen, kv_seqlen, scale, seed,
     dropout_rate, variadic_args, mask_type, layout, is_training):
   # args: {Q, K, V, mask*, bias*}
   outputs = _dot_product_attention_fwd_p.bind(
-      query, key, value, bias, mask, q_seqlen, kv_seqlen, scale=scale,
+      query, key, value, bias, q_seqlen, kv_seqlen, scale=scale,
       seed=seed, dropout_rate=dropout_rate, variadic_args=variadic_args,
       mask_type=mask_type, layout=layout, is_training=is_training)
   return outputs
 
 def _dot_product_attention_bwd_impl(
-    query, key, value, bias, mask, q_seqlen, kv_seqlen, activation, fwd_output,
+    query, key, value, bias, q_seqlen, kv_seqlen, activation, fwd_output,
     grad_output, scale, seed, dropout_rate, variadic_args, mask_type, layout):
   grads = _dot_product_attention_bwd_p.bind(
-      query, key, value, bias, mask, q_seqlen, kv_seqlen, activation,
+      query, key, value, bias, q_seqlen, kv_seqlen, activation,
       fwd_output, grad_output, scale=scale, seed=seed,
       dropout_rate=dropout_rate, variadic_args=variadic_args,
       mask_type=mask_type, layout=layout)
   return grads
 
 def _dot_product_attention_fwd_abstract(
-    query, key, value, bias, mask, q_seqlen, kv_seqlen, *, scale, seed,
+    query, key, value, bias, q_seqlen, kv_seqlen, *, scale, seed,
     dropout_rate, variadic_args, mask_type, layout, is_training):
   query_dtype = dtypes.canonicalize_dtype(query.dtype)
   if layout == AttentionLayout.BNTH.value:
@@ -392,14 +401,14 @@ def _dot_product_attention_fwd_abstract(
     )
 
 def _dot_product_attention_bwd_abstract(
-    query, key, value, bias, mask, q_seqlen, kv_seqlen, activation, fwd_output,
+    query, key, value, bias, q_seqlen, kv_seqlen, activation, fwd_output,
     grad_output, *, scale, seed, dropout_rate, variadic_args, mask_type,
     layout):
   query_dtype = dtypes.canonicalize_dtype(query.dtype)
   key_dtype = dtypes.canonicalize_dtype(key.dtype)
   value_dtype = dtypes.canonicalize_dtype(value.dtype)
 
-  _, _, has_dbias = variadic_args
+  _, has_dbias = variadic_args
   if has_dbias:
     # cuDNN supports bias for this case
     bias_dtype = dtypes.canonicalize_dtype(bias.dtype)
@@ -431,7 +440,7 @@ def _dot_product_attention_bwd_abstract(
     )
 
 def _dot_product_attention_fwd_cuda_lowering(
-    ctx, query, key, value, bias, mask, q_seqlen, kv_seqlen, scale, seed,
+    ctx, query, key, value, bias, q_seqlen, kv_seqlen, scale, seed,
     dropout_rate, variadic_args, mask_type, layout, is_training):
   query_type = ir.RankedTensorType(query.type)
   query_shape = query_type.shape
@@ -457,13 +466,11 @@ def _dot_product_attention_fwd_cuda_lowering(
       B, N, T, S, query_type.element_type, scale, seed, dropout_rate,
       mask_type, layout, is_bwd=False,
   )
-  # {Q, K, V, mask*, bias*, q_seqlen*, kv_seqlen*}
+  # {Q, K, V, bias*, q_seqlen*, kv_seqlen*}
   # {output, activation*, workspace}
   has_dropout = dropout_rate > 0
-  has_bias, has_mask, _ = variadic_args
+  has_bias, _ = variadic_args
   operands = [query, key, value]
-  if has_mask:
-    operands.append(mask)
   if has_bias:
     operands.append(bias)
   if has_padding(mask_type):
@@ -502,7 +509,7 @@ def _dot_product_attention_fwd_cuda_lowering(
     return [hlo.transpose(out.results[0], output_transpose_perm)]
 
 def _dot_product_attention_bwd_cuda_lowering(
-    ctx, query, key, value, bias, mask, q_seqlen, kv_seqlen, activation,
+    ctx, query, key, value, bias, q_seqlen, kv_seqlen, activation,
     fwd_output, grad_output, scale, seed, dropout_rate, variadic_args,
     mask_type, layout):
   query_type = ir.RankedTensorType(query.type)
@@ -532,14 +539,12 @@ def _dot_product_attention_bwd_cuda_lowering(
       B, q_N, T, S, query_type.element_type, scale, seed, dropout_rate,
       mask_type, layout, is_bwd=True,
   )
-  # {Q, K, V, activation, dO, mask*, bias*, O, q_seqlen*, kv_seqlen*}
+  # {Q, K, V, activation, dO, bias*, O, q_seqlen*, kv_seqlen*}
   # {dQ, dK, dV, dbias*, workspace}
   has_dropout = dropout_rate > 0
-  has_bias, has_mask, has_dbias = variadic_args
+  has_bias, has_dbias = variadic_args
   # create operands
   operands = [query, key, value, activation, grad_output]
-  if has_mask:
-    operands.append(mask)
   if has_bias:
     # flash attention requires bias in the bwd for remat
     operands.append(bias)
@@ -597,7 +602,7 @@ def _dot_product_attention_fwd_batcher(
     batched_args, batch_dims, *, scale, seed, dropout_rate, variadic_args,
     mask_type, layout, is_training):
   _check_valid_batch_dims(batch_dims)
-  query, key, value, bias, mask, q_seqlen, kv_seqlen = batched_args
+  query, key, value, bias, q_seqlen, kv_seqlen = batched_args
   query_bdim = batch_dims[0]
   if is_training:
     out_bdims = query_bdim, query_bdim
@@ -611,21 +616,19 @@ def _dot_product_attention_fwd_batcher(
     *Bs, T, N, _ = query.shape
     *_, S, _, _ = key.shape
   B = reduce(operator.mul, Bs)
-  has_bias, has_mask, _ = variadic_args
+  has_bias, _ = variadic_args
   # reshape to 4D shape
   query = jnp.reshape(query, (B,) + query.shape[-3:])
   key = jnp.reshape(key, (B,) + key.shape[-3:])
   value = jnp.reshape(value, (B,) + key.shape[-3:])
   if has_bias:
     bias = jnp.reshape(bias, (B, N, T, S))
-  if has_mask:
-    mask = jnp.reshape(mask, (B, N, T, S))
   if has_padding(mask_type):
     q_seqlen = jnp.reshape(q_seqlen, (B, ))
     kv_seqlen = jnp.reshape(kv_seqlen, (B, ))
 
   outputs = _dot_product_attention_fwd_p_wrapper.bind(
-      query, key, value, bias, mask, q_seqlen, kv_seqlen, scale=scale,
+      query, key, value, bias, q_seqlen, kv_seqlen, scale=scale,
       seed=seed, dropout_rate=dropout_rate, variadic_args=variadic_args,
       mask_type=mask_type, layout=layout, is_training=is_training)
 
@@ -643,7 +646,7 @@ def _dot_product_attention_bwd_batcher(
      batched_args, batch_dims, *, scale, seed, dropout_rate, variadic_args,
      mask_type, layout):
   _check_valid_batch_dims(batch_dims)
-  query, key, value, bias, mask, q_seqlen, \
+  query, key, value, bias, q_seqlen, \
     kv_seqlen, activation, fwd_output, grad_output = batched_args
   query_bdim = batch_dims[0]
   out_bdims = query_bdim, query_bdim, query_bdim
@@ -655,15 +658,13 @@ def _dot_product_attention_bwd_batcher(
     *Bs, T, N, _ = query.shape
     *_, S, _, _ = key.shape
   B = reduce(operator.mul, Bs)
-  has_bias, has_mask, has_dbias = variadic_args
+  has_bias, has_dbias = variadic_args
   # reshape to 4D shape
   query = jnp.reshape(query, (B,) + query.shape[-3:])
   key = jnp.reshape(key, (B,) + key.shape[-3:])
   value = jnp.reshape(value, (B,) + key.shape[-3:])
   if has_bias:
     bias = jnp.reshape(bias, (B, N, T, S))
-  if has_mask:
-    mask = jnp.reshape(mask, (B, N, T, S))
   if has_padding(mask_type):
     q_seqlen = jnp.reshape(q_seqlen, (B, ))
     kv_seqlen = jnp.reshape(kv_seqlen, (B, ))
@@ -673,7 +674,7 @@ def _dot_product_attention_bwd_batcher(
   grad_output = jnp.reshape(grad_output, (B,) + query.shape[-3:])
 
   grads = _dot_product_attention_bwd_p_wrapper.bind(
-      query, key, value, bias, mask, q_seqlen, kv_seqlen, activation,
+      query, key, value, bias, q_seqlen, kv_seqlen, activation,
       fwd_output, grad_output, scale=scale, seed=seed,
       dropout_rate=dropout_rate, variadic_args=variadic_args,
       mask_type=mask_type, layout=layout,
@@ -700,7 +701,7 @@ def _get_padded_spec(arg_info):
   return spec + (None,) * (ndim - len(spec))
 
 def _check_qkv_bias_mask_spec(
-    query_spec, key_spec, value_spec, bias_spec, mask_spec):
+    query_spec, key_spec, value_spec, bias_spec):
   # check qkv spec
   if not query_spec == key_spec == value_spec:
     raise ValueError("Query, key and value should have same sharding.")
@@ -709,7 +710,7 @@ def _check_qkv_bias_mask_spec(
     raise ValueError("Sharding on sequence dim is not allowed.")
   if head_spec is not None:
     raise ValueError("Sharding on head dim is not allowed.")
-  # check bias and mask spec
+  # check bias spec
   if bias_spec:
     *bias_batch_spec, bias_num_head_spec, bias_q_seq_spec, bias_kv_seq_spec = bias_spec
     if bias_batch_spec != batch_spec or bias_num_head_spec != num_head_spec:
@@ -717,13 +718,6 @@ def _check_qkv_bias_mask_spec(
         "Query and bias should have same sharding on batch and num_head dim.")
     if bias_q_seq_spec is not None or bias_kv_seq_spec is not None:
       raise ValueError("Sharding on bias sequence dim is not allowed.")
-  if mask_spec:
-    *mask_batch_spec, mask_num_head_spec, mask_q_seq_spec, mask_kv_seq_spec = mask_spec
-    if mask_batch_spec != batch_spec or mask_num_head_spec != num_head_spec:
-      raise ValueError(
-        "Query and mask should have same sharding on batch and num_head dim.")
-    if mask_q_seq_spec is not None or mask_kv_seq_spec is not None:
-      raise ValueError("Sharding on mask sequence dim is not allowed.")
 
 # fwd custom partition
 def _infer_fwd_output_sharding(mesh, arg_shapes, variadic_args, is_training):
@@ -733,11 +727,11 @@ def _infer_fwd_output_sharding(mesh, arg_shapes, variadic_args, is_training):
   # (*batch, kv_seq, num_head, head)
   key_spec = _get_padded_spec(arg_shapes[1])
   value_spec = _get_padded_spec(arg_shapes[2])
-  has_bias, has_mask, _ = variadic_args
+  has_bias, _ = variadic_args
   bias_spec = _get_padded_spec(arg_shapes[3]) if has_bias else None
-  mask_spec = _get_padded_spec(arg_shapes[4]) if has_mask else None
+
   _check_qkv_bias_mask_spec(
-    query_spec, key_spec, value_spec, bias_spec, mask_spec)
+    query_spec, key_spec, value_spec, bias_spec)
   # keep out sharding same as query sharding since they have same shape
   out_sharding = NamedSharding(mesh, PartitionSpec(*query_spec))
   if is_training:
@@ -749,7 +743,7 @@ def _infer_fwd_output_sharding(mesh, arg_shapes, variadic_args, is_training):
   return [out_sharding]
 
 _dot_product_attention_fwd_lower = custom_partitioning(
-    _dot_product_attention_fwd_impl, static_argnums=(7, 8, 9, 10, 11, 12, 13))
+    _dot_product_attention_fwd_impl, static_argnums=(6, 7, 8, 9, 10, 11, 12))
 
 def _dot_product_attention_fwd_infer_sharding_from_operands(
     scale, seed, dropout_rate, variadic_args, mask_type, layout, is_training,
@@ -777,11 +771,10 @@ def _infer_bwd_output_sharding(mesh, arg_shapes, variadic_args):
   # (*batch, kv_seq, num_head, head)
   key_spec = _get_padded_spec(arg_shapes[1])
   value_spec = _get_padded_spec(arg_shapes[2])
-  has_bias, has_mask, has_dbias = variadic_args
+  has_bias, has_dbias = variadic_args
   bias_spec = _get_padded_spec(arg_shapes[3]) if has_bias else None
-  mask_spec = _get_padded_spec(arg_shapes[4]) if has_mask else None
   _check_qkv_bias_mask_spec(
-    query_spec, key_spec, value_spec, bias_spec, mask_spec)
+    query_spec, key_spec, value_spec, bias_spec)
   # keep grad query sharding same as query sharding
   grad_query_sharding = NamedSharding(mesh, PartitionSpec(*query_spec))
   grad_key_sharding = NamedSharding(mesh, PartitionSpec(*key_spec))
@@ -793,7 +786,7 @@ def _infer_bwd_output_sharding(mesh, arg_shapes, variadic_args):
   return out_shardings
 
 _dot_product_attention_bwd_lower = custom_partitioning(
-    _dot_product_attention_bwd_impl, static_argnums=(10, 11, 12, 13, 14, 15)
+    _dot_product_attention_bwd_impl, static_argnums=(9, 10, 11, 12, 13, 14)
 )
 
 def _dot_product_attention_bwd_infer_sharding_from_operands(
@@ -899,12 +892,11 @@ dispatch.prim_requires_devices_during_lowering.add(
   _dot_product_attention_bwd_p_wrapper
 )
 
-@partial(jax.custom_vjp, nondiff_argnums=(7, 8, 9, 10, 11, 12, 13))
+@partial(jax.custom_vjp, nondiff_argnums=(6, 7, 8, 9, 10, 11, 12))
 def _dot_product_attention(query: Array,
                            key: Array,
                            value: Array,
                            bias: Array,
-                           mask: Array,
                            q_seqlen: Array,
                            kv_seqlen: Array,
                            scale: float,
@@ -915,7 +907,7 @@ def _dot_product_attention(query: Array,
                            layout: int,
                            cudnn_version: int):
   output = _dot_product_attention_fwd(
-      query, key, value, bias, mask, q_seqlen, kv_seqlen, scale=scale,
+      query, key, value, bias, q_seqlen, kv_seqlen, scale=scale,
       seed=seed, dropout_rate=dropout_rate, variadic_args=variadic_args,
       mask_type=mask_type, layout=layout, cudnn_version=cudnn_version)
   return output
@@ -977,28 +969,43 @@ def dot_product_attention(query: Array,
   # only support Ampere and Hopper for now
   check_compute_capability((80, 90))
   layout = _normalize_layout(qkv_layout)
+  if has_padding(mask_type) and (q_seqlen is None or kv_seqlen is None):
+    raise ValueError("Require q_seqlen and kv_seqlen to generate padding mask")
+
   if bias is not None:
     # reshape bias to have 4D shape
     bias = bias.reshape((1,) * (4 - len(bias.shape)) + bias.shape)
+
+  if mask is not None:
+    if mask.dtype == jnp.bool:
+      large_negative_number = get_large_negative_number(query.dtype)
+      mask = jnp.where(mask, jnp.asarray(0, query.dtype), large_negative_number)
+    # reshape mask to have 4D shape
+    mask = mask.reshape((1,) * (4 - len(mask.shape)) + mask.shape)  # type: ignore[union-attr]
+
+  # combine bias and mask
+  if bias is None:
+      bias = mask
+  else:
+    if mask is not None:
+      # should be broadcast to same shape
+      bias = bias + mask
+
   # check if input shape and data type is compatiable
   check_layout(query, key, value, bias, q_seqlen, kv_seqlen, layout)
-  if has_padding(mask_type) and (q_seqlen is None or kv_seqlen is None):
-    raise ValueError("Require q_seqlen and kv_seqlen to generate padding mask")
   has_bias = bias is not None
-  has_mask = mask is not None
   has_dbias = has_bias and \
     should_export_dbias(bias.shape, query.shape, layout)  # type: ignore[union-attr]
-  variadic_args = (has_bias, has_mask, has_dbias)
+  variadic_args = (has_bias, has_dbias)
+
   if bias is None:
     bias = jnp.zeros(0, dtype=query.dtype)
-  if mask is None:
-    mask = jnp.zeros(0, dtype=query.dtype)
   if q_seqlen is None:
     q_seqlen = jnp.zeros(0, dtype=query.dtype)
   if kv_seqlen is None:
     kv_seqlen = jnp.zeros(0, dtype=query.dtype)
   output = _dot_product_attention(
-      query, key, value, bias, mask, q_seqlen, kv_seqlen, scale, seed,
+      query, key, value, bias, q_seqlen, kv_seqlen, scale, seed,
       dropout_rate, variadic_args, mask_type, layout.value, cudnn_version
   )
   return output
