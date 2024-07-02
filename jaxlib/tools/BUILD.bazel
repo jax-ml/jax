@@ -69,11 +69,11 @@ cc_binary(
     ],
     linkshared = True,
     deps = [
-        "//jaxlib/mosaic/gpu:custom_call",
         "@xla//xla/pjrt/c:pjrt_c_api_gpu",
         "@xla//xla/pjrt/c:pjrt_c_api_gpu_version_script.lds",
         "@xla//xla/service:gpu_plugin",
     ] + if_cuda([
+        "//jaxlib/mosaic/gpu:custom_call",
         "@xla//xla/stream_executor:cuda_platform",
     ]) + if_rocm([
         "@xla//xla/stream_executor:rocm_platform",
