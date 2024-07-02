@@ -171,8 +171,8 @@ blocked = Blocked()
 IndexingMode = Union[Blocked, Unblocked]
 
 
-_BLOCK_SPECSIG = inspect.Signature.from_callable(
-    lambda index_map, block_shape: ...
+_BLOCK_SPEC_SIG = inspect.Signature.from_callable(
+    lambda block_shape, index_map: ...
 )
 
 @dataclasses.dataclass(unsafe_hash=True)
@@ -193,7 +193,7 @@ class BlockSpec:
       indexing_mode: IndexingMode = blocked,
       **kwargs: Any,
   ) -> None:
-    bound_args = _BLOCK_SPECSIG.bind_partial(*args, **kwargs)
+    bound_args = _BLOCK_SPEC_SIG.bind_partial(*args, **kwargs)
     block_shape = bound_args.arguments.get("block_shape", None)
     index_map = bound_args.arguments.get("index_map", None)
     if callable(block_shape):
