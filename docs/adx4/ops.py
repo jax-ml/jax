@@ -21,6 +21,7 @@ import numpy as np
 
 from util import *
 from core import *
+from embedding import *
 
 # === array type ===
 

@@ -159,11 +159,17 @@ def new_var(ty):
   return Var(ty)
 
 class BuilderEmitter(Emitter):
-  def __init__(self):
+  def __init__(self, arg_types):
+    self.args = [self.new_tracer(ty) for ty in arg_types]
     self.eqns = []
 
   def new_tracer(self, ty):
     return BuilderTracer(new_var(ty), ty)
+
+  def build(self, result:TraceVal):
+    atom_result = self.traceval_to_atom(result)
+    binders = [arg.var for arg in self.args]
+    return Jaxpr(binders, self.eqns, atom_result)
 
   def traceval_to_atom(self, arg:TraceVal) -> TraceVal:
     if isinstance(arg, BuilderTracer):
@@ -190,15 +196,9 @@ class BuilderTracer(Tracer):
   ty  : JaxType
 
 def materialize_jaxpr(stream:OpStream, arg_types:list[JaxType]) -> Jaxpr:
-  builder = BuilderEmitter()
-  args = [builder.new_tracer(ty) for ty in arg_types]
-  binders = [arg.var for arg in args]
-  stream_result = stream(builder, *args)
-  atom_result = builder.traceval_to_atom(canonicalize_pyval(stream_result))
-  return Jaxpr(binders, builder.eqns, atom_result)
-
-def trace_to_jaxpr(f, arg_types:list[JaxType]) -> Jaxpr:
-  return materialize_jaxpr(WithExplicitEmitter(f), arg_types)
+  builder = BuilderEmitter(arg_types)
+  stream_result = stream(builder, *builder.args)
+  return builder.build(stream_result)
 
 def apply_jaxpr(emitter, jaxpr, vals):
   env = {b : arg for b in jaxpr.binders}
@@ -296,72 +296,6 @@ class FrontendLoweringTracer(Tracer):
   ty : JaxVal
   rep : TraceVal
 
-# === embedding ===
-
-# We keep a "current emitter" as a globally-readable context. This is purely to
-# reduce clutter in user-facing code. Internally we pass around emitters
-# explicitly so it's easier to follow the flow of data.
-@dataclass
-class CurrentEmitter:
-  emitter : Emitter
-
-@contextmanager
-def set_current_emitter(emitter):
-  prev = current_emitter.emitter
-  current_emitter.emitter = emitter
-  try:
-    yield
-  finally:
-    current_emitter.emitter = prev
-
-def top_level_emitter():
-  return FrontendLoweringEmitter(eval_emitter)
-
-current_emitter = CurrentEmitter(top_level_emitter())
-
-def emit_primitive(p, args, funargs=()):
-  emitter = current_emitter.emitter
-  args_canonical = [canonicalize_pyval(arg) for arg in args]
-  arg_tys = [arg.ty for arg in args_canonical]
-  if isinstance(p, CallableHof):
-    result_ty = None
-  else:
-    fun_tys = [f.ty for f in funargs]
-    result_ty = p.result_type(*(tuple(arg_tys) + tuple(fun_tys)))
-  return emitter.emit_primitive(p, result_ty, args_canonical, funargs)
-
-# This turns a function that reads the implicit "current_emitter" context into
-# one that takes the emitter explicitly, conforming to the `OpStream` API
-@dataclass
-class WithExplicitEmitter:
-  f : Callable
-  def __call__(self, emitter, *args):
-    with set_current_emitter(emitter):
-      return self.f(*args)
-
-# `emit` requires each argument to be a `TraceVal`, which is either a `JaxVal`
-# or a `Tracer`. A PyVal could be a tuples of tracers, or a Python float
-# representing a rank-0 array. We canonicalize these to a `TraceVal` before
-# calling `emit`.
-
-PyVal : TypeAlias = Any
-pyval_canonicalizers = {}
-
-def register_canonicalizer(t, f):
-  pyval_canonicalizers[t] = f
-
-# may use current emitter, for example to build a FancyTuple from a python
-# tuple.
-def canonicalize_pyval(x: PyVal) -> TraceVal:
-  if isinstance(x, JaxVal):
-    return x
-  elif isinstance(x, Tracer):
-    return x
-  elif type(x) in pyval_canonicalizers:
-    return pyval_canonicalizers[type(x)](x)
-  else:
-    raise TypeError(f'Unrecognized JAX type: {type(x)}')
-
 # === jvp ===
 
 class JVPEmitter(Emitter):
@@ -374,4 +308,3 @@ class JVPEmitter(Emitter):
 
 class JVP(CallableHof):
   pass
-
