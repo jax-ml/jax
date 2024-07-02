@@ -296,10 +296,12 @@ def _preprocess_grid(grid: Grid | int | None) -> Grid:
 def _convert_block_spec_to_block_mapping(
     in_avals: Sequence[jax_core.ShapedArray],
     block_spec: BlockSpec,
+    path: tree_util.KeyPath,
     aval: jax_core.ShapedArray,
     in_tree: Any,
     grid: GridMappingGrid,
     mapped_dims: tuple[int, ...],
+    what: str,  # Used to localize error messages, e.g., {what}{path}
 ) -> BlockMapping | None:
   if block_spec is no_block_spec:
     return None
@@ -313,7 +315,13 @@ def _convert_block_spec_to_block_mapping(
       mapped if s is None else s for s in block_shape)
   flat_fun, _ = api_util.flatten_fun(lu.wrap_init(compute_index), in_tree)
   with tracing_grid_env(grid, mapped_dims):
-    jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+    jaxpr, out_avals, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
+    if len(out_avals) != len(block_shape):
+      raise ValueError(
+          f"Index map for {what}{tree_util.keystr(path)} must return "
+          f"{len(aval.shape)} values to match {block_shape=}. "
+          f"Currently returning {len(out_avals)} values."
+      )
   return BlockMapping(
       block_shape, jax_core.ClosedJaxpr(jaxpr, consts), block_spec.indexing_mode
   )
@@ -327,42 +335,51 @@ def _tile_ref(ref: state.AbstractRef, block_shape: tuple[int, ...] | None
   return ref.update(inner_aval=ref.inner_aval.update(shape=shape))
 
 
-def _check_static_ref_shape(ref: state.AbstractRef) -> state.AbstractRef:
-  shape = ref.shape
-  if not jax_core.is_constant_shape(shape):
-    # TODO(necula): thread the tree labels so that we can localize the error
-    raise ValueError("shape polymorphism for Pallas does not support "
-                     f"dynamically-shaped blocks. Found block_shape: {shape}")
-  return ref
-
-
-def _get_ref_avals(grid, in_avals, in_specs, out_avals, out_specs):
-  def _get_memory_space(spec):
+def _get_ref_avals(grid,
+                   in_avals: Sequence[jax_core.ShapedArray],
+                   in_specs: Sequence[BlockSpec],
+                   in_paths: Sequence[tree_util.KeyPath],
+                   out_avals: Sequence[jax_core.ShapedArray],
+                   out_specs: Sequence[BlockSpec],
+                   out_paths: Sequence[tree_util.KeyPath]):
+  def make_ref_aval(aval: jax_core.ShapedArray,
+                    spec: BlockSpec,
+                    path: tree_util.KeyPath,
+                    what: str) -> state.AbstractRef:
     if spec is no_block_spec:
-      return None
-    return spec.memory_space
+      memory_space = None
+      block_shape = None
+    else:
+      memory_space = spec.memory_space
+      block_shape = spec.block_shape
+
+    ref_aval = AbstractMemoryRef(aval, memory_space)
+    if block_shape is not None:
+      if len(ref_aval.shape) != len(block_shape):
+        raise ValueError(
+            f"Block shape for {what}{tree_util.keystr(path)} (= {block_shape}) "
+            f"must have the same number of dimensions as the array shape {ref_aval.shape}"
+        )
+      trimmed_block_shape = tuple(s for s in block_shape if s is not None)
+      ref_aval = ref_aval.update(
+          inner_aval=ref_aval.inner_aval.update(shape=trimmed_block_shape))
+
+    if not jax_core.is_constant_shape(ref_aval.shape):
+      raise ValueError(
+          "shape polymorphism for Pallas does not support "
+          "dynamically-shaped blocks. "
+          f"{what}{tree_util.keystr(path)} has block_shape: {ref_aval.shape}")
+    return ref_aval
+
   in_ref_avals = [
-      AbstractMemoryRef(aval, _get_memory_space(in_spec))
-      for aval, in_spec in zip(in_avals, in_specs)
+      make_ref_aval(aval, in_spec, in_path, "input")
+      for aval, in_spec, in_path in zip(in_avals, in_specs, in_paths)
   ]
   out_ref_avals = [
-      AbstractMemoryRef(aval, _get_memory_space(out_spec))
-      for aval, out_spec in zip(out_avals, out_specs)
+      make_ref_aval(aval, out_spec, out_path, "output")
+      for aval, out_spec, out_path in zip(out_avals, out_specs, out_paths)
   ]
-  if grid is None:
-    in_specs = [None] * len(in_avals)
-    out_specs = [None] * len(out_avals)
-  tiled_in_ref_avals = [
-      _check_static_ref_shape(aval if in_spec is no_block_spec
-                              else _tile_ref(aval, in_spec.block_shape))
-      for aval, in_spec in zip(in_ref_avals, in_specs)
-  ]
-  tiled_out_ref_avals = [
-      _check_static_ref_shape(aval if out_spec is no_block_spec
-                              else _tile_ref(aval, out_spec.block_shape))
-      for aval, out_spec in zip(out_ref_avals, out_specs)
-  ]
-  return in_specs, tiled_in_ref_avals, out_specs, tiled_out_ref_avals
+  return in_specs, in_ref_avals, out_specs, out_ref_avals
 
 class NoBlockSpec:
   pass
@@ -386,6 +403,8 @@ class GridSpec:
     # Be more lenient for in/out_specs
     if isinstance(in_specs, list):
       in_specs = tuple(in_specs)
+    elif in_specs is not no_block_spec and not isinstance(in_specs, Sequence):
+      raise ValueError(f"`in_specs` must be a tuple or a list. Found: {in_specs}")
     if isinstance(out_specs, list):
       out_specs = tuple(out_specs)
 
@@ -410,20 +429,20 @@ class GridSpec:
       flat_in_specs = self.in_specs
       if self.in_specs_tree != in_tree:
         raise ValueError(
-            "Pytree specs for arguments and `in_specs` must match: "
-            f"{in_tree} vs. {self.in_specs_tree}")
+            pytreedef_mismatch_err_msg("`in_specs`", self.in_specs_tree,
+                                       "inputs", in_tree))
     if self.out_specs is no_block_spec:
       flat_out_specs = [no_block_spec] * len(out_avals)
     else:
       flat_out_specs = self.out_specs
       if self.out_specs_tree != out_tree:
         raise ValueError(
-            "Pytree specs for `out_shape` and `out_specs` must match: "
-            f"{out_tree} vs. {self.out_specs_tree}")
+            pytreedef_mismatch_err_msg("`out_specs`", self.out_specs_tree,
+                                       "`out_shape`", out_tree))
     return flat_in_specs, flat_out_specs
 
   def get_grid_mapping(
-      self, in_avals, in_tree, out_avals, out_tree
+      self, in_avals, in_tree, in_paths, out_avals, out_tree, out_paths
   ) -> tuple[tuple[jax_core.AbstractValue, ...], GridMapping]:
     assert all(i is None or isinstance(i, int) for i in self.grid)
     grid_mapping_grid = tuple(
@@ -432,8 +451,8 @@ class GridSpec:
     flat_in_specs, flat_out_specs = self._get_in_out_specs(
         in_avals, in_tree, out_avals, out_tree)
     in_specs, in_ref_avals, out_specs, out_ref_avals = _get_ref_avals(
-        self.grid, in_avals, flat_in_specs, out_avals,
-        flat_out_specs)
+        self.grid, in_avals, flat_in_specs, in_paths,
+        out_avals, flat_out_specs, out_paths)
     grid_avals = [jax_core.ShapedArray((), jnp.dtype("int32"))] * len(self.grid)
     # Create args, kwargs pytree def
     grid_tree = tree_util.tree_structure((tuple(grid_avals), {}))
@@ -444,8 +463,10 @@ class GridSpec:
             in_tree=grid_tree,
             grid=grid_mapping_grid,
             mapped_dims=(),
+            what="input",
         ),
         in_specs,
+        in_paths,
         in_ref_avals,
     )
     out_block_mappings = map(
@@ -455,8 +476,10 @@ class GridSpec:
             in_tree=grid_tree,
             grid=grid_mapping_grid,
             mapped_dims=(),
+            what="output",
         ),
         out_specs,
+        out_paths,
         out_ref_avals,
     )
     grid_mapping = GridMapping(
@@ -480,3 +503,18 @@ class GridSpec:
     static_self = copy.copy(self)
     static_self.grid = static_grid  # type: ignore
     return static_self, dynamic_bounds
+
+def pytreedef_mismatch_err_msg(
+    what1: str, tree1: tree_util.PyTreeDef,
+    what2: str, tree2: tree_util.PyTreeDef) -> str:
+  errs = list(tree_util.equality_errors_pytreedef(tree1, tree2))
+  msg = []
+  msg.append(
+      f"Pytree for {what1} and {what2} do not match. "
+      f"There are {len(errs)} mismatches, including:")
+  for path, thing1, thing2, explanation in errs:
+    where = f"at {tree_util.keystr(path)}, " if path else ""
+    msg.append(
+        f"    * {where}{what1} is a {thing1} but"
+        f" {what2} is a {thing2}, so {explanation}")
+  return "\n".join(msg)

@@ -184,7 +184,7 @@ class BlockInvarianceTest(parameterized.TestCase):
 
     def make_kernel_body(index_map):
       def body(key_ref, o_ref):
-        key = key_ref[0, 0]
+        key = key_ref[...]
         samples = plrandom.sample_block(
             jax.random.uniform,
             key,
@@ -199,9 +199,7 @@ class BlockInvarianceTest(parameterized.TestCase):
 
     global_key = jax_random.key(0, impl="pallas_tpu")
     o_shape = jnp.ones((64, 512), dtype=jnp.float32)
-    key_spec = pl.BlockSpec(
-        (1, 1), lambda i, j: (0, 0), memory_space=pltpu.TPUMemorySpace.SMEM
-    )
+    key_spec = pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM)
     out_spec = pl.BlockSpec((16, 128), lambda i, j: (i, j))
     result_16x128 = pl.pallas_call(
         make_kernel_body(index_map=lambda i, j: (i, j)),

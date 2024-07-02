@@ -22,10 +22,10 @@ import string
 from typing import Any
 
 import jax
-from jax import core as jax_core
 from jax import lax
 from jax import tree_util
 from jax._src import ad_util
+from jax._src import core as jax_core
 from jax._src import custom_derivatives
 from jax._src import debugging
 from jax._src import dtypes
@@ -204,6 +204,11 @@ def ir_constant(x, mlir_type=None):
 lowering_rules = {}
 skip_mlir_conversions = set()
 
+def _get_aval_physical_dtype_shape(aval):
+  dtype_physical_shape = jax_core.physical_aval(aval).shape[
+      len(aval.shape) :
+  ]
+  return dtype_physical_shape
 
 def _get_arg_type(
     aval,
@@ -427,6 +432,7 @@ def lower_jaxpr_to_module(
       mlir_func = lower_jaxpr_to_transform_func(
           ctx,
           bm.index_map_jaxpr.jaxpr,
+          aval,
           name=func_name,
           mosaic_grid_mapping=mosaic_grid_mapping,
       )
@@ -434,6 +440,9 @@ def lower_jaxpr_to_module(
       block_shape = [
           1 if b is pl_core.mapped else b for b in bm.block_shape
       ]
+      # If we have an extended dtype, we need to add the block shape for the
+      # remaining physical dtype.
+      block_shape += list(_get_aval_physical_dtype_shape(aval.inner_aval))
       window_shape = ir.DenseI64ArrayAttr.get(block_shape)
       block_params = dict(
           window_bounds=window_shape,
@@ -469,6 +478,7 @@ def lower_jaxpr_to_module(
 def lower_jaxpr_to_transform_func(
     ctx: ir.Context,
     jaxpr: jax_core.Jaxpr,
+    aval: jax_core.AbstractValue,
     *,
     name: str,
     mosaic_grid_mapping: MosaicGridMapping,
@@ -503,8 +513,16 @@ def lower_jaxpr_to_transform_func(
         mesh_context=mesh_context,
         traceback_caches=mlir.TracebackCaches(),
     )
-    return jaxpr_subcomp(lowering_context, jaxpr, *jaxpr_indices,
-                         *scalar_prefetch)
+    out = jaxpr_subcomp(lowering_context, jaxpr, *jaxpr_indices,
+                        *scalar_prefetch)
+    assert isinstance(aval, state.AbstractRef), aval
+    # If we have an extended dtype, we need to add 0s for the block indices
+    # for the remaining physical dtype.
+    out += [
+        ir_constant(0, mlir_type=_dtype_to_ir_type(jnp.dtype("int32")))
+    ] * len(_get_aval_physical_dtype_shape(aval.inner_aval))
+    return out
+
   body_func.__name__ = name
   body = func.FuncOp.from_py_func(*arg_types, name=name)(body_func)
   try:
