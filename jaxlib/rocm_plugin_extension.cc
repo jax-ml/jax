@@ -34,7 +34,7 @@ namespace nb = nanobind;
 
 namespace xla {
 namespace {
-Status RegisterCustomCallTarget(const PJRT_Api* c_api, nb::str fn_name,
+absl::Status RegisterCustomCallTarget(const PJRT_Api* c_api, nb::str fn_name,
                                 nb::capsule fn, int api_version,
                                 XLA_FFI_Handler_Traits traits) {
   if (c_api->extension_start == nullptr) {
@@ -66,7 +66,7 @@ Status RegisterCustomCallTarget(const PJRT_Api* c_api, nb::str fn_name,
   RETURN_STATUS_IF_PJRT_ERROR(
       reinterpret_cast<const PJRT_Gpu_Custom_Call*>(next)->custom_call(&args),
       c_api);
-  return OkStatus();
+  return absl::OkStatus();
 }
 
 nb::dict Registrations() {
