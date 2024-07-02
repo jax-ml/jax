@@ -111,14 +111,18 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
     mlir::memref::registerMemRefPasses();
     mlir::registerConvertToLLVMPass();
     mlir::registerGPUPasses();
+    mlir::registerGpuLaunchSinkIndexComputations();
     mosaic::gpu::registerGpuLaunchLoweringPass();
     mosaic::gpu::registerConvertGpuToLLVMPass();
+    mosaic::gpu::registerByvalInsertionPass();
     return true;
   }();
   (void)register_once;
   return mlir::parsePassPipeline(
       R"(
       builtin.module(
+        canonicalize,
+        gpu-launch-sink-index-computations,
         convert-nvgpu-to-nvvm,
         gpu-kernel-outlining{data-layout-str=},
         convert-vector-to-scf{full-unroll=false lower-tensors=false target-rank=1},
@@ -135,6 +139,7 @@ mlir::FailureOr<mlir::OpPassManager> GetPassPipeline(
         gpu.module(convert-gpu-to-nvvm{has-redux=false index-bitwidth=64 use-bare-ptr-memref-call-conv=false}),
         gpu.module(canonicalize{max-iterations=10 max-num-rewrites=-1 region-simplify=normal test-convergence=false top-down=true}),
         gpu.module(cse),
+        gpu.module(mosaic-byval-insertion),
         gpu.module(reconcile-unrealized-casts),
         mosaic-convert-gpu-to-llvm,
         gpu-module-to-binary{format=)" +

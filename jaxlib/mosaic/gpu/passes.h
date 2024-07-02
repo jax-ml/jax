@@ -19,6 +19,7 @@ limitations under the License.
 namespace mosaic {
 namespace gpu {
 
+void registerByvalInsertionPass();
 void registerConvertGpuToLLVMPass();
 
 }  // namespace gpu

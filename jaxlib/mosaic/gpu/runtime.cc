@@ -81,17 +81,6 @@ void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
   }
 }
 
-void mosaic_gpu_memcpy_async_h2d(CUdeviceptr dst, void *src, uint64_t bytes,
-                                 CUstream stream) {
-  CUresult result = cuMemcpyHtoDAsync(dst, src, bytes, stream);
-  if (result != CUDA_SUCCESS) {
-    const char *ptr = nullptr;
-    cuGetErrorString(result, &ptr);
-    fprintf(stderr, "cuMemcpyAsync failed: %s\n", ptr);
-    abort();
-  }
-}
-
 void* mosaic_gpu_module_load(void *data) {
   CUmodule module = nullptr;
   if (auto result = cuModuleLoadData(&module, data); result != CUDA_SUCCESS) {

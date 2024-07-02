@@ -23,6 +23,7 @@ limitations under the License.
 #include "mlir/include/mlir/Conversion/LLVMCommon/TypeConverter.h"
 #include "mlir/include/mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/include/mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/include/mlir/IR/BuiltinAttributes.h"
 #include "mlir/include/mlir/IR/BuiltinOps.h"
 #include "mlir/include/mlir/IR/SymbolTable.h"
 #include "mlir/include/mlir/Pass/PassRegistry.h"
@@ -65,11 +66,68 @@ class ConvertGpuToLLVMPass
   }
 };
 
+// Convert all array parameters to GPU kernels into byval pointers.
+// NVVM backend converts them into arrays in the .param memory space.
+// We only use arrays to pass in TMA descriptors, which is why we also
+// require 64-byte alignment.
+class ByvalInsertionPass
+    : public mosaic::gpu::Pass<ByvalInsertionPass, mlir::gpu::GPUModuleOp> {
+ public:
+  using mosaic::gpu::Pass<ByvalInsertionPass, mlir::gpu::GPUModuleOp>::Pass;
+  static constexpr llvm::StringLiteral kArgumentName = "mosaic-byval-insertion";
+  static constexpr llvm::StringLiteral kPassName = "ByvalInsertionPass";
+
+  void runOnOperation() override {
+    auto result = getOperation().walk([](mlir::LLVM::LLVMFuncOp op) {
+      // TODO(apaszke): op.isDeclaration() always returns false...
+      if (op.getFunctionBody().empty()) {  // Skip over declarations.
+        return mlir::WalkResult::advance();
+      }
+      auto ptr_ty = mlir::LLVM::LLVMPointerType::get(op.getContext());
+      mlir::LLVM::LLVMFunctionType func_ty = op.getFunctionType();
+      std::vector<mlir::Type> new_arg_types = func_ty.getParams().vec();
+      for (unsigned i = 0; i < op.getNumArguments(); ++i) {
+        mlir::BlockArgument arg = op.getArgument(i);
+        if (!mlir::isa<mlir::LLVM::LLVMArrayType>(arg.getType())) {
+          continue;
+        }
+        if (op.getArgAttrDict(i)) {
+          op->emitOpError(
+              "!llvm.array argument already has some argument attributes");
+          return mlir::WalkResult::interrupt();
+        }
+        // It would be a lot simpler to use op.insertArgument, but the
+        // impl of FunctionOpInterface for llvm.func is _completely_ broken
+        new_arg_types[i] = ptr_ty;
+        op.setArgAttr(i, "llvm.byval", mlir::TypeAttr::get(arg.getType()));
+        op.setArgAttr(i, "nvvm.grid_constant",
+                      mlir::UnitAttr::get(op.getContext()));
+        op.setArgAttr(i, "llvm.align",
+                      mlir::IntegerAttr::get(
+                          mlir::IntegerType::get(op.getContext(), 32), 64));
+        arg.setType(ptr_ty);
+      }
+      op.setFunctionType(mlir::LLVM::LLVMFunctionType::get(
+          func_ty.getReturnType(), new_arg_types, func_ty.isVarArg()));
+      return mlir::WalkResult::advance();
+    });
+    if (result.wasInterrupted()) {
+      signalPassFailure();
+    }
+  }
+};
+
 }  // namespace
 
 void registerConvertGpuToLLVMPass() {
   ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
     return std::make_unique<ConvertGpuToLLVMPass>();
+  });
+}
+
+void registerByvalInsertionPass() {
+  ::mlir::registerPass([]() -> std::unique_ptr<::mlir::Pass> {
+    return std::make_unique<ByvalInsertionPass>();
   });
 }
 

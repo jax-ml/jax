@@ -80,14 +80,15 @@ mlir::Value packKernelArgs(mlir::OpBuilder &builder,
       c1);
 
   for (auto [i, operand] : llvm::enumerate(launch.getKernelOperands())) {
-    mlir::LLVM::GEPArg gep_arg(i);
     mlir::Value storage_ptr = builder.create<mlir::LLVM::GEPOp>(
-        launch.getLoc(), ptr_ty, operand.getType(), kernel_args_struct,
-        gep_arg);
+        launch.getLoc(), ptr_ty, kernel_args_struct_ty, kernel_args_struct,
+        mlir::ArrayRef<mlir::LLVM::GEPArg>{mlir::LLVM::GEPArg(0),
+                                           mlir::LLVM::GEPArg(i)});
     builder.create<mlir::LLVM::StoreOp>(launch.getLoc(), operand, storage_ptr);
+    mlir::LLVM::GEPArg arr_gep_arg(i);
     mlir::Value array_slot_ptr = builder.create<mlir::LLVM::GEPOp>(
         launch.getLoc(), ptr_ty, builder.getI64Type(), kernel_args_array,
-        gep_arg);
+        mlir::LLVM::GEPArg(i));
     builder.create<mlir::LLVM::StoreOp>(launch.getLoc(), storage_ptr,
                                         array_slot_ptr);
   }
