@@ -81,7 +81,7 @@ from jax._src.tree_util import (
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps,
     distributed_debug_log, split_list, weakref_lru_cache,
-    merge_lists, flatten, unflatten, subs_list, fun_name)
+    merge_lists, flatten, unflatten, subs_list, fun_name, fun_qual_name)
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -669,7 +669,7 @@ def _infer_params_impl(
       out_layouts=out_layouts_flat,
       resource_env=resource_env,
       donated_invars=donated_invars,
-      name=fun_name(flat_fun),
+      name=fun_qual_name(flat_fun),
       keep_unused=ji.keep_unused,
       inline=ji.inline,
   )

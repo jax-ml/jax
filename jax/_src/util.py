@@ -378,6 +378,10 @@ def wrap_name(name, transform_name):
 def fun_name(fun: Callable):
   return getattr(fun, "__name__", "<unnamed function>")
 
+def fun_qual_name(fun: Callable):
+  return getattr(fun, "__qualname__",
+                 getattr(fun, "__name__", "<unnamed function>"))
+
 def canonicalize_axis(axis, num_dims) -> int:
   """Canonicalize an axis in [-num_dims, num_dims) to [0, num_dims)."""
   axis = operator.index(axis)
