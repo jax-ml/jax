@@ -557,8 +557,6 @@ def _compile_and_share_module(
 ) -> xc.LoadedExecutable:
   share_timeout = config.share_binary_between_hosts_timeout_ms.value
 
-  # TODO: We need a proper eviction protocol here, otherwise all compiled
-  # modules will pile in memory.
   if cache_key in _compile_and_share_module.modules_cache:
     return _compile_and_share_module.modules_cache[cache_key]
 

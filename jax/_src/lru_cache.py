@@ -16,24 +16,26 @@ from __future__ import annotations
 
 import heapq
 import logging
-import pathlib
 import time
 import warnings
-
-from jax._src.compilation_cache_interface import CacheInterface
-
 
 try:
   import filelock
 except ImportError:
   filelock = None
 
+from jax._src import path as pathlib
+from jax._src.compilation_cache_interface import CacheInterface
 
 logger = logging.getLogger(__name__)
 
 
 _CACHE_SUFFIX = "-cache"
 _ATIME_SUFFIX = "-atime"
+
+
+def _is_local_filesystem(path: str) -> bool:
+  return path.startswith("file://") or "://" not in path
 
 
 class LRUCache(CacheInterface):
@@ -56,29 +58,26 @@ class LRUCache(CacheInterface):
         indicates no limit, allowing the cache size to grow indefinitely.
       lock_timeout_secs: (optional) The timeout for acquiring a file lock.
     """
-    # TODO(ayx): add support for cloud other filesystems such as GCS
-    if not self._is_local_filesystem(path):
-      raise NotImplementedError("LRUCache only supports local filesystem at this time.")
+    if not _is_local_filesystem(path) and not pathlib.epath_installed:
+      raise RuntimeError("Please install the `etils[epath]` package to specify a cache directory on a non-local filesystem")
 
-    self.path = pathlib.Path(path)
+    self.path = self._path = pathlib.Path(path)
     self.path.mkdir(parents=True, exist_ok=True)
-
-    # TODO(ayx): having a `self._path` is required by the base class
-    # `CacheInterface`, but the base class can be removed after `LRUCache`
-    # and the original `GFileCache` are unified
-    self._path = self.path
 
     self.eviction_enabled = max_size != -1  # no eviction if `max_size` is set to -1
 
     if self.eviction_enabled:
       if filelock is None:
-        raise RuntimeError("Please install filelock package to set `jax_compilation_cache_max_size`")
+        raise RuntimeError("Please install the `filelock` package to set `jax_compilation_cache_max_size`")
 
       self.max_size = max_size
       self.lock_timeout_secs = lock_timeout_secs
 
       self.lock_path = self.path / ".lockfile"
-      self.lock = filelock.FileLock(self.lock_path)
+      if _is_local_filesystem(path):
+        self.lock = filelock.FileLock(self.lock_path)
+      else:
+        self.lock = filelock.SoftFileLock(self.lock_path)
 
   def get(self, key: str) -> bytes | None:
     """Retrieves the cached value for the given key.
@@ -173,7 +172,12 @@ class LRUCache(CacheInterface):
     h: list[tuple[int, str, int]] = []
     dir_size = 0
     for cache_path in self.path.glob(f"*{_CACHE_SUFFIX}"):
-      file_size = cache_path.stat().st_size
+      file_stat = cache_path.stat()
+
+      # `pathlib` and `etils[epath]` have different API for obtaining the size
+      # of a file, and we need to support them both.
+      # See also https://github.com/google/etils/issues/630
+      file_size = file_stat.st_size if not pathlib.epath_installed else file_stat.length  # pytype: disable=attribute-error
 
       key = cache_path.name.removesuffix(_CACHE_SUFFIX)
       atime_path = self.path / f"{key}{_ATIME_SUFFIX}"
@@ -198,11 +202,3 @@ class LRUCache(CacheInterface):
       atime_path.unlink()
 
       dir_size -= file_size
-
-  # See comments in `jax.src.compilation_cache.get_file_cache()` for details.
-  # TODO(ayx): This function has a duplicate in that place, and there is
-  # redundancy here. However, this code is temporary, and once the issue
-  # is fixed, this code can be removed.
-  @staticmethod
-  def _is_local_filesystem(path: str) -> bool:
-    return path.startswith("file://") or "://" not in path

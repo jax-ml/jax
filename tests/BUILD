@@ -1146,16 +1146,6 @@ py_test(
 )
 
 py_test(
-    name = "gfile_cache_test",
-    srcs = ["gfile_cache_test.py"],
-    deps = [
-        "//jax",
-        "//jax:gfile_cache",
-        "//jax:test_util",
-    ],
-)
-
-py_test(
     name = "lru_cache_test",
     srcs = ["lru_cache_test.py"],
     deps = [
