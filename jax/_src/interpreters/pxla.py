@@ -2108,6 +2108,36 @@ def get_out_memory_kinds_via_propagation(closed_jaxpr: core.ClosedJaxpr,
   return tuple(safe_map(read, jaxpr.outvars))
 
 
+@weakref_lru_cache
+def get_out_layouts_via_propagation(closed_jaxpr: core.ClosedJaxpr
+                                    ) -> tuple[None | DeviceLocalLayout]:
+  from jax._src import pjit
+
+  env = {}  # type: ignore
+  jaxpr = closed_jaxpr.jaxpr
+
+  def read(var):
+    if type(var) is core.Literal:
+      return None
+    return env[var]
+
+  def write(var, val):
+    env[var] = val
+
+  safe_map(write, jaxpr.invars, [None] * len(jaxpr.invars))
+  safe_map(write, jaxpr.constvars, [None] * len(jaxpr.constvars))
+
+  for eqn in jaxpr.eqns:
+    # TODO(yashkatariya): Replace this with a registration system when there are
+    # more primitives for layout propagation.
+    if eqn.primitive is pjit.sharding_constraint_p:
+      out_eqn_layouts = [eqn.params['layout']]
+    else:
+      out_eqn_layouts = [None] * len(eqn.outvars)
+    safe_map(write, eqn.outvars, out_eqn_layouts)
+  return tuple(safe_map(read, jaxpr.outvars))
+
+
 MaybeLayout = Sequence[Union[DeviceLocalLayout, AutoLayout, None]]
 
 
@@ -2198,6 +2228,13 @@ def lower_sharding_computation(
   jaxpr = closed_jaxpr.jaxpr
   global_in_avals = closed_jaxpr.in_avals
   global_out_avals = closed_jaxpr.out_avals
+
+  # If layout is propagated, then set the out_layout in the top module to AUTO
+  # so that XLA can override the entry_computation_layout. The propagated
+  # layout will be set via a custom call.
+  out_layouts_via_prop = get_out_layouts_via_propagation(closed_jaxpr)
+  out_layouts = tuple(DeviceLocalLayout.AUTO if p is not None else o
+                      for o, p in safe_zip(out_layouts, out_layouts_via_prop))
 
   assert len(out_shardings) == len(out_layouts) == len(global_out_avals), (
       len(out_shardings), len(out_layouts), len(global_out_avals))

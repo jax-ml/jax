@@ -16,7 +16,6 @@ import contextlib
 import math
 from absl.testing import absltest
 import numpy as np
-from functools import partial
 
 import jax
 import jax.numpy as jnp
@@ -359,7 +358,7 @@ class LayoutTest(jtu.JaxTestCase):
 
   def test_wsc_concrete_layout(self):
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
-    shape = (128, 128)
+    shape = (16, 128)
     s = NamedSharding(mesh, P('x'))
     np_inp = np.arange(math.prod(shape)).reshape(shape)
     arr = jax.device_put(np_inp, s)
@@ -367,11 +366,7 @@ class LayoutTest(jtu.JaxTestCase):
     # Create a custom layout instead of using `arr.layout` to test the API.
     custom_dll = DLL(major_to_minor=(0, 1), tiling=((8, 128),))
 
-    # We need AUTO so that XLA can override the entry computation layout set.
-    # TODO(yashkatariya): Expose a config that sets out_shardings to AUTO by
-    # default instead of `None` i.e. default layout and let the compiler choose
-    # the layout or try setting it to AUTO by default and see if there is chaos.
-    @partial(jax.jit, out_shardings=Layout(DLL.AUTO))
+    @jax.jit
     def f(x):
       y = x.T
       # Constrain `y` to the original layout of `arr` because without it,
@@ -383,9 +378,9 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertEqual(out.layout, arr.layout)
     self.assertArraysEqual(out, np_inp.T)
 
-  def test_wsc_concrete_layout_bfloat16(self):
+  def test_wsc_bfloat16_concrete_layout(self):
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
-    shape = (128, 128)
+    shape = (16, 128)
     s = NamedSharding(mesh, P('x'))
     inp = jnp.arange(math.prod(shape), dtype=jnp.bfloat16).reshape(shape)
     arr = jax.device_put(inp, s)
@@ -393,7 +388,7 @@ class LayoutTest(jtu.JaxTestCase):
     # Create a custom layout instead of using `arr.layout` to test the API.
     custom_dll = DLL(major_to_minor=(0, 1), tiling=((8, 128), (2, 1)))
 
-    @partial(jax.jit, out_shardings=Layout(DLL.AUTO))
+    @jax.jit
     def f(x):
       y = x.T
       # Constrain `y` to the original layout of `arr` because without it,
