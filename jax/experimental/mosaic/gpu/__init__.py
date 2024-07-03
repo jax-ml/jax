@@ -329,6 +329,7 @@ class LaunchContext:
     src_ref_ty = ir.MemRefType(src_ref.type)
     dst_ref_ty = ir.MemRefType(dst_ref.type)
     element_type = src_ref_ty.element_type
+    element_bytewidth = mgpu.bytewidth(element_type)
     if element_type != dst_ref_ty.element_type:
       raise ValueError(
           f"Expected same element type, got {element_type} and"
@@ -397,10 +398,17 @@ class LaunchContext:
     rank = len(slice_shape)
     if rank > 5:  # TODO: apaszke - Implement stride compression
       raise ValueError("Async copies only support striding up to 5 dimensions")
+    if swizzle is not None and slice_shape[-1] != swizzle // element_bytewidth:
+      raise ValueError(
+          f"Async copies with {swizzle=} require last dimension of the slice to"
+          f" be exactly {swizzle} bytes"
+          f" ({swizzle // element_bytewidth} elements), but got"
+          f" {slice_shape[-1]}"
+      )
     smem_ptr = utils.memref_ptr(smem_ref, memory_space=3)
     if gmem_ref is src_ref:
       assert barrier is not None  # for pytype
-      slice_bytes = c(np.prod(slice_shape) * mgpu.bytewidth(element_type), i32)
+      slice_bytes = c(np.prod(slice_shape) * element_bytewidth, i32)
       barrier_ptr = barrier.get_ptr()
       with uniform_ctx():
         if arrive:
