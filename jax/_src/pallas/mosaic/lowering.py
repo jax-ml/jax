@@ -936,6 +936,7 @@ class KeyScalarBundle:
     scalars: A list of OpResults representing scalar key data during the
       lowering pass.
   """
+  key_shape: tuple[int, ...]
   scalars: list[ir.OpResult]
 
 def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
@@ -1021,7 +1022,7 @@ def _prng_key_load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree
         cast_to_index=True,
     )
     load_ops.append(memref.LoadOp(ref, starts).result)
-  return KeyScalarBundle(scalars=load_ops)
+  return KeyScalarBundle(scalars=load_ops, key_shape=tuple(ref_block_shape))
 
 
 lowering_rules[primitives.load_p] = _load_lowering_rule
@@ -2521,8 +2522,19 @@ lowering_rules[prng.random_fold_in_p] = random_fold_in_lowering
 
 
 def random_unwrap_lowering(ctx, key):
-  del ctx, key
-  raise NotImplementedError("key_data not implemented.")
+  del ctx
+  assert isinstance(key, KeyScalarBundle)
+  # Convert to a vector.
+  if tuple(key.key_shape) != (1, 1):
+    raise NotImplementedError(
+      "Seed key_data of shape != (1, 1) not supported. "
+      f"Got: {key.key_shape}")
+  scalar = key.scalars[0]
+  out_type = ir.VectorType.get(
+      key.key_shape, _dtype_to_ir_type(jnp.dtype('int32'))
+  )
+  val = vector.BroadcastOp(out_type, scalar).result
+  return val
 lowering_rules[prng.random_unwrap_p] = random_unwrap_lowering
 
 
@@ -2540,7 +2552,8 @@ def random_wrap_lowering(ctx, key_data, *, impl):
         f"Got: {key_data_shape}")
     for i in range(key_data_shape[1]):
       key_data_list.append(vector.ExtractOp(key_data, [], [0, i]))
-    return KeyScalarBundle(scalars=key_data_list)
+    return KeyScalarBundle(
+        scalars=key_data_list, key_shape=tuple(key_data_shape))
   if isinstance(key_data, KeyScalarBundle):
     return key_data
   else:

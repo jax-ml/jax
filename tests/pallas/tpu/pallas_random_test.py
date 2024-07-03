@@ -132,6 +132,21 @@ class PRNGTest(jtu.JaxTestCase):
     self.assertGreaterEqual(jnp.min(result), 0)
     self.assertLessEqual(jnp.max(result), 1.0)
 
+  def test_key_data(self):
+    def body(key_ref, o_ref):
+      o_ref[...] = jax.random.key_data(key_ref[...])
+    rbg_key = jax_random.key(0, impl="rbg")
+    key = plrandom.to_pallas_key(rbg_key)
+    expected_key_data = jax.random.key_data(key)
+    o_shape = jax.ShapeDtypeStruct(expected_key_data.shape,
+                                   expected_key_data.dtype)
+    result = pl.pallas_call(
+        body,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM)],
+        out_shape=o_shape,
+    )(key)
+    self.assertEqual(result, expected_key_data)
+
   def test_fold_in(self):
     # Test that folding in a value results in different random numbers.
     def body(key_ref, o_ref):
