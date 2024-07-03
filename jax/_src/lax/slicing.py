@@ -2485,11 +2485,11 @@ def _scatter_lower(ctx, operand, indices, updates, *,
       scattered_dims_to_operand_dims=list(dnums.scatter_dims_to_operand_dims),
       index_vector_dim=len(ctx.avals_in[1].shape) - 1,
   )
-  result = mlir.aval_to_ir_types(aval_out)
+  result = mlir.aval_to_ir_type(aval_out)
   operand = [operand]
   updates = [updates]
   op = hlo.ScatterOp(
-      result,
+      (result,),
       operand,
       indices,
       updates,
@@ -2546,7 +2546,7 @@ def _scatter_add_lower_gpu(ctx, operand, indices, updates,
       index_vector_dim=len(ctx.avals_in[1].shape) - 1,
   )
   real_dtype = _real_dtype(aval_out.dtype)
-  operand_type_part = mlir.aval_to_ir_types(
+  operand_type_part = mlir.aval_to_ir_type(
       core.ShapedArray(aval_out.shape, real_dtype))
 
   def _scatter(operand_part, updates_part):
@@ -2554,7 +2554,7 @@ def _scatter_add_lower_gpu(ctx, operand, indices, updates,
     updates_part = [updates_part]
 
     scatter = hlo.ScatterOp(
-        operand_type_part,
+        (operand_type_part,),
         operand_part,
         indices,
         updates_part,

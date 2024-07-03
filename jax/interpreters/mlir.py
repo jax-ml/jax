@@ -31,7 +31,6 @@ from jax._src.interpreters.mlir import (
   _lowerings as _lowerings,
   _platform_specific_lowerings as _platform_specific_lowerings,
   aval_to_ir_type as aval_to_ir_type,
-  aval_to_ir_types as aval_to_ir_types,
   core_call_lowering as core_call_lowering,
   custom_call as custom_call,
   dense_bool_elements as dense_bool_elements,
@@ -42,7 +41,7 @@ from jax._src.interpreters.mlir import (
   emit_python_callback as emit_python_callback,
   flatten_ir_values as flatten_lowering_ir_args,  # TODO(phawkins): remove me
   flatten_ir_values as flatten_ir_values,
-  unflatten_ir_values as unflatten_ir_values,
+  unflatten_ir_values_like_types as unflatten_ir_values_like_types,
   func_dialect as func_dialect,
   hlo as hlo,
   i32_attr as i32_attr,
