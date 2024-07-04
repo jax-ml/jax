@@ -4618,6 +4618,11 @@ class APITest(jtu.JaxTestCase):
     for msg in cm.output:
       self.assertIn("TRACING CACHE MISS", msg)
 
+  def test_cache_miss_explanations_no_debug_info(self):
+    # ``operator.add`` is a built-in function and does not have debug info.
+    with config.explain_cache_misses(True):
+      jax.jit(operator.add)(42, 24)
+
   @parameterized.named_parameters([
       {"testcase_name": f"{dtype}", "dtype": dtype}
       for dtype in jtu.dtypes.custom_floats])
