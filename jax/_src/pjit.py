@@ -1147,7 +1147,7 @@ def explain_tracing_cache_miss(
 
   # have we seen this function before at all?
   fun_name = getattr(f, '__qualname__', f)
-  if debug_info.func_src_info:
+  if debug_info is not None and debug_info.func_src_info:
     _, _, *rest = debug_info.func_src_info.split(' ')
     src_info = " defined at "  + ' '.join(rest)
   else:
