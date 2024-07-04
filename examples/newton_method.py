@@ -1,9 +1,10 @@
 import jax
+from jax import jit
 from typing import Callable, Iterable
 
 is_float = lambda x: isinstance(x, (float, int))
 
-ini = [1., -1., 1., -1.]
+ini = [4.5, 3.5, 4.5, 3.5]
 
 g = lambda x: (-13 + x[0] + ((5 - x[1])*x[1] - 2)*x[1])**2 + (-29 + x[0] + ((x[1] + 1)*x[1] - 14)*x[1])**2 + (-13 + x[2] + ((5 - x[3])*x[3] - 2)*x[3])**2 + (-29 + x[2] + ((x[3] + 1)*x[3] - 14)*x[3])**2
 
@@ -46,7 +47,7 @@ def wolfe(fun: Callable,
             break
     return alpha
 
-
+#@jit
 def newton(fun: Callable, 
            x_0: Iterable,
            verbose: bool=False, 

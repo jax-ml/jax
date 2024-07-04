@@ -1,7 +1,9 @@
 import jax
+from jax import jit
 from typing import Callable, Iterable
 from newton_method import wolfe, g, ini, is_float
 
+#@jit
 def bfgs(fun: Callable, 
          x_0: Iterable,
          verbose: bool=False,
