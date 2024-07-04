@@ -342,9 +342,10 @@ def compile_or_get_cached(
 
     return retrieved_executable
   elif (
-      config.share_binary_between_hosts.value
-      and is_multi_process
-      and distributed.global_state.client is not None
+      (
+          config.share_binary_between_hosts.value
+          or (is_multi_process and distributed.global_state.client is not None)
+      )
       # Host callbacks are currently baked into the HLO module so we cant share
       # them.
       and len(host_callbacks) == 0
