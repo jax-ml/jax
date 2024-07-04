@@ -59,6 +59,7 @@ class OpsTest(jtu.JaxTestCase):
           (lax.bitwise_or, jnp.int32),
           (lax.bitwise_xor, jnp.int32),
           (lax.shift_left, jnp.int32),
+          (lax.shift_right_arithmetic, jnp.int32),
           (lax.shift_right_logical, jnp.int32),
       ]
   )
