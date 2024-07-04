@@ -389,7 +389,6 @@ pytype_strict_library(
         ":cache_key",
         ":compilation_cache_interface",
         ":config",
-        ":gfile_cache",
         ":lru_cache",
         ":monitoring",
         ":path",
@@ -421,7 +420,7 @@ pytype_strict_library(
     srcs = ["_src/lru_cache.py"],
     deps = [
         ":compilation_cache_interface",
-        ":config",
+        ":path",
     ] + py_deps("filelock"),
 )
 
@@ -513,15 +512,6 @@ pytype_strict_library(
         ":xla_bridge",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
-)
-
-pytype_strict_library(
-    name = "gfile_cache",
-    srcs = ["_src/gfile_cache.py"],
-    deps = [
-        ":compilation_cache_interface",
-        ":path",
-    ],
 )
 
 pytype_strict_library(
