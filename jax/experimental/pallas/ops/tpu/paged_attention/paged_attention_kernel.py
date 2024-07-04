@@ -131,6 +131,7 @@ def paged_flash_attention_kernel(
     pages_per_compute_block: int,
     pages_per_sequence: int,
     mask_value: float,
+    attn_logits_soft_cap: float,
     megacore_mode: str,
     program_ids=(),
 ):
@@ -219,18 +220,18 @@ def paged_flash_attention_kernel(
     return async_copy_k, async_copy_v
 
   @pl.when(i * bk < length)
-  def flash_attention():
+  def flash_attention():  # pylint: disable=unused-variable
     step = step_ref[0]
     buffer_index = buffer_index_ref[0]
 
     @pl.when(i == 0)
-    def init():
+    def init():  # pylint: disable=unused-variable
       m_ref[...] = jnp.full_like(m_ref, -jnp.inf)
       l_ref[...] = jnp.zeros_like(l_ref)
       o_ref[...] = jnp.zeros_like(o_ref)
 
     @pl.when(step == 0)
-    def prefetch_first_block():
+    def prefetch_first_block():  # pylint: disable=unused-variable
       async_copy_k, async_copy_v = create_kv_async_copy_descriptors(
           b, h, i, buffer_index
       )
@@ -240,7 +241,7 @@ def paged_flash_attention_kernel(
     next_b, next_h, next_i = compute_block_indices(b, h, i + 1)
 
     @pl.when(next_b < batch_size)
-    def prefetch_next_block():
+    def prefetch_next_block():  # pylint: disable=unused-variable
       next_buffer_index = jnp.where(buffer_index == 0, 1, 0)
       async_copy_next_k, async_copy_next_v = create_kv_async_copy_descriptors(
           next_b, next_h, next_i, next_buffer_index
@@ -255,6 +256,10 @@ def paged_flash_attention_kernel(
     q = q_ref[...].astype(jnp.float32)
     k = async_copy_k.wait_and_get_loaded()
     qk = jnp.einsum('hd,td->ht', q, k, preferred_element_type=jnp.float32)
+    if attn_logits_soft_cap is not None:
+      capped_qk = jnp.tanh(qk / attn_logits_soft_cap)
+      qk = capped_qk * attn_logits_soft_cap
+
     mask = i * bk + jax.lax.broadcasted_iota(jnp.int32, qk.shape, 1) < length
     qk = qk + jnp.where(mask, 0.0, mask_value)
     m_curr = qk.max(axis=-1)
@@ -303,6 +308,7 @@ def paged_flash_attention_kernel_inline_seq_dim(
     pages_per_compute_block: int,
     pages_per_sequence: int,
     mask_value: float,
+    attn_logits_soft_cap: float,
     megacore_mode: str,
 ):
   core_index, b, h = pl.program_id(0), pl.program_id(1), pl.program_id(2)
@@ -336,6 +342,7 @@ def paged_flash_attention_kernel_inline_seq_dim(
         pages_per_compute_block=pages_per_compute_block,
         pages_per_sequence=pages_per_sequence,
         mask_value=mask_value,
+        attn_logits_soft_cap=attn_logits_soft_cap,
         megacore_mode=megacore_mode,
         program_ids=(core_index, b, h, i),
     )
@@ -356,6 +363,7 @@ def paged_flash_attention_kernel_inline_seq_dim(
     jax.jit,
     static_argnames=[
         "pages_per_compute_block",
+        "attn_logits_soft_cap",
         "mask_value",
         "megacore_mode",
         "inline_seq_dim",
@@ -369,6 +377,7 @@ def paged_attention(
     page_indices: jax.Array,
     *,
     mask_value: float = DEFAULT_MASK_VALUE,
+    attn_logits_soft_cap: float | None = None,
     pages_per_compute_block: int,
     megacore_mode: str | None = None,
     inline_seq_dim: bool = True,
@@ -385,6 +394,7 @@ def paged_attention(
       the page in `k_pages` or `v_pages`.
     mask_value: The value used for padding in attention. By default it is a very
       negative floating point number.
+    attn_logits_soft_cap: The value used for soft capping the attention logits.
     pages_per_compute_block: how many pages to be processed in one flash
       attention block in the pallas kernel.
     megacore_mode: if set, enable megacore to parallelize the computation. Must
@@ -614,6 +624,7 @@ def paged_attention(
           batch_size=batch_size,
           pages_per_compute_block=pages_per_compute_block,
           mask_value=mask_value,
+          attn_logits_soft_cap=attn_logits_soft_cap,
           megacore_mode=megacore_mode,
       ),
       grid_spec=pltpu.PrefetchScalarGridSpec(

@@ -75,7 +75,7 @@ def _reconstruct_kv(page_indices, pages):
   return gathered.reshape(batch_size, num_heads, -1, head_dim)
 
 
-def _grouped_query_attention_reference(q, k, v, lengths):
+def _grouped_query_attention_reference(q, k, v, lengths, attn_logits_soft_cap):
   batch_size, num_heads, head_dim = q.shape
   _, num_kv_heads, max_seq_len, _ = k.shape
   assert k.shape == v.shape
@@ -90,6 +90,8 @@ def _grouped_query_attention_reference(q, k, v, lengths):
   logits = jnp.einsum(
       "bhgd,bhtd->bhgt", q.astype(jnp.float32), k.astype(jnp.float32)
   )
+  if attn_logits_soft_cap is not None:
+    logits = jnp.tanh(logits / attn_logits_soft_cap) * attn_logits_soft_cap
   mask = jnp.arange(max_seq_len)[None] < lengths[:, None]
   mask_value = -0.7 * float(np.finfo(np.dtype("float32")).max)
   logits = logits + jnp.where(mask, 0.0, mask_value)[:, None, None, :]
@@ -113,6 +115,7 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
       q_kv_head_ratio=(1, 4, 8),
       head_dim=(128, 256),
       megacore_mode=("batch", "kv_head", None),
+      attn_logits_soft_cap=(1.0, None),
       are_kv_quantized=(
           False,
           True,
@@ -126,6 +129,7 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
       q_kv_head_ratio,
       head_dim,
       megacore_mode,
+      attn_logits_soft_cap,
       are_kv_quantized,
   ):
     if not jtu.is_device_tpu_at_least(4):
@@ -161,10 +165,12 @@ class PagedAttentionKernelTest(jtu.JaxTestCase):
         page_indices,
         pages_per_compute_block=block_size // page_size,
         megacore_mode=megacore_mode,
+        attn_logits_soft_cap=attn_logits_soft_cap,
     )
     k = _reconstruct_kv(page_indices, k_pages)
     v = _reconstruct_kv(page_indices, v_pages)
-    o_ref = _grouped_query_attention_reference(q, k, v, seq_lens)
+    o_ref = _grouped_query_attention_reference(
+        q, k, v, seq_lens, attn_logits_soft_cap)
 
     if q_kv_head_ratio > 1:
       atol, rtol = 1e-2, 2e-2
