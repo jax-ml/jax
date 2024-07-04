@@ -3971,20 +3971,24 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     with self.assertWarns(DeprecationWarning, msg=msg):
       x.astype('float32')
 
-  def testAstypeInt4(self):
-    # Test converting from int4 to int8
-    x = np.array([1, -2, -3, 4, -8, 7], dtype=jnp.int4)
+  @parameterized.parameters('int2', 'int4')
+  def testAstypeIntN(self, dtype):
+    if dtype == 'int2':
+      self.skipTest('XLA support for int2 is incomplete.')
+
+    # Test converting from intN to int8
+    x = np.array([1, -2, -3, 4, -8, 7], dtype=dtype)
     args_maker = lambda: [x]
     np_op = lambda x: np.asarray(x).astype(jnp.int8)
     jnp_op = lambda x: jnp.asarray(x).astype(jnp.int8)
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
-    # Test converting from int8 to int4
+    # Test converting from int8 to intN
     x = np.array([1, -2, -3, 4, -8, 7], dtype=jnp.int8)
     args_maker = lambda: [x]
-    np_op = lambda x: np.asarray(x).astype(jnp.int4)
-    jnp_op = lambda x: jnp.asarray(x).astype(jnp.int4)
+    np_op = lambda x: np.asarray(x).astype(dtype)
+    jnp_op = lambda x: jnp.asarray(x).astype(dtype)
     self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
     self._CompileAndCheck(jnp_op, args_maker)
 
