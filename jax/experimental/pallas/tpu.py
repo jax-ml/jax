@@ -45,6 +45,7 @@ from jax._src.pallas.mosaic.primitives import semaphore_signal
 from jax._src.pallas.mosaic.primitives import semaphore_wait
 from jax._src.pallas.mosaic.primitives import prng_seed
 from jax._src.pallas.mosaic.primitives import prng_random_bits
+from jax._src.pallas.mosaic.random import to_pallas_key
 from jax._src.tpu_custom_call import CostEstimate
 
 ANY = TPUMemorySpace.ANY
