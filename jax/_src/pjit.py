@@ -1127,7 +1127,7 @@ def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
 callsites: set[str] = set()
 
 def explain_tracing_cache_miss(
-    f: Callable, unseen_f: bool, cache: dict, key: tuple, result: tuple):
+    f: Callable, unseen_f: bool, cache: dict, key: tuple):
   if config.check_tracer_leaks.value: return
 
   def unpack(key):
