@@ -61,8 +61,9 @@ filterwarnings = [
     "default:Special cases found for .* but none were parsed.*:UserWarning",
     "default:.*is not JSON-serializable. Using the repr instead.",
     # end array_api_tests-related warnings
-    # TODO(slebedev): Remove once we migrate all pl.BlockSpec usages in JAX.
-    "default:BlockSpec now expects .*:DeprecationWarning",
+    # This is a transitive warning coming from TensorFlow dependencies.
+    # TODO(slebedev): Remove once we bump the minimum TensorFlow version.
+    "default:The key path API is deprecated .*",
 ]
 doctest_optionflags = [
     "NUMBER",
