@@ -628,7 +628,7 @@ def debug_info(
   """Try to build trace-time debug info for fun when applied to args/kwargs."""
   arg_names = _arg_names(fun_signature, args, kwargs, static_argnums,
                          static_argnames)
-  if src is None or arg_names is None:
+  if arg_names is None:
     return None
   return TracingDebugInfo(traced_for, src, arg_names, None)
 
