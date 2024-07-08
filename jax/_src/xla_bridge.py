@@ -600,19 +600,20 @@ def discover_pjrt_plugins() -> None:
 def _options_from_jax_configs(plugin_name):
   options = {}
 
-  pjrt_client_options = config.jax_pjrt_client_create_options.value
-  pjrt_client_option_list = []
-  if pjrt_client_options:
-    pjrt_client_option_list = pjrt_client_options.split(";")
+  if plugin_name == "tpu":
+    pjrt_client_options = config.jax_pjrt_client_create_options.value
+    pjrt_client_option_list = []
+    if pjrt_client_options:
+      pjrt_client_option_list = pjrt_client_options.split(";")
 
-  for option in pjrt_client_option_list:
-    option_list = option.split(":")
-    if (len(option_list) != 2):
-      raise RuntimeError(
-          "Multiple ':' separators for option in "
-          f"jax_pjrt_client_create_options: '{option}'. "
-          "Should be in format 'key:value'")
-    options[option_list[0]] = option_list[1]
+    for option in pjrt_client_option_list:
+      option_list = option.split(":")
+      if (len(option_list) != 2):
+        raise RuntimeError(
+            "Multiple ':' separators for option in "
+            f"jax_pjrt_client_create_options: '{option}'. "
+            "Should be in format 'key:value'")
+      options[option_list[0]] = option_list[1]
 
   if plugin_name == "cuda":
     visible_devices = CUDA_VISIBLE_DEVICES.value
