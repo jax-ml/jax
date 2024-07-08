@@ -721,6 +721,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       dtype=int_types + float_types + complex_types
   )
   @jax.default_matmul_precision("float32")
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testVecdot(self, lhs_shape, rhs_shape, axis, dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
@@ -1075,6 +1076,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     dtype=float_types + complex_types,
   )
   @jtu.ignore_warning(category=FutureWarning, message="jnp.linalg.solve: batched")
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testSolve(self, lhs_shape, rhs_shape, dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
@@ -1088,6 +1090,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       rhs_shape=[(2,), (2, 2), (2, 2, 2), (2, 2, 2, 2)]
   )
   @jtu.ignore_warning(category=FutureWarning, message="jnp.linalg.solve: batched")
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testSolveBroadcasting(self, lhs_shape, rhs_shape):
     # Batched solve can involve some ambiguities; this test checks
     # that we match NumPy's convention in all cases.

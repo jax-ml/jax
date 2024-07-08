@@ -45,6 +45,7 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
     inverse=[True, False],
   )
   @jax.default_matmul_precision("float32")
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testRotationApply(self, shape, vector_shape, dtype, inverse):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype), rng(vector_shape, dtype),)
@@ -152,6 +153,7 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
     seq=['x', 'xy', 'xyz', 'XYZ'],
     degrees=[True, False],
   )
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testRotationFromEuler(self, size, dtype, seq, degrees):
     rng = jtu.rand_default(self.rng())
     shape = (size, len(seq))
@@ -240,6 +242,7 @@ class LaxBackedScipySpatialTransformTests(jtu.JaxTestCase):
     shape=[(4,), (num_samples, 4)],
     other_shape=[(4,), (num_samples, 4)],
   )
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testRotationMultiply(self, shape, other_shape, dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: (rng(shape, dtype), rng(other_shape, dtype))

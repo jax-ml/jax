@@ -152,7 +152,8 @@ class Rotation(typing.NamedTuple):
       raise ValueError("Expected consecutive axes to be different, "
                        "got {}".format(seq))
     axes = jnp.array([_elementary_basis_index(x) for x in seq.lower()])
-    return _compute_euler_from_quat(self.quat, axes, extrinsic, degrees)
+    with jax.numpy_rank_promotion('allow'):
+      return _compute_euler_from_quat(self.quat, axes, extrinsic, degrees)
 
   def as_matrix(self) -> jax.Array:
     """Represent as rotation matrix."""
@@ -321,7 +322,6 @@ def _compose_quat(p: jax.Array, q: jax.Array) -> jax.Array:
                     p[3]*q[1] + q[3]*p[1] + cross[1],
                     p[3]*q[2] + q[3]*p[2] + cross[2],
                     p[3]*q[3] - p[0]*q[0] - p[1]*q[1] - p[2]*q[2]])
-
 
 @functools.partial(jnp.vectorize, signature='(m),(l),(),()->(n)')
 def _compute_euler_from_quat(quat: jax.Array, axes: jax.Array, extrinsic: bool, degrees: bool) -> jax.Array:
