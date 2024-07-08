@@ -926,7 +926,7 @@ def dot_product_attention(
         bias = bias + mask
 
       return cudnn_dot_product_attention(
-          query, key, value, bias, mask=None, scale=scale_val,
+          query, key, value, bias, mask=None, scale=scale_val,  # type: ignore[arg-type]
           mask_type=mask_type,
       )
     case None:

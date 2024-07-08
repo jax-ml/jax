@@ -30,7 +30,6 @@ from jax._src import test_util as jtu
 from jax._src import ad_checkpoint
 from jax._src.interpreters import mlir
 from jax._src.lib import cuda_versions
-from jax._src.nn.functions import _get_causal_mask
 from jax.test_util import check_grads
 from jax import nn
 from jax import random
