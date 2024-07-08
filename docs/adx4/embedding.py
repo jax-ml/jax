@@ -51,7 +51,7 @@ def emit_primitive(p, args, funargs=()):
     result_ty = None
   else:
     fun_tys = [f.ty for f in funargs]
-    result_ty = p.result_type(*(tuple(arg_tys) + tuple(fun_tys)))
+    result_ty = p.result_type(*(tuple(fun_tys) + tuple(arg_tys)))
   return emitter.emit_primitive(p, result_ty, args_canonical, funargs)
 
 # This turns a function that reads the implicit "current_emitter" context into
@@ -91,3 +91,11 @@ def trace_to_jaxpr(f, arg_types:list[JaxType]) -> Jaxpr:
   with set_current_emitter(builder):
     result = canonicalize_pyval(f(*builder.args))
     return builder.build(result)
+
+# === exposed core hofs ===
+
+def xla_call(f, *args):
+  args_canonical = [canonicalize_pyval(arg) for arg in args]
+  arg_tys = [arg.ty for arg in args_canonical]
+  jaxpr = trace_to_jaxpr(f, arg_tys)
+  return emit_primitive(XLACall(), args, (jaxpr,))

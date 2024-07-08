@@ -27,13 +27,16 @@ def fun0():
 print(fun0())
 print(trace_to_jaxpr(fun0, []))
 
+print("============")
+
 def fun1():
   x = add(1.0, 2.0)
   return cond(False, lambda: add(x, sin(1.0)), lambda: 1.0)
 
 print(fun1())
-print("============")
 print(trace_to_jaxpr(fun1, []))
+
+print("============")
 
 def fun2(xy):
   x, y = xy
@@ -41,3 +44,11 @@ def fun2(xy):
 
 print(fun2((1.0, 2.0)))
 print(trace_to_jaxpr(fun2, [TupleType((jax_float, jax_float))]))
+
+print("============")
+
+def fun3(x, y):
+  return add(x, y)
+
+
+print(xla_call(fun3, 1.0, 2.0))

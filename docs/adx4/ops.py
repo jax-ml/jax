@@ -105,6 +105,11 @@ class ProjectTuple(Op):
 class ConstructTuple(Op):
   pass
 
+# === fancy tuples (pytrees) ===
+
+
+
+
 # === ops ===
 
 class Sin(Op):
@@ -127,13 +132,13 @@ def add(x, y):
 
 @dataclass
 class Cond(JaxprHof):
-  def impl(self, _, p:JaxVal, then_fun:Jaxpr, else_fun:Jaxpr):
+  def impl(self, _, then_fun:Jaxpr, else_fun:Jaxpr, p:JaxVal):
     if p:
       return apply_jaxpr(eval_emitter, then_fun, ())
     else:
       return apply_jaxpr(eval_emitter, else_fun, ())
 
-  def result_type(self, p_ty:JaxType, then_fun_ty:JaxprType, else_fun_ty:JaxprType):
+  def result_type(self, then_fun_ty:JaxprType, else_fun_ty:JaxprType, p_ty:JaxType):
     assert p_ty == jax_bool
     assert then_fun_ty.result_type == else_fun_ty.result_type
     return then_fun_ty.result_type

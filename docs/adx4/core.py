@@ -60,7 +60,7 @@ class Op:
   # MdJax ops only
   def jvp(self, primals:list[Atom], tangents:list[Atom]): raise NotImplementedError(type(self))
   # LoJax ops only
-  def impl(self, *args):       raise NotImplementedError(type(self))
+  def impl(self, *args_and_funargs):       raise NotImplementedError(type(self))
 
 class JaxprHof:
   @property
@@ -69,6 +69,7 @@ class JaxprHof:
 
   # MdJax ops only
   def jvp(self, funargs, primals, tangents): raise NotImplementedError(type(self))
+
   # LoJax ops only
   def impl(self, *args_and_funargs): raise NotImplementedError(type(self))
 
@@ -141,12 +142,14 @@ class Tracer:
     return self.ty._getitem(self, ix)
 
 TraceVal : TypeAlias = JaxVal | Tracer
+SelfTracer : TypeAlias = Tracer # indicates a tracer of the appropriate type for the emitter we're in
+SelfTraceVal : TypeAlias = JaxVal | SelfTracer
 
 # === Evaluation with concrete values ===
 
 class EvalEmitter(Emitter):
   def emit_primitive(self, p:Primitive, result_ty, args:tuple[JaxVal], fun_args):
-    return p.impl(result_ty, *(tuple(args) + tuple(fun_args)))
+    return p.impl(result_ty, *(tuple(fun_args) + tuple(args)))
 
 eval_emitter = EvalEmitter()
 
@@ -171,8 +174,9 @@ class BuilderEmitter(Emitter):
     binders = [arg.var for arg in self.args]
     return Jaxpr(binders, self.eqns, atom_result)
 
-  def traceval_to_atom(self, arg:TraceVal) -> TraceVal:
+  def traceval_to_atom(self, arg:TraceVal) -> Atom:
     if isinstance(arg, BuilderTracer):
+      # valid even if it's a different BuilderTracer, following lexical scoping rules
       return arg.var
     elif isinstance(arg, JaxVal):
       return arg
@@ -201,7 +205,7 @@ def materialize_jaxpr(stream:OpStream, arg_types:list[JaxType]) -> Jaxpr:
   return builder.build(stream_result)
 
 def apply_jaxpr(emitter, jaxpr, vals):
-  env = {b : arg for b in jaxpr.binders}
+  env = dict(zip(jaxpr.binders, vals))
   def interpret_atom(x):
     if isinstance(x, Var):
       return env[x]
@@ -262,7 +266,7 @@ class FrontendLoweringEmitter(Emitter):
     return lowered_jaxpr
 
   def lower_to_rep(self, x:TraceVal) -> TraceVal:
-    # Lowering transforms an entire programs with no free variables. So
+    # Lowering transforms an entire program with no free variables. So
     # all FrontentLoweringTracers should be ours
     if isinstance(x, FrontendLoweringTracer):
       return x.rep
@@ -296,6 +300,11 @@ class FrontendLoweringTracer(Tracer):
   ty : JaxVal
   rep : TraceVal
 
+# === XLA translation ===
+
+def compile_xla(jaxpr, arg_tys):
+  assert False
+
 # === jvp ===
 
 class JVPEmitter(Emitter):
@@ -303,8 +312,31 @@ class JVPEmitter(Emitter):
     self.parent = parent
 
   def emit(self, p:Primitive, args, funargs):
-    with set_emitter(self.parent):
-      return p.jvp(primals, tangents, funargs)
+    assert False
 
 class JVP(CallableHof):
   pass
+
+# === vmap ===
+
+class VmapEmitter(Emitter):
+  def __init__(self, parent):
+    self.parent = parent
+
+  def emit(self, p:Primitive, args, funargs):
+    assert False
+
+class JVP(CallableHof):
+  pass
+
+# === XLA compilation ===
+
+class XLACall(JaxprHof):
+  def result_type(self, jaxpr, *args):
+    return jaxpr.result_type
+
+  def impl(self, jaxpr, *args):
+    arg_tys = [arg.ty for arg in args]
+    compiled_obj = compile_xla(jaxpr, arg_tys)
+    return compiled_obj.call(args)
+
