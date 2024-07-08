@@ -25,6 +25,9 @@ Remember to align the itemized text with the first line of an item within a list
   * Removed a number of previously-deprecated internal APIs related to
     polymorphic shapes. From {mod}`jax.core`: removed `canonicalize_shape`,
     `dimension_as_value`, `definitely_equal`, and `symbolic_equal_dim`.
+  * HLO lowering rules should no longer wrap singleton ir.Values in tuples.
+    Instead, return singleton ir.Values unwrapped. Support for wrapped values
+    will be removed in a future version of JAX.
 
 ## jaxlib 0.4.31
 

@@ -1555,8 +1555,18 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
   def write(v: core.Var, node: IrValues):
     assert node is not None
     w: IrValues
-    w = node if isinstance(node, ir.Value) else tuple(node)
-    assert _is_ir_values(w), w
+    if isinstance(node, ir.Value):
+      w = node
+    else:
+      if len(node) == 1:
+        warnings.warn(
+            "JAX lowering rules should not wrap singleton values in tuples. "
+            "It will be an error to wrap a singleton value in a tuple in a "
+            "future version of JAX.",
+            DeprecationWarning, stacklevel=2)
+        w = node[0]
+      else:
+        w = tuple(node)
     env[v] = w
 
   def get_override_lowering_rule(primitive: core.Primitive) -> LoweringRule | None:
@@ -1623,7 +1633,6 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
                                platform_rules, default_rule,
                                eqn.effects,
                                *in_nodes, **eqn.params)
-      assert all(_is_ir_values(v) for v in ans), (eqn, ans)
 
       if effects:
         # If there were ordered effects in the primitive, there should be output
@@ -1646,8 +1655,6 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
       raise ValueError("Output of translation rule must be iterable: "
                        f"{eqn}, got output {ans}") from e
 
-    # assert all(isinstance(v, ir.Value) for w in out_nodes for v in w), (
-    #   ans, "lowering function returned a bad output", eqn)
     assert len(ans) == len(eqn.outvars), (ans, eqn)
     map(write, eqn.outvars, out_nodes)
     core.clean_up_dead_vars(eqn, env, last_used)
