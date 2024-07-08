@@ -24,6 +24,7 @@ import warnings
 
 import numpy as np
 
+import jax
 from jax import lax
 from jax._src import api
 from jax._src import core
@@ -953,7 +954,10 @@ def _var(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
                      dtype=computation_dtype, keepdims=keepdims)
   normalizer = lax.sub(normalizer, lax.convert_element_type(correction, computation_dtype))
   result = sum(centered, axis, dtype=computation_dtype, keepdims=keepdims, where=where)
-  return _where(normalizer > 0, lax.div(result, normalizer).astype(dtype), np.nan)
+  result = lax.div(result, normalizer).astype(dtype)
+  with jax.debug_nans(False):
+    result = _where(normalizer > 0, result, np.nan)
+  return result
 
 
 def _var_promote_types(a_dtype: DTypeLike, dtype: DTypeLike | None) -> tuple[DType, DType]:
