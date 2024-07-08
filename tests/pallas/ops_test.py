@@ -34,8 +34,6 @@ from jax._src import test_util as jtu
 from jax.interpreters import partial_eval as pe
 from jax.experimental import pallas as pl
 
-# Import mosaic for flag definitions
-from jax.experimental import mosaic as _  # noqa: F401
 if sys.platform != "win32":
   from jax.experimental.pallas import gpu as plgpu
   from jax.experimental.pallas import tpu as pltpu

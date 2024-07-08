@@ -49,3 +49,10 @@ from jax._src.state.indexing import ds
 from jax._src.state.indexing import dslice
 from jax._src.state.indexing import Slice
 from jax._src.state.primitives import broadcast_to
+
+# Import tpu_custom_call for its flag definitions, needed for cross-platform lowering
+try:
+  from jax._src import tpu_custom_call  # pytype: disable=import-error
+  del tpu_custom_call
+except ImportError:
+  pass

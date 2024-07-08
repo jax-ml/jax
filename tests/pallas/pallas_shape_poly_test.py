@@ -28,7 +28,6 @@ import jax
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.pallas.pallas_call import _trace_to_jaxpr
-from jax._src import tpu_custom_call  # For configuration values
 import jax.numpy as jnp
 from jax.experimental import pallas as pl
 from jax import export
