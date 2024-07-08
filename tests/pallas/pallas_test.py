@@ -567,6 +567,44 @@ class ApiErrorTest(PallasBaseTest):
         "array shape"):
       f(a)
 
+  def test_pallas_call_input_output_aliases_errors(self):
+    x = np.arange(8 * 128, dtype=np.int32).reshape((8, 128))
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "input_output_aliases contains the mapping '2:0' with input index 2 "
+        "outside the range .*"):
+      self.pallas_call(lambda x_ref, y_ref, o1_ref: None,
+                       out_shape=[x],
+                       input_output_aliases={2: 0})(x, x)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "input_output_aliases contains the mapping '1:1' with output index 1 "
+        "outside the range .*"):
+      self.pallas_call(lambda x_ref, y_ref, o1_ref: None,
+                       out_shape=[x],
+                       input_output_aliases={1: 1})(x, x)
+
+    y = np.concatenate([x, x], axis=0)
+    with self.assertRaisesRegex(
+        ValueError,
+        "input_output_aliases contains the mapping '1:0' referring to "
+        "input\\[1\\] with abstract value .*int32\\[16,128\\].* "
+        "output\\[0\\] with a different abstract value .*int32\\[8,128\\]"):
+      self.pallas_call(lambda x_ref, y_ref, o1_ref: None,
+                       out_shape=[x],
+                       input_output_aliases={1: 0})(x, y)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        "input_output_aliases contains the mapping '1:0' referring to "
+        "input\\[1\\] with abstract value .*int32\\[8,128\\].* "
+        "output\\[0\\] with a different abstract value .*float32\\[8,128\\]"):
+      self.pallas_call(lambda x_ref, y_ref, o1_ref: None,
+                       out_shape=[jax.ShapeDtypeStruct(x.shape, jnp.float32)],
+                       input_output_aliases={1: 0})(x, x)
+
 
 class ApiErrorInterpreterTest(ApiErrorTest):
   INTERPRET = True

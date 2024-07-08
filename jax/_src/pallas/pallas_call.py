@@ -1044,7 +1044,8 @@ def pallas_call(
       The default value for `out_specs` specifies the whole array,
       e.g., as ``pl.BlockSpec(x.shape, lambda *indices: indices)``.
     input_output_aliases: a dictionary mapping the index of some inputs to
-      the index of the output that aliases them.
+      the index of the output that aliases them. These indices are in the
+      flattened inputs and outputs.
     interpret: runs the ``pallas_call`` as a ``jax.jit`` of a scan over the
       grid whose body is the kernel lowered as a JAX function. This does not
       require a TPU or a GPU, and is the only way to run Pallas kernels on CPU.
@@ -1086,6 +1087,27 @@ def pallas_call(
       raise ValueError(
           "The kernel function in a pallas_call should return None. "
           f"Found a PyTree: {f_out_tree}")
+    for i_idx, o_idx in input_output_aliases.items():
+      if i_idx not in range(len(flat_in_avals)):
+        raise ValueError(
+            f"input_output_aliases contains the mapping '{i_idx}:{o_idx}' with "
+            f"input index {i_idx} outside the range "
+            f"[0, {len(flat_in_avals)})")
+      if o_idx not in range(len(flat_out_avals)):
+        raise ValueError(
+            f"input_output_aliases contains the mapping '{i_idx}:{o_idx}' with "
+            f"output index {o_idx} outside the range "
+            f"[0, {len(flat_out_avals)})")
+      in_aval = flat_in_avals[i_idx]
+      out_aval = flat_out_avals[o_idx]
+      if in_aval.shape != out_aval.shape or in_aval.dtype != out_aval.dtype:
+        raise ValueError(
+            f"input_output_aliases contains the mapping '{i_idx}:{o_idx}' "
+            f"referring to input{tree_util.keystr(in_paths[i_idx])} with "
+            f"abstract value {in_aval} "
+            f"and to output{tree_util.keystr(out_paths[o_idx])} with "
+            f"a different abstract value {out_aval}.")
+
     out_flat = pallas_call_p.bind(
         *dynamic_grid_bounds, *consts, *flat_args,
         jaxpr=jaxpr, name=name,
