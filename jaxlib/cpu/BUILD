@@ -61,11 +61,12 @@ pybind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
-    enable_stub_generation = True,
+    enable_stub_generation = False,  # generated stubs are incorrect
     features = ["-use_header_modules"],
     module_name = "_lapack",
     pytype_srcs = [
-        "_lapack.pyi",
+        "_lapack/__init__.pyi",
+        "_lapack/svd.pyi",
     ],
     deps = [
         ":lapack_kernels",
