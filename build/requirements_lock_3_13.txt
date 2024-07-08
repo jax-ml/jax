@@ -57,7 +57,7 @@ numpy==1.26.4
     #   scipy
 opt-einsum==3.3.0
     # via -r build/requirements.in
-packaging==24.0
+packaging==24.1
     # via
     #   build
     #   matplotlib
