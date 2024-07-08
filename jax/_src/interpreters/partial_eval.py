@@ -1966,11 +1966,20 @@ def _inline_literals(
 
 
 class DynamicJaxprTrace(core.Trace):
-  __slots__ = []
+  def __init__(self, frame):
+    self.frame = frame
 
-  @property
-  def frame(self):
-    return self.main.jaxpr_stack[-1]  # pytype: disable=attribute-error
+  def full_raise(self, x):
+    as_local_var = self.frame.tracer_to_var.get(id(x))
+    if as_local_var is None:
+      # either
+      #  literal (not a tracer) "pure"
+      #  someone else's tracer "lift"
+      #  my tracer from a different scope "sublift"
+      return self.new_const(x)
+    else:
+      #  my tracer from the current scope "skipped"
+      return x
 
   def new_arg(self, aval):
     tracer = DynamicJaxprTracer(self, aval, source_info_util.current())
@@ -2349,37 +2358,23 @@ def trace_to_jaxpr_dynamic(
     keep_inputs: list[bool] | None = None,
 ) -> tuple[Jaxpr, list[AbstractValue], list[Any],
            list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]]:
-  with core.new_main(DynamicJaxprTrace, dynamic=True) as main:
-    main.jaxpr_stack = ()  # type: ignore
-    jaxpr, out_avals, consts, attrs_tracked = trace_to_subjaxpr_dynamic(
-      fun, main, in_avals, keep_inputs=keep_inputs, debug_info=debug_info)
-    del main, fun
-  return jaxpr, out_avals, consts, attrs_tracked
-
-
-def trace_to_subjaxpr_dynamic(
-    fun: lu.WrappedFun,
-    main: core.MainTrace,
-    in_avals: Sequence[AbstractValue],
-    *,
-    keep_inputs: Sequence[bool] | None = None,
-    debug_info: DebugInfo | None = None,
-) -> tuple[Jaxpr, list[AbstractValue], list[Any],
-           list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]]:
   keep_inputs = [True] * len(in_avals) if keep_inputs is None else keep_inputs
 
   frame = JaxprStackFrame()
   frame.debug_info = debug_info
-  with extend_jaxpr_stack(main, frame), source_info_util.reset_name_stack():
-    trace = DynamicJaxprTrace(main, core.cur_sublevel())
-    in_tracers = _input_type_to_tracers(trace.new_arg, in_avals)
-    in_tracers_ = [t for t, keep in zip(in_tracers, keep_inputs) if keep]
+  trace = DynamicJaxprTrace(frame)
+  in_tracers = _input_type_to_tracers(trace.new_arg, in_avals)
+  in_tracers_ = [t for t, keep in zip(in_tracers, keep_inputs) if keep]
+  with core.set_current_trace(trace):
     ans = fun.call_wrapped(*in_tracers_)
-    out_tracers = map(trace.full_raise, ans)
-    jaxpr, consts, attrs_tracked = frame.to_jaxpr(trace, out_tracers)
-    del fun, main, trace, frame, in_tracers, out_tracers, ans
+
+  out_tracers = map(trace.full_raise, ans)
+  jaxpr, consts, attrs_tracked = frame.to_jaxpr(trace, out_tracers)
+  del fun, trace, frame, in_tracers, out_tracers, ans
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   return jaxpr, [v.aval for v in jaxpr.outvars], consts, attrs_tracked
+
+def trace_to_subjaxpr_dynamic(): assert False
 
 
 @profiler.annotate_function

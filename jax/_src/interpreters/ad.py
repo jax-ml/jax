@@ -71,15 +71,18 @@ def jvp(fun: lu.WrappedFun, has_aux=False, instantiate=True,
     return jvpfun(fun, instantiate, transform_stack), aux
 
 
+class JVPTag: pass
+
+
 @lu.transformation
 def jvpfun(instantiate, transform_stack, primals, tangents):
+  tag = JVPTag()
   tangents = [Zero.from_value(t) if not isinstance(t, Zero)
               and dtype(t) == float0 else t for t in tangents]
   ctx = (source_info_util.transform_name_stack('jvp') if transform_stack
          else contextlib.nullcontext())
-  with core.new_main(JVPTrace) as main, ctx:
-    out_primals, out_tangents = yield (main, primals, tangents), {}
-    del main
+  with ctx:
+    out_primals, out_tangents = yield (tag, primals, tangents), {}
   if type(instantiate) is bool:
     instantiate = [instantiate] * len(out_tangents)
   out_tangents = [instantiate_zeros(t) if inst else t for t, inst
@@ -87,27 +90,19 @@ def jvpfun(instantiate, transform_stack, primals, tangents):
   yield out_primals, out_tangents
 
 @lu.transformation
-def jvp_subtrace(main, primals, tangents):
-  trace = JVPTrace(main, core.cur_sublevel())
-  for x in list(primals) + list(tangents):
-    if isinstance(x, Tracer):
-      if x._trace.level >= trace.level:
-        raise core.escaped_tracer_error(
-            x, f"Tracer from a higher level: {x} in trace {trace}")
-      assert x._trace.level < trace.level
+def jvp_subtrace(tag, primals, tangents):
+  trace = JVPTrace(core.find_cur_trace(), tag)
   in_tracers = [JVPTracer(trace, x, t) if type(t) is not Zero else x
                 for x, t in zip(primals, tangents)]
-  ans = yield in_tracers, {}
+  with core.set_current_trace(trace):
+    ans = yield in_tracers, {}
   out_tracers = map(trace.full_raise, ans)
   yield unzip2([(out_tracer.primal, out_tracer.tangent)
                 for out_tracer in out_tracers])
 
 @lu.transformation_with_aux
-def jvp_subtrace_aux(main, primals, tangents):
-  trace = JVPTrace(main, core.cur_sublevel())
-  for x in list(primals) + list(tangents):
-    if isinstance(x, Tracer):
-      assert x._trace.level < trace.level
+def jvp_subtrace_aux(tag, primals, tangents):
+  trace = JVPTrace(core.find_cur_trace(), tag)
   ans, aux = yield map(partial(JVPTracer, trace), primals, tangents), {}
   ans_tracers = map(trace.full_raise, ans)
   out_primals, out_tangents = unzip2((t.primal, t.tangent) for t in ans_tracers)
@@ -294,17 +289,16 @@ def nonzero_tangent_outputs(*args, **kwargs):
 
 
 class JVPTrace(Trace):
+  def __init__(self, parent_trace, tag):
+    self.tag = tag
+    self.parent_trace = parent_trace
 
-  def pure(self, val):
-    tangent_zero = Zero(get_aval(val).at_least_vspace())
-    return JVPTracer(self, val, tangent_zero)
-
-  def lift(self, val):
-    tangent_zero = Zero(get_aval(val).at_least_vspace())
-    return JVPTracer(self, val, tangent_zero)
-
-  def sublift(self, val):
-    return JVPTracer(self, val.primal, val.tangent)
+  def full_raise(self, val):
+    if isinstance(val, JVPTracer) and val._trace.tag is self.tag:
+      return JVPTracer(self, val.primal, val.tangent)
+    else:
+      tangent_zero = Zero(get_aval(val).at_least_vspace())
+      return JVPTracer(self, val, tangent_zero)
 
   def process_primitive(self, primitive, tracers, params):
     primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
@@ -312,7 +306,9 @@ class JVPTrace(Trace):
     if not jvp:
       msg = f"Differentiation rule for '{primitive}' not implemented"
       raise NotImplementedError(msg)
-    primal_out, tangent_out = jvp(primals_in, tangents_in, **params)
+    with core.set_current_trace(self.parent_trace):
+      primal_out, tangent_out = jvp(primals_in, tangents_in, **params)
+
     if primitive.multiple_results:
       return [JVPTracer(self, x, t) for x, t in zip(primal_out, tangent_out)]
     else:

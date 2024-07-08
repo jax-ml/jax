@@ -426,12 +426,11 @@ class Primitive:
   def bind(self, *args, **params):
     assert (not config.enable_checks.value or
             all(isinstance(arg, Tracer) or valid_jaxtype(arg) for arg in args)), args
-    return self.bind_with_trace(find_top_trace(args), args, params)
+    return self.bind_with_trace(find_cur_trace(), args, params)
 
   def bind_with_trace(self, trace, args, params):
-    with pop_level(trace.level):
-      out = trace.process_primitive(self, map(trace.full_raise, args), params)
-    return map(full_lower, out) if self.multiple_results else full_lower(out)
+    with without_any_current_trace():
+      return trace.process_primitive(self, map(trace.full_raise, args), params)
 
   def def_impl(self, impl):
     self.impl = impl
@@ -510,65 +509,12 @@ def eval_jaxpr(jaxpr: Jaxpr, consts, *args, propagate_source_info=True) -> list[
 TracerType = TypeVar('TracerType', bound='Tracer')
 
 class Trace(Generic[TracerType]):
-  __slots__ = ['main', 'level', 'sublevel']
-
-  main: MainTrace
-  level: int
-  sublevel: Sublevel
-
-  def __init__(self, main: MainTrace, sublevel: Sublevel) -> None:
-    self.main = main
-    self.level = main.level
-    self.sublevel = sublevel
-
-  def full_raise(self, val) -> TracerType:
-    if not isinstance(val, Tracer):
-      # This check is only applied to non-Tracers, because the hasattr() is
-      # expensive (Tracer.__getattr__) in the common case that val is a Tracer.
-      if hasattr(val, "dimension_as_value"):  # Used for shape_poly._DimExpr
-        val = val.dimension_as_value()
-        if not isinstance(val, Tracer):
-          return self.pure(val)
-      else:
-        return self.pure(val)
-    val._assert_live()
-    level = self.level
-    sublevel = self.sublevel
-    if val._trace.main is self.main:
-      if val._trace.sublevel == sublevel:
-        return cast(TracerType, val)
-      elif val._trace.sublevel < sublevel:
-        return self.sublift(val)
-      else:
-        raise escaped_tracer_error(
-            val, f"Can't lift sublevels {val._trace.sublevel} to {sublevel}")
-    elif val._trace.level < level:
-      if val._trace.sublevel > sublevel:
-        raise escaped_tracer_error(
-            val, f"Incompatible sublevel: {val._trace}, {(level, sublevel)}")
-      return self.lift(val)
-    elif val._trace.level > level:
-      raise escaped_tracer_error(
-          val, f"Can't lift level {val} to {self}")
-    else:  # val._trace.level == self.level:
-      raise escaped_tracer_error(
-          val, f"Different traces at same level: {val}, {self}")
-
-  def pure(self, val) -> TracerType:
-    raise NotImplementedError("must override")
-
-  def lift(self, tracer) -> TracerType:
-    raise NotImplementedError("must override")
-
-  def sublift(self, tracer) -> TracerType:
-    raise NotImplementedError("must override")
 
   def process_primitive(self, primitive, tracers, params):
     raise NotImplementedError("must override")
 
   def __repr__(self):
-    return '{}(level={}/{})'.format(
-        self.__class__.__name__, self.level, self.sublevel)
+    return '{}'.format(self.__class__.__name__)
 
   def process_call(self, call_primitive, f, tracers, params):
     msg = (f"{type(self)} must override process_call to handle call-like "
@@ -921,9 +867,10 @@ aval_method = namedtuple("aval_method", ["fun"])
 
 
 class EvalTrace(Trace):
-  # See comments in https://github.com/google/jax/pull/3370
-  def pure(self, x): return x
-  lift = sublift = pure
+
+  def full_raise(self, arg):
+    # TODO: check arg isn't a tracer. Evaluation should only happen on closed terms. No tracers around.
+    return arg
 
   def process_primitive(self, primitive, tracers, params):
     if config.debug_key_reuse.value:
@@ -931,6 +878,8 @@ class EvalTrace(Trace):
       from jax.experimental.key_reuse._core import call_impl_with_key_reuse_checks  # pytype: disable=import-error
       return call_impl_with_key_reuse_checks(primitive, primitive.impl, *tracers, **params)
     else:
+      for t in tracers:
+        assert not isinstance(t, Tracer) # TODO: rename
       return primitive.impl(*tracers, **params)
 
   def process_call(self, primitive, f, tracers, params):
@@ -958,99 +907,16 @@ class EvalTrace(Trace):
       return fun.call_wrapped(*tracers)
 
 
-class MainTrace:
-  level: int
-  trace_type: type[Trace]
-  payload: dict[str, Any]
-
-  def __init__(self, level, trace_type, **payload) -> None:
-    self.level = level
-    self.trace_type = trace_type
-    self.payload = payload
-
-  def __repr__(self) -> str:
-    return f"MainTrace({self.level},{self.trace_type.__name__})"
-
-  def __hash__(self) -> int:
-    return hash((self.level, self.trace_type))
-
-  def __eq__(self, other: object) -> bool:
-    return (isinstance(other, MainTrace) and
-            self.level == other.level and
-            self.trace_type == other.trace_type and
-            self.payload == other.payload)
-
-  def with_cur_sublevel(self):
-    return self.trace_type(self, cur_sublevel(), **self.payload)
-
-class TraceStack:
-  # See comments in https://github.com/google/jax/pull/3370
-  stack: list[MainTrace]
-  dynamic: MainTrace
-
-  def __init__(self):
-    eval_trace = MainTrace(0, EvalTrace)
-    self.stack = [eval_trace]
-    self.dynamic = eval_trace
-
-  def next_level(self) -> int:
-    return len(self.stack)
-
-  def push(self, main_trace: MainTrace) -> None:
-    self.stack.append(main_trace)
-
-  def pop(self) -> None:
-    self.stack.pop()
-
-  def __repr__(self) -> str:
-    stack_str = map('  {}\n'.format, self.stack[::-1])
-    return f'Trace stack\n{stack_str}\n{self.dynamic}'
-
-  def copy(self):
-    new = self.__new__(TraceStack)
-    new.stack = self.stack[:]
-    new.dynamic = self.dynamic
-    return new
-
-
-@total_ordering
-class Sublevel:
-
-  def __init__(self, level: int):
-    self.level = level
-
-  def __repr__(self):
-    return str(self.level)
-
-  def __eq__(self, other):
-    return type(other) is Sublevel and self.level == other.level
-
-  def __lt__(self, other):
-    return type(other) is Sublevel and self.level < other.level
-
-
 AxisEnvFrame = namedtuple('AxisEnvFrame', ['name', 'size', 'main_trace'])
 AxisName = Hashable
 
 no_axis_name = object()
 
 class TraceState:
-  trace_stack: TraceStack
-  substack: list[Sublevel]
-  axis_env: list[AxisEnvFrame]
+  trace: Trace | None
 
   def __init__(self) -> None:
-    self.trace_stack = TraceStack()
-    self.substack = [Sublevel(0)]
-    self.axis_env = []
-
-  def copy(self):
-    new = self.__new__(TraceState)
-    new.trace_stack = self.trace_stack.copy()
-    new.substack = self.substack[:]
-    new.axis_env = self.axis_env[:]
-    return new
-
+    self.trace = EvalTrace()
 
 def _update_thread_local_jit_state(dynamic):
   state = (dynamic.level, dynamic.trace_type)
@@ -1077,11 +943,10 @@ def _initialize_jax_jit_thread_local_state():
   This function does not live in `config.py`, to prevent circular imports.
   """
   tls = jax_jit.thread_local_state()
-  if tls.extra_jit_context is None:
-    dynamic = thread_local_state.trace_state.trace_stack.dynamic
-    state = (dynamic.level, dynamic.trace_type)
-    config.update_thread_local_jit_state(dynamic_trace_state=state)
 
+  if tls.extra_jit_context is None:
+    dynamic = isinstance(find_cur_trace(), EvalTrace)
+    config.update_thread_local_jit_state(dynamic_trace_state=dynamic)
 
 jax_jit.set_thread_local_state_initialization_callback(
     _initialize_jax_jit_thread_local_state)
@@ -1100,9 +965,6 @@ def reset_trace_state() -> bool:
     return False
   else:
     return True
-
-def cur_sublevel() -> Sublevel:
-  return thread_local_state.trace_state.substack[-1]
 
 TRACER_LEAK_DEBUGGER_WARNING = """\
 JAX check_tracer_leaks behavior can trigger false positives when used with a debugger.
@@ -1195,83 +1057,6 @@ def _why_alive_container_info(container, obj_id) -> str:
     return f' named {container.__name__}'
   return name
 
-
-@contextmanager
-def new_main(trace_type: type[Trace], dynamic: bool = False,
-             **payload) -> Generator[MainTrace, None, None]:
-  # See comments in https://github.com/google/jax/pull/3370
-  stack = thread_local_state.trace_state.trace_stack
-  level = stack.next_level()
-  main = MainTrace(level, trace_type, **payload)
-  stack.push(main)
-  if dynamic:
-    prev_dynamic, stack.dynamic = stack.dynamic, main
-    _update_thread_local_jit_state(stack.dynamic)
-
-  try:
-    yield main
-  finally:
-    stack.pop()
-    if dynamic:
-      stack.dynamic = prev_dynamic
-      _update_thread_local_jit_state(stack.dynamic)
-
-  if config.check_tracer_leaks.value:
-    t = ref(main)
-    del main
-    if t() is not None:
-      leaked_tracers = maybe_find_leaked_tracers(t())
-      if leaked_tracers: raise leaked_tracer_error("trace", t(), leaked_tracers)
-
-@contextmanager
-def new_dynamic(level: int) -> Generator[None, None, None]:
-  stack = thread_local_state.trace_state.trace_stack
-  prev_dynamic, stack.dynamic = stack.dynamic, stack.stack[level]
-  _update_thread_local_jit_state(stack.dynamic)
-  try:
-    yield
-  finally:
-    stack.dynamic = prev_dynamic
-    _update_thread_local_jit_state(stack.dynamic)
-
-def dynamic_level() -> int:
-  return thread_local_state.trace_state.trace_stack.dynamic.level
-
-@contextmanager
-def new_base_main(trace_type: type[Trace],
-                  **payload) -> Generator[MainTrace, None, None]:
-  # See comments in https://github.com/google/jax/pull/3370
-  stack = thread_local_state.trace_state.trace_stack
-  main = MainTrace(0, trace_type, **payload)
-  prev_dynamic, stack.dynamic = stack.dynamic, main
-  prev_base, stack.stack[0] = stack.stack[0], main
-  _update_thread_local_jit_state(stack.dynamic)
-  try:
-    yield main
-  finally:
-    stack.dynamic = prev_dynamic
-    stack.stack[0] = prev_base
-    _update_thread_local_jit_state(stack.dynamic)
-
-  if config.check_tracer_leaks.value:
-    t = ref(main)
-    del main
-    if t() is not None:
-      leaked_tracers = maybe_find_leaked_tracers(t())
-      if leaked_tracers: raise leaked_tracer_error("trace", t(), leaked_tracers)
-
-@contextmanager
-def pop_level(level: int):
-  if level == 0:
-    return (yield)
-  prev, thread_local_state.trace_state.trace_stack.stack = \
-      thread_local_state.trace_state.trace_stack.stack, \
-      thread_local_state.trace_state.trace_stack.stack[:level]
-  try:
-    yield
-  finally:
-    thread_local_state.trace_state.trace_stack.stack = prev
-
 @contextmanager
 def ensure_compile_time_eval():
   """Context manager to ensure evaluation at trace/compile time (or error).
@@ -1335,46 +1120,6 @@ def ensure_compile_time_eval():
   with new_base_main(EvalTrace):
     yield
 eval_context = ensure_compile_time_eval  # alias, backward compatibility
-
-@contextmanager
-def new_sublevel() -> Generator[None, None, None]:
-  sublevel = Sublevel(len(thread_local_state.trace_state.substack))
-  thread_local_state.trace_state.substack.append(sublevel)
-  try:
-    yield
-  finally:
-    thread_local_state.trace_state.substack.pop()
-
-  if config.check_tracer_leaks.value:
-    t = ref(sublevel)
-    del sublevel
-    if t() is not None:
-      leaked_tracers = maybe_find_leaked_tracers(t())
-      if leaked_tracers:
-        raise leaked_tracer_error("sublevel", t(), leaked_tracers)
-
-def full_lower(val):
-  if isinstance(val, Tracer):
-    return val.full_lower()
-  else:
-    return val
-
-
-def _get_trace_level(t: Tracer) -> int: return t._trace.level
-
-
-def find_top_trace(xs) -> Trace:
-  top_tracer = max((x for x in xs if isinstance(x, Tracer)),
-                    default=None, key=_get_trace_level)
-  if top_tracer is not None:
-    top_tracer._assert_live()
-    top_main = top_tracer._trace.main
-  else:
-    top_main = None
-  dynamic = thread_local_state.trace_state.trace_stack.dynamic
-  top_main = (dynamic if top_main is None or dynamic.level > top_main.level
-              else top_main)
-  return top_main.with_cur_sublevel()
 
 def get_referent(x: Any) -> Any:
   return x.get_referent() if isinstance(x, Tracer) else x
@@ -2382,7 +2127,7 @@ class CallPrimitive(Primitive):
     return [subfun], new_params
 
 def call_bind_with_continuation(primitive: CallPrimitive, fun, *args, **params):
-  top_trace = find_top_trace(args)
+  top_trace = find_cur_trace()
   fun_, env_trace_todo = process_env_traces_call(
       fun, primitive, top_trace.level, tuple(params.items()))
   tracers = map(top_trace.full_raise, args)
@@ -3466,3 +3211,36 @@ def clean_up_dead_vars(eqn: JaxprEqn, env: dict[Var, Any],
     if last_used[v] is eqn:
       # Delete ref to variable when it is no longer needed by next equations.
       del env[v]
+
+
+
+
+
+# =================== new stuff ==============
+
+
+def get_trace_state():
+  return thread_local_state.trace_state
+
+def find_cur_trace():
+  return get_trace_state().trace
+
+@contextmanager
+def without_any_current_trace():
+  try:
+    ts = get_trace_state()
+    prev = ts.trace
+    ts.trace = None
+    yield
+  finally:
+    ts.trace = prev
+
+@contextmanager
+def set_current_trace(t):
+  try:
+    ts = get_trace_state()
+    prev = ts.trace
+    ts.trace = t
+    yield
+  finally:
+    ts.trace = prev

@@ -1407,7 +1407,7 @@ def pjit_check_aval_sharding(
 
 # -------------------- pjit rules --------------------
 
-pjit_p = core.AxisPrimitive("pjit")
+pjit_p = core.Primitive("pjit")
 pjit_p.multiple_results = True
 
 
