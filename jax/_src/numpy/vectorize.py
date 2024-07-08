@@ -17,8 +17,10 @@ from collections.abc import Callable, Collection, Sequence
 import functools
 import re
 from typing import Any
+import warnings
 
 from jax._src import api
+from jax._src import config
 from jax import lax
 from jax._src.numpy import lax_numpy as jnp
 from jax._src.util import safe_map as map, safe_zip as zip
@@ -288,6 +290,23 @@ def vectorize(pyfunc, *, excluded=frozenset(), signature=None):
 
     checked_func = _check_output_dims(
         excluded_func, dim_sizes, output_core_dims, error_context)
+
+    # Detect implicit rank promotion:
+    if config.numpy_rank_promotion.value != "allow":
+      ranks = [arg.ndim - len(core_dims)
+               for arg, core_dims in zip(args, input_core_dims)
+               if arg.ndim != 0]
+      if len(set(ranks)) > 1:
+        msg = (f"operands with shapes {[arg.shape for arg in args]} require rank"
+               f" promotion for jnp.vectorize function with signature {signature}."
+               " Set the jax_numpy_rank_promotion config option to 'allow' to"
+               " disable this message; for more information, see"
+               " https://jax.readthedocs.io/en/latest/rank_promotion_warning.html.")
+        if config.numpy_rank_promotion.value == "warn":
+          warnings.warn(msg)
+        elif config.numpy_rank_promotion.value == "raise":
+          raise ValueError(msg)
+
 
     # Rather than broadcasting all arguments to full broadcast shapes, prefer
     # expanding dimensions using vmap. By pushing broadcasting
