@@ -93,6 +93,8 @@ jax_test(
     deps = [
         "//jax:pallas",
         "//jax:pallas_gpu",  # build_cleaner: keep
+        "//jax:pallas_tpu",
+        "//jax:pallas_tpu_ops",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
