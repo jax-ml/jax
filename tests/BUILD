@@ -1503,9 +1503,6 @@ jax_test(
         "gpu": 4,
     },
     tags = ["multiaccelerator"],
-    deps = [
-        "//jax:fused_attention_stablehlo",
-    ],
 )
 
 py_test(

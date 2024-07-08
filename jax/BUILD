@@ -232,6 +232,7 @@ py_library_providing_imports_info(
     ] + glob(
         [
             "*.py",
+            "_src/cudnn/**/*.py",
             "_src/debugger/**/*.py",
             "_src/extend/**/*.py",
             "_src/image/**/*.py",
@@ -1127,17 +1128,4 @@ pytype_library(
     srcs = ["experimental/rnn.py"],
     visibility = ["//visibility:public"],
     deps = [":jax"],
-)
-
-pytype_library(
-    name = "fused_attention_stablehlo",
-    srcs = [
-        "_src/cudnn/__init__.py",
-        "_src/cudnn/fused_attention_stablehlo.py",
-    ],
-    visibility = [":internal"],
-    deps = [
-        ":experimental",
-        ":jax",
-    ],
 )

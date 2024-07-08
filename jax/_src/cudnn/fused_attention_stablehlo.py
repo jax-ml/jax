@@ -12,40 +12,40 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from enum import Enum
-from functools import partial, reduce
-import operator
+import enum
+import functools
 import json
+import math
 
 import jax
-import jax.numpy as jnp
 from jax import core
 from jax import dtypes
-from jax.interpreters import mlir
-from jax.interpreters import xla
-from jax.interpreters.mlir import ir
-from jax.interpreters.mlir import hlo
-from jax.experimental.custom_partitioning import custom_partitioning
-from jax.sharding import PartitionSpec, NamedSharding
-
 from jax._src import dispatch
+from jax._src.custom_partitioning import custom_partitioning
 from jax._src.interpreters import batching
 from jax._src.lib import cuda_versions
+from jax.interpreters import mlir
+from jax.interpreters import xla
+from jax.interpreters.mlir import hlo
+from jax.interpreters.mlir import ir
+import jax.numpy as jnp
+from jax.sharding import NamedSharding, PartitionSpec
 
 Array = jnp.ndarray
-DType = jnp.dtype
-PRNGKey = jnp.ndarray
 
-class AttentionLayout(Enum):
+
+class AttentionLayout(enum.Enum):
   BTNH = 0
   BNTH = 1
 
-class MaskType(Enum):
+
+class MaskType(enum.Enum):
   NO_MASK = 0
   PADDING = 1
   CAUSAL = 2
   PADDING_CAUSAL = 3
   ALIBI = 4
+
 
 def convert_mask_type_to_string(mask_type: MaskType) -> str:
   if mask_type == MaskType.NO_MASK:
@@ -614,7 +614,7 @@ def _dot_product_attention_fwd_batcher(
   else:
     *Bs, T, N, _ = query.shape
     *_, S, _, _ = key.shape
-  B = reduce(operator.mul, Bs)
+  B = math.prod(Bs)
   has_bias, _ = variadic_args
   # reshape to 4D shape
   query = jnp.reshape(query, (B,) + query.shape[-3:])
@@ -656,7 +656,7 @@ def _dot_product_attention_bwd_batcher(
   else:
     *Bs, T, N, _ = query.shape
     *_, S, _, _ = key.shape
-  B = reduce(operator.mul, Bs)
+  B = math.prod(Bs)
   has_bias, has_dbias = variadic_args
   # reshape to 4D shape
   query = jnp.reshape(query, (B,) + query.shape[-3:])
@@ -756,11 +756,16 @@ def _dot_product_attention_fwd_partition(
   arg_shardings = tuple([arg_i.sharding for arg_i in arg_shapes])
   out_shardings = _infer_fwd_output_sharding(
     mesh, arg_shapes, variadic_args, is_training)
-  impl = partial(
-      _dot_product_attention_fwd_impl, scale=scale, seed=seed,
-      dropout_rate=dropout_rate, variadic_args=variadic_args,
+  impl = functools.partial(
+      _dot_product_attention_fwd_impl,
+      scale=scale,
+      seed=seed,
+      dropout_rate=dropout_rate,
+      variadic_args=variadic_args,
       mask_type=mask_type,
-      layout=layout, is_training=is_training)
+      layout=layout,
+      is_training=is_training,
+  )
   return mesh, impl, out_shardings, arg_shardings
 
 # bwd custom partition
@@ -799,9 +804,12 @@ def _dot_product_attention_bwd_partition(
   out_shardings = _infer_bwd_output_sharding(mesh, arg_shapes, variadic_args)
   # args sharding
   arg_shardings = tuple([arg_i.sharding for arg_i in arg_shapes])
-  impl = partial(
-      _dot_product_attention_bwd_impl, scale=scale, seed=seed,
-      dropout_rate=dropout_rate, variadic_args=variadic_args,
+  impl = functools.partial(
+      _dot_product_attention_bwd_impl,
+      scale=scale,
+      seed=seed,
+      dropout_rate=dropout_rate,
+      variadic_args=variadic_args,
       mask_type=mask_type,
       layout=layout,
   )
@@ -811,7 +819,7 @@ def _dot_product_attention_bwd_partition(
 _dot_product_attention_fwd_p = core.Primitive("dot_product_attention_fwd")
 _dot_product_attention_fwd_p.multiple_results = True
 _dot_product_attention_fwd_p.def_impl(
-    partial(xla.apply_primitive, _dot_product_attention_fwd_p)
+    functools.partial(xla.apply_primitive, _dot_product_attention_fwd_p)
 )
 _dot_product_attention_fwd_p.def_abstract_eval(
     _dot_product_attention_fwd_abstract
@@ -836,7 +844,7 @@ _dot_product_attention_fwd_p_wrapper.def_abstract_eval(
 _dot_product_attention_bwd_p = core.Primitive("dot_product_attention_bwd")
 _dot_product_attention_bwd_p.multiple_results = True
 _dot_product_attention_bwd_p.def_impl(
-    partial(xla.apply_primitive, _dot_product_attention_bwd_p)
+    functools.partial(xla.apply_primitive, _dot_product_attention_bwd_p)
 )
 _dot_product_attention_bwd_p.def_abstract_eval(
     _dot_product_attention_bwd_abstract
@@ -891,7 +899,8 @@ dispatch.prim_requires_devices_during_lowering.add(
   _dot_product_attention_bwd_p_wrapper
 )
 
-@partial(jax.custom_vjp, nondiff_argnums=(6, 7, 8, 9, 10, 11, 12))
+
+@functools.partial(jax.custom_vjp, nondiff_argnums=(6, 7, 8, 9, 10, 11, 12))
 def _dot_product_attention(query: Array,
                            key: Array,
                            value: Array,

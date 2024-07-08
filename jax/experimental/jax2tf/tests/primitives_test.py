@@ -187,6 +187,15 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         continue
       if p.name == "pallas_call":
         continue
+      if p.name == "custom_partitioning":
+        continue
+      if p.name in (
+          "dot_product_attention_fwd",
+          "dot_product_attention_bwd",
+          "dot_product_attention_fwd_wrapper",
+          "dot_product_attention_bwd_wrapper",
+      ):
+        continue
       if p.name in tf_not_yet_impl:
         self.assertNotIn(
             p, tf_impl)  # Should not be in both tf_impl and tf_not_yet_impl
