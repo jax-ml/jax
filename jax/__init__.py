@@ -99,9 +99,9 @@ from jax._src.api import eval_shape as eval_shape
 from jax._src.dtypes import float0 as float0
 from jax._src.api import grad as grad
 from jax._src.api import hessian as hessian
-from jax._src.xla_bridge import host_count as host_count
-from jax._src.xla_bridge import host_id as host_id
-from jax._src.xla_bridge import host_ids as host_ids
+from jax._src.xla_bridge import host_count as _deprecated_host_count
+from jax._src.xla_bridge import host_id as _deprecated_host_id
+from jax._src.xla_bridge import host_ids as _deprecated_host_ids
 from jax._src.api import jacobian as jacobian
 from jax._src.api import jacfwd as jacfwd
 from jax._src.api import jacrev as jacrev
@@ -234,6 +234,19 @@ _deprecations = {
       "CHANGELOG.md for 0.4.30 for more examples.",
       _deprecated_xla_computation
   ),
+  # Added Jul 8, 2024
+  "host_count": (
+    "jax.host_count is deprecated: use jax.process_count instead.",
+    _deprecated_host_count
+  ),
+  "host_id": (
+    "jax.host_id is deprecated: use jax.process_index instead.",
+    _deprecated_host_id
+  ),
+  "host_ids": (
+    "jax.host_ids is deprecated: use list(range(jax.process_count())) instead.",
+    _deprecated_host_ids
+  ),
 }
 
 import typing as _typing
@@ -247,6 +260,9 @@ if _typing.TYPE_CHECKING:
   from jax._src.tree_util import tree_structure as tree_structure
   from jax._src.tree_util import tree_transpose as tree_transpose
   from jax._src.tree_util import tree_unflatten as tree_unflatten
+  from jax._src.xla_bridge import host_count as host_count
+  from jax._src.xla_bridge import host_id as host_id
+  from jax._src.xla_bridge import host_ids as host_ids
 
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr

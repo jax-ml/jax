@@ -25,6 +25,9 @@ Remember to align the itemized text with the first line of an item within a list
   * Removed a number of previously-deprecated internal APIs related to
     polymorphic shapes. From {mod}`jax.core`: removed `canonicalize_shape`,
     `dimension_as_value`, `definitely_equal`, and `symbolic_equal_dim`.
+  * The {func}`jax.host_count`, {func}`jax.host_id`, and {func}`jax.host_ids`
+    aliases were initially deprecated in v0.2.13, and are now scheduled for
+    removal after the standard 3 month deprecation period.
 
 ## jaxlib 0.4.31
 
