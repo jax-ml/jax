@@ -2532,11 +2532,9 @@ skip_mlir_conversions.add(lax.shift_right_logical_p)
 
 
 def _erf_inv_lowering_rule(ctx: LoweringRuleContext, x):
-  (x_aval,) = ctx.avals_in
-  if x_aval.dtype == jnp.float32:
-    return lower_fun(pallas_utils.erf_inv_32_lowering_helper, multiple_results=False)(ctx, x)
-  else:
-    raise NotImplementedError
+  return lower_fun(
+      pallas_utils.erf_inv_lowering_helper, multiple_results=False,
+  )(ctx, x)
 
 
 lowering_rules[lax.erf_inv_p] = _erf_inv_lowering_rule
