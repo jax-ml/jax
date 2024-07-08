@@ -2258,6 +2258,15 @@ lowering_rules[lax.shift_left_p] = _shift_left_lowering_rule
 skip_mlir_conversions.add(lax.shift_left_p)
 
 
+def _shift_right_arithmetic_lowering_rule(ctx: LoweringRuleContext, x, d):
+  x, d = _bcast(x, d, *ctx.avals_in, *ctx.avals_out)
+  return arith.ShRSIOp(x, d).result
+
+
+lowering_rules[lax.shift_right_arithmetic_p] = _shift_right_arithmetic_lowering_rule
+skip_mlir_conversions.add(lax.shift_right_arithmetic_p)
+
+
 def _shift_right_logical_lowering_rules(ctx: LoweringRuleContext, x, d):
   x, d = _bcast(x, d, *ctx.avals_in, *ctx.avals_out)
   return arith.ShRUIOp(x, d).result
