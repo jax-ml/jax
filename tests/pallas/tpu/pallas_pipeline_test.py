@@ -42,6 +42,7 @@ if CAN_USE_HYPOTHESIS:
       deadline=None,
       max_examples=200,
       print_blob=True,
+      verbosity=hp.Verbosity.verbose,
   )
   hp.settings.load_profile('deterministic')
 
@@ -1482,8 +1483,10 @@ if CAN_USE_HYPOTHESIS:
       if not jtu.is_device_tpu_at_least(4):
         self.skipTest('Only TPU v4+ allowed.')
 
+    @parameterized.named_parameters(
+        ('float32', 'float32'), ('bfloat16', 'bfloat16'), ('int8', 'int8')
+    )
     @hp.given(
-        hps.sampled_from(['float32', 'bfloat16', 'int8']),
         hps.integers(1, 1024),
         hps.integers(1, 1024),
         hps.integers(1, 1024),
@@ -1499,8 +1502,9 @@ if CAN_USE_HYPOTHESIS:
       if dtype == 'bfloat16':
         hp.assume(bm >= 16)
       if dtype == 'int8':
+        if not jtu.is_device_tpu_at_least(5):
+          self.skipTest('Only TPU v5+ allowed for int8.')
         hp.assume(bm >= 32)
-        hp.assume(jtu.is_device_tpu_at_least(5))
       k1, k2 = jax.random.split(jax.random.key(seed))
       x = jax.random.normal(k1, (m, k), jnp.float32).astype(dtype)
       y = jax.random.normal(k2, (k, n), jnp.float32).astype(dtype)
