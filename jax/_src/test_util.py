@@ -28,7 +28,7 @@ import re
 import sys
 import tempfile
 import textwrap
-from typing import Any
+from typing import Any, TextIO
 import unittest
 import warnings
 import zlib
@@ -191,42 +191,48 @@ def unaccelerate_getattr_deprecation(module, name):
   finally:
     module._deprecations[name] = (message, prev_attr)
 
+
 @contextmanager
-def capture_stdout() -> Generator[Callable[[], str], None, None]:
-  """Context manager to capture all output written to stdout.
+def _capture_output(fp: TextIO) -> Generator[Callable[[], str], None, None]:
+  """Context manager to capture all output written to a given file object.
 
   Unlike ``contextlib.redirect_stdout``, this context manager works for
-  both pure Python and native code.
+  any file object and also for both pure Python and native code.
 
   Example::
 
-    with capture_stdout() as get_captured:
+    with capture_output(sys.stdout) as get_output:
       print(42)
-    print("Captured": get_captured())
+    print("Captured": get_output())
 
   Yields:
     A function returning the captured output. The function must be called
     *after* the context is no longer active.
   """
-  # ``None`` means the stdout has not been captured yet.
+  # ``None`` means nothing has not been captured yet.
   captured = None
 
-  def get_captured() -> str:
+  def get_output() -> str:
     if captured is None:
-      raise ValueError("get_captured() called while the context is active.")
+      raise ValueError("get_output() called while the context is active.")
     return captured
 
   with tempfile.NamedTemporaryFile(mode="w+", encoding='utf-8') as f:
-    original_stdout = os.dup(sys.stdout.fileno())
-    os.dup2(f.fileno(), sys.stdout.fileno())
+    original_fd = os.dup(fp.fileno())
+    os.dup2(f.fileno(), fp.fileno())
     try:
-      yield get_captured
+      yield get_output
     finally:
       # Python also has its own buffers, make sure everything is flushed.
-      sys.stdout.flush()
+      fp.flush()
+      os.fsync(fp.fileno())
       f.seek(0)
       captured = f.read()
-      os.dup2(original_stdout, sys.stdout.fileno())
+      os.dup2(original_fd, fp.fileno())
+
+
+capture_stdout = partial(_capture_output, sys.stdout)
+capture_stderr = partial(_capture_output, sys.stderr)
 
 
 @contextmanager

@@ -70,6 +70,8 @@ jax_test(
 jax_test(
     name = "pallas_call_test",
     srcs = ["pallas_call_test.py"],
+    # The flag is necessary for ``pl.debug_print`` tests to work on TPU.
+    args = ["--logtostderr"],
     disable_backends = [
         "cpu",
         "gpu",

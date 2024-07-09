@@ -1931,7 +1931,9 @@ class PallasCallPrintTest(PallasBaseTest):
         .lower(x)
         .compile({'xla_tpu_enable_log_recorder': 'true'})
     )
-    compiled_kernel(x)
+    with jtu.capture_stderr() as get_output:
+      jax.block_until_ready(compiled_kernel(x))
+    self.assertIn('It works!', get_output())
 
   def test_debug_print_with_values(self):
     @functools.partial(
@@ -1948,7 +1950,9 @@ class PallasCallPrintTest(PallasBaseTest):
         .lower(x)
         .compile({'xla_tpu_enable_log_recorder': 'true'})
     )
-    compiled_kernel(x)
+    with jtu.capture_stderr() as get_output:
+      jax.block_until_ready(compiled_kernel(x))
+    self.assertIn('x[0] == 42', get_output())
 
 
 class PallasCallTraceTest(PallasBaseTest):
