@@ -373,21 +373,21 @@ class BatchTracer(Tracer):
     else:  # TODO(mattjj): could handle the RaggedAxis case?
       return self
 
+class BatchTag: pass
+
 class BatchTrace(Trace):
 
-  def __init__(self, *args, axis_name, spmd_axis_name = None):
-    super().__init__(*args)
+  def __init__(self, parent_trace, tag, axis_name, spmd_axis_name = None):
+    self.parent_trace = parent_trace
     self.axis_name = axis_name
     self.spmd_axis_name = spmd_axis_name
+    self.tag = tag
 
-  def pure(self, val):
-    return BatchTracer(self, val, not_mapped, source_info_util.current())
-
-  def lift(self, val):
-    return BatchTracer(self, val, not_mapped, source_info_util.current())
-
-  def sublift(self, val):
-    return BatchTracer(self, val.val, val.batch_dim, source_info_util.current())
+  def to_batch_info(self, val):
+    if isinstance(val, BatchTracer) and val._trace.tag is self.tag:
+      return val.val, val.batch_dim
+    else:
+      return val, not_mapped
 
   def get_primitive_batcher(self, primitive, frame):
     if primitive in primitive_batchers:
@@ -423,7 +423,7 @@ class BatchTrace(Trace):
   def process_primitive(self, primitive, tracers, params):
     if config.dynamic_shapes.value:
       primitive.abstract_eval(*(t.aval for t in tracers), **params)
-    vals_in, dims_in = unzip2((t.val, t.batch_dim) for t in tracers)
+    vals_in, dims_in = unzip2(map(self.to_batch_info, tracers))
     is_axis_primitive = primitive in axis_primitive_batchers
     used_names = core.used_axis_names(primitive, params)
     if is_axis_primitive and _main_trace_for_axis_names(self.main, used_names):
@@ -621,20 +621,19 @@ def batch(fun: lu.WrappedFun, axis_name: AxisName, axis_size,
                       spmd_axis_name)
 
 @lu.transformation
-def _batch_outer(axis_name, axis_size, in_dims, main_type, spmd_axis_name,
+def _batch_outer(axis_name, axis_size, in_dims, _main_type, spmd_axis_name,
                  *in_vals):
-  with core.new_main(
-      main_type, axis_name=axis_name, spmd_axis_name=spmd_axis_name) as main:
-    with core.extend_axis_env(axis_name, axis_size, main):
-      with source_info_util.transform_name_stack('vmap'):
-        outs = yield (main, in_dims, *in_vals), {}
-      del main
+  parent_trace = core.find_cur_trace()
+  tag = BatchTag()
+  with source_info_util.transform_name_stack('vmap'):
+    outs = yield (parent_trace, tag, axis_name, spmd_axis_name, in_dims, *in_vals), {}
   yield outs
 
 @lu.transformation
-def _batch_inner(axis_size, out_dim_dests, main, in_dims, *in_vals):
+def _batch_inner(axis_size, out_dim_dests, parent_trace, tag, axis_name, spmd_axis_name, in_dims, *in_vals):
   in_dims = in_dims() if callable(in_dims) else in_dims
-  trace = main.with_cur_sublevel()
+  trace = BatchTrace(parent_trace, tag, axis_name, spmd_axis_name)
+
   idx = memoize(lambda: BatchTracer(trace, make_iota(axis_size), 0,
                                     source_info_util.current()))
   in_tracers = map(partial(to_elt, trace, idx), in_vals, in_dims)

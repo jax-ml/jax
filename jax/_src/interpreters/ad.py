@@ -102,12 +102,10 @@ def jvp_subtrace(parent_trace, tag, primals, tangents):
 @lu.transformation_with_aux
 def jvp_subtrace_aux(parent_trace, tag, primals, tangents):
   trace = JVPTrace(parent_trace, tag)
-  ans, aux = yield map(partial(JVPTracer, trace), primals, tangents), {}
-  ans_tracers = map(trace.full_raise, ans)
-  out_primals, out_tangents = unzip2((t.primal, t.tangent) for t in ans_tracers)
-  aux_primals = [core.full_lower(x.primal)
-                 if isinstance(x, JVPTracer) and x._trace.level == trace.level
-                 else x for x in aux]
+  with core.set_current_trace(trace):
+    ans, aux = yield map(partial(JVPTracer, trace), primals, tangents), {}
+  out_primals, out_tangents = unzip2(map(trace.to_primal_tangent_pair, ans))
+  aux_primals, _            = unzip2(map(trace.to_primal_tangent_pair, aux))
   yield (out_primals, out_tangents), aux_primals
 
 
