@@ -430,7 +430,7 @@ class Primitive:
 
   def bind_with_trace(self, trace, args, params):
     with without_any_current_trace():
-      return trace.process_primitive(self, map(trace.full_raise, args), params)
+      return trace.process_primitive(self, args, params)
 
   def def_impl(self, impl):
     self.impl = impl
@@ -542,25 +542,6 @@ class Trace(Generic[TracerType]):
     msg = (f"{type(self)} must override process_custom_vjp_call "
            "to handle custom_vjp primitives")
     raise NotImplementedError(msg)
-
-
-def raise_as_much_as_possible(tracer) -> Tracer:
-  # Find effective bottom of trace stack (highest dynamic Trace on the stack).
-  trace_stack = thread_local_state.trace_state.trace_stack.stack
-  idx = next(i for i, m in enumerate(trace_stack) if m is
-             thread_local_state.trace_state.trace_stack.dynamic)
-
-  # Only pay attention to effective part of trace stack.
-  trace_stack = trace_stack[idx:]
-
-  # Lift tracer into everything in the effective stack higher than its level
-  for trace in trace_stack:
-    trace = trace.with_cur_sublevel()
-    if (not isinstance(tracer, Tracer) or tracer._trace.level < trace.level):
-      tracer = trace.full_raise(tracer)
-
-  return tracer
-
 
 def escaped_tracer_error(tracer, detail=None):
   num_frames = _TRACER_ERROR_NUM_TRACEBACK_FRAMES.value
@@ -867,10 +848,6 @@ aval_method = namedtuple("aval_method", ["fun"])
 
 
 class EvalTrace(Trace):
-
-  def full_raise(self, arg):
-    # TODO: check arg isn't a tracer. Evaluation should only happen on closed terms. No tracers around.
-    return arg
 
   def process_primitive(self, primitive, tracers, params):
     if config.debug_key_reuse.value:
@@ -2113,10 +2090,8 @@ class CallPrimitive(Primitive):
   call_primitive = True
 
   def bind(self, fun, *args, **params):
-    call_bind_continuation, top_trace, fun_, tracers, params = (
-        call_bind_with_continuation(self, fun, *args, **params))
-    outs = top_trace.process_call(self, fun_, tracers, params)
-    return call_bind_continuation(outs)
+    top_trace = find_cur_trace()
+    return top_trace.process_call(self, fun, args, params)
 
   def get_bind_params(self, params):
     new_params = dict(params)
@@ -2126,45 +2101,9 @@ class CallPrimitive(Primitive):
       subfun = lu.annotate(subfun, _jaxpr_type_to_callable_annotation(jaxpr))
     return [subfun], new_params
 
-def call_bind_with_continuation(primitive: CallPrimitive, fun, *args, **params):
-  top_trace = find_cur_trace()
-  fun_, env_trace_todo = process_env_traces_call(
-      fun, primitive, top_trace.level, tuple(params.items()))
-  tracers = map(top_trace.full_raise, args)
-  fun_ = lu.annotate(fun_, fun.in_type)
-
-  def call_bind_continuation(outs):
-    return map(full_lower, apply_todos(env_trace_todo(), outs))
-  return call_bind_continuation, top_trace, fun_, tracers, params
-
-@lu.transformation_with_aux
-def process_env_traces_call(primitive: CallPrimitive, level: int,
-                            params_tuple: tuple, *args):
-  outs = yield args, {}
-  params = dict(params_tuple)
-  todo = []
-  while True:
-    tracers = [x for x in outs if isinstance(x, Tracer) and x._trace.level > level]
-    if not tracers:
-      break
-    ans = max(tracers, key=_get_trace_level)
-    trace = ans._trace.main.with_cur_sublevel()
-    outs = map(trace.full_raise, outs)
-    outs, cur_todo = trace.post_process_call(primitive, outs, params)
-    todo.append(cur_todo)
-  yield outs, tuple(todo)  # Ensure the aux output is immutable
-
-def apply_todos(todos, outs):
-  todos_list = list(todos)
-  while todos_list:
-    outs = map(full_lower, todos_list.pop()(outs))
-  return outs
-
-
 def call_impl(f: lu.WrappedFun, *args, **params):
   del params  # params parameterize the call primitive, not the function
-  with new_sublevel():
-    return f.call_wrapped(*args)
+  return f.call_wrapped(*args)
 
 call_p: CallPrimitive = CallPrimitive('call')
 call = call_p.bind
@@ -2265,27 +2204,6 @@ def map_bind(primitive: MapPrimitive, fun, *args, **params):
       map_bind_with_continuation(primitive, fun, *args, **params))
   return map_bind_continuation(
       primitive.process(top_trace, fun, tracers, params))
-
-@lu.transformation_with_aux
-def process_env_traces_map(primitive: MapPrimitive, level: int,
-                           params_tuple: tuple, *args):
-  outs = yield args, {}
-  params = dict(params_tuple)
-  todo = []
-  out_axes_transforms = []
-  while True:
-    tracers = [x for x in outs if isinstance(x, Tracer)
-               and (level is None or x._trace.level > level)]
-    if not tracers:
-      break
-    ans = max(tracers, key=_get_trace_level)
-    trace = ans._trace.main.with_cur_sublevel()
-    outs = map(trace.full_raise, outs)
-    outs, (cur_todo, cur_xform) = primitive.post_process(trace, outs, params)
-    todo.append(cur_todo)
-    out_axes_transforms.append(cur_xform)
-  yield outs, (tuple(todo), tuple(out_axes_transforms))
-
 
 def mapped_aval(size: AxisSize, axis: int | None,
                 aval: AbstractValue) -> AbstractValue:
@@ -3212,12 +3130,7 @@ def clean_up_dead_vars(eqn: JaxprEqn, env: dict[Var, Any],
       # Delete ref to variable when it is no longer needed by next equations.
       del env[v]
 
-
-
-
-
 # =================== new stuff ==============
-
 
 def get_trace_state():
   return thread_local_state.trace_state
@@ -3225,12 +3138,14 @@ def get_trace_state():
 def find_cur_trace():
   return get_trace_state().trace
 
+class NotATrace: pass
+
 @contextmanager
 def without_any_current_trace():
   try:
     ts = get_trace_state()
     prev = ts.trace
-    ts.trace = None
+    ts.trace = NotATrace()
     yield
   finally:
     ts.trace = prev

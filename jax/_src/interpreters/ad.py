@@ -96,9 +96,7 @@ def jvp_subtrace(tag, primals, tangents):
                 for x, t in zip(primals, tangents)]
   with core.set_current_trace(trace):
     ans = yield in_tracers, {}
-  out_tracers = map(trace.full_raise, ans)
-  yield unzip2([(out_tracer.primal, out_tracer.tangent)
-                for out_tracer in out_tracers])
+  yield unzip2(map(trace.to_primal_tangent_pair, ans))
 
 @lu.transformation_with_aux
 def jvp_subtrace_aux(tag, primals, tangents):
@@ -293,15 +291,15 @@ class JVPTrace(Trace):
     self.tag = tag
     self.parent_trace = parent_trace
 
-  def full_raise(self, val):
+  def to_primal_tangent_pair(self, val):
     if isinstance(val, JVPTracer) and val._trace.tag is self.tag:
-      return JVPTracer(self, val.primal, val.tangent)
+      return (val.primal, val.tangent)
     else:
       tangent_zero = Zero(get_aval(val).at_least_vspace())
-      return JVPTracer(self, val, tangent_zero)
+      return (val, tangent_zero)
 
   def process_primitive(self, primitive, tracers, params):
-    primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
+    primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     jvp = primitive_jvps.get(primitive)
     if not jvp:
       msg = f"Differentiation rule for '{primitive}' not implemented"
@@ -316,7 +314,7 @@ class JVPTrace(Trace):
 
   def process_call(self, call_primitive, f, tracers, params):
     assert call_primitive.multiple_results
-    primals, tangents = unzip2((t.primal, t.tangent) for t in tracers)
+    primals, tangents = unzip2(map(self.to_primal_tangent_pair, tracers))
     which_nz = [     type(t) is not Zero           for t in tangents]
     tangents = [t if type(t) is not Zero else None for t in tangents]
     args, in_tree = tree_flatten((primals, tangents))
@@ -344,27 +342,10 @@ class JVPTrace(Trace):
                    for p, t in zip(primal_out, tangent_out)]
     return [JVPTracer(self, p, t) for p, t in zip(primal_out, tangent_out)]
 
-  def post_process_call(self, call_primitive, out_tracers, params):
-    primals, tangents = unzip2((t.primal, t.tangent) for t in out_tracers)
-    out, treedef = tree_flatten((primals, tangents))
-    tangents_nz = [type(t) is not Zero for t in tangents]
-    del primals, tangents
-    main = self.main
-    def todo(x):
-      primals, tangents = tree_unflatten(treedef, x)
-      trace = JVPTrace(main, core.cur_sublevel())
-      return map(partial(JVPTracer, trace), primals, tangents)
-    if call_primitive.map_primitive:
-      def out_axes_transform(out_axes):
-        return (*out_axes, *(ax for ax, nz in zip(out_axes, tangents_nz) if nz))
-      todo = (todo, out_axes_transform)
-    return out, todo
-
   # The only difference between process_map and process_call is that
   # the `in_axes` and `out_axes_thunk` params must be updated;
   # that's handled in process_call.
   process_map = process_call
-  post_process_map = post_process_call
 
   def process_custom_jvp_call(self, _, __, f_jvp, tracers, *, symbolic_zeros):
     primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
@@ -379,9 +360,6 @@ class JVPTrace(Trace):
     tangents_out = map(replace_rule_output_symbolic_zeros, tangents_out)
     tangents_out = map(recast_to_float0, primals_out, tangents_out)
     return map(partial(JVPTracer, self), primals_out, tangents_out)
-
-  def post_process_custom_jvp_call(self, out_tracers, _):
-    raise CustomJVPException()
 
   def process_custom_vjp_call(self, _, __, fwd, bwd, tracers, out_trees,
                               symbolic_zeros):
@@ -401,9 +379,6 @@ class JVPTrace(Trace):
     tangents_out = map(jax._src.lax.lax.tie_p.bind, primals_out, tangents_out)
     tangents_out = map(recast_to_float0, primals_out, tangents_out)
     return map(partial(JVPTracer, self), primals_out, tangents_out)
-
-  def post_process_custom_vjp_call(self, out_tracers, _):
-    raise CustomVJPException()
 
   def process_custom_transpose(self, prim, call, tracers, **params):
     ps_in, ts_in = unzip2((t.primal, t.tangent) for t in tracers)
@@ -461,7 +436,6 @@ class JVPTracer(Tracer):
 
   @property
   def aval(self):
-    # TODO(dougalm): add epsilon ball
     return get_aval(self.primal)
 
   def full_lower(self):
