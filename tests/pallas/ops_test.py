@@ -227,6 +227,70 @@ class OpsTest(PallasBaseTest):
     np.testing.assert_array_equal(r[4], result[4])
     np.testing.assert_array_equal(r[5], result[5])
 
+  @parameterized.named_parameters(
+      ("reduce_all_true", "all_true", jnp.all, True),
+      ("reduce_all_false", "all_false", jnp.all, False),
+      ("reduce_all_mixed", "one_false", jnp.all, False),
+      ("reduce_any_true", "all_true", jnp.any, True),
+      ("reduce_any_false", "all_false", jnp.any, False),
+      ("reduce_any_mixed", "one_false", jnp.any, True),
+  )
+  def test_reduce_boolean(self, input_type, reduction_op, expected_result):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("TODO: error on GPU")
+
+    def kernel(x_ref, ones_ref, o_ref):
+      # Convert float to bool with a comparison.
+      bool_x = x_ref[...] == ones_ref[...]
+      reduced_as_bool = reduction_op(bool_x, keepdims=True)
+      # Convert bool to float with a select.
+      float_value = jnp.where(reduced_as_bool, 1.0, 0.0)
+      o_ref[0, 0] = float_value[0, 0]
+
+    if input_type == 'all_true':
+      x = jnp.ones((8, 128), dtype=jnp.float32)
+    elif input_type == 'all_false':
+      x = jnp.zeros((8, 128), dtype=jnp.float32)
+    elif input_type == 'one_false':
+      x = jnp.ones((8, 128), dtype=jnp.float32)
+      x = x.at[0, 0].set(0.0)
+    ones = jnp.ones_like(x)
+
+    result = self.pallas_call(
+        kernel,
+        in_specs=[
+            pl.BlockSpec((8, 128), lambda *_: (0, 0)),
+            pl.BlockSpec((8, 128), lambda *_: (0, 0)),
+        ],
+        out_specs=pl.BlockSpec(block_shape=(1, 1), memory_space=smem_on_tpu()),
+        out_shape=jax.ShapeDtypeStruct([1, 1], jnp.float32),
+        grid=(1,),
+    )(x, ones)
+    np.testing.assert_array_equal(result[0, 0], float(expected_result))
+
+  @parameterized.named_parameters(
+      ("sum", jnp.sum,), ("max", jnp.max,), ("min", jnp.min,)
+  )
+  def test_reduce_float(self, reduction_op):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("TODO: error on GPU")
+
+    def kernel(x_ref, o_ref):
+      o_ref[0, 0] = reduction_op(x_ref[...])
+
+    x = jax.random.normal(jax.random.key(0), (8, 128))
+    result = self.pallas_call(
+        kernel,
+        in_specs=[
+            pl.BlockSpec((8, 128), lambda *_: (0, 0)),
+        ],
+        out_specs=pl.BlockSpec((1, 1), memory_space=smem_on_tpu()),
+        out_shape=jax.ShapeDtypeStruct([1, 1], jnp.float32),
+        grid=(1,),
+    )(x)
+
+    np.testing.assert_allclose(result[0, 0], reduction_op(x), atol=1e-5)
+
 
 class OpsInterpreterTest(OpsTest):
   INTERPRET = True
@@ -1044,59 +1108,6 @@ class OpsExtraTest(PallasBaseTest):
       y = reduce(x)
       y_ref = jnp.cumsum(x, axis=axis)
       np.testing.assert_allclose(y, y_ref, atol=1e-2, rtol=1e-2, err_msg=i)
-
-  def test_integer_sum(self):
-    if jtu.test_device_matches(["gpu"]) and not self.INTERPRET:
-      self.skipTest("TODO: error on GPU")
-
-    def kernel(x_ref, o_ref):
-      x = x_ref[:]
-      # We'd prefer to say:
-      # o_ref[0, 0] = jnp.sum(x)
-      # But this currently hits issues in both Pallas and Mosaic lowering.
-      r = jnp.sum(x, keepdims=True, axis=1)
-      r = jnp.sum(r, keepdims=True, axis=0)
-      o_ref[0, 0] = r[0, 0]
-
-    x = jnp.full([8, 128], 2.0)
-    result = self.pallas_call(
-        kernel,
-        in_specs=[
-            pl.BlockSpec((8, 128), lambda *_: (0, 0)),
-        ],
-        out_specs=pl.BlockSpec((1, 1), memory_space=pltpu.SMEM),
-        out_shape=jax.ShapeDtypeStruct([1, 1], jnp.float32),
-        grid=(1,),
-    )(x)
-
-    np.testing.assert_array_equal(result[0, 0], 2048.0)
-
-  def test_integer_max(self):
-    if jtu.test_device_matches(["gpu"]) and not self.INTERPRET:
-      self.skipTest("TODO: error on GPU")
-
-    def kernel(x_ref, o_ref):
-      x = x_ref[:]
-      # We'd prefer to say:
-      # o_ref[0, 0] = jnp.max(x)
-      # But this currently hits issues in both Pallas and Mosaic lowering.
-      x = jnp.max(x, keepdims=True, axis=1)
-      x = jnp.max(x, keepdims=True, axis=0)
-      o_ref[0, 0] = x[0, 0]
-
-    x = jnp.arange(1024.0)
-    x = jnp.reshape(x, [8, 128])
-    result = self.pallas_call(
-        kernel,
-        in_specs=[
-            pl.BlockSpec((8, 128), lambda *_: (0, 0)),
-        ],
-        out_specs=pl.BlockSpec((1, 1), memory_space=pltpu.SMEM),
-        out_shape=jax.ShapeDtypeStruct([1, 1], jnp.float32),
-        grid=(1,),
-    )(x)
-
-    np.testing.assert_array_equal(result[0, 0], 1023.0)
 
 
 class OpsExtraInterpreterTest(OpsTest):
