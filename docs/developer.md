@@ -191,11 +191,13 @@ python build/build.py --enable_rocm --rocm_path=/opt/rocm-5.7.0 \
 
 To make sure that JAX's build is reproducible, behaves uniformly across
 supported platforms (Linux, Windows, MacOS) and is properly isolated from
-specifics of a local system, we rely on hermetic Python (see
-[rules_python](https://github.com/bazelbuild/rules_python)) for all build
-and test commands executed via Bazel. This means that your system Python
-installation will be ignored during the build and Python interpreter itself
-as well as all the Python dependencies will be managed by bazel directly.
+specifics of a local system, we rely on hermetic Python (provided by
+[rules_python](https://github.com/bazelbuild/rules_python), see
+[Toolchain Registration](https://rules-python.readthedocs.io/en/latest/toolchains.html#workspace-toolchain-registration)
+for details) for all build and test commands executed via Bazel. This means that
+your system Python installation will be ignored during the build and Python
+interpreter itself as well as all the Python dependencies will be managed by
+bazel directly.
 
 ### Specifying Python version
 
@@ -267,10 +269,23 @@ bazel run //build:requirements.update --repo_env=HERMETIC_PYTHON_VERSION=3.12 --
 
 ### Specifying dependencies on local wheels
 
-If you need to depend on a local .whl file, for example on your newly built
-jaxlib wheel, you may add a path to the wheel in `build/requirements.in` and
-re-run the requirements updater command for a selected version of Python. For
-example:
+By default the build scans `dist` directory in the repository root for any local
+`.whl` files to be included in the list of dependencies. If the wheel is Python
+version specific, only the wheels that match the selected Python version will
+be included.
+
+The overall local wheel search and selection logic is controlled by the
+arguments to `python_init_repositories()` macro (called directly from the
+`WORKSPACE` file). You may use `local_wheel_dist_folder` to change the location
+of the folder with local wheels. Use `local_wheel_inclusion_list` and
+`local_wheel_exclusion_list` arguments to specify which wheels should be
+included and/or excluded from the search (it supports basic wildcard matching).
+
+If necessary, you can also depend on a local `.whl` file manually, bypassing the
+automatic local wheel search mechanism. For example to depend on your newly
+built jaxlib wheel, you may add a path to the wheel in `build/requirements.in`
+and re-run the requirements updater command for a selected version of Python.
+For example:
 
 ```
 echo -e "\n$(realpath jaxlib-0.4.27.dev20240416-cp312-cp312-manylinux2014_x86_64.whl)" >> build/requirements.in
