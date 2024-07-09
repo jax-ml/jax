@@ -800,7 +800,8 @@ def _temporary_shape_exception(a, a_) -> bool:
 class CustomVJPCallPrimitive(core.CallPrimitive):
   initial_style: core.Primitive
 
-  def bind(self, fun, fwd, bwd, *args, out_trees, symbolic_zeros):
+  def bind_with_trace(self, trace, fun, fwd, bwd, *args, out_trees, symbolic_zeros):
+    assert False
     args = map(core.full_lower, args)
     top_trace = core.find_top_trace(args)
     fun, env_trace_todo1 = process_env_traces(

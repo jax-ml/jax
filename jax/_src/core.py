@@ -424,9 +424,9 @@ class Primitive:
     return f'{self.name}'
 
   def bind(self, *args, **params):
-    assert (not config.enable_checks.value or
-            all(isinstance(arg, Tracer) or valid_jaxtype(arg) for arg in args)), args
-    return self.bind_with_trace(find_cur_trace(), args, params)
+    cur_trace = find_cur_trace()
+    assert not isinstance(cur_trace, NotATrace)
+    return self.bind_with_trace(cur_trace, args, params)
 
   def bind_with_trace(self, trace, args, params):
     with without_any_current_trace():
@@ -2089,9 +2089,10 @@ class CallPrimitive(Primitive):
   multiple_results = True
   call_primitive = True
 
-  def bind(self, fun, *args, **params):
-    top_trace = find_cur_trace()
-    return top_trace.process_call(self, fun, args, params)
+  def bind_with_trace(self, trace, fun_and_args, params):
+    fun = fun_and_args[0]
+    args = fun_and_args[1:]
+    return trace.process_call(self, fun, args, params)
 
   def get_bind_params(self, params):
     new_params = dict(params)
@@ -2161,9 +2162,6 @@ class MapPrimitive(Primitive):
 
   def process(self, trace, fun, tracers, params):
     return trace.process_map(self, fun, tracers, params)
-
-  def post_process(self, trace, out_tracers, params):
-    return trace.post_process_map(self, out_tracers, params)
 
   def get_bind_params(self, params):
     new_params = dict(params)
@@ -2497,12 +2495,9 @@ axis_substitution_rules: dict[Primitive, Callable[[ParamDict, AxisSubst, bool], 
 
 class AxisPrimitive(Primitive):
   def bind(self, *args, **params):
-    top_trace = find_top_trace(args)
     axis_main = max((axis_frame(a).main_trace for a in used_axis_names(self, params)),
                     default=None, key=lambda t: getattr(t, 'level', -1))
-    top_trace = (top_trace if not axis_main or axis_main.level < top_trace.level
-                 else axis_main.with_cur_sublevel())
-    return self.bind_with_trace(top_trace, args, params)
+    return self.bind_with_trace(find_cur_trace(), args, params)
 
 
 # ------------------- Jaxpr checking -------------------

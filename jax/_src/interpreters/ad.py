@@ -336,8 +336,8 @@ class JVPTrace(Trace):
     f_jvp, out_tree = traceable(f_jvp, in_tree)
     update_params = call_param_updaters.get(call_primitive)
     new_params = update_params(params, which_nz) if update_params else params
-    result = self.parent_trace.process_call(call_primitive, _update_annotation(f_jvp, f.in_type, which_nz),
-                                            args, new_params)
+    fun_and_args = (_update_annotation(f_jvp, f.in_type, which_nz),) + tuple(args)
+    result = call_primitive.bind_with_trace(self.parent_trace, fun_and_args, new_params)
     primal_out, tangent_out = tree_unflatten(out_tree(), result)
     tangent_out = [Zero(get_aval(p).at_least_vspace()) if t is None else t
                    for p, t in zip(primal_out, tangent_out)]

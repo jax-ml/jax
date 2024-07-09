@@ -262,20 +262,20 @@ class JaxprTrace(Trace['JaxprTracer']):
 
     # Wrap f to perform the partial evaluation and plumb out aux data.
     if not config.dynamic_shapes.value:
-      f_ = trace_to_subjaxpr_nounits_fwd(f, self.main, False)
+      f_ = trace_to_subjaxpr_nounits_fwd(f, self, False)
       f_, aux = partial_eval_wrapper_nounits(f_, tuple(in_knowns),
                                              tuple(in_avals))
     else:
       if f.in_type is None:
         f = lu.annotate(f, tuple((a, True) for a in in_avals))
-      f_, aux = trace_to_subjaxpr_nounits_dyn(f, self.main, tuple(in_knowns),
+      f_, aux = trace_to_subjaxpr_nounits_dyn(f, self, tuple(in_knowns),
                                               f.in_type, False)
     # Adjust parameters (e.g. donated_invars) for the call to be evaluated now.
     const_params = update_params(params, in_knowns, 0)
 
     # Run the call, getting known out vals and aux data used for staged-out call
-    out = primitive.bind(_update_annotation_known(f_, f.in_type, in_knowns),
-                         *in_consts, **const_params)
+    fun_and_args = (_update_annotation_known(f_, f.in_type, in_knowns),) + tuple(in_consts)
+    out = primitive.bind_with_trace(self.parent_trace, fun_and_args, const_params)
     fwds, out_knowns, out_type, jaxpr, env = aux()
     # Split apart known outputs from the original call and non-fwded residuals.
     out_consts, non_fwd_res = split_list(out, [sum(out_knowns)])
@@ -298,7 +298,7 @@ class JaxprTrace(Trace['JaxprTracer']):
 
     # Create the input tracers for the staged-out (unknown-value) call.
     res_tracers = map(self.instantiate_const, map(self.new_const, res))
-    env_tracers = map(self.full_raise, env)
+    env_tracers = map(self.to_jaxpr_tracer, env)
     unknown_arg_tracers = [t for t in tracers if not t.is_known()]
     # Adjust parameters (e.g. donated_invars) for the staged-out call's args.
     num_new_args = len(res_tracers) + len(env_tracers)
@@ -344,7 +344,7 @@ class JaxprTrace(Trace['JaxprTracer']):
                        for ax, aval in zip(unk_in_axes, in_avals)]
 
     # Wrap f to perform partial evaluation and plumb out aux data.
-    f = trace_to_subjaxpr_nounits(f, self.main, False)
+    f = trace_to_subjaxpr_nounits(f, self, False)
     f, aux = partial_eval_wrapper_nounits(f, tuple(in_knowns),
                                           tuple(in_avals_mapped))
     # Adjust params for knowns (e.g. donated_invars, in_axes, out_axes_thunk)
@@ -430,7 +430,7 @@ class JaxprTrace(Trace['JaxprTracer']):
     # Because we instantiate all tracers, in_knowns is all False.
     tracers = map(self.instantiate_const_abstracted, tracers)
     in_knowns, in_avals, () = partition_pvals([t.pval for t in tracers])
-    f = trace_to_subjaxpr_nounits(f, self.main, True)
+    f = trace_to_subjaxpr_nounits(f, selfmain, True)
     f, aux = partial_eval_wrapper_nounits(f, tuple(in_knowns), tuple(in_avals))
     out_flat = prim.bind(f, fwd, bwd, out_trees=out_trees,
                          symbolic_zeros=symbolic_zeros)
@@ -445,7 +445,7 @@ class JaxprTrace(Trace['JaxprTracer']):
     @_memoize
     def fwd_jaxpr_thunk(*zeros):
       fwd_ = _interleave_fun(fwd, zeros)
-      fwd_ = trace_to_subjaxpr_nounits(fwd_, self.main, True)
+      fwd_ = trace_to_subjaxpr_nounits(fwd_, self, True)
       fwd_, aux = partial_eval_wrapper_nounits(
           fwd_, tuple(in_knowns), tuple(in_avals))
       with core.new_sublevel():
@@ -730,12 +730,12 @@ def _trace_to_subjaxpr_nounits(trace, instantiate, in_pvals):
 # TODO(mattjj): update all callers to use this version, delete other version.
 @lu.transformation
 def trace_to_subjaxpr_nounits_fwd(
-    main: core.MainTrace,
+    trace: JaxprTrace,
     instantiate: bool | Sequence[bool],
     in_pvals: Sequence[PartialVal]):
   assert all(isinstance(pv, PartialVal) for pv in in_pvals), in_pvals
   out_tracers, jaxpr, out_consts, env = yield from _trace_to_subjaxpr_nounits(
-      main, instantiate, in_pvals)
+      trace, instantiate, in_pvals)
   out_pvals = [t.pval for t in out_tracers]
 
   # Which out_consts (aka residuals) are just forwarded inputs? Check obj id.
@@ -1606,13 +1606,7 @@ class DynamicJaxprTracer(core.Tracer):
     return ()
 
   def _origin_msg(self):
-    if not self._trace.main.jaxpr_stack:
-      # If this Tracer has been leaked the jaxpr stack may no longer be
-      # available. So we can't print as much origin information.
-      return ("\nThis DynamicJaxprTracer was created on line "
-              f"{source_info_util.summarize(self._line_info)}")
-    else:
-      invar_pos, progenitor_eqns = self._trace.frame.find_progenitors(self)
+    invar_pos, progenitor_eqns = self._trace.frame.find_progenitors(self)
     dbg = self._debug_info
     if dbg is None:
       return ""
