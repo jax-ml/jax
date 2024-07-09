@@ -233,7 +233,8 @@ def check_layout(query, key, value, bias, q_seqlen, kv_seqlen, layout):
   check_eq(q_rank, k_rank, v_rank, "QKV rank")
 
   q_dtype, k_dtype, v_dtype = query.dtype, key.dtype, value.dtype
-  assert q_dtype in [jnp.float16, jnp.bfloat16], "Q must be fp16 or bf16"
+  if q_dtype not in [jnp.bfloat16, jnp.float16]:
+    raise NotImplementedError(f"Q must be fp16 or bf16, got {q_dtype}")
   check_eq(q_dtype, k_dtype, v_dtype, "QKV dtype")
 
   if layout == AttentionLayout.BNTH:
