@@ -54,7 +54,12 @@ ffi::Error LuPivotsToPermutationImpl(
     gpuStream_t stream, std::int32_t permutation_size,
     ffi::Buffer<ffi::DataType::S32> pivots,
     ffi::Result<ffi::Buffer<ffi::DataType::S32>> permutation) {
+#if XLA_FFI_LAZY_DECODED_BUFFER
+  auto dims = pivots.dimensions();
+#else
   auto dims = pivots.dimensions;
+#endif
+
   if (dims.size() < 1) {
     return ffi::Error(ffi::ErrorCode::kInvalidArgument,
                       "pivots must have at least one dimension");
@@ -71,9 +76,15 @@ ffi::Error LuPivotsToPermutationImpl(
     batch_size =
         absl::c_accumulate(dims.first(dims.size() - 1), 1, std::multiplies<>());
   }
+#if XLA_FFI_LAZY_DECODED_BUFFER
+  LaunchLuPivotsToPermutationKernel(stream, batch_size, pivot_size,
+                                    permutation_size, pivots.typed_data(),
+                                    permutation->typed_data());
+#else
   LaunchLuPivotsToPermutationKernel(stream, batch_size, pivot_size,
                                     permutation_size, pivots.data,
                                     permutation->data);
+#endif
   if (auto status = JAX_AS_STATUS(gpuGetLastError()); !status.ok()) {
     return ffi::Error(static_cast<XLA_FFI_Error_Code>(status.code()),
                       std::string(status.message()));
