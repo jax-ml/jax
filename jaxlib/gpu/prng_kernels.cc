@@ -68,11 +68,19 @@ XLA_FFI_Error* ThreeFry2x32Ffi(XLA_FFI_CallFrame* call_frame) {
           .Ret<ffi::Buffer<ffi::DataType::U32>>()
           .To([](gpuStream_t stream, auto keys0, auto keys1, auto data0,
                  auto data1, auto out0, auto out1) -> ffi::Error {
+#if XLA_FFI_LAZY_DECODED_BUFFER
+            std::int64_t n = out0->element_count();
+            LaunchThreeFry2x32KernelFfi(stream, n, keys0.typed_data(),
+                                        keys1.typed_data(), data0.typed_data(),
+                                        data1.typed_data(), out0->typed_data(),
+                                        out1->typed_data());
+#else
             std::int64_t n = absl::c_accumulate(out0->dimensions, 1,
                                                 std::multiplies<int64_t>());
             LaunchThreeFry2x32KernelFfi(stream, n, keys0.data, keys1.data,
                                         data0.data, data1.data, out0->data,
                                         out1->data);
+#endif
             if (auto status = JAX_AS_STATUS(gpuGetLastError()); !status.ok()) {
               return ffi::Error(static_cast<XLA_FFI_Error_Code>(status.code()),
                                 std::string(status.message()));
