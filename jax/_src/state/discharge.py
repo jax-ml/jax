@@ -240,8 +240,7 @@ def _prepend_scatter(x, indexer, val, *, add=False):
   return x[None].at[(0, *indexer)].set(val)[0]
 
 
-def _get_discharge(x, idx, tree):
-  indexers = tree_util.tree_unflatten(tree, idx)
+def index_array(x, indexers):
   result = x
   for indexer in indexers:
     if _is_trivial_indexer(indexer):
@@ -260,24 +259,7 @@ def _get_discharge(x, idx, tree):
       result = result[None][(np.array(0, "int32"), *indexer)]
   return result
 
-def _indexer(idx, indexed_dims):
-  idx_ = iter(idx)
-  indexer = tuple(next(idx_) if b else slice(None) for b in indexed_dims)
-  assert next(idx_, None) is None
-  return indexer
-
-@register_discharge_rule(swap_p)
-def _swap_discharge_rule(
-    in_avals: Sequence[core.AbstractValue],
-    out_avals: Sequence[core.AbstractValue], x, val, *idx,
-    tree):
-  del in_avals, out_avals
-  z, x_new = _swap_discharge(x, val, idx, tree)
-  return (x_new, None) + (None,) * len(idx), z
-
-def _swap_discharge(x, val, idx, tree):
-  indexers = tree_util.tree_unflatten(tree, idx)
-
+def index_swap_array(x, indexers, val):
   result = x
   result_val = val
   for indexer in indexers:
@@ -299,6 +281,29 @@ def _swap_discharge(x, val, idx, tree):
       result_val = _prepend_scatter(result, indexer, result_val)
       result = result_old
   return result, result_val
+
+def _get_discharge(x, idx, tree):
+  indexers = tree_util.tree_unflatten(tree, idx)
+  return index_array(x, indexers)
+
+def _indexer(idx, indexed_dims):
+  idx_ = iter(idx)
+  indexer = tuple(next(idx_) if b else slice(None) for b in indexed_dims)
+  assert next(idx_, None) is None
+  return indexer
+
+@register_discharge_rule(swap_p)
+def _swap_discharge_rule(
+    in_avals: Sequence[core.AbstractValue],
+    out_avals: Sequence[core.AbstractValue], x, val, *idx,
+    tree):
+  del in_avals, out_avals
+  z, x_new = _swap_discharge(x, val, idx, tree)
+  return (x_new, None) + (None,) * len(idx), z
+
+def _swap_discharge(x, val, idx, tree):
+  indexers = tree_util.tree_unflatten(tree, idx)
+  return index_swap_array(x, indexers, val)
 
 @register_discharge_rule(addupdate_p)
 def _addupdate_discharge_rule(
