@@ -1034,12 +1034,14 @@ def pallas_call(
       See details at :ref:`pallas_grid`.
     in_specs: a PyTree of :class:`jax.experimental.pallas.BlockSpec` with
       a structure matching that of the positional arguments.
+      The default value for ``in_specs`` specifies the whole array for all
+      inputs, e.g., as ``pl.BlockSpec(x.shape, lambda *indices: (0,) * x.ndim)``.
       See details at :ref:`pallas_blockspec`.
     out_specs: a PyTree of :class:`jax.experimental.pallas.BlockSpec` with
       a structure matching that of the outputs.
+      The default value for ``out_specs`` specifies the whole array,
+      e.g., as ``pl.BlockSpec(x.shape, lambda *indices: (0,) * x.ndim)``.
       See details at :ref:`pallas_blockspec`.
-      The default value for `out_specs` specifies the whole array,
-      e.g., as ``pl.BlockSpec(x.shape, lambda *indices: indices)``.
     input_output_aliases: a dictionary mapping the index of some inputs to
       the index of the output that aliases them. These indices are in the
       flattened inputs and outputs.
@@ -1063,6 +1065,9 @@ def pallas_call(
   if grid_spec is None:
     grid_spec = GridSpec(grid, in_specs, out_specs)
   grid_spec, dynamic_grid_bounds = grid_spec.unzip_dynamic_grid_bounds()
+  # TODO(necula): this canonicalization may be convenient for some usage
+  # but it is lossy, because it prevents expressing functions that return
+  # lists.
   if isinstance(out_shape, list):
     out_shape = tuple(out_shape)
   flat_out_shapes_with_paths, out_tree = tree_util.tree_flatten_with_path(out_shape)

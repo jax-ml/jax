@@ -187,9 +187,9 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
     in_avals, in_avals_tree = tree_util.tree_flatten(tuple(unflat_in_avals))
     flat_in_specs, flat_out_specs = self._get_in_out_specs(
         in_avals, in_avals_tree, out_avals, out_tree)
-    in_specs, in_ref_avals, out_specs, out_ref_avals = (
+    in_ref_avals, out_ref_avals = (
         pallas_core._get_ref_avals(
-            self.grid, in_avals, flat_in_specs, in_paths[num_flat_scalar_prefetch:],
+            in_avals, flat_in_specs, in_paths[num_flat_scalar_prefetch:],
             out_avals, flat_out_specs, out_paths))
     scalar_ref_avals = [
         AbstractMemoryRef(jax_core.ShapedArray(aval.shape, aval.dtype),
@@ -209,7 +209,7 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
             mapped_dims=(),
             what="input",
         ),
-        in_specs,
+        flat_in_specs,
         in_paths[num_flat_scalar_prefetch:],
         in_ref_avals,
     )
@@ -222,7 +222,7 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
             mapped_dims=(),
             what="output",
         ),
-        out_specs,
+        flat_out_specs,
         out_paths,
         out_ref_avals,
     )
