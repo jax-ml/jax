@@ -16,16 +16,21 @@ from __future__ import annotations
 
 from functools import partial
 
+import jax
 from jax import jit
+from jax._src.numpy.util import (check_arraylike, promote_dtypes_inexact)
 from jax._src.typing import Array, ArrayLike
 import jax.numpy as jnp
 
 
 @partial(jit, static_argnames=('axis',))
-def trapezoid(y: ArrayLike, x: ArrayLike | None = None, dx: ArrayLike = 1.0,
-              axis: int = -1) -> Array:
-  r"""
-  Integrate along the given axis using the composite trapezoidal rule.
+def trapezoid(
+    y: ArrayLike,
+    x: ArrayLike | None = None,
+    dx: ArrayLike = 1.0,
+    axis: int = -1,
+) -> Array:
+  r"""Integrate along the given axis using the composite trapezoidal rule.
 
   JAX implementation of :func:`scipy.integrate.trapezoid`
 
@@ -35,7 +40,7 @@ def trapezoid(y: ArrayLike, x: ArrayLike | None = None, dx: ArrayLike = 1.0,
   Args:
     y: array of data to integrate.
     x: optional array of sample points corresponding to the ``y`` values. If not
-       provided, ``x`` defaults to equally spaced with spacing given by ``dx``.
+      provided, ``x`` defaults to equally spaced with spacing given by ``dx``.
     dx: The spacing between sample points when `x` is None (default: 1.0).
     axis: The axis along which to integrate (default: -1)
 
@@ -67,3 +72,82 @@ def trapezoid(y: ArrayLike, x: ArrayLike | None = None, dx: ArrayLike = 1.0,
     Array(True, dtype=bool)
   """
   return jnp.trapezoid(y, x, dx, axis)
+
+
+@partial(jit, static_argnames=('axis', 'initial'))
+def cumulative_trapezoid(
+    y: ArrayLike,
+    x: ArrayLike | None = None,
+    dx: ArrayLike = 1.0,
+    axis: int = -1,
+    initial: float | None = None,
+) -> Array:
+  r"""Cumulatively integrate ``y(x)`` using the composite trapezoidal rule.
+
+  JAX implementation of :func:`scipy.integrate.cumulative_trapezoid`
+
+  Args:
+    y: array of data to integrate.
+    x: optional array of sample points corresponding to the ``y`` values. If not
+      provided, ``x`` defaults to equally spaced with spacing given by ``dx``.
+    dx: the spacing between sample points when `x` is None (default: 1.0).
+    axis: the axis along which to integrate (default: -1)
+    initial: a scalar value to prepend to the result. Either None (default) or
+      0.0. If ``initial=0``, the result is an array with the same shape as
+      ``y``. If ``initial=None``, the resulting array has one fewer elements
+      than ``y`` along the ``axis`` dimension.
+
+  Returns:
+    The cumulative definite integral approximated by the trapezoidal rule.
+
+  See also:
+    :func:`jax.scipy.integrate.trapezoid`: non-cumulative trapezoidal
+    integration
+  """
+  if x is None:
+    check_arraylike('cumulative_trapezoid', y)
+    (y_arr,) = promote_dtypes_inexact(y)
+    dx_array = jnp.asarray(dx, dtype=y_arr.dtype)
+  else:
+    check_arraylike('cumulative_trapezoid', y, x)
+    y_arr, x_arr = promote_dtypes_inexact(y, x)
+
+    if x_arr.ndim == 1:
+      if y_arr.shape[axis] != len(x_arr):
+        raise ValueError(
+            f'The length of x is {len(x_arr)}, but expected'
+            f' {y_arr.shape[axis]}.'
+        )
+    else:
+      if x_arr.shape != y_arr.shape:
+        raise ValueError(
+            'If x is not 1 dimensional, it must have the same shape as y.'
+        )
+
+    if x_arr.ndim == 1:
+      dx_array = jnp.diff(x_arr)
+      new_shape = [1] * y_arr.ndim
+      new_shape[axis] = len(dx_array)
+      dx_array = jnp.reshape(dx_array, new_shape)
+    else:
+      dx_array = jnp.diff(x_arr, axis=axis)
+
+  y_sliced = partial(jax.lax.slice_in_dim, y_arr, axis=axis)
+
+  out = (
+      jnp.cumsum(dx_array * (y_sliced(1, None) + y_sliced(0, -1)), axis=axis)
+      / 2.0
+  )
+
+  if initial is not None:
+    if initial != 0.0:
+      raise ValueError(
+          '`initial` must be 0 or None. Non-zero values have been deprecated'
+          ' since SciPy version 1.12.0.'
+      )
+    initial_array = jnp.asarray(initial, dtype=out.dtype)
+    initial_shape = list(out.shape)
+    initial_shape[axis] = 1
+    initial_array = jnp.broadcast_to(initial_array, initial_shape)
+    out = jnp.concatenate((initial_array, out), axis=axis)
+  return out

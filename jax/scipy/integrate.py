@@ -16,5 +16,6 @@
 # See PEP 484 & https://github.com/google/jax/issues/7570
 
 from jax._src.scipy.integrate import (
-  trapezoid as trapezoid
+    cumulative_trapezoid as cumulative_trapezoid,
+    trapezoid as trapezoid,
 )
