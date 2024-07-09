@@ -76,13 +76,14 @@ class JVPTag: pass
 
 @lu.transformation
 def jvpfun(instantiate, transform_stack, primals, tangents):
+  parent_trace = core.find_cur_trace()
   tag = JVPTag()
   tangents = [Zero.from_value(t) if not isinstance(t, Zero)
               and dtype(t) == float0 else t for t in tangents]
   ctx = (source_info_util.transform_name_stack('jvp') if transform_stack
          else contextlib.nullcontext())
   with ctx:
-    out_primals, out_tangents = yield (tag, primals, tangents), {}
+    out_primals, out_tangents = yield (parent_trace, tag, primals, tangents), {}
   if type(instantiate) is bool:
     instantiate = [instantiate] * len(out_tangents)
   out_tangents = [instantiate_zeros(t) if inst else t for t, inst
@@ -90,8 +91,8 @@ def jvpfun(instantiate, transform_stack, primals, tangents):
   yield out_primals, out_tangents
 
 @lu.transformation
-def jvp_subtrace(tag, primals, tangents):
-  trace = JVPTrace(core.find_cur_trace(), tag)
+def jvp_subtrace(parent_trace, tag, primals, tangents):
+  trace = JVPTrace(parent_trace, tag)
   in_tracers = [JVPTracer(trace, x, t) if type(t) is not Zero else x
                 for x, t in zip(primals, tangents)]
   with core.set_current_trace(trace):
@@ -99,8 +100,8 @@ def jvp_subtrace(tag, primals, tangents):
   yield unzip2(map(trace.to_primal_tangent_pair, ans))
 
 @lu.transformation_with_aux
-def jvp_subtrace_aux(tag, primals, tangents):
-  trace = JVPTrace(core.find_cur_trace(), tag)
+def jvp_subtrace_aux(parent_trace, tag, primals, tangents):
+  trace = JVPTrace(parent_trace, tag)
   ans, aux = yield map(partial(JVPTracer, trace), primals, tangents), {}
   ans_tracers = map(trace.full_raise, ans)
   out_primals, out_tangents = unzip2((t.primal, t.tangent) for t in ans_tracers)
@@ -318,7 +319,7 @@ class JVPTrace(Trace):
     which_nz = [     type(t) is not Zero           for t in tangents]
     tangents = [t if type(t) is not Zero else None for t in tangents]
     args, in_tree = tree_flatten((primals, tangents))
-    f_jvp = jvp_subtrace(f, self.main)
+    f_jvp = jvp_subtrace(f, self.parent_trace, self.tag)
     f_jvp, which_nz_out = nonzero_tangent_outputs(f_jvp)
     if isinstance(call_primitive, core.MapPrimitive):
       in_axes = params['in_axes']
@@ -335,8 +336,8 @@ class JVPTrace(Trace):
     f_jvp, out_tree = traceable(f_jvp, in_tree)
     update_params = call_param_updaters.get(call_primitive)
     new_params = update_params(params, which_nz) if update_params else params
-    result = call_primitive.bind(_update_annotation(f_jvp, f.in_type, which_nz),
-                                 *args, **new_params)
+    result = self.parent_trace.process_call(call_primitive, _update_annotation(f_jvp, f.in_type, which_nz),
+                                            args, new_params)
     primal_out, tangent_out = tree_unflatten(out_tree(), result)
     tangent_out = [Zero(get_aval(p).at_least_vspace()) if t is None else t
                    for p, t in zip(primal_out, tangent_out)]
