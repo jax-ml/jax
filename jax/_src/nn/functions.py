@@ -866,8 +866,9 @@ def dot_product_attention(
       the square root of query's head dimension (i.e. H).
     is_causal: If true, causal attention will be applied. Note, some
       implementations like `xla` will generate a mask tensor and apply it to the
-      logits, but other implementations like `cudnn` will avoid computing the
-      unmasked regions.
+      logits to mask out the non-causal parts of the attention matrix, but other
+      implementations like `cudnn` will avoid computing the non-causal regions,
+      providing speedups.
     implementaion: A string to control which implementation backend to use.
       Supported strings are `xla`, `cudnn` (cuDNN flash attention). It defaults
       to `None`, which will automatically select the best available backend.
