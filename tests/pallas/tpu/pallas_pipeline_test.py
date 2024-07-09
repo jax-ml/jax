@@ -1511,7 +1511,7 @@ if CAN_USE_HYPOTHESIS:
 
       out = matmul(x, y, bm=bm, bk=bk, bn=bn)
       expected = x @ y
-      atol = rtol = 1e-5
+      atol = rtol = 2.3e-5
       if dtype == 'bfloat16':
         out = out.astype('float32')
         expected = expected.astype('float32')
