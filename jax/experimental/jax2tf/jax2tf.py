@@ -2007,7 +2007,7 @@ tf_impl[lax.le_to_p] = handle_boolean_args(partial(_total_order_cond, tf.math.le
 tf_impl[lax.linalg.cholesky_p] = tf.linalg.cholesky
 
 
-def _convert_element_type(operand, *, new_dtype, weak_type=False):
+def _convert_element_type(operand, *, new_dtype, weak_type=False, sharding=None):
   old_dtype = operand.dtype.as_numpy_dtype
   if (dtypes.issubdtype(old_dtype, np.complexfloating) and
       not dtypes.issubdtype(new_dtype, np.complexfloating)):

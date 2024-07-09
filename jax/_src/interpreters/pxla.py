@@ -2237,13 +2237,14 @@ def lower_sharding_computation(
 
   # Device assignment across all inputs, outputs and shardings inside jaxpr
   # should be the same.
-  jaxpr_sharding = list(dispatch.jaxpr_shardings(jaxpr))
+  unique_intermediate_shardings = list(util.stable_unique(
+      dispatch.get_intermediate_shardings(jaxpr)))
   backend, device_assignment = _get_and_check_device_assignment(
       it.chain(
           ((i, MismatchType.ARG_SHARDING, None) for i in util.stable_unique(in_shardings)),
           ((o, MismatchType.OUT_SHARDING, None) for o in util.stable_unique(out_shardings)),
           ((js, MismatchType.SHARDING_INSIDE_COMPUTATION, source_info)
-           for js, source_info in util.stable_unique(jaxpr_sharding))),
+           for js, source_info in unique_intermediate_shardings)),
       devices_from_context)
 
   platforms = lowering_platforms or (backend.platform,)
@@ -2254,14 +2255,15 @@ def lower_sharding_computation(
       devices_from_context or
       len(device_assignment) > 1 or
       any(not is_unspecified(i) for i in in_shardings) or
-      any(not is_unspecified(js) for js, _ in jaxpr_sharding) or
+      any(not is_unspecified(js) for js, _ in unique_intermediate_shardings) or
       any(not is_unspecified(o) for o in out_shardings))
 
   da_object = _create_da_object(tuple(device_assignment))
 
   all_default_mem_kind = are_all_shardings_default_mem_kind(
       da_object,
-      it.chain(in_shardings, out_shardings, [js for js, _ in jaxpr_sharding]))
+      it.chain(in_shardings, out_shardings,
+               [js for js, _ in unique_intermediate_shardings]))
 
   # TODO(yashkatariya): Remove this when XLA can propagate memory kinds or when
   # JAX puts memory kinds in the types of jaxpr.
@@ -2321,7 +2323,8 @@ def lower_sharding_computation(
       shape_poly_state=shape_poly_state,
       all_default_mem_kind=all_default_mem_kind,
       all_args_info=all_args_info,
-      pgle_profiler=pgle_profiler)
+      pgle_profiler=pgle_profiler,
+      intermediate_shardings=[s for s, _ in unique_intermediate_shardings])
 
 
 def _to_logical_sharding(
@@ -2704,20 +2707,21 @@ def _get_out_sharding_from_orig_sharding(
   return out
 
 def maybe_recover_user_shardings(
-    old_shardings, new_shardings, old_avals, new_avals):
+    old_shardings, new_shardings, old_avals, new_avals,
+    intermediate_shardings=None):
   if all(not isinstance(o, sharding_impls.GSPMDSharding) for o in new_shardings):
     return new_shardings
 
-  orig_in_s = None
-  orig_aval = None
-  for oi, aval in safe_zip(old_shardings, old_avals):
-    if type(oi) in _orig_out_sharding_handlers:
-      orig_in_s = oi
-      orig_aval = aval
-      break
-  if orig_in_s is not None:
-    return _get_out_sharding_from_orig_sharding(
-        new_shardings, new_avals, orig_in_s, orig_aval)
+  for oi, o_aval in safe_zip(old_shardings, old_avals):
+    if oi is not None and type(oi) in _orig_out_sharding_handlers:
+      return _get_out_sharding_from_orig_sharding(
+          new_shardings, new_avals, oi, o_aval)
+
+  if intermediate_shardings is not None:
+    for i in intermediate_shardings:
+      if i is not None and type(i) in _orig_out_sharding_handlers:
+        return _get_out_sharding_from_orig_sharding(
+            new_shardings, new_avals, i, None)
 
   return new_shardings
 
@@ -2997,7 +3001,8 @@ class UnloadedMeshExecutable:
                all_default_mem_kind: bool = True,
                all_args_info: AllArgsInfo | None = None,
                compiler_options=None,
-               pgle_profiler: profiler.PGLEProfiler | None = None
+               pgle_profiler: profiler.PGLEProfiler | None = None,
+               intermediate_shardings: Sequence[JSharding] | None = None,
   ) -> MeshExecutable:
     if shape_poly_state is not None and shape_poly_state.uses_dim_vars:
       hlo = mlir.refine_polymorphic_shapes(hlo)
@@ -3054,7 +3059,8 @@ class UnloadedMeshExecutable:
         xla_executable, in_layouts, out_layouts, len(ordered_effects))
 
     out_shardings = maybe_recover_user_shardings(
-        in_shardings, out_shardings, global_in_avals, global_out_avals)
+        in_shardings, out_shardings, global_in_avals, global_out_avals,
+        intermediate_shardings)
 
     out_shardings = finalize_out_shardings(out_shardings, da)
 

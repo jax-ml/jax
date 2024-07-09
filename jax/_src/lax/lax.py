@@ -517,14 +517,16 @@ def convert_element_type(operand: ArrayLike, new_dtype: DTypeLike) -> Array:
   return _convert_element_type(operand, new_dtype, weak_type=False)
 
 def _convert_element_type(operand: ArrayLike, new_dtype: DTypeLike | None = None,
-                          weak_type: bool = False):
+                          weak_type: bool = False,
+                          sharding: Sharding | None = None):
   if hasattr(operand, '__jax_array__'):
     operand = operand.__jax_array__()
 
   if (dtypes.issubdtype(new_dtype, dtypes.extended) or
       dtypes.issubdtype(getattr(operand, 'dtype', None), dtypes.extended)):
-    return convert_element_type_p.bind(operand, new_dtype=new_dtype,
-                                       weak_type=bool(weak_type))
+    return convert_element_type_p.bind(
+        operand, new_dtype=new_dtype, weak_type=bool(weak_type),
+        sharding=sharding)
 
   # Don't canonicalize old_dtype because x64 context might cause
   # un-canonicalized operands to be passed in.
@@ -553,11 +555,13 @@ def _convert_element_type(operand: ArrayLike, new_dtype: DTypeLike | None = None
   if ((old_dtype, old_weak_type) == (new_dtype, weak_type) and
       isinstance(operand, Array) and
       not (isinstance(operand, core.Tracer) and
-           isinstance(core.get_aval(operand), core.ConcreteArray))):
+           isinstance(core.get_aval(operand), core.ConcreteArray)) and
+      (sharding is None or getattr(operand, 'sharding', None) == sharding)):
     return type_cast(Array, operand)
   else:
-    return convert_element_type_p.bind(operand, new_dtype=new_dtype,
-                                       weak_type=bool(weak_type))
+    return convert_element_type_p.bind(
+        operand, new_dtype=new_dtype, weak_type=bool(weak_type),
+        sharding=sharding)
 
 def bitcast_convert_type(operand: ArrayLike, new_dtype: DTypeLike) -> Array:
   """Elementwise bitcast.
@@ -1341,7 +1345,8 @@ def _eye(dtype: DTypeLike, shape: Shape, offset: DimSize) -> Array:
   dtype = dtypes.canonicalize_dtype(dtype)
   bool_eye = eq(add(broadcasted_iota(np.int32, shape, 0), np.int32(offset)),
                 broadcasted_iota(np.int32, shape, 1))
-  return convert_element_type_p.bind(bool_eye, new_dtype=dtype, weak_type=False)
+  return convert_element_type_p.bind(bool_eye, new_dtype=dtype, weak_type=False,
+                                     sharding=None)
 
 def _delta(dtype: DTypeLike, shape: Shape, axes: Sequence[int]) -> Array:
   """This utility function exists for creating Kronecker delta arrays."""
@@ -1351,8 +1356,9 @@ def _delta(dtype: DTypeLike, shape: Shape, axes: Sequence[int]) -> Array:
   iotas = [broadcasted_iota(np.uint32, base_shape, i)
            for i in range(len(base_shape))]
   eyes = [eq(i1, i2) for i1, i2 in zip(iotas[:-1], iotas[1:])]
-  result = convert_element_type_p.bind(_reduce(operator.and_, eyes),
-                                       new_dtype=dtype, weak_type=False)
+  result = convert_element_type_p.bind(
+      _reduce(operator.and_, eyes), new_dtype=dtype, weak_type=False,
+      sharding=None)
   return broadcast_in_dim(result, shape, axes)
 
 def _tri(dtype: DTypeLike, shape: Shape, offset: DimSize) -> Array:
@@ -1362,7 +1368,8 @@ def _tri(dtype: DTypeLike, shape: Shape, offset: DimSize) -> Array:
   bool_tri = ge(add(broadcasted_iota(np.int32, shape, 0),
                     asarray(core.dimension_as_value(offset)).astype(np.int32)),
                 broadcasted_iota(np.int32, shape, 1))
-  return convert_element_type_p.bind(bool_tri, new_dtype=dtype, weak_type=False)
+  return convert_element_type_p.bind(bool_tri, new_dtype=dtype, weak_type=False,
+                                     sharding=None)
 
 def stop_gradient(x: T) -> T:
   """Stops gradient computation.
@@ -2469,10 +2476,12 @@ ad.defjvp_zero(lt_to_p)
 mlir.register_lowering(lt_to_p, partial(_compare_lower_hlo, "LT", True))
 
 
-def _convert_element_type_shape_rule(operand, *, new_dtype, weak_type):
+def _convert_element_type_shape_rule(operand, *, new_dtype, weak_type,
+                                     sharding):
   return operand.shape
 
-def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type):
+def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type,
+                                     sharding):
   if (operand.dtype != new_dtype and
       ((dtypes.issubdtype(operand.dtype, dtypes.extended) and
         not operand.dtype._rules.convert_from(operand.dtype, new_dtype)) or
@@ -2483,10 +2492,12 @@ def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type):
         f"to {dtype_to_string(new_dtype)}")
   return new_dtype
 
-def _convert_element_type_weak_type_rule(operand, *, new_dtype, weak_type):
+def _convert_element_type_weak_type_rule(operand, *, new_dtype, weak_type,
+                                         sharding):
   return weak_type
 
-def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, weak_type):
+def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, weak_type,
+                                         sharding):
   assert ad.is_undefined_primal(operand)
   old_dtype = operand.aval.dtype
   old_weak_type = dtypes.is_weakly_typed(operand)
@@ -2495,16 +2506,17 @@ def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, weak_type):
   elif core.primal_dtype_to_tangent_dtype(old_dtype) == dtypes.float0:
     return [ad_util.Zero(operand.aval.update(dtype=dtypes.float0, weak_type=False))]
   else:
-    return [convert_element_type_p.bind(ct, new_dtype=old_dtype,
-                                        weak_type=old_weak_type)]
+    return [convert_element_type_p.bind(
+        ct, new_dtype=old_dtype, weak_type=old_weak_type, sharding=sharding)]
 
-def _convert_element_type_jvp_rule(tangent, operand , *, new_dtype, weak_type):
+def _convert_element_type_jvp_rule(tangent, operand , *, new_dtype, weak_type,
+                                   sharding):
   if core.primal_dtype_to_tangent_dtype(new_dtype) == dtypes.float0:
     tangent_aval = core.raise_to_shaped(core.get_aval(tangent))
     return ad_util.Zero(tangent_aval.update(dtype=dtypes.float0, weak_type=False))
   else:
     return convert_element_type_p.bind(tangent, new_dtype=new_dtype,
-                                       weak_type=weak_type)
+                                       weak_type=weak_type, sharding=sharding)
 
 def _convert_elt_type_folding_rule(consts, eqn):
   # We constant-fold convert_element_types applied to constants if those
@@ -2544,11 +2556,19 @@ def _convert_elt_type_pp_rule(eqn, context, settings):
   # don't print new_dtype because the output binder shows it, don't print
   # weak_type when false
   params = dict(eqn.params)
-  del params['new_dtype']  # output binder shows it
-  if not params['weak_type']: del params['weak_type']  # don't show trivial case
+  if params['sharding'] is None:
+    del params['sharding']  # don't show trivial case
   return core._pp_eqn(eqn.replace(params=params), context, settings)
 
 convert_element_type_p = Primitive('convert_element_type')
+def _convert_element_type_bind(operand, *, new_dtype, weak_type, sharding):
+  operand = core.Primitive.bind(convert_element_type_p, operand,
+                                new_dtype=new_dtype, weak_type=weak_type,
+                                sharding=sharding)
+  if sharding is not None:
+    operand = jax.lax.with_sharding_constraint(operand, sharding)
+  return operand
+convert_element_type_p.def_custom_bind(_convert_element_type_bind)
 convert_element_type_p.def_impl(partial(dispatch.apply_primitive, convert_element_type_p))
 convert_element_type_p.def_abstract_eval(
     partial(standard_abstract_eval, convert_element_type_p,
@@ -2560,12 +2580,12 @@ batching.defvectorized(convert_element_type_p)
 pe.const_fold_rules[convert_element_type_p] = _convert_elt_type_folding_rule
 pe.forwarding_rules[convert_element_type_p] = _convert_elt_type_fwd_rule
 pe.def_trivial_padding(convert_element_type_p)
-# TODO(mattjj): un-comment the next line (see #9456)
-# core.pp_eqn_rules[convert_element_type_p] = _convert_elt_type_pp_rule
+core.pp_eqn_rules[convert_element_type_p] = _convert_elt_type_pp_rule
 
 def _real_dtype(dtype): return np.finfo(dtype).dtype
 
-def _convert_element_type_lower(ctx, operand, *, new_dtype, weak_type):
+def _convert_element_type_lower(ctx, operand, *, new_dtype, weak_type,
+                                sharding):
   aval_in, = ctx.avals_in
   aval_out, = ctx.avals_out
   if (dtypes.issubdtype(aval_in.dtype, np.complexfloating) and

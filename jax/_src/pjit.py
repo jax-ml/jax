@@ -636,6 +636,7 @@ def _infer_params_impl(
       HashableFunction(res_paths, closure=()),
       IgnoreKey(ji.inline))
   _attr_update(flat_fun, in_type, attr_token, attrs_tracked)
+
   out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
       out_shardings_treedef, out_shardings_leaves, ji.out_layouts_treedef,
       ji.out_layouts_leaves, HashableFunction(out_tree, closure=()),

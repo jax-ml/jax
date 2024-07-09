@@ -1526,7 +1526,7 @@ def _ir_cast(src: ir.Value, dst_type: ir.Type, *, signed: bool) -> ir.Value:
 
 @register_lowering(lax.convert_element_type_p)
 def _convert_element_type_lowering_rule(
-    ctx: LoweringRuleContext, x, *, new_dtype, weak_type
+    ctx: LoweringRuleContext, x, *, new_dtype, weak_type, sharding
 ):
   [x_aval] = ctx.avals_in
   x = _ensure_ir_value(x, x_aval)

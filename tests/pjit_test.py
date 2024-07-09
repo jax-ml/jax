@@ -37,6 +37,7 @@ from jax import dtypes
 from jax import stages
 from jax.errors import JAXTypeError
 from jax import lax
+from jax._src.lax import lax as lax_internal
 from jax.lax import with_sharding_constraint
 from jax._src import prng
 from jax.sharding import PartitionSpec as P, Mesh
@@ -4239,6 +4240,77 @@ class ArrayPjitTest(jtu.JaxTestCase):
       out = jax.device_put(x_s1, s2)
     self.assertArraysEqual(out, np_inp)
     self.assertEqual(out.sharding, s2)
+
+  def test_convert_element_type_sharding(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    inp = np.arange(16).reshape(8, 2)
+
+    out = lax_internal._convert_element_type(
+        inp, new_dtype=np.float32, weak_type=False, sharding=s)
+    self.assertArraysEqual(out, inp.astype('float32'))
+    self.assertEqual(out.dtype, np.float32)
+    self.assertEqual(out.sharding, s)
+
+  def test_jnp_array_sharding(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    inp = np.arange(16).reshape(8, 2)
+
+    out = jnp.array(inp, device=s)
+    self.assertArraysEqual(out, inp)
+    self.assertEqual(out.sharding, s)
+
+  def test_jnp_array_inside_jit_sharding(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    inp = np.arange(16).reshape(8, 2)
+
+    @jax.jit
+    def f():
+      return jnp.array(inp, dtype=np.float32, device=s)
+
+    out = f()
+    print(f.trace().jaxpr)
+    self.assertArraysEqual(out, inp.astype('float32'))
+    self.assertEqual(out.sharding, s)
+    self.assertEqual(out.dtype, np.float32)
+
+    @jax.jit
+    def g(x):
+      return jnp.array(x, dtype=np.float32, device=s)
+
+    out2 = g(inp)
+    self.assertArraysEqual(out2, inp.astype('float32'))
+    self.assertEqual(out2.sharding, s)
+    self.assertEqual(out2.dtype, np.float32)
+
+  def test_jnp_array_reshard_error(self):
+    if jax.device_count() < 2:
+      self.skipTest('Requires >=2 devices')
+    arr = jax.device_put(np.arange(8), jax.devices()[0])
+    with self.assertRaisesRegex(ValueError, "Received incompatible devices.*"):
+      jnp.array(arr, device=jax.devices()[1])
+
+  def test_jnp_array_sharded_array_no_op(self):
+    inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(inp, jax.devices()[0])
+
+    out = lax_internal._convert_element_type(
+        arr, sharding=SingleDeviceSharding(jax.devices()[0]))
+    self.assertArraysEqual(out, inp)
+    self.assertEqual(out.unsafe_buffer_pointer(), arr.unsafe_buffer_pointer())
+
+  def test_wsc_named_sharding_nullary(self):
+    mesh = jtu.create_global_mesh((2,), ('x',))
+    s = NamedSharding(mesh, P())
+
+    @jax.jit
+    def f():
+      return jax.lax.with_sharding_constraint(jnp.arange(8), s)
+
+    out = f()
+    self.assertEqual(out.sharding, s)
 
 
 def spec_regex(s):

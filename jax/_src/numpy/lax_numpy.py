@@ -734,7 +734,7 @@ def transpose(a: ArrayLike, axes: Sequence[int] | None = None) -> Array:
   Args:
     a: input array
     axes: optionally specify the permutation using a length-`a.ndim` sequence of integers
-      ``i`` satisfying ``0 <= i < a.ndim``. Defaults to ``range(a.ndim)[::-1]``, i.e
+      ``i`` satisfying ``0 <= i < a.ndim``. Defaults to ``range(a.ndim)[::-1]``, i.e.
       reverses the order of all axes.
 
   Returns:
@@ -3227,7 +3227,8 @@ deprecations.register("jax-numpy-array-none")
 
 @util.implements(np.array, lax_description=_ARRAY_DOC)
 def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
-          order: str | None = "K", ndmin: int = 0) -> Array:
+          order: str | None = "K", ndmin: int = 0,
+          *, device: xc.Device | Sharding | None = None) -> Array:
   if order is not None and order != "K":
     raise NotImplementedError("Only implemented for order='K'")
 
@@ -3239,10 +3240,12 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
   # whenever x is weak, but avoids introducing weak types with something like
   # array([1, 2, 3])
   weak_type = dtype is None and dtypes.is_weakly_typed(object)
+  sharding = canonicalize_device_to_sharding(device)
 
   # Use device_put to avoid a copy for ndarray inputs.
   if (not copy and isinstance(object, np.ndarray) and
-      (dtype is None or dtype == object.dtype) and (ndmin <= object.ndim)):
+      (dtype is None or dtype == object.dtype) and (ndmin <= object.ndim) and
+      device is None):
     # Keep the output uncommitted.
     return jax.device_put(object)
 
@@ -3326,10 +3329,17 @@ def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
     raise TypeError(f"Unexpected input type for array: {type(object)}")
 
   out_array: Array = lax_internal._convert_element_type(
-      out, dtype, weak_type=weak_type)
+      out, dtype, weak_type=weak_type, sharding=sharding)
   if ndmin > ndim(out_array):
     out_array = lax.expand_dims(out_array, range(ndmin - ndim(out_array)))
   return out_array
+
+
+def canonicalize_device_to_sharding(device: xc.Device | Sharding | None
+                                    ) -> Sharding | None:
+  if isinstance(device, xc.Device):
+    return SingleDeviceSharding(device)
+  return device
 
 
 def _convert_to_array_if_dtype_fails(x: ArrayLike) -> ArrayLike:

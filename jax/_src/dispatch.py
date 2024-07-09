@@ -220,7 +220,7 @@ class SourceInfo(NamedTuple):
   eqn_name: str
 
 
-def jaxpr_shardings(
+def get_intermediate_shardings(
     jaxpr: core.Jaxpr,
 ) -> Iterator[tuple[Sharding, SourceInfo]]:
   from jax._src import pjit
@@ -246,7 +246,7 @@ def jaxpr_shardings(
       yield from ((s, source_info) for s in eqn.params['devices']
                   if isinstance(s, Sharding) and s.memory_kind is not None)
   for subjaxpr in core.subjaxprs(jaxpr):
-    yield from jaxpr_shardings(subjaxpr)
+    yield from get_intermediate_shardings(subjaxpr)
 
 
 def jaxpr_has_bints(jaxpr: core.Jaxpr) -> bool:

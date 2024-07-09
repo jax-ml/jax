@@ -1344,9 +1344,10 @@ def _convert_helper(x, *, to_dtype):
   raise NotImplementedError(f"Unsupported cast: {from_dtype} -> {to_dtype}")
 
 def _convert_element_type_lowering_rule(
-    ctx: LoweringRuleContext, x, *, new_dtype, weak_type
+    ctx: LoweringRuleContext, x, *, new_dtype, weak_type, sharding
 ):
   del weak_type
+  del sharding
   out_aval = ctx.avals_out[0]
   old_dtype = ctx.avals_in[0].dtype
   out_type = aval_to_ir_type(out_aval)
