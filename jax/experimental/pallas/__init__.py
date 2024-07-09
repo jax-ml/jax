@@ -50,6 +50,10 @@ from jax._src.state.indexing import dslice
 from jax._src.state.indexing import Slice
 from jax._src.state.primitives import broadcast_to
 
+from jax._src.deprecations import register as _register_deprecation
+_register_deprecation("pallas-block-spec-order")
+del _register_deprecation
+
 # Import tpu_custom_call for its flag definitions, needed for cross-platform lowering
 try:
   from jax._src import tpu_custom_call  # pytype: disable=import-error

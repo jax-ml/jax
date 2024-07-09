@@ -613,6 +613,7 @@ pytype_strict_library(
         "//visibility:public",
     ],
     deps = [
+        ":deprecations",
         ":jax",
         ":source_info_util",
         "//jax/_src/pallas",

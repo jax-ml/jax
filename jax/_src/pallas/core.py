@@ -27,6 +27,7 @@ import warnings
 import jax
 from jax._src import api_util
 from jax._src import core as jax_core
+from jax._src import deprecations
 from jax._src import linear_util as lu
 from jax._src import state
 from jax._src import tree_util
@@ -192,13 +193,15 @@ class BlockSpec:
     if callable(block_shape):
       # TODO(slebedev): Remove this code path and update the signature of
       # __init__ after October 1, 2024.
-      warnings.warn(
+      message = (
           "BlockSpec now expects ``block_shape`` to be passed before"
           " ``index_map``. Update your code by swapping the order of these"
           " arguments. For example, ``pl.BlockSpace(lambda i: i, (42,))``"
-          " should be written as ``pl.BlockSpec((42,), lambda i: i)``.",
-          DeprecationWarning,
+          " should be written as ``pl.BlockSpec((42,), lambda i: i)``."
       )
+      if deprecations.is_accelerated("pallas-block-spec-order"):
+        raise TypeError(message)
+      warnings.warn(message, DeprecationWarning)
       index_map, block_shape = block_shape, index_map
 
     self.block_shape = block_shape
