@@ -286,6 +286,9 @@ def _lower_tpu_kernel(
       pipeline.run(module.operation)
       dump_mlir(module, "post-hlo-conversion")
 
+    # Note: we don't pass the TpuTilingFlags here, since we don't know the
+    # tiling decisions made by the compiler / what flags are enabled at this
+    # point, so we assume everything can be tiled up to default tiling.
     pipeline = [
         f"func.func(tpu-infer-memref-layout{{hardware-generation={hardware_generation}}})"
     ]

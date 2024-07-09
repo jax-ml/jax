@@ -48,10 +48,16 @@ class TPUDialect;
 namespace mlir {
 namespace tpu {
 
+struct TpuTilingFlags {
+  bool use_x16_large_second_minor = false;
+  bool use_x8_large_second_minor = false;
+  bool use_x4_large_second_minor = false;
+};
+
 std::pair<bool, bool> mightCommunicateBetweenChips(Operation* op);
 
 std::unique_ptr<OperationPass<func::FuncOp>> createInferMemRefLayoutPass(
-    int hardware_generation = -1);
+    int hardware_generation = -1, const TpuTilingFlags &tpu_tiling_flags = {});
 
 std::unique_ptr<OperationPass<func::FuncOp>> createCanonicalizeMosaicPass();
 

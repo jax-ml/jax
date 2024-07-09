@@ -679,11 +679,12 @@ def InferMemRefLayoutPass : Pass<"tpu-infer-memref-layout", "::mlir::func::FuncO
     "::mlir::func::FuncDialect",
     "::mlir::memref::MemRefDialect",
   ];
-  let constructor = "::mlir::tpu::createInferMemRefLayoutPass(-1)";
+  let constructor = "::mlir::tpu::createInferMemRefLayoutPass()";
   let options = [
     // If hardware_generation is not set, the default value of -1 will crash on
     // runOnOperation.
     Option<"hardware_generation", "hardware-generation", "int", /*default=*/"-1", "">,
+    Option<"tpu_tiling_flags", "tpu-tiling-flags", "::mlir::tpu::TpuTilingFlags", /*default=*/"::mlir::tpu::TpuTilingFlags{}", "">,
   ];
 }
 

@@ -1805,6 +1805,20 @@ class VectorLayoutInferer {
         }
         // Fall through.
       }
+      if (auto store = dyn_cast<vector::StoreOp>(operand.getOwner())) {
+        auto maybe_tiling = verifyMemoryTiling(
+            store, getMemRefLayout(store.getBase()).getTiles(),
+            store.getMemRefType().getRank(),
+            store.getMemRefType().getElementTypeBitWidth());
+        if (maybe_tiling) {
+          auto tiling = *maybe_tiling;
+          if (tiling ==
+              nativeTiling(store.getMemRefType().getElementTypeBitWidth())) {
+            continue;
+          }
+        }
+        // Fall through.
+      }
       return false;
     }
     return true;
