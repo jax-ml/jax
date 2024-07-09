@@ -226,7 +226,7 @@ def structure(tree: Any,
 
 
 def transpose(outer_treedef: tree_util.PyTreeDef,
-              inner_treedef: tree_util.PyTreeDef,
+              inner_treedef: tree_util.PyTreeDef | None,
               pytree_to_transpose: Any) -> Any:
   """Transform a tree having tree structure (outer, inner) into one having structure (inner, outer).
 
