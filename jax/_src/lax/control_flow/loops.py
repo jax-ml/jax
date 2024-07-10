@@ -1213,9 +1213,9 @@ def scan_bind(*args, **params):
     in_atoms = [core.Var('', a) for a in avals]  # dummies
     _scan_typecheck(True, *in_atoms, **params)
     core.check_jaxpr(params['jaxpr'].jaxpr)
-  return core.AxisPrimitive.bind(scan_p, *args, **params)
+  return core.Primitive.bind(scan_p, *args, **params)
 
-scan_p = core.AxisPrimitive("scan")
+scan_p = core.Primitive("scan")
 scan_p.multiple_results = True
 scan_p.def_custom_bind(scan_bind)
 scan_p.def_impl(partial(dispatch.apply_primitive, scan_p))
@@ -1892,7 +1892,7 @@ def _while_discharge_rule(in_avals, out_avals, *args, cond_jaxpr, body_jaxpr,
       *[None] * num_carry]
   return invals_out, carry_out
 
-while_p = core.AxisPrimitive('while')
+while_p = core.Primitive('while')
 while_p.multiple_results = True
 while_p.def_impl(partial(dispatch.apply_primitive, while_p))
 while_p.def_effectful_abstract_eval(_while_loop_abstract_eval)

@@ -376,9 +376,10 @@ class BatchTag: pass
 
 class BatchTrace(Trace):
 
-  def __init__(self, parent_trace, tag, axis_name, spmd_axis_name = None):
+  def __init__(self, parent_trace, tag, axis_name, axis_size, spmd_axis_name = None):
     self.parent_trace = parent_trace
     self.axis_name = axis_name
+    self.axis_size = axis_size
     self.spmd_axis_name = spmd_axis_name
     self.tag = tag
 
@@ -388,54 +389,28 @@ class BatchTrace(Trace):
     else:
       return val, not_mapped
 
-  def get_primitive_batcher(self, primitive, frame):
-    if primitive in primitive_batchers:
-      return primitive_batchers[primitive]
-    elif self.spmd_axis_name is not None and primitive in spmd_axis_primitive_batchers:
-      return partial(spmd_axis_primitive_batchers[primitive],
-                     self.spmd_axis_name, frame.size, frame.name,
-                     frame.main_trace.trace_type)
-    elif primitive in axis_primitive_batchers:
-      return self.get_axis_primitive_batcher(primitive, frame)
-    msg = "Batching rule for '{}' not implemented"
-    raise NotImplementedError(msg.format(primitive))
-
-  def get_axis_primitive_batcher(self, primitive, frame):
-    return partial(axis_primitive_batchers[primitive],
-        frame.size, frame.name, frame.main_trace.trace_type)
-
-  def get_frame(self, vals, dims) -> core.AxisEnvFrame:
-    if any(d is not not_mapped for d in dims):
-      sizes = (x.shape[d] if type(d) is int else d.size
-               for x, d in zip(vals, dims) if d is not not_mapped)
-      axis_size, = core.dedup_referents(sizes)
+  def apply_primitive_batcher(self, p, vals, dims, params):
+    trace_type = None
+    if p in primitive_batchers:
+      return primitive_batchers[p](vals, dims, **params)
+    elif self.spmd_axis_name is not None and p in spmd_axis_primitive_batchers:
+      return spmd_axis_primitive_batchers[p](
+        self.spmd_axis_name, self.axis_size, self.axis_name, trace_type, vals, dims, **params)
+    elif p in axis_primitive_batchers:
+      return axis_primitive_batchers[p](
+        self.axis_size, self.axis_name, trace_type, vals, dims, **params)
     else:
-      axis_size = None  # can't be inferred from data
-    if self.axis_name is core.no_axis_name:
-      assert axis_size is not None  # must be inferable from data
-      return core.AxisEnvFrame(self.axis_name, axis_size, self.tag)
-    frame = core.axis_frame(self.axis_name, self.main)
-    assert axis_size is None or axis_size == frame.size, (axis_size, frame.size)
-    assert frame.main_trace is self.main
-    return frame
+      raise NotImplementedError("Batching rule for '{}' not implemented".format(p))
 
   def process_primitive(self, primitive, tracers, params):
     if config.dynamic_shapes.value:
       primitive.abstract_eval(*(t.aval for t in tracers), **params)
     vals_in, dims_in = unzip2(map(self.to_batch_info, tracers))
-    is_axis_primitive = primitive in axis_primitive_batchers
-    used_names = core.used_axis_names(primitive, params)
-    if is_axis_primitive and _main_trace_for_axis_names(self.main, used_names):
-      frame = self.get_frame(vals_in, dims_in)
-      batcher_primitive = self.get_axis_primitive_batcher(primitive, frame)
-      val_out, dim_out = batcher_primitive(vals_in, dims_in, **params)
-    elif all(bdim is not_mapped for bdim in dims_in):
-      return primitive.bind(*vals_in, **params)
-    else:
-      frame = self.get_frame(vals_in, dims_in)
-      batched_primitive = self.get_primitive_batcher(primitive, frame)
-      with core.set_current_trace(self.parent_trace):
-        val_out, dim_out = batched_primitive(vals_in, dims_in, **params)
+    if all(bdim is not_mapped for bdim in dims_in) and primitive in primitive_batchers:
+      # no-op shortcut
+      return primitive.bind_with_trace(self.parent, *vals_in, **params)
+    with core.set_current_trace(self.parent_trace):
+      val_out, dim_out = self.apply_primitive_batcher(primitive, vals_in, dims_in, params)
     src = source_info_util.current()
     if primitive.multiple_results:
       return [BatchTracer(self, x, d, src) for x, d in zip(val_out, dim_out)]
@@ -632,7 +607,7 @@ def _batch_outer(axis_name, axis_size, in_dims, _main_type, spmd_axis_name,
 @lu.transformation
 def _batch_inner(axis_size, out_dim_dests, parent_trace, tag, axis_name, spmd_axis_name, in_dims, *in_vals):
   in_dims = in_dims() if callable(in_dims) else in_dims
-  trace = BatchTrace(parent_trace, tag, axis_name, spmd_axis_name)
+  trace = BatchTrace(parent_trace, tag, axis_name, axis_size, spmd_axis_name)
   idx = memoize(lambda: BatchTracer(trace, make_iota(axis_size), 0,
                                     source_info_util.current()))
   in_tracers = map(partial(to_elt, trace, idx), in_vals, in_dims)
@@ -843,14 +818,14 @@ def _batch_jaxpr_axes(closed_jaxpr, axis_size, in_axes, out_axes_dest,
   return core.ClosedJaxpr(jaxpr_out, consts), out_batched()
 
 @lu.transformation_with_aux
-def _batch_jaxpr_inner(axis_size, main, in_axes, *in_vals):
-  trace = main.with_cur_sublevel()
+def _batch_jaxpr_inner(axis_size, parent_trace, tag, axis_name, spmd_axis_name, in_axes, *in_vals):
+  trace = BatchTrace(parent_trace, tag, axis_name, axis_size, spmd_axis_name)
   _, in_axes = resolve_ragged_axes(in_vals, in_axes)
   in_tracers = [BatchTracer(trace, val, dim) if dim is not None else val
                 for val, dim in zip(in_vals, in_axes)]
-  outs = yield in_tracers, {}
-  out_tracers = map(trace.full_raise, outs)
-  out_vals, out_axes = unzip2((t.val, t.batch_dim) for t in out_tracers)
+  with core.set_current_trace(trace):
+    outs = yield in_tracers, {}
+  out_vals, out_axes = unzip2(map(trace.to_batch_info, outs))
   new_out_axes = indirectify_ragged_axes_against_inputs_outputs(
       out_axes, in_vals, out_vals)
   yield out_vals, new_out_axes
@@ -880,11 +855,9 @@ def _batch_jaxpr_outer(axis_name, spmd_axis_name, axis_size, in_dims, main_type,
   in_dims = in_dims() if callable(in_dims) else in_dims
   in_dims = [canonicalize_axis(ax, np.ndim(x)) if isinstance(ax, int)
              else ax for x, ax in unsafe_zip(in_vals, in_dims)]
-  with core.new_main(main_type, axis_name=axis_name,
-                     spmd_axis_name=spmd_axis_name) as main:
-    with core.extend_axis_env(axis_name, axis_size, main):
-      out_vals = yield (main, in_dims, *in_vals), {}
-      del main
+  parent_trace = core.find_cur_trace()
+  tag = BatchTag()
+  out_vals = yield (parent_trace, tag, axis_name, spmd_axis_name, in_dims, *in_vals), {}
   yield out_vals
 
 def _merge_bdims(x, y):

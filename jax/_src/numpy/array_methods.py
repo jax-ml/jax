@@ -313,7 +313,6 @@ def _compress_method(a: ArrayLike, condition: ArrayLike,
                             size=size, fill_value=fill_value)
 
 
-@core.stash_axis_env()
 @partial(jax.jit, static_argnums=(1,2,3))
 def _multi_slice(arr: ArrayLike,
                  start_indices: tuple[tuple[int, ...]],

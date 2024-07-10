@@ -805,9 +805,9 @@ def cond_bind(*args, branches):
     _cond_typecheck(True, *in_atoms, branches=branches)
     for jaxpr in branches:
       core.check_jaxpr(jaxpr.jaxpr)
-  return core.AxisPrimitive.bind(cond_p, *args, branches=branches)
+  return core.Primitive.bind(cond_p, *args, branches=branches)
 
-cond_p = core.AxisPrimitive('cond')
+cond_p = core.Primitive('cond')
 cond_p.multiple_results = True
 cond_p.def_impl(partial(dispatch.apply_primitive, cond_p))
 cond_p.def_effectful_abstract_eval(_cond_abstract_eval)
@@ -819,7 +819,6 @@ batching.spmd_axis_primitive_batchers[cond_p] = _cond_batching_rule
 batching.axis_primitive_batchers[cond_p] = partial(_cond_batching_rule, None)
 xla.register_initial_style_primitive(cond_p)
 core.custom_typechecks[cond_p] = partial(_cond_typecheck, False)
-core.axis_substitution_rules[cond_p] = _cond_axis_substitution
 pe.partial_eval_jaxpr_custom_rules[cond_p] = _cond_partial_eval_custom
 pe.dce_rules[cond_p] = _cond_dce_rule
 

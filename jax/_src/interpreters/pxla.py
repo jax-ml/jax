@@ -1366,21 +1366,6 @@ ad.call_transpose_param_updaters[xla_pmap_p] = _xla_call_transpose_update_params
 
 ad.primitive_transposes[xla_pmap_p] = partial(ad.map_transpose, xla_pmap_p)
 
-def _pmap_axis_subst(params, subst, traverse):
-  if 'call_jaxpr' not in params:
-    return params
-  if not traverse:
-    return params
-  def shadowed_subst(name):
-    return (name,) if name in params['axis_name'] else subst(name)
-  with maybe_extend_axis_env(params['axis_name'],
-                             params['global_axis_size'], None):
-    new_jaxpr = core.subst_axis_names_jaxpr(params['call_jaxpr'],
-                                            shadowed_subst)
-  return dict(params, call_jaxpr=new_jaxpr)
-core.axis_substitution_rules[xla_pmap_p] = _pmap_axis_subst
-
-
 def _unravel_index_hlo(axis_env):
   div = mlir.ir_constant(
       np.array(axis_env.nreps // math.prod(axis_env.sizes), np.uint32))

@@ -866,7 +866,7 @@ def _custom_vjp_call_jaxpr_abstract_eval(*_, fun_jaxpr, **__):
         f'Effects not supported in `custom_vjp`: {disallowed_effects}')
   return fun_jaxpr.out_avals, fun_jaxpr.effects
 
-custom_vjp_call_jaxpr_p = core.AxisPrimitive('custom_vjp_call_jaxpr')
+custom_vjp_call_jaxpr_p = core.Primitive('custom_vjp_call_jaxpr')
 custom_vjp_call_jaxpr_p.multiple_results = True
 custom_vjp_call_jaxpr_p.def_impl(_custom_vjp_call_jaxpr_impl)
 custom_vjp_call_jaxpr_p.def_effectful_abstract_eval(_custom_vjp_call_jaxpr_abstract_eval)

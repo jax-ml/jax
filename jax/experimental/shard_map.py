@@ -922,7 +922,7 @@ eager_rules[dispatch.device_put_p] = _device_put_eager_rule
 # New primitives for efficient transposition
 
 # psum2_p is like psum_p except has a different transpose, so mostly copied:
-psum2_p = core.AxisPrimitive('psum2')
+psum2_p = core.Primitive('psum2')
 psum2_p.multiple_results = True
 psum2_p.def_impl(lax_parallel.psum_p.impl)
 psum2_p.def_effectful_abstract_eval(lax_parallel.psum_p.abstract_eval)
@@ -931,8 +931,6 @@ batching.primitive_batchers[psum2_p] = partial(lax_parallel._reduction_batcher, 
 batching.axis_primitive_batchers[psum2_p] = \
   partial(lax_parallel._batched_reduction_collective, psum2_p,
           lambda v, axis_size: axis_size * v)
-core.axis_substitution_rules[psum2_p] = \
-    partial(lax_parallel._subst_all_names_in_param, 'axes')
 def _psum2_transpose_rule(cts, *args, axes, axis_index_groups):
   del args
   return pbroadcast_p.bind(*cts, axes=axes, axis_index_groups=axis_index_groups)
@@ -944,7 +942,7 @@ def pbroadcast(x, axis_name):
   xs, treedef = tree_flatten(x)
   ys = pbroadcast_p.bind(*xs, axes=axes, axis_index_groups=None)
   return tree_unflatten(treedef, ys)
-pbroadcast_p = core.AxisPrimitive('pbroadcast')
+pbroadcast_p = core.Primitive('pbroadcast')
 pbroadcast_p.multiple_results = True
 pbroadcast_p.def_impl(lambda *args, axes, axis_index_groups: args)
 pbroadcast_p.def_abstract_eval(lambda *args, axes, axis_index_groups: args)
@@ -959,8 +957,6 @@ def _pbroadcast_axis_batcher(size, name, trace_type, vals_in, dims_in, *, axes,
                              groups):
   raise NotImplementedError  # vmap with axis name involved in this primitive
 batching.axis_primitive_batchers[pbroadcast_p] = _pbroadcast_axis_batcher
-core.axis_substitution_rules[pbroadcast_p] = \
-    partial(lax_parallel._subst_all_names_in_param, 'axes')
 ad.deflinear2(pbroadcast_p,
               lambda cts, *_, axes, axis_index_groups:
               psum2_p.bind(*cts, axes=axes, axis_index_groups=axis_index_groups))
@@ -1557,7 +1553,6 @@ def _shard_map_axis_subst(params, subst, traverse):
   with core.extend_axis_env_nd(params['mesh'].shape.items()):
     new_jaxpr = core.subst_axis_names_jaxpr(params['jaxpr'], shadowed_subst)
   return dict(params, jaxpr=new_jaxpr)
-core.axis_substitution_rules[shard_map_p] = _shard_map_axis_subst
 
 # Remat
 

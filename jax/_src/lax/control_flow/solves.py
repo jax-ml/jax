@@ -457,7 +457,7 @@ def _linear_solve_batching_rule(spmd_axis_name, axis_size, axis_name, main_type,
   return outs, out_dims
 
 
-linear_solve_p = core.AxisPrimitive('custom_linear_solve')
+linear_solve_p = core.Primitive('custom_linear_solve')
 linear_solve_p.multiple_results = True
 linear_solve_p.def_impl(_custom_linear_solve_impl)
 linear_solve_p.def_abstract_eval(_linear_solve_abstract_eval)
