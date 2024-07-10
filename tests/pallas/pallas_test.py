@@ -299,7 +299,7 @@ class PallasCallTest(PallasBaseTest):
     def kernel(o_ref):
       nonlocal o_ref_shape
       o_ref_shape = o_ref.shape
-      o_ref[...] = jnp.full(o_ref.shape, 42)
+      o_ref[...] = jnp.full(o_ref.shape, 42, dtype=np.int32)
 
     pids = self.pallas_call(kernel,
                             jax.ShapeDtypeStruct((8,), dtype=np.int32))()
