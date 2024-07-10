@@ -17,14 +17,14 @@ limitations under the License.
 
 #include <cstdint>
 #include <functional>
-#include <string>
 #include <string_view>
 
 #include "absl/algorithm/container.h"
 #include "absl/status/status.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
+#include "jaxlib/gpu/vendor.h"
+#include "jaxlib/ffi_helpers.h"
 #include "jaxlib/kernel_helpers.h"
-#include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
 #include "xla/service/custom_call_status.h"
 
@@ -70,10 +70,7 @@ ffi::Error ThreeFry2x32Impl(gpuStream_t stream,
   LaunchThreeFry2x32KernelFfi(stream, n, keys0.typed_data(), keys1.typed_data(),
                               data0.typed_data(), data1.typed_data(),
                               out0->typed_data(), out1->typed_data());
-  if (auto status = JAX_AS_STATUS(gpuGetLastError()); !status.ok()) {
-    return ffi::Error(static_cast<XLA_FFI_Error_Code>(status.code()),
-                      std::string(status.message()));
-  }
+  FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuGetLastError()));
   return ffi::Error::Success();
 }
 }  // namespace

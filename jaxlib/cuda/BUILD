@@ -343,6 +343,7 @@ cc_library(
         ":cuda_gpu_kernel_helpers",
         ":cuda_prng_kernels_impl",
         ":cuda_vendor",
+        "//jaxlib:ffi_helpers",
         "//jaxlib:kernel_helpers",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",

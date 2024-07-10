@@ -128,6 +128,9 @@ cc_library(
     hdrs = ["ffi_helpers.h"],
     features = ["-use_header_modules"],
     deps = [
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/ffi/api:ffi",
+        "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",

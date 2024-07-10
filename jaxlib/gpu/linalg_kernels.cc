@@ -30,7 +30,6 @@ limitations under the License.
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_helpers.h"
-#include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
 #include "xla/service/custom_call_status.h"
 
@@ -71,13 +70,8 @@ ffi::Error LuPivotsToPermutationImpl(
     return ffi::Error(ffi::ErrorCode::kInvalidArgument,
                       "pivots must have at least one dimension");
   }
-  auto maybe_pivot_size = MaybeCastNoOverflow<std::int32_t>(dims.back());
-  if (!maybe_pivot_size.ok()) {
-    return ffi::Error(
-        static_cast<XLA_FFI_Error_Code>(maybe_pivot_size.status().code()),
-        std::string(maybe_pivot_size.status().message()));
-  }
-  std::int32_t pivot_size = maybe_pivot_size.value();
+  FFI_ASSIGN_OR_RETURN(std::int32_t pivot_size,
+                       MaybeCastNoOverflow<std::int32_t>(dims.back()));
   std::int64_t batch_size = 1;
   if (dims.size() >= 2) {
     batch_size =
@@ -86,10 +80,7 @@ ffi::Error LuPivotsToPermutationImpl(
   LaunchLuPivotsToPermutationKernel(stream, batch_size, pivot_size,
                                     permutation_size, pivots.typed_data(),
                                     permutation->typed_data());
-  if (auto status = JAX_AS_STATUS(gpuGetLastError()); !status.ok()) {
-    return ffi::Error(static_cast<XLA_FFI_Error_Code>(status.code()),
-                      std::string(status.message()));
-  }
+  FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuGetLastError()));
   return ffi::Error::Success();
 }
 }  // namespace
