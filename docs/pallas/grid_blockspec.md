@@ -33,7 +33,10 @@ for i in range(n):
 This generalizes to any tuple of integers (a length `d` grid will correspond
 to `d` nested loops).
 The kernel is executed as many times
-as `prod(grid)`. Each of these invocations is referred to as a "program".
+as `prod(grid)`.
+The default grid value `None` stands for `()`, and results in one
+kernel invocation.
+Each of these invocations is referred to as a "program".
 To access which program (i.e. which element of the grid) the kernel is currently
 executing, we use {func}`jax.experimental.pallas.program_id`.
 For example, for invocation `(1, 2)`, `program_id(axis=0)` returns `1` and
@@ -231,5 +234,49 @@ See [the Pallas TPU documentation](https://jax.readthedocs.io/en/latest/pallas/t
  [209 209 209 219 219 219]
  [309 309 309 319 319 319]
  [309 309 309 319 319 319]]
+
+```
+
+A `None` value appearing as a dimension value in the `block_shape` behaves
+as the value `1`, except that the corresponding
+block axis is squeezed. In the example below, observe that the
+shape of the `o_ref` is (2,) when the block shape was specified as
+`(None, 2)` (the leading dimension was squeezed).
+
+```python
+>>> def kernel(o_ref):
+...   assert o_ref.shape == (2,)
+...   o_ref[...] = jnp.full((2,), 10 * pl.program_id(1) + pl.program_id(0))
+>>> pl.pallas_call(kernel,
+...                jax.ShapeDtypeStruct((3, 4), dtype=np.int32),
+...                out_specs=pl.BlockSpec((None, 2), lambda i, j: (i, j)),
+...                grid=(3, 2), interpret=True)()
+Array([[ 0,  0, 10, 10],
+       [ 1,  1, 11, 11],
+       [ 2,  2, 12, 12]], dtype=int32)
+
+```
+
+When we construct a `BlockSpec` we can use the value `None` for the
+`block_shape` parameter, in which case the shape of the overall array
+is used as `block_shape`.
+And if we use the value `None` for the `index_map` parameter
+then a default index map function that returns a tuple of zeros is
+used: `index_map=lambda *invocation_indices: (0,) * len(block_shape)`.
+
+```python
+>>> show_invocations(x_shape=(4, 4), block_shape=None, grid=(2, 3),
+...                  out_index_map=None)
+[[12 12 12 12]
+ [12 12 12 12]
+ [12 12 12 12]
+ [12 12 12 12]]
+
+>>> show_invocations(x_shape=(4, 4), block_shape=(4, 4), grid=(2, 3),
+...                  out_index_map=None)
+[[12 12 12 12]
+ [12 12 12 12]
+ [12 12 12 12]
+ [12 12 12 12]]
 
 ```

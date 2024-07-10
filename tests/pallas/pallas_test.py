@@ -253,6 +253,114 @@ class PallasCallTest(PallasBaseTest):
     # TODO(necula): we normalize out_shape to a tuple, we shouldn't.
     self.assertIsInstance(res, tuple)
 
+  @jtu.skip_on_devices("gpu")  # TODO: RET_CHECK failure
+  def test_block_spec_with_padding(self):
+    def f(*, shape, block_shape):
+      def kernel(o1_ref):
+        assert o1_ref.shape == block_shape
+        o1_ref[...] = jnp.full(o1_ref.shape, pl.program_id(0))
+
+      return self.pallas_call(kernel,
+                              jax.ShapeDtypeStruct(shape, dtype=np.int32),
+                              grid=((shape[0] + block_shape[0] - 1) // block_shape[0],),
+                              out_specs=pl.BlockSpec(block_shape, lambda i: i))()
+    # No padding
+    pids = f(shape=(8,), block_shape=(2,))
+    self.assertAllClose(pids,
+                        np.array([0, 0, 1, 1, 2, 2, 3, 3], dtype=np.int32))
+    # Pad the last block
+    pids = f(shape=(8,), block_shape=(3,))
+    self.assertAllClose(pids,
+                        np.array([0, 0, 0, 1, 1, 1, 2, 2], dtype=np.int32))
+    # Works even if the shape is smaller than 1 block
+    pids = f(shape=(3,), block_shape=(8,))
+    self.assertAllClose(pids,
+                        np.array([0, 0, 0], dtype=np.int32))
+
+  def test_block_spec_mapped_dimension(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((4,), jnp.float32),
+        in_specs=[
+            pl.BlockSpec((None, 4), lambda _: (0, 0)),
+            pl.BlockSpec((None, 4), lambda _: (1, 0)),
+        ],
+        grid=1,
+    )
+    def add_vectors(x_ref, y_ref, o_ref):
+      o_ref[:] = x_ref[:] + y_ref[:]
+    xy = jnp.arange(8., dtype=np.float32).reshape((2, 4))
+    out = add_vectors(xy, xy)
+    out_ref = xy[0] + xy[1]
+    np.testing.assert_allclose(out, out_ref)
+
+  def test_pallas_call_no_grid(self):
+    o_ref_shape = None
+    def kernel(o_ref):
+      nonlocal o_ref_shape
+      o_ref_shape = o_ref.shape
+      o_ref[...] = jnp.full(o_ref.shape, 42)
+
+    pids = self.pallas_call(kernel,
+                            jax.ShapeDtypeStruct((8,), dtype=np.int32))()
+    self.assertAllClose(pids, np.array([42] * 8, dtype=np.int32))
+    self.assertEqual(o_ref_shape, (8,))
+
+  def test_pallas_call_no_block_spec(self):
+    o_ref_shape = None
+    def kernel(o_ref):
+      nonlocal o_ref_shape
+      o_ref_shape = o_ref.shape
+      o_ref[...] = jnp.full(o_ref.shape, pl.program_id(0))
+
+    pids = self.pallas_call(kernel,
+                            jax.ShapeDtypeStruct((8,), dtype=np.int32),
+                            grid=(1,))()
+    self.assertEqual(o_ref_shape, (8,))
+    self.assertAllClose(pids, np.array([0] * 8, dtype=np.int32))
+
+  def test_block_spec_no_block_shape_and_no_index_map(self):
+    o_ref_shape = None
+    def kernel(o_ref):
+      nonlocal o_ref_shape
+      o_ref_shape = o_ref.shape
+      o_ref[...] = jnp.full(o_ref.shape, pl.program_id(0))
+
+    pids = self.pallas_call(kernel,
+                            jax.ShapeDtypeStruct((8,), dtype=np.int32),
+                            out_specs=pl.BlockSpec(),
+                            grid=(1,))()
+    self.assertEqual(o_ref_shape, (8,))
+    self.assertAllClose(pids, np.array([0] * 8, dtype=np.int32))
+
+  def test_block_spec_no_block_shape(self):
+    o_ref_shape = None
+    def kernel(o_ref):
+      nonlocal o_ref_shape
+      o_ref_shape = o_ref.shape
+      o_ref[...] = jnp.full(o_ref.shape, pl.program_id(0))
+
+    pids = self.pallas_call(kernel,
+                            jax.ShapeDtypeStruct((8,), dtype=np.int32),
+                            out_specs=pl.BlockSpec(None, lambda i: i),
+                            grid=(1,))()
+    self.assertEqual(o_ref_shape, (8,))
+    self.assertAllClose(pids, np.array([0] * 8, dtype=np.int32))
+
+  def test_block_spec_no_index_map(self):
+    o_ref_shape = None
+    def kernel(o_ref):
+      nonlocal o_ref_shape
+      o_ref_shape = o_ref.shape
+      o_ref[...] = jnp.full(o_ref.shape, pl.program_id(0))
+
+    pids = self.pallas_call(kernel,
+                            jax.ShapeDtypeStruct((8,), dtype=np.int32),
+                            out_specs=pl.BlockSpec((4,)),
+                            grid=(1,))()
+    self.assertEqual(o_ref_shape, (4,))
+    self.assertAllClose(pids[0:4], np.array([0] * 4, dtype=np.int32))
+
   def test_hoisted_consts(self):
     # See https://github.com/google/jax/issues/21557.
     x = jnp.zeros(32)
@@ -440,50 +548,6 @@ class PallasCallTest(PallasBaseTest):
     self.assertEqual(f(x), 2.)
     self.assertEqual(trace_count, 1)
 
-  def test_custom_jvp_call(self):
-    @functools.partial(jax.custom_jvp, nondiff_argnums=(1,))
-    def softmax(x, axis=-1):
-      unnormalized = jnp.exp(x - jnp.max(x, axis, keepdims=True))
-      return unnormalized / jnp.sum(unnormalized, axis, keepdims=True)
-
-    @softmax.defjvp
-    def softmax_jvp(axis, primals, tangents):
-      (x,), (x_dot,) = primals, tangents
-      y = softmax(x, axis)
-      return y, y * (x_dot - (y * x_dot).sum(axis, keepdims=True))
-
-    m, n = 16, 32
-    x = random.normal(random.key(0), (m, n))
-
-    @functools.partial(self.pallas_call, out_shape=x, grid=1)
-    def softmax_kernel(x_ref, y_ref):
-      y_ref[:] = softmax(x_ref[:])
-
-    np.testing.assert_allclose(softmax_kernel(x), jax.nn.softmax(x), atol=1e-7)
-
-  @jtu.skip_on_devices("gpu")  # TODO: RET_CHECK failure
-  def test_block_spec_with_padding(self):
-    def f(*, shape, block_shape):
-      def kernel(o1_ref):
-        assert o1_ref.shape == block_shape
-        o1_ref[...] = jnp.full(o1_ref.shape, pl.program_id(0))
-
-      return self.pallas_call(kernel,
-                              jax.ShapeDtypeStruct(shape, dtype=np.int32),
-                              grid=((shape[0] + block_shape[0] - 1) // block_shape[0],),
-                              out_specs=pl.BlockSpec(block_shape, lambda i: i))()
-    # No padding
-    pids = f(shape=(8,), block_shape=(2,))
-    self.assertAllClose(pids,
-                        np.array([0, 0, 1, 1, 2, 2, 3, 3], dtype=np.int32))
-    # Pad the last block
-    pids = f(shape=(8,), block_shape=(3,))
-    self.assertAllClose(pids,
-                        np.array([0, 0, 0, 1, 1, 1, 2, 2], dtype=np.int32))
-    # Works even if the shape is smaller than 1 block
-    pids = f(shape=(3,), block_shape=(8,))
-    self.assertAllClose(pids,
-                        np.array([0, 0, 0], dtype=np.int32))
 
 class PallasCallInterpreterTest(PallasCallTest):
   INTERPRET = True
@@ -1495,6 +1559,27 @@ class PallasCallAutodifferentiationTest(PallasBaseTest):
     jtu.check_grads(pallas_impl, (x,), modes=["fwd"], order=2,
                     atol=grad_tol, rtol=grad_tol)
 
+  def test_custom_jvp_call(self):
+    @functools.partial(jax.custom_jvp, nondiff_argnums=(1,))
+    def softmax(x, axis=-1):
+      unnormalized = jnp.exp(x - jnp.max(x, axis, keepdims=True))
+      return unnormalized / jnp.sum(unnormalized, axis, keepdims=True)
+
+    @softmax.defjvp
+    def softmax_jvp(axis, primals, tangents):
+      (x,), (x_dot,) = primals, tangents
+      y = softmax(x, axis)
+      return y, y * (x_dot - (y * x_dot).sum(axis, keepdims=True))
+
+    m, n = 16, 32
+    x = random.normal(random.key(0), (m, n))
+
+    @functools.partial(self.pallas_call, out_shape=x, grid=1)
+    def softmax_kernel(x_ref, y_ref):
+      y_ref[:] = softmax(x_ref[:])
+
+    np.testing.assert_allclose(softmax_kernel(x), jax.nn.softmax(x), atol=1e-7)
+
   # TODO(sharadmv): enable this when we update Triton
   # def test_jvp_matmul(self):
   #   k1, k2 = random.split(random.key(0))
@@ -1504,23 +1589,6 @@ class PallasCallAutodifferentiationTest(PallasBaseTest):
   #   mm = functools.partial(matmul, bm=bm, bn=bn, bk=bk, gm=gm,
   #                          interpret=self.INTERPRET)
   #   jtu.check_grads(mm, (x, y), modes=["fwd"], order=1)
-
-  def test_slicing_block_spec(self):
-    @functools.partial(
-        self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((4,), jnp.float32),
-        in_specs=[
-            pl.BlockSpec((None, 4), lambda _: (0, 0)),
-            pl.BlockSpec((None, 4), lambda _: (1, 0)),
-        ],
-        grid=1,
-    )
-    def add_vectors(x_ref, y_ref, o_ref):
-      o_ref[:] = x_ref[:] + y_ref[:]
-    xy = jnp.arange(8.).reshape((2, 4))
-    out = add_vectors(xy, xy)
-    out_ref = xy[0] + xy[1]
-    np.testing.assert_allclose(out, out_ref)
 
 
 class PallasCallAutodifferentiationInterpreterTest(PallasCallAutodifferentiationTest):

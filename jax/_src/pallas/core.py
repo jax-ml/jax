@@ -211,11 +211,14 @@ class BlockSpec:
 
   def compute_index(self, *args):
     assert self.index_map is not None
-    assert self.block_shape is not None
     out = self.index_map(*args)
     if not isinstance(out, tuple):
       out = (out,)
     return out
+
+class NoBlockSpec:
+  pass
+no_block_spec = NoBlockSpec()
 
 
 # A PyTree of BlockSpec | NoBlockSpec.
@@ -310,9 +313,11 @@ def _convert_block_spec_to_block_mapping(
     return None
   if block_spec.index_map is None:
     compute_index = lambda *args, **kwargs: (0,) * len(aval.shape)
-    block_shape = aval.shape
   else:
     compute_index = block_spec.compute_index
+  if block_spec.block_shape is None:
+    block_shape = aval.shape
+  else:
     block_shape = block_spec.block_shape
   block_shape = tuple(
       mapped if s is None else s for s in block_shape)
@@ -338,8 +343,7 @@ def _tile_ref(ref: state.AbstractRef, block_shape: tuple[int, ...] | None
   return ref.update(inner_aval=ref.inner_aval.update(shape=shape))
 
 
-def _get_ref_avals(grid,
-                   in_avals: Sequence[jax_core.ShapedArray],
+def _get_ref_avals(in_avals: Sequence[jax_core.ShapedArray],
                    in_specs: Sequence[BlockSpec],
                    in_paths: Sequence[tree_util.KeyPath],
                    out_avals: Sequence[jax_core.ShapedArray],
@@ -363,9 +367,9 @@ def _get_ref_avals(grid,
             f"Block shape for {what}{tree_util.keystr(path)} (= {block_shape}) "
             f"must have the same number of dimensions as the array shape {ref_aval.shape}"
         )
-      trimmed_block_shape = tuple(s for s in block_shape if s is not None)
+      block_shape_unmapped = tuple(s for s in block_shape if s is not None)
       ref_aval = ref_aval.update(
-          inner_aval=ref_aval.inner_aval.update(shape=trimmed_block_shape))
+          inner_aval=ref_aval.inner_aval.update(shape=block_shape_unmapped))
 
     if not jax_core.is_constant_shape(ref_aval.shape):
       raise ValueError(
@@ -382,11 +386,7 @@ def _get_ref_avals(grid,
       make_ref_aval(aval, out_spec, out_path, "output")
       for aval, out_spec, out_path in zip(out_avals, out_specs, out_paths)
   ]
-  return in_specs, in_ref_avals, out_specs, out_ref_avals
-
-class NoBlockSpec:
-  pass
-no_block_spec = NoBlockSpec()
+  return in_ref_avals, out_ref_avals
 
 
 @dataclasses.dataclass(init=False, unsafe_hash=True)
@@ -453,8 +453,8 @@ class GridSpec:
     )
     flat_in_specs, flat_out_specs = self._get_in_out_specs(
         in_avals, in_tree, out_avals, out_tree)
-    in_specs, in_ref_avals, out_specs, out_ref_avals = _get_ref_avals(
-        self.grid, in_avals, flat_in_specs, in_paths,
+    in_ref_avals, out_ref_avals = _get_ref_avals(
+        in_avals, flat_in_specs, in_paths,
         out_avals, flat_out_specs, out_paths)
     grid_avals = [jax_core.ShapedArray((), jnp.dtype("int32"))] * len(self.grid)
     # Create args, kwargs pytree def
@@ -468,7 +468,7 @@ class GridSpec:
             mapped_dims=(),
             what="input",
         ),
-        in_specs,
+        flat_in_specs,
         in_paths,
         in_ref_avals,
     )
@@ -481,7 +481,7 @@ class GridSpec:
             mapped_dims=(),
             what="output",
         ),
-        out_specs,
+        flat_out_specs,
         out_paths,
         out_ref_avals,
     )
