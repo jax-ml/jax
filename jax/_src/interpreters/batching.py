@@ -261,8 +261,7 @@ def from_elt(trace: BatchTrace, axis_size: AxisSize, i: int,
     def _cont(axis_size, elt, axis):
       return from_elt(trace, axis_size, i, elt, axis)
     return handler(_cont, axis_size, x, spec)
-  x_ = trace.full_raise(x)
-  val, bdim = x_.val, x_.batch_dim
+  val, bdim = trace.to_batch_info(x)
   if type(bdim) is RaggedAxis:
     if spec is not jumble_axis:
       # TODO(mattjj): improve this error message
@@ -270,9 +269,9 @@ def from_elt(trace: BatchTrace, axis_size: AxisSize, i: int,
     return _jumble_result(axis_size, bdim.stacked_axis, bdim.ragged_axes, val)
   else:
     try:
-      return matchaxis(trace.axis_name, axis_size, x_.batch_dim, spec, x_.val)
+      return matchaxis(trace.axis_name, axis_size, bdim, spec, val)
     except SpecMatchError:
-      raise SpecMatchError(i, x_.batch_dim, spec) from None
+      raise SpecMatchError(i, xdim, spec) from None
 from_elt_handlers: dict[type, FromEltHandler] = {}
 
 def make_iota(axis_size: AxisSize) -> Array:
@@ -414,7 +413,7 @@ class BatchTrace(Trace):
       axis_size = None  # can't be inferred from data
     if self.axis_name is core.no_axis_name:
       assert axis_size is not None  # must be inferable from data
-      return core.AxisEnvFrame(self.axis_name, axis_size, self.main)
+      return core.AxisEnvFrame(self.axis_name, axis_size, self.tag)
     frame = core.axis_frame(self.axis_name, self.main)
     assert axis_size is None or axis_size == frame.size, (axis_size, frame.size)
     assert frame.main_trace is self.main
@@ -435,7 +434,8 @@ class BatchTrace(Trace):
     else:
       frame = self.get_frame(vals_in, dims_in)
       batched_primitive = self.get_primitive_batcher(primitive, frame)
-      val_out, dim_out = batched_primitive(vals_in, dims_in, **params)
+      with core.set_current_trace(self.parent_trace):
+        val_out, dim_out = batched_primitive(vals_in, dims_in, **params)
     src = source_info_util.current()
     if primitive.multiple_results:
       return [BatchTracer(self, x, d, src) for x, d in zip(val_out, dim_out)]
@@ -633,11 +633,11 @@ def _batch_outer(axis_name, axis_size, in_dims, _main_type, spmd_axis_name,
 def _batch_inner(axis_size, out_dim_dests, parent_trace, tag, axis_name, spmd_axis_name, in_dims, *in_vals):
   in_dims = in_dims() if callable(in_dims) else in_dims
   trace = BatchTrace(parent_trace, tag, axis_name, spmd_axis_name)
-
   idx = memoize(lambda: BatchTracer(trace, make_iota(axis_size), 0,
                                     source_info_util.current()))
   in_tracers = map(partial(to_elt, trace, idx), in_vals, in_dims)
-  outs = yield in_tracers, {}
+  with core.set_current_trace(trace):
+    outs = yield in_tracers, {}
   out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
   out_vals = map(partial(from_elt, trace, axis_size), range(len(outs)),
                  outs, out_dim_dests)

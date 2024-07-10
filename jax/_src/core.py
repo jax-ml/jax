@@ -884,7 +884,7 @@ class EvalTrace(Trace):
       return fun.call_wrapped(*tracers)
 
 
-AxisEnvFrame = namedtuple('AxisEnvFrame', ['name', 'size', 'main_trace'])
+AxisEnvFrame = namedtuple('AxisEnvFrame', ['name', 'size', 'batch_tag'])
 AxisName = Hashable
 
 no_axis_name = object()
