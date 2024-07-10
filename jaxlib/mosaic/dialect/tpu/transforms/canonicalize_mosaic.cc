@@ -7,10 +7,12 @@
 // NOLINTNEXTLINE(misc-include-cleaner)
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 // NOLINTNEXTLINE(misc-include-cleaner)
+#include "llvm/ADT/StringMap.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Support/LogicalResult.h"
-#include "llvm/ADT/StringMap.h"
+#include "absl/log/check.h"
+#include "mlir/include/mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/include/mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/include/mlir/Dialect/Vector/Transforms/VectorTransforms.h"
 #include "mlir/include/mlir/IR/AffineExpr.h"
@@ -19,6 +21,7 @@
 #include "mlir/include/mlir/IR/ImplicitLocOpBuilder.h"
 #include "mlir/include/mlir/IR/Operation.h"
 #include "mlir/include/mlir/IR/Region.h"
+#include "mlir/include/mlir/IR/Value.h"
 #include "mlir/include/mlir/Support/LLVM.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 
@@ -33,22 +36,78 @@ LogicalResult tpu_matmul_rule(tpu::MatmulOp op) {
 
   auto lhs = op.getLhs();
   auto rhs = op.getRhs();
+  auto acc = op.getAcc();
 
   const VectorType lhs_ty = lhs.getType();
   const VectorType rhs_ty = rhs.getType();
+  const VectorType acc_ty = acc.getType();
 
   auto lhs_element_type = lhs_ty.getElementType();
   auto rhs_element_type = rhs_ty.getElementType();
+  auto acc_element_type = acc_ty.getElementType();
+
+  auto extsi_sitofp = [&builder, &op](TypedValue<VectorType> element) {
+    const VectorType ty = element.getType();
+    auto shape = ty.getShape();
+    CHECK(ty.getElementType().isInteger());
+    TypedValue<VectorType> ext_ele;
+    if (ty.getElementType().getIntOrFloatBitWidth() == 32) {
+      ext_ele = element;
+    } else {
+      ext_ele = cast<TypedValue<VectorType>>(
+          builder
+              .create<arith::ExtSIOp>(
+                  VectorType::get(shape, builder.getI32Type()), element)
+              .getResult());
+    }
+    // TODO(mvoz): Go to bf16 when hardware supported, requires adding support
+    // for 16 bitwidth in extsiop in infer/apply.
+    auto ele_as_fp = builder.create<arith::SIToFPOp>(
+        op.getLoc(), VectorType::get(shape, builder.getF32Type()), ext_ele);
+    return ele_as_fp;
+  };
 
   if (lhs_element_type != rhs_element_type) {
-    if (lhs_element_type.isInteger() || rhs_element_type.isInteger()) {
-      op->emitOpError("Mix int/float or different int/int - NYI");
+    if (lhs_element_type.isInteger() && rhs_element_type.isInteger()) {
+      // TODO(mvoz): Add support for mixed int/int matmul.
+      op->emitOpError("Mix int/int - NYI");
+      return failure();
+    }
+    if (acc_element_type.isInteger()) {
+      // TODO(mvoz): Add support for mixed int/float matmul with int acc.
+      // Should be pretty straightforward.
+      op->emitOpError("acc is int in mixed matmul. Expected float.");
+      return failure();
+    }
+    if (lhs_element_type.isInteger()) {
+      auto float_lhs = extsi_sitofp(lhs);
+      op->setOperand(0, float_lhs);
+    }
+    if (rhs_element_type.isInteger()) {
+      auto float_rhs = extsi_sitofp(rhs);
+      op->setOperand(1, float_rhs);
+    }
+  }
+  // TODO(mvoz): Add more invariants.
+  if (acc_element_type.isInteger()) {
+    if (!op.getLhs().getType().getElementType().isInteger()) {
+      op->emitOpError("int acc with float lhs. Expected int lhs.");
+      return failure();
+    }
+    if (!op.getRhs().getType().getElementType().isInteger()) {
+      op->emitOpError("int acc with float rhs. Expected int rhs.");
+      return failure();
+    }
+  } else {
+    if (op.getLhs().getType().getElementType().isInteger()) {
+      op->emitOpError("float acc with int lhs. Expected float lhs.");
+      return failure();
+    }
+    if (op.getRhs().getType().getElementType().isInteger()) {
+      op->emitOpError("float acc with int rhs. Expected float rhs.");
       return failure();
     }
   }
-  // TODO(voz): Add more invariants.
-  // TODO(voz): Insert extf/ sitof/ etc ops to cast the operands to the
-  // correct type for mixed matmul cases.
   return success();
 };
 
