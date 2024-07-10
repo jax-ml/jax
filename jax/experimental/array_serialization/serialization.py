@@ -194,13 +194,14 @@ async def transfer_shard_to_host(shard: array.Shard) -> np.ndarray:
     sharding = jax.sharding.SingleDeviceSharding(shard.device,
         memory_kind="pinned_host")
     data = jax.device_put(data, sharding)
-    # Allow other transfers to be scheduled simultaneously
-    await asyncio.sleep(0)
-    # Ensure that jax.Array's internal numpy array can be zero-copied.
-    # Tensorstore implicitly converts the written data to a numpy array,
-    # and would otherwise silently copy host-to-host.
-    data = np.array(data, copy=False)
-  return data
+  else:
+    data.copy_to_host_async()
+  # Allow other transfers to be scheduled simultaneously
+  await asyncio.sleep(0)
+  # Ensure that jax.Array's internal numpy array can be zero-copied. Tensorstore
+  # implicitly converts the written data to a numpy array, and would otherwise
+  # silently copy host-to-host.
+  return np.array(data, copy=False)
 
 
 async def async_serialize(
