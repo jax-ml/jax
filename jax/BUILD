@@ -992,7 +992,7 @@ pytype_library(
             "experimental/array_api/*.py",
         ],
     ),
-    visibility = [":internal"],
+    visibility = [":internal"] + jax_visibility("array_api"),
     deps = [":jax"],
 )
 
