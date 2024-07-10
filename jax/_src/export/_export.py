@@ -1142,7 +1142,7 @@ def call(exported: Exported) -> Callable[..., jax.Array]:
     def fix_float0_ct(ct_res, expected_aval):
       if expected_aval.dtype != dtypes.float0:
         return ct_res
-      return ad_util.zeros_like_aval(expected_aval)
+      return ad_util.zeros_like_jaxval(ct_res)
 
     ct_res_fixed = map(fix_float0_ct,
                        ct_res_flat, exp_vjp.in_avals[len(args_flat):])
