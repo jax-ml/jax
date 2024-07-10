@@ -18,10 +18,9 @@ limitations under the License.
 
 #include <cstddef>
 #include <cstdint>
-#include <string>
 
 #include "jaxlib/gpu/vendor.h"
-#include "xla/ffi/api/c_api.h"
+#include "xla/ffi/api/ffi.h"
 #include "xla/service/custom_call_status.h"
 
 namespace jax {
@@ -40,13 +39,13 @@ void LaunchThreeFry2x32Kernel(gpuStream_t stream, void** buffers,
 void ThreeFry2x32(gpuStream_t stream, void** buffers, const char* opaque,
                   size_t opaque_len, XlaCustomCallStatus* status);
 
-XLA_FFI_Error* ThreeFry2x32Ffi(XLA_FFI_CallFrame* call_frame);
-
 void LaunchThreeFry2x32KernelFfi(gpuStream_t stream,
                                  std::int64_t n,
                                  std::uint32_t *keys0, std::uint32_t *keys1,
                                  std::uint32_t *data0, std::uint32_t *data1,
                                  std::uint32_t *out0, std::uint32_t *out1);
+
+XLA_FFI_DECLARE_HANDLER_SYMBOL(ThreeFry2x32Ffi);
 
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

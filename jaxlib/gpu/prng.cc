@@ -29,7 +29,7 @@ std::string BuildThreeFry2x32Descriptor(std::int64_t n) {
 nb::dict Registrations() {
   nb::dict dict;
   dict[JAX_GPU_PREFIX "_threefry2x32_ffi"] =
-      EncapsulateFunction(ThreeFry2x32Ffi);
+      EncapsulateFfiHandler(ThreeFry2x32Ffi);
   // TODO(b/338022728): remove after 3 weeks
   dict[JAX_GPU_PREFIX "_threefry2x32"] = EncapsulateFunction(ThreeFry2x32);
   return dict;

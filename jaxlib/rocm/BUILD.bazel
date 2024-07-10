@@ -194,13 +194,16 @@ pybind_extension(
 )
 
 cc_library(
-    name = "hip_lu_pivot_kernels",
-    srcs = ["//jaxlib/gpu:lu_pivot_kernels.cc"],
-    hdrs = ["//jaxlib/gpu:lu_pivot_kernels.h"],
+    name = "hip_linalg_kernels",
+    srcs = ["//jaxlib/gpu:linalg_kernels.cc"],
+    hdrs = ["//jaxlib/gpu:linalg_kernels.h"],
+    features = ["-use_header_modules"],
     deps = [
         ":hip_gpu_kernel_helpers",
-        ":hip_lu_pivot_kernels_impl",
+        ":hip_linalg_kernels_impl",
         ":hip_vendor",
+        "//jaxlib:ffi_helpers",
+        "//jaxlib:kernel_helpers",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -212,54 +215,17 @@ cc_library(
 )
 
 rocm_library(
-    name = "hip_lu_pivot_kernels_impl",
-    srcs = ["//jaxlib/gpu:lu_pivot_kernels.cu.cc"],
-    hdrs = ["//jaxlib/gpu:lu_pivot_kernels.h"],
+    name = "hip_linalg_kernels_impl",
+    srcs = ["//jaxlib/gpu:linalg_kernels.cu.cc"],
+    hdrs = ["//jaxlib/gpu:linalg_kernels.h"],
     deps = [
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
         "@local_config_rocm//rocm:rocm_headers",
         "@xla//xla/ffi/api:ffi",
-    ],
-)
-
-cc_library(
-    name = "cholesky_update_kernel",
-    srcs = [
-        "//jaxlib/gpu:cholesky_update_kernel.cc",
-    ],
-    hdrs = ["//jaxlib/gpu:cholesky_update_kernel.h"],
-    features = ["-use_header_modules"],
-    deps = [
-        ":cholesky_update_kernel_impl",
-        ":hip_gpu_kernel_helpers",
-        ":hip_vendor",
-        ":hipsolver_kernels",
-        "//jaxlib:kernel_helpers",
         "@xla//xla/service:custom_call_status",
-        "@com_google_absl//absl/status",
-        "@local_config_rocm//rocm:rocm_headers",
     ],
 )
-
-rocm_library(
-    name = "cholesky_update_kernel_impl",
-    srcs = [
-        "//jaxlib/gpu:cholesky_update_kernel.cu.cc",
-    ],
-    hdrs = [
-        "//jaxlib/gpu:cholesky_update_kernel.h",
-    ],
-    deps = [
-        ":hip_gpu_kernel_helpers",
-        ":hip_vendor",
-        ":hipsolver_kernels",
-        "//jaxlib:kernel_helpers",
-        "@xla//xla/service:custom_call_status",
-        "@local_config_rocm//rocm:rocm_headers",
-    ],
-)
-
 
 pybind_extension(
     name = "_linalg",
@@ -271,10 +237,8 @@ pybind_extension(
     features = ["-use_header_modules"],
     module_name = "_linalg",
     deps = [
-        ":cholesky_update_kernel",
         ":hip_gpu_kernel_helpers",
-        ":hip_lu_pivot_kernels",
-        ":hip_lu_pivot_kernels_impl",
+        ":hip_linalg_kernels",
         ":hip_vendor",
         "//jaxlib:kernel_nanobind_helpers",
         "@xla//xla/tsl/python/lib/core:numpy",
@@ -291,11 +255,13 @@ cc_library(
         ":hip_gpu_kernel_helpers",
         ":hip_prng_kernels_impl",
         ":hip_vendor",
+        "//jaxlib:ffi_helpers",
         "//jaxlib:kernel_helpers",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
         "@local_config_rocm//rocm:rocm_headers",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/status",
         "@xla//xla/service:custom_call_status",
     ],
 )
@@ -308,7 +274,6 @@ rocm_library(
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
         "//jaxlib:kernel_helpers",
-        "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
         "@local_config_rocm//rocm:rocm_headers",
         "@xla//xla/service:custom_call_status",
