@@ -333,6 +333,7 @@ def _identity_fn(x):
 def _different_device_order_reshard(x, target_sharding):
   from jax._src import api, array
 
+  x._check_if_deleted()
   inp_sharding = x.sharding
 
   if inp_sharding._device_assignment == target_sharding._device_assignment:

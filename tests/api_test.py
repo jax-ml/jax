@@ -1932,6 +1932,45 @@ class APITest(jtu.JaxTestCase):
       x = api.device_put(val, device=cpu_device)
       self.assertEqual(x.devices(), {cpu_device})
 
+  def test_device_put_on_single_device_donated_buffer_fails(self):
+    @partial(jax.jit, donate_argnums=0)
+    def f(inp1):
+      return inp1 * 2
+
+    x = jnp.zeros((10,), jnp.float32)
+    f(x)
+
+    with self.assertRaises(RuntimeError):
+      result = jax.device_put(x, jax.devices()[0])
+      result.block_until_ready()
+
+    with self.assertRaises(RuntimeError):
+      result = jax.device_put(x, jax.devices()[-1])
+      result.block_until_ready()
+
+  def test_device_put_on_multi_device_donated_buffer_fails(self):
+    @partial(jax.jit, donate_argnums=0)
+    def f(inp1):
+      return inp1 * 2
+
+    mesh1 = jax.sharding.Mesh(jax.devices(), ("x",))
+    s1 = jax.NamedSharding(mesh1, P("x"))
+
+    mesh2 = jax.sharding.Mesh(tuple(reversed(jax.devices())), ("x",))
+    s2 = jax.NamedSharding(mesh2, P("x"))
+
+    x = jax.device_put(np.arange(len(jax.devices()), dtype=jnp.float32), s1)
+    f(x)
+
+    with self.assertRaises(RuntimeError):
+      result = jax.device_put(x, s1)
+      result.block_until_ready()
+
+    with self.assertRaises(RuntimeError):
+      result = jax.device_put(x, s2)
+      result.block_until_ready()
+
+
   @jax.default_matmul_precision("float32")
   def test_jacobian(self):
     R = self.rng().randn
