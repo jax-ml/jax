@@ -272,7 +272,10 @@ class XlaExecutable(Executable):
         ]
       except xla_extension.XlaRuntimeError as e:
         msg, *_ = e.args
-        if not (type(msg) is str and msg.startswith("UNIMPLEMENTED")):
+        supported = not (type(msg) is str and
+                         (msg.startswith("UNIMPLEMENTED") or
+                          "PjRt-compatible backend only" in msg))
+        if supported:
           raise
 
     if (
