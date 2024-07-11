@@ -177,15 +177,15 @@ class BlockSpec:
 
   See :ref:`pallas_blockspec` for more details.
   """
-  block_shape: tuple[int | None, ...] | None = None
-  index_map: Callable[..., Any] | None = None
+  block_shape: tuple[int | None, ...]
+  index_map: Callable[..., Any]
   memory_space: Any | None = dataclasses.field(kw_only=True, default=None)
   indexing_mode: IndexingMode = dataclasses.field(kw_only=True, default=blocked)
 
   def __init__(
       self,
-      block_shape: Any | None = None,
-      index_map: Any | None = None,
+      block_shape: Any,
+      index_map: Any,
       *,
       memory_space: Any | None = None,
       indexing_mode: IndexingMode = blocked,
@@ -311,6 +311,8 @@ def _convert_block_spec_to_block_mapping(
 ) -> BlockMapping | None:
   if block_spec is no_block_spec:
     return None
+  assert block_spec.indexing_mode is not None
+  assert block_spec.block_shape is not None
   if block_spec.index_map is None:
     compute_index = lambda *args, **kwargs: (0,) * len(aval.shape)
   else:
