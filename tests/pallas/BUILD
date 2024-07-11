@@ -39,7 +39,6 @@ jax_test(
         },
     },
     disable_configs = [
-        "cpu",  # The 64-bit variant
         "gpu",
         "gpu_x32",
         "gpu_a100",
@@ -75,9 +74,6 @@ jax_test(
             "ondemand": False,  # Include in presubmit.
         },
     },
-    disable_backends = [
-        "cpu",
-    ],
     disable_configs = [
         "gpu",
         "gpu_x32",
@@ -123,7 +119,6 @@ jax_test(
         },
     },
     disable_configs = [
-        "cpu",  # The 64-bit variant
         "gpu",
         "gpu_x32",
         "gpu_a100",
@@ -189,10 +184,6 @@ jax_test(
             "ondemand": False,  # Include in presubmit.
         },
     },
-    disable_backends = [
-        "cpu",
-        "tpu",
-    ],
     disable_configs = [
         "gpu",
         "gpu_x32",
