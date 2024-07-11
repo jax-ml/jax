@@ -56,6 +56,7 @@ from jax._src.config import (
   debug_nans as debug_nans,
   debug_infs as debug_infs,
   log_compiles as log_compiles,
+  explain_cache_misses as explain_cache_misses,
   default_device as default_device,
   default_matmul_precision as default_matmul_precision,
   default_prng_impl as default_prng_impl,

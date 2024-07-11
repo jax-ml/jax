@@ -135,13 +135,20 @@ def _initialize_cache() -> None:
       _cache, path = cache_and_path
       logger.debug("Initialized persistent compilation cache at %s", path)
 
+def is_persistent_cache_enabled() -> bool:
+  return (config.compilation_cache_dir.value is not None
+          and config.enable_compilation_cache.value)
+
 
 def _get_cache(backend) -> CacheInterface | None:
   # TODO(b/289098047): consider making this an API and changing the callers of
   # get_executable_and_time() and put_executable_and_time() to call get_cache()
   # and passing the result to them.
   if backend.runtime_type in _UNSUPPORTED_RUNTIMES:
-    logger.debug("_get_cache: Unsupported runtime: %s", backend.runtime_type)
+    log_priority = (logging.WARNING if is_persistent_cache_enabled()
+                    else logging.DEBUG)
+    logger.log(log_priority, "_get_cache: Unsupported runtime: %s",
+               backend.runtime_type)
     return None
   if _cache is None:
     _initialize_cache()  # initialization is done at most once; see above
@@ -206,9 +213,15 @@ def put_executable_and_time(
   """Adds the 'executable' and its compilation time to the cache, possibly
   evicting older entries.
   """
+  log_priority = (logging.WARNING
+                  if config.explain_cache_misses.value
+                  and is_persistent_cache_enabled()
+                  else logging.DEBUG)
   cache = _get_cache(backend)
   if cache is None:
-    logger.debug("put_executable_and_time: cache is disabled/not initialized")
+    logger.log(log_priority,
+               "Not writing persistent cache entry with key %s"
+               " since cache is disabled/not initialized", cache_key)
     return
 
   serialized_executable = backend.serialize_executable(executable)
@@ -219,19 +232,14 @@ def put_executable_and_time(
   min_entry_size = config.persistent_cache_min_entry_size_bytes.value
   entry_size = len(executable_and_time)
   if entry_size < min_entry_size:
-    logger.info(
-        "Not writing cache entry with key %s since its size (%d bytes) "
-        "is less than threshold (%d bytes)",
-        cache_key,
-        entry_size,
-        min_entry_size,
-    )
+    logger.log(log_priority,
+        "Not writing persistent cache entry with key %s since its size"
+        " (%d bytes) is less than threshold (%d bytes)", cache_key, entry_size,
+        min_entry_size)
   else:
-    logger.info(
-        "Writing %s to persistent compilation cache with key %s.",
-        module_name,
-        cache_key
-    )
+    logger.log(log_priority,
+               "Writing %s to persistent compilation cache with key %s.",
+               module_name, cache_key)
     monitoring.record_event('/jax/compilation_cache/cache_misses')
     cache.put(cache_key, executable_and_time)
 
