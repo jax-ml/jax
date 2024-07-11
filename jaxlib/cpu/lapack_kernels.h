@@ -152,6 +152,26 @@ struct Geqrf {
   static int64_t Workspace(lapack_int m, lapack_int n);
 };
 
+// FFI Kernel
+
+template <::xla::ffi::DataType dtype>
+struct QrFactorization {
+  using ValueType = ::xla::ffi::NativeType<dtype>;
+  using FnType = void(lapack_int* m, lapack_int* n, ValueType* a,
+                      lapack_int* lda, ValueType* tau, ValueType* work,
+                      lapack_int* lwork, lapack_int* info);
+
+  inline static FnType* fn = nullptr;
+
+  static ::xla::ffi::Error Kernel(::xla::ffi::Buffer<dtype> x,
+                                  ::xla::ffi::ResultBuffer<dtype> x_out,
+                                  ::xla::ffi::ResultBuffer<dtype> tau,
+                                  ::xla::ffi::ResultBuffer<LapackIntDtype> info,
+                                  ::xla::ffi::ResultBuffer<dtype> work);
+
+  static int64_t GetWorkspaceSize(lapack_int x_rows, lapack_int x_cols);
+};
+
 //== Orthogonal QR ==//
 
 // lapack orgqr

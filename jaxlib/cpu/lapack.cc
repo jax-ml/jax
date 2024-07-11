@@ -89,6 +89,10 @@ void GetLapackKernelsFromScipy() {
   AssignKernelFn<Geqrf<double>>(lapack_ptr("dgeqrf"));
   AssignKernelFn<Geqrf<std::complex<float>>>(lapack_ptr("cgeqrf"));
   AssignKernelFn<Geqrf<std::complex<double>>>(lapack_ptr("zgeqrf"));
+  AssignKernelFn<QrFactorization<DataType::F32>>(lapack_ptr("sgeqrf"));
+  AssignKernelFn<QrFactorization<DataType::F64>>(lapack_ptr("dgeqrf"));
+  AssignKernelFn<QrFactorization<DataType::C64>>(lapack_ptr("cgeqrf"));
+  AssignKernelFn<QrFactorization<DataType::C128>>(lapack_ptr("zgeqrf"));
 
   AssignKernelFn<Orgqr<float>>(lapack_ptr("sorgqr"));
   AssignKernelFn<Orgqr<double>>(lapack_ptr("dorgqr"));
@@ -215,6 +219,10 @@ nb::dict Registrations() {
   dict["lapack_dgetrf_ffi"] = EncapsulateFunction(lapack_dgetrf_ffi);
   dict["lapack_cgetrf_ffi"] = EncapsulateFunction(lapack_cgetrf_ffi);
   dict["lapack_zgetrf_ffi"] = EncapsulateFunction(lapack_zgetrf_ffi);
+  dict["lapack_sgeqrf_ffi"] = EncapsulateFunction(lapack_sgeqrf_ffi);
+  dict["lapack_dgeqrf_ffi"] = EncapsulateFunction(lapack_dgeqrf_ffi);
+  dict["lapack_cgeqrf_ffi"] = EncapsulateFunction(lapack_cgeqrf_ffi);
+  dict["lapack_zgeqrf_ffi"] = EncapsulateFunction(lapack_zgeqrf_ffi);
   dict["lapack_spotrf_ffi"] = EncapsulateFunction(lapack_spotrf_ffi);
   dict["lapack_dpotrf_ffi"] = EncapsulateFunction(lapack_dpotrf_ffi);
   dict["lapack_cpotrf_ffi"] = EncapsulateFunction(lapack_cpotrf_ffi);
@@ -294,6 +302,18 @@ NB_MODULE(_lapack, m) {
   m.def("lapack_zhetrd_workspace", &Sytrd<std::complex<double>>::Workspace,
         nb::arg("lda"), nb::arg("n"));
   // FFI Kernel LAPACK Workspace Size Queries
+  m.def("lapack_sgeqrf_workspace_ffi",
+        &QrFactorization<DataType::F32>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"));
+  m.def("lapack_dgeqrf_workspace_ffi",
+        &QrFactorization<DataType::F64>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"));
+  m.def("lapack_cgeqrf_workspace_ffi",
+        &QrFactorization<DataType::C64>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"));
+  m.def("lapack_zgeqrf_workspace_ffi",
+        &QrFactorization<DataType::C128>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"));
   m.def("gesdd_iwork_size_ffi", &svd::GetIntWorkspaceSize, nb::arg("m"),
         nb::arg("n"));
   m.def("sgesdd_work_size_ffi", &svd::SVDType<DataType::F32>::GetWorkspaceSize,

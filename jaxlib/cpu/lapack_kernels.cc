@@ -281,6 +281,55 @@ template struct Geqrf<double>;
 template struct Geqrf<std::complex<float>>;
 template struct Geqrf<std::complex<double>>;
 
+// FFI Kernel
+
+template <ffi::DataType dtype>
+ffi::Error QrFactorization<dtype>::Kernel(
+    ffi::Buffer<dtype> x, ffi::ResultBuffer<dtype> x_out,
+    ffi::ResultBuffer<dtype> tau, ffi::ResultBuffer<LapackIntDtype> info,
+    ffi::ResultBuffer<dtype> work) {
+  auto [batch_count, x_rows, x_cols] = SplitBatch2D(x.dimensions());
+  auto* x_out_data = x_out->typed_data();
+  auto* tau_data = tau->typed_data();
+  auto* info_data = info->typed_data();
+  auto* work_data = work->typed_data();
+
+  CopyIfDiffBuffer(x, x_out);
+  FFI_ASSIGN_OR_RETURN(auto workspace_dim_v, MaybeCastNoOverflow<lapack_int>(
+                                                 work->dimensions().back()));
+  FFI_ASSIGN_OR_RETURN(auto x_rows_v, MaybeCastNoOverflow<lapack_int>(x_rows));
+  FFI_ASSIGN_OR_RETURN(auto x_cols_v, MaybeCastNoOverflow<lapack_int>(x_cols));
+  auto x_leading_dim_v = x_rows_v;
+
+  const int64_t x_out_step{x_rows * x_cols};
+  const int64_t tau_step{std::min(x_rows, x_cols)};
+  for (int64_t i = 0; i < batch_count; ++i) {
+    fn(&x_rows_v, &x_cols_v, x_out_data, &x_leading_dim_v, tau_data, work_data,
+       &workspace_dim_v, info_data);
+    x_out_data += x_out_step;
+    tau_data += tau_step;
+    ++info_data;
+  }
+  return ffi::Error::Success();
+}
+
+template <ffi::DataType dtype>
+int64_t QrFactorization<dtype>::GetWorkspaceSize(lapack_int x_rows,
+                                                 lapack_int x_cols) {
+  ValueType optimal_size{};
+  lapack_int x_leading_dim_v = x_rows;
+  lapack_int info = 0;
+  lapack_int workspace_query = -1;
+  fn(&x_rows, &x_cols, nullptr, &x_leading_dim_v, nullptr, &optimal_size,
+     &workspace_query, &info);
+  return info == 0 ? static_cast<int64_t>(std::real(optimal_size)) : -1;
+}
+
+template struct QrFactorization<ffi::DataType::F32>;
+template struct QrFactorization<ffi::DataType::F64>;
+template struct QrFactorization<ffi::DataType::C64>;
+template struct QrFactorization<ffi::DataType::C128>;
+
 //== Orthogonal QR                                      ==//
 //== Computes orthogonal matrix Q from QR Decomposition ==//
 
