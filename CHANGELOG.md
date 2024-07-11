@@ -1,6 +1,8 @@
 # Change log
 
 Best viewed [here](https://jax.readthedocs.io/en/latest/changelog.html).
+For the changes specific to the experimental Pallas APIs,
+see {ref}`pallas-changelog`.
 
 <!--
 Remember to align the itemized text with the first line of an item within a list.
