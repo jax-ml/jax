@@ -173,7 +173,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
               for a in out]
     return f
 
-
   @jtu.sample_product(
     [dict(shape=shape, axis=axis)
       for shape in all_shapes
@@ -192,7 +191,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self.assertEqual(y, ())
     else:
       self.assertArraysEqual(jnp.moveaxis(jnp.array(y), 0, axis), x)
-
 
   @parameterized.parameters(
       [dtype for dtype in [
@@ -888,7 +886,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-
   @jtu.sample_product(
     shape=all_shapes,
     dtype=default_dtypes + unsigned_dtypes,
@@ -897,7 +894,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     rng = jtu.rand_default(self.rng())
     x = rng(shape, dtype)
     self.assertArraysEqual(jnp.clip(x), x)
-
 
   # TODO(micky774): Check for ValueError instead of DeprecationWarning when
   # jnp.clip deprecation is completed (began 2024-4-2) and default behavior is
@@ -924,7 +920,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       with self.assertWarns(DeprecationWarning, msg=msg):
         jnp.clip(x, max=jnp.array([-1+5j]))
 
-
   # TODO(micky774): Check for ValueError instead of DeprecationWarning when
   # jnp.hypot deprecation is completed (began 2024-4-2) and default behavior is
   # Array API 2023 compliant
@@ -943,7 +938,6 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       with self.assertWarns(DeprecationWarning, msg=msg):
         y = jnp.ones_like(x)
         jnp.hypot(x, y)
-
 
   @jtu.sample_product(
     [dict(shape=shape, dtype=dtype)
@@ -5535,9 +5529,32 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = self._GetArgsMaker(rng, [shape], [dtype])
     jnp_fun = lambda y: jnp.gradient(y, *varargs, axis=axis)
     np_fun = lambda y: np.gradient(y, *varargs, axis=axis)
-    self._CheckAgainstNumpy(
-        np_fun, jnp_fun, args_maker, check_dtypes=False)
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
     self._CompileAndCheck(jnp_fun, args_maker)
+
+  @jtu.sample_product(
+      shape=[(5,), (5, 7), (5, 10, 3)],
+      dtype=inexact_dtypes,
+  )
+  def testGradientNonConstant(self, shape, dtype):
+    rng = jtu.rand_default(self.rng())
+
+    varargs = [(s,) for s in shape]
+    args = [shape] + varargs
+    args_maker = self._GetArgsMaker(rng, args, [dtype] * len(args))
+    atol = jtu.tolerance(
+        dtype, {np.float16: 4e-2, jax.dtypes.bfloat16: 4e-1, np.float32: 2e-5}
+    )
+    rtol = jtu.tolerance(dtype, {jax.dtypes.bfloat16: 5e-1})
+    self._CheckAgainstNumpy(
+        np.gradient,
+        jnp.gradient,
+        args_maker,
+        check_dtypes=False,
+        atol=atol,
+        rtol=rtol,
+    )
+    self._CompileAndCheck(jnp.gradient, args_maker)
 
   def testZerosShapeErrors(self):
     # see https://github.com/google/jax/issues/1822
