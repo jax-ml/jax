@@ -105,8 +105,6 @@ ShardingSpec = sharding_specs.ShardingSpec
 
 ### util
 
-def identity(x): return x
-
 @profiler.annotate_function
 def shard_args(shardings: Sequence[JSharding], args, canonicalize=True) -> Sequence[xc.ArrayImpl]:
   # Fast path for one argument.

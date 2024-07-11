@@ -54,7 +54,6 @@ from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
-def identity(x): return x
 
 TracerId = int
 AvalId = int

@@ -44,7 +44,6 @@ from jax._src.util import (unzip2, safe_map, safe_zip, split_list, wrap_name,
 
 zip = safe_zip
 map = safe_map
-def identity(x): return x
 
 def _update_annotation(
     f: lu.WrappedFun,
