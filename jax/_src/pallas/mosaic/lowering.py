@@ -1201,6 +1201,34 @@ def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
 lowering_rules[lax.reduce_sum_p] = _reduce_sum_lowering_rule
 
 
+def _cumsum_lowering_helper(x, *, axis: int = 0, reverse: bool = False):
+  if reverse:
+    raise NotImplementedError
+
+  if axis != 0:
+    x = jnp.moveaxis(x, axis, 0)
+
+  def inner(carry, x):
+    result = carry + x
+    return result, result
+  
+  init_state = jnp.zeros(x.shape[1:], dtype=x.dtype)
+  _, result = lax.scan(inner, init_state, x)
+
+  if axis != 0:
+    result = jnp.moveaxis(result, 0, axis)
+
+  return result
+
+
+def _cumsum_lowering_rule(ctx: LoweringRuleContext, x, *, axis, reverse):
+  return lower_fun(_cumsum_lowering_helper, multiple_results=False)(
+      ctx, x, axis=axis, reverse=reverse)
+
+
+lowering_rules[lax.cumsum_p] = _cumsum_lowering_rule
+
+
 def _broadcast_in_dim_lowering_rule(
     ctx: LoweringRuleContext, val, *, shape, broadcast_dimensions
 ):
