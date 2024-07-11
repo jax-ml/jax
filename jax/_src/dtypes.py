@@ -339,7 +339,8 @@ def _issubclass(a: Any, b: Any) -> bool:
 
 # TODO(jakevdp): consider whether to disallow None here. We allow it
 # because np.issubdtype allows it (and treats it as equivalent to float64).
-def issubdtype(a: DTypeLike | None, b: DTypeLike | None) -> bool:
+def issubdtype(a: DTypeLike | ExtendedDType | None,
+               b: DTypeLike | ExtendedDType | None) -> bool:
   """Returns True if first argument is a typecode lower/equal in type hierarchy.
 
   This is like :func:`numpy.issubdtype`, but can handle dtype extensions such as

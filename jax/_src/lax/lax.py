@@ -499,7 +499,8 @@ def lt(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise less-than: :math:`x < y`."""
   return lt_p.bind(x, y)
 
-def convert_element_type(operand: ArrayLike, new_dtype: DTypeLike) -> Array:
+def convert_element_type(operand: ArrayLike,
+                         new_dtype: DTypeLike | dtypes.ExtendedDType) -> Array:
   """Elementwise cast.
 
   Wraps XLA's `ConvertElementType
@@ -516,9 +517,11 @@ def convert_element_type(operand: ArrayLike, new_dtype: DTypeLike) -> Array:
   """
   return _convert_element_type(operand, new_dtype, weak_type=False)
 
-def _convert_element_type(operand: ArrayLike, new_dtype: DTypeLike | None = None,
-                          weak_type: bool = False,
-                          sharding: Sharding | None = None):
+def _convert_element_type(
+    operand: ArrayLike,
+    new_dtype: DTypeLike | dtypes.ExtendedDType | None = None,
+    weak_type: bool = False,
+    sharding: Sharding | None = None):
   if hasattr(operand, '__jax_array__'):
     operand = operand.__jax_array__()
 
@@ -527,6 +530,8 @@ def _convert_element_type(operand: ArrayLike, new_dtype: DTypeLike | None = None
     return convert_element_type_p.bind(
         operand, new_dtype=new_dtype, weak_type=bool(weak_type),
         sharding=sharding)
+
+  new_dtype = type_cast(DTypeLike | None, new_dtype)
 
   # Don't canonicalize old_dtype because x64 context might cause
   # un-canonicalized operands to be passed in.
