@@ -187,6 +187,8 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
         continue
       if p.name == "pallas_call":
         continue
+      if p.name == "tpu_custom_call":
+        continue
       if p.name == "custom_partitioning":
         continue
       if p.name in (
