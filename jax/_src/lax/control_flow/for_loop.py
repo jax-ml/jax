@@ -70,29 +70,6 @@ for_p.multiple_results = True
 
 ### Tracing utilities
 
-def _hoist_consts_to_refs(jaxpr: core.Jaxpr) -> core.Jaxpr:
-  all_const_avals = [var.aval for var in jaxpr.constvars]
-  is_const_ref = [isinstance(var.aval, AbstractRef) for var in
-                  jaxpr.constvars]
-  const_avals, const_ref_avals = partition_list(is_const_ref, all_const_avals)
-  const_avals = map(AbstractRef, const_avals)
-  merged_const_avals = merge_lists(is_const_ref, const_avals, const_ref_avals)
-  i_aval, *arg_avals = (var.aval for var in jaxpr.invars)
-  in_avals = [i_aval, *merged_const_avals, *arg_avals]
-  num_consts = len(merged_const_avals)
-
-  def _hoist(i, *consts_args):
-    all_consts, args = split_list(consts_args, [num_consts])
-    consts, const_refs = partition_list(is_const_ref, all_consts)
-    # We immediately read the const values out of the `Ref`s.
-    consts = map(lambda x: ref_get(x, ()), consts)
-    all_consts = merge_lists(is_const_ref, consts, const_refs)
-    return core.eval_jaxpr(jaxpr, all_consts, i, *args)
-  hoisted_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(_hoist), in_avals)
-  assert not consts, "All consts should have been converted to refs"
-  return hoisted_jaxpr
-
 def _trace_to_jaxpr_with_refs(f, state_tree: PyTreeDef,
                               state_avals: Sequence[core.AbstractValue]
                               ) -> tuple[core.Jaxpr, list[Any], PyTreeDef]:
@@ -160,8 +137,7 @@ def for_loop(nsteps: int | Sequence[int],
       body, state_tree, [idx_aval, *state_avals])
   if out_tree != tree_structure(None):
     raise Exception("`body` should not return anything.")
-  # Remove constvars from jaxpr and turn them into `Ref`s
-  jaxpr = _hoist_consts_to_refs(jaxpr)
+  jaxpr = state_utils.hoist_consts_to_refs(jaxpr, index=1)
   which_linear = (False,) * (len(consts) + len(flat_state))
   out_flat = for_p.bind(*consts, *flat_state, jaxpr=jaxpr, nsteps=int(nsteps),
                         reverse=reverse, which_linear=which_linear,

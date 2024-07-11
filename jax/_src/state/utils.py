@@ -13,44 +13,60 @@
 # limitations under the License.
 """Utilities for tracing stateful functions."""
 
-from collections.abc import Sequence
-
 from jax._src.interpreters import partial_eval as pe
 from jax._src import core
 from jax._src import linear_util as lu
 from jax._src.state import AbstractRef
-from jax._src.util import (partition_list, merge_lists, split_list, safe_map,
-                           safe_zip)
+from jax._src.util import split_list, safe_map, safe_zip
 from jax._src.state.primitives import ref_get
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
-def hoist_consts_to_refs(jaxpr: core.Jaxpr) -> core.Jaxpr:
-  all_const_avals = [var.aval for var in jaxpr.constvars]
-  is_const_ref = [isinstance(var.aval, AbstractRef) for var in
-                  jaxpr.constvars]
-  const_avals_, const_ref_avals = partition_list(is_const_ref, all_const_avals)
-  const_avals: Sequence[AbstractRef]  = map(AbstractRef, const_avals_)
-  merged_const_avals = merge_lists(is_const_ref, const_avals, const_ref_avals)
-  arg_avals = [var.aval for var in jaxpr.invars]
-  in_avals = [*merged_const_avals, *arg_avals]
-  num_consts = len(merged_const_avals)
+
+def hoist_consts_to_refs(jaxpr: core.Jaxpr, *, index: int = 0) -> core.Jaxpr:
+  """Hoists the constants in the given jaxpr into invars.
+
+  Args:
+    jaxpr: The jaxpr.
+    index: The index where the invars for the constants should be inserted.
+      By default, the new invars are inserted *before* any existing invars.
+
+  Returns:
+    A new jaxpr where the constants were hoisted into invars as ``Ref``s.
+  """
+  if not jaxpr.constvars:
+    return jaxpr  # Nothing to hoist.
+
+  is_const_ref = [
+      isinstance(var.aval, AbstractRef) for var in jaxpr.constvars
+  ]
+  const_avals = [
+      var.aval if is_ref else AbstractRef(var.aval)
+      for is_ref, var in zip(is_const_ref, jaxpr.constvars)
+  ]
+  in_avals = [var.aval for var in jaxpr.invars]
+  in_avals[index:index] = const_avals
 
   def _hoist(*consts_args):
-    all_consts, args = split_list(consts_args, [num_consts])
-    consts, const_refs = partition_list(is_const_ref, all_consts)
+    args0, all_consts, args1 = split_list(
+        consts_args, [index, len(const_avals)]
+    )
     # We immediately read the const values out of the `Ref`s.
-    consts = map(lambda x: ref_get(x, ()), consts)
-    all_consts = merge_lists(is_const_ref, consts, const_refs)
-    return core.eval_jaxpr(jaxpr, all_consts, *args)
+    all_consts = [
+        c if is_ref else ref_get(c, ())
+        for is_ref, c in zip(is_const_ref, all_consts)
+    ]
+    return core.eval_jaxpr(jaxpr, all_consts, *args0, *args1)
+
   hoisted_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
       lu.wrap_init(_hoist), in_avals)
   assert not consts, "All consts should have been converted to refs"
   return hoisted_jaxpr
 
+
 def val_to_ref_aval(x) -> AbstractRef:
   aval = core.raise_to_shaped(core.get_aval(x))
   if type(aval) is not core.ShapedArray:
-    raise Exception(f"can't make ref from {x}")
+    raise TypeError(f"can't make ref from {x}")
   return AbstractRef(aval)
