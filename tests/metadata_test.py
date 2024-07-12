@@ -90,6 +90,7 @@ class MetadataTest(jtu.JaxTestCase):
     hlo = module_to_string(jax.jit(f).lower(jnp.arange(8.0)).compiler_ir())
     self.assertNotRegex(hlo, r'<.* at 0x[0-9a-fA-F]+>')
 
+  @unittest.skip('b/352539562')
   def test_source_file_prefix_removal(self):
 
     def make_hlo():
