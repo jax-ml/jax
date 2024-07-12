@@ -456,6 +456,35 @@ class LayoutTest(jtu.JaxTestCase):
         '.*Length of major_to_minor and the rank of the value should match.*'):
       jax.device_put(inp, l)
 
+  def test_concrete_layout_in_shardings(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    shape = (16, 128)
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+    arr = jax.device_put(np_inp, s)
+
+    custom_dll = DLL(major_to_minor=(0, 1))
+
+    @partial(jax.jit, in_shardings=Layout(custom_dll, s))
+    def f(x):
+      return x.T
+
+    out = f(arr)
+    self.assertArraysEqual(out, np_inp.T)
+    self.assertEqual(out.layout.device_local_layout.major_to_minor,
+                     custom_dll.major_to_minor[::-1])
+
+    custom_dll2 = DLL(major_to_minor=(1, 0))
+
+    @partial(jax.jit, in_shardings=Layout(custom_dll2, s))
+    def g(x):
+      return x.T
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'Layout passed to jit does not match the layout on the respective arg'):
+      g(arr)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

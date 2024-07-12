@@ -2726,24 +2726,21 @@ def maybe_recover_user_shardings(
 
   return new_shardings
 
-
-def _check_xla_user_layout(ul, xl, what: str):
+def is_user_xla_layout_equal(ul: DeviceLocalLayout | AutoLayout,
+                             xl: DeviceLocalLayout) -> bool:
   if xla_extension_version >= 274:
-    if ul._tiling is None:
-      if ul.major_to_minor != xl.major_to_minor:
-        raise AssertionError(
-            f"Unexpected XLA layout override: (XLA) {xl} != {ul} "
-            f"(User {what} layout)")
+    if isinstance(ul, DeviceLocalLayout) and ul._tiling is None:
+      return ul.major_to_minor == xl.major_to_minor
     else:
-      if ul != xl:
-        raise AssertionError(
-            f"Unexpected XLA layout override: (XLA) {xl} != {ul} "
-            f"(User {what} layout)")
+      return ul == xl
   else:
-    if ul != xl:
-      raise AssertionError(
-          f"Unexpected XLA layout override: (XLA) {xl} != {ul} "
-          f"(User {what} layout)")
+    return ul == xl
+
+def _check_user_xla_layout(ul, xl, what: str):
+  if not is_user_xla_layout_equal(ul, xl):
+    raise AssertionError(
+        f"Unexpected XLA layout override: (XLA) {xl} != {ul} "
+        f"(User {what} layout)")
 
 
 def _get_layouts_from_executable(
@@ -2763,7 +2760,7 @@ def _get_layouts_from_executable(
   for x, i in safe_zip(in_layouts_xla, in_layouts):
     x = DeviceLocalLayout.from_pjrt_layout(x)
     if isinstance(i, DeviceLocalLayout):
-      _check_xla_user_layout(i, x, "input")
+      _check_user_xla_layout(i, x, "input")
     # Always append the XLA layout because it has the full information
     # (tiling, etc) even if the user layout does not specify tiling.
     new_in_layouts.append(x)
@@ -2772,7 +2769,7 @@ def _get_layouts_from_executable(
   for x, o in safe_zip(out_layouts_xla, out_layouts):
     x = DeviceLocalLayout.from_pjrt_layout(x)
     if isinstance(o, DeviceLocalLayout):
-      _check_xla_user_layout(o, x, "output")
+      _check_user_xla_layout(o, x, "output")
     # Always append the XLA layout because it has the full information
     # (tiling, etc) even if the user layout does not specify tiling.
     new_out_layouts.append(x)

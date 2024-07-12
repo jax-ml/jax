@@ -676,7 +676,6 @@ def _infer_params_impl(
                     attrs_tracked), args_flat
 
 
-
 class InferParamsCacheEntry:
   """Mutable value object for _infer_params_cached."""
   __slots__ = ['pjit_params']
@@ -1464,8 +1463,10 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
       # arg_layout can be None because some backends don't implement the
       # required layout methods. Hence `arr.layout` can return
       # `Layout(None, sharding)`
-      if (committed and not is_pmap_sharding and
-          arg_layout is not None and arg_layout != jit_in_l):
+      if (committed
+          and not is_pmap_sharding
+          and arg_layout is not None
+          and not pxla.is_user_xla_layout_equal(jit_in_l, arg_layout)):
         extra_msg = ''
         if isinstance(jit_in_l, AutoLayout):
           extra_msg = (
