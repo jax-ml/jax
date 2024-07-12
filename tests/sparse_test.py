@@ -414,7 +414,7 @@ class cuSparseTest(sptu.SparseTestCase):
   @jtu.run_on_devices("gpu")
   def test_gpu_translation_rule(self):
     version = xla_bridge.get_backend().platform_version
-    if version.split()[0] != "rocm":
+    if "rocm" not in version.split():
       cuda_version = None if version == "<unknown>" else int(
           version.split()[-1])
       if cuda_version is None or cuda_version < 11000:

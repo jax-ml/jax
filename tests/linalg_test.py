@@ -47,7 +47,7 @@ int_types = jtu.dtypes.all_integer
 
 def _is_required_cuda_version_satisfied(cuda_version):
   version = xla_bridge.get_backend().platform_version
-  if version == "<unknown>" or version.split()[0] == "rocm":
+  if version == "<unknown>" or "rocm" in version.split():
     return False
   else:
     return int(version.split()[-1]) >= cuda_version
