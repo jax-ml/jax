@@ -358,6 +358,15 @@ LogicalResult WaitDMAOp::verify() {
   return success();
 }
 
+LogicalResult RegionOp::verify() {
+  for (auto result_type : getResultTypes()) {
+    if (isa<MemRefType>(result_type)) {
+      return emitOpError("Region result cannot be a memref.");
+    }
+  }
+  return success();
+}
+
 }  // namespace tpu
 }  // namespace mlir
 

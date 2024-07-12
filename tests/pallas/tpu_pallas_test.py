@@ -728,6 +728,84 @@ class PallasCallDMATest(PallasBaseTest):
     )()
     np.testing.assert_allclose(o, 4 * np.ones_like(o))
 
+  def test_run_scoped_can_return_scalar_value(self):
+    def kernel(y_ref):
+      def body(x_ref):
+        x_ref[0] = 0
+        x_ref[0] += 1
+        return x_ref[0] + 2
+
+      out = pltpu.run_scoped(body, pltpu.SMEM((1,), jnp.int32))
+      y_ref[0] = out
+
+    o = self.pallas_call(
+        kernel,
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+        ),
+        out_shape=jax.ShapeDtypeStruct((1,), jnp.int32),
+    )()
+    np.testing.assert_allclose(o, jnp.array([3], jnp.int32))
+
+  def test_run_scoped_can_return_scalar_values(self):
+    def kernel(y_ref):
+      def body(x_ref):
+        x_ref[0] = 0
+        x_ref[0] += 1
+        return x_ref[0] + 2, x_ref[0]
+
+      out = pltpu.run_scoped(body, pltpu.SMEM((1,), jnp.int32))
+      y_ref[0], y_ref[1] = out
+
+    o = self.pallas_call(
+        kernel,
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+        ),
+        out_shape=jax.ShapeDtypeStruct((2,), jnp.int32),
+    )()
+    np.testing.assert_allclose(o, jnp.array([3, 1], jnp.int32))
+
+  def test_run_scoped_can_return_vector_values(self):
+    def kernel(y_ref):
+      def body(x_ref):
+        x_ref[...] = jnp.ones_like(x_ref)
+        return x_ref[...] + 1
+
+      out = pltpu.run_scoped(body, pltpu.VMEM((16, 128), jnp.int32))
+      y_ref[...] = out
+
+    o = self.pallas_call(
+        kernel,
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+        ),
+        out_shape=jax.ShapeDtypeStruct((16, 128), jnp.int32),
+    )()
+    np.testing.assert_allclose(o, jnp.full((16, 128), 2, dtype=jnp.int32))
+
+  def test_run_scoped_can_return_padded_vector_values(self):
+    def kernel(y_ref):
+      def body(x_ref):
+        x_ref[...] = jnp.ones_like(x_ref)
+        return x_ref[...] + 1
+
+      out = pltpu.run_scoped(body, pltpu.VMEM((17, 128), jnp.int32))
+      y_ref[...] = out
+
+    o = self.pallas_call(
+        kernel,
+        grid_spec=pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+        ),
+        out_shape=jax.ShapeDtypeStruct((17, 128), jnp.int32),
+    )()
+    np.testing.assert_allclose(o, jnp.full((17, 128), 2, dtype=jnp.int32))
+
   def test_nested_scoped_allocation(self):
     def kernel(y_ref):
       def body(x_ref):

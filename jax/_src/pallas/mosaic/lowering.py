@@ -2413,7 +2413,8 @@ def _alloc_value(aval: jax_core.AbstractValue) -> ir.Value:
 
 
 def _run_scoped_lowering_rule(ctx: LoweringRuleContext, *consts, jaxpr):
-  region = tpu.RegionOp()
+  out_type = [aval_to_ir_type(aval) for aval in ctx.avals_out]
+  region = tpu.RegionOp(out_type)
   in_avals = [v.aval for v in jaxpr.invars]
   jaxpr = pe.convert_constvars_jaxpr(jaxpr)
   with ir.InsertionPoint(region.body):
@@ -2423,9 +2424,9 @@ def _run_scoped_lowering_rule(ctx: LoweringRuleContext, *consts, jaxpr):
     ctx = ctx.lowering_context.replace(
         block_shapes=(*ctx.block_shapes, *block_shapes)
     )
-    jaxpr_subcomp(ctx, jaxpr, *consts, *args)
-    tpu.YieldOp([])
-  return []
+    out = jaxpr_subcomp(ctx, jaxpr, *consts, *args)
+    tpu.YieldOp(out)
+  return region.results
 
 
 lowering_rules[tpu_primitives.run_scoped_p] = _run_scoped_lowering_rule

@@ -48,8 +48,8 @@ class TraceOp(TraceOp):  # noqa: F405
 class RegionOp(RegionOp):  # noqa: F405
   """An extension to the automatically generated RegionOp bindings."""
 
-  def __init__(self, *, loc=None, ip=None):
-    super().__init__([], loc=loc, ip=ip)
+  def __init__(self, results, *, loc=None, ip=None):
+    super().__init__(results, loc=loc, ip=ip)
     self.regions[0].blocks.append()  # Append the block.
 
   @property

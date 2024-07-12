@@ -161,16 +161,18 @@ run_scoped_p = jax_core.Primitive('run_scoped')
 run_scoped_p.multiple_results = True
 
 
-def run_scoped(f: Callable[..., None], *types, **kw_types) -> None:
+def run_scoped(f: Callable[..., Any], *types, **kw_types) -> Any:
   flat_types, in_tree = tree_util.tree_flatten((types, kw_types))
-  flat_fun, _ = api_util.flatten_fun(lu.wrap_init(f), in_tree)
+  flat_fun, out_tree_thunk = api_util.flatten_fun(lu.wrap_init(f), in_tree)
   avals = map(lambda t: t.get_aval(), flat_types)
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, avals)
-  run_scoped_p.bind(*consts, jaxpr=jaxpr)
+  out = run_scoped_p.bind(*consts, jaxpr=jaxpr)
+  return tree_util.tree_unflatten(out_tree_thunk(), out)
 
 
 @run_scoped_p.def_effectful_abstract_eval
 def _run_scoped_abstract_eval(*args, jaxpr):
+  del args
   # jaxpr will have effects for its inputs (Refs that are allocated) and for
   # constvars (closed over Refs). The effects for the allocated Refs are local
   # to the jaxpr and shouldn't propagate out.
@@ -181,7 +183,7 @@ def _run_scoped_abstract_eval(*args, jaxpr):
           and eff.input_index >= len(jaxpr.constvars)
       )
   }
-  return [], nonlocal_effects
+  return [v.aval for v in jaxpr.outvars], nonlocal_effects
 
 
 class DeviceIdType(enum.Enum):

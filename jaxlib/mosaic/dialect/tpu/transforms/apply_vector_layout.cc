@@ -1433,19 +1433,18 @@ LogicalResult scf_if_rule(RewriteContext &ctx, Operation &op,
   return success();
 }
 
-LogicalResult scf_yield_rule(RewriteContext &ctx, Operation &op,
-                             const ArrayRef<Layout> layouts_in,
-                             const ArrayRef<Layout> layouts_out) {
+LogicalResult yield_rule(RewriteContext &ctx, Operation &op,
+                         const ArrayRef<Layout> layouts_in,
+                         const ArrayRef<Layout> layouts_out) {
   OpBuilder builder(&op);
-  auto yield_op = cast<scf::YieldOp>(op);
-  TPU_ASSERT_EQ_OP(layouts_in.size(), yield_op.getNumOperands());
+  TPU_ASSERT_EQ_OP(layouts_in.size(), op.getNumOperands());
   TPU_ASSERT_EQ_OP(layouts_out.size(), 0);
-  if (yield_op.getNumOperands() == 0) {
+  if (op.getNumOperands() == 0) {
     return success();
   }
   SmallVector<Value> unrolled;
   for (auto [operand, layout] :
-       llvm::zip_equal(yield_op.getOperands(), layouts_in)) {
+       llvm::zip_equal(op.getOperands(), layouts_in)) {
     if (auto vector_operand = dyn_cast<TypedValue<VectorType>>(operand)) {
       // When the operand has vector type, disassemble the operand.
       TPU_ASSERT_OP(layout.has_value());
@@ -1460,7 +1459,7 @@ LogicalResult scf_yield_rule(RewriteContext &ctx, Operation &op,
   }
 
   // Replace the old operands with unrolled operands.
-  yield_op->setOperands(unrolled);
+  op.setOperands(unrolled);
   return success();
 }
 
@@ -2671,15 +2670,51 @@ LogicalResult tpu_gather_rule(RewriteContext &ctx, Operation &op,
 LogicalResult tpu_region_rule(RewriteContext &ctx, Operation &op,
                               const ArrayRef<Layout> layouts_in,
                               const ArrayRef<Layout> layouts_out) {
-  if (op.getNumOperands() != 0 || op.getNumResults() != 0) {
+  if (op.getNumOperands() != 0) {
     return op.emitOpError(
-        "Not implemented: tpu.region_block with inputs or outputs");
+        "Not implemented: tpu.region_block with inputs");
   }
   TPU_ASSERT_EQ_OP(layouts_in.size(), 0);
-  TPU_ASSERT_EQ_OP(layouts_out.size(), 0);
+  ImplicitLocOpBuilder builder(op.getLoc(), &op);
   auto region_op = cast<tpu::RegionOp>(op);
   // We don't modify the op, but we do rewrite the branch bodies.
-  return applyLayoutBlock(ctx, region_op.getRegion().getBlocks().front());
+  if (failed(
+          applyLayoutBlock(ctx, region_op.getRegion().getBlocks().front()))) {
+    return op.emitOpError("Failed to apply layout to TPU region.");
+  }
+  auto yield_op = cast<tpu::YieldOp>(
+      *region_op.getRegion().getBlocks().front().getTerminator());
+  auto new_op = builder.create<tpu::RegionOp>(yield_op->getOperandTypes());
+  moveAllRegions(*region_op, *new_op);
+
+  int64_t index = 0;
+  SmallVector<Value> rolled_results;
+  for (auto [result, layout] :
+       llvm::zip_equal(region_op.getResults(), layouts_out)) {
+    if (const auto vty = dyn_cast<VectorType>(result.getType())) {
+      // When the result has a vector type, assemble the result.
+      TPU_ASSERT_OP(layout.has_value());
+      const SmallVector<int64_t> tiles_shape =
+          layout->tileArrayShape(vty.getShape(), ctx.target_shape);
+      const int64_t num_vectors = ShapedType::getNumElements(tiles_shape);
+      xla::Array<Value> tiles(tiles_shape);
+      TPU_ASSERT_LE_OP(index + num_vectors, new_op.getResults().size());
+      tiles.SetValues(
+          llvm::make_range(new_op.getResults().begin() + index,
+                           new_op.getResults().begin() + index + num_vectors));
+      index += num_vectors;
+      RollVectorsOp rolled_op =
+          assemble(builder, vty, *layout, tiles, ctx.target_shape);
+      rolled_results.push_back(rolled_op);
+    } else {
+      TPU_ASSERT_OP(!layout.has_value());
+      rolled_results.push_back(new_op.getResult(index));
+      ++index;
+    }
+  }
+  region_op.replaceAllUsesWith(rolled_results);
+  region_op.erase();
+  return success();
 }
 
 LogicalResult tpu_repeat_rule(RewriteContext &ctx, Operation &op,
@@ -4318,7 +4353,8 @@ const llvm::StringMap<rule_type> &rules() {
       {scf::WhileOp::getOperationName(), scf_while_rule},
       {scf::ConditionOp::getOperationName(), scf_condition_rule},
       {scf::IfOp::getOperationName(), scf_if_rule},
-      {scf::YieldOp::getOperationName(), scf_yield_rule},
+      {scf::YieldOp::getOperationName(), yield_rule},
+      {tpu::YieldOp::getOperationName(), yield_rule},
       {tpu::RotateOp::getOperationName(), tpu_rotate_rule},
       {tpu::DynamicRotateOp::getOperationName(), tpu_dynamic_rotate_rule},
       {tpu::ConcatenateOp::getOperationName(), tpu_concatenate_rule},

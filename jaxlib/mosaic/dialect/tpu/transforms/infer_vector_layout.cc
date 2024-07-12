@@ -994,8 +994,16 @@ class VectorLayoutInferer {
       return success();
     };
     TPU_CHECK_OP(op->getNumOperands() == 0, "expected no operands");
-    TPU_CHECK_OP(op->getNumResults() == 0, "results unsupported");
-    return inferBlock((*op).getRegion(0).getBlocks().front(), match_region);
+    auto body_result =
+        inferBlock((*op).getRegion(0).getBlocks().front(), match_region);
+    if (body_result.failed()) {
+      return op.emitOpError("failed to infer vector layout in region body");
+    }
+    auto yield_op = op.getBody()->getTerminator();
+    auto yield_in_layouts = getLayoutFromOperands(yield_op);
+    setInLayout(yield_op, yield_in_layouts);
+    setOutLayout(op, yield_in_layouts);
+    return success();
   }
 
   LogicalResult infer(tpu::IotaOp op) {

@@ -580,6 +580,7 @@ def TPU_RegionOp : TPU_Op<"region", [RecursiveMemoryEffects, SingleBlockImplicit
   let arguments = (ins);
   let results = (outs Variadic<AnyType>:$results);
   let regions = (region AnyRegion:$region);
+  let hasVerifier = 1;
 }
 
 def TPU_TraceOp : TPU_Op<"trace", [RecursiveMemoryEffects, SingleBlockImplicitTerminator<"tpu::YieldOp">]> {
