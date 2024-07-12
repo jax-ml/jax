@@ -360,8 +360,9 @@ LogicalResult WaitDMAOp::verify() {
 
 LogicalResult RegionOp::verify() {
   for (auto result_type : getResultTypes()) {
-    if (isa<MemRefType>(result_type)) {
-      return emitOpError("Region result cannot be a memref.");
+    if (!isa<FloatType, IntegerType, VectorType, IndexType>(result_type)) {
+      return emitOpError(
+          "Region result must be float, int, index or a vector type.");
     }
   }
   return success();
