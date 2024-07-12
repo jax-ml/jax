@@ -42,6 +42,16 @@ namespace jax {
           .Ret<::xla::ffi::Buffer<LapackIntDtype>>(/*info*/) \
           .Ret<::xla::ffi::Buffer<data_type>>(/*work*/))
 
+#define JAX_CPU_DEFINE_ORGQR(name, data_type)                \
+  XLA_FFI_DEFINE_HANDLER(                                    \
+      name, OrthogonalQr<data_type>::Kernel,                 \
+      ::xla::ffi::Ffi::Bind()                                \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)         \
+          .Arg<::xla::ffi::Buffer<data_type>>(/*tau*/)       \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*x_out*/)     \
+          .Ret<::xla::ffi::Buffer<LapackIntDtype>>(/*info*/) \
+          .Ret<::xla::ffi::Buffer<data_type>>(/*work*/))
+
 #define JAX_CPU_DEFINE_POTRF(name, data_type)            \
   XLA_FFI_DEFINE_HANDLER(                                \
       name, CholeskyFactorization<data_type>::Kernel,    \
@@ -92,6 +102,11 @@ JAX_CPU_DEFINE_GEQRF(lapack_dgeqrf_ffi, ::xla::ffi::DataType::F64);
 JAX_CPU_DEFINE_GEQRF(lapack_cgeqrf_ffi, ::xla::ffi::DataType::C64);
 JAX_CPU_DEFINE_GEQRF(lapack_zgeqrf_ffi, ::xla::ffi::DataType::C128);
 
+JAX_CPU_DEFINE_ORGQR(lapack_sorgqr_ffi, ::xla::ffi::DataType::F32);
+JAX_CPU_DEFINE_ORGQR(lapack_dorgqr_ffi, ::xla::ffi::DataType::F64);
+JAX_CPU_DEFINE_ORGQR(lapack_cungqr_ffi, ::xla::ffi::DataType::C64);
+JAX_CPU_DEFINE_ORGQR(lapack_zungqr_ffi, ::xla::ffi::DataType::C128);
+
 JAX_CPU_DEFINE_POTRF(lapack_spotrf_ffi, ::xla::ffi::DataType::F32);
 JAX_CPU_DEFINE_POTRF(lapack_dpotrf_ffi, ::xla::ffi::DataType::F64);
 JAX_CPU_DEFINE_POTRF(lapack_cpotrf_ffi, ::xla::ffi::DataType::C64);
@@ -104,6 +119,7 @@ JAX_CPU_DEFINE_GESDD_COMPLEX(lapack_zgesdd_ffi, ::xla::ffi::DataType::C128);
 
 #undef JAX_CPU_DEFINE_GETRF
 #undef JAX_CPU_DEFINE_GEQRF
+#undef JAX_CPU_DEFINE_ORGQR
 #undef JAX_CPU_DEFINE_POTRF
 #undef JAX_CPU_DEFINE_GESDD
 #undef JAX_CPU_DEFINE_GESDD_COMPLEX

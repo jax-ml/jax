@@ -41,10 +41,10 @@ jax::QrFactorization<ffi::DataType::F64>::FnType dgeqrf_;
 jax::QrFactorization<ffi::DataType::C64>::FnType cgeqrf_;
 jax::QrFactorization<ffi::DataType::C128>::FnType zgeqrf_;
 
-jax::Orgqr<float>::FnType sorgqr_;
-jax::Orgqr<double>::FnType dorgqr_;
-jax::Orgqr<std::complex<float>>::FnType cungqr_;
-jax::Orgqr<std::complex<double>>::FnType zungqr_;
+jax::OrthogonalQr<ffi::DataType::F32>::FnType sorgqr_;
+jax::OrthogonalQr<ffi::DataType::F64>::FnType dorgqr_;
+jax::OrthogonalQr<ffi::DataType::C64>::FnType cungqr_;
+jax::OrthogonalQr<ffi::DataType::C128>::FnType zungqr_;
 
 jax::CholeskyFactorization<ffi::DataType::F32>::FnType spotrf_;
 jax::CholeskyFactorization<ffi::DataType::F64>::FnType dpotrf_;
@@ -110,6 +110,18 @@ static_assert(std::is_same_v<jax::QrFactorization<ffi::DataType::C64>::FnType,
               JAX_KERNEL_FNTYPE_MISMATCH_MSG);
 static_assert(std::is_same_v<jax::QrFactorization<ffi::DataType::C128>::FnType,
                              jax::Geqrf<std::complex<double>>::FnType>,
+              JAX_KERNEL_FNTYPE_MISMATCH_MSG);
+static_assert(std::is_same_v<jax::OrthogonalQr<ffi::DataType::F32>::FnType,
+                             jax::Orgqr<float>::FnType>,
+              JAX_KERNEL_FNTYPE_MISMATCH_MSG);
+static_assert(std::is_same_v<jax::OrthogonalQr<ffi::DataType::F64>::FnType,
+                             jax::Orgqr<double>::FnType>,
+              JAX_KERNEL_FNTYPE_MISMATCH_MSG);
+static_assert(std::is_same_v<jax::OrthogonalQr<ffi::DataType::C64>::FnType,
+                             jax::Orgqr<std::complex<float>>::FnType>,
+              JAX_KERNEL_FNTYPE_MISMATCH_MSG);
+static_assert(std::is_same_v<jax::OrthogonalQr<ffi::DataType::C128>::FnType,
+                             jax::Orgqr<std::complex<double>>::FnType>,
               JAX_KERNEL_FNTYPE_MISMATCH_MSG);
 static_assert(
     std::is_same_v<jax::CholeskyFactorization<ffi::DataType::F32>::FnType,
@@ -215,6 +227,11 @@ static auto init = []() -> int {
   AssignKernelFn<QrFactorization<ffi::DataType::F64>>(dgeqrf_);
   AssignKernelFn<QrFactorization<ffi::DataType::C64>>(cgeqrf_);
   AssignKernelFn<QrFactorization<ffi::DataType::C128>>(zgeqrf_);
+
+  AssignKernelFn<OrthogonalQr<ffi::DataType::F32>>(sorgqr_);
+  AssignKernelFn<OrthogonalQr<ffi::DataType::F64>>(dorgqr_);
+  AssignKernelFn<OrthogonalQr<ffi::DataType::C64>>(cungqr_);
+  AssignKernelFn<OrthogonalQr<ffi::DataType::C128>>(zungqr_);
 
   AssignKernelFn<CholeskyFactorization<ffi::DataType::F32>>(spotrf_);
   AssignKernelFn<CholeskyFactorization<ffi::DataType::F64>>(dpotrf_);

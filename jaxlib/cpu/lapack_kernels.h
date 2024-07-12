@@ -186,6 +186,27 @@ struct Orgqr {
   static int64_t Workspace(lapack_int m, lapack_int n, lapack_int k);
 };
 
+// FFI Kernel
+
+template <::xla::ffi::DataType dtype>
+struct OrthogonalQr {
+  using ValueType = ::xla::ffi::NativeType<dtype>;
+  using FnType = void(lapack_int* m, lapack_int* n, lapack_int* k, ValueType* a,
+                      lapack_int* lda, ValueType* tau, ValueType* work,
+                      lapack_int* lwork, lapack_int* info);
+
+  inline static FnType* fn = nullptr;
+
+  static ::xla::ffi::Error Kernel(::xla::ffi::Buffer<dtype> x,
+                                  ::xla::ffi::Buffer<dtype> tau,
+                                  ::xla::ffi::ResultBuffer<dtype> x_out,
+                                  ::xla::ffi::ResultBuffer<LapackIntDtype> info,
+                                  ::xla::ffi::ResultBuffer<dtype> work);
+
+  static int64_t GetWorkspaceSize(lapack_int x_rows, lapack_int x_cols,
+                                  lapack_int tau_size);
+};
+
 //== Cholesky Factorization ==//
 
 // lapack potrf

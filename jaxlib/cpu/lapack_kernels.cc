@@ -381,6 +381,60 @@ template struct Orgqr<double>;
 template struct Orgqr<std::complex<float>>;
 template struct Orgqr<std::complex<double>>;
 
+// FFI Kernel
+
+template <ffi::DataType dtype>
+ffi::Error OrthogonalQr<dtype>::Kernel(ffi::Buffer<dtype> x,
+                                       ffi::Buffer<dtype> tau,
+                                       ffi::ResultBuffer<dtype> x_out,
+                                       ffi::ResultBuffer<LapackIntDtype> info,
+                                       ffi::ResultBuffer<dtype> work) {
+  auto [batch_count, x_rows, x_cols] = SplitBatch2D(x.dimensions());
+  auto* tau_data = tau.typed_data();
+  auto* x_out_data = x_out->typed_data();
+  auto* info_data = info->typed_data();
+  auto* work_data = work->typed_data();
+
+  CopyIfDiffBuffer(x, x_out);
+
+  FFI_ASSIGN_OR_RETURN(auto tau_size_v, MaybeCastNoOverflow<lapack_int>(
+                                            tau.dimensions().back()));
+  FFI_ASSIGN_OR_RETURN(auto x_rows_v, MaybeCastNoOverflow<lapack_int>(x_rows));
+  FFI_ASSIGN_OR_RETURN(auto x_cols_v, MaybeCastNoOverflow<lapack_int>(x_cols));
+  FFI_ASSIGN_OR_RETURN(auto workspace_dim_v, MaybeCastNoOverflow<lapack_int>(
+                                                 work->dimensions().back()));
+  auto x_leading_dim_v = x_rows_v;
+
+  const int64_t x_out_step{x_rows * x_cols};
+  const int64_t tau_step{tau_size_v};
+  for (int64_t i = 0; i < batch_count; ++i) {
+    fn(&x_rows_v, &x_cols_v, &tau_size_v, x_out_data, &x_leading_dim_v,
+       tau_data, work_data, &workspace_dim_v, info_data);
+    x_out_data += x_out_step;
+    tau_data += tau_step;
+    ++info_data;
+  }
+  return ffi::Error::Success();
+}
+
+template <ffi::DataType dtype>
+int64_t OrthogonalQr<dtype>::GetWorkspaceSize(lapack_int x_rows,
+                                              lapack_int x_cols,
+                                              lapack_int tau_size) {
+  ValueType optimal_size = {};
+  lapack_int x_leading_dim_v = x_rows;
+  lapack_int info = 0;
+  lapack_int workspace_query = -1;
+  fn(&x_rows, &x_cols, &tau_size, nullptr, &x_leading_dim_v, nullptr,
+     &optimal_size, &workspace_query, &info);
+  return info == 0 ? static_cast<int64_t>(std::real(optimal_size)) : -1;
+}
+
+template struct OrthogonalQr<ffi::DataType::F32>;
+template struct OrthogonalQr<ffi::DataType::F64>;
+template struct OrthogonalQr<ffi::DataType::C64>;
+template struct OrthogonalQr<ffi::DataType::C128>;
+
 //== Cholesky Factorization ==//
 
 // lapack potrf
