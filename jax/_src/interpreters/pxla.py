@@ -62,6 +62,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.layout import DeviceLocalLayout, AutoLayout, Layout
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec
@@ -2726,6 +2727,25 @@ def maybe_recover_user_shardings(
   return new_shardings
 
 
+def _check_xla_user_layout(ul, xl, what: str):
+  if xla_extension_version >= 274:
+    if ul._tiling is None:
+      if ul.major_to_minor != xl.major_to_minor:
+        raise AssertionError(
+            f"Unexpected XLA layout override: (XLA) {xl} != {ul} "
+            f"(User {what} layout)")
+    else:
+      if ul != xl:
+        raise AssertionError(
+            f"Unexpected XLA layout override: (XLA) {xl} != {ul} "
+            f"(User {what} layout)")
+  else:
+    if ul != xl:
+      raise AssertionError(
+          f"Unexpected XLA layout override: (XLA) {xl} != {ul} "
+          f"(User {what} layout)")
+
+
 def _get_layouts_from_executable(
     xla_executable, in_layouts, out_layouts, num_ordered_effects
 ) -> tuple[Sequence[DeviceLocalLayout | None], Sequence[DeviceLocalLayout | None]]:
@@ -2743,25 +2763,19 @@ def _get_layouts_from_executable(
   for x, i in safe_zip(in_layouts_xla, in_layouts):
     x = DeviceLocalLayout.from_pjrt_layout(x)
     if isinstance(i, DeviceLocalLayout):
-      if i != x:
-        raise AssertionError(
-            f"Unexpected XLA layout override: (XLA) {x} != {i} (User input"
-            " layout)")
-      new_in_layouts.append(i)
-    else:
-      new_in_layouts.append(x)
+      _check_xla_user_layout(i, x, "input")
+    # Always append the XLA layout because it has the full information
+    # (tiling, etc) even if the user layout does not specify tiling.
+    new_in_layouts.append(x)
 
   new_out_layouts = []
   for x, o in safe_zip(out_layouts_xla, out_layouts):
     x = DeviceLocalLayout.from_pjrt_layout(x)
     if isinstance(o, DeviceLocalLayout):
-      if o != x:
-        raise AssertionError(
-            f"Unexpected XLA layout override: (XLA) {x} != {o} (User output"
-            " layout)")
-      new_out_layouts.append(o)
-    else:
-      new_out_layouts.append(x)
+      _check_xla_user_layout(o, x, "output")
+    # Always append the XLA layout because it has the full information
+    # (tiling, etc) even if the user layout does not specify tiling.
+    new_out_layouts.append(x)
 
   assert all(isinstance(i, DeviceLocalLayout) for i in new_in_layouts)
   assert all(isinstance(o, DeviceLocalLayout) for o in new_out_layouts)

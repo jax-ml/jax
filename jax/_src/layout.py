@@ -33,43 +33,54 @@ class AutoLayout:
 if xla_extension_version >= 274:
   class DeviceLocalLayout:
     major_to_minor: tuple[int, ...]
-    tiling: tuple[tuple[int, ...], ...] | None
+    _tiling: tuple[tuple[int, ...], ...] | None
+    _sub_byte_element_size_in_bits: int
 
     AUTO = AutoLayout()
 
     def __init__(self, major_to_minor: tuple[int, ...],
-                tiling: tuple[tuple[int, ...], ...] | None = None):
+                 _tiling: tuple[tuple[int, ...], ...] | None = None,
+                 _sub_byte_element_size_in_bits: int = 0):
       self.major_to_minor = tuple(major_to_minor)
-      self.tiling = None if tiling is None else tuple(map(tuple, tiling))
+      self._tiling = None if _tiling is None else tuple(map(tuple, _tiling))
+      self._sub_byte_element_size_in_bits = _sub_byte_element_size_in_bits
 
     @staticmethod
     def from_pjrt_layout(pjrt_layout: xc.PjRtLayout):
       xla_layout = pjrt_layout._xla_layout()
       return DeviceLocalLayout(xla_layout.minor_to_major()[::-1],  # pytype: disable=wrong-arg-types
-                               xla_layout.tiling())
+                               xla_layout.tiling(),
+                               xla_layout.element_size_in_bits())
 
     def __repr__(self):
-      return (f'DeviceLocalLayout(major_to_minor={self.major_to_minor},'
-              f' tiling={self.tiling})')
+      return (
+          f'DeviceLocalLayout(major_to_minor={self.major_to_minor},'
+          f' _tiling={self._tiling},'
+          f' _sub_byte_element_size_in_bits={self._sub_byte_element_size_in_bits})'
+      )
 
     def __hash__(self):
-      return hash((self.major_to_minor, self.tiling))
+      return hash((self.major_to_minor, self._tiling,
+                   self._sub_byte_element_size_in_bits))
 
     def __eq__(self, other):
       if not isinstance(other, DeviceLocalLayout):
         return False
       return (self.major_to_minor == other.major_to_minor and
-              self.tiling == other.tiling)
+              self._tiling == other._tiling and
+              self._sub_byte_element_size_in_bits == other._sub_byte_element_size_in_bits)
 
     def _to_xla_layout(self, dtype) -> str:
-      if self.tiling is None:
+      if self._tiling is None:
         xla_layout = xc.Layout(self.major_to_minor[::-1])
       else:
-        if issubdtype(dtype, np.integer):
+        if self._sub_byte_element_size_in_bits != 0:
+          sub_byte_size = self._sub_byte_element_size_in_bits
+        elif issubdtype(dtype, np.integer):
           sub_byte_size = iinfo(dtype).bits if iinfo(dtype).bits < 8 else 0
         else:
           sub_byte_size = 0
-        xla_layout = xc.Layout(self.major_to_minor[::-1], self.tiling,  # type: ignore
+        xla_layout = xc.Layout(self.major_to_minor[::-1], self._tiling,  # type: ignore
                                sub_byte_size)
       return str(xla_layout)
 else:

@@ -364,7 +364,7 @@ class LayoutTest(jtu.JaxTestCase):
     arr = jax.device_put(np_inp, s)
 
     # Create a custom layout instead of using `arr.layout` to test the API.
-    custom_dll = DLL(major_to_minor=(0, 1), tiling=((8, 128),))
+    custom_dll = DLL(major_to_minor=(0, 1))
 
     @jax.jit
     def f(x):
@@ -374,7 +374,8 @@ class LayoutTest(jtu.JaxTestCase):
       return jax.lax.with_sharding_constraint(y, Layout(custom_dll, s))
 
     out = f(arr)
-    self.assertEqual(out.layout, Layout(custom_dll, s))
+    self.assertEqual(out.layout.device_local_layout.major_to_minor,
+                     custom_dll.major_to_minor)
     self.assertEqual(out.layout, arr.layout)
     self.assertArraysEqual(out, np_inp.T)
 
@@ -386,7 +387,7 @@ class LayoutTest(jtu.JaxTestCase):
     arr = jax.device_put(inp, s)
 
     # Create a custom layout instead of using `arr.layout` to test the API.
-    custom_dll = DLL(major_to_minor=(0, 1), tiling=((8, 128), (2, 1)))
+    custom_dll = DLL(major_to_minor=(0, 1))
 
     @jax.jit
     def f(x):
@@ -396,19 +397,39 @@ class LayoutTest(jtu.JaxTestCase):
       return jax.lax.with_sharding_constraint(y, Layout(custom_dll, s))
 
     out = f(arr)
-    self.assertEqual(out.layout, Layout(custom_dll, s))
+    self.assertEqual(out.layout.device_local_layout.major_to_minor,
+                     custom_dll.major_to_minor)
     self.assertEqual(out.layout, arr.layout)
     self.assertArraysEqual(out, inp.T)
 
   def test_device_put_user_concrete_layout(self):
     shape = (8, 128)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
-    dll = DLL(major_to_minor=(1, 0), tiling=((8, 128),))
+    dll = DLL(major_to_minor=(1, 0))
     s = SingleDeviceSharding(jax.devices()[0])
 
     out = jax.device_put(np_inp, Layout(dll, s))
-    self.assertEqual(out.layout, Layout(dll, s))
+    self.assertEqual(out.layout.device_local_layout.major_to_minor,
+                     dll.major_to_minor)
     self.assertArraysEqual(out, np_inp)
+
+  def test_concrete_layout_jit(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    shape = (16, 128)
+    s = NamedSharding(mesh, P('x'))
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+    arr = jax.device_put(np_inp, s)
+
+    def f(x):
+      return x.T
+
+    custom_dll = DLL(major_to_minor=(0, 1))
+    f = jax.jit(f, out_shardings=Layout(custom_dll, s))
+
+    out = f(arr)
+    self.assertArraysEqual(out, np_inp.T)
+    self.assertEqual(out.layout.device_local_layout.major_to_minor,
+                     custom_dll.major_to_minor)
 
 
 if __name__ == '__main__':
