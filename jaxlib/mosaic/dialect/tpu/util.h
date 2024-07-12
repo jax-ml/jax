@@ -100,6 +100,8 @@ std::string shapeToString(const T &shape) {
   return os.str();
 }
 
+SmallVector<int64_t> ComputeTileStrides(MemRefType memref_ty,
+                                        absl::Span<const int64_t> tiling);
 }  // namespace mlir::tpu
 
 #endif  // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_UTIL_H_

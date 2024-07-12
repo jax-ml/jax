@@ -24,9 +24,12 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
+#include "absl/log/check.h"
+#include "mlir/include/mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/include/mlir/IR/BuiltinTypes.h"
 #include "mlir/include/mlir/IR/IRMapping.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
+#include "jaxlib/mosaic/dialect/tpu/util.h"
 
 namespace mlir {
 namespace tpu {
@@ -180,6 +183,95 @@ LogicalResult MemRefSqueezeOp::canonicalize(MemRefSqueezeOp op,
   auto squeeze = rewriter.create<MemRefSqueezeOp>(op.getLoc(), new_result_type,
                                                   layout_ref);
   rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), squeeze);
+  return success();
+}
+
+LogicalResult MemRefReshapeOp::verify() {
+  auto src_ty = getMemRefType(getInput());
+  auto tgt_ty = getType();
+  if (tgt_ty.getMemorySpace() != nullptr &&
+      tgt_ty.getMemorySpace() != src_ty.getMemorySpace()) {
+    return emitOpError("Memory spaces do not match.");
+  }
+  if (src_ty.getShape().size() < 2 || tgt_ty.getShape().size() < 2) {
+    return emitError("Not implemented: 1d memref reshape.");
+  }
+  if (tgt_ty.getElementType() != src_ty.getElementType()) {
+    return emitOpError("Element types don't match.");
+  }
+  auto src_elements_num = ShapedType::getNumElements(src_ty.getShape());
+  auto tgt_elements_num = ShapedType::getNumElements(tgt_ty.getShape());
+  if (src_elements_num != tgt_elements_num) {
+    return emitOpError(
+        "Number of elements doesn't match between input and output memref "
+        "type.");
+  }
+  // Source and target attributes may be different before propagation is done by
+  // the canonicalizer, so we allow this when attributes are "unset" in the
+  // target type.
+  auto tgt_layout = dyn_cast<tpu::TiledLayoutAttr>(tgt_ty.getLayout());
+  if (!tgt_layout) {
+    return success();
+  }
+  auto src_layout = dyn_cast<tpu::TiledLayoutAttr>(src_ty.getLayout());
+  if (!src_layout || src_layout.getTiles().empty()) {
+    return emitOpError("Expected a tiled layout for the input memref.");
+  }
+  if (src_layout.getTiles() != tgt_layout.getTiles()) {
+    return emitOpError(
+        "Expected the same tiling for the input and output memref.");
+  }
+  auto tile = src_layout.getTiles().front().dimensions();
+  if (tile.size() != 2) {
+    return emitOpError("Not implemented: memref reshape with 1D tiling.");
+  }
+  SmallVector<int64_t> src_tile_strides(src_layout.getTileStrides());
+  if (ComputeTileStrides(src_ty, tile) != src_tile_strides) {
+    return emitOpError("Not implemented: reshape on a non-contiguous memref.");
+  }
+  auto src_tiled_shape = src_ty.getShape().take_back(2);
+  auto tgt_tiled_shape = tgt_ty.getShape().take_back(2);
+  bool is_src_align_tile_2nd_minor = src_tiled_shape[0] % tile[0] == 0;
+  bool is_src_align_tile_minor = src_tiled_shape[1] % tile[1] == 0;
+  bool is_tgt_align_tile_2nd_minor = tgt_tiled_shape[0] % tile[0] == 0;
+  bool is_tgt_align_tile_minor = tgt_tiled_shape[1] % tile[1] == 0;
+  if (tile[0] == 1 && is_src_align_tile_minor && is_tgt_align_tile_minor) {
+    // When the tiling is (1, ?) and the source and target shapes are aligned
+    // to the tile, we support reshape on any dims.
+  } else if (tgt_tiled_shape[1] != src_tiled_shape[1]) {
+    return emitError("Expected the minormost dimension to be unchanged");
+  } else if (tgt_tiled_shape[0] != src_tiled_shape[0]) {
+    if (!is_src_align_tile_2nd_minor || !is_tgt_align_tile_2nd_minor) {
+      return emitError(
+          "Expected the 2nd minor dimension is aligned to the tile");
+    }
+  }
+  return success();
+}
+
+LogicalResult MemRefReshapeOp::canonicalize(MemRefReshapeOp op,
+                                            PatternRewriter &rewriter) {
+  auto src_ty = op.getInput().getType();
+  auto dst_ty = op.getType();
+  auto erase_layout_op = op.getInput().getDefiningOp<tpu::EraseLayoutOp>();
+  if (!erase_layout_op) {
+    return failure();
+  }
+  auto layout_ref = erase_layout_op.getOperand();
+  auto layout_ty = layout_ref.getType();
+  auto layout =
+      dyn_cast<tpu::TiledLayoutAttr>(layout_ty.getLayout());
+  CHECK(!layout.getTiles().empty());
+  auto tile = layout.getTiles().front().dimensions();
+  auto new_tile_strides = ComputeTileStrides(dst_ty, tile);
+  auto new_layout = tpu::TiledLayoutAttr::get(
+      src_ty.getContext(), layout.getTiles(), new_tile_strides);
+  auto new_result_ty =
+      MemRefType::get(dst_ty.getShape(), dst_ty.getElementType(), new_layout,
+                      layout_ty.getMemorySpace());
+  auto reshape =
+      rewriter.create<MemRefReshapeOp>(op.getLoc(), new_result_ty, layout_ref);
+  rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), reshape);
   return success();
 }
 
