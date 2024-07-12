@@ -621,7 +621,7 @@ class TransferShardTest(jtu.JaxTestCase):
     arr = jax.device_put(np_inp, sharding)
     shard = arr.addressable_shards[0]
 
-    np_out = serialization.transfer_shard_to_host(shard)
+    np_out = asyncio.run(serialization.transfer_shard_to_host(shard))
 
     self.assertArraysEqual(np_out, np_inp)
 
