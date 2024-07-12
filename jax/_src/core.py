@@ -3350,11 +3350,17 @@ def _compact_eqn_should_include(k: str, v: Any) -> bool:
     return False
   return True
 
-def str_eqn_compact(primitive_name: str, params: dict) -> str:
+def str_eqn_compact(primitive: Primitive, params: dict[Any, Any]) -> str:
   "Compact equation to string conversion used in HLO metadata."
+  if primitive in custom_str_eqn_compact_rules:
+    return custom_str_eqn_compact_rules[primitive](primitive, params)
+  primitive_name = primitive.name
   kvs = " ".join(f"{k}={v}" for k, v in params.items()
                  if _compact_eqn_should_include(k, v))
   return f"{primitive_name}[{kvs}]" if len(kvs) > 0 else primitive_name
+custom_str_eqn_compact_rules: dict[
+    Primitive, Callable[[Primitive, dict[Any, Any]], str]
+] = {}
 
 def pp_jaxpr_skeleton(jaxpr, eqns_fn, context: JaxprPpContext,
                       settings: JaxprPpSettings) -> pp.Doc:

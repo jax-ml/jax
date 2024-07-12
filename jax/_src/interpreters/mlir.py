@@ -411,7 +411,7 @@ def _source_info_to_location(
     ctx: ModuleContext, primitive: core.Primitive, params: dict[str, Any],
     source_info: source_info_util.SourceInfo) -> ir.Location:
   eqn_str = (f'{source_info.name_stack}/'
-             f'{core.str_eqn_compact(primitive.name, params)}')
+             f'{core.str_eqn_compact(primitive, params)}')
   if config.include_full_tracebacks_in_locations.value:
     if source_info.traceback is None:
       loc = ir.Location.unknown()

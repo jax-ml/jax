@@ -1259,7 +1259,7 @@ def _make_op_metadata(primitive: core.Primitive,
                       source_info: source_info_util.SourceInfo,
                       ) -> xla_client.OpMetadata:
   eqn_str = (str(source_info.name_stack) + '/'
-             + core.str_eqn_compact(primitive.name, params))
+             + core.str_eqn_compact(primitive, params))
   frame = source_info_util.user_frame(source_info)
   return xla_client.OpMetadata(
         op_type=primitive.name,
