@@ -5,7 +5,7 @@
 <!--* freshness: { reviewed: '2024-06-01' } *-->
 
 (pallas_grid)=
-### `grid`, a.k.a. kernels in a loop
+## `grid`, a.k.a. kernels in a loop
 
 When using {func}`jax.experimental.pallas.pallas_call` the kernel function
 is executed multiple times on different inputs, as specified via the `grid` argument
@@ -79,13 +79,7 @@ See [the Pallas TPU documentation](https://jax.readthedocs.io/en/latest/pallas/t
 
 (pallas_blockspec)=
 
-### `BlockSpec`, a.k.a. how to chunk up inputs
-
-```{note}
-The documentation here applies to the ``indexing_mode == Blocked``, which
-is the default.
-The documentation for the ``indexing_mode == Unblocked`` is coming.
-```
+## `BlockSpec`, a.k.a. how to chunk up inputs
 
 In conjunction with the `grid` argument, we need to provide Pallas
 the information on how to slice up the input for each invocation.
@@ -100,6 +94,8 @@ to revisit the
 `BlockSpec`s are provided to `pallas_call` via the
 `in_specs` and `out_specs`, one for each input and output respectively.
 
+First, we discuss the semantics of `BlockSpec` when `indexing_mode == pl.Blocked()`.
+
 Informally, the `index_map` of the `BlockSpec` takes as arguments
 the invocation indices (as many as the length of the `grid` tuple),
 and returns **block indices** (one block index for each axis of
@@ -110,7 +106,11 @@ to get the actual element index on the corresponding array axis.
 If the block shape does not divide evenly the overall shape then the
 last iteration on each axis will still receive references to blocks
 of `block_shape` but the elements that are out-of-bounds are padded
-on input and discarded on output. Note that at least one of the
+on input and discarded on output. The values of the padding are unspecified, and
+you should assume they is garbage. In the `interpret=True` mode, we
+pad with NaN for floating-point values, to give users a chance to
+spot accessing out-of-bounds elements, but this behavior should not
+be depended upon. Note that at least one of the
 elements in each block must be within bounds.
 
 More precisely, the slices for each axis of the input `x` of
@@ -160,24 +160,26 @@ For example:
 
 ```
 
-The function `show_invocations` defined below uses Pallas to show the
+The function `show_program_ids` defined below uses Pallas to show the
 invocation indices. The `iota_2D_kernel` will fill each output block
 with a decimal number where the first digit represents the invocation
 index over the first axis, and the second the invocation index
 over the second axis:
 
 ```python
->>> def show_invocations(x_shape, block_shape, grid, out_index_map=lambda i, j: (i, j)):
-...   def iota_2D_kernel(o_ref):
-...    axes = 0
-...    for axis in range(len(grid)):
-...      axes += pl.program_id(axis) * 10**(len(grid) - 1 - axis)
-...    o_ref[...] = jnp.full(o_ref.shape, axes)
-...   res = pl.pallas_call(iota_2D_kernel,
+>>> def show_program_ids(x_shape, block_shape, grid,
+...                      index_map=lambda i, j: (i, j),
+...                      indexing_mode=pl.Blocked()):
+...   def program_ids_kernel(o_ref):  # Fill the output block with 10*program_id(1) + program_id(0)
+...     axes = 0
+...     for axis in range(len(grid)):
+...       axes += pl.program_id(axis) * 10**(len(grid) - 1 - axis)
+...     o_ref[...] = jnp.full(o_ref.shape, axes)
+...   res = pl.pallas_call(program_ids_kernel,
 ...                        out_shape=jax.ShapeDtypeStruct(x_shape, dtype=np.int32),
 ...                        grid=grid,
 ...                        in_specs=[],
-...                        out_specs=pl.BlockSpec(block_shape, out_index_map),
+...                        out_specs=pl.BlockSpec(block_shape, index_map, indexing_mode=indexing_mode),
 ...                        interpret=True)()
 ...   print(res)
 
@@ -185,7 +187,8 @@ over the second axis:
 
 For example:
 ```python
->>> show_invocations(x_shape=(8, 6), block_shape=(2, 3), grid=(4, 2))
+>>> show_program_ids(x_shape=(8, 6), block_shape=(2, 3), grid=(4, 2),
+...                  index_map=lambda i, j: (i, j))
 [[ 0  0  0  1  1  1]
  [ 0  0  0  1  1  1]
  [10 10 10 11 11 11]
@@ -196,7 +199,8 @@ For example:
  [30 30 30 31 31 31]]
 
 >>> # An example with out-of-bounds accesses
->>> show_invocations(x_shape=(7, 5), block_shape=(2, 3), grid=(4, 2))
+>>> show_program_ids(x_shape=(7, 5), block_shape=(2, 3), grid=(4, 2),
+...                  index_map=lambda i, j: (i, j))
 [[ 0  0  0  1  1]
  [ 0  0  0  1  1]
  [10 10 10 11 11]
@@ -206,7 +210,8 @@ For example:
  [30 30 30 31 31]]
 
 >>> # It is allowed for the shape to be smaller than block_shape
->>> show_invocations(x_shape=(1, 2), block_shape=(2, 3), grid=(1, 1))
+>>> show_program_ids(x_shape=(1, 2), block_shape=(2, 3), grid=(1, 1),
+...                  index_map=lambda i, j: (i, j))
 [[0 0]]
 
 ```
@@ -215,7 +220,7 @@ When multiple invocations write to the same elements of the output
 array the result is platform dependent.
 
 In the example below, we have a 3D grid with the last grid dimension
-not used in the block selection (`out_index_map=lambda i, j, k: (i, j)`).
+not used in the block selection (`index_map=lambda i, j, k: (i, j)`).
 Hence, we iterate over the same output block 10 times.
 The output shown below was generated on CPU using `interpret=True`
 mode, which at the moment executes the invocation sequentially.
@@ -224,8 +229,8 @@ and this function generates the output shown.
 See [the Pallas TPU documentation](https://jax.readthedocs.io/en/latest/pallas/tpu/details.html#noteworthy-properties-and-restrictions).
 
 ```python
->>> show_invocations(x_shape=(8, 6), block_shape=(2, 3), grid=(4, 2, 10),
-...                  out_index_map=lambda i, j, k: (i, j))
+>>> show_program_ids(x_shape=(8, 6), block_shape=(2, 3), grid=(4, 2, 10),
+...                  index_map=lambda i, j, k: (i, j))
 [[  9   9   9  19  19  19]
  [  9   9   9  19  19  19]
  [109 109 109 119 119 119]
@@ -265,18 +270,62 @@ then a default index map function that returns a tuple of zeros is
 used: `index_map=lambda *invocation_indices: (0,) * len(block_shape)`.
 
 ```python
->>> show_invocations(x_shape=(4, 4), block_shape=None, grid=(2, 3),
-...                  out_index_map=None)
+>>> show_program_ids(x_shape=(4, 4), block_shape=None, grid=(2, 3),
+...                  index_map=None)
 [[12 12 12 12]
  [12 12 12 12]
  [12 12 12 12]
  [12 12 12 12]]
 
->>> show_invocations(x_shape=(4, 4), block_shape=(4, 4), grid=(2, 3),
-...                  out_index_map=None)
+>>> show_program_ids(x_shape=(4, 4), block_shape=(4, 4), grid=(2, 3),
+...                  index_map=None)
 [[12 12 12 12]
  [12 12 12 12]
  [12 12 12 12]
  [12 12 12 12]]
+
+```
+
+### The "unblocked" indexing mode
+
+The behavior documented above applies to the `indexing_mode=pl.Blocked()`.
+When using the `pl.Unblocked` indexing mode the values returned by the
+index map function are used directly as the array indices, without first
+scaling them by the block size.
+When using the unblocked mode you can specify virtual padding
+of the array as a tuple of low-high paddings for each dimension: the
+behavior is as if the overall array is padded on input. No guarantees
+are made for the padding values in the unblocked mode, similarly to the padding
+values for the blocked indexing mode when the block shape does not divide the
+overall array shape.
+
+The unblocked mode is currently supported only on TPUs.
+
+
+```python
+>>> # unblocked without padding
+>>> show_program_ids(x_shape=(8, 6), block_shape=(2, 3), grid=(4, 2),
+...                  index_map=lambda i, j: (2*i, 3*j),
+...                  indexing_mode=pl.Unblocked())
+    [[ 0  0  0  1  1  1]
+     [ 0  0  0  1  1  1]
+     [10 10 10 11 11 11]
+     [10 10 10 11 11 11]
+     [20 20 20 21 21 21]
+     [20 20 20 21 21 21]
+     [30 30 30 31 31 31]
+     [30 30 30 31 31 31]]
+
+>>> # unblocked, first pad the array with 1 row and 2 columns.
+>>> show_program_ids(x_shape=(7, 7), block_shape=(2, 3), grid=(4, 3),
+...                  index_map=lambda i, j: (2*i, 3*j),
+...                  indexing_mode=pl.Unblocked(((1, 0), (2, 0))))
+    [[ 0  1  1  1  2  2  2]
+     [10 11 11 11 12 12 12]
+     [10 11 11 11 12 12 12]
+     [20 21 21 21 22 22 22]
+     [20 21 21 21 22 22 22]
+     [30 31 31 31 32 32 32]
+     [30 31 31 31 32 32 32]]
 
 ```

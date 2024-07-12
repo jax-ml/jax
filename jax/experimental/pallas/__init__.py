@@ -20,6 +20,8 @@ See the Pallas documentation at https://jax.readthedocs.io/en/latest/pallas.html
 from jax._src import pallas
 from jax._src.pallas.core import BlockSpec
 from jax._src.pallas.core import no_block_spec
+from jax._src.pallas.core import IndexingMode
+from jax._src.pallas.core import Blocked
 from jax._src.pallas.core import Unblocked
 from jax._src.pallas.core import unblocked
 from jax._src.pallas.pallas_call import pallas_call

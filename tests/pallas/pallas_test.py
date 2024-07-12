@@ -277,6 +277,27 @@ class PallasCallTest(PallasBaseTest):
     self.assertAllClose(pids,
                         np.array([0, 0, 0], dtype=np.int32))
 
+  @parameterized.parameters("int32", "float32")
+  def test_block_spec_padding_is_nan(self, dtype_name):
+    if not self.INTERPRET:
+      self.skipTest("Only applicable for the interpret mode")
+
+    dtype = np.dtype(dtype_name)
+    def copy_kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+
+    res = self.pallas_call(copy_kernel,
+                           jax.ShapeDtypeStruct((6,), dtype=dtype),
+                           grid=(1,),
+                           in_specs=[pl.BlockSpec((6,), lambda i: 0)])(
+        np.full((3,), 42, dtype=dtype)
+    )
+    expected_pad = {"int32": jnp.iinfo(np.int32).min,
+                    "float32": np.nan}[dtype_name]
+    self.assertAllClose(res,
+                        np.array([42, 42, 42, expected_pad, expected_pad, expected_pad],
+                                 dtype=dtype))
+
   def test_block_spec_mapped_dimension(self):
     @functools.partial(
         self.pallas_call,
