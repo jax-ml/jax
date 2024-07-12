@@ -10,6 +10,12 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.31
 
+* Breaking changes
+  * Fixed a numerical issue in the gradients produced by `jax.remat`. This may
+    cause ``f(x) != jax.value_and_grad(f)(x)[0]`` (due to numerical differences)
+    for more functions f than previously. See
+    https://github.com/google/jax/pull/22244 for more information.
+
 * Changes
   * The minimum Python version is now 3.10. 3.10 will remain the minimum
     supported version until July 2025.
