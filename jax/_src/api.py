@@ -2463,13 +2463,13 @@ def device_put(
   with config.explicit_device_put_scope():
     x_flat, treedef = tree_flatten(x)
     if (device is None or
-         isinstance(device, (xc.Device, Sharding, TransferToMemoryKind))):
+        isinstance(device, (xc.Device, Sharding, TransferToMemoryKind))):
       device_flat = [device] * len(x_flat)
     else:
       device_flat = flatten_axes("device_put device", treedef, device)
 
     if (src is None or
-         isinstance(src, (xc.Device, Sharding, TransferToMemoryKind))):
+        isinstance(src, (xc.Device, Sharding, TransferToMemoryKind))):
       src_flat = [_infer_src_sharding(src, xf) for xf in x_flat]
     else:
       src_flat = flatten_axes("device_put source", treedef, src)

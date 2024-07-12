@@ -14,6 +14,7 @@
 
 import contextlib
 import math
+from functools import partial
 from absl.testing import absltest
 import numpy as np
 
@@ -430,6 +431,30 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np_inp.T)
     self.assertEqual(out.layout.device_local_layout.major_to_minor,
                      custom_dll.major_to_minor)
+
+  def test_compatible_aval_error(self):
+    custom_dll = DLL(major_to_minor=(0, 1, 2))
+    l = Layout(custom_dll, SingleDeviceSharding(jax.devices()[0]))
+    inp = np.arange(8)
+
+    @partial(jax.jit, in_shardings=l)
+    def f(x):
+      return x * 2
+
+    with self.assertRaisesRegex(
+        ValueError,
+        '.*Length of major_to_minor and the rank of the value should match.*'):
+      f(inp)
+
+  def test_incompatible_aval_error_device_put(self):
+    custom_dll = DLL(major_to_minor=(0, 1, 2))
+    l = Layout(custom_dll, SingleDeviceSharding(jax.devices()[0]))
+    inp = np.arange(8)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        '.*Length of major_to_minor and the rank of the value should match.*'):
+      jax.device_put(inp, l)
 
 
 if __name__ == '__main__':

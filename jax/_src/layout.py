@@ -23,6 +23,7 @@ from jax._src.sharding_impls import AUTO as AutoSharding, is_auto
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension_version
 
+Shape = tuple[int, ...]
 
 class AutoLayout:
 
@@ -83,6 +84,13 @@ if xla_extension_version >= 274:
         xla_layout = xc.Layout(self.major_to_minor[::-1], self._tiling,  # type: ignore
                                sub_byte_size)
       return str(xla_layout)
+
+    def check_compatible_aval(self, aval_shape: Shape):
+      if len(self.major_to_minor) != len(aval_shape):
+        raise ValueError(
+            f'Length of major_to_minor and the rank of the value should match.'
+            f' Got major_to_minor={self.major_to_minor} and shape={aval_shape}')
+
 else:
   class DeviceLocalLayout:  # type: ignore
     layout: xc.PjRtLayout
@@ -110,6 +118,9 @@ else:
 
     def _to_xla_layout(self, dtype) -> str:
       return self._layout_str
+
+    def check_compatible_aval(self, aval_shape: Shape):
+      pass
 
 
 LayoutOptions = Union[DeviceLocalLayout, None, AutoLayout]  # pytype: disable=invalid-annotation

@@ -631,7 +631,7 @@ def _infer_params_impl(
       in_avals, in_tree, dbg, device_or_backend_set, have_kwargs)
 
   attr_token = _attr_token(flat_fun, in_type)
-  jaxpr, consts, out_type, attrs_tracked = _create_pjit_jaxpr(
+  jaxpr, consts, out_avals, attrs_tracked = _create_pjit_jaxpr(
       flat_fun, in_type, attr_token, dbg,
       HashableFunction(res_paths, closure=()),
       IgnoreKey(ji.inline))
@@ -640,7 +640,7 @@ def _infer_params_impl(
   out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
       out_shardings_treedef, out_shardings_leaves, ji.out_layouts_treedef,
       ji.out_layouts_leaves, HashableFunction(out_tree, closure=()),
-      tuple(out_type), jaxpr.jaxpr.debug_info, device_or_backend_set)
+      tuple(out_avals), jaxpr.jaxpr.debug_info, device_or_backend_set)
 
   assert len(explicit_args) == len(in_shardings_flat) == len(in_layouts_flat)
 
@@ -1123,6 +1123,9 @@ def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
     pjit_check_aval_sharding(in_shardings_flat, in_avals,
                              None if debug_info is None else debug_info.arg_names,
                              "pjit arguments", allow_uneven_sharding=False)
+    check_aval_layout_compatibility(
+        in_layouts_flat, in_avals,
+        None if debug_info is None else debug_info.arg_names, "jit arguments")
   return in_shardings_flat, in_layouts_flat
 
 callsites: set[str] = set()
@@ -1298,11 +1301,11 @@ def _create_pjit_jaxpr(
 @util.cache(max_size=4096, trace_context_in_key=False)
 def _check_and_canonicalize_out_shardings(
     out_shardings_treedef, out_shardings_leaves, out_layouts_treedef,
-    out_layouts_leaves, out_tree, out_type, debug_info, device_or_backend_set):
+    out_layouts_leaves, out_tree, out_avals, debug_info, device_or_backend_set):
   orig_out_shardings = tree_unflatten(out_shardings_treedef, out_shardings_leaves)
   if (is_unspecified(orig_out_shardings) or
       isinstance(orig_out_shardings, sharding.Sharding)):
-    out_shardings_flat = (orig_out_shardings,) * len(out_type)
+    out_shardings_flat = (orig_out_shardings,) * len(out_avals)
   else:
     out_shardings_flat = flatten_axis_resources(
         "pjit out_shardings", out_tree(), orig_out_shardings,
@@ -1310,16 +1313,19 @@ def _check_and_canonicalize_out_shardings(
 
   out_layouts = tree_unflatten(out_layouts_treedef, out_layouts_leaves)
   if out_layouts is None:
-    out_layouts_flat = (out_layouts,) * len(out_type)
+    out_layouts_flat = (out_layouts,) * len(out_avals)
   else:
     out_layouts_flat = flatten_axis_resources(
         "pjit out_layouts", out_tree(), out_layouts, tupled_args=False)
 
   if not config.dynamic_shapes.value:
     pjit_check_aval_sharding(
-        out_shardings_flat, out_type,
+        out_shardings_flat, out_avals,
         None if debug_info is None else debug_info.result_paths,
         "pjit outputs", allow_uneven_sharding=False)
+    check_aval_layout_compatibility(
+        out_layouts_flat, out_avals,
+        None if debug_info is None else debug_info.result_paths, "jit outputs")
   return out_shardings_flat, out_layouts_flat
 
 
@@ -1404,6 +1410,22 @@ def pjit_check_aval_sharding(
                          f"the global size of its dimension {i} should be "
                          f"divisible by {size}, but it is equal to {shape[i]} "
                          f"(full shape: {shape})")
+
+
+def check_aval_layout_compatibility(
+    layouts, flat_avals, names: tuple[str, ...] | None, what_aval: str):
+  new_names = [''] * len(layouts) if names is None else names
+  for aval, l, name in zip(flat_avals, layouts, new_names):
+    if l is None or isinstance(l, AutoLayout):
+      continue
+    name_str = f' with pytree key path {name}' if name else ''
+    shape = aval.shape
+    try:
+      l.check_compatible_aval(shape)
+    except ValueError as e:
+      raise ValueError(
+          f'One of {what_aval}{name_str} is incompatible with its layout '
+          f'annotation {l}: {e}')
 
 
 # -------------------- pjit rules --------------------
@@ -2512,6 +2534,9 @@ def with_sharding_constraint(x, shardings):
   pjit_check_aval_sharding(
       shardings_flat, x_flat, None, "with_sharding_constraint arguments",
       allow_uneven_sharding=True)
+
+  check_aval_layout_compatibility(user_layouts_flat, x_flat, None,
+                                  "with_sharding_constraint arguments")
 
   outs = [sharding_constraint_p.bind(xf, sharding=s, layout=l,
                                      resource_env=resource_env,
