@@ -23,7 +23,6 @@
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
 #include "absl/log/check.h"
-#include "absl/log/log.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
 #include "jaxlib/mosaic/dialect/tpu/util.h"
 #include "xla/layout.h"
@@ -34,22 +33,6 @@ namespace mlir::tpu {
 #define GEN_PASS_DEF_INFERMEMREFLAYOUTPASS
 #include "jaxlib/mosaic/dialect/tpu/tpu_passes.h.inc"
 
-SmallVector<int64_t> ComputeTileStrides(MemRefType memref_ty,
-                                        int64_t leading_tile_rows) {
-  SmallVector<int64_t> tile_strides(memref_ty.getRank());
-  int64_t stride = 1;
-  for (int i = memref_ty.getRank() - 1; i >= 0; --i) {
-    tile_strides[i] = stride;
-    if (i == memref_ty.getRank() - 1) {
-      stride *= llvm::divideCeil(memref_ty.getShape()[i], 128);
-    } else if (i == memref_ty.getRank() - 2) {
-      stride *= llvm::divideCeil(memref_ty.getShape()[i], leading_tile_rows);
-    } else {
-      stride *= memref_ty.getShape()[i];
-    }
-  }
-  return tile_strides;
-}
 
 // Returns the number of 128-element groups in a tile.
 //
@@ -151,7 +134,7 @@ FailureOr<TiledLayoutAttr> inferLayout(MemRefType memref_ty,
       }
       tiles.push_back(xla::Tile({32 / bitwidth, 1}));
     }
-    auto tile_strides = ComputeTileStrides(memref_ty, leading_tile_rows);
+    auto tile_strides = ComputeTileStrides(memref_ty, {leading_tile_rows, 128});
     return TiledLayoutAttr::get(memref_ty.getContext(), tiles, tile_strides);
   }
   return emitError(UnknownLoc::get(memref_ty.getContext()),
