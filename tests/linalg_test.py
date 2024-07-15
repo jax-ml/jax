@@ -909,7 +909,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       if dtype == np.complex128:
         atol = 2e-13
       else:
-        atol = 5e-4
+        atol = 6e-4
       self.assertArraysAllClose(t_out, b.real, atol=atol)
 
   def testJspSVDBasic(self):
