@@ -526,8 +526,7 @@ class Trace(Generic[TracerType]):
            "primitives")
     raise NotImplementedError(msg)
 
-  def process_custom_jvp_call(self, primitive, fun, jvp, tracers, *,
-                              symbolic_zeros):
+  def process_custom_jvp_call(self, primitive, fun, jvp, tracers, symbolic_zeros):
     msg = (f"{type(self)} must override process_custom_jvp_call "
            "to handle custom_jvp primitives")
     raise NotImplementedError(msg)
@@ -870,18 +869,19 @@ class EvalTrace(Trace):
 
   def process_custom_transpose(self, primitive, call, tracers, **_):
     del primitive, _
-    with new_sublevel():
+    with concrete_eval():
       return call.call_wrapped(*tracers)
 
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers, **_):
     del primitive, jvp, _  # Unused.
-    with new_sublevel():
+    with concrete_eval():
       return fun.call_wrapped(*tracers)
 
   def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers, **_):  # pytype: disable=signature-mismatch
     del primitive, fwd, bwd, _  # Unused.
-    with new_sublevel():
+    with concrete_eval():
       return fun.call_wrapped(*tracers)
+
 
 
 AxisEnvFrame = namedtuple('AxisEnvFrame', ['name', 'size', 'batch_tag'])
@@ -2921,6 +2921,16 @@ def set_current_trace(t):
     ts = get_trace_state()
     prev = ts.trace
     ts.trace = t
+    yield
+  finally:
+    ts.trace = prev
+
+@contextmanager
+def concrete_eval():
+  try:
+    ts = get_trace_state()
+    prev = ts.trace
+    ts.trace = EvalTrace()
     yield
   finally:
     ts.trace = prev

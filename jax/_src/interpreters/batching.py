@@ -408,7 +408,7 @@ class BatchTrace(Trace):
     vals_in, dims_in = unzip2(map(self.to_batch_info, tracers))
     if all(bdim is not_mapped for bdim in dims_in) and primitive in primitive_batchers:
       # no-op shortcut
-      return primitive.bind_with_trace(self.parent, *vals_in, **params)
+      return primitive.bind_with_trace(self.parent_trace, vals_in, params)
     with core.set_current_trace(self.parent_trace):
       val_out, dim_out = self.apply_primitive_batcher(primitive, vals_in, dims_in, params)
     src = source_info_util.current()
@@ -420,14 +420,14 @@ class BatchTrace(Trace):
   def process_call(self, call_primitive, f, tracers, params):
     assert call_primitive.multiple_results
     params = dict(params, name=params.get('name', f.__name__))
-    vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
+    vals, dims = unzip2(map(self.to_batch_info, tracers))
     if all(bdim is not_mapped for bdim in dims):
       return call_primitive.bind(f, *vals, **params)
     sizes = (x.shape[d] if type(d) is int else len(d.segment_lengths)
              for x, d in zip(vals, dims) if d is not not_mapped)
     axis_size, = core.dedup_referents(sizes)
     segment_lens, dims = indirectify_ragged_axes(dims)
-    f_, dims_out = batch_subtrace(f, self.main, tuple(dims))
+    f_, dims_out = batch_subtrace(f, self, tuple(dims))
     f_ = _update_annotation(
         f_, f.in_type, axis_size, self.axis_name, dims, segment_lens)
     vals_out = call_primitive.bind(f_, *segment_lens, *vals, **params)
@@ -445,7 +445,7 @@ class BatchTrace(Trace):
     return vals, todo
 
   def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params):
-    vals, dims = unzip2((t.val, t.batch_dim) for t in tracers)
+    vals, dims = unzip2(map(self.to_batch_info, tracers))
     if all(dim is not_mapped for dim in dims):
       return map_primitive.bind(f, *vals, **params)
     else:
@@ -469,7 +469,7 @@ class BatchTrace(Trace):
       new_dims = tuple(
         d - 1 if both_mapped(in_axis, d) and in_axis < d else d
         for d, in_axis in zip(dims, params['in_axes']))
-      f, dims_out = batch_subtrace(f, self.main, new_dims)
+      f, dims_out = batch_subtrace(f, self, new_dims)
       out_axes_thunk = params['out_axes_thunk']
       # NOTE: This assumes that the choice of the dimensions over which outputs
       #       are batched is entirely dependent on the function and not e.g. on the
@@ -503,8 +503,8 @@ class BatchTrace(Trace):
     return vals, todo
 
   def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):
-    in_vals, in_dims = unzip2((t.val, t.batch_dim) for t in tracers)
-    fun, out_dims1 = batch_subtrace(fun, self.main, in_dims)
+    in_vals, in_dims = unzip2(map(self.to_batch_info, tracers))
+    fun, out_dims1 = batch_subtrace(fun, self, in_dims)
     jvp, out_dims2 = batch_custom_jvp_subtrace(jvp, self.main, in_dims)
     out_vals = prim.bind(fun, jvp, *in_vals, symbolic_zeros=symbolic_zeros)
     fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
@@ -531,50 +531,22 @@ class BatchTrace(Trace):
 
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, *, out_trees,
                               symbolic_zeros):  # pytype: disable=signature-mismatch
-    in_vals, in_dims = unzip2((t.val, t.batch_dim) for t in tracers)
-    axis_size, = {x.shape[d] for x, d in zip(in_vals, in_dims)
-                  if d is not not_mapped}
+    in_vals, in_dims = unzip2(map(self.to_batch_info, tracers))
     fwd_in_dims = [d for in_dim in in_dims for d in [in_dim, not_mapped]]
-    fun, out_dims1 = batch_subtrace(fun, self.main, in_dims)
-    fwd, out_dims2 = batch_subtrace(fwd, self.main, fwd_in_dims)
-    bwd = batch_custom_vjp_bwd(bwd, self.axis_name, axis_size,
-                               out_dims2, in_dims, self.main.trace_type,
-                               self.spmd_axis_name)
-    out_vals = prim.bind(fun, fwd, bwd, *in_vals, out_trees=out_trees,
-                         symbolic_zeros=symbolic_zeros)
+
+    fun, out_dims1 = batch_subtrace(fun, self, in_dims)
+    fwd, out_dims2 = batch_subtrace(fwd, self, fwd_in_dims)
+
+    bwd = batch_custom_vjp_bwd(bwd, self, out_dims2, in_dims)
+    out_vals = prim.bind_with_trace(self.parent_trace,
+                                    (fun, fwd, bwd) + tuple(in_vals),
+                                    dict(out_trees=out_trees, symbolic_zeros=symbolic_zeros))
     fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
     if not fst:
       _, res_tree = out_trees()
       _, out_dims = split_list(out_dims, [res_tree.num_leaves])
     src = source_info_util.current()
     return [BatchTracer(self, v, d, src) for v, d in zip(out_vals, out_dims)]
-
-  def post_process_custom_vjp_call(self, out_tracers, _):
-    vals, dims, srcs = unzip3((t.val, t.batch_dim, t.source_info)
-                              for t in out_tracers)
-    main = self.main
-    def todo(vals):
-      trace = main.with_cur_sublevel()
-      return map(partial(BatchTracer, trace), vals, dims, srcs)
-    return vals, todo
-
-  def post_process_custom_vjp_call_fwd(self, out_tracers, out_trees):
-    vals, dims, srcs = unzip3((t.val, t.batch_dim, t.source_info)
-                              for t in out_tracers)
-    axis_size, = {x.shape[d] for x, d in zip(vals, dims) if d is not not_mapped}
-    main, trace_type = self.main, self.main.trace_type
-    axis_name = self.axis_name
-    _, res_tree = out_trees()
-    num_res = res_tree.num_leaves
-    res_dims, primal_dims = split_list(dims, [num_res])
-    _, primal_srcs = split_list(srcs, [num_res])
-    def todo(vals):
-      trace = main.with_cur_sublevel()
-      return map(partial(BatchTracer, trace), vals, primal_dims, primal_srcs)
-    def bwd_transform(bwd):
-      return batch_custom_vjp_bwd(bwd, axis_name, axis_size, dims, (None,),
-                                  trace_type, self.spmd_axis_name)
-    return vals, todo, bwd_transform
 
 def _main_trace_for_axis_names(main_trace: core.MainTrace,
                                axis_name: Iterable[AxisName],
@@ -654,15 +626,16 @@ def vtile(f_flat: lu.WrappedFun,
 ### API for batching functions with jaxpr type inputs and outputs
 
 @lu.transformation_with_aux
-def batch_subtrace(main, in_dims, *in_vals):
-  trace = main.with_cur_sublevel()
+def batch_subtrace(prev_trace, in_dims, *in_vals):
+  assert isinstance(prev_trace, BatchTrace)
+  trace = BatchTrace(core.find_cur_trace(), prev_trace.tag, prev_trace.axis_name, prev_trace.axis_size, prev_trace.spmd_axis_name)
   in_dims = in_dims() if callable(in_dims) else in_dims
   in_vals, in_dims = resolve_ragged_axes(in_vals, in_dims)
   in_tracers = [BatchTracer(trace, x, dim, source_info_util.current())
                 if dim is not None else x for x, dim in zip(in_vals, in_dims)]
-  outs = yield in_tracers, {}
-  out_tracers = map(trace.full_raise, outs)
-  out_vals, out_dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
+  with core.set_current_trace(trace):
+    outs = yield in_tracers, {}
+  out_vals, out_dims = unzip2(map(trace.to_batch_info, outs))
   segment_lens, out_dims = indirectify_ragged_axes(out_dims)
   yield (*segment_lens, *out_vals), out_dims
 
@@ -899,8 +872,9 @@ def batch_custom_jvp_subtrace(main, in_dims, *in_vals):
                      out_tangent_bds, out_dims, out_tangents)
   yield out_primals + out_tangents, out_dims * 2
 
-def batch_custom_vjp_bwd(bwd, axis_name, axis_size, in_dims, out_dim_dests,
-                         main_type, spmd_axis_name):
+def batch_custom_vjp_bwd(bwd, prev_trace, in_dims, out_dim_dests):
+  axis_size = prev_trace.axis_size
+  axis_name = prev_trace.axis_name
   def new_bwd(*args):
     in_dims_ = in_dims() if callable(in_dims) else in_dims
     args = [SymbolicZero(core.mapped_aval(axis_size, dim, x.aval))
@@ -909,8 +883,8 @@ def batch_custom_vjp_bwd(bwd, axis_name, axis_size, in_dims, out_dim_dests,
     in_dims_ = [None if type(x) is SymbolicZero else d
                 for x, d in zip(args, in_dims_)]
     bwd_, out_dims_thunk = batch_subtrace(lu.wrap_init(bwd))
-    bwd_ = _batch_outer(bwd_, axis_name, axis_size, in_dims_, main_type,
-                        spmd_axis_name)
+    bwd_ = _batch_outer(bwd_, axis_name, axis_size, in_dims, None,
+                        prev_trace.spmd_axis_name)
     bwd_ = _match_axes_and_sum(bwd_, axis_size, axis_name, out_dims_thunk,
                                out_dim_dests)
     return bwd_.call_wrapped(*args)

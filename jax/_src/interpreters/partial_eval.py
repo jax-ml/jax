@@ -224,7 +224,7 @@ class JaxprTrace(Trace['JaxprTracer']):
     # jaxpr and consider all outputs unknown.
     consts = [t.pval.get_known() for t in tracers]
     if all(c is not None for c in consts):
-      return primitive.bind(*consts, **params)
+      return primitive.bind_with_trace(self.parent_trace, consts, params)
     tracers = map(self.instantiate_const, tracers)
     avals = [t.aval for t in tracers]
     out_aval, effects = primitive.abstract_eval(*avals, **params)
@@ -399,14 +399,15 @@ class JaxprTrace(Trace['JaxprTracer']):
   def _current_truncated_name_stack(self):
     return source_info_util.current_name_stack()[len(self.name_stack):]
 
-  def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):
+  def process_custom_jvp_call(self, prim, fun, jvp, tracers, symbolic_zeros):
     # We assume partial evaluation is only performed to build linear functions,
     # and hence we don't need to keep the custom JVP rule around anymore.
     del jvp, symbolic_zeros
-    assert not all(t.is_known() for t in tracers)
-    return fun.call_wrapped(*tracers)
+    with core.set_current_trace(self):
+      return fun.call_wrapped(*tracers)
 
   def process_custom_transpose(self, prim, call, tracers, **params):
+    tracers = map(self.to_jaxpr_tracer, tracers)
     res_ts, lin_ts = split_list(tracers, [params['res_tree'].num_leaves])
     assert all(t.is_known()     for t in res_ts)
     lin_all_known   = all(t.is_known()     for t in lin_ts)
@@ -424,49 +425,14 @@ class JaxprTrace(Trace['JaxprTracer']):
       for t in out_tracers: t.recipe = eqn
       return out_tracers
 
-  def process_custom_vjp_call(self, prim, f, fwd, bwd, tracers, out_trees,
-                              symbolic_zeros):
+  def process_custom_vjp_call(self, prim, f, fwd, bwd, tracers, out_trees, symbolic_zeros):
     # TODO(mattjj): after old remat is deleted, make this method trivial.
     # Because we instantiate all tracers, in_knowns is all False.
-    tracers = map(self.instantiate_const_abstracted, tracers)
-    in_knowns, in_avals, () = partition_pvals([t.pval for t in tracers])
-    f = trace_to_subjaxpr_nounits(f, selfmain, True)
-    f, aux = partial_eval_wrapper_nounits(f, tuple(in_knowns), tuple(in_avals))
-    out_flat = prim.bind(f, fwd, bwd, out_trees=out_trees,
-                         symbolic_zeros=symbolic_zeros)
-    out_knowns, out_avals, jaxpr, env = aux()
-    out_consts, res = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
-    res_tracers = map(self.new_instantiated_const, res)
-    env_tracers = map(self.full_raise, env)
-    out_tracers = [JaxprTracer(self, PartialVal.unknown(a), None)
-                   for a in out_avals]
-    closed_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(jaxpr), ())
-
-    @_memoize
-    def fwd_jaxpr_thunk(*zeros):
-      fwd_ = _interleave_fun(fwd, zeros)
-      fwd_ = trace_to_subjaxpr_nounits(fwd_, self, True)
-      fwd_, aux = partial_eval_wrapper_nounits(
-          fwd_, tuple(in_knowns), tuple(in_avals))
-      with core.new_sublevel():
-        out_flat = fwd_.call_wrapped()
-      out_knowns, out_avals, jaxpr, env = aux()
-      _, res = split_list(out_flat, [len(out_flat)-len(jaxpr.constvars)])
-      converted_jaxpr = convert_envvars_to_constvars(jaxpr, len(env))
-      return converted_jaxpr, (*res, *env)
-
-    name_stack = self._current_truncated_name_stack()
-    source = source_info_util.current().replace(name_stack=name_stack)
-    eqn = new_eqn_recipe((*res_tracers, *env_tracers, *tracers),
-                         out_tracers, prim.initial_style,
-                         dict(fun_jaxpr=closed_jaxpr,
-                              fwd_jaxpr_thunk=fwd_jaxpr_thunk,
-                              num_consts=len(res) + len(env),
-                              bwd=bwd, out_trees=out_trees,
-                              symbolic_zeros=symbolic_zeros),
-                         jaxpr.effects, source)
-    for t in out_tracers: t.recipe = eqn
-    return merge_lists(out_knowns, out_tracers, out_consts)
+    if all(self.to_jaxpr_tracer(t).is_known() for t in tracers):
+      with core.set_current_trace(self.parent_trace):
+        return prim.bind(f, fwd, bwd, *tracers, out_trees=out_trees, symbolic_zeros=symbolic_zeros)
+    else:
+      assert False, "TODO!"
 
 def partition_pvals(
     pvals: list[PartialVal]
@@ -2049,7 +2015,7 @@ class DynamicJaxprTrace(core.Trace):
       self.frame.add_eqn(eqn)
     return out_tracers
 
-  def process_custom_jvp_call(self, prim, fun, jvp, tracers, *, symbolic_zeros):
+  def process_custom_jvp_call(self, prim, fun, jvp, tracers, symbolic_zeros):
     in_avals = [t.aval for t in tracers]
     with core.new_sublevel():
       fun_jaxpr, out_avals, consts, () = trace_to_subjaxpr_dynamic(fun, self.main, in_avals)

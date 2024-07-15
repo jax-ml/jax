@@ -352,25 +352,14 @@ def _flatten_jvp(primal_name, jvp_name, in_tree, maybe_out_type, *args):
 class CustomJVPCallPrimitive(core.Primitive):
   multiple_results = True
 
-  def bind(self, fun, jvp, *args, symbolic_zeros):
-    args = map(core.full_lower, args)
-    top_trace = core.find_top_trace(args)
-    fun, env_trace_todo1 = process_env_traces(
-        fun, self, top_trace and top_trace.level, False)
-    jvp, env_trace_todo2 = process_env_traces(
-        jvp, self, top_trace and top_trace.level, True)
-    tracers = map(top_trace.full_raise, args)
-    outs = top_trace.process_custom_jvp_call(self, fun, jvp, tracers,
-                                             symbolic_zeros=symbolic_zeros)
-    _, env_trace_todo = lu.merge_linear_aux(env_trace_todo1, env_trace_todo2)
-    return core.apply_todos(env_trace_todo, map(core.full_lower, outs))
+  def bind_with_trace(self, trace, args, params):
+    fun, jvp, tracers = args[0], args[1], args[2:]
+    with core.without_any_current_trace():
+      return trace.process_custom_jvp_call(self, fun, jvp, tracers, **params)
 
   def impl(self, fun, _, *args):
     with core.new_sublevel():
       return fun.call_wrapped(*args)
-
-  def post_process(self, trace, out_tracers, jvp_was_run: bool):
-    return trace.post_process_custom_jvp_call(out_tracers, jvp_was_run)
 
   def get_bind_params(self, params):
     new_params = dict(params)
@@ -399,24 +388,6 @@ def lift_jvp(num_consts: int, jvp_jaxpr_thunk: Callable) -> lu.WrappedFun:
     assert next(nz_out_tangents_, None) is None
     return [*out_primals, *out_tangents]
   return jvp
-
-@partial(lu.transformation_with_aux, use_eq_store=True)
-def process_env_traces(primitive, level: int, jvp_was_run: bool, *args):
-  outs = yield args, {}
-  todo = []
-  while True:
-    tracers = [x for x in outs if isinstance(x, core.Tracer)
-               and (level is None or x._trace.level > level)]
-    if tracers:
-      ans = max(tracers, key=lambda x: x._trace.level)
-    else:
-      break
-    trace = ans._trace.main.with_cur_sublevel()
-    outs = map(trace.full_raise, outs)
-    outs, cur_todo = primitive.post_process(trace, outs, jvp_was_run)
-    todo.append(cur_todo)
-  yield outs, tuple(todo)  # Ensure the aux output is immutable
-
 
 effects.custom_derivatives_allowed_effects.add_type(lax.InOutFeedEffect)
 
@@ -800,55 +771,12 @@ def _temporary_shape_exception(a, a_) -> bool:
 class CustomVJPCallPrimitive(core.CallPrimitive):
   initial_style: core.Primitive
 
-  def bind_with_trace(self, trace, fun, fwd, bwd, *args, out_trees, symbolic_zeros):
-    assert False
-    args = map(core.full_lower, args)
-    top_trace = core.find_top_trace(args)
-    fun, env_trace_todo1 = process_env_traces(
-        fun, self, top_trace and top_trace.level, False)
-    fwd, env_trace_todo2 = process_env_traces_fwd(
-      fwd, top_trace and top_trace.level, out_trees)
-    tracers = map(top_trace.full_raise, args)
-    bwd_ = lambda *args: bwd(*args)
-    outs = top_trace.process_custom_vjp_call(self, fun, fwd, bwd_, tracers,
-                                             out_trees=out_trees,
-                                             symbolic_zeros=symbolic_zeros)
-    fst, env_trace_todo = lu.merge_linear_aux(env_trace_todo1, env_trace_todo2)
-    if fst:
-      return core.apply_todos(env_trace_todo, map(core.full_lower, outs))
-    else:
-      env_trace_todo, bwd_transform = env_trace_todo
-      bwd = _apply_bwd_transform(bwd_transform, bwd)
-      return core.apply_todos(env_trace_todo, map(core.full_lower, outs))
+  def bind_with_trace(self, trace, args, params):
+    fun, fwd, bwd, tracers = args[0], args[1], args[2], args[3:]
+    with core.without_any_current_trace():
+      return trace.process_custom_vjp_call(self, fun, fwd, bwd, tracers, **params)
 
-  def impl(self, fun, fwd, bwd, *args, out_trees):
-    del fwd, bwd, out_trees
-    with core.new_sublevel():
-      return fun.call_wrapped(*args)
-
-  def post_process(self, trace, out_tracers, params):
-    return trace.post_process_custom_vjp_call(out_tracers, params)
 custom_vjp_call_p = CustomVJPCallPrimitive('custom_vjp_call')
-
-@partial(lu.transformation_with_aux, use_eq_store=True)
-def process_env_traces_fwd(level: int, out_trees, *args):
-  outs = yield args, {}
-  todo = []
-  bwd_transforms = []
-  while True:
-    tracers = [x for x in outs if isinstance(x, core.Tracer)
-               and (level is None or x._trace.level > level)]
-    if tracers:
-      ans = max(tracers, key=lambda x: x._trace.level)
-    else:
-      break
-    trace = ans._trace.main.with_cur_sublevel()
-    outs = map(trace.full_raise, outs)
-    outs, cur_todo, bwd_xform = trace.post_process_custom_vjp_call_fwd(outs, out_trees)
-    todo.append(cur_todo)
-    bwd_transforms.append(bwd_xform)
-  yield outs, (tuple(todo), tuple(bwd_transforms))
-
 
 def _apply_bwd_transform(todos, bwd):
   todos_list = list(todos)
