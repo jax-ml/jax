@@ -62,7 +62,7 @@ packaging==24.0
     #   build
     #   matplotlib
     #   pytest
-pillow==10.3.0
+pillow==10.4.0
     # via
     #   -r build/test-requirements.txt
     #   matplotlib
