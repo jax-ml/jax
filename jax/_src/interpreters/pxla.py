@@ -2153,12 +2153,6 @@ def to_gspmd_sharding(s: JSharding, ndim: int) -> GSPMDSharding:
                         _device_list=getattr(s, '_internal_device_list', None))
 
 
-# Dummy function which is a no-op in OSS since enhanced barrier is switched on
-# in OSS.
-def spmd_mode_check(da_object, inline):
-  return
-
-
 def _discharge_refs_jaxpr(closed_jaxpr, in_shardings, in_layouts,
                           donated_invars, out_shardings, out_layouts):
   if any(isinstance(e, RefEffect) for e in closed_jaxpr.effects):
@@ -2192,7 +2186,6 @@ def lower_sharding_computation(
     donated_invars: Sequence[bool],
     *,
     keep_unused: bool,
-    inline: bool,
     devices_from_context: Sequence[xc.Device] | None,
     lowering_platforms: tuple[str, ...] | None,
     lowering_parameters: mlir.LoweringParameters,
@@ -2273,8 +2266,6 @@ def lower_sharding_computation(
         closed_jaxpr, in_shardings)
   else:
     propagated_out_mem_kinds = (None,) * len(global_out_avals)
-
-  spmd_mode_check(da_object, inline)
 
   # 2. Build up the HLO
   semantic_in_shardings = SemanticallyEqualShardings(
