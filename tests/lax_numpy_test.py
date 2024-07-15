@@ -91,15 +91,15 @@ def np_unique_backport(ar, return_index=False, return_inverse=False, return_coun
   # Wrapper for np.unique, handling the change to inverse_indices in numpy 2.0
   result = np.unique(ar, return_index=return_index, return_inverse=return_inverse,
                      return_counts=return_counts, axis=axis, **kwds)
-  if jtu.numpy_version() >= (2, 0, 0) or np.ndim(ar) == 1 or not return_inverse:
+  if jtu.numpy_version() >= (2, 0, 1) or np.ndim(ar) == 1 or not return_inverse:
     return result
 
   idx = 2 if return_index else 1
   inverse_indices = result[idx]
   if axis is None:
     inverse_indices = inverse_indices.reshape(np.shape(ar))
-  else:
-    inverse_indices = np.expand_dims(inverse_indices, [i for i in range(np.ndim(ar)) if i != axis])
+  elif jtu.numpy_version() == (2, 0, 0):
+    inverse_indices = inverse_indices.reshape(-1)
   return (*result[:idx], inverse_indices, *result[idx + 1:])
 
 
