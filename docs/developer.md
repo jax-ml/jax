@@ -547,6 +547,22 @@ python tests/lax_numpy_test.py --test_targets="testPad"
 
 The Colab notebooks are tested for errors as part of the documentation build.
 
+### Hypothesis tests
+
+Some of the tests use [hypothesis](https://hypothesis.readthedocs.io/en/latest).
+Normally, hypothesis will test using multiple example inputs, and on a test failure
+it will try to find a smaller example that still results in failure:
+Look through the test failure for a line like the one below, and add the decorator
+mentioned in the message:
+```
+You can reproduce this example by temporarily adding @reproduce_failure('6.97.4', b'AXicY2DAAAAAEwAB') as a decorator on your test case
+```
+
+For interactive development, you can set the environment variable
+`JAX_HYPOTHESIS_PROFILE=interactive` (or the equivalent flag `--jax_hypothesis_profile=interactive`)
+in order to set the number of examples to 1, and skip the example
+minimization phase.
+
 ### Doctests
 
 JAX uses pytest in doctest mode to test the code examples within the documentation.

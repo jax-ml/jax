@@ -51,6 +51,8 @@ from jax._src.state.types import (shaped_array_ref, ReadEffect, WriteEffect,
                                   AccumEffect, AbstractRef)
 
 config.parse_flags_with_absl()
+jtu.setup_hypothesis()
+
 
 class StatePrimitivesTest(jtu.JaxTestCase):
 
