@@ -28,7 +28,7 @@ import jax.numpy as jnp
 from jax._src import test_util as jtu
 from jax._src import array
 from jax._src import xla_bridge as xb
-from jax.sharding import NamedSharding, GSPMDSharding
+from jax.sharding import NamedSharding, GSPMDSharding, SingleDeviceSharding
 from jax.sharding import PartitionSpec as P
 from jax.experimental.array_serialization import serialization
 from jax.experimental.layout import Layout, DeviceLocalLayout as DLL
@@ -609,6 +609,21 @@ class CheckpointTest(jtu.JaxTestCase):
     out = deserialized_arr.astype(jnp.int8)  # doesn't crash
     self.assertEqual(out.dtype, jnp.int8)
     self.assertArraysEqual(out + out, out * 2)
+
+
+@jtu.with_config(jax_enable_memories=True)
+class TransferShardTest(jtu.JaxTestCase):
+
+  @jtu.skip_on_devices('cpu')
+  def test_transfer_shard_to_host(self):
+    np_inp = np.arange(16).reshape((4, 4))
+    sharding = SingleDeviceSharding(jax.devices()[0], memory_kind="device")
+    arr = jax.device_put(np_inp, sharding)
+    shard = arr.addressable_shards[0]
+
+    np_out = asyncio.run(serialization.transfer_shard_to_host(shard))
+
+    self.assertArraysEqual(np_out, np_inp)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

@@ -29,6 +29,7 @@ from typing import Any, Optional
 
 import jax
 from jax._src import array
+from jax._src import config
 from jax._src import distributed
 from jax._src import sharding
 from jax._src import sharding_impls
@@ -184,6 +185,25 @@ class _LimitInFlightBytes:
       self._cv.notify_all()
 
 
+async def transfer_shard_to_host(shard: array.Shard) -> np.ndarray:
+  data = shard.data
+  has_pinned_host = any(
+      m.kind == "pinned_host" for m in shard.device.addressable_memories())
+  if config.enable_memories.value and has_pinned_host:
+    # If available, transfer to pinned host memory
+    sharding = jax.sharding.SingleDeviceSharding(shard.device,
+        memory_kind="pinned_host")
+    data = jax.device_put(data, sharding)
+  else:
+    data.copy_to_host_async()
+  # Allow other transfers to be scheduled simultaneously
+  await asyncio.sleep(0)
+  # Ensure that jax.Array's internal numpy array can be zero-copied. Tensorstore
+  # implicitly converts the written data to a numpy array, and would otherwise
+  # silently copy host-to-host.
+  return np.array(data, copy=False)
+
+
 async def async_serialize(
     arr_inp,
     tensorstore_spec,
@@ -260,8 +280,9 @@ async def async_serialize(
 
   async def _write_array(shard):
     if shard.replica_id == replica_id:
+      data = await transfer_shard_to_host(shard)
       write_future = t[shard.index].write(
-          shard.data,
+          data,
           # Avoid additional copy of input array into the TensorStore chunk
           # cache.  If `arr_inp` is a jax.Array, the result of converting
           # it to a NumPy array, as is done internally by TensorStore, is
