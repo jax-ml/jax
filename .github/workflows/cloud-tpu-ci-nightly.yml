@@ -56,17 +56,13 @@ jobs:
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 
           elif [ "${{ matrix.jaxlib-version }}" == "nightly" ]; then
-            pip install .
-            pip install --pre jaxlib \
-              -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_releases.html
+            pip install --pre . -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
             pip install --pre libtpu-nightly \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
             pip install requests
 
           elif [ "${{ matrix.jaxlib-version }}" == "nightly+oldest_supported_libtpu" ]; then
-            pip install .
-            pip install --pre jaxlib \
-              -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_releases.html
+            pip install --pre . -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
             pip install --pre libtpu-nightly==0.1.dev${{ env.LIBTPU_OLDEST_VERSION_DATE }} \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
             pip install requests
