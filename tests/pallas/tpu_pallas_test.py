@@ -2374,6 +2374,47 @@ class MiscellaneousInterpreterTest(PallasBaseTest):
 
     np.testing.assert_array_equal(out, np.reshape(x[:, 7, :], (1, 8, 128)))
 
+  def test_sublane_adding_shape_cast_f32(self):
+    """b/352833257"""
+    x = np.arange(8 * 128, dtype=jnp.float32).reshape(8, 128)
+
+    def kernel(x_ref, out_ref):
+      out_ref[:, 0, :] = x_ref[:, :]
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct((8, 1, 128), jnp.float32)
+    )(x)
+
+    np.testing.assert_array_equal(out, np.reshape(x, (8, 1, 128)))
+
+  def test_sublane_adding_shape_cast_bf16(self):
+    """b/352833257"""
+    x = np.arange(8 * 128, dtype=jnp.bfloat16).reshape(8, 128)
+
+    def kernel(x_ref, out_ref):
+      out_ref[:, 0, :] = x_ref[:, :]
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct((8, 1, 128), jnp.bfloat16)
+    )(x)
+
+    np.testing.assert_array_equal(out, np.reshape(x, (8, 1, 128)))
+
+  def test_mixed_strides(self):
+    """b/352841329"""
+    x = np.zeros((8, 128), dtype=jnp.float32)
+    y = np.zeros((8, 2, 128), dtype=jnp.bfloat16)
+
+    def kernel(x_ref, y_ref, out_ref):
+      out_ref[:, :] = x_ref[:, :] + y_ref[:, 1, :].astype(jnp.float32)
+
+    out = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )(x, y)
+
+    np.testing.assert_array_equal(out, np.zeros((8, 128), dtype=jnp.float32))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
