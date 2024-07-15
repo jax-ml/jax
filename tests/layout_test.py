@@ -25,6 +25,7 @@ from jax._src import config
 from jax._src.layout import Layout, DeviceLocalLayout as DLL
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip
+from jax._src.lib import xla_extension_version
 
 config.parse_flags_with_absl()
 
@@ -404,6 +405,9 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, inp.T)
 
   def test_device_put_user_concrete_layout(self):
+    if xla_extension_version < 274:
+      self.skipTest('Requires xla_extension_version >= 274')
+
     shape = (8, 128)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
     dll = DLL(major_to_minor=(1, 0))
@@ -433,6 +437,9 @@ class LayoutTest(jtu.JaxTestCase):
                      custom_dll.major_to_minor)
 
   def test_compatible_aval_error(self):
+    if xla_extension_version < 274:
+      self.skipTest('Requires xla_extension_version >= 274')
+
     custom_dll = DLL(major_to_minor=(0, 1, 2))
     l = Layout(custom_dll, SingleDeviceSharding(jax.devices()[0]))
     inp = np.arange(8)
@@ -447,6 +454,9 @@ class LayoutTest(jtu.JaxTestCase):
       f(inp)
 
   def test_incompatible_aval_error_device_put(self):
+    if xla_extension_version < 274:
+      self.skipTest('Requires xla_extension_version >= 274')
+
     custom_dll = DLL(major_to_minor=(0, 1, 2))
     l = Layout(custom_dll, SingleDeviceSharding(jax.devices()[0]))
     inp = np.arange(8)
