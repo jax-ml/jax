@@ -397,3 +397,27 @@ def merge_linear_aux(aux1, aux2):
       return True, out1
     else:
       raise StoreException("both stores occupied")
+
+
+def merge_linear_aux2(aux1, aux2, aux3):
+  try:
+    flag, out = merge_linear_aux(aux1, aux2)
+  except StoreException:
+    try:
+      out_ = aux3()
+    except StoreException:
+      raise StoreException("no store occupied") from None
+    else:
+      try:
+        aux1()
+      except StoreException:
+        return 2, out_
+      else:
+        raise StoreException("multiple stores occupied")
+  else:
+    try:
+      aux3()
+    except StoreException:
+      return int(flag), out
+    else:
+      raise StoreException("multiple stores occupied") from None

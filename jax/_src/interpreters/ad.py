@@ -409,6 +409,31 @@ class JVPTrace(Trace):
   def post_process_custom_vjp_call(self, out_tracers, _):
     raise CustomVJPException()
 
+  def process_custom_ad_call(self, _, fun, fwd, bwd, tracers, out_trees,
+                             symbolic_zeros):
+    del fun
+    primals_in, tangents_in = unzip2((t.primal, t.tangent) for t in tracers)
+    primals_in = map(core.full_lower, primals_in)
+    if not symbolic_zeros:
+      tangents_in = map(instantiate_zeros, tangents_in)
+      tangents_in = map(replace_float0s, primals_in, tangents_in)
+    else:
+      tangents_in = map(replace_internal_symbolic_zeros, tangents_in)
+    py_out = fwd.call_wrapped(*primals_in, *tangents_in)
+    _, res_tree = out_trees()
+    res, py_out = split_list(py_out, [res_tree.num_leaves])
+    primals_out, tangents_out = split_list(py_out, [len(py_out) // 2])
+    avals_out = [raise_to_shaped(core.get_aval(x)) for x in primals_out]
+    tangents_out = map(replace_rule_output_symbolic_zeros, tangents_out)
+    tangents_out = map(recast_to_float0, primals_out, tangents_out)
+    tangents_out = custom_ad_lin_p.bind(
+        *res, *tangents_out, *tangents_in, num_res=res_tree.num_leaves,
+        bwd=bwd, out_avals=avals_out, symbolic_zeros=symbolic_zeros)
+    return map(partial(JVPTracer, self), primals_out, tangents_out)
+
+  def post_process_custom_ad_call(self, out_tracers, _):
+    assert 0
+
   def process_custom_transpose(self, prim, call, tracers, **params):
     ps_in, ts_in = unzip2((t.primal, t.tangent) for t in tracers)
     res_ps_in, lin_ps_in = split_list(ps_in, [params['res_tree'].num_leaves])
@@ -771,3 +796,24 @@ class CustomVJPException(Exception):
            "closed-over value into the custom_vjp function as an argument, and "
            "adapting the custom_vjp fwd and bwd rules.")
     super().__init__(msg)
+
+
+custom_ad_lin_p = core.Primitive("custom_ad_lin")
+custom_ad_lin_p.def_abstract_eval(lambda *_, out_avals, **__: out_avals)
+custom_ad_lin_p.multiple_results = True
+def _custom_ad_lin_impl(*args, num_res, out_avals, **_):
+  _, tangents_out, _ = split_list(args, [num_res, len(out_avals)])
+  return tangents_out
+custom_ad_lin_p.def_impl(_custom_ad_lin_impl)
+
+def _custom_ad_lin_transpose(cts_out, *invals, num_res, bwd, out_avals,
+                             symbolic_zeros):
+  res, _ = split_list(invals, [num_res])
+  if symbolic_zeros:
+    cts_out = map(replace_internal_symbolic_zeros, cts_out)
+  else:
+    cts_out = map(instantiate_zeros, cts_out)
+  cts_in = bwd(*res, *cts_out)
+  cts_in = map(replace_rule_output_symbolic_zeros, cts_in)
+  return [None] * (num_res + len(out_avals)) + list(cts_in)
+primitive_transposes[custom_ad_lin_p] = _custom_ad_lin_transpose
