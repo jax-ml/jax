@@ -29,7 +29,6 @@ from jax._src import config
 from jax._src import core as jax_core
 from jax._src import effects
 from jax._src import linear_util as lu
-from jax._src import state
 from jax._src import tree_util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -38,7 +37,7 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.primitives import uninitialized_value
 from jax._src.state import discharge as state_discharge
-from jax._src.state import primitives as sp
+from jax._src.state import utils as state_utils
 from jax._src.util import (
     safe_map,
     safe_zip,
@@ -693,42 +692,6 @@ def _pallas_call_batching_rule(
 
 batching.primitive_batchers[pallas_call_p] = _pallas_call_batching_rule
 
-def _hoist_consts_to_refs(jaxpr: jax_core.Jaxpr) -> jax_core.Jaxpr:
-  """Hoists the constants in the given jaxpr into invars.
-
-  Args:
-    jaxpr: The jaxpr.
-
-  Returns:
-    A new jaxpr where the constants were hoisted into invars as ``Ref``s.
-    The invars for the constants are added *before* any existing invars.
-  """
-  if not jaxpr.constvars:
-    return jaxpr  # Nothing to hoist.
-
-  is_const_ref = [
-      isinstance(var.aval, state.AbstractRef) for var in jaxpr.constvars
-  ]
-  const_avals = [
-      var.aval if is_ref else state.AbstractRef(var.aval)
-      for is_ref, var in zip(is_const_ref, jaxpr.constvars)
-  ]
-  in_avals = const_avals + [var.aval for var in jaxpr.invars]
-
-  def _hoist(*consts_args):
-    all_consts, args = split_list(consts_args, [len(const_avals)])
-    # We immediately read the const values out of the `Ref`s.
-    all_consts = [
-        c if is_ref else sp.ref_get(c, ())
-        for is_ref, c in zip(is_const_ref, all_consts)
-    ]
-    return jax_core.eval_jaxpr(jaxpr, all_consts, *args)
-
-  hoisted_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(
-      lu.wrap_init(_hoist), in_avals)
-  assert not consts, "All consts should have been converted to refs"
-  return hoisted_jaxpr
-
 
 def checkify_pallas_kernel_body_jaxpr(
     body_jaxpr: jax_core.ClosedJaxpr,
@@ -914,7 +877,7 @@ def _trace_to_jaxpr(fun: Callable, grid_spec: GridSpec,
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun,
                                                      jaxpr_flat_avals, debug)
     if consts:
-      jaxpr = _hoist_consts_to_refs(jaxpr)
+      jaxpr = state_utils.hoist_consts_to_refs(jaxpr)
       # Pad ``block_mappings`` to account for the hoisted constants.
       grid_mapping = grid_mapping.replace(
           block_mappings=(*grid_mapping.block_mappings, *[None] * len(consts)),
