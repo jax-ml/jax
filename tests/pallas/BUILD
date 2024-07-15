@@ -378,10 +378,9 @@ jax_test(
         "tpu_splash_attention_kernel_test.py",
     ],
     disable_backends = [
-        "cpu",
         "gpu",
     ],
-    shard_count = 18,
+    shard_count = 24,
     tags = [
         "noasan",  # Times out.
         "nomsan",  # Times out.
@@ -398,7 +397,6 @@ jax_test(
         "tpu_splash_attention_mask_test.py",
     ],
     disable_backends = [
-        "cpu",
         "gpu",
     ],
     deps = [
@@ -417,7 +415,6 @@ jax_test(
         },
     },
     disable_backends = [
-        "cpu",
         "tpu",
     ],
     disable_configs = [
@@ -451,7 +448,6 @@ jax_test(
         },
     },
     disable_backends = [
-        "cpu",
         "tpu",
     ],
     disable_configs = [
