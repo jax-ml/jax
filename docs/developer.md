@@ -569,17 +569,17 @@ doctest command is run on the full package; you can see the details in
 
 ## Type checking
 
-We use `mypy` to check the type hints. To check types locally the same way
-as the CI checks them:
+We use `mypy` to check the type hints. To run `mypy` with the same configuration as the
+github CI checks, you can use the [pre-commit](https://pre-commit.com/) framework:
 
 ```
-pip install mypy
-mypy --config=pyproject.toml --show-error-codes jax
+pip install pre-commit
+pre-commit run mypy --all-files
 ```
 
-Alternatively, you can use the [pre-commit](https://pre-commit.com/) framework to run this
-on all staged files in your git repository, automatically using the same mypy version as
-in the GitHub CI:
+Because `mypy` can be somewhat slow when checking all files, it may be convenient to
+only check files you have modified. To do this, first stage the changes (i.e. `git add`
+the changed files) and then run this before committing the changes:
 
 ```
 pre-commit run mypy
@@ -588,19 +588,12 @@ pre-commit run mypy
 ## Linting
 
 JAX uses the [ruff](https://docs.astral.sh/ruff/) linter to ensure code
-quality. You can check your local changes by running:
+quality. To run `ruff` with the same configuration as the
+github CI checks, you can use the [pre-commit](https://pre-commit.com/) framework:
 
 ```
-pip install ruff
-ruff jax
-```
-
-Alternatively, you can use the [pre-commit](https://pre-commit.com/) framework to run this
-on all staged files in your git repository, automatically using the same ruff version as
-the GitHub tests:
-
-```
-pre-commit run ruff
+pip install pre-commit
+pre-commit run ruff --all-files
 ```
 
 ## Update documentation
@@ -670,8 +663,8 @@ To check that the markdown and ipynb files are properly synced, you may use the
 by the github CI:
 
 ```
-git add docs -u  # pre-commit runs on files in git staging.
-pre-commit run jupytext
+pip install pre-commit
+pre-commit run jupytext --all-files
 ```
 
 #### Creating new notebooks
