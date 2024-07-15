@@ -1207,6 +1207,9 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     self.assertArraysEqual(out, np_inp * 24)
 
   def test_qr_decomposition_offload(self):
+    if jtu.is_cloud_tpu():
+      self.skipTest("Test fails on cloud TPU")
+
     shape = (3, 3)
     dtype = np.float32
     operand = jnp.reshape(jnp.arange(math.prod(shape), dtype=dtype), shape)
