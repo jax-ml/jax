@@ -35,7 +35,7 @@ jobs:
           pip install absl-py pytest
           if [[ "${{ matrix.jaxlib-version }}" == "nightly" ]]; then
             pip install --pre jaxlib \
-              -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_releases.html
+              -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
           fi;
           cd jax
           pip install .
