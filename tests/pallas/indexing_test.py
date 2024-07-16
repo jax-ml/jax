@@ -35,12 +35,11 @@ except (ModuleNotFoundError, ImportError):
 
 import hypothesis.extra.numpy as hnp
 import hypothesis.strategies as hps
-hp.settings.register_profile(
-    "deterministic", database=None, derandomize=True, deadline=None,
-    max_examples=100, print_blob=True)
-hp.settings.load_profile("deterministic")
+
 
 jax.config.parse_flags_with_absl()
+jtu.setup_hypothesis(max_examples=100)
+
 
 Slice = indexing.Slice
 NDIndexer = indexing.NDIndexer

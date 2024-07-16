@@ -22,6 +22,7 @@ import datetime
 import functools
 from functools import partial
 import inspect
+import logging
 import math
 import os
 import re
@@ -106,6 +107,13 @@ TEST_WITH_PERSISTENT_COMPILATION_CACHE = config.bool_flag(
     config.bool_env('JAX_TEST_WITH_PERSISTENT_COMPILATION_CACHE', False),
     help='If enabled, the persistent compilation cache will be enabled for all '
     'test cases. This can be used to increase compilation cache coverage.')
+
+HYPOTHESIS_PROFILE = config.string_flag(
+    'hypothesis_profile',
+    os.getenv('JAX_HYPOTHESIS_PROFILE', 'deterministic'),
+    help=('Select the hypothesis profile to use for testing. Available values: '
+          'deterministic, interactive'),
+)
 
 # We sanitize test names to ensure they work with "unitttest -k" and
 # "pytest -k" test filtering. pytest accepts '[' and ']' but unittest -k
@@ -2036,3 +2044,47 @@ class numpy_with_mpmath:
       return worker(ctx, scale, exact, reference, value)
     else:
       assert 0  # unreachable
+
+# Hypothesis testing support
+def setup_hypothesis(max_examples=30) -> None:
+  """Sets up the hypothesis profiles.
+
+  Sets up the hypothesis testing profiles, and selects the one specified by
+  the ``JAX_HYPOTHESIS_PROFILE`` environment variable (or the
+  ``--jax_hypothesis_profile`` configuration.
+
+  Args:
+    max_examples: the maximum number of hypothesis examples to try, when using
+      the default "deterministic" profile.
+  """
+  try:
+    import hypothesis as hp  # type: ignore
+  except (ModuleNotFoundError, ImportError):
+    return
+
+  hp.settings.register_profile(
+      "deterministic",
+      database=None,
+      derandomize=True,
+      deadline=None,
+      max_examples=max_examples,
+      print_blob=True,
+  )
+  hp.settings.register_profile(
+      "interactive",
+      parent=hp.settings.load_profile("deterministic"),
+      max_examples=1,
+      report_multiple_bugs=False,
+      verbosity=hp.Verbosity.verbose,
+      # Don't try and shrink
+      phases=(
+          hp.Phase.explicit,
+          hp.Phase.reuse,
+          hp.Phase.generate,
+          hp.Phase.target,
+          hp.Phase.explain,
+      ),
+  )
+  profile = HYPOTHESIS_PROFILE.value
+  logging.info("Using hypothesis profile: %s", profile)
+  hp.settings.load_profile(profile)

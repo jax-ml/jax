@@ -35,29 +35,14 @@ import numpy as np
 try:
   import hypothesis as hp
   import hypothesis.strategies as hps
-  CAN_USE_HYPOTHESIS = True
 except (ModuleNotFoundError, ImportError):
-  CAN_USE_HYPOTHESIS = False
-
-if not CAN_USE_HYPOTHESIS:
-  raise unittest.SkipTest("tests require hypothesis")
-
+  raise unittest.SkipTest("these tests require hypothesis")
 
 jax.config.parse_flags_with_absl()
-
-hp.settings.register_profile(
-    "deterministic",
-    database=None,
-    derandomize=True,
-    deadline=None,
-    max_examples=30,
-    print_blob=True,
-)
-hp.settings.load_profile("deterministic")
+jtu.setup_hypothesis()
 
 partial = functools.partial
 Draw = TypeVar("Draw", bound=Callable[[hps.SearchStrategy[Any]], Any])
-
 
 @hps.composite
 def segment_ids_strategy(draw, seq_len: int) -> splash.SegmentIds:
@@ -466,7 +451,7 @@ class SplashAttentionTest(AttentionTest):
 
     q_seq_len, kv_seq_len, head_dim, dtype = data.draw(attention_strategy())
 
-    # Avoid segment ids for rectangular matrices, as its hard to enforce
+    # Avoid segment ids for rectangular matrices, as it's hard to enforce
     # valid masks (non-0 rows).
     hp.assume(q_seq_len == kv_seq_len or not is_segmented)
 
