@@ -373,6 +373,13 @@ class Jax2TfLimitation(test_harnesses.Limitation):
             devices=("cpu", "gpu"),
             modes=("eager", "graph", "compiled")),
         custom_numeric(
+            dtypes=[dtypes.bfloat16],
+            tol=5e-5,
+            # Error for GL
+            devices=("tpu",),
+            modes=("eager", "graph", "compiled"),
+            native_serialization=Jax2TfLimitation.FOR_NATIVE),
+        custom_numeric(
             custom_assert=custom_assert,
             description=(
                 "May return different values in the strictly upper triangular "
