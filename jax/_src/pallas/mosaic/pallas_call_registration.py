@@ -112,16 +112,25 @@ def pallas_call_tpu_lowering_rule(
   physical_avals = [jax_src_core.physical_aval(aval) for aval in ctx.avals_in]
   ctx = ctx.replace(avals_in=physical_avals)
 
-  def _lower_fun(*args):
-    # Booleans are loaded into the kernel as integers.
+  # Booleans are loaded into the kernel as integers.
+  def _maybe_cast_inputs(*args):
     args = [_maybe_cast_to_int(x) for x in args]
-    kernel_out_avals = [_maybe_cast_to_int(x) for x in out_avals]
+    return args
+  kernel_in_avals = [_maybe_cast_to_int(x) for x in ctx.avals_in]  # type: ignore
+  kernel_out_avals = [_maybe_cast_to_int(x) for x in out_avals]
+  cast_ctx = ctx.replace(avals_out=kernel_in_avals)
+  in_nodes = mlir.lower_fun(_maybe_cast_inputs)(cast_ctx, *in_nodes)
 
-    # Dynamic grid bounds have to go at the front.
-    dynamic_grid_args, args = args[:num_dyn_bounds], args[num_dyn_bounds:],
-    result = mosaic.as_tpu_kernel(
-        mosaic_module,
-        kernel_out_avals,
+  # Dynamic grid bounds have to go at the front.
+  dynamic_grid_args, args = in_nodes[:num_dyn_bounds], in_nodes[num_dyn_bounds:]
+  kernel_ctx = ctx.replace(avals_in=kernel_in_avals, avals_out=kernel_out_avals)
+  out_nodes = mosaic.lower_module_to_custom_call(
+        kernel_ctx,
+        *dynamic_grid_args,
+        *extra_args,
+        *args,
+        module=mosaic_module,
+        out_type=kernel_out_avals,
         backend="tpu",
         kernel_name=name,
         cost_estimate=mosaic_params.get("cost_estimate"),
@@ -129,21 +138,17 @@ def pallas_call_tpu_lowering_rule(
         flags=mosaic_params.get("flags"),
         allow_input_fusion=mosaic_params.get("allow_input_fusion"),
         input_output_aliases=input_output_aliases,
+        serialization_format=mosaic_params.get("serialization_format", 1),
+        device_type=mosaic_params.get("device_type"),
         internal_scratch_in_bytes=mosaic_params.get(
             "internal_scratch_in_bytes"
         ),
-    )(
-        *dynamic_grid_args,
-        *extra_args,
-        *args,
         collective_id=mosaic_params.get("collective_id", None),
     )
-
-    # Cast results from integers back to booleans.
-    _maybe_cast_to_bool = lambda x, aval: x.astype(
-        jax.numpy.bool_) if aval.dtype == jax.numpy.bool_ else x
-    result = [
-        _maybe_cast_to_bool(x, aval) for x, aval in zip(result, out_avals)]
-    return result
-  return mlir.lower_fun(_lower_fun, multiple_results=True)(
-      ctx, *in_nodes)
+  _maybe_cast_to_bool = lambda x, aval: x.astype(
+      jax.numpy.bool_) if aval.dtype == jax.numpy.bool_ else x
+  def _maybe_cast_outputs(*args):
+    args = [_maybe_cast_to_bool(x, aval) for x, aval in zip(args, out_avals)]
+    return args
+  cast_ctx = ctx.replace(avals_in=kernel_out_avals)
+  return mlir.lower_fun(_maybe_cast_outputs)(cast_ctx, *out_nodes)
