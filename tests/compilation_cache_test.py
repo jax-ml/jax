@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections import Counter
 from functools import partial
+import logging
 import math
 import platform
 import unittest
@@ -28,6 +29,7 @@ from absl.testing import parameterized
 import jax
 from jax import jit
 from jax import lax
+from jax import numpy as jnp
 from jax import pmap
 from jax._src import compilation_cache as cc
 from jax._src import compiler
@@ -61,6 +63,11 @@ def tearDownModule():
 
 def increment_event_count(event):
   _counts[event] += 1
+
+def msg_exists_in_logs(msg: str, records: list[logging.LogRecord],
+                       level: int | None = None) -> bool:
+  return any(msg in record.getMessage() for record in records
+             if level is None or level == record.levelno)
 
 
 class InMemoryCache(CacheInterface):
@@ -414,6 +421,109 @@ class CompilationCacheTest(CompilationCacheTestCase):
         _counts["/jax/compilation_cache/cache_hits"]
         - previous_counts["/jax/compilation_cache/cache_hits"],
         1)
+
+  def test_persistent_cache_hit_logging(self):
+    jit(lambda x: x + 1)(1)
+    msg = "Persistent compilation cache hit"
+
+    # cache hits with `log_compiles` on should be in WARNING when enabled
+    with config.log_compiles(True):
+      with self.assertLogs(level="WARNING") as log:
+        jit(lambda x: x + 1)(1)
+      self.assertTrue(msg_exists_in_logs(msg, log.records, logging.WARNING))
+
+  def test_persistent_cache_hit_no_logging(self):
+    jit(lambda x: x + 1)(1)
+    msg = "Persistent compilation cache hit"
+
+    # cache hits with `log_compiles` off should NOT be in WARNING
+    with config.log_compiles(False):
+      with self.assertLogs(level="DEBUG") as log:
+        jit(lambda x: x + 1)(1)
+      self.assertFalse(msg_exists_in_logs(msg, log.records, logging.WARNING))
+
+  def test_persistent_cache_miss_logging_with_explain(self):
+    with (config.explain_cache_misses(True),
+          config.compilation_cache_dir("jax-cache")):
+
+      # omitting writing to cache because compilation is too fast
+      pure_fn = lambda a: jnp.array(1, dtype=jnp.int32)
+      with config.persistent_cache_min_compile_time_secs(1e5):
+        with self.assertLogs(level="DEBUG") as log:
+          jit(lambda x: x +
+              jax.pure_callback(pure_fn, jax.ShapeDtypeStruct((), jnp.int32), x)
+              )(1)
+        msg1 = "Not writing persistent cache entry"
+        msg2 = "because it uses host callbacks"
+        self.assertTrue(msg_exists_in_logs(msg1, log.records, logging.WARNING))
+        self.assertTrue(msg_exists_in_logs(msg2, log.records, logging.WARNING))
+
+      # omitting writing to cache because host callback is present
+      pure_fn = lambda a: jnp.array(1, dtype=jnp.int32)
+      with self.assertLogs(level="DEBUG") as log:
+        jit(lambda x: x +
+            jax.pure_callback(pure_fn, jax.ShapeDtypeStruct((), jnp.int32), x)
+            )(1)
+      msg1 = "Not writing persistent cache entry"
+      msg2 = "because it uses host callbacks"
+      self.assertTrue(msg_exists_in_logs(msg1, log.records, logging.WARNING))
+      self.assertTrue(msg_exists_in_logs(msg2, log.records, logging.WARNING))
+
+      # omitting writing to cache because binary is too small
+      with config.persistent_cache_min_entry_size_bytes(int(1e9)):
+        with self.assertLogs(level="DEBUG") as log:
+          jit(lambda x: x + 2)(1)
+      msg1 = "Not writing persistent cache entry"
+      msg2 = "is less than threshold"
+      self.assertTrue(msg_exists_in_logs(msg1, log.records, logging.WARNING))
+      self.assertTrue(msg_exists_in_logs(msg2, log.records, logging.WARNING))
+
+      # successful cache write
+      with config.persistent_cache_min_entry_size_bytes(1):
+        with self.assertLogs(level="DEBUG") as log:
+          jit(lambda x: x ** 2)(1)
+      msg = "to persistent compilation cache with key"
+      self.assertTrue(msg_exists_in_logs(msg, log.records, logging.WARNING))
+
+  def test_persistent_cache_miss_logging_with_no_explain(self):
+    # test that cache failure messages do not get logged in WARNING
+    with (config.explain_cache_misses(False),
+          config.compilation_cache_dir("jax-cache")):
+      # omitting writing to cache because compilation is too fast
+      with config.persistent_cache_min_compile_time_secs(1e3):
+        with self.assertLogs(level="DEBUG") as log:
+          jit(lambda x: x + 1)(1)
+        msg1, msg2 = "Not writing persistent cache entry", "because it took <"
+        self.assertFalse(msg_exists_in_logs(msg1, log.records, logging.WARNING))
+        self.assertFalse(msg_exists_in_logs(msg2, log.records, logging.WARNING))
+
+      # omitting writing to cache because host callback is present
+      pure_fn = lambda a: jnp.array(1, dtype=jnp.int32)
+      with self.assertLogs(level="DEBUG") as log:
+        jit(lambda x: x +
+            jax.pure_callback(pure_fn, jax.ShapeDtypeStruct((), jnp.int32), x)
+            )(1)
+      msg1 = "Not writing persistent cache entry"
+      msg2 = "because it uses host callbacks"
+      self.assertFalse(msg_exists_in_logs(msg1, log.records, logging.WARNING))
+      self.assertFalse(msg_exists_in_logs(msg2, log.records, logging.WARNING))
+
+      # omitting writing to cache because binary is too small
+      with config.persistent_cache_min_entry_size_bytes(int(1e9)):
+        with self.assertLogs(level="DEBUG") as log:
+          jit(lambda x: x + 2)(1)
+      msg1 = "Not writing persistent cache entry"
+      msg2 = "is less than threshold"
+      self.assertFalse(msg_exists_in_logs(msg1, log.records, logging.WARNING))
+      self.assertFalse(msg_exists_in_logs(msg2, log.records, logging.WARNING))
+
+      # successful cache write
+      with config.persistent_cache_min_entry_size_bytes(1):
+        with self.assertLogs(level="DEBUG") as log:
+          jit(lambda x: x ** 2)(1)
+      msg = "to persistent compilation cache with key"
+      self.assertFalse(msg_exists_in_logs(msg, log.records, logging.WARNING))
+
 
   @parameterized.parameters(0, 1)
   def test_cache_write_with_process_restriction(self, process_id):
