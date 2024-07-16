@@ -2143,7 +2143,128 @@ class PallasCallTraceTest(PallasBaseTest):
     self.assertEqual(num_stop, 2)
 
 
-class PallasCallCheckifyInterpreterTest(PallasBaseTest):
+class PallasCallTPUBooleanTest(PallasBaseTest):
+  """Tests for loading/storing from bool memrefs on TPUs.
+
+  We specifically test bools because they have special handling.
+  Bools are stored as integers inside of memrefs, and we typecast to/from
+  bools automatically on load.
+  """
+
+  INTERPRET: bool = False
+
+  @parameterized.parameters((False,), (True,))
+  def test_scalar_bool_load_store(self, value):
+    def kernel(x_ref, o_ref):
+      o_ref[0, 0] = jnp.logical_not(x_ref[0, 0])
+    input = jnp.array([[value]])
+    output_shape = jax.ShapeDtypeStruct((1, 1), jnp.bool_)
+    result = self.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+        out_shape=output_shape,
+    )(input)
+    np.testing.assert_array_equal(result, jnp.logical_not(input))
+
+  @parameterized.parameters((False,), (True,))
+  def test_scalar_bool_run_scoped(self, value):
+    if self.INTERPRET:
+      self.skipTest('run_scoped not supported in non-interpret mode.')
+    def kernel(x_ref, o_ref):
+      def inner_scope(scoped_ref):
+        scoped_ref[0, 0] = jnp.logical_not(x_ref[0, 0])
+        o_ref[0, 0] = scoped_ref[0, 0]
+      pltpu.run_scoped(inner_scope,
+                       pltpu.SMEM((1, 1), dtype=jnp.bool_))
+    input_arr = jnp.array([[value]])
+    output_shape = jax.ShapeDtypeStruct((1, 1), jnp.bool_)
+    result = self.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.SMEM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.SMEM),
+        out_shape=output_shape,
+    )(input_arr)
+    np.testing.assert_array_equal(result, jnp.logical_not(input_arr))
+
+  def test_vector_bool_load_store(self):
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...]
+    input = jnp.array([[False, True, True, False]])
+    output_shape = jax.ShapeDtypeStruct((1, 4), jnp.bool_)
+    if self.INTERPRET:
+      result = self.pallas_call(
+          kernel,
+          in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+          out_shape=output_shape,
+      )(input)
+      np.testing.assert_array_equal(result, input)
+    else:
+      # TODO(justinfu): Fix vector boolean ops so that they do not trigger
+      # a relayout error from changing bitwidths in Mosaic.
+      with self.assertRaisesRegex(
+          Exception, 'Boolean vector loads are not supported.'):
+        self.pallas_call(
+            kernel,
+            in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+            out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+            out_shape=output_shape,
+        )(input)
+
+  def test_bool_dma_not_implemented(self):
+    if not jtu.is_device_tpu_at_least(4):
+      self.skipTest('DMAs not supported on TPU generations <= 3')
+    if self.INTERPRET:
+      self.skipTest('Test only applies to non-interpret mode.')
+    num_devices = jax.local_device_count()
+    def kernel(x_ref, o_ref, send_sem, recv_sem):
+      index = lax.axis_index('x')
+      neighbor = lax.rem(index + 1, num_devices)
+      copy = pltpu.make_async_remote_copy(x_ref,
+                                   o_ref,
+                                   send_sem,
+                                   recv_sem,
+                                   device_id=(0, neighbor))
+      copy.start()
+      copy.wait()
+    input_arr = jnp.ones((8, 128), dtype=jnp.bool_)
+    output_shape = jax.ShapeDtypeStruct((8, 128), jnp.bool_)
+    grid_spec = pltpu.PrefetchScalarGridSpec(
+      num_scalar_prefetch=0,
+      in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM)],
+      out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+      grid=(1,),
+      scratch_shapes=[pltpu.SemaphoreType.DMA] * 2,
+    )
+    test_fn = self.pallas_call(
+          kernel,
+          grid_spec=grid_spec,
+          out_shape=output_shape,
+      )
+    with self.assertRaisesRegex(
+        Exception, 'DMAs with bool dtypes are not supported.'):
+      devices = mesh_utils.create_device_mesh((1, num_devices))
+      mesh = jax.sharding.Mesh(devices, P(None, 'x'))
+      sharding = jax.sharding.NamedSharding(mesh, P(None, 'x'))
+      input_arr = jax.device_put(input_arr, sharding)
+      jax.jit(
+            shard_map.shard_map(
+                test_fn,
+                mesh=mesh,
+                in_specs=P(None, 'x'),
+                out_specs=P(None, 'x'),
+                check_rep=False
+            )
+      )(input_arr)
+
+
+
+class PallasCallTPUBooleanInterpretTest(PallasCallTPUBooleanTest):
+  INTERPRET: bool = True
+
+
+class PallasCallTPUCheckifyTest(PallasBaseTest):
   INTERPRET: bool = True
 
   @parameterized.parameters((2,), (5,), (6,), (7,))

@@ -20,6 +20,7 @@ from typing import Any
 import warnings
 
 import jax
+from jax import dtypes
 from jax import core as jax_core
 from jax._src import core as jax_src_core
 from jax._src import sharding_impls
@@ -31,6 +32,21 @@ from jax._src.pallas.pallas_call import pallas_call_p
 from jax.experimental import mosaic
 from jax.experimental.mosaic.dialects import tpu
 
+def _maybe_cast_to_int(x: jax.Array | jax_core.ShapedArray):
+  """Casts boolean values to integers.
+
+  We perform this cast because Mosaic does not directly support bool values
+  for Memrefs. Instead, we load bools as integers and cast them to bools
+  after loading from a memref inside of the kernel.
+  """
+  if isinstance(x, jax.Array):
+    if dtypes.issubdtype(x.dtype, jax.numpy.bool_):
+      return x.astype(lowering.BOOL_MEMREF_TYPE)
+    return x
+  else:
+    if dtypes.issubdtype(x.dtype, jax.numpy.bool_):
+      return jax_core.ShapedArray(x.shape, lowering.BOOL_MEMREF_TYPE)
+    return x
 
 def pallas_call_tpu_lowering_rule(
     ctx: mlir.LoweringRuleContext, *in_nodes,
@@ -97,11 +113,15 @@ def pallas_call_tpu_lowering_rule(
   ctx = ctx.replace(avals_in=physical_avals)
 
   def _lower_fun(*args):
+    # Booleans are loaded into the kernel as integers.
+    args = [_maybe_cast_to_int(x) for x in args]
+    kernel_out_avals = [_maybe_cast_to_int(x) for x in out_avals]
+
     # Dynamic grid bounds have to go at the front.
     dynamic_grid_args, args = args[:num_dyn_bounds], args[num_dyn_bounds:],
-    return mosaic.as_tpu_kernel(
+    result = mosaic.as_tpu_kernel(
         mosaic_module,
-        out_avals,
+        kernel_out_avals,
         backend="tpu",
         kernel_name=name,
         cost_estimate=mosaic_params.get("cost_estimate"),
@@ -118,5 +138,12 @@ def pallas_call_tpu_lowering_rule(
         *args,
         collective_id=mosaic_params.get("collective_id", None),
     )
+
+    # Cast results from integers back to booleans.
+    _maybe_cast_to_bool = lambda x, aval: x.astype(
+        jax.numpy.bool_) if aval.dtype == jax.numpy.bool_ else x
+    result = [
+        _maybe_cast_to_bool(x, aval) for x, aval in zip(result, out_avals)]
+    return result
   return mlir.lower_fun(_lower_fun, multiple_results=True)(
       ctx, *in_nodes)

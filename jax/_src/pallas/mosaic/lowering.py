@@ -70,6 +70,8 @@ NDIndexer = indexing.NDIndexer
 TPUMemorySpace = tpu_core.TPUMemorySpace
 VMEM = tpu_core.TPUMemorySpace.VMEM
 SMEM = tpu_core.TPUMemorySpace.SMEM
+# Booleans are stored as the following type in memrefs.
+BOOL_MEMREF_TYPE = np.dtype('int32')
 
 # The value interpreted as a dynamic dimension by MLIR.
 MLIR_DYNAMIC = -9223372036854775808
@@ -121,7 +123,8 @@ def _memory_space_to_tpu_memspace(memory_space: TPUMemorySpace | None
     memory_space = VMEM
   return ir.Attribute.parse(f"#tpu.memory_space<{memory_space}>")
 
-def _dtype_to_ir_type(dtype: jnp.dtype) -> ir.Type:
+def _dtype_to_ir_type(dtype: jnp.dtype,
+                      is_kernel_boundary: bool = False) -> ir.Type:
   if jnp.issubdtype(dtype, tpu_core.semaphore_dtype):
     if jnp.issubdtype(dtype, tpu_core.dma_semaphore):
       return ir.Type.parse("!tpu.dma_semaphore")
@@ -131,6 +134,8 @@ def _dtype_to_ir_type(dtype: jnp.dtype) -> ir.Type:
       return ir.Type.parse("!tpu.semaphore")
     else:
       raise NotImplementedError
+  if is_kernel_boundary and jnp.issubdtype(dtype, jnp.dtype('bool')):
+    dtype = BOOL_MEMREF_TYPE
   # TODO(justinfu): Remove after mosaic supports unsigned types.
   # This conversion makes mosaic interpret all unsigned types as signed types.
   type =  mlir.dtype_to_ir_type(dtype)
@@ -139,7 +144,10 @@ def _dtype_to_ir_type(dtype: jnp.dtype) -> ir.Type:
   else:
     return type
 
-def aval_to_ir_type(aval, shape=None, memory_space: TPUMemorySpace | None = None):
+def aval_to_ir_type(aval,
+                    shape=None,
+                    memory_space: TPUMemorySpace | None = None,
+                    is_kernel_boundary: bool = False):
   if isinstance(aval, tpu_core.AbstractSemaphore):
     if aval.sem_type is tpu_core.SemaphoreType.DMA:
       sem_type = ir.Type.parse("!tpu.dma_semaphore")
@@ -164,14 +172,18 @@ def aval_to_ir_type(aval, shape=None, memory_space: TPUMemorySpace | None = None
     if shape is None:
       shape = aval.shape
     memspace = _memory_space_to_tpu_memspace(memory_space)
-    return ir.MemRefType.get(shape, _dtype_to_ir_type(aval.dtype),
-                             memory_space=memspace)
+    return ir.MemRefType.get(shape,
+      _dtype_to_ir_type(aval.dtype, is_kernel_boundary=True),
+      memory_space=memspace)
   if isinstance(aval, jax_core.ShapedArray):
     if shape is None:
       shape = aval.shape
     if not shape:
-      return _dtype_to_ir_type(aval.dtype)
-    return ir.VectorType.get(shape, _dtype_to_ir_type(aval.dtype))
+      return _dtype_to_ir_type(
+          aval.dtype, is_kernel_boundary=is_kernel_boundary)
+    return ir.VectorType.get(
+        shape,
+        _dtype_to_ir_type(aval.dtype, is_kernel_boundary=is_kernel_boundary))
   raise NotImplementedError(aval)
 
 
@@ -994,17 +1006,20 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
       cast_to_index=True,
   )
   need_stride = not all((s is None or s == 1) for s in strides)
-  load_aval = jax_core.ShapedArray(sizes, dtype=ref_aval.dtype)
   if is_smem_load:
     if ctx.avals_out[0].shape:
       raise ValueError("Can only load scalars from SMEM")
-    return memref.LoadOp(ref, starts).result
+    return _maybe_cast_load_to_bool(
+        aval_out, memref.LoadOp(ref, starts).result)
+  load_aval = jax_core.ShapedArray(sizes, dtype=ref_aval.dtype)
   if need_stride:
     load_val = tpu.StridedLoadOp(
-        aval_to_ir_type(load_aval), ref, starts, strides
+      aval_to_ir_type(load_aval, is_kernel_boundary=True), ref, starts, strides
     ).result
   else:
-    load_val = vector.LoadOp(aval_to_ir_type(load_aval), ref, starts).result
+    load_val = vector.LoadOp(
+        aval_to_ir_type(load_aval, is_kernel_boundary=True), ref, starts).result
+  load_val = _maybe_cast_load_to_bool(aval_out, load_val)
   if load_aval == aval_out:
     return load_val
   vec_type = ir.VectorType.get(aval_out.shape,
@@ -1046,6 +1061,42 @@ def _prng_key_load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree
 lowering_rules[primitives.load_p] = _load_lowering_rule
 skip_mlir_conversions.add(primitives.load_p)
 
+def _maybe_cast_load_to_bool(
+    out_aval, val: ir.Value) -> tuple[ir.Value, jnp.dtype]:
+  """Casts a memref load value to bool if the requested value is a bool.
+
+  Mosaic does not support boolean-type memrefs, since booleans
+  typically live in mask registers. We instead load booleans as integers from
+  memrefs and move them to mask registers on load using this function.
+
+  Args:
+    out_aval: The output aval of the load.
+    val: The input value.
+
+  Returns:
+    The loaded value, and the JAX dtype of the input value.
+  """
+  if out_aval.dtype != jnp.bool_:
+    return val
+  load_scalar_type = _dtype_to_ir_type(BOOL_MEMREF_TYPE)
+  if not out_aval.shape:
+    # For scalars, truncate the value to a bool.
+    pred = _cmpi_lowering_types[lax.ne_p]
+    predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
+    const_zero = ir.IntegerAttr.get(load_scalar_type, 0)
+    const_zero = arith.ConstantOp(load_scalar_type, const_zero)
+    return arith.CmpIOp(predicate, val, const_zero).result
+  else:
+    raise NotImplementedError("Boolean vector loads are not supported.")
+
+def _maybe_cast_store_to_memref_type(
+    expected_aval, val: ir.Value) -> ir.Value:
+  """Casts a boolean value back to an integer for storing in a memref."""
+  if expected_aval.dtype != jnp.bool_:
+    return val
+  int_out_type = aval_to_ir_type(expected_aval, is_kernel_boundary=True)
+  return arith.ExtUIOp(int_out_type, val).result
+
 
 def _masked_swap_lowering_rule(
     ctx: LoweringRuleContext, *args_flat, args_tree, **_
@@ -1086,6 +1137,8 @@ def _masked_swap_lowering_rule(
     if val_aval.shape:
       raise ValueError("Can only store scalars to SMEM")
     result = memref.LoadOp(ref, starts).result
+    result = _maybe_cast_load_to_bool(val_aval, result)
+    val = _maybe_cast_store_to_memref_type(val_aval, val)
     memref.StoreOp(val, ref, starts)
     return result
   mem_slice_shape = list(aval_out.shape)
@@ -1099,19 +1152,22 @@ def _masked_swap_lowering_rule(
   ]
   mem_aval = aval_out.update(shape=tuple(mem_slice_shape))
   mem_aval_vec_type = ir.VectorType.get(mem_aval.shape,
-                                        _dtype_to_ir_type(mem_aval.dtype))
+    _dtype_to_ir_type(mem_aval.dtype, is_kernel_boundary=True))
   if need_stride:
     result = tpu.StridedLoadOp(mem_aval_vec_type, ref, starts, strides).result
   else:
     result = vector.LoadOp(mem_aval_vec_type, ref, starts).result
+  val = _maybe_cast_store_to_memref_type(val_aval, val)
   if mem_aval != aval_out:
     # We are slicing a scalar so provided dummy 1 indices
     result_vec_type = ir.VectorType.get(aval_out.shape,
-                                        _dtype_to_ir_type(aval_out.dtype))
+      _dtype_to_ir_type(aval_out.dtype, is_kernel_boundary=True))
     result = vector.ShapeCastOp(result_vec_type, result).result
     val_vec_type = ir.VectorType.get(mem_aval.shape,
-                                     _dtype_to_ir_type(mem_aval.dtype))
+      _dtype_to_ir_type(mem_aval.dtype, is_kernel_boundary=True))
     val = vector.ShapeCastOp(val_vec_type, val).result
+  result = _maybe_cast_load_to_bool(val_aval, result)
+
   if need_stride:
     tpu.StridedStoreOp(val, ref, starts, strides)
   else:
@@ -1455,7 +1511,12 @@ def _convert_element_type_lowering_rule(
       and new_dtype == jnp.bool_
       and old_dtype.itemsize == 4
   ):
-    return arith.TruncIOp(out_type, x).result
+    pred = _cmpi_lowering_types[lax.ne_p]
+    predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
+    const_type = _dtype_to_ir_type(old_dtype)
+    const_zero = ir.IntegerAttr.get(const_type, 0)
+    const_zero = arith.ConstantOp(const_type, const_zero)
+    return arith.CmpIOp(predicate, x, const_zero).result
   return lower_fun(functools.partial(_convert_helper, to_dtype=new_dtype),
                    multiple_results=False)(ctx, x)
 
@@ -1856,7 +1917,7 @@ def _not_lowering_rule(ctx: LoweringRuleContext, x):
   # xor x, -1
   # covers both cases.
   out_aval = ctx.avals_out[0]
-  out_scalar_type = mlir.dtype_to_ir_type(out_aval.dtype)
+  out_scalar_type = _dtype_to_ir_type(out_aval.dtype)
   if not out_aval.shape:
     # Create a scalar constant.
     minus_one = ir_constant(-1, out_scalar_type)
@@ -2404,7 +2465,9 @@ def _alloc_value(aval: jax_core.AbstractValue) -> ir.Value:
       return tpu.AllocaSemaphoreOp(memref_type).result
     else:
       out_type = ir.MemRefType.get(
-          aval.shape, _dtype_to_ir_type(aval.dtype), memory_space=memspace)
+          aval.shape,
+          _dtype_to_ir_type(aval.dtype, is_kernel_boundary=True),
+          memory_space=memspace)
       return memref.AllocaOp(out_type, [], []).result
   elif isinstance(aval, tpu_core.AbstractSemaphore):
     memref_type = aval_to_ir_type(aval, memory_space=TPUMemorySpace.SEMAPHORE)
@@ -2509,6 +2572,8 @@ def _dma_start_lowering_rule(ctx: LoweringRuleContext, *args, tree,
   (src_ref_aval, _, dst_ref_aval, _, sem_aval, _, src_sem_aval, _, _) = (
       tree_util.tree_unflatten(tree, ctx.avals_in)
   )
+  if src_ref_aval.dtype == jnp.bool_:
+    raise NotImplementedError("DMAs with bool dtypes are not supported.")
   block_shapes = tree_util.tree_unflatten(tree, ctx.block_shapes)
   src_ref_block_shape, dst_ref_block_shape = block_shapes[0], block_shapes[2]
   src_ref, _ = _index_ref(
