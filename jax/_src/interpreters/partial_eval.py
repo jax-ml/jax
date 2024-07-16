@@ -2048,17 +2048,14 @@ class DynamicJaxprTrace(core.Trace):
   def process_custom_vjp_call(self, prim, fun, fwd, bwd, tracers, out_trees,
                               symbolic_zeros):
     in_avals = [t.aval for t in tracers]
-    with core.new_sublevel():
-      fun_jaxpr, out_avals, consts, () = trace_to_subjaxpr_dynamic(fun, self.main, in_avals)
+    fun_jaxpr, out_avals, consts, _ = trace_to_jaxpr_dynamic(fun, in_avals, debug_info)
     closed_fun_jaxpr = core.ClosedJaxpr(convert_constvars_jaxpr(fun_jaxpr), ())
 
-    main_ = ref(self.main)
-
-    @_memoize
+    # @_memoize
     def fwd_jaxpr_from_zeros(*zeros):
       for store in fwd.stores: store and store.reset()
       fwd_ = _interleave_fun(fwd, zeros)
-      jaxpr, _, consts, atr = trace_to_subjaxpr_dynamic(fwd_, main_(), in_avals)
+      jaxpr, _, consts, atr = trace_to_jaxpr_dynamic(fwd_, in_avals)
       if atr: raise NotImplementedError
       return jaxpr, consts
 
