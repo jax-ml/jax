@@ -2048,9 +2048,6 @@ class PallasCallDynamicDMATest(PallasBaseTest):
 class PallasCallPrintTest(PallasBaseTest):
 
   def test_debug_print(self):
-    if jtu.is_cloud_tpu():
-      self.skipTest("Test fails on cloud TPU")
-
     @functools.partial(
         self.pallas_call,
         out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
@@ -2069,9 +2066,6 @@ class PallasCallPrintTest(PallasBaseTest):
     self.assertIn('It works!', get_output())
 
   def test_debug_print_with_values(self):
-    if jtu.is_cloud_tpu():
-      self.skipTest("Test fails on cloud TPU")
-
     @functools.partial(
         self.pallas_call,
         in_specs=(pl.BlockSpec(memory_space=pltpu.SMEM),),

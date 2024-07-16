@@ -85,7 +85,11 @@ jobs:
         run: |
           # Run single-accelerator tests in parallel
           JAX_ENABLE_TPU_XDIST=true python3 -m pytest -n=${{ matrix.tpu.cores }} --tb=short \
+            --deselect=tests/pallas/tpu_pallas_test.py::PallasCallPrintTest \
             --maxfail=20 -m "not multiaccelerator" tests examples
+          # Run Pallas printing tests, which need to run with I/O capturing disabled.
+          TPU_STDERR_LOG_LEVEL=0 python3 -m pytest -s \
+            tests/pallas/tpu_pallas_test.py::PallasCallPrintTest
           # Run multi-accelerator across all chips
           python3 -m pytest --tb=short --maxfail=20 -m "multiaccelerator" tests
       - name: Send chat on failure
