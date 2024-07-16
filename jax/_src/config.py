@@ -916,7 +916,8 @@ jax2tf_default_native_serialization = bool_state(
     help=(
         'Sets the default value of the native_serialization parameter to '
         'jax2tf.convert. Prefer using the parameter instead of the flag, '
-        'the flag may be removed in the future.'
+        'the flag may be removed in the future. '
+        'Starting with JAX 0.4.31 non-native serialization is deprecated.'
     )
 )
 

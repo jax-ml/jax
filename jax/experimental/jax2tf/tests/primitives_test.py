@@ -113,9 +113,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                                                   dtype=harness.dtype), limitations))
     func_jax = harness.dyn_fun
     args = harness.dyn_args_maker(self.rng())
-    enable_xla = harness.params.get("enable_xla", True)
-    if config.jax2tf_default_native_serialization.value and not enable_xla:
-      raise unittest.SkipTest("native_serialization not supported with enable_xla=False")
 
     if ("eigh" == harness.group_name and
         np.complex64 == harness.dtype and
@@ -142,8 +139,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     associative_scan_reductions = harness.params.get("associative_scan_reductions", False)
     try:
       with jax.jax2tf_associative_scan_reductions(associative_scan_reductions):
-        self.ConvertAndCompare(func_jax, *args, limitations=limitations,
-                               enable_xla=enable_xla)
+        self.ConvertAndCompare(func_jax, *args, limitations=limitations)
     except Exception as e:
       # TODO(b/264596006): custom calls are not registered properly with TF in OSS
       if (config.jax2tf_default_native_serialization.value and

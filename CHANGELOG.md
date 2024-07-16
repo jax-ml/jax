@@ -32,6 +32,10 @@ Remember to align the itemized text with the first line of an item within a list
   * HLO lowering rules should no longer wrap singleton ir.Values in tuples.
     Instead, return singleton ir.Values unwrapped. Support for wrapped values
     will be removed in a future version of JAX.
+  * {func}`jax.experimental.jax2tf.convert` with `native_serialization=False`
+    or `enable_xla=False` is now deprecated and this support will be removed in
+    a future version.
+    Native serialization has been the default since JAX 0.4.16 (September 2023).
 
 ## jaxlib 0.4.31
 

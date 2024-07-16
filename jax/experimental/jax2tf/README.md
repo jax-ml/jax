@@ -59,7 +59,8 @@ For backwards compatibility purposes, and for special uses,
 the JAX-TensorFlow interoperation APIs can be used also
 in a **graph serialization** mode (the only mode available before version 0.4.7,
 and the default mode before JAX version 0.4.15),
-without going through StableHLO.
+without going through StableHLO. (Starting with JAX version 0.4.31 the
+graph serialization mode is deprecated. It will be removed in the near future).
 
   * For calling JAX functions from TensorFlow,
     it is possible to request that the JAX function be lowered with one TensorFlow

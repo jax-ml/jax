@@ -860,17 +860,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       return ad_checkpoint.checkpoint_name(jnp.sin(x), "sin")
     jax2tf.convert(f_jax)(1.)  # No error.
 
-  def test_convert_nullary_func(self):
-    # Even nullary functions are converted to TF (as opposed to constant-folded
-    # in JAX prior to conversion).
-    def f_jax():
-      return jnp.sin(1.)
-    f_tf = jax2tf.convert(f_jax)
-    # for native serialization the HLO we get from TF is constant-folded, so this
-    # test fails.
-    if not config.jax2tf_default_native_serialization.value:
-      self.assertIn("sine(", self.TfToHlo(f_tf))
-
   def test_convert_of_nested_independent_jit(self):
     def func(x):
       def inner1(y):
@@ -1131,31 +1120,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     self.assertAllClose((np.full_like(x[0], fill_value=1.),
                          np.full_like(x[1], fill_value=2.)),
                         (grad_tf[0].numpy(), grad_tf[1].numpy()))
-
-  @jtu.skip_on_flag("jax2tf_default_native_serialization", True)
-  def test_enable_xla(self):
-    # Tests that enable_xla flag is properly scoped to a conversion.
-    def fun(x):
-      # lax.reduce is unlikely to ever be convertible with enable_xla=False
-      return lax.reduce(x, np.float32(0), lambda v, acc: v + acc, dimensions=(0, 1))
-
-    tf_fun_with_xla = jax2tf.convert(fun, enable_xla=True)
-    tf_fun_without_xla = jax2tf.convert(fun, enable_xla=False)
-    x = np.ones((2, 3), dtype=np.float32)
-
-    self.assertAllClose(fun(x), tf_fun_with_xla(x))
-    with self.assertRaisesRegex(NotImplementedError,
-                                "Call to reduce cannot be converted with enable_xla=False"):
-      tf_fun_without_xla(x)
-
-    # Now in reverse order (we had bugs with the management of enable_xla global)
-    tf_fun2_without_xla = jax2tf.convert(lambda x: fun(x), enable_xla=False)
-    tf_fun2_with_xla = jax2tf.convert(lambda x: fun(x), enable_xla=True)
-
-    with self.assertRaisesRegex(NotImplementedError,
-                                "Call to reduce cannot be converted with enable_xla=False"):
-      tf_fun2_without_xla(x)
-    self.assertAllClose(fun(x), tf_fun2_with_xla(x))
 
   def test_device_array_arg(self):
     self.ConvertAndCompare(jnp.sin, jnp.zeros((2, 3), jnp.float32))
@@ -1716,35 +1680,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
       self.assertAllClose(
         res,
         x + _testing_multi_platform_to_add[tf_device_jax_platform])
-
-  def test_cond_primitive(self):
-    def f_cond(x):
-      return lax.cond(x < 1.0, jnp.cos, jnp.sin, x)
-
-    self.ConvertAndCompare(f_cond, np.pi / 4, enable_xla=False)
-    self.ConvertAndCompare(f_cond, np.pi / 2, enable_xla=False)
-
-    f_cond_tf = jax2tf.convert(f_cond, enable_xla=False)
-    self.assertNotIn("switch_case", self.TfToHlo(f_cond_tf, np.pi))
-
-    def f_switch(x):
-      return lax.switch(jnp.int32(x), [jnp.cos, jnp.sin, lambda _: 42.0], x)
-
-    self.ConvertAndCompare(f_switch, np.pi / 4, enable_xla=False)
-    self.ConvertAndCompare(f_switch, np.pi / 2, enable_xla=False)
-    self.ConvertAndCompare(f_switch, 2 * np.pi, enable_xla=False)
-
-    f_switch_tf = jax2tf.convert(f_switch, enable_xla=False)
-    self.assertIn("switch_case", self.TfToHlo(f_switch_tf, np.pi))
-
-  @jtu.skip_on_flag("jax2tf_default_native_serialization", False)
-  def test_ragged_dot(self):
-    dtype = np.float32
-    m, k, n, num_groups = 5, 4, 3, 2
-    lhs = np.arange(m * k, dtype=dtype).reshape((m, k))
-    rhs = np.arange(num_groups * k * n, dtype=dtype).reshape((num_groups, k, n))
-    group_sizes = np.array([3, 2], dtype=np.int32)
-    self.ConvertAndCompare(jax.lax.ragged_dot, lhs, rhs, group_sizes)
 
 
 @jtu.with_config(jax_enable_custom_prng=True)
