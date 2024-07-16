@@ -909,8 +909,7 @@ def dot_product_attention(
     case 'cudnn':
       mask_type = MaskType.CAUSAL if is_causal else MaskType.NO_MASK
       return cudnn_dot_product_attention(
-          query, key, value, bias, mask, scale=scale_val,  # type: ignore[arg-type]
-          mask_type=mask_type,
+          query, key, value, bias, mask, scale=scale_val, mask_type=mask_type
       )
     case None:
       # TODO(kaixih@nvidia) Defaults to XLA for now. Will automatically select
