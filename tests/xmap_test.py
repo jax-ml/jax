@@ -100,8 +100,6 @@ def _ensure_bdim_batcher(axis_size, frame_name, main_type, vals_in, dims_in, axi
   return jnp.moveaxis(v, d, bdim), bdim
 batching.axis_primitive_batchers[ensure_bdim_p] = _ensure_bdim_batcher
 batching.primitive_batchers[ensure_bdim_p] = lambda v, d: (v[0], d[0])
-core.axis_substitution_rules[ensure_bdim_p] = partial(
-    lax_parallel._subst_all_names_in_param, 'axis_name')
 
 def ensure_bdim(x, axis_name, bdim):
   return ensure_bdim_p.bind(x, axis_name=(axis_name,), bdim=bdim)
@@ -116,8 +114,6 @@ def _constant_introducing_batcher(_1, _2, _3, xs, ds, axis_name):
   # Introduce a constant
   return (x + np.arange(x.size, dtype=x.dtype).reshape(x.shape)), d
 batching.axis_primitive_batchers[constant_introducing_p] = _constant_introducing_batcher
-core.axis_substitution_rules[constant_introducing_p] = partial(
-  lax_parallel._subst_all_names_in_param, 'axis_name')
 
 # -------------------- Axis resources generation --------------------
 

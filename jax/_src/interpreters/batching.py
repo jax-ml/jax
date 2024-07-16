@@ -516,8 +516,9 @@ class BatchTrace(Trace):
     in_vals, in_dims = unzip2(map(self.to_batch_info, tracers))
     axis_data = AxisData(self.axis_name, self.axis_size, self.spmd_axis_name)
     fun, out_dims1 = batch_subtrace(fun, self.tag, axis_data, in_dims)
-    jvp, out_dims2 = batch_custom_jvp_subtrace(jvp, self.main, in_dims)
-    out_vals = prim.bind(fun, jvp, *in_vals, symbolic_zeros=symbolic_zeros)
+    jvp, out_dims2 = batch_custom_jvp_subtrace(jvp, self.tag, axis_data, in_dims)
+    out_vals = prim.bind_with_trace(self.parent_trace, (fun, jvp) + tuple(in_vals),
+                                    dict(symbolic_zeros=symbolic_zeros))
     fst, out_dims = lu.merge_linear_aux(out_dims1, out_dims2)
     if not fst:
       assert out_dims == out_dims[:len(out_dims) // 2] * 2
@@ -793,7 +794,7 @@ def _batch_jaxpr_axes(closed_jaxpr, axis_size, in_axes, out_axes_dest,
                       axis_name, spmd_axis_name, main_type):
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr))
   f, out_axes = _batch_jaxpr_inner(f, axis_size)
-  f, out_batched = _match_axes_jaxpr(f, axis_size, out_axes_dest, out_axes)
+  f, out_batched = _match_axes_jaxpr(f, axis_name, axis_size, out_axes_dest, out_axes)
   f = _batch_jaxpr_outer(f, axis_name, spmd_axis_name, axis_size, in_axes,
                          main_type)
   avals_in = [core.unmapped_aval(axis_size, axis_name, b, aval) if b is not not_mapped
@@ -815,10 +816,9 @@ def _batch_jaxpr_inner(axis_size, parent_trace, tag, axis_name, spmd_axis_name, 
   yield out_vals, new_out_axes
 
 @lu.transformation_with_aux
-def _match_axes_jaxpr(axis_size, out_axes_dest, out_axes, main, in_axes,
+def _match_axes_jaxpr(axis_name, axis_size, out_axes_dest, out_axes, trace, in_axes,
                       *in_vals):
-  trace = main.with_cur_sublevel()
-  out_vals = yield (main, in_axes, *in_vals), {}
+  out_vals = yield (trace, in_axes, *in_vals), {}
   out_axes = out_axes()
   out_axes_dest = [(None if src is not_mapped else 0)
                    if dst is zero_if_mapped else dst
@@ -826,7 +826,7 @@ def _match_axes_jaxpr(axis_size, out_axes_dest, out_axes, main, in_axes,
   if len(out_axes_dest) != len(out_axes):
     out_axis_dest, = out_axes_dest
     out_axes_dest = [out_axis_dest] * len(out_axes)
-  out_vals = map(partial(matchaxis, trace.axis_name, axis_size),
+  out_vals = map(partial(matchaxis, axis_name, axis_size),
                  out_axes, out_axes_dest, out_vals)
   out_batched = [dst is not None for dst in out_axes_dest]
   yield out_vals, out_batched
@@ -860,20 +860,21 @@ zero_if_mapped = ZeroIfMapped()
 ### functions for handling custom_vjp
 
 @lu.transformation_with_aux
-def batch_custom_jvp_subtrace(main, in_dims, *in_vals):
+def batch_custom_jvp_subtrace(tag, axis_data, in_dims, *in_vals):
   size, = {x.shape[d] for x, d in zip(in_vals, in_dims * 2)
            if d is not not_mapped}
-  trace = main.with_cur_sublevel()
+  trace = BatchTrace(core.find_cur_trace(), tag, axis_data.name, axis_data.size, axis_data.spmd_name)
   in_tracers = [val if dim is None else
                 SymbolicZero(core.mapped_aval(size, dim, val.aval))
                 if type(val) is SymbolicZero else BatchTracer(trace, val, dim)
                 for val, dim in zip(in_vals, in_dims * 2)]
-  outs = yield in_tracers, {}
-  # TODO(mattjj,frostig): instantiating any SymbolicZero output is easy, but can
-  # be wasteful in the rare case it actually triggers; handle symbolically!
-  outs = [instantiate(replace_rule_output_symbolic_zeros(x)) for x in outs]
-  out_tracers = map(trace.full_raise, outs)
-  out_vals, out_dims = unzip2((t.val, t.batch_dim) for t in out_tracers)
+  with core.set_current_trace(trace):
+    outs = yield in_tracers, {}
+    # TODO(mattjj,frostig): instantiating any SymbolicZero output is easy, but can
+    # be wasteful in the rare case it actually triggers; handle symbolically!
+    outs = [instantiate(replace_rule_output_symbolic_zeros(x)) for x in outs]
+
+  out_vals, out_dims = unzip2(map(trace.to_batch_info, outs))
   out_primals, out_tangents = split_list(out_vals, [len(out_vals) // 2])
   out_primal_bds, out_tangent_bds = split_list(out_dims, [len(out_vals) // 2])
   out_dims = map(_merge_bdims, out_primal_bds, out_tangent_bds)

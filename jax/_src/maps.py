@@ -49,7 +49,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.interpreters import partial_eval as pe
 from jax._src.interpreters.partial_eval import (
-  trace_to_subjaxpr_dynamic, DynamicJaxprTracer,
+  DynamicJaxprTracer,
   convert_constvars_jaxpr, new_jaxpr_eqn)
 from jax._src.interpreters import pxla
 from jax._src.pjit import (sharding_constraint_p, get_unconstrained_dims,
@@ -876,7 +876,6 @@ def _xmap_axis_subst(params, subst, traverse):
   with core.extend_axis_env_nd(params['global_axis_sizes'].items()):
     new_jaxpr = core.subst_axis_names_jaxpr(params['call_jaxpr'], shadowed_subst)
   return dict(params, call_jaxpr=new_jaxpr)
-core.axis_substitution_rules[xmap_p] = _xmap_axis_subst
 
 # NOTE: We don't have to handle spmd_{in|out}_axes here, because
 # SPMD batching always gets involved as the last transform before XLA translation
