@@ -4224,7 +4224,8 @@ LogicalResult vector_transpose_rule(RewriteContext &ctx, Operation &op,
   // multiple tiles. At the moment we always batch along columns, with the
   // reasoning being that if all the tiles are fed into the MXU, then it's
   // better if we end up with results that contribute to the same contraction.
-  const bool can_batch = layout_in.bitwidth() == 16;
+  const bool can_batch =
+      layout_in.bitwidth() == 16 && ctx.hardware_generation < 6;
   auto doTranspose = [&](const ArrayRef<int64_t> batch_idx,
                          const int64_t src_row, const int64_t src_col,
                          const int64_t src_col_end, const VectorType tile_ty_in,
