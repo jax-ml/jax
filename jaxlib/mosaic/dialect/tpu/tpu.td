@@ -376,6 +376,7 @@ def TPU_BitcastOp : TPU_Op<"bitcast", [Pure]> {
   let arguments = (ins AnyVector:$input);
   let results = (outs AnyVector:$output);
   let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
+  let hasVerifier = 1;
 }
 
 def TPU_BitcastVregOp : TPU_Op<"bitcast_vreg", [Pure]> {

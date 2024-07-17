@@ -1963,36 +1963,59 @@ LogicalResult tpu_bitcast_rule(RewriteContext &ctx, Operation &op,
   TPU_ASSERT_EQ_OP(layouts_out.size(), 1);
   TPU_ASSERT_OP(layouts_in.front().has_value());
   TPU_ASSERT_OP(layouts_out.front().has_value());
-  const VectorLayout &layout_in = *layouts_in.front();
-  const VectorLayout &layout_out = *layouts_out.front();
-  if (!layout_in.hasNativeTiling(ctx.target_shape) ||
-      !layout_out.hasNativeTiling(ctx.target_shape)) {
-    return op.emitOpError("Not implemented: unsupported tiling");
+  const VectorLayout &in_layout = *layouts_in.front();
+  const VectorLayout &out_layout = *layouts_out.front();
+  auto in_bitwidth = in_layout.bitwidth();
+  auto out_bitwidth = out_layout.bitwidth();
+  auto in_tiling = in_layout.tiling();
+  auto out_tiling = out_layout.tiling();
+  in_tiling[0] *= in_bitwidth;
+  out_tiling[0] *= out_bitwidth;
+  if (in_tiling != out_tiling) {
+    return op.emitOpError(
+        "Expected tilings are the same after multiplying the "
+          "second-minor dimension by the ratio of bitwidths.");
   }
-  if (layout_in.offsets() != LayoutOffsets{0, 0} ||
-      layout_out.offsets() != LayoutOffsets{0, 0}) {
-    return op.emitOpError("Not implemented: unsupported offsets");
+  auto in_offsets = in_layout.offsets();
+  auto out_offsets = out_layout.offsets();
+  if (!out_offsets[0].has_value() && in_bitwidth > out_bitwidth) {
+    return op.emitOpError(
+        "Expected no replicated offset on 2nd minor dimension of output when "
+        "bitwidth is decreased.");
   }
-  if (layout_in.implicit_dim() != VectorLayout::ImplicitDim::kNone ||
-      layout_out.implicit_dim() != VectorLayout::ImplicitDim::kNone) {
-    return op.emitOpError("Not implemented: unsupported implicit dim");
+  if (in_offsets[0].has_value() != out_offsets[0].has_value() ||
+      in_offsets[0].value_or(0) * in_bitwidth !=
+          out_offsets[0].value_or(0) * out_bitwidth ||
+      in_offsets[1] != out_offsets[1]) {
+    return op.emitOpError(
+        "Expected offsets are the same after multiplying the "
+          "second-minor dimension by the ratio of bitwidths.");
+  }
+  if (in_layout.implicit_dim() != out_layout.implicit_dim()) {
+    return op.emitOpError(
+        "Expected same implicit dim for input and output layout");
+  }
+  auto bitcast_op = cast<tpu::BitcastOp>(op);
+  const auto out_ty = bitcast_op.getResult().getType();
+  if (in_bitwidth != out_bitwidth) {
+    if (in_layout.implicit_dim() != VectorLayout::ImplicitDim::kNone) {
+      return op.emitOpError("Expected no implicit dim when bitwidth changes");
+    }
   }
   ImplicitLocOpBuilder builder(op.getLoc(), &op);
-  auto bitcast_op = cast<tpu::BitcastOp>(op);
-  const VectorType vty = bitcast_op.getResult().getType();
   FAILUREOR_ASSIGN_OR_RETURN(
       const auto native_vreg_ty,
-      getNativeVregType(vty.getElementType(), ctx.target_shape));
+      getNativeVregType(out_ty.getElementType(), ctx.target_shape));
   FAILUREOR_ASSIGN_OR_RETURN(
       const xla::Array<Value> in_tiles,
-      disassemble(builder, layout_in, bitcast_op.getInput(), ctx.target_shape));
+      disassemble(builder, in_layout, bitcast_op.getInput(), ctx.target_shape));
   xla::Array<Value> out_tiles(in_tiles.dimensions());
   out_tiles.Each([&](absl::Span<const int64_t> idxs, Value *v) {
     const Value in_tile = in_tiles(idxs);
     *v = builder.create<tpu::BitcastVregOp>(native_vreg_ty, in_tile);
   });
   bitcast_op.replaceAllUsesWith(
-      assemble(builder, vty, layout_out, out_tiles, ctx.target_shape)
+      assemble(builder, out_ty, out_layout, out_tiles, ctx.target_shape)
           .getOperation());
   bitcast_op.erase();
   return success();

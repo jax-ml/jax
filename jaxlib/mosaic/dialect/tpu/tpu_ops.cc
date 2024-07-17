@@ -54,6 +54,34 @@ LogicalResult UnrollVectorsOp::canonicalize(UnrollVectorsOp op,
   return success();
 }
 
+LogicalResult BitcastOp::verify() {
+  auto in_ty = getInput().getType();
+  auto out_ty = getOutput().getType();
+  auto in_bitwidth = in_ty.getElementTypeBitWidth();
+  auto out_bitwidth = out_ty.getElementTypeBitWidth();
+  if (in_bitwidth != out_bitwidth) {
+    if (in_ty.getRank() < 2 || out_ty.getRank() < 2) {
+      return emitError(
+          "Not implemented: bitcast between different bitwidths on a 1D "
+          "vector.");
+    }
+    SmallVector<int64_t, 4> in_shape(in_ty.getShape());
+    SmallVector<int64_t, 4> out_shape(out_ty.getShape());
+    *(in_shape.end() - 2) *= in_bitwidth;
+    *(out_shape.end() - 2) *= out_bitwidth;
+    if (in_shape != out_shape) {
+      return emitError(
+          "Expected input and output shapes are the same after multiplying the "
+          "second-minor dimension by the ratio of bitwidths.");
+    }
+  } else if (in_ty.getShape() != out_ty.getShape()) {
+    return emitError(
+        "Expected input and output shapes are the same when bitwidth does not "
+        "change.");
+  }
+  return success();
+}
+
 LogicalResult MemRefSliceOp::verify() {
   auto source_type = getMemRefType(getMemRef());
   auto target_type = getType();
