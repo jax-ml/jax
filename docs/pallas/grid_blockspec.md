@@ -103,6 +103,17 @@ the overall array). Each block index is then multiplied by the
 corresponding axis size from `block_shape`
 to get the actual element index on the corresponding array axis.
 
+```{note}
+Not all block shapes are supported.
+  * On TPU, only blocks with rank at least 2 are supported.
+    Furthermore, if the last two dimensions of your input are larger than
+    8 and 128 respectively, the block shape in those dimensions must be a
+    multiple of the respective factor. If the input dimension is smaller,
+    the block should span the full dimension.
+
+  * On GPU, only blocks with a size that is power of 2 are supported.
+```
+
 If the block shape does not divide evenly the overall shape then the
 last iteration on each axis will still receive references to blocks
 of `block_shape` but the elements that are out-of-bounds are padded
