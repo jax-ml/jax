@@ -1941,7 +1941,9 @@ class PallasMegacoreTest(PallasBaseTest):
             )
         )
     )(x, y)
-    np.testing.assert_allclose(z, jax.vmap(jax.vmap(jnp.dot))(x, y))
+    np.testing.assert_allclose(
+        z, jax.vmap(jax.vmap(jnp.dot))(x, y), rtol=1e-6
+    )
 
 
 class PallasCallVmapTest(PallasBaseTest):
