@@ -949,14 +949,11 @@ def _pallas_call_lowering(
   def tpu_lowering(ctx: mlir.LoweringRuleContext,
                    *in_nodes: mlir.ir.Value | Sequence[mlir.ir.Value],
                    **params):
-    try:
-      from jax._src.pallas.mosaic import pallas_call_registration
-    except ImportError:
+    if mosaic_tpu_backend is None:
       raise _unsupported_lowering_error("tpu")
-    else:
-      return pallas_call_registration.pallas_call_tpu_lowering_rule(
-          ctx, *in_nodes, **params
-      )
+    return mosaic_tpu_backend.pallas_call_tpu_lowering_rule(
+        ctx, *in_nodes, **params
+    )
 
   def gpu_lowering(ctx: mlir.LoweringRuleContext,
                    *in_nodes: mlir.ir.Value | Sequence[mlir.ir.Value],
@@ -968,10 +965,9 @@ def _pallas_call_lowering(
         from jax._src.pallas.triton import pallas_call_registration  # type: ignore
     except ImportError:
       raise _unsupported_lowering_error("gpu")
-    else:
-      return pallas_call_registration.pallas_call_lowering(
-          ctx, *in_nodes, **params
-      )
+    return pallas_call_registration.pallas_call_lowering(
+        ctx, *in_nodes, **params
+    )
 
   return mlir.lower_per_platform(ctx, "pallas_call",
                                  dict(cpu=cpu_lowering,
@@ -1122,3 +1118,13 @@ def pallas_call(
     out = tree_util.tree_unflatten(out_tree, out_flat)
     return out
   return wrapped
+
+
+# We import the TPU backend at the top level because it defines flags. Note that
+# we can only do that at the bottom of this file, beacuse it also depends on
+# this module already being initialized.
+
+try:
+  from jax._src.pallas.mosaic import pallas_call_registration as mosaic_tpu_backend
+except ImportError:
+  mosaic_tpu_backend = None  # type: ignore

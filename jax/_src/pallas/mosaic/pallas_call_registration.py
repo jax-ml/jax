@@ -16,18 +16,22 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
 from typing import Any
 import warnings
 
 import jax
 from jax import dtypes
 from jax import core as jax_core
+from jax._src import config
 from jax._src import core as jax_src_core
 from jax._src import sharding_impls
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.pallas import core
 from jax._src.pallas.mosaic import lowering
+from jax._src.pallas.mosaic import verification
 from jax._src.pallas.pallas_call import pallas_call_p
 from jax.experimental import mosaic
 from jax.experimental.mosaic.dialects import tpu
@@ -47,6 +51,17 @@ def _maybe_cast_to_int(x: jax.Array | jax_core.ShapedArray):
     if dtypes.issubdtype(x.dtype, jax.numpy.bool_):
       return jax_core.ShapedArray(x.shape, lowering.BOOL_MEMREF_TYPE)
     return x
+
+_DUMP_PROMELA_TO = config.string_flag(
+    "jax_pallas_dump_promela_to",
+    default=os.getenv("JAX_PALLAS_DUMP_PROMELA_TO", ""),
+    help=(
+        "If set, dumps a Promela model of the kernel to the specified"
+        " directory. The model can verify that the kernel is free of data"
+        " races, deadlocks, etc."
+    ),
+)
+
 
 def pallas_call_tpu_lowering_rule(
     ctx: mlir.LoweringRuleContext, *in_nodes,
@@ -105,6 +120,32 @@ def pallas_call_tpu_lowering_rule(
       for a in input_output_aliases
   )
   out_avals = [jax_core.ShapedArray(s.shape, s.dtype) for s in out_shapes]
+
+  if promela_dump_path := _DUMP_PROMELA_TO.value:
+    num_devices = 1 if mesh is None else mesh.devices.size
+    num_cores = (
+        jax.devices()[0].num_cores
+        if mesh is None
+        else mesh.devices[0].num_cores
+    )
+    model = verification.export_promela_model(
+        mosaic_module, num_devices, num_cores
+    )
+    if promela_dump_path == "stdout":
+      print(model)
+    else:
+      if promela_dump_path == "sponge":
+        promela_dump_path = os.getenv("TEST_UNDECLARED_OUTPUTS_DIR", "")
+        if not promela_dump_path:
+          raise ValueError(
+              "TEST_UNDECLARED_OUTPUTS_DIR must be set when"
+              " --jax_pallas_dump_promela_to=sponge"
+          )
+      dump_ctx = tempfile.NamedTemporaryFile(
+          mode="w", prefix=name + "-", suffix=".pml", dir=promela_dump_path, delete=False,
+      )
+      with dump_ctx as f:
+        f.write(model)
 
   # Replace in_avals to physical avals.
   # This step is required for mapping logical types to physical types.

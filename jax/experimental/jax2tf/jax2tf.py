@@ -1550,6 +1550,10 @@ tf_not_yet_impl = [
     "consume",
     "ragged_dot",
     "cholesky_update",
+    # Pallas TPU primitives
+    "bitcast",
+    "repeat",
+    "roll",
 ]
 
 tf_impl[random_internal.random_clone_p] = lambda x: x
