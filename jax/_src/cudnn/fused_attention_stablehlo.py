@@ -713,7 +713,8 @@ def _check_qkv_bias_mask_spec(
   # check bias spec
   if bias_spec:
     *bias_batch_spec, bias_num_head_spec, bias_q_seq_spec, bias_kv_seq_spec = bias_spec
-    if bias_batch_spec != batch_spec or bias_num_head_spec != num_head_spec:
+    if any(bias_batch_spec) and bias_batch_spec != batch_spec or \
+      bias_num_head_spec is not None and bias_num_head_spec != num_head_spec:
       raise ValueError(
         "Query and bias should have same sharding on batch and num_head dim.")
     if bias_q_seq_spec is not None or bias_kv_seq_spec is not None:
@@ -805,7 +806,8 @@ def _dot_product_attention_bwd_partition(
   out_shardings = _infer_bwd_output_sharding(mesh, arg_shapes, variadic_args)
   # args sharding
   arg_shardings = tuple([arg_i.sharding for arg_i in arg_shapes])
-  impl = functools.partial(
+  def sharded_impl(*args):
+    impl = functools.partial(
       _dot_product_attention_bwd_impl,
       scale=scale,
       seed=seed,
@@ -813,8 +815,17 @@ def _dot_product_attention_bwd_partition(
       variadic_args=variadic_args,
       mask_type=mask_type,
       layout=layout,
-  )
-  return mesh, impl, out_shardings, arg_shardings
+    )
+    grads = impl(*args)
+    _, has_dbias = variadic_args
+    if has_dbias:
+      query_spec = arg_shardings[0].spec
+      batch_spec = query_spec[0]
+      local_dbias = grads[3]
+      global_dbias = jax.lax.psum(local_dbias, batch_spec)
+      grads = grads[:3] + [global_dbias]
+    return grads
+  return mesh, sharded_impl, out_shardings, arg_shardings
 
 # Create dot_product_attention_fwd_p for forward operation.
 _dot_product_attention_fwd_p = core.Primitive("dot_product_attention_fwd")
