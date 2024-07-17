@@ -1716,15 +1716,13 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
   def wrapped(*args, **kwargs):
     (jitted_f, flat_global_args, out_tree, mesh,
      out_specs) = infer_params(*args, **kwargs)
-    with jax.spmd_mode('allow_all'):
-      outs = jitted_f(*flat_global_args)
-      outs = global_array_to_host_local_array(outs, mesh, out_specs())
+    outs = jitted_f(*flat_global_args)
+    outs = global_array_to_host_local_array(outs, mesh, out_specs())
     return tree_unflatten(out_tree(), outs)
 
   def lower(*args, **kwargs):
     jitted_f, _, _, _, _ = infer_params(*args, **kwargs)
-    with jax.spmd_mode('allow_all'):
-      return jitted_f.lower(*args, **kwargs)
+    return jitted_f.lower(*args, **kwargs)
   wrapped.lower = lower
 
   return wrapped
