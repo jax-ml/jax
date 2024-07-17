@@ -19,12 +19,17 @@ import itertools
 import math
 import textwrap
 from typing import Any, Sequence
+from jax import lax
+from jax._src import core as jax_core
+from jax._src import tree_util
+from jax._src.lib import tpu
+from jax._src.pallas.mosaic import lowering
+from jax._src.pallas.mosaic import primitives
+from jax._src.util import split_list, unzip2
 from jaxlib.mlir import ir
-from jaxlib.mlir.passmanager import PassManager
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import func
-from jax._src.lib import tpu
-from jax._src.util import split_list
+from jaxlib.mlir.passmanager import PassManager
 
 _UNSPECIFIED = object()
 Var = str
@@ -63,7 +68,7 @@ active [NDMA] proctype DmaEngine() {
            buf_readers(i, src_dev, src_core)--;
          }
          sems(src_sem, src_dev, src_core)++;
-       }  // Read read
+       }  // Read complete
        d_step {
          printf("DMA write done: [%d, %d)@{%d, %d} (%d++)\\n", dst_buf_base, dst_buf_base + dst_buf_len, dst_dev, dst_core, dst_sem);
          int i;
@@ -230,7 +235,7 @@ class GlobalBarrierSemaphoreModel:
 
 
 def _print_op(ctx, op):
-  match op.OPERATION_NAME:
+  match op.name:
     case "tpu.region":
       _print_block(ctx, op.body)
     case "tpu.device_id":
@@ -370,6 +375,23 @@ def _print_op(ctx, op):
       return bin_op(ctx, "bool", "/", *op.operands)
     case "tpu.trace_start":
       ctx.comment(op.message.value)
+    case "tpu.assume_multiple":
+      # TODO(apaszke): Add an assertion
+      return ctx.get(op.value, NotImplemented)
+    case "verification.pretend":
+      read_refs = []
+      for o in op.operands:
+        if (model := ctx.get(o, None)) is None:
+          raise ValueError(f"Could not model the read of {o}")
+        read_refs.append(model)
+      with ctx.block("d_step {", "}"):  # Start reading
+        for r in read_refs:
+          for loc in r.readers_at(None):
+            ctx.emit(None, f"{loc}++")
+      with ctx.block("d_step {", "}"):  # Stop reading
+        for r in read_refs:
+          for loc in r.readers_at(None):
+            ctx.emit(None, f"{loc}--")
     case "scf.for":
       carrys = [
           ctx.emit("int", ctx.get(arg))
@@ -500,3 +522,70 @@ def export_promela_model(
     return ctx.get_model(
         uses_barrier_semaphores, num_devices, num_cores_per_device, iteration_bounds
     )
+
+
+assume_p = jax_core.Primitive("assume_for_verification")
+assume_p.def_impl(lambda x, y: x)
+
+@assume_p.def_abstract_eval
+def _assume_abstract_eval(x, y):
+  return x.join(y)
+
+def _assume_lowering(ctx: lowering.LoweringRuleContext, x, y):
+  return y if ctx.lowering_context.for_verification else x
+
+lowering.lowering_rules[assume_p] = _assume_lowering  # type: ignore
+
+def assume(normally, *, when_verifying):
+  return assume_p.bind(normally, when_verifying)
+
+
+pretend_p = jax_core.Primitive("pretend_for_verification")
+pretend_p.multiple_results = True
+
+@pretend_p.def_abstract_eval
+def _pretend_abstract_eval(*_, **params):
+  del params  # Unused.
+  return ()
+
+def _pretend_lowering(ctx: lowering.LoweringRuleContext, *flat_args, tree):
+  if ctx.lowering_context.for_verification:
+    (base_read_refs, indexers) = tree_util.tree_unflatten(tree, flat_args)
+    read_ref_avals, _ = tree_util.tree_unflatten(tree, ctx.avals_in)
+    block_shapes, _ = tree_util.tree_unflatten(tree, ctx.block_shapes)
+    read_refs = [
+        lowering._index_ref(ref, aval, block_shape, indexer)[0]
+        for ref, aval, block_shape, indexer in zip(
+            base_read_refs, read_ref_avals, block_shapes, indexers, strict=True,
+        )
+    ]
+    ir.Operation.create("verification.pretend", operands=read_refs)
+  return ()
+
+lowering.lowering_rules[pretend_p] = _pretend_lowering  # type: ignore
+
+def pretend(read_refs):
+  refs, indexers = unzip2(primitives._get_ref_and_indexers(r) for r in read_refs)
+  flat_args, tree = tree_util.tree_flatten((refs, indexers))
+  return pretend_p.bind(*flat_args, tree=tree)
+
+
+def skip(f):
+  """Skips the verification of the given function."""
+  def wrapper(*args, **kwargs):
+    is_not_verifying = assume(normally=1, when_verifying=0)
+    lax.cond(is_not_verifying)(lambda: f(*args, **kwargs))
+  return wrapper
+
+
+def define_model(model):
+  """Replaces a function with its simplified model during verification."""
+  def decorator(f):
+    def wrapper(*args, **kwargs):
+      lax.cond(
+          assume(normally=1, when_verifying=0),
+          lambda: f(*args, **kwargs),
+          lambda: model(*args, **kwargs),
+      )
+    return wrapper
+  return decorator

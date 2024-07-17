@@ -103,16 +103,22 @@ def pallas_call_tpu_lowering_rule(
   if axis_context is not None:
     if isinstance(axis_context, sharding_impls.SPMDAxisContext):
       mesh = axis_context.mesh
-  with ir.Context() as mlir_ctx, ir.Location.unknown(mlir_ctx):
-    mlir_ctx.append_dialect_registry(mlir.upstream_dialects)
-    mlir_ctx.load_all_available_dialects()
-    tpu.register_dialect(mlir_ctx)
-    dimension_semantics = mosaic_params.get("dimension_semantics", None)
-    mosaic_module, extra_args = lowering.lower_jaxpr_to_module(
-        mlir_ctx, grid_mapping, in_shapes, out_shapes, jaxpr,
-        dimension_semantics=dimension_semantics, mesh=mesh)
-    if debug:
-      print(mosaic_module)
+  mlir_ctx = ir.Context()
+  mlir_ctx.append_dialect_registry(mlir.upstream_dialects)
+  mlir_ctx.load_all_available_dialects()
+  tpu.register_dialect(mlir_ctx)
+  def lower_module(for_verification: bool):
+    if for_verification:
+      mlir_ctx.allow_unregistered_dialects = True
+    with mlir_ctx, ir.Location.unknown(mlir_ctx):
+      dimension_semantics = mosaic_params.get("dimension_semantics", None)
+      return lowering.lower_jaxpr_to_module(
+          mlir_ctx, grid_mapping, in_shapes, out_shapes, jaxpr,
+          dimension_semantics=dimension_semantics, mesh=mesh,
+          for_verification=for_verification)
+  mosaic_module, extra_args = lower_module(for_verification=False)
+  if debug:
+    print(mosaic_module)
   num_extra_args = len(extra_args)
   num_dyn_bounds = grid_mapping.num_dynamic_grid_bounds
   input_output_aliases = tuple(
@@ -128,8 +134,9 @@ def pallas_call_tpu_lowering_rule(
         if mesh is None
         else mesh.devices[0].num_cores
     )
+    verification_module, _ = lower_module(for_verification=True)
     model = verification.export_promela_model(
-        mosaic_module, num_devices, num_cores
+        verification_module, num_devices, num_cores
     )
     if promela_dump_path == "stdout":
       print(model)
