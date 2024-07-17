@@ -1163,6 +1163,7 @@ py_test(
 jax_test(
     name = "compilation_cache_test",
     srcs = ["compilation_cache_test.py"],
+    tags = ["test_cpu_thunks"],
     deps = [
         "//jax:compilation_cache_internal",
         "//jax:compiler",
