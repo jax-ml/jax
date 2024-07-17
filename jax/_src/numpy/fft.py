@@ -112,7 +112,7 @@ def _fft_core(func_name: str, fft_type: xla_client.FftType, a: ArrayLike,
 def fftn(a: ArrayLike, s: Shape | None = None,
          axes: Sequence[int] | None = None,
          norm: str | None = None) -> Array:
-  r"""Compute discrete Fourier transform of multidimensional array along given axes.
+  r"""Compute a multidimensional discrete Fourier transform along given axes.
 
   JAX implementation of :func:`numpy.fft.fftn`.
 
@@ -126,15 +126,15 @@ def fftn(a: ArrayLike, s: Shape | None = None,
       supported.
 
   Returns:
-    An array containing the discrete Fourier transform of ``a``.
+    An array containing the multidimensional discrete Fourier transform of ``a``.
 
   See also:
-    - :func:`jax.numpy.fft.fft`: Computes the discrete Fourier transform of
-      one-dimensional array.
-    - :func:`jax.numpy.fft.ifft`: Computes the inverse of discrete Fourier transform
-      of one-dimensional array.
-    - :func:`jax.numpy.fft.ifftn`: Computes the inverse of discrete Fourier transform
-      of multidimensional array.
+    - :func:`jax.numpy.fft.fft`: Computes a one-dimensional discrete Fourier
+      transform.
+    - :func:`jax.numpy.fft.ifft`: Computes a one-dimensional inverse discrete
+      Fourier transform.
+    - :func:`jax.numpy.fft.ifftn`: Computes a multidimensional inverse discrete
+      Fourier transform.
 
   Examples:
     ``jnp.fft.fftn`` computes the transform along all the axes by default when
@@ -186,7 +186,7 @@ def fftn(a: ArrayLike, s: Shape | None = None,
 def ifftn(a: ArrayLike, s: Shape | None = None,
           axes: Sequence[int] | None = None,
           norm: str | None = None) -> Array:
-  r"""Compute inverse discrete Fourier transform of multidimensional array.
+  r"""Compute a multidimensional inverse discrete Fourier transform.
 
   JAX implementation of :func:`numpy.fft.ifftn`.
 
@@ -200,15 +200,16 @@ def ifftn(a: ArrayLike, s: Shape | None = None,
       supported.
 
   Returns:
-    An array containing the inverse discrete Fourier transform of ``a``.
+    An array containing the multidimensional inverse discrete Fourier transform
+    of ``a``.
 
   See also:
-    - :func:`jax.numpy.fft.fftn`: Computes the discrete Fourier transform of
-      multidimensional array.
-    - :func:`jax.numpy.fft.fft`: Computes the discrete Fourier transform of
-      one-dimensional array.
-    - :func:`jax.numpy.fft.ifft`: Computes the inverse of discrete Fourier transform
-      of one-dimensional array.
+    - :func:`jax.numpy.fft.fftn`: Computes a multidimensional discrete Fourier
+      transform.
+    - :func:`jax.numpy.fft.fft`: Computes a one-dimensional discrete Fourier
+      transform.
+    - :func:`jax.numpy.fft.ifft`: Computes a one-dimensional inverse discrete
+      Fourier transform.
 
   Examples:
     ``jnp.fft.ifftn`` computes the transform along all the axes by default when
@@ -281,15 +282,121 @@ def _fft_core_1d(func_name: str, fft_type: xla_client.FftType,
   return _fft_core(func_name, fft_type, a, s, axes, norm)
 
 
-@implements(np.fft.fft)
 def fft(a: ArrayLike, n: int | None = None,
         axis: int = -1, norm: str | None = None) -> Array:
+  r"""Compute a one-dimensional discrete Fourier transform along a given axis.
+
+  JAX implementation of :func:`numpy.fft.fft`.
+
+  Args:
+    a: input array
+    n: int. Specifies the dimension of the result along ``axis``. If not specified,
+      it will default to the dimension of ``a`` along ``axis``.
+    axis: int, default=-1. Specifies the axis along which the transform is computed.
+      If not specified, the transform is computed along axis -1.
+    norm: string. The normalization mode. "backward", "ortho" and "forward" are
+      supported.
+
+  Returns:
+    An array containing the one-dimensional discrete Fourier transform of ``a``.
+
+  See also:
+    - :func:`jax.numpy.fft.ifft`: Computes a one-dimensional inverse discrete
+      Fourier transform.
+    - :func:`jax.numpy.fft.fftn`: Computes a multidimensional discrete Fourier
+      transform.
+    - :func:`jax.numpy.fft.ifftn`: Computes a multidimensional inverse discrete
+      Fourier transform.
+
+  Examples:
+    ``jnp.fft.fft`` computes the transform along ``axis -1`` by default.
+
+    >>> x = jnp.array([[1, 2, 4, 7],
+    ...                [5, 3, 1, 9]])
+    >>> jnp.fft.fft(x)
+    Array([[14.+0.j, -3.+5.j, -4.+0.j, -3.-5.j],
+           [18.+0.j,  4.+6.j, -6.+0.j,  4.-6.j]], dtype=complex64)
+
+    When ``n=3``, dimension of the transform along axis -1 will be ``3`` and
+    dimension along other axes will be the same as that of input.
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jnp.fft.fft(x, n=3))
+    [[ 7.+0.j   -2.+1.73j -2.-1.73j]
+     [ 9.+0.j    3.-1.73j  3.+1.73j]]
+
+    When ``n=3`` and ``axis=0``, dimension of the transform along ``axis 0`` will
+    be ``3`` and dimension along other axes will be same as that of input.
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jnp.fft.fft(x, n=3, axis=0))
+    [[ 6. +0.j    5. +0.j    5. +0.j   16. +0.j  ]
+     [-1.5-4.33j  0.5-2.6j   3.5-0.87j  2.5-7.79j]
+     [-1.5+4.33j  0.5+2.6j   3.5+0.87j  2.5+7.79j]]
+
+    ``jnp.fft.ifft`` can be used to reconstruct ``x`` from the result of
+    ``jnp.fft.fft``.
+
+    >>> x_fft = jnp.fft.fft(x)
+    >>> jnp.allclose(x, jnp.fft.ifft(x_fft))
+    Array(True, dtype=bool)
+  """
   return _fft_core_1d('fft', xla_client.FftType.FFT, a, n=n, axis=axis,
                       norm=norm)
 
-@implements(np.fft.ifft)
+
 def ifft(a: ArrayLike, n: int | None = None,
          axis: int = -1, norm: str | None = None) -> Array:
+  r"""Compute a one-dimensional inverse discrete Fourier transform.
+
+  JAX implementation of :func:`numpy.fft.ifft`.
+
+  Args:
+    a: input array
+    n: int. Specifies the dimension of the result along ``axis``. If not specified,
+      it will default to the dimension of ``a`` along ``axis``.
+    axis: int, default=-1. Specifies the axis along which the transform is computed.
+      If not specified, the transform is computed along axis -1.
+    norm: string. The normalization mode. "backward", "ortho" and "forward" are
+      supported.
+
+  Returns:
+    An array containing the one-dimensional discrete Fourier transform of ``a``.
+
+  See also:
+    - :func:`jax.numpy.fft.fft`: Computes a one-dimensional discrete Fourier
+      transform.
+    - :func:`jax.numpy.fft.fftn`: Computes a multidimensional discrete Fourier
+      transform.
+    - :func:`jax.numpy.fft.ifftn`: Computes a multidimensional inverse of discrete
+      Fourier transform.
+
+  Examples:
+    ``jnp.fft.ifft`` computes the transform along ``axis -1`` by default.
+
+    >>> x = jnp.array([[3, 1, 4, 6],
+    ...                [2, 5, 7, 1]])
+    >>> jnp.fft.ifft(x)
+    Array([[ 3.5 +0.j  , -0.25-1.25j,  0.  +0.j  , -0.25+1.25j],
+          [ 3.75+0.j  , -1.25+1.j  ,  0.75+0.j  , -1.25-1.j  ]],      dtype=complex64)
+
+    When ``n=5``, dimension of the transform along axis -1 will be ``5`` and
+    dimension along other axes will be the same as that of input.
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jnp.fft.ifft(x, n=5))
+    [[ 2.8 +0.j   -0.96-0.04j  1.06+0.5j   1.06-0.5j  -0.96+0.04j]
+     [ 3.  +0.j   -0.59+1.66j  0.09-0.55j  0.09+0.55j -0.59-1.66j]]
+
+    When ``n=3`` and ``axis=0``, dimension of the transform along ``axis 0`` will
+    be ``3`` and dimension along other axes will be same as that of input.
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jnp.fft.ifft(x, n=3, axis=0))
+    [[ 1.67+0.j    2.  +0.j    3.67+0.j    2.33+0.j  ]
+     [ 0.67+0.58j -0.5 +1.44j  0.17+2.02j  1.83+0.29j]
+     [ 0.67-0.58j -0.5 -1.44j  0.17-2.02j  1.83-0.29j]]
+  """
   return _fft_core_1d('ifft', xla_client.FftType.IFFT, a, n=n, axis=axis,
                       norm=norm)
 
