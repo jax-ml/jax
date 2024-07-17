@@ -89,6 +89,12 @@ lowerable_effects: effects_lib.EffectTypeSet = effects_lib.lowerable_effects
 
 IrValues = Union[ir.Value, tuple[ir.Value, ...]]
 
+
+def _is_not_block_argument(x: IrValues) -> bool:
+  """Returns true if `x` is not a block argument."""
+  return not isinstance(x, ir.BlockArgument)
+
+
 def _is_ir_values(x: IrValues) -> bool:
   """Returns true if `x` is an ir.Value or tuple of ir.Values"""
   if isinstance(x, ir.Value):
@@ -1746,8 +1752,10 @@ def lower_per_platform(ctx: LoweringRuleContext,
   # If there is a single rule left just apply the rule, without conditionals.
   if len(kept_rules) == 1:
     output = kept_rules[0](ctx, *rule_args, **rule_kwargs)
-    map(lambda o: wrap_compute_type_in_place(ctx, o.owner),
-        flatten_ir_values(output))
+    map(
+        lambda o: wrap_compute_type_in_place(ctx, o.owner),
+        filter(_is_not_block_argument, flatten_ir_values(output)),
+    )
     return output
 
   assert len(platforms) > 1 and len(kept_rules) >= 2, (platforms, kept_rules)
@@ -1785,7 +1793,10 @@ def lower_per_platform(ctx: LoweringRuleContext,
       except TypeError as e:
         raise ValueError("Output of translation rule must be iterable: "
                         f"{description}, got output {output}") from e
-      map(lambda o: wrap_compute_type_in_place(ctx, o.owner), out_nodes)
+      map(
+          lambda o: wrap_compute_type_in_place(ctx, o.owner),
+          filter(_is_not_block_argument, out_nodes),
+      )
       if inner_ctx.tokens_out is not None:
         assert len(ordered_effects) == len(inner_ctx.tokens_out)
         out_nodes = [inner_ctx.tokens_out.get(eff)
