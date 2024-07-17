@@ -4555,7 +4555,8 @@ Value selectTilesFromRotatedRowVregs(
 // Arguments:
 //   value_shape: The shape of the value which needs to be retiled in vregs.
 //   src: The source layout.
-//   src_vreg_array: An array of vregs storing source tiles.
+//   src_vreg_array: An array of vregs storing source tiles (with implicit
+//                   shape).
 //   dst_layout: The destination layout, with reduced sublane dimension, based
 //   on
 //     which the retiling will be performed.
@@ -4573,7 +4574,7 @@ xla::Array<Value> retileToReducedSublanes(
   CHECK(llvm::isPowerOf2_64(dst_tiling_sublane));
 
   xla::Array<Value> dst_vreg_array(
-      dst_layout.tileArrayShape(value_shape, target_shape));
+      dst_layout.tileArrayImplicitShape(value_shape, target_shape));
 
   // We need to rotate each src tile in each src vreg once so that they can
   // be merged to form new vregs. If a src vreg contains more than one src tile,
@@ -4758,8 +4759,7 @@ xla::Array<Value> retileToReducedSublanes(
 bool isSupportedReducedSublanesRetile(
     const VectorLayout &src, const VectorLayout &dst,
     const std::array<int64_t, 2> target_shape) {
-  return src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-         dst.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
+  return src.implicit_dim() == dst.implicit_dim() &&
          llvm::all_of(llvm::zip_equal(src.offsets(), dst.offsets()),
                       [](auto tup) {
                         auto [lhs, rhs] = tup;
@@ -4814,19 +4814,42 @@ Value copy_one_sublane(OpBuilder &builder, Value src_vreg, int src_sl_idx,
 // TODO(apaszke): Test this function properly
 FailureOr<TypedValue<VectorType>> relayout(
     OpBuilder &builder, TypedValue<VectorType> v, VectorLayout src,
-    const VectorLayout &dst, const std::array<int64_t, 2> target_shape) {
+    VectorLayout dst, const std::array<int64_t, 2> target_shape) {
   const int8_t bitwidth = src.bitwidth();
   if (bitwidth != dst.bitwidth()) {
     return emitError(v.getLoc(), "Can't change bitwidth during a relayout");
   }
   const int packing = src.packing();
   VectorType vty = v.getType();
-  FAILUREOR_ASSIGN_OR_RETURN(xla::Array<Value> src_tiles,
-                             disassemble(builder, src, v, target_shape));
+
+  // Save the original value of dst to use it at the end. It determines the
+  // out_layout of the result of assemble.
+  // TODO(tlongeri): Do we really care about setting an equivalent layout
+  //                 instead of the original? We could just overwrite
+  const VectorLayout original_dst = dst;
+  // Try to reconcile differences in implicit dim.
+  if (src.implicit_dim() != dst.implicit_dim()) {
+    VectorLayout src_candidate(src.bitwidth(), src.offsets(), src.tiling(),
+                               dst.implicit_dim());
+    if (src_candidate.equivalentTo(src, vty.getShape(), target_shape)) {
+      src = src_candidate;
+    } else {
+      VectorLayout dst_candidate(dst.bitwidth(), dst.offsets(), dst.tiling(),
+                                 src.implicit_dim());
+      if (dst_candidate.equivalentTo(dst, vty.getShape(), target_shape)) {
+        dst = dst_candidate;
+      }
+    }
+  }
+
+  FAILUREOR_ASSIGN_OR_RETURN(
+      xla::Array<Value> src_tiles,
+      disassemble(builder, src, v, target_shape, /*use_implicit_shape=*/true));
   SmallVector<int64_t> dst_tiles_shape =
-      dst.tileArrayShape(vty.getShape(), target_shape);
+      dst.tileArrayImplicitShape(vty.getShape(), target_shape);
   if (src.generalizes(dst, vty.getShape(), target_shape)) {
-    return assemble(builder, vty, dst, std::move(src_tiles), target_shape)
+    return assemble(builder, vty, dst, std::move(src_tiles), target_shape,
+                    /*use_implicit_shape=*/true)
         .getResult();
   }
   if (!src.offsets()[0].has_value() && !src.offsets()[1].has_value() &&
@@ -4841,25 +4864,16 @@ FailureOr<TypedValue<VectorType>> relayout(
     return assemble(builder, vty, dst, std::move(dst_tiles), target_shape)
         .getResult();
   }
-  // Try to reconcile differences in implicit dim.
-  if (src.implicit_dim() != dst.implicit_dim()) {
-    VectorLayout candidate(src.bitwidth(), src.offsets(), src.tiling(),
-                           dst.implicit_dim());
-    if (candidate.equivalentTo(src, vty.getShape(), target_shape)) {
-      src = candidate;
-    }
-  }
 
   // Handle retiling from (1, 128) to (8, 128) for 32-bit data.
-  if (src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-      dst.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-      src.bitwidth() == 32 && src.offsets() == LayoutOffsets{0, 0} &&
+  if (src.implicit_dim() == dst.implicit_dim() && src.bitwidth() == 32 &&
+      src.offsets() == LayoutOffsets{0, 0} &&
       (dst.offsets()[0] == 0 || (dst.offsets()[0] == std::nullopt &&
                                  *(src_tiles.dimensions().end() - 2) == 1)) &&
       dst.offsets()[1] == 0 && src.tiling() == std::array<int64_t, 2>{1, 128} &&
       dst.tiling() == std::array<int64_t, 2>{8, 128}) {
     xla::Array<Value> src_tiles_retiled(
-        dst.tileArrayShape(vty.getShape(), target_shape));
+        dst.tileArrayImplicitShape(vty.getShape(), target_shape));
     src_tiles_retiled.Each([&](absl::Span<const int64_t> idx, Value *tile) {
       for (int dst_sl_idx = 0; dst_sl_idx < 8; ++dst_sl_idx) {
         SmallVector<int64_t> src_idx(idx.begin(), idx.end());
@@ -4880,15 +4894,14 @@ FailureOr<TypedValue<VectorType>> relayout(
                // where m < 8 and m is a power of 2.
                // TODO(b/306692696) Generalize relayout from tiling (m, 128) to
                // (8, 128) for any src_tiles.dimensions().
-      src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-      dst.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-      src.bitwidth() == 32 && src.offsets() == LayoutOffsets{0, 0} &&
+      src.implicit_dim() == dst.implicit_dim() && src.bitwidth() == 32 &&
+      src.offsets() == LayoutOffsets{0, 0} &&
       dst.offsets() == LayoutOffsets{0, 0} &&
       target_shape[0] % src.tiling()[0] == 0 &&
       src.tiling()[1] == target_shape[1] && dst.tiling() == target_shape &&
       *(src_tiles.dimensions().end() - 2) == 1) {
     xla::Array<Value> src_tiles_retiled(
-        dst.tileArrayShape(vty.getShape(), target_shape));
+        dst.tileArrayImplicitShape(vty.getShape(), target_shape));
     src_tiles_retiled.Each(
         [&](const absl::Span<const int64_t> idx, Value *const new_src_tile) {
           const int64_t tiles_per_vreg = src.tilesPerVreg(target_shape);
@@ -4918,14 +4931,12 @@ FailureOr<TypedValue<VectorType>> relayout(
     src_tiles = std::move(src_tiles_retiled);
   } else if (  // TODO(b/265133506): Generalize retiling.
                // (8,128) -> (8 * packing,128) tiling change for packed type.
-      src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-      dst.implicit_dim() == VectorLayout::ImplicitDim::kNone && bitwidth < 32 &&
+      src.implicit_dim() == dst.implicit_dim() && bitwidth < 32 &&
       32 % bitwidth == 0 && src.offsets() == dst.offsets() &&
       src.tiling() == std::array<int64_t, 2>{8, 128} &&
       dst.tiling() == std::array<int64_t, 2>{8 * dst.packing(), 128}) {
-    const VectorLayout new_src(src.bitwidth(), src.offsets(), dst.tiling());
     xla::Array<Value> src_tiles_retiled(
-        new_src.tileArrayShape(vty.getShape(), target_shape));
+        dst.tileArrayImplicitShape(vty.getShape(), target_shape));
     int vty_packing = dst.packing();
     VectorType vreg_x32 =
         vty.getElementType().isSignlessInteger()
@@ -4950,7 +4961,7 @@ FailureOr<TypedValue<VectorType>> relayout(
           v.getLoc(), src_tiles.begin()->getType(), parts,
           tpu::PackFormat::kCompressed);
     });
-    src = new_src;
+    src = dst;
     src_tiles = std::move(src_tiles_retiled);
   } else if (  // Handle retiling from (1, 128 * packing) to (packing, 128) for
                // packed data.
@@ -4963,8 +4974,7 @@ FailureOr<TypedValue<VectorType>> relayout(
                // interesting if the next step is a retile, since we can also
                // match corresponding elements without shifting. It's just that
                // the tiles are not adjacent (no contiguous vreg slice).
-      src.implicit_dim() == VectorLayout::ImplicitDim::kNone &&
-      dst.implicit_dim() == VectorLayout::ImplicitDim::kNone && bitwidth < 32 &&
+      src.implicit_dim() == dst.implicit_dim() && bitwidth < 32 &&
       32 % bitwidth == 0 && src.offsets() == dst.offsets() &&
       src.tiling() == std::array<int64_t, 2>{1, 128 * packing} &&
       dst.tiling() == std::array<int64_t, 2>{packing, 128}) {
@@ -5008,10 +5018,8 @@ FailureOr<TypedValue<VectorType>> relayout(
     // [(a b) (A B) (c d) (C D) ...]. That is, traverse down each column before
     // moving to the next one. This is exactly an interleaving of the sublanes
     // of the vreg parts.
-    const VectorLayout new_src(src.bitwidth(), src.offsets(),
-                               std::array<int64_t, 2>{packing, 128});
     xla::Array<Value> src_tiles_retiled(
-        new_src.tileArrayShape(vty.getShape(), target_shape));
+        dst.tileArrayImplicitShape(vty.getShape(), target_shape));
     const VectorType vreg_x32 =
         vty.getElementType().isSignlessInteger()
             ? VectorType::get(target_shape, builder.getI32Type())
@@ -5026,7 +5034,7 @@ FailureOr<TypedValue<VectorType>> relayout(
       for (int i = 0; i < packing; ++i) {
         parts.push_back(builder.create<tpu::UnpackSubelementsOp>(
             v.getLoc(), vreg_x32, src_tiles(src_idx), vreg_part));
-        if (*(src_idx.end() - 2) < *(src_tiles.dimensions().end() - 2)) {
+        if (*(src_idx.end() - 2) < *(src_tiles.dimensions().end() - 2) - 1) {
           ++*(src_idx.end() - 2);
         }  // The rest is padding, so just pick any of the input parts (but not
            // an arbitrary vreg so we don't add an extra dependency).
@@ -5035,7 +5043,7 @@ FailureOr<TypedValue<VectorType>> relayout(
           v.getLoc(), src_tiles.begin()->getType(), parts,
           tpu::PackFormat::kInterleaved);
     });
-    src = new_src;
+    src = dst;
     src_tiles = std::move(src_tiles_retiled);
   } else if (  // Handle retiling from (8, 128, -2) to (8, 128) for 32-bit data.
                // This drops the implicit second minor dimension.
@@ -5045,11 +5053,12 @@ FailureOr<TypedValue<VectorType>> relayout(
       src.offsets() == LayoutOffsets{0, 0} && src.tiling() == dst.tiling() &&
       src.tiling() == std::array<int64_t, 2>{8, 128}) {
     xla::Array<Value> src_tiles_retiled(
-        dst.tileArrayShape(vty.getShape(), target_shape));
+        dst.tileArrayImplicitShape(vty.getShape(), target_shape));
     src_tiles_retiled.Each(
         [&](const absl::Span<const int64_t> idx, Value *tile) {
           for (int dst_sl_idx = 0; dst_sl_idx < 8; ++dst_sl_idx) {
             SmallVector<int64_t> src_idx(idx.begin(), idx.end());
+            src.insertImplicit<int64_t>(src_idx, 0);
             auto second_minor_idx = idx.size() - 2;
             src_idx[second_minor_idx] = 8 * idx[second_minor_idx] + dst_sl_idx;
             if (src_idx[second_minor_idx] >= src_tiles.dim(second_minor_idx)) {
@@ -5214,7 +5223,10 @@ FailureOr<TypedValue<VectorType>> relayout(
         dst_tiles(idx) = rot_tile;
       });
     }
-    return assemble(builder, vty, dst, std::move(dst_tiles), target_shape)
+    dst_tiles.Reshape(
+        original_dst.tileArrayImplicitShape(vty.getShape(), target_shape));
+    return assemble(builder, vty, original_dst, std::move(dst_tiles),
+                    target_shape, /*use_implicit_shape=*/true)
         .getResult();
   }
   // TODO(apaszke): Implement general relayout
