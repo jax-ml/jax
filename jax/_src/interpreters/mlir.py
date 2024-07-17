@@ -147,7 +147,6 @@ def delegate_lowering(ctx, lowering_fun, *args, **ctx_override_kwargs):
 # IR Types
 
 IrTypes = Union[ir.Type, tuple[ir.Type, ...]]
-IrValues = Union[ir.Value, tuple[ir.Value, ...]]
 
 def _is_ir_values(x: IrValues) -> bool:
   """Returns true if `x` is an ir.Value or tuple of ir.Values"""
@@ -812,7 +811,8 @@ def sharded_aval(aval: core.AbstractValue,
 def eval_dynamic_shape(ctx: LoweringRuleContext,
                        shape: core.Shape) -> tuple[int | Value, ...]:
   if config.dynamic_shapes.value:
-    return tuple(ctx.axis_size_env.get(d, d) for d in shaFpe)  # type: ignore
+    assert ctx.axis_size_env is not None
+    return tuple(ctx.axis_size_env.get(d, d) for d in shape)  # type: ignore
   else:
     ctx = ctx.replace(
         primitive="eval_dynamic_shape",
