@@ -41,11 +41,13 @@ def tearDownModule():
 class LayoutTest(jtu.JaxTestCase):
 
   def setUp(self):
-    if not jtu.test_device_matches(['tpu']):
-      self.skipTest("Layouts do not work on CPU and GPU backends yet.")
+    if not jtu.test_device_matches(['tpu', 'gpu']):
+      self.skipTest("Layouts do not work on CPU backend yet.")
     super().setUp()
 
   def test_auto_layout(self):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("This test does not work on GPU backend.")
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     shape1 = (128, 128)
     shape2 = (128, 128)
@@ -111,6 +113,8 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertArraysEqual(apply_out[1], (np_inp2 * 2).T)
 
   def test_default_layout(self):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("This test does not work on GPU backend.")
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     shape = (4, 4, 2)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
@@ -150,6 +154,8 @@ class LayoutTest(jtu.JaxTestCase):
               out_shardings=DLL.AUTO).lower(sds).compile()
 
   def test_in_layouts_out_layouts(self):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("This test does not work on GPU backend.")
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     shape = (8, 8)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
@@ -174,6 +180,8 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertEqual(out.sharding, NamedSharding(mesh, P('y', 'x')))
 
   def test_sharding_and_layouts(self):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("This test does not work on GPU backend.")
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     shape = (4, 8)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
@@ -236,6 +244,8 @@ class LayoutTest(jtu.JaxTestCase):
     compiled(*arrs)
 
   def test_aot_layout_mismatch(self):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("This test does not work on GPU backend.")
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     shape = (256, 4, 2)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
@@ -405,6 +415,8 @@ class LayoutTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, inp.T)
 
   def test_device_put_user_concrete_layout(self):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("This test does not work on GPU backend.")
     if xla_extension_version < 274:
       self.skipTest('Requires xla_extension_version >= 274')
 
