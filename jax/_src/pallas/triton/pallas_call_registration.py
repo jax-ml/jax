@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import io
+import math
 from typing import Any
 
 import jax
@@ -72,6 +73,15 @@ def pallas_call_lowering(
     raise NotImplementedError(
         "dynamic grid bounds not supported in the Triton backend"
     )
+
+  for bm in grid_mapping.block_mappings:
+    block_size = math.prod(d for d in bm.block_shape  # type: ignore[misc]
+                           if d is not pallas_core.mapped)
+    power_of_2 = 0 == block_size & (block_size - 1)
+    if not power_of_2:
+      raise ValueError(
+          "The Pallas GPU lowering currently requires that the block sizes be "
+          f"a power of 2. Found block with shape {bm.block_shape}")
   triton_params = compiler_params.get("triton", compiler_params)
   num_warps = triton_params.pop("num_warps", 4)
   [lowering_platform] = ctx.platforms or ctx.module_context.platforms

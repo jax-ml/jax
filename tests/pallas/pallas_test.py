@@ -150,7 +150,6 @@ class PallasBaseTest(jtu.JaxTestCase):
 
 class PallasCallTest(PallasBaseTest):
 
-
   def test_add_one(self):
     if jtu.test_device_matches(["cpu"]) and jax.config.x64_enabled:
       # TODO: assertion failures on CPU in 64-bit mode
@@ -356,14 +355,10 @@ class PallasCallTest(PallasBaseTest):
 
     test_context = contextlib.nullcontext()
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
-      if len(block_shape) == 0:
+      if len(block_shape) < 2:
         test_context = self.assertRaisesRegex(
-            Exception,
-            "Indexing into a \\(\\)-shaped Ref not yet supported on TPU")
-      elif len(block_shape) == 1:
-        test_context = self.assertRaisesRegex(
-            RuntimeError,
-            "1D windows not implemented")
+            ValueError,
+            "TPU lowering currently supports only blocks of rank >= 2")
       else:
         evenly_divisible = (
             (block_shape[-1] % 128 == 0
@@ -372,14 +367,16 @@ class PallasCallTest(PallasBaseTest):
             if shape[-2] >= 8 else block_shape[-2] == shape[-2]))
         if not evenly_divisible:
           test_context = self.assertRaisesRegex(
-              RuntimeError,
-              "is not divisible by tiling evenly")
+              ValueError,
+              "last two dimensions of your block shape are divisible by 8 and 128")
 
     elif jtu.test_device_matches(["gpu"]) and not self.INTERPRET:
       block_size = math.prod(block_shape)
       block_size_is_power_2 = 0 == (block_size & (block_size - 1))
       if not block_size_is_power_2:
-        self.skipTest("TODO: Add GPU exception, now RET_CHECK failure")
+        test_context = self.assertRaisesRegex(
+            ValueError,
+            "GPU lowering currently requires that the block sizes be a power of 2")
 
     with test_context:
       res = self.pallas_call(

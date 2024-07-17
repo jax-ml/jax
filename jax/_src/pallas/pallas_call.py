@@ -838,7 +838,7 @@ def pallas_call_checkify_rule(error: checkify.Error,
   error_block_mappings = map(
         partial(
             pallas_core._convert_block_spec_to_block_mapping,
-            (*grid_avals, *scalar_ref_avals),
+            in_avals=(*grid_avals, *scalar_ref_avals),
             in_tree=grid_tree,
             grid=grid_mapping.grid,
             mapped_dims=grid_mapping.mapped_dims,

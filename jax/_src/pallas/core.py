@@ -189,6 +189,9 @@ IndexingMode = Union[Blocked, Unblocked]
 class BlockSpec:
   """Specifies how an array should be sliced for each iteration of a kernel.
 
+  This encodes the parameters as passed from the API, before canonicalization.
+  BlockMapping contains a canonicalized internal form of this information.
+
   See :ref:`pallas_blockspec` for more details.
   """
   block_shape: tuple[int | None, ...] | None = None
@@ -241,6 +244,7 @@ BlockSpecTree = Any
 
 @dataclasses.dataclass(frozen=True)
 class BlockMapping:
+  """Canonicalized internal version of BlockSpec."""
   block_shape: tuple[Mapped | int, ...]
   index_map_jaxpr: jax_core.ClosedJaxpr
   indexing_mode: IndexingMode
@@ -279,8 +283,9 @@ def tracing_grid_env(grid: GridMappingGrid, mapped_dims: tuple[int, ...]):
 
 @dataclasses.dataclass(frozen=True)
 class GridMapping:
+  """Canonicalized internal version of GridSpec."""
   grid: GridMappingGrid
-  block_mappings: tuple[BlockMapping | None, ...]
+  block_mappings: tuple[BlockMapping, ...]
   mapped_dims: tuple[int, ...] = ()
   num_index_operands: int = 0
   num_scratch_operands: int = 0
@@ -314,17 +319,18 @@ def _preprocess_grid(grid: Grid | int | None) -> Grid:
 
 
 def _convert_block_spec_to_block_mapping(
-    in_avals: Sequence[jax_core.ShapedArray],
     block_spec: BlockSpec,
     path: tree_util.KeyPath,
     aval: jax_core.ShapedArray,
+    *,
+    in_avals: Sequence[jax_core.ShapedArray],
     in_tree: Any,
     grid: GridMappingGrid,
     mapped_dims: tuple[int, ...],
     what: str,  # Used to localize error messages, e.g., {what}{path}
-) -> BlockMapping | None:
+) -> BlockMapping:
   if block_spec is no_block_spec:
-    return None
+    block_spec = BlockSpec(None, None)
   if block_spec.index_map is None:
     compute_index = lambda *args, **kwargs: (0,) * len(aval.shape)
   else:
@@ -405,9 +411,14 @@ def _get_ref_avals(in_avals: Sequence[jax_core.ShapedArray],
 
 @dataclasses.dataclass(init=False, unsafe_hash=True)
 class GridSpec:
+  """Specifies the invocation grid and the block specs for inputs and outputs.
+
+  This encodes the parameters as passed from the API, before canonicalization.
+  GridMapping contains the canonicalized internal form of this information.
+  """
   grid: Grid
-  in_specs: tuple[BlockSpec | NoBlockSpec, ...]
-  out_specs: tuple[BlockSpec | NoBlockSpec, ...]
+  in_specs: tuple[BlockSpec | NoBlockSpec, ...] | NoBlockSpec
+  out_specs: tuple[BlockSpec | NoBlockSpec, ...] | NoBlockSpec
   in_specs_tree: Any
   out_specs_tree: Any
 
@@ -476,7 +487,7 @@ class GridSpec:
     in_block_mappings = map(
         partial(
             _convert_block_spec_to_block_mapping,
-            grid_avals,
+            in_avals=grid_avals,
             in_tree=grid_tree,
             grid=grid_mapping_grid,
             mapped_dims=(),
@@ -489,7 +500,7 @@ class GridSpec:
     out_block_mappings = map(
         partial(
             _convert_block_spec_to_block_mapping,
-            grid_avals,
+            in_avals=grid_avals,
             in_tree=grid_tree,
             grid=grid_mapping_grid,
             mapped_dims=(),

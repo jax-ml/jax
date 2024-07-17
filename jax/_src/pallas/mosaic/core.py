@@ -203,7 +203,7 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
     in_block_mappings = map(
         partial(
             _convert_block_spec_to_block_mapping,
-            (*grid_avals, *scalar_ref_avals),
+            in_avals=(*grid_avals, *scalar_ref_avals),
             in_tree=index_map_in_tree,
             grid=grid_mapping_grid,
             mapped_dims=(),
@@ -216,7 +216,7 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
     out_block_mappings = map(
         partial(
             _convert_block_spec_to_block_mapping,
-            (*grid_avals, *scalar_ref_avals),
+            in_avals=(*grid_avals, *scalar_ref_avals),
             in_tree=index_map_in_tree,
             grid=grid_mapping_grid,
             mapped_dims=(),

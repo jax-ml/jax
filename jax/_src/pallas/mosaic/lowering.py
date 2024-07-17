@@ -391,6 +391,35 @@ def lower_jaxpr_to_module(
     mesh: mesh_lib.Mesh | None = None,
     for_verification: bool = False,
 ) -> tuple[Module, tuple[Any, ...]]:
+  in_out_shapes = (*in_shapes, *out_shapes)
+  for bm, array_shape in zip(grid_mapping.block_mappings, in_out_shapes):
+    if len(bm.block_shape) < 2:
+      # TODO(necula): add block spec localization
+      raise ValueError(
+          "The Pallas TPU lowering currently supports only blocks of rank >= 2. "
+          f"Found block with shape {bm.block_shape}")
+    bs1, bs0 = bm.block_shape[-2:]
+    if pl_core.mapped in (bs1, bs0):
+      # TODO(necula): add block spec localization
+      raise ValueError(
+          "The Pallas TPU lowering does not support mapped dimensions in the "
+          "last two dimensions of the block_shape. "
+          f"Found block with shape {bm.block_shape}")
+    as1, as0 = array_shape.shape[-2:]
+    evenly_divisible = (
+        (bs0 % 128 == 0 if as0 >= 128 else bs0 == as0) and
+        (bs1 % 8 == 0 if as1 >= 8 else bs1 == as1)
+    )
+    if not evenly_divisible:
+      # TODO(necula): add block spec localization
+      raise ValueError(
+          "The Pallas TPU lowering currently requires that the last two "
+          "dimensions of your block shape are divisible by 8 and 128 "
+          "respectively, if the dimensions of the overall array are larger "
+          "than the respective factors. If array dimensions are smaller, "
+          "the block should span the full array dimension. "
+          f"Found array of shape {array_shape.shape} and block_shape {bm.block_shape}."
+      )
   mosaic_grid_mapping = MosaicGridMapping(
       jaxpr, grid_mapping, dimension_semantics, mesh)
   mosaic_grid_mapping.maybe_compress_grid()
