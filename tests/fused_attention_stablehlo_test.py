@@ -348,34 +348,54 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       self.skipTest("Requires >= cuDNN 8.9.6")
     k1, k2, k3, k4, k5 = jax.random.split(jax.random.key(0), 5)
     query = jax.random.normal(
-        k1, (2, 1024, 4, 64), dtype=jnp.bfloat16)
+        k1, (4, 1024, 4, 64), dtype=jnp.bfloat16)
     key = jax.random.normal(
-        k2, (2, 1024, 4, 64), dtype=jnp.bfloat16)
+        k2, (4, 1024, 4, 64), dtype=jnp.bfloat16)
     value = jax.random.normal(
-        k3, (2, 1024, 4, 64), dtype=jnp.bfloat16)
+        k3, (4, 1024, 4, 64), dtype=jnp.bfloat16)
     grad = jax.random.normal(
-        k4, (2, 1024, 4, 64), dtype=jnp.bfloat16)
+        k4, (4, 1024, 4, 64), dtype=jnp.bfloat16)
     bias = jax.random.normal(
         k5, (4, 1024, 1024), dtype=jnp.bfloat16)
-    jitted_sdpa_train = jax.jit(
-      partial(
-        sdpa_train, scale=1.0, mask_type=MaskType.NO_MASK, dropout_rate=0),
-    )
+    devices = np.array(jax.local_devices()[:4])
+    devices = devices.reshape((2, 2))
+    with Mesh(devices, ("dp", "tp")) as mesh:
+      qkv_spec = PartitionSpec("dp", None, "tp", None)
+      qkv_sharding = NamedSharding(mesh, qkv_spec)
+      bias_spec = PartitionSpec("tp", None, None)
+      bias_sharding = NamedSharding(mesh, bias_spec)
+      replicated = NamedSharding(mesh, PartitionSpec())
+      in_shardings = (qkv_sharding, qkv_sharding, qkv_sharding,
+                      qkv_sharding, bias_sharding, replicated)
+      out_shardings = (qkv_sharding, (qkv_sharding, qkv_sharding, qkv_sharding, bias_sharding))
+      query = jax.device_put(query, qkv_sharding)
+      key = jax.device_put(key, qkv_sharding)
+      value = jax.device_put(value, qkv_sharding)
+      grad = jax.device_put(grad, qkv_sharding)
+      bias = jax.device_put(bias, bias_sharding)
+      jitted_sdpa_train = jax.jit(
+        partial(
+          sdpa_train, scale=1.0, mask_type=MaskType.NO_MASK, dropout_rate=0),
+        in_shardings=in_shardings,
+        out_shardings=out_shardings
+      )
 
-    jitted_sdpa_train_ref = jax.jit(
-      partial(
-        sdpa_train_ref, scale=1.0, mask_type=MaskType.NO_MASK, dropout_rate=0),
-    )
+      jitted_sdpa_train_ref = jax.jit(
+        partial(
+          sdpa_train_ref, scale=1.0, mask_type=MaskType.NO_MASK, dropout_rate=0),
+        in_shardings=in_shardings,
+        out_shardings=out_shardings
+      )
 
-    out, (query_grad, key_grad, value_grad, bias_grad) = \
-      jitted_sdpa_train(query, key, value, grad, bias, None)
-    out_ref, (query_grad_ref, key_grad_ref, value_grad_ref, bias_grad_ref) = \
-      jitted_sdpa_train_ref(query, key, value, grad, bias, None)
-    self.assertArraysAllClose(out_ref, out, rtol=1e-5, atol=1e-5)
-    self.assertArraysAllClose(query_grad_ref, query_grad, rtol=1e-2, atol=1e-2)
-    self.assertArraysAllClose(key_grad_ref, key_grad, rtol=1e-5, atol=1e-5)
-    self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-5, atol=1e-5)
-    self.assertArraysAllClose(bias_grad_ref, bias_grad, rtol=1e-5, atol=1e-5)
+      out, (query_grad, key_grad, value_grad, bias_grad) = \
+        jitted_sdpa_train(query, key, value, grad, bias, None)
+      out_ref, (query_grad_ref, key_grad_ref, value_grad_ref, bias_grad_ref) = \
+        jitted_sdpa_train_ref(query, key, value, grad, bias, None)
+      self.assertArraysAllClose(out_ref, out, rtol=1e-5, atol=1e-5)
+      self.assertArraysAllClose(query_grad_ref, query_grad, rtol=1e-2, atol=1e-2)
+      self.assertArraysAllClose(key_grad_ref, key_grad, rtol=1e-5, atol=1e-5)
+      self.assertArraysAllClose(value_grad_ref, value_grad, rtol=1e-5, atol=1e-5)
+      self.assertArraysAllClose(bias_grad_ref, bias_grad, rtol=1e-5, atol=1e-5)
 
   @jtu.run_on_devices("cuda")
   def test_layouts(self):
