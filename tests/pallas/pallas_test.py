@@ -1796,10 +1796,12 @@ class PallasCheckifyInterpreterTest(PallasBaseTest):
           value < fail_iteration, "failed on loop {itr}", itr=value)
     input_arr = jnp.arange(num_loops, dtype=jnp.float32)
     in_specs = [pl.BlockSpec((1,), lambda x: (x,))]
+    out_specs = pl.BlockSpec((1,), lambda x: (x,))
     out_shape = jax.ShapeDtypeStruct((1,), dtype=jnp.float32)
     pallas_call = self.pallas_call(kernel,
                                  grid=(num_loops,),
                                  in_specs=in_specs,
+                                 out_specs=out_specs,
                                  out_shape=out_shape)
 
     checked_call = checkify.checkify(pallas_call,

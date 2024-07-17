@@ -68,6 +68,7 @@ import numpy as np
 
 NDIndexer = indexing.NDIndexer
 TPUMemorySpace = tpu_core.TPUMemorySpace
+MemorySpace = pl_core.MemorySpace | TPUMemorySpace
 VMEM = tpu_core.TPUMemorySpace.VMEM
 SMEM = tpu_core.TPUMemorySpace.SMEM
 # Booleans are stored as the following type in memrefs.
@@ -117,10 +118,14 @@ class LoweringRuleContext:
   replace = dataclasses.replace
 
 
-def _memory_space_to_tpu_memspace(memory_space: TPUMemorySpace | None
+def _memory_space_to_tpu_memspace(memory_space: MemorySpace | None
                                   ) -> ir.Attribute:
   if memory_space is None:
     memory_space = VMEM
+  elif memory_space == pl_core.MemorySpace.ERROR:
+    memory_space = SMEM
+  elif memory_space == pl_core.MemorySpace.INDEX:
+    memory_space = SMEM
   return ir.Attribute.parse(f"#tpu.memory_space<{memory_space}>")
 
 def _dtype_to_ir_type(dtype: jnp.dtype,
@@ -146,7 +151,7 @@ def _dtype_to_ir_type(dtype: jnp.dtype,
 
 def aval_to_ir_type(aval,
                     shape=None,
-                    memory_space: TPUMemorySpace | None = None,
+                    memory_space: MemorySpace | None = None,
                     is_kernel_boundary: bool = False):
   if isinstance(aval, tpu_core.AbstractSemaphore):
     if aval.sem_type is tpu_core.SemaphoreType.DMA:

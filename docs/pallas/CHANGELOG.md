@@ -35,6 +35,7 @@ Remember to align the itemized text with the first line of an item within a list
     and `lax.erf_inv` ({jax-issue}`#22310`).
   * Added initial support for shape polymorphism for the Pallas TPU custom kernels\
     ({jax-issue}`#22084`).
+  * Added TPU support for checkify. ({jax-issue}`#22480`)
 
 ## Released with JAX 0.4.30 (June 18, 2024)
 
