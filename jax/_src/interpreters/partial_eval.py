@@ -1441,8 +1441,7 @@ def _dce_jaxpr(jaxpr: Jaxpr, used_outputs: tuple[bool, ...],
       env[x] = read(x) or b
 
   def has_effects(eqn: JaxprEqn) -> bool:
-    effs = {e for e in eqn.effects if not isinstance(e, core.NamedAxisEffect)}
-    return bool(effs) or core.primitive_uses_outfeed(eqn.primitive, eqn.params)
+    return bool(eqn.effects) or core.primitive_uses_outfeed(eqn.primitive, eqn.params)
 
   new_eqns = []
   map(write, jaxpr.outvars, used_outputs)

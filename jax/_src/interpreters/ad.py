@@ -299,6 +299,12 @@ class JVPTrace(Trace):
 
   def process_primitive(self, primitive, tracers, params):
     primals_in, tangents_in = unzip2(map(self.to_primal_tangent_pair, tracers))
+    if all(type(t) is Zero for t in tangents_in):
+      primal_out = primitive.bind_with_trace(self.parent_trace, primals_in, params)
+      if primitive.multiple_results:
+        return [JVPTracer(self, p, Zero.from_value(p)) for p in primal_out]
+      else:
+        return JVPTracer(self, primal_out, Zero.from_value(primal_out))
     jvp = primitive_jvps.get(primitive)
     if not jvp:
       msg = f"Differentiation rule for '{primitive}' not implemented"
