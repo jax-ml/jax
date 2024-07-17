@@ -2765,14 +2765,13 @@ def _pad_wrap(array: Array, pad_width: PadValue[int]) -> Array:
       _check_no_padding(pad_width[i], "wrap")
       continue
     size = array.shape[i]
-    left_repeats, left_remainder = divmod(pad_width[i][0], size)
-    right_repeats, right_remainder = divmod(pad_width[i][1], size)
-    total_repeats = left_repeats + right_repeats + 1
+    repeats, (left_remainder, right_remainder) = np.divmod(pad_width[i], size)
+    total_repeats = repeats.sum() + 1
     parts = []
-    if left_remainder > 0:
+    if left_remainder:
       parts += [lax.slice_in_dim(array, size - left_remainder, size, axis=i)]
     parts += total_repeats * [array]
-    if right_remainder > 0:
+    if right_remainder:
       parts += [lax.slice_in_dim(array, 0, right_remainder, axis=i)]
     array = lax.concatenate(parts, dimension=i)
   return array
@@ -2788,7 +2787,8 @@ def _pad_symmetric_or_reflect(array: Array, pad_width: PadValue[int],
       _check_no_padding(pad_width[i], mode)
       continue
 
-    axis_size = array.shape[i]
+    n = array.shape[i]
+    offset = 1 if (mode == "reflect" and n > 1) else 0
 
     def build_padding(array, padding, before):
       if before:
@@ -2796,41 +2796,23 @@ def _pad_symmetric_or_reflect(array: Array, pad_width: PadValue[int],
       else:
         edge = lax.slice_in_dim(array, -1, None, axis=i)
 
-      # Try to give nicer error messages for unsupported shape polymorphic uses
-      shape_poly_error_msg = lambda: (
-          "Shape polymorphism is supported for jnp.pad with 'reflect' or "
-          "'symmetric' padding mode only when it is possible to determine "
-          f"at lowering time that the axis size (= {axis_size}) is larger than 1 "
-          f"and larger or equal than the padding length (= {padding}). "
-          f"Error while handling {'left' if before else 'right'} padding on axis {i}.")
-      try:
-        # We check that we can determine all comparisions.
-        offset = 1 if (mode == "reflect" and axis_size > 1) else 0
-        has_poly_dim = not core.is_constant_shape((axis_size, padding))
-        # For shape polymorphism, ensure the loop below ends after 1 iteration
-        if has_poly_dim and not (axis_size > 1 and axis_size - offset >= padding):
-          raise ValueError(shape_poly_error_msg())
-      except core.InconclusiveDimensionOperation as e:
-        raise ValueError(shape_poly_error_msg()) from e
-
       while padding > 0:
-        curr_pad = min(padding, axis_size - offset)
+        curr_pad = min(padding, n - offset)
         padding -= curr_pad
-        if has_poly_dim: assert padding == 0
 
         if before:
           start = offset
           stop = offset + curr_pad
         else:
           start = -(curr_pad + offset)
-          stop = None if (mode == "symmetric" or axis_size == 1) else -1
+          stop = None if (mode == "symmetric" or n == 1) else -1
 
         x = lax.slice_in_dim(array, start, stop, axis=i)
         x = flip(x, axis=i)
 
         if reflect_type == 'odd':
           x = 2 * edge - x
-          if axis_size > 1:
+          if n > 1:
             if before:
               edge = lax.slice_in_dim(x, 0, 1, axis=i)
             else:
@@ -4326,7 +4308,7 @@ def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
              endpoint: bool = True, retstep: bool = False,
              dtype: DTypeLike | None = None,
              axis: int = 0) -> Array | tuple[Array, Array]:
-  num = core.concrete_dim_or_error(num, "'num' argument of jnp.linspace")
+  num = core.concrete_or_error(operator.index, num, "'num' argument of jnp.linspace")
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.linspace")
   return _linspace(start, stop, num, endpoint, retstep, dtype, axis)
 
@@ -4355,13 +4337,13 @@ def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
   bounds_shape.insert(axis, 1)
   div = (num - 1) if endpoint else num
   if num > 1:
-    delta: Array = lax.convert_element_type(stop - start, computation_dtype) / array(div, dtype=computation_dtype)
+    delta: Array = lax.convert_element_type(stop - start, computation_dtype) / div
     iota_shape = [1,] * len(bounds_shape)
     iota_shape[axis] = div
     # This approach recovers the endpoints with float32 arithmetic,
     # but can lead to rounding errors for integer outputs.
     real_dtype = finfo(computation_dtype).dtype
-    step = reshape(lax.iota(real_dtype, div), iota_shape) / array(div, real_dtype)
+    step = reshape(lax.iota(real_dtype, div), iota_shape) / div
     step = step.astype(computation_dtype)
     out = (reshape(broadcast_start, bounds_shape) * (1 - step) +
       reshape(broadcast_stop, bounds_shape) * step)
@@ -4373,7 +4355,7 @@ def _linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
   elif num == 1:
     delta = asarray(nan if endpoint else stop - start, dtype=computation_dtype)
     out = reshape(broadcast_start, bounds_shape)
-  else:  # num == 0 degenerate case, match numpy behavior
+  else: # num == 0 degenerate case, match numpy behavior
     empty_shape = list(lax.broadcast_shapes(shape(start), shape(stop)))
     empty_shape.insert(axis, 0)
     delta = asarray(nan, dtype=computation_dtype)
