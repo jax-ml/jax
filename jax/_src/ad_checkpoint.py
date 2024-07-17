@@ -820,10 +820,11 @@ def _remat_lowering(ctx, *args, jaxpr: core.Jaxpr, prevent_cse: bool,
           differentiated=differentiated, policy=policy,
           is_gpu_platform=is_gpu_platform)
 
-    arg_types = map(mlir.aval_to_ir_types, ctx.avals_in)
+    arg_types = map(mlir.aval_to_ir_type, ctx.avals_in)
     flat_args = mlir.flatten_ir_values(args)
     barrier_op = hlo.OptimizationBarrierOp(flat_args)
-    jaxpr_args = mlir.unflatten_ir_values(barrier_op.results, map(len, arg_types))
+    jaxpr_args = mlir.unflatten_ir_values_like_types(
+      barrier_op.results, arg_types)
   else:
     jaxpr_args = args
   outs, tokens_out = mlir.jaxpr_subcomp(
@@ -840,10 +841,10 @@ def _optimization_barrier_abstract_eval(*args):
   return args
 
 def _optimization_barrier_lowering_rule(ctx, *args):
-  barrier_types = map(mlir.aval_to_ir_types, ctx.avals_in)
+  barrier_types = map(mlir.aval_to_ir_type, ctx.avals_in)
   flat_args = mlir.flatten_ir_values(args)
   barrier_op = hlo.OptimizationBarrierOp(flat_args)
-  return mlir.unflatten_ir_values(barrier_op.results, map(len, barrier_types))
+  return mlir.unflatten_ir_values_like_types(barrier_op.results, barrier_types)
 
 def _optimization_barrier(arg):
   flat_args, treedef = tree_flatten(arg)

@@ -81,7 +81,7 @@ from jax._src.tree_util import (
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps,
     distributed_debug_log, split_list, weakref_lru_cache,
-    merge_lists, flatten, subs_list, fun_name, fun_qual_name)
+    merge_lists, subs_list, fun_name, fun_qual_name)
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -1931,9 +1931,9 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
                    out_shardings, in_layouts, out_layouts, resource_env,
                    donated_invars, keep_unused, inline):
   effects = list(ctx.tokens_in.effects())
-  output_types = map(mlir.aval_to_ir_types, ctx.avals_out)
+  output_types = map(mlir.aval_to_ir_type, ctx.avals_out)
   output_types = [mlir.token_type()] * len(effects) + output_types
-  flat_output_types = flatten(output_types)
+  flat_output_types = mlir.flatten_ir_types(output_types)
 
   func = _pjit_cached_lower_jaxpr_to_fun(
       ctx, name, jaxpr, tuple(effects), in_shardings,
@@ -1946,7 +1946,7 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
                              ir.FlatSymbolRefAttr.get(func.name.value),
                              mlir.flatten_ir_values(args))
   mlir.wrap_compute_type_in_place(ctx, call)
-  out_nodes = mlir.unflatten_ir_values(call.results, map(len, output_types))
+  out_nodes = mlir.unflatten_ir_values_like_types(call.results, output_types)
   tokens, out_nodes = split_list(out_nodes, [len(effects)])
   tokens_out = ctx.tokens_in.update_tokens(mlir.TokenSet(zip(effects, tokens)))
   ctx.set_tokens_out(tokens_out)

@@ -4568,8 +4568,8 @@ mlir.lowerable_effects.add_type(InOutFeedEffect)
 
 
 def _infeed_lowering(ctx, token, *, shapes, partitions):
-  output_types = safe_map(mlir.aval_to_ir_types, ctx.avals_out[:-1])
-  flat_output_types = util.flatten(output_types)
+  output_types = safe_map(mlir.aval_to_ir_type, ctx.avals_out[:-1])
+  flat_output_types = mlir.flatten_ir_types(output_types)
   # TODO(phawkins): verify `shapes` have a major-to-minor layout.
   layouts = ir.ArrayAttr.get([
       ir.ArrayAttr.get(
@@ -4586,7 +4586,7 @@ def _infeed_lowering(ctx, token, *, shapes, partitions):
     mlir.set_sharding(infeed, xla.sharding_to_proto(partitions))
   token = infeed.results[-1]
   outs = infeed.results[:-1]
-  return mlir.unflatten_ir_values(outs, safe_map(len, output_types)) + [
+  return mlir.unflatten_ir_values_like_types(outs, output_types) + [
       token,
   ]
 

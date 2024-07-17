@@ -1713,13 +1713,13 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
       return out
     return mlir.lower_fun(fun)(ctx, *args)
 
-  loop_carry_types = _map(mlir.aval_to_ir_types, ctx.avals_in)
+  loop_carry_types = _map(mlir.aval_to_ir_type, ctx.avals_in)
   body_effects = effects.ordered_effects.filter_in(body_jaxpr.effects)
   num_tokens = len(body_effects)
   tokens = [ctx.tokens_in.get(eff) for eff in body_effects]
   token_types = [mlir.token_type() for _ in tokens]
   loop_carry_types = [*token_types, *loop_carry_types]
-  flat_loop_carry_types = util.flatten(loop_carry_types)
+  flat_loop_carry_types = mlir.flatten_ir_types(loop_carry_types)
   args = [*tokens, *args]
 
   flat_args = mlir.flatten_ir_values(args)
@@ -1732,7 +1732,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     flat_cond_args = [
         cond_block.arguments[i] for i in range(len(flat_loop_carry_types))
     ]
-    cond_args = mlir.unflatten_ir_values(flat_cond_args, _map(len, loop_carry_types))
+    cond_args = mlir.unflatten_ir_values_like_types(flat_cond_args, loop_carry_types)
     # Remove tokens from cond args
     cond_args = cond_args[num_tokens:]
     x, _, z = util.split_list(cond_args, [cond_nconsts, body_nconsts])
@@ -1772,7 +1772,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     flat_body_args = [
         body_block.arguments[i] for i in range(len(flat_loop_carry_types))
     ]
-    body_args = mlir.unflatten_ir_values(flat_body_args, _map(len, loop_carry_types))
+    body_args = mlir.unflatten_ir_values_like_types(flat_body_args, loop_carry_types)
     # Tokens are at the front of the args list to the while loop
     token_args, body_args = util.split_list(body_args, [num_tokens])
     tokens_in = mlir.TokenSet(zip(body_effects, token_args))
@@ -1799,7 +1799,7 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     hlo.return_([*mlir.flatten_ir_values(out_tokens), *mlir.flatten_ir_values(x), *mlir.flatten_ir_values(y),
                   *mlir.flatten_ir_values(new_z)])
 
-  outputs = mlir.unflatten_ir_values(while_op.results, _map(len, loop_carry_types))
+  outputs = mlir.unflatten_ir_values_like_types(while_op.results, loop_carry_types)
   tokens, _, _, z = util.split_list(outputs, [num_tokens, cond_nconsts, body_nconsts])
   if tokens:
     ctx.set_tokens_out(mlir.TokenSet(zip(body_effects, tokens)))
