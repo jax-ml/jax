@@ -496,7 +496,8 @@ remat_p.multiple_results = True
 @remat_p.def_impl
 def remat_impl(*args, jaxpr, prevent_cse, differentiated, policy):
   del prevent_cse, differentiated, policy  # Unused.
-  return core.eval_jaxpr(jaxpr, (), *args)
+  with core.concrete_eval():
+    return core.eval_jaxpr(jaxpr, (), *args)
 
 @remat_p.def_effectful_abstract_eval
 def remat_abstract_eval(*args, jaxpr, prevent_cse, differentiated, policy):

@@ -856,7 +856,8 @@ class EvalTrace(Trace):
     else:
       for t in tracers:
         assert not isinstance(t, Tracer) # TODO: rename
-      return primitive.impl(*tracers, **params)
+      with set_current_trace(EvalTrace()):
+        return primitive.impl(*tracers, **params)
 
   def process_call(self, primitive, f, tracers, params):
     if config.debug_key_reuse.value:
