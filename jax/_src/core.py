@@ -444,10 +444,6 @@ class Primitive:
     self.abstract_eval = effectful_abstract_eval
     return effectful_abstract_eval
 
-  def def_custom_bind(self, bind):
-    self.bind = bind
-    return bind
-
   def impl(self, *args, **params):
     raise NotImplementedError("Evaluation rule for '{}' not implemented"
                               .format(self.name))

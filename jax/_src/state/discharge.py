@@ -357,16 +357,6 @@ def _closed_call_discharge_rule(
 run_state_p = core.Primitive("run_state")
 run_state_p.multiple_results = True
 
-def _run_state_bind(*args: Any, jaxpr: core.Jaxpr,
-                    which_linear: tuple[bool, ...]):
-  if config.enable_checks.value:
-    core.check_jaxpr(jaxpr)
-    assert len(jaxpr.invars) == len(args)
-    assert len(which_linear) == len(args)
-  return core.Primitive.bind(run_state_p, *args, jaxpr=jaxpr,
-                             which_linear=which_linear)
-run_state_p.def_custom_bind(_run_state_bind)
-
 def _run_state_impl(*args: Any, jaxpr: core.Jaxpr,
                     which_linear: tuple[bool, ...]):
   del which_linear

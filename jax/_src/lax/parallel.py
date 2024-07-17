@@ -734,7 +734,7 @@ def _replica_groups_hlo(replica_groups: Sequence[Sequence[int]]
 
 def _allreduce_impl(pos_reducer, *args, axes, axis_index_groups):
   assert axis_index_groups is None
-  assert all(isinstance(axis, int) for axis in axes)
+  assert all(isinstance(axis, int) for axis in axes), axes
   return [pos_reducer(arg, axes) for arg in args]
 
 def _allreduce_effectful_abstract_eval(*args, axes, axis_index_groups):
@@ -840,30 +840,6 @@ ad.deflinear2(psum_p, _psum_transpose_rule)
 batching.primitive_batchers[psum_p] = partial(_reduction_batcher, psum_p)
 batching.axis_primitive_batchers[psum_p] = \
   partial(_batched_reduction_collective, psum_p, lambda v, axis_size: axis_size * v)
-
-
-# We set a special bind rule for psum so that psum(1, 'i') can be evaluated at
-# tracing time.
-@psum_p.def_custom_bind
-def psum_bind(*args, axes, axis_index_groups):
-  if all(not isinstance(x, core.Tracer) for x in args):
-    named_axes, pos_axes = axes_partition = [], []
-    for axis in axes:
-      axes_partition[isinstance(axis, int)].append(axis)
-    def pos_reduce(x):
-      if not pos_axes:
-        return x
-      return lax._reduce_sum(x, [canonicalize_axis(axis, getattr(x, 'ndim', 0))
-                                 for axis in pos_axes])
-    if axis_index_groups is not None:
-      assert not pos_axes
-      size = len(axis_index_groups[0])
-    else:
-      size = math.prod([core.axis_frame(name).size for name in named_axes])
-    return tuple(lax._const(x, size) * pos_reduce(x) for x in args)
-  return core.Primitive.bind(
-      psum_p, *args, axes=axes, axis_index_groups=axis_index_groups)
-
 
 pmax_p = core.Primitive('pmax')
 pmax_p.multiple_results = True
@@ -1629,31 +1605,6 @@ def _axis_index_effectful_abstract_eval(*, axis_name):
 axis_index_p = core.Primitive('axis_index')
 mlir.register_lowering(axis_index_p, _axis_index_lowering)
 axis_index_p.def_effectful_abstract_eval(_axis_index_effectful_abstract_eval)
-
-# Axis index doesn't get any arguments, so that the default bind would have no
-# way to call into a data-dependency based trace such as vmap. Each trace that
-# wants to bind an axis name has to additionally implement `process_axis_index`
-# and put its main trace on the axis env stack.
-def _axis_index_bind(*, axis_name):
-  def name_idx(name):
-    frame = core.axis_frame(name)
-    dynamic = core.thread_local_state.trace_state.trace_stack.dynamic
-    if (frame.main_trace is None or dynamic.level > frame.main_trace.level):
-      return core.Primitive.bind(axis_index_p, axis_name=name)
-    else:
-      trace = frame.main_trace.with_cur_sublevel()
-      return trace.process_axis_index(frame)
-
-  if not isinstance(axis_name, (tuple, list)):
-    return name_idx(axis_name)
-  else:
-    inner_size = 1
-    index = 0
-    for name in reversed(axis_name):
-      index += name_idx(name) * inner_size
-      inner_size *= psum(1, name)
-    return index
-axis_index_p.def_custom_bind(_axis_index_bind)
 
 def _vmap_process_axis_index(self, frame):
   assert frame.size is not None

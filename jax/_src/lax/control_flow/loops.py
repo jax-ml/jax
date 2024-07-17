@@ -1207,17 +1207,8 @@ def _scan_state_discharge_rule(in_avals, out_avals, *args, jaxpr, num_consts,
   assert len(refs_out_matching_in_avals) == len(in_avals)
   return refs_out_matching_in_avals, [*carry_out, *ys]
 
-def scan_bind(*args, **params):
-  if config.enable_checks.value:
-    avals = _map(core.get_aval, args)
-    in_atoms = [core.Var('', a) for a in avals]  # dummies
-    _scan_typecheck(True, *in_atoms, **params)
-    core.check_jaxpr(params['jaxpr'].jaxpr)
-  return core.Primitive.bind(scan_p, *args, **params)
-
 scan_p = core.Primitive("scan")
 scan_p.multiple_results = True
-scan_p.def_custom_bind(scan_bind)
 scan_p.def_impl(partial(dispatch.apply_primitive, scan_p))
 scan_p.def_effectful_abstract_eval(_scan_abstract_eval)
 ad.primitive_jvps[scan_p] = _scan_jvp

@@ -831,11 +831,6 @@ class XMapPrimitive(core.MapPrimitive):
   def __init__(self):
     super().__init__('xmap')
     self.def_impl(xmap_impl)
-    self.def_custom_bind(self.bind)
-
-  def bind(self, fun, *args, in_axes, **params):
-    assert len(in_axes) == len(args), (in_axes, args)
-    return core.map_bind(self, fun, *args, in_axes=in_axes, **params)
 
   def process(self, trace, fun, tracers, params):
     return trace.process_xmap(self, fun, tracers, params)

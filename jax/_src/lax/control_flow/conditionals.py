@@ -798,20 +798,10 @@ def _cond_typecheck(bind_time, *in_atoms, branches):
       f'called with operands of type {_avals_short(op_avals)}')
   return jaxpr0.out_avals, joined_effects
 
-def cond_bind(*args, branches):
-  if config.enable_checks.value:
-    avals = map(core.get_aval, args)
-    in_atoms = [core.Var('', a) for a in avals]  # dummies
-    _cond_typecheck(True, *in_atoms, branches=branches)
-    for jaxpr in branches:
-      core.check_jaxpr(jaxpr.jaxpr)
-  return core.Primitive.bind(cond_p, *args, branches=branches)
-
 cond_p = core.Primitive('cond')
 cond_p.multiple_results = True
 cond_p.def_impl(partial(dispatch.apply_primitive, cond_p))
 cond_p.def_effectful_abstract_eval(_cond_abstract_eval)
-cond_p.def_custom_bind(cond_bind)
 ad.primitive_jvps[cond_p] = _cond_jvp
 ad.reducing_transposes[cond_p] = _cond_transpose
 pe.custom_partial_eval_rules[cond_p] = _cond_partial_eval
