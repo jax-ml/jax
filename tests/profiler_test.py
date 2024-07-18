@@ -22,6 +22,7 @@ import threading
 import time
 import unittest
 from absl.testing import absltest
+import pathlib
 
 import jax
 import jax.numpy as jnp
@@ -103,6 +104,26 @@ class ProfilerTest(unittest.TestCase):
         self.assertIn(b"/device:TPU", proto)
       self.assertIn(b"pxla.py", proto)
 
+  def testProgrammaticProfilingPathlib(self):
+    with tempfile.TemporaryDirectory() as tmpdir_string:
+      tmpdir = pathlib.Path(tmpdir_string)
+      try:
+        jax.profiler.start_trace(tmpdir)
+        jax.pmap(lambda x: jax.lax.psum(x + 1, 'i'), axis_name='i')(
+            jnp.ones(jax.local_device_count()))
+      finally:
+        jax.profiler.stop_trace()
+
+      proto_path = tuple(tmpdir.rglob("*.xplane.pb"))
+      self.assertEqual(len(proto_path), 1)
+      proto = proto_path[0].read_bytes()
+      # Sanity check that serialized proto contains host, device, and
+      # Python traces without deserializing.
+      self.assertIn(b"/host:CPU", proto)
+      if jtu.test_device_matches(["tpu"]):
+        self.assertIn(b"/device:TPU", proto)
+      self.assertIn(b"pxla.py", proto)
+
   def testProfilerGetFDOProfile(self):
     # Tests stop_and_get_fod_profile could run.
     try:
@@ -141,6 +162,22 @@ class ProfilerTest(unittest.TestCase):
       self.assertEqual(len(proto_path), 1)
       with open(proto_path[0], "rb") as f:
         proto = f.read()
+      # Sanity check that serialized proto contains host and device traces
+      # without deserializing.
+      self.assertIn(b"/host:CPU", proto)
+      if jtu.test_device_matches(["tpu"]):
+        self.assertIn(b"/device:TPU", proto)
+
+  def testProgrammaticProfilingContextManagerPathlib(self):
+    with tempfile.TemporaryDirectory() as tmpdir_string:
+      tmpdir = pathlib.Path(tmpdir_string)
+      with jax.profiler.trace(tmpdir):
+        jax.pmap(lambda x: jax.lax.psum(x + 1, 'i'), axis_name='i')(
+            jnp.ones(jax.local_device_count()))
+
+      proto_path = tuple(tmpdir.rglob("*.xplane.pb"))
+      self.assertEqual(len(proto_path), 1)
+      proto = proto_path[0].read_bytes()
       # Sanity check that serialized proto contains host and device traces
       # without deserializing.
       self.assertIn(b"/host:CPU", proto)
