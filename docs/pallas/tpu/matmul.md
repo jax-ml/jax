@@ -14,7 +14,7 @@ kernelspec:
 
 +++ {"id": "-z6pOJwvn-_j"}
 
-# Pallas TPU - Your First Matmul
+# Matrix Multiplication
 
 In this guide, we'll write a matrix multiplication routine using Pallas. We'll also go over how to think about matmul performance on TPU and how to template a matmul kernel to fuse in operations.
 
@@ -180,6 +180,9 @@ np.testing.assert_array_equal(x @ y, matmul(x, y))
 
 Let's think about how to analyze matrix multiplication performance.
 
+> Quick note: in this guide, we'll be discussing floating point operations, but want to make the distinction between FLOPs vs FLOP/s.
+  When we say "FLOPs" we mean "floating point operations", as in a number of operations. When we say "FLOP/s", we refer to "floating point operations *per second*", as in a *rate* of performing floating point operations.
+
 The number of FLOPs in a `(m, k) x (k, n)` matrix multiplication are (approximately) `2 * m * k * n`. (Technically it is `n * m * (2k - 1)` but for large enough `k` our approximation is sufficient.)
 
 The minimum amount of memory usage for a matrix multiply (assuming float32) is the total size of the inputs (copying into VMEM) plus the size of the output (copying into HBM). Thus the minimum bandwidth usage is `(m * k + k * n + m * n) * 4 bytes/float32`. Memory usage can be greater if we re-read the inputs multiple times, which is often the case.
@@ -202,9 +205,9 @@ print(matmul_membw(1024, 1024, 1024, jnp.float32))
 
 +++ {"id": "agCtb2GMQazl"}
 
-Now that we can calculate the amount of FLOPs and (minimum) memory bandwidth usage of a matrix multiplication, let's now see how many FLOP/s we can execute and how much memory bandwidth we actually have on a particular TPU.
+Now that we can calculate the total number of FLOPs and (minimum) memory bandwidth usage of a matrix multiplication, let's now see how many FLOP/s we can execute and how much memory bandwidth we actually have on a particular TPU.
 
-This notebook was run on TPU v5e so we will utilize numbers for that specific chip (if you are running this notebook, your numbers may differ). TPU v5es have [197 TFLOPs of bf16 compute and 819 GB/s of memory bandwidth](https://cloud.google.com/tpu/docs/system-architecture-tpu-vm#tpu_v5e). We can compute the minimum arithmetic intensity (ratio of FLOPs to memory bandwidth) needed to be compute bound in this analytical model on this chip by taking their ratio (about 240 FLOPs/byte on TPU v5e).
+This notebook was run on TPU v5e so we will utilize numbers for that specific chip (if you are running this notebook, your numbers may differ). TPU v5es have [197 TFLOP/s of bf16 compute and 819 GB/s of memory bandwidth](https://cloud.google.com/tpu/docs/system-architecture-tpu-vm#tpu_v5e). We can compute the minimum arithmetic intensity (ratio of FLOP/s to memory bandwidth) needed to be compute bound in this analytical model on this chip by taking their ratio (about 240 FLOPs/byte on TPU v5e).
 
 ```{code-cell} ipython3
 :id: WUydNX2-K6Oy
@@ -308,6 +311,8 @@ def matmul(
         grid=(m // bm, n // bn, k // bk),
       ),
       out_shape=jax.ShapeDtypeStruct((m, n), x.dtype),
+      compiler_params=dict(mosaic=dict(
+          dimension_semantics=("parallel", "parallel", "arbitrary"))),
   )(x, y)
 ```
 
@@ -325,9 +330,9 @@ np.testing.assert_array_equal(x @ y, matmul(x, y))
 
 ## Performance of pipelined kernels
 
-Our above analysis about FLOPS vs memory usage applies at a coarse scale i.e. when we are looking at the the size of a the total matrix multiplication. However, remember that in practice, we are pipelining the execution of a blocked matrix multiplication, meaning we have a loop in which we are doing matrix multiplication with smaller blocks.
+Our above analysis about FLOPs vs memory usage applies at a coarse scale i.e. when we are looking at the the size of a the total matrix multiplication. However, remember that in practice, we are pipelining the execution of a blocked matrix multiplication, meaning we have a loop in which we are doing matrix multiplication with smaller blocks.
 
-This means that we actually care about the FLOPS vs memory bandwidth usage of each individual instance of the kernel, not the global FLOPS vs memory bandwidth usage. Therefore, the block sizes `bm`, `bk`, `bn` are extremely important for performance. Even if we have the largest matrices in the world, if we pick very small `bm`, `bk`, and `bn`, we will be memory bound because each time we invoke the kernel we will have too few FLOPs to hide the memory transfers happening in the background.
+This means that we actually care about the FLOPs vs memory bandwidth usage of each individual instance of the kernel, not the global FLOPs vs memory bandwidth usage. Therefore, the block sizes `bm`, `bk`, `bn` are extremely important for performance. Even if we have the largest matrices in the world, if we pick very small `bm`, `bk`, and `bn`, we will be memory bound because each time we invoke the kernel we will have too few FLOPs to hide the memory transfers happening in the background.
 
 The intuition should therefore be: to be compute bound, make the blocks as big as possible! There are two main constraints:
 
@@ -365,7 +370,7 @@ def analyze_matmul(m: int, k: int, n: int, dtype: np.dtype,
   print("Matmul time: ", time)
   mm_flops = matmul_flops(m, k, n) / time
   print("Matmul FLOP/s: ", mm_flops)
-  print(f"FLOPs utilization: {mm_flops / v5e_bf16_flops * 100:.4f}%")
+  print(f"FLOP/s utilization: {mm_flops / v5e_bf16_flops * 100:.4f}%")
   print()
 
 print("================bm=128, bk=128, bn=128===================")
@@ -472,6 +477,8 @@ def matmul(
         grid=(m // bm, n // bn, k // bk),
       ),
       out_shape=jax.ShapeDtypeStruct((m, n), x.dtype),
+      compiler_params=dict(mosaic=dict(
+          dimension_semantics=("parallel", "parallel", "arbitrary"))),
   )(x, y)
 ```
 
@@ -505,7 +512,7 @@ def analyze_matmul(m: int, k: int, n: int, dtype: np.dtype,
   print("Matmul time: ", time)
   mm_flops = matmul_flops(m, k, n) / time
   print("Matmul FLOP/s: ", mm_flops)
-  print(f"FLOPs utilization: {mm_flops / v5e_bf16_flops * 100:.4f}%")
+  print(f"FLOP/s utilization: {mm_flops / v5e_bf16_flops * 100:.4f}%")
   print()
 
 print("================bm=128, bk=128, bn=128===================")
@@ -621,7 +628,7 @@ def analyze_matmul(m: int, k: int, n: int, dtype: np.dtype,
   print("Matmul time: ", time)
   mm_flops = matmul_flops(m, k, n) / time
   print("Matmul FLOP/s: ", mm_flops)
-  print(f"FLOPs utilization: {mm_flops / v5e_bf16_flops * 100:.4f}%")
+  print(f"FLOP/s utilization: {mm_flops / v5e_bf16_flops * 100:.4f}%")
   print()
 
 
