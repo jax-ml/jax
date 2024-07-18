@@ -171,7 +171,8 @@ def wgmma_m64(
   if a_in_regs := isinstance(a, mgpu.FragmentedArray):
     if a.mlir_dtype != ir.F16Type.get() and a.mlir_dtype != ir.BF16Type.get():
       raise ValueError(f"Unsupported A register array dtype: {a.mlir_dtype}")
-    if a.layout != mgpu.WGMMA_LAYOUT or a.shape != (64, 64):
+    # Column count must be equal to swizzle // bytewidth.
+    if a.layout != mgpu.WGMMA_LAYOUT or a.shape != (64, swizzle // 2):
       raise ValueError("Unsupported A register array layout")
     if a_k_stride is not None or a_transpose is not None:
       raise ValueError("Unsupported WGMMA features with A in registers")
