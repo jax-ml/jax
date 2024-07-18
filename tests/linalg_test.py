@@ -16,6 +16,7 @@
 
 from functools import partial
 import itertools
+import unittest
 
 import numpy as np
 import scipy
@@ -33,6 +34,7 @@ from jax._src import config
 from jax._src.lax import linalg as lax_linalg
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
+from jax._src.lib import xla_extension_version
 from jax._src.numpy.util import promote_dtypes_inexact
 
 config.parse_flags_with_absl()
@@ -1622,6 +1624,15 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         partial(jvp, lax.linalg.triangular_solve),
         (a, b),
         (a, b))
+
+  @unittest.skipIf(xla_extension_version < 277, "Requires jaxlib > 0.4.30")
+  def testTriangularSolveSingularBatched(self):
+    x = jnp.array([[1, 1], [0, 0]], dtype=np.float32)
+    y = jnp.array([[1], [1.]], dtype=np.float32)
+    out = jax.lax.linalg.triangular_solve(x[None], y[None], left_side=True)
+    # x is singular. The triangular solve may contain either nans or infs, but
+    # it should not consist of only finite values.
+    self.assertFalse(np.all(np.isfinite(out)))
 
   @jtu.sample_product(
     n=[1, 4, 5, 20, 50, 100],
