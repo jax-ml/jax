@@ -6,6 +6,8 @@ see {ref}`pallas-changelog`.
 
 <!--
 Remember to align the itemized text with the first line of an item within a list.
+
+When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.md.
 -->
 
 ## jax 0.4.32
