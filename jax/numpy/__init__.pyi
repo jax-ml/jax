@@ -462,13 +462,13 @@ def imag(x: ArrayLike, /) -> Array: ...
 index_exp = _np.index_exp
 
 @overload
-def indices(dimensions: Sequence[int], dtype: DTypeLike = int32,
+def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
             sparse: Literal[False] = False) -> Array: ...
 @overload
-def indices(dimensions: Sequence[int], dtype: DTypeLike = int32,
+def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
             *, sparse: Literal[True]) -> tuple[Array, ...]: ...
 @overload
-def indices(dimensions: Sequence[int], dtype: DTypeLike = int32,
+def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
             sparse: builtins.bool = False) -> Array | tuple[Array, ...]: ...
 
 inexact = _np.inexact

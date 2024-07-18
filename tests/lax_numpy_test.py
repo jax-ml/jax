@@ -4613,6 +4613,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  def testIndiciesDefaultDtype(self):
+    self.assertEqual(jnp.indices((2, 3)).dtype,
+                     dtypes.canonicalize_dtype(np.int64))
+
   @jtu.sample_product(
     shape=nonzerodim_shapes,
     dtype=all_dtypes,

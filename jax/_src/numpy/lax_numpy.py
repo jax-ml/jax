@@ -4517,17 +4517,19 @@ def ix_(*args: ArrayLike) -> tuple[Array, ...]:
 
 
 @overload
-def indices(dimensions: Sequence[int], dtype: DTypeLike = int32,
+def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
             sparse: Literal[False] = False) -> Array: ...
 @overload
-def indices(dimensions: Sequence[int], dtype: DTypeLike = int32,
+def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
             *, sparse: Literal[True]) -> tuple[Array, ...]: ...
 @overload
-def indices(dimensions: Sequence[int], dtype: DTypeLike = int32,
+def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
             sparse: bool = False) -> Array | tuple[Array, ...]: ...
 @util.implements(np.indices)
-def indices(dimensions: Sequence[int], dtype: DTypeLike = int32,
+def indices(dimensions: Sequence[int], dtype: DTypeLike | None = None,
             sparse: bool = False) -> Array | tuple[Array, ...]:
+  dtypes.check_user_dtype_supported(dtype, "indices")
+  dtype = dtype or dtypes.canonicalize_dtype(int_)
   dimensions = tuple(
       core.concrete_or_error(operator.index, d, "dimensions argument of jnp.indices")
       for d in dimensions)
