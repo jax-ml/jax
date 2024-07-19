@@ -927,8 +927,7 @@ psum2_p.multiple_results = True
 psum2_p.def_impl(lax_parallel.psum_p.impl)
 psum2_p.def_effectful_abstract_eval(lax_parallel.psum_p.abstract_eval)
 mlir.register_lowering(psum2_p, mlir._lowerings[lax_parallel.psum_p])
-batching.primitive_batchers[psum2_p] = partial(lax_parallel._reduction_batcher, psum2_p)
-batching.axis_primitive_batchers[psum2_p] = \
+batching.fancy_primitive_batchers[psum2_p] = \
   partial(lax_parallel._batched_reduction_collective, psum2_p,
           lambda v, axis_size: axis_size * v)
 def _psum2_transpose_rule(cts, *args, axes, axis_index_groups):
@@ -952,11 +951,10 @@ def _pbroadcast_batcher(vals_in, dims_in, *, axes, axis_index_groups):
   vals_out = pbroadcast_p.bind(*vals_in, axes=axes,
                                axis_index_groups=axis_index_groups)
   return vals_out, dims_in
-batching.primitive_batchers[pbroadcast_p] = _pbroadcast_batcher
 def _pbroadcast_axis_batcher(size, name, trace_type, vals_in, dims_in, *, axes,
                              groups):
   raise NotImplementedError  # vmap with axis name involved in this primitive
-batching.axis_primitive_batchers[pbroadcast_p] = _pbroadcast_axis_batcher
+batching.fancy_primitive_batchers[pbroadcast_p] = _pbroadcast_axis_batcher
 ad.deflinear2(pbroadcast_p,
               lambda cts, *_, axes, axis_index_groups:
               psum2_p.bind(*cts, axes=axes, axis_index_groups=axis_index_groups))

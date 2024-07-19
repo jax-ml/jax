@@ -370,9 +370,7 @@ def ltg_batcher(insert_axis, spmd_axis_name, axis_size,
   y = host_local_array_to_global_array_p.bind(
       x, global_mesh=global_mesh, pspec=new_pspec)
   return y, d
-batching.spmd_axis_primitive_batchers[host_local_array_to_global_array_p] = partial(
-    ltg_batcher, False)
-batching.axis_primitive_batchers[host_local_array_to_global_array_p] = partial(
+batching.fancy_primitive_batchers[host_local_array_to_global_array_p] = partial(
     ltg_batcher, False, None)
 
 def _ltg_lowering(ctx, x, *, global_mesh, pspec):

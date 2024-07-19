@@ -866,7 +866,7 @@ def _transpose_scan_jaxpr(jaxpr, num_res1, num_c, num_res2,
                         b_ys_avals_stripped + res2_avals))
 
 
-def _scan_batching_rule(spmd_axis_name, axis_size, axis_name, main_type, args,
+def _scan_batching_rule(axis_data, main_type, args,
                         dims, reverse, length,
                         jaxpr, num_consts, num_carry, linear, unroll,
                         _split_transpose):
@@ -885,8 +885,8 @@ def _scan_batching_rule(spmd_axis_name, axis_size, axis_name, main_type, args,
     jaxpr_batched, batched_out = batching.batch_jaxpr(
         jaxpr, axis_size, batched,
         instantiate=carry_batched + [False] * num_ys,
-        axis_name=axis_name,
-        spmd_axis_name=spmd_axis_name,
+        axis_name=axis_data.name,
+        spmd_axis_name=axis_data.spmd_name,
         main_type=main_type)
     carry_batched_out, ys_batched = batched_out[:num_carry], batched_out[num_carry:]
     if carry_batched_out == carry_batched:
@@ -1217,8 +1217,7 @@ pe.custom_partial_eval_rules[scan_p] = _scan_partial_eval
 xla.register_initial_style_primitive(scan_p)
 mlir.register_lowering(scan_p,
                        mlir.lower_fun(_scan_impl, multiple_results=True))
-batching.axis_primitive_batchers[scan_p] = partial(_scan_batching_rule, None)
-batching.spmd_axis_primitive_batchers[scan_p] = _scan_batching_rule
+batching.fancy_primitive_batchers[scan_p] = _scan_batching_rule
 core.custom_typechecks[scan_p] = partial(_scan_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[scan_p] = _scan_partial_eval_custom
 pe.padding_rules[scan_p] = _scan_padding_rule
@@ -1374,7 +1373,7 @@ def _while_loop_abstract_eval(*avals, cond_jaxpr, body_jaxpr, body_nconsts,
   return _map(raise_to_shaped, body_jaxpr.out_avals), joined_effects
 
 
-def _while_loop_batching_rule(spmd_axis_name, axis_size, axis_name, main_type,
+def _while_loop_batching_rule(axis_data, main_type,
                               args, dims, cond_nconsts, cond_jaxpr,
                               body_nconsts, body_jaxpr):
   from jax._src.callback import _IOEffect, _OrderedIOEffect
@@ -1393,8 +1392,8 @@ def _while_loop_batching_rule(spmd_axis_name, axis_size, axis_name, main_type,
   # reach a fixpoint.
   for _ in range(1 + len(carry_bat)):
     _, carry_bat_out = batching.batch_jaxpr(
-        body_jaxpr, axis_size, bconst_bat + carry_bat, instantiate=carry_bat,
-        axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
+        body_jaxpr, axis_data.size, bconst_bat + carry_bat, instantiate=carry_bat,
+        axis_name=axis_data.size, spmd_axis_name=axis_data.spmd_name, main_type=main_type)
     if carry_bat == carry_bat_out:
       break
     carry_bat = safe_map(operator.or_, carry_bat, carry_bat_out)
@@ -1891,8 +1890,7 @@ ad.primitive_jvps[while_p] = _while_loop_jvp
 pe.custom_partial_eval_rules[while_p] = _while_partial_eval
 xla.register_initial_style_primitive(while_p)
 ad.primitive_transposes[while_p] = _while_transpose_error
-batching.axis_primitive_batchers[while_p] = partial(_while_loop_batching_rule, None)
-batching.spmd_axis_primitive_batchers[while_p] = _while_loop_batching_rule
+batching.fancy_primitive_batchers[while_p] = _while_loop_batching_rule
 pe.partial_eval_jaxpr_custom_rules[while_p] = _while_partial_eval_custom
 mlir.register_lowering(while_p, _while_lowering)
 core.custom_typechecks[while_p] = _while_typecheck

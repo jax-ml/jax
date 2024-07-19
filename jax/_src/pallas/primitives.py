@@ -69,7 +69,8 @@ def program_id_bind(*, axis: int):
   # otherwise).
   _ = frame.size(axis)
   return jax_core.Primitive.bind(program_id_p, axis=axis)
-program_id_p.def_custom_bind(program_id_bind)
+# TODO(dougalm): figure out how put the grid_env contest on the relevant trace
+# program_id_p.def_custom_bind(program_id_bind)
 
 def _program_id_abstract_eval(**_):
   return jax_core.ShapedArray((), jnp.int32)
@@ -81,7 +82,8 @@ def num_programs(axis: int) -> int | jax.Array:
   """Returns the size of the grid along the given axis."""
   return num_programs_p.bind(axis=axis)
 
-@num_programs_p.def_custom_bind
+# TODO(dougalm): figure out how put the grid_env contest on the relevant trace
+# @num_programs_p.def_custom_bind
 def _num_programs_bind(*, axis: int):
   # We might be using a local grid env
   grid_env = pallas_core.current_grid_env()

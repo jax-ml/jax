@@ -375,8 +375,7 @@ def _linear_solve_transpose_rule(cotangent, *primals, const_lengths, jaxprs):
   return [None] * sum(const_lengths) + cotangent_b
 
 
-def _linear_solve_batching_rule(spmd_axis_name, axis_size, axis_name, main_type,
-                                args, dims, const_lengths, jaxprs):
+def _linear_solve_batching_rule(axis_data, main_type, args, dims, const_lengths, jaxprs):
   orig_bat = [d is not batching.not_mapped for d in dims]
 
   params, b = _split_linear_solve_args(args, const_lengths)
@@ -467,5 +466,4 @@ mlir.register_lowering(
     linear_solve_p, mlir.lower_fun(_custom_linear_solve_impl,
                                    multiple_results=True))
 ad.primitive_transposes[linear_solve_p] = _linear_solve_transpose_rule
-batching.axis_primitive_batchers[linear_solve_p] = partial(_linear_solve_batching_rule, None)
-batching.spmd_axis_primitive_batchers[linear_solve_p] = _linear_solve_batching_rule
+batching.fancy_primitive_batchers[linear_solve_p] = partial(_linear_solve_batching_rule)

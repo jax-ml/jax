@@ -1931,19 +1931,17 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
 mlir.register_lowering(pjit_p, _pjit_lowering)
 
 
-def _pjit_batcher(insert_axis, spmd_axis_name,
-                  axis_size, axis_name, main_type,
+def _pjit_batcher(insert_axis, axis_data, main_type,
                   vals_in, dims_in,
                   jaxpr, in_shardings, out_shardings, in_layouts, out_layouts,
                   resource_env, donated_invars, name, keep_unused, inline):
   segment_lens, dims_in = batching.indirectify_ragged_axes(dims_in)
   new_jaxpr, axes_out = batching.batch_jaxpr2(
-      jaxpr, axis_size, dims_in, axis_name=axis_name,
-      spmd_axis_name=spmd_axis_name, main_type=main_type)
+      jaxpr, axis_data, dims_in, main_type=main_type)
 
   # `insert_axis` is set to True only for some `xmap` uses.
-  new_parts = (axis_name,) if insert_axis else (
-      () if spmd_axis_name is None else spmd_axis_name)
+  new_parts = (axis_data.name,) if insert_axis else (
+      () if axis_data.spmd_name is None else axis_data.spmd_name)
 
   if resource_env is not None:
     mesh = resource_env.physical_mesh
@@ -1981,9 +1979,8 @@ def _pjit_batcher(insert_axis, spmd_axis_name,
       vals_in, vals_out, axes_out)
   return vals_out, resolved_axes_out
 
-batching.spmd_axis_primitive_batchers[pjit_p] = partial(_pjit_batcher, False)
-batching.axis_primitive_batchers[pjit_p] = partial(_pjit_batcher, False, None)
-pxla.spmd_primitive_batchers[pjit_p] = partial(_pjit_batcher, True, None)
+batching.fancy_primitive_batchers[pjit_p] = partial(_pjit_batcher, False)
+pxla.spmd_primitive_batchers[pjit_p] = partial(_pjit_batcher, True)
 
 def _pjit_batcher_for_sharding(
     s: sharding.Sharding | UnspecifiedValue,
@@ -2567,20 +2564,20 @@ mlir.register_lowering(sharding_constraint_p,
 
 
 def _sharding_constraint_batcher(
-    insert_axis, spmd_axis_name, axis_size, axis_name, main_type, vals_in,
+    insert_axis, axis_data, main_type, vals_in,
     dims_in, sharding, layout, resource_env, unconstrained_dims):
-  if spmd_axis_name is not None and isinstance(sharding, NamedSharding):
+  if axis_data.spmd_name is not None and isinstance(sharding, NamedSharding):
     used = {n for ns in sharding.spec
             for n in (ns if isinstance(ns, tuple) else (ns,))}
-    if set(spmd_axis_name) & used:
-      raise ValueError(f"vmap spmd_axis_name {spmd_axis_name} cannot appear in "
+    if set(axis_data.spmd_name) & used:
+      raise ValueError(f"vmap spmd_axis_name {axis_data.spmd_name} cannot appear in "
                        "with_sharding_constraint spec, but got spec "
                        f"{sharding.spec}")
   x, = vals_in
   d, = dims_in
   # None means unconstrained in ParsedPartitionSpec
-  new_parts = (axis_name,) if insert_axis else (
-      None if spmd_axis_name is None else spmd_axis_name)
+  new_parts = (axis_data.axis_name,) if insert_axis else (
+      None if axis_data.spmd_name is None else axis_data.spmd_name)
   unconstrained_dims = {ud + (d <= ud) for ud in unconstrained_dims}
 
   if new_parts is None:
@@ -2606,12 +2603,10 @@ def _sharding_constraint_batcher(
       resource_env=resource_env,
       unconstrained_dims=unconstrained_dims)
   return y, d
-batching.spmd_axis_primitive_batchers[sharding_constraint_p] = partial(
+batching.fancy_primitive_batchers[sharding_constraint_p] = partial(
     _sharding_constraint_batcher, False)
-batching.axis_primitive_batchers[sharding_constraint_p] = partial(
-    _sharding_constraint_batcher, False, None)
 pxla.spmd_primitive_batchers[sharding_constraint_p] = partial(
-    _sharding_constraint_batcher, True, None)
+    _sharding_constraint_batcher, True)
 
 
 def _resource_typing_sharding_constraint(avals, params, source_info,

@@ -830,7 +830,7 @@ def _custom_vjp_call_jaxpr_jvp(
 ad.primitive_jvps[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_jvp
 
 def _custom_vjp_call_jaxpr_vmap(
-    spmd_axis_name, axis_size, axis_name, main_type, args, in_dims, *,
+    axis_data, main_type, args, in_dims, *,
     fun_jaxpr: core.ClosedJaxpr,
     fwd_jaxpr_thunk: Callable[..., tuple[core.Jaxpr, Sequence[Any]]],
     num_consts: int, bwd: Callable, out_trees: Callable, symbolic_zeros: bool):
@@ -866,10 +866,7 @@ def _custom_vjp_call_jaxpr_vmap(
       num_consts=num_consts, out_trees=out_trees, symbolic_zeros=symbolic_zeros)
   out_dims = out_dims2[0] if out_dims2 else out_dims1
   return batched_outs, out_dims
-batching.spmd_axis_primitive_batchers[custom_vjp_call_jaxpr_p] = \
-    _custom_vjp_call_jaxpr_vmap
-batching.axis_primitive_batchers[custom_vjp_call_jaxpr_p] = partial(
-    _custom_vjp_call_jaxpr_vmap, None)
+batching.fancy_primitive_batchers[custom_vjp_call_jaxpr_p] = _custom_vjp_call_jaxpr_vmap
 
 xla.register_initial_style_primitive(custom_vjp_call_jaxpr_p)
 

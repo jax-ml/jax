@@ -357,8 +357,7 @@ def _bcast_select_n(pred, *cases):
     pred = lax.broadcast_in_dim(pred, np.shape(cases[0]), idx)
   return lax.select_n(pred, *cases)
 
-def _cond_batching_rule(spmd_axis_name, axis_size, axis_name, main_type, args,
-                        dims, branches):
+def _cond_batching_rule(axis_data, main_type, args, dims, branches):
   index, *ops = args
   index_dim, *op_dims = dims
   # TODO(sharadmv): clean this up by adding a specific blocklist
@@ -805,8 +804,7 @@ cond_p.def_effectful_abstract_eval(_cond_abstract_eval)
 ad.primitive_jvps[cond_p] = _cond_jvp
 ad.reducing_transposes[cond_p] = _cond_transpose
 pe.custom_partial_eval_rules[cond_p] = _cond_partial_eval
-batching.spmd_axis_primitive_batchers[cond_p] = _cond_batching_rule
-batching.axis_primitive_batchers[cond_p] = partial(_cond_batching_rule, None)
+batching.fancy_primitive_batchers[cond_p] = _cond_batching_rule
 xla.register_initial_style_primitive(cond_p)
 core.custom_typechecks[cond_p] = partial(_cond_typecheck, False)
 pe.partial_eval_jaxpr_custom_rules[cond_p] = _cond_partial_eval_custom

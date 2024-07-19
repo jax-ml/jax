@@ -645,22 +645,34 @@ def pgather(src, idx, axes: int | AxisName):
 
 ### parallel primitives
 
-def _subst_all_names_in_param(
-    pname: str, params: core.ParamDict, subst: core.AxisSubst, traverse: bool) -> core.ParamDict:
-  axis_name = params[pname]
-  if not isinstance(axis_name, (tuple, list)):
-    axis_name = (axis_name,)
-  result = dict(params)
-  result[pname] = sum(((name,) if isinstance(name, int) else subst(name)
-                       for name in axis_name),
-                      ())
-  return result
+def constant_version_of_psum(args, axes, axis_index_groups):
+  named_axes, pos_axes = axes_partition = [], []
+  for axis in axes:
+    axes_partition[isinstance(axis, int)].append(axis)
+  def pos_reduce(x):
+    if not pos_axes:
+      return x
+    return lax._reduce_sum(x, [canonicalize_axis(axis, getattr(x, 'ndim', 0))
+                               for axis in pos_axes])
+  if axis_index_groups is not None:
+    assert not pos_axes
+    size = len(axis_index_groups[0])
+  else:
+    size = math.prod([core.axis_frame(name).size for name in named_axes])  # type: ignore
+  return tuple(lax._const(x, size) * pos_reduce(x) for x in args)
 
 def _reduction_with_positional_batcher(prim, vals_in, dims_in, axis_index_groups,
     transform_unmapped, transform_mapped):
   if axis_index_groups is not None:
     raise NotImplementedError("axis_index_groups not supported in vmap collectives. "
                               "Please open a feature request!")
+
+  if all(d is None for d in dims_in):
+    if prim is psum_p:
+      return constant_version_of_psum(vals_in, dims_in, axis_index_groups)
+    else:
+      assert False
+
   vals_in = [val if d is batching.not_mapped or d == 0 else _moveaxis(d, 0, val)
              for val, d in zip(vals_in, dims_in)]
   mapped_vals_in, unmapped_vals_in = partitioned_vals_in = [], []
@@ -696,10 +708,10 @@ def _reduction_batcher(prim, vals_in, dims_in, *, axes, axis_index_groups):
   return vals_out, [d if d is batching.not_mapped else 0 for d in dims_in]
 
 def _batched_reduction_collective(
-    prim, if_unmapped, axis_size, frame_name, _, vals_in, dims_in, axes,
+    prim, if_unmapped, axis_data, _, vals_in, dims_in, axes,
     axis_index_groups):
   assert prim.multiple_results
-  assert frame_name in axes
+  assert axis_data.name in axes
   # Note that we have a choice here. We can either unfuse the reduction into one
   # that handles the batched dims and then another one that handles the rest.
   # Alternatively, we can keep the dimension reduction fused with the rest, but
@@ -708,10 +720,10 @@ def _batched_reduction_collective(
   # We choose the second strategy here.
   vals_out = _reduction_with_positional_batcher(
       prim, vals_in, dims_in, axis_index_groups,
-      lambda d, d_vals_in: (tuple(axis for axis in axes if axis != frame_name),
-                            [if_unmapped(v, axis_size) for v in d_vals_in]),
+      lambda d, d_vals_in: (tuple(axis for axis in axes if axis != axis_data.name),
+                            [if_unmapped(v, axis_data.name) for v in d_vals_in]),
       lambda d, d_vals_in: (tuple(axis + (axis >= d) if isinstance(axis, int) else
-                                  axis if axis != frame_name else
+                                  axis if axis != axis_data.name else
                                   d
                                   for axis in axes),
                             d_vals_in))
@@ -734,7 +746,9 @@ def _replica_groups_hlo(replica_groups: Sequence[Sequence[int]]
 
 def _allreduce_impl(pos_reducer, *args, axes, axis_index_groups):
   assert axis_index_groups is None
-  assert all(isinstance(axis, int) for axis in axes), axes
+  if not all(isinstance(axis, int) for axis in axes):
+    breakpoint()
+  assert all(isinstance(axis, int) for axis in axes)
   return [pos_reducer(arg, axes) for arg in args]
 
 def _allreduce_effectful_abstract_eval(*args, axes, axis_index_groups):
@@ -837,8 +851,7 @@ psum_p.def_effectful_abstract_eval(_allreduce_effectful_abstract_eval)
 mlir.register_lowering(
     psum_p, partial(_allreduce_lowering, lax.add_p, lax._reduce_sum))
 ad.deflinear2(psum_p, _psum_transpose_rule)
-batching.primitive_batchers[psum_p] = partial(_reduction_batcher, psum_p)
-batching.axis_primitive_batchers[psum_p] = \
+batching.fancy_primitive_batchers[psum_p] = \
   partial(_batched_reduction_collective, psum_p, lambda v, axis_size: axis_size * v)
 
 pmax_p = core.Primitive('pmax')
@@ -847,8 +860,7 @@ pmax_p.def_impl(partial(_allreduce_impl, lax._reduce_max))
 pmax_p.def_effectful_abstract_eval(_allreduce_effectful_abstract_eval)
 mlir.register_lowering(
     pmax_p, partial(_allreduce_lowering, lax.max_p, lax._reduce_max))
-batching.primitive_batchers[pmax_p] = partial(_reduction_batcher, pmax_p)
-batching.axis_primitive_batchers[pmax_p] = \
+batching.fancy_primitive_batchers[pmax_p] = \
   partial(_batched_reduction_collective, pmax_p, lambda v, axis_size: v)
 
 
@@ -858,8 +870,7 @@ pmin_p.def_impl(partial(_allreduce_impl, lax._reduce_min))
 pmin_p.def_effectful_abstract_eval(_allreduce_effectful_abstract_eval)
 mlir.register_lowering(
     pmin_p, partial(_allreduce_lowering, lax.min_p, lax._reduce_min))
-batching.primitive_batchers[pmin_p] = partial(_reduction_batcher, pmin_p)
-batching.axis_primitive_batchers[pmin_p] = \
+batching.fancy_primitive_batchers[pmin_p] = \
   partial(_batched_reduction_collective, pmin_p, lambda v, axis_size: v)
 
 
@@ -924,8 +935,7 @@ ppermute_p = core.Primitive('ppermute')
 ppermute_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 ad.deflinear2(ppermute_p, _ppermute_transpose_rule)
 mlir.register_lowering(ppermute_p, _ppermute_lowering)
-batching.primitive_batchers[ppermute_p] = partial(_collective_batcher, ppermute_p)
-batching.axis_primitive_batchers[ppermute_p] = _ppermute_batcher
+batching.fancy_primitive_batchers[ppermute_p] = _ppermute_batcher
 
 def _pbroadcast_transpose_rule(t, x, source, axis_name):
   is_source = axis_index(axis_name) == source
@@ -960,8 +970,7 @@ pbroadcast_p = core.Primitive('pbroadcast')
 pbroadcast_p.def_abstract_eval(lambda x, **params: raise_to_shaped(x))
 ad.deflinear2(pbroadcast_p, _pbroadcast_transpose_rule)
 mlir.register_lowering(pbroadcast_p, _pbroadcast_lowering)
-batching.primitive_batchers[pbroadcast_p] = partial(_collective_batcher, pbroadcast_p)
-batching.axis_primitive_batchers[pbroadcast_p] = _pbroadcast_batcher
+batching.fancy_primitive_batchers[pbroadcast_p] = _pbroadcast_batcher
 
 
 def _moveaxis(src, dst, x):
@@ -1129,8 +1138,7 @@ all_to_all_p = core.Primitive('all_to_all')
 all_to_all_p.def_effectful_abstract_eval(_all_to_all_effectful_abstract_eval)
 mlir.register_lowering(all_to_all_p, _all_to_all_lowering)
 ad.deflinear2(all_to_all_p, _all_to_all_transpose_rule)
-batching.primitive_batchers[all_to_all_p] = _all_to_all_batcher
-batching.axis_primitive_batchers[all_to_all_p] = _all_to_all_batched_collective
+batching.fancy_primitive_batchers[all_to_all_p] = _all_to_all_batched_collective
 
 
 def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False):
@@ -1333,8 +1341,7 @@ for p in ("cuda", "rocm", "tpu"):
                          partial(_all_gather_lowering, platform=p),
                          platform=p)
 ad.deflinear2(all_gather_p, _all_gather_transpose_rule)
-batching.primitive_batchers[all_gather_p] = _all_gather_batcher
-batching.axis_primitive_batchers[all_gather_p] = _all_gather_batched_collective
+batching.fancy_primitive_batchers[all_gather_p] = _all_gather_batched_collective
 
 
 def _reduce_scatter_lowering(
@@ -1466,8 +1473,7 @@ reduce_scatter_p.def_effectful_abstract_eval(
     _reduce_scatter_effectful_abstract_eval
 )
 ad.deflinear2(reduce_scatter_p, _reduce_scatter_transpose_rule)
-batching.primitive_batchers[reduce_scatter_p] = _reduce_scatter_batcher
-batching.axis_primitive_batchers[reduce_scatter_p] = _reduce_scatter_collective
+batching.fancy_primitive_batchers[reduce_scatter_p] = _reduce_scatter_collective
 
 mlir.register_lowering(reduce_scatter_p,
                        partial(_reduce_scatter_lowering, lax.add_p))
@@ -1654,7 +1660,7 @@ def _pdot_vmap_collective_rule(axis_size, frame_name, _, vals_in, dims_in, *, ax
                     pos_batch=(tuple(x_pos_batch), tuple(y_pos_batch)),
                     precision=precision)
   return out, None
-batching.axis_primitive_batchers[pdot_p] = _pdot_vmap_collective_rule
+batching.fancy_primitive_batchers[pdot_p] = _pdot_vmap_collective_rule
 
 def _pdot_vmap_batching_rule(vals_in, dims_in, *, axis_name, pos_contract,
                              pos_batch, precision):
@@ -1763,5 +1769,4 @@ pgather_p.def_impl(_pgather_impl)
 pgather_p.def_abstract_eval(_pgather_abstract_eval)
 mlir.register_lowering(pgather_p, _pgather_parallel_lowering)
 # TODO: Transpose? That requires adding pscatter...
-batching.primitive_batchers[pgather_p] = _pgather_batcher
-batching.axis_primitive_batchers[pgather_p] = _pgather_collective_batcher
+batching.fancy_primitive_batchers[pgather_p] = _pgather_collective_batcher
