@@ -268,6 +268,9 @@ class FragmentedArray:
     else:
       raise NotImplementedError(self.mlir_dtype)
 
+  def __radd__(self, other):
+    return self + other
+
   def __mul__(self, other):
     if ir.FloatType.isinstance(self.mlir_dtype):
       return self._pointwise(arith.mulf, other)
@@ -276,15 +279,28 @@ class FragmentedArray:
     else:
       raise NotImplementedError(self.mlir_dtype)
 
+  def __rmul__(self, other):
+    return self * other
+
   def __sub__(self, other):
     if not ir.FloatType.isinstance(self.mlir_dtype):
       raise NotImplementedError
     return self._pointwise(arith.subf, other)
 
+  def __rsub__(self, other):
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError
+    return self._pointwise(lambda s, o: arith.subf(o, s), other)
+
   def __truediv__(self, other):
     if not ir.FloatType.isinstance(self.mlir_dtype):
       raise NotImplementedError
     return self._pointwise(arith.divf, other)
+
+  def __rtruediv__(self, other):
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError
+    return self._pointwise(lambda s, o: arith.divf(o, s), other)
 
   def max(self, other):
     if not ir.FloatType.isinstance(self.mlir_dtype):
