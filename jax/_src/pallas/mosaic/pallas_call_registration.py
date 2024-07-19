@@ -76,6 +76,7 @@ def pallas_call_tpu_lowering_rule(
     compiler_params: dict[str, Any]):
   """Lowers a pallas_call to a Mosaic TPU custom call."""
   if interpret:
+    # TODO(necula): is this branch still needed?
     return mlir.lower_fun(pallas_call_p.impl, multiple_results=True)(
         ctx, *in_nodes, jaxpr=jaxpr, name=name, out_shapes=out_shapes,
         in_shapes=in_shapes,

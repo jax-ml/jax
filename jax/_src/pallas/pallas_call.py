@@ -187,12 +187,13 @@ def _pallas_call_impl_interpret(
   )
   assert next(dynamic_grid_args_iter, None) is None
   with grid_mapping.trace_env():
-    discharged_jaxpr, consts = state_discharge.discharge_state(jaxpr, ())
+    discharged_jaxpr, discharged_consts = state_discharge.discharge_state(jaxpr, ())
   if debug:
     print(discharged_jaxpr)
   out = _initialize_output_vals(out_shapes, args, input_output_aliases)
   scalars, args = split_list(args, [grid_mapping.num_index_operands])  # type: ignore
-  # invars: [*scalar_prefetch, *inputs, *outputs, *scratch]
+  # invars: [*scalar_prefetch, *consts, *inputs, *outputs, *scratch]
+  # args now contains: *consts, *inputs, *outputs
   num_invars = len(jaxpr.invars)
   num_inputs_outputs = (
       num_invars
@@ -243,6 +244,10 @@ def _pallas_call_impl_interpret(
   else:
     # Base case is always one iteration when grid is ()
     num_iterations = 1
+
+  # The scan carry: (i, loop_idx, *consts, *ins, *outs, *scratch)
+  # i:int32 is the interation index
+  # loop_idx: tuple[int32] are the program ids for each grid axis
   def cond(carry):
     i, *_ = carry
     return i < num_iterations
@@ -256,7 +261,7 @@ def _pallas_call_impl_interpret(
     carry, scratch = split_list(carry, [num_inout])
     with pallas_core.grid_env(local_grid_env):
       start_indices = [
-          None if bm is None else bm.compute_start_indices(loop_idx, *scalars)
+          None if bm is None else bm.compute_start_indices_interpret(loop_idx, *scalars)
           for bm in grid_mapping.block_mappings]
     blocks = map(_maybe_dynamic_slice, start_indices, block_shapes, carry,
                  is_indexing_dim)
@@ -269,13 +274,14 @@ def _pallas_call_impl_interpret(
           len(blocks),
           len(scratch_values),
       )
-      blocks = jax.core.eval_jaxpr(discharged_jaxpr, consts, *scalars,
+      blocks = jax.core.eval_jaxpr(discharged_jaxpr, discharged_consts, *scalars,
                                    *blocks, *scratch)
     blocks = blocks[grid_mapping.num_index_operands:]
     blocks, out_scratch = split_list(blocks, [num_inout])
     carry = map(_maybe_dynamic_update_slice, start_indices, block_shapes,
                 carry, blocks, is_indexing_dim)
     return (i + 1, _get_next_indices(grid, loop_idx), *carry, *out_scratch)
+
   (_, _, *carry) = lax.while_loop(
       cond, body, (jnp.int32(0), grid_start_indices, *carry)
   )
@@ -604,13 +610,13 @@ def _pallas_call_batching_rule(
     # Ordinarily, adding support for scalar prefetch in vmap would involve
     # modifying the block specs in a nontrivial way. However, if we are only
     # vmapping over 1-sized dimensions, we can just get rid of the dimensions
-    # and pretend we were never vmapping over them at all.
+    # and pretend we were never vmapped over them at all.
     if all(
         bdim is batching.not_mapped or arg.shape[bdim] == 1
         for arg, bdim in zip(scalar_args, scalar_bdims)
     ):
       scalar_args = safe_map(_maybe_squeeze_out_bdim, scalar_args, scalar_bdims)
-      scalar_bdims = [None] * len(scalar_args)
+      scalar_bdims = [batching.not_mapped] * len(scalar_args)
       args = (*scalar_args, *args)
       dims = (*scalar_bdims, *bdims)
     else:
@@ -648,6 +654,7 @@ def _pallas_call_batching_rule(
   all_dims = list(dims) + [0] * len(out_shapes)
 
   num_index_operands = grid_mapping.num_index_operands
+  num_constant_operands = grid_mapping.num_constant_operands
   num_scratch_operands = grid_mapping.num_scratch_operands
 
   # Only add a batch dimension for the avals that actually have a grid mapping.
@@ -661,11 +668,16 @@ def _pallas_call_batching_rule(
       block_mappings,
   )
 
+  # TODO(necula): should fix in_shapes to include the consts
+  dims_no_consts = (
+      dims[:num_index_operands] +
+      dims[num_index_operands + num_constant_operands:]
+  )
   batched_in_shapes = tuple(
       jax.ShapeDtypeStruct(x.shape if dim is batching.not_mapped else
                            tuple_insert(x.shape, dim, axis_size),
                            x.dtype)
-      for x, dim in zip(in_shapes, dims))
+      for x, dim in zip(in_shapes, dims_no_consts))
   batched_out_shapes = tuple(
       jax.ShapeDtypeStruct(tuple_insert(x.shape, 0, axis_size), x.dtype)
       for x in out_shapes)
@@ -900,11 +912,37 @@ def _trace_to_jaxpr(fun: Callable, grid_spec: GridSpec,
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun,
                                                      jaxpr_flat_avals, debug)
     if consts:
-      jaxpr = state_utils.hoist_consts_to_refs(jaxpr)
       # Pad ``block_mappings`` to account for the hoisted constants.
+      # The constants will be right after the index operands and just before
+      # the real inputs and outputs.
+      jaxpr = state_utils.hoist_consts_to_refs(
+          jaxpr,
+          index=grid_mapping.num_index_operands,
+          make_abstract_ref=lambda aval: pallas_core.AbstractMemoryRef(aval, None))
+      num_constant_operands = len(consts)
+      # TODO(necula): refactor grid_mapping to remove this code duplication
+      grid_avals = [jax_core.ShapedArray((), jnp.dtype("int32"))] * len(grid_mapping.grid)
+      if grid_mapping.num_index_operands:
+        grid_avals += flat_in_avals[:grid_mapping.num_index_operands]  # type: ignore
+      # Create args, kwargs pytree def
+      grid_tree = tree_util.tree_structure((tuple(grid_avals), {}))
+      const_block_mappings = []
+      for c_idx, c in enumerate(consts):
+        const_block_mapping = pallas_core._convert_block_spec_to_block_mapping(
+            grid_avals,
+            pallas_core.BlockSpec(None, None),
+            path=(tree_util.SequenceKey(c_idx),),
+            aval=jax_core.ShapedArray(c.shape, c.dtype),
+            in_tree=grid_tree,
+            grid=grid_mapping.grid,
+            mapped_dims=(),
+            what="consts",
+        )
+        const_block_mappings.append(const_block_mapping)
+
       grid_mapping = grid_mapping.replace(
-          block_mappings=(*grid_mapping.block_mappings, *[None] * len(consts)),
-          num_constant_operands=len(consts),
+          block_mappings=(*const_block_mappings, *grid_mapping.block_mappings),
+          num_constant_operands=num_constant_operands,
       )
   return grid_mapping, jaxpr, consts, out_tree_thunk()
 
@@ -1105,8 +1143,9 @@ def pallas_call(
             f"and to output{tree_util.keystr(out_paths[o_idx])} with "
             f"a different abstract value {out_aval}.")
 
+    index_args, rest_args = split_list(flat_args, [grid_mapping.num_index_operands])
     out_flat = pallas_call_p.bind(
-        *dynamic_grid_bounds, *consts, *flat_args,
+        *dynamic_grid_bounds, *index_args, *consts, *rest_args,
         jaxpr=jaxpr, name=name,
         in_shapes=tuple(jax.ShapeDtypeStruct(a.shape, a.dtype)
                         for a in flat_args),

@@ -251,7 +251,7 @@ def _new_ir_context() -> ir.Context:
 
 def lower_jaxpr_to_triton_module(
     jaxpr: jax_core.Jaxpr,
-    in_shapes,
+    in_out_shapes,
     grid_mapping: GridMapping,
     name: str,
     platform: str
@@ -301,6 +301,10 @@ def lower_jaxpr_to_triton_module(
           functools.partial(_eval_index_map, ctx, program_ids),
           grid_mapping.block_mappings,
       )
+      consts_shapes = [
+          jax.ShapeDtypeStruct(v.aval.shape, v.aval.dtype)
+          for v in jaxpr.invars[grid_mapping.num_index_operands:grid_mapping.num_index_operands + grid_mapping.num_constant_operands]
+      ]
       block_infos = [
           BlockInfo(
               jax.ShapeDtypeStruct(shape_dtype.shape, shape_dtype.dtype),
@@ -310,7 +314,7 @@ def lower_jaxpr_to_triton_module(
           if block_mapping is not None
           else None
           for shape_dtype, block_mapping, start_idx in zip(
-              (*in_shapes, *[()] * grid_mapping.num_constant_operands),
+              (*consts_shapes, *in_out_shapes),
               grid_mapping.block_mappings,
               start_indices,
           )

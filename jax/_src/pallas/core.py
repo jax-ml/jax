@@ -245,7 +245,7 @@ class BlockMapping:
   index_map_jaxpr: jax_core.ClosedJaxpr
   indexing_mode: IndexingMode
 
-  def compute_start_indices(self, loop_idx, *args):
+  def compute_start_indices_interpret(self, loop_idx, *args):
     discharged_jaxpr, discharged_consts = state_discharge.discharge_state(
         self.index_map_jaxpr.jaxpr, self.index_map_jaxpr.consts
     )
@@ -344,6 +344,10 @@ def _convert_block_spec_to_block_mapping(
           f"{len(aval.shape)} values to match {block_shape=}. "
           f"Currently returning {len(out_avals)} values."
       )
+  if consts:
+    raise NotImplementedError(
+        f"Index map for {what}{tree_util.keystr(path)} captures constants: "
+        f"{consts}")
   return BlockMapping(
       block_shape, jax_core.ClosedJaxpr(jaxpr, consts), block_spec.indexing_mode
   )

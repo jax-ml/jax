@@ -274,7 +274,7 @@ class MosaicGridMapping:
     self.mapped_dims = grid_mapping.mapped_dims
     num_scalar_prefetch = grid_mapping.num_index_operands
     num_scratch = grid_mapping.num_scratch_operands
-    # jaxpr has signature [*scalar_prefetch, *in_ops *out_ops, *scratch]
+    # jaxpr has signature [*scalar_prefetch, *consts, *in_ops, *out_ops, *scratch]
     num_operands = (
         len(self.jaxpr.invars)
         - num_scalar_prefetch
@@ -411,9 +411,13 @@ def lower_jaxpr_to_module(
           grid_mapping.num_index_operands:-grid_mapping.num_scratch_operands]
     else:
       invars = invars[grid_mapping.num_index_operands:]
+    # invars now = *consts, *ins, *outs
     avals = tuple(v.aval for v in invars)
     block_operand_shapes = (
-        *in_shapes[grid_mapping.num_index_operands :],
+        *[jax.ShapeDtypeStruct(v.aval.shape,
+                               v.aval.dtype)
+          for v in invars[:grid_mapping.num_constant_operands]],
+        *in_shapes[grid_mapping.num_index_operands:],
         *out_shapes,
     )
     assert len(block_operand_shapes) == len(grid_mapping.block_mappings)
@@ -425,8 +429,6 @@ def lower_jaxpr_to_module(
         raise NotImplementedError(
             "BlockSpecs are required on TPU when grid is specified"
         )
-      if bm.index_map_jaxpr.consts:
-        raise NotImplementedError("Index map jaxpr with consts not supported.")
       # ANY operands don't support windowing and require empty window_params.
       if aval.memory_space == tpu_core.TPUMemorySpace.ANY:
         # We may not require windowing if our block_shape matches the original
