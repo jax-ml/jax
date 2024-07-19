@@ -364,20 +364,28 @@ class WGMMATest(TestCase):
     )()
     np.testing.assert_array_equal(iota, expected)
 
-  @parameterized.named_parameters(
-      ("f32", ir.F32Type.get, jnp.float32),
-      ("f16", ir.F16Type.get, jnp.float16),
-      ("i8", partial(ir.IntegerType.get_signless, 8), jnp.int8),
+  @parameterized.product(
+      dtypes=(
+          (ir.F32Type.get, jnp.float32),
+          (ir.F16Type.get, jnp.float16),
+          (partial(ir.IntegerType.get_signless, 8), jnp.int8),
+      ),
+      swizzle=(32, 64, 128),
+      num_col_tiles=(1, 2, 3),
   )
-  def test_store_tiled(self, mlir_dtype_cls, jax_dtype):
+  def test_store_tiled(self, dtypes, swizzle, num_col_tiles):
+    mlir_dtype_cls, jax_dtype = dtypes
     mlir_dtype = mlir_dtype_cls()
+    if bytewidth(mlir_dtype) > 2 and swizzle == 32:
+      self.skipTest("Not implemented")
+    col_tiling = swizzle // bytewidth(mlir_dtype)
     m = 128
-    n = 256
-    tiling = (64, 128 // bytewidth(mlir_dtype))
+    n = col_tiling * num_col_tiles
+    tiling = (64, col_tiling)
     def kernel(ctx, out, smem):
       del ctx
-      iota_tensor(m, n, mlir_dtype).store_tiled(smem, swizzle=128)
-      copy(smem, out, swizzle=128)
+      iota_tensor(m, n, mlir_dtype).store_tiled(smem, swizzle=swizzle)
+      copy(smem, out, swizzle=swizzle)
     expected = (
         np.arange(m * n, dtype=jax_dtype)
         .reshape(m // tiling[0], tiling[0], n // tiling[1], tiling[1])
