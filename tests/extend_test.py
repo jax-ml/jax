@@ -245,10 +245,11 @@ class FfiTest(jtu.JaxTestCase):
   @jtu.sample_product(
       shape=[(1,), (4,), (5,)],
       dtype=(np.int32,),
-      vectorized=(False, True),
+      vmap_method=("broadcast", "broadcast_fullrank", "sequential",
+                   "legacy_vectorized"),
   )
   @jtu.run_on_devices("gpu")
-  def testFfiCallBatching(self, shape, dtype, vectorized):
+  def testFfiCallBatching(self, shape, dtype, vmap_method):
     shape = (10,) + shape
     pivots_size = shape[-1]
     permutation_size = 2 * pivots_size
@@ -256,15 +257,29 @@ class FfiTest(jtu.JaxTestCase):
     pivots = jnp.broadcast_to(pivots, shape)
     expected = lax.linalg.lu_pivots_to_permutation(pivots, permutation_size)
     actual = jax.vmap(lambda x: ffi_call_lu_pivots_to_permutation(
-        x, permutation_size, vectorized=vectorized))(pivots)
+        x, permutation_size, vmap_method=vmap_method))(pivots)
     self.assertArraysEqual(actual, expected)
+
+  @jtu.run_on_devices("gpu")
+  def testVectorizedDeprecation(self):
+    pivots_size = 4
+    shape = (10, pivots_size)
+    permutation_size = 2 * pivots_size
+    pivots = jnp.arange(permutation_size - 1, pivots_size - 1, -1,
+                        dtype=np.int32)
+    pivots = jnp.broadcast_to(pivots, shape)
+    with self.assertWarns(DeprecationWarning):
+      ffi_call_lu_pivots_to_permutation(pivots, permutation_size, vectorized=True)
+    with self.assertWarns(DeprecationWarning):
+      jax.vmap(
+          lambda x: ffi_call_lu_pivots_to_permutation(x, permutation_size))(pivots)
 
 
 # TODO(dfm): For now this test uses the `cu_lu_pivots_to_permutation`
 # custom call target because that's the only one in jaxlib that uses the
 # new FFI interface. Once more are available, consider using something that
 # can be run on multiple platforms.
-def ffi_call_lu_pivots_to_permutation(pivots, permutation_size, vectorized=True):
+def ffi_call_lu_pivots_to_permutation(pivots, permutation_size, **kwargs):
   return jex.ffi.ffi_call(
       "cu_lu_pivots_to_permutation",
       jax.ShapeDtypeStruct(
@@ -272,7 +287,7 @@ def ffi_call_lu_pivots_to_permutation(pivots, permutation_size, vectorized=True)
           dtype=pivots.dtype,
       ),
       pivots,
-      vectorized=vectorized,
+      **kwargs,
   )
 
 

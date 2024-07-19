@@ -60,8 +60,7 @@ def rms_norm(x, eps=1e-5):
     # type (which corresponds to numpy's `float32` type), and it must be a
     # static parameter (i.e. not a JAX array).
     eps=np.float32(eps),
-    # The `vectorized` parameter controls this function's behavior under `vmap`.
-    vectorized=True,
+    vmap_method="broadcast_fullrank",
   )
 
 
@@ -74,7 +73,7 @@ def rms_norm_fwd(x, eps=1e-5):
     ),
     x,
     eps=np.float32(eps),
-    vectorized=True,
+    vmap_method="broadcast_fullrank",
   )
   return y, (res, x)
 
@@ -91,7 +90,7 @@ def rms_norm_bwd(eps, res, ct):
       res,
       x,
       ct,
-      vectorized=True,
+      vmap_method="broadcast_fullrank",
     ),
   )
 

@@ -635,13 +635,13 @@ class PureCallbackTest(jtu.JaxTestCase):
     @jax.jit
     @jax.vmap
     def f(x):
-      return jax.pure_callback(np.sin, x, x)
+      return jax.pure_callback(np.sin, x, x, vmap_method="sequential")
     out = f(jnp.arange(4.))
     np.testing.assert_allclose(out, np.sin(np.arange(4.)))
 
     @jax.jit
     def g(x):
-      return jax.pure_callback(np.sin, x, x)
+      return jax.pure_callback(np.sin, x, x, vmap_method="sequential")
     out = jax.vmap(g, in_axes=1)(jnp.arange(8.).reshape((4, 2)))
     np.testing.assert_allclose(out, np.sin(np.arange(8.).reshape((4, 2))).T)
 
@@ -649,7 +649,8 @@ class PureCallbackTest(jtu.JaxTestCase):
     @functools.partial(jax.vmap, in_axes=(0, None))
     def h(x, y):
       out_shape = jax.ShapeDtypeStruct(x.shape, np.result_type(x.dtype, y.dtype))
-      return jax.pure_callback(lambda x, y: np.sin(x) + y, out_shape, x, y)
+      return jax.pure_callback(lambda x, y: np.sin(x) + y, out_shape, x, y,
+                               vmap_method="sequential")
     out = h(jnp.arange(4.), 4.)
     self.assertArraysAllClose(out, np.sin(np.arange(4.)) + 4.,
                               rtol=1E-7, check_dtypes=False)
@@ -658,7 +659,8 @@ class PureCallbackTest(jtu.JaxTestCase):
     @functools.partial(jax.vmap)
     def h(x, y):
       out_shape = jax.ShapeDtypeStruct(x.shape, np.result_type(x.dtype, y.dtype))
-      return jax.pure_callback(lambda x, y: np.sin(x) + y, out_shape, x, y)
+      return jax.pure_callback(lambda x, y: np.sin(x) + y, out_shape, x, y,
+                               vmap_method="sequential")
     out = h(jnp.arange(4.), jnp.arange(10., 14.))
     self.assertArraysAllClose(out, np.sin(np.arange(4.)) + np.arange(10., 14.),
                               rtol=1E-7, check_dtypes=False)
@@ -667,7 +669,8 @@ class PureCallbackTest(jtu.JaxTestCase):
     @functools.partial(jax.vmap, in_axes=1, out_axes=1)
     def h(x, y):
       out_shape = jax.ShapeDtypeStruct(x.shape, np.result_type(x.dtype, y.dtype))
-      return jax.pure_callback(lambda x, y: np.sin(x) + y, out_shape, x, y)
+      return jax.pure_callback(lambda x, y: np.sin(x) + y, out_shape, x, y,
+                               vmap_method="sequential")
     out = h(jnp.arange(4.)[None], jnp.arange(10., 14.)[None])
     self.assertArraysAllClose(out, np.sin(np.arange(4.)) + np.arange(10.,
       14.)[None],
@@ -682,7 +685,7 @@ class PureCallbackTest(jtu.JaxTestCase):
     @jax.jit
     @jax.vmap
     def f(x):
-      return jax.pure_callback(cb, x, x)
+      return jax.pure_callback(cb, x, x, vmap_method="sequential")
 
     np.testing.assert_allclose(f(jnp.arange(4.)), np.sin(np.arange(4.)))
 
@@ -693,7 +696,7 @@ class PureCallbackTest(jtu.JaxTestCase):
     @jax.jit
     @jax.vmap
     def g(x):
-      return jax.pure_callback(cb2, x, x, vectorized=True)
+      return jax.pure_callback(cb2, x, x, vmap_method="broadcast")
 
     np.testing.assert_allclose(g(jnp.arange(4.)), np.sin(np.arange(4.)))
 
@@ -701,7 +704,7 @@ class PureCallbackTest(jtu.JaxTestCase):
     @functools.partial(jax.vmap, in_axes=(0, None))
     def h(x, y):
       return jax.pure_callback(lambda x, y: np.sin(x) + y, x, x, y,
-                               vectorized=True)
+                               vmap_method="broadcast")
     out = h(jnp.arange(4.), 4.)
     np.testing.assert_allclose(out, np.sin(np.arange(4.)) + 4.)
 
@@ -709,7 +712,7 @@ class PureCallbackTest(jtu.JaxTestCase):
     @functools.partial(jax.vmap, in_axes=(1, None), out_axes=1)
     def h(x, y):
       return jax.pure_callback(lambda x, y: np.sin(x) + y, x, x, y,
-                               vectorized=True)
+                               vmap_method="legacy_vectorized")
     out = h(jnp.arange(4.)[None], 4.)
     np.testing.assert_allclose(out, np.sin(np.arange(4.)[None]) + 4.)
 
@@ -722,7 +725,7 @@ class PureCallbackTest(jtu.JaxTestCase):
     @jax.jit
     @jax.vmap
     def f(x):
-      return jax.pure_callback(cb, x, x, vectorized=True)
+      return jax.pure_callback(cb, x, x, vmap_method="broadcast")
 
     with self.assertRaises(RuntimeError):
       f(jnp.arange(4.))
@@ -980,6 +983,52 @@ class PureCallbackTest(jtu.JaxTestCase):
     x = jnp.array([1.0, 2.0, 3.0, 4.0])
     out = jax.pure_callback(f, jax.ShapeDtypeStruct(x.shape, x.dtype), x)
     np.testing.assert_allclose(out, 2 * jnp.log(x + 1))
+
+  def test_vmap_method_raise(self):
+    @jax.vmap
+    def f(x):
+      # Setting vectorized to None disables the current default behavior of
+      # falling back on sequential.
+      return jax.pure_callback(np.sin, x, x, vectorized=None)
+
+    with self.assertRaisesRegex(NotImplementedError, "vmap is only supported"):
+      f(jnp.arange(4.))
+
+  def test_deprecated_vectorized(self):
+    def f(x, **kwargs):
+      return jax.pure_callback(np.sin, x, x, **kwargs)
+
+    with self.assertWarnsRegex(DeprecationWarning, "The default behavior"):
+      jax.vmap(f)(jnp.arange(4.0))
+
+    with self.assertWarnsRegex(DeprecationWarning, "The vectorized argument"):
+      f(jnp.arange(4.0), vectorized=True)
+
+    with self.assertWarnsRegex(DeprecationWarning, "The vectorized argument"):
+      f(jnp.arange(4.0), vectorized=False)
+
+  def test_vmap_method_broadcast(self):
+    def callback(x, y):
+      self.assertTupleEqual(x.shape, (4,))
+      self.assertTupleEqual(y.shape, (1,))
+      return x + y
+
+    def f(x, y):
+      return jax.pure_callback(callback, x, x, y, vmap_method="broadcast")
+
+    jax.vmap(f, in_axes=(0, None))(jnp.arange(4.0), 1.0)  # doesn't error
+
+  def test_vmap_method_broadcast_fullrank(self):
+    def callback(x, y):
+      self.assertTupleEqual(x.shape, (4,))
+      self.assertTupleEqual(y.shape, (4,))
+      return x + y
+
+    def f(x, y):
+      return jax.pure_callback(callback, x, x, y,
+                               vmap_method="broadcast_fullrank")
+
+    jax.vmap(f, in_axes=(0, None))(jnp.arange(4.0), 1.0)  # doesn't error
 
 
 class IOCallbackTest(jtu.JaxTestCase):
