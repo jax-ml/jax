@@ -43,11 +43,12 @@ To effectively utilize TPUs for matrix multiplication, we'll need to cover a few
 
 ### Block Matrix Multiplication
 
-Let's say we'd like to implement a `matmul(x, y)` function that multiplies an `(m, k)` array with a `(k, n)` array using a provided function `matmul_small` that does matrix multiplication for us but only with small sizes (say `m, k, n <= 256`) to do the compute. Could we implement our our `matmul` function in terms of `matmul_small`?
+Let's say we want to implement `matmul(x, y)` which generically multiplies an `(m, k)` array with a `(k, n)` array, but with a twist. We're only allowed to use the primitive `matmul_small` which multiples small matrices (say `m, k, n <= 256`). How could we do it?
 
-Yes! The answer is by decomposing the matmul into one that operates on small chunks of our inputs (a.k.a. blocks).
+A nice property of matrix multiplication is that each block of the output can be expressed as the sum of several smaller matrix multiplications of row blocks and column blocks of the inputs.
+Formally, if we have input arrays $x \in \mathbb{R}^{m \times k}$ and $y \in \mathbb{R}^{k \times n}$ and output $z \in \mathbb{R}^{m \times n}$, we decompose them into blocks along the dimensions of size $b_m, b_k, b_n$.
 
-<!-- Formally, if we have input arrays $x \in \mathbb{R}^{m \times k}$ and $y \in \mathbb{R}^{k \times n}$ and output $z \in \mathbb{R}^{m \times n}$, we decompose them into blocks along the dimensions of size $b_m, b_k, b_n$.
+For example, $x$ would be decomposed as:
 
 $$
 \begin{bmatrix}
@@ -57,9 +58,16 @@ x_{1, 0} & \cdots & x_{1, i_k} \\
 x_{i_m, 0} & \cdots & x_{i_m, i_k} \\
 \end{bmatrix}
 $$
- where $i_m \in [0, \ldots, B_m]$ -->
 
-Here's a NumPy implementation:
+where $x_{ik} \in \mathbb{R}^{b_m \times b_k}$. (We can similarly decompose $y$ and $z$.)
+
+For a particular output block $z_{ij}$, we can compute it as
+
+$$
+z_{ij} = \sum_k x_{ik} y_{kj}
+$$
+
+Therefore, each output block $z_{ij}$ is the sum of several smaller block matrix multiplications $x_{ik} y_{kj}$. Here's how we'd implement this algorithm in NumPy:
 
 ```{code-cell} ipython3
 :id: PACqDMtQrMOL
@@ -97,7 +105,7 @@ def block_matmul(
 
 +++ {"id": "TP49TV6q8so9"}
 
-Our `block_matmul` function should now work on inputs larger than 256.
+Our `block_matmul` function should now work on inputs larger than 256 (though we assume that our input dimensions evenly divide 256).
 
 ```{code-cell} ipython3
 :id: 2SZFnWnurzEC
@@ -112,7 +120,7 @@ np.testing.assert_allclose(x @ y, block_matmul(x, y), atol=1e-6, rtol=1e-6)
 
 `block_matmul` decomposes a matrix multiplication into many smaller ones by observing that each output chunk of size `(bm, bn)` can be computed by accumulating several `(bm, bk) x (bk, bn)` size matrix multiplications.
 
-TPUs and GPUs have native hardware capable of small matrix multiplication akin to `matmul_small`, so to utilize this hardware when doing bigger matrix multiplications, we will apply the `block_matmul` decomposition.
+TPUs and GPUs do matmuls just like this! They natively support small matrix multiplication akin to `matmul_small`, so to utilize this hardware when doing bigger matrix multiplications, we will apply the `block_matmul` decomposition.
 
 +++ {"id": "a0ESFoX1ID0z"}
 
@@ -178,14 +186,14 @@ np.testing.assert_array_equal(x @ y, matmul(x, y))
 
 ## Matrix multiplication performance
 
-Let's think about how to analyze matrix multiplication performance.
+Let's think about how to analyze matrix multiplication performance. When we think about matmul performance, we typically care about two things: the total number of floating point operations (FLOPs) and the amount of memory bandwidth usage. From the [guide on TPUs and pipelining](pipelining), we see that in order to use the efficient compute units on TPUs (and on ML accelerators on general), we need to copy our inputs from HBM into VMEM, closer to the compute units. This copying to and from HBM takes time and an efficient kernel hopefully spends most of its time actually computing, as opposed to waiting for these transfers. Memory bandwidth measures the rate of this data transfer.
 
 > Quick note: in this guide, we'll be discussing floating point operations, but want to make the distinction between FLOPs vs FLOP/s.
   When we say "FLOPs" we mean "floating point operations", as in a number of operations. When we say "FLOP/s", we refer to "floating point operations *per second*", as in a *rate* of performing floating point operations.
 
 The number of FLOPs in a `(m, k) x (k, n)` matrix multiplication are (approximately) `2 * m * k * n`. (Technically it is `n * m * (2k - 1)` but for large enough `k` our approximation is sufficient.)
 
-The minimum amount of memory usage for a matrix multiply (assuming float32) is the total size of the inputs (copying into VMEM) plus the size of the output (copying into HBM). Thus the minimum bandwidth usage is `(m * k + k * n + m * n) * 4 bytes/float32`. Memory usage can be greater if we re-read the inputs multiple times, which is often the case.
+The minimum amount of memory bandwidth usage for a matrix multiply (assuming float32) is the total size of the inputs (copying into VMEM) plus the size of the output (copying into HBM). Thus the minimum bandwidth usage is `(m * k + k * n + m * n) * 4 bytes/float32`. Memory usage can be greater if we re-read the inputs multiple times, which is often the case.
 
 One observation is that the number of matmul FLOPs is cubic in its inputs whereas the minimum bandwidth usage is quadratic in its inputs. Intuitively, this means that FLOPs grow faster than bandwidth usage, meaning that the bigger our matmul is, the more compute we have relative to copying.
 
@@ -205,21 +213,21 @@ print(matmul_membw(1024, 1024, 1024, jnp.float32))
 
 +++ {"id": "agCtb2GMQazl"}
 
-Now that we can calculate the total number of FLOPs and (minimum) memory bandwidth usage of a matrix multiplication, let's now see how many FLOP/s we can execute and how much memory bandwidth we actually have on a particular TPU.
+Now that we can calculate the total number of FLOPs and (minimum) memory bandwidth usage of a matrix multiplication, let's see what a real TPU can handle.
 
-This notebook was run on TPU v5e so we will utilize numbers for that specific chip (if you are running this notebook, your numbers may differ). TPU v5es have [197 TFLOP/s of bf16 compute and 819 GB/s of memory bandwidth](https://cloud.google.com/tpu/docs/system-architecture-tpu-vm#tpu_v5e). We can compute the minimum arithmetic intensity (ratio of FLOP/s to memory bandwidth) needed to be compute bound in this analytical model on this chip by taking their ratio (about 240 FLOPs/byte on TPU v5e).
+This notebook was run on a TPU v5e chip so we'll use the v5e numbers (if you are running this notebook, your numbers may differ). TPU v5es have [197 TFLOP/s of bf16/f32 compute and 819 GB/s of memory bandwidth](https://cloud.google.com/tpu/docs/system-architecture-tpu-vm#tpu_v5e). By looking at the ratio of these numbers (called the arithmetic intensity), we can get a bound on how low this "FLOPs / memory bandwidth usage" ratio can get before we become IO bound (about 240 FLOPs/byte on TPU v5e).
 
 ```{code-cell} ipython3
 :id: WUydNX2-K6Oy
 
-v5e_bf16_flops = 197e12
+v5e_flops = 197e12
 v5e_membw = 819e9
-v5e_op_intensity = v5e_bf16_flops / v5e_membw  # ~240.5
+v5e_op_intensity = v5e_flops / v5e_membw  # ~240.5
 ```
 
 +++ {"id": "UjQIWq-9RJue"}
 
-We can now estimate the amount of time it takes to execute a matmul of a particular size using the FLOPs and how much time it takes to copy the inputs and outputs using the memory bandwidth.
+Roughly, these numbers tell us the FLOPs of a matmul should take `2 * m * k * n / (197 TFLOP/s)` seconds and the copies to/from VMEM should take `(m*k + k*n + m*n) * 4 bytes / 819GB/s` seconds.
 
 ```{code-cell} ipython3
 :id: PiYobLc-RQSB
@@ -234,7 +242,7 @@ def matmul_flops_intensity(m: int, k: int, n: int, dtype: jnp.dtype):
 
 This basic calculation tells us roughly how efficiently we'll be able to use our MXUs. If our matmul op intensity is below what our chip is capable of, then our computation will be *memory bound*, i.e. our compute units will be idling while waiting for values to be transferred. If the matmul intensity is higher than what the chip is capable, then we will be *compute bound*.
 
-Because matmul FLOPs are cubic in their input sizes and memory bandwidth usage is quadratic, we expect that we will get compute bound as we get bigger and bigger, but this crossing over point is really important! Let's say we are doing a `(1024, 1024) x (1024, 1024)` float32 matrix multiplication (`f32`s get truncated to `bf16` in the MXU so we use the `bf16` FLOPs numbers but `f32` memory bandwidth numbers).
+Because matmul FLOPs are cubic in their input sizes and memory bandwidth usage is quadratic, we expect that we will get compute bound as we get bigger and bigger, but this crossing over point is really important! Let's say we are doing a `(1024, 1024) x (1024, 1024)` float32 matrix multiplication.
 
 ```{code-cell} ipython3
 :id: NMcretZoTPjj
@@ -245,7 +253,15 @@ print(f"{matmul_flops_intensity(1024, 1024, 1024, jnp.float32)} flops/byte")
 
 +++ {"id": "U0CZSKwdTbqE"}
 
-Our matmul flops intensity is less than what our chip is capable of. That's not good! We are likely going to be memory bound with this type of matrix multiplication. However, what if our inputs and outputs were `bf16` instead? We keep the same FLOPs but *halve* our memory bandwidth usage.
+Our matmul flops intensity is less than what our chip is capable of. That's not good! We are likely going to be memory bound with this type of matrix multiplication. However, what if our inputs and outputs were bigger instead?  At some point when our matmuls get big enough, we will cross over from memory bound into compute bound. For example, if we have a matmul where `m = k = n`, we will cross over (on TPU v5e) when `2m**3 / 12m**2 > 240` or when `m = k = n > 1440`.
+
++++ {"id": "iw4c_CZIdSeV"}
+
+### `bfloat16` matrix multiplication
+
++++ {"id": "7tACYDKIT3lq"}
+
+To make it easier for matrix multiplication to be compute bound on TPU, we could also use a smaller dtype for our inputs and outputs. Our previous example used `float32` inputs and outputs but TPU v5e also supports the `bfloat16` data type (a 16-bit floating point format, also called `bf16`) for matrix multiplication as well. On TPU v5e, we will have the same FLOP/s but will *halve our memory bandwidth usage*. This makes it way easier to be compute bound for smaller matrices. Let's see what our intensity is with a 1024 x 1024 x 1024 `bf16` matrix multiply:
 
 ```{code-cell} ipython3
 :id: mcuLdyDoTmnO
@@ -257,12 +273,6 @@ print(f"{matmul_flops_intensity(1024, 1024, 1024, jnp.bfloat16)} flops/byte")
 +++ {"id": "XPPil1YSTn9Z"}
 
 We now have a matmul that is compute bound!
-
-+++ {"id": "iw4c_CZIdSeV"}
-
-### `bf16` matrix multiplication
-
-+++ {"id": "7tACYDKIT3lq"}
 
 Let's add `bf16` support to our matrix multiplication kernel.
 
@@ -370,7 +380,7 @@ def analyze_matmul(m: int, k: int, n: int, dtype: np.dtype,
   print("Matmul time: ", time)
   mm_flops = matmul_flops(m, k, n) / time
   print("Matmul FLOP/s: ", mm_flops)
-  print(f"FLOP/s utilization: {mm_flops / v5e_bf16_flops * 100:.4f}%")
+  print(f"FLOP/s utilization: {mm_flops / v5e_flops * 100:.4f}%")
   print()
 
 print("================bm=128, bk=128, bn=128===================")
@@ -418,7 +428,9 @@ Now that we have a basic matrix multiplication kernel, we can now try fusing ope
 
 ### Fused right-hand-side transpose
 
-A common first thing to do is to fuse a transpose (e.g. instead of doing `x @ y` we do `x @ y.T`). Accelerators often supports a matrix multiplication routine that fuses an RHS transpose (for example, TPU v5e) so there is no additional cost to fusing in a transpose. We can use this routine with `jax.lax.dot_general`, which when natively supported will be more efficient than doing a transpose and a matmul separately.
+A common first thing to do is to fuse a transpose. What do we mean by that? Suppose we wanted to compute `x @ y.T` instead of `x @ y`. Naively we could first compute `y.T` and then pass it into our efficient matrix multiply kernel. However, the operation `y.T` is not free on its own -- it involves copying `O(n^2)` data. Ideally, we could compute the transpose *while* doing the matrix multiply in just one kernel, i.e. "fusing" it with the matmul. 
+
+Accelerators often support native matrix multiplication routine that fuse a RHS transpose. For instance TPU v5e, the MXU allows us to do `x @ y.T` for small arrays. We can invoke this routine with `jax.lax.dot_general`, which will be more efficient than doing a transpose then a matmul separately.
 
 ```{code-cell} ipython3
 :id: 1_6S_QnMbHAQ
@@ -512,7 +524,7 @@ def analyze_matmul(m: int, k: int, n: int, dtype: np.dtype,
   print("Matmul time: ", time)
   mm_flops = matmul_flops(m, k, n) / time
   print("Matmul FLOP/s: ", mm_flops)
-  print(f"FLOP/s utilization: {mm_flops / v5e_bf16_flops * 100:.4f}%")
+  print(f"FLOP/s utilization: {mm_flops / v5e_flops * 100:.4f}%")
   print()
 
 print("================bm=128, bk=128, bn=128===================")
@@ -628,7 +640,7 @@ def analyze_matmul(m: int, k: int, n: int, dtype: np.dtype,
   print("Matmul time: ", time)
   mm_flops = matmul_flops(m, k, n) / time
   print("Matmul FLOP/s: ", mm_flops)
-  print(f"FLOP/s utilization: {mm_flops / v5e_bf16_flops * 100:.4f}%")
+  print(f"FLOP/s utilization: {mm_flops / v5e_flops * 100:.4f}%")
   print()
 
 
