@@ -2300,8 +2300,7 @@ LogicalResult rotate_rule_impl(RewriteContext &ctx, OpTy op, Value amount,
     }
     // Convert dynamic shift to log(bound) static ops.
     int roll_by = 1;
-    Value cst_1 = mlirI32Const(1);
-    while (bound > 0) {
+    while (roll_by < bound) {
       auto new_result = rotate(
           result,
           mlirI32Const(tiling_dim >= 0 ? roll_by * ctx.target_shape[tiling_dim]
@@ -2310,15 +2309,14 @@ LogicalResult rotate_rule_impl(RewriteContext &ctx, OpTy op, Value amount,
       auto mask = builder.create<arith::CmpIOp>(
           arith::CmpIPredicate::ne,
           builder.create<vector::BroadcastOp>(
-              i32_vreg, builder.create<arith::AndIOp>(vreg_shift, cst_1)),
+              i32_vreg,
+              builder.create<arith::AndIOp>(vreg_shift, mlirI32Const(roll_by))),
           builder.create<arith::ConstantOp>(
               DenseElementsAttr::get(i32_vreg, builder.getI32IntegerAttr(0))));
       result.Each([&](absl::Span<const int64_t> idxs, Value *v) {
         *v = builder.create<arith::SelectOp>(mask, new_result(idxs), *v);
       });
       roll_by *= 2;
-      bound /= 2;
-      vreg_shift = divI(vreg_shift, 2);
     }
     return result;
   };
