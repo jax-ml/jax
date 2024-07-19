@@ -400,12 +400,6 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
       # Fixed Ref schedule, only really needed to prevent HBM data race in the
       # degenerate case of a trivial (single-step) inner loop.
       accum_schedule = pltpu.get_pipeline_schedule('fixed')
-      # Tweak schedule to skip copying in initial accumulator data as we zero it
-      # out anyway.
-      for k in ['prologue_copy_in', 'wait_in', 'copy_in']:
-        accum_schedule[k] = functools.partial(  # avoid cell-var-from-loop
-            lambda original_pred_fn, *a: original_pred_fn(*a) & ~is_start,
-            accum_schedule[k])
 
       # Outer loop prologue
       @pl.when(is_start)
@@ -889,6 +883,8 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
             pl.ds(pl.multiple_of(0, sharded_k), sharded_k),
         )
 
+      rhs_schedule = pltpu.get_pipeline_schedule('fixed')
+
       # Outer Loop Prologue
       @pl.when(is_start)
       @jax.named_scope('sync')
@@ -930,10 +926,13 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
               bwd_copy.wait()
 
           # deferred "prefetch"
-          next_slot = jnp.where(phase == 0, working_slot, buffering_slot)
-          next_phase = 1 - phase
-          scheduler.prefetch(out_bref,
-                              accumulator_ref.at[next_phase, next_slot])
+          # Don't prefetch when accums are being zeroed.
+          @pl.when(~is_start)
+          def _prefetch():
+            next_slot = jnp.where(phase == 0, working_slot, buffering_slot)
+            next_phase = 1 - phase
+            scheduler.prefetch(out_bref,
+                                accumulator_ref.at[next_phase, next_slot])
 
       # Prefetch next inputs on last step of our present cycle
       def prefetch(lhs_bref, rhs_bref, out_bref, scheduler):
@@ -954,11 +953,11 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
         next_phase = lax.rem(phase + 1, 2)
         scheduler.prefetch(
             lhs_bref, lhs_ref.at[get_lhs_slice(next_step, next_phase)])
-        scheduler.prefetch(
-            rhs_bref, rhs_ref)
+        scheduler.prefetch(rhs_bref, rhs_ref, rhs_schedule)
         # When the inner matmul loop consists of a single iteration, we need
         # to avoid optimistic prefetch to avoid a data race.
-        @pl.when(~trivial_loop)
+        # Don't prefetch when accums are being zeroed.
+        @pl.when(~trivial_loop & ~is_start)
         def _prefetch_accum():
           scheduler.prefetch(
               out_bref, accumulator_ref.at[next_phase, next_working_slot])
@@ -975,6 +974,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
           init_accumulators=outer_step == 0,
           prefetch=prefetch,
           postyeet=postyeet,
+          schedule=[None, rhs_schedule, None],
       )
 
       # Add forwards and backwards stream results together
@@ -1160,6 +1160,8 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
       def get_accum_slice(phase, slot):
         return (slot, make_ds(phase, half_m))
 
+      rhs_schedule = pltpu.get_pipeline_schedule('fixed')
+
       # Outer Loop Prologue
       @pl.when(is_start)
       @jax.named_scope('sync')
@@ -1199,12 +1201,15 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
             def _wait_prev_bwd_dma():
               bwd_copy.wait()
           # deferred "prefetch"
-          next_working_slot = jnp.where(
-              phase == 0, working_slot, buffering_slot)
-          next_phase = 1 - phase
-          scheduler.prefetch(
-              out_bref, rs_accum_scratch_ref.at[
-                  get_accum_slice(next_phase, next_working_slot)])
+          # Don't prefetch when accums are being zeroed.
+          @pl.when(~is_start)
+          def _prefetch():
+            next_working_slot = jnp.where(
+                phase == 0, working_slot, buffering_slot)
+            next_phase = 1 - phase
+            scheduler.prefetch(
+                out_bref, rs_accum_scratch_ref.at[
+                    get_accum_slice(next_phase, next_working_slot)])
 
       # Prefetch next inputs on last step of our present cycle
       def prefetch(lhs_bref, rhs_bref, out_bref, scheduler):
@@ -1225,8 +1230,9 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
         next_phase = lax.rem(phase + 1, 2)
         scheduler.prefetch(lhs_bref,
                            lhs_ref.at[get_lhs_slice(next_step, next_phase)])
-        scheduler.prefetch(rhs_bref, rhs_ref)
-        @pl.when(~trivial_loop)
+        scheduler.prefetch(rhs_bref, rhs_ref, rhs_schedule)
+        # Don't prefetch when accums are being zeroed.
+        @pl.when(~trivial_loop & ~is_start)
         def _prefetch_accumulator():
           scheduler.prefetch(
               out_bref, rs_accum_scratch_ref.at[
@@ -1244,6 +1250,7 @@ class PallasCallCollectivePipelineTest(parameterized.TestCase):
           init_accumulators=outer_step == 0,
           prefetch=prefetch,
           postyeet=postyeet,
+          schedule=[None, rhs_schedule, None],
       )
 
     kernel = pl.pallas_call(
