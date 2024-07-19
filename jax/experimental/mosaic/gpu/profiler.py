@@ -140,7 +140,7 @@ class ProfilerSpec:
     return self.smem_i32_elements(block) * bytes_per_entry
 
   def intern_name(self, name: str) -> int:
-    if name_id := self.interned_names.get(name, None):
+    if (name_id := self.interned_names.get(name, None)) is not None:
       return name_id
     name_id = self.interned_names[name] = len(self.interned_names)
     if name_id & self.EXIT:
