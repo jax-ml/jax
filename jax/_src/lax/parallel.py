@@ -645,34 +645,21 @@ def pgather(src, idx, axes: int | AxisName):
 
 ### parallel primitives
 
-def constant_version_of_psum(args, axes, axis_index_groups):
-  named_axes, pos_axes = axes_partition = [], []
-  for axis in axes:
-    axes_partition[isinstance(axis, int)].append(axis)
-  def pos_reduce(x):
-    if not pos_axes:
-      return x
-    return lax._reduce_sum(x, [canonicalize_axis(axis, getattr(x, 'ndim', 0))
-                               for axis in pos_axes])
-  if axis_index_groups is not None:
-    assert not pos_axes
-    size = len(axis_index_groups[0])
-  else:
-    size = math.prod([core.axis_frame(name).size for name in named_axes])  # type: ignore
-  return tuple(lax._const(x, size) * pos_reduce(x) for x in args)
+def _constant_psum(axis_data, args, axes, axis_index_groups):
+  assert axis_data.name in axes
+  if axis_index_groups: raise NotImplementedError
+  axes_ = tuple(n for n in axes if n != axis_data.name)
+  if axes_:
+    args = psum_p.bind(*args, axes=axes_, axis_index_groups=axis_index_groups)
+  outs = [lax._const(x, axis_data.size) * x for x in args]
+  return outs, [None] * len(outs)
 
-def _reduction_with_positional_batcher(prim, vals_in, dims_in, axis_index_groups,
+def _reduction_with_positional_batcher(
+    prim, vals_in, dims_in, axis_index_groups,
     transform_unmapped, transform_mapped):
   if axis_index_groups is not None:
     raise NotImplementedError("axis_index_groups not supported in vmap collectives. "
                               "Please open a feature request!")
-
-  if all(d is None for d in dims_in):
-    if prim is psum_p:
-      return constant_version_of_psum(vals_in, dims_in, axis_index_groups)
-    else:
-      assert False
-
   vals_in = [val if d is batching.not_mapped or d == 0 else _moveaxis(d, 0, val)
              for val, d in zip(vals_in, dims_in)]
   mapped_vals_in, unmapped_vals_in = partitioned_vals_in = [], []
@@ -712,6 +699,12 @@ def _batched_reduction_collective(
     axis_index_groups):
   assert prim.multiple_results
   assert axis_data.name in axes
+  if all(d is None for d in dims_in):
+    if prim is psum_p:
+      return _constant_psum(axis_data, vals_in, axes, axis_index_groups)
+    else:
+      return prim.bind(*vals_in, axes=axes, axis_index_groups=axis_index_groups)
+
   # Note that we have a choice here. We can either unfuse the reduction into one
   # that handles the batched dims and then another one that handles the rest.
   # Alternatively, we can keep the dimension reduction fused with the rest, but
@@ -1309,12 +1302,15 @@ def _all_gather_batcher(vals_in, dims_in, *, all_gather_dimension, axis_name, ax
       tiled=tiled)
   return result, d
 
-def _all_gather_batched_collective(frame_size, frame_name, _, vals_in, dims_in,
+def _all_gather_batched_collective(axis_data, _, vals_in, dims_in,
                                    all_gather_dimension, axis_name,
                                    axis_index_groups, axis_size, tiled):
+  frame_size, frame_name = axis_data.size, axis_data.name
   if axis_index_groups is not None:
     raise NotImplementedError("axis_index_groups not supported in vmap")
-  assert axis_size == frame_size, "axis size doesn't match"
+  try:
+    assert axis_size == frame_size, "axis size doesn't match"
+  except: breakpoint()
   if not isinstance(axis_name, tuple):
     axis_name = (axis_name,)
   if len(axis_name) > 1:

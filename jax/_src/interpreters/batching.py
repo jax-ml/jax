@@ -414,9 +414,11 @@ class BatchTrace(Trace):
       raise NotImplementedError("Batching rule for '{}' not implemented".format(p))
     src = source_info_util.current()
     if p.multiple_results:
-      return [BatchTracer(self, x, d, src) for x, d in zip(val_out, dim_out)]
+      return [BatchTracer(self, x, d, src) if d is not not_mapped else x
+              for x, d in zip(val_out, dim_out)]
     else:
-      return BatchTracer(self, val_out, dim_out, src)
+      return (BatchTracer(self, val_out, dim_out, src)
+              if dim_out is not not_mapped else val_out)
 
   def process_call(self, call_primitive, f, tracers, params):
     assert call_primitive.multiple_results
