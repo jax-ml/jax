@@ -2352,6 +2352,8 @@ def join_named_shapes(*named_shapes):
 
 # TODO: Make canonicalize_shape return named shapes?
 def as_named_shape(shape) -> NamedShape:
+  if isinstance(shape, int):
+    shape = (shape,)
   if isinstance(shape, NamedShape):
     return shape
   return NamedShape(*shape)
