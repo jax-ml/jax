@@ -1258,6 +1258,20 @@ def _custom_vjp_call_jaxpr_check(mesh, *in_rep, fun_jaxpr, **_):
   return _check_rep(mesh, fun_jaxpr.jaxpr, in_rep)
 
 
+# TODO(mattjj): make standard_check handle multiple outputs, share code
+@register_check(control_flow.solves.linear_solve_p)
+def _linear_solve_check(mesh, *in_rep, const_lengths, jaxprs):
+  in_rep_ = [r for r in in_rep if r is not None]
+  assert in_rep
+  if not in_rep_[:-1] == in_rep_[1:]:
+    msg = ("shard_map check_rep rewrite failed. Please open an issue at "
+           "https://github.com/google/jax/issues and as a workaround pass the "
+           "check_rep=False argument to shard_map")
+    raise Exception(msg)
+  return [in_rep_[0]] * len(jaxprs.solve.out_avals)
+register_standard_rewrite(control_flow.solves.linear_solve_p)
+
+
 del _check_rules[lax.tie_p]
 
 @register_check(lax.tie_p)

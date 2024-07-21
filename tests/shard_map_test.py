@@ -1910,6 +1910,19 @@ class ShardMapTest(jtu.JaxTestCase):
       shard_map(lambda *_: None, mesh, ((None, None), P('i', 'j')), None,
                     )((object(), object()), x)
 
+  def test_custom_linear_solve_rep_rules(self):
+    # https://github.com/google/jax/issues/20162
+    mesh = jtu.create_global_mesh((1,), ('i',))
+    a = jnp.array(1).reshape(1, 1)
+    b = jnp.array(1).reshape(1)
+
+    @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
+    def f(a, b):
+      c = jnp.linalg.solve(a, b)
+      return c
+
+    _ = f(a, b)  # don't crash
+
 
 class FunSpec(NamedTuple):
   name: str
