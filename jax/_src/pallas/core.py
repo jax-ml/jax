@@ -19,6 +19,7 @@ from collections.abc import Callable, Iterator, Sequence
 import contextlib
 import copy
 import dataclasses
+import enum
 import functools
 import threading
 from typing import Any, Union
@@ -84,6 +85,19 @@ class AbstractMemoryRef(state.AbstractRef):
 
   def __hash__(self):
     return hash((self.__class__, self.inner_aval, self.memory_space))
+
+
+class MemorySpace(enum.Enum):
+  """ Logical, device-agnostic memory spaces.
+
+  Each memory space will be translated to a device-specific memory
+  type during lowering.
+  """
+  ERROR = "error"  # Memory space for checkify errors.
+  INDEX = "index"  # Memory space for scalar prefetch arguments.
+
+  def __str__(self) -> str:
+    return self.value
 
 
 def _ref_raise_to_shaped(ref_aval: AbstractMemoryRef, weak_type):

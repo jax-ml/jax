@@ -116,6 +116,10 @@ def _sanitize_scope_name(name):
   return scope_name
 
 
+# TODO(b/353437394): Deprecate support for `enable_xla=False`.
+# Line below is different externally and internally.
+allow_enable_xla_false = lambda: True
+
 # A value suitable in a TF tracing context: tf.Tensor, tf.Variable,
 # or Python scalar or numpy.ndarray. (A tf.EagerTensor is a tf.Tensor.)
 TfVal = Any
@@ -330,7 +334,11 @@ def convert(fun_jax: Callable,
     only TensorFlow ops and thus can be called from a TensorFlow program.
   """
   if not enable_xla:
-    warnings.warn("jax2tf.convert with enable_xla=False is deprecated.")
+    if allow_enable_xla_false():
+      warnings.warn("jax2tf.convert with enable_xla=False is deprecated.")
+    else:
+      raise ValueError("jax2tf.convert with enable_xla=False is not supported.")
+
   if native_serialization is DEFAULT_NATIVE_SERIALIZATION:
     if not enable_xla:
       native_serialization = False
@@ -1542,6 +1550,10 @@ tf_not_yet_impl = [
     "consume",
     "ragged_dot",
     "cholesky_update",
+    # Pallas TPU primitives
+    "bitcast",
+    "repeat",
+    "roll",
 ]
 
 tf_impl[random_internal.random_clone_p] = lambda x: x

@@ -48,6 +48,16 @@ from jax._src.pallas.mosaic.primitives import prng_random_bits
 from jax._src.pallas.mosaic.random import to_pallas_key
 from jax._src.tpu_custom_call import CostEstimate
 
+import types
+from jax._src.pallas.mosaic.verification import assume
+from jax._src.pallas.mosaic.verification import pretend
+from jax._src.pallas.mosaic.verification import skip
+from jax._src.pallas.mosaic.verification import define_model
+verification = types.SimpleNamespace(
+    assume=assume, pretend=pretend, skip=skip, define_model=define_model
+)
+del types, assume, pretend, skip, define_model  # Clean up.
+
 ANY = TPUMemorySpace.ANY
 CMEM = TPUMemorySpace.CMEM
 SMEM = TPUMemorySpace.SMEM

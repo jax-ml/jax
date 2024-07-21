@@ -42,6 +42,8 @@ Remember to align the itemized text with the first line of an item within a list
 * Bug fixes
   * Fixed a bug that meant that negative static_argnums to a jit were mishandled
     by the jit dispatch fast path.
+  * Fixed a bug that meant triangular solves of batches of singular matrices
+    produce nonsensical finite values, instead of inf or nan (#3589, #15429).
 
 ## jax 0.4.30 (June 18, 2024)
 

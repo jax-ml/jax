@@ -4241,6 +4241,35 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np_inp)
     self.assertEqual(out.sharding, s2)
 
+  @parameterized.named_parameters(
+      ("8_2", (8, 2)),
+      ("8_384", (8, 384)),
+  )
+  def test_device_put_efficient_reshard_complex_mesh(self, shape):
+    if jax.device_count() < 8:
+      self.skipTest('Requires >= 8 devices')
+
+    dev = jax.devices()
+    mesh1 = jax.sharding.Mesh(
+        np.asarray(dev).reshape([1, 2, 2, 2]),
+        ('replica', 'data', 'seq', 'model'))
+    mesh2 = jax.sharding.Mesh(
+        np.asarray(jax.devices())
+        .reshape([1, 1, 2, 2, 2, 1])
+        .swapaxes(2, 3)
+        .reshape([1, 1, 4, 2, 1]),
+        ('replica', 'data', 'seq', 'model_q', 'model_kv'))
+
+    np_inp = jnp.arange(math.prod(shape)).reshape(shape)
+    s1 = NamedSharding(mesh1, P('model'))
+    s2 = NamedSharding(mesh2, P())
+
+    x_s1 = jax.device_put(np_inp, s1)
+
+    out = jax.device_put(x_s1, s2)
+    self.assertArraysEqual(out, np_inp)
+    self.assertEqual(out.sharding, s2)
+
   def test_convert_element_type_sharding(self):
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))

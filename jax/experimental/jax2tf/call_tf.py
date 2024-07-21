@@ -45,7 +45,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib.mlir.dialects import hlo
 from jax.experimental.jax2tf import jax2tf as jax2tf_internal
-from jax.interpreters import mlir
+from jax._src.interpreters import mlir
 import numpy as np
 import tensorflow as tf
 
@@ -645,11 +645,11 @@ def emit_tf_embedded_graph_custom_call(
 
   operands = list(operands)
   result_types = list(
-      util.flatten([mlir.aval_to_ir_types(aval) for aval in result_avals])
+      mlir.flatten_ir_types([mlir.aval_to_ir_type(aval) for aval in result_avals])
   )
   if ordered:
     operands.insert(0, ctx.tokens_in.get(call_tf_ordered_effect))
-    result_types.insert(0, mlir.token_type()[0])
+    result_types.insert(0, mlir.token_type())
 
   custom_call = hlo.CustomCallOp(
       result_types,

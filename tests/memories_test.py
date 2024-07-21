@@ -916,6 +916,28 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     out2 = f2(np_inp)
     self.assertArraysEqual(out2, np_inp + 1)
 
+  @parameterized.parameters(True, False)
+  def test_copy_offload(self, jit_compute_fn: bool):
+    # test an explicit copy within the host computation.
+
+    def g(x):
+      return jnp.copy(x) * 2
+
+    @jax.jit
+    def f(x):
+      if jit_compute_fn:
+        y = compute_on("device_host")(jax.jit(g))(x)
+      else:
+        y = compute_on("device_host")(g)(x)
+      return y * 3
+
+    inp = jnp.arange(8)
+    out = f(inp)
+    self.assertArraysEqual(out, inp * 6)
+
+    lowered_text = f.lower(jnp.arange(8)).as_text()
+    self.assertIn('_xla_compute_type', lowered_text)
+
   def test_pure_host_data_and_compute(self):
     if xb.backend_xla_version() is not None and xb.backend_xla_version() < 2:
       self.skipTest("This test requires an xla_version >= 2.")

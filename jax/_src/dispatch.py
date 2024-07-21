@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import atexit
+import collections
 from collections.abc import Callable, Iterator, Sequence
 import contextlib
 import dataclasses
@@ -363,13 +364,38 @@ def _different_device_order_reshard(x, target_sharding):
         old_hlo_sharding.tile_assignment_devices(), permute_order
     )
     new_hlo_sharding = xc.HloSharding.from_proto(new_op_sharding)
+    # TODO(yashkatariya): Enable this when HloSharding conversion is fixed in
+    # XLA.
+    # assert (new_op_sharding.tile_assignment_dimensions
+    #         == new_hlo_sharding.tile_assignment_dimensions())
+    # assert (new_op_sharding.tile_assignment_devices
+    #         == new_hlo_sharding.tile_assignment_devices())
 
-  new_x = array.make_array_from_single_device_arrays(
-      x.shape,
-      GSPMDSharding(target_sharding._device_assignment, new_hlo_sharding,
-                    memory_kind=target_sharding.memory_kind),
-      x._arrays,
-  )
+  new_sharding = GSPMDSharding(
+      target_sharding._device_assignment, new_hlo_sharding,
+      memory_kind=target_sharding.memory_kind)
+
+  old_device_to_index_buffer = collections.defaultdict()
+  old_index_to_buffer = collections.defaultdict()
+  for s in x.addressable_shards:
+    old_index_to_buffer[array.hashed_index(s.index)] = s.data
+    old_device_to_index_buffer[s.device] = (s.index, s.data)
+
+  new_arrays = []
+  for new_d, new_index in new_sharding.addressable_devices_indices_map(x.shape).items():
+    old_index, old_buf = old_device_to_index_buffer[new_d]
+    if old_index == new_index:
+      assert array._get_device(old_buf) == new_d, (
+          array._get_device(old_buf), new_d)
+      new_arrays.append(old_buf)
+    else:
+      old_buf = old_index_to_buffer[array.hashed_index(new_index)]
+      new_arrays.append(
+          pxla.batched_device_put(old_buf.aval, SingleDeviceSharding(new_d),
+                                  [old_buf], [new_d]))
+
+  new_x = array.ArrayImpl(
+      x.aval, new_sharding, new_arrays, committed=True, _skip_checks=True)
 
   _orig_get_and_check_device_assignment = pxla._get_and_check_device_assignment.fn
   pxla._get_and_check_device_assignment.fn = partial(

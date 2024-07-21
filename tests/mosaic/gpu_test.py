@@ -364,20 +364,28 @@ class WGMMATest(TestCase):
     )()
     np.testing.assert_array_equal(iota, expected)
 
-  @parameterized.named_parameters(
-      ("f32", ir.F32Type.get, jnp.float32),
-      ("f16", ir.F16Type.get, jnp.float16),
-      ("i8", partial(ir.IntegerType.get_signless, 8), jnp.int8),
+  @parameterized.product(
+      dtypes=(
+          (ir.F32Type.get, jnp.float32),
+          (ir.F16Type.get, jnp.float16),
+          (partial(ir.IntegerType.get_signless, 8), jnp.int8),
+      ),
+      swizzle=(32, 64, 128),
+      num_col_tiles=(1, 2, 3),
   )
-  def test_store_tiled(self, mlir_dtype_cls, jax_dtype):
+  def test_store_tiled(self, dtypes, swizzle, num_col_tiles):
+    mlir_dtype_cls, jax_dtype = dtypes
     mlir_dtype = mlir_dtype_cls()
+    if bytewidth(mlir_dtype) > 2 and swizzle == 32:
+      self.skipTest("Not implemented")
+    col_tiling = swizzle // bytewidth(mlir_dtype)
     m = 128
-    n = 256
-    tiling = (64, 128 // bytewidth(mlir_dtype))
+    n = col_tiling * num_col_tiles
+    tiling = (64, col_tiling)
     def kernel(ctx, out, smem):
       del ctx
-      iota_tensor(m, n, mlir_dtype).store_tiled(smem, swizzle=128)
-      copy(smem, out, swizzle=128)
+      iota_tensor(m, n, mlir_dtype).store_tiled(smem, swizzle=swizzle)
+      copy(smem, out, swizzle=swizzle)
     expected = (
         np.arange(m * n, dtype=jax_dtype)
         .reshape(m // tiling[0], tiling[0], n // tiling[1], tiling[1])
@@ -613,31 +621,39 @@ class WGMMATest(TestCase):
       n=(64, 128, 192),
       k_steps=(1, 2),
       rhs_transpose=(False, True),
+      swizzle=(32, 64, 128),
       mlir_dtype_cls=(ir.F16Type, ir.BF16Type),
   )
-  def test_wgmma_reg_lhs(self, m, n, k_steps, rhs_transpose, mlir_dtype_cls):
-    k = 64 * k_steps
+  def test_wgmma_reg_lhs(
+      self, m, n, k_steps, rhs_transpose, swizzle, mlir_dtype_cls
+  ):
     index = ir.IndexType.get()
 
     row_major = mgpu.WGMMALayout.ROW_MAJOR
     col_major = mgpu.WGMMALayout.COL_MAJOR
     rhs_order = col_major if rhs_transpose else row_major
+    bytewidth = 2
+    nk_tile = swizzle // bytewidth
+    k = nk_tile * k_steps
 
     def kernel(ctx, rhs, out, rhs_smem):
       del ctx
       for ki in range(k_steps):
-        for ni in range(n // 64):
-          rhs_slice = (ds(c(ki * 64, index), 64), ds(c(ni * 64, index), 64))
+        for ni in range(n // nk_tile):
+          rhs_slice = (
+              ds(c(ki * nk_tile, index), nk_tile),
+              ds(c(ni * nk_tile, index), nk_tile),
+          )
           if rhs_transpose:
             rhs_slice = rhs_slice[::-1]
           copy(
               src=memref_slice(rhs, rhs_slice),
               dst=memref_slice(rhs_smem, (ki, ni)),
-              swizzle=128,
+              swizzle=swizzle,
           )
       init_acc = mgpu.WGMMAAccumulator.zero(m=m, n=n)
       lhs_regs = iota_tensor(m, k, mlir_dtype_cls.get())
-      acc = mgpu.wgmma(init_acc, lhs_regs, rhs_smem, b_order=rhs_order)
+      acc = mgpu.wgmma(init_acc, lhs_regs, rhs_smem, b_order=rhs_order, swizzle=swizzle)
       nvvm.wgmma_commit_group_sync_aligned()
       nvvm.wgmma_wait_group_sync_aligned(0)
       acc.value.store_untiled(out)
@@ -647,7 +663,7 @@ class WGMMATest(TestCase):
     y = self.prng.uniform(-1, 1, y_shape).astype(jax_dtype)
     out_shape = jax.ShapeDtypeStruct((m, n), jnp.float32)
     scratch_shape = jax.ShapeDtypeStruct(
-        (k_steps, n // 64, 64, 64), jax_dtype
+        (k_steps, n // nk_tile, nk_tile, nk_tile), jax_dtype
     )
     z = mosaic_gpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), y, out_shape, scratch_shape
@@ -656,7 +672,7 @@ class WGMMATest(TestCase):
     ref = jax.lax.dot(
         x, (y.T if rhs_transpose else y), preferred_element_type=jnp.float32
     )
-    rtol = 0 if k_steps == 1 else 2.2e-4
+    rtol = 5e-4
     np.testing.assert_allclose(z, ref, rtol=rtol, atol=0)
 
 

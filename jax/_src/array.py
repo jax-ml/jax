@@ -32,7 +32,6 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import errors
 from jax._src import profiler
-from jax._src import tree_util
 from jax._src import xla_bridge
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
@@ -1069,22 +1068,18 @@ def shard_device_array(x, devices, indices, sharding):
   aval = api_util.shaped_abstractify(x)
   return pxla.batched_device_put(aval, sharding, shards, devices)
 
-def _hashable_index(idx):
-  return tree_util.tree_map(
-      lambda x: (x.start, x.stop) if type(x) == slice else x, idx)
-
 
 def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
   candidates = defaultdict(list)
   bufs = [buf.data for buf in x.addressable_shards]
   arr_indices = tuple(x.sharding.devices_indices_map(x.shape).values())
   for buf, idx in safe_zip(bufs, arr_indices):
-    candidates[_hashable_index(idx)].append(buf)
+    candidates[hashed_index(idx)].append(buf)
 
   bufs = []
   for idx, device in safe_zip(indices, devices):
     # Look up all buffers that contain the correct slice of the logical array.
-    candidates_list = candidates[_hashable_index(idx)]
+    candidates_list = candidates[hashed_index(idx)]
     if not candidates_list:
       # This array isn't sharded correctly. Reshard it via host roundtrip.
       # TODO(skye): more efficient reshard?

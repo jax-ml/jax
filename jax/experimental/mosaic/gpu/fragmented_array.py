@@ -268,6 +268,9 @@ class FragmentedArray:
     else:
       raise NotImplementedError(self.mlir_dtype)
 
+  def __radd__(self, other):
+    return self + other
+
   def __mul__(self, other):
     if ir.FloatType.isinstance(self.mlir_dtype):
       return self._pointwise(arith.mulf, other)
@@ -276,15 +279,28 @@ class FragmentedArray:
     else:
       raise NotImplementedError(self.mlir_dtype)
 
+  def __rmul__(self, other):
+    return self * other
+
   def __sub__(self, other):
     if not ir.FloatType.isinstance(self.mlir_dtype):
       raise NotImplementedError
     return self._pointwise(arith.subf, other)
 
+  def __rsub__(self, other):
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError
+    return self._pointwise(lambda s, o: arith.subf(o, s), other)
+
   def __truediv__(self, other):
     if not ir.FloatType.isinstance(self.mlir_dtype):
       raise NotImplementedError
     return self._pointwise(arith.divf, other)
+
+  def __rtruediv__(self, other):
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError
+    return self._pointwise(lambda s, o: arith.divf(o, s), other)
 
   def max(self, other):
     if not ir.FloatType.isinstance(self.mlir_dtype):
@@ -567,7 +583,7 @@ class FragmentedArray:
     bw = mgpu.bytewidth(dtype)
     m, n = self.shape
     assert m % 64 == 0  # This is implied by the layout.
-    cols_per_tile = 128 // bw
+    cols_per_tile = swizzle // bw
     expected_shape = [m // 64, n // cols_per_tile, 64, cols_per_tile]
     if ir.MemRefType(ref.type).shape != expected_shape:
       raise ValueError(ref.type, (m, n))
@@ -580,7 +596,7 @@ class FragmentedArray:
     dtype = ref_ty.element_type
     bw = mgpu.bytewidth(dtype)
     m_tiles, n_tiles, m_tile_size, n_tile_size = ref_ty.shape
-    if m_tile_size != 64 or n_tile_size != (128 // bw):
+    if m_tile_size != 64 or n_tile_size != (swizzle // bw):
       raise ValueError
     m, n = m_tiles * m_tile_size, n_tiles * n_tile_size
     assert m % 64 == 0  # This is implied by the layout.
@@ -595,13 +611,14 @@ class FragmentedArray:
 
   @staticmethod
   def transfer_tiled(shape, dtype, swizzle: int | None):
+    # TODO(apaszke): We could use ldmatrix/stmatrix for 16-bit types.
     bw = mgpu.bytewidth(dtype)
     m, n = shape
-    if n % 32 != 0:
+    cols_per_tile = swizzle // bw
+    if n % cols_per_tile != 0:
       raise NotImplementedError
-    cols_per_tile = 128 // bw
-    if swizzle != 128:
-      raise NotImplementedError("Only 128B swizzle supported")
+    if swizzle not in {32, 64, 128}:
+      raise NotImplementedError("Only swizzled stores supported")
 
     c = arith.ConstantOp.create_index
     tidx = arith.remui(gpu.thread_id(gpu.Dimension.x), c(WARPGROUP_SIZE))
@@ -609,46 +626,66 @@ class FragmentedArray:
     warp_id = arith.divui(tidx, c(32))  # {0, 1, 2, 3}
     sub_row_base = arith.divui(lane_id, c(4))  # {0, 1, ..., 7}
     if bw > 2:  # Stagger is only necessary for values larger than 16bit.
-      is_even_row = arith.cmpi(
-          arith.CmpIPredicate.eq, arith.remui(sub_row_base, c(2)), c(0)
-      )
+      # We split the rows into two groups (left/right) and change the order in
+      # which they perform accesses to avoid bank conflicts.
+      # It seems that the STS.64 is 2x faster (and the hardware reports no
+      # conflicts) when the conflicts are split between half-warps, as
+      # opposed to having them within the half-warp. This requires a
+      # little more work for the selects, but is ultimately worth it.
+      match swizzle:
+        case 128:
+          is_stagger_left = arith.cmpi(
+              arith.CmpIPredicate.eq, arith.remui(sub_row_base, c(2)), c(0)
+          )
+        case 64:
+          is_stagger_left = arith.cmpi(
+              arith.CmpIPredicate.eq,
+              arith.remui(arith.divui(sub_row_base, c(2)), c(2)),
+              c(0),
+          )
+        case 32:
+          # 32-byte tiles of 4-byte types have only 8 columns so there is no way
+          # to stagger the memory accesses within a single tile. We could do it
+          # across tiles, but that would be a completely different scheme.
+          raise NotImplementedError
+        case _:
+          raise AssertionError(swizzle)
+      stagger_amount = swizzle // 64
     else:
       # We rely on canonicalization to clean up the selects.
       i1 = ir.IntegerType.get_signless(1)
-      is_even_row = arith.constant(i1, ir.BoolAttr.get(True))
+      is_stagger_left = arith.constant(i1, ir.BoolAttr.get(True))
+      stagger_amount = 0
     row_base = arith.addi(sub_row_base, arith.muli(warp_id, c(16)))
     col_base = arith.muli(arith.remui(lane_id, c(4)), c(2))  # {0, 2, 4, 6}
     # The swizzle pattern is constant for a given thread.
-    col_swizzle_bits = arith.muli(sub_row_base, c(16 // bw))
+    col_swizzle_bits = arith.muli(
+        arith.divui(sub_row_base, c(128 // swizzle)), c(16 // bw),
+    )
     for row_group in range(m // 64):
       for col_group in range(n // cols_per_tile):
         for row_subidx in range(2):
           row = arith.addi(row_base, c(row_subidx * 8))
           for col_subidx in range(cols_per_tile // 8):
-            # We stagger the even and odd rows a little to avoid bank conflicts.
-            # It seems that the STS.64 is 2x faster (and the hardware reports no
-            # conflicts) when the conflicts are split between half-warps, as
-            # opposed to having them within the half-warp. This requires a
-            # little more work for the selects, but is ultimately worth it.
-            col_subidx_even = col_subidx
-            col_subidx_odd = col_subidx ^ 2
+            col_subidx_left = col_subidx
+            col_subidx_right = col_subidx ^ stagger_amount
             col_off = arith.select(
-                is_even_row, c(col_subidx_even * 8), c(col_subidx_odd * 8)
+                is_stagger_left, c(col_subidx_left * 8), c(col_subidx_right * 8)
             )
             col = arith.addi(col_base, col_off)
             col = arith.xori(col, col_swizzle_bits)
-            reg_idx_even = col_subidx_even + col_group * (cols_per_tile // 8)
-            reg_idx_odd = col_subidx_odd + col_group * (cols_per_tile // 8)
-            even_idx = row_group, reg_idx_even, row_subidx, 0
-            odd_idx = row_group, reg_idx_odd, row_subidx, 0
+            reg_idx_left = col_subidx_left + col_group * (cols_per_tile // 8)
+            reg_idx_right = col_subidx_right + col_group * (cols_per_tile // 8)
+            left_idx = row_group, reg_idx_left, row_subidx, 0
+            right_idx = row_group, reg_idx_right, row_subidx, 0
             idx = c(row_group), c(col_group), row, col
-            def get_register(regs, even_idx=even_idx, odd_idx=odd_idx):
-              value_even = regs[even_idx]
-              value_odd = regs[odd_idx]
-              return arith.select(is_even_row, value_even, value_odd)
-            def update_registers(regs, new, even_idx=even_idx, odd_idx=odd_idx):
-              regs[even_idx] = arith.select(is_even_row, new, regs[even_idx])
-              regs[odd_idx] = arith.select(is_even_row, regs[odd_idx], new)
+            def get_register(regs, left_idx=left_idx, right_idx=right_idx):
+              value_left = regs[left_idx]
+              value_right = regs[right_idx]
+              return arith.select(is_stagger_left, value_left, value_right)
+            def update_registers(regs, new, left_idx=left_idx, right_idx=right_idx):
+              regs[left_idx] = arith.select(is_stagger_left, new, regs[left_idx])
+              regs[right_idx] = arith.select(is_stagger_left, regs[right_idx], new)
             yield get_register, update_registers, idx
 
   def tree_flatten(self):

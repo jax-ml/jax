@@ -549,9 +549,9 @@ class Scheduler:
   # outputs, and in-out accumulators.
 
   def initialize(self, buffered_ref, src_ref, schedule=None):
-    pred = self.first_step_ever
-    if schedule is not None:
-      pred = schedule['prologue_copy_in'](self, buffered_ref, src_ref)
+    if schedule is None:
+      schedule = _default_schedule
+    pred = schedule["prologue_copy_in"](self, buffered_ref, src_ref)
 
     with jax.named_scope("ep_initialize"):
       @pl.when(self.first_step_ever)
@@ -563,36 +563,44 @@ class Scheduler:
         if buffered_ref.is_input:
           buffered_ref.copy_in(src_ref, self.indices)
 
+      # In the prologue this makes it so we wait on the prologue copy to finish.
+      # In other iterations this is the regular swap.
       buffered_ref.swap_slots()
 
   def wait_in(self, buffered_ref, src_ref, schedule=None):
-    pred = self.has_changed(buffered_ref) | self.first_step
-    if schedule is not None:
-      pred = schedule['wait_in'](self, buffered_ref, src_ref)
+    if schedule is None:
+      schedule = _default_schedule
+    pred = schedule["wait_in"](self, buffered_ref, src_ref)
 
     @jax.named_scope("ep_wait_in")
     def _wait():
       if buffered_ref.is_input:
         buffered_ref.wait_in(src_ref, self.indices)
       if buffered_ref.is_accumulator:
+        # In most cases we won't be waiting when init_accumulators is True,
+        # so this is usually just setting what we just copied.
         buffered_ref.set_accumulator(self.init_accumulators)
     @jax.named_scope("ep_set_accum")
     def _no_wait():
       if buffered_ref.is_accumulator:
-        @pl.when(self.first_step)
+
+        @pl.when(self.first_step | self.has_changed(buffered_ref))
         def _set_accumulator():
+          # In most cases we will skip waiting when init_accumulators is True,
+          # so this is usually just setting the accumulator to 0.
           buffered_ref.set_accumulator(self.init_accumulators)
     lax.cond(pred, _wait, _no_wait)
 
   def copy_in(self, buffered_ref, src_ref, schedule=None):
-    pred = self.will_change(buffered_ref) & ~self.last_step_ever
-    if schedule is not None:
-      pred = schedule['copy_in'](self, buffered_ref, src_ref)
+    if schedule is None:
+      schedule = _default_schedule
+    pred = schedule['copy_in'](self, buffered_ref, src_ref)
 
     @pl.when(pred)
     @jax.named_scope("ep_copy_in")
     def _send():
       if buffered_ref.is_input:
+        # We skip the last step because that's what prefetch is for.
         @pl.when(~self.last_step)
         def _copy_in():
           buffered_ref.copy_in(src_ref, self.next_indices)
@@ -601,24 +609,23 @@ class Scheduler:
 
   # convenience method for prefetch callbacks.
   def prefetch(self, buffered_ref, src_ref, schedule=None):
-    pred = ((self.will_change(buffered_ref) | self.last_step) &
-            ~self.last_step_ever)
-    if schedule is not None:
-      pred = schedule['prefetch'](self, buffered_ref, src_ref)
+    if schedule is None:
+      schedule = _default_schedule
+    pred = schedule['prefetch'](self, buffered_ref, src_ref)
 
     @pl.when(pred)
     @jax.named_scope("ep_prefetch")
     def _send():
       if buffered_ref.is_input:
+        # Prefetch should only run on the last step.
         @pl.when(self.last_step)
         def _prefetch_in():
           buffered_ref.copy_in(src_ref, self.next_indices)
 
   def wait_out(self, buffered_ref, dst_ref, schedule=None):
-    pred = ((self.has_changed(buffered_ref) | self.first_step) &
-            ~self.first_step_ever)
-    if schedule is not None:
-      pred = schedule['wait_out'](self, buffered_ref, dst_ref)
+    if schedule is None:
+      schedule = _default_schedule
+    pred = schedule['wait_out'](self, buffered_ref, dst_ref)
 
     @pl.when(pred)
     @jax.named_scope("ep_wait_out")
@@ -630,9 +637,9 @@ class Scheduler:
   #     cycle
 
   def copy_out(self, buffered_ref, dst_ref, schedule=None):
-    pred = self.will_change(buffered_ref) | self.last_step
-    if schedule is not None:
-      pred = schedule['copy_out'](self, buffered_ref, dst_ref)
+    if schedule is None:
+      schedule = _default_schedule
+    pred = schedule['copy_out'](self, buffered_ref, dst_ref)
 
     @jax.named_scope("ep_copy_out")
     def _copy_out_and_accumulate():
@@ -643,15 +650,20 @@ class Scheduler:
     @jax.named_scope("ep_accum")
     def _just_accumulate():
       if buffered_ref.is_accumulator:
+        # We accumulate on the last step because we will set the accumulator
+        # on the next first step. We can optimize this away if it becomes
+        # a problem, but it is probably not worth the complexity to support
+        # chains of different pipelines that want to reuse the accumulator with
+        # slightly different schedules.
         @pl.when(self.last_step)
         def _accumulate():
           buffered_ref.accumulate()
     lax.cond(pred, _copy_out_and_accumulate, _just_accumulate)
 
   def finalize(self, buffered_ref, dst_ref, schedule=None):
-    pred = self.last_step_ever
-    if schedule is not None:
-      pred = schedule['epilogue_wait_out'](self, buffered_ref, dst_ref)
+    if schedule is None:
+      schedule = _default_schedule
+    pred = schedule['epilogue_wait_out'](self, buffered_ref, dst_ref)
 
     @pl.when(pred)
     @jax.named_scope("ep_finalize")
@@ -676,12 +688,18 @@ class Scheduler:
 # that the source and target HBM Refs change with each cycle.
 _default_schedule = dict(
     prologue_copy_in=lambda s, bref, _: s.first_step_ever,
+    # We assume that the source ref changed for prefetch.
     wait_in=lambda s, bref, _: s.has_changed(bref) | s.first_step,
     copy_in=lambda s, bref, _: s.will_change(bref) & ~s.last_step_ever,
+    # We assume that the source ref changed. E.g. because of a CM DMA.
     prefetch=lambda s, bref, _: (
-        (s.will_change(bref) | s.last_step) & ~s.last_step_ever),
+        (s.will_change(bref) | s.last_step) & ~s.last_step_ever
+    ),
+    # We assume that the target ref changed. E.g. because of a CM DMA.
     wait_out=lambda s, bref, _: (
-        (s.has_changed(bref) | s.first_step) & ~s.first_step_ever),
+        (s.has_changed(bref) | s.first_step) & ~s.first_step_ever
+    ),
+    # We assume that the target ref is changing. E.g. because of a CM DMA.
     copy_out=lambda s, bref, _: s.will_change(bref) | s.last_step,
     epilogue_wait_out=lambda s, bref, _: s.last_step_ever,
 )
@@ -693,14 +711,39 @@ _default_schedule = dict(
 # pipeline schedule.
 _fixed_schedule = dict(
     prologue_copy_in=lambda s, bref, _: s.first_step_ever,
+    # We don't assume that the source ref changed for prefetch.
     wait_in=lambda s, bref, _: s.has_changed(bref) | s.first_step_ever,
     copy_in=lambda s, bref, _: s.will_change(bref) & ~s.last_step_ever,
+    # We don't assume that the source ref changed.
     prefetch=lambda s, bref, _: s.will_change(bref) & ~s.last_step_ever,
+    # We don't assume that the target ref changed.
     wait_out=lambda s, bref, _: s.has_changed(bref) & ~s.first_step_ever,
+    # We don't assume that the target ref is changing.
     copy_out=lambda s, bref, _: s.will_change(bref) | s.last_step_ever,
     epilogue_wait_out=lambda s, bref, _: s.last_step_ever,
 )
 
+
+def skip_input_copies_when_init_accumulators(schedule) -> Any:
+  """Skip input copies in schedule when init_accumulators is True."""
+  new_schedule = {**schedule}
+  for k in ["prologue_copy_in", "wait_in", "copy_in"]:
+
+    def new_pred(original_pred_fn, *a):
+      pred = original_pred_fn(*a)
+      if a[1].is_accumulator:
+        pred &= ~a[0].init_accumulators
+      return pred
+
+    new_schedule[k] = functools.partial(
+        new_pred,
+        schedule[k],
+    )
+  return new_schedule
+
+
+_default_schedule = skip_input_copies_when_init_accumulators(_default_schedule)
+_fixed_schedule = skip_input_copies_when_init_accumulators(_fixed_schedule)
 
 def get_pipeline_schedule(schedule) -> Any:
   """Retrieve a named pipeline schedule or pass through fully specified one."""

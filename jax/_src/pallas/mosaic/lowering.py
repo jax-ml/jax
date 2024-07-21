@@ -68,6 +68,7 @@ import numpy as np
 
 NDIndexer = indexing.NDIndexer
 TPUMemorySpace = tpu_core.TPUMemorySpace
+MemorySpace = pl_core.MemorySpace | TPUMemorySpace
 VMEM = tpu_core.TPUMemorySpace.VMEM
 SMEM = tpu_core.TPUMemorySpace.SMEM
 # Booleans are stored as the following type in memrefs.
@@ -105,6 +106,7 @@ class LoweringContext:
   mesh_context: MeshContext | None
   replace = dataclasses.replace
   traceback_caches: mlir.TracebackCaches
+  for_verification: bool
 
 
 @dataclasses.dataclass
@@ -112,15 +114,19 @@ class LoweringRuleContext:
   lowering_context: LoweringContext
   avals_in: Sequence[jax_core.AbstractValue]
   avals_out: Sequence[jax_core.AbstractValue]
-  block_shapes: list[tuple[int | pl_core.Mapped, ...]] | None
+  block_shapes: Sequence[tuple[int | pl_core.Mapped, ...] | None]
 
   replace = dataclasses.replace
 
 
-def _memory_space_to_tpu_memspace(memory_space: TPUMemorySpace | None
+def _memory_space_to_tpu_memspace(memory_space: MemorySpace | None
                                   ) -> ir.Attribute:
   if memory_space is None:
     memory_space = VMEM
+  elif memory_space == pl_core.MemorySpace.ERROR:
+    memory_space = SMEM
+  elif memory_space == pl_core.MemorySpace.INDEX:
+    memory_space = SMEM
   return ir.Attribute.parse(f"#tpu.memory_space<{memory_space}>")
 
 def _dtype_to_ir_type(dtype: jnp.dtype,
@@ -146,7 +152,7 @@ def _dtype_to_ir_type(dtype: jnp.dtype,
 
 def aval_to_ir_type(aval,
                     shape=None,
-                    memory_space: TPUMemorySpace | None = None,
+                    memory_space: MemorySpace | None = None,
                     is_kernel_boundary: bool = False):
   if isinstance(aval, tpu_core.AbstractSemaphore):
     if aval.sem_type is tpu_core.SemaphoreType.DMA:
@@ -382,15 +388,18 @@ def lower_jaxpr_to_module(
     out_shapes: tuple[jax.ShapeDtypeStruct, ...],
     jaxpr: jax_core.Jaxpr,
     dimension_semantics: tuple[str | None, ...] | None,
-    mesh: mesh_lib.Mesh | None = None
+    mesh: mesh_lib.Mesh | None = None,
+    for_verification: bool = False,
 ) -> tuple[Module, tuple[Any, ...]]:
   mosaic_grid_mapping = MosaicGridMapping(
       jaxpr, grid_mapping, dimension_semantics, mesh)
   mosaic_grid_mapping.maybe_compress_grid()
   m = ir.Module.create()
   sym_tab = ir.SymbolTable(m.operation)
-  func_op = lower_jaxpr_to_func(ctx, jaxpr, mosaic_grid_mapping=mosaic_grid_mapping,
-                                name="main")
+  func_op = lower_jaxpr_to_func(
+      ctx, jaxpr, mosaic_grid_mapping=mosaic_grid_mapping,
+      name="main", for_verification=for_verification,
+  )
   m.body.append(func_op)
   sym_tab.insert(func_op)
   window_params = []
@@ -447,6 +456,7 @@ def lower_jaxpr_to_module(
           aval,
           name=func_name,
           mosaic_grid_mapping=mosaic_grid_mapping,
+          for_verification=for_verification,
       )
       assert mlir_func.verify(), mlir_func
       block_shape = [
@@ -494,6 +504,7 @@ def lower_jaxpr_to_transform_func(
     *,
     name: str,
     mosaic_grid_mapping: MosaicGridMapping,
+    for_verification: bool,
 ) -> func.FuncOp:
   num_grid = len(mosaic_grid_mapping.grid_types)
   arg_types = [
@@ -524,6 +535,7 @@ def lower_jaxpr_to_transform_func(
         source_info_util.NameStack(),
         mesh_context=mesh_context,
         traceback_caches=mlir.TracebackCaches(),
+        for_verification=for_verification,
     )
     out = jaxpr_subcomp(lowering_context, jaxpr, *jaxpr_indices,
                         *scalar_prefetch)
@@ -554,6 +566,7 @@ def lower_jaxpr_to_func(
     *,
     mosaic_grid_mapping: MosaicGridMapping,
     name: str,
+    for_verification: bool,
 ) -> func.FuncOp:
   num_grid = len(mosaic_grid_mapping.grid_types)
   num_scalar_prefetch = len(mosaic_grid_mapping.scalar_prefetch_types)
@@ -590,6 +603,7 @@ def lower_jaxpr_to_func(
         source_info_util.NameStack(),
         mesh_context=mesh_context,
         traceback_caches=mlir.TracebackCaches(),
+        for_verification=for_verification,
     )
     return jaxpr_subcomp(
         lowering_context, jaxpr, *scalar_prefetch, *operands_and_scratch

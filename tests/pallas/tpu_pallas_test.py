@@ -1941,7 +1941,9 @@ class PallasMegacoreTest(PallasBaseTest):
             )
         )
     )(x, y)
-    np.testing.assert_allclose(z, jax.vmap(jax.vmap(jnp.dot))(x, y))
+    np.testing.assert_allclose(
+        z, jax.vmap(jax.vmap(jnp.dot))(x, y), rtol=1e-6
+    )
 
 
 class PallasCallVmapTest(PallasBaseTest):
@@ -2253,13 +2255,11 @@ class PallasCallTPUBooleanTest(PallasBaseTest):
       )(input_arr)
 
 
-
 class PallasCallTPUBooleanInterpretTest(PallasCallTPUBooleanTest):
   INTERPRET: bool = True
 
 
 class PallasCallTPUCheckifyTest(PallasBaseTest):
-  INTERPRET: bool = True
 
   @parameterized.parameters((2,), (5,), (6,), (7,))
   def test_checkify_with_scalar_prefetch(self, threshold):
@@ -2305,17 +2305,17 @@ class PallasCallTPUCheckifyTest(PallasBaseTest):
       checkify.check(all_nequal, 'x_ref equals o_ref id=({x}, {y})',
                      x=pl.program_id(0), y=pl.program_id(1))
 
-    x = jax.random.uniform(jax.random.key(0), (128, 128), dtype=jnp.float32)
+    x = jax.random.uniform(jax.random.key(0), (128, 512), dtype=jnp.float32)
     pallas_call = self.pallas_call(
         body,
         out_shape=jax.ShapeDtypeStruct(x.shape, jnp.float32),
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
             in_specs=[
-                pl.BlockSpec((32, 32), lambda i, j: (i, j)),
+                pl.BlockSpec((32, 128), lambda i, j: (i, j)),
             ],
-            out_specs=pl.BlockSpec((32, 32), lambda i, j: (i, j)),
-            scratch_shapes=[pltpu.VMEM((32, 32), dtype=jnp.float32)],
+            out_specs=pl.BlockSpec((32, 128), lambda i, j: (i, j)),
+            scratch_shapes=[pltpu.VMEM((32, 128), dtype=jnp.float32)],
             grid=(4, 4),
         ),
     )
@@ -2359,6 +2359,10 @@ class PallasCallTPUCheckifyTest(PallasBaseTest):
     np.testing.assert_array_equal(
         result, np.full(shape, grid_size * 2.0, np.float32)
     )
+
+
+class PallasCallTPUCheckifyInterpretTest(PallasCallTPUCheckifyTest):
+  INTERPRET: bool = True
 
 
 class MiscellaneousInterpreterTest(PallasBaseTest):

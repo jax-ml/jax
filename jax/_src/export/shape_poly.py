@@ -886,10 +886,8 @@ class _DimExpr:
       if config.enable_checks.value:
         v1 = divisor * quotient
         v2 = v1 + remainder
-        assert self == _ensure_poly(v2, "check", self.scope), (
-            self, v2, type(self), type(v2))
-        assert self == _ensure_poly(divisor * quotient + remainder, "test", self.scope), (
-            self, divisor, quotient, remainder)
+        assert self == v2, (self, v2, type(self), type(v2))
+        assert self == divisor * quotient + remainder, (self, divisor, quotient, remainder)
       return quotient, remainder
     except InconclusiveDimensionOperation:
       return (_DimExpr._from_operation(_DimFactor.FLOORDIV, self, divisor,

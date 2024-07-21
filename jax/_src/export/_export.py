@@ -737,7 +737,7 @@ def _wrap_main_func(
     orig_main_name = ir.StringAttr(symbol_table.insert(orig_main)).value
 
     def is_token(typ, attrs):
-      return (typ == mlir.token_type()[0])
+      return (typ == mlir.token_type())
 
     orig_input_types = orig_main.type.inputs  # type: ignore
     arg_attrs = list(ir.ArrayAttr(orig_main.arg_attrs))  # type: ignore
@@ -1329,7 +1329,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     else:
       current_platform_idx = cast(ir.Value, mlir.ir_constant(np.int32(0)))
     # Compute the rule index based on the current platform
-    i32_type = mlir.aval_to_ir_types(core.ShapedArray((), dtype=np.int32))[0]
+    i32_type = mlir.aval_to_ir_type(core.ShapedArray((), dtype=np.int32))
     if current_platform_idx.type != i32_type:
       current_platform_idx = hlo.ConvertOp(i32_type, current_platform_idx)
     callee_platform_idx = hlo.CaseOp([i32_type],
