@@ -2375,11 +2375,8 @@ def make_jaxpr(fun: Callable,
   @wraps(fun)
   @api_boundary
   def make_jaxpr_f(*args, **kwargs):
-    with ExitStack() as stack:
-      for axis_name, size in axis_env or []:
-        stack.enter_context(core.extend_axis_env(axis_name, size, None))
-      traced = jit(fun, static_argnums=static_argnums,
-                   abstracted_axes=abstracted_axes).trace(*args, **kwargs)
+    traced = jit(fun, static_argnums=static_argnums,
+                 abstracted_axes=abstracted_axes).trace(*args, **kwargs)
     # `jit` converts tracers in consts to args but that breaks the semantics of
     # `make_jaxpr`. Hence convert the tracers in args back to consts in jaxpr.
     if traced._num_consts:

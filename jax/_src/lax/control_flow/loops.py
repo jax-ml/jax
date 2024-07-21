@@ -1377,6 +1377,8 @@ def _while_loop_batching_rule(axis_data, main_type,
                               args, dims, cond_nconsts, cond_jaxpr,
                               body_nconsts, body_jaxpr):
   from jax._src.callback import _IOEffect, _OrderedIOEffect
+  axis_name, axis_size, spmd_axis_name = \
+      axis_data.name, axis_data.size, axis_data.spmd_name
   if any(_OrderedIOEffect in fn.effects for fn in [body_jaxpr, cond_jaxpr]):
     raise Exception("Ordered IO effects not supported in vmap.")
 

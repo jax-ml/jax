@@ -718,15 +718,15 @@ def _batch_jaxpr(closed_jaxpr, axis_size, in_batched, instantiate, axis_name,
 
 def batch_jaxpr_axes(closed_jaxpr, axis_size, in_axes, out_axes_dest, axis_name,
                      spmd_axis_name, main_type):
-  return _batch_jaxpr_axes(closed_jaxpr, axis_size, tuple(in_axes),
-                           tuple(out_axes_dest), axis_name, spmd_axis_name,
-                           main_type)
+  axis_data = AxisData(axis_name, axis_size, spmd_axis_name)
+  return _batch_jaxpr_axes(closed_jaxpr, axis_data, tuple(in_axes),
+                           tuple(out_axes_dest), main_type)
 
 @weakref_lru_cache
 def _batch_jaxpr_axes(closed_jaxpr, axis_data, in_axes, out_axes_dest, main_type):
   f = lu.wrap_init(core.jaxpr_as_fun(closed_jaxpr))
   f, out_axes = _batch_jaxpr_inner(f, axis_data)
-  f, out_batched = _match_axes_jaxpr(f, aixs_data, out_axes_dest, out_axes)
+  f, out_batched = _match_axes_jaxpr(f, axis_data, out_axes_dest, out_axes)
   f = _batch_jaxpr_outer(f, axis_data, in_axes, main_type)
   avals_in = [core.unmapped_aval(axis_data.size, axis_data.name, b, aval) if b is not not_mapped
               else aval for aval, b in unsafe_zip(closed_jaxpr.in_avals, in_axes)]

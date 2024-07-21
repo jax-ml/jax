@@ -722,8 +722,6 @@ def _batched_reduction_collective(
                                   axis if axis != axis_data.name else
                                   d for axis in axes),
                             d_vals_in))
-
-  if axis_data.name not in axes: breakpoint()
   return vals_out, [batching.not_mapped] * len(vals_out)
 
 def _replica_groups(axis_env, axis_name, axis_index_groups):
@@ -764,7 +762,7 @@ def _allreduce_effectful_abstract_eval(*args, axes, axis_index_groups):
       ShapedArray(lax._reduce_op_shape_rule(raise_to_shaped(arg), axes=pos_axes),
                   arg.dtype, named_shape=named_shape)
       for arg, named_shape in zip(args, named_shapes)]
-  return out_avals, {core.NamedAxisEffect(axis) for axis in named_axes}
+  return out_avals, set()
 
 def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
   if axis_index_groups is not None and ("tpu" in ctx.module_context.platforms):
@@ -907,7 +905,8 @@ def _ppermute_transpose_rule(t, x, perm, axis_name):
   inverse_perm = list(zip(dsts, srcs))
   return [ppermute(t, axis_name=axis_name, perm=inverse_perm)]
 
-def _ppermute_batcher(axis_size, frame_name, _, vals_in, dims_in, axis_name, perm):
+def _ppermute_batcher(axis_data, _, vals_in, dims_in, axis_name, perm):
+  axis_size, frame_name = axis_data.size, axis_data.name
   (v,), (d,) = vals_in, dims_in
   if not isinstance(axis_name, (tuple, list)):
     axis_name = (axis_name,)
@@ -1128,8 +1127,7 @@ def _all_to_all_effectful_abstract_eval(
   shape[split_axis] //= axis_size
   shape[concat_axis] *= axis_size
   out_aval = input_aval.update(shape=tuple(shape), weak_type=False)
-  effects = {*map(core.NamedAxisEffect, axis_name)}
-  return out_aval, effects
+  return out_aval, set()
 
 
 all_to_all_p = core.Primitive('all_to_all')
@@ -1203,6 +1201,8 @@ def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False):
    [[12 13 14 15]
     [ 4  5  6  7]]]
   """
+  if not isinstance(axis_name, tuple):
+    axis_name = axis_name,
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
   axis_size = psum(1, axis_name, axis_index_groups=axis_index_groups)
   def bind(leaf):
@@ -1211,7 +1211,7 @@ def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False):
         all_gather_dimension=canonicalize_axis(
             axis, np.ndim(leaf) if tiled else np.ndim(leaf) + 1),
         axis_name=axis_name, axis_index_groups=axis_index_groups,
-        axis_size=axis_size, tiled=tiled)
+        axis_size=int(axis_size), tiled=tiled)
   return tree_util.tree_map(bind, x)
 
 def _expand(dim, size, index, tiled, x):
@@ -1280,8 +1280,7 @@ def _all_gather_effectful_abstract_eval(
   new_named_shape = {name: size for name, size in x_aval.named_shape.items()
                      if name not in axis_name}
   out_aval = x_aval.update(shape=new_shape, named_shape=new_named_shape)
-  effects = {*map(core.NamedAxisEffect, axis_name)}
-  return out_aval, effects
+  return out_aval, set()
 
 
 def _all_gather_transpose_rule(cts, x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
@@ -1311,11 +1310,14 @@ def _all_gather_batched_collective(axis_data, _, vals_in, dims_in,
                                    all_gather_dimension, axis_name,
                                    axis_index_groups, axis_size, tiled):
   frame_size, frame_name = axis_data.size, axis_data.name
+  if frame_name not in axis_name:
+    return _all_gather_batcher(
+        vals_in, dims_in, all_gather_dimension=all_gather_dimension,
+        axis_name=axis_name, axis_index_groups=axis_index_groups,
+        axis_size=axis_size, tiled=tiled)
   if axis_index_groups is not None:
     raise NotImplementedError("axis_index_groups not supported in vmap")
-  try:
-    assert axis_size == frame_size, "axis size doesn't match"
-  except: breakpoint()
+  assert axis_size == frame_size, breakpoint() or "axis size doesn't match"
   if not isinstance(axis_name, tuple):
     axis_name = (axis_name,)
   if len(axis_name) > 1:
@@ -1421,8 +1423,7 @@ def _reduce_scatter_effectful_abstract_eval(
       if name not in axis_name
   }
   out_aval = x_aval.update(shape=new_shape, named_shape=new_named_shape)
-  effects = {*map(core.NamedAxisEffect, axis_name)}
-  return out_aval, effects
+  return out_aval, set()
 
 
 def _reduce_scatter_transpose_rule(cts, x, *, axis_name, scatter_dimension,
@@ -1448,9 +1449,10 @@ def _reduce_scatter_batcher(vals_in, dims_in, *, scatter_dimension, axis_name,
       tiled=tiled)
   return result, d
 
-def _reduce_scatter_collective(frame_size, frame_name, _, vals_in, dims_in,
+def _reduce_scatter_collective(axis_data, _, vals_in, dims_in,
                                scatter_dimension, axis_name,
                                axis_index_groups, axis_size, tiled):
+  frame_size, frame_name = axis_data.size, axis_data.name
   if axis_index_groups is not None:
     raise NotImplementedError("axis_index_groups not supported in vmap")
   assert axis_size == frame_size, "axis size doesn't match"
@@ -1597,26 +1599,21 @@ def _build_axis_index_lowering_hlo(ctx, axis_name, axis_env):
       unsigned_index)
 
 def _axis_index_lowering(ctx, *, axis_name):
-  return [
-      _build_axis_index_lowering_hlo(ctx, axis_name,
-                                     ctx.module_context.axis_env)
-  ]
-
+  return [_build_axis_index_lowering_hlo(ctx, axis_name,
+                                         ctx.module_context.axis_env)]
 
 def _axis_index_effectful_abstract_eval(*, axis_name):
   frame = core.axis_frame(axis_name)
   out_aval = ShapedArray((), np.int32, named_shape={axis_name: frame.size})
-  return out_aval, {core.NamedAxisEffect(axis_name)}
+  return out_aval, set()
 
+def _axis_index_batcher(axis_data, _, vals_in, dims_in, *, axis_name):
+  return lax.iota(np.int32, axis_data.size), 0
 
 axis_index_p = core.Primitive('axis_index')
 mlir.register_lowering(axis_index_p, _axis_index_lowering)
 axis_index_p.def_effectful_abstract_eval(_axis_index_effectful_abstract_eval)
-
-def _vmap_process_axis_index(self, frame):
-  assert frame.size is not None
-  return batching.BatchTracer(self, lax.iota(np.int32, frame.size), 0)
-batching.BatchTrace.process_axis_index = _vmap_process_axis_index  # type: ignore
+batching.fancy_primitive_batchers[axis_index_p] = _axis_index_batcher
 
 
 pdot_p = core.Primitive('pdot')
@@ -1641,12 +1638,16 @@ def _pdot_effectful_abstract_eval(
                  for name, size in common_named_shape.items()
                  if name not in axis_name}
   out_aval = pos_aval.update(named_shape=named_shape)
-  effects = {*map(core.NamedAxisEffect, axis_name)}
-  return out_aval, effects
+  return out_aval, set()
 
 
-def _pdot_vmap_collective_rule(axis_size, frame_name, _, vals_in, dims_in, *, axis_name,
+def _pdot_vmap_collective_rule(axis_data, _, vals_in, dims_in, *, axis_name,
                                pos_contract, pos_batch, precision):
+  axis_size, frame_name = axis_data.size, axis_data.name
+  if frame_name not in axis_name:
+    return _pdot_vmap_batching_rule(
+        vals_in, dims_in, axis_name=axis_name, pos_contract=pos_contract,
+        pos_batch=pos_batch, precision=precision)
   x, y = vals_in
   x_dim, y_dim = dims_in
   x_pos_contract, y_pos_contract = pos_contract
