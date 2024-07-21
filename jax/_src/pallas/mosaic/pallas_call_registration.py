@@ -32,7 +32,6 @@ from jax._src.lib.mlir import ir
 from jax._src.pallas import core
 from jax._src.pallas.mosaic import lowering
 from jax._src.pallas.mosaic import verification
-from jax._src.pallas.pallas_call import pallas_call_p
 from jax.experimental import mosaic
 from jax.experimental.mosaic.dialects import tpu
 
@@ -69,21 +68,13 @@ def pallas_call_tpu_lowering_rule(
     name: str,
     grid_mapping: core.GridMapping,
     input_output_aliases: tuple[tuple[int, int], ...],
-    in_shapes: tuple[jax.ShapeDtypeStruct, ...],
-    out_shapes: tuple[jax.ShapeDtypeStruct, ...],
     debug: bool,
     interpret: bool,
     compiler_params: dict[str, Any]):
   """Lowers a pallas_call to a Mosaic TPU custom call."""
-  if interpret:
-    # TODO(necula): is this branch still needed?
-    return mlir.lower_fun(pallas_call_p.impl, multiple_results=True)(
-        ctx, *in_nodes, jaxpr=jaxpr, name=name, out_shapes=out_shapes,
-        in_shapes=in_shapes,
-        interpret=interpret, debug=debug,
-        input_output_aliases=input_output_aliases,
-        grid_mapping=grid_mapping,
-        compiler_params=compiler_params)
+  del interpret
+  # TODO(necula): cleanup
+  out_shapes = grid_mapping.out_shapes
   if debug:
     print(jaxpr)
   if "mosaic_params" in compiler_params:
@@ -114,7 +105,7 @@ def pallas_call_tpu_lowering_rule(
     with mlir_ctx, ir.Location.unknown(mlir_ctx):
       dimension_semantics = mosaic_params.get("dimension_semantics", None)
       return lowering.lower_jaxpr_to_module(
-          mlir_ctx, grid_mapping, in_shapes, out_shapes, jaxpr,
+          mlir_ctx, grid_mapping, jaxpr,
           dimension_semantics=dimension_semantics, mesh=mesh,
           for_verification=for_verification)
   mosaic_module, extra_args = lower_module(for_verification=False)

@@ -294,7 +294,7 @@ class MosaicGridMapping:
     self.grid_names = grid_mapping.grid_names
     self.jaxpr = jaxpr
     self.block_mappings = grid_mapping.block_mappings
-    self.mapped_dims = grid_mapping.mapped_dims
+    self.mapped_dims = grid_mapping.vmapped_dims
     num_scalar_prefetch = grid_mapping.num_index_operands
     num_scratch = grid_mapping.num_scratch_operands
     # jaxpr has signature [*scalar_prefetch, *consts, *in_ops, *out_ops, *scratch]
@@ -425,13 +425,15 @@ class MeshInfo:
 def lower_jaxpr_to_module(
     ctx: ir.Context,
     grid_mapping: pl_core.GridMapping,
-    in_shapes: tuple[jax.ShapeDtypeStruct, ...],
-    out_shapes: tuple[jax.ShapeDtypeStruct, ...],
     jaxpr: jax_core.Jaxpr,
     dimension_semantics: tuple[str | None, ...] | None,
     mesh: mesh_lib.Mesh | None = None,
     for_verification: bool = False,
 ) -> tuple[Module, tuple[Any, ...]]:
+  # TODO(necula): cleanup
+  in_shapes = grid_mapping.in_shapes
+  out_shapes = grid_mapping.out_shapes
+
   mosaic_grid_mapping = MosaicGridMapping(
       jaxpr, grid_mapping, dimension_semantics, mesh)
   mosaic_grid_mapping.maybe_compress_grid()
@@ -454,10 +456,8 @@ def lower_jaxpr_to_module(
       invars = invars[grid_mapping.num_index_operands:]
     # invars now = *consts, *ins, *outs
     avals = tuple(v.aval for v in invars)
+    # TODO(necula): we should not need block_operand_shapes anymore
     block_operand_shapes = (
-        *[jax.ShapeDtypeStruct(v.aval.shape,
-                               v.aval.dtype)
-          for v in invars[:grid_mapping.num_constant_operands]],
         *in_shapes[grid_mapping.num_index_operands:],
         *out_shapes,
     )
@@ -466,10 +466,6 @@ def lower_jaxpr_to_module(
         zip(block_operand_shapes, grid_mapping.block_mappings, avals)
     ):
       func_name = f"transform_{i}"
-      if bm is None:
-        raise NotImplementedError(
-            "BlockSpecs are required on TPU when grid is specified"
-        )
       # ANY operands don't support windowing and require empty window_params.
       if aval.memory_space == tpu_core.TPUMemorySpace.ANY:
         # We may not require windowing if our block_shape matches the original
