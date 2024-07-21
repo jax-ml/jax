@@ -1055,9 +1055,10 @@ def _all_to_all_batcher(vals_in, dims_in, *, axis_name, split_axis, concat_axis,
   )
   return result, d
 
-def _all_to_all_batched_collective(axis_size, frame_name, _, vals_in, dims_in,
+def _all_to_all_batched_collective(axis_data, _, vals_in, dims_in,
                                    axis_name, split_axis, concat_axis,
                                    axis_index_groups, tiled):
+  axis_size, frame_name = axis_data.size, axis_data.name
   if axis_index_groups is not None:
     raise NotImplementedError("Please open a feature request!")
   x, = vals_in
