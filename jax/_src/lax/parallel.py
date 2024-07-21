@@ -648,9 +648,9 @@ def pgather(src, idx, axes: int | AxisName):
 def _constant_psum(axis_data, args, axes, axis_index_groups):
   assert axis_data.name in axes
   if axis_index_groups: raise NotImplementedError
-  axes_ = tuple(n for n in axes if n != axis_data.name)
-  if axes_:
-    args = psum_p.bind(*args, axes=axes_, axis_index_groups=axis_index_groups)
+  new_axes = tuple(n for n in axes if n != axis_data.name)
+  if new_axes:
+    args = psum_p.bind(*args, axes=new_axes, axis_index_groups=axis_index_groups)
   outs = [lax._const(x, axis_data.size) * x for x in args]
   return outs, [None] * len(outs)
 
@@ -698,12 +698,15 @@ def _batched_reduction_collective(
     prim, if_unmapped, axis_data, _, vals_in, dims_in, axes,
     axis_index_groups):
   assert prim.multiple_results
-  assert axis_data.name in axes
   if all(d is None for d in dims_in):
-    if prim is psum_p:
+    if prim is psum_p and axis_data.name in axes:
       return _constant_psum(axis_data, vals_in, axes, axis_index_groups)
     else:
-      return prim.bind(*vals_in, axes=axes, axis_index_groups=axis_index_groups)
+      return prim.bind(*vals_in, axes=axes, axis_index_groups=axis_index_groups), dims_in
+
+  if axis_data.name not in axes:
+    return _reduction_batcher(prim, vals_in, dims_in, axes=axes,
+                              axis_index_groups=axis_index_groups)
 
   # Note that we have a choice here. We can either unfuse the reduction into one
   # that handles the batched dims and then another one that handles the rest.
@@ -714,12 +717,13 @@ def _batched_reduction_collective(
   vals_out = _reduction_with_positional_batcher(
       prim, vals_in, dims_in, axis_index_groups,
       lambda d, d_vals_in: (tuple(axis for axis in axes if axis != axis_data.name),
-                            [if_unmapped(v, axis_data.name) for v in d_vals_in]),
+                            [if_unmapped(v, axis_data.size) for v in d_vals_in]),
       lambda d, d_vals_in: (tuple(axis + (axis >= d) if isinstance(axis, int) else
                                   axis if axis != axis_data.name else
-                                  d
-                                  for axis in axes),
+                                  d for axis in axes),
                             d_vals_in))
+
+  if axis_data.name not in axes: breakpoint()
   return vals_out, [batching.not_mapped] * len(vals_out)
 
 def _replica_groups(axis_env, axis_name, axis_index_groups):
