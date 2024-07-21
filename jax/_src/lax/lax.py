@@ -3031,9 +3031,113 @@ def _ragged_dot_dtype_rule(lhs: Array, rhs: Array, group_sizes: Array,
   # defer the output dtype to dot_general, which is part of the _ragged_dot_impl.
   return _dot_general_dtype_rule(lhs, rhs, dimension_numbers=_RAGGED_DOT_DOT_DIMENSION_NUMBERS, precision=precision, preferred_element_type=preferred_element_type)
 
+
+def _ragged_dot_jvp_rule(
+    primals, tangents, precision, preferred_element_type, group_offset
+):
+  # note - we could ostensibly just get this by passing on the
+  # value to ragged_dot below, but, this feels cleaner.
+  if group_offset is not None:
+    raise NotImplementedError('Unimplemented group_offset support.')
+  x, y, gs = primals
+  dx, dy, _ = tangents  # no tan on the gs
+
+  # primal
+  primal_out = ragged_dot(
+      x,
+      y,
+      gs,
+      precision=precision,
+      preferred_element_type=preferred_element_type,
+  )
+
+  # tangent
+  dx_out = (
+      ragged_dot(
+          dx,
+          y,
+          gs,
+          precision=precision,
+          preferred_element_type=preferred_element_type,
+      )
+      if type(dx) is not ad_util.Zero
+      else jax.numpy.zeros_like(primal_out)
+  )
+  dy_out = (
+      ragged_dot(
+          x,
+          dy,
+          gs,
+          precision=precision,
+          preferred_element_type=preferred_element_type,
+      )
+      if type(dy) is not ad_util.Zero
+      else jax.numpy.zeros_like(primal_out)
+  )
+  tangent_out = dx_out + dy_out
+
+  return primal_out, tangent_out
+
+
+def _ragged_dot_transpose_rule(
+    ct, *operands, precision, preferred_element_type, group_offset
+):
+  x, y, gs = operands
+  if group_offset is not None:
+    raise NotImplementedError('Unimplemented group_offset support.')
+
+  def ragged_to_dense(x, group_sizes):
+    group_count = group_sizes.shape[0]
+    shape = (group_count, x.shape[0], x.shape[1])
+    x_broadcasted = jax.lax.broadcast_in_dim(x, shape, (1, 2))
+    iota = jax.lax.broadcasted_iota(group_sizes.dtype, shape, 1)
+    group_ends = jax.lax.cumsum(group_sizes)
+    group_starts = concatenate(
+        [
+            np.zeros_like([group_ends[0]], dtype=group_sizes.dtype),
+            group_ends[:-1],
+        ],
+        0,
+    )
+    group_ends = jax.lax.broadcast_in_dim(group_ends, shape, (0,))
+    group_starts = jax.lax.broadcast_in_dim(group_starts, shape, (0,))
+    mask = (group_starts <= iota) & (iota < group_ends)
+    return jax.numpy.where(mask, x_broadcasted, 0)
+
+  if ad.is_undefined_primal(y):
+    grad_x = None
+  else:
+    y_t = jax.numpy.matrix_transpose(y)
+    grad_x = ragged_dot(
+        ct,
+        y_t,
+        gs,
+        precision=precision,
+        preferred_element_type=preferred_element_type,
+    )
+
+  if ad.is_undefined_primal(x):
+    grad_y = None
+  else:
+    x_dense = ragged_to_dense(x, gs)
+    ct_dense = ragged_to_dense(ct, gs)
+    dimension_numbers = (([1], [1]), ([0], [0]))
+    grad_y = jax.lax.dot_general(
+        x_dense,
+        ct_dense,
+        dimension_numbers,
+        precision=precision,
+        preferred_element_type=preferred_element_type,
+    )
+
+  return grad_x, grad_y, None
+
+
 ragged_dot_p = standard_primitive(_ragged_dot_shape_rule,
                                   _ragged_dot_dtype_rule, 'ragged_dot')
 ragged_dot_p.def_impl(partial(dispatch.apply_primitive, ragged_dot_p))
+ad.primitive_jvps[ragged_dot_p] = _ragged_dot_jvp_rule
+ad.primitive_transposes[ragged_dot_p] = _ragged_dot_transpose_rule
 
 def _ragged_dot_impl(
     lhs: Array,
