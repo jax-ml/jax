@@ -4265,10 +4265,18 @@ class ArrayPjitTest(jtu.JaxTestCase):
     s2 = NamedSharding(mesh2, P())
 
     x_s1 = jax.device_put(np_inp, s1)
-
+    # Reshard!
     out = jax.device_put(x_s1, s2)
     self.assertArraysEqual(out, np_inp)
     self.assertEqual(out.sharding, s2)
+    del out
+
+    s3 = NamedSharding(mesh2, P('model_q'))
+    x_s3 = jax.device_put(np_inp, s3)
+    # Reshard to iota device assignment!
+    out2 = jax.device_put(x_s3, s1)
+    self.assertArraysEqual(out2, np_inp)
+    self.assertEqual(out2.sharding, s1)
 
   def test_convert_element_type_sharding(self):
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
