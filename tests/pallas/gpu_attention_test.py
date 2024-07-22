@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import os
-import sys
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -35,25 +34,13 @@ config.parse_flags_with_absl()
 
 
 @jtu.with_config(jax_traceback_filtering="off")
-class PallasBaseTest(jtu.JaxTestCase):
-  INTERPRET = False
+class DecodeAttentionTest(jtu.JaxTestCase):
 
   def setUp(self):
-    if jtu.test_device_matches(["cpu"]) and not self.INTERPRET:
-      self.skipTest("On CPU the test works only in interpret mode")
-    if jtu.test_device_matches(["cpu", "gpu"]) and jax.config.x64_enabled:
-      self.skipTest("On CPU and GPU the test works only in 32-bit")
-    if (jtu.test_device_matches(["cuda"]) and
-        not jtu.is_cuda_compute_capability_at_least("8.0")):
-      self.skipTest("Only works on GPU with capability >= sm80")
-    if sys.platform == "win32" and not self.INTERPRET:
-      self.skipTest("Only works on non-Windows platforms")
+    if not jtu.is_cuda_compute_capability_at_least("8.0"):
+      self.skipTest("Fused attention only works on GPUs with capability >= sm80")
 
     super().setUp()
-
-
-class DecodeAttentionTest(PallasBaseTest):
-  INTERPRET = False
 
   @parameterized.named_parameters(*[
       (
@@ -92,7 +79,7 @@ class DecodeAttentionTest(PallasBaseTest):
     k = random.normal(k2, (batch_size, seq_len, head_dim), dtype=jnp.float16)
     v = random.normal(k3, (batch_size, seq_len, head_dim), dtype=jnp.float16)
 
-    o = decode_attention.mqa(q, k, v, interpret=self.INTERPRET)
+    o = decode_attention.mqa(q, k, v)
     o_ref = decode_attention.mqa_reference(q, k, v)
     np.testing.assert_allclose(o, o_ref, atol=0.05)
 
@@ -142,12 +129,9 @@ class DecodeAttentionTest(PallasBaseTest):
         k3, (batch_size, seq_len, num_kv_heads, head_dim), dtype=jnp.float16
     )
 
-    o = decode_attention.gqa(q, k, v, interpret=self.INTERPRET)
+    o = decode_attention.gqa(q, k, v)
     o_ref = decode_attention.gqa_reference(q, k, v)
     np.testing.assert_allclose(o, o_ref, atol=0.05)
-
-class DecodeAttentionInterpreterTest(DecodeAttentionTest):
-  INTERPRET = True
 
 
 if __name__ == "__main__":

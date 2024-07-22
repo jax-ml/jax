@@ -114,14 +114,14 @@ def matmul_block_spec(x, y, *, bm, bn, bk, interpret, debug=False):
 
 
 @jtu.with_config(jax_traceback_filtering="off")
-class PallasBaseTest(jtu.JaxTestCase):
+class PallasTest(jtu.JaxTestCase):
   INTERPRET = False
 
   def setUp(self):
     if jtu.test_device_matches(["cpu"]) and not self.INTERPRET:
       self.skipTest("On CPU the test works only in interpret mode")
-    if jtu.test_device_matches(["cpu", "gpu"]) and jax.config.x64_enabled:
-      self.skipTest("On CPU and GPU the test works only in 32-bit")
+    if jtu.test_device_matches(["gpu"]) and jax.config.x64_enabled:
+      self.skipTest("On GPU the test works only in 32-bit")
     if (jtu.test_device_matches(["cuda"]) and
         not jtu.is_cuda_compute_capability_at_least("8.0")):
       self.skipTest("Only works on GPU with capability >= sm80")
@@ -135,24 +135,28 @@ class PallasBaseTest(jtu.JaxTestCase):
     return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
 
 
-class FusedAttentionTest(PallasBaseTest):
+class FusedAttentionTest(PallasTest):
 
   def setUp(self):
     super().setUp()
-    if jtu.test_device_matches(["tpu"]):
-      self.skipTest("Not intended for TPU")
+    if jtu.test_device_matches(["cpu", "tpu"]):
+      self.skipTest("Works only on GPU")
 
-  @jtu.parameterized_filterable(
-      kwargs=[
-          dict(
-              batch_size=batch_size,
-              seq_len=seq_len,
-              num_heads=num_heads,
-              head_dim=head_dim,
-              causal=causal,
-              use_fwd=use_fwd,
-              use_segment_ids=use_segment_ids,
-              kwargs=kwargs,
+  @parameterized.named_parameters(
+      *[
+          (
+              (
+                  f"{batch_size=}_{seq_len=}_{num_heads=}_{head_dim=}_{causal=}"
+                  f"_{use_fwd=}_{use_segment_ids=}_{kwargs=}"
+              ),
+              batch_size,
+              seq_len,
+              num_heads,
+              head_dim,
+              causal,
+              use_fwd,
+              use_segment_ids,
+              kwargs,
           )
           for (
               batch_size,
@@ -179,7 +183,6 @@ class FusedAttentionTest(PallasBaseTest):
   )
   def test_fused_attention_fwd(
       self,
-      *,
       batch_size,
       seq_len,
       num_heads,
@@ -212,8 +215,7 @@ class FusedAttentionTest(PallasBaseTest):
       def impl(q, k, v):
         v, _ = jax.vjp(
             functools.partial(
-                attention.mha, causal=causal, segment_ids=segment_ids,
-                interpret=self.INTERPRET, **kwargs
+                attention.mha, causal=causal, segment_ids=segment_ids, **kwargs
             ),
             q,
             k,
@@ -223,22 +225,25 @@ class FusedAttentionTest(PallasBaseTest):
 
     else:
       impl = functools.partial(
-          attention.mha, causal=causal, segment_ids=segment_ids,
-          interpret=self.INTERPRET, **kwargs
+          attention.mha, causal=causal, segment_ids=segment_ids, **kwargs
       )
     o = impl(q, k, v)
     o_ref = attention.mha_reference(q, k, v, segment_ids, causal=causal)
     np.testing.assert_allclose(o, o_ref, atol=0.05)
 
-  @jtu.parameterized_filterable(
-      kwargs=[
-          dict(
-              batch_size=batch_size,
-              seq_len=seq_len,
-              num_heads=num_heads,
-              head_dim=head_dim,
-              causal=causal,
-              use_segment_ids=use_segment_ids,
+  @parameterized.named_parameters(
+      *[
+          (
+              (
+                  f"{batch_size=}_{seq_len=}_{num_heads=}_{head_dim=}_{causal=}_"
+                  f"{use_segment_ids=}"
+              ),
+              batch_size,
+              seq_len,
+              num_heads,
+              head_dim,
+              causal,
+              use_segment_ids,
           )
           for (
               batch_size,
@@ -258,7 +263,7 @@ class FusedAttentionTest(PallasBaseTest):
       ]
   )
   def test_fused_attention_bwd(
-      self, *, batch_size, seq_len, num_heads, head_dim, causal, use_segment_ids
+      self, batch_size, seq_len, num_heads, head_dim, causal, use_segment_ids
   ):
     k1, k2, k3 = random.split(random.key(0), 3)
     q = random.normal(
@@ -278,8 +283,7 @@ class FusedAttentionTest(PallasBaseTest):
       segment_ids = None
 
     def f(q, k, v):
-      return attention.mha(q, k, v, segment_ids, causal=causal,
-                           interpret=self.INTERPRET).sum()
+      return attention.mha(q, k, v, segment_ids, causal=causal).sum()
 
     def f_ref(q, k, v):
       return attention.mha_reference(q, k, v, segment_ids, causal=causal).sum()
@@ -296,7 +300,7 @@ class FusedAttentionInterpreterTest(FusedAttentionTest):
   INTERPRET = True
 
 
-class FusedLayerNormTest(PallasBaseTest):
+class FusedLayerNormTest(PallasTest):
 
   def setUp(self):
     super().setUp()
@@ -344,7 +348,7 @@ class FusedLayerNormInterpreterTest(FusedLayerNormTest):
   INTERPRET = True
 
 
-class RmsNormTest(PallasBaseTest):
+class RmsNormTest(PallasTest):
 
   def setUp(self):
     super().setUp()
@@ -392,7 +396,7 @@ class RmsNormInterpreterTest(RmsNormTest):
   INTERPRET = True
 
 
-class SoftmaxTest(PallasBaseTest):
+class SoftmaxTest(PallasTest):
 
   def setUp(self):
     super().setUp()
