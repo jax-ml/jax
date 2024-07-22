@@ -55,7 +55,8 @@ def dct(x: Array, type: int = 2, n: int | None = None,
       If larger than ``x.shape[axis]``, the input will be zero-padded, if
       smaller, the input will be truncated.
     axis: integer, default=-1. The axis along which the dct will be performed.
-    norm: string. The normalization mode. Currently only ``"ortho"`` is supported.
+    norm: string. The normalization mode: one of ``[None, "backward", "ortho"]``.
+      The default is ``None``, which is equivalent to ``"backward"``.
 
   Returns:
     array containing the discrete cosine transform of x
@@ -98,7 +99,7 @@ def dct(x: Array, type: int = 2, n: int | None = None,
   """
   if type != 2:
     raise NotImplementedError('Only DCT type 2 is implemented.')
-  if norm is not None and norm not in ['ortho']:
+  if norm is not None and norm not in ['backward', 'ortho']:
     raise ValueError(f"jax.scipy.fft.dct: {norm=!r} is not implemented")
 
   axis = canonicalize_axis(axis, x.ndim)
@@ -149,7 +150,8 @@ def dctn(x: Array, type: int = 2,
       specified, it will default to the shape of ``x`` along the specified ``axes``.
     axes: integer or sequence of integers. Specifies the axes along which the
       transform will be computed.
-    norm: string. The normalization mode. Currently only ``"ortho"`` is supported.
+    norm: string. The normalization mode: one of ``[None, "backward", "ortho"]``.
+      The default is ``None``, which is equivalent to ``"backward"``.
 
   Returns:
     array containing the discrete cosine transform of x
@@ -198,7 +200,7 @@ def dctn(x: Array, type: int = 2,
   """
   if type != 2:
     raise NotImplementedError('Only DCT type 2 is implemented.')
-  if norm is not None and norm not in ['ortho']:
+  if norm is not None and norm not in ['backward', 'ortho']:
     raise ValueError(f"jax.scipy.fft.dctn: {norm=!r} is not implemented")
 
   if axes is None:
@@ -234,7 +236,8 @@ def idct(x: Array, type: int = 2, n: int | None = None,
       If larger than ``x.shape[axis]``, the input will be zero-padded, if
       smaller, the input will be truncated.
     axis: integer, default=-1. The axis along which the dct will be performed.
-    norm: string. The normalization mode. Currently only ``"ortho"`` is supported.
+    norm: string. The normalization mode: one of ``[None, "backward", "ortho"]``.
+      The default is ``None``, which is equivalent to ``"backward"``.
 
   Returns:
     array containing the inverse discrete cosine transform of x
@@ -286,7 +289,7 @@ def idct(x: Array, type: int = 2, n: int | None = None,
   """
   if type != 2:
     raise NotImplementedError('Only DCT type 2 is implemented.')
-  if norm is not None and norm not in ['ortho']:
+  if norm is not None and norm not in ['backward', 'ortho']:
     raise ValueError(f"jax.scipy.fft.idct: {norm=!r} is not implemented")
 
   axis = canonicalize_axis(axis, x.ndim)
@@ -296,7 +299,7 @@ def idct(x: Array, type: int = 2, n: int | None = None,
                  for a in range(x.ndim)])
   N = x.shape[axis]
   x = x.astype(jnp.float32)
-  if norm is None:
+  if norm is None or norm == 'backward':
     x = _dct_ortho_norm(x, axis)
   x = _dct_ortho_norm(x, axis)
 
@@ -328,7 +331,8 @@ def idctn(x: Array, type: int = 2,
       specified, it will default to the shape of ``x`` along the specified ``axes``.
     axes: integer or sequence of integers. Specifies the axes along which the
       transform will be computed.
-    norm: string. The normalization mode. Currently only ``"ortho"`` is supported.
+    norm: string. The normalization mode: one of ``[None, "backward", "ortho"]``.
+      The default is ``None``, which is equivalent to ``"backward"``.
 
   Returns:
     array containing the inverse discrete cosine transform of x
@@ -384,7 +388,7 @@ def idctn(x: Array, type: int = 2,
   """
   if type != 2:
     raise NotImplementedError('Only DCT type 2 is implemented.')
-  if norm is not None and norm not in ['ortho']:
+  if norm is not None and norm not in ['backward', 'ortho']:
     raise ValueError(f"jax.scipy.fft.idctn: {norm=!r} is not implemented")
 
   if axes is None:
