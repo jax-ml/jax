@@ -941,6 +941,7 @@ ad.deflinear2(psum2_p, _psum2_transpose_rule)
 # pbroadcast_p is exactly the transpose of psum2_p
 def pbroadcast(x, axis_name):
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
+  if not axis_name: return x
   xs, treedef = tree_flatten(x)
   ys = pbroadcast_p.bind(*xs, axes=axes, axis_index_groups=None)
   return tree_unflatten(treedef, ys)
@@ -1058,13 +1059,14 @@ def _psum_check(_, *in_rep, axes, axis_index_groups):
   assert False  # should be rewritten away
 
 @register_rewrite(lax_parallel.psum_p)
-def _psum_rewrite(_, in_rep, *args, axes, axis_index_groups):
+def _psum_rewrite(mesh, in_rep, *args, axes, axis_index_groups):
   # Replace the psum with psum2, insert pbroadcasts on input, replicated output.
   if axis_index_groups is not None: raise NotImplementedError
   axes = (axes,) if not isinstance(axes, tuple) else axes
-  out_rep = [r | set(axes) for r in in_rep]  # TODO determinism (and elsewhere)
-  args_ = [pbroadcast(x, tuple(n for n in src if n not in dst))
-           if src - dst else x for x, src, dst in zip(args, in_rep, out_rep)]
+  axes_ = set(axes)
+  out_rep = [r | axes_ for r in in_rep]  # TODO determinism (and elsewhere)
+  args_ = [pbroadcast(x, tuple(n for n in mesh.axis_names if n in axes_ & src))
+           for x, src in zip(args, in_rep)]
   out_val = psum2_p.bind(*args_, axes=axes, axis_index_groups=axis_index_groups)
   return out_val, out_rep
 
