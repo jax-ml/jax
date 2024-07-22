@@ -24,7 +24,7 @@ execnet==2.1.1
     # via pytest-xdist
 flatbuffers==24.3.25
     # via -r build/test-requirements.txt
-fonttools==4.51.0
+fonttools==4.53.1
     # via matplotlib
 fsspec==2024.3.1
     # via etils
