@@ -443,7 +443,7 @@ jax_test(
     shard_count = {
         "cpu": 40,
         "gpu": 40,
-        "tpu": 40,
+        "tpu": 50,
     },
     tags = ["noasan"],  # Test times out on all backends
 )
