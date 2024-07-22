@@ -387,6 +387,14 @@ FailureOr<SmallVector<int64_t>> getIntConstsFromOperandRange(
   return res;
 }
 
+Value broadcastSublane(OpBuilder &builder, Value vreg, int sublane_idx,
+                       const std::array<int64_t, 2> target_shape) {
+  return builder.create<tpu::GatherOp>(
+      vreg.getLoc(), vreg.getType(), vreg,
+      SmallVector<int32_t>(target_shape[0], sublane_idx),
+      /*dimension=*/0);
+}
+
 FailureOr<std::pair<Value, SmallVector<int64_t>>> sliceRef(
     ImplicitLocOpBuilder &builder, TypedValue<MemRefType> base_ref,
     ArrayRef<int64_t> slice_shape, ValueRange indices,
@@ -3898,11 +3906,8 @@ LogicalResult vector_shape_cast_rule(RewriteContext &ctx, Operation &op,
             // BroadcastInSublanesOp requires the sublanes to be replicated.
             if (layout_in.offsets()[0].has_value()) {
               const int32_t sublane = row_idx % ctx.target_shape[0];
-              col_vreg = builder.create<tpu::GatherOp>(
-                  col_vreg.getType(), col_vreg,
-                  /*indices=*/
-                  SmallVector<int32_t>(ctx.target_shape[0], sublane),
-                  /*dimension=*/0);
+              col_vreg = broadcastSublane(builder, col_vreg, sublane,
+                                          ctx.target_shape);
             }
             *dst_vreg = builder.create<BroadcastInSublanesOp>(
                 col_vreg.getType(), col_vreg,
@@ -4780,41 +4785,37 @@ bool isSupportedReducedSublanesRetile(
 //
 // Arguments:
 //  src_vreg: The source vreg to copy a sublane from.
-//  src_sl_idx: The sublane index in src_vreg to copy.
-//  dst_vreg: The destination vreg to copy a sublane to.
-//  dst_sl_idx: The sublane index in dst_vreg to paste.
+//  src_sl_idx: The sublane index in src_vreg to copy from.
+//  dst_vreg: The base vreg to copy the sublane into. May be null.
+//  dst_sl_idx: The sublane index in the result.
 //
 // Returns:
 //  A new dst_vreg with the copied sublane.
 Value copy_one_sublane(OpBuilder &builder, Value src_vreg, int src_sl_idx,
                        Value dst_vreg, int dst_sl_idx,
                        const std::array<int64_t, 2> target_shape) {
-  if (!dst_vreg) {
-    const DenseI32ArrayAttr gather_indices =
-        builder.getDenseI32ArrayAttr(SmallVector<int32_t>(8, src_sl_idx));
-    return builder.create<tpu::GatherOp>(src_vreg.getLoc(), src_vreg.getType(),
-                                         src_vreg, gather_indices,
-                                         /*dimension=*/0);
-  }
-  auto src_vreg_rot = builder.create<tpu::RotateOp>(
+  src_vreg = builder.create<tpu::RotateOp>(
       src_vreg.getLoc(), src_vreg,
-      /*amount=*/(dst_sl_idx - src_sl_idx + 8) % 8,
+      /*amount=*/(dst_sl_idx - src_sl_idx + target_shape[0]) % target_shape[0],
       /*dimension=*/0, /*stride=*/nullptr, /*stride_dimension=*/nullptr);
-  auto boundIdxConst =
-      std::bind(IdxConst, std::placeholders::_1, builder, src_vreg.getLoc());
-  const int bitwidth =
-      cast<VectorType>(src_vreg.getType()).getElementTypeBitWidth();
-  CHECK_EQ(bitwidth,
-           cast<VectorType>(dst_vreg.getType()).getElementTypeBitWidth());
-  const VectorType vmask_ty =
-      *getNativeVregOrVmaskType(builder.getI1Type(), bitwidth, target_shape);
-  auto sublanes_mask = builder.create<tpu::CreateMaskOp>(
-      src_vreg.getLoc(), vmask_ty,
-      ValueRange{boundIdxConst(dst_sl_idx), boundIdxConst(0)},
-      ValueRange{boundIdxConst(dst_sl_idx + 1),
-                 boundIdxConst(target_shape[1])});
-  return builder.create<arith::SelectOp>(src_vreg.getLoc(), sublanes_mask,
-                                         src_vreg_rot, dst_vreg);
+  if (dst_vreg) {
+    auto boundIdxConst =
+        std::bind(IdxConst, std::placeholders::_1, builder, src_vreg.getLoc());
+    const int bitwidth =
+        cast<VectorType>(src_vreg.getType()).getElementTypeBitWidth();
+    CHECK_EQ(bitwidth,
+             cast<VectorType>(dst_vreg.getType()).getElementTypeBitWidth());
+    const VectorType vmask_ty =
+        *getNativeVregOrVmaskType(builder.getI1Type(), bitwidth, target_shape);
+    auto sublanes_mask = builder.create<tpu::CreateMaskOp>(
+        src_vreg.getLoc(), vmask_ty,
+        ValueRange{boundIdxConst(dst_sl_idx), boundIdxConst(0)},
+        ValueRange{boundIdxConst(dst_sl_idx + 1),
+                   boundIdxConst(target_shape[1])});
+    src_vreg = builder.create<arith::SelectOp>(src_vreg.getLoc(), sublanes_mask,
+                                               src_vreg, dst_vreg);
+  }
+  return src_vreg;
 }
 
 // This function is based on tpu_rotate_rule. It applies a shift of amount to
@@ -5069,17 +5070,22 @@ FailureOr<TypedValue<VectorType>> relayout(
     xla::Array<Value> src_tiles_retiled(
         dst.tileArrayImplicitShape(vty.getShape(), target_shape));
     src_tiles_retiled.Each([&](absl::Span<const int64_t> idx, Value *tile) {
-      for (int dst_sl_idx = 0; dst_sl_idx < 8; ++dst_sl_idx) {
-        SmallVector<int64_t> src_idx(idx.begin(), idx.end());
-        src_idx[src_idx.size() - 2] = 8 * idx[idx.size() - 2] + dst_sl_idx;
-        if (src_idx[src_idx.size() - 2] >=
-            *(src_tiles.dimensions().end() - 2)) {
-          break;
+      SmallVector<int64_t> src_idx(idx.begin(), idx.end());
+      *(src_idx.end() - 2) *= target_shape[0];
+      *(src_idx.end() - 1) /= target_shape[0];
+      const int64_t src_sl_idx = *(idx.end() - 1) % target_shape[0];
+      if (!dst.offsets()[0]) {
+        CHECK_EQ(src.getImplicitTiledDims(vty.getShape(), 1)[0], 1);
+        *tile = broadcastSublane(builder, src_tiles(src_idx), src_sl_idx,
+                                 target_shape);
+      } else {
+        for (int dst_sl_idx = 0;
+             dst_sl_idx < target_shape[0] &&
+             *(src_idx.end() - 2) < *(src_tiles.dimensions().end() - 2);
+             ++dst_sl_idx, ++*(src_idx.end() - 2)) {
+          *tile = copy_one_sublane(builder, src_tiles(src_idx), src_sl_idx,
+                                   *tile, dst_sl_idx, target_shape);
         }
-        src_idx[src_idx.size() - 1] = idx[idx.size() - 1] / 8;
-        const int64_t src_sl_idx = idx[idx.size() - 1] % 8;
-        *tile = copy_one_sublane(builder, src_tiles(src_idx), src_sl_idx, *tile,
-                                 dst_sl_idx, target_shape);
       }
     });
     src = dst;
