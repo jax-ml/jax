@@ -1541,6 +1541,12 @@ class ShardMapTest(jtu.JaxTestCase):
     shard_map(lambda k: jax.random.normal(k[0], (1,)),
               mesh=mesh, in_specs=P('i'), out_specs=P('i'))(keys)  # don't crash
 
+  def test_erf_rules(self):
+    mesh = jtu.create_global_mesh((4,), ('i',))
+    x = jnp.arange(16.)
+    shard_map(jax.lax.erf,
+              mesh=mesh, in_specs=P('i'), out_specs=P('i'))(x)  # don't crash
+
   def test_error_for_variable_num_args(self):
     mesh = Mesh(np.array(jax.devices()[:4]).reshape(2, 2), ('x', 'y'))
 
