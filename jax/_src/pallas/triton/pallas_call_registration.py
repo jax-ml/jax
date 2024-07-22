@@ -54,6 +54,7 @@ def pallas_call_lowering(
     compiler_params: dict[str, Any],
 ):
   if interpret:
+    # TODO(necula): is this branch still needed?
     return mlir.lower_fun(pallas_call_p.impl, multiple_results=True)(
         ctx,
         *in_nodes,
@@ -71,6 +72,10 @@ def pallas_call_lowering(
   if grid_mapping.num_dynamic_grid_bounds:
     raise NotImplementedError(
         "dynamic grid bounds not supported in the Triton backend"
+    )
+  if grid_mapping.num_index_operands:
+    raise NotImplementedError(
+        "scalar prefetch not implemented in the Triton backend"
     )
   triton_params = compiler_params.get("triton", compiler_params)
   num_warps = triton_params.pop("num_warps", 4)

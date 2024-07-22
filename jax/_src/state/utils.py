@@ -13,6 +13,8 @@
 # limitations under the License.
 """Utilities for tracing stateful functions."""
 
+from typing import Callable
+
 from jax._src.interpreters import partial_eval as pe
 from jax._src import core
 from jax._src import linear_util as lu
@@ -24,13 +26,20 @@ map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
 
-def hoist_consts_to_refs(jaxpr: core.Jaxpr, *, index: int = 0) -> core.Jaxpr:
+def hoist_consts_to_refs(
+    jaxpr: core.Jaxpr,
+    *,
+    index: int = 0,
+    make_abstract_ref: Callable[[core.AbstractValue], AbstractRef] = lambda aval: AbstractRef(aval)
+) -> core.Jaxpr:
   """Hoists the constants in the given jaxpr into invars.
 
   Args:
     jaxpr: The jaxpr.
     index: The index where the invars for the constants should be inserted.
       By default, the new invars are inserted *before* any existing invars.
+    make_abstract_ref: a callable to construct an AbstractRef, or subtype
+      thereof, from a constant AbstractValue.
 
   Returns:
     A new jaxpr where the constants were hoisted into invars as ``Ref``s.
@@ -42,7 +51,7 @@ def hoist_consts_to_refs(jaxpr: core.Jaxpr, *, index: int = 0) -> core.Jaxpr:
       isinstance(var.aval, AbstractRef) for var in jaxpr.constvars
   ]
   const_avals = [
-      var.aval if is_ref else AbstractRef(var.aval)
+      var.aval if is_ref else make_abstract_ref(var.aval)
       for is_ref, var in zip(is_const_ref, jaxpr.constvars)
   ]
   in_avals = [var.aval for var in jaxpr.invars]

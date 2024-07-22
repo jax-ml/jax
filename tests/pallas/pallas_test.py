@@ -150,7 +150,6 @@ class PallasBaseTest(jtu.JaxTestCase):
 
 class PallasCallTest(PallasBaseTest):
 
-
   def test_add_one(self):
     if jtu.test_device_matches(["cpu"]) and jax.config.x64_enabled:
       # TODO: assertion failures on CPU in 64-bit mode
@@ -468,19 +467,22 @@ class PallasCallTest(PallasBaseTest):
 
   def test_hoisted_consts(self):
     # See https://github.com/google/jax/issues/21557.
-    if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
-      self.skipTest("On TPU the test works only in interpret mode")
-    x = jnp.zeros(32)
-    indices = jnp.arange(4).reshape((2, 2))
+    # to_store will be hoisted as a constant. Choose distinct shapes from in/outs.
+    to_store = np.arange(128, dtype=np.float32).reshape((1, 128))
+    x = np.arange(16 * 128, dtype=np.float32).reshape((16, 128))
 
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct(x.shape, x.dtype),
+        out_shape=jax.ShapeDtypeStruct((64, 128), x.dtype),
+        grid=(2,),
+        in_specs=[pl.BlockSpec((8, 128), lambda i: (i, 0))],
+        out_specs=pl.BlockSpec((32, 128), lambda i: (i, 0)),
     )
     def kernel(src, dst):
-      dst[indices] = src[indices]
+      dst[0:1] = to_store
 
-    jax.block_until_ready(kernel(x))
+    res = kernel(x)
+    self.assertAllClose(res[0:1], to_store)
 
   def test_vector_slicing(self):
     if jtu.test_device_matches(["cpu"]) and jax.config.x64_enabled:
@@ -742,6 +744,17 @@ class ApiErrorTest(PallasBaseTest):
     with self.assertRaisesRegex(
         ValueError,
         "Index map for input\\[0\\] must return 1 values to match .*Currently returning 2 values."):
+      f(a)
+
+  def test_pallas_call_index_map_captures_consts(self):
+    a = np.arange(256, dtype=np.int32)
+    index_map_result = np.array([0], dtype=np.int32)
+    f = self.pallas_call(lambda x_ref, o1_ref: None,
+                         out_shape=a,
+                         in_specs=[pl.BlockSpec((4,), lambda: index_map_result)])
+    with self.assertRaisesRegex(
+        NotImplementedError,
+        "Index map for input\\[0\\] captures constants"):
       f(a)
 
   def test_pallas_call_out_specs_mismatch_shape(self):

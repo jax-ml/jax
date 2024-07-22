@@ -17,6 +17,7 @@
 import contextlib
 import functools
 import io
+import math
 import re
 import sys
 from absl.testing import absltest
@@ -71,7 +72,6 @@ class PallasBaseTest(jtu.JaxTestCase):
 
 
 class PallasCallScalarPrefetchTest(PallasBaseTest):
-
   def test_trivial_scalar_prefetch(self):
     def body(_, x_ref, o_ref):
       o_ref[...] = x_ref[...]
@@ -114,6 +114,56 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
         ),
     )(s, x)
     np.testing.assert_array_equal(out, x)
+
+  @jtu.parameterized_filterable(
+      kwargs=[
+          dict(scratch=scratch, vmap=vmap)
+          for scratch in [True, False]
+          for vmap in [True, False]
+      ]
+  )
+  def test_scalar_prefetch_hoisted_const(self, *, scratch: bool, vmap: bool):
+    if jtu.test_device_matches(["cpu"]) and jax.config.x64_enabled:
+      self.skipTest("TODO: dslice(start, 1) raises error about slice inputs being int32 and int64")
+    # to_store will be hoisted as constants. Choose distinct shapes from in/outs.
+    to_store = np.arange(128, dtype=np.float32).reshape((1, 128))
+    if vmap:
+      x_shape = (4, 16, 128)
+    else:
+      x_shape = (16, 128)
+    x = np.arange(math.prod(x_shape), dtype=np.float32).reshape(x_shape)
+
+    def f(x):
+      s = jnp.array([1, 0], jnp.int32)  # iteration 0 -> 1, iteration 1 -> 0
+      @functools.partial(
+          self.pallas_call,
+          out_shape=jax.ShapeDtypeStruct((64, 128), x.dtype),
+          grid_spec=pltpu.PrefetchScalarGridSpec(
+              num_scalar_prefetch=1,
+              grid=(2,),
+              in_specs=[pl.BlockSpec((8, 128),
+                                     lambda i, s_ref: (pl.load(s_ref, (i,)), 0))],
+              out_specs=pl.BlockSpec((32, 128),
+                                     lambda i, s_ref: (pl.load(s_ref, i), 0)),
+              scratch_shapes=([pltpu.SemaphoreType.REGULAR((3,))] if scratch
+                              else []),
+          ),
+      )
+      def kernel(s_ref, src, dst, *scratch_refs):
+        store_idx = s_ref[pl.program_id(0)]
+        pl.store(dst, (pl.dslice(store_idx, 1), slice(None)), to_store)
+      return kernel(s, x)
+
+    if vmap:
+      f = jax.vmap(f)
+    res = f(x)
+    if vmap:
+      for i in range(x.shape[0]):
+        self.assertAllClose(res[i, 0:1], to_store)
+        self.assertAllClose(res[i, 33:34], to_store)
+    else:
+      self.assertAllClose(res[0:1], to_store)
+      self.assertAllClose(res[33:34], to_store)
 
   def test_block_spec_with_wrong_block_shape_errors(self):
     def body(x_ref, o_ref):

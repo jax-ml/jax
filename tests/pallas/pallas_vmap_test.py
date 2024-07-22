@@ -37,7 +37,7 @@ config.parse_flags_with_absl()
 
 
 @jtu.with_config(jax_traceback_filtering="off")
-class PallasTest(jtu.JaxTestCase):
+class PallasBaseTest(jtu.JaxTestCase):
   INTERPRET = False
 
   def setUp(self):
@@ -58,7 +58,7 @@ class PallasTest(jtu.JaxTestCase):
     return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
 
 
-class PallasCallVmapTest(PallasTest):
+class PallasCallVmapTest(PallasBaseTest):
 
   def setUp(self):
     super().setUp()
@@ -129,6 +129,26 @@ class PallasCallVmapTest(PallasTest):
     out = jax.vmap(add_one)(jnp.arange(8).reshape((4, 2)))
     out_ref = jnp.arange(1, 9).reshape((4, 2))
     np.testing.assert_allclose(out, out_ref)
+
+  def test_vmap_with_hoisted_consts(self):
+    # to_store will be hoisted as a constant. Choose distinct shapes from in/outs.
+    to_store = np.arange(128, dtype=np.float32).reshape((1, 128))
+    x = np.arange(4 * 16 * 128, dtype=np.float32).reshape((4, 16, 128))
+
+    @jax.vmap
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((64, 128), x.dtype),
+        grid=(2,),
+        in_specs=[pl.BlockSpec((8, 128), lambda i: (i, 0))],
+        out_specs=pl.BlockSpec((32, 128), lambda i: (i, 0)),
+    )
+    def kernel(src, dst):
+      dst[0:1] = to_store
+
+    res = kernel(x)
+    for i in range(x.shape[0]):
+      self.assertAllClose(res[i, 0:1], to_store)
 
   def test_vmap_of_kernel_with_input_output_aliases(self):
     @functools.partial(
