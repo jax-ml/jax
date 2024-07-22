@@ -2534,7 +2534,7 @@ def nonzero(a: ArrayLike, *, size: int | None = None,
     nonzero value.
 
   See also:
-    - :func:`jax.numpy flatnonzero`
+    - :func:`jax.numpy.flatnonzero`
     - :func:`jax.numpy.where`
 
   Examples:
