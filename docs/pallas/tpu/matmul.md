@@ -163,9 +163,9 @@ def matmul(
   return pl.pallas_call(
       matmul_kernel,
       out_shape=jax.ShapeDtypeStruct((m, n), x.dtype),
-      in_specs=[pl.BlockSpec(lambda i, j, k: (i, k), (bm, bk)),
-                pl.BlockSpec(lambda i, j, k: (k, j), (bk, bn))],
-      out_specs=pl.BlockSpec(lambda i, j, k: (i, j), (bm, bn)),
+      in_specs=[pl.BlockSpec((bm, bk), lambda i, j, k: (i, k)),
+                pl.BlockSpec((bk, bn), lambda i, j, k: (k, j))],
+      out_specs=pl.BlockSpec((bm, bn), lambda i, j, k: (i, j)),
       grid=(m // bm, n // bn, k // bk),
       compiler_params=dict(mosaic=dict(
           dimension_semantics=("parallel", "parallel", "arbitrary"))),
@@ -313,10 +313,10 @@ def matmul(
       grid_spec=pltpu.PrefetchScalarGridSpec(
         num_scalar_prefetch=0,
         in_specs=[
-            pl.BlockSpec(lambda i, j, k: (i, k), (bm, bk)),
-            pl.BlockSpec(lambda i, j, k: (k, j), (bk, bn)),
+            pl.BlockSpec((bm, bk), lambda i, j, k: (i, k)),
+            pl.BlockSpec((bk, bn), lambda i, j, k: (k, j)),
         ],
-        out_specs=pl.BlockSpec(lambda i, j, k: (i, j), (bm, bn)),
+        out_specs=pl.BlockSpec((bm, bn), lambda i, j, k: (i, j)),
         scratch_shapes=[pltpu.VMEM((bm, bn), jnp.float32)],
         grid=(m // bm, n // bn, k // bk),
       ),
@@ -428,7 +428,7 @@ Now that we have a basic matrix multiplication kernel, we can now try fusing ope
 
 ### Fused right-hand-side transpose
 
-A common first thing to do is to fuse a transpose. What do we mean by that? Suppose we wanted to compute `x @ y.T` instead of `x @ y`. Naively we could first compute `y.T` and then pass it into our efficient matrix multiply kernel. However, the operation `y.T` is not free on its own -- it involves copying `O(n^2)` data. Ideally, we could compute the transpose *while* doing the matrix multiply in just one kernel, i.e. "fusing" it with the matmul. 
+A common first thing to do is to fuse a transpose. What do we mean by that? Suppose we wanted to compute `x @ y.T` instead of `x @ y`. Naively we could first compute `y.T` and then pass it into our efficient matrix multiply kernel. However, the operation `y.T` is not free on its own -- it involves copying `O(n^2)` data. Ideally, we could compute the transpose *while* doing the matrix multiply in just one kernel, i.e. "fusing" it with the matmul.
 
 Accelerators often support native matrix multiplication routine that fuse a RHS transpose. For instance TPU v5e, the MXU allows us to do `x @ y.T` for small arrays. We can invoke this routine with `jax.lax.dot_general`, which will be more efficient than doing a transpose then a matmul separately.
 
@@ -471,9 +471,9 @@ def matmul(
 ):
   if transpose_rhs:
     y = y.swapaxes(0, 1)
-    y_block_spec = pl.BlockSpec(lambda i, j, k: (j, k), (bn, bk))
+    y_block_spec = pl.BlockSpec((bn, bk), lambda i, j, k: (j, k))
   else:
-    y_block_spec = pl.BlockSpec(lambda i, j, k: (k, j), (bk, bn))
+    y_block_spec = pl.BlockSpec((bk, bn), lambda i, j, k: (k, j))
   m, k = x.shape
   _, n = y.shape
   return pl.pallas_call(
@@ -481,10 +481,10 @@ def matmul(
       grid_spec=pltpu.PrefetchScalarGridSpec(
         num_scalar_prefetch=0,
         in_specs=[
-            pl.BlockSpec(lambda i, j, k: (i, k), (bm, bk)),
+            pl.BlockSpec((bm, bk), lambda i, j, k: (i, k)),
             y_block_spec,
         ],
-        out_specs=pl.BlockSpec(lambda i, j, k: (i, j), (bm, bn)),
+        out_specs=pl.BlockSpec((bm, bn), lambda i, j, k: (i, j)),
         scratch_shapes=[pltpu.VMEM((bm, bn), jnp.float32)],
         grid=(m // bm, n // bn, k // bk),
       ),
@@ -590,9 +590,9 @@ def matmul(
 ):
   if transpose_rhs:
     y = y.swapaxes(0, 1)
-    y_block_spec = pl.BlockSpec(lambda i, j, k: (j, k), (bn, bk))
+    y_block_spec = pl.BlockSpec((bn, bk), lambda i, j, k: (j, k))
   else:
-    y_block_spec = pl.BlockSpec(lambda i, j, k: (k, j), (bk, bn))
+    y_block_spec = pl.BlockSpec((bk, bn), lambda i, j, k: (k, j))
   m, k = x.shape
   _, n = y.shape
   return pl.pallas_call(
@@ -605,10 +605,10 @@ def matmul(
       grid_spec=pltpu.PrefetchScalarGridSpec(
           num_scalar_prefetch=0,
           in_specs=[
-              pl.BlockSpec(lambda i, j, k: (i, k), (bm, bk)),
+              pl.BlockSpec((bm, bk), lambda i, j, k: (i, k)),
               y_block_spec,
           ],
-          out_specs=pl.BlockSpec(lambda i, j, k: (i, j), (bm, bn)),
+          out_specs=pl.BlockSpec((bm, bn), lambda i, j, k: (i, j)),
           scratch_shapes=[pltpu.VMEM((bm, bn), jnp.float32)],
           grid=(m // bm, n // bn, k // bk),
       ),
