@@ -440,6 +440,7 @@ jax_test(
     backend_tags = {
         "cpu": ["notsan"],  # Test times out.
     },
+    linking_mode = "static",
     shard_count = {
         "cpu": 40,
         "gpu": 40,
