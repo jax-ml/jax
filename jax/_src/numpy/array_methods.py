@@ -32,6 +32,7 @@ import numpy as np
 import jax
 from jax import lax
 from jax.sharding import Sharding
+from jax._src import api
 from jax._src import core
 from jax._src import dtypes
 from jax._src.api_util import _ensure_index_tuple
@@ -66,6 +67,12 @@ def _astype(arr: ArrayLike, dtype: DTypeLike, copy: bool = False, device: xc.Dev
   casts are implementation dependent.
   """
   return lax_numpy.astype(arr, dtype, copy=copy, device=device)
+
+def _to_device(arr: ArrayLike, device: xc.Device | Sharding, *,
+               stream: int | Any | None = None):
+  if stream is not None:
+    raise NotImplementedError("stream argument of array.to_device()")
+  return api.device_put(arr, device)
 
 
 def _nbytes(arr: ArrayLike) -> int:
@@ -694,6 +701,7 @@ _array_methods = {
   "sum": reductions.sum,
   "swapaxes": lax_numpy.swapaxes,
   "take": lax_numpy.take,
+  "to_device": _to_device,
   "trace": lax_numpy.trace,
   "transpose": _transpose,
   "var": reductions.var,

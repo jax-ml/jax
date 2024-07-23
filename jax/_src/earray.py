@@ -83,6 +83,12 @@ class EArray(basearray.Array):
     phys_sharding = self._data.sharding
     return sharding_impls.logical_sharding(self.aval, phys_sharding)
 
+  @property
+  def device(self):
+    if isinstance(self._data.sharding, sharding_impls.SingleDeviceSharding):
+      return self._data.device
+    return self.sharding
+
   # TODO(mattjj): not implemented below here, need more methods from ArrayImpl
 
   def addressable_data(self, index: int) -> EArray:

@@ -1276,6 +1276,30 @@ class ShardingTest(jtu.JaxTestCase):
     self.assertEqual(x1, x2)
     self.assertEqual(hash(x1), hash(x2))
 
+  def test_device_attr(self):
+    # For single-device arrays, x.device returns the device
+    x = jnp.ones((2, 10))
+    self.assertEqual(x.device, list(x.devices())[0])
+
+    # For sharded arrays, x.device returns the sharding
+    mesh = jtu.create_global_mesh((2,), ('x',))
+    sharding = jax.sharding.NamedSharding(mesh, P('x'))
+    x = jax.device_put(x, sharding)
+    self.assertEqual(x.device, sharding)
+
+  def test_to_device(self):
+    device = jax.devices()[-1]
+    mesh = jtu.create_global_mesh((2,), ('x',))
+    sharding = jax.sharding.NamedSharding(mesh, P('x'))
+
+    x = jnp.ones((2, 10))
+
+    x_device = x.to_device(device)
+    x_sharding = x.to_device(sharding)
+
+    self.assertEqual(x_device.device, device)
+    self.assertEqual(x_sharding.device, sharding)
+
 
 class RngShardingTest(jtu.JaxTestCase):
   # tests that the PRNGs are automatically sharded as expected
