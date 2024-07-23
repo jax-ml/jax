@@ -41,6 +41,7 @@ from jax._src import effects as effects_lib
 from jax._src import linear_util as lu
 from jax._src import path
 from jax._src import pickle_util
+from jax._src import sharding
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import util
@@ -875,9 +876,7 @@ _platforms_with_donation = ["cpu", "cuda", "rocm", "tpu"]
 
 def _to_physical_op_sharding(
     aval: core.AbstractValue, sharding: JSharding | None,
-) -> xc.OpSharding | None:
-  # TODO(bartchr): add `dialects.sdy.TensorShardingAttr` to func type once JAX
-  # is released with SDY.
+) -> xc.OpSharding | sharding.SdyArraySharding | None:
   if sharding is None:
     return None
   assert isinstance(sharding, JSharding)
@@ -2270,9 +2269,7 @@ wrap_with_full_to_shard_op = partial(_wrap_with_spmd_op, "SPMDFullToShardShape")
 wrap_with_shard_to_full_op = partial(_wrap_with_spmd_op, "SPMDShardToFullShape")
 
 
-def set_sharding(op, sharding: xc.OpSharding):
-  # TODO(bartchr): add `dialects.sdy.TensorShardingAttr` to sharding type once
-  # JAX is released with SDY.
+def set_sharding(op, sharding: xc.OpSharding | sharding.SdyArraySharding):
   if config.use_shardy_partitioner.value:
     op.attributes["sdy.sharding"] = get_sharding_attr(sharding)
   else:
@@ -2280,20 +2277,18 @@ def set_sharding(op, sharding: xc.OpSharding):
 
 
 def get_sharding_attr(
-    sharding: xc.OpSharding,
+    sharding: xc.OpSharding | sharding.SdyArraySharding
 ) -> ir.Attribute:
-  # TODO(bartchr): add `dialects.sdy.TensorShardingAttr` to sharding type once
-  # JAX is released with SDY.
   if config.use_shardy_partitioner.value:
-    return sharding  # type: ignore[return-value]
+    return sharding.build()  # type: ignore
   else:
     # If there are very large numbers of devices, use the proto representation.
     # The MHLO to HLO conversion supports both, and the proto representation is
     # more compact.
-    if len(sharding.tile_assignment_devices) > 100:
-      return ir.StringAttr.get(sharding.SerializeToString())  # type: ignore[arg-type]
+    if len(sharding.tile_assignment_devices) > 100:  # type: ignore
+      return ir.StringAttr.get(sharding.SerializeToString())  # type: ignore
     else:
-      return ir.StringAttr.get(repr(xc.HloSharding.from_proto(sharding)))
+      return ir.StringAttr.get(repr(xc.HloSharding.from_proto(sharding)))  # type: ignore[arg-type]
 
 
 def wrap_with_layout_op(ctx: LoweringRuleContext,
