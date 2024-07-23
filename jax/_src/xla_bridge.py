@@ -21,7 +21,7 @@ XLA. There are also a handful of related casting utilities.
 from __future__ import annotations
 
 import atexit
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 import dataclasses
 from functools import lru_cache, partial
 import importlib
@@ -30,10 +30,9 @@ import logging
 import os
 import pkgutil
 import platform as py_platform
-import sys
 import threading
 import traceback
-from typing import Any, Callable, Union
+from typing import Any, Union
 import warnings
 
 from jax._src import config
@@ -103,11 +102,15 @@ _CPU_ENABLE_GLOO_COLLECTIVES = config.bool_flag(
     help="Deprecated, please use jax_cpu_collectives_implementation instead.",
 )
 
-_CPU_COLLECTIVES_IMPLEMENTATION = config.string_flag(
-    name='jax_cpu_collectives_implementation',
-    default='none',
-    help='Cross-process collective implementation used on CPU. Either "none", '
-         '"gloo" or "mpi"'
+CPU_COLLECTIVES_IMPLEMENTATIONS = ["none", "gloo", "mpi"]
+CPU_COLLECTIVES_IMPLEMENTATION = config.enum_flag(
+    name="jax_cpu_collectives_implementation",
+    default="none",
+    enum_values=CPU_COLLECTIVES_IMPLEMENTATIONS,
+    help=(
+        "Cross-process collective implementation used on CPU. Must be one of"
+        f" {CPU_COLLECTIVES_IMPLEMENTATIONS}"
+    ),
 )
 
 # TODO(yueshengys): turn default back to True after resolving memory increase
@@ -130,7 +133,6 @@ def _at_fork():
 _at_fork_handler_installed = False
 
 # Backends
-
 
 
 def tpu_client_timer_callback(timer_secs: float) -> xla_client.Client | None:
@@ -222,30 +224,47 @@ def register_backend_factory(name: str, factory: BackendFactory, *,
     _topology_factories[name] = make_topology
 
 
-def make_cpu_client() -> xla_client.Client:
-  collectives: xla_client._xla.CpuCollectives | None = None
+def make_cpu_client(
+    collectives: xla_client._xla.CpuCollectives | None = None,
+) -> xla_client.Client:
+  """Creates a CPU client with the requested collectives implementation.
 
-  collectives_impl = _CPU_COLLECTIVES_IMPLEMENTATION.value
-  if _CPU_ENABLE_GLOO_COLLECTIVES.value:
-      collectives_impl = 'gloo'
-      warnings.warn('Setting `jax_cpu_enable_gloo_collectives` is deprecated. '
-                    'Please use `jax.config.update('
-                    '"jax_cpu_collectives_implementation", "gloo")` instead.',
-                    DeprecationWarning,
-                    )
-  if collectives_impl == 'gloo':
-    collectives = xla_client._xla.make_gloo_tcp_collectives(
-      distributed_client=distributed.global_state.client,
-    )
-  elif collectives_impl == 'mpi':
-    collectives = xla_client._xla.make_mpi_collectives()
-    collectives.Init()
-    atexit.register(collectives.Finalize)
-  elif collectives_impl != 'none':
-    collectives_impls = ['none', 'gloo', 'mpi']
-    raise RuntimeError(f"Unknown collectives implementation "
-                       f"{collectives_impl}. Available implementations are "
-                       f"{collectives_impls}.")
+  The implementation of CPU collectives used by the client is determined by the
+  flag `--jax_cpu_collectives_implementation` - unless `collectives` is
+  provided, in which case the flag is overridden and `collectives` is used.
+
+  Args:
+    collectives: An optional CPU collectives implementation, used by the client
+      if provided.
+
+  Raises:
+    RuntimeError: If `--jax_cpu_collectives_implementation` is unknown.
+
+  Returns:
+    The created CPU client.
+  """
+  if collectives is None:
+    collectives_impl = CPU_COLLECTIVES_IMPLEMENTATION.value
+    if _CPU_ENABLE_GLOO_COLLECTIVES.value:
+        collectives_impl = 'gloo'
+        warnings.warn('Setting `jax_cpu_enable_gloo_collectives` is '
+                      'deprecated. Please use `jax.config.update('
+                      '"jax_cpu_collectives_implementation", "gloo")` instead.',
+                      DeprecationWarning,
+                      )
+    if collectives_impl == 'gloo':
+      collectives = xla_client._xla.make_gloo_tcp_collectives(
+        distributed_client=distributed.global_state.client,
+      )
+    elif collectives_impl == 'mpi':
+      collectives = xla_client._xla.make_mpi_collectives()
+      collectives.Init()
+      atexit.register(collectives.Finalize)
+    elif collectives_impl != 'none':
+      raise RuntimeError(f"Unknown collectives implementation "
+                        f"{collectives_impl}. Available implementations are "
+                        f"{CPU_COLLECTIVES_IMPLEMENTATIONS}.")
+
   return xla_client.make_cpu_client(
     asynchronous=_CPU_ENABLE_ASYNC_DISPATCH.value,
     distributed_client=distributed.global_state.client,
@@ -367,7 +386,7 @@ def _check_cuda_versions(raise_on_first_error: bool = False,
       # versions:
       # https://docs.nvidia.com/deeplearning/cudnn/developer-guide/index.html#api-compat
       scale_for_comparison=100,
-      min_supported_version=8900
+      min_supported_version=9000
   )
   _version_check("cuFFT", cuda_versions.cufft_get_version,
                  cuda_versions.cufft_build_version,
@@ -570,12 +589,7 @@ def discover_pjrt_plugins() -> None:
     logger.debug("No jax_plugins namespace packages available")
 
   # Augment with advertised entrypoints.
-  if sys.version_info < (3, 10):
-    # Use the backport library because it provides a forward-compatible
-    # implementation.
-    from importlib_metadata import entry_points
-  else:
-    from importlib.metadata import entry_points
+  from importlib.metadata import entry_points
 
   for entry_point in entry_points(group="jax_plugins"):
     logger.debug("Discovered entry-point based JAX plugin: %s",

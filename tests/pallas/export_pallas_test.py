@@ -13,14 +13,13 @@
 # limitations under the License.
 
 """Test exporting Pallas kernels."""
+
 import sys
 
 from absl.testing import absltest
 import jax
-from jax._src import test_util as jtu
 from jax import export
-# Import mosaic for flag definitions
-from jax.experimental import mosaic as _  # noqa: F401
+from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
 import numpy as np
 

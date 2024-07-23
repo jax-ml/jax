@@ -28,6 +28,31 @@ namespace nb = nanobind;
 
 using ::xla::ffi::DataType;
 
+svd::ComputationMode GetSvdComputationMode(bool job_opt_compute_uv,
+                                           bool job_opt_full_matrices) {
+  if (!job_opt_compute_uv) {
+    return svd::ComputationMode::kNoComputeUVt;
+  } else if (!job_opt_full_matrices) {
+    return svd::ComputationMode::kComputeMinUVt;
+  }
+  return svd::ComputationMode::kComputeFullUVt;
+}
+
+template <DataType dtype>
+int64_t GesddGetWorkspaceSize(lapack_int m, lapack_int n,
+                              bool job_opt_compute_uv,
+                              bool job_opt_full_matrices) {
+  svd::ComputationMode mode =
+      GetSvdComputationMode(job_opt_compute_uv, job_opt_full_matrices);
+  return svd::SVDType<dtype>::GetWorkspaceSize(m, n, mode);
+};
+
+lapack_int GesddGetRealWorkspaceSize(lapack_int m, lapack_int n,
+                                     bool job_opt_compute_uv) {
+  svd::ComputationMode mode = GetSvdComputationMode(job_opt_compute_uv, true);
+  return svd::GetRealWorkspaceSize(m, n, mode);
+}
+
 void GetLapackKernelsFromScipy() {
   static bool initialized = false;  // Protected by GIL
   if (initialized) return;
@@ -64,11 +89,19 @@ void GetLapackKernelsFromScipy() {
   AssignKernelFn<Geqrf<double>>(lapack_ptr("dgeqrf"));
   AssignKernelFn<Geqrf<std::complex<float>>>(lapack_ptr("cgeqrf"));
   AssignKernelFn<Geqrf<std::complex<double>>>(lapack_ptr("zgeqrf"));
+  AssignKernelFn<QrFactorization<DataType::F32>>(lapack_ptr("sgeqrf"));
+  AssignKernelFn<QrFactorization<DataType::F64>>(lapack_ptr("dgeqrf"));
+  AssignKernelFn<QrFactorization<DataType::C64>>(lapack_ptr("cgeqrf"));
+  AssignKernelFn<QrFactorization<DataType::C128>>(lapack_ptr("zgeqrf"));
 
   AssignKernelFn<Orgqr<float>>(lapack_ptr("sorgqr"));
   AssignKernelFn<Orgqr<double>>(lapack_ptr("dorgqr"));
   AssignKernelFn<Orgqr<std::complex<float>>>(lapack_ptr("cungqr"));
   AssignKernelFn<Orgqr<std::complex<double>>>(lapack_ptr("zungqr"));
+  AssignKernelFn<OrthogonalQr<DataType::F32>>(lapack_ptr("sorgqr"));
+  AssignKernelFn<OrthogonalQr<DataType::F64>>(lapack_ptr("dorgqr"));
+  AssignKernelFn<OrthogonalQr<DataType::C64>>(lapack_ptr("cungqr"));
+  AssignKernelFn<OrthogonalQr<DataType::C128>>(lapack_ptr("zungqr"));
 
   AssignKernelFn<Potrf<float>>(lapack_ptr("spotrf"));
   AssignKernelFn<Potrf<double>>(lapack_ptr("dpotrf"));
@@ -83,6 +116,10 @@ void GetLapackKernelsFromScipy() {
   AssignKernelFn<RealGesdd<double>>(lapack_ptr("dgesdd"));
   AssignKernelFn<ComplexGesdd<std::complex<float>>>(lapack_ptr("cgesdd"));
   AssignKernelFn<ComplexGesdd<std::complex<double>>>(lapack_ptr("zgesdd"));
+  AssignKernelFn<svd::SVDType<DataType::F32>>(lapack_ptr("sgesdd"));
+  AssignKernelFn<svd::SVDType<DataType::F64>>(lapack_ptr("dgesdd"));
+  AssignKernelFn<svd::SVDType<DataType::C64>>(lapack_ptr("cgesdd"));
+  AssignKernelFn<svd::SVDType<DataType::C128>>(lapack_ptr("zgesdd"));
 
   AssignKernelFn<RealSyevd<float>>(lapack_ptr("ssyevd"));
   AssignKernelFn<RealSyevd<double>>(lapack_ptr("dsyevd"));
@@ -186,10 +223,22 @@ nb::dict Registrations() {
   dict["lapack_dgetrf_ffi"] = EncapsulateFunction(lapack_dgetrf_ffi);
   dict["lapack_cgetrf_ffi"] = EncapsulateFunction(lapack_cgetrf_ffi);
   dict["lapack_zgetrf_ffi"] = EncapsulateFunction(lapack_zgetrf_ffi);
+  dict["lapack_sgeqrf_ffi"] = EncapsulateFunction(lapack_sgeqrf_ffi);
+  dict["lapack_dgeqrf_ffi"] = EncapsulateFunction(lapack_dgeqrf_ffi);
+  dict["lapack_cgeqrf_ffi"] = EncapsulateFunction(lapack_cgeqrf_ffi);
+  dict["lapack_zgeqrf_ffi"] = EncapsulateFunction(lapack_zgeqrf_ffi);
+  dict["lapack_sorgqr_ffi"] = EncapsulateFunction(lapack_sorgqr_ffi);
+  dict["lapack_dorgqr_ffi"] = EncapsulateFunction(lapack_dorgqr_ffi);
+  dict["lapack_cungqr_ffi"] = EncapsulateFunction(lapack_cungqr_ffi);
+  dict["lapack_zungqr_ffi"] = EncapsulateFunction(lapack_zungqr_ffi);
   dict["lapack_spotrf_ffi"] = EncapsulateFunction(lapack_spotrf_ffi);
   dict["lapack_dpotrf_ffi"] = EncapsulateFunction(lapack_dpotrf_ffi);
   dict["lapack_cpotrf_ffi"] = EncapsulateFunction(lapack_cpotrf_ffi);
   dict["lapack_zpotrf_ffi"] = EncapsulateFunction(lapack_zpotrf_ffi);
+  dict["lapack_sgesdd_ffi"] = EncapsulateFunction(lapack_sgesdd_ffi);
+  dict["lapack_dgesdd_ffi"] = EncapsulateFunction(lapack_dgesdd_ffi);
+  dict["lapack_cgesdd_ffi"] = EncapsulateFunction(lapack_cgesdd_ffi);
+  dict["lapack_zgesdd_ffi"] = EncapsulateFunction(lapack_zgesdd_ffi);
 
   return dict;
 }
@@ -198,6 +247,14 @@ NB_MODULE(_lapack, m) {
   // Populates the LAPACK kernels from scipy on first call.
   m.def("initialize", GetLapackKernelsFromScipy);
   m.def("registrations", &Registrations);
+  // Submodules
+  auto svd = m.def_submodule("svd");
+  // Enums
+  nb::enum_<svd::ComputationMode>(svd, "ComputationMode")
+      // kComputeVtOverwriteXPartialU is not implemented
+      .value("kComputeFullUVt", svd::ComputationMode::kComputeFullUVt)
+      .value("kComputeMinUVt", svd::ComputationMode::kComputeMinUVt)
+      .value("kNoComputeUVt", svd::ComputationMode::kNoComputeUVt);
 
   // Old-style LAPACK Workspace Size Queries
   m.def("lapack_sgeqrf_workspace", &Geqrf<float>::Workspace, nb::arg("m"),
@@ -252,6 +309,43 @@ NB_MODULE(_lapack, m) {
         nb::arg("lda"), nb::arg("n"));
   m.def("lapack_zhetrd_workspace", &Sytrd<std::complex<double>>::Workspace,
         nb::arg("lda"), nb::arg("n"));
+  // FFI Kernel LAPACK Workspace Size Queries
+  m.def("lapack_sgeqrf_workspace_ffi",
+        &QrFactorization<DataType::F32>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"));
+  m.def("lapack_dgeqrf_workspace_ffi",
+        &QrFactorization<DataType::F64>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"));
+  m.def("lapack_cgeqrf_workspace_ffi",
+        &QrFactorization<DataType::C64>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"));
+  m.def("lapack_zgeqrf_workspace_ffi",
+        &QrFactorization<DataType::C128>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"));
+  m.def("lapack_sorgqr_workspace_ffi",
+        &OrthogonalQr<DataType::F32>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"), nb::arg("k"));
+  m.def("lapack_dorgqr_workspace_ffi",
+        &OrthogonalQr<DataType::F64>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"), nb::arg("k"));
+  m.def("lapack_cungqr_workspace_ffi",
+        &OrthogonalQr<DataType::C64>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"), nb::arg("k"));
+  m.def("lapack_zungqr_workspace_ffi",
+        &OrthogonalQr<DataType::C128>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"), nb::arg("k"));
+  m.def("gesdd_iwork_size_ffi", &svd::GetIntWorkspaceSize, nb::arg("m"),
+        nb::arg("n"));
+  m.def("sgesdd_work_size_ffi", &svd::SVDType<DataType::F32>::GetWorkspaceSize,
+        nb::arg("m"), nb::arg("n"), nb::arg("mode"));
+  m.def("dgesdd_work_size_ffi", &svd::SVDType<DataType::F64>::GetWorkspaceSize,
+        nb::arg("m"), nb::arg("n"), nb::arg("mode"));
+  m.def("gesdd_rwork_size_ffi", &svd::GetRealWorkspaceSize, nb::arg("m"),
+        nb::arg("n"), nb::arg("mode"));
+  m.def("cgesdd_work_size_ffi", &svd::SVDType<DataType::C64>::GetWorkspaceSize,
+        nb::arg("m"), nb::arg("n"), nb::arg("mode"));
+  m.def("zgesdd_work_size_ffi", &svd::SVDType<DataType::C128>::GetWorkspaceSize,
+        nb::arg("m"), nb::arg("n"), nb::arg("mode"));
 }
 
 }  // namespace

@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Hashable, Iterator, Sequence
+from collections.abc import Callable, Hashable, Iterator, Sequence
 import contextlib
 import functools
 import itertools
@@ -22,9 +22,7 @@ import logging
 import os
 import sys
 import threading
-from typing import (
-    Any, Callable, Generic, NamedTuple, NoReturn, Protocol, TypeVar, cast,
-)
+from typing import Any, Generic, NamedTuple, NoReturn, Protocol, TypeVar, cast
 
 from jax._src import lib
 from jax._src.lib import jax_jit
@@ -223,7 +221,8 @@ def trace_context():
           # Technically this affects jaxpr->stablehlo lowering, not tracing.
           hlo_source_file_canonicalization_regex.value,
           pgle_profiling_runs.value,
-          enable_pgle.value)
+          enable_pgle.value,
+          use_shardy_partitioner.value)
 
 config = Config()
 
@@ -276,6 +275,8 @@ class State(Generic[_T]):
             type(self).__name__))
 
   def _set(self, value: _T) -> None:
+    if self._validator:
+      self._validator(value)
     self._value = value
     if self._update_global_hook:
       self._update_global_hook(value)
@@ -829,6 +830,7 @@ class _GlobalExtraJitContext(NamedTuple):
   xla_profile_version: int = 0
   pgle_profiling_runs: int = 0
   enable_pgle: bool = False
+  use_shardy_partitioner: bool = False
 
 
 def _update_global_jit_state(**kw):
@@ -873,7 +875,7 @@ class _ThreadLocalStateCache(threading.local):
 
   The extra_jit_context in jax_jit.thread_local_state() may get updated and thus
   incurring dispatch overhead for comparing this python object during jit calls.
-  We want to duduplicate the objects that have the same hash/equality to also
+  We want to deduplicate the objects that have the same hash/equality to also
   have the same object ID, since the equality check is much faster if the object
   IDs match.
   """
@@ -916,7 +918,8 @@ jax2tf_default_native_serialization = bool_state(
     help=(
         'Sets the default value of the native_serialization parameter to '
         'jax2tf.convert. Prefer using the parameter instead of the flag, '
-        'the flag may be removed in the future.'
+        'the flag may be removed in the future. '
+        'Starting with JAX 0.4.31 non-native serialization is deprecated.'
     )
 )
 
@@ -940,6 +943,15 @@ jax_export_calling_convention_version = int_state(
         'within the range of versions supported by the tf.XlaCallModule '
         'used in your deployment environment. '
         'See https://jax.readthedocs.io/en/latest/export/shape_poly.html#calling-convention-versions.'
+    )
+)
+
+export_ignore_forward_compatibility = bool_state(
+    name='jax_export_ignore_forward_compatibility',
+    default=bool_env('JAX_EXPORT_IGNORE_FORWARD_COMPATIBILIY', False),
+    help=(
+        'Whether to ignore the forward compatibility lowering rules. '
+        'See https://jax.readthedocs.io/en/latest/export/export.html#compatibility-guarantees-for-custom-calls.'
     )
 )
 
@@ -1414,7 +1426,7 @@ numpy_rank_promotion = enum_state(
 
 default_matmul_precision = optional_enum_state(
     name='jax_default_matmul_precision',
-    enum_values=['bfloat16', 'tensorfloat32', 'float32'],
+    enum_values=['default', 'high', 'highest', 'bfloat16', 'tensorfloat32', 'float32'],
     default=None,
     help=('Control the default matmul and conv precision for 32bit inputs.\n\n'
 
@@ -1667,4 +1679,21 @@ pmap_no_rank_reduction = bool_state(
     help=(
         "If True, pmap shards have a the same rank as their enclosing array."
     )
+)
+
+use_shardy_partitioner = bool_state(
+    name='jax_use_shardy_partitioner',
+    default=False,
+    upgrade=True,
+    help=(
+        'Whether to lower to Shardy. Shardy is a new open sourced propagation '
+        'framework for MLIR. Currently Shardy is experimental in JAX. See '
+        'www.github.com/openxla/shardy'
+    ),
+    update_global_hook=lambda val: _update_global_jit_state(
+        use_shardy_partitioner=val
+    ),
+    update_thread_local_hook=lambda val: update_thread_local_jit_state(
+        use_shardy_partitioner=val
+    ),
 )

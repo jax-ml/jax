@@ -16,12 +16,12 @@
 from __future__ import annotations
 
 import importlib.util
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import functools
 import logging
 import string
 import sys
-from typing import Any, Callable, Union
+from typing import Any, Union
 import weakref
 
 import numpy as np
@@ -159,11 +159,11 @@ def debug_callback_lowering(ctx, *args, effect, callback, **params):
         *flat_args, effect=effect, callback=callback, **params)
     return ()
   if effects.ordered_effects.contains(effect):
-    [token] = ctx.tokens_in.get(effect)
+    token = ctx.tokens_in.get(effect)
     result, token, _ = mlir.emit_python_callback(
         ctx, _callback, token, list(args), ctx.avals_in, ctx.avals_out,
         has_side_effect=True)
-    ctx.set_tokens_out(mlir.TokenSet({effect: (token,)}))
+    ctx.set_tokens_out(mlir.TokenSet({effect: token}))
   else:
     result, _, _ = mlir.emit_python_callback(
         ctx, _callback, None, list(args), ctx.avals_in, ctx.avals_out,

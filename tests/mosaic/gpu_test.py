@@ -14,10 +14,11 @@
 # ==============================================================================
 """Tests for Mosaic GPU DSL functions and utilities."""
 
+import enum
 from functools import partial
+import itertools
+import math
 import operator
-import sys
-from typing import Optional
 
 from absl.testing import absltest, parameterized
 import jax
@@ -31,12 +32,15 @@ from jax._src.lib.mlir.dialects import vector
 import jax.numpy as jnp
 import numpy as np
 try:
-  if sys.version_info < (3, 10):
-    raise ImportError("Mosaic requires Python 3.10")
   import jax._src.lib.mosaic_gpu  # noqa: F401
   HAS_MOSAIC_GPU = True
 except ImportError:
   HAS_MOSAIC_GPU = False
+
+  class Dimension(enum.IntEnum):  # Just to make parameterized tests expand ok
+    x = 0
+    y = 1
+    z = 2
 else:
   from jax.experimental.mosaic import gpu as mosaic_gpu
   from jax.experimental.mosaic.gpu import dsl as mgpu
@@ -44,9 +48,11 @@ else:
   from jax.experimental.mosaic.gpu.utils import *  # noqa: F403
   from jax._src.lib.mlir.dialects import gpu
   from jax._src.lib.mlir.dialects import llvm
+  Dimension = gpu.Dimension
 
 
 # ruff: noqa: F405
+# pylint: disable=g-complex-comprehension
 config.parse_flags_with_absl()
 
 def nd_loop(bounds, body, *, _idxs = ()):
@@ -68,7 +74,7 @@ def mlir_sum(elems):
   return total
 
 
-def copy(src: ir.Value, dst: ir.Value, swizzle: Optional[int] = None):
+def copy(src: ir.Value, dst: ir.Value, swizzle: int | None = None):
   index = ir.IndexType.get()
   thread_id = gpu.thread_id(gpu.Dimension.x)
   stride = gpu.block_dim(gpu.Dimension.x)
@@ -88,32 +94,21 @@ def copy(src: ir.Value, dst: ir.Value, swizzle: Optional[int] = None):
     def body(*idx):
       dst_idx = idx
       if swizzle is not None:
-        if swizzle != 128:
-          raise NotImplementedError("Only swizzle 128B implemented")
-        # TODO(apaszke): This can probably be cleaned up.
-        # But it works and it's test-only, so it doesn't matter much.
-        # After all, swizzle should just be an xor of row and linear idx,
-        # adjusted for the bytewidth.
+        assert swizzle.bit_count() == 1
         bytes_per_element = bytewidth(src_ty.element_type)
-        elems_per_tile = 1024 // bytes_per_element
-        elems_per_row = elems_per_tile // 8
-        elems_per_group = 16 // bytes_per_element
         linear_idx = c(0, index)
         for stride, i in zip(dyn_strides, idx):
           linear_idx = arith.addi(linear_idx, arith.muli(i, stride))
-        tile_offset = arith.remui(linear_idx, c(elems_per_tile, index))
-        linear_tile_start = arith.subi(linear_idx, tile_offset)
-        row = arith.divui(tile_offset, c(elems_per_row, index))
-        row_offset = arith.remui(tile_offset, c(elems_per_row, index))
-        src_group = arith.divui(row_offset, c(elems_per_group, index))
-        group_offset = arith.remui(row_offset, c(elems_per_group, index))
-        dst_group = arith.xori(src_group, row)
-        dst_linear_idx = mlir_sum([
-            linear_tile_start,
-            arith.muli(row, c(elems_per_row, index)),
-            arith.muli(dst_group, c(elems_per_group, index)),
-            group_offset,
-        ])
+        # Swizzle pattern repeats every 128 bytes.
+        swizzle_src = arith.remui(
+            arith.divui(linear_idx, c(128 // bytes_per_element, index)),
+            c(swizzle // 16, index),
+        )
+        # Swizzle happens in groups of 16 bytes.
+        swizzle_shift = 4 - (bytes_per_element.bit_length() - 1)
+        dst_linear_idx = arith.xori(
+            linear_idx, arith.shli(swizzle_src, c(swizzle_shift, index))
+        )
         dst_idx = [
             arith.remui(arith.divui(dst_linear_idx, stride), c(bound, index))
             for stride, bound in zip(dyn_strides, shape)
@@ -379,20 +374,28 @@ class WGMMATest(TestCase):
     )()
     np.testing.assert_array_equal(iota, expected)
 
-  @parameterized.named_parameters(
-      ("f32", ir.F32Type.get, jnp.float32),
-      ("f16", ir.F16Type.get, jnp.float16),
-      ("i8", partial(ir.IntegerType.get_signless, 8), jnp.int8),
+  @parameterized.product(
+      dtypes=(
+          (ir.F32Type.get, jnp.float32),
+          (ir.F16Type.get, jnp.float16),
+          (partial(ir.IntegerType.get_signless, 8), jnp.int8),
+      ),
+      swizzle=(32, 64, 128),
+      num_col_tiles=(1, 2, 3),
   )
-  def test_store_tiled(self, mlir_dtype_cls, jax_dtype):
+  def test_store_tiled(self, dtypes, swizzle, num_col_tiles):
+    mlir_dtype_cls, jax_dtype = dtypes
     mlir_dtype = mlir_dtype_cls()
+    if bytewidth(mlir_dtype) > 2 and swizzle == 32:
+      self.skipTest("Not implemented")
+    col_tiling = swizzle // bytewidth(mlir_dtype)
     m = 128
-    n = 256
-    tiling = (64, 128 // bytewidth(mlir_dtype))
+    n = col_tiling * num_col_tiles
+    tiling = (64, col_tiling)
     def kernel(ctx, out, smem):
       del ctx
-      iota_tensor(m, n, mlir_dtype).store_tiled(smem, swizzle=128)
-      copy(smem, out, swizzle=128)
+      iota_tensor(m, n, mlir_dtype).store_tiled(smem, swizzle=swizzle)
+      copy(smem, out, swizzle=swizzle)
     expected = (
         np.arange(m * n, dtype=jax_dtype)
         .reshape(m // tiling[0], tiling[0], n // tiling[1], tiling[1])
@@ -486,9 +489,10 @@ class WGMMATest(TestCase):
       n=(64, 128, 192),
       k_steps=(1, 2),
       tma_inputs=(False, True),
+      swizzle=(32, 64, 128),
       jax_out_dtype=(jnp.float16, jnp.float32),
   )
-  def test_wgmma(
+  def test_wgmma_basic(
       self,
       m,
       n,
@@ -497,10 +501,15 @@ class WGMMATest(TestCase):
       lhs_transpose,
       rhs_transpose,
       tma_inputs,
+      swizzle,
       jax_out_dtype,
   ):
     if jax_out_dtype == jnp.float16 and in_mlir_dtype_cls is not ir.F16Type:
       raise self.skipTest("Only f16 input is supported for f16 output.")
+    if swizzle != 128 and lhs_transpose:
+      raise self.skipTest("Transpose only supported in 128B swizzled WGMMA")
+    if swizzle != 128 and not tma_inputs:
+      raise self.skipTest("Copy with non-128B swizzles not implemented")
 
     in_mlir_dtype = in_mlir_dtype_cls.get()
     out_mlir_dtype = mlir.dtype_to_ir_type(jnp.dtype(jax_out_dtype))
@@ -522,7 +531,7 @@ class WGMMATest(TestCase):
         raise NotImplementedError(in_mlir_dtype)
     else:
       raise NotImplementedError(in_mlir_dtype)
-    nk_tile = 128 // bytewidth(in_mlir_dtype)
+    nk_tile = swizzle // bytewidth(in_mlir_dtype)
     k = nk_tile * k_steps
     assert m % 64 == 0 and n % nk_tile == 0
     index = ir.IndexType.get()
@@ -546,14 +555,14 @@ class WGMMATest(TestCase):
         ctx.async_copy(
             src_ref=lhs,
             dst_ref=lhs_smem,
-            swizzle=128,
+            swizzle=swizzle,
             gmem_transform=lhs_transform,
             barrier=barriers[0],
         )
         ctx.async_copy(
             src_ref=rhs,
             dst_ref=rhs_smem,
-            swizzle=128,
+            swizzle=swizzle,
             gmem_transform=rhs_transform,
             barrier=barriers[1],
         )
@@ -571,7 +580,7 @@ class WGMMATest(TestCase):
             copy(
                 src=memref_slice(lhs, lhs_slice),
                 dst=memref_slice(lhs_smem, (mi, ki)),
-                swizzle=128,
+                swizzle=swizzle,
             )
         for ki in range(k // nk_tile):
           k_slice = ds(c(ki * nk_tile, index), nk_tile)
@@ -582,12 +591,12 @@ class WGMMATest(TestCase):
             copy(
                 src=memref_slice(rhs, rhs_slice),
                 dst=memref_slice(rhs_smem, (ki, ni)),
-                swizzle=128,
+                swizzle=swizzle,
             )
       init_acc = mgpu.WGMMAAccumulator.zero(m=m, n=n, dtype=out_mlir_dtype)
       acc = mgpu.wgmma(
           init_acc, lhs_smem, rhs_smem,
-          a_order=lhs_order, b_order=rhs_order,
+          a_order=lhs_order, b_order=rhs_order, swizzle=swizzle,
       )
       nvvm.wgmma_commit_group_sync_aligned()
       nvvm.wgmma_wait_group_sync_aligned(0)
@@ -622,31 +631,39 @@ class WGMMATest(TestCase):
       n=(64, 128, 192),
       k_steps=(1, 2),
       rhs_transpose=(False, True),
+      swizzle=(32, 64, 128),
       mlir_dtype_cls=(ir.F16Type, ir.BF16Type),
   )
-  def test_wgmma_reg_lhs(self, m, n, k_steps, rhs_transpose, mlir_dtype_cls):
-    k = 64 * k_steps
+  def test_wgmma_reg_lhs(
+      self, m, n, k_steps, rhs_transpose, swizzle, mlir_dtype_cls
+  ):
     index = ir.IndexType.get()
 
     row_major = mgpu.WGMMALayout.ROW_MAJOR
     col_major = mgpu.WGMMALayout.COL_MAJOR
     rhs_order = col_major if rhs_transpose else row_major
+    bytewidth = 2
+    nk_tile = swizzle // bytewidth
+    k = nk_tile * k_steps
 
     def kernel(ctx, rhs, out, rhs_smem):
       del ctx
       for ki in range(k_steps):
-        for ni in range(n // 64):
-          rhs_slice = (ds(c(ki * 64, index), 64), ds(c(ni * 64, index), 64))
+        for ni in range(n // nk_tile):
+          rhs_slice = (
+              ds(c(ki * nk_tile, index), nk_tile),
+              ds(c(ni * nk_tile, index), nk_tile),
+          )
           if rhs_transpose:
             rhs_slice = rhs_slice[::-1]
           copy(
               src=memref_slice(rhs, rhs_slice),
               dst=memref_slice(rhs_smem, (ki, ni)),
-              swizzle=128,
+              swizzle=swizzle,
           )
       init_acc = mgpu.WGMMAAccumulator.zero(m=m, n=n)
       lhs_regs = iota_tensor(m, k, mlir_dtype_cls.get())
-      acc = mgpu.wgmma(init_acc, lhs_regs, rhs_smem, b_order=rhs_order)
+      acc = mgpu.wgmma(init_acc, lhs_regs, rhs_smem, b_order=rhs_order, swizzle=swizzle)
       nvvm.wgmma_commit_group_sync_aligned()
       nvvm.wgmma_wait_group_sync_aligned(0)
       acc.value.store_untiled(out)
@@ -656,7 +673,7 @@ class WGMMATest(TestCase):
     y = self.prng.uniform(-1, 1, y_shape).astype(jax_dtype)
     out_shape = jax.ShapeDtypeStruct((m, n), jnp.float32)
     scratch_shape = jax.ShapeDtypeStruct(
-        (k_steps, n // 64, 64, 64), jax_dtype
+        (k_steps, n // nk_tile, nk_tile, nk_tile), jax_dtype
     )
     z = mosaic_gpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), y, out_shape, scratch_shape
@@ -665,7 +682,7 @@ class WGMMATest(TestCase):
     ref = jax.lax.dot(
         x, (y.T if rhs_transpose else y), preferred_element_type=jnp.float32
     )
-    rtol = 0 if k_steps == 1 else 2.2e-4
+    rtol = 5e-4
     np.testing.assert_allclose(z, ref, rtol=rtol, atol=0)
 
 
@@ -712,16 +729,59 @@ class BarrierTest(TestCase):
     )()
     np.testing.assert_array_equal(y, np.full_like(y, 3, dtype=np.int32))
 
+  @parameterized.named_parameters(
+      (
+          f"_{''.join(map(str, collective_dims))}{'_' + ''.join(map(str, noncollective_dims)) if noncollective_dims else ''}",
+          collective_dims,
+          noncollective_dims,
+      )
+      for collective_dims in itertools.chain.from_iterable(
+          itertools.combinations(Dimension, n) for n in range(1, 4)
+      )
+      for noncollective_dims in itertools.chain.from_iterable(
+          itertools.combinations(Dimension, n) for n in range(3)
+      )
+      if all(d not in noncollective_dims for d in collective_dims)
+  )
+  def test_collective_arrive(self, collective_dims, noncollective_dims):
+    i32 = ir.IntegerType.get_signless(32)
+    index = ir.IndexType.get()
+    cluster = [1, 1, 1]
+    for d in itertools.chain(collective_dims, noncollective_dims):
+      cluster[d] = 2
+    def kernel(ctx, dst, _):
+      collective_barrier = CollectiveBarrierArray(ctx, collective_dims, 1)[0]
+      nvvm.fence_mbarrier_init()
+      nvvm.cluster_arrive_relaxed()
+      nvvm.cluster_wait()
+      collective_barrier.arrive()
+      collective_barrier.wait()
+      tid = thread_idx()
+      linear_idx = arith.index_cast(index, tid)
+      stride = c(128, index)
+      for d in gpu.Dimension:
+        linear_idx = arith.addi(linear_idx, arith.muli(gpu.block_id(d), stride))
+        stride = arith.muli(stride, gpu.grid_dim(d))
+      memref.store(arith.index_cast(i32, linear_idx), dst, [linear_idx])
+    out_shape = jax.ShapeDtypeStruct((math.prod(cluster) * 128,), jnp.int32)
+    y = mosaic_gpu.as_gpu_kernel(
+        kernel, cluster, (128, 1, 1), (), out_shape, (), cluster=cluster,
+    )()
+    np.testing.assert_array_equal(
+        y, np.arange(math.prod(cluster) * 128, dtype=np.int32)
+    )
+
+
 class TMATest(TestCase):
 
   @parameterized.product(
-      swizzle=(None, 128),
-      shape=((64, 64), (5, 64), (2, 3, 5, 64)),
+      swizzle=(None, 32, 64, 128),
+      shape=((64, None), (5, None), (2, 3, 5, None)),
       dtype=(jnp.float16, jnp.float32),
   )
-  def test_tma_load(self, swizzle, shape, dtype):
-    if dtype == jnp.float32:
-      shape = (*shape[:-1], shape[-1] // 2)
+  def test_tma_load_basic(self, swizzle, shape, dtype):
+    minor_size = 64 if swizzle is None else swizzle // jnp.dtype(dtype).itemsize
+    shape = (*shape[:-1], minor_size)
     i1 = ir.IntegerType.get_signless(1)
     def kernel(ctx, src, dst, tmp):
       barrier = BarrierArray(1)[0]
@@ -732,15 +792,80 @@ class TMATest(TestCase):
     y = mosaic_gpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, x)(x)
     np.testing.assert_array_equal(y, x)
 
+  @parameterized.named_parameters(
+      (
+          f"_{collective_dim}{'_' + ''.join(map(str, noncollective_dims)) if noncollective_dims else ''}",
+          collective_dim,
+          noncollective_dims,
+      )
+      for collective_dim in Dimension
+      for noncollective_dims in itertools.chain.from_iterable(
+          itertools.combinations(Dimension, n) for n in range(3)
+      )
+      if collective_dim not in noncollective_dims
+  )
+  def test_tma_load_multicast(self, collective_dim, noncollective_dims):
+    index = ir.IndexType.get()
+    swizzle = 128
+    dtype = jnp.float16
+    cluster = [1, 1, 1]
+    for d in (collective_dim, *noncollective_dims):
+      cluster[d] = 2
+    noncollective_size = math.prod(cluster) // cluster[collective_dim]
+    shape = (noncollective_size, 64, 64)
+    minor_size = 64 if swizzle is None else swizzle // jnp.dtype(dtype).itemsize
+    shape = (*shape[:-1], minor_size)
+    # Note that this kernel does not use the non-collective dimensions in any
+    # interesting way and so they don't really have to be part of the cluster.
+    # We use them to test that the multicast mask is generated correctly.
+    def kernel(ctx, src, dst, tmp):
+      stride = 1
+      noncollective_idx = c(0, index)
+      for d in noncollective_dims:
+        noncollective_idx = arith.addi(
+            noncollective_idx,
+            arith.muli(gpu.cluster_block_id(d), c(stride, index))
+        )
+        stride *= 2
+      barrier = BarrierArray(1)[0]
+      nvvm.fence_mbarrier_init()
+      nvvm.cluster_arrive_relaxed()
+      nvvm.cluster_wait()
+      ctx.async_copy(
+          src_ref=src,
+          dst_ref=tmp,
+          gmem_slice=(noncollective_idx,),
+          swizzle=swizzle,
+          barrier=barrier,
+          collective=collective_dim,
+      )
+      barrier.wait()
+      slc = ds(
+          arith.muli(gpu.cluster_block_id(collective_dim), c(32, index)), 32
+      )
+      copy(
+          memref_slice(tmp, slc),
+          memref_slice(dst, (noncollective_idx, slc)),
+          swizzle=swizzle,
+      )
+    x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
+    smem_shape = jax.ShapeDtypeStruct(shape[1:], dtype)
+    y = mosaic_gpu.as_gpu_kernel(
+        kernel, cluster, (128, 1, 1), x, x, smem_shape, cluster=cluster
+    )(x)
+    np.testing.assert_array_equal(y, x)
+
   @parameterized.product(
       swizzle=(None, 128),
       shape=((128, 128), (5, 32, 128)),
       dtype=(jnp.float16, jnp.float32),
   )
   def test_tma_load_tiled(self, swizzle, shape, dtype):
+    # TODO(apaszke): ptxas seems to freeze when generating code for copy with
+    # swizzle 32 and 64.
     i1 = ir.IntegerType.get_signless(1)
     index = ir.IndexType.get()
-    tiling = (32, 128 // jnp.dtype(dtype).itemsize)
+    tiling = (32, (swizzle or 128) // jnp.dtype(dtype).itemsize)
     tiled_shape = tile_shape(shape, tiling)[:len(shape)]
     def kernel(ctx, src, dst, tmp):
       barrier = BarrierArray(1)[0]
@@ -770,9 +895,10 @@ class TMATest(TestCase):
       dtype=(jnp.float16, jnp.float32),
   )
   def test_tma_squeeze_indexing(self, swizzle, dtype):
-    shape = (4, 5, 64)
-    if dtype == jnp.float32:
-      shape = (*shape[:-1], shape[-1] // 2)
+    # TODO(apaszke): ptxas seems to freeze when generating code for copy with
+    # swizzle 32 and 64.
+    minor_size = 64 if swizzle is None else swizzle // jnp.dtype(dtype).itemsize
+    shape = (4, 5, minor_size)
     def kernel(ctx, src, dst, tmp):
       barrier = BarrierArray(1)[0]
       for i in range(4):
@@ -808,13 +934,13 @@ class TMATest(TestCase):
     np.testing.assert_array_equal(y, x)
 
   @parameterized.product(
-      swizzle=(None, 128),
-      shape=((64, 64), (5, 64), (2, 3, 5, 64)),
+      swizzle=(None, 32, 64, 128),
+      shape=((64, None), (5, None), (2, 3, 5, None)),
       dtype=(jnp.float16, jnp.float32),
   )
   def test_tma_store(self, swizzle, shape, dtype):
-    if dtype == jnp.float32:
-      shape = (*shape[:-1], shape[-1] // 2)
+    minor_size = 64 if swizzle is None else swizzle // jnp.dtype(dtype).itemsize
+    shape = (*shape[:-1], minor_size)
     def kernel(ctx, src, dst, tmp):
       copy(src, tmp, swizzle=swizzle)
       ctx.async_copy(src_ref=tmp, dst_ref=dst, swizzle=swizzle)

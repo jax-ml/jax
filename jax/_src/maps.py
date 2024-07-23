@@ -15,12 +15,12 @@
 from __future__ import annotations
 
 from collections import OrderedDict, abc
-from collections.abc import Iterable, Sequence, Mapping
+from collections.abc import Callable, Iterable, Sequence, Mapping
 import contextlib
 from functools import wraps, partial, partialmethod, lru_cache
 import itertools as it
 import math
-from typing import Callable, Any, NamedTuple, Union, cast as type_cast
+from typing import Any, NamedTuple, Union, cast as type_cast
 
 import numpy as np
 
@@ -715,7 +715,7 @@ def make_xmap_callable(fun: lu.WrappedFun,
         core.ClosedJaxpr(jaxpr, consts), 'jit', name,
         (UNSPECIFIED,) * len(in_avals), (UNSPECIFIED,) * len(out_avals),
         (None,) * len(in_avals), (None,) * len(out_avals),
-        donated_invars, keep_unused=True, inline=False,
+        donated_invars, keep_unused=True,
         devices_from_context=None, lowering_platforms=None,
         lowering_parameters=lowering_parameters, pgle_profiler=None)
 
@@ -1350,7 +1350,7 @@ def _xmap_lowering_rule_replica(ctx, *in_nodes,
   #       them!
   vectorized_jaxpr, out_avals, consts, () = pe.trace_to_jaxpr_dynamic(f, local_avals)
   # _check_out_avals_vs_out_axes(out_avals, out_axes, global_axis_sizes)
-  const_nodes = [mlir.ir_constants(xla.canonicalize_dtype(x)) for x in consts]
+  const_nodes = [mlir.ir_constant(xla.canonicalize_dtype(x)) for x in consts]
 
   local_mesh_shape = mesh.local_mesh.shape
   tiled_ins = (
@@ -1426,14 +1426,14 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
   vectorized_jaxpr, global_out_avals, consts, () = pe.trace_to_jaxpr_dynamic(f, global_in_avals)
 
   sharded_global_in_nodes = [
-    [mlir.wrap_with_sharding_op(
+    mlir.wrap_with_sharding_op(
         ctx, node, aval,
         NamedSharding(mesh, array_mapping_to_axis_resources(aval_axes)
-                      )._to_xla_hlo_sharding(aval.ndim).to_proto())]
-    if aval_axes else [node]
+                      )._to_xla_hlo_sharding(aval.ndim).to_proto())
+    if aval_axes else node
     for node, aval, aval_axes in zip(global_in_nodes, global_in_avals, mesh_in_axes)
   ]
-  const_nodes = [mlir.ir_constants(xla.canonicalize_dtype(x)) for x in consts]
+  const_nodes = [mlir.ir_constant(xla.canonicalize_dtype(x)) for x in consts]
 
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
@@ -1451,7 +1451,7 @@ def _xmap_lowering_rule_spmd(ctx, *global_in_nodes,
         NamedSharding(mesh, array_mapping_to_axis_resources(aval_axes)
                       )._to_xla_hlo_sharding(aval.ndim).to_proto())
     if aval_axes else node
-    for (node,), aval, aval_axes in zip(global_out_nodes, global_out_avals, mesh_out_axes)
+    for node, aval, aval_axes in zip(global_out_nodes, global_out_avals, mesh_out_axes)
   ]
 
   return sharded_global_out_nodes
@@ -1485,7 +1485,7 @@ def _xmap_lowering_rule_spmd_manual(ctx, *global_in_nodes,
   #       them!
   global_in_avals = ctx.avals_in
   vectorized_jaxpr, global_out_avals, consts, () = pe.trace_to_jaxpr_dynamic(f, global_in_avals)
-  const_nodes = [mlir.ir_constants(xla.canonicalize_dtype(x)) for x in consts]
+  const_nodes = [mlir.ir_constant(xla.canonicalize_dtype(x)) for x in consts]
 
   # We in-line here rather than generating a Call HLO as in the xla_call
   # translation rule just because the extra tuple stuff is a pain.
@@ -1498,9 +1498,8 @@ def _xmap_lowering_rule_spmd_manual(ctx, *global_in_nodes,
          in vectorized_jaxpr.effects):
     raise NotImplementedError('Cannot lower `xmap` with ordered effects.')
   global_out_nodes, _ = mlir.jaxpr_subcomp(
-      sub_ctx, vectorized_jaxpr, name_stack,
-      mlir.TokenSet(), const_nodes, *([n] for n in global_in_nodes),
-      dim_var_values=ctx.dim_var_values)
+      sub_ctx, vectorized_jaxpr, name_stack, mlir.TokenSet(), const_nodes,
+      *global_in_nodes, dim_var_values=ctx.dim_var_values)
 
   return global_out_nodes
 
@@ -1816,6 +1815,7 @@ def _fix_inferred_spmd_sharding(jaxpr, resource_env, gen_fresh_name = None):
           [tmpvar], [outvar], sharding_constraint_p,
           dict(resource_env=resource_env,
                sharding=gspmd_sharding,
+               layout=None,
                unconstrained_dims=unconstrained_dims),
           set(),
           eqn.source_info, eqn.ctx))

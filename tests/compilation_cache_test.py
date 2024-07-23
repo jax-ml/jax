@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 from collections import Counter
 from functools import partial
+import logging
 import math
-import os
 import platform
-import tempfile
 import unittest
 from unittest import mock
 from unittest import SkipTest
@@ -28,14 +29,17 @@ from absl.testing import parameterized
 import jax
 from jax import jit
 from jax import lax
+from jax import numpy as jnp
 from jax import pmap
 from jax._src import compilation_cache as cc
 from jax._src import compiler
 from jax._src import config
 from jax._src import distributed
 from jax._src import monitoring
+from jax._src import path as pathlib
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
+from jax._src.compilation_cache_interface import CacheInterface
 from jax._src.lib import xla_client
 from jax._src.maps import xmap
 from jax.experimental.pjit import pjit
@@ -60,20 +64,52 @@ def tearDownModule():
 def increment_event_count(event):
   _counts[event] += 1
 
+def msg_exists_in_logs(msg: str, records: list[logging.LogRecord],
+                       level: int | None = None) -> bool:
+  return any(msg in record.getMessage() for record in records
+             if level is None or level == record.levelno)
+
+
+class InMemoryCache(CacheInterface):
+    """An in-memory cache for testing purposes."""
+
+    # not used, but required by `CacheInterface`
+    _path = pathlib.Path()
+
+    def __init__(self):
+        self._cache: dict[str, bytes] = {}
+
+    def get(self, key: str) -> bytes | None:
+        return self._cache.get(key)
+
+    def put(self, key: str, value: bytes) -> None:
+        self._cache[key] = value
+
+    def clear(self) -> None:
+        self._cache.clear()
+
+    def __len__(self) -> int:
+        return len(self._cache)
+
+
+def count_cache_items() -> int:
+  return 0 if cc._cache is None else len(cc._cache)
+
+
+def clear_cache() -> None:
+  if cc._cache is not None:
+    cc._cache.clear()
+
+
 class CompilationCacheTestCase(jtu.JaxTestCase):
-  tmpdir: str
 
   def setUp(self):
     super().setUp()
     cc.reset_cache()
-    tmpdir = tempfile.TemporaryDirectory()
-    self.enter_context(tmpdir)
-    self.enter_context(config.compilation_cache_dir(tmpdir.name))
-    self.tmpdir = tmpdir.name
+    cc._cache = InMemoryCache()
 
   def tearDown(self):
     cc.reset_cache()
-    self.tmpdir = ""
     super().tearDown()
 
 
@@ -158,38 +194,32 @@ class CompilationCacheTest(CompilationCacheTestCase):
     f = pmap(lambda x: x - lax.psum(x, "i"), axis_name="i")
     x = np.arange(jax.device_count(), dtype=np.int64)
     f(x)
-    files_in_directory = len(os.listdir(self.tmpdir))
-    self.assertEqual(files_in_directory, 1)
+    self.assertEqual(count_cache_items(), 1)
     x = np.arange(jax.device_count(), dtype=np.float32)
     f(x)
-    files_in_directory = len(os.listdir(self.tmpdir))
-    self.assertEqual(files_in_directory, 2)
+    self.assertEqual(count_cache_items(), 2)
     # TODO: create a test for calling pmap with the same input more than once
 
   def test_jit(self):
     f = jit(lambda x: x * x)
     f(1)
-    files_in_directory = len(os.listdir(self.tmpdir))
-    self.assertEqual(files_in_directory, 1)
+    self.assertEqual(count_cache_items(), 1)
     f(1.0)
-    files_in_directory = len(os.listdir(self.tmpdir))
-    self.assertEqual(files_in_directory, 2)
+    self.assertEqual(count_cache_items(), 2)
 
   def test_xla_autofdo_profile_version(self):
     original_profile_version = config.jax_xla_profile_version.value
     with config.jax_xla_profile_version(original_profile_version + 1):
       f = jit(lambda x: x * x)
       f(1)
-      files_in_cache_directory = os.listdir(self.tmpdir)
-      self.assertLen(files_in_cache_directory, 1)
+      self.assertEqual(count_cache_items(), 1)
       # Clear the cache directory, then update the profile version and execute
       # again. The in-memory caches should be invalidated and a new persistent
       # cache entry created.
-      os.unlink(os.path.join(self.tmpdir, files_in_cache_directory[0]))
+      clear_cache()
       with config.jax_xla_profile_version(original_profile_version + 2):
         f(1)
-        files_in_directory = len(os.listdir(self.tmpdir))
-        self.assertEqual(files_in_directory, 1)
+        self.assertEqual(count_cache_items(), 1)
 
   @jtu.with_mesh([("x", 2)])
   def test_pjit(self):
@@ -200,12 +230,10 @@ class CompilationCacheTest(CompilationCacheTestCase):
     shape = (8, 8)
     x = np.arange(math.prod(shape), dtype=np.int64).reshape(shape)
     f(x, x + 1)
-    files_in_directory = len(os.listdir(self.tmpdir))
-    self.assertEqual(files_in_directory, 1)
+    self.assertEqual(count_cache_items(), 1)
     x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     f(x, x + 1)
-    files_in_directory = len(os.listdir(self.tmpdir))
-    self.assertEqual(files_in_directory, 2)
+    self.assertEqual(count_cache_items(), 2)
 
   @jtu.with_mesh([("x", 2)])
   def test_xmap(self):
@@ -219,14 +247,12 @@ class CompilationCacheTest(CompilationCacheTestCase):
     xmap(
         f, in_axes=["a", ...], out_axes=["a", ...], axis_resources={"a": "x"}
     )(x)
-    files_in_directory = len(os.listdir(self.tmpdir))
-    self.assertEqual(files_in_directory, 1)
+    self.assertEqual(count_cache_items(), 1)
     x = np.arange(8, dtype=np.float32).reshape((2, 2, 2))
     xmap(
         f, in_axes=["a", ...], out_axes=["a", ...], axis_resources={"a": "x"}
     )(x)
-    files_in_directory = len(os.listdir(self.tmpdir))
-    self.assertEqual(files_in_directory, 2)
+    self.assertEqual(count_cache_items(), 2)
 
   def test_cache_write_warning(self):
     f = jit(lambda x: x * x)
@@ -280,8 +306,7 @@ class CompilationCacheTest(CompilationCacheTestCase):
       config.persistent_cache_min_entry_size_bytes(1048576),  # 1MiB
     ):
       jit(lambda x: x + 1)(1)
-      files_in_cache = len(os.listdir(self.tmpdir))
-      self.assertEqual(files_in_cache, 0)
+      self.assertEqual(count_cache_items(), 0)
 
   def test_min_compile_time(self):
     with (
@@ -291,14 +316,12 @@ class CompilationCacheTest(CompilationCacheTestCase):
       # Mock time to progress in small intervals so compilation time is small.
       with mock.patch("time.monotonic", side_effect=np.arange(0, 10, 0.1)):
         jit(lambda x: x + 1)(1)
-        files_in_cache = len(os.listdir(self.tmpdir))
-        self.assertEqual(files_in_cache, 0)
+        self.assertEqual(count_cache_items(), 0)
 
       # Mock time to progress in large intervals so compilation time is large.
       with mock.patch("time.monotonic", side_effect=np.arange(0, 100, 10)):
         jit(lambda x: x + 2)(1)
-        files_in_cache = len(os.listdir(self.tmpdir))
-        self.assertEqual(files_in_cache, 1)
+        self.assertEqual(count_cache_items(), 1)
 
   # This is perhaps related to mocking time.monotonic?
   @unittest.skipIf(platform.system() == "Windows", "Test fails on Windows")
@@ -399,6 +422,109 @@ class CompilationCacheTest(CompilationCacheTestCase):
         - previous_counts["/jax/compilation_cache/cache_hits"],
         1)
 
+  def test_persistent_cache_hit_logging(self):
+    jit(lambda x: x + 1)(1)
+    msg = "Persistent compilation cache hit"
+
+    # cache hits with `log_compiles` on should be in WARNING when enabled
+    with config.log_compiles(True):
+      with self.assertLogs(level="WARNING") as log:
+        jit(lambda x: x + 1)(1)
+      self.assertTrue(msg_exists_in_logs(msg, log.records, logging.WARNING))
+
+  def test_persistent_cache_hit_no_logging(self):
+    jit(lambda x: x + 1)(1)
+    msg = "Persistent compilation cache hit"
+
+    # cache hits with `log_compiles` off should NOT be in WARNING
+    with config.log_compiles(False):
+      with self.assertLogs(level="DEBUG") as log:
+        jit(lambda x: x + 1)(1)
+      self.assertFalse(msg_exists_in_logs(msg, log.records, logging.WARNING))
+
+  def test_persistent_cache_miss_logging_with_explain(self):
+    with (config.explain_cache_misses(True),
+          config.compilation_cache_dir("jax-cache")):
+
+      # omitting writing to cache because compilation is too fast
+      pure_fn = lambda a: jnp.array(1, dtype=jnp.int32)
+      with config.persistent_cache_min_compile_time_secs(1e5):
+        with self.assertLogs(level="DEBUG") as log:
+          jit(lambda x: x +
+              jax.pure_callback(pure_fn, jax.ShapeDtypeStruct((), jnp.int32), x)
+              )(1)
+        msg1 = "Not writing persistent cache entry"
+        msg2 = "because it uses host callbacks"
+        self.assertTrue(msg_exists_in_logs(msg1, log.records, logging.WARNING))
+        self.assertTrue(msg_exists_in_logs(msg2, log.records, logging.WARNING))
+
+      # omitting writing to cache because host callback is present
+      pure_fn = lambda a: jnp.array(1, dtype=jnp.int32)
+      with self.assertLogs(level="DEBUG") as log:
+        jit(lambda x: x +
+            jax.pure_callback(pure_fn, jax.ShapeDtypeStruct((), jnp.int32), x)
+            )(1)
+      msg1 = "Not writing persistent cache entry"
+      msg2 = "because it uses host callbacks"
+      self.assertTrue(msg_exists_in_logs(msg1, log.records, logging.WARNING))
+      self.assertTrue(msg_exists_in_logs(msg2, log.records, logging.WARNING))
+
+      # omitting writing to cache because binary is too small
+      with config.persistent_cache_min_entry_size_bytes(int(1e9)):
+        with self.assertLogs(level="DEBUG") as log:
+          jit(lambda x: x + 2)(1)
+      msg1 = "Not writing persistent cache entry"
+      msg2 = "is less than threshold"
+      self.assertTrue(msg_exists_in_logs(msg1, log.records, logging.WARNING))
+      self.assertTrue(msg_exists_in_logs(msg2, log.records, logging.WARNING))
+
+      # successful cache write
+      with config.persistent_cache_min_entry_size_bytes(1):
+        with self.assertLogs(level="DEBUG") as log:
+          jit(lambda x: x ** 2)(1)
+      msg = "to persistent compilation cache with key"
+      self.assertTrue(msg_exists_in_logs(msg, log.records, logging.WARNING))
+
+  def test_persistent_cache_miss_logging_with_no_explain(self):
+    # test that cache failure messages do not get logged in WARNING
+    with (config.explain_cache_misses(False),
+          config.compilation_cache_dir("jax-cache")):
+      # omitting writing to cache because compilation is too fast
+      with config.persistent_cache_min_compile_time_secs(1e3):
+        with self.assertLogs(level="DEBUG") as log:
+          jit(lambda x: x + 1)(1)
+        msg1, msg2 = "Not writing persistent cache entry", "because it took <"
+        self.assertFalse(msg_exists_in_logs(msg1, log.records, logging.WARNING))
+        self.assertFalse(msg_exists_in_logs(msg2, log.records, logging.WARNING))
+
+      # omitting writing to cache because host callback is present
+      pure_fn = lambda a: jnp.array(1, dtype=jnp.int32)
+      with self.assertLogs(level="DEBUG") as log:
+        jit(lambda x: x +
+            jax.pure_callback(pure_fn, jax.ShapeDtypeStruct((), jnp.int32), x)
+            )(1)
+      msg1 = "Not writing persistent cache entry"
+      msg2 = "because it uses host callbacks"
+      self.assertFalse(msg_exists_in_logs(msg1, log.records, logging.WARNING))
+      self.assertFalse(msg_exists_in_logs(msg2, log.records, logging.WARNING))
+
+      # omitting writing to cache because binary is too small
+      with config.persistent_cache_min_entry_size_bytes(int(1e9)):
+        with self.assertLogs(level="DEBUG") as log:
+          jit(lambda x: x + 2)(1)
+      msg1 = "Not writing persistent cache entry"
+      msg2 = "is less than threshold"
+      self.assertFalse(msg_exists_in_logs(msg1, log.records, logging.WARNING))
+      self.assertFalse(msg_exists_in_logs(msg2, log.records, logging.WARNING))
+
+      # successful cache write
+      with config.persistent_cache_min_entry_size_bytes(1):
+        with self.assertLogs(level="DEBUG") as log:
+          jit(lambda x: x ** 2)(1)
+      msg = "to persistent compilation cache with key"
+      self.assertFalse(msg_exists_in_logs(msg, log.records, logging.WARNING))
+
+
   @parameterized.parameters(0, 1)
   def test_cache_write_with_process_restriction(self, process_id):
     with (
@@ -408,7 +534,7 @@ class CompilationCacheTest(CompilationCacheTestCase):
     ):
       jit(lambda x: x + 1)(1)
 
-      files_in_directory = len(os.listdir(self.tmpdir))
+      files_in_directory = count_cache_items()
       if process_id == 0:
         self.assertEqual(files_in_directory, 1)
       elif process_id == 1:
@@ -446,9 +572,22 @@ class CompilationCacheDisabledTest(CompilationCacheTestCase):
     with config.enable_compilation_cache(False):
       f = jit(lambda x: x * x)
       f(1)
-      files_in_directory = len(os.listdir(self.tmpdir))
-      self.assertEqual(files_in_directory, 0)
+      self.assertEqual(count_cache_items(), 0)
 
+  def test_tasks_disable_cache_metric(self):
+    with config.enable_compilation_cache(False):
+      count_before_first_use = _counts[
+          "/jax/compilation_cache/task_disabled_cache"]
+      jit(lambda x: x + 1)(1)
+      count_after_first_use = _counts[
+          "/jax/compilation_cache/task_disabled_cache"]
+      self.assertEqual(count_after_first_use - count_before_first_use, 1)
+
+      # Verify that the count is incremented only once per task.
+      jit(lambda x: x + 3)(3)
+      count_after_second_use = _counts[
+          "/jax/compilation_cache/task_disabled_cache"]
+      self.assertEqual(count_after_second_use, count_after_first_use)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

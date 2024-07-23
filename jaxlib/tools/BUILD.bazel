@@ -69,11 +69,11 @@ cc_binary(
     ],
     linkshared = True,
     deps = [
-        "//jaxlib/mosaic/gpu:custom_call",
         "@xla//xla/pjrt/c:pjrt_c_api_gpu",
         "@xla//xla/pjrt/c:pjrt_c_api_gpu_version_script.lds",
         "@xla//xla/service:gpu_plugin",
     ] + if_cuda([
+        "//jaxlib/mosaic/gpu:custom_call",
         "@xla//xla/stream_executor:cuda_platform",
     ]) + if_rocm([
         "@xla//xla/stream_executor:rocm_platform",
@@ -93,6 +93,12 @@ py_binary(
         "//jax_plugins/cuda:setup.py",
         "//jax_plugins/cuda:__init__.py",
         "@local_config_cuda//cuda:cuda-nvvm",
+    ]) + if_rocm([
+        "//jaxlib:version",
+        "//jaxlib/rocm:rocm_gpu_support",
+        "//jax_plugins/rocm:pyproject.toml",
+        "//jax_plugins/rocm:setup.py",
+        "//jax_plugins/rocm:__init__.py",
     ]),
     deps = [
       "//jax/tools:build_utils",
@@ -104,8 +110,8 @@ py_binary(
 )
 
 py_binary(
-    name = "build_cuda_kernels_wheel",
-    srcs = ["build_cuda_kernels_wheel.py"],
+    name = "build_gpu_kernels_wheel",
+    srcs = ["build_gpu_kernels_wheel.py"],
     data = [
         "LICENSE.txt",
     ] + if_cuda([
@@ -116,6 +122,12 @@ py_binary(
         "//jax_plugins/cuda:plugin_pyproject.toml",
         "//jax_plugins/cuda:plugin_setup.py",
         "@local_config_cuda//cuda:cuda-nvvm",
+    ]) + if_rocm([
+        "//jaxlib:rocm_plugin_extension",
+        "//jaxlib:version",
+        "//jaxlib/rocm:rocm_gpu_support",
+        "//jax_plugins/rocm:plugin_pyproject.toml",
+        "//jax_plugins/rocm:plugin_setup.py",
     ]),
     deps = [
       "//jax/tools:build_utils",

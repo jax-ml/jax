@@ -17,7 +17,6 @@ import asyncio
 import contextlib
 import math
 from functools import partial
-import re
 import os
 import pathlib
 import tracemalloc as tm
@@ -29,7 +28,7 @@ import jax.numpy as jnp
 from jax._src import test_util as jtu
 from jax._src import array
 from jax._src import xla_bridge as xb
-from jax.sharding import NamedSharding, GSPMDSharding
+from jax.sharding import NamedSharding, GSPMDSharding, SingleDeviceSharding
 from jax.sharding import PartitionSpec as P
 from jax.experimental.array_serialization import serialization
 from jax.experimental.layout import Layout, DeviceLocalLayout as DLL
@@ -44,13 +43,6 @@ def setUpModule():
 
 def tearDownModule():
   _exit_stack.close()
-
-
-pattern = re.compile(r"\{(.*?):")
-
-def extract_minor_to_major(l):
-  match = re.search(pattern, str(l))
-  return tuple(int(i) for i in match.groups()[0].split(','))
 
 
 class CheckpointTest(jtu.JaxTestCase):
@@ -103,6 +95,41 @@ class CheckpointTest(jtu.JaxTestCase):
     # We load entire array in memory here.
     self.assertGreater(peak, 30_000_000)
     tm.stop()
+
+  def test_memory_consumption_for_save(self):
+    global_mesh = jtu.create_global_mesh((1, 1), ('x', 'y'))
+    inp_shape = (16 * 1024, 16 * 1024)
+    pspec = P('x', 'y')
+    num = math.prod(inp_shape)
+    sharding = NamedSharding(global_mesh, pspec)
+    src = jnp.arange(num, dtype=np.int32).reshape(inp_shape)
+    inp = array.make_array_from_callback(
+        inp_shape, sharding, lambda idx: src[idx]
+    )
+    ckpt_dir = pathlib.Path(self.create_tempdir('memprofsave').full_path)
+    tspec = serialization.get_tensorstore_spec(str(ckpt_dir))
+    tspec['metadata'] = {
+        'shape': inp.shape,
+        'compressor': None,
+        'chunks': inp.shape,
+    }
+
+    is_cpu = jtu.test_device_matches(['cpu'])
+    tm.start()
+    try:
+      manager = serialization.GlobalAsyncCheckpointManager()
+      manager.serialize(
+          [inp],
+          [tspec],
+          on_commit_callback=partial(
+              self._on_commit_callback, ckpt_dir, ckpt_dir
+          ),
+      )
+      manager.wait_until_finished()
+      unused_current, peak = tm.get_traced_memory()
+      self.assertLess(peak, src.nbytes * (1 * (not is_cpu) + 0.5))
+    finally:
+      tm.stop()
 
   def test_checkpointing_with_path_variant(self):
     global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
@@ -194,6 +221,100 @@ class CheckpointTest(jtu.JaxTestCase):
                            np.array([[16, 17], [18, 19]], dtype=np.int32))
     self.assertArraysEqual(np.asarray(m2.addressable_shards[1].data),
                            np.array([[16, 17], [18, 19]], dtype=np.int32))
+    self.assertEqual(m2.addressable_shards[0].data.shape, (2, 2))
+    self.assertEqual(m2.dtype, np.int32)
+
+    self.assertIsInstance(m3, array.ArrayImpl)
+    for i, s in enumerate(m3.addressable_shards):
+      self.assertEqual(s.index, (slice(None),))
+      self.assertEqual(s.replica_id, i)
+      self.assertArraysEqual(np.asarray(s.data), np.array([], dtype=np.float32))
+    self.assertEqual(m3.dtype, np.float32)
+
+  def test_checkpointing_ocdbt_transaction(self):
+    global_mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    inp_shape = (8, 2)
+    pspec = P('x', 'y')
+    num = math.prod(inp_shape)
+
+    # First Array
+    global_input_data1 = np.arange(num, dtype=np.int32).reshape(inp_shape)
+    a1 = array.make_array_from_callback(
+        inp_shape,
+        NamedSharding(global_mesh, pspec),
+        lambda idx: global_input_data1[idx],
+    )
+    ckpt_dir = pathlib.Path(self.create_tempdir('ckpt').full_path)
+    ckpt_path1 = ckpt_dir / 'first'
+
+    # Second Array
+    global_input_data2 = np.arange(num, num + num, dtype=np.int32).reshape(
+        inp_shape
+    )
+    a2 = array.make_array_from_callback(
+        inp_shape,
+        NamedSharding(global_mesh, pspec),
+        lambda idx: global_input_data2[idx],
+    )
+    ckpt_path2 = ckpt_dir / 'second'
+
+    # Third Array
+    def cb3(_):
+      return np.array([], dtype=np.float32)
+
+    global_mesh1d = jtu.create_global_mesh((8,), ('x',))
+    a3 = array.make_array_from_callback(
+        (0,), NamedSharding(global_mesh1d, P(None)), cb3
+    )
+    ckpt_path3 = ckpt_dir / 'third'
+
+    ckpt_paths = [str(ckpt_path1), str(ckpt_path2), str(ckpt_path3)]
+    tspecs = jax.tree_util.tree_map(
+        lambda p: serialization.get_tensorstore_spec(p, ocdbt=True), ckpt_paths
+    )
+
+    manager = serialization.GlobalAsyncCheckpointManager()
+    with ts.Transaction(atomic=True) as transaction:
+      manager.serialize(
+          [a1, a2, a3],
+          tspecs,
+          on_commit_callback=partial(
+              self._on_commit_callback, ckpt_dir, ckpt_dir
+          ),
+          transaction=transaction,
+      )
+    manager.wait_until_finished()
+
+    m1, m2, m3 = serialization.run_deserialization(
+        [
+            NamedSharding(global_mesh, pspec),
+            NamedSharding(global_mesh, P('x')),
+            NamedSharding(global_mesh1d, P(None)),
+        ],
+        tspecs,
+    )
+
+    self.assertIsInstance(m1, array.ArrayImpl)
+    self.assertArraysEqual(
+        np.asarray(m1.addressable_shards[0].data),
+        np.array([[0], [2]], dtype=np.int32),
+    )
+    self.assertArraysEqual(
+        np.asarray(m1.addressable_shards[1].data),
+        np.array([[1], [3]], dtype=np.int32),
+    )
+    self.assertEqual(m1.addressable_shards[0].data.shape, (2, 1))
+    self.assertEqual(m1.dtype, np.int32)
+
+    self.assertIsInstance(m2, array.ArrayImpl)
+    self.assertArraysEqual(
+        np.asarray(m2.addressable_shards[0].data),
+        np.array([[16, 17], [18, 19]], dtype=np.int32),
+    )
+    self.assertArraysEqual(
+        np.asarray(m2.addressable_shards[1].data),
+        np.array([[16, 17], [18, 19]], dtype=np.int32),
+    )
     self.assertEqual(m2.addressable_shards[0].data.shape, (2, 2))
     self.assertEqual(m2.dtype, np.int32)
 
@@ -436,8 +557,8 @@ class CheckpointTest(jtu.JaxTestCase):
 
     out_layout = jax.jit(lambda x: x.T, out_shardings=Layout(DLL.AUTO)).lower(
         arr).compile().output_layouts()
-    self.assertEqual(extract_minor_to_major(arr.layout),
-                     extract_minor_to_major(out_layout)[::-1])
+    self.assertEqual(arr.layout.device_local_layout.major_to_minor,
+                     out_layout.device_local_layout.major_to_minor[::-1])
 
     ckpt_dir = pathlib.Path(self.create_tempdir('ckpt').full_path)
     ckpt_path = pathlib.Path(self.create_tempdir(f'{ckpt_dir}/first').full_path)
@@ -488,6 +609,21 @@ class CheckpointTest(jtu.JaxTestCase):
     out = deserialized_arr.astype(jnp.int8)  # doesn't crash
     self.assertEqual(out.dtype, jnp.int8)
     self.assertArraysEqual(out + out, out * 2)
+
+
+@jtu.with_config(jax_enable_memories=True)
+class TransferShardTest(jtu.JaxTestCase):
+
+  @jtu.skip_on_devices('cpu')
+  def test_transfer_shard_to_host(self):
+    np_inp = np.arange(16).reshape((4, 4))
+    sharding = SingleDeviceSharding(jax.devices()[0], memory_kind="device")
+    arr = jax.device_put(np_inp, sharding)
+    shard = arr.addressable_shards[0]
+
+    np_out = asyncio.run(serialization.transfer_shard_to_host(shard))
+
+    self.assertArraysEqual(np_out, np_inp)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

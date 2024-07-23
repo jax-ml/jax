@@ -34,6 +34,16 @@ py_library(
 )
 
 py_library(
+    name = "verification",
+    srcs = ["verification.py"],
+    deps = [
+        "//jax",
+        "//jax:mlir",
+        "//jax/_src/lib",
+    ],
+)
+
+py_library(
     name = "primitives",
     srcs = ["primitives.py"],
     deps = [

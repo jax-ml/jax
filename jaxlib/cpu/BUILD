@@ -35,12 +35,12 @@ cc_library(
     copts = ["-fexceptions"],
     features = ["-use_header_modules"],
     deps = [
+        "//jaxlib:ffi_helpers",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
         "@xla//xla/service:custom_call_status",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:dynamic_annotations",
-        "@com_google_absl//absl/strings:str_format",
     ],
 )
 
@@ -59,11 +59,12 @@ pybind_extension(
         "-fexceptions",
         "-fno-strict-aliasing",
     ],
-    enable_stub_generation = True,
+    enable_stub_generation = False,  # generated stubs are incorrect
     features = ["-use_header_modules"],
     module_name = "_lapack",
     pytype_srcs = [
-        "_lapack.pyi",
+        "_lapack/__init__.pyi",
+        "_lapack/svd.pyi",
     ],
     deps = [
         ":lapack_kernels",

@@ -181,7 +181,6 @@ py_library(
     ] + jax_internal_export_back_compat_test_util_visibility,
     deps = [
         ":jax",
-        "//jax/experimental/export",
     ] + py_deps("numpy"),
 )
 
@@ -210,6 +209,7 @@ py_library_providing_imports_info(
         "_src/checkify.py",
         "_src/custom_batching.py",
         "_src/custom_derivatives.py",
+        "_src/custom_partitioning.py",
         "_src/custom_transpose.py",
         "_src/debugging.py",
         "_src/dispatch.py",
@@ -232,6 +232,7 @@ py_library_providing_imports_info(
     ] + glob(
         [
             "*.py",
+            "_src/cudnn/**/*.py",
             "_src/debugger/**/*.py",
             "_src/extend/**/*.py",
             "_src/image/**/*.py",
@@ -390,7 +391,6 @@ pytype_strict_library(
         ":cache_key",
         ":compilation_cache_interface",
         ":config",
-        ":gfile_cache",
         ":lru_cache",
         ":monitoring",
         ":path",
@@ -422,7 +422,7 @@ pytype_strict_library(
     srcs = ["_src/lru_cache.py"],
     deps = [
         ":compilation_cache_interface",
-        ":config",
+        ":path",
     ] + py_deps("filelock"),
 )
 
@@ -514,15 +514,6 @@ pytype_strict_library(
         ":xla_bridge",
         "//jax/_src/lib",
     ] + py_deps("numpy"),
-)
-
-pytype_strict_library(
-    name = "gfile_cache",
-    srcs = ["_src/gfile_cache.py"],
-    deps = [
-        ":compilation_cache_interface",
-        ":path",
-    ],
 )
 
 pytype_strict_library(
@@ -622,6 +613,7 @@ pytype_strict_library(
         "//visibility:public",
     ],
     deps = [
+        ":deprecations",
         ":jax",
         ":source_info_util",
         "//jax/_src/pallas",
@@ -643,6 +635,7 @@ pytype_strict_library(
         "//jax/_src/pallas/mosaic:pipeline",
         "//jax/_src/pallas/mosaic:primitives",
         "//jax/_src/pallas/mosaic:random",
+        "//jax/_src/pallas/mosaic:verification",
     ],
 )
 
@@ -800,10 +793,11 @@ pytype_strict_library(
     name = "layout",
     srcs = ["_src/layout.py"],
     deps = [
+        ":dtypes",
         ":sharding",
         ":sharding_impls",
         "//jax/_src/lib",
-    ],
+    ] + py_deps("numpy"),
 )
 
 pytype_strict_library(
@@ -950,6 +944,7 @@ pytype_strict_library(
         "_src/clusters/__init__.py",
         "_src/clusters/cloud_tpu_cluster.py",
         "_src/clusters/cluster.py",
+        "_src/clusters/mpi4py_cluster.py",
         "_src/clusters/ompi_cluster.py",
         "_src/clusters/slurm_cluster.py",
         "_src/distributed.py",
@@ -963,7 +958,7 @@ pytype_strict_library(
         ":traceback_util",
         ":util",
         "//jax/_src/lib",
-    ] + py_deps("importlib_metadata"),
+    ],
 )
 
 # Public JAX libraries below this point.
@@ -998,7 +993,7 @@ pytype_library(
             "experimental/array_api/*.py",
         ],
     ),
-    visibility = [":internal"],
+    visibility = [":internal"] + jax_visibility("array_api"),
     deps = [":jax"],
 )
 
@@ -1136,17 +1131,4 @@ pytype_library(
     srcs = ["experimental/rnn.py"],
     visibility = ["//visibility:public"],
     deps = [":jax"],
-)
-
-pytype_library(
-    name = "fused_attention_stablehlo",
-    srcs = [
-        "_src/cudnn/__init__.py",
-        "_src/cudnn/fused_attention_stablehlo.py",
-    ],
-    visibility = [":internal"],
-    deps = [
-        ":experimental",
-        ":jax",
-    ],
 )

@@ -17,13 +17,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import copy
 import dataclasses
 import functools
 import itertools
 import re
-from typing import Any, Callable, Union
+from typing import Any, Union, cast
 import warnings
 
 from absl import logging
@@ -64,7 +64,7 @@ LoweringSharding = Union[sharding.Sharding, pxla.UnspecifiedValue]
 HloSharding = xla_client.HloSharding
 
 # The minimum and maximum supported calling convention version.
-# See https://jax.readthedocs.io/en/latest/export.html#module-calling-convention#calling-conventions-versions
+# See https://jax.readthedocs.io/en/latest/export/export.html#export-calling-convention-version
 minimum_supported_calling_convention_version = 9
 maximum_supported_calling_convention_version = 9
 
@@ -166,14 +166,14 @@ class Exported:
         add platforms. JAX built-in platforms are: 'tpu', 'cpu', 'cuda', 'rocm'.
         See https://jax.readthedocs.io/en/latest/export/export.html#cross-platform-and-multi-platform-export.
     ordered_effects: the ordered effects present in the serialized module.
-        This is present from serialization version 9. See https://jax.readthedocs.io/en/latest/export.html#module-calling-convention
+        This is present from serialization version 9. See https://jax.readthedocs.io/en/latest/export/export.html#module-calling-convention
         for the calling convention in presence of ordered effects.
     unordered_effects: the unordered effects present in the serialized module.
         This is present from serialization version 9.
     mlir_module_serialized: the serialized lowered VHLO module.
     calling_convention_version: a version number for the calling
         convention of the exported module.
-        See more versioning details at https://jax.readthedocs.io/en/latest/export.html#calling-convention-versions.
+        See more versioning details at https://jax.readthedocs.io/en/latest/export/export.html#calling-convention-versions.
     module_kept_var_idx: the sorted indices of the arguments among `in_avals` that
         must be passed to the module. The other arguments have been dropped
         because they are not used.
@@ -192,7 +192,7 @@ class Exported:
         for each primal output. It returns a tuple with the cotangents
         corresponding to the flattened primal inputs.
 
-  See a [description of the calling convention for the `mlir_module`](https://jax.readthedocs.io/en/latest/export.html#module-calling-convention).
+  See a [description of the calling convention for the `mlir_module`](https://jax.readthedocs.io/en/latest/export/export.html#module-calling-convention).
   """
   fun_name: str
   in_tree: tree_util.PyTreeDef
@@ -399,7 +399,7 @@ def export_back_compat(
   Note: this function exists only for internal usage by jax2tf and for
     backwards compatibility with jax.experimental.export. Use
     `jax.export` instead.
-    See https://jax.readthedocs.io/en/latest/export.html
+    See https://jax.readthedocs.io/en/latest/export/export.html
 
   Args:
     fun_jax: the function to lower and serialize.
@@ -409,7 +409,7 @@ def export_back_compat(
         the lowered code takes an argument specifying the platform.
         If None, then use the default JAX backend.
         The calling convention for multiple platforms is explained
-        at https://jax.readthedocs.io/en/latest/export.html#module-calling-convention.
+        at https://jax.readthedocs.io/en/latest/export/export.html#module-calling-convention.
     disabled_checks: the safety checks to disable. See docstring
         of `DisabledSafetyCheck`.
 
@@ -458,7 +458,9 @@ def export_back_compat(
     traced = wrapped_fun_jax.trace(*args_specs, **kwargs_specs)
     lowered = traced.lower(
         lowering_platforms=actual_lowering_platforms,
-        _private_parameters=mlir.LoweringParameters(for_export=True))
+        _private_parameters=mlir.LoweringParameters(
+            for_export=True,
+            export_ignore_forward_compatibility=config.export_ignore_forward_compatibility.value))
     return _export_lowered(
         lowered, traced.jaxpr, traced.fun_name,
         disabled_checks=disabled_checks,
@@ -482,7 +484,7 @@ def export(
         the exported code takes an argument specifying the platform.
         If None, then use the default JAX backend.
         The calling convention for multiple platforms is explained at
-        https://jax.readthedocs.io/en/latest/export.html#module-calling-convention.
+        https://jax.readthedocs.io/en/latest/export/export.html#module-calling-convention.
     lowering_platforms: DEPRECATED, use `platforms`.
     disabled_checks: the safety checks to disable. See documentation for
         of `jax.export.DisabledSafetyCheck`.
@@ -541,7 +543,9 @@ def export(
     traced = fun_jit.trace(*args_specs, **kwargs_specs)
     lowered = traced.lower(
         lowering_platforms=actual_lowering_platforms,
-        _private_parameters=mlir.LoweringParameters(for_export=True))
+        _private_parameters=mlir.LoweringParameters(
+            for_export=True,
+            export_ignore_forward_compatibility=config.export_ignore_forward_compatibility.value))
     return _export_lowered(
         lowered, traced.jaxpr, traced.fun_name,
         disabled_checks=disabled_checks)
@@ -600,12 +604,11 @@ def _export_lowered(
 
   # Log and then check the module.
   if logging.vlog_is_on(3):
-    logmsg = (f"version={version} "
-              f"lowering_platforms={lowering.compile_args['platforms']} "
+    logmsg = (f"fun_name={fun_name} version={version} "
+              f"lowering_platforms={lowering._platforms} "  # type: ignore[unused-ignore,attribute-error]
               f"disabled_checks={disabled_checks}")
-    logging.info("Lowered JAX module: %s\n", logmsg)
-    if dumped_to := mlir.dump_module_to_file(mlir_module, "export"):
-      logging.info("Dumped the exported MLIR module to %s", dumped_to)
+    logging.info("Exported JAX function: %s\n", logmsg)
+    logging.info(mlir.dump_module_message(mlir_module, "export"))
 
   _check_module(mlir_module,
                 disabled_checks=disabled_checks)
@@ -706,7 +709,7 @@ def _wrap_main_func(
 ) -> ir.Module:
   """Wraps the lowered module with a new "main" handling dimension arguments.
 
-  See calling convention documentation https://jax.readthedocs.io/en/latest/export.html#module-calling-convention.
+  See calling convention documentation https://jax.readthedocs.io/en/latest/export/export.html#module-calling-convention.
 
   Args:
     module: the HLO module as obtained from lowering.
@@ -726,7 +729,7 @@ def _wrap_main_func(
   context = mlir.make_ir_context()
   with context, ir.Location.unknown(context):
     # Make a copy, do not mutate because it may be cached
-    wrapped_module = ir.Module.parse(mlir.module_to_bytecode(module))  # type: ignore
+    wrapped_module = ir.Module.parse(mlir.module_to_bytecode(module))  # type: ignore[arg-type]
     symbol_table = ir.SymbolTable(wrapped_module.operation)
     orig_main = symbol_table["main"]
     orig_main.attributes["sym_visibility"] = ir.StringAttr.get("private")
@@ -734,7 +737,7 @@ def _wrap_main_func(
     orig_main_name = ir.StringAttr(symbol_table.insert(orig_main)).value
 
     def is_token(typ, attrs):
-      return (typ == mlir.token_type()[0])
+      return (typ == mlir.token_type())
 
     orig_input_types = orig_main.type.inputs  # type: ignore
     arg_attrs = list(ir.ArrayAttr(orig_main.arg_attrs))  # type: ignore
@@ -812,6 +815,7 @@ def _wrap_main_func(
           lowering_parameters=mlir.LoweringParameters(
               global_constant_computation=True,
               for_export=True,
+              export_ignore_forward_compatibility=config.export_ignore_forward_compatibility.value,
           ))
       ctx = mlir.LoweringRuleContext(
         module_context=module_context,
@@ -834,7 +838,7 @@ def _wrap_main_func(
       orig_main_args: list[ir.Value] = []
       # The platform index and the dimension variables
       for arg, arg_type in zip(
-          list(new_main_op.arguments[0:nr_platform_index_args]) + util.flatten(dim_values),
+          list(new_main_op.arguments[0:nr_platform_index_args]) + mlir.flatten_ir_values(dim_values),
           platform_input_types + dim_var_input_types):
         if arg.type != arg_type:
           orig_main_args.append(hlo.convert(arg_type, arg))
@@ -879,7 +883,7 @@ def _check_lowering(lowering) -> None:
       "keepalive", "host_callbacks", "pmap_nreps", "committed",
       "device_assignment", "jaxpr_debug_info", "shape_poly_state",
       "all_default_mem_kind", "in_layouts", "out_layouts", "all_args_info",
-      "pgle_profiler"]
+      "pgle_profiler", "intermediate_shardings"]
   for compile_arg in lowering.compile_args.keys():
     if compile_arg not in allowed_compile_args:
       raise NotImplementedError(f"Unrecognized lowered.compile_args[{compile_arg}]")
@@ -918,7 +922,7 @@ def _check_lowering(lowering) -> None:
 # Their backwards compatibility is tested by back_compat_test.py.
 _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "Sharding", "SPMDFullToShardShape", "SPMDShardToFullShape",
-    "cu_threefry2x32",
+    "cu_threefry2x32", "cu_threefry2x32_ffi",
     "__gpu$xla.gpu.triton",  # Pallas call on GPU
     # cholesky on CPU
     "lapack_spotrf", "lapack_dpotrf", "lapack_cpotrf", "lapack_zpotrf",
@@ -1138,7 +1142,7 @@ def call(exported: Exported) -> Callable[..., jax.Array]:
     def fix_float0_ct(ct_res, expected_aval):
       if expected_aval.dtype != dtypes.float0:
         return ct_res
-      return ad_util.zeros_like_aval(expected_aval)
+      return ad_util.zeros_like_jaxval(ct_res)
 
     ct_res_fixed = map(fix_float0_ct,
                        ct_res_flat, exp_vjp.in_avals[len(args_flat):])
@@ -1323,9 +1327,9 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     if len(lowering_platforms) > 1:
       current_platform_idx = ctx.dim_var_values[0]
     else:
-      current_platform_idx = mlir.ir_constant(np.int32(0))
+      current_platform_idx = cast(ir.Value, mlir.ir_constant(np.int32(0)))
     # Compute the rule index based on the current platform
-    i32_type = mlir.aval_to_ir_types(core.ShapedArray((), dtype=np.int32))[0]
+    i32_type = mlir.aval_to_ir_type(core.ShapedArray((), dtype=np.int32))
     if current_platform_idx.type != i32_type:
       current_platform_idx = hlo.ConvertOp(i32_type, current_platform_idx)
     callee_platform_idx = hlo.CaseOp([i32_type],
@@ -1334,8 +1338,8 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
     for i in range(len(lowering_platforms)):
       branch = callee_platform_idx.regions[i].blocks.append()
       with ir.InsertionPoint(branch):
-        hlo.return_(mlir.ir_constants(
-          np.int32(callee_lowering_platform_index[i])))
+        hlo.return_([mlir.ir_constant(
+          np.int32(callee_lowering_platform_index[i]))])
     if callee_platform_idx.result.type != callee_type.inputs[0]:
       callee_platform_idx = hlo.ConvertOp(callee_type.inputs[0],
                                           callee_platform_idx)
@@ -1346,7 +1350,7 @@ def _call_exported_lowering(ctx: mlir.LoweringRuleContext, *args,
 
   ordered_effects = exported.ordered_effects
   for eff in ordered_effects:
-    token_in = ctx.tokens_in.get(eff)[0]
+    token_in = ctx.tokens_in.get(eff)
     submodule_args.append(token_in)
   kept_args = [
       convert_shape(a, a_aval, exported_in_aval)

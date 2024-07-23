@@ -16,12 +16,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import dataclasses
 import functools
 import math
 import operator
-from typing import Any, Callable, TypeVar
+from typing import Any, Hashable, TypeVar
 
 import jax
 from jax import lax
@@ -251,12 +251,15 @@ def _new_ir_context() -> ir.Context:
 
 def lower_jaxpr_to_triton_module(
     jaxpr: jax_core.Jaxpr,
-    in_shapes,
+    in_out_shapes,
     grid_mapping: GridMapping,
     name: str,
     platform: str
 ) -> LoweringResult:
-  jaxpr, _ = pe.dce_jaxpr(jaxpr, [True] * len(jaxpr.outvars), instantiate=True)
+  with grid_mapping.trace_env():
+    jaxpr, _ = pe.dce_jaxpr(
+        jaxpr, [True] * len(jaxpr.outvars), instantiate=True
+    )
   with _new_ir_context(), ir.Location.unknown():
     module = ir.Module.create()
     param_types = [
@@ -301,6 +304,10 @@ def lower_jaxpr_to_triton_module(
           functools.partial(_eval_index_map, ctx, program_ids),
           grid_mapping.block_mappings,
       )
+      consts_shapes = [
+          jax.ShapeDtypeStruct(v.aval.shape, v.aval.dtype)
+          for v in jaxpr.invars[grid_mapping.num_index_operands:grid_mapping.num_index_operands + grid_mapping.num_constant_operands]
+      ]
       block_infos = [
           BlockInfo(
               jax.ShapeDtypeStruct(shape_dtype.shape, shape_dtype.dtype),
@@ -310,7 +317,7 @@ def lower_jaxpr_to_triton_module(
           if block_mapping is not None
           else None
           for shape_dtype, block_mapping, start_idx in zip(
-              (*in_shapes, *[()] * grid_mapping.num_constant_operands),
+              (*consts_shapes, *in_out_shapes),
               grid_mapping.block_mappings,
               start_indices,
           )
@@ -1526,7 +1533,7 @@ def _ir_cast(src: ir.Value, dst_type: ir.Type, *, signed: bool) -> ir.Value:
 
 @register_lowering(lax.convert_element_type_p)
 def _convert_element_type_lowering_rule(
-    ctx: LoweringRuleContext, x, *, new_dtype, weak_type
+    ctx: LoweringRuleContext, x, *, new_dtype, weak_type, sharding
 ):
   [x_aval] = ctx.avals_in
   x = _ensure_ir_value(x, x_aval)
@@ -2236,6 +2243,14 @@ def _remat_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
 triton_lowering_rules[ad_util.stop_gradient_p] = lambda _, x: x
 
 
+@register_lowering(lax.axis_index_p)
+def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
+  grid_names = ctx.context.grid_mapping.grid_names
+  if axis_name in grid_names:
+    # We are querying a named axis corresponding to a grid dimension.
+    return _program_id_lowering_rule(ctx, axis=grid_names.index(axis_name))
+  raise LookupError(f"Axis name {axis_name} not found in grid.")
+
 def _is_read_only(ref_effects) -> bool:
   if len(ref_effects) == 0:
     return True
@@ -2542,7 +2557,6 @@ def _cond_lowering_rule(
     index,
     *args,  # *consts, *ops
     branches,  # tuple(jaxprs)
-    linear,
 ):
   block_infos = ctx.block_infos
 
@@ -2572,7 +2586,6 @@ def _cond_lowering_rule(
           _sub(index, _ir_constant(1, index.type)),
           *args,
           branches=branches[1:],
-          linear=linear,
       )
     else:
       outs1 = lower_jaxpr_to_triton_ir(

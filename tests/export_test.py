@@ -13,7 +13,7 @@
 # limitations under the License.
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import contextlib
 import dataclasses
 import functools
@@ -21,7 +21,6 @@ import logging
 import math
 import re
 import unittest
-from typing import Callable
 
 from absl.testing import absltest
 import jax
@@ -45,6 +44,13 @@ from jax._src.interpreters import mlir
 from jax._src.lib.mlir.dialects import hlo
 
 import numpy as np
+
+# ruff: noqa: F401
+try:
+  import flatbuffers
+  CAN_SERIALIZE = True
+except (ModuleNotFoundError, ImportError):
+  CAN_SERIALIZE = False
 
 config.parse_flags_with_absl()
 
@@ -104,8 +110,8 @@ testing_primitive_with_effect_p.def_effectful_abstract_eval(
 
 def lowering_testing_primitive_with_effect(ctx, a, *, effect_class_name: str):
   if "Ordered" in effect_class_name:
-    token_in = ctx.tokens_in.get(_testing_effects[effect_class_name])[0]
-    ctx.set_tokens_out(mlir.TokenSet({_testing_effects[effect_class_name]: (token_in,)}))
+    token_in = ctx.tokens_in.get(_testing_effects[effect_class_name])
+    ctx.set_tokens_out(mlir.TokenSet({_testing_effects[effect_class_name]: token_in}))
   return [mlir.hlo.add(a, a)]
 
 mlir.register_lowering(testing_primitive_with_effect_p,
@@ -140,12 +146,15 @@ def _testing_multi_platform_fun_expected(x,
 
 
 def get_exported(fun: Callable, vjp_order=0,
-                 **export_kwargs):
+                 **export_kwargs) -> Callable[[...], export.Exported]:
   """Like export.export but with serialization + deserialization."""
   def serde_exported(*fun_args, **fun_kwargs):
     exp = export.export(fun, **export_kwargs)(*fun_args, **fun_kwargs)
-    serialized = exp.serialize(vjp_order=vjp_order)
-    return export.deserialize(serialized)
+    if CAN_SERIALIZE:
+      serialized = exp.serialize(vjp_order=vjp_order)
+      return export.deserialize(serialized)
+    else:
+      return exp
   return serde_exported
 
 
@@ -235,6 +244,8 @@ class JaxExportTest(jtu.JaxTestCase):
   @jtu.ignore_warning(category=DeprecationWarning,
                       message="The jax.experimental.export module is deprecated")
   def test_export_experimental_back_compat(self):
+    if not CAN_SERIALIZE:
+      self.skipTest("serialization disabled")
     from jax.experimental import export
     # Can export a lambda, without jit
     exp = export.export(lambda x: jnp.sin(x))(.1)
@@ -335,7 +346,8 @@ class JaxExportTest(jtu.JaxTestCase):
 
   def test_default_export_platform(self):
     test_platform = jtu.device_under_test()
-    if test_platform == "gpu": test_platform = "cuda"
+    if test_platform == "gpu":
+      test_platform = "rocm" if jtu.is_device_rocm() else "cuda"
     self.assertEqual(export.default_export_platform(), test_platform)
     exp = export.export(jnp.sin)(1.)
     self.assertEqual(exp.platforms, (export.default_export_platform(),))
@@ -396,23 +408,38 @@ class JaxExportTest(jtu.JaxTestCase):
     # Test that we propagate properly the LoweringParameters.for_export
     test_primitive = core.Primitive("_test_primitive_for_export")
     test_primitive.def_abstract_eval(lambda in_aval: in_aval)
+    # Store here the context for lowering
+    context = {}
     def test_primitive_lowering(ctx, arg):
-      if ctx.module_context.lowering_parameters.for_export:
-        raise ValueError("Lowering for export not supported")
+      context["for_export"] = ctx.module_context.lowering_parameters.for_export
+      context["export_ignore_forward_compatibility"] = ctx.module_context.lowering_parameters.export_ignore_forward_compatibility
       return mlir.hlo.AddOp(arg, arg).results
 
     mlir.register_lowering(test_primitive, test_primitive_lowering)
     self.addCleanup(lambda: mlir.register_lowering(test_primitive, None))
 
-    f = test_primitive.bind
+    f = jax.jit(test_primitive.bind)
     a = np.arange(3, dtype=np.float32)
-    res = jax.jit(f)(a)  # Works with JIT
+    context.clear()
+    res = f(a)  # Works with JIT
     self.assertAllClose(res, a + a)
-    jax.jit(f).lower(a)  # Works with most AOT
-
-    with self.assertRaisesRegex(ValueError,
-        "Lowering for export not supported"):
-      export.export(jax.jit(f))(a)
+    self.assertEqual(context,
+                     dict(for_export=False,
+                          export_ignore_forward_compatibility=False))
+    context.clear()
+    f.lower(a)  # Works with most AOT
+    # The above was cached
+    self.assertEqual(context, {})
+    _ = export.export(f)(a)
+    self.assertEqual(context,
+                     dict(for_export=True,
+                          export_ignore_forward_compatibility=False))
+    context.clear()
+    with config.export_ignore_forward_compatibility(True):
+      _ = export.export(f)(a)
+      self.assertEqual(context,
+                       dict(for_export=True,
+                            export_ignore_forward_compatibility=True))
 
   def test_grad(self):
     f = lambda x: jnp.sum(jnp.sin(x))
@@ -435,7 +462,9 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertAllClose(jax.grad(jax.grad(jax.grad(f)))(x),
                         jax.grad(jax.grad(jax.grad(f1)))(x))
 
-  def test_grad_int(self):
+  @jtu.parameterized_filterable(
+    kwargs=[dict(poly_shape=True), dict(poly_shape=False)])
+  def test_grad_int(self, poly_shape):
     def f(xi, xf):
       return (2 * xi.T, xf.T * xf.T)
 
@@ -453,7 +482,11 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertAllClose(res, (xi_ct, xf_ct))
     (f_outi_ct2, f_outf_ct2), = f_vjp2((xi_ct, xf_ct))
 
-    exp = get_exported(jax.jit(f), vjp_order=2)(xi, xf)
+    if poly_shape:
+      args = export.symbolic_args_specs([xi, xf], shapes_specs=["2, a", "a, 4"])
+    else:
+      args = (xi, xf)
+    exp = get_exported(jax.jit(f), vjp_order=2)(*args)
     fr = exp.call
 
     res = fr(xi, xf)
@@ -874,7 +907,9 @@ class JaxExportTest(jtu.JaxTestCase):
     if str(dtype) in {"float8_e4m3b11fnuz",
                       "float8_e4m3fnuz",
                       "float8_e5m2fnuz",
+                      "int2",
                       "int4",
+                      "uint2",
                       "uint4"}:
       self.skipTest(f"TODO: serialization not supported for {str(dtype)}")
     @jax.jit
@@ -1313,8 +1348,9 @@ class JaxExportTest(jtu.JaxTestCase):
     exp = export.export(pjit.pjit(f, in_shardings=shardings))(input)
     exp_rev = export.export(pjit.pjit(f, in_shardings=shardings_rev))(input_no_shards)
 
-    _ = exp.serialize(vjp_order=1)
-    _ = exp_rev.serialize(vjp_order=1)
+    if CAN_SERIALIZE:
+      _ = exp.serialize(vjp_order=1)
+      _ = exp_rev.serialize(vjp_order=1)
 
     g = jax.grad(exp_rev.call)(input_rev)
     g_rev = jax.grad(exp.call)(input)
@@ -1402,8 +1438,11 @@ class JaxExportTest(jtu.JaxTestCase):
     mlir.register_lowering(times_2, functools.partial(times_n_lowering, 2),
                            "cpu")
 
-    times_3 = core.Primitive("__testing_times_3")  # x3 for cuda
+    times_3 = core.Primitive("__testing_times_3")  # x3 for cuda and rocm
     times_3.def_abstract_eval(lambda x: x)
+
+    mlir.register_lowering(times_3, functools.partial(times_n_lowering, 3),
+                           "rocm")
     mlir.register_lowering(times_3, functools.partial(times_n_lowering, 3),
                            "cuda")
 
@@ -1412,22 +1451,27 @@ class JaxExportTest(jtu.JaxTestCase):
     mlir.register_lowering(times_4, functools.partial(times_n_lowering, 4),
                            "tpu")
 
-    times_2_or_3 = core.Primitive("__testing_times_2_or_3")  # x2 for cpu, x3 for cuda
+    times_2_or_3 = core.Primitive("__testing_times_2_or_3")  # x2 for cpu, x3 for cuda and rocm
     times_2_or_3.def_abstract_eval(lambda x: x)
     mlir.register_lowering(times_2_or_3,
                            mlir.lower_fun(times_2.bind,
                                           multiple_results=False), "cpu")
+
+    mlir.register_lowering(times_2_or_3,
+                           mlir.lower_fun(times_3.bind,
+                                          multiple_results=False), "rocm")
     mlir.register_lowering(times_2_or_3,
                            mlir.lower_fun(times_3.bind,
                                           multiple_results=False), "cuda")
 
-    times_2_or_3_or_4 = core.Primitive("__testing_times_2_or_3_or_4")  # x2 for cpu, x3 for cuda, x4 for tpu
+    times_2_or_3_or_4 = core.Primitive("__testing_times_2_or_3_or_4")  # x2 for cpu, x3 for cuda and rocm, x4 for tpu
     times_2_or_3_or_4.def_abstract_eval(lambda x: x)
-    times_2_or_3_or_4_lowering_cpu_cuda = mlir.lower_fun(times_2_or_3.bind,
+    times_2_or_3_or_4_lowering_cpu_gpu = mlir.lower_fun(times_2_or_3.bind,
                                                          multiple_results=False)
-    for platform in ["cpu", "cuda"]:
+
+    for platform in ["cpu", "cuda", "rocm"]:
       mlir.register_lowering(times_2_or_3_or_4,
-                             times_2_or_3_or_4_lowering_cpu_cuda,
+                             times_2_or_3_or_4_lowering_cpu_gpu,
                              platform)
     mlir.register_lowering(times_2_or_3_or_4, mlir.lower_fun(times_4.bind,
                                                              multiple_results=False),
@@ -1437,7 +1481,7 @@ class JaxExportTest(jtu.JaxTestCase):
     def f(x):
       return times_2_or_3_or_4.bind(x)
     x = np.float32(42.)
-    exp = export.export(f, lowering_platforms=["cpu", "cuda", "tpu"])(x)
+    exp = export.export(f, lowering_platforms=["cpu", "cuda", "rocm", "tpu"])(x)
     expected = x * np.float32(dict(cpu=2, gpu=3, tpu=4)[jtu.device_under_test()])
     self.assertAllClose(exp.call(x), expected)
 
@@ -1702,6 +1746,9 @@ class JaxExportTest(jtu.JaxTestCase):
       )
     ])
   def test_ordered_effects_error(self, *, name: str, expect_error: str):
+    if not CAN_SERIALIZE:
+      # These errors arise during serialization
+      self.skipTest("serialization is disabled")
     x = np.ones((3, 4), dtype=np.float32)
     def f_jax(x):
       return 10. + _testing_multi_platform_func(

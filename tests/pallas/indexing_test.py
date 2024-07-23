@@ -35,12 +35,11 @@ except (ModuleNotFoundError, ImportError):
 
 import hypothesis.extra.numpy as hnp
 import hypothesis.strategies as hps
-hp.settings.register_profile(
-    "deterministic", database=None, derandomize=True, deadline=None,
-    max_examples=100, print_blob=True)
-hp.settings.load_profile("deterministic")
+
 
 jax.config.parse_flags_with_absl()
+jtu.setup_hypothesis(max_examples=100)
+
 
 Slice = indexing.Slice
 NDIndexer = indexing.NDIndexer
@@ -244,12 +243,12 @@ class IndexerTest(jtu.JaxTestCase):
             jax.ShapeDtypeStruct(x.shape, y.dtype),
         ],
         in_specs=[
-            pl.BlockSpec(lambda i: (0, 0), x.shape),
-            pl.BlockSpec(lambda i: (0, 0), y.shape),
+            pl.BlockSpec(x.shape, lambda i: (0, 0)),
+            pl.BlockSpec(y.shape, lambda i: (0, 0)),
         ],
         out_specs=[
-            pl.BlockSpec(lambda i: (0, 0), x.shape),
-            pl.BlockSpec(lambda i: (0, 0), y.shape),
+            pl.BlockSpec(x.shape, lambda i: (0, 0)),
+            pl.BlockSpec(y.shape, lambda i: (0, 0)),
         ],
         interpret=True,
     )(x, y)
@@ -287,12 +286,12 @@ class IndexerTest(jtu.JaxTestCase):
             jax.ShapeDtypeStruct(output_shape, jnp.float32)
         ],
         in_specs=[
-            pl.BlockSpec(lambda i: (0, 0), left.shape),
-            pl.BlockSpec(lambda i: (0, 0), right.shape)
+            pl.BlockSpec(left.shape, lambda i: (0, 0)),
+            pl.BlockSpec(right.shape, lambda i: (0, 0))
         ],
         out_specs=[
-            pl.BlockSpec(lambda i: (0, 0), output_shape),
-            pl.BlockSpec(lambda i: (0, 0), output_shape)
+            pl.BlockSpec(output_shape, lambda i: (0, 0)),
+            pl.BlockSpec(output_shape, lambda i: (0, 0))
         ],
         interpret=True,
     )(left, right)

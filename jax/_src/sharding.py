@@ -126,6 +126,8 @@ class Sharding:
   def _to_xla_hlo_sharding(self, num_dimensions: int) -> xc.HloSharding:
     raise NotImplementedError('Subclasses should implement this method.')
 
+  def _to_sdy_sharding(self, num_dimensions: int):
+    raise NotImplementedError('Subclasses should implement this method.')
 
   #############################################################################
   # Default implementations below that all subclasses will inherit.

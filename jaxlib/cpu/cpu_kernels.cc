@@ -122,10 +122,22 @@ JAX_CPU_REGISTER_HANDLER(lapack_sgetrf_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_dgetrf_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_cgetrf_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_zgetrf_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_sgeqrf_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_dgeqrf_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_cgeqrf_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_zgeqrf_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_sorgqr_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_dorgqr_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_cungqr_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_zungqr_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_spotrf_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_dpotrf_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_cpotrf_ffi);
 JAX_CPU_REGISTER_HANDLER(lapack_zpotrf_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_sgesdd_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_dgesdd_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_cgesdd_ffi);
+JAX_CPU_REGISTER_HANDLER(lapack_zgesdd_ffi);
 
 #undef JAX_CPU_REGISTER_HANDLER
 

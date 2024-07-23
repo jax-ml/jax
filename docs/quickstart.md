@@ -158,7 +158,7 @@ Another useful transformation is {func}`~jax.vmap`, the vectorizing map.
 It has the familiar semantics of mapping a function along array axes, but instead of explicitly looping
 over function calls, it transforms the function into a natively vectorized version for better performance.
 When composed with {func}`~jax.jit`, it can be just as performant as manually rewriting your function
-operate over an extra batch dimension.
+to operate over an extra batch dimension.
 
 We're going to work with a simple example, and promote matrix-vector products into matrix-matrix products using {func}`~jax.vmap`.
 Although this is easy to do by hand in this specific case, the same technique can apply to more complicated functions.

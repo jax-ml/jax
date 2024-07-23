@@ -15,9 +15,10 @@
 """Tests for splash_attention."""
 from __future__ import annotations
 
+from collections.abc import Callable
 import dataclasses
 import functools
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 import unittest
 
 from absl.testing import absltest
@@ -34,25 +35,11 @@ import numpy as np
 try:
   import hypothesis as hp
   import hypothesis.strategies as hps
-  CAN_USE_HYPOTHESIS = True
 except (ModuleNotFoundError, ImportError):
-  CAN_USE_HYPOTHESIS = False
-
-if not CAN_USE_HYPOTHESIS:
-  raise unittest.SkipTest("tests require hypothesis")
-
+  raise unittest.SkipTest("these tests require hypothesis")
 
 jax.config.parse_flags_with_absl()
-
-hp.settings.register_profile(
-    "deterministic",
-    database=None,
-    derandomize=True,
-    deadline=None,
-    max_examples=30,
-    print_blob=True,
-)
-hp.settings.load_profile("deterministic")
+jtu.setup_hypothesis()
 
 partial = functools.partial
 Draw = TypeVar("Draw", bound=Callable[[hps.SearchStrategy[Any]], Any])
@@ -304,14 +291,19 @@ def attn_logits_soft_cap_strategy() -> hps.SearchStrategy[float | None]:
   return hps.one_of(hps.just(None), hps.floats(min_value=1.0, max_value=50.0))
 
 
-class AttentionTest(jtu.JaxTestCase):
+@jtu.with_config(jax_traceback_filtering="off")
+class PallasBaseTest(jtu.JaxTestCase):
+  INTERPRET = False
 
   def setUp(self):
-    if not jtu.test_device_matches(["tpu"]):
-      self.skipTest("Need TPU devices")
-    # TODO(b/327487669): selectively re-enable tests that works on TPU v3.
-    if not jtu.is_device_tpu_at_least(4):
-      self.skipTest("Not supported on TPU generations <= 3")
+    if not self.INTERPRET:
+      if not jtu.test_device_matches(["tpu"]):
+        self.skipTest("Only interpret mode supported on non-TPU")
+      # TODO(b/327487669): selectively re-enable tests that works on TPU v3.
+      if not jtu.is_device_tpu_at_least(4):
+        self.skipTest("Not supported on TPU generations <= 3")
+    if jtu.test_device_matches(["cpu"]) and jax.config.x64_enabled:
+      self.skipTest("On CPU the test works only in 32-bit")
 
     super().setUp()
 
@@ -325,7 +317,7 @@ class AttentionTest(jtu.JaxTestCase):
     np.testing.assert_allclose(x, y, **kwargs)
 
 
-class SplashAttentionTest(AttentionTest):
+class SplashAttentionTest(PallasBaseTest):
 
   @parameterized.product(
       is_mqa=(False, True),
@@ -360,7 +352,7 @@ class SplashAttentionTest(AttentionTest):
 
     attn_logits_soft_cap = data.draw(attn_logits_soft_cap_strategy())
     masks = data.draw(mha_mask_strategy(q_seq_len, kv_seq_len, num_q_heads))
-    mask = mask_lib.MultiHeadMask(tuple((m.get_mask() for m in masks)))
+    mask = mask_lib.MultiHeadMask(tuple(m.get_mask() for m in masks))
     block_sizes = data.draw(block_sizes_strategy(q_seq_len, kv_seq_len))
 
     if is_mqa:
@@ -369,6 +361,7 @@ class SplashAttentionTest(AttentionTest):
           mask,
           block_sizes=block_sizes,
           attn_logits_soft_cap=attn_logits_soft_cap,
+          interpret=self.INTERPRET,
       )
     else:
       attn_ref = splash.make_masked_mha_reference(mask)
@@ -376,6 +369,7 @@ class SplashAttentionTest(AttentionTest):
           mask,
           block_sizes=block_sizes,
           attn_logits_soft_cap=attn_logits_soft_cap,
+          interpret=self.INTERPRET,
       )
     o = attn(q, k, v, segment_ids)
     o_ref = attn_ref(
@@ -421,7 +415,7 @@ class SplashAttentionTest(AttentionTest):
       segment_ids = data.draw(segment_ids_strategy(q_seq_len))
     attn_logits_soft_cap = data.draw(attn_logits_soft_cap_strategy())
     masks = data.draw(mha_mask_strategy(q_seq_len, kv_seq_len, num_q_heads))
-    mask = mask_lib.MultiHeadMask(tuple((m.get_mask() for m in masks)))
+    mask = mask_lib.MultiHeadMask(tuple(m.get_mask() for m in masks))
     block_sizes = data.draw(block_sizes_strategy(q_seq_len, kv_seq_len))
     if is_mqa:
       attn_ref = splash.make_masked_mqa_reference(mask)
@@ -430,6 +424,7 @@ class SplashAttentionTest(AttentionTest):
           block_sizes=block_sizes,
           save_residuals=True,
           attn_logits_soft_cap=attn_logits_soft_cap,
+          interpret=self.INTERPRET,
       )
     else:
       attn_ref = splash.make_masked_mha_reference(mask)
@@ -438,6 +433,7 @@ class SplashAttentionTest(AttentionTest):
           block_sizes=block_sizes,
           save_residuals=True,
           attn_logits_soft_cap=attn_logits_soft_cap,
+          interpret=self.INTERPRET,
       )
     attn_ref = partial(
         attn_ref,
@@ -465,7 +461,7 @@ class SplashAttentionTest(AttentionTest):
 
     q_seq_len, kv_seq_len, head_dim, dtype = data.draw(attention_strategy())
 
-    # Avoid segment ids for rectangular matrices, as its hard to enforce
+    # Avoid segment ids for rectangular matrices, as it's hard to enforce
     # valid masks (non-0 rows).
     hp.assume(q_seq_len == kv_seq_len or not is_segmented)
 
@@ -578,6 +574,7 @@ class SplashAttentionTest(AttentionTest):
           block_sizes=block_sizes,
           downcast_smem_data=downcast_smem_data,
           attn_logits_soft_cap=attn_logits_soft_cap,
+          interpret=self.INTERPRET,
       )
     else:
       attn_ref = splash.make_masked_mha_reference(mask, backward_impl="custom")
@@ -586,6 +583,7 @@ class SplashAttentionTest(AttentionTest):
           block_sizes=block_sizes,
           downcast_smem_data=downcast_smem_data,
           attn_logits_soft_cap=attn_logits_soft_cap,
+          interpret=self.INTERPRET,
       )
     o, attn_vjp = jax.vjp(attn, q, k, v, segment_ids)
     q32, k32, v32 = jax.tree.map(

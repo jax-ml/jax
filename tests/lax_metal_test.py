@@ -578,6 +578,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       dtype=float_dtypes,#number_dtypes,
   )
   @jax.default_matmul_precision("float32")
+  @jax.numpy_rank_promotion('allow') # adopt PR#22316
   def testVecdot(self, lhs_batch, rhs_batch, axis_size, axis, dtype):
     # Construct vecdot-compatible shapes.
     size = min(len(lhs_batch), len(rhs_batch))

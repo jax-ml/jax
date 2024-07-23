@@ -14,11 +14,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 import inspect
 import operator
 from functools import partial, lru_cache
-from typing import Any, Callable, Type
+from typing import Any
 
 import numpy as np
 
@@ -628,7 +628,7 @@ def debug_info(
   """Try to build trace-time debug info for fun when applied to args/kwargs."""
   arg_names = _arg_names(fun_signature, args, kwargs, static_argnums,
                          static_argnames)
-  if src is None or arg_names is None:
+  if arg_names is None:
     return None
   return TracingDebugInfo(traced_for, src, arg_names, None)
 
@@ -713,6 +713,6 @@ class _HashableByObjectId:
   def __eq__(self, other):
     return self.val is other.val
 
-def register_class_with_attrs(t: Type) -> None:
+def register_class_with_attrs(t: type) -> None:
   _class_with_attrs.add(t)
-_class_with_attrs: set[Type] = set()
+_class_with_attrs: set[type] = set()

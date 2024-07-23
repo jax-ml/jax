@@ -2562,22 +2562,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
                   'tuple of ClosedJaxpr required: (4, 2)'),
         lambda: core.check_jaxpr(jaxpr))
 
-    jaxpr, eqn = new_jaxpr()
-    eqn.params['linear'] = (4, 2)
-    self.assertRaisesRegex(
-        core.JaxprTypeError,
-        re.escape('invalid cond param linear of type tuple, '
-                  'tuple of bool required: (4, 2)'),
-        lambda: core.check_jaxpr(jaxpr))
-
-    jaxpr, eqn = new_jaxpr()
-    eqn.params['linear'] = 'multi\nline'
-    self.assertRaisesRegex(
-        core.JaxprTypeError,
-        r'invalid cond param linear of type str, '
-        r'tuple of bool required:\r?\nmulti\r?\nline',
-        lambda: core.check_jaxpr(jaxpr))
-
   def test_cond_transformation_rule_with_consts(self):
     # https://github.com/google/jax/pull/9731
 
@@ -2976,6 +2960,31 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     hlo_text = fn.lower(init).as_text('hlo')
     self.assertNotIn('4,1,2,2', hlo_text)
 
+  def test_cond_vmap_forwarding_doesnt_promote(self):
+    def f(x, y):
+      x, y = jax.lax.cond(
+          x < 3,
+          lambda x, y: (x * 2, y),
+          lambda x, y: (x * 3, y),
+          x, y
+      )
+      return x, y
+
+    x = jnp.arange(3)
+    y = jnp.array(3.)
+
+    x2, y2 = jax.vmap(f, in_axes=(0, None), out_axes=(0, None))(x, y)  # don't crash
+
+    assert x is not x2
+    assert y is y2
+
+  def test_cond_casting(self):
+    x = 1.0
+    identity = lambda x: x
+
+    y = lax.cond(True, identity, identity, x)
+    self.assertEqual(y, x)
+    self.assertIsInstance(y, jax.Array)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

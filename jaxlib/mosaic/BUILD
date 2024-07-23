@@ -40,13 +40,14 @@ cc_library(
         "dialect/tpu/layout.cc",
         "dialect/tpu/tpu_dialect.cc",
         "dialect/tpu/tpu_ops.cc",
-        "dialect/tpu/util.h",
+        "dialect/tpu/util.cc",
     ] + glob([
         "dialect/tpu/transforms/*.cc",
     ]),
     hdrs = [
         "dialect/tpu/layout.h",
         "dialect/tpu/tpu_dialect.h",
+        "dialect/tpu/util.h",
     ] + glob([
         "dialect/tpu/transforms/*.h",
     ]),

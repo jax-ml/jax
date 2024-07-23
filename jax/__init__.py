@@ -56,6 +56,7 @@ from jax._src.config import (
   debug_nans as debug_nans,
   debug_infs as debug_infs,
   log_compiles as log_compiles,
+  explain_cache_misses as explain_cache_misses,
   default_device as default_device,
   default_matmul_precision as default_matmul_precision,
   default_prng_impl as default_prng_impl,
@@ -226,8 +227,12 @@ _deprecations = {
     "jax.clear_backends is deprecated.",
     _deprecated_clear_backends
   ),
+  # Added Jun 16, 2024
   "xla_computation": (
-      "jax.xla_computation is deprecated. Please use the AOT APIs.",
+      "jax.xla_computation is deprecated. Please use the AOT APIs; see "
+      "https://jax.readthedocs.io/en/latest/aot.html. For example, replace "
+      "xla_computation(f)(*xs) with jit(f).lower(*xs).compiler_ir('hlo'). See "
+      "CHANGELOG.md for 0.4.30 for more examples.",
       _deprecated_xla_computation
   ),
 }

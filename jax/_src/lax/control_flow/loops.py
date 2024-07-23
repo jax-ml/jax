@@ -14,12 +14,12 @@
 """Module for the loop primitives."""
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import partial
 import inspect
 import itertools
 import operator
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 import weakref
 
 import jax
@@ -1713,16 +1713,16 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
       return out
     return mlir.lower_fun(fun)(ctx, *args)
 
-  loop_carry_types = _map(mlir.aval_to_ir_types, ctx.avals_in)
+  loop_carry_types = _map(mlir.aval_to_ir_type, ctx.avals_in)
   body_effects = effects.ordered_effects.filter_in(body_jaxpr.effects)
   num_tokens = len(body_effects)
   tokens = [ctx.tokens_in.get(eff) for eff in body_effects]
   token_types = [mlir.token_type() for _ in tokens]
   loop_carry_types = [*token_types, *loop_carry_types]
-  flat_loop_carry_types = util.flatten(loop_carry_types)
+  flat_loop_carry_types = mlir.flatten_ir_types(loop_carry_types)
   args = [*tokens, *args]
 
-  flat_args = mlir.flatten_lowering_ir_args(args)
+  flat_args = mlir.flatten_ir_values(args)
   while_op = hlo.WhileOp(flat_loop_carry_types, flat_args)
 
   # Loop condition
@@ -1732,15 +1732,15 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     flat_cond_args = [
         cond_block.arguments[i] for i in range(len(flat_loop_carry_types))
     ]
-    cond_args = util.unflatten(flat_cond_args, _map(len, loop_carry_types))
+    cond_args = mlir.unflatten_ir_values_like_types(flat_cond_args, loop_carry_types)
     # Remove tokens from cond args
     cond_args = cond_args[num_tokens:]
     x, _, z = util.split_list(cond_args, [cond_nconsts, body_nconsts])
     cond_consts = [
-        mlir.ir_constants(xla.canonicalize_dtype(x)) for x in cond_jaxpr.consts
+        mlir.ir_constant(xla.canonicalize_dtype(x)) for x in cond_jaxpr.consts
     ]
     cond_name_stack = name_stack.extend('cond')
-    ((pred,),), _ = mlir.jaxpr_subcomp(
+    (pred,), _ = mlir.jaxpr_subcomp(
         ctx.module_context,
         cond_jaxpr.jaxpr,
         cond_name_stack,
@@ -1772,13 +1772,13 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     flat_body_args = [
         body_block.arguments[i] for i in range(len(flat_loop_carry_types))
     ]
-    body_args = util.unflatten(flat_body_args, _map(len, loop_carry_types))
+    body_args = mlir.unflatten_ir_values_like_types(flat_body_args, loop_carry_types)
     # Tokens are at the front of the args list to the while loop
     token_args, body_args = util.split_list(body_args, [num_tokens])
     tokens_in = mlir.TokenSet(zip(body_effects, token_args))
     x, y, z = util.split_list(body_args, [cond_nconsts, body_nconsts])
     body_name_stack = name_stack.extend('body')
-    body_consts = [mlir.ir_constants(xla.canonicalize_dtype(x))
+    body_consts = [mlir.ir_constant(xla.canonicalize_dtype(x))
                    for x in body_jaxpr.consts]
     new_z, tokens_out = mlir.jaxpr_subcomp(
         ctx.module_context, body_jaxpr.jaxpr, body_name_stack,
@@ -1786,9 +1786,9 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
     out_tokens = [tokens_out.get(eff) for eff in body_effects]
     if batched:
       body_pred_name_stack = name_stack.extend('body_pred')
-      cond_consts = [mlir.ir_constants(xla.canonicalize_dtype(x))
+      cond_consts = [mlir.ir_constant(xla.canonicalize_dtype(x))
                      for x in cond_jaxpr.consts]
-      ((body_pred,),), _ = mlir.jaxpr_subcomp(
+      (body_pred,), _ = mlir.jaxpr_subcomp(
           ctx.module_context, cond_jaxpr.jaxpr, body_pred_name_stack,
           mlir.TokenSet(), cond_consts, *(x + z),
           dim_var_values=ctx.dim_var_values)
@@ -1796,10 +1796,10 @@ def _while_lowering(ctx, *args, cond_jaxpr, body_jaxpr, cond_nconsts,
           partial(_pred_bcast_select_hlo, ctx, pred_aval, body_pred), new_z, z,
           body_jaxpr.out_avals)
 
-    hlo.return_([*util.flatten(out_tokens), *util.flatten(x), *util.flatten(y),
-                  *util.flatten(new_z)])
+    hlo.return_([*mlir.flatten_ir_values(out_tokens), *mlir.flatten_ir_values(x), *mlir.flatten_ir_values(y),
+                  *mlir.flatten_ir_values(new_z)])
 
-  outputs = util.unflatten(while_op.results, _map(len, loop_carry_types))
+  outputs = mlir.unflatten_ir_values_like_types(while_op.results, loop_carry_types)
   tokens, _, _, z = util.split_list(outputs, [num_tokens, cond_nconsts, body_nconsts])
   if tokens:
     ctx.set_tokens_out(mlir.TokenSet(zip(body_effects, tokens)))
@@ -1909,16 +1909,14 @@ state_discharge.register_discharge_rule(while_p)(_while_discharge_rule)
 
 
 def _pred_bcast_select_hlo(ctx,
-    pred_aval: core.ShapedArray, pred: ir.Value, xs: Sequence[ir.Value],
-    ys: Sequence[ir.Value], x_y_aval: core.AbstractValue) -> Sequence[ir.Value]:
+    pred_aval: core.ShapedArray, pred: ir.Value, x: mlir.IrValues,
+    y: mlir.IrValues, x_y_aval: core.AbstractValue) -> Sequence[ir.Value]:
   if x_y_aval is core.abstract_token:
-    x, = xs
-    y, = ys
     return [hlo.AfterAllOp([x, y]).result]
   else:
+    assert isinstance(x, ir.Value), x
+    assert isinstance(y, ir.Value), y
     assert isinstance(x_y_aval, core.ShapedArray), x_y_aval
-    x, = xs
-    y, = ys
     assert x.type == y.type, (x.type, y.type)
     assert (pred_aval.shape == x_y_aval.shape[:len(pred_aval.shape)]), (
             pred_aval.shape, x_y_aval)
@@ -2079,8 +2077,29 @@ def fori_loop(lower, upper, body_fun, init_val,
 
 ### map and miscellaneous rules
 
+def _batch_and_remainder(x, batch_size: int):
+  leaves, treedef = tree_flatten(x)
+
+  scan_leaves = []
+  remainder_leaves = []
+
+  for leaf in leaves:
+    num_batches, _ = divmod(leaf.shape[0], batch_size)
+    total_batch_elems = num_batches * batch_size
+    scan_leaves.append(leaf[:total_batch_elems].reshape(num_batches, batch_size, *leaf.shape[1:]))
+    remainder_leaves.append(leaf[total_batch_elems:])
+
+  scan_tree = treedef.unflatten(scan_leaves)
+  remainder_tree = treedef.unflatten(remainder_leaves)
+  return scan_tree, remainder_tree
+
 @api_boundary
-def map(f, xs):
+def map(
+  f,
+  xs,
+  *,
+  batch_size: int | None = None,
+):
   """Map a function over leading array axes.
 
   Like Python's builtin map, except inputs and outputs are in the form of
@@ -2099,16 +2118,47 @@ def map(f, xs):
   arbitrary nested pytree type, and the mapped computation is compiled only
   once.
 
+  If ``batch_size`` is provided, the computation is executed in batches of that size
+  and parallelized using :func:`~jax.vmap`. This can be used as either a more performant
+  version of ``map`` or as a memory-efficient version of ``vmap``. If the axis is not
+  divisible by the batch size, the remainder is processed in a separate ``vmap`` and
+  concatenated to the result.
+
+    >>> x = jnp.ones((10, 3, 4))
+    >>> def f(x):
+    ...   print('inner shape:', x.shape)
+    ...   return x + 1
+    >>> y = lax.map(f, x, batch_size=3)
+    inner shape: (3, 4)
+    inner shape: (3, 4)
+    >>> y.shape
+    (10, 3, 4)
+
+  In the example above, "inner shape" is printed twice, once while tracing the batched
+  computation and once while tracing the remainder computation.
+
   Args:
     f: a Python function to apply element-wise over the first axis or axes of
       ``xs``.
     xs: values over which to map along the leading axis.
+    batch_size: (optional) integer specifying the size of the batch for each step to execute
+      in parallel.
 
   Returns:
     Mapped values.
   """
-  g = lambda _, x: ((), f(x))
-  _, ys = scan(g, (), xs)
+  if batch_size is not None:
+    scan_xs, remainder_xs = _batch_and_remainder(xs, batch_size)
+    g = lambda _, x: ((), jax.vmap(f)(x))
+    _, scan_ys = scan(g, (), scan_xs)
+    remainder_ys = jax.vmap(f)(remainder_xs)
+    flatten = lambda x: x.reshape(-1, *x.shape[2:])
+    ys = tree_map(
+      lambda x, y: jax.numpy.concatenate([flatten(x), y], axis=0), scan_ys, remainder_ys,
+    )
+  else:
+    g = lambda _, x: ((), f(x))
+    _, ys = scan(g, (), xs)
   return ys
 
 def _rng_bit_generator_batching_rule(batched_args, batch_dims, *, shape, dtype, algorithm):

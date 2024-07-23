@@ -13,7 +13,8 @@
 # limitations under the License.
 from __future__ import annotations
 
-from typing import Any, Callable, Iterable, TypeVar, overload
+from collections.abc import Callable, Iterable
+from typing import Any, TypeVar, overload
 
 from jax._src import tree_util
 
@@ -225,7 +226,7 @@ def structure(tree: Any,
 
 
 def transpose(outer_treedef: tree_util.PyTreeDef,
-              inner_treedef: tree_util.PyTreeDef,
+              inner_treedef: tree_util.PyTreeDef | None,
               pytree_to_transpose: Any) -> Any:
   """Transform a tree having tree structure (outer, inner) into one having structure (inner, outer).
 

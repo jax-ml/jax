@@ -28,6 +28,7 @@ Experimental Modules
     jax.experimental.mesh_utils
     jax.experimental.serialize_executable
     jax.experimental.shard_map
+    jax.experimental.pallas
 
 Experimental APIs
 -----------------
@@ -37,7 +38,3 @@ Experimental APIs
 
    enable_x64
    disable_x64
-
-   jax.experimental.checkify.checkify
-   jax.experimental.checkify.check
-   jax.experimental.checkify.check_error

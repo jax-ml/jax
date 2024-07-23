@@ -14,14 +14,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence, Iterable, Iterator, Generator
+from collections.abc import Callable, Generator, Iterable, Iterator, Sequence
 import contextlib
 from functools import partial
 import itertools as it
 import math
 import operator as op
 from types import SimpleNamespace
-from typing import Any, NamedTuple, Callable, TypeVar
+from typing import Any, NamedTuple, TypeVar
 import unittest
 
 from absl.testing import absltest
@@ -1541,6 +1541,12 @@ class ShardMapTest(jtu.JaxTestCase):
     shard_map(lambda k: jax.random.normal(k[0], (1,)),
               mesh=mesh, in_specs=P('i'), out_specs=P('i'))(keys)  # don't crash
 
+  def test_erf_rules(self):
+    mesh = jtu.create_global_mesh((4,), ('i',))
+    x = jnp.arange(16.)
+    shard_map(jax.lax.erf,
+              mesh=mesh, in_specs=P('i'), out_specs=P('i'))(x)  # don't crash
+
   def test_error_for_variable_num_args(self):
     mesh = Mesh(np.array(jax.devices()[:4]).reshape(2, 2), ('x', 'y'))
 
@@ -1569,8 +1575,23 @@ class ShardMapTest(jtu.JaxTestCase):
     def g(x):
       return f(f(x))
 
-    with self.assertRaisesRegex(Exception, r"check_rep=False"):
-      jax.grad(lambda x: g(x).sum())(jnp.ones(4))
+    y, grad = jax.value_and_grad(lambda x: g(x).sum())(jnp.ones(4))
+    # first psum sums, second psum multiplies by 4
+    self.assertAllClose(y, (jnp.ones(4) * 4).sum(), check_dtypes=False)
+    # two psums on the backward pass, each one multiplies by 4
+    self.assertAllClose(grad, jnp.ones(4) * 4 * 4, check_dtypes=False)
+
+  def test_repeated_psum_allowed(self):
+    # https://github.com/google/jax/issues/19175
+    mesh = Mesh(jax.devices()[:4], ('i',))
+
+    @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P())
+    def g(x):
+      return jax.lax.psum(jax.lax.psum(x, 'i'), 'i')
+
+    y = g(jnp.arange(4.))
+    self.assertAllClose(y, jnp.arange(4.).sum(keepdims=True) * 4,
+                        check_dtypes=False)
 
   def test_approx_top_k(self):
     mesh = Mesh(np.array(jax.devices()[:2]), ('i',))
@@ -1814,6 +1835,114 @@ class ShardMapTest(jtu.JaxTestCase):
     xs = jnp.arange(4 * 16.).reshape(4, 16)
     with self.assertRaisesRegex(ValueError, "spmd_axis_name cannot appear"):
       jax.vmap(g, spmd_axis_name='i')(xs)
+
+  def test_in_spec_none(self):
+    mesh = jtu.create_global_mesh((4, 2), ('i', 'j'))
+
+    x = jnp.arange(8).reshape(4, 2)
+
+    def f(o, x):
+      self.assertIs(o, obj)
+      return jnp.sin(x)
+
+    obj = object()
+    y = shard_map(f, mesh, (None, P('i')), P('i'))(obj, x)
+    self.assertAllClose(y, jnp.sin(x), check_dtypes=False)
+
+    obj = None
+    y = shard_map(f, mesh, (None, P('i')), P('i'))(None, x)
+    self.assertAllClose(y, jnp.sin(x), check_dtypes=False)
+
+    def f2(o, x):
+      self.assertIsInstance(o, dict)
+      self.assertIs(o['a'], obj['a'])
+      return jnp.sin(x)
+
+    obj = {'a': object()}
+    y = shard_map(f2, mesh, ({'a': None}, P('i')), P('i'))(obj, x)
+    self.assertAllClose(y, jnp.sin(x), check_dtypes=False)
+
+    def f3(x, o):
+      self.assertIs(o, obj)
+      return jnp.sin(x)
+
+    obj = object()
+    y = shard_map(f3, mesh, (P('i'), None), P('i'))(x, obj)
+    self.assertAllClose(y, jnp.sin(x), check_dtypes=False)
+
+    obj = None
+    y = shard_map(f3, mesh, (P('i'), None), P('i'))(x, obj)
+    self.assertAllClose(y, jnp.sin(x), check_dtypes=False)
+
+    def f4(o1, o2, x, o3):
+      self.assertIs(o1, obj1)
+      self.assertIs(o2[0], obj2[0])
+      self.assertIs(o2[1], obj2[1])
+      self.assertIs(o3, obj3)
+      return jnp.sin(x)
+
+    obj1 = object()
+    obj2 = (object(), object())
+    obj3 = object()
+    y = shard_map(f4, mesh, (None, None, P('i'), None), P('i'))(obj1, obj2, x, obj3)
+    self.assertAllClose(y, jnp.sin(x), check_dtypes=False)
+
+  def test_in_spec_none_divisibility_errors(self):
+    mesh = jtu.create_global_mesh((4, 2), ('i', 'j'))
+    x = jnp.arange(4).reshape(2, 2)
+
+    with self.assertRaisesRegex(ValueError, 'divisible'):
+      shard_map(lambda *_: None, mesh, (None, P('i')), None)(object(), x)
+
+    with self.assertRaisesRegex(ValueError, 'divisible'):
+      shard_map(lambda *_: None, mesh, (P('i'), None), None)(x, object())
+
+    with self.assertRaisesRegex(ValueError, 'divisible'):
+      shard_map(lambda *_: None, mesh, (P('i'), None), None
+                )(x, (object(), object()))
+
+    with self.assertRaisesRegex(ValueError, 'divisible'):
+      shard_map(lambda *_: None, mesh, (P('i'), (None, None)), None,
+                    )(x, (object(), object()))
+
+    with self.assertRaisesRegex(ValueError, 'divisible'):
+      shard_map(lambda *_: None, mesh, ((None, None), P('i')), None,
+                    )((object(), object()), x)
+
+  def test_in_spec_none_rank_errors(self):
+    mesh = jtu.create_global_mesh((4, 2), ('i', 'j'))
+    x = jnp.arange(4)
+
+    with self.assertRaisesRegex(ValueError, 'rank'):
+      shard_map(lambda *_: None, mesh, (None, P('i', 'j')), None)(object(), x)
+
+    with self.assertRaisesRegex(ValueError, 'rank'):
+      shard_map(lambda *_: None, mesh, (P('i', 'j'), None), None)(x, object())
+
+    with self.assertRaisesRegex(ValueError, 'rank'):
+      shard_map(lambda *_: None, mesh, (P('i', 'j'), None), None
+                )(x, (object(), object()))
+
+    with self.assertRaisesRegex(ValueError, 'rank'):
+      shard_map(lambda *_: None, mesh, (P('i', 'j'), (None, None)), None,
+                    )(x, (object(), object()))
+
+    with self.assertRaisesRegex(ValueError, 'rank'):
+      shard_map(lambda *_: None, mesh, ((None, None), P('i', 'j')), None,
+                    )((object(), object()), x)
+
+  def test_custom_linear_solve_rep_rules(self):
+    # https://github.com/google/jax/issues/20162
+    mesh = jtu.create_global_mesh((1,), ('i',))
+    a = jnp.array(1).reshape(1, 1)
+    b = jnp.array(1).reshape(1)
+
+    @partial(shard_map, mesh=mesh, in_specs=P('i'), out_specs=P('i'))
+    def f(a, b):
+      c = jnp.linalg.solve(a, b)
+      return c
+
+    _ = f(a, b)  # don't crash
 
 
 class FunSpec(NamedTuple):

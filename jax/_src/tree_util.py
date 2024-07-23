@@ -14,14 +14,14 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Hashable, Iterable
+from collections.abc import Callable, Hashable, Iterable, Sequence
 from dataclasses import dataclass
 import difflib
 import functools
 from functools import partial
 import operator as op
 import textwrap
-from typing import Any, Callable, NamedTuple, Sequence, TypeVar, Union, overload
+from typing import Any, NamedTuple, TypeVar, Union, overload
 
 from jax._src import traceback_util
 from jax._src.lib import pytree
@@ -621,7 +621,7 @@ def equality_errors(
   """Helper to describe structural differences between two pytrees.
 
   Args:
-    tree1, tree2: pytrees to compare.
+    tree1, tree2: pytrees known to have different structure.
 
   Usage:
 
@@ -635,6 +635,15 @@ def equality_errors(
            in equality_errors(val1, val2))))
   """
   yield from _equality_errors((), tree1, tree2, is_leaf)
+
+def equality_errors_pytreedef(
+    tree1: PyTreeDef,
+    tree2: PyTreeDef) -> Iterable[tuple[KeyPath, str, str, str]]:
+  """Like `equality_errors` but invoked on PyTreeDef."""
+  # TODO(mattjj): make equality_errors not print type name, avoid metaclass
+  leaf = type("LeafMeta", (type,), dict(__repr__=lambda _: "pytree leaf"))("Leaf", (), {})()
+  return equality_errors(tree_unflatten(tree1, [leaf] * tree1.num_leaves),
+                         tree_unflatten(tree2, [leaf] * tree2.num_leaves))
 
 # TODO(mattjj): maybe share some logic with _prefix_error?
 def _equality_errors(path, t1, t2, is_leaf):

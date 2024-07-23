@@ -14,8 +14,8 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict, deque, namedtuple
-from collections.abc import (Collection, Generator, Hashable, Iterable,
-                             Iterator, Set, Sequence, MutableSet,
+from collections.abc import (Callable, Collection, Generator, Hashable,
+                             Iterable, Iterator, Set, Sequence, MutableSet,
                              MutableMapping)
 from contextlib import contextmanager, ExitStack
 from dataclasses import dataclass
@@ -28,7 +28,7 @@ import math
 import operator
 import threading
 import types
-from typing import (Any, Callable, ClassVar, Generic, NamedTuple, TypeVar,
+from typing import (Any, ClassVar, Generic, NamedTuple, TypeVar,
                     cast, overload, Union)
 import warnings
 from weakref import ref
@@ -78,7 +78,7 @@ no_effects: Effects = effects.no_effects
 
 class JaxprDebugInfo(NamedTuple):
   traced_for: str     # e.g. 'jit', 'scan', etc
-  func_src_info: str  # e.g. f'{fun.__name__} at {filename}:{lineno}'
+  func_src_info: str | None  # e.g. f'{fun.__name__} at {filename}:{lineno}'
   arg_names: tuple[str | None, ...]     # e.g. ('args[0]', ... )
   result_paths: tuple[str, ...]  # e.g. ('[0]', '[1]', ...)
 
@@ -282,7 +282,7 @@ class JaxprEqnContext:
             f"threefry_partitionable={self.threefry_partitionable})")
 
 
-class JaxprEqn(NamedTuple):
+class JaxprEqn:
   invars: list[Atom]
   outvars: list[Var]
   primitive: Primitive
@@ -290,6 +290,20 @@ class JaxprEqn(NamedTuple):
   effects: Effects
   source_info: source_info_util.SourceInfo
   ctx: JaxprEqnContext
+
+  # It's slightly faster to use a class with __slots__ than a NamedTuple.
+  __slots__ = ['invars', 'outvars', 'primitive', 'params', 'effects',
+               'source_info', 'ctx']
+
+  def __init__(self, invars, outvars, primitive, params, effects, source_info,
+               ctx):
+    self.invars = invars
+    self.outvars = outvars
+    self.primitive = primitive
+    self.params = params
+    self.effects = effects
+    self.source_info = source_info
+    self.ctx = ctx
 
   def __repr__(self):
     return str(pp_eqn(self, JaxprPpContext(), JaxprPpSettings())).rstrip()
@@ -304,7 +318,6 @@ class JaxprEqn(NamedTuple):
       source_info: source_info_util.SourceInfo | None = None,
       ctx: JaxprEqnContext | None = None
   ):
-    # It is slightly faster to rebuild the tuple directly than to call _replace.
     return JaxprEqn(
       self.invars if invars is None else invars,
       self.outvars if outvars is None else outvars,
@@ -686,7 +699,7 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
   def _error_repr(self):
     if self.aval is None:
       return f"traced array with aval {self.aval}"
-    return f"traced array with shape {raise_to_shaped(self.aval).str_short()}."
+    return f"traced array with shape {raise_to_shaped(self.aval).str_short()}"
 
   def __array__(self, *args, **kw):
     raise TracerArrayConversionError(self)
@@ -721,13 +734,9 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
     # This attribute is part of the jax.Array API, but only defined on concrete arrays.
     # Raising a ConcretizationTypeError would make sense, but for backward compatibility
     # we raise an AttributeError so that hasattr() and getattr() work as expected.
-    try:
-      orig_msg = self._origin_msg()
-    except:
-      orig_msg = ''
     raise AttributeError(self,
       f"The 'sharding' attribute is not available on {self._error_repr()}."
-      f"{orig_msg}")
+      f"{self._origin_msg()}")
 
   @property
   def addressable_shards(self):
@@ -1040,13 +1049,8 @@ class TraceState:
 
 
 def _update_thread_local_jit_state(dynamic):
-  # Copies the MainTrace instance, removing any .debug_info or .jaxpr_stack
-  # fields that should not be kept alive as part of a cache key.
-  # TODO(mattjj): split debug_info and jaxpr_stack out of MainTrace.
-  # TODO(mattjj): add a test that verifies that JIT-ted functions are not kept
-  # alive by the JIT cache, particularly for nested JIT-ted functions.
-  copy = MainTrace(dynamic.level, dynamic.trace_type, **dynamic.payload)
-  config.update_thread_local_jit_state(dynamic_trace_state=copy)
+  state = (dynamic.level, dynamic.trace_type)
+  config.update_thread_local_jit_state(dynamic_trace_state=state)
 
 
 # The global state of the tracer is accessed by a thread-local object.
@@ -1071,8 +1075,8 @@ def _initialize_jax_jit_thread_local_state():
   tls = jax_jit.thread_local_state()
   if tls.extra_jit_context is None:
     dynamic = thread_local_state.trace_state.trace_stack.dynamic
-    copy = MainTrace(dynamic.level, dynamic.trace_type, **dynamic.payload)
-    config.update_thread_local_jit_state(dynamic_trace_state=copy)
+    state = (dynamic.level, dynamic.trace_type)
+    config.update_thread_local_jit_state(dynamic_trace_state=state)
 
 
 jax_jit.set_thread_local_state_initialization_callback(
@@ -1537,7 +1541,7 @@ def concrete_or_error(force: Any, val: Any, context=""):
 
 def concrete_dim_or_error(val: Any, context=""):
   """Like concrete_or_error(operator.index), allowing symbolic dimensions."""
-  if is_dim(val):
+  if is_symbolic_dim(val):
     return val
   else:
     return concrete_or_error(operator.index, val, context=context)
@@ -2348,6 +2352,8 @@ def join_named_shapes(*named_shapes):
 
 # TODO: Make canonicalize_shape return named shapes?
 def as_named_shape(shape) -> NamedShape:
+  if isinstance(shape, int):
+    shape = (shape,)
   if isinstance(shape, NamedShape):
     return shape
   return NamedShape(*shape)
@@ -3342,11 +3348,17 @@ def _compact_eqn_should_include(k: str, v: Any) -> bool:
     return False
   return True
 
-def str_eqn_compact(primitive_name: str, params: dict) -> str:
+def str_eqn_compact(primitive: Primitive, params: dict[Any, Any]) -> str:
   "Compact equation to string conversion used in HLO metadata."
+  if primitive in custom_str_eqn_compact_rules:
+    return custom_str_eqn_compact_rules[primitive](primitive, params)
+  primitive_name = primitive.name
   kvs = " ".join(f"{k}={v}" for k, v in params.items()
                  if _compact_eqn_should_include(k, v))
   return f"{primitive_name}[{kvs}]" if len(kvs) > 0 else primitive_name
+custom_str_eqn_compact_rules: dict[
+    Primitive, Callable[[Primitive, dict[Any, Any]], str]
+] = {}
 
 def pp_jaxpr_skeleton(jaxpr, eqns_fn, context: JaxprPpContext,
                       settings: JaxprPpSettings) -> pp.Doc:
@@ -3458,3 +3470,7 @@ def clean_up_dead_vars(eqn: JaxprEqn, env: dict[Var, Any],
     if last_used[v] is eqn:
       # Delete ref to variable when it is no longer needed by next equations.
       del env[v]
+
+# Used in shard_map for converting avals
+shard_aval_handlers = {}  # type: ignore
+unshard_aval_handlers = {}  # type: ignore

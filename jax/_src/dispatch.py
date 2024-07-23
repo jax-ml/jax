@@ -16,13 +16,13 @@
 from __future__ import annotations
 
 import atexit
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 import contextlib
 import dataclasses
 from functools import partial
 import itertools
 import time
-from typing import Any, Callable, NamedTuple
+from typing import Any, NamedTuple
 import logging
 import threading
 
@@ -37,9 +37,9 @@ from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
-from jax._src import xla_bridge as xb
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
+from jax._src.abstract_arrays import array_types
 from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.interpreters import pxla
@@ -219,7 +219,7 @@ class SourceInfo(NamedTuple):
   eqn_name: str
 
 
-def jaxpr_shardings(
+def get_intermediate_shardings(
     jaxpr: core.Jaxpr,
 ) -> Iterator[tuple[Sharding, SourceInfo]]:
   from jax._src import pjit
@@ -245,7 +245,7 @@ def jaxpr_shardings(
       yield from ((s, source_info) for s in eqn.params['devices']
                   if isinstance(s, Sharding) and s.memory_kind is not None)
   for subjaxpr in core.subjaxprs(jaxpr):
-    yield from jaxpr_shardings(subjaxpr)
+    yield from get_intermediate_shardings(subjaxpr)
 
 
 def jaxpr_has_bints(jaxpr: core.Jaxpr) -> bool:
@@ -322,16 +322,13 @@ def _check_special(name: str, dtype: np.dtype, buf: basearray.Array) -> None:
       raise FloatingPointError(f"invalid value (inf) encountered in {name}")
 
 
-def _override_get_device_assignment(sharding, *args, **kwargs):
-  da = sharding._device_assignment
-  return xb.get_device_backend(da[0]), da
-
 def _identity_fn(x):
   return x
 
-def _mcjax_reshard(x, target_sharding):
+def _different_device_order_reshard(x, target_sharding):
   from jax._src import api, array
 
+  x._check_if_deleted()
   inp_sharding = x.sharding
 
   if inp_sharding._device_assignment == target_sharding._device_assignment:
@@ -358,23 +355,27 @@ def _mcjax_reshard(x, target_sharding):
     new_op_sharding.iota_reshape_dims = []
     new_op_sharding.iota_transpose_perm = []
     new_op_sharding.tile_assignment_devices = np.take(
-        old_hlo_sharding.tile_assignment_devices(), permute_order
+        permute_order, old_hlo_sharding.tile_assignment_devices()
     )
     new_hlo_sharding = xc.HloSharding.from_proto(new_op_sharding)
+    # TODO(yashkatariya): Enable this when HloSharding conversion is fixed in
+    # XLA.
+    # assert (new_op_sharding.tile_assignment_dimensions
+    #         == new_hlo_sharding.tile_assignment_dimensions())
+    # assert (new_op_sharding.tile_assignment_devices
+    #         == new_hlo_sharding.tile_assignment_devices())
+    assert (list(np.take(inp_sharding._device_assignment,
+                         old_hlo_sharding.tile_assignment_devices()))
+            == list(np.take(target_sharding._device_assignment,
+                            new_op_sharding.tile_assignment_devices)))
 
   new_x = array.make_array_from_single_device_arrays(
       x.shape,
-      GSPMDSharding(target_sharding._device_assignment, new_hlo_sharding),
+      GSPMDSharding(target_sharding._device_assignment, new_hlo_sharding,
+                    memory_kind=target_sharding.memory_kind),
       x._arrays,
   )
-
-  _orig_get_and_check_device_assignment = pxla._get_and_check_device_assignment.fn
-  pxla._get_and_check_device_assignment.fn = partial(
-      _override_get_device_assignment, target_sharding)
-  try:
-    return api.jit(_identity_fn, out_shardings=target_sharding)(new_x)
-  finally:
-    pxla._get_and_check_device_assignment.fn = _orig_get_and_check_device_assignment
+  return api.jit(_identity_fn, out_shardings=target_sharding)(new_x)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -398,25 +399,40 @@ class _DeferredShardArg:
 
 def _device_put_sharding_impl(x, aval, device):
   from jax._src import array
+  from jax.experimental import multihost_utils
 
   if isinstance(device, Sharding):
     s = device
     if getattr(x, 'sharding', None) == s and getattr(x, '_committed', False):
       return x
+
     if (not s.is_fully_addressable and
         isinstance(x, array.ArrayImpl) and not x.is_fully_addressable):
-      # This has to be XLACompatible because _mcjax_reshard will run a
-      # XLA computation.
       assert isinstance(s, Sharding)
-      return _mcjax_reshard(x, s)
+      return _different_device_order_reshard(x, s)
+
+    if (s.is_fully_addressable and isinstance(x, array.ArrayImpl) and
+        x.is_fully_addressable and len(s.device_set) > 1 and
+        s._internal_device_list != x.sharding._internal_device_list and  # pytype: disable=attribute-error
+        s.device_set == x.sharding.device_set):
+      assert isinstance(s, Sharding)
+      return _different_device_order_reshard(x, s)
+
     if not s.is_fully_addressable:
+      if ((isinstance(x, array.ArrayImpl) and not x._committed) or
+          type(x) in array_types):
+        # TODO(yashkatariya): Move this check to `jit`.
+        multihost_utils.assert_equal(
+            x, fail_message=(
+                f"{type(x)} passed to device_put is not the same on each"
+                " process. Make sure you are passing the same value of"
+                f" {type(x)} on each process."))
+        return api.jit(_identity_fn, out_shardings=s)(x)
       # TODO(yashkatariya,mattjj): Link to a doc about McJAX and jax.Array.
       raise ValueError(
           "device_put's second argument must be a Device or a Sharding which"
-          f" represents addressable devices, but got {s}. You are probably"
-          " trying to use device_put in multi-controller JAX which is not"
-          " supported. Please use jax.make_array_from_single_device_arrays API"
-          " or pass device or Sharding which represents addressable devices.")
+          f" represents addressable devices, but got {s}. Please pass device or"
+          " Sharding which represents addressable devices.")
     return _DeferredShardArg(x, s, aval, True)
 
   # Only `Device` exists below. `Sharding` instance is handled above.

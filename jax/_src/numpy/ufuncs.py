@@ -18,9 +18,9 @@ Implements ufuncs for jax.numpy.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import partial
 import operator
-from typing import Callable
 
 import warnings
 
@@ -92,11 +92,17 @@ def sign(x: ArrayLike, /) -> Array:
 @implements(np.floor, module='numpy')
 @partial(jit, inline=True)
 def floor(x: ArrayLike, /) -> Array:
+  check_arraylike('floor', x)
+  if dtypes.isdtype(dtypes.dtype(x), ('integral', 'bool')):
+    return lax.asarray(x)
   return lax.floor(*promote_args_inexact('floor', x))
 
 @implements(np.ceil, module='numpy')
 @partial(jit, inline=True)
 def ceil(x: ArrayLike, /) -> Array:
+  check_arraylike('ceil', x)
+  if dtypes.isdtype(dtypes.dtype(x), ('integral', 'bool')):
+    return lax.asarray(x)
   return lax.ceil(*promote_args_inexact('ceil', x))
 
 @implements(np.exp, module='numpy')
@@ -492,9 +498,36 @@ def abs(x: ArrayLike, /) -> Array:
   return absolute(x)
 
 
-@implements(np.rint, module='numpy')
 @jit
 def rint(x: ArrayLike, /) -> Array:
+  """Rounds the elements of x to the nearest integer
+
+  LAX-backend implementation of :func:`numpy.rint`.
+
+  Args:
+    x: Input array
+
+  Returns:
+    An array-like object containing the rounded elements of ``x``. Always promotes
+    to inexact.
+
+  Note:
+    If an element of x is exactly half way, e.g. ``0.5`` or ``1.5``, rint will round
+    to the nearest even integer.
+
+  Example:
+    >>> x1 = jnp.array([5, 4, 7])
+    >>> jnp.rint(x1)
+    Array([5., 4., 7.], dtype=float32)
+
+    >>> x2 = jnp.array([-2.5, -1.5, -0.5, 0.5, 1.5, 2.5, 3.5, 4.5])
+    >>> jnp.rint(x2)
+    Array([-2., -2., -0.,  0.,  2.,  2.,  4.,  4.], dtype=float32)
+
+    >>> x3 = jnp.array([-2.5+3.5j, 4.5-0.5j])
+    >>> jnp.rint(x3)
+    Array([-2.+4.j,  4.-0.j], dtype=complex64)
+  """
   check_arraylike('rint', x)
   dtype = dtypes.dtype(x)
   if dtype == bool or dtypes.issubdtype(dtype, np.integer):
@@ -504,9 +537,39 @@ def rint(x: ArrayLike, /) -> Array:
   return lax.round(x, lax.RoundingMethod.TO_NEAREST_EVEN)
 
 
-@implements(np.copysign, module='numpy')
 @jit
 def copysign(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+  """Copies the sign of each element in ``x2`` to the corresponding element in ``x1``.
+
+  LAX-backend implementation of :func:`numpy.copysign`.
+
+  Args:
+    x1: Input array
+    x2: The array whose elements will be used to determine the sign, must be
+      broadcast-compatible with ``x1``
+
+  Returns:
+    An array object containing the potentially changed elements of ``x1``, always promotes
+    to inexact dtype, and has a shape of ``jnp.broadcast_shapes(x1.shape, x2.shape)``
+
+  Examples:
+    >>> x1 = jnp.array([5, 2, 0])
+    >>> x2 = -1
+    >>> jnp.copysign(x1, x2)
+    Array([-5., -2., -0.], dtype=float32)
+
+    >>> x1 = jnp.array([6, 8, 0])
+    >>> x2 = 2
+    >>> jnp.copysign(x1, x2)
+    Array([6., 8., 0.], dtype=float32)
+
+    >>> x1 = jnp.array([2, -3])
+    >>> x2 = jnp.array([[1],[-4], [5]])
+    >>> jnp.copysign(x1, x2)
+    Array([[ 2.,  3.],
+           [-2., -3.],
+           [ 2.,  3.]], dtype=float32)
+  """
   x1, x2 = promote_args_inexact("copysign", x1, x2)
   if dtypes.issubdtype(dtypes.dtype(x1), np.complexfloating):
     raise TypeError("copysign does not support complex-valued inputs")
@@ -522,9 +585,43 @@ def true_divide(x1: ArrayLike, x2: ArrayLike, /) -> Array:
 divide = true_divide
 
 
-@implements(np.floor_divide, module='numpy')
 @jit
 def floor_divide(x1: ArrayLike, x2: ArrayLike, /) -> Array:
+  """Calculates the floor division of x1 by x2 element-wise
+
+  LAX-backend implementation of :func:`numpy.floor_divide`.
+
+  Args:
+    x1: Input array, the dividend
+    x2: Input array, the divisor
+
+  Returns:
+    An array-like object containing each of the quotients rounded down
+    to the nearest integer towards negative infinity. This is equivalent
+    to ``x1 // x2`` in Python.
+
+  Examples:
+    >>> x1 = jnp.array([10, 20, 30])
+    >>> x2 = jnp.array([3, 4, 7])
+    >>> jnp.floor_divide(x1, x2)
+    Array([3, 5, 4], dtype=int32)
+
+    >>> x1 = jnp.array([-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5])
+    >>> x2 = 3
+    >>> jnp.floor_divide(x1, x2)
+    Array([-2, -2, -1, -1, -1,  0,  0,  0,  1,  1,  1], dtype=int32)
+
+    >>> x1 = jnp.array([6, 6, 6], dtype=jnp.int32)
+    >>> x2 = jnp.array([2.0, 2.5, 3.0], dtype=jnp.float32)
+    >>> jnp.floor_divide(x1, x2)
+    Array([3., 2., 2.], dtype=float32)
+
+  Note:
+    ``x1 // x2`` is equivalent to ``jnp.floor_divide(x1, x2)`` for arrays ``x1`` and ``x2``
+
+  See Also:
+    :func:`jnp.divide` and :func:`jnp.true_divide` for floating point division
+  """
   x1, x2 = promote_args_numeric("floor_divide", x1, x2)
   dtype = dtypes.dtype(x1)
   if dtypes.issubdtype(dtype, np.unsignedinteger):
@@ -540,9 +637,41 @@ def floor_divide(x1: ArrayLike, x2: ArrayLike, /) -> Array:
     return _float_divmod(x1, x2)[0]
 
 
-@implements(np.divmod, module='numpy')
 @jit
 def divmod(x1: ArrayLike, x2: ArrayLike, /) -> tuple[Array, Array]:
+  """Calculates the integer quotient and remainder of x1 by x2 element-wise
+
+  LAX-backend implementation of :func:`numpy.divmod`.
+
+  Args:
+    x1: Input array, the dividend
+    x2: Input array, the divisor
+
+  Returns:
+    A tuple of arrays ``(x1 // x2, x1 % x2)``.
+
+  Examples:
+    >>> x1 = jnp.array([10, 20, 30])
+    >>> x2 = jnp.array([3, 4, 7])
+    >>> jnp.divmod(x1, x2)
+    (Array([3, 5, 4], dtype=int32), Array([1, 0, 2], dtype=int32))
+
+    >>> x1 = jnp.array([-5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5])
+    >>> x2 = 3
+    >>> jnp.divmod(x1, x2)
+    (Array([-2, -2, -1, -1, -1,  0,  0,  0,  1,  1,  1], dtype=int32),
+     Array([1, 2, 0, 1, 2, 0, 1, 2, 0, 1, 2], dtype=int32))
+
+    >>> x1 = jnp.array([6, 6, 6], dtype=jnp.int32)
+    >>> x2 = jnp.array([1.9, 2.5, 3.1], dtype=jnp.float32)
+    >>> jnp.divmod(x1, x2)
+    (Array([3., 2., 1.], dtype=float32),
+     Array([0.30000007, 1.        , 2.9       ], dtype=float32))
+
+  See Also:
+    - :func:`jax.numpy.floor_divide`: floor division function
+    - :func:`jax.numpy.remainder`: remainder function
+  """
   x1, x2 = promote_args_numeric("divmod", x1, x2)
   if dtypes.issubdtype(dtypes.dtype(x1), np.integer):
     return floor_divide(x1, x2), remainder(x1, x2)
@@ -698,16 +827,47 @@ def _logaddexp2_jvp(primals, tangents):
   return primal_out, tangent_out
 
 
-@implements(np.log2, module='numpy')
 @partial(jit, inline=True)
 def log2(x: ArrayLike, /) -> Array:
+  """Calculates the base-2 logarithm of x element-wise
+
+  LAX-backend implementation of :func:`numpy.log2`.
+
+  Args:
+    x: Input array
+
+  Returns:
+    An array containing the base-2 logarithm of each element in ``x``, promotes
+    to inexact dtype.
+
+  Examples:
+    >>> x1 = jnp.array([0.25, 0.5, 1, 2, 4, 8])
+    >>> jnp.log2(x1)
+    Array([-2., -1.,  0.,  1.,  2.,  3.], dtype=float32)
+  """
   x, = promote_args_inexact("log2", x)
   return lax.div(lax.log(x), lax.log(_constant_like(x, 2)))
 
 
-@implements(np.log10, module='numpy')
 @partial(jit, inline=True)
 def log10(x: ArrayLike, /) -> Array:
+  """Calculates the base-10 logarithm of x element-wise
+
+  LAX-backend implementation of :func:`numpy.log10`.
+
+  Args:
+    x: Input array
+
+  Returns:
+    An array containing the base-10 logarithm of each element in ``x``, promotes
+    to inexact dtype.
+
+  Examples:
+    >>> x1 = jnp.array([0.01, 0.1, 1, 10, 100, 1000])
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jnp.log10(x1))
+    [-2. -1.  0.  1.  2.  3.]
+  """
   x, = promote_args_inexact("log10", x)
   return lax.div(lax.log(x), lax.log(_constant_like(x, 10)))
 

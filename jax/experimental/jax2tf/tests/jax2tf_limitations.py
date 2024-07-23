@@ -15,9 +15,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import itertools
-from typing import Any, Callable, Optional, Union
+from typing import Any
 
 import jax
 from jax import lax
@@ -198,6 +198,12 @@ class Jax2TfLimitation(test_harnesses.Limitation):
             devices=("cpu", "gpu"),
             tol=1e-13,
             modes=("eager", "graph", "compiled")),
+        custom_numeric(
+            dtypes=[np.complex64],
+            devices=("tpu",),
+            tol=1e-3,
+            modes=("eager", "graph", "compiled"),
+            native_serialization=Jax2TfLimitation.FOR_NON_NATIVE),
     ]
 
   @classmethod
@@ -206,7 +212,17 @@ class Jax2TfLimitation(test_harnesses.Limitation):
         custom_numeric(dtypes=[np.complex64], devices=("cpu", "gpu", "tpu"),
                        tol=1e-3),
         custom_numeric(dtypes=[np.complex128], devices=("cpu", "gpu"), tol=1e-12),
-        cls.helper_get_trig_custom_limitation(np.cosh)
+        Jax2TfLimitation(
+            "TF2XLA impl for Acosh doesn't properly handle large complex types,"
+            " native serialization more closely matches numpy numerics.",
+            dtypes=[np.complex64, np.complex128],
+            devices=("cpu", "gpu", "tpu"),
+            modes="compiled",
+            expect_tf_error=False,
+            skip_comparison=True,
+            native_serialization=Jax2TfLimitation.FOR_NON_NATIVE,
+        ),
+        cls.helper_get_trig_custom_limitation(np.cosh),
     ]
 
   @classmethod
@@ -281,6 +297,11 @@ class Jax2TfLimitation(test_harnesses.Limitation):
         custom_numeric(dtypes=[np.complex64], devices=("cpu", "gpu", "tpu"),
                        tol=1e-3),
         custom_numeric(dtypes=[np.complex128], devices=("cpu", "gpu"), tol=1e-12),
+        custom_numeric(dtypes=[np.complex64, np.complex128],
+                       devices=("cpu", "gpu", "tpu"),
+                       modes=("compiled",),
+                       tol=1e-3,
+                       native_serialization=Jax2TfLimitation.FOR_NON_NATIVE),
         custom_numeric(dtypes=[np.complex128], devices=("cpu",),
                        modes=("eager", "compiled", "graph"),
                        tol=1e-13,
@@ -351,6 +372,13 @@ class Jax2TfLimitation(test_harnesses.Limitation):
             tol=5e-2,
             devices=("cpu", "gpu"),
             modes=("eager", "graph", "compiled")),
+        custom_numeric(
+            dtypes=[dtypes.bfloat16],
+            tol=5e-5,
+            # Error for GL
+            devices=("tpu",),
+            modes=("eager", "graph", "compiled"),
+            native_serialization=Jax2TfLimitation.FOR_NATIVE),
         custom_numeric(
             custom_assert=custom_assert,
             description=(

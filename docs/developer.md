@@ -191,11 +191,13 @@ python build/build.py --enable_rocm --rocm_path=/opt/rocm-5.7.0 \
 
 To make sure that JAX's build is reproducible, behaves uniformly across
 supported platforms (Linux, Windows, MacOS) and is properly isolated from
-specifics of a local system, we rely on hermetic Python (see
-[rules_python](https://github.com/bazelbuild/rules_python)) for all build
-and test commands executed via Bazel. This means that your system Python
-installation will be ignored during the build and Python interpreter itself
-as well as all the Python dependencies will be managed by bazel directly.
+specifics of a local system, we rely on hermetic Python (provided by
+[rules_python](https://github.com/bazelbuild/rules_python), see
+[Toolchain Registration](https://rules-python.readthedocs.io/en/latest/toolchains.html#workspace-toolchain-registration)
+for details) for all build and test commands executed via Bazel. This means that
+your system Python installation will be ignored during the build and Python
+interpreter itself as well as all the Python dependencies will be managed by
+bazel directly.
 
 ### Specifying Python version
 
@@ -267,10 +269,23 @@ bazel run //build:requirements.update --repo_env=HERMETIC_PYTHON_VERSION=3.12 --
 
 ### Specifying dependencies on local wheels
 
-If you need to depend on a local .whl file, for example on your newly built
-jaxlib wheel, you may add a path to the wheel in `build/requirements.in` and
-re-run the requirements updater command for a selected version of Python. For
-example:
+By default the build scans `dist` directory in the repository root for any local
+`.whl` files to be included in the list of dependencies. If the wheel is Python
+version specific, only the wheels that match the selected Python version will
+be included.
+
+The overall local wheel search and selection logic is controlled by the
+arguments to `python_init_repositories()` macro (called directly from the
+`WORKSPACE` file). You may use `local_wheel_dist_folder` to change the location
+of the folder with local wheels. Use `local_wheel_inclusion_list` and
+`local_wheel_exclusion_list` arguments to specify which wheels should be
+included and/or excluded from the search (it supports basic wildcard matching).
+
+If necessary, you can also depend on a local `.whl` file manually, bypassing the
+automatic local wheel search mechanism. For example to depend on your newly
+built jaxlib wheel, you may add a path to the wheel in `build/requirements.in`
+and re-run the requirements updater command for a selected version of Python.
+For example:
 
 ```
 echo -e "\n$(realpath jaxlib-0.4.27.dev20240416-cp312-cp312-manylinux2014_x86_64.whl)" >> build/requirements.in
@@ -532,6 +547,22 @@ python tests/lax_numpy_test.py --test_targets="testPad"
 
 The Colab notebooks are tested for errors as part of the documentation build.
 
+### Hypothesis tests
+
+Some of the tests use [hypothesis](https://hypothesis.readthedocs.io/en/latest).
+Normally, hypothesis will test using multiple example inputs, and on a test failure
+it will try to find a smaller example that still results in failure:
+Look through the test failure for a line like the one below, and add the decorator
+mentioned in the message:
+```
+You can reproduce this example by temporarily adding @reproduce_failure('6.97.4', b'AXicY2DAAAAAEwAB') as a decorator on your test case
+```
+
+For interactive development, you can set the environment variable
+`JAX_HYPOTHESIS_PROFILE=interactive` (or the equivalent flag `--jax_hypothesis_profile=interactive`)
+in order to set the number of examples to 1, and skip the example
+minimization phase.
+
 ### Doctests
 
 JAX uses pytest in doctest mode to test the code examples within the documentation.
@@ -554,17 +585,17 @@ doctest command is run on the full package; you can see the details in
 
 ## Type checking
 
-We use `mypy` to check the type hints. To check types locally the same way
-as the CI checks them:
+We use `mypy` to check the type hints. To run `mypy` with the same configuration as the
+github CI checks, you can use the [pre-commit](https://pre-commit.com/) framework:
 
 ```
-pip install mypy
-mypy --config=pyproject.toml --show-error-codes jax
+pip install pre-commit
+pre-commit run mypy --all-files
 ```
 
-Alternatively, you can use the [pre-commit](https://pre-commit.com/) framework to run this
-on all staged files in your git repository, automatically using the same mypy version as
-in the GitHub CI:
+Because `mypy` can be somewhat slow when checking all files, it may be convenient to
+only check files you have modified. To do this, first stage the changes (i.e. `git add`
+the changed files) and then run this before committing the changes:
 
 ```
 pre-commit run mypy
@@ -573,19 +604,12 @@ pre-commit run mypy
 ## Linting
 
 JAX uses the [ruff](https://docs.astral.sh/ruff/) linter to ensure code
-quality. You can check your local changes by running:
+quality. To run `ruff` with the same configuration as the
+github CI checks, you can use the [pre-commit](https://pre-commit.com/) framework:
 
 ```
-pip install ruff
-ruff jax
-```
-
-Alternatively, you can use the [pre-commit](https://pre-commit.com/) framework to run this
-on all staged files in your git repository, automatically using the same ruff version as
-the GitHub tests:
-
-```
-pre-commit run ruff
+pip install pre-commit
+pre-commit run ruff --all-files
 ```
 
 ## Update documentation
@@ -655,8 +679,8 @@ To check that the markdown and ipynb files are properly synced, you may use the
 by the github CI:
 
 ```
-git add docs -u  # pre-commit runs on files in git staging.
-pre-commit run jupytext
+pip install pre-commit
+pre-commit run jupytext --all-files
 ```
 
 #### Creating new notebooks

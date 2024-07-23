@@ -13,14 +13,14 @@
 # limitations under the License.
 from __future__ import annotations
 
-from collections.abc import Hashable, Sequence
+from collections.abc import Callable, Hashable, Sequence
 import enum
 from functools import partial
 import inspect
 import itertools as it
 from math import prod
 import operator as op
-from typing import Any, Callable, TypeVar, Union
+from typing import Any, TypeVar, Union
 
 import numpy as np
 
@@ -52,7 +52,7 @@ from jax._src.lax import (lax, parallel as lax_parallel, slicing,
 from jax._src.util import (HashableFunction, HashablePartial, unzip2, unzip3,
                            as_hashable_function, memoize, partition_list,
                            merge_lists, split_list, subs_list2)
-from jax.api_util import flatten_fun_nokwargs, shaped_abstractify
+from jax.api_util import flatten_fun_nokwargs, shaped_abstractify, argnums_partial
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
@@ -103,7 +103,8 @@ def shard_map(f: Callable, mesh: Mesh, in_specs: Specs, out_specs: Specs,
       be sharded along the named axes of ``mesh``. In each ``PartitionSpec``,
       mentioning a ``mesh`` axis name at a position expresses sharding the
       corresponding argument array axis along that positional axis; not
-      mentioning an axis name expresses replication.
+      mentioning an axis name expresses replication. If an argument, or argument
+      subtree, has a corresponding spec of None, that argument is not sharded.
     out_specs: a pytree with :class:`~jax.sharding.PartitionSpec` instances as leaves,
       with a tree structure that is a tree prefix of the output of ``f``. Each
       ``PartitionSpec`` represents how the corresponding output shards should be
@@ -153,13 +154,17 @@ def _shard_map(f: Callable, mesh: Mesh, in_specs: Specs,
   def wrapped(*args):
     fun = lu.wrap_init(f)
     args_flat, in_tree = tree_flatten(args)
-    try: in_specs_flat = broadcast_prefix(in_specs, args)
+    fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
+    try: in_specs_flat = broadcast_prefix(in_specs, args,
+                                          is_leaf=lambda x: x is None)
     except ValueError:
       e, *_ = prefix_errors(in_specs, args)
       raise e('shard_map in_specs') from None
-    _check_specs_vs_args(f, mesh, in_tree, in_specs, in_specs_flat, args_flat)
+    dyn_argnums, in_specs_flat = unzip2((i, s) for i, s in enumerate(in_specs_flat)
+                                        if s is not None)
+    fun, args_flat = argnums_partial(fun, dyn_argnums, args_flat)
+    _check_specs_vs_args(f, mesh, in_tree, in_specs, dyn_argnums, in_specs_flat, args_flat)
     in_names_flat = tuple(map(_canonicalize_spec, in_specs_flat))
-    fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
 
     @memoize
     def out_names_thunk():
@@ -258,11 +263,13 @@ no_fail = NoFail()
 
 def _check_specs_vs_args(
     f: Callable, mesh: Mesh, in_tree: PyTreeDef, in_specs: Specs,
-    in_specs_flat: list[P], xs: list) -> None:
+    dyn_argnums: Sequence[int], in_specs_flat: Sequence[P],
+    xs: Sequence) -> None:
   in_avals = map(shaped_abstractify, xs)
   fail = [a if not len(p) <= a.ndim else no_fail
           for p, a in zip(in_specs_flat, in_avals)]
   if any(f is not no_fail for f in fail):
+    fail = _expand_fail(in_tree, dyn_argnums, fail)
     msg = _spec_rank_error(SpecErrorType.input, f, in_tree, in_specs, fail)
     raise ValueError(msg)
   in_names_flat = tuple(map(_canonicalize_spec, in_specs_flat))
@@ -270,8 +277,17 @@ def _check_specs_vs_args(
                    for d, ns in names.items()) else no_fail
           for a, names in zip(in_avals, in_names_flat)]
   if any(f is not no_fail for f in fail):
+    fail = _expand_fail(in_tree, dyn_argnums, fail)
     msg = _spec_divisibility_error(f, mesh, in_tree, in_specs, fail)
     raise ValueError(msg)
+
+def _expand_fail(in_tree: PyTreeDef, dyn_argnums: Sequence[int],
+                 fail: Sequence[core.ShapedArray | NoFail]
+                 ) -> list[core.ShapedArray | NoFail]:
+  fail_: list[core.ShapedArray | NoFail] = [no_fail] * in_tree.num_leaves
+  for i, f in zip(dyn_argnums, fail):
+    fail_[i] = f
+  return fail_
 
 def _spec_rank_error(
     error_type: SpecErrorType, f: Callable, tree: PyTreeDef, specs: Specs,
@@ -418,11 +434,11 @@ def _iter_paths(tree: PyTreeDef, specs: Specs, fails: list[T | NoFail]
   failures = tree_unflatten(tree, fails)
   failures_aug = generate_key_paths(failures)
   specs_ = tree_unflatten(tree_structure(specs), generate_key_paths(specs))
-  leaf = lambda x: type(x) is tuple and len(x) == 2 and type(x[1]) is P
+  leaf = lambda x: x is None or type(x) is tuple and len(x) == 2 and type(x[1]) is P
   specs_aug = broadcast_prefix(specs_, failures, is_leaf=leaf)
-  return [((spec_key, spec), (fail_key, fail_data))
-          for (spec_key, spec), (fail_key, fail_data)
-          in zip(specs_aug, failures_aug) if fail_data is not no_fail]
+  return [(s, (fail_key, fail_data)) for s, (fail_key, fail_data)
+          in zip(specs_aug, failures_aug)
+          if s is not None and fail_data is not no_fail]
 
 # Primitive
 
@@ -502,9 +518,7 @@ def _shard_map_staging(
   in_avals_ = map(partial(_shard_aval, mesh), in_names, in_avals)
   main = trace.main
   with core.new_sublevel(), core.extend_axis_env_nd(mesh.shape.items()):
-    jaxpr, genavals, consts, () = pe.trace_to_subjaxpr_dynamic(
-        f, main, in_avals_
-    )
+    jaxpr, genavals, consts, () = pe.trace_to_subjaxpr_dynamic(f, main, in_avals_)
   out_avals_ = map(_check_shapedarray, genavals)
   _check_names(out_names_thunk(), out_avals_)
   in_rep = map(partial(_in_names_to_rep, mesh), in_names)
@@ -536,21 +550,32 @@ def _check_shapedarray(aval: core.AbstractValue) -> core.ShapedArray:
 
 def _shard_aval(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
                 ) -> core.AbstractValue:
-  if isinstance(aval, core.ShapedArray):
-    return aval.update(tuple(sz // prod(mesh.shape[n] for n in names.get(i, ()))
-                             for i, sz in enumerate(aval.shape)))
-  else:
-    raise NotImplementedError  # TODO(mattjj): add table with handlers
+  if type(aval) in core.shard_aval_handlers:
+    return core.shard_aval_handlers[type(aval)](mesh, names, aval)
+  raise NotImplementedError(f"Unsupported aval type: {type(aval)}")
 
 def _unshard_aval(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
                  ) -> core.AbstractValue:
-  if isinstance(aval, core.ShapedArray):
-    return aval.update(tuple(sz * prod(mesh.shape[n] for n in names.get(i, ()))
-                             for i, sz in enumerate(aval.shape)),
-                       named_shape={k: v for k, v in aval.named_shape.items()
-                                    if k not in mesh.shape})
+  if type(aval) in core.unshard_aval_handlers:
+    return core.unshard_aval_handlers[type(aval)](mesh, names, aval)
   else:
-    raise NotImplementedError  # TODO(mattjj): add table with handlers
+    raise NotImplementedError(f"Unsupported aval type: {type(aval)}")
+
+def _shard_shaped_array(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
+                       ) -> core.AbstractValue:
+  assert isinstance(aval, core.ShapedArray)
+  return aval.update(tuple(sz // prod(mesh.shape[n] for n in names.get(i, ()))
+                            for i, sz in enumerate(aval.shape)))
+core.shard_aval_handlers[core.ShapedArray] = _shard_shaped_array
+
+def _unshard_shaped_array(mesh: Mesh, names: AxisNames,
+                          aval: core.AbstractValue,) -> core.AbstractValue:
+  assert isinstance(aval, core.ShapedArray)
+  return aval.update(tuple(sz * prod(mesh.shape[n] for n in names.get(i, ()))
+                            for i, sz in enumerate(aval.shape)),
+                      named_shape={k: v for k, v in aval.named_shape.items()
+                                  if k not in mesh.shape})
+core.unshard_aval_handlers[core.ShapedArray] = _unshard_shaped_array
 
 # Type-checking
 
@@ -663,8 +688,7 @@ def _xla_shard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
   return [mlir.wrap_with_full_to_shard_op(ctx, sx, aval_out, manual_proto, unspecified)]
 
 def _xla_unshard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
-                 aval_in, aval_out, xs):
-  x, = xs
+                 aval_in, aval_out, x):
   axes = {name: i for i, ns in names.items() for name in ns}
   ns = _make_scoped_manual_sharding(ctx, mesh, axes)
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
@@ -928,6 +952,7 @@ ad.deflinear2(psum2_p, _psum2_transpose_rule)
 # pbroadcast_p is exactly the transpose of psum2_p
 def pbroadcast(x, axis_name):
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
+  if not axis_name: return x
   xs, treedef = tree_flatten(x)
   ys = pbroadcast_p.bind(*xs, axes=axes, axis_index_groups=None)
   return tree_unflatten(treedef, ys)
@@ -1045,13 +1070,14 @@ def _psum_check(_, *in_rep, axes, axis_index_groups):
   assert False  # should be rewritten away
 
 @register_rewrite(lax_parallel.psum_p)
-def _psum_rewrite(_, in_rep, *args, axes, axis_index_groups):
+def _psum_rewrite(mesh, in_rep, *args, axes, axis_index_groups):
   # Replace the psum with psum2, insert pbroadcasts on input, replicated output.
   if axis_index_groups is not None: raise NotImplementedError
   axes = (axes,) if not isinstance(axes, tuple) else axes
-  out_rep = [r | set(axes) for r in in_rep]  # TODO determinism (and elsewhere)
-  args_ = [pbroadcast(x, tuple(n for n in src if n not in dst))
-           if src - dst else x for x, src, dst in zip(args, in_rep, out_rep)]
+  axes_ = set(axes)
+  out_rep = [r | axes_ for r in in_rep]  # TODO determinism (and elsewhere)
+  args_ = [pbroadcast(x, tuple(n for n in mesh.axis_names if n in axes_ & src))
+           for x, src in zip(args, in_rep)]
   out_val = psum2_p.bind(*args_, axes=axes, axis_index_groups=axis_index_groups)
   return out_val, out_rep
 
@@ -1243,6 +1269,20 @@ def _custom_vjp_call_jaxpr_rewrite(
 @register_check(custom_derivatives.custom_vjp_call_jaxpr_p)
 def _custom_vjp_call_jaxpr_check(mesh, *in_rep, fun_jaxpr, **_):
   return _check_rep(mesh, fun_jaxpr.jaxpr, in_rep)
+
+
+# TODO(mattjj): make standard_check handle multiple outputs, share code
+@register_check(control_flow.solves.linear_solve_p)
+def _linear_solve_check(mesh, *in_rep, const_lengths, jaxprs):
+  in_rep_ = [r for r in in_rep if r is not None]
+  assert in_rep
+  if not in_rep_[:-1] == in_rep_[1:]:
+    msg = ("shard_map check_rep rewrite failed. Please open an issue at "
+           "https://github.com/google/jax/issues and as a workaround pass the "
+           "check_rep=False argument to shard_map")
+    raise Exception(msg)
+  return [in_rep_[0]] * len(jaxprs.solve.out_avals)
+register_standard_rewrite(control_flow.solves.linear_solve_p)
 
 
 del _check_rules[lax.tie_p]
@@ -1703,15 +1743,13 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
   def wrapped(*args, **kwargs):
     (jitted_f, flat_global_args, out_tree, mesh,
      out_specs) = infer_params(*args, **kwargs)
-    with jax.spmd_mode('allow_all'):
-      outs = jitted_f(*flat_global_args)
-      outs = global_array_to_host_local_array(outs, mesh, out_specs())
+    outs = jitted_f(*flat_global_args)
+    outs = global_array_to_host_local_array(outs, mesh, out_specs())
     return tree_unflatten(out_tree(), outs)
 
   def lower(*args, **kwargs):
     jitted_f, _, _, _, _ = infer_params(*args, **kwargs)
-    with jax.spmd_mode('allow_all'):
-      return jitted_f.lower(*args, **kwargs)
+    return jitted_f.lower(*args, **kwargs)
   wrapped.lower = lower
 
   return wrapped

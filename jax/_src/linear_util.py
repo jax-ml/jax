@@ -63,8 +63,9 @@ data must be immutable, because it will be stored in function memoization tables
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from functools import partial
-from typing import Any, Callable, NamedTuple
+from typing import Any, NamedTuple
 import weakref
 
 from jax._src import config
@@ -308,7 +309,7 @@ class TracingDebugInfo(NamedTuple):
   # formed just before staging to a jaxpr and read in trace-time error messages.
   # TODO(mattjj): delete partial_eval.DebugInfo, replace all uses with this cls
   traced_for: str             # e.g. 'jit', 'scan', etc
-  func_src_info: str          # e.g. f'{fun.__name__} at {filename}:{lineno}'
+  func_src_info: str | None   # e.g. f'{fun.__name__} at {filename}:{lineno}'
   arg_names: tuple[str, ...]  # e.g. ('args[0]', ... )
   result_paths: Callable[[], tuple[str, ...]] | None
 
@@ -350,7 +351,7 @@ def cache(call: Callable, *, explain: Callable | None = None):
     else:
       ans = call(fun, *args)
       if explain and config.explain_cache_misses.value:
-        explain(fun.f, cache is new_cache, cache, key, ans)
+        explain(fun.f, cache is new_cache, cache, key)
       cache[key] = (ans, fun.stores)
 
     return ans

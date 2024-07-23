@@ -785,7 +785,6 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     actual = jnp.mean(x)
     self.assertAllClose(expected, actual, atol=0)
 
-
   @jtu.sample_product(
     [dict(shape=shape, axis=axis)
       for shape in all_shapes
@@ -815,10 +814,14 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
         out = jnp.concat([jnp.zeros(zeros_shape, dtype=out.dtype), out], axis=axis)
       return out
 
-
     # We currently "cheat" to ensure we have JAX arrays, not NumPy arrays as
     # input because we rely on JAX-specific casting behavior
-    args_maker = lambda: [jnp.array(rng(shape, dtype))]
+    def args_maker():
+      x = jnp.array(rng(shape, dtype))
+      if out_dtype in unsigned_dtypes:
+        x = 10 * jnp.abs(x)
+      return [x]
+
     np_op = getattr(np, "cumulative_sum", np_mock_op)
     kwargs = dict(axis=axis, dtype=out_dtype, include_initial=include_initial)
 
@@ -826,7 +829,6 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     jnp_fun = lambda x: jnp.cumulative_sum(x, **kwargs)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
-
 
   @jtu.sample_product(
       shape=filter(lambda x: len(x) != 1, all_shapes), dtype=all_dtypes,

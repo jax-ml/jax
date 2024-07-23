@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import collections
 import collections.abc
+from collections.abc import Callable
 import concurrent.futures
 from contextlib import contextmanager
 import copy
@@ -33,7 +34,7 @@ import re
 import subprocess
 import sys
 import types
-from typing import Callable, NamedTuple
+from typing import NamedTuple
 import unittest
 import weakref
 
@@ -57,6 +58,7 @@ from jax._src import pjit as pjit_lib
 from jax._src.ad_checkpoint import saved_residuals
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
 from jax._src.lib import xla_extension_version
@@ -1931,6 +1933,45 @@ class APITest(jtu.JaxTestCase):
       x = api.device_put(val, device=cpu_device)
       self.assertEqual(x.devices(), {cpu_device})
 
+  def test_device_put_on_single_device_donated_buffer_fails(self):
+    @partial(jax.jit, donate_argnums=0)
+    def f(inp1):
+      return inp1 * 2
+
+    x = jnp.zeros((10,), jnp.float32)
+    f(x)
+
+    with self.assertRaises(RuntimeError):
+      result = jax.device_put(x, jax.devices()[0])
+      result.block_until_ready()
+
+    with self.assertRaises(RuntimeError):
+      result = jax.device_put(x, jax.devices()[-1])
+      result.block_until_ready()
+
+  def test_device_put_on_multi_device_donated_buffer_fails(self):
+    @partial(jax.jit, donate_argnums=0)
+    def f(inp1):
+      return inp1 * 2
+
+    mesh1 = jax.sharding.Mesh(jax.devices(), ("x",))
+    s1 = jax.NamedSharding(mesh1, P("x"))
+
+    mesh2 = jax.sharding.Mesh(tuple(reversed(jax.devices())), ("x",))
+    s2 = jax.NamedSharding(mesh2, P("x"))
+
+    x = jax.device_put(np.arange(len(jax.devices()), dtype=jnp.float32), s1)
+    f(x)
+
+    with self.assertRaises(RuntimeError):
+      result = jax.device_put(x, s1)
+      result.block_until_ready()
+
+    with self.assertRaises(RuntimeError):
+      result = jax.device_put(x, s2)
+      result.block_until_ready()
+
+
   @jax.default_matmul_precision("float32")
   def test_jacobian(self):
     R = self.rng().randn
@@ -3212,7 +3253,7 @@ class APITest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        "vmap has mapped output but out_axes is None"):
+        "at vmap out_axes"):
       # If the output is mapped (unnamed axis), then there must be some out_axes
       # specified.
       api.vmap(lambda x: x, out_axes=None)(jnp.array([1., 2.]))
@@ -4539,13 +4580,15 @@ class APITest(jtu.JaxTestCase):
     x = jnp.float32(1.)
     y = {'hi': jnp.arange(3., dtype='float32')}
 
+    expected_log_len = 1 if not is_persistent_cache_enabled() else 3
+
     # print on first miss, not on hit
     with config.explain_cache_misses(True):
       with self.assertLogs(level='WARNING') as cm:
         f(x, y)
         f(x, y)
-    self.assertLen(cm.output, 1)
-    msg, = cm.output
+    self.assertLen(cm.output, expected_log_len)
+    msg = cm.output[0]
     self.assertIn('TRACING CACHE MISS', msg)
     self.assertIn('never seen function', msg)
 
@@ -4554,8 +4597,8 @@ class APITest(jtu.JaxTestCase):
     with config.explain_cache_misses(True):
       with self.assertLogs(level='WARNING') as cm:
         f(x, y_)
-    self.assertLen(cm.output, 1)
-    msg, = cm.output
+    self.assertLen(cm.output, expected_log_len)
+    msg = cm.output[0]
     self.assertIn('never seen input type signature', msg)
     self.assertIn('closest seen input type signature has 1 mismatches', msg)
     self.assertIn('seen f32[3], but now given f32[4]', msg)
@@ -4565,8 +4608,8 @@ class APITest(jtu.JaxTestCase):
       with config.explain_cache_misses(True):
         with self.assertLogs(level='WARNING') as cm:
           f(1., y)
-      self.assertLen(cm.output, 1)
-      msg, = cm.output
+      self.assertLen(cm.output, expected_log_len)
+      msg = cm.output[0]
       self.assertIn('weak_type=True', msg)
       self.assertIn('https://jax.readthedocs.io/en/latest/type_promotion.html#weak-types', msg)
 
@@ -4574,8 +4617,8 @@ class APITest(jtu.JaxTestCase):
     with config.explain_cache_misses(True):
       with self.assertLogs(level='WARNING') as cm:
         f(1, y=y)
-    self.assertLen(cm.output, 1)
-    msg, = cm.output
+    self.assertLen(cm.output, expected_log_len)
+    msg = cm.output[0]
     self.assertIn('never seen passing 1 positional args and 1 keyword args', msg)
 
     # tracing config change
@@ -4583,8 +4626,9 @@ class APITest(jtu.JaxTestCase):
       with self.assertLogs(level='WARNING') as cm:
         with jax.numpy_rank_promotion('warn'):
           f(x, y)
-    self.assertLen(cm.output, 1)
-    msg, = cm.output
+    # depending on the backend, we may or may not get persistent cache warnings
+    self.assertTrue(1 <= len(cm.output) <= expected_log_len)
+    msg = cm.output[0]
     self.assertIn("tracing context doesn't match", msg)
 
   def test_cache_miss_explanations_new_function_in_loop(self):
@@ -4598,9 +4642,15 @@ class APITest(jtu.JaxTestCase):
       with self.assertLogs(level='WARNING') as cm:
         for _ in range(2):
           jax.jit(lambda x: 2 * x)(3)
-    self.assertLen(cm.output, 2)
-    _, msg = cm.output
-    self.assertIn('another function defined on the same line', msg)
+    if is_persistent_cache_enabled():
+      # number of warnings depends on the backend
+      self.assertTrue(4 <= len(cm.output) <= 6)
+      msg = cm.output[3]
+      self.assertIn('another function defined on the same line', msg)
+    else:
+      self.assertLen(cm.output, 2)
+      _, msg = cm.output
+      self.assertIn('another function defined on the same line', msg)
 
   def test_cache_miss_explanations_unpacks_transforms(self):
     # Tests that the explain_tracing_cache_miss() function does not throw an
@@ -4613,9 +4663,20 @@ class APITest(jtu.JaxTestCase):
       with self.assertLogs(level="WARNING") as cm:
         f(jax.random.key(seed=123))
 
-    self.assertLen(cm.output, 5)
-    for msg in cm.output:
-      self.assertIn("TRACING CACHE MISS", msg)
+    if is_persistent_cache_enabled():
+      # 5 warnings from tracing cache, 5-10 from persistent cache depending on
+      # the backend
+      self.assertTrue(10 <= len(cm.output) <= 15)
+      self.assertTrue(any("TRACING CACHE MISS" in msg for msg in cm.output))
+    else:
+      self.assertLen(cm.output, 5)
+      for msg in cm.output:
+        self.assertIn("TRACING CACHE MISS", msg)
+
+  def test_cache_miss_explanations_no_source_info(self):
+    # ``operator.add`` is a built-in function and does not have source info.
+    with config.explain_cache_misses(True):
+      jax.jit(operator.add)(42, 24)
 
   @parameterized.named_parameters([
       {"testcase_name": f"{dtype}", "dtype": dtype}
@@ -4764,6 +4825,27 @@ class APITest(jtu.JaxTestCase):
       return x * 2
 
     f.trace(jnp.arange(8)).lower(lowering_platforms=('tpu',))  # doesn't crash
+
+  def test_no_double_dots_in_error_message(self):
+    @jax.jit
+    def f(x):
+      return 1 if x > 0 else 0
+
+    with self.assertRaisesRegex(TracerBoolConversionError, r"with shape bool\[\]\.[^\.]"):
+      f(0)
+
+  def test_inlined_literals_with_error(self):
+    @jax.jit
+    def f():
+      @partial(jax.jit, inline=True)
+      def g():
+        return jnp.sin(1.)
+      if g() > 0:
+        return 1.
+      return 0.
+
+    with self.assertRaisesRegex(TracerBoolConversionError, "Attempted boolean"):
+      f()
 
 
 class RematTest(jtu.JaxTestCase):
@@ -6383,6 +6465,39 @@ class RematTest(jtu.JaxTestCase):
     self.assertFalse(any(' sin ' in line for line in l.output))
     self.assertTrue(any(' cos ' in line for line in l.output))
 
+  def test_excess_precision_hell(self):
+    finfo = jnp.finfo('bfloat16')
+    eps = finfo.eps
+
+    @jax.custom_vjp
+    def dot(x):
+      return jnp.dot(x, x)
+    def dot_fwd(x):
+      return dot(x), None
+    def dot_bwd(_, g):
+      return g,
+    dot.defvjp(dot_fwd, dot_bwd)
+
+    @jax.custom_vjp
+    def foo(x):
+      return jnp.float32(1.) * x.astype('float32')
+    def foo_fwd(x):
+      return foo(x), x
+    def foo_bwd(x, _):
+      return jnp.float32(1.) * x.astype('float32'),
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    @jax.jit
+    @partial(jax.remat, policy=lambda *_, **__: True)
+    def f(x):
+      x = dot(x)
+      return foo(x)
+
+    x = (jnp.bfloat16(1) + eps) * jnp.eye(2, dtype='bfloat16')
+    y, vjp = jax.vjp(f, x)
+    y_, = vjp(jnp.ones_like(y))
+    self.assertAllClose(y, y_, atol=0, rtol=0)
+
 
 @jtu.with_config(jax_pprint_use_color=False)
 class JaxprTest(jtu.JaxTestCase):
@@ -6426,7 +6541,6 @@ class JaxprTest(jtu.JaxTestCase):
             p:f32[] = add n l
           in (p,) }
       )
-      linear=(False, False, False, False)
     ] e a a c d
   in (f,) }"""
     jaxpr = api.make_jaxpr(f)(jnp.float32(3.))
@@ -10006,8 +10120,7 @@ class CustomTransposeTest(jtu.JaxTestCase):
       return x + fn(y, x)
 
     def cond_wrap(f):
-      return lambda i, x: lax.cond(i > 0, f, lambda x: x, x,
-                                   linear=(True,))
+      return lambda i, x: lax.cond(i > 0, f, lambda x: x, x)
 
     i = 7.
     x = jnp.ones(2) * 6.
@@ -10031,8 +10144,7 @@ class CustomTransposeTest(jtu.JaxTestCase):
       return x + fn(y, x)
 
     def cond_wrap(f):
-      return lambda i, x: lax.cond(i > 0, f, lambda x: x, x,
-                                   linear=(True,))
+      return lambda i, x: lax.cond(i > 0, f, lambda x: x, x)
 
     i = 7.
     x = jnp.ones(2) * 6.
@@ -10385,7 +10497,7 @@ class CustomVmapTest(jtu.JaxTestCase):
 
     # does err
     self.assertRaisesRegex(
-        ValueError, 'vmap has mapped output but out_axes is None',
+        ValueError, "at vmap out_axes",
         lambda: api.vmap(
             f_non_jvp, in_axes=(0, None), out_axes=(0, None))(xs, tx))
 
@@ -10424,7 +10536,7 @@ class CustomVmapTest(jtu.JaxTestCase):
 
     # does err
     self.assertRaisesRegex(
-        ValueError, 'vmap has mapped output but out_axes is None',
+        ValueError, "at vmap out_axes",
         lambda: api.vmap(
             f_jvp, in_axes=(None, 0), out_axes=(None, 0))(x, txs))
 
@@ -10533,6 +10645,58 @@ class CustomVmapTest(jtu.JaxTestCase):
 
     self.assertEqual(str(jaxpr), str(jaxpr_ref))
 
+  @parameterized.named_parameters(
+    ("1", 1),
+    ("8", 4),
+    ("12", 8),
+    ("16", 16),
+  )
+  def test_batch_map_basic(self, batch_size: int):
+    def f(x):
+      self.assertEqual(x.shape, ())
+      return x**2
+
+    x = np.arange(16)
+    y = jax.lax.map(f, x, batch_size=batch_size)
+
+    np.testing.assert_array_equal(y, x**2)
+
+  @parameterized.named_parameters(
+    ("1", 1),
+    ("8", 4),
+    ("12", 8),
+    ("16", 16),
+  )
+  def test_batch_map_pytrees(self, batch_size: int):
+    f = lambda x: {'b': x['a'] ** 2}
+    inputs = {'a': np.arange(16)}
+    expected = np.arange(16) ** 2
+
+    outputs = jax.lax.map(f, inputs, batch_size=batch_size)
+    self.assertAllClose(outputs['b'], expected)
+
+    outputs = jax.lax.map(
+      f, inputs, batch_size=batch_size
+    )
+    self.assertAllClose(outputs['b'], expected)
+
+
+  def test_batch_divides_axis(self):
+    def f(t):
+      x, a = t
+      self.assertEqual(x.shape, (4,))
+      return (x + a)**2
+
+    x = jax.random.randint(jax.random.key(0), (16, 4), -10, 10)
+    a = jax.random.randint(jax.random.key(1), (16, 4), -10, 10)
+
+    @jax.jit
+    def g(x, a):
+      return jax.lax.map(f, (x, a), batch_size=8)
+
+    y = g(x, a)
+
+    self.assertAllClose(y, (x + a)**2)
 
 class CustomApiTest(jtu.JaxTestCase):
   """Test interactions among the custom_{vmap,jvp,vjp,transpose,*} APIs"""

@@ -346,13 +346,28 @@ symbolic constraints:
     more complex expressions, e.g., from `a >= b + 8` we
     can infer that `a - b >= 8` but not that `a >= 9`.
     We may improve somewhat this area in the future.
-  * Equality constraints are treated as normalization rules.
-    E.g., `floordiv(a, b) = c` works by replacing all
-    occurences of the left-hand-side with the right-hand-side.
-    You can only have equality constraints where the left-hand-side
-    is a multiplication of factors, e.g, `a * b`, or `4 * a`, or
-    `floordiv(a, b)`. Thus, the left-hand-side cannot contain
-    addition or subtraction at the top-level.
+  * Equality constraints are treated as rewrite rules:
+    whenever the symbolic expression on the left of `==`
+    is encountered, it is rewritten to the expression on
+    the right.
+    E.g., `floordiv(a, b) == c` works by replacing all
+    occurences of `floordiv(a, b)` with `c`.
+    Equality constraints must not contain addition or
+    subtraction at the top-leve on the left-hand-side. Examples of
+    valid left-hand-sides are `a * b`, or `4 * a`, or
+    `floordiv(a + c, b)`.
+
+```python
+>>> # Introduce dimension variable with equality constraints.
+>>> a, b, c, d = export.symbolic_shape("a, b, c, d",
+...                                    constraints=("a * b == c + d",))
+>>> 2 * b * a
+2*d + 2*c
+
+>>> a * b * b
+b*d + b*c
+
+```
 
 The symbolic constraints can also help to work around the
 limitations in the JAX reasoning mechanisms.
@@ -361,7 +376,7 @@ the slice size `x.shape[0] % 3`, which is the symbolic expression
 `mod(b, 3)`, is less or equal to the axis size, which is `b`.
 This happens to be true for all strictly positive values of
 `b`, but it is not something JAX's symbolic comparison rules
-can prove. Hence the following code raises an error:
+can prove. Hence, the following code raises an error:
 
 ```python
 from jax import lax
@@ -640,3 +655,24 @@ Note that the following will succeed:
 
 ```
 
+(shape_poly_debugging)=
+## Debugging
+
+First, see the {ref}`export_debugging` documentation.
+Additionally, you can debug the shape refinement, which is
+invoked at compilation time for modules that have dimension variables or multi-platform
+support.
+
+If there is an error during shape refinement, you can set the `JAX_DUMP_IR_TO`
+environment variable to see a dump of the HLO module before
+shape refinement (named `..._before_refine_polymorphic_shapes.mlir`).
+This module should already have static input shapes.
+
+To enable the logging of all stages of shape refinement you can set the
+environment variable `TF_CPP_VMODULE=refine_polymorphic_shapes=3` in OSS
+(inside Google, you pass `--vmodule=refine_polymorphic_shapes=3`):
+
+```shell
+# Log from python
+JAX_DUMP_IR_TO=/tmp/export.dumps/ TF_CPP_VMODULE=refine_polymorphic_shapes=3 python tests/shape_poly_test.py ShapePolyTest.test_simple_unary -v=3
+```

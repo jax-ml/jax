@@ -14,12 +14,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import enum
 import operator
 from functools import partial
 import math
-from typing import Callable, NamedTuple
+from typing import NamedTuple
 import weakref
 
 import numpy as np
@@ -1820,23 +1820,14 @@ def _gather_lower(ctx, operand, indices, *,
 
   assert mode in (GatherScatterMode.PROMISE_IN_BOUNDS,
                   GatherScatterMode.CLIP), mode
-  try:
-    dnums = hlo.GatherDimensionNumbers.get(
-        collapsed_slice_dims=list(dimension_numbers.collapsed_slice_dims),
-        operand_batching_dims=[],
-        start_indices_batching_dims=[],
-        index_vector_dim=len(ctx.avals_in[1].shape) - 1,
-        offset_dims=list(dimension_numbers.offset_dims),
-        start_index_map=list(dimension_numbers.start_index_map),
-    )
-  # TODO: b/342182301 - Remove this branch once only the new API is supported
-  except:
-    dnums = hlo.GatherDimensionNumbers.get(
-        collapsed_slice_dims=list(dimension_numbers.collapsed_slice_dims),
-        index_vector_dim=len(ctx.avals_in[1].shape) - 1,
-        offset_dims=list(dimension_numbers.offset_dims),
-        start_index_map=list(dimension_numbers.start_index_map),
-    )
+  dnums = hlo.GatherDimensionNumbers.get(
+      collapsed_slice_dims=list(dimension_numbers.collapsed_slice_dims),
+      operand_batching_dims=[],
+      start_indices_batching_dims=[],
+      index_vector_dim=len(ctx.avals_in[1].shape) - 1,
+      offset_dims=list(dimension_numbers.offset_dims),
+      start_index_map=list(dimension_numbers.start_index_map),
+  )
   if not core.is_constant_shape(slice_sizes):
     slice_sizes = mlir.eval_dynamic_shape_as_tensor(ctx, slice_sizes)
     # TODO(burmako): Fix overly conservative type inference of DynamicGatherOp.
@@ -2482,32 +2473,23 @@ def _scatter_lower(ctx, operand, indices, updates, *,
 
   if mode == GatherScatterMode.CLIP:
     clip_fn = mlir.lower_fun(_clamp_scatter_indices, multiple_results=False)
-    (indices,), = clip_fn(ctx.replace(avals_out=None), operand, indices,
+    (indices,) = clip_fn(ctx.replace(avals_out=None), operand, indices,
                           updates, dnums=dimension_numbers)
 
   dnums = dimension_numbers
-  try:
-    scatter_dnums = hlo.ScatterDimensionNumbers.get(
-        update_window_dims=list(dnums.update_window_dims),
-        inserted_window_dims=list(dnums.inserted_window_dims),
-        input_batching_dims=[],
-        scatter_indices_batching_dims=[],
-        scattered_dims_to_operand_dims=list(dnums.scatter_dims_to_operand_dims),
-        index_vector_dim=len(ctx.avals_in[1].shape) - 1,
-    )
-  # TODO: b/342182301 - Remove this branch once only the new API is supported
-  except:
-    scatter_dnums = hlo.ScatterDimensionNumbers.get(
-        update_window_dims=list(dnums.update_window_dims),
-        inserted_window_dims=list(dnums.inserted_window_dims),
-        scattered_dims_to_operand_dims=list(dnums.scatter_dims_to_operand_dims),
-        index_vector_dim=len(ctx.avals_in[1].shape) - 1,
-    )
-  result = mlir.aval_to_ir_types(aval_out)
+  scatter_dnums = hlo.ScatterDimensionNumbers.get(
+      update_window_dims=list(dnums.update_window_dims),
+      inserted_window_dims=list(dnums.inserted_window_dims),
+      input_batching_dims=[],
+      scatter_indices_batching_dims=[],
+      scattered_dims_to_operand_dims=list(dnums.scatter_dims_to_operand_dims),
+      index_vector_dim=len(ctx.avals_in[1].shape) - 1,
+  )
+  result = mlir.aval_to_ir_type(aval_out)
   operand = [operand]
   updates = [updates]
   op = hlo.ScatterOp(
-      result,
+      (result,),
       operand,
       indices,
       updates,
@@ -2522,9 +2504,9 @@ def _scatter_lower(ctx, operand, indices, updates, *,
       raise NotImplementedError('Cannot lower effectful `scatter`.')
     out_nodes, _ = mlir.jaxpr_subcomp(
         ctx.module_context, update_jaxpr, name_stack, mlir.TokenSet(),
-        update_consts, (update.arguments[0],), (update.arguments[1],),
+        update_consts, update.arguments[0], update.arguments[1],
         dim_var_values=ctx.dim_var_values)
-    hlo.return_(util.flatten(out_nodes))
+    hlo.return_(mlir.flatten_ir_values(out_nodes))
   return op.results
 
 mlir.register_lowering(scatter_p, _scatter_lower)
@@ -2550,30 +2532,21 @@ def _scatter_add_lower_gpu(ctx, operand, indices, updates,
 
   if mode == GatherScatterMode.CLIP:
     clip_fn = mlir.lower_fun(_clamp_scatter_indices, multiple_results=False)
-    (indices,), = clip_fn(ctx.replace(avals_out=None), operand, indices, updates,
-                          dnums=dimension_numbers)
+    indices, = clip_fn(ctx.replace(avals_out=None), operand, indices, updates,
+                       dnums=dimension_numbers)
 
   aval_out, = ctx.avals_out
   dnums = dimension_numbers
-  try:
-    scatter_dnums = hlo.ScatterDimensionNumbers.get(
-        update_window_dims=list(dnums.update_window_dims),
-        inserted_window_dims=list(dnums.inserted_window_dims),
-        input_batching_dims=[],
-        scatter_indices_batching_dims=[],
-        scattered_dims_to_operand_dims=list(dnums.scatter_dims_to_operand_dims),
-        index_vector_dim=len(ctx.avals_in[1].shape) - 1,
-    )
-  # TODO: b/342182301 - Remove this branch once only the new API is supported
-  except:
-    scatter_dnums = hlo.ScatterDimensionNumbers.get(
-        update_window_dims=list(dnums.update_window_dims),
-        inserted_window_dims=list(dnums.inserted_window_dims),
-        scattered_dims_to_operand_dims=list(dnums.scatter_dims_to_operand_dims),
-        index_vector_dim=len(ctx.avals_in[1].shape) - 1,
-    )
+  scatter_dnums = hlo.ScatterDimensionNumbers.get(
+      update_window_dims=list(dnums.update_window_dims),
+      inserted_window_dims=list(dnums.inserted_window_dims),
+      input_batching_dims=[],
+      scatter_indices_batching_dims=[],
+      scattered_dims_to_operand_dims=list(dnums.scatter_dims_to_operand_dims),
+      index_vector_dim=len(ctx.avals_in[1].shape) - 1,
+  )
   real_dtype = _real_dtype(aval_out.dtype)
-  operand_type_part = mlir.aval_to_ir_types(
+  operand_type_part = mlir.aval_to_ir_type(
       core.ShapedArray(aval_out.shape, real_dtype))
 
   def _scatter(operand_part, updates_part):
@@ -2581,7 +2554,7 @@ def _scatter_add_lower_gpu(ctx, operand, indices, updates,
     updates_part = [updates_part]
 
     scatter = hlo.ScatterOp(
-        operand_type_part,
+        (operand_type_part,),
         operand_part,
         indices,
         updates_part,

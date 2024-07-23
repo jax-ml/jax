@@ -13,7 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 import contextlib
 import ctypes
 import dataclasses
@@ -24,7 +24,7 @@ import pathlib
 import subprocess
 import tempfile
 import time
-from typing import Any, Generic, Sequence, TypeVar
+from typing import Any, Generic, TypeVar
 
 import jax
 from jax._src import config
@@ -38,7 +38,6 @@ from jaxlib.mlir.dialects import func
 from jaxlib.mlir.dialects import gpu
 from jaxlib.mlir.dialects import llvm
 from jaxlib.mlir.dialects import memref
-from jaxlib.mlir.dialects import nvgpu
 from jaxlib.mlir.dialects import nvvm
 from jaxlib.mlir.passmanager import PassManager
 import numpy as np
@@ -209,6 +208,8 @@ OnDeviceProfiler = profiler.OnDeviceProfiler
 @dataclasses.dataclass()
 class LaunchContext:
   launch_op: gpu.LaunchOp
+  gmem_scratch_ptr: ir.Value
+  cluster_size: tuple[int, ...]
   profiler: OnDeviceProfiler | None = None
   next_scratch_offset: int = 0
   host_scratch_init: list[Callable[[ir.Value], None]] = dataclasses.field(
@@ -252,48 +253,58 @@ class LaunchContext:
           llvm.getelementptr(ptr_ty, host_ptr, [], [alloc_base], i8)
       )
     self.host_scratch_init.append(host_init_wrapped)
+    # with ir.InsertionPoint(self.gmem_scratch_ptr.owner):
+    # There is no way to create an insertion point after an operation...
+    gep = llvm.GEPOp(
+        ptr_ty, self.gmem_scratch_ptr, [], [alloc_base], i8
+    )
+    gep.move_after(self.gmem_scratch_ptr.owner)
+    return device_init(gep.result)
 
-    with ir.InsertionPoint.at_block_begin(self.launch_op.body.blocks[0]):
-      ptr_ty = ir.Type.parse("!llvm.ptr")
-      const_ptr_ty = ir.Type.parse("!llvm.ptr<4>")
-      gmem_scratch_ptr = llvm.call_intrinsic(
-          ptr_ty,
-          "llvm.nvvm.ptr.constant.to.gen.p0.p4",
-          [llvm.mlir_addressof(const_ptr_ty, "global_scratch")],
-      )
-      return device_init(llvm.getelementptr(
-          ptr_ty, gmem_scratch_ptr, [], [alloc_base], i8
-      ))
+  def cluster_collective_mask(self, collective: gpu.Dimension):
+    # We first compute the linearized index of the slice along the collective
+    # dim that contains the current block. Then, the mask is a sequence of 1s
+    # strided by the position of the collective dim, shifted left by the linear
+    # slice index.
+    # TODO(apaszke): Make sure this gets hoisted outside of any loops.
+    # If not, we might need to do it manually.
+    i32 = ir.IntegerType.get_signless(32)
+    stride = 1
+    mask_shift = c(0, i32)
+    collective_stride = None
+    for cluster_dim in gpu.Dimension:
+      if self.cluster_size[cluster_dim] == 1:
+        continue
+      if cluster_dim != collective:
+        dim_idx = arith.index_castui(i32, gpu.cluster_block_id(cluster_dim))
+        mask_shift = arith.addi(
+            mask_shift, arith.muli(dim_idx, c(stride, i32)),
+        )
+      else:
+        collective_stride = stride
+      stride *= self.cluster_size[cluster_dim]
+    mask_unshifted = 0
+    for i in range(self.cluster_size[collective]):
+      mask_unshifted |= 1 << (i * collective_stride)
+    return arith.shli(c(mask_unshifted, i32), mask_shift)
 
   def _get_tma_desc(
       self,
-      ref,
+      gmem_ref,
       gmem_transform: tuple[MemRefTransform, ...],
       transformed_slice_shape: tuple[int, ...],
       swizzle: int | None,
   ):
-    index = ir.IndexType.get()
-    ref_ty = ir.MemRefType(ref.type)
-    tma_desc_key = (ref, transformed_slice_shape, swizzle, gmem_transform)
+    tma_desc_key = (gmem_ref, transformed_slice_shape, swizzle, gmem_transform)
     if (tma_desc := self.tma_descriptors.get(tma_desc_key, None)) is None:
-      swizzle_str = f"swizzle_{swizzle}b" if swizzle is not None else "none"
-      default_tensor_map_attrs = dict(
-          swizzle=swizzle_str, l2promo="none", oob="zero", interleave="none"
-      )
-      tensor_map_ty = utils.get_tensormap_descriptor(
-          tensor=(
-              f"memref<{'x'.join(map(str, transformed_slice_shape))}x{ref_ty.element_type}, 3>"
-          ),
-          **default_tensor_map_attrs,
-      )
-      with ir.InsertionPoint(self.launch_op):
-        for t in gmem_transform:
-          ref = t.apply(ref)
-        ref_ty = ir.MemRefType(ref.type)
-
       i64 = ir.IntegerType.get_signless(64)
       ptr_ty = ir.Type.parse("!llvm.ptr")
       def init_tma_desc(host_ptr):
+        ref = gmem_ref
+        for t in gmem_transform:
+          ref = t.apply(ref)
+        ref_ty = ir.MemRefType(ref.type)
+        # TODO(apaszke): Use utils.memref_ptr to compute base_ptr
         _, offset, *sizes_and_strides = memref.extract_strided_metadata(ref)
         aligned_ptr_idx = memref.extract_aligned_pointer_as_index(ref)
         as_i64 = lambda i: arith.index_cast(i64, i)
@@ -318,9 +329,7 @@ class LaunchContext:
       def cast_tma_desc(device_ptr):
         # TODO(apaszke): Investigate why prefetching can cause launch failures
         # nvvm.prefetch_tensormap(device_ptr)
-        return builtin.unrealized_conversion_cast(
-            [tensor_map_ty], [device_ptr]
-        )
+        return device_ptr
       tma_desc = self._alloc_scratch(
           TMA_DESCRIPTOR_BYTES,
           alignment=TMA_DESCRIPTOR_ALIGNMENT,
@@ -341,12 +350,16 @@ class LaunchContext:
       swizzle: int | None = None,
       arrive: bool | None = None,
       uniform: bool = True,
+      collective: gpu.Dimension | None = None,
   ):
     index = ir.IndexType.get()
+    i16 = ir.IntegerType.get_signless(16)
+    i32 = ir.IntegerType.get_signless(32)
     smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
     src_ref_ty = ir.MemRefType(src_ref.type)
     dst_ref_ty = ir.MemRefType(dst_ref.type)
     element_type = src_ref_ty.element_type
+    element_bytewidth = mgpu.bytewidth(element_type)
     if element_type != dst_ref_ty.element_type:
       raise ValueError(
           f"Expected same element type, got {element_type} and"
@@ -394,15 +407,52 @@ class LaunchContext:
 
     if slice_shape != tuple(smem_ref_ty.shape):
       raise ValueError(
-          "Expected the SMEM reference to have the same shape as the tiled"
-          f" slice: {tuple(smem_ref_ty.shape)} != {slice_shape}"
+          "Expected the SMEM reference to have the same shape as the"
+          f" transformed slice: {tuple(smem_ref_ty.shape)} != {slice_shape}"
       )
+
+    dyn_base_indices = list(dyn_base_indices)
+    slice_shape = list(slice_shape)
+    if (
+        collective is not None
+        and (collective_size := self.cluster_size[collective]) != 1
+    ):
+      for collective_slice_dim, slice_size in enumerate(slice_shape[:-1]):
+        if slice_size % collective_size == 0:
+          break
+      else:
+        raise ValueError(
+            "None of the leading dimensions in the transformed slice shape"
+            f" {slice_shape} is divisible by the collective size"
+            f" {collective_size}"
+        )
+      # Make each block load a smaller slice, adjust the GMEM indices and slice
+      # the SMEM reference accordingly.
+      slice_shape[collective_slice_dim] //= collective_size
+      block_idx = gpu.cluster_block_id(collective)
+      block_offset = arith.muli(block_idx, c(slice_shape[collective_slice_dim], index))
+      dyn_base_indices[collective_slice_dim] = arith.addi(
+          dyn_base_indices[collective_slice_dim], block_offset,
+      )
+      smem_ref = mgpu.memref_slice(
+          smem_ref,
+          (slice(None),) * collective_slice_dim
+          + (mgpu.ds(block_offset, slice_shape[collective_slice_dim]),),
+      )
+      multicast_mask = arith.trunci(
+          i16, self.cluster_collective_mask(collective)
+      )
+    else:
+      multicast_mask = None
+
     tma_desc = self._get_tma_desc(
-        gmem_ref, gmem_transform, slice_shape, swizzle,
+        gmem_ref, gmem_transform, tuple(slice_shape), swizzle,
     )
 
-    # nvgpu TMA instructions expect reversed indices...
-    rev_dyn_based_indices = reversed(dyn_base_indices)
+    # We constuct TMA descriptors in column-major order.
+    rev_dyn_base_indices = [
+        arith.index_cast(i32, idx) for idx in reversed(dyn_base_indices)
+    ]
 
     uniform_ctx = (
         functools.partial(mgpu.single_thread, per_block=False)
@@ -410,30 +460,39 @@ class LaunchContext:
         else contextlib.nullcontext
     )
 
+    rank = len(slice_shape)
+    if rank > 5:  # TODO: apaszke - Implement stride compression
+      raise ValueError("Async copies only support striding up to 5 dimensions")
+    if swizzle is not None and slice_shape[-1] != swizzle // element_bytewidth:
+      raise ValueError(
+          f"Async copies with {swizzle=} require last dimension of the slice to"
+          f" be exactly {swizzle} bytes"
+          f" ({swizzle // element_bytewidth} elements), but got"
+          f" {slice_shape[-1]}"
+      )
+    smem_ptr = utils.memref_ptr(smem_ref, memory_space=3)
     if gmem_ref is src_ref:
+      assert barrier is not None  # for pytype
+      slice_bytes = c(np.prod(slice_shape) * element_bytewidth, i32)
+      barrier_ptr = barrier.get_ptr()
       with uniform_ctx():
-        assert barrier is not None  # for pytype
-        barrier_group = barrier.barrier_array.value
-        barrier_idx = barrier.offset
         if arrive:
-          slice_bytes = c(
-              np.prod(slice_shape) * mgpu.bytewidth(element_type), index
-          )
-          nvgpu.mbarrier_arrive_expect_tx(
-              barrier_group, slice_bytes, barrier_idx
-          )
-        nvgpu.tma_async_load(
-            smem_ref, barrier_group, tma_desc, rev_dyn_based_indices, barrier_idx
+          nvvm.mbarrier_arrive_expect_tx_shared(barrier_ptr, slice_bytes)
+        nvvm.cp_async_bulk_tensor_shared_cluster_global(
+            smem_ptr, tma_desc, rev_dyn_base_indices, barrier_ptr, [], multicast_mask=multicast_mask,
         )
     else:
       with uniform_ctx():
-        nvgpu.tma_async_store(smem_ref, tma_desc, rev_dyn_based_indices)
+        nvvm.cp_async_bulk_tensor_global_shared_cta(
+            tma_desc, smem_ptr, rev_dyn_base_indices
+        )
         nvvm.cp_async_bulk_commit_group()
 
   def await_async_copy(
       self, allow_groups: int, await_read_only: bool = False
   ):
     nvvm.cp_async_bulk_wait_group(allow_groups, read=await_read_only)
+    # TODO(apaszke): Use a warpgroup barrier!!!
     gpu.barrier()  # Groups are supposedly tracked per-thread
 
 
@@ -475,7 +534,9 @@ def _construct_smem_reftree(
 def _launch(
     token,
     grid,
+    cluster,
     block,
+    scratch_arr,
     smem_buffers: ShapeTree | Union[ShapeTree],
     profiler_spec: profiler.ProfilerSpec | None = None,
     maybe_prof_buffer: ir.Value | None = None,
@@ -505,10 +566,24 @@ def _launch(
   # TODO(cperivol): Query the shared memory size programmatically.
   if smem_bytes > 228 * 1024:
     raise ValueError(f"Mosaic GPU kernel exceeds available shared memory {smem_bytes=} > 228000")
+  if cluster:
+    if len(cluster) != 3:
+      raise ValueError("Clusters must be 3D")
+    cluster_kwargs = {
+        "clusterSize" + d: c(s, index) for s, d in zip(cluster, "XYZ")
+    }
+    for grid_size, cluster_size in zip(grid, cluster):
+      if grid_size % cluster_size != 0:
+        raise ValueError(
+            f"Grid dimension ({grid_size}) must be divisible by cluster"
+            f" dimension ({cluster_size})"
+        )
+  else:
+    cluster_kwargs = {}
   launch_op = gpu.LaunchOp(
       token.type, [token], *grid_vals, *block_vals,
-      dynamicSharedMemorySize=c(smem_bytes, i32))
-  launch_op.body.blocks.append(*([index] * 12))  # Append an empty block
+      dynamicSharedMemorySize=c(smem_bytes, i32), **cluster_kwargs)
+  launch_op.body.blocks.append(*([index] * (12 + 2 * len(cluster_kwargs))))  # Append an empty block
   smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
   with ir.InsertionPoint(launch_op.body.blocks[0]):
     dynamic_smem = gpu.dynamic_shared_memory(
@@ -516,8 +591,8 @@ def _launch(
             (ir.ShapedType.get_dynamic_size(),), i8, memory_space=smem
         )
     )
-    smem_ref_trees = []
 
+    smem_ref_trees = []
     for smem_live_buffers_collection in smem_disjoint_live_buffers_collections:
       smem_ref_tree = _construct_smem_reftree(
           dynamic_smem, smem_live_buffers_collection)
@@ -542,7 +617,9 @@ def _launch(
     else:
       smem_ref_tree: RefTree = smem_ref_trees[0] if smem_ref_trees else []
 
-    yield LaunchContext(launch_op, prof), smem_ref_tree
+    ptr_ty = ir.Type.parse("!llvm.ptr")
+    scratch_ptr = builtin.unrealized_conversion_cast([ptr_ty], [scratch_arr])
+    yield LaunchContext(launch_op, scratch_ptr, cluster, prof), smem_ref_tree
     if prof is not None:
       prof.finalize(grid=grid, block=block)
     gpu.terminator()
@@ -551,6 +628,7 @@ def _launch(
 def _lower_as_gpu_kernel(
     body,
     grid: tuple[int, ...],
+    cluster: tuple[int, ...],
     block: tuple[int, ...],
     in_shapes: tuple[Any, ...],
     out_shape,
@@ -600,8 +678,11 @@ def _lower_as_gpu_kernel(
       in_refs = arg_refs[:len(in_ref_tys)]
       out_refs = arg_refs[len(in_ref_tys):]
       prof_buffer = out_refs.pop() if prof_spec is not None else None
+      empty_arr_ty = ir.Type.parse("!llvm.array<0 x i8>")
+      scratch_alloc = llvm.AllocaOp(ptr_ty, c(1, i64), empty_arr_ty)
+      scratch_arr = llvm.load(empty_arr_ty, scratch_alloc.result)
       with _launch(
-          token, grid, block, smem_scratch_shape,
+          token, grid, cluster, block, scratch_arr, smem_scratch_shape,
           prof_spec, prof_buffer
       ) as (launch_ctx, smem_refs):
         body(launch_ctx, *in_refs, *out_refs, smem_refs)
@@ -609,23 +690,12 @@ def _lower_as_gpu_kernel(
       # Allocate and initialize the host buffer right before the launch.
       # Note that we couldn't do that before, because we had to run the body
       # to learn what the scratch contains.
-      with ir.InsertionPoint(launch_ctx.launch_op):
-        host_scratch_ptr = llvm.alloca(ptr_ty, c(gmem_scratch_bytes, i64), i8)
+      with ir.InsertionPoint(scratch_arr.owner):
+        scratch_arr_ty = ir.Type.parse(f"!llvm.array<{gmem_scratch_bytes} x i8>")
+        scratch_alloc.elem_type = ir.TypeAttr.get(scratch_arr_ty)
+        scratch_arr.set_type(scratch_arr_ty)
         for init_callback in launch_ctx.host_scratch_init:
-          init_callback(host_scratch_ptr)
-        global_scratch.global_type = ir.TypeAttr.get(
-            ir.Type.parse("!llvm.array<" + str(gmem_scratch_bytes) + " x i8>")
-        )
-        func.call(
-            [],
-            "mosaic_gpu_memcpy_async_h2d",
-            [
-                gmem_scratch_ptr,
-                host_scratch_ptr,
-                c(gmem_scratch_bytes, i64),
-                token_ptr,
-            ],
-        )
+          init_callback(scratch_alloc.result)
     main.func_op.attributes["llvm.emit_c_interface"] = ir.UnitAttr.get()
   sym_tab = ir.SymbolTable(module.operation)
   sym_tab.insert(main.func_op)
@@ -643,6 +713,7 @@ def as_gpu_kernel(
     out_shape,
     smem_scratch_shape: ShapeTree | Union[ShapeTree],
     prof_spec: profiler.ProfilerSpec | None = None,
+    cluster: tuple[int, ...] = (),
 ):
   if isinstance(in_shape, list):
     in_shape = tuple(in_shape)
@@ -651,7 +722,7 @@ def as_gpu_kernel(
 
   module, out_shape, gmem_scratch_bytes, unwrap_output_tuple = (
       _lower_as_gpu_kernel(
-          body, grid, block, in_shape, out_shape, smem_scratch_shape, prof_spec
+          body, grid, cluster, block, in_shape, out_shape, smem_scratch_shape, prof_spec
       )
   )
 

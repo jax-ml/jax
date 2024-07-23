@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Sequence, Iterable
+from collections.abc import Callable, Sequence, Iterable
 import dataclasses
 from functools import partial
 import inspect
@@ -23,7 +23,7 @@ import itertools as it
 import logging
 import operator as op
 import weakref
-from typing import Callable, NamedTuple, Any, Union, Optional, cast
+from typing import NamedTuple, Any, Union, cast
 import threading
 import warnings
 
@@ -81,7 +81,7 @@ from jax._src.tree_util import (
 from jax._src.util import (
     HashableFunction, safe_map, safe_zip, wraps,
     distributed_debug_log, split_list, weakref_lru_cache,
-    merge_lists, flatten, unflatten, subs_list, fun_name)
+    merge_lists, subs_list, fun_name, fun_qual_name)
 
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
@@ -245,7 +245,7 @@ def _need_to_rebuild_with_fdo(pgle_profiler):
 def _get_fastpath_data(
     executable, out_tree, args_flat, out_flat, attrs_tracked, effects,
     consts, abstracted_axes, pgle_profiler
-) -> Optional[pxla.MeshExecutableFastpathData]:
+) -> pxla.MeshExecutableFastpathData | None:
   out_reflattened, out_tree = pxla.reflatten_outputs_for_dispatch(out_tree, out_flat)
 
   use_fastpath = (
@@ -369,10 +369,7 @@ def _split_layout_and_sharding(entries):
   layouts, shardings = [], []
 
   for e in entries_flat:
-    if e is None or is_unspecified_or_auto(e):
-      layouts.append(None)
-      shardings.append(e)
-    elif isinstance(e, Layout):
+    if isinstance(e, Layout):
       layouts.append(e.device_local_layout)
       shardings.append(e.sharding)
     elif isinstance(e, (DeviceLocalLayout, AutoLayout)):
@@ -608,7 +605,7 @@ def _infer_params_impl(
   assert None not in in_shardings_leaves
   assert None not in out_shardings_leaves
 
-  in_type: Union[core.InputType, tuple[core.AbstractValue, ...]]
+  in_type: core.InputType | tuple[core.AbstractValue, ...]
   if config.dynamic_shapes.value:
     in_type = pe.infer_lambda_input_type(axes_specs, explicit_args)
     in_avals = tuple(a for a, e in in_type if e)
@@ -634,15 +631,16 @@ def _infer_params_impl(
       in_avals, in_tree, dbg, device_or_backend_set, have_kwargs)
 
   attr_token = _attr_token(flat_fun, in_type)
-  jaxpr, consts, out_type, attrs_tracked = _create_pjit_jaxpr(
+  jaxpr, consts, out_avals, attrs_tracked = _create_pjit_jaxpr(
       flat_fun, in_type, attr_token, dbg,
       HashableFunction(res_paths, closure=()),
       IgnoreKey(ji.inline))
   _attr_update(flat_fun, in_type, attr_token, attrs_tracked)
+
   out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
       out_shardings_treedef, out_shardings_leaves, ji.out_layouts_treedef,
       ji.out_layouts_leaves, HashableFunction(out_tree, closure=()),
-      tuple(out_type), jaxpr.jaxpr.debug_info, device_or_backend_set)
+      tuple(out_avals), jaxpr.jaxpr.debug_info, device_or_backend_set)
 
   assert len(explicit_args) == len(in_shardings_flat) == len(in_layouts_flat)
 
@@ -669,14 +667,13 @@ def _infer_params_impl(
       out_layouts=out_layouts_flat,
       resource_env=resource_env,
       donated_invars=donated_invars,
-      name=fun_name(flat_fun),
+      name=fun_qual_name(flat_fun),
       keep_unused=ji.keep_unused,
       inline=ji.inline,
   )
   return PjitParams(consts, params, in_avals, in_tree, out_tree(),
                     donated_invars, dbg.arg_names if dbg else None, len(consts),
                     attrs_tracked), args_flat
-
 
 
 class InferParamsCacheEntry:
@@ -1125,12 +1122,15 @@ def _process_in_axis_resources(in_shardings_treedef, in_shardings_leaves,
     pjit_check_aval_sharding(in_shardings_flat, in_avals,
                              None if debug_info is None else debug_info.arg_names,
                              "pjit arguments", allow_uneven_sharding=False)
+    check_aval_layout_compatibility(
+        in_layouts_flat, in_avals,
+        None if debug_info is None else debug_info.arg_names, "jit arguments")
   return in_shardings_flat, in_layouts_flat
 
 callsites: set[str] = set()
 
 def explain_tracing_cache_miss(
-    f: Callable, unseen_f: bool, cache: dict, key: tuple, result: tuple):
+    f: Callable, unseen_f: bool, cache: dict, key: tuple):
   if config.check_tracer_leaks.value: return
 
   def unpack(key):
@@ -1150,7 +1150,7 @@ def explain_tracing_cache_miss(
 
   # have we seen this function before at all?
   fun_name = getattr(f, '__qualname__', f)
-  if debug_info.func_src_info:
+  if debug_info is not None and debug_info.func_src_info:
     _, _, *rest = debug_info.func_src_info.split(' ')
     src_info = " defined at "  + ' '.join(rest)
   else:
@@ -1209,11 +1209,7 @@ def explain_tracing_cache_miss(
     p(f"  never seen input pytree{in_tree_str}")
     dont_match = [t for t, *_ in seen_keys if t != in_tree]
     closest_tree = min(dont_match, key=lambda t: abs(t.num_leaves - in_tree.num_leaves))
-    # TODO(mattjj): make equality_errors not print type name, avoid metaclass
-    leaf = type('LeafMeta', (type,), dict(__repr__=lambda _: 'leaf'))('Leaf', (), {})()
-    this_dummy = tree_unflatten(in_tree, [leaf] * in_tree.num_leaves)
-    close_dummy = tree_unflatten(closest_tree, [leaf] * closest_tree.num_leaves)  # type: ignore
-    errs = list(tree_util.equality_errors(this_dummy, close_dummy))
+    errs = list(tree_util.equality_errors_pytreedef(in_tree, closest_tree))  # type: ignore[arg-type]
     p(f"  closest seen input pytree has {len(errs)} mismatches, including:")
     for path, thing1, thing2, explanation in errs:
       fst, *path = path  # type: ignore
@@ -1304,11 +1300,11 @@ def _create_pjit_jaxpr(
 @util.cache(max_size=4096, trace_context_in_key=False)
 def _check_and_canonicalize_out_shardings(
     out_shardings_treedef, out_shardings_leaves, out_layouts_treedef,
-    out_layouts_leaves, out_tree, out_type, debug_info, device_or_backend_set):
+    out_layouts_leaves, out_tree, out_avals, debug_info, device_or_backend_set):
   orig_out_shardings = tree_unflatten(out_shardings_treedef, out_shardings_leaves)
   if (is_unspecified(orig_out_shardings) or
       isinstance(orig_out_shardings, sharding.Sharding)):
-    out_shardings_flat = (orig_out_shardings,) * len(out_type)
+    out_shardings_flat = (orig_out_shardings,) * len(out_avals)
   else:
     out_shardings_flat = flatten_axis_resources(
         "pjit out_shardings", out_tree(), orig_out_shardings,
@@ -1316,16 +1312,19 @@ def _check_and_canonicalize_out_shardings(
 
   out_layouts = tree_unflatten(out_layouts_treedef, out_layouts_leaves)
   if out_layouts is None:
-    out_layouts_flat = (out_layouts,) * len(out_type)
+    out_layouts_flat = (out_layouts,) * len(out_avals)
   else:
     out_layouts_flat = flatten_axis_resources(
         "pjit out_layouts", out_tree(), out_layouts, tupled_args=False)
 
   if not config.dynamic_shapes.value:
     pjit_check_aval_sharding(
-        out_shardings_flat, out_type,
+        out_shardings_flat, out_avals,
         None if debug_info is None else debug_info.result_paths,
         "pjit outputs", allow_uneven_sharding=False)
+    check_aval_layout_compatibility(
+        out_layouts_flat, out_avals,
+        None if debug_info is None else debug_info.result_paths, "jit outputs")
   return out_shardings_flat, out_layouts_flat
 
 
@@ -1412,6 +1411,22 @@ def pjit_check_aval_sharding(
                          f"(full shape: {shape})")
 
 
+def check_aval_layout_compatibility(
+    layouts, flat_avals, names: tuple[str, ...] | None, what_aval: str):
+  new_names = [''] * len(layouts) if names is None else names
+  for aval, l, name in zip(flat_avals, layouts, new_names):
+    if l is None or isinstance(l, AutoLayout):
+      continue
+    name_str = f' with pytree key path {name}' if name else ''
+    shape = aval.shape
+    try:
+      l.check_compatible_aval(shape)
+    except ValueError as e:
+      raise ValueError(
+          f'One of {what_aval}{name_str} is incompatible with its layout '
+          f'annotation {l}: {e}')
+
+
 # -------------------- pjit rules --------------------
 
 pjit_p = core.AxisPrimitive("pjit")
@@ -1430,7 +1445,8 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
   for arg, jit_in_l, rs, aval in safe_zip(
       args, jit_in_layouts, resolved_in_shardings, in_avals):
     arg_layout, committed = (
-        pxla._maybe_get_default_layout(getattr(arg, 'layout', None), jit_in_l, rs, aval),
+        pxla._maybe_get_default_layout(getattr(arg, 'layout', None), jit_in_l,
+                                       rs, aval),
         getattr(arg, '_committed', True))
     # Sharding can be unspecified when array is committed if it's a PmapSharding.
     is_pmap_sharding = (is_unspecified(rs) or
@@ -1447,8 +1463,10 @@ def _resolve_in_layouts(args, jit_in_layouts, resolved_in_shardings, in_avals):
       # arg_layout can be None because some backends don't implement the
       # required layout methods. Hence `arr.layout` can return
       # `Layout(None, sharding)`
-      if (committed and not is_pmap_sharding and
-          arg_layout is not None and arg_layout != jit_in_l):
+      if (committed
+          and not is_pmap_sharding
+          and arg_layout is not None
+          and not pxla.is_user_xla_layout_equal(jit_in_l, arg_layout)):
         extra_msg = ''
         if isinstance(jit_in_l, AutoLayout):
           extra_msg = (
@@ -1763,7 +1781,7 @@ def _pjit_lower_cached(
     return pxla.lower_sharding_computation(
         jaxpr, api_name, name, in_shardings, out_shardings,
         in_layouts, out_layouts, tuple(donated_invars),
-        keep_unused=keep_unused, inline=inline,
+        keep_unused=keep_unused,
         devices_from_context=(
             None if mesh is None or mesh.empty else list(mesh.devices.flat)),
         lowering_platforms=lowering_platforms,
@@ -1913,9 +1931,9 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
                    out_shardings, in_layouts, out_layouts, resource_env,
                    donated_invars, keep_unused, inline):
   effects = list(ctx.tokens_in.effects())
-  output_types = map(mlir.aval_to_ir_types, ctx.avals_out)
+  output_types = map(mlir.aval_to_ir_type, ctx.avals_out)
   output_types = [mlir.token_type()] * len(effects) + output_types
-  flat_output_types = flatten(output_types)
+  flat_output_types = mlir.flatten_ir_types(output_types)
 
   func = _pjit_cached_lower_jaxpr_to_fun(
       ctx, name, jaxpr, tuple(effects), in_shardings,
@@ -1926,9 +1944,9 @@ def _pjit_lowering(ctx, *args, name, jaxpr, in_shardings,
   args = (*ctx.dim_var_values, *tokens_in, *args)
   call = func_dialect.CallOp(flat_output_types,
                              ir.FlatSymbolRefAttr.get(func.name.value),
-                             mlir.flatten_lowering_ir_args(args))
+                             mlir.flatten_ir_values(args))
   mlir.wrap_compute_type_in_place(ctx, call)
-  out_nodes = unflatten(call.results, map(len, output_types))
+  out_nodes = mlir.unflatten_ir_values_like_types(call.results, output_types)
   tokens, out_nodes = split_list(out_nodes, [len(effects)])
   tokens_out = ctx.tokens_in.update_tokens(mlir.TokenSet(zip(effects, tokens)))
   ctx.set_tokens_out(tokens_out)
@@ -2488,6 +2506,9 @@ def with_sharding_constraint(x, shardings):
   .. _Distributed arrays and automatic parallelization: https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html
   """
   x_flat, tree = tree_flatten(x)
+
+  layouts, shardings = _split_layout_and_sharding(shardings)
+
   user_shardings = prepare_axis_resources(
       shardings, "shardings", allow_unconstrained_dims=True)
   del shardings
@@ -2495,6 +2516,10 @@ def with_sharding_constraint(x, shardings):
   user_shardings_flat = tuple(
       flatten_axes("with_sharding_constraint shardings", tree, user_shardings))
   del user_shardings
+
+  user_layouts_flat = tuple(
+      flatten_axes("with_sharding_constraint layouts", tree, layouts))
+  del layouts
 
   resource_env = mesh_lib.thread_resources.env
   mesh = resource_env.physical_mesh
@@ -2511,19 +2536,30 @@ def with_sharding_constraint(x, shardings):
       shardings_flat, x_flat, None, "with_sharding_constraint arguments",
       allow_uneven_sharding=True)
 
-  outs = [sharding_constraint_p.bind(xf, sharding=s,
+  check_aval_layout_compatibility(user_layouts_flat, x_flat, None,
+                                  "with_sharding_constraint arguments")
+
+  outs = [sharding_constraint_p.bind(xf, sharding=s, layout=l,
                                      resource_env=resource_env,
                                      unconstrained_dims=ud)
-          for xf, s, ud in zip(x_flat, shardings_flat, unconstrained_dims)]
+          for xf, s, l, ud in zip(x_flat, shardings_flat, user_layouts_flat,
+                                  unconstrained_dims)]
   return tree_unflatten(tree, outs)
 
 def _identity_fn(x): return x
 
-def _sharding_constraint_impl(x, sharding, resource_env, unconstrained_dims):
-  if hasattr(x, 'sharding') and x.sharding.is_equivalent_to(sharding, x.ndim):
-    return x
-  # Run a jit here to raise good errors when device assignment don't match.
-  return api.jit(_identity_fn, out_shardings=sharding)(x)
+def _sharding_constraint_impl(x, sharding, layout, resource_env,
+                              unconstrained_dims):
+  if layout is None:
+    if hasattr(x, 'sharding') and x.sharding.is_equivalent_to(sharding, x.ndim):
+      return x
+    # Run a jit here to raise good errors when device assignment don't match.
+    return api.jit(_identity_fn, out_shardings=sharding)(x)
+  else:
+    if (hasattr(x, 'layout') and x.layout.device_local_layout == layout and
+        x.sharding.is_equivalent_to(sharding, x.ndim)):
+      return x
+    return api.jit(_identity_fn, out_shardings=Layout(layout, sharding))(x)
 
 
 sharding_constraint_p = core.Primitive("sharding_constraint")
@@ -2532,7 +2568,7 @@ sharding_constraint_p.def_abstract_eval(lambda x, **_: x)
 ad.deflinear2(sharding_constraint_p,
               lambda ct, _, **params: (sharding_constraint_p.bind(ct, **params),))
 
-def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding,
+def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding, layout,
                                       resource_env, unconstrained_dims):
   aval, = ctx.avals_in
   out_aval, = ctx.avals_out
@@ -2547,19 +2583,19 @@ def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding,
         sharding._to_xla_hlo_sharding(aval.ndim), mesh)[0]
     sharding = NamedSharding._from_parsed_pspec(
         mesh, parsed_pspec, _manual_axes=axis_ctx.manual_axes)
-  return [
-      mlir.wrap_with_sharding_op(ctx,
-          x_node, out_aval,
-          sharding._to_xla_hlo_sharding(aval.ndim).to_proto(),
-          unspecified_dims=unconstrained_dims)
-  ]
+  out = mlir.wrap_with_sharding_op(
+      ctx, x_node, out_aval, sharding._to_xla_hlo_sharding(aval.ndim).to_proto(),
+      unspecified_dims=unconstrained_dims)
+  if layout is not None:
+    out = mlir.wrap_with_layout_op(ctx, out, out_aval, layout, aval)
+  return [out]
 mlir.register_lowering(sharding_constraint_p,
                        _sharding_constraint_hlo_lowering)
 
 
-def _sharding_constraint_batcher(insert_axis, spmd_axis_name, axis_size,
-                                 axis_name, main_type, vals_in, dims_in,
-                                 sharding, resource_env, unconstrained_dims):
+def _sharding_constraint_batcher(
+    insert_axis, spmd_axis_name, axis_size, axis_name, main_type, vals_in,
+    dims_in, sharding, layout, resource_env, unconstrained_dims):
   if spmd_axis_name is not None and isinstance(sharding, NamedSharding):
     used = {n for ns in sharding.spec
             for n in (ns if isinstance(ns, tuple) else (ns,))}
@@ -2586,9 +2622,14 @@ def _sharding_constraint_batcher(insert_axis, spmd_axis_name, axis_size,
     vmapped_sharding = NamedSharding(
         vmapped_sharding.mesh, PartitionSpec(*new_spec))
 
+  # TODO(yashkatariya): Figure out layouts should change under vmap.
+  if layout is not None:
+    raise NotImplementedError
+
   y = sharding_constraint_p.bind(
       x,
       sharding=vmapped_sharding,
+      layout=layout,
       resource_env=resource_env,
       unconstrained_dims=unconstrained_dims)
   return y, d

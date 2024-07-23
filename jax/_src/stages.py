@@ -43,7 +43,6 @@ from jax._src import config
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import tree_util
-from jax._src.tree_util import tree_unflatten, keystr
 from jax._src import util
 from jax._src.sharding_impls import is_unspecified_or_auto
 from jax._src.layout import Layout
@@ -273,7 +272,10 @@ class XlaExecutable(Executable):
         ]
       except xla_extension.XlaRuntimeError as e:
         msg, *_ = e.args
-        if not (type(msg) is str and msg.startswith("UNIMPLEMENTED")):
+        supported = not (type(msg) is str and
+                         (msg.startswith("UNIMPLEMENTED") or
+                          "PjRt-compatible backend only" in msg))
+        if supported:
           raise
 
     if (
@@ -315,7 +317,7 @@ class XlaLowering(Lowering):
   def hlo(self) -> xc.XlaComputation:
     """Return an HLO representation of this computation."""
     hlo = self.stablehlo()
-    m: Union[str, bytes]
+    m: str | bytes
     m = mlir.module_to_bytecode(hlo)
     return xla_extension.mlir.mlir_module_to_xla_computation(
         m, use_tuple_args=self.compile_args["tuple_args"])
@@ -419,42 +421,12 @@ def make_args_info(in_tree, in_avals, donate_argnums):
       ArgInfo(aval, i in donate_argnums)
       for i, aval in enumerate(flat_avals)])
 
+
 class CompiledCallParams(NamedTuple):
   executable: Executable
   no_kwargs: bool
   in_tree: tree_util.PyTreeDef
   out_tree: tree_util.PyTreeDef
-
-
-class Traced(Stage):
-  __slots__ = ["jaxpr", "args_info", "fun_name", "_out_tree", "_lower_callable",
-               "_args_flat", "_arg_names", "_num_consts"]
-
-  def __init__(self, jaxpr: core.ClosedJaxpr, args_info, fun_name, out_tree,
-               lower_callable, args_flat=None, arg_names=None,
-               num_consts: int = 0):
-    self.jaxpr = jaxpr
-    self.args_info = args_info
-    self.fun_name = fun_name
-    self._out_tree = out_tree
-    self._lower_callable = lower_callable
-    self._args_flat = args_flat
-    self._arg_names = arg_names
-    self._num_consts = num_consts
-
-  @property
-  def out_info(self):
-    return self._out_tree.unflatten(
-        [OutInfo(o.shape, o.dtype) for o in self.jaxpr.out_avals])
-
-  def lower(self, lowering_platforms: tuple[str, ...] | None = None,
-            _private_parameters: mlir.LoweringParameters | None = None):
-    if _private_parameters is None:
-      _private_parameters = mlir.LoweringParameters()
-    new_callable = functools.partial(
-        self._lower_callable, lowering_platforms=lowering_platforms,
-        lowering_parameters=_private_parameters)
-    return Lowered(new_callable(), self.args_info, self._out_tree)
 
 
 class Compiled(Stage):
@@ -590,11 +562,7 @@ class Compiled(Stage):
           f"keyword arguments, but called with keyword arguments: {kws}")
     args_flat, in_tree = tree_util.tree_flatten((args, kwargs))
     if in_tree != params.in_tree:
-      leaf = PytreeLeaf()
-      this_dummy = tree_unflatten(in_tree, [leaf] * in_tree.num_leaves)
-      other_dummy = tree_unflatten(
-          params.in_tree, [leaf] * params.in_tree.num_leaves)
-      errs = list(tree_util.equality_errors(this_dummy, other_dummy))
+      errs = list(tree_util.equality_errors_pytreedef(in_tree, params.in_tree))
       msg = []
       msg.append(
           "Function compiled with input pytree does not match the input pytree"
@@ -603,7 +571,7 @@ class Compiled(Stage):
         fst, *rest = path
         base = ['args', 'kwargs'][fst.idx]
         msg.append(
-            f"    * at {base}{keystr(tuple(rest))}, seen {thing2} but now"
+            f"    * at {base}{tree_util.keystr(tuple(rest))}, seen {thing2} but now"
             f" given {thing1}, so {explanation}")
       raise TypeError('\n'.join(msg))
     try:
@@ -639,10 +607,6 @@ class Compiled(Stage):
           return outs
         self._call = cpp_call_fallback
     return self._call(*args, **kwargs)
-
-
-class PytreeLeaf:
-  def __repr__(self): return "pytree leaf"
 
 
 class Lowered(Stage):
@@ -760,6 +724,37 @@ class Lowered(Stage):
       return self._lowering.cost_analysis()
     except NotImplementedError:
       return None
+
+
+class Traced(Stage):
+  __slots__ = ["jaxpr", "args_info", "fun_name", "_out_tree", "_lower_callable",
+               "_args_flat", "_arg_names", "_num_consts"]
+
+  def __init__(self, jaxpr: core.ClosedJaxpr, args_info, fun_name, out_tree,
+               lower_callable, args_flat=None, arg_names=None,
+               num_consts: int = 0):
+    self.jaxpr = jaxpr
+    self.args_info = args_info
+    self.fun_name = fun_name
+    self._out_tree = out_tree
+    self._lower_callable = lower_callable
+    self._args_flat = args_flat
+    self._arg_names = arg_names
+    self._num_consts = num_consts
+
+  @property
+  def out_info(self):
+    return self._out_tree.unflatten(
+        [OutInfo(o.shape, o.dtype) for o in self.jaxpr.out_avals])
+
+  def lower(self, *, lowering_platforms: tuple[str, ...] | None = None,
+            _private_parameters: mlir.LoweringParameters | None = None):
+    if _private_parameters is None:
+      _private_parameters = mlir.LoweringParameters()
+    new_callable = functools.partial(
+        self._lower_callable, lowering_platforms=lowering_platforms,
+        lowering_parameters=_private_parameters)
+    return Lowered(new_callable(), self.args_info, self._out_tree)
 
 
 @runtime_checkable

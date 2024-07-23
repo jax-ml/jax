@@ -39,6 +39,11 @@ jax_test(
 )
 
 jax_test(
+    name = "device_test",
+    srcs = ["device_test.py"],
+)
+
+jax_test(
     name = "dynamic_api_test",
     srcs = ["dynamic_api_test.py"],
     shard_count = 2,
@@ -73,6 +78,11 @@ jax_test(
     shard_count = {
         "gpu": 5,
     },
+)
+
+jax_test(
+    name = "config_test",
+    srcs = ["config_test.py"],
 )
 
 jax_test(
@@ -139,6 +149,7 @@ jax_test(
     shard_count = {
         "tpu": 20,
         "cpu": 20,
+        "gpu": 10,
     },
 )
 
@@ -432,7 +443,7 @@ jax_test(
     shard_count = {
         "cpu": 40,
         "gpu": 40,
-        "tpu": 40,
+        "tpu": 50,
     },
     tags = ["noasan"],  # Test times out on all backends
 )
@@ -1140,16 +1151,6 @@ py_test(
 )
 
 py_test(
-    name = "gfile_cache_test",
-    srcs = ["gfile_cache_test.py"],
-    deps = [
-        "//jax",
-        "//jax:gfile_cache",
-        "//jax:test_util",
-    ],
-)
-
-py_test(
     name = "lru_cache_test",
     srcs = ["lru_cache_test.py"],
     deps = [
@@ -1162,6 +1163,7 @@ py_test(
 jax_test(
     name = "compilation_cache_test",
     srcs = ["compilation_cache_test.py"],
+    tags = ["test_cpu_thunks"],
     deps = [
         "//jax:compilation_cache_internal",
         "//jax:compiler",
@@ -1460,7 +1462,6 @@ jax_test(
     ],
     deps = [
         "//jax:internal_test_harnesses",
-        "//jax/experimental/export",
     ],
 )
 
@@ -1469,6 +1470,7 @@ jax_test(
     srcs = ["export_harnesses_multi_platform_test.py"],
     disable_configs = [
         "gpu_a100",  # TODO(b/269593297): matmul precision issues
+        "gpu_h100",  # Scarce resources.
     ],
     shard_count = {
         "cpu": 40,
@@ -1483,7 +1485,6 @@ jax_test(
     ],
     deps = [
         "//jax:internal_test_harnesses",
-        "//jax/experimental/export",
     ],
 )
 
@@ -1508,9 +1509,6 @@ jax_test(
         "gpu": 4,
     },
     tags = ["multiaccelerator"],
-    deps = [
-        "//jax:fused_attention_stablehlo",
-    ],
 )
 
 py_test(

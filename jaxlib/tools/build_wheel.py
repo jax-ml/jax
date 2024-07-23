@@ -222,10 +222,6 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
 
   if exists(f"__main__/jaxlib/cuda/_solver.{pyext}") and not skip_gpu_kernels:
     copy_runfiles(
-        dst_dir=jaxlib_dir / "cuda" / "nvvm" / "libdevice",
-        src_files=["local_config_cuda/cuda/cuda/nvvm/libdevice/libdevice.10.bc"],
-    )
-    copy_runfiles(
         dst_dir=jaxlib_dir / "cuda",
         src_files=[
             f"__main__/jaxlib/cuda/_solver.{pyext}",
@@ -238,7 +234,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
             f"__main__/jaxlib/cuda/_versions.{pyext}",
         ],
     )
-  if exists(f"__main__/jaxlib/rocm/_solver.{pyext}"):
+  if exists(f"__main__/jaxlib/rocm/_solver.{pyext}") and not skip_gpu_kernels:
     copy_runfiles(
         dst_dir=jaxlib_dir / "rocm",
         src_files=[
@@ -286,6 +282,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
           "__main__/jaxlib/mlir/dialects/_mhlo_ops_gen.py",
           "__main__/jaxlib/mlir/dialects/_ods_common.py",
           "__main__/jaxlib/mlir/dialects/_scf_ops_gen.py",
+          "__main__/jaxlib/mlir/dialects/_sdy_ops_gen.py",
           "__main__/jaxlib/mlir/dialects/_sparse_tensor_enum_gen.py",
           "__main__/jaxlib/mlir/dialects/_sparse_tensor_ops_gen.py",
           "__main__/jaxlib/mlir/dialects/_stablehlo_ops_gen.py",
@@ -307,6 +304,7 @@ def prepare_wheel(sources_path: pathlib.Path, *, cpu, skip_gpu_kernels):
           "__main__/jaxlib/mlir/dialects/memref.py",
           "__main__/jaxlib/mlir/dialects/mhlo.py",
           "__main__/jaxlib/mlir/dialects/scf.py",
+          "__main__/jaxlib/mlir/dialects/sdy.py",
           "__main__/jaxlib/mlir/dialects/sparse_tensor.py",
           "__main__/jaxlib/mlir/dialects/stablehlo.py",
           "__main__/jaxlib/mlir/dialects/vector.py",

@@ -19,7 +19,7 @@ from collections.abc import Sequence
 import dataclasses
 import enum
 import functools
-from typing import Any
+from typing import Any, Hashable
 
 from jax._src import core as jax_core
 from jax._src import dtypes
@@ -33,6 +33,7 @@ zip, unsafe_zip = util.safe_zip, zip
 
 partial = functools.partial
 Grid = pallas_core.Grid
+TupleGrid = pallas_core.TupleGrid
 BlockSpec = pallas_core.BlockSpec
 BlockSpecTree = pallas_core.BlockSpecTree
 GridMapping = pallas_core.GridMapping
@@ -78,7 +79,7 @@ class AbstractSemaphoreTy(dtypes.ExtendedDType):
     return self.__class__ == other.__class__
 
   def __hash__(self) -> int:
-    return hash((self.__class__))
+    return hash(self.__class__)
 
 # TODO(sharadmv): implement dtype rules for AbstractSemaphoreTy
 
@@ -109,7 +110,7 @@ class SemaphoreType(enum.Enum):
       dtype = SemaphoreTy()
     return MemoryRef(shape, dtype, TPUMemorySpace.SEMAPHORE)
 
-  def get_aval(self) -> "AbstractMemoryRef":
+  def get_aval(self) -> AbstractMemoryRef:
     return self(()).get_aval()
 
 @dataclasses.dataclass(frozen=True)
@@ -149,7 +150,8 @@ def _make_aval(obj: object) -> jax_core.AbstractValue:
 
 @dataclasses.dataclass(init=False, unsafe_hash=True)
 class PrefetchScalarGridSpec(pallas_core.GridSpec):
-  grid: Grid
+  grid: TupleGrid
+  grid_names: tuple[Hashable, ...] | None
   num_scalar_prefetch: int
   in_specs: tuple[BlockSpec | NoBlockSpec, ...]
   out_specs: tuple[BlockSpec | NoBlockSpec, ...]
@@ -170,7 +172,7 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
     self.scratch_shapes = tuple(scratch_shapes)
 
   def get_grid_mapping(
-      self, in_avals, in_tree, out_avals, out_tree
+      self, in_avals, in_tree, in_paths, out_avals, out_tree, out_paths
   ) -> tuple[tuple[jax_core.AbstractValue, ...], GridMapping]:
     assert all(i is None or isinstance(i, int) for i in self.grid)
     grid_mapping_grid = tuple(
@@ -187,10 +189,10 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
     in_avals, in_avals_tree = tree_util.tree_flatten(tuple(unflat_in_avals))
     flat_in_specs, flat_out_specs = self._get_in_out_specs(
         in_avals, in_avals_tree, out_avals, out_tree)
-    in_specs, in_ref_avals, out_specs, out_ref_avals = (
+    in_ref_avals, out_ref_avals = (
         pallas_core._get_ref_avals(
-            self.grid, in_avals, flat_in_specs,
-            out_avals, flat_out_specs))
+            in_avals, flat_in_specs, in_paths[num_flat_scalar_prefetch:],
+            out_avals, flat_out_specs, out_paths))
     scalar_ref_avals = [
         AbstractMemoryRef(jax_core.ShapedArray(aval.shape, aval.dtype),
                           TPUMemorySpace.SMEM)
@@ -207,8 +209,10 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
             in_tree=index_map_in_tree,
             grid=grid_mapping_grid,
             mapped_dims=(),
+            what="input",
         ),
-        in_specs,
+        flat_in_specs,
+        in_paths[num_flat_scalar_prefetch:],
         in_ref_avals,
     )
     out_block_mappings = map(
@@ -218,12 +222,14 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
             in_tree=index_map_in_tree,
             grid=grid_mapping_grid,
             mapped_dims=(),
+            what="output",
         ),
-        out_specs,
+        flat_out_specs,
+        out_paths,
         out_ref_avals,
     )
     grid_mapping = GridMapping(
-        grid=grid_mapping_grid,  # type: ignore
+        grid=grid_mapping_grid, grid_names=self.grid_names, # type: ignore
         block_mappings=(*in_block_mappings, *out_block_mappings),
         mapped_dims=(),
         num_index_operands=num_flat_scalar_prefetch,

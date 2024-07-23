@@ -14,11 +14,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import partial
 import math
 import operator
-from typing import Callable
 import warnings
 
 import numpy as np

@@ -14,11 +14,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import functools
 from functools import partial
 import logging
-from typing import Any, Callable
+from typing import Any
 import types
 
 import numpy as np
@@ -28,11 +28,11 @@ from jax._src import api
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
+from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import effects
 from jax._src import source_info_util
 from jax._src import traceback_util
-from jax._src import util
 from jax._src.api_util import flatten_fun, shaped_abstractify
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -545,10 +545,15 @@ def remat_partial_eval(trace, *tracers, jaxpr, **params):
   jaxpr_known, in_used_known = pe.dce_jaxpr(jaxpr_known, out_used_known)
   num_res = sum(used_res)
 
+  # To avoid precision mismatches in fwd and bwd passes due to XLA excess
+  # precision, insert explicit x = reduce_precision(x, **finfo(x.dtype)) calls
+  # on producers of any residuals. See https://github.com/google/jax/pull/22244.
+  jaxpr_known_ = _insert_reduce_precision(jaxpr_known, num_res)
+
   # compute known outputs and residuals (hoisted out of remat primitive)
   _, in_consts_ = unzip2(t.pval for t in tracers if t.pval.is_known())
   _, in_consts = partition_list(in_used_known, in_consts_)
-  out_consts = core.eval_jaxpr(jaxpr_known, (), *in_consts)
+  out_consts = core.eval_jaxpr(jaxpr_known_, (), *in_consts)
   out_knowns, residuals = split_list(out_consts, [len(out_consts)-num_res])
 
   # set up unknown outputs with a recipe to call remat
@@ -587,6 +592,43 @@ def remat_partial_eval(trace, *tracers, jaxpr, **params):
   # zip together known and unknown outputs
   return merge_lists(out_unknowns, out_knowns, out_jaxpr_tracers)
 pe.custom_partial_eval_rules[remat_p] = remat_partial_eval
+
+@weakref_lru_cache
+def _insert_reduce_precision(jaxpr: core.Jaxpr, num_res: int) -> core.Jaxpr:
+  res_vars = jaxpr.outvars[len(jaxpr.outvars) - num_res:]
+  used_vars = {x for e in jaxpr.eqns for x in e.invars if isinstance(x, core.Var)}
+  invars, constvars, eqns = jaxpr.invars[:], jaxpr.constvars[:], jaxpr.eqns[:]
+  for v in res_vars:
+    if (not isinstance(v.aval, core.UnshapedArray) or
+        not dtypes.issubdtype(v.aval.dtype, np.inexact)):
+      continue
+    if v not in used_vars:
+      continue
+    assert isinstance(v, core.Var)
+    newvar = core.Var(v.suffix, v.aval)
+    finfo = dtypes.finfo(v.aval.dtype)
+    params = dict(exponent_bits=finfo.nexp, mantissa_bits=finfo.nmant)
+    if v in constvars or v in invars:
+      lst = constvars if v in constvars else invars
+      new_eqn = core.new_jaxpr_eqn(
+          [newvar], [v], lax_internal.reduce_precision_p, params, set())
+      lst[lst.index(v)] = newvar
+      eqns.insert(0, new_eqn)
+    else:
+      (eqn_idx, eqn), = ((i, e) for i, e in enumerate(eqns) if v in e.outvars)
+      if (eqn.primitive == lax_internal.reduce_precision_p and
+          eqn.params == params):
+        continue
+      replace_eqn = eqn.replace(outvars=[v_ if v_ != v else newvar
+                                         for v_ in eqn.outvars])
+      new_eqn = core.new_jaxpr_eqn(
+          [newvar], [v], lax_internal.reduce_precision_p, params, set(),
+          eqn.source_info, eqn.ctx)
+      eqns[eqn_idx] = replace_eqn
+      eqns.insert(eqn_idx+1, new_eqn)
+  new_jaxpr = jaxpr.replace(invars=invars, constvars=constvars, eqns=eqns)
+  config.enable_checks.value and core.check_jaxpr(new_jaxpr)
+  return new_jaxpr
 
 def remat_partial_eval_custom_params_updater(*args):
   *_, params_known, params_staged = args
@@ -695,9 +737,9 @@ def _has_effects(effects) -> bool:
   return bool({e for e in effects if not isinstance(e, core.NamedAxisEffect)})
 
 
-def remat_lowering(*args, jaxpr: core.Jaxpr, prevent_cse: bool,
-                   differentiated: bool, is_gpu_platform: bool = False,
-                   **_):
+def remat_expansion(*args, jaxpr: core.Jaxpr, prevent_cse: bool,
+                    differentiated: bool, is_gpu_platform: bool = False,
+                    **_):
   assert not jaxpr.constvars
 
   if differentiated and prevent_cse:
@@ -766,22 +808,43 @@ def _remat_translation_using_cond(*args, jaxpr: core.Jaxpr):
   unif = lax_internal.rng_uniform(np.float32(0), np.float32(1), shape=())
   return lax_control_flow.cond(unif < np.float32(2), remat_comp, dummy_comp, *args)
 
-mlir.register_lowering(
-    remat_p, mlir.lower_fun(remat_lowering, multiple_results=True))
-mlir.register_lowering(
-    remat_p,
-    mlir.lower_fun(partial(remat_lowering, is_gpu_platform=True),
-                   multiple_results=True),
-    platform="gpu")
+def _remat_lowering(ctx, *args, jaxpr: core.Jaxpr, prevent_cse: bool,
+                   differentiated: bool, policy, is_gpu_platform=False):
+  jaxpr_args: Sequence[mlir.IrValues]
+  if differentiated and prevent_cse:
+    # If we're using the loop or cond lowerings, use the slower lower_fun
+    # based path.
+    if not config.remat_opt_barrier.value:
+      return mlir.lower_fun(remat_expansion, multiple_results=True)(
+          ctx, *args, jaxpr=jaxpr, prevent_cse=prevent_cse,
+          differentiated=differentiated, policy=policy,
+          is_gpu_platform=is_gpu_platform)
+
+    arg_types = map(mlir.aval_to_ir_type, ctx.avals_in)
+    flat_args = mlir.flatten_ir_values(args)
+    barrier_op = hlo.OptimizationBarrierOp(flat_args)
+    jaxpr_args = mlir.unflatten_ir_values_like_types(
+      barrier_op.results, arg_types)
+  else:
+    jaxpr_args = args
+  outs, tokens_out = mlir.jaxpr_subcomp(
+      ctx.module_context, jaxpr, ctx.name_stack.extend('checkpoint'),
+      ctx.tokens_in, (), *jaxpr_args, dim_var_values=ctx.dim_var_values)
+  ctx.set_tokens_out(tokens_out)
+  return outs
+
+mlir.register_lowering(remat_p, _remat_lowering)
+mlir.register_lowering(remat_p, partial(_remat_lowering, is_gpu_platform=True),
+                       platform="gpu")
 
 def _optimization_barrier_abstract_eval(*args):
   return args
 
 def _optimization_barrier_lowering_rule(ctx, *args):
-  barrier_types = map(mlir.aval_to_ir_types, ctx.avals_in)
-  flat_args = mlir.flatten_lowering_ir_args(args)
+  barrier_types = map(mlir.aval_to_ir_type, ctx.avals_in)
+  flat_args = mlir.flatten_ir_values(args)
   barrier_op = hlo.OptimizationBarrierOp(flat_args)
-  return util.unflatten(barrier_op.results, map(len, barrier_types))
+  return mlir.unflatten_ir_values_like_types(barrier_op.results, barrier_types)
 
 def _optimization_barrier(arg):
   flat_args, treedef = tree_flatten(arg)
