@@ -27,7 +27,7 @@ from jax._src import effects
 from jax._src import ad_util
 from jax._src import state
 from jax._src import util
-from jax._src.util import cache, weakref_lru_cache, safe_map, partition_list
+from jax._src.util import weakref_lru_cache, safe_map, partition_list
 from jax.api_util import flatten_fun_nokwargs
 from jax._src.interpreters import partial_eval as pe
 from jax.tree_util import tree_map, tree_unflatten
@@ -76,7 +76,6 @@ def _initial_style_jaxpr_attrs(fun: Callable, in_tree, in_avals,
   closed_jaxpr = pe.close_jaxpr(pe.convert_constvars_jaxpr(jaxpr))
   return closed_jaxpr, consts, out_tree, attrs_tracked
 
-@cache()
 def _initial_style_jaxprs_with_common_consts(
     funs: Sequence[Callable], in_tree, in_avals, primitive_name: str):
   # When staging the branches of a conditional into jaxprs, constants are
@@ -170,34 +169,34 @@ def _initial_style_jaxprs_with_common_consts(
         nonref_consts.append(c)
         nonref_const_avals.append(aval)
     all_nonref_consts.append(nonref_consts)
-    all_nonref_const_avals.append(nonref_const_avals)
-    canonical_ref_indices.append(ref_indices)
-
-  newvar = core.gensym(suffix='_')
-  unused_ref_const_vars = map(newvar, canonical_ref_avals)
-  unused_const_vars = [map(newvar, const_avals)
-                       for const_avals in all_nonref_const_avals]
-  def pad_jaxpr_constvars(i, jaxpr):
-    is_ref = [isinstance(v.aval, state.AbstractRef) for v in jaxpr.constvars]
-    nonref_constvars, ref_constvars = partition_list(is_ref, jaxpr.constvars)
-    padded_ref_constvars = unused_ref_const_vars[:]
-    for canonical_id, ref_var in zip(canonical_ref_indices[i], ref_constvars):
-      padded_ref_constvars[canonical_id] = ref_var
-    const_prefix = util.concatenate(unused_const_vars[:i])
-    const_suffix = util.concatenate(unused_const_vars[i + 1:])
-    constvars = [*padded_ref_constvars, *const_prefix, *nonref_constvars,
-                 *const_suffix]
-    jaxpr = jaxpr.replace(constvars=constvars)
-    effects = pe.make_jaxpr_effects(jaxpr.constvars, jaxpr.invars,
-                                    jaxpr.outvars, jaxpr.eqns)
-    jaxpr = jaxpr.replace(effects=effects)
-    return jaxpr
+    all_nonref_const_avals.append(tuple(nonref_const_avals))
+    canonical_ref_indices.append(tuple(ref_indices))
 
   consts = [*canonical_refs, *util.concatenate(all_nonref_consts)]
-  jaxprs = tuple(pad_jaxpr_constvars(i, jaxpr) for i, jaxpr in enumerate(jaxprs))
-  closed_jaxprs = [core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
-                   for jaxpr in jaxprs]
-  return closed_jaxprs, consts, all_out_trees
+  jaxprs = tuple(_pad_jaxpr_constvars(jaxpr, i, (*canonical_ref_avals,), (*canonical_ref_indices,), (*all_nonref_const_avals,))
+                 for i, jaxpr in enumerate(jaxprs))
+  return jaxprs, consts, all_out_trees
+
+@weakref_lru_cache
+def _pad_jaxpr_constvars(jaxpr, i, canonical_ref_avals, canonical_ref_indices,
+                         all_nonref_const_avals):
+  is_ref = [isinstance(v.aval, state.AbstractRef) for v in jaxpr.constvars]
+  nonref_constvars, ref_constvars = partition_list(is_ref, jaxpr.constvars)
+  newvar = core.gensym(suffix='_')
+  unused_const_vars = [tuple(map(newvar, const_avals))
+                       for const_avals in all_nonref_const_avals]
+  padded_ref_constvars  = map(newvar, canonical_ref_avals)
+  for canonical_id, ref_var in zip(canonical_ref_indices[i], ref_constvars):
+    padded_ref_constvars[canonical_id] = ref_var
+  const_prefix = util.concatenate(unused_const_vars[:i])
+  const_suffix = util.concatenate(unused_const_vars[i + 1:])
+  constvars = [*padded_ref_constvars, *const_prefix, *nonref_constvars,
+                *const_suffix]
+  jaxpr = jaxpr.replace(constvars=constvars)
+  effects = pe.make_jaxpr_effects(jaxpr.constvars, jaxpr.invars,
+                                  jaxpr.outvars, jaxpr.eqns)
+  jaxpr = jaxpr.replace(effects=effects)
+  return core.ClosedJaxpr(pe.convert_constvars_jaxpr(jaxpr), ())
 
 def _check_tree_and_avals(what, tree1, avals1, tree2, avals2):
   """Raises TypeError if (tree1, avals1) does not match (tree2, avals2).
