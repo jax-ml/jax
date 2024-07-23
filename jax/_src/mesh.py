@@ -283,6 +283,11 @@ class Mesh(contextlib.ContextDecorator):
   def _local_mesh(self, process_index):
     return _get_local_mesh(self, process_index)
 
+  @property
+  def _is_jax_device_mesh(self):
+    # Returns if the mesh contains JAX devices or not
+    return True
+
   @functools.cached_property
   def device_ids(self):
     assert not self.empty

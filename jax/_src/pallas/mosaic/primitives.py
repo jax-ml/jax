@@ -405,7 +405,7 @@ class AsyncCopyDescriptor:
 dma_start_p = jax_core.Primitive('dma_start')
 dma_start_p.multiple_results = True
 
-@dma_start_p.def_abstract_eval
+@dma_start_p.def_effectful_abstract_eval
 def _dma_start_abstract_eval(*args, tree, device_id_type):
   (
       src_ref_aval,
@@ -433,7 +433,8 @@ def _dma_start_abstract_eval(*args, tree, device_id_type):
       raise ValueError(
           f"Cannot signal on a non-()-shaped semaphore: {src_sem_shape}"
       )
-  return []
+  n_src_indexers = len(tree_util.tree_leaves(src_indexers_avals))
+  return [], {state.ReadEffect(0), state.WriteEffect(n_src_indexers + 1)}
 
 def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
                       context: jax_core.JaxprPpContext,

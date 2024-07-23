@@ -21,12 +21,14 @@ import enum
 import functools
 from typing import Any, Hashable
 
+import jax
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import tree_util
 from jax._src import util
 import jax.numpy as jnp
 from jax._src.pallas import core as pallas_core
+import numpy as np
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
@@ -249,3 +251,17 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
       jaxpr_out_avals = (jaxpr_out_avals,)
     return (*jaxpr_in_avals, *jaxpr_out_avals,
             *jaxpr_scratch_avals), grid_mapping
+
+
+@dataclasses.dataclass(frozen=True)
+class TensorCore:
+  id: int
+
+
+def create_tensorcore_mesh(axis_name: str) -> pallas_core.PallasMesh:
+  # TODO(b/355036384): emit a better error if we don't have tensorcores.
+  num_cores = jax.devices()[0].num_cores
+  return pallas_core.PallasMesh(
+      np.array([TensorCore(i) for i in range(num_cores)]),
+      [axis_name],
+  )

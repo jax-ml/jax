@@ -234,6 +234,8 @@ def get_intermediate_shardings(
       yield from ((i, source_info) for i in eqn.params['in_shardings'])
       yield from ((o, source_info) for o in eqn.params['out_shardings'])
     elif eqn.primitive is shard_map.shard_map_p:
+      if not eqn.params['mesh']._is_jax_device_mesh:
+        continue
       source_info = SourceInfo(eqn.source_info, eqn.primitive.name)
       def _names_to_pspec(names):
         ndmin = max(names) + 1 if names else 0

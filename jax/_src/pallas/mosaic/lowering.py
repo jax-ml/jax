@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+import contextlib
 import dataclasses
 import functools
 import string
@@ -46,6 +47,7 @@ from jax._src.lib.mlir.dialects import math
 from jax._src.lib.mlir.dialects import memref
 from jax._src.lib.mlir.dialects import scf
 from jax._src.lib.mlir.dialects import vector
+from jax._src.pallas import pallas_call
 from jax._src.pallas import core as pl_core
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
@@ -98,7 +100,7 @@ class MeshContext:
 @dataclasses.dataclass
 class LoweringContext:
   ir_context: ir.Context
-  grid_rank: int  # Includes both user and vmap axes.
+  grid_sizes: tuple[int, ...]  # Includes both user and vmap axes.
   grid_names: tuple[Hashable, ...] | None
   mapped_dims: tuple[int, ...]  # Indices of vmapped grid dimensions.
   user_grid_indices: Sequence[ir.Value] | None
@@ -108,6 +110,24 @@ class LoweringContext:
   replace = dataclasses.replace
   traceback_caches: mlir.TracebackCaches
   for_verification: bool
+
+  @property
+  def grid_rank(self):
+    return len(self.grid_sizes)
+
+  @contextlib.contextmanager
+  def grid_name_context(self):
+    # TODO(b/355036977): generalize this across other platforms
+    if not self.grid_names:
+      yield
+      return
+    grid_names = self.grid_names
+    valid_grid_sizes = tuple(
+        d for i, d in enumerate(self.grid_sizes) if i not in self.mapped_dims
+    )
+    grid_env = zip(grid_names, valid_grid_sizes)
+    with jax_core.extend_axis_env_nd(grid_env):
+      yield
 
 
 @dataclasses.dataclass
@@ -551,7 +571,7 @@ def lower_jaxpr_to_transform_func(
       mesh_context = None
     lowering_context = LoweringContext(
         ctx,
-        len(mosaic_grid_mapping.grid),
+        mosaic_grid_mapping.grid,
         mosaic_grid_mapping.grid_names,
         mosaic_grid_mapping.mapped_dims,
         None,
@@ -620,7 +640,7 @@ def lower_jaxpr_to_func(
       mesh_context = None
     lowering_context = LoweringContext(
         ctx,
-        len(mosaic_grid_mapping.grid),
+        mosaic_grid_mapping.grid,
         mosaic_grid_mapping.grid_names,
         mosaic_grid_mapping.mapped_dims,
         jaxpr_indices,
@@ -2518,7 +2538,8 @@ def _run_scoped_lowering_rule(ctx: LoweringRuleContext, *consts, jaxpr):
   out_type = [aval_to_ir_type(aval) for aval in ctx.avals_out]
   region = tpu.RegionOp(out_type)
   in_avals = [v.aval for v in jaxpr.invars]
-  jaxpr = pe.convert_constvars_jaxpr(jaxpr)
+  with ctx.lowering_context.grid_name_context():
+    jaxpr = pe.convert_constvars_jaxpr(jaxpr)
   with ir.InsertionPoint(region.body):
     args = map(_alloc_value, in_avals)
     block_shapes = tuple(a.shape if isinstance(a, state.AbstractRef) else None
@@ -2803,3 +2824,54 @@ def random_wrap_lowering(ctx, key_data, *, impl):
     raise NotImplementedError(f"key_data wrap {type(key_data)}")
 
 lowering_rules[prng.random_wrap_p] = random_wrap_lowering
+
+
+# Lowering for shard_map
+
+# Technically this is not a lowering rule, but a discharge rule. When we use
+# a special pallas mesh for a shard_map inside of a run_state, we turn it into
+# a pallas call. The pallas_call has named grid axes corresponding to the names
+# in the pallas mesh. It also sets up input/output aliasing automatically.
+
+def _shard_map_discharge_rule(
+    in_avals,
+    out_avals,
+    *args,
+    mesh,
+    auto,
+    in_names,
+    out_names,
+    jaxpr,
+    check_rep,
+    rewrite,
+):
+  del out_avals, auto, in_names, out_names, check_rep, rewrite
+  if not isinstance(mesh, pl_core.PallasMesh):
+    raise NotImplementedError("Mesh must be a PallasMesh")
+  if len(mesh.shape) > 1:
+    raise NotImplementedError("Mesh must be 1D")
+  core_axis_name, num_cores = list(mesh.shape.items())[0]
+  def body(*args):
+    in_refs = args[:len(in_avals)]
+    jax_core.eval_jaxpr(jaxpr, (), *in_refs)
+  assert len(jaxpr.outvars) == 0
+  out = pallas_call.pallas_call(
+      body,
+      out_shape=in_avals,
+      in_specs=[pl_core.BlockSpec(memory_space=tpu_core.TPUMemorySpace.ANY)]
+      * len(in_avals),
+      out_specs=[pl_core.BlockSpec(memory_space=tpu_core.TPUMemorySpace.ANY)]
+      * len(in_avals),
+      input_output_aliases={i: i for i in range(len(in_avals))},
+      grid=((core_axis_name, num_cores),),
+      compiler_params=dict(
+          mosaic=dict(dimension_semantics=("parallel",)),
+      ),
+  )(*args)
+  return out, ()
+
+
+from jax.experimental import shard_map
+state_discharge.register_discharge_rule(shard_map.shard_map_p)(
+    _shard_map_discharge_rule
+)

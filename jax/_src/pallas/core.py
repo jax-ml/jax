@@ -30,6 +30,7 @@ from jax._src import api_util
 from jax._src import core as jax_core
 from jax._src import deprecations
 from jax._src import linear_util as lu
+from jax._src import mesh as mesh_lib
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
@@ -570,3 +571,11 @@ def pytreedef_mismatch_err_msg(
         f"    * {where}{what1} is a {thing1} but"
         f" {what2} is a {thing2}, so {explanation}")
   return "\n".join(msg)
+
+
+class PallasMesh(mesh_lib.Mesh):
+  """A specialized mesh used for lowering shard_map -> pallas_call."""
+
+  @property
+  def _is_jax_device_mesh(self):
+    return False
