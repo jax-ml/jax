@@ -42,16 +42,19 @@ LogicalResult applyLayoutOp(ApplyVectorLayoutContext &ctx, Operation &op);
 // Changes the layout of a vector value.
 //
 // Arguments:
+//   ctx: The context used for rewriting.
+//   builder: The builder used for rewriting.
 //   v: The value to relayout. Must be of type VectorType.
 //   src: The current layout of v.
 //   dst: The target layout of v.
 //
 // Returns:
 //   A new MLIR vector value, laid out as requested by dst.
-FailureOr<TypedValue<VectorType>> relayout(OpBuilder &builder,
+FailureOr<TypedValue<VectorType>> relayout(ApplyVectorLayoutContext &ctx,
+                                           OpBuilder &builder,
                                            TypedValue<VectorType> v,
-                                           VectorLayout src, VectorLayout dst,
-                                           std::array<int64_t, 2> target_shape);
+                                           VectorLayout src,
+                                           VectorLayout dst);
 
 }  // namespace mlir::tpu
 
