@@ -2076,14 +2076,16 @@ def raise_to_shaped(aval: AbstractValue, weak_type=None):
     if handler: return handler(aval, weak_type)
   raise TypeError(type(aval))
 
-raise_to_shaped_mappings : dict[type, Callable] = {
-  AbstractToken: lambda aval, _: aval,
-  Bot: lambda aval, _: aval,
-  UnshapedArray: lambda aval, _: aval,
-  ShapedArray: lambda aval, weak_type: ShapedArray(
-      aval.shape, aval.dtype, weak_type, aval.named_shape),
-  DConcreteArray: lambda aval, weak_type: DShapedArray(
-      aval.shape, aval.dtype, weak_type),
+raise_to_shaped_mappings: dict[type, Callable] = {
+    AbstractToken: lambda aval, _: aval,
+    Bot: lambda aval, _: aval,
+    UnshapedArray: lambda aval, _: aval,
+    ShapedArray: lambda aval, weak_type: ShapedArray(
+        aval.shape, aval.dtype, weak_type, aval.named_shape
+    ),
+    DConcreteArray: lambda aval, weak_type: DShapedArray(
+        aval.shape, aval.dtype, weak_type
+    ),
 }
 
 ### Operations on shapes and dimension sizes.

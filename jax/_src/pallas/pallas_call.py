@@ -274,7 +274,7 @@ def _pallas_call_impl_interpret(
           len(blocks),
           len(scratch_values),
       )
-      blocks = jax.core.eval_jaxpr(discharged_jaxpr, discharged_consts, *scalars,
+      blocks = jax_core.eval_jaxpr(discharged_jaxpr, discharged_consts, *scalars,
                                    *blocks, *scratch)
     blocks = blocks[grid_mapping.num_index_operands:]
     blocks, out_scratch = split_list(blocks, [num_inout])
@@ -787,7 +787,7 @@ def pallas_call_checkify_rule(error: checkify.Error,
     # errors before other arguments.
     jaxpr_args = [*input_error_vals, *scalars, *inputs, *outputs, *scratch]
     assert len(checked_jaxpr.jaxpr.invars) == len(jaxpr_args)
-    result_flat = jax.core.eval_jaxpr(
+    result_flat = jax_core.eval_jaxpr(
         checked_jaxpr.jaxpr, checked_jaxpr.consts, *jaxpr_args)
     output_errors, _ = split_list(result_flat, [num_err_vals])
     # Store new errors back in the error refs.

@@ -26,6 +26,7 @@ from jax import lax
 from jax import tree_util
 from jax._src import ad_util
 from jax._src import core as jax_core
+from jax._src import dtypes
 from jax._src import effects
 from jax._src import pretty_printer as pp
 from jax._src import state
@@ -472,7 +473,12 @@ def _load_discharge_rule(in_avals, out_avals, *args_flat, args_tree, **_):
     # of bounds, it will instead move the start_index backwards so the slice
     # will fit in memory.
     ref = _pad_values_to_avoid_dynamic_slice_oob_shift(ref, slice_sizes)
-    out_ones = lax.dynamic_slice(ref, slice_starts, slice_sizes=slice_sizes)
+    idx_dtype = dtypes.canonicalize_dtype(jnp.int64)
+    out_ones = lax.dynamic_slice(
+      ref,
+      [jnp.astype(s, idx_dtype) for s in slice_starts],
+      slice_sizes=slice_sizes,
+    )
     out_indexer = tuple(0 if scalar else slice(None) for scalar in scalar_dims)
     out = out_ones[out_indexer]
   elif all(not isinstance(s, Slice) for s in idx.indices):
