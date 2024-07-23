@@ -371,9 +371,9 @@ MlirTpuValueArray mlirTpuDisassemble(MlirTpuInsertionPoint insertion_point,
 MlirLogicalResult mlirTpuApplyLayoutOp(int hardware_generation,
                                        MlirOperation op,
                                        MlirTpuI64TargetTuple target_shape) {
-  auto f = unwrap(op)->getParentOfType<mlir::func::FuncOp>();
-  CHECK(f != nullptr);
-  mlir::tpu::RewriteContext ctx{f, hardware_generation, unwrap(target_shape)};
+  mlir::tpu::ApplyVectorLayoutContext ctx{
+      .hardware_generation = hardware_generation,
+      .target_shape = unwrap(target_shape)};
   return wrap(mlir::tpu::applyLayoutOp(ctx, *unwrap(op)));
 }
 

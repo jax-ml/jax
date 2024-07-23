@@ -16,6 +16,7 @@ limitations under the License.
 #ifndef JAXLIB_MOSAIC_DIALECT_TPU_DIALECT_H_
 #define JAXLIB_MOSAIC_DIALECT_TPU_DIALECT_H_
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <utility>
@@ -54,6 +55,15 @@ struct TpuTilingFlags {
   bool use_x4_large_second_minor = false;
 };
 
+struct ApplyVectorLayoutContext {
+  // TODO(tlongeri): target_shape should be determined from hardware_generation
+  int hardware_generation = -1;
+  std::array<int64_t, 2> target_shape = {8, 128};
+  // mxu_shape = {contracting_size, non_contracting_size}
+  std::array<int64_t, 2> mxu_shape = {128, 128};
+  int64_t max_sublanes_in_scratch = 0;
+};
+
 std::pair<bool, bool> mightCommunicateBetweenChips(Operation* op);
 
 std::unique_ptr<OperationPass<func::FuncOp>> createInferMemRefLayoutPass(
@@ -66,9 +76,7 @@ std::unique_ptr<OperationPass<func::FuncOp>> createInferVectorLayoutPass(
     int lane_count = 128, int sublane_count = 8);
 
 std::unique_ptr<OperationPass<func::FuncOp>> createApplyVectorLayoutPass(
-    int hardware_generation = -1, int lane_count = 128, int sublane_count = 8,
-    int mxu_contracting_size = 128, int mxu_noncontracting_size = 128,
-    int max_sublanes_in_scratch = 0);
+    const ApplyVectorLayoutContext &ctx = ApplyVectorLayoutContext{});
 
 std::unique_ptr<OperationPass<func::FuncOp>>
 createLogicalToPhysicalDeviceIdPass(int64_t total_devices);

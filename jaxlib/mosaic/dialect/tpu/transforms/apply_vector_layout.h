@@ -4,9 +4,7 @@
 #include <array>
 #include <cstdint>
 
-#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
-#include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LogicalResult.h"
 #include "jaxlib/mosaic/dialect/tpu/layout.h"
@@ -14,17 +12,6 @@
 #include "xla/array.h"
 
 namespace mlir::tpu {
-
-struct RewriteContext {
-  func::FuncOp func;
-  // TODO(tlongeri): target_shape should be determined from hardware_generation
-  const int hardware_generation;
-  const std::array<int64_t, 2> target_shape = {8, 128};
-  const std::array<int64_t, 2> mxu_shape = {128, 128};
-  const int max_sublanes_in_scratch = 0;
-
-  MLIRContext *getMLIRContext() { return func.getContext(); }
-};
 
 // TODO(tlongeri): Remove default values for use_implicit_shape.
 RollVectorsOp assemble(OpBuilder &builder, VectorType vty,
@@ -50,7 +37,7 @@ FailureOr<xla::Array<Value>> disassemble(OpBuilder &builder,
 //   and
 //     have a valid layout (Layout1D or Layout2D)
 //   - All non-vector operands must have NoLayout.
-LogicalResult applyLayoutOp(RewriteContext &ctx, Operation &op);
+LogicalResult applyLayoutOp(ApplyVectorLayoutContext &ctx, Operation &op);
 
 // Changes the layout of a vector value.
 //
