@@ -14,7 +14,9 @@
 # ==============================================================================
 """Tests for Mosaic GPU DSL functions and utilities."""
 
+import enum
 from functools import partial
+import itertools
 import math
 import operator
 
@@ -34,6 +36,11 @@ try:
   HAS_MOSAIC_GPU = True
 except ImportError:
   HAS_MOSAIC_GPU = False
+
+  class Dimension(enum.IntEnum):  # Just to make parameterized tests expand ok
+    x = 0
+    y = 1
+    z = 2
 else:
   from jax.experimental.mosaic import gpu as mosaic_gpu
   from jax.experimental.mosaic.gpu import dsl as mgpu
@@ -41,9 +48,11 @@ else:
   from jax.experimental.mosaic.gpu.utils import *  # noqa: F403
   from jax._src.lib.mlir.dialects import gpu
   from jax._src.lib.mlir.dialects import llvm
+  Dimension = gpu.Dimension
 
 
 # ruff: noqa: F405
+# pylint: disable=g-complex-comprehension
 config.parse_flags_with_absl()
 
 def nd_loop(bounds, body, *, _idxs = ()):
@@ -741,38 +750,67 @@ class TMATest(TestCase):
     y = mosaic_gpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, x)(x)
     np.testing.assert_array_equal(y, x)
 
-  def test_tma_load_multicast(self):
-    dtype = jnp.float16
-    shape = (64, 64)
+  @parameterized.named_parameters(
+      (
+          f"_{collective_dim}{'_' + ''.join(map(str, noncollective_dims)) if noncollective_dims else ''}",
+          collective_dim,
+          noncollective_dims,
+      )
+      for collective_dim in Dimension
+      for noncollective_dims in itertools.chain.from_iterable(
+          itertools.combinations(Dimension, n) for n in range(3)
+      )
+      if collective_dim not in noncollective_dims
+  )
+  def test_tma_load_multicast(self, collective_dim, noncollective_dims):
+    index = ir.IndexType.get()
     swizzle = 128
+    dtype = jnp.float16
+    cluster = [1, 1, 1]
+    for d in (collective_dim, *noncollective_dims):
+      cluster[d] = 2
+    noncollective_size = math.prod(cluster) // cluster[collective_dim]
+    shape = (noncollective_size, 64, 64)
     minor_size = 64 if swizzle is None else swizzle // jnp.dtype(dtype).itemsize
     shape = (*shape[:-1], minor_size)
-    i16 = ir.IntegerType.get_signless(16)
-    index = ir.IndexType.get()
+    # Note that this kernel does not use the non-collective dimensions in any
+    # interesting way and so they don't really have to be part of the cluster.
+    # We use them to test that the multicast mask is generated correctly.
     def kernel(ctx, src, dst, tmp):
+      stride = 1
+      noncollective_idx = c(0, index)
+      for d in noncollective_dims:
+        noncollective_idx = arith.addi(
+            noncollective_idx,
+            arith.muli(gpu.cluster_block_id(d), c(stride, index))
+        )
+        stride *= 2
       barrier = BarrierArray(1)[0]
       nvvm.fence_mbarrier_init()
       nvvm.cluster_arrive_relaxed()
       nvvm.cluster_wait()
-      slc = ds(
-          arith.muli(gpu.cluster_block_id(gpu.Dimension.x), c(32, index)), 32
+      ctx.async_copy(
+          src_ref=src,
+          dst_ref=tmp,
+          gmem_slice=(noncollective_idx,),
+          swizzle=swizzle,
+          barrier=barrier,
+          collective=collective_dim,
       )
-      with single_thread():
-        barrier.arrive_expect_tx(math.prod(shape) * np.dtype(dtype).itemsize)
-        ctx.async_copy(
-            src_ref=src,
-            dst_ref=memref_slice(tmp, slc),
-            swizzle=swizzle,
-            gmem_slice=slc,
-            barrier=barrier,
-            arrive=False,
-            uniform=False,
-            multicast_mask=c(0b11, i16),
-        )
       barrier.wait()
-      copy(memref_slice(tmp, slc), memref_slice(dst, slc), swizzle=swizzle)
+      slc = ds(
+          arith.muli(gpu.cluster_block_id(collective_dim), c(32, index)), 32
+      )
+      copy(
+          memref_slice(tmp, slc),
+          memref_slice(dst, (noncollective_idx, slc)),
+          swizzle=swizzle,
+      )
     x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
-    y = mosaic_gpu.as_gpu_kernel(kernel, (2, 1, 1), (128, 1, 1), x, x, x, cluster=(2, 1, 1))(x)
+    smem_shape = jax.ShapeDtypeStruct(shape[1:], dtype)
+    y = mosaic_gpu.as_gpu_kernel(
+        kernel, cluster, (128, 1, 1), x, x, smem_shape, cluster=cluster
+    )(x)
     np.testing.assert_array_equal(y, x)
 
   @parameterized.product(

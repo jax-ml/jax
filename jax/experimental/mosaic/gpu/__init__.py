@@ -209,6 +209,7 @@ OnDeviceProfiler = profiler.OnDeviceProfiler
 class LaunchContext:
   launch_op: gpu.LaunchOp
   gmem_scratch_ptr: ir.Value
+  cluster_size: tuple[int, ...]
   profiler: OnDeviceProfiler | None = None
   next_scratch_offset: int = 0
   host_scratch_init: list[Callable[[ir.Value], None]] = dataclasses.field(
@@ -322,9 +323,10 @@ class LaunchContext:
       swizzle: int | None = None,
       arrive: bool | None = None,
       uniform: bool = True,
-      multicast_mask: ir.Value | None = None,
+      collective: gpu.Dimension | None = None,
   ):
     index = ir.IndexType.get()
+    i16 = ir.IntegerType.get_signless(16)
     i32 = ir.IntegerType.get_signless(32)
     smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
     src_ref_ty = ir.MemRefType(src_ref.type)
@@ -378,11 +380,68 @@ class LaunchContext:
 
     if slice_shape != tuple(smem_ref_ty.shape):
       raise ValueError(
-          "Expected the SMEM reference to have the same shape as the tiled"
-          f" slice: {tuple(smem_ref_ty.shape)} != {slice_shape}"
+          "Expected the SMEM reference to have the same shape as the"
+          f" transformed slice: {tuple(smem_ref_ty.shape)} != {slice_shape}"
       )
+
+    dyn_base_indices = list(dyn_base_indices)
+    slice_shape = list(slice_shape)
+    if (
+        collective is not None
+        and (collective_size := self.cluster_size[collective]) != 1
+    ):
+      for collective_slice_dim, slice_size in enumerate(slice_shape[:-1]):
+        if slice_size % collective_size == 0:
+          break
+      else:
+        raise ValueError(
+            "None of the leading dimensions in the transformed slice shape"
+            f" {slice_shape} is divisible by the collective size"
+            f" {collective_size}"
+        )
+      # Make each block load a smaller slice, adjust the GMEM indices and slice
+      # the SMEM reference accordingly.
+      slice_shape[collective_slice_dim] //= collective_size
+      block_idx = gpu.cluster_block_id(collective)
+      block_offset = arith.muli(block_idx, c(slice_shape[collective_slice_dim], index))
+      dyn_base_indices[collective_slice_dim] = arith.addi(
+          dyn_base_indices[collective_slice_dim], block_offset,
+      )
+      smem_ref = mgpu.memref_slice(
+          smem_ref,
+          (slice(None),) * collective_slice_dim
+          + (mgpu.ds(block_offset, slice_shape[collective_slice_dim]),),
+      )
+      # Compute the multicast mask. We first compute the linearized index of the
+      # slice along the collective dim that contains the current block. Then,
+      # the mask is a sequence of 1s strided by the position of the collective
+      # dim, shifted left by the linear slice index.
+      # TODO(apaszke): Make sure this gets hoisted outside of any loops.
+      # If not, we might need to do it manually.
+      stride = 1
+      mask_shift = c(0, i32)
+      collective_stride = None
+      for cluster_dim in gpu.Dimension:
+        if self.cluster_size[cluster_dim] == 1:
+          continue
+        if cluster_dim != collective:
+          dim_idx = arith.index_castui(i32, gpu.cluster_block_id(cluster_dim))
+          mask_shift = arith.addi(
+              mask_shift, arith.muli(dim_idx, c(stride, i32)),
+          )
+        else:
+          collective_stride = stride
+        stride *= self.cluster_size[cluster_dim]
+      multicast_mask_unshifted = 0
+      for i in range(collective_size):
+        multicast_mask_unshifted |= 1 << (i * collective_stride)
+      multicast_mask = arith.shli(c(multicast_mask_unshifted, i32), mask_shift)
+      multicast_mask = arith.trunci(i16, multicast_mask)
+    else:
+      multicast_mask = None
+
     tma_desc = self._get_tma_desc(
-        gmem_ref, gmem_transform, slice_shape, swizzle,
+        gmem_ref, gmem_transform, tuple(slice_shape), swizzle,
     )
 
     # We constuct TMA descriptors in column-major order.
@@ -555,7 +614,7 @@ def _launch(
 
     ptr_ty = ir.Type.parse("!llvm.ptr")
     scratch_ptr = builtin.unrealized_conversion_cast([ptr_ty], [scratch_arr])
-    yield LaunchContext(launch_op, scratch_ptr, prof), smem_ref_tree
+    yield LaunchContext(launch_op, scratch_ptr, cluster, prof), smem_ref_tree
     if prof is not None:
       prof.finalize(grid=grid, block=block)
     gpu.terminator()
