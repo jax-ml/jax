@@ -33,6 +33,7 @@ from jax._src import profiler
 from jax._src import traceback_util
 from jax._src.interpreters import mlir
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 import numpy as np
 
@@ -113,6 +114,7 @@ def get_compile_options(
     num_partitions: int,
     device_assignment=None,
     use_spmd_partitioning: bool = True,
+    use_shardy_partitioner: bool = False,
     use_auto_spmd_partitioning: bool = False,
     auto_spmd_partitioning_mesh_shape: list[int] | None = None,
     auto_spmd_partitioning_mesh_ids: list[int] | None = None,
@@ -132,6 +134,10 @@ def get_compile_options(
       `num_partitions`.
     use_spmd_partitioning: boolean indicating whether to enable SPMD or MPMD
       partitioning in XLA.
+    use_shardy_partitioner: boolean indicating whether to use the Shardy
+      partitioner in XLA. Shardy is a new open sourced propagation framework for
+      MLIR. Currently Shardy is experimental in JAX. See
+      www.github.com/openxla/shardy.
     use_auto_spmd_partitioning: boolean indicating whether to automatically
       generate XLA shardings for SPMD partitioner.
     auto_spmd_partitioning_mesh_shape: device mesh shape used to create
@@ -141,8 +147,8 @@ def get_compile_options(
     env_options_overrides: dict of additional options parsed by the compiler
     fdo_profile: Optional profile for feedback-directed optimization passed to
       XLA.
-    detailed_logging: Is this an "interesting" computation about which XLA
-      would be wise to log compilation information?
+    detailed_logging: Is this an "interesting" computation about which XLA would
+      be wise to log compilation information?
     backend: the client, if available.
   """
   compile_options = xc.CompileOptions()
@@ -194,6 +200,11 @@ def get_compile_options(
     debug_options.xla_llvm_disable_expensive_passes = True
     debug_options.xla_test_all_input_layouts = False
 
+  # TODO(b/352486192): Set this on compile_options after the field is moved to
+  # the `ExecutableBuildOptions` proto.
+  if xla_extension_version >= 278:
+    debug_options.xla_use_shardy = use_shardy_partitioner
+
   # XLA-AutoFDO profile version: precedence order is:
   # 1. Whatever --jax_xla_profile_version is set to.
   # 2. If --jax_xla_profile_version is not set (i.e., 0), call the function
@@ -226,6 +237,7 @@ def get_compile_options(
   debug_options.xla_detailed_logging = detailed_logging
 
   return compile_options
+
 
 @profiler.annotate_function
 def backend_compile(

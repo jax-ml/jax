@@ -56,6 +56,8 @@ from jax._src.pjit import pjit, pjit_p
 from jax._src import mesh as mesh_lib
 from jax._src.interpreters import pxla
 from jax.interpreters import mlir
+from jax._src.lib.mlir import dialects
+from jax._src.lib.mlir import ir
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
@@ -5063,6 +5065,46 @@ class UtilTest(jtu.JaxTestCase):
   def test_mesh_with_string_axis_names(self):
     mesh = jax.sharding.Mesh(jax.devices(), 'dp')
     self.assertTupleEqual(mesh.axis_names, ('dp',))
+
+
+@jtu.with_config(jax_use_shardy_partitioner=True)
+class SdyIntegrationTest(jtu.JaxTestCase):
+
+  # TODO(bartchr): Once JAX is released with SDY, remove setUp.
+  def setUp(self):
+    if not dialects.sdy:
+      raise unittest.SkipTest('Shardy is not available.')
+
+  def test_lowering_input_output_sharding(self):
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    s = jax.sharding.NamedSharding(mesh, P('x', 'y'))
+    arr = jax.device_put(np_inp, s)
+
+    @partial(jax.jit, out_shardings=s)
+    def f(x):
+      return x * 2
+
+    self.assertIn('sdy.sharding = #sdy.sharding', f.lower(arr).as_text())
+
+  def test_long_axis_names(self):
+    mesh = jtu.create_global_mesh((2, 2, 2), ('sequence', 'data', 'model'))
+    s = jax.sharding.NamedSharding(mesh, P(('sequence', 'data'), 'model'))
+    with ir.Context() as ctx:
+      dialects.sdy.register_dialect(ctx)
+      self.assertEqual(
+          str(s._to_sdy_sharding(3)),
+          '#sdy.sharding<@mesh, [{"sequence", "data"}, {"model"}, {}]>',
+      )
+
+  def test_unconstrained(self):
+    mesh = jtu.create_global_mesh((8,), ('x',))
+    s = jax.sharding.NamedSharding(mesh, P(None, P.UNCONSTRAINED, 'x'))
+    with ir.Context() as ctx:
+      dialects.sdy.register_dialect(ctx)
+      self.assertEqual(
+          str(s._to_sdy_sharding(3)), '#sdy.sharding<@mesh, [{}, {?}, {"x"}]>'
+      )
 
 
 if __name__ == '__main__':

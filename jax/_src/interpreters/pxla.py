@@ -1943,10 +1943,11 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
                             inout_aliases: None | tuple[None | int, ...],
                             propagated_out_mem_kinds: tuple[None | str, ...],
                             platforms: tuple[str, ...],
-                            lowering_parameters: mlir.LoweringParameters):
+                            lowering_parameters: mlir.LoweringParameters,
+                            mesh_shape_tuple: tuple[tuple[str, int], ...]):
   jaxpr = closed_jaxpr.jaxpr
-  in_shardings = semantic_in_shardings._gspmd_shardings
-  out_shardings = semantic_out_shardings._gspmd_shardings
+  in_shardings = semantic_in_shardings.shardings
+  out_shardings = semantic_out_shardings.shardings
   global_in_avals = closed_jaxpr.in_avals
   global_out_avals = closed_jaxpr.out_avals
 
@@ -2019,7 +2020,8 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
         all_default_mem_kind=all_default_mem_kind,
         input_output_aliases=inout_aliases,
         propagated_out_mem_kinds=propagated_out_mem_kinds,
-        lowering_parameters=lowering_parameters)
+        lowering_parameters=lowering_parameters,
+        mesh_shape_tuple=mesh_shape_tuple)
   tuple_args = dispatch.should_tuple_args(len(global_in_avals), backend.platform)
   unordered_effects = list(
       effects.ordered_effects.filter_not_in(closed_jaxpr.effects))
@@ -2262,6 +2264,14 @@ def lower_sharding_computation(
   semantic_out_shardings = SemanticallyEqualShardings(
       out_shardings, global_out_avals)  # type: ignore
   prim_requires_devices = dispatch.jaxpr_has_prim_requiring_devices(jaxpr)
+  mesh_shape_tuple = None
+  if config.use_shardy_partitioner.value:
+    for sharding in it.chain(
+        in_shardings, out_shardings,
+        [js for js, _ in unique_intermediate_shardings]):
+      if isinstance(sharding, sharding_impls.NamedSharding):
+        mesh_shape_tuple = sharding.mesh.shape_tuple
+        break
 
   (module, keepalive, host_callbacks, unordered_effects, ordered_effects,
    nreps, tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
@@ -2270,7 +2280,8 @@ def lower_sharding_computation(
        tuple(da_object) if prim_requires_devices else None, donated_invars,
        name_stack, all_default_mem_kind, inout_aliases,
        propagated_out_mem_kinds, platforms,
-       lowering_parameters=lowering_parameters)
+       lowering_parameters=lowering_parameters,
+       mesh_shape_tuple=mesh_shape_tuple)
 
   # backend and device_assignment is passed through to MeshExecutable because
   # if keep_unused=False and all in_shardings are pruned, then there is no way
@@ -2789,6 +2800,7 @@ def create_compile_options(
       num_partitions=num_partitions,
       device_assignment=xla_device_assignment,
       use_spmd_partitioning=spmd_lowering,
+      use_shardy_partitioner=config.use_shardy_partitioner.value,
       use_auto_spmd_partitioning=auto_spmd_lowering,
       env_options_overrides=compiler_options,
       fdo_profile=fdo_profile,

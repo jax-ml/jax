@@ -211,6 +211,20 @@ symlink_inputs(
 )
 
 symlink_inputs(
+    name = "sdy_dialect",
+    rule = py_library,
+    symlinked_inputs = {"srcs": {
+        "dialects": ["@shardy//shardy/integrations/python/ir:sdy_ops_py_files"],
+    }},
+    deps = [
+        ":core",
+        ":ir",
+        ":mlir",
+        "//jaxlib/mlir/_mlir_libs:_sdy",
+    ],
+)
+
+symlink_inputs(
     name = "stablehlo_dialect",
     rule = py_library,
     symlinked_inputs = {"srcs": {
@@ -301,4 +315,3 @@ symlink_inputs(
         "//jaxlib/mlir/_mlir_libs:_mlirDialectsLLVM",
     ],
 )
-

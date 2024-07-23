@@ -258,6 +258,12 @@ class Mesh(contextlib.ContextDecorator):
         (name, size)
         for name, size in util.safe_zip(self.axis_names, self.devices.shape))
 
+  @functools.cached_property
+  def shape_tuple(self):
+    return tuple(
+        (name, size)
+        for name, size in util.safe_zip(self.axis_names, self.devices.shape))
+
   @property
   def size(self):
     return math.prod(self.shape.values())
