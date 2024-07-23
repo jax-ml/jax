@@ -250,7 +250,6 @@ def _new_ir_context() -> ir.Context:
 
 def lower_jaxpr_to_triton_module(
     jaxpr: jax_core.Jaxpr,
-    in_out_shapes,
     grid_mapping: GridMapping,
     name: str,
     platform: str
@@ -313,23 +312,22 @@ def lower_jaxpr_to_triton_module(
         raise NotImplementedError(
             "Scalar prefetch not supported in Triton lowering."
         )
-      for bm in grid_mapping.block_mappings:
-        if not isinstance(bm.indexing_mode, Blocked):
-          raise NotImplementedError(
-              "Only Blocked indexing mode is supported in Triton lowering."
-          )
+      if not all(isinstance(bm.indexing_mode, Blocked)
+                 for bm in grid_mapping.block_mappings):
+        raise NotImplementedError(
+            "Only Blocked indexing mode is supported in Triton lowering."
+        )
       start_indices = map(
           functools.partial(_eval_index_map, ctx, program_ids),
           grid_mapping.block_mappings,
       )
       block_infos = [
           BlockInfo(
-              jax.ShapeDtypeStruct(shape_dtype.shape, shape_dtype.dtype),
+              block_mapping.array_shape_dtype,
               start_idx,
               block_mapping.block_shape,
           )
-          for shape_dtype, block_mapping, start_idx in zip(
-              in_out_shapes,
+          for block_mapping, start_idx in zip(
               grid_mapping.block_mappings,
               start_indices,
           )
