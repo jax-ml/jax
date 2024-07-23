@@ -5239,6 +5239,15 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     out = jnp.linspace(*endpoints, 10, dtype=dtype)
     self.assertAllClose(out[np.array([0, -1])], endpoints, rtol=0, atol=0)
 
+  def testLinspaceArrayNum(self):
+    """Regression test for Issue #22405."""
+    rng = jtu.rand_default(self.rng())
+    endpoints = rng((2,), np.float32)
+    # The num parameter is an np.array.
+    out = jnp.linspace(*endpoints, np.array(10, dtype=np.int32),
+                       dtype=np.float32)
+    self.assertAllClose(out[np.array([0, -1])], endpoints, rtol=0, atol=0)
+
   @jtu.sample_product(
     start_shape=[(), (2,), (2, 2)],
     stop_shape=[(), (2,), (2, 2)],
