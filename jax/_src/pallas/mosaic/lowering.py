@@ -19,7 +19,7 @@ from collections.abc import Callable, Sequence
 import dataclasses
 import functools
 import string
-from typing import Any
+from typing import Any, Hashable
 
 import jax
 from jax import lax
@@ -99,6 +99,7 @@ class MeshContext:
 class LoweringContext:
   ir_context: ir.Context
   grid_rank: int  # Includes both user and vmap axes.
+  grid_names: tuple[Hashable, ...] | None
   mapped_dims: tuple[int, ...]  # Indices of vmapped grid dimensions.
   user_grid_indices: Sequence[ir.Value] | None
   block_shapes: list[tuple[int | pl_core.Mapped, ...]]
@@ -252,6 +253,7 @@ def _get_arg_type(
 @dataclasses.dataclass(init=False)
 class MosaicGridMapping:
   grid: tuple[int, ...] | None
+  grid_names: tuple[Hashable, ...] | None
   jaxpr: jax_core.Jaxpr
   block_mappings: tuple[pl_core.BlockMapping | None, ...]
   mapped_dims: tuple[int, ...]
@@ -269,6 +271,7 @@ class MosaicGridMapping:
                dimension_semantics: tuple[str, ...] | None,
                mesh: mesh_lib.Mesh | None):
     self.grid = grid_mapping.grid
+    self.grid_names = grid_mapping.grid_names
     self.jaxpr = jaxpr
     self.block_mappings = grid_mapping.block_mappings
     self.mapped_dims = grid_mapping.mapped_dims
@@ -341,6 +344,12 @@ class MosaicGridMapping:
           "Cannot use communication in pallas_call without shard_map."
       )
     axis_names = mesh.axis_names
+    if self.grid_names is not None:
+      if any(a in self.grid_names for a in axis_names):
+        raise ValueError(
+            "Cannot shadow axis mesh axis names with grid names. mesh axis"
+            f" names: {mesh.axis_names}, grid names: {self.grid_names}"
+        )
     # We need mesh <-> logical translation tables. Since the logical IDs are
     # just linearized versions of the mesh IDs, we create those tables.
     mesh_strides = pallas_utils.strides_from_shape(tuple(
@@ -356,7 +365,19 @@ class MosaicGridMapping:
 
   @functools.cached_property
   def has_communication(self) -> bool:
-    return bool(jax_core.used_axis_names_jaxpr(self.jaxpr))
+    nonlocal_axis_names = set()
+    def _get_nonlocal_axis_names(jaxpr: jax_core.Jaxpr):
+      return {
+          e.name
+          for e in jaxpr.effects
+          if isinstance(e, jax_core.NamedAxisEffect)
+          and (not self.grid_names or e.name not in self.grid_names)
+      }
+    nonlocal_axis_names.update(_get_nonlocal_axis_names(self.jaxpr))
+    for bm in self.block_mappings:
+      if bm is not None:
+        nonlocal_axis_names.update(_get_nonlocal_axis_names(bm.index_map_jaxpr))
+    return bool(nonlocal_axis_names)
 
   def get_extra_args(self) -> tuple[Any, ...]:
     return ()
@@ -531,6 +552,7 @@ def lower_jaxpr_to_transform_func(
     lowering_context = LoweringContext(
         ctx,
         len(mosaic_grid_mapping.grid),
+        mosaic_grid_mapping.grid_names,
         mosaic_grid_mapping.mapped_dims,
         None,
         arg_block_shapes,
@@ -599,6 +621,7 @@ def lower_jaxpr_to_func(
     lowering_context = LoweringContext(
         ctx,
         len(mosaic_grid_mapping.grid),
+        mosaic_grid_mapping.grid_names,
         mosaic_grid_mapping.mapped_dims,
         jaxpr_indices,
         arg_block_shapes,
@@ -2627,10 +2650,18 @@ def _device_id_lowering_rule(ctx: LoweringRuleContext):
   return tpu.DeviceIdOp().result
 lowering_rules[tpu_primitives.device_id_p] = _device_id_lowering_rule
 
-def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: str):
+def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
+  grid_names = ctx.lowering_context.grid_names
+  if grid_names and axis_name in grid_names:
+    # We are querying a named axis corresponding to a grid dimension.
+    return _program_id_lowering_rule(ctx, axis=grid_names.index(axis_name))
+  # We are querying a named axis corresponding to a mesh dimension.
   device_id = tpu.DeviceIdOp().result
-  mesh_shape = ctx.lowering_context.mesh_context.mesh_shape
-  axis_names = ctx.lowering_context.mesh_context.axis_names
+  mesh_context = ctx.lowering_context.mesh_context
+  if mesh_context is None:
+    raise ValueError("Mesh context is not set.")
+  mesh_shape = mesh_context.mesh_shape
+  axis_names = mesh_context.axis_names
   axis_index = axis_names.index(axis_name)
   axis_size = ir_constant(mesh_shape[axis_index])
   minor_divisor = ir_constant(

@@ -22,7 +22,7 @@ import dataclasses
 import enum
 import functools
 import threading
-from typing import Any, Union
+from typing import Any, Hashable, Union
 import warnings
 
 import jax
@@ -44,9 +44,14 @@ dynamic_grid_dim = DynamicGridDim()
 
 
 partial = functools.partial
-Grid = tuple[Union[int, jax_core.Array], ...]
+GridElement = int | jax_core.Array
+GridName = Hashable
+GridNames = tuple[Hashable, ...] | None
+NamedGrid = tuple[tuple[GridName, int], ...]
+TupleGrid = tuple[GridElement, ...]
+Grid = Union[NamedGrid, TupleGrid]
 StaticGrid = tuple[int, ...]
-GridMappingGrid = tuple[Union[int, DynamicGridDim], ...]
+GridMappingGrid = tuple[int | DynamicGridDim, ...]
 split_list = util.split_list
 
 map, unsafe_map = util.safe_map, map
@@ -280,6 +285,7 @@ def tracing_grid_env(grid: GridMappingGrid, mapped_dims: tuple[int, ...]):
 @dataclasses.dataclass(frozen=True)
 class GridMapping:
   grid: GridMappingGrid
+  grid_names: tuple[Hashable, ...] | None
   block_mappings: tuple[BlockMapping | None, ...]
   mapped_dims: tuple[int, ...] = ()
   num_index_operands: int = 0
@@ -301,16 +307,39 @@ class GridMapping:
 
   @contextlib.contextmanager
   def trace_env(self):
-    with tracing_grid_env(self.grid, self.mapped_dims):
+    if self.grid_names is None:
+      axis_env_ctx = contextlib.nullcontext()
+    else:
+      axis_env_ctx = jax_core.extend_axis_env_nd(
+          zip(self.grid_names, self.grid)
+      )
+    with tracing_grid_env(self.grid, self.mapped_dims), axis_env_ctx:
       yield
 
+def _is_valid_grid_dim(dim: int | jax.Array) -> bool:
+  if isinstance(dim, jax.Array):
+    return True
+  return jax_core.is_dim(dim)
 
-def _preprocess_grid(grid: Grid | int | None) -> Grid:
+def _preprocess_grid(grid: Grid | int | None) -> tuple[TupleGrid, GridNames]:
   if grid is None:
-    return ()
+    return (), None
   if isinstance(grid, int):
-    return (grid,)
-  return grid
+    return (grid,), None
+  # Handle empty grid
+  if not grid:
+    return grid, None  # type: ignore
+  # Check if we have a named grid
+  if isinstance(grid[0], tuple):
+    grid_names, grid = util.unzip2(grid)  # type: ignore
+  else:
+    grid_names = None
+  # TODO(b/353730556): allow NumPy scalars in grids
+  if not all(_is_valid_grid_dim(g) for g in grid):  # type: ignore
+    raise ValueError(
+        f"Grid must be a tuple of integers or jax.Array, got {grid}"
+    )
+  return grid, grid_names  # type: ignore
 
 
 def _convert_block_spec_to_block_mapping(
@@ -409,7 +438,8 @@ def _get_ref_avals(in_avals: Sequence[jax_core.ShapedArray],
 
 @dataclasses.dataclass(init=False, unsafe_hash=True)
 class GridSpec:
-  grid: Grid
+  grid: TupleGrid
+  grid_names: tuple[Hashable, ...] | None
   in_specs: tuple[BlockSpec | NoBlockSpec, ...]
   out_specs: tuple[BlockSpec | NoBlockSpec, ...]
   in_specs_tree: Any
@@ -429,7 +459,7 @@ class GridSpec:
     if isinstance(out_specs, list):
       out_specs = tuple(out_specs)
 
-    self.grid = _preprocess_grid(grid)
+    self.grid, self.grid_names = _preprocess_grid(grid)
     if in_specs is not no_block_spec:
       flat_in_specs, self.in_specs_tree = tree_util.tree_flatten(in_specs)
       self.in_specs = tuple(flat_in_specs)
@@ -504,7 +534,8 @@ class GridSpec:
         out_ref_avals,
     )
     grid_mapping = GridMapping(
-        grid_mapping_grid, (*in_block_mappings, *out_block_mappings)  # type: ignore
+        grid_mapping_grid, self.grid_names, # type: ignore
+        (*in_block_mappings, *out_block_mappings)
     )
     jaxpr_in_avals = tree_util.tree_unflatten(in_tree, in_ref_avals)
     jaxpr_out_avals = tree_util.tree_unflatten(out_tree, out_ref_avals)

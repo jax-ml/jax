@@ -908,7 +908,7 @@ def _trace_to_jaxpr(fun: Callable, grid_spec: GridSpec,
   wrapped_fun, out_tree_thunk = api_util.flatten_fun_nokwargs(
       lu.wrap_init(fun), jaxpr_in_tree)
   debug = pe.debug_info(fun, jaxpr_in_tree, out_tree_thunk, False, "pallas_call")
-  with pallas_core.tracing_grid_env(grid_mapping.grid, ()):
+  with grid_mapping.trace_env():
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_fun,
                                                      jaxpr_flat_avals, debug)
     if consts:
@@ -1031,6 +1031,13 @@ def _pallas_custom_str_eqn_compact(
 jax_core.custom_str_eqn_compact_rules[pallas_call_p] = (
     _pallas_custom_str_eqn_compact
 )
+
+def _pallas_call_typecheck_rule(*in_avals, grid_mapping, **params):
+  with grid_mapping.trace_env():
+    return pallas_call_p.abstract_eval(
+        *in_avals, grid_mapping=grid_mapping, **params
+    )
+jax_core.custom_typechecks[pallas_call_p] = _pallas_call_typecheck_rule
 
 
 def pallas_call(

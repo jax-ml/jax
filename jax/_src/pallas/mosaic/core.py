@@ -19,7 +19,7 @@ from collections.abc import Sequence
 import dataclasses
 import enum
 import functools
-from typing import Any
+from typing import Any, Hashable
 
 from jax._src import core as jax_core
 from jax._src import dtypes
@@ -33,6 +33,7 @@ zip, unsafe_zip = util.safe_zip, zip
 
 partial = functools.partial
 Grid = pallas_core.Grid
+TupleGrid = pallas_core.TupleGrid
 BlockSpec = pallas_core.BlockSpec
 BlockSpecTree = pallas_core.BlockSpecTree
 GridMapping = pallas_core.GridMapping
@@ -149,7 +150,8 @@ def _make_aval(obj: object) -> jax_core.AbstractValue:
 
 @dataclasses.dataclass(init=False, unsafe_hash=True)
 class PrefetchScalarGridSpec(pallas_core.GridSpec):
-  grid: Grid
+  grid: TupleGrid
+  grid_names: tuple[Hashable, ...] | None
   num_scalar_prefetch: int
   in_specs: tuple[BlockSpec | NoBlockSpec, ...]
   out_specs: tuple[BlockSpec | NoBlockSpec, ...]
@@ -227,7 +229,7 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
         out_ref_avals,
     )
     grid_mapping = GridMapping(
-        grid=grid_mapping_grid,  # type: ignore
+        grid=grid_mapping_grid, grid_names=self.grid_names, # type: ignore
         block_mappings=(*in_block_mappings, *out_block_mappings),
         mapped_dims=(),
         num_index_operands=num_flat_scalar_prefetch,

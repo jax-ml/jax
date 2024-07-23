@@ -21,7 +21,7 @@ import dataclasses
 import functools
 import math
 import operator
-from typing import Any, TypeVar
+from typing import Any, Hashable, TypeVar
 
 import jax
 from jax import lax
@@ -256,7 +256,10 @@ def lower_jaxpr_to_triton_module(
     name: str,
     platform: str
 ) -> LoweringResult:
-  jaxpr, _ = pe.dce_jaxpr(jaxpr, [True] * len(jaxpr.outvars), instantiate=True)
+  with grid_mapping.trace_env():
+    jaxpr, _ = pe.dce_jaxpr(
+        jaxpr, [True] * len(jaxpr.outvars), instantiate=True
+    )
   with _new_ir_context(), ir.Location.unknown():
     module = ir.Module.create()
     param_types = [
@@ -2239,6 +2242,14 @@ def _remat_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
 
 triton_lowering_rules[ad_util.stop_gradient_p] = lambda _, x: x
 
+
+@register_lowering(lax.axis_index_p)
+def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
+  grid_names = ctx.context.grid_mapping.grid_names
+  if axis_name in grid_names:
+    # We are querying a named axis corresponding to a grid dimension.
+    return _program_id_lowering_rule(ctx, axis=grid_names.index(axis_name))
+  raise LookupError(f"Axis name {axis_name} not found in grid.")
 
 def _is_read_only(ref_effects) -> bool:
   if len(ref_effects) == 0:

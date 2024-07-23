@@ -1927,5 +1927,110 @@ class PallasCheckifyInterpreterTest(PallasBaseTest):
       err.throw()
 
 
+class PallasCallNamedGridTest(PallasBaseTest):
+
+  def test_named_grid(self):
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...]
+
+    x = jnp.arange(2 * 8 * 128, dtype=np.int32).reshape((2, 8, 128))
+    y = self.pallas_call(
+        kernel,
+        out_shape=x,
+        in_specs=[
+            pl.BlockSpec((None, 8, 128), lambda i: (i, 0, 0)),
+        ],
+        out_specs=pl.BlockSpec((None, 8, 128), lambda i: (i, 0, 0)),
+        grid=(("i", 2),)
+    )(x)
+    np.testing.assert_array_equal(y, x)
+
+  def test_named_grid_reordered_names(self):
+
+    def kernel(x_ref, y_ref):
+      y_ref[...] = x_ref[...]
+
+    x = jnp.arange(4 * 16 * 128, dtype=np.int32).reshape((4, 16, 128))
+    y = self.pallas_call(
+        kernel,
+        out_shape=x,
+        in_specs=[
+            pl.BlockSpec((None, 8, 128), lambda i, j: (i, j, 0)),
+        ],
+        out_specs=pl.BlockSpec((None, 8, 128), lambda i, j: (i, j, 0)),
+        grid=(("j", 4), ("i", 2))
+    )(x)
+    np.testing.assert_array_equal(y, x)
+
+  def test_can_query_named_grid_size_in_kernel_via_psum(self):
+
+    def kernel(x_ref, y_ref):
+      self.assertEqual(lax.psum(1, "i"), 2)
+      self.assertEqual(lax.psum(1, "j"), 4)
+      y_ref[...] = x_ref[...]
+
+    x = jnp.arange(4 * 16 * 128, dtype=np.int32).reshape((4, 16, 128))
+    y = self.pallas_call(
+        kernel,
+        out_shape=x,
+        in_specs=[
+            pl.BlockSpec((None, 8, 128), lambda i, j: (i, j, 0)),
+        ],
+        out_specs=pl.BlockSpec((None, 8, 128), lambda i, j: (i, j, 0)),
+        grid=(("j", 4), ("i", 2))
+    )(x)
+    np.testing.assert_array_equal(y, x)
+
+  def test_can_query_named_dynamic_grid_size_in_kernel_via_psum(self):
+    # TODO(): Enable dynamic grid size via axis_size primitive.
+    self.skipTest("Not supported.")
+
+    def kernel(x_ref, y_ref):
+      self.assertEqual(lax.psum(1, "i"), 2)
+      self.assertEqual(lax.psum(1, "j"), 4)
+      y_ref[...] = x_ref[...]
+
+    x = jnp.arange(4 * 8 * 128, dtype=np.int32).reshape((4, 8, 128))
+    @jax.jit
+    def foo(n):
+      return self.pallas_call(
+          kernel,
+          out_shape=x,
+          in_specs=[
+              pl.BlockSpec((None, 8, 128), lambda i: (i, 0, 0)),
+          ],
+          out_specs=pl.BlockSpec((None, 8, 128), lambda i: (i, 0, 0)),
+          grid=(("i", n),)
+      )(x)
+    y = foo(4)
+    np.testing.assert_array_equal(y, x)
+
+  def test_can_query_named_grid_program_id_in_kernel_via_axis_index(self):
+    if self.INTERPRET:
+      self.skipTest("Not supported in interpret mode.")
+    def kernel(x_ref, y_ref):
+      i_index = lax.axis_index("i")
+      y_ref[...] = x_ref[...] + i_index
+
+    x = jnp.arange(4 * 8 * 128, dtype=np.int32).reshape((4, 8, 128))
+    y = self.pallas_call(
+        kernel,
+        out_shape=x,
+        in_specs=[
+            pl.BlockSpec((None, 8, 128), lambda i: (i, 0, 0)),
+        ],
+        out_specs=pl.BlockSpec((None, 8, 128), lambda i: (i, 0, 0)),
+        grid=(("i", 4),),
+    )(x)
+    np.testing.assert_array_equal(
+        y, x + jnp.arange(4, dtype=jnp.int32)[:, None, None]
+    )
+
+
+class PallasCallNamedGridInterpretTest(PallasCallNamedGridTest):
+  INTERPRET = True
+
+
 if __name__ == "__main__":
   absltest.main()
