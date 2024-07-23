@@ -255,6 +255,13 @@ class ArrayImpl(basearray.Array):
     return self._sharding
 
   @property
+  def device(self):
+    self._check_if_deleted()
+    if isinstance(self.sharding, SingleDeviceSharding):
+      return list(self.sharding.device_set)[0]
+    return self.sharding
+
+  @property
   def weak_type(self):
     return self.aval.weak_type
 

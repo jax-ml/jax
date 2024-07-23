@@ -25,6 +25,8 @@ Remember to align the itemized text with the first line of an item within a list
     will be removed in a future release.
   * Updated the repr of gpu devices to be more consistent
     with TPUs/CPUs. For example, `cuda(id=0)` will now be `CudaDevice(id=0)`.
+  * Added the `device` property and `to_device` method to {class}`jax.Array`, as
+    part of JAX's [Array API](https://data-apis.org/array-api) support.
 * Deprecations
   * Removed a number of previously-deprecated internal APIs related to
     polymorphic shapes. From {mod}`jax.core`: removed `canonicalize_shape`,
