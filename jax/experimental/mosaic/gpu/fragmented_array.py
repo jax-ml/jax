@@ -166,6 +166,11 @@ class FragmentedArray:
       case _:
         raise NotImplementedError
 
+  def __repr__(self):
+    return (
+        f"FragmentedArray(layout={self.layout}, shape={self.shape})"
+    )
+
   @classmethod
   def load_strided(cls, ref: ir.Value):
     if not ir.MemRefType.isinstance(ref.type):
