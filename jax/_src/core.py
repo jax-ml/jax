@@ -3470,3 +3470,7 @@ def clean_up_dead_vars(eqn: JaxprEqn, env: dict[Var, Any],
     if last_used[v] is eqn:
       # Delete ref to variable when it is no longer needed by next equations.
       del env[v]
+
+# Used in shard_map for converting avals
+shard_aval_handlers = {}  # type: ignore
+unshard_aval_handlers = {}  # type: ignore

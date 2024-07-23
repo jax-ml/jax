@@ -550,21 +550,32 @@ def _check_shapedarray(aval: core.AbstractValue) -> core.ShapedArray:
 
 def _shard_aval(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
                 ) -> core.AbstractValue:
-  if isinstance(aval, core.ShapedArray):
-    return aval.update(tuple(sz // prod(mesh.shape[n] for n in names.get(i, ()))
-                             for i, sz in enumerate(aval.shape)))
-  else:
-    raise NotImplementedError  # TODO(mattjj): add table with handlers
+  if type(aval) in core.shard_aval_handlers:
+    return core.shard_aval_handlers[type(aval)](mesh, names, aval)
+  raise NotImplementedError(f"Unsupported aval type: {type(aval)}")
 
 def _unshard_aval(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
                  ) -> core.AbstractValue:
-  if isinstance(aval, core.ShapedArray):
-    return aval.update(tuple(sz * prod(mesh.shape[n] for n in names.get(i, ()))
-                             for i, sz in enumerate(aval.shape)),
-                       named_shape={k: v for k, v in aval.named_shape.items()
-                                    if k not in mesh.shape})
+  if type(aval) in core.unshard_aval_handlers:
+    return core.unshard_aval_handlers[type(aval)](mesh, names, aval)
   else:
-    raise NotImplementedError  # TODO(mattjj): add table with handlers
+    raise NotImplementedError(f"Unsupported aval type: {type(aval)}")
+
+def _shard_shaped_array(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
+                       ) -> core.AbstractValue:
+  assert isinstance(aval, core.ShapedArray)
+  return aval.update(tuple(sz // prod(mesh.shape[n] for n in names.get(i, ()))
+                            for i, sz in enumerate(aval.shape)))
+core.shard_aval_handlers[core.ShapedArray] = _shard_shaped_array
+
+def _unshard_shaped_array(mesh: Mesh, names: AxisNames,
+                          aval: core.AbstractValue,) -> core.AbstractValue:
+  assert isinstance(aval, core.ShapedArray)
+  return aval.update(tuple(sz * prod(mesh.shape[n] for n in names.get(i, ()))
+                            for i, sz in enumerate(aval.shape)),
+                      named_shape={k: v for k, v in aval.named_shape.items()
+                                  if k not in mesh.shape})
+core.unshard_aval_handlers[core.ShapedArray] = _unshard_shaped_array
 
 # Type-checking
 
