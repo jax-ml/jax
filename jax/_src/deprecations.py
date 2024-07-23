@@ -66,6 +66,13 @@ def accelerate_getattr_deprecation(module: ModuleType, name: str) -> None:
   message, _ = module._deprecations[name]
   module._deprecations[name] = (message, None)
 
+def is_accelerated_attribute(module: ModuleType, name: str) -> bool:
+  """Returns true if given name is accelerated.
+
+  Raises an error if name is not a deprecated attribute in module.
+  """
+  return module._deprecations[name][1] is None
+
 # The following mechanism is a separate one, for registering and
 # accelerating deprecations that are not imports (for example, deprecations
 # of a function argument).
