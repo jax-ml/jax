@@ -673,7 +673,9 @@ pytype_strict_library(
     ],
     deps = [
         ":pallas",
+        "//jax/_src/pallas/mosaic_gpu:core",  # build_cleaner: keep
         "//jax/_src/pallas/mosaic_gpu:pallas_call_registration",  # build_cleaner: keep
+        "//jax/_src/pallas/mosaic_gpu:primitives",  # build_cleaner: keep
         "//jax/_src/pallas/triton:pallas_call_registration",  # build_cleaner: keep
         "//jax/_src/pallas/triton:primitives",
     ],

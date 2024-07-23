@@ -32,7 +32,9 @@ py_library(
     name = "mosaic_gpu",
     srcs = ["__init__.py"],
     deps = [
+        ":core",
         ":pallas_call_registration",
+        ":primitives",
     ],
 )
 
@@ -52,6 +54,8 @@ pytype_strict_library(
     name = "lowering",
     srcs = ["lowering.py"],
     deps = [
+        ":core",
+        ":primitives",
         "//jax",
         "//jax:core",
         "//jax:mlir",
@@ -60,4 +64,25 @@ pytype_strict_library(
         "//jax/_src/lib",
         "//jax/_src/pallas",
     ] + py_deps("numpy"),
+)
+
+pytype_strict_library(
+    name = "core",
+    srcs = ["core.py"],
+    deps = [
+        "//jax",
+        "//jax/_src/pallas",
+    ],
+)
+
+pytype_strict_library(
+    name = "primitives",
+    srcs = ["primitives.py"],
+    deps = [
+        "//jax:api_util",
+        "//jax:core",
+        "//jax:effects",
+        "//jax:partial_eval",
+        "//jax:tree_util",
+    ],
 )
