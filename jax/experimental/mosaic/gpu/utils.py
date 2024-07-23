@@ -177,6 +177,13 @@ def fori(bound, carrys):
   return wrapper
 
 
+@contextlib.contextmanager
+def when(cond):
+  with ir.InsertionPoint(scf.IfOp(cond).then_block):
+    yield
+    scf.yield_([])
+
+
 def thread_idx():
   i32 = ir.IntegerType.get_signless(32)
   as_i32 = lambda x: arith.index_cast(i32, x)
@@ -564,6 +571,11 @@ class Barrier:
     parity, new_parities = self.update_parities(parities)
     memref.store(new_parities, self.barrier_array.phases, [])
     self.wait_parity(parity, expect_wait=expect_wait)
+
+  def arrive_expect_tx(self, bytes: int | ir.Value):
+    if isinstance(bytes, int):
+      bytes = c(bytes, ir.IntegerType.get_signless(32))
+    nvvm.mbarrier_arrive_expect_tx(self.get_ptr(), bytes)
 
   def update_parities(self, parities: ir.Value) -> tuple[ir.Value, ir.Value]:
     i32 = ir.IntegerType.get_signless(32)

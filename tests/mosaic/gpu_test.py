@@ -15,6 +15,7 @@
 """Tests for Mosaic GPU DSL functions and utilities."""
 
 from functools import partial
+import math
 import operator
 
 from absl.testing import absltest, parameterized
@@ -738,6 +739,40 @@ class TMATest(TestCase):
       copy(tmp, dst, swizzle=swizzle)
     x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
     y = mosaic_gpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, x)(x)
+    np.testing.assert_array_equal(y, x)
+
+  def test_tma_load_multicast(self):
+    dtype = jnp.float16
+    shape = (64, 64)
+    swizzle = 128
+    minor_size = 64 if swizzle is None else swizzle // jnp.dtype(dtype).itemsize
+    shape = (*shape[:-1], minor_size)
+    i16 = ir.IntegerType.get_signless(16)
+    index = ir.IndexType.get()
+    def kernel(ctx, src, dst, tmp):
+      barrier = BarrierArray(1)[0]
+      nvvm.fence_mbarrier_init()
+      nvvm.cluster_arrive_relaxed()
+      nvvm.cluster_wait()
+      slc = ds(
+          arith.muli(gpu.cluster_block_id(gpu.Dimension.x), c(32, index)), 32
+      )
+      with single_thread():
+        barrier.arrive_expect_tx(math.prod(shape) * np.dtype(dtype).itemsize)
+        ctx.async_copy(
+            src_ref=src,
+            dst_ref=memref_slice(tmp, slc),
+            swizzle=swizzle,
+            gmem_slice=slc,
+            barrier=barrier,
+            arrive=False,
+            uniform=False,
+            multicast_mask=c(0b11, i16),
+        )
+      barrier.wait()
+      copy(memref_slice(tmp, slc), memref_slice(dst, slc), swizzle=swizzle)
+    x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
+    y = mosaic_gpu.as_gpu_kernel(kernel, (2, 1, 1), (128, 1, 1), x, x, x, cluster=(2, 1, 1))(x)
     np.testing.assert_array_equal(y, x)
 
   @parameterized.product(

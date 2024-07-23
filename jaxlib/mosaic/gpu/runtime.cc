@@ -115,14 +115,37 @@ void *mosaic_gpu_get_function(CUmodule module, const char *name,
   return function;
 }
 
-void mosaic_gpu_launch_kernel(CUfunction function, int64_t grid_x,
-                              int64_t grid_y, int64_t grid_z, int64_t block_x,
-                              int64_t block_y, int64_t block_z,
-                              int32_t smem_bytes, CUstream stream,
+void mosaic_gpu_launch_kernel(CUfunction function, uint32_t grid_x,
+                              uint32_t grid_y, uint32_t grid_z,
+                              uint32_t cluster_x, uint32_t cluster_y,
+                              uint32_t cluster_z, uint32_t block_x,
+                              uint32_t block_y, uint32_t block_z,
+                              uint32_t smem_bytes, CUstream stream,
                               void **params) {
-  CUresult result =
-      cuLaunchKernel(function, grid_x, grid_y, grid_z, block_x, block_y,
-                     block_z, smem_bytes, stream, params, nullptr);
+  CUlaunchConfig config {
+    .gridDimX = grid_x,
+    .gridDimY = grid_y,
+    .gridDimZ = grid_z,
+    .blockDimX = block_x,
+    .blockDimY = block_y,
+    .blockDimZ = block_z,
+    .sharedMemBytes = smem_bytes,
+    .hStream = stream,
+    .attrs = nullptr,
+    .numAttrs = 0,
+  };
+  CUlaunchAttribute cluster_attr;
+  if (cluster_x != 0) {
+    cluster_attr.id = CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION;
+    cluster_attr.value.clusterDim = {
+        .x = cluster_x,
+        .y = cluster_y,
+        .z = cluster_z,
+    };
+    config.attrs = &cluster_attr;
+    config.numAttrs = 1;
+  }
+  CUresult result = cuLaunchKernelEx(&config, function, params, nullptr);
   if (result != CUDA_SUCCESS) {
     const char *ptr = nullptr;
     cuGetErrorString(result, &ptr);
@@ -130,5 +153,4 @@ void mosaic_gpu_launch_kernel(CUfunction function, int64_t grid_x,
     abort();
   }
 }
-
 }

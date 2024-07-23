@@ -322,6 +322,7 @@ class LaunchContext:
       swizzle: int | None = None,
       arrive: bool | None = None,
       uniform: bool = True,
+      multicast_mask: ir.Value | None = None,
   ):
     index = ir.IndexType.get()
     i32 = ir.IntegerType.get_signless(32)
@@ -414,7 +415,7 @@ class LaunchContext:
         if arrive:
           nvvm.mbarrier_arrive_expect_tx_shared(barrier_ptr, slice_bytes)
         nvvm.cp_async_bulk_tensor_shared_cluster_global(
-            smem_ptr, tma_desc, rev_dyn_base_indices, barrier_ptr, []
+            smem_ptr, tma_desc, rev_dyn_base_indices, barrier_ptr, [], multicast_mask=multicast_mask,
         )
     else:
       with uniform_ctx():
@@ -469,6 +470,7 @@ def _construct_smem_reftree(
 def _launch(
     token,
     grid,
+    cluster,
     block,
     scratch_arr,
     smem_buffers: ShapeTree | Union[ShapeTree],
@@ -500,10 +502,24 @@ def _launch(
   # TODO(cperivol): Query the shared memory size programmatically.
   if smem_bytes > 228 * 1024:
     raise ValueError(f"Mosaic GPU kernel exceeds available shared memory {smem_bytes=} > 228000")
+  if cluster:
+    if len(cluster) != 3:
+      raise ValueError("Clusters must be 3D")
+    cluster_kwargs = {
+        "clusterSize" + d: c(s, index) for s, d in zip(cluster, "XYZ")
+    }
+    for grid_size, cluster_size in zip(grid, cluster):
+      if grid_size % cluster_size != 0:
+        raise ValueError(
+            f"Grid dimension ({grid_size}) must be divisible by cluster"
+            f" dimension ({cluster_size})"
+        )
+  else:
+    cluster_kwargs = {}
   launch_op = gpu.LaunchOp(
       token.type, [token], *grid_vals, *block_vals,
-      dynamicSharedMemorySize=c(smem_bytes, i32))
-  launch_op.body.blocks.append(*([index] * 12))  # Append an empty block
+      dynamicSharedMemorySize=c(smem_bytes, i32), **cluster_kwargs)
+  launch_op.body.blocks.append(*([index] * (12 + 2 * len(cluster_kwargs))))  # Append an empty block
   smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
   with ir.InsertionPoint(launch_op.body.blocks[0]):
     dynamic_smem = gpu.dynamic_shared_memory(
@@ -548,6 +564,7 @@ def _launch(
 def _lower_as_gpu_kernel(
     body,
     grid: tuple[int, ...],
+    cluster: tuple[int, ...],
     block: tuple[int, ...],
     in_shapes: tuple[Any, ...],
     out_shape,
@@ -601,7 +618,7 @@ def _lower_as_gpu_kernel(
       scratch_alloc = llvm.AllocaOp(ptr_ty, c(1, i64), empty_arr_ty)
       scratch_arr = llvm.load(empty_arr_ty, scratch_alloc.result)
       with _launch(
-          token, grid, block, scratch_arr, smem_scratch_shape,
+          token, grid, cluster, block, scratch_arr, smem_scratch_shape,
           prof_spec, prof_buffer
       ) as (launch_ctx, smem_refs):
         body(launch_ctx, *in_refs, *out_refs, smem_refs)
@@ -632,6 +649,7 @@ def as_gpu_kernel(
     out_shape,
     smem_scratch_shape: ShapeTree | Union[ShapeTree],
     prof_spec: profiler.ProfilerSpec | None = None,
+    cluster: tuple[int, ...] = (),
 ):
   if isinstance(in_shape, list):
     in_shape = tuple(in_shape)
@@ -640,7 +658,7 @@ def as_gpu_kernel(
 
   module, out_shape, gmem_scratch_bytes, unwrap_output_tuple = (
       _lower_as_gpu_kernel(
-          body, grid, block, in_shape, out_shape, smem_scratch_shape, prof_spec
+          body, grid, cluster, block, in_shape, out_shape, smem_scratch_shape, prof_spec
       )
   )
 
