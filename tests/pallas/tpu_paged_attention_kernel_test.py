@@ -108,6 +108,11 @@ def _megacore_enabled():
 
 @jtu.with_config(jax_numpy_dtype_promotion="standard")
 class PagedAttentionKernelTest(jtu.JaxTestCase):
+  def setUp(self):
+    super().setUp()
+    if jtu.is_device_tpu_at_least(6):
+      self.skipTest('Not implemented for TPU v6')
+
   @parameterized.product(
       dtype=(jnp.float32, jnp.bfloat16),
       page_size=(16, 32, 64),

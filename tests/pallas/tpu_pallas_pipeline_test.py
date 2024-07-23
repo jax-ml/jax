@@ -1503,6 +1503,9 @@ if CAN_USE_HYPOTHESIS:
         hps.integers(0, 4),
     )
     def test_padded_matmul(self, dtype, m, k, n, bm, bk, bn, seed):
+      if dtype == 'int8' and jtu.is_device_tpu_at_least(6):
+        self.skipTest('Not implemented for TPU v6.')
+
       hp.assume(bm <= m)
       hp.assume(bn <= n)
       hp.assume(bk <= k)
