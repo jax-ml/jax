@@ -729,6 +729,48 @@ class BarrierTest(TestCase):
     )()
     np.testing.assert_array_equal(y, np.full_like(y, 3, dtype=np.int32))
 
+  @parameterized.named_parameters(
+      (
+          f"_{''.join(map(str, collective_dims))}{'_' + ''.join(map(str, noncollective_dims)) if noncollective_dims else ''}",
+          collective_dims,
+          noncollective_dims,
+      )
+      for collective_dims in itertools.chain.from_iterable(
+          itertools.combinations(Dimension, n) for n in range(1, 4)
+      )
+      for noncollective_dims in itertools.chain.from_iterable(
+          itertools.combinations(Dimension, n) for n in range(3)
+      )
+      if all(d not in noncollective_dims for d in collective_dims)
+  )
+  def test_collective_arrive(self, collective_dims, noncollective_dims):
+    i32 = ir.IntegerType.get_signless(32)
+    index = ir.IndexType.get()
+    cluster = [1, 1, 1]
+    for d in itertools.chain(collective_dims, noncollective_dims):
+      cluster[d] = 2
+    def kernel(ctx, dst, _):
+      collective_barrier = CollectiveBarrierArray(ctx, collective_dims, 1)[0]
+      nvvm.fence_mbarrier_init()
+      nvvm.cluster_arrive_relaxed()
+      nvvm.cluster_wait()
+      collective_barrier.arrive()
+      collective_barrier.wait()
+      tid = thread_idx()
+      linear_idx = arith.index_cast(index, tid)
+      stride = c(128, index)
+      for d in gpu.Dimension:
+        linear_idx = arith.addi(linear_idx, arith.muli(gpu.block_id(d), stride))
+        stride = arith.muli(stride, gpu.grid_dim(d))
+      memref.store(arith.index_cast(i32, linear_idx), dst, [linear_idx])
+    out_shape = jax.ShapeDtypeStruct((math.prod(cluster) * 128,), jnp.int32)
+    y = mosaic_gpu.as_gpu_kernel(
+        kernel, cluster, (128, 1, 1), (), out_shape, (), cluster=cluster,
+    )()
+    np.testing.assert_array_equal(
+        y, np.arange(math.prod(cluster) * 128, dtype=np.int32)
+    )
+
 
 class TMATest(TestCase):
 

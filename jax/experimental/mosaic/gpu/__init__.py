@@ -261,6 +261,33 @@ class LaunchContext:
     gep.move_after(self.gmem_scratch_ptr.owner)
     return device_init(gep.result)
 
+  def cluster_collective_mask(self, collective: gpu.Dimension):
+    # We first compute the linearized index of the slice along the collective
+    # dim that contains the current block. Then, the mask is a sequence of 1s
+    # strided by the position of the collective dim, shifted left by the linear
+    # slice index.
+    # TODO(apaszke): Make sure this gets hoisted outside of any loops.
+    # If not, we might need to do it manually.
+    i32 = ir.IntegerType.get_signless(32)
+    stride = 1
+    mask_shift = c(0, i32)
+    collective_stride = None
+    for cluster_dim in gpu.Dimension:
+      if self.cluster_size[cluster_dim] == 1:
+        continue
+      if cluster_dim != collective:
+        dim_idx = arith.index_castui(i32, gpu.cluster_block_id(cluster_dim))
+        mask_shift = arith.addi(
+            mask_shift, arith.muli(dim_idx, c(stride, i32)),
+        )
+      else:
+        collective_stride = stride
+      stride *= self.cluster_size[cluster_dim]
+    mask_unshifted = 0
+    for i in range(self.cluster_size[collective]):
+      mask_unshifted |= 1 << (i * collective_stride)
+    return arith.shli(c(mask_unshifted, i32), mask_shift)
+
   def _get_tma_desc(
       self,
       gmem_ref,
@@ -412,31 +439,9 @@ class LaunchContext:
           (slice(None),) * collective_slice_dim
           + (mgpu.ds(block_offset, slice_shape[collective_slice_dim]),),
       )
-      # Compute the multicast mask. We first compute the linearized index of the
-      # slice along the collective dim that contains the current block. Then,
-      # the mask is a sequence of 1s strided by the position of the collective
-      # dim, shifted left by the linear slice index.
-      # TODO(apaszke): Make sure this gets hoisted outside of any loops.
-      # If not, we might need to do it manually.
-      stride = 1
-      mask_shift = c(0, i32)
-      collective_stride = None
-      for cluster_dim in gpu.Dimension:
-        if self.cluster_size[cluster_dim] == 1:
-          continue
-        if cluster_dim != collective:
-          dim_idx = arith.index_castui(i32, gpu.cluster_block_id(cluster_dim))
-          mask_shift = arith.addi(
-              mask_shift, arith.muli(dim_idx, c(stride, i32)),
-          )
-        else:
-          collective_stride = stride
-        stride *= self.cluster_size[cluster_dim]
-      multicast_mask_unshifted = 0
-      for i in range(collective_size):
-        multicast_mask_unshifted |= 1 << (i * collective_stride)
-      multicast_mask = arith.shli(c(multicast_mask_unshifted, i32), mask_shift)
-      multicast_mask = arith.trunci(i16, multicast_mask)
+      multicast_mask = arith.trunci(
+          i16, self.cluster_collective_mask(collective)
+      )
     else:
       multicast_mask = None
 

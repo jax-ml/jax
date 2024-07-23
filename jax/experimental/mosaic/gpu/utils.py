@@ -572,11 +572,6 @@ class Barrier:
     memref.store(new_parities, self.barrier_array.phases, [])
     self.wait_parity(parity, expect_wait=expect_wait)
 
-  def arrive_expect_tx(self, bytes: int | ir.Value):
-    if isinstance(bytes, int):
-      bytes = c(bytes, ir.IntegerType.get_signless(32))
-    nvvm.mbarrier_arrive_expect_tx(self.get_ptr(), bytes)
-
   def update_parities(self, parities: ir.Value) -> tuple[ir.Value, ir.Value]:
     i32 = ir.IntegerType.get_signless(32)
     offset_i32 = arith.index_castui(i32, self.offset)
@@ -586,10 +581,14 @@ class Barrier:
     )
     return parity, arith.xori(parities, bitmask)
 
-
   def arrive(self):
     token_ty = ir.Type.parse("!nvgpu.mbarrier.token")
     nvgpu.mbarrier_arrive(token_ty, self.barrier_array.value, self.offset)
+
+  def arrive_expect_tx(self, bytes: int | ir.Value):
+    if isinstance(bytes, int):
+      bytes = c(bytes, ir.IntegerType.get_signless(32))
+    nvvm.mbarrier_arrive_expect_tx(self.get_ptr(), bytes)
 
   def get_ptr(self):
     i32 = ir.IntegerType.get_signless(32)
@@ -609,6 +608,71 @@ class Barrier:
     return llvm.getelementptr(
         ptr_ty, barrier_arr_ptr, [offset_i32], [-2147483648], i64,
     )
+
+
+class CollectiveBarrierArray(BarrierArray):
+  def __init__(self, ctx, dims: Sequence[gpu.Dimension], num_barriers):
+    i32 = ir.IntegerType.get_signless(32)
+    self.ctx = ctx
+    self.dims = dims
+    self.cluster_mask = c(0, i32)
+    # With the exception of the current device, each pair of slices along
+    # collective dims is disjoint. Since the current device is overcounted,
+    # we must decrease the arrival count a little.
+    arrival_count = sum(ctx.cluster_size[d] for d in dims) - len(dims) + 1
+    super().__init__(num_barriers, arrival_count=arrival_count)
+    for d in dims:
+      self.cluster_mask = arith.ori(
+          self.cluster_mask, ctx.cluster_collective_mask(d)
+      )
+
+  def __getitem__(self, offset):
+    return CollectiveBarrier(super().__getitem__(offset))
+
+
+@dataclasses.dataclass(frozen=True)
+class CollectiveBarrier:
+  barrier: Barrier
+
+  def arrive(self):
+    """Arrives on a barrier in all blocks that share at least one of the coordinates along the collective dimensions.
+
+    Note that unlike in arrive, each warpgroup arrives once.
+    """
+    i32 = ir.IntegerType.get_signless(32)
+    thread_in_warpgroup = arith.remui(thread_idx(), c(WARPGROUP_SIZE, i32))
+    signaled_block = arith.divui(
+        thread_in_warpgroup, c(WARPGROUP_SIZE // 16, i32)
+    )
+    is_collective_block = arith.cmpi(
+        arith.CmpIPredicate.ne,
+        arith.andi(
+            self.barrier.barrier_array.cluster_mask,
+            arith.shli(c(1, i32), signaled_block),
+        ),
+        c(0, i32),
+    )
+    is_signaling_thread = arith.cmpi(
+        arith.CmpIPredicate.eq,
+        arith.remui(thread_in_warpgroup, c(WARPGROUP_SIZE // 16, i32)),
+        c(0, i32),
+    )
+    should_arrive = arith.andi(is_collective_block, is_signaling_thread)
+    llvm.inline_asm(
+        ir.Type.parse("!llvm.void"),
+        [should_arrive, self.barrier.get_ptr(), signaled_block],
+        """
+    {
+        .reg .b32 mapped_addr;
+        @$0 mapa.shared::cluster.u32 mapped_addr, $1, $2;
+        @$0 mbarrier.arrive.shared::cluster.b64 _, [mapped_addr];
+    }""",
+        "b,r,r",
+        has_side_effects=True,
+    )
+
+  def wait(self):
+    self.barrier.wait()
 
 
 class Partition:
