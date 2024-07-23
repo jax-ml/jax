@@ -189,8 +189,9 @@ def lower_jaxpr_to_module(
   ]
   module, out_structs, gmem_scratch_bytes, _ = mosaic_gpu._lower_as_gpu_kernel(
       body,
-      grid,
-      block,
+      grid=grid,
+      cluster=(),
+      block=block,
       in_shapes=in_structs,
       out_shape=out_structs,
       smem_scratch_shape=(*in_structs, *out_structs, *extra_smem_scratch),
