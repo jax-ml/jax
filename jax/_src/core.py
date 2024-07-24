@@ -2442,9 +2442,6 @@ def _check_jaxpr(
             raise JaxprTypeError(
                 "Invalid `JaxprInputEffect`: must be present in jaxpr. "
                 f"{jaxpr_effect} is not in {jaxpr.effects}.")
-        elif isinstance(eff, NamedAxisEffect):
-          # It is valid for a primitive to discharge the named axis effect.
-          continue
         elif eff not in jaxpr.effects:
           raise JaxprTypeError("Equation effect not present in jaxpr effects. "
                                f"Equation effect: {eff}. "

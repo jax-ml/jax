@@ -98,8 +98,7 @@ def _ensure_bdim_batcher(axis_size, frame_name, main_type, vals_in, dims_in, axi
   d, = dims_in
   assert d is not batching.not_mapped
   return jnp.moveaxis(v, d, bdim), bdim
-batching.axis_primitive_batchers[ensure_bdim_p] = _ensure_bdim_batcher
-batching.primitive_batchers[ensure_bdim_p] = lambda v, d: (v[0], d[0])
+batching.fancy_primitive_batchers[ensure_bdim_p] = _ensure_bdim_batcher
 
 def ensure_bdim(x, axis_name, bdim):
   return ensure_bdim_p.bind(x, axis_name=(axis_name,), bdim=bdim)
@@ -113,7 +112,7 @@ def _constant_introducing_batcher(_1, _2, _3, xs, ds, axis_name):
   (x,), (d,) = xs, ds
   # Introduce a constant
   return (x + np.arange(x.size, dtype=x.dtype).reshape(x.shape)), d
-batching.axis_primitive_batchers[constant_introducing_p] = _constant_introducing_batcher
+batching.fancy_primitive_batchers[constant_introducing_p] = _constant_introducing_batcher
 
 # -------------------- Axis resources generation --------------------
 

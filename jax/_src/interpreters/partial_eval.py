@@ -1683,7 +1683,7 @@ class JaxprStackFrame:
     invars = self.attrs_vars + self.invars
     state_ans, end_trees = unzip2(
         tree_flatten(t) for t in get_states(self.attrs_tracked))
-    state_outvars = [self.tracer_to_var[id(trace.full_raise(x))]
+    state_outvars = [self.tracer_to_var[id(trace.to_jaxpr_tracer(x))]
                      for xs in state_ans for x in xs]
     explicit_outvars = [self.tracer_to_var[id(t)] for t in out_tracers]
     outvars = state_outvars + explicit_outvars
