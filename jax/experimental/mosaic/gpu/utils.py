@@ -19,6 +19,7 @@ import contextlib
 import dataclasses
 import enum
 import functools
+import math
 from typing import Any, Literal
 
 import jax
@@ -527,13 +528,12 @@ class BarrierRef:
 
   def __iter__(self) -> Iterator["BarrierRef"]:
     if self.num_barriers == 1:
-      raise ValueError("Cannot iterate over a single barrier")
-    for offset in range(self.num_barriers):
-      yield self[offset]
+      yield self
+    else:
+      for offset in range(self.num_barriers):
+        yield self[offset]
 
   def __getitem__(self, offset: ir.Value | int) -> "BarrierRef":
-    if self.num_barriers == 1:
-      raise ValueError("Cannot index a single barrier")
     i32 = ir.IntegerType.get_signless(32)
     if isinstance(offset, int):
       offset = c(offset, i32)
@@ -604,7 +604,7 @@ class BarrierRef:
 @dataclasses.dataclass(frozen=True)
 class CollectiveBarrierRef:
   barrier: BarrierRef
-  cluster_mask: ir.Value
+  cluster_mask: ir.Value | None
 
   @staticmethod
   def initialize(
@@ -618,15 +618,23 @@ class CollectiveBarrierRef:
     # collective dims is disjoint. Since the current device is overcounted,
     # we must decrease the arrival count a little.
     arrival_count = sum(cluster_shape[d] for d in dims) - len(dims) + 1
-    cluster_mask = c(0, i32)
-    for d in dims:
-      cluster_mask = arith.ori(
-          cluster_mask, cluster_collective_mask(cluster_shape, d)
-      )
+    if math.prod(cluster_shape[d] for d in dims) == 1:
+      cluster_mask = None
+      assert arrival_count == 1
+    else:
+      cluster_mask = c(0, i32)
+      for d in dims:
+        if cluster_shape[d] == 1:
+          # Only the current device is in this mask, but it will also be
+          # present in one of the non-trivial cluster dims.
+          continue
+        cluster_mask = arith.ori(
+            cluster_mask, cluster_collective_mask(cluster_shape, d)
+        )
     barrier = BarrierRef.initialize(address, num_barriers, arrival_count=arrival_count)
     return CollectiveBarrierRef(barrier, cluster_mask)
 
-  def __iter__(self, offset):
+  def __iter__(self):
     for b in self.barrier:
       yield CollectiveBarrierRef(b, self.cluster_mask)
 
@@ -640,6 +648,10 @@ class CollectiveBarrierRef:
     """
     if self.barrier.num_barriers != 1:
       raise ValueError("Can only arrive on a single barrier")
+    if self.cluster_mask is None:
+      with single_thread(per_block=False):
+        self.barrier.arrive()
+      return
     i32 = ir.IntegerType.get_signless(32)
     thread_in_warpgroup = arith.remui(thread_idx(), c(WARPGROUP_SIZE, i32))
     signaled_block = arith.divui(
@@ -876,13 +888,12 @@ def cluster_collective_mask(
   mask_shift = c(0, i32)
   collective_stride = None
   for cluster_dim in gpu.Dimension:
-    if cluster_shape[cluster_dim] == 1:
-      continue
     if cluster_dim != collective:
-      dim_idx = arith.index_castui(i32, gpu.cluster_block_id(cluster_dim))
-      mask_shift = arith.addi(
-          mask_shift, arith.muli(dim_idx, c(stride, i32)),
-      )
+      if cluster_shape[cluster_dim] != 1:  # Constant-fold multiply by 0.
+        dim_idx = arith.index_castui(i32, gpu.cluster_block_id(cluster_dim))
+        mask_shift = arith.addi(
+            mask_shift, arith.muli(dim_idx, c(stride, i32)),
+        )
     else:
       collective_stride = stride
     stride *= cluster_shape[cluster_dim]

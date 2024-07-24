@@ -386,10 +386,8 @@ class LaunchContext:
 
     dyn_base_indices = list(dyn_base_indices)
     slice_shape = list(slice_shape)
-    if (
-        collective is not None
-        and (collective_size := self.cluster_size[collective]) != 1
-    ):
+    collective_size = 1 if collective is None else self.cluster_size[collective]
+    if collective_size > 1:
       for collective_slice_dim, slice_size in enumerate(slice_shape[:-1]):
         if slice_size % collective_size == 0:
           break
@@ -446,11 +444,13 @@ class LaunchContext:
     smem_ptr = utils.memref_ptr(smem_ref, memory_space=3)
     if gmem_ref is src_ref:
       assert barrier is not None  # for pytype
-      slice_bytes = c(np.prod(slice_shape) * element_bytewidth, i32)
+      transfer_bytes = c(
+          np.prod(slice_shape) * element_bytewidth * collective_size, i32
+      )
       barrier_ptr = barrier.get_ptr()
       with uniform_ctx():
         if arrive:
-          nvvm.mbarrier_arrive_expect_tx_shared(barrier_ptr, slice_bytes)
+          nvvm.mbarrier_arrive_expect_tx_shared(barrier_ptr, transfer_bytes)
         nvvm.cp_async_bulk_tensor_shared_cluster_global(
             smem_ptr, tma_desc, rev_dyn_base_indices, barrier_ptr, [], multicast_mask=multicast_mask,
         )
@@ -622,11 +622,11 @@ def _launch(
     cluster_kwargs = {
         "clusterSize" + d: c(s, index) for s, d in zip(cluster, "XYZ")
     }
-    for grid_size, cluster_size in zip(grid, cluster):
+    for d, grid_size, cluster_size in zip("xyz", grid, cluster):
       if grid_size % cluster_size != 0:
         raise ValueError(
-            f"Grid dimension ({grid_size}) must be divisible by cluster"
-            f" dimension ({cluster_size})"
+            f"Grid dimension {d} must be divisible by cluster dimension:"
+            f" {grid_size} % {cluster_size} != 0"
         )
   else:
     cluster_kwargs = {}

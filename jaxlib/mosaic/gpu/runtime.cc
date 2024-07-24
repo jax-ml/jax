@@ -92,8 +92,9 @@ void* mosaic_gpu_module_load(void *data) {
   return module;
 }
 
+// cluster_size can be -1 when it's not statically known.
 void *mosaic_gpu_get_function(CUmodule module, const char *name,
-                              int32_t smem_bytes) {
+                              int32_t smem_bytes, int32_t cluster_size) {
   CUfunction function = nullptr;
   CUresult result = cuModuleGetFunction(&function, module, name);
   if (result != CUDA_SUCCESS) {
@@ -105,6 +106,16 @@ void *mosaic_gpu_get_function(CUmodule module, const char *name,
   if (smem_bytes) {
     result = cuFuncSetAttribute(
         function, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, smem_bytes);
+    if (result != CUDA_SUCCESS) {
+      const char *ptr = nullptr;
+      cuGetErrorString(result, &ptr);
+      fprintf(stderr, "cuFuncSetAttribute failed: %s\n", ptr);
+      abort();
+    }
+  }
+  if (cluster_size > 8) {
+    result = cuFuncSetAttribute(
+        function, CU_FUNC_ATTRIBUTE_NON_PORTABLE_CLUSTER_SIZE_ALLOWED, 1);
     if (result != CUDA_SUCCESS) {
       const char *ptr = nullptr;
       cuGetErrorString(result, &ptr);

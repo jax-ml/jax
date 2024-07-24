@@ -733,9 +733,10 @@ class BarrierTest(TestCase):
 
   @parameterized.named_parameters(
       (
-          f"_{''.join(map(str, collective_dims))}{'_' + ''.join(map(str, noncollective_dims)) if noncollective_dims else ''}",
+          f"_{''.join(map(str, collective_dims))}={collective_size}{'_' + ''.join(map(str, noncollective_dims)) if noncollective_dims else ''}",
           collective_dims,
           noncollective_dims,
+          collective_size,
       )
       for collective_dims in itertools.chain.from_iterable(
           itertools.combinations(Dimension, n) for n in range(1, 4)
@@ -743,14 +744,19 @@ class BarrierTest(TestCase):
       for noncollective_dims in itertools.chain.from_iterable(
           itertools.combinations(Dimension, n) for n in range(3)
       )
+      for collective_size in (1, 2, 4)
       if all(d not in noncollective_dims for d in collective_dims)
   )
-  def test_collective_arrive(self, collective_dims, noncollective_dims):
+  def test_collective_arrive(self, collective_dims, noncollective_dims, collective_size):
     i32 = ir.IntegerType.get_signless(32)
     index = ir.IndexType.get()
     cluster = [1, 1, 1]
-    for d in itertools.chain(collective_dims, noncollective_dims):
+    for d in collective_dims:
+      cluster[d] = collective_size
+    for d in noncollective_dims:
       cluster[d] = 2
+    if math.prod(cluster) > 16:
+      self.skipTest("Cluster too big")
     def kernel(ctx, dst, collective_barrier):
       collective_barrier.arrive()
       collective_barrier.wait()
@@ -794,25 +800,28 @@ class TMATest(TestCase):
 
   @parameterized.named_parameters(
       (
-          f"_{collective_dim}{'_' + ''.join(map(str, noncollective_dims)) if noncollective_dims else ''}",
+          f"_{collective_dim}={collective_size}{'_' + ''.join(map(str, noncollective_dims)) if noncollective_dims else ''}",
           collective_dim,
           noncollective_dims,
+          collective_size,
       )
       for collective_dim in Dimension
       for noncollective_dims in itertools.chain.from_iterable(
           itertools.combinations(Dimension, n) for n in range(3)
       )
+      for collective_size in (1, 2, 4)
       if collective_dim not in noncollective_dims
   )
-  def test_tma_load_multicast(self, collective_dim, noncollective_dims):
+  def test_tma_load_multicast(self, collective_dim, noncollective_dims, collective_size):
     index = ir.IndexType.get()
     swizzle = 128
     dtype = jnp.float16
     cluster = [1, 1, 1]
-    for d in (collective_dim, *noncollective_dims):
+    cluster[collective_dim] = collective_size
+    for d in noncollective_dims:
       cluster[d] = 2
     noncollective_size = math.prod(cluster) // cluster[collective_dim]
-    shape = (noncollective_size, 64, 64)
+    shape = (noncollective_size, 32 * cluster[collective_dim], 64)
     minor_size = 64 if swizzle is None else swizzle // jnp.dtype(dtype).itemsize
     shape = (*shape[:-1], minor_size)
     # Note that this kernel does not use the non-collective dimensions in any
@@ -827,7 +836,7 @@ class TMATest(TestCase):
             noncollective_idx,
             arith.muli(gpu.cluster_block_id(d), c(stride, index))
         )
-        stride *= 2
+        stride *= cluster[d]
       ctx.async_copy(
           src_ref=src,
           dst_ref=tmp,
