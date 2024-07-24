@@ -147,7 +147,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     super().setUp()
     lax_control_flow._initial_style_open_jaxpr.cache_clear()
     lax_control_flow._initial_style_jaxpr.cache_clear()
-    lax_control_flow._initial_style_jaxprs_with_common_consts.cache_clear()
+    lax_control_flow.common._pad_jaxpr_constvars.cache_clear()
 
   def testCallableErrors(self):
     not_callable = 42
@@ -2985,6 +2985,29 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     y = lax.cond(True, identity, identity, x)
     self.assertEqual(y, x)
     self.assertIsInstance(y, jax.Array)
+
+  def test_cond_memory_leak(self):
+    # https://github.com/google/jax/issues/12719
+
+    def leak():
+      data = jax.device_put(np.zeros((1024), dtype=np.float32) + 1)
+      def g():
+          return jax.lax.cond(
+              True,
+              lambda: data[0],  # noqa: F821
+              lambda: data[1],  # noqa: F821
+          )
+      jg = jax.jit(g)
+      _ = jg().block_until_ready()
+      del g, jg, data, _
+
+    leak()
+    self.assertEqual(0, len(jax.lib.xla_bridge.get_backend().live_buffers()))
+    leak()
+    self.assertEqual(0, len(jax.lib.xla_bridge.get_backend().live_buffers()))
+    leak()
+    self.assertEqual(0, len(jax.lib.xla_bridge.get_backend().live_buffers()))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
