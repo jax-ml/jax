@@ -288,7 +288,7 @@ class VectorLayout {
   }
 
   template <typename T>
-  void insertImplicit(SmallVector<T> &vec, T value) const {
+  void insertImplicit(SmallVectorImpl<T> &vec, T value) const {
     CHECK_GE(vec.size(), layout_rank());
     switch (implicit_dim_) {
       case ImplicitDim::kNone:
@@ -302,7 +302,7 @@ class VectorLayout {
   }
 
   template <typename T>
-  void eraseImplicit(SmallVector<T> &vec) const {
+  void eraseImplicit(SmallVectorImpl<T> &vec) const {
     CHECK_GE(vec.size(), 2);
     switch (implicit_dim_) {
       case ImplicitDim::kNone:
