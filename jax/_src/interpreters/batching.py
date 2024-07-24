@@ -806,9 +806,9 @@ def batch_custom_jvp_subtrace(tag, axis_data, in_dims, *in_vals):
   out_primals, out_tangents = split_list(out_vals, [len(out_vals) // 2])
   out_primal_bds, out_tangent_bds = split_list(out_dims, [len(out_vals) // 2])
   out_dims = map(_merge_bdims, out_primal_bds, out_tangent_bds)
-  out_primals  = map(partial(matchaxis, trace.axis_name, size),
+  out_primals  = map(partial(matchaxis, trace.axis_data.name, size),
                      out_primal_bds, out_dims,  out_primals)
-  out_tangents = map(partial(matchaxis, trace.axis_name, size),
+  out_tangents = map(partial(matchaxis, trace.axis_data.name, size),
                      out_tangent_bds, out_dims, out_tangents)
   yield out_primals + out_tangents, out_dims * 2
 
