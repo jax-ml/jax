@@ -821,7 +821,9 @@ class TMATest(TestCase):
     for d in noncollective_dims:
       cluster[d] = 2
     noncollective_size = math.prod(cluster) // cluster[collective_dim]
-    shape = (noncollective_size, 32 * cluster[collective_dim], 64)
+    # We use the 2 dimension to exercise splitting the collective over
+    # multiple dimensions when the cluster is large.
+    shape = (noncollective_size, 2, 16 * cluster[collective_dim], 64)
     minor_size = 64 if swizzle is None else swizzle // jnp.dtype(dtype).itemsize
     shape = (*shape[:-1], minor_size)
     # Note that this kernel does not use the non-collective dimensions in any
@@ -847,11 +849,11 @@ class TMATest(TestCase):
       )
       barrier.wait()
       slc = ds(
-          arith.muli(gpu.cluster_block_id(collective_dim), c(32, index)), 32
+          arith.muli(gpu.cluster_block_id(collective_dim), c(16, index)), 16
       )
       copy(
-          memref_slice(tmp, slc),
-          memref_slice(dst, (noncollective_idx, slc)),
+          memref_slice(tmp, (slice(None), slc)),
+          memref_slice(dst, (noncollective_idx, slice(None), slc)),
           swizzle=swizzle,
       )
     x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)

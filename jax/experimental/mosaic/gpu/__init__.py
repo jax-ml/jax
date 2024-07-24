@@ -388,9 +388,26 @@ class LaunchContext:
     slice_shape = list(slice_shape)
     collective_size = 1 if collective is None else self.cluster_size[collective]
     if collective_size > 1:
-      for collective_slice_dim, slice_size in enumerate(slice_shape[:-1]):
-        if slice_size % collective_size == 0:
+      def partition_dim(dim: int, idx: ir.Value, num_chunks: int):
+        nonlocal smem_ref
+        slice_shape[dim] //= num_chunks
+        block_offset = arith.muli(idx, c(slice_shape[dim], index))
+        dyn_base_indices[dim] = arith.addi(dyn_base_indices[dim], block_offset)
+        smem_ref = utils.memref_slice(
+            smem_ref,
+            (slice(None),) * dim + (utils.ds(block_offset, slice_shape[dim]),)
+        )
+      idx = gpu.cluster_block_id(collective)
+      rem_collective_size = collective_size
+      for dim, slice_size in enumerate(slice_shape[:-1]):
+        if slice_size % rem_collective_size == 0:
+          partition_dim(dim, idx, rem_collective_size)
           break
+        elif collective_size % slice_size == 0:
+          dim_idx = arith.remui(idx, c(slice_size, index))
+          partition_dim(dim, dim_idx, slice_size)
+          idx = arith.divui(idx, c(slice_size, index))
+          rem_collective_size //= slice_size
       else:
         raise ValueError(
             "None of the leading dimensions in the transformed slice shape"
@@ -399,17 +416,6 @@ class LaunchContext:
         )
       # Make each block load a smaller slice, adjust the GMEM indices and slice
       # the SMEM reference accordingly.
-      slice_shape[collective_slice_dim] //= collective_size
-      block_idx = gpu.cluster_block_id(collective)
-      block_offset = arith.muli(block_idx, c(slice_shape[collective_slice_dim], index))
-      dyn_base_indices[collective_slice_dim] = arith.addi(
-          dyn_base_indices[collective_slice_dim], block_offset,
-      )
-      smem_ref = utils.memref_slice(
-          smem_ref,
-          (slice(None),) * collective_slice_dim
-          + (utils.ds(block_offset, slice_shape[collective_slice_dim]),),
-      )
       multicast_mask = arith.trunci(
           i16, utils.cluster_collective_mask(self.cluster_size, collective)
       )
