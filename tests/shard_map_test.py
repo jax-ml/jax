@@ -1749,6 +1749,40 @@ class ShardMapTest(jtu.JaxTestCase):
     v = jax.device_put(v, jax.sharding.NamedSharding(mesh, P('i', 'j')))
     self.assertAllClose(v*v, f(v), check_dtypes=False)
 
+  def test_partial_auto_of_pjit(self):
+    mesh = jtu.create_global_mesh((2, 2), ('i', 'j'))
+
+    def h():
+      def _make_zeros():
+        return jnp.zeros(())
+      s = jax.sharding.NamedSharding(mesh, P())
+      y = jax.jit(_make_zeros, out_shardings=s)()
+      return y.reshape((1,))
+
+    def f():
+      return shard_map(
+          h, mesh, in_specs=(),
+          out_specs=P('i'), check_rep=False, auto=frozenset({'j'}))()
+
+    self.assertAllClose(jax.jit(f)(), jnp.zeros((2,)))
+
+  def test_partial_auto_of_pjit_different_mesh(self):
+    mesh = jtu.create_global_mesh((2, 2), ('i', 'j'))
+    mesh2 = jax.sharding.Mesh(mesh.devices, ('k', 'l'))
+
+    def h():
+      def _make_zeros():
+        return jnp.zeros(())
+      s = jax.sharding.NamedSharding(mesh2, P())
+      y = jax.jit(_make_zeros, out_shardings=s)()
+      return y.reshape((1,))
+
+    def f():
+      return shard_map(
+          h, mesh, in_specs=(),
+          out_specs=P('i'), check_rep=False, auto=frozenset({'j'}))()
+
+    self.assertAllClose(jax.jit(f)(), jnp.zeros((2,)))
 
   def test_vmap_grad_shmap_spmd_axis_name_residuals(self):
     # https://github.com/google/jax/pull/21032
