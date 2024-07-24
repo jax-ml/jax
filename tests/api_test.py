@@ -50,6 +50,7 @@ from jax._src import array
 from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
+from jax._src import deprecations
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
@@ -3020,8 +3021,11 @@ class APITest(jtu.JaxTestCase):
     axis_env = [(axis_name, jax.local_device_count())]
     _ = api.xla_computation(fn, axis_env=axis_env, backend='cpu')(input_x)
 
-  @jtu.unaccelerate_getattr_deprecation(jax, 'xla_computation')
+  @jtu.ignore_warning(category=DeprecationWarning, message='jax.xla_computation is deprecated')
   def test_xla_computation_axis_env(self):
+    is_accelerated = deprecations.is_accelerated_attribute(jax, 'xla_computation')
+    xla_computation = api.xla_computation if is_accelerated else jax.xla_computation
+
     def fn(x):
       z = x * jax.lax.axis_index('i').astype(jnp.float32)
       def inner_fn(carry, a):
@@ -3029,7 +3033,7 @@ class APITest(jtu.JaxTestCase):
       return jax.lax.scan(inner_fn, jnp.zeros_like(z[0]), z)
 
     x = jnp.ones((5, 6, 4), dtype=jnp.float32)
-    _ = jax.xla_computation(fn, axis_env=(('i', 8),), backend='cpu')(x)
+    _ = xla_computation(fn, axis_env=(('i', 8),), backend='cpu')(x)
 
   def test_concurrent_device_get_and_put(self):
     def f(x):
@@ -10760,8 +10764,11 @@ class BufferDonationTest(jtu.BufferDonationTestCase):
 
 class NamedCallTest(jtu.JaxTestCase):
 
-  @jtu.unaccelerate_getattr_deprecation(jax, 'xla_computation')
+  @jtu.ignore_warning(category=DeprecationWarning, message='jax.xla_computation is deprecated')
   def test_default_name(self):
+    is_accelerated = deprecations.is_accelerated_attribute(jax, 'xla_computation')
+    xla_computation = api.xla_computation if is_accelerated else jax.xla_computation
+
     @api.named_call
     def my_test_function(x):
       return x**2
@@ -10770,7 +10777,7 @@ class NamedCallTest(jtu.JaxTestCase):
     def f(x):
       return my_test_function(x)
 
-    c = jax.xla_computation(f)(2)
+    c = xla_computation(f)(2)
     print_opts = xla_client._xla.HloPrintOptions.short_parsable()
     print_opts.print_metadata = True
     hlo_text = c.as_hlo_module().to_string(print_opts)

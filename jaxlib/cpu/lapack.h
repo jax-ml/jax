@@ -23,6 +23,18 @@ namespace jax {
 
 // FFI Definition Macros (by DataType)
 
+#define JAX_CPU_DEFINE_TRSM(name, data_type)                                  \
+  XLA_FFI_DEFINE_HANDLER(name, TriMatrixEquationSolver<data_type>::Kernel,    \
+                         ::xla::ffi::Ffi::Bind()                              \
+                             .Arg<::xla::ffi::Buffer<data_type>>(/*x*/)       \
+                             .Arg<::xla::ffi::Buffer<data_type>>(/*y*/)       \
+                             .Arg<::xla::ffi::BufferR0<data_type>>(/*alpha*/) \
+                             .Ret<::xla::ffi::Buffer<data_type>>(/*y_out*/)   \
+                             .Attr<MatrixParams::Side>("side")                \
+                             .Attr<MatrixParams::UpLo>("uplo")                \
+                             .Attr<MatrixParams::Transpose>("trans_x")        \
+                             .Attr<MatrixParams::Diag>("diag"))
+
 #define JAX_CPU_DEFINE_GETRF(name, data_type)                \
   XLA_FFI_DEFINE_HANDLER(                                    \
       name, LuDecomposition<data_type>::Kernel,              \
@@ -92,6 +104,11 @@ namespace jax {
 
 // FFI Handlers
 
+JAX_CPU_DEFINE_TRSM(blas_strsm_ffi, ::xla::ffi::DataType::F32);
+JAX_CPU_DEFINE_TRSM(blas_dtrsm_ffi, ::xla::ffi::DataType::F64);
+JAX_CPU_DEFINE_TRSM(blas_ctrsm_ffi, ::xla::ffi::DataType::C64);
+JAX_CPU_DEFINE_TRSM(blas_ztrsm_ffi, ::xla::ffi::DataType::C128);
+
 JAX_CPU_DEFINE_GETRF(lapack_sgetrf_ffi, ::xla::ffi::DataType::F32);
 JAX_CPU_DEFINE_GETRF(lapack_dgetrf_ffi, ::xla::ffi::DataType::F64);
 JAX_CPU_DEFINE_GETRF(lapack_cgetrf_ffi, ::xla::ffi::DataType::C64);
@@ -117,6 +134,7 @@ JAX_CPU_DEFINE_GESDD(lapack_dgesdd_ffi, ::xla::ffi::DataType::F64);
 JAX_CPU_DEFINE_GESDD_COMPLEX(lapack_cgesdd_ffi, ::xla::ffi::DataType::C64);
 JAX_CPU_DEFINE_GESDD_COMPLEX(lapack_zgesdd_ffi, ::xla::ffi::DataType::C128);
 
+#undef JAX_CPU_DEFINE_TRSM
 #undef JAX_CPU_DEFINE_GETRF
 #undef JAX_CPU_DEFINE_GEQRF
 #undef JAX_CPU_DEFINE_ORGQR

@@ -15,6 +15,7 @@
 """Utilities for code generator."""
 
 import dataclasses
+from typing import Callable
 
 import jax
 from jaxlib.mlir import ir
@@ -315,30 +316,66 @@ class FragmentedArray:
   def exp(self, approx: bool = False):
     if not ir.FloatType.isinstance(self.mlir_dtype):
       raise NotImplementedError
-    def fast_exp(x):
+    if approx:
       f32 = ir.F32Type.get()
       if self.mlir_dtype != f32:
         raise NotImplementedError
       log2e = arith.constant(f32, ir.FloatAttr.get(f32, 1.4426950408889634))
-      if x.type == f32:
+      def fast_exp(x):
         scaled = arith.mulf(x, log2e)
-        return llvm.inline_asm(
-            f32, [scaled], "ex2.approx.f32 $0,$1;", "=f,f", asm_dialect=0
-        )
+        return llvm.inline_asm(f32, [scaled], "ex2.approx.f32 $0, $1;", "=f,f")
+      return self._pointwise(self._lift_fast_unary(fast_exp))
+    return self._pointwise(mlir_math.exp)
+
+  def sin(self, approx: bool = False):
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError
+    if approx and self.mlir_dtype != ir.F32Type.get():
+      raise NotImplementedError
+    return self._pointwise(
+        self._lift_fast_unary("sin.approx.f32") if approx else mlir_math.sin
+    )
+
+  def cos(self, approx: bool = False):
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError
+    if approx and self.mlir_dtype != ir.F32Type.get():
+      raise NotImplementedError
+    return self._pointwise(
+        self._lift_fast_unary("cos.approx.f32") if approx else mlir_math.cos
+    )
+
+  def rsqrt(self, approx: bool = False):
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError
+    if approx and self.mlir_dtype != ir.F32Type.get():
+      raise NotImplementedError
+    return self._pointwise(
+        self._lift_fast_unary("rsqrt.approx.f32") if approx else mlir_math.rsqrt
+    )
+
+  @staticmethod
+  def _lift_fast_unary(
+      instr: str | Callable[[ir.Value], ir.Value],
+  ) -> Callable[[ir.Value], ir.Value]:
+    def fast_instr(x):
+      f32 = ir.F32Type.get()
+      if x.type == f32:
+        if isinstance(instr, str):
+          return llvm.inline_asm(f32, [x], instr + " $0, $1;", "=f,f")
+        else:
+          return instr(x)
       elif ir.VectorType.isinstance(x.type):
         index = ir.IndexType.get()
         result = llvm.mlir_undef(x.type)
         for i in range(2):
           v = vector.extractelement(x, position=c(i, index))
-          vr = fast_exp(v)
+          vr = fast_instr(v)
           result = vector.insertelement(vr, result, position=c(i, index))
         return result
       else:
         raise NotImplementedError(x.type)
-    return self._pointwise(fast_exp if approx else mlir_math.exp)
-
-  def rsqrt(self):
-    return self._pointwise(mlir_math.rsqrt)
+    return fast_instr
 
   def __and__(self, other):
     if not ir.IntegerType.isinstance(self.mlir_dtype):

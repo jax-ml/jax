@@ -29,9 +29,10 @@ from jax import lax
 from jax import random
 from jax._src import checkify
 from jax._src import config
+from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax.control_flow.for_loop import for_loop
-from jax._src.pallas.pallas_call import _trace_to_jaxpr
+from jax._src.pallas.pallas_call import _trace_kernel_to_jaxpr
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
 import numpy as np
@@ -55,6 +56,10 @@ def smem_on_tpu():
     return None
 
 
+intx = dtypes.canonicalize_dtype(jnp.int64)
+floatx = dtypes.canonicalize_dtype(jnp.float64)
+
+
 @functools.partial(jax.jit, static_argnames=["bm", "bn", "gm", "bk",
                                              "interpret", "debug"])
 def matmul(x, y, *, bm, bn, gm, bk, interpret, debug=False):
@@ -65,7 +70,7 @@ def matmul(x, y, *, bm, bn, gm, bk, interpret, debug=False):
       debug=debug,
       grid=pl.cdiv(m, bm) * pl.cdiv(n, bn))
   def matmul_kernel(x_ref, y_ref, o_ref):
-    pid = pl.program_id(axis=0)
+    pid = pl.program_id(axis=0).astype(intx)
     num_pid_m = m // bm
     num_pid_n = n // bn
     num_pid_in_group = gm * num_pid_n
@@ -133,8 +138,6 @@ class PallasBaseTest(jtu.JaxTestCase):
   def setUp(self):
     if jtu.test_device_matches(["cpu"]) and not self.INTERPRET:
       self.skipTest("On CPU the test works only in interpret mode")
-    if jtu.test_device_matches(["gpu"]) and jax.config.x64_enabled:
-      self.skipTest("On GPU the test works only in 32-bit")
     if (jtu.test_device_matches(["cuda"]) and
         not jtu.is_cuda_compute_capability_at_least("8.0")):
       self.skipTest("Only works on GPU with capability >= sm80")
@@ -142,22 +145,18 @@ class PallasBaseTest(jtu.JaxTestCase):
       self.skipTest("Only works on non-Windows platforms")
 
     super().setUp()
-    _trace_to_jaxpr.cache_clear()
+    _trace_kernel_to_jaxpr.cache_clear()
 
   def pallas_call(self, *args, **kwargs):
     return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
 
 
 class PallasCallTest(PallasBaseTest):
-
   def test_add_one(self):
-    if jtu.test_device_matches(["cpu"]) and jax.config.x64_enabled:
-      # TODO: assertion failures on CPU in 64-bit mode
-      self.skipTest("On CPU the test works only in 32-bit mode")
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
       self.skipTest("On TPU the test works only in interpret mode")
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.float32))
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), floatx))
     def add_one(x_ref, o_ref):
       o_ref[()] = x_ref[()] + 1.
 
@@ -177,14 +176,11 @@ class PallasCallTest(PallasBaseTest):
     np.testing.assert_allclose(add_one(x), jnp.array([1.], jnp.float32))
 
   def test_add_vector_block_spec(self):
-    if jtu.test_device_matches(["cpu"]) and jax.config.x64_enabled:
-      # TODO: assertion failures on CPU in 64-bit mode
-      self.skipTest("On CPU the test works only in 32-bit mode")
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
       self.skipTest("On TPU the test works only in interpret mode")
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((8,), jnp.int32),
+        out_shape=jax.ShapeDtypeStruct((8,), intx),
         in_specs=[pl.BlockSpec((1,), lambda i: i)],
         out_specs=pl.BlockSpec((1,), lambda i: i),
         grid=8,
@@ -195,14 +191,11 @@ class PallasCallTest(PallasBaseTest):
     np.testing.assert_allclose(add_one(jnp.arange(8)), jnp.arange(8) + 1)
 
   def test_add_matrix_block_spec(self):
-    if jtu.test_device_matches(["cpu"]) and jax.config.x64_enabled:
-      # TODO: assertion failures on CPU in 64-bit mode
-      self.skipTest("On CPU the test works only in 32-bit mode")
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
       self.skipTest("On TPU the test works only in interpret mode")
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((8, 8), jnp.int32),
+        out_shape=jax.ShapeDtypeStruct((8, 8), intx),
         in_specs=[pl.BlockSpec((2, 2), lambda i, j: (i, j))],
         out_specs=pl.BlockSpec((2, 2), lambda i, j: (i, j)),
         grid=(4, 4),
@@ -225,13 +218,10 @@ class PallasCallTest(PallasBaseTest):
     self.assertTrue(jnp.all(logical_and(x)))
 
   def test_vector_indexing(self):
-    if jtu.test_device_matches(["cpu"]) and jax.config.x64_enabled:
-      # TODO: assertion failures on CPU in 64-bit mode
-      self.skipTest("On CPU the test works only in 32-bit mode")
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
       self.skipTest("On TPU the test works only in interpret mode")
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.float32),
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), floatx),
         grid=1)
     def index(x_ref, i_ref, o_ref):
       o_ref[()] = x_ref[i_ref[()]]
@@ -485,13 +475,10 @@ class PallasCallTest(PallasBaseTest):
     self.assertAllClose(res[0:1], to_store)
 
   def test_vector_slicing(self):
-    if jtu.test_device_matches(["cpu"]) and jax.config.x64_enabled:
-      # TODO: assertion failures on CPU in 64-bit mode
-      self.skipTest("On CPU the test works only in 32-bit mode")
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
       self.skipTest("On TPU the test works only in interpret mode")
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), floatx),
         grid=1)
     def index(x_ref, idx_ref, o_ref):
       idx = idx_ref[()]
@@ -517,9 +504,6 @@ class PallasCallTest(PallasBaseTest):
       if block_size_m <= m and block_size_n <= n and block_size_k <= k
     ])
   def test_matmul(self, m, n, k, dtype, bm, bn, bk, gm):
-    if jtu.test_device_matches(["cpu"]) and jax.config.x64_enabled:
-      # TODO: all sort of assertion failures on CPU in 64-bit mode
-      self.skipTest("On CPU the test works only in 32-bit mode")
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
       self.skipTest("On TPU the test works only in interpret mode")
     k1, k2 = random.split(random.key(0))
@@ -543,9 +527,6 @@ class PallasCallTest(PallasBaseTest):
       if block_size_m <= m and block_size_n <= n and block_size_k <= k
     ])
   def test_matmul_block_spec(self, m, n, k, dtype, bm, bn, bk):
-    if jtu.test_device_matches(["cpu"]) and jax.config.x64_enabled:
-      # TODO: all sort of assertion failures on CPU in 64-bit mode
-      self.skipTest("On CPU the test works only in 32-bit mode")
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
       self.skipTest("On TPU the test works only in interpret mode")
     k1, k2 = random.split(random.key(0))
@@ -605,15 +586,12 @@ class PallasCallTest(PallasBaseTest):
     np.testing.assert_allclose(dummy(x), jnp.ones_like(x), atol=1e-5, rtol=1e-5)
 
   def test_with_input_output_aliasing(self):
-    if jtu.test_device_matches(["cpu"]) and jax.config.x64_enabled:
-      # TODO: assertion failures on CPU in 64-bit mode
-      self.skipTest("On CPU the test works only in 32-bit mode")
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
       self.skipTest("On TPU the test works only in interpret mode")
     def add_inplace_kernel(_, o_ref, *, block_size):
       pid = pl.program_id(axis=0)  # we use a 1d launch grid so axis is 0
       block_start = pid * block_size
-      offsets = block_start + jnp.arange(block_size)
+      offsets = block_start + jnp.arange(block_size, dtype=jnp.int32)
       mask = offsets < o_ref.shape[0]
       x = pl.load(o_ref, (offsets,), mask=mask)
       output = x + 1
@@ -634,13 +612,10 @@ class PallasCallTest(PallasBaseTest):
     np.testing.assert_allclose(out, expected)
 
   def test_using_pallas_slice(self):
-    if jtu.test_device_matches(["cpu"]) and jax.config.x64_enabled:
-      # TODO: assertion failures on CPU in 64-bit mode
-      self.skipTest("On CPU the test works only in 32-bit mode")
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
       self.skipTest("On TPU the test works only in interpret mode")
     m, n = 32, 4
-    out_shape = jax.ShapeDtypeStruct((4, n), jnp.float32)
+    out_shape = jax.ShapeDtypeStruct((4, n), floatx)
     @functools.partial(
         self.pallas_call,
         out_shape=out_shape,
@@ -679,7 +654,6 @@ class PallasCallInterpreterTest(PallasCallTest):
 
 
 class ApiErrorTest(PallasBaseTest):
-
   def test_pallas_kernel_args_mismatch(self):
     a = np.arange(256, dtype=np.int32)
     f = self.pallas_call(lambda x_ref: None,  # Missing o_ref
@@ -743,7 +717,7 @@ class ApiErrorTest(PallasBaseTest):
                          in_specs=[pl.BlockSpec((4,), lambda: (0, 0))])
     with self.assertRaisesRegex(
         ValueError,
-        "Index map for input\\[0\\] must return 1 values to match .*Currently returning 2 values."):
+        "Index map for inputs\\[0\\] must return 1 values to match .*Currently returning 2 values."):
       f(a)
 
   def test_pallas_call_index_map_captures_consts(self):
@@ -754,7 +728,7 @@ class ApiErrorTest(PallasBaseTest):
                          in_specs=[pl.BlockSpec((4,), lambda: index_map_result)])
     with self.assertRaisesRegex(
         NotImplementedError,
-        "Index map for input\\[0\\] captures constants"):
+        "Index map for inputs\\[0\\] captures constants"):
       f(a)
 
   def test_pallas_call_out_specs_mismatch_shape(self):
@@ -776,7 +750,7 @@ class ApiErrorTest(PallasBaseTest):
                          in_specs=[pl.BlockSpec((1, 1), lambda: (0, 0))])
     with self.assertRaisesRegex(
         ValueError,
-        "Block shape for input\\[0\\] .* must have the same number of dimensions as the "
+        "Block shape for inputs\\[0\\] .* must have the same number of dimensions as the "
         "array shape"):
 
       f(a)
@@ -786,7 +760,7 @@ class ApiErrorTest(PallasBaseTest):
                          out_specs=[pl.BlockSpec((1, 1), lambda: 0)])
     with self.assertRaisesRegex(
         ValueError,
-        "Block shape for output\\[0\\] .* must have the same number of dimensions as the "
+        "Block shape for outputs\\[0\\] .* must have the same number of dimensions as the "
         "array shape"):
       f(a)
 
@@ -996,7 +970,7 @@ class PallasControlFlowTest(PallasBaseTest):
 
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((x.shape[0], y.shape[1]), jnp.float32),
+        out_shape=jax.ShapeDtypeStruct((x.shape[0], y.shape[1]), floatx),
         in_specs=[
             pl.BlockSpec((), lambda _, __: ()),
             pl.BlockSpec((bx, 1), lambda i, _: (i, 0)),
@@ -1073,15 +1047,13 @@ class PallasControlFlowTest(PallasBaseTest):
       #     dx, jnp.float32([0., 2, 4, 6, 0, 10, 12 + 12, 14]))
 
   def test_scan_cond_vm_explicit_ref_arg(self):
-    if jtu.test_device_matches(["cpu"]):
-      # TODO: fix this
-      self.skipTest("Fails on CPU: assertion error")
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
       self.skipTest("TODO: error on TPU")
 
     program = jnp.int32([0, 1, 2, 3, 2])
-    params = jnp.arange(len(program) * 3.).reshape(len(program), 3)
-    x = jnp.arange(7.)
+    params = jnp.arange(len(program) * 3., dtype=jnp.float32)
+    params = params.reshape(len(program), 3)
+    x = jnp.arange(7., dtype=jnp.float32)
     bx = 4
 
     @jax.jit
@@ -1113,7 +1085,7 @@ class PallasControlFlowTest(PallasBaseTest):
         return state, program_ref, params_ref
       out_ref[...] = jax.lax.fori_loop(
           0, len(program), body_fn,
-          (jnp.zeros(x.shape), program_ref, params_ref))[0]
+          (jnp.zeros(x.shape, dtype=jnp.float32), program_ref, params_ref))[0]
 
     expected = (x * params[0, 0] +
                 2 * x * params[1, 1] +
@@ -1127,16 +1099,14 @@ class PallasControlFlowTest(PallasBaseTest):
           params, x)
 
   def test_scan_cond_vm_closing_over_ref(self):
-    if jtu.test_device_matches(["cpu"]):
-      # TODO: fix this
-      self.skipTest("Fails on CPU: assertion error")
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
       self.skipTest("TODO: error on TPU")
 
     # ** Difference is the closure over params_ref in the switch branches. **
     program = jnp.int32([0, 1, 2, 3, 2, -1])
-    params = jnp.arange(len(program) * 3.).reshape(len(program), 3)
-    x = jnp.arange(7.)
+    params = jnp.arange(len(program) * 3., dtype=jnp.float32)
+    params = params.reshape(len(program), 3)
+    x = jnp.arange(7., dtype=jnp.float32)
     bx = 4
 
     @jax.jit
@@ -1169,7 +1139,7 @@ class PallasControlFlowTest(PallasBaseTest):
         return state, program_ref, params_ref
       out_ref[...] = jax.lax.fori_loop(
           0, len(program), body_fn,
-          (jnp.zeros(x.shape), program_ref, params_ref))[0]
+          (jnp.zeros(x.shape, dtype=jnp.float32), program_ref, params_ref))[0]
 
     expected = (x * params[0, 0] +
                 2 * x * params[1, 1] +
@@ -1375,7 +1345,7 @@ class PallasControlFlowTest(PallasBaseTest):
         kernel,
         grid=(1,),
         out_specs=pl.BlockSpec((1, 1), memory_space=smem_on_tpu()),
-        out_shape=jax.ShapeDtypeStruct([1, 1], jnp.int32),
+        out_shape=jax.ShapeDtypeStruct([1, 1], intx),
         in_specs=[
             pl.BlockSpec(
                 (1, 8, 128),
@@ -1439,7 +1409,7 @@ class PallasControlFlowTest(PallasBaseTest):
         kernel,
         grid=(4,),
         out_specs=pl.BlockSpec((1, 1), memory_space=smem_on_tpu()),
-        out_shape=jax.ShapeDtypeStruct([1, 1], jnp.int32),
+        out_shape=jax.ShapeDtypeStruct([1, 1], intx),
         in_specs=[
             pl.BlockSpec(
                 (1, 8, 128),
@@ -1634,7 +1604,7 @@ class PallasCallAutodifferentiationTest(PallasBaseTest):
       grad_tol = 1e-1
 
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.float32),
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((), floatx),
         grid=1)
     def pallas_impl(x_ref, o_ref):
       x = x_ref[()]
@@ -1656,7 +1626,7 @@ class PallasCallAutodifferentiationTest(PallasBaseTest):
   def test_pallas_around_grad(self, impl):
     @functools.partial(
         self.pallas_call,
-        out_shape=jax.ShapeDtypeStruct((), jnp.float32),
+        out_shape=jax.ShapeDtypeStruct((), floatx),
         name=self.id().split(".")[-1],
         grid=1)
     def pallas_impl(x_ref, o_ref):
@@ -1675,7 +1645,7 @@ class PallasCallAutodifferentiationTest(PallasBaseTest):
       grad_tol = 1e-1
 
     @functools.partial(
-        self.pallas_call, out_shape=jax.ShapeDtypeStruct((4,), jnp.float32),
+        self.pallas_call, out_shape=jax.ShapeDtypeStruct((4,), floatx),
         grid=1)
     def pallas_impl(x_ref, o_ref):
       x = x_ref[jnp.arange(2)]
@@ -1730,16 +1700,9 @@ class PallasCallAutodifferentiationTest(PallasBaseTest):
 class PallasCallAutodifferentiationInterpreterTest(PallasCallAutodifferentiationTest):
   INTERPRET = True
 
-  def setUp(self):
-    super().setUp()
-    if jtu.test_device_matches(["cpu"]) and jax.config.x64_enabled:
-      # TODO: assertion failures on CPU in 64-bit mode
-      self.skipTest("On CPU the test works only in 32-bit mode")
-
 
 class PallasOutOfBoundsInterpreterTest(PallasBaseTest):
-
-  INTERPRET: bool = True
+  INTERPRET = True
 
   def test_interpret_mode_out_of_bounds_access(self):
     block_size = 32
@@ -1818,7 +1781,7 @@ class PallasOutOfBoundsInterpreterTest(PallasBaseTest):
 
 class PallasCheckifyInterpreterTest(PallasBaseTest):
   # TODO(b/346651778): Support non-interpret mode checkify.
-  INTERPRET: bool = True
+  INTERPRET = True
 
   def test_no_checkify(self,):
     def kernel(y_ref):
@@ -1928,7 +1891,6 @@ class PallasCheckifyInterpreterTest(PallasBaseTest):
 
 
 class PallasCallNamedGridTest(PallasBaseTest):
-
   def test_named_grid(self):
 
     def kernel(x_ref, y_ref):

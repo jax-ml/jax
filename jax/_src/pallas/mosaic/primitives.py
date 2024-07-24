@@ -191,7 +191,9 @@ class DeviceIdType(enum.Enum):
   LOGICAL = "logical"
 
 
-def check_sem_avals(sem_aval, sem_indexers_avals, name):
+def check_sem_avals(sem_aval, sem_indexers_avals, name, allowed_semaphore_types=None):
+  if allowed_semaphore_types is None:
+    allowed_semaphore_types = {tpu_core.semaphore, tpu_core.barrier_semaphore}
   if not isinstance(sem_aval, state.AbstractRef):
     raise ValueError(f"Cannot {name} on a non-semaphore Ref: {sem_aval}")
   sem_shape = sem_aval.shape
@@ -200,11 +202,14 @@ def check_sem_avals(sem_aval, sem_indexers_avals, name):
   if sem_shape:
     raise ValueError(f"Cannot {name} on a non-()-shaped semaphore: {sem_shape}")
   sem_dtype = sem_aval.dtype
-  if not (
-      jnp.issubdtype(sem_dtype, tpu_core.semaphore)
-      or jnp.issubdtype(sem_dtype, tpu_core.barrier_semaphore)
+  if not any(
+      jnp.issubdtype(sem_dtype, sem_type)
+      for sem_type in allowed_semaphore_types
   ):
-    raise ValueError(f"Must {name} a REGULAR or BARRIER semaphore: {sem_dtype}")
+    raise ValueError(
+        f"Must {name} semaphores of the following types:"
+        f" {allowed_semaphore_types}"
+    )
 
 
 semaphore_read_p = jax_core.Primitive("semaphore_read")
@@ -223,7 +228,14 @@ def _semaphore_read_abstract_eval(
     args_tree,
 ):
   sem_aval, sem_indexers_avals = tree_util.tree_unflatten(args_tree, avals)
-  check_sem_avals(sem_aval, sem_indexers_avals, "read")
+  check_sem_avals(
+      sem_aval,
+      sem_indexers_avals,
+      "read",
+      allowed_semaphore_types={
+          tpu_core.dma_semaphore, tpu_core.semaphore, tpu_core.barrier_semaphore
+      },
+  )
   return jax_core.ShapedArray((), jnp.dtype("int32"))
 
 
@@ -405,7 +417,7 @@ class AsyncCopyDescriptor:
 dma_start_p = jax_core.Primitive('dma_start')
 dma_start_p.multiple_results = True
 
-@dma_start_p.def_abstract_eval
+@dma_start_p.def_effectful_abstract_eval
 def _dma_start_abstract_eval(*args, tree, device_id_type):
   (
       src_ref_aval,
@@ -433,7 +445,8 @@ def _dma_start_abstract_eval(*args, tree, device_id_type):
       raise ValueError(
           f"Cannot signal on a non-()-shaped semaphore: {src_sem_shape}"
       )
-  return []
+  n_src_indexers = len(tree_util.tree_leaves(src_indexers_avals))
+  return [], {state.ReadEffect(0), state.WriteEffect(n_src_indexers + 1)}
 
 def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
                       context: jax_core.JaxprPpContext,

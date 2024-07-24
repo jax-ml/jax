@@ -346,6 +346,14 @@ def xla_computation(fun: Callable,
                     donate_argnums: int | Iterable[int] = ()) -> Callable:
   """Creates a function that produces its XLA computation given example args.
 
+  .. warning::
+
+    This function is deprecated as of JAX v0.4.30, and will be removed in a future
+    JAX release. You can replace it with :ref:`ahead-of-time-lowering` APIs; for
+    example, ``jax.xla_computation(fn)(*args)`` can be replaced with
+    ``jax.jit(fn).lower(*args).compiler_ir('hlo')``.
+    See the `JAX 0.4.30 Change log`_ for more examples.
+
   Args:
     fun: Function from which to form XLA computations.
     static_argnums: See the :py:func:`jax.jit` docstring.
@@ -404,7 +412,7 @@ def xla_computation(fun: Callable,
   >>> import jax
   >>>
   >>> def f(x): return jax.numpy.sin(jax.numpy.cos(x))
-  >>> c = jax.xla_computation(f)(3.)
+  >>> c = jax.xla_computation(f)(3.)  # doctest: +SKIP
   >>> print(c.as_hlo_text())  # doctest: +SKIP
   HloModule xla_computation_f.6
   <BLANKLINE>
@@ -423,13 +431,13 @@ def xla_computation(fun: Callable,
 
   >>> import types
   >>> scalar = types.SimpleNamespace(shape=(), dtype=np.dtype(np.float32))
-  >>> c = jax.xla_computation(f)(scalar)
+  >>> c = jax.xla_computation(f)(scalar)  # doctest: +SKIP
 
 
   Here's an example that involves a parallel collective and axis name:
 
   >>> def f(x): return x - jax.lax.psum(x, 'i')
-  >>> c = jax.xla_computation(f, axis_env=[('i', 4)])(2)
+  >>> c = jax.xla_computation(f, axis_env=[('i', 4)])(2)  # doctest: +SKIP
   >>> print(c.as_hlo_text())  # doctest: +SKIP
   HloModule jaxpr_computation.9
   primitive_computation.3 {
@@ -457,7 +465,7 @@ def xla_computation(fun: Callable,
   ...   return rowsum, colsum, allsum
   ...
   >>> axis_env = [('i', 4), ('j', 2)]
-  >>> c = xla_computation(g, axis_env=axis_env)(5.)
+  >>> c = jax.xla_computation(g, axis_env=axis_env)(5.)  # doctest: +SKIP
   >>> print(c.as_hlo_text())  # doctest: +SKIP
   HloModule jaxpr_computation__1.19
   [removed uninteresting text here]
@@ -469,6 +477,8 @@ def xla_computation(fun: Callable,
     all-reduce.17 = f32[] all-reduce(parameter.2), replica_groups={{0,1,2,3,4,5,6,7}}, to_apply=primitive_computation__1.13
     ROOT tuple.18 = (f32[], f32[], f32[]) tuple(all-reduce.7, all-reduce.12, all-reduce.17)
   }
+
+  .. _JAX 0.4.30 Change log: https://jax.readthedocs.io/en/latest/changelog.html#jax-0-4-30-june-18-2024
   """
   if instantiate_const_outputs is not None:
     raise ValueError(

@@ -57,7 +57,6 @@ from jax._src import mesh as mesh_lib
 from jax._src.interpreters import pxla
 from jax.interpreters import mlir
 from jax._src.lib.mlir import dialects
-from jax._src.lib.mlir import ir
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
@@ -5087,24 +5086,6 @@ class SdyIntegrationTest(jtu.JaxTestCase):
 
     self.assertIn('sdy.sharding = #sdy.sharding', f.lower(arr).as_text())
 
-  def test_long_axis_names(self):
-    mesh = jtu.create_global_mesh((2, 2, 2), ('sequence', 'data', 'model'))
-    s = jax.sharding.NamedSharding(mesh, P(('sequence', 'data'), 'model'))
-    with ir.Context() as ctx:
-      dialects.sdy.register_dialect(ctx)
-      self.assertEqual(
-          str(s._to_sdy_sharding(3)),
-          '#sdy.sharding<@mesh, [{"sequence", "data"}, {"model"}, {}]>',
-      )
-
-  def test_unconstrained(self):
-    mesh = jtu.create_global_mesh((8,), ('x',))
-    s = jax.sharding.NamedSharding(mesh, P(None, P.UNCONSTRAINED, 'x'))
-    with ir.Context() as ctx:
-      dialects.sdy.register_dialect(ctx)
-      self.assertEqual(
-          str(s._to_sdy_sharding(3)), '#sdy.sharding<@mesh, [{}, {?}, {"x"}]>'
-      )
 
 
 if __name__ == '__main__':

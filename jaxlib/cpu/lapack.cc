@@ -69,6 +69,10 @@ void GetLapackKernelsFromScipy() {
   AssignKernelFn<Trsm<double>>(blas_ptr("dtrsm"));
   AssignKernelFn<Trsm<std::complex<float>>>(blas_ptr("ctrsm"));
   AssignKernelFn<Trsm<std::complex<double>>>(blas_ptr("ztrsm"));
+  AssignKernelFn<TriMatrixEquationSolver<DataType::F32>>(blas_ptr("strsm"));
+  AssignKernelFn<TriMatrixEquationSolver<DataType::F64>>(blas_ptr("dtrsm"));
+  AssignKernelFn<TriMatrixEquationSolver<DataType::C64>>(blas_ptr("ctrsm"));
+  AssignKernelFn<TriMatrixEquationSolver<DataType::C128>>(blas_ptr("ztrsm"));
 
   nb::module_ cython_lapack =
       nb::module_::import_("scipy.linalg.cython_lapack");
@@ -219,6 +223,10 @@ nb::dict Registrations() {
   dict["lapack_zhetrd"] =
       EncapsulateFunction(Sytrd<std::complex<double>>::Kernel);
 
+  dict["blas_strsm_ffi"] = EncapsulateFunction(blas_strsm_ffi);
+  dict["blas_dtrsm_ffi"] = EncapsulateFunction(blas_dtrsm_ffi);
+  dict["blas_ctrsm_ffi"] = EncapsulateFunction(blas_ctrsm_ffi);
+  dict["blas_ztrsm_ffi"] = EncapsulateFunction(blas_ztrsm_ffi);
   dict["lapack_sgetrf_ffi"] = EncapsulateFunction(lapack_sgetrf_ffi);
   dict["lapack_dgetrf_ffi"] = EncapsulateFunction(lapack_dgetrf_ffi);
   dict["lapack_cgetrf_ffi"] = EncapsulateFunction(lapack_cgetrf_ffi);

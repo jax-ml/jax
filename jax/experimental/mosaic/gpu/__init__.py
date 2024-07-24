@@ -19,6 +19,7 @@ import ctypes
 import dataclasses
 import functools
 import itertools
+import math
 import os
 import pathlib
 import subprocess
@@ -42,7 +43,6 @@ from jaxlib.mlir.dialects import nvvm
 from jaxlib.mlir.passmanager import PassManager
 import numpy as np
 
-from . import dsl as mgpu
 from . import profiler
 from . import utils
 
@@ -63,7 +63,7 @@ TMA_DESCRIPTOR_BYTES = 128
 TMA_DESCRIPTOR_ALIGNMENT = 64
 
 
-c = mgpu.c  # This is too common to fully qualify.
+c = utils.c  # This is too common to fully qualify.
 
 
 RUNTIME_PATH = None
@@ -143,13 +143,13 @@ class TileTransform(MemRefTransform):
     tiling_rank = len(self.tiling)
     tiled_rank = untiled_rank + tiling_rank
     for t, d in zip(self.tiling[::-1], range(untiled_rank)[::-1]):
-      ref = mgpu.memref_unfold(ref, d, (None, t))
+      ref = utils.memref_unfold(ref, d, (None, t))
     permutation = (
         *range(untiled_rank - tiling_rank),
         *range(untiled_rank - tiling_rank, tiled_rank, 2),
         *range(untiled_rank - tiling_rank + 1, tiled_rank, 2),
     )
-    return mgpu.memref_transpose(ref, permutation)
+    return utils.memref_transpose(ref, permutation)
 
   def transform_index(self, idx: Sequence[ir.Value]) -> tuple[ir.Value, ...]:
     index = ir.IndexType.get()
@@ -193,7 +193,7 @@ class TransposeTransform(MemRefTransform):
       raise ValueError("Permutation must be a permutation")
 
   def apply(self, ref: ir.Value) -> ir.Value:
-    return mgpu.memref_transpose(ref, self.permutation)
+    return utils.memref_transpose(ref, self.permutation)
 
   def transform_index(self, idx: Sequence[ir.Value]) -> tuple[ir.Value, ...]:
     return tuple(idx[p] for p in self.permutation)
@@ -209,7 +209,7 @@ OnDeviceProfiler = profiler.OnDeviceProfiler
 class LaunchContext:
   launch_op: gpu.LaunchOp
   gmem_scratch_ptr: ir.Value
-  cluster_size: tuple[int, ...]
+  cluster_size: tuple[int, int, int]
   profiler: OnDeviceProfiler | None = None
   next_scratch_offset: int = 0
   host_scratch_init: list[Callable[[ir.Value], None]] = dataclasses.field(
@@ -260,33 +260,6 @@ class LaunchContext:
     )
     gep.move_after(self.gmem_scratch_ptr.owner)
     return device_init(gep.result)
-
-  def cluster_collective_mask(self, collective: gpu.Dimension):
-    # We first compute the linearized index of the slice along the collective
-    # dim that contains the current block. Then, the mask is a sequence of 1s
-    # strided by the position of the collective dim, shifted left by the linear
-    # slice index.
-    # TODO(apaszke): Make sure this gets hoisted outside of any loops.
-    # If not, we might need to do it manually.
-    i32 = ir.IntegerType.get_signless(32)
-    stride = 1
-    mask_shift = c(0, i32)
-    collective_stride = None
-    for cluster_dim in gpu.Dimension:
-      if self.cluster_size[cluster_dim] == 1:
-        continue
-      if cluster_dim != collective:
-        dim_idx = arith.index_castui(i32, gpu.cluster_block_id(cluster_dim))
-        mask_shift = arith.addi(
-            mask_shift, arith.muli(dim_idx, c(stride, i32)),
-        )
-      else:
-        collective_stride = stride
-      stride *= self.cluster_size[cluster_dim]
-    mask_unshifted = 0
-    for i in range(self.cluster_size[collective]):
-      mask_unshifted |= 1 << (i * collective_stride)
-    return arith.shli(c(mask_unshifted, i32), mask_shift)
 
   def _get_tma_desc(
       self,
@@ -346,7 +319,7 @@ class LaunchContext:
       dst_ref,
       gmem_slice: Any = (),
       gmem_transform: MemRefTransform | tuple[MemRefTransform, ...] = (),
-      barrier: mgpu.Barrier | None = None,
+      barrier: utils.BarrierRef | None = None,
       swizzle: int | None = None,
       arrive: bool | None = None,
       uniform: bool = True,
@@ -359,7 +332,7 @@ class LaunchContext:
     src_ref_ty = ir.MemRefType(src_ref.type)
     dst_ref_ty = ir.MemRefType(dst_ref.type)
     element_type = src_ref_ty.element_type
-    element_bytewidth = mgpu.bytewidth(element_type)
+    element_bytewidth = utils.bytewidth(element_type)
     if element_type != dst_ref_ty.element_type:
       raise ValueError(
           f"Expected same element type, got {element_type} and"
@@ -402,7 +375,7 @@ class LaunchContext:
       slice_shape = t.transform_shape(slice_shape)
     for dim, squeezed in enumerate(is_squeezed):
       if squeezed:
-        smem_ref = mgpu.memref_unsqueeze(smem_ref, dim)
+        smem_ref = utils.memref_unsqueeze(smem_ref, dim)
     smem_ref_ty = ir.MemRefType(smem_ref.type)
 
     if slice_shape != tuple(smem_ref_ty.shape):
@@ -434,13 +407,13 @@ class LaunchContext:
       dyn_base_indices[collective_slice_dim] = arith.addi(
           dyn_base_indices[collective_slice_dim], block_offset,
       )
-      smem_ref = mgpu.memref_slice(
+      smem_ref = utils.memref_slice(
           smem_ref,
           (slice(None),) * collective_slice_dim
-          + (mgpu.ds(block_offset, slice_shape[collective_slice_dim]),),
+          + (utils.ds(block_offset, slice_shape[collective_slice_dim]),),
       )
       multicast_mask = arith.trunci(
-          i16, self.cluster_collective_mask(collective)
+          i16, utils.cluster_collective_mask(self.cluster_size, collective)
       )
     else:
       multicast_mask = None
@@ -455,7 +428,7 @@ class LaunchContext:
     ]
 
     uniform_ctx = (
-        functools.partial(mgpu.single_thread, per_block=False)
+        functools.partial(utils.single_thread, per_block=False)
         if uniform
         else contextlib.nullcontext
     )
@@ -506,36 +479,121 @@ T = TypeVar('T')
 class Union(Generic[T]):
   members: Sequence[T]
 
+  def __iter__(self):
+    return iter(self.members)
+
+@dataclasses.dataclass(frozen=True)
+class TMABarrier:
+  num_barriers: int = 1
+
+@dataclasses.dataclass(frozen=True)
+class Barrier:
+  arrival_count: int
+  num_barriers: int = 1
+
+@dataclasses.dataclass(frozen=True)
+class ClusterBarrier:
+  collective_dims: Sequence[gpu.Dimension]
+  num_barriers: int = 1
+
 
 def _count_buffer_bytes(shape_dtype: jax.ShapeDtypeStruct) -> int:
   return np.prod(shape_dtype.shape) * np.dtype(shape_dtype.dtype).itemsize
 
 
 def _construct_smem_reftree(
-    dynamic_smem: ir.Value, smem_buffers: ShapeTree) -> RefTree:
+    cluster_shape: tuple[int, int, int],
+    dynamic_smem: ir.Value,
+    smem_buffers: ShapeTree,
+    dynamic_smem_offset: int = 0,
+) -> RefTree:
   index = ir.IndexType.get()
+  i8 = ir.IntegerType.get_signless(8)
+  ptr = ir.Type.parse("!llvm.ptr")
   smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
-  flat_ref_tys, smem_buffer_tree = jax.tree.flatten(smem_buffers)
+  flat_ref_tys, smem_buffer_tree = jax.tree.flatten(
+      smem_buffers, is_leaf=lambda x: isinstance(x, Union)
+  )
   smem_refs = []
-  dynamic_smem_offset = 0
   for ref_ty in flat_ref_tys:
-    mlir_dtype = mlir.dtype_to_ir_type(ref_ty.dtype)
-    tile_smem = memref.view(
-        ir.MemRefType.get(ref_ty.shape, mlir_dtype, memory_space=smem),
-        dynamic_smem, c(dynamic_smem_offset, index), [],
-    )
-    dynamic_smem_offset += _count_buffer_bytes(ref_ty)
-    smem_refs.append(tile_smem)
+    def get_barrier_ptr(num_barriers: int) -> ir.Value:
+      nonlocal dynamic_smem_offset
+      smem_base_ptr = utils.memref_ptr(dynamic_smem, memory_space=3)
+      barrier_base_ptr = llvm.getelementptr(
+          ptr, smem_base_ptr, [], [dynamic_smem_offset], i8
+      )
+      dynamic_smem_offset += num_barriers * MBARRIER_BYTES
+      return barrier_base_ptr
+    match ref_ty:
+      case Union(members):
+        member_trees = [
+            _construct_smem_reftree(cluster_shape, dynamic_smem, m, dynamic_smem_offset)
+            for m in members
+        ]
+        # TODO(apaszke): This is quadratic, but it shouldn't matter for now...
+        dynamic_smem_offset += _smem_tree_size(ref_ty)
+        ref = Union(member_trees)
+      case TMABarrier(num_barriers):
+        ref = utils.BarrierRef.initialize(
+            get_barrier_ptr(num_barriers), num_barriers, arrival_count=1
+        )
+      case Barrier(arrival_count, num_barriers):
+        ref = utils.BarrierRef.initialize(
+            get_barrier_ptr(num_barriers),
+            num_barriers,
+            arrival_count=arrival_count,
+        )
+      case ClusterBarrier(collective_dims, num_barriers):
+        ref = utils.CollectiveBarrierRef.initialize(
+            get_barrier_ptr(num_barriers),
+            num_barriers,
+            collective_dims,
+            cluster_shape,
+        )
+      case _:
+        mlir_dtype = mlir.dtype_to_ir_type(ref_ty.dtype)
+        tile_smem = memref.view(
+            ir.MemRefType.get(ref_ty.shape, mlir_dtype, memory_space=smem),
+            dynamic_smem, c(dynamic_smem_offset, index), [],
+        )
+        dynamic_smem_offset += _count_buffer_bytes(ref_ty)
+        ref = tile_smem
+    smem_refs.append(ref)
   return jax.tree.unflatten(smem_buffer_tree, smem_refs)
+
+
+MBARRIER_BYTES = 8
+
+
+def _smem_tree_size(smem_buffers: ShapeTree) -> int:
+  leaves = jax.tree.leaves(
+      smem_buffers, is_leaf=lambda x: isinstance(x, Union)
+  )
+  size = 0
+  for l in leaves:
+    match l:
+      case Union(members):
+        size += max(_smem_tree_size(s) for s in members)
+      case (
+          TMABarrier(num_barriers)
+          | ClusterBarrier(_, num_barriers=num_barriers)
+          | Barrier(_, num_barriers=num_barriers)
+      ):
+        if size % MBARRIER_BYTES:
+          raise NotImplementedError("Misaligned barrier allocation")
+        size += num_barriers * MBARRIER_BYTES
+      case _:
+        size += _count_buffer_bytes(l)
+  return size
 
 
 # TODO(apaszke): Inline this
 @contextlib.contextmanager
 def _launch(
     token,
-    grid,
-    cluster,
-    block,
+    grid: tuple[int, int, int],
+    cluster: tuple[int, int, int],
+    block: tuple[int, int, int],
     scratch_arr,
     smem_buffers: ShapeTree | Union[ShapeTree],
     profiler_spec: profiler.ProfilerSpec | None = None,
@@ -549,24 +607,16 @@ def _launch(
   grid_vals = [c(i, index) for i in grid]
   block_vals = [c(i, index) for i in block]
 
-  if isinstance(smem_buffers, Union):
-    smem_disjoint_live_buffers_collections = smem_buffers.members
-    compute_smem_bytes = max(
-        sum(_count_buffer_bytes(l) for l in jax.tree.leaves(s))
-            for s in smem_buffers.members)
-  else:
-    smem_disjoint_live_buffers_collections = [smem_buffers]
-    compute_smem_bytes = sum(
-        _count_buffer_bytes(l) for l in jax.tree.leaves(smem_buffers))
+  user_smem_bytes = _smem_tree_size(smem_buffers)
 
-  smem_bytes = compute_smem_bytes
+  smem_bytes = user_smem_bytes
   if profiler_spec is not None:
     smem_bytes += profiler_spec.smem_bytes(block=block)
 
   # TODO(cperivol): Query the shared memory size programmatically.
   if smem_bytes > 228 * 1024:
     raise ValueError(f"Mosaic GPU kernel exceeds available shared memory {smem_bytes=} > 228000")
-  if cluster:
+  if math.prod(cluster) != 1:
     if len(cluster) != 3:
       raise ValueError("Clusters must be 3D")
     cluster_kwargs = {
@@ -592,11 +642,15 @@ def _launch(
         )
     )
 
-    smem_ref_trees = []
-    for smem_live_buffers_collection in smem_disjoint_live_buffers_collections:
-      smem_ref_tree = _construct_smem_reftree(
-          dynamic_smem, smem_live_buffers_collection)
-      smem_ref_trees.append(smem_ref_tree)
+    smem_ref_tree = _construct_smem_reftree(
+        cluster, dynamic_smem, smem_buffers
+    )
+    # TODO(apaszke): Skip the following if no barriers were initialized.
+    nvvm.fence_mbarrier_init()
+    if math.prod(cluster) != 1:
+      nvvm.cluster_arrive_relaxed(aligned=ir.UnitAttr.get())
+      nvvm.cluster_wait(aligned=ir.UnitAttr.get())
+    gpu.barrier()
 
     if profiler_spec:
       prof_smem = memref.view(
@@ -604,18 +658,13 @@ def _launch(
               (profiler_spec.smem_i32_elements(block=block),),
               i32, memory_space=smem,
           ),
-          dynamic_smem, c(compute_smem_bytes, index), [],
+          dynamic_smem, c(user_smem_bytes, index), [],
       )
       prof = profiler.OnDeviceProfiler(
           profiler_spec, prof_smem, maybe_prof_buffer
       )
     else:
       prof = None
-
-    if isinstance(smem_buffers, Union):
-      smem_ref_tree: Union[RefTree] = Union(smem_ref_trees)
-    else:
-      smem_ref_tree: RefTree = smem_ref_trees[0] if smem_ref_trees else []
 
     ptr_ty = ir.Type.parse("!llvm.ptr")
     scratch_ptr = builtin.unrealized_conversion_cast([ptr_ty], [scratch_arr])
@@ -627,9 +676,9 @@ def _launch(
 
 def _lower_as_gpu_kernel(
     body,
-    grid: tuple[int, ...],
-    cluster: tuple[int, ...],
-    block: tuple[int, ...],
+    grid: tuple[int, int, int],
+    cluster: tuple[int, int, int],
+    block: tuple[int, int, int],
     in_shapes: tuple[Any, ...],
     out_shape,
     smem_scratch_shape: ShapeTree | Union[ShapeTree],
@@ -637,7 +686,6 @@ def _lower_as_gpu_kernel(
 ):
   ptr_ty = ir.Type.parse("!llvm.ptr")
   token_ty = ir.Type.parse("!gpu.async.token")
-  i8 = ir.IntegerType.get_signless(8)
   i32 = ir.IntegerType.get_signless(32)
   i64 = ir.IntegerType.get_signless(64)
 
@@ -707,13 +755,13 @@ def _lower_as_gpu_kernel(
 
 def as_gpu_kernel(
     body,
-    grid: tuple[int, ...],
-    block: tuple[int, ...],
+    grid: tuple[int, int, int],
+    block: tuple[int, int, int],
     in_shape,
     out_shape,
     smem_scratch_shape: ShapeTree | Union[ShapeTree],
     prof_spec: profiler.ProfilerSpec | None = None,
-    cluster: tuple[int, ...] = (),
+    cluster: tuple[int, int, int] = (1, 1, 1),
 ):
   if isinstance(in_shape, list):
     in_shape = tuple(in_shape)

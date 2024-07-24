@@ -17,6 +17,8 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax._src import test_util as jtu
+import jax._src.pallas.mosaic_gpu.core as plgpu_core
+import jax._src.pallas.mosaic_gpu.primitives as plgpu_prims
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
 import numpy as np
@@ -112,6 +114,25 @@ class PallasCallTest(PallasTest):
     with self.assertRaises(Exception):
       # TODO(slebedev): Remove assertRaises() once we support indexing.
       kernel(x)
+
+  def test_scoped_allocation(self):
+    def kernel(x_ref, o_ref):
+      def body(tmp_ref):
+        self.assertEqual(tmp_ref.shape, (8, 128))
+        tmp_ref[...] = x_ref[...] + 1.0
+        return tmp_ref[...]
+
+      tmp = plgpu_prims.run_scoped(body, plgpu_core.SMEM((8, 128), jnp.float32))
+      self.assertEqual(tmp.shape, (8, 128))
+      o_ref[...] = tmp
+
+    inp = np.ones((8, 128))
+    f = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    )
+    o = f(inp)
+    np.testing.assert_array_equal(o, inp + 1.0)
 
 
 if __name__ == "__main__":

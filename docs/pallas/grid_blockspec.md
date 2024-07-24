@@ -34,7 +34,7 @@ This generalizes to any tuple of integers (a length `d` grid will correspond
 to `d` nested loops).
 The kernel is executed as many times
 as `prod(grid)`.
-The default grid value `None` stands for `()`, and results in one
+The default grid value `()` results in one
 kernel invocation.
 Each of these invocations is referred to as a "program".
 To access which program (i.e. which element of the grid) the kernel is currently

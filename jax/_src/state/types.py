@@ -132,6 +132,12 @@ class AbstractRef(core.AbstractValue):
   def __init__(self, inner_aval: core.AbstractValue):
     self.inner_aval = inner_aval
 
+  @property
+  def weak_type(self) -> bool:
+    if not hasattr(self.inner_aval, "weak_type"):
+      raise AttributeError
+    return self.inner_aval.weak_type
+
   def update(self, inner_aval=None):
     if inner_aval is None:
       return AbstractRef(self.inner_aval)
@@ -217,3 +223,19 @@ def shaped_array_ref(shape: tuple[int, ...], dtype,
                      named_shape = None) -> AbstractRef:
   return AbstractRef(core.ShapedArray(shape, dtype, weak_type=weak_type,
                                       named_shape=named_shape))
+
+def _shard_ref(mesh, names, ref_aval: AbstractRef):
+  del mesh
+  if names:
+    # Can't actually shard a ref, can only close over it.
+    raise NotImplementedError("Can't shard a Ref.")
+  return ref_aval
+core.shard_aval_handlers[AbstractRef] = _shard_ref
+
+def _unshard_ref(mesh, names, ref_aval: AbstractRef):
+  del mesh
+  if names:
+    # Can't actually shard a ref, can only close over it.
+    raise NotImplementedError("Can't unshard a Ref")
+  return ref_aval
+core.unshard_aval_handlers[AbstractRef] = _unshard_ref

@@ -18,7 +18,7 @@ from collections.abc import Callable, Sequence
 import dataclasses
 from functools import partial
 import operator
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar
 
 import numpy as np
 
@@ -790,7 +790,8 @@ def _initial_style_jaxpr(fun, in_tree, in_avals):
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(fun_, in_avals, debug)
   return jaxpr, consts, out_tree_thunk()
 
-def run_state(f: Callable[..., None]):
+T = TypeVar('T')
+def run_state(f: Callable[..., None]) -> Callable[[T], T]:
   def wrapped(args):
     flat_args, in_tree = tree_util.tree_flatten(args)
     avals = [core.raise_to_shaped(core.get_aval(arg)) for arg in flat_args]

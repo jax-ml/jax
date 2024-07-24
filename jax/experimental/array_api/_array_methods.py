@@ -31,15 +31,6 @@ def _array_namespace(self, /, *, api_version: None | str = None):
   return jax.experimental.array_api
 
 
-def _to_device(self, device: xe.Device | Sharding | None, *,
-               stream: int | Any | None = None):
-  if stream is not None:
-    raise NotImplementedError("stream argument of array.to_device()")
-  return jax.device_put(self, device)
-
-
 def add_array_object_methods():
   # TODO(jakevdp): set on tracers as well?
   setattr(ArrayImpl, "__array_namespace__", _array_namespace)
-  setattr(ArrayImpl, "to_device", _to_device)
-  setattr(ArrayImpl, "device", property(lambda self: self.sharding))

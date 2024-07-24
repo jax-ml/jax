@@ -527,7 +527,7 @@ def TPU_DeviceIdOp : TPU_Op<"device_id", [Pure]> {
 }
 
 def TPU_SemaphoreReadOp : TPU_Op<"sem_read"> {
-  let arguments = (ins MemRefOf<[TPU_SemaphoreType]>:$semaphore);
+  let arguments = (ins MemRefOf<[TPU_SemaphoreType, TPU_DMASemaphoreType]>:$semaphore);
   let results = (outs I32:$result);
   let assemblyFormat = [{ $semaphore attr-dict `:` type($semaphore) `->` type($result)}];
 }
@@ -737,7 +737,7 @@ def ApplyVectorLayoutPass : Pass<"tpu-apply-vector-layout", "::mlir::func::FuncO
     "::mlir::vector::VectorDialect",
     "::mlir::tpu::TPUDialect",
   ];
-  let constructor = "::mlir::tpu::createApplyVectorLayoutPass(-1)";
+  let constructor = "::mlir::tpu::createApplyVectorLayoutPass()";
   let options = [
     // If hardware_generation is not set, the default value of -1 will crash on
     // runOnOperation.

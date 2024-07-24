@@ -26,7 +26,7 @@ from jax import random
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lax.control_flow.for_loop import for_loop
-from jax._src.pallas.pallas_call import _trace_to_jaxpr
+from jax._src.pallas.pallas_call import _trace_kernel_to_jaxpr
 from jax.experimental import pallas as pl
 from jax.experimental.pallas.ops.gpu import attention
 from jax.experimental.pallas.ops.gpu import layer_norm
@@ -129,7 +129,7 @@ class PallasBaseTest(jtu.JaxTestCase):
       self.skipTest("Only works on non-Windows platforms")
 
     super().setUp()
-    _trace_to_jaxpr.cache_clear()
+    _trace_kernel_to_jaxpr.cache_clear()
 
   def pallas_call(self, *args, **kwargs):
     return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)

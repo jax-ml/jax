@@ -104,6 +104,15 @@ std::array<int64_t, 2> unwrap(MlirTpuI64TargetTuple arr) {
 MlirTpuI64TargetTuple wrap(std::array<int64_t, 2> arr) {
   return {arr[0], arr[1]};
 }
+mlir::tpu::ApplyVectorLayoutContext unwrap(
+    MlirTpuApplyVectorLayoutContext ctx) {
+  return mlir::tpu::ApplyVectorLayoutContext{
+      .hardware_generation = ctx.hardware_generation,
+      .target_shape = unwrap(ctx.target_shape),
+      .mxu_shape = {ctx.mxu_shape.contracting_size,
+                    ctx.mxu_shape.non_contracting_size},
+      .max_sublanes_in_scratch = ctx.max_sublanes_in_scratch};
+}
 
 mlir::OpBuilder mlirTpuInsertionPointToOpBuilder(
     MlirTpuInsertionPoint insertion_point) {
@@ -371,21 +380,22 @@ MlirTpuValueArray mlirTpuDisassemble(MlirTpuInsertionPoint insertion_point,
 MlirLogicalResult mlirTpuApplyLayoutOp(int hardware_generation,
                                        MlirOperation op,
                                        MlirTpuI64TargetTuple target_shape) {
-  auto f = unwrap(op)->getParentOfType<mlir::func::FuncOp>();
-  CHECK(f != nullptr);
-  mlir::tpu::RewriteContext ctx{f, hardware_generation, unwrap(target_shape)};
+  mlir::tpu::ApplyVectorLayoutContext ctx{
+      .hardware_generation = hardware_generation,
+      .target_shape = unwrap(target_shape)};
   return wrap(mlir::tpu::applyLayoutOp(ctx, *unwrap(op)));
 }
 
 MlirValue mlirTpuRelayout(MlirTpuInsertionPoint insertion_point, MlirValue val,
                           MlirTpuVectorLayout src, MlirTpuVectorLayout dst,
-                          MlirTpuI64TargetTuple target_shape) {
+                          MlirTpuApplyVectorLayoutContext ctx) {
   mlir::OpBuilder builder = mlirTpuInsertionPointToOpBuilder(insertion_point);
   // This cast will fail and assert if the caller passed a non-vector
   auto vector_val = mlir::cast<mlir::TypedValue<mlir::VectorType>>(unwrap(val));
+  auto apply_layout_ctx = unwrap(ctx);
   mlir::FailureOr<mlir::TypedValue<mlir::VectorType>> failure_or_new_val =
-      mlir::tpu::relayout(builder, vector_val, *unwrap(src), *unwrap(dst),
-                          unwrap(target_shape));
+      mlir::tpu::relayout(apply_layout_ctx, builder, vector_val, *unwrap(src),
+                          *unwrap(dst));
   if (failed(failure_or_new_val)) {
     return {nullptr};
   }

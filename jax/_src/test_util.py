@@ -188,18 +188,6 @@ def check_eq(xs, ys, err_msg=''):
   tree_all(tree_map(assert_close, xs, ys))
 
 
-# TODO(yashkatariya): Make this context manager check for deprecation message
-# in OSS.
-@contextmanager
-def unaccelerate_getattr_deprecation(module, name):
-  message, prev_attr = module._deprecations[name]
-  module._deprecations[name] = (message, getattr(module, f"_deprecated_{name}"))
-  try:
-    yield
-  finally:
-    module._deprecations[name] = (message, prev_attr)
-
-
 @contextmanager
 def _capture_output(fp: TextIO) -> Generator[Callable[[], str], None, None]:
   """Context manager to capture all output written to a given file object.

@@ -15,6 +15,7 @@
 """Mosaic-specific Pallas APIs."""
 
 from jax._src.pallas.mosaic import core
+from jax._src.pallas.mosaic.core import create_tensorcore_mesh
 from jax._src.pallas.mosaic.core import dma_semaphore
 from jax._src.pallas.mosaic.core import PrefetchScalarGridSpec
 from jax._src.pallas.mosaic.core import semaphore
