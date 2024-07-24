@@ -907,17 +907,17 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     msg = "Complex values have no ordering and cannot be clipped"
     # jit is disabled so we don't miss warnings due to caching.
     with jax.disable_jit():
-      with self.assertWarns(DeprecationWarning, msg=msg):
+      with self.assertWarnsRegex(DeprecationWarning, msg):
         jnp.clip(x)
 
-      with self.assertWarns(DeprecationWarning, msg=msg):
+      with self.assertWarnsRegex(DeprecationWarning, msg):
         jnp.clip(x, max=x)
 
       x = rng(shape, dtype=jnp.int32)
-      with self.assertWarns(DeprecationWarning, msg=msg):
+      with self.assertWarnsRegex(DeprecationWarning, msg):
         jnp.clip(x, min=-1+5j)
 
-      with self.assertWarns(DeprecationWarning, msg=msg):
+      with self.assertWarnsRegex(DeprecationWarning, msg):
         jnp.clip(x, max=jnp.array([-1+5j]))
 
   # TODO(micky774): Check for ValueError instead of DeprecationWarning when
@@ -932,10 +932,10 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     msg = "Passing complex-valued inputs to hypot"
     # jit is disabled so we don't miss warnings due to caching.
     with jax.disable_jit():
-      with self.assertWarns(DeprecationWarning, msg=msg):
+      with self.assertWarnsRegex(DeprecationWarning, msg):
         jnp.hypot(x, x)
 
-      with self.assertWarns(DeprecationWarning, msg=msg):
+      with self.assertWarnsRegex(DeprecationWarning, msg):
         y = jnp.ones_like(x)
         jnp.hypot(x, y)
 
@@ -3962,8 +3962,8 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testAstypeComplexDowncast(self):
     x = jnp.array(2.0+1.5j, dtype='complex64')
-    msg = "Casting from complex to non-complex dtypes will soon raise "
-    with self.assertWarns(DeprecationWarning, msg=msg):
+    msg = "Casting from complex to real dtypes will soon raise "
+    with self.assertWarnsRegex(DeprecationWarning, msg):
       x.astype('float32')
 
   @parameterized.parameters('int2', 'int4')
