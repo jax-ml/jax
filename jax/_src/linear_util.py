@@ -337,13 +337,8 @@ def cache(call: Callable, *, explain: Callable | None = None):
 
   def memoized_fun(fun: WrappedFun, *args):
     cache = fun_caches.setdefault(fun.f, new_cache := {})  # type: ignore
-    if config.check_tracer_leaks.value:
-      key = (_copy_main_traces(fun.transforms), fun.params, fun.in_type, args,
-             config.enable_x64.value, config.default_device.value,
-             config.trace_context())
-    else:
-      key = (fun.transforms, fun.params, fun.in_type, args, config.enable_x64.value,
-             config.default_device.value, config.trace_context())
+    key = (fun.transforms, fun.params, fun.in_type, args, config.enable_x64.value,
+           config.default_device.value, config.trace_context())
     result = cache.get(key, None)
     if result is not None:
       ans, stores = result
@@ -363,15 +358,6 @@ def cache(call: Callable, *, explain: Callable | None = None):
   memoized_fun.evict_function = _evict_function  # type: ignore
   cache_clearing_funs.add(memoized_fun.cache_clear)
   return memoized_fun
-
-
-@partial(partial, tree_map)
-def _copy_main_traces(x):
-  if isinstance(x, core.MainTrace):
-    return core.MainTrace(x.level, x.trace_type, **x.payload)
-  else:
-    return x
-
 
 @transformation
 def hashable_partial(*args):

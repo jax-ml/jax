@@ -149,11 +149,6 @@ def switch(index, branches: Sequence[Callable], *operands,
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `switch`: {disallowed_effects}')
-  if joined_effects:
-    # Raise index in case of effects to allow data-dependence-based discharging
-    # of those effects (even if they don't have an explicit data dependence).
-    index = core.raise_as_much_as_possible(index)
-
   out = cond_p.bind(index, *consts, *ops, branches=tuple(jaxprs))
   return tree_unflatten(out_trees[0], out)
 
@@ -264,10 +259,6 @@ def _cond(pred, true_fun: Callable, false_fun: Callable, *operands,
         f'Effects not supported in `cond`: {disallowed_effects}')
 
   index = lax.convert_element_type(pred, np.int32)
-  if joined_effects:
-    # Raise index in case of effects to allow data-dependence-based discharging
-    # of those effects (even if they don't have an explicit data dependence).
-    index = core.raise_as_much_as_possible(index)
   false_jaxpr = replace_jaxpr_effects(false_jaxpr, joined_effects)
   true_jaxpr = replace_jaxpr_effects(true_jaxpr, joined_effects)
 
