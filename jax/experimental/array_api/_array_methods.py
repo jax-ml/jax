@@ -14,14 +14,9 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import jax
 from jax._src.array import ArrayImpl
 from jax.experimental.array_api._version import __array_api_version__
-from jax.sharding import Sharding
-
-from jax._src.lib import xla_extension as xe
 
 
 def _array_namespace(self, /, *, api_version: None | str = None):
