@@ -479,7 +479,6 @@ class CompatTest(bctu.CompatTestBase):
                                   np.asarray(out), atol=1e-4, rtol=1e-4))
 
   @jtu.parameterized_filterable(
-    one_containing="f32",
     kwargs=[
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
       for dtype_name in ("f32", "f64", "c64", "c128")])
