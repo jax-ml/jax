@@ -26,7 +26,7 @@ is invoked from the other framework.
 The native serialization mode has several advantages:
 
    * supports virtually all operations supported by native execution, e.g.,
-     `xmap`, `shard_map`, `pmap`, parallel collective operations, and all
+     `shard_map`, `pmap`, parallel collective operations, and all
      primitives at all data types.
    * uses standard native JAX code paths for lowering, and thus it is easier
      to trust that the semantics and performance stays faithful to the native

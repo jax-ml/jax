@@ -78,7 +78,7 @@ def call_tf(
   function must return the same type of results.
 
   If ``call_tf`` appears in a JAX staging context (:func:`jax.jit`,
-  or :func:`jax.pmap`, or :func:`jax.xmap`, or a control-flow primitive) then
+  or :func:`jax.pmap`, or a control-flow primitive) then
   ``callable_tf`` will be compiled with ``tf.function(callable_tf,
   jit_compile=True)``
   and the resulting XLA computation will be embedded in JAX's XLA computation.

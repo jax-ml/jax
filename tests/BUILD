@@ -217,30 +217,6 @@ py_test(
 )
 
 jax_test(
-    name = "xmap_test",
-    srcs = ["xmap_test.py"],
-    backend_tags = {
-        "gpu": [
-            "noasan",  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
-        ],
-        "tpu": [
-            "noasan",  # Times out.
-            "nomsan",  # Times out.
-            "notsan",  # Times out.
-        ],
-    },
-    shard_count = {
-        "cpu": 10,
-        "gpu": 4,
-        "tpu": 4,
-    },
-    tags = ["multiaccelerator"],
-    deps = [
-        "//jax:maps",
-    ],
-)
-
-jax_test(
     name = "memories_test",
     srcs = ["memories_test.py"],
     shard_count = {

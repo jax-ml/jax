@@ -68,7 +68,7 @@ def _check_mesh_resource_axis(mesh, parsed_pspec, _manual_axes):
 
 
 def hashed_index(x) -> int:
-  # This works for both `pjit`/`xmap` indices and `pmap` indices (which might
+  # This works for both `pjit` indices and `pmap` indices (which might
   # have an integer instead of a slice).
   assert all(v.step is None for v in x if isinstance(v, slice))
   return hash(tuple((v.start, v.stop) if isinstance(v, slice) else v for v in x))
@@ -1123,8 +1123,8 @@ class SPMDAxisContext:
   """A hardware axis context for parallel computations that use the GSPMD partitioner.
 
   This includes the mesh that will later by used to execute this computation,
-  as well as a set of mesh axes that are currently (e.g. because the current lowering
-  is invoked inside an xmap) lowered in the MANUAL sharding mode.
+  as well as a set of mesh axes that are currently lowered in the MANUAL
+  sharding mode.
   """
   mesh: mesh_lib.Mesh
   manual_axes: frozenset[MeshAxisName] = frozenset()

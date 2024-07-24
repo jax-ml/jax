@@ -201,13 +201,13 @@ def _tpu_custom_call_lowering(
     if axis_context.manual_axes != frozenset(axis_context.mesh.axis_names):
       raise NotImplementedError(
           "Mosaic kernels cannot be automatically partitioned. Please wrap the"
-          " call in a shard_map or xmap."
+          " call in a shard_map."
       )
   elif isinstance(axis_context, sharding_impls.ShardingContext):
     if axis_context.num_devices != 1:
       raise NotImplementedError(
           "Mosaic kernels cannot be automatically partitioned. Please wrap the"
-          " call in a shard_map or xmap."
+          " call in a shard_map."
       )
   elif config.has_communication:
     raise NotImplementedError(

@@ -20,7 +20,6 @@ This section contains examples and tutorials on more advanced topics, such as Mu
    notebooks/Distributed_arrays_and_automatic_parallelization
    notebooks/shard_map
    distributed_data_loading
-   notebooks/xmap_tutorial
 
 .. toctree::
    :caption: Automatic Differentiation

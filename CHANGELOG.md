@@ -10,6 +10,9 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.31
 
+* Deletion
+  * xmap has been deleted. Please use {func}`shard_map` as the replacement.
+
 * Changes
   * The minimum Python version is now 3.10. 3.10 will remain the minimum
     supported version until July 2025.

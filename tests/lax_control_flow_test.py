@@ -41,7 +41,6 @@ import jax.scipy as jsp
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax.control_flow import for_loop
 from jax._src.interpreters import mlir
-from jax._src.maps import xmap
 
 jax.config.parse_flags_with_absl()
 
@@ -2709,19 +2708,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         return carry, val+1
       lax.scan(side_effecting_scan, None, jnp.ones((2, 2)))
       lst[0] += 1
-
-  def test_while_loop_fixed_point_with_nested_named_axes(self):
-    def f(x):
-      z = x + lax.axis_index('a').astype(x.dtype)
-      y = x + lax.axis_index('b').astype(x.dtype)
-      def cond(carry):
-        i, x = carry
-        return x < 5
-      def body(carry):
-        i, x = carry
-        return i + 1, x + lax.psum(y, 'b')
-      return lax.while_loop(cond, body, (0, z))[1]
-    xmap(f, axis_sizes=dict(a=2, b=10), out_axes=(['a']), in_axes={})(1.)
 
   def test_while_loop_fixed_point_with_batched_pred_and_consts(self):
     def f(i, x):

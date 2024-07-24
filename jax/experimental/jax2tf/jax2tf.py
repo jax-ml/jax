@@ -51,7 +51,6 @@ from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import op_shardings
 from jax._src import sharding_impls
-from jax._src import maps
 from jax._src import mesh
 from jax._src import pjit
 from jax._src import prng
@@ -1484,7 +1483,7 @@ class TensorFlowTrace(core.Trace):
 def _unexpected_primitive(p: core.Primitive, *args, **kwargs):
   assert False, f"Encountered unexpected primitive {p}"
 
-for unexpected in [core.call_p, maps.xmap_p]:
+for unexpected in [core.call_p]:
   tf_impl[unexpected] = partial(_unexpected_primitive, unexpected)
 
 tf_impl[lax_control_flow.loops.eval_jaxpr_p] = \

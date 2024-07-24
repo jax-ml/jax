@@ -33,7 +33,6 @@ from absl.testing import absltest
 import jax
 from jax._src import compiler
 from jax._src import config
-from jax._src import maps
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax import lax

@@ -94,10 +94,6 @@ def args_slicer(args, bdims):
 ignore_jit_of_pmap_warning = partial(
   jtu.ignore_warning, message=".*jit-of-pmap.*")
 
-ignore_xmap_warning = partial(
-  jtu.ignore_warning, message=".*is an experimental.*")
-
-
 def create_input_array_for_pmap(input_shape, in_axes=0, input_data=None,
                                 devices=None, sharded_dim_size=None):
   if input_data is None:
@@ -1950,7 +1946,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     indices = np.array([[[2], [1]], [[0], [0]]])
     mapped_fn(indices)  # doesn't crash
 
-  @ignore_xmap_warning()
   def testPdotBasic(self):
     num_devices = jax.device_count()
 
