@@ -987,12 +987,21 @@ class FragmentedArrayTest(TestCase):
         np.testing.assert_array_equal(result, np_op(ref_x, ref_rhs))
 
   @parameterized.product(
-      ops=((lambda x: mgpu.FragmentedArray.exp(x), np.exp),),
+      ops=(
+          (lambda x: mgpu.FragmentedArray.exp(x), np.exp, False),
+          (lambda x: mgpu.FragmentedArray.exp(x, approx=True), np.exp, True),
+          (lambda x: mgpu.FragmentedArray.sin(x), np.sin, False),
+          (lambda x: mgpu.FragmentedArray.sin(x, approx=True), np.sin, True),
+          (lambda x: mgpu.FragmentedArray.cos(x), np.cos, False),
+          (lambda x: mgpu.FragmentedArray.cos(x, approx=True), np.cos, True),
+          (lambda x: mgpu.FragmentedArray.rsqrt(x), jax.lax.rsqrt, False),
+          (lambda x: mgpu.FragmentedArray.rsqrt(x, approx=True), jax.lax.rsqrt, True),
+      ),
       m=(64, 128),
       n=(8, 16, 32, 64, 80, 128, 256),
   )
   def test_unary(self, ops, m=64, n=32):
-    op, np_op = ops
+    op, np_op, is_approx = ops
     def kernel(ctx, dst, _):
       f32 = ir.F32Type.get()
       iota = iota_tensor(m=m, n=n, mlir_dtype=f32)
@@ -1002,7 +1011,9 @@ class FragmentedArrayTest(TestCase):
         kernel, (1, 1, 1), (128, 1, 1), (), out_shape, ()
     )()
     x = np.arange(m * n, dtype=jnp.float32).reshape(m, n)
-    np.testing.assert_allclose(result, np_op(x), atol=2e-7, rtol=2e-7)
+    atol = 5e-3 if is_approx else 2e-7
+    rtol = 4e-6 if is_approx else 2e-7
+    np.testing.assert_allclose(result, np_op(x), atol=atol, rtol=rtol)
 
   @parameterized.product(
       op=(arith.addf, arith.maximumf),
