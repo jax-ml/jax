@@ -160,6 +160,48 @@ template struct Trsm<double>;
 template struct Trsm<std::complex<float>>;
 template struct Trsm<std::complex<double>>;
 
+// FFI Kernel
+
+template <ffi::DataType dtype>
+ffi::Error TriMatrixEquationSolver<dtype>::Kernel(
+    ffi::Buffer<dtype> x, ffi::Buffer<dtype> y, ffi::BufferR0<dtype> alpha,
+    ffi::ResultBuffer<dtype> y_out, MatrixParams::Side side,
+    MatrixParams::UpLo uplo, MatrixParams::Transpose trans_x,
+    MatrixParams::Diag diag) {
+  CopyIfDiffBuffer(y, y_out);
+
+  auto [batch_count, y_rows, y_cols] = SplitBatch2D(y.dimensions());
+  auto* y_out_data = y_out->typed_data();
+  lapack_int x_leading_dim_v =
+      side == MatrixParams::Side::kLeft ? y_rows : y_cols;
+  lapack_int y_leading_dim_v = y_rows;
+
+  auto side_v = static_cast<char>(side);
+  auto uplo_v = static_cast<char>(uplo);
+  auto trans_x_v = static_cast<char>(trans_x);
+  auto diag_v = static_cast<char>(diag);
+  FFI_ASSIGN_OR_RETURN(auto y_rows_v, MaybeCastNoOverflow<lapack_int>(y_rows));
+  FFI_ASSIGN_OR_RETURN(auto y_cols_v, MaybeCastNoOverflow<lapack_int>(y_cols));
+
+  auto* x_data = x.typed_data();
+  const int64_t y_out_step{y_rows * y_cols};
+  const int64_t x_step{x_leading_dim_v * x_leading_dim_v};
+  for (int64_t i = 0; i < batch_count; ++i) {
+    fn(&side_v, &uplo_v, &trans_x_v, &diag_v, &y_rows_v, &y_cols_v,
+       alpha.typed_data(), x_data, &x_leading_dim_v, y_out_data,
+       &y_leading_dim_v);
+
+    y_out_data += y_out_step;
+    x_data += x_step;
+  }
+  return ffi::Error::Success();
+}
+
+template struct TriMatrixEquationSolver<ffi::DataType::F32>;
+template struct TriMatrixEquationSolver<ffi::DataType::F64>;
+template struct TriMatrixEquationSolver<ffi::DataType::C64>;
+template struct TriMatrixEquationSolver<ffi::DataType::C128>;
+
 //== LU Decomposition ==//
 
 // lapack getrf

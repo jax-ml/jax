@@ -26,10 +26,10 @@ namespace ffi = xla::ffi;
 
 extern "C" {
 
-jax::Trsm<float>::FnType strsm_;
-jax::Trsm<double>::FnType dtrsm_;
-jax::Trsm<std::complex<float>>::FnType ctrsm_;
-jax::Trsm<std::complex<double>>::FnType ztrsm_;
+jax::TriMatrixEquationSolver<ffi::DataType::F32>::FnType strsm_;
+jax::TriMatrixEquationSolver<ffi::DataType::F64>::FnType dtrsm_;
+jax::TriMatrixEquationSolver<ffi::DataType::C64>::FnType ctrsm_;
+jax::TriMatrixEquationSolver<ffi::DataType::C128>::FnType ztrsm_;
 
 jax::LuDecomposition<ffi::DataType::F32>::FnType sgetrf_;
 jax::LuDecomposition<ffi::DataType::F64>::FnType dgetrf_;
@@ -87,6 +87,22 @@ namespace jax {
 
 #define JAX_KERNEL_FNTYPE_MISMATCH_MSG "FFI Kernel FnType mismatch"
 
+static_assert(
+    std::is_same_v<jax::TriMatrixEquationSolver<ffi::DataType::F32>::FnType,
+                   jax::Trsm<float>::FnType>,
+    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
+static_assert(
+    std::is_same_v<jax::TriMatrixEquationSolver<ffi::DataType::F64>::FnType,
+                   jax::Trsm<double>::FnType>,
+    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
+static_assert(
+    std::is_same_v<jax::TriMatrixEquationSolver<ffi::DataType::C64>::FnType,
+                   jax::Trsm<std::complex<float>>::FnType>,
+    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
+static_assert(
+    std::is_same_v<jax::TriMatrixEquationSolver<ffi::DataType::C128>::FnType,
+                   jax::Trsm<std::complex<double>>::FnType>,
+    JAX_KERNEL_FNTYPE_MISMATCH_MSG);
 static_assert(std::is_same_v<jax::LuDecomposition<ffi::DataType::F32>::FnType,
                              jax::Getrf<float>::FnType>,
               JAX_KERNEL_FNTYPE_MISMATCH_MSG);
@@ -217,6 +233,11 @@ static auto init = []() -> int {
   AssignKernelFn<Sytrd<std::complex<double>>>(zhetrd_);
 
   // FFI Kernels
+
+  AssignKernelFn<TriMatrixEquationSolver<ffi::DataType::F32>>(strsm_);
+  AssignKernelFn<TriMatrixEquationSolver<ffi::DataType::F64>>(dtrsm_);
+  AssignKernelFn<TriMatrixEquationSolver<ffi::DataType::C64>>(ctrsm_);
+  AssignKernelFn<TriMatrixEquationSolver<ffi::DataType::C128>>(ztrsm_);
 
   AssignKernelFn<LuDecomposition<ffi::DataType::F32>>(sgetrf_);
   AssignKernelFn<LuDecomposition<ffi::DataType::F64>>(dgetrf_);
