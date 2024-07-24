@@ -883,7 +883,7 @@ def _scan_batching_rule(axis_data, main_type, args,
   for _ in range(1 + len(carry_batched)):
     batched = const_batched + carry_batched + xs_batched
     jaxpr_batched, batched_out = batching.batch_jaxpr(
-        jaxpr, axis_size, batched,
+        jaxpr, axis_data.size, batched,
         instantiate=carry_batched + [False] * num_ys,
         axis_name=axis_data.name,
         spmd_axis_name=axis_data.spmd_name,
@@ -900,7 +900,7 @@ def _scan_batching_rule(axis_data, main_type, args,
   consts_bdims, init_bdims, xs_bdims = split_list(dims, [num_consts, num_carry])
   new_consts = [batching.moveaxis(x, d, 0) if d is not batching.not_mapped and d != 0
                 else x for x, d in zip(consts, consts_bdims)]
-  new_init = [batching.broadcast(x, axis_size, 0) if now_batched and not was_batched
+  new_init = [batching.broadcast(x, axis_data.size, 0) if now_batched and not was_batched
               else batching.moveaxis(x, d, 0) if now_batched else x
               for x, d, was_batched, now_batched in
               zip(init, init_bdims, init_batched, carry_batched)]

@@ -302,8 +302,9 @@ def _cached_for_jaxpr(jaxpr):
   discharged_jaxpr, body_consts = discharge_state(jaxpr, ())
   return core.ClosedJaxpr(discharged_jaxpr, body_consts)
 
-def _for_vmap(spmd_axis_name, axis_size, axis_name, main_type, args, dims, *,
+def _for_vmap(axis_data, main_type, args, dims, *,
               jaxpr, nsteps, reverse, which_linear, unroll):
+  spmd_axis_name, axis_size, axis_name = axis_data.spmd_name, axis_data.size, axis_data.name
   init_batched = [d is not batching.not_mapped for d in dims]
   closed_jaxpr = _cached_for_jaxpr(jaxpr)
   batched = init_batched
@@ -328,8 +329,7 @@ def _for_vmap(spmd_axis_name, axis_size, axis_name, main_type, args, dims, *,
                         reverse=reverse, which_linear=which_linear,
                         unroll=unroll)
   return out_flat, [0 if b else batching.not_mapped for b in batched]
-batching.axis_primitive_batchers[for_p] = functools.partial(_for_vmap, None)
-batching.spmd_axis_primitive_batchers[for_p] = _for_vmap
+batching.fancy_primitive_batchers[for_p] = _for_vmap
 
 def _for_jvp(primals, tangents, *, jaxpr, nsteps, reverse, which_linear,
              unroll):
