@@ -248,8 +248,7 @@ def promote_shapes(fun_name: str, *args: ArrayLike) -> list[Array]:
         if config.numpy_rank_promotion.value != "allow":
           _rank_promotion_warning_or_error(fun_name, shapes)
         result_rank = len(lax.broadcast_shapes(*shapes))
-        return [_broadcast_to(arg, (1,) * (result_rank - len(shp)) + shp)
-                for arg, shp in zip(args, shapes)]
+        return [lax.broadcast_to_rank(arg, result_rank) for arg in args]
 
 
 def _rank_promotion_warning_or_error(fun_name: str, shapes: Sequence[Shape]):

@@ -838,6 +838,8 @@ def broadcast(operand: ArrayLike, sizes: Sequence[int]) -> Array:
   See Also:
     jax.lax.broadcast_in_dim : add new dimensions at any location in the array shape.
   """
+  if len(sizes) == 0:
+    return asarray(operand)
   dims = tuple(range(len(sizes), len(sizes) + np.ndim(operand)))
   return broadcast_in_dim(operand, tuple(sizes) + np.shape(operand), dims)
 
@@ -872,9 +874,12 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
       operand, *dyn_shape, shape=tuple(static_shape),
       broadcast_dimensions=tuple(broadcast_dimensions))
 
-def broadcast_to_rank(x: Array, rank: int) -> Array:
+def broadcast_to_rank(x: ArrayLike, rank: int) -> Array:
   """Adds leading dimensions of ``1`` to give ``x`` rank ``rank``."""
-  return broadcast(x, (1,) * (rank - x.ndim))
+  ndim = np.ndim(x)
+  if ndim == rank:
+    return asarray(x)
+  return broadcast(x, (1,) * (rank - ndim))
 
 def reshape(operand: ArrayLike, new_sizes: Shape,
             dimensions: Sequence[int] | None = None) -> Array:
