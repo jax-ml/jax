@@ -191,7 +191,9 @@ class DeviceIdType(enum.Enum):
   LOGICAL = "logical"
 
 
-def check_sem_avals(sem_aval, sem_indexers_avals, name):
+def check_sem_avals(sem_aval, sem_indexers_avals, name, allowed_semaphore_types=None):
+  if allowed_semaphore_types is None:
+    allowed_semaphore_types = {tpu_core.semaphore, tpu_core.barrier_semaphore}
   if not isinstance(sem_aval, state.AbstractRef):
     raise ValueError(f"Cannot {name} on a non-semaphore Ref: {sem_aval}")
   sem_shape = sem_aval.shape
@@ -200,11 +202,14 @@ def check_sem_avals(sem_aval, sem_indexers_avals, name):
   if sem_shape:
     raise ValueError(f"Cannot {name} on a non-()-shaped semaphore: {sem_shape}")
   sem_dtype = sem_aval.dtype
-  if not (
-      jnp.issubdtype(sem_dtype, tpu_core.semaphore)
-      or jnp.issubdtype(sem_dtype, tpu_core.barrier_semaphore)
+  if not any(
+      jnp.issubdtype(sem_dtype, sem_type)
+      for sem_type in allowed_semaphore_types
   ):
-    raise ValueError(f"Must {name} a REGULAR or BARRIER semaphore: {sem_dtype}")
+    raise ValueError(
+        f"Must {name} semaphores of the following types:"
+        f" {allowed_semaphore_types}"
+    )
 
 
 semaphore_read_p = jax_core.Primitive("semaphore_read")
@@ -223,7 +228,14 @@ def _semaphore_read_abstract_eval(
     args_tree,
 ):
   sem_aval, sem_indexers_avals = tree_util.tree_unflatten(args_tree, avals)
-  check_sem_avals(sem_aval, sem_indexers_avals, "read")
+  check_sem_avals(
+      sem_aval,
+      sem_indexers_avals,
+      "read",
+      allowed_semaphore_types={
+          tpu_core.dma_semaphore, tpu_core.semaphore, tpu_core.barrier_semaphore
+      },
+  )
   return jax_core.ShapedArray((), jnp.dtype("int32"))
 
 

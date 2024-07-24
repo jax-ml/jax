@@ -1038,6 +1038,35 @@ class PallasCallDMATest(PallasBaseTest):
         y, jnp.arange(m * n).astype(jnp.int32).reshape((m, n))
     )
 
+  def test_can_read_dma_semaphore(self):
+
+    def kernel(x_hbm_ref, y_hbm_ref, sem_val_ref, dma_sem):
+      sem_val_ref[0, 0] = 123
+      pltpu.async_copy(x_hbm_ref, y_hbm_ref, dma_sem).wait()
+      sem_val_ref[0, 0] = pltpu.semaphore_read(dma_sem)
+    x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
+    # TODO(b/345534352): Add interpret support for semaphore signal/wait.
+    y, sem_val = jax.block_until_ready(
+        pl.pallas_call(
+            kernel,
+            grid_spec=pltpu.PrefetchScalarGridSpec(
+                num_scalar_prefetch=0,
+                in_specs=[pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY)],
+                out_specs=[
+                    pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.ANY),
+                    pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
+                ],
+                scratch_shapes=[pltpu.SemaphoreType.DMA],
+            ),
+            out_shape=[
+                jax.ShapeDtypeStruct((8, 128), jnp.int32),
+                jax.ShapeDtypeStruct((1, 1), jnp.int32),
+            ],
+        )(x)
+    )
+    np.testing.assert_array_equal(y, x)
+    np.testing.assert_array_equal(sem_val, 0)
+
   def test_hbm_hbm_dma(self):
     def kernel(x_hbm_ref, y_hbm_ref):
       def body(sem):
