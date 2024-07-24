@@ -2908,7 +2908,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     with self.assertRaises(TypeError):
       jnp.ones((-1, 1))
 
-  def test_full_like_commited(self):
+  def test_full_like_committed(self):
     x = jnp.array((1, 2, 3), dtype=np.int32)
     self.assertFalse(x._committed)
     self.assertFalse(lax.full_like(x, 1.1)._committed)
@@ -4040,7 +4040,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       self._CheckAgainstNumpy(np_op, jnp_op, args_maker)
 
   @jtu.sample_product(
-    # Final dimension must be a multiple of 16 to ensure compatibilty of all dtype pairs.
+    # Final dimension must be a multiple of 16 to ensure compatibility of all dtype pairs.
     shape=[(0,), (32,), (2, 16)],
     a_dtype=all_dtypes,
     dtype=(*all_dtypes, None) if config.enable_x64.value else all_dtypes,
@@ -4249,7 +4249,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       actual = jnp.take_along_axis(x, indices, axis=-1 if axis is NO_VALUE else axis)
     self.assertArraysEqual(actual, expected)
 
-  def _assertSamePartionedArrays(self, jnp_output, np_output, axis, kth, shape):
+  def _assertSamePartitionedArrays(self, jnp_output, np_output, axis, kth, shape):
     # Assert that pivot point is equal:
     self.assertArraysEqual(
       lax.index_in_dim(jnp_output, axis=axis, index=kth),
@@ -4275,7 +4275,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     arg = rng(shape, dtype)
     jnp_output = jnp.partition(arg, axis=axis, kth=kth)
     np_output = np.partition(arg, axis=axis, kth=kth)
-    self._assertSamePartionedArrays(jnp_output, np_output, axis, kth, shape)
+    self._assertSamePartitionedArrays(jnp_output, np_output, axis, kth, shape)
 
   @jtu.sample_product(
     kth=range(10),
@@ -4289,7 +4289,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     shape = arg.shape
     jnp_output = jnp.partition(arg, axis=axis, kth=kth)
     np_output = np.partition(arg, axis=axis, kth=kth)
-    self._assertSamePartionedArrays(jnp_output, np_output, axis, kth, shape)
+    self._assertSamePartitionedArrays(jnp_output, np_output, axis, kth, shape)
 
   @jtu.sample_product(
     [{'shape': shape, 'axis': axis, 'kth': kth}
@@ -4316,7 +4316,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         getvals = jax.vmap(getvals, in_axes=ax, out_axes=ax)
     jnp_values = getvals(arg, jnp_output)
     np_values = getvals(arg, np_output)
-    self._assertSamePartionedArrays(jnp_values, np_values, axis, kth, shape)
+    self._assertSamePartitionedArrays(jnp_values, np_values, axis, kth, shape)
 
   @jtu.sample_product(
     kth=range(10),
@@ -4342,7 +4342,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
         getvals = jax.vmap(getvals, in_axes=ax, out_axes=ax)
     jnp_values = getvals(arg, jnp_output)
     np_values = getvals(arg, np_output)
-    self._assertSamePartionedArrays(jnp_values, np_values, axis, kth, shape)
+    self._assertSamePartitionedArrays(jnp_values, np_values, axis, kth, shape)
 
   @jtu.sample_product(
     [dict(shifts=shifts, axis=axis)
@@ -4613,7 +4613,7 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
-  def testIndiciesDefaultDtype(self):
+  def testIndicesDefaultDtype(self):
     self.assertEqual(jnp.indices((2, 3)).dtype,
                      dtypes.canonicalize_dtype(np.int64))
 
