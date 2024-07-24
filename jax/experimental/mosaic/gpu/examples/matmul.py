@@ -296,27 +296,25 @@ def build_kernel(
   smem_shape = mosaic_gpu.Union(
       [compute_scratch_shapes, epilogue_scratch_shapes])
 
-  def _main(ctx, a_device, b_device, c_device,
-            smem_union: mosaic_gpu.Union[mosaic_gpu.RefTree]):
-    compute_smem, epilogue_smem = smem_union.members
+  def _main(ctx, a_device, b_device, c_device, smem):
+    (compute_smem, epilogue_smem), barriers = smem
 
     memref.assume_alignment(c_device, 16)
 
-    barrier_group = BarrierArray(stages)
     m_start = arith.muli(c(block_tiling.m), gpu.block_id(gpu.Dimension.x))
     n_start = arith.muli(c(block_tiling.n), gpu.block_id(gpu.Dimension.y))
 
     def fetch(slot, ki):
-      barrier = barrier_group[slot]
+      barrier = barriers[slot]
       k_start = arith.muli(c(block_tiling.k), ki)
       lhs_tma_tile_bytes = int(np.prod(block_tiling.mk) * lhs_elem_bytes)
       rhs_tma_tile_bytes = int(np.prod(block_tiling.kn) * rhs_elem_bytes)
-      txcount = c(lhs_tma_tile_bytes + rhs_tma_tile_bytes)
+      txcount = lhs_tma_tile_bytes + rhs_tma_tile_bytes
       common_copy_args = dict(
           swizzle=128, barrier=barrier, arrive=False, uniform=False,
       )
       with single_thread():
-        nvgpu.mbarrier_arrive_expect_tx(barrier_group.value, txcount, slot)
+        barrier.arrive_expect_tx(txcount)
         ctx.async_copy(
             src_ref=a_device,
             dst_ref=memref_slice(compute_smem["lhs"], slot),
@@ -349,7 +347,7 @@ def build_kernel(
       si = arith.remui(ki, c(stages))
 
       with ctx.named_region("TMA wait"):
-        barrier_group[si].wait()
+        barriers[si].wait()
 
       with ctx.named_region("WGMMA"):
         a_slice = memref_slice(compute_smem["lhs"], si)
@@ -439,7 +437,7 @@ def build_kernel(
           jax.ShapeDtypeStruct((n, k) if rhs_transpose else (k, n), rhs_dtype),
       ),
       jax.ShapeDtypeStruct((m, n), jnp.float32),
-      smem_shape,
+      (smem_shape, TMABarrier(stages)),
       profiler_spec,
   )
 

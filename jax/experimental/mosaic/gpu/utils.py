@@ -501,89 +501,91 @@ def commit_shared():
   )
 
 
-class BarrierArray:
+@dataclasses.dataclass(frozen=True)
+class BarrierRef:
+  base_address: ir.Value
+  offset: ir.Value
+  phases: ir.Value
+  num_barriers: int
 
-  def __init__(self, num_barriers: int, arrival_count: int = 1):
-    barrier_group_ty = ir.Type.parse(
-        "!nvgpu.mbarrier.group<memorySpace=#gpu.address_space<workgroup>,"
-        f" num_barriers={num_barriers}>"
-    )
-
-    self.num_barriers = num_barriers
-    self.value = nvgpu.mbarrier_create(barrier_group_ty)
-    self.num_barriers = num_barriers
-    index = ir.IndexType.get()
+  @staticmethod
+  def initialize(address: ir.Value, num_barriers: int, arrival_count: int = 1) -> "BarrierRef":
     if num_barriers > 32:
       raise NotImplementedError("Only up to 32 barriers per group supported")
     i32 = ir.IntegerType.get_signless(32)
-    self.phases = memref.alloca(ir.MemRefType.get((), i32), [], [])
-    memref.store(c(0, i32), self.phases, [])
+    i64 = ir.IntegerType.get_signless(64)
+    ptr = ir.Type.parse("!llvm.ptr<3>")
+    phases = memref.alloca(ir.MemRefType.get((), i32), [], [])
+    memref.store(c(0, i32), phases, [])
     with single_thread(per_block=True):
       for i in range(num_barriers):
-        nvgpu.mbarrier_init(self.value, c(arrival_count, index), c(i, index))
-    gpu.barrier()
+        nvvm.mbarrier_init_shared(
+            llvm.getelementptr(ptr, address, [], [i], i64),
+            c(arrival_count, i32),
+        )
+    return BarrierRef(address, c(0, i32), phases, num_barriers)
 
-  def __iter__(self) -> Iterator["Barrier"]:
+  def __iter__(self) -> Iterator["BarrierRef"]:
+    if self.num_barriers == 1:
+      raise ValueError("Cannot iterate over a single barrier")
     for offset in range(self.num_barriers):
       yield self[offset]
 
-  def __getitem__(self, offset: ir.Value | int):
-    index = ir.IndexType.get()
+  def __getitem__(self, offset: ir.Value | int) -> "BarrierRef":
+    if self.num_barriers == 1:
+      raise ValueError("Cannot index a single barrier")
+    i32 = ir.IntegerType.get_signless(32)
     if isinstance(offset, int):
-      offset = c(offset, index)
-    if ir.IntegerType.isinstance(offset.type):
-      offset = arith.index_castui(index, offset)
-    return Barrier(self, offset)
-
-
-@dataclasses.dataclass(frozen=True)
-class Barrier:
-  barrier_array: BarrierArray
-  offset: ir.Value
+      offset = c(offset, i32)
+    elif ir.IndexType.isinstance(offset.type):
+      offset = arith.index_castui(i32, offset)
+    elif offset.type != i32:
+      raise ValueError(f"Expected a dynamic index or an integer, got {offset}")
+    return BarrierRef(
+        self.base_address,
+        arith.addi(self.offset, offset),
+        self.phases,
+        1,
+    )
 
   def wait_parity(self, parity, expect_wait=False):
     i1 = ir.IntegerType.get_signless(1)
-    index = ir.IndexType.get()
+    i32 = ir.IntegerType.get_signless(32)
+    ticks = c(10000000, i32)
+    address = self.get_ptr()
+    parity = arith.extui(i32, parity)
     if expect_wait:
-      nvgpu.mbarrier_try_wait_parity(
-          self.barrier_array.value, parity, c(10000000, index), self.offset,
-      )
-      return
-    barrier_ptr = self.get_ptr()
+      nvvm.mbarrier_try_wait_parity_shared(address, parity, ticks)
     barrier_ready = llvm.inline_asm(
         i1,
-        [barrier_ptr, parity],
+        [address, parity],
         "mbarrier.test_wait.parity.shared.b64 $0, [$1], $2;",
         "=b,l,r",
-        asm_dialect=0,
         has_side_effects=True,
     )
     should_wait = arith.xori(barrier_ready, c(1, i1))
     should_wait = llvm.intr_expect(should_wait, c(0, i1))
     with ir.InsertionPoint(scf.IfOp(should_wait).then_block):
-      nvgpu.mbarrier_try_wait_parity(
-          self.barrier_array.value, parity, c(10000000, index), self.offset,
-      )
+      nvvm.mbarrier_try_wait_parity_shared(address, parity, ticks)
       scf.yield_([])
 
   def wait(self, expect_wait=False):
-    parities = memref.load(self.barrier_array.phases, [])
+    parities = memref.load(self.phases, [])
     parity, new_parities = self.update_parities(parities)
-    memref.store(new_parities, self.barrier_array.phases, [])
+    memref.store(new_parities, self.phases, [])
     self.wait_parity(parity, expect_wait=expect_wait)
 
   def update_parities(self, parities: ir.Value) -> tuple[ir.Value, ir.Value]:
     i32 = ir.IntegerType.get_signless(32)
-    offset_i32 = arith.index_castui(i32, self.offset)
-    bitmask = arith.shli(c(1, i32), offset_i32)
+    bitmask = arith.shli(c(1, i32), self.offset)
     parity = arith.cmpi(
         arith.CmpIPredicate.ne, arith.andi(parities, bitmask), c(0, i32)
     )
     return parity, arith.xori(parities, bitmask)
 
   def arrive(self):
-    token_ty = ir.Type.parse("!nvgpu.mbarrier.token")
-    nvgpu.mbarrier_arrive(token_ty, self.barrier_array.value, self.offset)
+    i64 = ir.IntegerType.get_signless(64)
+    nvvm.mbarrier_arrive_shared(i64, self.get_ptr())
 
   def arrive_expect_tx(self, bytes: int | ir.Value):
     if isinstance(bytes, int):
@@ -591,54 +593,53 @@ class Barrier:
     nvvm.mbarrier_arrive_expect_tx(self.get_ptr(), bytes)
 
   def get_ptr(self):
-    i32 = ir.IntegerType.get_signless(32)
+    ptr = ir.Type.parse("!llvm.ptr<3>")
     i64 = ir.IntegerType.get_signless(64)
-    ptr_ty = ir.Type.parse("!llvm.ptr<3>")
-    smem = ir.IntegerAttr.get(i64, 3)
-    num_barriers = self.barrier_array.num_barriers
-    mbarrier_ref_ty = ir.MemRefType.get((num_barriers,), i64, memory_space=smem)
-    mbarrier_ref = builtin.unrealized_conversion_cast(
-        [mbarrier_ref_ty], [self.barrier_array.value],
-    )
-    mbarrier_ref_ptr = memref.extract_aligned_pointer_as_index(mbarrier_ref)
-    barrier_arr_ptr = llvm.inttoptr(
-        ptr_ty, arith.index_cast(i64, mbarrier_ref_ptr),
-    )
-    offset_i32 = arith.index_cast(i32, self.offset)
+    DYNAMIC32 = -2147483648
     return llvm.getelementptr(
-        ptr_ty, barrier_arr_ptr, [offset_i32], [-2147483648], i64,
+        ptr, self.base_address, [self.offset], [DYNAMIC32], i64
     )
-
-
-class CollectiveBarrierArray(BarrierArray):
-  def __init__(self, ctx, dims: Sequence[gpu.Dimension], num_barriers):
-    i32 = ir.IntegerType.get_signless(32)
-    self.ctx = ctx
-    self.dims = dims
-    self.cluster_mask = c(0, i32)
-    # With the exception of the current device, each pair of slices along
-    # collective dims is disjoint. Since the current device is overcounted,
-    # we must decrease the arrival count a little.
-    arrival_count = sum(ctx.cluster_size[d] for d in dims) - len(dims) + 1
-    super().__init__(num_barriers, arrival_count=arrival_count)
-    for d in dims:
-      self.cluster_mask = arith.ori(
-          self.cluster_mask, ctx.cluster_collective_mask(d)
-      )
-
-  def __getitem__(self, offset):
-    return CollectiveBarrier(super().__getitem__(offset))
 
 
 @dataclasses.dataclass(frozen=True)
-class CollectiveBarrier:
-  barrier: Barrier
+class CollectiveBarrierRef:
+  barrier: BarrierRef
+  cluster_mask: ir.Value
+
+  @staticmethod
+  def initialize(
+      address: ir.Value,
+      num_barriers: int,
+      dims: Sequence[gpu.Dimension],
+      cluster_shape: tuple[int, int, int],
+  ) -> "CollectiveBarrierRef":
+    i32 = ir.IntegerType.get_signless(32)
+    # With the exception of the current device, each pair of slices along
+    # collective dims is disjoint. Since the current device is overcounted,
+    # we must decrease the arrival count a little.
+    arrival_count = sum(cluster_shape[d] for d in dims) - len(dims) + 1
+    cluster_mask = c(0, i32)
+    for d in dims:
+      cluster_mask = arith.ori(
+          cluster_mask, cluster_collective_mask(cluster_shape, d)
+      )
+    barrier = BarrierRef.initialize(address, num_barriers, arrival_count=arrival_count)
+    return CollectiveBarrierRef(barrier, cluster_mask)
+
+  def __iter__(self, offset):
+    for b in self.barrier:
+      yield CollectiveBarrierRef(b, self.cluster_mask)
+
+  def __getitem__(self, offset):
+    return CollectiveBarrierRef(self.barrier[offset], self.cluster_mask)
 
   def arrive(self):
     """Arrives on a barrier in all blocks that share at least one of the coordinates along the collective dimensions.
 
     Note that unlike in arrive, each warpgroup arrives once.
     """
+    if self.barrier.num_barriers != 1:
+      raise ValueError("Can only arrive on a single barrier")
     i32 = ir.IntegerType.get_signless(32)
     thread_in_warpgroup = arith.remui(thread_idx(), c(WARPGROUP_SIZE, i32))
     signaled_block = arith.divui(
@@ -646,10 +647,7 @@ class CollectiveBarrier:
     )
     is_collective_block = arith.cmpi(
         arith.CmpIPredicate.ne,
-        arith.andi(
-            self.barrier.barrier_array.cluster_mask,
-            arith.shli(c(1, i32), signaled_block),
-        ),
+        arith.andi(self.cluster_mask, arith.shli(c(1, i32), signaled_block)),
         c(0, i32),
     )
     is_signaling_thread = arith.cmpi(
@@ -862,3 +860,33 @@ def memref_ptr(memref_arg, memory_space=None):
           overflow_flags=llvm.IntegerOverflowFlags.none,
       ),
   )
+
+
+def cluster_collective_mask(
+    cluster_shape: tuple[int, int, int], collective: gpu.Dimension
+):
+  # We first compute the linearized index of the slice along the collective
+  # dim that contains the current block. Then, the mask is a sequence of 1s
+  # strided by the position of the collective dim, shifted left by the linear
+  # slice index.
+  # TODO(apaszke): Make sure this gets hoisted outside of any loops.
+  # If not, we might need to do it manually.
+  i32 = ir.IntegerType.get_signless(32)
+  stride = 1
+  mask_shift = c(0, i32)
+  collective_stride = None
+  for cluster_dim in gpu.Dimension:
+    if cluster_shape[cluster_dim] == 1:
+      continue
+    if cluster_dim != collective:
+      dim_idx = arith.index_castui(i32, gpu.cluster_block_id(cluster_dim))
+      mask_shift = arith.addi(
+          mask_shift, arith.muli(dim_idx, c(stride, i32)),
+      )
+    else:
+      collective_stride = stride
+    stride *= cluster_shape[cluster_dim]
+  mask_unshifted = 0
+  for i in range(cluster_shape[collective]):
+    mask_unshifted |= 1 << (i * collective_stride)
+  return arith.shli(c(mask_unshifted, i32), mask_shift)

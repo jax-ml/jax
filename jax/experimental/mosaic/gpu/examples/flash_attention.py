@@ -132,7 +132,7 @@ def build_kernel(
   v_scratch = jax.ShapeDtypeStruct(
       tile_shape((blocks.stages, blocks.kv, head_dim), tiling), jnp.float16
   )
-  smem_scratch_shape = [
+  smem_buffers_shape = [
       qo_scratch,
       k_scratch,
       v_scratch,
@@ -149,19 +149,18 @@ def build_kernel(
       k_gmem,
       v_gmem,
       out_gmem,
-      smem_scratch,
+      smem,
   ):
-    k_barriers = BarrierArray(blocks.stages)
-    v_barriers = BarrierArray(blocks.stages)
-    q_barriers = BarrierArray(compute_wgs_per_block)
-    k_consumed_barrier, v_consumed_barrier = BarrierArray(2, arrival_count=256)
-    schedule_barrier = BarrierArray(1, arrival_count=256)[0]
+    wg_idx = warpgroup_idx(sync=True)
+    smem_buffers, buffer_barriers, consumed_barriers, schedule_barrier = smem
+    qo_smem, k_smem, v_smem = smem_buffers
+    k_barriers, v_barriers, q_barriers = buffer_barriers
+    k_consumed_barrier, v_consumed_barrier = consumed_barriers
     @ctx.named_region("Schedule barrier")
     def perform_schedule_barrier():
       schedule_barrier.arrive()
       schedule_barrier.wait()
-    wg_idx = warpgroup_idx(sync=True)
-    qo_smem, k_smem, v_smem = smem_scratch
+
     qo_smem = memref_slice(qo_smem, arith.index_cast(index, wg_idx))
 
     @contextlib.contextmanager
@@ -361,13 +360,12 @@ def build_kernel(
       out_gmem,
       smem_scratch,
   ):
-    barriers = BarrierArray(blocks.stages + wgs_per_block)
-    schedule_barrier = BarrierArray(1, arrival_count=256)[0]
+    wg_idx = warpgroup_idx(sync=True)
+    (qo_smem, k_smem, v_smem), barriers, schedule_barrier = smem_scratch
     def perform_schedule_barrier():
       schedule_barrier.arrive()
       schedule_barrier.wait()
-    wg_idx = warpgroup_idx(sync=True)
-    qo_smem, k_smem, v_smem = smem_scratch
+
     qo_smem = memref_slice(qo_smem, arith.index_cast(index, wg_idx))
 
     @contextlib.contextmanager
@@ -403,8 +401,8 @@ def build_kernel(
 
     def kv_copy_init(slot, kv_seq_base):
       with single_thread(per_block=False):
-        txcount = c(2 * blocks.kv * head_dim * bytewidth(f16))
-        nvgpu.mbarrier_arrive_expect_tx(barriers.value, txcount, slot)
+        txcount = 2 * blocks.kv * head_dim * bytewidth(f16)
+        barriers[slot].arrive_expect_tx(txcount)
         k_tr = (
             mosaic_gpu.TileTransform(tiling),
             mosaic_gpu.TransposeTransform((0, 2, 1, 3, 4)),
@@ -539,8 +537,23 @@ def build_kernel(
   match impl:
     case Implementation.TWO_COMPUTE_WG:
       kernel = compute_only_kernel
+      smem_scratch_shape = (
+          smem_buffers_shape,
+          TMABarrier(blocks.stages + compute_wgs_per_block),
+          Barrier(arrival_count=256, num_barriers=1),
+      )
     case Implementation.TWO_COMPUTE_ONE_TMA_WG:
       kernel = tma_wg_kernel
+      smem_scratch_shape = (
+          smem_buffers_shape,
+          (
+              TMABarrier(blocks.stages),
+              TMABarrier(blocks.stages),
+              TMABarrier(compute_wgs_per_block),
+          ),
+          Barrier(arrival_count=256, num_barriers=2),
+          Barrier(arrival_count=256, num_barriers=1),
+      )
   return mosaic_gpu.as_gpu_kernel(
       kernel, grid, block, in_shape, out_shape, smem_scratch_shape, prof_spec
   )

@@ -542,7 +542,7 @@ class WGMMATest(TestCase):
     rhs_order = col_major if rhs_transpose else row_major
 
     def kernel(ctx, lhs, rhs, out, scratch):
-      lhs_smem, rhs_smem = scratch
+      lhs_smem, rhs_smem, barriers = scratch
       if tma_inputs:
         lhs_transform = (mosaic_gpu.TileTransform((64, nk_tile)),)
         if lhs_transpose:
@@ -551,7 +551,6 @@ class WGMMATest(TestCase):
         rhs_transform = (mosaic_gpu.TileTransform((nk_tile, nk_tile)),)
         if rhs_transpose:
           rhs_transform += (mosaic_gpu.TransposeTransform((1, 0, 2, 3)),)
-        barriers = BarrierArray(2)
         ctx.async_copy(
             src_ref=lhs,
             dst_ref=lhs_smem,
@@ -616,6 +615,7 @@ class WGMMATest(TestCase):
         jax.ShapeDtypeStruct(
             (k // nk_tile, n // nk_tile, nk_tile, nk_tile), in_jax_dtype
         ),
+        mgpu.TMABarrier(2),
     ]
     z = mosaic_gpu.as_gpu_kernel(
         kernel, (1, 1, 1), (128, 1, 1), (x, y), out_shape, scratch_shape
@@ -690,10 +690,9 @@ class BarrierTest(TestCase):
 
   def test_wg_communication(self):
     i32 = ir.IntegerType.get_signless(32)
-    def kernel(ctx, dst, tmp):
+    def kernel(ctx, dst, scratch):
+      tmp, barriers = scratch
       del ctx  # Unused.
-      barriers = BarrierArray(3, arrival_count=128)
-      gpu.barrier()  # Make sure the barriers are initialized.
       wg_idx = arith.divui(mgpu.warp_idx(), c(4, i32))
       is_first_wg = arith.cmpi(arith.CmpIPredicate.eq, wg_idx, c(0, i32))
       is_second_wg = arith.cmpi(arith.CmpIPredicate.eq, wg_idx, c(1, i32))
@@ -725,7 +724,10 @@ class BarrierTest(TestCase):
         (2 * 128, 1, 1),
         (),
         out_shape,
-        jax.ShapeDtypeStruct((128,), jnp.int32),
+        (
+            jax.ShapeDtypeStruct((128,), jnp.int32),
+            mgpu.Barrier(arrival_count=128, num_barriers=3),
+        ),
     )()
     np.testing.assert_array_equal(y, np.full_like(y, 3, dtype=np.int32))
 
@@ -749,11 +751,7 @@ class BarrierTest(TestCase):
     cluster = [1, 1, 1]
     for d in itertools.chain(collective_dims, noncollective_dims):
       cluster[d] = 2
-    def kernel(ctx, dst, _):
-      collective_barrier = CollectiveBarrierArray(ctx, collective_dims, 1)[0]
-      nvvm.fence_mbarrier_init()
-      nvvm.cluster_arrive_relaxed()
-      nvvm.cluster_wait()
+    def kernel(ctx, dst, collective_barrier):
       collective_barrier.arrive()
       collective_barrier.wait()
       tid = thread_idx()
@@ -764,8 +762,9 @@ class BarrierTest(TestCase):
         stride = arith.muli(stride, gpu.grid_dim(d))
       memref.store(arith.index_cast(i32, linear_idx), dst, [linear_idx])
     out_shape = jax.ShapeDtypeStruct((math.prod(cluster) * 128,), jnp.int32)
+    scratch = mgpu.ClusterBarrier(collective_dims)
     y = mosaic_gpu.as_gpu_kernel(
-        kernel, cluster, (128, 1, 1), (), out_shape, (), cluster=cluster,
+        kernel, cluster, (128, 1, 1), (), out_shape, scratch, cluster=cluster,
     )()
     np.testing.assert_array_equal(
         y, np.arange(math.prod(cluster) * 128, dtype=np.int32)
@@ -783,13 +782,14 @@ class TMATest(TestCase):
     minor_size = 64 if swizzle is None else swizzle // jnp.dtype(dtype).itemsize
     shape = (*shape[:-1], minor_size)
     i1 = ir.IntegerType.get_signless(1)
-    def kernel(ctx, src, dst, tmp):
-      barrier = BarrierArray(1)[0]
+    def kernel(ctx, src, dst, smem):
+      tmp, barrier = smem
       ctx.async_copy(src_ref=src, dst_ref=tmp, swizzle=swizzle, barrier=barrier)
       barrier.wait_parity(c(0, i1))
       copy(tmp, dst, swizzle=swizzle)
     x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
-    y = mosaic_gpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, x)(x)
+    smem = (x, mgpu.TMABarrier())
+    y = mosaic_gpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, smem)(x)
     np.testing.assert_array_equal(y, x)
 
   @parameterized.named_parameters(
@@ -818,7 +818,8 @@ class TMATest(TestCase):
     # Note that this kernel does not use the non-collective dimensions in any
     # interesting way and so they don't really have to be part of the cluster.
     # We use them to test that the multicast mask is generated correctly.
-    def kernel(ctx, src, dst, tmp):
+    def kernel(ctx, src, dst, scratch):
+      tmp, barrier = scratch
       stride = 1
       noncollective_idx = c(0, index)
       for d in noncollective_dims:
@@ -827,10 +828,6 @@ class TMATest(TestCase):
             arith.muli(gpu.cluster_block_id(d), c(stride, index))
         )
         stride *= 2
-      barrier = BarrierArray(1)[0]
-      nvvm.fence_mbarrier_init()
-      nvvm.cluster_arrive_relaxed()
-      nvvm.cluster_wait()
       ctx.async_copy(
           src_ref=src,
           dst_ref=tmp,
@@ -849,7 +846,7 @@ class TMATest(TestCase):
           swizzle=swizzle,
       )
     x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
-    smem_shape = jax.ShapeDtypeStruct(shape[1:], dtype)
+    smem_shape = (jax.ShapeDtypeStruct(shape[1:], dtype), mgpu.TMABarrier())
     y = mosaic_gpu.as_gpu_kernel(
         kernel, cluster, (128, 1, 1), x, x, smem_shape, cluster=cluster
     )(x)
@@ -867,8 +864,8 @@ class TMATest(TestCase):
     index = ir.IndexType.get()
     tiling = (32, (swizzle or 128) // jnp.dtype(dtype).itemsize)
     tiled_shape = tile_shape(shape, tiling)[:len(shape)]
-    def kernel(ctx, src, dst, tmp):
-      barrier = BarrierArray(1)[0]
+    def kernel(ctx, src, dst, scratch):
+      tmp, barrier = scratch
       ctx.async_copy(
           src_ref=src,
           dst_ref=tmp,
@@ -885,7 +882,10 @@ class TMATest(TestCase):
         )
         copy(memref_slice(tmp, idxs), memref_slice(dst, s), swizzle=swizzle)
     x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
-    smem = jax.ShapeDtypeStruct(tile_shape(shape, tiling), dtype)
+    smem = (
+        jax.ShapeDtypeStruct(tile_shape(shape, tiling), dtype),
+        mgpu.TMABarrier(),
+    )
     f = mosaic_gpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, smem)
     y = f(x)
     np.testing.assert_array_equal(y, x)
@@ -899,8 +899,8 @@ class TMATest(TestCase):
     # swizzle 32 and 64.
     minor_size = 64 if swizzle is None else swizzle // jnp.dtype(dtype).itemsize
     shape = (4, 5, minor_size)
-    def kernel(ctx, src, dst, tmp):
-      barrier = BarrierArray(1)[0]
+    def kernel(ctx, src, dst, smem):
+      tmp, barrier = smem
       for i in range(4):
         ctx.async_copy(
             src_ref=src,
@@ -912,14 +912,15 @@ class TMATest(TestCase):
         barrier.wait()
       copy(tmp, dst, swizzle=swizzle)
     x = np.arange(np.prod(shape), dtype=dtype).reshape(shape)
-    y = mosaic_gpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, x)(x)
+    smem = (x, mgpu.TMABarrier())
+    y = mosaic_gpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, smem)(x)
     np.testing.assert_array_equal(y, x)
 
   def test_parity_tracking(self):
     shape = (16, 64)
     index = ir.IndexType.get()
-    def kernel(ctx, src, dst, tmp):
-      barrier = BarrierArray(1)[0]
+    def kernel(ctx, src, dst, smem):
+      tmp, barrier = smem
       for i in range(shape[0]):
         s = ds(c(i, index), 1)
         ctx.async_copy(
@@ -929,7 +930,7 @@ class TMATest(TestCase):
         copy(tmp, memref_slice(dst, s))
     x = np.arange(np.prod(shape), dtype=jnp.float16).reshape(shape)
     y = mosaic_gpu.as_gpu_kernel(
-        kernel, (1, 1, 1), (128, 1, 1), x, x, x[0:1]
+        kernel, (1, 1, 1), (128, 1, 1), x, x, (x[0:1], mgpu.TMABarrier())
     )(x)
     np.testing.assert_array_equal(y, x)
 
