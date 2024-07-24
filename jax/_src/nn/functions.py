@@ -838,7 +838,7 @@ def dot_product_attention(
 
   .. math::
 
-    \mathrm{Attention}(Q, K, V)=\mathrm{softmax}(\frac{QK^T}{\sqrt{d_k}}V)
+    \mathrm{Attention}(Q, K, V)=\mathrm{softmax}(\frac{QK^T}{\sqrt{d_k}})V
 
   If we define :code:`logits` as the output of :math:`QK^T` and the
   :code:`probs` as the output of :math:`softmax`.
@@ -869,7 +869,7 @@ def dot_product_attention(
       logits to mask out the non-causal parts of the attention matrix, but other
       implementations like `cudnn` will avoid computing the non-causal regions,
       providing speedups.
-    implementaion: A string to control which implementation backend to use.
+    implementation: A string to control which implementation backend to use.
       Supported strings are `xla`, `cudnn` (cuDNN flash attention). It defaults
       to `None`, which will automatically select the best available backend.
       Note, `cudnn` supports only a subset of shapes/dtypes, and an exception
@@ -896,8 +896,8 @@ def dot_product_attention(
   _check_has_shape(query, [B, -1, N, H], 'query')
   scale_val = (1.0 / np.sqrt(H)) if scale is None else scale
   if not (query.dtype == key.dtype == value.dtype):
-    raise ValueError(f"query/key/value should have the same shape, but got "
-                     f"{query.shape} vs {key.shape} vs {value.shape}.")
+    raise ValueError(f"query/key/value should have the same dtype, but got "
+                     f"{query.dtype} vs {key.dtype} vs {value.dtype}.")
   if mask is not None and mask.dtype != jnp.bool_:
     raise ValueError(f"Mask must be boolean dtype, but got {mask.dtype}.")
 
