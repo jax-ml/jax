@@ -156,14 +156,14 @@ class LoweringError(Exception):
 
 def lower_jaxpr_to_module(
     grid_mapping: pl_core.GridMapping,
+    in_structs: tuple[jax.ShapeDtypeStruct, ...],
+    out_structs: tuple[jax.ShapeDtypeStruct, ...],
     jaxpr: jax_core.Jaxpr,
     name: str,
     compiler_params: dict[str, Any],
 ) -> LoweringResult:
-  in_structs = grid_mapping.in_shapes
-  out_structs = grid_mapping.out_shapes
   assert len(jaxpr.outvars) == 0
-  assert not grid_mapping.vmapped_dims
+  assert not grid_mapping.mapped_dims
   grid = grid_mapping.grid
   if len(grid) < 3:
     grid += (1,) * (3 - len(grid))

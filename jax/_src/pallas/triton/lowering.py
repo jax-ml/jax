@@ -112,8 +112,10 @@ class LoweringError(Exception):
 
 
 def _eval_index_map(
-    ctx: ModuleContext, idx, block_mapping: BlockMapping
+    ctx: ModuleContext, idx, block_mapping: BlockMapping | None
 ):
+  if block_mapping is None:
+    return None
   block_indices = lower_jaxpr_to_triton_ir(
       ctx, block_mapping.index_map_jaxpr.jaxpr, None, *idx
   )
@@ -185,13 +187,13 @@ def _process_grid_to_3d_grid(grid_mapping: GridMapping):
 
   # Preserve grid order provided to pallas_call
   for i, s in enumerate(grid_mapping.grid):
-    if i not in grid_mapping.vmapped_dims:
+    if i not in grid_mapping.mapped_dims:
       launch_grid.append(s)
       launch_grid_to_pallas_grid.append(i)
 
   # For mapped dims, iterate from inner to outer. This follows the pallas_call
   # batching rule that prepends the vmapped dimension.
-  for dim in reversed(grid_mapping.vmapped_dims):
+  for dim in reversed(grid_mapping.mapped_dims):
     s = grid_mapping.grid[dim]
     launch_grid.append(s)
     launch_grid_to_pallas_grid.append(dim)
@@ -285,7 +287,7 @@ def lower_jaxpr_to_triton_module(
       local_program_ids = [
           pid
           for i, pid in enumerate(program_ids)
-          if i not in grid_mapping.vmapped_dims
+          if i not in grid_mapping.mapped_dims
       ]
       ctx = ModuleContext(
           name, grid_mapping, local_program_ids, mlir.TracebackCaches(), platform
@@ -295,7 +297,7 @@ def lower_jaxpr_to_triton_module(
             "Scalar prefetch not supported in Triton lowering."
         )
       for bm in grid_mapping.block_mappings:
-        if not isinstance(bm.indexing_mode, Blocked):
+        if bm is not None and not isinstance(bm.indexing_mode, Blocked):
           raise NotImplementedError(
               "Only Blocked indexing mode is supported in Triton lowering."
           )
@@ -303,14 +305,20 @@ def lower_jaxpr_to_triton_module(
           functools.partial(_eval_index_map, ctx, program_ids),
           grid_mapping.block_mappings,
       )
+      consts_shapes = [
+          jax.ShapeDtypeStruct(v.aval.shape, v.aval.dtype)
+          for v in jaxpr.invars[grid_mapping.num_index_operands:grid_mapping.num_index_operands + grid_mapping.num_constant_operands]
+      ]
       block_infos = [
           BlockInfo(
               jax.ShapeDtypeStruct(shape_dtype.shape, shape_dtype.dtype),
               start_idx,
               block_mapping.block_shape,
           )
+          if block_mapping is not None
+          else None
           for shape_dtype, block_mapping, start_idx in zip(
-              in_out_shapes,
+              (*consts_shapes, *in_out_shapes),
               grid_mapping.block_mappings,
               start_indices,
           )
