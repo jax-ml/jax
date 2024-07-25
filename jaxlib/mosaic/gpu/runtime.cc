@@ -15,7 +15,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
+
 #include "third_party/gpus/cuda/include/cuda.h"
 
 extern "C" {
@@ -24,6 +24,13 @@ void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
                               int64_t elem_bytewidth, int64_t rank,
                               int64_t *sizes, int64_t *strides,
                               int64_t swizzle_bytes, int64_t *window_shape) {
+  if (((uintptr_t)tma_desc) % 64 != 0) {
+    fprintf(stderr,
+            "TMA descriptor address must be 64 byte aligned, but got: %p\n",
+            tma_desc);
+    abort();
+  }
+
   CUtensorMapDataType data_type;
   if (elem_bytewidth == 1) {
     data_type = CU_TENSOR_MAP_DATA_TYPE_UINT8;
@@ -37,9 +44,20 @@ void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
     fprintf(stderr, "Unsupported element size: %ld\n", elem_bytewidth);
     abort();
   }
+  if (rank < 1 || rank > 5) {
+    fprintf(stderr, "Rank must be in [1, 5], but got %ld\n", rank);
+    abort();
+  }
   cuuint64_t tma_sizes[5] = {1, 1, 1, 1, 1};
   for (int i = 0; i < rank; ++i) {
-    tma_sizes[i] = static_cast<cuuint64_t>(sizes[rank - i - 1]);
+    cuuint64_t tma_size_i = static_cast<cuuint64_t>(sizes[rank - i - 1]);
+    if (tma_size_i > static_cast<cuuint64_t>(1) << 32) {
+      fprintf(stderr,
+              "TMA size must be less than 2**32, but got %ld at index %ld\n",
+              tma_size_i, rank - i - 1);
+      abort();
+    }
+    tma_sizes[i] = tma_size_i;
   }
   cuuint64_t tma_strides[5] = {1, 1, 1, 1, 1};
   if (strides[rank - 1] != 1) {
@@ -48,12 +66,29 @@ void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
     abort();
   }
   for (int i = 0; i < rank - 1; ++i) {  // We skip the implicit minor stride.
-    tma_strides[i] =
+    cuuint64_t tma_stride_i =
         static_cast<cuuint64_t>(strides[rank - i - 2] * elem_bytewidth);
+    if (tma_stride_i % 16 != 0 || tma_stride_i >= static_cast<cuuint64_t>(1)
+                                                      << 40) {
+      fprintf(stderr,
+              "Byte strides must be divisble by 16 and less than 2**40, but "
+              "got %ld (item stride = %ld, item size = %ld) at index %ld\n",
+              tma_stride_i, strides[rank - 1], elem_bytewidth, rank - i - 2);
+      abort();
+    }
+    tma_strides[i] = tma_stride_i;
   }
   cuuint32_t tma_window_shape[5] = {1, 1, 1, 1, 1};
   for (int64_t i = 0; i < rank; ++i) {
-    tma_window_shape[i] = static_cast<cuuint32_t>(window_shape[rank - i - 1]);
+    cuuint32_t tma_window_shape_i =
+        static_cast<cuuint32_t>(window_shape[rank - i - 1]);
+    if (tma_window_shape_i > 256) {
+      fprintf(stderr,
+              "Window shape must be in [0, 256], but got %d at index %ld\n",
+              tma_window_shape_i, rank - i - 1);
+      abort();
+    }
+    tma_window_shape[i] = tma_window_shape_i;
   }
   cuuint32_t element_strides[5] = {1, 1, 1, 1, 1};
   CUtensorMapSwizzle swizzle;
