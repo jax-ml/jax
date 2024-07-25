@@ -155,6 +155,7 @@ from jax.numpy import (
     square as square,
     squeeze as squeeze,
     stack as stack,
+    std as std,
     subtract as subtract,
     sum as sum,
     take as take,
@@ -174,6 +175,7 @@ from jax.numpy import (
     unique_inverse as unique_inverse,
     unique_values as unique_values,
     unstack as unstack,
+    var as var,
     vecdot as vecdot,
     where as where,
     zeros as zeros,
@@ -197,11 +199,6 @@ from jax.experimental.array_api._data_type_functions import (
 from jax.experimental.array_api._elementwise_functions import (
     clip as clip,
     hypot as hypot,
-)
-
-from jax.experimental.array_api._statistical_functions import (
-    std as std,
-    var as var,
 )
 
 from jax.experimental.array_api._utility_functions import (
