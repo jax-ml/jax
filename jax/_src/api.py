@@ -1771,16 +1771,14 @@ def _cpp_pmap(
         is_explicit_global_axis_size=p.is_explicit_global_axis_size,
     )
 
-    map_bind_continuation, top_trace, fun_, tracers, params = (
-        core.map_bind_with_continuation(pxla.xla_pmap_p, p.flat_fun,
-                                        *p.flat_args, **params))
     execute: Callable | None = None
+    top_trace = core.find_cur_trace()
     if isinstance(top_trace, core.EvalTrace):
-      execute = pxla.xla_pmap_impl_lazy(fun_, *tracers, **params)
-      out = map_bind_continuation(execute(*tracers))
+      assert False
+      # execute = pxla.xla_pmap_impl_lazy(fun_, *tracers, **params)
+      # out = map_bind_continuation(execute(*tracers))
     else:
-      out = map_bind_continuation(
-          pxla.xla_pmap_p.process(top_trace, fun_, tracers, params))
+      out = pxla.xla_pmap_p.bind_with_trace(top_trace, (p.flat_fun,) + tuple(p.flat_args), params)
 
     out_tree, out_flat = p.out_tree, out
     out_pytree_def = out_tree()

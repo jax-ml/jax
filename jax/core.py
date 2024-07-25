@@ -84,8 +84,6 @@ from jax._src.core import (
   lattice_join as lattice_join,
   leaked_tracer_error as leaked_tracer_error,
   literalable_types as literalable_types,
-  map_bind as map_bind,
-  map_bind_with_continuation as map_bind_with_continuation,
   mapped_aval as mapped_aval,
   maybe_find_leaked_tracers as maybe_find_leaked_tracers,
   max_dim as max_dim,

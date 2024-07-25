@@ -2059,52 +2059,14 @@ class MapPrimitive(Primitive):
   multiple_results = True
   map_primitive = True
 
-  def bind(self, fun, *args, **params):
+  def bind_with_trace(self, trace, fun_and_args, params):
+    fun = fun_and_args[0]
+    args = fun_and_args[1:]
     assert len(params['in_axes']) == len(args)
-    return map_bind(self, fun, *args, **params)
+    return trace.process_map(self, fun, args, params)
 
   def process(self, trace, fun, tracers, params):
     return trace.process_map(self, fun, tracers, params)
-
-  def get_bind_params(self, params):
-    new_params = dict(params)
-    jaxpr = new_params.pop('call_jaxpr')
-    subfun = lu.hashable_partial(lu.wrap_init(eval_jaxpr), jaxpr, ())
-    axes = new_params.pop('out_axes')
-    new_params['out_axes_thunk'] = HashableFunction(lambda: axes, closure=axes)
-    return [subfun], new_params
-
-
-def map_bind_with_continuation(primitive: MapPrimitive, fun, *args,
-                               out_axes_thunk, **params):
-  # The new thunk depends deterministically on the old thunk and the wrapped
-  # function. Any caching already has to include the wrapped function as part
-  # of the key, so we only use the previous thunk for equality checks.
-  @as_hashable_function(closure=out_axes_thunk)
-  def new_out_axes_thunk():
-    out_axes = out_axes_thunk()
-    _, out_axes_transforms = todo_and_xforms()
-    for t in out_axes_transforms:
-      out_axes = t(out_axes)
-    return out_axes
-  params = dict(params, out_axes_thunk=new_out_axes_thunk)
-  top_trace = find_top_trace(args)
-  fun, todo_and_xforms = process_env_traces_map(
-      fun, primitive, top_trace and top_trace.level, tuple(params.items()))
-  tracers = map(top_trace.full_raise, args)
-
-  def map_bind_continuation(outs):
-    env_trace_todo, _ = todo_and_xforms()
-    return map(full_lower, apply_todos(env_trace_todo, outs))
-
-  return map_bind_continuation, top_trace, fun, tracers, params
-
-
-def map_bind(primitive: MapPrimitive, fun, *args, **params):
-  map_bind_continuation, top_trace, fun, tracers, params = (
-      map_bind_with_continuation(primitive, fun, *args, **params))
-  return map_bind_continuation(
-      primitive.process(top_trace, fun, tracers, params))
 
 def mapped_aval(size: AxisSize, axis: int | None,
                 aval: AbstractValue) -> AbstractValue:
