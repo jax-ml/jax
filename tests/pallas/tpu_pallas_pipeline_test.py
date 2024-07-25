@@ -1469,7 +1469,7 @@ if CAN_USE_HYPOTHESIS:
       accum_dtype = (
           jnp.float32 if jnp.issubdtype(x.dtype, jnp.floating) else jnp.int32
       )
-      pltpu.run_scoped(run, pltpu.VMEM((bm, bn), accum_dtype))
+      pl.run_scoped(run, pltpu.VMEM((bm, bn), accum_dtype))
 
     num_cores = jax.devices()[0].num_cores
     return pl.pallas_call(

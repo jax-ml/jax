@@ -19,20 +19,23 @@ from __future__ import annotations
 import enum
 import functools
 import string
-from typing import Any
+from typing import Any, Callable
 
 import jax
 from jax import lax
 from jax import tree_util
 from jax._src import ad_util
+from jax._src import api_util
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
+from jax._src import linear_util as lu
 from jax._src import pretty_printer as pp
 from jax._src import state
 from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
+from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
@@ -797,3 +800,46 @@ def debug_print_lowering_rule(ctx, *args, **params):
       has_side_effect=True,
   )
   return result
+
+
+run_scoped_p = jax_core.Primitive("run_scoped")
+run_scoped_p.multiple_results = True
+
+
+def run_scoped(f: Callable[..., Any], *types, **kw_types) -> Any:
+  """Call the function with allocated references.
+
+  Args:
+    f: The function that generatest the jaxpr.
+    *types: The types of the function's positional arguments.
+    **kw_types: The types of the function's keyword arguments.
+  """
+
+  flat_types, in_tree = tree_util.tree_flatten((types, kw_types))
+  flat_fun, out_tree_thunk = api_util.flatten_fun(lu.wrap_init(f), in_tree)
+  avals = [t.get_aval() for t in flat_types]
+  # Turn the function into a jaxpr. The body of run_scoped may have
+  # effects (IO) on constvars (i.e. variables inherited from the
+  # parent scope). Jax can't reason about effects to references that
+  # are not in the invars of an operation so we just put them all
+  # there.
+  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, avals)
+  out = run_scoped_p.bind(*consts, jaxpr=jaxpr)
+  return tree_util.tree_unflatten(out_tree_thunk(), out)
+
+
+@run_scoped_p.def_effectful_abstract_eval
+def _run_scoped_abstract_eval(*args, jaxpr):
+  del args
+  # jaxpr will have effects for its inputs (Refs that are allocated) and for
+  # constvars (closed over Refs). The effects for the allocated Refs are local
+  # to the jaxpr and shouldn't propagate out.
+  nonlocal_effects = {
+      eff
+      for eff in jaxpr.effects
+      if not (
+          isinstance(eff, effects.JaxprInputEffect)
+          and eff.input_index >= len(jaxpr.constvars)
+      )
+  }
+  return [v.aval for v in jaxpr.outvars], nonlocal_effects

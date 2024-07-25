@@ -2552,7 +2552,7 @@ def _run_scoped_lowering_rule(ctx: LoweringRuleContext, *consts, jaxpr):
   return region.results
 
 
-lowering_rules[tpu_primitives.run_scoped_p] = _run_scoped_lowering_rule
+lowering_rules[primitives.run_scoped_p] = _run_scoped_lowering_rule
 
 def _device_id_to_logical(
     ctx: LoweringRuleContext, device_id,

@@ -34,7 +34,6 @@ from jax._src.lib.mlir.dialects import memref as memref_dialect
 from jax._src.lib.mlir.dialects import nvgpu as nvgpu_dialect
 from jax._src.pallas import core as pl_core
 from jax._src.pallas import primitives
-from jax._src.pallas.mosaic_gpu import primitives as mosaic_primitives
 from jax._src.state import primitives as sp
 from jax.experimental.mosaic import gpu as mosaic_gpu
 from jax.experimental.mosaic.gpu import dsl as mgpu
@@ -403,7 +402,7 @@ def _debug_print_lowering_rule(
   return ()
 
 
-@register_lowering_rule(mosaic_primitives.run_scoped_p)
+@register_lowering_rule(primitives.run_scoped_p)
 def _run_scoped_lowering_rule(
     ctx: LoweringRuleContext, *consts, jaxpr: jax_core.Jaxpr
 ):

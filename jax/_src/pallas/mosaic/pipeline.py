@@ -28,6 +28,7 @@ from jax import lax
 from jax import tree_util
 from jax._src import util as jax_util
 from jax._src.pallas import core as pallas_core
+from jax._src.pallas import primitives as primitives
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax.experimental import pallas as pl
@@ -988,7 +989,7 @@ def emit_pipeline(
       scratches = ()
     if allocations is None:
       # run with inline scoped allocations
-      return tpu_primitives.run_scoped(
+      return primitives.run_scoped(
           lambda allocations: pipeline(
               *refs,
               scratches=scratches,

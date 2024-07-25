@@ -14,14 +14,16 @@
 
 """Module for Pallas, a JAX extension for custom kernels.
 
-See the Pallas documentation at https://jax.readthedocs.io/en/latest/pallas.html.
+See the Pallas documentation at
+https://jax.readthedocs.io/en/latest/pallas.html.
 """
 
 from jax._src import pallas
-from jax._src.pallas.core import BlockSpec
-from jax._src.pallas.core import no_block_spec
-from jax._src.pallas.core import IndexingMode
+from jax._src.deprecations import register as _register_deprecation
 from jax._src.pallas.core import Blocked
+from jax._src.pallas.core import BlockSpec
+from jax._src.pallas.core import IndexingMode
+from jax._src.pallas.core import no_block_spec
 from jax._src.pallas.core import Unblocked
 from jax._src.pallas.core import unblocked
 from jax._src.pallas.pallas_call import pallas_call
@@ -41,6 +43,7 @@ from jax._src.pallas.primitives import max_contiguous
 from jax._src.pallas.primitives import multiple_of
 from jax._src.pallas.primitives import num_programs
 from jax._src.pallas.primitives import program_id
+from jax._src.pallas.primitives import run_scoped
 from jax._src.pallas.primitives import store
 from jax._src.pallas.primitives import swap
 from jax._src.pallas.utils import cdiv
@@ -52,6 +55,5 @@ from jax._src.state.indexing import dslice
 from jax._src.state.indexing import Slice
 from jax._src.state.primitives import broadcast_to
 
-from jax._src.deprecations import register as _register_deprecation
 _register_deprecation("pallas-block-spec-order")
 del _register_deprecation

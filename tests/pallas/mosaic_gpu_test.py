@@ -17,8 +17,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 import jax
 from jax._src import test_util as jtu
-import jax._src.pallas.mosaic_gpu.core as plgpu_core
-import jax._src.pallas.mosaic_gpu.primitives as plgpu_prims
+import jax._src.pallas.mosaic_gpu.core as plgpu
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
 import numpy as np
@@ -122,7 +121,7 @@ class PallasCallTest(PallasTest):
         tmp_ref[...] = x_ref[...] + 1.0
         return tmp_ref[...]
 
-      tmp = plgpu_prims.run_scoped(body, plgpu_core.SMEM((8, 128), jnp.float32))
+      tmp = pl.run_scoped(body, plgpu.SMEM((8, 128), jnp.float32))
       self.assertEqual(tmp.shape, (8, 128))
       o_ref[...] = tmp
 

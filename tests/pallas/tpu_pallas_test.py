@@ -749,7 +749,7 @@ class PallasCallDMATest(PallasBaseTest):
         temp_ref[...] = jnp.ones_like(temp_ref)
         x_ref[...] = 4 * y_ref[...] + temp_ref[...]
 
-      pltpu.run_scoped(body, pltpu.VMEM((8,), jnp.float32))
+      pl.run_scoped(body, pltpu.VMEM((8,), jnp.float32))
       return []
 
     jaxpr, _, _, () = pe.trace_to_jaxpr_dynamic(
@@ -768,7 +768,7 @@ class PallasCallDMATest(PallasBaseTest):
         x_ref[...] = jnp.ones_like(x_ref)
         y_ref[...] = 4 * x_ref[...]
 
-      pltpu.run_scoped(body, pltpu.VMEM((8, 128), jnp.float32))
+      pl.run_scoped(body, pltpu.VMEM((8, 128), jnp.float32))
 
     o = self.pallas_call(
         kernel,
@@ -783,7 +783,7 @@ class PallasCallDMATest(PallasBaseTest):
         x_ref[0] += 1
         return x_ref[0] + 2
 
-      out = pltpu.run_scoped(body, pltpu.SMEM((1,), jnp.int32))
+      out = pl.run_scoped(body, pltpu.SMEM((1,), jnp.int32))
       y_ref[0] = out
 
     o = self.pallas_call(
@@ -803,7 +803,7 @@ class PallasCallDMATest(PallasBaseTest):
         x_ref[0] += 1
         return x_ref[0] + 2, x_ref[0]
 
-      out = pltpu.run_scoped(body, pltpu.SMEM((1,), jnp.int32))
+      out = pl.run_scoped(body, pltpu.SMEM((1,), jnp.int32))
       y_ref[0], y_ref[1] = out
 
     o = self.pallas_call(
@@ -822,7 +822,7 @@ class PallasCallDMATest(PallasBaseTest):
         x_ref[...] = jnp.ones_like(x_ref)
         return x_ref[...] + 1
 
-      out = pltpu.run_scoped(body, pltpu.VMEM((16, 128), jnp.int32))
+      out = pl.run_scoped(body, pltpu.VMEM((16, 128), jnp.int32))
       y_ref[...] = out
 
     o = self.pallas_call(
@@ -841,7 +841,7 @@ class PallasCallDMATest(PallasBaseTest):
         x_ref[...] = jnp.ones_like(x_ref)
         return x_ref[...] + 1
 
-      out = pltpu.run_scoped(body, pltpu.VMEM((17, 128), jnp.int32))
+      out = pl.run_scoped(body, pltpu.VMEM((17, 128), jnp.int32))
       y_ref[...] = out
 
     o = self.pallas_call(
@@ -861,9 +861,9 @@ class PallasCallDMATest(PallasBaseTest):
         def inner_body(z_ref):
           z_ref[...] = jnp.ones_like(z_ref)
           x_ref[...] = z_ref[...]
-        pltpu.run_scoped(inner_body, pltpu.VMEM((8, 128), jnp.float32))
+        pl.run_scoped(inner_body, pltpu.VMEM((8, 128), jnp.float32))
         y_ref[...] = 4 * x_ref[...]
-      pltpu.run_scoped(body, pltpu.VMEM((8, 128), jnp.float32))
+      pl.run_scoped(body, pltpu.VMEM((8, 128), jnp.float32))
 
     o = self.pallas_call(
         kernel,
@@ -875,7 +875,7 @@ class PallasCallDMATest(PallasBaseTest):
     def kernel(y_ref):
       def body(sem1):
         pass
-      pltpu.run_scoped(body, pltpu.SemaphoreType.DMA)
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA)
 
     jax.block_until_ready(self.pallas_call(
         kernel,
@@ -886,8 +886,7 @@ class PallasCallDMATest(PallasBaseTest):
     def kernel(y_ref):
       def body(sem1, sem2):
         pass
-      pltpu.run_scoped(body, pltpu.SemaphoreType.DMA,
-                       pltpu.SemaphoreType.REGULAR)
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA, pltpu.SemaphoreType.REGULAR)
 
     jax.block_until_ready(self.pallas_call(
         kernel,
@@ -901,8 +900,9 @@ class PallasCallDMATest(PallasBaseTest):
         self.assertTupleEqual(sems.shape, (3,))
         self.assertTrue(jnp.issubdtype(dma_sems.dtype, pltpu.dma_semaphore))
         self.assertTrue(jnp.issubdtype(sems.dtype, pltpu.semaphore))
-      pltpu.run_scoped(body, pltpu.SemaphoreType.DMA((4,)),
-                       pltpu.SemaphoreType.REGULAR((3,)))
+      pl.run_scoped(
+          body, pltpu.SemaphoreType.DMA((4,)), pltpu.SemaphoreType.REGULAR((3,))
+      )
 
     jax.block_until_ready(self.pallas_call(
         kernel,
@@ -936,12 +936,12 @@ class PallasCallDMATest(PallasBaseTest):
       def body(sem):
         pltpu.semaphore_signal(sem)
         pltpu.semaphore_wait(sem)
-      pltpu.run_scoped(body, pltpu.SemaphoreType.REGULAR)
+      pl.run_scoped(body, pltpu.SemaphoreType.REGULAR)
       def body2(sem):
         pltpu.semaphore_signal(sem, 2)
         pltpu.semaphore_wait(sem)
         pltpu.semaphore_wait(sem)
-      pltpu.run_scoped(body2, pltpu.SemaphoreType.REGULAR)
+      pl.run_scoped(body2, pltpu.SemaphoreType.REGULAR)
       def body3(sem):
         pltpu.semaphore_signal(sem)
         pltpu.semaphore_signal(sem)
@@ -949,7 +949,7 @@ class PallasCallDMATest(PallasBaseTest):
         pltpu.semaphore_wait(sem)
         pltpu.semaphore_wait(sem)
         pltpu.semaphore_wait(sem)
-      pltpu.run_scoped(body3, pltpu.SemaphoreType.REGULAR)
+      pl.run_scoped(body3, pltpu.SemaphoreType.REGULAR)
 
     # TODO(b/345534352): Add interpret support for semaphore signal/wait.
     jax.block_until_ready(self.pallas_call(
@@ -973,7 +973,7 @@ class PallasCallDMATest(PallasBaseTest):
         pltpu.semaphore_wait(sems.at[2])
         pltpu.semaphore_wait(sems.at[2])
         pltpu.semaphore_wait(sems.at[2])
-      pltpu.run_scoped(body, pltpu.SemaphoreType.REGULAR((3,)))
+      pl.run_scoped(body, pltpu.SemaphoreType.REGULAR((3,)))
 
     # TODO(b/345534352): Add interpret support for semaphore signal/wait.
     jax.block_until_ready(pl.pallas_call(
@@ -998,7 +998,7 @@ class PallasCallDMATest(PallasBaseTest):
         pltpu.semaphore_wait(sems.at[i, 2])
         pltpu.semaphore_wait(sems.at[i, 2])
         pltpu.semaphore_wait(sems.at[i, 2])
-      pltpu.run_scoped(body, pltpu.SemaphoreType.REGULAR((4, 3)))
+      pl.run_scoped(body, pltpu.SemaphoreType.REGULAR((4, 3)))
 
     # TODO(b/345534352): Add interpret support for semaphore signal/wait.
     jax.block_until_ready(
@@ -1024,7 +1024,7 @@ class PallasCallDMATest(PallasBaseTest):
             y_ref[r, c] = pltpu.semaphore_read(sems.at[r, c])
             pltpu.semaphore_wait(sems.at[r, c], v)
 
-      pltpu.run_scoped(body, pltpu.SemaphoreType.REGULAR((m, n)))
+      pl.run_scoped(body, pltpu.SemaphoreType.REGULAR((m, n)))
 
     # TODO(b/345534352): Add interpret support for semaphore signal/wait.
     y = jax.block_until_ready(
@@ -1072,7 +1072,7 @@ class PallasCallDMATest(PallasBaseTest):
       def body(sem):
         pltpu.async_copy(x_hbm_ref.at[pl.ds(8), :], y_hbm_ref.at[:, pl.ds(128)],
                          sem).wait()
-      pltpu.run_scoped(body, pltpu.SemaphoreType.DMA)
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA)
     x = jnp.arange(8 * 128.).reshape((8, 128))
     y = self.pallas_call(
         kernel,
@@ -1089,7 +1089,7 @@ class PallasCallDMATest(PallasBaseTest):
       def body(sem):
         pltpu.async_copy(x_hbm_ref.at[pl.ds(8), :], y_hbm_ref.at[:, pl.ds(128)],
                          sem).wait()
-      pltpu.run_scoped(body, pltpu.SemaphoreType.DMA((1,)))
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA((1,)))
 
     # TODO(b/345534352): Add interpret support for nonscalar semaphores.
     with self.assertRaisesRegex(ValueError, 'Cannot signal'):
@@ -1108,7 +1108,7 @@ class PallasCallDMATest(PallasBaseTest):
       def body(sem):
         pltpu.async_copy(x_hbm_ref.at[pl.ds(8), :], y_hbm_ref.at[:, pl.ds(128)],
                          sem.at[0]).wait()
-      pltpu.run_scoped(body, pltpu.SemaphoreType.DMA((1,)))
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA((1,)))
     x = jnp.arange(8 * 128.).reshape((8, 128))
 
     # TODO(b/345534352): Add interpret support for nonscalar semaphores.
@@ -1131,7 +1131,7 @@ class PallasCallDMATest(PallasBaseTest):
         pltpu.async_copy(
             x_hbm_ref.at[pl.ds(i, 1)], y_hbm_ref.at[pl.ds(i, 1)], sem
         ).wait()
-      pltpu.run_scoped(body, pltpu.SemaphoreType.DMA)
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA)
     x = jnp.arange(2 * 8 * 128.).reshape((2, 8, 128))
     y = self.pallas_call(
         kernel,
@@ -1150,8 +1150,9 @@ class PallasCallDMATest(PallasBaseTest):
         pltpu.async_copy(x_hbm_ref.at[pl.ds(8), :], x_ref.at[:, pl.ds(128)],
                          sem).wait()
         y_ref[...] = x_ref[...]
-      pltpu.run_scoped(body, pltpu.VMEM((8, 128), jnp.float32),
-                       pltpu.SemaphoreType.DMA)
+      pl.run_scoped(
+          body, pltpu.VMEM((8, 128), jnp.float32), pltpu.SemaphoreType.DMA
+      )
     x = jnp.arange(8 * 128.).reshape((8, 128))
     y = self.pallas_call(
         kernel,
@@ -1167,8 +1168,9 @@ class PallasCallDMATest(PallasBaseTest):
       def body(y_ref, sem):
         y_ref[...] = x_ref[...]
         pltpu.async_copy(y_hbm_ref, y_ref, sem).wait()
-      pltpu.run_scoped(body, pltpu.VMEM((8, 128), jnp.float32),
-                       pltpu.SemaphoreType.DMA)
+      pl.run_scoped(
+          body, pltpu.VMEM((8, 128), jnp.float32), pltpu.SemaphoreType.DMA
+      )
     x = jnp.arange(8 * 128.).reshape((8, 128))
     y = self.pallas_call(
         kernel,
@@ -1183,10 +1185,12 @@ class PallasCallDMATest(PallasBaseTest):
         pltpu.async_copy(x_hbm_ref, x_ref, sem).wait()
         y_ref[...] = x_ref[...]
         pltpu.async_copy(y_ref, y_hbm_ref, sem).wait()
-      pltpu.run_scoped(body,
-                       pltpu.VMEM((8, 128), jnp.float32),
-                       pltpu.VMEM((8, 128), jnp.float32),
-                       pltpu.SemaphoreType.DMA)
+      pl.run_scoped(
+          body,
+          pltpu.VMEM((8, 128), jnp.float32),
+          pltpu.VMEM((8, 128), jnp.float32),
+          pltpu.SemaphoreType.DMA,
+      )
     x = jnp.arange(8 * 128.).reshape((8, 128))
     y = self.pallas_call(
         kernel,
@@ -1201,8 +1205,9 @@ class PallasCallDMATest(PallasBaseTest):
       def body(x_ref, sem):
         pltpu.async_copy(x_hbm_ref, x_ref, sem).wait()
         y_ref[...] = x_ref[0, 0] * jnp.ones_like(y_ref)
-      pltpu.run_scoped(body, pltpu.SMEM((8, 128), jnp.float32),
-                       pltpu.SemaphoreType.DMA)
+      pl.run_scoped(
+          body, pltpu.SMEM((8, 128), jnp.float32), pltpu.SemaphoreType.DMA
+      )
     x = 4 * jnp.ones((8, 128), jnp.float32)
     y = self.pallas_call(
         kernel,
@@ -1219,8 +1224,9 @@ class PallasCallDMATest(PallasBaseTest):
         y_ref[0, 0] = 0.0
         y_ref[0, 1] = x_ref[4, 4]
         pltpu.async_copy(y_ref, y_hbm_ref, sem).wait()
-      pltpu.run_scoped(body, pltpu.SMEM((1, 2), jnp.float32),
-                       pltpu.SemaphoreType.DMA)
+      pl.run_scoped(
+          body, pltpu.SMEM((1, 2), jnp.float32), pltpu.SemaphoreType.DMA
+      )
     x = jnp.arange(8 * 128.).reshape((8, 128))
     y = self.pallas_call(
         kernel,
@@ -1237,7 +1243,7 @@ class PallasCallDMATest(PallasBaseTest):
     def kernel(x_ref, y_ref):
       def body(sem):
         pltpu.async_copy(x_ref, y_ref, sem).wait()
-      pltpu.run_scoped(body, pltpu.SemaphoreType.DMA)
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA)
     x = jnp.arange(8 * 128.).reshape((8, 128))
     y = self.pallas_call(
         kernel,
@@ -1260,7 +1266,7 @@ class PallasCallDMATest(PallasBaseTest):
         )
         dma1.wait()
         dma2.wait()
-      pltpu.run_scoped(body, pltpu.SemaphoreType.DMA)
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA)
     x = jnp.arange(2 * 8 * 128.).reshape((16, 128))
     y = self.pallas_call(
         kernel,
@@ -1283,7 +1289,7 @@ class PallasCallDMATest(PallasBaseTest):
         )
         dma1.wait()
         dma2.wait()
-      pltpu.run_scoped(body, pltpu.SemaphoreType.DMA)
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA)
     x = jnp.arange(2 * 8 * 128.).reshape((2, 8, 128))
     y = self.pallas_call(
         kernel,
@@ -1309,7 +1315,7 @@ class PallasCallDMATest(PallasBaseTest):
           )
           dma1.wait()
           dma2.wait()
-      pltpu.run_scoped(body, pltpu.SemaphoreType.DMA)
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA)
     x = jnp.arange(3 * 2 * 8 * 128.).reshape((3, 2, 8, 128))
     y = self.pallas_call(
         kernel,
@@ -1332,7 +1338,7 @@ class PallasCallDMATest(PallasBaseTest):
         )
         dma1.wait()
         dma2.wait()
-      pltpu.run_scoped(body, pltpu.SemaphoreType.DMA)
+      pl.run_scoped(body, pltpu.SemaphoreType.DMA)
     x = jnp.arange(2 * 8 * 128.).reshape((2, 8, 128))
     with self.assertRaises(Exception):
       _ = self.pallas_call(
@@ -1586,8 +1592,12 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
         copy_done.wait_send()
         copy_done.wait_recv()
 
-      pltpu.run_scoped(body, pltpu.SemaphoreType.REGULAR,
-                       pltpu.SemaphoreType.DMA, pltpu.SemaphoreType.DMA)
+      pl.run_scoped(
+          body,
+          pltpu.SemaphoreType.REGULAR,
+          pltpu.SemaphoreType.DMA,
+          pltpu.SemaphoreType.DMA,
+      )
 
     x = jnp.arange(2 * 8 * 128.0).reshape((2 * 8, 128))
 
@@ -1633,8 +1643,12 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
         copy_done.wait_send()
         copy_done.wait_recv()
 
-      pltpu.run_scoped(body, pltpu.SemaphoreType.REGULAR,
-                       pltpu.SemaphoreType.DMA, pltpu.SemaphoreType.DMA)
+      pl.run_scoped(
+          body,
+          pltpu.SemaphoreType.REGULAR,
+          pltpu.SemaphoreType.DMA,
+          pltpu.SemaphoreType.DMA,
+      )
 
     num_devices = jax.local_device_count()
     x = jnp.arange(num_devices * 8 * 128).reshape((num_devices * 8, 128))
@@ -1683,7 +1697,7 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
         copy_done.wait_send()
         copy_done.wait_recv()
 
-      pltpu.run_scoped(
+      pl.run_scoped(
           body,
           pltpu.SemaphoreType.REGULAR,
           pltpu.SemaphoreType.DMA,
@@ -1735,8 +1749,12 @@ class PallasCallRemoteDMATest(parameterized.TestCase):
             x_ref, y_ref, send_sem, recv_sem, device_id=neighbor
         ).wait()
 
-      pltpu.run_scoped(body, pltpu.SemaphoreType.REGULAR,
-                       pltpu.SemaphoreType.DMA, pltpu.SemaphoreType.DMA)
+      pl.run_scoped(
+          body,
+          pltpu.SemaphoreType.REGULAR,
+          pltpu.SemaphoreType.DMA,
+          pltpu.SemaphoreType.DMA,
+      )
 
     num_devices = jax.local_device_count()
     x = jnp.arange(num_devices * 8 * 128).reshape((num_devices * 8, 128))
@@ -2196,12 +2214,12 @@ class PallasCallTraceTest(PallasBaseTest):
       def scope1():
         with jax.named_scope('scope1'):
           o_ref[...] = jnp.zeros_like(o_ref[...])
-      pltpu.run_scoped(scope1)
+      pl.run_scoped(scope1)
 
       def scope2():
         with jax.named_scope('scope2'):
           o_ref[...] = o_ref[...] + 1
-      pltpu.run_scoped(scope2)
+      pl.run_scoped(scope2)
 
     with string_stdout() as msg:
       _ = self.pallas_call(
@@ -2250,8 +2268,7 @@ class PallasCallTPUBooleanTest(PallasBaseTest):
       def inner_scope(scoped_ref):
         scoped_ref[0, 0] = jnp.logical_not(x_ref[0, 0])
         o_ref[0, 0] = scoped_ref[0, 0]
-      pltpu.run_scoped(inner_scope,
-                       pltpu.SMEM((1, 1), dtype=jnp.bool_))
+      pl.run_scoped(inner_scope, pltpu.SMEM((1, 1), dtype=jnp.bool_))
     input_arr = jnp.array([[value]])
     output_shape = jax.ShapeDtypeStruct((1, 1), jnp.bool_)
     result = self.pallas_call(
