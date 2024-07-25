@@ -4683,7 +4683,7 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
       axis = _canonicalize_axis(axis, len(input_shape))
       aux_axis = axis + 1
       aux_shape: list[DimSize] = list(input_shape)
-      aux_shape.insert(aux_axis, repeats)
+      aux_shape.insert(aux_axis, operator.index(repeats) if core.is_constant_dim(repeats) else repeats)  # type: ignore
       a = lax.broadcast_in_dim(
         a, aux_shape, [i for i in range(len(aux_shape)) if i != aux_axis])
       result_shape: list[DimSize] = list(input_shape)
