@@ -1591,39 +1591,38 @@ class VectorLayoutInferer {
       return success();
     }
     auto dst_ty = cast<VectorType>(op->getResult(0).getType());
+    unsigned src_bitwidth = src_ty.getElementTypeBitWidth();
+    unsigned dst_bitwidth = dst_ty.getElementTypeBitWidth();
     auto some_layout = getLayout(op->getOperand(0));
     TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
     if (dyn_cast<arith::ExtFOp>(op)) {
-      TPU_CHECK_OP(src_ty.getElementTypeBitWidth() == 16 &&
-                       dst_ty.getElementTypeBitWidth() == 32,
+      TPU_CHECK_OP(src_bitwidth == 16 && dst_bitwidth == 32,
                    "Only 16-bit to 32-bit extensions supported");
-    } else {
-      TPU_CHECK_OP(dst_ty.getElementTypeBitWidth() == 32,
-                   "Only extensions to 32-bit supported");
     }
     auto &layout = *some_layout;
-    // TODO(apaszke): Support native packed layouts here.
     Layout src_layout;
     Layout dst_layout;
-    // All layouts that subdivide the rows of the default tiling evenly
-    // can be handled uniformly with the default case, by preserving the
-    // tiling through the op.
-    if (default_tiling_[0] % layout.tiling()[0] == 0 &&
-        default_tiling_[1] == layout.tiling()[1]) {
+    if (layout.tiling() == nativeTiling(src_bitwidth)) {
+      // If the source is already in native tiling, we can unpack it directly.
+      src_layout = layout;
+      dst_layout =
+          VectorLayout(dst_bitwidth, layout.offsets(),
+                       nativeTiling(dst_bitwidth), layout.implicit_dim());
+    } else if (dst_bitwidth == 32 &&
+               default_tiling_[0] % layout.tiling()[0] == 0 &&
+               default_tiling_[1] == layout.tiling()[1]) {
+      // All layouts that subdivide the rows of the result native tiling evenly
+      // can be handled uniformly with the default case, by preserving the
+      // tiling through the op.
+      // TODO(jevinjiang): we can relax this for non-32bit as well.
       src_layout = layout;
       dst_layout = VectorLayout(32, layout.offsets(), src_layout->tiling(),
                                 layout.implicit_dim());
-    } else if (layout.tiling() ==
-               nativeTiling(src_ty.getElementTypeBitWidth())) {
-      // If the source is already in native tiling, we can unpack it directly.
-      src_layout = layout;
-      dst_layout = VectorLayout(32, layout.offsets(), default_tiling_,
-                                layout.implicit_dim());
     } else {
       // TODO(b/335863273): we should also reduce offsets.
-      src_layout = VectorLayout(layout.bitwidth(), layout.offsets(),
-                                default_tiling_, layout.implicit_dim());
-      dst_layout = VectorLayout(32, layout.offsets(), default_tiling_,
+      src_layout = VectorLayout(src_bitwidth, layout.offsets(), default_tiling_,
+                                layout.implicit_dim());
+      dst_layout = VectorLayout(dst_bitwidth, layout.offsets(), default_tiling_,
                                 layout.implicit_dim());
     }
     setLayout(op, src_layout, dst_layout);

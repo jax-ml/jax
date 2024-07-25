@@ -765,10 +765,6 @@ LogicalResult ext_op_rule_impl(RewriteContext &ctx, OpTy op,
   const auto source_ty = source.getType();
   auto output_vregs_shape =
       layout_out.tileArrayShape(result_ty.getShape(), ctx.target_shape);
-  if (layout_out.bitwidth() != 32) {
-    return op.emitOpError(
-        "Not implemented: Only extensions to 32-bit supported");
-  }
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> input_vregs,
       disassemble(builder, layout_in, source, ctx.target_shape));
@@ -790,7 +786,7 @@ LogicalResult ext_op_rule_impl(RewriteContext &ctx, OpTy op,
   if (layout_in.offsets() != layout_out.offsets()) {
     return op.emitOpError("Not implemented: Change of offsets during the cast");
   }
-  const int packing = layout_in.packing();
+  const int packing = layout_out.bitwidth() / layout_in.bitwidth();
   if (layout_in.hasNativeTiling(ctx.target_shape) &&
       layout_out.hasNativeTiling(ctx.target_shape)) {
     output_vregs.Each([&](absl::Span<const int64_t> idxs, Value *v) {
