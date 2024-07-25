@@ -473,6 +473,11 @@ jax_test(
 jax_test(
     name = "lax_numpy_ufuncs_test",
     srcs = ["lax_numpy_ufuncs_test.py"],
+    shard_count = {
+        "cpu": 10,
+        "gpu": 10,
+        "tpu": 10,
+    },
     tags = ["test_cpu_thunks"],
 )
 
