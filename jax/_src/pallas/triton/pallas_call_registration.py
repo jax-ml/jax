@@ -19,12 +19,10 @@ from __future__ import annotations
 import io
 from typing import Any
 
-import jax
 from jax import core as jax_core
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas.pallas_call import pallas_call_p
 from jax._src.pallas.triton import lowering
 
 
@@ -45,30 +43,16 @@ def pallas_call_lowering(
     *in_nodes,
     jaxpr: jax_core.Jaxpr,
     name: str,
-    in_shapes: tuple[jax.ShapeDtypeStruct, ...],
-    out_shapes: tuple[jax.ShapeDtypeStruct, ...],
     interpret: bool,
     debug: bool,
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: pallas_core.GridMapping,
     compiler_params: dict[str, Any],
 ):
-  if interpret:
-    # TODO(necula): is this branch still needed?
-    return mlir.lower_fun(pallas_call_p.impl, multiple_results=True)(
-        ctx,
-        *in_nodes,
-        jaxpr=jaxpr,
-        name=name,
-        out_shapes=out_shapes,
-        in_shapes=in_shapes,
-        interpret=interpret,
-        debug=debug,
-        input_output_aliases=input_output_aliases,
-        grid_mapping=grid_mapping,
-        compiler_params=compiler_params,
-    )
-
+  del interpret
+  # TODO(necula): cleanup
+  in_shapes = grid_mapping.in_shapes
+  out_shapes = grid_mapping.out_shapes
   if grid_mapping.num_dynamic_grid_bounds:
     raise NotImplementedError(
         "dynamic grid bounds not supported in the Triton backend"

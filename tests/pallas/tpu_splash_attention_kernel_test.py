@@ -318,7 +318,6 @@ class PallasBaseTest(jtu.JaxTestCase):
 
 
 class SplashAttentionTest(PallasBaseTest):
-
   @parameterized.product(
       is_mqa=(False, True),
       is_segmented=(False, True),
@@ -544,7 +543,7 @@ class SplashAttentionTest(PallasBaseTest):
         data.draw(mha_strategy())
     )
 
-    # Avoid segment ids for rectangular matrices, as its hard to enforce
+    # Avoid segment ids for rectangular matrices, as it's hard to enforce
     # valid masks (non-0 rows).
     hp.assume(q_seq_len == kv_seq_len or not is_segmented)
 

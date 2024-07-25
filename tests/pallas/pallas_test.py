@@ -32,7 +32,7 @@ from jax._src import config
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax.control_flow.for_loop import for_loop
-from jax._src.pallas.pallas_call import _trace_to_jaxpr
+from jax._src.pallas.pallas_call import _trace_kernel_to_jaxpr
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
 import numpy as np
@@ -145,14 +145,13 @@ class PallasBaseTest(jtu.JaxTestCase):
       self.skipTest("Only works on non-Windows platforms")
 
     super().setUp()
-    _trace_to_jaxpr.cache_clear()
+    _trace_kernel_to_jaxpr.cache_clear()
 
   def pallas_call(self, *args, **kwargs):
     return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
 
 
 class PallasCallTest(PallasBaseTest):
-
   def test_add_one(self):
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
       self.skipTest("On TPU the test works only in interpret mode")
@@ -655,7 +654,6 @@ class PallasCallInterpreterTest(PallasCallTest):
 
 
 class ApiErrorTest(PallasBaseTest):
-
   def test_pallas_kernel_args_mismatch(self):
     a = np.arange(256, dtype=np.int32)
     f = self.pallas_call(lambda x_ref: None,  # Missing o_ref
@@ -719,7 +717,7 @@ class ApiErrorTest(PallasBaseTest):
                          in_specs=[pl.BlockSpec((4,), lambda: (0, 0))])
     with self.assertRaisesRegex(
         ValueError,
-        "Index map for input\\[0\\] must return 1 values to match .*Currently returning 2 values."):
+        "Index map for inputs\\[0\\] must return 1 values to match .*Currently returning 2 values."):
       f(a)
 
   def test_pallas_call_index_map_captures_consts(self):
@@ -730,7 +728,7 @@ class ApiErrorTest(PallasBaseTest):
                          in_specs=[pl.BlockSpec((4,), lambda: index_map_result)])
     with self.assertRaisesRegex(
         NotImplementedError,
-        "Index map for input\\[0\\] captures constants"):
+        "Index map for inputs\\[0\\] captures constants"):
       f(a)
 
   def test_pallas_call_out_specs_mismatch_shape(self):
@@ -752,7 +750,7 @@ class ApiErrorTest(PallasBaseTest):
                          in_specs=[pl.BlockSpec((1, 1), lambda: (0, 0))])
     with self.assertRaisesRegex(
         ValueError,
-        "Block shape for input\\[0\\] .* must have the same number of dimensions as the "
+        "Block shape for inputs\\[0\\] .* must have the same number of dimensions as the "
         "array shape"):
 
       f(a)
@@ -762,7 +760,7 @@ class ApiErrorTest(PallasBaseTest):
                          out_specs=[pl.BlockSpec((1, 1), lambda: 0)])
     with self.assertRaisesRegex(
         ValueError,
-        "Block shape for output\\[0\\] .* must have the same number of dimensions as the "
+        "Block shape for outputs\\[0\\] .* must have the same number of dimensions as the "
         "array shape"):
       f(a)
 
@@ -1893,7 +1891,6 @@ class PallasCheckifyInterpreterTest(PallasBaseTest):
 
 
 class PallasCallNamedGridTest(PallasBaseTest):
-
   def test_named_grid(self):
 
     def kernel(x_ref, y_ref):
