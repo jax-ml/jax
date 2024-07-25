@@ -1,5 +1,8 @@
 # Known failures for the array api tests.
 
+# finfo return type misalignment (https://github.com/data-apis/array-api/issues/405)
+array_api_tests/test_data_type_functions.py::test_finfo[float32]
+
 # Test suite attempts in-place mutation:
 array_api_tests/test_special_cases.py::test_iop
 array_api_tests/test_special_cases.py::test_nan_propagation
