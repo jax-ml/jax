@@ -132,6 +132,18 @@ NB_MODULE(_triton, m) {
           return major * 10 + minor;
         }));
 
+  m.def(
+      "get_arch_details",
+      ValueOrThrowWrapper([](int device) -> absl::StatusOr<absl::string_view> {
+#ifdef JAX_GPU_HIP
+        hipDeviceProp_t prop;
+        hipGetDeviceProperties(&prop, 0);
+        return prop.gcnArchName;
+#else
+        return absl::UnimplementedError("Not a HIP GPU");
+#endif
+      }));
+
   m.def("get_serialized_metadata",
         ValueOrThrowWrapper(
             [](nb::bytes opaque) -> absl::StatusOr<nb::bytes> {
