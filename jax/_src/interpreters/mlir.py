@@ -711,6 +711,15 @@ class LoweringRuleContext:
 
   def replace(self, **kw): return dataclasses.replace(self, **kw)  # pytype: disable=wrong-arg-types  # dataclasses-replace-types
 
+  def is_forward_compat(self) -> bool:
+    """Returns true if the lowering parameters are in forward compatibility mode.
+    """
+    lowering_parameters = self.module_context.lowering_parameters
+    return (
+        lowering_parameters.for_export
+        and not lowering_parameters.export_ignore_forward_compatibility
+    )
+
 
 if not MYPY:
   class LoweringRule(Protocol):

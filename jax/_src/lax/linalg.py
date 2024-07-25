@@ -45,6 +45,7 @@ from jax._src.lib import gpu_linalg
 from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
 from jax._src.lib import lapack
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
@@ -463,8 +464,13 @@ def _cholesky_cpu_lowering(ctx, operand):
   out_aval, = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
   op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-  result, info = lapack.potrf_hlo(operand_aval.dtype, operand, lower=True,
-                                  a_shape_vals=op_shape_vals)
+  # TODO(b/344892332): Remove the check after the compatibility period.
+  if jaxlib_version < (0, 4, 31):
+    ctx_arg = ()
+  else:
+    ctx_arg = (ctx,)
+  result, info = lapack.potrf_hlo(*ctx_arg, operand_aval.dtype, operand,
+                                  lower=True, a_shape_vals=op_shape_vals)
 
   ok = mlir.compare_hlo(
       info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
