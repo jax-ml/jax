@@ -572,9 +572,7 @@ def _unshard_shaped_array(mesh: Mesh, names: AxisNames,
                           aval: core.AbstractValue,) -> core.AbstractValue:
   assert isinstance(aval, core.ShapedArray)
   return aval.update(tuple(sz * prod(mesh.shape[n] for n in names.get(i, ()))
-                            for i, sz in enumerate(aval.shape)),
-                      named_shape={k: v for k, v in aval.named_shape.items()
-                                  if k not in mesh.shape})
+                            for i, sz in enumerate(aval.shape)))
 core.unshard_aval_handlers[core.ShapedArray] = _unshard_shaped_array
 
 # Type-checking
