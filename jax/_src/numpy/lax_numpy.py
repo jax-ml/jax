@@ -2316,6 +2316,7 @@ def array_split(ary: ArrayLike, indices_or_sections: int | Sequence[int] | Array
                 axis: int = 0) -> list[Array]:
   return _split("array_split", ary, indices_or_sections, axis=axis)
 
+deprecations.register("jax-numpy-clip-complex")
 
 @jit
 def clip(
@@ -2377,14 +2378,14 @@ def clip(
   util.check_arraylike("clip", arr)
   if any(jax.numpy.iscomplexobj(t) for t in (arr, min, max)):
     # TODO(micky774): Deprecated 2024-4-2, remove after deprecation expires.
-    warnings.warn(
+    deprecations.warn(
+      "jax-numpy-clip-complex",
       "Clip received a complex value either through the input or the min/max "
       "keywords. Complex values have no ordering and cannot be clipped. "
       "Attempting to clip using complex numbers is deprecated and will soon "
       "raise a ValueError. Please convert to a real value or array by taking "
       "the real or imaginary components via jax.numpy.real/imag respectively.",
-      DeprecationWarning, stacklevel=2,
-    )
+      stacklevel=2)
   if min is not None:
     arr = ufuncs.maximum(min, arr)
   if max is not None:
@@ -3476,6 +3477,8 @@ def _convert_to_array_if_dtype_fails(x: ArrayLike) -> ArrayLike:
     return x
 
 
+deprecations.register("jax-numpy-astype-complex-to-real")
+
 @util.implements(getattr(np, "astype", None), lax_description="""
 This is implemented via :func:`jax.lax.convert_element_type`, which may
 have slightly different behavior than :func:`numpy.astype` in some cases.
@@ -3493,12 +3496,12 @@ def astype(x: ArrayLike, dtype: DTypeLike | None,
   dtypes.check_user_dtype_supported(dtype, "astype")
   if issubdtype(x_arr.dtype, complexfloating):
     if dtypes.isdtype(dtype, ("integral", "real floating")):
-      warnings.warn(
+      deprecations.warn(
+        "jax-numpy-astype-complex-to-real",
         "Casting from complex to real dtypes will soon raise a ValueError. "
         "Please first use jnp.real or jnp.imag to take the real/imaginary "
         "component of your input.",
-        DeprecationWarning, stacklevel=2
-      )
+        stacklevel=2)
     elif np.dtype(dtype) == bool:
       # convert_element_type(complex, bool) has the wrong semantics.
       x_arr = (x_arr != _lax_const(x_arr, 0))
