@@ -4680,11 +4680,12 @@ def repeat(a: ArrayLike, repeats: ArrayLike, axis: int | None = None, *,
     # Fast path for when repeats is a scalar.
     if np.ndim(repeats) == 0 and ndim(a) != 0:
       input_shape = shape(a)
-      aux_axis = axis if axis < 0 else axis + 1
-      a = expand_dims(a, aux_axis)
-      reps: list[DimSize] = [1] * len(shape(a))
-      reps[aux_axis] = repeats
-      a = tile(a, reps)
+      axis = _canonicalize_axis(axis, len(input_shape))
+      aux_axis = axis + 1
+      aux_shape: list[DimSize] = list(input_shape)
+      aux_shape.insert(aux_axis, repeats)
+      a = lax.broadcast_in_dim(
+        a, aux_shape, [i for i in range(len(aux_shape)) if i != aux_axis])
       result_shape: list[DimSize] = list(input_shape)
       result_shape[axis] *= repeats
       return reshape(a, result_shape)
