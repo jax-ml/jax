@@ -24,14 +24,22 @@ from jax.sharding import PartitionSpec as P
 import numpy as np
 
 jax.config.parse_flags_with_absl()
-NUM_SHARDS = 16
+NUM_SHARDS = 4
 
 
-@jtu.with_config(use_mock_gpu_client=True, mock_num_gpus=NUM_SHARDS)
+@jtu.with_config(mock_num_processes=NUM_SHARDS)
 class MockGPUTest(jtu.JaxTestCase):
 
+  def setUp(self):
+    if not jtu.test_device_matches(["gpu"]):
+      self.skipTest("Mocking devices only works on the GPU backend.")
+    super().setUp()
+
+  def testMockDeviceCount(self):
+    self.assertEqual(jax.device_count(), jax.local_device_count() * NUM_SHARDS)
+
   def testMockWithSharding(self):
-    mesh = jtu.create_global_mesh((NUM_SHARDS,), ('x',))
+    mesh = jax.sharding.Mesh(jax.devices(), ('x',))
     @partial(
         jax.jit,
         in_shardings=NamedSharding(mesh, P('x',)),
@@ -41,13 +49,17 @@ class MockGPUTest(jtu.JaxTestCase):
       z = x @ y
       return z @ y
 
-    shape = (64, 64)
+    shape = (1024, 1024)
     x = jnp.arange(math.prod(shape)).reshape(shape).astype(np.float32)
     y = x + 1
     f_lowered = f.lower(x, y)
     hlo = f_lowered.compiler_ir()
-    self.assertIn('sharding = "{devices=[16,1]<=[16]}"', str(hlo))
 
+    mocked_count = NUM_SHARDS * jax.local_device_count()
+    self.assertIn(
+        f'sharding = "{{devices=[{mocked_count},1]<=[{mocked_count}]}}"',
+        str(hlo)
+    )
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
