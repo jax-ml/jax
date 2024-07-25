@@ -117,6 +117,36 @@ class MatmulTestCase(jtu.JaxTestCase):
         self.skipTest("Not enough shared memory for test, skipping.")
       raise e
 
+  @parameterized.product(
+      m=(512, 2048),
+      n=(512, 2048),
+      k=(512, 2048),
+      stages=(2, 4),
+      tile_m=(64, 128),
+      tile_n=(64, 128),
+      cluster_m=(1, 2, 4),
+      cluster_n=(1, 2, 4),
+  )
+  def test_matmul_clusters(self, m, k, n, stages, tile_m, tile_n, cluster_m, cluster_n):
+    try:
+      matmul.verify(
+          m,
+          k,
+          n,
+          stages,
+          tile_m=tile_m,
+          tile_n=tile_n,
+          cluster_m=cluster_m,
+          cluster_n=cluster_n,
+          lhs_dtype=jnp.float32,
+          rhs_dtype=jnp.float32,
+          rhs_transpose=True,
+      )
+    except ValueError as e:
+      if "Mosaic GPU kernel exceeds available shared memory" in str(e):
+        self.skipTest("Not enough shared memory for test, skipping.")
+      raise e
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
