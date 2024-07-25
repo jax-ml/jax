@@ -2257,9 +2257,13 @@ def _wrap_with_spmd_op(name: str,
                        ctx: LoweringRuleContext,
                        x: ir.Value,
                        aval_out: core.AbstractValue,
-                       sharding_proto: xc.OpSharding,
+                       sharding: xc.OpSharding | sharding.SdyArraySharding,
                        unspecified_dims: set[int] | None = None,
-                       has_side_effect: bool = False):
+                       has_side_effect: bool = False,
+                       allow_shardy_lowering: bool = False):
+  if config.use_shardy_partitioner.value and allow_shardy_lowering:
+    return dialects.sdy.ShardingConstraintOp(x, sharding.build()).result  # type: ignore
+
   # unspecified_dims indicate dimensions whose shardings are not specified and
   # XLA sharding propagation can change them.
   if unspecified_dims:
@@ -2280,11 +2284,12 @@ def _wrap_with_spmd_op(name: str,
                    api_version=1,
                    result_shapes=result_shapes,
                    has_side_effect=has_side_effect)
-  set_sharding(op, sharding_proto)
+  set_sharding(op, sharding)
   return op.result
 
 
-wrap_with_sharding_op = partial(_wrap_with_spmd_op, "Sharding")
+wrap_with_sharding_op = partial(_wrap_with_spmd_op, "Sharding",
+                                allow_shardy_lowering=True)
 wrap_with_full_to_shard_op = partial(_wrap_with_spmd_op, "SPMDFullToShardShape")
 wrap_with_shard_to_full_op = partial(_wrap_with_spmd_op, "SPMDShardToFullShape")
 

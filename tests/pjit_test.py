@@ -4967,6 +4967,29 @@ class SdyIntegrationTest(jtu.JaxTestCase):
 
     self.assertIn('sdy.sharding = #sdy.sharding', f.lower(arr).as_text())
 
+  def test_lowering_with_sharding_constraint(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    arr = np.arange(16).reshape(4, 2, 2)
+
+    @jax.jit
+    def f(x):
+      return jax.lax.with_sharding_constraint(
+          x, NamedSharding(mesh, P('x', None, 'y')))
+    lowered_str = jax.jit(f).lower(arr).as_text()
+    self.assertIn('sdy.sharding_constraint', lowered_str)
+    self.assertIn('<@mesh, [{"x"}, {}, {"y"}]>', lowered_str)
+
+  def test_lowering_with_sharding_constraint_unconstrained(self):
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    arr = np.arange(16).reshape(4, 2, 2)
+
+    @jax.jit
+    def f(x):
+      return jax.lax.with_sharding_constraint(
+          x, NamedSharding(mesh, P('x', P.UNCONSTRAINED, 'y')))
+    lowered_str = f.lower(arr).as_text()
+    self.assertIn('sdy.sharding_constraint', lowered_str)
+    self.assertIn('<@mesh, [{"x"}, {?}, {"y"}]>', lowered_str)
 
 
 if __name__ == '__main__':

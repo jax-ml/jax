@@ -2447,6 +2447,8 @@ def with_sharding_constraint(x, shardings):
   shardings_flat = [_create_sharding_for_array(mesh, a, 'shardings',
                                                'with_sharding_constraint')
                     for a in user_shardings_flat]
+  # TODO(bartchr): remove `unconstrained_dims` after migrating to Shardy. It's
+  # already part of the shardings.
   unconstrained_dims = [get_unconstrained_dims(s)
                         if isinstance(s, NamedSharding) else {}
                         for s in shardings_flat]
@@ -2496,9 +2498,12 @@ def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding, layout,
   if (isinstance(axis_ctx, sharding_impls.SPMDAxisContext) and
       axis_ctx.manual_axes):
     sharding = mlir.add_manual_axes(axis_ctx, sharding, aval.ndim)
+  if config.use_shardy_partitioner.value:
+    sharding = sharding._to_sdy_sharding(aval.ndim)
+  else:
+    sharding = sharding._to_xla_hlo_sharding(aval.ndim).to_proto()
   out = mlir.wrap_with_sharding_op(
-      ctx, x_node, out_aval, sharding._to_xla_hlo_sharding(aval.ndim).to_proto(),
-      unspecified_dims=unconstrained_dims)
+      ctx, x_node, out_aval, sharding, unspecified_dims=unconstrained_dims)
   if layout is not None:
     out = mlir.wrap_with_layout_op(ctx, out, out_aval, layout, aval)
   return [out]
