@@ -838,7 +838,7 @@ def dot_product_attention(
 
   .. math::
 
-    \mathrm{Attention}(Q, K, V)=\mathrm{softmax}(\frac{QK^T}{\sqrt{d_k}}V)
+    \mathrm{Attention}(Q, K, V)=\mathrm{softmax}(\frac{QK^T}{\sqrt{d_k}})V
 
   If we define :code:`logits` as the output of :math:`QK^T` and the
   :code:`probs` as the output of :math:`softmax`.
@@ -866,9 +866,10 @@ def dot_product_attention(
       the square root of query's head dimension (i.e. H).
     is_causal: If true, causal attention will be applied. Note, some
       implementations like `xla` will generate a mask tensor and apply it to the
-      logits, but other implementations like `cudnn` will avoid computing the
-      unmasked regions.
-    implementaion: A string to control which implementation backend to use.
+      logits to mask out the non-causal parts of the attention matrix, but other
+      implementations like `cudnn` will avoid computing the non-causal regions,
+      providing speedups.
+    implementation: A string to control which implementation backend to use.
       Supported strings are `xla`, `cudnn` (cuDNN flash attention). It defaults
       to `None`, which will automatically select the best available backend.
       Note, `cudnn` supports only a subset of shapes/dtypes, and an exception
@@ -895,8 +896,8 @@ def dot_product_attention(
   _check_has_shape(query, [B, -1, N, H], 'query')
   scale_val = (1.0 / np.sqrt(H)) if scale is None else scale
   if not (query.dtype == key.dtype == value.dtype):
-    raise ValueError(f"query/key/value should have the same shape, but got "
-                     f"{query.shape} vs {key.shape} vs {value.shape}.")
+    raise ValueError(f"query/key/value should have the same dtype, but got "
+                     f"{query.dtype} vs {key.dtype} vs {value.dtype}.")
   if mask is not None and mask.dtype != jnp.bool_:
     raise ValueError(f"Mask must be boolean dtype, but got {mask.dtype}.")
 
@@ -907,27 +908,8 @@ def dot_product_attention(
       )
     case 'cudnn':
       mask_type = MaskType.CAUSAL if is_causal else MaskType.NO_MASK
-      # Convert bool mask to float mask for addition
-      if mask is not None:
-        large_negative_number = _get_large_negative(query.dtype)
-        mask = jnp.where(mask, jnp.zeros((), query.dtype),
-                         large_negative_number)
-
-      # Prepare the bias for cudnn flash attention:
-      #   We should never use the mask argument of cudnn, because it is
-      #   multiplicative and thus the masked values (i.e. the zeros) will
-      #   still take part in the following softmax. So, we need to use the bias
-      #   argument for the mask to ensure the masked values are very small.
-      # TODO(kaixih@nvidia): The logic should be moved to the internal of
-      # cudnn_dot_product_attention.
-      if bias is None:
-        bias = mask
-      elif mask is not None:
-        bias = bias + mask
-
       return cudnn_dot_product_attention(
-          query, key, value, bias, mask=None, scale=scale_val,  # type: ignore[arg-type]
-          mask_type=mask_type,
+          query, key, value, bias, mask, scale=scale_val, mask_type=mask_type
       )
     case None:
       # TODO(kaixih@nvidia) Defaults to XLA for now. Will automatically select

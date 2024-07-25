@@ -109,6 +109,24 @@ struct Trsm {
   static void Kernel(void* out, void** data, XlaCustomCallStatus*);
 };
 
+// FFI Kernel
+
+template <::xla::ffi::DataType dtype>
+struct TriMatrixEquationSolver {
+  using ValueType = ::xla::ffi::NativeType<dtype>;
+  using FnType = void(char* side, char* uplo, char* transa, char* diag,
+                      lapack_int* m, lapack_int* n, ValueType* alpha,
+                      ValueType* a, lapack_int* lda, ValueType* b,
+                      lapack_int* ldb);
+
+  inline static FnType* fn = nullptr;
+  static ::xla::ffi::Error Kernel(
+      ::xla::ffi::Buffer<dtype> x, ::xla::ffi::Buffer<dtype> y,
+      ::xla::ffi::BufferR0<dtype> alpha, ::xla::ffi::ResultBuffer<dtype> y_out,
+      MatrixParams::Side side, MatrixParams::UpLo uplo,
+      MatrixParams::Transpose trans_x, MatrixParams::Diag diag);
+};
+
 //== LU Decomposition ==//
 
 // lapack getrf
@@ -152,6 +170,26 @@ struct Geqrf {
   static int64_t Workspace(lapack_int m, lapack_int n);
 };
 
+// FFI Kernel
+
+template <::xla::ffi::DataType dtype>
+struct QrFactorization {
+  using ValueType = ::xla::ffi::NativeType<dtype>;
+  using FnType = void(lapack_int* m, lapack_int* n, ValueType* a,
+                      lapack_int* lda, ValueType* tau, ValueType* work,
+                      lapack_int* lwork, lapack_int* info);
+
+  inline static FnType* fn = nullptr;
+
+  static ::xla::ffi::Error Kernel(::xla::ffi::Buffer<dtype> x,
+                                  ::xla::ffi::ResultBuffer<dtype> x_out,
+                                  ::xla::ffi::ResultBuffer<dtype> tau,
+                                  ::xla::ffi::ResultBuffer<LapackIntDtype> info,
+                                  ::xla::ffi::ResultBuffer<dtype> work);
+
+  static int64_t GetWorkspaceSize(lapack_int x_rows, lapack_int x_cols);
+};
+
 //== Orthogonal QR ==//
 
 // lapack orgqr
@@ -164,6 +202,27 @@ struct Orgqr {
   static FnType* fn;
   static void Kernel(void* out, void** data, XlaCustomCallStatus*);
   static int64_t Workspace(lapack_int m, lapack_int n, lapack_int k);
+};
+
+// FFI Kernel
+
+template <::xla::ffi::DataType dtype>
+struct OrthogonalQr {
+  using ValueType = ::xla::ffi::NativeType<dtype>;
+  using FnType = void(lapack_int* m, lapack_int* n, lapack_int* k, ValueType* a,
+                      lapack_int* lda, ValueType* tau, ValueType* work,
+                      lapack_int* lwork, lapack_int* info);
+
+  inline static FnType* fn = nullptr;
+
+  static ::xla::ffi::Error Kernel(::xla::ffi::Buffer<dtype> x,
+                                  ::xla::ffi::Buffer<dtype> tau,
+                                  ::xla::ffi::ResultBuffer<dtype> x_out,
+                                  ::xla::ffi::ResultBuffer<LapackIntDtype> info,
+                                  ::xla::ffi::ResultBuffer<dtype> work);
+
+  static int64_t GetWorkspaceSize(lapack_int x_rows, lapack_int x_cols,
+                                  lapack_int tau_size);
 };
 
 //== Cholesky Factorization ==//

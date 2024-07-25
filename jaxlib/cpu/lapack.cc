@@ -69,6 +69,10 @@ void GetLapackKernelsFromScipy() {
   AssignKernelFn<Trsm<double>>(blas_ptr("dtrsm"));
   AssignKernelFn<Trsm<std::complex<float>>>(blas_ptr("ctrsm"));
   AssignKernelFn<Trsm<std::complex<double>>>(blas_ptr("ztrsm"));
+  AssignKernelFn<TriMatrixEquationSolver<DataType::F32>>(blas_ptr("strsm"));
+  AssignKernelFn<TriMatrixEquationSolver<DataType::F64>>(blas_ptr("dtrsm"));
+  AssignKernelFn<TriMatrixEquationSolver<DataType::C64>>(blas_ptr("ctrsm"));
+  AssignKernelFn<TriMatrixEquationSolver<DataType::C128>>(blas_ptr("ztrsm"));
 
   nb::module_ cython_lapack =
       nb::module_::import_("scipy.linalg.cython_lapack");
@@ -89,11 +93,19 @@ void GetLapackKernelsFromScipy() {
   AssignKernelFn<Geqrf<double>>(lapack_ptr("dgeqrf"));
   AssignKernelFn<Geqrf<std::complex<float>>>(lapack_ptr("cgeqrf"));
   AssignKernelFn<Geqrf<std::complex<double>>>(lapack_ptr("zgeqrf"));
+  AssignKernelFn<QrFactorization<DataType::F32>>(lapack_ptr("sgeqrf"));
+  AssignKernelFn<QrFactorization<DataType::F64>>(lapack_ptr("dgeqrf"));
+  AssignKernelFn<QrFactorization<DataType::C64>>(lapack_ptr("cgeqrf"));
+  AssignKernelFn<QrFactorization<DataType::C128>>(lapack_ptr("zgeqrf"));
 
   AssignKernelFn<Orgqr<float>>(lapack_ptr("sorgqr"));
   AssignKernelFn<Orgqr<double>>(lapack_ptr("dorgqr"));
   AssignKernelFn<Orgqr<std::complex<float>>>(lapack_ptr("cungqr"));
   AssignKernelFn<Orgqr<std::complex<double>>>(lapack_ptr("zungqr"));
+  AssignKernelFn<OrthogonalQr<DataType::F32>>(lapack_ptr("sorgqr"));
+  AssignKernelFn<OrthogonalQr<DataType::F64>>(lapack_ptr("dorgqr"));
+  AssignKernelFn<OrthogonalQr<DataType::C64>>(lapack_ptr("cungqr"));
+  AssignKernelFn<OrthogonalQr<DataType::C128>>(lapack_ptr("zungqr"));
 
   AssignKernelFn<Potrf<float>>(lapack_ptr("spotrf"));
   AssignKernelFn<Potrf<double>>(lapack_ptr("dpotrf"));
@@ -211,10 +223,22 @@ nb::dict Registrations() {
   dict["lapack_zhetrd"] =
       EncapsulateFunction(Sytrd<std::complex<double>>::Kernel);
 
+  dict["blas_strsm_ffi"] = EncapsulateFunction(blas_strsm_ffi);
+  dict["blas_dtrsm_ffi"] = EncapsulateFunction(blas_dtrsm_ffi);
+  dict["blas_ctrsm_ffi"] = EncapsulateFunction(blas_ctrsm_ffi);
+  dict["blas_ztrsm_ffi"] = EncapsulateFunction(blas_ztrsm_ffi);
   dict["lapack_sgetrf_ffi"] = EncapsulateFunction(lapack_sgetrf_ffi);
   dict["lapack_dgetrf_ffi"] = EncapsulateFunction(lapack_dgetrf_ffi);
   dict["lapack_cgetrf_ffi"] = EncapsulateFunction(lapack_cgetrf_ffi);
   dict["lapack_zgetrf_ffi"] = EncapsulateFunction(lapack_zgetrf_ffi);
+  dict["lapack_sgeqrf_ffi"] = EncapsulateFunction(lapack_sgeqrf_ffi);
+  dict["lapack_dgeqrf_ffi"] = EncapsulateFunction(lapack_dgeqrf_ffi);
+  dict["lapack_cgeqrf_ffi"] = EncapsulateFunction(lapack_cgeqrf_ffi);
+  dict["lapack_zgeqrf_ffi"] = EncapsulateFunction(lapack_zgeqrf_ffi);
+  dict["lapack_sorgqr_ffi"] = EncapsulateFunction(lapack_sorgqr_ffi);
+  dict["lapack_dorgqr_ffi"] = EncapsulateFunction(lapack_dorgqr_ffi);
+  dict["lapack_cungqr_ffi"] = EncapsulateFunction(lapack_cungqr_ffi);
+  dict["lapack_zungqr_ffi"] = EncapsulateFunction(lapack_zungqr_ffi);
   dict["lapack_spotrf_ffi"] = EncapsulateFunction(lapack_spotrf_ffi);
   dict["lapack_dpotrf_ffi"] = EncapsulateFunction(lapack_dpotrf_ffi);
   dict["lapack_cpotrf_ffi"] = EncapsulateFunction(lapack_cpotrf_ffi);
@@ -294,6 +318,30 @@ NB_MODULE(_lapack, m) {
   m.def("lapack_zhetrd_workspace", &Sytrd<std::complex<double>>::Workspace,
         nb::arg("lda"), nb::arg("n"));
   // FFI Kernel LAPACK Workspace Size Queries
+  m.def("lapack_sgeqrf_workspace_ffi",
+        &QrFactorization<DataType::F32>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"));
+  m.def("lapack_dgeqrf_workspace_ffi",
+        &QrFactorization<DataType::F64>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"));
+  m.def("lapack_cgeqrf_workspace_ffi",
+        &QrFactorization<DataType::C64>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"));
+  m.def("lapack_zgeqrf_workspace_ffi",
+        &QrFactorization<DataType::C128>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"));
+  m.def("lapack_sorgqr_workspace_ffi",
+        &OrthogonalQr<DataType::F32>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"), nb::arg("k"));
+  m.def("lapack_dorgqr_workspace_ffi",
+        &OrthogonalQr<DataType::F64>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"), nb::arg("k"));
+  m.def("lapack_cungqr_workspace_ffi",
+        &OrthogonalQr<DataType::C64>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"), nb::arg("k"));
+  m.def("lapack_zungqr_workspace_ffi",
+        &OrthogonalQr<DataType::C128>::GetWorkspaceSize, nb::arg("m"),
+        nb::arg("n"), nb::arg("k"));
   m.def("gesdd_iwork_size_ffi", &svd::GetIntWorkspaceSize, nb::arg("m"),
         nb::arg("n"));
   m.def("sgesdd_work_size_ffi", &svd::SVDType<DataType::F32>::GetWorkspaceSize,

@@ -70,11 +70,11 @@ in Pallas --- every invocation of
 the kernel body gets access to slices of the inputs and is meant to initialize a slice
 of the output.
 
-.. warning::
-  Not all window shapes are supported. If the last two dimensions of your input
-  are larger than 8 and 128 respectively, the window shape in those dimensions
-  must be a multiple of the respective factor. If the input dimension is smaller,
-  the window should span the full dimension.
+.. note::
+  Not all block shapes are supported. On TPU, if the last two dimensions of
+  your input are larger than 8 and 128 respectively, the block shape in those
+  dimensions must be a multiple of the respective factor.
+  If the input dimension is smaller, the block should span the full dimension.
 
 One interesting aspect of Pallas TPU kernels is the way they handle memory spaces:
 While the inputs to ``pallas_call`` will often reside in HBM (the main TPU

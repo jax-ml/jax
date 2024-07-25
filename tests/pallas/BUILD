@@ -39,11 +39,8 @@ jax_test(
         },
     },
     disable_configs = [
-        "cpu",  # The 64-bit variant
         "gpu",
         "gpu_x32",
-        "gpu_a100",
-        "gpu_h100",
         "gpu_p100",
         "gpu_p100_x32",
     ],
@@ -75,9 +72,6 @@ jax_test(
             "ondemand": False,  # Include in presubmit.
         },
     },
-    disable_backends = [
-        "cpu",
-    ],
     disable_configs = [
         "gpu",
         "gpu_x32",
@@ -123,7 +117,6 @@ jax_test(
         },
     },
     disable_configs = [
-        "cpu",  # The 64-bit variant
         "gpu",
         "gpu_x32",
         "gpu_a100",
@@ -178,6 +171,7 @@ jax_test(
     deps = [
         "//jax:pallas",
         "//jax:pallas_gpu",  # build_cleaner: keep
+        "//jax/_src/pallas/mosaic_gpu",
     ] + py_deps("absl/testing") + py_deps("numpy"),
 )
 
@@ -189,10 +183,6 @@ jax_test(
             "ondemand": False,  # Include in presubmit.
         },
     },
-    disable_backends = [
-        "cpu",
-        "tpu",
-    ],
     disable_configs = [
         "gpu",
         "gpu_x32",
@@ -268,4 +258,232 @@ jax_test(
         "//jax:pallas_tpu",  # build_cleaner: keep
         "//jax/experimental/export",
     ],
+)
+
+jax_test(
+    name = "tpu_all_gather_test",
+    srcs = [
+        "tpu_all_gather_test.py",
+    ],
+    disable_backends = [
+        "cpu",
+        "gpu",
+    ],
+    deps = [
+        "//jax:pallas_tpu_ops",
+    ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("hypothesis"),
+)
+
+jax_test(
+    name = "tpu_gmm_test",
+    srcs = [
+        "tpu_gmm_test.py",
+    ],
+    disable_backends = [
+        "cpu",
+        "gpu",
+    ],
+    shard_count = 50,
+    tags = [
+        "noasan",  # Times out.
+        "nomsan",  # Times out.
+        "notsan",  # Times out.
+    ],
+    deps = [
+        "//jax:pallas_tpu_ops",
+    ] + py_deps([
+        "absl/testing",
+        "absl/flags",
+        "numpy",
+        "hypothesis",
+    ]),
+)
+
+jax_test(
+    name = "tpu_pallas_test",
+    srcs = ["tpu_pallas_test.py"],
+    # The flag is necessary for ``pl.debug_print`` tests to work on TPU.
+    args = ["--logtostderr"],
+    disable_backends = [
+        "cpu",
+        "gpu",
+    ],
+    deps = [
+        "//jax:extend",
+        "//jax:pallas_tpu",
+        "//jax:pallas_tpu_ops",
+    ],
+)
+
+jax_test(
+    name = "tpu_pallas_pipeline_test",
+    srcs = ["tpu_pallas_pipeline_test.py"],
+    disable_backends = [
+        "cpu",
+        "gpu",
+    ],
+    shard_count = 5,
+    tags = [
+        "noasan",  # Times out.
+        "nomsan",  # Times out.
+        "notsan",  # Times out.
+    ],
+    deps = [
+        "//jax:extend",
+        "//jax:pallas_tpu",
+        "//jax:pallas_tpu_ops",
+    ] + py_deps("hypothesis"),
+)
+
+jax_test(
+    name = "tpu_pallas_mesh_test",
+    srcs = ["tpu_pallas_mesh_test.py"],
+    disable_backends = [
+        "cpu",
+        "gpu",
+    ],
+    tags = [
+        "noasan",
+        "nomsan",
+        "notsan",
+    ],
+    deps = [
+        "//jax:extend",
+        "//jax:pallas_tpu",
+    ],
+)
+
+jax_test(
+    name = "tpu_pallas_random_test",
+    srcs = [
+        "tpu_pallas_random_test.py",
+    ],
+    disable_backends = [
+        "cpu",
+        "gpu",
+    ],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_tpu",
+        "//jax/_src/pallas/mosaic:random",
+        "//third_party/py/absl/testing:absltest",
+        "//third_party/py/absl/testing:parameterized",
+    ] + py_deps("numpy"),
+)
+
+jax_test(
+    name = "tpu_paged_attention_kernel_test",
+    srcs = ["tpu_paged_attention_kernel_test.py"],
+    disable_backends = [
+        "cpu",
+        "gpu",
+    ],
+    shard_count = 5,
+    tags = [
+        "noasan",  # Times out.
+        "nomsan",  # Times out.
+        "notsan",  # Times out.
+    ],
+    deps = [
+        "//jax:pallas_tpu_ops",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_test(
+    name = "tpu_splash_attention_kernel_test",
+    srcs = [
+        "tpu_splash_attention_kernel_test.py",
+    ],
+    disable_backends = [
+        "gpu",
+        "cpu",
+    ],
+    shard_count = 24,
+    tags = [
+        "noasan",  # Times out.
+        "nomsan",  # Times out.
+        "notsan",  # Times out.
+    ],
+    deps = [
+        "//jax:pallas_tpu_ops",
+    ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("hypothesis"),
+)
+
+jax_test(
+    name = "tpu_splash_attention_mask_test",
+    srcs = [
+        "tpu_splash_attention_mask_test.py",
+    ],
+    disable_backends = [
+        "gpu",
+    ],
+    deps = [
+        "//jax:pallas_tpu_ops",
+    ] + py_deps("absl/testing") + py_deps("numpy") + py_deps("hypothesis"),
+)
+
+jax_test(
+    name = "gpu_attention_test",
+    srcs = [
+        "gpu_attention_test.py",
+    ],
+    config_tags_overrides = {
+        "gpu_a100_x32": {
+            "ondemand": False,  # Include in presubmit.
+        },
+    },
+    disable_backends = [
+        "tpu",
+    ],
+    disable_configs = [
+        "gpu",
+        "gpu_x32",
+        "gpu_p100",
+        "gpu_p100_x32",
+        "gpu_a100",
+        "gpu_h100",
+    ],
+    enable_configs = [
+        "gpu_a100_x32",
+        "gpu_h100_x32",
+    ],
+    shard_count = 1,
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_gpu",  # build_cleaner: keep
+        "//jax:pallas_gpu_ops",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
+)
+
+jax_test(
+    name = "gpu_ops_test",
+    srcs = [
+        "gpu_ops_test.py",
+    ],
+    config_tags_overrides = {
+        "gpu_a100_x32": {
+            "ondemand": False,  # Include in presubmit.
+        },
+    },
+    disable_backends = [
+        "tpu",
+    ],
+    disable_configs = [
+        "gpu",
+        "gpu_x32",
+        "gpu_a100",
+        "gpu_h100",
+        "gpu_p100",
+        "gpu_p100_x32",
+    ],
+    enable_configs = [
+        "gpu_a100_x32",
+        "gpu_h100_x32",
+    ],
+    shard_count = 2,
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_gpu",
+        "//jax:pallas_gpu_ops",
+    ] + py_deps("absl/testing") + py_deps("numpy"),
 )

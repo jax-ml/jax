@@ -112,6 +112,7 @@ class LaxNumpyUfuncTests(jtu.JaxTestCase):
       rhs_shape=broadcast_compatible_shapes,
       dtype=jtu.dtypes.floating,
   )
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def test_call(self, func, nin, nout, identity, lhs_shape, rhs_shape, dtype):
     jnp_fun = jnp.frompyfunc(func, nin=nin, nout=nout, identity=identity)
     np_fun = cast_outputs(np.frompyfunc(func, nin=nin, nout=nout, identity=identity))

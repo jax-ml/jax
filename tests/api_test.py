@@ -50,6 +50,7 @@ from jax._src import array
 from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
+from jax._src import deprecations
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
@@ -58,6 +59,7 @@ from jax._src import pjit as pjit_lib
 from jax._src.ad_checkpoint import saved_residuals
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
 from jax._src.lib import xla_extension_version
@@ -1932,6 +1934,45 @@ class APITest(jtu.JaxTestCase):
       x = api.device_put(val, device=cpu_device)
       self.assertEqual(x.devices(), {cpu_device})
 
+  def test_device_put_on_single_device_donated_buffer_fails(self):
+    @partial(jax.jit, donate_argnums=0)
+    def f(inp1):
+      return inp1 * 2
+
+    x = jnp.zeros((10,), jnp.float32)
+    f(x)
+
+    with self.assertRaises(RuntimeError):
+      result = jax.device_put(x, jax.devices()[0])
+      result.block_until_ready()
+
+    with self.assertRaises(RuntimeError):
+      result = jax.device_put(x, jax.devices()[-1])
+      result.block_until_ready()
+
+  def test_device_put_on_multi_device_donated_buffer_fails(self):
+    @partial(jax.jit, donate_argnums=0)
+    def f(inp1):
+      return inp1 * 2
+
+    mesh1 = jax.sharding.Mesh(jax.devices(), ("x",))
+    s1 = jax.NamedSharding(mesh1, P("x"))
+
+    mesh2 = jax.sharding.Mesh(tuple(reversed(jax.devices())), ("x",))
+    s2 = jax.NamedSharding(mesh2, P("x"))
+
+    x = jax.device_put(np.arange(len(jax.devices()), dtype=jnp.float32), s1)
+    f(x)
+
+    with self.assertRaises(RuntimeError):
+      result = jax.device_put(x, s1)
+      result.block_until_ready()
+
+    with self.assertRaises(RuntimeError):
+      result = jax.device_put(x, s2)
+      result.block_until_ready()
+
+
   @jax.default_matmul_precision("float32")
   def test_jacobian(self):
     R = self.rng().randn
@@ -2665,6 +2706,8 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(out_shape.shape, (3,))
 
   def test_eval_shape_names(self):
+    raise unittest.SkipTest("named shape are deprecated")
+
     def fun(x, y):
       return lax.psum(x, 'i') + y
 
@@ -2980,8 +3023,11 @@ class APITest(jtu.JaxTestCase):
     axis_env = [(axis_name, jax.local_device_count())]
     _ = api.xla_computation(fn, axis_env=axis_env, backend='cpu')(input_x)
 
-  @jtu.unaccelerate_getattr_deprecation(jax, 'xla_computation')
+  @jtu.ignore_warning(category=DeprecationWarning, message='jax.xla_computation is deprecated')
   def test_xla_computation_axis_env(self):
+    is_accelerated = deprecations.is_accelerated_attribute(jax, 'xla_computation')
+    xla_computation = api.xla_computation if is_accelerated else jax.xla_computation
+
     def fn(x):
       z = x * jax.lax.axis_index('i').astype(jnp.float32)
       def inner_fn(carry, a):
@@ -2989,7 +3035,7 @@ class APITest(jtu.JaxTestCase):
       return jax.lax.scan(inner_fn, jnp.zeros_like(z[0]), z)
 
     x = jnp.ones((5, 6, 4), dtype=jnp.float32)
-    _ = jax.xla_computation(fn, axis_env=(('i', 8),), backend='cpu')(x)
+    _ = xla_computation(fn, axis_env=(('i', 8),), backend='cpu')(x)
 
   def test_concurrent_device_get_and_put(self):
     def f(x):
@@ -4540,13 +4586,15 @@ class APITest(jtu.JaxTestCase):
     x = jnp.float32(1.)
     y = {'hi': jnp.arange(3., dtype='float32')}
 
+    expected_log_len = 1 if not is_persistent_cache_enabled() else 3
+
     # print on first miss, not on hit
     with config.explain_cache_misses(True):
       with self.assertLogs(level='WARNING') as cm:
         f(x, y)
         f(x, y)
-    self.assertLen(cm.output, 1)
-    msg, = cm.output
+    self.assertLen(cm.output, expected_log_len)
+    msg = cm.output[0]
     self.assertIn('TRACING CACHE MISS', msg)
     self.assertIn('never seen function', msg)
 
@@ -4555,8 +4603,8 @@ class APITest(jtu.JaxTestCase):
     with config.explain_cache_misses(True):
       with self.assertLogs(level='WARNING') as cm:
         f(x, y_)
-    self.assertLen(cm.output, 1)
-    msg, = cm.output
+    self.assertLen(cm.output, expected_log_len)
+    msg = cm.output[0]
     self.assertIn('never seen input type signature', msg)
     self.assertIn('closest seen input type signature has 1 mismatches', msg)
     self.assertIn('seen f32[3], but now given f32[4]', msg)
@@ -4566,8 +4614,8 @@ class APITest(jtu.JaxTestCase):
       with config.explain_cache_misses(True):
         with self.assertLogs(level='WARNING') as cm:
           f(1., y)
-      self.assertLen(cm.output, 1)
-      msg, = cm.output
+      self.assertLen(cm.output, expected_log_len)
+      msg = cm.output[0]
       self.assertIn('weak_type=True', msg)
       self.assertIn('https://jax.readthedocs.io/en/latest/type_promotion.html#weak-types', msg)
 
@@ -4575,8 +4623,8 @@ class APITest(jtu.JaxTestCase):
     with config.explain_cache_misses(True):
       with self.assertLogs(level='WARNING') as cm:
         f(1, y=y)
-    self.assertLen(cm.output, 1)
-    msg, = cm.output
+    self.assertLen(cm.output, expected_log_len)
+    msg = cm.output[0]
     self.assertIn('never seen passing 1 positional args and 1 keyword args', msg)
 
     # tracing config change
@@ -4584,8 +4632,9 @@ class APITest(jtu.JaxTestCase):
       with self.assertLogs(level='WARNING') as cm:
         with jax.numpy_rank_promotion('warn'):
           f(x, y)
-    self.assertLen(cm.output, 1)
-    msg, = cm.output
+    # depending on the backend, we may or may not get persistent cache warnings
+    self.assertTrue(1 <= len(cm.output) <= expected_log_len)
+    msg = cm.output[0]
     self.assertIn("tracing context doesn't match", msg)
 
   def test_cache_miss_explanations_new_function_in_loop(self):
@@ -4599,9 +4648,15 @@ class APITest(jtu.JaxTestCase):
       with self.assertLogs(level='WARNING') as cm:
         for _ in range(2):
           jax.jit(lambda x: 2 * x)(3)
-    self.assertLen(cm.output, 2)
-    _, msg = cm.output
-    self.assertIn('another function defined on the same line', msg)
+    if is_persistent_cache_enabled():
+      # number of warnings depends on the backend
+      self.assertTrue(4 <= len(cm.output) <= 6)
+      msg = cm.output[3]
+      self.assertIn('another function defined on the same line', msg)
+    else:
+      self.assertLen(cm.output, 2)
+      _, msg = cm.output
+      self.assertIn('another function defined on the same line', msg)
 
   def test_cache_miss_explanations_unpacks_transforms(self):
     # Tests that the explain_tracing_cache_miss() function does not throw an
@@ -4614,9 +4669,15 @@ class APITest(jtu.JaxTestCase):
       with self.assertLogs(level="WARNING") as cm:
         f(jax.random.key(seed=123))
 
-    self.assertLen(cm.output, 5)
-    for msg in cm.output:
-      self.assertIn("TRACING CACHE MISS", msg)
+    if is_persistent_cache_enabled():
+      # 5 warnings from tracing cache, 5-10 from persistent cache depending on
+      # the backend
+      self.assertTrue(10 <= len(cm.output) <= 15)
+      self.assertTrue(any("TRACING CACHE MISS" in msg for msg in cm.output))
+    else:
+      self.assertLen(cm.output, 5)
+      for msg in cm.output:
+        self.assertIn("TRACING CACHE MISS", msg)
 
   def test_cache_miss_explanations_no_source_info(self):
     # ``operator.add`` is a built-in function and does not have source info.
@@ -6410,6 +6471,39 @@ class RematTest(jtu.JaxTestCase):
     self.assertFalse(any(' sin ' in line for line in l.output))
     self.assertTrue(any(' cos ' in line for line in l.output))
 
+  def test_excess_precision_hell(self):
+    finfo = jnp.finfo('bfloat16')
+    eps = finfo.eps
+
+    @jax.custom_vjp
+    def dot(x):
+      return jnp.dot(x, x)
+    def dot_fwd(x):
+      return dot(x), None
+    def dot_bwd(_, g):
+      return g,
+    dot.defvjp(dot_fwd, dot_bwd)
+
+    @jax.custom_vjp
+    def foo(x):
+      return jnp.float32(1.) * x.astype('float32')
+    def foo_fwd(x):
+      return foo(x), x
+    def foo_bwd(x, _):
+      return jnp.float32(1.) * x.astype('float32'),
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    @jax.jit
+    @partial(jax.remat, policy=lambda *_, **__: True)
+    def f(x):
+      x = dot(x)
+      return foo(x)
+
+    x = (jnp.bfloat16(1) + eps) * jnp.eye(2, dtype='bfloat16')
+    y, vjp = jax.vjp(f, x)
+    y_, = vjp(jnp.ones_like(y))
+    self.assertAllClose(y, y_, atol=0, rtol=0)
+
 
 @jtu.with_config(jax_pprint_use_color=False)
 class JaxprTest(jtu.JaxTestCase):
@@ -6479,6 +6573,7 @@ class JaxprTest(jtu.JaxTestCase):
     self.assertIn('psum', str(jaxpr))
 
   def test_make_jaxpr_named(self):
+    raise unittest.SkipTest("named shape are deprecated")
     def f(x):
       return x - lax.psum(x, 'i')
 
@@ -10672,8 +10767,11 @@ class BufferDonationTest(jtu.BufferDonationTestCase):
 
 class NamedCallTest(jtu.JaxTestCase):
 
-  @jtu.unaccelerate_getattr_deprecation(jax, 'xla_computation')
+  @jtu.ignore_warning(category=DeprecationWarning, message='jax.xla_computation is deprecated')
   def test_default_name(self):
+    is_accelerated = deprecations.is_accelerated_attribute(jax, 'xla_computation')
+    xla_computation = api.xla_computation if is_accelerated else jax.xla_computation
+
     @api.named_call
     def my_test_function(x):
       return x**2
@@ -10682,7 +10780,7 @@ class NamedCallTest(jtu.JaxTestCase):
     def f(x):
       return my_test_function(x)
 
-    c = jax.xla_computation(f)(2)
+    c = xla_computation(f)(2)
     print_opts = xla_client._xla.HloPrintOptions.short_parsable()
     print_opts.print_metadata = True
     hlo_text = c.as_hlo_module().to_string(print_opts)

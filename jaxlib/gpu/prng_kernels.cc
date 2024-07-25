@@ -17,13 +17,14 @@ limitations under the License.
 
 #include <cstdint>
 #include <functional>
-#include <string>
 #include <string_view>
 
 #include "absl/algorithm/container.h"
+#include "absl/status/status.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
+#include "jaxlib/gpu/vendor.h"
+#include "jaxlib/ffi_helpers.h"
 #include "jaxlib/kernel_helpers.h"
-#include "xla/ffi/api/c_api.h"
 #include "xla/ffi/api/ffi.h"
 #include "xla/service/custom_call_status.h"
 
@@ -56,32 +57,33 @@ void ThreeFry2x32(gpuStream_t stream, void** buffers, const char* opaque,
   }
 }
 
-XLA_FFI_Error* ThreeFry2x32Ffi(XLA_FFI_CallFrame* call_frame) {
-  static const auto* kImpl =
-      ffi::Ffi::Bind()
-          .Ctx<ffi::PlatformStream<gpuStream_t>>()
-          .Arg<ffi::Buffer<ffi::DataType::U32>>()
-          .Arg<ffi::Buffer<ffi::DataType::U32>>()
-          .Arg<ffi::Buffer<ffi::DataType::U32>>()
-          .Arg<ffi::Buffer<ffi::DataType::U32>>()
-          .Ret<ffi::Buffer<ffi::DataType::U32>>()
-          .Ret<ffi::Buffer<ffi::DataType::U32>>()
-          .To([](gpuStream_t stream, auto keys0, auto keys1, auto data0,
-                 auto data1, auto out0, auto out1) -> ffi::Error {
-            std::int64_t n = absl::c_accumulate(out0->dimensions, 1,
-                                                std::multiplies<int64_t>());
-            LaunchThreeFry2x32KernelFfi(stream, n, keys0.data, keys1.data,
-                                        data0.data, data1.data, out0->data,
-                                        out1->data);
-            if (auto status = JAX_AS_STATUS(gpuGetLastError()); !status.ok()) {
-              return ffi::Error(static_cast<XLA_FFI_Error_Code>(status.code()),
-                                std::string(status.message()));
-            }
-            return ffi::Error::Success();
-          })
-          .release();
-  return kImpl->Call(call_frame);
+namespace {
+ffi::Error ThreeFry2x32Impl(gpuStream_t stream,
+                            ffi::Buffer<ffi::DataType::U32> keys0,
+                            ffi::Buffer<ffi::DataType::U32> keys1,
+                            ffi::Buffer<ffi::DataType::U32> data0,
+                            ffi::Buffer<ffi::DataType::U32> data1,
+                            ffi::Result<ffi::Buffer<ffi::DataType::U32>> out0,
+                            ffi::Result<ffi::Buffer<ffi::DataType::U32>> out1) {
+  std::int64_t n =
+      absl::c_accumulate(out0->dimensions(), 1, std::multiplies<int64_t>());
+  LaunchThreeFry2x32KernelFfi(stream, n, keys0.typed_data(), keys1.typed_data(),
+                              data0.typed_data(), data1.typed_data(),
+                              out0->typed_data(), out1->typed_data());
+  FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuGetLastError()));
+  return ffi::Error::Success();
 }
+}  // namespace
+
+XLA_FFI_DEFINE_HANDLER_SYMBOL(ThreeFry2x32Ffi, ThreeFry2x32Impl,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Arg<ffi::Buffer<ffi::DataType::U32>>()
+                                  .Arg<ffi::Buffer<ffi::DataType::U32>>()
+                                  .Arg<ffi::Buffer<ffi::DataType::U32>>()
+                                  .Arg<ffi::Buffer<ffi::DataType::U32>>()
+                                  .Ret<ffi::Buffer<ffi::DataType::U32>>()
+                                  .Ret<ffi::Buffer<ffi::DataType::U32>>());
 
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

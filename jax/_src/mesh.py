@@ -258,6 +258,12 @@ class Mesh(contextlib.ContextDecorator):
         (name, size)
         for name, size in util.safe_zip(self.axis_names, self.devices.shape))
 
+  @functools.cached_property
+  def shape_tuple(self):
+    return tuple(
+        (name, size)
+        for name, size in util.safe_zip(self.axis_names, self.devices.shape))
+
   @property
   def size(self):
     return math.prod(self.shape.values())
@@ -276,6 +282,11 @@ class Mesh(contextlib.ContextDecorator):
 
   def _local_mesh(self, process_index):
     return _get_local_mesh(self, process_index)
+
+  @property
+  def _is_jax_device_mesh(self):
+    # Returns if the mesh contains JAX devices or not
+    return True
 
   @functools.cached_property
   def device_ids(self):

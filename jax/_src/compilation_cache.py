@@ -42,26 +42,47 @@ _cache: CacheInterface | None = None
 
 _cache_initialized: bool = False
 
+_cache_checked: bool = False
+
 _cache_used: bool = False
 
-# Mutex to protect _cache_initialized and _cache_used.
+# Mutex to protect _cache_initialized, _cache_checked and _cache_used.
 _cache_initialized_mutex = threading.Lock()
 
 _UNSUPPORTED_RUNTIMES: set[str] = set()
 
-def set_once_cache_used(f) -> None:
-  """One-time setting of _cache_used.
-
-  If _cache_used is False, set it to True and execute the provided function
-  f. No action if _cache_used is True. This provides a mechanism to execute f
-  once per task. Note that reset_cache() will reset _cache_used also.
+def is_cache_used(backend: xla_client.Client) -> bool:
+  """Check if cache is used and report adoption metrics one-time per task.
+  The cache may be initialized during the first call to this function.
   """
-  global _cache_used
+  # Return _cache_used directly if _cache_checked is True. If _cache_checked is
+  # False, set it to True, report metrics and return if cache is used. This
+  # provides a mechanism to report the metrics once per task. Note that
+  # reset_cache() will reset _cache_checked and _cache_used also.
+  global _cache_checked, _cache_used
   with _cache_initialized_mutex:
-    if not _cache_used:
-      _cache_used = True
-      if f is not None:
-        f()
+    if _cache_checked:
+      return _cache_used
+
+  with _cache_initialized_mutex:
+    if not _cache_checked:
+      _cache_checked = True
+
+      # Persistent compilation cache only implemented on TPU and GPU and the
+      # backend that supports serialization of executables.
+      # TODO(skye): add warning when initializing cache on unsupported default
+      # platform
+      supported_platforms = ["tpu", "gpu", "cpu"]
+
+      if not _is_cache_enabled():
+        monitoring.record_event('/jax/compilation_cache/task_disabled_cache')
+      elif (
+          backend.platform in supported_platforms
+          and getattr(backend, "supports_executable_serialization", True)
+      ):
+        monitoring.record_event('/jax/compilation_cache/tasks_using_cache')
+        _cache_used = True
+      return _cache_used
 
 
 def get_file_cache(path: str) -> tuple[CacheInterface, str] | None:
@@ -135,13 +156,20 @@ def _initialize_cache() -> None:
       _cache, path = cache_and_path
       logger.debug("Initialized persistent compilation cache at %s", path)
 
+def is_persistent_cache_enabled() -> bool:
+  return (config.compilation_cache_dir.value is not None
+          and config.enable_compilation_cache.value)
+
 
 def _get_cache(backend) -> CacheInterface | None:
   # TODO(b/289098047): consider making this an API and changing the callers of
   # get_executable_and_time() and put_executable_and_time() to call get_cache()
   # and passing the result to them.
   if backend.runtime_type in _UNSUPPORTED_RUNTIMES:
-    logger.debug("_get_cache: Unsupported runtime: %s", backend.runtime_type)
+    log_priority = (logging.WARNING if is_persistent_cache_enabled()
+                    else logging.DEBUG)
+    logger.log(log_priority, "_get_cache: Unsupported runtime: %s",
+               backend.runtime_type)
     return None
   if _cache is None:
     _initialize_cache()  # initialization is done at most once; see above
@@ -206,9 +234,15 @@ def put_executable_and_time(
   """Adds the 'executable' and its compilation time to the cache, possibly
   evicting older entries.
   """
+  log_priority = (logging.WARNING
+                  if config.explain_cache_misses.value
+                  and is_persistent_cache_enabled()
+                  else logging.DEBUG)
   cache = _get_cache(backend)
   if cache is None:
-    logger.debug("put_executable_and_time: cache is disabled/not initialized")
+    logger.log(log_priority,
+               "Not writing persistent cache entry with key %s"
+               " since cache is disabled/not initialized", cache_key)
     return
 
   serialized_executable = backend.serialize_executable(executable)
@@ -219,19 +253,14 @@ def put_executable_and_time(
   min_entry_size = config.persistent_cache_min_entry_size_bytes.value
   entry_size = len(executable_and_time)
   if entry_size < min_entry_size:
-    logger.info(
-        "Not writing cache entry with key %s since its size (%d bytes) "
-        "is less than threshold (%d bytes)",
-        cache_key,
-        entry_size,
-        min_entry_size,
-    )
+    logger.log(log_priority,
+        "Not writing persistent cache entry with key %s since its size"
+        " (%d bytes) is less than threshold (%d bytes)", cache_key, entry_size,
+        min_entry_size)
   else:
-    logger.info(
-        "Writing %s to persistent compilation cache with key %s.",
-        module_name,
-        cache_key
-    )
+    logger.log(log_priority,
+               "Writing %s to persistent compilation cache with key %s.",
+               module_name, cache_key)
     monitoring.record_event('/jax/compilation_cache/cache_misses')
     cache.put(cache_key, executable_and_time)
 
@@ -259,12 +288,14 @@ def reset_cache() -> None:
   """Get back to pristine, uninitialized state."""
   global _cache
   global _cache_initialized
+  global _cache_checked
   global _cache_used
   logger.info("Resetting cache at %s.",
                _cache._path if _cache is not None else "<empty>")
   _cache = None
   with _cache_initialized_mutex:
     _cache_initialized = False
+    _cache_checked = False
     _cache_used = False
 
 

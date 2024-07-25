@@ -272,17 +272,21 @@ pybind_extension(
 )
 
 cc_library(
-    name = "cuda_lu_pivot_kernels",
+    name = "cuda_linalg_kernels",
     srcs = [
-        "//jaxlib/gpu:lu_pivot_kernels.cc",
+        "//jaxlib/gpu:linalg_kernels.cc",
     ],
-    hdrs = ["//jaxlib/gpu:lu_pivot_kernels.h"],
+    hdrs = ["//jaxlib/gpu:linalg_kernels.h"],
+    features = ["-use_header_modules"],
     deps = [
         ":cuda_gpu_kernel_helpers",
-        ":cuda_lu_pivot_kernels_impl",
+        ":cuda_linalg_kernels_impl",
         ":cuda_vendor",
+        "//jaxlib:ffi_helpers",
+        "//jaxlib:kernel_helpers",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
+        "@xla//xla/service:custom_call_status",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
@@ -292,52 +296,17 @@ cc_library(
 )
 
 cuda_library(
-    name = "cuda_lu_pivot_kernels_impl",
+    name = "cuda_linalg_kernels_impl",
     srcs = [
-        "//jaxlib/gpu:lu_pivot_kernels.cu.cc",
+        "//jaxlib/gpu:linalg_kernels.cu.cc",
     ],
-    hdrs = ["//jaxlib/gpu:lu_pivot_kernels.h"],
+    hdrs = [
+        "//jaxlib/gpu:linalg_kernels.h",
+    ],
     deps = [
         ":cuda_gpu_kernel_helpers",
         ":cuda_vendor",
         "@xla//xla/ffi/api:ffi",
-        "@xla//xla/service:custom_call_status",
-        "@local_config_cuda//cuda:cuda_headers",
-    ],
-)
-
-cc_library(
-    name = "cholesky_update_kernel",
-    srcs = [
-        "//jaxlib/gpu:cholesky_update_kernel.cc",
-    ],
-    hdrs = ["//jaxlib/gpu:cholesky_update_kernel.h"],
-    features = ["-use_header_modules"],
-    deps = [
-        ":cholesky_update_kernel_impl",
-        ":cuda_gpu_kernel_helpers",
-        ":cuda_vendor",
-        ":cusolver_kernels",
-        "//jaxlib:kernel_helpers",
-        "@xla//xla/service:custom_call_status",
-        "@com_google_absl//absl/status",
-        "@local_config_cuda//cuda:cuda_headers",
-    ],
-)
-
-cuda_library(
-    name = "cholesky_update_kernel_impl",
-    srcs = [
-        "//jaxlib/gpu:cholesky_update_kernel.cu.cc",
-    ],
-    hdrs = [
-        "//jaxlib/gpu:cholesky_update_kernel.h",
-    ],
-    deps = [
-        ":cuda_gpu_kernel_helpers",
-        ":cuda_vendor",
-        ":cusolver_kernels",
-        "//jaxlib:kernel_helpers",
         "@xla//xla/service:custom_call_status",
         "@local_config_cuda//cuda:cuda_headers",
     ],
@@ -353,10 +322,8 @@ pybind_extension(
     features = ["-use_header_modules"],
     module_name = "_linalg",
     deps = [
-        ":cholesky_update_kernel",
         ":cuda_gpu_kernel_helpers",
-        ":cuda_lu_pivot_kernels",
-        ":cuda_lu_pivot_kernels_impl",
+        ":cuda_linalg_kernels",
         ":cuda_vendor",
         "//jaxlib:kernel_nanobind_helpers",
         "@xla//xla/tsl/cuda:cudart",
@@ -376,11 +343,13 @@ cc_library(
         ":cuda_gpu_kernel_helpers",
         ":cuda_prng_kernels_impl",
         ":cuda_vendor",
+        "//jaxlib:ffi_helpers",
         "//jaxlib:kernel_helpers",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
         "@xla//xla/service:custom_call_status",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/status",
         "@local_config_cuda//cuda:cuda_headers",
     ],
 )
@@ -395,7 +364,6 @@ cuda_library(
         ":cuda_gpu_kernel_helpers",
         ":cuda_vendor",
         "//jaxlib:kernel_helpers",
-        "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
         "@xla//xla/service:custom_call_status",
         "@local_config_cuda//cuda:cuda_headers",
@@ -426,9 +394,8 @@ cc_library(
     srcs = ["//jaxlib/gpu:gpu_kernels.cc"],
     visibility = ["//visibility:public"],
     deps = [
-        ":cholesky_update_kernel",
         ":cublas_kernels",
-        ":cuda_lu_pivot_kernels",
+        ":cuda_linalg_kernels",
         ":cuda_prng_kernels",
         ":cuda_vendor",
         ":cudnn_rnn_kernels",

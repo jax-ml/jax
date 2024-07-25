@@ -13,10 +13,10 @@
 # limitations under the License.
 
 from absl.testing import absltest
-
 import jax
-from jax._src import test_util as jtu
 from jax._src import config
+from jax._src import test_util as jtu
+from jax._src.cloud_tpu_init import cloud_tpu_init
 
 jax.config.parse_flags_with_absl()
 
@@ -25,7 +25,8 @@ jax_test_enum_config = config.enum_state(
     name='jax_test_enum_config',
     enum_values=['default', 'xxx', 'yyy'],
     default='default',
-    help='Configuration only used for tests.')
+    help='Configuration only used for tests.',
+)
 
 
 class ConfigTest(jtu.JaxTestCase):
@@ -67,6 +68,19 @@ class ConfigTest(jtu.JaxTestCase):
       with jax_test_enum_config('invalid'):
         pass
     self.assertEqual(jax_test_enum_config.value, 'default')
+
+  def test_cloud_tpu_init(self):
+    if not jtu.is_cloud_tpu():
+      self.skipTest('Not running on a Cloud TPU VM.')
+
+    # Context manager resets the jax_platforms config to its original value.
+    with jtu.global_config_context(jax_platforms=None):
+      cloud_tpu_init()
+      self.assertEqual(config.jax_platforms.value, 'tpu,cpu')
+
+    with jtu.global_config_context(jax_platforms='platform_A'):
+      cloud_tpu_init()
+      self.assertEqual(config.jax_platforms.value, 'platform_A')
 
 
 if __name__ == '__main__':

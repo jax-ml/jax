@@ -43,4 +43,5 @@ repos:
   rev: v1.16.1
   hooks:
   - id: jupytext
+    files: docs/
     args: [--sync]

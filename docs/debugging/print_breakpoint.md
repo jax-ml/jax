@@ -138,7 +138,7 @@ jax.grad(f)(1.)
 
 #### Printing in other transformations
 
-`jax.debug.print` also works in other transformations like `xmap` and `pjit`.
+`jax.debug.print` also works in other transformations like `pjit`.
 
 ### More control with `jax.debug.callback`
 

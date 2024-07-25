@@ -42,6 +42,7 @@ def pallas_call_lowering(
     compiler_params: dict[str, Any],
 ):
   if interpret:
+    # TODO(necula): is this still needed?
     return mlir.lower_fun(pallas_call_p.impl, multiple_results=True)(
         ctx,
         *args,
@@ -68,7 +69,10 @@ def pallas_call_lowering(
   if debug:
     print(jaxpr)
     print(grid_mapping)
-
+  if grid_mapping.num_constant_operands:
+    raise NotImplementedError(
+        "captured consts not supported in the Mosaic GPU backend"
+    )
   lowering_result = lowering.lower_jaxpr_to_module(
       grid_mapping,
       in_shapes,

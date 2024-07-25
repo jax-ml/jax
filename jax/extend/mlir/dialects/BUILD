@@ -78,6 +78,12 @@ pytype_strict_library(
 )
 
 pytype_strict_library(
+    name = "sdy_dialect",
+    srcs = ["sdy.py"],
+    deps = if_building_jaxlib(["//jaxlib/mlir:sdy_dialect"]),
+)
+
+pytype_strict_library(
     name = "stablehlo_dialect",
     srcs = ["stablehlo.py"],
     deps = if_building_jaxlib(["//jaxlib/mlir:stablehlo_dialect"]),

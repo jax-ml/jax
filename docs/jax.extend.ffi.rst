@@ -9,3 +9,4 @@
   ffi_call
   ffi_lowering
   pycapsule
+  register_ffi_target

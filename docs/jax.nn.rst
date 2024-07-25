@@ -52,3 +52,4 @@ Other functions
     logsumexp
     standardize
     one_hot
+    dot_product_attention

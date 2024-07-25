@@ -56,17 +56,13 @@ jobs:
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
 
           elif [ "${{ matrix.jaxlib-version }}" == "nightly" ]; then
-            pip install .
-            pip install --pre jaxlib \
-              -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_releases.html
+            pip install --pre . -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
             pip install --pre libtpu-nightly \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
             pip install requests
 
           elif [ "${{ matrix.jaxlib-version }}" == "nightly+oldest_supported_libtpu" ]; then
-            pip install .
-            pip install --pre jaxlib \
-              -f https://storage.googleapis.com/jax-releases/jaxlib_nightly_releases.html
+            pip install --pre . -f https://storage.googleapis.com/jax-releases/jax_nightly_releases.html
             pip install --pre libtpu-nightly==0.1.dev${{ env.LIBTPU_OLDEST_VERSION_DATE }} \
               -f https://storage.googleapis.com/jax-releases/libtpu_releases.html
             pip install requests
@@ -89,7 +85,11 @@ jobs:
         run: |
           # Run single-accelerator tests in parallel
           JAX_ENABLE_TPU_XDIST=true python3 -m pytest -n=${{ matrix.tpu.cores }} --tb=short \
+            --deselect=tests/pallas/tpu_pallas_test.py::PallasCallPrintTest \
             --maxfail=20 -m "not multiaccelerator" tests examples
+          # Run Pallas printing tests, which need to run with I/O capturing disabled.
+          TPU_STDERR_LOG_LEVEL=0 python3 -m pytest -s \
+            tests/pallas/tpu_pallas_test.py::PallasCallPrintTest
           # Run multi-accelerator across all chips
           python3 -m pytest --tb=short --maxfail=20 -m "multiaccelerator" tests
       - name: Send chat on failure

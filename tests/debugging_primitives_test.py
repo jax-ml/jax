@@ -26,7 +26,6 @@ from jax._src import ad_checkpoint
 from jax._src import debugging
 from jax._src import dispatch
 from jax._src import test_util as jtu
-from jax._src.maps import xmap
 import jax.numpy as jnp
 import numpy as np
 
@@ -785,40 +784,6 @@ class DebugPrintParallelTest(jtu.JaxTestCase):
           "[2 3 4 5 6 7 8 9]\n"
           "[ 3  4  5  6  7  8  9 10]\n"
           "[ 4  5  6  7  8  9 10 11]\n")
-
-  def test_unordered_print_of_pjit_of_xmap(self):
-    def f(x):
-      def foo(x):
-        idx = lax.axis_index('foo')
-        debug_print("{idx}: {x}", idx=idx, x=x)
-        return jnp.mean(x, axis=['foo'])
-      out = xmap(foo, in_axes=['foo'], out_axes=[...])(x)
-      debug_print("Out: {}", out)
-      return out
-    mesh = jax.sharding.Mesh(np.array(jax.devices()), ['dev'])
-    in_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec('dev'))
-    out_spec = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec())
-    f = pjit.pjit(f, in_shardings=in_spec, out_shardings=out_spec)
-    with mesh:
-      with jtu.capture_stdout() as output:
-        f(jnp.arange(8, dtype=jnp.int32) * 2)
-        lines = ["0: 0", "1: 2", "2: 4", "3: 6", "4: 8", "5: 10", "6: 12",
-                 "7: 14", "Out: 7.0", ""]
-        jax.effects_barrier()
-
-      self._assertLinesEqual(output(), "\n".join(lines))
-
-  def test_unordered_print_with_xmap(self):
-    def f(x):
-      debug_print("{}", x, ordered=False)
-    f = xmap(f, in_axes=['a'], out_axes=None, backend='cpu',
-             axis_resources={'a': 'dev'})
-    with jax.sharding.Mesh(np.array(jax.devices()), ['dev']):
-      with jtu.capture_stdout() as output:
-        f(np.arange(40))
-        jax.effects_barrier()
-      lines = [f"{i}\n" for i in range(40)]
-      self._assertLinesEqual(output(), "".join(lines))
 
   def test_unordered_print_works_in_pmap_of_while(self):
     if jax.device_count() < 2:

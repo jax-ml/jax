@@ -21,6 +21,7 @@ os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 from absl.testing import absltest
 import jax
 from jax import random
+from jax._src.lib import xla_extension
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.pallas.pallas_call import _trace_to_jaxpr
@@ -36,7 +37,7 @@ config.parse_flags_with_absl()
 
 
 @jtu.with_config(jax_traceback_filtering="off")
-class PallasTest(jtu.JaxTestCase):
+class PallasBaseTest(jtu.JaxTestCase):
   INTERPRET = False
 
   def setUp(self):
@@ -57,7 +58,7 @@ class PallasTest(jtu.JaxTestCase):
     return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
 
 
-class PallasCallVmapTest(PallasTest):
+class PallasCallVmapTest(PallasBaseTest):
 
   def setUp(self):
     super().setUp()
@@ -129,6 +130,26 @@ class PallasCallVmapTest(PallasTest):
     out_ref = jnp.arange(1, 9).reshape((4, 2))
     np.testing.assert_allclose(out, out_ref)
 
+  def test_vmap_with_hoisted_consts(self):
+    # to_store will be hoisted as a constant. Choose distinct shapes from in/outs.
+    to_store = np.arange(128, dtype=np.float32).reshape((1, 128))
+    x = np.arange(4 * 16 * 128, dtype=np.float32).reshape((4, 16, 128))
+
+    @jax.vmap
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((64, 128), x.dtype),
+        grid=(2,),
+        in_specs=[pl.BlockSpec((8, 128), lambda i: (i, 0))],
+        out_specs=pl.BlockSpec((32, 128), lambda i: (i, 0)),
+    )
+    def kernel(src, dst):
+      dst[0:1] = to_store
+
+    res = kernel(x)
+    for i in range(x.shape[0]):
+      self.assertAllClose(res[i, 0:1], to_store)
+
   def test_vmap_of_kernel_with_input_output_aliases(self):
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.int32),
@@ -188,6 +209,9 @@ class PallasCallVmapTest(PallasTest):
 
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_small_large_vmap(self):
+    if xla_extension.is_tsan() and jtu.test_device_matches(["cpu"]):
+      self.skipTest("Test is very slow under TSAN")
+
     # Catches https://github.com/google/jax/issues/18361
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), jnp.int32),
@@ -206,6 +230,9 @@ class PallasCallVmapTest(PallasTest):
     np.testing.assert_allclose(out, out_ref)
 
   def test_small_small_large_vmap(self):
+    if xla_extension.is_tsan() and jtu.test_device_matches(["cpu"]):
+      self.skipTest("Test is very slow under TSAN")
+
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((2,), jnp.int32),
         grid=(2,))

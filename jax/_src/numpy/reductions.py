@@ -1073,9 +1073,44 @@ def _std(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None,
   return lax.sqrt(var(a, axis=axis, dtype=dtype, correction=correction, keepdims=keepdims, where=where))
 
 
-@implements(np.ptp, skip_params=['out'])
 def ptp(a: ArrayLike, axis: Axis = None, out: None = None,
         keepdims: bool = False) -> Array:
+  r"""Return the peak-to-peak range along a given axis.
+
+  JAX implementation of :func:`numpy.ptp`.
+
+  Args:
+    a: input array.
+    axis: optional, int or sequence of ints, default=None. Axis along which the
+      range is computed. If None, the range is computed on the flattened array.
+    keepdims: bool, default=False. If true, reduced axes are left in the result
+      with size 1.
+    out: Unused by JAX.
+
+  Returns:
+    An array with the range of elements along specified axis of input.
+
+  Examples:
+    By default, ``jnp.ptp`` computes the range along all axes.
+
+    >>> x = jnp.array([[1, 3, 5, 2],
+    ...                [4, 6, 8, 1],
+    ...                [7, 9, 3, 4]])
+    >>> jnp.ptp(x)
+    Array(8, dtype=int32)
+
+    If ``axis=1``, computes the range along axis 1.
+
+    >>> jnp.ptp(x, axis=1)
+    Array([4, 7, 6], dtype=int32)
+
+    To preserve the dimensions of input, you can set ``keepdims=True``.
+
+    >>> jnp.ptp(x, axis=1, keepdims=True)
+    Array([[4],
+           [7],
+           [6]], dtype=int32)
+  """
   return _ptp(a, _ensure_optional_axes(axis), out, keepdims)
 
 @partial(api.jit, static_argnames=('axis', 'keepdims'))
@@ -1089,10 +1124,44 @@ def _ptp(a: ArrayLike, axis: Axis = None, out: None = None,
   return lax.sub(x, y)
 
 
-@implements(np.count_nonzero)
 @partial(api.jit, static_argnames=('axis', 'keepdims'))
 def count_nonzero(a: ArrayLike, axis: Axis = None,
                   keepdims: bool = False) -> Array:
+  r"""Return the number of nonzero elements along a given axis.
+
+  JAX implementation of :func:`numpy.count_nonzero`.
+
+  Args:
+    a: input array.
+    axis: optional, int or sequence of ints, default=None. Axis along which the
+      number of nonzeros are counted. If None, counts within the flattened array.
+    keepdims: bool, default=False. If true, reduced axes are left in the result
+      with size 1.
+
+  Returns:
+    An array with number of nonzeros elements along specified axis of the input.
+
+  Examples:
+    By default, ``jnp.count_nonzero`` counts the nonzero values along all axes.
+
+    >>> x = jnp.array([[1, 0, 0, 0],
+    ...                [0, 0, 1, 0],
+    ...                [1, 1, 1, 0]])
+    >>> jnp.count_nonzero(x)
+    Array(5, dtype=int32)
+
+    If ``axis=1``, counts along axis 1.
+
+    >>> jnp.count_nonzero(x, axis=1)
+    Array([1, 1, 3], dtype=int32)
+
+    To preserve the dimensions of input, you can set ``keepdims=True``.
+
+    >>> jnp.count_nonzero(x, axis=1, keepdims=True)
+    Array([[1],
+           [1],
+           [3]], dtype=int32)
+  """
   check_arraylike("count_nonzero", a)
   return sum(lax.ne(a, _lax_const(a, 0)), axis=axis,
              dtype=dtypes.canonicalize_dtype(int), keepdims=keepdims)
@@ -1113,52 +1182,412 @@ def _nan_reduction(a: ArrayLike, name: str, jnp_reduction: Callable[..., Array],
   else:
     return out
 
-@implements(np.nanmin, skip_params=['out'])
+
 @partial(api.jit, static_argnames=('axis', 'keepdims'))
 def nanmin(a: ArrayLike, axis: Axis = None, out: None = None,
            keepdims: bool = False, initial: ArrayLike | None = None,
            where: ArrayLike | None = None) -> Array:
+  r"""Return the minimum of the array elements along a given axis, ignoring NaNs.
+
+  JAX implementation of :func:`numpy.nanmin`.
+
+  Args:
+    a: Input array.
+    axis: int or sequence of ints, default=None. Axis along which the minimum is
+      computed. If None, the minimum is computed along the flattened array.
+    keepdims: bool, default=False. If True, reduced axes are left in the result
+      with size 1.
+    initial: int or array, default=None. Initial value for the minimum.
+    where: array of boolean dtype, default=None. The elements to be used in the
+      minimum. Array should be broadcast compatible to the input. ``initial``
+      must be specified when ``where`` is used.
+    out: Unused by JAX.
+
+  Returns:
+    An array of minimum values along the given axis, ignoring NaNs. If all values
+    are NaNs along the given axis, returns ``nan``.
+
+  See also:
+    - :func:`jax.numpy.nanmax`: Compute the maximum of array elements along a
+      given axis, ignoring NaNs.
+    - :func:`jax.numpy.nansum`: Compute the sum of array elements along a given
+      axis, ignoring NaNs.
+    - :func:`jax.numpy.nanprod`: Compute the product of array elements along a
+      given axis, ignoring NaNs.
+    - :func:`jax.numpy.nanmean`: Compute the mean of array elements along a given
+      axis, ignoring NaNs.
+
+  Examples:
+
+    By default, ``jnp.nanmin`` computes the minimum of elements along the flattened
+    array.
+
+    >>> nan = jnp.nan
+    >>> x = jnp.array([[1, nan, 4, 5],
+    ...                [nan, -2, nan, -4],
+    ...                [2, 1, 3, nan]])
+    >>> jnp.nanmin(x)
+    Array(-4., dtype=float32)
+
+    If ``axis=1``, the maximum will be computed along axis 1.
+
+    >>> jnp.nanmin(x, axis=1)
+    Array([ 1., -4.,  1.], dtype=float32)
+
+    If ``keepdims=True``, ``ndim`` of the output will be same of that of the input.
+
+    >>> jnp.nanmin(x, axis=1, keepdims=True)
+    Array([[ 1.],
+           [-4.],
+           [ 1.]], dtype=float32)
+
+    To include only specific elements in computing the maximum, you can use
+    ``where``. It can either have same dimension as input
+
+    >>> where=jnp.array([[0, 0, 1, 0],
+    ...                  [0, 0, 1, 1],
+    ...                  [1, 1, 1, 0]], dtype=bool)
+    >>> jnp.nanmin(x, axis=1, keepdims=True, initial=0, where=where)
+    Array([[ 0.],
+           [-4.],
+           [ 0.]], dtype=float32)
+
+    or must be broadcast compatible with input.
+
+    >>> where = jnp.array([[False],
+    ...                    [True],
+    ...                    [False]])
+    >>> jnp.nanmin(x, axis=0, keepdims=True, initial=0, where=where)
+    Array([[ 0., -2.,  0., -4.]], dtype=float32)
+  """
   return _nan_reduction(a, 'nanmin', min, np.inf, nan_if_all_nan=initial is None,
                         axis=axis, out=out, keepdims=keepdims,
                         initial=initial, where=where)
 
-@implements(np.nanmax, skip_params=['out'])
+
 @partial(api.jit, static_argnames=('axis', 'keepdims'))
 def nanmax(a: ArrayLike, axis: Axis = None, out: None = None,
            keepdims: bool = False, initial: ArrayLike | None = None,
            where: ArrayLike | None = None) -> Array:
+  r"""Return the maximum of the array elements along a given axis, ignoring NaNs.
+
+  JAX implementation of :func:`numpy.nanmax`.
+
+  Args:
+    a: Input array.
+    axis: int or sequence of ints, default=None. Axis along which the maximum is
+      computed. If None, the maximum is computed along the flattened array.
+    keepdims: bool, default=False. If True, reduced axes are left in the result
+      with size 1.
+    initial: int or array, default=None. Initial value for the maximum.
+    where: array of boolean dtype, default=None. The elements to be used in the
+      maximum. Array should be broadcast compatible to the input. ``initial``
+      must be specified when ``where`` is used.
+    out: Unused by JAX.
+
+  Returns:
+    An array of maximum values along the given axis, ignoring NaNs. If all values
+    are NaNs along the given axis, returns ``nan``.
+
+  See also:
+    - :func:`jax.numpy.nanmin`: Compute the minimum of array elements along a
+      given axis, ignoring NaNs.
+    - :func:`jax.numpy.nansum`: Compute the sum of array elements along a given
+      axis, ignoring NaNs.
+    - :func:`jax.numpy.nanprod`: Compute the product of array elements along a
+      given axis, ignoring NaNs.
+    - :func:`jax.numpy.nanmean`: Compute the mean of array elements along a given
+      axis, ignoring NaNs.
+
+  Examples:
+
+    By default, ``jnp.nanmax`` computes the maximum of elements along the flattened
+    array.
+
+    >>> nan = jnp.nan
+    >>> x = jnp.array([[8, nan, 4, 6],
+    ...                [nan, -2, nan, -4],
+    ...                [-2, 1, 7, nan]])
+    >>> jnp.nanmax(x)
+    Array(8., dtype=float32)
+
+    If ``axis=1``, the maximum will be computed along axis 1.
+
+    >>> jnp.nanmax(x, axis=1)
+    Array([ 8., -2.,  7.], dtype=float32)
+
+    If ``keepdims=True``, ``ndim`` of the output will be same of that of the input.
+
+    >>> jnp.nanmax(x, axis=1, keepdims=True)
+    Array([[ 8.],
+           [-2.],
+           [ 7.]], dtype=float32)
+
+    To include only specific elements in computing the maximum, you can use
+    ``where``. It can either have same dimension as input
+
+    >>> where=jnp.array([[0, 0, 1, 0],
+    ...                  [0, 0, 1, 1],
+    ...                  [1, 1, 1, 0]], dtype=bool)
+    >>> jnp.nanmax(x, axis=1, keepdims=True, initial=0, where=where)
+    Array([[4.],
+           [0.],
+           [7.]], dtype=float32)
+
+    or must be broadcast compatible with input.
+
+    >>> where = jnp.array([[True],
+    ...                    [False],
+    ...                    [False]])
+    >>> jnp.nanmax(x, axis=0, keepdims=True, initial=0, where=where)
+    Array([[8., 0., 4., 6.]], dtype=float32)
+  """
   return _nan_reduction(a, 'nanmax', max, -np.inf, nan_if_all_nan=initial is None,
                         axis=axis, out=out, keepdims=keepdims,
                         initial=initial, where=where)
 
-@implements(np.nansum, skip_params=['out'])
+
 @partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def nansum(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out: None = None,
            keepdims: bool = False, initial: ArrayLike | None = None,
            where: ArrayLike | None = None) -> Array:
+  r"""Return the sum of the array elements along a given axis, ignoring NaNs.
+
+  JAX implementation of :func:`numpy.nansum`.
+
+  Args:
+    a: Input array.
+    axis: int or sequence of ints, default=None. Axis along which the sum is
+      computed. If None, the sum is computed along the flattened array.
+    dtype: The type of the output array. Default=None.
+    keepdims: bool, default=False. If True, reduced axes are left in the result
+      with size 1.
+    initial: int or array, default=None. Initial value for the sum.
+    where: array of boolean dtype, default=None. The elements to be used in the
+      sum. Array should be broadcast compatible to the input.
+    out: Unused by JAX.
+
+  Returns:
+    An array containing the sum of array elements along the given axis, ignoring
+    NaNs. If all elements along the given axis are NaNs, returns 0.
+
+  See also:
+    - :func:`jax.numpy.nanmin`: Compute the minimum of array elements along a
+      given axis, ignoring NaNs.
+    - :func:`jax.numpy.nanmax`: Compute the maximum of array elements along a
+      given axis, ignoring NaNs.
+    - :func:`jax.numpy.nanprod`: Compute the product of array elements along a
+      given axis, ignoring NaNs.
+    - :func:`jax.numpy.nanmean`: Compute the mean of array elements along a given
+      axis, ignoring NaNs.
+
+  Examples:
+
+    By default, ``jnp.nansum`` computes the sum of elements along the flattened
+    array.
+
+    >>> nan = jnp.nan
+    >>> x = jnp.array([[3, nan, 4, 5],
+    ...                [nan, -2, nan, 7],
+    ...                [2, 1, 6, nan]])
+    >>> jnp.nansum(x)
+    Array(26., dtype=float32)
+
+    If ``axis=1``, the sum will be computed along axis 1.
+
+    >>> jnp.nansum(x, axis=1)
+    Array([12.,  5.,  9.], dtype=float32)
+
+    If ``keepdims=True``, ``ndim`` of the output will be same of that of the input.
+
+    >>> jnp.nansum(x, axis=1, keepdims=True)
+    Array([[12.],
+           [ 5.],
+           [ 9.]], dtype=float32)
+
+    To include only specific elements in computing the sum, you can use ``where``.
+
+    >>> where=jnp.array([[1, 0, 1, 0],
+    ...                  [0, 0, 1, 1],
+    ...                  [1, 1, 1, 0]], dtype=bool)
+    >>> jnp.nansum(x, axis=1, keepdims=True, where=where)
+    Array([[7.],
+           [7.],
+           [9.]], dtype=float32)
+
+    If ``where`` is ``False`` at all elements, ``jnp.nansum`` returns 0 along
+    the given axis.
+
+    >>> where = jnp.array([[False],
+    ...                    [False],
+    ...                    [False]])
+    >>> jnp.nansum(x, axis=0, keepdims=True, where=where)
+    Array([[0., 0., 0., 0.]], dtype=float32)
+  """
   dtypes.check_user_dtype_supported(dtype, "nanprod")
   return _nan_reduction(a, 'nansum', sum, 0, nan_if_all_nan=False,
                         axis=axis, dtype=dtype, out=out, keepdims=keepdims,
                         initial=initial, where=where)
 
-# Work around a sphinx documentation warning in NumPy 1.22.
-if nansum.__doc__ is not None:
-  nansum.__doc__ = nansum.__doc__.replace("\n\n\n", "\n\n")
 
-@implements(np.nanprod, skip_params=['out'])
 @partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def nanprod(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out: None = None,
             keepdims: bool = False, initial: ArrayLike | None = None,
             where: ArrayLike | None = None) -> Array:
+  r"""Return the product of the array elements along a given axis, ignoring NaNs.
+
+  JAX implementation of :func:`numpy.nanprod`.
+
+  Args:
+    a: Input array.
+    axis: int or sequence of ints, default=None. Axis along which the product is
+      computed. If None, the product is computed along the flattened array.
+    dtype: The type of the output array. Default=None.
+    keepdims: bool, default=False. If True, reduced axes are left in the result
+      with size 1.
+    initial: int or array, default=None. Initial value for the product.
+    where: array of boolean dtype, default=None. The elements to be used in the
+      product. Array should be broadcast compatible to the input.
+    out: Unused by JAX.
+
+  Returns:
+    An array containing the product of array elements along the given axis,
+    ignoring NaNs. If all elements along the given axis are NaNs, returns 1.
+
+  See also:
+    - :func:`jax.numpy.nanmin`: Compute the minimum of array elements along a
+      given axis, ignoring NaNs.
+    - :func:`jax.numpy.nanmax`: Compute the maximum of array elements along a
+      given axis, ignoring NaNs.
+    - :func:`jax.numpy.nansum`: Compute the sum of array elements along a given
+      axis, ignoring NaNs.
+    - :func:`jax.numpy.nanmean`: Compute the mean of array elements along a given
+      axis, ignoring NaNs.
+
+  Examples:
+
+    By default, ``jnp.nanprod`` computes the product of elements along the flattened
+    array.
+
+    >>> nan = jnp.nan
+    >>> x = jnp.array([[nan, 3, 4, nan],
+    ...                [5, nan, 1, 3],
+    ...                [2, 1, nan, 1]])
+    >>> jnp.nanprod(x)
+    Array(360., dtype=float32)
+
+    If ``axis=1``, the product will be computed along axis 1.
+
+    >>> jnp.nanprod(x, axis=1)
+    Array([12., 15.,  2.], dtype=float32)
+
+    If ``keepdims=True``, ``ndim`` of the output will be same of that of the input.
+
+    >>> jnp.nanprod(x, axis=1, keepdims=True)
+    Array([[12.],
+           [15.],
+           [ 2.]], dtype=float32)
+
+    To include only specific elements in computing the maximum, you can use ``where``.
+
+    >>> where=jnp.array([[1, 0, 1, 0],
+    ...                  [0, 0, 1, 1],
+    ...                  [1, 1, 1, 0]], dtype=bool)
+    >>> jnp.nanprod(x, axis=1, keepdims=True, where=where)
+    Array([[4.],
+           [3.],
+           [2.]], dtype=float32)
+
+    If ``where`` is ``False`` at all elements, ``jnp.nanprod`` returns 1 along
+    the given axis.
+
+    >>> where = jnp.array([[False],
+    ...                    [False],
+    ...                    [False]])
+    >>> jnp.nanprod(x, axis=0, keepdims=True, where=where)
+    Array([[1., 1., 1., 1.]], dtype=float32)
+  """
   dtypes.check_user_dtype_supported(dtype, "nanprod")
   return _nan_reduction(a, 'nanprod', prod, 1, nan_if_all_nan=False,
                         axis=axis, dtype=dtype, out=out, keepdims=keepdims,
                         initial=initial, where=where)
 
-@implements(np.nanmean, skip_params=['out'])
+
 @partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def nanmean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out: None = None,
             keepdims: bool = False, where: ArrayLike | None = None) -> Array:
+  r"""Return the mean of the array elements along a given axis, ignoring NaNs.
+
+  JAX implementation of :func:`numpy.nanmean`.
+
+  Args:
+    a: Input array.
+    axis: int or sequence of ints, default=None. Axis along which the mean is
+      computed. If None, the mean is computed along the flattened array.
+    dtype: The type of the output array. Default=None.
+    keepdims: bool, default=False. If True, reduced axes are left in the result
+      with size 1.
+    where: array of boolean dtype, default=None. The elements to be used in
+      computing mean. Array should be broadcast compatible to the input.
+    out: Unused by JAX.
+
+  Returns:
+    An array containing the mean of array elements along the given axis, ignoring
+    NaNs. If all elements along the given axis are NaNs, returns ``nan``.
+
+  See also:
+    - :func:`jax.numpy.nanmin`: Compute the minimum of array elements along a
+      given axis, ignoring NaNs.
+    - :func:`jax.numpy.nanmax`: Compute the maximum of array elements along a
+      given axis, ignoring NaNs.
+    - :func:`jax.numpy.nansum`: Compute the sum of array elements along a given
+      axis, ignoring NaNs.
+    - :func:`jax.numpy.nanprod`: Compute the product of array elements along a
+      given axis, ignoring NaNs.
+
+  Examples:
+
+    By default, ``jnp.nanmean`` computes the mean of elements along the flattened
+    array.
+
+    >>> nan = jnp.nan
+    >>> x = jnp.array([[2, nan, 4, 3],
+    ...                [nan, -2, nan, 9],
+    ...                [4, -7, 6, nan]])
+    >>> jnp.nanmean(x)
+    Array(2.375, dtype=float32)
+
+    If ``axis=1``, mean will be computed along axis 1.
+
+    >>> jnp.nanmean(x, axis=1)
+    Array([3. , 3.5, 1. ], dtype=float32)
+
+    If ``keepdims=True``, ``ndim`` of the output will be same of that of the input.
+
+    >>> jnp.nanmean(x, axis=1, keepdims=True)
+    Array([[3. ],
+           [3.5],
+           [1. ]], dtype=float32)
+
+    ``where`` can be used to include only specific elements in computing the mean.
+
+    >>> where = jnp.array([[1, 0, 1, 0],
+    ...                    [0, 0, 1, 1],
+    ...                    [1, 1, 0, 1]], dtype=bool)
+    >>> jnp.nanmean(x, axis=1, keepdims=True, where=where)
+    Array([[ 3. ],
+           [ 9. ],
+           [-1.5]], dtype=float32)
+
+    If ``where`` is ``False`` at all elements, ``jnp.nanmean`` returns ``nan``
+    along the given axis.
+
+    >>> where = jnp.array([[False],
+    ...                    [False],
+    ...                    [False]])
+    >>> jnp.nanmean(x, axis=0, keepdims=True, where=where)
+    Array([[nan, nan, nan, nan]], dtype=float32)
+  """
   check_arraylike("nanmean", a)
   if out is not None:
     raise NotImplementedError("The 'out' argument to jnp.nanmean is not supported.")
@@ -1175,11 +1604,82 @@ def nanmean(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out
   return td
 
 
-@implements(np.nanvar, skip_params=['out'])
 @partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def nanvar(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out: None = None,
            ddof: int = 0, keepdims: bool = False,
            where: ArrayLike | None = None) -> Array:
+  r"""Compute the variance of array elements along a given axis, ignoring NaNs.
+
+  JAX implementation of :func:`numpy.nanvar`.
+
+  Args:
+    a: input array.
+    axis: optional, int or sequence of ints, default=None. Axis along which the
+      variance is computed. If None, variance is computed along flattened array.
+    dtype: The type of the output array. Default=None.
+    ddof: int, default=0. Degrees of freedom. The divisor in the variance computation
+      is ``N-ddof``, ``N`` is number of elements along given axis.
+    keepdims: bool, default=False. If true, reduced axes are left in the result
+      with size 1.
+    where: optional, boolean array, default=None. The elements to be used in the
+      variance. Array should be broadcast compatible to the input.
+    out: Unused by JAX.
+
+  Returns:
+    An array containing the variance of array elements along specified axis. If
+    all elements along the given axis are NaNs, returns ``nan``.
+
+  See also:
+    - :func:`jax.numpy.nanmean`: Compute the mean of array elements over a given
+      axis, ignoring NaNs.
+    - :func:`jax.numpy.nanstd`: Computed the standard deviation of a given axis,
+      ignoring NaNs.
+    - :func:`jax.numpy.var`: Compute the variance of array elements along a given
+      axis.
+
+  Examples:
+    By default, ``jnp.nanvar`` computes the variance along all axes.
+
+    >>> nan = jnp.nan
+    >>> x = jnp.array([[1, nan, 4, 3],
+    ...                [nan, 2, nan, 9],
+    ...                [4, 8, 6, nan]])
+    >>> jnp.nanvar(x)
+    Array(6.984375, dtype=float32)
+
+    If ``axis=1``, variance is computed along axis 1.
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jnp.nanvar(x, axis=1))
+    [ 1.56 12.25  2.67]
+
+    To preserve the dimensions of input, you can set ``keepdims=True``.
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jnp.nanvar(x, axis=1, keepdims=True))
+    [[ 1.56]
+     [12.25]
+     [ 2.67]]
+
+    If ``ddof=1``:
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jnp.nanvar(x, axis=1, keepdims=True, ddof=1))
+    [[ 2.33]
+     [24.5 ]
+     [ 4.  ]]
+
+    To include specific elements of the array to compute variance, you can use
+    ``where``.
+
+    >>> where = jnp.array([[1, 0, 1, 0],
+    ...                    [0, 1, 1, 0],
+    ...                    [1, 1, 0, 1]], dtype=bool)
+    >>> jnp.nanvar(x, axis=1, keepdims=True, where=where)
+    Array([[2.25],
+           [0.  ],
+           [4.  ]], dtype=float32)
+  """
   check_arraylike("nanvar", a)
   dtypes.check_user_dtype_supported(dtype, "nanvar")
   if out is not None:
@@ -1206,11 +1706,74 @@ def nanvar(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out:
   return lax.convert_element_type(result, dtype)
 
 
-@implements(np.nanstd, skip_params=['out'])
 @partial(api.jit, static_argnames=('axis', 'dtype', 'keepdims'))
 def nanstd(a: ArrayLike, axis: Axis = None, dtype: DTypeLike | None = None, out: None = None,
            ddof: int = 0, keepdims: bool = False,
            where: ArrayLike | None = None) -> Array:
+  r"""Compute the standard deviation along a given axis, ignoring NaNs.
+
+  JAX implementation of :func:`numpy.nanstd`.
+
+  Args:
+    a: input array.
+    axis: optional, int or sequence of ints, default=None. Axis along which the
+      standard deviation is computed. If None, standard deviaiton is computed
+      along flattened array.
+    dtype: The type of the output array. Default=None.
+    ddof: int, default=0. Degrees of freedom. The divisor in the standard deviation
+      computation is ``N-ddof``, ``N`` is number of elements along given axis.
+    keepdims: bool, default=False. If true, reduced axes are left in the result
+      with size 1.
+    where: optional, boolean array, default=None. The elements to be used in the
+      standard deviation. Array should be broadcast compatible to the input.
+    out: Unused by JAX.
+
+  Returns:
+    An array containing the standard deviation of array elements along the given
+    axis. If all elements along the given axis are NaNs, returns ``nan``.
+
+  See also:
+    - :func:`jax.numpy.nanmean`: Compute the mean of array elements over a given
+      axis, ignoring NaNs.
+    - :func:`jax.numpy.nanvar`: Compute the variance along the given axis, ignoring
+      NaNs values.
+    - :func:`jax.numpy.std`: Computed the standard deviation along the given axis.
+
+  Examples:
+    By default, ``jnp.nanstd`` computes the standard deviation along flattened array.
+
+    >>> nan = jnp.nan
+    >>> x = jnp.array([[3, nan, 4, 5],
+    ...                [nan, 2, nan, 7],
+    ...                [2, 1, 6, nan]])
+    >>> jnp.nanstd(x)
+    Array(1.9843135, dtype=float32)
+
+    If ``axis=0``, computes standard deviation along axis 0.
+
+    >>> jnp.nanstd(x, axis=0)
+    Array([0.5, 0.5, 1. , 1. ], dtype=float32)
+
+    To preserve the dimensions of input, you can set ``keepdims=True``.
+
+    >>> jnp.nanstd(x, axis=0, keepdims=True)
+    Array([[0.5, 0.5, 1. , 1. ]], dtype=float32)
+
+    If ``ddof=1``:
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jnp.nanstd(x, axis=0, keepdims=True, ddof=1))
+    [[0.71 0.71 1.41 1.41]]
+
+    To include specific elements of the array to compute standard deviation, you
+    can use ``where``.
+
+    >>> where=jnp.array([[1, 0, 1, 0],
+    ...                  [0, 1, 0, 1],
+    ...                  [1, 1, 0, 1]], dtype=bool)
+    >>> jnp.nanstd(x, axis=0, keepdims=True, where=where)
+    Array([[0.5, 0.5, 0. , 0. ]], dtype=float32)
+  """
   check_arraylike("nanstd", a)
   dtypes.check_user_dtype_supported(dtype, "nanstd")
   if out is not None:
@@ -1506,20 +2069,109 @@ def nanpercentile(a: ArrayLike, q: ArrayLike,
   return nanquantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
                      method=method, keepdims=keepdims)
 
-@implements(np.median, skip_params=['out', 'overwrite_input'])
+
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'keepdims'))
 def median(a: ArrayLike, axis: int | tuple[int, ...] | None = None,
            out: None = None, overwrite_input: bool = False,
            keepdims: bool = False) -> Array:
+  r"""Return the median of array elements along a given axis.
+
+  JAX implementation of :func:`numpy.median`.
+
+  Args:
+    a: input array.
+    axis: optional, int or sequence of ints, default=None. Axis along which the
+      median to be computed. If None, median is computed for the flattened array.
+    keepdims: bool, default=False. If true, reduced axes are left in the result
+      with size 1.
+    out: Unused by JAX.
+    overwrite_input: Unused by JAX.
+
+  Returns:
+    An array of the median along the given axis.
+
+  See also:
+    - :func:`jax.numpy.mean`: Compute the mean of array elements over a given axis.
+    - :func:`jax.numpy.max`: Compute the maximum of array elements over given axis.
+    - :func:`jax.numpy.min`: Compute the minimum of array elements over given axis.
+
+  Examples:
+    By default, the median is computed for the flattened array.
+
+    >>> x = jnp.array([[2, 4, 7, 1],
+    ...                [3, 5, 9, 2],
+    ...                [6, 1, 8, 3]])
+    >>> jnp.median(x)
+    Array(3.5, dtype=float32)
+
+    If ``axis=1``, the median is computed along axis 1.
+
+    >>> jnp.median(x, axis=1)
+    Array([3. , 4. , 4.5], dtype=float32)
+
+    If ``keepdims=True``, ``ndim`` of the output is equal to that of the input.
+
+    >>> jnp.median(x, axis=1, keepdims=True)
+    Array([[3. ],
+           [4. ],
+           [4.5]], dtype=float32)
+  """
   check_arraylike("median", a)
   return quantile(a, 0.5, axis=axis, out=out, overwrite_input=overwrite_input,
                   keepdims=keepdims, method='midpoint')
 
-@implements(np.nanmedian, skip_params=['out', 'overwrite_input'])
+
 @partial(api.jit, static_argnames=('axis', 'overwrite_input', 'keepdims'))
 def nanmedian(a: ArrayLike, axis: int | tuple[int, ...] | None = None,
               out: None = None, overwrite_input: bool = False,
               keepdims: bool = False) -> Array:
+  r"""Return the median of array elements along a given axis, ignoring NaNs.
+
+  JAX implementation of :func:`numpy.nanmedian`.
+
+  Args:
+    a: input array.
+    axis: optional, int or sequence of ints, default=None. Axis along which the
+      median to be computed. If None, median is computed for the flattened array.
+    keepdims: bool, default=False. If true, reduced axes are left in the result
+      with size 1.
+    out: Unused by JAX.
+    overwrite_input: Unused by JAX.
+
+  Returns:
+    An array containing the median along the given axis, ignoring NaNs. If all
+    elements along the given axis are NaNs, returns ``nan``.
+
+  See also:
+    - :func:`jax.numpy.nanmean`: Compute the mean of array elements over a given
+      axis, ignoring NaNs.
+    - :func:`jax.numpy.nanmax`: Compute the maximum of array elements over given
+      axis, ignoring NaNs.
+    - :func:`jax.numpy.nanmin`: Compute the minimum of array elements over given
+      axis, ignoring NaNs.
+
+  Examples:
+    By default, the median is computed for the flattened array.
+
+    >>> nan = jnp.nan
+    >>> x = jnp.array([[2, nan, 7, nan],
+    ...                [nan, 5, 9, 2],
+    ...                [6, 1, nan, 3]])
+    >>> jnp.nanmedian(x)
+    Array(4., dtype=float32)
+
+    If ``axis=1``, the median is computed along axis 1.
+
+    >>> jnp.nanmedian(x, axis=1)
+    Array([4.5, 5. , 3. ], dtype=float32)
+
+    If ``keepdims=True``, ``ndim`` of the output is equal to that of the input.
+
+    >>> jnp.nanmedian(x, axis=1, keepdims=True)
+    Array([[4.5],
+           [5. ],
+           [3. ]], dtype=float32)
+  """
   check_arraylike("nanmedian", a)
   return nanquantile(a, 0.5, axis=axis, out=out,
                      overwrite_input=overwrite_input, keepdims=keepdims,

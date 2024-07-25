@@ -31,7 +31,6 @@ from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.maps import xmap
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -89,12 +88,12 @@ def function_effect_lowering(ctx, *, effect):
     return []
   func = mlir._emit_lowering_rule_as_fun(_f, ctx)
 
-  output_types = map(mlir.aval_to_ir_types, ctx.avals_out)
+  output_types = map(mlir.aval_to_ir_type, ctx.avals_out)
   effs = list(ctx.tokens_in.effects())
   in_tokens = [ctx.tokens_in.get(eff) for eff in effs]
   token_types = [mlir.token_type() for _ in effs]
   output_types = [*token_types, *output_types]
-  flat_output_types = util.flatten(output_types)
+  flat_output_types = mlir.flatten_ir_types(output_types)
   call = mlir.func_dialect.CallOp(flat_output_types,
                                   mlir.ir.FlatSymbolRefAttr.get(func.name.value),
                                   mlir.flatten_ir_values(in_tokens))
@@ -264,15 +263,6 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
         ValueError,
         r"Ordered effects not supported for map primitives: \[.*\]"):
       jax.make_jaxpr(f)(jnp.arange(jax.local_device_count()))
-
-  def test_xmap_inherits_effects(self):
-    def f(x):
-      effect_p.bind(effect=foo_effect)
-      effect_p.bind(effect=bar_effect)
-      return x
-    f = xmap(f, in_axes=['a'], out_axes=['a'])
-    jaxpr = jax.make_jaxpr(f)(jnp.arange(jax.local_device_count()))
-    self.assertSetEqual(jaxpr.effects, {foo_effect, bar_effect})
 
   def test_pjit_inherits_effects(self):
     def f(x):

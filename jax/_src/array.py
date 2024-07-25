@@ -32,7 +32,6 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src import errors
 from jax._src import profiler
-from jax._src import tree_util
 from jax._src import xla_bridge
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
@@ -193,7 +192,7 @@ class ArrayImpl(basearray.Array):
     # Don't rearrange if skip_checks is enabled because this assumes that the
     # input buffers are already arranged properly. This usually happens when
     # Array's are created as output of a JAX transformation
-    # (like pjit, xmap, etc).
+    # (like pjit, etc).
     if not _skip_checks or config.enable_checks.value:
       self._check_and_rearrange()
 
@@ -254,6 +253,13 @@ class ArrayImpl(basearray.Array):
   @property
   def sharding(self):
     return self._sharding
+
+  @property
+  def device(self):
+    self._check_if_deleted()
+    if isinstance(self.sharding, SingleDeviceSharding):
+      return list(self.sharding.device_set)[0]
+    return self.sharding
 
   @property
   def weak_type(self):
@@ -460,8 +466,7 @@ class ArrayImpl(basearray.Array):
 
   def __reduce__(self):
     fun, args, arr_state = self._value.__reduce__()
-    aval_state = {'weak_type': self.aval.weak_type,
-                  'named_shape': self.aval.named_shape}
+    aval_state = {'weak_type': self.aval.weak_type}
     return (_reconstruct_array, (fun, args, arr_state, aval_state))
 
   @use_cpp_method()
@@ -968,9 +973,6 @@ def make_array_from_single_device_arrays(
 
   Examples:
 
-    In this single-process example, we use ``make_array_from_single_device_arrays`` to create an
-    a global array.
-
     >>> import math
     >>> from jax.sharding import Mesh
     >>> from jax.sharding import PartitionSpec as P
@@ -991,40 +993,8 @@ def make_array_from_single_device_arrays(
     >>> arr = jax.make_array_from_single_device_arrays(global_shape, sharding, arrays)
     >>> assert arr.shape == (8,8) # arr.shape is (8,8) regardless of jax.device_count()
 
-    When using multiple processes, a common data pipeline is to have data parallelism across devices,
-    with each device receiving at least one example. In this case, the following recipe will use
-    `make_array_from_single_device_arrays` to create a global jax.Array.
-
-    First, we create the per host data as Numpy arrays.
-
-    >>> sharding = jax.sharding.NamedSharding(mesh, P(('x', 'y'),))
-    >>> rows_per_device = 2
-    >>> feature_length = 32
-    >>> per_device_shape = (rows_per_device, feature_length)
-    >>> per_host_shape = (rows_per_device * len(mesh.local_devices), feature_length)
-    >>> per_host_generator = lambda : np.arange(np.prod(per_host_shape)).reshape(per_host_shape)
-    >>> per_host_data = per_host_generator() # replace with your own per-host data pipeline that outputs numpy arrays
-
-    Second, we put the Numpy data onto the local devices as single device Jax Arrays. Then we call
-    make_array_from_single_device_arrays to make the global Array.
-
-    >>> global_shape = (rows_per_device * len(sharding.device_set), ) + per_device_shape[1:]
-    >>> per_device_data = np.split(per_host_data, len(mesh.local_devices), axis = 0) # per device data, but on host
-    >>> per_device_data_on_device = jax.device_put(per_device_data, mesh.local_devices) # per device data, now on device
-    >>> output_global_array = jax.make_array_from_single_device_arrays(global_shape, sharding, per_device_data_on_device)
-    ...
-    >>> assert output_global_array.addressable_data(0).shape == per_device_shape
-    >>> assert output_global_array.shape == global_shape
-
-    When using tensor parallelism (equivalent to sharding across both rows and columns in the
-    above example), the above example doesn't generate the data in the sharding that you plan
-    to consume it with. The most common fix is to simply load the data in this data parallel sharding
-    and have the reshard happen automatically within the downstream jitted function.
-    Depending on your use case, you might prefer to directly load sharded data, something that
-    ``make_array_from_single_device_arrays`` can do but will depend on your data loading pipeline
-    also loading in the matching sharding. Loading in a data parallel format is typically
-    fully satisfactory for data loading for LLM use cases.
-
+  For cases where you have a local array and want to convert it to a global
+  jax.Array, use ``jax.make_array_from_process_local_data``.
   """
   # All input arrays should be committed. Checking it is expensive on
   # single-controller systems.
@@ -1104,22 +1074,18 @@ def shard_device_array(x, devices, indices, sharding):
   aval = api_util.shaped_abstractify(x)
   return pxla.batched_device_put(aval, sharding, shards, devices)
 
-def _hashable_index(idx):
-  return tree_util.tree_map(
-      lambda x: (x.start, x.stop) if type(x) == slice else x, idx)
-
 
 def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
   candidates = defaultdict(list)
   bufs = [buf.data for buf in x.addressable_shards]
   arr_indices = tuple(x.sharding.devices_indices_map(x.shape).values())
   for buf, idx in safe_zip(bufs, arr_indices):
-    candidates[_hashable_index(idx)].append(buf)
+    candidates[hashed_index(idx)].append(buf)
 
   bufs = []
   for idx, device in safe_zip(indices, devices):
     # Look up all buffers that contain the correct slice of the logical array.
-    candidates_list = candidates[_hashable_index(idx)]
+    candidates_list = candidates[hashed_index(idx)]
     if not candidates_list:
       # This array isn't sharded correctly. Reshard it via host roundtrip.
       # TODO(skye): more efficient reshard?

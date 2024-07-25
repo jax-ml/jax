@@ -16,6 +16,7 @@
 
 from functools import partial
 import itertools
+import unittest
 
 import numpy as np
 import scipy
@@ -33,6 +34,7 @@ from jax._src import config
 from jax._src.lax import linalg as lax_linalg
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
+from jax._src.lib import xla_extension_version
 from jax._src.numpy.util import promote_dtypes_inexact
 
 config.parse_flags_with_absl()
@@ -47,7 +49,7 @@ int_types = jtu.dtypes.all_integer
 
 def _is_required_cuda_version_satisfied(cuda_version):
   version = xla_bridge.get_backend().platform_version
-  if version == "<unknown>" or version.split()[0] == "rocm":
+  if version == "<unknown>" or "rocm" in version.split():
     return False
   else:
     return int(version.split()[-1]) >= cuda_version
@@ -721,6 +723,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       dtype=int_types + float_types + complex_types
   )
   @jax.default_matmul_precision("float32")
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testVecdot(self, lhs_shape, rhs_shape, axis, dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
@@ -908,7 +911,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       if dtype == np.complex128:
         atol = 2e-13
       else:
-        atol = 5e-4
+        atol = 6e-4
       self.assertArraysAllClose(t_out, b.real, atol=atol)
 
   def testJspSVDBasic(self):
@@ -1075,6 +1078,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     dtype=float_types + complex_types,
   )
   @jtu.ignore_warning(category=FutureWarning, message="jnp.linalg.solve: batched")
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testSolve(self, lhs_shape, rhs_shape, dtype):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(lhs_shape, dtype), rng(rhs_shape, dtype)]
@@ -1088,6 +1092,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
       rhs_shape=[(2,), (2, 2), (2, 2, 2), (2, 2, 2, 2)]
   )
   @jtu.ignore_warning(category=FutureWarning, message="jnp.linalg.solve: batched")
+  @jax.numpy_rank_promotion('allow')  # This test explicitly exercises implicit rank promotion.
   def testSolveBroadcasting(self, lhs_shape, rhs_shape):
     # Batched solve can involve some ambiguities; this test checks
     # that we match NumPy's convention in all cases.
@@ -1619,6 +1624,15 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         partial(jvp, lax.linalg.triangular_solve),
         (a, b),
         (a, b))
+
+  @unittest.skipIf(xla_extension_version < 277, "Requires jaxlib > 0.4.30")
+  def testTriangularSolveSingularBatched(self):
+    x = jnp.array([[1, 1], [0, 0]], dtype=np.float32)
+    y = jnp.array([[1], [1.]], dtype=np.float32)
+    out = jax.lax.linalg.triangular_solve(x[None], y[None], left_side=True)
+    # x is singular. The triangular solve may contain either nans or infs, but
+    # it should not consist of only finite values.
+    self.assertFalse(np.all(np.isfinite(out)))
 
   @jtu.sample_product(
     n=[1, 4, 5, 20, 50, 100],

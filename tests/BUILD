@@ -39,6 +39,11 @@ jax_test(
 )
 
 jax_test(
+    name = "device_test",
+    srcs = ["device_test.py"],
+)
+
+jax_test(
     name = "dynamic_api_test",
     srcs = ["dynamic_api_test.py"],
     shard_count = 2,
@@ -208,30 +213,6 @@ py_test(
     deps = [
         "//jax",
         "//jax:test_util",
-    ],
-)
-
-jax_test(
-    name = "xmap_test",
-    srcs = ["xmap_test.py"],
-    backend_tags = {
-        "gpu": [
-            "noasan",  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
-        ],
-        "tpu": [
-            "noasan",  # Times out.
-            "nomsan",  # Times out.
-            "notsan",  # Times out.
-        ],
-    },
-    shard_count = {
-        "cpu": 10,
-        "gpu": 4,
-        "tpu": 4,
-    },
-    tags = ["multiaccelerator"],
-    deps = [
-        "//jax:maps",
     ],
 )
 
@@ -438,9 +419,12 @@ jax_test(
     shard_count = {
         "cpu": 40,
         "gpu": 40,
-        "tpu": 40,
+        "tpu": 50,
     },
-    tags = ["noasan"],  # Test times out on all backends
+    tags = [
+        "noasan",  # Test times out on all backends
+        "test_cpu_thunks",
+    ],
 )
 
 jax_test(
@@ -451,6 +435,7 @@ jax_test(
         "gpu": 30,
         "tpu": 40,
     },
+    tags = ["test_cpu_thunks"],
 )
 
 jax_test(
@@ -461,6 +446,7 @@ jax_test(
         "gpu": 20,
         "tpu": 20,
     },
+    tags = ["test_cpu_thunks"],
 )
 
 jax_test(
@@ -481,16 +467,19 @@ jax_test(
         "gpu": 10,
         "tpu": 10,
     },
+    tags = ["test_cpu_thunks"],
 )
 
 jax_test(
     name = "lax_numpy_ufuncs_test",
     srcs = ["lax_numpy_ufuncs_test.py"],
+    tags = ["test_cpu_thunks"],
 )
 
 jax_test(
     name = "lax_numpy_vectorize_test",
     srcs = ["lax_numpy_vectorize_test.py"],
+    tags = ["test_cpu_thunks"],
 )
 
 jax_test(
@@ -555,6 +544,7 @@ jax_test(
         "gpu": 40,
         "tpu": 40,
     },
+    tags = ["test_cpu_thunks"],
     deps = [
         "//jax:internal_test_util",
         "//jax:lax_reference",
@@ -584,6 +574,7 @@ jax_test(
         "gpu": 40,
         "tpu": 20,
     },
+    tags = ["test_cpu_thunks"],
 )
 
 jax_test(
@@ -594,6 +585,7 @@ jax_test(
         "gpu": 40,
         "tpu": 40,
     },
+    tags = ["test_cpu_thunks"],
     deps = ["//jax:internal_test_util"] + py_deps("numpy") + py_deps("absl/testing"),
 )
 
@@ -605,6 +597,7 @@ jax_test(
         "gpu": 40,
         "tpu": 40,
     },
+    tags = ["test_cpu_thunks"],
     deps = ["//jax:internal_test_util"] + py_deps("numpy") + py_deps("absl/testing"),
 )
 
@@ -647,6 +640,7 @@ jax_test(
         "gpu": 40,
         "tpu": 40,
     },
+    tags = ["test_cpu_thunks"],
 )
 
 jax_test(
@@ -1158,6 +1152,7 @@ py_test(
 jax_test(
     name = "compilation_cache_test",
     srcs = ["compilation_cache_test.py"],
+    tags = ["test_cpu_thunks"],
     deps = [
         "//jax:compilation_cache_internal",
         "//jax:compiler",

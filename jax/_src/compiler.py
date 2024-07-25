@@ -33,6 +33,7 @@ from jax._src import profiler
 from jax._src import traceback_util
 from jax._src.interpreters import mlir
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 import numpy as np
 
@@ -91,11 +92,29 @@ def use_detailed_logging(module: ir.Module) -> bool:
   return _walk_operations(module.operation, bound) < 0
 
 
+def log_persistent_cache_hit(module_name: str) -> None:
+  hit_log_priority = (logging.WARNING if config.log_compiles.value
+                      else logging.DEBUG)
+  logger.log(hit_log_priority, "Persistent compilation cache hit for '%s'",
+             module_name)
+
+
+def log_persistent_cache_miss(module_name: str) -> None:
+  miss_log_priority = (logging.WARNING
+                        if config.explain_cache_misses.value
+                        and compilation_cache.is_persistent_cache_enabled()
+                        else logging.DEBUG)
+  # all caps to match the tracing cache "TRACING CACHE MISS"
+  logger.log(miss_log_priority, "PERSISTENT COMPILATION CACHE MISS for '%s'",
+             module_name)
+
+
 def get_compile_options(
     num_replicas: int,
     num_partitions: int,
     device_assignment=None,
     use_spmd_partitioning: bool = True,
+    use_shardy_partitioner: bool = False,
     use_auto_spmd_partitioning: bool = False,
     auto_spmd_partitioning_mesh_shape: list[int] | None = None,
     auto_spmd_partitioning_mesh_ids: list[int] | None = None,
@@ -115,6 +134,10 @@ def get_compile_options(
       `num_partitions`.
     use_spmd_partitioning: boolean indicating whether to enable SPMD or MPMD
       partitioning in XLA.
+    use_shardy_partitioner: boolean indicating whether to use the Shardy
+      partitioner in XLA. Shardy is a new open sourced propagation framework for
+      MLIR. Currently Shardy is experimental in JAX. See
+      www.github.com/openxla/shardy.
     use_auto_spmd_partitioning: boolean indicating whether to automatically
       generate XLA shardings for SPMD partitioner.
     auto_spmd_partitioning_mesh_shape: device mesh shape used to create
@@ -124,8 +147,8 @@ def get_compile_options(
     env_options_overrides: dict of additional options parsed by the compiler
     fdo_profile: Optional profile for feedback-directed optimization passed to
       XLA.
-    detailed_logging: Is this an "interesting" computation about which XLA
-      would be wise to log compilation information?
+    detailed_logging: Is this an "interesting" computation about which XLA would
+      be wise to log compilation information?
     backend: the client, if available.
   """
   compile_options = xc.CompileOptions()
@@ -177,6 +200,11 @@ def get_compile_options(
     debug_options.xla_llvm_disable_expensive_passes = True
     debug_options.xla_test_all_input_layouts = False
 
+  # TODO(b/352486192): Set this on compile_options after the field is moved to
+  # the `ExecutableBuildOptions` proto.
+  if xla_extension_version >= 278:
+    debug_options.xla_use_shardy = use_shardy_partitioner
+
   # XLA-AutoFDO profile version: precedence order is:
   # 1. Whatever --jax_xla_profile_version is set to.
   # 2. If --jax_xla_profile_version is not set (i.e., 0), call the function
@@ -209,6 +237,7 @@ def get_compile_options(
   debug_options.xla_detailed_logging = detailed_logging
 
   return compile_options
+
 
 @profiler.annotate_function
 def backend_compile(
@@ -251,23 +280,12 @@ def compile_or_get_cached(
   if dumped_to := mlir.dump_module_to_file(computation, "compile"):
     logging.info("Dumped the module to %s.", dumped_to)
 
-  # Persistent compilation cache only implemented on TPU and GPU and the backend
-  # that supports serialization of executables.
-  # TODO(skye): add warning when initializing cache on unsupported default platform
-  supported_platforms = ["tpu", "gpu", "cpu"]
-  use_compilation_cache = (
-      config.enable_compilation_cache.value
-      and getattr(backend, "supports_executable_serialization", True)
-      and backend.platform in supported_platforms
-  )
+  use_compilation_cache = compilation_cache.is_cache_used(backend)
 
   if not use_compilation_cache:
     return backend_compile(backend, computation, compile_options,
                            host_callbacks)
 
-  compilation_cache.set_once_cache_used(
-      lambda: monitoring.record_event(
-          "/jax/compilation_cache/tasks_using_cache"))
   monitoring.record_event('/jax/compilation_cache/compile_requests_use_cache')
 
   try:
@@ -330,7 +348,7 @@ def compile_or_get_cached(
 
   if retrieved_executable is not None:
     assert retrieved_compile_time is not None
-    logger.debug("Persistent compilation cache hit for '%s'", module_name)
+    log_persistent_cache_hit(module_name)
 
     monitoring.record_event('/jax/compilation_cache/cache_hits')
     monitoring.record_event_duration_secs(
@@ -349,6 +367,7 @@ def compile_or_get_cached(
       # them.
       and len(host_callbacks) == 0
   ):
+    log_persistent_cache_miss(module_name)
     return _compile_and_share_module(
         backend,
         computation,
@@ -364,6 +383,7 @@ def compile_or_get_cached(
       and is_multi_process
       and distributed.global_state.client is not None
   ):
+    log_persistent_cache_miss(module_name)
     return _compile_and_write_autotune_config(
         backend,
         computation,
@@ -375,6 +395,7 @@ def compile_or_get_cached(
         min_device_process_id
     )
   else:
+    log_persistent_cache_miss(module_name)
     return _compile_and_write_cache(
         backend,
         computation,
@@ -655,19 +676,26 @@ def _cache_write(cache_key: str,
   """
   # Only write cache entries from the first process. Otherwise we create
   # problems with contention for writes on some filesystems, e.g., GCS.
+  log_priority = (logging.WARNING
+                  if config.explain_cache_misses.value
+                  and compilation_cache.is_persistent_cache_enabled()
+                  else logging.DEBUG)
   if distributed.global_state.process_id != 0:
-    logger.debug("Not writing persistent cache entry since process_id != 0")
+    logger.log(log_priority,
+               "Not writing persistent cache entry since process_id != 0")
     return
 
   if host_callbacks:
-    logger.debug(
+    logger.log(
+        log_priority,
         "Not writing persistent cache entry for '%s' because it uses host "
         "callbacks (e.g. from jax.debug.print or breakpoint)", module_name)
     return
 
   min_compile_time = config.persistent_cache_min_compile_time_secs.value
   if compile_time_secs < min_compile_time:
-    logger.debug(
+    logger.log(
+        log_priority,
         "Not writing persistent cache entry for '%s' because it took < %.2f "
         "seconds to compile (%.2fs)", module_name, min_compile_time,
         compile_time_secs)

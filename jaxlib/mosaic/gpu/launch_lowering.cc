@@ -27,6 +27,7 @@ limitations under the License.
 // TODO(apaszke): Implement a third function that properly cleans up the
 // resources allocated by the first function.
 
+#include <cassert>
 #include <memory>
 #include <vector>
 
@@ -98,13 +99,12 @@ mlir::Value packKernelArgs(mlir::OpBuilder &builder,
 void emitRuntimeDecls(mlir::ModuleOp module) {
   auto ptr_ty = mlir::LLVM::LLVMPointerType::get(module.getContext());
   auto i32 = mlir::IntegerType::get(module.getContext(), 32);
-  auto i64 = mlir::IntegerType::get(module.getContext(), 64);
   auto decl_builder = mlir::OpBuilder::atBlockBegin(module.getBody());
   decl_builder.create<mlir::func::FuncOp>(
       module.getLoc(), decl_builder.getStringAttr("mosaic_gpu_launch_kernel"),
       mlir::FunctionType::get(module.getContext(),
-                              {ptr_ty, i64, i64, i64, i64, i64, i64, i32,
-                               ptr_ty, ptr_ty},
+                              {ptr_ty, i32, i32, i32, i32, i32, i32, i32, i32,
+                               i32, i32, ptr_ty, ptr_ty},
                               {}),
       decl_builder.getStringAttr("private"), /*arg_attr=*/nullptr,
       /*res_attrs=*/nullptr);
@@ -115,7 +115,7 @@ void emitRuntimeDecls(mlir::ModuleOp module) {
       /*res_attrs=*/nullptr);
   decl_builder.create<mlir::func::FuncOp>(
       module.getLoc(), decl_builder.getStringAttr("mosaic_gpu_get_function"),
-      mlir::FunctionType::get(module.getContext(), {ptr_ty, ptr_ty, i32},
+      mlir::FunctionType::get(module.getContext(), {ptr_ty, ptr_ty, i32, i32},
                               {ptr_ty}),
       decl_builder.getStringAttr("private"), /*arg_attr=*/nullptr,
       /*res_attrs=*/nullptr);
@@ -125,7 +125,8 @@ void buildInitFunction(mlir::OpBuilder &module_builder,
                        mlir::func::FuncOp init_func,
                        llvm::StringRef kernel_name,
                        mlir::gpu::ObjectAttr object,
-                       mlir::Value dynamic_smem_size) {
+                       mlir::Value dynamic_smem_size,
+                       mlir::gpu::KernelDim3 cluster_shape) {
   auto i32 = mlir::IntegerType::get(init_func.getContext(), 32);
   auto ptr_ty = mlir::LLVM::LLVMPointerType::get(init_func.getContext());
   mlir::Location loc = init_func.getLoc();
@@ -174,11 +175,34 @@ void buildInitFunction(mlir::OpBuilder &module_builder,
               mlir::cast<mlir::IntegerAttr>(const_smem.getValue()).getInt()));
     }
   }
+  mlir::Value cluster_size;
+  if (cluster_shape.x) {
+    assert(cluster_shape.y && cluster_shape.z);
+    auto const_x = cluster_shape.x.getDefiningOp<mlir::LLVM::ConstantOp>();
+    auto const_y = cluster_shape.y.getDefiningOp<mlir::LLVM::ConstantOp>();
+    auto const_z = cluster_shape.z.getDefiningOp<mlir::LLVM::ConstantOp>();
+    if (const_x && const_y && const_z) {
+      cluster_size = builder.create<mlir::LLVM::ConstantOp>(
+          loc, i32,
+          builder.getI32IntegerAttr(
+              mlir::cast<mlir::IntegerAttr>(const_x.getValue()).getInt() *
+              mlir::cast<mlir::IntegerAttr>(const_y.getValue()).getInt() *
+              mlir::cast<mlir::IntegerAttr>(const_z.getValue()).getInt()));
+    } else {
+      cluster_size = builder.create<mlir::LLVM::ConstantOp>(
+          loc, i32, builder.getI32IntegerAttr(-1));
+    }
+  } else {
+    assert(!cluster_shape.y && !cluster_shape.z);
+    cluster_size = builder.create<mlir::LLVM::ConstantOp>(
+        loc, i32, builder.getI32IntegerAttr(1));
+  }
   mlir::Value kernel_handle =
       builder
           .create<mlir::func::CallOp>(
               loc, "mosaic_gpu_get_function", ptr_ty,
-              mlir::ValueRange{module_handle, kernel_name_ptr, used_smem})
+              mlir::ValueRange{module_handle, kernel_name_ptr, used_smem,
+                               cluster_size})
           .getResult(0);
   builder.create<mlir::LLVM::StoreOp>(loc, module_handle,
                                       init_func.getArgument(0));
@@ -195,19 +219,33 @@ mlir::LogicalResult launchPreloadedKernel(mlir::func::FuncOp func,
   mlir::Value dynamic_smem = launch.getDynamicSharedMemorySize();
   if (!dynamic_smem) {
     dynamic_smem = builder.create<mlir::LLVM::ConstantOp>(
-        launch.getLoc(), builder.getI64Type(), builder.getI64IntegerAttr(0));
+        launch.getLoc(), builder.getI32Type(), builder.getI32IntegerAttr(0));
   }
   mlir::Value arg_ptr_array = packKernelArgs(builder, launch);
+  auto as_32bit = [&](mlir::gpu::KernelDim3 dim) {
+    dim.x = builder.create<mlir::LLVM::TruncOp>(launch.getLoc(),
+                                                builder.getI32Type(), dim.x);
+    dim.y = builder.create<mlir::LLVM::TruncOp>(launch.getLoc(),
+                                                builder.getI32Type(), dim.y);
+    dim.z = builder.create<mlir::LLVM::TruncOp>(launch.getLoc(),
+                                                builder.getI32Type(), dim.z);
+    return dim;
+  };
+  mlir::gpu::KernelDim3 grid = as_32bit(launch.getGridSizeOperandValues());
+  mlir::gpu::KernelDim3 block = as_32bit(launch.getBlockSizeOperandValues());
+  mlir::gpu::KernelDim3 cluster;
   if (launch.hasClusterSize()) {
-    return launch.emitOpError("Clusters not supported yet.");
+    cluster = as_32bit(launch.getClusterSizeOperandValues());
+  } else {
+    cluster.x = cluster.y = cluster.z = builder.create<mlir::LLVM::ConstantOp>(
+      launch.getLoc(), builder.getI32Type(), builder.getI32IntegerAttr(0));
   }
-  mlir::gpu::KernelDim3 grid = launch.getGridSizeOperandValues();
-  mlir::gpu::KernelDim3 block = launch.getBlockSizeOperandValues();
   mlir::Value stream = launch.getAsyncObject();
   builder.create<mlir::func::CallOp>(
       launch.getLoc(), "mosaic_gpu_launch_kernel", mlir::TypeRange{},
-      mlir::ValueRange{kernel_handle, grid.x, grid.y, grid.z, block.x, block.y,
-                       block.z, dynamic_smem, stream, arg_ptr_array});
+      mlir::ValueRange{kernel_handle, grid.x, grid.y, grid.z, cluster.x,
+                       cluster.y, cluster.z, block.x, block.y, block.z,
+                       dynamic_smem, stream, arg_ptr_array});
   return mlir::success();
 }
 
@@ -288,9 +326,13 @@ class GpuLaunchLoweringPass : public ::mlir::OperationPass<mlir::ModuleOp> {
             return mlir::WalkResult::interrupt();
           }
 
+          mlir::gpu::KernelDim3 cluster_shape;
+          if (launch.hasClusterSize()) {
+            cluster_shape = launch.getClusterSizeOperandValues();
+          }
           buildInitFunction(module_builder, init_func,
                             launch.getKernelName().getValue(), object,
-                            launch.getDynamicSharedMemorySize());
+                            launch.getDynamicSharedMemorySize(), cluster_shape);
 
           // Add a new function argument for the kernel handle.
           func.insertArgument(0, ptr_ty,

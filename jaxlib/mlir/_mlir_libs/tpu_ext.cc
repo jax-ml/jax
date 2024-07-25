@@ -317,6 +317,29 @@ MlirContext getDefaultContext() {
 PYBIND11_MODULE(_tpu_ext, m) {
   mlirRegisterTPUPasses();  // Register all passes on load.
 
+  py::class_<MlirTpuApplyVectorLayoutContext>(m, "ApplyVectorLayoutCtx",
+                                              py::module_local())
+      .def(py::init([](int hardware_generation, py::tuple target_shape,
+                       py::tuple mxu_shape, int max_sublanes_in_scratch) {
+             if (target_shape.size() != 2) {
+               throw py::value_error("target_shape should be of length 2");
+             }
+             if (mxu_shape.size() != 2) {
+               throw py::value_error("mxu_shape should be of length 2");
+             }
+             return MlirTpuApplyVectorLayoutContext{
+                 .hardware_generation = hardware_generation,
+                 .target_shape = {target_shape[0].cast<int64_t>(),
+                                  target_shape[1].cast<int64_t>()},
+                 .mxu_shape = {mxu_shape[0].cast<int64_t>(),
+                               mxu_shape[1].cast<int64_t>()},
+                 .max_sublanes_in_scratch = max_sublanes_in_scratch};
+           }),
+           py::arg("hardware_generation") = -1,
+           py::arg("target_shape") = toPyTuple(TARGET_SHAPE),
+           py::arg("mxu_shape") = py::make_tuple(128, 128),
+           py::arg("max_sublanes_in_scratch") = 0);
+
   py::class_<MlirTpuVregDataBounds>(m, "VRegDataBounds", py::module_local())
       .def("mask_varies_along",
            [](MlirTpuVregDataBounds self, MlirTpuDirection direction) {
@@ -648,10 +671,11 @@ PYBIND11_MODULE(_tpu_ext, m) {
           }
         });
   m.def("relayout",
-        [](MlirValue v, MlirTpuVectorLayout src, MlirTpuVectorLayout dst) {
+        [](MlirValue v, MlirTpuVectorLayout src, MlirTpuVectorLayout dst,
+           MlirTpuApplyVectorLayoutContext apply_layout_ctx) {
           DiagnosticCapture diag_capture(getDefaultContext());
           MlirValue new_v = mlirTpuRelayout(getDefaultInsertionPoint(), v, src,
-                                            dst, TARGET_SHAPE);
+                                            dst, apply_layout_ctx);
           if (new_v.ptr == nullptr) {
             diag_capture.throwIfError();
             throw py::value_error("Failed to relayout");

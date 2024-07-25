@@ -550,21 +550,30 @@ def _check_shapedarray(aval: core.AbstractValue) -> core.ShapedArray:
 
 def _shard_aval(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
                 ) -> core.AbstractValue:
-  if isinstance(aval, core.ShapedArray):
-    return aval.update(tuple(sz // prod(mesh.shape[n] for n in names.get(i, ()))
-                             for i, sz in enumerate(aval.shape)))
-  else:
-    raise NotImplementedError  # TODO(mattjj): add table with handlers
+  if type(aval) in core.shard_aval_handlers:
+    return core.shard_aval_handlers[type(aval)](mesh, names, aval)
+  raise NotImplementedError(f"Unsupported aval type: {type(aval)}")
 
 def _unshard_aval(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
                  ) -> core.AbstractValue:
-  if isinstance(aval, core.ShapedArray):
-    return aval.update(tuple(sz * prod(mesh.shape[n] for n in names.get(i, ()))
-                             for i, sz in enumerate(aval.shape)),
-                       named_shape={k: v for k, v in aval.named_shape.items()
-                                    if k not in mesh.shape})
+  if type(aval) in core.unshard_aval_handlers:
+    return core.unshard_aval_handlers[type(aval)](mesh, names, aval)
   else:
-    raise NotImplementedError  # TODO(mattjj): add table with handlers
+    raise NotImplementedError(f"Unsupported aval type: {type(aval)}")
+
+def _shard_shaped_array(mesh: Mesh, names: AxisNames, aval: core.AbstractValue
+                       ) -> core.AbstractValue:
+  assert isinstance(aval, core.ShapedArray)
+  return aval.update(tuple(sz // prod(mesh.shape[n] for n in names.get(i, ()))
+                            for i, sz in enumerate(aval.shape)))
+core.shard_aval_handlers[core.ShapedArray] = _shard_shaped_array
+
+def _unshard_shaped_array(mesh: Mesh, names: AxisNames,
+                          aval: core.AbstractValue,) -> core.AbstractValue:
+  assert isinstance(aval, core.ShapedArray)
+  return aval.update(tuple(sz * prod(mesh.shape[n] for n in names.get(i, ()))
+                            for i, sz in enumerate(aval.shape)))
+core.unshard_aval_handlers[core.ShapedArray] = _unshard_shaped_array
 
 # Type-checking
 
@@ -938,6 +947,7 @@ ad.deflinear2(psum2_p, _psum2_transpose_rule)
 # pbroadcast_p is exactly the transpose of psum2_p
 def pbroadcast(x, axis_name):
   axes = (axis_name,) if not isinstance(axis_name, tuple) else axis_name
+  if not axis_name: return x
   xs, treedef = tree_flatten(x)
   ys = pbroadcast_p.bind(*xs, axes=axes, axis_index_groups=None)
   return tree_unflatten(treedef, ys)
@@ -1052,13 +1062,14 @@ def _psum_check(_, *in_rep, axes, axis_index_groups):
   assert False  # should be rewritten away
 
 @register_rewrite(lax_parallel.psum_p)
-def _psum_rewrite(_, in_rep, *args, axes, axis_index_groups):
+def _psum_rewrite(mesh, in_rep, *args, axes, axis_index_groups):
   # Replace the psum with psum2, insert pbroadcasts on input, replicated output.
   if axis_index_groups is not None: raise NotImplementedError
   axes = (axes,) if not isinstance(axes, tuple) else axes
-  out_rep = [r | set(axes) for r in in_rep]  # TODO determinism (and elsewhere)
-  args_ = [pbroadcast(x, tuple(n for n in src if n not in dst))
-           if src - dst else x for x, src, dst in zip(args, in_rep, out_rep)]
+  axes_ = set(axes)
+  out_rep = [r | axes_ for r in in_rep]  # TODO determinism (and elsewhere)
+  args_ = [pbroadcast(x, tuple(n for n in mesh.axis_names if n in axes_ & src))
+           for x, src in zip(args, in_rep)]
   out_val = psum2_p.bind(*args_, axes=axes, axis_index_groups=axis_index_groups)
   return out_val, out_rep
 
@@ -1250,6 +1261,20 @@ def _custom_vjp_call_jaxpr_rewrite(
 @register_check(custom_derivatives.custom_vjp_call_jaxpr_p)
 def _custom_vjp_call_jaxpr_check(mesh, *in_rep, fun_jaxpr, **_):
   return _check_rep(mesh, fun_jaxpr.jaxpr, in_rep)
+
+
+# TODO(mattjj): make standard_check handle multiple outputs, share code
+@register_check(control_flow.solves.linear_solve_p)
+def _linear_solve_check(mesh, *in_rep, const_lengths, jaxprs):
+  in_rep_ = [r for r in in_rep if r is not None]
+  assert in_rep
+  if not in_rep_[:-1] == in_rep_[1:]:
+    msg = ("shard_map check_rep rewrite failed. Please open an issue at "
+           "https://github.com/google/jax/issues and as a workaround pass the "
+           "check_rep=False argument to shard_map")
+    raise Exception(msg)
+  return [in_rep_[0]] * len(jaxprs.solve.out_avals)
+register_standard_rewrite(control_flow.solves.linear_solve_p)
 
 
 del _check_rules[lax.tie_p]
@@ -1709,15 +1734,13 @@ def pmap(f, axis_name=None, *, in_axes=0, out_axes=0,
   def wrapped(*args, **kwargs):
     (jitted_f, flat_global_args, out_tree, mesh,
      out_specs) = infer_params(*args, **kwargs)
-    with jax.spmd_mode('allow_all'):
-      outs = jitted_f(*flat_global_args)
-      outs = global_array_to_host_local_array(outs, mesh, out_specs())
+    outs = jitted_f(*flat_global_args)
+    outs = global_array_to_host_local_array(outs, mesh, out_specs())
     return tree_unflatten(out_tree(), outs)
 
   def lower(*args, **kwargs):
     jitted_f, _, _, _, _ = infer_params(*args, **kwargs)
-    with jax.spmd_mode('allow_all'):
-      return jitted_f.lower(*args, **kwargs)
+    return jitted_f.lower(*args, **kwargs)
   wrapped.lower = lower
 
   return wrapped

@@ -19,20 +19,23 @@ from collections.abc import Sequence
 import dataclasses
 import enum
 import functools
-from typing import Any
+from typing import Any, Hashable
 
+import jax
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import tree_util
 from jax._src import util
 import jax.numpy as jnp
 from jax._src.pallas import core as pallas_core
+import numpy as np
 
 map, unsafe_map = util.safe_map, map
 zip, unsafe_zip = util.safe_zip, zip
 
 partial = functools.partial
 Grid = pallas_core.Grid
+TupleGrid = pallas_core.TupleGrid
 BlockSpec = pallas_core.BlockSpec
 BlockSpecTree = pallas_core.BlockSpecTree
 GridMapping = pallas_core.GridMapping
@@ -149,7 +152,8 @@ def _make_aval(obj: object) -> jax_core.AbstractValue:
 
 @dataclasses.dataclass(init=False, unsafe_hash=True)
 class PrefetchScalarGridSpec(pallas_core.GridSpec):
-  grid: Grid
+  grid: TupleGrid
+  grid_names: tuple[Hashable, ...] | None
   num_scalar_prefetch: int
   in_specs: tuple[BlockSpec | NoBlockSpec, ...]
   out_specs: tuple[BlockSpec | NoBlockSpec, ...]
@@ -187,9 +191,9 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
     in_avals, in_avals_tree = tree_util.tree_flatten(tuple(unflat_in_avals))
     flat_in_specs, flat_out_specs = self._get_in_out_specs(
         in_avals, in_avals_tree, out_avals, out_tree)
-    in_specs, in_ref_avals, out_specs, out_ref_avals = (
+    in_ref_avals, out_ref_avals = (
         pallas_core._get_ref_avals(
-            self.grid, in_avals, flat_in_specs, in_paths[num_flat_scalar_prefetch:],
+            in_avals, flat_in_specs, in_paths[num_flat_scalar_prefetch:],
             out_avals, flat_out_specs, out_paths))
     scalar_ref_avals = [
         AbstractMemoryRef(jax_core.ShapedArray(aval.shape, aval.dtype),
@@ -209,7 +213,7 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
             mapped_dims=(),
             what="input",
         ),
-        in_specs,
+        flat_in_specs,
         in_paths[num_flat_scalar_prefetch:],
         in_ref_avals,
     )
@@ -222,12 +226,12 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
             mapped_dims=(),
             what="output",
         ),
-        out_specs,
+        flat_out_specs,
         out_paths,
         out_ref_avals,
     )
     grid_mapping = GridMapping(
-        grid=grid_mapping_grid,  # type: ignore
+        grid=grid_mapping_grid, grid_names=self.grid_names, # type: ignore
         block_mappings=(*in_block_mappings, *out_block_mappings),
         mapped_dims=(),
         num_index_operands=num_flat_scalar_prefetch,
@@ -247,3 +251,17 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
       jaxpr_out_avals = (jaxpr_out_avals,)
     return (*jaxpr_in_avals, *jaxpr_out_avals,
             *jaxpr_scratch_avals), grid_mapping
+
+
+@dataclasses.dataclass(frozen=True)
+class TensorCore:
+  id: int
+
+
+def create_tensorcore_mesh(axis_name: str) -> pallas_core.PallasMesh:
+  # TODO(b/355036384): emit a better error if we don't have tensorcores.
+  num_cores = jax.devices()[0].num_cores
+  return pallas_core.PallasMesh(
+      np.array([TensorCore(i) for i in range(num_cores)]),
+      [axis_name],
+  )

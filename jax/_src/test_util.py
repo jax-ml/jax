@@ -22,13 +22,14 @@ import datetime
 import functools
 from functools import partial
 import inspect
+import logging
 import math
 import os
 import re
 import sys
 import tempfile
 import textwrap
-from typing import Any
+from typing import Any, TextIO
 import unittest
 import warnings
 import zlib
@@ -107,6 +108,13 @@ TEST_WITH_PERSISTENT_COMPILATION_CACHE = config.bool_flag(
     help='If enabled, the persistent compilation cache will be enabled for all '
     'test cases. This can be used to increase compilation cache coverage.')
 
+HYPOTHESIS_PROFILE = config.string_flag(
+    'hypothesis_profile',
+    os.getenv('JAX_HYPOTHESIS_PROFILE', 'deterministic'),
+    help=('Select the hypothesis profile to use for testing. Available values: '
+          'deterministic, interactive'),
+)
+
 # We sanitize test names to ensure they work with "unitttest -k" and
 # "pytest -k" test filtering. pytest accepts '[' and ']' but unittest -k
 # does not. We replace sequences of problematic characters with a single '_'.
@@ -180,53 +188,47 @@ def check_eq(xs, ys, err_msg=''):
   tree_all(tree_map(assert_close, xs, ys))
 
 
-# TODO(yashkatariya): Make this context manager check for deprecation message
-# in OSS.
 @contextmanager
-def unaccelerate_getattr_deprecation(module, name):
-  message, prev_attr = module._deprecations[name]
-  module._deprecations[name] = (message, getattr(module, f"_deprecated_{name}"))
-  try:
-    yield
-  finally:
-    module._deprecations[name] = (message, prev_attr)
-
-@contextmanager
-def capture_stdout() -> Generator[Callable[[], str], None, None]:
-  """Context manager to capture all output written to stdout.
+def _capture_output(fp: TextIO) -> Generator[Callable[[], str], None, None]:
+  """Context manager to capture all output written to a given file object.
 
   Unlike ``contextlib.redirect_stdout``, this context manager works for
-  both pure Python and native code.
+  any file object and also for both pure Python and native code.
 
   Example::
 
-    with capture_stdout() as get_captured:
+    with capture_output(sys.stdout) as get_output:
       print(42)
-    print("Captured": get_captured())
+    print("Captured": get_output())
 
   Yields:
     A function returning the captured output. The function must be called
     *after* the context is no longer active.
   """
-  # ``None`` means the stdout has not been captured yet.
+  # ``None`` means nothing has not been captured yet.
   captured = None
 
-  def get_captured() -> str:
+  def get_output() -> str:
     if captured is None:
-      raise ValueError("get_captured() called while the context is active.")
+      raise ValueError("get_output() called while the context is active.")
     return captured
 
   with tempfile.NamedTemporaryFile(mode="w+", encoding='utf-8') as f:
-    original_stdout = os.dup(sys.stdout.fileno())
-    os.dup2(f.fileno(), sys.stdout.fileno())
+    original_fd = os.dup(fp.fileno())
+    os.dup2(f.fileno(), fp.fileno())
     try:
-      yield get_captured
+      yield get_output
     finally:
       # Python also has its own buffers, make sure everything is flushed.
-      sys.stdout.flush()
+      fp.flush()
+      os.fsync(fp.fileno())
       f.seek(0)
       captured = f.read()
-      os.dup2(original_stdout, sys.stdout.fileno())
+      os.dup2(original_fd, fp.fileno())
+
+
+capture_stdout = partial(_capture_output, sys.stdout)
+capture_stderr = partial(_capture_output, sys.stderr)
 
 
 @contextmanager
@@ -1471,23 +1473,31 @@ def parameterized_filterable(*,
     testcase_name: Callable[[dict[str, Any]], str] | None = None,
     one_containing: str | None = None,
 ):
-  """
-  Decorator for named parameterized tests, with filtering.
+  """Decorator for named parameterized tests, with filtering support.
 
-  Works like parameterized.named_parameters, except that it supports the
-  `one_containing` option. This is useful to select only one of the tests,
-  and to leave the test name unchanged (helps with specifying the desired test
-  when debugging).
+  Works like ``parameterized.named_parameters``, except that it sanitizes the test
+  names so that we can use ``pytest -k`` and ``python test.py -k`` test filtering.
+  This means, e.g., that many special characters are replaced with `_`.
+  It also supports the ``one_containing`` arg to select one of the tests, while
+  leaving the name unchanged, which is useful for IDEs to be able to easily
+  pick up the enclosing test name.
+
+  Usage:
+     @jtu.parameterized_filterable(
+       # one_containing="a_4",
+       [dict(a=4, b=5),
+        dict(a=5, b=4)])
+     def test_my_test(self, *, a, b): ...
 
   Args:
     kwargs: Each entry is a set of kwargs to be passed to the test function.
     testcase_name: Optionally, a function to construct the testcase_name from
-      one kwargs dict. If not given then kwarg may contain `testcase_name` and
-      if not, the test case name is constructed as `str(kwarg)`.
+      one kwargs dict. If not given then ``kwargs`` may contain ``testcase_name`` and
+      otherwise the test case name is constructed as ``str(kwarg)``.
       We sanitize the test names to work with -k test filters. See
-      `sanitize_test_name`.
-    one_containing: If given, then leave the test name unchanged, and use
-      only one `kwargs` whose `testcase_name` includes `one_containing`.
+      ``sanitize_test_name``.
+    one_containing: If given, then leaves the test name unchanged, and use
+      only one of the ``kwargs`` whose `testcase_name` includes ``one_containing``.
   """
   # Ensure that all kwargs contain a testcase_name
   kwargs_with_testcase_name: Sequence[dict[str, Any]]
@@ -2022,3 +2032,47 @@ class numpy_with_mpmath:
       return worker(ctx, scale, exact, reference, value)
     else:
       assert 0  # unreachable
+
+# Hypothesis testing support
+def setup_hypothesis(max_examples=30) -> None:
+  """Sets up the hypothesis profiles.
+
+  Sets up the hypothesis testing profiles, and selects the one specified by
+  the ``JAX_HYPOTHESIS_PROFILE`` environment variable (or the
+  ``--jax_hypothesis_profile`` configuration.
+
+  Args:
+    max_examples: the maximum number of hypothesis examples to try, when using
+      the default "deterministic" profile.
+  """
+  try:
+    import hypothesis as hp  # type: ignore
+  except (ModuleNotFoundError, ImportError):
+    return
+
+  hp.settings.register_profile(
+      "deterministic",
+      database=None,
+      derandomize=True,
+      deadline=None,
+      max_examples=max_examples,
+      print_blob=True,
+  )
+  hp.settings.register_profile(
+      "interactive",
+      parent=hp.settings.load_profile("deterministic"),
+      max_examples=1,
+      report_multiple_bugs=False,
+      verbosity=hp.Verbosity.verbose,
+      # Don't try and shrink
+      phases=(
+          hp.Phase.explicit,
+          hp.Phase.reuse,
+          hp.Phase.generate,
+          hp.Phase.target,
+          hp.Phase.explain,
+      ),
+  )
+  profile = HYPOTHESIS_PROFILE.value
+  logging.info("Using hypothesis profile: %s", profile)
+  hp.settings.load_profile(profile)

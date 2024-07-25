@@ -23,21 +23,17 @@ from jax.numpy.linalg import (
   matmul as matmul,
   matrix_norm as matrix_norm,
   matrix_power as matrix_power,
+  matrix_rank as matrix_rank,
   matrix_transpose as matrix_transpose,
   outer as outer,
+  pinv as pinv,
   qr as qr,
   slogdet as slogdet,
   solve as solve,
   svd as svd,
   svdvals as svdvals,
   tensordot as tensordot,
+  trace as trace,
   vecdot as vecdot,
   vector_norm as vector_norm,
-)
-
-from jax.numpy.linalg import trace as trace
-
-from jax.experimental.array_api._linear_algebra_functions import (
-  matrix_rank as matrix_rank,
-  pinv as pinv,
 )

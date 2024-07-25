@@ -74,10 +74,6 @@ template <typename T>
 ArrayRef<std::remove_const_t<T>> toArrayRef(absl::Span<T> span) {
   return ArrayRef<std::remove_const_t<T>>(span.data(), span.size());
 }
-template <typename T, std::size_t N>
-ArrayRef<std::remove_const_t<T>> toArrayRef(std::array<T, N> array) {
-  return ArrayRef<std::remove_const_t<T>>(array.data(), array.size());
-}
 
 inline arith::ConstantOp IdxConst(int64_t idx, OpBuilder &builder,
                                   Location loc) {
@@ -100,6 +96,8 @@ std::string shapeToString(const T &shape) {
   return os.str();
 }
 
+SmallVector<int64_t> ComputeTileStrides(MemRefType memref_ty,
+                                        absl::Span<const int64_t> tiling);
 }  // namespace mlir::tpu
 
 #endif  // THIRD_PARTY_PY_JAX_JAXLIB_MOSAIC_DIALECT_TPU_UTIL_H_

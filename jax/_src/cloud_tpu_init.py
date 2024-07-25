@@ -77,7 +77,6 @@ def cloud_tpu_init() -> None:
   running_in_cloud_tpu_vm = True
 
   os.environ.setdefault('GRPC_VERBOSITY', 'ERROR')
-  os.environ.setdefault('JAX_PLATFORMS', 'tpu,cpu')
   os.environ['TPU_ML_PLATFORM'] = 'JAX'
   os.environ['TPU_ML_PLATFORM_VERSION'] = version.__version__
   os.environ.setdefault('ENABLE_RUNTIME_UPTIME_TELEMETRY', '1')
@@ -87,6 +86,12 @@ def cloud_tpu_init() -> None:
   # this makes tensorstore serialization work better on TPU
   os.environ.setdefault('TENSORSTORE_CURL_LOW_SPEED_TIME_SECONDS', '60')
   os.environ.setdefault('TENSORSTORE_CURL_LOW_SPEED_LIMIT_BYTES', '256')
+
+  # If the JAX_PLATFORMS env variable isn't set, config.jax_platforms defaults
+  # to None. In this case, we set it to 'tpu,cpu' to ensure that JAX uses the
+  # TPU backend.
+  if config.jax_platforms.value is None:
+    config.update('jax_platforms', 'tpu,cpu')
 
   if config.jax_pjrt_client_create_options.value is None:
     config.update(

@@ -171,7 +171,7 @@ easiest way to run these checks locally is via the
 
 ```bash
 pip install pre-commit
-pre-commit run --all
+pre-commit run --all-files
 ```
 
 If your pull request touches documentation notebooks, this will also run some checks

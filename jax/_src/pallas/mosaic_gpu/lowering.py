@@ -56,9 +56,28 @@ class ModuleContext:
   name: str
   grid_mapping: pl_core.GridMapping
   runtime_smem: ir.Value  # ir.MemRefType
+  smem_used_bytes: int
 
-  def scratch_view(self, shapes: list[jax.ShapeDtypeStruct]) -> list[ir.Value]:
-    """Return memref views into the runtime scrath based on the shapes."""
+  # TODO(cperivol): Only return the shapes and figure out the sizes when freeing.
+  def scratch_view(
+      self, shapes: list[jax.ShapeDtypeStruct]
+  ) -> tuple[int, list[ir.Value]]:
+    """Return memref views into the runtime scrath based on the shapes.
+
+    This is low level and unsafe. `scratch_view()` allocates bytes at
+    the top of a stack and they can be deallocated in a FIFO fashion
+    with `stack_free_smem()`.
+
+    Args:
+      shapes: The shapes of the scratch buffers.
+
+    Returns:
+      The number of bytes allocated and a list of memref views into
+      the scratch buffers. The views are allocated at the top of a
+      scratch stack and are valid only until
+      `ModuleContext.stack_free_smem()` is called.
+
+    """
 
     smem_scratch_bytes = math.prod(ir.MemRefType(self.runtime_smem.type).shape)
     required_scratch_bytes = sum(
@@ -66,15 +85,17 @@ class ModuleContext:
     )
     if smem_scratch_bytes < required_scratch_bytes:
       raise ValueError(
-          f"Too few {smem_scratch_bytes=} provided (pass via compiler_params), we"
-          f" need {required_scratch_bytes} ({shapes=})"
+          f"Too few {smem_scratch_bytes=} provided (pass via compiler_params),"
+          f" we need {required_scratch_bytes} ({shapes=})"
       )
 
     views = []
-    off = 0
+    off = self.smem_used_bytes
     smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
+    total_bytes = 0
     for sh in shapes:
       sh_bytes = math.prod(sh.shape) * jnp.dtype(sh.dtype).itemsize
+      total_bytes += sh_bytes
       strides = (*np.cumprod(sh.shape)[:-1:-1], 1)
 
       # We need scratch to be able to store 128 items of x.
@@ -85,12 +106,22 @@ class ModuleContext:
           strides=[_index(i) for i in strides],
       )
       scratch_ty = ir.MemRefType.get(
-          [np.prod(sh.shape)], mlir.dtype_to_ir_type(sh.dtype), memory_space=smem
+          sh.shape,
+          mlir.dtype_to_ir_type(sh.dtype),
+          memory_space=smem,
       )
       off += sh_bytes
       views.append(memref_dialect.view(scratch_ty, scratch, _index(off), []))
+      self.smem_used_bytes += total_bytes
 
-    return views
+    return total_bytes, views
+
+  def stack_free_smem(self, bytes: int):
+    """Frees the `bytes` last allocated."""
+
+    self.smem_used_bytes -= bytes
+    if self.smem_used_bytes < 0:
+      raise ValueError("Tried to free more bytes than allocated.")
 
 
 @dataclasses.dataclass
@@ -173,8 +204,8 @@ def lower_jaxpr_to_module(
 
     barrier.wait()
 
-    module_ctx = ModuleContext(name, grid_mapping, runtime_smem)
-    _ = lower_jaxpr_to_mosaic_gpu(module_ctx, jaxpr, None, *buffers_smem)
+    module_ctx = ModuleContext(name, grid_mapping, runtime_smem, smem_used_bytes=0)
+    _ = lower_jaxpr_to_mosaic_gpu(module_ctx, jaxpr, None, buffers_smem)
 
     for b_gmem, b_smem in zip(out_buffers_gmem, out_buffers_smem):
       # TODO(slebedev): Support 128-byte swizzling, once we can lower matmuls.
@@ -182,15 +213,19 @@ def lower_jaxpr_to_module(
 
     launch_ctx.await_async_copy(0)
 
+  # TODO(b/354568888): Add a jaxpr traversal to calculate the precise
+  # amount of memory required.
   extra_smem_scratch = [
       jax.ShapeDtypeStruct(
-          shape=[compiler_params.get("smem_scratch_bytes", 0)], dtype=np.int8
+          shape=[compiler_params.get("smem_scratch_bytes", 100000)],
+          dtype=np.int8,
       )
   ]
   module, out_structs, gmem_scratch_bytes, _ = mosaic_gpu._lower_as_gpu_kernel(
       body,
-      grid,
-      block,
+      grid=grid,
+      cluster=(),
+      block=block,
       in_shapes=in_structs,
       out_shape=out_structs,
       smem_scratch_shape=(*in_structs, *out_structs, *extra_smem_scratch),
@@ -214,7 +249,8 @@ def lower_jaxpr_to_mosaic_gpu(
     ctx: ModuleContext,
     jaxpr: jax_core.Jaxpr,
     block_infos: Sequence[BlockInfo | None] | None,
-    *args,
+    args,
+    consts=(),
 ) -> Sequence[ir.Value]:
   env = {}
   block_info_env = {}
@@ -234,6 +270,7 @@ def lower_jaxpr_to_mosaic_gpu(
     block_infos = [None] * len(jaxpr.invars)
   for invar, block_info in zip(jaxpr.invars, block_infos):
     block_info_env[invar] = block_info
+  map(write_env, jaxpr.constvars, consts)
   map(write_env, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
     invals = map(read_env, eqn.invars)
@@ -272,6 +309,7 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_smem, *indexers, tree):
   del tree  # Unused.
   if indexers:
     raise NotImplementedError("No support for indexers yet")
+
   return mgpu.FragmentedArray.load_strided(x_smem)
 
 
@@ -291,7 +329,7 @@ def _swap_lowering_rule(
 def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
   if jaxpr.consts:
     raise NotImplementedError
-  return lower_jaxpr_to_mosaic_gpu(ctx.module_context, jaxpr.jaxpr, None, *args)
+  return lower_jaxpr_to_mosaic_gpu(ctx.module_context, jaxpr.jaxpr, None, args)
 
 
 @register_lowering_rule(lax.broadcast_in_dim_p)
@@ -304,12 +342,12 @@ def _broadcast_in_dim_lowering_rule(
 ):
   if broadcast_dimensions:
     raise NotImplementedError
-  return x.broadcast(shape)
+  return _ensure_fa(x, ctx.avals_in[0]).broadcast(shape)
 
 
 @register_lowering_rule(lax.convert_element_type_p)
 def _convert_element_type_lowering_rule(
-    ctx: LoweringRuleContext, x, *, new_dtype, weak_type
+    ctx: LoweringRuleContext, x, *, new_dtype, weak_type, sharding
 ):
   return _ensure_fa(x, *ctx.avals_in).astype(mlir.dtype_to_ir_type(new_dtype))
 
@@ -345,7 +383,7 @@ def _reduce_sum_lowering_rule(ctx: LoweringRuleContext, x, *, axes):
   if axes != (0,):
     raise NotImplementedError("No support for axes other than 0 yet")
   [x_aval] = ctx.avals_in
-  [scratch] = ctx.module_context.scratch_view(
+  _, [scratch] = ctx.module_context.scratch_view(
       [jax.ShapeDtypeStruct(shape=(4,), dtype=x_aval.dtype)]
   )
   return mgpu.FragmentedArray.splat(x.reduce_sum(scratch), ())
@@ -362,6 +400,21 @@ def _debug_print_lowering_rule(
   primitives.check_debug_print_format(fmt, *args)
   mgpu.debug_print(fmt, *args)
   return ()
+
+
+@register_lowering_rule(primitives.run_scoped_p)
+def _run_scoped_lowering_rule(
+    ctx: LoweringRuleContext, *consts, jaxpr: jax_core.Jaxpr
+):
+  in_avals = [v.aval.inner_aval for v in jaxpr.invars]
+  bytes_allocated, input_refs = ctx.module_context.scratch_view(
+      [jax.ShapeDtypeStruct(shape=aval.shape, dtype=aval.dtype) for aval in in_avals]
+  )
+  outs = lower_jaxpr_to_mosaic_gpu(
+      ctx.module_context, jaxpr, None, input_refs, consts
+  )
+  ctx.module_context.stack_free_smem(bytes_allocated)
+  return outs
 
 
 def _bcast(
@@ -397,7 +450,7 @@ def _bcast(
 def _ensure_fa(x: object, aval: jax_core.ShapedArray) -> mgpu.FragmentedArray:
   if isinstance(x, mgpu.FragmentedArray):
     return x
-  elif isinstance(x, (np.number, np.ndarray,int, float)):
+  elif isinstance(x, (np.number, np.ndarray, int, float)):
     return mgpu.FragmentedArray.splat(
         _ir_constant(x, mlir.dtype_to_ir_type(aval.dtype)), ()
     )

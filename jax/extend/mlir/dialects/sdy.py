@@ -1,4 +1,4 @@
-# Copyright 2023 The JAX Authors.
+# Copyright 2024 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,14 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import jax
+# ruff: noqa: F403
 
-
-def std(x, /, *, axis=None, correction=0.0, keepdims=False):
-  """Calculates the standard deviation of the input array x."""
-  return jax.numpy.std(x, axis=axis, correction=correction, keepdims=keepdims)
-
-
-def var(x, /, *, axis=None, correction=0.0, keepdims=False):
-  """Calculates the variance of the input array x."""
-  return jax.numpy.var(x, axis=axis, correction=correction, keepdims=keepdims)
+# TODO(bartchr): Once JAX is released with SDY, remove the try/except.
+try:
+  from jaxlib.mlir.dialects.sdy import *
+except ImportError:
+  pass

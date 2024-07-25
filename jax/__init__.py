@@ -56,6 +56,7 @@ from jax._src.config import (
   debug_nans as debug_nans,
   debug_infs as debug_infs,
   log_compiles as log_compiles,
+  explain_cache_misses as explain_cache_misses,
   default_device as default_device,
   default_matmul_precision as default_matmul_precision,
   default_prng_impl as default_prng_impl,
@@ -179,7 +180,6 @@ import jax.experimental.compilation_cache.compilation_cache as _ccache
 del _ccache
 
 from jax._src.deprecations import register as _register_deprecation
-_register_deprecation("jax-experimental-maps-module")
 _register_deprecation('jax-scipy-beta-args')
 _register_deprecation('tracer-hash')
 del _register_deprecation

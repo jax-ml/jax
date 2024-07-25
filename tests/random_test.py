@@ -1458,6 +1458,14 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     self.check_shape(func, keys, fill_value)
     self.check_against_reference(func, func, keys, fill_value)
 
+  def test_int_shape(self):
+    # It's not clear if we want to accept ints as the shape argument; the point
+    # of this test is not to check the API functionality but rather to ensure
+    # this doesn't fail in core.py like it used to.
+    @jax.jit
+    def f():
+      jax.random.normal(jax.random.key(0), 1000)
+    f()  # don't crash
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

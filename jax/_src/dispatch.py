@@ -37,7 +37,6 @@ from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
-from jax._src import xla_bridge as xb
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.abstract_arrays import array_types
@@ -222,7 +221,7 @@ class SourceInfo(NamedTuple):
   eqn_name: str
 
 
-def jaxpr_shardings(
+def get_intermediate_shardings(
     jaxpr: core.Jaxpr,
 ) -> Iterator[tuple[Sharding, SourceInfo]]:
   from jax._src import pjit
@@ -237,6 +236,8 @@ def jaxpr_shardings(
       yield from ((i, source_info) for i in eqn.params['in_shardings'])
       yield from ((o, source_info) for o in eqn.params['out_shardings'])
     elif eqn.primitive is shard_map.shard_map_p:
+      if not eqn.params['mesh']._is_jax_device_mesh:
+        continue
       source_info = SourceInfo(eqn.source_info, eqn.primitive.name)
       def _names_to_pspec(names):
         ndmin = max(names) + 1 if names else 0
@@ -248,7 +249,7 @@ def jaxpr_shardings(
       yield from ((s, source_info) for s in eqn.params['devices']
                   if isinstance(s, Sharding) and s.memory_kind is not None)
   for subjaxpr in core.subjaxprs(jaxpr):
-    yield from jaxpr_shardings(subjaxpr)
+    yield from get_intermediate_shardings(subjaxpr)
 
 
 def jaxpr_has_bints(jaxpr: core.Jaxpr) -> bool:
@@ -325,16 +326,13 @@ def _check_special(name: str, dtype: np.dtype, buf: basearray.Array) -> None:
       raise FloatingPointError(f"invalid value (inf) encountered in {name}")
 
 
-def _override_get_device_assignment(sharding, *args, **kwargs):
-  da = sharding._device_assignment
-  return xb.get_device_backend(da[0]), da
-
 def _identity_fn(x):
   return x
 
 def _different_device_order_reshard(x, target_sharding):
   from jax._src import api, array
 
+  x._check_if_deleted()
   inp_sharding = x.sharding
 
   if inp_sharding._device_assignment == target_sharding._device_assignment:
@@ -361,9 +359,19 @@ def _different_device_order_reshard(x, target_sharding):
     new_op_sharding.iota_reshape_dims = []
     new_op_sharding.iota_transpose_perm = []
     new_op_sharding.tile_assignment_devices = np.take(
-        old_hlo_sharding.tile_assignment_devices(), permute_order
+        permute_order, old_hlo_sharding.tile_assignment_devices()
     )
     new_hlo_sharding = xc.HloSharding.from_proto(new_op_sharding)
+    # TODO(yashkatariya): Enable this when HloSharding conversion is fixed in
+    # XLA.
+    # assert (new_op_sharding.tile_assignment_dimensions
+    #         == new_hlo_sharding.tile_assignment_dimensions())
+    # assert (new_op_sharding.tile_assignment_devices
+    #         == new_hlo_sharding.tile_assignment_devices())
+    assert (list(np.take(inp_sharding._device_assignment,
+                         old_hlo_sharding.tile_assignment_devices()))
+            == list(np.take(target_sharding._device_assignment,
+                            new_op_sharding.tile_assignment_devices)))
 
   new_x = array.make_array_from_single_device_arrays(
       x.shape,
@@ -371,14 +379,7 @@ def _different_device_order_reshard(x, target_sharding):
                     memory_kind=target_sharding.memory_kind),
       x._arrays,
   )
-
-  _orig_get_and_check_device_assignment = pxla._get_and_check_device_assignment.fn
-  pxla._get_and_check_device_assignment.fn = partial(
-      _override_get_device_assignment, target_sharding)
-  try:
-    return api.jit(_identity_fn, out_shardings=target_sharding)(new_x)
-  finally:
-    pxla._get_and_check_device_assignment.fn = _orig_get_and_check_device_assignment
+  return api.jit(_identity_fn, out_shardings=target_sharding)(new_x)
 
 
 @dataclasses.dataclass(frozen=True)

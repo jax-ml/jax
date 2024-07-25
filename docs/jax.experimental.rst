@@ -17,7 +17,6 @@ Experimental Modules
     jax.experimental.array_api
     jax.experimental.checkify
     jax.experimental.host_callback
-    jax.experimental.maps
     jax.experimental.pjit
     jax.experimental.sparse
     jax.experimental.jet
@@ -38,7 +37,3 @@ Experimental APIs
 
    enable_x64
    disable_x64
-
-   jax.experimental.checkify.checkify
-   jax.experimental.checkify.check
-   jax.experimental.checkify.check_error

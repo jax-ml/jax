@@ -15,6 +15,7 @@
 """Mosaic-specific Pallas APIs."""
 
 from jax._src.pallas.mosaic import core
+from jax._src.pallas.mosaic.core import create_tensorcore_mesh
 from jax._src.pallas.mosaic.core import dma_semaphore
 from jax._src.pallas.mosaic.core import PrefetchScalarGridSpec
 from jax._src.pallas.mosaic.core import semaphore
@@ -39,7 +40,6 @@ from jax._src.pallas.mosaic.primitives import make_async_copy
 from jax._src.pallas.mosaic.primitives import make_async_remote_copy
 from jax._src.pallas.mosaic.primitives import repeat
 from jax._src.pallas.mosaic.primitives import roll
-from jax._src.pallas.mosaic.primitives import run_scoped
 from jax._src.pallas.mosaic.primitives import semaphore_read
 from jax._src.pallas.mosaic.primitives import semaphore_signal
 from jax._src.pallas.mosaic.primitives import semaphore_wait
@@ -47,6 +47,20 @@ from jax._src.pallas.mosaic.primitives import prng_seed
 from jax._src.pallas.mosaic.primitives import prng_random_bits
 from jax._src.pallas.mosaic.random import to_pallas_key
 from jax._src.tpu_custom_call import CostEstimate
+
+# TODO(cperivol): Temporary alias to the global run_scoped. Remove
+# this once everyone has migrated to the pallas core one.
+from jax._src.pallas.primitives import run_scoped
+
+import types
+from jax._src.pallas.mosaic.verification import assume
+from jax._src.pallas.mosaic.verification import pretend
+from jax._src.pallas.mosaic.verification import skip
+from jax._src.pallas.mosaic.verification import define_model
+verification = types.SimpleNamespace(
+    assume=assume, pretend=pretend, skip=skip, define_model=define_model
+)
+del types, assume, pretend, skip, define_model  # Clean up.
 
 ANY = TPUMemorySpace.ANY
 CMEM = TPUMemorySpace.CMEM

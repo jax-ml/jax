@@ -158,7 +158,8 @@ class TPU_Op<string mnemonic, list<Trait> traits = []> :
 
 def TPU_ReductionKind : I32EnumAttr<"ReductionKind", "Reduction kind", [
   I32EnumAttrCase<"SUM", 0, "sum">,
-  I32EnumAttrCase<"MAX", 1, "max">
+  I32EnumAttrCase<"MAX", 1, "max">,
+  I32EnumAttrCase<"MIN", 2, "min">
 ]> {
     let genSpecializedAttr = 0;
     let cppNamespace = "::mlir::tpu";
@@ -375,6 +376,7 @@ def TPU_BitcastOp : TPU_Op<"bitcast", [Pure]> {
   let arguments = (ins AnyVector:$input);
   let results = (outs AnyVector:$output);
   let assemblyFormat = [{ $input attr-dict `:` type($input) `->` type($output) }];
+  let hasVerifier = 1;
 }
 
 def TPU_BitcastVregOp : TPU_Op<"bitcast_vreg", [Pure]> {
@@ -483,6 +485,16 @@ def TPU_MemRefSqueezeOp : TPU_Op<"memref_squeeze", [Pure]> {
   let hasCanonicalizeMethod = 1;
 }
 
+def TPU_MemRefReshapeOp : TPU_Op<"memref_reshape", [Pure]> {
+  let arguments = (ins AnyMemRef:$input);
+  let results = (outs AnyMemRef:$result);
+  let assemblyFormat = [{
+    $input attr-dict `:` type($input) `->` type($result)
+  }];
+  let hasVerifier = 1;
+  let hasCanonicalizeMethod = 1;
+}
+
 def TPU_ReinterpretCastOp : TPU_Op<"reinterpret_cast", [Pure]> {
   let arguments = (ins AnyMemRef:$input);
   let results = (outs AnyMemRef:$result);
@@ -515,7 +527,7 @@ def TPU_DeviceIdOp : TPU_Op<"device_id", [Pure]> {
 }
 
 def TPU_SemaphoreReadOp : TPU_Op<"sem_read"> {
-  let arguments = (ins MemRefOf<[TPU_SemaphoreType]>:$semaphore);
+  let arguments = (ins MemRefOf<[TPU_SemaphoreType, TPU_DMASemaphoreType]>:$semaphore);
   let results = (outs I32:$result);
   let assemblyFormat = [{ $semaphore attr-dict `:` type($semaphore) `->` type($result)}];
 }
@@ -579,6 +591,7 @@ def TPU_RegionOp : TPU_Op<"region", [RecursiveMemoryEffects, SingleBlockImplicit
   let arguments = (ins);
   let results = (outs Variadic<AnyType>:$results);
   let regions = (region AnyRegion:$region);
+  let hasVerifier = 1;
 }
 
 def TPU_TraceOp : TPU_Op<"trace", [RecursiveMemoryEffects, SingleBlockImplicitTerminator<"tpu::YieldOp">]> {
@@ -679,11 +692,12 @@ def InferMemRefLayoutPass : Pass<"tpu-infer-memref-layout", "::mlir::func::FuncO
     "::mlir::func::FuncDialect",
     "::mlir::memref::MemRefDialect",
   ];
-  let constructor = "::mlir::tpu::createInferMemRefLayoutPass(-1)";
+  let constructor = "::mlir::tpu::createInferMemRefLayoutPass()";
   let options = [
     // If hardware_generation is not set, the default value of -1 will crash on
     // runOnOperation.
     Option<"hardware_generation", "hardware-generation", "int", /*default=*/"-1", "">,
+    Option<"tpu_tiling_flags", "tpu-tiling-flags", "::mlir::tpu::TpuTilingFlags", /*default=*/"::mlir::tpu::TpuTilingFlags{}", "">,
   ];
 }
 
@@ -723,7 +737,7 @@ def ApplyVectorLayoutPass : Pass<"tpu-apply-vector-layout", "::mlir::func::FuncO
     "::mlir::vector::VectorDialect",
     "::mlir::tpu::TPUDialect",
   ];
-  let constructor = "::mlir::tpu::createApplyVectorLayoutPass(-1)";
+  let constructor = "::mlir::tpu::createApplyVectorLayoutPass()";
   let options = [
     // If hardware_generation is not set, the default value of -1 will crash on
     // runOnOperation.

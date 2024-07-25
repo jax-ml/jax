@@ -14,6 +14,7 @@
 
 import contextlib
 import math
+from functools import partial
 from absl.testing import absltest
 import numpy as np
 
@@ -24,6 +25,7 @@ from jax._src import config
 from jax._src.layout import Layout, DeviceLocalLayout as DLL
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip
+from jax._src.lib import xla_extension_version
 
 config.parse_flags_with_absl()
 
@@ -364,7 +366,7 @@ class LayoutTest(jtu.JaxTestCase):
     arr = jax.device_put(np_inp, s)
 
     # Create a custom layout instead of using `arr.layout` to test the API.
-    custom_dll = DLL(major_to_minor=(0, 1), tiling=((8, 128),))
+    custom_dll = DLL(major_to_minor=(0, 1))
 
     @jax.jit
     def f(x):
@@ -374,7 +376,8 @@ class LayoutTest(jtu.JaxTestCase):
       return jax.lax.with_sharding_constraint(y, Layout(custom_dll, s))
 
     out = f(arr)
-    self.assertEqual(out.layout, Layout(custom_dll, s))
+    self.assertEqual(out.layout.device_local_layout.major_to_minor,
+                     custom_dll.major_to_minor)
     self.assertEqual(out.layout, arr.layout)
     self.assertArraysEqual(out, np_inp.T)
 
@@ -386,7 +389,7 @@ class LayoutTest(jtu.JaxTestCase):
     arr = jax.device_put(inp, s)
 
     # Create a custom layout instead of using `arr.layout` to test the API.
-    custom_dll = DLL(major_to_minor=(0, 1), tiling=((8, 128), (2, 1)))
+    custom_dll = DLL(major_to_minor=(0, 1))
 
     @jax.jit
     def f(x):
@@ -396,19 +399,101 @@ class LayoutTest(jtu.JaxTestCase):
       return jax.lax.with_sharding_constraint(y, Layout(custom_dll, s))
 
     out = f(arr)
-    self.assertEqual(out.layout, Layout(custom_dll, s))
+    self.assertEqual(out.layout.device_local_layout.major_to_minor,
+                     custom_dll.major_to_minor)
     self.assertEqual(out.layout, arr.layout)
     self.assertArraysEqual(out, inp.T)
 
   def test_device_put_user_concrete_layout(self):
+    if xla_extension_version < 274:
+      self.skipTest('Requires xla_extension_version >= 274')
+
     shape = (8, 128)
     np_inp = np.arange(math.prod(shape)).reshape(shape)
-    dll = DLL(major_to_minor=(1, 0), tiling=((8, 128),))
+    dll = DLL(major_to_minor=(1, 0))
     s = SingleDeviceSharding(jax.devices()[0])
 
     out = jax.device_put(np_inp, Layout(dll, s))
-    self.assertEqual(out.layout, Layout(dll, s))
+    self.assertEqual(out.layout.device_local_layout.major_to_minor,
+                     dll.major_to_minor)
     self.assertArraysEqual(out, np_inp)
+
+  def test_concrete_layout_jit(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    shape = (16, 128)
+    s = NamedSharding(mesh, P('x'))
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+    arr = jax.device_put(np_inp, s)
+
+    def f(x):
+      return x.T
+
+    custom_dll = DLL(major_to_minor=(0, 1))
+    f = jax.jit(f, out_shardings=Layout(custom_dll, s))
+
+    out = f(arr)
+    self.assertArraysEqual(out, np_inp.T)
+    self.assertEqual(out.layout.device_local_layout.major_to_minor,
+                     custom_dll.major_to_minor)
+
+  def test_compatible_aval_error(self):
+    if xla_extension_version < 274:
+      self.skipTest('Requires xla_extension_version >= 274')
+
+    custom_dll = DLL(major_to_minor=(0, 1, 2))
+    l = Layout(custom_dll, SingleDeviceSharding(jax.devices()[0]))
+    inp = np.arange(8)
+
+    @partial(jax.jit, in_shardings=l)
+    def f(x):
+      return x * 2
+
+    with self.assertRaisesRegex(
+        ValueError,
+        '.*Length of major_to_minor and the rank of the value should match.*'):
+      f(inp)
+
+  def test_incompatible_aval_error_device_put(self):
+    if xla_extension_version < 274:
+      self.skipTest('Requires xla_extension_version >= 274')
+
+    custom_dll = DLL(major_to_minor=(0, 1, 2))
+    l = Layout(custom_dll, SingleDeviceSharding(jax.devices()[0]))
+    inp = np.arange(8)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        '.*Length of major_to_minor and the rank of the value should match.*'):
+      jax.device_put(inp, l)
+
+  def test_concrete_layout_in_shardings(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    shape = (16, 128)
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+    arr = jax.device_put(np_inp, s)
+
+    custom_dll = DLL(major_to_minor=(0, 1))
+
+    @partial(jax.jit, in_shardings=Layout(custom_dll, s))
+    def f(x):
+      return x.T
+
+    out = f(arr)
+    self.assertArraysEqual(out, np_inp.T)
+    self.assertEqual(out.layout.device_local_layout.major_to_minor,
+                     custom_dll.major_to_minor[::-1])
+
+    custom_dll2 = DLL(major_to_minor=(1, 0))
+
+    @partial(jax.jit, in_shardings=Layout(custom_dll2, s))
+    def g(x):
+      return x.T
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'Layout passed to jit does not match the layout on the respective arg'):
+      g(arr)
 
 
 if __name__ == '__main__':

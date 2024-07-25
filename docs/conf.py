@@ -132,6 +132,7 @@ exclude_patterns = [
     'notebooks/*.md',
     'pallas/quickstart.md',
     'pallas/tpu/pipelining.md',
+    'pallas/tpu/matmul.md',
     'jep/9407-type-promotion.md',
     'autodidax.md',
     'sharded-computation.md',
@@ -213,12 +214,12 @@ nb_execution_excludepatterns = [
     # Has extra requirements: networkx, pandas, pytorch, tensorflow, etc.
     'jep/9407-type-promotion.*',
     # TODO(jakevdp): enable execution on the following if possible:
-    'notebooks/xmap_tutorial.*',
     'notebooks/Distributed_arrays_and_automatic_parallelization.*',
     'notebooks/autodiff_remat.*',
     # Requires accelerators
     'pallas/quickstart.*',
     'pallas/tpu/pipelining.*',
+    'pallas/tpu/matmul.*',
     'sharded-computation.*',
     'distributed_data_loading.*'
 ]

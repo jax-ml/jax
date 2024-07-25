@@ -563,8 +563,7 @@ As XLA does not have enough knowledge about the custom functions to shard input 
 To avoid this duplication, we can:
 - [custom_partitioning](https://jax.readthedocs.io/en/latest/jax.experimental.custom_partitioning.html): to make it behave like all native JAX operations (but more complicated)
 - Use manual sharding
-  - [shard_map](https://jax.readthedocs.io/en/latest/jep/14273-shard-map.html): the new replacement for xmap
-  - [xmap](https://jax.readthedocs.io/en/latest/notebooks/xmap_tutorial.html) (now deprecated)
+  - [shard_map](https://jax.readthedocs.io/en/latest/jep/14273-shard-map.html)
 
 This example demonstrates the use of custom_partitioning.
 

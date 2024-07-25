@@ -92,6 +92,11 @@ typedef struct MlirTpuI64TargetTuple {
   int64_t lane;
 } MlirTpuI64TargetTuple;
 
+typedef struct MlirTpuMxuShape {
+  int64_t contracting_size;
+  int64_t non_contracting_size;
+} MlirTpuMxuShape;
+
 typedef struct MlirTpuBoolTargetTuple {
   bool sublane;
   bool lane;
@@ -103,6 +108,13 @@ typedef struct MlirTpuInsertionPoint {
   MlirBlock block;  // Only used when ref_operation is unspecified (null)
   MlirOperation ref_operation;
 } MlirTpuInsertionPoint;
+
+typedef struct MlirTpuApplyVectorLayoutContext {
+  int hardware_generation = -1;
+  MlirTpuI64TargetTuple target_shape = {8, 128};
+  MlirTpuMxuShape mxu_shape = {128, 128};
+  int64_t max_sublanes_in_scratch = 0;
+} MlirTpuApplyVectorLayoutContext;
 
 // Caller owns the returned object and is responsible for calling
 // mlirTpuVectorLayoutDestroy
@@ -218,7 +230,7 @@ mlirTpuApplyLayoutOp(int hardware_generation, MlirOperation op,
 MLIR_CAPI_EXPORTED MlirValue
 mlirTpuRelayout(MlirTpuInsertionPoint insertion_point, MlirValue val,
                 MlirTpuVectorLayout src, MlirTpuVectorLayout dst,
-                MlirTpuI64TargetTuple target_shape);
+                MlirTpuApplyVectorLayoutContext ctx);
 #ifdef __cplusplus
 }
 #endif

@@ -51,7 +51,6 @@ from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import op_shardings
 from jax._src import sharding_impls
-from jax._src import maps
 from jax._src import mesh
 from jax._src import pjit
 from jax._src import prng
@@ -115,6 +114,10 @@ def _sanitize_scope_name(name):
     scope_name = f".{scope_name}"
   return scope_name
 
+
+# TODO(b/353437394): Deprecate support for `enable_xla=False`.
+# Line below is different externally and internally.
+allow_enable_xla_false = lambda: True
 
 # A value suitable in a TF tracing context: tf.Tensor, tf.Variable,
 # or Python scalar or numpy.ndarray. (A tf.EagerTensor is a tf.Tensor.)
@@ -304,6 +307,7 @@ def convert(fun_jax: Callable,
       so the lowering tries harder to use non-XLA TF ops to lower the
       function and aborts if this is not possible. Cannot be set to `False`
       when using `native_serialization`.
+      Starting with JAX 0.4.31 support for `enable_xla=False` is deprecated.
     native_serialization: serialize the JAX function natively to
       StableHLO with compatibility guarantees. This makes it easier to have
       confidence that the code executed when calling this function from
@@ -312,6 +316,7 @@ def convert(fun_jax: Callable,
       is set to `False` or to the configuration flag
       `--jax2tf_default_native_serialization` otherwise.
       Native serialization cannot be used with `enable_xla=False`.
+      Starting with JAX 0.4.31 support for non-native serialization is deprecated.
     native_serialization_platforms: In conjunction with
       `native_serialization`, specify the platform(s)
       for which to lower the code. Must be a tuple of
@@ -327,12 +332,21 @@ def convert(fun_jax: Callable,
     tuple/lists/dicts thereof), and returns TfVals as outputs, and uses
     only TensorFlow ops and thus can be called from a TensorFlow program.
   """
+  if not enable_xla:
+    if allow_enable_xla_false():
+      warnings.warn("jax2tf.convert with enable_xla=False is deprecated.")
+    else:
+      raise ValueError("jax2tf.convert with enable_xla=False is not supported.")
+
   if native_serialization is DEFAULT_NATIVE_SERIALIZATION:
     if not enable_xla:
       native_serialization = False
     else:
       native_serialization = config.jax2tf_default_native_serialization.value
 
+  if not native_serialization:
+    warnings.warn(
+        "jax2tf.convert with native_serialization=False is deprecated.")
   if native_serialization and not enable_xla:
     raise ValueError(
         "native_serialization is not supported with enable_xla=False")
@@ -1259,7 +1273,7 @@ def _make_op_metadata(primitive: core.Primitive,
                       source_info: source_info_util.SourceInfo,
                       ) -> xla_client.OpMetadata:
   eqn_str = (str(source_info.name_stack) + '/'
-             + core.str_eqn_compact(primitive.name, params))
+             + core.str_eqn_compact(primitive, params))
   frame = source_info_util.user_frame(source_info)
   return xla_client.OpMetadata(
         op_type=primitive.name,
@@ -1469,7 +1483,7 @@ class TensorFlowTrace(core.Trace):
 def _unexpected_primitive(p: core.Primitive, *args, **kwargs):
   assert False, f"Encountered unexpected primitive {p}"
 
-for unexpected in [core.call_p, maps.xmap_p]:
+for unexpected in [core.call_p]:
   tf_impl[unexpected] = partial(_unexpected_primitive, unexpected)
 
 tf_impl[lax_control_flow.loops.eval_jaxpr_p] = \
@@ -1535,6 +1549,10 @@ tf_not_yet_impl = [
     "consume",
     "ragged_dot",
     "cholesky_update",
+    # Pallas TPU primitives
+    "bitcast",
+    "repeat",
+    "roll",
 ]
 
 tf_impl[random_internal.random_clone_p] = lambda x: x
@@ -2007,7 +2025,7 @@ tf_impl[lax.le_to_p] = handle_boolean_args(partial(_total_order_cond, tf.math.le
 tf_impl[lax.linalg.cholesky_p] = tf.linalg.cholesky
 
 
-def _convert_element_type(operand, *, new_dtype, weak_type=False):
+def _convert_element_type(operand, *, new_dtype, weak_type=False, sharding=None):
   old_dtype = operand.dtype.as_numpy_dtype
   if (dtypes.issubdtype(old_dtype, np.complexfloating) and
       not dtypes.issubdtype(new_dtype, np.complexfloating)):

@@ -30,8 +30,9 @@ from jax._src import op_shardings
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
 from jax._src.lib import xla_client as xc
+from jax._src.lib.mlir import dialects, ir
 from jax._src.util import safe_zip
-from jax._src.sharding import common_devices_indices_map
+from jax._src.sharding import common_devices_indices_map, SdyDimSharding, SdyArraySharding
 from jax._src.sharding_impls import (_op_sharding_to_pos_sharding,
                                      pmap_sharding_devices_indices_map,
                                      NamedSharding, GSPMDSharding,
@@ -1275,6 +1276,67 @@ class ShardingTest(jtu.JaxTestCase):
 
     self.assertEqual(x1, x2)
     self.assertEqual(hash(x1), hash(x2))
+
+  def test_device_attr(self):
+    # For single-device arrays, x.device returns the device
+    x = jnp.ones((2, 10))
+    self.assertEqual(x.device, list(x.devices())[0])
+
+    # For sharded arrays, x.device returns the sharding
+    mesh = jtu.create_global_mesh((2,), ('x',))
+    sharding = jax.sharding.NamedSharding(mesh, P('x'))
+    x = jax.device_put(x, sharding)
+    self.assertEqual(x.device, sharding)
+
+  def test_to_device(self):
+    device = jax.devices()[-1]
+    mesh = jtu.create_global_mesh((2,), ('x',))
+    sharding = jax.sharding.NamedSharding(mesh, P('x'))
+
+    x = jnp.ones((2, 10))
+
+    x_device = x.to_device(device)
+    x_sharding = x.to_device(sharding)
+
+    self.assertEqual(x_device.device, device)
+    self.assertEqual(x_sharding.device, sharding)
+
+
+@jtu.with_config(jax_use_shardy_partitioner=True)
+class ShardyShardingTest(jtu.JaxTestCase):
+
+  def test_long_axis_names(self):
+    mesh = jtu.create_global_mesh((2, 2, 2), ('sequence', 'data', 'model'))
+    s = jax.sharding.NamedSharding(mesh, P(('sequence', 'data'), 'model'))
+    sdy_sharding = s._to_sdy_sharding(3)
+    self.assertEqual(
+        sdy_sharding,
+        SdyArraySharding(
+            'mesh',
+            [SdyDimSharding(('sequence', 'data'), True),
+             SdyDimSharding(('model',), True),
+             SdyDimSharding([], True)]))
+    with ir.Context() as ctx:
+      dialects.sdy.register_dialect(ctx)
+      self.assertEqual(
+          str(sdy_sharding.build()),
+          '#sdy.sharding<@mesh, [{"sequence", "data"}, {"model"}, {}]>')
+
+  def test_unconstrained(self):
+    mesh = jtu.create_global_mesh((8,), ('x',))
+    s = jax.sharding.NamedSharding(mesh, P(None, P.UNCONSTRAINED, 'x'))
+    sdy_sharding = s._to_sdy_sharding(3)
+    self.assertEqual(
+        sdy_sharding,
+        SdyArraySharding(
+            'mesh',
+            [SdyDimSharding([], True),
+             SdyDimSharding([], False),
+             SdyDimSharding(('x',), True)]))
+    with ir.Context() as ctx:
+      dialects.sdy.register_dialect(ctx)
+      self.assertEqual(
+          str(sdy_sharding.build()), '#sdy.sharding<@mesh, [{}, {?}, {"x"}]>')
 
 
 class RngShardingTest(jtu.JaxTestCase):

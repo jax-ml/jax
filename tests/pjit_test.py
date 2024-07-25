@@ -35,8 +35,8 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax import dtypes
 from jax import stages
-from jax.errors import JAXTypeError
 from jax import lax
+from jax._src.lax import lax as lax_internal
 from jax.lax import with_sharding_constraint
 from jax._src import prng
 from jax.sharding import PartitionSpec as P, Mesh
@@ -50,11 +50,10 @@ from jax._src.sharding_impls import (
     AUTO, UNSPECIFIED, NamedSharding, GSPMDSharding, PositionalSharding,
     SingleDeviceSharding, parse_flatten_op_sharding)
 import jax._src.pjit as pjit_lib
-from jax._src.maps import xmap
-from jax._src.pjit import pjit, pjit_p
+from jax._src.pjit import pjit
 from jax._src import mesh as mesh_lib
 from jax._src.interpreters import pxla
-from jax.interpreters import mlir
+from jax._src.lib.mlir import dialects
 from jax._src import xla_bridge
 from jax._src.lib import xla_client as xc
 from jax._src.lib import xla_extension
@@ -67,7 +66,6 @@ _exit_stack = contextlib.ExitStack()
 
 def setUpModule():
   _exit_stack.enter_context(jtu.set_host_platform_device_count(8))
-  _exit_stack.enter_context(jtu.global_config_context(experimental_xmap_spmd_lowering=True))
 
 def tearDownModule():
   _exit_stack.close()
@@ -746,25 +744,6 @@ class PJitTest(jtu.BufferDonationTestCase):
     self.assertListEqual(op.tile_assignment_dimensions(), [2, 1])
     self.assertListEqual(op.tile_assignment_devices(), [0, 1])
     self.assertFalse(op_shardings.is_op_sharding_replicated(op))
-
-  @jtu.with_mesh([('x', 2), ('y', 1)])
-  def testShardingInXMap(self):
-    h = pjit(lambda x: x, in_shardings=P('x'), out_shardings=None)
-    f = xmap(lambda x: h(x * 2), in_axes=['i', ...], out_axes=['i', ...],
-             axis_resources={'i': 'y'})
-    x = jnp.arange(16).reshape((4, 4))
-    rule = mlir._lowerings[pjit_p]
-    test_rule_called = False
-    def _test_rule(*args, **kwargs):
-      nonlocal test_rule_called
-      test_rule_called = True
-      return rule(*args, **kwargs)
-    try:
-      mlir._lowerings[pjit_p] = _test_rule
-      f(x)
-      self.assertTrue(test_rule_called)
-    finally:
-      mlir._lowerings[pjit_p] = rule
 
   @jtu.with_mesh([('x', 2)])
   def testLowerWithDuckTyping(self):
@@ -3297,36 +3276,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
 
     jax.device_put(2., NamedSharding(mesh, P()))  # doesn't crash
 
-  @jtu.with_mesh([('x', 2), ('y', 1)])
-  def test_jit_nested_xmap_lower_arg_info(self):
-    def f(x, y, *args):
-      out = xmap(lambda x: x * 2, in_axes=['i', ...], out_axes=['i', ...],
-               axis_resources={'i': 'y'})(jnp.arange(8.))
-      return y['hi'] + args[1], out
-
-    lowered = pjit(f, in_shardings=P(), out_shardings=P()).lower(
-        {'hi': 1.}, {'hi': 2.}, 3., 4.)
-    hlo_str = mlir.module_to_string(lowered.compiler_ir('stablehlo'))
-    self.assertNotIn("\"x\"", hlo_str)
-    self.assertIn("y['hi']", hlo_str)
-    # TODO(yashkatariya): Add keep_unused support to lower_mesh_computation
-    # and then uncomment the below line.
-    # self.assertNotIn("args[0]", hlo_str)
-    self.assertIn("args[1]", hlo_str)
-
-  @jtu.with_mesh([('x', 2), ('y', 1)])
-  def test_jit_nested_xmap_lower_result_info(self):
-    def f(x, y, z):
-      _ = xmap(lambda x: x * 2, in_axes=['i', ...], out_axes=['i', ...],
-               axis_resources={'i': 'y'})(jnp.arange(8.))
-      return {'a': x, 'b': [y]}
-
-    lowered = pjit(f, in_shardings=P(), out_shardings=P()).lower(
-        1., (2.,), [3.])
-    hlo_str = mlir.module_to_string(lowered.compiler_ir('stablehlo'))
-    self.assertIn("jax.result_info = \"['a']\"", hlo_str)
-    self.assertIn("jax.result_info = \"['b'][0][0]\"", hlo_str)
-
   def test_with_sharding_constraint_with_two_meshes(self):
     if jax.device_count() < 4:
       self.skipTest("Requires more than 4 devices.")
@@ -3829,7 +3778,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     arr = jax.device_put(np.arange(8), s)
     with self.assertRaisesRegex(
         ValueError,
-        'If you are using xmap or spmd_axis_name parameter of jax.vmap, please'
+        'If you are using spmd_axis_name parameter of jax.vmap, please'
         ' make sure to run your jitted function inside the mesh context'
         ' manager.*SingleDeviceSharding'):
       jax.jit(jax.vmap(f, spmd_axis_name='x'))(arr)
@@ -4240,6 +4189,114 @@ class ArrayPjitTest(jtu.JaxTestCase):
     self.assertArraysEqual(out, np_inp)
     self.assertEqual(out.sharding, s2)
 
+  @parameterized.named_parameters(
+      ("8_2", (8, 2)),
+      ("8_384", (8, 384)),
+  )
+  def test_device_put_efficient_reshard_complex_mesh(self, shape):
+    if jax.device_count() < 8:
+      self.skipTest('Requires >= 8 devices')
+
+    dev = jax.devices()
+    mesh1 = jax.sharding.Mesh(
+        np.asarray(dev).reshape([1, 2, 2, 2]),
+        ('replica', 'data', 'seq', 'model'))
+    mesh2 = jax.sharding.Mesh(
+        np.asarray(jax.devices())
+        .reshape([1, 1, 2, 2, 2, 1])
+        .swapaxes(2, 3)
+        .reshape([1, 1, 4, 2, 1]),
+        ('replica', 'data', 'seq', 'model_q', 'model_kv'))
+
+    np_inp = jnp.arange(math.prod(shape)).reshape(shape)
+    s1 = NamedSharding(mesh1, P('model'))
+    s2 = NamedSharding(mesh2, P())
+
+    x_s1 = jax.device_put(np_inp, s1)
+    # Reshard!
+    out = jax.device_put(x_s1, s2)
+    self.assertArraysEqual(out, np_inp)
+    self.assertEqual(out.sharding, s2)
+    del out
+
+    s3 = NamedSharding(mesh2, P('model_q'))
+    x_s3 = jax.device_put(np_inp, s3)
+    # Reshard to iota device assignment!
+    out2 = jax.device_put(x_s3, s1)
+    self.assertArraysEqual(out2, np_inp)
+    self.assertEqual(out2.sharding, s1)
+
+  def test_convert_element_type_sharding(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    inp = np.arange(16).reshape(8, 2)
+
+    out = lax_internal._convert_element_type(
+        inp, new_dtype=np.float32, weak_type=False, sharding=s)
+    self.assertArraysEqual(out, inp.astype('float32'))
+    self.assertEqual(out.dtype, np.float32)
+    self.assertEqual(out.sharding, s)
+
+  def test_jnp_array_sharding(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    inp = np.arange(16).reshape(8, 2)
+
+    out = jnp.array(inp, device=s)
+    self.assertArraysEqual(out, inp)
+    self.assertEqual(out.sharding, s)
+
+  def test_jnp_array_inside_jit_sharding(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    inp = np.arange(16).reshape(8, 2)
+
+    @jax.jit
+    def f():
+      return jnp.array(inp, dtype=np.float32, device=s)
+
+    out = f()
+    print(f.trace().jaxpr)
+    self.assertArraysEqual(out, inp.astype('float32'))
+    self.assertEqual(out.sharding, s)
+    self.assertEqual(out.dtype, np.float32)
+
+    @jax.jit
+    def g(x):
+      return jnp.array(x, dtype=np.float32, device=s)
+
+    out2 = g(inp)
+    self.assertArraysEqual(out2, inp.astype('float32'))
+    self.assertEqual(out2.sharding, s)
+    self.assertEqual(out2.dtype, np.float32)
+
+  def test_jnp_array_reshard_error(self):
+    if jax.device_count() < 2:
+      self.skipTest('Requires >=2 devices')
+    arr = jax.device_put(np.arange(8), jax.devices()[0])
+    with self.assertRaisesRegex(ValueError, "Received incompatible devices.*"):
+      jnp.array(arr, device=jax.devices()[1])
+
+  def test_jnp_array_sharded_array_no_op(self):
+    inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(inp, jax.devices()[0])
+
+    out = lax_internal._convert_element_type(
+        arr, sharding=SingleDeviceSharding(jax.devices()[0]))
+    self.assertArraysEqual(out, inp)
+    self.assertEqual(out.unsafe_buffer_pointer(), arr.unsafe_buffer_pointer())
+
+  def test_wsc_named_sharding_nullary(self):
+    mesh = jtu.create_global_mesh((2,), ('x',))
+    s = NamedSharding(mesh, P())
+
+    @jax.jit
+    def f():
+      return jax.lax.with_sharding_constraint(jnp.arange(8), s)
+
+    out = f()
+    self.assertEqual(out.sharding, s)
+
 
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")
@@ -4371,72 +4428,6 @@ class PJitErrorTest(jtu.JaxTestCase):
       with self.assertRaisesRegex(ValueError, error):
         pjit(lambda x: x, in_shardings=None, out_shardings=spec)(x)
 
-  @jtu.with_mesh([('x', 2)])
-  def testInputShardsXMapAxis(self):
-    spec = P('x')
-    f = xmap(
-        pjit(lambda x: x + 2, in_shardings=spec, out_shardings=None),
-        in_axes=['i', ...],
-        out_axes=['i', ...],
-        axis_resources={'i': 'x'},
-    )
-    x = jnp.arange(4).reshape((2, 2))
-    error = (r"pjit input has an axis resources specification of " +
-             spec_regex(spec) + r" that uses one or more "
-             "mesh axes already used by "
-             r"xmap to partition a named axis appearing in its named_shape \(both "
-             r"use mesh axes `x`\)")
-    with self.assertRaisesRegex(JAXTypeError, error):
-      f(x)
-
-  @jtu.with_mesh([('x', 2)])
-  def testOutputShardsXMapAxis(self):
-    spec = P('x')
-    f = xmap(
-        pjit(lambda x: x + 2, in_shardings=None, out_shardings=spec),
-        in_axes=['i', ...],
-        out_axes=['i', ...],
-        axis_resources={'i': 'x'},
-    )
-    x = jnp.arange(4).reshape((2, 2))
-    error = (r"pjit output has an axis resources specification of " +
-             spec_regex(spec) + r" that uses one or more "
-             "mesh axes already used by "
-             r"xmap to partition a named axis appearing in its named_shape \(both "
-             r"use mesh axes `x`\)")
-    with self.assertRaisesRegex(JAXTypeError, error):
-      f(x)
-
-  @jtu.with_mesh([('x', 2)])
-  def testConstraintShardsXMapAxis(self):
-    spec = P('x')
-    f = xmap(lambda x: with_sharding_constraint(x, spec),
-             in_axes=['i', ...], out_axes=['i', ...], axis_resources={'i': 'x'})
-    x = jnp.arange(4).reshape((2, 2))
-    error = (r"with_sharding_constraint input has an axis resources specification of " +
-             spec_regex(spec) + r" that uses one or more "
-             "mesh axes already used by "
-             r"xmap to partition a named axis appearing in its named_shape \(both "
-             r"use mesh axes `x`\)")
-    with self.assertRaisesRegex(JAXTypeError, error):
-      f(x)
-
-  @jtu.with_mesh([('x', 2)])
-  def testCatchesInnerXMapErrors(self):
-    f = pjit(
-        xmap(
-            lambda x, y: x,
-            in_axes=(['i'], ['j']),
-            out_axes=['i', 'j'],
-            axis_resources={'i': 'x', 'j': 'x'},
-        ),
-        in_shardings=None,
-        out_shardings=None,
-    )
-    x = jnp.arange(4)
-    with self.assertRaises(JAXTypeError):
-      f(x, x)
-
   def testEmptyMesh(self):
     out = pjit(lambda x: x, in_shardings=None, out_shardings=None)(jnp.arange(4))
     self.assertEqual(out.sharding, SingleDeviceSharding(jax.devices()[0]))
@@ -4508,8 +4499,8 @@ class PJitErrorTest(jtu.JaxTestCase):
         return h(x)
     xshape = (2, 5, 6)
     x = jnp.arange(math.prod(xshape)).reshape(xshape)
-    with self.assertRaisesRegex(RuntimeError,
-                                "Changing the physical mesh is not allowed.*"):
+    with self.assertRaisesRegex(
+        ValueError, "Received incompatible devices for pjitted computation.*"):
       f(x)
 
   @parameterized.named_parameters(
@@ -4954,6 +4945,28 @@ class UtilTest(jtu.JaxTestCase):
   def test_mesh_with_string_axis_names(self):
     mesh = jax.sharding.Mesh(jax.devices(), 'dp')
     self.assertTupleEqual(mesh.axis_names, ('dp',))
+
+
+@jtu.with_config(jax_use_shardy_partitioner=True)
+class SdyIntegrationTest(jtu.JaxTestCase):
+
+  # TODO(bartchr): Once JAX is released with SDY, remove setUp.
+  def setUp(self):
+    if not dialects.sdy:
+      raise unittest.SkipTest('Shardy is not available.')
+
+  def test_lowering_input_output_sharding(self):
+    mesh = jtu.create_global_mesh((4, 2), ('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    s = jax.sharding.NamedSharding(mesh, P('x', 'y'))
+    arr = jax.device_put(np_inp, s)
+
+    @partial(jax.jit, out_shardings=s)
+    def f(x):
+      return x * 2
+
+    self.assertIn('sdy.sharding = #sdy.sharding', f.lower(arr).as_text())
+
 
 
 if __name__ == '__main__':

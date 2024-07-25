@@ -41,7 +41,6 @@ import jax.scipy as jsp
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lax.control_flow import for_loop
 from jax._src.interpreters import mlir
-from jax._src.maps import xmap
 
 jax.config.parse_flags_with_absl()
 
@@ -147,7 +146,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     super().setUp()
     lax_control_flow._initial_style_open_jaxpr.cache_clear()
     lax_control_flow._initial_style_jaxpr.cache_clear()
-    lax_control_flow._initial_style_jaxprs_with_common_consts.cache_clear()
+    lax_control_flow.common._pad_jaxpr_constvars.cache_clear()
 
   def testCallableErrors(self):
     not_callable = 42
@@ -2710,19 +2709,6 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       lax.scan(side_effecting_scan, None, jnp.ones((2, 2)))
       lst[0] += 1
 
-  def test_while_loop_fixed_point_with_nested_named_axes(self):
-    def f(x):
-      z = x + lax.axis_index('a').astype(x.dtype)
-      y = x + lax.axis_index('b').astype(x.dtype)
-      def cond(carry):
-        i, x = carry
-        return x < 5
-      def body(carry):
-        i, x = carry
-        return i + 1, x + lax.psum(y, 'b')
-      return lax.while_loop(cond, body, (0, z))[1]
-    xmap(f, axis_sizes=dict(a=2, b=10), out_axes=(['a']), in_axes={})(1.)
-
   def test_while_loop_fixed_point_with_batched_pred_and_consts(self):
     def f(i, x):
       def cond(carry):
@@ -2985,6 +2971,29 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     y = lax.cond(True, identity, identity, x)
     self.assertEqual(y, x)
     self.assertIsInstance(y, jax.Array)
+
+  def test_cond_memory_leak(self):
+    # https://github.com/google/jax/issues/12719
+
+    def leak():
+      data = jax.device_put(np.zeros((1024), dtype=np.float32) + 1)
+      def g():
+          return jax.lax.cond(
+              True,
+              lambda: data[0],  # noqa: F821
+              lambda: data[1],  # noqa: F821
+          )
+      jg = jax.jit(g)
+      _ = jg().block_until_ready()
+      del g, jg, data, _
+
+    leak()
+    self.assertEqual(0, len(jax.lib.xla_bridge.get_backend().live_buffers()))
+    leak()
+    self.assertEqual(0, len(jax.lib.xla_bridge.get_backend().live_buffers()))
+    leak()
+    self.assertEqual(0, len(jax.lib.xla_bridge.get_backend().live_buffers()))
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

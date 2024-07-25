@@ -248,8 +248,7 @@ def promote_shapes(fun_name: str, *args: ArrayLike) -> list[Array]:
         if config.numpy_rank_promotion.value != "allow":
           _rank_promotion_warning_or_error(fun_name, shapes)
         result_rank = len(lax.broadcast_shapes(*shapes))
-        return [_broadcast_to(arg, (1,) * (result_rank - len(shp)) + shp)
-                for arg, shp in zip(args, shapes)]
+        return [lax.broadcast_to_rank(arg, result_rank) for arg in args]
 
 
 def _rank_promotion_warning_or_error(fun_name: str, shapes: Sequence[Shape]):
@@ -428,11 +427,7 @@ def _broadcast_to(arr: ArrayLike, shape: DimSize | Shape) -> Array:
     if nlead < 0 or not compatible:
       msg = "Incompatible shapes for broadcasting: {} and requested shape {}"
       raise ValueError(msg.format(arr_shape, shape))
-    diff, = np.where(tuple(not core.definitely_equal(arr_d, shape_d)
-                           for arr_d, shape_d in safe_zip(arr_shape, shape_tail)))
-    new_dims = tuple(range(nlead)) + tuple(nlead + diff)
-    kept_dims = tuple(np.delete(np.arange(len(shape)), new_dims))
-    return lax.broadcast_in_dim(lax.squeeze(arr, tuple(diff)), shape, kept_dims)
+    return lax.broadcast_in_dim(arr, shape, tuple(range(nlead, len(shape))))
 
 
 # The `jit` on `where` exists to avoid materializing constants in cases like
@@ -447,9 +442,13 @@ def _where(condition: ArrayLike, x: ArrayLike, y: ArrayLike) -> Array:
   if not np.issubdtype(_dtype(condition), np.bool_):
     condition = lax.ne(condition, lax._zero(condition))
   x, y = promote_dtypes(x, y)
-  condition_arr, x_arr, y_arr = _broadcast_arrays(condition, x, y)
+  if np.ndim(condition) == 0:
+    # lax.select() handles scalar conditions without broadcasting.
+    x_arr, y_arr = _broadcast_arrays(x, y)
+  else:
+    condition, x_arr, y_arr = _broadcast_arrays(condition, x, y)
   try:
     is_always_empty = core.is_empty_shape(x_arr.shape)
   except:
     is_always_empty = False  # can fail with dynamic shapes
-  return lax.select(condition_arr, x_arr, y_arr) if not is_always_empty else x_arr
+  return lax.select(condition, x_arr, y_arr) if not is_always_empty else x_arr

@@ -498,7 +498,7 @@ def gmm(
     del k_i, group_offsets, group_ids, group_offset
     return m_tile_ids[grid_id], n_i
 
-  out_block_spec = pl.BlockSpec(out_transform_indices, (tm, tn))
+  out_block_spec = pl.BlockSpec((tm, tn), out_transform_indices)
   if existing_out is None:
     in_out_block_spec: Any = None
     input_output_aliases = {}
@@ -506,11 +506,11 @@ def gmm(
     in_out_block_spec = out_block_spec
     input_output_aliases = {6: 0}
 
-  lhs_block_spec = pl.BlockSpec(lhs_transform_indices, (tm, tk))
+  lhs_block_spec = pl.BlockSpec((tm, tk), lhs_transform_indices)
   if transpose_rhs:
-    rhs_block_spec = pl.BlockSpec(rhs_transform_indices, (None, tn, tk))
+    rhs_block_spec = pl.BlockSpec((None, tn, tk), rhs_transform_indices)
   else:
-    rhs_block_spec = pl.BlockSpec(rhs_transform_indices, (None, tk, tn))
+    rhs_block_spec = pl.BlockSpec((None, tk, tn), rhs_transform_indices)
 
   lhs_bytes = lhs.size * lhs.itemsize
   rhs_bytes = (k * n) * rhs.itemsize  # We don't read all of rhs
@@ -740,7 +740,7 @@ def tgmm(
     # "unsharded" domain.
     return group_ids[grid_id] - group_offset[0], k_i, n_i
 
-  out_block_spec = pl.BlockSpec(out_transform_indices, (None, tk, tn))
+  out_block_spec = pl.BlockSpec((None, tk, tn), out_transform_indices)
   if existing_out is None:
     in_out_block_spec: Any = None
     input_output_aliases = {}
@@ -748,8 +748,8 @@ def tgmm(
     in_out_block_spec = out_block_spec
     input_output_aliases = {6: 0}
 
-  lhs_block_spec = pl.BlockSpec(lhs_transform_indices, (tm, tk))
-  rhs_block_spec = pl.BlockSpec(rhs_transform_indices, (tm, tn))
+  lhs_block_spec = pl.BlockSpec((tm, tk), lhs_transform_indices)
+  rhs_block_spec = pl.BlockSpec((tm, tn), rhs_transform_indices)
 
   lhs_bytes = lhs.size * lhs.itemsize
   rhs_bytes = rhs.size * rhs.itemsize
