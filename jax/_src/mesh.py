@@ -34,10 +34,6 @@ from jax._src.lib import xla_client as xc
 MeshAxisName = Any
 ResourceAxisName = Hashable
 
-class Loop(NamedTuple):
-  name: ResourceAxisName
-  length: int
-
 
 def show_axes(axes):
   return ", ".join(sorted(f"`{a}`" for a in axes))
@@ -45,7 +41,6 @@ def show_axes(axes):
 
 class ResourceEnv(NamedTuple):
   physical_mesh: Mesh
-  loops: tuple[Loop, ...]
 
   def with_mesh(self, mesh: Mesh):
     overlap = set(mesh.axis_names) & (self.resource_axes - set(self.physical_mesh.axis_names))
@@ -55,40 +50,26 @@ class ResourceEnv(NamedTuple):
                        f"{show_axes(overlap)}")
     return self._replace(physical_mesh=mesh)
 
-  def with_extra_loop(self, loop: Loop):
-    if loop.name in self.resource_axes:
-      raise ValueError(f"Cannot extend the resource environment with loop named "
-                       f"`{loop.name}`. An axis of this name is already defined!")
-    return self._replace(loops=self.loops + (loop,))
-
   @property
   def physical_resource_axes(self) -> set[ResourceAxisName]:
     return set(self.physical_mesh.axis_names)
 
   @property
-  def loop_resource_axes(self) -> set[ResourceAxisName]:
-    return {loop.name for loop in self.loops}
-
-  @property
   def resource_axes(self) -> set[ResourceAxisName]:
-    return self.physical_resource_axes | self.loop_resource_axes
+    return self.physical_resource_axes
 
   @property
   def shape(self):
-    shape = self.physical_mesh.shape
-    shape.update(self.loops)
-    return shape
+    return self.physical_mesh.shape
 
   @property
   def local_shape(self):
-    shape = self.physical_mesh.local_mesh.shape
-    shape.update(self.loops)
-    return shape
+    return self.physical_mesh.local_mesh.shape
 
   def __repr__(self):
     mesh_repr = ", ".join(
         f"'{k}': {v}" for k, v in self.physical_mesh.shape.items())
-    return f"ResourceEnv(mesh=Mesh({mesh_repr}), {self.loops!r})"
+    return f"ResourceEnv(mesh=Mesh({mesh_repr}))"
 
 
 @util.cache(max_size=128, trace_context_in_key=False)
@@ -328,7 +309,7 @@ class Mesh(contextlib.ContextDecorator):
             if d.process_index == d.client.process_index()]
 
 
-EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()), ())
+EMPTY_ENV = ResourceEnv(Mesh(np.empty((), dtype=object), ()))
 
 class _ThreadResourcesLocalState(threading.local):
 
