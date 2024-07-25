@@ -2987,12 +2987,14 @@ class LaxControlFlowTest(jtu.JaxTestCase):
       _ = jg().block_until_ready()
       del g, jg, data, _
 
+    nbufs = lambda: len(jax.live_arrays())
+    base = nbufs()
     leak()
-    self.assertEqual(0, len(jax.lib.xla_bridge.get_backend().live_buffers()))
+    self.assertEqual(base, nbufs())
     leak()
-    self.assertEqual(0, len(jax.lib.xla_bridge.get_backend().live_buffers()))
+    self.assertEqual(base, nbufs())
     leak()
-    self.assertEqual(0, len(jax.lib.xla_bridge.get_backend().live_buffers()))
+    self.assertEqual(base, nbufs())
 
 
 if __name__ == '__main__':
