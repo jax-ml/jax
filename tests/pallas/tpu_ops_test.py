@@ -54,6 +54,31 @@ class TpuOpsTest(jtu.JaxTestCase):
     expected = lax.erf_inv(x)
     np.testing.assert_array_equal(out, expected)
 
+  SIGN_PARAMS = [
+    (jnp.int32, (-3, 0, 5)),
+    (jnp.uint32, (0, 5)),
+    (jnp.float32, (-3.2, -0., 0., 5.1, jnp.nan, jnp.inf, -jnp.inf)),
+  ]
+
+  @parameterized.named_parameters(
+      (f"{dtype.__name__}_{value}", dtype, value)
+      for dtype, values in SIGN_PARAMS
+      for value in values
+  )
+  def test_sign(self, dtype, value):
+    @jax.jit
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((4,), dtype),
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = jnp.sign(x_ref[...])
+
+    x = jnp.full((4,), value, dtype=dtype)
+    out = kernel(x)
+    expected = jnp.sign(x)
+    np.testing.assert_array_equal(out, expected)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
