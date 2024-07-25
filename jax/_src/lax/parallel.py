@@ -21,7 +21,6 @@ from collections.abc import Sequence
 from functools import partial
 import itertools
 import math
-import string
 
 from jax import tree_util
 from jax._src import core
@@ -42,6 +41,7 @@ from jax._src.util import (canonicalize_axis, moveaxis, safe_map, safe_zip,
 import numpy as np
 
 unsafe_map, map = map, safe_map  # type: ignore
+unsafe_zip, zip = zip, safe_zip  # type: ignore
 
 
 ### parallel traceables
@@ -471,168 +471,6 @@ def axis_index(axis_name):
   [0 1]]
   """
   return axis_index_p.bind(axis_name=axis_name)
-
-
-def pdot(x, y, axis_name, pos_contract=((), ()), pos_batch=((), ()),
-         precision=None):
-  if not isinstance(axis_name, (list, tuple)):
-    axis_name = (axis_name,)
-  pos_contract = tuple(map(tuple, pos_contract))
-  pos_batch = tuple(map(tuple, pos_batch))
-  return pdot_p.bind(x, y, axis_name=tuple(axis_name),
-                     pos_contract=pos_contract, pos_batch=pos_batch,
-                     precision=lax.canonicalize_precision(precision))
-
-
-def xeinsum(spec: str, *operands):
-  in_spec, out_spec = spec.split('->')
-  all_in_subs, all_in_named = unzip2(XeinsumSpecParser(in_spec).parse_args())
-  (out_subs, out_named), = XeinsumSpecParser(out_spec).parse_args()
-
-  if len(operands) != len(all_in_named):
-    raise ValueError("Expecting the same number of argument specs in the "
-                     f"subscript ({in_spec}) as the number of operands. But got "
-                     f"{len(all_in_named)} argument specs for "
-                     f"{len(operands)} operands")
-
-  if len(operands) > 2:
-    raise NotImplementedError("Only one or two operands are supported. "
-                              f"But got {len(operands)} operands")
-
-  # output subs and named axes must appear in at least one of the inputs.
-  if not set(out_named).issubset(set().union(*all_in_named)):
-    raise ValueError("Found named axes "
-                     f"{set(out_named) - set().union(*all_in_named)} "
-                     "appearing in the output spec but not in the input")
-  if not set(out_subs).issubset(set().union(*all_in_subs)):
-    raise ValueError("Found subscript(s) "
-                     f"{set(out_subs) - set().union(*all_in_subs)} "
-                     "appearing in the output spec but not in the input")
-
-  xs = list(operands)
-  for idx, (in_subs, in_named) in enumerate(safe_zip(all_in_subs, all_in_named)):
-    # if a subscript axis appears only in one input and not the output, reduce!
-    other_named = set().union(
-        *[named for i, named in enumerate(all_in_named) if i != idx])
-    other_subs = set().union(
-        *[subs for i, subs in enumerate(all_in_subs) if i != idx])
-
-    subs_reduce = list(set(in_subs) - {*out_subs, *other_subs})
-    subs_reduce_axes = [in_subs.index(n) for n in subs_reduce]
-    named_reduce_axes = list(set(in_named) - {*out_named, *other_named})
-
-    if subs_reduce_axes or named_reduce_axes:
-      xs[idx] = psum(xs[idx], axis_name=subs_reduce_axes + named_reduce_axes)
-      for i in sorted(subs_reduce_axes, reverse=True):
-        del all_in_subs[idx][i]
-      for named_axis in named_reduce_axes:
-        all_in_named[idx].remove(named_axis)
-
-  if len(operands) == 1:
-    return xs[0]
-
-  if len(operands) == 2:
-    x, y = xs
-    lhs_subs, rhs_subs = all_in_subs
-    lhs_named, rhs_named = all_in_named
-
-    # if a named axis appears in both inputs and not the output, contract!
-    named_contract = list((set(lhs_named) & set(rhs_named)) - set(out_named))
-
-    # if a subscript appears in both inputs and not the outputs, contract!
-    subs_contract = (set(lhs_subs) & set(rhs_subs)) - set(out_subs)
-
-    pos_contract = unzip2((lhs_subs.index(n), rhs_subs.index(n))
-                          for n in subs_contract)
-
-    # if a subscript appears in both inputs _and_ the outputs, batch!
-    subs_batch = (set(lhs_subs) & set(rhs_subs)) - subs_contract
-    pos_batch = unzip2((lhs_subs.index(n), rhs_subs.index(n)) for n in subs_batch)
-
-    return pdot(x, y, axis_name=named_contract,
-                pos_contract=pos_contract, pos_batch=pos_batch)
-
-
-class XeinsumSpecParser:
-  spec: str
-  pos: int
-
-  def __init__(self, spec: str):
-    self.spec = spec
-    self.pos = 0
-
-  @property
-  def eof(self):
-    return self.pos == len(self.spec)
-
-  @property
-  def cur(self):
-    return self.spec[self.pos]
-
-  def parse_subscript(self):
-    if self.cur in string.ascii_lowercase:
-      out = self.cur
-      self.pos += 1
-      return out, True
-    else:
-      return None, False
-
-  def parse_axis_name(self):
-    try:
-      end = self.spec.index('}', self.pos)
-    except ValueError:
-      assert False
-
-    try:
-      end = self.spec.index(',', self.pos, end)
-    except ValueError:
-      pass
-
-    axis_name = self.spec[self.pos:end]
-    assert axis_name
-    self.pos = end
-    return axis_name
-
-  def maybe_take(self, char: str, on_eof: bool = False):
-    if self.eof:
-      return on_eof
-    if self.cur == char:
-      self.pos += 1
-      return True
-
-  def parse_arg(self):
-    subscripts = []
-    names = []
-    while not self.eof:
-      subscript, cont = self.parse_subscript()
-      if not cont: break
-      subscripts.append(subscript)
-    if self.eof:
-      return False, (subscripts, names)
-    if self.maybe_take(','):
-      return True, (subscripts, names)
-    else:
-      assert self.maybe_take('{')
-      first = True
-      while not self.maybe_take('}'):
-        if not first:
-          assert self.maybe_take(',')
-        first = False
-        if self.eof:
-          raise ValueError("Unterminated named axis brace")
-        axis_name = self.parse_axis_name()
-        names.append(axis_name)
-      return self.maybe_take(',', False), (subscripts, names)
-
-  def parse_args(self):
-    arg_specs = []
-    cont = True
-    while not self.eof:
-      cont, result = self.parse_arg()
-      arg_specs.append(result)
-    if cont:
-      arg_specs.append(([], []))
-    return arg_specs
 
 
 def pgather(src, idx, axes: int | AxisName):
@@ -1650,77 +1488,6 @@ def _vmap_process_axis_index(self, frame):
   assert frame.size is not None
   return batching.BatchTracer(self, lax.iota(np.int32, frame.size), 0)
 batching.BatchTrace.process_axis_index = _vmap_process_axis_index  # type: ignore
-
-
-pdot_p = core.AxisPrimitive('pdot')
-core.axis_substitution_rules[pdot_p] = partial(_subst_all_names_in_param, 'axis_name')
-
-@pdot_p.def_impl
-def _pdot_impl(x, y, *, axis_name, pos_contract, pos_batch, precision):
-  if axis_name: raise NameError(f"unbound axis name: {axis_name[0]}")
-  return lax.dot_general(x, y, (pos_contract, pos_batch), precision=precision)
-
-
-@pdot_p.def_effectful_abstract_eval
-def _pdot_effectful_abstract_eval(
-    x, y, *, axis_name, pos_contract, pos_batch, precision
-):
-  # TODO(frostig,mattjj,jekbradbury): check inputs have given axis names?
-  if not len(set(axis_name)) == len(axis_name): raise ValueError
-  pos_aval = lax.dot_general_p.abstract_eval(
-      x, y, dimension_numbers=[pos_contract, pos_batch],
-      precision=precision, preferred_element_type=None)[0]
-  return pos_aval, {*map(core.NamedAxisEffect, axis_name)}
-
-def _pdot_vmap_collective_rule(axis_size, frame_name, _, vals_in, dims_in, *, axis_name,
-                               pos_contract, pos_batch, precision):
-  x, y = vals_in
-  x_dim, y_dim = dims_in
-  x_pos_contract, y_pos_contract = pos_contract
-  x_pos_contract = [x_dim] + [d + (d >= x_dim) for d in x_pos_contract]
-  y_pos_contract = [y_dim] + [d + (d >= y_dim) for d in y_pos_contract]
-  x_pos_batch, y_pos_batch = pos_batch
-  x_pos_batch = [d + (d >= x_dim) for d in x_pos_batch]
-  y_pos_batch = [d + (d >= y_dim) for d in y_pos_batch]
-  remaining_axis_names = tuple(n for n in axis_name if n != frame_name)
-  out = pdot_p.bind(x, y, axis_name=remaining_axis_names,
-                    pos_contract=(tuple(x_pos_contract), tuple(y_pos_contract)),
-                    pos_batch=(tuple(x_pos_batch), tuple(y_pos_batch)),
-                    precision=precision)
-  return out, None
-batching.axis_primitive_batchers[pdot_p] = _pdot_vmap_collective_rule
-
-def _pdot_vmap_batching_rule(vals_in, dims_in, *, axis_name, pos_contract,
-                             pos_batch, precision):
-  x, y = vals_in
-  (pos_contract, pos_batch), result_batch_dim = lax._dot_general_batch_dim_nums(
-      (x.ndim, y.ndim), dims_in, [pos_contract, pos_batch])
-  out = pdot_p.bind(x, y, axis_name=axis_name, pos_contract=pos_contract,
-                    pos_batch=pos_batch, precision=precision)
-  return out, result_batch_dim
-batching.primitive_batchers[pdot_p] = _pdot_vmap_batching_rule
-
-
-def _pdot_lowering(x, y, *, axis_name, pos_contract, pos_batch, precision):
-  local_out = lax.dot_general(x, y, dimension_numbers=(pos_contract, pos_batch),
-                              precision=precision, preferred_element_type=None)
-  return psum(local_out, axis_name) if axis_name is not None else local_out
-
-mlir.register_lowering(
-    pdot_p,
-    mlir.lower_fun(_pdot_lowering, multiple_results=False))
-
-def _pdot_transpose_lhs(g, x, y, *, axis_name, pos_contract, pos_batch, precision):
-  # TODO: avals with names, call pbroadcast with axis_name
-  return lax._dot_general_transpose_lhs(
-      g, x, y, dimension_numbers=[pos_contract, pos_batch], precision=precision,
-      preferred_element_type=None)
-def _pdot_transpose_rhs(g, x, y, *, axis_name, pos_contract, pos_batch, precision):
-  # TODO: avals with names, call pbroadcast with axis_name
-  return lax._dot_general_transpose_rhs(
-      g, x, y, dimension_numbers=[pos_contract, pos_batch], precision=precision,
-      preferred_element_type=None)
-ad.defbilinear(pdot_p, _pdot_transpose_lhs, _pdot_transpose_rhs)
 
 
 def _pgather_impl(src, idx, *, axes):

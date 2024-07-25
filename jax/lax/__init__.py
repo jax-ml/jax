@@ -355,8 +355,6 @@ from jax._src.lax.parallel import (
   psum_p as psum_p,
   psum_scatter as psum_scatter,
   pswapaxes as pswapaxes,
-  pdot as pdot,
-  xeinsum as xeinsum,
 )
 from jax._src.lax.other import (
   conv_general_dilated_local as conv_general_dilated_local,
