@@ -934,6 +934,7 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "lapack_ssyevd", "lapack_dsyevd", "lapack_cheevd", "lapack_zheevd",
     # eigh on GPU
     "cusolver_syevj", "cusolver_syevd",
+    "hipsolver_syevj", "hipsolver_syevd",
     # eigh on TPU
     "Eigh",
     # eig on CPU
@@ -947,6 +948,8 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     # qr on GPU
     "cusolver_geqrf", "cublas_geqrf_batched",
     "cusolver_orgqr",
+    "hipsolver_geqrf", "hipblas_geqrf_batched",
+    "hipsolver_orgqr",
     # qr and svd on TPU
     "Qr", "ProductOfElementaryHouseholderReflectors",
     # triangular_solve on CPU
