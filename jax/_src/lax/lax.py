@@ -2555,14 +2555,6 @@ def _convert_elt_type_pp_rule(eqn, context, settings):
   return core._pp_eqn(eqn.replace(params=params), context, settings)
 
 convert_element_type_p = Primitive('convert_element_type')
-def _convert_element_type_bind(operand, *, new_dtype, weak_type, sharding):
-  operand = core.Primitive.bind(convert_element_type_p, operand,
-                                new_dtype=new_dtype, weak_type=weak_type,
-                                sharding=sharding)
-  if sharding is not None:
-    operand = jax.lax.with_sharding_constraint(operand, sharding)
-  return operand
-convert_element_type_p.def_custom_bind(_convert_element_type_bind)
 convert_element_type_p.def_impl(partial(dispatch.apply_primitive, convert_element_type_p))
 convert_element_type_p.def_abstract_eval(
     partial(standard_abstract_eval, convert_element_type_p,

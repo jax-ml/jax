@@ -755,7 +755,7 @@ def _allreduce_effectful_abstract_eval(*args, axes, axis_index_groups):
                        f"named axes, but got: {axes}")
   out_avals = [
       ShapedArray(lax._reduce_op_shape_rule(raise_to_shaped(arg), axes=pos_axes),
-                  arg.dtype)] for arg in args]
+                  arg.dtype) for arg in args]
   return out_avals, set()
 
 def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
