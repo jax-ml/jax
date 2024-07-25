@@ -3778,7 +3778,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     arr = jax.device_put(np.arange(8), s)
     with self.assertRaisesRegex(
         ValueError,
-        'If you are using xmap or spmd_axis_name parameter of jax.vmap, please'
+        'If you are using spmd_axis_name parameter of jax.vmap, please'
         ' make sure to run your jitted function inside the mesh context'
         ' manager.*SingleDeviceSharding'):
       jax.jit(jax.vmap(f, spmd_axis_name='x'))(arr)

@@ -874,6 +874,21 @@ class LoweringResult(NamedTuple):
 _platforms_with_donation = ["cpu", "cuda", "rocm", "tpu"]
 
 
+def add_manual_axes(axis_ctx: sharding_impls.SPMDAxisContext, sharding, ndim):
+  mesh = axis_ctx.mesh
+  if (isinstance(sharding, sharding_impls.NamedSharding) and
+      sharding.mesh.shape == mesh.shape):
+    return sharding_impls.NamedSharding._from_parsed_pspec(
+        sharding.mesh, sharding._parsed_pspec, memory_kind=sharding.memory_kind,
+        _manual_axes=axis_ctx.manual_axes)
+  else:
+    parsed_pspec = sharding_impls.parse_flatten_op_sharding(
+      sharding._to_xla_hlo_sharding(ndim), mesh)[0]
+    return sharding_impls.NamedSharding._from_parsed_pspec(
+      mesh, parsed_pspec, memory_kind=sharding.memory_kind,
+      _manual_axes=axis_ctx.manual_axes)
+
+
 def _to_physical_op_sharding(
     ctx: ModuleContext,
     aval: core.AbstractValue, sharding: JSharding | None,
@@ -890,17 +905,7 @@ def _to_physical_op_sharding(
   axis_ctx = ctx.axis_context
   if (isinstance(axis_ctx, sharding_impls.SPMDAxisContext) and
       axis_ctx.manual_axes):
-    mesh = axis_ctx.mesh
-    if (isinstance(sharding, sharding_impls.NamedSharding) and
-        sharding.mesh.shape == mesh.shape):
-      sharding = sharding_impls.NamedSharding._from_parsed_pspec(
-          sharding.mesh, sharding._parsed_pspec,
-          _manual_axes=axis_ctx.manual_axes)
-    else:
-      parsed_pspec = sharding_impls.parse_flatten_op_sharding(
-        sharding._to_xla_hlo_sharding(aval.ndim), mesh)[0]
-      sharding = sharding_impls.NamedSharding._from_parsed_pspec(
-        mesh, parsed_pspec, _manual_axes=axis_ctx.manual_axes)
+    sharding = add_manual_axes(axis_ctx, sharding, aval.ndim)
   if config.use_shardy_partitioner.value:
     return sharding._to_sdy_sharding(aval.ndim)  # type: ignore
   return sharding._to_xla_hlo_sharding(aval.ndim).to_proto()  # type: ignore
