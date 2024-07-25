@@ -381,9 +381,9 @@ def xla_computation(fun: Callable,
     return_shape: Optional boolean, defaults to ``False``. If ``True``, the
       wrapped function returns a pair where the first element is the XLA
       computation and the second element is a pytree with the same structure as
-      the output of ``fun`` and where the leaves are objects with ``shape`` and
-      ``dtype`` attributes representing the corresponding types of the output
-      leaves.
+      the output of ``fun`` and where the leaves are objects with ``shape``,
+      ``dtype``, and ``named_shape`` attributes representing the corresponding
+      types of the output leaves.
     donate_argnums: Specify which arguments are "donated" to the computation.
       It is safe to donate arguments if you no longer need them once the
       computation has finished. In some cases XLA can make use of donated
@@ -557,8 +557,8 @@ def xla_computation(fun: Callable,
       m = mlir.module_to_bytecode(lowering_result.module)
       built = xc._xla.mlir.mlir_module_to_xla_computation(
           m, use_tuple_args=tuple_args, return_tuple=True)
-    out_shapes_flat = [ShapeDtypeStruct(a.shape, a.dtype) for a in out_avals]
-    out_shapes_flat = [ShapeDtypeStruct(a.shape, a.dtype) for a in out_avals]
+    out_shapes_flat = [
+        ShapeDtypeStruct(a.shape, a.dtype, a.named_shape) for a in out_avals]
     out_shape = tree_unflatten(out_tree(), out_shapes_flat)
     for out_aval in out_avals:
       if not isinstance(out_aval, ShapedArray):
@@ -2337,8 +2337,8 @@ def make_jaxpr(fun: Callable,
       wrapped function returns a pair where the first element is the
       ``ClosedJaxpr`` representation of ``fun`` and the second element is a
       pytree with the same structure as the output of ``fun`` and where the
-      leaves are objects with ``shape`` and ``dtype`` attributes representing
-      the corresponding types of the output leaves.
+      leaves are objects with ``shape``, ``dtype``, and ``named_shape``
+      attributes representing the corresponding types of the output leaves.
 
   Returns:
     A wrapped version of ``fun`` that when applied to example arguments returns
@@ -2400,7 +2400,8 @@ def make_jaxpr(fun: Callable,
     else:
       jaxpr = traced.jaxpr
     if return_shape:
-      out = [ShapeDtypeStruct(o.shape, o.dtype) for o in jaxpr.out_avals]
+      out = [ShapeDtypeStruct(o.shape, o.dtype, getattr(o, 'named_shape', None))
+             for o in jaxpr.out_avals]
       return jaxpr, tree_unflatten(tree_structure(traced.out_info), out)
     return jaxpr
 
@@ -2690,13 +2691,12 @@ class ShapeDtypeStruct:
   Args:
     shape: a sequence of integers representing an array shape
     dtype: a dtype-like object
+    named_shape: (optional) a dictionary representing a named shape
     sharding: (optional) a :class:`jax.Sharding` object
   """
-  __slots__ = ["shape", "dtype", "sharding", "_dll"]
-  named_shape = {}
+  __slots__ = ["shape", "dtype", "named_shape", "sharding", "_dll"]
 
-  def __init__(self, shape, dtype, sharding=None, named_shape=None):
-    del named_shape  # ignored, vestigial
+  def __init__(self, shape, dtype, named_shape=None, sharding=None):
     self.shape = tuple(shape)
     if dtype is None:
       raise ValueError("ShapeDtypeStruct: dtype must be specified.")
@@ -2713,6 +2713,7 @@ class ShapeDtypeStruct:
           f" layout in a `ShapeDtypeStruct`. Got {sharding}")
     self.sharding = sharding.sharding if isinstance(sharding, Layout) else sharding
     self._dll = sharding.device_local_layout if isinstance(sharding, Layout) else None
+    self.named_shape = {} if named_shape is None else dict(named_shape)
 
   size = property(lambda self: math.prod(self.shape))
   ndim = property(lambda self: len(self.shape))
@@ -2728,10 +2729,11 @@ class ShapeDtypeStruct:
       raise TypeError("len() of unsized object") from e  # same as numpy error
 
   def __repr__(self):
+    ns = f", named_shape={self.named_shape}" if self.named_shape else ""
     sh = f", sharding={self.sharding}" if self.sharding is not None else ""
     l = f", layout={self.layout}" if self._dll is not None else ""
     return (f"{type(self).__name__}(shape={self.shape}, "
-            f"dtype={self.dtype.name}{sh}{l})")
+            f"dtype={self.dtype.name}{ns}{sh}{l})")
 
   __str__ = __repr__
 
@@ -2739,17 +2741,19 @@ class ShapeDtypeStruct:
     if not isinstance(other, ShapeDtypeStruct):
       return False
     else:
-      return ((other.shape, other.dtype, other.sharding, other.layout) ==
-              (self.shape, self.dtype, self.sharding, self.layout))
+      return ((other.shape, other.dtype, other.named_shape, other.sharding, other.layout) ==
+              (self.shape, self.dtype, self.named_shape, self.sharding, self.layout))
 
   def __hash__(self):
     # TODO(frostig): avoid the conversion from dict by addressing
     # https://github.com/google/jax/issues/8182
-    return hash((self.shape, self.dtype, self.sharding, self.layout))
+    named = frozenset(self.named_shape.items())
+    return hash((self.shape, self.dtype, named, self.sharding, self.layout))
+
 
 core.pytype_aval_mappings[ShapeDtypeStruct] = (
     lambda x: ShapedArray(x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
-                          weak_type=False))
+                          weak_type=False, named_shape=x.named_shape))
 
 
 @api_boundary
