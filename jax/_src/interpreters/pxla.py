@@ -854,12 +854,10 @@ def lower_parallel_callable(
 def _pmap_unmap_shaped_array(
     size: int, axis_name: core.AxisName, axis: int | None, aval: ShapedArray
   ) -> ShapedArray:
-  named_shape = dict(aval.named_shape)
-  named_shape.pop(axis_name, None)  # TODO: make this mandatory
-  if axis is None: return aval.update(named_shape=named_shape)
+  if axis is None: return aval
   elif type(axis) is int:
     return ShapedArray(tuple_update(aval.shape, axis, size), aval.dtype,
-                       named_shape=named_shape, weak_type=aval.weak_type)
+                       weak_type=aval.weak_type)
   else: raise TypeError(axis)
 
 
@@ -1507,22 +1505,17 @@ mlir.register_lowering(xla_pmap_p, _pmap_lowering)
 def tile_aval_nd(axis_sizes, in_axes: ArrayMapping, aval):
   assert isinstance(aval, ShapedArray)
   shape = list(aval.shape)
-  named_shape = dict(aval.named_shape)
   for name, axis in in_axes.items():
     assert shape[axis] % axis_sizes[name] == 0
-    assert name not in named_shape
-    named_shape[name] = axis_sizes[name]
     shape[axis] //= axis_sizes[name]
-  return aval.update(shape=tuple(shape), named_shape=named_shape)
+  return aval.update(shape=tuple(shape))
 
 def untile_aval_nd(axis_sizes, out_axes: ArrayMapping, aval):
   assert isinstance(aval, ShapedArray)
   shape = list(aval.shape)
-  named_shape = dict(aval.named_shape)
   for name, axis in out_axes.items():
     shape[axis] *= axis_sizes[name]
-    named_shape.pop(name, None)  # The name might be missing --- it's a broadcast.
-  return aval.update(shape=tuple(shape), named_shape=named_shape)
+  return aval.update(shape=tuple(shape))
 
 
 def mesh_local_to_global(mesh, axes: ArrayMapping, aval):

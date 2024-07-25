@@ -148,9 +148,7 @@ def _logical_aval_to_interpret_mode_aval(aval):
     return aval.update(inner_aval=inner_aval)
   if isinstance(aval, jax_core.ShapedArray):
     inner_dtype = _logical_to_interpret_mode_dtype(aval.dtype)
-    return jax_core.ShapedArray(aval.shape,
-                                inner_dtype,
-                                weak_type=aval.weak_type, named_shape=aval.named_shape)
+    return jax_core.ShapedArray(aval.shape, inner_dtype, weak_type=aval.weak_type)
   return aval
 
 def _get_next_indices(grid, indices):

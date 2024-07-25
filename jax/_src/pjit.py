@@ -490,7 +490,7 @@ def _make_jit_wrapper(fun: Callable, jit_info: PjitInfo):
     p, _ = _infer_params(fun, jit_info, args, kwargs)
     out_s = [None if is_unspecified(s) else s for s in p.params['out_shardings']]
     # TODO(yashkatariya): Add `Layout` to SDS.
-    out = [api.ShapeDtypeStruct(x.shape, x.dtype, x.named_shape, sharding=s)
+    out = [api.ShapeDtypeStruct(x.shape, x.dtype, sharding=s)
            for x, s in zip(p.params['jaxpr'].out_avals, out_s)]
     return tree_unflatten(p.out_tree, out)
 

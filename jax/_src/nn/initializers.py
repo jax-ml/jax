@@ -198,19 +198,19 @@ def truncated_normal(stddev: RealNumeric = 1e-2,
   return init
 
 @export
-def _compute_fans(shape: core.NamedShape,
+def _compute_fans(shape: Sequence[int],
                   in_axis: int | Sequence[int] = -2,
                   out_axis: int | Sequence[int] = -1,
                   batch_axis: int | Sequence[int] = ()
-                  ) -> tuple[Array, Array]:
+                  ) -> tuple[float, float]:
   """
   Compute effective input and output sizes for a linear or convolutional layer.
 
   Axes not in in_axis, out_axis, or batch_axis are assumed to constitute the
   "receptive field" of a convolution (kernel spatial dimensions).
   """
-  if shape.rank <= 1:
-    raise ValueError(f"Can't compute input and output sizes of a {shape.rank}"
+  if len(shape) <= 1:
+    raise ValueError(f"Can't compute input and output sizes of a {len(shape)}"
                      "-dimensional weights tensor. Must be at least 2D.")
 
   if isinstance(in_axis, int):
@@ -225,13 +225,13 @@ def _compute_fans(shape: core.NamedShape,
     batch_size = shape[batch_axis]
   else:
     batch_size = math.prod([shape[i] for i in batch_axis])
-  receptive_field_size = shape.total / in_size / out_size / batch_size
+  receptive_field_size = math.prod(shape) / in_size / out_size / batch_size
   fan_in = in_size * receptive_field_size
   fan_out = out_size * receptive_field_size
   return fan_in, fan_out
 
 def _complex_uniform(key: KeyArray,
-                     shape: Sequence[int] | core.NamedShape,
+                     shape: Sequence[int],
                      dtype: DTypeLikeInexact) -> Array:
   """
   Sample uniform random values within a disk on the complex plane,
@@ -245,7 +245,7 @@ def _complex_uniform(key: KeyArray,
   return r * jnp.exp(1j * theta)
 
 def _complex_truncated_normal(key: KeyArray, upper: ArrayLike,
-                              shape: Sequence[int] | core.NamedShape,
+                              shape: Sequence[int],
                               dtype: DTypeLikeInexact) -> Array:
   """
   Sample random values from a centered normal distribution on the complex plane,
@@ -317,9 +317,9 @@ def variance_scaling(
   def init(key: KeyArray,
            shape: core.Shape,
            dtype: DTypeLikeInexact = dtype) -> Array:
+    shape = core.canonicalize_shape(shape)
     dtype = dtypes.canonicalize_dtype(dtype)
-    named_shape = core.as_named_shape(shape)
-    fan_in, fan_out = _compute_fans(named_shape, in_axis, out_axis, batch_axis)
+    fan_in, fan_out = _compute_fans(shape, in_axis, out_axis, batch_axis)
     if mode == "fan_in": denominator = fan_in
     elif mode == "fan_out": denominator = fan_out
     elif mode == "fan_avg": denominator = (fan_in + fan_out) / 2
@@ -332,18 +332,18 @@ def variance_scaling(
       if jnp.issubdtype(dtype, jnp.floating):
         # constant is stddev of standard normal truncated to (-2, 2)
         stddev = jnp.sqrt(variance) / jnp.array(.87962566103423978, dtype)
-        return random.truncated_normal(key, -2, 2, named_shape, dtype) * stddev
+        return random.truncated_normal(key, -2, 2, shape, dtype) * stddev
       else:
         # constant is stddev of complex standard normal truncated to 2
         stddev = jnp.sqrt(variance) / jnp.array(.95311164380491208, dtype)
-        return _complex_truncated_normal(key, 2, named_shape, dtype) * stddev
+        return _complex_truncated_normal(key, 2, shape, dtype) * stddev
     elif distribution == "normal":
-      return random.normal(key, named_shape, dtype) * jnp.sqrt(variance)
+      return random.normal(key, shape, dtype) * jnp.sqrt(variance)
     elif distribution == "uniform":
       if jnp.issubdtype(dtype, jnp.floating):
-        return random.uniform(key, named_shape, dtype, -1) * jnp.sqrt(3 * variance)
+        return random.uniform(key, shape, dtype, -1) * jnp.sqrt(3 * variance)
       else:
-        return _complex_uniform(key, named_shape, dtype) * jnp.sqrt(variance)
+        return _complex_uniform(key, shape, dtype) * jnp.sqrt(variance)
     else:
       raise ValueError(f"invalid distribution for variance scaling initializer: {distribution}")
 
