@@ -29,7 +29,6 @@ from jaxlib.mlir import ir
 from jaxlib.mlir.dialects import arith
 from jaxlib.mlir.dialects import gpu
 from jaxlib.mlir.dialects import memref
-from jaxlib.mlir.dialects import nvgpu
 from jaxlib.mlir.dialects import nvvm
 from jaxlib.mlir.dialects import scf
 from jaxlib.mlir.dialects import vector
@@ -281,7 +280,6 @@ def build_kernel(
   block = (128, 1, 1)
 
   c = arith.ConstantOp.create_index
-  divmod = lambda x, y: (arith.divui(x, c(y)), arith.remui(x, c(y)))
 
   compute_scratch_shapes = {
       "lhs": jax.ShapeDtypeStruct((stages, *tile_shape(block_tiling.mk, tma_tiling.mk)), lhs_dtype),
@@ -360,11 +358,13 @@ def build_kernel(
 
       with ctx.named_region("TMA start"):
         tma_ki = arith.addi(ki, c(stages - 1))
-        do_tma = arith.cmpi(arith.CmpIPredicate.slt, tma_ki, c(k_steps))
+        tma_si = arith.remui(tma_ki, c(stages))
         not_first_step = arith.cmpi(arith.CmpIPredicate.ne, ki, c(0))
-        if_op = scf.IfOp(arith.andi(not_first_step, do_tma))
-        with ir.InsertionPoint(if_op.then_block):
-          tma_si = arith.remui(tma_ki, c(stages))
+        tma_ki_in_bounds = arith.cmpi(
+            arith.CmpIPredicate.slt, tma_ki, c(k_steps)
+        )
+        do_tma = arith.andi(not_first_step, tma_ki_in_bounds)
+        with ir.InsertionPoint(scf.IfOp(do_tma).then_block):
           fetch(tma_si, tma_ki)
           scf.yield_([])
 
@@ -381,52 +381,14 @@ def build_kernel(
       gpu.barrier()
 
     with ctx.named_region("GMEM store"):
-      # Vectorized epilogue to move results from SMEM to GMEM
-      # TODO(apaszke): Make this into a proper copy function.
-      warps_per_warpgroup = 4
-      lanes_per_warp = 32
-      m_out_tiling, n_out_tiling = out_tiling[-2:]
-      warp_id, lane_id = divmod(gpu.thread_id(gpu.Dimension.x), lanes_per_warp)
-      # We store 4 f32 numbers for a block of 16B.
-      vector_len = 4
-      num_vectors_per_row = safe_div(tile_n, vector_len)
-      # Process several rows at once if it is necessary to fully exploit each
-      # warp.
-      if tile_n < lanes_per_warp * vector_len:
-        num_rows_per_warp = min(
-            safe_div(lanes_per_warp * vector_len, tile_n),
-            safe_div(tile_m, warps_per_warpgroup))
-      else:
-        num_rows_per_warp = 1
-      lanes_per_row = safe_div(lanes_per_warp, num_rows_per_warp)
-      lane_row_offset, lane_col_offset = divmod(lane_id, lanes_per_row)
-      warp_for_op = scf.ForOp(arith.muli(warp_id, c(num_rows_per_warp)),
-                              c(tile_m),
-                              c(warps_per_warpgroup * num_rows_per_warp))
-      with ir.InsertionPoint(warp_for_op.body):
-        start_row = warp_for_op.induction_variable
-        m_row_idx = arith.addi(start_row, lane_row_offset)
-        vector_for_op = scf.ForOp(lane_col_offset, c(num_vectors_per_row),
-                                  c(lanes_per_row))
-        with ir.InsertionPoint(vector_for_op.body):
-          vector_idx = vector_for_op.induction_variable
-          n_store = arith.muli(vector_idx, c(vector_len))
-          col_group, n_load = divmod(n_store, n_out_tiling)
-          m_tile, m_within_tile = divmod(m_row_idx, m_out_tiling)
-          swizzle_source = arith.shli(arith.remui(m_row_idx, c(8)), c(2))
-          n_acc = arith.xori(n_load, swizzle_source)
-          acc_part = vector.load(
-              ir.VectorType.get((vector_len,), f32),
-              acc_smem,
-              [m_tile, col_group, m_within_tile, n_acc],
-          )
-          vector.store(
-              acc_part,
-              c_device,
-              [arith.addi(m_start, m_row_idx), arith.addi(n_start, n_store)],
-          )
-          scf.yield_([])
-        scf.yield_([])
+      ctx.async_copy(
+          src_ref=acc_smem,
+          dst_ref=c_device,
+          gmem_slice=(ds(m_start, tile_m), ds(n_start, tile_n)),
+          gmem_transform=mosaic_gpu.TileTransform(out_tiling),
+          swizzle=128,
+      )
+      ctx.await_async_copy(0)
 
   return mosaic_gpu.as_gpu_kernel(
       _main,
@@ -524,5 +486,6 @@ if __name__ == "__main__":
   m, k, n = 33 * 128, 2048, 4 * 128
   runtime, ref_runtime = verify(m=m, k=k, n=n)
   tflops = float(2 * k * m * n) / (runtime / 1e3) / 1e12
+  ref_tflops = float(2 * k * m * n) / (ref_runtime / 1e3) / 1e12
   print(f"Kernel:    {runtime * 1000:.1f} us = {tflops:.1f} TFLOPS")
-  print(f"Reference: {runtime * 1000:.1f} us = {tflops:.1f} TFLOPS")
+  print(f"Reference: {ref_runtime * 1000:.1f} us = {ref_tflops:.1f} TFLOPS")
