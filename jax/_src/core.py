@@ -1734,7 +1734,7 @@ def _invalid_shape_error(shape: Shape, context: str=""):
 class ShapedArray(UnshapedArray):
   __slots__ = ['shape']
   array_abstraction_level = 2
-  named_shape = {}
+  named_shape = {}  # type: ignore
 
   def __init__(self, shape, dtype, weak_type=False, named_shape=None):
     del named_shape  # unused, vestigial

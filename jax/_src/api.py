@@ -2693,9 +2693,9 @@ class ShapeDtypeStruct:
     sharding: (optional) a :class:`jax.Sharding` object
   """
   __slots__ = ["shape", "dtype", "sharding", "_dll"]
-  named_shape = {}
+  named_shape = {}  # type: ignore
 
-  def __init__(self, shape, dtype, sharding=None, named_shape=None):
+  def __init__(self, shape, dtype, named_shape=None, sharding=None):
     del named_shape  # ignored, vestigial
     self.shape = tuple(shape)
     if dtype is None:
