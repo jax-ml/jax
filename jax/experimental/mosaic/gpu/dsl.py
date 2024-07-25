@@ -27,6 +27,8 @@ from .fragmented_array import (
     WGStridedFragLayout,
 )
 from .utils import (
+    BarrierRef,
+    CollectiveBarrierRef,
     DynamicSlice,
     Partition,
     Partition1D,
