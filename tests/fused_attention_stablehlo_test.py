@@ -30,7 +30,6 @@ from jax._src.cudnn.fused_attention_stablehlo import (
     dot_product_attention,
     check_is_flash_attention,
     check_cudnn_version,
-    check_compute_capability,
     get_large_negative_number,
     MaskType,
     AttentionLayout,
@@ -159,12 +158,13 @@ class DotProductAttentionTest(jtu.JaxTestCase):
       self.skipTest("Requires more than 4 devices.")
     try:
       cudnn_version = check_cudnn_version()
-      check_compute_capability((80, 90))
     except RuntimeError as e:
       self.skipTest(str(e))
       return
     if cudnn_version < 8904:
       self.skipTest("Requires >= cuDNN 8.9.4")
+    if not jtu.is_cuda_compute_capability_at_least("8.0"):
+      self.skipTest("Requires at least Ampere arch")
 
   @jtu.sample_product(
       batch_size=[4],
@@ -340,12 +340,14 @@ class DotProductAttentionTest(jtu.JaxTestCase):
   def test_sdpa_broadcast_bias_and_dbias(self):
     try:
       cudnn_version = check_cudnn_version()
-      check_compute_capability((90,))
     except RuntimeError as e:
       self.skipTest(str(e))
       return
     if cudnn_version < 8906:
       self.skipTest("Requires >= cuDNN 8.9.6")
+    if not jtu.is_cuda_compute_capability_at_least("9.0"):
+      self.skipTest("Requires at least Hopper arch")
+
     k1, k2, k3, k4, k5 = jax.random.split(jax.random.key(0), 5)
     query = jax.random.normal(
         k1, (4, 1024, 4, 64), dtype=jnp.bfloat16)
