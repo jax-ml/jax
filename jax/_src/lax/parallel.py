@@ -1603,8 +1603,8 @@ def _axis_index_lowering(ctx, *, axis_name):
                                          ctx.module_context.axis_env)]
 
 def _axis_index_effectful_abstract_eval(*, axis_name):
-  frame = core.axis_frame(axis_name)
-  out_aval = ShapedArray((), np.int32, named_shape={axis_name: frame.size})
+  size = core.get_axis_size(axis_name)
+  out_aval = ShapedArray((), np.int32, named_shape={axis_name: size})
   return out_aval, set()
 
 def _axis_index_batcher(axis_data, _, vals_in, dims_in, *, axis_name):

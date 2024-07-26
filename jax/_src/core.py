@@ -2806,6 +2806,30 @@ def get_axis_size(axis_name:AxisName):
 def axis_exists(axis_name:AxisName):
   return axis_name in get_trace_state().axis_env
 
+# When a mapped function is given no axis name, we generate a name object based
+# on the id of the function object. Collisions aren't important because this
+# name can't be used in collectives, as user code never gets a ref to this
+# object. We don't want to use the function object itself because that might
+# persist references to the function object.
+# TODO(mattjj): revisit this unique axis name strategy
+@total_ordering
+class _TempAxisName:
+
+  def __init__(self, obj):
+    self.id = id(obj)
+
+  def __repr__(self):
+    return f'<axis {hex(self.id)}>'
+
+  def __hash__(self):
+    return hash(self.id)
+
+  def __eq__(self, other):
+    return type(other) is _TempAxisName and self.id == other.id
+
+  def __lt__(self, other):
+    return type(other) is _TempAxisName and self.id < other.id
+
 concrete_eval = ensure_compile_time_eval
 
 # Used in shard_map for converting avals
