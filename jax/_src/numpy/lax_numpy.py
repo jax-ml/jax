@@ -33,7 +33,7 @@ import importlib
 import math
 import operator
 import types
-from typing import (cast, overload, Any, Literal, NamedTuple,
+from typing import (overload, Any, Literal, NamedTuple,
                     Protocol, TypeVar, Union)
 from textwrap import dedent as _dedent
 import warnings
@@ -1579,7 +1579,7 @@ def unravel_index(indices: ArrayLike, shape: Shape) -> tuple[Array, ...]:
   except TypeError:
     # TODO: Consider warning here since shape is supposed to be a sequence, so
     # this should not happen.
-    shape = cast(list[Any], [shape])
+    shape = [shape]
   if any(ndim(s) != 0 for s in shape):
     raise ValueError("unravel_index: shape should be a scalar or 1D sequence.")
   out_indices: list[ArrayLike] = [0] * len(shape)
