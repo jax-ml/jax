@@ -886,16 +886,17 @@ class EvalTrace(Trace):
 
 
 
-AxisEnvFrame = namedtuple('AxisEnvFrame', ['name', 'size', 'batch_tag'])
 AxisName = Hashable
 
 no_axis_name = object()
 
 class TraceState:
   trace: Trace | None
+  axis_env : Dict[AxisName, int]
 
   def __init__(self) -> None:
     self.trace = EvalTrace()
+    self.axis_env = {}
 
 def _update_thread_local_jit_state(dynamic):
   state = (dynamic.level, dynamic.trace_type)
@@ -1096,8 +1097,14 @@ def ensure_compile_time_eval():
 
   But in some cases it can be more convenient to use this context manager.
   """
-  with new_base_main(EvalTrace):
+  try:
+    ts = get_trace_state()
+    prev = ts.trace
+    ts.trace = EvalTrace()
     yield
+  finally:
+    ts.trace = prev
+
 eval_context = ensure_compile_time_eval  # alias, backward compatibility
 
 def get_referent(x: Any) -> Any:
@@ -2781,14 +2788,25 @@ def set_current_trace(t):
     ts.trace = prev
 
 @contextmanager
-def concrete_eval():
+def extend_axis_env(name_size_pairs : list[tuple[AxisName, int]]):
+  env = get_trace_state().axis_env
+  for name, size in name_size_pairs:
+    if name in env:
+      raise Exception(f"Axis name {name} is already in scope")
   try:
-    ts = get_trace_state()
-    prev = ts.trace
-    ts.trace = EvalTrace()
+    env.update(name_size_pairs)
     yield
   finally:
-    ts.trace = prev
+    for name, _ in name_size_pairs:
+      env.pop(name)
+
+def get_axis_size(axis_name:AxisName):
+  return get_trace_state().axis_env[axis_name]
+
+def axis_exists(axis_name:AxisName):
+  return axis_name in get_trace_state().axis_env
+
+concrete_eval = ensure_compile_time_eval
 
 # Used in shard_map for converting avals
 shard_aval_handlers = {}  # type: ignore

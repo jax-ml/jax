@@ -1774,9 +1774,8 @@ def _cpp_pmap(
     execute: Callable | None = None
     top_trace = core.find_cur_trace()
     if isinstance(top_trace, core.EvalTrace):
-      assert False
-      # execute = pxla.xla_pmap_impl_lazy(fun_, *tracers, **params)
-      # out = map_bind_continuation(execute(*tracers))
+      execute = pxla.xla_pmap_impl_lazy(p.flat_fun, *p.flat_args, **params)
+      out = execute(*p.flat_args)
     else:
       out = pxla.xla_pmap_p.bind_with_trace(top_trace, (p.flat_fun,) + tuple(p.flat_args), params)
 

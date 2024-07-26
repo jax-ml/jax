@@ -675,7 +675,7 @@ def stage_parallel_callable(
   with dispatch.log_elapsed_time(
       "Finished tracing + transforming {fun_name} for pmap in {elapsed_time} sec",
       fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
-    jaxpr, out_sharded_avals, consts = pe.trace_to_jaxpr_final(
+    jaxpr, out_sharded_avals, consts, _ = pe.trace_to_jaxpr_dynamic(
         fun, sharded_avals, pe.debug_info_final(fun, "pmap"))
   jaxpr = api_util.jaxpr_debug_info(jaxpr, orig_fun.debug_info)
   jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
@@ -713,8 +713,8 @@ def get_pmap_jaxpr(
   pci = ParallelCallableInfo(
       name, backend, axis_name, axis_size, global_axis_size, devices,
       in_axes, out_axes_thunk, avals)
-  jaxpr, consts, replicas, shards = stage_parallel_callable(pci, fun)
-  jaxpr = core.remove_named_axis_effects(jaxpr, {axis_name})
+  with core.extend_axis_env([(axis_name, axis_size)]):
+    jaxpr, consts, replicas, shards = stage_parallel_callable(pci, fun)
   closed_jaxpr = core.ClosedJaxpr(jaxpr, consts)
   return closed_jaxpr, backend, replicas, shards, pci
 
@@ -812,7 +812,7 @@ def lower_parallel_callable(
                                           backend.platform)
   module_name = f"pmap_{fun.__name__}"
   platforms = lowering_platforms or (backend.platform,)
-  with maybe_extend_axis_env(axis_name, global_axis_size, None):
+  with core.extend_axis_env([(axis_name, global_axis_size)]):
     ordered_effects = list(
         effects.ordered_effects.filter_in(closed_jaxpr.effects))
     if ordered_effects:
@@ -3110,9 +3110,3 @@ def get_array_mapping(pspec: PartitionSpec) -> ArrayMappingOrAutoOrUnspecified:
   parsed_pspec = sharding_impls.prepare_axis_resources(
       pspec, "pspec to array_mapping")
   return _get_array_mapping(parsed_pspec)
-
-
-@contextmanager
-def maybe_extend_axis_env(*args, **kwargs):
-  with core.extend_axis_env(*args, **kwargs):
-    yield

@@ -83,8 +83,6 @@ from jax._src.interpreters.partial_eval import (
   trace_to_jaxpr as trace_to_jaxpr,
   trace_to_jaxpr_dynamic as _trace_to_jaxpr_dynamic,
   trace_to_jaxpr_dynamic2 as trace_to_jaxpr_dynamic2,
-  trace_to_jaxpr_final as trace_to_jaxpr_final,
-  trace_to_jaxpr_final2 as trace_to_jaxpr_final2,
   trace_to_jaxpr_nounits as trace_to_jaxpr_nounits,
   trace_to_subjaxpr as trace_to_subjaxpr,
   trace_to_subjaxpr_nounits as trace_to_subjaxpr_nounits,

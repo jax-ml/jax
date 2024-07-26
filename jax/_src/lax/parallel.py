@@ -120,8 +120,25 @@ def psum(x, axis_name, *, axis_index_groups=None):
   leaves = [lax.convert_element_type(l, np.int32)
             if dtypes.dtype(l) == np.bool_ else l for l in leaves]
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
-  out_flat = psum_p.bind(
-      *leaves, axes=tuple(axis_name), axis_index_groups=axis_index_groups)
+  # handle the constant case specially
+  if all(not isinstance(leaf, core.Tracer) for leaf in leaves):
+    named_axes, pos_axes = axes_partition = [], []
+    for axis in axis_name:
+      axes_partition[isinstance(axis, int)].append(axis)
+    def pos_reduce(x):
+      if not pos_axes:
+        return x
+      return lax._reduce_sum(x, [canonicalize_axis(axis, getattr(x, 'ndim', 0))
+                                 for axis in pos_axes])
+    if axis_index_groups is not None:
+      assert not pos_axes
+      size = len(axis_index_groups[0])
+    else:
+      size = math.prod([core.get_axis_size(name) for name in named_axes])
+    out_flat = tuple(lax._const(leaf, size) * pos_reduce(leaf) for leaf in leaves)
+  else:
+    out_flat = psum_p.bind(
+        *leaves, axes=tuple(axis_name), axis_index_groups=axis_index_groups)
   return tree_util.tree_unflatten(treedef, out_flat)
 
 def pmean(x, axis_name, *, axis_index_groups=None):
