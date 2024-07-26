@@ -508,7 +508,7 @@ def convert_element_type(operand: ArrayLike,
   Similar to a C++ `static_cast`.
 
   Args:
-    operand: an array or scalar value to be cast
+    operand: an array or scalar value to be cast.
     new_dtype: a NumPy dtype representing the target type.
 
   Returns:
