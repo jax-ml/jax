@@ -783,6 +783,8 @@ jax_test(
         # compilation times out on CPU.
         "noasan",
         "not_build:arm",
+        # TODO(b/355237462): Re-enable once MSAN issue is addressed.
+        "nomsan",
     ],
     deps = py_deps("torch"),
 )
