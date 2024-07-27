@@ -672,12 +672,11 @@ def stage_parallel_callable(
     fun = _change_argument_ranks(fun, pci.in_axes, pci.out_axes_thunk)
   else:
     fun = orig_fun
-  with core.extend_axis_env([(pci.axis_name, pci.global_axis_size)]):
-    with dispatch.log_elapsed_time(
-        "Finished tracing + transforming {fun_name} for pmap in {elapsed_time:.9f} sec",
-        fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
-      jaxpr, out_sharded_avals, consts = pe.trace_to_jaxpr_final(
-          fun, sharded_avals, pe.debug_info_final(fun, "pmap"))
+  with dispatch.log_elapsed_time(
+      "Finished tracing + transforming {fun_name} for pmap in {elapsed_time} sec",
+      fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
+    jaxpr, out_sharded_avals, consts, _ = pe.trace_to_jaxpr_dynamic(
+        fun, sharded_avals, pe.debug_info_final(fun, "pmap"))
   jaxpr = api_util.jaxpr_debug_info(jaxpr, orig_fun.debug_info)
   jaxpr = dispatch.apply_outfeed_rewriter(jaxpr)
 
