@@ -28,6 +28,7 @@ from jax import random
 from jax._src import test_util as jtu
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_kernel as splash
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask as mask_lib
+from jax.experimental.pallas.ops.tpu.splash_attention.splash_attention_mask_info import process_mask
 import jax.numpy as jnp
 import numpy as np
 
@@ -318,7 +319,6 @@ class PallasBaseTest(jtu.JaxTestCase):
 
 
 class SplashAttentionTest(PallasBaseTest):
-
   @parameterized.product(
       is_mqa=(False, True),
       is_segmented=(False, True),
@@ -544,7 +544,7 @@ class SplashAttentionTest(PallasBaseTest):
         data.draw(mha_strategy())
     )
 
-    # Avoid segment ids for rectangular matrices, as its hard to enforce
+    # Avoid segment ids for rectangular matrices, as it's hard to enforce
     # valid masks (non-0 rows).
     hp.assume(q_seq_len == kv_seq_len or not is_segmented)
 
@@ -649,6 +649,71 @@ class SplashAttentionTest(PallasBaseTest):
     self._assert_allclose(dv, dv_ref, atol=2e-2, rtol=3e-2)
     self._assert_allclose(dq, dq_ref, atol=2e-2, rtol=3e-2)
     self._assert_allclose(dk, dk_ref, atol=2e-2, rtol=3e-2)
+
+  def test_grid_shrinking(self):
+    """Make sure that grid shrinking does not change the attention output."""
+
+    class IdentityMask(mask_lib._ComputableMask):
+      """Identity mask that is guaranteed to trigger grid shrinking."""
+
+      def __init__(
+          self,
+          shape: tuple[int, int],
+          shard_count: int = 1,
+      ):
+        def identity_mask_function(q_ids, kv_ids):
+          return q_ids == kv_ids
+
+        super().__init__(
+            shape=shape,
+            mask_function=identity_mask_function,
+            shard_count=shard_count,
+        )
+
+      def __eq__(self, other: object):
+        if not isinstance(other, type(self)):
+          return NotImplemented
+
+        return self.shape == other.shape and np.array_equal(
+            self.q_sequence, other.q_sequence
+        )
+
+      def __hash__(self):
+        return hash((
+            type(self),
+            self.shape,
+            self.q_sequence.tobytes() if self.q_sequence is not None else None,
+        ))
+
+    # Use a sequence length greater than the default block size to trigger
+    # the grid shrinking logic.
+    seq_len = 256
+    head_dim = 128
+    key = random.key(42)
+    k1, k2, k3 = random.split(key, 3)
+    q = random.uniform(k1, (1, seq_len, head_dim), dtype=jnp.float32)
+    k = random.uniform(k2, (seq_len, head_dim), dtype=jnp.float32)
+    v = random.uniform(k3, (seq_len, head_dim), dtype=jnp.float32)
+
+    identity_mask = mask_lib.MultiHeadMask([IdentityMask((seq_len, seq_len))])
+
+    process_mask_path = "jax.experimental.pallas.ops.tpu.splash_attention.splash_attention_mask_info.process_mask"
+    process_mask_shrink = lambda *args, **kwargs: process_mask(
+        *args, **kwargs, shrink_grid=True
+    )
+    process_mask_no_shrink = lambda *args, **kwargs: process_mask(
+        *args, **kwargs, shrink_grid=False
+    )
+
+    with unittest.mock.patch(process_mask_path, process_mask_shrink):
+      shrink_out = splash.make_splash_mqa_single_device(identity_mask)(q, k, v)
+
+    with unittest.mock.patch(process_mask_path, process_mask_no_shrink):
+      no_shrink_out = splash.make_splash_mqa_single_device(identity_mask)(
+          q, k, v
+      )
+
+    np.testing.assert_array_equal(shrink_out, no_shrink_out)
 
 
 if __name__ == "__main__":

@@ -31,7 +31,6 @@ from jax._src.lax import lax
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
 from jax._src.lib.mlir.dialects import memref as memref_dialect
-from jax._src.lib.mlir.dialects import nvgpu as nvgpu_dialect
 from jax._src.pallas import core as pl_core
 from jax._src.pallas import primitives
 from jax._src.state import primitives as sp
@@ -60,68 +59,57 @@ class ModuleContext:
 
   # TODO(cperivol): Only return the shapes and figure out the sizes when freeing.
   def scratch_view(
-      self, shapes: list[jax.ShapeDtypeStruct]
-  ) -> tuple[int, list[ir.Value]]:
-    """Return memref views into the runtime scrath based on the shapes.
+      self, structs: Sequence[jax.ShapeDtypeStruct]
+  ) -> tuple[int, Sequence[ir.Value]]:
+    """Creates a view into the runtime scratch buffer for each struct.
 
-    This is low level and unsafe. `scratch_view()` allocates bytes at
-    the top of a stack and they can be deallocated in a FIFO fashion
-    with `stack_free_smem()`.
+    This is a low-level API. Use it only if you know what you are doing.
+
+    The function allocates bytes at the top of a stack, which need to be
+    deallocated in a FIFO fashion with :meth:`ModuleContext.stack_free_smem`.
+    After deallocation, the view is invalid and cannot be used.
 
     Args:
-      shapes: The shapes of the scratch buffers.
+      structus: The shapes and dtypes of the views to create.
 
     Returns:
-      The number of bytes allocated and a list of memref views into
-      the scratch buffers. The views are allocated at the top of a
-      scratch stack and are valid only until
-      `ModuleContext.stack_free_smem()` is called.
-
+      A tuple, where the first element is the number of bytes allocated,
+      and the second element is a sequence of memref views into the
+      runtime scratch buffer.
     """
-
     smem_scratch_bytes = math.prod(ir.MemRefType(self.runtime_smem.type).shape)
     required_scratch_bytes = sum(
-        math.prod(sh.shape) * jnp.dtype(sh.dtype).itemsize for sh in shapes
+        math.prod(sh.shape) * jnp.dtype(sh.dtype).itemsize for sh in structs
     )
     if smem_scratch_bytes < required_scratch_bytes:
       raise ValueError(
           f"Too few {smem_scratch_bytes=} provided (pass via compiler_params),"
-          f" we need {required_scratch_bytes} ({shapes=})"
+          f" we need {required_scratch_bytes} ({structs=})"
       )
 
     views = []
     off = self.smem_used_bytes
     smem = ir.Attribute.parse("#gpu.address_space<workgroup>")
-    total_bytes = 0
-    for sh in shapes:
-      sh_bytes = math.prod(sh.shape) * jnp.dtype(sh.dtype).itemsize
-      total_bytes += sh_bytes
-      strides = (*np.cumprod(sh.shape)[:-1:-1], 1)
-
-      # We need scratch to be able to store 128 items of x.
-      scratch = memref_dialect.subview(
-          self.runtime_smem,
-          offsets=[_index(off)],
-          sizes=[_index(sh_bytes)],
-          strides=[_index(i) for i in strides],
-      )
+    for s in structs:
       scratch_ty = ir.MemRefType.get(
-          sh.shape,
-          mlir.dtype_to_ir_type(sh.dtype),
+          s.shape,
+          mlir.dtype_to_ir_type(s.dtype),
           memory_space=smem,
       )
-      off += sh_bytes
-      views.append(memref_dialect.view(scratch_ty, scratch, _index(off), []))
-      self.smem_used_bytes += total_bytes
+      views.append(
+          memref_dialect.view(scratch_ty, self.runtime_smem, _index(off), [])
+      )
+      off += math.prod(s.shape) * jnp.dtype(s.dtype).itemsize
 
+    total_bytes = off - self.smem_used_bytes
+    self.smem_used_bytes = off
     return total_bytes, views
 
   def stack_free_smem(self, bytes: int):
-    """Frees the `bytes` last allocated."""
-
+    """Frees the ``bytes`` last allocated."""
+    if bytes > self.smem_used_bytes:
+      raise ValueError("Tried to free more bytes than was allocated")
     self.smem_used_bytes -= bytes
-    if self.smem_used_bytes < 0:
-      raise ValueError("Tried to free more bytes than allocated.")
 
 
 @dataclasses.dataclass
@@ -155,42 +143,30 @@ class LoweringError(Exception):
 
 def lower_jaxpr_to_module(
     grid_mapping: pl_core.GridMapping,
-    in_structs: tuple[jax.ShapeDtypeStruct, ...],
-    out_structs: tuple[jax.ShapeDtypeStruct, ...],
     jaxpr: jax_core.Jaxpr,
     name: str,
     compiler_params: dict[str, Any],
 ) -> LoweringResult:
+  in_structs = grid_mapping.in_shapes
+  out_structs = grid_mapping.out_shapes
   assert len(jaxpr.outvars) == 0
-  assert not grid_mapping.mapped_dims
+  assert not grid_mapping.vmapped_dims
   grid = grid_mapping.grid
   if len(grid) < 3:
     grid += (1,) * (3 - len(grid))
   block = (128,) + (1,) * (len(grid) - 1)
 
   def body(launch_ctx: mosaic_gpu.LaunchContext, *buffers):
-    *buffers_gmem, (*buffers_smem, runtime_smem) = buffers
+    *buffers_gmem, (*buffers_smem, runtime_smem, barriers) = buffers
     assert len(buffers_gmem) == len(buffers_smem)
     in_buffers_gmem = buffers_gmem[: len(in_structs)]
     in_buffers_smem = buffers_smem[: len(in_structs)]
     out_buffers_gmem = buffers_gmem[len(in_structs) :]
     out_buffers_smem = buffers_smem[len(in_structs) :]
 
-    # arrival_count= determines the expected number of arrivals for each
-    # barrier in the array. It is not accidental that we do just a single
-    # mbarrier_arrive_expect_tx below.
-    # TODO(slebedev): Consider enforcing this in the mgpu.BarrierArray.
-    [barrier] = mgpu.BarrierArray(1, arrival_count=1)
+    [barrier] = cast(mgpu.BarrierRef, barriers)
 
     with mgpu.single_thread():
-      nvgpu_dialect.mbarrier_arrive_expect_tx(
-          barrier.barrier_array.value,
-          _index(
-              sum(math.prod(s.shape) * s.dtype.itemsize for s in in_structs)
-          ),
-          barrier.offset,
-      )
-
       for b_gmem, b_smem in zip(in_buffers_gmem, in_buffers_smem):
         # TODO(slebedev): Support 128-byte swizzling, once we can lower matmuls.
         launch_ctx.async_copy(
@@ -198,7 +174,7 @@ def lower_jaxpr_to_module(
             dst_ref=b_smem,
             barrier=barrier,
             swizzle=None,
-            arrive=False,
+            arrive=True,
             uniform=False,
         )
 
@@ -228,7 +204,12 @@ def lower_jaxpr_to_module(
       block=block,
       in_shapes=in_structs,
       out_shape=out_structs,
-      smem_scratch_shape=(*in_structs, *out_structs, *extra_smem_scratch),
+      smem_scratch_shape=(
+          *in_structs,
+          *out_structs,
+          *extra_smem_scratch,
+          mgpu.TMABarrier(),
+      ),
   )
 
   return LoweringResult(module, grid, gmem_scratch_bytes, out_structs)

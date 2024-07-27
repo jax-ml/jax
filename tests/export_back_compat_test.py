@@ -63,6 +63,7 @@ from jax.sharding import PartitionSpec as P
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lib import cuda_versions
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib import xla_extension_version
 
 config.parse_flags_with_absl()
@@ -107,9 +108,13 @@ class CompatTest(bctu.CompatTestBase):
   def test_custom_call_coverage(self):
     """Tests that the back compat tests cover all the targets declared stable."""
     targets_to_cover = set(_export._CUSTOM_CALL_TARGETS_GUARANTEED_STABLE)
+    cpu_ffi_testdatas = [
+        cpu_cholesky_lapack_potrf.data_2024_05_31,
+    ]
     # Add here all the testdatas that should cover the targets guaranteed
     # stable
     covering_testdatas = [
+        *cpu_ffi_testdatas,
         cpu_cholesky_lapack_potrf.data_2023_06_19,
         cpu_eig_lapack_geev.data_2023_06_19,
         cpu_eigh_lapack_syev.data_2023_03_17,
@@ -171,7 +176,14 @@ class CompatTest(bctu.CompatTestBase):
     atol = dict(f32=1e-4, f64=1e-12, c64=1e-4, c128=1e-12)[dtype_name]
 
     data = self.load_testdata(cpu_cholesky_lapack_potrf.data_2023_06_19[dtype_name])
+    # TODO(b/344892332): Remove the check after the compatibility period.
+    has_xla_ffi_support = jaxlib_version >= (0, 4, 31)
     self.run_one_test(func, data, rtol=rtol, atol=atol)
+    if has_xla_ffi_support:
+      with config.export_ignore_forward_compatibility(True):
+        # FFI Kernel test
+        data = self.load_testdata(cpu_cholesky_lapack_potrf.data_2024_05_31[dtype_name])
+        self.run_one_test(func, data, rtol=rtol, atol=atol)
 
   @parameterized.named_parameters(
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
@@ -479,7 +491,6 @@ class CompatTest(bctu.CompatTestBase):
                                   np.asarray(out), atol=1e-4, rtol=1e-4))
 
   @jtu.parameterized_filterable(
-    one_containing="f32",
     kwargs=[
       dict(testcase_name=f"_dtype={dtype_name}", dtype_name=dtype_name)
       for dtype_name in ("f32", "f64", "c64", "c128")])

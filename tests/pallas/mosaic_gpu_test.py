@@ -13,9 +13,11 @@
 # limitations under the License.
 
 import functools
+
 from absl.testing import absltest
 from absl.testing import parameterized
 import jax
+from jax._src import config
 from jax._src import test_util as jtu
 import jax._src.pallas.mosaic_gpu.core as plgpu
 from jax.experimental import pallas as pl
@@ -29,6 +31,8 @@ jax.config.parse_flags_with_absl()
 class PallasTest(jtu.JaxTestCase):
 
   def setUp(self):
+    if config.enable_x64.value:
+      self.skipTest("Only works on x32 at the moment")
     if not jtu.is_cuda_compute_capability_at_least("9.0"):
       self.skipTest("Only works on a GPU with capability >= sm90")
 
@@ -47,6 +51,17 @@ class PallasCallTest(PallasTest):
 
     x = jnp.arange(256).astype(jnp.float32)
     np.testing.assert_array_equal(add_one(x), x + 1.0)
+
+  def test_add_doubled_sum(self):
+    @functools.partial(
+        pl.pallas_call,
+        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+    )
+    def add_one(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + jnp.sum(x_ref[...]) + jnp.sum(x_ref[...])
+
+    x = jnp.arange(256).astype(jnp.float32)
+    np.testing.assert_array_equal(add_one(x), x + x.sum()*2)
 
   @parameterized.product(input_factor=[0.001, 1, 10, 100, 100])
   def test_layer_norm(self, input_factor):

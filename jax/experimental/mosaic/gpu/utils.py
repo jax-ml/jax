@@ -590,6 +590,10 @@ class BarrierRef:
   def arrive_expect_tx(self, bytes: int | ir.Value):
     if isinstance(bytes, int):
       bytes = c(bytes, ir.IntegerType.get_signless(32))
+    elif ir.IndexType.isinstance(bytes.type):
+      i32 = ir.IntegerType.get_signless(32)
+      bytes = arith.index_cast(i32, bytes)
+
     nvvm.mbarrier_arrive_expect_tx(self.get_ptr(), bytes)
 
   def get_ptr(self):

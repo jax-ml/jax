@@ -725,7 +725,7 @@ def flash_attention_kernel(
     m_scratch_ref[...] = jnp.full_like(m_scratch_ref, mask_value)
     l_scratch_ref[...] = jnp.zeros_like(l_scratch_ref)
 
-  _, _, should_run, should_not_mask = _next_nonzero(
+  global_kv_index, _, should_run, should_not_mask = _next_nonzero(
       h,
       i,
       j,
@@ -760,7 +760,11 @@ def flash_attention_kernel(
         kv_segment_ids_ref,
         attn_logits_soft_cap=attn_logits_soft_cap,
         k_slice=slice_k,
-        k_offset=j * bkv + kv_compute_index * bkv_compute,
+        # When the iteration space is shrunk (for local attention for example),
+        # the kv_index program_id does not correspond to the actual coordinates
+        # of the KV data. Make sure to use the 'unshrunk' index (coming from the
+        # data_next array) when computing the mask.
+        k_offset=global_kv_index * bkv + kv_compute_index * bkv_compute,
         bq=bq,
         mask_function=mask_function,
     )
@@ -1282,7 +1286,7 @@ def _flash_attention_dq_kernel(
   def init():
     dq_scratch_ref[...] = jnp.zeros_like(dq_scratch_ref)
 
-  _, _, should_run, should_not_mask = _next_nonzero(
+  global_kv_index, _, should_run, should_not_mask = _next_nonzero(
       h, i, j, data_next_ref, block_mask_ref, mask_next_ref
   )
   @pl.when(should_run)
@@ -1308,7 +1312,11 @@ def _flash_attention_dq_kernel(
         kv_segment_ids_ref,
         attn_logits_soft_cap=attn_logits_soft_cap,
         k_slice=pl.ds(0, bkv),
-        k_offset=j * bkv,
+        # When the iteration space is shrunk (for local attention for example),
+        # the kv_index program_id does not correspond to the actual coordinates
+        # of the KV data. Make sure to use the 'unshrunk' index (coming from the
+        # data_next array) when computing the mask.
+        k_offset=global_kv_index * bkv,
         bq=bq,
         mask_function=mask_function,
     )

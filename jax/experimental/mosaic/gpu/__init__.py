@@ -733,7 +733,9 @@ def _lower_as_gpu_kernel(
       out_refs = arg_refs[len(in_ref_tys):]
       prof_buffer = out_refs.pop() if prof_spec is not None else None
       empty_arr_ty = ir.Type.parse("!llvm.array<0 x i8>")
-      scratch_alloc = llvm.AllocaOp(ptr_ty, c(1, i64), empty_arr_ty)
+      scratch_alloc = llvm.AllocaOp(
+          ptr_ty, c(1, i64), empty_arr_ty, alignment=TMA_DESCRIPTOR_ALIGNMENT
+      )
       scratch_arr = llvm.load(empty_arr_ty, scratch_alloc.result)
       with _launch(
           token, grid, cluster, block, scratch_arr, smem_scratch_shape,

@@ -27,6 +27,7 @@ import warnings
 
 import jax
 from jax._src import api_util
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import deprecations
 from jax._src import linear_util as lu
@@ -40,7 +41,8 @@ import jax.numpy as jnp
 
 
 class DynamicGridDim:
-  pass
+  def __repr__(self):
+    return "DynamicGridDim"
 dynamic_grid_dim = DynamicGridDim()
 
 
@@ -173,18 +175,27 @@ def current_grid_env() -> GridEnv | None:
 
 
 class Mapped:
-  pass
+  """Used as a block shape dimension to denote a mapped dimension.
+  A mapped dimension behaves like `1` except it is squeezed from the block.
+  See :ref:`pallas_blockspec` for more details.
+  """
+  def __repr__(self):
+    return "Mapped"
 mapped = Mapped()
 
 
 @dataclasses.dataclass(frozen=True)
 class Unblocked:
   padding: tuple[tuple[int, int], ...] | None = None
+
+  def __repr__(self):
+    return f"Unblocked(padding={self.padding})"
 unblocked = Unblocked()
 
 
 class Blocked:
-  pass
+  def __repr__(self):
+    return "Blocked"
 blocked = Blocked()
 
 
@@ -196,6 +207,8 @@ class BlockSpec:
   """Specifies how an array should be sliced for each iteration of a kernel.
 
   See :ref:`pallas_blockspec` for more details.
+  This object contains the parameters passed through the API.
+  An internal canonicalized version is in BlockMapping.
   """
   block_shape: tuple[int | None, ...] | None = None
   index_map: Callable[..., Any] | None = None
@@ -247,9 +260,38 @@ BlockSpecTree = Any
 
 @dataclasses.dataclass(frozen=True)
 class BlockMapping:
+  """An internal canonicalized version of BlockSpec.
+
+  See the `check_invariants` method for precise specification.
+  """
   block_shape: tuple[Mapped | int, ...]
+  block_aval: AbstractMemoryRef   # The block ref aval
   index_map_jaxpr: jax_core.ClosedJaxpr
   indexing_mode: IndexingMode
+  array_shape_dtype: jax.ShapeDtypeStruct  # The whole array
+  origin: str  # The origin, e.g. input[2]["field"]
+
+  def check_invariants(self) -> None:
+    if not config.enable_checks.value: return
+
+    unmapped_block_shape = tuple(s for s in self.block_shape if s is not mapped)
+    assert unmapped_block_shape == self.block_aval.shape, (
+        self.block_shape, self.block_aval)
+    assert len(self.block_shape) == len(self.array_shape_dtype.shape), (
+        self.block_shape, self.array_shape_dtype
+    )
+
+    assert not self.index_map_jaxpr.consts
+    assert len(self.block_shape) == len(self.index_map_jaxpr.out_avals)
+    assert all(ov.shape == () and
+               (ov.dtype == jnp.int32 or ov.dtype == jnp.int64)
+               for ov in self.index_map_jaxpr.out_avals), (
+               self.index_map_jaxpr.out_avals)
+
+  def replace(self, **kwargs):
+    new_self = dataclasses.replace(self, **kwargs)
+    new_self.check_invariants()
+    return new_self
 
   def compute_start_indices_interpret(self, loop_idx, *args):
     discharged_jaxpr, discharged_consts = state_discharge.discharge_state(
@@ -269,8 +311,6 @@ class BlockMapping:
     else:
       raise RuntimeError(f"Unknown indexing mode: {self.indexing_mode}")
 
-  replace = dataclasses.replace
-
 
 @contextlib.contextmanager
 def tracing_grid_env(grid: GridMappingGrid, mapped_dims: tuple[int, ...]):
@@ -285,16 +325,86 @@ def tracing_grid_env(grid: GridMappingGrid, mapped_dims: tuple[int, ...]):
 
 @dataclasses.dataclass(frozen=True)
 class GridMapping:
+  """An internal canonicalized version of GridSpec.
+
+  Encodes the calling conventions of the pallas_call primitive, the kernel,
+  and the index maps.
+
+  The pallas_call is invoked with: ``*dynamic_grid_sizes, *index, *consts, *inputs``.
+  The ``index`` operands are for the scalar prefetch.
+  The ``consts`` are constants captured by the kernel function.
+
+  The kernel function is invoked with:
+  ``*index, *consts, *inputs, *scratch``.
+
+  The index map functions are invoked with:
+  ``*program_ids, *index``.
+
+  See the `check_invariants` method for a more precise specification.
+  """
   grid: GridMappingGrid
   grid_names: tuple[Hashable, ...] | None
-  block_mappings: tuple[BlockMapping | None, ...]
-  mapped_dims: tuple[int, ...] = ()
-  num_index_operands: int = 0
-  num_scratch_operands: int = 0
-  # Number of constants hoisted to operands by ``_hoist_consts_to_refs``.
-  num_constant_operands: int = 0
 
-  replace = dataclasses.replace
+  # Block mappings for: *consts, *inputs, *outputs
+  block_mappings: tuple[BlockMapping, ...]
+  # The inputs for tracing the index map: the tree and the flat avals
+  index_map_tree: tree_util.PyTreeDef
+  index_map_avals: tuple[jax_core.AbstractValue]
+  # Which dimensions in `grid` are vmapped.
+  vmapped_dims: tuple[int, ...]
+
+  num_index_operands: int
+  # Number of captured constants hoisted to operands.
+  num_constant_operands: int
+  num_inputs: int
+  num_outputs: int
+  num_scratch_operands: int
+
+  def check_invariants(self) -> None:
+    if not config.enable_checks.value: return
+    assert (len(self.block_mappings) ==
+            self.num_constant_operands + self.num_inputs + self.num_outputs), (
+        self.num_constant_operands, self.num_inputs, self.num_outputs,
+        self.block_mappings
+    )
+    # index_map_avals = int32[] * len(self.grid) + index_operands
+    assert len(self.index_map_avals) == len(self.grid) + self.num_index_operands, (
+        self.index_map_avals,
+        self.grid,
+        self.num_index_operands,
+    )
+    # Check that we can put together the avals and the tree.
+    index_map_args, index_map_kwargs = self.index_map_tree.unflatten(
+        self.index_map_avals)
+    assert not index_map_kwargs
+    assert len(index_map_args) >= len(self.grid)
+    for i in range(len(self.grid)):
+      index_map_arg = index_map_args[i]
+      assert index_map_arg.shape == ()
+      assert index_map_arg.dtype == jnp.int32
+
+    assert len(self.vmapped_dims) <= len(self.grid)
+    for i in self.vmapped_dims:
+      assert 0 <= i < len(self.grid)
+
+    if self.grid_names is not None:
+      assert len(self.grid) == len(self.grid_names), (self.grid, self.grid_names)
+    for bm in self.block_mappings:
+      bm.check_invariants()
+      assert tuple(self.index_map_avals) == tuple(bm.index_map_jaxpr.in_avals), (
+          self.index_map_avals,
+          bm.index_map_jaxpr.in_avals,
+      )
+
+  def replace(self, **kwargs) -> GridMapping:
+    new_self = dataclasses.replace(self, **kwargs)
+    new_self.check_invariants()
+    return new_self
+
+  @property
+  # TODO(necula): deprecate and then remove this property.
+  def mapped_dims(self) -> tuple[int, ...]:
+    return self.vmapped_dims
 
   @property
   def num_dynamic_grid_bounds(self):
@@ -314,74 +424,123 @@ class GridMapping:
       axis_env_ctx = jax_core.extend_axis_env_nd(
           zip(self.grid_names, self.grid)
       )
-    with tracing_grid_env(self.grid, self.mapped_dims), axis_env_ctx:
+    with tracing_grid_env(self.grid, self.vmapped_dims), axis_env_ctx:
       yield
+
+  @property
+  def slice_index_ops(self):
+    """Returns a slice object to select the index operands to a kernel."""
+    return slice(0, self.num_index_operands)
+
+  @property
+  def slice_block_ops(self):
+    """Returns a slice to select all but the index operands to a kernel."""
+    return slice(self.num_index_operands, None)
+
+  @property
+  def slice_scratch_ops(self):
+    """Returns a slice object to select the scratch operands to a kernel."""
+    if self.num_scratch_operands:
+      return slice(-self.num_scratch_operands, None)
+    else:
+      return slice(0, 0)
+
+  # TODO(necula): this is used to recover the old `in_shapes`, but it probably
+  # is not needed anymore, with some cleanup.
+  @property
+  def in_shapes(self) -> tuple[jax.ShapeDtypeStruct, ...]:
+    """The shapes of *index, *consts, *inputs."""
+    index_shapes = [jax.ShapeDtypeStruct(ia.inner_aval.shape,
+                                         ia.inner_aval.dtype)
+                    for ia in self.index_map_avals[len(self.grid):]]
+    consts_inputs_shapes = [
+        bm.array_shape_dtype
+        for bm in self.block_mappings[
+            :self.num_constant_operands + self.num_inputs]]
+    return tuple(index_shapes + consts_inputs_shapes)
+
+  # TODO(necula): this is used to recover the old `out_shapes`, but it probably
+  # is not needed anymore, with some cleanup.
+  @property
+  def out_shapes(self) -> tuple[jax.ShapeDtypeStruct, ...]:
+    return tuple(
+        bm.array_shape_dtype
+        for bm in self.block_mappings[
+            self.num_constant_operands + self.num_inputs:
+            self.num_constant_operands + self.num_inputs + self.num_outputs])
 
 def _is_valid_grid_dim(dim: int | jax.Array) -> bool:
   if isinstance(dim, jax.Array):
     return True
   return jax_core.is_dim(dim)
 
-def _preprocess_grid(grid: Grid | int | None) -> tuple[TupleGrid, GridNames]:
-  if grid is None:
-    return (), None
-  if isinstance(grid, int):
-    return (grid,), None
-  # Handle empty grid
-  if not grid:
-    return grid, None  # type: ignore
-  # Check if we have a named grid
-  if isinstance(grid[0], tuple):
-    grid_names, grid = util.unzip2(grid)  # type: ignore
-  else:
-    grid_names = None
-  # TODO(b/353730556): allow NumPy scalars in grids
-  if not all(_is_valid_grid_dim(g) for g in grid):  # type: ignore
-    raise ValueError(
-        f"Grid must be a tuple of integers or jax.Array, got {grid}"
-    )
-  return grid, grid_names  # type: ignore
-
-
 def _convert_block_spec_to_block_mapping(
-    in_avals: Sequence[jax_core.ShapedArray],
     block_spec: BlockSpec,
     path: tree_util.KeyPath,
-    aval: jax_core.ShapedArray,
-    in_tree: Any,
+    array_aval: jax_core.ShapedArray,
+    *,
+    # Inputs for the index_map
+    index_map_avals: Sequence[jax_core.AbstractValue],
+    index_map_tree: tree_util.PyTreeDef,
     grid: GridMappingGrid,
     mapped_dims: tuple[int, ...],
     what: str,  # Used to localize error messages, e.g., {what}{path}
-) -> BlockMapping | None:
+) -> BlockMapping:
+  origin = f"{what}{tree_util.keystr(path)}"
   if block_spec is no_block_spec:
-    return None
+    block_spec = BlockSpec(None, None)
   if block_spec.index_map is None:
-    compute_index = lambda *args, **kwargs: (0,) * len(aval.shape)
+    compute_index = lambda *args: (0,) * len(array_aval.shape)
   else:
     compute_index = block_spec.compute_index
   if block_spec.block_shape is None:
-    block_shape = aval.shape
+    block_shape = array_aval.shape
   else:
     block_shape = block_spec.block_shape
-  block_shape = tuple(
-      mapped if s is None else s for s in block_shape)
-  flat_fun, _ = api_util.flatten_fun(lu.wrap_init(compute_index), in_tree)
-  with tracing_grid_env(grid, mapped_dims):
-    jaxpr, out_avals, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, in_avals)
-    if len(out_avals) != len(block_shape):
+    if len(array_aval.shape) != len(block_shape):
       raise ValueError(
-          f"Index map for {what}{tree_util.keystr(path)} must return "
-          f"{len(aval.shape)} values to match {block_shape=}. "
-          f"Currently returning {len(out_avals)} values."
+          f"Block shape for {origin} (= {block_shape}) "
+          f"must have the same number of dimensions as the array shape {array_aval.shape}"
       )
+  unmapped_block_shape = tuple(s for s in block_shape if s is not None)
+  block_aval = AbstractMemoryRef(array_aval.update(shape=unmapped_block_shape),
+                                 block_spec.memory_space)
+
+  if not jax_core.is_constant_shape(block_aval.shape):
+    raise ValueError(
+        "shape polymorphism for Pallas does not support "
+        "dynamically-shaped blocks. "
+        f"{origin} has block_shape: {block_aval.shape}")
+
+  flat_index_map_fun, _ = api_util.flatten_fun(lu.wrap_init(compute_index),
+                                               index_map_tree)
+  with tracing_grid_env(grid, mapped_dims):
+    jaxpr, out_avals, consts, () = pe.trace_to_jaxpr_dynamic(flat_index_map_fun,
+                                                             index_map_avals)
+  mapped_block_shape = tuple(
+        mapped if s is None else s for s in block_shape)
+  if len(out_avals) != len(mapped_block_shape):
+    raise ValueError(
+        # TODO(necula): show the name and location of the index map function
+        f"Index map for {origin} must return "
+        f"{len(block_aval.shape)} values to match block shape {mapped_block_shape}. "
+        f"Currently returning {len(out_avals)} values."
+    )
   if consts:
     raise NotImplementedError(
-        f"Index map for {what}{tree_util.keystr(path)} captures constants: "
+        # TODO(necula): show the name and location of the index map function
+        f"Index map for {origin} captures constants: "
         f"{consts}")
-  return BlockMapping(
-      block_shape, jax_core.ClosedJaxpr(jaxpr, consts), block_spec.indexing_mode
+  mapping = BlockMapping(
+      block_shape=mapped_block_shape,
+      block_aval=block_aval,
+      index_map_jaxpr=jax_core.ClosedJaxpr(jaxpr, consts),
+      indexing_mode=block_spec.indexing_mode,
+      array_shape_dtype=jax.ShapeDtypeStruct(array_aval.shape, array_aval.dtype),
+      origin=origin,
   )
-
+  mapping.check_invariants()
+  return mapping
 
 def _tile_ref(ref: state.AbstractRef, block_shape: tuple[int, ...] | None
              ) -> state.AbstractRef:
@@ -390,65 +549,20 @@ def _tile_ref(ref: state.AbstractRef, block_shape: tuple[int, ...] | None
   shape = tuple(s for s in block_shape if s is not None)
   return ref.update(inner_aval=ref.inner_aval.update(shape=shape))
 
-
-def _get_ref_avals(in_avals: Sequence[jax_core.ShapedArray],
-                   in_specs: Sequence[BlockSpec],
-                   in_paths: Sequence[tree_util.KeyPath],
-                   out_avals: Sequence[jax_core.ShapedArray],
-                   out_specs: Sequence[BlockSpec],
-                   out_paths: Sequence[tree_util.KeyPath]):
-  def make_ref_aval(aval: jax_core.ShapedArray,
-                    spec: BlockSpec,
-                    path: tree_util.KeyPath,
-                    what: str) -> state.AbstractRef:
-    if spec is no_block_spec:
-      memory_space = None
-      block_shape = None
-    else:
-      memory_space = spec.memory_space
-      block_shape = spec.block_shape
-
-    ref_aval = AbstractMemoryRef(aval, memory_space)
-    if block_shape is not None:
-      if len(ref_aval.shape) != len(block_shape):
-        raise ValueError(
-            f"Block shape for {what}{tree_util.keystr(path)} (= {block_shape}) "
-            f"must have the same number of dimensions as the array shape {ref_aval.shape}"
-        )
-      block_shape_unmapped = tuple(s for s in block_shape if s is not None)
-      ref_aval = ref_aval.update(
-          inner_aval=ref_aval.inner_aval.update(shape=block_shape_unmapped))
-
-    if not jax_core.is_constant_shape(ref_aval.shape):
-      raise ValueError(
-          "shape polymorphism for Pallas does not support "
-          "dynamically-shaped blocks. "
-          f"{what}{tree_util.keystr(path)} has block_shape: {ref_aval.shape}")
-    return ref_aval
-
-  in_ref_avals = [
-      make_ref_aval(aval, in_spec, in_path, "input")
-      for aval, in_spec, in_path in zip(in_avals, in_specs, in_paths)
-  ]
-  out_ref_avals = [
-      make_ref_aval(aval, out_spec, out_path, "output")
-      for aval, out_spec, out_path in zip(out_avals, out_specs, out_paths)
-  ]
-  return in_ref_avals, out_ref_avals
-
-
 @dataclasses.dataclass(init=False, unsafe_hash=True)
 class GridSpec:
+  """Encodes the parameters of the grid, as given through the API.
+
+  An internal sanitized version is in GridMapping.
+  """
   grid: TupleGrid
   grid_names: tuple[Hashable, ...] | None
-  in_specs: tuple[BlockSpec | NoBlockSpec, ...]
-  out_specs: tuple[BlockSpec | NoBlockSpec, ...]
-  in_specs_tree: Any
-  out_specs_tree: Any
+  in_specs: tuple[BlockSpec | NoBlockSpec, ...] | NoBlockSpec
+  out_specs: tuple[BlockSpec | NoBlockSpec, ...] | NoBlockSpec
 
   def __init__(
       self,
-      grid: Grid | None = None,
+      grid: Grid = (),
       in_specs: BlockSpecTree = no_block_spec,
       out_specs: BlockSpecTree = no_block_spec,
   ):
@@ -460,89 +574,153 @@ class GridSpec:
     if isinstance(out_specs, list):
       out_specs = tuple(out_specs)
 
-    self.grid, self.grid_names = _preprocess_grid(grid)
-    if in_specs is not no_block_spec:
-      flat_in_specs, self.in_specs_tree = tree_util.tree_flatten(in_specs)
-      self.in_specs = tuple(flat_in_specs)
-    else:
-      self.in_specs = in_specs
-      self.in_specs_tree = None
-    if out_specs is not no_block_spec:
-      flat_out_specs, self.out_specs_tree = tree_util.tree_flatten(out_specs)
-      self.out_specs = tuple(flat_out_specs)
-    else:
-      self.out_specs = out_specs
-      self.out_specs_tree = None
+    self.in_specs = in_specs
+    self.out_specs = out_specs
 
-  def _get_in_out_specs(self, in_avals, in_tree, out_avals, out_tree):
-    if self.in_specs is no_block_spec:
-      flat_in_specs = [no_block_spec] * len(in_avals)
-    else:
-      flat_in_specs = self.in_specs
-      if self.in_specs_tree != in_tree:
-        raise ValueError(
-            pytreedef_mismatch_err_msg("`in_specs`", self.in_specs_tree,
-                                       "inputs", in_tree))
-    if self.out_specs is no_block_spec:
-      flat_out_specs = [no_block_spec] * len(out_avals)
-    else:
-      flat_out_specs = self.out_specs
-      if self.out_specs_tree != out_tree:
-        raise ValueError(
-            pytreedef_mismatch_err_msg("`out_specs`", self.out_specs_tree,
-                                       "`out_shape`", out_tree))
-    return flat_in_specs, flat_out_specs
+    grid_names = None
+    if isinstance(grid, int):
+      grid = (grid,)
+    elif grid and isinstance(grid[0], tuple):  # Check if we have a named grid
+      grid_names, grid = util.unzip2(grid)  # type: ignore
+
+    # TODO(b/353730556): allow NumPy scalars in grids
+    if not all(_is_valid_grid_dim(g) for g in grid):  # type: ignore
+      raise ValueError(
+          f"Grid must be a tuple of integers or jax.Array, got {grid}"
+      )
+    self.grid = grid  # type: ignore
+    self.grid_names = grid_names
 
   def get_grid_mapping(
-      self, in_avals, in_tree, in_paths, out_avals, out_tree, out_paths
-  ) -> tuple[tuple[jax_core.AbstractValue, ...], GridMapping]:
+      self,
+      in_avals: Sequence[jax_core.AbstractValue],
+      in_tree: tree_util.PyTreeDef,
+      in_paths: Sequence[tree_util.KeyPath],
+      out_avals: Sequence[jax_core.AbstractValue],
+      out_tree: tree_util.PyTreeDef,
+      out_paths: Sequence[tree_util.KeyPath],
+      num_scalar_prefetch: int = 0,
+      scratch_shapes: Sequence[Any] = (),
+  ) -> tuple[tuple[AbstractMemoryRef, ...],
+             GridMapping]:
     assert all(i is None or isinstance(i, int) for i in self.grid)
     grid_mapping_grid = tuple(
         dynamic_grid_dim if d is None else d for d in self.grid
     )
-    flat_in_specs, flat_out_specs = self._get_in_out_specs(
-        in_avals, in_tree, out_avals, out_tree)
-    in_ref_avals, out_ref_avals = _get_ref_avals(
-        in_avals, flat_in_specs, in_paths,
-        out_avals, flat_out_specs, out_paths)
-    grid_avals = [jax_core.ShapedArray((), jnp.dtype("int32"))] * len(self.grid)
-    # Create args, kwargs pytree def
-    grid_tree = tree_util.tree_structure((tuple(grid_avals), {}))
+    # The inputs for the index maps
+    index_map_avals = (
+        (jax_core.ShapedArray((), jnp.dtype("int32")),) * len(self.grid))
+    index_map_tree = tree_util.tree_structure((index_map_avals, {}))
+
+    if num_scalar_prefetch:
+      all_avals = tree_util.tree_unflatten(in_tree, in_avals)
+      scalar_avals, unflat_in_avals = split_list(
+          all_avals, [num_scalar_prefetch])
+      flat_scalar_avals, scalar_tree = tree_util.tree_flatten(scalar_avals)
+      num_flat_scalar_prefetch = len(flat_scalar_avals)
+      scalar_ref_avals = [
+          self._make_scalar_ref_aval(aval)
+          for aval in flat_scalar_avals]
+      jaxpr_scalar_ref_avals = tree_util.tree_unflatten(
+          scalar_tree, scalar_ref_avals)
+      in_avals, in_tree = tree_util.tree_flatten(tuple(unflat_in_avals))
+      index_map_tree = tree_util.tree_structure(((*index_map_avals,
+                                                  *scalar_avals), {}))
+      index_map_avals = (*index_map_avals, *scalar_ref_avals)
+      del scalar_ref_avals, flat_scalar_avals, scalar_tree
+      del scalar_avals, unflat_in_avals, all_avals
+    else:
+      num_flat_scalar_prefetch = 0
+      jaxpr_scalar_ref_avals = ()
+
+    if scratch_shapes:
+      flat_scratch_shapes, scratch_tree = tree_util.tree_flatten(
+          scratch_shapes)
+      flat_scratch_avals = map(self._make_scratch_aval, flat_scratch_shapes)
+      num_flat_scratch_operands = len(flat_scratch_avals)
+      jaxpr_scratch_avals = tree_util.tree_unflatten(
+          scratch_tree, flat_scratch_avals)
+      if not isinstance(jaxpr_scratch_avals, (tuple, list)):
+        jaxpr_scratch_avals = (jaxpr_scratch_avals,)
+      del flat_scratch_avals, flat_scratch_shapes, scratch_tree
+    else:
+      num_flat_scratch_operands = 0
+      jaxpr_scratch_avals = ()
+
+    if self.in_specs is not no_block_spec:
+      flat_in_specs, in_specs_tree = tree_util.tree_flatten(self.in_specs)
+      if in_specs_tree != in_tree:
+        raise ValueError(
+            pytreedef_mismatch_err_msg("`in_specs`", in_specs_tree,
+                                       "inputs", in_tree))
+    else:
+      flat_in_specs = [no_block_spec] * len(in_avals)
+
     in_block_mappings = map(
         partial(
             _convert_block_spec_to_block_mapping,
-            grid_avals,
-            in_tree=grid_tree,
+            index_map_avals=index_map_avals,
+            index_map_tree=index_map_tree,
             grid=grid_mapping_grid,
             mapped_dims=(),
-            what="input",
+            what="inputs",
         ),
         flat_in_specs,
-        in_paths,
-        in_ref_avals,
+        in_paths[num_flat_scalar_prefetch:],
+        in_avals,
     )
+
+    if self.out_specs is not no_block_spec:
+      flat_out_specs, out_specs_tree = tree_util.tree_flatten(self.out_specs)
+      if out_specs_tree != out_tree:
+        raise ValueError(
+            pytreedef_mismatch_err_msg("`out_specs`", out_specs_tree,
+                                       "`out_shape`", out_tree))
+    else:
+      flat_out_specs = [no_block_spec] * len(out_avals)
+
     out_block_mappings = map(
         partial(
             _convert_block_spec_to_block_mapping,
-            grid_avals,
-            in_tree=grid_tree,
+            index_map_avals=index_map_avals,
+            index_map_tree=index_map_tree,
             grid=grid_mapping_grid,
             mapped_dims=(),
-            what="output",
+            what="outputs",
         ),
         flat_out_specs,
         out_paths,
-        out_ref_avals,
+        out_avals,
     )
     grid_mapping = GridMapping(
-        grid_mapping_grid, self.grid_names, # type: ignore
-        (*in_block_mappings, *out_block_mappings)
+        grid=grid_mapping_grid,  # type: ignore[arg-type]
+        grid_names=self.grid_names,
+        block_mappings=(*in_block_mappings, *out_block_mappings),
+        index_map_avals=index_map_avals,  # type: ignore[arg-type]
+        index_map_tree=index_map_tree,
+        vmapped_dims=(),
+        num_index_operands=num_flat_scalar_prefetch,
+        num_constant_operands=0,  # Fixed up later
+        num_inputs=len(flat_in_specs),
+        num_outputs=len(flat_out_specs),
+        num_scratch_operands=num_flat_scratch_operands,
     )
-    jaxpr_in_avals = tree_util.tree_unflatten(in_tree, in_ref_avals)
+    grid_mapping.check_invariants()
+    in_ref_avals = [bm.block_aval for bm in in_block_mappings]
+    jaxpr_in_ref_avals = tree_util.tree_unflatten(in_tree, in_ref_avals)
+    jaxpr_in_avals = (*jaxpr_scalar_ref_avals, *jaxpr_in_ref_avals)
+    out_ref_avals = [bm.block_aval for bm in out_block_mappings]
     jaxpr_out_avals = tree_util.tree_unflatten(out_tree, out_ref_avals)
     if not isinstance(jaxpr_out_avals, (tuple, list)):
       jaxpr_out_avals = (jaxpr_out_avals,)
-    return (*jaxpr_in_avals, *jaxpr_out_avals), grid_mapping
+    return (*jaxpr_in_avals, *jaxpr_out_avals,
+            *jaxpr_scratch_avals), grid_mapping
+
+  def _make_scratch_aval(self, obj: object) -> jax_core.AbstractValue:
+    assert False  # Not needed in GridSpec
+
+  def _make_scalar_ref_aval(self, aval):
+    assert False  # Not needed in GridSpec
 
   def unzip_dynamic_grid_bounds(
       self,
@@ -556,6 +734,7 @@ class GridSpec:
     static_self = copy.copy(self)
     static_self.grid = static_grid  # type: ignore
     return static_self, dynamic_bounds
+
 
 def pytreedef_mismatch_err_msg(
     what1: str, tree1: tree_util.PyTreeDef,

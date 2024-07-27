@@ -52,6 +52,7 @@ from jax.numpy import (
     argmax as argmax,
     argmin as argmin,
     argsort as argsort,
+    asarray as asarray,
     asin as asin,
     asinh as asinh,
     atan as atan,
@@ -85,6 +86,7 @@ from jax.numpy import (
     expand_dims as expand_dims,
     expm1 as expm1,
     eye as eye,
+    finfo as finfo,
     flip as flip,
     float32 as float32,
     float64 as float64,
@@ -108,6 +110,7 @@ from jax.numpy import (
     isnan as isnan,
     less as less,
     less_equal as less_equal,
+    linspace as linspace,
     log as log,
     log10 as log10,
     log1p as log1p,
@@ -186,14 +189,8 @@ from jax.experimental.array_api._manipulation_functions import (
     reshape as reshape,
 )
 
-from jax.experimental.array_api._creation_functions import (
-    asarray as asarray,
-    linspace as linspace,
-)
-
 from jax.experimental.array_api._data_type_functions import (
     astype as astype,
-    finfo as finfo,
 )
 
 from jax.experimental.array_api._elementwise_functions import (

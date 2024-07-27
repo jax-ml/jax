@@ -1252,7 +1252,7 @@ mlir.register_lowering(random_gamma_p, mlir.lower_fun(
     partial(_gamma_impl, use_vmap=True),
     multiple_results=False))
 mlir.register_lowering(random_gamma_p, mlir.lower_fun(
-    partial(_gamma_impl, use_vmap=False),
+    partial(_gamma_impl, use_vmap=True),
     multiple_results=False), platform='cpu')
 batching.primitive_batchers[random_gamma_p] = _gamma_batching_rule
 

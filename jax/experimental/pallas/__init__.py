@@ -18,7 +18,6 @@ See the Pallas documentation at
 https://jax.readthedocs.io/en/latest/pallas.html.
 """
 
-from jax._src import pallas
 from jax._src.deprecations import register as _register_deprecation
 from jax._src.pallas.core import Blocked
 from jax._src.pallas.core import BlockSpec

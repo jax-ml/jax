@@ -473,6 +473,11 @@ jax_test(
 jax_test(
     name = "lax_numpy_ufuncs_test",
     srcs = ["lax_numpy_ufuncs_test.py"],
+    shard_count = {
+        "cpu": 10,
+        "gpu": 10,
+        "tpu": 10,
+    },
     tags = ["test_cpu_thunks"],
 )
 
@@ -774,10 +779,9 @@ jax_test(
         "gpu_h100",  # Pytorch H100 build times out in Google's CI.
     ],
     tags = [
-        # PyTorch leaks dlpack metadata https://github.com/pytorch/pytorch/issues/117058, and
-        # compilation times out on CPU.
-        "noasan",
         "not_build:arm",
+        # TODO(b/355237462): Re-enable once MSAN issue is addressed.
+        "nomsan",
     ],
     deps = py_deps("torch"),
 )

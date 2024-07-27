@@ -84,16 +84,11 @@ _ROCM_VISIBLE_DEVICES = config.string_flag(
     'Restricts the set of ROCM devices that JAX will use. Either "all", or a '
     'comma-separate list of integer device IDs.')
 
-_USE_MOCK_GPU_CLIENT = config.bool_flag(
-    name="use_mock_gpu_client",
-    default=False,
-    help="If True, use a mock GPU client instead of a real one.",
-)
-
-_MOCK_NUM_GPUS = config.int_flag(
-    name="mock_num_gpus",
-    default=1,
-    help="Mock GPU client number of gpus.",
+_MOCK_NUM_PROCESSES = config.int_flag(
+    name="mock_num_processes",
+    default=0,
+    help="Mock number of JAX processes in GPU client. Value zero turns "
+         "off mocking.",
 )
 
 _CPU_ENABLE_GLOO_COLLECTIVES = config.bool_flag(
@@ -148,7 +143,7 @@ def tpu_client_timer_callback(timer_secs: float) -> xla_client.Client | None:
   t.start()
 
   try:
-    client = xla_client.make_tpu_client( # type: ignore
+    client = xla_client.make_tpu_client(
         get_tpu_library_path(),
         _options_from_jax_configs("tpu"))
   finally:
@@ -207,7 +202,7 @@ _plugin_callback_lock = threading.Lock()
 # It is fine for a plugin not to implement every feature that JAX uses, provided
 # that a reasonable feature set is implemented and the plugin fails gracefully
 # for unimplemented features. Wrong outputs are not acceptable.
-_nonexperimental_plugins: set[str] = {'cuda'}
+_nonexperimental_plugins: set[str] = {'cuda', 'rocm'}
 
 def register_backend_factory(name: str, factory: BackendFactory, *,
                              priority: int = 0,
@@ -438,9 +433,9 @@ def make_gpu_client(
   if visible_devices != "all":
     allowed_devices = {int(x) for x in visible_devices.split(",")}
 
-  use_mock_gpu_client = _USE_MOCK_GPU_CLIENT.value
+  use_mock_gpu_client = _MOCK_NUM_PROCESSES.value > 0
   num_nodes = (
-      _MOCK_NUM_GPUS.value
+      _MOCK_NUM_PROCESSES.value
       if use_mock_gpu_client
       else distributed.global_state.num_processes
   )
@@ -638,9 +633,10 @@ def _options_from_jax_configs(plugin_name):
     visible_devices = CUDA_VISIBLE_DEVICES.value
     if visible_devices != 'all':
       options['visible_devices'] = [int(x) for x in visible_devices.split(',')]
-    options['enable_mock_nccl'] = _USE_MOCK_GPU_CLIENT.value
+    mock_processes = _MOCK_NUM_PROCESSES.value
+    options['enable_mock_nccl'] = mock_processes > 0
     if options['enable_mock_nccl']:
-      options['num_nodes'] = _MOCK_NUM_GPUS.value
+      options['num_nodes'] = mock_processes
 
   return options
 

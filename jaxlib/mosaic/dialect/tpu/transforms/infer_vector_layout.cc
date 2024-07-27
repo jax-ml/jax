@@ -141,7 +141,7 @@ class VectorLayoutInferer {
       // TODO: b/342235360 - This check is temporary while we increase and test
       // support for offsets outside of the first tile. When support is more
       // broad, any op without support should check it within their own rule.
-      if (!isa<vector::ExtractStridedSliceOp>(any_op)) {
+      if (!isa<vector::BroadcastOp, vector::ExtractStridedSliceOp>(any_op)) {
         const SmallVector<Layout> layouts_in = getLayoutFromOperands(&any_op);
         for (const Layout &layout : layouts_in) {
           if (layout && layout->offsets()[1].has_value() &&
@@ -1054,9 +1054,20 @@ class VectorLayoutInferer {
       auto some_layout = getLayout(op.getSource());
       TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
       auto &layout = *some_layout;
+      if (layout.implicit_dim() != ImplicitDim::kNone) {
+        VectorLayout layout_2d(layout.bitwidth(), layout.offsets(),
+                               layout.tiling(), ImplicitDim::kNone);
+        if (layout_2d.equivalentTo(layout, src_ty.getShape(), target_shape_)) {
+          // TODO(b/342237796): Stop preferring 2D layouts (if given the choice)
+          // and defer the work, if any, to relayout.
+          layout = layout_2d;
+        }
+      }
+      auto src_tiled_ishape = layout.getImplicitTiledDims(src_ty.getShape(), 1);
+      auto dst_tiled_ishape = layout.getImplicitTiledDims(res_ty.getShape(), 1);
       // Since we can only do sublane broadcasts in the (8, 128) tiling, we
       // should always use that when sublane broadcasting is required.
-      if (*(src_ty.getShape().end() - 2) != *(res_ty.getShape().end() - 2)) {
+      if (src_tiled_ishape[0] != dst_tiled_ishape[0]) {
         if (layout.bitwidth() != kNativeBitwidth) {
           NYI("Only 32-bit broadcasts supported");
         }
@@ -1069,20 +1080,9 @@ class VectorLayoutInferer {
         layout = VectorLayout(layout.bitwidth(), offsets, default_tiling_,
                               layout.implicit_dim());
       }
-      if (layout.implicit_dim() != ImplicitDim::kNone) {
-        VectorLayout layout_2d(layout.bitwidth(), layout.offsets(),
-                               layout.tiling(), ImplicitDim::kNone);
-        if (layout_2d.equivalentTo(layout, src_ty.getShape(), target_shape_)) {
-          // TODO(b/342237796): Stop preferring 2D layouts (if given the choice)
-          // and defer the work, if any, to relayout.
-          layout = layout_2d;
-        }
-      }
-      auto src_tiled_shape = src_ty.getShape().take_back(2);
-      auto dst_tiled_shape = res_ty.getShape().take_back(2);
       LayoutOffsets offsets = layout.offsets();
       for (int i = 0; i < 2; ++i) {
-        if (src_tiled_shape[i] != dst_tiled_shape[i]) {
+        if (src_tiled_ishape[i] != dst_tiled_ishape[i]) {
           offsets[i] = std::nullopt;
         }
       }
@@ -1591,39 +1591,38 @@ class VectorLayoutInferer {
       return success();
     }
     auto dst_ty = cast<VectorType>(op->getResult(0).getType());
+    unsigned src_bitwidth = src_ty.getElementTypeBitWidth();
+    unsigned dst_bitwidth = dst_ty.getElementTypeBitWidth();
     auto some_layout = getLayout(op->getOperand(0));
     TPU_CHECK_OP(some_layout.has_value(), "missing vector layout");
     if (dyn_cast<arith::ExtFOp>(op)) {
-      TPU_CHECK_OP(src_ty.getElementTypeBitWidth() == 16 &&
-                       dst_ty.getElementTypeBitWidth() == 32,
+      TPU_CHECK_OP(src_bitwidth == 16 && dst_bitwidth == 32,
                    "Only 16-bit to 32-bit extensions supported");
-    } else {
-      TPU_CHECK_OP(dst_ty.getElementTypeBitWidth() == 32,
-                   "Only extensions to 32-bit supported");
     }
     auto &layout = *some_layout;
-    // TODO(apaszke): Support native packed layouts here.
     Layout src_layout;
     Layout dst_layout;
-    // All layouts that subdivide the rows of the default tiling evenly
-    // can be handled uniformly with the default case, by preserving the
-    // tiling through the op.
-    if (default_tiling_[0] % layout.tiling()[0] == 0 &&
-        default_tiling_[1] == layout.tiling()[1]) {
+    if (layout.tiling() == nativeTiling(src_bitwidth)) {
+      // If the source is already in native tiling, we can unpack it directly.
+      src_layout = layout;
+      dst_layout =
+          VectorLayout(dst_bitwidth, layout.offsets(),
+                       nativeTiling(dst_bitwidth), layout.implicit_dim());
+    } else if (dst_bitwidth == 32 &&
+               default_tiling_[0] % layout.tiling()[0] == 0 &&
+               default_tiling_[1] == layout.tiling()[1]) {
+      // All layouts that subdivide the rows of the result native tiling evenly
+      // can be handled uniformly with the default case, by preserving the
+      // tiling through the op.
+      // TODO(jevinjiang): we can relax this for non-32bit as well.
       src_layout = layout;
       dst_layout = VectorLayout(32, layout.offsets(), src_layout->tiling(),
                                 layout.implicit_dim());
-    } else if (layout.tiling() ==
-               nativeTiling(src_ty.getElementTypeBitWidth())) {
-      // If the source is already in native tiling, we can unpack it directly.
-      src_layout = layout;
-      dst_layout = VectorLayout(32, layout.offsets(), default_tiling_,
-                                layout.implicit_dim());
     } else {
       // TODO(b/335863273): we should also reduce offsets.
-      src_layout = VectorLayout(layout.bitwidth(), layout.offsets(),
-                                default_tiling_, layout.implicit_dim());
-      dst_layout = VectorLayout(32, layout.offsets(), default_tiling_,
+      src_layout = VectorLayout(src_bitwidth, layout.offsets(), default_tiling_,
+                                layout.implicit_dim());
+      dst_layout = VectorLayout(dst_bitwidth, layout.offsets(), default_tiling_,
                                 layout.implicit_dim());
     }
     setLayout(op, src_layout, dst_layout);

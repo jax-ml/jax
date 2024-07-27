@@ -1266,7 +1266,7 @@ def _create_pjit_jaxpr(
            list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]]:
   del ignored_inline  # just for explain_cache_miss
   with dispatch.log_elapsed_time(
-      "Finished tracing + transforming {fun_name} for pjit in {elapsed_time} sec",
+      "Finished tracing + transforming {fun_name} for pjit in {elapsed_time:.9f} sec",
       fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
     pe_debug = debug_info and pe.debug_info_final(fun, debug_info.traced_for)
     if config.dynamic_shapes.value:
@@ -1966,7 +1966,8 @@ def _pjit_batcher(axis_data, main_type,
   # TODO(yashkatariya): Figure out layouts should change under vmap.
   if not (all(l is None for l in in_layouts) and
           all(l is None for l in out_layouts)):
-    raise NotImplementedError
+    raise NotImplementedError(
+        'Concrete layouts are not supported for vmap(jit).')
 
   vals_out = pjit_p.bind(
     *vals_in,
@@ -2445,6 +2446,8 @@ def with_sharding_constraint(x, shardings):
   shardings_flat = [_create_sharding_for_array(mesh, a, 'shardings',
                                                'with_sharding_constraint')
                     for a in user_shardings_flat]
+  # TODO(bartchr): remove `unconstrained_dims` after migrating to Shardy. It's
+  # already part of the shardings.
   unconstrained_dims = [get_unconstrained_dims(s)
                         if isinstance(s, NamedSharding) else {}
                         for s in shardings_flat]
@@ -2494,9 +2497,12 @@ def _sharding_constraint_hlo_lowering(ctx, x_node, *, sharding, layout,
   if (isinstance(axis_ctx, sharding_impls.SPMDAxisContext) and
       axis_ctx.manual_axes):
     sharding = mlir.add_manual_axes(axis_ctx, sharding, aval.ndim)
+  if config.use_shardy_partitioner.value:
+    sharding = sharding._to_sdy_sharding(aval.ndim)
+  else:
+    sharding = sharding._to_xla_hlo_sharding(aval.ndim).to_proto()
   out = mlir.wrap_with_sharding_op(
-      ctx, x_node, out_aval, sharding._to_xla_hlo_sharding(aval.ndim).to_proto(),
-      unspecified_dims=unconstrained_dims)
+      ctx, x_node, out_aval, sharding, unspecified_dims=unconstrained_dims)
   if layout is not None:
     out = mlir.wrap_with_layout_op(ctx, out, out_aval, layout, aval)
   return [out]
@@ -2532,7 +2538,9 @@ def _sharding_constraint_batcher(
 
   # TODO(yashkatariya): Figure out layouts should change under vmap.
   if layout is not None:
-    raise NotImplementedError
+    raise NotImplementedError(
+        'Concrete layout is not supported for vmap(with_sharding_constraint). '
+        f'Got layout {layout}')
 
   y = sharding_constraint_p.bind(
       x,

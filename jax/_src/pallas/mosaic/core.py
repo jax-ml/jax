@@ -24,7 +24,6 @@ from typing import Any, Hashable
 import jax
 from jax._src import core as jax_core
 from jax._src import dtypes
-from jax._src import tree_util
 from jax._src import util
 import jax.numpy as jnp
 from jax._src.pallas import core as pallas_core
@@ -141,30 +140,19 @@ class MemoryRef:
         jax_core.ShapedArray(self.shape, self.dtype), self.memory_space)
 
 
-def _make_aval(obj: object) -> jax_core.AbstractValue:
-  if isinstance(obj, MemoryRef):
-    return obj.get_aval()
-  if isinstance(obj, SemaphoreType):
-    return obj.get_aval()
-  raise ValueError(f"No registered conversion for {type(obj)}. "
-                   "Only VMEM and SemaphoreType are supported.")
-
-
 @dataclasses.dataclass(init=False, unsafe_hash=True)
 class PrefetchScalarGridSpec(pallas_core.GridSpec):
   grid: TupleGrid
   grid_names: tuple[Hashable, ...] | None
   num_scalar_prefetch: int
-  in_specs: tuple[BlockSpec | NoBlockSpec, ...]
-  out_specs: tuple[BlockSpec | NoBlockSpec, ...]
-  in_specs_tree: Any
-  out_specs_tree: Any
+  in_specs: tuple[BlockSpec | NoBlockSpec, ...] | NoBlockSpec
+  out_specs: tuple[BlockSpec | NoBlockSpec, ...] | NoBlockSpec
   scratch_shapes: tuple[Any, ...]
 
   def __init__(
       self,
       num_scalar_prefetch: int,
-      grid: Grid | None = None,
+      grid: Grid = (),
       in_specs: BlockSpecTree = no_block_spec,
       out_specs: BlockSpecTree = no_block_spec,
       scratch_shapes: Any | Sequence[Any] = ()
@@ -173,84 +161,25 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
     self.num_scalar_prefetch = num_scalar_prefetch
     self.scratch_shapes = tuple(scratch_shapes)
 
-  def get_grid_mapping(
+  def _make_scalar_ref_aval(self, aval):
+    return AbstractMemoryRef(jax_core.ShapedArray(aval.shape, aval.dtype),
+                             TPUMemorySpace.SMEM)
+
+  def _make_scratch_aval(self, obj: object) -> jax_core.AbstractValue:
+    if isinstance(obj, MemoryRef):
+      return obj.get_aval()
+    if isinstance(obj, SemaphoreType):
+      return obj.get_aval()
+    raise ValueError(f"No registered conversion for {type(obj)}. "
+                     "Only VMEM and SemaphoreType are supported.")
+
+  def get_grid_mapping(  # type: ignore[override]
       self, in_avals, in_tree, in_paths, out_avals, out_tree, out_paths
   ) -> tuple[tuple[jax_core.AbstractValue, ...], GridMapping]:
-    assert all(i is None or isinstance(i, int) for i in self.grid)
-    grid_mapping_grid = tuple(
-        pallas_core.dynamic_grid_dim if d is None else d for d in self.grid
-    )
-    all_avals = tree_util.tree_unflatten(in_tree, in_avals)
-    flat_scratch_shapes, scratch_tree = tree_util.tree_flatten(
-        self.scratch_shapes)
-    flat_scratch_avals = map(_make_aval, flat_scratch_shapes)
-    scalar_avals, unflat_in_avals = split_list(
-        all_avals, [self.num_scalar_prefetch])
-    flat_scalar_avals, scalar_tree = tree_util.tree_flatten(scalar_avals)
-    num_flat_scalar_prefetch = len(flat_scalar_avals)
-    in_avals, in_avals_tree = tree_util.tree_flatten(tuple(unflat_in_avals))
-    flat_in_specs, flat_out_specs = self._get_in_out_specs(
-        in_avals, in_avals_tree, out_avals, out_tree)
-    in_ref_avals, out_ref_avals = (
-        pallas_core._get_ref_avals(
-            in_avals, flat_in_specs, in_paths[num_flat_scalar_prefetch:],
-            out_avals, flat_out_specs, out_paths))
-    scalar_ref_avals = [
-        AbstractMemoryRef(jax_core.ShapedArray(aval.shape, aval.dtype),
-                          TPUMemorySpace.SMEM)
-        for aval in flat_scalar_avals]
-    grid_avals = [jax_core.ShapedArray((), jnp.dtype("int32"))] * len(self.grid)
-    # Create args, kwargs pytree def
-    index_map_in_tree = tree_util.tree_structure(
-        ((*grid_avals, *scalar_avals), {})
-    )
-    in_block_mappings = map(
-        partial(
-            _convert_block_spec_to_block_mapping,
-            (*grid_avals, *scalar_ref_avals),
-            in_tree=index_map_in_tree,
-            grid=grid_mapping_grid,
-            mapped_dims=(),
-            what="input",
-        ),
-        flat_in_specs,
-        in_paths[num_flat_scalar_prefetch:],
-        in_ref_avals,
-    )
-    out_block_mappings = map(
-        partial(
-            _convert_block_spec_to_block_mapping,
-            (*grid_avals, *scalar_ref_avals),
-            in_tree=index_map_in_tree,
-            grid=grid_mapping_grid,
-            mapped_dims=(),
-            what="output",
-        ),
-        flat_out_specs,
-        out_paths,
-        out_ref_avals,
-    )
-    grid_mapping = GridMapping(
-        grid=grid_mapping_grid, grid_names=self.grid_names, # type: ignore
-        block_mappings=(*in_block_mappings, *out_block_mappings),
-        mapped_dims=(),
-        num_index_operands=num_flat_scalar_prefetch,
-        num_scratch_operands=len(flat_scratch_avals)
-    )
-    jaxpr_scalar_ref_avals = tree_util.tree_unflatten(
-        scalar_tree, scalar_ref_avals)
-    jaxpr_in_ref_avals = tree_util.tree_unflatten(in_avals_tree, in_ref_avals)
-    jaxpr_scratch_avals = tree_util.tree_unflatten(
-        scratch_tree, flat_scratch_avals)
-    if not isinstance(jaxpr_scratch_avals, (tuple, list)):
-      jaxpr_scratch_avals = (jaxpr_scratch_avals,)
-    jaxpr_in_avals = (*jaxpr_scalar_ref_avals,
-                      *jaxpr_in_ref_avals)
-    jaxpr_out_avals = tree_util.tree_unflatten(out_tree, out_ref_avals)
-    if not isinstance(jaxpr_out_avals, (tuple, list)):
-      jaxpr_out_avals = (jaxpr_out_avals,)
-    return (*jaxpr_in_avals, *jaxpr_out_avals,
-            *jaxpr_scratch_avals), grid_mapping
+    return super().get_grid_mapping(in_avals, in_tree, in_paths,
+                                    out_avals, out_tree, out_paths,
+                                    num_scalar_prefetch=self.num_scalar_prefetch,
+                                    scratch_shapes=self.scratch_shapes)
 
 
 @dataclasses.dataclass(frozen=True)

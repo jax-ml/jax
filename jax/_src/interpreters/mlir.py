@@ -97,8 +97,7 @@ def _is_not_block_argument(x: IrValues) -> bool:
 
 
 def dense_int_elements(xs) -> ir.DenseIntElementsAttr:
-  return type_cast(ir.DenseIntElementsAttr,
-                   ir.DenseIntElementsAttr.get(np.asarray(xs, np.int64)))
+  return ir.DenseIntElementsAttr.get(np.asarray(xs, np.int64))
 
 dense_int_array = ir.DenseI64ArrayAttr.get
 
@@ -112,7 +111,7 @@ def dense_bool_elements(xs: Sequence[bool]) -> ir.DenseElementsAttr:
       a, type=ir.IntegerType.get_signless(1), shape=[len(xs)])
 
 def dense_bool_array(xs: Sequence[bool]) -> ir.DenseBoolArrayAttr:
-  return ir.DenseBoolArrayAttr.get(xs)  # type: ignore[arg-type]
+  return ir.DenseBoolArrayAttr.get(xs)
 
 def i32_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(32), i)
 def i64_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(64), i)
@@ -710,6 +709,15 @@ class LoweringRuleContext:
     self.tokens_out = tokens_out
 
   def replace(self, **kw): return dataclasses.replace(self, **kw)  # pytype: disable=wrong-arg-types  # dataclasses-replace-types
+
+  def is_forward_compat(self) -> bool:
+    """Returns true if the lowering parameters are in forward compatibility mode.
+    """
+    lowering_parameters = self.module_context.lowering_parameters
+    return (
+        lowering_parameters.for_export
+        and not lowering_parameters.export_ignore_forward_compatibility
+    )
 
 
 if not MYPY:
@@ -2257,9 +2265,13 @@ def _wrap_with_spmd_op(name: str,
                        ctx: LoweringRuleContext,
                        x: ir.Value,
                        aval_out: core.AbstractValue,
-                       sharding_proto: xc.OpSharding,
+                       sharding: xc.OpSharding | sharding.SdyArraySharding,
                        unspecified_dims: set[int] | None = None,
-                       has_side_effect: bool = False):
+                       has_side_effect: bool = False,
+                       allow_shardy_lowering: bool = False):
+  if config.use_shardy_partitioner.value and allow_shardy_lowering:
+    return dialects.sdy.ShardingConstraintOp(x, sharding.build()).result  # type: ignore
+
   # unspecified_dims indicate dimensions whose shardings are not specified and
   # XLA sharding propagation can change them.
   if unspecified_dims:
@@ -2280,11 +2292,12 @@ def _wrap_with_spmd_op(name: str,
                    api_version=1,
                    result_shapes=result_shapes,
                    has_side_effect=has_side_effect)
-  set_sharding(op, sharding_proto)
+  set_sharding(op, sharding)
   return op.result
 
 
-wrap_with_sharding_op = partial(_wrap_with_spmd_op, "Sharding")
+wrap_with_sharding_op = partial(_wrap_with_spmd_op, "Sharding",
+                                allow_shardy_lowering=True)
 wrap_with_full_to_shard_op = partial(_wrap_with_spmd_op, "SPMDFullToShardShape")
 wrap_with_shard_to_full_op = partial(_wrap_with_spmd_op, "SPMDShardToFullShape")
 
@@ -2794,7 +2807,7 @@ def custom_call(
   if backend_config is None:
     backend_config_attr = ir.StringAttr.get("")
   elif isinstance(backend_config, (str, bytes)):
-    backend_config_attr = ir.StringAttr.get(backend_config)  # type: ignore[arg-type]
+    backend_config_attr = ir.StringAttr.get(backend_config)
   elif isinstance(backend_config, dict):
     # TODO(necula): it seems that the CustomCallOp constructor requires that
     # backend_config_attr be a string attribute, even though in some cases we

@@ -16,10 +16,11 @@
 # via CustomCallWithLayout.
 
 from collections.abc import Sequence
+from enum import Enum
 
 import numpy as np
 
-import jaxlib.mlir.ir as ir
+import jaxlib.mlir.ir as ir  # pylint: disable=consider-using-from-import
 import jaxlib.mlir.dialects.stablehlo as hlo
 
 from jaxlib import xla_client
@@ -32,7 +33,59 @@ from .hlo_helpers import (
 from .cpu import _lapack
 
 for _name, _value in _lapack.registrations().items():
-  xla_client.register_custom_call_target(_name, _value, platform="cpu")
+  xla_client.register_custom_call_target(
+      _name,
+      _value,
+      platform="cpu",
+      api_version=(1 if _name.endswith("_ffi") else 0),
+  )
+
+
+def _char_attr(c):
+  return ir.IntegerAttr.get(ir.IntegerType.get_unsigned(8), ord(c))
+
+
+def _lapack_int_attr(value):
+  return ir.IntegerAttr.get(ir.IntegerType.get_signless(32), value)
+
+
+def _enum_to_char_attr(e: Enum):
+  return ir.IntegerAttr.get(ir.IntegerType.get_unsigned(8), e.value)
+
+
+def _matrix_side_attr(*, left_side: bool):
+  return _char_attr("L" if left_side else "R")
+
+
+def _matrix_uplo_attr(*, lower: bool):
+  return _char_attr("L" if lower else "U")
+
+
+def _matrix_transpose_attr(*, transpose: bool, conjugate: bool):
+  return _char_attr(("C" if conjugate else "T") if transpose else "N")
+
+
+def _matrix_diagonal_attr(*, unit_diag: bool):
+  return _char_attr("U" if unit_diag else "N")
+
+
+LAPACK_DTYPE_PREFIX = {
+    np.float32: "s",
+    np.float64: "d",
+    np.complex64: "c",
+    np.complex128: "z",
+}
+
+
+def build_lapack_fn_target(fn_base: str, dtype) -> str:
+  """Builds the target name for a LAPACK function custom call."""
+  try:
+    prefix = (
+        LAPACK_DTYPE_PREFIX.get(dtype, None) or LAPACK_DTYPE_PREFIX[dtype.type]
+    )
+    return f"lapack_{prefix}{fn_base}"
+  except KeyError as err:
+    raise NotImplementedError(err, f"Unsupported dtype {dtype}.") from err
 
 
 # TODO(phawkins): it would be nice to avoid duplicating code for each type.
@@ -262,28 +315,13 @@ def orgqr_hlo(dtype, a: ir.Value, tau, *,
 
 # ?potrf: Cholesky decomposition
 
-def potrf_hlo(dtype, a: ir.Value, *, lower=False,
+def potrf_hlo(ctx, dtype, a: ir.Value, *, lower=False,
               a_shape_vals: tuple[DimensionSize, ...]):
   _lapack.initialize()
   a_type = ir.RankedTensorType(a.type)
-  n = a_shape_vals[-1]
-  if dtype == np.float32:
-    fn = "lapack_spotrf"
-  elif dtype == np.float64:
-    fn = "lapack_dpotrf"
-  elif dtype == np.complex64:
-    fn = "lapack_cpotrf"
-  elif dtype == np.complex128:
-    fn = "lapack_zpotrf"
-  else:
-    raise NotImplementedError(f"Unsupported dtype {dtype}")
+  fn_base = build_lapack_fn_target(fn_base="potrf", dtype=dtype)
   batch_dims_vals = a_shape_vals[:-2]
   num_bd = len(batch_dims_vals)
-  batch_size_val = hlo_s32(1)
-  for b_v in batch_dims_vals:
-    batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
-
-  scalar_layout = []
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
   info_layout = tuple(range(num_bd - 1, -1, -1))
 
@@ -292,7 +330,14 @@ def potrf_hlo(dtype, a: ir.Value, *, lower=False,
       (batch_dims_vals, ir.IntegerType.get_signless(32))
   ]
   result_types, result_shapes = mk_result_types_and_shapes(shape_type_pairs)
-  out = custom_call(
+  if ctx.is_forward_compat():
+    fn = fn_base
+    scalar_layout = []
+    n = a_shape_vals[-1]
+    batch_size_val = hlo_s32(1)
+    for b_v in batch_dims_vals:
+      batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
+    out = custom_call(
       fn,
       result_types=result_types,
       operands=[hlo_s32(int(lower)), batch_size_val, ensure_hlo_s32(n), a],
@@ -301,6 +346,21 @@ def potrf_hlo(dtype, a: ir.Value, *, lower=False,
       operand_output_aliases={3: 0},
       result_shapes=result_shapes,
   ).results
+  else:
+    fn = fn_base + "_ffi"
+    out = custom_call(
+        fn,
+        result_types=result_types,
+        operands=[a],
+        operand_layouts=[layout],
+        result_layouts=[layout, info_layout],
+        operand_output_aliases={0: 0},
+        result_shapes=result_shapes,
+        backend_config={
+            "uplo": _matrix_uplo_attr(lower=lower),
+        },
+        api_version=4,
+    ).results
   return out[:2]
 
 

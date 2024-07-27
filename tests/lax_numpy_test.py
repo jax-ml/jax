@@ -47,6 +47,7 @@ from jax.test_util import check_grads
 from jax._src import array
 from jax._src import config
 from jax._src import core
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.lax import lax as lax_internal
@@ -904,20 +905,25 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testClipComplexInputDeprecation(self, shape):
     rng = jtu.rand_default(self.rng())
     x = rng(shape, dtype=jnp.complex64)
-    msg = "Complex values have no ordering and cannot be clipped"
+    msg = ".*Complex values have no ordering and cannot be clipped.*"
+    def assert_warns_or_errors(msg=msg):
+      if deprecations.is_accelerated("jax-numpy-clip-complex"):
+        return self.assertRaisesRegex(ValueError, msg)
+      else:
+        return self.assertWarnsRegex(DeprecationWarning, msg)
     # jit is disabled so we don't miss warnings due to caching.
     with jax.disable_jit():
-      with self.assertWarnsRegex(DeprecationWarning, msg):
+      with assert_warns_or_errors():
         jnp.clip(x)
 
-      with self.assertWarnsRegex(DeprecationWarning, msg):
+      with assert_warns_or_errors():
         jnp.clip(x, max=x)
 
       x = rng(shape, dtype=jnp.int32)
-      with self.assertWarnsRegex(DeprecationWarning, msg):
+      with assert_warns_or_errors():
         jnp.clip(x, min=-1+5j)
 
-      with self.assertWarnsRegex(DeprecationWarning, msg):
+      with assert_warns_or_errors():
         jnp.clip(x, max=jnp.array([-1+5j]))
 
   # TODO(micky774): Check for ValueError instead of DeprecationWarning when
@@ -929,14 +935,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   def testHypotComplexInputDeprecation(self, shape):
     rng = jtu.rand_default(self.rng())
     x = rng(shape, dtype=jnp.complex64)
-    msg = "Passing complex-valued inputs to hypot"
+    msg = "Passing complex-valued inputs to hypot.*"
+    def assert_warns_or_errors(msg=msg):
+      if deprecations.is_accelerated("jax-numpy-hypot-complex"):
+        return self.assertRaisesRegex(ValueError, msg)
+      else:
+        return self.assertWarnsRegex(DeprecationWarning, msg)
     # jit is disabled so we don't miss warnings due to caching.
     with jax.disable_jit():
-      with self.assertWarnsRegex(DeprecationWarning, msg):
+      with assert_warns_or_errors():
         jnp.hypot(x, x)
 
-      with self.assertWarnsRegex(DeprecationWarning, msg):
-        y = jnp.ones_like(x)
+      y = jnp.ones_like(x)
+      with assert_warns_or_errors():
         jnp.hypot(x, y)
 
   @jtu.sample_product(
@@ -2987,25 +2998,37 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       func=[
         lambda dtype, device: jnp.arange(5, dtype=dtype, device=device),
         lambda dtype, device: jnp.eye(5, 6, dtype=dtype, device=device),
+        lambda dtype, device: jnp.linspace(5, 6, 7, dtype=dtype, device=device),
+        lambda dtype, device: jnp.linspace(5, 6, 7, retstep=True, dtype=dtype, device=device),
+        lambda dtype, device: jnp.array([1, 2, 3, 4, 5], dtype=dtype, device=device),
       ],
       dtype=default_dtypes,
   )
-  def testArangeEyeWithDevice(self, func, dtype):
+  def testArangeEyeLinspaceArrayWithDevice(self, func, dtype):
     device = jax.devices()[-1]
-    out = func(dtype=dtype, device=device)
-    self.assertEqual(out.devices(), {device})
+    output = func(dtype=dtype, device=device)
+    if isinstance(output, tuple):
+      self.assertEqual(output[0].devices(), {device})
+    else:
+      self.assertEqual(output.devices(), {device})
 
   @jtu.sample_product(
       func=[
         lambda dtype, device: jnp.arange(5, dtype=dtype, device=device),
         lambda dtype, device: jnp.eye(5, 6, dtype=dtype, device=device),
+        lambda dtype, device: jnp.linspace(5, 6, 7, dtype=dtype, device=device),
+        lambda dtype, device: jnp.linspace(5, 6, 7, retstep=True, dtype=dtype, device=device),
+        lambda dtype, device: jnp.array([1, 2, 3, 4, 5], dtype=dtype, device=device),
       ],
       dtype=default_dtypes,
   )
-  def testArangeEyeWithSharding(self, func, dtype):
+  def testArangeEyeLinspaceArrayWithSharding(self, func, dtype):
     sharding = SingleDeviceSharding(jax.devices()[-1])
-    out = func(dtype=dtype, device=sharding)
-    self.assertEqual(out.sharding, sharding)
+    output = func(dtype=dtype, device=sharding)
+    if isinstance(output, tuple):
+      self.assertEqual(output[0].sharding, sharding)
+    else:
+      self.assertEqual(output.sharding, sharding)
 
   @jtu.sample_product(
       func=[jnp.empty_like, jnp.zeros_like, jnp.ones_like, jnp.full_like],
@@ -3962,8 +3985,13 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
 
   def testAstypeComplexDowncast(self):
     x = jnp.array(2.0+1.5j, dtype='complex64')
-    msg = "Casting from complex to real dtypes will soon raise "
-    with self.assertWarnsRegex(DeprecationWarning, msg):
+    msg = "Casting from complex to real dtypes.*"
+    def assert_warns_or_errors(msg=msg):
+      if deprecations.is_accelerated("jax-numpy-astype-complex-to-real"):
+        return self.assertRaisesRegex(ValueError, msg)
+      else:
+        return self.assertWarnsRegex(DeprecationWarning, msg)
+    with assert_warns_or_errors():
       x.astype('float32')
 
   @parameterized.parameters('int2', 'int4')
@@ -6050,7 +6078,6 @@ class NumpySignaturesTest(jtu.JaxTestCase):
       'histogram': ['normed'],
       'histogram2d': ['normed'],
       'histogramdd': ['normed'],
-      'linspace': ['device'],
       'nanpercentile': ['weights'],
       'nanquantile': ['weights'],
       'nanstd': ['correction', 'mean'],

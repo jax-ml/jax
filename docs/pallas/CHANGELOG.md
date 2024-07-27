@@ -22,7 +22,8 @@ Remember to align the itemized text with the first line of an item within a list
     Padding in interpreter mode will be with NaN, to help debug out-of-bounds
     errors, but this behavior is not present when running in custom kernel mode,
     and should not be depended on.
-
+  * Previously it was possible to import many APIs that are meant to be
+    private, as `jax.experimental.pallas.pallas`. This is not possible anymore.
 
 * Deprecations
 

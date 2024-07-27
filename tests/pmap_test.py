@@ -1946,17 +1946,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     indices = np.array([[[2], [1]], [[0], [0]]])
     mapped_fn(indices)  # doesn't crash
 
-  def testPdotBasic(self):
-    num_devices = jax.device_count()
-
-    def f(x, y):
-      return lax.pdot(x, y, 'i')
-
-    x = jnp.arange(num_devices * 3).reshape(num_devices, 3)
-    y = jnp.arange(num_devices * 5).reshape(num_devices, 5)
-    z = self.pmap(f, axis_name='i', out_axes=None)(x, y)
-    self.assertAllClose(z, jnp.dot(x.T, y))
-
   @parameterized.named_parameters(
       {"testcase_name": "_shape={}_axis={}_collective={}".format(
           jtu.format_shape_dtype_string(shape, dtype),

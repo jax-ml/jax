@@ -765,10 +765,6 @@ LogicalResult ext_op_rule_impl(RewriteContext &ctx, OpTy op,
   const auto source_ty = source.getType();
   auto output_vregs_shape =
       layout_out.tileArrayShape(result_ty.getShape(), ctx.target_shape);
-  if (layout_out.bitwidth() != 32) {
-    return op.emitOpError(
-        "Not implemented: Only extensions to 32-bit supported");
-  }
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> input_vregs,
       disassemble(builder, layout_in, source, ctx.target_shape));
@@ -790,7 +786,7 @@ LogicalResult ext_op_rule_impl(RewriteContext &ctx, OpTy op,
   if (layout_in.offsets() != layout_out.offsets()) {
     return op.emitOpError("Not implemented: Change of offsets during the cast");
   }
-  const int packing = layout_in.packing();
+  const int packing = layout_out.bitwidth() / layout_in.bitwidth();
   if (layout_in.hasNativeTiling(ctx.target_shape) &&
       layout_out.hasNativeTiling(ctx.target_shape)) {
     output_vregs.Each([&](absl::Span<const int64_t> idxs, Value *v) {
@@ -3161,16 +3157,16 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
         *tile = src_tiles(src_idx);
       });
     } else {
-      if (layout_in.bitwidth() != 32) {
-        return op.emitOpError(
-            "Not implemented: Only 32-bit broadcast supported");
-      }
       if (tiling[1] != ctx.target_shape[1]) {
         return op.emitOpError("Not implemented: unsupported tiling");
       }
       int64_t num_tiles = layout_in.tilesPerVreg(ctx.target_shape);
       if (needs_physical_broadcast ==
           std::array{true, false}) {  // Sublane broadcast
+        if (layout_in.bitwidth() != 32) {
+          return op.emitOpError(
+              "Not implemented: Only 32-bit supported for sublane broadcast");
+        }
         if (num_tiles != 1) {
           return op.emitOpError(
               "Not implemented: Only native tiling supported");
@@ -3202,20 +3198,24 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
                  std::array{false, true}) {  // Lane broadcast
         TPU_ASSERT_EQ_OP(*(src_tiles.dimensions().end() - 1), 1);
         TPU_ASSERT_OP(offsets_in[1].has_value());
+        const int64_t sublanes_per_tile =
+            layout_in.sublanesPerTile(ctx.target_shape);
         const int64_t offset = *offsets_in[1];
+        const int64_t lane_offset = offset % ctx.target_shape[1];
+        const int64_t tile_offset = offset / ctx.target_shape[1];
         const auto idx_ty =
             VectorType::get(ctx.target_shape, builder.getI32Type());
-        auto idx_const = builder.create<arith::ConstantOp>(
+        auto lane_offset_cst = builder.create<arith::ConstantOp>(
             broadcast_op.getLoc(), idx_ty,
-            DenseElementsAttr::get(idx_ty, builder.getI32IntegerAttr(offset)));
-        int64_t sublanes_per_tile = layout_in.sublanesPerTile(ctx.target_shape);
+            DenseElementsAttr::get(idx_ty,
+                                   builder.getI32IntegerAttr(lane_offset)));
         DenseI32ArrayAttr sublane_pattern;
         if (num_tiles != 1) {
           SmallVector<int32_t> pattern;
           pattern.reserve(ctx.target_shape[0]);
           for (int32_t t = 0; t < num_tiles; ++t) {
             for (int32_t i = 0; i < sublanes_per_tile; ++i) {
-              pattern.push_back(i);
+              pattern.push_back(sublanes_per_tile * tile_offset + i);
             }
           }
           sublane_pattern = builder.getDenseI32ArrayAttr(pattern);
@@ -3234,7 +3234,8 @@ LogicalResult vector_broadcast_rule(RewriteContext &ctx, Operation &op,
             }
           }
           Value res_vreg = builder.create<tpu::DynamicGatherOp>(
-              broadcast_op.getLoc(), src_tile->getType(), *src_tile, idx_const,
+              broadcast_op.getLoc(), src_tile->getType(), *src_tile,
+              lane_offset_cst,
               /*dimension=*/1);
           if (num_tiles != 1) {
             res_vreg = builder.create<tpu::GatherOp>(
@@ -5543,7 +5544,7 @@ LogicalResult applyLayoutOp(RewriteContext &ctx, Operation &op) {
   // TODO: b/342235360 - This check is temporary while we increase and test
   // support for offsets outside of the first tile. When support is more broad,
   // any op without support should check it within their own rule.
-  if (!isa<vector::ExtractStridedSliceOp>(op)) {
+  if (!isa<vector::BroadcastOp, vector::ExtractStridedSliceOp>(op)) {
     for (const Layout &layout : layouts_in) {
       if (layout && layout->offsets()[1].has_value() &&
           layout->offsets()[1].value() >= layout->tiling()[1]) {
