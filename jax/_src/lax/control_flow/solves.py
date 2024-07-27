@@ -395,15 +395,15 @@ def _linear_solve_batching_rule(axis_data, main_type, args, dims, const_lengths,
   for i in range(1 + len(orig_b_bat) + len(solve.out_avals)):
     # Apply vecmat and solve -> new batched parts of x
     solve_jaxpr_batched, solve_x_bat = batching.batch_jaxpr(
-        solve, axis_size, solve_bat + b_bat, instantiate=x_bat,
-        axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
+        solve, axis_data.size, solve_bat + b_bat, instantiate=x_bat,
+        axis_name=axis_data.name, spmd_axis_name=axis_data.spmd_name, main_type=main_type)
     if vecmat is None:
       vecmat_jaxpr_batched = None
       x_bat_out = solve_x_bat
     else:
       vecmat_jaxpr_batched, vecmat_x_bat = batching.batch_jaxpr(
-          vecmat, axis_size, vecmat_bat + b_bat, instantiate=b_bat,
-          axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
+          vecmat, axis_data.size, vecmat_bat + b_bat, instantiate=b_bat,
+          axis_name=axis_data.name, spmd_axis_name=axis_data.spmd_name, main_type=main_type)
       # batch all aux data by default
       x_bat_out = _map(operator.or_, vecmat_x_bat + [True] * num_aux, solve_x_bat)
     # keep a slice of only the linear operator part of solve's avals
@@ -411,15 +411,15 @@ def _linear_solve_batching_rule(axis_data, main_type, args, dims, const_lengths,
 
     # Apply matvec and solve_t -> new batched parts of b
     matvec_jaxpr_batched, matvec_b_bat = batching.batch_jaxpr(
-        matvec, axis_size, matvec_bat + x_bat_noaux, instantiate=b_bat,
-        axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
+        matvec, axis_data.size, matvec_bat + x_bat_noaux, instantiate=b_bat,
+        axis_name=axis_data.name, spmd_axis_name=axis_data.spmd_name, main_type=main_type)
     if solve_t is None:
       solve_t_jaxpr_batched = None
       b_bat_out = _map(operator.or_, matvec_b_bat, orig_b_bat)
     else:
       solve_t_jaxpr_batched, solve_t_b_aux_bat = batching.batch_jaxpr(
-          solve_t, axis_size, solve_t_bat + x_bat_noaux, instantiate=x_bat_out,
-          axis_name=axis_name, spmd_axis_name=spmd_axis_name, main_type=main_type)
+          solve_t, axis_data.size, solve_t_bat + x_bat_noaux, instantiate=x_bat_out,
+          axis_name=axis_data.name, spmd_axis_name=axis_data.spmd_name, main_type=main_type)
       assert len(solve_t_b_aux_bat) == len(orig_b_bat) + num_aux
       solve_t_b_bat, _ = split_list(solve_t_b_aux_bat, [len(orig_b_bat)])
       b_bat_out = _map(lambda m, s, o: m or s or o, matvec_b_bat, solve_t_b_bat,
@@ -443,7 +443,7 @@ def _linear_solve_batching_rule(axis_data, main_type, args, dims, const_lengths,
   ]
   # Broadcast out b if necessary
   new_b = [
-      batching.broadcast(x, axis_size, 0) if now_bat and not was_bat else
+      batching.broadcast(x, axis_data.size, 0) if now_bat and not was_bat else
       batching.moveaxis(x, d, 0) if now_bat and d != 0 else x
       for x, d, was_bat, now_bat in zip(b, b_dims, orig_b_bat, b_bat)
   ]
