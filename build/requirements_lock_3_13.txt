@@ -98,7 +98,7 @@ wheel==0.43.0
     # via -r build/test-requirements.txt
 zipp==3.18.1
     # via etils
-zstandard==0.22.0
+zstandard==0.23.0
     # via -r build/requirements.in
 
 # The following packages are considered to be unsafe in a requirements file:
