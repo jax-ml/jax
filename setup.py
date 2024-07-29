@@ -58,7 +58,7 @@ setup(
         'numpy>=1.24',
         "numpy>=1.26.0; python_version>='3.12'",
         'opt_einsum',
-        'scipy>=1.9',
+        'scipy>=1.10',
         "scipy>=1.11.1; python_version>='3.12'",
     ],
     extras_require={
