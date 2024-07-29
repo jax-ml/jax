@@ -262,6 +262,7 @@ def _get_arg_type(
       memory_space = TPUMemorySpace.VMEM
   if isinstance(aval, tpu_core.AbstractSemaphore):
     return aval_to_ir_type(aval), None
+  # TODO(necula): clean this None block_mapping
   if block_mapping is None:
     return aval_to_ir_type(aval, memory_space=memory_space), aval.shape
   shape = tuple(1 if b is pl_core.mapped else b for b in block_mapping.block_shape)
@@ -296,6 +297,7 @@ class MosaicGridMapping:
     self.jaxpr = jaxpr
     self.block_mappings = grid_mapping.block_mappings
     self.mapped_dims = grid_mapping.vmapped_dims
+    # TODO(necula): clean this using new grid_mapping helpers
     num_scalar_prefetch = grid_mapping.num_index_operands
     num_scratch = grid_mapping.num_scratch_operands
     # jaxpr has signature [*scalar_prefetch, *consts, *in_ops, *out_ops, *scratch]
@@ -348,7 +350,7 @@ class MosaicGridMapping:
         for aval in scratch_avals
     )
     self.grid_types, _ = unzip2([
-        _get_arg_type(jax_core.ShapedArray((), jnp.int32), None)
+        _get_arg_type(pl_core.index_map_grid_aval, None)
         for _ in range(len(self.grid))
     ])
     self._prepare_mesh_info(mesh)
@@ -432,9 +434,6 @@ def lower_jaxpr_to_module(
     mesh: mesh_lib.Mesh | None = None,
     for_verification: bool = False,
 ) -> tuple[Module, tuple[Any, ...]]:
-  # TODO(necula): cleanup
-  in_shapes = grid_mapping.in_shapes
-  out_shapes = grid_mapping.out_shapes
   for bm in grid_mapping.block_mappings:
     def err_details():
       return (f"Block spec for {bm.origin} has block shape "
@@ -510,33 +509,17 @@ def lower_jaxpr_to_module(
   window_params = []
   grid = mosaic_grid_mapping.grid
   if grid:
-    invars = jaxpr.invars
-    if grid_mapping.num_scratch_operands > 0:
-      invars = invars[
-          grid_mapping.num_index_operands:-grid_mapping.num_scratch_operands]
-    else:
-      invars = invars[grid_mapping.num_index_operands:]
-    # invars now = *consts, *ins, *outs
-    avals = tuple(v.aval for v in invars)
-    # TODO(necula): we should not need block_operand_shapes anymore
-    block_operand_shapes = (
-        *in_shapes[grid_mapping.num_index_operands:],
-        *out_shapes,
-    )
-    assert len(block_operand_shapes) == len(grid_mapping.block_mappings)
-    for i, (full_ty, bm, aval) in enumerate(
-        zip(block_operand_shapes, grid_mapping.block_mappings, avals)
-    ):
+    for i, bm in enumerate(grid_mapping.block_mappings):
       func_name = f"transform_{i}"
       # ANY operands don't support windowing and require empty window_params.
-      if aval.memory_space == tpu_core.TPUMemorySpace.ANY:
+      if bm.block_aval.memory_space == tpu_core.TPUMemorySpace.ANY:
         # We checked above that the block does not require windowing.
         window_params.append(ir.DictAttr.get())
         continue
       mlir_func = lower_jaxpr_to_transform_func(
           ctx,
           bm.index_map_jaxpr.jaxpr,
-          aval,
+          bm.block_aval,
           name=func_name,
           mosaic_grid_mapping=mosaic_grid_mapping,
           for_verification=for_verification,
@@ -547,7 +530,7 @@ def lower_jaxpr_to_module(
       ]
       # If we have an extended dtype, we need to add the block shape for the
       # remaining physical dtype.
-      block_shape += list(_get_aval_physical_dtype_shape(aval.inner_aval))
+      block_shape += list(_get_aval_physical_dtype_shape(bm.block_aval.inner_aval))
       window_shape = ir.DenseI64ArrayAttr.get(block_shape)
       block_params = dict(
           window_bounds=window_shape,
@@ -941,7 +924,7 @@ def _make_index(s):
 def _maybe_cast_to_index(cast_to_index, x):
   if cast_to_index:
     return _make_index(x)
-  return _ensure_mlir_value(x, aval=jax_core.ShapedArray((), jnp.int32))
+  return _ensure_mlir_value(x, aval=pl_core.index_map_grid_aval)
 
 
 def _index_to_start_size_stride(
@@ -2156,9 +2139,8 @@ def _lower_jaxpr_to_for_loop(ctx: LoweringRuleContext,
   if unroll != 1:
     raise NotImplementedError(
         f"Only unroll={num_steps=} and unroll=1 supported. Got {unroll=}.")
-  i32 = jax_core.ShapedArray((), jnp.int32)
-  lbd = _ensure_mlir_value(start, i32)
-  ubd = arith.addi(lbd, _ensure_mlir_value(num_steps, i32))
+  lbd = _ensure_mlir_value(start, pl_core.index_map_grid_aval)
+  ubd = arith.addi(lbd, _ensure_mlir_value(num_steps, pl_core.index_map_grid_aval))
   step = ir_constant(1, mlir_type=_dtype_to_ir_type(jnp.dtype("int32")))
   for_op = scf.ForOp(lbd, ubd, step, args)
   with ir.InsertionPoint(for_op.body):
@@ -2626,8 +2608,8 @@ def _device_id_to_logical(
       return sum(a * b for a, b in zip(indices, mesh_strides))
     lower_ctx = LoweringRuleContext(
         lowering_context=ctx.lowering_context,
-        avals_in=[jax_core.ShapedArray((), jnp.int32)] * len(device_ids),
-        avals_out=[jax_core.ShapedArray((), jnp.int32)],
+        avals_in=[pl_core.index_map_grid_aval] * len(device_ids),
+        avals_out=[pl_core.index_map_grid_aval],
         block_shapes=(None,) * len(device_ids),
     )
     return lower_fun(_linearize_mesh_indices, multiple_results=False)(
