@@ -811,7 +811,11 @@ class PallasCallInputOutputAliasingTest(PallasBaseTest):
 
   def test_basic_input_output_aliasing(self):
     # Input needs to be big so it doesn't fit in VMEM
-    x = jnp.ones((32, 1024, 1024))
+    size = 1024
+    if jtu.is_device_cuda():
+      # Reduce the size on CUDA to avoid OOM.
+      size = 256
+    x = jnp.ones((32, size, size))
     expected = x + 1
 
     def kernel(x_ref, y_ref):
@@ -821,8 +825,8 @@ class PallasCallInputOutputAliasingTest(PallasBaseTest):
       return self.pallas_call(
           kernel,
           out_shape=x,
-          in_specs=[pl.BlockSpec((None, 1024, 1024), lambda i: (i, 0, 0))],
-          out_specs=pl.BlockSpec((None, 1024, 1024), lambda i: (i, 0, 0)),
+          in_specs=[pl.BlockSpec((None, size, size), lambda i: (i, 0, 0))],
+          out_specs=pl.BlockSpec((None, size, size), lambda i: (i, 0, 0)),
           grid=(x.shape[0],),
           input_output_aliases={0: 0},
       )(x)
