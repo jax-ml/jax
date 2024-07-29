@@ -76,14 +76,13 @@ class JVPTag: pass
 
 @lu.transformation
 def jvpfun(instantiate, transform_stack, primals, tangents):
-  parent_trace = core.find_cur_trace()
   tag = JVPTag()
   tangents = [Zero.from_value(t) if not isinstance(t, Zero)
               and dtype(t) == float0 else t for t in tangents]
   ctx = (source_info_util.transform_name_stack('jvp') if transform_stack
          else contextlib.nullcontext())
   with ctx:
-    out_primals, out_tangents = yield (parent_trace, tag, primals, tangents), {}
+    out_primals, out_tangents = yield (tag, primals, tangents), {}
   if type(instantiate) is bool:
     instantiate = [instantiate] * len(out_tangents)
   out_tangents = [instantiate_zeros(t) if inst else t for t, inst
@@ -91,7 +90,8 @@ def jvpfun(instantiate, transform_stack, primals, tangents):
   yield out_primals, out_tangents
 
 @lu.transformation
-def jvp_subtrace(parent_trace, tag, primals, tangents):
+def jvp_subtrace(tag, primals, tangents):
+  parent_trace = core.find_cur_trace()
   trace = JVPTrace(parent_trace, tag)
   in_tracers = [JVPTracer(trace, x, t) if type(t) is not Zero else x
                 for x, t in zip(primals, tangents)]
@@ -100,7 +100,8 @@ def jvp_subtrace(parent_trace, tag, primals, tangents):
   yield unzip2(map(trace.to_primal_tangent_pair, ans))
 
 @lu.transformation_with_aux
-def jvp_subtrace_aux(parent_trace, tag, primals, tangents):
+def jvp_subtrace_aux(tag, primals, tangents):
+  parent_trace = core.find_cur_trace()
   trace = JVPTrace(parent_trace, tag)
   with core.set_current_trace(trace):
     ans, aux = yield map(partial(JVPTracer, trace), primals, tangents), {}
@@ -323,7 +324,7 @@ class JVPTrace(Trace):
     which_nz = [     type(t) is not Zero           for t in tangents]
     tangents = [t if type(t) is not Zero else None for t in tangents]
     args, in_tree = tree_flatten((primals, tangents))
-    f_jvp = jvp_subtrace(f, self.parent_trace, self.tag)
+    f_jvp = jvp_subtrace(f, self.tag)
     f_jvp, which_nz_out = nonzero_tangent_outputs(f_jvp)
     if isinstance(call_primitive, core.MapPrimitive):
       in_axes = params['in_axes']

@@ -856,7 +856,7 @@ class EvalTrace(Trace):
       return call_impl_with_key_reuse_checks(primitive, primitive.impl, *tracers, **params)
     else:
       for t in tracers:
-        assert not isinstance(t, Tracer) # TODO: rename
+        assert not isinstance(t, Tracer), breakpoint() or t # TODO: rename
       with set_current_trace(EvalTrace()):
         return primitive.impl(*tracers, **params)
 
@@ -2003,7 +2003,8 @@ class CallPrimitive(Primitive):
   def bind_with_trace(self, trace, fun_and_args, params):
     fun = fun_and_args[0]
     args = fun_and_args[1:]
-    return trace.process_call(self, fun, args, params)
+    with without_any_current_trace():
+      return trace.process_call(self, fun, args, params)
 
   def get_bind_params(self, params):
     new_params = dict(params)
@@ -2015,7 +2016,8 @@ class CallPrimitive(Primitive):
 
 def call_impl(f: lu.WrappedFun, *args, **params):
   del params  # params parameterize the call primitive, not the function
-  return f.call_wrapped(*args)
+  with set_current_trace(EvalTrace()):
+    return f.call_wrapped(*args)
 
 call_p: CallPrimitive = CallPrimitive('call')
 call = call_p.bind
@@ -2071,7 +2073,8 @@ class MapPrimitive(Primitive):
     fun = fun_and_args[0]
     args = fun_and_args[1:]
     assert len(params['in_axes']) == len(args)
-    return trace.process_map(self, fun, args, params)
+    with without_any_current_trace():
+      return trace.process_map(self, fun, args, params)
 
   def process(self, trace, fun, tracers, params):
     return trace.process_map(self, fun, tracers, params)

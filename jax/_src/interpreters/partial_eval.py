@@ -262,7 +262,7 @@ class JaxprTrace(Trace['JaxprTracer']):
 
     # Wrap f to perform the partial evaluation and plumb out aux data.
     if not config.dynamic_shapes.value:
-      f_ = trace_to_subjaxpr_nounits_fwd(f, self, False)
+      f_ = trace_to_subjaxpr_nounits_fwd(f, self.tag, False)
       f_, aux = partial_eval_wrapper_nounits(f_, tuple(in_knowns),
                                              tuple(in_avals))
     else:
@@ -344,6 +344,7 @@ class JaxprTrace(Trace['JaxprTracer']):
                        for ax, aval in zip(unk_in_axes, in_avals)]
 
     # Wrap f to perform partial evaluation and plumb out aux data.
+    assert False
     f = trace_to_subjaxpr_nounits(f, self, False)
     f, aux = partial_eval_wrapper_nounits(f, tuple(in_knowns),
                                           tuple(in_avals_mapped))
@@ -696,12 +697,15 @@ def _trace_to_subjaxpr_nounits(trace, instantiate, in_pvals):
 # TODO(mattjj): update all callers to use this version, delete other version.
 @lu.transformation
 def trace_to_subjaxpr_nounits_fwd(
-    trace: JaxprTrace,
+    tag: JaxprTraceTag,
     instantiate: bool | Sequence[bool],
     in_pvals: Sequence[PartialVal]):
   assert all(isinstance(pv, PartialVal) for pv in in_pvals), in_pvals
-  out_tracers, jaxpr, out_consts, env = yield from _trace_to_subjaxpr_nounits(
-      trace, instantiate, in_pvals)
+  current_name_stack = source_info_util.current_name_stack()
+  trace = JaxprTrace(core.find_cur_trace(), current_name_stack, tag)
+  with core.set_current_trace(trace):
+    out_tracers, jaxpr, out_consts, env = yield from _trace_to_subjaxpr_nounits(
+        trace, instantiate, in_pvals)
   out_pvals = [t.pval for t in out_tracers]
 
   # Which out_consts (aka residuals) are just forwarded inputs? Check obj id.
@@ -1965,7 +1969,7 @@ class DynamicJaxprTrace(core.Trace):
         aval = aval.update(shape=tuple(get_referent(d) for d in shape))
       out_tracers.append(DynamicJaxprTracer(self, aval, source_info))
     invars = map(self.getvar, in_tracers)
-    constvars = map(self.getvar, map(self.instantiate_const, consts))
+    constvars = map(self.getvar, map(self.to_jaxpr_tracer, consts))
     outvars = map(self.makevar, out_tracers)
     new_params = dict(params, call_jaxpr=convert_constvars_jaxpr(jaxpr))
     update_params = call_param_updaters.get(call_primitive)
