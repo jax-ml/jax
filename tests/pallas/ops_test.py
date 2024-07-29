@@ -296,6 +296,22 @@ class OpsTest(PallasBaseTest):
 class OpsInterpreterTest(OpsTest):
   INTERPRET = True
 
+  def test_debug_print(self):
+    @functools.partial(
+        self.pallas_call,
+        out_shape=jax.ShapeDtypeStruct((2,), jnp.float32),
+        grid=1,
+    )
+    def kernel(x_ref, o_ref):
+      jax.debug.print("x = {}", x_ref)
+
+    x = jnp.array([4.2, 2.4]).astype(jnp.float32)
+    with jtu.capture_stdout() as output:
+      jax.block_until_ready(kernel(x))
+      jax.effects_barrier()
+
+    self.assertIn("x = [4.2 2.4]", output())
+
 
 class OpsExtraTest(PallasBaseTest):
   """These are additional ops tests that have not been ported to TPU yet."""
