@@ -881,6 +881,9 @@ def backends() -> dict[str, xla_client.Client]:
     default_priority = -1000
     for platform, priority, fail_quietly in platform_registrations:
       try:
+        if platform == "cuda" and not hardware_utils.has_visible_nvidia_gpu():
+          continue
+
         backend = _init_backend(platform)
         _backends[platform] = backend
 
@@ -918,12 +921,7 @@ def _suggest_missing_backends():
 
   assert _default_backend is not None
   default_platform = _default_backend.platform
-  nvidia_gpu_devices = [
-    "/dev/nvidia0",
-    "/dev/dxg",  # WSL2
-  ]
-  if ("cuda" not in _backends and
-      any(os.path.exists(d) for d in nvidia_gpu_devices)):
+  if "cuda" not in _backends and hardware_utils.has_visible_nvidia_gpu():
     if hasattr(xla_extension, "GpuAllocatorConfig") and "cuda" in _backend_errors:
       err = _backend_errors["cuda"]
       warning_msg = f"CUDA backend failed to initialize: {err}."
