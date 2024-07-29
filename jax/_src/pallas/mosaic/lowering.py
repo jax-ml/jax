@@ -40,6 +40,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax as lax_internal
 from jax._src.lax.control_flow import for_loop
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith
 from jax._src.lib.mlir.dialects import func
@@ -423,6 +424,7 @@ class MeshInfo:
   mesh_strides: tuple[int, ...]
 
 def lower_jaxpr_to_module(
+    lowering_context: mlir.LoweringRuleContext,
     ctx: ir.Context,
     grid_mapping: pl_core.GridMapping,
     jaxpr: jax_core.Jaxpr,
@@ -433,6 +435,66 @@ def lower_jaxpr_to_module(
   # TODO(necula): cleanup
   in_shapes = grid_mapping.in_shapes
   out_shapes = grid_mapping.out_shapes
+  for bm in grid_mapping.block_mappings:
+    def err_details():
+      return (f"Block spec for {bm.origin} has block shape "
+              f"{bm.block_shape}, array shape {bm.array_shape_dtype.shape}, "
+              # TODO(necula): add index_map source location info
+              f"and index_map returning {bm.index_map_jaxpr.jaxpr.outvars}, in "
+              f"memory space {bm.block_aval.memory_space}.")
+
+    if len(bm.block_shape) < 2:
+      if not (bm.block_aval.memory_space == tpu_core.TPUMemorySpace.SMEM and
+              bm.has_trivial_window()):
+        # TODO(necula): enable this check, seems to regress
+        if False:
+          raise ValueError(
+              "The Pallas TPU lowering currently supports only blocks of "
+              "rank >= 2 for blocks, except those in the SMEM memory space "
+              "having the same block shape as the array shape and a "
+              "trivial index_map (returning all 0s)." + err_details())
+      continue
+
+    if (bm.block_aval.memory_space == tpu_core.TPUMemorySpace.ANY and
+        not bm.has_trivial_window()):
+      raise ValueError(
+          "The Pallas TPU lowering currently supports in memory space ANY "
+          "only blocks having the same block shape as the array shape "
+          "and a trivial index_map (returning all 0s)." + err_details())
+
+    bs0, bs1 = (1 if bs is pl_core.mapped else bs
+                for bs in bm.block_shape[-2:])
+    as0, as1 = bm.array_shape_dtype.shape[-2:]
+    if lowering_context.is_forward_compat() or jaxlib_version < (0, 4, 31):
+      # The window divisibility condition in older versions of jaxlib
+
+      # With shape polymorphism block_shape is static, but the array shape may
+      # be symbolic. Write the divisibility comparisons to defer inequality
+      # comparisons on dimensions as much as possible.
+      evenly_divisible = (
+          (bs1 % 128 == 0 or (bs1 == as1 and as1 < 128)) and
+          (bs0 % 8 == 0 or (bs0 == as0 and as0 < 8))
+      )
+      if not evenly_divisible:
+        raise ValueError(
+            "The Pallas TPU lowering currently requires that the last two "
+            "dimensions of your block shape are divisible by 8 and 128 "
+            "respectively, if the respective dimensions of the overall array "
+            "are larger than the respective factors. If array dimensions are "
+            "smaller, the block should span the full array dimension. "
+            + err_details())
+    else:
+      evenly_divisible = (
+          (bs1 == as1 or bs1 % 128 == 0) and
+          (bs0 == as0 or bs0 % 8 == 0)
+      )
+      if not evenly_divisible:
+        raise ValueError(
+              "The Pallas TPU lowering currently requires that the last two "
+              "dimensions of your block shape are divisible by 8 and 128 "
+              "respectively, or be equal to the respective dimensions of the "
+              "overall array. "
+              + err_details())
 
   mosaic_grid_mapping = MosaicGridMapping(
       jaxpr, grid_mapping, dimension_semantics, mesh)
@@ -468,25 +530,7 @@ def lower_jaxpr_to_module(
       func_name = f"transform_{i}"
       # ANY operands don't support windowing and require empty window_params.
       if aval.memory_space == tpu_core.TPUMemorySpace.ANY:
-        # We may not require windowing if our block_shape matches the original
-        # shape or the dimensions are mapped.
-        requires_windowing = any(
-            b != s
-            for b, s in zip(bm.block_shape, full_ty.shape)
-            if not (b is pl_core.mapped and s == 1)
-        )
-        if np.prod(grid) != 1:
-          for atom in bm.index_map_jaxpr.jaxpr.outvars:
-            if requires_windowing:
-              break
-            requires_windowing = not (
-                isinstance(atom, jax_core.Literal) and atom.val == 0
-            )
-        if requires_windowing:
-          raise NotImplementedError(
-              "Operands in placed in the TPUMemorySpace.ANY memory space don't"
-              " support windowing (i.e. non-trivial block_shape or index_map)."
-          )
+        # We checked above that the block does not require windowing.
         window_params.append(ir.DictAttr.get())
         continue
       mlir_func = lower_jaxpr_to_transform_func(

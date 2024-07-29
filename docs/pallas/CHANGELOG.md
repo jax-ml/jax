@@ -37,6 +37,9 @@ Remember to align the itemized text with the first line of an item within a list
   * Added initial support for shape polymorphism for the Pallas TPU custom kernels\
     ({jax-issue}`#22084`).
   * Added TPU support for checkify. ({jax-issue}`#22480`)
+  * Added clearer error messages when the block sizes do not match the TPU
+    requirements. Previously, the errors were coming from the Mosaic backend
+    and did not have useful Python stack traces.
 
 ## Released with JAX 0.4.30 (June 18, 2024)
 

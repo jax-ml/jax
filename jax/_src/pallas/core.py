@@ -311,6 +311,16 @@ class BlockMapping:
     else:
       raise RuntimeError(f"Unknown indexing mode: {self.indexing_mode}")
 
+  def has_trivial_window(self):
+    """If block shape is same as the array shape and index_map returns 0s."""
+    for b, s in zip(self.block_shape, self.array_shape_dtype.shape):
+      if b != s and not (b is mapped and s == 1):
+        return False
+    for atom in self.index_map_jaxpr.jaxpr.outvars:
+      if not (isinstance(atom, jax_core.Literal) and atom.val == 0):
+        return False
+    return True
+
 
 @contextlib.contextmanager
 def tracing_grid_env(grid: GridMappingGrid, mapped_dims: tuple[int, ...]):
