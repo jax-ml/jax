@@ -14,6 +14,8 @@ Remember to align the itemized text with the first line of an item within a list
   * xmap has been deleted. Please use {func}`shard_map` as the replacement.
 
 * Changes
+  * The minimum CuDNN version is v9.1. This was true in previous releases also,
+    but we now declare this version constraint formally.
   * The minimum Python version is now 3.10. 3.10 will remain the minimum
     supported version until July 2025.
   * The minimum NumPy version is now 1.24. NumPy 1.24 will remain the minimum
