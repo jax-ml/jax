@@ -78,7 +78,7 @@ pyparsing==3.1.2
     # via matplotlib
 pyproject-hooks==1.0.0
     # via build
-pytest==8.1.1
+pytest==8.3.2
     # via pytest-xdist
 pytest-xdist==3.5.0
     # via -r build/test-requirements.txt
