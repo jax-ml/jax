@@ -255,6 +255,25 @@ def lower_jaxpr_to_triton_module(
     name: str,
     platform: str
 ) -> LoweringResult:
+  if grid_mapping.num_dynamic_grid_bounds:
+    raise NotImplementedError(
+        "dynamic grid bounds not supported in the Triton backend"
+    )
+  # TODO(necula): this fails many tests, figure it out
+  # for bm in grid_mapping.block_mappings:
+  #   block_size = math.prod(d for d in bm.block_shape  # type: ignore[misc]
+  #                          if d is not pallas_core.mapped)
+  #   power_of_2 = (block_size & (block_size - 1)) == 0
+
+  #   if not power_of_2:
+  #     raise ValueError(
+  #         "The Pallas GPU lowering currently requires that the block sizes be "
+  #         f"a power of 2. Found block spec for {bm.origin} with "
+  #         f"shape {bm.block_shape}")
+  if grid_mapping.num_index_operands:
+    raise NotImplementedError(
+        "scalar prefetch not implemented in the Triton backend"
+    )
   with grid_mapping.trace_env():
     jaxpr, _ = pe.dce_jaxpr(
         jaxpr, [True] * len(jaxpr.outvars), instantiate=True

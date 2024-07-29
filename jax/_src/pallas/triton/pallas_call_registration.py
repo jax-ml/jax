@@ -53,14 +53,6 @@ def pallas_call_lowering(
   # TODO(necula): cleanup
   in_shapes = grid_mapping.in_shapes
   out_shapes = grid_mapping.out_shapes
-  if grid_mapping.num_dynamic_grid_bounds:
-    raise NotImplementedError(
-        "dynamic grid bounds not supported in the Triton backend"
-    )
-  if grid_mapping.num_index_operands:
-    raise NotImplementedError(
-        "scalar prefetch not implemented in the Triton backend"
-    )
   triton_params = compiler_params.get("triton", compiler_params)
   num_warps = triton_params.pop("num_warps", 4)
   [lowering_platform] = ctx.platforms or ctx.module_context.platforms

@@ -857,6 +857,10 @@ def _trace_kernel_to_jaxpr(fun: Callable,
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_kernel_fun,
                                                      kernel_avals, debug)
     if consts:
+      raise ValueError(
+          "Kernel function in pallas_call should not capture constants. "
+          "They should instead be passed as inputs. "
+          "It captures: {consts}")
       # Pad ``block_mappings`` to account for the hoisted constants.
       # The constants will be right after the index operands and just before
       # the real inputs and outputs.

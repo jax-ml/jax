@@ -63,7 +63,8 @@ _DUMP_PROMELA_TO = config.string_flag(
 
 
 def pallas_call_tpu_lowering_rule(
-    ctx: mlir.LoweringRuleContext, *in_nodes,
+    ctx: mlir.LoweringRuleContext,
+    *in_nodes,
     jaxpr: jax_core.Jaxpr,
     name: str,
     grid_mapping: core.GridMapping,
@@ -105,7 +106,7 @@ def pallas_call_tpu_lowering_rule(
     with mlir_ctx, ir.Location.unknown(mlir_ctx):
       dimension_semantics = mosaic_params.get("dimension_semantics", None)
       return lowering.lower_jaxpr_to_module(
-          mlir_ctx, grid_mapping, jaxpr,
+          ctx, mlir_ctx, grid_mapping, jaxpr,
           dimension_semantics=dimension_semantics, mesh=mesh,
           for_verification=for_verification)
   mosaic_module, extra_args = lower_module(for_verification=False)
