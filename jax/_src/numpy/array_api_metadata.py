@@ -1,4 +1,4 @@
-# Copyright 2023 The JAX Authors.
+# Copyright 2024 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,23 +12,62 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+This module contains metadata related to the `Python array API`_.
+
+.. _Python array API: https://data-apis.org/array-api/
+"""
 from __future__ import annotations
+
+import importlib
 
 import jax
 from jax._src.sharding import Sharding
 from jax._src.lib import xla_client as xc
 from jax._src import dtypes as _dtypes, config
 
-# TODO(micky774): Add to jax.numpy.util when finalizing jax.experimental.array_api
-# deprecation
-class __array_namespace_info__:
 
-  def __init__(self):
-    self._capabilities = {
-      "boolean indexing": True,
-      "data-dependent shapes": False,
-    }
+# TODO(jakevdp, vfdev-5): export this in jax.numpy once migration is complete.
+__array_api_version__ = '2023.12'
 
+
+# TODO(jakevdp, vfdev-5): export this in jax.numpy once migration is complete.
+def __array_namespace_info__() -> ArrayNamespaceInfo:
+  return ArrayNamespaceInfo()
+
+
+def _array_namespace_property(self):
+  # TODO(jakevdp): clean this up once numpy fully supports the array API.
+  # In some environments, jax.experimental.array_api is not available.
+  # We return an AttributeError in this case, because some callers use
+  # hasattr checks to check for array API compatibility.
+  if not importlib.util.find_spec('jax.experimental.array_api'):
+    raise AttributeError("__array_namespace__ requires jax.experimental.array_api")
+  return __array_namespace__
+
+
+def __array_namespace__(*, api_version: None | str = None):
+  """Return the `Python array API`_ namespace for JAX.
+
+  .. _Python array API: https://data-apis.org/array-api/
+  """
+  if api_version is not None and api_version != __array_api_version__:
+    raise ValueError(f"{api_version=!r} is not available; "
+                     f"available versions are: {[__array_api_version__]}")
+  # TODO(jakevdp, vfdev-5): change this to jax.numpy once migration is complete.
+  import jax.experimental.array_api
+  return jax.experimental.array_api  # pytype: disable=module-attr
+
+
+class ArrayNamespaceInfo:
+  """Metadata for the `Python array API`_
+
+  .. _Python array API: https://data-apis.org/array-api/
+  """
+  _capabilities = {
+    "boolean indexing": True,
+    "data-dependent shapes": False,
+  }
 
   def _build_dtype_dict(self):
     array_api_types = {
