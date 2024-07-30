@@ -424,13 +424,11 @@ class Primitive:
     return f'{self.name}'
 
   def bind(self, *args, **params):
-    cur_trace = find_cur_trace()
-    assert not isinstance(cur_trace, NotATrace)
-    return self.bind_with_trace(cur_trace, args, params)
+    with take_current_trace() as cur_trace:
+      return self.bind_with_trace(cur_trace, args, params)
 
   def bind_with_trace(self, trace, args, params):
-    with without_any_current_trace():
-      return trace.process_primitive(self, args, params)
+    return trace.process_primitive(self, args, params)
 
   def def_impl(self, impl):
     self.impl = impl
@@ -925,7 +923,7 @@ def _initialize_jax_jit_thread_local_state():
   tls = jax_jit.thread_local_state()
 
   if tls.extra_jit_context is None:
-    dynamic = isinstance(find_cur_trace(), EvalTrace)
+    dynamic = isinstance(get_trace_state().trace, EvalTrace)
     config.update_thread_local_jit_state(dynamic_trace_state=dynamic)
 
 jax_jit.set_thread_local_state_initialization_callback(
@@ -2003,8 +2001,7 @@ class CallPrimitive(Primitive):
   def bind_with_trace(self, trace, fun_and_args, params):
     fun = fun_and_args[0]
     args = fun_and_args[1:]
-    with without_any_current_trace():
-      return trace.process_call(self, fun, args, params)
+    return trace.process_call(self, fun, args, params)
 
   def get_bind_params(self, params):
     new_params = dict(params)
@@ -2073,8 +2070,7 @@ class MapPrimitive(Primitive):
     fun = fun_and_args[0]
     args = fun_and_args[1:]
     assert len(params['in_axes']) == len(args)
-    with without_any_current_trace():
-      return trace.process_map(self, fun, args, params)
+    return trace.process_map(self, fun, args, params)
 
   def process(self, trace, fun, tracers, params):
     return trace.process_map(self, fun, tracers, params)
@@ -2766,18 +2762,21 @@ def clean_up_dead_vars(eqn: JaxprEqn, env: dict[Var, Any],
 def get_trace_state():
   return thread_local_state.trace_state
 
+# Prefer to use `take_current_trace` instead. That avoids having both an implicit
+# trace and an explicit one around at the same time, which are easily mixed up.
 def find_cur_trace():
   return get_trace_state().trace
 
 class NotATrace: pass
 
 @contextmanager
-def without_any_current_trace():
+def take_current_trace():
   try:
     ts = get_trace_state()
     prev = ts.trace
+    assert isinstance(prev, Trace)
     ts.trace = NotATrace()
-    yield
+    yield prev
   finally:
     ts.trace = prev
 

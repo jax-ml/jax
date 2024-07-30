@@ -91,24 +91,23 @@ def jvpfun(instantiate, transform_stack, primals, tangents):
 
 @lu.transformation
 def jvp_subtrace(tag, primals, tangents):
-  parent_trace = core.find_cur_trace()
-  trace = JVPTrace(parent_trace, tag)
-  in_tracers = [JVPTracer(trace, x, t) if type(t) is not Zero else x
-                for x, t in zip(primals, tangents)]
-  with core.set_current_trace(trace):
-    ans = yield in_tracers, {}
-  yield unzip2(map(trace.to_primal_tangent_pair, ans))
+  with core.take_current_trace() as parent_trace:
+    trace = JVPTrace(parent_trace, tag)
+    in_tracers = [JVPTracer(trace, x, t) if type(t) is not Zero else x
+                  for x, t in zip(primals, tangents)]
+    with core.set_current_trace(trace):
+      ans = yield in_tracers, {}
+    yield unzip2(map(trace.to_primal_tangent_pair, ans))
 
 @lu.transformation_with_aux
 def jvp_subtrace_aux(tag, primals, tangents):
-  parent_trace = core.find_cur_trace()
-  trace = JVPTrace(parent_trace, tag)
-  with core.set_current_trace(trace):
-    ans, aux = yield map(partial(JVPTracer, trace), primals, tangents), {}
-  out_primals, out_tangents = unzip2(map(trace.to_primal_tangent_pair, ans))
-  aux_primals, _            = unzip2(map(trace.to_primal_tangent_pair, aux))
-  yield (out_primals, out_tangents), aux_primals
-
+  with core.take_current_trace() as parent_trace:
+    trace = JVPTrace(parent_trace, tag)
+    with core.set_current_trace(trace):
+      ans, aux = yield map(partial(JVPTracer, trace), primals, tangents), {}
+    out_primals, out_tangents = unzip2(map(trace.to_primal_tangent_pair, ans))
+    aux_primals, _            = unzip2(map(trace.to_primal_tangent_pair, aux))
+    yield (out_primals, out_tangents), aux_primals
 
 def linearize(traceable, *primals, **kwargs):
   has_aux = kwargs.pop('has_aux', False)

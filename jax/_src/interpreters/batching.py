@@ -522,21 +522,22 @@ def batch(fun: lu.WrappedFun, axis_data,
 
 @lu.transformation
 def _batch_outer(axis_data, in_dims, _main_type, *in_vals):
-  parent_trace = core.find_cur_trace()
   tag = BatchTag()
   with source_info_util.transform_name_stack('vmap'):
-    outs = yield (parent_trace, tag, in_dims, *in_vals), {}
+    outs = yield (tag, in_dims, *in_vals), {}
   yield outs
 
 @lu.transformation
-def _batch_inner(axis_data, out_dim_dests, parent_trace, tag, in_dims, *in_vals):
+def _batch_inner(axis_data, out_dim_dests, tag, in_dims, *in_vals):
   in_dims = in_dims() if callable(in_dims) else in_dims
-  trace = BatchTrace(parent_trace, tag, axis_data)
-  idx = memoize(lambda: BatchTracer(trace, make_iota(axis_data.size), 0,
-                                    source_info_util.current()))
-  in_tracers = map(partial(to_elt, trace, idx), in_vals, in_dims)
-  with core.set_current_trace(trace):
-    outs = yield in_tracers, {}
+  with core.take_current_trace() as parent_trace:
+    trace = BatchTrace(parent_trace, tag, axis_data)
+    idx = memoize(lambda: BatchTracer(trace, make_iota(axis_data.size), 0,
+                                      source_info_util.current()))
+    in_tracers = map(partial(to_elt, trace, idx), in_vals, in_dims)
+    with core.set_current_trace(trace):
+      outs = yield in_tracers, {}
+
   out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
   out_vals = map(partial(from_elt, trace, axis_data.size), range(len(outs)),
                  outs, out_dim_dests)
@@ -579,16 +580,17 @@ def vtile(f_flat: lu.WrappedFun,
 
 @lu.transformation_with_aux
 def batch_subtrace(tag, axis_data, in_dims, *in_vals):
-  trace = BatchTrace(core.find_cur_trace(), tag, axis_data)
-  in_dims = in_dims() if callable(in_dims) else in_dims
-  in_vals, in_dims = resolve_ragged_axes(in_vals, in_dims)
-  in_tracers = [BatchTracer(trace, x, dim, source_info_util.current())
-                if dim is not None else x for x, dim in zip(in_vals, in_dims)]
-  with core.set_current_trace(trace):
-    outs = yield in_tracers, {}
-  out_vals, out_dims = unzip2(map(trace.to_batch_info, outs))
-  segment_lens, out_dims = indirectify_ragged_axes(out_dims)
-  yield (*segment_lens, *out_vals), out_dims
+  with core.take_current_trace() as parent_trace:
+    trace = BatchTrace(parent_trace, tag, axis_data)
+    in_dims = in_dims() if callable(in_dims) else in_dims
+    in_vals, in_dims = resolve_ragged_axes(in_vals, in_dims)
+    in_tracers = [BatchTracer(trace, x, dim, source_info_util.current())
+                  if dim is not None else x for x, dim in zip(in_vals, in_dims)]
+    with core.set_current_trace(trace):
+      outs = yield in_tracers, {}
+    out_vals, out_dims = unzip2(map(trace.to_batch_info, outs))
+    segment_lens, out_dims = indirectify_ragged_axes(out_dims)
+    yield (*segment_lens, *out_vals), out_dims
 
 def indirectify_ragged_axes(dims):
   if not any(type(d) is RaggedAxis for d in dims):
@@ -734,17 +736,18 @@ def _batch_jaxpr_axes(closed_jaxpr, axis_data, in_axes, out_axes_dest, main_type
   return core.ClosedJaxpr(jaxpr_out, consts), out_batched()
 
 @lu.transformation_with_aux
-def _batch_jaxpr_inner(axis_data, parent_trace, tag, in_axes, *in_vals):
-  trace = BatchTrace(parent_trace, tag, axis_data)
-  _, in_axes = resolve_ragged_axes(in_vals, in_axes)
-  in_tracers = [BatchTracer(trace, val, dim) if dim is not None else val
-                for val, dim in zip(in_vals, in_axes)]
-  with core.set_current_trace(trace):
-    outs = yield in_tracers, {}
-  out_vals, out_axes = unzip2(map(trace.to_batch_info, outs))
-  new_out_axes = indirectify_ragged_axes_against_inputs_outputs(
-      out_axes, in_vals, out_vals)
-  yield out_vals, new_out_axes
+def _batch_jaxpr_inner(axis_data, tag, in_axes, *in_vals):
+  with core.take_current_trace() as parent_trace:
+    trace = BatchTrace(parent_trace, tag, axis_data)
+    _, in_axes = resolve_ragged_axes(in_vals, in_axes)
+    in_tracers = [BatchTracer(trace, val, dim) if dim is not None else val
+                  for val, dim in zip(in_vals, in_axes)]
+    with core.set_current_trace(trace):
+      outs = yield in_tracers, {}
+    out_vals, out_axes = unzip2(map(trace.to_batch_info, outs))
+    new_out_axes = indirectify_ragged_axes_against_inputs_outputs(
+        out_axes, in_vals, out_vals)
+    yield out_vals, new_out_axes
 
 @lu.transformation_with_aux
 def _match_axes_jaxpr(axis_data, out_axes_dest, out_axes, trace, in_axes,
@@ -767,9 +770,8 @@ def _batch_jaxpr_outer(axis_data, in_dims, main_type, *in_vals):
   in_dims = in_dims() if callable(in_dims) else in_dims
   in_dims = [canonicalize_axis(ax, np.ndim(x)) if isinstance(ax, int)
              else ax for x, ax in unsafe_zip(in_vals, in_dims)]
-  parent_trace = core.find_cur_trace()
   tag = BatchTag()
-  out_vals = yield (parent_trace, tag, in_dims, *in_vals), {}
+  out_vals = yield (tag, in_dims, *in_vals), {}
   yield out_vals
 
 def _merge_bdims(x, y):
@@ -791,16 +793,17 @@ zero_if_mapped = ZeroIfMapped()
 def batch_custom_jvp_subtrace(tag, axis_data, in_dims, *in_vals):
   size, = {x.shape[d] for x, d in zip(in_vals, in_dims * 2)
            if d is not not_mapped}
-  trace = BatchTrace(core.find_cur_trace(), tag, axis_data)
-  in_tracers = [val if dim is None else
-                SymbolicZero(core.mapped_aval(size, dim, val.aval))
-                if type(val) is SymbolicZero else BatchTracer(trace, val, dim)
-                for val, dim in zip(in_vals, in_dims * 2)]
-  with core.set_current_trace(trace):
-    outs = yield in_tracers, {}
-    # TODO(mattjj,frostig): instantiating any SymbolicZero output is easy, but can
-    # be wasteful in the rare case it actually triggers; handle symbolically!
-    outs = [instantiate(replace_rule_output_symbolic_zeros(x)) for x in outs]
+  with core.take_current_trace() as parent_trace:
+    trace = BatchTrace(parent_trace, tag, axis_data)
+    in_tracers = [val if dim is None else
+                  SymbolicZero(core.mapped_aval(size, dim, val.aval))
+                  if type(val) is SymbolicZero else BatchTracer(trace, val, dim)
+                  for val, dim in zip(in_vals, in_dims * 2)]
+    with core.set_current_trace(trace):
+      outs = yield in_tracers, {}
+      # TODO(mattjj,frostig): instantiating any SymbolicZero output is easy, but can
+      # be wasteful in the rare case it actually triggers; handle symbolically!
+      outs = [instantiate(replace_rule_output_symbolic_zeros(x)) for x in outs]
 
   out_vals, out_dims = unzip2(map(trace.to_batch_info, outs))
   out_primals, out_tangents = split_list(out_vals, [len(out_vals) // 2])
