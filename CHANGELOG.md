@@ -8,7 +8,11 @@ see {ref}`pallas-changelog`.
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## jax 0.4.31
+## jax 0.4.32
+
+## jaxlib 0.4.32
+
+## jax 0.4.31 (July 29, 2024)
 
 * Deletion
   * xmap has been deleted. Please use {func}`shard_map` as the replacement.
@@ -48,7 +52,7 @@ Remember to align the itemized text with the first line of an item within a list
   * The previously-deprecated function `jax.random.shuffle` has been removed;
     instead use `jax.random.permutation` with `independent=True`.
 
-## jaxlib 0.4.31
+## jaxlib 0.4.31 (July 29, 2024)
 
 * Bug fixes
   * Fixed a bug that meant that negative static_argnums to a jit were mishandled
