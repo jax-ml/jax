@@ -181,7 +181,8 @@ def _shard_map(f: Callable, mesh: Mesh, in_specs: Specs,
       return tuple(map(_canonicalize_spec, out_specs_flat))
 
     if rewrite := check_rep:
-      fun = _efficient_transpose_rewrite(fun, mesh, in_names_flat, out_names_thunk)
+      ...  # TODO TODO DO NOT SUBMIT
+      # fun = _efficient_transpose_rewrite(fun, mesh, in_names_flat, out_names_thunk)
 
     try:
       out_flat = shard_map_p.bind(
@@ -448,30 +449,10 @@ MaybeTracer = Union[JaxType, Tracer]
 class ShardMapPrimitive(core.Primitive):
   multiple_results = True
 
-  def bind(self, fun: lu.WrappedFun, *args: MaybeTracer, mesh: Mesh,
-           in_names: tuple[AxisNames, ...],
-           out_names_thunk: Callable[[], tuple[AxisNames, ...]],
-           check_rep: bool, rewrite: bool, auto: frozenset[AxisName]
-           ) -> Sequence[MaybeTracer]:
-    top_trace = core.find_top_trace(args)
-    fun, env_todo = process_env_traces(fun, top_trace.level, mesh, in_names,
-                                       out_names_thunk, check_rep, rewrite, auto)
-
-    @as_hashable_function(closure=out_names_thunk)
-    def new_out_names_thunk():
-      out_names = out_names_thunk()
-      _, xforms = env_todo()
-      for t in xforms:
-        out_names = t(out_names)
-      return out_names
-
-    tracers = map(top_trace.full_raise, args)
-    outs = top_trace.process_shard_map(  # pytype: disable=attribute-error
-        shard_map_p, fun, tracers, mesh=mesh, in_names=in_names,
-        out_names_thunk=new_out_names_thunk, check_rep=check_rep,
-        rewrite=rewrite, auto=auto)
-    todos, _ = env_todo()
-    return map(core.full_lower, core.apply_todos(todos, outs))
+  def bind_with_trace(self, trace, fun_and_args, params):
+    fun, *args = fun_and_args
+    with core.without_any_current_trace():
+      return trace.process_shard_map(shard_map_p, fun, args, **params)
 
   def get_bind_params(self, params):
     new_params = dict(params)
@@ -483,63 +464,39 @@ class ShardMapPrimitive(core.Primitive):
 
 shard_map_p = ShardMapPrimitive('shard_map')
 
-@lu.transformation_with_aux
-def process_env_traces(level: int, mesh, in_names, out_names_thunk, check_rep,
-                       rewrite, auto, *args: Any):
-  outs = yield args, {}
-  todos, out_names_transforms = [], []
-  while True:
-    tracers = [x for x in outs if isinstance(x, core.Tracer)
-               and (level is None or x._trace.level > level)]
-    if tracers:
-      ans = max(tracers, key=op.attrgetter('_trace.level'))
-    else:
-      break
-    trace = ans._trace.main.with_cur_sublevel()
-    outs = map(trace.full_raise, outs)
-    outs, (todo, xform) = trace.post_process_shard_map(
-        outs, mesh, in_names, out_names_thunk, check_rep, rewrite, auto)
-    todos.append(todo)
-    out_names_transforms.append(xform)
-  yield outs, (tuple(todos), tuple(out_names_transforms))
-
 # Staging
 
 def _shard_map_staging(
     trace: pe.DynamicJaxprTrace, prim: core.Primitive, f: lu.WrappedFun,
-    in_tracers: Sequence[pe.DynamicJaxprTracer], *, mesh: Mesh,
+    in_tracers: Sequence[Any], *,
+    mesh: Mesh,
     in_names: tuple[AxisNames, ...],
     out_names_thunk: Callable[[], tuple[AxisNames, ...]],
     check_rep: bool,
     rewrite: bool,
     auto: frozenset,
   ) -> Sequence[pe.DynamicJaxprTracer]:
+  in_tracers = map(trace.to_jaxpr_tracer, in_tracers)
   in_avals = [t.aval for t in in_tracers]
   in_avals_ = map(partial(_shard_aval, mesh), in_names, in_avals)
-  main = trace.main
-  with core.new_sublevel(), core.extend_axis_env_nd(mesh.shape.items()):
-    jaxpr, genavals, consts, () = pe.trace_to_subjaxpr_dynamic(f, main, in_avals_)
-  out_avals_ = map(_check_shapedarray, genavals)
-  _check_names(out_names_thunk(), out_avals_)
-  in_rep = map(partial(_in_names_to_rep, mesh), in_names)
-  if check_rep:
-    out_rep = _check_rep(mesh, jaxpr, in_rep)
-    _check_reps(mesh, out_names_thunk(), out_rep)
-  out_avals = map(partial(_unshard_aval, mesh), out_names_thunk(), out_avals_)
+  with core.extend_axis_env(mesh.shape.items()):
+    jaxpr, out_avals_, consts, () = pe.trace_to_jaxpr_dynamic(f, in_avals_)
+  out_avals = map(_check_shapedarray, out_avals_)
+  out_avals = map(partial(_unshard_aval, mesh), out_names_thunk(), out_avals)
+  # TODO check_rep
   source_info = source_info_util.current()
   out_tracers = [pe.DynamicJaxprTracer(trace, a, source_info) for a in out_avals]
   invars = map(trace.getvar, in_tracers)
-  constvars = map(trace.getvar, map(trace.instantiate_const, consts))
+  constvars = map(trace.getvar, map(trace.to_jaxpr_tracer, consts))
   outvars = map(trace.makevar, out_tracers)
   in_names_staged = ({},) * len(consts) + tuple(in_names)  # type: ignore
-  with core.extend_axis_env_nd(mesh.shape.items()):
+  with core.extend_axis_env(mesh.shape.items()):
     jaxpr = pe.convert_constvars_jaxpr(jaxpr)
   params = dict(mesh=mesh, in_names=in_names_staged,
                 out_names=tuple(out_names_thunk()), jaxpr=jaxpr,
                 check_rep=check_rep, rewrite=rewrite, auto=auto)
-  effs = core.filter_named_axis_effects(jaxpr.effects, mesh.axis_names)
   eqn = pe.new_jaxpr_eqn([*constvars, *invars], outvars, prim, params,
-                         effs, source_info)
+                         jaxpr.effects, source_info)
   trace.frame.add_eqn(eqn)
   return out_tracers
 pe.DynamicJaxprTrace.process_shard_map = _shard_map_staging
@@ -586,7 +543,7 @@ def _shard_map_typecheck(_, *in_atoms, jaxpr, mesh, in_names, out_names,
     if not core.typecompat(v.aval, _shard_aval(mesh, in_name, x.aval)):
       raise core.JaxprTypeError("shard_map argument avals not compatible with "
                                 "jaxpr binder avals and in_names")
-  with core.extend_axis_env_nd(tuple(mesh.shape.items())):
+  with core.extend_axis_env(mesh.shape.items()):
     core.check_jaxpr(jaxpr)
   if check_rep:
     in_rep = map(partial(_in_names_to_rep, mesh), in_names)
@@ -597,8 +554,7 @@ def _shard_map_typecheck(_, *in_atoms, jaxpr, mesh, in_names, out_names,
                                   "sufficiently replicated")
   out_avals_sharded = [x.aval for x in jaxpr.outvars]
   out_avals = map(partial(_unshard_aval, mesh), out_names, out_avals_sharded)
-  effs = core.filter_named_axis_effects(jaxpr.effects, mesh.axis_names)
-  return out_avals, effs
+  return out_avals, jaxpr.effects
 core.custom_typechecks[shard_map_p] = _shard_map_typecheck
 
 def _in_names_to_rep(mesh: Mesh, names: AxisNames) -> set[AxisName]:
@@ -650,7 +606,7 @@ def _shard_map_lowering(ctx, *in_nodes, jaxpr, mesh, in_names, out_names,
       mesh, frozenset(mesh.axis_names) - auto
   )
   sub_ctx = ctx.module_context.replace(axis_context=new_axis_context)
-  with core.extend_axis_env_nd(tuple(mesh.shape.items())):
+  with core.extend_axis_env(mesh.shape.items()):
     out_nodes_, tokens_out = mlir.call_lowering(
         "shmap_body", ctx.name_stack, jaxpr, None, sub_ctx, in_avals_,
         out_avals_, ctx.tokens_in, *in_nodes_, dim_var_values=ctx.dim_var_values,
@@ -1690,7 +1646,7 @@ def _all_mesh_names(mesh: Mesh) -> tuple[AxisName, ...]:
 def _shard_map_dce(used_outputs: list[bool], eqn: core.JaxprEqn
                    ) -> tuple[list[bool], core.JaxprEqn | None]:
   mesh = eqn.params["mesh"]
-  with core.extend_axis_env_nd(mesh.shape.items()):
+  with core.extend_axis_env(mesh.shape.items()):
     jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['jaxpr'], used_outputs)
   if not any(used_inputs) and not any(used_outputs) and not jaxpr.effects:
     return used_inputs, None
@@ -1699,11 +1655,10 @@ def _shard_map_dce(used_outputs: list[bool], eqn: core.JaxprEqn
     _, out_names = partition_list(used_outputs, eqn.params['out_names'])
     new_params = dict(eqn.params, jaxpr=jaxpr, in_names=tuple(in_names),
                       out_names=tuple(out_names))
-    effs = core.filter_named_axis_effects(jaxpr.effects, mesh.axis_names)
     new_eqn = pe.new_jaxpr_eqn(
         [v for v, used in zip(eqn.invars, used_inputs) if used],
         [x for x, used in zip(eqn.outvars, used_outputs) if used],
-        eqn.primitive, new_params, effs, eqn.source_info)
+        eqn.primitive, new_params, jaxpr.effects, eqn.source_info)
     return used_inputs, new_eqn
 pe.dce_rules[shard_map_p] = _shard_map_dce
 
