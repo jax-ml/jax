@@ -342,12 +342,11 @@ class GridMapping:
   Encodes the calling conventions of the pallas_call primitive, the kernel,
   and the index maps.
 
-  The pallas_call is invoked with: ``*dynamic_grid_sizes, *index, *consts, *inputs``.
+  The pallas_call is invoked with: ``*dynamic_grid_sizes, *index, *inputs``.
   The ``index`` operands are for the scalar prefetch.
-  The ``consts`` are constants captured by the kernel function.
 
   The kernel function is invoked with:
-  ``*index, *consts, *inputs, *scratch``.
+  ``*index, *inputs, *scratch``.
 
   The index map functions are invoked with:
   ``*program_ids, *index``.
@@ -357,7 +356,7 @@ class GridMapping:
   grid: GridMappingGrid
   grid_names: tuple[Hashable, ...] | None
 
-  # Block mappings for: *consts, *inputs, *outputs
+  # Block mappings for: *inputs, *outputs
   block_mappings: tuple[BlockMapping, ...]
   # The inputs for tracing the index map: the tree and the flat avals
   index_map_tree: tree_util.PyTreeDef
@@ -366,17 +365,14 @@ class GridMapping:
   vmapped_dims: tuple[int, ...]
 
   num_index_operands: int
-  # Number of captured constants hoisted to operands.
-  num_constant_operands: int
   num_inputs: int
   num_outputs: int
   num_scratch_operands: int
 
   def check_invariants(self) -> None:
     if not config.enable_checks.value: return
-    assert (len(self.block_mappings) ==
-            self.num_constant_operands + self.num_inputs + self.num_outputs), (
-        self.num_constant_operands, self.num_inputs, self.num_outputs,
+    assert (len(self.block_mappings) == self.num_inputs + self.num_outputs), (
+        self.num_inputs, self.num_outputs,
         self.block_mappings
     )
     # index_map_avals = int32[] * len(self.grid) + index_operands
@@ -443,21 +439,21 @@ class GridMapping:
   @property
   def slice_index_ops(self):
     """Returns a slice object to select the index operands to a kernel.
-    This works on a sequence that contains *index, *consts, *ins, *outs, *scratch.
+    This works on a sequence that contains *index, *ins, *outs, *scratch.
     """
     return slice(0, self.num_index_operands)
 
   @property
   def slice_block_ops(self):
     """Returns a slice to select all but the index operands to a kernel.
-    This works on a sequence that contains *index, *consts, *ins, *outs, *scratch.
+    This works on a sequence that contains *index, *ins, *outs, *scratch.
     """
     return slice(self.num_index_operands, None)
 
   @property
   def slice_scratch_ops(self):
     """Returns a slice object to select the scratch operands to a kernel.
-    This works on a sequence that contains *index, *consts, *ins, *outs, *scratch.
+    This works on a sequence that contains *index, *ins, *outs, *scratch.
     """
     if self.num_scratch_operands:
       return slice(-self.num_scratch_operands, None)
@@ -466,22 +462,21 @@ class GridMapping:
 
   @property
   def in_shapes(self) -> Iterable[jax.ShapeDtypeStruct]:
-    """The shapes of *index, *consts, *inputs."""
+    """The shapes of *index, *inputs."""
     index_shapes = (jax.ShapeDtypeStruct(ia.inner_aval.shape,
                                          ia.inner_aval.dtype)
                     for ia in self.index_map_avals[len(self.grid):])
-    consts_inputs_shapes = (
+    inputs_shapes = (
         bm.array_shape_dtype
-        for bm in self.block_mappings[
-            :self.num_constant_operands + self.num_inputs])
-    return itertools.chain(index_shapes, consts_inputs_shapes)
+        for bm in self.block_mappings[:self.num_inputs])
+    return itertools.chain(index_shapes, inputs_shapes)
 
   @property
   def block_mappings_output(self) -> Iterable[BlockMapping]:
     return itertools.islice(
         self.block_mappings,
-        self.num_constant_operands + self.num_inputs,
-        self.num_constant_operands + self.num_inputs + self.num_outputs)
+        self.num_inputs,
+        self.num_inputs + self.num_outputs)
 
   @property
   def out_shapes(self) -> Iterable[jax.ShapeDtypeStruct]:
@@ -742,7 +737,6 @@ def get_grid_mapping(
       index_map_tree=index_map_tree,
       vmapped_dims=(),
       num_index_operands=num_flat_scalar_prefetch,
-      num_constant_operands=0,  # Fixed up later
       num_inputs=len(flat_in_specs),
       num_outputs=len(flat_out_specs),
       num_scratch_operands=num_flat_scratch_operands,

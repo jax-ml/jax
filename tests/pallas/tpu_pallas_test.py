@@ -130,7 +130,6 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
     # dynamic_grid_dims, index, inputs, outputs, scratch.
     if jtu.test_device_matches(["cpu"]) and jax.config.x64_enabled:
       self.skipTest("TODO: dslice(start, 1) raises error about slice inputs being int32 and int64")
-    # to_store will be hoisted as constants. Choose distinct shapes from in/outs.
     to_store = np.arange(128, dtype=np.float32).reshape((1, 128))
     if vmap:
       x_shape = (4, 16, 128)
@@ -138,7 +137,7 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
       x_shape = (16, 128)
     x = np.arange(math.prod(x_shape), dtype=np.float32).reshape(x_shape)
 
-    def f(x, grid_size):
+    def f(x, grid_size, to_store):
       s = jnp.array([1, 0], jnp.int32)  # iteration 0 -> 1, iteration 1 -> 0
       @functools.partial(
           self.pallas_call,
@@ -147,29 +146,30 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
               num_scalar_prefetch=1,  # 1 pytree
               grid=(grid_size,),
               in_specs=[pl.BlockSpec((8, 128),
-                                     lambda i, s_ref: (pl.load(s_ref[0], (i,)), 0))],
+                                     lambda i, s_ref: (pl.load(s_ref[0], (i,)), 0)),
+                        pl.BlockSpec((1, 128), lambda i, s_ref: (0, 0))],
               out_specs=pl.BlockSpec((32, 128),
                                      lambda i, s_ref: (pl.load(s_ref[0], i), 0)),
               scratch_shapes=([pltpu.SemaphoreType.REGULAR((3,))] if scratch
                               else []),
           ),
       )
-      def kernel(s_refs, src, dst, *scratch_refs):
+      def kernel(s_refs, src, to_store, dst, *scratch_refs):
         s_ref, s2, s3 = s_refs
         assert s_ref.shape == (2,)
         assert s2.shape == (3,)
         assert s3 is None
         store_idx = s_ref[pl.program_id(0)]
-        pl.store(dst, (pl.dslice(store_idx, 1), slice(None)), to_store)
+        pl.store(dst, (pl.dslice(store_idx, 1), slice(None)), to_store[...])
       # Pass a pytree of scalar
-      return kernel((s, np.arange(3, dtype=np.int32), None), x)
+      return kernel((s, np.arange(3, dtype=np.int32), None), x, to_store)
 
     if dyn_grid:
       f = jax.jit(f)
     if vmap:
-      res = jax.vmap(lambda x: f(x, 2))(x)
+      res = jax.vmap(lambda x: f(x, 2, to_store))(x)
     else:
-      res = f(x, 2)
+      res = f(x, 2, to_store)
 
     if vmap:
       for i in range(x.shape[0]):
