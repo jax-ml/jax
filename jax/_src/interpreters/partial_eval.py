@@ -1916,13 +1916,6 @@ class DynamicJaxprTrace(core.Trace):
     var = self.frame.tracer_to_var[id(tracer)] = self.frame.newvar(tracer.aval)
     return var
 
-  def instantiate_const(self, val):
-    if (isinstance(val, Tracer) and val._trace.main is self.main
-        and val._trace.sublevel == self.sublevel):
-      return val
-    else:
-      return self.new_const(val)
-
   def process_primitive(self, primitive, tracers, params):
     jaxpr_tracers = map(self.to_jaxpr_tracer, tracers)
     if primitive in custom_staging_rules:
@@ -1949,10 +1942,10 @@ class DynamicJaxprTrace(core.Trace):
 
   def process_call(self, call_primitive, f, explicit_tracers, params):
     if f.in_type is None:
-      f = lu.annotate(f, tuple((raise_to_shaped(t.aval), True)
+      f = lu.annotate(f, tuple((raise_to_shaped(get_aval(t)), True)
                                for t in explicit_tracers))
     implicit_tracers = _extract_implicit_args(self, f.in_type, explicit_tracers)
-    in_tracers = [*implicit_tracers, *explicit_tracers]
+    in_tracers = map(self.to_jaxpr_tracer, [*implicit_tracers, *explicit_tracers])
     # TODO(mattjj): check in_tracers are consistent with f.in_type annotation
     dbg = debug_info_final(f, call_primitive.name)
     jaxpr, out_type, consts = trace_to_jaxpr_dynamic2(f, debug_info=dbg)
