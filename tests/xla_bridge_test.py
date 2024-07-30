@@ -252,6 +252,9 @@ class GetBackendTest(jtu.JaxTestCase):
       self.platform = platform
       self._device_count = device_count
 
+    def shut_down(self):
+      pass
+
     def device_count(self):
       return self._device_count
 

@@ -903,6 +903,8 @@ def backends() -> dict[str, xla_client.Client]:
           raise RuntimeError(err_msg)
 
     assert _default_backend is not None
+    if _default_backend.platform == "cpu":
+      atexit.register(_default_backend.shut_down)
     if not config.jax_platforms.value:
       _suggest_missing_backends()
     return _backends
