@@ -1289,7 +1289,8 @@ def isrealobj(x: Any) -> bool:
 
 def reshape(
     a: ArrayLike, shape: DimSize | Shape | None = None, order: str = "C", *,
-    newshape: DimSize | Shape | DeprecatedArg = DeprecatedArg()) -> Array:
+    newshape: DimSize | Shape | DeprecatedArg = DeprecatedArg(),
+    copy: bool | None = None) -> Array:
   """Return a reshaped copy of an array.
 
   JAX implementation of :func:`numpy.reshape`, implemented in terms of
@@ -1303,6 +1304,8 @@ def reshape(
     order: ``'F'`` or ``'C'``, specifies whether the reshape should apply column-major
       (fortran-style, ``"F"``) or row-major (C-style, ``"C"``) order; default is ``"C"``.
       JAX does not support ``order="A"``.
+    copy: unused by JAX; JAX always returns a copy, though under JIT the compiler
+      may optimize such copies away.
 
   Returns:
     reshaped copy of input array with the specified shape.
@@ -1355,6 +1358,8 @@ def reshape(
            [3, 4],
            [5, 6]], dtype=int32)
   """
+  del copy  # unused
+
   __tracebackhide__ = True
   util.check_arraylike("reshape", a)
 
