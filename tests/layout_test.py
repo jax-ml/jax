@@ -470,6 +470,8 @@ class LayoutTest(jtu.JaxTestCase):
       jax.device_put(inp, l)
 
   def test_concrete_layout_in_shardings(self):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("This test does not work on GPU backend.")
     mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
     s = NamedSharding(mesh, P('x', 'y'))
     shape = (16, 128)
