@@ -1997,7 +1997,7 @@ class DynamicJaxprTrace(core.Trace):
       source_info = source_info_util.current()
       out_tracers = [DynamicJaxprTracer(self, a, source_info) for a in out_avals]
       invars = map(self.getvar, tracers)
-      constvars = map(self.getvar, map(self.instantiate_const, consts))
+      constvars = map(self.getvar, map(self.to_jaxpr_tracer, consts))
       outvars = map(self.makevar, out_tracers)
       new_in_axes = (None,) * len(consts) + params['in_axes']
       new_params = dict(params, in_axes=new_in_axes, out_axes=out_axes,
@@ -2028,7 +2028,7 @@ class DynamicJaxprTrace(core.Trace):
 
     out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]
     invars = map(self.getvar, tracers)
-    constvars = map(self.getvar, map(self.instantiate_const, consts))
+    constvars = map(self.getvar, map(self.to_jaxpr_tracer, consts))
     outvars = map(self.makevar, out_tracers)
     eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim,
                         dict(call_jaxpr=closed_fun_jaxpr,
@@ -2056,7 +2056,7 @@ class DynamicJaxprTrace(core.Trace):
 
     out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]
     invars = map(self.getvar, tracers)
-    constvars = map(self.getvar, map(self.instantiate_const, consts))
+    constvars = map(self.getvar, map(self.to_jaxpr_tracer, consts))
     outvars = map(self.makevar, out_tracers)
     eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim.initial_style,
                         dict(fun_jaxpr=closed_fun_jaxpr,
@@ -2097,7 +2097,7 @@ class DynamicJaxprTrace(core.Trace):
 
     out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]
     invars = map(self.getvar, tracers)
-    constvars = map(self.getvar, map(self.instantiate_const, call_consts))
+    constvars = map(self.getvar, map(self.to_jaxpr_tracer, call_consts))
     outvars = map(self.makevar, out_tracers)
     eqn = new_jaxpr_eqn([*constvars, *invars], outvars, prim,
                         dict(call_jaxpr=closed_call_jaxpr,
@@ -2422,8 +2422,8 @@ def _extract_implicit_args(
     for d1, d2 in zip(aval.shape, tracer.aval.shape):
       if isinstance(d1, DBIdx):
         if tracers[d1.val] is None:
-          tracers[d1.val] = trace.instantiate_const(d2)
-        assert tracers[d1.val] is trace.instantiate_const(d2)
+          tracers[d1.val] = trace.to_jaxpr_tracer(d2)
+        assert tracers[d1.val] is trace.to_jaxpr_tracer(d2)
   assert all(t is not None for t in tracers)
   return [t for t, (_, e) in zip(tracers, in_type) if not e]  # type: ignore
 

@@ -64,7 +64,7 @@ def program_id(axis: int) -> jax.Array:
   """
   return program_id_p.bind(axis=axis)
 
-@program_id_p.def_custom_bind
+# @program_id_p.def_custom_bind
 def program_id_bind(*, axis: int):
   grid_env = pallas_core.current_grid_env()
   if grid_env:
