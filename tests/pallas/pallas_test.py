@@ -671,7 +671,7 @@ class PallasCallInterpreterTest(PallasCallTest):
 
 
 class ApiErrorTest(PallasBaseTest):
-  def test_pallas_kernel_args_mismatch(self):
+  def test_pallas_call_kernel_args_mismatch(self):
     a = np.arange(256, dtype=np.int32)
     f = self.pallas_call(lambda x_ref: None,  # Missing o_ref
                          out_shape=a)
@@ -687,11 +687,22 @@ class ApiErrorTest(PallasBaseTest):
   def test_pallas_call_error_kernel_returns_something(self, returns):
     a = np.arange(256, dtype=np.int32)
     # The kernel should not return anything
-    f = self.pallas_call(lambda x_ref, o1_ref, o2_ref: returns,
+    def my_kernel(x_ref, o1_ref, o2_ref):
+      return returns
+    f = self.pallas_call(my_kernel,
                          out_shape=(a, a))
     with self.assertRaisesRegex(
         ValueError,
-        "The kernel function in a pallas_call should return None"):
+        "The kernel function my_kernel at .*pallas_test.py:.* in a pallas_call should return None"):
+      f(a)
+
+  def test_pallas_call_kernel_with_no_signature_returns_something(self):
+    a = np.arange(256, dtype=np.int32)
+    f = self.pallas_call(lambda *args: 0,  # Returns 0
+                         out_shape=a)
+    with self.assertRaisesRegex(
+        ValueError,
+        "The kernel function .* at .*pallas_test.py:.* in a pallas_call should return None"):
       f(a)
 
   def test_pallas_call_in_specs_not_a_sequence(self):
@@ -729,12 +740,46 @@ class ApiErrorTest(PallasBaseTest):
 
   def test_pallas_call_index_map_wrong_number_of_results(self):
     a = np.arange(256, dtype=np.int32)
-    f = self.pallas_call(lambda x_ref, o1_ref: None,
+    def my_index_map():
+      return 0, 0
+    f = self.pallas_call(lambda x_ref, o_ref: None,
                          out_shape=a,
-                         in_specs=[pl.BlockSpec((4,), lambda: (0, 0))])
+                         in_specs=[pl.BlockSpec((4,), my_index_map)])
     with self.assertRaisesRegex(
         ValueError,
-        "Index map for inputs\\[0\\] must return 1 values to match .*Currently returning 2 values."):
+        "Index map function my_index_map at .*/pallas_test.py:.* for "
+        "x_ref must return 1 values to match .*"
+        "Currently returning 2 values."):
+      f(a)
+
+  def test_pallas_call_index_map_wrong_return_type(self):
+    a = np.arange(256, dtype=np.int32)
+    def my_index_map(i):
+      return 5.
+    f = self.pallas_call(lambda x_ref, o_ref: None,
+                         out_shape=a,
+                         grid=(1,),
+                         in_specs=[pl.BlockSpec((4,), my_index_map)])
+    with self.assertRaisesRegex(
+        ValueError,
+        "Index map function my_index_map at .*/pallas_test.py:.* for "
+        "x_ref must return integer scalars. Output\\[0\\] has "
+        "type .*float"):
+      f(a)
+
+  def test_pallas_call_index_map_wrong_return_shape(self):
+    a = np.arange(256, dtype=np.int32)
+    def my_index_map(i):
+      return jnp.arange(4, dtype=np.int32)
+    f = self.pallas_call(lambda x_ref, o_ref: None,
+                         out_shape=a,
+                         grid=(1,),
+                         in_specs=[pl.BlockSpec((4,), my_index_map)])
+    with self.assertRaisesRegex(
+        ValueError,
+        "Index map function my_index_map at .*/pallas_test.py:.* for "
+        "x_ref must return integer scalars. Output\\[0\\] has "
+        "type .*int32\\[4\\]"):
       f(a)
 
   def test_pallas_call_index_map_captures_consts(self):
@@ -742,10 +787,12 @@ class ApiErrorTest(PallasBaseTest):
     index_map_result = np.array([0], dtype=np.int32)
     f = self.pallas_call(lambda x_ref, o1_ref: None,
                          out_shape=a,
-                         in_specs=[pl.BlockSpec((4,), lambda: index_map_result)])
+                         grid=(1,),
+                         in_specs=[pl.BlockSpec((4,),
+                                                lambda i: jnp.array(index_map_result)[i])])
     with self.assertRaisesRegex(
-        NotImplementedError,
-        "Index map for inputs\\[0\\] captures constants"):
+        ValueError,
+        "Index map function .* for x_ref must not capture constants:"):
       f(a)
 
   def test_pallas_call_out_specs_mismatch_shape(self):
@@ -767,7 +814,7 @@ class ApiErrorTest(PallasBaseTest):
                          in_specs=[pl.BlockSpec((1, 1), lambda: (0, 0))])
     with self.assertRaisesRegex(
         ValueError,
-        "Block shape for inputs\\[0\\] .* must have the same number of dimensions as the "
+        "Block shape for x_ref .* must have the same number of dimensions as the "
         "array shape"):
 
       f(a)

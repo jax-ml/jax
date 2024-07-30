@@ -11,7 +11,17 @@ For the overall JAX change log see [here](https://jax.readthedocs.io/en/latest/c
 Remember to align the itemized text with the first line of an item within a list.
 -->
 
-## Released with JAX 0.4.31
+## Released with jax 0.4.32
+
+* Changes
+
+* Deprecations
+
+* New functionality:
+  * Improved error messages for mistakes in the signature of the index map functions,
+    to include the name and source location of the index map.
+
+##  Released with jax 0.4.31 (July 29, 2024)
 
 * Changes
   * {class}`jax.experimental.pallas.BlockSpec` now expects `block_shape` to

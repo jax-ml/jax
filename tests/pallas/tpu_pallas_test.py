@@ -208,64 +208,6 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
     self.assertIsInstance(res, tuple)  # Even though we asked for a list!
     self.assertAllClose(res[0][0], x)
 
-  def test_block_spec_with_wrong_block_shape_errors(self):
-    def body(x_ref, o_ref):
-      o_ref[...] = x_ref[...]
-
-    x = jnp.ones((16, 128))
-    with self.assertRaisesRegex(
-        ValueError,
-        'Block shape .* must have the same number of dimensions as the array shape .*'):
-      _ = self.pallas_call(
-          body,
-          grid_spec=pltpu.PrefetchScalarGridSpec(
-              num_scalar_prefetch=0,
-              in_specs=[pl.BlockSpec((128,), lambda i: (i, 0))],  # WRONG
-              out_specs=pl.BlockSpec((8, 128,), lambda i: (i, 0)),
-              grid=(2,),
-          ),
-          out_shape=x,
-      )(x)
-
-  def test_block_spec_with_index_map_that_accepts_wrong_number_of_args_errors(self):
-    def body(x_ref, o_ref):
-      o_ref[...] = x_ref[...]
-
-    x = jnp.ones((16, 128))
-    with self.assertRaisesRegex(
-        TypeError,
-        'missing 1 required positional argument: \'j\''):
-      _ = self.pallas_call(
-          body,
-          grid_spec=pltpu.PrefetchScalarGridSpec(
-              num_scalar_prefetch=0,
-              in_specs=[pl.BlockSpec((8, 128,), lambda i, j: (i, 0))],  # WRONG
-              out_specs=pl.BlockSpec((8, 128,), lambda i: (i, 0),),
-              grid=(2,),
-          ),
-          out_shape=x,
-      )(x)
-
-  def test_block_spec_with_index_map_returns_wrong_number_of_values_errors(self):
-    def body(x_ref, o_ref):
-      o_ref[...] = x_ref[...]
-
-    x = jnp.ones((16, 128))
-    with self.assertRaisesRegex(
-        ValueError,
-        r'Index map for inputs\[0\] must return 2 values to match block shape \(8, 128\).'
-        ' Currently returning 1 values.'):
-      _ = self.pallas_call(
-          body,
-          grid_spec=pltpu.PrefetchScalarGridSpec(
-              num_scalar_prefetch=0,
-              in_specs=[pl.BlockSpec((8, 128,), lambda i: (i,))],  # WRONG
-              out_specs=pl.BlockSpec((8, 128), lambda i: (i, 0)),
-              grid=(2,),
-          ),
-          out_shape=x,
-      )(x)
-
   def test_vmap_scalar_prefetch(self):
     def body(_, x_ref, o_ref):
       o_ref[...] = x_ref[...]
