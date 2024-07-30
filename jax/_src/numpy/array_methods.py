@@ -39,6 +39,7 @@ from jax._src.api_util import _ensure_index_tuple
 from jax._src.array import ArrayImpl
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import xla_client as xc
+from jax._src.numpy import array_api_metadata
 from jax._src.numpy import lax_numpy
 from jax._src.numpy import reductions
 from jax._src.numpy import ufuncs
@@ -718,6 +719,7 @@ _impl_only_array_methods = {
 }
 
 _array_properties = {
+  "__array_namespace__": array_api_metadata._array_namespace_property,
   "flat": _notimplemented_flat,
   "T": lax_numpy.transpose,
   "mT": lax_numpy.matrix_transpose,
