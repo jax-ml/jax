@@ -1407,3 +1407,222 @@ def custom_vjp_by_custom_transpose(fun, fwd, bwd):
 
 # TODO(mattjj): remove these stubs, which exist to avoid breaking internal users
 custom_jvp_call_jaxpr_p = core.Primitive("custom_jvp_call_jaxpr")
+
+
+@custom_api_util.register_custom_decorator_type
+class custom_ad(Generic[ReturnValue]):
+  fun: Callable[..., ReturnValue]
+  nondiff_argnums: tuple[int, ...]
+  fwd: Callable[..., tuple[ReturnValue, ReturnValue, Any]] | None = None
+  bwd: Callable[..., tuple[Any, ...]] | None = None
+  symbolic_zeros: bool = False
+
+  def __init__(
+      self,
+      fun: Callable[..., ReturnValue],
+      nondiff_argnums: tuple[int, ...] = (),
+  ):
+    update_wrapper(self, fun)
+    self.fun = fun
+    self.nondiff_argnums = nondiff_argnums
+
+  __getattr__ = custom_api_util.forward_attr
+
+  def defad(
+      self,
+      fwd: Callable[..., tuple[ReturnValue, ReturnValue, Any]],
+      bwd: Callable[..., tuple[Any, ...]],
+      symbolic_zeros: bool = False,
+  ):
+    self.symbolic_zeros = symbolic_zeros
+    self.fwd = fwd
+    self.bwd = bwd
+
+  @traceback_util.api_boundary
+  def __call__(self, *args: Any, **kwargs: Any) -> ReturnValue:  # pytype: disable=invalid-annotation
+    primal_name = getattr(self.fun, "__name__", str(self.fun))
+    if not self.fwd or not self.bwd:
+      msg = f"No AD rules defined for custom_ad function {primal_name} using defad."
+      raise AttributeError(msg)
+    fwd_name = getattr(self.fwd, "__name__", str(self.fwd))
+    args = _resolve_kwargs(self.fun, args, kwargs)
+    if self.nondiff_argnums:
+      raise NotImplementedError("todo")
+    else:
+      dyn_args = args
+      f_ = lu.wrap_init(self.fun)
+      fwd = lu.wrap_init(self.fwd)
+      bwd = lu.wrap_init(self.bwd)
+    args_flat, in_tree = tree_flatten(dyn_args)
+    in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]
+    flat_fun, fun_out_type = _flatten_fun_nokwargs(f_, in_tree)
+    flat_fwd, fwd_out_type = _flatten_ad_fwd(fwd, primal_name, fwd_name, in_tree,
+                                             fun_out_type)
+    flat_bwd = _flatten_bwd(bwd, in_tree, in_avals, fwd_out_type).call_wrapped
+    out_flat = custom_ad_p.bind(flat_fun, flat_fwd, flat_bwd, *args_flat,
+                                out_trees=fwd_out_type,
+                                symbolic_zeros=self.symbolic_zeros)
+    _, (out_tree, _) = lu.merge_linear_aux(fun_out_type, fwd_out_type)
+    return tree_unflatten(out_tree, out_flat)
+
+
+@partial(lu.transformation_with_aux, use_eq_store=True)
+def _flatten_ad_fwd(primal_name, fwd_name, in_tree, maybe_out_type, *args):
+  primals_in, tangents_in = split_list(args, [len(args) // 2])
+  py_primals = tree_unflatten(in_tree, primals_in)
+  py_tangents = tree_unflatten(in_tree, tangents_in)
+  py_out = yield (py_primals, py_tangents), {}
+  if not isinstance(py_out, (list, tuple)) or len(py_out) != 3:
+    msg = (f"Custom AD forward rule {fwd_name} for function {primal_name} "
+           "must produce a list or tuple with 3 elements representing "
+           f"primal, tangent, and residuals, but got {py_out}.")
+    raise TypeError(msg)
+  py_primals_out, py_tangents_out, py_res = py_out
+  primals_out, out_tree = tree_flatten(py_primals_out)
+  tangents_out, out_tree2 = tree_flatten(py_tangents_out)
+  res, res_tree = tree_flatten(py_res)
+  primal_avals = [core.raise_to_shaped(core.get_aval(x)) for x in primals_out]
+  if out_tree != out_tree2:
+    msg = (f"Custom AD rule {fwd_name} for function {primal_name} must "
+           "produce primal and tangent outputs with equal container (pytree) "
+           f"structures, but got {out_tree} and {out_tree2} respectively.")
+    raise TypeError(msg)
+  # If the primal function already ran, check out_tree agreement.
+  try: out_type_ = maybe_out_type()
+  except lu.StoreException: out_type_ = None
+  if out_type_ is not None:
+    out_tree_, primal_avals_ = out_type_
+    ty_tree  = tree_unflatten(out_tree , [a.str_short() for a in primal_avals])
+    ty_tree_ = tree_unflatten(out_tree_, [a.str_short() for a in primal_avals_])
+    if out_tree_ != out_tree:
+      m = (f"Custom AD rule {fwd_name} for function {primal_name} must "
+           "produce a list or tuple with 3 elements "
+           "where the first element represents the primal output "
+           "(equal in value to the output of the custom_ad-decorated function "
+           f"{primal_name}, "
+           "and in particular of the same container/pytree structure), but "
+           "instead the AD rule output's first element had container/pytree "
+           "structure:\n"
+           f"""    {str(ty_tree ).replace("'", "")}\n"""
+           f"while the custom_ad-decorated function {primal_name} had output "
+           "container/pytree structure:\n"
+           f"""    {str(ty_tree_).replace("'", "")}.""")
+      raise TypeError(m)
+    if not all(map(core.typematch, primal_avals, primal_avals_)):
+      m = (f"Custom AD rule {fwd_name} for function {primal_name} must "
+           "produce a list or tuple with three elements "
+           "where the first element represents the primal output "
+           "(equal in value to the output of the custom_ad-decorated function "
+           f"{primal_name}, "
+           "and in particular with leaves of the same shape/dtype), but "
+           "instead the AD rule output's first element had shapes/dtypes of:\n"
+           f"""    {str(ty_tree ).replace("'", "")}\n"""
+           f"while the custom_ad-decorated function {primal_name} had output "
+           "shapes/dtypes of:\n"
+           f"""    {str(ty_tree_).replace("'", "")}""")
+      raise TypeError(m)
+  primal_avals_out = [
+      raise_to_shaped(core.get_aval(x), weak_type=False).strip_named_shape()
+      for x in primals_out]
+  tangent_avals_out = [
+      raise_to_shaped(core.get_aval(t), weak_type=False).strip_named_shape()
+      if type(t) is not SymbolicZero else t.aval.strip_weak_type()
+      for t in tangents_out]
+  if primal_avals_out != tangent_avals_out:
+    if len(primal_avals_out) == 1:
+      (av1,), (av2,) = primal_avals_out, tangent_avals_out
+      msg = ("Custom AD rule must produce primal and tangent outputs with "
+             "equal shapes and dtypes, but got {} and {} respectively.")
+      raise TypeError(msg.format(av1.str_short(), av2.str_short()))
+    else:
+      msg = ("Custom AD rule must produce primal and tangent outputs with "
+             "equal shapes and dtypes, but got:\n{}")
+      disagreements = (
+          f"  primal {av1.str_short()} for tangent {av2.str_short()}"
+          for av1, av2 in zip(primal_avals_out, tangent_avals_out) if av1 != av2)
+      raise TypeError(msg.format('\n'.join(disagreements)))
+  yield (*res, *primals_out, *tangents_out), (out_tree, res_tree)
+
+class CustomADPrimitive(core.Primitive):
+  multiple_results = True
+
+  def bind(self, fun, fwd, bwd, *args, out_trees, symbolic_zeros):
+    args = map(core.full_lower, args)
+    top_trace = core.find_top_trace(args)
+    fun, env_trace_todo1 = process_env_traces(
+        fun, self, top_trace and top_trace.level, False)
+    fwd, env_trace_todo2 = process_env_traces_fwd(
+        fwd, top_trace and top_trace.level, out_trees)
+    tracers = map(top_trace.full_raise, args)
+    bwd_ = lambda *args: bwd(*args)
+    outs = top_trace.process_custom_ad_call(self, fun, fwd, bwd_, tracers,
+                                            out_trees=out_trees,
+                                            symbolic_zeros=symbolic_zeros)
+    fst, env_trace_todo = lu.merge_linear_aux(env_trace_todo1, env_trace_todo2)
+    if fst:
+      return core.apply_todos(env_trace_todo, map(core.full_lower, outs))
+    else:
+      env_trace_todo, bwd_transform = env_trace_todo
+      bwd = _apply_bwd_transform(bwd_transform, bwd)
+      return core.apply_todos(env_trace_todo, map(core.full_lower, outs))
+
+  def impl(self, fun, jvp, fwd, bwd, *args, **kwargs):
+    del jvp, fwd, bwd, kwargs
+    with core.new_sublevel():
+      return fun.call_wrapped(*args)
+
+  def post_process(self, trace, out_tracers, params):
+    return trace.post_process_custom_ad_call(out_tracers, params)
+
+  def get_bind_params(self, params):
+    assert 0
+    # new_params = dict(params)
+    # call_jaxpr = new_params.pop('call_jaxpr')
+    # num_consts = new_params.pop('num_consts')
+    # jvp_jaxpr_thunk = new_params.pop('jvp_jaxpr_thunk')
+    # fwd_jaxpr_thunk = new_params.pop('fwd_jaxpr_thunk')
+    # bwd_jaxpr_thunk = new_params.pop('bwd_jaxpr_thunk')
+    # fun = lu.wrap_init(core.jaxpr_as_fun(call_jaxpr))
+    # jvp = lift_jvp(num_consts, jvp_jaxpr_thunk)
+    # fwd = ...
+    # bwd = ...
+    # return [fun, jvp], new_params
+custom_ad_p = CustomADPrimitive("custom_ad")
+
+@partial(lu.transformation_with_aux, use_eq_store=True)
+def process_env_traces_ad_fwd(level: int, out_trees, *args):
+  outs = yield args, {}
+  todo = []
+  bwd_transforms = []
+  while True:
+    tracers = [x for x in outs if isinstance(x, core.Tracer)
+               and (level is None or x._trace.level > level)]
+    if tracers:
+      ans = max(tracers, key=lambda x: x._trace.level)
+    else:
+      break
+    trace = ans._trace.main.with_cur_sublevel()
+    outs = map(trace.full_raise, outs)
+    # TODO(dfm): The custom_vjp logic should work here... I think?
+    outs, cur_todo, bwd_xform = trace.post_process_custom_vjp_call_fwd(outs, out_trees)
+    todo.append(cur_todo)
+    bwd_transforms.append(bwd_xform)
+  yield outs, (tuple(todo), tuple(bwd_transforms))
+
+# def _custom_ad_jaxpr_impl(*args, fun_jaxpr, **_):
+#   return core.jaxpr_as_fun(fun_jaxpr)(*args)
+
+# def _custom_ad_jaxpr_abstract_eval(*_, fun_jaxpr, **__):
+#   disallowed_effects = effects.custom_derivatives_allowed_effects.filter_not_in(fun_jaxpr.effects)
+#   if disallowed_effects:
+#     raise NotImplementedError(
+#         f'Effects not supported in `custom_ad`: {disallowed_effects}')
+#   return fun_jaxpr.out_avals, fun_jaxpr.effects
+
+# custom_ad_jaxpr_p = core.AxisPrimitive("custom_ad")
+# custom_ad_jaxpr_p.multiple_results = True
+# custom_ad_jaxpr_p.def_impl(_custom_ad_jaxpr_impl)
+# custom_ad_jaxpr_p.def_effectful_abstract_eval(_custom_ad_jaxpr_abstract_eval)
+# CustomADPrimitive.initial_style = custom_ad_jaxpr_p
+# mlir.register_lowering(custom_ad_jaxpr_p, mlir.lower_fun(
+#     _custom_ad_jaxpr_impl, multiple_results=True))
