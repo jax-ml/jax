@@ -16,6 +16,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The MHLO MLIR dialect (`jax.extend.mlir.mhlo`) has been removed. Use the
     `stablehlo` dialect instead.
 
+* Deprecations
+  * Complex inputs to {func}`jax.numpy.clip` and {func}`jax.numpy.hypot` are
+    no longer allowed, after being deprecated since JAX v0.4.27.
+
 ## jaxlib 0.4.32
 
 ## jax 0.4.31 (July 29, 2024)

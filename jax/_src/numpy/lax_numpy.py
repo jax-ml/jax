@@ -2316,7 +2316,6 @@ def array_split(ary: ArrayLike, indices_or_sections: int | Sequence[int] | Array
                 axis: int = 0) -> list[Array]:
   return _split("array_split", ary, indices_or_sections, axis=axis)
 
-deprecations.register("jax-numpy-clip-complex")
 
 @jit
 def clip(
@@ -2377,15 +2376,11 @@ def clip(
 
   util.check_arraylike("clip", arr)
   if any(jax.numpy.iscomplexobj(t) for t in (arr, min, max)):
-    # TODO(micky774): Deprecated 2024-4-2, remove after deprecation expires.
-    deprecations.warn(
-      "jax-numpy-clip-complex",
+    raise ValueError(
       "Clip received a complex value either through the input or the min/max "
       "keywords. Complex values have no ordering and cannot be clipped. "
-      "Attempting to clip using complex numbers is deprecated and will soon "
-      "raise a ValueError. Please convert to a real value or array by taking "
-      "the real or imaginary components via jax.numpy.real/imag respectively.",
-      stacklevel=2)
+      "Please convert to a real value or array by taking the real or "
+      "imaginary components via jax.numpy.real/imag respectively.")
   if min is not None:
     arr = ufuncs.maximum(min, arr)
   if max is not None:
