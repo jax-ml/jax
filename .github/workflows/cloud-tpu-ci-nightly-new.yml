@@ -10,7 +10,7 @@
 # always locally installs jax from github head (already checked out by the
 # Github Actions environment).
 
-name: CI - Cloud TPU (nightly)
+name: CI - Cloud TPU Nightly (new)
 on:
   schedule:
     - cron: "0 14 * * *" # daily at 7am PST
