@@ -674,12 +674,13 @@ def trace_to_subjaxpr_nounits(
   del out_tracers
   yield jaxpr, (out_pvals, out_consts, env)
 
-def _trace_to_subjaxpr_nounits(trace, instantiate, in_pvals):
+def _trace_to_subjaxpr_nounits(trace:JaxprTrace, instantiate, in_pvals):
   in_knowns  = [pval.is_known()     for pval in in_pvals]
   in_consts  = [pval.get_known()    for pval in in_pvals if     pval.is_known()]
   in_tracers = [trace.new_arg(pval) for pval in in_pvals if not pval.is_known()]
   in_args = merge_lists(in_knowns, in_tracers, in_consts)
-  ans = yield in_args, {}
+  with core.set_current_trace(trace):
+    ans = yield in_args, {}
   assert isinstance(ans, (list, tuple)), (
       f"Got unexpected return type when tracing function to jaxpr: {ans}")
   assert all(isinstance(x, core.Tracer) or core.valid_jaxtype(x) for x in ans), (
@@ -726,13 +727,16 @@ def trace_to_subjaxpr_nounits_fwd(
 #     than passed as redundant outputs.
 @lu.transformation
 def trace_to_subjaxpr_nounits_fwd2(
-    main: core.MainTrace,
+    tag: JaxprTraceTag,
     instantiate: bool | Sequence[bool],
     in_pvals: Sequence[PartialVal]):
   assert all(isinstance(pv, PartialVal) for pv in in_pvals), in_pvals
-  out_tracers, jaxpr, consts, env = yield from _trace_to_subjaxpr_nounits(
-      main, instantiate, in_pvals)
-  out_pvals = [t.pval for t in out_tracers]
+  current_name_stack = source_info_util.current_name_stack()
+  with core.take_current_trace() as parent_trace:
+    trace = JaxprTrace(parent_trace, current_name_stack, tag)
+    out_tracers, jaxpr, consts, env = yield from _trace_to_subjaxpr_nounits(
+        trace, instantiate, in_pvals)
+    out_pvals = [t.pval for t in out_tracers]
 
   # Which consts (aka residuals) are just forwarded inputs? Check obj id.
   in_consts  = [pval.get_known()    for pval in  in_pvals if    pval.is_known()]
