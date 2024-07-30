@@ -62,7 +62,6 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 import jax._src.util as jax_util
 from jax.ad_checkpoint import checkpoint_name, checkpoint as new_checkpoint
 import jax.custom_batching
@@ -2641,7 +2640,6 @@ class APITest(jtu.JaxTestCase):
 
     self.assertEqual(count[0], 1)
 
-  @unittest.skipIf(xla_extension_version <= 273, "requires jaxlib 0.4.31")
   def test_jit_infer_params_cache(self):
     def f(x):
       return x
@@ -4427,7 +4425,6 @@ class APITest(jtu.JaxTestCase):
     g = jax.grad(f, argnums=-1)
     g(x, y)  # doesn't crash
 
-  @unittest.skipIf(xla_extension_version < 272, "requires jaxlib 0.4.31")
   def test_jit_negative_static_argnums(self):
     @partial(jax.jit, static_argnums=-1)
     def g(x, y):

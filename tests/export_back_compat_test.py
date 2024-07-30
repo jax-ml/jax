@@ -19,7 +19,6 @@ update these tests.
 import dataclasses
 from functools import partial
 import itertools
-import logging
 import math
 
 from absl.testing import absltest, parameterized
@@ -64,7 +63,6 @@ from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lib import cuda_versions
 from jax._src.lib import version as jaxlib_version
-from jax._src.lib import xla_extension_version
 
 config.parse_flags_with_absl()
 
@@ -591,8 +589,6 @@ class CompatTest(bctu.CompatTestBase):
     self.run_one_test(func, data)
 
   def test_cuda_threefry2x32(self):
-    logging.info("test_cuda_threefry2x32: xla_extension_version: %s",
-                 xla_extension_version)
     def func(x):
       return jax.random.uniform(x, (2, 4), dtype=np.float32)
 

@@ -16,7 +16,6 @@
 
 from functools import partial
 import itertools
-import unittest
 
 import numpy as np
 import scipy
@@ -34,7 +33,6 @@ from jax._src import config
 from jax._src.lax import linalg as lax_linalg
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
-from jax._src.lib import xla_extension_version
 from jax._src.numpy.util import promote_dtypes_inexact
 
 config.parse_flags_with_absl()
@@ -1625,7 +1623,6 @@ class ScipyLinalgTest(jtu.JaxTestCase):
         (a, b),
         (a, b))
 
-  @unittest.skipIf(xla_extension_version < 277, "Requires jaxlib > 0.4.30")
   def testTriangularSolveSingularBatched(self):
     x = jnp.array([[1, 1], [0, 0]], dtype=np.float32)
     y = jnp.array([[1], [1.]], dtype=np.float32)

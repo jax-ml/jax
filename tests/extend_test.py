@@ -15,7 +15,6 @@
 import os
 
 import numpy as np
-import unittest
 from absl.testing import absltest, parameterized
 
 import jax
@@ -30,7 +29,6 @@ from jax._src import linear_util
 from jax._src import prng
 from jax._src import test_util as jtu
 from jax._src.interpreters import mlir
-from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.extend import ffi
 
@@ -124,7 +122,6 @@ class FfiTest(jtu.JaxTestCase):
     dtype=(np.int32,),
   )
   @jtu.run_on_devices("gpu")
-  @unittest.skipIf(xla_extension_version < 272, "requires jaxlib 0.4.31")
   def testFfiCall(self, shape, dtype):
     pivots_size = shape[-1]
     permutation_size = 2 * pivots_size
@@ -140,7 +137,6 @@ class FfiTest(jtu.JaxTestCase):
       vectorized=(False, True),
   )
   @jtu.run_on_devices("gpu")
-  @unittest.skipIf(xla_extension_version < 272, "requires jaxlib 0.4.31")
   def testFfiCallBatching(self, shape, dtype, vectorized):
     shape = (10,) + shape
     pivots_size = shape[-1]
