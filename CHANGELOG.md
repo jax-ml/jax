@@ -10,6 +10,10 @@ Remember to align the itemized text with the first line of an item within a list
 
 ## jax 0.4.32
 
+* Breaking changes
+  * The MHLO MLIR dialect (`jax.extend.mlir.mhlo`) has been removed. Use the
+    `stablehlo` dialect instead.
+
 ## jaxlib 0.4.32
 
 ## jax 0.4.31 (July 29, 2024)
