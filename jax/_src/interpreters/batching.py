@@ -536,7 +536,8 @@ def _batch_inner(axis_data, out_dim_dests, tag, in_dims, *in_vals):
                                       source_info_util.current()))
     in_tracers = map(partial(to_elt, trace, idx), in_vals, in_dims)
     with core.set_current_trace(trace):
-      outs = yield in_tracers, {}
+      with core.extend_axis_env([(axis_data.name, axis_data.size)]):
+        outs = yield in_tracers, {}
 
   out_dim_dests = out_dim_dests() if callable(out_dim_dests) else out_dim_dests
   out_vals = map(partial(from_elt, trace, axis_data.size), range(len(outs)),
