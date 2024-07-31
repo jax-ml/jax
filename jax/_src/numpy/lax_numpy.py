@@ -8286,13 +8286,14 @@ def _is_scalar(x):
   return  np.isscalar(x) or (isinstance(x, (np.ndarray, Array))
                              and np.ndim(x) == 0)
 
-def _canonicalize_tuple_index(arr_ndim, idx, array_name='array'):
+def _canonicalize_tuple_index(arr_ndim, idx):
   """Helper to remove Ellipsis and add in the implicit trailing slice(None)."""
   num_dimensions_consumed = sum(not (e is None or e is Ellipsis or isinstance(e, bool)) for e in idx)
   if num_dimensions_consumed > arr_ndim:
+    index_or_indices = "index" if num_dimensions_consumed == 1 else "indices"
     raise IndexError(
-        f"Too many indices for {array_name}: {num_dimensions_consumed} "
-        f"non-None/Ellipsis indices for dim {arr_ndim}.")
+        f"Too many indices: {arr_ndim}-dimensional array indexed "
+        f"with {num_dimensions_consumed} regular {index_or_indices}.")
   ellipses = (i for i, elt in enumerate(idx) if elt is Ellipsis)
   ellipsis_index = next(ellipses, None)
   if ellipsis_index is not None:
