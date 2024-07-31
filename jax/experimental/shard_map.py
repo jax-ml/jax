@@ -674,6 +674,8 @@ def _make_scoped_manual_sharding(ctx, mesh, axes):
 
 def _xla_shard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
                aval_in, aval_out, x):
+  if prod([size for n, size in mesh.shape.items() if n not in auto]) == 1:
+    return x
   manual_proto = pxla.manual_proto(aval_in, frozenset(mesh.axis_names) - auto, mesh)
   axes = {name: i for i, ns in names.items() for name in ns}
   ns = _make_scoped_manual_sharding(ctx, mesh, axes)
@@ -684,10 +686,12 @@ def _xla_shard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
   unspecified = set(range(aval_in.ndim)) if auto else set()
   sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, shard_proto,
                                   unspecified_dims=unspecified)
-  return [mlir.wrap_with_full_to_shard_op(ctx, sx, aval_out, manual_proto, unspecified)]
+  return mlir.wrap_with_full_to_shard_op(ctx, sx, aval_out, manual_proto, unspecified)
 
 def _xla_unshard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
                  aval_in, aval_out, x):
+  if prod([size for n, size in mesh.shape.items() if n not in auto]) == 1:
+    return x
   axes = {name: i for i, ns in names.items() for name in ns}
   ns = _make_scoped_manual_sharding(ctx, mesh, axes)
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
