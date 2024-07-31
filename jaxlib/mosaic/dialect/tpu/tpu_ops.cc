@@ -407,7 +407,7 @@ class CanonicalizeAddOfMatmul : public OpRewritePattern<AddOp> {
       return failure();
     };
     return success(succeeded(try_canonicalize(op.getLhs(), op.getRhs())) ||
-                   succeeded(try_canonicalize(op.getRhs(), op.getLhs())));
+                   succeeded(try_canonicalize(op.getLhs(), op.getRhs())));
   }
 };
 
