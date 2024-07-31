@@ -2226,7 +2226,7 @@ def bincount(x: ArrayLike, weights: ArrayLike | None = None,
     weights = np.array(1, dtype=int_)
   elif shape(x) != shape(weights):
     raise ValueError("shape of weights must match shape of x.")
-  return zeros(length, _dtype(weights)).at[clip(x, 0)].add(weights)
+  return zeros(length, _dtype(weights)).at[clip(x, 0)].add(weights, mode='drop')
 
 @overload
 def broadcast_shapes(*shapes: Sequence[int]) -> tuple[int, ...]: ...
