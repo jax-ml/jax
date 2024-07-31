@@ -9653,6 +9653,83 @@ class CustomVJPTest(jtu.JaxTestCase):
 
     jax.grad(f)(1., 2.)  # don't crash
 
+  def test_optimize_remat(self):
+    def fun(x):
+      # This array is included to make sure that we handle consts appropriately
+      return np.array([1.0])*x
+
+    def fwd(x):
+      return np.array([2.0])*x*x/np.array([1.0]), (x,)
+
+    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(fun, fwd)
+    x = jnp.linspace(0, 5.0, 10)
+    self.assertAllClose(jax.jit(fwd)(x)[0], 2*x*x)  # Shouldn't hit custom DCE
+    self.assertAllClose(jax.jit(lambda x: fwd(x)[0])(x), x)  # Should be DCEed
+
+  def test_optimize_remat_vmap(self):
+    def fun(x):
+      return (np.array([1.0])*x)[0]
+    def fwd(x):
+      return (np.array([2.0])*x*x/np.array([1.0]))[0], (x,)
+    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(fun, fwd)
+    x = jnp.linspace(0, 5.0, 10)
+    self.assertAllClose(jax.jit(jax.vmap(fwd))(x)[0], 2*x*x)
+    self.assertAllClose(jax.jit(lambda x: jax.vmap(fwd)(x)[0])(x), x)
+
+  def test_optimize_remat_cond(self):
+    def fun(x):
+      return x
+    def fwd(x):
+      return x*x, (x,)
+    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(fun, fwd)
+
+    def g(x):
+      return jax.lax.cond(True, fwd, lambda x: (2.0 * x, (x,)), x)
+    x = jnp.linspace(0, 5.0, 10)
+    self.assertAllClose(jax.jit(g)(x)[0], x*x)
+    self.assertAllClose(jax.jit(lambda x: g(x)[0])(x), x)
+
+  def test_optimize_remat_jvp(self):
+    def fun(x):
+      return x**2
+    def fwd_(x):
+      return x*x, (x,)
+    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(fun, fwd_)
+    calc = jax.jvp(fwd, (3.2,), (1.0,))
+    expected = jax.jvp(fwd_, (3.2,), (1.0,))
+    self.assertAllClose(calc, expected)
+
+    @jax.jit
+    def g(x, t):
+      (y, r), (y_dot, r_dot) = jax.jvp(fwd, (x,), (t,))
+      return y, y_dot
+    calc = g(3.2, 1.0)
+    expected = jax.jvp(fun, (3.2,), (1.0,))
+    self.assertAllClose(calc, expected)
+
+  def test_optimize_remat_gh21303(self):
+    @jax.custom_vjp
+    def f(x):
+      return jnp.tan(x)
+
+    def f_fwd(x):
+      return jnp.sin(x), (x,)
+
+    def f_bwd(res, g):
+      x, = res
+      cos_x = jnp.cos(x)
+      return (cos_x * g,)
+
+    f.defvjp(f_fwd, f_bwd, optimize_remat=True)
+
+    def temp(x):
+      out = jax.remat(f)(x)
+      out = out ** 2
+      return out
+
+    v, g = jax.value_and_grad(temp)(3.2)
+    self.assertAllClose(v, jnp.tan(3.2)**2)
+
 
 def transpose_unary(f, x_example):
   def transposed(y):
