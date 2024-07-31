@@ -30,6 +30,7 @@ from jax.sharding import NamedSharding, PartitionSpec, Mesh
 from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import callback
+from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import debugging
@@ -1314,7 +1315,7 @@ def _shard_map_batch(
   spmd_axis_name = trace.spmd_axis_name
   if spmd_axis_name is not None:
     used = {n for names in in_names for ns in names.values() for n in ns}
-    if set(spmd_axis_name) & used:
+    if not config.disable_vmap_shmap_error.value and set(spmd_axis_name) & used:
       raise ValueError("vmap spmd_axis_name cannot appear in shard_map in_specs")
     new_in_names = [{**ns, d:spmd_axis_name} if d is not batching.not_mapped  # type: ignore
                     else ns for ns, d in zip(new_in_names, in_dims)]
@@ -1349,7 +1350,7 @@ def _batch_out_names(spmd_axis_name, dims, out_names):
                   for ax in names} for names, d in zip(out_names, dims)]
   if spmd_axis_name is not None:
     used = {n for names in out_names for ns in names.values() for n in ns}
-    if set(spmd_axis_name) & used:
+    if not config.disable_vmap_shmap_error.value and set(spmd_axis_name) & used:
       raise ValueError("vmap spmd_axis_name cannot appear in shard_map out_specs")
     out_names_ = [{**ns, d:spmd_axis_name} if d is not batching.not_mapped
                   else ns for ns, d in zip(out_names_, dims)]
