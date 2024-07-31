@@ -2323,6 +2323,34 @@ class MiscellaneousInterpreterTest(PallasBaseTest):
 
     np.testing.assert_array_equal(out, np.zeros((8, 128), dtype=jnp.float32))
 
+  def test_sum(self):
+    """b/356467588"""
+    x = np.zeros((8, 2, 8, 128), dtype=jnp.float32)
+
+    def kernel(x_ref, out_ref):
+      out_ref[:, :, :] = jnp.sum(x_ref[:, :, :, :], 2)
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct((8, 2, 128), jnp.float32)
+    )(x)
+
+    np.testing.assert_array_equal(out, np.zeros((8, 2, 128), dtype=jnp.float32))
+
+  def test_transpose(self):
+    """b/356475128"""
+    x = np.zeros((8, 2, 8, 128), dtype=jnp.float32)
+
+    def kernel(x_ref, out_ref):
+      out_ref[:, :, :, :] = jnp.transpose(x_ref[:, :, :, :], (0, 2, 1, 3))
+
+    out = self.pallas_call(
+        kernel, out_shape=jax.ShapeDtypeStruct((8, 8, 2, 128), jnp.float32)
+    )(x)
+
+    np.testing.assert_array_equal(
+        out, np.zeros((8, 8, 2, 128), dtype=jnp.float32)
+    )
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
