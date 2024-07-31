@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import os
+import csv
 import json
 import argparse
 import threading
@@ -29,6 +30,34 @@ def extract_filename(path):
   file_name, _ = os.path.splitext(base_name)
   return file_name
 
+
+def combine_json_reports():
+  all_json_files = [f for f in os.listdir(base_dir) if f.endswith('_log.json')]
+  combined_data = []
+  for json_file in all_json_files:
+    with open(os.path.join(base_dir, json_file), 'r') as infile:
+      data = json.load(infile)
+      combined_data.append(data)
+  combined_json_file = f"{base_dir}/final_compiled_report.json"
+  with open(combined_json_file, 'w') as outfile:
+    json.dump(combined_data, outfile, indent=4)
+
+
+def combine_csv_reports():
+  all_csv_files = [f for f in os.listdir(base_dir) if f.endswith('_log.csv')]
+  combined_csv_file = f"{base_dir}/final_compiled_report.csv"
+  with open(combined_csv_file, mode='w', newline='') as outfile:
+    csv_writer = csv.writer(outfile)
+    for i, csv_file in enumerate(all_csv_files):
+      with open(os.path.join(base_dir, csv_file), mode='r') as infile:
+        csv_reader = csv.reader(infile)
+        if i == 0:
+          # write headers only once
+          csv_writer.writerow(next(csv_reader))
+        for row in csv_reader:
+          csv_writer.writerow(row)
+
+
 def generate_final_report(shell=False, env_vars={}):
   env = os.environ
   env = {**env, **env_vars}
@@ -41,7 +70,10 @@ def generate_final_report(shell=False, env_vars={}):
     print("FAILED - {}".format(" ".join(cmd)))
     print(result.stderr.decode())
 
-  return result.returncode, result.stderr.decode(), result.stdout.decode()
+  # Generate json reports.
+  combine_json_reports()
+  # Generate csv reports.
+  combine_csv_reports()
 
 
 def run_shell_command(cmd, shell=False, env_vars={}):
@@ -66,7 +98,7 @@ def parse_test_log(log_file):
       report = json.loads(line)
       if "nodeid" in report:
         module = report["nodeid"].split("::")[0]
-        if module:
+        if module and ".py" in module:
           test_files.add(os.path.abspath(module))
   return test_files
 
@@ -100,9 +132,20 @@ def run_test(testmodule, gpu_tokens, continue_on_fail):
   }
   testfile = extract_filename(testmodule)
   if continue_on_fail:
-      cmd = ["python3", "-m", "pytest", '--html={}/{}_log.html'.format(base_dir, testfile), "--reruns", "3", "-v", testmodule]
+    cmd = ["python3", "-m", "pytest",
+          "--json-report", f"--json-report-file={base_dir}/{testfile}_log.json",
+          f"--csv={base_dir}/{testfile}_log.csv",
+          "--csv-columns", "id,module,name,file,status,duration",
+          f"--html={base_dir}/{testfile}_log.html",
+          "--reruns", "3", "-v", testmodule]
   else:
-      cmd = ["python3", "-m", "pytest", '--html={}/{}_log.html'.format(base_dir, testfile), "--reruns", "3", "-x", "-v", testmodule]
+    cmd = ["python3", "-m", "pytest",
+          "--json-report", f"--json-report-file={base_dir}/{testfile}_log.json",
+          f"--csv={base_dir}/{testfile}_log.csv",
+          "--csv-columns", "id,module,name,file,status,duration",
+          f"--html={base_dir}/{testfile}_log.html",
+          "--reruns", "3", "-x", "-v", testmodule]
+
   return_code, stderr, stdout = run_shell_command(cmd, env_vars=env_vars)
   with GPU_LOCK:
     gpu_tokens.append(target_gpu)
@@ -115,7 +158,7 @@ def run_test(testmodule, gpu_tokens, continue_on_fail):
 
 
 def run_parallel(all_testmodules, p, c):
-  print(f"Running tests with parallelism=", p)
+  print(f"Running tests with parallelism = {p}")
   available_gpu_tokens = list(range(p))
   executor = ThreadPoolExecutor(max_workers=p)
   # walking through test modules.
