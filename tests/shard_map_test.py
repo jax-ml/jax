@@ -1978,6 +1978,24 @@ class ShardMapTest(jtu.JaxTestCase):
 
     _ = f(a, b)  # don't crash
 
+  def test_temporary_error_suppression_flag(self):
+    mesh = jtu.create_global_mesh((2,), ('i',))
+
+    def f(x, y):
+      z = shard_map(lambda x, y: x + jax.lax.all_gather(y, 'i', tiled=True),
+                    mesh=mesh, in_specs=(P(None), P('i')), out_specs=P(None),
+                    check_rep=False,
+                    )(x, y)
+      return z
+
+    y = jnp.arange(8)
+    xs = jnp.arange(32).reshape(4, 8)
+    with self.assertRaisesRegex(ValueError, 'vmap spmd_axis_name cannot appear in'):
+      _ = jax.vmap(f, in_axes=(0, None), spmd_axis_name='i')(xs, y)
+
+    with config.disable_vmap_shmap_error():
+      _ = jax.vmap(f, in_axes=(0, None), spmd_axis_name='i')(xs, y)
+
 
 class FunSpec(NamedTuple):
   name: str
