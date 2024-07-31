@@ -58,6 +58,7 @@ from jax.numpy import (
     asarray as asarray,
     asin as asin,
     asinh as asinh,
+    astype as astype,
     atan as atan,
     atan2 as atan2,
     atanh as atanh,
@@ -189,8 +190,4 @@ from jax.numpy import (
     where as where,
     zeros as zeros,
     zeros_like as zeros_like,
-)
-
-from jax.experimental.array_api._data_type_functions import (
-    astype as astype,
 )
