@@ -300,7 +300,7 @@ class MosaicGridMapping:
     # TODO(necula): clean this using new grid_mapping helpers
     num_scalar_prefetch = grid_mapping.num_index_operands
     num_scratch = grid_mapping.num_scratch_operands
-    # jaxpr has signature [*scalar_prefetch, *consts, *in_ops, *out_ops, *scratch]
+    # jaxpr has signature [*scalar_prefetch, *in_ops, *out_ops, *scratch]
     num_operands = (
         len(self.jaxpr.invars)
         - num_scalar_prefetch

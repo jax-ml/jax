@@ -96,13 +96,13 @@ class OpsTest(PallasBaseTest):
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((8, 128), dtype),
     )
-    def kernel(x_ref, o_ref):
-      o_ref[...] = fn(x_ref[...], y)
+    def kernel(x_ref, y_ref, o_ref):
+      o_ref[...] = fn(x_ref[...], y_ref[...])
 
     x = jnp.full((8, 128), 4, dtype=dtype)
     y = jnp.full((8, 128), 2 if jnp.issubdtype(dtype, jnp.integer) else 2.0,
                  dtype=dtype)
-    np.testing.assert_allclose(kernel(x), fn(x, y))
+    np.testing.assert_allclose(kernel(x, y), fn(x, y))
 
   @parameterized.named_parameters(
       ('integer_1_1', (1, 1)),

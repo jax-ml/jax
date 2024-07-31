@@ -14,6 +14,8 @@ Remember to align the itemized text with the first line of an item within a list
 ## Released with jax 0.4.32
 
 * Changes
+  * The kernel function is not allowed to close over constants. Instead, all the needed arrays
+    must be passed as inputs, with proper block specs ({jax-issue}`#22746`).
 
 * Deprecations
 

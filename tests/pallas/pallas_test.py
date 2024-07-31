@@ -488,8 +488,10 @@ class PallasCallTest(PallasBaseTest):
     def kernel(src, dst):
       dst[0:1] = to_store
 
-    res = kernel(x)
-    self.assertAllClose(res[0:1], to_store)
+    with self.assertRaisesRegex(
+        ValueError,
+        "The kernel function .* should not capture constants"):
+      kernel(x)
 
   def test_vector_slicing(self):
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:

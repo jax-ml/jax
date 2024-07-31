@@ -37,7 +37,6 @@ from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.primitives import uninitialized_value
 from jax._src.state import discharge as state_discharge
-from jax._src.state import utils as state_utils
 from jax._src.util import (
     safe_map,
     safe_zip,
@@ -841,7 +840,8 @@ def _trace_kernel_to_jaxpr(fun: Callable,
                            grid_mapping: GridMapping,
                            kernel_avals: tuple[pallas_core.AbstractMemRef, ...],
                            kernel_in_tree: tree_util.PyTreeDef,
-                           interpret: bool):
+                           interpret: bool
+                           ) -> jax_core.ClosedJaxpr:
   if interpret:
     kernel_avals = tuple(map(_logical_aval_to_interpret_mode_aval,
                              kernel_avals))
@@ -852,38 +852,20 @@ def _trace_kernel_to_jaxpr(fun: Callable,
     jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(wrapped_kernel_fun,
                                                      kernel_avals, debug)
     if consts:
-      # Pad ``block_mappings`` to account for the hoisted constants.
-      # The constants will be right after the index operands and just before
-      # the real inputs and outputs.
-      jaxpr = state_utils.hoist_consts_to_refs(
-          jaxpr,
-          index=grid_mapping.num_index_operands,
-          make_abstract_ref=lambda aval: pallas_core.AbstractMemoryRef(aval, None))
-      num_constant_operands = len(consts)
-      const_block_mappings = []
-      for c_idx, c in enumerate(consts):
-        const_block_mapping = pallas_core._convert_block_spec_to_block_mapping(
-            pallas_core.BlockSpec(None, None),
-            origin=f"consts[{c_idx}]",
-            array_aval=jax_core.ShapedArray(c.shape, c.dtype),
-            index_map_avals=grid_mapping.index_map_avals,
-            index_map_tree=grid_mapping.index_map_tree,
-            grid=grid_mapping.grid,
-            mapped_dims=(),
-        )
-        const_block_mappings.append(const_block_mapping)
+      consts_avals = [jax_core.raise_to_shaped(jax_core.get_aval(c))
+                      for c in consts]
+      raise ValueError(
+          f"The kernel function {fun_src_info} in a "
+          "pallas_call should not capture constants. You should pass them "
+          f"as inputs. It captures constants of shapes: {consts_avals}")
 
-      grid_mapping = grid_mapping.replace(
-          block_mappings=(*const_block_mappings, *grid_mapping.block_mappings),
-          num_constant_operands=num_constant_operands,
-      )
   kernel_out_tree = out_tree_thunk()
   if kernel_out_tree != tree_util.tree_structure(None):
     raise ValueError(
         f"The kernel function {fun_src_info} in a "
         f"pallas_call should return None. "
         f"It returns a PyTree: {kernel_out_tree}")
-  return grid_mapping, jaxpr, consts
+  return jaxpr
 
 def _extract_function_name(f: Callable, name: str | None) -> str:
   if name is None:
@@ -1095,7 +1077,7 @@ def pallas_call(
         flat_in_avals, in_tree, in_origins,
         flat_out_avals, out_tree, out_origins)
     flat_kernel_avals, kernel_in_tree = tree_util.tree_flatten(kernel_avals)
-    grid_mapping, jaxpr, consts = _trace_kernel_to_jaxpr(
+    jaxpr = _trace_kernel_to_jaxpr(
         kernel, kernel_src_info,
         grid_mapping, tuple(flat_kernel_avals), kernel_in_tree,
         interpret=interpret)
@@ -1122,7 +1104,7 @@ def pallas_call(
 
     index_args, rest_args = split_list(flat_args, [grid_mapping.num_index_operands])
     out_flat = pallas_call_p.bind(
-        *dynamic_grid_bounds, *index_args, *consts, *rest_args,
+        *dynamic_grid_bounds, *index_args, *rest_args,
         jaxpr=jaxpr, name=name,
         debug=debug,
         interpret=interpret,
