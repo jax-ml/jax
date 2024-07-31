@@ -325,6 +325,193 @@ class PallasCallRemoteDMAInterpretTest(parameterized.TestCase):
                                    out_specs=P(None, 'x')))(sharded_arr)
     np.testing.assert_array_equal(result, expected)
 
+  def test_interpret_remote_dma_asymmetrical_indexer(self):
+    # Test DMAs where destination slices are not the same.
+    if jax.local_device_count() <= 1:
+      self.skipTest('Test requires multiple devices.')
+    if not jtu.is_device_tpu(5, 'e'):
+      self.skipTest('Only works with TPU v5e.')
+    num_devices = jax.local_device_count()
+
+    def test_kernel(x_ref,
+               output_ref,
+               send_sem,
+               recv_sem):
+      output_ref[...] = jnp.zeros_like(output_ref[...])
+      my_id = lax.axis_index('x')
+      even_device = lax.rem(my_id, 2)
+      odd_device = 1 - even_device
+      neighbor = lax.rem(my_id + 1, num_devices)
+      # If the device_id is even, we copy to output_ref[1].
+      # If it's odd, we copy to output_ref[0].
+      @pl.when(even_device)
+      def _():
+        remote_dma = pltpu.make_async_remote_copy(
+            src_ref=x_ref,
+            dst_ref=output_ref.at[1],
+            send_sem=send_sem,
+            recv_sem=recv_sem,
+            device_id=neighbor,
+        )
+        remote_dma.start()
+        remote_dma.wait()
+      @pl.when(odd_device)
+      def _():
+        remote_dma = pltpu.make_async_remote_copy(
+            src_ref=x_ref,
+            dst_ref=output_ref.at[0],
+            send_sem=send_sem,
+            recv_sem=recv_sem,
+            device_id=neighbor,
+        )
+        remote_dma.start()
+        remote_dma.wait()
+
+    out_shape = (jax.ShapeDtypeStruct((2, 8, 128), jnp.float32))
+    grid_spec = pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            in_specs=[
+                pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+            ],
+            out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+            scratch_shapes=(
+                [pltpu.SemaphoreType.DMA] * 2
+            )
+        )
+
+    devices = mesh_utils.create_device_mesh(( num_devices,))
+    mesh = jax.sharding.Mesh(devices, P('x'))
+    sharding = jax.sharding.NamedSharding(mesh, P(None, 'x'))
+    unsharded_arr = jax.random.normal(
+        jax.random.key(0), shape=(8, 128 * num_devices))
+    sharded_arr = jax.device_put(unsharded_arr, sharding)
+
+    # Compare interpret mode result to non-interpret mode result.
+    kernel = pl.pallas_call(
+        test_kernel,
+        out_shape=out_shape,
+        grid_spec=grid_spec,
+        interpret=True,
+    )
+    compiled_func = jax.jit(shard_map.shard_map(
+      kernel,
+      mesh=mesh,
+      in_specs=P(None, 'x'),
+      out_specs=P(None, 'x'),
+      check_rep=False))
+    result_interpret = compiled_func(sharded_arr)
+
+    kernel = pl.pallas_call(
+        test_kernel,
+        out_shape=out_shape,
+        grid_spec=grid_spec,
+    )
+    compiled_func = jax.jit(shard_map.shard_map(
+      kernel,
+      mesh=mesh,
+      in_specs=P(None, 'x'),
+      out_specs=P(None, 'x'),
+      check_rep=False))
+    result_noninterpret = compiled_func(sharded_arr)
+    np.testing.assert_allclose(result_interpret,
+                               result_noninterpret,
+                               atol=1e-5,
+                               rtol=1e-3)
+
+  def test_interpret_remote_dma_asymmetrical_refs(self):
+    # Test DMAs where dst refs are not the same.
+    self.skipTest('Known failure.')
+    num_devices = jax.local_device_count()
+
+    def test_kernel(x_ref,
+               even_output,
+               odd_output,
+               send_sem,
+               recv_sem):
+      even_output[...] = jnp.zeros_like(even_output[...])
+      odd_output[...] = jnp.zeros_like(odd_output[...])
+      my_id = lax.axis_index('x')
+      even_device = lax.rem(my_id, 2)
+      odd_device = 1 - even_device
+      neighbor = lax.rem(my_id + 1, num_devices)
+      @pl.when(even_device)
+      def _():
+        remote_dma = pltpu.make_async_remote_copy(
+            src_ref=x_ref,
+            dst_ref=even_output,
+            send_sem=send_sem,
+            recv_sem=recv_sem,
+            device_id=neighbor,
+            device_id_type=pltpu.DeviceIdType.LOGICAL,
+        )
+        remote_dma.start()
+        remote_dma.wait()
+      @pl.when(odd_device)
+      def _():
+        remote_dma = pltpu.make_async_remote_copy(
+            src_ref=x_ref,
+            dst_ref=odd_output,
+            send_sem=send_sem,
+            recv_sem=recv_sem,
+            device_id=neighbor,
+            device_id_type=pltpu.DeviceIdType.LOGICAL,
+        )
+        remote_dma.start()
+        remote_dma.wait()
+
+    out_shape = (jax.ShapeDtypeStruct((8, 128), jnp.float32))
+    grid_spec = pltpu.PrefetchScalarGridSpec(
+            num_scalar_prefetch=0,
+            in_specs=[
+                pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+            ],
+            out_specs=[
+                pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+                pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.VMEM),
+            ],
+            scratch_shapes=(
+                [pltpu.SemaphoreType.DMA] * 2
+            )
+        )
+
+    devices = mesh_utils.create_device_mesh((1, num_devices))
+    mesh = jax.sharding.Mesh(devices, P(None, 'x'))
+    sharding = jax.sharding.NamedSharding(mesh, P(None, 'x'))
+    unsharded_arr = jax.random.normal(
+        jax.random.key(0), shape=(8, 128 * num_devices))
+    sharded_arr = jax.device_put(unsharded_arr, sharding)
+
+    # Compare interpret mode result to non-interpret mode result.
+    kernel = pl.pallas_call(
+        test_kernel,
+        out_shape=(out_shape, out_shape),
+        grid_spec=grid_spec,
+        interpret=True,
+    )
+    compiled_func = jax.jit(shard_map.shard_map(
+      kernel,
+      mesh=mesh,
+      in_specs=P(None, 'x'),
+      out_specs=P(None, 'x'),
+      check_rep=False))
+    result_interpret = compiled_func(sharded_arr)
+
+    kernel = pl.pallas_call(
+        test_kernel,
+        out_shape=(out_shape, out_shape),
+        grid_spec=grid_spec,
+    )
+    compiled_func = jax.jit(shard_map.shard_map(
+      kernel,
+      mesh=mesh,
+      in_specs=P(None, 'x'),
+      out_specs=P(None, 'x'),
+      check_rep=False))
+    result_noninterpret = compiled_func(sharded_arr)
+    np.testing.assert_allclose(result_interpret,
+                               result_noninterpret,
+                               atol=1e-5,
+                               rtol=1e-3)
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
