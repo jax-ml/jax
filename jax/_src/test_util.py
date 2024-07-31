@@ -1947,6 +1947,39 @@ class numpy_with_mpmath:
 
     return ctx.asin(x)
 
+  def arccos(self, x):
+    ctx = x.context
+
+    if isinstance(x, ctx.mpc):
+      # Workaround mpmath 1.3 bug in acos(+-inf+-infj) evaluation (see
+      # mpmath/mpmath#793).
+      # TODO(pearu): remove the if-block below when mpmath 1.4 or
+      # newer will be the required test dependency.
+      pi = ctx.pi
+      inf = ctx.inf
+      zero = ctx.zero
+
+      if ctx.isinf(x.imag):
+        if ctx.isinf(x.real):
+          real = pi / 4 if x.real > 0 else 3 * pi / 4
+        else:
+          real = pi / 2
+        imag = inf if x.imag < 0 else -inf
+        return ctx.make_mpc((real._mpf_, imag._mpf_))
+      elif ctx.isinf(x.real):
+        inf = ctx.inf
+        sign_imag = -1 if x.imag < 0 else 1
+        real = zero if x.real > 0 else pi
+        return ctx.make_mpc((real._mpf_, (-sign_imag * inf)._mpf_))
+      # On branch cut, mpmath.mp.acos returns different value
+      # compared to mpmath.fp.acos and numpy.arccos. The
+      # following if-block ensures compatibiliy with
+      # numpy.arccos.
+      if x.imag == 0 and x.real > 1:
+        return -ctx.acos(x)
+
+    return ctx.acos(x)
+
   def arcsinh(self, x):
     ctx = x.context
 
@@ -1973,6 +2006,29 @@ class numpy_with_mpmath:
       if x.real == 0 and x.imag < -1:
         return (-ctx.asinh(x)).conjugate()
     return ctx.asinh(x)
+
+  def arccosh(self, x):
+    ctx = x.context
+
+    if isinstance(x, ctx.mpc):
+      # Workaround mpmath 1.3 bug in acosh(+-inf+-infj) evaluation
+      # (see mpmath/mpmath#749).
+      pi = ctx.pi
+      inf = ctx.inf
+      zero = ctx.zero
+      if ctx.isinf(x.real):
+        sign_imag = -1 if x.imag < 0 else 1
+        imag = (
+          (3 if x.real < 0 else 1) * sign_imag * pi / 4
+          if ctx.isinf(x.imag)
+          else (sign_imag * pi if x.real < 0 else zero)
+        )
+        return ctx.make_mpc((inf._mpf_, imag._mpf_))
+      elif ctx.isinf(x.imag):
+        sign_imag = -1 if x.imag < 0 else 1
+        imag = sign_imag * pi / 2
+        return ctx.make_mpc((inf._mpf_, imag._mpf_))
+    return ctx.acosh(x)
 
   def normalize(self, exact, reference, value):
     """Normalize reference and value using precision defined by the
