@@ -49,8 +49,7 @@ RUN eval "$(pyenv init -)" && \
         numpy setuptools build wheel six auditwheel scipy \
         pytest pytest-html pytest_html_merger pytest-reportlog \
         pytest-rerunfailures cloudpickle portpicker matplotlib absl-py \
-        flatbuffers hypothesis
-
+        flatbuffers hypothesis pytest-json-report pytest-csv
 
 ################################################################################
 FROM rocm_base AS rt_build
@@ -68,3 +67,4 @@ LABEL com.amdgpu.rocm_version="$ROCM_VERSION" \
 
 RUN --mount=type=bind,source=wheelhouse,target=/wheelhouse \
     pip install --find-links /wheelhouse jax jaxlib jax_rocm60_plugin jax_rocm60_pjrt
+
