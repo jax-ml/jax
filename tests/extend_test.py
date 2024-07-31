@@ -28,6 +28,7 @@ from jax._src import core
 from jax._src import linear_util
 from jax._src import prng
 from jax._src import test_util as jtu
+from jax._src import xla_bridge
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.extend import ffi
@@ -47,7 +48,12 @@ class ExtendTest(jtu.JaxTestCase):
     self.assertIs(jex.random.unsafe_rbg_prng_impl, prng.unsafe_rbg_prng_impl)
 
     # Assume these are tested elsewhere, only check equivalence
+    self.assertIs(jex.backend.backends, xla_bridge.backends)
+    self.assertIs(jex.backend.backend_xla_version, xla_bridge.backend_xla_version)
+    self.assertIs(jex.backend.default_backend, xla_bridge.default_backend)
     self.assertIs(jex.backend.clear_backends, api.clear_backends)
+    self.assertIs(jex.backend.get_backend, xla_bridge.get_backend)
+    self.assertIs(jex.backend.register_backend_factory, xla_bridge.register_backend_factory)
     self.assertIs(jex.core.array_types, abstract_arrays.array_types)
     self.assertIs(jex.linear_util.StoreException, linear_util.StoreException)
     self.assertIs(jex.linear_util.WrappedFun, linear_util.WrappedFun)
