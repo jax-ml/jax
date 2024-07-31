@@ -1290,6 +1290,45 @@ class ComputeOffload(jtu.BufferDonationTestCase):
 
     self.assertArraysAllClose(out, expected_out, rtol=1e-3)
 
+  def test_mem_kind_donation_pinned_host(self):
+    mesh = jtu.create_global_mesh((2,), "x")
+    s = NamedSharding(mesh, P(), memory_kind='pinned_host')
+    s_dev = s.with_memory_kind('device')
+
+    @compute_on('device_host')
+    @functools.partial(jax.jit, out_shardings=(s, s_dev), donate_argnums=(0, 1))
+    def f(inp1, inp2):
+      return inp1 * 2, inp2 * 2
+
+    np_inp = np.arange(16).reshape(8, 2)
+    x = jax.device_put(np_inp, s)
+    x_dev = jax.device_put(np_inp, s_dev)
+
+    f(x, x_dev)
+
+    lowered_text = f.lower(x, x_dev).as_text("hlo")
+    self.assertIn("input_output_alias", lowered_text)
+    self.assertDeleted(x)
+    self.assertDeleted(x_dev)
+
+  @parameterized.parameters("pinned_host", "device")
+  def test_identity_mem_kind_donation(self, mem_kind):
+    mesh = jtu.create_global_mesh((2,), "x")
+    s = NamedSharding(mesh, P(), memory_kind=mem_kind)
+
+    @functools.partial(jax.jit, out_shardings=s, donate_argnums=0)
+    def f(inp):
+      return inp
+
+    np_inp = np.arange(16).reshape(8, 2)
+    x = jax.device_put(np_inp, s)
+
+    f(x)
+
+    lowered_text = f.lower(x).as_text("hlo")
+    self.assertIn("input_output_alias", lowered_text)
+    self.assertDeleted(x)
+
 
 @jtu.with_config(jax_enable_memories=True)
 class ActivationOffloadingTest(jtu.JaxTestCase):
