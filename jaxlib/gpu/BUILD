@@ -25,6 +25,8 @@ package(
 
 exports_files(srcs = [
     "blas.cc",
+    "blas_handle_pool.cc",
+    "blas_handle_pool.h",
     "blas_kernels.cc",
     "blas_kernels.h",
     "gpu_kernel_helpers.cc",
@@ -42,6 +44,8 @@ exports_files(srcs = [
     "rnn_kernels.cc",
     "rnn_kernels.h",
     "solver.cc",
+    "solver_handle_pool.cc",
+    "solver_handle_pool.h",
     "solver_kernels.cc",
     "solver_kernels.h",
     "sparse.cc",

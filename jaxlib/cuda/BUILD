@@ -73,13 +73,33 @@ cc_library(
 )
 
 cc_library(
-    name = "cublas_kernels",
-    srcs = ["//jaxlib/gpu:blas_kernels.cc"],
-    hdrs = ["//jaxlib/gpu:blas_kernels.h"],
+    name = "cuda_blas_handle_pool",
+    srcs = [
+        "//jaxlib/gpu:blas_handle_pool.cc",
+    ],
+    hdrs = [
+        "//jaxlib/gpu:blas_handle_pool.h",
+    ],
     deps = [
         ":cuda_gpu_kernel_helpers",
         ":cuda_vendor",
         "//jaxlib:handle_pool",
+        "@xla//xla/tsl/cuda:cublas",
+        "@xla//xla/tsl/cuda:cudart",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/synchronization",
+        "@local_config_cuda//cuda:cuda_headers",
+    ],
+)
+
+cc_library(
+    name = "cublas_kernels",
+    srcs = ["//jaxlib/gpu:blas_kernels.cc"],
+    hdrs = ["//jaxlib/gpu:blas_kernels.h"],
+    deps = [
+        ":cuda_blas_handle_pool",
+        ":cuda_gpu_kernel_helpers",
+        ":cuda_vendor",
         "//jaxlib:kernel_helpers",
         "@xla//xla/service:custom_call_status",
         "@xla//xla/tsl/cuda:cublas",
@@ -90,9 +110,9 @@ cc_library(
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
-        "@com_google_absl//absl/synchronization",
         "@local_config_cuda//cuda:cublas_headers",
         "@local_config_cuda//cuda:cuda_headers",
     ],
@@ -119,6 +139,7 @@ pybind_extension(
         ":cuda_vendor",
         "//jaxlib:kernel_nanobind_helpers",
         "@xla//xla/tsl/cuda:cublas",
+        "@xla//xla/tsl/cuda:cudart",
         "@xla//xla/tsl/python/lib/core:numpy",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings:str_format",
@@ -166,19 +187,39 @@ pybind_extension(
 )
 
 cc_library(
+    name = "cuda_solver_handle_pool",
+    srcs = [
+        "//jaxlib/gpu:solver_handle_pool.cc",
+    ],
+    hdrs = [
+        "//jaxlib/gpu:solver_handle_pool.h",
+    ],
+    deps = [
+        ":cuda_gpu_kernel_helpers",
+        ":cuda_vendor",
+        "//jaxlib:handle_pool",
+        "@xla//xla/tsl/cuda:cudart",
+        "@xla//xla/tsl/cuda:cusolver",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/synchronization",
+        "@local_config_cuda//cuda:cuda_headers",
+    ],
+)
+
+cc_library(
     name = "cusolver_kernels",
     srcs = ["//jaxlib/gpu:solver_kernels.cc"],
     hdrs = ["//jaxlib/gpu:solver_kernels.h"],
     deps = [
         ":cuda_gpu_kernel_helpers",
+        ":cuda_solver_handle_pool",
         ":cuda_vendor",
-        "//jaxlib:handle_pool",
         "//jaxlib:kernel_helpers",
         "@xla//xla/service:custom_call_status",
+        "@xla//xla/tsl/cuda:cudart",
         "@xla//xla/tsl/cuda:cusolver",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/synchronization",
         "@local_config_cuda//cuda:cuda_headers",
     ],
 )
@@ -201,6 +242,7 @@ pybind_extension(
     module_name = "_solver",
     deps = [
         ":cuda_gpu_kernel_helpers",
+        ":cuda_solver_handle_pool",
         ":cuda_vendor",
         ":cusolver_kernels",
         "//jaxlib:kernel_nanobind_helpers",

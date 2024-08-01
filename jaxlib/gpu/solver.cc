@@ -13,22 +13,21 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <algorithm>
-#include <cstdint>
+#include <memory>
 #include <stdexcept>
 #include <utility>
-#include <vector>
 
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/pair.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_format.h"
+#include "third_party/gpus/cuda/include/cusolver_common.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
+#include "jaxlib/gpu/solver_handle_pool.h"
 #include "jaxlib/gpu/solver_kernels.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
 #include "xla/tsl/python/lib/core/numpy.h"
-
 
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
