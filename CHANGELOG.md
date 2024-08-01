@@ -19,6 +19,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Deprecations
   * Complex inputs to {func}`jax.numpy.clip` and {func}`jax.numpy.hypot` are
     no longer allowed, after being deprecated since JAX v0.4.27.
+  * Deprecated the following APIs:
+    * `jax.lib.xla_bridge.xla_client`: use {mod}`jax.lib.xla_client` directly.
+    * `jax.lib.xla_bridge.get_backend`: use {func}`jax.extend.backend.get_backend`.
+    * `jax.lib.xla_bridge.default_backend`: use {func}`jax.extend.backend.default_backend`.
 
 ## jaxlib 0.4.32
 
