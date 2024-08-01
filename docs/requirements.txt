@@ -18,4 +18,5 @@ matplotlib
 scikit-learn
 numpy
 rich[jupyter]
+cmake
 .[ci]  # Install jax from the current directory; jaxlib from pypi.
