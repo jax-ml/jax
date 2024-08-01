@@ -1782,8 +1782,7 @@ def _replication_rewrite_match(
   f = lu.wrap_init(partial(core.eval_jaxpr, jaxpr.jaxpr, jaxpr.consts))
   f, out_rep = _efficient_transpose_rewrite_nomatch(f, mesh, in_rep)
   f = _match_rep(f, mesh, out_rep, out_rep_dst)
-  with core.extend_axis_env_nd(mesh.shape.items()):
-    jaxpr_, _, consts, () = pe.trace_to_jaxpr_dynamic(f, jaxpr.in_avals)
+  jaxpr_, _, consts, () = pe.trace_to_jaxpr_dynamic(f, jaxpr.in_avals)
   return core.ClosedJaxpr(jaxpr_, consts)
 
 # TODO(mattjj): caching
@@ -1794,8 +1793,7 @@ def _replication_rewrite_nomatch(
 ) -> tuple[core.ClosedJaxpr, list[set[AxisName]]]:
   f = lu.wrap_init(partial(core.eval_jaxpr, jaxpr.jaxpr, jaxpr.consts))
   f, out_rep = _efficient_transpose_rewrite_nomatch(f, mesh, in_rep)
-  with core.extend_axis_env(mesh.shape.items()):
-    jaxpr_, _, consts, () = pe.trace_to_jaxpr_dynamic(f, jaxpr.in_avals)
+  jaxpr_, _, consts, () = pe.trace_to_jaxpr_dynamic(f, jaxpr.in_avals)
   return core.ClosedJaxpr(jaxpr_, consts), out_rep()
 
 @lu.transformation_with_aux
