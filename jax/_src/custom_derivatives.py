@@ -1468,6 +1468,7 @@ def optimize_remat_of_custom_vjp_fwd(
     flat_fun, out_type = _flatten_fun_nokwargs(f_, in_tree)
     flat_fwd, out_trees = _flatten_fwd(fwd_, False, primal_name, fwd_name,
                                        in_tree, out_type)
+    flat_fwd = _fix_fwd_args(flat_fwd)
 
     in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]
     fwd_jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fwd, in_avals)
@@ -1496,6 +1497,12 @@ def optimize_remat_of_custom_vjp_fwd(
     return tree_unflatten(out_tree, (*out_flat, *res))
 
   return wrapped_fwd
+
+@lu.transformation
+def _fix_fwd_args(*args):
+  args = [(x, True) for x in args]
+  args = [x for pair in args for x in pair]
+  yield (yield args, {})
 
 def _remat_opt_impl(
     *args,
