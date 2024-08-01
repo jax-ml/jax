@@ -1118,23 +1118,6 @@ def _scan_typecheck(bind_time, *in_atoms, reverse, length, num_consts,
       f'called with sequence whose items have type\n{_avals_short(x_avals_mapped)}')
   return [*init_avals, *y_avals], jaxpr.effects
 
-def _scan_pp_rule(eqn, context, settings):
-  printed_params = dict(eqn.params)
-  del printed_params['linear']
-  if eqn.params['num_consts'] + eqn.params['num_carry'] == len(eqn.invars):
-    del printed_params['length']
-  if printed_params['unroll'] == 1:
-    del printed_params['unroll']
-  if printed_params['num_carry'] == 0:
-    del printed_params['num_carry']
-  if printed_params['num_consts'] == 0:
-    del printed_params['num_consts']
-  if not printed_params['reverse']:
-    del printed_params['reverse']
-  if not printed_params['_split_transpose']:
-    del printed_params['_split_transpose']
-  return core._pp_eqn(eqn.replace(params=printed_params), context, settings)
-
 def _scan_state_discharge_rule(in_avals, out_avals, *args, jaxpr, num_consts,
                                num_carry, linear, unroll, reverse, length,
                                _split_transpose):
@@ -1233,8 +1216,6 @@ pe.partial_eval_jaxpr_custom_rules[scan_p] = _scan_partial_eval_custom
 pe.padding_rules[scan_p] = _scan_padding_rule
 pe.dce_rules[scan_p] = _scan_dce_rule
 state_discharge.register_discharge_rule(scan_p)(_scan_state_discharge_rule)
-# TODO(mattjj,frostig): un-comment this pp rule
-# core.pp_eqn_rules[scan_p] = _scan_pp_rule
 
 def _propagate_mem_kind_scan(*xm, reverse, length, num_consts, num_carry, jaxpr,
                              linear, unroll, _split_transpose):

@@ -569,13 +569,6 @@ def _convert_block_spec_to_block_mapping(
   mapping.check_invariants()
   return mapping
 
-def _tile_ref(ref: state.AbstractRef, block_shape: tuple[int, ...] | None
-             ) -> state.AbstractRef:
-  if block_shape is None:
-    return ref
-  shape = tuple(s for s in block_shape if s is not None)
-  return ref.update(inner_aval=ref.inner_aval.update(shape=shape))
-
 index_map_grid_aval = jax_core.ShapedArray((), jnp.int32)
 
 @dataclasses.dataclass(init=False)
