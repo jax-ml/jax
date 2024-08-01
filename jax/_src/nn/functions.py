@@ -853,9 +853,9 @@ def dot_product_attention(
     query: ArrayLike,
     key: ArrayLike,
     value: ArrayLike,
-    *,
     bias: ArrayLike | None = None,
     mask: ArrayLike | None = None,
+    *,
     scale: float | None = None,
     is_causal: bool = False,
     implementation: Literal['xla', 'cudnn'] | None = None) -> Array:
@@ -882,20 +882,20 @@ def dot_product_attention(
     G = number of groups, which equals to N // K
 
   Args:
-    query: query array; shape :code:`(BTNH)`
-    key: key array: shape :code:`(BSKH)`. When `K` equals `N`, multi-headed
-    attention (MHA: https://arxiv.org/abs/1706.03762) is performed. Otherwise,
-    grouped query attention (GQA: https://arxiv.org/abs/2305.13245) is performed
-    if `N` is a multiple of `K`, and multi-query attention (MQA:
-    https://arxiv.org/abs/1911.02150) is performed if `K == 1` (a special case
-    of GQA).
+    query: query array; shape :code:`(BTNH|TNH)`
+    key: key array: shape :code:`(BSKH|SKH)`. When `K` equals `N`, multi-headed
+      attention (MHA https://arxiv.org/abs/1706.03762) is performed. Otherwise,
+      grouped query attention (GQA https://arxiv.org/abs/2305.13245) is
+      performed if `N` is a multiple of `K`, and multi-query attention (MQA
+      https://arxiv.org/abs/1911.02150) is performed if `K == 1` (a special case
+      of GQA).
     value: value array, should have the same shape as the `key` array.
     bias: optional, bias array to be added to logits; The shape must be 4D and
-      be broadcastable to :code:`(BNTS)`.
+      be broadcastable to :code:`(BNTS|NTS)`.
     mask: optional, mask array used to filter out logits. It is a boolean mask
       where `True` indicates the element should take part in attention. For an
       additive mask, users should pass it to `bias`. The shape must be 4D and be
-      broadcastable to :code:`(BNTS)`.
+      broadcastable to :code:`(BNTS|NTS)`.
     scale: scale for the logits. If None, the scale will be set to 1 divided by
       the square root of query's head dimension (i.e. H).
     is_causal: If true, causal attention will be applied. Note, some
@@ -912,18 +912,24 @@ def dot_product_attention(
   Returns:
     An array of the attention output with the same shape as :code:`query`.
   """
+  original_shape = jnp.asarray(query).shape
+  def _preprocess_array(t):
+    if t is None:
+      return t
+    t = jnp.asarray(t)
+    return t[None, ...] if t.ndim == 3 else t
+  query = _preprocess_array(query)
+  key = _preprocess_array(key)
+  value = _preprocess_array(value)
+  bias = _preprocess_array(bias)
+  mask = _preprocess_array(mask)
+
   def _check_has_shape(t: Array, shape: Sequence[int], name: str) -> None:
     if t.ndim != len(shape):
       raise ValueError(f"{name} ndim should be {len(shape)}, but got {t.ndim}")
     for i in range(t.ndim):
       if shape[i] != -1 and t.shape[i] != shape[i]:
         raise ValueError(f"{name} shape should be {shape}: but got {t.shape}")
-
-  query = jnp.asarray(query)
-  key = jnp.asarray(key)
-  value = jnp.asarray(value)
-  bias = bias if bias is None else jnp.asarray(bias)
-  mask = mask if mask is None else jnp.asarray(mask)
 
   B, S, K, H = key.shape
   _check_has_shape(value, [B, S, K, H], 'value')
@@ -944,19 +950,21 @@ def dot_product_attention(
 
   match implementation:
     case 'xla':
-      return _dot_product_attention_xla(
+      out = _dot_product_attention_xla(
           query, key, value, bias, mask, is_causal=is_causal, scale=scale_val,
       )
     case 'cudnn':
       mask_type = MaskType.CAUSAL if is_causal else MaskType.NO_MASK
-      return cudnn_dot_product_attention(
+      out = cudnn_dot_product_attention(
           query, key, value, bias, mask, scale=scale_val, mask_type=mask_type
       )
     case None:
       # TODO(kaixih@nvidia) Defaults to XLA for now. Will automatically select
       # best backend.
-      return _dot_product_attention_xla(
+      out = _dot_product_attention_xla(
           query, key, value, bias, mask, is_causal=is_causal, scale=scale_val,
       )
     case _:
       raise ValueError(f"Unsupported implementation option: {implementation}")
+
+  return jnp.reshape(out, original_shape)
