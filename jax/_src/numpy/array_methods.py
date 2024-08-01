@@ -470,7 +470,7 @@ class _IndexUpdateRef:
     self.array = array
     self.index = index
 
-  def __repr__(self):
+  def __repr__(self) -> str:
     return f"_IndexUpdateRef({self.array!r}, {self.index!r})"
 
   def get(self, *, indices_are_sorted=False, unique_indices=False,
