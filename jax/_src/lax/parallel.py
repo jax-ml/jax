@@ -627,8 +627,13 @@ def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
           use_global_device_ids=ir.BoolAttr.get(True))
     else:
       other_args = {}
-    op = hlo.AllReduceOp(
-        x.type, x, replica_groups=replica_groups, **other_args)
+
+    if hlo.get_api_version() < 8:
+      op = hlo.AllReduceOp(
+          x.type, x, replica_groups=replica_groups, **other_args)
+    else:
+      op = hlo.AllReduceOp(
+          [x.type], [x], replica_groups=replica_groups, **other_args)
     scalar_aval = core.ShapedArray((), aval.dtype)
     scalar_type = mlir.aval_to_ir_type(scalar_aval)
     reducer_block = op.regions[0].blocks.append(scalar_type, scalar_type)
@@ -877,13 +882,21 @@ def _all_to_all_lowering(
     other_args = dict(channel_handle=channel_handle)
   else:
     other_args = {}
+  if hlo.get_api_version() < 8:
+    return hlo.AllToAllOp(
+        x,
+        split_dimension=mlir.i64_attr(split_axis),
+        concat_dimension=mlir.i64_attr(concat_axis),
+        split_count=mlir.i64_attr(split_count),
+        replica_groups=_replica_groups_hlo(replica_groups),
+        **other_args).results
   return hlo.AllToAllOp(
-      x,
-      split_dimension=mlir.i64_attr(split_axis),
-      concat_dimension=mlir.i64_attr(concat_axis),
-      split_count=mlir.i64_attr(split_count),
-      replica_groups=_replica_groups_hlo(replica_groups),
-      **other_args).results
+    [x],
+    split_dimension=mlir.i64_attr(split_axis),
+    concat_dimension=mlir.i64_attr(concat_axis),
+    split_count=mlir.i64_attr(split_count),
+    replica_groups=_replica_groups_hlo(replica_groups),
+    **other_args).results
 
 def _all_to_all_transpose_rule(
     cts, x, axis_name, split_axis, concat_axis, axis_index_groups, tiled
@@ -1115,9 +1128,16 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
         use_global_device_ids=ir.BoolAttr.get(True))
   else:
     other_args = {}
+
+  if hlo.get_api_version() < 8:
+    return hlo.AllGatherOp(
+        mlir.aval_to_ir_type(out_aval),
+        x, all_gather_dim=mlir.i64_attr(all_gather_dimension),
+        replica_groups=_replica_groups_hlo(replica_groups),
+        **other_args).results
   return hlo.AllGatherOp(
-      mlir.aval_to_ir_type(out_aval),
-      x, all_gather_dim=mlir.i64_attr(all_gather_dimension),
+      [mlir.aval_to_ir_type(out_aval)],
+      [x], all_gather_dim=mlir.i64_attr(all_gather_dimension),
       replica_groups=_replica_groups_hlo(replica_groups),
       **other_args).results
 
