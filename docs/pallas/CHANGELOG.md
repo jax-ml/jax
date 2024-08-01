@@ -44,6 +44,7 @@ Remember to align the itemized text with the first line of an item within a list
   * Previously it was possible to import many APIs that are meant to be
     private, as `jax.experimental.pallas.pallas`. This is not possible anymore.
 
+
 * Deprecations
 
 
@@ -59,6 +60,12 @@ Remember to align the itemized text with the first line of an item within a list
   * Added clearer error messages when the block sizes do not match the TPU
     requirements. Previously, the errors were coming from the Mosaic backend
     and did not have useful Python stack traces.
+  * Added support for TPU lowering with 1D blocks, and relaxed the requirements
+    for the block sizes with at least 2 dimensions: the last 2 dimensions must
+    be divisible by 8 and 128 respectively, unless they span the entire
+    corresponding array dimension. Previously, block dimensions that spanned the
+    entire array were allowed only if the block dimensions in the last two
+    dimensions were smaller than 8 and 128 respectively.
 
 ## Released with JAX 0.4.30 (June 18, 2024)
 

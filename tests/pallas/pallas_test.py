@@ -322,6 +322,12 @@ class PallasCallTest(PallasBaseTest):
       kwargs=[
           dict(shape=(), block_shape=()),
           dict(shape=(2,), block_shape=(2,)),
+          dict(shape=(128,), block_shape=(128,)),
+          dict(shape=(128,), block_shape=(64,), dtype=np.int16),
+          dict(shape=(128,), block_shape=(128,), dtype=np.int16),
+          dict(shape=(1024,), block_shape=(128,), dtype=np.int16),
+          dict(shape=(1024,), block_shape=(256,), dtype=np.int16),
+          dict(shape=(128,), block_shape=(64,)),
           dict(shape=(2, 2), block_shape=(2, 2)),
           dict(shape=(3, 3), block_shape=(3, 3)),
           dict(shape=(4, 2), block_shape=(2, 2)),
@@ -348,34 +354,43 @@ class PallasCallTest(PallasBaseTest):
           dict(shape=(5, 128), block_shape=(8, 128)),
       ]
   )
-  def test_block_spec_valid_block_shapes(self, *, shape, block_shape):
+  def test_block_spec_valid_block_shapes(self, *,
+                                         shape, block_shape,
+                                         dtype=np.int32):
+    if np.iinfo(dtype).bits == 16:
+      self.skipTest("TODO(necula): test fails with Mosaic unimplemented for np.int16")
+    rank = len(shape)
+    assert rank == len(block_shape)
     def copy_kernel(x_ref, o_ref):
       o_ref[...] = x_ref[...]
 
-    assert len(shape) == len(block_shape)
     grid = [(sd + bd - 1) // bd for sd, bd in zip(shape, block_shape)]
-    x = np.arange(math.prod(shape), dtype=np.int32).reshape(shape)
+    x = np.arange(math.prod(shape), dtype=dtype).reshape(shape)
 
     test_context = contextlib.nullcontext()
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
-      if len(block_shape) < 2:
-        self.skipTest("TODO(necula): enable this check")
-      if len(block_shape) < 2:
-        test_context = self.assertRaisesRegex(
-            ValueError,
-            "TPU lowering currently supports only blocks of rank >= 2")
+      if jaxlib_version < (0, 4, 32):
+        # TODO(b/356116061): Remove the old rank condition
+        if rank < 2:
+          test_context = self.assertRaisesRegex(
+              ValueError,
+              "TPU lowering currently supports only blocks of rank >= 2")
       else:
-        if jaxlib_version < (0, 4, 31):
-          evenly_divisible = (
-              (block_shape[-1] % 128 == 0
-              if shape[-1] >= 128 else block_shape[-1] == shape[-1]) and
-              (block_shape[-2] % 8 == 0
-              if shape[-2] >= 8 else block_shape[-2] == shape[-2]))
-        else:
-          evenly_divisible = (
-              (block_shape[-1] == shape[-1] or block_shape[-1] % 128 == 0) and
-              (block_shape[-2] == shape[-2] or block_shape[-2] % 8 == 0))
+        if rank < 1:
+          test_context = self.assertRaisesRegex(
+              ValueError,
+              "TPU lowering currently supports only blocks of rank >= 1")
 
+      if rank >= 1:
+        bs0, as0 = block_shape[-1], shape[-1]
+        if rank >= 2:
+          bs1, as1 = block_shape[-2], shape[-2]
+        else:
+          bs1, as1 = 1, 1
+
+        evenly_divisible = (
+            (bs0 == as0 or bs0 % 128 == 0) and
+            (bs1 == as1 or bs1 % 8 == 0))
         if not evenly_divisible:
           test_context = self.assertRaisesRegex(
               ValueError,
