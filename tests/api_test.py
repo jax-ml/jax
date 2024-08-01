@@ -9730,6 +9730,25 @@ class CustomVJPTest(jtu.JaxTestCase):
     v, g = jax.value_and_grad(temp)(3.2)
     self.assertAllClose(v, jnp.tan(3.2)**2)
 
+  def test_optimize_remat_multiple_args(self):
+    def f_(x, y):
+      return jnp.sin(x) * y
+
+    @jax.custom_vjp
+    def f(x, y):
+      return f_(x, y)
+
+    def f_fwd(x, y):
+      return f(x, y), (jnp.cos(x), jnp.sin(x), y)
+
+    def f_bwd(res, g):
+      cos_x, sin_x, y = res
+      return (cos_x * g * y, sin_x * g)
+
+    f.defvjp(f_fwd, f_bwd, optimize_remat=True)
+    x, y = 3.2, 1.0
+    self.assertAllClose(jax.grad(f)(x, y), jax.grad(f_)(x, y))
+
 
 def transpose_unary(f, x_example):
   def transposed(y):
