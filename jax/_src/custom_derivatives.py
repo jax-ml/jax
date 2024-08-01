@@ -80,12 +80,11 @@ def _sum_tangents(_, x, *xs):
 def _zeros_like_pytree(x):
   return tree_map(Zero.from_value, x)
 
-@partial(partial, tree_map)
-def _stop_gradient(x):
-  if isinstance(x, core.Tracer):
-    return stop_gradient_p.bind(x)
-  else:
-    return x
+_stop_gradient = partial(
+    tree_map,
+    lambda x: stop_gradient_p.bind(x) if isinstance(x, core.Tracer) else x,
+)
+
 
 # like the api_util.py function, but also grabs output avals for error checking
 @lu.transformation_with_aux
@@ -139,13 +138,13 @@ class custom_jvp(Generic[ReturnValue]):
   .. _tutorial: https://jax.readthedocs.io/en/latest/notebooks/Custom_derivative_rules_for_Python_code.html
   """
   fun: Callable[..., ReturnValue]
-  nondiff_argnums: tuple[int, ...]
+  nondiff_argnums: Sequence[int]
   jvp: Callable[..., tuple[ReturnValue, ReturnValue]] | None = None
   symbolic_zeros: bool = False
 
   def __init__(self,
                fun: Callable[..., ReturnValue],
-               nondiff_argnums: tuple[int, ...] = (),
+               nondiff_argnums: Sequence[int] = (),
                ):
     update_wrapper(self, fun)
     self.fun = fun
@@ -490,7 +489,7 @@ class custom_vjp(Generic[ReturnValue]):
 
   def __init__(self,
                fun: Callable[..., ReturnValue],
-               nondiff_argnums: tuple[int, ...] = ()):
+               nondiff_argnums: Sequence[int] = ()):
     update_wrapper(self, fun)
     self.fun = fun
     self.nondiff_argnums = nondiff_argnums
@@ -1438,7 +1437,7 @@ custom_jvp_call_jaxpr_p = core.Primitive("custom_jvp_call_jaxpr")
 def optimize_remat_of_custom_vjp_fwd(
     fun: Callable[..., ReturnValue],
     fwd: Callable[..., tuple[ReturnValue, Any]],
-    nondiff_argnums: tuple[int, ...] = (),
+    nondiff_argnums: Sequence[int] = (),
     symbolic_zeros: bool = False,
 ) -> Callable[..., tuple[ReturnValue, Any]]:
   if symbolic_zeros:

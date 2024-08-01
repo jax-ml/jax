@@ -2293,33 +2293,33 @@ def _flat_axes_specs(abstracted_axes, *args, **kwargs
   return broadcast_prefix(abstracted_axes, args, ax_leaf)
 
 
-# TODO(phawkins): for some reason mypy cannot determine these overloads are
-# non-overlapping. Pytype is happy with them.
 @overload
-def make_jaxpr(fun: Callable,  # type: ignore
-               static_argnums: int | Iterable[int] = (),
-               axis_env: Sequence[tuple[AxisName, int]] | None = None,
-               return_shape: Literal[False] = ...,
-               abstracted_axes: Any | None = None,
-               ) -> Callable[..., core.ClosedJaxpr]:
+def make_jaxpr(
+    fun: Callable,
+    static_argnums: int | Iterable[int] = (),
+    axis_env: Sequence[tuple[AxisName, int]] | None = None,
+    return_shape: Literal[False] = ...,
+    abstracted_axes: Any | None = None,
+) -> Callable[..., core.ClosedJaxpr]:
   ...
 
 @overload
-def make_jaxpr(fun: Callable,
-               static_argnums: int | Iterable[int] = (),
-               axis_env: Sequence[tuple[AxisName, int]] | None = None,
-               return_shape: Literal[True] = ...,
-               abstracted_axes: Any | None = None,
-               ) -> Callable[..., tuple[core.ClosedJaxpr, Any]]:
+def make_jaxpr(
+    fun: Callable,
+    static_argnums: int | Iterable[int] = (),
+    axis_env: Sequence[tuple[AxisName, int]] | None = None,
+    return_shape: Literal[True] = ...,
+    abstracted_axes: Any | None = None,
+) -> Callable[..., tuple[core.ClosedJaxpr, Any]]:
   ...
 
-def make_jaxpr(fun: Callable,
-               static_argnums: int | Iterable[int] = (),
-               axis_env: Sequence[tuple[AxisName, int]] | None = None,
-               return_shape: bool = False,
-               abstracted_axes: Any | None = None,
-               ) -> Callable[..., (core.ClosedJaxpr |
-                                        tuple[core.ClosedJaxpr, Any])]:
+def make_jaxpr(
+    fun: Callable,
+    static_argnums: int | Iterable[int] = (),
+    axis_env: Sequence[tuple[AxisName, int]] | None = None,
+    return_shape: bool = False,
+    abstracted_axes: Any | None = None,
+) -> Callable[..., core.ClosedJaxpr | tuple[core.ClosedJaxpr, Any]]:
   """Creates a function that produces its jaxpr given example args.
 
   Args:

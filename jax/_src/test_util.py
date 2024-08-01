@@ -2046,7 +2046,7 @@ def setup_hypothesis(max_examples=30) -> None:
       the default "deterministic" profile.
   """
   try:
-    import hypothesis as hp  # type: ignore
+    import hypothesis as hp
   except (ModuleNotFoundError, ImportError):
     return
 

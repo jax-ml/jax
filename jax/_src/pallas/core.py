@@ -700,7 +700,7 @@ def get_grid_mapping(
           _convert_block_spec_to_block_mapping,
           index_map_avals=index_map_avals,
           index_map_tree=index_map_tree,
-          grid=grid_mapping_grid,
+          grid=grid_mapping_grid,  # type: ignore[arg-type]
           mapped_dims=(),
       ),
       flat_in_specs,
@@ -722,7 +722,7 @@ def get_grid_mapping(
           _convert_block_spec_to_block_mapping,
           index_map_avals=index_map_avals,
           index_map_tree=index_map_tree,
-          grid=grid_mapping_grid,
+          grid=grid_mapping_grid,  # type: ignore[arg-type]
           mapped_dims=(),
       ),
       flat_out_specs,
