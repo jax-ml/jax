@@ -69,4 +69,6 @@ from jax._src.tree_util import (
     treedef_children as treedef_children,
     treedef_is_leaf as treedef_is_leaf,
     treedef_tuple as treedef_tuple,
+    tree_zip_with as tree_zip_with,
+    tree_unzip_with as tree_unzip_with,
 )

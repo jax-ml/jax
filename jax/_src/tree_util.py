@@ -1289,3 +1289,19 @@ def _prefix_error(
      f"{prefix_tree_keys} and {full_tree_keys}")
   for k, t1, t2 in zip(prefix_tree_keys, prefix_tree_children, full_tree_children):
     yield from _prefix_error((*key_path, k), t1, t2)
+
+def default_zip_err(tree1, tree2):
+  return (f"Can't zip trees with different structures:  {tree1} vs {tree2}")
+
+def tree_zip_with(f, xs, ys, err_msg=default_zip_err):
+  xs_flat, xs_tree = tree_flatten(xs)
+  ys_flat, ys_tree = tree_flatten(ys)
+  if xs_tree != ys_tree:
+    raise TypeError(err_msg(xs_tree, ys_tree))
+  return tree_unflatten(xs_tree, map(f, xs_flat, ys_flat))
+
+def tree_unzip_with(f, xs):
+  xs_flat, tree = tree_flatten(xs)
+  ys_flat, zs_flat = unzip2(map(f, xs_flat))
+  return tree_unflatten(tree, ys_flat), tree_unflatten(tree, zs_flat)
+

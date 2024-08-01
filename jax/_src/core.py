@@ -854,7 +854,7 @@ class EvalTrace(Trace):
       return call_impl_with_key_reuse_checks(primitive, primitive.impl, *tracers, **params)
     else:
       for t in tracers:
-        assert not isinstance(t, Tracer), breakpoint() or t # TODO: rename
+        assert not isinstance(t, Tracer) # TODO: rename
       with set_current_trace(EvalTrace()):
         return primitive.impl(*tracers, **params)
 

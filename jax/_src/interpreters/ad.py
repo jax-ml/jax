@@ -20,13 +20,14 @@ import functools
 import itertools as it
 from functools import partial
 from typing import Any
+import numpy as np
 
 import jax
 from jax._src import config
 from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe
-from jax.tree_util import (tree_flatten, tree_unflatten,
-                           register_pytree_node, Partial)
+from jax.tree_util import (tree_flatten, tree_unflatten, tree_zip_with,
+                           tree_unzip_with, register_pytree_node, Partial)
 from jax._src import core
 from jax._src import source_info_util
 from jax._src.ad_util import (
@@ -62,52 +63,59 @@ def _update_annotation(
                for nz, aval in zip(explicit_nonzeros, explicit_avals) if nz]
   return lu.annotate(f, (*orig_type, *tan_types))
 
-def jvp(fun: lu.WrappedFun, has_aux=False, instantiate=True,
-    transform_stack=True) -> Any:
-  if not has_aux:
-    return jvpfun(jvp_subtrace(fun), instantiate, transform_stack)
+def jvp(fun: Callable, primals, tangents, has_aux) -> Any:
+  if (not isinstance(primals, (tuple, list)) or
+      not isinstance(tangents, (tuple, list))):
+    raise TypeError("primal and tangent arguments to jax.jvp must be tuples or lists; "
+                    f"found {type(primals).__name__} and {type(tangents).__name__}.")
+
+  with core.take_current_trace() as parent_trace:
+    trace = JVPTrace(parent_trace, JVPTag())
+    tracers = tree_zip_with(partial(make_jvp_tracer, trace), primals, tangents, err_msg=jvp_tree_error_msg)
+    with core.set_current_trace(trace):
+      result_maybe_aux = fun(*tracers)
+
+    if has_aux:
+      result, aux = result_maybe_aux
+    else:
+      result = result_maybe_aux
+      aux = ()
+
+    out_primals, out_tangents = tree_unzip_with(trace.to_primal_tangent_pair, result)
+    aux_primals, _            = tree_unzip_with(trace.to_primal_tangent_pair, aux)
+
+    if has_aux:
+      return out_primals, out_tangents, aux_primals
+    else:
+      return out_primals, out_tangents
+
+def make_jvp_tracer(trace, p, t):
+  _dtype = partial(dtype, canonicalize=True)
+  if core.primal_dtype_to_tangent_dtype(_dtype(p)) != _dtype(t):
+    raise TypeError("primal and tangent arguments to jax.jvp do not match; "
+                    "dtypes must be equal, or in case of int/bool primal dtype "
+                    "the tangent dtype must be float0."
+                    f"Got primal dtype {_dtype(p)} and so expected tangent dtype "
+                    f"{core.primal_dtype_to_tangent_dtype(_dtype(p))}, but got "
+                    f"tangent dtype {_dtype(t)} instead.")
+  if np.shape(p) != np.shape(t):
+    raise ValueError("jvp called with different primal and tangent shapes;"
+                     f"Got primal shape {np.shape(p)} and tangent shape as {np.shape(t)}")
+  if not isinstance(t, Zero) and dtype(t) == float0:
+    t = Zero.from_value(t)
+
+  if type(t) is Zero:
+    return p
   else:
-    fun, aux = jvp_subtrace_aux(fun)
-    return jvpfun(fun, instantiate, transform_stack), aux
+    return JVPTracer(trace, p, t)
+
+def jvp_tree_error_msg(tree_def, tree_def_2):
+  return ("primal and tangent arguments to jax.jvp must have the same tree "
+         f"structure; primals have tree structure {tree_def} whereas tangents have "
+         f"tree structure {tree_def_2}.")
 
 
 class JVPTag: pass
-
-
-@lu.transformation
-def jvpfun(instantiate, transform_stack, primals, tangents):
-  tag = JVPTag()
-  tangents = [Zero.from_value(t) if not isinstance(t, Zero)
-              and dtype(t) == float0 else t for t in tangents]
-  ctx = (source_info_util.transform_name_stack('jvp') if transform_stack
-         else contextlib.nullcontext())
-  with ctx:
-    out_primals, out_tangents = yield (tag, primals, tangents), {}
-  if type(instantiate) is bool:
-    instantiate = [instantiate] * len(out_tangents)
-  out_tangents = [instantiate_zeros(t) if inst else t for t, inst
-                  in zip(out_tangents, instantiate)]
-  yield out_primals, out_tangents
-
-@lu.transformation
-def jvp_subtrace(tag, primals, tangents):
-  with core.take_current_trace() as parent_trace:
-    trace = JVPTrace(parent_trace, tag)
-    in_tracers = [JVPTracer(trace, x, t) if type(t) is not Zero else x
-                  for x, t in zip(primals, tangents)]
-    with core.set_current_trace(trace):
-      ans = yield in_tracers, {}
-    yield unzip2(map(trace.to_primal_tangent_pair, ans))
-
-@lu.transformation_with_aux
-def jvp_subtrace_aux(tag, primals, tangents):
-  with core.take_current_trace() as parent_trace:
-    trace = JVPTrace(parent_trace, tag)
-    with core.set_current_trace(trace):
-      ans, aux = yield map(partial(JVPTracer, trace), primals, tangents), {}
-    out_primals, out_tangents = unzip2(map(trace.to_primal_tangent_pair, ans))
-    aux_primals, _            = unzip2(map(trace.to_primal_tangent_pair, aux))
-    yield (out_primals, out_tangents), aux_primals
 
 def linearize(traceable, *primals, **kwargs):
   has_aux = kwargs.pop('has_aux', False)
