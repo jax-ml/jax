@@ -1,4 +1,4 @@
-# Copyright 2018 The JAX Authors.
+# Copyright 2024 The JAX Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,13 +15,18 @@
 # Note: import <name> as <name> is required for names to be exported.
 # See PEP 484 & https://github.com/google/jax/issues/7570
 
-from jax.experimental.x64_context import (
-  enable_x64 as enable_x64,
-  disable_x64 as disable_x64,
+import sys as _sys
+import warnings as _warnings
+
+import jax.numpy as _array_api
+
+# Added 2024-08-01
+_warnings.warn(
+    "jax.experimental.array_api import is no longer required as of JAX v0.4.32; "
+    "jax.numpy supports the array API by default.",
+    DeprecationWarning, stacklevel=2
 )
-from jax._src.callback import (
-  io_callback as io_callback
-)
-from jax._src.earray import (
-    EArray as EArray
-)
+
+_sys.modules['jax.experimental.array_api'] = _array_api
+
+del _array_api, _sys, _warnings
