@@ -12,6 +12,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 
 ## jax 0.4.32
 
+* Changes
+  * {mod}`jax.numpy` now supports v2023.12 of the Python Array API Standard.
+    See {ref}`python-array-api` for more information.
+
 * Breaking changes
   * The MHLO MLIR dialect (`jax.extend.mlir.mhlo`) has been removed. Use the
     `stablehlo` dialect instead.
@@ -23,6 +27,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     * `jax.lib.xla_bridge.xla_client`: use {mod}`jax.lib.xla_client` directly.
     * `jax.lib.xla_bridge.get_backend`: use {func}`jax.extend.backend.get_backend`.
     * `jax.lib.xla_bridge.default_backend`: use {func}`jax.extend.backend.default_backend`.
+  * The `jax.experimental.array_api` module is deprecated, and importing it is no
+    longer required to use the Array API. `jax.numpy` supports the array API
+    directly; see {ref}`python-array-api` for more information.
 
 ## jaxlib 0.4.32
 
