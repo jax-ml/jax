@@ -25,3 +25,20 @@ from jax._src.callback import (
 from jax._src.earray import (
     EArray as EArray
 )
+
+from jax import numpy as _array_api
+
+
+_deprecations = {
+  # Deprecated 01 Aug 2024
+  "array_api": (
+    "jax.experimental.array_api import is no longer required as of JAX v0.4.32; "
+    "jax.numpy supports the array API by default.",
+    _array_api
+  ),
+}
+
+from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
+__getattr__ = _deprecation_getattr(__name__, _deprecations)
+del _deprecation_getattr
+del _array_api
