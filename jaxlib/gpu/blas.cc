@@ -13,10 +13,9 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include <algorithm>
 #include <stdexcept>
 #include <utility>
-#include <vector>
+#include <cstddef>
 
 #include "nanobind/nanobind.h"
 #include "nanobind/stl/pair.h"

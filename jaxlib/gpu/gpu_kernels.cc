@@ -21,6 +21,7 @@ limitations under the License.
 #include "jaxlib/gpu/prng_kernels.h"
 #include "jaxlib/gpu/rnn_kernels.h"
 #include "jaxlib/gpu/solver_kernels.h"
+#include "jaxlib/gpu/solver_kernels_ffi.h"
 #include "jaxlib/gpu/sparse_kernels.h"
 #include "jaxlib/gpu/triton_kernels.h"
 #include "jaxlib/gpu/vendor.h"
@@ -42,7 +43,6 @@ XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cu_cholesky_update", CholeskyUpdate,
                                          "CUDA");
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cu_threefry2x32", ThreeFry2x32,
                                          "CUDA");
-XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusolver_getrf", Getrf, "CUDA");
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusolver_geqrf", Geqrf, "CUDA");
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusolver_csrlsvqr", Csrlsvqr, "CUDA");
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusolver_orgqr", Orgqr, "CUDA");
@@ -56,6 +56,10 @@ XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cu_lu_pivots_to_permutation",
                          "CUDA", LuPivotsToPermutation);
 XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cu_threefry2x32_ffi", "CUDA",
                          ThreeFry2x32Ffi);
+
+XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusolver_getrf", Getrf, "CUDA");
+XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cusolver_getrf_ffi", "CUDA",
+                         GetrfFfi);
 
 #if JAX_CUSPARSE_11300
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cusparse_csr_todense", CsrToDense,

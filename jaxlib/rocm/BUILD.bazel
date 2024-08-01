@@ -59,13 +59,31 @@ cc_library(
 )
 
 cc_library(
-    name = "hipblas_kernels",
-    srcs = ["//jaxlib/gpu:blas_kernels.cc"],
-    hdrs = ["//jaxlib/gpu:blas_kernels.h"],
+    name = "hip_gpu_handle_pools",
+    srcs = [
+        "//jaxlib/gpu:gpu_handle_pools.cc",
+    ],
+    hdrs = [
+        "//jaxlib/gpu:gpu_handle_pools.h",
+    ],
     deps = [
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
         "//jaxlib:handle_pool",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/synchronization",
+        "@local_config_rocm//rocm:rocm_headers",
+    ],
+)
+
+cc_library(
+    name = "hipblas_kernels",
+    srcs = ["//jaxlib/gpu:blas_kernels.cc"],
+    hdrs = ["//jaxlib/gpu:blas_kernels.h"],
+    deps = [
+        ":hip_gpu_handle_pools",
+        ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
         "//jaxlib:kernel_helpers",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
@@ -73,6 +91,7 @@ cc_library(
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/memory",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
@@ -109,15 +128,34 @@ cc_library(
     srcs = ["//jaxlib/gpu:solver_kernels.cc"],
     hdrs = ["//jaxlib/gpu:solver_kernels.h"],
     deps = [
+        ":hip_gpu_handle_pools",
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
-        "//jaxlib:handle_pool",
         "//jaxlib:kernel_helpers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
         "@local_config_rocm//rocm:hipsolver",
         "@local_config_rocm//rocm:rocm_headers",
+        "@xla//xla/service:custom_call_status",
+    ],
+)
+
+cc_library(
+    name = "hipsolver_kernels_ffi",
+    srcs = ["//third_party/py/jax/jaxlib/gpu:solver_kernels_ffi.cc"],
+    hdrs = ["//third_party/py/jax/jaxlib/gpu:solver_kernels_ffi.h"],
+    deps = [
+        ":hip_gpu_handle_pools",
+        ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
+        "//jaxlib:ffi_helpers",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@local_config_rocm//rocm:hipsolver",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/ffi/api:ffi",
         "@xla//xla/service:custom_call_status",
     ],
 )
@@ -132,6 +170,7 @@ pybind_extension(
     features = ["-use_header_modules"],
     module_name = "_solver",
     deps = [
+        ":hip_gpu_handle_pools",
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
         ":hipsolver_kernels",
@@ -241,9 +280,9 @@ pybind_extension(
         ":hip_linalg_kernels",
         ":hip_vendor",
         "//jaxlib:kernel_nanobind_helpers",
-        "@xla//xla/tsl/python/lib/core:numpy",
         "@local_config_rocm//rocm:rocm_headers",
         "@nanobind",
+        "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )
 
@@ -257,11 +296,11 @@ cc_library(
         ":hip_vendor",
         "//jaxlib:ffi_helpers",
         "//jaxlib:kernel_helpers",
-        "@xla//xla/ffi/api:c_api",
-        "@xla//xla/ffi/api:ffi",
-        "@local_config_rocm//rocm:rocm_headers",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/ffi/api:ffi",
         "@xla//xla/service:custom_call_status",
     ],
 )
@@ -274,8 +313,8 @@ rocm_library(
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
         "//jaxlib:kernel_helpers",
-        "@xla//xla/ffi/api:ffi",
         "@local_config_rocm//rocm:rocm_headers",
+        "@xla//xla/ffi/api:ffi",
         "@xla//xla/service:custom_call_status",
     ],
 )

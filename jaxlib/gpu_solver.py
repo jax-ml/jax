@@ -50,7 +50,10 @@ for cuda_module_name in [".cuda", "jax_cuda12_plugin"]:
     _cusolver = importlib.import_module(
         f"{cuda_module_name}._solver", package="jaxlib"
     )
-  except ImportError:
+  except ImportError as e:
+    print(e)
+    import traceback
+    traceback.print_exception(e)
     _cusolver = None
   else:
     break
