@@ -21,10 +21,12 @@ limitations under the License.
 #include "nanobind/stl/pair.h"
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_format.h"
+#include "absl/status/statusor.h"
 #include "third_party/gpus/cuda/include/cusolver_common.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/solver_handle_pool.h"
 #include "jaxlib/gpu/solver_kernels.h"
+#include "jaxlib/gpu/solver_kernels_ffi.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_nanobind_helpers.h"
 #include "xla/tsl/python/lib/core/numpy.h"
@@ -473,6 +475,9 @@ nb::dict Registrations() {
   dict["cusolver_csrlsvqr"] = EncapsulateFunction(Csrlsvqr);
   dict["cusolver_gesvdj"] = EncapsulateFunction(Gesvdj);
 #endif  // JAX_GPU_CUDA
+
+  dict[JAX_GPU_PREFIX "solver_getrf_ffi"] = EncapsulateFfiHandler(GetrfFfi);
+
   return dict;
 }
 

@@ -60,12 +60,8 @@ cc_library(
 
 cc_library(
     name = "hip_blas_handle_pool",
-    srcs = [
-        "//jaxlib/gpu:blas_handle_pool.cc",
-    ],
-    hdrs = [
-        "//jaxlib/gpu:blas_handle_pool.h",
-    ],
+    srcs = ["//jaxlib/gpu:blas_handle_pool.cc"],
+    hdrs = ["//jaxlib/gpu:blas_handle_pool.h"],
     deps = [
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
@@ -102,6 +98,23 @@ cc_library(
     ],
 )
 
+cc_library(
+    name = "hipblas_kernels_ffi",
+    srcs = ["//third_party/py/jax/jaxlib/gpu:blas_kernels_ffi.cc"],
+    hdrs = ["//third_party/py/jax/jaxlib/gpu:blas_kernels_ffi.h"],
+    deps = [
+        ":hip_gpu_handle_pools",
+        ":hip_gpu_kernel_helpers",
+        ":hip_vendor",
+        "//jaxlib:ffi_helpers",
+        "@com_google_absl//absl/status",
+        "@local_config_rocm//rocm:hipblas",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@xla//xla/ffi/api:ffi",
+        "@xla//xla/service:custom_call_status",
+    ],
+)
+
 pybind_extension(
     name = "_blas",
     srcs = ["//jaxlib/gpu:blas.cc"],
@@ -114,6 +127,7 @@ pybind_extension(
     deps = [
         ":hip_vendor",
         ":hipblas_kernels",
+        ":hipblas_kernels_ffi",
         "//jaxlib:kernel_nanobind_helpers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings:str_format",
@@ -126,12 +140,8 @@ pybind_extension(
 
 cc_library(
     name = "hip_solver_handle_pool",
-    srcs = [
-        "//jaxlib/gpu:solver_handle_pool.cc",
-    ],
-    hdrs = [
-        "//jaxlib/gpu:solver_handle_pool.h",
-    ],
+    srcs = ["//jaxlib/gpu:solver_handle_pool.cc"],
+    hdrs = ["//jaxlib/gpu:solver_handle_pool.h"],
     deps = [
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
@@ -157,6 +167,24 @@ cc_library(
         "@com_google_absl//absl/synchronization",
         "@local_config_rocm//rocm:hipsolver",
         "@local_config_rocm//rocm:rocm_headers",
+        "@xla//xla/service:custom_call_status",
+    ],
+)
+
+cc_library(
+    name = "hipsolver_kernels_ffi",
+    srcs = ["//third_party/py/jax/jaxlib/gpu:solver_kernels_ffi.cc"],
+    hdrs = ["//third_party/py/jax/jaxlib/gpu:solver_kernels_ffi.h"],
+    deps = [
+        ":hip_gpu_kernel_helpers",
+        ":hip_solver_handle_pool",
+        ":hip_vendor",
+        "//jaxlib:ffi_helpers",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@local_config_rocm//rocm:hipsolver",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@xla//xla/ffi/api:ffi",
         "@xla//xla/service:custom_call_status",
     ],
 )
