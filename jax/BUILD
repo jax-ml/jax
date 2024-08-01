@@ -986,15 +986,6 @@ pytype_library(
 )
 
 pytype_library(
-    name = "experimental_array_api",
-    visibility = [":internal"] + jax_visibility("array_api"),
-    deps = [
-        ":experimental",
-        ":jax",
-    ],
-)
-
-pytype_library(
     name = "experimental_sparse",
     srcs = glob(
         [
