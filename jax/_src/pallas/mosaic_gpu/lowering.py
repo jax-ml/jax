@@ -137,7 +137,7 @@ class BlockInfo:
   block_shape: tuple[int, ...]
 
 
-class LoweringError(Exception):
+class LoweringError(Exception):  # pylint: disable=g-bad-exception-name
   pass
 
 
@@ -287,7 +287,7 @@ def lower_jaxpr_to_mosaic_gpu(
 
 @register_lowering_rule(sp.get_p)
 def _get_lowering_rule(ctx: LoweringRuleContext, x_smem, *indexers, tree):
-  del tree  # Unused.
+  del tree, ctx  # Unused.
   if indexers:
     raise NotImplementedError("No support for indexers yet")
 
@@ -298,7 +298,7 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_smem, *indexers, tree):
 def _swap_lowering_rule(
     ctx: LoweringRuleContext, x_smem, value, *indexers, tree
 ):
-  del tree  # Unused.
+  del tree, ctx  # Unused.
   if indexers:
     raise NotImplementedError("No support for indexers yet")
   old_value = mgpu.FragmentedArray.load_strided(x_smem)
@@ -330,6 +330,7 @@ def _broadcast_in_dim_lowering_rule(
 def _convert_element_type_lowering_rule(
     ctx: LoweringRuleContext, x, *, new_dtype, weak_type, sharding
 ):
+  del weak_type, sharding
   return _ensure_fa(x, *ctx.avals_in).astype(mlir.dtype_to_ir_type(new_dtype))
 
 
@@ -377,6 +378,7 @@ def _debug_print_lowering_rule(
     fmt,
     has_placeholders: bool,
 ):
+  del ctx
   del has_placeholders
   primitives.check_debug_print_format(fmt, *args)
   mgpu.debug_print(fmt, *args)
