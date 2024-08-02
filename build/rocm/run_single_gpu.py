@@ -85,7 +85,6 @@ def collect_testmodules():
   print("Found %d test modules." % (len(test_files)))
   print("--------------------------------------------")
   print("\n".join(test_files))
-  
   return test_files
 
 
