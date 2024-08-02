@@ -757,12 +757,6 @@ def flatten_ir_values(xs: Iterable[IrValues]) -> list[ir.Value]:
       out.extend(x)
   return out
 
-
-_unflatten_done = object()
-
-def _unwrap_singleton_ir_values(x): return x[0] if len(x) == 1 else x
-
-
 def flatten_ir_types(xs: Iterable[IrTypes]) -> list[ir.Type]:
   """Concatenates/flattens a list of ir.Types or ir.Type sequences."""
   out = []

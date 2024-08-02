@@ -846,17 +846,6 @@ def _foldaxis(axis, x):
   new_shape[axis:axis+2] = [x.shape[axis] * x.shape[axis + 1]]
   return x.reshape(new_shape)
 
-def _index_in_group(axis_name, axis_index_groups):
-  cur_device_id = axis_index(axis_name)
-  if axis_index_groups is None:
-    return cur_device_id
-  # We use argsort to invert the axis_index_groups permutation
-  flat_groups = np.array(axis_index_groups).flatten()
-  device_id_to_idx = flat_groups.argsort() % len(axis_index_groups[0])
-  return lax.squeeze(
-      slicing.dynamic_slice_in_dim(device_id_to_idx, cur_device_id, 1), [0])
-
-
 def _all_to_all_lowering(
     ctx, x, *, split_axis, concat_axis, axis_name, axis_index_groups, tiled
 ):
@@ -1082,18 +1071,6 @@ def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False):
         axis_name=axis_name, axis_index_groups=axis_index_groups,
         axis_size=axis_size, tiled=tiled)
   return tree_util.tree_map(bind, x)
-
-def _expand(dim, size, index, tiled, x):
-  shape = list(x.shape)
-  if tiled:
-    tile_size = shape[dim]
-    shape[dim] *= size
-    out = lax.full(shape, lax._const(x, 0))
-    return slicing.dynamic_update_slice_in_dim(out, x, index * tile_size, dim)
-  else:
-    shape.insert(dim, size)
-    out = lax.full(shape, lax._const(x, 0))
-    return slicing.dynamic_update_index_in_dim(out, x, index, dim)
 
 def _all_gather_impl(x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
   raise AssertionError("Unexpected call to _all_gather_impl")
