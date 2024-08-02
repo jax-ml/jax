@@ -22,6 +22,7 @@ arrays.
 """
 from __future__ import annotations
 
+import atexit
 import collections
 from collections.abc import Callable, Generator, Hashable, Iterable, Sequence
 from functools import partial, lru_cache
@@ -2960,11 +2961,18 @@ def clear_backends():
   xb.local_devices.cache_clear()
   xb.process_count.cache_clear()
   dispatch.xla_primitive_callable.cache_clear()
+  util.clear_all_caches()
   pjit._infer_params_cached.cache_clear()
   pjit._pjit_lower_cached.cache_clear()
   pjit._create_pjit_jaxpr.cache_clear()  # pytype: disable=attribute-error
   pjit._cpp_pjit_cache.clear()
   xc._xla.PjitFunctionCache.clear_all()
+
+@atexit.register
+def clean_up():
+  assert xb._default_backend is not None
+  if xb._default_backend.platform == "cpu":  # pytype: disable=attribute-error
+    clear_backends()
 
 def live_arrays(platform=None):
   """Return all live arrays in the backend for `platform`.
