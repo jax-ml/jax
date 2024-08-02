@@ -912,17 +912,19 @@ def dot_product_attention(
   Returns:
     An array of the attention output with the same shape as :code:`query`.
   """
-  original_shape = jnp.asarray(query).shape
-  def _preprocess_array(t):
-    if t is None:
-      return t
+  output_shape = jnp.asarray(query).shape
+  def _ensure_4d(t):
     t = jnp.asarray(t)
-    return t[None, ...] if t.ndim == 3 else t
-  query = _preprocess_array(query)
-  key = _preprocess_array(key)
-  value = _preprocess_array(value)
-  bias = _preprocess_array(bias)
-  mask = _preprocess_array(mask)
+    dims_to_add = 4 - t.ndim
+    if dims_to_add > 0:
+      return jnp.expand_dims(t, axis=tuple(range(dims_to_add)))
+    return t
+  
+  query = _ensure_4d(query)
+  key = _ensure_4d(key)
+  value = _ensure_4d(value)
+  bias = _ensure_4d(bias) if bias is not None else None
+  mask = _ensure_4d(mask) if mask is not None else None
 
   def _check_has_shape(t: Array, shape: Sequence[int], name: str) -> None:
     if t.ndim != len(shape):
@@ -967,4 +969,4 @@ def dot_product_attention(
     case _:
       raise ValueError(f"Unsupported implementation option: {implementation}")
 
-  return jnp.reshape(out, original_shape)
+  return jnp.reshape(out, output_shape)
