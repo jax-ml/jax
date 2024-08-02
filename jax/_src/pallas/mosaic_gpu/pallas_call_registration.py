@@ -60,10 +60,11 @@ def pallas_call_lowering(
   if debug:
     print(lowering_result.module.operation)
 
+  module = lowering_result.module
   return mosaic_gpu._mosaic_gpu_lowering_rule(
       ctx,
       *args,
-      module=lowering_result.module,
+      module=module.operation.get_asm(binary=True, enable_debug_info=True),
       gmem_scratch_bytes=lowering_result.gmem_scratch_bytes,
       out_types=lowering_result.out_structs,
   )
