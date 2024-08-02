@@ -4297,6 +4297,24 @@ class ArrayPjitTest(jtu.JaxTestCase):
     out = f()
     self.assertEqual(out.sharding, s)
 
+  @jtu.run_on_devices('tpu', 'gpu')
+  def test_aot_device_mismatch(self):
+    mesh = jtu.create_global_mesh((1,), 'x')
+    np_inp = np.arange(8)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P()))
+
+    @jax.jit
+    def f(x):
+      return x * 2
+
+    compiled = f.lower(arr).compile()
+
+    cpu_arr = jax.device_put(np_inp, jax.devices('cpu')[0])
+    with self.assertRaisesRegex(
+        ValueError,
+        "Compiled object called with input sharding.*does not match"):
+      compiled(cpu_arr)
+
 
 def spec_regex(s):
   return str(s).replace(r"(", r"\(").replace(r")", r"\)")

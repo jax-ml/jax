@@ -3071,18 +3071,8 @@ def check_array_xla_sharding_layout_match(
 
     db_xs = check_device_backend_on_shardings([xs])
 
-    # Raise memory kind mismatch error even if the arg is uncommitted.
-    if arg.sharding.memory_kind != xs.memory_kind:
-      errors.append(
-          ("Got input sharding(s) that compiled object was called with: "
-          f"{arg.sharding} and sharding(s) the computation was compiled "
-          f"with: {xs} for arg {name} with shape: {arg.aval.str_short()}",
-          'sharding'))
-
     if (not db_xs and arg._committed and
-        not op_shardings.are_op_shardings_equal(
-            arg.sharding._to_xla_hlo_sharding(arg.ndim),
-            xs._to_xla_hlo_sharding(arg.ndim))):
+        not arg.sharding.is_equivalent_to(xs, arg.ndim)):
       errors.append(
           ("Got input sharding(s) that compiled object was called with: "
           f"{arg.sharding} and sharding(s) the computation was compiled "
