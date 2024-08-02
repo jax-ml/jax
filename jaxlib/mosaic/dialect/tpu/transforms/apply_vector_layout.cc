@@ -130,43 +130,6 @@ void moveAllRegions(Operation &src, Operation &dst) {
     dst_region.takeBody(src_region);
   }
 }
-// Masks all values outside of bounds.
-//
-// Arguments:
-//   value: A rank 2 MLIR vector to be masked.
-//   bounds: A TargetTuple of slices specifying a rectangular subregion of value
-//     that should be preserved during masking.
-//   neutral: A scalar attribute specifying the value that will be inserted
-//     for all values outside of specified bounds.
-//
-// Returns:
-//   An MLIR value of the same type as the value argument, with all entries
-//   outside of bounds replaced by neutral.
-FailureOr<Value> maskOOB(RewriteContext &ctx, OpBuilder &builder,
-                         TypedValue<VectorType> value,
-                         const VRegDataBounds &bounds,
-                         const TypedAttr neutral) {
-  TPU_ASSERT_LOC(value.getLoc(),
-                 llvm::equal(value.getType().getShape(), ctx.target_shape));
-  if (bounds.isComplete(ctx.target_shape)) {
-    return value;
-  }
-  FAILUREOR_ASSIGN_OR_RETURN(
-      TypedValue<VectorType> mask,
-      bounds.getVectorMask(builder, value.getLoc(), ctx.hardware_generation,
-                           ctx.target_shape));
-  if (cast<IntegerType>(mask.getType().getElementType()).getWidth() != 1) {
-    return emitError(value.getLoc(),
-                     "Not implemented: Unsupported mask bitwidth");
-  }
-  auto neutral_vec_ty = VectorType::get(ctx.target_shape, neutral.getType());
-  auto neutral_vec = builder.create<arith::ConstantOp>(
-      value.getLoc(), neutral_vec_ty,
-      DenseElementsAttr::get(neutral_vec_ty, neutral));
-  return builder
-      .create<arith::SelectOp>(value.getLoc(), mask, value, neutral_vec)
-      .getResult();
-}
 
 // Get the address of pre-allocated internal scratch space with requested shape.
 //
@@ -590,6 +553,50 @@ FailureOr<VectorType> getNativeVregType(
     Type elem_ty, const std::array<int64_t, 2> target_shape) {
   return getNativeVregOrVmaskTypeImpl(elem_ty, elem_ty.getIntOrFloatBitWidth(),
                                       target_shape);
+}
+
+// Masks all values outside of bounds.
+//
+// Arguments:
+//   value: A rank 2 MLIR vector to be masked.
+//   bounds: A TargetTuple of slices specifying a rectangular subregion of value
+//     that should be preserved during masking.
+//   neutral: A scalar attribute specifying the value that will be inserted
+//     for all values outside of specified bounds.
+//
+// Returns:
+//   An MLIR value of the same type as the value argument, with all entries
+//   outside of bounds replaced by neutral.
+FailureOr<Value> maskOOB(RewriteContext &ctx, OpBuilder &builder,
+                         TypedValue<VectorType> value,
+                         const VRegDataBounds &bounds,
+                         const TypedAttr neutral) {
+  auto native_vreg_ty =
+      *getNativeVregType(value.getType().getElementType(), ctx.target_shape);
+  TPU_ASSERT_LOC(value.getLoc(), llvm::equal(value.getType().getShape(),
+                                             native_vreg_ty.getShape()));
+  if (bounds.isComplete(ctx.target_shape)) {
+    return value;
+  }
+  FAILUREOR_ASSIGN_OR_RETURN(
+      TypedValue<VectorType> mask,
+      bounds.getVectorMask(builder, value.getLoc(), ctx.hardware_generation,
+                           ctx.target_shape));
+  if (cast<IntegerType>(mask.getType().getElementType()).getWidth() != 1) {
+    return emitError(value.getLoc(),
+                     "Not implemented: Unsupported mask bitwidth");
+  }
+  if (mask.getType().getShape() != native_vreg_ty.getShape()) {
+    mask = builder.create<tpu::MaskCastOp>(
+        value.getLoc(),
+        VectorType::get(native_vreg_ty.getShape(), builder.getI1Type()), mask);
+  }
+  auto neutral_vec = builder.create<arith::ConstantOp>(
+      value.getLoc(), native_vreg_ty,
+      DenseElementsAttr::get(native_vreg_ty, neutral));
+  return builder
+      .create<arith::SelectOp>(value.getLoc(), mask, value, neutral_vec)
+      .getResult();
 }
 
 // Returns empty vector on null attribute
@@ -3593,42 +3600,42 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
     return multi_reduction_op.emitOpError(
         "Not implemented: Only constant accumulator supported");
   }
-  if (!src_ty.getElementType().isF32()) {
+  if (!src_ty.getElementType().isF32() && !src_ty.getElementType().isBF16()) {
     return multi_reduction_op.emitOpError(
-               "Not implemented: Only FP32 reductions supported, but got ")
+               "Not implemented: Only FP32 and BF16 reductions supported, but "
+               "got ")
            << src_ty;
   }
-  // Element types of source, dest, acc match (by multi_dim reduction's
-  // definition), so we expect an f32 constant
+  auto element_type = cast<FloatType>(src_ty.getElementType());
   const auto acc_def_value = dyn_cast<DenseFPElementsAttr>(acc_def.getValue());
   if (acc_def_value == nullptr || !acc_def_value.isSplat()) {
     return multi_reduction_op.emitOpError("Expected a splat constant");
   }
-  TPU_ASSERT_OP(acc_def_value.getElementType().isF32());
-  const auto val = acc_def_value.getSplatValue<float>();
+  TPU_ASSERT_OP(acc_def_value.getElementType() == element_type);
+  const auto val = acc_def_value.getSplatValue<FloatAttr>();
   FloatAttr neutral;
   switch (multi_reduction_op.getKind()) {
     case vector::CombiningKind::ADD:
-      neutral = builder.getF32FloatAttr(0);
+      neutral = builder.getFloatAttr(element_type, 0);
       break;
     case vector::CombiningKind::MAXIMUMF: {
       // TODO(b/322836633): The semantics of maximumf don't match the lowering
       // for older TPU versions because older TPU versions don't respect the
       // -0.0 vs +0.0 ordering.
       neutral = builder.getFloatAttr(
-          builder.getF32Type(),
-          APFloat::getInf(APFloat::IEEEsingle(), /*Negative=*/true));
+          element_type, APFloat::getInf(element_type.getFloatSemantics(),
+                                        /*Negative=*/true));
     } break;
     case vector::CombiningKind::MINIMUMF: {
       neutral = builder.getFloatAttr(
-          builder.getF32Type(),
-          APFloat::getInf(APFloat::IEEEsingle(), /*Negative=*/false));
+          element_type, APFloat::getInf(element_type.getFloatSemantics(),
+                                        /*Negative=*/false));
     } break;
     default:
       return multi_reduction_op.emitOpError(
           "Not implemented: unsupported kind");
   }
-  if (val != neutral.getValueAsDouble()) {
+  if (val != neutral) {
     return multi_reduction_op.emitOpError(
         "Not implemented: Only neutral accumulator supported");
   }
@@ -3760,6 +3767,7 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
                   maskOOB(ctx, builder, cast<TypedValue<VectorType>>(*src_vreg),
                           *data_bounds, neutral);
               if (failed(failure_or_vreg)) {
+                op.emitOpError("Failed to mask vreg");
                 return absl::UnknownError("");
               }
               Value vreg = failure_or_vreg.value();
