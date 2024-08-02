@@ -567,15 +567,16 @@ def _infer_params_impl(
 
   dbg = debug_info(jit_name, ji.fun_sourceinfo, ji.fun_signature, args, kwargs,
                    ji.static_argnums, ji.static_argnames)
-  f = lu.wrap_init(fun)
-  f, res_paths = result_paths(f)
-  f, dyn_args = argnums_partial_except(f, ji.static_argnums, args, allow_invalid=True)
+  f, dyn_args = argnums_partial_except(fun, ji.static_argnums, args, allow_invalid=True)
   del args
 
   f, dyn_kwargs = argnames_partial_except(f, ji.static_argnames, kwargs)
   explicit_args, in_tree = tree_flatten((dyn_args, dyn_kwargs))
-  flat_fun, out_tree = flatten_fun(f, in_tree)
-  flat_fun, explicit_args = hoist_obj_attrs(flat_fun, explicit_args)
+  f, explicit_args = hoist_obj_attrs(f, explicit_args)
+
+  # f, res_paths = result_paths(fun)
+  # flat_fun, out_tree = flatten_fun(f, in_tree)
+
 
   if (ji.donate_argnums or ji.donate_argnames) and not config.debug_nans.value:
     donated_invars = donation_vector(ji.donate_argnums, ji.donate_argnames, in_tree)
@@ -629,12 +630,13 @@ def _infer_params_impl(
       ji.in_layouts_treedef, ji.in_layouts_leaves,
       in_avals, in_tree, dbg, device_or_backend_set, have_kwargs)
 
-  attr_token = _attr_token(flat_fun, in_type)
+  # attr_token = _attr_token(f, in_type)
+  attr_token = None
   jaxpr, consts, out_avals, attrs_tracked = _create_pjit_jaxpr(
-      flat_fun, in_type, attr_token, dbg,
-      HashableFunction(res_paths, closure=()),
+      f, in_type, attr_token, dbg,
+      # HashableFunction(res_paths, closure=()),
       IgnoreKey(ji.inline))
-  _attr_update(flat_fun, in_type, attr_token, attrs_tracked)
+  # _attr_update(f, in_type, attr_token, attrs_tracked)
 
   out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
       out_shardings_treedef, out_shardings_leaves, ji.out_layouts_treedef,
@@ -1254,33 +1256,32 @@ def explain_tracing_cache_miss(
   p("explanation unavailable! please open an issue at https://github.com/google/jax")
   return done()
 
-@partial(lu.cache, explain=explain_tracing_cache_miss)
+# @partial(lu.cache, explain=explain_tracing_cache_miss)
 def _create_pjit_jaxpr(
-    fun: lu.WrappedFun,
+    fun: Callable,
     in_type: core.InputType | Sequence[core.AbstractValue],
     attr_data: int,
     debug_info: lu.TracingDebugInfo,
-    out_paths: Callable,
+    # out_paths: Callable,
     ignored_inline: IgnoreKey
 ) -> tuple[core.ClosedJaxpr, list[Any], list[core.AbstractValue],
            list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]]:
   del ignored_inline  # just for explain_cache_miss
   with dispatch.log_elapsed_time(
       "Finished tracing + transforming {fun_name} for pjit in {elapsed_time:.9f} sec",
-      fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
-    pe_debug = debug_info and pe.debug_info_final(fun, debug_info.traced_for)
+      fun_name=fun, event=dispatch.JAXPR_TRACE_EVENT):
     if config.dynamic_shapes.value:
       jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic2(
-          lu.annotate(fun, cast(core.InputType, in_type)), debug_info=pe_debug)
+          lu.annotate(fun, cast(core.InputType, in_type)))
       attrs_tracked = []
     else:
       jaxpr, global_out_avals, consts, attrs_tracked = pe.trace_to_jaxpr_dynamic(
-          fun, in_type, debug_info=pe_debug)
+          fun, in_type)
       # assert attr_data is sentinel or attr_data matches attrs_tracked
 
-  # TODO(dougalm,mattjj): enable debug info with attrs_tracked
-  if not config.dynamic_shapes.value and not attrs_tracked:
-    jaxpr = jaxpr_debug_info(jaxpr, debug_info, out_paths())
+  # # TODO(dougalm,mattjj): enable debug info with attrs_tracked
+  # if not config.dynamic_shapes.value and not attrs_tracked:
+  #   jaxpr = jaxpr_debug_info(jaxpr, debug_info, out_paths())
 
   if config.debug_key_reuse.value:
     # Import here to avoid circular imports
@@ -1334,7 +1335,7 @@ def seen_attrs_get(
     fun: lu.WrappedFun,
     in_type: core.InputType | tuple[core.AbstractValue, ...]
 ) -> list:
-  cache = _seen_attrs.setdefault(fun.f, defaultdict(list))
+  cache = _seen_attrs.setdefault(fun, defaultdict(list))
   assert fun.in_type is None or fun.in_type == in_type
   return cache[(fun.transforms, fun.params, in_type)]
 

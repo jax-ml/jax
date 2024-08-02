@@ -235,7 +235,7 @@ def argnums_partial(f, dyn_argnums, args, require_static_args_hashable=True):
     fixed_args = [Unhashable(arg) for i, arg in enumerate(args)
                   if i not in dyn_argnums]
   dyn_args = tuple(args[i] for i in dyn_argnums)
-  return _argnums_partial(f, dyn_argnums, tuple(fixed_args)), dyn_args
+  return partial(_argnums_partial, f, dyn_argnums, tuple(fixed_args)), dyn_args
 
 def _ensure_inbounds(allow_invalid: bool, num_args: int, argnums: Sequence[int]
                      ) -> tuple[int, ...]:
@@ -275,10 +275,9 @@ def argnums_partial_except(f: lu.WrappedFun, static_argnums: tuple[int, ...],
     else:
       fixed_args.append(_HashableWithStrictTypeEquality(static_arg))
 
-  return _argnums_partial(f, dyn_argnums, tuple(fixed_args)), dyn_args
+  return partial(_argnums_partial, f, dyn_argnums, tuple(fixed_args)), dyn_args
 
-@lu.transformation
-def _argnums_partial(dyn_argnums, fixed_args, *dyn_args, **kwargs):
+def _argnums_partial(f, dyn_argnums, fixed_args, *dyn_args, **kwargs):
   sentinel = object()
   args = [sentinel] * (len(fixed_args) + len(dyn_args))
   for i, arg in zip(dyn_argnums, dyn_args):
@@ -286,11 +285,9 @@ def _argnums_partial(dyn_argnums, fixed_args, *dyn_args, **kwargs):
   fixed_args_ = iter(fixed_args)
   args = [next(fixed_args_).val if x is sentinel else x for x in args]
   assert next(fixed_args_, sentinel) is sentinel
-  ans = yield args, kwargs
-  yield ans
+  return f(*args, **kwargs)
 
-
-def argnames_partial_except(f: lu.WrappedFun, static_argnames: tuple[str, ...],
+def argnames_partial_except(f: Callable, static_argnames: tuple[str, ...],
                             kwargs: dict[str, Any]):
   if not static_argnames:
     return f, kwargs
@@ -700,7 +697,7 @@ def hoist_obj_attrs(f, flat_args):
     else:
       idxs.append(i)
       flat_args_.append(x)
-  return _argnums_partial(f, tuple(idxs), tuple(objs)), flat_args_
+  return partial(_argnums_partial, f, tuple(idxs), tuple(objs)), flat_args_
 
 class _HashableByObjectId:
   __slots__ = ['val']

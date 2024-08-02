@@ -26,7 +26,7 @@ import jax
 from jax._src import config
 from jax._src import linear_util as lu
 from jax._src.interpreters import partial_eval as pe
-from jax.tree_util import (tree_flatten, tree_unflatten, tree_zip_with,
+from jax.tree_util import (tree_flatten, tree_map, tree_unflatten, tree_zip_with,
                            tree_unzip_with, register_pytree_node, Partial)
 from jax._src import core
 from jax._src import source_info_util
@@ -63,7 +63,9 @@ def _update_annotation(
                for nz, aval in zip(explicit_nonzeros, explicit_avals) if nz]
   return lu.annotate(f, (*orig_type, *tan_types))
 
-def jvp(fun: Callable, primals, tangents, has_aux) -> Any:
+class JVPTag: pass
+
+def jvp(fun: Callable, primals, tangents) -> Any:
   if (not isinstance(primals, (tuple, list)) or
       not isinstance(tangents, (tuple, list))):
     raise TypeError("primal and tangent arguments to jax.jvp must be tuples or lists; "
@@ -72,22 +74,13 @@ def jvp(fun: Callable, primals, tangents, has_aux) -> Any:
   with core.take_current_trace() as parent_trace:
     trace = JVPTrace(parent_trace, JVPTag())
     tracers = tree_zip_with(partial(make_jvp_tracer, trace), primals, tangents, err_msg=jvp_tree_error_msg)
-    with core.set_current_trace(trace):
+    with source_info_util.transform_name_stack('jvp'), core.set_current_trace(trace):
       result_maybe_aux = fun(*tracers)
 
-    if has_aux:
-      result, aux = result_maybe_aux
-    else:
-      result = result_maybe_aux
-      aux = ()
-
+    result, aux = result_maybe_aux
     out_primals, out_tangents = tree_unzip_with(trace.to_primal_tangent_pair, result)
     aux_primals, _            = tree_unzip_with(trace.to_primal_tangent_pair, aux)
-
-    if has_aux:
-      return out_primals, out_tangents, aux_primals
-    else:
-      return out_primals, out_tangents
+    return out_primals, out_tangents, aux_primals
 
 def make_jvp_tracer(trace, p, t):
   _dtype = partial(dtype, canonicalize=True)
@@ -101,10 +94,7 @@ def make_jvp_tracer(trace, p, t):
   if np.shape(p) != np.shape(t):
     raise ValueError("jvp called with different primal and tangent shapes;"
                      f"Got primal shape {np.shape(p)} and tangent shape as {np.shape(t)}")
-  if not isinstance(t, Zero) and dtype(t) == float0:
-    t = Zero.from_value(t)
-
-  if type(t) is Zero:
+  if type(t) is Zero or dtype(t) == float0:
     return p
   else:
     return JVPTracer(trace, p, t)
@@ -115,34 +105,19 @@ def jvp_tree_error_msg(tree_def, tree_def_2):
          f"tree structure {tree_def_2}.")
 
 
-class JVPTag: pass
+def linearize(traceable, primals):
+  in_pvals = ( tree_map(lambda p: pe.PartialVal.known(p), primals)
+             , tree_map(lambda p: pe.PartialVal.unknown(get_aval(p).at_least_vspace()), primals))
+  jaxpr, out_pvals, consts = pe.trace_to_jaxpr_nounits(partial(jvp, traceable), in_pvals)
+  out_primals_pvals, out_tangents_pvals, aux_pvals = out_pvals
+  assert all(pval.is_known() for pval, _ in tree_flatten(out_primals_pvals))
+  assert all(pval.is_known() for pval, _ in tree_flatten(aux_pvals))
+  out_primals = tree_map(lambda pval: pval.get_known(), out_primals_pvals)
+  aux= tree_map(lambda pval: pval.get_known(), aux_pvals)
+  return out_primals, out_tangents_pvals, jaxpr, consts, aux
 
-def linearize(traceable, *primals, **kwargs):
-  has_aux = kwargs.pop('has_aux', False)
-  if not has_aux:
-    jvpfun = jvp(traceable)
-  else:
-    jvpfun, aux = jvp(traceable, has_aux=True)
-
-  in_pvals = (tuple(pe.PartialVal.known(p) for p in primals)
-              + tuple(pe.PartialVal.unknown(get_aval(p).at_least_vspace())
-                      for p in primals))
-  _, in_tree = tree_flatten(((primals, primals), {}))
-  jvpfun_flat, out_tree = flatten_fun(jvpfun, in_tree)
-  jaxpr, out_pvals, consts = pe.trace_to_jaxpr_nounits(jvpfun_flat, in_pvals)
-  out_primals_pvals, out_tangents_pvals = tree_unflatten(out_tree(), out_pvals)
-  assert all(out_primal_pval.is_known() for out_primal_pval in out_primals_pvals)
-  out_primals_consts = [pval.get_known() for pval in out_primals_pvals]
-  if not has_aux:
-    return out_primals_consts, out_tangents_pvals, jaxpr, consts
-  else:
-    return out_primals_consts, out_tangents_pvals, jaxpr, consts, aux()
-
-def vjp(traceable, primals, has_aux=False):
-  if not has_aux:
-    out_primals, pvals, jaxpr, consts = linearize(traceable, *primals)
-  else:
-    out_primals, pvals, jaxpr, consts, aux = linearize(traceable, *primals, has_aux=True)
+def vjp(traceable, primals):
+  out_primals, pvals, jaxpr, consts, aux = linearize(traceable, primals)
 
   def unbound_vjp(pvals, jaxpr, consts, *cts):
     cts = tuple(ct for ct, pval in zip(cts, pvals) if not pval.is_known())
@@ -153,10 +128,7 @@ def vjp(traceable, primals, has_aux=False):
   # Ensure that vjp_ is a PyTree so that we can pass it from the forward to the backward
   # pass in a custom VJP.
   vjp_ =  Partial(partial(unbound_vjp, pvals, jaxpr), consts)
-  if not has_aux:
-    return out_primals, vjp_
-  else:
-    return out_primals, vjp_, aux
+  return out_primals, vjp_, aux
 
 def unpair_pval(pval):
   aval, const = pval

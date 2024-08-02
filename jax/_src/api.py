@@ -692,15 +692,14 @@ def value_and_grad(fun: Callable, argnums: int | Sequence[int] = 0,
                       f"{max_argnum + 1} positional arguments to be passed by the caller, "
                       f"but got only {len(args)} positional arguments.")
 
-    f = lu.wrap_init(fun, kwargs)
-    f_partial, dyn_args = argnums_partial(f, argnums, args,
+    f_partial, dyn_args = argnums_partial(fun, argnums, args,
                                           require_static_args_hashable=False)
     for leaf in tree_leaves(dyn_args):
       _check_input_dtype_grad(holomorphic, allow_int, leaf)
     if not has_aux:
-      ans, vjp_py = _vjp(f_partial, *dyn_args)
+      ans, vjp_py = vjp(f_partial, *dyn_args)
     else:
-      ans, vjp_py, aux = _vjp(
+      ans, vjp_py, aux = vjp(
           f_partial, *dyn_args, has_aux=True)
     _check_scalar(ans)
     tree_map(partial(_check_output_dtype_grad, holomorphic), ans)
@@ -1628,7 +1627,6 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
   dbg = debug_info('pmap', src, signature, args, kwargs,
                    static_broadcasted_tuple, ())
 
-  f = lu.wrap_init(fun)
   if static_broadcasted_tuple:
     if max(static_broadcasted_tuple) >= len(args):
       raise ValueError(
@@ -1638,7 +1636,7 @@ def _prepare_pmap(fun, in_axes, out_axes, static_broadcasted_tuple,
           "All static broadcasted arguments must be passed positionally.")
     dyn_argnums = [i for i in range(len(args))
                    if i not in static_broadcasted_tuple]
-    f, dyn_args = argnums_partial(f, dyn_argnums, args)
+    f, dyn_args = argnums_partial(fun, dyn_argnums, args)
 
     if isinstance(in_axes, tuple):
       dyn_in_axes = tuple(in_axes[i] for i in dyn_argnums)
@@ -1914,8 +1912,13 @@ def jvp(
   0.19900084
   """
   check_callable(fun)
-  with source_info_util.transform_name_stack('jvp'):
-    return ad.jvp(fun, primals, tangents, has_aux=has_aux)
+  if has_aux:
+    return ad.jvp(fun, primals, tangents)
+  else:
+    def fun_(*primals):
+      return fun(*primals), ()
+    out_primals, out_tangents, _ = ad.jvp(fun_, primals, tangents)
+    return out_primals, out_tangents
 
 @overload
 def linearize(fun: Callable, *primals, has_aux: Literal[False] = False
@@ -2141,30 +2144,15 @@ def vjp(
     raise NotImplementedError("reduce_axes argument to vjp is deprecated")
   del reduce_axes
   check_callable(fun)
-  return _vjp(
-      lu.wrap_init(fun), *primals, has_aux=has_aux)
+  tree_map(dispatch.check_arg, primals)
 
-def _vjp(fun: lu.WrappedFun, *primals, has_aux=False):
-  """Variant of vjp() that takes an lu.WrappedFun."""
-  primals_flat, in_tree = tree_flatten(primals)
-  for arg in primals_flat: dispatch.check_arg(arg)
-  if not has_aux:
-    flat_fun, out_tree = flatten_fun_nokwargs(fun, in_tree)
-    out_primals, vjp = ad.vjp(flat_fun, primals_flat)
-    out_tree = out_tree()
+  if has_aux:
+    return ad.vjp(fun, primals)
   else:
-    flat_fun, out_aux_trees = flatten_fun_nokwargs2(fun, in_tree)
-    out_primals, vjp, aux = ad.vjp(flat_fun, primals_flat, has_aux=True)
-    out_tree, aux_tree = out_aux_trees()
-  out_primal_avals = map(shaped_abstractify, out_primals)
-  out_primal_py = tree_unflatten(out_tree, out_primals)
-  vjp_py = Partial(partial(_vjp_pullback_wrapper, fun.__name__,
-                           out_primal_avals, (out_tree, in_tree)), vjp)
-  if not has_aux:
-    return out_primal_py, vjp_py
-  else:
-    return out_primal_py, vjp_py, tree_unflatten(aux_tree, aux)
-
+     def fun_(*primals):
+       return fun(*primals), ()
+     out_primal, vjp_fun, _ = ad.vjp(fun_, primals)
+     return out_primal, vjp_fun
 
 def linear_transpose(fun: Callable, *primals, reduce_axes=()) -> Callable:
   """Transpose a function that is promised to be linear.

@@ -46,7 +46,7 @@ from jax._src.core import (Trace, Tracer, Jaxpr, Literal, get_aval,
 from jax._src.state.types import AbstractRef
 from jax._src.tree_util import (PyTreeDef, treedef_tuple, tree_unflatten,
                                 tree_flatten, tree_structure, KeyPath, generate_key_paths,
-                                keystr)
+                                keystr, tree_map)
 from jax._src.util import (unzip2, safe_zip, safe_map, toposort, split_list,
                            merge_lists, partition_list, OrderedSet,
                            as_hashable_function, weakref_lru_cache, subs_list)
@@ -648,25 +648,43 @@ def trace_to_jaxpr(
 
   return jaxpr, out_pvals, consts
 
+
+def make_jaxpr_tracing_val(trace, pval):
+  assert isinstance(pval, PartialVal)
+  if pval.is_known():
+    return pval.get_known()
+  else:
+    return trace.new_arg(pval)
+
+def interpret_jaxpr_tracing_result(val, t, instantiate):
+  t = trace.to_jaxpr_tracer(t)
+  if instantiate:
+    return trace.instantiate_const(val)
+  else:
+    return t
+
 @profiler.annotate_function
 def trace_to_jaxpr_nounits(
-    fun: lu.WrappedFun, pvals: Sequence[PartialVal],
+    fun: Callable, pvals: Sequence[PartialVal],
     instantiate: bool | Sequence[bool] = False,
   ) -> tuple[Jaxpr, list[PartialVal], list[core.Value]]:
   current_name_stack = source_info_util.current_name_stack()
   with core.take_current_trace() as parent_trace:
     trace = JaxprTrace(parent_trace, current_name_stack, JaxprTraceTag())
-    fun = trace_to_subjaxpr_nounits(fun, trace, instantiate)
+    tracers = tree_map(partial(make_jaxpr_tracing_val, trace), pvals)
     with core.set_current_trace(trace):
-      jaxpr, (out_pvals, consts, env) = fun.call_wrapped(pvals)
-      assert not env
-    return jaxpr, out_pvals, consts
+      ans = fun(*tracers)
+    ans = tree_map(partial(interpret_jaxpr_tracing_result, trace), ans, instantiate)
+    flat_non_const_tracers = [t for t in tree_flatten(ans)[0] if not t.is_known()]
+    flat_in_tracers = tree_flatten(tracers)[0]
+    jaxpr, out_consts, env = tracers_to_jaxpr(flat_in_tracers, flat_non_const_tracers)
+    return ans, jaxpr, out_consts, env
 
-@lu.transformation
 def trace_to_subjaxpr_nounits(
     trace: JaxprTrace,
     instantiate: bool | Sequence[bool],
     in_pvals: Sequence[PartialVal]):
+
   assert all(isinstance(pv, PartialVal) for pv in in_pvals), in_pvals
   out_tracers, jaxpr, out_consts, env = yield from _trace_to_subjaxpr_nounits(
       trace, instantiate, in_pvals)
@@ -2223,7 +2241,7 @@ def trace_to_jaxpr_dynamic(
   in_tracers = _input_type_to_tracers(trace.new_arg, in_avals)
   in_tracers_ = [t for t, keep in zip(in_tracers, keep_inputs) if keep]
   with core.set_current_trace(trace):
-    ans = fun.call_wrapped(*in_tracers_)
+    ans = fun(*in_tracers_)
 
   out_tracers = map(trace.to_jaxpr_tracer, ans)
   jaxpr, consts, attrs_tracked = frame.to_jaxpr(trace, out_tracers)
