@@ -2114,7 +2114,7 @@ def lower_sharding_computation(
     donated_invars: Sequence[bool],
     *,
     keep_unused: bool,
-    devices_from_context: Sequence[xc.Device] | None,
+    context_mesh: mesh_lib.Mesh | None,
     lowering_platforms: tuple[str, ...] | None,
     lowering_parameters: mlir.LoweringParameters,
     pgle_profiler: profiler.PGLEProfiler | None,
@@ -2157,6 +2157,8 @@ def lower_sharding_computation(
   assert len(out_shardings) == len(out_layouts) == len(global_out_avals), (
       len(out_shardings), len(out_layouts), len(global_out_avals))
 
+  devices_from_context = (None if context_mesh is None or context_mesh.empty
+                          else context_mesh._flat_devices_tuple)
   # Device assignment across all inputs, outputs and shardings inside jaxpr
   # should be the same.
   unique_intermediate_shardings = list(util.stable_unique(
@@ -2253,7 +2255,8 @@ def lower_sharding_computation(
       all_default_mem_kind=all_default_mem_kind,
       all_args_info=all_args_info,
       pgle_profiler=pgle_profiler,
-      intermediate_shardings=[s for s, _ in unique_intermediate_shardings])
+      intermediate_shardings=[s for s, _ in unique_intermediate_shardings],
+      context_mesh=context_mesh)
 
 
 def _to_logical_sharding(
@@ -2472,7 +2475,7 @@ def _get_out_sharding_from_orig_sharding(
 
 def maybe_recover_user_shardings(
     old_shardings, new_shardings, old_avals, new_avals,
-    intermediate_shardings=None):
+    intermediate_shardings=None, context_mesh: mesh_lib.Mesh | None = None):
   if all(not isinstance(o, sharding_impls.GSPMDSharding) for o in new_shardings):
     return new_shardings
 
@@ -2486,6 +2489,11 @@ def maybe_recover_user_shardings(
       if i is not None and type(i) in _orig_out_sharding_handlers:
         return _get_out_sharding_from_orig_sharding(
             new_shardings, new_avals, i, None)
+
+  if context_mesh is not None and not context_mesh.empty:
+    return [sharding_impls._gspmd_to_named_sharding_via_mesh(n, context_mesh)
+            if isinstance(n, GSPMDSharding) else n
+            for n in new_shardings]
 
   return new_shardings
 
@@ -2775,6 +2783,7 @@ class UnloadedMeshExecutable:
                compiler_options=None,
                pgle_profiler: profiler.PGLEProfiler | None = None,
                intermediate_shardings: Sequence[JSharding] | None = None,
+               context_mesh: mesh_lib.Mesh | None = None
   ) -> MeshExecutable:
     if shape_poly_state is not None and shape_poly_state.uses_dim_vars:
       hlo = mlir.refine_polymorphic_shapes(hlo)
@@ -2832,7 +2841,7 @@ class UnloadedMeshExecutable:
 
     out_shardings = maybe_recover_user_shardings(
         in_shardings, out_shardings, global_in_avals, global_out_avals,
-        intermediate_shardings)
+        intermediate_shardings, context_mesh)
 
     out_shardings = finalize_out_shardings(out_shardings, da)
 

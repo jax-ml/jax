@@ -875,7 +875,7 @@ def _check_lowering(lowering) -> None:
   # Check that we do not see new compile_args. When we add a compile_args it is
   # safe to add it to the allowed_compile_args if it does not change the semantics
   # or the calling convention of the lowered module.
-  allowed_compile_args = [
+  allowed_compile_args = {
       "backend", "platforms", "mesh", "global_in_avals",
       "global_out_avals", "in_shardings", "out_shardings", "kept_var_idx",
       "mut", "spmd_lowering", "auto_spmd_lowering",
@@ -883,7 +883,7 @@ def _check_lowering(lowering) -> None:
       "keepalive", "host_callbacks", "pmap_nreps", "committed",
       "device_assignment", "jaxpr_debug_info", "shape_poly_state",
       "all_default_mem_kind", "in_layouts", "out_layouts", "all_args_info",
-      "pgle_profiler", "intermediate_shardings"]
+      "pgle_profiler", "intermediate_shardings", "context_mesh"}
   for compile_arg in lowering.compile_args.keys():
     if compile_arg not in allowed_compile_args:
       raise NotImplementedError(f"Unrecognized lowered.compile_args[{compile_arg}]")

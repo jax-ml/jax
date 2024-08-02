@@ -2516,6 +2516,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
     with mesh:
       out = pjit(lambda: 1)()
+    self.assertEqual(out.sharding, NamedSharding(mesh, P()))
     self.assertIsInstance(out, array.ArrayImpl)
     self.assertEqual(out, 1)
 
@@ -2873,6 +2874,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     with jtu.ignore_warning(category=DeprecationWarning,
                             message="backend and device argument"):
       f = pjit(mul, device=jax.devices()[1])
+
     x = jnp.arange(8).reshape(4, 2)
     f_out = f(x)
     f_out2 = f(f_out)
