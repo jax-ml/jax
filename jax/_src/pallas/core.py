@@ -445,10 +445,14 @@ class GridMapping:
 
   @property
   def slice_block_ops(self):
-    """Returns a slice to select all but the index operands to a kernel.
+    """Returns a slice to select the block operands to a kernel.
+
+    The block operands are: *ins, *outs, the same for which we
+    have `self.block_mappings`.
     This works on a sequence that contains *index, *ins, *outs, *scratch.
     """
-    return slice(self.num_index_operands, None)
+    return slice(self.num_index_operands,
+                 self.num_index_operands + len(self.block_mappings))
 
   @property
   def slice_scratch_ops(self):

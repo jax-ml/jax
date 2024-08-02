@@ -297,15 +297,6 @@ class MosaicGridMapping:
     self.jaxpr = jaxpr
     self.block_mappings = grid_mapping.block_mappings
     self.mapped_dims = grid_mapping.vmapped_dims
-    # TODO(necula): clean this using new grid_mapping helpers
-    num_scalar_prefetch = grid_mapping.num_index_operands
-    num_scratch = grid_mapping.num_scratch_operands
-    # jaxpr has signature [*scalar_prefetch, *in_ops, *out_ops, *scratch]
-    num_operands = (
-        len(self.jaxpr.invars)
-        - num_scalar_prefetch
-        - num_scratch
-    )
     user_grid = tuple(
         g for i, g in enumerate(self.grid) if i not in self.mapped_dims
     )
@@ -315,8 +306,6 @@ class MosaicGridMapping:
       raise ValueError(
           "Must have dimension semantics for each dimension of the grid."
       )
-    if num_operands != len(self.block_mappings):
-      raise ValueError("Must have block mappings for each operand.")
     assert len(self.mapped_dims) + len(dimension_semantics) == len(
         self.grid
     ), (
@@ -332,9 +321,10 @@ class MosaicGridMapping:
     )
 
     in_avals = [invar.aval for invar in self.jaxpr.invars]
-    scalar_prefetch_avals, operand_avals, scratch_avals = split_list(
-        in_avals, [num_scalar_prefetch, num_operands]
-    )
+    # jaxpr has signature [*scalar_prefetch, *consts, *in_ops, *out_ops, *scratch]
+    scalar_prefetch_avals = in_avals[grid_mapping.slice_index_ops]
+    operand_avals = in_avals[grid_mapping.slice_block_ops]
+    scratch_avals = in_avals[grid_mapping.slice_scratch_ops]
     self.scalar_prefetch_types, _ = unzip2([
         _get_arg_type(aval, None)
         for aval in scalar_prefetch_avals])
