@@ -5469,8 +5469,17 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
   FAILUREOR_ASSIGN_OR_RETURN(
       xla::Array<Value> src_tiles,
       disassemble(builder, src, v, target_shape, /*use_implicit_shape=*/true));
-  // Two easy cases: layouts are equivalent, or the source is replicated.
+  // Two easy cases: source is more general, or is replicated.
   if (src.generalizes(dst, vty.getShape(), target_shape)) {
+    // A value with a replicated offset might use fewer vregs than a value with
+    // a non-zero offset.
+    if (xla::Product(src.tileArrayShape(vty.getShape(), target_shape)) !=
+        xla::Product(dst.tileArrayShape(vty.getShape(), target_shape))) {
+      return emitError(v.getLoc(),
+                       "Not implemented: source layout is more general, but "
+                       "vreg count changes");
+    }
+    src_tiles.Reshape(dst.tileArrayImplicitShape(vty.getShape(), target_shape));
     return assemble(builder, vty, dst, std::move(src_tiles), target_shape,
                     /*use_implicit_shape=*/true)
         .getResult();
@@ -5523,7 +5532,6 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
                     std::move(src_tiles), dst.offsets()));
 
   CHECK_EQ(src, dst);  // At this point we've should be done.
-  src_tiles.Reshape(dst.tileArrayImplicitShape(vty.getShape(), target_shape));
   return assemble(builder, vty, dst, std::move(src_tiles), target_shape,
                   /*use_implicit_shape=*/true)
       .getResult();
