@@ -1392,7 +1392,9 @@ def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand, *,
     lu, pivot, info = getrf_impl(operand_aval.dtype, operand)
   else:
     op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-    lu, pivot, info = getrf_impl(
+    # TODO(b/344892332): Remove the conditional after the compatibility period.
+    ctx_args = (ctx,) if jaxlib_version >= (0, 4, 32) else ()
+    lu, pivot, info = getrf_impl(*ctx_args,
         operand_aval.dtype, operand, a_shape_vals=op_shape_vals)
   # Subtract 1 from the pivot to get 0-based indices.
   pivot = hlo.subtract(pivot, mlir.full_like_aval(ctx, 1, pivot_aval))
