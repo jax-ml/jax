@@ -48,6 +48,7 @@ def pallas_call_lowering(
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: pallas_core.GridMapping,
     compiler_params: dict[str, Any],
+    cost_estimate: pallas_core.CostEstimate | None,
 ):
   del interpret
   if grid_mapping.num_dynamic_grid_bounds:

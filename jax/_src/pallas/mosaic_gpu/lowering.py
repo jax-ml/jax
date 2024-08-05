@@ -146,7 +146,9 @@ def lower_jaxpr_to_module(
     jaxpr: jax_core.Jaxpr,
     name_and_src_info: pallas_core.NameAndSrcInfo,
     compiler_params: dict[str, Any],
+    cost_estimate: pallas_core.CostEstimate | None,
 ) -> LoweringResult:
+  del cost_estimate  # Unused.
   in_structs = tuple(grid_mapping.in_shapes)
   out_structs = grid_mapping.out_shapes
   assert len(jaxpr.outvars) == 0

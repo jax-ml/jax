@@ -22,8 +22,8 @@ from typing import Any
 import warnings
 
 import jax
-from jax import dtypes
 from jax import core as jax_core
+from jax import dtypes
 from jax._src import config
 from jax._src import core as jax_src_core
 from jax._src import sharding_impls
@@ -34,6 +34,7 @@ from jax._src.pallas.mosaic import lowering
 from jax._src.pallas.mosaic import verification
 from jax.experimental import mosaic
 from jax.experimental.mosaic.dialects import tpu
+from jax.experimental.pallas import tpu as pltpu
 
 def _maybe_cast_to_int(x: jax.Array | jax_core.ShapedArray):
   """Casts boolean values to integers.
@@ -71,7 +72,9 @@ def pallas_call_tpu_lowering_rule(
     input_output_aliases: tuple[tuple[int, int], ...],
     debug: bool,
     interpret: bool,
-    compiler_params: dict[str, Any]):
+    compiler_params: dict[str, Any],
+    cost_estimate: core.CostEstimate | None,
+):
   """Lowers a pallas_call to a Mosaic TPU custom call."""
   del interpret
   if debug:
@@ -90,6 +93,22 @@ def pallas_call_tpu_lowering_rule(
     mosaic_params = compiler_params["mosaic"]
   else:
     mosaic_params = {}
+
+  if "cost_estimate" in mosaic_params:
+    # TODO(amagni): Remove this branch after October 22th 2024.
+    if cost_estimate is not None:
+      raise ValueError(
+          "Passing cost estimate via both compiler_params=dict(mosaic=...) and"
+          " pallas_call(..., cost_estimate=...) is not supported."
+      )
+
+    warnings.warn(
+        "Passing cost estimate via compiler_params=dict(cost_estimate=...) is"
+        " deprecated. Use pallas_call(..., cost_estimate=...) instead.",
+        DeprecationWarning,
+    )
+    cost_estimate = mosaic_params["cost_estimate"]
+
   mesh = None
   axis_context = ctx.module_context.axis_context
   if axis_context is not None:
@@ -172,27 +191,33 @@ def pallas_call_tpu_lowering_rule(
   # Dynamic grid bounds have to go at the front.
   dynamic_grid_args, args = in_nodes[:num_dyn_bounds], in_nodes[num_dyn_bounds:]
   kernel_ctx = ctx.replace(avals_in=kernel_in_avals, avals_out=kernel_out_avals)
-  out_nodes = mosaic.lower_module_to_custom_call(
-        kernel_ctx,
-        *dynamic_grid_args,
-        *extra_args,
-        *args,
-        module=mosaic_module,
-        out_type=kernel_out_avals,
-        backend="tpu",
-        kernel_name=name_and_src_info.name,
-        cost_estimate=mosaic_params.get("cost_estimate"),
-        vmem_limit_bytes=mosaic_params.get("vmem_limit_bytes"),
-        flags=mosaic_params.get("flags"),
-        allow_input_fusion=mosaic_params.get("allow_input_fusion"),
-        input_output_aliases=input_output_aliases,
-        serialization_format=mosaic_params.get("serialization_format", 1),
-        device_type=mosaic_params.get("device_type"),
-        internal_scratch_in_bytes=mosaic_params.get(
-            "internal_scratch_in_bytes"
-        ),
-        collective_id=mosaic_params.get("collective_id", None),
+  if cost_estimate is not None:
+    mosaic_cost_estimate = pltpu.CostEstimate(
+        flops=cost_estimate.flops,
+        bytes_accessed=cost_estimate.bytes_accessed,
+        transcendentals=cost_estimate.transcendentals,
     )
+  else:
+    mosaic_cost_estimate = None
+  out_nodes = mosaic.lower_module_to_custom_call(
+      kernel_ctx,
+      *dynamic_grid_args,
+      *extra_args,
+      *args,
+      module=mosaic_module,
+      out_type=kernel_out_avals,
+      backend="tpu",
+      kernel_name=name_and_src_info.name,
+      cost_estimate=mosaic_cost_estimate,
+      vmem_limit_bytes=mosaic_params.get("vmem_limit_bytes"),
+      flags=mosaic_params.get("flags"),
+      allow_input_fusion=mosaic_params.get("allow_input_fusion"),
+      input_output_aliases=input_output_aliases,
+      serialization_format=mosaic_params.get("serialization_format", 1),
+      device_type=mosaic_params.get("device_type"),
+      internal_scratch_in_bytes=mosaic_params.get("internal_scratch_in_bytes"),
+      collective_id=mosaic_params.get("collective_id", None),
+  )
   _maybe_cast_to_bool = lambda x, aval: x.astype(
       jax.numpy.bool_) if aval.dtype == jax.numpy.bool_ else x
   def _maybe_cast_outputs(*args):

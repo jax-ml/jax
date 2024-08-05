@@ -36,6 +36,7 @@ def pallas_call_lowering(
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: pallas_core.GridMapping,
     compiler_params: dict[str, Any],
+    cost_estimate: pallas_core.CostEstimate | None,
 ):
   del interpret
   if grid_mapping.num_dynamic_grid_bounds:
@@ -58,6 +59,7 @@ def pallas_call_lowering(
       jaxpr,
       name_and_src_info,
       compiler_params,
+      cost_estimate,
   )
   if debug:
     print(f"\nThe Mosaic GPU module for pallas_call {name_and_src_info}:")

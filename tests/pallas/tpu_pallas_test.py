@@ -1487,18 +1487,34 @@ class PallasCallTest(PallasBaseTest):
     f = self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-        compiler_params=dict(
-            mosaic=dict(
-                cost_estimate=pltpu.CostEstimate(
-                    flops=1234, transcendentals=21, bytes_accessed=12345
-                )
-            )
+        cost_estimate=pl.CostEstimate(
+            flops=1234, transcendentals=21, bytes_accessed=12345
         ),
     )
     (analysis_result,) = jax.jit(f).lower(x).compile().cost_analysis()
     self.assertEqual(analysis_result['flops'], 1234)
     self.assertEqual(analysis_result['transcendentals'], 21)
     self.assertEqual(analysis_result['bytes accessed'], 12345)
+
+
+  def test_cost_analysis_vmap(self):
+    def kernel(x, y):
+      y[:] = x[:]
+    batch_size = 3
+    x = jnp.arange(batch_size * 1024.).reshape(batch_size, 8, 128)
+    f = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+        cost_estimate=pl.CostEstimate(
+            flops=1234, transcendentals=21, bytes_accessed=12345
+        ),
+    )
+    f = jax.vmap(f)
+    (analysis_result,) = jax.jit(f).lower(x).compile().cost_analysis()
+    self.assertEqual(analysis_result['flops'], batch_size * 1234)
+    self.assertEqual(analysis_result['transcendentals'], batch_size * 21)
+    self.assertEqual(analysis_result['bytes accessed'], batch_size * 12345)
+
 
   def test_vmem_limit(self):
     shape = (128, 128)

@@ -60,6 +60,7 @@ BlockSpec = pallas_core.BlockSpec
 BlockSpecTree = pallas_core.BlockSpecTree
 NoBlockSpec = pallas_core.NoBlockSpec
 no_block_spec = pallas_core.no_block_spec
+CostEstimate = pallas_core.CostEstimate
 
 # See the docstring for GridMapping for the calling convention
 pallas_call_p = jax_core.Primitive('pallas_call')
@@ -164,6 +165,7 @@ def _get_next_indices(grid, indices):
 def _pallas_call_impl(*args, **kwargs):
   assert False  # We always jit a pallas call, we only need the lowering rule
 
+
 def _pallas_call_impl_interpret(
     *args,
     jaxpr: jax_core.Jaxpr,
@@ -171,8 +173,10 @@ def _pallas_call_impl_interpret(
     debug: bool,
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: GridMapping,
-    compiler_params: Any):
-  del compiler_params
+    compiler_params: Any,
+    cost_estimate: CostEstimate,
+):
+  del compiler_params, cost_estimate
   # If we're in interpreter mode, we *scan* over the grid and eval the
   # discharged jaxpr.
   dynamic_grid_args, args = split_list(  # type: ignore
@@ -294,6 +298,7 @@ def _pallas_call_impl_interpret(
     out_nopad.append(o)
   return out_nopad
 
+
 pallas_call_p.def_impl(_pallas_call_impl)
 
 def _pallas_call_abstract_eval(*avals, grid_mapping: GridMapping, **_):
@@ -302,9 +307,20 @@ def _pallas_call_abstract_eval(*avals, grid_mapping: GridMapping, **_):
                for bm in grid_mapping.block_mappings_output)
 pallas_call_p.def_abstract_eval(_pallas_call_abstract_eval)
 
-def _pallas_call_jvp_rule(primals, tangents, *, jaxpr, name_and_src_info,
+
+def _pallas_call_jvp_rule(
+    primals,
+    tangents,
+    *,
+    jaxpr,
+    name_and_src_info,
     input_output_aliases: tuple[tuple[int, int], ...],
-    grid_mapping, debug, interpret, compiler_params: Any):
+    grid_mapping,
+    debug,
+    interpret,
+    compiler_params: Any,
+    cost_estimate: CostEstimate | None,
+):
   if grid_mapping.num_dynamic_grid_bounds:
     raise NotImplementedError("interpret with dynamic grid bounds unsupported")
   if grid_mapping.num_index_operands:
@@ -346,20 +362,32 @@ def _pallas_call_jvp_rule(primals, tangents, *, jaxpr, name_and_src_info,
       num_inputs=grid_mapping.num_inputs * 2,
       num_outputs=grid_mapping.num_outputs * 2,
   )
+  if cost_estimate is not None:
+    jvp_cost_estimate = CostEstimate(
+        flops=2 * cost_estimate.flops,
+        bytes_accessed=2 * cost_estimate.bytes_accessed,
+        transcendentals=2 * cost_estimate.transcendentals,
+    )
+  else:
+    jvp_cost_estimate = None
   out_flat = pallas_call_p.bind(
       *primals,
       *tangents,
       jaxpr=jvp_jaxpr,
       name_and_src_info=name_and_src_info.replace(
-          name=f"{name_and_src_info.name}_jvp"),
+          name=f"{name_and_src_info.name}_jvp"
+      ),
       grid_mapping=jvp_grid_mapping,
       interpret=interpret,
       debug=debug,
       input_output_aliases=(),
       compiler_params=compiler_params,
+      cost_estimate=jvp_cost_estimate,
   )
   out_primals, out_tangents = split_list(out_flat, [len(out_flat) // 2])
   return out_primals, out_tangents
+
+
 ad.primitive_jvps[pallas_call_p] = _pallas_call_jvp_rule
 
 def _batch_block_mapping(grid_mapping: GridMapping,
@@ -436,6 +464,7 @@ def _batch_with_explicit_loop(
     debug: bool,
     interpret: bool,
     compiler_params: Any,
+    cost_estimate: CostEstimate | None,
 ):
   """Batch the pallas_call by calling it in loop over the batch size.
 
@@ -501,6 +530,7 @@ def _batch_with_explicit_loop(
         debug=debug,
         interpret=interpret,
         compiler_params=compiler_params,
+        cost_estimate=cost_estimate,
     )
     for i, batch_out_array in enumerate(batch_out):
       state[i] = jax.lax.dynamic_update_index_in_dim(
@@ -528,6 +558,7 @@ def _pallas_call_batching_rule(
     debug: bool,
     interpret: bool,
     compiler_params: Any,
+    cost_estimate: CostEstimate | None,
 ):
   def _maybe_squeeze_out_bdim(
       x: jax.Array, bdim: int | batching.NotMapped
@@ -536,8 +567,9 @@ def _pallas_call_batching_rule(
       return x
     return jnp.squeeze(x, axis=bdim)
 
-  axis_size, = {x.shape[d] for x, d in zip(args, dims)
-                if d is not batching.not_mapped}
+  (axis_size,) = {
+      x.shape[d] for x, d in zip(args, dims) if d is not batching.not_mapped
+  }
   if axis_size == 1:
     # Why are we even vmapping?
     args = map(_maybe_squeeze_out_bdim, args, dims)
@@ -550,6 +582,7 @@ def _pallas_call_batching_rule(
         debug=debug,
         interpret=interpret,
         compiler_params=compiler_params,
+        cost_estimate=cost_estimate,
     )
     return [jnp.expand_dims(x, 0) for x in out], (0,) * len(out)
 
@@ -581,6 +614,7 @@ def _pallas_call_batching_rule(
         debug=debug,
         interpret=interpret,
         compiler_params=compiler_params,
+        cost_estimate=cost_estimate,
     )
   else:
     pass  # No dynamic grid dimensions
@@ -613,6 +647,7 @@ def _pallas_call_batching_rule(
           debug=debug,
           interpret=interpret,
           compiler_params=compiler_params,
+          cost_estimate=cost_estimate,
       )
 
   if not dims:
@@ -657,18 +692,29 @@ def _pallas_call_batching_rule(
       block_mappings=tuple(batched_block_mappings),
       index_map_avals=batched_index_map_avals,
       index_map_tree=batched_index_map_tree,
-      vmapped_dims=(0,) + tuple(a + 1 for a in grid_mapping.vmapped_dims))
+      vmapped_dims=(0,) + tuple(a + 1 for a in grid_mapping.vmapped_dims),
+  )
+  if cost_estimate is not None:
+    batched_cost_estimate = CostEstimate(
+        flops=cost_estimate.flops * axis_size,
+        bytes_accessed=cost_estimate.bytes_accessed * axis_size,
+        transcendentals=cost_estimate.transcendentals * axis_size,
+    )
+  else:
+    batched_cost_estimate = None
   out = pallas_call_p.bind(
       *dynamic_grid_args,
       *args,
       jaxpr=jaxpr,
       name_and_src_info=name_and_src_info.replace(
-          name=f"{name_and_src_info.name}_batched"),
+          name=f"{name_and_src_info.name}_batched"
+      ),
       grid_mapping=batched_grid_mapping,
       input_output_aliases=input_output_aliases,
       debug=debug,
       interpret=interpret,
       compiler_params=compiler_params,
+      cost_estimate=batched_cost_estimate,
   )
   return out, (0,) * len(out)
 
@@ -971,6 +1017,7 @@ def pallas_call(
     interpret: bool = False,
     name: str | None = None,
     compiler_params: dict[str, Any] | None = None,
+    cost_estimate: CostEstimate | None = None,
 ) -> Callable[..., Any]:
   """Invokes a Pallas kernel on some inputs.
 
@@ -1106,14 +1153,18 @@ def pallas_call(
 
     index_args, rest_args = split_list(flat_args, [grid_mapping.num_index_operands])
     out_flat = pallas_call_p.bind(
-        *dynamic_grid_bounds, *index_args, *rest_args,
+        *dynamic_grid_bounds,
+        *index_args,
+        *rest_args,
         jaxpr=jaxpr,
         name_and_src_info=name_and_src_info,
         debug=debug,
         interpret=interpret,
         grid_mapping=grid_mapping,
         input_output_aliases=tuple(input_output_aliases.items()),
-        compiler_params=compiler_params)
+        compiler_params=compiler_params,
+        cost_estimate=cost_estimate,
+    )
     out = tree_util.tree_unflatten(out_tree, out_flat)
     return out
   return wrapped
