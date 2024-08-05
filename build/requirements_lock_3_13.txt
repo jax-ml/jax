@@ -6,7 +6,7 @@
 #
 absl-py==2.1.0
     # via -r build/test-requirements.txt
-attrs==23.2.0
+attrs==24.1.0
     # via hypothesis
 build==1.2.1
     # via -r build/test-requirements.txt
