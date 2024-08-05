@@ -94,7 +94,7 @@ sortedcontainers==2.4.0
     # via hypothesis
 typing-extensions==4.11.0
     # via etils
-wheel==0.43.0
+wheel==0.44.0
     # via -r build/test-requirements.txt
 zipp==3.18.1
     # via etils
