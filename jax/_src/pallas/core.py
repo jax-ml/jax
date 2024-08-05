@@ -36,6 +36,7 @@ from jax._src import mesh as mesh_lib
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
+from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src.state import discharge as state_discharge
 import jax.numpy as jnp
@@ -56,8 +57,46 @@ TupleGrid = tuple[GridElement, ...]
 Grid = Union[NamedGrid, TupleGrid]
 StaticGrid = tuple[int, ...]
 GridMappingGrid = tuple[int | DynamicGridDim, ...]
-SrcInfoStr = str  # function_name at filename:linenumber
 OriginStr = str  # The origin of a block spec, e.g. input[2]["field"]
+
+
+@dataclasses.dataclass(frozen=True)
+class NameAndSrcInfo:
+  #: The name of the pallas_call or the name of the kernel function.
+  name: str
+  #: the source info, and the name of kernel function if not in `name`.`
+  src_info: str
+
+  def __str__(self):
+    return f"{self.name}{' ' if self.src_info else ''}{self.src_info}"
+  __repr__ = __str__
+
+  replace = dataclasses.replace
+
+
+  @staticmethod
+  def from_pallas_call(pallas_call_name: str | None,
+                       src_info : str | None) -> NameAndSrcInfo:
+    """Formats the name and the source info.
+
+    Args:
+      pallas_call_name: The `name` argument to pallas_call.
+      src_info: The result of `api_util.fun_source_info(kernel)`, in the form
+        "{function_name} at {file_name}:{line_number}".
+    """
+    if pallas_call_name is not None:
+      pallas_call_name = mlir._module_name_regex.sub("_", pallas_call_name)
+    if src_info is None:
+      return NameAndSrcInfo(
+          "unknown" if pallas_call_name is None else pallas_call_name,
+          "")
+    if pallas_call_name is not None:
+      return NameAndSrcInfo(pallas_call_name,
+                            f"for kernel function {src_info}")
+    src_info_parts = src_info.split(" ")
+    return NameAndSrcInfo(src_info_parts[0],
+                          " ".join(src_info_parts[1:]))
+
 
 # Pytrees of jax.ShapeDtypeStruct
 ShapeDtypeStructTree = tuple[jax.ShapeDtypeStruct, ...]
@@ -268,7 +307,7 @@ class BlockMapping:
   block_shape: tuple[Mapped | int, ...]
   block_aval: AbstractMemoryRef   # The block ref aval
   index_map_jaxpr: jax_core.ClosedJaxpr
-  index_map_src_info: SrcInfoStr
+  index_map_src_info: NameAndSrcInfo
   indexing_mode: IndexingMode
   array_shape_dtype: jax.ShapeDtypeStruct  # The whole array
   origin: OriginStr
@@ -534,7 +573,8 @@ def _convert_block_spec_to_block_mapping(
       lu.wrap_init(index_map_func), index_map_tree)
   debug = pe.debug_info(index_map_func, index_map_tree, index_map_out_tree_thunk,
                         False, "pallas_call index_map")
-  index_map_src_info = debug.func_src_info or "<unknown>"
+  index_map_src_info = NameAndSrcInfo.from_pallas_call(None,
+                                                       debug.func_src_info)
   with tracing_grid_env(grid, mapped_dims):
     jaxpr, out_avals, consts, () = pe.trace_to_jaxpr_dynamic(flat_index_map_fun,
                                                              index_map_avals,

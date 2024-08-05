@@ -167,12 +167,12 @@ def _pallas_call_impl(*args, **kwargs):
 def _pallas_call_impl_interpret(
     *args,
     jaxpr: jax_core.Jaxpr,
-    name: str,
+    name_and_src_info: pallas_core.NameAndStrInfo,
     debug: bool,
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: GridMapping,
     compiler_params: Any):
-  del compiler_params, name
+  del compiler_params
   # If we're in interpreter mode, we *scan* over the grid and eval the
   # discharged jaxpr.
   dynamic_grid_args, args = split_list(  # type: ignore
@@ -188,6 +188,7 @@ def _pallas_call_impl_interpret(
   with grid_mapping.trace_env():
     discharged_jaxpr, discharged_consts = state_discharge.discharge_state(jaxpr, ())
   if debug:
+    print(f"\nJaxpr the the kernel in pallas_call {name_and_src_info}:")
     print(discharged_jaxpr)
   out = _initialize_output_vals(grid_mapping.block_mappings_output,
                                 args, input_output_aliases)
@@ -301,7 +302,7 @@ def _pallas_call_abstract_eval(*avals, grid_mapping: GridMapping, **_):
                for bm in grid_mapping.block_mappings_output)
 pallas_call_p.def_abstract_eval(_pallas_call_abstract_eval)
 
-def _pallas_call_jvp_rule(primals, tangents, *, jaxpr, name,
+def _pallas_call_jvp_rule(primals, tangents, *, jaxpr, name_and_src_info,
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping, debug, interpret, compiler_params: Any):
   if grid_mapping.num_dynamic_grid_bounds:
@@ -336,8 +337,8 @@ def _pallas_call_jvp_rule(primals, tangents, *, jaxpr, name,
     effs.append(eff)
   jvp_jaxpr = jvp_jaxpr.replace(invars=invars, effects=effs)
   if debug:
+    print(f"\nThe jaxpr for the jvp of pallas_call {name_and_src_info}:")
     print(jvp_jaxpr)
-  # TODO(necula): does this work with consts?
   in_bms, out_bms = split_list(grid_mapping.block_mappings, [len(primals)])
   jvp_bms = (*in_bms, *in_bms, *out_bms, *out_bms)
   jvp_grid_mapping = grid_mapping.replace(
@@ -349,7 +350,8 @@ def _pallas_call_jvp_rule(primals, tangents, *, jaxpr, name,
       *primals,
       *tangents,
       jaxpr=jvp_jaxpr,
-      name=f"{name}_jvp",
+      name_and_src_info=name_and_src_info.replace(
+          name=f"{name_and_src_info.name}_jvp"),
       grid_mapping=jvp_grid_mapping,
       interpret=interpret,
       debug=debug,
@@ -428,7 +430,7 @@ def _batch_with_explicit_loop(
     dims: Sequence[int | batching.NotMapped],
     *,
     jaxpr: jax_core.Jaxpr,
-    name: str,
+    name_and_src_info: pallas_core.NameAndSrcInfo,
     grid_mapping: GridMapping,
     input_output_aliases: tuple[tuple[int, int], ...],
     debug: bool,
@@ -493,7 +495,7 @@ def _batch_with_explicit_loop(
     batch_out = pallas_call_p.bind(
         *batch_args,
         jaxpr=jaxpr,
-        name=name,
+        name_and_src_info=name_and_src_info,
         grid_mapping=grid_mapping,
         input_output_aliases=input_output_aliases,
         debug=debug,
@@ -520,7 +522,7 @@ def _pallas_call_batching_rule(
     dims,
     *,
     jaxpr: jax_core.Jaxpr,
-    name: str,
+    name_and_src_info: pallas_core.NameAndSrcInfo,
     grid_mapping: GridMapping,
     input_output_aliases: tuple[tuple[int, int], ...],
     debug: bool,
@@ -542,7 +544,7 @@ def _pallas_call_batching_rule(
     out = pallas_call_p.bind(
         *args,
         jaxpr=jaxpr,
-        name=name,
+        name_and_src_info=name_and_src_info,
         grid_mapping=grid_mapping,
         input_output_aliases=input_output_aliases,
         debug=debug,
@@ -573,7 +575,7 @@ def _pallas_call_batching_rule(
         args=dynamic_grid_args + args,
         dims=dynamic_grid_dims + dims,
         jaxpr=jaxpr,
-        name=name,
+        name_and_src_info=name_and_src_info,
         grid_mapping=grid_mapping,
         input_output_aliases=input_output_aliases,
         debug=debug,
@@ -605,7 +607,7 @@ def _pallas_call_batching_rule(
           args=scalar_args + args,
           dims=scalar_bdims + bdims,
           jaxpr=jaxpr,
-          name=name,
+          name_and_src_info=name_and_src_info,
           grid_mapping=grid_mapping,
           input_output_aliases=input_output_aliases,
           debug=debug,
@@ -660,7 +662,8 @@ def _pallas_call_batching_rule(
       *dynamic_grid_args,
       *args,
       jaxpr=jaxpr,
-      name=f"batched_{name}",
+      name_and_src_info=name_and_src_info.replace(
+          name=f"{name_and_src_info.name}_batched"),
       grid_mapping=batched_grid_mapping,
       input_output_aliases=input_output_aliases,
       debug=debug,
@@ -836,7 +839,7 @@ checkify.error_checks[pallas_call_p] = pallas_call_checkify_rule
 
 @weakref_lru_cache
 def _trace_kernel_to_jaxpr(fun: Callable,
-                           fun_src_info: pallas_core.SrcInfoStr,
+                           name_and_src_info: pallas_core.NameAndSrcInfo,
                            grid_mapping: GridMapping,
                            kernel_avals: tuple[pallas_core.AbstractMemRef, ...],
                            kernel_in_tree: tree_util.PyTreeDef,
@@ -855,22 +858,16 @@ def _trace_kernel_to_jaxpr(fun: Callable,
       consts_avals = [jax_core.raise_to_shaped(jax_core.get_aval(c))
                       for c in consts]
       raise ValueError(
-          f"The kernel function {fun_src_info} in a "
-          "pallas_call should not capture constants. You should pass them "
-          f"as inputs. It captures constants of shapes: {consts_avals}")
+          f"The kernel function in the pallas_call {name_and_src_info} "
+          f"captures constants {consts_avals}. "
+          "You should pass them as inputs")
 
   kernel_out_tree = out_tree_thunk()
   if kernel_out_tree != tree_util.tree_structure(None):
     raise ValueError(
-        f"The kernel function {fun_src_info} in a "
-        f"pallas_call should return None. "
-        f"It returns a PyTree: {kernel_out_tree}")
+        f"The kernel function in the pallas_call {name_and_src_info} "
+        f"should return None. It returns a PyTree: {kernel_out_tree}")
   return jaxpr
-
-def _extract_function_name(f: Callable, name: str | None) -> str:
-  if name is None:
-    name = f.__name__ if hasattr(f, "__name__") and f.__name__ else "func"
-  return name
 
 
 _PALLAS_USE_MOSAIC_GPU = config.bool_flag(
@@ -1009,7 +1006,11 @@ def pallas_call(
       grid whose body is the kernel lowered as a JAX function. This does not
       require a TPU or a GPU, and is the only way to run Pallas kernels on CPU.
       This is useful for debugging.
-    name: TO BE DOCUMENTED.
+    name: if present, specifies the name to use for this kernel call in
+      debugging and error messages. To this name we append the file and line
+      where the kernel function is defined, .e.g:
+      `{name} for kernel function {kernel_name} at {file}:{line}`.
+      If missing, then we use `{kernel_name} at {file}:{line}`.
     compiler_params: TO BE DOCUMENTED.
 
   Returns:
@@ -1017,7 +1018,9 @@ def pallas_call(
     invoke the Pallas kernel.
 
   """
-  name = _extract_function_name(kernel, name)
+  kernel_src_info = api_util.fun_sourceinfo(kernel)
+  name_and_src_info = pallas_core.NameAndSrcInfo.from_pallas_call(
+      name, kernel_src_info)
   if compiler_params is None:
     compiler_params = {}
 
@@ -1058,16 +1061,15 @@ def pallas_call(
 
     kernel_fun_sig = api_util.fun_signature(kernel)
     arg_names = None
-    kernel_src_info: pallas_core.SrcInfoStr = "<unknown>"
     if kernel_fun_sig:
       kernel_debug_info = api_util.debug_info(
           "pallas_call kernel",
-           api_util.fun_sourceinfo(kernel),
+           kernel_src_info,
            kernel_fun_sig,
            [1] * len(kernel_fun_sig.parameters), {}, (), ())
       if kernel_debug_info:
         arg_names = kernel_debug_info.arg_names
-        kernel_src_info = kernel_debug_info.func_src_info
+      del kernel_debug_info
     in_origins = tuple(in_path_to_input_origin(p, arg_names)
                        for p in in_paths)
     out_origins = tuple(f"outputs{tree_util.keystr(p)}" for p in out_paths)
@@ -1105,7 +1107,8 @@ def pallas_call(
     index_args, rest_args = split_list(flat_args, [grid_mapping.num_index_operands])
     out_flat = pallas_call_p.bind(
         *dynamic_grid_bounds, *index_args, *rest_args,
-        jaxpr=jaxpr, name=name,
+        jaxpr=jaxpr,
+        name_and_src_info=name_and_src_info,
         debug=debug,
         interpret=interpret,
         grid_mapping=grid_mapping,

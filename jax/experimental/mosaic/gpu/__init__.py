@@ -690,6 +690,7 @@ def _lower_as_gpu_kernel(
     in_shapes: tuple[Any, ...],
     out_shape,
     smem_scratch_shape: ShapeTree | Union[ShapeTree],
+    module_name: str,
     prof_spec: profiler.ProfilerSpec | None = None,
 ):
   ptr_ty = ir.Type.parse("!llvm.ptr")
@@ -714,6 +715,8 @@ def _lower_as_gpu_kernel(
     out_ref_tys.append(prof_spec.mlir_buffer_type(grid, block))
 
   module = ir.Module.create()
+  attrs = module.operation.attributes
+  attrs["sym_name"] = ir.StringAttr.get(module_name)
   with ir.InsertionPoint(module.body):
     _declare_runtime_functions()
     gmem_scratch_bytes = 0
@@ -772,6 +775,7 @@ def as_gpu_kernel(
     smem_scratch_shape: ShapeTree | Union[ShapeTree],
     prof_spec: profiler.ProfilerSpec | None = None,
     cluster: tuple[int, int, int] = (1, 1, 1),
+    module_name: str = "unknown",
 ):
   if isinstance(in_shape, list):
     in_shape = tuple(in_shape)
@@ -780,7 +784,8 @@ def as_gpu_kernel(
 
   module, out_shape, gmem_scratch_bytes, unwrap_output_tuple = (
       _lower_as_gpu_kernel(
-          body, grid, cluster, block, in_shape, out_shape, smem_scratch_shape, prof_spec
+          body, grid, cluster, block, in_shape, out_shape, smem_scratch_shape,
+          module_name, prof_spec
       )
   )
 

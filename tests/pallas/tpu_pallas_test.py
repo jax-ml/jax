@@ -1884,10 +1884,6 @@ class PallasCallPrintTest(PallasBaseTest):
 
 class PallasCallTraceTest(PallasBaseTest):
 
-  def parse_debug_string(self, debug_string):
-    jaxpr, mlir = debug_string.split('module')
-    return {'jaxpr': jaxpr, 'mlir': mlir}
-
   def test_trace_start_stop_match(self):
     def kernel(o_ref):
       with jax.named_scope('scope1'):
@@ -1900,10 +1896,10 @@ class PallasCallTraceTest(PallasBaseTest):
         debug=True,
       )()
       # TODO(justinfu): Add an official lowering API to get the MLIR.
-      mlir = self.parse_debug_string(msg.getvalue())['mlir']
+      debug_string = msg.getvalue()
 
-    num_start = mlir.count('tpu.trace_start')
-    num_stop = mlir.count('tpu.trace_stop')
+    num_start = debug_string.count('tpu.trace_start')
+    num_stop = debug_string.count('tpu.trace_stop')
     self.assertEqual(num_start, 1)
     self.assertEqual(num_stop, 1)
 
@@ -1926,10 +1922,10 @@ class PallasCallTraceTest(PallasBaseTest):
         debug=True,
       )()
       # TODO(justinfu): Add an official lowering API to get the MLIR.
-      mlir = self.parse_debug_string(msg.getvalue())['mlir']
+      debug_string = msg.getvalue()
 
-    num_start = mlir.count('tpu.trace_start')
-    num_stop = mlir.count('tpu.trace_stop')
+    num_start = debug_string.count('tpu.trace_start')
+    num_stop = debug_string.count('tpu.trace_stop')
     self.assertEqual(num_start, 2)
     self.assertEqual(num_stop, 2)
 

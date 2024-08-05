@@ -30,7 +30,7 @@ def pallas_call_lowering(
     ctx: mlir.LoweringRuleContext,
     *args,
     jaxpr: jax_core.Jaxpr,
-    name: str,
+    name_and_src_info: pallas_core.NameAndSrcInfo,
     interpret: bool,
     debug: bool,
     input_output_aliases: tuple[tuple[int, int], ...],
@@ -48,16 +48,19 @@ def pallas_call_lowering(
     )
 
   if debug:
+    print(f"\nThe kernel jaxpr for pallas_call {name_and_src_info}:")
     print(jaxpr)
+    print(f"The grid mapping for pallas_call {name_and_src_info}:")
     print(grid_mapping)
 
   lowering_result = lowering.lower_jaxpr_to_module(
       grid_mapping,
       jaxpr,
-      name,
+      name_and_src_info,
       compiler_params,
   )
   if debug:
+    print(f"\nThe Mosaic GPU module for pallas_call {name_and_src_info}:")
     print(lowering_result.module.operation)
 
   module = lowering_result.module

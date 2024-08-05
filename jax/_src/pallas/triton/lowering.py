@@ -266,7 +266,7 @@ def _check_tensor_size(shape: tuple[int | pallas_core.Mapped, ...]):
 def lower_jaxpr_to_triton_module(
     jaxpr: jax_core.Jaxpr,
     grid_mapping: GridMapping,
-    name: str,
+    name_and_src_info: pallas_core.NameAndStrInfo,
     platform: str
 ) -> LoweringResult:
   if grid_mapping.num_dynamic_grid_bounds:
@@ -283,6 +283,9 @@ def lower_jaxpr_to_triton_module(
     )
   with _new_ir_context(), ir.Location.unknown():
     module = ir.Module.create()
+    attrs = module.operation.attributes
+    module_name = name_and_src_info.name
+    attrs["sym_name"] = ir.StringAttr.get(module_name)
     param_types = [
         tt_dialect.PointerType.get(_dtype_to_ir_type(var.aval.dtype), 1)
         for var in jaxpr.invars
@@ -290,7 +293,7 @@ def lower_jaxpr_to_triton_module(
     assert len(jaxpr.outvars) == 0
     fn_type = ir.FunctionType.get(param_types, [])
     fn = tt_dialect.FuncOp(
-        name,
+        name_and_src_info.name,
         ir.TypeAttr.get(fn_type),
         sym_visibility="public",
         res_attrs=ir.DictAttr.get(dict(noinline=ir.BoolAttr.get(False))),
@@ -310,7 +313,8 @@ def lower_jaxpr_to_triton_module(
           if i not in grid_mapping.vmapped_dims
       ]
       ctx = ModuleContext(
-          name, grid_mapping, local_program_ids, mlir.TracebackCaches(), platform
+          name_and_src_info.name,
+          grid_mapping, local_program_ids, mlir.TracebackCaches(), platform
       )
       if grid_mapping.num_index_operands:
         raise NotImplementedError(
