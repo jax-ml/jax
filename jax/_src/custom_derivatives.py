@@ -844,7 +844,7 @@ def _custom_vjp_call_jaxpr_vmap(
   out_dims1 = [0 if b else not_mapped for b in out_batched]
   out_dims2 = []
 
-  @pe._memoize
+  # @pe._memoize
   def batched_fwd_jaxpr_thunk(*zeros):
     fwd_jaxpr = core.ClosedJaxpr(*fwd_jaxpr_thunk(*zeros))  # consts can be tracers
     batched_fwd_jaxpr, out_batched = batching.batch_jaxpr(
@@ -855,9 +855,10 @@ def _custom_vjp_call_jaxpr_vmap(
 
   fwd_args_batched = [0 if b else not_mapped for b in args_batched]
   fwd_out_dims = lambda: out_dims2[0]
+  axis_data = batching.AxisData(axis_name, axis_size, spmd_axis_name)
+  tag = batching.BatchTag()
   batched_bwd = batching.batch_custom_vjp_bwd(
-      bwd, axis_name, axis_size, fwd_out_dims, fwd_args_batched, main_type,
-      spmd_axis_name)
+    bwd, tag, axis_data, fwd_out_dims, fwd_args_batched)
 
   batched_outs = custom_vjp_call_jaxpr_p.bind(
       *args, fun_jaxpr=batched_fun_jaxpr,
