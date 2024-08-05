@@ -27,6 +27,7 @@ pytree = _xe.pytree
 ArrayImpl = _xe.ArrayImpl
 Device = _xe.Device
 DistributedRuntimeClient = _xe.DistributedRuntimeClient
+HloModule = _xe.HloModule
 HloPrintOptions = _xe.HloPrintOptions
 OpSharding = _xe.OpSharding
 PjitFunctionCache = _xe.PjitFunctionCache
