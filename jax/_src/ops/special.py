@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import functools
 from typing import overload, Literal
 
 import jax
@@ -40,6 +41,7 @@ def logsumexp(a: ArrayLike, axis: Axis = None, b: ArrayLike | None = None,
 def logsumexp(a: ArrayLike, axis: Axis = None, b: ArrayLike | None = None,
               keepdims: bool = False, return_sign: bool = False, where: ArrayLike | None = None) -> Array | tuple[Array, Array]: ...
 
+@functools.partial(jax.custom_jvp, nondiff_argnums=(1, 3, 4, 5))
 def logsumexp(a: ArrayLike, axis: Axis = None, b: ArrayLike | None = None,
               keepdims: bool = False, return_sign: bool = False, where: ArrayLike | None = None) -> Array | tuple[Array, Array]:
   r"""Log-sum-exp reduction.
@@ -95,3 +97,36 @@ def logsumexp(a: ArrayLike, axis: Axis = None, b: ArrayLike | None = None,
     with jax.debug_nans(False):
       out = jnp.where(sign < 0, jnp.array(np.nan, dtype=out.dtype), out)
   return out
+
+@logsumexp.defjvp
+def _logsumexp_jvp(axis, keepdims, return_sign, where, primals, tangents):
+  a, b = primals
+  a_dot, b_dot = tangents
+  out = logsumexp(
+      a,
+      axis=axis,
+      b=b,
+      keepdims=keepdims,
+      return_sign=return_sign,
+      where=where,
+  )
+
+  if return_sign:
+    out, sign = out
+
+  if b is None:
+    out_dot = jnp.sum(
+        a_dot * jnp.exp(a - out), axis=axis, keepdims=keepdims, where=where,
+    )
+  else:
+    out_dot = jnp.sum(
+        (b * a_dot + b_dot) * jnp.exp(a - out),
+        axis=axis,
+        keepdims=keepdims,
+        where=where,
+    )
+  if return_sign:
+    sign_dot = jnp.zeros_like(sign)
+    return (out, sign), (out_dot, sign_dot)
+  else:
+    return out, out_dot

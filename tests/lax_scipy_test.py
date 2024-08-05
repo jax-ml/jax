@@ -18,6 +18,7 @@ import itertools
 import unittest
 
 from absl.testing import absltest
+from absl.testing import parameterized
 
 import numpy as np
 import scipy.integrate
@@ -201,6 +202,34 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     y_expected = osp_special.logsumexp(x[mask]) if mask.any() else -jnp.inf
     y_actual = lsp_special.logsumexp(x, where=mask)
     self.assertAllClose(y_expected, y_actual, check_dtypes=False)
+
+  def testLogSumExpZerosJac(self):
+    # Regression test for https://github.com/google/jax/issues/22398
+    fun = lambda b: lsp_special.logsumexp(jnp.zeros(2), axis=0, b=b)
+    np.testing.assert_array_equal(
+        jax.jacfwd(fun)(jnp.array([1.0, 0.0])),
+        jnp.ones(2),
+    )
+
+  @parameterized.product(
+      axis=[None, 0], with_b=[False, True], return_sign=[False, True]
+  )
+  def testLogSumExpJac(self, axis, with_b, return_sign):
+    fun = partial(lsp_special.logsumexp, axis=axis, return_sign=return_sign)
+    orig_fun = partial(
+        lsp_special.logsumexp.fun, axis=axis, return_sign=return_sign
+    )
+    tol = 5e-5 if jtu.test_device_matches(["tpu"]) else 1e-06
+    for i in range(100):
+      a = jax.random.normal(jax.random.key(i), (2,)) * 4.2
+      b = None
+      if with_b:
+        b = jax.random.uniform(jax.random.key(i), ())
+      jax.tree.map(
+          lambda x, y: np.testing.assert_allclose(x, y, atol=tol, rtol=tol),
+          jax.jacfwd(fun)(a, b=b),
+          jax.jacfwd(orig_fun)(a, b=b),
+      )
 
   @jtu.sample_product(
     shape=all_shapes,
