@@ -832,6 +832,9 @@ def _custom_vjp_call_jaxpr_vmap(
     num_consts: int, bwd: Callable, out_trees: Callable, symbolic_zeros: bool):
   args = [batching.moveaxis(x, d, 0) if d is not not_mapped and d != 0
           else x for x, d in zip(args, in_dims)]
+  axis_name = axis_data.name
+  axis_size = axis_data.size
+  spmd_axis_name = axis_data.spmd_name
 
   in_batched = [d is not not_mapped for d in in_dims]
   _, args_batched = split_list(in_batched, [num_consts])
@@ -1047,10 +1050,11 @@ def _maybe_perturbed(x: Any) -> bool:
   # False if x can't represent an AD-perturbed value (i.e. a value
   # with a nontrivial tangent attached), up to heuristics, and True otherwise.
   # See https://github.com/google/jax/issues/6415 for motivation.
-  x = core.full_lower(x)
   if not isinstance(x, core.Tracer):
     # If x is not a Tracer, it can't be perturbed.
     return False
+  elif isinstance(x, ad.JVPTracer) and isinstance(x.tangent, ad.Zero):
+    return _maybe_perturbed(x.primal)
   elif isinstance(x, pe.DynamicJaxprTracer):
     # If x is a DynamicJaxprTracer then we're staging out; differentiation could
     # happen later, but some types always have trivial tangents.

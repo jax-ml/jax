@@ -2078,27 +2078,24 @@ class DynamicJaxprTrace(core.Trace):
   def process_custom_transpose(self, prim, call, tracers, *,
                                transpose, out_types,
                                lin_tree, res_tree, out_tree):
+    tracers = map(self.to_jaxpr_tracer, tracers)
     tracers_res, tracers_lin = split_list(tracers, [res_tree.num_leaves])
 
     in_avals_p = [t.aval for t in tracers]
     in_avals_t = [*[t.aval for t in tracers_res], *out_types]
 
-    with core.new_sublevel():
-      call_jaxpr, out_avals, call_consts, () = trace_to_subjaxpr_dynamic(
-          call, self.main, in_avals_p)
+    call_jaxpr, out_avals, call_consts, _ = trace_to_jaxpr_dynamic(call, in_avals_p)
     closed_call_jaxpr = core.ClosedJaxpr(
         convert_constvars_jaxpr(call_jaxpr), ())
 
     transpose_flat, in_tree2 = flatten_fun_nokwargs(
         lu.wrap_init(transpose), treedef_tuple((res_tree, out_tree)))
 
-    main_ = ref(self.main)
     # the following thunk evaluates to a pair: transpose_jaxpr, transpose_consts
-    @_memoize
+    # @_memoize
     def transpose_jaxpr_thunk():
       for store in transpose_flat.stores: store.reset()
-      jaxpr, _, consts, () = trace_to_subjaxpr_dynamic(
-          transpose_flat, main_(), in_avals_t)
+      jaxpr, _, consts, () = trace_to_jaxpr_dynamic(transpose_flat, in_avals_t)
       return jaxpr, consts
 
     out_tracers = [DynamicJaxprTracer(self, a) for a in out_avals]

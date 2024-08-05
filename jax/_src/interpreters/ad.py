@@ -389,7 +389,7 @@ class JVPTrace(Trace):
       return map(partial(JVPTracer, self), primals_out, tangents_out)
 
   def process_custom_transpose(self, prim, call, tracers, **params):
-    ps_in, ts_in = unzip2((t.primal, t.tangent) for t in tracers)
+    ps_in, ts_in = unzip2(map(self.to_primal_tangent_pair, tracers))
     res_ps_in, lin_ps_in = split_list(ps_in, [params['res_tree'].num_leaves])
     res_ts_in, lin_ts_in = split_list(ts_in, [params['res_tree'].num_leaves])
 
@@ -413,10 +413,10 @@ class JVPTrace(Trace):
       raise NotImplementedError(
         'JVP of custom transpose with respect to non-symbolic-zero residuals')
 
-    ps_out = prim.bind(call, *ps_in, **params)
-
-    lin_ts_in = map(instantiate_zeros, lin_ts_in)
-    ts_out = prim.bind(call, *res_ps_in, *lin_ts_in, **params)
+    with core.set_current_trace(self.parent_trace):
+      ps_out = prim.bind(call, *ps_in, **params)
+      lin_ts_in = map(instantiate_zeros, lin_ts_in)
+      ts_out = prim.bind(call, *res_ps_in, *lin_ts_in, **params)
 
     return map(partial(JVPTracer, self), ps_out, ts_out)
 
