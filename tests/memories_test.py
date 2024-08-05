@@ -628,6 +628,23 @@ class DevicePutTest(jtu.JaxTestCase):
     self.assertArraysEqual(t, t_copy)
     self.assertEqual(t.shape, t_copy.shape)
 
+  def test_close_over_host_constant_and_stream(self):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("This test does not work on GPU backend.")
+
+    _, s_host, np_inp, inp_host = _create_inputs(
+        (8, 2), P("x", "y"), mem_kind="pinned_host")
+    s_dev = s_host.with_memory_kind('device')
+
+    @functools.partial(jax.jit, out_shardings=s_dev)
+    def f():
+      y = jax.device_put(inp_host, s_dev)
+      z = y * 2
+      return z
+
+    out = f()
+    self._check_device_put_addressable_shards(out, np_inp * 2, s_dev, 'device')
+
 
 @jtu.with_config(jax_enable_memories=True)
 class ComputeOffload(jtu.BufferDonationTestCase):
