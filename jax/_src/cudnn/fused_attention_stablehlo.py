@@ -285,7 +285,7 @@ def check_layout(query, key, value, bias, q_seqlen, kv_seqlen, layout):
 
 def check_is_flash_attention(
     query, key, layout, cudnn_version, has_bias, is_training):
-  if layout == AttentionLayout.BNTH:
+  if layout == AttentionLayout.BNTH.value:
     _, _, T, H = query.shape
     _, _, S, _ = key.shape
   else:
