@@ -386,6 +386,7 @@ class BatchTrace(Trace):
 
   def __init__(self, parent_trace, tag, axis_data):
     self.parent_trace = parent_trace
+    assert isinstance(axis_data, AxisData), breakpoint()
     self.axis_data = axis_data
     self.tag = tag
 
@@ -583,11 +584,11 @@ def vtile(f_flat: lu.WrappedFun,
 def batch_subtrace(tag, axis_data, in_dims, *in_vals):
   with core.take_current_trace() as parent_trace:
     trace = BatchTrace(parent_trace, tag, axis_data)
-    in_dims = in_dims() if callable(in_dims) else in_dims
-    in_vals, in_dims = resolve_ragged_axes(in_vals, in_dims)
-    in_tracers = [BatchTracer(trace, x, dim, source_info_util.current())
-                  if dim is not None else x for x, dim in zip(in_vals, in_dims)]
     with core.set_current_trace(trace):
+      in_dims = in_dims() if callable(in_dims) else in_dims
+      in_vals, in_dims = resolve_ragged_axes(in_vals, in_dims)
+      in_tracers = [BatchTracer(trace, x, dim, source_info_util.current())
+                    if dim is not None else x for x, dim in zip(in_vals, in_dims)]
       outs = yield in_tracers, {}
     out_vals, out_dims = unzip2(map(trace.to_batch_info, outs))
     segment_lens, out_dims = indirectify_ragged_axes(out_dims)
