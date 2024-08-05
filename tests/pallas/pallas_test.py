@@ -400,7 +400,9 @@ class PallasCallTest(PallasBaseTest):
       block_size = math.prod(block_shape)
       block_size_is_power_2 = 0 == (block_size & (block_size - 1))
       if not block_size_is_power_2:
-        self.skipTest("TODO: Add GPU exception, now RET_CHECK failure")
+        test_context = self.assertRaisesRegex(
+            Exception,
+            "array arguments and results whose size is a power of 2")
 
     with test_context:
       res = self.pallas_call(

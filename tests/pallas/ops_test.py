@@ -821,7 +821,7 @@ class OpsExtraTest(PallasBaseTest):
   @parameterized.parameters(
       ((16, 32), (16,)),
       ((16, 32), (32,)),
-      ((16, 32), (16, 31)),
+      ((16, 32), (16, 16)),
   )
   def test_invalid_broadcasted_load(self, x_shape, mask_shape):
     if self.INTERPRET:

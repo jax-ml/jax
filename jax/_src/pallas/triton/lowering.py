@@ -86,7 +86,7 @@ class ModuleContext:
 class BlockInfo:
   full_shape_dtype: jax.ShapeDtypeStruct
   start_indices: Sequence[Any]
-  block_shape: tuple[int, ...]
+  block_shape: tuple[int, ...]  # TODO(necula): can this contain "mapped"?
 
 
 @dataclasses.dataclass
@@ -94,7 +94,7 @@ class LoweringRuleContext:
   context: ModuleContext
   avals_in: Sequence[jax_core.ShapedArray]
   avals_out: Sequence[jax_core.ShapedArray]
-  block_infos: Sequence[BlockInfo | None]
+  block_infos: Sequence[BlockInfo | None]  # TODO(necula): can this be None?
 
   replace = dataclasses.replace
 
@@ -247,6 +247,21 @@ def _new_ir_context() -> ir.Context:
   ctx.load_all_available_dialects()
   return ctx
 
+# Many Trion operations require that their inputs and outputs have sizes that
+# are a power of 2 (they are defined to have TensorSizeTrait that enforces
+# this). This check is only needed to obtain a nicer error message; the
+# Triton lowering will fail anyway but it will crash with a C++ exception.
+# We currently apply this check only to load/store operations.
+def _check_tensor_size(shape: tuple[int | pallas_core.Mapped, ...]):
+  size = math.prod(1 if d is pallas_core.mapped else d for d in shape)
+  power_of_2 = (size & (size - 1)) == 0
+  if not power_of_2:
+    raise ValueError(
+        "The Pallas Triton lowering currently requires that all "
+        "operations have array arguments and results whose size "
+        "is a power of 2. Encountered an array of "
+        f"shape {shape}")
+
 
 def lower_jaxpr_to_triton_module(
     jaxpr: jax_core.Jaxpr,
@@ -258,17 +273,6 @@ def lower_jaxpr_to_triton_module(
     raise NotImplementedError(
         "dynamic grid bounds not supported in the Triton backend"
     )
-  # TODO(necula): this fails many tests, figure it out
-  # for bm in grid_mapping.block_mappings:
-  #   block_size = math.prod(d for d in bm.block_shape  # type: ignore[misc]
-  #                          if d is not pallas_core.mapped)
-  #   power_of_2 = (block_size & (block_size - 1)) == 0
-
-  #   if not power_of_2:
-  #     raise ValueError(
-  #         "The Pallas GPU lowering currently requires that the block sizes be "
-  #         f"a power of 2. Found block spec for {bm.origin} with "
-  #         f"shape {bm.block_shape}")
   if grid_mapping.num_index_operands:
     raise NotImplementedError(
         "scalar prefetch not implemented in the Triton backend"
@@ -387,7 +391,8 @@ def lower_jaxpr_to_triton_ir(
       inval_types = map(lambda t: getattr(t, "type", None), invals)
       raise LoweringError(
           f"Exception while lowering eqn:\n  {eqn}\nWith context:\n "
-          f" {rule_ctx}\nWith inval types={inval_types}\nIn jaxpr:\n{jaxpr}"
+          f" {rule_ctx}\nWith inval types={inval_types}\nIn jaxpr:\n{jaxpr}\n"
+          f"msg={e}"
       ) from e
     if eqn.primitive.multiple_results:
       map(write_env, eqn.outvars, outvals)
@@ -1641,7 +1646,7 @@ def _compute_pointers_from_indices(
     nd_indexer: NDIndexer,
     array_shape: tuple[int, ...],
 ) -> ir.Value:
-  if block_info is None:
+  if block_info is None:  # TODO(necula): is this branch dead?
     full_shape = array_shape
     num_mapped_dims = 0
     block_shape = array_shape
@@ -1654,6 +1659,7 @@ def _compute_pointers_from_indices(
   strides = pallas_utils.strides_from_shape(full_shape)
   indexer_shape = nd_indexer.get_indexer_shape()
   int_indexer_shape = nd_indexer.int_indexer_shape
+  _check_tensor_size(indexer_shape)
   indices = nd_indexer.indices
   other_shape = indexer_shape[len(int_indexer_shape) :]
   bcast_indices = []
