@@ -15,6 +15,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 * Changes
   * {mod}`jax.numpy` now supports v2023.12 of the Python Array API Standard.
     See {ref}`python-array-api` for more information.
+  * Computations on the CPU backend may now be dispatched asynchronously in
+    more cases. Previously non-parallel computations were always dispatched
+    synchronously. You can recover the old behavior by setting
+    `jax.config.update('jax_cpu_enable_async_dispatch', False)`.
 
 * Breaking changes
   * The MHLO MLIR dialect (`jax.extend.mlir.mhlo`) has been removed. Use the
