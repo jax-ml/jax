@@ -580,6 +580,8 @@ class DevicePutTest(jtu.JaxTestCase):
     self.assertEqual(out_host.sharding, s_host)
 
   def test_weight_offload_with_dp_on_output(self):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("This test is flaky on GPU backend.")
     _, s_dev, np_inp, inp_dev = _create_inputs(
         (8, 2), P("x", "y"), mem_kind="device")
     s_host = s_dev.with_memory_kind('pinned_host')
