@@ -1855,6 +1855,7 @@ class DynamicJaxprTrace(core.Trace):
 
   def invalidate(self):
     self.frame.tracers = None
+    self.frame.constid_to_tracer = None
     super().invalidate()
 
   def to_jaxpr_tracer(self, x):
