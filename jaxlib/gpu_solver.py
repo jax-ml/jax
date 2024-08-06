@@ -320,7 +320,10 @@ def _syevd_hlo(platform, gpu_solver, have_jacobi_solver, dtype, a, *,
     kernel = f"{platform}solver_syevd"
     lwork, opaque = gpu_solver.build_syevd_descriptor(
         np.dtype(dtype), lower, batch_int, n)
-    assert lwork > 0
+    # TODO(Ruturaj4): Currently, hipsolverSsyevd sets lwork to 0 if n==0.
+    # Remove if this behavior changes in then new ROCm release.
+    if n > 0 or platform != "hip":
+      assert lwork > 0
 
   if ir.ComplexType.isinstance(a_type.element_type):
     eigvals_type = ir.ComplexType(a_type.element_type).element_type
