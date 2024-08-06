@@ -344,7 +344,6 @@ class JaxprTrace(Trace['JaxprTracer']):
                        for ax, aval in zip(unk_in_axes, in_avals)]
 
     # Wrap f to perform partial evaluation and plumb out aux data.
-    assert False
     f = trace_to_subjaxpr_nounits(f, self, False)
     f, aux = partial_eval_wrapper_nounits(f, tuple(in_knowns),
                                           tuple(in_avals_mapped))
@@ -360,7 +359,7 @@ class JaxprTrace(Trace['JaxprTracer']):
                         out_axes_thunk=const_out_axes_thunk)
 
     # Run the map, getting known out vals and aux data used for staged-out map.
-    out = primitive.bind(f, *in_consts, **const_params)
+    out = primitive.bind_with_trace(self.parent_trace, (f, *in_consts), const_params)
     out_knowns, out_avals_mapped, jaxpr, env = aux()
     # Split apart known outputs from the original call and residuals.
     out_consts, res = split_list(out, [len(out) - len(jaxpr.constvars)])
