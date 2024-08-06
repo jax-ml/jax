@@ -609,9 +609,9 @@ def _infer_params_impl(
     in_avals = tuple(a for a, e in in_type if e)
   elif in_avals is None:
     avals = []
-    for i, a in enumerate(explicit_args):
+    for i, x in enumerate(explicit_args):
       try:
-        avals.append(shaped_abstractify(a))
+        avals.append(shaped_abstractify(x))
       except OverflowError as e:
         arg_path = (f"argument path is {dbg.arg_names[i]}" if dbg
                     else f"flattened argument number is {i}")
@@ -623,6 +623,14 @@ def _infer_params_impl(
   else:
     in_type = in_avals
 
+  mesh_shape = None  # or get from context...
+  for i, x in enumerate(explicit_args):
+    ms = maybe_get_mesh_shape(x)
+    if ms is not None:
+      if mesh_shape is not None and ms != mesh_shape:
+        raise Exception((mesh_shape, i, ms))
+      mesh_shape = ms
+
   in_shardings_flat, in_layouts_flat = _process_in_axis_resources(
       in_shardings_treedef, in_shardings_leaves,
       ji.in_layouts_treedef, ji.in_layouts_leaves,
@@ -632,7 +640,7 @@ def _infer_params_impl(
   jaxpr, consts, out_avals, attrs_tracked = _create_pjit_jaxpr(
       flat_fun, in_type, attr_token, dbg,
       HashableFunction(res_paths, closure=()),
-      IgnoreKey(ji.inline))
+      IgnoreKey(ji.inline), mesh_shape)
   _attr_update(flat_fun, in_type, attr_token, attrs_tracked)
 
   out_shardings_flat, out_layouts_flat = _check_and_canonicalize_out_shardings(
@@ -673,6 +681,9 @@ def _infer_params_impl(
                     donated_invars, dbg.arg_names if dbg else None, len(consts),
                     attrs_tracked), args_flat
 
+def maybe_get_mesh_shape(x) -> core.MeshShape | None:
+  if isinstance(x, xc.ArrayImpl) and isinstance(x.sharding, NamedSharding):
+    return x.sharding.mesh.shape_tuple
 
 class InferParamsCacheEntry:
   """Mutable value object for _infer_params_cached."""
@@ -1260,7 +1271,8 @@ def _create_pjit_jaxpr(
     attr_data: int,
     debug_info: lu.TracingDebugInfo,
     out_paths: Callable,
-    ignored_inline: IgnoreKey
+    ignored_inline: IgnoreKey,
+    mesh_shape: core.MeshShape | None,
 ) -> tuple[core.ClosedJaxpr, list[Any], list[core.AbstractValue],
            list[tuple[PyTreeDef, PyTreeDef, tuple[Any, str]]]]:
   del ignored_inline  # just for explain_cache_miss
@@ -1268,14 +1280,14 @@ def _create_pjit_jaxpr(
       "Finished tracing + transforming {fun_name} for pjit in {elapsed_time:.9f} sec",
       fun_name=fun.__name__, event=dispatch.JAXPR_TRACE_EVENT):
     pe_debug = debug_info and pe.debug_info_final(fun, debug_info.traced_for)
-    if config.dynamic_shapes.value:
-      jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic2(
-          lu.annotate(fun, cast(core.InputType, in_type)), debug_info=pe_debug)
-      attrs_tracked = []
-    else:
-      jaxpr, global_out_avals, consts, attrs_tracked = pe.trace_to_jaxpr_dynamic(
-          fun, in_type, debug_info=pe_debug)
-      # assert attr_data is sentinel or attr_data matches attrs_tracked
+    with core.sms(mesh_shape):
+      if config.dynamic_shapes.value:
+        jaxpr, global_out_avals, consts = pe.trace_to_jaxpr_dynamic2(
+            lu.annotate(fun, cast(core.InputType, in_type)), debug_info=pe_debug)
+        attrs_tracked = []
+      else:
+        jaxpr, global_out_avals, consts, attrs_tracked = pe.trace_to_jaxpr_dynamic(
+            fun, in_type, debug_info=pe_debug)
 
   # TODO(dougalm,mattjj): enable debug info with attrs_tracked
   if not config.dynamic_shapes.value and not attrs_tracked:
@@ -2424,7 +2436,6 @@ def with_sharding_constraint(x, shardings):
   .. _Distributed arrays and automatic parallelization: https://jax.readthedocs.io/en/latest/notebooks/Distributed_arrays_and_automatic_parallelization.html
   """
   x_flat, tree = tree_flatten(x)
-
   layouts, shardings = _split_layout_and_sharding(shardings)
 
   user_shardings = prepare_axis_resources(
