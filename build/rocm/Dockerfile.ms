@@ -27,9 +27,14 @@ ENV PATH="$ROCM_PATH/bin:${PATH}"
 ENV PATH="$OPENCL_ROOT/bin:${PATH}"
 ENV PATH="/root/bin:/root/.local/bin:$PATH"
 
-# install pyenv dependencies
+# install pyenv and python build dependencies
 RUN --mount=type=cache,target=/var/cache/apt \
-    apt-get update && apt-get install -y git libssl-dev
+    apt-get update && apt-get install -y \
+        git \
+        libssl-dev \
+        libffi-dev \
+        libreadline-dev \
+        liblzma-dev
 
 # Install pyenv with different python versions
 ARG PYTHON_VERSION=3.10.14
