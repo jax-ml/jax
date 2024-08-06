@@ -510,6 +510,12 @@ class Trace(Generic[TracerType]):
   def __repr__(self):
     return '{}'.format(self.__class__.__name__)
 
+  def invalidate(self):
+    if config.check_tracer_leaks.value:
+      leaked_tracers = maybe_find_leaked_tracers(self)
+      if leaked_tracers:
+        raise leaked_tracer_error("trace", self, leaked_tracers)
+
   def process_call(self, call_primitive, f, tracers, params):
     msg = (f"{type(self)} must override process_call to handle call-like "
            "primitives")
@@ -953,13 +959,8 @@ the following:
   threading.current_thread().pydev_do_not_trace = True
 """
 
-def maybe_find_leaked_tracers(x: MainTrace | Sublevel | None
-                              ) -> list[Tracer]:
-  """Find the leaked tracers holding a reference to the MainTrace or SubLevel.
-
-  It's possible there's none! eg. there's some cases where JAX itself holds a
-  reference to `x` inside of a lambda closure, and no tracers were leaked
-  by the user. In this case an empty list is returned.
+def maybe_find_leaked_tracers(trace: Trace) -> list[Tracer]:
+  """Find the leaked tracers holding a reference to the Trace
   """
   if not getattr(threading.current_thread(), 'pydev_do_not_trace', True):
     warnings.warn(TRACER_LEAK_DEBUGGER_WARNING)
@@ -967,8 +968,7 @@ def maybe_find_leaked_tracers(x: MainTrace | Sublevel | None
   # only due to cyclical dependencies. (We don't care about unreachable leaked
   # tracers since they can't interact with user code and cause a problem.)
   gc.collect()
-  traces = list(filter(lambda x: isinstance(x, Trace), gc.get_referrers(x)))
-  tracers = list(filter(lambda x: isinstance(x, Tracer), gc.get_referrers(*traces)))
+  tracers = list(filter(lambda x: isinstance(x, Tracer), gc.get_referrers(trace)))
   return tracers
 
 def leaked_tracer_error(name: str, t, tracers: list[Tracer]) -> Exception:

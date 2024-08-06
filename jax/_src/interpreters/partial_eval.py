@@ -660,6 +660,7 @@ def trace_to_jaxpr_nounits(
     with core.set_current_trace(trace):
       jaxpr, (out_pvals, consts, env) = fun.call_wrapped(pvals)
       assert not env
+    trace.invalidate()
     return jaxpr, out_pvals, consts
 
 @lu.transformation
@@ -1852,6 +1853,10 @@ class DynamicJaxprTrace(core.Trace):
   def __init__(self, frame):
     self.frame = frame
 
+  def invalidate(self):
+    self.frame.tracers = None
+    super().invalidate()
+
   def to_jaxpr_tracer(self, x):
     as_local_var = self.frame.tracer_to_var.get(id(x))
     if as_local_var is None:
@@ -2219,15 +2224,17 @@ def trace_to_jaxpr_dynamic(
 
   frame = JaxprStackFrame()
   frame.debug_info = debug_info
+
   trace = DynamicJaxprTrace(frame)
   in_tracers = _input_type_to_tracers(trace.new_arg, in_avals)
-  in_tracers_ = [t for t, keep in zip(in_tracers, keep_inputs) if keep]
+  in_tracers = [t for t, keep in zip(in_tracers, keep_inputs) if keep]
   with core.set_current_trace(trace):
-    ans = fun.call_wrapped(*in_tracers_)
+    ans = fun.call_wrapped(*in_tracers)
 
   out_tracers = map(trace.to_jaxpr_tracer, ans)
   jaxpr, consts, attrs_tracked = frame.to_jaxpr(trace, out_tracers)
-  del fun, trace, frame, in_tracers, out_tracers, ans
+  del fun, frame, in_tracers, out_tracers, ans
+  trace.invalidate()
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   return jaxpr, [v.aval for v in jaxpr.outvars], consts, attrs_tracked
 
@@ -2236,14 +2243,18 @@ def trace_to_jaxpr_dynamic2(
     fun: lu.WrappedFun, debug_info: DebugInfo | None = None
   ) -> tuple[Jaxpr, OutputType, list[Any]]:
   trace = DynamicJaxprTrace(JaxprStackFrame())
+
   trace.frame.debug_info = debug_info
   in_avals, keep_inputs = unzip2(fun.in_type)
   in_tracers = _input_type_to_tracers(trace.new_arg, in_avals)
-  in_tracers_ = [t for t, keep in zip(in_tracers, keep_inputs) if keep]
+  in_tracers = [t for t, keep in zip(in_tracers, keep_inputs) if keep]
   with core.set_current_trace(trace):
-    ans = fun.call_wrapped(*in_tracers_)
+    ans = fun.call_wrapped(*in_tracers)
   out_tracers = map(trace.to_jaxpr_tracer, ans)
-  return trace.frame.to_jaxpr2(out_tracers)
+  jaxpr = trace.frame.to_jaxpr2(out_tracers)
+  del in_tracers, out_tracers, ans
+  trace.invalidate()
+  return jaxpr
 
 AbstractedAxisName = Hashable
 AbstractedAxesSpec = Union[
