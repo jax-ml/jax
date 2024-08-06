@@ -1968,7 +1968,20 @@ def _cmp_lowering_rule(prim, ctx: LoweringRuleContext, x, y):
   x, y = _bcast(x, y, ctx.avals_in[0], ctx.avals_in[1], ctx.avals_out[0])
   x_aval, y_aval = ctx.avals_in
   dtypes = x_aval.dtype, y_aval.dtype
-  if all(jnp.issubdtype(dtype, jnp.integer) for dtype in dtypes):
+  if all(
+      jnp.issubdtype(dtype, jnp.integer) | jnp.issubdtype(dtype, jnp.bool_)
+      for dtype in dtypes
+  ):
+
+    # Handle bool comparisons by casting to int32.
+    bool_cast_to = _dtype_to_ir_type(jnp.dtype("int32"))
+    true_ = ir_constant(1, mlir_type=bool_cast_to)
+    false_ = ir_constant(0, mlir_type=bool_cast_to)
+    if jnp.issubdtype(dtypes[0], jnp.bool_):
+      x = arith.SelectOp(x, true_, false_)
+    if jnp.issubdtype(dtypes[1], jnp.bool_):
+      y = arith.SelectOp(y, true_, false_)
+
     pred = _cmpi_lowering_types[prim]
     predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
     return arith.CmpIOp(predicate, x, y).result
