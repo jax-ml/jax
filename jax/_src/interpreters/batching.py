@@ -426,7 +426,8 @@ class BatchTrace(Trace):
     params = dict(params, name=params.get('name', f.__name__))
     vals, dims = unzip2(map(self.to_batch_info, tracers))
     if all(bdim is not_mapped for bdim in dims):
-      return call_primitive.bind(f, *vals, **params)
+      with core.set_current_trace(self.parent_trace):
+        return call_primitive.bind(f, *vals, **params)
     sizes = (x.shape[d] if type(d) is int else len(d.segment_lengths)
              for x, d in zip(vals, dims) if d is not not_mapped)
     axis_size, = core.dedup_referents(sizes)
@@ -434,7 +435,9 @@ class BatchTrace(Trace):
     f_, dims_out = batch_subtrace(f, self.tag, self.axis_data, tuple(dims))
     f_ = _update_annotation(
         f_, f.in_type, self.axis_data.size, self.axis_data.name, dims, segment_lens)
-    vals_out = call_primitive.bind(f_, *segment_lens, *vals, **params)
+
+    with core.set_current_trace(self.parent_trace):
+      vals_out = call_primitive.bind(f_, *segment_lens, *vals, **params)
     vals_out, dims_out = resolve_ragged_axes(vals_out, dims_out())
     src = source_info_util.current()
     return [BatchTracer(self, v, d, src) for v, d in zip(vals_out, dims_out)]
@@ -442,7 +445,8 @@ class BatchTrace(Trace):
   def process_map(self, map_primitive, f: lu.WrappedFun, tracers, params):
     vals, dims = unzip2(map(self.to_batch_info, tracers))
     if all(dim is not_mapped for dim in dims):
-      return map_primitive.bind(f, *vals, **params)
+      with core.set_current_trace(self.parent_trace):
+        return map_primitive.bind(f, *vals, **params)
     else:
       assert len({x.shape[d] for x, d in zip(vals, dims) if d is not not_mapped}) == 1
       # The logic for the dimension math below is as follows:
@@ -474,7 +478,8 @@ class BatchTrace(Trace):
         return tuple(out_axis + 1 if both_mapped(out_axis, d) and d < out_axis else out_axis
                      for out_axis, d in zip(out_axes_thunk(), dims_out()))
       new_params = dict(params, in_axes=new_in_axes, out_axes_thunk=new_out_axes_thunk)
-      vals_out = map_primitive.bind(f, *vals, **new_params)
+      with core.set_current_trace(self.parent_trace):
+        vals_out = map_primitive.bind(f, *vals, **new_params)
       dims_out_ = [d + 1 if both_mapped(out_axis, d) and out_axis <= d else d
                    for d, out_axis in zip(dims_out(), out_axes_thunk())]
       src = source_info_util.current()
