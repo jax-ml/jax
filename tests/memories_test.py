@@ -441,6 +441,26 @@ class DevicePutTest(jtu.JaxTestCase):
     self._check_device_put_addressable_shards(
         out2, np_inp * np_inp * 2, s_host, 'pinned_host')
 
+  def test_zero_size_parameter(self):
+    if jtu.test_device_matches(["gpu"]):
+      self.skipTest("This test does not work on GPU backend.")
+    _, s_host, np_inp, inp_host = _create_inputs(
+        (0,), P("x"), mem_kind="pinned_host")
+    s_dev = s_host.with_memory_kind('device')
+
+    @functools.partial(jax.jit, out_shardings=s_host)
+    def f(a):
+      b = jax.device_put(a, s_dev)
+      return b
+
+    compiled = f.lower(inp_host).compile()  # doesn't crash
+    compiled_text = compiled.as_text()
+    self.assertRegex(compiled_text, r"entry_computation_layout=.*S\(5\)}")
+
+    out = f(inp_host)
+    self._check_device_put_addressable_shards(
+        out, np_inp, s_host, 'pinned_host')
+
   def test_parameter_streaming_with_scalar_and_constant(self):
     if jtu.test_device_matches(["gpu"]):
       self.skipTest("This test does not work on GPU backend.")
