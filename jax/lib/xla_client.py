@@ -14,8 +14,6 @@
 
 from jax._src.lib import xla_client as _xc
 
-bfloat16 = _xc.bfloat16  # TODO(jakevdp): deprecate this in favor of ml_dtypes.bfloat16
-
 dtype_to_etype = _xc.dtype_to_etype
 execute_with_python_values = _xc.execute_with_python_values
 get_topology_for_devices = _xc.get_topology_for_devices
@@ -47,11 +45,16 @@ _deprecations = {
     "jax.lib.xla_client._xla is deprecated; use jax.lib.xla_extension.",
     _xc._xla
   ),
+  "bfloat16" : (
+    "jax.lib.xla_client.bfloat16 is deprecated; use ml_dtypes.bfloat16.",
+    _xc.bfloat16
+  ),
 }
 
 import typing as _typing
 if _typing.TYPE_CHECKING:
   _xla = _xc._xla
+  bfloat16 = _xc.bfloat16
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
