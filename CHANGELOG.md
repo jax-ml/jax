@@ -13,6 +13,7 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
 ## jax 0.4.32
 
 * Changes
+  * `jax_enable_memories` flag is set to `True` by default.
   * {mod}`jax.numpy` now supports v2023.12 of the Python Array API Standard.
     See {ref}`python-array-api` for more information.
   * Computations on the CPU backend may now be dispatched asynchronously in

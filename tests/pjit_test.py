@@ -3824,19 +3824,6 @@ class ArrayPjitTest(jtu.JaxTestCase):
         ' manager.*SingleDeviceSharding'):
       jax.jit(jax.vmap(f, spmd_axis_name='x'))(arr)
 
-  @jtu.skip_on_devices("tpu", "gpu")
-  def test_device_put_memory_kind_not_tpu_gpu(self):
-    @jax.jit
-    def f(x):
-      y = x * 2
-      return jax.device_put(y, sharding_impls.TransferToMemoryKind('unpinned_host'))
-
-    with self.assertRaisesRegex(
-        NotImplementedError,
-        'Passing memory_kind to device_put via Shardings is not supported on'
-        ' platform.*'):
-      f(jnp.arange(8))
-
   def test_no_output_multiple_devices(self):
     mesh = jtu.create_global_mesh((2,), ('x',))
 
