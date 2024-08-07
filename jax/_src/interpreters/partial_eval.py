@@ -1993,11 +1993,10 @@ class DynamicJaxprTrace(core.Trace):
     reduced_in_avals = [core.mapped_aval(axis_size, in_axis, a)
                         if in_axis is not None else a
                         for a, in_axis in zip(in_avals, params['in_axes'])]
-    with core.extend_axis_env(axis_name, params["global_axis_size"], None):
-      with core.new_sublevel():
-        jaxpr, reduced_out_avals, consts, () = trace_to_subjaxpr_dynamic(
-            f, self.main, reduced_in_avals,
-            debug_info=debug_info_final(f, map_primitive.name))
+    with core.extend_axis_env([(axis_name, params["global_axis_size"])]):
+      jaxpr, reduced_out_avals, consts, () = trace_to_jaxpr_dynamic(
+          f, reduced_in_avals,
+          debug_info=debug_info_final(f, map_primitive.name))
       ordered_effects = effects.ordered_effects.filter_in(jaxpr.effects)
       if ordered_effects:
         raise ValueError("Ordered effects not supported for "
@@ -2018,9 +2017,8 @@ class DynamicJaxprTrace(core.Trace):
       update_params = call_param_updaters.get(map_primitive)
       if update_params:
         new_params = update_params(new_params, [True] * len(tracers), len(consts))
-      effs = core.filter_named_axis_effects(jaxpr.effects, {axis_name})
       eqn = new_jaxpr_eqn([*constvars, *invars], outvars, map_primitive,
-                          new_params, effs, source_info)
+                          new_params, jaxpr.effects, source_info)
       self.frame.add_eqn(eqn)
     return out_tracers
 

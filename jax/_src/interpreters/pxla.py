@@ -1470,7 +1470,7 @@ def _pmap_lowering(ctx, *in_nodes, axis_name,
     if in_axis is not None else in_node
     for aval, in_node, in_axis in zip(in_avals, in_nodes, in_axes))
 
-  with maybe_extend_axis_env(axis_name, global_axis_size, None):
+  with core.extend_axis_env([(axis_name, global_axis_size)]):
     sub_ctx = ctx.module_context.replace(
         axis_context=sharding_impls.ReplicaAxisContext(new_env))
     sharded_outs, _ = mlir.jaxpr_subcomp(

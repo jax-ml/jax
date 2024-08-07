@@ -2450,14 +2450,14 @@ def _check_map(ctx_factory, prim, in_avals, params):
       raise JaxprTypeError(f"Call primitive {prim} passes operand {in_aval} "
                            f"to jaxpr expecting {binder_aval}")
 
-  with extend_axis_env(params['axis_name'], axis_size, None):
+  with extend_axis_env([(params['axis_name'], axis_size)]):
     _check_jaxpr(ctx_factory, call_jaxpr)
 
   mapped_out_avals = [v.aval for v in call_jaxpr.outvars]
   out_avals = [unmapped_aval(axis_size, axis_name, out_axis, aval)
                if out_axis is not None else aval
                for aval, out_axis in zip(mapped_out_avals, out_axes)]
-  return out_avals, filter_named_axis_effects(call_jaxpr.effects, {axis_name})
+  return out_avals, call_jaxpr.effects
 
 
 # ------------------- Jaxpr printed representation -------------------
