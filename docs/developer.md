@@ -420,6 +420,8 @@ You may pass additional options to `build.py` to configure the build; see the
 `jaxlib` build documentation for details.
 
 By default the Bazel build runs the JAX tests using `jaxlib` built from source.
+If it is a gpu_test, it will also use cuda plugin (`jax-cuda-pjrt` and
+`jax-cuda-plugin`) built from source .
 To run JAX tests, run:
 
 ```
@@ -444,6 +446,8 @@ Alternatively, to install `jaxlib` from a local wheel (assuming Python 3.12):
 echo -e "\n$(realpath jaxlib-0.4.26-cp312-cp312-manylinux2014_x86_64.whl)" >> build/requirements.in
 python build/build.py --requirements_update --python_version=3.12
 ```
+Note for cuda support, you will need to install `jax-cuda12-plugin` and
+`jax-cuda12-pjrt` assuming it is cuda version 12.
 
 Once you have `jaxlib` installed hermetically, run:
 
@@ -459,7 +463,8 @@ Some of JAX tests are for multiple accelerators (i.e. GPUs, TPUs). When JAX is
 already installed, you can run GPUs tests like this:
 
 ```
-bazel test //tests:gpu_tests --local_test_jobs=4 --test_tag_filters=multiaccelerator --//jax:build_jaxlib=false --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform
+bazel test //tests:gpu_tests --local_test_jobs=4 --test_tag_filters=multiaccelerator --//jax:build_jaxlib=false 
+--//jax:build_cuda_plugin_from_source=false --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform
 ```
 
 You can speed up single accelerator tests by running them in parallel on
