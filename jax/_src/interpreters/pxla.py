@@ -340,14 +340,15 @@ def _emap_impl(fun: lu.WrappedFun, *args,
 
   emap_info = EmapInfo(backend, devices)
   shard_axes = [{} if in_axis is None else {axis_name: in_axis} for in_axis in in_axes]
-  with core.new_base_main(MapTrace, emap_info=emap_info) as main:
-    with core.new_sublevel(), core.extend_axis_env(axis_name, axis_size, main):
-      t = main.with_cur_sublevel()
-      tracers = [MapTracer(t, arg, s) for arg, s in zip(args, shard_axes)]
+  trace = MapTrace(axis_name, emap_info)
+  with core.extend_axis_env([(axis_name, axis_size)]):
+    tracers = [MapTracer(trace, arg, s) for arg, s in zip(args, shard_axes)]
+    with core.set_current_trace(trace):
       ans = fun.call_wrapped(*tracers)
-      out_tracers = map(t.full_raise, ans)
-      outvals, out_axes_src = unzip2((t.val, t.shard_axes) for t in out_tracers)
-    del main
+
+    out_tracers = map(trace.to_map_tracer, ans)
+    outvals, out_axes_src = unzip2((t.val, t.shard_axes) for t in out_tracers)
+
   out_axes = out_axes_thunk()
 
   platform = xb.get_backend(backend).platform
@@ -407,26 +408,26 @@ FakePrimitive = namedtuple("FakePrimitive", ["multiple_results", "bind"])
 
 class MapTrace(core.Trace):
 
-  def __init__(self, *args, emap_info):
-    super().__init__(*args)
+  def __init__(self, axis_name, emap_info):
     self.emap_info = emap_info
+    self.axis_name = axis_name
 
-  def pure(self, val):
-    return MapTracer(self, val, {})
-
-  def sublift(self, tracer):
-    return MapTracer(self, tracer.val, tracer.shard_axes)
+  def to_map_tracer(self, val):
+    if isinstance(val, MapTracer):
+      return val
+    else:
+      return MapTracer(self, val, {})
 
   def process_primitive(self, primitive, tracers, params):
-    info = self.main.payload["emap_info"]
+    tracers = map(self.to_map_tracer, tracers)
     vals, shard_axes = unzip2([(t.val, t.shard_axes) for t in tracers])
-    names = tuple(f.name for f in core.thread_local_state.trace_state.axis_env
-                  if f.main_trace is self.main)
+    info = self.emap_info
+    names = core.get_current_axes()
     all_axes = tuple(_map_schedule(map(s.get, names)) for s in shard_axes)  # pytype: disable=wrong-arg-types  # always-use-return-annotations
     f = HashableFunction(lambda *args: primitive.bind(*args, **params),
                          (primitive, tuple(params.items())))
-    f_mapped, out_shard_axes = _multi_pmap(f, info, names, all_axes)
-    with core.eval_context(), jax.disable_jit(False):
+    f_mapped, out_shard_axes = _multi_pmap(f, self.emap_info, names, all_axes)
+    with core.eval_context(), core.pop_axis_name(self.axis_name), jax.disable_jit(False):
       outvals = f_mapped(*vals)
     if primitive.multiple_results:
       return [MapTracer(self, val, out_shard_axes) for val in outvals]

@@ -2804,11 +2804,26 @@ def extend_axis_env(name_size_pairs : list[tuple[AxisName, int]]):
     for name, _ in name_size_pairs:
       env.pop(name)
 
+@contextmanager
+def pop_axis_name(name : AxisName):
+  state = get_trace_state()
+  prev_env = state.axis_env
+  new_env = prev_env.copy()
+  new_env.pop(name)
+  try:
+    state.axis_env = new_env
+    yield
+  finally:
+    state.axis_env = prev_env
+
 def get_axis_size(axis_name:AxisName):
   return get_trace_state().axis_env[axis_name]
 
 def axis_exists(axis_name:AxisName):
   return axis_name in get_trace_state().axis_env
+
+def get_current_axes() -> list[AxisName]:
+  return tuple(k for k in get_trace_state().axis_env)
 
 # When a mapped function is given no axis name, we generate a name object based
 # on the id of the function object. Collisions aren't important because this
