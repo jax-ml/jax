@@ -100,10 +100,10 @@ cc_library(
 
 cc_library(
     name = "hipblas_kernels_ffi",
-    srcs = ["//third_party/py/jax/jaxlib/gpu:blas_kernels_ffi.cc"],
-    hdrs = ["//third_party/py/jax/jaxlib/gpu:blas_kernels_ffi.h"],
+    srcs = ["//jaxlib/gpu:blas_kernels_ffi.cc"],
+    hdrs = ["//jaxlib/gpu:blas_kernels_ffi.h"],
     deps = [
-        ":hip_gpu_handle_pools",
+        ":hip_blas_handle_pool",
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
         "//jaxlib:ffi_helpers",
@@ -173,8 +173,8 @@ cc_library(
 
 cc_library(
     name = "hipsolver_kernels_ffi",
-    srcs = ["//third_party/py/jax/jaxlib/gpu:solver_kernels_ffi.cc"],
-    hdrs = ["//third_party/py/jax/jaxlib/gpu:solver_kernels_ffi.h"],
+    srcs = ["//jaxlib/gpu:solver_kernels_ffi.cc"],
+    hdrs = ["//jaxlib/gpu:solver_kernels_ffi.h"],
     deps = [
         ":hip_gpu_kernel_helpers",
         ":hip_solver_handle_pool",
@@ -199,10 +199,11 @@ pybind_extension(
     features = ["-use_header_modules"],
     module_name = "_solver",
     deps = [
-        ":hip_gpu_handle_pools",
+        ":hip_solver_handle_pool",
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
         ":hipsolver_kernels",
+        ":hipsolver_kernels_ffi",
         "//jaxlib:kernel_nanobind_helpers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings:str_format",
