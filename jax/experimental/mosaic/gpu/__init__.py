@@ -442,6 +442,16 @@ class LaunchContext:
     rank = len(slice_shape)
     if rank > 5:  # TODO: apaszke - Implement stride compression
       raise ValueError("Async copies only support striding up to 5 dimensions")
+    if max(slice_shape) > 256:
+      raise ValueError(
+          "Async copies only support copying <=256 elements along each"
+          " dimension"
+      )
+    if (zeroth_bw := slice_shape[-1] * element_bytewidth) % 16 != 0:
+      raise ValueError(
+          "Async copies require the number of bytes copied along the last"
+          f" dimension to be divisible by 16, but got {zeroth_bw}"
+      )
     if swizzle is not None and slice_shape[-1] != swizzle // element_bytewidth:
       raise ValueError(
           f"Async copies with {swizzle=} require last dimension of the slice to"
