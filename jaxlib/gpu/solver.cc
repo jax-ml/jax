@@ -22,7 +22,6 @@ limitations under the License.
 #include "absl/container/flat_hash_map.h"
 #include "absl/strings/str_format.h"
 #include "absl/status/statusor.h"
-#include "third_party/gpus/cuda/include/cusolver_common.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/solver_handle_pool.h"
 #include "jaxlib/gpu/solver_kernels.h"
