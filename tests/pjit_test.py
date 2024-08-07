@@ -1483,6 +1483,45 @@ class CustomPartitionerTest(jtu.JaxTestCase):
     pjit_f = pjit(jit_f, in_shardings=(P('x')), out_shardings=P('x'))
     self.assertArraysEqual(x, pjit_f(x))
 
+  def test_custom_partitioning_no_mesh_context(self):
+    self.skip_if_custom_partitioning_not_supported()
+
+    @custom_partitioning
+    def f(x):
+      return x
+
+    def partition(mesh, arg_shapes, result_shape):
+      def lower_fn(x):
+        @jax.jit
+        def g(y):
+          return y
+
+        return g(x)
+
+      x_shard = arg_shapes[0].sharding
+      return (
+          mesh,
+          lower_fn,
+          NamedSharding(x_shard.mesh, P('x')),
+          (NamedSharding(x_shard.mesh, P('x')),),
+      )
+
+    def infer_sharding_from_operands(mesh, arg_shapes, result_shape):
+      x_shard = arg_shapes[0].sharding
+      return NamedSharding(x_shard.mesh, P('x'))
+
+    f.def_partition(
+        infer_sharding_from_operands=infer_sharding_from_operands,
+        partition=partition,
+    )
+
+    mesh = jtu.create_global_mesh((4,), ('x',))
+    x = np.asarray(np.random.randint(0, 20, (32,)), dtype=np.float32)
+    s = NamedSharding(mesh, P('x'))
+
+    pjit_f = jax.jit(f, in_shardings=s, out_shardings=s)
+    self.assertArraysEqual(x, pjit_f(x))
+
   @jtu.with_mesh([('x', 4)])
   def test_custom_partitioner_with_scan(self):
     self.skip_if_custom_partitioning_not_supported()
@@ -3409,8 +3448,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
     cache_info4 = pxla._cached_compilation.cache_info()
     self.assertIsInstance(out4.sharding, PositionalSharding)
 
-    self.assertEqual(cache_info4.hits, cache_info3.hits + 1)
-    self.assertEqual(cache_info4.misses, cache_info3.misses)
+    self.assertEqual(cache_info4.hits, cache_info3.hits)
+    self.assertEqual(cache_info4.misses, cache_info3.misses + 1)
 
   def test_cache_hit_pjit_lower_with_cpp_cache_miss(self):
     mesh = jtu.create_global_mesh((2, 1), ('x', 'y'))
@@ -3521,8 +3560,8 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.assertIsInstance(out3.sharding, PositionalSharding)
     self.assertEqual(count[0], 1)
 
-    self.assertEqual(cache_info2.hits, cache_info1.hits + 1)
-    self.assertEqual(cache_info2.misses, cache_info1.misses)
+    self.assertEqual(cache_info2.hits, cache_info1.hits)
+    self.assertEqual(cache_info2.misses, cache_info1.misses + 1)
 
     self.assertEqual(pl_cache_info2.hits, pl_cache_info1.hits)
     self.assertEqual(pl_cache_info2.misses, pl_cache_info1.misses + 1)
@@ -3813,7 +3852,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       self.skipTest('Requires >=4 devices')
 
     mesh1 = jax.sharding.Mesh(jax.devices()[:2], 'x')
-    mesh2 = jax.sharding.Mesh(jax.devices()[2:4], 'y')
+    mesh2 = jax.sharding.Mesh(jax.devices()[2:4], 'x')
 
     @jax.jit
     def f(x):
@@ -3824,7 +3863,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       out_a = f(a)  # lowering cached
 
       # same num_devices but different devices.
-      b = jax.device_put(out_a, NamedSharding(mesh2, P('y')))
+      b = jax.device_put(out_a, NamedSharding(mesh2, P('x')))
       f(b)  # lowering cache *hit*
 
     with jtu.count_jit_and_pmap_compiles() as count:
