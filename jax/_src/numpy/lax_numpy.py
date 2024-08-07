@@ -8340,7 +8340,10 @@ def _expand_bool_indices(idx, shape):
         i_shape = _shape(i)
         start = len(out) + ellipsis_offset - newaxis_offset
         expected_shape = shape[start: start + _ndim(i)]
-        if i_shape != expected_shape:
+        if len(i_shape) != len(expected_shape):
+          raise IndexError(f"too many boolean indices at index {dim_number}: got mask of shape "
+                           f"{i_shape}, but only {len(expected_shape)} dimensions remain.")
+        if not all(s1 in (0, s2) for s1, s2 in zip(i_shape, expected_shape)):
           raise IndexError("boolean index did not match shape of indexed array in index "
                            f"{dim_number}: got {i_shape}, expected {expected_shape}")
         out.extend(np.where(i))
