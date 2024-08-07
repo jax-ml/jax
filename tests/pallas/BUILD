@@ -203,6 +203,7 @@ jax_test(
         "//jax:internal_export_back_compat_test_util",
         "//jax:pallas",
         "//jax:pallas_gpu",  # build_cleaner: keep
+        "//jax:pallas_tpu_ops",  # build_cleaner: keep
     ],
 )
 
