@@ -60,7 +60,8 @@ filterwarnings = [
     # TODO(jakevdp): remove when array_api_tests stabilize
     "default:.*not machine-readable.*:UserWarning",
     "default:Special cases found for .* but none were parsed.*:UserWarning",
-    "default:.*is not JSON-serializable. Using the repr instead.",
+    "default:.*is not JSON-serializable. Using the repr instead.*:UserWarning",
+    "default:The .* method is good for exploring strategies.*",
 
     # These are transitive warnings coming from TensorFlow dependencies.
     # TODO(slebedev): Remove once we bump the minimum TensorFlow version.
