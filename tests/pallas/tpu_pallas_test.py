@@ -2358,9 +2358,7 @@ class MiscellaneousTest(PallasBaseTest):
 
     np.testing.assert_array_equal(out, np.zeros((8, 128), dtype=jnp.float32))
 
-  @only_passes_in_interpret()
   def test_sum(self):
-    """b/356467588"""
     x = np.zeros((8, 2, 8, 128), dtype=jnp.float32)
 
     def kernel(x_ref, out_ref):

@@ -5396,12 +5396,17 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
         src_candidate.tileArrayImplicitShape(vty.getShape(), target_shape));
     return std::make_pair(src_candidate, vregs);
   }
-  // Remove second minor implicit dim, for values that have (8, 128) tiling.
-  // TODO(apaszke): We should allow replicated dst_offset_hints[0].
+  // Remove second minor implicit dim, for values that have (m, 128) tiling (for
+  // m that is a power of 2).
   if (src.implicit_dim() == VectorLayout::ImplicitDim::kSecondMinor &&
       dst_implicit_dim == VectorLayout::ImplicitDim::kNone &&
-      src.bitwidth() == 32 && src.tiling() == std::array<int64_t, 2>{8, 128} &&
-      dst_offset_hints[0]) {
+      src.bitwidth() == 32 && src.tiling()[1] == target_shape[1] &&
+      llvm::isPowerOf2_32(src.tiling()[0])) {
+    // We should never see a replicated offset here. We're removing the implicit
+    // dim so the only case when this can happen is when its size is 1 (or else
+    // we can't prove replication in the logical value). But in that case, the
+    // equivalentTo case above triggers and we never reach this branch.
+    CHECK(dst_offset_hints[0].has_value());
     int64_t dst_sublane_offset = *dst_offset_hints[0];
     VectorLayout dst(src.bitwidth(), {dst_sublane_offset, src.offsets()[1]},
                      src.tiling(), dst_implicit_dim);
@@ -5414,15 +5419,25 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
       src.insertImplicit<int64_t>(src_idx, 0);
       const int dst_sl_start =
           idx[dst_2nd_minor_idx] == 0 ? dst_sublane_offset : 0;
-      src_idx[dst_2nd_minor_idx] = target_shape[0] * idx[dst_2nd_minor_idx] +
+      // This could be optimized further to take offsets[1] into account.
+      // For example, extended offsets allow us to skip copies of low sublanes
+      // in tiles with idx.back() == 0.
+      const int tiles_per_vreg = src.tilesPerVreg(target_shape);
+      const int sublanes_per_tile = src.sublanesPerTile(target_shape);
+      src_idx[dst_2nd_minor_idx] = src.tiling()[0] * idx[dst_2nd_minor_idx] +
                                    dst_sl_start - dst_sublane_offset;
       for (int dst_sl_idx = dst_sl_start;
-           dst_sl_idx < target_shape[0] &&
+           dst_sl_idx < src.tiling()[0] &&
            src_idx[dst_2nd_minor_idx] < vregs.dim(dst_2nd_minor_idx);
            ++dst_sl_idx, ++src_idx[dst_2nd_minor_idx]) {
-        *tile = copy_one_sublane(builder, vregs(src_idx),
-                                 src.offsets()[0].value_or(dst_sl_idx), *tile,
-                                 dst_sl_idx, target_shape);
+        // This could be optimized further by copying multiple sublanes at once.
+        for (int tile_idx = 0; tile_idx < tiles_per_vreg; ++tile_idx) {
+          int tile_off = tile_idx * sublanes_per_tile;
+          *tile =
+              copy_one_sublane(builder, vregs(src_idx),
+                               tile_off + src.offsets()[0].value_or(dst_sl_idx),
+                               *tile, tile_off + dst_sl_idx, target_shape);
+        }
       }
     });
     return std::make_pair(dst, new_vregs);
