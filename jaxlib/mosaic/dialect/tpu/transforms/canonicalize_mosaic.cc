@@ -317,6 +317,21 @@ LogicalResult canonicalize_contraction(int hardware_generation, Operation &op) {
   return result;
 }
 
+LogicalResult canonicalize_extract(int hardware_generation, Operation &raw_op) {
+  auto op = dyn_cast<vector::ExtractOp>(raw_op);
+  Type result_ty = op.getResult().getType();
+  if (!isa<VectorType>(result_ty)) {
+    bool is_supported = result_ty.isSignlessIntOrFloat() &&
+                        result_ty.getIntOrFloatBitWidth() == 32;
+    if (!is_supported) {
+      return op.emitOpError(
+          "Only 32-bit scalar vector.extracts supported. Cast your input to a "
+          "32-bit type first.");
+    }
+  }
+  return success();
+}
+
 using canonicalize_rule_type =
     std::function<LogicalResult(int hardware_generation, Operation &op)>;
 
@@ -324,6 +339,7 @@ const llvm::StringMap<canonicalize_rule_type> &rules() {
   static auto rules = new llvm::StringMap<canonicalize_rule_type>{
       {tpu::MatmulOp::getOperationName(), canonicalize_matmul},
       {vector::ContractionOp::getOperationName(), canonicalize_contraction},
+      {vector::ContractionOp::getOperationName(), canonicalize_extract},
       {vector::MultiDimReductionOp::getOperationName(),
        canonicalize_multi_dim_reduction}};
   return *rules;
