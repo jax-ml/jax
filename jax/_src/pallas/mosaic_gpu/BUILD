@@ -59,6 +59,7 @@ pytype_strict_library(
         "//jax:mlir",
         "//jax:mosaic_gpu",
         "//jax:pallas",
+        "//jax:partial_eval",
         "//jax:util",
         "//jax/_src/lib",
         "//jax/_src/pallas",

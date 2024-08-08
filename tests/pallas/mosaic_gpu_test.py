@@ -46,22 +46,36 @@ class PallasCallTest(PallasTest):
         pl.pallas_call,
         out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
     )
-    def add_one(x_ref, o_ref):
+    def kernel(x_ref, o_ref):
       o_ref[...] = x_ref[...] + 1.0
 
     x = jnp.arange(256).astype(jnp.float32)
-    np.testing.assert_array_equal(add_one(x), x + 1.0)
+    np.testing.assert_array_equal(kernel(x), x + 1.0)
+
+  def test_add_one_grid(self):
+    @functools.partial(
+        pl.pallas_call,
+        in_specs=[pl.BlockSpec((128,), lambda *i: i)],
+        out_specs=pl.BlockSpec((128,), lambda *i: i),
+        out_shape=jax.ShapeDtypeStruct([128 * 2], jnp.float32),
+        grid=2,
+    )
+    def kernel(x_ref, o_ref):
+      o_ref[...] = x_ref[...] + 1.0
+
+    x = jnp.arange(128 * 2).astype(jnp.float32)
+    np.testing.assert_array_equal(kernel(x), x + 1.0)
 
   def test_add_doubled_sum(self):
     @functools.partial(
         pl.pallas_call,
-        out_shape=jax.ShapeDtypeStruct([256], jnp.float32),
+        out_shape=jax.ShapeDtypeStruct([128], jnp.float32),
     )
-    def add_one(x_ref, o_ref):
+    def kernel(x_ref, o_ref):
       o_ref[...] = x_ref[...] + jnp.sum(x_ref[...]) + jnp.sum(x_ref[...])
 
-    x = jnp.arange(256).astype(jnp.float32)
-    np.testing.assert_array_equal(add_one(x), x + x.sum()*2)
+    x = jnp.arange(128).astype(jnp.float32)
+    np.testing.assert_array_equal(kernel(x), x + x.sum()*2)
 
   @parameterized.product(input_factor=[0.001, 1, 10, 100, 100])
   def test_layer_norm(self, input_factor):

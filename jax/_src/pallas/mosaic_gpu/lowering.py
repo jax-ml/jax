@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 import dataclasses
 import functools
+import itertools as it
 import math
 from typing import Any, cast
 
@@ -27,9 +28,11 @@ from jax._src import core as jax_core
 from jax._src import pjit
 from jax._src import util
 from jax._src.interpreters import mlir
+from jax._src.interpreters import partial_eval as pe
 from jax._src.lax import lax
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import arith as arith_dialect
+from jax._src.lib.mlir.dialects import gpu as gpu_dialect
 from jax._src.lib.mlir.dialects import memref as memref_dialect
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
@@ -97,7 +100,7 @@ class ModuleContext:
           memory_space=smem,
       )
       views.append(
-          memref_dialect.view(scratch_ty, self.runtime_smem, _index(off), [])
+          memref_dialect.view(scratch_ty, self.runtime_smem, _as_index(off), [])
       )
       off += math.prod(s.shape) * jnp.dtype(s.dtype).itemsize
 
@@ -112,17 +115,16 @@ class ModuleContext:
     self.smem_used_bytes -= bytes
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class LoweringRuleContext:
   module_context: ModuleContext
   avals_in: Sequence[jax_core.ShapedArray]
   avals_out: Sequence[jax_core.ShapedArray]
-  block_shapes: list[tuple[int | pallas_core.Mapped, ...]] | None
 
   replace = dataclasses.replace
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(frozen=True)
 class LoweringResult:
   module: ir.Module
   grid: tuple[int, ...]
@@ -130,15 +132,24 @@ class LoweringResult:
   out_structs: tuple[jax.ShapeDtypeStruct, ...]
 
 
-@dataclasses.dataclass
-class BlockInfo:
-  full_shape_dtype: jax.ShapeDtypeStruct
-  start_indices: Sequence[Any]
-  block_shape: tuple[int, ...]
-
-
 class LoweringError(Exception):  # pylint: disable=g-bad-exception-name
   pass
+
+
+def _eval_index_map(
+    ctx: ModuleContext, idx, block_mapping: pallas_core.BlockMapping
+) -> Sequence[ir.Value]:
+  block_indices = lower_jaxpr_to_mosaic_gpu(
+      ctx, block_mapping.index_map_jaxpr.jaxpr, idx
+  )
+  result = []
+  for i, b in zip(block_indices, block_mapping.block_shape):
+    if b is pallas_core.mapped:
+      result.append(i)
+    else:
+      # TODO(slebedev): Use a type-agnostic multiplication wrapper.
+      result.append(arith_dialect.muli(_as_index(i), _as_index(b)))
+  return tuple(result)
 
 
 def lower_jaxpr_to_module(
@@ -149,10 +160,50 @@ def lower_jaxpr_to_module(
     cost_estimate: pallas_core.CostEstimate | None,
 ) -> LoweringResult:
   del cost_estimate  # Unused.
-  in_structs = tuple(grid_mapping.in_shapes)
-  out_structs = grid_mapping.out_shapes
+
+  in_structs_gmem = [*grid_mapping.in_shapes]
+  in_structs_smem = [
+      jax.ShapeDtypeStruct(bm.block_shape, s.dtype)
+      for bm, s in zip(
+          grid_mapping.block_mappings[: grid_mapping.num_inputs],
+          grid_mapping.in_shapes,
+      )
+  ]
+  out_structs_gmem = [*grid_mapping.out_shapes]
+  out_structs_smem = [
+      jax.ShapeDtypeStruct(bm.block_shape, s.dtype)
+      for bm, s in zip(
+          grid_mapping.block_mappings[grid_mapping.num_inputs :],
+          grid_mapping.out_shapes,
+      )
+  ]
   assert len(jaxpr.outvars) == 0
   assert not grid_mapping.vmapped_dims
+  if len(grid_mapping.grid) > 3:
+    raise NotImplementedError(
+        "Only <=3D grids are supported in Mosaic GPU lowering."
+    )
+  if grid_mapping.num_dynamic_grid_bounds:
+    raise NotImplementedError(
+        "Dynamic grid bounds not supported in the Mosaic GPU lowering."
+    )
+  if grid_mapping.num_index_operands:
+    raise NotImplementedError(
+        "Scalar prefetch not supported in Mosaic GPU lowering."
+    )
+  if not all(
+      isinstance(bm.indexing_mode, pallas_core.Blocked)
+      for bm in grid_mapping.block_mappings
+  ):
+    raise NotImplementedError(
+        "Only Blocked indexing mode is supported in Mosaic GPU lowering."
+    )
+
+  with grid_mapping.trace_env():
+    jaxpr, _ = pe.dce_jaxpr(
+        jaxpr, [True] * len(jaxpr.outvars), instantiate=True
+    )
+
   grid = grid_mapping.grid
   if len(grid) < 3:
     grid += (1,) * (3 - len(grid))
@@ -161,19 +212,40 @@ def lower_jaxpr_to_module(
   def body(launch_ctx: mosaic_gpu.LaunchContext, *buffers):
     *buffers_gmem, (*buffers_smem, runtime_smem, barriers) = buffers
     assert len(buffers_gmem) == len(buffers_smem)
-    in_buffers_gmem = buffers_gmem[: len(in_structs)]
-    in_buffers_smem = buffers_smem[: len(in_structs)]
-    out_buffers_gmem = buffers_gmem[len(in_structs) :]
-    out_buffers_smem = buffers_smem[len(in_structs) :]
+    in_buffers_gmem = buffers_gmem[: len(in_structs_gmem)]
+    in_buffers_smem = buffers_smem[: len(in_structs_smem)]
+    out_buffers_gmem = buffers_gmem[len(in_structs_gmem) :]
+    out_buffers_smem = buffers_smem[len(in_structs_smem) :]
 
     [barrier] = cast(mgpu.BarrierRef, barriers)
 
+    module_ctx = ModuleContext(
+        name_and_src_info.name, grid_mapping, runtime_smem, smem_used_bytes=0
+    )
+    program_ids = [
+        arith_dialect.index_cast(
+            ir.IntegerType.get_signless(32), gpu_dialect.block_id(dim)
+        )
+        for dim in it.islice(gpu_dialect.Dimension, len(grid_mapping.grid))
+    ]
+    start_indices = map(
+        functools.partial(_eval_index_map, module_ctx, program_ids),
+        grid_mapping.block_mappings,
+    )
+    in_start_indices = start_indices[: len(in_structs_gmem)]
+    out_start_indices = start_indices[len(in_structs_gmem) :]
+
     with mgpu.single_thread():
-      for b_gmem, b_smem in zip(in_buffers_gmem, in_buffers_smem):
+      for start_indices, b_gmem, b_smem in zip(
+          in_start_indices, in_buffers_gmem, in_buffers_smem
+      ):
         # TODO(slebedev): Support 128-byte swizzling, once we can lower matmuls.
         launch_ctx.async_copy(
             src_ref=b_gmem,
             dst_ref=b_smem,
+            gmem_slice=tuple(
+                map(mgpu.ds, start_indices, ir.MemRefType(b_smem.type).shape)
+            ),
             barrier=barrier,
             swizzle=None,
             arrive=True,
@@ -182,13 +254,21 @@ def lower_jaxpr_to_module(
 
     barrier.wait()
 
-    module_ctx = ModuleContext(name_and_src_info.name,
-                               grid_mapping, runtime_smem, smem_used_bytes=0)
-    _ = lower_jaxpr_to_mosaic_gpu(module_ctx, jaxpr, None, buffers_smem)
+    _ = lower_jaxpr_to_mosaic_gpu(module_ctx, jaxpr, buffers_smem)
+    mgpu.commit_shared()
 
-    for b_gmem, b_smem in zip(out_buffers_gmem, out_buffers_smem):
+    for start_indices, b_gmem, b_smem in zip(
+        out_start_indices, out_buffers_gmem, out_buffers_smem
+    ):
       # TODO(slebedev): Support 128-byte swizzling, once we can lower matmuls.
-      launch_ctx.async_copy(src_ref=b_smem, dst_ref=b_gmem, swizzle=None)
+      launch_ctx.async_copy(
+          src_ref=b_smem,
+          dst_ref=b_gmem,
+          gmem_slice=tuple(
+              map(mgpu.ds, start_indices, ir.MemRefType(b_smem.type).shape)
+          ),
+          swizzle=None,
+      )
 
     launch_ctx.await_async_copy(0)
 
@@ -200,23 +280,25 @@ def lower_jaxpr_to_module(
           dtype=np.int8,
       )
   ]
-  module, out_structs, gmem_scratch_bytes, _ = mosaic_gpu._lower_as_gpu_kernel(
-      body,
-      grid=grid,
-      cluster=(),
-      block=block,
-      in_shapes=in_structs,
-      out_shape=out_structs,
-      smem_scratch_shape=(
-          *in_structs,
-          *out_structs,
-          *extra_smem_scratch,
-          mgpu.TMABarrier(),
-      ),
-      module_name=name_and_src_info.name,
+  module, out_structs_smem, gmem_scratch_bytes, _ = (
+      mosaic_gpu._lower_as_gpu_kernel(
+          body,
+          grid=grid,
+          cluster=(),
+          block=block,
+          in_shapes=in_structs_gmem,
+          out_shape=out_structs_gmem,
+          smem_scratch_shape=(
+              *in_structs_smem,
+              *out_structs_smem,
+              *extra_smem_scratch,
+              mgpu.TMABarrier(),
+          ),
+          module_name=name_and_src_info.name,
+      )
   )
 
-  return LoweringResult(module, grid, gmem_scratch_bytes, out_structs)
+  return LoweringResult(module, grid, gmem_scratch_bytes, out_structs_smem)
 
 
 mosaic_lowering_rules = {}
@@ -233,28 +315,17 @@ def register_lowering_rule(primitive: jax_core.Primitive):
 def lower_jaxpr_to_mosaic_gpu(
     ctx: ModuleContext,
     jaxpr: jax_core.Jaxpr,
-    block_infos: Sequence[BlockInfo | None] | None,
-    args,
+    args: Sequence[ir.Value],
     consts=(),
 ) -> Sequence[ir.Value]:
   env = {}
-  block_info_env = {}
 
   def read_env(atom: jax_core.Atom):
     return atom.val if isinstance(atom, jax_core.Literal) else env[atom]
 
-  def read_block_info_env(atom: jax_core.Atom):
-    if isinstance(atom, jax_core.Literal):
-      return None
-    return block_info_env.get(atom, None)
-
   def write_env(var: jax_core.Var, val):
     env[var] = val
 
-  if block_infos is None:
-    block_infos = [None] * len(jaxpr.invars)
-  for invar, block_info in zip(jaxpr.invars, block_infos):
-    block_info_env[invar] = block_info
   map(write_env, jaxpr.constvars, consts)
   map(write_env, jaxpr.invars, args)
   for eqn in jaxpr.eqns:
@@ -270,7 +341,6 @@ def lower_jaxpr_to_mosaic_gpu(
         ctx,
         avals_in=[cast(jax_core.ShapedArray, v.aval) for v in eqn.invars],
         avals_out=[cast(jax_core.ShapedArray, v.aval) for v in eqn.outvars],
-        block_shapes=map(read_block_info_env, eqn.invars),
     )
     try:
       outvals = rule(rule_ctx, *invals, **eqn.params)
@@ -291,10 +361,9 @@ def lower_jaxpr_to_mosaic_gpu(
 
 @register_lowering_rule(sp.get_p)
 def _get_lowering_rule(ctx: LoweringRuleContext, x_smem, *indexers, tree):
-  del tree, ctx  # Unused.
+  del ctx, tree  # Unused.
   if indexers:
     raise NotImplementedError("No support for indexers yet")
-
   return mgpu.FragmentedArray.load_strided(x_smem)
 
 
@@ -302,7 +371,7 @@ def _get_lowering_rule(ctx: LoweringRuleContext, x_smem, *indexers, tree):
 def _swap_lowering_rule(
     ctx: LoweringRuleContext, x_smem, value, *indexers, tree
 ):
-  del tree, ctx  # Unused.
+  del ctx, tree  # Unused.
   if indexers:
     raise NotImplementedError("No support for indexers yet")
   old_value = mgpu.FragmentedArray.load_strided(x_smem)
@@ -314,7 +383,7 @@ def _swap_lowering_rule(
 def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
   if jaxpr.consts:
     raise NotImplementedError
-  return lower_jaxpr_to_mosaic_gpu(ctx.module_context, jaxpr.jaxpr, None, args)
+  return lower_jaxpr_to_mosaic_gpu(ctx.module_context, jaxpr.jaxpr, args)
 
 
 @register_lowering_rule(lax.broadcast_in_dim_p)
@@ -398,7 +467,7 @@ def _run_scoped_lowering_rule(
       [jax.ShapeDtypeStruct(shape=aval.shape, dtype=aval.dtype) for aval in in_avals]
   )
   outs = lower_jaxpr_to_mosaic_gpu(
-      ctx.module_context, jaxpr, None, input_refs, consts
+      ctx.module_context, jaxpr, input_refs, consts
   )
   ctx.module_context.stack_free_smem(bytes_allocated)
   return outs
@@ -446,7 +515,7 @@ def _ensure_fa(x: object, aval: jax_core.ShapedArray) -> mgpu.FragmentedArray:
 
 def _ir_constant(v: object, t: ir.Type) -> ir.Value:
   if isinstance(v, (np.number, np.ndarray, int, float)):
-    if isinstance(t, ir.IntegerType):
+    if isinstance(t, (ir.IntegerType, ir.IndexType)):
       v = int(v)
     else:
       assert isinstance(t, ir.FloatType)
@@ -455,5 +524,9 @@ def _ir_constant(v: object, t: ir.Type) -> ir.Value:
   raise NotImplementedError(f"Unsupported constant: {v!r}")
 
 
-def _index(i: int) -> ir.Value:
-  return arith_dialect.constant(ir.IndexType.get(), int(i))
+def _as_index(v: int | ir.Value) -> ir.Value:
+  if isinstance(v, int):
+    return arith_dialect.constant(ir.IndexType.get(), v)
+  if ir.IndexType.isinstance(v.type):
+    return v
+  return arith_dialect.index_cast(ir.IndexType.get(), v)

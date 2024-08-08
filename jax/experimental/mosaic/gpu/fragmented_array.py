@@ -15,6 +15,7 @@
 """Utilities for code generator."""
 
 import dataclasses
+import math
 from typing import Callable
 
 import jax
@@ -98,10 +99,10 @@ class WGStridedFragLayout:
     memref_type = ir.MemRefType(memref_ty)
     bw = mgpu.bytewidth(memref_type.element_type)
     assert 8 % bw == 0 and 8 // bw != 0, bw
-    if np.prod(memref_type.shape) % WARPGROUP_SIZE != 0:
+    if math.prod(memref_type.shape) % WARPGROUP_SIZE != 0:
       raise ValueError(
           "Ref must have a number of elements that is a multiple of"
-          f" {WARPGROUP_SIZE}"
+          f" {WARPGROUP_SIZE} (got {math.prod(memref_type.shape)})"
       )
     max_vec_size = np.prod(memref_type.shape) // WARPGROUP_SIZE
     return cls(
