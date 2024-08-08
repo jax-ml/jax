@@ -364,6 +364,15 @@ def add_boolean_argument(parser, name, default=False, help_str=None):
   group.add_argument("--no" + name, dest=name, action="store_false")
 
 
+def _get_editable_output_paths(output_path):
+  """Returns the paths to the editable wheels."""
+  return (
+      os.path.join(output_path, "jaxlib"),
+      os.path.join(output_path, "jax_gpu_pjrt"),
+      os.path.join(output_path, "jax_gpu_plugin"),
+  )
+
+
 def main():
   cwd = os.getcwd()
   parser = argparse.ArgumentParser(
@@ -678,11 +687,20 @@ def main():
     *args.bazel_options,
   )
 
+  if args.build_gpu_plugin and args.editable:
+    output_path_jaxlib, output_path_jax_pjrt, output_path_jax_kernel = (
+        _get_editable_output_paths(output_path)
+    )
+  else:
+    output_path_jaxlib = output_path
+    output_path_jax_pjrt = output_path
+    output_path_jax_kernel = output_path
+
   if args.build_gpu_kernel_plugin == "" and not args.build_gpu_pjrt_plugin:
     build_cpu_wheel_command = [
       *command_base,
       "//jaxlib/tools:build_wheel", "--",
-      f"--output_path={output_path}",
+      f"--output_path={output_path_jaxlib}",
       f"--jaxlib_git_hash={get_githash()}",
       f"--cpu={wheel_cpu}"
     ]
@@ -698,7 +716,7 @@ def main():
     build_gpu_kernels_command = [
       *command_base,
       "//jaxlib/tools:build_gpu_kernels_wheel", "--",
-      f"--output_path={output_path}",
+      f"--output_path={output_path_jax_kernel}",
       f"--jaxlib_git_hash={get_githash()}",
       f"--cpu={wheel_cpu}",
     ]
@@ -719,7 +737,7 @@ def main():
     build_pjrt_plugin_command = [
       *command_base,
       "//jaxlib/tools:build_gpu_plugin_wheel", "--",
-      f"--output_path={output_path}",
+      f"--output_path={output_path_jax_pjrt}",
       f"--jaxlib_git_hash={get_githash()}",
       f"--cpu={wheel_cpu}",
     ]
