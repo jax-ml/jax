@@ -9762,6 +9762,23 @@ class CustomVJPTest(jtu.JaxTestCase):
     x, y = 3.2, 1.0
     self.assertAllClose(jax.grad(f)(x, y), jax.grad(f_)(x, y))
 
+  def test_optimize_remat_kwargs(self):
+    @jax.custom_vjp
+    def f(x, y):
+      return jnp.sin(x) * y
+
+    def f_fwd(x, y, *, keyword=False):
+      del keyword
+      return f(x, y), (jnp.cos(x), jnp.sin(x), y)
+
+    def f_bwd(res, g):
+      cos_x, sin_x, y = res
+      return (cos_x * g * y, sin_x * g)
+
+    f.defvjp(f_fwd, f_bwd, optimize_remat=True)
+    x, y = 3.2, 1.0
+    jax.grad(f)(x, y)  # Doesn't error
+
 
 def transpose_unary(f, x_example):
   def transposed(y):

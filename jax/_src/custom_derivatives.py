@@ -1451,7 +1451,9 @@ def optimize_remat_of_custom_vjp_fwd(
     # above and it would be good to consolidate it.
     primal_name = getattr(fun, "__name__", str(fun))
     fwd_name = getattr(fwd, "__name__", str(fwd))
-    args = _resolve_kwargs(fwd, args, kwargs)
+    # Note: we use `fun` instead of `fwd` here for consistency with
+    # custom_vjp.__call__ above.
+    args = _resolve_kwargs(fun, args, kwargs)
     if nondiff_argnums:
       for i in nondiff_argnums: _check_for_tracers(args[i])
       nondiff_argnums_ = set(nondiff_argnums)
