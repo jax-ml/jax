@@ -2172,8 +2172,6 @@ def lower_sharding_computation(
       devices_from_context)
 
   platforms = lowering_platforms or (backend.platform,)
-  # TODO(yashkatariya): Enable this when offload APIs are stable.
-  # transfer_mem_kind_in_jaxpr = list(jaxpr_transfer_mem_kinds(jaxpr))
 
   committed = bool(
       devices_from_context or
@@ -2184,10 +2182,12 @@ def lower_sharding_computation(
 
   da_object = _create_da_object(tuple(device_assignment))
 
+  transfer_mem_kind_in_jaxpr = list(jaxpr_transfer_mem_kinds(jaxpr))
   all_default_mem_kind = are_all_shardings_default_mem_kind(
       da_object,
       it.chain(in_shardings, out_shardings,
-               [js for js, _ in unique_intermediate_shardings]))
+               [js for js, _ in unique_intermediate_shardings],
+               transfer_mem_kind_in_jaxpr))  # pytype: disable=wrong-arg-types
 
   # TODO(yashkatariya): Remove this when XLA can propagate memory kinds or when
   # JAX puts memory kinds in the types of jaxpr.
