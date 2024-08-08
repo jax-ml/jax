@@ -692,6 +692,9 @@ jax_test(
         "gpu": [
             "noasan",  # Times out under asan.
         ],
+        "tpu": [
+            "noasan",  # Times out under asan.
+        ],
     },
     shard_count = {
         "cpu": 10,
