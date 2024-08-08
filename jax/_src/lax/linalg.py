@@ -1172,10 +1172,11 @@ def _lu_pivots_to_permutation_abstract_eval(pivots, *, permutation_size):
           'Argument to lu_pivots_to_permutation must have rank >= 1 and dtype '
           'int32. Got shape={} and dtype={}'.format(pivots.shape, pivots.dtype))
 
-    if permutation_size < pivots.shape[-1]:
+    pivots_size = pivots.shape[-1]
+    if permutation_size < pivots_size:
       raise ValueError(
           'Output permutation size {} has to exceed the trailing dimension of '
-          'the pivots. Got shape {}'.format(permutation_size, pivots.shape))
+          'the pivots. Got pivots size {}'.format(permutation_size, pivots_size))
 
     batch_dims = pivots.shape[:-1]
     permutations = pivots.update(shape=batch_dims + (permutation_size,))
