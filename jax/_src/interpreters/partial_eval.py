@@ -344,7 +344,7 @@ class JaxprTrace(Trace['JaxprTracer']):
                        for ax, aval in zip(unk_in_axes, in_avals)]
 
     # Wrap f to perform partial evaluation and plumb out aux data.
-    f = trace_to_subjaxpr_nounits(f, self, False)
+    f = trace_to_subjaxpr_nounits(f, self.tag, False)
     f, aux = partial_eval_wrapper_nounits(f, tuple(in_knowns),
                                           tuple(in_avals_mapped))
     # Adjust params for knowns (e.g. donated_invars, in_axes, out_axes_thunk)
@@ -365,7 +365,7 @@ class JaxprTrace(Trace['JaxprTracer']):
     out_consts, res = split_list(out, [len(out) - len(jaxpr.constvars)])
 
     # We can only check_jaxpr with the dynamic axis environment extended:
-    with core.extend_axis_env(params['axis_name'], params['axis_size'], None):
+    with core.extend_axis_env([(params['axis_name'], params['axis_size'])]):
       call_jaxpr = convert_constvars_jaxpr(jaxpr)
 
     # Compute staged and const out_axes, taking into account residuals.
@@ -375,7 +375,7 @@ class JaxprTrace(Trace['JaxprTracer']):
 
     # Create the input tracers for the staged-out (unkonwn-value) call.
     const_tracers = map(self.new_instantiated_const, res)
-    env_tracers = map(self.full_raise, env)
+    env_tracers = map(self.to_jaxpr_tracer, env)
     unknown_arg_tracers = [t for t in tracers if not t.is_known()]
     # Adjust params for staged-out call on unknown values.
     num_new_args = len(const_tracers) + len(env_tracers)
@@ -388,10 +388,9 @@ class JaxprTrace(Trace['JaxprTracer']):
                  for ax, a in zip(staged_out_axes, out_avals_mapped)]
     out_tracers = [JaxprTracer(self, PartialVal.unknown(a), None)
                    for a in out_avals]
-    effs = core.filter_named_axis_effects(jaxpr.effects, {params['axis_name']})
     src_info = source_info_util.current()
     eqn = new_eqn_recipe((*const_tracers, *env_tracers, *unknown_arg_tracers),
-                         out_tracers, primitive, staged_params, effs, src_info)
+                         out_tracers, primitive, staged_params, jaxpr.effects, src_info)
     for t in out_tracers: t.recipe = eqn
 
     return merge_lists(out_knowns, out_tracers, out_consts)
@@ -664,15 +663,18 @@ def trace_to_jaxpr_nounits(
 
 @lu.transformation
 def trace_to_subjaxpr_nounits(
-    trace: JaxprTrace,
+    tag: JaxprTraceTag,
     instantiate: bool | Sequence[bool],
     in_pvals: Sequence[PartialVal]):
   assert all(isinstance(pv, PartialVal) for pv in in_pvals), in_pvals
-  out_tracers, jaxpr, out_consts, env = yield from _trace_to_subjaxpr_nounits(
-      trace, instantiate, in_pvals)
-  out_pvals = [t.pval for t in out_tracers]
-  del out_tracers
-  yield jaxpr, (out_pvals, out_consts, env)
+  current_name_stack = source_info_util.current_name_stack()
+  with core.take_current_trace() as parent_trace:
+    trace = JaxprTrace(parent_trace, current_name_stack, tag)
+    out_tracers, jaxpr, out_consts, env = yield from _trace_to_subjaxpr_nounits(
+        trace, instantiate, in_pvals)
+    out_pvals = [t.pval for t in out_tracers]
+    del out_tracers
+    yield jaxpr, (out_pvals, out_consts, env)
 
 def _trace_to_subjaxpr_nounits(trace:JaxprTrace, instantiate, in_pvals):
   in_knowns  = [pval.is_known()     for pval in in_pvals]
