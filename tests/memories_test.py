@@ -1480,8 +1480,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
 
     compiled_stats = compiled_f.memory_analysis()
     if compiled_stats is not None:
-      if jtu.pjrt_c_api_version_at_least(0, 43):
-        self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
+      self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
   def test_remat_scan_layout_change_offloadable(self):
     if not jtu.test_device_matches(["tpu"]):
@@ -1522,8 +1521,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
 
     compiled_stats = compiled_f.memory_analysis()
     if compiled_stats is not None:
-      if jtu.pjrt_c_api_version_at_least(0, 43):
-        self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
+      self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
   def test_remat_checkpoint_dots_with_no_batch_dims(self):
     policy = jax.checkpoint_policies.offload_dot_with_no_batch_dims(
@@ -1554,8 +1552,7 @@ class ActivationOffloadingTest(jtu.JaxTestCase):
 
     compiled_stats = compiled_f.memory_analysis()
     if compiled_stats is not None:
-      if jtu.pjrt_c_api_version_at_least(0, 43):
-        self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
+      self.assertGreater(compiled_stats.host_temp_size_in_bytes, 0)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())
