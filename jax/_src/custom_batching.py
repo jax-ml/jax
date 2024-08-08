@@ -65,6 +65,11 @@ class custom_vmap:
   @traceback_util.api_boundary
   def __call__(self, *args, **kwargs):
     assert not kwargs
+    fun_name = getattr(self.fun, "__name__", str(self.fun))
+    if not self.vmap_rule:
+      raise AttributeError(
+          f"No batching rule defined for custom_vmap function {fun_name} "
+          "using def_vmap.")
     args_flat, in_tree = tree_flatten(args)
     flat_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(self.fun), in_tree)
     in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]

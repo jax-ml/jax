@@ -10793,7 +10793,6 @@ class CustomVmapTest(jtu.JaxTestCase):
     )
     self.assertAllClose(outputs['b'], expected)
 
-
   def test_batch_divides_axis(self):
     def f(t):
       x, a = t
@@ -10810,6 +10809,15 @@ class CustomVmapTest(jtu.JaxTestCase):
     y = g(x, a)
 
     self.assertAllClose(y, (x + a)**2)
+
+  def test_undefined_rule(self):
+    @jax.custom_batching.custom_vmap
+    def f(x): return jnp.sin(x)
+
+    with self.assertRaisesRegex(
+        AttributeError, "No batching rule defined for custom_vmap function f"):
+      f(0.5)
+
 
 class CustomApiTest(jtu.JaxTestCase):
   """Test interactions among the custom_{vmap,jvp,vjp,transpose,*} APIs"""
