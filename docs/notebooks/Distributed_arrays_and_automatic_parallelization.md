@@ -52,7 +52,7 @@ if len(jax.local_devices()) < 8:
 
 ## Intro and a quick example
 
-By reading this tutorial notebook, you'll learn about `jax.Array`, a unified
+By reading this tutorial notebook, you'll learn about `jax.Array`, a unified 
 datatype for representing arrays, even with physical storage spanning multiple
 devices. You'll also learn about how using `jax.Array`s together with `jax.jit`
 can provide automatic compiler-based parallelization.
@@ -64,24 +64,29 @@ First, we'll create a `jax.Array` sharded across multiple devices:
 :id: Gf2lO4ii3vGG
 
 from jax.experimental import mesh_utils
-from jax.sharding import PositionalSharding
+from jax.sharding import Mesh, PartitionSpec as P, NamedSharding
 ```
 
 ```{code-cell}
 :id: q-XBTEoy3vGG
 
 # Create a Sharding object to distribute a value across devices:
-sharding = PositionalSharding(mesh_utils.create_device_mesh((8,)))
+mesh = Mesh(devices=mesh_utils.create_device_mesh((4, 2)),
+            axis_names=('x', 'y'))
 ```
 
 ```{code-cell}
-:id: vI39znW93vGH
-:outputId: 3b518df8-5c29-4848-acc3-e41df939f30b
-
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 166
+id: vI39znW93vGH
+outputId: 4f702753-8add-4b65-a4af-0f18f098cc46
+---
 # Create an array of random values:
 x = jax.random.normal(jax.random.key(0), (8192, 8192))
 # and use jax.device_put to distribute it across devices:
-y = jax.device_put(x, sharding.reshape(4, 2))
+y = jax.device_put(x, NamedSharding(mesh, P('x', 'y')))
 jax.debug.visualize_array_sharding(y)
 ```
 
@@ -91,9 +96,13 @@ Next, we'll apply a computation to it and visualize how the result values are
 stored across multiple devices too:
 
 ```{code-cell}
-:id: -qCnHZl83vGI
-:outputId: 9da9c29e-ce88-4425-e1ec-e93e5bcf3106
-
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 166
+id: -qCnHZl83vGI
+outputId: 0e131c23-5765-43ae-f232-6417ae1acbb2
+---
 z = jnp.sin(y)
 jax.debug.visualize_array_sharding(z)
 ```
@@ -104,17 +113,23 @@ The evaluation of the `jnp.sin` application was automatically parallelized
 across the devices on which the input values (and output values) are stored:
 
 ```{code-cell}
-:id: _VTzN0r03vGI
-:outputId: c9208010-984b-442b-d105-c8c6a3a010e6
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: _VTzN0r03vGI
+outputId: c03eecab-4c86-4dac-d776-5fc72cbb5273
+---
 # `x` is present on a single device
 %timeit -n 5 -r 5 jnp.sin(x).block_until_ready()
 ```
 
 ```{code-cell}
-:id: QuzhU1g63vGI
-:outputId: d48fc76e-79a7-47b9-d392-b18a1c33c798
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: QuzhU1g63vGI
+outputId: 8135cca0-871b-4b6a-a7e5-02e78c2028c7
+---
 # `y` is sharded across 8 devices.
 %timeit -n 5 -r 5 jnp.sin(y).block_until_ready()
 ```
@@ -128,7 +143,7 @@ Now let's look at each of these pieces in more detail!
 
 +++ {"id": "W6HsXauGxL6w"}
 
-### Sharding basics, and the `PositionalSharding` subclass
+### Sharding basics, and the `NamedSharding` subclass
 
 +++ {"id": "NWDyp_EjVHkg"}
 
@@ -146,9 +161,13 @@ x = jax.random.normal(jax.random.key(0), (8192, 8192))
 ```
 
 ```{code-cell}
-:id: vNRabO2J3vGJ
-:outputId: 73db7b6e-c2e7-467d-a0ef-c35e29e582dd
-
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 199
+id: vNRabO2J3vGJ
+outputId: 40fd7172-a16c-4dd8-e2e1-17bb3afe5409
+---
 jax.debug.visualize_array_sharding(x)
 ```
 
@@ -159,169 +178,14 @@ Here, we're using the `jax.debug.visualize_array_sharding` function to show wher
 But we can shard `x` across multiple devices by using `jax.device_put` and a `Sharding` object. First, we make a `numpy.ndarray` of `Devices` using `mesh_utils.create_device_mesh`, which takes hardware topology into account for the `Device` order:
 
 ```{code-cell}
-:id: VUIEIzRp3vGK
-
-from jax.experimental import mesh_utils
-devices = mesh_utils.create_device_mesh((8,))
-```
-
-+++ {"id": "lbOKFWmBX1iv"}
-
-Then, we create a `PositionalSharding` and use it with `device_put`:
-
-```{code-cell}
-:id: jwrWfZeB3vGK
-:outputId: e6f126bd-f6bd-48c7-c130-6f02757e3342
-
-from jax.sharding import PositionalSharding
-
-sharding = PositionalSharding(devices)
-
-x = jax.device_put(x, sharding.reshape(8, 1))
-jax.debug.visualize_array_sharding(x)
-```
-
-+++ {"id": "TUu69IWXZdTm"}
-
-Here `sharding` is a `PositionalSharding` which acts like an array with sets of devices as elements:
-
-```{code-cell}
-:id: zxWB82Kz3vGK
-:outputId: 11384a6b-fabc-4c4c-bcad-a3be51eb0465
-
-sharding
-```
-
-+++ {"id": "uRLpOcmNj_Vt"}
-
-The device numbers here are not in numerical order, because the mesh reflects the underlying toroidal topology of the device.
-
-By writing `PositionalSharding(ndarray_of_devices)`, we fix the device order and the initial shape. Then we can reshape it:
-
-```{code-cell}
-:id: PLsnpSzc3vGL
-:outputId: 9f4db733-cafe-46ae-c057-dc31046a6f66
-
-sharding.reshape(8, 1)
-```
-
-```{code-cell}
-:id: iqKdI4LO3vGL
-:outputId: 6aa10fc2-cec4-4401-a0df-343e71646e0a
-
-sharding.reshape(4, 2)
-```
-
-+++ {"id": "KBu6WLfhm7ra"}
-
-To use `device_put` with a data array `x`, we can reshape the `sharding` into a shape that is _congruent_ with `x.shape`, meaning a shape with the same length as `x.shape` and where each element evenly divides the corresponding element of `x.shape`:
-```python
-def is_congruent(x_shape: Sequence[int], sharding_shape: Sequence[int]) -> bool:
-  return (len(x_shape) == len(sharding_shape) and
-          all(d1 % d2 == 0 for d1, d2 in zip(x_shape, sharding_shape)))
-```
-
-For example, we can reshape `sharding` to have shape `(4, 2)`, then use it in a `device_put`:
-
-```{code-cell}
-:id: SELr4xNi3vGL
-:outputId: b2f4acec-0cd3-4829-ca16-cae2e0e8ca60
-
-sharding = sharding.reshape(4, 2)
-print(sharding)
-```
-
-```{code-cell}
-:id: 8IVIsqfX3vGL
-:outputId: 033d0e02-a643-4f4c-9d24-9cd8465bc69a
-
-y = jax.device_put(x, sharding)
-jax.debug.visualize_array_sharding(y)
-```
-
-+++ {"id": "tyg9F-UIsU__"}
-
-Here `y` represents the same _value_ as `x`, but its shards (i.e. slices) are stored in different devices' memories.
-
-Different `PositionalSharding` shapes result in different distributed layouts (i.e. shardings) of the result:
-
-```{code-cell}
-:id: cCjt6QCz3vGM
-:outputId: 4ad8a611-596d-424f-b6c5-fc00f1adc306
-
-sharding = sharding.reshape(1, 8)
-print(sharding)
-```
-
-```{code-cell}
-:id: yTK4Nz3u3vGM
-:outputId: e445c6bc-4fe3-4e9d-cc9e-d82858f58312
-
-y = jax.device_put(x, sharding)
-jax.debug.visualize_array_sharding(y)
-```
-
-+++ {"id": "0PuamOvXubcf"}
-
-In some cases, we don't just want to store each slice of `x` in a single device's memory; we might want to _replicate_ some slices, meaning storing copies of a slice's values in multiple devices' memories.
-
-With `PositionalSharding`, we can express replication by calling the reducer method `replicate`:
-
-```{code-cell}
-:id: _jr6XYKx3vGM
-:outputId: 59c8b9a4-b8af-493a-ba8d-da5931e88f93
-
-sharding = sharding.reshape(4, 2)
-print(sharding.replicate(axis=0, keepdims=True))
-```
-
-```{code-cell}
-:id: S5vzjFuH3vGN
-:outputId: b6ce2675-7261-4e57-fa8c-b4e87abf7e52
-
-y = jax.device_put(x, sharding.replicate(axis=0, keepdims=True))
-jax.debug.visualize_array_sharding(y)
-```
-
-+++ {"id": "FzeP0kpTvJv-"}
-
-Here the visualization shows that `x` is sharded two ways along its second dimension (and not sharded along the first dimension), and each of those shards is replicated four ways (i.e. stored in four device memories).
-
-The `replicate` method is analogous to the familiar NumPy array reduction methods like `.sum()` and `.prod()`. It operates along an axis performing a set union. So if `sharding` has shape `(4, 2)`, then `sharding.replicate(0, keepdims=True)` has shape `(1, 2)`, and `sharding.replicate(1, keepdims=True)` has shape `(4, 1)`. Unlike analogous NumPy methods, `keepdims=True` is actually the default, so reduced-over axes aren't squeezed:
-
-```{code-cell}
-:id: DR7VV-6e3vGN
-:outputId: f879fc2c-5723-4199-b306-295bc1b3681e
-
-print(sharding.replicate(0).shape)
-print(sharding.replicate(1).shape)
-```
-
-```{code-cell}
-:id: agUtVUVx3vGN
-:outputId: 0e9789ef-ce52-4ed6-8bd5-c876b95f66e6
-
-y = jax.device_put(x, sharding.replicate(1))
-jax.debug.visualize_array_sharding(y)
-```
-
-+++ {"id": "D31t5POXxHHJ"}
-
-### `NamedSharding` gives a way to express shardings with names
-
-+++ {"id": "ayMKWeTmxl-X"}
-
-So far we've worked with `PositionalSharding`, but there are alternative ways to express shardings. In fact, `Sharding` is an interface, and any class that implements that interface can be used with functions like `device_put`.
-
-Another convenient way to express sharding is with the `NamedSharding`:
-
-```{code-cell}
-:id: zpB1JxyK3vGN
-:outputId: 46d5da37-840c-49d8-8380-a162811bae8a
-
-from jax.sharding import Mesh
-from jax.sharding import PartitionSpec
-from jax.sharding import NamedSharding
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 166
+id: zpB1JxyK3vGN
+outputId: 8e385462-1c2c-4256-c38a-84299d3bd02c
+---
+from jax.sharding import Mesh, PartitionSpec, NamedSharding
 from jax.experimental import mesh_utils
 
 P = PartitionSpec
@@ -351,9 +215,13 @@ def mesh_sharding(
 ```
 
 ```{code-cell}
-:id: zp3MfS4Y3vGO
-:outputId: 2c2f7201-c2c1-49e5-f8a5-0730c124d89a
-
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 166
+id: zp3MfS4Y3vGO
+outputId: 032fdd7e-19a1-45da-e1ad-b3227fa43ee6
+---
 y = jax.device_put(x, mesh_sharding(P('a', 'b')))
 jax.debug.visualize_array_sharding(y)
 ```
@@ -363,17 +231,25 @@ jax.debug.visualize_array_sharding(y)
 Here, we use `P('a', 'b')` to express that the first and second axes of `x` should be sharded over the device mesh axes `'a'` and `'b'`, respectively. We can easily switch to `P('b', 'a')` to shard the axes of `x` over different devices:
 
 ```{code-cell}
-:id: FigK5Zsa3vGO
-:outputId: eca784e8-33fe-4e9b-a41d-21e9ee781a35
-
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 199
+id: FigK5Zsa3vGO
+outputId: e488d073-9d02-4376-a6af-19d6d5509c7d
+---
 y = jax.device_put(x, mesh_sharding(P('b', 'a')))
 jax.debug.visualize_array_sharding(y)
 ```
 
 ```{code-cell}
-:id: hI-HD0xN3vGO
-:outputId: c3e7dc3c-4048-448a-ef0b-50683532fcdc
-
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 166
+id: hI-HD0xN3vGO
+outputId: b0c2e863-3aee-4417-b45f-21b2187f6ef7
+---
 # This `None` means that `x` is not sharded on its second dimension,
 # and since the Mesh axis name 'b' is not mentioned, shards are
 # replicated across it.
@@ -388,17 +264,25 @@ Here, because `P('a', None)` doesn't mention the `Mesh` axis name `'b'`, we get 
 To shard only over the second axis of `x`, we can use a `None` placeholder in the `PartitionSpec`:
 
 ```{code-cell}
-:id: EXBExMQC3vGP
-:outputId: fe1c8d7e-3345-4438-b9d2-780e7854b4eb
-
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 199
+id: EXBExMQC3vGP
+outputId: c80e6177-12a6-40ef-b4e4-934dad22da3d
+---
 y = jax.device_put(x, mesh_sharding(P(None, 'b')))
 jax.debug.visualize_array_sharding(y)
 ```
 
 ```{code-cell}
-:id: PjUpG8uz3vGP
-:outputId: 64d8224d-15d9-4ad4-d613-f7f85b1dc1af
-
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 199
+id: PjUpG8uz3vGP
+outputId: a0f59dc5-b509-4b8b-bd22-bcd69f696763
+---
 y = jax.device_put(x, mesh_sharding(P(None, 'a')))
 jax.debug.visualize_array_sharding(y)
 ```
@@ -408,9 +292,13 @@ jax.debug.visualize_array_sharding(y)
 For a fixed mesh, we can even partition one logical axis of `x` over multiple device mesh axes:
 
 ```{code-cell}
-:id: fVcPbDUA3vGP
-:outputId: 7f524ba5-a6d8-4490-cda9-685ad11416f9
-
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 298
+id: fVcPbDUA3vGP
+outputId: da3f435d-dfc1-4a41-ec90-691cd7c748a0
+---
 y = jax.device_put(x, mesh_sharding(P(('a', 'b'), None)))
 jax.debug.visualize_array_sharding(y)
 ```
@@ -432,16 +320,19 @@ For example, the simplest computation is an elementwise one:
 ```{code-cell}
 :id: _EmQwggc3vGQ
 
-from jax.experimental import mesh_utils
-from jax.sharding import PositionalSharding
-sharding = PositionalSharding(mesh_utils.create_device_mesh((8,)))
+devices = mesh_utils.create_device_mesh((4, 2))
+mesh = Mesh(devices, axis_names=('a', 'b'))
 ```
 
 ```{code-cell}
-:id: LnT0vWjc3vGQ
-:outputId: 8089effc-aa4c-49e3-dd19-7064881dbad0
-
-x = jax.device_put(x, sharding.reshape(4, 2))
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 349
+id: LnT0vWjc3vGQ
+outputId: 8e642049-61eb-458d-af79-ac449b58d11b
+---
+x = jax.device_put(x, NamedSharding(mesh, P('a', 'b')))
 print('input sharding:')
 jax.debug.visualize_array_sharding(x)
 
@@ -459,11 +350,15 @@ In other words, even though we wrote the `jnp.sin` computation as if a single ma
 We can do the same for more than just elementwise operations too. Consider a matrix multiplication with sharded inputs:
 
 ```{code-cell}
-:id: Dq043GkP3vGQ
-:outputId: 350219a8-1e4a-4404-fe14-50f97ea3e7ba
-
-y = jax.device_put(x, sharding.reshape(4, 2).replicate(1))
-z = jax.device_put(x, sharding.reshape(4, 2).replicate(0))
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 548
+id: Dq043GkP3vGQ
+outputId: 3eff7b67-d7f0-4212-c9d3-2cc271ac1f98
+---
+y = jax.device_put(x, NamedSharding(mesh, P('a', None)))
+z = jax.device_put(x, NamedSharding(mesh, P(None, 'b')))
 print('lhs sharding:')
 jax.debug.visualize_array_sharding(y)
 print('rhs sharding:')
@@ -481,32 +376,45 @@ Here the compiler chose the output sharding so that it could maximally paralleli
 How can we be sure it's actually running in parallel? We can do a simple timing experiment:
 
 ```{code-cell}
-:id: QjQ5u8qh3vGQ
-:outputId: bd29edcd-b87c-486e-c568-906f06ae16be
-
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 199
+id: QjQ5u8qh3vGQ
+outputId: 0aefc170-833c-4a6a-e003-5990d3db31d9
+---
 x_single = jax.device_put(x, jax.devices()[0])
 jax.debug.visualize_array_sharding(x_single)
 ```
 
 ```{code-cell}
-:id: 8tn8lOj73vGR
-:outputId: 5809b3c8-7333-4cd3-db97-a7aede943dce
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: 8tn8lOj73vGR
+outputId: d9898c93-7afc-416b-8c40-4d9551613cd0
+---
 np.allclose(jnp.dot(x_single, x_single),
             jnp.dot(y, z))
 ```
 
 ```{code-cell}
-:id: D7PpZwhR3vGR
-:outputId: 4f0bd43d-0b32-4089-d3da-c8f1449e3526
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: D7PpZwhR3vGR
+outputId: 4901a11b-2354-4d26-a897-b88def07a716
+---
 %timeit -n 5 -r 5 jnp.dot(x_single, x_single).block_until_ready()
 ```
 
 ```{code-cell}
-:id: rgo_yVHF3vGR
-:outputId: 97f19052-f1c9-4d30-f453-07b3a7208aa9
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: rgo_yVHF3vGR
+outputId: e51216cf-b073-4250-d422-67f9fd72f6aa
+---
 %timeit -n 5 -r 5 jnp.dot(y, z).block_until_ready()
 ```
 
@@ -515,9 +423,13 @@ np.allclose(jnp.dot(x_single, x_single),
 Even copying a sharded `Array` produces a result with the sharding of the input:
 
 ```{code-cell}
-:id: f1Zw-2lH3vGR
-:outputId: a796bed4-07b0-497d-8fd8-31a22ab9762e
-
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 166
+id: f1Zw-2lH3vGR
+outputId: 43d7a642-fde4-47a6-901f-dfdc64d6a613
+---
 w_copy = jnp.copy(w)
 jax.debug.visualize_array_sharding(w_copy)
 ```
@@ -540,35 +452,41 @@ import textwrap
 from termcolor import colored
 
 def print_exception(e):
-  name = colored(f'{type(e).__name__}', 'red')
+  name = colored(f'{type(e).__name__}', 'red', force_color=True)
   print(textwrap.fill(f'{name}: {str(e)}'))
 ```
 
 ```{code-cell}
-:id: DHh0N3vn3vGS
-:outputId: e7741882-0ebf-4237-e5d1-e48c9b9c178f
+---
+colab:
+  base_uri: https://localhost:8080/
+id: DHh0N3vn3vGS
+outputId: 8c4652f7-c484-423b-ad78-182134280187
+---
+sharding1 = NamedSharding(Mesh(jax.devices()[:4], 'x'), P('x'))
+sharding2 = NamedSharding(Mesh(jax.devices()[4:], 'x'), P('x'))
 
-sharding1 = PositionalSharding(jax.devices()[:4])
-sharding2 = PositionalSharding(jax.devices()[4:])
-
-y = jax.device_put(x, sharding1.reshape(2, 2))
-z = jax.device_put(x, sharding2.reshape(2, 2))
+y = jax.device_put(x, sharding1)
+z = jax.device_put(x, sharding2)
 try: y + z
 except ValueError as e: print_exception(e)
 ```
 
 ```{code-cell}
-:id: Im7DkoOl3vGS
-:outputId: 3adfe1cb-db52-4a9d-e98e-62c6455c3100
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: Im7DkoOl3vGS
+outputId: 1b6fcd7a-762b-4366-a96d-aea63bad7fe0
+---
 devices = jax.devices()
 permuted_devices = [devices[i] for i in [0, 1, 2, 3, 6, 7, 4, 5]]
 
-sharding1 = PositionalSharding(devices)
-sharding2 = PositionalSharding(permuted_devices)
+sharding1 = NamedSharding(Mesh(devices, 'x'), P('x'))
+sharding2 = NamedSharding(Mesh(permuted_devices, 'x'), P('x'))
 
-y = jax.device_put(x, sharding1.reshape(4, 2))
-z = jax.device_put(x, sharding2.reshape(4, 2))
+y = jax.device_put(x, sharding1)
+z = jax.device_put(x, sharding2)
 try: y + z
 except ValueError as e: print_exception(e)
 ```
@@ -583,10 +501,13 @@ Unlike committed arrays, uncommitted arrays can be moved and resharded automatic
 For example, the output of `jnp.zeros`, `jnp.arange`, and `jnp.array` are uncommitted:
 
 ```{code-cell}
-:id: _QvtKL8r3vGS
-:outputId: e0078805-bdfd-436e-f94f-7cd256d2574f
-
-y = jax.device_put(x, sharding1.reshape(4, 2))
+---
+colab:
+  base_uri: https://localhost:8080/
+id: _QvtKL8r3vGS
+outputId: 761b1208-fe4b-4c09-a7d2-f62152183ef0
+---
+y = jax.device_put(x, sharding1)
 y + jnp.ones_like(y)
 y + jnp.arange(y.size).reshape(y.shape)
 print('no error!')
@@ -603,14 +524,14 @@ While the compiler will attempt to decide how a function's intermediate values a
 ```{code-cell}
 :id: jniSFm5V3vGT
 
-sharding = PositionalSharding(mesh_utils.create_device_mesh((8,)))
+mesh = Mesh(mesh_utils.create_device_mesh((4, 2)), ('x', 'y'))
 ```
 
 ```{code-cell}
 :id: Q1wuDp-L3vGT
 
 x = jax.random.normal(jax.random.key(0), (8192, 8192))
-x = jax.device_put(x, sharding.reshape(4, 2))
+x = jax.device_put(x, NamedSharding(mesh, P('x', 'y')))
 ```
 
 ```{code-cell}
@@ -619,14 +540,18 @@ x = jax.device_put(x, sharding.reshape(4, 2))
 @jax.jit
 def f(x):
   x = x + 1
-  y = jax.lax.with_sharding_constraint(x, sharding.reshape(2, 4))
+  y = jax.lax.with_sharding_constraint(x, NamedSharding(mesh, P('y', 'x')))
   return y
 ```
 
 ```{code-cell}
-:id: zYFS-n4r3vGT
-:outputId: d23a7938-cb7d-44b4-b9c7-83edf1d1145e
-
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 347
+id: zYFS-n4r3vGT
+outputId: 0ac96b8f-ed23-4413-aed9-edd00a841c37
+---
 jax.debug.visualize_array_sharding(x)
 y = f(x)
 jax.debug.visualize_array_sharding(y)
@@ -638,14 +563,18 @@ jax.debug.visualize_array_sharding(y)
 @jax.jit
 def f(x):
   x = x + 1
-  y = jax.lax.with_sharding_constraint(x, sharding.replicate())
+  y = jax.lax.with_sharding_constraint(x, NamedSharding(mesh, P()))
   return y
 ```
 
 ```{code-cell}
-:id: AiRFtVsR3vGT
-:outputId: f3e28a70-46cf-46fb-c801-82f0ddb447e4
-
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 347
+id: AiRFtVsR3vGT
+outputId: 2edacc2c-ac80-4519-c9d1-bee364a22b31
+---
 jax.debug.visualize_array_sharding(x)
 y = f(x)
 jax.debug.visualize_array_sharding(y)
@@ -728,29 +657,42 @@ params, batch = init_model(jax.random.key(0), layer_sizes, batch_size)
 ### 8-way batch data parallelism
 
 ```{code-cell}
+:id: mJLqRPpSDX0i
+
+mesh = Mesh(mesh_utils.create_device_mesh((8,)), 'batch')
+```
+
+```{code-cell}
 :id: _Q5NbdOn3vGV
 
-sharding = PositionalSharding(jax.devices()).reshape(8, 1)
+sharding = NamedSharding(mesh, P('batch'))
+replicated_sharding = NamedSharding(mesh, P())
 ```
 
 ```{code-cell}
 :id: 3KC6ieEe3vGV
 
 batch = jax.device_put(batch, sharding)
-params = jax.device_put(params, sharding.replicate())
+params = jax.device_put(params, replicated_sharding)
 ```
 
 ```{code-cell}
-:id: MUb-QE2b3vGV
-:outputId: 1f831ea5-5a30-49ad-8195-977ff7ed476a
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: MUb-QE2b3vGV
+outputId: 5a27f007-c572-44f8-9f49-6e745ee739e8
+---
 loss_jit(params, batch)
 ```
 
 ```{code-cell}
-:id: HUkw0u413vGV
-:outputId: dfa2599c-9440-4657-9035-0dc3bbf625e1
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: HUkw0u413vGV
+outputId: 07e481a1-97fb-4bd0-d754-cb6d8317bff6
+---
 step_size = 1e-5
 
 for _ in range(30):
@@ -762,9 +704,12 @@ print(loss_jit(params, batch))
 ```
 
 ```{code-cell}
-:id: paCw6Zaj3vGV
-:outputId: 8ab1c32c-f2b1-465c-df71-f5a599e7f19e
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: paCw6Zaj3vGV
+outputId: ad4cce34-3a6a-4d44-9a86-477a7fee4841
+---
 %timeit -n 5 -r 5 gradfun(params, batch)[0][0].block_until_ready()
 ```
 
@@ -776,9 +721,12 @@ params_single = jax.device_put(params, jax.devices()[0])
 ```
 
 ```{code-cell}
-:id: Z1wgUKXk3vGV
-:outputId: 74df8892-c349-41dc-cb1b-e0843ec5c994
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: Z1wgUKXk3vGV
+outputId: d66767b7-3f17-482f-b811-919bb1793277
+---
 %timeit -n 5 -r 5 gradfun(params_single, batch_single)[0][0].block_until_ready()
 ```
 
@@ -787,18 +735,28 @@ params_single = jax.device_put(params, jax.devices()[0])
 ### 4-way batch data parallelism and 2-way model tensor parallelism
 
 ```{code-cell}
-:id: N5-zzgW03vGW
+:id: k1hxOfgRDwo0
 
-sharding = sharding.reshape(4, 2)
+mesh = Mesh(mesh_utils.create_device_mesh((4, 2)), ('batch', 'model'))
 ```
 
 ```{code-cell}
-:id: sgIWCjJK3vGW
-:outputId: b2fdc556-05cc-4e68-fa04-48643d194dee
-
-batch = jax.device_put(batch, sharding.replicate(1))
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 314
+id: sgIWCjJK3vGW
+outputId: 8cb0f19f-3942-415c-c57a-31bb81784f46
+---
+batch = jax.device_put(batch, NamedSharding(mesh, P('batch', None)))
 jax.debug.visualize_array_sharding(batch[0])
 jax.debug.visualize_array_sharding(batch[1])
+```
+
+```{code-cell}
+:id: q9PQP-0eEAO6
+
+replicated_sharding = NamedSharding(mesh, P())
 ```
 
 ```{code-cell}
@@ -806,39 +764,50 @@ jax.debug.visualize_array_sharding(batch[1])
 
 (W1, b1), (W2, b2), (W3, b3), (W4, b4) = params
 
-W1 = jax.device_put(W1, sharding.replicate())
-b1 = jax.device_put(b1, sharding.replicate())
+W1 = jax.device_put(W1, replicated_sharding)
+b1 = jax.device_put(b1, replicated_sharding)
 
-W2 = jax.device_put(W2, sharding.replicate(0))
-b2 = jax.device_put(b2, sharding.replicate(0))
+W2 = jax.device_put(W2, NamedSharding(mesh, P(None, 'model')))
+b2 = jax.device_put(b2, NamedSharding(mesh, P('model')))
 
-W3 = jax.device_put(W3, sharding.replicate(0).T)
-b3 = jax.device_put(b3, sharding.replicate())
+W3 = jax.device_put(W3, NamedSharding(mesh, P('model', None)))
+b3 = jax.device_put(b3, replicated_sharding)
 
-W4 = jax.device_put(W4, sharding.replicate())
-b4 = jax.device_put(b4, sharding.replicate())
+W4 = jax.device_put(W4, replicated_sharding)
+b4 = jax.device_put(b4, replicated_sharding)
 
 params = (W1, b1), (W2, b2), (W3, b3), (W4, b4)
 ```
 
 ```{code-cell}
-:id: _lSJ63sh3vGW
-:outputId: 5b37aa8b-3226-4805-8282-876e8d06edda
-
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 199
+id: _lSJ63sh3vGW
+outputId: bcd3e33e-36b5-4787-9cd2-60623fd6e5fa
+---
 jax.debug.visualize_array_sharding(W2)
 ```
 
 ```{code-cell}
-:id: fxkfWYkk3vGW
-:outputId: 8a1063c3-540b-47c1-d990-a6845da861f7
-
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 199
+id: fxkfWYkk3vGW
+outputId: 59e60b16-fe37-47d4-8214-96096ffbd79c
+---
 jax.debug.visualize_array_sharding(W3)
 ```
 
 ```{code-cell}
-:id: uPCVs-_k3vGW
-:outputId: de01cdfc-36cb-4823-c692-22c692ef4220
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: uPCVs-_k3vGW
+outputId: 618516e9-9736-4ca0-dd22-09d094ce57a2
+---
 print(loss_jit(params, batch))
 ```
 
@@ -854,25 +823,35 @@ for _ in range(30):
 ```
 
 ```{code-cell}
-:id: c9Sbl69e3vGX
-:outputId: 8272c5fa-e59f-4953-c2d5-658c42a28712
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: c9Sbl69e3vGX
+outputId: 2ee3d432-7172-46ca-e01a-614e83345808
+---
 print(loss_jit(params, batch))
 ```
 
 ```{code-cell}
-:id: lkAF0dAb3vGX
-:outputId: acf0df31-c5e1-4683-b73f-b0cd1b0929f8
-
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 380
+id: lkAF0dAb3vGX
+outputId: 6c1e317e-cded-4af4-8080-0de835fa4c71
+---
 (W1, b1), (W2, b2), (W3, b3), (W4, b4) = params
 jax.debug.visualize_array_sharding(W2)
 jax.debug.visualize_array_sharding(W3)
 ```
 
 ```{code-cell}
-:id: I1Npor3i3vGX
-:outputId: 4099f6dd-7b46-4123-c1cb-5173c3d3278e
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: I1Npor3i3vGX
+outputId: 479c4d81-cb0b-40a5-89ba-394c10dc3297
+---
 %timeit -n 10 -r 10 gradfun(params, batch)[0][0].block_until_ready()
 ```
 
@@ -903,7 +882,8 @@ def f(key, x):
   return x + numbers
 
 key = jax.random.key(42)
-x_sharding = jax.sharding.PositionalSharding(jax.devices())
+mesh = Mesh(jax.devices(), 'x')
+x_sharding = NamedSharding(mesh, P('x'))
 x = jax.device_put(jnp.arange(24), x_sharding)
 ```
 
@@ -912,9 +892,13 @@ x = jax.device_put(jnp.arange(24), x_sharding)
 On a partitioned input, the function `f` produces output that is also partitioned:
 
 ```{code-cell}
-:id: Oi97rpLz3vGY
-:outputId: 204a7e8d-dc88-4b77-b7e3-0e72f306c5d3
-
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 67
+id: Oi97rpLz3vGY
+outputId: 9dd63254-a483-4847-c0f5-5a4367bf08e9
+---
 jax.debug.visualize_array_sharding(f(key, x))
 ```
 
@@ -923,9 +907,12 @@ jax.debug.visualize_array_sharding(f(key, x))
 But if we inspect the compiled computation for `f` on this partitioned input, we see that it does involve some communication:
 
 ```{code-cell}
-:id: 64wIZuSJ3vGY
-:outputId: 1054fe99-0476-44ec-9693-b0d8f98bf6a8
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: 64wIZuSJ3vGY
+outputId: fa166d45-ca9c-457a-be84-bcc9236d0730
+---
 f_exe = f.lower(key, x).compile()
 print('Communicating?', 'collective-permute' in f_exe.as_text())
 ```
@@ -935,9 +922,12 @@ print('Communicating?', 'collective-permute' in f_exe.as_text())
 One way to work around this is to configure JAX with the experimental upgrade flag `jax_threefry_partitionable`. With the flag on, the "collective permute" operation is now gone from the compiled computation:
 
 ```{code-cell}
-:id: 1I7bqxA63vGY
-:outputId: ec4c579d-f446-4b48-ceda-785c09ba299b
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: 1I7bqxA63vGY
+outputId: 756e0a36-ff14-438f-bbd4-3ef03f97a47b
+---
 jax.config.update('jax_threefry_partitionable', True)
 f_exe = f.lower(key, x).compile()
 print('Communicating?', 'collective-permute' in f_exe.as_text())
@@ -948,9 +938,13 @@ print('Communicating?', 'collective-permute' in f_exe.as_text())
 The output is still partitioned:
 
 ```{code-cell}
-:id: zHPJzdn23vGY
-:outputId: a8904d20-4d04-4f59-8eae-281e47d29246
-
+---
+colab:
+  base_uri: https://localhost:8080/
+  height: 67
+id: zHPJzdn23vGY
+outputId: 3332de0f-4827-4f0b-b9ef-69249b7c6bc6
+---
 jax.debug.visualize_array_sharding(f(key, x))
 ```
 
@@ -959,9 +953,12 @@ jax.debug.visualize_array_sharding(f(key, x))
 One caveat to the `jax_threefry_partitionable` option, however, is that _the random values produced may be different than without the flag set_, even though they were generated by the same random key:
 
 ```{code-cell}
-:id: nBUHBBal3vGY
-:outputId: f194c213-0688-4b7a-ffb8-c4453b82b1f1
-
+---
+colab:
+  base_uri: https://localhost:8080/
+id: nBUHBBal3vGY
+outputId: 4b9be948-ccab-4a31-a06f-37ec9c7b5235
+---
 jax.config.update('jax_threefry_partitionable', False)
 print('Stable:')
 print(f(key, x))
