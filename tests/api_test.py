@@ -4850,6 +4850,19 @@ class APITest(jtu.JaxTestCase):
     with self.assertRaisesRegex(TracerBoolConversionError, "Attempted boolean"):
       f()
 
+  def test_inline_return_twice(self):
+    # https://github.com/google/jax/issues/22944
+    @jax.jit
+    def add_one(x: int) -> int:
+      return x + 1
+
+    def add_one_and_dupe(x: int) -> tuple[int, int]:
+      y = add_one(x)
+      return (y, y)
+
+    jit_add_one_dupe = jax.jit(add_one_and_dupe, inline=True)
+    jax.eval_shape(jit_add_one_dupe, 0)  # don't crash
+
 
 class RematTest(jtu.JaxTestCase):
 

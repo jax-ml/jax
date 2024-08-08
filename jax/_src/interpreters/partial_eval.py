@@ -2821,7 +2821,7 @@ def inline_jaxpr_into_trace(
   tracer_env: dict[Var, Any] = dict(zip([*jaxpr.constvars, *jaxpr.invars],
                                         [*consts, *arg_tracers]))
   def new_tracer(atom):
-    tracer = DynamicJaxprTracer(trace, atom.aval, src)
+    tracer = tracer_env[atom] = DynamicJaxprTracer(trace, atom.aval, src)
     trace.frame.tracers.append(tracer)
     trace.frame.tracer_to_var[id(tracer)] = env[atom]
     return tracer
