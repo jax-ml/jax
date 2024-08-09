@@ -38,7 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
       - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d # ratchet:actions/setup-python@v5
+        uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f # ratchet:actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install JAX test requirements
@@ -54,8 +54,8 @@ jobs:
             --upgrade \
             numpy \
             scipy
-          python -c "import numpy; print(f'numpy.__version__=')"
-          python -c "import scipy; print(f'scipy.__version__=')"
+          python -c "import numpy; print(f'{numpy.__version__=}')"
+          python -c "import scipy; print(f'{scipy.__version__=}')"
       - name: Install JAX
         run: |
           pip install .[ci]
@@ -85,7 +85,7 @@ jobs:
           && steps.status.outcome == 'failure'
           && github.event_name == 'schedule'
           && github.repository == 'google/jax'
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # ratchet: actions/upload-artifact@v4
+        uses: actions/upload-artifact@89ef406dd8d7e03cfd12d9e0a4a378f454709029 # ratchet: actions/upload-artifact@v4
         with:
           name: output-${{ matrix.python-version }}-log.jsonl
           path: output-${{ matrix.python-version }}-log.jsonl
@@ -107,10 +107,10 @@ jobs:
         shell: bash
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
-      - uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d # ratchet:actions/setup-python@v5
+      - uses: actions/setup-python@39cd14951b08e74b54015e9e001cdefcf80e669f # ratchet:actions/setup-python@v5
         with:
           python-version: "3.x"
-      - uses: actions/download-artifact@65a9edc5881444af0b9093a5e628f2fe47ea3b2e # ratchet:actions/download-artifact@v4
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # ratchet:actions/download-artifact@v4
         with:
           path: /tmp/workspace/logs
       - name: install requirements

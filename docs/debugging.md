@@ -15,6 +15,8 @@ kernelspec:
 (debugging)=
 # Introduction to debugging
 
+<!--* freshness: { reviewed: '2024-05-10' } *-->
+
 This section introduces you to a set of built-in JAX debugging methods — {func}`jax.debug.print`, {func}`jax.debug.breakpoint`, and {func}`jax.debug.callback` — that you can use with various JAX transformations.
 
 Let's begin with {func}`jax.debug.print`.
@@ -124,7 +126,7 @@ Here is an example of what a debugger session might look like:
 
 @jax.jit
 def f(x):
-  y, z = jnp.sin(x, jnp.cos(x))
+  y, z = jnp.sin(x), jnp.cos(x)
   jax.debug.breakpoint()
   return y * z
 f(2.) # ==> Pauses during execution

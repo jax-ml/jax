@@ -38,6 +38,7 @@ class VectorizeTest(jtu.JaxTestCase):
       ]
     ],
   )
+  @jax.numpy_rank_promotion('allow')
   def test_matmat(self, left_shape, right_shape, result_shape):
     matmat = jnp.vectorize(jnp.dot, signature='(n,m),(m,k)->(n,k)')
     self.assertEqual(matmat(jnp.zeros(left_shape),
@@ -54,6 +55,7 @@ class VectorizeTest(jtu.JaxTestCase):
       ]
     ],
   )
+  @jax.numpy_rank_promotion('allow')
   def test_matvec(self, left_shape, right_shape, result_shape):
     matvec = jnp.vectorize(jnp.dot, signature='(n,m),(m)->(n)')
     self.assertEqual(matvec(jnp.zeros(left_shape),
@@ -69,6 +71,7 @@ class VectorizeTest(jtu.JaxTestCase):
       ]
     ],
   )
+  @jax.numpy_rank_promotion('allow')
   def test_vecmat(self, left_shape, right_shape, result_shape):
     vecvec = jnp.vectorize(jnp.dot, signature='(m),(m)->()')
     self.assertEqual(vecvec(jnp.zeros(left_shape),
@@ -253,6 +256,36 @@ class VectorizeTest(jtu.JaxTestCase):
     msg = r"Cannot pass None at locations \{1\} with signature='\(k\),\(k\)->\(k\)'"
     with self.assertRaisesRegex(ValueError, msg):
       f(*args)
+
+  def test_rank_promotion_error(self):
+    # Regression test for https://github.com/google/jax/issues/22305
+    f = jnp.vectorize(jnp.add, signature="(),()->()")
+    rank2 = jnp.zeros((10, 10))
+    rank1 = jnp.zeros(10)
+    rank0 = jnp.zeros(())
+    msg = "operands with shapes .* require rank promotion"
+    with jax.numpy_rank_promotion('raise'):
+      with self.assertRaisesRegex(ValueError, msg):
+        f(rank2, rank1)
+    with jax.numpy_rank_promotion('warn'):
+      with self.assertWarnsRegex(UserWarning, msg):
+        f(rank2, rank1)
+
+    # no warning for scalar rank promotion
+    with jax.numpy_rank_promotion('raise'):
+      f(rank2, rank0)
+      f(rank1, rank0)
+    with jax.numpy_rank_promotion('warn'):
+      f(rank2, rank0)
+      f(rank1, rank0)
+
+    # No warning when broadcasted ranks match.
+    f2 = jnp.vectorize(jnp.add, signature="(n),()->(n)")
+    with jax.numpy_rank_promotion('raise'):
+      f2(rank2, rank1)
+    with jax.numpy_rank_promotion('warn'):
+      with self.assertNoWarnings():
+        f2(rank2, rank1)
 
 
 if __name__ == "__main__":

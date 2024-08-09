@@ -15,11 +15,11 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import contextlib
 from functools import partial
 import itertools as it
 import gc
 import math
-import os
 from random import shuffle
 import re
 from typing import Union, cast
@@ -46,18 +46,23 @@ from jax._src import config
 from jax._src import sharding_impls
 from jax._src import sharding_specs
 from jax._src import test_util as jtu
-from jax._src import xla_bridge
 from jax._src.internal_test_util import lax_test_util
 from jax._src.interpreters import mlir
 from jax._src.interpreters import pxla
 from jax._src.lax import parallel
 from jax._src.lib import xla_extension
-from jax._src.lib import xla_extension_version
 from jax._src.util import safe_map, safe_zip
 
 config.parse_flags_with_absl()
 
-prev_xla_flags = None
+# Run all tests with 8 CPU devices.
+_exit_stack = contextlib.ExitStack()
+
+def setUpModule():
+  _exit_stack.enter_context(jtu.set_host_platform_device_count(8))
+
+def tearDownModule():
+  _exit_stack.close()
 
 compatible_shapes = [[(3,)], [(3, 4), (3, 1), (1, 4)], [(2, 3, 4), (2, 1, 4)]]
 
@@ -86,32 +91,8 @@ def args_slicer(args, bdims):
   slicers = safe_map(slicer, args, bdims)
   return lambda i: [sl(i) for sl in slicers]
 
-# Run all tests with 8 CPU devices.
-def setUpModule():
-  global prev_xla_flags
-  prev_xla_flags = os.getenv("XLA_FLAGS")
-  flags_str = prev_xla_flags or ""
-  # Don't override user-specified device count, or other XLA flags.
-  if "xla_force_host_platform_device_count" not in flags_str:
-    os.environ["XLA_FLAGS"] = (flags_str +
-                               " --xla_force_host_platform_device_count=8")
-  # Clear any cached backends so new CPU backend will pick up the env var.
-  xla_bridge.get_backend.cache_clear()
-
-# Reset to previous configuration in case other test modules will be run.
-def tearDownModule():
-  if prev_xla_flags is None:
-    del os.environ["XLA_FLAGS"]
-  else:
-    os.environ["XLA_FLAGS"] = prev_xla_flags
-  xla_bridge.get_backend.cache_clear()
-
 ignore_jit_of_pmap_warning = partial(
   jtu.ignore_warning, message=".*jit-of-pmap.*")
-
-ignore_xmap_warning = partial(
-  jtu.ignore_warning, message=".*is an experimental.*")
-
 
 def create_input_array_for_pmap(input_shape, in_axes=0, input_data=None,
                                 devices=None, sharded_dim_size=None):
@@ -1112,7 +1093,6 @@ class PythonPmapTest(jtu.JaxTestCase):
                      ((0, 1, 2, 3, 4, 5, 6, 7,),))  # order doesn't matter
 
   @jtu.run_on_devices("gpu")
-  @unittest.skipIf(xla_extension_version < 250, "Requires jaxlib 0.4.26")
   def testCollectiveBroadcast(self):
     device_count = jax.device_count()
     f = lambda x: lax.pbroadcast(x, source=0, axis_name='i')
@@ -1123,7 +1103,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @jtu.run_on_devices("gpu")
-  @unittest.skipIf(xla_extension_version < 250, "Requires jaxlib 0.4.26")
   def testCollectiveBroadcastVmap(self):
     device_count = jax.device_count()
     f = lambda x: lax.pbroadcast(x, source=0, axis_name='i')
@@ -1134,7 +1113,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     self.assertAllClose(ans, expected, check_dtypes=False)
 
   @jtu.run_on_devices("gpu")
-  @unittest.skipIf(xla_extension_version < 250, "Requires jaxlib 0.4.26")
   def testCollectiveBroadcastGrad(self):
     device_count = jax.device_count()
     f = lambda x: lax.pbroadcast(x, source=0, axis_name='i')
@@ -1247,7 +1225,7 @@ class PythonPmapTest(jtu.JaxTestCase):
       boards.append(''.join('*' if x else ' ' for x in board.ravel()))
 
     print_board(reshaped_board)
-    for _ in range(20):
+    for _ in range(9):
       reshaped_board = step(reshaped_board)
       print_board(reshaped_board)
 
@@ -1263,17 +1241,6 @@ class PythonPmapTest(jtu.JaxTestCase):
         '             ** ****  ******            ',
         '            **  *   ***     *           ',
         '           ** **** **  *   ***          ',
-        '          **  *    * **** **  *         ',
-        '         ** ****  ** *    * ****        ',
-        '        **  *   ***  **  ** *   *       ',
-        '       ** **** **  *** ***  ** ***      ',
-        '      **  *    * ***   *  ***  *  *     ',
-        '     ** ****  ** *  * *****  *******    ',
-        '    **  *   ***  **** *    ***      *   ',
-        '   ** **** **  ***    **  **  *    ***  ',
-        '  **  *    * ***  *  ** *** ****  **  * ',
-        ' ** ****  ** *  ******  *   *   *** ****',
-        ' *  *   ***  ****     **** *** **   *   ',
     ))
 
     print(ans)
@@ -1821,8 +1788,8 @@ class PythonPmapTest(jtu.JaxTestCase):
         res = fv(x)
       return res
 
-    x = random.normal(random.PRNGKey(1), (80, 5))
-    y = random.normal(random.PRNGKey(1), (10, 5))
+    x = random.normal(random.PRNGKey(1), (40, 5))
+    y = random.normal(random.PRNGKey(1), (5, 5))
 
     result1 = vmap(lambda b: matrix_vector(x, b, True))(y)       # vmap + pmap
     result2 = lax.map(lambda b: matrix_vector(x, b, False), y)   # map + map
@@ -1979,18 +1946,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     indices = np.array([[[2], [1]], [[0], [0]]])
     mapped_fn(indices)  # doesn't crash
 
-  @ignore_xmap_warning()
-  def testPdotBasic(self):
-    num_devices = jax.device_count()
-
-    def f(x, y):
-      return lax.pdot(x, y, 'i')
-
-    x = jnp.arange(num_devices * 3).reshape(num_devices, 3)
-    y = jnp.arange(num_devices * 5).reshape(num_devices, 5)
-    z = self.pmap(f, axis_name='i', out_axes=None)(x, y)
-    self.assertAllClose(z, jnp.dot(x.T, y))
-
   @parameterized.named_parameters(
       {"testcase_name": "_shape={}_axis={}_collective={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
@@ -2079,13 +2034,10 @@ class PythonPmapTest(jtu.JaxTestCase):
     def f(x):
       return jnp.sin(x)
 
+    # warm-up the cache
     x = jnp.ones(axis_size)
-    f(x)  # warm-up any dispatching compilations
-
-    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
-      _, f_bwd  = jax.vjp(f, x)
-      _ = f_bwd(x)
-    self.assertEqual(count[0], 2)  # one for fwd, one for bwd
+    _, f_bwd  = jax.vjp(f, x)
+    _ = f_bwd(x)
 
     with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
       _, f_bwd2  = jax.vjp(f, x)
@@ -2200,7 +2152,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     jax.vmap(jax.vmap(lambda x: 2 * x, axis_name='i'),
              axis_name='i')(jax.numpy.ones((1, 1)))  # don't crash
 
-  @unittest.skipIf(xla_extension_version < 252, "Requires jaxlib 0.4.26")
   @jtu.run_on_devices("cpu")
   def test_pmap_stack_size(self):
     # Regression test for https://github.com/google/jax/issues/20428
@@ -2211,6 +2162,15 @@ class PythonPmapTest(jtu.JaxTestCase):
     x = jnp.eye(200)
     y = jax.pmap(jax.scipy.linalg.expm)(jnp.array([x, x]))
     y.block_until_ready()  # doesn't crash
+
+  def test_pmap_of_prng_key(self):
+    # Regression test for https://github.com/google/jax/issues/20392
+    keys = jax.random.split(jax.random.key(0), jax.device_count())
+    result1 = jax.pmap(jax.random.bits)(keys)
+    with jtu.ignore_warning(
+        category=UserWarning, message="The jitted function bits includes a pmap"):
+      result2 = jax.jit(jax.pmap(jax.random.bits))(keys)
+    self.assertArraysEqual(result1, result2)
 
 
 @jtu.pytest_mark_if_available('multiaccelerator')
@@ -2526,7 +2486,7 @@ class PmapWithDevicesTest(jtu.JaxTestCase):
     f = lambda x: jnp.dot(x, x.T)
     f0 = pmap(f, devices=[d0])
     f1 = pmap(f, devices=[d1])
-    x = self.rng().rand(1, 1000, 1000)
+    x = self.rng().rand(1, 500, 500)
     r0 = f0(x)
     r1 = f1(x)
     expected = np.expand_dims(np.dot(x.squeeze(), x.squeeze().T), 0)

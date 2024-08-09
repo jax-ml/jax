@@ -55,7 +55,8 @@ def dct(x: Array, type: int = 2, n: int | None = None,
       If larger than ``x.shape[axis]``, the input will be zero-padded, if
       smaller, the input will be truncated.
     axis: integer, default=-1. The axis along which the dct will be performed.
-    norm: string. The normalization mode. Currently only ``"ortho"`` is supported.
+    norm: string. The normalization mode: one of ``[None, "backward", "ortho"]``.
+      The default is ``None``, which is equivalent to ``"backward"``.
 
   Returns:
     array containing the discrete cosine transform of x
@@ -64,9 +65,42 @@ def dct(x: Array, type: int = 2, n: int | None = None,
     - :func:`jax.scipy.fft.dctn`: multidimensional DCT
     - :func:`jax.scipy.fft.idct`: inverse DCT
     - :func:`jax.scipy.fft.idctn`: multidimensional inverse DCT
+
+  Examples:
+    >>> x = jax.random.normal(jax.random.key(0), (3, 3))
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jax.scipy.fft.dct(x))
+    [[-0.58 -0.33 -1.08]
+     [-0.88 -1.01 -1.79]
+     [-1.06 -2.43  1.24]]
+
+    When ``n`` smaller than ``x.shape[axis]``
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jax.scipy.fft.dct(x, n=2))
+    [[-0.22 -0.9 ]
+     [-0.57 -1.68]
+     [-2.52 -0.11]]
+
+    When ``n`` smaller than ``x.shape[axis]`` and ``axis=0``
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jax.scipy.fft.dct(x, n=2, axis=0))
+    [[-2.22  1.43 -0.67]
+     [ 0.52 -0.26 -0.04]]
+
+    When ``n`` larger than ``x.shape[axis]`` and ``axis=1``
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jax.scipy.fft.dct(x, n=4, axis=1))
+    [[-0.58 -0.35 -0.64 -1.11]
+     [-0.88 -0.9  -1.46 -1.68]
+     [-1.06 -2.25 -1.15  1.93]]
   """
   if type != 2:
     raise NotImplementedError('Only DCT type 2 is implemented.')
+  if norm is not None and norm not in ['backward', 'ortho']:
+    raise ValueError(f"jax.scipy.fft.dct: {norm=!r} is not implemented")
 
   axis = canonicalize_axis(axis, x.ndim)
   if n is not None:
@@ -116,7 +150,8 @@ def dctn(x: Array, type: int = 2,
       specified, it will default to the shape of ``x`` along the specified ``axes``.
     axes: integer or sequence of integers. Specifies the axes along which the
       transform will be computed.
-    norm: string. The normalization mode. Currently only ``"ortho"`` is supported.
+    norm: string. The normalization mode: one of ``[None, "backward", "ortho"]``.
+      The default is ``None``, which is equivalent to ``"backward"``.
 
   Returns:
     array containing the discrete cosine transform of x
@@ -125,9 +160,48 @@ def dctn(x: Array, type: int = 2,
     - :func:`jax.scipy.fft.dct`: one-dimensional DCT
     - :func:`jax.scipy.fft.idct`: one-dimensional inverse DCT
     - :func:`jax.scipy.fft.idctn`: multidimensional inverse DCT
+
+  Examples:
+
+    ``jax.scipy.fft.dctn`` computes the transform along both the axes by default
+    when ``axes`` argument is ``None``.
+
+    >>> x = jax.random.normal(jax.random.key(0), (3, 3))
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jax.scipy.fft.dctn(x))
+    [[-5.04 -7.54 -3.26]
+     [ 0.83  3.64 -4.03]
+     [ 0.12 -0.73  3.74]]
+
+    When ``s=[2]``, dimension of the transform along ``axis 0`` will be ``2``
+    and dimension along ``axis 1`` will be same as that of input.
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jax.scipy.fft.dctn(x, s=[2]))
+    [[-2.92 -2.68 -5.74]
+     [ 0.42  0.97  1.  ]]
+
+    When ``s=[2]`` and ``axes=[1]``, dimension of the transform along ``axis 1`` will
+    be ``2`` and dimension along ``axis 0`` will  be same as that of input.
+    Also when ``axes=[1]``, transform will be computed only along ``axis 1``.
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jax.scipy.fft.dctn(x, s=[2], axes=[1]))
+    [[-0.22 -0.9 ]
+     [-0.57 -1.68]
+     [-2.52 -0.11]]
+
+    When ``s=[2, 4]``, shape of the transform will be ``(2, 4)``.
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...   print(jax.scipy.fft.dctn(x, s=[2, 4]))
+    [[-2.92 -2.49 -4.21 -5.57]
+     [ 0.42  0.79  1.16  0.8 ]]
   """
   if type != 2:
     raise NotImplementedError('Only DCT type 2 is implemented.')
+  if norm is not None and norm not in ['backward', 'ortho']:
+    raise ValueError(f"jax.scipy.fft.dctn: {norm=!r} is not implemented")
 
   if axes is None:
     axes = range(x.ndim)
@@ -162,7 +236,8 @@ def idct(x: Array, type: int = 2, n: int | None = None,
       If larger than ``x.shape[axis]``, the input will be zero-padded, if
       smaller, the input will be truncated.
     axis: integer, default=-1. The axis along which the dct will be performed.
-    norm: string. The normalization mode. Currently only ``"ortho"`` is supported.
+    norm: string. The normalization mode: one of ``[None, "backward", "ortho"]``.
+      The default is ``None``, which is equivalent to ``"backward"``.
 
   Returns:
     array containing the inverse discrete cosine transform of x
@@ -171,9 +246,51 @@ def idct(x: Array, type: int = 2, n: int | None = None,
     - :func:`jax.scipy.fft.dct`: DCT
     - :func:`jax.scipy.fft.dctn`: multidimensional DCT
     - :func:`jax.scipy.fft.idctn`: multidimensional inverse DCT
+
+  Examples:
+
+    >>> x = jax.random.normal(jax.random.key(0), (3, 3))
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...    print(jax.scipy.fft.idct(x))
+    [[-0.02 -0.   -0.17]
+     [-0.02 -0.07 -0.28]
+     [-0.16 -0.36  0.18]]
+
+    When ``n`` smaller than ``x.shape[axis]``
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...    print(jax.scipy.fft.idct(x, n=2))
+    [[ 0.   -0.19]
+     [-0.03 -0.34]
+     [-0.38  0.04]]
+
+    When ``n`` smaller than ``x.shape[axis]`` and ``axis=0``
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...    print(jax.scipy.fft.idct(x, n=2, axis=0))
+    [[-0.35  0.23 -0.1 ]
+     [ 0.17 -0.09  0.01]]
+
+    When ``n`` larger than ``x.shape[axis]`` and ``axis=0``
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...    print(jax.scipy.fft.idct(x, n=4, axis=0))
+    [[-0.34  0.03  0.07]
+     [ 0.    0.18 -0.17]
+     [ 0.14  0.09 -0.14]
+     [ 0.   -0.18  0.14]]
+
+    ``jax.scipy.fft.idct`` can be used to reconstruct ``x`` from the result
+    of ``jax.scipy.fft.dct``
+
+    >>> x_dct = jax.scipy.fft.dct(x)
+    >>> jnp.allclose(x, jax.scipy.fft.idct(x_dct))
+    Array(True, dtype=bool)
   """
   if type != 2:
     raise NotImplementedError('Only DCT type 2 is implemented.')
+  if norm is not None and norm not in ['backward', 'ortho']:
+    raise ValueError(f"jax.scipy.fft.idct: {norm=!r} is not implemented")
 
   axis = canonicalize_axis(axis, x.ndim)
   if n is not None:
@@ -182,7 +299,7 @@ def idct(x: Array, type: int = 2, n: int | None = None,
                  for a in range(x.ndim)])
   N = x.shape[axis]
   x = x.astype(jnp.float32)
-  if norm is None:
+  if norm is None or norm == 'backward':
     x = _dct_ortho_norm(x, axis)
   x = _dct_ortho_norm(x, axis)
 
@@ -214,7 +331,8 @@ def idctn(x: Array, type: int = 2,
       specified, it will default to the shape of ``x`` along the specified ``axes``.
     axes: integer or sequence of integers. Specifies the axes along which the
       transform will be computed.
-    norm: string. The normalization mode. Currently only ``"ortho"`` is supported.
+    norm: string. The normalization mode: one of ``[None, "backward", "ortho"]``.
+      The default is ``None``, which is equivalent to ``"backward"``.
 
   Returns:
     array containing the inverse discrete cosine transform of x
@@ -223,9 +341,55 @@ def idctn(x: Array, type: int = 2,
     - :func:`jax.scipy.fft.dct`: one-dimensional DCT
     - :func:`jax.scipy.fft.dctn`: multidimensional DCT
     - :func:`jax.scipy.fft.idct`: one-dimensional inverse DCT
+
+  Examples:
+
+    ``jax.scipy.fft.idctn`` computes the transform along both the axes by default
+    when ``axes`` argument is ``None``.
+
+    >>> x = jax.random.normal(jax.random.key(0), (3, 3))
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...    print(jax.scipy.fft.idctn(x))
+    [[-0.03 -0.08 -0.08]
+     [ 0.05  0.12 -0.09]
+     [-0.02 -0.04  0.08]]
+
+    When ``s=[2]``, dimension of the transform along ``axis 0`` will be ``2``
+    and dimension along ``axis 1`` will be the same as that of input.
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...  print(jax.scipy.fft.idctn(x, s=[2]))
+    [[-0.01 -0.03 -0.14]
+     [ 0.    0.03  0.06]]
+
+    When ``s=[2]`` and ``axes=[1]``, dimension of the transform along ``axis 1`` will
+    be ``2`` and dimension along ``axis 0`` will  be same as that of input.
+    Also when ``axes=[1]``, transform will be computed only along ``axis 1``.
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...  print(jax.scipy.fft.idctn(x, s=[2], axes=[1]))
+    [[ 0.   -0.19]
+     [-0.03 -0.34]
+     [-0.38  0.04]]
+
+    When ``s=[2, 4]``, shape of the transform will be ``(2, 4)``
+
+    >>> with jnp.printoptions(precision=2, suppress=True):
+    ...  print(jax.scipy.fft.idctn(x, s=[2, 4]))
+    [[-0.01 -0.01 -0.05 -0.11]
+     [ 0.    0.01  0.03  0.04]]
+
+    ``jax.scipy.fft.idctn`` can be used to reconstruct ``x`` from the result
+    of ``jax.scipy.fft.dctn``
+
+    >>> x_dctn = jax.scipy.fft.dctn(x)
+    >>> jnp.allclose(x, jax.scipy.fft.idctn(x_dctn))
+    Array(True, dtype=bool)
   """
   if type != 2:
     raise NotImplementedError('Only DCT type 2 is implemented.')
+  if norm is not None and norm not in ['backward', 'ortho']:
+    raise ValueError(f"jax.scipy.fft.idctn: {norm=!r} is not implemented")
 
   if axes is None:
     axes = range(x.ndim)

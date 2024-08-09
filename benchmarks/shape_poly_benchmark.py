@@ -18,7 +18,7 @@ import google_benchmark as benchmark
 import jax
 from jax import core
 from jax._src.numpy import lax_numpy
-from jax.experimental import export
+from jax import export
 
 jax.config.parse_flags_with_absl()
 

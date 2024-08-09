@@ -42,7 +42,7 @@ except ImportError:
   colorama = None
 
 
-_PPRINT_USE_COLOR = config.DEFINE_bool(
+_PPRINT_USE_COLOR = config.bool_flag(
     'jax_pprint_use_color',
     config.bool_env('JAX_PPRINT_USE_COLOR', True),
     help='Enable jaxpr pretty-printing with colorful syntax highlighting.'
@@ -173,9 +173,9 @@ class _SourceMapDoc(Doc):
   def __repr__(self): return f"source({self.child}, {self.source})"
 
 
-Color = enum.Enum("_Color", ["BLACK", "RED", "GREEN", "YELLOW", "BLUE",
-                             "MAGENTA", "CYAN", "WHITE", "RESET"])
-Intensity = enum.Enum("_Intensity", ["DIM", "NORMAL", "BRIGHT"])
+Color = enum.Enum("Color", ["BLACK", "RED", "GREEN", "YELLOW", "BLUE",
+                            "MAGENTA", "CYAN", "WHITE", "RESET"])
+Intensity = enum.Enum("Intensity", ["DIM", "NORMAL", "BRIGHT"])
 
 class _ColorDoc(Doc):
   __slots__ = ("foreground", "background", "intensity", "child")

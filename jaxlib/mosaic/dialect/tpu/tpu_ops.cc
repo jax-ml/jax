@@ -24,9 +24,12 @@ limitations under the License.
 #include "mlir/IR/Value.h"
 #include "mlir/Support/LLVM.h"
 #include "mlir/Support/LogicalResult.h"
+#include "absl/log/check.h"
+#include "mlir/include/mlir/IR/BuiltinTypeInterfaces.h"
 #include "mlir/include/mlir/IR/BuiltinTypes.h"
 #include "mlir/include/mlir/IR/IRMapping.h"
 #include "jaxlib/mosaic/dialect/tpu/tpu_dialect.h"
+#include "jaxlib/mosaic/dialect/tpu/util.h"
 
 namespace mlir {
 namespace tpu {
@@ -48,6 +51,34 @@ LogicalResult UnrollVectorsOp::canonicalize(UnrollVectorsOp op,
     }
   }
   rewriter.replaceOp(op, roll_op.getOperands());
+  return success();
+}
+
+LogicalResult BitcastOp::verify() {
+  auto in_ty = getInput().getType();
+  auto out_ty = getOutput().getType();
+  auto in_bitwidth = in_ty.getElementTypeBitWidth();
+  auto out_bitwidth = out_ty.getElementTypeBitWidth();
+  if (in_bitwidth != out_bitwidth) {
+    if (in_ty.getRank() < 2 || out_ty.getRank() < 2) {
+      return emitError(
+          "Not implemented: bitcast between different bitwidths on a 1D "
+          "vector.");
+    }
+    SmallVector<int64_t, 4> in_shape(in_ty.getShape());
+    SmallVector<int64_t, 4> out_shape(out_ty.getShape());
+    *(in_shape.end() - 2) *= in_bitwidth;
+    *(out_shape.end() - 2) *= out_bitwidth;
+    if (in_shape != out_shape) {
+      return emitError(
+          "Expected input and output shapes are the same after multiplying the "
+          "second-minor dimension by the ratio of bitwidths.");
+    }
+  } else if (in_ty.getShape() != out_ty.getShape()) {
+    return emitError(
+        "Expected input and output shapes are the same when bitwidth does not "
+        "change.");
+  }
   return success();
 }
 
@@ -183,6 +214,95 @@ LogicalResult MemRefSqueezeOp::canonicalize(MemRefSqueezeOp op,
   return success();
 }
 
+LogicalResult MemRefReshapeOp::verify() {
+  auto src_ty = getMemRefType(getInput());
+  auto tgt_ty = getType();
+  if (tgt_ty.getMemorySpace() != nullptr &&
+      tgt_ty.getMemorySpace() != src_ty.getMemorySpace()) {
+    return emitOpError("Memory spaces do not match.");
+  }
+  if (src_ty.getShape().size() < 2 || tgt_ty.getShape().size() < 2) {
+    return emitError("Not implemented: 1d memref reshape.");
+  }
+  if (tgt_ty.getElementType() != src_ty.getElementType()) {
+    return emitOpError("Element types don't match.");
+  }
+  auto src_elements_num = ShapedType::getNumElements(src_ty.getShape());
+  auto tgt_elements_num = ShapedType::getNumElements(tgt_ty.getShape());
+  if (src_elements_num != tgt_elements_num) {
+    return emitOpError(
+        "Number of elements doesn't match between input and output memref "
+        "type.");
+  }
+  // Source and target attributes may be different before propagation is done by
+  // the canonicalizer, so we allow this when attributes are "unset" in the
+  // target type.
+  auto tgt_layout = dyn_cast<tpu::TiledLayoutAttr>(tgt_ty.getLayout());
+  if (!tgt_layout) {
+    return success();
+  }
+  auto src_layout = dyn_cast<tpu::TiledLayoutAttr>(src_ty.getLayout());
+  if (!src_layout || src_layout.getTiles().empty()) {
+    return emitOpError("Expected a tiled layout for the input memref.");
+  }
+  if (src_layout.getTiles() != tgt_layout.getTiles()) {
+    return emitOpError(
+        "Expected the same tiling for the input and output memref.");
+  }
+  auto tile = src_layout.getTiles().front().dimensions();
+  if (tile.size() != 2) {
+    return emitOpError("Not implemented: memref reshape with 1D tiling.");
+  }
+  SmallVector<int64_t> src_tile_strides(src_layout.getTileStrides());
+  if (ComputeTileStrides(src_ty, tile) != src_tile_strides) {
+    return emitOpError("Not implemented: reshape on a non-contiguous memref.");
+  }
+  auto src_tiled_shape = src_ty.getShape().take_back(2);
+  auto tgt_tiled_shape = tgt_ty.getShape().take_back(2);
+  bool is_src_align_tile_2nd_minor = src_tiled_shape[0] % tile[0] == 0;
+  bool is_src_align_tile_minor = src_tiled_shape[1] % tile[1] == 0;
+  bool is_tgt_align_tile_2nd_minor = tgt_tiled_shape[0] % tile[0] == 0;
+  bool is_tgt_align_tile_minor = tgt_tiled_shape[1] % tile[1] == 0;
+  if (tile[0] == 1 && is_src_align_tile_minor && is_tgt_align_tile_minor) {
+    // When the tiling is (1, ?) and the source and target shapes are aligned
+    // to the tile, we support reshape on any dims.
+  } else if (tgt_tiled_shape[1] != src_tiled_shape[1]) {
+    return emitError("Expected the minormost dimension to be unchanged");
+  } else if (tgt_tiled_shape[0] != src_tiled_shape[0]) {
+    if (!is_src_align_tile_2nd_minor || !is_tgt_align_tile_2nd_minor) {
+      return emitError(
+          "Expected the 2nd minor dimension is aligned to the tile");
+    }
+  }
+  return success();
+}
+
+LogicalResult MemRefReshapeOp::canonicalize(MemRefReshapeOp op,
+                                            PatternRewriter &rewriter) {
+  auto src_ty = op.getInput().getType();
+  auto dst_ty = op.getType();
+  auto erase_layout_op = op.getInput().getDefiningOp<tpu::EraseLayoutOp>();
+  if (!erase_layout_op) {
+    return failure();
+  }
+  auto layout_ref = erase_layout_op.getOperand();
+  auto layout_ty = layout_ref.getType();
+  auto layout =
+      dyn_cast<tpu::TiledLayoutAttr>(layout_ty.getLayout());
+  CHECK(!layout.getTiles().empty());
+  auto tile = layout.getTiles().front().dimensions();
+  auto new_tile_strides = ComputeTileStrides(dst_ty, tile);
+  auto new_layout = tpu::TiledLayoutAttr::get(
+      src_ty.getContext(), layout.getTiles(), new_tile_strides);
+  auto new_result_ty =
+      MemRefType::get(dst_ty.getShape(), dst_ty.getElementType(), new_layout,
+                      layout_ty.getMemorySpace());
+  auto reshape =
+      rewriter.create<MemRefReshapeOp>(op.getLoc(), new_result_ty, layout_ref);
+  rewriter.replaceOpWithNewOp<EraseLayoutOp>(op, op.getType(), reshape);
+  return success();
+}
+
 template <typename Op>
 LogicalResult verifyStridedOp(Op op, MemRefType memref_ty,
                               VectorType vector_ty) {
@@ -230,33 +350,38 @@ LogicalResult ReinterpretCastOp::verify() {
       source_type.getMemorySpace() == target_type.getMemorySpace());
 }
 
-LogicalResult RotateOp::verify() {
-  auto vty = getResult().getType();
-  if (vty.getRank() <= getDimension() || getDimension() < 0) {
-    emitOpError("Invalid dimension: ") << getDimension();
+template <typename Op>
+LogicalResult verifyRotateOp(Op op) {
+  auto vty = op.getResult().getType();
+  if (vty.getRank() <= op.getDimension() || op.getDimension() < 0) {
+    op.emitOpError("Invalid dimension: ") << op.getDimension();
     return failure();
   }
-  if (getAmount() < 0) {
-    emitOpError("Rotate amount must be >= 0");
+  if (op.getStride().has_value() && op.getStride().value() < 0) {
+    op.emitOpError("Rotate stride must be >= 0 if it is specified");
     return failure();
   }
-  if (getStride().has_value() && getStride().value() < 0) {
-    emitOpError("Rotate stride must be >= 0 if it is specified");
+  if (op.getStrideDimension().has_value() &&
+      (vty.getRank() <= op.getStrideDimension().value() ||
+       op.getStrideDimension().value() < 0)) {
+    op.emitOpError("Invalid stride dimension: ")
+        << op.getStrideDimension().value();
     return failure();
   }
-  if (getStrideDimension().has_value() &&
-      (vty.getRank() <= getStrideDimension().value() ||
-       getStrideDimension().value() < 0)) {
-    emitOpError("Invalid stride dimension: ") << getStrideDimension().value();
-    return failure();
-  }
-  if (getStride().has_value() != getStrideDimension().has_value()) {
-    emitOpError(
+  if (op.getStride().has_value() != op.getStrideDimension().has_value()) {
+    op.emitOpError(
         "Expected  either none or both stride and stride dimension are "
         "present");
     return failure();
   }
   return success();
+}
+
+// TODO(b/347016737): deprecate static rotate
+LogicalResult RotateOp::verify() { return verifyRotateOp<RotateOp>(*this); }
+
+LogicalResult DynamicRotateOp::verify() {
+  return verifyRotateOp<DynamicRotateOp>(*this);
 }
 
 // a + matmul(l, r, 0) == matmul(l, r, a)
@@ -267,7 +392,7 @@ class CanonicalizeAddOfMatmul : public OpRewritePattern<AddOp> {
   LogicalResult matchAndRewrite(AddOp op, PatternRewriter &rewriter) const {
     auto try_canonicalize = [&](Value maybe_matmul, Value maybe_acc) {
       auto matmul = dyn_cast_if_present<MatmulOp>(maybe_matmul.getDefiningOp());
-      if (!matmul) {
+      if (!matmul || !matmul->hasOneUse()) {
         return failure();
       }
       if (auto const_acc = matmul.getAcc().getDefiningOp<arith::ConstantOp>();
@@ -349,6 +474,16 @@ LogicalResult WaitDMAOp::verify() {
   if (sem_type.getRank() != 0) {
     emitOpError("DMA wait semaphore must be rank 0");
     return failure();
+  }
+  return success();
+}
+
+LogicalResult RegionOp::verify() {
+  for (auto result_type : getResultTypes()) {
+    if (!isa<FloatType, IntegerType, VectorType, IndexType>(result_type)) {
+      return emitOpError(
+          "Region result must be float, int, index or a vector type.");
+    }
   }
   return success();
 }

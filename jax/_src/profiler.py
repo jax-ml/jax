@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from contextlib import contextmanager
 from functools import wraps
 import glob
@@ -24,7 +25,7 @@ import logging
 import os
 import socketserver
 import threading
-from typing import Callable, Union
+from typing import Any
 
 from jax._src import traceback_util
 traceback_util.register_exclusion(__file__)
@@ -128,7 +129,7 @@ def start_trace(log_dir, create_perfetto_link: bool = False,
     _profile_state.create_perfetto_link = create_perfetto_link
     _profile_state.create_perfetto_trace = (
         create_perfetto_trace or create_perfetto_link)
-    _profile_state.log_dir = log_dir
+    _profile_state.log_dir = str(log_dir)
 
 
 def _write_perfetto_trace_file(log_dir):
@@ -210,7 +211,7 @@ def stop_trace():
     _profile_state.reset()
 
 
-def stop_and_get_fdo_profile() -> Union[bytes, str]:
+def stop_and_get_fdo_profile() -> bytes | str:
   """Stops the currently-running profiler trace and export fdo_profile.
 
   Currently, this is only supported for GPU.
@@ -380,3 +381,62 @@ def save_device_memory_profile(filename, backend: str | None = None) -> None:
   profile = device_memory_profile(backend)
   with open(filename, "wb") as f:
     f.write(profile)
+
+
+# Allows to run model with profiler given amount of times. After required amount
+# of retries achived client can collect FDO data.
+class PGLEProfiler:
+
+  def __init__(self, retries: int, percentile: int):
+    self.retries: int = retries
+    self.percentile: int = percentile
+    self.collected_fdo: str | None = None
+    self.called_times: int = 0
+    self.fdo_profiles: list[Any] = []
+    self.current_session: xla_client.profiler.ProfilerSession | None = None
+
+  def consume_fdo_profile(self) -> str | None:
+    if self.collected_fdo is not None:
+      return self.collected_fdo
+
+    if not self.is_enabled() or self.called_times != self.retries:
+      return None
+
+    self.collected_fdo = xla_client.profiler.aggregate_profiled_instructions(
+        self.fdo_profiles, self.percentile
+    )
+    return self.collected_fdo
+
+  def is_fdo_consumed(self):
+    return self.collected_fdo is not None
+
+  def disable(self):
+    self.retries = 0
+
+  def is_enabled(self):
+    return self.retries > 0
+
+  def is_running(self):
+    return self.current_session is not None
+
+  @classmethod
+  @contextmanager
+  def trace(cls, runner: PGLEProfiler | None):
+    if (runner is None or runner.is_running()
+        or not runner.is_enabled() or runner.is_fdo_consumed()):
+      yield
+    else:
+      options = xla_client.profiler.ProfileOptions()
+      options.enable_hlo_proto = True
+      runner.current_session = xla_client.profiler.ProfilerSession(options)
+
+      try:
+        yield
+      finally:
+        xspace = runner.current_session.stop()
+        runner.fdo_profiles.append(
+            xla_client.profiler.get_fdo_profile(xspace)
+        )
+        runner.current_session = None
+
+        runner.called_times += 1

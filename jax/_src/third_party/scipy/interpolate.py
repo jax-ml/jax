@@ -45,7 +45,7 @@ class RegularGridInterpolator:
   Returns:
     interpolator: callable interpolation object.
 
-  Example:
+  Examples:
     >>> points = (jnp.array([1, 2, 3]), jnp.array([4, 5, 6]))
     >>> values = jnp.array([[10, 20, 30], [40, 50, 60], [70, 80, 90]])
     >>> interpolate = RegularGridInterpolator(points, values, method='linear')
@@ -164,7 +164,7 @@ register_pytree_node(
     lambda obj: ((obj.grid, obj.values, obj.fill_value),
                  (obj.method, obj.bounds_error)),
     lambda aux, children: RegularGridInterpolator(
-        *children[:2],  # type: ignore[index]
+        *children[:2],
         *aux,
-        *children[2:]),  # type: ignore[index]
+        *children[2:]),
 )

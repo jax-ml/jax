@@ -22,7 +22,6 @@ from jax._src import array
 from jax._src import xla_bridge
 from jax._src.lax.lax import _array_copy
 from jax._src.lib import xla_client
-from jax._src.lib import xla_extension_version
 from jax._src.typing import Array, DLDeviceType
 from jax._src.sharding import Sharding
 
@@ -39,10 +38,7 @@ MIN_DLPACK_VERSION = (0, 5)
 SUPPORTED_DTYPES = frozenset({
     jnp.int8, jnp.int16, jnp.int32, jnp.int64, jnp.uint8, jnp.uint16,
     jnp.uint32, jnp.uint64, jnp.float16, jnp.bfloat16, jnp.float32,
-    jnp.float64, jnp.complex64, jnp.complex128})
-
-if xla_extension_version >= 231:
-  SUPPORTED_DTYPES = SUPPORTED_DTYPES | frozenset({jnp.bool_})
+    jnp.float64, jnp.complex64, jnp.complex128, jnp.bool_})
 
 
 def _to_dlpack(x: Array, stream: int | Any | None,
@@ -197,7 +193,7 @@ def _legacy_from_dlpack(dlpack, device: xla_client.Device | None = None,
         pass
 
   _arr = jnp.asarray(xla_client._xla.dlpack_managed_tensor_to_buffer(
-      dlpack, cpu_backend, gpu_backend)) # type: ignore
+      dlpack, cpu_backend, gpu_backend))
   dlpack_device, = _arr.devices()
   return _place_array(_arr, device, dlpack_device, copy)
 
@@ -221,7 +217,7 @@ def _from_dlpack(external_array, device: xla_client.Device | None = None,
   dlpack_device = backend.device_from_local_hardware_id(device_id)
   try:
     stream = dlpack_device.get_stream_for_external_ready_events()
-  except xla_client.XlaRuntimeError as err:  # type: ignore
+  except xla_client.XlaRuntimeError as err:
     if "UNIMPLEMENTED" in str(err):
       stream = None
     else:

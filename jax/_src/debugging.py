@@ -16,12 +16,12 @@
 from __future__ import annotations
 
 import importlib.util
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import functools
 import logging
 import string
 import sys
-from typing import Any, Callable, Union
+from typing import Any, Union
 import weakref
 
 import numpy as np
@@ -46,6 +46,7 @@ from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding import Sharding
 from jax._src.sharding_impls import NamedSharding, parse_flatten_op_sharding
+from jax._src.state import discharge as state_discharge
 
 logger = logging.getLogger(__name__)
 
@@ -77,13 +78,20 @@ map, unsafe_map = util.safe_map, map
 def debug_callback_impl(*args, callback: Callable[..., Any],
                         effect: DebugEffect):
   del effect
-  cpu_device, *_ = jax.local_devices(backend="cpu")
+  try:
+    cpu_device, *_ = jax.local_devices(backend="cpu")
+  except RuntimeError as e:
+    raise RuntimeError(
+        "jax.debug.callback failed to find a local CPU device to place the"
+        " inputs on. Make sure \"cpu\" is listed in --jax_platforms or the"
+        " JAX_PLATFORMS environment variable."
+    ) from e
   args = jax.device_put(args, cpu_device)
   with jax.default_device(cpu_device):
     try:
       callback(*args)
     except BaseException:
-      logger.exception("jax.debug_callback failed")
+      logger.exception("jax.debug.callback failed")
       raise
   return ()
 
@@ -152,11 +160,11 @@ def debug_callback_lowering(ctx, *args, effect, callback, **params):
         *flat_args, effect=effect, callback=callback, **params)
     return ()
   if effects.ordered_effects.contains(effect):
-    [token] = ctx.tokens_in.get(effect)
+    token = ctx.tokens_in.get(effect)
     result, token, _ = mlir.emit_python_callback(
         ctx, _callback, token, list(args), ctx.avals_in, ctx.avals_out,
         has_side_effect=True)
-    ctx.set_tokens_out(mlir.TokenSet({effect: (token,)}))
+    ctx.set_tokens_out(mlir.TokenSet({effect: token}))
   else:
     result, _, _ = mlir.emit_python_callback(
         ctx, _callback, None, list(args), ctx.avals_in, ctx.avals_out,
@@ -199,6 +207,14 @@ def _debug_callback_partial_eval_custom(saveable, unks_in, inst_in, eqn):
   return eqn, eqn, [], [], []
 pe.partial_eval_jaxpr_custom_rules[debug_callback_p] = (
     _debug_callback_partial_eval_custom)
+
+@state_discharge.register_discharge_rule(debug_callback_p)
+def _debug_callback_state_discharge_rule(
+    in_avals, out_avals, *args, effect, callback, **params
+):
+  del in_avals, out_avals  # Unused.
+  out = debug_callback_p.bind(*args, effect=effect, callback=callback, **params)
+  return args, out
 
 def debug_callback(callback: Callable[..., None], *args: Any,
                    ordered: bool = False, **kwargs: Any) -> None:
@@ -504,11 +520,11 @@ def visualize_sharding(shape: Sequence[int], sharding: Sharding, *,
       heights[chunk_idxs] = None
       widths[chunk_idxs]  = horiz_size / shape[0]
     slices.setdefault(chunk_idxs, set()).add(dev.id)
-  num_rows = max([a[0] for a in slices.keys()]) + 1
+  num_rows = max(a[0] for a in slices.keys()) + 1
   if len(list(slices.keys())[0]) == 1:
     num_cols = 1
   else:
-    num_cols = max([a[1] for a in slices.keys()]) + 1
+    num_cols = max(a[1] for a in slices.keys()) + 1
 
   color_iter = make_color_iter(color_map, num_rows, num_cols)
   table = rich.table.Table(show_header=False, show_lines=not use_color,

@@ -17,11 +17,11 @@
 from __future__ import annotations
 
 import collections
-from collections.abc import Sequence
+from collections.abc import Callable, Generator, MutableMapping, Sequence
 import itertools
 import logging
 import math
-from typing import Any, Callable, Generator, MutableMapping
+from typing import Any
 
 from jax._src import xla_bridge as xb
 import numpy as np
@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 _TPU_V2 = 'TPU v2'
 _TPU_V3 = 'TPU v3'
 _TPU_V4 = 'TPU v4'
+_TPU_V5_LITE = "TPU v5 lite"
 
 # Maps physical topology -> mesh shape -> transpose to use for jekbradbury's
 # famous contiguous mesh trick.
@@ -64,7 +65,8 @@ _TRANSPOSE_TRICKS: dict[
 
 # Physical ordering of core IDs in a tray that creates a ring
 _TRAY_RING_ORDER = (0, 1, 2, 3, 6, 7, 4, 5)
-
+_TRAY_2x2_RING_ORDER = (0, 1, 3, 2)
+_TRAY_4x4_RING_ORDER = (0, 1, 2, 3, 7, 6, 5, 9, 10, 11, 15, 14, 13, 12, 8, 4)
 
 def _tpu_v2_v3_create_device_mesh(
     mesh_shape: Sequence[int],
@@ -94,6 +96,45 @@ def _tpu_v2_v3_create_device_mesh(
     return np.asarray(devices).reshape(mesh_shape)
 
 
+def _vlc_create_device_mesh(
+    mesh_shape: Sequence[int], devices: Sequence[Any], **unused_kwargs
+) -> np.ndarray | None:
+  """Creates rotated pincer device assignment for selected topologies.
+
+  Args:
+    mesh_shape: Logical mesh shape used by the model.
+    devices: TPU devices.
+    **unused_kwargs: ...
+
+  Returns:
+    None or reordered devices reshaped as `mesh_shape`.
+  """
+  max_x, max_y, max_z = max(getattr(d, "coords", (0, 0, 0)) for d in devices)
+  bound_x, bound_y, bound_z = max_x + 1, max_y + 1, max_z + 1
+  # Our ring re-ordering makes sense only if the passed-in devices are
+  # sequential, which may not always be the case. reversed() changes z-minor to
+  # x-minor.
+  sequential_devices = sorted(
+      devices,
+      key=lambda d: tuple(reversed(getattr(d, "coords", (0, 0, 0)))))
+
+  if bound_x == bound_y == 2 and bound_z == 1 and len(devices) == 4:  # VLC2x2
+    device_mesh = np.asarray(sequential_devices)
+    device_mesh = device_mesh[np.array(_TRAY_2x2_RING_ORDER)]
+    device_mesh = device_mesh.reshape(mesh_shape)
+    return device_mesh
+
+  if bound_x == bound_y == 4 and bound_z == 1 and len(devices) == 16:  # VLP4x4
+    # Only uses ring order if the whole mesh is a replica group.
+    if max(mesh_shape) == len(devices):
+      device_mesh = np.asarray(sequential_devices)
+      device_mesh = device_mesh[np.array(_TRAY_4x4_RING_ORDER)]
+      device_mesh = device_mesh.reshape(mesh_shape)
+      return device_mesh
+
+  return None
+
+
 # Registers functions to create device mesh for specific device kinds. Takes
 # precedence over the more general logic in create_device_mesh(). Handler may
 # return None; in that case, it will fall back to using the default logic.
@@ -103,6 +144,7 @@ device_kind_handler_dict: dict[
 ] = {
     _TPU_V2: _tpu_v2_v3_create_device_mesh,
     _TPU_V3: _tpu_v2_v3_create_device_mesh,
+    _TPU_V5_LITE: _vlc_create_device_mesh,
 }
 
 
@@ -533,7 +575,12 @@ def _get_physical_tpu_mesh(jax_devices: Sequence[Any]) -> np.ndarray:
 
   Args:
     jax_devices: A list of JAX devices in a TPU slice in process-tiled z, y, x,
-      core order, e.g. from jax.devices().
+      core order, e.g. from jax.devices(). The coordinates of these devices
+      should constitute a cuboid with no holes; e.g., the coordinates can be
+      {(1, 0, 0), (1, 0, 1), (1, 1, 0), (1, 1, 1)} (a 1x2x2 cuboid); passing
+      only 3 of these devices would result in a "hole" in that cuboid, which is
+      an error.  As in our example, the cuboid is not required to include the
+      point (0, 0, 0).
 
   Returns:
     A np.ndarray of JAX devices with shape [global_x, global_y, global_z]. On
@@ -541,24 +588,57 @@ def _get_physical_tpu_mesh(jax_devices: Sequence[Any]) -> np.ndarray:
   """
   device_kind = jax_devices[0].device_kind
   device_coords = [d.coords for d in jax_devices]
-  dims = tuple(d + 1 for d in max(device_coords))
+  coord_size = len(device_coords[0])
+  # Position-wise max and min coordinates:
+  max_coords = tuple(
+      max(dc[i] for dc in device_coords) for i in range(coord_size)
+  )
+  min_coords = tuple(
+      min(dc[i] for dc in device_coords) for i in range(coord_size)
+  )
+  dims = tuple(h - l + 1 for (h, l) in zip(max_coords, min_coords))
+
+  max_cores_per_chip = max(d.core_on_chip for d in jax_devices)
+  min_cores_per_chip = min(d.core_on_chip for d in jax_devices)
+  cores_per_chip = max_cores_per_chip - min_cores_per_chip + 1
+
   assert len(dims) == 3, dims
+  assert (
+      len(jax_devices) == np.prod(dims) * cores_per_chip
+  ), f'{jax_devices=} {dims=} {cores_per_chip=}'
+
   if device_kind in (_TPU_V2, _TPU_V3):
-    cores_per_chip = max(d.core_on_chip for d in jax_devices) + 1
     out = np.empty(dims[:2] + (cores_per_chip,), dtype=object)
-    for coords, d in zip(device_coords, jax_devices):
+    for d in jax_devices:
+      coords = d.coords
       assert coords[2] == 0, d
-      out[coords[0], coords[1], d.core_on_chip] = d
+      out[
+          coords[0] - min_coords[0],
+          coords[1] - min_coords[1],
+          d.core_on_chip - min_cores_per_chip,
+      ] = d
   else:
     out = np.empty(dims, dtype=object)
-    for coords, d in zip(device_coords, jax_devices):
+    for d in jax_devices:
+      coords = d.coords
       if d.core_on_chip != 0:
         raise AssertionError(
             'Creating meshes for TPU >v3 requires one device per chip'
             f' ("megacore" mode). Got device id {d.core_on_chip} for a device'
             f' of kind {device_kind}: {d}.'
         )
-      out[coords[0], coords[1], coords[2]] = d
+      out[
+          coords[0] - min_coords[0],
+          coords[1] - min_coords[1],
+          coords[2] - min_coords[2],
+      ] = d
+
+  # Check there is no "hole" in the mesh we constructed.
+  if (out == None).any():  # pylint: disable=singleton-comparison
+    raise AssertionError(
+        'Constructed mesh contains a "hole"; probable cause: coordinates '
+        f'of jax_devices are not a contiguous cuboid: {jax_devices}'
+    )
   return out
 
 

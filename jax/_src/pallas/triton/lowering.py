@@ -16,12 +16,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import dataclasses
 import functools
 import math
 import operator
-from typing import Any, Callable, TypeVar
+from typing import Any, Hashable, TypeVar
 
 import jax
 from jax import lax
@@ -29,6 +29,7 @@ from jax import tree_util
 from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import api_util
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import custom_derivatives
 from jax._src import linear_util as lu
@@ -78,13 +79,14 @@ class ModuleContext:
   grid_mapping: GridMapping
   program_ids: Sequence[ir.Value]
   traceback_caches: mlir.TracebackCaches = dataclasses.field(repr=False)
+  platform: str
 
 
 @dataclasses.dataclass
 class BlockInfo:
   full_shape_dtype: jax.ShapeDtypeStruct
   start_indices: Sequence[Any]
-  block_shape: tuple[int, ...]
+  block_shape: tuple[int, ...]  # TODO(necula): can this contain "mapped"?
 
 
 @dataclasses.dataclass
@@ -92,7 +94,7 @@ class LoweringRuleContext:
   context: ModuleContext
   avals_in: Sequence[jax_core.ShapedArray]
   avals_out: Sequence[jax_core.ShapedArray]
-  block_infos: Sequence[BlockInfo | None]
+  block_infos: Sequence[BlockInfo | None]  # TODO(necula): can this be None?
 
   replace = dataclasses.replace
 
@@ -110,10 +112,8 @@ class LoweringError(Exception):
 
 
 def _eval_index_map(
-    ctx: ModuleContext, idx, block_mapping: BlockMapping | None
+    ctx: ModuleContext, idx, block_mapping: BlockMapping
 ):
-  if block_mapping is None:
-    return None
   block_indices = lower_jaxpr_to_triton_ir(
       ctx, block_mapping.index_map_jaxpr.jaxpr, None, *idx
   )
@@ -136,6 +136,10 @@ def _bcast_to(a: ir.Value, shape: tuple[int, ...]) -> ir.Value:
     a_type = ir.RankedTensorType(a.type)
     if a_type.shape == [*shape]:
       return a
+    if a_type.rank != len(shape) or not all(
+        a_type.shape[i] in (dim, 1) for i, dim in enumerate(shape)
+    ):
+      raise ValueError(f"Cannot broadcast from {a_type.shape} to {[*shape]}")
     return tt_dialect.broadcast(
         ir.RankedTensorType.get(shape, a_type.element_type, a_type.encoding), a
     )
@@ -181,13 +185,13 @@ def _process_grid_to_3d_grid(grid_mapping: GridMapping):
 
   # Preserve grid order provided to pallas_call
   for i, s in enumerate(grid_mapping.grid):
-    if i not in grid_mapping.mapped_dims:
+    if i not in grid_mapping.vmapped_dims:
       launch_grid.append(s)
       launch_grid_to_pallas_grid.append(i)
 
   # For mapped dims, iterate from inner to outer. This follows the pallas_call
   # batching rule that prepends the vmapped dimension.
-  for dim in reversed(grid_mapping.mapped_dims):
+  for dim in reversed(grid_mapping.vmapped_dims):
     s = grid_mapping.grid[dim]
     launch_grid.append(s)
     launch_grid_to_pallas_grid.append(dim)
@@ -243,18 +247,45 @@ def _new_ir_context() -> ir.Context:
   ctx.load_all_available_dialects()
   return ctx
 
+# Many Trion operations require that their inputs and outputs have sizes that
+# are a power of 2 (they are defined to have TensorSizeTrait that enforces
+# this). This check is only needed to obtain a nicer error message; the
+# Triton lowering will fail anyway but it will crash with a C++ exception.
+# We currently apply this check only to load/store operations.
+def _check_tensor_size(shape: tuple[int | pallas_core.Mapped, ...]):
+  size = math.prod(1 if d is pallas_core.mapped else d for d in shape)
+  power_of_2 = (size & (size - 1)) == 0
+  if not power_of_2:
+    raise ValueError(
+        "The Pallas Triton lowering currently requires that all "
+        "operations have array arguments and results whose size "
+        "is a power of 2. Encountered an array of "
+        f"shape {shape}")
+
 
 def lower_jaxpr_to_triton_module(
     jaxpr: jax_core.Jaxpr,
-    in_shapes,
     grid_mapping: GridMapping,
-    name: str,
-    cuda_options: Any,
+    name_and_src_info: pallas_core.NameAndStrInfo,
+    platform: str
 ) -> LoweringResult:
-  # TODO(slebedev): Use cuda_options= during lowering.
-  jaxpr, _ = pe.dce_jaxpr(jaxpr, [True] * len(jaxpr.outvars), instantiate=True)
+  if grid_mapping.num_dynamic_grid_bounds:
+    raise NotImplementedError(
+        "dynamic grid bounds not supported in the Triton backend"
+    )
+  if grid_mapping.num_index_operands:
+    raise NotImplementedError(
+        "scalar prefetch not implemented in the Triton backend"
+    )
+  with grid_mapping.trace_env():
+    jaxpr, _ = pe.dce_jaxpr(
+        jaxpr, [True] * len(jaxpr.outvars), instantiate=True
+    )
   with _new_ir_context(), ir.Location.unknown():
     module = ir.Module.create()
+    attrs = module.operation.attributes
+    module_name = name_and_src_info.name
+    attrs["sym_name"] = ir.StringAttr.get(module_name)
     param_types = [
         tt_dialect.PointerType.get(_dtype_to_ir_type(var.aval.dtype), 1)
         for var in jaxpr.invars
@@ -262,7 +293,7 @@ def lower_jaxpr_to_triton_module(
     assert len(jaxpr.outvars) == 0
     fn_type = ir.FunctionType.get(param_types, [])
     fn = tt_dialect.FuncOp(
-        name,
+        name_and_src_info.name,
         ir.TypeAttr.get(fn_type),
         sym_visibility="public",
         res_attrs=ir.DictAttr.get(dict(noinline=ir.BoolAttr.get(False))),
@@ -279,34 +310,34 @@ def lower_jaxpr_to_triton_module(
       local_program_ids = [
           pid
           for i, pid in enumerate(program_ids)
-          if i not in grid_mapping.mapped_dims
+          if i not in grid_mapping.vmapped_dims
       ]
       ctx = ModuleContext(
-          name, grid_mapping, local_program_ids, mlir.TracebackCaches()
+          name_and_src_info.name,
+          grid_mapping, local_program_ids, mlir.TracebackCaches(), platform
       )
       if grid_mapping.num_index_operands:
         raise NotImplementedError(
             "Scalar prefetch not supported in Triton lowering."
         )
-      for bm in grid_mapping.block_mappings:
-        if bm is not None and not isinstance(bm.indexing_mode, Blocked):
-          raise NotImplementedError(
-              "Only Blocked indexing mode is supported in Triton lowering."
-          )
+      if not all(isinstance(bm.indexing_mode, Blocked)
+                 for bm in grid_mapping.block_mappings):
+        raise NotImplementedError(
+            "Only Blocked indexing mode is supported in Triton lowering."
+        )
       start_indices = map(
           functools.partial(_eval_index_map, ctx, program_ids),
           grid_mapping.block_mappings,
       )
       block_infos = [
           BlockInfo(
-              jax.ShapeDtypeStruct(shape_dtype.shape, shape_dtype.dtype),
+              block_mapping.array_shape_dtype,
               start_idx,
               block_mapping.block_shape,
           )
-          if block_mapping is not None
-          else None
-          for shape_dtype, block_mapping, start_idx in zip(
-              in_shapes, grid_mapping.block_mappings, start_indices
+          for block_mapping, start_idx in zip(
+              grid_mapping.block_mappings,
+              start_indices,
           )
       ]
       () = lower_jaxpr_to_triton_ir(ctx, jaxpr, block_infos, *entry.arguments)
@@ -334,11 +365,12 @@ def lower_jaxpr_to_triton_ir(
   def write_env(var: jax_core.Var, val):
     env[var] = val
 
-  if block_infos is None:
-    block_infos = [None] * len(jaxpr.invars)
-  for invar, block_info in zip(jaxpr.invars, block_infos):
-    block_info_env[invar] = block_info
+  if block_infos is not None:
+    for invar, block_info in zip(jaxpr.invars, block_infos):
+      block_info_env[invar] = block_info
+
   map(write_env, jaxpr.invars, args)
+
   for eqn in jaxpr.eqns:
     invals = map(read_env, eqn.invars)
     if eqn.primitive not in triton_lowering_rules:
@@ -363,12 +395,14 @@ def lower_jaxpr_to_triton_ir(
       inval_types = map(lambda t: getattr(t, "type", None), invals)
       raise LoweringError(
           f"Exception while lowering eqn:\n  {eqn}\nWith context:\n "
-          f" {rule_ctx}\nWith inval types={inval_types}\nIn jaxpr:\n{jaxpr}"
+          f" {rule_ctx}\nWith inval types={inval_types}\nIn jaxpr:\n{jaxpr}\n"
+          f"msg={e}"
       ) from e
     if eqn.primitive.multiple_results:
       map(write_env, eqn.outvars, outvals)
     else:
       write_env(eqn.outvars[0], outvals)
+
   return map(read_env, jaxpr.outvars)
 
 
@@ -382,20 +416,16 @@ def _program_id(axis: int) -> ir.Value:
   return tt_dialect.get_program_id(axis)
 
 
+@register_lowering(primitives.program_id_p)
 def _program_id_lowering_rule(ctx: LoweringRuleContext, *, axis):
   return ctx.context.program_ids[axis]
 
 
-triton_lowering_rules[primitives.program_id_p] = _program_id_lowering_rule
-
-
+@register_lowering(primitives.num_programs_p)
 def _num_programs_lowering_rule(ctx: LoweringRuleContext, *, axis):
   if axis not in range(3):
     raise ValueError(f"axis must be in [0, 3), but got: {axis}")
   return tt_dialect.get_num_programs(axis)
-
-triton_lowering_rules[primitives.num_programs_p] = _num_programs_lowering_rule
-
 
 def _atomic_rmw(
     op: tt_dialect.RMWOp,
@@ -418,6 +448,7 @@ def _atomic_rmw(
   )
 
 
+@register_lowering(primitives.atomic_rmw_p)
 def _atomic_lowering_rule(
     ctx: LoweringRuleContext,
     *args_flat,
@@ -457,9 +488,7 @@ def _atomic_lowering_rule(
   return _atomic_rmw(op, ptr, val, mask=mask)
 
 
-triton_lowering_rules[primitives.atomic_rmw_p] = _atomic_lowering_rule
-
-
+@register_lowering(primitives.atomic_cas_p)
 def _atomic_cas_lowering_rule(ctx: LoweringRuleContext, ptr, cmp, val):
   _, cmp_aval, val_aval = ctx.avals_in
   if ir.RankedTensorType.isinstance(ptr.type):
@@ -478,9 +507,6 @@ def _atomic_cas_lowering_rule(ctx: LoweringRuleContext, ptr, cmp, val):
       sem=tt_dialect.MemSemantic.ACQUIRE_RELEASE,
       scope=tt_dialect.MemSyncScope.GPU,
   )
-
-
-triton_lowering_rules[primitives.atomic_cas_p] = _atomic_cas_lowering_rule
 
 
 def _associative_scan_lowering(body, ctx: LoweringRuleContext, args, axes):
@@ -515,6 +541,7 @@ def _associative_scan_lowering(body, ctx: LoweringRuleContext, args, axes):
   return list(scan_op.result)
 
 
+@register_lowering(lax.cumsum_p)
 def _cumsum_lowering_rule(
     ctx: LoweringRuleContext, x, *, axis: int, reverse: bool
 ):
@@ -523,15 +550,10 @@ def _cumsum_lowering_rule(
   return _associative_scan_lowering(jnp.add, ctx, x, (axis,))[0]
 
 
-triton_lowering_rules[lax.cumsum_p] = _cumsum_lowering_rule
-
-
+@register_lowering(lax.not_p)
 def _not_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
   return arith_dialect.xori(x, _full(x.type, ~x_aval.dtype.type(0)))
-
-
-triton_lowering_rules[lax.not_p] = _not_lowering_rule
 
 
 @dataclasses.dataclass(frozen=True)
@@ -572,10 +594,11 @@ class _Fallback:
 
 
 def _make_dispatch_table(
-    name: str, table: Sequence[_Extern | _Fallback]
+    name: str, **tables: Sequence[_Extern | _Fallback]
 ) -> Callable[..., ir.Value]:
 
   def inner(ctx: LoweringRuleContext, *args: ir.Value) -> ir.Value:
+    table = tables[ctx.context.platform]
     h = next((e for e in table if e.matches(ctx.avals_in)), None)
     if h is None:
       arg_aval_dtypes = tuple(aval.dtype.name for aval in ctx.avals_in)
@@ -597,15 +620,22 @@ def _make_dispatch_table(
 
 _abs_dispatch_table = _make_dispatch_table(
     "abs",
-    [
+    cuda=[
         _Extern(["int32"], "__nv_abs", "int32"),
         _Extern(["int64"], "__nv_llabs", "int64"),
         _Extern(["float32"], "__nv_fabsf", "float32"),
         _Extern(["float64"], "__nv_fabs", "float64"),
     ],
+    rocm=[
+        _Fallback(["int32"], lambda ctx, x: math_dialect.absi(x)),
+        _Fallback(["int64"], lambda ctx, x: math_dialect.absi(x)),
+        _Fallback(["float32"], lambda ctx, x: math_dialect.absf(x)),
+        _Fallback(["float64"], lambda ctx, x: math_dialect.absf(x)),
+    ],
 )
 
 
+@register_lowering(lax.abs_p)
 def _abs_lowering_rule(ctx: LoweringRuleContext, x):
   try:
     return _abs_dispatch_table(ctx, x)
@@ -619,214 +649,335 @@ def _abs_lowering_rule(ctx: LoweringRuleContext, x):
       raise e from None
 
 
-triton_lowering_rules[lax.abs_p] = _abs_lowering_rule
-
-
 triton_lowering_rules.update({
     lax.neg_p: lambda ctx, x: _minus(x),
     lax.ceil_p: _make_dispatch_table(
         "ceil",
-        [
+        cuda=[
             _Extern(["float32"], "__nv_ceilf", "float32"),
             _Extern(["float64"], "__nv_ceil", "float64"),
+        ],
+        rocm=[
+            _Extern(["float32"], "__ocml_ceil_f32", "float32"),
+            _Extern(["float64"], "__ocml_ceil_f64", "float64"),
         ],
     ),
     lax.floor_p: _make_dispatch_table(
         "floor",
-        [
+        cuda=[
             _Extern(["float32"], "__nv_floorf", "float32"),
             _Extern(["float64"], "__nv_floor", "float64"),
+            _Fallback(["float16"], lambda ctx, x: math_dialect.floor(x)),
+            _Fallback(["bfloat16"], lambda ctx, x: math_dialect.floor(x)),
+        ],
+        rocm=[
+            _Extern(["float32"], "__ocml_floor_f32", "float32"),
+            _Extern(["float64"], "__ocml_floor_f64", "float64"),
             _Fallback(["float16"], lambda ctx, x: math_dialect.floor(x)),
             _Fallback(["bfloat16"], lambda ctx, x: math_dialect.floor(x)),
         ],
     ),
     lax.exp_p: _make_dispatch_table(
         "exp",
-        [
+        cuda=[
             _Extern(["float32"], "__nv_expf", "float32"),
             _Extern(["float64"], "__nv_exp", "float64"),
+            _Fallback(["float16"], lambda ctx, x: math_dialect.exp(x)),
+            _Fallback(["bfloat16"], lambda ctx, x: math_dialect.exp(x)),
+        ],
+        rocm=[
+            _Fallback(["float32"], lambda ctx, x: math_dialect.exp(x)),
+            _Fallback(["float64"], lambda ctx, x: math_dialect.exp(x)),
             _Fallback(["float16"], lambda ctx, x: math_dialect.exp(x)),
             _Fallback(["bfloat16"], lambda ctx, x: math_dialect.exp(x)),
         ],
     ),
     lax.exp2_p: _make_dispatch_table(
         "exp2",
-        [
+        cuda=[
             _Extern(["float32"], "__nv_exp2f", "float32"),
             _Extern(["float64"], "__nv_exp2", "float64"),
+            _Fallback(["float16"], lambda ctx, x: math_dialect.exp2(x)),
+            _Fallback(["bfloat16"], lambda ctx, x: math_dialect.exp2(x)),
+        ],
+        rocm=[
+            _Extern(["float32"], "__ocml_exp2_f32", "float32"),
+            _Extern(["float64"], "__ocml_exp2_f64", "float64"),
             _Fallback(["float16"], lambda ctx, x: math_dialect.exp2(x)),
             _Fallback(["bfloat16"], lambda ctx, x: math_dialect.exp2(x)),
         ],
     ),
     lax.expm1_p: _make_dispatch_table(
         "expm1",
-        [
+        cuda=[
             _Extern(["float32"], "__nv_expm1f", "float32"),
             _Extern(["float64"], "__nv_expm1", "float64"),
+        ],
+        rocm=[
+            _Extern(["float32"], "__ocml_expm1_f32", "float32"),
+            _Extern(["float64"], "__ocml_expm1_f64", "float64"),
         ],
     ),
     lax.log_p: _make_dispatch_table(
         "log",
-        [
+        cuda=[
             _Extern(["float32"], "__nv_logf", "float32"),
             _Extern(["float64"], "__nv_log", "float64"),
+            _Fallback(["float16"], lambda ctx, x: math_dialect.log(x)),
+            _Fallback(["bfloat16"], lambda ctx, x: math_dialect.log(x)),
+        ],
+        rocm=[
+            _Extern(["float32"], "__ocml_log_f32", "float32"),
+            _Extern(["float64"], "__ocml_log_f64", "float64"),
             _Fallback(["float16"], lambda ctx, x: math_dialect.log(x)),
             _Fallback(["bfloat16"], lambda ctx, x: math_dialect.log(x)),
         ],
     ),
     lax.log1p_p: _make_dispatch_table(
         "log1p",
-        [
+        cuda=[
             _Extern(["float32"], "__nv_log1pf", "float32"),
             _Extern(["float64"], "__nv_log1p", "float64"),
+        ],
+        rocm=[
+            _Extern(["float32"], "__ocml_log1p_f32", "float32"),
+            _Extern(["float64"], "__ocml_log1p_f64", "float64"),
         ],
     ),
     lax.sqrt_p: _make_dispatch_table(
         "sqrt",
-        [
+        cuda=[
             _Extern(["float32"], "__nv_sqrtf", "float32"),
             _Extern(["float64"], "__nv_sqrt", "float64"),
+            _Fallback(["float16"], lambda ctx, x: math_dialect.sqrt(x)),
+            _Fallback(["bfloat16"], lambda ctx, x: math_dialect.sqrt(x)),
+        ],
+        rocm=[
+            _Extern(["float32"], "__ocml_sqrt_f32", "float32"),
+            _Extern(["float64"], "__ocml_sqrt_f64", "float64"),
             _Fallback(["float16"], lambda ctx, x: math_dialect.sqrt(x)),
             _Fallback(["bfloat16"], lambda ctx, x: math_dialect.sqrt(x)),
         ],
     ),
     lax.pow_p: _make_dispatch_table(
         "pow",
-        [
+        cuda=[
             _Extern(["float32", "int32"], "__nv_powif", "float32"),
             _Extern(["float64", "int32"], "__nv_powi", "float64"),
             _Extern(["float32", "float32"], "__nv_powf", "float32"),
             _Extern(["float64", "float64"], "__nv_pow", "float64"),
         ],
+        rocm=[
+            _Extern(["float32", "int32"], "__ocml_pown_f32", "float32"),
+            _Extern(["float64", "int32"], "__ocml_pown_f64", "float64"),
+            _Extern(["float32", "float32"], "__ocml_pow_f32", "float32"),
+            _Extern(["float64", "float64"], "__ocml_pow_f64", "float64"),
+        ],
     ),
     lax.cbrt_p: _make_dispatch_table(
         "cbrt",
-        [
+        cuda=[
             _Extern(["float32"], "__nv_cbrtf", "float32"),
             _Extern(["float64"], "__nv_cbrt", "float64"),
+        ],
+        rocm=[
+            _Extern(["float32"], "__ocml_cbrt_f32", "float32"),
+            _Extern(["float64"], "__ocml_cbrt_f64", "float64"),
         ],
     ),
     lax.rsqrt_p: _make_dispatch_table(
         "rsqrt",
-        [
+        cuda=[
             _Extern(["float32"], "__nv_rsqrtf", "float32"),
             _Extern(["float64"], "__nv_rsqrt", "float64"),
+        ],
+        rocm=[
+            _Extern(["float32"], "__ocml_rsqrt_f32", "float32"),
+            _Extern(["float64"], "__ocml_rsqrt_f64", "float64"),
         ],
     ),
     lax.sin_p: _make_dispatch_table(
         "sin",
-        [
+        cuda=[
             _Extern(["float32"], "__nv_sinf", "float32"),
             _Extern(["float64"], "__nv_sin", "float64"),
+            _Fallback(["float16"], lambda ctx, x: math_dialect.sin(x)),
+            _Fallback(["bfloat16"], lambda ctx, x: math_dialect.sin(x)),
+        ],
+        rocm=[
+            _Extern(["float32"], "__ocml_sin_f32", "float32"),
+            _Extern(["float64"], "__ocml_sin_f64", "float64"),
             _Fallback(["float16"], lambda ctx, x: math_dialect.sin(x)),
             _Fallback(["bfloat16"], lambda ctx, x: math_dialect.sin(x)),
         ],
     ),
     lax.cos_p: _make_dispatch_table(
         "cos",
-        [
+        cuda=[
             _Extern(["float32"], "__nv_cosf", "float32"),
             _Extern(["float64"], "__nv_cos", "float64"),
+            _Fallback(["float16"], lambda ctx, x: math_dialect.cos(x)),
+            _Fallback(["bfloat16"], lambda ctx, x: math_dialect.cos(x)),
+        ],
+        rocm=[
+            _Extern(["float32"], "__ocml_cos_f32", "float32"),
+            _Extern(["float64"], "__ocml_cos_f64", "float64"),
             _Fallback(["float16"], lambda ctx, x: math_dialect.cos(x)),
             _Fallback(["bfloat16"], lambda ctx, x: math_dialect.cos(x)),
         ],
     ),
     lax.tan_p: _make_dispatch_table(
         "tan",
-        [
+        cuda=[
             _Extern(["float32"], "__nv_tanf", "float32"),
             _Extern(["float64"], "__nv_tan", "float64"),
+        ],
+        rocm=[
+            _Extern(["float32"], "__ocml_tan_f32", "float32"),
+            _Extern(["float64"], "__ocml_tan_f64", "float64"),
         ],
     ),
     lax.asin_p: _make_dispatch_table(
         "asin",
-        [
+        cuda=[
             _Extern(["float32"], "__nv_asinf", "float32"),
             _Extern(["float64"], "__nv_asin", "float64"),
+        ],
+        rocm=[
+            _Extern(["float32"], "__ocml_asin_f32", "float32"),
+            _Extern(["float64"], "__ocml_asin_f64", "float64"),
         ],
     ),
     lax.acos_p: _make_dispatch_table(
         "acos",
-        [
+        cuda=[
             _Extern(["float32"], "__nv_acosf", "float32"),
             _Extern(["float64"], "__nv_acos", "float64"),
+        ],
+        rocm=[
+            _Extern(["float32"], "__ocml_acos_f32", "float32"),
+            _Extern(["float64"], "__ocml_acos_f64", "float64"),
         ],
     ),
     lax.atan_p: _make_dispatch_table(
         "atan",
-        [
+        cuda=[
             _Extern(["float32"], "__nv_atanf", "float32"),
             _Extern(["float64"], "__nv_atan", "float64"),
+        ],
+        rocm=[
+            _Extern(["float32"], "__ocml_atan_f32", "float32"),
+            _Extern(["float64"], "__ocml_atan_f64", "float64"),
         ],
     ),
     lax.atan2_p: _make_dispatch_table(
         "atan2",
-        [
+        cuda=[
             _Extern(["float32", "float32"], "__nv_atan2f", "float32"),
             _Extern(["float64", "float64"], "__nv_atan2", "float64"),
+        ],
+        rocm=[
+            _Extern(["float32", "float32"], "__ocml_atan2_f32", "float32"),
+            _Extern(["float64", "float64"], "__ocml_atan2_f64", "float64"),
         ],
     ),
     lax.sinh_p: _make_dispatch_table(
         "sinh",
-        [
+        cuda=[
             _Extern(["float32"], "__nv_sinhf", "float32"),
             _Extern(["float64"], "__nv_sinh", "float64"),
+        ],
+        rocm=[
+            _Extern(["float32"], "__ocml_sinh_f32", "float32"),
+            _Extern(["float64"], "__ocml_sinh_f64", "float64"),
         ],
     ),
     lax.cosh_p: _make_dispatch_table(
         "cosh",
-        [
+        cuda=[
             _Extern(["float32"], "__nv_coshf", "float32"),
             _Extern(["float64"], "__nv_cosh", "float64"),
+        ],
+        rocm=[
+            _Extern(["float32"], "__ocml_cosh_f32", "float32"),
+            _Extern(["float64"], "__ocml_cosh_f64", "float64"),
         ],
     ),
     lax.tanh_p: _make_dispatch_table(
         "tanh",
-        [
+        cuda=[
             _Extern(["float32"], "__nv_tanhf", "float32"),
             _Extern(["float64"], "__nv_tanh", "float64"),
+        ],
+        rocm=[
+            _Extern(["float32"], "__ocml_tanh_f32", "float32"),
+            _Extern(["float64"], "__ocml_tanh_f64", "float64"),
         ],
     ),
     lax.asinh_p: _make_dispatch_table(
         "asinh",
-        [
+        cuda=[
             _Extern(["float32"], "__nv_asinhf", "float32"),
             _Extern(["float64"], "__nv_asinh", "float64"),
+        ],
+        rocm=[
+            _Extern(["float32"], "__ocml_asinh_f32", "float32"),
+            _Extern(["float64"], "__ocml_asinh_f64", "float64"),
         ],
     ),
     lax.acosh_p: _make_dispatch_table(
         "acosh",
-        [
+        cuda=[
             _Extern(["float32"], "__nv_acoshf", "float32"),
             _Extern(["float64"], "__nv_acosh", "float64"),
+        ],
+        rocm=[
+            _Extern(["float32"], "__ocml_acosh_f32", "float32"),
+            _Extern(["float64"], "__ocml_acosh_f64", "float64"),
         ],
     ),
     lax.atanh_p: _make_dispatch_table(
         "atanh",
-        [
+        cuda=[
             _Extern(["float32"], "__nv_atanhf", "float32"),
             _Extern(["float64"], "__nv_atanh", "float64"),
+        ],
+        rocm=[
+            _Extern(["float32"], "__ocml_atanh_f32", "float32"),
+            _Extern(["float64"], "__ocml_atanh_f64", "float64"),
         ],
     ),
     lax.population_count_p: _make_dispatch_table(
         "population_count",
-        [
+        cuda=[
             _Extern(["int32"], "__nv_popc", "int32"),
             _Extern(["int64"], "__nv_popcll", "int32"),
+        ],
+        rocm=[
+            _Fallback(["int32"], lambda ctx, x: math_dialect.ctpop(x)),
+            _Fallback(["int64"], lambda ctx, x: math_dialect.ctpop(x)),
         ],
     ),
     lax.clz_p: _make_dispatch_table(
         "clz",
-        [
+        cuda=[
             _Extern(["int32"], "__nv_clz", "int32"),
             _Extern(["int64"], "__nv_clzll", "int32"),
+        ],
+        rocm=[
+            _Fallback(["int32"], lambda ctx, x: math_dialect.ctlz(x)),
+            _Fallback(["int64"], lambda ctx, x: math_dialect.ctlz(x)),
         ],
     ),
     lax.nextafter_p: _make_dispatch_table(
         "nextafter",
-        [
+        cuda=[
             _Extern(["float32", "float32"], "__nv_nextafterf", "float32"),
             _Extern(["float64", "float64"], "__nv_nextafter", "float64"),
+        ],
+        rocm=[
+            _Extern(["float32", "float32"], "__ocml_nextafter_f32", "float32"),
+            _Extern(["float64", "float64"], "__ocml_nextafter_f64", "float64"),
         ],
     ),
 })
@@ -1019,6 +1170,22 @@ for prim, fn in _JAX_TO_TRITON_SIGNED_BINARY.items():
   triton_lowering_rules[prim] = signed_rule
 
 
+@register_lowering(primitives.debug_print_p)
+def debug_print_lowering_rule(
+    ctx: LoweringRuleContext,
+    *args: ir.Value,
+    fmt: str,
+    has_placeholders: bool,
+):
+  if has_placeholders:
+    raise ValueError(
+        "pl.debug_print() does not support placeholders when lowering to Triton"
+    )
+
+  tt_dialect.print_(f" {fmt} ", hex=False, args=args)
+  return ()
+
+
 def _set_attr(v: ir.Value, name: str, attr: ir.Attribute) -> None:
   if not ir.BlockArgument.isinstance(v):
     v.owner.attributes[name] = attr
@@ -1034,6 +1201,7 @@ def _set_attr(v: ir.Value, name: str, attr: ir.Attribute) -> None:
     op.attributes[name] = attr
 
 
+@register_lowering(primitives.multiple_of_p)
 def _multiple_of_rule(ctx: LoweringRuleContext, x, values: Sequence[int]):
   [x_aval] = ctx.avals_in
   assert max(1, len(x_aval.shape)) == len(values)
@@ -1045,9 +1213,7 @@ def _multiple_of_rule(ctx: LoweringRuleContext, x, values: Sequence[int]):
   return x
 
 
-triton_lowering_rules[primitives.multiple_of_p] = _multiple_of_rule
-
-
+@register_lowering(primitives.max_contiguous_p)
 def _max_contiguous_rule(ctx: LoweringRuleContext, x, values: Sequence[int]):
   [x_aval] = ctx.avals_in
   assert len(x_aval.shape) == len(values)
@@ -1059,25 +1225,38 @@ def _max_contiguous_rule(ctx: LoweringRuleContext, x, values: Sequence[int]):
   return x
 
 
-triton_lowering_rules[primitives.max_contiguous_p] = _max_contiguous_rule
-
-
+@register_lowering(sp.broadcast_to_p)
 def _broadcast_to_rule(ctx: LoweringRuleContext, x, shape: Sequence[int]):
   (x_aval,) = ctx.avals_in
   return _bcast_to(_ensure_ir_value(x, x_aval), shape)
 
 
-triton_lowering_rules[sp.broadcast_to_p] = _broadcast_to_rule
+@register_lowering(lax.integer_pow_p)
+def _integer_pow_rule(ctx: LoweringRuleContext, x, *, y: int):
+  if y == 0:
+    return _full(x.type, 1)
 
+  is_reciprocal = y < 0
+  if is_reciprocal:
+    y = -y
 
-def _integer_pow(a, *, y):
-  if y == 2:
-    return a * a
-  if y == 3:
-    return a * a * a
-  if y == -2:
-    return 1.0 / (a * a)
-  return jax.lax.pow(a, y)
+  acc = None
+  while y > 0:
+    y, mod = divmod(y, 2)
+    if mod:
+      acc = x if acc is None else _mul(acc, x)
+    if y > 0:
+      x = _mul(x, x)
+  assert acc is not None
+
+  [x_aval] = ctx.avals_in
+  [out_aval] = ctx.avals_out
+  acc = _cast(acc, x_aval.dtype, out_aval.dtype)
+  if is_reciprocal:
+    signed = jnp.issubdtype(out_aval.dtype, jnp.signedinteger)
+    return  _truediv(_full(acc.type, 1), acc, signed=signed)
+  else:
+    return acc
 
 
 def lower_fun(
@@ -1097,7 +1276,6 @@ def lower_fun(
 
 _JAX_FN_MAPPING = {
     lax.clamp_p: lambda min, a, max: jnp.minimum(jnp.maximum(min, a), max),
-    lax.integer_pow_p: _integer_pow,
     lax.logistic_p: lambda a: 1 / (1 + jnp.exp(-a)),
 }
 
@@ -1105,6 +1283,7 @@ for prim, fn in _JAX_FN_MAPPING.items():
   triton_lowering_rules[prim] = lower_fun(fn, multiple_results=False)
 
 
+@register_lowering(lax.min_p)
 def _min_lowering_rule(ctx: LoweringRuleContext, x, y):
   # TODO(slebedev): Consider allowing customizing nan behavior.
   x_aval, y_aval = ctx.avals_in
@@ -1122,9 +1301,7 @@ def _min_lowering_rule(ctx: LoweringRuleContext, x, y):
     return arith_dialect.minui(x, y)
 
 
-triton_lowering_rules[lax.min_p] = _min_lowering_rule
-
-
+@register_lowering(lax.max_p)
 def _max_lowering_rule(ctx: LoweringRuleContext, x, y):
   # TODO(slebedev): Consider allowing customizing nan behavior.
   x_aval, y_aval = ctx.avals_in
@@ -1142,9 +1319,7 @@ def _max_lowering_rule(ctx: LoweringRuleContext, x, y):
     return arith_dialect.maxui(x, y)
 
 
-triton_lowering_rules[lax.max_p] = _max_lowering_rule
-
-
+@register_lowering(lax.div_p)
 def _div_lowering_rule(ctx: LoweringRuleContext, x, y):
   x_aval, y_aval = ctx.avals_in
   x, y = _bcast(x, y, *ctx.avals_in, *ctx.avals_out)
@@ -1158,9 +1333,7 @@ def _div_lowering_rule(ctx: LoweringRuleContext, x, y):
   return _floordiv(x, y, signed=signed)
 
 
-triton_lowering_rules[lax.div_p] = _div_lowering_rule
-
-
+@register_lowering(lax.sign_p)
 def _sign_lowering_rule(ctx: LoweringRuleContext, x):
   [x_aval] = ctx.avals_in
   signed = jnp.issubdtype(x_aval.dtype, jnp.signedinteger)
@@ -1171,9 +1344,7 @@ def _sign_lowering_rule(ctx: LoweringRuleContext, x):
   )
 
 
-triton_lowering_rules[lax.sign_p] = _sign_lowering_rule
-
-
+@register_lowering(lax.iota_p)
 def _iota_lowering_rule(ctx: LoweringRuleContext, *, dtype, shape, dimension):
   iota = _make_range(0, shape[dimension])
   iota = _cast(iota, jnp.int32, dtype)
@@ -1181,9 +1352,6 @@ def _iota_lowering_rule(ctx: LoweringRuleContext, *, dtype, shape, dimension):
     if i != dimension:
       iota = _expand_dims(iota, i)
   return _bcast_to(iota, shape)
-
-
-triton_lowering_rules[lax.iota_p] = _iota_lowering_rule
 
 
 def _element_type(t: ir.Type) -> ir.Type:
@@ -1382,8 +1550,9 @@ def _ir_cast(src: ir.Value, dst_type: ir.Type, *, signed: bool) -> ir.Value:
   raise NotImplementedError(f"cannot cast {src} to {dst_type}")
 
 
+@register_lowering(lax.convert_element_type_p)
 def _convert_element_type_lowering_rule(
-    ctx: LoweringRuleContext, x, *, new_dtype, weak_type
+    ctx: LoweringRuleContext, x, *, new_dtype, weak_type, sharding
 ):
   [x_aval] = ctx.avals_in
   x = _ensure_ir_value(x, x_aval)
@@ -1392,11 +1561,7 @@ def _convert_element_type_lowering_rule(
   return _cast(x, x_aval.dtype, new_dtype)
 
 
-triton_lowering_rules[lax.convert_element_type_p] = (
-    _convert_element_type_lowering_rule
-)
-
-
+@register_lowering(lax.select_n_p)
 def select_n_lowering_rule(ctx: LoweringRuleContext, pred, x, y):
   pred_aval, a_aval, b_aval = ctx.avals_in
   [out_aval] = ctx.avals_out
@@ -1405,9 +1570,7 @@ def select_n_lowering_rule(ctx: LoweringRuleContext, pred, x, y):
   return arith_dialect.select(pred, y, x)
 
 
-triton_lowering_rules[lax.select_n_p] = select_n_lowering_rule
-
-
+@register_lowering(lax.broadcast_in_dim_p)
 def _broadcast_in_dim_lowering_rule(
     ctx: LoweringRuleContext, x, *, broadcast_dimensions, shape
 ):
@@ -1420,17 +1583,10 @@ def _broadcast_in_dim_lowering_rule(
   return _bcast_to(x, shape)
 
 
-triton_lowering_rules[jax.lax.broadcast_in_dim_p] = (
-    _broadcast_in_dim_lowering_rule
-)
-
-
+@register_lowering(lax.squeeze_p)
 def _squeeze_lowering_rule(ctx: LoweringRuleContext, a, *, dimensions):
   del dimensions
   return _reshape_lowering_rule(ctx, a, new_sizes=None, dimensions=None)
-
-
-triton_lowering_rules[lax.squeeze_p] = _squeeze_lowering_rule
 
 
 def _reshape(x: ir.Value, shape: Sequence[int]) -> ir.Value:
@@ -1444,6 +1600,7 @@ def _reshape(x: ir.Value, shape: Sequence[int]) -> ir.Value:
   )
 
 
+@register_lowering(lax.reshape_p)
 def _reshape_lowering_rule(
     ctx: LoweringRuleContext, a, *, new_sizes, dimensions
 ):
@@ -1487,16 +1644,13 @@ def _reshape_lowering_rule(
   return a
 
 
-triton_lowering_rules[jax.lax.reshape_p] = _reshape_lowering_rule
-
-
 def _compute_pointers_from_indices(
     root_ptr: ir.Value,
     block_info: BlockInfo | None,
     nd_indexer: NDIndexer,
     array_shape: tuple[int, ...],
 ) -> ir.Value:
-  if block_info is None:
+  if block_info is None:  # TODO(necula): is this branch dead?
     full_shape = array_shape
     num_mapped_dims = 0
     block_shape = array_shape
@@ -1509,6 +1663,7 @@ def _compute_pointers_from_indices(
   strides = pallas_utils.strides_from_shape(full_shape)
   indexer_shape = nd_indexer.get_indexer_shape()
   int_indexer_shape = nd_indexer.int_indexer_shape
+  _check_tensor_size(indexer_shape)
   indices = nd_indexer.indices
   other_shape = indexer_shape[len(int_indexer_shape) :]
   bcast_indices = []
@@ -1528,14 +1683,22 @@ def _compute_pointers_from_indices(
     else:
       index = next(indexer_iter)
     if isinstance(index, primitives.Slice):
-      # Handle slices with static and dynamic indices and static sizes
-      if isinstance(index.start, int):
-        ptr_dim_offset = _make_range(index.start, index.start + index.size)
-      else:
+      if index.is_dynamic_start:
+        # Compute the offset as start + range(0, size).
         ptr_dim_offset = _add(
             _bcast_to(index.start, [index.size]),
             _ir_cast(_make_range(0, index.size), index.start.type, signed=False),
         )
+      elif index.stride > 1:
+        # Compute the offset as start + range(0, size) * stride.
+        iota = _make_range(0, index.size)
+        ptr_dim_offset = _add(
+            _bcast_to(_i32_constant(index.start), [index.size]),
+            _mul(iota, _full(iota.type, index.stride)),
+        )
+      else:
+        ptr_dim_offset = _make_range(index.start, index.start + index.size)
+
       # We need to add broadcastable dimensions for the advanced int indexing
       # and for previous slices
       num_left_expand_dims = len(int_indexer_shape) + other_shape_idx
@@ -1589,6 +1752,7 @@ def _compute_pointers_from_indices(
   )
 
 
+@register_lowering(sp.get_p)
 def _get_lowering_rule(ctx: LoweringRuleContext, ptr, *idx, tree):
   indexers = tree_util.tree_unflatten(tree, idx)
   if not tt_dialect.PointerType.isinstance(ptr.type):
@@ -1606,9 +1770,6 @@ def _get_lowering_rule(ctx: LoweringRuleContext, ptr, *idx, tree):
       cache_modifier=None,
       is_volatile=False,
   )
-
-
-triton_lowering_rules[sp.get_p] = _get_lowering_rule
 
 
 _STR_TO_EVICTION_POLICY = {str(e): e for e in tt_dialect.EvictionPolicy}
@@ -1685,6 +1846,7 @@ def _load(
   )
 
 
+@register_lowering(primitives.load_p)
 def _masked_load_lowering_rule(
     ctx: LoweringRuleContext,
     *args_flat,
@@ -1720,9 +1882,7 @@ def _masked_load_lowering_rule(
   )
 
 
-triton_lowering_rules[primitives.load_p] = _masked_load_lowering_rule
-
-
+@register_lowering(sp.swap_p)
 def _swap_lowering_rule(ctx: LoweringRuleContext, ptr, value, *idx, tree):
   indexers = tree_util.tree_unflatten(tree, idx)
   if not tt_dialect.PointerType.isinstance(ptr.type):
@@ -1735,9 +1895,6 @@ def _swap_lowering_rule(ctx: LoweringRuleContext, ptr, value, *idx, tree):
   return _masked_swap_lowering_rule(
       ctx, *args_flat, args_tree=args_tree, eviction_policy=None
   )
-
-
-triton_lowering_rules[sp.swap_p] = _swap_lowering_rule
 
 
 def _store(
@@ -1794,6 +1951,7 @@ def _store(
   )
 
 
+@register_lowering(primitives.swap_p)
 def _masked_swap_lowering_rule(
     ctx: LoweringRuleContext, *args_flat, args_tree, eviction_policy
 ):
@@ -1818,9 +1976,7 @@ def _masked_swap_lowering_rule(
   return old_value
 
 
-triton_lowering_rules[primitives.swap_p] = _masked_swap_lowering_rule
-
-
+@register_lowering(sp.addupdate_p)
 def _addupdate_lowering_rule(ctx: LoweringRuleContext, ptr, value, *idx, tree):
   indexers = tree_util.tree_unflatten(tree, idx)
   if not tt_dialect.PointerType.isinstance(ptr.type):
@@ -1842,14 +1998,9 @@ def _addupdate_lowering_rule(ctx: LoweringRuleContext, ptr, value, *idx, tree):
   return []
 
 
-triton_lowering_rules[sp.addupdate_p] = _addupdate_lowering_rule
-
-
+@register_lowering(lax.transpose_p)
 def _transpose_lowering(ctx: LoweringRuleContext, x, *, permutation):
   return tt_dialect.trans(x, permutation)
-
-
-triton_lowering_rules[lax.transpose_p] = _transpose_lowering
 
 
 def _check_dot_operands(
@@ -1913,22 +2064,24 @@ def _dot(
     else:
       max_num_imprecise_acc = 0
 
-  # Ideally replace all allow_tf32 usages with InputPrecision directly
+  # Ideally, replace all allow_tf32 usages with InputPrecision directly.
   input_precision = tt_dialect.InputPrecision.IEEE
   if allow_tf32:
     input_precision = tt_dialect.InputPrecision.TF32
+
   return tt_dialect.dot(
       x,
       y,
       acc,
-      input_precision=input_precision,
       max_num_imprecise_acc=max_num_imprecise_acc,
+      input_precision=input_precision
   )
 
 
 _TF32_PRECISIONS = (lax.Precision.HIGH, lax.Precision.DEFAULT)
 
 
+@register_lowering(lax.dot_general_p)
 def _dot_general_lowering(
     ctx: LoweringRuleContext,
     a,
@@ -1968,9 +2121,6 @@ def _dot_general_lowering(
       acc_dtype,
       out_dtype,
   )
-
-
-triton_lowering_rules[lax.dot_general_p] = _dot_general_lowering
 
 
 def _reduction_lowering(body, ctx: LoweringRuleContext, a, axes):
@@ -2085,6 +2235,7 @@ triton_lowering_rules[lax.argmin_p] = functools.partial(
 )
 
 
+@register_lowering(pjit.pjit_p)
 def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
   if jaxpr.consts:
     raise NotImplementedError
@@ -2093,9 +2244,8 @@ def _pjit_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
   )
 
 
-triton_lowering_rules[pjit.pjit_p] = _pjit_lowering_rule
-
-
+@register_lowering(jax_core.closed_call_p)
+@register_lowering(custom_derivatives.custom_jvp_call_p)
 def _closed_call_lowering_rule(
     ctx: LoweringRuleContext, *args, call_jaxpr, **_
 ):
@@ -2105,19 +2255,21 @@ def _closed_call_lowering_rule(
   return lower_jaxpr_to_triton_ir(ctx.context, jaxpr, ctx.block_infos, *args)
 
 
-triton_lowering_rules[jax_core.closed_call_p] = _closed_call_lowering_rule
-triton_lowering_rules[custom_derivatives.custom_jvp_call_p] = (
-    _closed_call_lowering_rule
-)
-
-
+@register_lowering(ad_checkpoint.remat_p)
 def _remat_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
   return lower_jaxpr_to_triton_ir(ctx.context, jaxpr, ctx.block_infos, *args)
 
 
-triton_lowering_rules[ad_checkpoint.remat_p] = _remat_lowering_rule
 triton_lowering_rules[ad_util.stop_gradient_p] = lambda _, x: x
 
+
+@register_lowering(lax.axis_index_p)
+def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
+  grid_names = ctx.context.grid_mapping.grid_names
+  if axis_name in grid_names:
+    # We are querying a named axis corresponding to a grid dimension.
+    return _program_id_lowering_rule(ctx, axis=grid_names.index(axis_name))
+  raise LookupError(f"Axis name {axis_name} not found in grid.")
 
 def _is_read_only(ref_effects) -> bool:
   if len(ref_effects) == 0:
@@ -2129,6 +2281,7 @@ def _is_read_only(ref_effects) -> bool:
   return isinstance(eff, state.ReadEffect)
 
 
+@register_lowering(for_loop.for_p)
 def _for_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
@@ -2141,9 +2294,10 @@ def _for_lowering_rule(
   del which_linear
   if reverse or unroll != 1:
     raise NotImplementedError
-  lower_bound = _i32_constant(0)
-  upper_bound = _i32_constant(nsteps)
-  step = _i32_constant(1)
+  _i_constant = _i64_constant if config.enable_x64.value else _i32_constant
+  lower_bound = _i_constant(0)
+  upper_bound = _i_constant(nsteps)
+  step = _i_constant(1)
   init_args = map(_ensure_ir_value, args, ctx.avals_in)
   # Partially discharge state from jaxpr for non-pointers
   should_discharge = [
@@ -2182,9 +2336,6 @@ def _for_lowering_rule(
   return merge_lists(is_loop_arg, non_loop_args, list(for_op.results_))
 
 
-triton_lowering_rules[for_loop.for_p] = _for_lowering_rule
-
-
 def _lower_jaxpr_to_for_loop(
     ctx: LoweringRuleContext,
     jaxpr: jax_core.Jaxpr,
@@ -2221,6 +2372,7 @@ def _lower_jaxpr_to_for_loop(
   return list(for_op.results_)
 
 
+@register_lowering(lax.scan_p)
 def _scan_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
@@ -2268,9 +2420,6 @@ def _scan_lowering_rule(
     # it as an output
     return [upper_bound, *for_out]
   return for_out
-
-
-triton_lowering_rules[lax.scan_p] = _scan_lowering_rule
 
 
 def _maybe_pattern_match_fori_loop(
@@ -2353,6 +2502,7 @@ def _maybe_pattern_match_fori_loop(
   return [ub, ub, *for_out]
 
 
+@register_lowering(lax.while_p)
 def _while_lowering_rule(
     ctx: LoweringRuleContext,
     *args,
@@ -2422,15 +2572,12 @@ def _while_lowering_rule(
   return all_out[cond_nconsts + body_nconsts :]
 
 
-triton_lowering_rules[lax.while_p] = _while_lowering_rule
-
-
+@register_lowering(lax.cond_p)
 def _cond_lowering_rule(
     ctx: LoweringRuleContext,
     index,
     *args,  # *consts, *ops
     branches,  # tuple(jaxprs)
-    linear,
 ):
   block_infos = ctx.block_infos
 
@@ -2460,7 +2607,6 @@ def _cond_lowering_rule(
           _sub(index, _ir_constant(1, index.type)),
           *args,
           branches=branches[1:],
-          linear=linear,
       )
     else:
       outs1 = lower_jaxpr_to_triton_ir(
@@ -2471,9 +2617,6 @@ def _cond_lowering_rule(
     scf_dialect.yield_(outs1)
 
   return list(if_op.results_)
-
-
-triton_lowering_rules[lax.cond_p] = _cond_lowering_rule
 
 
 def _ensure_ir_value(x: object, aval: jax_core.ShapedArray) -> ir.Value:

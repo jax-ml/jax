@@ -14,12 +14,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import contextlib
 import functools
 import itertools as it
 from functools import partial
-from typing import Any, Callable
+from typing import Any
 
 import jax
 from jax._src import config
@@ -200,8 +200,8 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
     # TODO(mattjj): add back these checks for dynamic shapes
     # if config.enable_checks.value:
     #   ct_aval = core.get_aval(ct_env[v])
-    #   joined_aval = core.lattice_join(v.aval, ct_aval).strip_weak_type().strip_named_shape()
-    #   assert v.aval.strip_weak_type().strip_named_shape() == joined_aval, (prim, v.aval, ct_aval)
+    #   joined_aval = core.lattice_join(v.aval, ct_aval).strip_weak_type()
+    #   assert v.aval.strip_weak_type() == joined_aval, (prim, v.aval, ct_aval)
 
   def read_cotangent(v):
     return ct_env.pop(v, Zero(v.aval.at_least_vspace()))
@@ -238,7 +238,8 @@ def backward_pass(jaxpr: core.Jaxpr, transform_stack,
       else:
         cts_in, = map(read_cotangent, eqn.outvars)
       name_stack = source_info_util.current_name_stack() + eqn.source_info.name_stack
-      with source_info_util.user_context(eqn.source_info.traceback, name_stack=name_stack):
+      with source_info_util.user_context(
+          eqn.source_info.traceback, name_stack=name_stack), eqn.ctx.manager:
         if eqn.primitive.call_primitive or eqn.primitive.map_primitive:
           cts_in_avals = [v.aval for v in eqn.outvars]
           params = dict(eqn.params)
@@ -646,8 +647,10 @@ def map_transpose(primitive, params, call_jaxpr, args, ct, _):
                    if not is_undefined_primal(x)],
                  *[axis for axis, x in zip(out_axes, ct)
                    if type(x) is not Zero])
-  # The interim strategy we use below (until avals-with-names) only works
-  # when all outputs are mapped.
+  if any(out_axis is None for out_axis in out_axes):
+    raise NotImplementedError(
+        "autodiff of pmap functions with out_axes=None is not supported. "
+        "Consider using shard_map instead.")
   assert all(out_axis is not None for out_axis in out_axes), out_axes
   # NOTE: This assumes that the output cotangents being zero is a deterministic
   #       function of which input cotangents were zero.

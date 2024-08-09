@@ -70,7 +70,7 @@ from jax.interpreters import mlir
 from jax._src.interpreters import xla
 
 import numpy as np
-import tensorflow as tf  # type: ignore[import]
+import tensorflow as tf
 
 config.parse_flags_with_absl()
 
@@ -113,9 +113,6 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
                                                   dtype=harness.dtype), limitations))
     func_jax = harness.dyn_fun
     args = harness.dyn_args_maker(self.rng())
-    enable_xla = harness.params.get("enable_xla", True)
-    if config.jax2tf_default_native_serialization.value and not enable_xla:
-      raise unittest.SkipTest("native_serialization not supported with enable_xla=False")
 
     if ("eigh" == harness.group_name and
         np.complex64 == harness.dtype and
@@ -142,8 +139,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
     associative_scan_reductions = harness.params.get("associative_scan_reductions", False)
     try:
       with jax.jax2tf_associative_scan_reductions(associative_scan_reductions):
-        self.ConvertAndCompare(func_jax, *args, limitations=limitations,
-                               enable_xla=enable_xla)
+        self.ConvertAndCompare(func_jax, *args, limitations=limitations)
     except Exception as e:
       # TODO(b/264596006): custom calls are not registered properly with TF in OSS
       if (config.jax2tf_default_native_serialization.value and
@@ -179,10 +175,24 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       # TODO: Remove once tensorflow is 2.10.0 everywhere.
       if p.name == "optimization_barrier":
         continue
-      if p.name == "debug_callback":
+      if p.name == "debug_callback" or p.name == "debug_print":
         # TODO(sharadmv,necula): enable debug callbacks in TF
         continue
+      if p.name in ("max_contiguous", "multiple_of"):
+        # Pallas-specific primitives are not supported.
+        continue
       if p.name == "pallas_call":
+        continue
+      if p.name == "tpu_custom_call":
+        continue
+      if p.name == "custom_partitioning":
+        continue
+      if p.name in (
+          "dot_product_attention_fwd",
+          "dot_product_attention_bwd",
+          "dot_product_attention_fwd_wrapper",
+          "dot_product_attention_bwd_wrapper",
+      ):
         continue
       if p.name in tf_not_yet_impl:
         self.assertNotIn(

@@ -19,7 +19,7 @@ import jax
 from jax import lax
 import jax.numpy as jnp
 import numpy as np
-import tensorflow as tf  # type: ignore[import]
+import tensorflow as tf
 
 from jax.experimental import jax2tf
 from jax.experimental.jax2tf.tests import tf_test_util

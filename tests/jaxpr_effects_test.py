@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import functools
+import contextlib
 import threading
 import unittest
 
@@ -31,8 +31,6 @@ from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
-from jax._src.lib import xla_extension_version
-from jax._src.maps import xmap
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -90,15 +88,15 @@ def function_effect_lowering(ctx, *, effect):
     return []
   func = mlir._emit_lowering_rule_as_fun(_f, ctx)
 
-  output_types = map(mlir.aval_to_ir_types, ctx.avals_out)
+  output_types = map(mlir.aval_to_ir_type, ctx.avals_out)
   effs = list(ctx.tokens_in.effects())
   in_tokens = [ctx.tokens_in.get(eff) for eff in effs]
   token_types = [mlir.token_type() for _ in effs]
   output_types = [*token_types, *output_types]
-  flat_output_types = util.flatten(output_types)
+  flat_output_types = mlir.flatten_ir_types(output_types)
   call = mlir.func_dialect.CallOp(flat_output_types,
                                   mlir.ir.FlatSymbolRefAttr.get(func.name.value),
-                                  mlir.flatten_lowering_ir_args(in_tokens))
+                                  mlir.flatten_ir_values(in_tokens))
   tokens, out = util.split_list(call.results, [len(ctx.tokens_in)])
   ctx.set_tokens_out(mlir.TokenSet(zip(effs, tokens)))
   return out
@@ -121,7 +119,7 @@ def callback_effect_lowering(ctx: mlir.LoweringRuleContext, *args, callback, out
   del out_avals
   token_in = None
   if effects.ordered_effects.contains(effect):
-    token_in = ctx.tokens_in.get(effect)[0]
+    token_in = ctx.tokens_in.get(effect)
 
   out_op, token_out, _ = mlir.emit_python_callback(
       ctx, callback, token_in, list(args), list(ctx.avals_in),
@@ -134,18 +132,13 @@ def callback_effect_lowering(ctx: mlir.LoweringRuleContext, *args, callback, out
 mlir.register_lowering(callback_p, callback_effect_lowering)
 
 
-prev_xla_flags = None
-
+_exit_stack = contextlib.ExitStack()
 
 def setUpModule():
-  global prev_xla_flags
-  # This will control the CPU devices. On TPU we always have 2 devices
-  prev_xla_flags = jtu.set_host_platform_device_count(2)
+  _exit_stack.enter_context(jtu.set_host_platform_device_count(2))
 
-
-# Reset to previous configuration in case other test modules will be run.
 def tearDownModule():
-  prev_xla_flags()
+  _exit_stack.close()
 
 
 class JaxprEffectsTest(jtu.JaxTestCase):
@@ -271,15 +264,6 @@ class HigherOrderPrimitiveTest(jtu.JaxTestCase):
         r"Ordered effects not supported for map primitives: \[.*\]"):
       jax.make_jaxpr(f)(jnp.arange(jax.local_device_count()))
 
-  def test_xmap_inherits_effects(self):
-    def f(x):
-      effect_p.bind(effect=foo_effect)
-      effect_p.bind(effect=bar_effect)
-      return x
-    f = xmap(f, in_axes=['a'], out_axes=['a'])
-    jaxpr = jax.make_jaxpr(f)(jnp.arange(jax.local_device_count()))
-    self.assertSetEqual(jaxpr.effects, {foo_effect, bar_effect})
-
   def test_pjit_inherits_effects(self):
     def f(x):
       effect_p.bind(effect=foo_effect)
@@ -374,56 +358,6 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
         'incorrect set of output token.'):
       f.lower(2.)
 
-  def test_lowering_ordered_effect_should_create_tokens(self):
-    if xla_extension_version >= 260:
-      self.skipTest('Not applicable anymore')
-    def effect_lowering(ctx, *, effect):
-      ctx.set_tokens_out(ctx.tokens_in)
-      return []
-    mlir.register_lowering(effect_p, effect_lowering)
-
-    @jax.jit
-    def f(x):
-      effect_p.bind(effect=foo_effect)
-      return x + 1.
-    module = f.lower(2.).compiler_ir()
-    main = module.body.operations[0]
-    first_op = main.body.blocks[0].operations[0]
-    self.assertIn('hlo.create_token', first_op.operation.name)
-
-    @jax.jit
-    def f(x):
-      effect_p.bind(effect=foo_effect)
-      effect_p.bind(effect=foo2_effect)
-      return x + 1.
-    module = f.lower(2.).compiler_ir()
-    main = module.body.operations[0]
-    first_op = main.body.blocks[0].operations[0]
-    self.assertIn('hlo.create_token', first_op.operation.name)
-    second_op = main.body.blocks[0].operations[1]
-    self.assertIn('hlo.create_token', second_op.operation.name)
-
-    @jax.jit
-    def f(x):
-      effect_p.bind(effect=foo_effect)
-      return x + 1.
-    module = f.lower(2.).compiler_ir()
-    main = module.body.operations[0]
-    first_op = main.body.blocks[0].operations[0]
-    self.assertIn('hlo.create_token', first_op.operation.name)
-
-    @jax.jit
-    def f(x):
-      effect_p.bind(effect=foo_effect)
-      effect_p.bind(effect=foo2_effect)
-      return x + 1.
-    module = f.lower(2.).compiler_ir()
-    main = module.body.operations[0]
-    first_op = main.body.blocks[0].operations[0]
-    self.assertIn('hlo.create_token', first_op.operation.name)
-    second_op = main.body.blocks[0].operations[1]
-    self.assertIn('hlo.create_token', second_op.operation.name)
-
   def test_nontrivial_lowering_with_ordered_effect_should_consume_token(self):
 
     mlir.register_lowering(effect_p, function_effect_lowering)
@@ -434,13 +368,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
       return x + 1.
     module = f.lower(2.).compiler_ir()
     main = module.body.operations[0]
-
-    if xla_extension_version < 260:
-      first_op = main.body.blocks[0].operations[0]
-      self.assertIn('hlo.create_token', first_op.operation.name)
-      call_op = main.body.blocks[0].operations[1]
-    else:
-      call_op = main.body.blocks[0].operations[0]
+    call_op = main.body.blocks[0].operations[0]
 
     self.assertEqual(call_op.operation.name, 'func.call')
     self.assertEqual(str(call_op.attributes['callee']), '@effect')
@@ -491,9 +419,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
       return x + 1.
     module = f.lower(1.).compiler_ir()
     input_types = module.body.operations[0].type.inputs
-    token_type = (
-        '!stablehlo.token' if xla_extension_version >= 260 else 'tensor<0xi1>'
-    )
+    token_type = '!stablehlo.token'
     # First argument should be a token
     self.assertLen(list(input_types), 2)
     self.assertEqual(str(input_types[0]), token_type)
@@ -511,9 +437,7 @@ class EffectfulJaxprLoweringTest(jtu.JaxTestCase):
       return x + 1.
     module = f.lower(1.).compiler_ir()
     input_types = module.body.operations[0].type.inputs
-    token_type = (
-        '!stablehlo.token' if xla_extension_version >= 260 else 'tensor<0xi1>'
-    )
+    token_type = '!stablehlo.token'
     # First two arguments should be token values
     self.assertLen(list(input_types), 3)
     self.assertEqual(str(input_types[0]), token_type)
@@ -627,23 +551,22 @@ class EffectOrderingTest(jtu.JaxTestCase):
       log.append(x)
       return ()
 
-    @functools.partial(jax.jit, device=jax.devices()[0])
+    @jax.jit
     def f(x):
       # Expensive computation
       x = x.dot(x)
       x = jnp.log(x.sum())
       return callback_p.bind(x, callback=log_value, effect=log_effect, out_avals=[])
 
-    @functools.partial(jax.jit, device=jax.devices()[1])
+    @jax.jit
     def g(x):
       return callback_p.bind(x, callback=log_value, effect=log_effect, out_avals=[])
 
-    f(jnp.ones((500, 500)))
-    g(3.)
-    f(jnp.ones((500, 500)))
-    g(3.)
-    f(jnp.ones((500, 500)))
-    g(3.)
+    x = jax.device_put(jnp.ones((500, 500)), jax.devices()[0])
+    y = jax.device_put(3., jax.devices()[1])
+    for _ in range(3):
+      f(x)
+      g(y)
     jax.effects_barrier()
     f_, g_ = float(jnp.log(1.25e8)), 3.
     expected_log = [f_, g_, f_, g_, f_, g_]

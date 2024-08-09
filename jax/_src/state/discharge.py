@@ -14,11 +14,11 @@
 """Module for discharging state primitives."""
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import dataclasses
 from functools import partial
 import operator
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol, TypeVar
 
 import numpy as np
 
@@ -240,8 +240,7 @@ def _prepend_scatter(x, indexer, val, *, add=False):
   return x[None].at[(0, *indexer)].set(val)[0]
 
 
-def _get_discharge(x, idx, tree):
-  indexers = tree_util.tree_unflatten(tree, idx)
+def index_array(x, indexers):
   result = x
   for indexer in indexers:
     if _is_trivial_indexer(indexer):
@@ -260,24 +259,7 @@ def _get_discharge(x, idx, tree):
       result = result[None][(np.array(0, "int32"), *indexer)]
   return result
 
-def _indexer(idx, indexed_dims):
-  idx_ = iter(idx)
-  indexer = tuple(next(idx_) if b else slice(None) for b in indexed_dims)
-  assert next(idx_, None) is None
-  return indexer
-
-@register_discharge_rule(swap_p)
-def _swap_discharge_rule(
-    in_avals: Sequence[core.AbstractValue],
-    out_avals: Sequence[core.AbstractValue], x, val, *idx,
-    tree):
-  del in_avals, out_avals
-  z, x_new = _swap_discharge(x, val, idx, tree)
-  return (x_new, None) + (None,) * len(idx), z
-
-def _swap_discharge(x, val, idx, tree):
-  indexers = tree_util.tree_unflatten(tree, idx)
-
+def index_swap_array(x, indexers, val):
   result = x
   result_val = val
   for indexer in indexers:
@@ -299,6 +281,23 @@ def _swap_discharge(x, val, idx, tree):
       result_val = _prepend_scatter(result, indexer, result_val)
       result = result_old
   return result, result_val
+
+def _get_discharge(x, idx, tree):
+  indexers = tree_util.tree_unflatten(tree, idx)
+  return index_array(x, indexers)
+
+@register_discharge_rule(swap_p)
+def _swap_discharge_rule(
+    in_avals: Sequence[core.AbstractValue],
+    out_avals: Sequence[core.AbstractValue], x, val, *idx,
+    tree):
+  del in_avals, out_avals
+  z, x_new = _swap_discharge(x, val, idx, tree)
+  return (x_new, None) + (None,) * len(idx), z
+
+def _swap_discharge(x, val, idx, tree):
+  indexers = tree_util.tree_unflatten(tree, idx)
+  return index_swap_array(x, indexers, val)
 
 @register_discharge_rule(addupdate_p)
 def _addupdate_discharge_rule(
@@ -490,7 +489,7 @@ def _run_state_partial_eval(trace: pe.JaxprTrace, *tracers: pe.JaxprTracer,
   else:
     raise Exception("Invalid fixpoint")
   del out_unknowns  # redundant since it's the same as `in_unknowns`
-  tracers = tuple(trace.instantiate_const(t) if uk else t  # type: ignore
+  tracers = tuple(trace.instantiate_const(t) if uk else t
                   for t, uk in zip(tracers, in_unknowns))
 
   # We use `partial_eval_jaxpr_stateful` here because it won't remove effectful
@@ -785,7 +784,8 @@ def _initial_style_jaxpr(fun, in_tree, in_avals):
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(fun_, in_avals, debug)
   return jaxpr, consts, out_tree_thunk()
 
-def run_state(f: Callable[..., None]):
+T = TypeVar('T')
+def run_state(f: Callable[..., None]) -> Callable[[T], T]:
   def wrapped(args):
     flat_args, in_tree = tree_util.tree_flatten(args)
     avals = [core.raise_to_shaped(core.get_aval(arg)) for arg in flat_args]

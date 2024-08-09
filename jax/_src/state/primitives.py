@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from functools import partial
+import types
 from typing import Any, Union
 
 import numpy as np
@@ -56,18 +57,7 @@ zip, unsafe_zip = safe_zip, zip
 get_p = core.Primitive("get")
 get_p.def_impl(partial(dispatch.apply_primitive, get_p))
 
-Indexer = tuple[Union[int, slice, Array], ...]
-# or Ellipsis, but that can't be annotated until Python 3.10? (types.EllipsisType)
-
-def _get_slice_output_shape(in_shape: tuple[int, ...],
-                            idx_shapes: tuple[tuple[int, ...], ...],
-                            indexed_dims: tuple[bool, ...]) -> tuple[int, ...]:
-  shape_suffix = [d for i, d in zip(indexed_dims, in_shape) if not i]
-  shape_prefix, = set(idx_shapes) or [()]  # tie fighter
-  # Move shape prefix dimensions to the front
-  shape = (*shape_prefix, *shape_suffix)
-  return shape
-
+Indexer = tuple[Union[int, slice, Array, types.EllipsisType], ...]
 
 def get_ref_and_indexers(
     ref_or_view: Any, idx: Indexer | None, function_name: str
@@ -190,7 +180,7 @@ def _swap_abstract_eval(ref_aval: AbstractRef,
                        f"Expected shape: {expected_out_shape}. "
                        f"Value shape: {val_aval.shape}. "
                        f"Indices: {indexers}. ")
-    if ref_aval.dtype != val_aval.dtype:
+    if ref_aval.dtype != val_aval.dtype and not val_aval.weak_type:
       raise ValueError("Invalid dtype for `swap`. "
                        f"Ref dtype: {ref_aval.dtype}. "
                        f"Value dtype: {val_aval.dtype}. ")
@@ -343,7 +333,7 @@ def _get_jvp(primals: list[Any], tangents: list[Any], **params: Any):
   ref_tangent, *_ = tangents
   assert isinstance(ref_tangent.aval, AbstractRef)
   return (get_p.bind(ref_primal, *idx, **params),
-          get_p.bind(ref_tangent, *idx, **params))  # type: ignore[arg-type]
+          get_p.bind(ref_tangent, *idx, **params))
 ad.primitive_jvps[get_p] = _get_jvp
 
 def _swap_jvp(primals: list[Any], tangents: list[Any], **params: Any):
@@ -352,8 +342,8 @@ def _swap_jvp(primals: list[Any], tangents: list[Any], **params: Any):
   ref_tangent, x_tangent, *_ = tangents
   assert isinstance(ref_tangent.aval, AbstractRef)
   x_tangent = ad_util.instantiate(x_tangent)
-  return (swap_p.bind(ref_primal, x_primal, *idx, **params),  # type: ignore[arg-type]
-          swap_p.bind(ref_tangent, x_tangent, *idx, **params))  # type: ignore[arg-type]
+  return (swap_p.bind(ref_primal, x_primal, *idx, **params),
+          swap_p.bind(ref_tangent, x_tangent, *idx, **params))
 ad.primitive_jvps[swap_p] = _swap_jvp
 
 def addupdate_jvp_rule(primals: list[Any], tangents: list[Any], **params: Any):
@@ -407,11 +397,6 @@ pe.partial_eval_jaxpr_custom_rules[addupdate_p] = partial(
     _state_partial_eval_custom, addupdate_p)
 
 ##  get/swap/addupdate batching rules
-
-def _output_bdim(indexed_dims: tuple[bool, ...], ref_dim: int,
-                 idxs_shape: tuple[int, ...]):
-  num_idxs_to_left = sum(indexed_dims[:ref_dim])
-  return ref_dim - num_idxs_to_left + len(idxs_shape)
 
 def _batch_indexer(indexer: indexing.NDIndexer, dims,
                    axis_size: int,

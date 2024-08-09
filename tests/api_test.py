@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import collections
 import collections.abc
+from collections.abc import Callable
 import concurrent.futures
 from contextlib import contextmanager
 import copy
@@ -33,7 +34,7 @@ import re
 import subprocess
 import sys
 import types
-from typing import Callable, NamedTuple
+from typing import NamedTuple
 import unittest
 import weakref
 
@@ -49,13 +50,16 @@ from jax._src import array
 from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
+from jax._src import deprecations
 from jax._src import linear_util as lu
 from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src import debugging
+from jax._src import pjit as pjit_lib
 from jax._src.ad_checkpoint import saved_residuals
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
+from jax._src.compilation_cache import is_persistent_cache_enabled
 from jax._src.lib import xla_client
 from jax._src.lib import xla_extension
 import jax._src.util as jax_util
@@ -228,7 +232,9 @@ class JitTest(jtu.BufferDonationTestCase):
 
   def test_jit_device(self):
     device = jax.devices()[-1]
-    x = jit(lambda x: x, device=device)(3.)
+    with jtu.ignore_warning(category=DeprecationWarning,
+                            message="backend and device argument"):
+      x = jit(lambda x: x, device=device)(3.)
     _check_instance(self, x)
     self.assertEqual(x.devices(), {device})
 
@@ -259,10 +265,12 @@ class JitTest(jtu.BufferDonationTestCase):
 
     with jax.default_device(test_device):
       # Explicit `device` or `backend` argument to jit overrides default_device
-      self.assertEqual(
-          module(f, device=system_default_device)(1).devices(),
-          system_default_devices)
-      out = module(f, backend="cpu")(1)
+      with jtu.ignore_warning(category=DeprecationWarning,
+                              message="backend and device argument"):
+        self.assertEqual(
+            module(f, device=system_default_device)(1).devices(),
+            system_default_devices)
+        out = module(f, backend="cpu")(1)
       self.assertEqual(next(iter(out.devices())).platform, "cpu")
 
       # Sticky input device overrides default_device
@@ -702,6 +710,13 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertNotEqual(z3.unsafe_buffer_pointer(), x1.unsafe_buffer_pointer())
     self.assertEqual(z2, 1)
 
+  def test_print_token_buffer_error(self):
+    token = jax.lax.create_token()
+    with self.assertRaisesRegex(
+        RuntimeError, "Cannot convert a token-shape buffer to a numpy array."
+    ):
+      token._buf._value
+
   def test_trivial_computations_with_tokens(self):
     @jit
     def noop(arr, token):
@@ -847,8 +862,10 @@ class JitTest(jtu.BufferDonationTestCase):
   @jtu.skip_on_devices("cpu")
   def test_explicit_backend(self, module):
     f = lambda x: x + 1
-    jitted_f = module(f, backend=jtu.device_under_test())
-    jitted_f_cpu = module(f, backend="cpu")
+    with jtu.ignore_warning(category=DeprecationWarning,
+                            message="backend and device argument"):
+      jitted_f = module(f, backend=jtu.device_under_test())
+      jitted_f_cpu = module(f, backend="cpu")
 
     result = jitted_f(1.)
     result_cpu = jitted_f_cpu(1.)
@@ -863,8 +880,10 @@ class JitTest(jtu.BufferDonationTestCase):
   def test_device_to_device_copy_between_backends(self, module):
     # b/186624243
     f = lambda x: x + 1
-    jitted_f = module(f, backend=jtu.device_under_test())
-    jitted_f_cpu = module(f, backend="cpu")
+    with jtu.ignore_warning(category=DeprecationWarning,
+                            message="backend and device argument"):
+      jitted_f = module(f, backend=jtu.device_under_test())
+      jitted_f_cpu = module(f, backend="cpu")
 
     x = np.arange(30).reshape(1, 10, 3)
     result = jitted_f(x)
@@ -875,6 +894,8 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(result_cpu_2, x + 4)
 
   @jtu.skip_on_devices("cpu")
+  @jtu.ignore_warning(category=DeprecationWarning,
+                      message="backend and device argument")
   def test_mismatched_nested_backends(self):
     @partial(jax.jit, backend=jtu.device_under_test())
     def f(x):
@@ -1912,6 +1933,45 @@ class APITest(jtu.JaxTestCase):
       x = api.device_put(val, device=cpu_device)
       self.assertEqual(x.devices(), {cpu_device})
 
+  def test_device_put_on_single_device_donated_buffer_fails(self):
+    @partial(jax.jit, donate_argnums=0)
+    def f(inp1):
+      return inp1 * 2
+
+    x = jnp.zeros((10,), jnp.float32)
+    f(x)
+
+    with self.assertRaises(RuntimeError):
+      result = jax.device_put(x, jax.devices()[0])
+      result.block_until_ready()
+
+    with self.assertRaises(RuntimeError):
+      result = jax.device_put(x, jax.devices()[-1])
+      result.block_until_ready()
+
+  def test_device_put_on_multi_device_donated_buffer_fails(self):
+    @partial(jax.jit, donate_argnums=0)
+    def f(inp1):
+      return inp1 * 2
+
+    mesh1 = jax.sharding.Mesh(jax.devices(), ("x",))
+    s1 = jax.NamedSharding(mesh1, P("x"))
+
+    mesh2 = jax.sharding.Mesh(tuple(reversed(jax.devices())), ("x",))
+    s2 = jax.NamedSharding(mesh2, P("x"))
+
+    x = jax.device_put(np.arange(len(jax.devices()), dtype=jnp.float32), s1)
+    f(x)
+
+    with self.assertRaises(RuntimeError):
+      result = jax.device_put(x, s1)
+      result.block_until_ready()
+
+    with self.assertRaises(RuntimeError):
+      result = jax.device_put(x, s2)
+      result.block_until_ready()
+
+
   @jax.default_matmul_precision("float32")
   def test_jacobian(self):
     R = self.rng().randn
@@ -2206,12 +2266,10 @@ class APITest(jtu.JaxTestCase):
   def test_vjp_mismatched_arguments(self):
     _, pullback = api.vjp(lambda x, y: x * y, np.float32(3), np.float32(4))
     self.assertRaisesRegex(
-      TypeError,
-      "Tree structure of cotangent input.*does not match",
+      ValueError, "unexpected tree structure",
       lambda: pullback((np.float32(7), np.float32(100))))
     self.assertRaisesRegex(
-      TypeError,
-      "Type of cotangent input to vjp pullback.*is not the expected tangent type",
+      ValueError, "unexpected JAX type",
       lambda: pullback(np.float16(42)))
 
   def test_vjp_bad_cotangent_shape(self):
@@ -2220,9 +2278,7 @@ class APITest(jtu.JaxTestCase):
     def f_jax(x, y):
       return jnp.matmul(x, y)
     res, pullback = jax.vjp(f_jax, x, y)
-    with self.assertRaisesRegex(
-        ValueError,
-        "Shape of cotangent input to vjp pullback function .* must be the same as the shape of corresponding primal input .*"):
+    with self.assertRaisesRegex(ValueError, "unexpected JAX type"):
       pullback(np.ones((2, 4), dtype=np.float32))
 
   def test_jvp_jit_cached(self):
@@ -2574,7 +2630,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_eval_shape_trace_cache_share(self):
     def f(x):
-      return x * 2
+      return x
 
     inp = np.arange(8)
 
@@ -2582,8 +2638,31 @@ class APITest(jtu.JaxTestCase):
       jax.eval_shape(f, inp)
       jax.jit(f)(inp)
 
-    # one for `f` and another for mul (`x * 2`) which is jitted.
-    self.assertEqual(count[0], 2)
+    self.assertEqual(count[0], 1)
+
+  def test_jit_infer_params_cache(self):
+    def f(x):
+      return x
+
+    f_jit = jax.jit(f)
+
+    def g(x):
+      x = f_jit(x)  # noqa: F821
+      x = f_jit(x)  # noqa: F821
+      return x
+
+    g_jit = jax.jit(g)
+
+    inp = np.arange(8)
+    with jtu.count_jit_infer_params_cache_miss() as count:
+      g_jit(inp)
+
+    self.assertDictEqual(count, {f: 1, g: 1})
+    cache_size = pjit_lib._infer_params_cached.cache_info().currsize
+    del count, f, f_jit, g, g_jit
+    # Cache should only keep a weak reference to f and g.
+    self.assertLess(pjit_lib._infer_params_cached.cache_info().currsize,
+                    cache_size, msg=pjit_lib._infer_params_cached.cache_keys())
 
   def test_eval_shape_out_shardings(self):
     s = jax.sharding.SingleDeviceSharding(jax.devices()[0])
@@ -2625,6 +2704,8 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(out_shape.shape, (3,))
 
   def test_eval_shape_names(self):
+    raise unittest.SkipTest("named shape are deprecated")
+
     def fun(x, y):
       return lax.psum(x, 'i') + y
 
@@ -2700,14 +2781,14 @@ class APITest(jtu.JaxTestCase):
     self.assertEqual(tangent_i, np.zeros(shape=(), dtype=float0))
 
   def test_vjp_of_int_shapes(self):
-    out, fn_vjp = api.vjp(lambda x: lax.reshape(x, (2, 2)), np.ones((4, 1),
-                                                                    dtype=int))
-    tangent, = fn_vjp(out)
+    out, fn_vjp = api.vjp(
+        lambda x: lax.reshape(x, (2, 2)), np.ones((4, 1), dtype=int))
+    tangent, = fn_vjp(np.zeros((2, 2), dtypes.float0))
     self.assertArraysEqual(tangent, np.zeros(shape=(4, 1), dtype=float0))
 
   def test_jit_vjp_of_int(self):
     primal, fn_vjp = api.vjp(lambda x, y: x+y, 2, 1)
-    tangent_x, tangent_i = jax.jit(fn_vjp)(1)
+    tangent_x, tangent_i = jax.jit(fn_vjp)(np.zeros((), dtypes.float0))
     self.assertEqual(primal, 3)
     self.assertEqual(tangent_x, np.zeros(shape=(), dtype=float0))
     self.assertEqual(tangent_i, np.zeros(shape=(), dtype=float0))
@@ -2940,7 +3021,11 @@ class APITest(jtu.JaxTestCase):
     axis_env = [(axis_name, jax.local_device_count())]
     _ = api.xla_computation(fn, axis_env=axis_env, backend='cpu')(input_x)
 
+  @jtu.ignore_warning(category=DeprecationWarning, message='jax.xla_computation is deprecated')
   def test_xla_computation_axis_env(self):
+    is_accelerated = deprecations.is_accelerated_attribute(jax, 'xla_computation')
+    xla_computation = api.xla_computation if is_accelerated else jax.xla_computation
+
     def fn(x):
       z = x * jax.lax.axis_index('i').astype(jnp.float32)
       def inner_fn(carry, a):
@@ -2948,7 +3033,7 @@ class APITest(jtu.JaxTestCase):
       return jax.lax.scan(inner_fn, jnp.zeros_like(z[0]), z)
 
     x = jnp.ones((5, 6, 4), dtype=jnp.float32)
-    _ = jax.xla_computation(fn, axis_env=(('i', 8),), backend='cpu')(x)
+    _ = xla_computation(fn, axis_env=(('i', 8),), backend='cpu')(x)
 
   def test_concurrent_device_get_and_put(self):
     def f(x):
@@ -3172,7 +3257,7 @@ class APITest(jtu.JaxTestCase):
 
     with self.assertRaisesRegex(
         ValueError,
-        "vmap has mapped output but out_axes is None"):
+        "at vmap out_axes"):
       # If the output is mapped (unnamed axis), then there must be some out_axes
       # specified.
       api.vmap(lambda x: x, out_axes=None)(jnp.array([1., 2.]))
@@ -4053,6 +4138,16 @@ class APITest(jtu.JaxTestCase):
       return jnp.exp(dtype(0))
     f()  # doesn't error
 
+  def test_vmap_make_jaxpr_close_over_tracer(self):
+    def run(inp):
+      def f(x, y):
+        return x + y
+      g = lambda x: f(x, inp)
+      jaxpr = jax.make_jaxpr(g)(1)
+      return jax.core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, 1)
+
+    jax.vmap(run)(jnp.arange(2))  # doesn't crash
+
   def test_large_python_ints(self):
     with self.assertRaises(OverflowError):
       jnp.multiply(2 ** 100, 3.)
@@ -4331,8 +4426,12 @@ class APITest(jtu.JaxTestCase):
     g(x, y)  # doesn't crash
 
   def test_jit_negative_static_argnums(self):
-    g = jax.jit(lambda x, y: x * y, static_argnums=-1)
-    g(1, 2)  # doesn't crash
+    @partial(jax.jit, static_argnums=-1)
+    def g(x, y):
+      assert isinstance(y, int)
+      return x * y
+    for i in range(3):  # Loop verifies we exercise both Python and C++ dispatch
+      self.assertEqual(2 * i, g(2, i), msg=i)
 
   def test_fastpath_cache_confusion(self):
     # https://github.com/google/jax/issues/12542
@@ -4454,6 +4553,10 @@ class APITest(jtu.JaxTestCase):
     jax.clear_caches()
     self.assertEqual(f._cache_size, 0)
 
+  def test_invalid_value_device_put(self):
+    with self.assertRaisesRegex(ValueError, r".*Received invalid value.*"):
+      jax.device_put(jnp.arange(8), 'cpu')
+
   def test_clear_cache(self):
     @jax.jit
     def add(x):
@@ -4480,13 +4583,15 @@ class APITest(jtu.JaxTestCase):
     x = jnp.float32(1.)
     y = {'hi': jnp.arange(3., dtype='float32')}
 
+    expected_log_len = 1 if not is_persistent_cache_enabled() else 3
+
     # print on first miss, not on hit
     with config.explain_cache_misses(True):
       with self.assertLogs(level='WARNING') as cm:
         f(x, y)
         f(x, y)
-    self.assertLen(cm.output, 1)
-    msg, = cm.output
+    self.assertLen(cm.output, expected_log_len)
+    msg = cm.output[0]
     self.assertIn('TRACING CACHE MISS', msg)
     self.assertIn('never seen function', msg)
 
@@ -4495,8 +4600,8 @@ class APITest(jtu.JaxTestCase):
     with config.explain_cache_misses(True):
       with self.assertLogs(level='WARNING') as cm:
         f(x, y_)
-    self.assertLen(cm.output, 1)
-    msg, = cm.output
+    self.assertLen(cm.output, expected_log_len)
+    msg = cm.output[0]
     self.assertIn('never seen input type signature', msg)
     self.assertIn('closest seen input type signature has 1 mismatches', msg)
     self.assertIn('seen f32[3], but now given f32[4]', msg)
@@ -4506,8 +4611,8 @@ class APITest(jtu.JaxTestCase):
       with config.explain_cache_misses(True):
         with self.assertLogs(level='WARNING') as cm:
           f(1., y)
-      self.assertLen(cm.output, 1)
-      msg, = cm.output
+      self.assertLen(cm.output, expected_log_len)
+      msg = cm.output[0]
       self.assertIn('weak_type=True', msg)
       self.assertIn('https://jax.readthedocs.io/en/latest/type_promotion.html#weak-types', msg)
 
@@ -4515,8 +4620,8 @@ class APITest(jtu.JaxTestCase):
     with config.explain_cache_misses(True):
       with self.assertLogs(level='WARNING') as cm:
         f(1, y=y)
-    self.assertLen(cm.output, 1)
-    msg, = cm.output
+    self.assertLen(cm.output, expected_log_len)
+    msg = cm.output[0]
     self.assertIn('never seen passing 1 positional args and 1 keyword args', msg)
 
     # tracing config change
@@ -4524,8 +4629,9 @@ class APITest(jtu.JaxTestCase):
       with self.assertLogs(level='WARNING') as cm:
         with jax.numpy_rank_promotion('warn'):
           f(x, y)
-    self.assertLen(cm.output, 1)
-    msg, = cm.output
+    # depending on the backend, we may or may not get persistent cache warnings
+    self.assertTrue(1 <= len(cm.output) <= expected_log_len)
+    msg = cm.output[0]
     self.assertIn("tracing context doesn't match", msg)
 
   def test_cache_miss_explanations_new_function_in_loop(self):
@@ -4539,9 +4645,15 @@ class APITest(jtu.JaxTestCase):
       with self.assertLogs(level='WARNING') as cm:
         for _ in range(2):
           jax.jit(lambda x: 2 * x)(3)
-    self.assertLen(cm.output, 2)
-    _, msg = cm.output
-    self.assertIn('another function defined on the same line', msg)
+    if is_persistent_cache_enabled():
+      # number of warnings depends on the backend
+      self.assertTrue(4 <= len(cm.output) <= 6)
+      msg = cm.output[3]
+      self.assertIn('another function defined on the same line', msg)
+    else:
+      self.assertLen(cm.output, 2)
+      _, msg = cm.output
+      self.assertIn('another function defined on the same line', msg)
 
   def test_cache_miss_explanations_unpacks_transforms(self):
     # Tests that the explain_tracing_cache_miss() function does not throw an
@@ -4554,9 +4666,20 @@ class APITest(jtu.JaxTestCase):
       with self.assertLogs(level="WARNING") as cm:
         f(jax.random.key(seed=123))
 
-    self.assertLen(cm.output, 5)
-    for msg in cm.output:
-      self.assertIn("TRACING CACHE MISS", msg)
+    if is_persistent_cache_enabled():
+      # 5 warnings from tracing cache, 5-10 from persistent cache depending on
+      # the backend
+      self.assertTrue(10 <= len(cm.output) <= 15)
+      self.assertTrue(any("TRACING CACHE MISS" in msg for msg in cm.output))
+    else:
+      self.assertLen(cm.output, 5)
+      for msg in cm.output:
+        self.assertIn("TRACING CACHE MISS", msg)
+
+  def test_cache_miss_explanations_no_source_info(self):
+    # ``operator.add`` is a built-in function and does not have source info.
+    with config.explain_cache_misses(True):
+      jax.jit(operator.add)(42, 24)
 
   @parameterized.named_parameters([
       {"testcase_name": f"{dtype}", "dtype": dtype}
@@ -4667,6 +4790,78 @@ class APITest(jtu.JaxTestCase):
 
     jtu.check_grads(f, (list(jnp.arange(float(num_args))),), order=1,
                     modes=['rev'], atol=1e-3, rtol=1e-3)
+
+  @jtu.run_on_devices("cpu")
+  def test_inner_jit_forwarding_happens(self):
+    jaxpr = jax.make_jaxpr(lambda: jax.jit(lambda x: x)(3))()
+    self.assertLen(jaxpr.jaxpr.outvars, 1)
+    self.assertIsInstance(jaxpr.jaxpr.outvars[0], core.Literal)
+    self.assertEqual(jaxpr.jaxpr.outvars[0].val, 3)
+
+  @parameterized.parameters(range(8))
+  @jtu.run_on_devices("cpu")
+  def test_inner_jit_forwarding_correctness(self, num_input_fwd):
+    num_args = 8
+    rng = np.random.RandomState(0)
+
+    @jax.jit
+    def f(inputs):
+      inputs = [inputs[i] for i in rng.permutation(num_args)]
+      outputs = (inputs[:num_input_fwd] +
+                 [jnp.sin(inputs[i]) for i in range(num_args - num_input_fwd)])
+      return [outputs[i] for i in rng.permutation(num_args)]
+
+    f2 = jax.jit(f)
+    inputs = list(jnp.arange(float(num_args)))
+    expected = f(inputs)
+    ans = f2(inputs)
+    for a, b in zip(ans, expected):
+      self.assertAllClose(a, b)
+
+  def test_inner_jit_forwarded_consts_stay_const(self):
+    out = jax.jit(lambda: int(jax.jit(lambda x: x)(3)))()  # don't crash
+    self.assertEqual(out, 3)
+
+  def test_lowering_platform_aot(self):
+    @jax.jit
+    def f(x):
+      return x * 2
+
+    f.trace(jnp.arange(8)).lower(lowering_platforms=('tpu',))  # doesn't crash
+
+  def test_no_double_dots_in_error_message(self):
+    @jax.jit
+    def f(x):
+      return 1 if x > 0 else 0
+
+    with self.assertRaisesRegex(TracerBoolConversionError, r"with shape bool\[\]\.[^\.]"):
+      f(0)
+
+  def test_inlined_literals_with_error(self):
+    @jax.jit
+    def f():
+      @partial(jax.jit, inline=True)
+      def g():
+        return jnp.sin(1.)
+      if g() > 0:
+        return 1.
+      return 0.
+
+    with self.assertRaisesRegex(TracerBoolConversionError, "Attempted boolean"):
+      f()
+
+  def test_inline_return_twice(self):
+    # https://github.com/google/jax/issues/22944
+    @jax.jit
+    def add_one(x: int) -> int:
+      return x + 1
+
+    def add_one_and_dupe(x: int) -> tuple[int, int]:
+      y = add_one(x)
+      return (y, y)
+
+    jit_add_one_dupe = jax.jit(add_one_and_dupe, inline=True)
+    jax.eval_shape(jit_add_one_dupe, 0)  # don't crash
 
 
 class RematTest(jtu.JaxTestCase):
@@ -6286,6 +6481,39 @@ class RematTest(jtu.JaxTestCase):
     self.assertFalse(any(' sin ' in line for line in l.output))
     self.assertTrue(any(' cos ' in line for line in l.output))
 
+  def test_excess_precision_hell(self):
+    finfo = jnp.finfo('bfloat16')
+    eps = finfo.eps
+
+    @jax.custom_vjp
+    def dot(x):
+      return jnp.dot(x, x)
+    def dot_fwd(x):
+      return dot(x), None
+    def dot_bwd(_, g):
+      return g,
+    dot.defvjp(dot_fwd, dot_bwd)
+
+    @jax.custom_vjp
+    def foo(x):
+      return jnp.float32(1.) * x.astype('float32')
+    def foo_fwd(x):
+      return foo(x), x
+    def foo_bwd(x, _):
+      return jnp.float32(1.) * x.astype('float32'),
+    foo.defvjp(foo_fwd, foo_bwd)
+
+    @jax.jit
+    @partial(jax.remat, policy=lambda *_, **__: True)
+    def f(x):
+      x = dot(x)
+      return foo(x)
+
+    x = (jnp.bfloat16(1) + eps) * jnp.eye(2, dtype='bfloat16')
+    y, vjp = jax.vjp(f, x)
+    y_, = vjp(jnp.ones_like(y))
+    self.assertAllClose(y, y_, atol=0, rtol=0)
+
 
 @jtu.with_config(jax_pprint_use_color=False)
 class JaxprTest(jtu.JaxTestCase):
@@ -6329,7 +6557,6 @@ class JaxprTest(jtu.JaxTestCase):
             p:f32[] = add n l
           in (p,) }
       )
-      linear=(False, False, False, False)
     ] e a a c d
   in (f,) }"""
     jaxpr = api.make_jaxpr(f)(jnp.float32(3.))
@@ -6356,6 +6583,7 @@ class JaxprTest(jtu.JaxTestCase):
     self.assertIn('psum', str(jaxpr))
 
   def test_make_jaxpr_named(self):
+    raise unittest.SkipTest("named shape are deprecated")
     def f(x):
       return x - lax.psum(x, 'i')
 
@@ -9422,6 +9650,135 @@ class CustomVJPTest(jtu.JaxTestCase):
     finally:
       jax.config.update('jax_custom_vjp_disable_shape_check', False)
 
+  def test_bwd_rule_can_produce_list_or_tuple(self):
+    @jax.custom_vjp
+    def f(x, y):
+      return x * y
+
+    def f_fwd(x, y):
+      return f(x, y), (x, y)
+
+    def f_bwd(xy, g):
+      x, y = xy
+      return [g * y, x * g]  # list, not tuple
+
+    f.defvjp(f_fwd, f_bwd)
+
+    jax.grad(f)(1., 2.)  # don't crash
+
+  def test_optimize_remat(self):
+    def fun(x):
+      # This array is included to make sure that we handle consts appropriately
+      return np.array([1.0])*x
+
+    def fwd(x):
+      return np.array([2.0])*x*x/np.array([1.0]), (x,)
+
+    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(fun, fwd)
+    x = jnp.linspace(0, 5.0, 10)
+    self.assertAllClose(jax.jit(fwd)(x)[0], 2*x*x)  # Shouldn't hit custom DCE
+    self.assertAllClose(jax.jit(lambda x: fwd(x)[0])(x), x)  # Should be DCEed
+
+  def test_optimize_remat_vmap(self):
+    def fun(x):
+      return (np.array([1.0])*x)[0]
+    def fwd(x):
+      return (np.array([2.0])*x*x/np.array([1.0]))[0], (x,)
+    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(fun, fwd)
+    x = jnp.linspace(0, 5.0, 10)
+    self.assertAllClose(jax.jit(jax.vmap(fwd))(x)[0], 2*x*x)
+    self.assertAllClose(jax.jit(lambda x: jax.vmap(fwd)(x)[0])(x), x)
+
+  def test_optimize_remat_cond(self):
+    def fun(x):
+      return x
+    def fwd(x):
+      return x*x, (x,)
+    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(fun, fwd)
+
+    def g(x):
+      return jax.lax.cond(True, fwd, lambda x: (2.0 * x, (x,)), x)
+    x = jnp.linspace(0, 5.0, 10)
+    self.assertAllClose(jax.jit(g)(x)[0], x*x)
+    self.assertAllClose(jax.jit(lambda x: g(x)[0])(x), x)
+
+  def test_optimize_remat_jvp(self):
+    def fun(x):
+      return x**2
+    def fwd_(x):
+      return x*x, (x,)
+    fwd = custom_derivatives.optimize_remat_of_custom_vjp_fwd(fun, fwd_)
+    calc = jax.jvp(fwd, (3.2,), (1.0,))
+    expected = jax.jvp(fwd_, (3.2,), (1.0,))
+    self.assertAllClose(calc, expected)
+
+    @jax.jit
+    def g(x, t):
+      (y, r), (y_dot, r_dot) = jax.jvp(fwd, (x,), (t,))
+      return y, y_dot
+    calc = g(3.2, 1.0)
+    expected = jax.jvp(fun, (3.2,), (1.0,))
+    self.assertAllClose(calc, expected)
+
+  def test_optimize_remat_gh21303(self):
+    @jax.custom_vjp
+    def f(x):
+      return jnp.tan(x)
+
+    def f_fwd(x):
+      return jnp.sin(x), (x,)
+
+    def f_bwd(res, g):
+      x, = res
+      cos_x = jnp.cos(x)
+      return (cos_x * g,)
+
+    f.defvjp(f_fwd, f_bwd, optimize_remat=True)
+
+    def temp(x):
+      out = jax.remat(f)(x)
+      out = out ** 2
+      return out
+
+    v, g = jax.value_and_grad(temp)(3.2)
+    self.assertAllClose(v, jnp.tan(3.2)**2)
+
+  def test_optimize_remat_multiple_args(self):
+    def f_(x, y):
+      return jnp.sin(x) * y
+
+    @jax.custom_vjp
+    def f(x, y):
+      return f_(x, y)
+
+    def f_fwd(x, y):
+      return f(x, y), (jnp.cos(x), jnp.sin(x), y)
+
+    def f_bwd(res, g):
+      cos_x, sin_x, y = res
+      return (cos_x * g * y, sin_x * g)
+
+    f.defvjp(f_fwd, f_bwd, optimize_remat=True)
+    x, y = 3.2, 1.0
+    self.assertAllClose(jax.grad(f)(x, y), jax.grad(f_)(x, y))
+
+  def test_optimize_remat_kwargs(self):
+    @jax.custom_vjp
+    def f(x, y):
+      return jnp.sin(x) * y
+
+    def f_fwd(x, y, *, keyword=False):
+      del keyword
+      return f(x, y), (jnp.cos(x), jnp.sin(x), y)
+
+    def f_bwd(res, g):
+      cos_x, sin_x, y = res
+      return (cos_x * g * y, sin_x * g)
+
+    f.defvjp(f_fwd, f_bwd, optimize_remat=True)
+    x, y = 3.2, 1.0
+    jax.grad(f)(x, y)  # Doesn't error
+
 
 def transpose_unary(f, x_example):
   def transposed(y):
@@ -9893,8 +10250,7 @@ class CustomTransposeTest(jtu.JaxTestCase):
       return x + fn(y, x)
 
     def cond_wrap(f):
-      return lambda i, x: lax.cond(i > 0, f, lambda x: x, x,
-                                   linear=(True,))
+      return lambda i, x: lax.cond(i > 0, f, lambda x: x, x)
 
     i = 7.
     x = jnp.ones(2) * 6.
@@ -9918,8 +10274,7 @@ class CustomTransposeTest(jtu.JaxTestCase):
       return x + fn(y, x)
 
     def cond_wrap(f):
-      return lambda i, x: lax.cond(i > 0, f, lambda x: x, x,
-                                   linear=(True,))
+      return lambda i, x: lax.cond(i > 0, f, lambda x: x, x)
 
     i = 7.
     x = jnp.ones(2) * 6.
@@ -10272,7 +10627,7 @@ class CustomVmapTest(jtu.JaxTestCase):
 
     # does err
     self.assertRaisesRegex(
-        ValueError, 'vmap has mapped output but out_axes is None',
+        ValueError, "at vmap out_axes",
         lambda: api.vmap(
             f_non_jvp, in_axes=(0, None), out_axes=(0, None))(xs, tx))
 
@@ -10311,7 +10666,7 @@ class CustomVmapTest(jtu.JaxTestCase):
 
     # does err
     self.assertRaisesRegex(
-        ValueError, 'vmap has mapped output but out_axes is None',
+        ValueError, "at vmap out_axes",
         lambda: api.vmap(
             f_jvp, in_axes=(None, 0), out_axes=(None, 0))(x, txs))
 
@@ -10420,6 +10775,66 @@ class CustomVmapTest(jtu.JaxTestCase):
 
     self.assertEqual(str(jaxpr), str(jaxpr_ref))
 
+  @parameterized.named_parameters(
+    ("1", 1),
+    ("8", 4),
+    ("12", 8),
+    ("16", 16),
+  )
+  def test_batch_map_basic(self, batch_size: int):
+    def f(x):
+      self.assertEqual(x.shape, ())
+      return x**2
+
+    x = np.arange(16)
+    y = jax.lax.map(f, x, batch_size=batch_size)
+
+    np.testing.assert_array_equal(y, x**2)
+
+  @parameterized.named_parameters(
+    ("1", 1),
+    ("8", 4),
+    ("12", 8),
+    ("16", 16),
+  )
+  def test_batch_map_pytrees(self, batch_size: int):
+    f = lambda x: {'b': x['a'] ** 2}
+    inputs = {'a': np.arange(16)}
+    expected = np.arange(16) ** 2
+
+    outputs = jax.lax.map(f, inputs, batch_size=batch_size)
+    self.assertAllClose(outputs['b'], expected)
+
+    outputs = jax.lax.map(
+      f, inputs, batch_size=batch_size
+    )
+    self.assertAllClose(outputs['b'], expected)
+
+  def test_batch_divides_axis(self):
+    def f(t):
+      x, a = t
+      self.assertEqual(x.shape, (4,))
+      return (x + a)**2
+
+    x = jax.random.randint(jax.random.key(0), (16, 4), -10, 10)
+    a = jax.random.randint(jax.random.key(1), (16, 4), -10, 10)
+
+    @jax.jit
+    def g(x, a):
+      return jax.lax.map(f, (x, a), batch_size=8)
+
+    y = g(x, a)
+
+    self.assertAllClose(y, (x + a)**2)
+
+  def test_undefined_rule(self):
+    @jax.custom_batching.custom_vmap
+    def f(x): return jnp.sin(x)
+
+    with self.assertRaisesRegex(
+        AttributeError, "No batching rule defined for custom_vmap function f"):
+      f(0.5)
+
 
 class CustomApiTest(jtu.JaxTestCase):
   """Test interactions among the custom_{vmap,jvp,vjp,transpose,*} APIs"""
@@ -10483,7 +10898,10 @@ class BufferDonationTest(jtu.BufferDonationTestCase):
 
 class NamedCallTest(jtu.JaxTestCase):
 
+  @jtu.ignore_warning(category=DeprecationWarning, message='jax.xla_computation is deprecated')
   def test_default_name(self):
+    is_accelerated = deprecations.is_accelerated_attribute(jax, 'xla_computation')
+    xla_computation = api.xla_computation if is_accelerated else jax.xla_computation
 
     @api.named_call
     def my_test_function(x):
@@ -10493,7 +10911,7 @@ class NamedCallTest(jtu.JaxTestCase):
     def f(x):
       return my_test_function(x)
 
-    c = jax.xla_computation(f)(2)
+    c = xla_computation(f)(2)
     print_opts = xla_client._xla.HloPrintOptions.short_parsable()
     print_opts.print_metadata = True
     hlo_text = c.as_hlo_module().to_string(print_opts)
@@ -10655,9 +11073,11 @@ class OverrideLoweringTest(jtu.JaxTestCase):
     rules = ((jax.lax.sharding_constraint_p, wsc_as_noop),)
     lowered_ir = (
         jax.jit(f)
-        .lower(jax.ShapeDtypeStruct((2, 4), dtype=jnp.bfloat16),
-               _experimental_lowering_parameters=mlir.LoweringParameters(
-                 override_lowering_rules=rules)).as_text())
+        .trace(jax.ShapeDtypeStruct((2, 4), dtype=jnp.bfloat16))
+        .lower(_private_parameters=mlir.LoweringParameters(
+            override_lowering_rules=rules))
+        .as_text()
+    )
     self.assertNotIn("stablehlo.custom_call @Sharding", lowered_ir)
 
 

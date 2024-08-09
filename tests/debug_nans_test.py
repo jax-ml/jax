@@ -24,21 +24,12 @@ from jax._src import api
 from jax._src import test_util as jtu
 from jax import numpy as jnp
 from jax.experimental import pjit
-from jax._src.maps import xmap
 
 jax.config.parse_flags_with_absl()
 
 
+@jtu.with_config(jax_debug_nans=True)
 class DebugNaNsTest(jtu.JaxTestCase):
-
-  def setUp(self):
-    super().setUp()
-    self.cfg = jax.config._read("jax_debug_nans")
-    jax.config.update("jax_debug_nans", True)
-
-  def tearDown(self):
-    jax.config.update("jax_debug_nans", self.cfg)
-    super().tearDown()
 
   def testSinc(self):
     # Regression test for #6936
@@ -65,8 +56,8 @@ class DebugNaNsTest(jtu.JaxTestCase):
       ans = jax.jit(lambda x: 0. / x)(A)
       ans.block_until_ready()
 
+  @jax.debug_nans(False)
   def testJitComputationNaNContextManager(self):
-    jax.config.update("jax_debug_nans", False)
     A = jnp.array(0.)
     f = jax.jit(lambda x: 0. / x)
     ans = f(A)
@@ -121,28 +112,6 @@ class DebugNaNsTest(jtu.JaxTestCase):
   def testPmapNoNaN(self):
     ans = jax.pmap(lambda x: 0. / x)(jnp.array([1.]))
     ans.block_until_ready()
-
-  @jtu.ignore_warning(message=".*is an experimental.*")
-  def testXmap(self):
-
-    f = xmap(
-        lambda x: 0. / x,
-        in_axes=["i"],
-        out_axes=["i"],
-        axis_resources={"i": "x"})
-
-    with jax.sharding.Mesh(np.array(jax.local_devices()[:1]), ('x',)):
-      with self.assertRaisesRegex(
-          FloatingPointError,
-          r"invalid value \(nan\) encountered in xmap"):
-        ans = f(jnp.array([0.]))
-        ans.block_until_ready()
-
-    if jax.device_count() >= 2:
-      with jax.sharding.Mesh(np.array(jax.local_devices()[:2]), ('x',)):
-        with self.assertRaises(FloatingPointError):
-          ans = f(jnp.array([1., 0.]))
-          ans.block_until_ready()
 
   @jtu.ignore_warning(message=".*is an experimental.*")
   def testPjit(self):
@@ -205,16 +174,8 @@ class DebugNaNsTest(jtu.JaxTestCase):
       jax.jit(f)(inp, inp)
 
 
+@jtu.with_config(jax_debug_infs=True)
 class DebugInfsTest(jtu.JaxTestCase):
-
-  def setUp(self):
-    super().setUp()
-    self.cfg = jax.config._read("jax_debug_infs")
-    jax.config.update("jax_debug_infs", True)
-
-  def tearDown(self):
-    jax.config.update("jax_debug_infs", self.cfg)
-    super().tearDown()
 
   def testSingleResultPrimitiveNoInf(self):
     A = jnp.array([[1., 2.], [2., 3.]])

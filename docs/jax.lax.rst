@@ -120,6 +120,7 @@ Operators
     neg
     nextafter
     pad
+    platform_dependent
     polygamma
     population_count
     pow
@@ -158,7 +159,6 @@ Operators
     sub
     tan
     tanh
-    tie_in
     top_k
     transpose
     zeros_like_array
@@ -202,7 +202,6 @@ Parallel operators
 
     all_gather
     all_to_all
-    pdot
     psum
     psum_scatter
     pmax

@@ -21,13 +21,11 @@ from collections.abc import Sequence
 from functools import partial
 import itertools
 import math
-import string
 
 from jax import tree_util
 from jax._src import core
 from jax._src import dtypes
 from jax._src import sharding_impls
-from jax._src import util
 from jax._src.core import AxisName, ShapedArray, raise_to_shaped
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
@@ -43,6 +41,7 @@ from jax._src.util import (canonicalize_axis, moveaxis, safe_map, safe_zip,
 import numpy as np
 
 unsafe_map, map = map, safe_map  # type: ignore
+unsafe_zip, zip = zip, safe_zip  # type: ignore
 
 
 ### parallel traceables
@@ -474,168 +473,6 @@ def axis_index(axis_name):
   return axis_index_p.bind(axis_name=axis_name)
 
 
-def pdot(x, y, axis_name, pos_contract=((), ()), pos_batch=((), ()),
-         precision=None):
-  if not isinstance(axis_name, (list, tuple)):
-    axis_name = (axis_name,)
-  pos_contract = tuple(map(tuple, pos_contract))
-  pos_batch = tuple(map(tuple, pos_batch))
-  return pdot_p.bind(x, y, axis_name=tuple(axis_name),
-                     pos_contract=pos_contract, pos_batch=pos_batch,
-                     precision=lax.canonicalize_precision(precision))
-
-
-def xeinsum(spec: str, *operands):
-  in_spec, out_spec = spec.split('->')
-  all_in_subs, all_in_named = unzip2(XeinsumSpecParser(in_spec).parse_args())
-  (out_subs, out_named), = XeinsumSpecParser(out_spec).parse_args()
-
-  if len(operands) != len(all_in_named):
-    raise ValueError("Expecting the same number of argument specs in the "
-                     f"subscript ({in_spec}) as the number of operands. But got "
-                     f"{len(all_in_named)} argument specs for "
-                     f"{len(operands)} operands")
-
-  if len(operands) > 2:
-    raise NotImplementedError("Only one or two operands are supported. "
-                              f"But got {len(operands)} operands")
-
-  # output subs and named axes must appear in at least one of the inputs.
-  if not set(out_named).issubset(set().union(*all_in_named)):
-    raise ValueError("Found named axes "
-                     f"{set(out_named) - set().union(*all_in_named)} "
-                     "appearing in the output spec but not in the input")
-  if not set(out_subs).issubset(set().union(*all_in_subs)):
-    raise ValueError("Found subscript(s) "
-                     f"{set(out_subs) - set().union(*all_in_subs)} "
-                     "appearing in the output spec but not in the input")
-
-  xs = list(operands)
-  for idx, (in_subs, in_named) in enumerate(safe_zip(all_in_subs, all_in_named)):
-    # if a subscript axis appears only in one input and not the output, reduce!
-    other_named = set().union(  # type: ignore
-        *[named for i, named in enumerate(all_in_named) if i != idx])
-    other_subs = set().union(  # type: ignore
-        *[subs for i, subs in enumerate(all_in_subs) if i != idx])
-
-    subs_reduce = list(set(in_subs) - {*out_subs, *other_subs})
-    subs_reduce_axes = [in_subs.index(n) for n in subs_reduce]
-    named_reduce_axes = list(set(in_named) - {*out_named, *other_named})
-
-    if subs_reduce_axes or named_reduce_axes:
-      xs[idx] = psum(xs[idx], axis_name=subs_reduce_axes + named_reduce_axes)
-      for i in sorted(subs_reduce_axes, reverse=True):
-        del all_in_subs[idx][i]
-      for named_axis in named_reduce_axes:
-        all_in_named[idx].remove(named_axis)
-
-  if len(operands) == 1:
-    return xs[0]
-
-  if len(operands) == 2:
-    x, y = xs
-    lhs_subs, rhs_subs = all_in_subs
-    lhs_named, rhs_named = all_in_named
-
-    # if a named axis appears in both inputs and not the output, contract!
-    named_contract = list((set(lhs_named) & set(rhs_named)) - set(out_named))
-
-    # if a subscript appears in both inputs and not the outputs, contract!
-    subs_contract = (set(lhs_subs) & set(rhs_subs)) - set(out_subs)
-
-    pos_contract = unzip2((lhs_subs.index(n), rhs_subs.index(n))
-                          for n in subs_contract)
-
-    # if a subscript appears in both inputs _and_ the outputs, batch!
-    subs_batch = (set(lhs_subs) & set(rhs_subs)) - subs_contract
-    pos_batch = unzip2((lhs_subs.index(n), rhs_subs.index(n)) for n in subs_batch)
-
-    return pdot(x, y, axis_name=named_contract,
-                pos_contract=pos_contract, pos_batch=pos_batch)
-
-
-class XeinsumSpecParser:
-  spec: str
-  pos: int
-
-  def __init__(self, spec: str):
-    self.spec = spec
-    self.pos = 0
-
-  @property
-  def eof(self):
-    return self.pos == len(self.spec)
-
-  @property
-  def cur(self):
-    return self.spec[self.pos]
-
-  def parse_subscript(self):
-    if self.cur in string.ascii_lowercase:
-      out = self.cur
-      self.pos += 1
-      return out, True
-    else:
-      return None, False
-
-  def parse_axis_name(self):
-    try:
-      end = self.spec.index('}', self.pos)
-    except ValueError:
-      assert False
-
-    try:
-      end = self.spec.index(',', self.pos, end)
-    except ValueError:
-      pass
-
-    axis_name = self.spec[self.pos:end]
-    assert axis_name
-    self.pos = end
-    return axis_name
-
-  def maybe_take(self, char: str, on_eof: bool = False):
-    if self.eof:
-      return on_eof
-    if self.cur == char:
-      self.pos += 1
-      return True
-
-  def parse_arg(self):
-    subscripts = []
-    names = []
-    while not self.eof:
-      subscript, cont = self.parse_subscript()
-      if not cont: break
-      subscripts.append(subscript)
-    if self.eof:
-      return False, (subscripts, names)
-    if self.maybe_take(','):
-      return True, (subscripts, names)
-    else:
-      assert self.maybe_take('{')
-      first = True
-      while not self.maybe_take('}'):
-        if not first:
-          assert self.maybe_take(',')
-        first = False
-        if self.eof:
-          raise ValueError("Unterminated named axis brace")
-        axis_name = self.parse_axis_name()
-        names.append(axis_name)
-      return self.maybe_take(',', False), (subscripts, names)
-
-  def parse_args(self):
-    arg_specs = []
-    cont = True
-    while not self.eof:
-      cont, result = self.parse_arg()
-      arg_specs.append(result)
-    if cont:
-      arg_specs.append(([], []))
-    return arg_specs
-
-
 def pgather(src, idx, axes: int | AxisName):
   """Uses the last positional axis of idx to index into src's axes."""
   if not isinstance(axes, (tuple, list)):
@@ -727,7 +564,7 @@ def _replica_groups(axis_env, axis_name, axis_index_groups):
   return replica_groups
 
 def _replica_groups_hlo(replica_groups: Sequence[Sequence[int]]
-                        ) -> ir.DenseIntElementsAttr:
+                        ) -> ir.DenseElementsAttr:
   # Uneven replica groups are padded with -1.
   groups = np.array(list(itertools.zip_longest(*replica_groups, fillvalue=-1)),
                     dtype=np.int64).T
@@ -739,21 +576,15 @@ def _allreduce_impl(pos_reducer, *args, axes, axis_index_groups):
   return [pos_reducer(arg, axes) for arg in args]
 
 def _allreduce_effectful_abstract_eval(*args, axes, axis_index_groups):
-  # TODO(frostig,mattjj,jekbradbury): maybe check aval names here
+  named_axes = tuple(axis for axis in axes if not isinstance(axis, int))
   pos_axes = tuple(axis for axis in axes if isinstance(axis, int))
-  named_shapes = [arg.named_shape for arg in args]
-  named_axes = {axis for axis in axes if not isinstance(axis, int)}
-  if axis_index_groups is None:
-    named_shapes = [{name: size for name, size in arg.named_shape.items()
-                     if name not in named_axes} for arg in args]
-  else:
+  if axis_index_groups is not None:
     if len(pos_axes) != 0:
       raise ValueError(f"axis_index_groups can only be used with reductions over "
                        f"named axes, but got: {axes}")
   out_avals = [
       ShapedArray(lax._reduce_op_shape_rule(raise_to_shaped(arg), axes=pos_axes),
-                  arg.dtype, named_shape=named_shape)
-      for arg, named_shape in zip(args, named_shapes)]
+                  arg.dtype) for arg in args]
   return out_avals, {core.NamedAxisEffect(axis) for axis in named_axes}
 
 def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
@@ -772,7 +603,7 @@ def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
           shape=np.delete(np.array(aval.shape, dtype=np.int64),
                           positional_axes))
       reducer_ctx = ctx.replace(primitive=None, avals_in=[aval], avals_out=[aval_out])
-      out, = reducer(reducer_ctx, arg, axes=tuple(positional_axes))[0]
+      out, = reducer(reducer_ctx, arg, axes=tuple(positional_axes))
       return out
     args = map(_positional_reduce, ctx.avals_in, args)
   if not named_axes:
@@ -796,8 +627,13 @@ def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
           use_global_device_ids=ir.BoolAttr.get(True))
     else:
       other_args = {}
-    op = hlo.AllReduceOp(
-        x.type, x, replica_groups=replica_groups, **other_args)
+
+    if hlo.get_api_version() < 8:
+      op = hlo.AllReduceOp(
+          x.type, x, replica_groups=replica_groups, **other_args)
+    else:
+      op = hlo.AllReduceOp(
+          [x.type], [x], replica_groups=replica_groups, **other_args)
     scalar_aval = core.ShapedArray((), aval.dtype)
     scalar_type = mlir.aval_to_ir_type(scalar_aval)
     reducer_block = op.regions[0].blocks.append(scalar_type, scalar_type)
@@ -805,9 +641,8 @@ def _allreduce_lowering(prim, pos_fn, ctx, *args, axes, axis_index_groups):
       lower_reducer = mlir.lower_fun(prim.bind, multiple_results=False)
       reducer_ctx = ctx.replace(primitive=None,
                                 avals_in=[scalar_aval] * 2, avals_out=[scalar_aval])
-      out_nodes = lower_reducer(
-          reducer_ctx, *([a] for a in reducer_block.arguments))
-      hlo.return_(util.flatten(out_nodes))
+      out_nodes = lower_reducer(reducer_ctx, *reducer_block.arguments)
+      hlo.return_(mlir.flatten_ir_values(out_nodes))
     return op.result
 
   return [all_reduce(aval, x) for aval, x in zip(ctx.avals_in, args)]
@@ -862,7 +697,7 @@ def psum_bind(*args, axes, axis_index_groups):
       assert not pos_axes
       size = len(axis_index_groups[0])
     else:
-      size = math.prod([core.axis_frame(name).size for name in named_axes])  # type: ignore
+      size = math.prod([core.axis_frame(name).size for name in named_axes])
     return tuple(lax._const(x, size) * pos_reduce(x) for x in args)
   return core.AxisPrimitive.bind(
       psum_p, *args, axes=axes, axis_index_groups=axis_index_groups)
@@ -1011,17 +846,6 @@ def _foldaxis(axis, x):
   new_shape[axis:axis+2] = [x.shape[axis] * x.shape[axis + 1]]
   return x.reshape(new_shape)
 
-def _index_in_group(axis_name, axis_index_groups):
-  cur_device_id = axis_index(axis_name)
-  if axis_index_groups is None:
-    return cur_device_id
-  # We use argsort to invert the axis_index_groups permutation
-  flat_groups = np.array(axis_index_groups).flatten()
-  device_id_to_idx = flat_groups.argsort() % len(axis_index_groups[0])
-  return lax.squeeze(
-      slicing.dynamic_slice_in_dim(device_id_to_idx, cur_device_id, 1), [0])
-
-
 def _all_to_all_lowering(
     ctx, x, *, split_axis, concat_axis, axis_name, axis_index_groups, tiled
 ):
@@ -1047,13 +871,21 @@ def _all_to_all_lowering(
     other_args = dict(channel_handle=channel_handle)
   else:
     other_args = {}
+  if hlo.get_api_version() < 8:
+    return hlo.AllToAllOp(
+        x,
+        split_dimension=mlir.i64_attr(split_axis),
+        concat_dimension=mlir.i64_attr(concat_axis),
+        split_count=mlir.i64_attr(split_count),
+        replica_groups=_replica_groups_hlo(replica_groups),
+        **other_args).results
   return hlo.AllToAllOp(
-      x,
-      split_dimension=mlir.i64_attr(split_axis),
-      concat_dimension=mlir.i64_attr(concat_axis),
-      split_count=mlir.i64_attr(split_count),
-      replica_groups=_replica_groups_hlo(replica_groups),
-      **other_args).results
+    [x],
+    split_dimension=mlir.i64_attr(split_axis),
+    concat_dimension=mlir.i64_attr(concat_axis),
+    split_count=mlir.i64_attr(split_count),
+    replica_groups=_replica_groups_hlo(replica_groups),
+    **other_args).results
 
 def _all_to_all_transpose_rule(
     cts, x, axis_name, split_axis, concat_axis, axis_index_groups, tiled
@@ -1240,18 +1072,6 @@ def all_gather(x, axis_name, *, axis_index_groups=None, axis=0, tiled=False):
         axis_size=axis_size, tiled=tiled)
   return tree_util.tree_map(bind, x)
 
-def _expand(dim, size, index, tiled, x):
-  shape = list(x.shape)
-  if tiled:
-    tile_size = shape[dim]
-    shape[dim] *= size
-    out = lax.full(shape, lax._const(x, 0))
-    return slicing.dynamic_update_slice_in_dim(out, x, index * tile_size, dim)
-  else:
-    shape.insert(dim, size)
-    out = lax.full(shape, lax._const(x, 0))
-    return slicing.dynamic_update_index_in_dim(out, x, index, dim)
-
 def _all_gather_impl(x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
   raise AssertionError("Unexpected call to _all_gather_impl")
 
@@ -1271,7 +1091,7 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
     broadcast_dimensions = [i for i in range(len(new_shape)) if i != all_gather_dimension]
     x = hlo.broadcast_in_dim(
         mlir.aval_to_ir_type(x_aval.update(shape=new_shape)), x,
-        mlir.dense_int_array_v6(broadcast_dimensions))
+        mlir.dense_int_array(broadcast_dimensions))
   replica_groups = _replica_groups(ctx.module_context.axis_env, axis_name,
                                     axis_index_groups)
   if is_spmd:
@@ -1285,9 +1105,16 @@ def _all_gather_lowering(ctx, x, *, all_gather_dimension, axis_name,
         use_global_device_ids=ir.BoolAttr.get(True))
   else:
     other_args = {}
+
+  if hlo.get_api_version() < 8:
+    return hlo.AllGatherOp(
+        mlir.aval_to_ir_type(out_aval),
+        x, all_gather_dim=mlir.i64_attr(all_gather_dimension),
+        replica_groups=_replica_groups_hlo(replica_groups),
+        **other_args).results
   return hlo.AllGatherOp(
-      mlir.aval_to_ir_type(out_aval),
-      x, all_gather_dim=mlir.i64_attr(all_gather_dimension),
+      [mlir.aval_to_ir_type(out_aval)],
+      [x], all_gather_dim=mlir.i64_attr(all_gather_dimension),
       replica_groups=_replica_groups_hlo(replica_groups),
       **other_args).results
 
@@ -1303,12 +1130,7 @@ def _all_gather_effectful_abstract_eval(
     new_shape[all_gather_dimension] *= axis_size
   else:
     new_shape.insert(all_gather_dimension, axis_size)
-  new_named_shape = {name: size for name, size in x_aval.named_shape.items()
-                     if name not in axis_name}
-  out_aval = x_aval.update(shape=new_shape, named_shape=new_named_shape)
-  effects = {*map(core.NamedAxisEffect, axis_name)}
-  return out_aval, effects
-
+  return x_aval.update(shape=new_shape), {*map(core.NamedAxisEffect, axis_name)}
 
 def _all_gather_transpose_rule(cts, x, *, all_gather_dimension, axis_name, axis_index_groups, axis_size, tiled):
   return (psum_scatter(cts, axis_name=axis_name,
@@ -1410,9 +1232,8 @@ def _reduce_scatter_lowering(
     reducer_ctx = ctx.replace(primitive=None,
                               avals_in=[scalar_aval] * 2,
                               avals_out=[scalar_aval])
-    out_nodes = lower_reducer(
-        reducer_ctx, *([a] for a in reducer_block.arguments))
-    hlo.return_(util.flatten(out_nodes))
+    out_nodes = lower_reducer(reducer_ctx, *reducer_block.arguments)
+    hlo.return_(mlir.flatten_ir_values(out_nodes))
 
   if tiled:
     return op.results
@@ -1440,15 +1261,7 @@ def _reduce_scatter_effectful_abstract_eval(
                        f"{scatter_dim_input_size} must match shard count "
                        f"{axis_size}")
     del new_shape[scatter_dimension]
-
-  new_named_shape = {
-      name: size
-      for name, size in x_aval.named_shape.items()
-      if name not in axis_name
-  }
-  out_aval = x_aval.update(shape=new_shape, named_shape=new_named_shape)
-  effects = {*map(core.NamedAxisEffect, axis_name)}
-  return out_aval, effects
+  return x_aval.update(shape=new_shape), {*map(core.NamedAxisEffect, axis_name)}
 
 
 def _reduce_scatter_transpose_rule(cts, x, *, axis_name, scatter_dimension,
@@ -1540,10 +1353,10 @@ def psum_scatter(x, axis_name, *, scatter_dimension=0, axis_index_groups=None,
       When ``False`` (the default value), the size of dimension in
       ``scatter_dimension`` must match the size of axis ``axis_name`` (or the
       group size if ``axis_index_groups`` is given). After scattering the
-      all-reduce result along ``scatter_dimension``, the output is sequeezed by
+      all-reduce result along ``scatter_dimension``, the output is squeezed by
       removing ``scatter_dimension``, so the result has lower rank than the
       input. When ``True``, the size of dimension in ``scatter_dimension`` must
-      be dividible by the size of axis ``axis_name`` (or the group size if
+      be divisible by the size of axis ``axis_name`` (or the group size if
       ``axis_index_groups`` is given), and the ``scatter_dimension`` axis is
       preserved (so the result has the same rank as the input).
 
@@ -1636,9 +1449,7 @@ def _axis_index_lowering(ctx, *, axis_name):
 
 def _axis_index_effectful_abstract_eval(*, axis_name):
   frame = core.axis_frame(axis_name)
-  out_aval = ShapedArray((), np.int32, named_shape={axis_name: frame.size})
-  return out_aval, {core.NamedAxisEffect(axis_name)}
-
+  return ShapedArray((), np.int32), {core.NamedAxisEffect(axis_name)}
 
 axis_index_p = core.Primitive('axis_index')
 mlir.register_lowering(axis_index_p, _axis_index_lowering)
@@ -1674,84 +1485,6 @@ def _vmap_process_axis_index(self, frame):
   assert frame.size is not None
   return batching.BatchTracer(self, lax.iota(np.int32, frame.size), 0)
 batching.BatchTrace.process_axis_index = _vmap_process_axis_index  # type: ignore
-
-
-pdot_p = core.AxisPrimitive('pdot')
-core.axis_substitution_rules[pdot_p] = partial(_subst_all_names_in_param, 'axis_name')
-
-@pdot_p.def_impl
-def _pdot_impl(x, y, *, axis_name, pos_contract, pos_batch, precision):
-  if axis_name: raise NameError(f"unbound axis name: {axis_name[0]}")
-  return lax.dot_general(x, y, (pos_contract, pos_batch), precision=precision)
-
-
-@pdot_p.def_effectful_abstract_eval
-def _pdot_effectful_abstract_eval(
-    x, y, *, axis_name, pos_contract, pos_batch, precision
-):
-  # TODO(frostig,mattjj,jekbradbury): check inputs have given axis names?
-  if not len(set(axis_name)) == len(axis_name): raise ValueError
-  pos_aval = lax.dot_general_p.abstract_eval(
-      x, y, dimension_numbers=[pos_contract, pos_batch],
-      precision=precision, preferred_element_type=None)[0]
-  common_named_shape = core.join_named_shapes(x.named_shape, y.named_shape)
-  named_shape = {name: size
-                 for name, size in common_named_shape.items()
-                 if name not in axis_name}
-  out_aval = pos_aval.update(named_shape=named_shape)
-  effects = {*map(core.NamedAxisEffect, axis_name)}
-  return out_aval, effects
-
-
-def _pdot_vmap_collective_rule(axis_size, frame_name, _, vals_in, dims_in, *, axis_name,
-                               pos_contract, pos_batch, precision):
-  x, y = vals_in
-  x_dim, y_dim = dims_in
-  x_pos_contract, y_pos_contract = pos_contract
-  x_pos_contract = [x_dim] + [d + (d >= x_dim) for d in x_pos_contract]
-  y_pos_contract = [y_dim] + [d + (d >= y_dim) for d in y_pos_contract]
-  x_pos_batch, y_pos_batch = pos_batch
-  x_pos_batch = [d + (d >= x_dim) for d in x_pos_batch]
-  y_pos_batch = [d + (d >= y_dim) for d in y_pos_batch]
-  remaining_axis_names = tuple(n for n in axis_name if n != frame_name)
-  out = pdot_p.bind(x, y, axis_name=remaining_axis_names,
-                    pos_contract=(tuple(x_pos_contract), tuple(y_pos_contract)),
-                    pos_batch=(tuple(x_pos_batch), tuple(y_pos_batch)),
-                    precision=precision)
-  return out, None
-batching.axis_primitive_batchers[pdot_p] = _pdot_vmap_collective_rule
-
-def _pdot_vmap_batching_rule(vals_in, dims_in, *, axis_name, pos_contract,
-                             pos_batch, precision):
-  x, y = vals_in
-  (pos_contract, pos_batch), result_batch_dim = lax._dot_general_batch_dim_nums(
-      (x.ndim, y.ndim), dims_in, [pos_contract, pos_batch])
-  out = pdot_p.bind(x, y, axis_name=axis_name, pos_contract=pos_contract,
-                    pos_batch=pos_batch, precision=precision)
-  return out, result_batch_dim
-batching.primitive_batchers[pdot_p] = _pdot_vmap_batching_rule
-
-
-def _pdot_lowering(x, y, *, axis_name, pos_contract, pos_batch, precision):
-  local_out = lax.dot_general(x, y, dimension_numbers=(pos_contract, pos_batch),
-                              precision=precision, preferred_element_type=None)
-  return psum(local_out, axis_name) if axis_name is not None else local_out
-
-mlir.register_lowering(
-    pdot_p,
-    mlir.lower_fun(_pdot_lowering, multiple_results=False))
-
-def _pdot_transpose_lhs(g, x, y, *, axis_name, pos_contract, pos_batch, precision):
-  # TODO: avals with names, call pbroadcast with axis_name
-  return lax._dot_general_transpose_lhs(
-      g, x, y, dimension_numbers=[pos_contract, pos_batch], precision=precision,
-      preferred_element_type=None)
-def _pdot_transpose_rhs(g, x, y, *, axis_name, pos_contract, pos_batch, precision):
-  # TODO: avals with names, call pbroadcast with axis_name
-  return lax._dot_general_transpose_rhs(
-      g, x, y, dimension_numbers=[pos_contract, pos_batch], precision=precision,
-      preferred_element_type=None)
-ad.defbilinear(pdot_p, _pdot_transpose_lhs, _pdot_transpose_rhs)
 
 
 def _pgather_impl(src, idx, *, axes):

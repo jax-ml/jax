@@ -26,7 +26,7 @@ is invoked from the other framework.
 The native serialization mode has several advantages:
 
    * supports virtually all operations supported by native execution, e.g.,
-     `xmap`, `shard_map`, `pmap`, parallel collective operations, and all
+     `shard_map`, `pmap`, parallel collective operations, and all
      primitives at all data types.
    * uses standard native JAX code paths for lowering, and thus it is easier
      to trust that the semantics and performance stays faithful to the native
@@ -59,7 +59,8 @@ For backwards compatibility purposes, and for special uses,
 the JAX-TensorFlow interoperation APIs can be used also
 in a **graph serialization** mode (the only mode available before version 0.4.7,
 and the default mode before JAX version 0.4.15),
-without going through StableHLO.
+without going through StableHLO. (Starting with JAX version 0.4.31 the
+graph serialization mode is deprecated. It will be removed in the near future).
 
   * For calling JAX functions from TensorFlow,
     it is possible to request that the JAX function be lowered with one TensorFlow
@@ -1004,6 +1005,7 @@ We list here a history of the serialization version numbers:
     Supported by XlaCallModule since October 27th, 2023,
     available in JAX since October 20th, 2023 (JAX 0.4.20),
     and the default since February 1st, 2024 (JAX 0.4.24).
+    This is the only supported version as of 27th of March, 2024.
 
 ## Known issues
 

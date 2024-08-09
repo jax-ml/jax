@@ -33,11 +33,18 @@ import sys
 
 sys.path.insert(0, os.path.abspath('..'))
 
-
-# Currently type aliases are expanded. We tried a workaround along the lines of:
+# Workaround to avoid expanding type aliases. See:
 # https://github.com/sphinx-doc/sphinx/issues/6518#issuecomment-589613836
-# Unfortunately, this workaround makes Sphinx drop module-level documentation.
-# See https://github.com/google/jax/issues/3452.
+from typing import ForwardRef
+
+def _do_not_evaluate_in_jax(
+    self, globalns, *args, _evaluate=ForwardRef._evaluate,
+):
+  if globalns.get('__name__', '').startswith('jax'):
+    return self
+  return _evaluate(self, globalns, *args)
+
+ForwardRef._evaluate = _do_not_evaluate_in_jax
 
 # -- Project information -----------------------------------------------------
 
@@ -126,9 +133,11 @@ exclude_patterns = [
     'pallas/quickstart.md',
     'pallas/tpu/pipelining.md',
     'pallas/tpu/distributed.md',
+    'pallas/tpu/matmul.md',
     'jep/9407-type-promotion.md',
     'autodidax.md',
     'sharded-computation.md',
+    'ffi.ipynb',
 ]
 
 # The name of the Pygments (syntax highlighting) style to use.
@@ -193,6 +202,7 @@ myst_enable_extensions = ['dollarmath']
 nb_execution_mode = "force"
 nb_execution_allow_errors = False
 nb_merge_streams = True
+nb_execution_show_tb = True
 
 # Notebook cell execution timeout; defaults to 30.
 nb_execution_timeout = 100
@@ -207,14 +217,15 @@ nb_execution_excludepatterns = [
     # Has extra requirements: networkx, pandas, pytorch, tensorflow, etc.
     'jep/9407-type-promotion.*',
     # TODO(jakevdp): enable execution on the following if possible:
-    'notebooks/xmap_tutorial.*',
     'notebooks/Distributed_arrays_and_automatic_parallelization.*',
     'notebooks/autodiff_remat.*',
     # Requires accelerators
     'pallas/quickstart.*',
     'pallas/tpu/pipelining.*',
     'pallas/tpu/distributed.*',
-    'sharded-computation.*'
+    'pallas/tpu/matmul.*',
+    'sharded-computation.*',
+    'distributed_data_loading.*'
 ]
 
 # -- Options for HTMLHelp output ---------------------------------------------
@@ -316,6 +327,8 @@ def linkcode_resolve(domain, info):
     return None
   if not info['fullname']:
     return None
+  if info['module'].split(".")[0] != 'jax':
+     return None
   try:
     mod = sys.modules.get(info['module'])
     obj = operator.attrgetter(info['fullname'])(mod)

@@ -18,6 +18,7 @@ import io
 import logging
 import os
 import sys
+from typing import cast as type_cast
 
 from jax._src import config
 from jax._src.lib import version_str as jaxlib_version_str
@@ -136,7 +137,7 @@ def _serialize_ir(m: ir.Module) -> bytes:
 
 def _canonicalize_ir(m_original: ir.Module) -> bytes:
   with m_original.context:
-    m = m_original.operation.clone()
+    m = type_cast(ir.Module, m_original.operation.clone())
     passes = pm.PassManager.parse(
         "builtin.module(strip-debuginfo)"
     )

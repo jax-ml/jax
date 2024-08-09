@@ -17,19 +17,19 @@ from __future__ import annotations
 
 import abc
 import asyncio
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from functools import partial
 import itertools
 import logging
 import os
 import re
-import sys
 import threading
 import time
-from typing import Any, Callable, Optional, Union
+from typing import Any, Optional
 
 import jax
 from jax._src import array
+from jax._src import config
 from jax._src import distributed
 from jax._src import sharding
 from jax._src import sharding_impls
@@ -70,12 +70,12 @@ logger = logging.getLogger(__name__)
 
 async def create_async_array_from_callback(
     global_shape: array.Shape,
-    inp_sharding: sharding_impls.XLACompatibleSharding,
+    inp_sharding: jax.sharding.Sharding,
     data_callback: Callable[[array.Index, jax.Device], Awaitable[jax.Array]],
 ):
   device_to_index_map = inp_sharding.devices_indices_map(global_shape)
   addressable_da = inp_sharding._addressable_device_assignment
-  future_arrays = [data_callback(device_to_index_map[d], d)  # type: ignore
+  future_arrays = [data_callback(device_to_index_map[d], d)
                    for d in addressable_da]
   dbs = await asyncio.gather(*future_arrays)
   return array.make_array_from_single_device_arrays(
@@ -130,7 +130,7 @@ def get_tensorstore_spec(ckpt_path: str, ocdbt: bool = False):
   return spec
 
 
-def is_remote_storage(tspec: Union[dict[str, Any], str]) -> bool:
+def is_remote_storage(tspec: dict[str, Any] | str) -> bool:
   """Detect if user is using cloud storages.
 
   This can detect common defines and unable to detect some corner cases such as
@@ -170,7 +170,7 @@ class _LimitInFlightBytes:
     self._cv = asyncio.Condition(lock=asyncio.Lock())
 
   async def wait_for_bytes(self, requested_bytes):
-    if requested_bytes >= self._max_bytes:
+    if requested_bytes > self._max_bytes:
       raise ValueError('Requested more bytes than we reserved space for: '
                        f'{requested_bytes} > {self._max_bytes}')
     async with self._cv:
@@ -185,14 +185,51 @@ class _LimitInFlightBytes:
       self._cv.notify_all()
 
 
+async def transfer_shard_to_host(shard: array.Shard) -> np.ndarray:
+  data = shard.data
+  has_pinned_host = any(
+      m.kind == "pinned_host" for m in shard.device.addressable_memories())
+  if config.enable_memories.value and has_pinned_host:
+    # If available, transfer to pinned host memory
+    sharding = jax.sharding.SingleDeviceSharding(shard.device,
+        memory_kind="pinned_host")
+    data = jax.device_put(data, sharding)
+  else:
+    data.copy_to_host_async()
+  # Allow other transfers to be scheduled simultaneously
+  await asyncio.sleep(0)
+  # Ensure that jax.Array's internal numpy array can be zero-copied. Tensorstore
+  # implicitly converts the written data to a numpy array, and would otherwise
+  # silently copy host-to-host.
+  return np.array(data, copy=False)
+
+
 async def async_serialize(
     arr_inp,
     tensorstore_spec,
     commit_future=None,
     context=TS_CONTEXT,
-    primary_host: Optional[int] = 0,
+    primary_host: int | None = 0,
     replica_id: int = 0,
+    transaction: Optional[ts.Transaction] = None,
 ):
+  """Serialize an array using TensorStore.
+
+  Args:
+    arr_inp: The array to serialize.
+    tensorstore_spec: The tensorstore spec to use.
+    commit_future: A list of futures that will be appended to. The futures can
+      be awaited asynchronously. If None, the futures will be awaited
+      synchronously by this method.
+    context: ts.Context instance.
+    primary_host: Primary host, which indicates the host that will be treated as
+      the "leader". If None, all hosts are treated as the primary. DO NOT USE
+      unless you are sure you know what you are doing.
+    replica_id: Allows overriding the shard replica id that will be saved. DO
+      NOT USE unless you are sure you know what you are doing.
+    transaction: TensorStore transaction to use for opening and writing the
+      array.  If not specified, a non-transactional write will be used.
+  """
   if (isinstance(arr_inp, array.ArrayImpl) and jax.process_count() > 1 and
       arr_inp.is_fully_addressable):
     raise ValueError(
@@ -201,12 +238,6 @@ async def async_serialize(
         f'between processes. Serialization have failed for the array with '
         f'the path "{tensorstore_spec["kvstore"]["path"]}".')
 
-  if primary_host is None and is_remote_storage(tensorstore_spec):
-    raise ValueError(
-        'When primary_host is set to None and remote storage is used,'
-        ' serialization is not allowed, as this may lead to a race condition'
-        ' between processes.'
-    )
   # 'metadata' may not be present at the top level (for example, if we are using
   # a 'cast' driver).
   if not _spec_has_metadata(tensorstore_spec):
@@ -224,6 +255,7 @@ async def async_serialize(
         create=True,
         open=True,
         context=context,
+        transaction=transaction,
     )
     # Asynchronous case.
     if commit_future is not None:
@@ -232,21 +264,34 @@ async def async_serialize(
     else:
       await open_future
 
-  # `ts.open` runs twice for process 0 because for the first time, we just get
-  # the future to be awaited upon in the background thread. The second one runs
-  # with `assume_metadata=True` which does no I/O operation and returns the
-  # tensorstore object.
-  # For every process other than `0`, we open with `assume_metadata=True`.
+  # `ts.open` runs twice for process `primary_host` because for the first time,
+  # we just get the future to be awaited upon in the background thread. The
+  # second one runs with `assume_metadata=True` which does no I/O operation and
+  # returns the tensorstore object.
+  # For every process other than `primary_host`, we open with
+  # `assume_metadata=True`.
   t = await ts.open(
       ts.Spec(tensorstore_spec),
       open=True,
       assume_metadata=True,
       context=context,
+      transaction=transaction,
   )
 
   async def _write_array(shard):
     if shard.replica_id == replica_id:
-      write_future = t[shard.index].write(shard.data)
+      data = await transfer_shard_to_host(shard)
+      write_future = t[shard.index].write(
+          data,
+          # Avoid additional copy of input array into the TensorStore chunk
+          # cache.  If `arr_inp` is a jax.Array, the result of converting
+          # it to a NumPy array, as is done internally by TensorStore, is
+          # guaranteed to be immutable and therefore it is safe to retain a
+          # reference indefinitely.
+          can_reference_source_data_indefinitely=isinstance(
+              arr_inp, array.ArrayImpl
+          ),
+      )
       if commit_future is not None:
         assert isinstance(commit_future, list)
         commit_future.append(write_future.commit)
@@ -300,7 +345,7 @@ def estimate_read_memory_footprint(t: ts.TensorStore,
 
 
 async def async_deserialize(
-    in_sharding: sharding_impls.XLACompatibleSharding | Layout,
+    user_in_sharding: jax.sharding.Sharding | Layout,
     tensorstore_spec: ts.Spec | dict[str, Any],
     global_shape: Sequence[int] | None = None,
     dtype=None,
@@ -308,14 +353,14 @@ async def async_deserialize(
     context=TS_CONTEXT,
     assume_metadata: bool = False,
 ):
-  in_sharding = (in_sharding.sharding if isinstance(in_sharding, Layout) else  # type: ignore
-                 in_sharding)
-  if not isinstance(in_sharding, sharding_impls.XLACompatibleSharding):
+  in_sharding = (user_in_sharding.sharding
+                 if isinstance(user_in_sharding, Layout) else user_in_sharding)
+  if not isinstance(in_sharding, jax.sharding.Sharding):
     raise ValueError(
         'sharding passed to deserialization should be specified, concrete and'
-        f' an instance of `jax.XLACompatibleSharding`. Got {in_sharding}')
-  dll = (in_sharding.device_local_layout if isinstance(in_sharding, Layout)
-         else None)
+        f' an instance of `jax.sharding.Sharding`. Got {in_sharding}')
+  dll = (user_in_sharding.device_local_layout
+         if isinstance(user_in_sharding, Layout) else None)
   t = await ts.open(
       tensorstore_spec,
       open=True,
@@ -342,6 +387,12 @@ async def async_deserialize(
       # Cast while reloading on process to avoid 2 copies on device if the
       # casting is done on device.
       out = out.astype(dtype)
+    # Convert to jnp array so that layouts are initialized properly for
+    # sub-byte dtypes.
+    # TODO(yashkatariya): This is a band-aid fix. Figure out a better way to
+    # make this work.
+    if out.dtype == jnp.int4:
+      out = jnp.asarray(out)  # type: ignore
     result = jax.device_put(
         out, Layout(dll, jax.sharding.SingleDeviceSharding(device)))
     if byte_limiter is not None:
@@ -396,7 +447,7 @@ class GlobalAsyncCheckpointManagerBase(util.StrictABC):
   is finished, checkpoint for step 2 will need to be blocked. Maintaining a
   class allows to maintain that state.
 
-  Example:
+  Examples:
 
   Below is a simplified training loop:
 
@@ -552,7 +603,14 @@ class AsyncManager:
 class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBase):
   """Responsible for serializing GDAs via TensorStore."""
 
-  def serialize(self, arrays, tensorstore_specs, *, on_commit_callback):
+  def serialize(
+      self,
+      arrays,
+      tensorstore_specs,
+      *,
+      on_commit_callback,
+      transaction: Optional[ts.Transaction] = None,
+  ):
     """Serializes Arrays or Arrays via TensorStore asynchronously.
 
     TensorStore writes to a storage layer in 2 steps:
@@ -572,32 +630,52 @@ class GlobalAsyncCheckpointManager(AsyncManager, GlobalAsyncCheckpointManagerBas
         have finished writing their checkpoints to disk. Filesystems where
         atomic rename operations are supported, you can rename from the
         temporary directory to the final directory. On GCS, you write to the
-        final directory directly and in `on_commit_callback` you write a
-        success file indicating that the serialization was successful because
-        GCS does not support atomic rename operations.
+        final directory directly and in `on_commit_callback` you write a success
+        file indicating that the serialization was successful because GCS does
+        not support atomic rename operations.
+      transaction: Optional TensorStore transaction to use.
     """
     logger.info('Waiting for previous serialization to finish.')
     self.wait_until_finished()
 
-    commit_futures = [[] for _ in range(len(tensorstore_specs))]
+    commit_futures: list[ts.Future] = []
 
     async def _run_serializer():
       future_writer = jax.tree_util.tree_map(
-          async_serialize, arrays, tensorstore_specs, commit_futures)
+          lambda arr_inp, tensorstore_spec: async_serialize(
+              arr_inp,
+              tensorstore_spec,
+              commit_future=commit_futures,
+              transaction=transaction,
+          ),
+          arrays,
+          tensorstore_specs,
+      )
       return await asyncio.gather(*future_writer)
 
     asyncio.run(_run_serializer())
 
-    self._add_futures(jax.tree_util.tree_flatten(commit_futures)[0])
+    self._add_futures(commit_futures)
 
     # Used in wait_until_finished to check on process != 0, if the checkpoint
     # has finished writing.
     self._start_async_commit(on_commit_callback)
 
-  def serialize_with_paths(self, arrays: Sequence[jax.Array],
-                           paths: Sequence[str], *, on_commit_callback):
+  def serialize_with_paths(
+      self,
+      arrays: Sequence[jax.Array],
+      paths: Sequence[str],
+      *,
+      on_commit_callback,
+      transaction: Optional[ts.Transaction] = None,
+  ):
     tspecs = jax.tree.map(get_tensorstore_spec, paths)
-    self.serialize(arrays, tspecs, on_commit_callback=on_commit_callback)
+    self.serialize(
+        arrays,
+        tspecs,
+        on_commit_callback=on_commit_callback,
+        transaction=transaction,
+    )
 
   def deserialize(self, shardings: Sequence[sharding.Sharding | Layout],
                   tensorstore_specs: Sequence[dict[str, Any]],

@@ -32,12 +32,14 @@ import numpy as np
 import jax
 from jax import lax
 from jax.sharding import Sharding
+from jax._src import api
 from jax._src import core
 from jax._src import dtypes
 from jax._src.api_util import _ensure_index_tuple
 from jax._src.array import ArrayImpl
 from jax._src.lax import lax as lax_internal
 from jax._src.lib import xla_client as xc
+from jax._src.numpy import array_api_metadata
 from jax._src.numpy import lax_numpy
 from jax._src.numpy import reductions
 from jax._src.numpy import ufuncs
@@ -66,6 +68,12 @@ def _astype(arr: ArrayLike, dtype: DTypeLike, copy: bool = False, device: xc.Dev
   casts are implementation dependent.
   """
   return lax_numpy.astype(arr, dtype, copy=copy, device=device)
+
+def _to_device(arr: ArrayLike, device: xc.Device | Sharding, *,
+               stream: int | Any | None = None):
+  if stream is not None:
+    raise NotImplementedError("stream argument of array.to_device()")
+  return api.device_put(arr, device)
 
 
 def _nbytes(arr: ArrayLike) -> int:
@@ -304,11 +312,13 @@ def __array_module__(self, types):
 
 
 def _compress_method(a: ArrayLike, condition: ArrayLike,
-                     axis: int | None = None, out: None = None) -> Array:
+                     axis: int | None = None, *, out: None = None,
+                     size: int | None = None, fill_value: ArrayLike = 0) -> Array:
   """Return selected slices of this array along given axis.
 
   Refer to :func:`jax.numpy.compress` for full documentation."""
-  return lax_numpy.jaxcompress(condition, a, axis, out)
+  return lax_numpy.compress(condition, a, axis=axis, out=out,
+                            size=size, fill_value=fill_value)
 
 
 @core.stash_axis_env()
@@ -460,7 +470,7 @@ class _IndexUpdateRef:
     self.array = array
     self.index = index
 
-  def __repr__(self):
+  def __repr__(self) -> str:
     return f"_IndexUpdateRef({self.array!r}, {self.index!r})"
 
   def get(self, *, indices_are_sorted=False, unique_indices=False,
@@ -656,6 +666,7 @@ _array_operators = {
 }
 
 _array_methods = {
+  "__array_namespace__": array_api_metadata.__array_namespace__,
   "all": reductions.all,
   "any": reductions.any,
   "argmax": lax_numpy.argmax,
@@ -692,6 +703,7 @@ _array_methods = {
   "sum": reductions.sum,
   "swapaxes": lax_numpy.swapaxes,
   "take": lax_numpy.take,
+  "to_device": _to_device,
   "trace": lax_numpy.trace,
   "transpose": _transpose,
   "var": reductions.var,

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import os
-import unittest
+import sys
 
 from absl.testing import absltest
 from absl.testing import parameterized
@@ -28,32 +28,34 @@ import numpy as np
 
 os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
 
-try:
-  from jax.experimental.pallas import gpu as plgpu
-except ImportError:
-  pass
 # pylint: disable=no-value-for-parameter
 
 
-config.update("jax_traceback_filtering", "off")
 config.parse_flags_with_absl()
 
 
-class PallasTest(jtu.JaxTestCase):
-
-  def check_gpu_capability_at_least(self, capability, device: int = 0):
-    return plgpu.get_compute_capability(device) >= capability
+@jtu.with_config(jax_traceback_filtering="off")
+class PallasBaseTest(jtu.JaxTestCase):
+  INTERPRET = False
 
   def setUp(self):
-    if not jtu.test_device_matches(["gpu"]):
-      self.skipTest("Only works on GPU")
-    try:
-      import triton  # noqa: F401
-    except ImportError:
-      self.skipTest("Triton is not installed. Skipping PallasTest.")
+    if not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("Must only run on GPUs, or CPUs")
+    if jtu.test_device_matches(["cpu"]) and not self.INTERPRET:
+      self.skipTest("On CPU, the test works only in interpret mode")
+    if jax.config.x64_enabled:
+      self.skipTest("The test works only in 32-bit")
+    if (jtu.test_device_matches(["cuda"]) and
+        not jtu.is_cuda_compute_capability_at_least("8.0")):
+      self.skipTest("Only works on GPU with capability >= sm80")
+    if sys.platform == "win32" and not self.INTERPRET:
+      self.skipTest("Only works on non-Windows platforms")
+
     super().setUp()
 
-class DecodeAttentionTest(PallasTest):
+
+class DecodeAttentionTest(PallasBaseTest):
+  INTERPRET = False
 
   @parameterized.named_parameters(*[
       (
@@ -86,17 +88,13 @@ class DecodeAttentionTest(PallasTest):
       kwargs,
   ):
     del kwargs
-    if not self.check_gpu_capability_at_least(80):
-      raise unittest.SkipTest(
-          "Fused attention only works on GPUs with capability >= sm80"
-      )
 
     k1, k2, k3 = random.split(random.key(0), 3)
     q = random.normal(k1, (batch_size, num_heads, head_dim), dtype=jnp.float16)
     k = random.normal(k2, (batch_size, seq_len, head_dim), dtype=jnp.float16)
     v = random.normal(k3, (batch_size, seq_len, head_dim), dtype=jnp.float16)
 
-    o = decode_attention.mqa(q, k, v)
+    o = decode_attention.mqa(q, k, v, interpret=self.INTERPRET)
     o_ref = decode_attention.mqa_reference(q, k, v)
     np.testing.assert_allclose(o, o_ref, atol=0.05)
 
@@ -134,10 +132,6 @@ class DecodeAttentionTest(PallasTest):
       kwargs,
   ):
     del kwargs
-    if not self.check_gpu_capability_at_least(80):
-      raise unittest.SkipTest(
-          "Fused attention only works on GPUs with capability >= sm80"
-      )
 
     k1, k2, k3 = random.split(random.key(0), 3)
     q = random.normal(
@@ -150,9 +144,12 @@ class DecodeAttentionTest(PallasTest):
         k3, (batch_size, seq_len, num_kv_heads, head_dim), dtype=jnp.float16
     )
 
-    o = decode_attention.gqa(q, k, v)
+    o = decode_attention.gqa(q, k, v, interpret=self.INTERPRET)
     o_ref = decode_attention.gqa_reference(q, k, v)
     np.testing.assert_allclose(o, o_ref, atol=0.05)
+
+class DecodeAttentionInterpreterTest(DecodeAttentionTest):
+  INTERPRET = True
 
 
 if __name__ == "__main__":

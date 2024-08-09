@@ -25,10 +25,10 @@ https://github.com/google/jax/blob/main/jax/experimental/jax2tf/README.md#callin
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import dataclasses
 import functools
-from typing import Any, Callable, Optional
+from typing import Any
 
 from absl import logging
 import jax
@@ -40,13 +40,12 @@ from jax._src import ad_util
 from jax._src import core
 from jax._src import effects
 from jax._src import util
-from jax._src import xla_bridge
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib.mlir.dialects import hlo
 from jax.experimental.jax2tf import jax2tf as jax2tf_internal
-from jax.interpreters import mlir
+from jax._src.interpreters import mlir
 import numpy as np
 import tensorflow as tf
 
@@ -79,7 +78,7 @@ def call_tf(
   function must return the same type of results.
 
   If ``call_tf`` appears in a JAX staging context (:func:`jax.jit`,
-  or :func:`jax.pmap`, or :func:`jax.xmap`, or a control-flow primitive) then
+  or :func:`jax.pmap`, or a control-flow primitive) then
   ``callable_tf`` will be compiled with ``tf.function(callable_tf,
   jit_compile=True)``
   and the resulting XLA computation will be embedded in JAX's XLA computation.
@@ -354,10 +353,7 @@ def _call_tf_impl(*args_jax_flat, callable_flat_tf, **_):
     if isinstance(res_tf, tf.Tensor) and jax_dtype.type in dlpack.SUPPORTED_DTYPES:
       res_tf_platform = tf.DeviceSpec.from_string(res_tf.backing_device).device_type
       res_jax_platform = res_tf_platform.lower()
-      # Skip using dlpack in PJRT C API runtime, because it currently fails
-      # with "PJRT C API does not support GetDefaultLayout".
-      # https://github.com/openxla/xla/blob/762bde36adf22792e91c38fe87cabe5af05bfadc/xla/pjrt/pjrt_c_api_client.h#L285-L289
-      if res_jax_platform in _DLPACK_PLATFORMS and not xla_bridge.using_pjrt_c_api():
+      if res_jax_platform in _DLPACK_PLATFORMS:
         res_dlpack = tf.experimental.dlpack.to_dlpack(res_tf)
         return jax.dlpack.from_dlpack(res_dlpack)
 
@@ -564,7 +560,7 @@ def _call_tf_lowering(
   else:
     result_shapes = result_shape.tuple_shapes()  # type: ignore
 
-  result_avals = tuple(map(canonical_res_aval, result_shapes))  # type: ignore
+  result_avals = tuple(map(canonical_res_aval, result_shapes))
 
   submodule = mlir.xla_computation_to_mlir_module(xla_comp)
   symtab = ir.SymbolTable(submodule.operation)
@@ -649,11 +645,11 @@ def emit_tf_embedded_graph_custom_call(
 
   operands = list(operands)
   result_types = list(
-      util.flatten([mlir.aval_to_ir_types(aval) for aval in result_avals])
+      mlir.flatten_ir_types([mlir.aval_to_ir_type(aval) for aval in result_avals])
   )
   if ordered:
-    operands.insert(0, ctx.tokens_in.get(call_tf_ordered_effect)[0])
-    result_types.insert(0, mlir.token_type()[0])
+    operands.insert(0, ctx.tokens_in.get(call_tf_ordered_effect))
+    result_types.insert(0, mlir.token_type())
 
   custom_call = hlo.CustomCallOp(
       result_types,
@@ -672,7 +668,7 @@ def emit_tf_embedded_graph_custom_call(
   results = list(custom_call.results)
   if ordered:
     token = results.pop(0)
-    ctx.set_tokens_out(mlir.TokenSet({call_tf_ordered_effect: (token,)}))
+    ctx.set_tokens_out(mlir.TokenSet({call_tf_ordered_effect: token}))
 
   return results
 

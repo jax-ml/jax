@@ -45,6 +45,9 @@ config.parse_flags_with_absl()
 
 
 PRNG_IMPLS = list(prng_internal.prngs.items())
+# Remove Pallas keys from this test, which do not run in XLA.
+PRNG_IMPLS = [
+    (name, impl) for (name, impl) in PRNG_IMPLS if "pallas" not in name]
 
 
 class OnX64(enum.Enum):
@@ -390,10 +393,16 @@ class PrngTest(jtu.JaxTestCase):
     f = lambda key: jax.random.uniform(key, (1,))
     with jax._src.config.threefry_gpu_kernel_lowering(False):
       hlo_text = jax.jit(f).lower(jax.random.key(17)).as_text()
-      self.assertNotIn("cu_threefry2x32", hlo_text)
+      if jtu.is_device_rocm():
+        self.assertNotIn("hip_threefry2x32", hlo_text)
+      else:
+        self.assertNotIn("cu_threefry2x32", hlo_text)
     with jax._src.config.threefry_gpu_kernel_lowering(True):
       hlo_text = jax.jit(f).lower(jax.random.key(17)).as_text()
-      self.assertIn("cu_threefry2x32", hlo_text)
+      if jtu.is_device_rocm():
+        self.assertIn("hip_threefry2x32", hlo_text)
+      else:
+        self.assertIn("cu_threefry2x32", hlo_text)
 
   @parameterized.parameters([{'make_key': ctor} for ctor in KEY_CTORS])
   def test_random_seed_offset(self, make_key):
@@ -1221,9 +1230,9 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     key = random.key(123)
     keys = random.split(key, 4)
 
-    newshape = (2, 2)
-    key_func = partial(jnp.reshape, newshape=newshape)
-    arr_func = partial(jnp.reshape, newshape=(*newshape, *key._impl.key_shape))
+    shape = (2, 2)
+    key_func = partial(jnp.reshape, shape=shape)
+    arr_func = partial(jnp.reshape, shape=(*shape, *key._impl.key_shape))
 
     self.check_shape(key_func, keys)
     self.check_against_reference(key_func, arr_func, keys)
@@ -1291,7 +1300,7 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     keys = random.split(key, 4).reshape(2, 2)
 
     key_func = jnp.ravel
-    arr_func = partial(jnp.reshape, newshape=(4, *key._impl.key_shape))
+    arr_func = partial(jnp.reshape, shape=(4, *key._impl.key_shape))
 
     self.check_shape(key_func, keys)
     self.check_against_reference(key_func, arr_func, keys)
@@ -1449,6 +1458,14 @@ class JnpWithKeyArrayTest(jtu.JaxTestCase):
     self.check_shape(func, keys, fill_value)
     self.check_against_reference(func, func, keys, fill_value)
 
+  def test_int_shape(self):
+    # It's not clear if we want to accept ints as the shape argument; the point
+    # of this test is not to check the API functionality but rather to ensure
+    # this doesn't fail in core.py like it used to.
+    @jax.jit
+    def f():
+      jax.random.normal(jax.random.key(0), 1000)
+    f()  # don't crash
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

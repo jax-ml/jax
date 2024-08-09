@@ -15,3 +15,4 @@
 """Contains bindings for Mosaic."""
 
 from jax._src.tpu_custom_call import as_tpu_kernel
+from jax._src.tpu_custom_call import lower_module_to_custom_call

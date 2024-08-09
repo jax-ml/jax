@@ -11,25 +11,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-"""Contains Triton-specific pallas modules."""
-
-from jax._src.lib import gpu_triton as triton_kernel_call_lib
-from jax._src.pallas.triton.primitives import approx_tanh
-from jax._src.pallas.triton.primitives import elementwise_inline_asm
-
-
-try:
-  get_compute_capability = triton_kernel_call_lib.get_compute_capability
-except AttributeError:
-
-  def get_compute_capability(device) -> int:
-    del device  # Unused.
-    raise RuntimeError(
-        "get_compute_capability is not available. Try installing jaxlib with"
-        " GPU support following instructions in"
-        " https://jax.readthedocs.io/en/latest/installation.html."
-    )
-
-
-del triton_kernel_call_lib

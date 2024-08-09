@@ -14,10 +14,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import functools
 from functools import partial
 import math
-from typing import Any, Callable, Literal, TypeVar, overload
+from typing import Any, Literal, TypeVar, overload
 
 import numpy as np
 
@@ -44,6 +45,7 @@ from jax._src.lib import gpu_linalg
 from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
 from jax._src.lib import lapack
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
@@ -166,6 +168,20 @@ def eigh(
       subset_by_index=subset_by_index,
   )
   return v, w
+
+
+def cholesky_update(r_matrix: ArrayLike, w_vector: ArrayLike) -> Array:
+  """Given a Cholesky decomposition A = R.T @ R and a vector w,
+  computes the Cholesky decomposition of A + w @ w.T in O(N^2) time.
+
+  Args:
+    r_matrix: An upper-triangular matrix (R) such that A = R.T @ R.
+    w_vector: A vector (w) for rank-1 update.
+
+  Returns:
+    A new R' matrix being the Cholesky decomposition of A + w @ w.T.
+  """
+  return cholesky_update_p.bind(r_matrix, w_vector)
 
 
 def lu_pivots_to_permutation(pivots: ArrayLike, permutation_size: int) -> Array:
@@ -448,8 +464,13 @@ def _cholesky_cpu_lowering(ctx, operand):
   out_aval, = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
   op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-  result, info = lapack.potrf_hlo(operand_aval.dtype, operand, lower=True,
-                                  a_shape_vals=op_shape_vals)
+  # TODO(b/344892332): Remove the check after the compatibility period.
+  if jaxlib_version < (0, 4, 31):
+    ctx_arg = ()
+  else:
+    ctx_arg = (ctx,)
+  result, info = lapack.potrf_hlo(*ctx_arg, operand_aval.dtype, operand,
+                                  lower=True, a_shape_vals=op_shape_vals)
 
   ok = mlir.compare_hlo(
       info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
@@ -465,6 +486,81 @@ def _cholesky_cpu_lowering(ctx, operand):
 
 mlir.register_lowering(
     cholesky_p, _cholesky_cpu_lowering, platform='cpu')
+
+# Cholesky update
+
+def _cholesky_update_abstract_eval(r_matrix, w_vector):
+  r_dtype = dtypes.canonicalize_dtype(r_matrix.dtype)
+  w_dtype = dtypes.canonicalize_dtype(w_vector.dtype)
+  if not (r_dtype == w_dtype and r_dtype in (np.float32, np.float64)):
+    raise NotImplementedError(
+        "Rank-1 Cholesky update is only implemented for float32 and float64.")
+  if not (r_matrix.ndim == 2 and w_vector.ndim == 1
+          and r_matrix.shape[-2] == r_matrix.shape[-1]
+          and r_matrix.shape[-2] == w_vector.shape[-1]):
+    raise ValueError(
+        "Rank-1 update to Cholesky decomposition takes a square matrix "
+        "and a vector as inputs. Got shapes {}, {} instead".format(
+            r_matrix.shape, w_vector.shape))
+  return ShapedArray(r_matrix.shape, r_matrix.dtype)
+
+def _cholesky_update_cuda_lowering_rule(ctx, r_matrix, w_vector):
+  r_matrix_aval, _ = ctx.avals_in
+  try:
+    [platform] = ctx.module_context.platforms
+  except ValueError:
+    raise ValueError(
+        "Can only lower cholesky_update on a single platform."
+    ) from None
+  if platform != "cuda":
+    raise NotImplementedError(
+        "Can only lower fast cholesky_update on CUDA."
+    )
+  return gpu_linalg.cuda_cholesky_update(
+      r_matrix, w_vector, r_matrix_aval.dtype)
+
+
+def _cholesky_update_jax_fn(R, z):
+  def _drotg(x, y):
+    """Get coefs for Givens rotation in a numerically stable way."""
+    def _drotg_nonzero(x, y):
+      abs_x = jax.numpy.abs(x)
+      abs_y = jax.numpy.abs(y)
+      denominator = jnp.where(abs_x > abs_y, abs_x, abs_y)
+      x /= denominator
+      y /= denominator
+      rh = 1 / jax.numpy.sqrt(x ** 2 + y ** 2)
+      return x * rh, -y * rh
+    one_and_zero = (
+        jnp.array(1., dtype=x.dtype),
+        jnp.array(0., dtype=x.dtype),
+    )
+    return jax.lax.cond(y == 0, lambda x, y: one_and_zero, _drotg_nonzero, x, y)
+
+  def _drot(
+      first_vector: jax.Array, second_vector: jax.Array,
+      c_coef: float, s_coef: float) -> tuple[jax.Array, jax.Array]:
+    return (
+        c_coef * first_vector - s_coef * second_vector,
+        c_coef * second_vector + s_coef * first_vector)
+  n = z.shape[0]
+  for k in range(n):
+    c, s = _drotg(R[k, k], z[k])
+    row_k, z = _drot(R[k, :], z, c, s)
+    R = R.at[k, :].set(row_k)
+  return R
+
+cholesky_update_p = Primitive('cholesky_update')
+cholesky_update_p.multiple_results = False
+cholesky_update_p.def_abstract_eval(_cholesky_update_abstract_eval)
+cholesky_update_p.def_impl(partial(dispatch.apply_primitive, cholesky_update_p))
+
+mlir.register_lowering(
+    cholesky_update_p, _cholesky_update_cuda_lowering_rule, platform='cuda')
+
+mlir.register_lowering(
+    cholesky_update_p,
+    mlir.lower_fun(_cholesky_update_jax_fn, multiple_results=False))
 
 # Asymmetric eigendecomposition
 
@@ -1007,10 +1103,10 @@ def _triangular_solve_cpu_lower(
   if len(a_aval.shape) == 2 and np.dtype(a_aval.dtype) in _cpu_lapack_types:
     alpha = mlir.ir_constant(np.array(1, dtype=a_aval.dtype))
     b_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, b_aval.shape)
-    return [lapack.trsm_hlo(
+    return lapack.trsm_hlo(
       a_aval.dtype, alpha,
       a, b, left_side, lower, transpose_a, conjugate_a, unit_diagonal,
-      b_shape_vals=b_shape_vals)]
+      b_shape_vals=b_shape_vals)
   else:
     # Fall back to the HLO implementation for unsupported types or batching.
     # TODO: Consider swapping XLA for LAPACK in batched case
@@ -1076,10 +1172,11 @@ def _lu_pivots_to_permutation_abstract_eval(pivots, *, permutation_size):
           'Argument to lu_pivots_to_permutation must have rank >= 1 and dtype '
           'int32. Got shape={} and dtype={}'.format(pivots.shape, pivots.dtype))
 
-    if permutation_size < pivots.shape[-1]:
+    pivots_size = pivots.shape[-1]
+    if permutation_size < pivots_size:
       raise ValueError(
           'Output permutation size {} has to exceed the trailing dimension of '
-          'the pivots. Got shape {}'.format(permutation_size, pivots.shape))
+          'the pivots. Got pivots size {}'.format(permutation_size, pivots_size))
 
     batch_dims = pivots.shape[:-1]
     permutations = pivots.update(shape=batch_dims + (permutation_size,))
@@ -1099,7 +1196,7 @@ def _lu_pivots_to_permutation_batching_rule(batched_args, batch_dims, *,
 
 def _lu_pivots_to_permutation_gpu_lowering(lowering, ctx, pivots, *,
                                            permutation_size):
-  return [lowering(pivots, permutation_size=permutation_size)]
+  return lowering(pivots, permutation_size=permutation_size)
 
 
 lu_pivots_to_permutation_p = Primitive('lu_pivots_to_permutation')
@@ -1284,6 +1381,9 @@ def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand, *,
       "Shape polymorphism for native lowering for lu on CPU and GPU is "
       f"implemented only for the batch dimensions: {operand_aval.shape}")
 
+  # TODO(b/357034884): Remove once jaxlib 0.4.32 is the minimum version.
+  ctx_arg = (ctx,) if jaxlib_version >= (0, 4, 32) else ()
+
   out_aval, pivot_aval, perm_aval = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
   m = operand_aval.shape[-2]
@@ -1293,11 +1393,12 @@ def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand, *,
       raise NotImplementedError(
           "Shape polymorphism for native serialization for lu on GPU is not "
           f"implemented; b/261671778; {operand_aval.shape}")
-    lu, pivot, info = getrf_impl(operand_aval.dtype, operand)
+    lu, pivot, info = getrf_impl(*ctx_arg, operand_aval.dtype, operand)
   else:
     op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
+    # TODO(b/344892332): Remove the conditional after the compatibility period.
     lu, pivot, info = getrf_impl(
-        operand_aval.dtype, operand, a_shape_vals=op_shape_vals)
+        *ctx_arg, operand_aval.dtype, operand, a_shape_vals=op_shape_vals)
   # Subtract 1 from the pivot to get 0-based indices.
   pivot = hlo.subtract(pivot, mlir.full_like_aval(ctx, 1, pivot_aval))
   ok = mlir.compare_hlo(
@@ -1500,7 +1601,7 @@ def _geqrf_cpu_gpu_lowering(geqrf_impl, batched_geqrf_impl, ctx, a, *,
     a_out, taus = batched_geqrf_impl(a_aval.dtype, a)
   else:
     if platform in ["cuda", "rocm"]:
-      a_out, taus, info_geqrf = geqrf_impl(a_aval.dtype, a)  # type: ignore
+      a_out, taus, info_geqrf = geqrf_impl(a_aval.dtype, a)
     else:
       a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, a_aval.shape)
       a_out, taus, info_geqrf = geqrf_impl(a_aval.dtype, a,
@@ -1614,7 +1715,7 @@ def _householder_product_cpu_gpu_lowering(orgqr_impl, ctx, a, taus, *,
       raise NotImplementedError(
           "Shape polymorphism for native serialization for householder_product "
           f"on GPU is not implemented; b/261671778; {a_aval.shape}")
-    a, info_orgqr = orgqr_impl(a_aval.dtype, a, taus)  # type: ignore
+    a, info_orgqr = orgqr_impl(a_aval.dtype, a, taus)
   else:
     a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, a_aval.shape)
     tau_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, taus_aval.shape)

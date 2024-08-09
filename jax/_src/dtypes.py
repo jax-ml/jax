@@ -31,7 +31,7 @@ import ml_dtypes
 import numpy as np
 
 from jax._src import config
-from jax._src.typing import DType, DTypeLike
+from jax._src.typing import Array, DType, DTypeLike
 from jax._src.util import set_module, StrictABC
 
 from jax._src import traceback_util
@@ -135,17 +135,30 @@ _float8_dtypes = [
     _float8_e5m2fnuz_dtype,
 ]
 
+# 2-bit integer support
+int2: type[np.generic] | None = None
+uint2: type[np.generic] | None = None
+
+_int2_dtype: np.dtype | None = None
+_uint2_dtype: np.dtype | None = None
+
+_intn_dtypes = []
+
+# Remove the condition once the minimum ml_dtypes version required by JAX
+# contains https://github.com/jax-ml/ml_dtypes/pull/154.
+if hasattr(ml_dtypes, 'int2'):
+  int2 = ml_dtypes.int2
+  uint2 = ml_dtypes.uint2
+  _int2_dtype = np.dtype(int2)
+  _uint2_dtype = np.dtype(uint2)
+  _intn_dtypes.extend([_int2_dtype, _uint2_dtype])
+
 # 4-bit integer support
 int4: type[np.generic] = ml_dtypes.int4
 uint4: type[np.generic] = ml_dtypes.uint4
-
-_int4_dtype: np.dtype = np.dtype(int4)
-_uint4_dtype: np.dtype = np.dtype(uint4)
-
-_int4_dtypes = [
-    _int4_dtype,
-    _uint4_dtype,
-]
+_int4_dtype = np.dtype(int4)
+_uint4_dtype = np.dtype(uint4)
+_intn_dtypes.extend([_int4_dtype, _uint4_dtype])
 
 # Default types.
 bool_ = np.bool_
@@ -255,7 +268,7 @@ def scalar_type_of(x: Any) -> type:
   typ = dtype(x)
   if typ in _custom_float_dtypes:
     return float
-  elif typ in _int4_dtypes:
+  elif typ in _intn_dtypes:
     return int
   elif np.issubdtype(typ, np.bool_):
     return bool
@@ -326,7 +339,8 @@ def _issubclass(a: Any, b: Any) -> bool:
 
 # TODO(jakevdp): consider whether to disallow None here. We allow it
 # because np.issubdtype allows it (and treats it as equivalent to float64).
-def issubdtype(a: DTypeLike | None, b: DTypeLike | None) -> bool:
+def issubdtype(a: DTypeLike | ExtendedDType | None,
+               b: DTypeLike | ExtendedDType | None) -> bool:
   """Returns True if first argument is a typecode lower/equal in type hierarchy.
 
   This is like :func:`numpy.issubdtype`, but can handle dtype extensions such as
@@ -375,9 +389,9 @@ def _issubdtype_cached(a: type | np.dtype | ExtendedDType,
   # to the normal scalar type hierarchy.
   if a_sctype in _custom_float_scalar_types:
     return b_sctype in {a_sctype, np.floating, np.inexact, np.number, np.generic}
-  if a_sctype == int4:
+  if (int2 is not None and a_sctype == int2) or a_sctype == int4:
     return b_sctype in {a_sctype, np.signedinteger, np.integer, np.number, np.generic}
-  if a_sctype == uint4:
+  if (uint2 is not None and a_sctype == uint2) or a_sctype == uint4:
     return b_sctype in {a_sctype, np.unsignedinteger, np.integer, np.number, np.generic}
 
   # Otherwise, fall back to numpy.issubdtype
@@ -407,6 +421,11 @@ _signed_types = [
     np.dtype('int32'),
     np.dtype('int64'),
 ]
+
+if _int2_dtype is not None:
+  _signed_types.insert(0, _int2_dtype)
+if _uint2_dtype is not None:
+  _unsigned_types.insert(0, _uint2_dtype)
 
 _int_types = _unsigned_types + _signed_types
 
@@ -500,7 +519,11 @@ def _type_promotion_lattice(jax_numpy_dtype_promotion: str) -> dict[JAXType, lis
   This DAG maps each type to its immediately higher type on the lattice.
   """
   b1, = _bool_types
-  _uint4, u1, u2, u4, u8, _int4, i1, i2, i4, i8 = _int_types
+  if _int2_dtype is not None:
+    assert _uint2_dtype is not None
+    _uint2, uint4, u1, u2, u4, u8, _int2, int4, i1, i2, i4, i8 = _int_types
+  else:
+    uint4, u1, u2, u4, u8, int4, i1, i2, i4, i8 = _int_types
   *f1_types, bf, f2, f4, f8 = _float_types
   c4, c8 = _complex_types
   i_, f_, c_ = _weak_types
@@ -508,18 +531,19 @@ def _type_promotion_lattice(jax_numpy_dtype_promotion: str) -> dict[JAXType, lis
     out: dict[JAXType, list[JAXType]]
     out = {
       b1: [i_],
-      u1: [i2, u2], u2: [i4, u4], u4: [i8, u8], u8: [f_],
-      i_: [u1, i1], i1: [i2], i2: [i4], i4: [i8], i8: [f_],
+      i_: [u1, uint4, i1, int4],
+      uint4: [], u1: [i2, u2], u2: [i4, u4], u4: [i8, u8], u8: [f_],
+      int4: [], i1: [i2], i2: [i4], i4: [i8], i8: [f_],
       f_: [*f1_types, bf, f2, c_],
       **{t: [] for t in f1_types}, bf: [f4], f2: [f4], f4: [f8, c4], f8: [c8],
       c_: [c4], c4: [c8], c8: [],
     }
-    if _int4_dtype is not None:
-      out[i_].append(_int4_dtype)
-      out[_int4_dtype] = []
-    if _uint4_dtype is not None:
-      out[i_].append(_uint4_dtype)
-      out[_uint4_dtype] = []
+    if _int2_dtype is not None:
+      out[i_].append(_int2_dtype)
+      out[_int2_dtype] = []
+    if _uint2_dtype is not None:
+      out[i_].append(_uint2_dtype)
+      out[_uint2_dtype] = []
     return out
   elif jax_numpy_dtype_promotion == 'strict':
     return {
@@ -603,12 +627,12 @@ def _least_upper_bound(jax_numpy_dtype_promotion: str, *nodes: JAXType) -> JAXTy
         "promotion path. To avoid unintended promotion, 8-bit floats do not support "
         "implicit promotion. If you'd like your inputs to be promoted to another type, "
         "you can do so explicitly using e.g. x.astype('float32')")
-    elif any(n in _int4_dtypes for n in nodes):
+    elif any(n in _intn_dtypes for n in nodes):
       msg = (
         f"Input dtypes {tuple(str(n) for n in nodes)} have no available implicit dtype "
-        "promotion path. To avoid unintended promotion, 4-bit integers do not support "
-        "implicit promotion. If you'd like your inputs to be promoted to another type, "
-        "you can do so explicitly using e.g. x.astype('int32')")
+        "promotion path. To avoid unintended promotion, 2-bit and 4-bit integers do not "
+        "support implicit promotion. If you'd like your inputs to be promoted to another "
+        "type, you can do so explicitly using e.g. x.astype('int32')")
     else:
       msg = (
         f"Input dtypes {tuple(str(n) for n in nodes)} have no available implicit dtype "
@@ -741,25 +765,37 @@ def result_type(*args: Any, return_weak_type_flag: bool = False) -> DType | tupl
   return (dtype, weak_type) if return_weak_type_flag else dtype  # type: ignore[return-value]
 
 def check_user_dtype_supported(dtype, fun_name=None):
+  if isinstance(dtype, Array):
+    # Deprecation warning added 2024 June 13.
+    warnings.warn("Passing an array as a dtype argument is deprecated; "
+                  "instead of dtype=arr use dtype=arr.dtype.",
+                  category=DeprecationWarning, stacklevel=3)
+    return  # no further check needed, as array dtypes have already been validated.
   if issubdtype(dtype, extended):
     return
   # Avoid using `dtype in [...]` because of numpy dtype equality overloading.
   if isinstance(dtype, type) and dtype in {bool, int, float, builtins.complex}:
     return
   np_dtype = np.dtype(dtype)
-  is_custom_dtype = np_dtype.type in [*_custom_float_scalar_types, int4, uint4]
+  is_custom_dtype = np_dtype.type in [
+      *_custom_float_scalar_types,
+      int2,
+      int4,
+      uint2,
+      uint4,
+  ]
   if np_dtype.kind not in "biufc" and not is_custom_dtype:
     msg = f"JAX only supports number and bool dtypes, got dtype {dtype}"
     msg += f" in {fun_name}" if fun_name else ""
     raise TypeError(msg)
-  if dtype is not None and np_dtype != canonicalize_dtype(dtype):
+  if dtype is not None and np_dtype != canonicalize_dtype(np_dtype):
     msg = ("Explicitly requested dtype {} {} is not available, "
            "and will be truncated to dtype {}. To enable more dtypes, set the "
            "jax_enable_x64 configuration option or the JAX_ENABLE_X64 shell "
            "environment variable. "
            "See https://github.com/google/jax#current-gotchas for more.")
     fun_name = f"requested in {fun_name}" if fun_name else ""
-    truncated_dtype = canonicalize_dtype(dtype).name
+    truncated_dtype = canonicalize_dtype(np_dtype).name
     warnings.warn(msg.format(dtype, fun_name, truncated_dtype), stacklevel=3)
 
 def safe_to_cast(input_dtype_or_value: Any,

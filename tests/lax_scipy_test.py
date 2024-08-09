@@ -20,9 +20,9 @@ import unittest
 from absl.testing import absltest
 
 import numpy as np
+import scipy.cluster as osp_cluster
 import scipy.integrate
 import scipy.special as osp_special
-import scipy.cluster as osp_cluster
 
 import jax
 import jax.dtypes
@@ -202,6 +202,14 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     y_actual = lsp_special.logsumexp(x, where=mask)
     self.assertAllClose(y_expected, y_actual, check_dtypes=False)
 
+  def testLogSumExpZerosJac(self):
+    # Regression test for https://github.com/google/jax/issues/22398
+    fun = lambda b: lsp_special.logsumexp(jnp.zeros(2), axis=0, b=b)
+    np.testing.assert_array_equal(
+        jax.jacfwd(fun)(jnp.array([1.0, 0.0])),
+        jnp.ones(2),
+    )
+
   @jtu.sample_product(
     shape=all_shapes,
     dtype=float_dtypes,
@@ -339,8 +347,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     def scipy_fun(z, m=l_max, n=l_max):
       # scipy only supports scalar inputs for z, so we must loop here.
-      vals, derivs = zip(*(osp_special.lpmn(m, n, zi) for zi in z))
-      return np.dstack(vals), np.dstack(derivs)
+      vals, derivs = zip(*(osp_special.lpmn(m, n, zi) for zi in z.astype('float64')))
+      return np.dstack(vals).astype(z.dtype), np.dstack(derivs).astype(z.dtype)
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker, rtol=1e-5,
                             atol=3e-3, check_dtypes=False)
@@ -360,7 +368,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
 
     def scipy_fun(z, m=l_max, n=l_max):
       # scipy only supports scalar inputs for z, so we must loop here.
-      vals, _ = zip(*(osp_special.lpmn(m, n, zi) for zi in z))
+      vals, _ = zip(*(osp_special.lpmn(m, n, zi) for zi in z.astype('float64')))
       a = np.dstack(vals)
 
       # apply the normalization
@@ -372,7 +380,7 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
           c1 = (4.0 * np.pi) * osp_special.factorial(l + m)
           c2 = np.sqrt(c0 / c1)
           a_normalized[m, l] = c2 * a[m, l]
-      return a_normalized
+      return a_normalized.astype(z.dtype)
 
     self._CheckAgainstNumpy(scipy_fun, lax_fun, args_maker,
                             rtol=1e-5, atol=1e-5, check_dtypes=False)
@@ -518,6 +526,8 @@ class LaxBackedScipyTests(jtu.JaxTestCase):
     tol = 650 * float(jnp.finfo(matrix.dtype).eps)
     eye_mat = np.eye(should_be_eye.shape[0], dtype=should_be_eye.dtype)
     with self.subTest('Test unitarity.'):
+      if jtu.test_device_matches(["cpu"]):
+        tol = max(tol, 1e-8)
       self.assertAllClose(
         eye_mat, should_be_eye, atol=tol * 1000 * min(shape))
 

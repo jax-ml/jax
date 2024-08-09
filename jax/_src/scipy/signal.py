@@ -14,11 +14,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import partial
 import math
 import operator
-from typing import Callable
+from typing import Any
 import warnings
 
 import numpy as np
@@ -188,7 +188,7 @@ def convolve(in1: Array, in2: Array, mode: str = 'full', method: str = 'auto',
              precision: PrecisionLike = None) -> Array:
   """Convolution of two N-dimensional arrays.
 
-  JAX implementation of :func:`jax.scipy.signal.convolve`.
+  JAX implementation of :func:`scipy.signal.convolve`.
 
   Args:
     in1: left-hand input to the convolution.
@@ -253,7 +253,7 @@ def convolve2d(in1: Array, in2: Array, mode: str = 'full', boundary: str = 'fill
                fillvalue: float = 0, precision: PrecisionLike = None) -> Array:
   """Convolution of two 2-dimensional arrays.
 
-  JAX implementation of :func:`jax.scipy.signal.convolve2d`.
+  JAX implementation of :func:`scipy.signal.convolve2d`.
 
   Args:
     in1: left-hand input to the convolution. Must have ``in1.ndim == 2``.
@@ -284,6 +284,37 @@ def convolve2d(in1: Array, in2: Array, mode: str = 'full', boundary: str = 'fill
     - :func:`jax.numpy.convolve`: 1D convolution
     - :func:`jax.scipy.signal.convolve`: ND convolution
     - :func:`jax.scipy.signal.correlate`: ND correlation
+
+  Examples:
+    A few 2D convolution examples:
+
+    >>> x = jnp.array([[1, 2],
+    ...                [3, 4]])
+    >>> y = jnp.array([[2, 1, 1],
+    ...                [4, 3, 4],
+    ...                [1, 3, 2]])
+
+    Full 2D convolution uses implicit zero-padding at the edges:
+
+    >>> jax.scipy.signal.convolve2d(x, y, mode='full')
+    Array([[ 2.,  5.,  3.,  2.],
+           [10., 22., 17., 12.],
+           [13., 30., 32., 20.],
+           [ 3., 13., 18.,  8.]], dtype=float32)
+
+    Specifying ``mode = 'same'`` returns a centered 2D convolution of the same size
+    as the first input:
+
+    >>> jax.scipy.signal.convolve2d(x, y, mode='same')
+    Array([[22., 17.],
+           [30., 32.]], dtype=float32)
+
+    Specifying ``mode = 'valid'`` returns only the portion of 2D convolution
+    where the two arrays fully overlap:
+
+    >>> jax.scipy.signal.convolve2d(x, y, mode='valid')
+    Array([[22., 17.],
+           [30., 32.]], dtype=float32)
   """
   if boundary != 'fill' or fillvalue != 0:
     raise NotImplementedError("convolve2d() only supports boundary='fill', fillvalue=0")
@@ -296,7 +327,7 @@ def correlate(in1: Array, in2: Array, mode: str = 'full', method: str = 'auto',
               precision: PrecisionLike = None) -> Array:
   """Cross-correlation of two N-dimensional arrays.
 
-  JAX implementation of :func:`jax.scipy.signal.correlate`.
+  JAX implementation of :func:`scipy.signal.correlate`.
 
   Args:
     in1: left-hand input to the cross-correlation.
@@ -325,6 +356,29 @@ def correlate(in1: Array, in2: Array, mode: str = 'full', method: str = 'auto',
     - :func:`jax.numpy.correlate`: 1D cross-correlation
     - :func:`jax.scipy.signal.correlate2d`: 2D cross-correlation
     - :func:`jax.scipy.signal.convolve`: ND convolution
+
+  Examples:
+    A few 1D correlation examples:
+
+    >>> x = jnp.array([1, 2, 3, 2, 1])
+    >>> y = jnp.array([1, 3, 2])
+
+    Full 1D correlation uses implicit zero-padding at the edges:
+
+    >>> jax.scipy.signal.correlate(x, y, mode='full')
+    Array([ 2.,  7., 13., 15., 11.,  5.,  1.], dtype=float32)
+
+    Specifying ``mode = 'same'`` returns a centered 1D correlation of the same
+    size as the first input:
+
+    >>> jax.scipy.signal.correlate(x, y, mode='same')
+    Array([ 7., 13., 15., 11.,  5.], dtype=float32)
+
+    Specifying ``mode = 'valid'`` returns only the portion of 1D correlation
+    where the two arrays fully overlap:
+
+    >>> jax.scipy.signal.correlate(x, y, mode='valid')
+    Array([13., 15., 11.], dtype=float32)
   """
   return convolve(in1, jnp.flip(in2.conj()), mode, precision=precision, method=method)
 
@@ -333,7 +387,7 @@ def correlate2d(in1: Array, in2: Array, mode: str = 'full', boundary: str = 'fil
                 fillvalue: float = 0, precision: PrecisionLike = None) -> Array:
   """Cross-correlation of two 2-dimensional arrays.
 
-  JAX implementation of :func:`jax.scipy.signal.correlate2d`.
+  JAX implementation of :func:`scipy.signal.correlate2d`.
 
   Args:
     in1: left-hand input to the cross-correlation. Must have ``in1.ndim == 2``.
@@ -364,6 +418,38 @@ def correlate2d(in1: Array, in2: Array, mode: str = 'full', boundary: str = 'fil
     - :func:`jax.numpy.correlate`: 1D cross-correlation
     - :func:`jax.scipy.signal.correlate`: ND cross-correlation
     - :func:`jax.scipy.signal.convolve`: ND convolution
+
+  Examples:
+    A few 2D correlation examples:
+
+    >>> x = jnp.array([[2, 1, 3],
+    ...                [1, 3, 1],
+    ...                [4, 1, 2]])
+    >>> y = jnp.array([[1, 3],
+    ...                [4, 2]])
+
+    Full 2D correlation uses implicit zero-padding at the edges:
+
+    >>> jax.scipy.signal.correlate2d(x, y, mode='full')
+    Array([[ 4., 10., 10., 12.],
+           [ 8., 15., 24.,  7.],
+           [11., 28., 14.,  9.],
+           [12.,  7.,  7.,  2.]], dtype=float32)
+
+    Specifying ``mode = 'same'`` returns a centered 2D correlation of the same
+    size as the first input:
+
+    >>> jax.scipy.signal.correlate2d(x, y, mode='same')
+    Array([[15., 24.,  7.],
+           [28., 14.,  9.],
+           [ 7.,  7.,  2.]], dtype=float32)
+
+    Specifying ``mode = 'valid'`` returns only the portion of 2D correlation
+    where the two arrays fully overlap:
+
+    >>> jax.scipy.signal.correlate2d(x, y, mode='valid')
+    Array([[15., 24.],
+           [28., 14.]], dtype=float32)
   """
   if boundary != 'fill' or fillvalue != 0:
     raise NotImplementedError("correlate2d() only supports boundary='fill', fillvalue=0")
@@ -415,7 +501,7 @@ def detrend(data: ArrayLike, axis: int = -1, type: str = 'linear', bp: int = 0,
   Returns:
     The detrended data array.
 
-  Example:
+  Examples:
     A simple detrend operation in one dimension:
 
     >>> data = jnp.array([1., 4., 8., 8., 9.])
@@ -602,7 +688,7 @@ def _spectral_helper(x: Array, y: ArrayLike | None, fs: ArrayLike = 1.0,
   if nperseg is not None:  # if specified by user
     nperseg_int = jax.core.concrete_or_error(int, nperseg,
                                              "nperseg of windowed-FFT")
-    if nperseg_int < 1:  # type: ignore[operator]
+    if nperseg_int < 1:
       raise ValueError('nperseg must be a positive integer')
   # parse window; if array like, then set nperseg = win.shape
   win, nperseg_int = signal_helper._triage_segments(
@@ -610,7 +696,7 @@ def _spectral_helper(x: Array, y: ArrayLike | None, fs: ArrayLike = 1.0,
       input_length=x.shape[axis], dtype=x.dtype)
 
   if noverlap is None:
-    noverlap_int = nperseg_int // 2  # type: ignore[operator]
+    noverlap_int = nperseg_int // 2
   else:
     noverlap_int = jax.core.concrete_or_error(int, noverlap,
                                               "noverlap of windowed-FFT")
@@ -627,7 +713,7 @@ def _spectral_helper(x: Array, y: ArrayLike | None, fs: ArrayLike = 1.0,
       return jnp.zeros(x.shape, freq_dtype), jnp.zeros(x.shape, freq_dtype), jnp.zeros(x.shape, result_dtype)
   else:
     if x.size == 0 or y_arr.size == 0:
-      shape = tuple_insert(outershape, min([x.shape[axis], y_arr.shape[axis]]), axis)
+      shape = tuple_insert(outershape, min(x.shape[axis], y_arr.shape[axis]), axis)
       return jnp.zeros(shape, freq_dtype), jnp.zeros(shape, freq_dtype), jnp.zeros(shape, result_dtype)
 
   # Move time-axis to the end
@@ -668,19 +754,23 @@ def _spectral_helper(x: Array, y: ArrayLike | None, fs: ArrayLike = 1.0,
       y_arr = jnp.concatenate((y_arr, jnp.zeros_like(x, shape=(*y_arr.shape[:-1], nadd))), axis=-1)
 
   # Handle detrending and window functions
-  if not detrend_type:
-    detrend_func = lambda d: d
-  elif not callable(detrend_type):
+  detrend_func: Any
+  if isinstance(detrend_type, str):
     detrend_func = partial(detrend, type=detrend_type, axis=-1)
-  elif axis != -1:
-    # Wrap this function so that it receives a shape that it could
-    # reasonably expect to receive.
-    def detrend_func(d):
-      d = jnp.moveaxis(d, axis, -1)
-      d = detrend_type(d)
-      return jnp.moveaxis(d, -1, axis)
+  elif callable(detrend_type):
+    if axis != -1:
+      # Wrap this function so that it receives a shape that it could
+      # reasonably expect to receive.
+      def detrend_func(d):
+        d = jnp.moveaxis(d, axis, -1)
+        d = detrend_type(d)
+        return jnp.moveaxis(d, -1, axis)
+    else:
+      detrend_func = detrend_type
+  elif not detrend_type:
+    detrend_func = lambda d: d
   else:
-    detrend_func = detrend_type
+    raise ValueError(f'Unsupported detrend type: {detrend_type}')
 
   # Determine scale
   if scaling == 'density':
@@ -996,7 +1086,7 @@ def istft(Zxx: Array, fs: ArrayLike = 1.0, window: str = 'hann',
   See Also:
     :func:`jax.scipy.signal.stft`: short-time Fourier transform.
 
-  Example:
+  Examples:
     Demonstrate that this gives the inverse of :func:`~jax.scipy.signal.stft`:
 
     >>> x = jnp.array([1., 2., 3., 2., 1., 0., 1., 2.])

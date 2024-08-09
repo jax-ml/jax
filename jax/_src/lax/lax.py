@@ -15,14 +15,14 @@
 from __future__ import annotations
 
 import builtins
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import enum
 import functools
 from functools import partial
 import itertools
 import math
 import operator
-from typing import Any, Callable, ClassVar, TypeVar, Union, cast as type_cast, overload, TYPE_CHECKING
+from typing import Any, ClassVar, TypeVar, Union, cast as type_cast, overload, TYPE_CHECKING
 import warnings
 
 import numpy as np
@@ -59,15 +59,14 @@ from jax._src.interpreters.batching import RaggedAxis
 from jax._src.lax import slicing
 from jax._src.lax.utils import (
   _input_dtype, dtype_to_string, standard_abstract_eval,
-  standard_multi_result_abstract_eval, standard_named_shape_rule,
-  standard_primitive)
+  standard_multi_result_abstract_eval, standard_primitive)
 from jax._src import xla_bridge
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.sharding_impls import PmapSharding
-from jax._src.typing import Array, ArrayLike, DuckTypedArray, DTypeLike, Shape
+from jax._src.typing import Array, ArrayLike, DimSize, DuckTypedArray, DTypeLike, Shape
 from jax._src.util import (cache, safe_zip, safe_map, canonicalize_axis,
                            split_list, NumpyComplexWarning)
 
@@ -85,9 +84,10 @@ T = TypeVar("T")
 map, unsafe_map = safe_map, map
 zip, unsafe_zip = safe_zip, zip
 
-def _clip_int_to_valid_range(val: int, dtype) -> int:
+def _clip_int_to_valid_range(val: DimSize, dtype, where: str) -> int:
   info = np.iinfo(dtype)
-  return builtins.max(info.min, builtins.min(int(val), info.max))
+  val = core.concrete_dim_or_error(val, where)
+  return core.max_dim(info.min, core.min_dim(val, info.max))
 
 def _validate_shapes(shapes: Sequence[Shape]):
   def _check_static_shape(shape: Shape):
@@ -499,7 +499,8 @@ def lt(x: ArrayLike, y: ArrayLike) -> Array:
   r"""Elementwise less-than: :math:`x < y`."""
   return lt_p.bind(x, y)
 
-def convert_element_type(operand: ArrayLike, new_dtype: DTypeLike) -> Array:
+def convert_element_type(operand: ArrayLike,
+                         new_dtype: DTypeLike | dtypes.ExtendedDType) -> Array:
   """Elementwise cast.
 
   Wraps XLA's `ConvertElementType
@@ -508,7 +509,7 @@ def convert_element_type(operand: ArrayLike, new_dtype: DTypeLike) -> Array:
   Similar to a C++ `static_cast`.
 
   Args:
-    operand: an array or scalar value to be cast
+    operand: an array or scalar value to be cast.
     new_dtype: a NumPy dtype representing the target type.
 
   Returns:
@@ -516,15 +517,21 @@ def convert_element_type(operand: ArrayLike, new_dtype: DTypeLike) -> Array:
   """
   return _convert_element_type(operand, new_dtype, weak_type=False)
 
-def _convert_element_type(operand: ArrayLike, new_dtype: DTypeLike | None = None,
-                          weak_type: bool = False):
+def _convert_element_type(
+    operand: ArrayLike,
+    new_dtype: DTypeLike | dtypes.ExtendedDType | None = None,
+    weak_type: bool = False,
+    sharding: Sharding | None = None):
   if hasattr(operand, '__jax_array__'):
-    operand = operand.__jax_array__()  # type: ignore
+    operand = operand.__jax_array__()
 
   if (dtypes.issubdtype(new_dtype, dtypes.extended) or
       dtypes.issubdtype(getattr(operand, 'dtype', None), dtypes.extended)):
-    return convert_element_type_p.bind(operand, new_dtype=new_dtype,
-                                       weak_type=bool(weak_type))
+    return convert_element_type_p.bind(
+        operand, new_dtype=new_dtype, weak_type=bool(weak_type),
+        sharding=sharding)
+
+  new_dtype = type_cast(DTypeLike | None, new_dtype)
 
   # Don't canonicalize old_dtype because x64 context might cause
   # un-canonicalized operands to be passed in.
@@ -553,11 +560,13 @@ def _convert_element_type(operand: ArrayLike, new_dtype: DTypeLike | None = None
   if ((old_dtype, old_weak_type) == (new_dtype, weak_type) and
       isinstance(operand, Array) and
       not (isinstance(operand, core.Tracer) and
-           isinstance(core.get_aval(operand), core.ConcreteArray))):
-    return type_cast(Array, operand)
+           isinstance(core.get_aval(operand), core.ConcreteArray)) and
+      (sharding is None or getattr(operand, 'sharding', None) == sharding)):
+    return operand
   else:
-    return convert_element_type_p.bind(operand, new_dtype=new_dtype,
-                                       weak_type=bool(weak_type))
+    return convert_element_type_p.bind(
+        operand, new_dtype=new_dtype, weak_type=bool(weak_type),
+        sharding=sharding)
 
 def bitcast_convert_type(operand: ArrayLike, new_dtype: DTypeLike) -> Array:
   """Elementwise bitcast.
@@ -619,7 +628,7 @@ def concatenate(operands: Array | Sequence[ArrayLike], dimension: int) -> Array:
   if len(operands) == 1:
     op, = operands
     if isinstance(op, Array):
-      return type_cast(Array, op)
+      return op
   return concatenate_p.bind(*operands, dimension=dimension)
 
 
@@ -648,22 +657,26 @@ if TYPE_CHECKING:
 else:
 
   class Precision(enum.Enum):
-    """Precision enum for lax functions
+    """Precision enum for lax matrix multiply related functions.
 
-    The `precision` argument to JAX functions generally controls the tradeoff
-    between speed and accuracy for array computations on accelerator backends,
-    (i.e. TPU and GPU). Members are:
+    The device-dependent `precision` argument to JAX functions generally
+    controls the tradeoff between speed and accuracy for array computations on
+    accelerator backends, (i.e. TPU and GPU). Has no impact on CPU backends.
+    This only has an effect on float32 computations, and does not affect the
+    input/output datatypes. Members are:
 
     DEFAULT:
-      Fastest mode, but least accurate. Performs computations in bfloat16.
-      Aliases: ``'default'``, ``'fastest'``, ``'bfloat16'``.
+      Fastest mode, but least accurate. On TPU: performs float32 computations in
+      bfloat16. On GPU: uses tensorfloat32 if available (e.g. on A100 and H100
+      GPUs), otherwise standard float32 (e.g. on V100 GPUs). Aliases:
+      ``'default'``, ``'fastest'``.
     HIGH:
-      Slower but more accurate. Performs float32 computations in 3 bfloat16
-      passes, or using tensorfloat32 where available. Aliases: ``'high'``,
-      ``'bfloat16_3x'``, ``'tensorfloat32'``.
+      Slower but more accurate. On TPU: performs float32 computations in 3
+      bfloat16 passes. On GPU: uses tensorfloat32 where available, otherwise
+      float32. Aliases: ``'high'``..
     HIGHEST:
-      Slowest but most accurate. Performs computations in float32 or float64
-      as applicable. Aliases: ``'highest'``, ``'float32'``.
+      Slowest but most accurate. On TPU: performs float32 computations in 6
+      bfloat16. Aliases: ``'highest'``. On GPU: uses float32.
     """
 
     DEFAULT = 0
@@ -784,6 +797,33 @@ def dot_general(lhs: ArrayLike, rhs: ArrayLike, dimension_numbers: DotDimensionN
                             precision=canonicalize_precision(precision),
                             preferred_element_type=preferred_element_type)
 
+
+def ragged_dot(
+    lhs: Array,
+    rhs: Array,
+    group_sizes: Array,
+    precision: PrecisionLike = None,
+    preferred_element_type: DTypeLike | None = None,
+    group_offset: Array | None = None,
+    ) -> Array:
+  """Ragged matrix multiplication.
+
+  Args:
+    lhs: (m, k) shaped array.
+    rhs: (g, k, n) shaped array.
+    group_sizes: (g,) shaped array with integer element type, where g denotes   number of groups. The ith element indicates the size of ith group.
+    precision: Optional. Consistent with precision argument for :func:`jax.lax.dot`.
+    preferred_element_type: Optional. Consistent with precision argument for :func:`jax.lax.dot`.
+    group_offset: Optional. (1,) shaped array that indicates the group in group_sizes to start computing from. If not specified, defaults to [0].
+
+  Results:
+    (m, n) shaped array with preferred_element_type element type.
+  """
+  return ragged_dot_p.bind(lhs, rhs, group_sizes,
+                            precision=canonicalize_precision(precision),
+                            preferred_element_type=preferred_element_type, group_offset=group_offset)
+
+
 def broadcast(operand: ArrayLike, sizes: Sequence[int]) -> Array:
   """Broadcasts an array, adding new leading dimensions
 
@@ -798,6 +838,8 @@ def broadcast(operand: ArrayLike, sizes: Sequence[int]) -> Array:
   See Also:
     jax.lax.broadcast_in_dim : add new dimensions at any location in the array shape.
   """
+  if len(sizes) == 0:
+    return asarray(operand)
   dims = tuple(range(len(sizes), len(sizes) + np.ndim(operand)))
   return broadcast_in_dim(operand, tuple(sizes) + np.shape(operand), dims)
 
@@ -821,7 +863,7 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
     jax.lax.broadcast : simpler interface to add new leading dimensions.
   """
   if np.ndim(operand) == len(shape) and not len(broadcast_dimensions) and isinstance(operand, Array):
-    return type_cast(Array, operand)
+    return operand
   if config.dynamic_shapes.value:
     # We must gate this behavior under a flag because otherwise the errors
     # raised are different (and have worse source provenance information).
@@ -832,9 +874,12 @@ def broadcast_in_dim(operand: ArrayLike, shape: Shape,
       operand, *dyn_shape, shape=tuple(static_shape),
       broadcast_dimensions=tuple(broadcast_dimensions))
 
-def broadcast_to_rank(x: Array, rank: int) -> Array:
+def broadcast_to_rank(x: ArrayLike, rank: int) -> Array:
   """Adds leading dimensions of ``1`` to give ``x`` rank ``rank``."""
-  return broadcast(x, (1,) * (rank - x.ndim))
+  ndim = np.ndim(x)
+  if ndim == rank:
+    return asarray(x)
+  return broadcast(x, (1,) * (rank - ndim))
 
 def reshape(operand: ArrayLike, new_sizes: Shape,
             dimensions: Sequence[int] | None = None) -> Array:
@@ -885,7 +930,7 @@ def reshape(operand: ArrayLike, new_sizes: Shape,
     dims = api_util._ensure_index_tuple(dimensions)
     same_dims = tuple(dims) == tuple(range(np.ndim(operand)))
   if np.shape(operand) and same_shape and same_dims and isinstance(operand, Array):
-    return type_cast(Array, operand)
+    return operand
   else:
     dyn_shape, static_new_sizes = _extract_tracers_dyn_shape(new_sizes)
 
@@ -981,7 +1026,7 @@ def transpose(operand: ArrayLike,
   """
   permutation = tuple(operator.index(d) for d in permutation)
   if permutation == tuple(range(np.ndim(operand))) and isinstance(operand, Array):
-    return type_cast(Array, operand)
+    return operand
   else:
     return transpose_p.bind(operand, permutation=permutation)
 
@@ -1205,12 +1250,24 @@ def top_k(operand: ArrayLike, k: int) -> tuple[Array, Array]:
     k: integer specifying the number of top entries.
 
   Returns:
-    values: array containing the top k values along the last axis.
-    indices: array containing the indices corresponding to values.
+    A tuple ``(values, indices)`` where
+
+    - ``values`` is an array containing the top k values along the last axis.
+    - ``indices`` is an array containing the indices corresponding to values.
 
   See also:
-  - :func:`jax.lax.approx_max_k`
-  - :func:`jax.lax.approx_min_k`
+    - :func:`jax.lax.approx_max_k`
+    - :func:`jax.lax.approx_min_k`
+
+  Examples:
+    Find the largest three values, and their indices, within an array:
+
+    >>> x = jnp.array([9., 3., 6., 4., 10.])
+    >>> values, indices = jax.lax.top_k(x, 3)
+    >>> values
+    Array([10.,  9.,  6.], dtype=float32)
+    >>> indices
+    Array([4, 0, 2], dtype=int32)
   """
   if core.is_constant_dim(k):
     k = int(k)
@@ -1292,33 +1349,39 @@ def broadcasted_iota(dtype: DTypeLike, shape: Shape, dimension: int) -> Array:
   return iota_p.bind(*dynamic_shape, dtype=dtype, shape=tuple(static_shape),
                      dimension=dimension)
 
-def _eye(dtype: DTypeLike, shape: Shape, offset: int) -> Array:
+def _eye(dtype: DTypeLike, shape: Shape, offset: DimSize) -> Array:
   """Like numpy.eye, create a 2D array with ones on a diagonal."""
-  offset = _clip_int_to_valid_range(offset, np.int32)
+  offset = _clip_int_to_valid_range(offset, np.int32,
+                                    "argument `offset` of jax.numpy.eye")
   dtype = dtypes.canonicalize_dtype(dtype)
   bool_eye = eq(add(broadcasted_iota(np.int32, shape, 0), np.int32(offset)),
                 broadcasted_iota(np.int32, shape, 1))
-  return convert_element_type_p.bind(bool_eye, new_dtype=dtype, weak_type=False)
+  return convert_element_type_p.bind(bool_eye, new_dtype=dtype, weak_type=False,
+                                     sharding=None)
 
 def _delta(dtype: DTypeLike, shape: Shape, axes: Sequence[int]) -> Array:
   """This utility function exists for creating Kronecker delta arrays."""
   axes = map(int, axes)
   dtype = dtypes.canonicalize_dtype(dtype)
-  base_shape = tuple(np.take(shape, axes))  # type: ignore[arg-type]
+  base_shape = tuple(np.take(shape, axes))
   iotas = [broadcasted_iota(np.uint32, base_shape, i)
            for i in range(len(base_shape))]
   eyes = [eq(i1, i2) for i1, i2 in zip(iotas[:-1], iotas[1:])]
-  result = convert_element_type_p.bind(_reduce(operator.and_, eyes),
-                                       new_dtype=dtype, weak_type=False)
+  result = convert_element_type_p.bind(
+      _reduce(operator.and_, eyes), new_dtype=dtype, weak_type=False,
+      sharding=None)
   return broadcast_in_dim(result, shape, axes)
 
-def _tri(dtype: DTypeLike, shape: Shape, offset: int) -> Array:
+def _tri(dtype: DTypeLike, shape: Shape, offset: DimSize) -> Array:
   """Like numpy.tri, create a 2D array with ones below a diagonal."""
-  offset = _clip_int_to_valid_range(offset, np.int32)
+  offset = _clip_int_to_valid_range(offset, np.int32,
+                                    "argument `offset` of jax.numpy.tri")
   dtype = dtypes.canonicalize_dtype(dtype)
-  bool_tri = ge(add(broadcasted_iota(np.int32, shape, 0), np.int32(offset)),
+  bool_tri = ge(add(broadcasted_iota(np.int32, shape, 0),
+                    asarray(core.dimension_as_value(offset)).astype(np.int32)),
                 broadcasted_iota(np.int32, shape, 1))
-  return convert_element_type_p.bind(bool_tri, new_dtype=dtype, weak_type=False)
+  return convert_element_type_p.bind(bool_tri, new_dtype=dtype, weak_type=False,
+                                     sharding=None)
 
 def stop_gradient(x: T) -> T:
   """Stops gradient computation.
@@ -1369,7 +1432,7 @@ def squeeze(array: ArrayLike, dimensions: Sequence[int]) -> Array:
   ndim = np.ndim(array)
   dimensions = tuple(sorted(canonicalize_axis(i, ndim) for i in dimensions))
   if not dimensions and isinstance(array, Array):
-    return type_cast(Array, array)
+    return array
   return squeeze_p.bind(array, dimensions=dimensions)
 
 def expand_dims(array: ArrayLike, dimensions: Sequence[int]) -> Array:
@@ -1404,7 +1467,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
       If not specified, the output will have the same sharding as the input,
       with a few exceptions/limitations in particular:
       1. Sharding is not available during tracing, thus this will rely on jit.
-      2. If x is weakly typed or uncomitted, will use default sharding.
+      2. If x is weakly typed or uncommitted, will use default sharding.
       3. Shape is not None and is different from x.shape, default will be used.
 
   Returns:
@@ -1429,7 +1492,7 @@ def full_like(x: ArrayLike | DuckTypedArray,
       and getattr(x, '_committed', True)
       and not weak_type
       and fill_shape == np.shape(x)  # type: ignore[arg-type]
-  )  # type: ignore
+  )
   if use_x_sharding:
     # TODO(yashkatariya): Use shard_alike in tracing_mode once it is supported.
     sharding = x.sharding  # type: ignore
@@ -1567,7 +1630,7 @@ def zeros_like_array(x: ArrayLike) -> Array:
 def _add_arrays(x, y):
   if (isinstance(a := core.get_aval(x), ShapedArray) and
       dtypes.issubdtype(a.dtype, dtypes.extended)):
-    return dtype._rules.add(dtype, x, y)  # type: ignore
+    return dtype._rules.add(dtype, x, y)  # pytype: disable=attribute-error
   return add(x, y)
 
 for t in itertools.chain(
@@ -1681,21 +1744,6 @@ def naryop(result_dtype, accepted_dtypes, name, allow_extended_dtype=False,
 standard_naryop = partial(naryop, _input_dtype)
 
 
-def _broadcast_translate(op, ctx, avals_in, avals_out, *args):
-  """Variant of _standard_translate that performs explicit broadcasting.
-
-  Not all XLA library functions perform their own broadcasting."""
-  aval_out, = avals_out
-  broadcasted_args = []
-  for aval_in, arg in zip(avals_in, args):
-    if aval_out.shape != aval_in.shape:
-      bcast_dims = tuple(range(len(aval_out.shape) - len(aval_in.shape),
-                               len(aval_out.shape)))
-      arg = xops.BroadcastInDim(arg, aval_out.shape, bcast_dims)
-    broadcasted_args.append(arg)
-  return [op(*broadcasted_args)]
-
-
 # Like autograd.numpy.numpy_vjps.unbroadcast, this utility handles transposition
 # involving linear primitives with implicit broadcasting.
 def _unbroadcast(aval, x):
@@ -1733,8 +1781,8 @@ def broadcast_hlo(
   for aval, arg in zip(avals, args):
     if aval.shape != aval_out.shape:
       assert len(aval.shape) <= len(aval_out.shape), (aval, aval_out)
-      dims = mlir.dense_int_array_v6(
-          range(len(aval_out.shape) - len(aval.shape), len(aval_out.shape)))
+      dims = mlir.dense_int_array(
+          list(range(len(aval_out.shape) - len(aval.shape), len(aval_out.shape))))
       if any(isinstance(d, ir.Value) for d in aval_out.shape):
         arg = hlo.dynamic_broadcast_in_dim(
             mlir.aval_to_ir_type(aval_out), arg,
@@ -1747,7 +1795,7 @@ def broadcast_hlo(
   return out
 
 def _nary_lower_hlo(op: Callable, ctx,
-                    *args: ir.Value | Sequence[ir.Value],
+                    *args: ir.Value,
                     explicit_type=False, **params) -> Sequence[ir.Value]:
   """Lowers an elementwise operator to its MLIR equivalent.
 
@@ -2112,8 +2160,8 @@ def _pow_lower(ctx, x, y):
       partial(convert_element_type, new_dtype=out_aval.dtype), False)
   x_aval_ = x_aval.update(dtype=out_aval.dtype)
   y_aval_ = y_aval.update(dtype=out_aval.dtype)
-  [(x_,)] = convert(ctx.replace(avals_in=[x_aval], avals_out=[x_aval_]), x)
-  [(y_,)] = convert(ctx.replace(avals_in=[y_aval], avals_out=[y_aval_]), y)
+  [x_] = convert(ctx.replace(avals_in=[x_aval], avals_out=[x_aval_]), x)
+  [y_] = convert(ctx.replace(avals_in=[y_aval], avals_out=[y_aval_]), y)
   ctx_ = ctx.replace(avals_in=[x_aval_, y_aval_])
   return _nary_lower_hlo(hlo.power, ctx_, x_, y_)
 mlir.register_lowering(pow_p, _pow_lower)
@@ -2219,11 +2267,6 @@ def _add_transpose(t, x, y):
   else:
     return [_unbroadcast(x_aval, t), _unbroadcast(y_aval, t)]
 
-def _add_inverse(r, x, y):
-  xr = r - y
-  yr = r - x
-  return xr, yr
-
 # TODO(slebedev): Why does mypy fail to infer the type here?
 add_p: Primitive = standard_naryop([_num, _num], 'add')
 ad.primitive_jvps[add_p] = _add_jvp
@@ -2272,11 +2315,6 @@ def _mul_transpose(ct, x, y):
       return [None, ad_util.Zero(y.aval)]
     else:
       return [None, _unbroadcast(y.aval, mul(x, ct))]
-
-def _mul_inverse(r, x, y):
-  xr = r / y
-  yr = r / x
-  return xr, yr
 
 mul_p = standard_naryop([_num, _num], 'mul')
 ad.defjvp(mul_p,
@@ -2425,24 +2463,28 @@ ad.defjvp_zero(lt_to_p)
 mlir.register_lowering(lt_to_p, partial(_compare_lower_hlo, "LT", True))
 
 
-def _convert_element_type_shape_rule(operand, *, new_dtype, weak_type):
+def _convert_element_type_shape_rule(operand, *, new_dtype, weak_type,
+                                     sharding):
   return operand.shape
 
-def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type):
+def _convert_element_type_dtype_rule(operand, *, new_dtype, weak_type,
+                                     sharding):
   if (operand.dtype != new_dtype and
       ((dtypes.issubdtype(operand.dtype, dtypes.extended) and
-        not operand.dtype._rules.convert_from(operand.dtype, new_dtype)) or  # type: ignore
+        not operand.dtype._rules.convert_from(operand.dtype, new_dtype)) or
        (dtypes.issubdtype(new_dtype, dtypes.extended) and
-        not new_dtype._rules.convert_to(operand.dtype, new_dtype)))):  # type: ignore
+        not new_dtype._rules.convert_to(operand.dtype, new_dtype)))):
     raise ValueError(
         f"Cannot convert_element_type from {dtype_to_string(operand.dtype)} "
         f"to {dtype_to_string(new_dtype)}")
   return new_dtype
 
-def _convert_element_type_weak_type_rule(operand, *, new_dtype, weak_type):
+def _convert_element_type_weak_type_rule(operand, *, new_dtype, weak_type,
+                                         sharding):
   return weak_type
 
-def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, weak_type):
+def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, weak_type,
+                                         sharding):
   assert ad.is_undefined_primal(operand)
   old_dtype = operand.aval.dtype
   old_weak_type = dtypes.is_weakly_typed(operand)
@@ -2451,16 +2493,17 @@ def _convert_element_type_transpose_rule(ct, operand, *, new_dtype, weak_type):
   elif core.primal_dtype_to_tangent_dtype(old_dtype) == dtypes.float0:
     return [ad_util.Zero(operand.aval.update(dtype=dtypes.float0, weak_type=False))]
   else:
-    return [convert_element_type_p.bind(ct, new_dtype=old_dtype,
-                                        weak_type=old_weak_type)]
+    return [convert_element_type_p.bind(
+        ct, new_dtype=old_dtype, weak_type=old_weak_type, sharding=sharding)]
 
-def _convert_element_type_jvp_rule(tangent, operand , *, new_dtype, weak_type):
+def _convert_element_type_jvp_rule(tangent, operand , *, new_dtype, weak_type,
+                                   sharding):
   if core.primal_dtype_to_tangent_dtype(new_dtype) == dtypes.float0:
     tangent_aval = core.raise_to_shaped(core.get_aval(tangent))
     return ad_util.Zero(tangent_aval.update(dtype=dtypes.float0, weak_type=False))
   else:
     return convert_element_type_p.bind(tangent, new_dtype=new_dtype,
-                                       weak_type=weak_type)
+                                       weak_type=weak_type, sharding=sharding)
 
 def _convert_elt_type_folding_rule(consts, eqn):
   # We constant-fold convert_element_types applied to constants if those
@@ -2500,28 +2543,36 @@ def _convert_elt_type_pp_rule(eqn, context, settings):
   # don't print new_dtype because the output binder shows it, don't print
   # weak_type when false
   params = dict(eqn.params)
-  del params['new_dtype']  # output binder shows it
-  if not params['weak_type']: del params['weak_type']  # don't show trivial case
+  if params['sharding'] is None:
+    del params['sharding']  # don't show trivial case
   return core._pp_eqn(eqn.replace(params=params), context, settings)
 
 convert_element_type_p = Primitive('convert_element_type')
+def _convert_element_type_bind(operand, *, new_dtype, weak_type, sharding):
+  operand = core.Primitive.bind(convert_element_type_p, operand,
+                                new_dtype=new_dtype, weak_type=weak_type,
+                                sharding=sharding)
+  if sharding is not None:
+    operand = jax.lax.with_sharding_constraint(operand, sharding)
+  return operand
+convert_element_type_p.def_custom_bind(_convert_element_type_bind)
 convert_element_type_p.def_impl(partial(dispatch.apply_primitive, convert_element_type_p))
 convert_element_type_p.def_abstract_eval(
     partial(standard_abstract_eval, convert_element_type_p,
             _convert_element_type_shape_rule, _convert_element_type_dtype_rule,
-            _convert_element_type_weak_type_rule, standard_named_shape_rule))
+            _convert_element_type_weak_type_rule))
 ad.defjvp(convert_element_type_p, _convert_element_type_jvp_rule)
 ad.primitive_transposes[convert_element_type_p] = _convert_element_type_transpose_rule
 batching.defvectorized(convert_element_type_p)
 pe.const_fold_rules[convert_element_type_p] = _convert_elt_type_folding_rule
 pe.forwarding_rules[convert_element_type_p] = _convert_elt_type_fwd_rule
 pe.def_trivial_padding(convert_element_type_p)
-# TODO(mattjj): un-comment the next line (see #9456)
-# core.pp_eqn_rules[convert_element_type_p] = _convert_elt_type_pp_rule
+core.pp_eqn_rules[convert_element_type_p] = _convert_elt_type_pp_rule
 
 def _real_dtype(dtype): return np.finfo(dtype).dtype
 
-def _convert_element_type_lower(ctx, operand, *, new_dtype, weak_type):
+def _convert_element_type_lower(ctx, operand, *, new_dtype, weak_type,
+                                sharding):
   aval_in, = ctx.avals_in
   aval_out, = ctx.avals_out
   if (dtypes.issubdtype(aval_in.dtype, np.complexfloating) and
@@ -2736,7 +2787,7 @@ def _dot_general_transpose_lhs(g, x, y, *, dimension_numbers, precision,
   else:
     ans_batch, _, ans_y = ranges_like(x_batch, x_kept, y_kept)
   dims = ((ans_y, y_kept), (ans_batch, y_batch))
-  x_contract_sorted_by_y = list(np.take(x_contract, np.argsort(y_contract)))  # type: ignore[arg-type]
+  x_contract_sorted_by_y = list(np.take(x_contract, np.argsort(y_contract)))
   out_axes = np.argsort(list(x_batch) + x_kept + x_contract_sorted_by_y)
   x_bar = transpose(dot_general(g, y, dims, precision=precision,
                                 preferred_element_type=preferred_element_type),
@@ -2885,6 +2936,10 @@ def precision_attr(precision: Precision) -> ir.ArrayAttr:
 def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                        precision, preferred_element_type: np.dtype | None,
                        platform: str = "default"):
+  def _is_fp8_mixed_precision_matmul(_lhs_dtypes, _rhs_dtypes):
+    fp8_dtypes = (dtypes.float8_e4m3fn, dtypes.float8_e5m2,
+                  dtypes.float8_e5m2fnuz, dtypes.float8_e4m3fnuz)
+    return _lhs_dtypes in fp8_dtypes and _rhs_dtypes in fp8_dtypes
   del preferred_element_type  # Implied by the output aval
   lhs_aval, rhs_aval = ctx.avals_in
   lhs_dtype, rhs_dtype = lhs_aval.dtype, rhs_aval.dtype
@@ -2907,21 +2962,13 @@ def _dot_general_lower(ctx, lhs, rhs, *, dimension_numbers,
                                core.ShapedArray(rhs_aval.shape, aval_out.dtype))
         lhs_dtype = rhs_dtype = aval_out.dtype
     else:  # cpu and gpu
-      lhs = mlir.convert_hlo(ctx, lhs, lhs_aval,
-                             core.ShapedArray(lhs_aval.shape, aval_out.dtype))
-      rhs = mlir.convert_hlo(ctx, rhs, rhs_aval,
-                             core.ShapedArray(rhs_aval.shape, aval_out.dtype))
-      lhs_dtype = rhs_dtype = aval_out.dtype
-
-  # TODO(b/195364460): Work around slow XLA/CPU implementation of float16 matmul
-  if platform == "cpu":
-    if lhs_dtype == np.float16:
-      lhs = mlir.convert_hlo(ctx, lhs, lhs_aval,
-                             core.ShapedArray(lhs_aval.shape, np.float32))
-
-    if rhs_dtype == np.float16:
-      rhs = mlir.convert_hlo(ctx, rhs, rhs_aval,
-                             core.ShapedArray(rhs_aval.shape, np.float32))
+      # Do not convert mixed fp8 types to output type.
+      if not _is_fp8_mixed_precision_matmul(lhs_dtype, rhs_dtype):
+        lhs = mlir.convert_hlo(ctx, lhs, lhs_aval,
+                              core.ShapedArray(lhs_aval.shape, aval_out.dtype))
+        rhs = mlir.convert_hlo(ctx, rhs, rhs_aval,
+                              core.ShapedArray(rhs_aval.shape, aval_out.dtype))
+        lhs_dtype = rhs_dtype = aval_out.dtype
 
 
   dot_dnums = hlo.DotDimensionNumbers.get(
@@ -2944,6 +2991,166 @@ for platform in ["cpu", "tpu"]:
   mlir.register_lowering(dot_general_p,
                          partial(_dot_general_lower, platform=platform),
                          platform=platform)
+
+
+def _ragged_dot_shape_rule(lhs: Array, rhs: Array, group_sizes: Array, **_) -> Shape:
+  m, k = lhs.shape
+  group_count, rk, n = rhs.shape
+  if k != rk:
+    raise TypeError(f"ragged_dot requires that lhs.shape[1] == rhs.shape[1]: got {k} and {rk}.")
+  num_groups = group_sizes.shape[0]
+  if group_count != num_groups:
+    raise TypeError(f"ragged_dot requires that rhs.shape[0] == group_sizes.shape[0]: got {group_count} and {num_groups}.")
+  return (m, n)
+
+# DotDimensionNumbers used in the dot_general call for ragged_dot().
+_RAGGED_DOT_DOT_DIMENSION_NUMBERS: DotDimensionNumbers = (([2, 0], [1, 0]), ([], []))
+
+def _ragged_dot_dtype_rule(lhs: Array, rhs: Array, group_sizes: Array,
+                           precision,                          preferred_element_type: DTypeLike | None, **_) -> np.dtype:
+  if not dtypes.issubdtype(group_sizes.dtype, np.integer):
+    raise TypeError("ragged_dot requires that group_sizes.dtype is subtype of np.integer.")
+  # defer the output dtype to dot_general, which is part of the _ragged_dot_impl.
+  return _dot_general_dtype_rule(lhs, rhs, dimension_numbers=_RAGGED_DOT_DOT_DIMENSION_NUMBERS, precision=precision, preferred_element_type=preferred_element_type)
+
+
+def _ragged_dot_jvp_rule(
+    primals, tangents, precision, preferred_element_type, group_offset
+):
+  # note - we could ostensibly just get this by passing on the
+  # value to ragged_dot below, but, this feels cleaner.
+  if group_offset is not None:
+    raise NotImplementedError('Unimplemented group_offset support.')
+  x, y, gs = primals
+  dx, dy, _ = tangents  # no tan on the gs
+
+  # primal
+  primal_out = ragged_dot(
+      x,
+      y,
+      gs,
+      precision=precision,
+      preferred_element_type=preferred_element_type,
+  )
+
+  # tangent
+  dx_out = (
+      ragged_dot(
+          dx,
+          y,
+          gs,
+          precision=precision,
+          preferred_element_type=preferred_element_type,
+      )
+      if type(dx) is not ad_util.Zero
+      else jax.numpy.zeros_like(primal_out)
+  )
+  dy_out = (
+      ragged_dot(
+          x,
+          dy,
+          gs,
+          precision=precision,
+          preferred_element_type=preferred_element_type,
+      )
+      if type(dy) is not ad_util.Zero
+      else jax.numpy.zeros_like(primal_out)
+  )
+  tangent_out = dx_out + dy_out
+
+  return primal_out, tangent_out
+
+
+def _ragged_dot_transpose_rule(
+    ct, *operands, precision, preferred_element_type, group_offset
+):
+  x, y, gs = operands
+  if group_offset is not None:
+    raise NotImplementedError('Unimplemented group_offset support.')
+
+  def ragged_to_dense(x, group_sizes):
+    group_count = group_sizes.shape[0]
+    shape = (group_count, x.shape[0], x.shape[1])
+    x_broadcasted = jax.lax.broadcast_in_dim(x, shape, (1, 2))
+    iota = jax.lax.broadcasted_iota(group_sizes.dtype, shape, 1)
+    group_ends = jax.lax.cumsum(group_sizes)
+    group_starts = concatenate(
+        [
+            np.zeros_like([group_ends[0]], dtype=group_sizes.dtype),
+            group_ends[:-1],
+        ],
+        0,
+    )
+    group_ends = jax.lax.broadcast_in_dim(group_ends, shape, (0,))
+    group_starts = jax.lax.broadcast_in_dim(group_starts, shape, (0,))
+    mask = (group_starts <= iota) & (iota < group_ends)
+    return jax.numpy.where(mask, x_broadcasted, 0)
+
+  if ad.is_undefined_primal(y):
+    grad_x = None
+  else:
+    y_t = jax.numpy.matrix_transpose(y)
+    grad_x = ragged_dot(
+        ct,
+        y_t,
+        gs,
+        precision=precision,
+        preferred_element_type=preferred_element_type,
+    )
+
+  if ad.is_undefined_primal(x):
+    grad_y = None
+  else:
+    x_dense = ragged_to_dense(x, gs)
+    ct_dense = ragged_to_dense(ct, gs)
+    dimension_numbers = (([1], [1]), ([0], [0]))
+    grad_y = jax.lax.dot_general(
+        x_dense,
+        ct_dense,
+        dimension_numbers,
+        precision=precision,
+        preferred_element_type=preferred_element_type,
+    )
+
+  return grad_x, grad_y, None
+
+
+ragged_dot_p = standard_primitive(_ragged_dot_shape_rule,
+                                  _ragged_dot_dtype_rule, 'ragged_dot')
+ragged_dot_p.def_impl(partial(dispatch.apply_primitive, ragged_dot_p))
+ad.primitive_jvps[ragged_dot_p] = _ragged_dot_jvp_rule
+ad.primitive_transposes[ragged_dot_p] = _ragged_dot_transpose_rule
+
+def _ragged_dot_impl(
+    lhs: Array,
+    rhs: Array,
+    group_sizes: Array,
+    precision: PrecisionLike = None,
+    preferred_element_type: DTypeLike | None = None,
+    group_offset: Array | None = None,
+    ) -> Array:
+  if group_offset is not None:
+    raise NotImplementedError("Unimplemented group_offset support.")
+  shape = (rhs.shape[0], lhs.shape[0], lhs.shape[1])
+  lhs = broadcast_in_dim(lhs, shape, [1, 2])
+  iota = broadcasted_iota(group_sizes.dtype, shape, 1)
+  group_ends = jax.lax.cumsum(group_sizes)
+  group_starts = concatenate(
+      [_zeros(group_sizes)[:1], group_ends[:-1]], dimension=0,
+  )
+  group_ends = broadcast_in_dim(group_ends, shape, (0,))
+  group_starts = broadcast_in_dim(group_starts, shape, (0,))
+  mask = bitwise_and(group_starts <= iota, iota < group_ends)
+  lhs = select(mask, lhs, _zeros(lhs))
+  return dot_general(
+      lhs,
+      rhs,
+      dimension_numbers=_RAGGED_DOT_DOT_DIMENSION_NUMBERS,
+      precision=precision,
+      preferred_element_type=preferred_element_type,
+  )
+
+mlir.register_lowering(ragged_dot_p, mlir.lower_fun(_ragged_dot_impl, multiple_results=False))
 
 
 def _broadcast_in_dim_shape_rule(operand, *, shape, broadcast_dimensions):
@@ -3135,22 +3342,13 @@ def _broadcast_in_dim_lower(ctx, x, *dyn_shape, shape, broadcast_dimensions) -> 
   return [mlir.broadcast_in_dim(ctx, x, aval_out,
                                 broadcast_dimensions=broadcast_dimensions)]
 
-def _broadcast_in_dim_pp_rule(eqn, context, settings):
-  # Don't print shape or trivial broadcast_dimensions in params, since it can be
-  # inferred from the let-binder's type annotation.
-  printed_params = {}
-  if eqn.params['broadcast_dimensions']:
-    printed_params['broadcast_dimensions'] = eqn.params['broadcast_dimensions']
-  new_eqn = eqn.replpace(params=printed_params, invars=eqn.invars[:1])
-  return core._pp_eqn(new_eqn, context, settings)
-
 def _broadcast_in_dim_abstract_eval(x, *dyn_shape, shape, broadcast_dimensions):
   if (not dyn_shape and
       not any(isinstance(d, core.DArray) and
               type(core.get_aval(d).dtype) is core.bint for d in shape)):
     shape = _broadcast_in_dim_shape_rule(  # error checking
         x, shape=shape, broadcast_dimensions=broadcast_dimensions)
-    return core.ShapedArray(shape, x.dtype, x.weak_type, x.named_shape)
+    return core.ShapedArray(shape, x.dtype, x.weak_type)
   # If any BInts in shape, or Tracers in dyn_shape, produce a DShapedArray
   # (even if x is a ShapedArray)
   # TODO(mattjj): unify DShapedArray with ShapedArray, and remove this code
@@ -3168,8 +3366,6 @@ pe.custom_staging_rules[broadcast_in_dim_p] = _broadcast_in_dim_staging_rule
 pe.padding_rules[broadcast_in_dim_p] = _broadcast_in_dim_padding_rule
 core.custom_typechecks[broadcast_in_dim_p] = _broadcast_in_dim_typecheck_rule
 mlir.register_lowering(broadcast_in_dim_p, _broadcast_in_dim_lower)
-# TODO(mattjj): un-comment the next line
-# core.pp_eqn_rules[broadcast_in_dim_p] = _broadcast_in_dim_pp_rule
 
 
 def _clamp_shape_rule(min, operand, max):
@@ -3597,7 +3793,7 @@ def _transpose_lower(ctx, x, *, permutation):
 transpose_p = standard_primitive(_transpose_shape_rule, _input_dtype,
                                  'transpose')
 ad.deflinear2(transpose_p,
-              lambda t, _, permutation: [transpose(t, np.argsort(permutation))])  # type: ignore[arg-type]
+              lambda t, _, permutation: [transpose(t, np.argsort(permutation))])
 batching.primitive_batchers[transpose_p] = _transpose_batch_rule
 mlir.register_lowering(transpose_p, _transpose_lower)
 pe.def_trivial_padding(transpose_p)
@@ -3847,25 +4043,12 @@ def _reduce_jvp_rule(primals, tangents, *, computation, jaxpr, dimensions):
   reducer = core.jaxpr_as_fun(jaxpr)
   return _reduce_jvp(reducer, init_values, primal_xs, tangent_xs, dimensions)
 
-def _reduce_named_shape_rule(*avals, computation, jaxpr, dimensions):
-  # TODO(mattjj,frostig): see the TODOs noting limitations/assumptions in
-  # _reduce_batching_rule. We're making the same assumptions here for now.
-  num_operands = len(avals) // 2
-  operand_avals, init_avals = split_list(avals, [num_operands])
-  if any(a.named_shape for a in init_avals):
-    raise NotImplementedError
-  named_shapes = [a.named_shape for a in operand_avals]
-  join = core.join_named_shapes(*(a.named_shape for a in operand_avals))
-  return [join] * len(named_shapes)
-
-
 reduce_p = core.Primitive('reduce')
 reduce_p.multiple_results = True
 reduce_p.def_impl(partial(dispatch.apply_primitive, reduce_p))
 reduce_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, reduce_p, _reduce_shape_rule,
-            _reduce_dtype_rule, _reduce_weak_type_rule,
-            _reduce_named_shape_rule))
+            _reduce_dtype_rule, _reduce_weak_type_rule))
 batching.primitive_batchers[reduce_p] = _reduce_batch_rule
 ad.primitive_jvps[reduce_p] = _reduce_jvp_rule
 
@@ -3874,7 +4057,7 @@ def _reduce_lower(ctx, *values, computation, jaxpr, dimensions):
   operands, init_values = util.split_list(values, [len(values) // 2])
   init_value_avals = ctx.avals_in[len(values) // 2:]
   op = hlo.ReduceOp([mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
-                    operands, init_values, mlir.dense_int_array_v6(dimensions))
+                    operands, init_values, mlir.dense_int_array(dimensions))
   ir_types = [mlir.aval_to_ir_type(aval) for aval in init_value_avals]
   reducer = op.regions[0].blocks.append(*(ir_types + ir_types))
   with ir.InsertionPoint(reducer):
@@ -3884,9 +4067,9 @@ def _reduce_lower(ctx, *values, computation, jaxpr, dimensions):
     out_nodes, _ = mlir.jaxpr_subcomp(ctx.module_context, jaxpr.jaxpr,
                                       name_stack, mlir.TokenSet(),
                                       jaxpr.consts,
-                                      *([a] for a in reducer.arguments),
+                                      *reducer.arguments,
                                       dim_var_values=ctx.dim_var_values)
-    hlo.return_(util.flatten(out_nodes))
+    hlo.return_(mlir.flatten_ir_values(out_nodes))
   return op.results
 
 mlir.register_lowering(reduce_p, _reduce_lower)
@@ -3956,9 +4139,6 @@ batching.defreducer(reduce_prod_p, _get_prod_identity)
 pe.padding_rules[reduce_prod_p] = partial(_reducer_padding, _reduce_prod,
                                           _get_prod_identity)
 
-
-def _reduce_chooser_shape_rule(operand, *, axes):
-  return tuple(np.delete(operand.shape, axes))
 
 def _reduce_chooser_jvp_rule(g, ans, operand, *, axes):
   # TODO(mattjj): an alternative is to use variadic reduce to compute the chosen
@@ -4084,8 +4264,8 @@ def _unary_reduce_lower(reducer, unit_factory, ctx, x, *, axes):
   aval_out, = ctx.avals_out
   dtype = aval_out.dtype
   op = hlo.ReduceOp([mlir.aval_to_ir_type(aval_out)], [x],
-                    mlir.ir_constants(unit_factory(aval_out.dtype)),
-                    mlir.dense_int_array_v6(axes))
+                    [mlir.ir_constant(unit_factory(aval_out.dtype))],
+                    mlir.dense_int_array(axes))
   scalar_type = mlir.aval_to_ir_type(core.ShapedArray((), dtype))
   reducer_region = op.regions[0].blocks.append(scalar_type, scalar_type)
   with ir.InsertionPoint(reducer_region):
@@ -4254,7 +4434,7 @@ batching.primitive_batchers[sort_p] = _sort_batch_rule
 def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
   assert all(isinstance(x, core.ShapedArray) for x in ctx.avals_in), ctx.avals_in
   sort = hlo.SortOp([mlir.aval_to_ir_type(aval) for aval in ctx.avals_out],
-                    mlir.flatten_lowering_ir_args(operands),
+                    mlir.flatten_ir_values(operands),
                     dimension=mlir.i64_attr(dimension),
                     is_stable=ir.BoolAttr.get(is_stable))
   scalar_avals = [aval.update(shape=()) for aval in ctx.avals_in]
@@ -4268,9 +4448,8 @@ def _sort_lower(ctx, *operands, dimension, is_stable, num_keys):
                           avals_in=util.flatten(zip(scalar_avals, scalar_avals)),
                           avals_out=[core.ShapedArray((), np.bool_)])
 
-    out = lower_comparator(sub_ctx, *[[a] for a in comparator.arguments],
-                           num_keys=num_keys)
-    hlo.return_(util.flatten(out))
+    out = lower_comparator(sub_ctx, *comparator.arguments, num_keys=num_keys)
+    hlo.return_(mlir.flatten_ir_values(out))
   return sort.results
 
 mlir.register_lowering(sort_p, _sort_lower)
@@ -4448,8 +4627,8 @@ mlir.lowerable_effects.add_type(InOutFeedEffect)
 
 
 def _infeed_lowering(ctx, token, *, shapes, partitions):
-  output_types = safe_map(mlir.aval_to_ir_types, ctx.avals_out[:-1])
-  flat_output_types = util.flatten(output_types)
+  output_types = safe_map(mlir.aval_to_ir_type, ctx.avals_out[:-1])
+  flat_output_types = mlir.flatten_ir_types(output_types)
   # TODO(phawkins): verify `shapes` have a major-to-minor layout.
   layouts = ir.ArrayAttr.get([
       ir.ArrayAttr.get(
@@ -4466,9 +4645,9 @@ def _infeed_lowering(ctx, token, *, shapes, partitions):
     mlir.set_sharding(infeed, xla.sharding_to_proto(partitions))
   token = infeed.results[-1]
   outs = infeed.results[:-1]
-  return util.unflatten(outs, safe_map(len, output_types)) + [[
+  return mlir.unflatten_ir_values_like_types(outs, output_types) + [
       token,
-  ]]
+  ]
 
 mlir.register_lowering(infeed_p, _infeed_lowering)
 
@@ -4500,7 +4679,7 @@ mlir.lowerable_effects.add_type(InOutFeedEffect)
 
 def _outfeed_lowering(ctx, token, *xs, partitions):
   outfeed = hlo.OutfeedOp(
-      mlir.flatten_lowering_ir_args(xs),
+      mlir.flatten_ir_values(xs),
       token,
       outfeed_config=ir.StringAttr.get(''))
   if partitions is not None:
@@ -4542,7 +4721,7 @@ rng_uniform_p.def_abstract_eval(_rng_uniform_abstract_eval)
 
 def _rng_uniform_lowering(ctx, a, b, *, shape):
   aval_out, = ctx.avals_out
-  shape, = mlir.ir_constants(np.array(aval_out.shape, np.int64))
+  shape = mlir.ir_constant(np.array(aval_out.shape, np.int64))
   return [hlo.rng(a, b, shape, hlo.RngDistributionAttr.get('UNIFORM'))]
 
 mlir.register_lowering(rng_uniform_p, _rng_uniform_lowering)
@@ -4561,7 +4740,7 @@ def _rng_bit_generator_weak_type_rule(key, *, shape, dtype, algorithm):
   return (key.weak_type, False)
 
 RandomAlgorithm = xops.RandomAlgorithm
-RandomAlgorithm.__str__ = lambda algorithm: algorithm.name  # type: ignore[assignment]
+RandomAlgorithm.__str__ = lambda algorithm: algorithm.name  # type: ignore[method-assign]
 
 def _rng_algorithm(algorithm: RandomAlgorithm):
   if algorithm == RandomAlgorithm.RNG_THREE_FRY:
@@ -4630,9 +4809,6 @@ def _rng_bit_generator_lowering(
   return [out_key, out_vals]
 
 
-def _rng_bit_generator_named_shape_rule(key, *, shape, dtype, algorithm):
-  return [key.named_shape, key.named_shape]
-
 rng_bit_generator_p = Primitive("rng_bit_generator")
 rng_bit_generator_p.multiple_results = True
 rng_bit_generator_p.def_impl(
@@ -4640,8 +4816,7 @@ rng_bit_generator_p.def_impl(
 rng_bit_generator_p.def_abstract_eval(
     partial(standard_multi_result_abstract_eval, rng_bit_generator_p,
             _rng_bit_generator_shape_rule, _rng_bit_generator_dtype_rule,
-            _rng_bit_generator_weak_type_rule,
-            _rng_bit_generator_named_shape_rule))
+            _rng_bit_generator_weak_type_rule))
 mlir.register_lowering(rng_bit_generator_p,
                        _rng_bit_generator_lowering)
 
@@ -4700,7 +4875,9 @@ mlir.register_lowering(copy_p, lambda ctx, x: [x])
 ad.deflinear(copy_p, lambda t: [copy_p.bind(t)])
 pe.def_trivial_padding(copy_p)
 batching.defvectorized(copy_p)
-
+def _propagate_mem_kind_copy(in_mem_kind):
+  return in_mem_kind
+pxla.memory_kind_propagate_rule[copy_p] = _propagate_mem_kind_copy
 
 def rng_bit_generator(key, shape, dtype=np.uint32,
                       algorithm=RandomAlgorithm.RNG_DEFAULT):
@@ -4787,13 +4964,6 @@ def _iota_batching_rule(in_vals, in_dims, *, dtype, shape, dimension):
   iota = broadcasted_iota(dtype, shape, dimension+1)
   return iota, batching.RaggedAxis(ax, ((ragged_axis+1, segment_lengths),))
 batching.primitive_batchers[iota_p] = _iota_batching_rule
-
-def _iota_pp_rule(eqn, context, settings):
-  printed_params = {}
-  if len(eqn.params['shape']) > 1:
-    printed_params['dimension'] = eqn.params['dimension']
-  return core._pp_eqn(eqn.replace(params=printed_params), context, settings)
-# core.pp_eqn_rules[iota_p] = _iota_pp_rule
 
 def _iota_padding_rule(in_avals, out_avals, *dyn_shape, dtype, shape, dimension):
   out_aval, = out_avals
@@ -5010,7 +5180,7 @@ def remaining(original, *removed_lists):
 
 
 def canonicalize_precision(precision: PrecisionLike) -> tuple[Precision, Precision] | None:
-  """Turns an API precision specification, into a pair of enumeration values.
+  """Turns an API precision specification into a pair of enumeration values.
 
   The API can take the precision as a string, or int, and either as a single
   value to apply to both operands, or as a sequence of two values.
@@ -5019,20 +5189,19 @@ def canonicalize_precision(precision: PrecisionLike) -> tuple[Precision, Precisi
     if config.default_matmul_precision.value is None:
       return None
     try:
-      return type_cast(
-          tuple[Precision, Precision],
-          (Precision(config.default_matmul_precision.value),
-           Precision(config.default_matmul_precision.value)))
+      return (
+          Precision(config.default_matmul_precision.value),
+          Precision(config.default_matmul_precision.value),
+      )
     except TypeError:
       raise ValueError(
           "jax_default_matmul_precision flag must be set to None or a value in "
           f"{list(_precision_strings)}, but got {config.default_matmul_precision.value}"
       ) from None
   elif isinstance(precision, str) and precision in _precision_strings:
-    return type_cast(tuple[Precision, Precision],
-                     (Precision(precision), Precision(precision)))
+    return Precision(precision), Precision(precision)
   elif isinstance(precision, Precision):
-    return type_cast(tuple[Precision, Precision], (precision, precision))
+    return precision, precision
   elif (isinstance(precision, (list, tuple)) and len(precision) == 2 and
         all(isinstance(p, Precision) for p in precision)):
     return type_cast(tuple[Precision, Precision], precision)
@@ -5075,7 +5244,7 @@ empty_p.def_abstract_eval(lambda *, dtype: core.ShapedArray((), dtype))
 def _empty_lower(ctx, *, dtype):
   dtype = dtype if dtypes.issubdtype(dtype, dtypes.extended) else np.dtype(dtype)
   phys_aval = core.physical_aval(core.ShapedArray((), dtype))
-  return mlir.ir_constants(np.zeros(phys_aval.shape, phys_aval.dtype))
+  return mlir.ir_constant(np.zeros(phys_aval.shape, phys_aval.dtype)),
 mlir.register_lowering(empty_p, _empty_lower)
 
 
@@ -5118,14 +5287,6 @@ class BIntRules:
     return handler
 
   @staticmethod
-  def logical_sharding(aval, phys_sharding):
-    return phys_sharding
-
-  @staticmethod
-  def physical_sharding(aval, sharding):
-    return sharding
-
-  @staticmethod
   def convert_from(bint_dtype, other_dtype) -> bool:
     return other_dtype in (np.dtype('int32'), np.dtype('int64'))
 
@@ -5133,12 +5294,5 @@ class BIntRules:
   def convert_to(other_dtype, bint_dtype) -> bool:
     return other_dtype in (np.dtype('int32'), np.dtype('int64'))
 
-  @staticmethod
-  def replicate_trailing_dims(ctx, val: ir.Value, aval) -> ir.Value:
-    return val
-
-  @staticmethod
-  def check_replicated_trailing_dims(sharding: jax.sharding.GSPMDSharding, aval):
-    pass
 
 core.bint._rules = BIntRules

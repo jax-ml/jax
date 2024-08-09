@@ -503,14 +503,14 @@ from __future__ import annotations
 
 import atexit
 import enum
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import functools
 import itertools
 import logging
 import math
 import threading
 import traceback
-from typing import Any, Callable, cast
+from typing import Any, cast
 
 import jax
 from jax._src import api
@@ -541,12 +541,12 @@ from jax._src.lib.mlir.dialects import hlo
 import numpy as np
 
 
-_HOST_CALLBACK_INLINE = config.DEFINE_bool(
+_HOST_CALLBACK_INLINE = config.bool_flag(
     'jax_host_callback_inline',
     config.bool_env('JAX_HOST_CALLBACK_INLINE', False),
     help='Inline the host_callback, if not in a staged context.'
 )
-_HOST_CALLBACK_MAX_QUEUE_BYTE_SIZE = config.DEFINE_integer(
+_HOST_CALLBACK_MAX_QUEUE_BYTE_SIZE = config.int_flag(
     'jax_host_callback_max_queue_byte_size',
     config.int_env('JAX_HOST_CALLBACK_MAX_QUEUE_BYTE_SIZE', int(256 * 1e6)),
     help=('The size in bytes of the buffer used to hold outfeeds from each '
@@ -555,7 +555,7 @@ _HOST_CALLBACK_MAX_QUEUE_BYTE_SIZE = config.DEFINE_integer(
           'until the Python callback consume more outfeeds.'),
     lower_bound=int(16 * 1e6)
 )
-_HOST_CALLBACK_OUTFEED = config.DEFINE_bool(
+_HOST_CALLBACK_OUTFEED = config.bool_flag(
     'jax_host_callback_outfeed',
     config.bool_env('JAX_HOST_CALLBACK_OUTFEED', False),
     help=(
@@ -564,7 +564,7 @@ _HOST_CALLBACK_OUTFEED = config.DEFINE_bool(
         'Has no effect on TPU, since only the outfeed mechanism is implemented.'
     )
 )
-_HOST_CALLBACK_LEGACY = config.DEFINE_bool(
+_HOST_CALLBACK_LEGACY = config.bool_flag(
     'jax_host_callback_legacy',
     config.bool_env('JAX_HOST_CALLBACK_LEGACY', True),
     help=(
@@ -1528,7 +1528,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: list[core.JaxprEqn],
                 body_jaxpr=_rewrite_closed_jaxpr(body_jaxpr, True, True),
                 cond_jaxpr=_rewrite_closed_jaxpr(cond_jaxpr, True, False))))
   elif eqn.primitive is lax.cond_p:
-    branches, linear = util.split_dict(eqn.params, ["branches", "linear"])
+    branches, = util.split_dict(eqn.params, ["branches"])
     index, *operands = eqn.invars
     new_invars = [index, *operands, input_token_var, input_itoken_var]
     eqns.append(
@@ -1538,8 +1538,7 @@ def _rewrite_eqn(eqn: core.JaxprEqn, eqns: list[core.JaxprEqn],
                 eqn.params,
                 branches=tuple(
                     _rewrite_closed_jaxpr(jaxpr, True, True)
-                    for jaxpr in branches),
-                linear=(*linear, False, False))))
+                    for jaxpr in branches))))
   elif eqn.primitive is lax.scan_p:
     num_consts, num_carry, carry_jaxpr, linear, _, _, _, _ = util.split_dict(
         eqn.params,
@@ -1894,11 +1893,11 @@ def _initialize_outfeed_receiver(
       _callback_handler_data.receiver = outfeed_receiver_module.start(
           _callback_input_received, tuple(clients_with_outfeed),
           max_callback_queue_size_bytes,
-          compiler.get_compile_options(1, 1).executable_build_options)  # type:ignore
+          compiler.get_compile_options(1, 1).executable_build_options)
 
     def exit_handler():
       # Prevent logging usage during compilation, gives errors under pytest
-      dispatch._on_exit = True  # type: ignore[protected-access]
+      dispatch._on_exit = True
       if not _callback_handler_data.on_exit:
         _callback_handler_data.on_exit = True
         _deprecated_barrier_wait("at_exit")
@@ -2014,9 +2013,6 @@ if typing.TYPE_CHECKING:
   stop_outfeed_receiver = _deprecated_stop_outfeed_receiver
 else:
   from jax._src.deprecations import deprecation_getattr as _deprecation_getattr
-  from jax._src.deprecations import register
-  for deprecated in _deprecations.keys():
-    register(__name__, deprecated)
   __getattr__ = _deprecation_getattr(__name__, _deprecations)
   del _deprecation_getattr
 del typing

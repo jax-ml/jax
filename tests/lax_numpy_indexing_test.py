@@ -918,6 +918,12 @@ class IndexingTest(jtu.JaxTestCase):
     self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.slice_p)
     self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
 
+    # Indexing with `Ellipsis` is not lowered to `gather`.
+    jaxpr = jax.make_jaxpr(lambda x: x[..., 0])(jnp.ones((3, 4, 5)))
+    self.assertLen((jaxpr.jaxpr.eqns), 2)
+    self.assertEqual(jaxpr.jaxpr.eqns[-2].primitive, lax.slice_p)
+    self.assertEqual(jaxpr.jaxpr.eqns[-1].primitive, lax.squeeze_p)
+
     # Simple reverses lower to lax.rev_p
     jaxpr = jax.make_jaxpr(lambda x: x[:, ::-1])(jnp.ones((3, 4)))
     self.assertEqual(len(jaxpr.jaxpr.eqns), 1)
@@ -1024,6 +1030,23 @@ class IndexingTest(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
 
+  @parameterized.parameters(
+      [(3,), (0,)],
+      [(3, 4), (0,)],
+      [(3, 4), (0, 4)],
+      [(3, 4), (3, 0)],
+      [(3, 4, 5), (3, 0)],
+  )
+  def testEmptyBooleanIndexing(self, x_shape, m_shape):
+    # Regression test for https://github.com/google/jax/issues/22886
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(x_shape, np.int32), np.empty(m_shape, dtype=bool)]
+
+    np_fun = lambda x, m: np.asarray(x)[np.asarray(m)]
+    jnp_fun = lambda x, m: jnp.asarray(x)[jnp.asarray(m)]
+
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+
   @jtu.sample_product(
       shape=[(2, 3, 4, 5)],
       idx=[
@@ -1045,6 +1068,34 @@ class IndexingTest(jtu.JaxTestCase):
     args_maker = lambda: [rng(shape, np.int32)]
     np_fun = lambda x: np.asarray(x)[idx]
     jnp_fun = lambda x: jnp.asarray(x)[idx]
+    self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
+
+  @jtu.sample_product(
+      shape=[(2, 3, 4, 5)],
+      update_ndim=[0, 1, 2],
+      idx=[
+        np.index_exp[True],
+        np.index_exp[False],
+        np.index_exp[..., True],
+        np.index_exp[..., False],
+        np.index_exp[0, :2, True],
+        np.index_exp[0, :2, False],
+        np.index_exp[:2, 0, True],
+        np.index_exp[:2, 0, False],
+        np.index_exp[:2, np.array([0, 2]), True],
+        np.index_exp[np.array([1, 0]), :, True],
+        np.index_exp[True, :, True, :, np.array(True)],
+      ]
+  )
+  def testScalarBoolUpdate(self, shape, idx, update_ndim):
+    update_shape = np.zeros(shape)[idx].shape[-update_ndim:]
+    rng = jtu.rand_default(self.rng())
+    args_maker = lambda: [rng(shape, np.int32), rng(update_shape, np.int32)]
+    def np_fun(x, update):
+      x = np.array(x, copy=True)
+      x[idx] = update
+      return x
+    jnp_fun = lambda x, update: jnp.asarray(x).at[idx].set(update)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
 
   def testFloatIndexingError(self):
@@ -1172,7 +1223,11 @@ class IndexingTest(jtu.JaxTestCase):
   def testWrongNumberOfIndices(self):
     with self.assertRaisesRegex(
         IndexError,
-        "Too many indices for array: 2 non-None/Ellipsis indices for dim 1."):
+        "Too many indices: 0-dimensional array indexed with 1 regular index."):
+      jnp.array(1)[0]
+    with self.assertRaisesRegex(
+        IndexError,
+        "Too many indices: 1-dimensional array indexed with 2 regular indices."):
       jnp.zeros(3)[:, 5]
 
 

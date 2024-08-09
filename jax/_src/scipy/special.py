@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from functools import partial
 import operator
-from typing import cast, Any
+from typing import cast, overload, Any
 
 import numpy as np
 
@@ -28,12 +28,15 @@ from jax import lax
 
 from jax._src import core
 from jax._src import custom_derivatives
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src.lax.lax import _const as _lax_const
 from jax._src.numpy.util import promote_args_inexact, promote_dtypes_inexact
 from jax._src.ops import special as ops_special
 from jax._src.third_party.scipy.betaln import betaln as _betaln_impl
 from jax._src.typing import Array, ArrayLike
+from jax._src.nn.functions import softmax as nn_softmax
+from jax._src.nn.functions import log_softmax as nn_log_softmax
 
 
 def gammaln(x: ArrayLike) -> Array:
@@ -186,8 +189,16 @@ def factorial(n: ArrayLike, exact: bool = False) -> Array:
   n, = promote_args_inexact("factorial", n)
   return jnp.where(n < 0, 0, lax.exp(lax.lgamma(n + 1)))
 
+@overload
+def beta(a: ArrayLike, b: ArrayLike) -> Array: ...
 
-def beta(x: ArrayLike, y: ArrayLike) -> Array:
+@overload
+def beta(a: ArrayLike, *, y: ArrayLike) -> Array: ...
+
+@overload
+def beta(*, x: ArrayLike, y: ArrayLike) -> Array: ...
+
+def beta(*args, **kwds):
   r"""The beta function
 
   JAX implementation of :obj:`scipy.special.beta`.
@@ -209,9 +220,27 @@ def beta(x: ArrayLike, y: ArrayLike) -> Array:
     - :func:`jax.scipy.special.gamma`
     - :func:`jax.scipy.special.betaln`
   """
-  x, y = promote_args_inexact("beta", x, y)
-  sign = gammasgn(x) * gammasgn(y) * gammasgn(x + y)
-  return sign * lax.exp(betaln(x, y))
+  # TODO(jakevdp): deprecation warning added 2024-06-10; finalize after 2024-09-10
+  if 'x' in kwds:
+    msg = "The `x` parameter of jax.scipy.special.beta is deprecated, use `a` instead."
+    deprecations.warn('jax-scipy-beta-args', msg, stacklevel=2)
+    if 'a' in kwds:
+      raise TypeError("beta() got both parameter 'a' and parameter 'x'.")
+    kwds['a'] = kwds.pop('x')
+  if 'y' in kwds:
+    msg = "The `y` parameter of jax.scipy.special.beta is deprecated, use `b` instead."
+    deprecations.warn('jax-scipy-beta-args', msg, stacklevel=2)
+    if 'b' in kwds:
+      raise TypeError("beta() got both parameter 'b' and parameter 'y'.")
+    kwds['b'] = kwds.pop('y')
+  if extra := kwds.keys() - {'a', 'b'}:
+    raise TypeError(f"beta() got unexpected keyword arguments {list(extra)}")
+  return _beta(*args, **kwds)
+
+def _beta(a, b):
+  a, b = promote_args_inexact("beta", a, b)
+  sign = gammasgn(a) * gammasgn(b) * gammasgn(a + b)
+  return sign * lax.exp(betaln(a, b))
 
 
 def betainc(a: ArrayLike, b: ArrayLike, x: ArrayLike) -> Array:
@@ -599,7 +628,7 @@ def kl_div(
   .. math::
 
      \mathrm{kl\_div}(p, q) = \begin{cases}
-       p\log(p/q) & p>0,q>0\\
+       p\log(p/q)-p+q & p>0,q>0\\
        q & p=0,q\ge 0\\
        \infty & \mathrm{otherwise}
     \end{cases}
@@ -616,24 +645,7 @@ def kl_div(
     - :func:`jax.scipy.special.rel_entr`
   """
   p, q = promote_args_inexact("kl_div", p, q)
-  zero = _lax_const(p, 0.0)
-  both_gt_zero_mask = lax.bitwise_and(lax.gt(p, zero), lax.gt(q, zero))
-  one_zero_mask = lax.bitwise_and(lax.eq(p, zero), lax.ge(q, zero))
-
-  safe_p = jnp.where(both_gt_zero_mask, p, 1)
-  safe_q = jnp.where(both_gt_zero_mask, q, 1)
-
-  log_val = lax.sub(
-      lax.add(
-          lax.sub(_xlogx(safe_p), xlogy(safe_p, safe_q)),
-          safe_q,
-      ),
-      safe_p,
-  )
-  result = jnp.where(
-      both_gt_zero_mask, log_val, jnp.where(one_zero_mask, q, np.inf)
-  )
-  return result
+  return rel_entr(p, q) - p + q
 
 
 def rel_entr(
@@ -672,7 +684,7 @@ def rel_entr(
   safe_q = jnp.where(both_gt_zero_mask, q, 1)
   log_val = lax.sub(_xlogx(safe_p), xlogy(safe_p, safe_q))
   result = jnp.where(
-      both_gt_zero_mask, log_val, jnp.where(one_zero_mask, q, jnp.inf)
+      both_gt_zero_mask, log_val, jnp.where(one_zero_mask, zero, jnp.inf)
   )
   return result
 
@@ -754,7 +766,7 @@ def _zeta_series_expansion(x: ArrayLike, q: ArrayLike | None = None) -> Array:
   T = T0 * (dtype(0.5) + T1.sum(-1))
   return S + I + T
 
-zeta.defjvp(partial(jvp, _zeta_series_expansion))  # type: ignore[arg-type]
+zeta.defjvp(partial(jvp, _zeta_series_expansion))
 
 
 def polygamma(n: ArrayLike, x: ArrayLike) -> Array:
@@ -2042,10 +2054,9 @@ def expi_jvp(primals, tangents):
   return expi(x), jnp.exp(x) / x * x_dot
 
 
-def _expn1(n: int, x_in: ArrayLike) -> Array:
+def _expn1(n: Array, x: Array) -> Array:
   # exponential integral En
   _c = _lax_const
-  x = jnp.asarray(x_in)
   MACHEP = jnp.finfo(x.dtype).eps
 
   zero = _c(x, 0.0)
@@ -2080,7 +2091,7 @@ def _expn1(n: int, x_in: ArrayLike) -> Array:
   return d["z"] ** r * psi / jnp.exp(gammaln(t)) - d["ans"]
 
 
-def _expn2(n: int, x: Array) -> Array:
+def _expn2(n: Array, x: Array) -> Array:
   # x > 1.
   _c = _lax_const
   BIG = _c(x, 1.44115188075855872e17)
@@ -2131,7 +2142,7 @@ def _expn2(n: int, x: Array) -> Array:
   return d["ans"] * jnp.exp(-x)
 
 
-def _expn3(n: int, x: Array) -> Array:
+def _expn3(n: Array, x: Array) -> Array:
   # n >= 5000
   _c = _lax_const
   one = _c(x, 1.0)
@@ -2375,7 +2386,6 @@ def poch(z: ArrayLike, m: ArrayLike) -> Array:
   Notes:
     The JAX version supports only real-valued inputs.
   """
-  # Factorial definition when m is close to an integer, otherwise gamma definition.
   z, m = promote_args_inexact("poch", z, m)
 
   return jnp.where(m == 0., jnp.array(1, dtype=z.dtype), gamma(z + m) / gamma(z))
@@ -2412,6 +2422,8 @@ def _hyp1f1_serie(a, b, x):
   https://doi.org/10.48550/arXiv.1407.7786
   """
 
+  precision = jnp.finfo(x.dtype).eps
+
   def body(state):
     serie, k, term = state
     serie += term
@@ -2423,7 +2435,7 @@ def _hyp1f1_serie(a, b, x):
   def cond(state):
     serie, k, term = state
 
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > 1e-8)
+    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
 
   init = 1, 1, a / b * x
 
@@ -2437,6 +2449,8 @@ def _hyp1f1_asymptotic(a, b, x):
   https://doi.org/10.48550/arXiv.1407.7786
   """
 
+  precision = jnp.finfo(x.dtype).eps
+
   def body(state):
     serie, k, term = state
     serie += term
@@ -2448,7 +2462,7 @@ def _hyp1f1_asymptotic(a, b, x):
   def cond(state):
     serie, k, term = state
 
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > 1e-8)
+    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
 
   init = 1, 1, (b - a) * (1 - a) / x
   serie = lax.while_loop(cond, body, init)[0]
@@ -2464,6 +2478,8 @@ def _hyp1f1_a_derivative(a, b, x):
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/01/
   """
 
+  precision = jnp.finfo(x.dtype).eps
+
   def body(state):
     serie, k, term = state
     serie += term * (digamma(a + k) - digamma(a))
@@ -2475,7 +2491,7 @@ def _hyp1f1_a_derivative(a, b, x):
   def cond(state):
     serie, k, term = state
 
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > 1e-15)
+    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
 
   init = 0, 1, a / b * x
 
@@ -2490,6 +2506,8 @@ def _hyp1f1_b_derivative(a, b, x):
   https://functions.wolfram.com/HypergeometricFunctions/Hypergeometric1F1/20/01/02/
   """
 
+  precision = jnp.finfo(x.dtype).eps
+
   def body(state):
     serie, k, term = state
     serie += term * (digamma(b) - digamma(b + k))
@@ -2501,7 +2519,7 @@ def _hyp1f1_b_derivative(a, b, x):
   def cond(state):
     serie, k, term = state
 
-    return (k < 250) & (lax.abs(term) / lax.abs(serie) > 1e-15)
+    return (k < 250) & (lax.abs(term) / lax.abs(serie) > precision)
 
   init = 0, 1, a / b * x
 
@@ -2565,3 +2583,72 @@ hyp1f1.defjvps(
   lambda b_dot, primal_out, a, b, x: _hyp1f1_b_derivative(a, b, x) * b_dot,
   lambda x_dot, primal_out, a, b, x: _hyp1f1_x_derivative(a, b, x) * x_dot
 )
+
+
+def softmax(x: ArrayLike,
+            /,
+            *,
+            axis: int | tuple[int, ...] | None = None,
+            ) -> Array:
+  r"""Softmax function.
+
+  JAX implementation of :func:`scipy.special.softmax`.
+
+  Computes the function which rescales elements to the range :math:`[0, 1]`
+  such that the elements along :code:`axis` sum to :math:`1`.
+
+  .. math ::
+    \mathrm{softmax}(x) = \frac{\exp(x_i)}{\sum_j \exp(x_j)}
+
+  Args:
+    x : input array
+    axis: the axis or axes along which the softmax should be computed. The
+      softmax output summed across these dimensions should sum to :math:`1`.
+
+  Returns:
+    An array of the same shape as ``x``.
+
+  Note:
+    If any input values are ``+inf``, the result will be all ``NaN``: this
+    reflects the fact that ``inf / inf`` is not well-defined in the context of
+    floating-point math.
+
+  See also:
+    :func:`log_softmax`
+  """
+  return nn_softmax(x, axis=axis)
+
+
+def log_softmax(x: ArrayLike,
+                /,
+                *,
+                axis: int | tuple[int, ...] | None = None,
+                ) -> Array:
+  r"""Log-Softmax function.
+
+  JAX implementation of :func:`scipy.special.log_softmax`
+
+  Computes the logarithm of the :code:`softmax` function, which rescales
+  elements to the range :math:`[-\infty, 0)`.
+
+  .. math ::
+    \mathrm{log\_softmax}(x)_i = \log \left( \frac{\exp(x_i)}{\sum_j \exp(x_j)}
+    \right)
+
+  Args:
+    x : input array
+    axis: the axis or axes along which the :code:`log_softmax` should be
+      computed.
+
+  Returns:
+    An array of the same shape as ``x``
+
+  Note:
+    If any input values are ``+inf``, the result will be all ``NaN``: this
+    reflects the fact that ``inf / inf`` is not well-defined in the context of
+    floating-point math.
+
+  See also:
+    :func:`softmax`
+  """
+  return nn_log_softmax(x, axis=axis)

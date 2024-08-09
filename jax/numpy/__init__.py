@@ -265,6 +265,20 @@ from jax._src.numpy.lax_numpy import (
     zeros_like as zeros_like,
 )
 
+# TODO(slebedev): Remove the try-except once we upgrade to ml_dtypes 0.4.1.
+try:
+  from jax._src.numpy.lax_numpy import (
+    int2 as int2,
+    uint2 as uint2,
+  )
+except ImportError:
+  pass
+
+from jax._src.numpy.array_api_metadata import (
+  __array_api_version__ as __array_api_version__,
+  __array_namespace_info__ as __array_namespace_info__,
+)
+
 from jax._src.numpy.index_tricks import (
   c_ as c_,
   index_exp as index_exp,

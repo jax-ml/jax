@@ -85,7 +85,7 @@ except ImportError:
 try:
   import tensorflow as tf
 except ImportError:
-  tf = None  # type: ignore
+  tf = None
 
 
 _FN = flags.DEFINE_string(
@@ -151,7 +151,7 @@ def jax_to_ir(fn, input_shapes, *, constants=None, format):
     return fn_curried(**dict(zip(arg_names, args)))
 
   if format == 'HLO':
-    comp = jax.xla_computation(ordered_wrapper)(*args)
+    comp = jax.jit(ordered_wrapper).lower(*args).compiler_ir('hlo')
     serialized_proto = comp.as_serialized_hlo_module_proto()
     debug_txt = comp.as_hlo_text()
   else:
@@ -246,6 +246,11 @@ _DT = {
     'f16': jnp.float16, 'f32': jnp.float32, 'f64': jnp.float64,
     'c64': jnp.complex64, 'c128': jnp.complex128
 }
+if hasattr(jnp, 'int2'):
+  _DT['s2'] = jnp.int2
+if hasattr(jnp, 'uint2'):
+  _DT['u2'] = jnp.uint2
+
 _SHAPE_RE = re.compile(f"^({'|'.join(_DT)})\\[\\s*(\\d*[\\s*,\\d+]*)\\s*\\]$")
 
 

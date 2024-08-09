@@ -19,6 +19,7 @@ from __future__ import annotations
 import unittest
 
 from absl.testing import absltest
+from absl.testing import parameterized
 import jax
 from jax._src import test_util as jtu
 from jax._src import util
@@ -34,12 +35,11 @@ except (ModuleNotFoundError, ImportError):
 
 import hypothesis.extra.numpy as hnp
 import hypothesis.strategies as hps
-hp.settings.register_profile(
-    "deterministic", database=None, derandomize=True, deadline=None,
-    max_examples=100, print_blob=True)
-hp.settings.load_profile("deterministic")
+
 
 jax.config.parse_flags_with_absl()
+jtu.setup_hypothesis(max_examples=100)
+
 
 Slice = indexing.Slice
 NDIndexer = indexing.NDIndexer
@@ -99,25 +99,18 @@ class IndexerTest(jtu.JaxTestCase):
   def test_invalid_ndindexer(self):
     indices = (0, 0, 0)
     shape = (5, 5)
-    with self.assertRaises(ValueError):
+    with self.assertRaisesRegex(
+        ValueError, "`indices` must not be longer than `shape`"
+    ):
       _ = NDIndexer.from_indices_shape(indices, shape)
 
-  def test_invalid_ndindexer_oob_int(self):
-    indices = (4, 0)
-    shape = (3, 5)
-    with self.assertRaises(ValueError):
-      _ = NDIndexer.from_indices_shape(indices, shape)
-
-  def test_invalid_ndindexer_oob_slice_start(self):
-    indices = (slice(3, 2), 0)
-    shape = (3, 5)
-    with self.assertRaises(ValueError):
-      _ = NDIndexer.from_indices_shape(indices, shape)
-
-  def test_invalid_ndindexer_oob_slice_end(self):
-    indices = (Slice(2, 2), 0)
-    shape = (3, 5)
-    with self.assertRaises(ValueError):
+  @parameterized.parameters(
+      ((4, 0), (3, 5)),
+      ((slice(3, 2), 0), (3, 5)),
+      ((Slice(2, 2), 0), (3, 5)),
+  )
+  def test_invalid_ndindexer_oob(self, indices, shape):
+    with self.assertRaisesRegex(ValueError, "Out of bound"):
       _ = NDIndexer.from_indices_shape(indices, shape)
 
   def test_ndindexer_with_padding(self):
@@ -125,6 +118,12 @@ class IndexerTest(jtu.JaxTestCase):
     shape = (5, 5)
     indexer = NDIndexer.from_indices_shape(indices, shape)
     self.assertTupleEqual(indexer.get_indexer_shape(), shape)
+
+  def test_ndindexer_with_ellipsis(self):
+    indices = (..., 4)
+    shape = (5, 5)
+    indexer = NDIndexer.from_indices_shape(indices, shape)
+    self.assertTupleEqual(indexer.get_indexer_shape(), (5,))
 
   def test_ndindexer_with_slices(self):
     indices = (slice(2, 3), slice(4, 7))
@@ -153,6 +152,14 @@ class IndexerTest(jtu.JaxTestCase):
     shape = (5, 5)
     indexer = NDIndexer.from_indices_shape(indices, shape)
     self.assertTupleEqual(indexer.get_indexer_shape(), (10, 20))
+
+  def test_ndindexer_with_arrays_and_invalid_broadcasting(self):
+    indices = (np.arange(10)[None], np.arange(20)[None, :])
+    shape = (5, 5)
+    with self.assertRaisesRegex(
+        ValueError, "Cannot broadcast shapes for indexing"
+    ):
+      indexer = NDIndexer.from_indices_shape(indices, shape)
 
   def test_indexer_with_all_types(self):
     indices = (0, slice(10), np.arange(5))
@@ -236,15 +243,71 @@ class IndexerTest(jtu.JaxTestCase):
             jax.ShapeDtypeStruct(x.shape, y.dtype),
         ],
         in_specs=[
-            pl.BlockSpec(lambda i: (0, 0), x.shape),
-            pl.BlockSpec(lambda i: (0, 0), y.shape),
+            pl.BlockSpec(x.shape, lambda i: (0, 0)),
+            pl.BlockSpec(y.shape, lambda i: (0, 0)),
         ],
         out_specs=[
-            pl.BlockSpec(lambda i: (0, 0), x.shape),
-            pl.BlockSpec(lambda i: (0, 0), y.shape),
+            pl.BlockSpec(x.shape, lambda i: (0, 0)),
+            pl.BlockSpec(y.shape, lambda i: (0, 0)),
         ],
         interpret=True,
     )(x, y)
+
+  def test_ellipsis_indexing_iterpret_only(self):
+    # Interpreter only test! YMMV actually compiling this.
+    def permute_columns_in_row_kernel(left, right, new_left, new_right):
+      shape = left.shape
+      k = shape[-1]
+      ndim = len(shape)
+      left_slices = [
+          left[..., :1],
+          right[..., :1],
+          left[..., 1:k-1]
+      ]
+      right_slices = [
+          right[..., 1:k],
+          left[..., k-1:k]
+      ]
+      new_left[...] = np.concatenate(left_slices, axis=ndim - 1)
+      new_right[...] = np.concatenate(right_slices, axis=ndim - 1)
+
+    left = jnp.array([[1, 2, 3], [4, 5, 6]], dtype=jnp.float32)
+    right = jnp.array([[7, 8, 9], [10, 11, 12]], dtype=jnp.float32)
+
+    output_shape = left.shape
+
+    # hack to reuse the same fn for np cat
+    import jax.numpy as np  # noqa: F811
+    left_out, right_out = pl.pallas_call(
+        permute_columns_in_row_kernel,
+        grid=(1,),
+        out_shape=[
+            jax.ShapeDtypeStruct(output_shape, jnp.float32),
+            jax.ShapeDtypeStruct(output_shape, jnp.float32)
+        ],
+        in_specs=[
+            pl.BlockSpec(left.shape, lambda i: (0, 0)),
+            pl.BlockSpec(right.shape, lambda i: (0, 0))
+        ],
+        out_specs=[
+            pl.BlockSpec(output_shape, lambda i: (0, 0)),
+            pl.BlockSpec(output_shape, lambda i: (0, 0))
+        ],
+        interpret=True,
+    )(left, right)
+
+
+    import numpy as np  # noqa: F811
+    left_np = np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float32)
+    right_np = np.array([[7, 8, 9], [10, 11, 12]], dtype=np.float32)
+    left_out_np = left_np.copy()
+    right_out_np = right_np.copy()
+
+
+    permute_columns_in_row_kernel(left_np, right_np, left_out_np, right_out_np)
+    np.testing.assert_array_equal(left_out_np, left_out)
+    np.testing.assert_array_equal(right_out_np, right_out)
+
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

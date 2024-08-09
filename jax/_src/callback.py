@@ -14,11 +14,11 @@
 """Module for JAX callbacks."""
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import dataclasses
 import functools
 import logging
-from typing import Any, Callable
+from typing import Any
 
 import jax
 from jax._src import core
@@ -72,7 +72,14 @@ def pure_callback_impl(
     vectorized: bool,
 ):
   del sharding, vectorized, result_avals
-  cpu_device, *_ = jax.local_devices(backend="cpu")
+  try:
+    cpu_device, *_ = jax.local_devices(backend="cpu")
+  except RuntimeError as e:
+    raise RuntimeError(
+        "jax.pure_callback failed to find a local CPU device to place the"
+        " inputs on. Make sure \"cpu\" is listed in --jax_platforms or the"
+        " JAX_PLATFORMS environment variable."
+    ) from e
   args = jax.device_put(args, cpu_device)
   with jax.default_device(cpu_device):
     try:
@@ -117,14 +124,14 @@ def pure_callback_transpose_rule(*args, **kwargs):
 ad.primitive_transposes[pure_callback_p] = pure_callback_transpose_rule
 
 
-def pure_callback_batching_rule(
+def callback_batching_rule(
+    prim,
     args,
     dims,
     *,
-    callback: _FlatCallback,
-    sharding: SingleDeviceSharding | None,
     vectorized: bool,
     result_avals: Sequence[core.ShapedArray],
+    **kwargs: Any,
 ):
   axis_size = next(a.shape[d] for a, d in zip(args, dims)
                    if d is not batching.not_mapped)
@@ -134,30 +141,30 @@ def pure_callback_batching_rule(
     result_avals = tuple(
         core.unmapped_aval(axis_size, core.no_axis_name, 0, aval)  # type: ignore
         for aval in result_avals)
-    outvals = pure_callback_p.bind(
+    outvals = prim.bind(
         *new_args,
-        callback=callback,
-        sharding=sharding,
         vectorized=vectorized,
         result_avals=result_avals,
+        **kwargs,
     )
   else:
     is_batched = [d is not batching.not_mapped for d in dims]
     unbatched_args, batched_args = util.partition_list(is_batched, new_args)
     def _batch_fun(batched_args):
       merged_args = util.merge_lists(is_batched, unbatched_args, batched_args)
-      return pure_callback_p.bind(
+      return prim.bind(
           *merged_args,
-          callback=callback,
-          sharding=sharding,
           result_avals=result_avals,
           vectorized=vectorized,
+          **kwargs,
       )
     outvals = lax_map(_batch_fun, batched_args)
   return tuple(outvals), (0,) * len(outvals)
 
 
-batching.primitive_batchers[pure_callback_p] = pure_callback_batching_rule
+batching.primitive_batchers[pure_callback_p] = functools.partial(
+    callback_batching_rule, pure_callback_p
+)
 
 
 def _callback_op_sharding(axis_context, sharding: SingleDeviceSharding | None):
@@ -262,9 +269,8 @@ def pure_callback(
   For more explanation, see `External Callbacks`_.
 
   ``pure_callback`` enables calling a Python function in JIT-ed JAX functions.
-  The input ``callback`` will be passed NumPy arrays in place of JAX arrays and
-  should also return NumPy arrays. Execution takes place on CPU, like any
-  Python+NumPy function.
+  The input ``callback`` will be passed JAX arrays placed on a local CPU, and
+  it should also return JAX arrays on CPU.
 
   The callback is treated as functionally pure, meaning it has no side-effects
   and its output value depends only on its argument values. As a consequence, it
@@ -357,7 +363,14 @@ def io_callback_impl(
     ordered: bool,
 ):
   del result_avals, sharding, ordered
-  cpu_device, *_ = jax.local_devices(backend="cpu")
+  try:
+    cpu_device, *_ = jax.local_devices(backend="cpu")
+  except RuntimeError as e:
+    raise RuntimeError(
+        "jax.io_callback failed to find a local CPU device to place the"
+        " inputs on. Make sure \"cpu\" is listed in --jax_platforms or the"
+        " JAX_PLATFORMS environment variable."
+    ) from e
   args = jax.device_put(args, cpu_device)
   with jax.default_device(cpu_device):
     try:
@@ -428,7 +441,7 @@ def io_callback_lowering(ctx, *args, callback, sharding, ordered, **params):
 
   op_sharding = _callback_op_sharding(ctx.module_context.axis_context, sharding)
   if ordered:
-    token = ctx.tokens_in.get(_OrderedIOEffect)[0]
+    token = ctx.tokens_in.get(_OrderedIOEffect)
     result, token, _ = mlir.emit_python_callback(
         ctx,
         _callback,
@@ -439,7 +452,7 @@ def io_callback_lowering(ctx, *args, callback, sharding, ordered, **params):
         has_side_effect=True,
         sharding=op_sharding,
     )
-    ctx.set_tokens_out(mlir.TokenSet({_OrderedIOEffect: (token,)}))
+    ctx.set_tokens_out(mlir.TokenSet({_OrderedIOEffect: token}))
   else:
     result, token, _ = mlir.emit_python_callback(
         ctx,

@@ -16,6 +16,8 @@ kernelspec:
 
 # 🔪 JAX - The Sharp Bits 🔪
 
+<!--* freshness: { reviewed: '2024-06-03' } *-->
+
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/google/jax/blob/main/docs/notebooks/Common_Gotchas_in_JAX.ipynb) [![Open in Kaggle](https://kaggle.com/static/images/open-in-kaggle.svg)](https://kaggle.com/kernels/welcome?src=https://github.com/google/jax/blob/main/docs/notebooks/Common_Gotchas_in_JAX.ipynb)
 
 +++ {"id": "4k5PVzEo2uJO"}
@@ -1109,14 +1111,14 @@ There are a few ways to do this:
 
 Note that #2-#4 work for _any_ of JAX's configuration options.
 
-We can then confirm that `x64` mode is enabled:
+We can then confirm that `x64` mode is enabled, for example:
 
-```{code-cell} ipython3
-:id: HqGbBa9Rr-2g
-:outputId: 5aa72952-08cc-4569-9b51-a10311ae9e81
-
+```python
+import jax
 import jax.numpy as jnp
 from jax import random
+
+jax.config.update("jax_enable_x64", True)
 x = random.uniform(random.key(0), (1000,), dtype=jnp.float64)
 x.dtype # --> dtype('float64')
 ```
@@ -1143,6 +1145,7 @@ Many such cases are discussed in detail in the sections above; here we list seve
 
   >>> jnp.arange(254.0, 258.0).astype('uint8')
   Array([254, 255, 255, 255], dtype=uint8)
+
   ```
   This sort of mismatch would typically arise when casting extreme values from floating to integer types or vice versa.
 

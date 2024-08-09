@@ -19,8 +19,10 @@ logger = logging.getLogger(__name__)
 
 try:
   import etils.epath as epath
+  epath_installed = True
 except:
   epath = None
+  epath_installed = False
 
 # If etils.epath (aka etils[epath] to pip) is present, we prefer it because it
 # can read and write to, e.g., GCS buckets. Otherwise we use the builtin

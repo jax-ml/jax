@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@rules_python//python:defs.bzl", "py_library")
+load("//jaxlib:jax.bzl", "py_deps")
+load("@rules_python//python:defs.bzl", "py_library", "py_test")
 
 licenses(["notice"])
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//third_party/py/jax:internal"],
+    default_visibility = ["//third_party/py/jax:mosaic_gpu_users"],
 )
 
 exports_files(
@@ -45,4 +46,20 @@ py_library(
         "//third_party/py/jax",
         "//third_party/py/jax:mosaic_gpu",
     ],
+)
+
+py_test(
+    name = "run_matmul",
+    srcs = ["matmul.py"],
+    main = "matmul.py",
+    tags = [
+        "manual",
+        "notap",
+        "requires-gpu-sm90-only",
+    ],
+    deps = [
+        "//learning/brain/research/jax:gpu_support",
+        "//third_party/py/jax",
+        "//third_party/py/jax:mosaic_gpu",
+    ] + py_deps("numpy"),
 )

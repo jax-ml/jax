@@ -1,5 +1,7 @@
 # `jax.debug.print` and `jax.debug.breakpoint`
 
+<!--* freshness: { reviewed: '2024-03-13' } *-->
+
 The {mod}`jax.debug` package offers some useful tools for inspecting values
 inside of JIT-ted functions.
 
@@ -136,7 +138,7 @@ jax.grad(f)(1.)
 
 #### Printing in other transformations
 
-`jax.debug.print` also works in other transformations like `xmap` and `pjit`.
+`jax.debug.print` also works in other transformations like `pjit`.
 
 ### More control with `jax.debug.callback`
 

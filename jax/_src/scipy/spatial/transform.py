@@ -152,7 +152,8 @@ class Rotation(typing.NamedTuple):
       raise ValueError("Expected consecutive axes to be different, "
                        "got {}".format(seq))
     axes = jnp.array([_elementary_basis_index(x) for x in seq.lower()])
-    return _compute_euler_from_quat(self.quat, axes, extrinsic, degrees)
+    with jax.numpy_rank_promotion('allow'):
+      return _compute_euler_from_quat(self.quat, axes, extrinsic, degrees)
 
   def as_matrix(self) -> jax.Array:
     """Represent as rotation matrix."""
@@ -166,9 +167,12 @@ class Rotation(typing.NamedTuple):
     """Represent as rotation vectors."""
     return _as_rotvec(self.quat, degrees)
 
-  def as_quat(self) -> jax.Array:
+  def as_quat(self, canonical: bool=False) -> jax.Array:
     """Represent as quaternions."""
-    return self.quat
+    if canonical:
+      return _make_canonical(self.quat)
+    else:
+      return self.quat
 
   def inv(self):
     """Invert this rotation."""
@@ -322,7 +326,6 @@ def _compose_quat(p: jax.Array, q: jax.Array) -> jax.Array:
                     p[3]*q[2] + q[3]*p[2] + cross[2],
                     p[3]*q[3] - p[0]*q[0] - p[1]*q[1] - p[2]*q[2]])
 
-
 @functools.partial(jnp.vectorize, signature='(m),(l),(),()->(n)')
 def _compute_euler_from_quat(quat: jax.Array, axes: jax.Array, extrinsic: bool, degrees: bool) -> jax.Array:
   angle_first = jnp.where(extrinsic, 0, 2)
@@ -415,7 +418,7 @@ def _from_mrp(mrp: jax.Array) -> jax.Array:
 
 @functools.partial(jnp.vectorize, signature='(n)->(n)')
 def _inv(quat: jax.Array) -> jax.Array:
-  return quat.at[3].set(-quat[3])
+  return quat * jnp.array([-1, -1, -1, 1], dtype=quat.dtype)
 
 
 @functools.partial(jnp.vectorize, signature='(n)->()')
@@ -439,3 +442,18 @@ def _normalize_quaternion(quat: jax.Array) -> jax.Array:
 @functools.partial(jnp.vectorize, signature='(n)->()')
 def _vector_norm(vector: jax.Array) -> jax.Array:
   return jnp.sqrt(jnp.dot(vector, vector))
+
+
+@functools.partial(jnp.vectorize, signature='(n)->(n)')
+def _make_canonical(quat: jax.Array) -> jax.Array:
+  is_neg = quat < 0
+  is_zero = quat == 0
+
+  neg = (
+      is_neg[3]
+      | (is_zero[3] & is_neg[0])
+      | (is_zero[3] & is_zero[0] & is_neg[1])
+      | (is_zero[3] & is_zero[0] & is_zero[1] & is_neg[2])
+  )
+
+  return jnp.where(neg, -quat, quat)

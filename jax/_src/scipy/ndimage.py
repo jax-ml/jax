@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 import functools
 import itertools
 import operator
-from typing import Callable
 
 from jax._src import api
 from jax._src import util
@@ -116,7 +115,7 @@ def _map_coordinates(input: ArrayLike, coordinates: Sequence[ArrayLike],
     else:
       all_valid = functools.reduce(operator.and_, validities)
       contribution = jnp.where(all_valid, input_arr[indices], cval)
-    outputs.append(_nonempty_prod(weights) * contribution)
+    outputs.append(_nonempty_prod(weights) * contribution)  # type: ignore
   result = _nonempty_sum(outputs)
   if jnp.issubdtype(input_arr.dtype, jnp.integer):
     result = _round_half_away_from_zero(result)
@@ -151,8 +150,13 @@ def map_coordinates(
       * 1: Linear
 
     mode: Points outside the boundaries of the input are filled according to the given mode.
-      JAX supports one of ``('constant', 'nearest', 'mirror', 'wrap', 'reflect')``.
-      Default is 'constant'.
+      JAX supports one of ``('constant', 'nearest', 'mirror', 'wrap', 'reflect')``. Note the
+      ``'wrap'`` mode in JAX behaves as ``'grid-wrap'`` mode in SciPy, and ``'constant'``
+      mode in JAX behaves as ``'grid-constant'`` mode in SciPy. This discrepancy was caused
+      by a former bug in those modes in SciPy (https://github.com/scipy/scipy/issues/2640),
+      which was first fixed in JAX by changing the behavior of the existing modes, and later
+      on fixed in SciPy, by adding modes with new names, rather than fixing the existing
+      ones, for backwards compatibility reasons. Default is 'constant'.
     cval: Value used for points outside the boundaries of the input if ``mode='constant'``
       Default is 0.0.
 

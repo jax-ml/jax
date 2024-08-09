@@ -31,7 +31,6 @@ from absl.testing import absltest
 import jax
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src import maps  # Needed for config flags.
 
 import numpy as np
 

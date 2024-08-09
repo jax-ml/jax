@@ -40,13 +40,14 @@ cc_library(
         "dialect/tpu/layout.cc",
         "dialect/tpu/tpu_dialect.cc",
         "dialect/tpu/tpu_ops.cc",
-        "dialect/tpu/util.h",
+        "dialect/tpu/util.cc",
     ] + glob([
         "dialect/tpu/transforms/*.cc",
     ]),
     hdrs = [
         "dialect/tpu/layout.h",
         "dialect/tpu/tpu_dialect.h",
+        "dialect/tpu/util.h",
     ] + glob([
         "dialect/tpu/transforms/*.h",
     ]),
@@ -73,11 +74,14 @@ cc_library(
         "@xla//xla:array",
         "@xla//xla:shape_util",
         "@xla//xla:util",
+        "@tsl//tsl/platform:statusor",
         "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/hash",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
+        "@com_google_absl//absl/strings:string_view",
         "@com_google_absl//absl/types:span",
     ],
 )

@@ -32,6 +32,7 @@ or deployed codebases.
    :caption: Run Time
 
    aot
+   export/index
    errors
    transfer_guard
 
@@ -40,3 +41,4 @@ or deployed codebases.
    :caption: Custom Operations
 
    pallas/index
+   ffi

@@ -34,6 +34,17 @@ jax.scipy.integrate
 
    trapezoid
 
+jax.scipy.interpolate
+---------------------
+
+.. automodule:: jax.scipy.interpolate
+
+.. autosummary::
+  :toctree: _autosummary
+
+   RegularGridInterpolator
+
+
 jax.scipy.linalg
 ----------------
 
@@ -163,7 +174,9 @@ jax.scipy.special
    i0e
    i1
    i1e
+   kl_div
    log_ndtr
+   log_softmax
    logit
    logsumexp
    lpmn
@@ -173,13 +186,13 @@ jax.scipy.special
    ndtri
    poch
    polygamma
+   rel_entr
+   softmax
    spence
    sph_harm
    xlog1py
    xlogy
    zeta
-   kl_div
-   rel_entr
 
 
 jax.scipy.stats

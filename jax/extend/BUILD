@@ -29,6 +29,7 @@ pytype_strict_library(
     deps = [
         ":backend",
         ":core",
+        ":ffi",
         ":linear_util",
         ":random",
         ":source_info_util",
@@ -56,7 +57,10 @@ pytype_strict_library(
 pytype_strict_library(
     name = "backend",
     srcs = ["backend.py"],
-    deps = ["//jax"],
+    deps = [
+        "//jax",
+        "//jax:xla_bridge",
+    ],
 )
 
 pytype_strict_library(
@@ -69,4 +73,10 @@ pytype_strict_library(
     name = "source_info_util",
     srcs = ["source_info_util.py"],
     deps = ["//jax:source_info_util"],
+)
+
+pytype_strict_library(
+    name = "ffi",
+    srcs = ["ffi.py"],
+    deps = ["//jax"],
 )

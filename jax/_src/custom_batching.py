@@ -14,9 +14,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import functools
 import operator
-from typing import Callable
 
 from jax import lax
 from jax._src import api
@@ -53,7 +53,7 @@ class custom_vmap:
 
   def __init__(self, fun: Callable):
     functools.update_wrapper(self, fun)
-    self.fun = fun  # type: ignore[assignment]
+    self.fun = fun
     self.vmap_rule = None
 
   __getattr__ = custom_api_util.forward_attr
@@ -65,6 +65,11 @@ class custom_vmap:
   @traceback_util.api_boundary
   def __call__(self, *args, **kwargs):
     assert not kwargs
+    fun_name = getattr(self.fun, "__name__", str(self.fun))
+    if not self.vmap_rule:
+      raise AttributeError(
+          f"No batching rule defined for custom_vmap function {fun_name} "
+          "using def_vmap.")
     args_flat, in_tree = tree_flatten(args)
     flat_fun, out_tree = flatten_fun_nokwargs(lu.wrap_init(self.fun), in_tree)
     in_avals = [core.raise_to_shaped(core.get_aval(x)) for x in args_flat]

@@ -13,6 +13,12 @@
 # limitations under the License.
 # ==============================================================================
 
+from . import (
+    Barrier,
+    ClusterBarrier,
+    TMABarrier,
+    Union,
+)
 from .fragmented_array import (
     FragmentedArray,
     FragmentedLayout,
@@ -21,8 +27,8 @@ from .fragmented_array import (
     WGStridedFragLayout,
 )
 from .utils import (
-    Barrier,
-    BarrierArray,
+    BarrierRef,
+    CollectiveBarrierRef,
     DynamicSlice,
     Partition,
     Partition1D,
@@ -37,8 +43,11 @@ from .utils import (
     memref_transpose,
     memref_unfold,
     memref_unsqueeze,
-    once,
+    single_thread,
+    thread_idx,
     tile_shape,
+    warp_idx,
+    warpgroup_idx,
 )
 from .wgmma import (
     WGMMAAccumulator,

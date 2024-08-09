@@ -15,7 +15,6 @@
 load(
     "//jaxlib:jax.bzl",
     "if_building_jaxlib",
-    "if_building_mosaic_gpu",
     "jax_visibility",
     "py_library_providing_imports_info",
     "pytype_strict_library",
@@ -56,9 +55,10 @@ py_library_providing_imports_info(
         "//jaxlib/mlir:mhlo_dialect",
         "//jaxlib/mlir:pass_manager",
         "//jaxlib/mlir:scf_dialect",
+        "//jaxlib/mlir:sdy_dialect",
         "//jaxlib/mlir:sparse_tensor_dialect",
         "//jaxlib/mlir:stablehlo_dialect",
         "//jaxlib/mlir:vector_dialect",
         # xla_client
-    ]) + if_building_mosaic_gpu(["//jaxlib/mosaic/gpu:mosaic_gpu"]),
+    ]),
 )

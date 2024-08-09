@@ -15,7 +15,7 @@ limitations under the License.
 
 #include <cstdint>
 #include <cstdio>
-#include <cstdlib>
+
 #include "third_party/gpus/cuda/include/cuda.h"
 
 extern "C" {
@@ -24,6 +24,13 @@ void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
                               int64_t elem_bytewidth, int64_t rank,
                               int64_t *sizes, int64_t *strides,
                               int64_t swizzle_bytes, int64_t *window_shape) {
+  if (((uintptr_t)tma_desc) % 64 != 0) {
+    fprintf(stderr,
+            "TMA descriptor address must be 64 byte aligned, but got: %p\n",
+            tma_desc);
+    abort();
+  }
+
   CUtensorMapDataType data_type;
   if (elem_bytewidth == 1) {
     data_type = CU_TENSOR_MAP_DATA_TYPE_UINT8;
@@ -37,9 +44,20 @@ void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
     fprintf(stderr, "Unsupported element size: %ld\n", elem_bytewidth);
     abort();
   }
+  if (rank < 1 || rank > 5) {
+    fprintf(stderr, "Rank must be in [1, 5], but got %ld\n", rank);
+    abort();
+  }
   cuuint64_t tma_sizes[5] = {1, 1, 1, 1, 1};
   for (int i = 0; i < rank; ++i) {
-    tma_sizes[i] = static_cast<cuuint64_t>(sizes[rank - i - 1]);
+    cuuint64_t tma_size_i = static_cast<cuuint64_t>(sizes[rank - i - 1]);
+    if (tma_size_i > static_cast<cuuint64_t>(1) << 32) {
+      fprintf(stderr,
+              "TMA size must be less than 2**32, but got %ld at index %ld\n",
+              tma_size_i, rank - i - 1);
+      abort();
+    }
+    tma_sizes[i] = tma_size_i;
   }
   cuuint64_t tma_strides[5] = {1, 1, 1, 1, 1};
   if (strides[rank - 1] != 1) {
@@ -48,12 +66,36 @@ void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
     abort();
   }
   for (int i = 0; i < rank - 1; ++i) {  // We skip the implicit minor stride.
-    tma_strides[i] =
+    cuuint64_t tma_stride_i =
         static_cast<cuuint64_t>(strides[rank - i - 2] * elem_bytewidth);
+    if (tma_stride_i % 16 != 0 || tma_stride_i >= static_cast<cuuint64_t>(1)
+                                                      << 40) {
+      fprintf(stderr,
+              "Byte strides must be divisble by 16 and less than 2**40, but "
+              "got %ld (item stride = %ld, item size = %ld) at index %ld\n",
+              tma_stride_i, strides[rank - 1], elem_bytewidth, rank - i - 2);
+      abort();
+    }
+    tma_strides[i] = tma_stride_i;
   }
   cuuint32_t tma_window_shape[5] = {1, 1, 1, 1, 1};
   for (int64_t i = 0; i < rank; ++i) {
-    tma_window_shape[i] = static_cast<cuuint32_t>(window_shape[rank - i - 1]);
+    cuuint32_t tma_window_shape_i =
+        static_cast<cuuint32_t>(window_shape[rank - i - 1]);
+    if (tma_window_shape_i > 256) {
+      fprintf(stderr,
+              "Window shape must be in [0, 256], but got %d at index %ld\n",
+              tma_window_shape_i, rank - i - 1);
+      abort();
+    }
+    if (i == 0 && (tma_window_shape_i * elem_bytewidth) % 16 != 0) {
+      fprintf(stderr,
+              "The last dimension of window shape must have a bytewidth "
+              "divisible by 16, but got %d*%ld at index %ld\n",
+              tma_window_shape_i, elem_bytewidth, rank - i - 1);
+      abort();
+    }
+    tma_window_shape[i] = tma_window_shape_i;
   }
   cuuint32_t element_strides[5] = {1, 1, 1, 1, 1};
   CUtensorMapSwizzle swizzle;
@@ -81,17 +123,6 @@ void mosaic_gpu_init_tma_desc(CUtensorMap *tma_desc, void *base_addr,
   }
 }
 
-void mosaic_gpu_memcpy_async_h2d(CUdeviceptr dst, void *src, uint64_t bytes,
-                                 CUstream stream) {
-  CUresult result = cuMemcpyHtoDAsync(dst, src, bytes, stream);
-  if (result != CUDA_SUCCESS) {
-    const char *ptr = nullptr;
-    cuGetErrorString(result, &ptr);
-    fprintf(stderr, "cuMemcpyAsync failed: %s\n", ptr);
-    abort();
-  }
-}
-
 void* mosaic_gpu_module_load(void *data) {
   CUmodule module = nullptr;
   if (auto result = cuModuleLoadData(&module, data); result != CUDA_SUCCESS) {
@@ -103,8 +134,9 @@ void* mosaic_gpu_module_load(void *data) {
   return module;
 }
 
+// cluster_size can be -1 when it's not statically known.
 void *mosaic_gpu_get_function(CUmodule module, const char *name,
-                              int32_t smem_bytes) {
+                              int32_t smem_bytes, int32_t cluster_size) {
   CUfunction function = nullptr;
   CUresult result = cuModuleGetFunction(&function, module, name);
   if (result != CUDA_SUCCESS) {
@@ -123,17 +155,50 @@ void *mosaic_gpu_get_function(CUmodule module, const char *name,
       abort();
     }
   }
+  if (cluster_size > 8) {
+    result = cuFuncSetAttribute(
+        function, CU_FUNC_ATTRIBUTE_NON_PORTABLE_CLUSTER_SIZE_ALLOWED, 1);
+    if (result != CUDA_SUCCESS) {
+      const char *ptr = nullptr;
+      cuGetErrorString(result, &ptr);
+      fprintf(stderr, "cuFuncSetAttribute failed: %s\n", ptr);
+      abort();
+    }
+  }
   return function;
 }
 
-void mosaic_gpu_launch_kernel(CUfunction function, int64_t grid_x,
-                              int64_t grid_y, int64_t grid_z, int64_t block_x,
-                              int64_t block_y, int64_t block_z,
-                              int32_t smem_bytes, CUstream stream,
+void mosaic_gpu_launch_kernel(CUfunction function, uint32_t grid_x,
+                              uint32_t grid_y, uint32_t grid_z,
+                              uint32_t cluster_x, uint32_t cluster_y,
+                              uint32_t cluster_z, uint32_t block_x,
+                              uint32_t block_y, uint32_t block_z,
+                              uint32_t smem_bytes, CUstream stream,
                               void **params) {
-  CUresult result =
-      cuLaunchKernel(function, grid_x, grid_y, grid_z, block_x, block_y,
-                     block_z, smem_bytes, stream, params, nullptr);
+  CUlaunchConfig config {
+    .gridDimX = grid_x,
+    .gridDimY = grid_y,
+    .gridDimZ = grid_z,
+    .blockDimX = block_x,
+    .blockDimY = block_y,
+    .blockDimZ = block_z,
+    .sharedMemBytes = smem_bytes,
+    .hStream = stream,
+    .attrs = nullptr,
+    .numAttrs = 0,
+  };
+  CUlaunchAttribute cluster_attr;
+  if (cluster_x != 0) {
+    cluster_attr.id = CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION;
+    cluster_attr.value.clusterDim = {
+        .x = cluster_x,
+        .y = cluster_y,
+        .z = cluster_z,
+    };
+    config.attrs = &cluster_attr;
+    config.numAttrs = 1;
+  }
+  CUresult result = cuLaunchKernelEx(&config, function, params, nullptr);
   if (result != CUDA_SUCCESS) {
     const char *ptr = nullptr;
     cuGetErrorString(result, &ptr);
@@ -141,5 +206,4 @@ void mosaic_gpu_launch_kernel(CUfunction function, int64_t grid_x,
     abort();
   }
 }
-
 }

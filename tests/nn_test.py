@@ -28,6 +28,8 @@ from jax._src import config
 from jax._src import core
 from jax._src import test_util as jtu
 from jax._src import ad_checkpoint
+from jax._src.interpreters import mlir
+from jax._src.lib import cuda_versions
 from jax.test_util import check_grads
 from jax import nn
 from jax import random
@@ -36,8 +38,121 @@ import jax.numpy as jnp
 
 config.parse_flags_with_absl()
 
+def _is_required_cudnn_version_satisfied():
+  return (
+      jtu.is_cuda_compute_capability_at_least("8.0") and
+      cuda_versions is not None and
+      cuda_versions.cudnn_get_version() >= 8904
+  )
 
+def _get_causal_mask(T, S):
+  causal_mask = jnp.tril(jnp.ones((T, S), dtype=jnp.bool_))
+  return causal_mask[jnp.newaxis, jnp.newaxis, :, :]
+
+@jtu.with_config(jax_legacy_prng_key="allow",
+                 jax_numpy_dtype_promotion="standard")
 class NNFunctionsTest(jtu.JaxTestCase):
+  @parameterized.product(
+      dtype=[jnp.float32, jnp.bfloat16, jnp.float16],
+      use_bias=[False, True],
+      causal_mode=[None, 'is_causal', 'is_mask'],
+      group_num=[1, 2, 4],
+      use_vmap=[False, True],
+      impl=['xla', 'cudnn'],
+  )
+  def testDotProductAttentionInfer(self, dtype, use_bias, causal_mode,
+                                   group_num, use_vmap, impl):
+    if impl == 'cudnn' and not _is_required_cudnn_version_satisfied():
+      raise unittest.SkipTest("CUDA or cuDNN versions are not compatible.")
+    if impl == 'cudnn' and dtype == jnp.float32:
+      raise unittest.SkipTest("cuDNN only supports fp16 or bf16.")
+
+    sdpa = nn.dot_product_attention
+    B, S, T, N, H, G = 2, 128, 128, 4, 32, group_num
+    keys = random.split(random.PRNGKey(0), 4)
+    Q = random.normal(keys[0], (B, T, N, H), dtype)
+    K = random.normal(keys[1], (B, S, N // G, H), dtype)
+    V = random.normal(keys[2], (B, S, N // G, H), dtype)
+    if use_bias:
+      bias = random.normal(keys[3], (1, N, T, S), dtype)
+    else:
+      bias = None
+
+    is_causal = causal_mode == 'is_causal'
+    causal_mask = _get_causal_mask(T, S) if causal_mode == 'is_mask' else None
+
+    sdpa_ref = partial(sdpa, is_causal=is_causal, implementation=None)
+    sdpa_ans = partial(sdpa, is_causal=is_causal, implementation=impl)
+
+    if impl == 'cudnn':
+      lowered = jax.jit(sdpa_ans).lower(Q, K, V, bias, causal_mask)
+      hlo = mlir.module_to_string(lowered.compiler_ir('stablehlo'))
+      self.assertIn('__cudnn$fmha', hlo)
+
+    if use_vmap:
+      sdpa_ans = jax.vmap(sdpa_ans, in_axes=(0, 0, 0, None, None), out_axes=0)
+    K_ref = jnp.repeat(K, G, axis=2) if G != 1 else K
+    V_ref = jnp.repeat(V, G, axis=2) if G != 1 else V
+    out_ref = sdpa_ref(Q, K_ref, V_ref, bias, causal_mask)
+
+    out_ans = sdpa_ans(Q, K, V, bias, causal_mask)
+    self.assertAllClose(out_ref, out_ans, atol=.01, rtol=.01)
+
+  @parameterized.product(
+      dtype=[jnp.float32, jnp.bfloat16, jnp.float16],
+      use_bias=[False, True],
+      causal_mode=[None, 'is_causal', 'is_mask'],
+      group_num=[1, 2, 4],
+      use_vmap=[False, True],
+      impl=['xla', 'cudnn'],
+  )
+  def testDotProductAttentionTrain(self, dtype, use_bias, causal_mode,
+                                   group_num, use_vmap, impl):
+    if impl == 'cudnn' and not _is_required_cudnn_version_satisfied():
+      raise unittest.SkipTest("CUDA or cuDNN versions are not compatible.")
+    if impl == 'cudnn' and dtype == jnp.float32:
+      raise unittest.SkipTest("cuDNN only supports fp16 or bf16.")
+
+    sdpa = nn.dot_product_attention
+    B, S, T, N, H, G = 2, 128, 128, 4, 32, group_num
+    keys = random.split(random.PRNGKey(0), 5)
+    Q = random.normal(keys[0], (B, T, N, H), dtype)
+    K = random.normal(keys[1], (B, S, N // G, H), dtype)
+    V = random.normal(keys[2], (B, S, N // G, H), dtype)
+    grad = random.normal(keys[3], (B, T, N, H), dtype)
+    if use_bias:
+      bias = random.normal(keys[4], (1, N, T, S), dtype)
+    else:
+      bias = None
+
+    is_causal = causal_mode == 'is_causal'
+    causal_mask = _get_causal_mask(T, S) if causal_mode == 'is_mask' else None
+
+    K_ref = jnp.repeat(K, G, axis=2) if G != 1 else K
+    V_ref = jnp.repeat(V, G, axis=2) if G != 1 else V
+    sdpa_ref = partial(sdpa, is_causal=is_causal, implementation=None)
+    _, sdpa_vjp_ref = jax.vjp(sdpa_ref, Q, K_ref, V_ref, bias, causal_mask)
+    dQ_ref, dK_ref, dV_ref, dbias_ref, _ = sdpa_vjp_ref(grad)
+    if G != 1:
+      dK_ref = dK_ref.reshape(B, S, N // G, G, H).sum(axis=3)
+      dV_ref = dV_ref.reshape(B, S, N // G, G, H).sum(axis=3)
+
+    sdpa_ans = partial(sdpa, is_causal=is_causal, implementation=impl)
+    if use_vmap:
+      sdpa_ans = jax.vmap(sdpa_ans, in_axes=(0, 0, 0, None, None), out_axes=0)
+    _, sdpa_vjp_ans = jax.vjp(sdpa_ans, Q, K, V, bias, causal_mask)
+    dQ_ans, dK_ans, dV_ans, dbias_ans, _ = sdpa_vjp_ans(grad)
+
+    if impl == 'cudnn':
+      lowered = jax.jit(sdpa_vjp_ans).lower(grad)
+      hlo = mlir.module_to_string(lowered.compiler_ir('stablehlo'))
+      self.assertRegex(hlo, r'__cudnn\$fmha.*Backward\(')
+
+    self.assertAllClose(dQ_ref, dQ_ans, rtol=.01, atol=.01)
+    self.assertAllClose(dK_ref, dK_ans, rtol=.02, atol=.02)
+    self.assertAllClose(dV_ref, dV_ans, rtol=.02, atol=.02)
+    self.assertAllClose(dbias_ref, dbias_ans, rtol=.03, atol=.03)
+
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def testSoftplusGrad(self):
     check_grads(nn.softplus, (1e-8,), order=4,

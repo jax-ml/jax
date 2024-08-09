@@ -385,11 +385,6 @@ class CoreTest(jtu.JaxTestCase):
     self.assertLen(e1.outvars, 1)  # only primal out, no residuals
     self.assertEqual(e1.outvars[0].aval.shape, (3, 3))  # only primal out shape
 
-  def test_jaxpr_replace_debug_info_with_none(self):
-    jaxpr = make_jaxpr(simple_fun)(1.0, 2.0).jaxpr
-    self.assertIsNotNone(jaxpr.debug_info)
-    self.assertIsNone(jaxpr.replace(debug_info=None).debug_info)
-
 
 @jtu.with_config(jax_pprint_use_color=False)
 class JaxprTypeChecks(jtu.JaxTestCase):
@@ -398,7 +393,7 @@ class JaxprTypeChecks(jtu.JaxTestCase):
     super().setUp()
     lax_control_flow._initial_style_open_jaxpr.cache_clear()
     lax_control_flow._initial_style_jaxpr.cache_clear()
-    lax_control_flow._initial_style_jaxprs_with_common_consts.cache_clear()
+    lax_control_flow.common._pad_jaxpr_constvars.cache_clear()
 
   def test_check_jaxpr_correct(self):
     jaxpr = make_jaxpr(lambda x: jnp.sin(x) + jnp.cos(x))(1.).jaxpr
@@ -411,7 +406,7 @@ class JaxprTypeChecks(jtu.JaxTestCase):
   def test_check_jaxpr_jit_invalid(self):
     jaxpr = make_jaxpr(jax.jit(lambda x, y: x + 1))(1., 2.).jaxpr
     pjit_eqn, = jaxpr.eqns
-    jaxpr._eqns[0] = pjit_eqn._replace(invars=())
+    jaxpr._eqns[0] = pjit_eqn.replace(invars=())
     self.assertRaisesRegex(
         core.JaxprTypeError,
         '0 operands cannot call jaxpr with 2 inputs',
@@ -554,32 +549,6 @@ class JaxprTypeChecks(jtu.JaxTestCase):
   def test_raise_to_shaped_weak_type(self, value, weak_type):
     aval = core.raise_to_shaped(core.get_aval(value))
     self.assertEqual(aval.weak_type, weak_type)
-
-  def test_lattice_join_named_shape(self):
-    aval1 = core.ShapedArray((2, 3), np.float32, False, {'i': 10})
-    self.assertEqual(core.lattice_join(aval1, aval1), aval1)
-
-    aval2 = core.ShapedArray((2, 3), np.float32, False, {'j': 5})
-    expected = core.ShapedArray((2, 3), np.float32, False, {'i': 10, 'j': 5})
-    self.assertEqual(core.lattice_join(aval1, aval2), expected)
-
-    aval3 = core.ShapedArray((2, 3), np.float32, False, {'i': 5})
-    self.assertRaises(TypeError, lambda: core.lattice_join(aval1, aval3))
-
-  def test_typecompat_named_shape(self):
-    aval1 = core.ShapedArray((2, 3), np.float32, False, {'i': 10})
-    aval2 = core.ShapedArray((2, 3), np.float32, False, {'j': 5})
-    self.assertTrue(core.typecompat(aval1, aval2))
-
-    aval3 = core.ShapedArray((2, 3), np.float32, False, {'i': 5})
-    self.assertFalse(core.typecompat(aval1, aval3))
-
-  def test_named_shape_comparision(self):
-    self.assertTrue(core.NamedShape(2, 3) == (2, 3))
-    self.assertFalse(core.NamedShape(2, i=3) == (2,))
-    self.assertFalse(core.NamedShape(2, i=3) == (2, 3))
-    self.assertFalse(core.NamedShape(2, i=3) == None)
-    self.assertFalse(core.NamedShape() == [])
 
 
 @jtu.with_config(jax_dynamic_shapes=True)

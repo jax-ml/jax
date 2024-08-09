@@ -22,6 +22,8 @@ kernelspec:
 (external-callbacks)=
 # External callbacks
 
+<!--* freshness: { reviewed: '2024-05-16' } *-->
+
 This tutorial outlines how you can use various callback functions, which allow JAX runtimes to execute Python code on the host. Examples of JAX callbacks are {func}`jax.pure_callback`, {func}`jax.experimental.io_callback` and {func}`jax.debug.callback`. You can use them even while running under JAX transformations, including {func}`~jax.jit`, {func}`~jax.vmap`, {func}`~jax.grad`.
 
 ## Why callbacks?
@@ -56,7 +58,7 @@ def f(x):
 result = f(2)
 ```
 
-This works by passing the runtime value represented by `y` back to the host process, where the host can print the value.
+This works by passing the runtime value of `y` as a CPU {class}`jax.Array` back to the host process, where the host can print it.
 
 (external-callbacks-flavors-of-callback)=
 ## Flavors of callback
