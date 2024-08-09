@@ -317,7 +317,7 @@ class SparseTrace(core.Trace):
       with core.set_current_trace(self.parent_trace):
         out_spvalues = sparse_rules_bcoo[primitive](self.spenv, *(t._spvalue for t in tracers), **params)
     else:
-      out_bufs = primitive.bind_with_trace(self, tuple(self.spenv.data(spvalue) for spvalue in spvalues), params)
+      out_bufs = primitive.bind_with_trace(self.parent_trace, tuple(self.spenv.data(spvalue) for spvalue in spvalues), params)
       out_spvalues = arrays_to_spvalues(self.spenv, out_bufs if primitive.multiple_results else [out_bufs])
     out_tracers = tuple(SparseTracer(self, spvalue=spvalue) for spvalue in out_spvalues)
     return out_tracers if primitive.multiple_results else out_tracers[0]
