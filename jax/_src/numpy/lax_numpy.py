@@ -3399,13 +3399,74 @@ https://jax.readthedocs.io/en/latest/faq.html).
 
 deprecations.register("jax-numpy-array-none")
 
-@util.implements(np.array, lax_description=_ARRAY_DOC, extra_params="""
-device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
-  to which the created array will be committed.
-""")
+
 def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
           order: str | None = "K", ndmin: int = 0,
           *, device: xc.Device | Sharding | None = None) -> Array:
+  """Convert an object to a JAX array.
+
+  JAX implementation of :func:`numpy.array`.
+
+  Args:
+    object: an object that is convertible to an array. This includes JAX
+      arrays, NumPy arrays, Python scalars, Python collections like lists
+      and tuples, objects with an ``__array__`` method, and objects
+      supporting the Python buffer protocol.
+    dtype: optionally specify the dtype of the output array. If not
+      specified it will be inferred from the input.
+    copy: specify whether to force a copy of the input. Default: True.
+    order: not implemented in JAX
+    ndmin: integer specifying the minimum number of dimensions in the
+      output array.
+    device: optional :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
+      to which the created array will be committed.
+
+  Returns:
+    A JAX array constructed from the input.
+
+  See also:
+    - :func:`jax.numpy.asarray`: like `array`, but by default only copies
+      when necessary.
+    - :func:`jax.numpy.from_dlpack`: construct a JAX array from an object
+      that implements the dlpack interface.
+    - :func:`jax.numpy.frombuffer`: construct a JAX array from an object
+      that implements the buffer interface.
+
+  Examples:
+    Constructing JAX arrays from Python scalars:
+
+    >>> jnp.array(True)
+    Array(True, dtype=bool)
+    >>> jnp.array(42)
+    Array(42, dtype=int32, weak_type=True)
+    >>> jnp.array(3.5)
+    Array(3.5, dtype=float32, weak_type=True)
+    >>> jnp.array(1 + 1j)
+    Array(1.+1.j, dtype=complex64, weak_type=True)
+
+    Constructing JAX arrays from Python collections:
+
+    >>> jnp.array([1, 2, 3])  # list of ints -> 1D array
+    Array([1, 2, 3], dtype=int32)
+    >>> jnp.array([(1, 2, 3), (4, 5, 6)])  # list of tuples of ints -> 2D array
+    Array([[1, 2, 3],
+           [4, 5, 6]], dtype=int32)
+    >>> jnp.array(range(5))
+    Array([0, 1, 2, 3, 4], dtype=int32)
+
+    Constructing JAX arrays from NumPy arrays:
+
+    >>> jnp.array(np.linspace(0, 2, 5))
+    Array([0. , 0.5, 1. , 1.5, 2. ], dtype=float32)
+
+    Constructing a JAX array via the Python buffer interface, using Python's
+    built-in :mod:`array` module.
+
+    >>> from array import array
+    >>> pybuffer = array('i', [2, 3, 5, 7])
+    >>> jnp.array(pybuffer)
+    Array([2, 3, 5, 7], dtype=int32)
+  """
   if order is not None and order != "K":
     raise NotImplementedError("Only implemented for order='K'")
 
@@ -3594,13 +3655,72 @@ def astype(x: ArrayLike, dtype: DTypeLike | None,
   return _array_copy(result) if copy else result
 
 
-@util.implements(np.asarray, lax_description=_ARRAY_DOC, extra_params="""
-device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
-  to which the created array will be committed.
-""")
 def asarray(a: Any, dtype: DTypeLike | None = None, order: str | None = None,
             *, copy: bool | None = None,
             device: xc.Device | Sharding | None = None) -> Array:
+  """Convert an object to a JAX array.
+
+  JAX implementation of :func:`numpy.asarray`.
+
+  Args:
+    a: an object that is convertible to an array. This includes JAX
+      arrays, NumPy arrays, Python scalars, Python collections like lists
+      and tuples, objects with an ``__array__`` method, and objects
+      supporting the Python buffer protocol.
+    dtype: optionally specify the dtype of the output array. If not
+      specified it will be inferred from the input.
+    order: not implemented in JAX
+    copy: optional boolean specifying the copy mode. If True, then always
+      return a copy. If False, then error if a copy is necessary. Default is
+      None, which will only copy when necessary.
+    device: optional :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
+      to which the created array will be committed.
+
+  Returns:
+    A JAX array constructed from the input.
+
+  See also:
+    - :func:`jax.numpy.array`: like `asarray`, but defaults to `copy=True`.
+    - :func:`jax.numpy.from_dlpack`: construct a JAX array from an object
+      that implements the dlpack interface.
+    - :func:`jax.numpy.frombuffer`: construct a JAX array from an object
+      that implements the buffer interface.
+
+  Examples:
+    Constructing JAX arrays from Python scalars:
+
+    >>> jnp.asarray(True)
+    Array(True, dtype=bool)
+    >>> jnp.asarray(42)
+    Array(42, dtype=int32, weak_type=True)
+    >>> jnp.asarray(3.5)
+    Array(3.5, dtype=float32, weak_type=True)
+    >>> jnp.asarray(1 + 1j)
+    Array(1.+1.j, dtype=complex64, weak_type=True)
+
+    Constructing JAX arrays from Python collections:
+
+    >>> jnp.asarray([1, 2, 3])  # list of ints -> 1D array
+    Array([1, 2, 3], dtype=int32)
+    >>> jnp.asarray([(1, 2, 3), (4, 5, 6)])  # list of tuples of ints -> 2D array
+    Array([[1, 2, 3],
+           [4, 5, 6]], dtype=int32)
+    >>> jnp.asarray(range(5))
+    Array([0, 1, 2, 3, 4], dtype=int32)
+
+    Constructing JAX arrays from NumPy arrays:
+
+    >>> jnp.asarray(np.linspace(0, 2, 5))
+    Array([0. , 0.5, 1. , 1.5, 2. ], dtype=float32)
+
+    Constructing a JAX array via the Python buffer interface, using Python's
+    built-in :mod:`array` module.
+
+    >>> from array import array
+    >>> pybuffer = array('i', [2, 3, 5, 7])
+    >>> jnp.asarray(pybuffer)
+    Array([2, 3, 5, 7], dtype=int32)
+  """
   # For copy=False, the array API specifies that we raise a ValueError if the input supports
   # the buffer protocol but a copy is required. Since array() supports the buffer protocol
   # via numpy, this is only the case when the default device is not 'cpu'
@@ -4450,15 +4570,69 @@ def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
              dtype: DTypeLike | None = None,
              axis: int = 0,
              *, device: xc.Device | Sharding | None = None) -> Array | tuple[Array, Array]: ...
-@util.implements(np.linspace, extra_params="""
-device: (optional) :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
-  to which the created array will be committed.
-""")
 def linspace(start: ArrayLike, stop: ArrayLike, num: int = 50,
              endpoint: bool = True, retstep: bool = False,
              dtype: DTypeLike | None = None,
              axis: int = 0,
              *, device: xc.Device | Sharding | None = None) -> Array | tuple[Array, Array]:
+  """Return evenly-spaced numbers within an interval.
+
+  JAX implementation of :func:`numpy.linspace`.
+
+  Args:
+    start: scalar or array of starting values.
+    stop: scalar or array of stop values.
+    num: number of values to generate. Default: 50.
+    endpoint: if True (default) then include the ``stop`` value in the result.
+      If False, then exclude the ``stop`` value.
+    retstep: If True, then return a ``(result, step)`` tuple, where ``step`` is the
+      interval between adjacent values in ``result``.
+    axis: integer axis along which to generate the linspace. Defaults to zero.
+    device: optional :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
+      to which the created array will be committed.
+
+  Returns:
+    An array ``values``, or a tuple ``(values, step)`` if ``retstep`` is True, where:
+
+    - ``values`` is an array of evenly-spaced values from ``start`` to ``stop``
+    - ``step`` is the interval between adjacent values.
+
+  See also:
+    - :func:`jax.numpy.arange`: Generate ``N`` evenly-spaced values given a starting
+      point and a step
+    - :func:`jax.numpy.logspace`: Generate logarithmically-spaced values.
+    - :func:`jax.numpy.geomspace`: Generate geometrically-spaced values.
+
+  Examples:
+    List of 5 values between 0 and 10:
+
+    >>> jnp.linspace(0, 10, 5)
+    Array([ 0. ,  2.5,  5. ,  7.5, 10. ], dtype=float32)
+
+    List of 8 values between 0 and 10, excluding the endpoint:
+
+    >>> jnp.linspace(0, 10, 8, endpoint=False)
+    Array([0.  , 1.25, 2.5 , 3.75, 5.  , 6.25, 7.5 , 8.75], dtype=float32)
+
+    List of values and the step size between them
+
+    >>> vals, step = jnp.linspace(0, 10, 9, retstep=True)
+    >>> vals
+    Array([ 0.  ,  1.25,  2.5 ,  3.75,  5.  ,  6.25,  7.5 ,  8.75, 10.  ],      dtype=float32)
+    >>> step
+    Array(1.25, dtype=float32)
+
+    Multi-dimensional linspace:
+
+    >>> start = jnp.array([0, 5])
+    >>> stop = jnp.array([5, 10])
+    >>> jnp.linspace(start, stop, 5)
+    Array([[ 0.  ,  5.  ],
+           [ 1.25,  6.25],
+           [ 2.5 ,  7.5 ],
+           [ 3.75,  8.75],
+           [ 5.  , 10.  ]], dtype=float32)
+  """
   num = core.concrete_dim_or_error(num, "'num' argument of jnp.linspace")
   axis = core.concrete_or_error(operator.index, axis, "'axis' argument of jnp.linspace")
   return _linspace(start, stop, num, endpoint, retstep, dtype, axis, device=device)
