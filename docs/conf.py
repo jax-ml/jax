@@ -132,6 +132,7 @@ exclude_patterns = [
     'notebooks/*.md',
     'pallas/quickstart.md',
     'pallas/tpu/pipelining.md',
+    'pallas/tpu/distributed.md',
     'pallas/tpu/matmul.md',
     'jep/9407-type-promotion.md',
     'autodidax.md',
@@ -221,6 +222,7 @@ nb_execution_excludepatterns = [
     # Requires accelerators
     'pallas/quickstart.*',
     'pallas/tpu/pipelining.*',
+    'pallas/tpu/distributed.*',
     'pallas/tpu/matmul.*',
     'sharded-computation.*',
     'distributed_data_loading.*'
