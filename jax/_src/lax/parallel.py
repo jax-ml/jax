@@ -1291,6 +1291,11 @@ def _reduce_scatter_collective(axis_data, _, vals_in, dims_in,
                                scatter_dimension, axis_name,
                                axis_index_groups, axis_size, tiled):
   frame_size, frame_name = axis_data.size, axis_data.name
+  if frame_name not in axis_name:
+    return _reduce_scatter_batcher(
+        vals_in, dims_in, scatter_dimension=scatter_dimension,
+        axis_name=axis_name, axis_index_groups=axis_index_groups,
+        axis_size=axis_size, tiled=tiled)
   if axis_index_groups is not None:
     raise NotImplementedError("axis_index_groups not supported in vmap")
   assert axis_size == frame_size, "axis size doesn't match"
@@ -1395,6 +1400,8 @@ def psum_scatter(x, axis_name, *, scatter_dimension=0, axis_index_groups=None,
    [12 14]
    [16 18]]
   """
+  if not isinstance(axis_name, tuple):
+    axis_name = axis_name,
   axis_size = psum(1, axis_name, axis_index_groups=axis_index_groups)
   axis_index_groups = _canonicalize_axis_index_groups(axis_index_groups)
   bind = partial(

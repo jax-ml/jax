@@ -140,7 +140,11 @@ class PartialVal(tuple):
       return self[0]
 
 
-class JaxprTraceTag: pass
+class JaxprTraceTag:
+  def __hash__(self):
+    return hash(JaxprTraceTag)
+  def __eq__(self, other):
+    return isinstance(other, JaxprTraceTag)
 
 class JaxprTrace(Trace['JaxprTracer']):
 
@@ -655,7 +659,7 @@ def trace_to_jaxpr_nounits(
   with core.take_current_trace() as parent_trace:
     trace = JaxprTrace(parent_trace, current_name_stack, JaxprTraceTag())
     with core.new_trace(trace):
-      fun = trace_to_subjaxpr_nounits(fun, trace, instantiate)
+      fun = trace_to_subjaxpr_nounits(fun, trace.tag, instantiate)
       with core.set_current_trace(trace):
         jaxpr, (out_pvals, consts, env) = fun.call_wrapped(pvals)
         assert not env
@@ -667,6 +671,7 @@ def trace_to_subjaxpr_nounits(
     tag: JaxprTraceTag,
     instantiate: bool | Sequence[bool],
     in_pvals: Sequence[PartialVal]):
+  assert isinstance(tag, JaxprTraceTag)
   assert all(isinstance(pv, PartialVal) for pv in in_pvals), in_pvals
   current_name_stack = source_info_util.current_name_stack()
   with core.take_current_trace() as parent_trace:

@@ -1304,7 +1304,7 @@ def _pmap_partial_eval_custom_res_maker(params_known, aval):
 def _pmap_dce_rule(used_outputs, eqn):
   # just like pe.dce_jaxpr_call_rule, except handles in_axes / out_axes
   axis_name = eqn.params["axis_name"]
-  with maybe_extend_axis_env(axis_name, eqn.params["global_axis_size"], None):
+  with core.extend_axis_env([(axis_name, eqn.params["global_axis_size"])]):
     new_jaxpr, used_inputs = pe.dce_jaxpr(eqn.params['call_jaxpr'], used_outputs)
   _, donated_invars = partition_list(used_inputs, eqn.params['donated_invars'])
   _, in_axes = partition_list(used_inputs, eqn.params['in_axes'])
@@ -1315,11 +1315,10 @@ def _pmap_dce_rule(used_outputs, eqn):
   if not any(used_inputs) and not any(used_outputs) and not new_jaxpr.effects:
     return used_inputs, None
   else:
-    effs = core.filter_named_axis_effects(new_jaxpr.effects, {axis_name})
     new_eqn = pe.new_jaxpr_eqn(
         [v for v, used in zip(eqn.invars, used_inputs) if used],
         [v for v, used in zip(eqn.outvars, used_outputs) if used],
-        eqn.primitive, new_params, effs, eqn.source_info)
+        eqn.primitive, new_params, new_jaxpr.effects, eqn.source_info)
     return used_inputs, new_eqn
 
 

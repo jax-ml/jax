@@ -71,7 +71,11 @@ def jvp(fun: lu.WrappedFun, has_aux=False, instantiate=True,
     return jvpfun(fun, instantiate, transform_stack), aux
 
 
-class JVPTag: pass
+class JVPTag:
+  def __hash__(self):
+    return hash(JVPTag)
+  def __eq__(self, other):
+    return isinstance(other, JVPTag)
 
 
 @lu.transformation
