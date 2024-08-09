@@ -339,18 +339,18 @@ class ArrayImpl(basearray.Array):
       except ValueError:
         arr_idx = None
       if arr_idx is not None:
-        a = self._arrays[arr_idx]
-        out = ArrayImpl(
-            a.aval, SingleDeviceSharding(_get_device(a)), [a], committed=False,
-            _skip_checks=True)
+        out = self._arrays[arr_idx]
+        sharding = SingleDeviceSharding(_get_device(out))
 
         if config.pmap_no_rank_reduction.value:
           # If cidx was the index of a single shard, then it corresponds to one
           # shard of the chunked dimension.
           dims = tuple(i for i, x in enumerate(cidx) if isinstance(x, int))
-          return lax.squeeze(out, dimensions=dims)
-        else:
-          return out
+          # Squeeze on committed arrays to avoid data movement to shard 0.
+          out = lax.squeeze(out, dimensions=dims)
+
+        return ArrayImpl(
+            out.aval, sharding, [out], committed=False, _skip_checks=True)
 
     return lax_numpy._rewriting_take(self, idx)
 
