@@ -510,12 +510,6 @@ class Trace(Generic[TracerType]):
   def __repr__(self):
     return '{}'.format(self.__class__.__name__)
 
-  def invalidate(self):
-    if config.check_tracer_leaks.value:
-      leaked_tracers = maybe_find_leaked_tracers(self)
-      if leaked_tracers:
-        raise leaked_tracer_error("trace", self, leaked_tracers)
-
   def process_call(self, call_primitive, f, tracers, params):
     msg = (f"{type(self)} must override process_call to handle call-like "
            "primitives")
@@ -2775,6 +2769,21 @@ def find_cur_trace():
   return get_trace_state().trace
 
 class NotATrace: pass
+
+
+# to avoid leak checker false positives, ensure there are no remaining refs to
+# the trace before leaving the context.
+@contextmanager
+def new_trace(trace:Trace):
+  trace_ref = ref(trace)
+  del trace
+  yield
+  if config.check_tracer_leaks.value:
+    live_trace = trace_ref()
+    if live_trace is not None:
+      leaked_tracers = maybe_find_leaked_tracers(live_trace)
+      if leaked_tracers:
+        raise leaked_tracer_error("trace", live_trace, leaked_tracers)
 
 @contextmanager
 def take_current_trace():

@@ -654,12 +654,13 @@ def trace_to_jaxpr_nounits(
   current_name_stack = source_info_util.current_name_stack()
   with core.take_current_trace() as parent_trace:
     trace = JaxprTrace(parent_trace, current_name_stack, JaxprTraceTag())
-    fun = trace_to_subjaxpr_nounits(fun, trace, instantiate)
-    with core.set_current_trace(trace):
-      jaxpr, (out_pvals, consts, env) = fun.call_wrapped(pvals)
-      assert not env
-    trace.invalidate()
-    return jaxpr, out_pvals, consts
+    with core.new_trace(trace):
+      fun = trace_to_subjaxpr_nounits(fun, trace, instantiate)
+      with core.set_current_trace(trace):
+        jaxpr, (out_pvals, consts, env) = fun.call_wrapped(pvals)
+        assert not env
+      del trace, fun
+      return jaxpr, out_pvals, consts
 
 @lu.transformation
 def trace_to_subjaxpr_nounits(
@@ -1854,11 +1855,6 @@ class DynamicJaxprTrace(core.Trace):
   def __init__(self, frame):
     self.frame = frame
 
-  def invalidate(self):
-    self.frame.tracers = None
-    self.frame.constid_to_tracer = None
-    super().invalidate()
-
   def to_jaxpr_tracer(self, x):
     as_local_var = self.frame.tracer_to_var.get(id(x))
     if as_local_var is None:
@@ -2226,15 +2222,17 @@ def trace_to_jaxpr_dynamic(
   frame.debug_info = debug_info
 
   trace = DynamicJaxprTrace(frame)
-  in_tracers = _input_type_to_tracers(trace.new_arg, in_avals)
-  in_tracers = [t for t, keep in zip(in_tracers, keep_inputs) if keep]
-  with core.set_current_trace(trace):
-    ans = fun.call_wrapped(*in_tracers)
+  with core.new_trace(trace):
+    in_tracers = _input_type_to_tracers(trace.new_arg, in_avals)
+    in_tracers = [t for t, keep in zip(in_tracers, keep_inputs) if keep]
+    with core.set_current_trace(trace):
+      ans = fun.call_wrapped(*in_tracers)
 
-  out_tracers = map(trace.to_jaxpr_tracer, ans)
-  jaxpr, consts, attrs_tracked = frame.to_jaxpr(trace, out_tracers)
-  del fun, frame, in_tracers, out_tracers, ans
-  trace.invalidate()
+    out_tracers = map(trace.to_jaxpr_tracer, ans)
+    jaxpr, consts, attrs_tracked = frame.to_jaxpr(trace, out_tracers)
+    trace.frame = None # avoid cyclic refs
+    del trace, fun, frame, in_tracers, out_tracers, ans
+
   config.enable_checks.value and core.check_jaxpr(jaxpr)
   return jaxpr, [v.aval for v in jaxpr.outvars], consts, attrs_tracked
 
@@ -2242,18 +2240,20 @@ def trace_to_jaxpr_dynamic(
 def trace_to_jaxpr_dynamic2(
     fun: lu.WrappedFun, debug_info: DebugInfo | None = None
   ) -> tuple[Jaxpr, OutputType, list[Any]]:
-  trace = DynamicJaxprTrace(JaxprStackFrame())
 
-  trace.frame.debug_info = debug_info
-  in_avals, keep_inputs = unzip2(fun.in_type)
-  in_tracers = _input_type_to_tracers(trace.new_arg, in_avals)
-  in_tracers = [t for t, keep in zip(in_tracers, keep_inputs) if keep]
-  with core.set_current_trace(trace):
-    ans = fun.call_wrapped(*in_tracers)
-  out_tracers = map(trace.to_jaxpr_tracer, ans)
-  jaxpr = trace.frame.to_jaxpr2(out_tracers)
-  del in_tracers, out_tracers, ans
-  trace.invalidate()
+  trace = DynamicJaxprTrace(JaxprStackFrame())
+  with core.new_trace(trace):
+    trace.frame.debug_info = debug_info
+    in_avals, keep_inputs = unzip2(fun.in_type)
+    in_tracers = _input_type_to_tracers(trace.new_arg, in_avals)
+    in_tracers = [t for t, keep in zip(in_tracers, keep_inputs) if keep]
+    with core.set_current_trace(trace):
+      ans = fun.call_wrapped(*in_tracers)
+    out_tracers = map(trace.to_jaxpr_tracer, ans)
+    jaxpr = trace.frame.to_jaxpr2(out_tracers)
+    trace.frame = None # avoid cyclic refs
+    del trace, in_tracers, out_tracers, ans
+
   return jaxpr
 
 AbstractedAxisName = Hashable
