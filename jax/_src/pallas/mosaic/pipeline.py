@@ -72,6 +72,7 @@ def _broadcast_pytree_to(from_pytree, to_pytree):
   return tree_util.tree_unflatten(treedef, broadcast_leaves)
 
 
+@jax_util.cache(trace_context_in_key=False)
 def _get_tpu_generation() -> int:
   kind = jax.devices()[0].device_kind
   if kind.endswith(' lite'):
