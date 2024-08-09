@@ -70,6 +70,11 @@ class Zero:
   def from_value(val: Any) -> Zero:
     return Zero(raise_to_shaped(get_aval(val)))
 
+  @staticmethod
+  def from_primal_value(val: Any) -> Zero:
+    return Zero(core.primal_aval_to_tangent_aval(raise_to_shaped(get_aval(val))))
+
+
 register_pytree_node(Zero, lambda z: ((), z.aval), lambda aval, _: Zero(aval))
 
 

@@ -459,7 +459,9 @@ class cuSparseTest(sptu.SparseTestCase):
     rng = sptu.rand_sparse(self.rng(), post=jnp.array)
     M = rng(shape, dtype)
     nse = (M != 0).sum()
-    f = lambda M: sparse_coo._coo_fromdense(M, nse=nse)
+    def f(M):
+      ans = sparse_coo._coo_fromdense(M, nse=nse)
+      return ans
 
     # Forward-mode
     primals, tangents = jax.jvp(f, [M], [jnp.ones_like(M)])
