@@ -9,4 +9,3 @@ TPU specific documentation.
    details
    pipelining
    matmul
-   distributed
