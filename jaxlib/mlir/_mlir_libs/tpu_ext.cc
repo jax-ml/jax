@@ -374,14 +374,21 @@ PYBIND11_MODULE(_tpu_ext, m) {
       .def(py::init([](int bitwidth, py::tuple offsets, py::tuple tiling,
                        MlirTpuImplicitDim implicit_dim) {
              if (offsets.size() != 2) {
-               throw py::value_error("offsets should be of length 2");
+               throw py::value_error("Offsets should be of length 2");
              }
-             return mlirTpuVectorLayoutCreate(
+             if (tiling.size() != 2) {
+               throw py::value_error("Tiling should be of length 2");
+             }
+             MlirTpuVectorLayout layout = mlirTpuVectorLayoutCreate(
                  bitwidth,
                  {offsetFromPyOffset(offsets[0]),
                   offsetFromPyOffset(offsets[1])},
                  {tiling[0].cast<int64_t>(), tiling[1].cast<int64_t>()},
                  implicit_dim);
+            if (!mlirTpuVectorLayoutIsValid(layout, TARGET_SHAPE)) {
+              throw py::value_error("Layout not valid for target shape");
+            }
+            return layout;
            }),
            py::arg("bitwidth"), py::arg("offsets"), py::arg("tiling"),
            py::arg("implicit_dim"))
