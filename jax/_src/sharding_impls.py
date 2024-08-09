@@ -53,18 +53,17 @@ class TransferToMemoryKind:
 
 @util.cache(max_size=128, trace_context_in_key=False)
 def _check_mesh_resource_axis(mesh, parsed_pspec, _manual_axes):
-  try:
-    for p in parsed_pspec:
-      if p is not None:
-        for r in p:
-          mesh.shape[r]
-          if r in _manual_axes:
-            raise ValueError(
-                f"Axis: {r} of {parsed_pspec.get_partition_spec()} "
-                f"is also found in manual_axes: {_manual_axes}.") from None
-  except KeyError as e:
-    raise ValueError(f"Resource axis: {e.args[0]} of {parsed_pspec.user_spec} is "
-                     "undefined.") from None
+  for p in parsed_pspec:
+    if p is not None:
+      for r in p:
+        if r not in mesh.shape:
+          raise ValueError(
+              f"Resource axis: {r} of {parsed_pspec.get_partition_spec()} "
+              f"is not found in mesh: {tuple(mesh.shape.keys())}.")
+        if r in _manual_axes:
+          raise ValueError(
+              f"Axis: {r} of {parsed_pspec.get_partition_spec()} "
+              f"is also found in manual_axes: {_manual_axes}.") from None
 
 
 def hashed_index(x) -> int:

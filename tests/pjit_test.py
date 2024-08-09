@@ -4398,7 +4398,7 @@ class PJitErrorTest(jtu.JaxTestCase):
     spec = P(resources,)
     with self.assertRaisesRegex(
         ValueError,
-        r"Resource axis: x of.*" + spec_regex(spec) + " is undefined"):
+        r"Resource axis: x of.*" + spec_regex(spec) + r" is not found in mesh: \(.*\)."):
       pjit(lambda x: x, in_shardings=spec, out_shardings=None)(x)
 
   @check_1d_2d_mesh(set_mesh=False)
@@ -4408,7 +4408,7 @@ class PJitErrorTest(jtu.JaxTestCase):
     spec = P(resources,)
     with self.assertRaisesRegex(
         ValueError,
-        r"Resource axis: x of.*" + spec_regex(spec) + " is undefined"):
+        r"Resource axis: x of.*" + spec_regex(spec) + r" is not found in mesh: \(.*\)."):
       pjit(lambda x: x, in_shardings=None, out_shardings=spec)(x)
 
   @check_1d_2d_mesh(set_mesh=False)
@@ -4418,7 +4418,7 @@ class PJitErrorTest(jtu.JaxTestCase):
     spec = P(resources,)
     with self.assertRaisesRegex(
         ValueError,
-        r"Resource axis: x of.*" + spec_regex(spec) + " is undefined"):
+        r"Resource axis: x of.*" + spec_regex(spec) + r" is not found in mesh: \(.*\)."):
       pjit(
           lambda x: with_sharding_constraint(x, spec),
           in_shardings=None,
