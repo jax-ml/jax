@@ -469,11 +469,8 @@ class MapTrace(core.Trace):
              "Please open an issue at https://github.com/google/jax/issues !")
       raise NotImplementedError(msg)
     del prim, jvp, symbolic_zeros  # always base main, can drop jvp
-    in_vals, in_axes = unzip2((t.val, t.shard_axes) for t in tracers)
-    fun, out_axes = _emap_subtrace(fun, self.main, in_axes)
-    with core.new_sublevel():
-      out_vals = fun.call_wrapped(*in_vals)
-    return map(partial(MapTracer, self), out_vals, out_axes())
+    with core.set_current_trace(self):
+      return fun.call_wrapped(*tracers)
 
   def process_custom_vjp_call(self, primitive, fun, fwd, bwd, tracers,
                               out_trees, symbolic_zeros):
@@ -482,11 +479,8 @@ class MapTrace(core.Trace):
              "Please open an issue at https://github.com/google/jax/issues !")
       raise NotImplementedError(msg)
     del primitive, fwd, bwd, out_trees, symbolic_zeros  # always base main, drop vjp
-    in_vals, in_axes = unzip2((t.val, t.shard_axes) for t in tracers)
-    fun, out_axes = _emap_subtrace(fun, self.main, in_axes)
-    with core.new_sublevel():
-      out_vals = fun.call_wrapped(*in_vals)
-    return map(partial(MapTracer, self), out_vals, out_axes())
+    with core.set_current_trace(self):
+      return fun.call_wrapped(*tracers)
 
   def process_axis_index(self, axis_name):
     bind = HashableFunction(
@@ -497,16 +491,6 @@ class MapTrace(core.Trace):
       range = jax.lax.iota(np.int32, core.get_axis_size(axis_name))
     dummy_tracer = MapTracer(self, range, {axis_name: 0})
     return self.process_primitive(fake_primitive, (dummy_tracer,), {})
-
-@lu.transformation_with_aux
-def _emap_subtrace(main, in_axes, *in_vals):
-  t = main.with_cur_sublevel()
-  in_tracers = map(partial(MapTracer, t), in_vals, in_axes)
-  ans = yield in_tracers, {}
-  out_tracers = map(t.full_raise, ans)
-  out_vals, out_axes = unzip2((t.val, t.shard_axes) for t in out_tracers)
-  del t, in_tracers, ans, out_tracers
-  yield out_vals, out_axes
 
 def _annot_to_flat(ndim: int, mapped_axes: Iterable[int],
                  annotation: int | None) -> int | None:
