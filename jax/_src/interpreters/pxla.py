@@ -1881,7 +1881,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
                             propagated_out_mem_kinds: tuple[None | str, ...],
                             platforms: tuple[str, ...],
                             lowering_parameters: mlir.LoweringParameters,
-                            mesh_shape_tuple: tuple[tuple[str, int], ...] | None):
+                            mesh_shape_tuple: tuple[tuple[str, int], ...]):
   jaxpr = closed_jaxpr.jaxpr
   in_shardings = semantic_in_shardings.shardings
   out_shardings = semantic_out_shardings.shardings
@@ -1911,8 +1911,7 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
     in_mlir_shardings = map(_to_logical_sharding, global_in_avals, in_shardings)
     out_mlir_shardings = map(_to_logical_sharding, global_out_avals, out_shardings)
     replicated_args = [False] * len(global_in_avals)
-    axis_ctx = sharding_impls.ShardingContext(num_devices, device_assignment,
-                                              mesh_shape=mesh_shape_tuple)
+    axis_ctx = sharding_impls.ShardingContext(num_devices, device_assignment)
     num_partitions = num_devices
   else:
     # This path is triggered for `jit(pmap)` cases.
@@ -1958,7 +1957,8 @@ def _cached_lowering_to_hlo(closed_jaxpr, api_name, fun_name, backend,
         all_default_mem_kind=all_default_mem_kind,
         input_output_aliases=inout_aliases,
         propagated_out_mem_kinds=propagated_out_mem_kinds,
-        lowering_parameters=lowering_parameters)
+        lowering_parameters=lowering_parameters,
+        mesh_shape_tuple=mesh_shape_tuple)
   tuple_args = dispatch.should_tuple_args(len(global_in_avals), backend.platform)
   unordered_effects = list(
       effects.ordered_effects.filter_not_in(closed_jaxpr.effects))
@@ -2203,15 +2203,14 @@ def lower_sharding_computation(
   semantic_out_shardings = SemanticallyEqualShardings(
       out_shardings, global_out_avals)  # type: ignore
   prim_requires_devices = dispatch.jaxpr_has_prim_requiring_devices(jaxpr)
-
-  # TODO(yashkatariya): Initialize with context_mesh here?
   mesh_shape_tuple = None
-  for sharding in it.chain(
-      in_shardings, out_shardings,
-      [js for js, _ in unique_intermediate_shardings]):
-    if isinstance(sharding, sharding_impls.NamedSharding):
-      mesh_shape_tuple = sharding.mesh.shape_tuple
-      break
+  if config.use_shardy_partitioner.value:
+    for sharding in it.chain(
+        in_shardings, out_shardings,
+        [js for js, _ in unique_intermediate_shardings]):
+      if isinstance(sharding, sharding_impls.NamedSharding):
+        mesh_shape_tuple = sharding.mesh.shape_tuple
+        break
 
   (module, keepalive, host_callbacks, unordered_effects, ordered_effects,
    nreps, tuple_args, shape_poly_state) = _cached_lowering_to_hlo(
