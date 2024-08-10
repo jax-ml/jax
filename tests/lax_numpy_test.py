@@ -779,17 +779,54 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jtu.sample_product(
     dtype1=[s for s in default_dtypes if s != jnp.bfloat16],
     dtype2=[s for s in default_dtypes if s != jnp.bfloat16],
-    shape1=all_shapes,
-    shape2=all_shapes,
+    shape1=[(), (5,), (2, 5)],
+    shape2=[(), (5,), (2, 5)],
     assume_unique=[False, True],
     return_indices=[False, True],
+    size=[None, 3, 5],
+    fill_value=[None, -1]
   )
   def testIntersect1d(self, shape1, dtype1, shape2, dtype2, assume_unique,
-                      return_indices):
+                      return_indices, size, fill_value):
     rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng(shape1, dtype1), rng(shape2, dtype2)]
-    jnp_fun = lambda ar1, ar2: jnp.intersect1d(ar1, ar2, assume_unique=assume_unique, return_indices=return_indices)
-    np_fun = lambda ar1, ar2: np.intersect1d(ar1, ar2, assume_unique=assume_unique, return_indices=return_indices)
+    def args_maker():
+      # Generate two arrays with overlapping values.
+      size1, size2 = math.prod(shape1), math.prod(shape2)
+      num_vals = max(size1, size2) + min(size1, size2) // 2
+      vals = rng((num_vals,), 'int32')
+      arr1 = vals[:size1].astype(dtype1).reshape(shape1)
+      arr2 = vals[-size2:].astype(dtype2).reshape(shape2)
+      # if assume_unique is True, we need the results to contain unique values.
+      # This may lead to different shapes than requested, but ¯\_(ツ)_/¯
+      if assume_unique:
+        arr1 = np.unique(arr1)
+        self.rng().shuffle(arr1)  # inplace
+        arr1 = arr1.reshape(shape1) if arr1.shape == size1 else arr1
+        arr2 = np.unique(arr2)
+        self.rng().shuffle(arr2)  # inplace
+        arr2 = arr1.reshape(shape2) if arr2.shape == size2 else arr2
+      return arr1, arr2
+
+    def jnp_fun(ar1, ar2):
+      return jnp.intersect1d(ar1, ar2, assume_unique=assume_unique, return_indices=return_indices,
+                             size=size, fill_value=fill_value)
+
+    def np_fun(ar1, ar2):
+      result = np.intersect1d(ar1, ar2, assume_unique=assume_unique, return_indices=return_indices)
+      def correct_size(x, fill_value):
+        if size is None or size == len(x):
+          return x
+        elif size < len(x):
+          return x[:size]
+        else:
+          if fill_value is None:
+            fill_value = x.min()
+          return np.pad(x, (0, size - len(x)), constant_values=fill_value)
+      if return_indices:
+        return tuple(correct_size(r, f) for r, f in zip(result, [fill_value, ar1.size, ar2.size]))
+      else:
+        return correct_size(result, fill_value)
+
     with jtu.strict_promotion_if_dtypes_match([dtype1, dtype2]):
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
 
