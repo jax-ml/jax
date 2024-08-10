@@ -810,10 +810,6 @@ class ShardMapTrace(core.Trace):
       out_vals = fun.call_wrapped(*in_vals)
     return map(partial(ShardMapTracer, self), out_rep(), out_vals)
 
-  def process_axis_index(self, frame):
-    with core.eval_context(), jax.disable_jit(False):
-      return jax.jit(lambda: jax.lax.axis_index(frame.name))()
-
 
 class ShardMapTracer(core.Tracer):
   rep: RepType

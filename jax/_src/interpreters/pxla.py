@@ -419,6 +419,8 @@ class MapTrace(core.Trace):
       return MapTracer(self, val, {})
 
   def process_primitive(self, primitive, tracers, params):
+    if primitive is jax._src.lax.parallel.axis_index_p:
+      return self.process_axis_index(**params)
     tracers = map(self.to_map_tracer, tracers)
     vals, shard_axes = unzip2([(t.val, t.shard_axes) for t in tracers])
     info = self.emap_info
@@ -488,14 +490,14 @@ class MapTrace(core.Trace):
       out_vals = fun.call_wrapped(*in_vals)
     return map(partial(MapTracer, self), out_vals, out_axes())
 
-  def process_axis_index(self, frame):
+  def process_axis_index(self, axis_name):
     bind = HashableFunction(
-        lambda _: jax.lax.axis_index(frame.name),
-        (jax.lax.axis_index, frame.name))
+        lambda _: jax.lax.axis_index(axis_name),
+        (jax.lax.axis_index, axis_name))
     fake_primitive = FakePrimitive(multiple_results=False, bind=bind)
     with core.eval_context():
-      range = jax.lax.iota(np.int32, frame.size)
-    dummy_tracer = MapTracer(self, range, {frame.name: 0})
+      range = jax.lax.iota(np.int32, core.get_axis_size(axis_name))
+    dummy_tracer = MapTracer(self, range, {axis_name: 0})
     return self.process_primitive(fake_primitive, (dummy_tracer,), {})
 
 @lu.transformation_with_aux
