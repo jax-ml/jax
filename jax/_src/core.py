@@ -2818,15 +2818,14 @@ def set_current_trace(t):
 def extend_axis_env(name_size_pairs : list[tuple[AxisName, int]]):
   env = get_trace_state().axis_env
   name_size_pairs = [(name, size) for name, size in name_size_pairs if name is not no_axis_name]
-  for name, size in name_size_pairs:
-    if name in env:
-      raise Exception(f"Axis name {name} is already in scope")
+  prev = {name: env[name] for name, _ in name_size_pairs if name in env}
   try:
     env.update(name_size_pairs)
     yield
   finally:
     for name, _ in name_size_pairs:
       env.pop(name)
+    env.update(prev)
 
 @contextmanager
 def pop_axis_name(name : AxisName):

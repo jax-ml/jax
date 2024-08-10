@@ -453,8 +453,10 @@ class MapTrace(core.Trace):
     shard_axes = [{axis_name: _annot_to_flat(np.ndim(v), s.values(), ax), **s}
                   if ax is not None else s
                   for v, ax, s in zip(vals, in_axes, shard_axes)]
+    in_tracers = map(partial(MapTracer, self), vals, shard_axes)
     with core.extend_axis_env([(axis_name, axis_size)]):
-      ans = fun.call_wrapped(*tracers)
+      with core.set_current_trace(self):
+        ans = fun.call_wrapped(*in_tracers)
       out_tracers = map(self.to_map_tracer, ans)
       out, outaxes = unzip2((t.val, t.shard_axes) for t in out_tracers)
     out, outaxes = unzip2(_match_annot(axis_name, axis_size, v, s, dst)
