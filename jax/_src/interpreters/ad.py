@@ -101,7 +101,8 @@ def jvp_subtrace(tag, primals, tangents):
                   for x, t in zip(primals, tangents)]
     with core.set_current_trace(trace):
       ans = yield in_tracers, {}
-    yield unzip2(map(trace.to_primal_tangent_pair, ans))
+    out = unzip2(map(trace.to_primal_tangent_pair, ans))
+    yield out
 
 @lu.transformation_with_aux
 def jvp_subtrace_aux(tag, primals, tangents):

@@ -386,7 +386,7 @@ class BatchTrace(Trace):
 
   def __init__(self, parent_trace, tag, axis_data):
     self.parent_trace = parent_trace
-    assert isinstance(axis_data, AxisData), breakpoint()
+    assert isinstance(axis_data, AxisData)
     self.axis_data = axis_data
     self.tag = tag
 

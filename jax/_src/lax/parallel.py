@@ -597,7 +597,7 @@ def _replica_groups_hlo(replica_groups: Sequence[Sequence[int]]
 def _allreduce_impl(pos_reducer, *args, axes, axis_index_groups):
   assert axis_index_groups is None
   if not all(isinstance(axis, int) for axis in axes):
-    breakpoint()
+    breakpoint()  # TODO TODO DO NOT SUBMIT
   assert all(isinstance(axis, int) for axis in axes)
   return [pos_reducer(arg, axes) for arg in args]
 

@@ -355,7 +355,7 @@ def _emap_impl(fun: lu.WrappedFun, *args,
   donate_argnums = (1,) if platform in {"cuda", "rocm", "tpu"} else ()
   new_outvals = []
   for out_axis_src, out_axis, outval in zip(out_axes_src, out_axes, outvals):
-    with jax.disable_jit(False):
+    with jax.disable_jit(False), core.set_current_trace(core.EvalTrace()):
       donate_argnums_ = donate_argnums
       if isinstance(outval, array.ArrayImpl):
         # We don't want to donate if it's already sharded.

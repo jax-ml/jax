@@ -1772,12 +1772,12 @@ def _cpp_pmap(
     )
 
     execute: Callable | None = None
-    top_trace = core.find_cur_trace()
-    if isinstance(top_trace, core.EvalTrace):
-      execute = pxla.xla_pmap_impl_lazy(p.flat_fun, *p.flat_args, **params)
-      out = execute(*p.flat_args)
-    else:
-      out = pxla.xla_pmap_p.bind_with_trace(top_trace, (p.flat_fun,) + tuple(p.flat_args), params)
+    with core.take_current_trace() as trace:
+      if isinstance(trace, core.EvalTrace):
+        execute = pxla.xla_pmap_impl_lazy(p.flat_fun, *p.flat_args, **params)
+        out = execute(*p.flat_args)
+      else:
+        out = pxla.xla_pmap_p.bind_with_trace(trace, (p.flat_fun, *p.flat_args), params)
 
     out_tree, out_flat = p.out_tree, out
     out_pytree_def = out_tree()

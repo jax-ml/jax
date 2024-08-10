@@ -348,7 +348,7 @@ class JaxprTrace(Trace['JaxprTracer']):
                        for ax, aval in zip(unk_in_axes, in_avals)]
 
     # Wrap f to perform partial evaluation and plumb out aux data.
-    f = trace_to_subjaxpr_nounits(f, self.tag, False)
+    f = trace_to_subjaxpr_nounits2(f, self.tag, False)
     f, aux = partial_eval_wrapper_nounits(f, tuple(in_knowns),
                                           tuple(in_avals_mapped))
     # Adjust params for knowns (e.g. donated_invars, in_axes, out_axes_thunk)
@@ -659,15 +659,28 @@ def trace_to_jaxpr_nounits(
   with core.take_current_trace() as parent_trace:
     trace = JaxprTrace(parent_trace, current_name_stack, JaxprTraceTag())
     with core.new_trace(trace):
-      fun = trace_to_subjaxpr_nounits(fun, trace.tag, instantiate)
+      fun = trace_to_subjaxpr_nounits(fun, trace, instantiate)
       with core.set_current_trace(trace):
         jaxpr, (out_pvals, consts, env) = fun.call_wrapped(pvals)
         assert not env
       del trace, fun
       return jaxpr, out_pvals, consts
 
+# TODO(mattjj): superfluous wrapper...?
 @lu.transformation
 def trace_to_subjaxpr_nounits(
+    trace: JaxprTrace,
+    instantiate: bool | Sequence[bool],
+    in_pvals: Sequence[PartialVal]):
+  assert all(isinstance(pv, PartialVal) for pv in in_pvals), in_pvals
+  out_tracers, jaxpr, out_consts, env = yield from _trace_to_subjaxpr_nounits(
+      trace, instantiate, in_pvals)
+  out_pvals = [t.pval for t in out_tracers]
+  del out_tracers
+  yield jaxpr, (out_pvals, out_consts, env)
+
+@lu.transformation
+def trace_to_subjaxpr_nounits2(
     tag: JaxprTraceTag,
     instantiate: bool | Sequence[bool],
     in_pvals: Sequence[PartialVal]):
