@@ -365,7 +365,7 @@ def count_aot_jit_cpp_cache_miss():
 
 
 @contextmanager
-def count_jit_and_pmap_compiles():
+def count_jit_and_pmap_lowerings():
   # No need to clear any caches since we generally jit and pmap fresh callables
   # in tests.
 
@@ -405,7 +405,7 @@ def count_subjaxpr_to_hlo_conversion(fun_name: str):
 
 @contextmanager
 def assert_num_jit_and_pmap_compilations(times):
-  with count_jit_and_pmap_compiles() as count:
+  with count_jit_and_pmap_lowerings() as count:
     yield
   if count[0] != times:
     raise AssertionError(f"Expected exactly {times} XLA compilations, "

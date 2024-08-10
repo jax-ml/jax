@@ -1200,7 +1200,7 @@ class ComputeOffload(jtu.BufferDonationTestCase):
     f = jax.jit(mul, in_shardings=s)
     g = jax.jit(mul, in_shardings=s2)
 
-    with jtu.count_jit_and_pmap_compiles() as count:
+    with jtu.count_jit_and_pmap_lowerings() as count:
       out = f(np_inp)
       out2 = g(np_inp2)
     self.assertEqual(count[0], 1)

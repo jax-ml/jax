@@ -3523,7 +3523,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
     arr = jax.device_put(
         np.arange(16).reshape(8, 2), NamedSharding(mesh, P(None, 'x')))
 
-    with jtu.count_jit_and_pmap_compiles() as count:
+    with jtu.count_jit_and_pmap_lowerings() as count:
       vf = jax.vmap(pjit(lambda x: x * 2, in_shardings=ns))
       out = vf(arr)
       self.assertIsInstance(out.sharding, NamedSharding)
@@ -3867,7 +3867,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       b = jax.device_put(out_a, NamedSharding(mesh2, P('x')))
       f(b)  # lowering cache *hit*
 
-    with jtu.count_jit_and_pmap_compiles() as count:
+    with jtu.count_jit_and_pmap_lowerings() as count:
       g(np.arange(8))
     self.assertEqual(count[0], 1)
 
@@ -3890,7 +3890,7 @@ class ArrayPjitTest(jtu.JaxTestCase):
       b = jax.device_put(out_a, NamedSharding(mesh2, P()))
       f(b)  # lowering cache *miss*
 
-    with jtu.count_jit_and_pmap_compiles() as count:
+    with jtu.count_jit_and_pmap_lowerings() as count:
       g(np.arange(8))
     self.assertEqual(count[0], 2)
 

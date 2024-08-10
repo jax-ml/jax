@@ -1442,7 +1442,7 @@ class JitTest(jtu.BufferDonationTestCase):
     # https://github.com/google/jax/issues/9187
     f = jax.jit(lambda: jnp.sin(1))
     expected = f()
-    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+    with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       ans = jax.vmap(f, axis_size=2, out_axes=None)()
     self.assertEqual(count[0], 0)  # no compiles
     self.assertArraysAllClose(ans, expected, check_dtypes=True)
@@ -3433,11 +3433,11 @@ class APITest(jtu.JaxTestCase):
     def f(x):
       return jnp.sin(x)
 
-    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+    with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       _  = jax.grad(f)(3.)
     self.assertEqual(count[0], 2)  # one for fwd, one for bwd
 
-    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+    with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       _  = jax.grad(f)(3.)
       _  = jax.grad(f)(4.)
     self.assertEqual(count[0], 0)  # cache hits on both fwd and bwd
@@ -4352,7 +4352,7 @@ class APITest(jtu.JaxTestCase):
     jf = jax.jit(f)
     x = jax.random.uniform(jax.random.key(0), shape=(8, 4))
 
-    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+    with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       for _ in range(5):
         jax.hessian(jf)(x).block_until_ready()
 
@@ -5929,7 +5929,7 @@ class RematTest(jtu.JaxTestCase):
     # https://github.com/google/jax/issues/9661
     identity = jax.checkpoint(jax.jit(lambda x: 2 * x))
     _, f_lin = jax.linearize(identity, 1.)
-    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+    with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       for _ in range(20):
         f_lin(1.).block_until_ready()
     self.assertEqual(count[0], 1)  # cached after first execution
@@ -5947,7 +5947,7 @@ class RematTest(jtu.JaxTestCase):
     identity = jax.remat(lambda x, y: jax.jit(lambda x: 2 * x if y else x)(x),
                          static_argnums=(1,))
     _, f_vjp = jax.vjp(lambda x: identity(x, True), 1.)
-    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+    with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       for _ in range(20):
         f_vjp(1.)[0].block_until_ready()
     self.assertEqual(count[0], 2)  # fwd execute_trivial, backward_pass on bwd
@@ -5955,7 +5955,7 @@ class RematTest(jtu.JaxTestCase):
   def test_fwd_caching(self):
     # see above test also
     identity = jax.checkpoint(jax.jit(lambda x: 2 * x))
-    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+    with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       for _ in range(20):
         y, _ = jax.vjp(identity, 1.)
         y.block_until_ready()
@@ -5964,7 +5964,7 @@ class RematTest(jtu.JaxTestCase):
   def test_fwd_caching_static_argnums(self):
     # see above test also
     identity = jax.checkpoint(jax.jit(lambda x: 2 * x), static_argnums=(0,))
-    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+    with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       for _ in range(20):
         y = identity(1.)
         y.block_until_ready()

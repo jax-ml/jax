@@ -2590,7 +2590,7 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     def g(x):
       return x + 2
 
-    with jtu.count_jit_and_pmap_compiles() as count:
+    with jtu.count_jit_and_pmap_lowerings() as count:
       for x in range(10):
         lax.cond(x, f, g, x)
     # Should observe a maximum of 4 compiles: convert_element_type, f, g, cond
