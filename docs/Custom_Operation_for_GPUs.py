@@ -479,7 +479,7 @@ seq_len = 512
 emb_dim = 512
 assert jax.local_device_count() > 1, "Only 1 GPU, the example work, but it is this really what you want?"
 x = jax.random.normal(
-    jax.random.PRNGKey(0),
+    jax.random.key(0),
     shape=(jax.local_device_count() * per_core_batch_size, seq_len, emb_dim),
     dtype=jnp.float16,
 )

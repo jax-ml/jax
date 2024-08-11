@@ -590,7 +590,7 @@ def vmap_mjp(f, x, M):
     outs, = vmap(vjp_fun)(M)
     return outs
 
-key = random.PRNGKey(0)
+key = random.key(0)
 num_covecs = 128
 U = random.normal(key, (num_covecs,) + y.shape)
 
@@ -714,7 +714,7 @@ Here's a check:
 
 ```{code-cell}
 def check(seed):
-  key = random.PRNGKey(seed)
+  key = random.key(seed)
 
   # random coeffs for u and v
   key, subkey = random.split(key)
@@ -768,7 +768,7 @@ Here's a check of the VJP rules:
 
 ```{code-cell}
 def check(seed):
-  key = random.PRNGKey(seed)
+  key = random.key(seed)
 
   # random coeffs for u and v
   key, subkey = random.split(key)
