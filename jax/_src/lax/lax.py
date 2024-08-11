@@ -721,7 +721,7 @@ def dot(lhs: Array, rhs: Array, precision: PrecisionLike = None,
   <https://www.tensorflow.org/xla/operation_semantics#dot>`_
   operator.
 
-  For more general contraction, see the `dot_general` operator.
+  For more general contraction, see the :func:`jax.lax.dot_general` operator.
 
   Args:
     lhs: an array of dimension 1 or 2.
