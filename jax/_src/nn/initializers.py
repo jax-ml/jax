@@ -184,7 +184,7 @@ def truncated_normal(stddev: RealNumeric = 1e-2,
 
   >>> import jax, jax.numpy as jnp
   >>> initializer = jax.nn.initializers.truncated_normal(5.0)
-  >>> initializer(jax.random.PRNGKey(42), (2, 3), jnp.float32)  # doctest: +SKIP
+  >>> initializer(jax.random.key(42), (2, 3), jnp.float32)  # doctest: +SKIP
   Array([[ 2.9047365,  5.2338114,  5.29852  ],
          [-3.836303 , -4.192359 ,  0.6022964]], dtype=float32)
   """

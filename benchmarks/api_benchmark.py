@@ -839,7 +839,7 @@ def serial_dot_products(state):
       out = out + y * x[0]
     return out
 
-  x = jax.random.normal(jax.random.PRNGKey(0), (2, 2))
+  x = jax.random.normal(jax.random.key(0), (2, 2))
   f(x).block_until_ready()  # compile
   while state:
     f(x).block_until_ready()
@@ -929,7 +929,7 @@ def jit_add_chain(state):
   def g(x, y):
     return lax.add(x, y)
 
-  x = jax.random.normal(jax.random.PRNGKey(0), (2, 2))
+  x = jax.random.normal(jax.random.key(0), (2, 2))
   while state:
     @jax.jit
     def f(x):

@@ -1055,7 +1055,7 @@ def init(key, layer_sizes, batch_size):
 layer_sizes = [784, 128, 128, 128, 128, 128, 8]
 batch_size = 32
 
-params, batch = init(jax.random.PRNGKey(0), layer_sizes, batch_size)
+params, batch = init(jax.random.key(0), layer_sizes, batch_size)
 ```
 
 Compare these examples with the purely [automatic partitioning examples in the
