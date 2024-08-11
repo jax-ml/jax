@@ -15,6 +15,7 @@ from functools import partial
 
 from absl.testing import absltest
 from absl.testing import parameterized
+import unittest
 
 import numpy as np
 
@@ -223,7 +224,8 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     [dict(for_impl=for_impl, impl_name=impl_name)
      for for_impl, impl_name in FOR_LOOP_IMPLS],
   )
-  @jtu.skip_on_devices("gpu")  # TODO(mattjj,sharadmv): timeouts?
+  @unittest.skip("timeout?")  # TODO(dougalm): investigate
+  # @jtu.skip_on_devices("gpu")  # TODO(mattjj,sharadmv): timeouts?
   def test_for_jvp(self, f, ref, body_shapes, n, for_impl, for_body_name,
                    impl_name):
     for_ = for_impl
@@ -255,7 +257,8 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     [dict(for_impl=for_impl, impl_name=impl_name)
      for for_impl, impl_name in FOR_LOOP_IMPLS],
   )
-  @jtu.skip_on_devices("gpu")  # TODO(mattjj,sharadmv): timeouts?
+  @unittest.skip("timeout?")  # TODO(dougalm): investigate
+  # @jtu.skip_on_devices("gpu")  # TODO(mattjj,sharadmv): timeouts?
   def test_for_linearize(self, f, ref, body_shapes, n, for_impl, for_body_name,
                          impl_name):
     for_ = for_impl
@@ -362,7 +365,8 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     [dict(for_impl=for_impl, impl_name=impl_name)
      for for_impl, impl_name in FOR_LOOP_IMPLS],
   )
-  @jtu.skip_on_devices("gpu")  # TODO(mattjj,sharadmv): timeouts?
+  @unittest.skip("timeout?")  # TODO(dougalm): investigate
+  # @jtu.skip_on_devices("gpu")  # TODO(mattjj,sharadmv): timeouts?
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
   def test_for_grad(self, f, ref, body_shapes, n, for_impl, for_body_name,
                     impl_name):
@@ -382,7 +386,8 @@ class ForLoopTransformationTest(jtu.JaxTestCase):
     jtu.check_grads(lambda *args: for_(n, f, args)[1].sum(), args, order=2,
                     rtol=7e-3, atol=1e-2)
 
-  @jtu.skip_on_devices("gpu")  # TODO(mattjj,sharadmv): timeouts?
+  @unittest.skip("timeout?")  # TODO(dougalm): investigate
+  # @jtu.skip_on_devices("gpu")  # TODO(mattjj,sharadmv): timeouts?
   @jax.legacy_prng_key('allow')
   def test_grad_of_triple_nested_for_loop(self):
 
