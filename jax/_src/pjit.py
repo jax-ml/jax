@@ -1791,8 +1791,9 @@ def pjit_staging_rule(trace, *args, **params):
       # Inline jaxpr doesn't handle dynamic shapes when inlining. If dynamic
       # shapes are enabled, use eval_jaxpr, which uses the tracing machinery,
       # but redundantly performs abstract evaluation again.
-      out_tracers = core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, *args,
-                                    propagate_source_info=False)
+      with core.set_current_trace(trace):
+        out_tracers = core.eval_jaxpr(jaxpr.jaxpr, jaxpr.consts, *args,
+                                      propagate_source_info=False)
     else:
       out_tracers = pe.inline_jaxpr_into_trace(
           trace, jaxpr.jaxpr, jaxpr.consts, *args)
