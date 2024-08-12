@@ -33,7 +33,7 @@ from jax._src.numpy.lax_numpy import (
     sort, where, zeros)
 from jax._src.numpy.reductions import any, cumsum
 from jax._src.numpy.ufuncs import isnan
-from jax._src.numpy.util import check_arraylike
+from jax._src.numpy.util import check_arraylike, promote_dtypes
 from jax._src.util import canonicalize_axis
 from jax._src.typing import Array, ArrayLike
 
@@ -68,10 +68,9 @@ def setdiff1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
   JAX implementation of :func:`numpy.setdiff1d`.
 
   Because the size of the output of ``setdiff1d`` is data-dependent, the function
-  semantics are not typically compatible with :func:`~jax.jit` and other JAX
-  transformations. The JAX version adds the optional ``size`` argument which
-  must be specified statically for ``jnp.setdiff1d`` to be used in such contexts.
-  transformations.
+  is not typically compatible with :func:`~jax.jit` and other JAX transformations.
+  The JAX version adds the optional ``size`` argument which must be specified statically
+  for ``jnp.setdiff1d`` to be used in such contexts.
 
   Args:
     ar1: first array of elements to be differenced.
@@ -156,10 +155,9 @@ def union1d(ar1: ArrayLike, ar2: ArrayLike,
   JAX implementation of :func:`numpy.union1d`.
 
   Because the size of the output of ``union1d`` is data-dependent, the function
-  semantics are not typically compatible with :func:`~jax.jit` and other JAX
-  transformations. The JAX version adds the optional ``size`` argument which
-  must be specified statically for ``jnp.union1d`` to be used in such contexts.
-  transformations.
+  is not typically compatible with :func:`~jax.jit` and other JAX transformations.
+  The JAX version adds the optional ``size`` argument which must be specified
+  statically for ``jnp.union1d`` to be used in such contexts.
 
   Args:
     ar1: first array of elements to be unioned.
@@ -272,30 +270,97 @@ def setxor1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False) -> Arr
 
 
 @partial(jit, static_argnames=['return_indices'])
-def _intersect1d_sorted_mask(ar1: ArrayLike, ar2: ArrayLike, return_indices: bool = False) -> tuple[Array, ...]:
-  # JIT-compatible helper function for intersect1d
-  ar = concatenate((ar1, ar2))
+def _intersect1d_sorted_mask(arr1: Array, arr2: Array,
+                             return_indices: bool) -> tuple[Array, Array, Array | None]:
+  """JIT-compatible helper function for intersect1d"""
+  assert arr1.ndim == arr2.ndim == 1
+  arr = concatenate((arr1, arr2))
   if return_indices:
-    iota = lax.broadcasted_iota(np.int64, np.shape(ar), dimension=0)
-    aux, indices = lax.sort_key_val(ar, iota)
+    iota = lax.broadcasted_iota(np.int64, np.shape(arr), dimension=0)
+    aux, indices = lax.sort_key_val(arr, iota)
   else:
-    aux = sort(ar)
-
+    aux = sort(arr)
+    indices = None
   mask = aux[1:] == aux[:-1]
-  if return_indices:
-    return aux, mask, indices
+  return aux, mask, indices
+
+
+@partial(jit, static_argnames=['fill_value', 'assume_unique', 'size', 'return_indices'])
+def _intersect1d_size(arr1: Array, arr2: Array, fill_value: ArrayLike | None, assume_unique: bool,
+                      size: int, return_indices: bool) -> Array | tuple[Array, Array, Array]:
+  """Jit-compatible helper function for intersect1d with size specified."""
+  # Ensured by caller
+  assert arr1.ndim == arr2.ndim == 1
+  assert arr1.dtype == arr2.dtype
+
+  # First step: we concatenate the unique values of arr1 and arr2.
+  # The resulting values are:
+  #   num_unique1/num_unique2: number of unique values in arr1/arr2
+  #   aux[:num_unique1 + num_unique2] contains the sorted concatenated
+  #     unique values drawn from arr1 and arr2.
+  #   aux_sorted_indices: indices mapping aux to concatenation of arr1 and arr2
+  #   ind1[:num_unique1], ind2[:num_unique2]: indices of sorted unique
+  #     values in arr1/arr2
+  #   mask: boolean mask of relevant values in aux & aux_sorted_indices
+  if assume_unique:
+    ind1, num_unique1 = arange(arr1.size), asarray(arr1.size)
+    ind2, num_unique2 = arange(arr2.size), asarray(arr2.size)
+    arr = concatenate([arr1, arr2])
+    aux, aux_sort_indices = lax.sort([arr, arange(arr.size)], is_stable=True, num_keys=1)
+    mask = ones(arr.size, dtype=bool)
   else:
-    return aux, mask
+    arr1, ind1, num_unique1 = _unique(arr1, 0, size=arr1.size, return_index=True, return_true_size=True, fill_value=0)
+    arr2, ind2, num_unique2 = _unique(arr2, 0, size=arr2.size, return_index=True, return_true_size=True, fill_value=0)
+    arr = zeros(arr1.size + arr2.size, dtype=dtypes.result_type(arr1, arr2))
+    arr = arr.at[:arr1.size].set(arr1)
+    arr = lax.dynamic_update_slice(arr, arr2, (num_unique1,))
+    mask = arange(arr.size) < num_unique1 + num_unique2
+    _, aux, aux_sort_indices = lax.sort([~mask, arr, arange(arr.size)], is_stable=True, num_keys=2)
+
+  # Second step: extract the intersection values from aux
+  # Since we've sorted the unique entries in arr1 and arr2, any place where
+  # adjacent entries are equal is a value of the intersection.
+  # relevant results here:
+  #   num_results: number of values in the intersection of arr1 and arr2
+  #   vals: array where vals[:num_results] contains the intersection of arr1 and arr2,
+  #         and vals[num_results:] contains the appropriate fill_value.
+  aux_mask = (aux[1:] == aux[:-1]) & mask[1:]
+  num_results = aux_mask.sum()
+  val_indices = nonzero(aux_mask, size=size, fill_value=aux.size)[0]
+  vals = aux.at[val_indices].get(mode='fill', fill_value=0)
+  if fill_value is None:
+    vals = where(arange(len(vals)) < num_results, vals, vals.max())
+    vals = where(arange(len(vals)) < num_results, vals, vals.min())
+  else:
+    vals = where(arange(len(vals)) < num_results, vals, fill_value)
+
+  # Third step: extract the indices of the intersection values.
+  # This requires essentially unwinding aux_sort_indices and ind1/ind2 to find
+  # the appropriate list of indices from the original arrays.
+  if return_indices:
+    arr1_indices = aux_sort_indices.at[val_indices].get(mode='fill', fill_value=arr1.size)
+    arr1_indices = where(arange(len(arr1_indices)) < num_results, arr1_indices, arr1.size)
+    arr2_indices = aux_sort_indices.at[val_indices + 1].get(mode='fill', fill_value=arr2.size) - num_unique1
+    arr2_indices = where(arange(len(arr2_indices)) < num_results, arr2_indices, arr2.size)
+    if not assume_unique:
+      arr1_indices = ind1.at[arr1_indices].get(mode='fill', fill_value=ind1.size)
+      arr2_indices = ind2.at[arr2_indices].get(mode='fill', fill_value=ind2.size)
+    return vals, arr1_indices, arr2_indices
+  else:
+    return vals
 
 
 def intersect1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
-                return_indices: bool = False) -> Array | tuple[Array, Array, Array]:
+                return_indices: bool = False, *, size: int | None = None,
+                fill_value: ArrayLike | None = None) -> Array | tuple[Array, Array, Array]:
   """Compute the set intersection of two 1D arrays.
 
   JAX implementation of :func:`numpy.intersect1d`.
 
-  Because the size of the output of ``intersect1d`` is data-dependent, the function is not
-  compatible with JIT or other JAX transformations.
+  Because the size of the output of ``intersect1d`` is data-dependent, the function
+  is not typically compatible with :func:`~jax.jit` and other JAX transformations.
+  The JAX version adds the optional ``size`` argument which must be specified
+  statically for ``jnp.intersect1d`` to be used in such contexts.
 
   Args:
     ar1: first array of values to intersect.
@@ -305,6 +370,12 @@ def intersect1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
       arrays contain duplicates, the behavior is undefined. default: False.
     return_indices: If True, return arrays of indices specifying where the intersected
       values first appear in the input arrays.
+    size: if specified, return only the first ``size`` sorted elements. If there are fewer
+      elements than ``size`` indicates, the return value will be padded with ``fill_value``,
+      and returned indices will be padded with an out-of-bound index.
+    fill_value: when ``size`` is specified and there are fewer than the indicated number of
+      elements, fill the remaining entries ``fill_value``. Defaults to the smallest value
+      in the intersection.
 
   Returns:
     An array ``intersection``, or if ``return_indices=True``, a tuple of arrays
@@ -353,35 +424,35 @@ def intersect1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
      Array(True, dtype=bool)
   """
   check_arraylike("intersect1d", ar1, ar2)
-  ar1 = core.concrete_or_error(None, ar1, "The error arose in intersect1d()")
-  ar2 = core.concrete_or_error(None, ar2, "The error arose in intersect1d()")
+  arr1, arr2 = promote_dtypes(ar1, ar2)
+  del ar1, ar2
+  arr1 = ravel(arr1)
+  arr2 = ravel(arr2)
+
+  if size is not None:
+    return _intersect1d_size(arr1, arr2, return_indices=return_indices,
+                             size=size, fill_value=fill_value, assume_unique=assume_unique)
 
   if not assume_unique:
     if return_indices:
-      ar1, ind1 = unique(ar1, return_index=True)
-      ar2, ind2 = unique(ar2, return_index=True)
+      arr1, ind1 = unique(arr1, return_index=True)
+      arr2, ind2 = unique(arr2, return_index=True)
     else:
-      ar1 = unique(ar1)
-      ar2 = unique(ar2)
-  else:
-    ar1 = ravel(ar1)
-    ar2 = ravel(ar2)
+      arr1 = unique(arr1)
+      arr2 = unique(arr2)
 
-  if return_indices:
-    aux, mask, aux_sort_indices = _intersect1d_sorted_mask(ar1, ar2, return_indices)
-  else:
-    aux, mask = _intersect1d_sorted_mask(ar1, ar2, return_indices)
+  aux, mask, aux_sort_indices = _intersect1d_sorted_mask(arr1, arr2, return_indices)
 
   int1d = aux[:-1][mask]
 
   if return_indices:
-    ar1_indices = aux_sort_indices[:-1][mask]
-    ar2_indices = aux_sort_indices[1:][mask] - np.size(ar1)
+    assert aux_sort_indices is not None
+    arr1_indices = aux_sort_indices[:-1][mask]
+    arr2_indices = aux_sort_indices[1:][mask] - np.size(arr1)
     if not assume_unique:
-      ar1_indices = ind1[ar1_indices]
-      ar2_indices = ind2[ar2_indices]
-
-    return int1d, ar1_indices, ar2_indices
+      arr1_indices = ind1[arr1_indices]
+      arr2_indices = ind2[arr2_indices]
+    return int1d, arr1_indices, arr2_indices
   else:
     return int1d
 
@@ -517,9 +588,9 @@ def unique(ar: ArrayLike, return_index: bool = False, return_inverse: bool = Fal
   JAX implementation of :func:`numpy.unique`.
 
   Because the size of the output of ``unique`` is data-dependent, the function
-  semantics are not typically compatible with :func:`~jax.jit` and other JAX
-  transformations. The JAX version adds the optional ``size`` argument which
-  must be specified statically for ``jnp.unique`` to be used in such contexts.
+  is not typically compatible with :func:`~jax.jit` and other JAX transformations.
+  The JAX version adds the optional ``size`` argument which must be specified
+  statically for ``jnp.unique`` to be used in such contexts.
 
   Args:
     ar: N-dimensional array from which unique values will be extracted.
@@ -729,9 +800,9 @@ def unique_all(x: ArrayLike, /, *, size: int | None = None,
   and `equal_nan` set to True.
 
   Because the size of the output of ``unique_all`` is data-dependent, the function
-  semantics are not typically compatible with :func:`~jax.jit` and other JAX
-  transformations. The JAX version adds the optional ``size`` argument which
-  must be specified statically for ``jnp.unique`` to be used in such contexts.
+  is not typically compatible with :func:`~jax.jit` and other JAX transformations.
+  The JAX version adds the optional ``size`` argument which must be specified
+  statically for ``jnp.unique`` to be used in such contexts.
 
   Args:
     x: N-dimensional array from which unique values will be extracted.
@@ -810,9 +881,9 @@ def unique_counts(x: ArrayLike, /, *, size: int | None = None,
   :func:`jax.numpy.unique` with `return_counts` and `equal_nan` set to True.
 
   Because the size of the output of ``unique_counts`` is data-dependent, the function
-  semantics are not typically compatible with :func:`~jax.jit` and other JAX
-  transformations. The JAX version adds the optional ``size`` argument which
-  must be specified statically for ``jnp.unique`` to be used in such contexts.
+  is not typically compatible with :func:`~jax.jit` and other JAX transformations.
+  The JAX version adds the optional ``size`` argument which must be specified
+  statically for ``jnp.unique`` to be used in such contexts.
 
   Args:
     x: N-dimensional array from which unique values will be extracted.
@@ -870,9 +941,9 @@ def unique_inverse(x: ArrayLike, /, *, size: int | None = None,
   :func:`jax.numpy.unique` with `return_inverse` and `equal_nan` set to True.
 
   Because the size of the output of ``unique_inverse`` is data-dependent, the function
-  semantics are not typically compatible with :func:`~jax.jit` and other JAX
-  transformations. The JAX version adds the optional ``size`` argument which
-  must be specified statically for ``jnp.unique`` to be used in such contexts.
+  is not typically compatible with :func:`~jax.jit` and other JAX transformations.
+  The JAX version adds the optional ``size`` argument which must be specified
+  statically for ``jnp.unique`` to be used in such contexts.
 
   Args:
     x: N-dimensional array from which unique values will be extracted.
@@ -935,9 +1006,9 @@ def unique_values(x: ArrayLike, /, *, size: int | None = None,
   :func:`jax.numpy.unique` with `equal_nan` set to True.
 
   Because the size of the output of ``unique_values`` is data-dependent, the function
-  semantics are not typically compatible with :func:`~jax.jit` and other JAX
-  transformations. The JAX version adds the optional ``size`` argument which
-  must be specified statically for ``jnp.unique`` to be used in such contexts.
+  is not typically compatible with :func:`~jax.jit` and other JAX transformations.
+  The JAX version adds the optional ``size`` argument which must be specified statically
+  for ``jnp.unique`` to be used in such contexts.
 
   Args:
     x: N-dimensional array from which unique values will be extracted.
