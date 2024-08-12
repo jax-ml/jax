@@ -9779,6 +9779,31 @@ class CustomVJPTest(jtu.JaxTestCase):
     x, y = 3.2, 1.0
     jax.grad(f)(x, y)  # Doesn't error
 
+  def test_optimize_remat_custom_vmap(self):
+    # See https://github.com/google/jax/pull/23000
+    @jax.custom_vjp
+    def f(x, y):
+      return jnp.sin(x) * y
+
+    @jax.custom_batching.custom_vmap
+    def f_fwd(x, y):
+      return f(x, y), (jnp.cos(x), jnp.sin(x), y)
+
+    @f_fwd.def_vmap
+    def f_fwd_vmap(_, in_batched, x, y):
+      # Insert a new const here to test the optimize_remat batching rule.
+      out = np.array([2.0])*f(x, y)
+      out_batched = (True, (True, True, True))
+      return (out, (jnp.cos(x), jnp.sin(x), y)), out_batched
+
+    def f_bwd(res, g):
+      cos_x, sin_x, y = res
+      return (cos_x * g * y, sin_x * g)
+
+    f.defvjp(f_fwd, f_bwd, optimize_remat=True)
+    x, y = jnp.linspace(0.0, 1.0, 5), jnp.linspace(2.0, 5.0, 5)
+    jax.jit(jax.vmap(jax.grad(f)))(x, y)  # Doesn't error
+
 
 def transpose_unary(f, x_example):
   def transposed(y):
