@@ -204,7 +204,7 @@ def jaxpr_has_primitive(jaxpr: core.Jaxpr, prim_name: str) -> bool:
 # stablehlo is oblivious of physical devices.
 prim_requires_devices_during_lowering: set[core.Primitive] = set()
 
-def jaxpr_has_prim_requiring_devices(jaxpr: core.Jaxpr):
+def jaxpr_has_prim_requiring_devices(jaxpr: core.Jaxpr) -> bool:
   for eqn in jaxpr.eqns:
     if eqn.primitive in prim_requires_devices_during_lowering:
       return True

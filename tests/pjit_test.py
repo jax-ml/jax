@@ -1514,6 +1514,45 @@ class CustomPartitionerTest(jtu.JaxTestCase):
     xs = jnp.ones([32, 16])
     self.assertEqual(pjit_f(xs), xs.sum())
 
+  def test_custom_partitioning_no_mesh_context(self):
+    self.skip_if_custom_partitioning_not_supported()
+
+    @custom_partitioning
+    def f(x):
+      return x
+
+    def partition(mesh, arg_shapes, result_shape):
+      def lower_fn(x):
+        @jax.jit
+        def g(y):
+          return y
+
+        return g(x)
+
+      x_shard = arg_shapes[0].sharding
+      return (
+          mesh,
+          lower_fn,
+          NamedSharding(x_shard.mesh, P('x')),
+          (NamedSharding(x_shard.mesh, P('x')),),
+      )
+
+    def infer_sharding_from_operands(mesh, arg_shapes, result_shape):
+      x_shard = arg_shapes[0].sharding
+      return NamedSharding(x_shard.mesh, P('x'))
+
+    f.def_partition(
+        infer_sharding_from_operands=infer_sharding_from_operands,
+        partition=partition,
+    )
+
+    mesh = jtu.create_global_mesh((4,), ('x',))
+    x = np.asarray(np.random.randint(0, 20, (32,)), dtype=np.float32)
+    s = NamedSharding(mesh, P('x'))
+
+    jit_f = jax.jit(f, in_shardings=s, out_shardings=s)
+    self.assertArraysEqual(x, jit_f(x))
+
 
 @jtu.pytest_mark_if_available('multiaccelerator')
 class AutoShardingPjitTest(jtu.JaxTestCase):
