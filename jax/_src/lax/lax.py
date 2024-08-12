@@ -22,7 +22,7 @@ from functools import partial
 import itertools
 import math
 import operator
-from typing import Any, ClassVar, TypeVar, Union, cast as type_cast, overload, TYPE_CHECKING
+from typing import Any, TypeVar, Union, cast as type_cast, overload
 import warnings
 
 import numpy as np
@@ -634,64 +634,42 @@ def concatenate(operands: Array | Sequence[ArrayLike], dimension: int) -> Array:
 
 _precision_strings: dict[Any, Precision] = {}
 
-# TODO(b/333851820): pytype does not properly handle _missing_ in enums.
-# We work around that by defining `Precision` as a normal class.
-if TYPE_CHECKING:
+class Precision(enum.Enum):
+  """Precision enum for lax matrix multiply related functions.
 
-  class Precision:
-    DEFAULT: ClassVar[Precision]
-    HIGH: ClassVar[Precision]
-    HIGHEST: ClassVar[Precision]
+  The device-dependent `precision` argument to JAX functions generally
+  controls the tradeoff between speed and accuracy for array computations on
+  accelerator backends, (i.e. TPU and GPU). Has no impact on CPU backends.
+  This only has an effect on float32 computations, and does not affect the
+  input/output datatypes. Members are:
 
-    def __new__(cls, value: Precision | int | str | None) -> Precision:
-      raise NotImplementedError
+  DEFAULT:
+    Fastest mode, but least accurate. On TPU: performs float32 computations in
+    bfloat16. On GPU: uses tensorfloat32 if available (e.g. on A100 and H100
+    GPUs), otherwise standard float32 (e.g. on V100 GPUs). Aliases:
+    ``'default'``, ``'fastest'``.
+  HIGH:
+    Slower but more accurate. On TPU: performs float32 computations in 3
+    bfloat16 passes. On GPU: uses tensorfloat32 where available, otherwise
+    float32. Aliases: ``'high'``..
+  HIGHEST:
+    Slowest but most accurate. On TPU: performs float32 computations in 6
+    bfloat16. Aliases: ``'highest'``. On GPU: uses float32.
+  """
 
-    @property
-    def name(self) -> str:
-      raise NotImplementedError
+  DEFAULT = 0
+  HIGH = 1
+  HIGHEST = 2
 
-    @property
-    def value(self) -> int:
-      raise NotImplementedError
+  @classmethod
+  def _missing_(cls, value: object) -> Precision | None:
+    return _precision_strings.get(value)
 
-else:
+  def __repr__(self) -> str:
+    return f'{self.__class__.__name__}.{self.name}'
 
-  class Precision(enum.Enum):
-    """Precision enum for lax matrix multiply related functions.
-
-    The device-dependent `precision` argument to JAX functions generally
-    controls the tradeoff between speed and accuracy for array computations on
-    accelerator backends, (i.e. TPU and GPU). Has no impact on CPU backends.
-    This only has an effect on float32 computations, and does not affect the
-    input/output datatypes. Members are:
-
-    DEFAULT:
-      Fastest mode, but least accurate. On TPU: performs float32 computations in
-      bfloat16. On GPU: uses tensorfloat32 if available (e.g. on A100 and H100
-      GPUs), otherwise standard float32 (e.g. on V100 GPUs). Aliases:
-      ``'default'``, ``'fastest'``.
-    HIGH:
-      Slower but more accurate. On TPU: performs float32 computations in 3
-      bfloat16 passes. On GPU: uses tensorfloat32 where available, otherwise
-      float32. Aliases: ``'high'``..
-    HIGHEST:
-      Slowest but most accurate. On TPU: performs float32 computations in 6
-      bfloat16. Aliases: ``'highest'``. On GPU: uses float32.
-    """
-
-    DEFAULT = 0
-    HIGH = 1
-    HIGHEST = 2
-
-    @classmethod
-    def _missing_(cls, value: object) -> Precision | None:
-      return _precision_strings.get(value)
-
-    def __repr__(self) -> str:
-      return f'{self.__class__.__name__}.{self.name}'
-
-    def __str__(self) -> str:
-      return self.name
+  def __str__(self) -> str:
+    return self.name
 
 
 _precision_strings['highest'] = Precision.HIGHEST
