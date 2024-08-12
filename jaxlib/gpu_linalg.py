@@ -61,16 +61,17 @@ if _hip_linalg:
 _prod = lambda xs: functools.reduce(operator.mul, xs, 1)
 
 
-def _lu_pivots_to_permutation_hlo(platform, pivots, *, permutation_size):
+def _lu_pivots_to_permutation_hlo(platform, pivots, *, permutation_size,
+                                  pivots_shape_vals):
   """Kernel for the transformation of pivots to permutations on GPU."""
   typ = ir.RankedTensorType(pivots.type)
-  dims = typ.shape
   i32_type = ir.IntegerType.get_signless(32)
   assert typ.element_type == i32_type, typ
+  assert len(pivots_shape_vals) >= 1
 
-  pivots_layout = tuple(range(len(dims) - 1, -1, -1))
+  pivots_layout = tuple(range(len(pivots_shape_vals) - 1, -1, -1))
   permutations_layout = pivots_layout
-  permutations_dims = (*dims[:-1], permutation_size)
+  permutations_dims = (*pivots_shape_vals[:-1], permutation_size)
   result_types, result_shapes = mk_result_types_and_shapes(
       [(permutations_dims, i32_type)])
   return custom_call(
