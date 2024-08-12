@@ -1119,10 +1119,8 @@ class JaxTestCase(parameterized.TestCase):
 
   _compilation_cache_exit_stack: ExitStack | None = None
 
-  # TODO(mattjj): this obscures the error messages from failures, figure out how
-  # to re-enable it
-  # def tearDown(self) -> None:
-  #   assert core.reset_trace_state()
+  def tearDown(self) -> None:
+    assert core.reset_trace_state()
 
   def setUp(self):
     super().setUp()

@@ -855,7 +855,7 @@ class EvalTrace(Trace):
     else:
       for t in tracers:
         assert not isinstance(t, Tracer), t # TODO: rename
-      with set_current_trace(EvalTrace()):
+      with set_current_trace(eval_trace):
         return primitive.impl(*tracers, **params)
 
   def process_call(self, primitive, f, tracers, params):
@@ -883,6 +883,7 @@ class EvalTrace(Trace):
       return fun.call_wrapped(*tracers)
 
 
+eval_trace = EvalTrace()
 
 AxisName = Hashable
 
@@ -893,7 +894,7 @@ class TraceState:
   axis_env : Dict[AxisName, int]
 
   def __init__(self) -> None:
-    self.trace = EvalTrace()
+    self.trace = eval_trace
     self.axis_env = {}
 
 def _update_thread_local_jit_state(dynamic):
@@ -931,10 +932,7 @@ jax_jit.set_thread_local_state_initialization_callback(
 
 def trace_state_clean() -> bool:
   trace_state = thread_local_state.trace_state
-  return (trace_state.substack == [Sublevel(0)] and
-          trace_state.axis_env == [] and
-          trace_state.trace_stack.stack == [MainTrace(0, EvalTrace)] and
-          trace_state.trace_stack.dynamic == MainTrace(0, EvalTrace))
+  return (trace_state.trace is eval_trace and trace_state.axis_env == {})
 
 def reset_trace_state() -> bool:
   """Resets the global trace state and returns True if it was already clean."""
@@ -1092,7 +1090,7 @@ def ensure_compile_time_eval():
   try:
     ts = get_trace_state()
     prev = ts.trace
-    ts.trace = EvalTrace()
+    ts.trace = eval_trace
     yield
   finally:
     ts.trace = prev
@@ -2014,7 +2012,7 @@ class CallPrimitive(Primitive):
 
 def call_impl(f: lu.WrappedFun, *args, **params):
   del params  # params parameterize the call primitive, not the function
-  with set_current_trace(EvalTrace()):
+  with set_current_trace(eval_trace):
     return f.call_wrapped(*args)
 
 call_p: CallPrimitive = CallPrimitive('call')
