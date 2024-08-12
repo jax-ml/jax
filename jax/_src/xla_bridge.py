@@ -1187,15 +1187,30 @@ def host_count(backend: str | xla_client.Client | None = None) -> int:
   return process_count(backend)
 
 
+def process_indices(
+    backend: str | xla_client.Client | None = None
+) -> list[int]:
+  """Returns the list of all JAX process indices associated with the backend.
+
+  Args:
+    backend: This is an experimental feature and the API is likely to change.
+      Optional, a string representing the xla backend: ``'cpu'``, ``'gpu'``, or
+      ``'tpu'``.
+
+  Returns:
+    List of integer process indices.
+  """
+  return list(range(process_count(backend)))
+
+
 # TODO: remove this sometime after jax 0.2.13 is released
 def host_ids(
     backend: str | xla_client.Client | None = None
 ) -> list[int]:
   warnings.warn(
-      "jax.host_ids has been deprecated; please use range(jax.process_count()) "
-      "instead. jax.host_ids will eventually be removed; please update your "
-      "code.")
-  return list(range(process_count(backend)))
+      "jax.host_ids has been renamed to jax.process_indices. This alias "
+      "will eventually be removed; please update your code.")
+  return process_indices(backend)
 
 
 def using_pjrt_c_api(backend=None):

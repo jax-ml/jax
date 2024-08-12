@@ -138,6 +138,7 @@ Parallelization (:code:`pmap`)
     device_count
     local_device_count
     process_count
+    process_indices
 
 Callbacks
 ---------

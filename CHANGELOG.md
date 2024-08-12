@@ -20,6 +20,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     more cases. Previously non-parallel computations were always dispatched
     synchronously. You can recover the old behavior by setting
     `jax.config.update('jax_cpu_enable_async_dispatch', False)`.
+  * Added new {func}`jax.process_indices` function to replace the
+    `jax.host_ids()` function that was deprecated in JAX v0.2.13.
 
 * Breaking changes
   * The MHLO MLIR dialect (`jax.extend.mlir.mhlo`) has been removed. Use the
