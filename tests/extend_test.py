@@ -173,6 +173,8 @@ def ffi_call_lu_pivots_to_permutation(pivots, permutation_size, vectorized=True)
           dtype=pivots.dtype,
       ),
       pivots,
+      # TODO(b/358275922): Remove this after jaxlib v0.4.32 is released.
+      permutation_size=np.int32(permutation_size),
       vectorized=vectorized,
   )
 
