@@ -161,6 +161,23 @@ def _shapes_are_equal_length(shapes):
   return all(len(shape) == len(shapes[0]) for shape in shapes[1:])
 
 
+def arrays_with_overlapping_values(rng, shapes, dtypes, unique=False, overlap=0.5) -> list[jax.Array]:
+  """Generate multiple arrays with some overlapping values.
+
+  This is useful for tests of set-like operations.
+  """
+  assert 0 <= overlap <= 1
+  sizes = [math.prod(jtu._dims_of_shape(shape)) for shape in shapes]
+  total_size = int(sum(sizes) * (1 - overlap)) + max(sizes)  # non-strict upper-bound.
+  if unique:
+    vals = jtu.rand_unique_int(rng)((total_size,), 'int32')
+  else:
+    vals = jtu.rand_default(rng)((total_size,), 'int32')
+  offsets = [int(sum(sizes[:i]) * (1 - overlap)) for i in range(len(sizes))]
+  return [np.random.permutation(vals[offset: offset + size]).reshape(shape).astype(dtype)
+          for (offset, size, shape, dtype) in zip(offsets, sizes, shapes, dtypes)]
+
+
 class LaxBackedNumpyTests(jtu.JaxTestCase):
   """Tests for LAX-backed Numpy implementation."""
 
@@ -685,11 +702,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     dtype2=[s for s in default_dtypes if s != jnp.bfloat16],
     shape1=all_shapes,
     shape2=all_shapes,
+    overlap=[0.1, 0.5, 0.9],
   )
-  def testSetdiff1d(self, shape1, shape2, dtype1, dtype2):
-    rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng(shape1, dtype1), rng(shape2, dtype2)]
-
+  def testSetdiff1d(self, shape1, shape2, dtype1, dtype2, overlap):
+    args_maker = partial(arrays_with_overlapping_values, self.rng(),
+                         shapes=[shape1, shape2], dtypes=[dtype1, dtype2],
+                         overlap=overlap)
     with jtu.strict_promotion_if_dtypes_match([dtype1, dtype2]):
       self._CheckAgainstNumpy(np.setdiff1d, jnp.setdiff1d, args_maker)
 
@@ -700,10 +718,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     shape2=all_shapes,
     size=[1, 5, 10],
     fill_value=[None, -1],
+    overlap=[0.1, 0.5, 0.9],
   )
-  def testSetdiff1dSize(self, shape1, shape2, dtype1, dtype2, size, fill_value):
-    rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng(shape1, dtype1), rng(shape2, dtype2)]
+  def testSetdiff1dSize(self, shape1, shape2, dtype1, dtype2, size, fill_value, overlap):
+    args_maker = partial(arrays_with_overlapping_values, self.rng(),
+                         shapes=[shape1, shape2], dtypes=[dtype1, dtype2],
+                         overlap=overlap)
     def np_fun(arg1, arg2):
       result = np.setdiff1d(arg1, arg2)
       if size <= len(result):
@@ -719,12 +739,14 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jtu.sample_product(
     dtype1=[s for s in default_dtypes if s != jnp.bfloat16],
     dtype2=[s for s in default_dtypes if s != jnp.bfloat16],
-    shape1=nonempty_nonscalar_array_shapes,
-    shape2=nonempty_nonscalar_array_shapes,
+    shape1=all_shapes,
+    shape2=all_shapes,
+    overlap=[0.1, 0.5, 0.9],
   )
-  def testUnion1d(self, shape1, shape2, dtype1, dtype2):
-    rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng(shape1, dtype1), rng(shape2, dtype2)]
+  def testUnion1d(self, shape1, shape2, dtype1, dtype2, overlap):
+    args_maker = partial(arrays_with_overlapping_values, self.rng(),
+                         shapes=[shape1, shape2], dtypes=[dtype1, dtype2],
+                         overlap=overlap)
     def np_fun(arg1, arg2):
       dtype = jnp.promote_types(arg1.dtype, arg2.dtype)
       return np.union1d(arg1, arg2).astype(dtype)
@@ -734,14 +756,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jtu.sample_product(
     dtype1=[s for s in default_dtypes if s != jnp.bfloat16],
     dtype2=[s for s in default_dtypes if s != jnp.bfloat16],
-    shape1=nonempty_nonscalar_array_shapes,
-    shape2=nonempty_nonscalar_array_shapes,
+    shape1=nonempty_shapes,
+    shape2=nonempty_shapes,
     size=[1, 5, 10],
     fill_value=[None, -1],
+    overlap=[0.1, 0.5, 0.9],
   )
-  def testUnion1dSize(self, shape1, shape2, dtype1, dtype2, size, fill_value):
-    rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng(shape1, dtype1), rng(shape2, dtype2)]
+  def testUnion1dSize(self, shape1, shape2, dtype1, dtype2, size, fill_value, overlap):
+    args_maker = partial(arrays_with_overlapping_values, self.rng(),
+                         shapes=[shape1, shape2], dtypes=[dtype1, dtype2],
+                         overlap=overlap)
     def np_fun(arg1, arg2):
       dtype = jnp.promote_types(arg1.dtype, arg2.dtype)
       result = np.union1d(arg1, arg2).astype(dtype)
@@ -762,14 +786,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     shape1=all_shapes,
     shape2=all_shapes,
     assume_unique=[False, True],
+    overlap=[0.1, 0.5, 0.9],
   )
-  def testSetxor1d(self, shape1, dtype1, shape2, dtype2, assume_unique):
-    rng = jtu.rand_default(self.rng())
-    args_maker = lambda: [rng(shape1, dtype1), rng(shape2, dtype2)]
+  def testSetxor1d(self, shape1, dtype1, shape2, dtype2, assume_unique, overlap):
+    args_maker = partial(arrays_with_overlapping_values, self.rng(),
+                         shapes=[shape1, shape2], dtypes=[dtype1, dtype2],
+                         overlap=overlap)
     jnp_fun = lambda ar1, ar2: jnp.setxor1d(ar1, ar2, assume_unique=assume_unique)
     def np_fun(ar1, ar2):
       if assume_unique:
-        # pre-flatten the arrays to match with jax implementation
+        # numpy requires 1D inputs when assume_unique is True.
         ar1 = np.ravel(ar1)
         ar2 = np.ravel(ar2)
       return np.setxor1d(ar1, ar2, assume_unique)
@@ -779,33 +805,19 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
   @jtu.sample_product(
     dtype1=[s for s in default_dtypes if s != jnp.bfloat16],
     dtype2=[s for s in default_dtypes if s != jnp.bfloat16],
-    shape1=[(), (5,), (2, 5)],
-    shape2=[(), (5,), (2, 5)],
+    shape1=nonempty_shapes,
+    shape2=nonempty_shapes,
     assume_unique=[False, True],
     return_indices=[False, True],
     size=[None, 3, 5],
-    fill_value=[None, -1]
+    fill_value=[None, -1],
+    overlap=[0.1, 0.5, 0.9],
   )
   def testIntersect1d(self, shape1, dtype1, shape2, dtype2, assume_unique,
-                      return_indices, size, fill_value):
-    rng = jtu.rand_default(self.rng())
-    def args_maker():
-      # Generate two arrays with overlapping values.
-      size1, size2 = math.prod(shape1), math.prod(shape2)
-      num_vals = max(size1, size2) + min(size1, size2) // 2
-      vals = rng((num_vals,), 'int32')
-      arr1 = vals[:size1].astype(dtype1).reshape(shape1)
-      arr2 = vals[-size2:].astype(dtype2).reshape(shape2)
-      # if assume_unique is True, we need the results to contain unique values.
-      # This may lead to different shapes than requested, but ¯\_(ツ)_/¯
-      if assume_unique:
-        arr1 = np.unique(arr1)
-        self.rng().shuffle(arr1)  # inplace
-        arr1 = arr1.reshape(shape1) if arr1.shape == size1 else arr1
-        arr2 = np.unique(arr2)
-        self.rng().shuffle(arr2)  # inplace
-        arr2 = arr1.reshape(shape2) if arr2.shape == size2 else arr2
-      return arr1, arr2
+                      return_indices, size, fill_value, overlap):
+    args_maker = partial(arrays_with_overlapping_values, self.rng(),
+                         shapes=[shape1, shape2], dtypes=[dtype1, dtype2],
+                         unique=assume_unique, overlap=overlap)
 
     def jnp_fun(ar1, ar2):
       return jnp.intersect1d(ar1, ar2, assume_unique=assume_unique, return_indices=return_indices,
