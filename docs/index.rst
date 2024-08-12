@@ -27,7 +27,7 @@ For an end-to-end transformer library built on JAX, see MaxText_.
 
       JAX includes composable function transformations for compilation, batching, automatic differentiation, and parallelization.
 
-   .. grid-item-card:: Run Anywhere
+   .. grid-item-card:: Run anywhere
       :columns: 12 6 6 4
       :class-card: sd-border-0
       :shadow: None
@@ -36,19 +36,19 @@ For an end-to-end transformer library built on JAX, see MaxText_.
 
 .. grid:: 3
 
-    .. grid-item-card:: :material-regular:`rocket_launch;2em` Getting Started
+    .. grid-item-card:: :material-regular:`rocket_launch;2em` Getting started
       :columns: 12 6 6 4
       :link: beginner-guide
       :link-type: ref
       :class-card: getting-started
 
-    .. grid-item-card:: :material-regular:`library_books;2em` User Guides
+    .. grid-item-card:: :material-regular:`library_books;2em` User guides
       :columns: 12 6 6 4
       :link: user-guides
       :link-type: ref
       :class-card: user-guides
 
-    .. grid-item-card:: :material-regular:`laptop_chromebook;2em` Developer Docs
+    .. grid-item-card:: :material-regular:`laptop_chromebook;2em` Developer docs
       :columns: 12 6 6 4
       :link: contributor-guide
       :link-type: ref
@@ -58,7 +58,7 @@ For an end-to-end transformer library built on JAX, see MaxText_.
 .. toctree::
    :hidden:
    :maxdepth: 1
-   :caption: Getting Started
+   :caption: Getting started
 
    installation
    quickstart
@@ -75,7 +75,7 @@ For an end-to-end transformer library built on JAX, see MaxText_.
 .. toctree::
    :hidden:
    :maxdepth: 2
-   :caption: Further Resources
+   :caption: Further resources
 
    user_guides
    advanced_guide

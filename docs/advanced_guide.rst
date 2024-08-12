@@ -1,6 +1,6 @@
 .. _advanced_guide:
 
-Advanced Tutorials
+Advanced tutorials
 ==================
 This section contains examples and tutorials on more advanced topics, such as Multi Core computation, Custom operations, and more in depth applications
 
@@ -13,7 +13,7 @@ This section contains examples and tutorials on more advanced topics, such as Mu
    notebooks/vmapped_log_probs
 
 .. toctree::
-   :caption: Parallel Computation
+   :caption: Parallel computation
    :maxdepth: 1
 
    multi_process
@@ -22,7 +22,7 @@ This section contains examples and tutorials on more advanced topics, such as Mu
    distributed_data_loading
 
 .. toctree::
-   :caption: Automatic Differentiation
+   :caption: Automatic differentiation
    :maxdepth: 1
 
    notebooks/autodiff_cookbook
@@ -30,7 +30,7 @@ This section contains examples and tutorials on more advanced topics, such as Mu
    notebooks/autodiff_remat
 
 .. toctree::
-   :caption: JAX Internals
+   :caption: JAX internals
    :maxdepth: 1
 
    notebooks/How_JAX_primitives_work
@@ -38,7 +38,7 @@ This section contains examples and tutorials on more advanced topics, such as Mu
    Custom_Operation_for_GPUs
 
 .. toctree::
-   :caption: Deep Dives
+   :caption: Deep dives
    :maxdepth: 1
 
    notebooks/convolutions

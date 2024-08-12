@@ -1,4 +1,4 @@
-JAX Glossary of Terms
+JAX glossary of terms
 =====================
 
 .. glossary::

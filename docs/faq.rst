@@ -1,4 +1,4 @@
-JAX Frequently Asked Questions (FAQ)
+JAX frequently asked questions (FAQ)
 ====================================
 
 .. comment RST primer for Sphinx: https://thomas-cokelaer.info/tutorials/sphinx/rest_syntax.html

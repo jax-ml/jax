@@ -1,6 +1,6 @@
 .. _contributor-guide:
 
-Developer Documentation
+Developer documentation
 =======================
 
 JAX welcomes contributions from the community.
