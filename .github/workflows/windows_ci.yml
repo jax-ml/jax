@@ -53,7 +53,7 @@ jobs:
             --bazel_options=--color=yes `
             --bazel_options=--config=win_clang
 
-      - uses: actions/upload-artifact@89ef406dd8d7e03cfd12d9e0a4a378f454709029 # ratchet: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@834a144ee995460fba8ed112a2fc961b36a5ec5a # ratchet: actions/upload-artifact@v4
         with:
           name: wheels
           path: ${{ github.workspace }}\jax\dist\*.whl
