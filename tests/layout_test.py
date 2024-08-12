@@ -500,6 +500,54 @@ class LayoutTest(jtu.JaxTestCase):
         'Layout passed to jit does not match the layout on the respective arg'):
       g(arr)
 
+  def test_layout_donation(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    shape = (16, 128)
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+
+    custom_dll = DLL(major_to_minor=(0, 1))
+    arr = jax.device_put(np_inp, Layout(custom_dll, s))
+
+    @partial(jax.jit, in_shardings=Layout(custom_dll, s), donate_argnums=0)
+    def f(x):
+      return x
+
+    out = f(arr)
+    self.assertTrue(arr.is_deleted())
+
+  def test_layout_donation_auto(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    shape = (128, 16)
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+
+    arr = jax.device_put(np_inp, s)
+
+    @partial(jax.jit, out_shardings=Layout(DLL.AUTO), donate_argnums=0)
+    def f(x):
+      return x * x
+
+    out = f(arr)
+    self.assertTrue(arr.is_deleted())
+
+  def test_layout_donation_matching_in_and_out(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    s = NamedSharding(mesh, P('x', 'y'))
+    shape = (128, 16)
+    np_inp = np.arange(math.prod(shape)).reshape(shape)
+
+    custom_dll = DLL(major_to_minor=(0, 1))
+    l = Layout(custom_dll, s)
+    arr = jax.device_put(np_inp, l)
+
+    @partial(jax.jit, in_shardings=l, out_shardings=l, donate_argnums=0)
+    def f(x):
+      return x * x
+
+    out = f(arr)
+    self.assertTrue(arr.is_deleted())
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())
