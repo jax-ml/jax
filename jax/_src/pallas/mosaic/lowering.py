@@ -53,6 +53,7 @@ from jax._src.pallas import core as pallas_core
 from jax._src.pallas import primitives
 from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic import core as tpu_core
+from jax._src.pallas.mosaic import error_handling
 from jax._src.pallas.mosaic import primitives as tpu_primitives
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
@@ -632,12 +633,8 @@ def lower_jaxpr_to_transform_func(
   body = func.FuncOp.from_py_func(*arg_types, name=name)(body_func)
   try:
     body.func_op.verify()
-  except Exception as e:
-    raise LoweringException(
-        f"Body failed to verify: {body.func_op}.\nThis is an internal error."
-        " Please report a bug at:"
-        " https://github.com/google/jax/issues/new?assignees=sharadmv."
-    ) from e
+  except ir.MLIRError as e:
+    raise error_handling.mlir_error_to_verification_error(e) from e
   return body.func_op
 
 
@@ -694,12 +691,8 @@ def lower_jaxpr_to_func(
   body = func.FuncOp.from_py_func(*arg_types, name=name)(body_func)
   try:
     body.func_op.verify()
-  except Exception as e:
-    raise LoweringException(
-        f"Body failed to verify: {body.func_op}.\nThis is an internal error."
-        " Please report a bug at:"
-        " https://github.com/google/jax/issues/new?assignees=sharadmv."
-    ) from e
+  except ir.MLIRError as e:
+    raise error_handling.mlir_error_to_verification_error(e) from e
   return body.func_op
 
 

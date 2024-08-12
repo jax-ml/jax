@@ -268,6 +268,24 @@ jax_test(
 )
 
 jax_test(
+    name = "pallas_error_handling_test",
+    srcs = [
+        "pallas_error_handling_test.py",
+    ],
+    disable_backends = [
+        "cpu",
+        "gpu",
+    ],
+    deps = [
+        "//jax:pallas",
+        "//jax:pallas_tpu",
+        "//jax/_src/pallas/mosaic:random",
+        "//third_party/py/absl/testing:absltest",
+        "//third_party/py/absl/testing:parameterized",
+    ] + py_deps("numpy"),
+)
+
+jax_test(
     name = "tpu_all_gather_test",
     srcs = [
         "tpu_all_gather_test.py",
