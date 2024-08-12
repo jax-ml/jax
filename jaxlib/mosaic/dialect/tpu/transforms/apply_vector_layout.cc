@@ -3578,12 +3578,7 @@ LogicalResult vector_multi_reduction_rule(RewriteContext &ctx, Operation &op,
   auto acc = cast<TypedValue<VectorType>>(multi_reduction_op.getAcc());
   TPU_ASSERT_OP(layouts_out.front().has_value());
 
-  const ArrayAttr dim_attrs = multi_reduction_op.getReductionDims();
-  SmallVector<int64_t> dims;
-  dims.reserve(dim_attrs.size());
-  for (const Attribute dim_attr : dim_attrs) {
-    dims.push_back(cast<IntegerAttr>(dim_attr).getValue().getSExtValue());
-  }
+  SmallVector<int64_t> dims(multi_reduction_op.getReductionDims());
   std::sort(dims.begin(), dims.end());
 
   // Make sure that the accumulator is a splat of the neutral value

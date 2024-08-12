@@ -203,8 +203,8 @@ LogicalResult canonicalize_multi_dim_reduction(int hardware_generation,
     return success();
   } else if (element_type.isBF16()) {
     bool reduces_sublanes = false;
-    for (Attribute dim : op.getReductionDims()) {
-      if (cast<IntegerAttr>(dim).getInt() == source_ty.getRank() - 2) {
+    for (int64_t dim : op.getReductionDims()) {
+      if (dim == source_ty.getRank() - 2) {
         reduces_sublanes = true;
       }
     }
@@ -230,7 +230,7 @@ LogicalResult canonicalize_multi_dim_reduction(int hardware_generation,
       }
       auto new_op = builder.create<vector::MultiDimReductionOp>(
           op.getLoc(), new_acc.getType(), op.getKindAttr(), new_source, new_acc,
-          op.getReductionDims());
+          DenseI64ArrayAttr::get(builder.getContext(), op.getReductionDims()));
       auto new_result = builder.create<arith::TruncFOp>(op.getLoc(), result_ty,
                                                         new_op.getResult());
       op.replaceAllUsesWith(new_result.getResult());

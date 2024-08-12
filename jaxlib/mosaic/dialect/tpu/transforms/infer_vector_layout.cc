@@ -1277,11 +1277,7 @@ class VectorLayoutInferer {
     auto src_ty = op.getSourceVectorType();
     auto dst_ty = dyn_cast<VectorType>(op.getDestType());
     TPU_CHECK_OP(dst_ty, "only reductions with vector results supported");
-    SmallVector<int64_t> dims;
-    dims.reserve(op.getReductionDims().size());
-    for (Attribute dim_attr : op.getReductionDims()) {
-      dims.push_back(cast<IntegerAttr>(dim_attr).getInt());
-    }
+    llvm::ArrayRef<int64_t> dims = op.getReductionDims();
     int64_t src_rank = src_ty.getRank();
     auto acc_layout = getLayout(op.getAcc());
     TPU_CHECK_OP(is_fully_replicated(acc_layout),
@@ -1770,9 +1766,8 @@ class VectorLayoutInferer {
       if (auto reduce =
               dyn_cast<vector::MultiDimReductionOp>(operand.getOwner())) {
         bool reduces_tiled_dims = false;
-        for (Attribute dim : reduce.getReductionDims()) {
-          if (cast<IntegerAttr>(dim).getInt() >=
-              reduce.getSourceVectorType().getRank() - 2) {
+        for (int64_t dim : reduce.getReductionDims()) {
+          if (dim >= reduce.getSourceVectorType().getRank() - 2) {
             reduces_tiled_dims = true;
             break;
           }
