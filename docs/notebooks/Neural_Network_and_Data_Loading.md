@@ -14,7 +14,7 @@ kernelspec:
 
 +++ {"id": "18AF5Ab4p6VL"}
 
-# Training a Simple Neural Network, with PyTorch Data Loading
+# Training a simple neural network, with PyTorch data loading
 
 <!--* freshness: { reviewed: '2024-05-03' } *-->
 
@@ -175,7 +175,7 @@ def update(params, x, y):
 
 +++ {"id": "umJJGZCC2oKl"}
 
-## Data Loading with PyTorch
+## Data loading with PyTorch
 
 JAX is laser-focused on program transformations and accelerator-backed NumPy, so we don't include data loading or munging in the JAX library. There are already a lot of great data loaders out there, so let's just use them instead of reinventing anything. We'll grab PyTorch's data loader, and make a tiny shim to make it work with NumPy arrays.
 
@@ -245,7 +245,7 @@ test_labels = one_hot(np.array(mnist_dataset_test.test_labels), n_targets)
 
 +++ {"id": "xxPd6Qw3Z98v"}
 
-## Training Loop
+## Training loop
 
 ```{code-cell} ipython3
 :id: X2DnZo3iYj18
