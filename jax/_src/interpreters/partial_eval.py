@@ -515,8 +515,8 @@ def trace_to_subjaxpr_nounits_dyn(
   # Instantiate outputs and build jaxpr.
   if isinstance(instantiate, bool):
     instantiate = [instantiate] * len(ans)
-  out_tracers = map(trace.full_raise, map(core.full_lower, ans))
-  out_tracers = [trace.instantiate_const(trace.full_raise(t)) if inst else t
+  out_tracers = map(trace.to_jaxpr_tracer, ans)
+  out_tracers = [trace.instantiate_const(trace.to_jaxpr_tracer(t)) if inst else t
                  for inst, t in zip(instantiate, out_tracers)]
 
   # Collect known outputs.
@@ -1914,22 +1914,11 @@ class DynamicJaxprTrace(core.Trace):
     self.frame.constvar_to_val[var] = c
     return tracer
 
-  def sublift(self, t):
-    # When lifting closed-over tracers corresponding to this same trace, the
-    # variable to lift could have tracers (representing axis size variables) in
-    # its shape. We must lift those too!
-    tracer = self.frame.constid_to_tracer.get(id(t))
-    if tracer is None:
-      aval = raise_to_shaped(get_aval(t), weak_type=dtypes.is_weakly_typed(t))
-      aval = self._lift_tracers_in_aval(aval)
-      tracer = self._new_const(aval, t)
-    return tracer
-
   def _lift_tracers_in_aval(self, aval):
     if (not isinstance(aval, DShapedArray) or
         not any(isinstance(d, Tracer) for d in aval.shape)):
       return aval
-    shape = [self.full_raise(d) if isinstance(d, Tracer) else d
+    shape = [self.to_jaxpr_tracer(d) if isinstance(d, Tracer) else d
              for d in aval.shape]
     return aval.update(shape=tuple(shape))
 

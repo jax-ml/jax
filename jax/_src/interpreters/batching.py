@@ -399,7 +399,7 @@ class BatchTrace(Trace):
   def process_primitive(self, p, tracers, params):
     trace_type = None
     if config.dynamic_shapes.value:
-      p.abstract_eval(*(t.aval for t in tracers), **params)
+      p.abstract_eval(*(map(core.get_aval, tracers)), **params)
     vals_in, dims_in = unzip2(map(self.to_batch_info, tracers))
     if p in fancy_primitive_batchers:
       with core.set_current_trace(self.parent_trace):
