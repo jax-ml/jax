@@ -16,6 +16,7 @@
 
 from collections.abc import Callable, Sequence
 import importlib
+import sys
 from typing import Any
 
 
@@ -36,7 +37,11 @@ def attach(package_name: str, submodules: Sequence[str]) -> tuple[
 
   def __getattr__(name: str) -> Any:
     if name in submodules:
-      return importlib.import_module(f"{package_name}.{name}")
+      value = importlib.import_module(f"{package_name}.{name}")
+      # Update module-level globals to avoid calling ``__getattr__`` again
+      # for this ``name``.
+      setattr(sys.modules[__name__], name, value)
+      return value
     raise AttributeError(f"module '{package_name}' has no attribute '{name}")
 
   def __dir__() -> list[str]:
