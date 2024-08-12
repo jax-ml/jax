@@ -232,11 +232,12 @@ def initialize(coordinator_address: str | None = None,
   global_state.initialize(coordinator_address, num_processes, process_id,
                           local_device_ids, cluster_detection_method,
                           initialization_timeout, coordinator_bind_address)
-  atexit.register(shutdown)
 
 
+@atexit.register
 def shutdown():
   """Shuts down the distributed system.
 
-  Does nothing if the distributed system is not running."""
+  Does nothing if the distributed system is not running.
+  """
   global_state.shutdown()
