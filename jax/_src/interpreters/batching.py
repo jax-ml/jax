@@ -412,7 +412,11 @@ class BatchTrace(Trace):
         with core.set_current_trace(self.parent_trace):
           val_out, dim_out = primitive_batchers[p](vals_in, dims_in, **params)
     else:
-      raise NotImplementedError("Batching rule for '{}' not implemented".format(p))
+      if all(bdim is not_mapped for bdim in dims_in):
+         # no-op shortcut
+         return p.bind_with_trace(self.parent_trace, vals_in, params)
+      else:
+        raise NotImplementedError("Batching rule for '{}' not implemented".format(p))
     src = source_info_util.current()
     if p.multiple_results:
       return [BatchTracer(self, x, d, src) if d is not not_mapped else x
