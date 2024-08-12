@@ -1880,7 +1880,10 @@ class DynamicJaxprTrace(core.Trace):
       #  literal (not a tracer) "pure"
       #  someone else's tracer "lift"
       #  my tracer from a different scope "sublift"
-      return self.new_const(x)
+      if hasattr(x, "dimension_as_value"):  # Used for shape_poly._DimExpr
+        return self.to_jaxpr_tracer(x.dimension_as_value())
+      else:
+        return self.new_const(x)
     else:
       #  my tracer from the current scope "skipped"
       return x
