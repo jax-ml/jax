@@ -5287,9 +5287,10 @@ FailureOr<xla::Array<Value>> doColumnShiftRelayout(
 }
 
 FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeOffsets(
-    OpBuilder &builder, const std::array<int64_t, 2> target_shape,
-    const Location loc, const VectorType vty, const VectorLayout src,
-    xla::Array<Value> vregs, const LayoutOffsets dst_offsets) {
+    RewriteContext &ctx, OpBuilder &builder, const Location loc,
+    const VectorType vty, const VectorLayout src, xla::Array<Value> vregs,
+    const LayoutOffsets dst_offsets) {
+  const auto &target_shape = ctx.target_shape;
   const VectorLayout dst(src.bitwidth(), dst_offsets, src.tiling(),
                          src.implicit_dim());
   const int packing = src.packing();
@@ -5389,10 +5390,10 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeOffsets(
 
 // TODO(b/265133506): Generalize retiling.
 FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
-    OpBuilder &builder, const std::array<int64_t, 2> target_shape,
-    const Location loc, VectorType vty, const VectorLayout src,
-    xla::Array<Value> vregs, const std::array<int64_t, 2> dst_tiling,
-    bool try_replicate_rows) {
+    RewriteContext &ctx, OpBuilder &builder, const Location loc, VectorType vty,
+    const VectorLayout src, xla::Array<Value> vregs,
+    const std::array<int64_t, 2> dst_tiling, bool try_replicate_rows) {
+  const auto &target_shape = ctx.target_shape;
   if (src.tiling() == dst_tiling) {
     return std::pair(src, std::move(vregs));
   }
@@ -5594,10 +5595,11 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeTiling(
 }
 
 FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
-    OpBuilder &builder, const std::array<int64_t, 2> target_shape,
-    const Location loc, VectorType vty, const VectorLayout src,
-    xla::Array<Value> vregs, const VectorLayout::ImplicitDim dst_implicit_dim,
+    RewriteContext &ctx, OpBuilder &builder, const Location loc, VectorType vty,
+    const VectorLayout src, xla::Array<Value> vregs,
+    const VectorLayout::ImplicitDim dst_implicit_dim,
     const LayoutOffsets dst_offset_hints) {
+  const auto &target_shape = ctx.target_shape;
   if (src.implicit_dim() == dst_implicit_dim) {
     return std::make_pair(src, std::move(vregs));
   }
@@ -5625,8 +5627,7 @@ FailureOr<std::pair<VectorLayout, xla::Array<Value>>> changeImplicitDim(
                      src.tiling(), dst_implicit_dim);
     xla::Array<Value> new_vregs(
         dst.tileArrayImplicitShape(vty.getShape(), target_shape));
-    new_vregs.Each([&](const absl::Span<const int64_t> idx,
-                               Value *tile) {
+    new_vregs.Each([&](const absl::Span<const int64_t> idx, Value *tile) {
       const int64_t dst_2nd_minor_idx = idx.size() - 2;
       SmallVector<int64_t> src_idx(idx.begin(), idx.end());
       src.insertImplicit<int64_t>(src_idx, 0);
@@ -5751,21 +5752,21 @@ FailureOr<TypedValue<VectorType>> relayout(RewriteContext &ctx,
 
   FAILUREOR_ASSIGN_OR_RETURN(
       std::tie(src, src_tiles),
-      changeTiling(builder, ctx.target_shape, v.getLoc(), vty, src,
-                   std::move(src_tiles), dst.tiling(),
+      changeTiling(ctx, builder, v.getLoc(), vty, src, std::move(src_tiles),
+                   dst.tiling(),
                    dst.offsets()[0] == std::nullopt &&
                        src.offsets()[0] != std::nullopt));
 
   FAILUREOR_ASSIGN_OR_RETURN(
       std::tie(src, src_tiles),
-      changeImplicitDim(builder, ctx.target_shape, v.getLoc(), vty, src,
+      changeImplicitDim(ctx, builder, v.getLoc(), vty, src,
                         std::move(src_tiles), dst.implicit_dim(),
                         dst.offsets()));
 
   FAILUREOR_ASSIGN_OR_RETURN(
       std::tie(src, src_tiles),
-      changeOffsets(builder, ctx.target_shape, v.getLoc(), vty, src,
-                    std::move(src_tiles), dst.offsets()));
+      changeOffsets(ctx, builder, v.getLoc(), vty, src, std::move(src_tiles),
+                    dst.offsets()));
 
   CHECK_EQ(src, dst);  // At this point we've should be done.
   return assemble(builder, vty, dst, std::move(src_tiles), target_shape,
