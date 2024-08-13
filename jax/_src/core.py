@@ -507,6 +507,9 @@ class Trace(Generic[TracerType]):
   def process_primitive(self, primitive, tracers, params):
     raise NotImplementedError("must override")
 
+  def invalidate(self):
+    pass
+
   def __repr__(self):
     return '{}'.format(self.__class__.__name__)
 
@@ -2781,10 +2784,11 @@ class NotATrace: pass
 # the trace before leaving the context.
 @contextmanager
 def new_trace(trace:Trace):
-  trace_ref = ref(trace)
-  del trace
   yield
+  trace.invalidate()
   if config.check_tracer_leaks.value:
+    trace_ref = ref(trace)
+    del trace
     live_trace = trace_ref()
     if live_trace is not None:
       leaked_tracers = maybe_find_leaked_tracers(live_trace)

@@ -1873,6 +1873,11 @@ class DynamicJaxprTrace(core.Trace):
   def __init__(self, frame):
     self.frame = frame
 
+  def invalidate(self):
+    # avoid cyclic refs
+    self.frame.tracers = None
+    self.frame.constid_to_tracer = None
+
   def to_jaxpr_tracer(self, x):
     as_local_var = self.frame.tracer_to_var.get(id(x))
     if as_local_var is None:
@@ -2240,7 +2245,6 @@ def trace_to_jaxpr_dynamic(
 
     out_tracers = map(trace.to_jaxpr_tracer, ans)
     jaxpr, consts, attrs_tracked = frame.to_jaxpr(trace, out_tracers)
-    trace.frame = None # avoid cyclic refs
     del trace, fun, frame, in_tracers, out_tracers, ans
 
   config.enable_checks.value and core.check_jaxpr(jaxpr)
@@ -2261,7 +2265,6 @@ def trace_to_jaxpr_dynamic2(
       ans = fun.call_wrapped(*in_tracers)
     out_tracers = map(trace.to_jaxpr_tracer, ans)
     jaxpr = trace.frame.to_jaxpr2(out_tracers)
-    trace.frame = None # avoid cyclic refs
     del trace, in_tracers, out_tracers, ans
 
   return jaxpr
