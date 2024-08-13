@@ -14,7 +14,7 @@ kernelspec:
 
 +++ {"id": "6umP1IKf4Dg6"}
 
-# Autobatching for Bayesian Inference
+# Autobatching for Bayesian inference
 
 <!--* freshness: { reviewed: '2024-04-08' } *-->
 

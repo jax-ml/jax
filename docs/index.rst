@@ -1,4 +1,4 @@
-JAX: High-Performance Array Computing
+JAX: High performance array computing
 =====================================
 
 JAX is a Python library for accelerator-oriented array computation and program transformation,
@@ -75,7 +75,7 @@ For an end-to-end transformer library built on JAX, see MaxText_.
 .. toctree::
    :hidden:
    :maxdepth: 2
-   :caption: Further resources
+   :caption: Resources
 
    user_guides
    advanced_guide

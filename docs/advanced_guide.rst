@@ -1,8 +1,11 @@
 .. _advanced_guide:
 
-Advanced tutorials
-==================
-This section contains examples and tutorials on more advanced topics, such as Multi Core computation, Custom operations, and more in depth applications
+Advanced guides
+===============
+
+This section contains examples and tutorials on more advanced topics,
+such as multi-core computation, custom operations, and more in-depth
+applications.
 
 .. toctree::
    :caption: Examples

@@ -12,7 +12,7 @@ kernelspec:
   name: python3
 ---
 
-# JAX's foreign function interface
+# Foreign function interface (FFI)
 
 _This tutorial requires JAX v0.4.31 or newer._
 

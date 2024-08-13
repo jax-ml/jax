@@ -1,4 +1,4 @@
-# Runtime value debugging in JAX
+# Debugging runtime values
 
 <!--* freshness: { reviewed: '2024-04-11' } *-->
 

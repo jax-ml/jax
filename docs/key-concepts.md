@@ -13,7 +13,7 @@ kernelspec:
 ---
 
 (key-concepts)=
-# Key Concepts
+# Key concepts
 
 <!--* freshness: { reviewed: '2024-05-03' } *-->
 
