@@ -37,21 +37,6 @@ svd::ComputationMode GetSvdComputationMode(bool job_opt_compute_uv,
   return svd::ComputationMode::kComputeFullUVt;
 }
 
-template <DataType dtype>
-int64_t GesddGetWorkspaceSize(lapack_int m, lapack_int n,
-                              bool job_opt_compute_uv,
-                              bool job_opt_full_matrices) {
-  svd::ComputationMode mode =
-      GetSvdComputationMode(job_opt_compute_uv, job_opt_full_matrices);
-  return svd::SVDType<dtype>::GetWorkspaceSize(m, n, mode);
-};
-
-lapack_int GesddGetRealWorkspaceSize(lapack_int m, lapack_int n,
-                                     bool job_opt_compute_uv) {
-  svd::ComputationMode mode = GetSvdComputationMode(job_opt_compute_uv, true);
-  return svd::GetRealWorkspaceSize(m, n, mode);
-}
-
 // Due to enforced kComputeEigenvectors, this assumes a larger workspace size.
 // Could be improved to more accurately estimate the expected size based on the
 // eig::ComputationMode value.
@@ -375,18 +360,6 @@ NB_MODULE(_lapack, m) {
   m.def("lapack_zungqr_workspace_ffi",
         &OrthogonalQr<DataType::C128>::GetWorkspaceSize, nb::arg("m"),
         nb::arg("n"), nb::arg("k"));
-  m.def("gesdd_iwork_size_ffi", &svd::GetIntWorkspaceSize, nb::arg("m"),
-        nb::arg("n"));
-  m.def("sgesdd_work_size_ffi", &svd::SVDType<DataType::F32>::GetWorkspaceSize,
-        nb::arg("m"), nb::arg("n"), nb::arg("mode"));
-  m.def("dgesdd_work_size_ffi", &svd::SVDType<DataType::F64>::GetWorkspaceSize,
-        nb::arg("m"), nb::arg("n"), nb::arg("mode"));
-  m.def("gesdd_rwork_size_ffi", &svd::GetRealWorkspaceSize, nb::arg("m"),
-        nb::arg("n"), nb::arg("mode"));
-  m.def("cgesdd_work_size_ffi", &svd::SVDType<DataType::C64>::GetWorkspaceSize,
-        nb::arg("m"), nb::arg("n"), nb::arg("mode"));
-  m.def("zgesdd_work_size_ffi", &svd::SVDType<DataType::C128>::GetWorkspaceSize,
-        nb::arg("m"), nb::arg("n"), nb::arg("mode"));
   m.def("syevd_work_size_ffi", BoundWithEigvecs<eig::GetWorkspaceSize>,
         nb::arg("n"));
   m.def("syevd_iwork_size_ffi", BoundWithEigvecs<eig::GetIntWorkspaceSize>,
