@@ -110,7 +110,7 @@ def mlir_context(f):
 @mlir_context
 def build_kernel(
     m, n, k,
-    lhs_dtype, rhs_dtype,
+    lhs_dtype, rhs_dtype, out_dtype,
     stages: int = 2,
     tile_m: int = 128,
     tile_n: int = 128,
@@ -134,15 +134,20 @@ def build_kernel(
   if swizzle not in {32, 64, 128}:
     raise ValueError(f"swizzle must be 32, 64, or 128, but got {swizzle=}")
 
-  if tile_n % 32 == 0:
-    out_swizzle = 128
-  elif tile_n % 16 == 0:
-    out_swizzle = 64
-  else:
-    raise NotImplementedError(f"{tile_n=} must by divisible by 16")
-  out_swizzle_elems = out_swizzle // bytewidth(f32)
+  out_mlir_dtype = mlir.dtype_to_ir_type(out_dtype)
+  out_swizzle = swizzle
+  if bytewidth(out_mlir_dtype) == 4:
+    if tile_n % 32 == 0:
+      out_swizzle = 128
+    elif tile_n % 16 == 0:
+      out_swizzle = 64
+    else:
+      raise NotImplementedError(
+          f"{tile_n=} must by divisible by 16 for 32-bit output"
+      )
+  out_swizzle_elems = out_swizzle // bytewidth(out_mlir_dtype)
   out_tiling = (64, out_swizzle_elems)
-  out_tile = jax.ShapeDtypeStruct(tile_shape((tile_m, tile_n), out_tiling), jnp.float32)
+  out_tile = jax.ShapeDtypeStruct(tile_shape((tile_m, tile_n), out_tiling), out_dtype)
 
   lhs_elem_bytes = bytewidth(mlir.dtype_to_ir_type(lhs_dtype))
   rhs_elem_bytes = bytewidth(mlir.dtype_to_ir_type(rhs_dtype))
@@ -271,7 +276,7 @@ def build_kernel(
 
     with ctx.named_region("SMEM store"):
       acc_val = wgmma_impl.get_result(stage_loop_body.result)
-      acc_val.store_tiled(epilogue_smem, swizzle=out_swizzle)
+      acc_val.astype(out_mlir_dtype).store_tiled(epilogue_smem, swizzle=out_swizzle)
       commit_shared()  # Make sure the stores are visible to TMA.
 
     with ctx.named_region("GMEM store"):
@@ -292,7 +297,7 @@ def build_kernel(
           jax.ShapeDtypeStruct((m, k), lhs_dtype),
           jax.ShapeDtypeStruct((n, k) if rhs_transpose else (k, n), rhs_dtype),
       ),
-      jax.ShapeDtypeStruct((m, n), jnp.float32),
+      jax.ShapeDtypeStruct((m, n), out_dtype),
       (
           smem_shape,
           TMABarrier(num_barriers=stages),
@@ -318,6 +323,7 @@ def verify(
     swizzle=128,
     profile=False,
     in_dtype=jnp.float16,
+    out_dtype=jnp.float32,
     rhs_transpose=False,
 ):
   lhs_dtype, rhs_dtype = in_dtype, in_dtype
@@ -329,7 +335,7 @@ def verify(
   prof_spec = profiler.ProfilerSpec(4096) if profile else None
   f = build_kernel(
       m, n, k,
-      jnp.dtype(lhs_dtype), jnp.dtype(rhs_dtype),
+      jnp.dtype(lhs_dtype), jnp.dtype(rhs_dtype), jnp.dtype(out_dtype),
       stages=stages,
       tile_m=tile_m,
       tile_n=tile_n,
@@ -352,14 +358,19 @@ def verify(
         for v in (x, y)
     )
 
-  ref_f = functools.partial(
-      jax.lax.dot_general,
-      dimension_numbers=dimension_numbers,
-      preferred_element_type=jnp.float32,
-  )
+  @jax.jit
+  def ref_f(x, y):
+    return jax.lax.dot_general(
+        x,
+        y,
+        dimension_numbers=dimension_numbers,
+        preferred_element_type=jnp.float32,
+    ).astype(out_dtype)
 
   ref, ref_runtime = profiler.measure(ref_f, x, y)
-  np.testing.assert_allclose(z, ref, atol=1e-3, rtol=1e-3)
+  np.testing.assert_allclose(
+      z.astype(jnp.float32), ref.astype(jnp.float32), atol=1e-3, rtol=1e-3
+  )
   return runtime, ref_runtime
 
 

@@ -67,8 +67,14 @@ class MatmulTestCase(jtu.JaxTestCase):
   def test_matmul(self, data):
     in_dtype = data.draw(
         hps.sampled_from([jnp.float16, jnp.bfloat16, jnp.float32]),
-        label="dtype",
+        label="in_dtype",
     )
+    out_dtype = jnp.float32
+    if in_dtype != jnp.float32:
+      out_dtype = data.draw(
+          hps.sampled_from([in_dtype, jnp.float32]),
+          label="out_dtype",
+      )
     bytewidth = jnp.dtype(in_dtype).itemsize
     m, n, k = (
         data.draw(hps.sampled_from([128, 256, 512, 2048]), label=d)
@@ -102,6 +108,7 @@ class MatmulTestCase(jtu.JaxTestCase):
           tile_m=tile_m,
           tile_n=tile_n,
           in_dtype=in_dtype,
+          out_dtype=out_dtype,
           cluster_m=cluster_m,
           cluster_n=cluster_n,
           swizzle=swizzle,
