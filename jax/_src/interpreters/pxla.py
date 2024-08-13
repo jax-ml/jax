@@ -2189,13 +2189,11 @@ def lower_sharding_computation(
                [js for js, _ in unique_intermediate_shardings],
                transfer_mem_kind_in_jaxpr))  # pytype: disable=wrong-arg-types
 
-  # TODO(yashkatariya): Remove this when XLA can propagate memory kinds or when
-  # JAX puts memory kinds in the types of jaxpr.
-  if not all_default_mem_kind:
+  if all_default_mem_kind:
+    propagated_out_mem_kinds = (None,) * len(global_out_avals)
+  else:
     propagated_out_mem_kinds = get_out_memory_kinds_via_propagation(
         closed_jaxpr, in_shardings)
-  else:
-    propagated_out_mem_kinds = (None,) * len(global_out_avals)
 
   # 2. Build up the HLO
   semantic_in_shardings = SemanticallyEqualShardings(
@@ -2258,6 +2256,8 @@ def lower_sharding_computation(
       out_layouts=out_layouts,
       pmap_nreps=nreps,
       shape_poly_state=shape_poly_state,
+      # TODO(yashkatariya): Remove `all_default_mem_kind` after
+      # MemoryDescription works in OSS.
       all_default_mem_kind=all_default_mem_kind,
       all_args_info=all_args_info,
       pgle_profiler=pgle_profiler,
@@ -2327,18 +2327,17 @@ def get_out_shardings_from_executable(
 ) -> Sequence[sharding_impls.GSPMDSharding] | None:
   from jax._src import pjit
 
-  if config.enable_memories.value:
-    if all_default_mem_kind:
-      omk = [None] * num_out_avals
-    else:
-      try:
-        omk = xla_executable.get_output_memory_kinds()[0]
-        if num_ordered_effects > 0:
-          omk = omk[num_ordered_effects:]
-      except:
-        omk = [None] * num_out_avals
-  else:
+  # TODO(yashkatariya): Remove `all_default_mem_kind` branch after
+  # MemoryDescription works in OSS.
+  if all_default_mem_kind:
     omk = [None] * num_out_avals
+  else:
+    try:
+      omk = xla_executable.get_output_memory_kinds()[0]
+      if num_ordered_effects > 0:
+        omk = omk[num_ordered_effects:]
+    except:
+      omk = [None] * num_out_avals
 
   assert len(omk) == num_out_avals, (len(omk), num_out_avals)
 
