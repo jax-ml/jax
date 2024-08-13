@@ -130,6 +130,8 @@ def build_kernel(
     raise ValueError(f"n must be divisible by 64, but got {n=}")
   if stages < 2:
     raise ValueError(f"Need at least 2 stages, but got {stages=}")
+  if not rhs_transpose and jnp.dtype(rhs_dtype).itemsize != 2:
+    raise ValueError("Transpose only supported for only happen for 16bit types")
 
   lhs_elem_bytes = bytewidth(mlir.dtype_to_ir_type(lhs_dtype))
   rhs_elem_bytes = bytewidth(mlir.dtype_to_ir_type(rhs_dtype))
@@ -301,15 +303,10 @@ def verify(
     cluster_m=1,
     cluster_n=1,
     profile=False,
-    lhs_dtype=jnp.float16,
-    rhs_dtype=jnp.float16,
+    in_dtype=jnp.float16,
     rhs_transpose=False,
 ):
-  if not rhs_transpose and jnp.dtype(lhs_dtype).itemsize != 2:
-    raise ValueError(
-        "Implicit transpose can only happen for 16bit types (or mixed precision"
-        " that is underpinned by 16bit operations)."
-    )
+  lhs_dtype, rhs_dtype = in_dtype, in_dtype
 
   kx, ky = random.split(random.key(1234))
   x = random.uniform(kx, (m, k), dtype=lhs_dtype)

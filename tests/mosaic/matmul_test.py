@@ -15,6 +15,7 @@
 """Test different parameterizations of a matmul."""
 
 import os
+import unittest
 
 from absl.testing import absltest, parameterized
 from jax._src import config
@@ -27,11 +28,23 @@ except ImportError:
   matmul = None
 else:
   from jax.experimental.mosaic.gpu.examples import matmul
+try:
+  import hypothesis as hp
+  import hypothesis.strategies as hps
+except (ModuleNotFoundError, ImportError):
+  raise unittest.SkipTest("these tests require hypothesis")
 
 
 config.parse_flags_with_absl()
+jtu.setup_hypothesis()
 os.environ["XLA_FLAGS"] = (
     os.environ.get("XLA_FLAGS", "") + " --xla_gpu_autotune_level=0")
+
+
+def seed_hypothesis(f):
+  def wrapper(self, seed):
+    return hp.seed(seed)(f)(self)
+  return wrapper
 
 
 @jtu.with_config(jax_traceback_filtering="off")
@@ -45,25 +58,38 @@ class MatmulTestCase(jtu.JaxTestCase):
         not jtu.is_cuda_compute_capability_at_least("9.0")):
       self.skipTest("Only works on GPU with capability >= sm90")
 
-  @parameterized.product(
-      m=(128, 256, 512, 2048),
-      n=(128, 256, 512, 2048),
-      k=(128, 256, 512, 2048),
-      stages=(2, 4),
-      tile_m=(64, 128, 256),
-      tile_n=(64, 128, 256),
-      in_dtype=(jnp.float16, jnp.bfloat16),  # f32 tested separately
-      rhs_transpose=(False, True),
+  @parameterized.named_parameters(
+      (f"_shard{i}", i) for i in range(5)
   )
-  def test_matmul(self, m, k, n, stages, tile_m, tile_n, in_dtype, rhs_transpose):
-    if stages * (128 // jnp.dtype(in_dtype).itemsize) > k:
-      self.skipTest("Too many stages.")
-
-    if m < tile_m:
-      self.skipTest(f"No use in running a test with {m=} < {tile_m=}.")
-
-    if n < tile_n:
-      self.skipTest(f"No use in running a test with {n=} < {tile_n=}.")
+  @seed_hypothesis
+  @hp.settings(max_examples=100)  # Add verbosity=hp.Verbosity.verbose to debug
+  @hp.given(hps.data())
+  def test_matmul(self, data):
+    m, n, k = (
+        data.draw(hps.sampled_from([128, 256, 512, 2048]), label=d)
+        for d in "mnk"
+    )
+    stages = data.draw(hps.integers(2, 5), label="stages")
+    tile_m = data.draw(
+        hps.sampled_from([t for t in [64, 128, 256] if t <= m]), label="tile_m"
+    )
+    tile_n = data.draw(
+        hps.sampled_from([t for t in [64, 128, 256] if t <= n]), label="tile_n"
+    )
+    in_dtype = data.draw(
+        hps.sampled_from([jnp.float16, jnp.bfloat16, jnp.float32]),
+        label="dtype",
+    )
+    cluster_m = data.draw(hps.sampled_from([1, 2, 4]), label="cluster_m")
+    hp.assume((m // tile_m) % cluster_m == 0)
+    cluster_n = data.draw(hps.sampled_from([1, 2, 4]), label="cluster_n")
+    hp.assume((n // tile_n) % cluster_n == 0)
+    # TODO(apaszke): Non-portable clusters (16 blocks) sometimes deadlock.
+    hp.assume(cluster_m * cluster_n <= 8)
+    if jnp.dtype(in_dtype).itemsize == 4:
+      rhs_transpose = True
+    else:
+      rhs_transpose = data.draw(hps.booleans(), label="rhs_transpose")
 
     try:
       matmul.verify(
@@ -73,81 +99,14 @@ class MatmulTestCase(jtu.JaxTestCase):
           stages,
           tile_m=tile_m,
           tile_n=tile_n,
-          lhs_dtype=in_dtype,
-          rhs_dtype=in_dtype,
+          in_dtype=in_dtype,
+          cluster_m=cluster_m,
+          cluster_n=cluster_n,
           rhs_transpose=rhs_transpose,
       )
     except ValueError as e:
       if "Mosaic GPU kernel exceeds available shared memory" in str(e):
-        self.skipTest("Not enough shared memory for test, skipping.")
-      raise e
-
-  @parameterized.product(
-      m=(128, 256, 512, 2048),
-      n=(128, 256, 512, 2048),
-      k=(128, 256, 512, 2048),
-      stages=(2, 4),
-      tile_m=(64, 128, 256),
-      tile_n=(64, 128, 256),
-  )
-  def test_matmul_f32(self, m, k, n, stages, tile_m, tile_n):
-    if stages * (128 // jnp.dtype(jnp.float32).itemsize) > k:
-      self.skipTest("Too many stages.")
-
-    if m < tile_m:
-      self.skipTest(f"No use in running a test with {m=} < {tile_m=}.")
-
-    if n < tile_n:
-      self.skipTest(f"No use in running a test with {n=} < {tile_n=}.")
-
-    try:
-      matmul.verify(
-          m,
-          k,
-          n,
-          stages,
-          tile_m=tile_m,
-          tile_n=tile_n,
-          lhs_dtype=jnp.float32,
-          rhs_dtype=jnp.float32,
-          rhs_transpose=True,
-      )
-    except ValueError as e:
-      if "Mosaic GPU kernel exceeds available shared memory" in str(e):
-        self.skipTest("Not enough shared memory for test, skipping.")
-      raise e
-
-  @parameterized.product(
-      m=(512, 2048),
-      n=(512, 2048),
-      k=(512, 2048),
-      stages=(2, 4),
-      tile_m=(64, 128),
-      tile_n=(64, 128),
-      cluster_m=(1, 2, 4),
-      cluster_n=(1, 2, 4),
-  )
-  def test_matmul_clusters(self, m, k, n, stages, tile_m, tile_n, cluster_m, cluster_n):
-    if cluster_m * cluster_n > 8:
-      # TODO(apaszke): Investigate
-      self.skipTest("Tests sometimes fail with non-portable cluster sizes.")
-    try:
-      matmul.verify(
-          m,
-          k,
-          n,
-          stages,
-          tile_m=tile_m,
-          tile_n=tile_n,
-          cluster_m=cluster_m,
-          cluster_n=cluster_n,
-          lhs_dtype=jnp.float32,
-          rhs_dtype=jnp.float32,
-          rhs_transpose=True,
-      )
-    except ValueError as e:
-      if "Mosaic GPU kernel exceeds available shared memory" in str(e):
-        self.skipTest("Not enough shared memory for test, skipping.")
+        hp.assume(False)
       raise e
 
 
