@@ -42,7 +42,7 @@ MLIR_ERR_PREFIX = (
 RawFrame = namedtuple('RawFrame', ['func_name', 'filename', 'lineno', 'colno'])
 
 
-class MosaicError(Exception):
+class MosaicError(RuntimeError):
   """Error thrown by Pallas when re-raising a Mosaic internal error."""
 
 
