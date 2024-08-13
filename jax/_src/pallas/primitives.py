@@ -88,7 +88,7 @@ def num_programs(axis: int) -> int | jax.Array:
   return num_programs_p.bind(axis=axis)
 
 def _num_programs_bind_with_trace(trace, _, params):
-  axis = params.pop()
+  axis = params.pop("axis")
   # We might be using a local grid env
   grid_env = pallas_core.current_grid_env()
   if grid_env:
