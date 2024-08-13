@@ -369,7 +369,8 @@ class MosaicGridMapping:
     mesh_strides = pallas_utils.strides_from_shape(tuple(
         mesh.shape[a] for a in axis_names
     ))
-    self.mesh_info = MeshInfo(mesh.device_ids.shape, axis_names, mesh_strides)
+    mesh_shape = tuple(mesh.shape.values())
+    self.mesh_info = MeshInfo(mesh_shape, axis_names, mesh_strides)
 
   def maybe_compress_grid(self):
     # If we have many leading parallel dimensions, we should "compress" them
