@@ -1,5 +1,5 @@
 (installation)=
-# Installing JAX
+# Installation
 
 <!--* freshness: { reviewed: '2024-06-18' } *-->
 

@@ -1,5 +1,5 @@
-JAX glossary of terms
-=====================
+Glossary of terms
+=================
 
 .. glossary::
 

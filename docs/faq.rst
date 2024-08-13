@@ -1,5 +1,5 @@
-JAX frequently asked questions (FAQ)
-====================================
+Frequently asked questions (FAQ)
+================================
 
 .. comment RST primer for Sphinx: https://thomas-cokelaer.info/tutorials/sphinx/rest_syntax.html
 .. comment Some links referenced here. Use `JAX - The Sharp Bits`_ (underscore at the end) to reference

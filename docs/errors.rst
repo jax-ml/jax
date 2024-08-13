@@ -1,7 +1,8 @@
 .. _jax-errors:
 
-JAX Errors
-==========
+Errors
+======
+
 This page lists a few of the errors you might encounter when using JAX,
 along with representative examples of how one might fix them.
 

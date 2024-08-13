@@ -1,7 +1,7 @@
 .. _jax-tutorials:
 
-JAX tutorials
-=============
+Tutorials
+=========
 
 .. toctree::
    :maxdepth: 1
