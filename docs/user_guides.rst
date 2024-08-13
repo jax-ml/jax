@@ -1,6 +1,6 @@
 .. _user-guides:
 
-User Guides
+User guides
 ===========
 
 User guides are deeper dives into particular topics within JAX
@@ -9,7 +9,7 @@ or deployed codebases.
 
 .. toctree::
    :maxdepth: 1
-   :caption: Debugging and Performance
+   :caption: Debugging and performance
 
    notebooks/thinking_in_jax
    profiling
@@ -29,7 +29,7 @@ or deployed codebases.
 
 .. toctree::
    :maxdepth: 1
-   :caption: Run Time
+   :caption: Run time
 
    aot
    export/index
@@ -38,7 +38,7 @@ or deployed codebases.
 
 .. toctree::
    :maxdepth: 1
-   :caption: Custom Operations
+   :caption: Custom operations
 
    pallas/index
    ffi
