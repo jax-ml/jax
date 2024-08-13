@@ -18,7 +18,7 @@ from array import array as make_python_array
 import collections
 from collections.abc import Iterator
 import copy
-from functools import partial
+from functools import partial, wraps
 import inspect
 import io
 import itertools
@@ -174,8 +174,23 @@ def arrays_with_overlapping_values(rng, shapes, dtypes, unique=False, overlap=0.
   else:
     vals = jtu.rand_default(rng)((total_size,), 'int32')
   offsets = [int(sum(sizes[:i]) * (1 - overlap)) for i in range(len(sizes))]
-  return [np.random.permutation(vals[offset: offset + size]).reshape(shape).astype(dtype)
+  return [rng.permutation(vals[offset: offset + size]).reshape(shape).astype(dtype)
           for (offset, size, shape, dtype) in zip(offsets, sizes, shapes, dtypes)]
+
+
+def with_size_argument(fun):
+  @wraps(fun)
+  def wrapped(*args, size=None, fill_value=None, **kwargs):
+    result = fun(*args, **kwargs)
+    if size is None or size == len(result):
+      return result
+    elif size < len(result):
+      return result[:size]
+    else:
+      if fill_value is None:
+        fill_value = result.min() if result.size else 0
+      return np.pad(result, (0, size - len(result)), constant_values=fill_value)
+  return wrapped
 
 
 class LaxBackedNumpyTests(jtu.JaxTestCase):
@@ -786,19 +801,22 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     shape1=all_shapes,
     shape2=all_shapes,
     assume_unique=[False, True],
+    size=[None, 2, 5],
+    fill_value=[None, 99],
     overlap=[0.1, 0.5, 0.9],
   )
-  def testSetxor1d(self, shape1, dtype1, shape2, dtype2, assume_unique, overlap):
+  def testSetxor1d(self, shape1, dtype1, shape2, dtype2, assume_unique, size, fill_value, overlap):
     args_maker = partial(arrays_with_overlapping_values, self.rng(),
                          shapes=[shape1, shape2], dtypes=[dtype1, dtype2],
                          overlap=overlap)
-    jnp_fun = lambda ar1, ar2: jnp.setxor1d(ar1, ar2, assume_unique=assume_unique)
+    jnp_fun = lambda ar1, ar2: jnp.setxor1d(ar1, ar2, assume_unique=assume_unique,
+                                            size=size, fill_value=fill_value)
     def np_fun(ar1, ar2):
       if assume_unique:
         # numpy requires 1D inputs when assume_unique is True.
         ar1 = np.ravel(ar1)
         ar2 = np.ravel(ar2)
-      return np.setxor1d(ar1, ar2, assume_unique)
+      return with_size_argument(np.setxor1d)(ar1, ar2, assume_unique, size=size, fill_value=fill_value)
     with jtu.strict_promotion_if_dtypes_match([dtype1, dtype2]):
       self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False)
 
