@@ -65,20 +65,22 @@ class MatmulTestCase(jtu.JaxTestCase):
   @hp.settings(max_examples=100)  # Add verbosity=hp.Verbosity.verbose to debug
   @hp.given(hps.data())
   def test_matmul(self, data):
+    in_dtype = data.draw(
+        hps.sampled_from([jnp.float16, jnp.bfloat16, jnp.float32]),
+        label="dtype",
+    )
+    bytewidth = jnp.dtype(in_dtype).itemsize
     m, n, k = (
         data.draw(hps.sampled_from([128, 256, 512, 2048]), label=d)
         for d in "mnk"
     )
     stages = data.draw(hps.integers(2, 5), label="stages")
+    swizzle = data.draw(hps.sampled_from([32, 64, 128]), label="swizzle")
     tile_m = data.draw(
         hps.sampled_from([t for t in [64, 128, 256] if t <= m]), label="tile_m"
     )
     tile_n = data.draw(
         hps.sampled_from([t for t in [64, 128, 256] if t <= n]), label="tile_n"
-    )
-    in_dtype = data.draw(
-        hps.sampled_from([jnp.float16, jnp.bfloat16, jnp.float32]),
-        label="dtype",
     )
     cluster_m = data.draw(hps.sampled_from([1, 2, 4]), label="cluster_m")
     hp.assume((m // tile_m) % cluster_m == 0)
@@ -86,7 +88,7 @@ class MatmulTestCase(jtu.JaxTestCase):
     hp.assume((n // tile_n) % cluster_n == 0)
     # TODO(apaszke): Non-portable clusters (16 blocks) sometimes deadlock.
     hp.assume(cluster_m * cluster_n <= 8)
-    if jnp.dtype(in_dtype).itemsize == 4:
+    if bytewidth == 4:
       rhs_transpose = True
     else:
       rhs_transpose = data.draw(hps.booleans(), label="rhs_transpose")
@@ -96,12 +98,13 @@ class MatmulTestCase(jtu.JaxTestCase):
           m,
           k,
           n,
-          stages,
+          stages=stages,
           tile_m=tile_m,
           tile_n=tile_n,
           in_dtype=in_dtype,
           cluster_m=cluster_m,
           cluster_n=cluster_n,
+          swizzle=swizzle,
           rhs_transpose=rhs_transpose,
       )
     except ValueError as e:

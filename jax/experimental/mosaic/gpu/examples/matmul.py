@@ -87,13 +87,14 @@ class WGMMADefaultImpl:
       b_order: WGMMALayout,
       a_slice: SmemRef,
       b_slice: SmemRef,
+      swizzle: int,
   ) -> dict[str, WGMMAAccumulator]:
     """Perform a matrix multiplication.
 
     This function must guarantee that all WGMMA operations queued before it was
     called have completed before returning.
     """
-    acc = wgmma(acc, a_slice, b_slice, b_order=b_order)
+    acc = wgmma(acc, a_slice, b_slice, b_order=b_order, swizzle=swizzle)
     nvvm.wgmma_commit_group_sync_aligned()
     nvvm.wgmma_wait_group_sync_aligned(1)
     return acc
@@ -113,15 +114,13 @@ def build_kernel(
     stages: int = 2,
     tile_m: int = 128,
     tile_n: int = 128,
+    swizzle: int = 128,
     cluster: tuple[int, int] = (1, 1),
     rhs_transpose: bool = False,
     wgmma_impl=WGMMADefaultImpl,
     profiler_spec: profiler.ProfilerSpec | None = None,
 ):
   f32 = ir.F32Type.get()
-  out_128b_elems = 128 // bytewidth(f32)
-  out_tiling = (64, out_128b_elems)
-  out_tile = jax.ShapeDtypeStruct(tile_shape((tile_m, tile_n), out_tiling), jnp.float32)
   if tile_m % 64 != 0:
     raise ValueError(f"{tile_m=} must be divisible by 64")
   if m % tile_m != 0:
@@ -132,24 +131,36 @@ def build_kernel(
     raise ValueError(f"Need at least 2 stages, but got {stages=}")
   if not rhs_transpose and jnp.dtype(rhs_dtype).itemsize != 2:
     raise ValueError("Transpose only supported for only happen for 16bit types")
+  if swizzle not in {32, 64, 128}:
+    raise ValueError(f"swizzle must be 32, 64, or 128, but got {swizzle=}")
+
+  if tile_n % 32 == 0:
+    out_swizzle = 128
+  elif tile_n % 16 == 0:
+    out_swizzle = 64
+  else:
+    raise NotImplementedError(f"{tile_n=} must by divisible by 16")
+  out_swizzle_elems = out_swizzle // bytewidth(f32)
+  out_tiling = (64, out_swizzle_elems)
+  out_tile = jax.ShapeDtypeStruct(tile_shape((tile_m, tile_n), out_tiling), jnp.float32)
 
   lhs_elem_bytes = bytewidth(mlir.dtype_to_ir_type(lhs_dtype))
   rhs_elem_bytes = bytewidth(mlir.dtype_to_ir_type(rhs_dtype))
-  lhs_128b_elems = 128 // lhs_elem_bytes
-  rhs_128b_elems = 128 // rhs_elem_bytes
-  tile_k = max(lhs_128b_elems, rhs_128b_elems)
+  lhs_swizzle_elems = swizzle // lhs_elem_bytes
+  rhs_swizzle_elems = swizzle // rhs_elem_bytes
+  tile_k = max(lhs_swizzle_elems, rhs_swizzle_elems)
 
-  if tile_n % rhs_128b_elems != 0:
+  if tile_n % rhs_swizzle_elems != 0:
     raise ValueError(
-        f"{tile_n=} must be divisible by 128 bytes ="
-        f" {((lhs_128b_elems, lhs_dtype), (rhs_128b_elems, rhs_dtype))}"
+        f"{tile_n=} must be divisible by {swizzle} bytes ="
+        f" {((lhs_swizzle_elems, lhs_dtype), (rhs_swizzle_elems, rhs_dtype))}"
     )
 
   if k % tile_k != 0:
     raise ValueError(f"k must be divisible by {tile_k=}, but got {k=}")
 
   block_tiling = Tiling(m=tile_m, n=tile_n, k=tile_k)
-  tma_tiling = Tiling(m=64, n=rhs_128b_elems, k=lhs_128b_elems)
+  tma_tiling = Tiling(m=64, n=rhs_swizzle_elems, k=lhs_swizzle_elems)
   k_steps = k // block_tiling.k
   stages = min(stages, k_steps)
 
@@ -186,7 +197,7 @@ def build_kernel(
       rhs_tma_tile_bytes = int(np.prod(block_tiling.kn) * rhs_elem_bytes)
       txcount = lhs_tma_tile_bytes + rhs_tma_tile_bytes
       common_copy_args = dict(
-          swizzle=128, barrier=barrier, arrive=False, uniform=False,
+          swizzle=swizzle, barrier=barrier, arrive=False, uniform=False,
       )
       with single_thread():
         barrier.arrive_expect_tx(txcount)
@@ -232,7 +243,9 @@ def build_kernel(
         rhs_smem_order = (
             WGMMALayout.COL_MAJOR if rhs_transpose else WGMMALayout.ROW_MAJOR
         )
-        accs = wgmma_impl.wgmma(impl_smem, accs, rhs_smem_order, a_slice, b_slice)
+        accs = wgmma_impl.wgmma(
+            impl_smem, accs, rhs_smem_order, a_slice, b_slice, swizzle=swizzle
+        )
 
       with ctx.named_region("TMA start"):
         tma_ki = arith.addi(ki, c(stages - 1))
@@ -258,7 +271,7 @@ def build_kernel(
 
     with ctx.named_region("SMEM store"):
       acc_val = wgmma_impl.get_result(stage_loop_body.result)
-      acc_val.store_tiled(epilogue_smem, swizzle=128)
+      acc_val.store_tiled(epilogue_smem, swizzle=out_swizzle)
       commit_shared()  # Make sure the stores are visible to TMA.
 
     with ctx.named_region("GMEM store"):
@@ -267,7 +280,7 @@ def build_kernel(
           dst_ref=c_device,
           gmem_slice=(ds(m_start, tile_m), ds(n_start, tile_n)),
           gmem_transform=mosaic_gpu.TileTransform(out_tiling),
-          swizzle=128,
+          swizzle=out_swizzle,
       )
       ctx.await_async_copy(0)
 
@@ -302,6 +315,7 @@ def verify(
     tile_n=128,
     cluster_m=1,
     cluster_n=1,
+    swizzle=128,
     profile=False,
     in_dtype=jnp.float16,
     rhs_transpose=False,
@@ -312,8 +326,6 @@ def verify(
   x = random.uniform(kx, (m, k), dtype=lhs_dtype)
   y = random.uniform(ky, (n, k) if rhs_transpose else (k, n), dtype=rhs_dtype)
 
-  impl = WGMMADefaultImpl
-
   prof_spec = profiler.ProfilerSpec(4096) if profile else None
   f = build_kernel(
       m, n, k,
@@ -323,7 +335,8 @@ def verify(
       tile_n=tile_n,
       cluster=(cluster_m, cluster_n),
       rhs_transpose=rhs_transpose,
-      wgmma_impl=impl,
+      swizzle=swizzle,
+      wgmma_impl=WGMMADefaultImpl,
       profiler_spec=prof_spec,
   )
   z, runtime = profiler.measure(f, x, y)
