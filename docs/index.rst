@@ -48,7 +48,7 @@ For an end-to-end transformer library built on JAX, see MaxText_.
       :link-type: ref
       :class-card: user-guides
 
-    .. grid-item-card:: :material-regular:`laptop_chromebook;2em` Developer docs
+    .. grid-item-card:: :material-regular:`laptop_chromebook;2em` Developer notes
       :columns: 12 6 6 4
       :link: contributor-guide
       :link-type: ref
@@ -80,7 +80,7 @@ For an end-to-end transformer library built on JAX, see MaxText_.
    user_guides
    advanced_guide
    contributor_guide
-   building_on_jax
+   extensions
    notes
    jax
 
