@@ -27,7 +27,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import tree_util
 from jax._src import util
-from jax._src.api_util import flatten_fun_nokwargs
+from jax._src.api_util import flatten_fun_nokwargs, resolve_kwargs
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters.batching import not_mapped
@@ -64,7 +64,7 @@ class custom_vmap:
 
   @traceback_util.api_boundary
   def __call__(self, *args, **kwargs):
-    assert not kwargs
+    args = resolve_kwargs(self.fun, args, kwargs)
     fun_name = getattr(self.fun, "__name__", str(self.fun))
     if not self.vmap_rule:
       raise AttributeError(
