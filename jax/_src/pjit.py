@@ -64,6 +64,7 @@ from jax._src.lib.mlir.dialects import func as func_dialect
 from jax._src.lib import jax_jit
 from jax._src.lib import xla_client as xc
 from jax._src import sharding
+from jax._src.mesh import AbstractMesh
 from jax._src.sharding_impls import (
     NamedSharding, GSPMDSharding,
     SingleDeviceSharding, PmapSharding, AUTO, UNSPECIFIED, UnspecifiedValue,
@@ -1996,6 +1997,9 @@ def _pjit_batcher_for_sharding(
   if spmd_axis_name is None:
     if sharding_impls.is_op_sharding_replicated(hlo_s):
       return s
+    if isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh):
+      parsed_pspec = s._parsed_pspec.insert_axis_partitions(dim, None)
+      return NamedSharding._from_parsed_pspec(s.mesh, parsed_pspec)
     new_op = hlo_s.to_proto().clone()
     tad = list(new_op.tile_assignment_dimensions)
     tad.insert(dim, 1)
@@ -2005,6 +2009,9 @@ def _pjit_batcher_for_sharding(
         _device_list=getattr(s, '_internal_device_list', None))
     return pxla._get_out_sharding_from_orig_sharding([new_gs], [None], s, None)[0]
   else:
+    if isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh):
+      parsed_pspec = s._parsed_pspec.insert_axis_partitions(dim, spmd_axis_name)
+      return NamedSharding._from_parsed_pspec(s.mesh, parsed_pspec)
     if isinstance(s, NamedSharding):
       mesh = s.mesh
     if mesh is None or mesh.empty:
@@ -2470,6 +2477,27 @@ def _identity_fn(x): return x
 
 def _sharding_constraint_impl(x, sharding, layout, resource_env,
                               unconstrained_dims):
+  if (isinstance(sharding, NamedSharding) and
+      isinstance(sharding.mesh, AbstractMesh)):
+    if not hasattr(x, 'sharding'):
+      aval = shaped_abstractify(x)
+      raise ValueError(
+          'Target sharding contains a `jax.sharding.AbstractMesh` which'
+          ' requires the input passed should be a `jax.Array`. Got'
+          f' {type(x)} with shape {aval.str_short()}')
+    if not isinstance(x.sharding, NamedSharding):
+      raise TypeError(
+          'The sharding on the input must be a `NamedSharding` since the target'
+          ' sharding has an `AbstractMesh` in it. Got sharding type'
+          f' {type(x.sharding)}')
+    if x.sharding.mesh.shape_tuple != sharding.mesh.shape_tuple:
+      raise ValueError(
+          f'Mesh shape of the input {x.sharding.mesh.shape_tuple} does not'
+          ' match the mesh shape of the target sharding'
+          f' {sharding.mesh.shape_tuple}')
+    sharding = NamedSharding._from_parsed_pspec(
+        x.sharding.mesh, sharding._parsed_pspec)
+
   if layout is None:
     if hasattr(x, 'sharding') and x.sharding.is_equivalent_to(sharding, x.ndim):
       return x

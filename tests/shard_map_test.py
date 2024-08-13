@@ -38,11 +38,13 @@ from jax._src import core
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
 from jax._src.ad_checkpoint import saved_residuals
+from jax._src.mesh import AbstractMesh
 from jax._src.interpreters import mlir
 from jax._src.interpreters import partial_eval as pe
 from jax._src import linear_util as lu
 from jax._src import tree_util
 import jax.numpy as jnp
+from jax._src.lib import xla_extension_version
 
 from jax.experimental.custom_partitioning import custom_partitioning
 from jax.experimental.shard_map import shard_map
@@ -742,6 +744,103 @@ class ShardMapTest(jtu.JaxTestCase):
     self.assertEqual(e.params['in_names'], ({0: ('x', 'y',)},))
     self.assertIn('out_names', e.params)
     self.assertEqual(e.params['out_names'], ({0: ('x', 'y',)},))
+
+  @unittest.skipIf(xla_extension_version < 281,
+                   'Requires xla_extension_version >= 281')
+  def test_shard_map_abstract_mesh(self):
+    mesh = jtu.create_global_mesh((2, 2), ('x', 'y'))
+    np_inp = np.arange(16).reshape(8, 2)
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P('x', 'y')))
+
+    def f(x):
+      return shard_map(lambda x: x, mesh=mesh.abstract_mesh, in_specs=P('x'),
+                       out_specs=P('x'))(x)
+
+    out1 = jax.jit(f)(arr)
+    self.assertArraysEqual(out1, np_inp)
+    self.assertEqual(out1.sharding, NamedSharding(mesh, P('x')))
+
+    out_eager = f(arr)
+    self.assertArraysEqual(out_eager, np_inp)
+    self.assertEqual(out_eager.sharding, NamedSharding(mesh, P('x')))
+
+    out1, out2 = shard_map(lambda x, y: (x, y), mesh=mesh.abstract_mesh,
+                           in_specs=P('x'), out_specs=P('x'))(np_inp, arr)
+    self.assertArraysEqual(out1, np_inp)
+    self.assertEqual(out1.sharding, NamedSharding(mesh, P('x')))
+    self.assertArraysEqual(out2, np_inp)
+    self.assertEqual(out2.sharding, NamedSharding(mesh, P('x')))
+
+  @unittest.skipIf(xla_extension_version < 281,
+                   'Requires xla_extension_version >= 281')
+  def test_different_devices_shmap_abstract_mesh_cache_hit(self):
+    if jax.device_count() < 4:
+      self.skipTest('Requires >=4 devices')
+
+    mesh1 = jax.sharding.Mesh(jax.devices()[:2], 'i')
+    mesh2 = jax.sharding.Mesh(jax.devices()[2:4], 'i')
+    abstract_mesh = AbstractMesh(mesh1.shape_tuple)
+
+    @jax.jit
+    def f(x):
+      x = shard_map(lambda x: x, mesh=abstract_mesh, in_specs=P('i'),
+                    out_specs=P('i'))(x)
+      return jnp.sin(x)
+
+    with (
+        jtu.count_jit_tracing_cache_miss() as tracing_count,
+        jtu.count_jit_and_pmap_lowerings() as lowering_count,
+        jtu.count_jit_compilation_cache_miss() as compilation_count,
+    ):
+      a = jax.device_put(np.arange(8.), NamedSharding(mesh1, P()))
+      out_a = f(a)  # tracing and lowering cached
+
+      # same num_devices but different devices.
+      b = jax.device_put(out_a, NamedSharding(mesh2, P()))
+      f(b)  # tracing and lowering cache *hit*
+
+    self.assertEqual(tracing_count[0], 2)  # 1 miss for `f` and 1 miss for `sin`
+    self.assertEqual(lowering_count[0], 1)
+    self.assertEqual(compilation_count[0], 2)  # 2 misses since devices differ.
+
+  @unittest.skipIf(xla_extension_version < 281,
+                   'Requires xla_extension_version >= 281')
+  def test_shmap_abstract_mesh_errors(self):
+    mesh = jtu.create_global_mesh((2,), ('x',))
+    np_inp = np.arange(8)
+    abstract_mesh = jax.sharding.AbstractMesh(mesh.shape_tuple)
+
+    with self.assertRaisesRegex(
+        TypeError,
+        'shard_map got `AbstractMesh` as an input to the `mesh` argument'
+        " which requires the input's sharding to be a `NamedSharding`"):
+      shard_map(lambda x: x, mesh=abstract_mesh, in_specs=P('x'),
+                out_specs=P('x'))(jnp.arange(8))
+
+    arr = jax.device_put(np_inp, NamedSharding(mesh, P('x')))
+    mesh2 = jtu.create_global_mesh((2,), 'y')
+    abs_mesh2 = AbstractMesh(mesh2.shape_tuple)
+    with self.assertRaisesRegex(
+        ValueError,
+        'Mesh shape of the input.*does not match the mesh shape passed to'
+        ' shard_map'):
+      shard_map(lambda x: x, mesh=abs_mesh2, in_specs=P('y'),
+                out_specs=P('y'))(arr)
+
+    with self.assertRaisesRegex(
+        ValueError,
+        'Please pass `jax.Array`s with a `NamedSharding` as input to'
+        ' `shard_map` when passing `AbstractMesh` to the mesh argument.'):
+      shard_map(lambda x: x, mesh=abstract_mesh, in_specs=P('x'),
+                out_specs=P('x'))(np_inp)
+
+    arr_mesh2 = jax.device_put(np_inp, NamedSharding(mesh2, P('y')))
+    with self.assertRaisesRegex(
+        ValueError,
+        'Mesh shape of the input.*does not match the mesh shape passed to'
+        ' shard_map'):
+      shard_map(lambda x, y: (x, y), mesh=abstract_mesh, in_specs=P('x'),
+                out_specs=P('x'))(arr, arr_mesh2)
 
   @parameterized.parameters([True, False])
   @jtu.run_on_devices('cpu', 'gpu', 'tpu')

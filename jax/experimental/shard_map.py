@@ -26,8 +26,9 @@ import numpy as np
 
 import jax
 import jax.numpy as jnp
-from jax.sharding import NamedSharding, PartitionSpec, Mesh
+from jax.sharding import NamedSharding, PartitionSpec
 from jax._src import ad_checkpoint
+from jax._src import array
 from jax._src import ad_util
 from jax._src import callback
 from jax._src import config
@@ -46,6 +47,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.core import Tracer
+from jax._src.mesh import AbstractMesh, Mesh
 from jax._src.api import _shared_code_pmap, _prepare_pmap
 from jax._src.lax import (lax, parallel as lax_parallel, slicing,
                           windowed_reductions, convolution, fft, linalg,
@@ -79,8 +81,9 @@ AxisName = Hashable
 
 
 @traceback_util.api_boundary
-def shard_map(f: Callable, mesh: Mesh, in_specs: Specs, out_specs: Specs,
-              check_rep: bool = True, auto: frozenset[AxisName] = frozenset()):
+def shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
+              out_specs: Specs, check_rep: bool = True,
+              auto: frozenset[AxisName] = frozenset()):
   """Map a function over shards of data.
 
   Note:
@@ -134,14 +137,15 @@ def shard_map(f: Callable, mesh: Mesh, in_specs: Specs, out_specs: Specs,
   """
   return _shard_map(f, mesh, in_specs, out_specs, check_rep, auto)
 
-def _shard_map(f: Callable, mesh: Mesh, in_specs: Specs,
+def _shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
                out_specs: Specs | Callable[[], Specs],
                check_rep: bool, auto: frozenset[AxisName]):
   if not callable(f):
     raise TypeError("shard_map requires a callable for its first argument, "
                     f"but got {f} of type {type(f)}.")
-  if not isinstance(mesh, Mesh):
-    raise TypeError("shard_map requires a `jax.sharding.Mesh` instance for its "
+  if not isinstance(mesh, (Mesh, AbstractMesh)):
+    raise TypeError("shard_map requires a `jax.sharding.Mesh` or a "
+                    "`jax.sharding.AbstractMesh` instance for its "
                     f"second argument, but got {mesh} of type {type(mesh)}.")
   if not auto.issubset(mesh.axis_names):
     raise ValueError(f"shard_map requires auto={auto} to be a subset of "
@@ -711,10 +715,33 @@ def _pspec_mhlo_attrs(names: AxisNames, aval: core.AbstractValue) -> str:
 
 # Eager evaluation
 
+def get_mesh_from_args(args_flat, mesh):
+  for a in args_flat:
+    if hasattr(a, 'sharding'):
+      if not isinstance(a.sharding, NamedSharding):
+        raise TypeError(
+            "shard_map got `AbstractMesh` as an input to the `mesh` argument"
+            " which requires the input's sharding to be a `NamedSharding`. Got"
+            f" sharding type {type(a.sharding)}")
+      if a.sharding.mesh.shape_tuple != mesh.shape_tuple:
+        raise ValueError(
+            f"Mesh shape of the input {a.sharding.mesh.shape_tuple} does not"
+            " match the mesh shape passed to shard_map "
+            f" {mesh.shape_tuple}")
+      mesh = a.sharding.mesh
+  if isinstance(mesh, AbstractMesh):
+    raise ValueError(
+        "Please pass `jax.Array`s with a `NamedSharding` as input to"
+        " `shard_map` when passing `AbstractMesh` to the mesh argument.")
+  assert isinstance(mesh, Mesh)
+  return mesh
+
 def _shard_map_impl(trace, prim, fun, args, *, mesh, in_names, out_names_thunk,
                     check_rep, rewrite, auto):
   if auto: raise NotImplementedError
   del prim, auto
+  if isinstance(mesh, AbstractMesh):
+    mesh = get_mesh_from_args(args, mesh)
   args = map(partial(_unmatch_spec, mesh), in_names, args)
   in_rep = map(partial(_in_names_to_rep, mesh), in_names)
   with core.new_base_main(ShardMapTrace, mesh=mesh, check=check_rep) as main:

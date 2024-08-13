@@ -44,6 +44,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.interpreters import pxla
 from jax._src import lib
+from jax._src.mesh import AbstractMesh
 from jax._src.lib import xla_client as xc
 from jax._src.monitoring import record_event_duration_secs
 from jax._src.partition_spec import PartitionSpec
@@ -227,8 +228,11 @@ def get_intermediate_shardings(
 
   for eqn in jaxpr.eqns:
     if eqn.primitive is pjit.sharding_constraint_p:
+      s = eqn.params['sharding']
+      if isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh):
+        continue
       source_info = SourceInfo(eqn.source_info, eqn.primitive.name)
-      yield (eqn.params['sharding'], source_info)
+      yield (s, source_info)
     elif eqn.primitive is pjit.pjit_p:
       source_info = SourceInfo(eqn.source_info, eqn.primitive.name)
       yield from ((i, source_info) for i in eqn.params['in_shardings'])

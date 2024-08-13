@@ -191,7 +191,7 @@ class NamedSharding(sharding.Sharding):
     >>> named_sharding = jax.sharding.NamedSharding(mesh, spec)
   """
 
-  mesh: mesh_lib.Mesh
+  mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh
   spec: PartitionSpec
   _memory_kind: str | None
   _parsed_pspec: ParsedPartitionSpec
@@ -199,7 +199,7 @@ class NamedSharding(sharding.Sharding):
 
   @use_cpp_method()
   def __init__(
-      self, mesh: mesh_lib.Mesh, spec: PartitionSpec, *,
+      self, mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh, spec: PartitionSpec, *,
       memory_kind: str | None = None, _parsed_pspec=None,
       _manual_axes=frozenset()):
     self.mesh = mesh
@@ -259,20 +259,32 @@ class NamedSharding(sharding.Sharding):
 
   @property
   def device_set(self) -> set[Device]:
+    if isinstance(self.mesh, mesh_lib.AbstractMesh):
+      raise ValueError(
+          'device_set is not implemented for `jax.sharding.AbstractMesh`.')
     return self.mesh._flat_devices_set
 
   @property
   def _device_assignment(self) -> XLADeviceAssignment:
+    if isinstance(self.mesh, mesh_lib.AbstractMesh):
+      raise ValueError('_device_assignment is not implemented for'
+                       ' `jax.sharding.AbstractMesh`.')
     return self.mesh._flat_devices_tuple
 
   @property
   def is_fully_addressable(self) -> bool:
+    if isinstance(self.mesh, mesh_lib.AbstractMesh):
+      raise ValueError('is_fully_addressable is not implemented for '
+                       '`jax.sharding.AbstractMesh`.')
     # Speed up `is_fully_addressable` since there is a high chance that the
     # mesh across multiple NamedSharding objects will be the same.
     return not self.mesh.is_multi_process
 
   @property
   def addressable_devices(self) -> set[Device]:
+    if isinstance(self.mesh, mesh_lib.AbstractMesh):
+      raise ValueError('addressable_devices is not implemented for '
+                       '`jax.sharding.AbstractMesh`.')
     # Override addressable devices because there is a high chance that the mesh
     # across multiple NamedSharding objects will be the same.
     return self.mesh._local_devices_set
@@ -1623,6 +1635,7 @@ def logical_sharding(aval, phys_sharding) -> sharding.Sharding:
                         sharding_spec=logical_sharding_spec)
   elif isinstance(phys_sharding, NamedSharding):
     logical_gs = get_logical_gspmd_sharding(aval, phys_sharding)
+    assert isinstance(phys_sharding.mesh, mesh_lib.Mesh)
     return _gspmd_to_named_sharding_via_mesh(
         logical_gs, phys_sharding.mesh)
   else:

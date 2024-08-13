@@ -1989,7 +1989,7 @@ def are_all_shardings_default_mem_kind(da_object, shardings):
   except:
     return True
   for i in shardings:
-    if is_unspecified_or_auto(i):
+    if is_unspecified_or_auto(i) or i.memory_kind is None:
       continue
     if i.memory_kind != default_mem_kind:
       return False
@@ -2426,6 +2426,7 @@ def _register_out_sharding_handler(
 def _gspmd_to_named_sharding(
     out_s: sharding_impls.GSPMDSharding,
     orig_in_s: sharding_impls.NamedSharding) -> sharding_impls.NamedSharding:
+  assert isinstance(orig_in_s.mesh, mesh_lib.Mesh)
   return sharding_impls._gspmd_to_named_sharding_via_mesh(out_s, orig_in_s.mesh)
 
 _register_out_sharding_handler(

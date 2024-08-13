@@ -384,6 +384,25 @@ def count_jit_and_pmap_lowerings():
 
 
 @contextmanager
+def count_jit_compilation_cache_miss():
+  # No need to clear any caches since we generally jit and pmap fresh callables
+  # in tests.
+
+  jit_compilation = pxla._cached_compilation
+  count = [0]
+
+  def compile_and_count(*args, **kwargs):
+    count[0] += 1
+    return jit_compilation(*args, **kwargs)
+
+  pxla._cached_compilation = compile_and_count
+  try:
+    yield count
+  finally:
+    pxla._cached_compilation = jit_compilation
+
+
+@contextmanager
 def count_subjaxpr_to_hlo_conversion(fun_name: str):
   # No need to clear any caches since we generally jit and pmap fresh callables
   # in tests.
