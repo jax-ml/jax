@@ -271,7 +271,7 @@ def from_elt(trace: BatchTrace, axis_size: AxisSize, i: int,
     try:
       return matchaxis(trace.axis_data.name, axis_size, bdim, spec, val)
     except SpecMatchError:
-      raise SpecMatchError(i, xdim, spec) from None
+      raise SpecMatchError(i, x.batch_dim, spec) from None
 from_elt_handlers: dict[type, FromEltHandler] = {}
 
 def make_iota(axis_size: AxisSize) -> Array:
