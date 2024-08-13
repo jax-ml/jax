@@ -941,14 +941,16 @@ def register_dataclass(
       attributes represent the whole of the object state, and can be passed
       as keywords to the class constructor to create a copy of the object.
       All defined attributes should be listed among ``meta_fields`` or ``data_fields``.
-    meta_fields: auxiliary data field names. These fields *must* contain static,
-      hashable, immutable objects, as these objects are used to generate JIT cache
-      keys. In particular, ``meta_fields`` cannot contain :class:`jax.Array` or
-      :class:`numpy.ndarray` objects.
     data_fields: data field names. These fields *must* be JAX-compatible objects
       such as arrays (:class:`jax.Array` or :class:`numpy.ndarray`), scalars, or
-      pytrees whose leaves are arrays or scalars. Note that ``data_fields`` may be
-      ``None``, as this is recognized by JAX as an empty pytree.
+      pytrees whose leaves are arrays or scalars. Note that ``None`` is valid, as
+      this is recognized by JAX as an empty pytree.
+    meta_fields: auxiliary data field names. These fields will be considered static
+      within JAX transformations such as :func:`jax.jit`. The listed fields *must*
+      contain static, hashable, immutable objects, as these objects are used to
+      generate JIT cache keys: for example strings, Python scalars, or array shapes
+      and dtypes. In particular, ``meta_fields`` cannot contain :class:`jax.Array`
+      or :class:`numpy.ndarray` objects, as they are not hashable.
 
   Returns:
     The input class ``nodetype`` is returned unchanged after being added to JAX's
