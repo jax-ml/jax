@@ -488,6 +488,81 @@ LogicalResult RegionOp::verify() {
   return success();
 }
 
+LogicalResult ShuffledLoadOp::verify() {
+  if (getBase().getType().getRank() != getIndices().size()) {
+    return emitOpError("Base memref's rank and indices size do not match: ")
+           << getBase().getType().getRank() << " vs " << getIndices().size();
+  }
+  if (getSublaneMask().size() != getType().getShape()[0]) {
+    return emitOpError("Expected sublane mask size equals to ")
+           << getType().getShape()[0] << " but got " << getSublaneMask().size();
+  }
+  if (getSublaneOffsets().size() != getType().getShape()[0]) {
+    return emitOpError("Expected sublane offsets size equals to ")
+           << getType().getShape()[0] << " but got "
+           << getSublaneOffsets().size();
+  }
+  return success();
+}
+
+LogicalResult ShuffledLoadOp::canonicalize(ShuffledLoadOp op,
+                                           PatternRewriter &rewriter) {
+  bool can_convert_to_simple_load = true;
+  for (int i = 0; i < op.getSublaneOffsets().size(); ++i) {
+    if (op.getSublaneOffsets()[i] != i) {
+      can_convert_to_simple_load = false;
+      break;
+    };
+  }
+  if (can_convert_to_simple_load) {
+    rewriter.replaceOpWithNewOp<tpu::LoadOp>(
+        op, op.getType(), op.getBase(), op.getIndices(), op.getSublaneMask(),
+        /*sublane_stride=*/nullptr);
+  }
+  return success();
+}
+
+LogicalResult ShuffledStoreOp::verify() {
+  if (getBase().getType().getRank() != getIndices().size()) {
+    return emitOpError("Base memref's rank and indices size do not match: ")
+           << getBase().getType().getRank() << " vs " << getIndices().size();
+  }
+  if (getValueToStore().getType().getRank() != getIndices().size()) {
+    return emitOpError(
+               "The rank of value to store and indices size do not match: ")
+           << getBase().getType().getRank() << " vs " << getIndices().size();
+  }
+  if (getSublaneMask().size() != getValueToStore().getType().getShape()[0]) {
+    return emitOpError("Expected sublane mask size equals to ")
+           << getValueToStore().getType().getShape()[0] << " but got "
+           << getSublaneMask().size();
+  }
+  if (getSublaneOffsets().size() != getValueToStore().getType().getShape()[0]) {
+    return emitOpError("Expected sublane offsets size equals to ")
+           << getValueToStore().getType().getShape()[0] << " but got "
+           << getSublaneOffsets().size();
+  }
+  return success();
+}
+
+LogicalResult ShuffledStoreOp::canonicalize(ShuffledStoreOp op,
+                                            PatternRewriter &rewriter) {
+  bool can_convert_to_simple_store = true;
+  for (int i = 0; i < op.getSublaneOffsets().size(); ++i) {
+    if (op.getSublaneOffsets()[i] != i) {
+      can_convert_to_simple_store = false;
+      break;
+    };
+  }
+  if (can_convert_to_simple_store) {
+    rewriter.replaceOpWithNewOp<tpu::StoreOp>(op, op.getValueToStore(),
+                                              op.getBase(), op.getIndices(),
+                                              op.getSublaneMask(),
+                                              /*mask=*/nullptr,
+                                              /*sublane_stride=*/nullptr);
+  }
+  return success();
+}
 }  // namespace tpu
 }  // namespace mlir
 
