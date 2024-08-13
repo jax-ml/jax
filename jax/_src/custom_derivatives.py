@@ -1523,6 +1523,9 @@ def _remat_opt_vmap(
   batched_fwd_jaxpr, out_batched = batching.batch_jaxpr(
       fwd_jaxpr, axis_size, in_batched, False,
       axis_name, spmd_axis_name, main_type)
+  extra_consts = batched_fwd_jaxpr.consts
+  batched_fwd_jaxpr = pe.close_jaxpr(
+      pe.convert_constvars_jaxpr(batched_fwd_jaxpr.jaxpr))
   out_dims = [0 if b else not_mapped for b in out_batched]
 
   _, prim_batched = split_list(in_batched, [num_consts])
@@ -1535,7 +1538,8 @@ def _remat_opt_vmap(
         main_type)
     return batched_fun_jaxpr.jaxpr, batched_fun_jaxpr.consts
 
-  batched_outs = remat_opt_p.bind(*args, num_consts=num_consts,
+  batched_outs = remat_opt_p.bind(*extra_consts, *args,
+                                  num_consts=num_consts + len(extra_consts),
                                   num_res=num_res,
                                   fwd_jaxpr=batched_fwd_jaxpr,
                                   fun_jaxpr_thunk=batched_fun_jaxpr_thunk)
@@ -1603,6 +1607,7 @@ def _remat_opt_dce(used_outs: list[bool], eqn: core.JaxprEqn):
     instantiate += [True] * (len(eqn.invars) - eqn.params["num_consts"])
     new_jaxpr, used_ins = pe.dce_jaxpr(eqn.params["fwd_jaxpr"].jaxpr, used_outs,
                                        instantiate=instantiate)
+    assert not new_jaxpr.constvars
     closed_jaxpr = pe.close_jaxpr(new_jaxpr)
     invars = [v for used, v in zip(used_ins, eqn.invars) if used]
     new_params = dict(eqn.params)
