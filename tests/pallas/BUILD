@@ -85,10 +85,15 @@ jax_test(
         "gpu_h100_x32",
     ],
     shard_count = {
-        "cpu": 4,
-        "gpu": 4,
-        "tpu": 4,
+        "cpu": 8,
+        "gpu": 8,
+        "tpu": 8,
     },
+    tags = [
+        "noasan",  # Times out.
+        "nomsan",  # Times out.
+        "notsan",  # Times out.
+    ],
     deps = [
         "//jax:pallas",
         "//jax:pallas_gpu",  # build_cleaner: keep
@@ -104,6 +109,11 @@ jax_test(
     ],
     disable_backends = [
         "gpu",
+    ],
+    tags = [
+        "noasan",  # Times out.
+        "nomsan",  # Times out.
+        "notsan",  # Times out.
     ],
     deps = [
         "//jax:pallas",

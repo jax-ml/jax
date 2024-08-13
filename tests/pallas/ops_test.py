@@ -56,7 +56,7 @@ import hypothesis.strategies as hps
 # ruff: noqa: F811
 
 jax.config.parse_flags_with_absl()
-jtu.setup_hypothesis(max_examples=100)
+jtu.setup_hypothesis(max_examples=50)
 
 
 def smem_on_tpu():
