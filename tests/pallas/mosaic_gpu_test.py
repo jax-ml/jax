@@ -162,6 +162,38 @@ class PallasCallTest(PallasTest):
     o = f(inp)
     np.testing.assert_array_equal(o, inp + 1.0)
 
+  def test_program_id(self):
+    @functools.partial(
+        pl.pallas_call,
+        in_specs=(),
+        out_specs=pl.BlockSpec((128,), lambda *i: i),
+        out_shape=jax.ShapeDtypeStruct([128 * 2], jnp.int32),
+        grid=2,
+    )
+    def kernel(o_ref):
+      o_ref[...] = jnp.full(o_ref.shape, pl.program_id(0))
+
+    np.testing.assert_array_equal(
+        kernel(),
+        jnp.array([0] * 128 + [1] * 128, dtype=jnp.int32),
+    )
+
+  def test_num_programs(self):
+    @functools.partial(
+        pl.pallas_call,
+        in_specs=(),
+        out_specs=pl.BlockSpec((128,), lambda *i: i),
+        out_shape=jax.ShapeDtypeStruct([128 * 2], jnp.int32),
+        grid=2,
+    )
+    def kernel(o_ref):
+      o_ref[...] = jnp.full(o_ref.shape, pl.num_programs(0))
+
+    np.testing.assert_array_equal(
+        kernel(),
+        jnp.full([256], 2, dtype=jnp.int32),
+    )
+
 
 if __name__ == "__main__":
   absltest.main()
