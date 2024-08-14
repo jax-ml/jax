@@ -1134,7 +1134,7 @@ def _partial_eval_jaxpr_custom_cached(
     return x
 
   def has_effects(effects) -> bool:
-    return bool({e for e in effects if not isinstance(e, core.NamedAxisEffect)})
+    return bool(effects)
 
   newvar = core.gensym(suffix='_offload')
   known_eqns, staged_eqns = [], []
