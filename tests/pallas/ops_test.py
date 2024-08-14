@@ -1161,10 +1161,6 @@ class OpsExtraTest(PallasBaseTest):
     np.testing.assert_array_equal(out, o_new)
 
   def test_strided_load(self):
-    if self.INTERPRET:
-      # TODO(b/329733289): Remove this once the bug is fixed.
-      self.skipTest("Strided load not yet supported in interpreter mode")
-
     # Reproducer from https://github.com/google/jax/issues/20895.
     @functools.partial(
         self.pallas_call,
