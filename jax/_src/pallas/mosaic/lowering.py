@@ -1295,9 +1295,7 @@ def reduce_lowering_rule(reduce_fn, type_to_kind, type_to_identity):
         kind,
         x,
         acc,
-        ir.ArrayAttr.get(
-            [ir.IntegerAttr.get(ir.IntegerType.get_signless(64), a) for a in axes]
-        ),
+        axes,
     )
     return op.result
   return _lowering_rule
