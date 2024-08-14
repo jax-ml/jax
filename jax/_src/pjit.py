@@ -2525,11 +2525,11 @@ def _sharding_constraint_batcher(
   d, = dims_in
   # None means unconstrained in ParsedPartitionSpec
   unconstrained_dims = {ud + (d <= ud) for ud in unconstrained_dims}
-  if spmd_axis_name is None:
+  if axis_data.spmd_name is None:
     unconstrained_dims.add(d)
 
   vmapped_sharding = _pjit_batcher_for_sharding(
-      sharding, d, spmd_axis_name, resource_env.physical_mesh, x.ndim)
+      sharding, d, axis_data.spmd_name, resource_env.physical_mesh, x.ndim)
   if unconstrained_dims and isinstance(vmapped_sharding, NamedSharding):
     new_spec = list(vmapped_sharding.spec) + [None] * (x.ndim - len(vmapped_sharding.spec))
     for u in unconstrained_dims:
