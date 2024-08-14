@@ -1992,27 +1992,36 @@ class PallasCallTPUBooleanTest(PallasBaseTest):
   def test_vector_bool_load_store(self):
     def kernel(x_ref, o_ref):
       o_ref[...] = x_ref[...]
-    input = jnp.array([[False, True, True, False]])
-    output_shape = jax.ShapeDtypeStruct((1, 4), jnp.bool_)
-    if self.INTERPRET:
-      result = self.pallas_call(
-          kernel,
-          in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
-          out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
-          out_shape=output_shape,
-      )(input)
-      np.testing.assert_array_equal(result, input)
-    else:
-      # TODO(justinfu): Fix vector boolean ops so that they do not trigger
-      # a relayout error from changing bitwidths in Mosaic.
-      with self.assertRaisesRegex(
-          Exception, 'Boolean vector loads are not supported.'):
-        self.pallas_call(
-            kernel,
-            in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
-            out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
-            out_shape=output_shape,
-        )(input)
+    input = jax.random.bernoulli(jax.random.key(0), p=0.5, shape=(8, 128))
+    output_shape = jax.ShapeDtypeStruct((8, 128), jnp.bool_)
+    result = self.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM)],
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+        out_shape=output_shape,
+    )(input)
+    np.testing.assert_array_equal(result, input)
+
+  def test_vector_bool_masking(self):
+    def kernel(mask_ref, true_ref, false_ref, o_ref):
+      o_ref[...] = jnp.where(mask_ref[...], true_ref[...], false_ref[...])
+    key = jax.random.key(0)
+    k1, k2, k3 = jax.random.split(key, 3)
+    values_1 = jax.random.normal(k1, (8, 128), jnp.float32)
+    values_2 = jax.random.normal(k2, (8, 128), jnp.float32)
+    mask = jax.random.bernoulli(k3, p=0.5, shape=(8, 128))
+    output_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+    result = self.pallas_call(
+        kernel,
+        in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM),
+                  pl.BlockSpec(memory_space=pltpu.VMEM),
+                  pl.BlockSpec(memory_space=pltpu.VMEM),
+                  ],
+        out_specs=pl.BlockSpec(memory_space=pltpu.VMEM),
+        out_shape=output_shape,
+    )(mask, values_1, values_2)
+    expected = jnp.where(mask, values_1, values_2)
+    np.testing.assert_array_equal(result, expected)
 
   def test_bool_dma_not_implemented(self):
     if not jtu.is_device_tpu_at_least(4):

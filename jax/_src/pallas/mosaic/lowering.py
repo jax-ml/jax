@@ -1148,15 +1148,20 @@ def _maybe_cast_load_to_bool(
   if out_aval.dtype != jnp.bool_:
     return val
   load_scalar_type = _dtype_to_ir_type(BOOL_MEMREF_TYPE)
-  if not out_aval.shape:
-    # For scalars, truncate the value to a bool.
-    pred = _cmpi_lowering_types[lax.ne_p]
-    predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
-    const_zero = ir.IntegerAttr.get(load_scalar_type, 0)
+  pred = _cmpi_lowering_types[lax.ne_p]
+  predicate = ir.IntegerAttr.get(ir.IntegerType.get_signless(64), pred)
+  const_zero = ir.IntegerAttr.get(load_scalar_type, 0)
+  if out_aval.shape:  # Vector case.
+    load_vector_type = aval_to_ir_type(out_aval, is_kernel_boundary=True)
+    vector_zeros = arith.ConstantOp(
+        load_vector_type,
+        ir.DenseElementsAttr.get_splat(load_vector_type, const_zero)
+    )
+    return arith.CmpIOp(predicate, val, vector_zeros).result
+  else:  # Scalar case.
     const_zero = arith.ConstantOp(load_scalar_type, const_zero)
     return arith.CmpIOp(predicate, val, const_zero).result
-  else:
-    raise NotImplementedError("Boolean vector loads are not supported.")
+
 
 def _maybe_cast_store_to_memref_type(
     expected_aval, val: ir.Value) -> ir.Value:
