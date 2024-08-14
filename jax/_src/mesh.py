@@ -372,8 +372,38 @@ class AbstractMesh:
   def _internal_device_list(self):
     return None
 
+  @property
+  def empty(self):
+    return self.size == 0
+
+  @property
+  def devices(self):
+    _raise_value_error("devices")
+
+  @property
+  def device_ids(self):
+    _raise_value_error("device_ids")
+
+  @property
+  def is_multi_process(self):
+    _raise_value_error("is_multi_process")
+
+  @property
+  def local_devices(self):
+    _raise_value_error("local_devices")
+
+  @property
+  def local_mesh(self):
+    _raise_value_error("local_mesh")
+
   def __enter__(self):
     raise RuntimeError("AbstractMesh is not a context manager")
 
   def __exit__(self, exc_type, exc_value, traceback):
     raise RuntimeError("AbstractMesh is not a context manager")
+
+
+# Create this indirection because pytype fails to recognize a property if a
+# property raises an exception unconditionally. Remove this once that is fixed.
+def _raise_value_error(name):
+  raise ValueError(f"AbstractMesh does not implement {name}")
