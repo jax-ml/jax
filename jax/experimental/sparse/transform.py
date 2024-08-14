@@ -305,7 +305,8 @@ class SparseTrace(core.Trace):
     if isinstance(val, SparseTracer) and self.tag is val._trace.tag:
       return val
     else:
-      spvalue, = arrays_to_spvalues(self.spenv, [val])
+      with core.set_current_trace(self.parent_trace):
+        spvalue, = arrays_to_spvalues(self.spenv, [val])
       return SparseTracer(self, spvalue=spvalue)
 
   def process_primitive(self, primitive, tracers, params):
@@ -336,7 +337,8 @@ class SparseTrace(core.Trace):
   def process_custom_jvp_call(self, primitive, fun, jvp, tracers, *, symbolic_zeros):
     # TODO(jakevdp): handle the jvp here
     del primitive, jvp, symbolic_zeros
-    return fun.call_wrapped(*tracers)
+    with core.set_current_trace(self):
+      return fun.call_wrapped(*tracers)
 
 @lu.transformation_with_aux
 def sparsify_subtrace(tag, spenv, spvalues, *bufs):
