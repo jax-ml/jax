@@ -1813,7 +1813,7 @@ def pjit_staging_rule(trace, *args, **params):
     trace.frame.add_eqn(eqn)
   elif any(isinstance(c, core.MutableArray) for c in jaxpr.consts):
     jaxpr, consts = pxla._move_mutable_consts(jaxpr)
-    consts = map(trace.instantiate_const, consts)
+    consts = map(trace.new_const, consts)
     in_shardings = (*params['in_shardings'],) + (UNSPECIFIED,) * len(consts)
     in_layouts = (*params['in_layouts'],) + (None,) * len(consts)
     donated_invars = (*params['donated_invars'],) + (False,) * len(consts)
