@@ -29,8 +29,6 @@ exports_files(srcs = [
     "blas_handle_pool.h",
     "blas_kernels.cc",
     "blas_kernels.h",
-    "blas_kernels_ffi.cc",
-    "blas_kernels_ffi.h",
     "gpu_kernel_helpers.cc",
     "gpu_kernel_helpers.h",
     "gpu_kernels.cc",

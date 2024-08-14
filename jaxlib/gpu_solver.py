@@ -43,10 +43,7 @@ except ImportError:
 
 if _cublas:
   for _name, _value in _cublas.registrations().items():
-    # TODO(danfm): Clean up after all legacy custom calls are ported.
-    api_version = 1 if _name.endswith("_ffi") else 0
-    xla_client.register_custom_call_target(_name, _value, platform="CUDA",
-                                           api_version=api_version)
+    xla_client.register_custom_call_target(_name, _value, platform="CUDA")
 
 for cuda_module_name in [".cuda", "jax_cuda12_plugin"]:
   try:
@@ -78,10 +75,7 @@ except ImportError:
 
 if _hipblas:
   for _name, _value in _hipblas.registrations().items():
-    # TODO(danfm): Clean up after all legacy custom calls are ported.
-    api_version = 1 if _name.endswith("_ffi") else 0
-    xla_client.register_custom_call_target(_name, _value, platform="ROCM",
-                                           api_version=api_version)
+    xla_client.register_custom_call_target(_name, _value, platform="ROCM")
 
 for rocm_module_name in [".rocm", "jax_rocm60_plugin"]:
   try:
@@ -115,15 +109,14 @@ def _getrf_hlo(platform, gpu_blas, gpu_solver, ctx, dtype, a):
   num_bd = len(batch_dims)
   i32_type = ir.IntegerType.get_signless(32)
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
-  batch = math.prod(batch_dims)
-  use_batched = batch > 1 and m == n and m // batch <= 128
 
   # TODO(b/357034884): Remove after 3 week forward compatibility window.
   if ctx.is_forward_compat():
     if not gpu_blas:
       raise GpuLibNotLinkedError()
 
-    if use_batched:
+    batch = math.prod(batch_dims)
+    if batch > 1 and m == n and m // batch <= 128:
       lwork, opaque = gpu_blas.build_getrf_batched_descriptor(
         np.dtype(dtype), batch, m)
       workspace = ir.RankedTensorType.get([lwork], ir.IntegerType.get_signless(8))
@@ -154,9 +147,8 @@ def _getrf_hlo(platform, gpu_blas, gpu_solver, ctx, dtype, a):
         operand_output_aliases={0: 0}).results
     return out[:3]
 
-  target = "blas_getrf_batched_ffi" if use_batched else "solver_getrf_ffi"
   return custom_call(
-      f"{platform}{target}",
+      f"{platform}solver_getrf_ffi",
       result_types=[
         a.type,
         ir.RankedTensorType.get(batch_dims + (min(m, n),), i32_type),

@@ -17,7 +17,6 @@ limitations under the License.
 // JAX-generated HLO code from outside of JAX.
 
 #include "jaxlib/gpu/blas_kernels.h"
-#include "jaxlib/gpu/blas_kernels_ffi.h"
 #include "jaxlib/gpu/linalg_kernels.h"
 #include "jaxlib/gpu/prng_kernels.h"
 #include "jaxlib/gpu/rnn_kernels.h"
@@ -36,8 +35,6 @@ namespace {
 
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cublas_getrf_batched", GetrfBatched,
                                          "CUDA");
-XLA_FFI_REGISTER_HANDLER(XLA_FFI_GetApi(), "cublas_getrf_batched_ffi", "CUDA",
-                         GetrfBatchedFfi);
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cublas_geqrf_batched", GeqrfBatched,
                                          "CUDA");
 XLA_REGISTER_CUSTOM_CALL_TARGET_WITH_SYM("cudnn_rnn", RNNForward, "CUDA");

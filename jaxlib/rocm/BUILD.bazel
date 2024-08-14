@@ -98,23 +98,6 @@ cc_library(
     ],
 )
 
-cc_library(
-    name = "hipblas_kernels_ffi",
-    srcs = ["//jaxlib/gpu:blas_kernels_ffi.cc"],
-    hdrs = ["//jaxlib/gpu:blas_kernels_ffi.h"],
-    deps = [
-        ":hip_blas_handle_pool",
-        ":hip_gpu_kernel_helpers",
-        ":hip_vendor",
-        "//jaxlib:ffi_helpers",
-        "@com_google_absl//absl/status",
-        "@local_config_rocm//rocm:hipblas",
-        "@local_config_rocm//rocm:rocm_headers",
-        "@xla//xla/ffi/api:ffi",
-        "@xla//xla/service:custom_call_status",
-    ],
-)
-
 pybind_extension(
     name = "_blas",
     srcs = ["//jaxlib/gpu:blas.cc"],
@@ -127,7 +110,6 @@ pybind_extension(
     deps = [
         ":hip_vendor",
         ":hipblas_kernels",
-        ":hipblas_kernels_ffi",
         "//jaxlib:kernel_nanobind_helpers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings:str_format",
@@ -176,12 +158,14 @@ cc_library(
     srcs = ["//jaxlib/gpu:solver_kernels_ffi.cc"],
     hdrs = ["//jaxlib/gpu:solver_kernels_ffi.h"],
     deps = [
+        ":hip_blas_handle_pool",
         ":hip_gpu_kernel_helpers",
         ":hip_solver_handle_pool",
         ":hip_vendor",
         "//jaxlib:ffi_helpers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@local_config_rocm//rocm:hipblas",
         "@local_config_rocm//rocm:hipsolver",
         "@local_config_rocm//rocm:rocm_headers",
         "@xla//xla/ffi/api:ffi",
@@ -199,14 +183,15 @@ pybind_extension(
     features = ["-use_header_modules"],
     module_name = "_solver",
     deps = [
-        ":hip_solver_handle_pool",
         ":hip_gpu_kernel_helpers",
+        ":hip_solver_handle_pool",
         ":hip_vendor",
         ":hipsolver_kernels",
         ":hipsolver_kernels_ffi",
         "//jaxlib:kernel_nanobind_helpers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/strings:str_format",
+        "@local_config_rocm//rocm:hipblas",
         "@local_config_rocm//rocm:hipsolver",
         "@local_config_rocm//rocm:rocm_headers",
         "@nanobind",

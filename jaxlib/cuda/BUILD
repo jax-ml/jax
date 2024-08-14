@@ -114,22 +114,6 @@ cc_library(
     ],
 )
 
-cc_library(
-    name = "cublas_kernels_ffi",
-    srcs = ["//jaxlib/gpu:blas_kernels_ffi.cc"],
-    hdrs = ["//jaxlib/gpu:blas_kernels_ffi.h"],
-    deps = [
-        ":cuda_blas_handle_pool",
-        ":cuda_gpu_kernel_helpers",
-        ":cuda_vendor",
-        "//jaxlib:ffi_helpers",
-        "@xla//xla/ffi/api:ffi",
-        "@xla//xla/tsl/cuda:cublas",
-        "@xla//xla/tsl/cuda:cudart",
-        "@com_google_absl//absl/status",
-    ],
-)
-
 pybind_extension(
     name = "_blas",
     srcs = ["//jaxlib/gpu:blas.cc"],
@@ -148,7 +132,6 @@ pybind_extension(
     module_name = "_blas",
     deps = [
         ":cublas_kernels",
-        ":cublas_kernels_ffi",
         ":cuda_vendor",
         "//jaxlib:kernel_nanobind_helpers",
         "@xla//xla/tsl/cuda:cublas",
@@ -238,11 +221,13 @@ cc_library(
     srcs = ["//jaxlib/gpu:solver_kernels_ffi.cc"],
     hdrs = ["//jaxlib/gpu:solver_kernels_ffi.h"],
     deps = [
+        ":cuda_blas_handle_pool",
         ":cuda_gpu_kernel_helpers",
         ":cuda_solver_handle_pool",
         ":cuda_vendor",
         "//jaxlib:ffi_helpers",
         "@xla//xla/ffi/api:ffi",
+        "@xla//xla/tsl/cuda:cublas",
         "@xla//xla/tsl/cuda:cudart",
         "@xla//xla/tsl/cuda:cusolver",
         "@com_google_absl//absl/status",
@@ -274,6 +259,7 @@ pybind_extension(
         ":cusolver_kernels",
         ":cusolver_kernels_ffi",
         "//jaxlib:kernel_nanobind_helpers",
+        "@xla//xla/tsl/cuda:cublas",
         "@xla//xla/tsl/cuda:cudart",
         "@xla//xla/tsl/cuda:cusolver",
         "@xla//xla/tsl/python/lib/core:numpy",
@@ -466,7 +452,6 @@ cc_library(
     visibility = ["//visibility:public"],
     deps = [
         ":cublas_kernels",
-        ":cublas_kernels_ffi",
         ":cuda_linalg_kernels",
         ":cuda_prng_kernels",
         ":cuda_vendor",

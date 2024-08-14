@@ -16,10 +16,12 @@ limitations under the License.
 #include "jaxlib/gpu/solver_kernels_ffi.h"
 
 #include <algorithm>
+#include <cstdint>
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "jaxlib/ffi_helpers.h"
+#include "jaxlib/gpu/blas_handle_pool.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/solver_handle_pool.h"
 #include "jaxlib/gpu/vendor.h"
@@ -58,12 +60,11 @@ GETRF_KERNEL_IMPL(gpuDoubleComplex, gpusolverDnZgetrf);
 #undef GETRF_KERNEL_IMPL
 
 template <typename T>
-ffi::Error GetrfImpl(gpuStream_t stream, ffi::ScratchAllocator& scratch,
+ffi::Error GetrfImpl(int64_t batch, int64_t rows, int64_t cols,
+                     gpuStream_t stream, ffi::ScratchAllocator& scratch,
                      ffi::AnyBuffer a, ffi::Result<ffi::AnyBuffer> out,
                      ffi::Result<ffi::Buffer<ffi::DataType::S32>> ipiv,
                      ffi::Result<ffi::Buffer<ffi::DataType::S32>> info) {
-  FFI_RETURN_IF_ERROR(CheckMatrixDimensions(a.dimensions()));
-  auto [batch, rows, cols] = SplitBatch2D(a.dimensions());
   FFI_ASSIGN_OR_RETURN(auto m, MaybeCastNoOverflow<int>(rows));
   FFI_ASSIGN_OR_RETURN(auto n, MaybeCastNoOverflow<int>(cols));
 
@@ -98,6 +99,64 @@ ffi::Error GetrfImpl(gpuStream_t stream, ffi::ScratchAllocator& scratch,
   return ffi::Error::Success();
 }
 
+#define GETRF_BATCHED_KERNEL_IMPL(type, name)                                 \
+  template <>                                                                 \
+  struct GetrfBatchedKernel<type> {                                           \
+    static absl::Status Run(gpublasHandle_t handle, int n, type** a, int lda, \
+                            int* ipiv, int* info, int batch) {                \
+      return JAX_AS_STATUS(name(handle, n, a, lda, ipiv, info, batch));       \
+    }                                                                         \
+  }
+
+template <typename T>
+struct GetrfBatchedKernel;
+GETRF_BATCHED_KERNEL_IMPL(float, gpublasSgetrfBatched);
+GETRF_BATCHED_KERNEL_IMPL(double, gpublasDgetrfBatched);
+GETRF_BATCHED_KERNEL_IMPL(gpublasComplex, gpublasCgetrfBatched);
+GETRF_BATCHED_KERNEL_IMPL(gpublasDoubleComplex, gpublasZgetrfBatched);
+#undef GETRF_BATCHED_KERNEL_IMPL
+
+template <typename T>
+ffi::Error GetrfBatchedImpl(int64_t batch, int64_t cols, gpuStream_t stream,
+                            ffi::ScratchAllocator& scratch, ffi::AnyBuffer a,
+                            ffi::Result<ffi::AnyBuffer> out,
+                            ffi::Result<ffi::Buffer<ffi::DataType::S32>> ipiv,
+                            ffi::Result<ffi::Buffer<ffi::DataType::S32>> info) {
+  FFI_ASSIGN_OR_RETURN(auto n, MaybeCastNoOverflow<int>(cols));
+  FFI_ASSIGN_OR_RETURN(auto handle, BlasHandlePool::Borrow(stream));
+
+  auto maybe_workspace = scratch.Allocate(sizeof(void*) * batch);
+  if (!maybe_workspace.has_value()) {
+    return ffi::Error(ffi::ErrorCode::kUnknown,
+                      "Unable to allocate workspace for batched getrf");
+  }
+  auto workspace = maybe_workspace.value();
+
+  auto a_data = a.untyped_data();
+  auto out_data = out->untyped_data();
+  auto ipiv_data = ipiv->typed_data();
+  auto info_data = info->typed_data();
+  if (a_data != out_data) {
+    FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(
+        gpuMemcpyAsync(out_data, a_data, sizeof(T) * batch * cols * cols,
+                       gpuMemcpyDeviceToDevice, stream)));
+  }
+
+  FFI_ASSIGN_OR_RETURN(
+      auto a_ptrs_host,
+      MakeBatchPointers(stream, out_data, workspace, batch, sizeof(T) * n * n));
+  // TODO(phawkins, danfm): ideally we would not need to synchronize here, but
+  // to avoid it we need a way to keep the host-side buffer alive until the copy
+  // completes.
+  FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuStreamSynchronize(stream)));
+
+  auto batch_ptrs = static_cast<T**>(workspace);
+  FFI_RETURN_IF_ERROR_STATUS(GetrfBatchedKernel<T>::Run(
+      handle.get(), n, batch_ptrs, n, ipiv_data, info_data, batch));
+
+  return ffi::Error::Success();
+}
+
 ffi::Error GetrfDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
                          ffi::AnyBuffer a, ffi::Result<ffi::AnyBuffer> out,
                          ffi::Result<ffi::Buffer<ffi::DataType::S32>> ipiv,
@@ -108,14 +167,36 @@ ffi::Error GetrfDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
         ffi::ErrorCode::kInvalidArgument,
         "The input and output to getrf must have the same element type");
   }
-  if (dataType == ffi::DataType::F32) {
-    return GetrfImpl<float>(stream, scratch, a, out, ipiv, info);
-  } else if (dataType == ffi::DataType::F64) {
-    return GetrfImpl<double>(stream, scratch, a, out, ipiv, info);
-  } else if (dataType == ffi::DataType::C64) {
-    return GetrfImpl<gpuComplex>(stream, scratch, a, out, ipiv, info);
-  } else if (dataType == ffi::DataType::C128) {
-    return GetrfImpl<gpuDoubleComplex>(stream, scratch, a, out, ipiv, info);
+  FFI_RETURN_IF_ERROR(CheckMatrixDimensions(a.dimensions()));
+  auto [batch, rows, cols] = SplitBatch2D(a.dimensions());
+  if (batch > 1 && rows == cols && rows / batch <= 128) {
+    if (dataType == ffi::DataType::F32) {
+      return GetrfBatchedImpl<float>(batch, cols, stream, scratch, a, out, ipiv,
+                                     info);
+    } else if (dataType == ffi::DataType::F64) {
+      return GetrfBatchedImpl<double>(batch, cols, stream, scratch, a, out,
+                                      ipiv, info);
+    } else if (dataType == ffi::DataType::C64) {
+      return GetrfBatchedImpl<gpublasComplex>(batch, cols, stream, scratch, a,
+                                              out, ipiv, info);
+    } else if (dataType == ffi::DataType::C128) {
+      return GetrfBatchedImpl<gpublasDoubleComplex>(
+          batch, cols, stream, scratch, a, out, ipiv, info);
+    }
+  } else {
+    if (dataType == ffi::DataType::F32) {
+      return GetrfImpl<float>(batch, rows, cols, stream, scratch, a, out, ipiv,
+                              info);
+    } else if (dataType == ffi::DataType::F64) {
+      return GetrfImpl<double>(batch, rows, cols, stream, scratch, a, out, ipiv,
+                               info);
+    } else if (dataType == ffi::DataType::C64) {
+      return GetrfImpl<gpuComplex>(batch, rows, cols, stream, scratch, a, out,
+                                   ipiv, info);
+    } else if (dataType == ffi::DataType::C128) {
+      return GetrfImpl<gpuDoubleComplex>(batch, rows, cols, stream, scratch, a,
+                                         out, ipiv, info);
+    }
   }
   return ffi::Error(ffi::ErrorCode::kInvalidArgument,
                     "Unsupported element type for getrf");
