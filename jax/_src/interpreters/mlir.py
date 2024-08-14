@@ -1010,23 +1010,6 @@ def _get_mem_kind(s: JSharding | None) -> str | None:
   return s.memory_kind
 
 
-def _is_default_layout(curr_layout, sharding, aval):
-  if curr_layout is None or sharding is None:
-    return True
-  if isinstance(curr_layout, AutoLayout):
-    return False
-  d = sharding._device_assignment[0]
-  try:
-    return curr_layout == DeviceLocalLayout.from_pjrt_layout(
-        d.client.get_default_layout(aval.dtype, aval.shape, d))
-  except xla_extension.XlaRuntimeError as e:
-    msg, *_ = e.args
-    if type(msg) is str and msg.startswith("UNIMPLEMENTED"):
-      return True
-    else:
-      raise
-
-
 def lower_jaxpr_to_module(
     module_name: str,
     jaxpr: core.ClosedJaxpr,
@@ -1081,13 +1064,6 @@ def lower_jaxpr_to_module(
         "In multi-platform lowering either all or no lowering platforms "
         f"should support donation. Lowering for {platforms} of which "
         f"only {platforms_with_donation} support donation")
-    if (in_layouts is not None and arg_shardings is not None and
-        out_layouts is not None and result_shardings is not None
-        ) and not (
-        all(map(_is_default_layout, in_layouts, arg_shardings, in_avals)) and
-        all(map(_is_default_layout, out_layouts, result_shardings, out_avals))
-    ):
-      xla_donated_args = donated_args
     if num_partitions > 1 and (
         result_shardings is None or all(s is None for s in result_shardings)):
       xla_donated_args = donated_args
