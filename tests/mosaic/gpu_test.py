@@ -44,6 +44,7 @@ except ImportError:
 else:
   from jax.experimental.mosaic import gpu as mosaic_gpu
   from jax.experimental.mosaic.gpu import dsl as mgpu
+  from jax.experimental.mosaic.gpu import utils as utils
   from jax.experimental.mosaic.gpu import profiler
   from jax.experimental.mosaic.gpu.utils import *  # noqa: F403
   from jax._src.lib.mlir.dialects import gpu
@@ -749,10 +750,11 @@ class BarrierTest(TestCase):
 
   @parameterized.named_parameters(
       (
-          f"_{''.join(map(str, collective_dims))}={collective_size}{'_' + ''.join(map(str, noncollective_dims)) if noncollective_dims else ''}",
+          f"_{''.join(map(str, collective_dims))}={collective_size}{'_' + ''.join(map(str, noncollective_dims)) if noncollective_dims else ''}{'_group' if group_dims else ''}",
           collective_dims,
           noncollective_dims,
           collective_size,
+          group_dims,
       )
       for collective_dims in itertools.chain.from_iterable(
           itertools.combinations(Dimension, n) for n in range(1, 4)
@@ -761,9 +763,10 @@ class BarrierTest(TestCase):
           itertools.combinations(Dimension, n) for n in range(3)
       )
       for collective_size in (1, 2, 4)
+      for group_dims in (False,) + ((True,) if len(collective_dims) > 1 else ())
       if all(d not in noncollective_dims for d in collective_dims)
   )
-  def test_collective_arrive(self, collective_dims, noncollective_dims, collective_size):
+  def test_collective_arrive(self, collective_dims, noncollective_dims, collective_size, group_dims):
     i32 = ir.IntegerType.get_signless(32)
     index = ir.IndexType.get()
     cluster = [1, 1, 1]
@@ -773,9 +776,21 @@ class BarrierTest(TestCase):
       cluster[d] = 2
     if math.prod(cluster) > 16:
       self.skipTest("Cluster too big")
-    def kernel(ctx, dst, collective_barrier):
+    is_trivial = math.prod(cluster[d] for d in collective_dims) == 1
+    def kernel(ctx, dst, mask, collective_barrier):
+      memref.store(arith.constant(i32, 1 << 17), mask, [c(0, index)])
+      gpu.barrier()
       collective_barrier.arrive()
       collective_barrier.wait()
+      if not is_trivial:
+        llvm.atomicrmw(
+            llvm.AtomicBinOp.min,
+            utils.memref_ptr(mask),
+            collective_barrier.cluster_mask,
+            llvm.AtomicOrdering.monotonic,
+        )
+      else:
+        assert collective_barrier.cluster_mask is None
       tid = thread_idx()
       linear_idx = arith.index_cast(index, tid)
       stride = c(128, index)
@@ -784,13 +799,30 @@ class BarrierTest(TestCase):
         stride = arith.muli(stride, gpu.grid_dim(d))
       memref.store(arith.index_cast(i32, linear_idx), dst, [linear_idx])
     out_shape = jax.ShapeDtypeStruct((math.prod(cluster) * 128,), jnp.int32)
-    scratch = mgpu.ClusterBarrier(collective_dims)
-    y = mosaic_gpu.as_gpu_kernel(
-        kernel, cluster, (128, 1, 1), (), out_shape, scratch, cluster=cluster,
+    mask_shape = jax.ShapeDtypeStruct((1,), jnp.int32)
+    barrier_dims = collective_dims
+    if group_dims:
+      barrier_dims = (collective_dims[:2], *collective_dims[2:])
+    scratch = mgpu.ClusterBarrier(barrier_dims)
+    y, mask = mosaic_gpu.as_gpu_kernel(
+        kernel, cluster, (128, 1, 1), (), (out_shape, mask_shape), scratch, cluster=cluster,
     )()
     np.testing.assert_array_equal(
         y, np.arange(math.prod(cluster) * 128, dtype=np.int32)
     )
+    if not is_trivial:
+      # Verify that the mask is correct. Blocks are column-major, hence the transpose.
+      block_bits = 1 << np.arange(math.prod(cluster), dtype=np.int32).reshape(cluster[::-1]).T
+      expected_mask = 0
+      for bd in barrier_dims:
+        if isinstance(bd, gpu.Dimension):
+          bd = (bd,)
+        least_significant_slice = tuple(
+            slice(None) if d in bd else 0 for d in gpu.Dimension
+        )
+        mask_bits = block_bits[least_significant_slice]
+        expected_mask |= np.bitwise_or.reduce(mask_bits, axis=None)
+      self.assertEqual(mask, expected_mask)
 
 
 class TMATest(TestCase):
@@ -816,30 +848,36 @@ class TMATest(TestCase):
 
   @parameterized.named_parameters(
       (
-          f"_{collective_dim}={collective_size}{'_' + ''.join(map(str, noncollective_dims)) if noncollective_dims else ''}",
-          collective_dim,
+          f"_{''.join(map(str, collective_dims))}={collective_size}{'_' + ''.join(map(str, noncollective_dims)) if noncollective_dims else ''}",
+          collective_dims,
           noncollective_dims,
           collective_size,
       )
-      for collective_dim in Dimension
+      for collective_dims in itertools.chain.from_iterable(
+          itertools.combinations(Dimension, n) for n in range(1, 4)
+      )
       for noncollective_dims in itertools.chain.from_iterable(
           itertools.combinations(Dimension, n) for n in range(3)
       )
       for collective_size in (1, 2, 4)
-      if collective_dim not in noncollective_dims
+      if all(d not in noncollective_dims for d in collective_dims)
   )
-  def test_tma_load_multicast(self, collective_dim, noncollective_dims, collective_size):
+  def test_tma_load_multicast(self, collective_dims, noncollective_dims, collective_dim_size):
     index = ir.IndexType.get()
     swizzle = 128
     dtype = jnp.float16
     cluster = [1, 1, 1]
-    cluster[collective_dim] = collective_size
+    for d in collective_dims:
+      cluster[d] = collective_dim_size
     for d in noncollective_dims:
       cluster[d] = 2
-    noncollective_size = math.prod(cluster) // cluster[collective_dim]
+    if math.prod(cluster) > 16:
+      self.skipTest("Cluster too big")
+    collective_size = math.prod(cluster[d] for d in collective_dims)
+    noncollective_size = math.prod(cluster) // collective_size
     # We use the 2 dimension to exercise splitting the collective over
     # multiple dimensions when the cluster is large.
-    shape = (noncollective_size, 2, 16 * cluster[collective_dim], 64)
+    shape = (noncollective_size, 2, 16 * collective_size, 64)
     minor_size = 64 if swizzle is None else swizzle // jnp.dtype(dtype).itemsize
     shape = (*shape[:-1], minor_size)
     # Note that this kernel does not use the non-collective dimensions in any
@@ -861,11 +899,20 @@ class TMATest(TestCase):
           gmem_slice=(noncollective_idx,),
           swizzle=swizzle,
           barrier=barrier,
-          collective=collective_dim,
+          collective=collective_dims,
       )
       barrier.wait()
+      # This is _not_ the real cluster block idx, because it does not consider
+      # the column-major ordering of the grid dimensions.
+      idx = c(0, index)
+      stride = 1
+      for d in collective_dims:
+        idx = arith.addi(
+            idx, arith.muli(gpu.cluster_block_id(d), c(stride, index))
+        )
+        stride *= cluster[d]
       slc = ds(
-          arith.muli(gpu.cluster_block_id(collective_dim), c(16, index)), 16
+          arith.muli(idx, c(16, index)), 16
       )
       copy(
           memref_slice(tmp, (slice(None), slc)),

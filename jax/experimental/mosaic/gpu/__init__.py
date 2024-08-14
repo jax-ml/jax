@@ -325,7 +325,7 @@ class LaunchContext:
       swizzle: int | None = None,
       arrive: bool | None = None,
       uniform: bool = True,
-      collective: gpu.Dimension | None = None,
+      collective: Sequence[gpu.Dimension] | gpu.Dimension | None = None,
   ):
     index = ir.IndexType.get()
     i16 = ir.IntegerType.get_signless(16)
@@ -388,7 +388,11 @@ class LaunchContext:
 
     dyn_base_indices = list(dyn_base_indices)
     slice_shape = list(slice_shape)
-    collective_size = 1 if collective is None else self.cluster_size[collective]
+    collective_size = 1
+    if collective is not None:
+      if isinstance(collective, gpu.Dimension):
+        collective = (collective,)
+      collective_size = math.prod(self.cluster_size[d] for d in collective)
     if collective_size > 1:
       def partition_dim(dim: int, idx: ir.Value, num_chunks: int):
         nonlocal smem_ref
@@ -399,18 +403,28 @@ class LaunchContext:
             smem_ref,
             (slice(None),) * dim + (utils.ds(block_offset, slice_shape[dim]),)
         )
-      idx = gpu.cluster_block_id(collective)
+      stride = 1
+      idx = c(0, index)
+      for d in sorted(collective):
+        if self.cluster_size[d] == 1:  # Optimize a multiply by 0.
+          continue
+        idx = arith.addi(idx, arith.muli(gpu.cluster_block_id(d), c(stride, index)))
+        stride *= self.cluster_size[d]
       rem_collective_size = collective_size
       for dim, slice_size in enumerate(slice_shape[:-1]):
         if slice_size % rem_collective_size == 0:
           partition_dim(dim, idx, rem_collective_size)
+          rem_collective_size = 1
           break
-        elif collective_size % slice_size == 0:
+        elif rem_collective_size % slice_size == 0:
           dim_idx = arith.remui(idx, c(slice_size, index))
           partition_dim(dim, dim_idx, slice_size)
           idx = arith.divui(idx, c(slice_size, index))
           rem_collective_size //= slice_size
-      else:
+        else:
+          break  # We failed to partition the leading dimensions.
+      del idx  # We overwrote the block index in the loop.
+      if rem_collective_size > 1:
         raise ValueError(
             "None of the leading dimensions in the transformed slice shape"
             f" {slice_shape} is divisible by the collective size"
