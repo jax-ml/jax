@@ -21,6 +21,7 @@ from typing import cast, NamedTuple
 
 import numpy as np
 
+import jax
 from jax import jit
 from jax import lax
 
@@ -41,24 +42,39 @@ from jax._src.typing import Array, ArrayLike
 _lax_const = lax_internal._const
 
 
-@partial(jit, static_argnames=('invert',))
-def _in1d(ar1: ArrayLike, ar2: ArrayLike, invert: bool) -> Array:
+@partial(jit, static_argnames=('assume_unique', 'invert', 'method'))
+def _in1d(ar1: ArrayLike, ar2: ArrayLike, invert: bool,
+          method='auto', assume_unique=False) -> Array:
   check_arraylike("in1d", ar1, ar2)
-  ar1_flat = ravel(ar1)
-  ar2_flat = ravel(ar2)
-  # Note: an algorithm based on searchsorted has better scaling, but in practice
-  # is very slow on accelerators because it relies on lax control flow. If XLA
-  # ever supports binary search natively, we should switch to this:
-  #   ar2_flat = jnp.sort(ar2_flat)
-  #   ind = jnp.searchsorted(ar2_flat, ar1_flat)
-  #   if invert:
-  #     return ar1_flat != ar2_flat[ind]
-  #   else:
-  #     return ar1_flat == ar2_flat[ind]
-  if invert:
-    return (ar1_flat[:, None] != ar2_flat[None, :]).all(-1)
+  arr1, arr2 = promote_dtypes(ar1, ar2)
+  arr1, arr2 = arr1.ravel(), arr2.ravel()
+  if arr1.size == 0 or arr2.size == 0:
+    return (ones if invert else zeros)(arr1.shape, dtype=bool)
+  if method in ['auto', 'compare_all']:
+    if invert:
+      return (arr1[:, None] != arr2[None, :]).all(-1)
+    else:
+      return (arr1[:, None] == arr2[None, :]).any(-1)
+  elif method == 'binary_search':
+    arr2 = lax.sort(arr2)
+    ind = jax.numpy.searchsorted(arr2, arr1)
+    if invert:
+      return arr1 != arr2[ind]
+    else:
+      return arr1 == arr2[ind]
+  elif method == 'sort':
+    if assume_unique:
+      ind_out: slice | Array = slice(None)
+    else:
+      arr1, ind_out = unique(arr1, size=len(arr1), return_inverse=True, fill_value=arr2.max())
+    aux, ind = lax.sort_key_val(concatenate([arr1, arr2]), arange(arr1.size + arr2.size))
+    if invert:
+      return ones(arr1.shape, bool).at[ind[:-1]].set(aux[1:] != aux[:-1], mode='drop')[ind_out]
+    else:
+      return zeros(arr1.shape, bool).at[ind[:-1]].set(aux[1:] == aux[:-1], mode='drop')[ind_out]
   else:
-    return (ar1_flat[:, None] == ar2_flat[None, :]).any(-1)
+    raise ValueError(f"{method=} is not implemented; options are "
+                     "'compare_all', 'binary_search', 'sort', and 'auto'")
 
 
 def _concat_unique(arr1: Array, arr2: Array) -> tuple[Array, Array]:
@@ -148,7 +164,7 @@ def setdiff1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
     return full_like(arr1, fill_value, shape=size or 0)
   if not assume_unique:
     arr1 = cast(Array, unique(arr1, size=size and arr1.size))
-  mask = _in1d(arr1, ar2, invert=True)
+  mask = _in1d(arr1, ar2, invert=True, assume_unique=assume_unique)
   if size is None:
     return arr1[mask]
   else:
@@ -509,7 +525,8 @@ def intersect1d(ar1: ArrayLike, ar2: ArrayLike, assume_unique: bool = False,
 
 
 def isin(element: ArrayLike, test_elements: ArrayLike,
-         assume_unique: bool = False, invert: bool = False) -> Array:
+         assume_unique: bool = False, invert: bool = False, *,
+         method='auto') -> Array:
   """Determine whether elements in ``element`` appear in ``test_elements``.
 
   JAX implementation of :func:`numpy.isin`.
@@ -519,7 +536,11 @@ def isin(element: ArrayLike, test_elements: ArrayLike,
     test_elements: N-dimensional array of test values to check for the presence of
       each element.
     invert: If True, return ``~isin(element, test_elements)``. Default is False.
-    assume_unique: unused by JAX
+    assume_unique: if true, input arrays are assumed to be unique, which can
+      lead to more efficient computation. If the input arrays are not unique
+      and assume_unique is set to True, the results are undefined.
+    method: string specifying the method used to compute the result. Supported
+      options are 'compare_all', 'binary_search', 'sort', and 'auto' (default).
 
   Returns:
     A boolean array of shape ``element.shape`` that specifies whether each element
@@ -531,9 +552,9 @@ def isin(element: ArrayLike, test_elements: ArrayLike,
     >>> jnp.isin(elements, test_elements)
     Array([ True, False,  True, False], dtype=bool)
   """
-  del assume_unique  # unused
   check_arraylike("isin", element, test_elements)
-  result = _in1d(element, test_elements, invert=invert)
+  result = _in1d(element, test_elements, invert=invert,
+                 method=method, assume_unique=assume_unique)
   return result.reshape(np.shape(element))
 
 

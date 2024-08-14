@@ -703,11 +703,12 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     test_shape=all_shapes,
     dtype=default_dtypes,
     invert=[False, True],
+    method=['auto', 'compare_all', 'binary_search', 'sort']
   )
-  def testIsin(self, element_shape, test_shape, dtype, invert):
+  def testIsin(self, element_shape, test_shape, dtype, invert, method):
     rng = jtu.rand_default(self.rng())
     args_maker = lambda: [rng(element_shape, dtype), rng(test_shape, dtype)]
-    jnp_fun = lambda e, t: jnp.isin(e, t, invert=invert)
+    jnp_fun = lambda e, t: jnp.isin(e, t, invert=invert, method=method)
     np_fun = lambda e, t: np.isin(e, t, invert=invert)
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
