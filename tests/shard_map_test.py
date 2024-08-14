@@ -35,6 +35,7 @@ from jax.sharding import Mesh, NamedSharding
 from jax.sharding import PartitionSpec as P
 from jax._src import config
 from jax._src import core
+from jax._src import prng
 from jax._src import test_util as jtu
 from jax._src.util import safe_zip, safe_map, partition_list, merge_lists
 from jax._src.ad_checkpoint import saved_residuals
@@ -1755,6 +1756,22 @@ class ShardMapTest(jtu.JaxTestCase):
         f.lower(v).as_text('hlo'),
     )
     self.assertAllClose(v*v, f(v), check_dtypes=False)
+
+  def test_sharded_prng_with_abstract_mesh(self):
+    shape = (8, 2, 2)
+    mesh = jtu.create_global_mesh((2, 2, 2), ('x', 'y', 'z'))
+
+    np_inp = np.arange(math.prod(shape), dtype=np.uint32).reshape(shape)
+    key = prng.random_seed(np_inp, impl=prng.threefry_prng_impl)
+    key = jax.device_put(key, NamedSharding(mesh, P()))
+
+    @jax.jit
+    def shard_key(key):
+      return shard_map(
+          lambda x: x, mesh=mesh.abstract_mesh, in_specs=P(), out_specs=P())(key)
+
+    out = shard_key(key)
+    self.assertEqual(out.sharding, NamedSharding(mesh, P()))
 
   def test_partial_auto_error_wsc_manual(self):
     mesh = jtu.create_global_mesh((2, 2), ('i', 'j'))

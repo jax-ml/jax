@@ -489,7 +489,7 @@ class ArrayImpl(basearray.Array):
     """Returns the total global on-device size of the array in bytes."""
     arr = self._arrays[0]
     per_shard_size = arr.on_device_size_in_bytes()
-    return per_shard_size * len(self.sharding.device_set)
+    return per_shard_size * self.sharding.num_devices
 
   def devices(self) -> set[Device]:
     self._check_if_deleted()

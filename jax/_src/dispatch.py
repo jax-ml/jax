@@ -418,7 +418,7 @@ def _device_put_sharding_impl(x, aval, device):
       return _different_device_order_reshard(x, s)
 
     if (s.is_fully_addressable and isinstance(x, array.ArrayImpl) and
-        x.is_fully_addressable and len(s.device_set) > 1 and
+        x.is_fully_addressable and s.num_devices > 1 and
         s._internal_device_list != x.sharding._internal_device_list and  # pytype: disable=attribute-error
         s.device_set == x.sharding.device_set):
       assert isinstance(s, Sharding)

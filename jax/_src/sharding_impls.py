@@ -258,6 +258,10 @@ class NamedSharding(sharding.Sharding):
                 _manual_axes=_manual_axes)
 
   @property
+  def num_devices(self) -> int:
+    return self.mesh.size
+
+  @property
   def device_set(self) -> set[Device]:
     if isinstance(self.mesh, mesh_lib.AbstractMesh):
       raise ValueError(
@@ -365,6 +369,10 @@ class SingleDeviceSharding(sharding.Sharding):
       return True
     return (self._device == other._device and
             self.memory_kind == other.memory_kind)
+
+  @property
+  def num_devices(self) -> int:
+    return len(self.device_set)
 
   @property
   def device_set(self) -> set[Device]:
@@ -500,6 +508,10 @@ class PmapSharding(sharding.Sharding):
     else:
       pmap_devices = np.array(devices)
     return cls(pmap_devices, sharding_spec)
+
+  @property
+  def num_devices(self) -> int:
+    return len(self.device_set)
 
   @functools.cached_property
   def device_set(self) -> set[Device]:
@@ -707,6 +719,10 @@ class PositionalSharding(sharding.Sharding):
 
   # Sharding interface
 
+  @property
+  def num_devices(self) -> int:
+    return len(self.device_set)
+
   @functools.cached_property
   def device_set(self) -> set[xc.Device]:
     return set(self._devices)
@@ -825,6 +841,10 @@ class GSPMDSharding(sharding.Sharding):
           f"Sharding {self} is only valid for values of rank at least "
           f"{len(num_ways_dim_sharded)}, but was applied to a value of rank "
           f"{len(aval_shape)}")
+
+  @property
+  def num_devices(self) -> int:
+    return len(self.device_set)
 
   @functools.cached_property
   def device_set(self) -> set[Device]:
@@ -1405,12 +1425,12 @@ def get_process_index_and_count(
   if (tensor_sharding.is_fully_addressable or
       tensor_sharding.is_fully_replicated):
     return (0, 1)
-  num_devices = len(tensor_sharding.device_set)
   # Get device to indices map, we don't care about the concrete
   # global shape here, only to get the distribution of shards across the tensor
   # using (num_devices, num_devices, ...)  This is a universal shape that is
   # compatible with any mesh with num_devices.
-  device_map = tensor_sharding.devices_indices_map((num_devices,) * ndims)
+  device_map = tensor_sharding.devices_indices_map(
+      (tensor_sharding.num_devices,) * ndims)
 
   # Get the slices for 'dim' for all devices.
   global_slice = {k: v[dim] for k, v in device_map.items()}
@@ -1564,7 +1584,7 @@ def physical_hlo_sharding(aval, hlo_sharding: xc.HloSharding) -> xc.HloSharding:
 def is_single_device_sharding(sharding: sharding.Sharding) -> bool:
   # Special case PmapSharding here because PmapSharding maps away an axis
   # and needs to be handled separately.test_pjit_single_device_sharding_add
-  return len(sharding.device_set) == 1 and not isinstance(sharding, PmapSharding)
+  return sharding.num_devices == 1 and not isinstance(sharding, PmapSharding)
 
 def make_key_array_phys_sharding(aval, sharding):
   if is_single_device_sharding(sharding):
