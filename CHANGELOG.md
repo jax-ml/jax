@@ -37,6 +37,9 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
   * The `jax.experimental.array_api` module is deprecated, and importing it is no
     longer required to use the Array API. `jax.numpy` supports the array API
     directly; see {ref}`python-array-api` for more information.
+  * The internal utilities `jax.core.check_eqn`, `jax.core.check_type`, and
+    `jax.core.check_valid_jaxtype` are now deprecated, and will be removed in
+    the future.
 
 ## jaxlib 0.4.32
 
