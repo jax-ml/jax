@@ -88,10 +88,13 @@ class MatmulTestCase(jtu.JaxTestCase):
     tile_n = data.draw(
         hps.sampled_from([t for t in [64, 128, 256] if t <= n]), label="tile_n"
     )
+    grid_m, grid_n = m // tile_m, n // tile_n
+    grid_tile_n = data.draw(hps.sampled_from([1, 2, 4, 8, 16]), label="grid_tile_n")
+    hp.assume(grid_n % grid_tile_n == 0)
     cluster_m = data.draw(hps.sampled_from([1, 2, 4]), label="cluster_m")
-    hp.assume((m // tile_m) % cluster_m == 0)
+    hp.assume(grid_m % cluster_m == 0)
     cluster_n = data.draw(hps.sampled_from([1, 2, 4]), label="cluster_n")
-    hp.assume((n // tile_n) % cluster_n == 0)
+    hp.assume(grid_n % cluster_n == 0)
     # TODO(apaszke): Non-portable clusters (16 blocks) sometimes deadlock.
     hp.assume(cluster_m * cluster_n <= 8)
     if bytewidth == 4:
@@ -111,6 +114,7 @@ class MatmulTestCase(jtu.JaxTestCase):
           out_dtype=out_dtype,
           cluster_m=cluster_m,
           cluster_n=cluster_n,
+          grid_tile_n=grid_tile_n,
           swizzle=swizzle,
           rhs_transpose=rhs_transpose,
       )
