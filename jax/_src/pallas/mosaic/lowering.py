@@ -1460,9 +1460,7 @@ def _dot_general_lowering_rule(
         ir.Attribute.parse("#vector.kind<add>"),
         arith.MulFOp(x, y),
         acc,
-        ir.ArrayAttr.get(
-            [ir.IntegerAttr.get(ir.IntegerType.get_signless(64), 1)]
-        ),
+        [1]
     )
     return vector.ShapeCastOp(out_type, red).result
 
