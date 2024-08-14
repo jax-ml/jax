@@ -351,12 +351,6 @@ class BatchTracer(Tracer):
       return core.DShapedArray(shape=tuple(shape), dtype=aval.dtype,
                                weak_type=aval.weak_type)
 
-  def full_lower(self):
-    if self.batch_dim is not_mapped:
-      return core.full_lower(self.val)
-    else:
-      return self
-
   def _origin_msg(self):
     if self.source_info is None:
       return ""
@@ -429,9 +423,6 @@ class BatchTrace(Trace):
     assert call_primitive.multiple_results
     params = dict(params, name=params.get('name', f.__name__))
     vals, dims = unzip2(map(self.to_batch_info, tracers))
-    sizes = (x.shape[d] if type(d) is int else len(d.segment_lengths)
-             for x, d in zip(vals, dims) if d is not not_mapped)
-    axis_size, = core.dedup_referents(sizes)
     segment_lens, dims = indirectify_ragged_axes(dims)
     f_, dims_out = batch_subtrace(f, self.tag, self.axis_data, tuple(dims))
     f_ = _update_annotation(
@@ -794,8 +785,7 @@ zero_if_mapped = ZeroIfMapped()
 
 @lu.transformation_with_aux
 def batch_custom_jvp_subtrace(tag, axis_data, in_dims, *in_vals):
-  size, = {x.shape[d] for x, d in zip(in_vals, in_dims * 2)
-           if d is not not_mapped}
+  size = axis_data.size
   with core.take_current_trace() as parent_trace:
     trace = BatchTrace(parent_trace, tag, axis_data)
     in_tracers = [val if dim is None else
