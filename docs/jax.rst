@@ -99,11 +99,28 @@ Automatic differentiation
     linearize
     linear_transpose
     vjp
-    custom_jvp
-    custom_vjp
     custom_gradient
     closure_convert
     checkpoint
+
+``custom_jvp``
+~~~~~~~~~~~~~~
+
+.. autosummary::
+  :toctree: _autosummary
+
+  custom_jvp
+  custom_jvp.defjvp
+  custom_jvp.defjvps
+
+``custom_vjp``
+~~~~~~~~~~~~~~
+
+.. autosummary::
+  :toctree: _autosummary
+
+  custom_vjp
+  custom_vjp.defvjp
 
 jax.Array (:code:`jax.Array`)
 -----------------------------

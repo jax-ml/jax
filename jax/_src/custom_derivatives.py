@@ -152,10 +152,11 @@ class custom_jvp(Generic[ReturnValue]):
         ``nondiff_argnums``, the ``jvp`` function should accept two arguments,
         where the first is a tuple of primal inputs and the second is a tuple of
         tangent inputs. The lengths of both tuples are equal to the number of
-        parameters of the ``custom_jvp`` function. The ``jvp`` function should
-        produce as output a pair where the first element is the primal output
-        and the second element is the tangent output. Elements of the input and
-        output tuples may be arrays or any nested tuples/lists/dicts thereof.
+        parameters of the :class:`~jax.custom_jvp` function. The ``jvp`` function
+        should produce as output a pair where the first element is the primal
+        output and the second element is the tangent output. Elements of the
+        input and output tuples may be arrays or any nested tuples/lists/dicts
+        thereof.
       symbolic_zeros: boolean, indicating whether the rule should be passed
         objects representing static symbolic zeros in its tangent argument in
         correspondence with unperturbed values; otherwise, only standard JAX
@@ -166,48 +167,60 @@ class custom_jvp(Generic[ReturnValue]):
         ``False``.
 
     Returns:
-      None.
+      Returns ``jvp`` so that ``defjvp`` can be used as a decorator.
 
     Examples:
 
-      @jax.custom_jvp
-      def f(x, y):
-        return jnp.sin(x) * y
+      >>> @jax.custom_jvp
+      ... def f(x, y):
+      ...   return jnp.sin(x) * y
+      ...
+      >>> @f.defjvp
+      ... def f_jvp(primals, tangents):
+      ...   x, y = primals
+      ...   x_dot, y_dot = tangents
+      ...   primal_out = f(x, y)
+      ...   tangent_out = jnp.cos(x) * x_dot * y + jnp.sin(x) * y_dot
+      ...   return primal_out, tangent_out
 
-      @f.defjvp
-      def f_jvp(primals, tangents):
-        x, y = primals
-        x_dot, y_dot = tangents
-        primal_out = f(x, y)
-        tangent_out = jnp.cos(x) * x_dot * y + jnp.sin(x) * y_dot
-        return primal_out, tangent_out
+      >>> x = jnp.float32(1.0)
+      >>> y = jnp.float32(2.0)
+      >>> with jnp.printoptions(precision=2):
+      ...   print(jax.value_and_grad(f)(x, y))
+      (Array(1.68, dtype=float32), Array(1.08, dtype=float32))
     """
     self.jvp = jvp
     self.symbolic_zeros = symbolic_zeros
     return jvp
 
-  def defjvps(self, *jvps: Callable[..., ReturnValue] | None):
+  def defjvps(self, *jvps: Callable[..., ReturnValue] | None) -> None:
     """Convenience wrapper for defining JVPs for each argument separately.
 
     This convenience wrapper cannot be used together with ``nondiff_argnums``.
 
     Args:
       *jvps: a sequence of functions, one for each positional argument of the
-        ``custom_jvp`` function. Each function takes as arguments the tangent
-        value for the corresponding primal input, the primal output, and the
-        primal inputs. See the example below.
+        :class:`~jax.custom_jvp` function. Each function takes as arguments
+        the tangent value for the corresponding primal input, the primal
+        output, and the ßprimal inputs. See the example below.
 
     Returns:
       None.
 
     Examples:
 
-      @jax.custom_jvp
-      def f(x, y):
-        return jnp.sin(x) * y
+      >>> @jax.custom_jvp
+      ... def f(x, y):
+      ...   return jnp.sin(x) * y
+      ...
+      >>> f.defjvps(lambda x_dot, primal_out, x, y: jnp.cos(x) * x_dot * y,
+      ...           lambda y_dot, primal_out, x, y: jnp.sin(x) * y_dot)
 
-      f.defjvps(lambda x_dot, primal_out, x, y: jnp.cos(x) * x_dot * y,
-                lambda y_dot, primal_out, x, y: jnp.sin(x) * y_dot)
+      >>> x = jnp.float32(1.0)
+      >>> y = jnp.float32(2.0)
+      >>> with jnp.printoptions(precision=2):
+      ...   print(jax.value_and_grad(f)(x, y))
+      (Array(1.68, dtype=float32), Array(1.08, dtype=float32))
     """
     if self.nondiff_argnums:
       raise TypeError("Can't use ``defjvps`` with ``nondiff_argnums``.")
@@ -560,18 +573,24 @@ class custom_vjp(Generic[ReturnValue]):
 
     Examples:
 
-      @jax.custom_vjp
-      def f(x, y):
-        return jnp.sin(x) * y
+      >>> @jax.custom_vjp
+      ... def f(x, y):
+      ...   return jnp.sin(x) * y
+      ...
+      >>> def f_fwd(x, y):
+      ...   return f(x, y), (jnp.cos(x), jnp.sin(x), y)
+      ...
+      >>> def f_bwd(res, g):
+      ...   cos_x, sin_x, y = res
+      ...   return (cos_x * g * y, sin_x * g)
+      ...
+      >>> f.defvjp(f_fwd, f_bwd)
 
-      def f_fwd(x, y):
-        return f(x, y), (jnp.cos(x), jnp.sin(x), y)
-
-      def f_bwd(res, g):
-        cos_x, sin_x, y = res
-        return (cos_x * g * y, sin_x * g)
-
-      f.defvjp(f_fwd, f_bwd)
+      >>> x = jnp.float32(1.0)
+      >>> y = jnp.float32(2.0)
+      >>> with jnp.printoptions(precision=2):
+      ...   print(jax.value_and_grad(f)(x, y))
+      (Array(1.68, dtype=float32), Array(1.08, dtype=float32))
     """
     self.fwd = fwd
     self.bwd = bwd
