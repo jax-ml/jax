@@ -1196,6 +1196,7 @@ jax_test(
     shard_count = {
         "tpu": 5,
     },
+    tags = ["noasan"],  # Times out
     deps = [
         "//jax:experimental",
         "//jax:experimental_host_callback",
@@ -1211,6 +1212,7 @@ jax_test(
     shard_count = {
         "gpu": 5,
     },
+    tags = ["noasan"],  # Times out
     deps = [
         "//jax:experimental",
         "//jax:experimental_host_callback",
