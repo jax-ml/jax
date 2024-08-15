@@ -27,7 +27,11 @@ set -euxo pipefail -o history -o allexport
 # Tempoary way to source build configs. In the final version of the CL, these
 # will be moved to the Kokoro build configs and the jobs will automatically
 # source before running the script.
-BUILD_CONFIG_FILE="ci/.kokoro/nightly/jaxlib/linux_x86/py310"
+BUILD_CONFIG_FILE=""
+if [[ -n "$BUILD_CONFIG_FILE" ]]; then
+  echo "Please set a config file to $BUILD_CONFIG_FILE"
+  exit 1
+fi
 source "$BUILD_CONFIG_FILE"
 
 # Decide whether to use the release tag. JAX CI jobs build from the main
