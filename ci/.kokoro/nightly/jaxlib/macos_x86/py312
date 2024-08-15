@@ -6,4 +6,4 @@ source ci/.kokoro/nightly/jaxlib/common
 export JAXCI_HERMETIC_PYTHON_VERSION=3.12
 
 # Temporary; for local testing.
-export JAXCI_GIT_DIR="/home/kbuilder/jax"
+export JAXCI_GIT_DIR="/Users/srnitin/jax-ci-rework/jax"
