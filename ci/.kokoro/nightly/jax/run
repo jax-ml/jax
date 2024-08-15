@@ -1,0 +1,1 @@
+export JAXCI_BUILD_JAX_ENABLE="1"

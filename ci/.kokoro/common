@@ -1,0 +1,15 @@
+# This file contains the environment variables set to default values 
+# that are used by the Kokoro jobs. Jobs override these values by
+# setting the environment variables in their own common config file.
+export JAXCI_BUILD_JAX_ENABLE=""
+export JAXCI_BUILD_JAXLIB_ENABLE=""
+export JAXCI_BUILD_PLUGIN_ENABLE=""
+export JAXCI_BUILD_PJRT_ENABLE=""
+export JAXCI_WHEEL_AUDIT_ENABLE=""
+export JAXCI_HERMETIC_PYTHON_VERSION=""
+export JAXCI_RELEASE_TAG=""
+export JAXCI_OUTPUT_DIR="/jax/pkg"
+export JAXCI_DOCKER_IMAGE=""
+
+# Temporary; for local testing.
+export JAXCI_GIT_DIR="/usr/local/google/home/srnitin/ci-rework/jax"

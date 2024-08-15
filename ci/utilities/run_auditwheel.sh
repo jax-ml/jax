@@ -1,0 +1,33 @@
+#!/bin/bash
+# Copyright 2024 JAX Authors. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+#
+# Runs auditwheel to ensure manylinux compatibility.
+echo "Running auditwheel on the following wheel:"
+ls $JAXCI_OUTPUT_DIR/*.whl
+
+OUTPUT=$(python3 -m auditwheel show $JAXCI_OUTPUT_DIR/*.whl)
+# Remove the wheel name from the output to avoid false positives.
+wheel_name=$(basename $JAXCI_OUTPUT_DIR/*.whl)
+OUTPUT=${OUTPUT//${wheel_name}/} 
+
+# If a wheel is manylinux2014 compliant, `auditwheel show` will return the 
+# platform tag as manylinux_2_17. manylinux2014 is an alias for manylinux_2_17.
+if echo "$OUTPUT" | grep -q "manylinux_2_17"; then
+    printf "\nThe wheel is manylinux2014 compliant."
+else
+    echo "\nThe wheel is NOT manylinux2014 compliant."
+    exit 1
+fi
