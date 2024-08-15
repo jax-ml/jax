@@ -4,4 +4,3 @@ source ci/.kokoro/common
 
 # Enable jaxlib build.
 export JAXCI_BUILD_JAXLIB_ENABLE="1"
-export JAXCI_WHEEL_AUDIT_ENABLE="1"
