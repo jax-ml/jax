@@ -240,8 +240,13 @@ build:ci_darwin_arm64_cpu --config=macos_cache_push
 
 # Windows x86 CI configs
 build:ci_windows_x86_64_cpu --config=clang
-build:ci_windows_x86_64_cpu --config=win_clang
 build:ci_windows_x86_64_cpu --config=avx_windows
+# Set the toolchains
+build:ci_windows_x86_64_cpu --crosstool_top="//tensorflow/tools/toolchains/win/20240424:toolchain"
+build:ci_windows_x86_64_cpu --extra_toolchains="//tensorflow/tools/toolchains/win/20240424:cc-toolchain-x64_windows-clang-cl"
+build:ci_windows_x86_64_cpu --compiler=clang-cl
+build:ci_windows_x86_64_cpu --linkopt=/FORCE:MULTIPLE
+build:ci_windows_x86_64_cpu --host_linkopt=/FORCE:MULTIPLE
 # TODO(srnitin): Add an option for reading and pushing cache from/to GCS bucket
 
 # #############################################################################
@@ -302,16 +307,12 @@ build:rbe_windows_x86_64_base --define=override_eigen_strong_inline=true
 # Don't build the python zip archive in the RBE build.
 build:rbe_windows_x86_64_base --nobuild_python_zip
 
+build:rbe_windows_x86_64_cpu --config=rbe_windows_x86_64_base
+build:rbe_windows_x86_64_cpu --config=ci_windows_x86_64_cpu
 # Set the host, execution, and target platform
 build:rbe_windows_x86_64_cpu --host_platform="//tensorflow/tools/toolchains/win:x64_windows-clang-cl"
 build:rbe_windows_x86_64_cpu --extra_execution_platforms="//tensorflow/tools/toolchains/win:x64_windows-clang-cl"
 build:rbe_windows_x86_64_cpu --platforms="//tensorflow/tools/toolchains/win:x64_windows-clang-cl"
-# Set the toolchains
-build:rbe_windows_x86_64_cpu --crosstool_top="//tensorflow/tools/toolchains/win/20240424:toolchain"
-build:rbe_windows_x86_64_cpu --extra_toolchains="//tensorflow/tools/toolchains/win/20240424:cc-toolchain-x64_windows-clang-cl"
-build:rbe_windows_x86_64_cpu --compiler=clang-cl
-build:rbe_windows_x86_64_cpu --linkopt=/FORCE:MULTIPLE
-build:rbe_windows_x86_64_cpu --host_linkopt=/FORCE:MULTIPLE
 
 # #############################################################################
 # Cross-compile config options below.

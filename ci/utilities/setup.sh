@@ -66,7 +66,7 @@ elif [[ "$(uname -s)" == "Linux" && $(uname -m) == "aarch64" ]]; then
   else
     export BAZEL_CONFIG_CUDA=ci_linux_aarch64_cuda
   fi
-elif [[ "$(uname -s)" == "MSYS_NT" && $(uname -m) == "x86_64" ]]; then
+elif [[ "$(uname -s)" ~= "MSYS_NT" && $(uname -m) == "x86_64" ]]; then
   export BAZEL_CONFIG_CPU=ci_windows_x86_64_cpu
 elif [[ "$(uname -s)" == "Darwin" && $(uname -m) == "x86_64" ]]; then
   export BAZEL_CONFIG_CPU=ci_darwin_x86_64_cpu
