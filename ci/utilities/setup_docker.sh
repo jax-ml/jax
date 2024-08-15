@@ -26,7 +26,10 @@ if ! docker container inspect jax >/dev/null 2>&1 ; then
 
   JAXCI_DOCKER_ARGS=""
   # Enable GPU on Docker if building or testing either the CUDA plugin or PJRT.
-  if [[ "$JAXCI_BUILD_PLUGIN_ENABLE" == 1 ]] || [[ "$JAXCI_BUILD_PJRT_ENABLE" == 1 ]]; then
+  # Only Linux x86 CI machines have GPUs attached to them. 
+  if ( [[ $(uname -s) == "Linux" ]] && [[ $(uname -m) == "x86_64" ]] ) && \
+   [[ "$JAXCI_BUILD_PLUGIN_ENABLE" == 1 ]] || \
+   [[ "$JAXCI_BUILD_PJRT_ENABLE" == 1 ]]; then
   JAXCI_DOCKER_ARGS="--gpus all"
   fi
 
