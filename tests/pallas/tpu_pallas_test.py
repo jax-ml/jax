@@ -2031,15 +2031,16 @@ class PallasCallTPUBooleanTest(PallasBaseTest):
     )(input)
     np.testing.assert_array_equal(result, input)
 
-  def test_vector_bool_masking(self):
+  def test_vector_bool_masking_with_indexing(self):
     def kernel(mask_ref, true_ref, false_ref, o_ref):
-      o_ref[...] = jnp.where(mask_ref[...], true_ref[...], false_ref[...])
+      o_ref[0, ...] = jnp.where(
+          mask_ref[0, ...], true_ref[0, ...], false_ref[0, ...])
     key = jax.random.key(0)
     k1, k2, k3 = jax.random.split(key, 3)
-    values_1 = jax.random.normal(k1, (8, 128), jnp.float32)
-    values_2 = jax.random.normal(k2, (8, 128), jnp.float32)
-    mask = jax.random.bernoulli(k3, p=0.5, shape=(8, 128))
-    output_shape = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+    values_1 = jax.random.normal(k1, (1, 256, 256), jnp.float32)
+    values_2 = jax.random.normal(k2, (1, 256, 256), jnp.float32)
+    mask = jax.random.bernoulli(k3, p=0.5, shape=(1, 256, 256))
+    output_shape = jax.ShapeDtypeStruct((1, 256, 256), jnp.float32)
     result = self.pallas_call(
         kernel,
         in_specs=[pl.BlockSpec(memory_space=pltpu.VMEM),

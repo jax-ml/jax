@@ -1088,12 +1088,12 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
   else:
     load_val = vector.LoadOp(
         aval_to_ir_type(load_aval, is_kernel_boundary=True), ref, starts).result
-  load_val = _maybe_cast_load_to_bool(aval_out, load_val)
-  if load_aval == aval_out:
-    return load_val
-  vec_type = ir.VectorType.get(aval_out.shape,
-                               _dtype_to_ir_type(aval_out.dtype))
-  return vector.ShapeCastOp(vec_type, load_val).result
+  if load_aval != aval_out:
+    vec_type = ir.VectorType.get(aval_out.shape,
+                                _dtype_to_ir_type(aval_out.dtype,
+                                                  is_kernel_boundary=True))
+    load_val = vector.ShapeCastOp(vec_type, load_val).result
+  return _maybe_cast_load_to_bool(aval_out, load_val)
 
 def _prng_key_load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree) -> KeyScalarBundle:
   """Lowering rule for loading PRNG keys from SMEM.
