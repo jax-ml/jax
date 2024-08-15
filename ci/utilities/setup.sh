@@ -28,7 +28,7 @@ set -euxo pipefail -o history -o allexport
 # will be moved to the Kokoro build configs and the jobs will automatically
 # source before running the script.
 BUILD_CONFIG_FILE=""
-if [[ -n "$BUILD_CONFIG_FILE" ]]; then
+if [[ -z "$BUILD_CONFIG_FILE" ]]; then
   echo "Please set a config file to $BUILD_CONFIG_FILE"
   exit 1
 fi
@@ -36,7 +36,7 @@ source "$BUILD_CONFIG_FILE"
 
 # Decide whether to use the release tag. JAX CI jobs build from the main
 # branch by default. 
-if [[ -n "$JAXCI_RELEASE_TAG" ]]; then
+if [[ -z "$JAXCI_RELEASE_TAG" ]]; then
   git checkout tags/"$JAXCI_RELEASE_TAG"
 fi
 
