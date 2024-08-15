@@ -6,7 +6,9 @@ export JAXCI_BUILD_JAXLIB_ENABLE=""
 export JAXCI_BUILD_PLUGIN_ENABLE=""
 export JAXCI_BUILD_PJRT_ENABLE=""
 export JAXCI_WHEEL_AUDIT_ENABLE=""
-export JAXCI_HERMETIC_PYTHON_VERSION=""
+# Set default as 3.11 as otherwise we select the system python version. In
+# the Linux Arm64 Docker image, this can be 3.8 which is not supported by jax.
+export JAXCI_HERMETIC_PYTHON_VERSION="3.11"
 export JAXCI_RELEASE_TAG=""
 export JAXCI_OUTPUT_DIR="/jax/pkg"
 export JAXCI_DOCKER_IMAGE=""
