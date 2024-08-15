@@ -29,7 +29,7 @@ set -euxo pipefail -o history -o allexport
 # source before running the script.
 BUILD_CONFIG_FILE=""
 if [[ -z "$BUILD_CONFIG_FILE" ]]; then
-  echo "Please set a config file to $BUILD_CONFIG_FILE"
+  echo "Please set a config file to BUILD_CONFIG_FILE"
   exit 1
 fi
 source "$BUILD_CONFIG_FILE"
