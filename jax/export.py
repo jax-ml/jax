@@ -11,7 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-__all__ = ["DisabledSafetyCheck", "Exported", "export", "deserialize",
+__all__ = ["CompatibilityRequirement", "DisabledSafetyCheck", "Exported",
+           "export", "deserialize",
            "maximum_supported_calling_convention_version",
            "minimum_supported_calling_convention_version",
            "default_export_platform",
@@ -19,6 +20,7 @@ __all__ = ["DisabledSafetyCheck", "Exported", "export", "deserialize",
            "symbolic_shape", "symbolic_args_specs"]
 
 from jax._src.export._export import (
+  CompatibilityRequirement,
   DisabledSafetyCheck,
   Exported,
   export,

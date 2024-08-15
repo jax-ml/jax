@@ -187,6 +187,21 @@ class JaxExportTest(jtu.JaxTestCase):
     self.assertEqual((core.ShapedArray((4,), dtype=np.float32),), exp.in_avals)
     self.assertEqual((core.ShapedArray((4,), dtype=np.float32),), exp.out_avals)
 
+  def test_basic_export_with_compatibility_requirement(self):
+    @jax.jit
+    def my_fun(x):
+      return jnp.sin(x)
+
+    for requirement in export.CompatibilityRequirement:
+      exp = get_exported(my_fun, compatibility_requirement=requirement)(
+          jax.ShapeDtypeStruct((4,), dtype=np.float32))
+      self.assertEqual("my_fun", exp.fun_name)
+      self.assertEqual(jax.tree.flatten(((1,), {}))[1], exp.in_tree)
+      self.assertEqual(
+          (core.ShapedArray((4,), dtype=np.float32),), exp.in_avals)
+      self.assertEqual(
+          (core.ShapedArray((4,), dtype=np.float32),), exp.out_avals)
+
   def test_pytree_export_only(self):
     a = np.arange(4, dtype=np.float32)
     b = np.arange(6, dtype=np.float32)

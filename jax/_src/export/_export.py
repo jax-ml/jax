@@ -20,6 +20,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 import copy
 import dataclasses
+import enum
 import functools
 import itertools
 import re
@@ -132,6 +133,56 @@ class DisabledSafetyCheck:
 
   def __hash__(self) -> int:
     return hash(self._impl)
+
+
+class CompatibilityRequirement(enum.Enum):
+  """A compatibility requirement is used to manage situations when a StableHLO
+  producer (in this case, jax2tf) and a StableHLO consumer were built using
+  different versions of StableHLO.
+
+  Each StableHLO version `producer_version` has a compatibility window,
+  i.e. range of versions [`consumer_version_min`, `consumer_version_max`],
+  where StableHLO portable artifacts serialized by `producer_version`
+  can be deserialized by `consumer_version` within the window.
+  See https://github.com/openxla/stablehlo/blob/main/docs/compatibility.md
+  for the exact extent of these compatibility guarantees.
+
+  For example MAX will maximize how far into the past we can go
+  and still have the payloads produced by jax2tf be compatible with potential
+  consumers from the past.
+
+  Specifying a higher compatibility requirement may limit the features a model
+  can use, since new features cannot be used on old consumers.
+
+  Generally this value should align with the update cadence of the consumer,
+  either PJRT plugin, model server, or otherwise. More requirements can be added
+  as use case arise, and should be contributed to the StableHLO project before
+  JAX integration.
+  """
+
+  # No compatibility requirement, use current StableHLO version.
+  NONE = 0
+
+  # 1 Month forward compatibility.
+  WEEK_4 = 1
+
+  # 3 Month forward compatibility.
+  WEEK_12 = 2
+
+  # Max compatibility, use minimum StablehLO version.
+  MAX = 3
+
+  def stablehlo_version(self):
+    compat_req_map = {
+      CompatibilityRequirement.NONE: hlo.StablehloCompatibilityRequirement.NONE,
+      CompatibilityRequirement.WEEK_4: hlo.StablehloCompatibilityRequirement.WEEK_4,
+      CompatibilityRequirement.WEEK_12: hlo.StablehloCompatibilityRequirement.WEEK_12,
+      CompatibilityRequirement.MAX : hlo.StablehloCompatibilityRequirement.MAX,
+    }
+    stablehlo_compat_req = compat_req_map.get(self, None)
+    if stablehlo_compat_req is None:
+      raise ValueError(f"Unsupported compatibility requirement: {self}")
+    return hlo.get_version_from_compatibility_requirement(stablehlo_compat_req)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -392,6 +443,7 @@ def export_back_compat(
     *,
     lowering_platforms: Sequence[str] | None = None,
     disabled_checks: Sequence[DisabledSafetyCheck] = (),
+    compatibility_requirement: CompatibilityRequirement = CompatibilityRequirement.MAX,
     _device_assignment_for_internal_jax2tf_use_only = None,
     ) -> Callable[..., Exported]:
   """Exports native serialization for a JAX function.
@@ -464,6 +516,7 @@ def export_back_compat(
     return _export_lowered(
         lowered, traced.jaxpr, traced.fun_name,
         disabled_checks=disabled_checks,
+        compatibility_requirement=compatibility_requirement,
         _device_assignment_for_internal_jax2tf_use_only=_device_assignment_for_internal_jax2tf_use_only)
   return do_export
 
@@ -473,6 +526,7 @@ def export(
     platforms: Sequence[str] | None = None,
     lowering_platforms: Sequence[str] | None = None,
     disabled_checks: Sequence[DisabledSafetyCheck] = (),
+    compatibility_requirement: CompatibilityRequirement = CompatibilityRequirement.MAX,
     ) -> Callable[..., Exported]:
   """Exports a JAX function for persistent serialization.
 
@@ -488,6 +542,8 @@ def export(
     lowering_platforms: DEPRECATED, use `platforms`.
     disabled_checks: the safety checks to disable. See documentation for
         of `jax.export.DisabledSafetyCheck`.
+    compatibility_requirement: The CompatibilityRequirement of the exported
+        payload. See `CompatibilityRequirement` for details.
 
   Returns: a function that takes args and kwargs pytrees of {class}`jax.ShapeDtypeStruct`,
       or values with `.shape` and `.dtype` attributes, and returns an
@@ -548,14 +604,16 @@ def export(
             export_ignore_forward_compatibility=config.export_ignore_forward_compatibility.value))
     return _export_lowered(
         lowered, traced.jaxpr, traced.fun_name,
-        disabled_checks=disabled_checks)
+        disabled_checks=disabled_checks,
+        compatibility_requirement=compatibility_requirement)
   return do_export
 
 def _export_lowered(
     lowered: stages.Lowered,
     jaxpr: core.ClosedJaxpr, fun_name: str,
     disabled_checks: Sequence[DisabledSafetyCheck] = (),
-    _device_assignment_for_internal_jax2tf_use_only = None,
+    compatibility_requirement: CompatibilityRequirement = CompatibilityRequirement.MAX,
+    _device_assignment_for_internal_jax2tf_use_only=None,
   ) -> Exported:
   version = config.jax_export_calling_convention_version.value
   if (version < minimum_supported_calling_convention_version or
@@ -591,7 +649,7 @@ def _export_lowered(
     mlir_module_attrs["jax.uses_shape_polymorphism"] = (
         mlir.ir.BoolAttr.get(shape_poly_state.uses_dim_vars))
 
-  mlir_module_serialized = _module_to_bytecode(mlir_module)
+  mlir_module_serialized = _module_to_bytecode(mlir_module, compatibility_requirement)
 
   # Figure out the result types and shapes
   if "global_out_avals" in lowering.compile_args:
@@ -657,7 +715,8 @@ def _export_lowered(
                                              flat_primal_fun=True)
     return export(fun_vjp_jax,  # type: ignore[arg-type]
                   platforms=exp_primal.platforms,
-                  disabled_checks=exp_primal.disabled_safety_checks)(*vjp_in_avals)
+                  disabled_checks=exp_primal.disabled_safety_checks,
+                  compatibility_requirement=compatibility_requirement)(*vjp_in_avals)
 
   return Exported(
       fun_name=fun_name,
@@ -678,27 +737,20 @@ def _export_lowered(
       calling_convention_version=version,
       _get_vjp=_get_exported_vjp)
 
-def _module_to_bytecode(module: ir.Module) -> bytes:
+
+def _module_to_bytecode(
+    module: ir.Module,
+    compatibility_requirement: CompatibilityRequirement) -> bytes:
   mlir_str = mlir.module_to_bytecode(module)
-  # `target_version` is used to manage situations when a StableHLO producer
-  # (in this case, jax2tf) and a StableHLO consumer were built using
-  # different versions of StableHLO.
-  #
-  # Each StableHLO version `producer_version` has a compatibility window,
-  # i.e. range of versions [`consumer_version_min`, `consumer_version_max`],
-  # where StableHLO portable artifacts serialized by `producer_version`
-  # can be deserialized by `consumer_version` within the window.
-  # See https://github.com/openxla/stablehlo/blob/main/docs/compatibility.md
-  # for the exact extent of these compatibility guarantees.
-  #
-  # `hlo.get_minimum_version()` returns `consumer_version_min`
-  # for the current version of StableHLO. We are using it here to maximize
-  # forward compatibility, i.e. to maximize how far into the past we can go
-  # and still have the payloads produced by `serialize_portable_artifact`
-  # compatible with potential consumers from the past.
-  target_version = hlo.get_minimum_version()
-  module_serialized = xla_client._xla.mlir.serialize_portable_artifact(  # type: ignore
+
+  if hlo.get_api_version() < 9:
+    target_version = hlo.get_minimum_version()
+    module_serialized = xla_client._xla.mlir.serialize_portable_artifact(  # type: ignore
       mlir_str, target_version)
+    return module_serialized
+
+  module_serialized = hlo.serialize_portable_artifact_str(
+      mlir_str, compatibility_requirement.stablehlo_version())
   return module_serialized
 
 

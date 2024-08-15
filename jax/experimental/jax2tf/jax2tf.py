@@ -91,6 +91,7 @@ PolyShape = shape_poly.PolyShape  # TODO: deprecate
 DType = Any
 
 DisabledSafetyCheck = export.DisabledSafetyCheck
+CompatibilityRequirement = export.CompatibilityRequirement
 
 # A temporary internal flag, to enable the wrapping of jax.jit functions
 # with tf.function(jit_compile=True). See #7389. This change has triggered a
@@ -245,6 +246,7 @@ def convert(fun_jax: Callable,
             native_serialization: bool | _DefaultNativeSerialization = DEFAULT_NATIVE_SERIALIZATION,
             native_serialization_platforms: Sequence[str] | None = None,
             native_serialization_disabled_checks: Sequence[DisabledSafetyCheck] = (),
+            native_serialization_compatibility_requirement: CompatibilityRequirement = CompatibilityRequirement.MAX,
             ) -> Callable:
   """Allows calling a JAX function from a TensorFlow program.
 
@@ -326,6 +328,9 @@ def convert(fun_jax: Callable,
     native_serialization_disabled_checks: In conjunction with
       `native_serialization`, disable the specified safety checks.
       See docstring of `DisabledSafetyCheck`.
+    native_serialization_compatibility_requirement: In conjunction with
+      `native_serialization`, specify the compatibility requirement.
+      See docstring of `CompatibilityRequirement`.
 
   Returns:
     A version of `fun_jax` that expects TfVals as arguments (or
@@ -422,7 +427,8 @@ def convert(fun_jax: Callable,
           fun_jax,
           args_specs=args_specs, kwargs_specs=kwargs_specs,
           native_serialization_platforms=native_serialization_platforms,
-          native_serialization_disabled_checks=native_serialization_disabled_checks)
+          native_serialization_disabled_checks=native_serialization_disabled_checks,
+          native_serialization_compatibility_requirement=native_serialization_compatibility_requirement)
     else:
       impl = GraphSerializationImpl(
           fun_jax,
@@ -510,14 +516,17 @@ class NativeSerializationImpl(SerializationImpl):
   def __init__(self, fun_jax, *,
                args_specs, kwargs_specs,
                native_serialization_platforms: Sequence[str] | None,
-               native_serialization_disabled_checks: Sequence[DisabledSafetyCheck]):
+               native_serialization_disabled_checks: Sequence[DisabledSafetyCheck],
+               native_serialization_compatibility_requirement: CompatibilityRequirement):
     self.convert_kwargs = dict(native_serialization=True,
                                native_serialization_platforms=native_serialization_platforms,
-                               native_serialization_disabled_checks=native_serialization_disabled_checks)
+                               native_serialization_disabled_checks=native_serialization_disabled_checks,
+                               native_serialization_compatibility_requirement=native_serialization_compatibility_requirement)
     self.fun_jax = fun_jax
     self.args_specs = args_specs
     self.kwargs_specs = kwargs_specs
     self.native_serialization_disabled_checks = native_serialization_disabled_checks
+    self.native_serialization_compatibility_requirement = native_serialization_compatibility_requirement
     self.native_serialization_platforms = native_serialization_platforms
 
   def before_conversion(self):
@@ -533,6 +542,7 @@ class NativeSerializationImpl(SerializationImpl):
         self.fun_jax,
         lowering_platforms=self.native_serialization_platforms,
         disabled_checks=self.native_serialization_disabled_checks,
+        compatibility_requirement=self.native_serialization_compatibility_requirement,
         _device_assignment_for_internal_jax2tf_use_only=_exported_device_assignment,
     )(*self.args_specs, **self.kwargs_specs)
     assert(_exported_device_assignment[0] is not None)
