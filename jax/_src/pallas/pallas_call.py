@@ -192,7 +192,7 @@ def _pallas_call_impl_interpret(
   with grid_mapping.trace_env():
     discharged_jaxpr, discharged_consts = state_discharge.discharge_state(jaxpr, ())
   if debug:
-    print(f"\nJaxpr the the kernel in pallas_call {name_and_src_info}:")
+    print(f"\nJaxpr of the the kernel in pallas_call {name_and_src_info}:")
     print(discharged_jaxpr)
   out = _initialize_output_vals(grid_mapping.block_mappings_output,
                                 args, input_output_aliases)
@@ -889,7 +889,7 @@ def _trace_kernel_to_jaxpr(fun: Callable,
                            grid_mapping: GridMapping,
                            kernel_avals: tuple[pallas_core.AbstractMemRef, ...],
                            kernel_in_tree: tree_util.PyTreeDef,
-                           interpret: bool
+                           interpret: bool,
                            ) -> jax_core.ClosedJaxpr:
   if interpret:
     kernel_avals = tuple(map(_logical_aval_to_interpret_mode_aval,
@@ -1126,10 +1126,11 @@ def pallas_call(
         flat_in_avals, in_tree, in_origins,
         flat_out_avals, out_tree, out_origins)
     flat_kernel_avals, kernel_in_tree = tree_util.tree_flatten(kernel_avals)
-    jaxpr = _trace_kernel_to_jaxpr(
-        kernel, kernel_src_info,
-        grid_mapping, tuple(flat_kernel_avals), kernel_in_tree,
-        interpret=interpret)
+    with pallas_core.interpret_mode_env(interpret):
+      jaxpr = _trace_kernel_to_jaxpr(
+          kernel, kernel_src_info,
+          grid_mapping, tuple(flat_kernel_avals), kernel_in_tree,
+          interpret=interpret)
     for i_idx, o_idx in input_output_aliases.items():
       if i_idx not in range(len(flat_in_avals)):
         raise ValueError(
@@ -1152,19 +1153,20 @@ def pallas_call(
             f"a different abstract value {out_aval}.")
 
     index_args, rest_args = split_list(flat_args, [grid_mapping.num_index_operands])
-    out_flat = pallas_call_p.bind(
-        *dynamic_grid_bounds,
-        *index_args,
-        *rest_args,
-        jaxpr=jaxpr,
-        name_and_src_info=name_and_src_info,
-        debug=debug,
-        interpret=interpret,
-        grid_mapping=grid_mapping,
-        input_output_aliases=tuple(input_output_aliases.items()),
-        compiler_params=compiler_params,
-        cost_estimate=cost_estimate,
-    )
+    with pallas_core.interpret_mode_env(interpret):
+      out_flat = pallas_call_p.bind(
+          *dynamic_grid_bounds,
+          *index_args,
+          *rest_args,
+          jaxpr=jaxpr,
+          name_and_src_info=name_and_src_info,
+          debug=debug,
+          interpret=interpret,
+          grid_mapping=grid_mapping,
+          input_output_aliases=tuple(input_output_aliases.items()),
+          compiler_params=compiler_params,
+          cost_estimate=cost_estimate,
+      )
     out = tree_util.tree_unflatten(out_tree, out_flat)
     return out
   return wrapped

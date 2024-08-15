@@ -182,6 +182,8 @@ class PallasGridContext:
 @dataclasses.dataclass
 class PallasTracingEnv(threading.local):
   grid_context: PallasGridContext | None = None
+  grid_env_stack: list[GridEnv] = dataclasses.field(default_factory=list)
+  is_interpret_mode: bool = False
 _pallas_tracing_env = PallasTracingEnv()
 
 
@@ -202,22 +204,35 @@ class GridAxis:
 # Stores the kernel execution position and the size along grid axes.
 GridEnv = Sequence[GridAxis]
 
-_grid_env_stack: list[GridEnv] = []
-
-
 @contextlib.contextmanager
 def grid_env(env: GridEnv) -> Iterator[None]:
-  _grid_env_stack.append(env)
+  _pallas_tracing_env.grid_env_stack.append(env)
   try:
     yield
   finally:
-    _grid_env_stack.pop()
+   _pallas_tracing_env.grid_env_stack.pop()
 
 
 def current_grid_env() -> GridEnv | None:
-  if not _grid_env_stack:
+  if not _pallas_tracing_env.grid_env_stack:
     return None
-  return _grid_env_stack[-1]
+  return _pallas_tracing_env.grid_env_stack[-1]
+
+
+@contextlib.contextmanager
+def interpret_mode_env(interpret_mode: bool) -> Iterator[None]:
+  prev_interpret = _pallas_tracing_env.is_interpret_mode
+  if interpret_mode:
+    _pallas_tracing_env.is_interpret_mode = True
+  try:
+    yield
+  finally:
+    if interpret_mode:
+      _pallas_tracing_env.is_interpret_mode = prev_interpret
+
+def is_interpret_mode() -> bool:
+  """Returns whether the kernel is executing in interpret mode."""
+  return _pallas_tracing_env.is_interpret_mode
 
 
 class Mapped:

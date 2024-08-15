@@ -109,6 +109,8 @@ class SemaphoreType(enum.Enum):
       dtype = BarrierSemaphoreTy()
     else:
       dtype = SemaphoreTy()
+    if pallas_core.is_interpret_mode():
+      dtype = jnp.int32
     return MemoryRef(shape, dtype, TPUMemorySpace.SEMAPHORE)
 
   def get_aval(self) -> AbstractMemoryRef:

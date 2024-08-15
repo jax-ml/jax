@@ -2528,7 +2528,7 @@ lowering_rules[lax.bitcast_convert_type_p] = _bitcast_convert_type_lowering_rule
 
 def _alloc_value(aval: jax_core.AbstractValue) -> ir.Value:
   if isinstance(aval, pallas_core.AbstractMemoryRef):
-    memspace = ir.Attribute.parse(f"#tpu.memory_space<{aval.memory_space}>")
+    memspace = _memory_space_to_tpu_memspace(aval.memory_space)
     if jnp.issubdtype(aval.dtype, tpu_core.semaphore_dtype):
       assert aval.memory_space == TPUMemorySpace.SEMAPHORE
       memref_type = aval_to_ir_type(aval, memory_space=TPUMemorySpace.SEMAPHORE)

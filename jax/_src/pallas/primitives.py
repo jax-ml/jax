@@ -425,6 +425,8 @@ def uninitialized_value(shape, dtype):
     return jnp.full(shape, jnp.iinfo(dtype).min, dtype)
   elif jnp.issubdtype(dtype, jnp.bool):
     return jnp.full(shape, False, dtype)
+  elif jnp.issubdtype(dtype, pallas_core.semaphore_dtype):
+    return jnp.full(shape, 0, dtype)
   raise NotImplementedError(dtype)
 
 def _pad_values_to_avoid_dynamic_slice_oob_shift(value,
@@ -843,3 +845,54 @@ def _run_scoped_abstract_eval(*args, jaxpr):
       )
   }
   return [v.aval for v in jaxpr.outvars], nonlocal_effects
+
+
+def _run_scoped_discharge_rule(in_avals,
+                               out_avals,
+                               *args_flat,
+                               jaxpr,
+                               **_):
+  del out_avals
+  num_consts = len(args_flat)
+  jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
+  num_return_values = len(jaxpr_noconst.outvars)
+  discharged_body, new_consts = state_discharge.discharge_state(
+      jaxpr_noconst, [])
+  if new_consts:
+    raise NotImplementedError(
+        "Cannot handle new consts created by state discharge.")
+  # Create inputs filled with uninitialized values to the body.
+  body_avals = [v.aval for v in discharged_body.invars[num_consts:]]
+  init_vals = [uninitialized_value(
+      aval.shape, aval.dtype) for aval in body_avals]
+  init_vals_with_consts = args_flat + tuple(init_vals)
+  out = jax_core.eval_jaxpr(discharged_body, [], *init_vals_with_consts)
+  # Order of outputs:
+  # (1) return values, (2) closed refs, (3) scoped refs.
+  return_values = out[:num_return_values]
+  ref_outputs = out[num_return_values:]
+  # We update all ref values with their updated values from the discharged
+  # body. For other values we leave them in place.
+  updates = [
+      ref_outputs.pop(0) if isinstance(aval, pallas_core.AbstractMemoryRef)
+      else None for aval in in_avals]
+  assert len(ref_outputs) == len(
+      body_avals), f'{len(body_avals)}, != {len(ref_outputs)}'
+  assert len(updates) == len(in_avals), f'{len(updates)} != {len(in_avals)}'
+  return updates, return_values
+
+
+state_discharge.register_discharge_rule(run_scoped_p)(
+    _run_scoped_discharge_rule)
+
+
+@functools.partial(mlir.register_lowering, run_scoped_p)
+def _run_scoped_lowering_rule(ctx, *args, jaxpr):
+  # This lowering rule gets triggered when run_scoped is not discharged.
+  # In this case there are no stateful effects to handle.
+  def _lower_fun(*lower_fun_args):
+    updates, out = _run_scoped_discharge_rule([], [], *lower_fun_args,
+                               jaxpr=jaxpr)
+    assert len(updates) == 0, 'Cannot lower run_scoped with effects.'
+    return out
+  return mlir.lower_fun(_lower_fun, multiple_results=True)(ctx, *args)

@@ -883,8 +883,12 @@ class PallasCallDMATest(PallasBaseTest):
       def body(dma_sems, sems):
         self.assertTupleEqual(dma_sems.shape, (4,))
         self.assertTupleEqual(sems.shape, (3,))
-        self.assertTrue(jnp.issubdtype(dma_sems.dtype, pltpu.dma_semaphore))
-        self.assertTrue(jnp.issubdtype(sems.dtype, pltpu.semaphore))
+        if self.INTERPRET:
+          self.assertTrue(jnp.issubdtype(dma_sems.dtype, jnp.int32))
+          self.assertTrue(jnp.issubdtype(sems.dtype, jnp.int32))
+        else:
+          self.assertTrue(jnp.issubdtype(dma_sems.dtype, pltpu.dma_semaphore))
+          self.assertTrue(jnp.issubdtype(sems.dtype, pltpu.semaphore))
       pl.run_scoped(
           body, pltpu.SemaphoreType.DMA((4,)), pltpu.SemaphoreType.REGULAR((3,))
       )
@@ -898,10 +902,13 @@ class PallasCallDMATest(PallasBaseTest):
     def kernel(y_ref, dma_sems, sems):
       self.assertTupleEqual(dma_sems.shape, (4,))
       self.assertTupleEqual(sems.shape, (3,))
-      self.assertTrue(jnp.issubdtype(dma_sems.dtype, pltpu.dma_semaphore))
-      self.assertTrue(jnp.issubdtype(sems.dtype, pltpu.semaphore))
+      if self.INTERPRET:
+        self.assertTrue(jnp.issubdtype(dma_sems.dtype, jnp.int32))
+        self.assertTrue(jnp.issubdtype(sems.dtype, jnp.int32))
+      else:
+        self.assertTrue(jnp.issubdtype(dma_sems.dtype, pltpu.dma_semaphore))
+        self.assertTrue(jnp.issubdtype(sems.dtype, pltpu.semaphore))
 
-    # TODO(b/345534352): Add interpret support for REGULAR semaphore.
     jax.block_until_ready(
         self.pallas_call(
             kernel,
@@ -917,6 +924,10 @@ class PallasCallDMATest(PallasBaseTest):
     )
 
   def test_can_wait_on_semaphore(self):
+    # TODO(b/345534352): Add interpret support for semaphore signal/wait.
+    if self.INTERPRET:
+      self.skipTest('Semaphore signal/wait not supported in interpret mode.')
+
     def kernel(y_ref):
       def body(sem):
         pltpu.semaphore_signal(sem)
@@ -943,6 +954,10 @@ class PallasCallDMATest(PallasBaseTest):
     )())
 
   def test_can_wait_on_semaphore_array(self):
+    # TODO(b/345534352): Add interpret support for semaphore signal/wait.
+    if self.INTERPRET:
+      self.skipTest('Semaphore signal/wait not supported in interpret mode.')
+
     def kernel(y_ref):
       def body(sems):
         pltpu.semaphore_signal(sems.at[0])
@@ -961,12 +976,16 @@ class PallasCallDMATest(PallasBaseTest):
       pl.run_scoped(body, pltpu.SemaphoreType.REGULAR((3,)))
 
     # TODO(b/345534352): Add interpret support for semaphore signal/wait.
-    jax.block_until_ready(pl.pallas_call(
+    jax.block_until_ready(self.pallas_call(
         kernel,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )())
 
   def test_can_wait_on_semaphore_array_with_dynamic_index(self):
+    # TODO(b/345534352): Add interpret support for semaphore signal/wait.
+    if self.INTERPRET:
+      self.skipTest('Semaphore signal/wait not supported in interpret mode.')
+
     def kernel(y_ref):
       i = pl.program_id(0)
       def body(sems):
@@ -985,19 +1004,21 @@ class PallasCallDMATest(PallasBaseTest):
         pltpu.semaphore_wait(sems.at[i, 2])
       pl.run_scoped(body, pltpu.SemaphoreType.REGULAR((4, 3)))
 
-    # TODO(b/345534352): Add interpret support for semaphore signal/wait.
     jax.block_until_ready(
-        pl.pallas_call(
+        self.pallas_call(
             kernel,
             in_specs=[],
             out_specs=pl.BlockSpec((8, 128), lambda i: (0, 0)),
             out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
             grid=4,
-            debug=True,
         )()
     )
 
   def test_can_read_semaphore(self):
+    # TODO(b/345534352): Add interpret support for semaphore signal/wait.
+    if self.INTERPRET:
+      self.skipTest('Semaphore signal/wait not supported in interpret mode.')
+
     m, n = 2, 3
 
     def kernel(y_ref):
@@ -1013,7 +1034,7 @@ class PallasCallDMATest(PallasBaseTest):
 
     # TODO(b/345534352): Add interpret support for semaphore signal/wait.
     y = jax.block_until_ready(
-        pl.pallas_call(
+        self.pallas_call(
             kernel,
             out_specs=pl.BlockSpec(memory_space=pltpu.TPUMemorySpace.SMEM),
             out_shape=jax.ShapeDtypeStruct((m, n), jnp.int32),
@@ -1024,6 +1045,9 @@ class PallasCallDMATest(PallasBaseTest):
     )
 
   def test_can_read_dma_semaphore(self):
+    # TODO(b/345534352): Add interpret support for semaphore signal/wait.
+    if self.INTERPRET:
+      self.skipTest('Semaphore signal/wait not supported in interpret mode.')
 
     def kernel(x_hbm_ref, y_hbm_ref, sem_val_ref, dma_sem):
       sem_val_ref[0, 0] = 123
@@ -1032,7 +1056,7 @@ class PallasCallDMATest(PallasBaseTest):
     x = jnp.arange(8 * 128, dtype=jnp.int32).reshape((8, 128))
     # TODO(b/345534352): Add interpret support for semaphore signal/wait.
     y, sem_val = jax.block_until_ready(
-        pl.pallas_call(
+        self.pallas_call(
             kernel,
             grid_spec=pltpu.PrefetchScalarGridSpec(
                 num_scalar_prefetch=0,
@@ -1152,7 +1176,7 @@ class PallasCallDMATest(PallasBaseTest):
     def kernel(x_ref, y_hbm_ref):
       def body(y_ref, sem):
         y_ref[...] = x_ref[...]
-        pltpu.async_copy(y_hbm_ref, y_ref, sem).wait()
+        pltpu.async_copy(y_ref, y_hbm_ref, sem).wait()
       pl.run_scoped(
           body, pltpu.VMEM((8, 128), jnp.float32), pltpu.SemaphoreType.DMA
       )
@@ -1287,6 +1311,9 @@ class PallasCallDMATest(PallasBaseTest):
     np.testing.assert_allclose(y, x.reshape((16, 128)))
 
   def test_hbm_vmem_dma_multiple_indexing(self):
+    if self.INTERPRET:
+      self.skipTest('Multiple indexing not supported in interpret mode.')
+
     def kernel(x_hbm_ref, y_ref):
       def body(sem):
         for i in range(3):
@@ -1313,6 +1340,9 @@ class PallasCallDMATest(PallasBaseTest):
     np.testing.assert_allclose(y, x.reshape((3, 16, 128)))
 
   def test_cannot_squeeze_lane_sublane(self):
+    if self.INTERPRET:
+      self.skipTest('Only works on Mosaic TPU.')
+
     def kernel(x_hbm_ref, y_ref):
       def body(sem):
         dma1 = pltpu.async_copy(
@@ -1335,11 +1365,7 @@ class PallasCallDMATest(PallasBaseTest):
           out_shape=jax.ShapeDtypeStruct((16, 128), jnp.float32),
       )(x)
 
-  @parameterized.named_parameters(
-      ('', False),
-      ('_interpret', True),
-  )
-  def test_hoisted_scratch_space(self, interpret):
+  def test_hoisted_scratch_space(self):
     def kernel(x_ref, y_ref, scratch_ref):
       i = pl.program_id(0)
       @pl.when(i == 0)
@@ -1352,7 +1378,7 @@ class PallasCallDMATest(PallasBaseTest):
         y_ref[...] = scratch_ref[...]
 
     x = jnp.arange(8 * 128.).reshape((8, 128))
-    y = pl.pallas_call(
+    y = self.pallas_call(
         kernel,
         grid_spec=pltpu.PrefetchScalarGridSpec(
             num_scalar_prefetch=0,
@@ -1363,7 +1389,6 @@ class PallasCallDMATest(PallasBaseTest):
             out_specs=pl.BlockSpec((8, 128), lambda i: (0, 0)),
             grid=(3,),
         ),
-        interpret=interpret,
         out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
     )(x)
     np.testing.assert_array_equal(y, x + 3)
@@ -1440,6 +1465,10 @@ class PallasCallDMATest(PallasBaseTest):
       y = run(jnp.array([i], dtype=jnp.int32), x)
       np.testing.assert_array_equal(y, i)
       del y
+
+
+class PallasCallDMAInterpreterTest(PallasCallDMATest):
+  INTERPRET = True
 
   def test_interpret_local_dma(self):
     def test_kernel(x_ref,

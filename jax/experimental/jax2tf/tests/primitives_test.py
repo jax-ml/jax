@@ -178,7 +178,7 @@ class JaxPrimitiveTest(tf_test_util.JaxToTfTestCase):
       if p.name == "debug_callback" or p.name == "debug_print":
         # TODO(sharadmv,necula): enable debug callbacks in TF
         continue
-      if p.name in ("max_contiguous", "multiple_of"):
+      if p.name in ("max_contiguous", "multiple_of", "run_scoped"):
         # Pallas-specific primitives are not supported.
         continue
       if p.name == "pallas_call":
