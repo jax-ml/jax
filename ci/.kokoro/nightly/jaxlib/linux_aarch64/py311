@@ -4,4 +4,4 @@ source ci/.kokoro/common
 source ci/.kokoro/nightly/jaxlib/common
 
 export JAXCI_HERMETIC_PYTHON_VERSION=3.11
-export JAXCI_DOCKER_IMAGE="us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/build-arm64"
+export JAXCI_DOCKER_IMAGE="us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/build-arm64:jax-latest-multi-python"
