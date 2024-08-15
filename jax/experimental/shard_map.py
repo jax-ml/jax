@@ -717,12 +717,7 @@ def _pspec_mhlo_attrs(names: AxisNames, aval: core.AbstractValue) -> str:
 
 def get_mesh_from_args(args_flat, mesh):
   for a in args_flat:
-    if hasattr(a, 'sharding'):
-      if not isinstance(a.sharding, NamedSharding):
-        raise TypeError(
-            "shard_map got `AbstractMesh` as an input to the `mesh` argument"
-            " which requires the input's sharding to be a `NamedSharding`. Got"
-            f" sharding type {type(a.sharding)}")
+    if hasattr(a, 'sharding') and isinstance(a.sharding, NamedSharding):
       if a.sharding.mesh.shape_tuple != mesh.shape_tuple:
         raise ValueError(
             f"Mesh shape of the input {a.sharding.mesh.shape_tuple} does not"

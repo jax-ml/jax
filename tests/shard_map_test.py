@@ -812,9 +812,9 @@ class ShardMapTest(jtu.JaxTestCase):
     abstract_mesh = jax.sharding.AbstractMesh(mesh.shape_tuple)
 
     with self.assertRaisesRegex(
-        TypeError,
-        'shard_map got `AbstractMesh` as an input to the `mesh` argument'
-        " which requires the input's sharding to be a `NamedSharding`"):
+        ValueError,
+        "Please pass `jax.Array`s with a `NamedSharding` as input to"
+        " `shard_map` when passing `AbstractMesh` to the mesh argument"):
       shard_map(lambda x: x, mesh=abstract_mesh, in_specs=P('x'),
                 out_specs=P('x'))(jnp.arange(8))
 
