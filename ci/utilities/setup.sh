@@ -22,12 +22,13 @@
 # -o pipefail: entire command fails if pipe fails. watch out for yes | ...
 # -o history: record shell history
 # -o allexport: export all functions and variables to be available to subscripts
-set -euxo pipefail -o history -o allexport
+
+# TODO: Add -u when script is ready
+set -exo pipefail -o history -o allexport
 
 # Tempoary way to source build configs. In the final version of the CL, these
 # will be moved to the Kokoro build configs and the jobs will automatically
 # source before running the script.
-BUILD_CONFIG_FILE=""
 if [[ -z "$BUILD_CONFIG_FILE" ]]; then
   echo "Please set a config file to BUILD_CONFIG_FILE"
   exit 1
