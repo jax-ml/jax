@@ -7,3 +7,4 @@ export JAXCI_HERMETIC_PYTHON_VERSION=3.12
 
 # Temporary; for local testing.
 export JAXCI_GIT_DIR="/Users/srnitin/jax-ci-rework/jax"
+export JAXCI_OUTPUT_DIR="/Users/srnitin/jax-ci-rework/jax"
