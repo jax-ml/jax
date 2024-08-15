@@ -20,25 +20,27 @@ or deployed codebases.
 
 .. toctree::
    :maxdepth: 1
-   :caption: Development
+   :caption: Interfaces
 
-   jaxpr
-   notebooks/external_callbacks
-   type_promotion
    pytrees
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Run time
-
+   errors
    aot
    export/index
-   errors
+   type_promotion
    transfer_guard
 
 .. toctree::
    :maxdepth: 1
    :caption: Custom operations
 
+   notebooks/external_callbacks
    pallas/index
    ffi
+
+.. toctree::
+   :caption: Example applications
+   :maxdepth: 1
+
+   notebooks/neural_network_with_tfds_data
+   notebooks/Neural_Network_and_Data_Loading
+   notebooks/vmapped_log_probs

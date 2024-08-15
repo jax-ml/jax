@@ -1,7 +1,7 @@
 .. currentmodule:: jax
 
-Public API: jax package
-=======================
+Public API: ``jax`` package
+===========================
 
 Subpackages
 -----------
