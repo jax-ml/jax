@@ -1,0 +1,6 @@
+# Kokoro jobs automatically inherits the environment variables from the 
+# parent directory's common config file.
+source ci/.kokoro/common
+source ci/.kokoro/nightly/jax-cuda-pjrt/common
+
+export JAXCI_DOCKER_IMAGE="tensorflow/build:2.18-python3.10"

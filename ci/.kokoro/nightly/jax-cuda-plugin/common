@@ -1,0 +1,7 @@
+# Kokoro jobs automatically inherits the environment variables from the 
+# parent directory's common config file.
+source ci/.kokoro/common
+
+# Enable jax-cuda-plugin build.
+export JAXCI_BUILD_PLUGIN_ENABLE="1"
+export JAXCI_WHEEL_AUDIT_ENABLE="1"
