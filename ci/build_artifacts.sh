@@ -28,15 +28,15 @@ if [[ "$JAXCI_BUILD_JAXLIB_ENABLE" == 1 ]]; then
   jaxrun bazel-bin/jaxlib/tools/build_wheel --output_path=$JAXCI_OUTPUT_DIR --cpu=$(uname -m) --jaxlib_git_hash=$(git rev-parse HEAD)
 fi
 
-# Build the jax-cuda-pjrt artifact
-if [[ "$JAXCI_BUILD_PJRT_ENABLE" == 1 ]]; then
+# Build the jax-cuda-plugin artifact
+if [[ "$JAXCI_BUILD_PLUGIN_ENABLE" == 1 ]]; then
   jaxrun bazel --bazelrc=ci/.bazelrc build --config="$BAZEL_CONFIG_CUDA" --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" -- //jaxlib/tools:build_cuda_kernels_wheel
   jaxrun bazel-bin/jaxlib/tools/build_cuda_kernels_wheel --output_path=$JAXCI_OUTPUT_DIR --cpu=$(uname -m) --jaxlib_git_hash=$(git rev-parse HEAD) --enable-cuda=True --platform_version=12
 fi
 
-# Build the jax-cuda-plugin artifact
-if [[ "$JAXCI_BUILD_PLUGIN_ENABLE" == 1 ]]; then
-  jaxrun bazel --bazelrc=ci/.bazelrc build --config="$BAZEL_CONFIG_CUDA" --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" -- //jaxlib/tools:build_gpu_plugin_wheel
+# Build the jax-cuda-pjrt artifact
+if [[ "$JAXCI_BUILD_PJRT_ENABLE" == 1 ]]; then
+  jaxrun bazel --bazelrc=ci/.bazelrc build --config="$BAZEL_CONFIG_CUDA" -- //jaxlib/tools:build_gpu_plugin_wheel
   jaxrun bazel-bin/jaxlib/tools/build_gpu_plugin_wheel --output_path=$JAXCI_OUTPUT_DIR --cpu=$(uname -m) --jaxlib_git_hash=$(git rev-parse HEAD) --enable-cuda=True --platform_version=12
 fi
 

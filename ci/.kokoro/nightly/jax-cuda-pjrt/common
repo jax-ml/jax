@@ -2,6 +2,6 @@
 # parent directory's common config file.
 source ci/.kokoro/common
 
-# Enable jax-cuda-plugin build.
+# Enable jax-cuda-pjrt build.
 export JAXCI_BUILD_PJRT_ENABLE="1"
 export JAXCI_WHEEL_AUDIT_ENABLE="1"
