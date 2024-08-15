@@ -390,6 +390,7 @@ def main():
   add_boolean_argument(
       parser,
       "use_clang",
+      default = "true",
       help_str=(
           "Should we build using clang as the host compiler? Requires "
           "clang to be findable via the PATH, or a path to be given via "
