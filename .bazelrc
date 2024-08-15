@@ -107,6 +107,11 @@ build:nvcc_clang --config=cuda_clang
 build:nvcc_clang --action_env=TF_NVCC_CLANG="1"
 build:nvcc_clang --@local_config_cuda//:cuda_compiler=nvcc
 
+# Build with nvcc for CUDA and gcc for host
+build:nvcc_gcc --config=cuda
+build:nvcc_gcc --action_env=TF_NVCC_GCC="1"
+build:nvcc_gcc --@local_config_cuda//:cuda_compiler=nvcc
+
 build:rocm --crosstool_top=@local_config_rocm//crosstool:toolchain
 build:rocm --define=using_rocm=true --define=using_rocm_hipcc=true
 build:rocm --repo_env TF_NEED_ROCM=1
