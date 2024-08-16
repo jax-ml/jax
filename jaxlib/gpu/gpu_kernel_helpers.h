@@ -67,16 +67,6 @@ absl::Status AsStatus(cufftResult error, const char* file, std::int64_t line,
                       const char* expr);
 #endif
 
-// Builds an array of pointers to each array in a batch, in device memory.
-// Caution: the return value must be kept alive (e.g., via a stream
-// synchronization) until the copy enqueued by MakeBatchPointers on `stream`
-// completes.
-absl::StatusOr<std::unique_ptr<void*[]>> MakeBatchPointers(gpuStream_t stream,
-                                                           void* buffer,
-                                                           void* dev_ptrs,
-                                                           int batch,
-                                                           int batch_elem_size);
-
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax
 

@@ -72,6 +72,16 @@ cc_library(
     ],
 )
 
+cuda_library(
+    name = "cuda_make_batch_pointers",
+    srcs = ["//jaxlib/gpu:make_batch_pointers.cu.cc"],
+    hdrs = ["//jaxlib/gpu:make_batch_pointers.h"],
+    deps = [
+        ":cuda_vendor",
+        "@local_config_cuda//cuda:cuda_headers",
+    ],
+)
+
 cc_library(
     name = "cuda_blas_handle_pool",
     srcs = ["//jaxlib/gpu:blas_handle_pool.cc"],
@@ -95,6 +105,7 @@ cc_library(
     deps = [
         ":cuda_blas_handle_pool",
         ":cuda_gpu_kernel_helpers",
+        ":cuda_make_batch_pointers",
         ":cuda_vendor",
         "//jaxlib:kernel_helpers",
         "@xla//xla/service:custom_call_status",
@@ -223,6 +234,7 @@ cc_library(
     deps = [
         ":cuda_blas_handle_pool",
         ":cuda_gpu_kernel_helpers",
+        ":cuda_make_batch_pointers",
         ":cuda_solver_handle_pool",
         ":cuda_vendor",
         "//jaxlib:ffi_helpers",

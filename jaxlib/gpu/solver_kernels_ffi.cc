@@ -23,6 +23,7 @@ limitations under the License.
 #include "jaxlib/ffi_helpers.h"
 #include "jaxlib/gpu/blas_handle_pool.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
+#include "jaxlib/gpu/make_batch_pointers.h"
 #include "jaxlib/gpu/solver_handle_pool.h"
 #include "jaxlib/gpu/vendor.h"
 #include "xla/ffi/api/ffi.h"
@@ -142,13 +143,8 @@ ffi::Error GetrfBatchedImpl(int64_t batch, int64_t cols, gpuStream_t stream,
                        gpuMemcpyDeviceToDevice, stream)));
   }
 
-  FFI_ASSIGN_OR_RETURN(
-      auto a_ptrs_host,
-      MakeBatchPointers(stream, out_data, workspace, batch, sizeof(T) * n * n));
-  // TODO(phawkins, danfm): ideally we would not need to synchronize here, but
-  // to avoid it we need a way to keep the host-side buffer alive until the copy
-  // completes.
-  FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuStreamSynchronize(stream)));
+  MakeBatchPointersAsync(stream, out_data, workspace, batch, sizeof(T) * n * n);
+  FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuGetLastError()));
 
   auto batch_ptrs = static_cast<T**>(workspace);
   FFI_RETURN_IF_ERROR_STATUS(GetrfBatchedKernel<T>::Run(

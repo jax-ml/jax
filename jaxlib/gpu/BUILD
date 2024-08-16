@@ -36,6 +36,8 @@ exports_files(srcs = [
     "linalg_kernels.cc",
     "linalg_kernels.cu.cc",
     "linalg_kernels.h",
+    "make_batch_pointers.cu.cc",
+    "make_batch_pointers.h",
     "prng.cc",
     "prng_kernels.cc",
     "prng_kernels.cu.cc",
