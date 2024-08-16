@@ -1,0 +1,21 @@
+name: "Wait For Connection"
+description: 'Action to wait for connection from user'
+inputs:
+  should-wait:
+    description: 'Should the action wait for user connection'
+    required: true
+    default: "0"
+  repository:
+      description: 'Repository name with owner. For example, actions/checkout'
+      default: ${{ github.repository }}
+runs:
+  using: "composite"
+  steps:
+  - name: Wait For Connection
+    shell: bash
+    env:
+      REPOSITORY: ${{ inputs.repository }}
+      INTERACTIVE_CI: ${{ inputs.should-wait }}
+      PYTHONUNBUFFERED: 1
+    run: |
+      python3 ./actions/ci_connection/wait_for_connection.py
