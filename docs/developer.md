@@ -353,17 +353,24 @@ sudo apt-get install libopenblas-dev -y
    has `custom_python_interpreter()` entry there, pointing to the version of
    Python you want to build.
 
-3) Run `bazel build @python_dev//:python_dev` to build Python interpreter. By default it will
-   be built with GCC compiler. If you wish to build with clang, you need to set
-   corresponding env variables to do so (
+3) Run `bazel build @python_dev//:python_dev -repo_env=HERMETIC_PYTHON_VERSION=3.12`
+   to build Python interpreter. Note, it is easy to confuse Python version used
+   to conduct the build (which is needed for technical reasons and is defined by
+   `HERMETIC_PYTHON_VERSION=3.12`) and the version of Python you are building
+   (defined by whichever version you specified in `custom_python_interpreter()`
+   on step 2). For build to succeed, please make sure that hermetic Python you
+   choose to conduct the build already exists in your configuraiton (the actual
+   version does not matter, as long as it is a working one). By default, Python
+   binary will be built with GCC compiler. If you wish to build it with clang,
+   you need to set corresponding env variables to do so (
    e.g. `--repo_env=CC=/usr/lib/llvm-17/bin/clang --repo_env=CXX=/usr/lib/llvm-17/bin/clang++`).
 
 4) Check the output of the previous command. At the very end of it you will find
    a code snippet for `python_register_toolchains()` entry with your newly built
    Python in it. Copy that code snippet in your `WORKSPACE` file either right
    after  `python_init_toolchains()` entry (to add the new version of Python) or
-   instead of it (to replace an existing version, like replacing 3.12 with
-   custom built variant of 3.12). The code snippet is generated to match your
+   instead of it (to replace an existing version, like replacing `3.12` with
+   custom built variant of `3.12`). The code snippet is generated to match your
    actual setup, so it should work as is, but you can customize it if you choose
    so (for example to change location of Python's `.tgz` file so it could be
    downloaded remotely instead of being on local machine).
@@ -371,7 +378,11 @@ sudo apt-get install libopenblas-dev -y
 5) Make sure there is an entry for your Python's version in `requirements`
    parameter for `python_init_repositories()` in your WORKSPACE file. For
    example for `Python 3.13` it should have something
-   like `"3.13": "//build:requirements_lock_3_13.txt"`.
+   like `"3.13": "//build:requirements_lock_3_13.txt"`. Note, the key in the
+   `requirements` parameter must always be in `"major.minor"` version format, so
+   even if you are building Python version `3.13.0rc1` the corresponding 
+   `requirements` entry must still be `"3.13": "//build:requirements_lock_3_13.txt"`,
+   **not** `"3.13.0rc1": "//build:requirements_lock_3_13_0rc1.txt"`.
 
 6) For unstable versions of Python, optionally (but highly recommended)
    run `bazel build //build:all_py_deps --repo_env=HERMETIC_PYTHON_VERSION="3.13"`,
