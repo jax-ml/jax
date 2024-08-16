@@ -133,6 +133,73 @@ jax.Array (:code:`jax.Array`)
     make_array_from_single_device_arrays
     make_array_from_process_local_data
 
+Array properties and methods
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. autosummary::
+  :toctree: _autosummary
+
+    Array.addressable_shards
+    Array.all
+    Array.any
+    Array.argmax
+    Array.argmin
+    Array.argpartition
+    Array.argsort
+    Array.astype
+    Array.at
+    Array.choose
+    Array.clip
+    Array.compress
+    Array.conj
+    Array.conjugate
+    Array.copy
+    Array.copy_to_host_async
+    Array.cumprod
+    Array.cumsum
+    Array.device
+    Array.diagonal
+    Array.dot
+    Array.dtype
+    Array.flat
+    Array.flatten
+    Array.global_shards
+    Array.imag
+    Array.is_fully_addressable
+    Array.is_fully_replicated
+    Array.item
+    Array.itemsize
+    Array.max
+    Array.mean
+    Array.min
+    Array.nbytes
+    Array.ndim
+    Array.nonzero
+    Array.prod
+    Array.ptp
+    Array.ravel
+    Array.real
+    Array.repeat
+    Array.reshape
+    Array.round
+    Array.searchsorted
+    Array.shape
+    Array.sharding
+    Array.size
+    Array.sort
+    Array.squeeze
+    Array.std
+    Array.sum
+    Array.swapaxes
+    Array.take
+    Array.to_device
+    Array.trace
+    Array.transpose
+    Array.var
+    Array.view
+    Array.T
+    Array.mT
+
 Vectorization (:code:`vmap`)
 ----------------------------
 

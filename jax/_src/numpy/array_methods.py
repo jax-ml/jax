@@ -26,7 +26,7 @@ __all__ = ['register_jax_array_methods']
 import abc
 from functools import partial, wraps
 import math
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 import jax
@@ -43,9 +43,8 @@ from jax._src.numpy import array_api_metadata
 from jax._src.numpy import lax_numpy
 from jax._src.numpy import reductions
 from jax._src.numpy import ufuncs
-from jax._src.numpy import util
 from jax._src.ops import scatter
-from jax._src.typing import Array, ArrayLike, DimSize, DTypeLike, Shape
+from jax._src.typing import Array, ArrayLike, DimSize, DTypeLike, Shape, StaticScalar
 from jax._src.util import safe_zip, safe_map
 
 map, unsafe_map = safe_map, map
@@ -59,7 +58,56 @@ zip, unsafe_zip = safe_zip, zip
 # functions, which can themselves handle instances from any of these classes.
 
 
-def _astype(arr: ArrayLike, dtype: DTypeLike, copy: bool = False, device: xc.Device | Sharding | None = None) -> Array:
+def _all(self: ArrayLike, axis: reductions.Axis = None, out: None = None,
+         keepdims: bool = False, *, where: ArrayLike | None = None) -> Array:
+  """Test whether all array elements along a given axis evaluate to True.
+
+  Refer to :func:`jax.numpy.all` for the full documentation.
+  """
+  return reductions.all(self, axis=axis, out=out, keepdims=keepdims, where=where)
+
+def _any(self: Array, axis: reductions.Axis = None, out: None = None,
+         keepdims: bool = False, *, where: ArrayLike | None = None) -> Array:
+  """Test whether any array elements along a given axis evaluate to True.
+
+  Refer to :func:`jax.numpy.any` for the full documentation.
+  """
+  return reductions.any(self, axis=axis, out=out, keepdims=keepdims, where=where)
+
+def _argmax(self: Array, axis: int | None = None, out: None = None,
+            keepdims: bool | None = None) -> Array:
+  """Return the index of the maximum value.
+
+  Refer to :func:`jax.numpy.argmax` for the full documentation.
+  """
+  return lax_numpy.argmax(self, axis=axis, out=out, keepdims=keepdims)
+
+def _argmin(self: Array, axis: int | None = None, out: None = None,
+            keepdims: bool | None = None) -> Array:
+  """Return the index of the minimum value.
+
+  Refer to :func:`jax.numpy.argmin` for the full documentation.
+  """
+  return lax_numpy.argmin(self, axis=axis, out=out, keepdims=keepdims)
+
+def _argpartition(self: Array, kth: int, axis: int = -1,
+                  kind: str = 'introselect', order: None = None) -> Array:
+  """Return the indices that partially sort the array.
+
+  Refer to :func:`jax.numpy.argpartition` for the full documentation.
+  """
+  return lax_numpy.argpartition(self, kth=kth, axis=axis, kind=kind, order=order)
+
+def _argsort(self: Array, axis: int | None = -1, *, kind: None = None, order: None = None,
+             stable: bool = True, descending: bool = False) -> Array:
+  """Return the indices that sort the array.
+
+  Refer to :func:`jax.numpy.argsort` for the full documentation.
+  """
+  return lax_numpy.argsort(self, axis=axis, kind=kind, order=order,
+                           stable=stable, descending=descending)
+
+def _astype(self: Array, dtype: DTypeLike, copy: bool = False, device: xc.Device | Sharding | None = None) -> Array:
   """Copy the array and cast to a specified dtype.
 
   This is implemented via :func:`jax.lax.convert_element_type`, which may
@@ -67,42 +115,300 @@ def _astype(arr: ArrayLike, dtype: DTypeLike, copy: bool = False, device: xc.Dev
   some cases. In particular, the details of float-to-int and int-to-float
   casts are implementation dependent.
   """
-  return lax_numpy.astype(arr, dtype, copy=copy, device=device)
+  return lax_numpy.astype(self, dtype, copy=copy, device=device)
 
-def _to_device(arr: ArrayLike, device: xc.Device | Sharding, *,
-               stream: int | Any | None = None):
-  if stream is not None:
-    raise NotImplementedError("stream argument of array.to_device()")
-  return api.device_put(arr, device)
+def _choose(self: Array, choices: Sequence[ArrayLike], out: None = None, mode: str = 'raise') -> Array:
+  """Construct an array choosing from elements of multiple arrays.
 
-
-def _nbytes(arr: ArrayLike) -> int:
-  """Total bytes consumed by the elements of the array."""
-  return np.size(arr) * dtypes.dtype(arr, canonicalize=True).itemsize
-
-
-def _item(a: Array, *args) -> bool | int | float | complex:
-  """Copy an element of an array to a standard Python scalar and return it."""
-  arr = core.concrete_or_error(np.asarray, a, context="This occurred in the item() method of jax.Array")
-  if dtypes.issubdtype(a.dtype, dtypes.extended):
-    raise TypeError(f"No Python scalar type for {a.dtype=}")
-  return arr.item(*args)
-
-def _itemsize(arr: ArrayLike) -> int:
-  """Length of one array element in bytes."""
-  return dtypes.dtype(arr, canonicalize=True).itemsize
-
+  Refer to :func:`jax.numpy.choose` for the full documentation.
+  """
+  return lax_numpy.choose(self, choices=choices)
 
 def _clip(number: ArrayLike,
           min: ArrayLike | None = None, max: ArrayLike | None = None) -> Array:
   """Return an array whose values are limited to a specified range.
 
-  Refer to :func:`jax.numpy.clip` for full documentation."""
+  Refer to :func:`jax.numpy.clip` for full documentation.
+  """
   return lax_numpy.clip(number, min=min, max=max)
 
+def _compress(self: Array, condition: ArrayLike,
+              axis: int | None = None, *, out: None = None,
+              size: int | None = None, fill_value: ArrayLike = 0) -> Array:
+  """Return selected slices of this array along given axis.
 
-def _transpose(a: Array, *args: Any) -> Array:
-  """Returns a view of the array with axes transposed.
+  Refer to :func:`jax.numpy.compress` for full documentation.
+  """
+  return lax_numpy.compress(condition, self, axis=axis, out=out,
+                            size=size, fill_value=fill_value)
+
+def _conj(self: Array) -> Array:
+  """Return the complex conjugate of the array.
+
+  Refer to :func:`jax.numpy.conj` for the full documentation.
+  """
+  return ufuncs.conj(self)
+
+def _conjugate(self: Array) -> Array:
+  """Return the complex conjugate of the array.
+
+  Refer to :func:`jax.numpy.conjugate` for the full documentation.
+  """
+  return ufuncs.conjugate(self)
+
+def _copy(self: Array) -> Array:
+  """Return a copy of the array.
+
+  Refer to :func:`jax.numpy.copy` for the full documentation.
+  """
+  return lax_numpy.copy(self)
+
+def _cumprod(self: Array, /, axis: int | Sequence[int] | None = None,
+             dtype: DTypeLike | None = None, out: None = None) -> Array:
+  """Return the cumulative product of the array.
+
+  Refer to :func:`jax.numpy.cumprod` for the full documentation.
+  """
+  return reductions.cumprod(self, axis=axis, dtype=dtype, out=out)
+
+def _cumsum(self: Array, /, axis: int | Sequence[int] | None = None,
+            dtype: DTypeLike | None = None, out: None = None) -> Array:
+  """Return the cumulative sum of the array.
+
+  Refer to :func:`jax.numpy.cumsum` for the full documentation.
+  """
+  return reductions.cumsum(self, axis=axis, dtype=dtype, out=out)
+
+def _diagonal(self: Array, offset: int = 0, axis1: int = 0, axis2: int = 1) -> Array:
+  """Return the specified diagonal from the array.
+
+  Refer to :func:`jax.numpy.diagonal` for the full documentation.
+  """
+  return lax_numpy.diagonal(self, offset=offset, axis1=axis1, axis2=axis2)
+
+def _dot(self: Array, b: ArrayLike, *, precision: lax_internal.PrecisionLike = None,
+         preferred_element_type: DTypeLike | None = None) -> Array:
+  """Compute the dot product of two arrays.
+
+  Refer to :func:`jax.numpy.dot` for the full documentation.
+  """
+  return lax_numpy.dot(self, b, precision=precision, preferred_element_type=preferred_element_type)
+
+def _flatten(self: Array, order: str = "C") -> Array:
+  """Flatten array into a 1-dimensional shape.
+
+  Refer to :func:`jax.numpy.ravel` for the full documentation.
+  """
+  return lax_numpy.ravel(self, order=order)
+
+def _imag_property(self: Array) -> Array:
+  """Return the imaginary part of the array."""
+  return ufuncs.imag(self)
+
+def _item(self: Array, *args: int) -> bool | int | float | complex:
+  """Copy an element of an array to a standard Python scalar and return it."""
+  arr = core.concrete_or_error(np.asarray, self, context="This occurred in the item() method of jax.Array")
+  if dtypes.issubdtype(self.dtype, dtypes.extended):
+    raise TypeError(f"No Python scalar type for {arr.dtype=}")
+  return arr.item(*args)
+
+def _itemsize_property(self: Array) -> int:
+  """Length of one array element in bytes."""
+  return dtypes.dtype(self, canonicalize=True).itemsize
+
+def _matrix_transpose_property(self: Array):
+  """Compute the (batched) matrix transpose.
+
+  Refer to :func:`jax.numpy.matrix_transpose` for details.
+  """
+  return lax_numpy.matrix_transpose(self)
+
+def _max(self: Array, axis: reductions.Axis = None, out: None = None,
+         keepdims: bool = False, initial: ArrayLike | None = None,
+         where: ArrayLike | None = None) -> Array:
+  """Return the maximum of array elements along a given axis.
+
+  Refer to :func:`jax.numpy.max` for the full documentation.
+  """
+  return reductions.max(self, axis=axis, out=out, keepdims=keepdims,
+                        initial=initial, where=where)
+
+
+def _mean(self: Array, axis: reductions.Axis = None, dtype: DTypeLike | None = None,
+          out: None = None, keepdims: bool = False, *,
+          where: ArrayLike | None = None) -> Array:
+  """Return the mean of array elements along a given axis.
+
+  Refer to :func:`jax.numpy.mean` for the full documentation.
+  """
+  return reductions.mean(self, axis=axis, dtype=dtype, out=out,
+                         keepdims=keepdims, where=where)
+
+def _min(self: Array, axis: reductions.Axis = None, out: None = None,
+         keepdims: bool = False, initial: ArrayLike | None = None,
+         where: ArrayLike | None = None) -> Array:
+  """Return the minimum of array elements along a given axis.
+
+  Refer to :func:`jax.numpy.min` for the full documentation.
+  """
+  return reductions.min(self, axis=axis, out=out, keepdims=keepdims,
+                        initial=initial, where=where)
+
+def _nbytes_property(self: Array) -> int:
+  """Total bytes consumed by the elements of the array."""
+  return np.size(self) * dtypes.dtype(self, canonicalize=True).itemsize
+
+def _nonzero(self: Array, *, size: int | None = None,
+             fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None
+    ) -> tuple[Array, ...]:
+  """Return indices of nonzero elements of an array.
+
+  Refer to :func:`jax.numpy.nonzero` for the full documentation.
+  """
+  return lax_numpy.nonzero(self, size=size, fill_value=fill_value)
+
+def _prod(self: Array, axis: reductions.Axis = None, dtype: DTypeLike | None = None,
+          out: None = None, keepdims: bool = False,
+          initial: ArrayLike | None = None, where: ArrayLike | None = None,
+          promote_integers: bool = True) -> Array:
+  """Return product of the array elements over a given axis.
+
+  Refer to :func:`jax.numpy.prod` for the full documentation.
+  """
+  return reductions.prod(self, axis=axis, dtype=dtype, out=out, keepdims=keepdims,
+                         initial=initial, where=where, promote_integers=promote_integers)
+
+def _ptp(self: Array, axis: reductions.Axis = None, out: None = None,
+         keepdims: bool = False) -> Array:
+  """Return the peak-to-peak range along a given axis.
+
+  Refer to :func:`jax.numpy.ptp` for the full documentation.
+  """
+  return reductions.ptp(self, axis=axis, out=out, keepdims=keepdims)
+
+def _real_property(self: Array) -> Array:
+  """Return the real part of the array."""
+  return ufuncs.real(self)
+
+def _repeat(self: Array, repeats: ArrayLike, axis: int | None = None, *,
+            total_repeat_length: int | None = None) -> Array:
+  """Construct an array from repeated elements.
+
+  Refer to :func:`jax.numpy.repeat` for the full documentation.
+  """
+  return lax_numpy.repeat(self, repeats=repeats, axis=axis, total_repeat_length=total_repeat_length)
+
+def _reshape(self: Array, *args: Any, order: str = "C") -> Array:
+  """Returns an array containing the same data with a new shape.
+
+  Refer to :func:`jax.numpy.reshape` for full documentation.
+  """
+  __tracebackhide__ = True
+  newshape = _compute_newshape(self, args[0] if len(args) == 1 else args)
+  if order == "C":
+    return lax.reshape(self, newshape, None)
+  elif order == "F":
+    dims = list(range(self.ndim)[::-1])
+    return lax.reshape(self, newshape[::-1], dims).T
+  elif order == "A":
+    raise NotImplementedError("np.reshape order=A is not implemented.")
+  else:
+    raise ValueError(f"Unexpected value for 'order' argument: {order}.")
+
+def _round(self: Array, decimals: int = 0, out: None = None) -> Array:
+  """Round array elements to a given decimal.
+
+  Refer to :func:`jax.numpy.round` for full documentation.
+  """
+  return lax_numpy.round(self, decimals=decimals, out=out)
+
+def _searchsorted(self: Array, v: ArrayLike, side: str = 'left',
+                  sorter: ArrayLike | None = None, *, method: str = 'scan') -> Array:
+  """Perform a binary search within a sorted array.
+
+  Refer to :func:`jax.numpy.searchsorted` for full documentation."""
+  return lax_numpy.searchsorted(self, v, side=side, sorter=sorter, method=method)
+
+def _sort(self: Array, axis: int | None = -1, *, kind: None = None,
+          order: None = None, stable: bool = True, descending: bool = False) -> Array:
+  """Return a sorted copy of an array.
+
+  Refer to :func:`jax.numpy.sort` for full documentation.
+  """
+  return lax_numpy.sort(self, axis=axis, kind=kind, order=order,
+                        stable=stable, descending=descending)
+
+def _squeeze(self: Array, axis: int | Sequence[int] | None = None) -> Array:
+  """Remove one or more length-1 axes from array.
+
+  Refer to :func:`jax.numpy.squeeze` for full documentation.
+  """
+  return lax_numpy.squeeze(self, axis=axis)
+
+def _std(self: Array, axis: reductions.Axis = None, dtype: DTypeLike | None = None,
+         out: None = None, ddof: int = 0, keepdims: bool = False, *,
+         where: ArrayLike | None = None, correction: int | float | None = None) -> Array:
+  """Compute the standard deviation along a given axis.
+
+  Refer to :func:`jax.numpy.std` for full documentation.
+  """
+  return reductions.std(self, axis=axis, dtype=dtype, out=out, ddof=ddof, keepdims=keepdims,
+                        where=where, correction=correction)
+
+def _sum(self: Array, axis: reductions.Axis = None, dtype: DTypeLike | None = None,
+         out: None = None, keepdims: bool = False, initial: ArrayLike | None = None,
+         where: ArrayLike | None = None, promote_integers: bool = True) -> Array:
+  """Sum of the elements of the array over a given axis.
+
+  Refer to :func:`jax.numpy.sum` for full documentation.
+  """
+  return reductions.sum(self, axis=axis, dtype=dtype, out=out, keepdims=keepdims,
+                        where=where, promote_integers=promote_integers)
+
+def _swapaxes(self: Array, axis1: int, axis2: int) -> Array:
+  """Swap two axes of an array.
+
+  Refer to :func:`jax.numpy.swapaxes` for full documentation.
+  """
+  return lax_numpy.swapaxes(self, axis1=axis1, axis2=axis2)
+
+
+def _take(self: Array, indices: ArrayLike, axis: int | None = None, out: None = None,
+          mode: str | None = None, unique_indices: bool = False, indices_are_sorted: bool = False,
+          fill_value: StaticScalar | None = None) -> Array:
+  """Take elements from an array.
+
+  Refer to :func:`jax.numpy.take` for full documentation.
+  """
+  return lax_numpy.take(self, indices, axis=axis, out=out, mode=mode, unique_indices=unique_indices,
+                        indices_are_sorted=indices_are_sorted, fill_value=fill_value)
+
+def _to_device(self: Array, device: xc.Device | Sharding, *,
+               stream: int | Any | None = None):
+  """Return a copy of the array on the specified device
+
+  Args:
+    device: :class:`~jax.Device` or :class:`~jax.sharding.Sharding`
+      to which the created array will be committed.
+    stream: not implemented, passing a non-None value will lead to an error.
+  Returns:
+    copy of array placed on the specified device or devices.
+  """
+  if stream is not None:
+    raise NotImplementedError("stream argument of array.to_device()")
+  return api.device_put(self, device)
+
+
+def _trace(self: Array, offset: int | ArrayLike = 0, axis1: int = 0, axis2: int = 1,
+           dtype: DTypeLike | None = None, out: None = None) -> Array:
+  """Return the sum along the diagonal.
+
+  Refer to :func:`jax.numpy.trace` for full documentation.
+  """
+  return lax_numpy.trace(self, offset=offset, axis1=axis1, axis2=axis2, dtype=dtype, out=out)
+
+def _transpose(self: Array, *args: Any) -> Array:
+  """Returns a copy of the array with axes transposed.
 
   Refer to :func:`jax.numpy.transpose` for full documentation.
   """
@@ -112,10 +418,27 @@ def _transpose(a: Array, *args: Any) -> Array:
     axis = args[0] if args[0] is None else _ensure_index_tuple(args[0])
   else:
     axis = _ensure_index_tuple(args)
-  return lax_numpy.transpose(a, axis)
+  return lax_numpy.transpose(self, axis)
+
+def _transpose_property(self: Array):
+  """Compute the all-axis array transpose.
+
+  Refer to :func:`jax.numpy.transpose` for details.
+  """
+  return lax_numpy.transpose(self)
+
+def _var(self: Array, axis: reductions.Axis = None, dtype: DTypeLike | None = None,
+         out: None = None, ddof: int = 0, keepdims: bool = False, *,
+         where: ArrayLike | None = None, correction: int | float | None = None) -> Array:
+  """Compute the variance along a given axis.
+
+  Refer to :func:`jax.numpy.var` for full documentation.
+  """
+  return reductions.var(self, axis=axis, dtype=dtype, out=out, ddof=ddof,
+                        keepdims=keepdims, where=where, correction=correction)
 
 
-def _compute_newshape(a: ArrayLike, newshape: DimSize | Shape) -> Shape:
+def _compute_newshape(arr: Array, newshape: DimSize | Shape) -> Shape:
   """Fixes a -1 value in newshape, if present."""
   orig_newshape = newshape  # for error messages
   try:
@@ -130,43 +453,24 @@ def _compute_newshape(a: ArrayLike, newshape: DimSize | Shape) -> Shape:
   if neg1s:
     i, = neg1s
     other_sizes = (*newshape[:i], *newshape[i+1:])
-    if (all(isinstance(d, int) for d in (*np.shape(a), *other_sizes)) and
-        np.size(a) % math.prod(other_sizes) != 0):
-      raise TypeError(f"cannot reshape array of shape {np.shape(a)} (size {np.size(a)}) "
+    if (all(isinstance(d, int) for d in (*arr.shape, *other_sizes)) and
+        arr.size % math.prod(other_sizes) != 0):
+      raise TypeError(f"cannot reshape array of shape {arr.shape} (size {arr.size}) "
                       f"into shape {orig_newshape} because the product of "
                       f"specified axis sizes ({math.prod(other_sizes)}) does "
-                      f"not evenly divide {np.size(a)}")
-    sz = core.cancel_divide_tracers(np.shape(a), other_sizes)
+                      f"not evenly divide {arr.size}")
+    sz = core.cancel_divide_tracers(arr.shape, other_sizes)
     if sz is not None:
       return (*newshape[:i], sz, *newshape[i+1:])
   else:
-    if (all(isinstance(d, int) for d in (*np.shape(a), *newshape)) and
-        np.size(a) != math.prod(newshape)):
-      raise TypeError(f"cannot reshape array of shape {np.shape(a)} (size {np.size(a)}) "
+    if (all(isinstance(d, int) for d in (*arr.shape, *newshape)) and
+        arr.size != math.prod(newshape)):
+      raise TypeError(f"cannot reshape array of shape {arr.shape} (size {arr.size}) "
                       f"into shape {orig_newshape} (size {math.prod(newshape)})")
-  return tuple(-core.divide_shape_sizes(np.shape(a), newshape)
+  return tuple(-core.divide_shape_sizes(arr.shape, newshape)
                if core.definitely_equal(d, -1) else d for d in newshape)
 
-
-def _reshape(a: Array, *args: Any, order: str = "C") -> Array:
-  """Returns an array containing the same data with a new shape.
-
-  Refer to :func:`jax.numpy.reshape` for full documentation.
-  """
-  __tracebackhide__ = True
-  newshape = _compute_newshape(a, args[0] if len(args) == 1 else args)
-  if order == "C":
-    return lax.reshape(a, newshape, None)
-  elif order == "F":
-    dims = list(range(a.ndim)[::-1])
-    return lax.reshape(a, newshape[::-1], dims).T
-  elif order == "A":
-    raise NotImplementedError("np.reshape order=A is not implemented.")
-  else:
-    raise ValueError(f"Unexpected value for 'order' argument: {order}.")
-
-
-def _view(arr: Array, dtype: DTypeLike | None = None, type: None = None) -> Array:
+def _view(self: Array, dtype: DTypeLike | None = None, type: None = None) -> Array:
   """Return a bitwise copy of the array, viewed as a new dtype.
 
   This is fuller-featured wrapper around :func:`jax.lax.bitcast_convert_type`.
@@ -187,72 +491,70 @@ def _view(arr: Array, dtype: DTypeLike | None = None, type: None = None) -> Arra
   should only contain 0 or 1 bytes. Otherwise, results may be unpredictable or
   may change depending on how the result is used.
 
-  This conversion is guaranteed and safe:
-  >>> jnp.array([1, 0, 1], dtype=jnp.int8).view(jnp.bool_)
-  Array([ True, False,  True], dtype=bool)
+  This conversion is guaranteed and safe::
+
+    >>> jnp.array([1, 0, 1], dtype=jnp.int8).view(jnp.bool_)
+    Array([ True, False,  True], dtype=bool)
 
   However, there are no guarantees about the results of any expression involving
   a view such as this: `jnp.array([1, 2, 3], dtype=jnp.int8).view(jnp.bool_)`.
   In particular, the results may change between JAX releases and depending on
   the platform. To safely convert such an array to a boolean array, compare it
-  with `0`:
+  with `0`::
 
-  >>> jnp.array([1, 2, 0], dtype=jnp.int8) != 0
-  Array([ True,  True, False], dtype=bool)
+    >>> jnp.array([1, 2, 0], dtype=jnp.int8) != 0
+    Array([ True,  True, False], dtype=bool)
   """
   if type is not None:
     raise NotImplementedError("`type` argument of array.view() is not supported.")
 
-  util.check_arraylike("view", arr)
-  arr = lax_numpy.asarray(arr)
-
   dtypes.check_user_dtype_supported(dtype, "view")
   dtype = dtypes.canonicalize_dtype(dtype)
 
-  if arr.ndim == 0:
-    if arr.dtype.itemsize != dtype.itemsize:
+  if self.ndim == 0:
+    if self.dtype.itemsize != dtype.itemsize:
       raise ValueError("view() of a 0d array is only supported if the itemsize is unchanged.")
-    return _view(lax.expand_dims(arr, (0,)), dtype).squeeze()
+    return _view(lax.expand_dims(self, (0,)), dtype).squeeze()
 
-  if (arr.shape[-1] * arr.dtype.itemsize) % dtype.itemsize != 0:
+  if (self.shape[-1] * self.dtype.itemsize) % dtype.itemsize != 0:
     raise ValueError("When changing to a larger dtype, its size must be a divisor "
                      "of the total size in bytes of the last axis of the array.")
 
-  if arr.dtype == dtype:
-    return arr
+  if self.dtype == dtype:
+    return self
 
   # lax.bitcast_convert_type does not support bool or complex; in these cases we
   # cast to a compatible type and recursively call _view for simplicity.
-  if arr.dtype == bool:
-    return _view(arr.astype('uint8'), dtype)
+  if self.dtype == bool:
+    return _view(self.astype('uint8'), dtype)
 
-  if lax_numpy.issubdtype(arr.dtype, np.complexfloating):
-    new_shape = (*arr.shape[:-1], arr.shape[-1] * 2)
-    new_dtype = lax_numpy.finfo(arr.dtype).dtype
-    arr = (lax_numpy.zeros(new_shape, new_dtype)
-             .at[..., 0::2].set(arr.real)
-             .at[..., 1::2].set(arr.imag))
-    return _view(arr, dtype)
+  if lax_numpy.issubdtype(self.dtype, np.complexfloating):
+    new_shape = (*self.shape[:-1], self.shape[-1] * 2)
+    new_dtype = lax_numpy.finfo(self.dtype).dtype
+    self = (lax_numpy.zeros(new_shape, new_dtype)
+             .at[..., 0::2].set(self.real)
+             .at[..., 1::2].set(self.imag))
+    return _view(self, dtype)
 
   if dtype == bool:
-    return _view(arr, np.uint8).astype(bool)
+    return _view(self, np.uint8).astype(bool)
 
   if lax_numpy.issubdtype(dtype, np.complexfloating):
-    out = _view(arr, lax_numpy.finfo(dtype).dtype).astype(dtype)
+    out = _view(self, lax_numpy.finfo(dtype).dtype).astype(dtype)
     return out[..., 0::2] + 1j * out[..., 1::2]
 
   # lax.bitcast_convert_type adds or subtracts dimensions depending on the
   # relative bitwidths of the dtypes; we account for that with reshapes.
-  if arr.dtype.itemsize < dtype.itemsize:
-    factor = dtype.itemsize // arr.dtype.itemsize
-    arr = arr.reshape(*arr.shape[:-1], arr.shape[-1] // factor, factor)
-    return lax.bitcast_convert_type(arr, dtype)
+  if self.dtype.itemsize < dtype.itemsize:
+    factor = dtype.itemsize // self.dtype.itemsize
+    out = self.reshape(*self.shape[:-1], self.shape[-1] // factor, factor)
+    return lax.bitcast_convert_type(out, dtype)
 
-  if arr.dtype.itemsize > dtype.itemsize:
-    out = lax.bitcast_convert_type(arr, dtype)
+  if self.dtype.itemsize > dtype.itemsize:
+    out = lax.bitcast_convert_type(self, dtype)
     return out.reshape(*out.shape[:-2], out.shape[-2] * out.shape[-1])
 
-  return lax.bitcast_convert_type(arr, dtype)
+  return lax.bitcast_convert_type(self, dtype)
 
 
 def _notimplemented_flat(self):
@@ -291,9 +593,6 @@ def _operator_round(number: ArrayLike, ndigits: int | None = None) -> Array:
   # If `ndigits` is None, for a builtin float round(7.5) returns an integer.
   return out.astype(int) if ndigits is None else out
 
-def _copy(self: Array) -> Array:
-  return self.copy()
-
 def _deepcopy(self: Array, memo: Any) -> Array:
   del memo  # unused
   return self.copy()
@@ -311,19 +610,9 @@ def __array_module__(self, types):
     return NotImplemented
 
 
-def _compress_method(a: ArrayLike, condition: ArrayLike,
-                     axis: int | None = None, *, out: None = None,
-                     size: int | None = None, fill_value: ArrayLike = 0) -> Array:
-  """Return selected slices of this array along given axis.
-
-  Refer to :func:`jax.numpy.compress` for full documentation."""
-  return lax_numpy.compress(condition, a, axis=axis, out=out,
-                            size=size, fill_value=fill_value)
-
-
 @core.stash_axis_env()
 @partial(jax.jit, static_argnums=(1,2,3))
-def _multi_slice(arr: ArrayLike,
+def _multi_slice(self: Array,
                  start_indices: tuple[tuple[int, ...]],
                  limit_indices: tuple[tuple[int, ...]],
                  removed_dims: tuple[tuple[int, ...]]) -> list[Array]:
@@ -334,13 +623,13 @@ def _multi_slice(arr: ArrayLike,
   """
   results: list[Array] = []
   for starts, limits, removed in zip(start_indices, limit_indices, removed_dims):
-    sliced = lax.slice(arr, starts, limits)
+    sliced = lax.slice(self, starts, limits)
     if removed:
       sliced = lax.squeeze(sliced, removed)
     results.append(sliced)
   return results
 
-# The next two functions are related to iter(device_array), implemented here to
+# The next two functions are related to iter(array), implemented here to
 # avoid circular imports.
 @jax.jit
 def _unstack(x: Array) -> list[Array]:
@@ -667,46 +956,46 @@ _array_operators = {
 
 _array_methods = {
   "__array_namespace__": array_api_metadata.__array_namespace__,
-  "all": reductions.all,
-  "any": reductions.any,
-  "argmax": lax_numpy.argmax,
-  "argmin": lax_numpy.argmin,
-  "argpartition": lax_numpy.argpartition,
-  "argsort": lax_numpy.argsort,
+  "all": _all,
+  "any": _any,
+  "argmax": _argmax,
+  "argmin": _argmin,
+  "argpartition": _argpartition,
+  "argsort": _argsort,
   "astype": _astype,
-  "choose": lax_numpy.choose,
+  "choose": _choose,
   "clip": _clip,
-  "conj": ufuncs.conj,
-  "conjugate": ufuncs.conjugate,
-  "compress": _compress_method,
-  "copy": lax_numpy.copy,
-  "cumprod": reductions.cumprod,
-  "cumsum": reductions.cumsum,
-  "diagonal": lax_numpy.diagonal,
-  "dot": lax_numpy.dot,
-  "flatten": lax_numpy.ravel,
+  "compress": _compress,
+  "conj": _conj,
+  "conjugate": _conjugate,
+  "copy": _copy,
+  "cumprod": _cumprod,
+  "cumsum": _cumsum,
+  "diagonal": _diagonal,
+  "dot": _dot,
+  "flatten": _flatten,
   "item": _item,
-  "max": reductions.max,
-  "mean": reductions.mean,
-  "min": reductions.min,
-  "nonzero": lax_numpy.nonzero,
-  "prod": reductions.prod,
-  "ptp": reductions.ptp,
-  "ravel": lax_numpy.ravel,
-  "repeat": lax_numpy.repeat,
+  "max": _max,
+  "mean": _mean,
+  "min": _min,
+  "nonzero": _nonzero,
+  "prod": _prod,
+  "ptp": _ptp,
+  "ravel": _flatten,
+  "repeat": _repeat,
   "reshape": _reshape,
-  "round": lax_numpy.round,
-  "searchsorted": lax_numpy.searchsorted,
-  "sort": lax_numpy.sort,
-  "squeeze": lax_numpy.squeeze,
-  "std": reductions.std,
-  "sum": reductions.sum,
-  "swapaxes": lax_numpy.swapaxes,
-  "take": lax_numpy.take,
+  "round": _round,
+  "searchsorted": _searchsorted,
+  "sort": _sort,
+  "squeeze": _squeeze,
+  "std": _std,
+  "sum": _sum,
+  "swapaxes": _swapaxes,
+  "take": _take,
   "to_device": _to_device,
-  "trace": lax_numpy.trace,
+  "trace": _trace,
   "transpose": _transpose,
-  "var": reductions.var,
+  "var": _var,
   "view": _view,
 
   # Methods exposed in order to avoid circular imports
@@ -721,12 +1010,12 @@ _impl_only_array_methods = {
 
 _array_properties = {
   "flat": _notimplemented_flat,
-  "T": lax_numpy.transpose,
-  "mT": lax_numpy.matrix_transpose,
-  "real": ufuncs.real,
-  "imag": ufuncs.imag,
-  "nbytes": _nbytes,
-  "itemsize": _itemsize,
+  "T": _transpose_property,
+  "mT": _matrix_transpose_property,
+  "real": _real_property,
+  "imag": _imag_property,
+  "nbytes": _nbytes_property,
+  "itemsize": _itemsize_property,
   "at": _IndexUpdateHelper,
 }
 
@@ -772,14 +1061,14 @@ def _set_tracer_aval_forwarding(tracer, exclude=()):
     if prop_name not in exclude:
       setattr(tracer, prop_name, _forward_property_to_aval(prop_name))
 
-def _set_array_base_attributes(device_array, include=None, exclude=None):
+def _set_array_base_attributes(array_impl, include=None, exclude=None):
   # Forward operators, methods, and properties on Array to lax_numpy
   # functions (with no Tracers involved; this forwarding is direct)
   def maybe_setattr(attr_name, target):
     if exclude is not None and attr_name in exclude:
       return
     if not include or attr_name in include:
-      setattr(device_array, attr_name, target)
+      setattr(array_impl, attr_name, target)
 
   for operator_name, function in _array_operators.items():
     maybe_setattr(f"__{operator_name}__", function)
@@ -789,10 +1078,10 @@ def _set_array_base_attributes(device_array, include=None, exclude=None):
     maybe_setattr(prop_name, property(prop))
 
   for name, func in _impl_only_array_methods.items():
-    setattr(device_array, name, func)
+    setattr(array_impl, name, func)
 
-def _set_array_attributes(device_array):
-  setattr(device_array, "__array_module__", __array_module__)
+def _set_array_attributes(array_impl):
+  setattr(array_impl, "__array_module__", __array_module__)
 
 def _make_abstract_method(name, func):
   @abc.abstractmethod
