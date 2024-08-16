@@ -192,11 +192,10 @@ struct QrFactorization {
 
   inline static FnType* fn = nullptr;
 
-  static ::xla::ffi::Error Kernel(::xla::ffi::Buffer<dtype> x,
-                                  ::xla::ffi::ResultBuffer<dtype> x_out,
-                                  ::xla::ffi::ResultBuffer<dtype> tau,
-                                  ::xla::ffi::ResultBuffer<LapackIntDtype> info,
-                                  ::xla::ffi::ResultBuffer<dtype> work);
+  static ::xla::ffi::Error Kernel(
+      ::xla::ffi::Buffer<dtype> x, ::xla::ffi::ResultBuffer<dtype> x_out,
+      ::xla::ffi::ResultBuffer<dtype> tau,
+      ::xla::ffi::ResultBuffer<LapackIntDtype> info);
 
   static int64_t GetWorkspaceSize(lapack_int x_rows, lapack_int x_cols);
 };

@@ -336,18 +336,6 @@ NB_MODULE(_lapack, m) {
   m.def("lapack_zhetrd_workspace", &Sytrd<std::complex<double>>::Workspace,
         nb::arg("lda"), nb::arg("n"));
   // FFI Kernel LAPACK Workspace Size Queries
-  m.def("lapack_sgeqrf_workspace_ffi",
-        &QrFactorization<DataType::F32>::GetWorkspaceSize, nb::arg("m"),
-        nb::arg("n"));
-  m.def("lapack_dgeqrf_workspace_ffi",
-        &QrFactorization<DataType::F64>::GetWorkspaceSize, nb::arg("m"),
-        nb::arg("n"));
-  m.def("lapack_cgeqrf_workspace_ffi",
-        &QrFactorization<DataType::C64>::GetWorkspaceSize, nb::arg("m"),
-        nb::arg("n"));
-  m.def("lapack_zgeqrf_workspace_ffi",
-        &QrFactorization<DataType::C128>::GetWorkspaceSize, nb::arg("m"),
-        nb::arg("n"));
   m.def("lapack_sorgqr_workspace_ffi",
         &OrthogonalQr<DataType::F32>::GetWorkspaceSize, nb::arg("m"),
         nb::arg("n"), nb::arg("k"));
