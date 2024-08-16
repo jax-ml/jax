@@ -118,7 +118,7 @@ def _fetch_jax_metadata(xla_path):
         except Exception as ex:
             LOG.warning("Exception while retrieving xla_commit: %s" % ex)
 
-    cmd = ["python", "setup.py", "-V"]
+    cmd = ["python3", "setup.py", "-V"]
     env = dict(os.environ)
     env["JAX_RELEASE"] = "1"
 
