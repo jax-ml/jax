@@ -623,18 +623,15 @@ def main():
       python_version=python_version,
   )
 
-  if args.requirements_update:
+  if args.requirements_update or args.requirements_nightly_update:
+    if args.requirements_update:
+      task = "//build:requirements.update"
+    else:  # args.requirements_nightly_update
+      task = "//build:requirements_nightly.update"
     update_command = ([bazel_path] + args.bazel_startup_options +
-      ["run", "--verbose_failures=true", "//build:requirements.update"])
+      ["run", "--verbose_failures=true", task, *args.bazel_options])
     print(" ".join(update_command))
     shell(update_command)
-    return
-
-  if args.requirements_nightly_update:
-    update_nightly_command = ([bazel_path] + args.bazel_startup_options +
-      ["run", "--verbose_failures=true", "//build:requirements_nightly.update"])
-    print(" ".join(update_nightly_command))
-    shell(update_nightly_command)
     return
 
   if args.configure_only:
