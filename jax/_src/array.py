@@ -883,11 +883,11 @@ def make_array_from_process_local_data(
 
   Args:
     sharding: sharding of the global tensor.
-    host_local_data: data on the host to be placed on local devices. Each
+    local_data: data on the host to be placed on local devices. Each
       dimension should either match global_shape, or match
       num_addressable_indices(dim).
     global_shape: the target shape of the global tensor. If None,
-      will infer from host_local_data and sharding.
+      will infer from local_data and sharding.
 
   Returns:
     Tensor that will have sharding=sharding and of shape global_shape.
