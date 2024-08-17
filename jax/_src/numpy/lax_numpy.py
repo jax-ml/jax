@@ -385,13 +385,6 @@ def trunc(x: ArrayLike) -> Array:
   return where(lax.lt(x, _lax_const(x, 0)), ufuncs.ceil(x), ufuncs.floor(x))
 
 
-_CONV_PREFERRED_ELEMENT_TYPE_DESCRIPTION = """
-preferred_element_type : dtype, optional
-    If specified, accumulate results and return a result of the given data type.
-    If not specified, the function instead follows the numpy convention of always
-    accumulating results and returning an inexact dtype.
-"""
-
 @partial(jit, static_argnames=['mode', 'op', 'precision', 'preferred_element_type'])
 def _conv(x: Array, y: Array, mode: str, op: str, precision: PrecisionLike,
           preferred_element_type: DTypeLike | None = None) -> Array:
