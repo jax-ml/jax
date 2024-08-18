@@ -4994,13 +4994,15 @@ def padtype_to_pads(in_shape, window_shape, window_strides, padding):
                  for d in (out_shape - 1) * window_strides +
                           window_shape - in_shape)
     if padding == PaddingType.SAME:
-      return [
+      pads = [
           (pad_size // 2, pad_size - pad_size // 2) for pad_size in pad_sizes
       ]
     else:
-      return [
+      pads = [
           (pad_size - pad_size // 2, pad_size // 2) for pad_size in pad_sizes
       ]
+    # Avoids verbose numpy scalars in jaxprs.
+    return [p.item() if isinstance(p, np.generic) else p for p in pads]
   elif padding == PaddingType.VALID:
     return [(0, 0)] * len(in_shape)
   else:
