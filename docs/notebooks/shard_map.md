@@ -378,7 +378,7 @@ values, as this reference function:
 
 ```python
 def f_shmapped_ref(x):
-  x_blocks = jnp.array_split(x, mesh.shape[0])
+  x_blocks = jnp.array_split(x, mesh.shape['i'])
   y_blocks = [f(x_blk) for x_blk in x_blocks]
   return jnp.concatenate(y_blocks)
 ```
