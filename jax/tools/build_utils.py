@@ -59,6 +59,7 @@ def platform_tag(cpu: str) -> str:
     ("Darwin", "x86_64"): ("macosx_10_14", "x86_64"),
     ("Darwin", "arm64"): ("macosx_11_0", "arm64"),
     ("Windows", "AMD64"): ("win", "amd64"),
+    ("Windows", "x86_64"): ("win", "amd64"),
   }[(platform.system(), cpu)]
   return f"{platform_name}_{cpu_name}"
 
