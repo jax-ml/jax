@@ -50,6 +50,7 @@ ROCM_BUILD_JOB=""
 ROCM_BUILD_NUM=""
 BASE_DOCKER="ubuntu:20.04"
 CUSTOM_INSTALL=""
+JAX_USE_CLANG=""
 POSITIONAL_ARGS=()
 
 RUNTIME_FLAG=1
@@ -87,6 +88,10 @@ while [[ $# -gt 0 ]]; do
           ;;
         --rocm_build)
           ROCM_BUILD_NUM="$2"
+          shift 2
+          ;;
+        --use_clang)
+          JAX_USE_CLANG="$2"
           shift 2
           ;;
         *)
@@ -135,6 +140,12 @@ echo "Building (runtime) container (${DOCKER_IMG_NAME}) with Dockerfile($DOCKERF
 
 export XLA_CLONE_DIR="${XLA_CLONE_DIR:-}"
 
+# default to gcc
+JAX_COMPILER="gcc"
+if [ -n "$JAX_USE_CLANG" ]; then
+    JAX_COMPILER="clang"
+fi
+
 # ci_build.sh is mostly a compatibility wrapper for ci_build
 
 # 'dist_docker' will run 'dist_wheels' followed by a Docker build to create the "JAX image",
@@ -145,6 +156,7 @@ export XLA_CLONE_DIR="${XLA_CLONE_DIR:-}"
     --xla-source-dir=$XLA_CLONE_DIR \
     --rocm-build-job=$ROCM_BUILD_JOB \
     --rocm-build-num=$ROCM_BUILD_NUM \
+    --compiler=$JAX_COMPILER \
     dist_docker \
     --dockerfile $DOCKERFILE_PATH \
     --image-tag $DOCKER_IMG_NAME

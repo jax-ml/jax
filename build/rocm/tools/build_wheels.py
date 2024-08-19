@@ -56,7 +56,8 @@ def update_rocm_targets(rocm_path, targets):
     open(version_fp, "a").close()
 
 
-def build_jaxlib_wheel(jax_path, rocm_path, python_version, xla_path=None):
+def build_jaxlib_wheel(jax_path, rocm_path, python_version, xla_path=None, compiler="gcc"):
+    use_clang = "true" if compiler == "clang" else "false"
     cmd = [
         "python",
         "build/build.py",
@@ -64,6 +65,7 @@ def build_jaxlib_wheel(jax_path, rocm_path, python_version, xla_path=None):
         "--build_gpu_plugin",
         "--gpu_plugin_rocm_version=60",
         "--rocm_path=%s" % rocm_path,
+        "--use_clang=%s" % use_clang,
     ]
 
     if xla_path:
@@ -194,6 +196,12 @@ def parse_args():
         default=None,
         help="Optional directory where XLA source is located to use instead of JAX builtin XLA",
     )
+    p.add_argument(
+        "--compiler",
+        type=str,
+        default="gcc",
+        help="Compiler backend to use when compiling jax/jaxlib",
+    )
 
     p.add_argument("jax_path", help="Directory where JAX source directory is located")
 
@@ -225,7 +233,7 @@ def main():
     update_rocm_targets(rocm_path, GPU_DEVICE_TARGETS)
 
     for py in python_versions:
-        build_jaxlib_wheel(args.jax_path, rocm_path, py, args.xla_path)
+        build_jaxlib_wheel(args.jax_path, rocm_path, py, args.xla_path, args.compiler)
         wheel_paths = find_wheels(os.path.join(args.jax_path, "dist"))
         for wheel_path in wheel_paths:
             # skip jax wheel since it is non-platform
