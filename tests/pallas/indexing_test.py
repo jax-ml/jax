@@ -15,7 +15,9 @@
 """Tests for Pallas indexing logic and abstractions."""
 
 from __future__ import annotations
+from collections.abc import Sequence
 import sys
+from typing import NoReturn
 import unittest
 
 from absl.testing import absltest
@@ -617,6 +619,131 @@ class IndexerOpsTest(PallasBaseTest):
 
 
 class IndexerOpsInterpreterTest(IndexerOpsTest):
+  INTERPRET = True
+
+
+class SliceBuilder:
+    def __getitem__(self, args):
+        if not isinstance(args, tuple):
+            args = (args,)
+        return args
+
+sb = SliceBuilder()
+"""
+A helper object to create tuples of indexer objects using a more concise
+bracket notation.
+
+It allows for the creation of complex indexer tuples that include slices
+and other objects in a readable and compact form.
+
+Examples:
+
+    a = 5
+    indexers = sb[::4, a, 1::2, a]
+    print(indexers)  # Output: (slice(None, None, 4), 5, slice(1, None, 2), 5)
+"""
+
+def _slice_builder_new(cls) -> NoReturn:
+    raise RuntimeError('SliceBuilder cannot be instantiated directly')
+
+def _slice_builder_init_subclass(cls, **kwargs) -> NoReturn:
+    raise RuntimeError('Subclassing SliceBuilder is not allowed')
+
+SliceBuilder.__new__ = _slice_builder_new
+SliceBuilder.__init_subclass__ = _slice_builder_init_subclass
+
+
+class FrozenSet(Sequence):
+    def __init__(self, iterable):
+        self._seen_ids = set()
+        self._items = []
+        for item in iterable:
+            if id(item) not in self._seen_ids:
+                self._seen_ids.add(id(item))
+                self._items.append(item)
+        self._items = tuple(self._items)  # Freeze the list by converting it to a tuple
+
+    def __getitem__(self, index):
+        return self._items[index]
+
+    def __len__(self):
+        return len(self._items)
+
+    def __repr__(self):
+        return f'FrozenList({self._items})'
+
+    def __contains__(self, item):
+        return id(item) in self._seen_ids
+
+
+_ADVANCED_INDEXER_TEST_CASES = [
+    # ((16, 3, 6, 2), "::4, a, 1::2, b"),
+    # ((16, 3), "a, a"),
+    # ((16, 16), "::4, ::4"),
+    # ((16, 16), "1:14:2, 2:13:4"),
+    # ((16, 3), "a, :"),
+    ((16, 3), ":, a"),
+    # ((16, 3), "a, ::4"),
+    # ((16, 3), "::4, a"),
+    # ((8, 8, 3), "::4, ::2, a"),
+    # ((8, 8, 3), "::4, a, ::2"),
+    # ((8, 8, 3, 7), "::4, b, ::2, ::2"),
+    # ((8, 8, 3, 7), "b, ::4, ::2, ::2"),
+    # ((8, 8, 3, 7), "b, ::4, a, ::2"),
+    # ((3, 8, 8, 7), "b, a, ::4, ::2"),
+    # ((8, 8, 3, 7), "::4, b, a, ::2"),
+    # ((8, 8, 3, 6), "b, ::4, a, c"),
+    # ((8, 6, 4), "a"),
+    # ((6, 8, 4), "c, ::3"),
+    # ((6, 8, 4), "c, c"),
+    # ((8, 6, 4), "::3, c"),
+    # ((6, 2), "d"),
+    # ((8, 6), "::4, d"),
+]
+
+
+class AdvancedIndexerOpsTest(PallasBaseTest):
+
+  def setUp(self):
+    self.a = jnp.array([1,1,1,1,1], dtype=jnp.int32)
+    self.b = jnp.array([1,2,2,2,2], dtype=jnp.int32)
+    self.c = jnp.array([1,0,2,2,-1,1], dtype=jnp.int32)
+    self.d = jnp.array([1,0,0,0,0,1], dtype=jnp.bool_)
+
+    super().setUp()
+
+  @parameterized.parameters(_ADVANCED_INDEXER_TEST_CASES)
+  def run_test(self, in_shape: tuple[int, ...], indexer_str: str):
+    a, b, c, d = self.a, self.b, self.c, self.d
+
+    x = jnp.arange(np.prod(in_shape), dtype=jnp.float32).reshape(in_shape)
+    indexer = eval(f"sb[{indexer_str}]")
+    y = x[indexer]
+
+    fancy_indexers = tuple(FrozenSet(i for i in indexer if isinstance(i, jnp.ndarray)))
+    is_fancy_indexers = [isinstance(i, jnp.ndarray) for i in indexer]
+    indexer_items = indexer_str.split(", ")
+    fancy_indexer_names = tuple({n: None for n, b in zip(indexer_items, is_fancy_indexers) if b})
+
+    func_str = f'''
+def kernel(x_ref, {" ".join(f"{n}_ref," for n in fancy_indexer_names)} o_ref):
+{"\n".join(f"    {f'{n} = {n}_ref[...]'}" for n in fancy_indexer_names)}
+    w = x_ref[{indexer_str}]
+    o_ref[...] = w
+'''
+    # print(func_str)
+
+    exec(func_str, globals())
+
+    y_ = self.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct(y.shape, jnp.float32),
+    )(x, *fancy_indexers)
+
+    np.testing.assert_array_equal(y_, y)
+
+
+class AdvancedIndexerOpsInterpreterTest(AdvancedIndexerOpsTest):
   INTERPRET = True
 
 

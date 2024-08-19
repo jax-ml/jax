@@ -251,8 +251,40 @@ class NDIndexer:
     return cls(indices, shape, int_indexer_shape, validate=True)
 
   def get_indexer_shape(self) -> tuple[int | Array, ...]:
-    _, slice_indexers, _ = unpack_ndindexer(self)
-    slice_shape = [s.size for s in slice_indexers]
-    # In NDIndexers, the int_indexer_shape is *always* at the front of the
-    # result.
-    return (*self.int_indexer_shape, *slice_shape)
+    is_int_indexing, slice_indexers, int_indexers = unpack_ndindexer(self)
+
+    has_int_indexers = any(is_int_indexing)
+    has_non_adjacent_int_indexers = has_non_adjacent_true(is_int_indexing)
+
+    # shift the int_indexer_shape to the front
+    if has_non_adjacent_int_indexers:
+      slice_shape = [s.size for s in slice_indexers]
+      c = (*self.int_indexer_shape, *slice_shape)
+
+    elif has_int_indexers:
+      slice_shape = [s.size for s in slice_indexers]
+      int_indexer_shape = self.int_indexer_shape
+      pos = is_int_indexing.index(True)
+      c = (*slice_shape[:pos], *int_indexer_shape, *slice_shape[pos:])
+
+    else:
+      c = tuple(i.size for i in self.indices)
+
+    return c
+
+
+# TODO: make this function better
+def has_non_adjacent_true(seq: list[bool]) -> bool:
+  seen_true = False
+  last_is_true = False
+
+  for i in seq:
+    if i and seen_true and not last_is_true:
+      return True
+
+    if i:
+      seen_true = True
+
+    last_is_true = i
+
+  return False
