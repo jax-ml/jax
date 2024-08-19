@@ -9,6 +9,7 @@
 #include <string>
 #include <tuple>
 #include <type_traits>
+#include <utility>
 
 #include "absl/algorithm/container.h"
 #include "absl/base/optimization.h"
@@ -20,12 +21,7 @@
 
 namespace jax {
 
-#define FFI_ASSIGN_OR_RETURN(lhs, rhs)      \
-  if (ABSL_PREDICT_FALSE(!rhs.ok())) {      \
-    return ::jax::AsFfiError(rhs.status()); \
-  }                                         \
-  lhs = rhs.value()
-
+// Returns from the function if the argument is an ffi::Error.
 #define FFI_RETURN_IF_ERROR(...)             \
   do {                                       \
     ::xla::ffi::Error err = (__VA_ARGS__);   \
@@ -34,6 +30,8 @@ namespace jax {
     }                                        \
   } while (0)
 
+// Returns from the function with an ffi::Error if the argument is an
+// absl::Status.
 #define FFI_RETURN_IF_ERROR_STATUS(...)     \
   do {                                      \
     ::absl::Status status = (__VA_ARGS__);  \
@@ -41,6 +39,57 @@ namespace jax {
       return ::jax::AsFfiError(status);     \
     }                                       \
   } while (0)
+
+// Returns from the function with an ffi::Error if the RHS is an absl::Status,
+// otherwise assigns to the LHS. Most of the complication here stems from the
+// fact that we want to support having the LHS wrapped in parentheses (when
+// unpacking a tuple, for example).
+#define FFI_ASSIGN_OR_RETURN(lhs, rhs) \
+  FFI_ASSIGN_OR_RETURN_IMPL_(          \
+      FFI_ASSIGN_OR_RETURN_CONCAT_(_status_or_value, __LINE__), lhs, rhs)
+
+#define FFI_ASSIGN_OR_RETURN_IMPL_(statusor, lhs, rhs)        \
+  auto statusor = (rhs);                                      \
+  if (ABSL_PREDICT_FALSE(!statusor.ok())) {                   \
+    return ::jax::AsFfiError(statusor.status());              \
+  }                                                           \
+  FFI_ASSIGN_OR_RETURN_UNPARENTHESIZE_IF_PARENTHESIZED(lhs) = \
+      (*std::move(statusor))
+
+#define FFI_ASSIGN_OR_RETURN_CONCAT_INNER_(x, y) x##y
+#define FFI_ASSIGN_OR_RETURN_CONCAT_(x, y) \
+  FFI_ASSIGN_OR_RETURN_CONCAT_INNER_(x, y)
+
+// All the macros below here are to handle the case in FFI_ASSIGN_OR_RETURN
+// where the LHS is wrapped in parentheses.
+#define FFI_ASSIGN_OR_RETURN_EAT(...)
+#define FFI_ASSIGN_OR_RETURN_REM(...) __VA_ARGS__
+#define FFI_ASSIGN_OR_RETURN_EMPTY()
+
+#define FFI_ASSIGN_OR_RETURN_IS_EMPTY_INNER(...) \
+  FFI_ASSIGN_OR_RETURN_IS_EMPTY_INNER_HELPER((__VA_ARGS__, 0, 1))
+#define FFI_ASSIGN_OR_RETURN_IS_EMPTY_INNER_HELPER(args) \
+  FFI_ASSIGN_OR_RETURN_IS_EMPTY_INNER_I args
+#define FFI_ASSIGN_OR_RETURN_IS_EMPTY_INNER_I(e0, e1, is_empty, ...) is_empty
+
+#define FFI_ASSIGN_OR_RETURN_IS_EMPTY(...) \
+  FFI_ASSIGN_OR_RETURN_IS_EMPTY_I(__VA_ARGS__)
+#define FFI_ASSIGN_OR_RETURN_IS_EMPTY_I(...) \
+  FFI_ASSIGN_OR_RETURN_IS_EMPTY_INNER(_, ##__VA_ARGS__)
+
+#define FFI_ASSIGN_OR_RETURN_IF_1(_Then, _Else) _Then
+#define FFI_ASSIGN_OR_RETURN_IF_0(_Then, _Else) _Else
+#define FFI_ASSIGN_OR_RETURN_IF(_Cond, _Then, _Else) \
+  FFI_ASSIGN_OR_RETURN_CONCAT_(FFI_ASSIGN_OR_RETURN_IF_, _Cond)(_Then, _Else)
+
+#define FFI_ASSIGN_OR_RETURN_IS_PARENTHESIZED(...) \
+  FFI_ASSIGN_OR_RETURN_IS_EMPTY(FFI_ASSIGN_OR_RETURN_EAT __VA_ARGS__)
+
+#define FFI_ASSIGN_OR_RETURN_UNPARENTHESIZE_IF_PARENTHESIZED(...)             \
+  FFI_ASSIGN_OR_RETURN_IF(FFI_ASSIGN_OR_RETURN_IS_PARENTHESIZED(__VA_ARGS__), \
+                          FFI_ASSIGN_OR_RETURN_REM,                           \
+                          FFI_ASSIGN_OR_RETURN_EMPTY())                       \
+  __VA_ARGS__
 
 template <typename T>
 inline absl::StatusOr<T> MaybeCastNoOverflow(
@@ -67,21 +116,30 @@ inline ::xla::ffi::Error AsFfiError(const absl::Status& status) {
   }
 }
 
-template <typename T>
-::xla::ffi::Error CheckMatrixDimensions(::xla::ffi::Span<T> dims) {
-  if (dims.size() < 2) {
-    return ::xla::ffi::Error(::xla::ffi::ErrorCode::kInvalidArgument,
-                             "Matrix must have at least 2 dimensions");
-  }
-  return ::xla::ffi::Error::Success();
+inline int64_t GetBatchSize(::xla::ffi::Span<const int64_t> dims) {
+  return absl::c_accumulate(dims, 1, std::multiplies<int64_t>());
 }
 
-template <typename T>
-std::tuple<int64_t, int64_t, int64_t> SplitBatch2D(::xla::ffi::Span<T> dims) {
-  auto matrix_dims = dims.last(2);
-  return std::make_tuple(absl::c_accumulate(dims.first(dims.size() - 2), 1,
-                                            std::multiplies<int64_t>()),
-                         matrix_dims.front(), matrix_dims.back());
+inline absl::StatusOr<std::pair<int64_t, int64_t>> SplitBatch1D(
+    ::xla::ffi::Span<const int64_t> dims,
+    const std::string& source = __FILE__) {
+  if (dims.size() < 1) {
+    return absl::InvalidArgumentError(
+        absl::StrFormat("%s: Argument must have at least 1 dimension", source));
+  }
+  return std::make_pair(GetBatchSize(dims.first(dims.size() - 1)), dims.back());
+}
+
+inline absl::StatusOr<std::tuple<int64_t, int64_t, int64_t>> SplitBatch2D(
+    ::xla::ffi::Span<const int64_t> dims,
+    const std::string& source = __FILE__) {
+  if (dims.size() < 2) {
+    return absl::InvalidArgumentError(absl::StrFormat(
+        "%s: Argument must have at least 2 dimensions", source));
+  }
+  auto trailingDims = dims.last(2);
+  return std::make_tuple(GetBatchSize(dims.first(dims.size() - 2)),
+                         trailingDims.front(), trailingDims.back());
 }
 
 template <::xla::ffi::DataType dtype>
