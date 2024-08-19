@@ -241,8 +241,7 @@ build:ci_linux_x86_64 --crosstool_top="@ubuntu20.04-clang_manylinux2014-cuda12.3
 build:ci_linux_x86_64 --extra_toolchains="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_cuda//crosstool:toolchain-linux-x86_64"
 
 # The toolchain in `--config=cuda` needs to read before the toolchain in 
-# `--config=ci_linux_x86_64`. This means, we need to be inherit the CUDA base
-# configs before the CI configs. Otherwise, we run into issues with manylinux
+# `--config=ci_linux_x86_64`. Otherwise, we run into issues with manylinux
 # compliance.
 build:ci_linux_x86_64_cuda --config=local_cuda_base
 build:ci_linux_x86_64_cuda --config=ci_linux_x86_64

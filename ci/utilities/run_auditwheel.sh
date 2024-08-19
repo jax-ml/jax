@@ -21,9 +21,9 @@
 WHEELS=$(find "$JAXCI_OUTPUT_DIR/" -type f \( -name "*jaxlib*" -o -name "*jax*cuda*pjrt*" -o -name "*jax*cuda*plugin*" \))
 
 for wheel in $WHEELS; do
-    echo "Running auditwheel on the following wheel:"
+    printf "\nRunning auditwheel on the following wheel:"
     ls $wheel
-    OUTPUT=$(python3 -m auditwheel show $wheel)
+    OUTPUT_FULL=$(python3 -m auditwheel show $wheel)
     # Remove the wheel name from the output to avoid false positives.
     wheel_name=$(basename $wheel)
     OUTPUT=${OUTPUT//${wheel_name}/}
@@ -34,6 +34,7 @@ for wheel in $WHEELS; do
     if echo "$OUTPUT" | grep -q "manylinux_2_17"; then
         printf "\nThe wheel is manylinux2014 compliant.\n"
     else
+        echo "$OUTPUT_FULL"
         printf "\nThe wheel is NOT manylinux2014 compliant.\n"
         exit 1
     fi
