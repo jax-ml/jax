@@ -241,7 +241,7 @@ build:ci_linux_x86_64 --host_crosstool_top="@ubuntu20.04-clang_manylinux2014-cud
 build:ci_linux_x86_64 --crosstool_top="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_cuda//crosstool:toolchain"
 build:ci_linux_x86_64 --extra_toolchains="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_cuda//crosstool:toolchain-linux-x86_64"
 
-# The toolchain in `--config=cuda` needs to read before the toolchain in
+# The toolchain in `--config=cuda` needs to be read before the toolchain in
 # `--config=ci_linux_x86_64`. Otherwise, we run into issues with manylinux
 # compliance.
 build:ci_linux_x86_64_cuda --config=local_cuda_base

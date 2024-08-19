@@ -1,6 +1,0 @@
-# Kokoro jobs automatically inherits the environment variables from the 
-# parent directory's common config file.
-source ci/.kokoro/common
-
-# Enable jaxlib build.
-export JAXCI_BUILD_JAXLIB_ENABLE="1"

@@ -1,2 +1,0 @@
-source ci/.kokoro/common
-export JAXCI_BUILD_JAX_ENABLE="1"

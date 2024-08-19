@@ -1,0 +1,4 @@
+# Inherit the environment variables from the parent directory's common config
+# file.
+source ci/envs/common
+export JAXCI_BUILD_JAX_ENABLE="1"
