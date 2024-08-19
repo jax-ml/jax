@@ -92,6 +92,9 @@ def dist_wheels(
 
     cmd.extend(mounts)
 
+    if os.isatty(sys.stdout.fileno()):
+        cmd.append("-it")
+
     # NOTE(mrodden): bazel times out without --init, probably blocking on a zombie PID
     cmd.extend(
         [
