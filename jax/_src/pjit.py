@@ -279,11 +279,12 @@ def _get_fastpath_data(
         else s
         for s, a in zip(executable._in_shardings, executable.in_avals)
     ]
+    in_dlls = pxla.get_layouts_for_fasthpath_data(
+        executable._in_layouts, in_shardings, executable.in_avals)
     fastpath_data = pxla.MeshExecutableFastpathData(
         executable.xla_executable, out_tree, in_shardings,
         executable._out_shardings, out_avals, out_committed, kept_var_bitvec,
-        executable.unsafe_call.in_handler.local_devices,
-        executable.unsafe_call.in_handler.input_indices)
+        in_dlls)
   else:
     fastpath_data = None
   return fastpath_data
@@ -302,9 +303,7 @@ def _read_most_recent_pjit_call_executable(jaxpr):
 
 
 def _read_pgle_profiler(jaxpr):
-  return _most_recent_pjit_call_executable.weak_pgle_profiler_dict.get(
-      jaxpr, None
-  )
+  return _most_recent_pjit_call_executable.weak_pgle_profiler_dict.get(jaxpr, None)
 
 def _cpp_pjit_evict_fn(self):
   self._clear_cache()
@@ -343,8 +342,7 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
   cpp_pjit_f = xc._xla.pjit(
     fun_name(fun),
     fun, cache_miss, jit_info.static_argnums, jit_info.static_argnames,
-    jit_info.donate_argnums, tree_util.dispatch_registry,
-    lambda x, sharding: pxla.shard_args([sharding], [x])[0],
+    jit_info.donate_argnums, tree_util.dispatch_registry, pxla.cc_shard_arg,
     _get_cpp_global_cache(jit_info.has_explicit_sharding))
 
   cpp_pjitted_f = wraps(fun)(cpp_pjit_f)
@@ -1729,8 +1727,7 @@ def _pjit_call_impl(*args, jaxpr,
       in_shardings, out_shardings, None, None)
   return xc._xla.pjit(
       name, f, call_impl_cache_miss, [], [], donated_argnums,
-      tree_util.dispatch_registry,
-      lambda x, sharding: pxla.shard_args([sharding], [x])[0],
+      tree_util.dispatch_registry, pxla.cc_shard_arg,
       _get_cpp_global_cache(has_explicit_sharding))(*args)
 
 pjit_p.def_impl(_pjit_call_impl)

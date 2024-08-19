@@ -3015,7 +3015,7 @@ class ShardArgsTest(jtu.JaxTestCase):
     x = np.arange(math.prod(shape)).reshape(shape)
     arg = make_arg(x)
     sharding = jax.sharding.PmapSharding(jax.devices()[:nshards], spec)
-    results = pxla.shard_args([sharding], [arg])
+    results = pxla.shard_args([sharding], [None], [arg])
     self.assertEqual(len(results), 1)
     if isinstance(results[0], array.ArrayImpl):
       bufs = results[0]._arrays

@@ -500,6 +500,29 @@ class LayoutTest(jtu.JaxTestCase):
         'Layout passed to jit does not match the layout on the respective arg'):
       g(arr)
 
+  def test_in_layouts_jit_jnp_input(self):
+    major_last_layout = DLL(major_to_minor=(1, 0))
+    sharding = jax.sharding.SingleDeviceSharding(jax.devices()[0])
+
+    f = jax.jit(lambda x: x + 1,
+                in_shardings=Layout(major_last_layout, sharding))
+
+    arr = jnp.arange(8 * 128).reshape(8, 128)
+    out = f(arr)
+    self.assertArraysEqual(out, arr + 1)
+
+    # cpp dispatch should call into shard_args from cpp.
+    out2 = f(arr)
+    self.assertArraysEqual(out2, arr + 1)
+
+    np_inp = np.arange(8 * 128).reshape(8, 128)
+    out3 = f(np_inp)
+    self.assertArraysEqual(out3, np_inp + 1)
+
+    # cpp dispatch should call into shard_args from cpp.
+    out4 = f(np_inp)
+    self.assertArraysEqual(out4, np_inp + 1)
+
 
 if __name__ == '__main__':
   absltest.main(testLoader=jtu.JaxTestLoader())

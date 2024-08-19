@@ -1000,7 +1000,7 @@ def _to_xla_layout(layout: DeviceLocalLayout | None | AutoLayout,
     return "auto"
   if aval is core.abstract_token:
     return "default"
-  return layout._to_xla_layout(aval.dtype)  # type: ignore
+  return str(layout._to_xla_layout(aval.dtype))  # type: ignore
 
 
 def _get_mem_kind(s: JSharding | None) -> str | None:

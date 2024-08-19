@@ -134,7 +134,7 @@ class RuntimeTokenSet(threading.local):
     # We only use replicated sharding for the first time when the token for the
     # order effect hasn't been created.
     s = jax.sharding.GSPMDSharding.get_replicated(devices)
-    sharded_tok = core.Token(pxla.shard_args([s], [tok])[0])
+    sharded_tok = core.Token(pxla.shard_args([s], [None], [tok])[0])
     self.current_tokens[eff] = sharded_tok
     return sharded_tok
 
@@ -515,7 +515,10 @@ def _batched_device_put_impl(
   if shard_arg_xs:
     # Batch shard_arg calls. Helps improve efficiency for backends that support
     # efficient batch transfer.
-    shard_arg_results = pxla.shard_args(shard_arg_shardings, shard_arg_xs)
+    # device_put handles `Layout` via a different path, so just pass `None` as
+    # the layout here.
+    shard_arg_results = pxla.shard_args(
+        shard_arg_shardings, [None] * len(shard_arg_xs), shard_arg_xs)
     for i, shard_arg_result in zip(shard_arg_indices, shard_arg_results):
       assert isinstance(ys[i], _DeferredShardArg)
       ys[i] = ys[i].result_handler(shard_arg_result)

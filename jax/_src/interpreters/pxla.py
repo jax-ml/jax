@@ -32,6 +32,7 @@ import numpy as np
 
 import jax
 
+from jax._src import api
 from jax._src import api_util
 from jax._src import compiler
 from jax._src import config
@@ -60,6 +61,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.layout import DeviceLocalLayout, AutoLayout, Layout
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import hlo
 from jax._src.partition_spec import PartitionSpec
@@ -106,39 +108,67 @@ ShardingSpec = sharding_specs.ShardingSpec
 def identity(x): return x
 
 @profiler.annotate_function
-def shard_args(shardings: Sequence[JSharding], args, canonicalize=True) -> Sequence[xc.ArrayImpl]:
+def shard_args(shardings: Sequence[JSharding], layouts, args,
+               canonicalize=True) -> Sequence[xc.ArrayImpl]:
   # Fast path for one argument.
   if len(args) == 1:
     arg = args[0]
     if canonicalize:
       arg = xla.canonicalize_dtype(arg)
-    return shard_arg_handlers[type(arg)]([arg], shardings)
+    return shard_arg_handlers[type(arg)]([arg], shardings, layouts)
 
-  # type(arg) -> (indices, args, shardings)
-  batches = collections.defaultdict(lambda: ([], [], []))  # type: ignore
-  for i, (arg, sharding) in enumerate(safe_zip(args, shardings)):
+  # type(arg) -> (list[indices], list[args], list[shardings])
+  batches = collections.defaultdict(lambda: ([], [], [], []))  # type: ignore
+  for i, (arg, sharding, layout) in enumerate(safe_zip(args, shardings, layouts)):
     if canonicalize:
       arg = xla.canonicalize_dtype(arg)
     batch = batches[type(arg)]
     batch[0].append(i)
     batch[1].append(arg)
     batch[2].append(sharding)
+    batch[3].append(layout)
 
   # Call `shard_arg_handlers` per batch and build a flat list of arrays returned
   # from each call in the same order as `args`. Since `batches` is grouped by
   # types, we cannot simply flatten the results and we have to use the original
   # indices to put each array back to its original position.
   results: list[jax.Array | None] = [None] * len(args)
-  for t, (indices, a, s) in batches.items():
-    outs = shard_arg_handlers[t](a, s)
+  for t, (indices, a, s, l) in batches.items():
+    outs = shard_arg_handlers[t](a, s, l)
     for i, out in safe_zip(indices, outs):
       results[i] = out
-
   assert all(result is not None for result in results)
   return results
 
 
-shard_arg_handlers: dict[Any, Callable[[Sequence[Any], Sequence[Any]], Sequence[Any]]] = {}
+shard_arg_handlers: dict[
+    Any, Callable[[Sequence[Any], Sequence[Any], Sequence[Any]], Sequence[Any]]
+] = {}
+
+
+def is_default_layout(curr_layout, sharding, aval):
+  if curr_layout is None or sharding is None:
+    return True
+  if (aval is core.abstract_token or aval.dtype == dtypes.float0 or
+      dtypes.issubdtype(aval.dtype, dtypes.extended)):
+    return True
+  if isinstance(curr_layout, AutoLayout):
+    return False
+  d = sharding._device_assignment[0]
+  shard_shape = sharding.shard_shape(aval.shape)
+  try:
+    # TODO(yashkatariya): Replace this with normal `==` check once CPU supports
+    # int4.
+    return is_user_xla_layout_equal(
+        curr_layout,
+        DeviceLocalLayout.from_pjrt_layout(
+            d.client.get_default_layout(aval.dtype, shard_shape, d)))
+  except xe.XlaRuntimeError as e:
+    msg, *_ = e.args
+    if isinstance(msg, str) and msg.startswith("UNIMPLEMENTED"):
+      return True
+    else:
+      raise
 
 
 @lru_cache(maxsize=1024)
@@ -146,34 +176,37 @@ def _get_replicated_slices(num_addressable_devices: int):
   return ((slice(None),),) * num_addressable_devices
 
 
-def _masked_array_error(xs, shardings):
+def _masked_array_error(xs, shardings, layouts):
   raise ValueError("numpy masked arrays are not supported as direct inputs to JAX functions. "
                    "Use arr.filled() to convert the value to a standard numpy array.")
 shard_arg_handlers[np.ma.MaskedArray] = _masked_array_error
 
-def _shard_array(xs, shardings):
+def _shard_np_array(xs, shardings, layouts):
   results = []
-  for x, sharding in safe_zip(xs, shardings):
+  for x, sharding, layout in safe_zip(xs, shardings, layouts):
     devices = sharding._addressable_device_assignment
     if x.dtype == dtypes.float0:
       x = np.zeros(x.shape, dtype=np.dtype(bool))
     aval = api_util.shaped_abstractify(x)
-    if sharding.is_fully_replicated:
-      shards = [x] * len(devices)
+    if not is_default_layout(layout, sharding, aval):
+      results.append(api.device_put(x, Layout(layout, sharding)))
     else:
-      indices = tuple(sharding.addressable_devices_indices_map(x.shape).values())
-      shards = [x[i] for i in indices]
-    results.append(batched_device_put(aval, sharding, shards, devices))
+      if sharding.is_fully_replicated:
+        shards = [x] * len(devices)
+      else:
+        indices = tuple(sharding.addressable_devices_indices_map(x.shape).values())
+        shards = [x[i] for i in indices]
+      results.append(batched_device_put(aval, sharding, shards, devices))
   return results
 for _t in array_types:
-  shard_arg_handlers[_t] = _shard_array
+  shard_arg_handlers[_t] = _shard_np_array
 
-def _shard_darray(xs, shardings):
-  return shard_args(shardings, [x._data for x in xs])
+def _shard_darray(xs, shardings, layouts):
+  return shard_args(shardings, layouts, [x._data for x in xs])
 shard_arg_handlers[core.DArray] = _shard_darray
 
-def _shard_mutable_array(xs, shardings):
-  return shard_args(shardings, [x._buf for x in xs])
+def _shard_mutable_array(xs, shardings, layouts):
+  return shard_args(shardings, layouts, [x._buf for x in xs])
 shard_arg_handlers[core.MutableArray] = _shard_mutable_array
 
 def batched_device_put(aval: core.ShapedArray,
@@ -931,6 +964,7 @@ class UnloadedPmapExecutable:
     handle_outs = local_avals_to_results_handler(self.local_output_avals,
                                                  self.output_shardings)
     handle_args = InputsHandler(self.input_shardings,
+                                [None] * len(self.input_shardings),
                                 self.compiled.local_devices(), input_indices)
     execute_fun = ExecuteReplicated(self.compiled, "parallel computation",
                                     self.backend, handle_args, handle_outs,
@@ -1109,12 +1143,15 @@ def _get_pmap_sharding(devices, specs):
 
 
 class InputsHandler:
-  __slots__ = ("handler", "local_devices", "in_shardings", "input_indices")
+  __slots__ = ("handler", "in_shardings", "in_layouts", "local_devices",
+               "input_indices")
 
-  def __init__(self, in_shardings, local_devices=None, input_indices=None):
-    self.handler = partial(shard_args, in_shardings)
-    self.local_devices = local_devices
+  def __init__(self, in_shardings, in_layouts, local_devices=None,
+               input_indices=None):
+    self.handler = partial(shard_args, in_shardings, in_layouts)
     self.in_shardings = in_shardings
+    self.in_layouts = in_layouts
+    self.local_devices = local_devices
     self.input_indices = input_indices
 
   def __call__(self, input_buffers):
@@ -1122,8 +1159,9 @@ class InputsHandler:
 
   def __str__(self):
     return ("InputsHandler(\n"
-            f"local_devices={self.local_devices},\n"
             f"in_shardings={self.in_shardings},\n"
+            f"in_layouts={self.in_layouts},\n"
+            f"local_devices={self.local_devices},\n"
             f"input_indices={self.input_indices})")
 
 
@@ -1849,7 +1887,7 @@ def _maybe_get_default_layout(arg_layout, jit_in_layout, sharding, aval
   if is_unspecified_or_auto(sharding):
     return None
   # TODO(yashkatariya): Figure out how layouts work with extended dtypes.
-  if dtypes.issubdtype(aval.dtype, dtypes.extended):
+  if aval is core.abstract_token or dtypes.issubdtype(aval.dtype, dtypes.extended):
     return None
   if not core.is_constant_shape(aval.shape):
     return None
@@ -2505,7 +2543,7 @@ def maybe_recover_user_shardings(
 
 def is_user_xla_layout_equal(ul: DeviceLocalLayout | AutoLayout,
                              xl: DeviceLocalLayout) -> bool:
-  if isinstance(ul, DeviceLocalLayout) and ul._tiling is None:
+  if isinstance(ul, DeviceLocalLayout) and not ul._tiling:
     return ul.major_to_minor == xl.major_to_minor
   else:
     return ul == xl
@@ -2742,7 +2780,7 @@ class UnloadedMeshExecutable:
   pgle_profiler: profiler.PGLEProfiler | None
 
   def build_unsafe_call(self):
-    handle_args = InputsHandler(self.input_shardings)
+    handle_args = InputsHandler(self.input_shardings, self.in_layouts)
     handle_outs = global_avals_to_results_handler(
         self.output_avals, self.output_shardings, self.committed)
 
@@ -2882,9 +2920,7 @@ class MeshExecutableFastpathData(NamedTuple):
   out_avals: Sequence[ShapedArray]
   out_committed: Sequence[bool]
   kept_var_bitvec: Iterable[bool]
-  # TODO(yashkatariya): Remove once minimum jaxlib version is 0.4.24
-  arg_handler_devices: Sequence[xc.Device]
-  arg_handler_indices: Sequence[tuple[Index | None, ...]]
+  in_device_local_layouts: Sequence[DeviceLocalLayout | None]
 
 
 def reflatten_outputs_for_dispatch(out_tree, out_flat):
@@ -2992,18 +3028,36 @@ class MeshExecutable(stages.XlaExecutable):
             else s
             for s, a in zip(self._in_shardings, self.in_avals)
         ]
+        in_dlls = get_layouts_for_fasthpath_data(
+            self._in_layouts, in_shardings, self.in_avals)
         fastpath_data = MeshExecutableFastpathData(
             self.xla_executable, out_tree_dispatch, in_shardings,
             self._out_shardings, out_avals, out_committed, kept_var_bitvec,
-            self.unsafe_call.in_handler.local_devices,
-            self.unsafe_call.in_handler.input_indices)
+            in_dlls)
       else:
         fastpath_data = None
       return outs, fastpath_data, False  # Do not remove cache entry
 
     return xc._xla.pjit(
         self.unsafe_call.name, None, aot_cache_miss, [], [], [],
-        tree_util.dispatch_registry, lambda x, s: shard_args([s], [x])[0])
+        tree_util.dispatch_registry, cc_shard_arg)
+
+if xla_extension_version < 282:
+  def cc_shard_arg(x, sharding):
+    return shard_args([sharding], [None], [x])[0]
+else:
+  def cc_shard_arg(x, sharding, layout):  # type: ignore
+    return shard_args([sharding], [layout], [x])[0]
+
+
+def get_layouts_for_fasthpath_data(in_layouts, in_shardings, in_avals):
+  in_dlls = []
+  for l, s, a in zip(in_layouts, in_shardings, in_avals):
+    if is_default_layout(l, s, a):
+      in_dlls.append(None)
+    else:
+      in_dlls.append(l)
+  return in_dlls
 
 
 def check_arg_avals_for_call(ref_avals, arg_avals,

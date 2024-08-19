@@ -69,7 +69,7 @@ class DeviceLocalLayout:
             self._tiling == other._tiling and
             self._sub_byte_element_size_in_bits == other._sub_byte_element_size_in_bits)
 
-  def _to_xla_layout(self, dtype) -> str:
+  def _to_xla_layout(self, dtype) -> xc.Layout:
     if self._tiling is None:
       xla_layout = xc.Layout(self.major_to_minor[::-1])
     else:
@@ -81,7 +81,7 @@ class DeviceLocalLayout:
         sub_byte_size = 0
       xla_layout = xc.Layout(self.major_to_minor[::-1], self._tiling,
                               sub_byte_size)
-    return str(xla_layout)
+    return xla_layout
 
   def check_compatible_aval(self, aval_shape: Shape):
     if len(self.major_to_minor) != len(aval_shape):
