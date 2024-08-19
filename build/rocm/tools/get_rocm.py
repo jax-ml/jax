@@ -115,6 +115,23 @@ RHEL8 = System(
 )
 
 
+def parse_version(version_str):
+    if isinstance(version_str, str):
+        parts = version_str.split(".")
+        rv = type("Version", (), {})()
+        rv.major = int(parts[0].strip())
+        rv.minor = int(parts[1].strip())
+        rv.rev = None
+
+        if len(parts) > 2:
+            rv.rev = int(parts[2].strip())
+
+    else:
+        rv = version_str
+
+    return rv
+
+
 def get_system():
     md = os_release_meta()
 
@@ -210,16 +227,7 @@ def install_amdgpu_installer_internal(rocm_version):
 def _build_installer_url(rocm_version, metadata):
     md = metadata
 
-    if isinstance(rocm_version, str):
-        parts = rocm_version.split(".")
-        rv = type("Version", (), {})()
-        rv.major = parts[0]
-        rv.minor = parts[1]
-
-        if len(parts) > 2:
-            rv.rev = parts[2]
-    else:
-        rv = rocm_version
+    rv = parse_version(rocm_version)
 
     base_url = "http://artifactory-cdn.amd.com/artifactory/list"
 
@@ -248,6 +256,12 @@ def _build_installer_url(rocm_version, metadata):
 
 
 def setup_repos_ubuntu(rocm_version_str):
+
+    rv = parse_version(rocm_version_str)
+
+    # if X.Y.0 -> repo url version should be X.Y
+    if rv.rev == 0:
+        rocm_version_str = "%d.%d" % (rv.major, rv.minor)
 
     s = get_system()
     s.install_packages(["wget", "sudo", "gnupg"])
