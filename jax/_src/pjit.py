@@ -351,14 +351,15 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
   return cpp_pjitted_f
 
 
-def _pjit_explicit_sharding(in_shardings, out_shardings, device,
+def _pjit_explicit_sharding(in_shardings_flat, out_shardings_flat,
+                            in_layouts_flat, out_layouts_flat, device,
                             backend) -> bool:
-  in_shardings_flat, _ = tree_flatten(in_shardings)
-  out_shardings_flat, _ = tree_flatten(out_shardings)
   return (device is not None or
           backend is not None or
           any(not is_unspecified(i) for i in in_shardings_flat) or
-          any(not is_unspecified(i) for i in out_shardings_flat))
+          any(not is_unspecified(o) for o in out_shardings_flat) or
+          any(i is not None for i in in_layouts_flat) or
+          any(o is not None for o in out_layouts_flat))
 
 
 def _split_layout_and_sharding(entries):
@@ -445,7 +446,8 @@ def _parse_jit_arguments(fun: Callable, in_shardings: Any, out_shardings: Any,
       static_argnames)
 
   has_explicit_sharding = _pjit_explicit_sharding(
-      in_shardings, out_shardings, device, backend)
+      in_shardings_leaves, out_shardings_leaves, in_layouts_leaves,
+      out_layouts_leaves, device, backend)
 
   return PjitInfo(
         fun_sourceinfo=fun_sourceinfo,
@@ -1724,7 +1726,7 @@ def _pjit_call_impl(*args, jaxpr,
       resource_env, donated_invars, name, keep_unused, inline)
   donated_argnums = [i for i, d in enumerate(donated_invars) if d]
   has_explicit_sharding = _pjit_explicit_sharding(
-      in_shardings, out_shardings, None, None)
+      in_shardings, out_shardings, in_layouts, out_layouts, None, None)
   return xc._xla.pjit(
       name, f, call_impl_cache_miss, [], [], donated_argnums,
       tree_util.dispatch_registry, pxla.cc_shard_arg,
