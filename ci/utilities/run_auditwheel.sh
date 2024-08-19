@@ -26,7 +26,7 @@ for wheel in $WHEELS; do
     OUTPUT_FULL=$(python3 -m auditwheel show $wheel)
     # Remove the wheel name from the output to avoid false positives.
     wheel_name=$(basename $wheel)
-    OUTPUT=${OUTPUT//${wheel_name}/}
+    OUTPUT=${OUTPUT_FULL//${wheel_name}/}
 
     # If a wheel is manylinux2014 compliant, `auditwheel show` will return the
     # platform tag as manylinux_2_17. manylinux2014 is an alias for
