@@ -81,10 +81,10 @@ build:windows --host_linkopt=/OPT:ICF
 build:windows --incompatible_strict_action_env=true
 
 # #############################################################################
-# Feature-specific configurations. These are used by the CI configs below
-# depending on the type of build. E.g. `ci_linux_x86_64_base` inherits the 
+# Feature-specific configurations. These are used by the Local and CI configs
+# below depending on the type of build. E.g. `local_linux_x86_64` inherits the
 # Linux x86 configs such as `avx_linux` and `mkl_open_source_only`,
-# `ci_cuda_base` inherits `cuda` and `build_cuda_with_nvcc`, etc.
+# `local_cuda_base` inherits `cuda` and `build_cuda_with_nvcc`, etc.
 # #############################################################################
 build:nonccl --define=no_nccl_support=true
 
@@ -148,11 +148,9 @@ build:cuda --linkopt=-Wl,--disable-new-dtags
 
 # Build CUDA and other C++ targets with Clang
 build:build_cuda_with_clang --@local_config_cuda//:cuda_compiler=clang
-build:build_cuda_with_clang --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
 
 # Build CUDA with NVCC and other C++ targets with Clang
 build:build_cuda_with_nvcc --action_env=TF_NVCC_CLANG="1"
-build:build_cuda_with_nvcc --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
 build:build_cuda_with_nvcc --@local_config_cuda//:cuda_compiler=nvcc
 
 # Requires MSVC and LLVM to be installed
@@ -182,6 +180,9 @@ build:macos_cache_push --config=macos_cache --remote_upload_local_results=true -
 # Set base CUDA configs. These are inherited by the Linux x86 and Linux Aarch64
 # CUDA configs.
 build:local_cuda_base --config=cuda
+
+# JAX uses NVCC to build CUDA targets. If you would like to build CUDA targets
+# with Clang, change this to `--config=build_cuda_with_clang`
 build:local_cuda_base --config=build_cuda_with_nvcc
 
 # Linux x86 Local configs
@@ -234,17 +235,18 @@ build:ci_linux_x86_64 --config=local_linux_x86_64
 # specific configs
 build:ci_linux_x86_64 --config=clang
 
-# We do not have a CPU only toolchain so we use the CUDA toolchain for both
-# CPU and GPU builds.
+# TODO(b/356695103): We do not have a CPU only toolchain so we use the CUDA
+# toolchain for both CPU and GPU builds.
 build:ci_linux_x86_64 --host_crosstool_top="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_cuda//crosstool:toolchain"
 build:ci_linux_x86_64 --crosstool_top="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_cuda//crosstool:toolchain"
 build:ci_linux_x86_64 --extra_toolchains="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_cuda//crosstool:toolchain-linux-x86_64"
 
-# The toolchain in `--config=cuda` needs to read before the toolchain in 
+# The toolchain in `--config=cuda` needs to read before the toolchain in
 # `--config=ci_linux_x86_64`. Otherwise, we run into issues with manylinux
 # compliance.
 build:ci_linux_x86_64_cuda --config=local_cuda_base
 build:ci_linux_x86_64_cuda --config=ci_linux_x86_64
+build:ci_linux_x86_64_cuda --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
 
 # Linux Aarch64 CI configs
 build:ci_linux_aarch64_base --config=clang
@@ -261,6 +263,7 @@ build:ci_linux_aarch64 --crosstool_top="@ml2014_clang_aarch64_config_aarch64//cr
 # use Clang for the C++ targets and NVCC to build CUDA targets.
 build:ci_linux_aarch64_cuda --config=ci_linux_aarch64_base
 build:ci_linux_aarch64_cuda --config=local_cuda_base
+build:ci_linux_aarch64_cuda --action_env=CLANG_CUDA_COMPILER_PATH="/usr/lib/llvm-18/bin/clang"
 
 # Mac x86 CI configs
 build:ci_darwin_x86_64 --config=local_darwin_arm64
@@ -283,9 +286,9 @@ build:ci_windows_x86_64 --linkopt=/FORCE:MULTIPLE
 build:ci_windows_x86_64 --host_linkopt=/FORCE:MULTIPLE
 
 # #############################################################################
-# RBE config options below. These are inherit the CI configs above and set the
+# RBE config options below. These inherit the CI configs above and set the
 # remote execution backend and authentication options required to run builds
-# with RBE. Linux x86 and Windows builds can be run with RBE.
+# with RBE. Linux x86 and Windows builds use RBE.
 # #############################################################################
 # Flag to enable remote config
 common --experimental_repo_remote_exec
@@ -358,8 +361,8 @@ build:rbe_windows_x86_64 --config=ci_windows_x86_64
 
 # #############################################################################
 # Cross-compile config options below. Native RBE support does not exist for
-# Linux Aarch64 and Mac x86. So, we use the cross-compile toolchains to build
-# these targets on the Linux x86 RBE pool.
+# Linux Aarch64 and Mac x86. So, we use the cross-compile toolchain to build
+# targets for Linux Aarch64 and Mac x86 on the Linux x86 RBE pool.
 # #############################################################################
 # Set execution platform to Linux x86
 # Note: Lot of the "host_" flags such as "host_cpu" and "host_crosstool_top"
