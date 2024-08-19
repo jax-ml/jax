@@ -279,8 +279,8 @@ build:ci_darwin_arm64 --config=macos_cache_push
 build:ci_windows_x86_64 --config=clang
 build:ci_windows_x86_64 --config=avx_windows
 # Set the toolchains
-build:ci_windows_x86_64 --crosstool_top="//tensorflow/tools/toolchains/win/20240424:toolchain"
-build:ci_windows_x86_64 --extra_toolchains="//tensorflow/tools/toolchains/win/20240424:cc-toolchain-x64_windows-clang-cl"
+build:ci_windows_x86_64 --crosstool_top="@xla//tools/toolchains/win/20240424:toolchain"
+build:ci_windows_x86_64 --extra_toolchains="@xla//tools/toolchains/win/20240424:cc-toolchain-x64_windows-clang-cl"
 build:ci_windows_x86_64 --compiler=clang-cl
 build:ci_windows_x86_64 --linkopt=/FORCE:MULTIPLE
 build:ci_windows_x86_64 --host_linkopt=/FORCE:MULTIPLE
@@ -346,9 +346,9 @@ common:rbe_windows_x86_64 --remote_instance_name=projects/tensorflow-testing/ins
 build:rbe_windows_x86_64 --config=rbe
 
 # Set the host, execution, and target platform
-build:rbe_windows_x86_64 --host_platform="//tensorflow/tools/toolchains/win:x64_windows-clang-cl"
-build:rbe_windows_x86_64 --extra_execution_platforms="//tensorflow/tools/toolchains/win:x64_windows-clang-cl"
-build:rbe_windows_x86_64 --platforms="//tensorflow/tools/toolchains/win:x64_windows-clang-cl"
+build:rbe_windows_x86_64 --host_platform="@xla//tools/toolchains/win:x64_windows-clang-cl"
+build:rbe_windows_x86_64 --extra_execution_platforms="@xla//tools/toolchains/win:x64_windows-clang-cl"
+build:rbe_windows_x86_64 --platforms="@xla//tools/toolchains/win:x64_windows-clang-cl"
 
 build:rbe_windows_x86_64 --shell_executable=C:\\tools\\msys64\\usr\\bin\\bash.exe
 build:rbe_windows_x86_64 --remote_download_minimal --enable_runfiles
