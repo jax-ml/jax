@@ -124,9 +124,11 @@ build:cuda --repo_env HERMETIC_CUDA_COMPUTE_CAPABILITIES="sm_50,sm_60,sm_70,sm_8
 build:cuda --crosstool_top=@local_config_cuda//crosstool:toolchain
 build:cuda --@local_config_cuda//:enable_cuda
 build:cuda --@xla//xla/python:jax_cuda_pip_rpaths=true
+
 # Default hermetic CUDA and CUDNN versions.
 build:cuda --repo_env=HERMETIC_CUDA_VERSION="12.3.2"
 build:cuda --repo_env=HERMETIC_CUDNN_VERSION="9.1.1"
+
 # This flag is needed to include hermetic CUDA libraries for bazel tests.
 test:cuda --@local_config_cuda//cuda:include_hermetic_cuda_libs=true
 
@@ -181,8 +183,6 @@ build:macos_cache_push --config=macos_cache --remote_upload_local_results=true -
 # CUDA configs.
 build:local_cuda_base --config=cuda
 build:local_cuda_base --config=build_cuda_with_nvcc
-build:local_cuda_base --repo_env=HERMETIC_CUDA_VERSION="12.3.2"
-build:local_cuda_base --repo_env=HERMETIC_CUDNN_VERSION="9.1.1"
 
 # Linux x86 Local configs
 build:local_linux_x86_64 --config=avx_linux
@@ -240,8 +240,12 @@ build:ci_linux_x86_64 --host_crosstool_top="@ubuntu20.04-clang_manylinux2014-cud
 build:ci_linux_x86_64 --crosstool_top="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_cuda//crosstool:toolchain"
 build:ci_linux_x86_64 --extra_toolchains="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_cuda//crosstool:toolchain-linux-x86_64"
 
-build:ci_linux_x86_64_cuda --config=ci_linux_x86_64
+# The toolchain in `--config=cuda` needs to read before the toolchain in 
+# `--config=ci_linux_x86_64`. This means, we need to be inherit the CUDA base
+# configs before the CI configs. Otherwise, we run into issues with manylinux
+# compliance.
 build:ci_linux_x86_64_cuda --config=local_cuda_base
+build:ci_linux_x86_64_cuda --config=ci_linux_x86_64
 
 # Linux Aarch64 CI configs
 build:ci_linux_aarch64_base --config=clang

@@ -34,7 +34,7 @@ for wheel in $WHEELS; do
     if echo "$OUTPUT" | grep -q "manylinux_2_17"; then
         printf "\nThe wheel is manylinux2014 compliant.\n"
     else
-        echo "\nThe wheel is NOT manylinux2014 compliant.\n"
+        printf "\nThe wheel is NOT manylinux2014 compliant.\n"
         exit 1
     fi
 done
