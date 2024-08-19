@@ -16,41 +16,22 @@ limitations under the License.
 #include "jaxlib/gpu/blas_kernels.h"
 
 #include <algorithm>
-#include <stdexcept>
-#include <utility>
+#include <cstddef>
+#include <iterator>
+#include <string>
 #include <vector>
 
-#include "absl/base/casts.h"
-#include "absl/base/thread_annotations.h"
 #include "absl/status/status.h"
+#include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
-#include "absl/synchronization/mutex.h"
+#include "jaxlib/gpu/blas_handle_pool.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
-#include "jaxlib/handle_pool.h"
+#include "jaxlib/gpu/make_batch_pointers.h"
+#include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_helpers.h"
 #include "xla/service/custom_call_status.h"
 
 namespace jax {
-
-using BlasHandlePool = HandlePool<gpublasHandle_t, gpuStream_t>;
-
-template <>
-/*static*/ absl::StatusOr<BlasHandlePool::Handle> BlasHandlePool::Borrow(
-    gpuStream_t stream) {
-  BlasHandlePool* pool = Instance();
-  absl::MutexLock lock(&pool->mu_);
-  gpublasHandle_t handle;
-  if (pool->handles_[stream].empty()) {
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpublasCreate(&handle)));
-  } else {
-    handle = pool->handles_[stream].back();
-    pool->handles_[stream].pop_back();
-  }
-  if (stream) {
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpublasSetStream(handle, stream)));
-  }
-  return Handle(pool, handle, stream);
-}
 
 namespace JAX_GPU_NAMESPACE {
 
@@ -89,13 +70,9 @@ static absl::Status GetrfBatched_(gpuStream_t stream, void** buffers,
 
   int* ipiv = static_cast<int*>(buffers[2]);
   int* info = static_cast<int*>(buffers[3]);
-  auto a_ptrs_host = MakeBatchPointers(stream, buffers[1], buffers[4], d.batch,
-                                       SizeOfBlasType(d.type) * d.n * d.n);
-  JAX_RETURN_IF_ERROR(a_ptrs_host.status());
-  // TODO(phawkins): ideally we would not need to synchronize here, but to
-  // avoid it we need a way to keep the host-side buffer alive until the copy
-  // completes.
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuStreamSynchronize(stream)));
+  MakeBatchPointersAsync(stream, buffers[1], buffers[4], d.batch,
+                         SizeOfBlasType(d.type) * d.n * d.n);
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuGetLastError()));
   switch (d.type) {
     case BlasType::F32: {
       float** batch_ptrs = static_cast<float**>(buffers[4]);
@@ -152,17 +129,12 @@ static absl::Status GeqrfBatched_(gpuStream_t stream, void** buffers,
   }
 
   std::vector<int> info(d.batch);
-  auto a_ptrs_host = MakeBatchPointers(stream, buffers[1], buffers[3], d.batch,
-                                       SizeOfBlasType(d.type) * d.m * d.n);
-  JAX_RETURN_IF_ERROR(a_ptrs_host.status());
-  auto tau_ptrs_host =
-      MakeBatchPointers(stream, buffers[2], buffers[4], d.batch,
-                        SizeOfBlasType(d.type) * std::min(d.m, d.n));
-  JAX_RETURN_IF_ERROR(tau_ptrs_host.status());
-  // TODO(phawkins): ideally we would not need to synchronize here, but to
-  // avoid it we need a way to keep the host-side buffer alive until the copy
-  // completes.
-  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuStreamSynchronize(stream)));
+  MakeBatchPointersAsync(stream, buffers[1], buffers[3], d.batch,
+                         SizeOfBlasType(d.type) * d.m * d.n);
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuGetLastError()));
+  MakeBatchPointersAsync(stream, buffers[2], buffers[4], d.batch,
+                         SizeOfBlasType(d.type) * std::min(d.m, d.n));
+  JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuGetLastError()));
   switch (d.type) {
     case BlasType::F32: {
       float** a_batch_ptrs = static_cast<float**>(buffers[3]);

@@ -50,7 +50,7 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
     shape=[(10,), (2, 5)],
     n=[None, 1, 7, 13, 20],
     axis=[-1, 0],
-    norm=[None, 'ortho'],
+    norm=[None, 'ortho', 'backward'],
   )
   def testDct(self, shape, dtype, n, axis, norm):
     rng = jtu.rand_default(self.rng())
@@ -67,7 +67,7 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
      for axes in _get_dctn_test_axes(shape)
      for s in _get_dctn_test_s(shape, axes)],
     dtype=real_dtypes,
-    norm=[None, 'ortho'],
+    norm=[None, 'ortho', 'backward'],
   )
   def testDctn(self, shape, dtype, s, axes, norm):
     rng = jtu.rand_default(self.rng())
@@ -83,7 +83,7 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
     shape=[(10,), (2, 5)],
     n=[None, 1, 7, 13, 20],
     axis=[-1, 0],
-    norm=[None, 'ortho'],
+    norm=[None, 'ortho', 'backward'],
   )
   # TODO(phawkins): these tests are failing on T4 GPUs in CI with a
   # CUDA_ERROR_ILLEGAL_ADDRESS.
@@ -103,7 +103,7 @@ class LaxBackedScipyFftTests(jtu.JaxTestCase):
      for axes in _get_dctn_test_axes(shape)
      for s in _get_dctn_test_s(shape, axes)],
     dtype=real_dtypes,
-    norm=[None, 'ortho'],
+    norm=[None, 'ortho', 'backward'],
   )
   # TODO(phawkins): these tests are failing on T4 GPUs in CI with a
   # CUDA_ERROR_ILLEGAL_ADDRESS.

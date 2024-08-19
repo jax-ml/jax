@@ -1,6 +1,6 @@
 .. _user-guides:
 
-User Guides
+User guides
 ===========
 
 User guides are deeper dives into particular topics within JAX
@@ -9,7 +9,7 @@ or deployed codebases.
 
 .. toctree::
    :maxdepth: 1
-   :caption: Debugging and Performance
+   :caption: Debugging and performance
 
    notebooks/thinking_in_jax
    profiling
@@ -20,24 +20,27 @@ or deployed codebases.
 
 .. toctree::
    :maxdepth: 1
-   :caption: Development
+   :caption: Interfaces
 
-   jaxpr
-   notebooks/external_callbacks
-   type_promotion
    pytrees
-
-.. toctree::
-   :maxdepth: 1
-   :caption: Run Time
-
+   errors
    aot
    export/index
-   errors
+   type_promotion
    transfer_guard
 
 .. toctree::
    :maxdepth: 1
-   :caption: Custom Operations
+   :caption: Custom operations
 
+   notebooks/external_callbacks
    pallas/index
+   ffi
+
+.. toctree::
+   :caption: Example applications
+   :maxdepth: 1
+
+   notebooks/neural_network_with_tfds_data
+   notebooks/Neural_Network_and_Data_Loading
+   notebooks/vmapped_log_probs

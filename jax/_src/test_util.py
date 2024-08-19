@@ -188,18 +188,6 @@ def check_eq(xs, ys, err_msg=''):
   tree_all(tree_map(assert_close, xs, ys))
 
 
-# TODO(yashkatariya): Make this context manager check for deprecation message
-# in OSS.
-@contextmanager
-def unaccelerate_getattr_deprecation(module, name):
-  message, prev_attr = module._deprecations[name]
-  module._deprecations[name] = (message, getattr(module, f"_deprecated_{name}"))
-  try:
-    yield
-  finally:
-    module._deprecations[name] = (message, prev_attr)
-
-
 @contextmanager
 def _capture_output(fp: TextIO) -> Generator[Callable[[], str], None, None]:
   """Context manager to capture all output written to a given file object.
@@ -377,7 +365,7 @@ def count_aot_jit_cpp_cache_miss():
 
 
 @contextmanager
-def count_jit_and_pmap_compiles():
+def count_jit_and_pmap_lowerings():
   # No need to clear any caches since we generally jit and pmap fresh callables
   # in tests.
 
@@ -393,6 +381,25 @@ def count_jit_and_pmap_compiles():
     yield count
   finally:
     mlir.lower_jaxpr_to_module = mlir_lower
+
+
+@contextmanager
+def count_jit_compilation_cache_miss():
+  # No need to clear any caches since we generally jit and pmap fresh callables
+  # in tests.
+
+  jit_compilation = pxla._cached_compilation
+  count = [0]
+
+  def compile_and_count(*args, **kwargs):
+    count[0] += 1
+    return jit_compilation(*args, **kwargs)
+
+  pxla._cached_compilation = compile_and_count
+  try:
+    yield count
+  finally:
+    pxla._cached_compilation = jit_compilation
 
 
 @contextmanager
@@ -417,7 +424,7 @@ def count_subjaxpr_to_hlo_conversion(fun_name: str):
 
 @contextmanager
 def assert_num_jit_and_pmap_compilations(times):
-  with count_jit_and_pmap_compiles() as count:
+  with count_jit_and_pmap_lowerings() as count:
     yield
   if count[0] != times:
     raise AssertionError(f"Expected exactly {times} XLA compilations, "
@@ -505,7 +512,9 @@ def is_cuda_compute_capability_at_least(capability: str) -> bool:
   if not is_device_cuda():
     return False
   d, *_ = jax.local_devices(backend="gpu")
-  return d.compute_capability >= capability
+  target = tuple(int(x) for x in capability.split("."))
+  current = tuple(int(x) for x in d.compute_capability.split("."))
+  return current >= target
 
 def _get_device_tags():
   """returns a set of tags defined for the device under test"""
@@ -1959,6 +1968,39 @@ class numpy_with_mpmath:
 
     return ctx.asin(x)
 
+  def arccos(self, x):
+    ctx = x.context
+
+    if isinstance(x, ctx.mpc):
+      # Workaround mpmath 1.3 bug in acos(+-inf+-infj) evaluation (see
+      # mpmath/mpmath#793).
+      # TODO(pearu): remove the if-block below when mpmath 1.4 or
+      # newer will be the required test dependency.
+      pi = ctx.pi
+      inf = ctx.inf
+      zero = ctx.zero
+
+      if ctx.isinf(x.imag):
+        if ctx.isinf(x.real):
+          real = pi / 4 if x.real > 0 else 3 * pi / 4
+        else:
+          real = pi / 2
+        imag = inf if x.imag < 0 else -inf
+        return ctx.make_mpc((real._mpf_, imag._mpf_))
+      elif ctx.isinf(x.real):
+        inf = ctx.inf
+        sign_imag = -1 if x.imag < 0 else 1
+        real = zero if x.real > 0 else pi
+        return ctx.make_mpc((real._mpf_, (-sign_imag * inf)._mpf_))
+      # On branch cut, mpmath.mp.acos returns different value
+      # compared to mpmath.fp.acos and numpy.arccos. The
+      # following if-block ensures compatibiliy with
+      # numpy.arccos.
+      if x.imag == 0 and x.real > 1:
+        return -ctx.acos(x)
+
+    return ctx.acos(x)
+
   def arcsinh(self, x):
     ctx = x.context
 
@@ -1985,6 +2027,29 @@ class numpy_with_mpmath:
       if x.real == 0 and x.imag < -1:
         return (-ctx.asinh(x)).conjugate()
     return ctx.asinh(x)
+
+  def arccosh(self, x):
+    ctx = x.context
+
+    if isinstance(x, ctx.mpc):
+      # Workaround mpmath 1.3 bug in acosh(+-inf+-infj) evaluation
+      # (see mpmath/mpmath#749).
+      pi = ctx.pi
+      inf = ctx.inf
+      zero = ctx.zero
+      if ctx.isinf(x.real):
+        sign_imag = -1 if x.imag < 0 else 1
+        imag = (
+          (3 if x.real < 0 else 1) * sign_imag * pi / 4
+          if ctx.isinf(x.imag)
+          else (sign_imag * pi if x.real < 0 else zero)
+        )
+        return ctx.make_mpc((inf._mpf_, imag._mpf_))
+      elif ctx.isinf(x.imag):
+        sign_imag = -1 if x.imag < 0 else 1
+        imag = sign_imag * pi / 2
+        return ctx.make_mpc((inf._mpf_, imag._mpf_))
+    return ctx.acosh(x)
 
   def normalize(self, exact, reference, value):
     """Normalize reference and value using precision defined by the
@@ -2058,7 +2123,7 @@ def setup_hypothesis(max_examples=30) -> None:
       the default "deterministic" profile.
   """
   try:
-    import hypothesis as hp  # type: ignore
+    import hypothesis as hp
   except (ModuleNotFoundError, ImportError):
     return
 

@@ -25,7 +25,7 @@ jobs:
       with:
         repository: data-apis/array-api-tests
         # TODO(jakevdp) update this to a stable release/tag when available.
-        ref: '33f2d2ea2f3dd2b3ceeeb4519d55e08096184149'  # Latest commit as of 2024-05-28
+        ref: 'db95e67b29235249e5776ca2b6bb4e77117e0690'  # Latest commit as of 2024-08-08
         submodules: 'true'
         path: 'array-api-tests'
     - name: Set up Python ${{ matrix.python-version }}
@@ -38,8 +38,8 @@ jobs:
         python -m pip install -r array-api-tests/requirements.txt
     - name: Run the test suite
       env:
-        ARRAY_API_TESTS_MODULE: jax.experimental.array_api
+        ARRAY_API_TESTS_MODULE: jax.numpy
         JAX_ENABLE_X64: 'true'
       run: |
         cd ${GITHUB_WORKSPACE}/array-api-tests
-        pytest array_api_tests --max-examples=5 --derandomize --disable-deadline --skips-file ${GITHUB_WORKSPACE}/jax/experimental/array_api/skips.txt
+        pytest array_api_tests --max-examples=5 --derandomize --disable-deadline --skips-file ${GITHUB_WORKSPACE}/tests/array_api_skips.txt

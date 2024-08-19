@@ -22,8 +22,8 @@ from typing import Any
 import warnings
 
 import jax
-from jax import dtypes
 from jax import core as jax_core
+from jax import dtypes
 from jax._src import config
 from jax._src import core as jax_src_core
 from jax._src import sharding_impls
@@ -32,9 +32,9 @@ from jax._src.lib.mlir import ir
 from jax._src.pallas import core
 from jax._src.pallas.mosaic import lowering
 from jax._src.pallas.mosaic import verification
-from jax._src.pallas.pallas_call import pallas_call_p
 from jax.experimental import mosaic
 from jax.experimental.mosaic.dialects import tpu
+from jax.experimental.pallas import tpu as pltpu
 
 def _maybe_cast_to_int(x: jax.Array | jax_core.ShapedArray):
   """Casts boolean values to integers.
@@ -64,27 +64,21 @@ _DUMP_PROMELA_TO = config.string_flag(
 
 
 def pallas_call_tpu_lowering_rule(
-    ctx: mlir.LoweringRuleContext, *in_nodes,
+    ctx: mlir.LoweringRuleContext,
+    *in_nodes,
     jaxpr: jax_core.Jaxpr,
-    name: str,
+    name_and_src_info: core.NameAndSrcInfo,
     grid_mapping: core.GridMapping,
     input_output_aliases: tuple[tuple[int, int], ...],
-    in_shapes: tuple[jax.ShapeDtypeStruct, ...],
-    out_shapes: tuple[jax.ShapeDtypeStruct, ...],
     debug: bool,
     interpret: bool,
-    compiler_params: dict[str, Any]):
+    compiler_params: dict[str, Any],
+    cost_estimate: core.CostEstimate | None,
+):
   """Lowers a pallas_call to a Mosaic TPU custom call."""
-  if interpret:
-    # TODO(necula): is this branch still needed?
-    return mlir.lower_fun(pallas_call_p.impl, multiple_results=True)(
-        ctx, *in_nodes, jaxpr=jaxpr, name=name, out_shapes=out_shapes,
-        in_shapes=in_shapes,
-        interpret=interpret, debug=debug,
-        input_output_aliases=input_output_aliases,
-        grid_mapping=grid_mapping,
-        compiler_params=compiler_params)
+  del interpret
   if debug:
+    print(f"\nThe kernel jaxpr for pallas_call {name_and_src_info}:")
     print(jaxpr)
   if "mosaic_params" in compiler_params:
     # TODO(slebedev): Remove this branch after July 12th 2024.
@@ -99,6 +93,22 @@ def pallas_call_tpu_lowering_rule(
     mosaic_params = compiler_params["mosaic"]
   else:
     mosaic_params = {}
+
+  if "cost_estimate" in mosaic_params:
+    # TODO(amagni): Remove this branch after October 22th 2024.
+    if cost_estimate is not None:
+      raise ValueError(
+          "Passing cost estimate via both compiler_params=dict(mosaic=...) and"
+          " pallas_call(..., cost_estimate=...) is not supported."
+      )
+
+    warnings.warn(
+        "Passing cost estimate via compiler_params=dict(cost_estimate=...) is"
+        " deprecated. Use pallas_call(..., cost_estimate=...) instead.",
+        DeprecationWarning,
+    )
+    cost_estimate = mosaic_params["cost_estimate"]
+
   mesh = None
   axis_context = ctx.module_context.axis_context
   if axis_context is not None:
@@ -114,11 +124,13 @@ def pallas_call_tpu_lowering_rule(
     with mlir_ctx, ir.Location.unknown(mlir_ctx):
       dimension_semantics = mosaic_params.get("dimension_semantics", None)
       return lowering.lower_jaxpr_to_module(
-          mlir_ctx, grid_mapping, in_shapes, out_shapes, jaxpr,
+          ctx, mlir_ctx, grid_mapping, jaxpr,
           dimension_semantics=dimension_semantics, mesh=mesh,
-          for_verification=for_verification)
+          for_verification=for_verification,
+          name_and_src_info=name_and_src_info)
   mosaic_module, extra_args = lower_module(for_verification=False)
   if debug:
+    print(f"\nThe Mosaic module for pallas_call {name_and_src_info}:")
     print(mosaic_module)
   num_extra_args = len(extra_args)
   num_dyn_bounds = grid_mapping.num_dynamic_grid_bounds
@@ -126,7 +138,9 @@ def pallas_call_tpu_lowering_rule(
       (a[0] + num_dyn_bounds + num_extra_args, a[1])
       for a in input_output_aliases
   )
-  out_avals = [jax_core.ShapedArray(s.shape, s.dtype) for s in out_shapes]
+  out_avals = [jax_core.ShapedArray(bm.array_shape_dtype.shape,
+                                    bm.array_shape_dtype.dtype)
+               for bm in grid_mapping.block_mappings_output]
 
   if promela_dump_path := _DUMP_PROMELA_TO.value:
     num_devices = 1 if mesh is None else mesh.devices.size
@@ -140,6 +154,7 @@ def pallas_call_tpu_lowering_rule(
         verification_module, num_devices, num_cores
     )
     if promela_dump_path == "stdout":
+      print(f"The Promela model for pallas_call {name_and_src_info}:")
       print(model)
     else:
       if promela_dump_path == "sponge":
@@ -150,7 +165,10 @@ def pallas_call_tpu_lowering_rule(
               " --jax_pallas_dump_promela_to=sponge"
           )
       dump_ctx = tempfile.NamedTemporaryFile(
-          mode="w", prefix=name + "-", suffix=".pml", dir=promela_dump_path, delete=False,
+          mode="w",
+          prefix=name_and_src_info.name + "-",
+          suffix=".pml",
+          dir=promela_dump_path, delete=False,
       )
       with dump_ctx as f:
         f.write(model)
@@ -173,27 +191,33 @@ def pallas_call_tpu_lowering_rule(
   # Dynamic grid bounds have to go at the front.
   dynamic_grid_args, args = in_nodes[:num_dyn_bounds], in_nodes[num_dyn_bounds:]
   kernel_ctx = ctx.replace(avals_in=kernel_in_avals, avals_out=kernel_out_avals)
-  out_nodes = mosaic.lower_module_to_custom_call(
-        kernel_ctx,
-        *dynamic_grid_args,
-        *extra_args,
-        *args,
-        module=mosaic_module,
-        out_type=kernel_out_avals,
-        backend="tpu",
-        kernel_name=name,
-        cost_estimate=mosaic_params.get("cost_estimate"),
-        vmem_limit_bytes=mosaic_params.get("vmem_limit_bytes"),
-        flags=mosaic_params.get("flags"),
-        allow_input_fusion=mosaic_params.get("allow_input_fusion"),
-        input_output_aliases=input_output_aliases,
-        serialization_format=mosaic_params.get("serialization_format", 1),
-        device_type=mosaic_params.get("device_type"),
-        internal_scratch_in_bytes=mosaic_params.get(
-            "internal_scratch_in_bytes"
-        ),
-        collective_id=mosaic_params.get("collective_id", None),
+  if cost_estimate is not None:
+    mosaic_cost_estimate = pltpu.CostEstimate(
+        flops=cost_estimate.flops,
+        bytes_accessed=cost_estimate.bytes_accessed,
+        transcendentals=cost_estimate.transcendentals,
     )
+  else:
+    mosaic_cost_estimate = None
+  out_nodes = mosaic.lower_module_to_custom_call(
+      kernel_ctx,
+      *dynamic_grid_args,
+      *extra_args,
+      *args,
+      module=mosaic_module,
+      out_type=kernel_out_avals,
+      backend="tpu",
+      kernel_name=name_and_src_info.name,
+      cost_estimate=mosaic_cost_estimate,
+      vmem_limit_bytes=mosaic_params.get("vmem_limit_bytes"),
+      flags=mosaic_params.get("flags"),
+      allow_input_fusion=mosaic_params.get("allow_input_fusion"),
+      input_output_aliases=input_output_aliases,
+      serialization_format=mosaic_params.get("serialization_format", 1),
+      device_type=mosaic_params.get("device_type"),
+      internal_scratch_in_bytes=mosaic_params.get("internal_scratch_in_bytes"),
+      collective_id=mosaic_params.get("collective_id", None),
+  )
   _maybe_cast_to_bool = lambda x, aval: x.astype(
       jax.numpy.bool_) if aval.dtype == jax.numpy.bool_ else x
   def _maybe_cast_outputs(*args):

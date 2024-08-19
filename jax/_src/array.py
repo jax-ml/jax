@@ -192,7 +192,7 @@ class ArrayImpl(basearray.Array):
     # Don't rearrange if skip_checks is enabled because this assumes that the
     # input buffers are already arranged properly. This usually happens when
     # Array's are created as output of a JAX transformation
-    # (like pjit, xmap, etc).
+    # (like pjit, etc).
     if not _skip_checks or config.enable_checks.value:
       self._check_and_rearrange()
 
@@ -253,6 +253,13 @@ class ArrayImpl(basearray.Array):
   @property
   def sharding(self):
     return self._sharding
+
+  @property
+  def device(self):
+    self._check_if_deleted()
+    if isinstance(self.sharding, SingleDeviceSharding):
+      return list(self.sharding.device_set)[0]
+    return self.sharding
 
   @property
   def weak_type(self):
@@ -332,18 +339,18 @@ class ArrayImpl(basearray.Array):
       except ValueError:
         arr_idx = None
       if arr_idx is not None:
-        a = self._arrays[arr_idx]
-        out = ArrayImpl(
-            a.aval, SingleDeviceSharding(_get_device(a)), [a], committed=False,
-            _skip_checks=True)
+        out = self._arrays[arr_idx]
+        sharding = SingleDeviceSharding(_get_device(out))
 
         if config.pmap_no_rank_reduction.value:
           # If cidx was the index of a single shard, then it corresponds to one
           # shard of the chunked dimension.
           dims = tuple(i for i, x in enumerate(cidx) if isinstance(x, int))
-          return lax.squeeze(out, dimensions=dims)
-        else:
-          return out
+          # Squeeze on committed arrays to avoid data movement to shard 0.
+          out = lax.squeeze(out, dimensions=dims)
+
+        return ArrayImpl(
+            out.aval, sharding, [out], committed=False, _skip_checks=True)
 
     return lax_numpy._rewriting_take(self, idx)
 
@@ -459,8 +466,7 @@ class ArrayImpl(basearray.Array):
 
   def __reduce__(self):
     fun, args, arr_state = self._value.__reduce__()
-    aval_state = {'weak_type': self.aval.weak_type,
-                  'named_shape': self.aval.named_shape}
+    aval_state = {'weak_type': self.aval.weak_type}
     return (_reconstruct_array, (fun, args, arr_state, aval_state))
 
   @use_cpp_method()
@@ -483,7 +489,7 @@ class ArrayImpl(basearray.Array):
     """Returns the total global on-device size of the array in bytes."""
     arr = self._arrays[0]
     per_shard_size = arr.on_device_size_in_bytes()
-    return per_shard_size * len(self.sharding.device_set)
+    return per_shard_size * self.sharding.num_devices
 
   def devices(self) -> set[Device]:
     self._check_if_deleted()
@@ -628,8 +634,7 @@ class ArrayImpl(basearray.Array):
         npy_value[ind] = self._arrays[i]._single_device_array_to_np_array()
       self._npy_value = npy_value
       self._npy_value.flags.writeable = False
-    # https://docs.python.org/3/library/typing.html#typing.cast
-    return cast(np.ndarray, self._npy_value)
+    return self._npy_value
 
 
 # TODO(b/273265390): ideally we would write this as a decorator on the ArrayImpl
@@ -878,11 +883,11 @@ def make_array_from_process_local_data(
 
   Args:
     sharding: sharding of the global tensor.
-    host_local_data: data on the host to be placed on local devices. Each
+    local_data: data on the host to be placed on local devices. Each
       dimension should either match global_shape, or match
       num_addressable_indices(dim).
     global_shape: the target shape of the global tensor. If None,
-      will infer from host_local_data and sharding.
+      will infer from local_data and sharding.
 
   Returns:
     Tensor that will have sharding=sharding and of shape global_shape.

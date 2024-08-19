@@ -13,7 +13,7 @@ kernelspec:
 
 +++ {"id": "LQHmwePqryRU"}
 
-# How to Think in JAX
+# How to think in JAX
 
 <!--* freshness: { reviewed: '2024-04-08' } *-->
 
@@ -25,7 +25,7 @@ JAX provides a simple and powerful API for writing accelerated numerical code, b
 
 ## JAX vs. NumPy
 
-**Key Concepts:**
+**Key concepts:**
 
 - JAX provides a NumPy-inspired interface for convenience.
 - Through duck-typing, JAX arrays can often be used as drop-in replacements of NumPy arrays.
@@ -132,7 +132,7 @@ print(y)
 
 ## NumPy, lax & XLA: JAX API layering
 
-**Key Concepts:**
+**Key concepts:**
 
 - `jax.numpy` is a high-level wrapper that provides a familiar interface.
 - `jax.lax` is a lower-level API that is stricter and often more powerful.
@@ -215,7 +215,7 @@ Every JAX operation is eventually expressed in terms of these fundamental XLA op
 
 ## To JIT or not to JIT
 
-**Key Concepts:**
+**Key concepts:**
 
 - By default JAX executes operations one at a time, in sequence.
 - Using a just-in-time (JIT) compilation decorator, sequences of operations can be optimized together and run at once.
@@ -308,7 +308,7 @@ This is because the function generates an array whose shape is not known at comp
 
 ## JIT mechanics: tracing and static variables
 
-**Key Concepts:**
+**Key concepts:**
 
 - JIT and other JAX transforms work by *tracing* a function to determine its effect on inputs of a specific shape and type.
 
@@ -417,9 +417,9 @@ Understanding which values and operations will be static and which will be trace
 
 +++ {"id": "r-RCl_wD5lI7"}
 
-## Static vs Traced Operations
+## Static vs traced operations
 
-**Key Concepts:**
+**Key concepts:**
 
 - Just as values can be either static or traced, operations can be static or traced.
 

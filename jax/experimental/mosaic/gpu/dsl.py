@@ -13,6 +13,12 @@
 # limitations under the License.
 # ==============================================================================
 
+from . import (
+    Barrier,
+    ClusterBarrier,
+    TMABarrier,
+    Union,
+)
 from .fragmented_array import (
     FragmentedArray,
     FragmentedLayout,
@@ -21,8 +27,8 @@ from .fragmented_array import (
     WGStridedFragLayout,
 )
 from .utils import (
-    Barrier,
-    BarrierArray,
+    BarrierRef,
+    CollectiveBarrierRef,
     DynamicSlice,
     Partition,
     Partition1D,

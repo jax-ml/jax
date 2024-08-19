@@ -282,6 +282,28 @@ py_extension(
 )
 
 ##---------------------------------------------------------------------------##
+# Shardy Extensions
+##---------------------------------------------------------------------------##
+
+py_extension(
+    name = "_sdy",
+    srcs = [
+        "@shardy//shardy/integrations/python/ir:sdy_module.cc",
+    ],
+    copts = COPTS,
+    linkopts = LINKOPTS,
+    deps = [
+        ":jaxlib_mlir_capi_shared_library",
+        "@llvm-project//mlir:CAPIIRHeaders",
+        "@llvm-project//mlir:IR",
+        "@llvm-project//mlir:MLIRBindingsPythonHeaders",
+        "@local_config_python//:headers",
+        "@pybind11",
+        "@shardy//shardy/integrations/c:sdy_capi_headers",
+    ],
+)
+
+##---------------------------------------------------------------------------##
 # Stablehlo Extensions
 ##---------------------------------------------------------------------------##
 
@@ -357,6 +379,7 @@ cc_library(
         "@llvm-project//mlir:CAPITransformsObjects",
         "@llvm-project//mlir:CAPIVectorObjects",
         "@llvm-project//mlir:MLIRBindingsPythonCAPIObjects",
+        "@shardy//shardy/integrations/c:sdy_capi_objects",
         "@stablehlo//:chlo_capi_objects",
         "@stablehlo//:stablehlo_capi_objects",
         "@xla//xla/mlir_hlo:CAPIObjects",
@@ -394,6 +417,7 @@ windows_cc_shared_mlir_library(
     exported_symbol_prefixes = [
         "mlir",
         "chlo",
+        "sdy",
         "stablehlo",
     ],
     deps = [":jaxlib_mlir_capi_objects"],

@@ -725,7 +725,7 @@ def flash_attention_kernel(
     m_scratch_ref[...] = jnp.full_like(m_scratch_ref, mask_value)
     l_scratch_ref[...] = jnp.zeros_like(l_scratch_ref)
 
-  _, _, should_run, should_not_mask = _next_nonzero(
+  global_kv_index, _, should_run, should_not_mask = _next_nonzero(
       h,
       i,
       j,
@@ -760,7 +760,11 @@ def flash_attention_kernel(
         kv_segment_ids_ref,
         attn_logits_soft_cap=attn_logits_soft_cap,
         k_slice=slice_k,
-        k_offset=j * bkv + kv_compute_index * bkv_compute,
+        # When the iteration space is shrunk (for local attention for example),
+        # the kv_index program_id does not correspond to the actual coordinates
+        # of the KV data. Make sure to use the 'unshrunk' index (coming from the
+        # data_next array) when computing the mask.
+        k_offset=global_kv_index * bkv + kv_compute_index * bkv_compute,
         bq=bq,
         mask_function=mask_function,
     )
@@ -879,6 +883,7 @@ def _splash_attention_forward(
     save_residuals: bool,
     mask_function: MaskFunctionType | None,
     attn_logits_soft_cap: float | None = None,
+    interpret: bool = False
 ) -> SplashCustomReturnType:
   num_q_heads, q_seq_len, head_dim = q.shape
   bq, bkv = block_sizes.block_q, block_sizes.block_kv
@@ -1110,6 +1115,7 @@ def _splash_attention_forward(
         compiler_params=dict(mosaic=mosaic_params),
         out_shape=out_shapes,
         name=kernel_name,
+        interpret=interpret,
     )(
         fwd_mask_info.data_next,
         fwd_mask_info.block_mask,
@@ -1146,7 +1152,7 @@ def _splash_attention_forward(
   return out
 
 
-@partial(jax.custom_vjp, nondiff_argnums=(7, 8, 9, 10, 11, 12, 13))
+@partial(jax.custom_vjp, nondiff_argnums=(7, 8, 9, 10, 11, 12, 13, 14))
 def _splash_attention_custom(
     fwd_mask_info: mask_info_lib.MaskInfo,
     dq_mask_info: mask_info_lib.MaskInfo | None,
@@ -1162,6 +1168,7 @@ def _splash_attention_custom(
     residual_checkpoint_name: str | None,
     mask_function: MaskFunctionType | None,
     attn_logits_soft_cap: float | None = None,
+    interpret: bool = False,
 ) -> SplashCustomReturnType:
   # The forward function does not use the dq and dkv MaskInfos, it just forwards
   # them to the backward function as residuals. This is a way to communicate
@@ -1183,10 +1190,11 @@ def _splash_attention_custom(
       mask_value=mask_value,
       is_mqa=is_mqa,
       block_sizes=block_sizes,
-      save_residuals=save_residuals,
-      attn_logits_soft_cap=attn_logits_soft_cap,
       residual_checkpoint_name=residual_checkpoint_name,
+      save_residuals=save_residuals,
       mask_function=mask_function,
+      attn_logits_soft_cap=attn_logits_soft_cap,
+      interpret=interpret,
   )
 
 
@@ -1205,6 +1213,7 @@ def _splash_attention_fwd(
     residual_checkpoint_name: str | None,
     mask_function: MaskFunctionType | None,
     attn_logits_soft_cap: float | None = None,
+    interpret: bool = False,
 ) -> tuple[
     tuple[jax.Array],
     SplashResidualsType,
@@ -1212,7 +1221,7 @@ def _splash_attention_fwd(
   if save_residuals:
     raise NotImplementedError("Higher-order AD not supported")
 
-  out, (logsumexp,) = _splash_attention_forward(
+  out, (logsumexp,) = _splash_attention_forward(  # pytype: disable=wrong-arg-types
       fwd_mask_info,
       q,
       k,
@@ -1221,10 +1230,11 @@ def _splash_attention_fwd(
       mask_value=mask_value,
       is_mqa=is_mqa,
       block_sizes=block_sizes,
-      save_residuals=True,
-      attn_logits_soft_cap=attn_logits_soft_cap,
       residual_checkpoint_name=residual_checkpoint_name,
+      save_residuals=True,
       mask_function=mask_function,
+      attn_logits_soft_cap=attn_logits_soft_cap,
+      interpret=interpret,
   )
   return out, (
       q,
@@ -1276,7 +1286,7 @@ def _flash_attention_dq_kernel(
   def init():
     dq_scratch_ref[...] = jnp.zeros_like(dq_scratch_ref)
 
-  _, _, should_run, should_not_mask = _next_nonzero(
+  global_kv_index, _, should_run, should_not_mask = _next_nonzero(
       h, i, j, data_next_ref, block_mask_ref, mask_next_ref
   )
   @pl.when(should_run)
@@ -1302,7 +1312,11 @@ def _flash_attention_dq_kernel(
         kv_segment_ids_ref,
         attn_logits_soft_cap=attn_logits_soft_cap,
         k_slice=pl.ds(0, bkv),
-        k_offset=j * bkv,
+        # When the iteration space is shrunk (for local attention for example),
+        # the kv_index program_id does not correspond to the actual coordinates
+        # of the KV data. Make sure to use the 'unshrunk' index (coming from the
+        # data_next array) when computing the mask.
+        k_offset=global_kv_index * bkv,
         bq=bq,
         mask_function=mask_function,
     )
@@ -1349,6 +1363,7 @@ def _splash_attention_bwd_dq(
     k_layout: QKVLayout,
     v_layout: QKVLayout,
     mask_function: MaskFunctionType | None,
+    interpret: bool,
 ):
   num_q_heads, q_seq_len, head_dim = q.shape
   if is_mqa:
@@ -1560,6 +1575,7 @@ def _splash_attention_bwd_dq(
         out_shape=out_shapes,
         compiler_params=dict(mosaic=mosaic_params),
         name=kernel_name,
+        interpret=interpret,
     )(
         mask_info.data_next,
         mask_info.block_mask,
@@ -1789,6 +1805,7 @@ def _splash_attention_bwd_dkv(
     k_layout: QKVLayout,
     v_layout: QKVLayout,
     mask_function: MaskFunctionType | None,
+    interpret: bool,
 ):
   num_q_heads, q_seq_len, head_dim = q.shape
   if is_mqa:
@@ -2107,6 +2124,7 @@ def _splash_attention_bwd_dkv(
         out_shape=out_shapes,
         compiler_params=dict(mosaic=mosaic_params),
         name=kernel_name,
+        interpret=interpret,
     )(
         mask_info.data_next,
         mask_info.block_mask,
@@ -2139,6 +2157,7 @@ def _splash_attention_bwd(
     residual_checkpoint_name: str | None,
     mask_function: MaskFunctionType | None,
     attn_logits_soft_cap: float | None,
+    interpret: bool,
     res: SplashResidualsType,
     do: jax.Array,
 ) -> tuple[
@@ -2193,6 +2212,7 @@ def _splash_attention_bwd(
       k_layout=block_sizes.k_layout,
       v_layout=block_sizes.v_layout,
       mask_function=mask_function,
+      interpret=interpret,
   )
   if not use_fused_bwd_kernel:
     assert dq is None
@@ -2214,6 +2234,7 @@ def _splash_attention_bwd(
         k_layout=block_sizes.k_layout,
         v_layout=block_sizes.v_layout,
         mask_function=mask_function,
+        interpret=interpret,
     )
   # Match the signature of the fwd function.
   assert dq is not None
@@ -2241,6 +2262,7 @@ _splash_attention_custom.defvjp(_splash_attention_fwd, _splash_attention_bwd)
         "attn_logits_soft_cap",
         "residual_checkpoint_name",
         "mask_function",
+        "interpret",
     ],
 )
 def _splash_attention(
@@ -2259,6 +2281,7 @@ def _splash_attention(
     attn_logits_soft_cap: float | None,
     residual_checkpoint_name: str | None,
     mask_function: MaskFunctionType | None,
+    interpret: bool,
 ) -> SplashCustomReturnType:
   return _splash_attention_custom(
       fwd_mask_info,
@@ -2275,6 +2298,7 @@ def _splash_attention(
       attn_logits_soft_cap=attn_logits_soft_cap,
       residual_checkpoint_name=residual_checkpoint_name,
       mask_function=mask_function,
+      interpret=interpret,
   )
 
 
@@ -2378,6 +2402,7 @@ def _make_splash_attention(
     head_shards: int,
     q_seq_shards: int,
     residual_checkpoint_name: str | None = None,
+    interpret: bool = False,
 ):
   if len(mask.shape) != 3:
     raise ValueError(f'Unexpected mask shape: {mask.shape}')
@@ -2439,6 +2464,7 @@ def _make_splash_attention(
       attn_logits_soft_cap=attn_logits_soft_cap,
       residual_checkpoint_name=residual_checkpoint_name,
       mask_function=mask_function_fwd,
+      interpret=interpret,
   )
 
 

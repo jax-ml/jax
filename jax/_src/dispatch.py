@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import atexit
-import collections
 from collections.abc import Callable, Iterator, Sequence
 import contextlib
 import dataclasses
@@ -38,7 +37,6 @@ from jax._src import dtypes
 from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
-from jax._src import xla_bridge as xb
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.abstract_arrays import array_types
@@ -46,6 +44,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.interpreters import pxla
 from jax._src import lib
+from jax._src.mesh import AbstractMesh
 from jax._src.lib import xla_client as xc
 from jax._src.monitoring import record_event_duration_secs
 from jax._src.partition_spec import PartitionSpec
@@ -206,7 +205,7 @@ def jaxpr_has_primitive(jaxpr: core.Jaxpr, prim_name: str) -> bool:
 # stablehlo is oblivious of physical devices.
 prim_requires_devices_during_lowering: set[core.Primitive] = set()
 
-def jaxpr_has_prim_requiring_devices(jaxpr: core.Jaxpr):
+def jaxpr_has_prim_requiring_devices(jaxpr: core.Jaxpr) -> bool:
   for eqn in jaxpr.eqns:
     if eqn.primitive in prim_requires_devices_during_lowering:
       return True
@@ -229,13 +228,18 @@ def get_intermediate_shardings(
 
   for eqn in jaxpr.eqns:
     if eqn.primitive is pjit.sharding_constraint_p:
+      s = eqn.params['sharding']
+      if isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh):
+        continue
       source_info = SourceInfo(eqn.source_info, eqn.primitive.name)
-      yield (eqn.params['sharding'], source_info)
+      yield (s, source_info)
     elif eqn.primitive is pjit.pjit_p:
       source_info = SourceInfo(eqn.source_info, eqn.primitive.name)
       yield from ((i, source_info) for i in eqn.params['in_shardings'])
       yield from ((o, source_info) for o in eqn.params['out_shardings'])
     elif eqn.primitive is shard_map.shard_map_p:
+      if not eqn.params['mesh']._is_jax_device_mesh:
+        continue
       source_info = SourceInfo(eqn.source_info, eqn.primitive.name)
       def _names_to_pspec(names):
         ndmin = max(names) + 1 if names else 0
@@ -324,10 +328,6 @@ def _check_special(name: str, dtype: np.dtype, buf: basearray.Array) -> None:
       raise FloatingPointError(f"invalid value (inf) encountered in {name}")
 
 
-def _override_get_device_assignment(sharding, *args, **kwargs):
-  da = sharding._device_assignment
-  return xb.get_device_backend(da[0]), da
-
 def _identity_fn(x):
   return x
 
@@ -361,7 +361,7 @@ def _different_device_order_reshard(x, target_sharding):
     new_op_sharding.iota_reshape_dims = []
     new_op_sharding.iota_transpose_perm = []
     new_op_sharding.tile_assignment_devices = np.take(
-        old_hlo_sharding.tile_assignment_devices(), permute_order
+        permute_order, old_hlo_sharding.tile_assignment_devices()
     )
     new_hlo_sharding = xc.HloSharding.from_proto(new_op_sharding)
     # TODO(yashkatariya): Enable this when HloSharding conversion is fixed in
@@ -370,40 +370,18 @@ def _different_device_order_reshard(x, target_sharding):
     #         == new_hlo_sharding.tile_assignment_dimensions())
     # assert (new_op_sharding.tile_assignment_devices
     #         == new_hlo_sharding.tile_assignment_devices())
+    assert (list(np.take(inp_sharding._device_assignment,
+                         old_hlo_sharding.tile_assignment_devices()))
+            == list(np.take(target_sharding._device_assignment,
+                            new_op_sharding.tile_assignment_devices)))
 
-  new_sharding = GSPMDSharding(
-      target_sharding._device_assignment, new_hlo_sharding,
-      memory_kind=target_sharding.memory_kind)
-
-  old_device_to_index_buffer = collections.defaultdict()
-  old_index_to_buffer = collections.defaultdict()
-  for s in x.addressable_shards:
-    old_index_to_buffer[array.hashed_index(s.index)] = s.data
-    old_device_to_index_buffer[s.device] = (s.index, s.data)
-
-  new_arrays = []
-  for new_d, new_index in new_sharding.addressable_devices_indices_map(x.shape).items():
-    old_index, old_buf = old_device_to_index_buffer[new_d]
-    if old_index == new_index:
-      assert array._get_device(old_buf) == new_d, (
-          array._get_device(old_buf), new_d)
-      new_arrays.append(old_buf)
-    else:
-      old_buf = old_index_to_buffer[array.hashed_index(new_index)]
-      new_arrays.append(
-          pxla.batched_device_put(old_buf.aval, SingleDeviceSharding(new_d),
-                                  [old_buf], [new_d]))
-
-  new_x = array.ArrayImpl(
-      x.aval, new_sharding, new_arrays, committed=True, _skip_checks=True)
-
-  _orig_get_and_check_device_assignment = pxla._get_and_check_device_assignment.fn
-  pxla._get_and_check_device_assignment.fn = partial(
-      _override_get_device_assignment, target_sharding)
-  try:
-    return api.jit(_identity_fn, out_shardings=target_sharding)(new_x)
-  finally:
-    pxla._get_and_check_device_assignment.fn = _orig_get_and_check_device_assignment
+  new_x = array.make_array_from_single_device_arrays(
+      x.shape,
+      GSPMDSharding(target_sharding._device_assignment, new_hlo_sharding,
+                    memory_kind=target_sharding.memory_kind),
+      x._arrays,
+  )
+  return api.jit(_identity_fn, out_shardings=target_sharding)(new_x)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -440,7 +418,7 @@ def _device_put_sharding_impl(x, aval, device):
       return _different_device_order_reshard(x, s)
 
     if (s.is_fully_addressable and isinstance(x, array.ArrayImpl) and
-        x.is_fully_addressable and len(s.device_set) > 1 and
+        x.is_fully_addressable and s.num_devices > 1 and
         s._internal_device_list != x.sharding._internal_device_list and  # pytype: disable=attribute-error
         s.device_set == x.sharding.device_set):
       assert isinstance(s, Sharding)
@@ -574,6 +552,10 @@ def _device_put_batcher(batched_args, batch_dims, **params):
 batching.primitive_batchers[device_put_p] = _device_put_batcher
 
 def _tpu_gpu_device_put_lowering(ctx, *xs, devices, srcs):
+  # TODO(yashkatariya): Maybe we should add the custom calls anyways if it's
+  # being used inside jit? Atleast for now, this preserves the old behavior.
+  if ctx.module_context.all_default_mem_kind:
+    return xs
   def lower(x, device, src, aval, out_aval):
     if (isinstance(device, (Sharding, TransferToMemoryKind)) and
         device.memory_kind is not None):
@@ -584,6 +566,7 @@ def _tpu_gpu_device_put_lowering(ctx, *xs, devices, srcs):
       return x
     return x
   return list(map(lower, xs, devices, srcs, ctx.avals_in, ctx.avals_out))
+
 mlir.register_lowering(
   device_put_p, _tpu_gpu_device_put_lowering, platform='tpu')
 mlir.register_lowering(
@@ -591,12 +574,6 @@ mlir.register_lowering(
 
 
 def _common_device_put_lowering(ctx, *xs, devices, srcs):
-  for device in devices:
-    if (isinstance(device, (Sharding, TransferToMemoryKind)) and
-        device.memory_kind is not None):
-      raise NotImplementedError(
-          "Passing memory_kind to device_put via Shardings is not supported on"
-          f" platforms {ctx.module_context.platforms}")
   return xs
 mlir.register_lowering(device_put_p, _common_device_put_lowering)
 

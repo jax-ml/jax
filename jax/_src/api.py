@@ -22,6 +22,7 @@ arrays.
 """
 from __future__ import annotations
 
+import atexit
 import collections
 from collections.abc import Callable, Generator, Hashable, Iterable, Sequence
 from functools import partial, lru_cache
@@ -346,6 +347,14 @@ def xla_computation(fun: Callable,
                     donate_argnums: int | Iterable[int] = ()) -> Callable:
   """Creates a function that produces its XLA computation given example args.
 
+  .. warning::
+
+    This function is deprecated as of JAX v0.4.30, and will be removed in a future
+    JAX release. You can replace it with :ref:`ahead-of-time-lowering` APIs; for
+    example, ``jax.xla_computation(fn)(*args)`` can be replaced with
+    ``jax.jit(fn).lower(*args).compiler_ir('hlo')``.
+    See the `JAX 0.4.30 Change log`_ for more examples.
+
   Args:
     fun: Function from which to form XLA computations.
     static_argnums: See the :py:func:`jax.jit` docstring.
@@ -373,9 +382,9 @@ def xla_computation(fun: Callable,
     return_shape: Optional boolean, defaults to ``False``. If ``True``, the
       wrapped function returns a pair where the first element is the XLA
       computation and the second element is a pytree with the same structure as
-      the output of ``fun`` and where the leaves are objects with ``shape``,
-      ``dtype``, and ``named_shape`` attributes representing the corresponding
-      types of the output leaves.
+      the output of ``fun`` and where the leaves are objects with ``shape`` and
+      ``dtype`` attributes representing the corresponding types of the output
+      leaves.
     donate_argnums: Specify which arguments are "donated" to the computation.
       It is safe to donate arguments if you no longer need them once the
       computation has finished. In some cases XLA can make use of donated
@@ -404,7 +413,7 @@ def xla_computation(fun: Callable,
   >>> import jax
   >>>
   >>> def f(x): return jax.numpy.sin(jax.numpy.cos(x))
-  >>> c = jax.xla_computation(f)(3.)
+  >>> c = jax.xla_computation(f)(3.)  # doctest: +SKIP
   >>> print(c.as_hlo_text())  # doctest: +SKIP
   HloModule xla_computation_f.6
   <BLANKLINE>
@@ -423,13 +432,13 @@ def xla_computation(fun: Callable,
 
   >>> import types
   >>> scalar = types.SimpleNamespace(shape=(), dtype=np.dtype(np.float32))
-  >>> c = jax.xla_computation(f)(scalar)
+  >>> c = jax.xla_computation(f)(scalar)  # doctest: +SKIP
 
 
   Here's an example that involves a parallel collective and axis name:
 
   >>> def f(x): return x - jax.lax.psum(x, 'i')
-  >>> c = jax.xla_computation(f, axis_env=[('i', 4)])(2)
+  >>> c = jax.xla_computation(f, axis_env=[('i', 4)])(2)  # doctest: +SKIP
   >>> print(c.as_hlo_text())  # doctest: +SKIP
   HloModule jaxpr_computation.9
   primitive_computation.3 {
@@ -457,7 +466,7 @@ def xla_computation(fun: Callable,
   ...   return rowsum, colsum, allsum
   ...
   >>> axis_env = [('i', 4), ('j', 2)]
-  >>> c = xla_computation(g, axis_env=axis_env)(5.)
+  >>> c = jax.xla_computation(g, axis_env=axis_env)(5.)  # doctest: +SKIP
   >>> print(c.as_hlo_text())  # doctest: +SKIP
   HloModule jaxpr_computation__1.19
   [removed uninteresting text here]
@@ -469,6 +478,8 @@ def xla_computation(fun: Callable,
     all-reduce.17 = f32[] all-reduce(parameter.2), replica_groups={{0,1,2,3,4,5,6,7}}, to_apply=primitive_computation__1.13
     ROOT tuple.18 = (f32[], f32[], f32[]) tuple(all-reduce.7, all-reduce.12, all-reduce.17)
   }
+
+  .. _JAX 0.4.30 Change log: https://jax.readthedocs.io/en/latest/changelog.html#jax-0-4-30-june-18-2024
   """
   if instantiate_const_outputs is not None:
     raise ValueError(
@@ -547,8 +558,8 @@ def xla_computation(fun: Callable,
       m = mlir.module_to_bytecode(lowering_result.module)
       built = xc._xla.mlir.mlir_module_to_xla_computation(
           m, use_tuple_args=tuple_args, return_tuple=True)
-    out_shapes_flat = [
-        ShapeDtypeStruct(a.shape, a.dtype, a.named_shape) for a in out_avals]
+    out_shapes_flat = [ShapeDtypeStruct(a.shape, a.dtype) for a in out_avals]
+    out_shapes_flat = [ShapeDtypeStruct(a.shape, a.dtype) for a in out_avals]
     out_shape = tree_unflatten(out_tree(), out_shapes_flat)
     for out_aval in out_avals:
       if not isinstance(out_aval, ShapedArray):
@@ -2283,33 +2294,33 @@ def _flat_axes_specs(abstracted_axes, *args, **kwargs
   return broadcast_prefix(abstracted_axes, args, ax_leaf)
 
 
-# TODO(phawkins): for some reason mypy cannot determine these overloads are
-# non-overlapping. Pytype is happy with them.
 @overload
-def make_jaxpr(fun: Callable,  # type: ignore
-               static_argnums: int | Iterable[int] = (),
-               axis_env: Sequence[tuple[AxisName, int]] | None = None,
-               return_shape: Literal[False] = ...,
-               abstracted_axes: Any | None = None,
-               ) -> Callable[..., core.ClosedJaxpr]:
+def make_jaxpr(
+    fun: Callable,
+    static_argnums: int | Iterable[int] = (),
+    axis_env: Sequence[tuple[AxisName, int]] | None = None,
+    return_shape: Literal[False] = ...,
+    abstracted_axes: Any | None = None,
+) -> Callable[..., core.ClosedJaxpr]:
   ...
 
 @overload
-def make_jaxpr(fun: Callable,
-               static_argnums: int | Iterable[int] = (),
-               axis_env: Sequence[tuple[AxisName, int]] | None = None,
-               return_shape: Literal[True] = ...,
-               abstracted_axes: Any | None = None,
-               ) -> Callable[..., tuple[core.ClosedJaxpr, Any]]:
+def make_jaxpr(
+    fun: Callable,
+    static_argnums: int | Iterable[int] = (),
+    axis_env: Sequence[tuple[AxisName, int]] | None = None,
+    return_shape: Literal[True] = ...,
+    abstracted_axes: Any | None = None,
+) -> Callable[..., tuple[core.ClosedJaxpr, Any]]:
   ...
 
-def make_jaxpr(fun: Callable,
-               static_argnums: int | Iterable[int] = (),
-               axis_env: Sequence[tuple[AxisName, int]] | None = None,
-               return_shape: bool = False,
-               abstracted_axes: Any | None = None,
-               ) -> Callable[..., (core.ClosedJaxpr |
-                                        tuple[core.ClosedJaxpr, Any])]:
+def make_jaxpr(
+    fun: Callable,
+    static_argnums: int | Iterable[int] = (),
+    axis_env: Sequence[tuple[AxisName, int]] | None = None,
+    return_shape: bool = False,
+    abstracted_axes: Any | None = None,
+) -> Callable[..., core.ClosedJaxpr | tuple[core.ClosedJaxpr, Any]]:
   """Creates a function that produces its jaxpr given example args.
 
   Args:
@@ -2327,8 +2338,8 @@ def make_jaxpr(fun: Callable,
       wrapped function returns a pair where the first element is the
       ``ClosedJaxpr`` representation of ``fun`` and the second element is a
       pytree with the same structure as the output of ``fun`` and where the
-      leaves are objects with ``shape``, ``dtype``, and ``named_shape``
-      attributes representing the corresponding types of the output leaves.
+      leaves are objects with ``shape`` and ``dtype`` attributes representing
+      the corresponding types of the output leaves.
 
   Returns:
     A wrapped version of ``fun`` that when applied to example arguments returns
@@ -2390,8 +2401,7 @@ def make_jaxpr(fun: Callable,
     else:
       jaxpr = traced.jaxpr
     if return_shape:
-      out = [ShapeDtypeStruct(o.shape, o.dtype, getattr(o, 'named_shape', None))
-             for o in jaxpr.out_avals]
+      out = [ShapeDtypeStruct(o.shape, o.dtype) for o in jaxpr.out_avals]
       return jaxpr, tree_unflatten(tree_structure(traced.out_info), out)
     return jaxpr
 
@@ -2681,12 +2691,13 @@ class ShapeDtypeStruct:
   Args:
     shape: a sequence of integers representing an array shape
     dtype: a dtype-like object
-    named_shape: (optional) a dictionary representing a named shape
     sharding: (optional) a :class:`jax.Sharding` object
   """
-  __slots__ = ["shape", "dtype", "named_shape", "sharding", "_dll"]
+  __slots__ = ["shape", "dtype", "sharding", "_dll"]
+  named_shape = {}  # type: ignore
 
   def __init__(self, shape, dtype, named_shape=None, sharding=None):
+    del named_shape  # ignored, vestigial
     self.shape = tuple(shape)
     if dtype is None:
       raise ValueError("ShapeDtypeStruct: dtype must be specified.")
@@ -2703,7 +2714,6 @@ class ShapeDtypeStruct:
           f" layout in a `ShapeDtypeStruct`. Got {sharding}")
     self.sharding = sharding.sharding if isinstance(sharding, Layout) else sharding
     self._dll = sharding.device_local_layout if isinstance(sharding, Layout) else None
-    self.named_shape = {} if named_shape is None else dict(named_shape)
 
   size = property(lambda self: math.prod(self.shape))
   ndim = property(lambda self: len(self.shape))
@@ -2719,11 +2729,10 @@ class ShapeDtypeStruct:
       raise TypeError("len() of unsized object") from e  # same as numpy error
 
   def __repr__(self):
-    ns = f", named_shape={self.named_shape}" if self.named_shape else ""
     sh = f", sharding={self.sharding}" if self.sharding is not None else ""
     l = f", layout={self.layout}" if self._dll is not None else ""
     return (f"{type(self).__name__}(shape={self.shape}, "
-            f"dtype={self.dtype.name}{ns}{sh}{l})")
+            f"dtype={self.dtype.name}{sh}{l})")
 
   __str__ = __repr__
 
@@ -2731,19 +2740,17 @@ class ShapeDtypeStruct:
     if not isinstance(other, ShapeDtypeStruct):
       return False
     else:
-      return ((other.shape, other.dtype, other.named_shape, other.sharding, other.layout) ==
-              (self.shape, self.dtype, self.named_shape, self.sharding, self.layout))
+      return ((other.shape, other.dtype, other.sharding, other.layout) ==
+              (self.shape, self.dtype, self.sharding, self.layout))
 
   def __hash__(self):
     # TODO(frostig): avoid the conversion from dict by addressing
     # https://github.com/google/jax/issues/8182
-    named = frozenset(self.named_shape.items())
-    return hash((self.shape, self.dtype, named, self.sharding, self.layout))
-
+    return hash((self.shape, self.dtype, self.sharding, self.layout))
 
 core.pytype_aval_mappings[ShapeDtypeStruct] = (
     lambda x: ShapedArray(x.shape, dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True),
-                          weak_type=False, named_shape=x.named_shape))
+                          weak_type=False))
 
 
 @api_boundary
@@ -2954,11 +2961,18 @@ def clear_backends():
   xb.local_devices.cache_clear()
   xb.process_count.cache_clear()
   dispatch.xla_primitive_callable.cache_clear()
+  util.clear_all_caches()
   pjit._infer_params_cached.cache_clear()
   pjit._pjit_lower_cached.cache_clear()
   pjit._create_pjit_jaxpr.cache_clear()  # pytype: disable=attribute-error
   pjit._cpp_pjit_cache.clear()
   xc._xla.PjitFunctionCache.clear_all()
+
+@atexit.register
+def clean_up():
+  db = xb._default_backend
+  if db is not None and db.platform == "cpu":  # pytype: disable=attribute-error
+    clear_backends()
 
 def live_arrays(platform=None):
   """Return all live arrays in the backend for `platform`.

@@ -55,6 +55,7 @@ py_library_providing_imports_info(
         "//jaxlib/mlir:mhlo_dialect",
         "//jaxlib/mlir:pass_manager",
         "//jaxlib/mlir:scf_dialect",
+        "//jaxlib/mlir:sdy_dialect",
         "//jaxlib/mlir:sparse_tensor_dialect",
         "//jaxlib/mlir:stablehlo_dialect",
         "//jaxlib/mlir:vector_dialect",

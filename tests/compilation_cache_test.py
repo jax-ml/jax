@@ -41,7 +41,6 @@ from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.compilation_cache_interface import CacheInterface
 from jax._src.lib import xla_client
-from jax._src.maps import xmap
 from jax.experimental.pjit import pjit
 from jax.sharding import PartitionSpec as P
 import numpy as np
@@ -233,25 +232,6 @@ class CompilationCacheTest(CompilationCacheTestCase):
     self.assertEqual(count_cache_items(), 1)
     x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     f(x, x + 1)
-    self.assertEqual(count_cache_items(), 2)
-
-  @jtu.with_mesh([("x", 2)])
-  def test_xmap(self):
-    def f(x):
-      return x * 2
-
-    devices = np.array(jax.local_devices()[:2])
-    if devices.size < 2:
-      raise SkipTest("Test requires 2 devices")
-    x = np.arange(8, dtype=np.int64).reshape((2, 2, 2))
-    xmap(
-        f, in_axes=["a", ...], out_axes=["a", ...], axis_resources={"a": "x"}
-    )(x)
-    self.assertEqual(count_cache_items(), 1)
-    x = np.arange(8, dtype=np.float32).reshape((2, 2, 2))
-    xmap(
-        f, in_axes=["a", ...], out_axes=["a", ...], axis_resources={"a": "x"}
-    )(x)
     self.assertEqual(count_cache_items(), 2)
 
   def test_cache_write_warning(self):
@@ -574,6 +554,20 @@ class CompilationCacheDisabledTest(CompilationCacheTestCase):
       f(1)
       self.assertEqual(count_cache_items(), 0)
 
+  def test_tasks_disable_cache_metric(self):
+    with config.enable_compilation_cache(False):
+      count_before_first_use = _counts[
+          "/jax/compilation_cache/task_disabled_cache"]
+      jit(lambda x: x + 1)(1)
+      count_after_first_use = _counts[
+          "/jax/compilation_cache/task_disabled_cache"]
+      self.assertEqual(count_after_first_use - count_before_first_use, 1)
+
+      # Verify that the count is incremented only once per task.
+      jit(lambda x: x + 3)(3)
+      count_after_second_use = _counts[
+          "/jax/compilation_cache/task_disabled_cache"]
+      self.assertEqual(count_after_second_use, count_after_first_use)
 
 if __name__ == "__main__":
   absltest.main(testLoader=jtu.JaxTestLoader())

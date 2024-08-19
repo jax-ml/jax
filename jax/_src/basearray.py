@@ -22,6 +22,7 @@ from typing import Any, Union
 from collections.abc import Sequence
 
 # TODO(jakevdp): fix import cycles and define these.
+Device = Any
 Shard = Any
 Sharding = Any
 
@@ -111,6 +112,19 @@ class Array(abc.ABC):
   @abc.abstractmethod
   def sharding(self) -> Sharding:
     """The sharding for the array."""
+
+  @property
+  @abc.abstractmethod
+  def device(self) -> Device | Sharding:
+    """Array API-compatible device attribute.
+
+    For single-device arrays, this returns a Device. For sharded arrays, this
+    returns a Sharding.
+    """
+
+  @abc.abstractmethod
+  def copy_to_host_async(self):
+    """Copies jax.Array to host asynchronously."""
 
 
 Array.__module__ = "jax"

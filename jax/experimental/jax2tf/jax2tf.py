@@ -51,7 +51,6 @@ from jax._src import dtypes
 from jax._src import linear_util as lu
 from jax._src import op_shardings
 from jax._src import sharding_impls
-from jax._src import maps
 from jax._src import mesh
 from jax._src import pjit
 from jax._src import prng
@@ -1484,7 +1483,7 @@ class TensorFlowTrace(core.Trace):
 def _unexpected_primitive(p: core.Primitive, *args, **kwargs):
   assert False, f"Encountered unexpected primitive {p}"
 
-for unexpected in [core.call_p, maps.xmap_p]:
+for unexpected in [core.call_p]:
   tf_impl[unexpected] = partial(_unexpected_primitive, unexpected)
 
 tf_impl[lax_control_flow.loops.eval_jaxpr_p] = \
@@ -1536,7 +1535,6 @@ tf_not_yet_impl = [
     "pgather",
     "reduce_scatter",
     "axis_index",
-    "pdot",
     "all_gather",
     "lu_pivots_to_permutation",
     "xla_pmap",
@@ -3448,6 +3446,17 @@ def _custom_lin(*args: TfVal, **_) -> Sequence[TfVal]:
 
 
 tf_impl[ad.custom_lin_p] = _custom_lin
+
+
+def _remat_opt(*args: TfVal, num_consts: int, num_res: int,
+                    fwd_jaxpr: core.ClosedJaxpr,
+                    fun_jaxpr_thunk: Callable) -> Sequence[TfVal]:
+  del num_consts, num_res, fun_jaxpr_thunk
+  return _interpret_jaxpr(fwd_jaxpr, *args, extra_name_stack="remat_opt",
+                          fresh_constant_cache=False)
+
+
+tf_impl[custom_derivatives.remat_opt_p] = _remat_opt
 
 
 PartitionsOrReplicated = Union[tuple[int, ...], None]

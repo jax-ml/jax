@@ -45,6 +45,7 @@ from jax._src.lib import gpu_linalg
 from jax._src.lib import gpu_solver
 from jax._src.lib import gpu_sparse
 from jax._src.lib import lapack
+from jax._src.lib import version as jaxlib_version
 from jax._src.lib import xla_client
 from jax._src.lib.mlir import ir
 from jax._src.lib.mlir.dialects import chlo
@@ -463,8 +464,13 @@ def _cholesky_cpu_lowering(ctx, operand):
   out_aval, = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
   op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-  result, info = lapack.potrf_hlo(operand_aval.dtype, operand, lower=True,
-                                  a_shape_vals=op_shape_vals)
+  # TODO(b/344892332): Remove the check after the compatibility period.
+  if jaxlib_version < (0, 4, 31):
+    ctx_arg = ()
+  else:
+    ctx_arg = (ctx,)
+  result, info = lapack.potrf_hlo(*ctx_arg, operand_aval.dtype, operand,
+                                  lower=True, a_shape_vals=op_shape_vals)
 
   ok = mlir.compare_hlo(
       info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
@@ -1153,8 +1159,9 @@ def _generic_lu_pivots_to_permutation(swaps, permutation_size):
                                      len(batch_dims))
   if m == 0:
     return permutation
-  result, _ = lax.fori_loop(np.array(0, np.int32), np.array(k, np.int32),
-                            _lu_pivots_body_fn, (permutation, swaps))
+  upper = np.array(k, np.int32) if is_constant_dim(k) else k
+  result, _ = lax.fori_loop(np.array(0, np.int32), upper, _lu_pivots_body_fn,
+                            (permutation, swaps))
   return result
 
 
@@ -1165,18 +1172,14 @@ def _lu_pivots_to_permutation_abstract_eval(pivots, *, permutation_size):
       raise ValueError(
           'Argument to lu_pivots_to_permutation must have rank >= 1 and dtype '
           'int32. Got shape={} and dtype={}'.format(pivots.shape, pivots.dtype))
-
-    if permutation_size < pivots.shape[-1]:
+    pivots_size = pivots.shape[-1]
+    if not permutation_size >= pivots_size:
       raise ValueError(
           'Output permutation size {} has to exceed the trailing dimension of '
-          'the pivots. Got shape {}'.format(permutation_size, pivots.shape))
-
-    batch_dims = pivots.shape[:-1]
-    permutations = pivots.update(shape=batch_dims + (permutation_size,))
+          'the pivots. Got pivots size {}'.format(permutation_size, pivots_size))
+    return pivots.update(shape=(*pivots.shape[:-1], permutation_size))
   else:
-    permutations = pivots
-
-  return permutations
+    return pivots
 
 
 def _lu_pivots_to_permutation_batching_rule(batched_args, batch_dims, *,
@@ -1189,7 +1192,14 @@ def _lu_pivots_to_permutation_batching_rule(batched_args, batch_dims, *,
 
 def _lu_pivots_to_permutation_gpu_lowering(lowering, ctx, pivots, *,
                                            permutation_size):
-  return lowering(pivots, permutation_size=permutation_size)
+  # TODO(danfm): Remove once jaxlib 0.4.32 is the minimum version.
+  if jaxlib_version >= (0, 4, 32):
+    pivots_aval, = ctx.avals_in
+    pivots_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, pivots_aval.shape)
+    kwargs = dict(pivots_shape_vals=pivots_shape_vals)
+  else:
+    kwargs = {}
+  return lowering(pivots, permutation_size=permutation_size, **kwargs)
 
 
 lu_pivots_to_permutation_p = Primitive('lu_pivots_to_permutation')
@@ -1374,6 +1384,9 @@ def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand, *,
       "Shape polymorphism for native lowering for lu on CPU and GPU is "
       f"implemented only for the batch dimensions: {operand_aval.shape}")
 
+  # TODO(b/357034884): Remove once jaxlib 0.4.32 is the minimum version.
+  ctx_arg = (ctx,) if jaxlib_version >= (0, 4, 32) else ()
+
   out_aval, pivot_aval, perm_aval = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
   m = operand_aval.shape[-2]
@@ -1383,11 +1396,12 @@ def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand, *,
       raise NotImplementedError(
           "Shape polymorphism for native serialization for lu on GPU is not "
           f"implemented; b/261671778; {operand_aval.shape}")
-    lu, pivot, info = getrf_impl(operand_aval.dtype, operand)
+    lu, pivot, info = getrf_impl(*ctx_arg, operand_aval.dtype, operand)
   else:
     op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
+    # TODO(b/344892332): Remove the conditional after the compatibility period.
     lu, pivot, info = getrf_impl(
-        operand_aval.dtype, operand, a_shape_vals=op_shape_vals)
+        *ctx_arg, operand_aval.dtype, operand, a_shape_vals=op_shape_vals)
   # Subtract 1 from the pivot to get 0-based indices.
   pivot = hlo.subtract(pivot, mlir.full_like_aval(ctx, 1, pivot_aval))
   ok = mlir.compare_hlo(
@@ -1963,7 +1977,9 @@ def _svd_cpu_gpu_lowering(
                                 compute_uv=compute_uv)
   else:
     a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-    s, u, vt, info = gesvd_impl(operand_aval.dtype, operand,
+    # TODO(b/344892332): Remove the conditional after the compatibility period.
+    ctx_args = (ctx,) if jaxlib_version >= (0, 4, 32) else ()
+    s, u, vt, info = gesvd_impl(*ctx_args, operand_aval.dtype, operand,
                                 full_matrices=full_matrices,
                                 compute_uv=compute_uv,
                                 a_shape_vals=a_shape_vals)

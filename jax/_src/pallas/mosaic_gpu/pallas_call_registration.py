@@ -19,12 +19,10 @@ from __future__ import annotations
 
 from typing import Any
 
-import jax
 from jax import core as jax_core
 from jax._src.interpreters import mlir
 from jax._src.pallas import core as pallas_core
 from jax._src.pallas.mosaic_gpu import lowering
-from jax._src.pallas.pallas_call import pallas_call_p
 from jax.experimental.mosaic import gpu as mosaic_gpu
 
 
@@ -32,31 +30,15 @@ def pallas_call_lowering(
     ctx: mlir.LoweringRuleContext,
     *args,
     jaxpr: jax_core.Jaxpr,
-    name: str,
-    in_shapes: tuple[jax.ShapeDtypeStruct, ...],
-    out_shapes: tuple[jax.ShapeDtypeStruct, ...],
+    name_and_src_info: pallas_core.NameAndSrcInfo,
     interpret: bool,
     debug: bool,
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: pallas_core.GridMapping,
     compiler_params: dict[str, Any],
+    cost_estimate: pallas_core.CostEstimate | None,
 ):
-  if interpret:
-    # TODO(necula): is this still needed?
-    return mlir.lower_fun(pallas_call_p.impl, multiple_results=True)(
-        ctx,
-        *args,
-        jaxpr=jaxpr,
-        name=name,
-        out_shapes=out_shapes,
-        in_shapes=in_shapes,
-        interpret=interpret,
-        debug=debug,
-        input_output_aliases=input_output_aliases,
-        grid_mapping=grid_mapping,
-        compiler_params=compiler_params,
-    )
-
+  del interpret
   if grid_mapping.num_dynamic_grid_bounds:
     raise NotImplementedError(
         "dynamic grid bounds not supported in the Mosaic GPU backend"
@@ -67,27 +49,27 @@ def pallas_call_lowering(
     )
 
   if debug:
+    print(f"\nThe kernel jaxpr for pallas_call {name_and_src_info}:")
     print(jaxpr)
+    print(f"The grid mapping for pallas_call {name_and_src_info}:")
     print(grid_mapping)
-  if grid_mapping.num_constant_operands:
-    raise NotImplementedError(
-        "captured consts not supported in the Mosaic GPU backend"
-    )
+
   lowering_result = lowering.lower_jaxpr_to_module(
       grid_mapping,
-      in_shapes,
-      out_shapes,
       jaxpr,
-      name,
+      name_and_src_info,
       compiler_params,
+      cost_estimate,
   )
   if debug:
+    print(f"\nThe Mosaic GPU module for pallas_call {name_and_src_info}:")
     print(lowering_result.module.operation)
 
+  module = lowering_result.module
   return mosaic_gpu._mosaic_gpu_lowering_rule(
       ctx,
       *args,
-      module=lowering_result.module,
+      module=module.operation.get_asm(binary=True, enable_debug_info=True),
       gmem_scratch_bytes=lowering_result.gmem_scratch_bytes,
       out_types=lowering_result.out_structs,
   )

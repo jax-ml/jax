@@ -28,6 +28,7 @@ from jax import random
 from jax._src import test_util as jtu
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_kernel as splash
 from jax.experimental.pallas.ops.tpu.splash_attention import splash_attention_mask as mask_lib
+from jax.experimental.pallas.ops.tpu.splash_attention.splash_attention_mask_info import process_mask
 import jax.numpy as jnp
 import numpy as np
 
@@ -43,6 +44,7 @@ jtu.setup_hypothesis()
 
 partial = functools.partial
 Draw = TypeVar("Draw", bound=Callable[[hps.SearchStrategy[Any]], Any])
+
 
 @hps.composite
 def segment_ids_strategy(draw, seq_len: int) -> splash.SegmentIds:
@@ -290,14 +292,19 @@ def attn_logits_soft_cap_strategy() -> hps.SearchStrategy[float | None]:
   return hps.one_of(hps.just(None), hps.floats(min_value=1.0, max_value=50.0))
 
 
-class AttentionTest(jtu.JaxTestCase):
+@jtu.with_config(jax_traceback_filtering="off")
+class PallasBaseTest(jtu.JaxTestCase):
+  INTERPRET = False
 
   def setUp(self):
-    if not jtu.test_device_matches(["tpu"]):
-      self.skipTest("Need TPU devices")
-    # TODO(b/327487669): selectively re-enable tests that works on TPU v3.
-    if not jtu.is_device_tpu_at_least(4):
-      self.skipTest("Not supported on TPU generations <= 3")
+    if not self.INTERPRET:
+      if not jtu.test_device_matches(["tpu"]):
+        self.skipTest("Only interpret mode supported on non-TPU")
+      # TODO(b/327487669): selectively re-enable tests that works on TPU v3.
+      if not jtu.is_device_tpu_at_least(4):
+        self.skipTest("Not supported on TPU generations <= 3")
+    if jtu.test_device_matches(["cpu"]) and jax.config.x64_enabled:
+      self.skipTest("On CPU the test works only in 32-bit")
 
     super().setUp()
 
@@ -311,8 +318,7 @@ class AttentionTest(jtu.JaxTestCase):
     np.testing.assert_allclose(x, y, **kwargs)
 
 
-class SplashAttentionTest(AttentionTest):
-
+class SplashAttentionTest(PallasBaseTest):
   @parameterized.product(
       is_mqa=(False, True),
       is_segmented=(False, True),
@@ -355,6 +361,7 @@ class SplashAttentionTest(AttentionTest):
           mask,
           block_sizes=block_sizes,
           attn_logits_soft_cap=attn_logits_soft_cap,
+          interpret=self.INTERPRET,
       )
     else:
       attn_ref = splash.make_masked_mha_reference(mask)
@@ -362,6 +369,7 @@ class SplashAttentionTest(AttentionTest):
           mask,
           block_sizes=block_sizes,
           attn_logits_soft_cap=attn_logits_soft_cap,
+          interpret=self.INTERPRET,
       )
     o = attn(q, k, v, segment_ids)
     o_ref = attn_ref(
@@ -416,6 +424,7 @@ class SplashAttentionTest(AttentionTest):
           block_sizes=block_sizes,
           save_residuals=True,
           attn_logits_soft_cap=attn_logits_soft_cap,
+          interpret=self.INTERPRET,
       )
     else:
       attn_ref = splash.make_masked_mha_reference(mask)
@@ -424,6 +433,7 @@ class SplashAttentionTest(AttentionTest):
           block_sizes=block_sizes,
           save_residuals=True,
           attn_logits_soft_cap=attn_logits_soft_cap,
+          interpret=self.INTERPRET,
       )
     attn_ref = partial(
         attn_ref,
@@ -534,7 +544,7 @@ class SplashAttentionTest(AttentionTest):
         data.draw(mha_strategy())
     )
 
-    # Avoid segment ids for rectangular matrices, as its hard to enforce
+    # Avoid segment ids for rectangular matrices, as it's hard to enforce
     # valid masks (non-0 rows).
     hp.assume(q_seq_len == kv_seq_len or not is_segmented)
 
@@ -564,6 +574,7 @@ class SplashAttentionTest(AttentionTest):
           block_sizes=block_sizes,
           downcast_smem_data=downcast_smem_data,
           attn_logits_soft_cap=attn_logits_soft_cap,
+          interpret=self.INTERPRET,
       )
     else:
       attn_ref = splash.make_masked_mha_reference(mask, backward_impl="custom")
@@ -572,6 +583,7 @@ class SplashAttentionTest(AttentionTest):
           block_sizes=block_sizes,
           downcast_smem_data=downcast_smem_data,
           attn_logits_soft_cap=attn_logits_soft_cap,
+          interpret=self.INTERPRET,
       )
     o, attn_vjp = jax.vjp(attn, q, k, v, segment_ids)
     q32, k32, v32 = jax.tree.map(
@@ -637,6 +649,71 @@ class SplashAttentionTest(AttentionTest):
     self._assert_allclose(dv, dv_ref, atol=2e-2, rtol=3e-2)
     self._assert_allclose(dq, dq_ref, atol=2e-2, rtol=3e-2)
     self._assert_allclose(dk, dk_ref, atol=2e-2, rtol=3e-2)
+
+  def test_grid_shrinking(self):
+    """Make sure that grid shrinking does not change the attention output."""
+
+    class IdentityMask(mask_lib._ComputableMask):
+      """Identity mask that is guaranteed to trigger grid shrinking."""
+
+      def __init__(
+          self,
+          shape: tuple[int, int],
+          shard_count: int = 1,
+      ):
+        def identity_mask_function(q_ids, kv_ids):
+          return q_ids == kv_ids
+
+        super().__init__(
+            shape=shape,
+            mask_function=identity_mask_function,
+            shard_count=shard_count,
+        )
+
+      def __eq__(self, other: object):
+        if not isinstance(other, type(self)):
+          return NotImplemented
+
+        return self.shape == other.shape and np.array_equal(
+            self.q_sequence, other.q_sequence
+        )
+
+      def __hash__(self):
+        return hash((
+            type(self),
+            self.shape,
+            self.q_sequence.tobytes() if self.q_sequence is not None else None,
+        ))
+
+    # Use a sequence length greater than the default block size to trigger
+    # the grid shrinking logic.
+    seq_len = 256
+    head_dim = 128
+    key = random.key(42)
+    k1, k2, k3 = random.split(key, 3)
+    q = random.uniform(k1, (1, seq_len, head_dim), dtype=jnp.float32)
+    k = random.uniform(k2, (seq_len, head_dim), dtype=jnp.float32)
+    v = random.uniform(k3, (seq_len, head_dim), dtype=jnp.float32)
+
+    identity_mask = mask_lib.MultiHeadMask([IdentityMask((seq_len, seq_len))])
+
+    process_mask_path = "jax.experimental.pallas.ops.tpu.splash_attention.splash_attention_mask_info.process_mask"
+    process_mask_shrink = lambda *args, **kwargs: process_mask(
+        *args, **kwargs, shrink_grid=True
+    )
+    process_mask_no_shrink = lambda *args, **kwargs: process_mask(
+        *args, **kwargs, shrink_grid=False
+    )
+
+    with unittest.mock.patch(process_mask_path, process_mask_shrink):
+      shrink_out = splash.make_splash_mqa_single_device(identity_mask)(q, k, v)
+
+    with unittest.mock.patch(process_mask_path, process_mask_no_shrink):
+      no_shrink_out = splash.make_splash_mqa_single_device(identity_mask)(
+          q, k, v
+      )
+
+    np.testing.assert_array_equal(shrink_out, no_shrink_out)
 
 
 if __name__ == "__main__":

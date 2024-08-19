@@ -18,7 +18,7 @@ from collections.abc import Callable, Sequence
 import dataclasses
 from functools import partial
 import operator
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar
 
 import numpy as np
 
@@ -285,12 +285,6 @@ def index_swap_array(x, indexers, val):
 def _get_discharge(x, idx, tree):
   indexers = tree_util.tree_unflatten(tree, idx)
   return index_array(x, indexers)
-
-def _indexer(idx, indexed_dims):
-  idx_ = iter(idx)
-  indexer = tuple(next(idx_) if b else slice(None) for b in indexed_dims)
-  assert next(idx_, None) is None
-  return indexer
 
 @register_discharge_rule(swap_p)
 def _swap_discharge_rule(
@@ -790,7 +784,8 @@ def _initial_style_jaxpr(fun, in_tree, in_avals):
   jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(fun_, in_avals, debug)
   return jaxpr, consts, out_tree_thunk()
 
-def run_state(f: Callable[..., None]):
+T = TypeVar('T')
+def run_state(f: Callable[..., None]) -> Callable[[T], T]:
   def wrapped(args):
     flat_args, in_tree = tree_util.tree_flatten(args)
     avals = [core.raise_to_shaped(core.get_aval(arg)) for arg in flat_args]

@@ -19,12 +19,10 @@ from __future__ import annotations
 import io
 from typing import Any
 
-import jax
 from jax import core as jax_core
 from jax._src.interpreters import mlir
 from jax._src.lib.mlir import ir
 from jax._src.pallas import core as pallas_core
-from jax._src.pallas.pallas_call import pallas_call_p
 from jax._src.pallas.triton import lowering
 
 
@@ -44,31 +42,15 @@ def pallas_call_lowering(
     ctx: mlir.LoweringRuleContext,
     *in_nodes,
     jaxpr: jax_core.Jaxpr,
-    name: str,
-    in_shapes: tuple[jax.ShapeDtypeStruct, ...],
-    out_shapes: tuple[jax.ShapeDtypeStruct, ...],
+    name_and_src_info: pallas_core.NameAndSrcInfo,
     interpret: bool,
     debug: bool,
     input_output_aliases: tuple[tuple[int, int], ...],
     grid_mapping: pallas_core.GridMapping,
     compiler_params: dict[str, Any],
+    cost_estimate: pallas_core.CostEstimate | None,
 ):
-  if interpret:
-    # TODO(necula): is this branch still needed?
-    return mlir.lower_fun(pallas_call_p.impl, multiple_results=True)(
-        ctx,
-        *in_nodes,
-        jaxpr=jaxpr,
-        name=name,
-        out_shapes=out_shapes,
-        in_shapes=in_shapes,
-        interpret=interpret,
-        debug=debug,
-        input_output_aliases=input_output_aliases,
-        grid_mapping=grid_mapping,
-        compiler_params=compiler_params,
-    )
-
+  del interpret
   if grid_mapping.num_dynamic_grid_bounds:
     raise NotImplementedError(
         "dynamic grid bounds not supported in the Triton backend"
@@ -86,26 +68,30 @@ def pallas_call_lowering(
     num_stages = triton_params.pop("num_stages", 3)
 
   if debug:
+    print(f"\nThe kernel jaxpr for pallas_call {name_and_src_info}:")
     print(jaxpr)
+    print("The grid mapping for pallas_call {name_and_src_info}:")
     print(grid_mapping)
 
   lowering_result = lowering.lower_jaxpr_to_triton_module(
-      jaxpr, (*in_shapes, *out_shapes), grid_mapping, name, lowering_platform
+      jaxpr, grid_mapping, name_and_src_info, lowering_platform
   )
   module_op = lowering_result.module.operation
   if debug:
+    print(f"\nThe Triton module for pallas_call {name_and_src_info}:")
     print(module_op.get_asm(enable_debug_info=True, pretty_debug_info=True))
 
   grid_x, grid_y, grid_z = normalize_grid(lowering_result.grid)
   out_types = [
-      ir.RankedTensorType.get(shape.shape, mlir.dtype_to_ir_type(shape.dtype))
-      for shape in out_shapes
+      ir.RankedTensorType.get(bm.array_shape_dtype.shape,
+                              mlir.dtype_to_ir_type(bm.array_shape_dtype.dtype))
+      for bm in grid_mapping.block_mappings_output
   ]
   buf = io.BytesIO()
   module_op.write_bytecode(buf)
   backend_config = dict(
-      name=ir.StringAttr.get(name),
-      ir=ir.StringAttr.get(buf.getvalue()),  # type: ignore
+      name=ir.StringAttr.get(name_and_src_info.name),
+      ir=ir.StringAttr.get(buf.getvalue()),
       num_stages=mlir.i32_attr(num_stages),
       num_warps=mlir.i32_attr(num_warps),
       grid_x=mlir.i32_attr(grid_x),

@@ -233,6 +233,37 @@ def TPU_StridedStoreOp : TPU_Op<"strided_store"> {
   let hasVerifier = 1;
 }
 
+def TPU_ShuffledLoadOp : TPU_Op<"shuffled_load"> {
+  let arguments = (ins
+    AnyMemRef:$base,
+    Variadic<Index>:$indices,
+    DenseBoolArrayAttr:$sublane_mask,
+    DenseI32ArrayAttr:$sublane_offsets
+  );
+  let results = (outs TPU_Vreg:$result);
+  let assemblyFormat = [{
+    $base `[` $indices `]` attr-dict `:` type($base) `,` type($result)
+  }];
+  let hasVerifier = 1;
+  let hasCanonicalizeMethod = 1;
+}
+
+def TPU_ShuffledStoreOp : TPU_Op<"shuffled_store"> {
+  let arguments = (ins
+    TPU_Vreg:$valueToStore,
+    AnyMemRef:$base,
+    Variadic<Index>:$indices,
+    DenseBoolArrayAttr:$sublane_mask,
+    DenseI32ArrayAttr:$sublane_offsets
+  );
+  let results = (outs);
+  let assemblyFormat = [{
+    $base `[` $indices `]` `,` $valueToStore attr-dict `:` type($base) `,` type($valueToStore)
+  }];
+  let hasVerifier = 1;
+  let hasCanonicalizeMethod = 1;
+}
+
 // TODO(jevinjiang): deprecate to use dynamic_rotate.
 def TPU_RotateOp : TPU_Op<"rotate", [Pure, SameOperandsAndResultType]> {
   let arguments = (ins
@@ -527,7 +558,7 @@ def TPU_DeviceIdOp : TPU_Op<"device_id", [Pure]> {
 }
 
 def TPU_SemaphoreReadOp : TPU_Op<"sem_read"> {
-  let arguments = (ins MemRefOf<[TPU_SemaphoreType]>:$semaphore);
+  let arguments = (ins MemRefOf<[TPU_SemaphoreType, TPU_DMASemaphoreType]>:$semaphore);
   let results = (outs I32:$result);
   let assemblyFormat = [{ $semaphore attr-dict `:` type($semaphore) `->` type($result)}];
 }
@@ -711,7 +742,9 @@ def CanonicalizeMosaicPass : Pass<"tpu-canonicalize-mosaic", "::mlir::func::Func
     "::mlir::tpu::TPUDialect",
   ];
   let constructor = "::mlir::tpu::createCanonicalizeMosaicPass()";
-  let options = [];
+  let options = [
+    Option<"hardware_generation", "hardware-generation", "int", /*default=*/"-1", "">,
+  ];
 }
 
 def InferVectorLayoutPass : Pass<"tpu-infer-vector-layout", "::mlir::func::FuncOp"> {
@@ -737,7 +770,7 @@ def ApplyVectorLayoutPass : Pass<"tpu-apply-vector-layout", "::mlir::func::FuncO
     "::mlir::vector::VectorDialect",
     "::mlir::tpu::TPUDialect",
   ];
-  let constructor = "::mlir::tpu::createApplyVectorLayoutPass(-1)";
+  let constructor = "::mlir::tpu::createApplyVectorLayoutPass()";
   let options = [
     // If hardware_generation is not set, the default value of -1 will crash on
     // runOnOperation.

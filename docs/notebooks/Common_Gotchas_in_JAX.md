@@ -158,7 +158,7 @@ iter_operand = iter(range(10))
 
 +++ {"id": "oBdKtkVW8Lha"}
 
-## 🔪 In-Place Updates
+## 🔪 In-place updates
 
 +++ {"id": "JffAqnEW4JEb"}
 
@@ -268,7 +268,7 @@ For more details on indexed array updates, see the [documentation for the `.at` 
 
 +++ {"id": "oZ_jE2WAypdL"}
 
-## 🔪 Out-of-Bounds Indexing
+## 🔪 Out-of-bounds indexing
 
 +++ {"id": "btRFwEVzypdN"}
 
@@ -385,7 +385,7 @@ jnp.sum(jnp.array(x))
 
 +++ {"id": "MUycRNh6e50W"}
 
-## 🔪 Random Numbers
+## 🔪 Random numbers
 
 +++ {"id": "O8vvaVt3MRG2"}
 
@@ -395,7 +395,7 @@ jnp.sum(jnp.array(x))
 
 +++ {"id": "Qikt9pPW9L5K"}
 
-### RNGs and State
+### RNGs and state
 You're used to _stateful_ pseudorandom number generators (PRNGs) from numpy and other libraries, which helpfully hide a lot of details under the hood to give you a ready fountain of pseudorandomness:
 
 ```{code-cell} ipython3
@@ -538,11 +538,11 @@ for subkey in subkeys:
 
 +++ {"id": "rg4CpMZ8c3ri"}
 
-## 🔪 Control Flow
+## 🔪 Control flow
 
 +++ {"id": "izLTvT24dAq0"}
 
-### ✔ python control_flow + autodiff ✔
+### ✔ Python control_flow + autodiff ✔
 
 If you just want to apply `grad` to your python functions, you can use regular python control-flow constructs with no problems, as if you were using [Autograd](https://github.com/hips/autograd) (or Pytorch or TF Eager).
 
@@ -562,7 +562,7 @@ print(grad(f)(4.))  # ok!
 
 +++ {"id": "hIfPT7WMmZ2H"}
 
-### python control flow + JIT
+### Python control flow + JIT
 
 Using control flow with `jit` is more complicated, and by default it has more constraints.
 
@@ -865,7 +865,7 @@ $\ast$ = argument-<b>value</b>-independent loop condition - unrolls the loop
 
 +++ {"id": "OxLsZUyRt_kF"}
 
-## 🔪 Dynamic Shapes
+## 🔪 Dynamic shapes
 
 +++ {"id": "1tKXcAMduDR1"}
 
@@ -1111,14 +1111,14 @@ There are a few ways to do this:
 
 Note that #2-#4 work for _any_ of JAX's configuration options.
 
-We can then confirm that `x64` mode is enabled:
+We can then confirm that `x64` mode is enabled, for example:
 
-```{code-cell} ipython3
-:id: HqGbBa9Rr-2g
-:outputId: 5aa72952-08cc-4569-9b51-a10311ae9e81
-
+```python
+import jax
 import jax.numpy as jnp
 from jax import random
+
+jax.config.update("jax_enable_x64", True)
 x = random.uniform(random.key(0), (1000,), dtype=jnp.float64)
 x.dtype # --> dtype('float64')
 ```
@@ -1130,7 +1130,7 @@ x.dtype # --> dtype('float64')
 
 +++ {"id": "WAHjmL0E2XwO"}
 
-## 🔪 Miscellaneous Divergences from NumPy
+## 🔪 Miscellaneous divergences from NumPy
 
 While `jax.numpy` makes every attempt to replicate the behavior of numpy's API, there do exist corner cases where the behaviors differ.
 Many such cases are discussed in detail in the sections above; here we list several other known places where the APIs diverge.

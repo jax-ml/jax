@@ -13,7 +13,7 @@ kernelspec:
 
 +++ {"id": "7XNMxdTwURqI"}
 
-# External Callbacks in JAX
+# External callbacks
 
 <!--* freshness: { reviewed: '2024-04-08' } *-->
 

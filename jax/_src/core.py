@@ -739,6 +739,15 @@ class Tracer(typing.Array, metaclass=StrictABCMeta):
       f"{self._origin_msg()}")
 
   @property
+  def device(self):
+    # This attribute is part of the jax.Array API, but only defined on concrete arrays.
+    # Raising a ConcretizationTypeError would make sense, but for backward compatibility
+    # we raise an AttributeError so that hasattr() and getattr() work as expected.
+    raise AttributeError(self,
+      f"The 'device' attribute is not available on {self._error_repr()}."
+      f"{self._origin_msg()}")
+
+  @property
   def addressable_shards(self):
     raise ConcretizationTypeError(self,
       f"The 'addressable_shards' attribute is not available on {self._error_repr()}."
@@ -1409,9 +1418,6 @@ class AbstractValue:
   def strip_weak_type(self) -> AbstractValue:
     return self
 
-  def strip_named_shape(self) -> AbstractValue:
-    return self
-
   def join(self, other):
     raise NotImplementedError("must override")
 
@@ -1462,9 +1468,10 @@ bot = Bot()
 def lattice_join(x: AbstractValue | None,
                  y: AbstractValue | None) -> AbstractValue:
   if x is None:
-    return cast(AbstractValue, y)
+    assert y is not None
+    return y
   elif y is None:
-    return cast(AbstractValue, x)
+    return x
   elif isinstance(x, type(y)):
     return y.join(x)
   elif isinstance(y, type(x)):
@@ -1541,7 +1548,7 @@ def concrete_or_error(force: Any, val: Any, context=""):
 
 def concrete_dim_or_error(val: Any, context=""):
   """Like concrete_or_error(operator.index), allowing symbolic dimensions."""
-  if is_dim(val):
+  if is_symbolic_dim(val):
     return val
   else:
     return concrete_or_error(operator.index, val, context=context)
@@ -1686,6 +1693,8 @@ def canonicalize_shape(shape: Shape, context: str="") -> tuple[Any, ...]:
   Returns:
     A tuple of canonical dimension values.
   """
+  if isinstance(shape, int):
+    shape = shape,
   try:
     return tuple(unsafe_map(_canonicalize_dimension, shape))
   except TypeError:
@@ -1696,7 +1705,7 @@ def canonicalize_dim(d: DimSize, context: str="") -> DimSize:
   """Canonicalizes and checks for errors in a user-provided shape dimension value.
 
   Args:
-    f: a Python value that represents a dimension.
+    d: a Python value that represents a dimension.
 
   Returns:
     A canonical dimension value.
@@ -1724,25 +1733,25 @@ def _invalid_shape_error(shape: Shape, context: str=""):
   return TypeError(msg)
 
 class ShapedArray(UnshapedArray):
-  __slots__ = ['shape', 'named_shape']
+  __slots__ = ['shape']
   array_abstraction_level = 2
+  named_shape = {}  # type: ignore
 
   def __init__(self, shape, dtype, weak_type=False, named_shape=None):
+    del named_shape  # unused, vestigial
     self.shape = canonicalize_shape(shape)
     self.dtype = _dtype_object(dtype)
     self.weak_type = weak_type
-    self.named_shape = {} if named_shape is None else dict(named_shape)
 
   def update(self, shape=None, dtype=None, weak_type=None, named_shape=None):
+    del named_shape  # unused, vestigial
     if shape is None:
       shape = self.shape
     if dtype is None:
       dtype = self.dtype
     if weak_type is None:
       weak_type = self.weak_type
-    if named_shape is None:
-      named_shape = self.named_shape
-    return ShapedArray(shape, dtype, weak_type, named_shape)
+    return ShapedArray(shape, dtype, weak_type)
 
   ndim = property(lambda self: len(self.shape))
   size = property(lambda self:
@@ -1757,25 +1766,22 @@ class ShapedArray(UnshapedArray):
   def __eq__(self, other):
     return (type(self) is type(other)
             and self.dtype == other.dtype and self.shape == other.shape
-            and self.weak_type == other.weak_type
-            and self.named_shape == other.named_shape)
+            and self.weak_type == other.weak_type)
 
   def __hash__(self):
     # can use hash(self.dtype) and rely on the fact that numpy reuses base dtype
     # objects, e.g. `np.zeros(3).dtype is np.zeros(4).dtype`, or we can use
     # the unique character code via hash(self.dtype.char)
-    return hash((self.shape, self.dtype, self.weak_type,
-                 tuple(self.named_shape.items())))
+    return hash((self.shape, self.dtype, self.weak_type))
 
   def at_least_vspace(self):
     return ShapedArray(self.shape, primal_dtype_to_tangent_dtype(self.dtype),
-                       self.weak_type, self.named_shape)
+                       self.weak_type)
 
   def join(self, other):
     if definitely_equal_shape(self.shape, other.shape) and self.dtype == other.dtype:
       weak_type = self.weak_type and other.weak_type
-      named_shape = join_named_shapes(self.named_shape, other.named_shape)
-      return self.update(weak_type=weak_type, named_shape=named_shape)
+      return self.update(weak_type=weak_type)
     elif self.dtype == other.dtype:
       return UnshapedArray(self.dtype)
     else:
@@ -1785,14 +1791,7 @@ class ShapedArray(UnshapedArray):
     dt_str =  _short_dtype_name(self.dtype) if short_dtypes else self.dtype.name
     dt_str = dt_str.replace('void', 'float0')
     shapestr = ','.join(map(str, self.shape))
-    if self.named_shape:
-      named_shapestr = ','.join(f'{k}:{v}' for k, v in self.named_shape.items())
-      return f'{dt_str}[{shapestr};{named_shapestr}]'
-    else:
-      return f'{dt_str}[{shapestr}]'
-
-  def strip_named_shape(self):
-    return self.update(named_shape={})
+    return f'{dt_str}[{shapestr}]'
 
   def _len(self, ignored_tracer):
     try:
@@ -1840,12 +1839,9 @@ class ConcreteArray(ShapedArray):
       return self
     elif self.shape == other.shape and self.dtype == other.dtype:
       weak_type = self.weak_type and other.weak_type
-      named_shape = join_named_shapes(self.named_shape, other.named_shape)
-      return ShapedArray(
-          self.shape, self.dtype, weak_type=weak_type, named_shape=named_shape)
+      return ShapedArray(self.shape, self.dtype, weak_type=weak_type)
     elif self.dtype == other.dtype:
-      return UnshapedArray(self.dtype,
-                           weak_type=self.weak_type and other.weak_type)
+      return UnshapedArray(self.dtype, weak_type=self.weak_type and other.weak_type)
     else:
       raise TypeError(self, other)
 
@@ -1958,6 +1954,7 @@ class DArray:
     assert data.shape == pad_shape
     self._aval = aval
     self._data = data
+
   shape = property(lambda self: self._aval.shape)
   dtype = property(lambda self: self._aval.dtype)
   aval = property(lambda self: self._aval)
@@ -1968,20 +1965,37 @@ class DArray:
 
     dtypestr = _short_dtype_name(self._aval.dtype)
     shapestr = ','.join(map(str, self.shape))
-    slices = tuple(slice(int(d._data)) if type(d) is DArray and
-                   type(d.dtype) is bint else slice(None) for d in self.shape)
-    data = self._data[slices]
+    data = self.data
     return f'{dtypestr}[{shapestr}] with value: {data}'
+
   def __hash__(self) -> int:
     if not self.shape:
       return hash((self._aval, int(self._data)))
     raise TypeError("unhashable type: DArray")
+
   def __eq__(self, other):
     if isinstance(other, DArray) and self._aval == other._aval:
       return self._data == other._data
     return False
+
   def __len__(self):
     return self.shape[0]
+
+  @property
+  def data(self):
+    if not self.shape and type(self.dtype) is bint:
+      # special-case scalar bints
+      return self._data
+
+    slices = tuple(
+        slice(int(d._data))
+        if type(d) is DArray and type(d.dtype) is bint
+        else slice(None)
+        for d in self.shape
+    )
+    data = self._data[slices]
+    return data
+
 
 pytype_aval_mappings[DArray] = \
     lambda x: DConcreteArray(x._aval.shape, x._aval.dtype, x._aval.weak_type,
@@ -2076,14 +2090,15 @@ def raise_to_shaped(aval: AbstractValue, weak_type=None):
     if handler: return handler(aval, weak_type)
   raise TypeError(type(aval))
 
-raise_to_shaped_mappings : dict[type, Callable] = {
-  AbstractToken: lambda aval, _: aval,
-  Bot: lambda aval, _: aval,
-  UnshapedArray: lambda aval, _: aval,
-  ShapedArray: lambda aval, weak_type: ShapedArray(
-      aval.shape, aval.dtype, weak_type, aval.named_shape),
-  DConcreteArray: lambda aval, weak_type: DShapedArray(
-      aval.shape, aval.dtype, weak_type),
+raise_to_shaped_mappings: dict[type, Callable] = {
+    AbstractToken: lambda aval, _: aval,
+    Bot: lambda aval, _: aval,
+    UnshapedArray: lambda aval, _: aval,
+    ShapedArray: lambda aval, weak_type: ShapedArray(
+        aval.shape, aval.dtype, weak_type),
+    DConcreteArray: lambda aval, weak_type: DShapedArray(
+        aval.shape, aval.dtype, weak_type
+    ),
 }
 
 ### Operations on shapes and dimension sizes.
@@ -2194,20 +2209,24 @@ def min_dim(d1: DimSize, d2: DimSize) -> DimSize:
   d1_is_constant = is_constant_dim(d1)
   if d1_is_constant and is_constant_dim(d2):
     return min(d1, d2)
+  d1 = concrete_dim_or_error(d1, "argument `d1` of `core.min_dim`")
+  d2 = concrete_dim_or_error(d2, "argument `d2` of `core.min_dim`")
   if d1_is_constant:
-    return d2.rmin(d1)  # type: ignore[union-attr]
+    return d2.rmin(d1)
   else:
-    return d1.min(d2)  # type: ignore[union-attr]
+    return d1.min(d2)
 
 def max_dim(d1: DimSize, d2: DimSize) -> DimSize:
   """Like max(d1, d2) but for both constant and symbolic dimensions."""
   d1_is_constant = is_constant_dim(d1)
   if d1_is_constant and is_constant_dim(d2):
       return max(d1, d2)
+  d1 = concrete_dim_or_error(d1, "argument `d1` of `core.max_dim`")
+  d2 = concrete_dim_or_error(d2, "argument `d2` of `core.max_dim`")
   if d1_is_constant:
-    return d2.rmax(d1)  # type: ignore[union-attr]
+    return d2.rmax(d1)
   else:
-    return d1.max(d2)  # type: ignore[union-attr]
+    return d1.max(d2)
 
 def dimension_as_value(d: DimSize):
   """Turns a dimension size into a JAX array.
@@ -2270,94 +2289,6 @@ def dim_constant(ct: int):
 
 def dim_value_aval() -> AbstractValue:
   return ShapedArray((), dim_value_dtype(), weak_type=True)
-
-# ------------------- Named shapes -------------------
-
-
-class NamedShape:
-  def __init__(self, *args, **kwargs):
-    self.__positional = canonicalize_shape(args)
-    # TODO: Assert that kwargs match axis env?
-    self.__named = dict(kwargs)
-
-  @property
-  def rank(self):
-    return len(self.__positional) + len(self.__named)
-
-  @property
-  def positional_rank(self):
-    return len(self.__positional)
-
-  @property
-  def named_rank(self):
-    return len(self.__named)
-
-  @property
-  def positional(self):
-    return self.__positional
-
-  @property
-  def names(self):
-    return self.__named.keys()
-
-  @property
-  def named_sizes(self):
-    return self.__named.values()
-
-  @property
-  def named_items(self):
-    return self.__named.items()
-
-  def __getitem__(self, idx):
-    try:
-      idx = operator.index(idx)
-      return self.__positional[idx]
-    except TypeError:
-      pass
-    return self.__named[idx]
-
-  @property
-  def total(self):
-    total = 1
-    for s in self.__positional: total *= s
-    for s in self.__named.values(): total *= s
-    return total
-
-  def __str__(self):
-    # TODO(mattjj,frostig): revise not to miss commas
-    if not self.__named:
-      return str(self.__positional)
-    return (f"({', '.join(map(str, self.__positional))}{', ' if self.__named else ''}"
-            f"{', '.join(f'{k}={v}' for k, v in self.__named.items())})")
-
-  def __eq__(self, other):
-    if isinstance(other, NamedShape):
-      return (self.__positional, self.__named) == (other.__positional, other.__named)
-    if isinstance(other, tuple):
-      return not self.__named and self.__positional == other
-    return False
-
-  def __hash__(self):
-    named = frozenset(self.__named.items())
-    return hash((self.__positional, named))
-
-def join_named_shapes(*named_shapes):
-  result = {}
-  for named_shape in named_shapes:
-    for name, size in named_shape.items():
-      if result.setdefault(name, size) != size:
-        raise TypeError(
-            f"Axis name {name} used with inconsistent sizes: {result[name]} != {size}")
-  return result
-
-# TODO: Make canonicalize_shape return named shapes?
-def as_named_shape(shape) -> NamedShape:
-  if isinstance(shape, int):
-    shape = (shape,)
-  if isinstance(shape, NamedShape):
-    return shape
-  return NamedShape(*shape)
-
 
 # ------------------- Call -------------------
 
@@ -2563,17 +2494,15 @@ def _map_shaped_array(
   # TODO: Extend the named shape
   if axis is None: return aval
   return ShapedArray(tuple_delete(aval.shape, axis), aval.dtype,
-                     named_shape=aval.named_shape, weak_type=aval.weak_type)
+                     weak_type=aval.weak_type)
 
 def _unmap_shaped_array(
     size: int, axis_name: AxisName, axis: int | None, aval: ShapedArray
   ) -> ShapedArray:
-  named_shape = dict(aval.named_shape)
-  named_shape.pop(axis_name, None)  # TODO: make this mandatory
-  if axis is None: return aval.update(named_shape=named_shape)
+  if axis is None: return aval
   elif type(axis) is int:
     return ShapedArray(tuple_insert(aval.shape, axis, size), aval.dtype,
-                       named_shape=named_shape, weak_type=aval.weak_type)
+                       weak_type=aval.weak_type)
   else: raise TypeError(axis)
 
 def _map_dshaped_array(
@@ -2769,16 +2698,8 @@ def subst_axis_names_var(v: Var, subst: AxisSubst, var_map: dict[Var, Var]) -> V
   # Var identity is load-bearing, so we can't have duplicates!
   if isinstance(v, DropVar): return v
   assert v not in var_map
-  if not hasattr(v.aval, 'named_shape'):
-    var_map[v] = v
-    return v
-  names = tuple(it.chain.from_iterable(subst(name) for name in v.aval.named_shape))
-  named_shape = {name: axis_frame(name).size for name in names}
-  if len(named_shape) != len(names):
-    raise DuplicateAxisNameError(v)
-  new_v = Var(v.suffix, v.aval.update(named_shape=named_shape))
-  var_map[v] = new_v
-  return new_v
+  var_map[v] = v
+  return v
 
 def subst_axis_names_eqn(eqn: JaxprEqn, subst: AxisSubst, var_map: dict[Var, Var]) -> JaxprEqn:
   invars: list[Atom] = [v if isinstance(v, Literal) else var_map[v] for v in eqn.invars]
@@ -2846,31 +2767,20 @@ def typecheck(aval: AbstractValue, x) -> bool:
   return typecompat(aval, get_aval(x))
 
 def typecompat(aval_ref: AbstractValue, aval: AbstractValue) -> bool:
-  """Determine whether `aval` conforms to `aval_ref`.
-
-  Ignores weak_type and named_shape, other than to check that an axis name isn't
-  used with different sizes.
-  """
+  """Determine whether `aval` conforms to `aval_ref`. Ignores weak_type."""
   try:
     return typematch(aval_ref, lattice_join(aval_ref, aval))
   except TypeError:
     return False
 
 def typematch(aval1: AbstractValue, aval2: AbstractValue) -> bool:
-  """Determine whether `aval1` and `aval2` are equivalent.
-
-  Ignores weak_type and named_shape, other than to check that an axis name isn't
-  used with different sizes.
-  """
+  """Determine whether `aval1` and `aval2` are equivalent. Ignores weak_type."""
   if aval1 == aval2: return True
   # unequal avals may still represent the same type, because type is represented
-  # by avals at the shaped level, and because weak type tags and (for now) named
-  # shape components aren't considered part of the type
-  if isinstance(aval1, ShapedArray) and isinstance(aval2, ShapedArray):
-    # a bonus check for whether any named axes have inconsistent sizes
-    join_named_shapes(aval1.named_shape, aval2.named_shape)
-  return (raise_to_shaped(aval1, weak_type=False).strip_named_shape() ==
-          raise_to_shaped(aval2, weak_type=False).strip_named_shape())
+  # by avals at the shaped level, and because weak type tags aren't considered
+  # part of the type
+  return (raise_to_shaped(aval1, weak_type=False) ==
+          raise_to_shaped(aval2, weak_type=False))
 
 class JaxprTypeError(TypeError): pass
 
@@ -3470,3 +3380,7 @@ def clean_up_dead_vars(eqn: JaxprEqn, env: dict[Var, Any],
     if last_used[v] is eqn:
       # Delete ref to variable when it is no longer needed by next equations.
       del env[v]
+
+# Used in shard_map for converting avals
+shard_aval_handlers = {}  # type: ignore
+unshard_aval_handlers = {}  # type: ignore

@@ -119,6 +119,7 @@ from jax._src.api import named_scope as named_scope
 from jax._src.api import pmap as pmap
 from jax._src.xla_bridge import process_count as process_count
 from jax._src.xla_bridge import process_index as process_index
+from jax._src.xla_bridge import process_indices as process_indices
 from jax._src.callback import pure_callback as pure_callback
 from jax._src.ad_checkpoint import checkpoint_wrapper as remat
 from jax._src.api import ShapeDtypeStruct as ShapeDtypeStruct
@@ -180,7 +181,6 @@ import jax.experimental.compilation_cache.compilation_cache as _ccache
 del _ccache
 
 from jax._src.deprecations import register as _register_deprecation
-_register_deprecation("jax-experimental-maps-module")
 _register_deprecation('jax-scipy-beta-args')
 _register_deprecation('tracer-hash')
 del _register_deprecation

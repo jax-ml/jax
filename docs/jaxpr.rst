@@ -164,7 +164,7 @@ before (with two input vars, one for each element of the input tuple)
 
 
 
-Constant Vars
+Constant vars
 -------------
 
 Some values in jaxprs are constants, in that their value does not depend on the

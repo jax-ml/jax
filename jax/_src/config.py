@@ -221,7 +221,8 @@ def trace_context():
           # Technically this affects jaxpr->stablehlo lowering, not tracing.
           hlo_source_file_canonicalization_regex.value,
           pgle_profiling_runs.value,
-          enable_pgle.value)
+          enable_pgle.value,
+          use_shardy_partitioner.value)
 
 config = Config()
 
@@ -829,6 +830,7 @@ class _GlobalExtraJitContext(NamedTuple):
   xla_profile_version: int = 0
   pgle_profiling_runs: int = 0
   enable_pgle: bool = False
+  use_shardy_partitioner: bool = False
 
 
 def _update_global_jit_state(**kw):
@@ -1052,7 +1054,7 @@ def _update_jax_memories_thread_local(val):
 
 enable_memories = bool_state(
     'jax_enable_memories',
-    default=False,
+    default=True,
     upgrade=True,
     update_global_hook=_update_jax_memories_global,
     update_thread_local_hook=_update_jax_memories_thread_local,
@@ -1499,6 +1501,12 @@ eager_pmap = bool_state(
     upgrade=True,
     help='Enable eager-mode pmap when jax_disable_jit is activated.')
 
+disable_vmap_shmap_error = bool_state(
+    name='jax_disable_vmap_shmap_error',
+    default=False,
+    upgrade=False,
+    help='Temporary workaround to disable an error check in vmap-of-shmap.')
+
 # TODO(mattjj): remove once we land mutable array plumbing, or face great shame
 custom_vjp_disable_shape_check = bool_state(
     name='jax_custom_vjp_disable_shape_check',
@@ -1677,4 +1685,21 @@ pmap_no_rank_reduction = bool_state(
     help=(
         "If True, pmap shards have a the same rank as their enclosing array."
     )
+)
+
+use_shardy_partitioner = bool_state(
+    name='jax_use_shardy_partitioner',
+    default=False,
+    upgrade=True,
+    help=(
+        'Whether to lower to Shardy. Shardy is a new open sourced propagation '
+        'framework for MLIR. Currently Shardy is experimental in JAX. See '
+        'www.github.com/openxla/shardy'
+    ),
+    update_global_hook=lambda val: _update_global_jit_state(
+        use_shardy_partitioner=val
+    ),
+    update_thread_local_hook=lambda val: update_thread_local_jit_state(
+        use_shardy_partitioner=val
+    ),
 )

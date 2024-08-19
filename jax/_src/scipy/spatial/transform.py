@@ -167,9 +167,12 @@ class Rotation(typing.NamedTuple):
     """Represent as rotation vectors."""
     return _as_rotvec(self.quat, degrees)
 
-  def as_quat(self) -> jax.Array:
+  def as_quat(self, canonical: bool=False) -> jax.Array:
     """Represent as quaternions."""
-    return self.quat
+    if canonical:
+      return _make_canonical(self.quat)
+    else:
+      return self.quat
 
   def inv(self):
     """Invert this rotation."""
@@ -415,7 +418,7 @@ def _from_mrp(mrp: jax.Array) -> jax.Array:
 
 @functools.partial(jnp.vectorize, signature='(n)->(n)')
 def _inv(quat: jax.Array) -> jax.Array:
-  return quat.at[3].set(-quat[3])
+  return quat * jnp.array([-1, -1, -1, 1], dtype=quat.dtype)
 
 
 @functools.partial(jnp.vectorize, signature='(n)->()')
@@ -439,3 +442,18 @@ def _normalize_quaternion(quat: jax.Array) -> jax.Array:
 @functools.partial(jnp.vectorize, signature='(n)->()')
 def _vector_norm(vector: jax.Array) -> jax.Array:
   return jnp.sqrt(jnp.dot(vector, vector))
+
+
+@functools.partial(jnp.vectorize, signature='(n)->(n)')
+def _make_canonical(quat: jax.Array) -> jax.Array:
+  is_neg = quat < 0
+  is_zero = quat == 0
+
+  neg = (
+      is_neg[3]
+      | (is_zero[3] & is_neg[0])
+      | (is_zero[3] & is_zero[0] & is_neg[1])
+      | (is_zero[3] & is_zero[0] & is_zero[1] & is_neg[2])
+  )
+
+  return jnp.where(neg, -quat, quat)

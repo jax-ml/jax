@@ -21,7 +21,7 @@ import dataclasses
 import functools
 import math
 import operator
-from typing import Any, TypeVar
+from typing import Any, Hashable, TypeVar
 
 import jax
 from jax import lax
@@ -29,6 +29,7 @@ from jax import tree_util
 from jax._src import ad_checkpoint
 from jax._src import ad_util
 from jax._src import api_util
+from jax._src import config
 from jax._src import core as jax_core
 from jax._src import custom_derivatives
 from jax._src import linear_util as lu
@@ -85,7 +86,7 @@ class ModuleContext:
 class BlockInfo:
   full_shape_dtype: jax.ShapeDtypeStruct
   start_indices: Sequence[Any]
-  block_shape: tuple[int, ...]
+  block_shape: tuple[int, ...]  # TODO(necula): can this contain "mapped"?
 
 
 @dataclasses.dataclass
@@ -93,7 +94,7 @@ class LoweringRuleContext:
   context: ModuleContext
   avals_in: Sequence[jax_core.ShapedArray]
   avals_out: Sequence[jax_core.ShapedArray]
-  block_infos: Sequence[BlockInfo | None]
+  block_infos: Sequence[BlockInfo | None]  # TODO(necula): can this be None?
 
   replace = dataclasses.replace
 
@@ -111,10 +112,8 @@ class LoweringError(Exception):
 
 
 def _eval_index_map(
-    ctx: ModuleContext, idx, block_mapping: BlockMapping | None
+    ctx: ModuleContext, idx, block_mapping: BlockMapping
 ):
-  if block_mapping is None:
-    return None
   block_indices = lower_jaxpr_to_triton_ir(
       ctx, block_mapping.index_map_jaxpr.jaxpr, None, *idx
   )
@@ -186,13 +185,13 @@ def _process_grid_to_3d_grid(grid_mapping: GridMapping):
 
   # Preserve grid order provided to pallas_call
   for i, s in enumerate(grid_mapping.grid):
-    if i not in grid_mapping.mapped_dims:
+    if i not in grid_mapping.vmapped_dims:
       launch_grid.append(s)
       launch_grid_to_pallas_grid.append(i)
 
   # For mapped dims, iterate from inner to outer. This follows the pallas_call
   # batching rule that prepends the vmapped dimension.
-  for dim in reversed(grid_mapping.mapped_dims):
+  for dim in reversed(grid_mapping.vmapped_dims):
     s = grid_mapping.grid[dim]
     launch_grid.append(s)
     launch_grid_to_pallas_grid.append(dim)
@@ -248,17 +247,45 @@ def _new_ir_context() -> ir.Context:
   ctx.load_all_available_dialects()
   return ctx
 
+# Many Trion operations require that their inputs and outputs have sizes that
+# are a power of 2 (they are defined to have TensorSizeTrait that enforces
+# this). This check is only needed to obtain a nicer error message; the
+# Triton lowering will fail anyway but it will crash with a C++ exception.
+# We currently apply this check only to load/store operations.
+def _check_tensor_size(shape: tuple[int | pallas_core.Mapped, ...]):
+  size = math.prod(1 if d is pallas_core.mapped else d for d in shape)
+  power_of_2 = (size & (size - 1)) == 0
+  if not power_of_2:
+    raise ValueError(
+        "The Pallas Triton lowering currently requires that all "
+        "operations have array arguments and results whose size "
+        "is a power of 2. Encountered an array of "
+        f"shape {shape}")
+
 
 def lower_jaxpr_to_triton_module(
     jaxpr: jax_core.Jaxpr,
-    in_out_shapes,
     grid_mapping: GridMapping,
-    name: str,
+    name_and_src_info: pallas_core.NameAndStrInfo,
     platform: str
 ) -> LoweringResult:
-  jaxpr, _ = pe.dce_jaxpr(jaxpr, [True] * len(jaxpr.outvars), instantiate=True)
+  if grid_mapping.num_dynamic_grid_bounds:
+    raise NotImplementedError(
+        "dynamic grid bounds not supported in the Triton backend"
+    )
+  if grid_mapping.num_index_operands:
+    raise NotImplementedError(
+        "scalar prefetch not implemented in the Triton backend"
+    )
+  with grid_mapping.trace_env():
+    jaxpr, _ = pe.dce_jaxpr(
+        jaxpr, [True] * len(jaxpr.outvars), instantiate=True
+    )
   with _new_ir_context(), ir.Location.unknown():
     module = ir.Module.create()
+    attrs = module.operation.attributes
+    module_name = name_and_src_info.name
+    attrs["sym_name"] = ir.StringAttr.get(module_name)
     param_types = [
         tt_dialect.PointerType.get(_dtype_to_ir_type(var.aval.dtype), 1)
         for var in jaxpr.invars
@@ -266,7 +293,7 @@ def lower_jaxpr_to_triton_module(
     assert len(jaxpr.outvars) == 0
     fn_type = ir.FunctionType.get(param_types, [])
     fn = tt_dialect.FuncOp(
-        name,
+        name_and_src_info.name,
         ir.TypeAttr.get(fn_type),
         sym_visibility="public",
         res_attrs=ir.DictAttr.get(dict(noinline=ir.BoolAttr.get(False))),
@@ -283,38 +310,32 @@ def lower_jaxpr_to_triton_module(
       local_program_ids = [
           pid
           for i, pid in enumerate(program_ids)
-          if i not in grid_mapping.mapped_dims
+          if i not in grid_mapping.vmapped_dims
       ]
       ctx = ModuleContext(
-          name, grid_mapping, local_program_ids, mlir.TracebackCaches(), platform
+          name_and_src_info.name,
+          grid_mapping, local_program_ids, mlir.TracebackCaches(), platform
       )
       if grid_mapping.num_index_operands:
         raise NotImplementedError(
             "Scalar prefetch not supported in Triton lowering."
         )
-      for bm in grid_mapping.block_mappings:
-        if bm is not None and not isinstance(bm.indexing_mode, Blocked):
-          raise NotImplementedError(
-              "Only Blocked indexing mode is supported in Triton lowering."
-          )
+      if not all(isinstance(bm.indexing_mode, Blocked)
+                 for bm in grid_mapping.block_mappings):
+        raise NotImplementedError(
+            "Only Blocked indexing mode is supported in Triton lowering."
+        )
       start_indices = map(
           functools.partial(_eval_index_map, ctx, program_ids),
           grid_mapping.block_mappings,
       )
-      consts_shapes = [
-          jax.ShapeDtypeStruct(v.aval.shape, v.aval.dtype)
-          for v in jaxpr.invars[grid_mapping.num_index_operands:grid_mapping.num_index_operands + grid_mapping.num_constant_operands]
-      ]
       block_infos = [
           BlockInfo(
-              jax.ShapeDtypeStruct(shape_dtype.shape, shape_dtype.dtype),
+              block_mapping.array_shape_dtype,
               start_idx,
               block_mapping.block_shape,
           )
-          if block_mapping is not None
-          else None
-          for shape_dtype, block_mapping, start_idx in zip(
-              (*consts_shapes, *in_out_shapes),
+          for block_mapping, start_idx in zip(
               grid_mapping.block_mappings,
               start_indices,
           )
@@ -374,7 +395,8 @@ def lower_jaxpr_to_triton_ir(
       inval_types = map(lambda t: getattr(t, "type", None), invals)
       raise LoweringError(
           f"Exception while lowering eqn:\n  {eqn}\nWith context:\n "
-          f" {rule_ctx}\nWith inval types={inval_types}\nIn jaxpr:\n{jaxpr}"
+          f" {rule_ctx}\nWith inval types={inval_types}\nIn jaxpr:\n{jaxpr}\n"
+          f"msg={e}"
       ) from e
     if eqn.primitive.multiple_results:
       map(write_env, eqn.outvars, outvals)
@@ -1628,7 +1650,7 @@ def _compute_pointers_from_indices(
     nd_indexer: NDIndexer,
     array_shape: tuple[int, ...],
 ) -> ir.Value:
-  if block_info is None:
+  if block_info is None:  # TODO(necula): is this branch dead?
     full_shape = array_shape
     num_mapped_dims = 0
     block_shape = array_shape
@@ -1641,6 +1663,7 @@ def _compute_pointers_from_indices(
   strides = pallas_utils.strides_from_shape(full_shape)
   indexer_shape = nd_indexer.get_indexer_shape()
   int_indexer_shape = nd_indexer.int_indexer_shape
+  _check_tensor_size(indexer_shape)
   indices = nd_indexer.indices
   other_shape = indexer_shape[len(int_indexer_shape) :]
   bcast_indices = []
@@ -2240,6 +2263,14 @@ def _remat_lowering_rule(ctx: LoweringRuleContext, *args, jaxpr, **_):
 triton_lowering_rules[ad_util.stop_gradient_p] = lambda _, x: x
 
 
+@register_lowering(lax.axis_index_p)
+def _axis_index_rule(ctx: LoweringRuleContext, *, axis_name: Hashable):
+  grid_names = ctx.context.grid_mapping.grid_names
+  if axis_name in grid_names:
+    # We are querying a named axis corresponding to a grid dimension.
+    return _program_id_lowering_rule(ctx, axis=grid_names.index(axis_name))
+  raise LookupError(f"Axis name {axis_name} not found in grid.")
+
 def _is_read_only(ref_effects) -> bool:
   if len(ref_effects) == 0:
     return True
@@ -2263,9 +2294,10 @@ def _for_lowering_rule(
   del which_linear
   if reverse or unroll != 1:
     raise NotImplementedError
-  lower_bound = _i32_constant(0)
-  upper_bound = _i32_constant(nsteps)
-  step = _i32_constant(1)
+  _i_constant = _i64_constant if config.enable_x64.value else _i32_constant
+  lower_bound = _i_constant(0)
+  upper_bound = _i_constant(nsteps)
+  step = _i_constant(1)
   init_args = map(_ensure_ir_value, args, ctx.avals_in)
   # Partially discharge state from jaxpr for non-pointers
   should_discharge = [

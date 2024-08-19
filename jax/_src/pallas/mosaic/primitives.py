@@ -15,17 +15,13 @@
 """Module for Pallas:TPU-specific JAX primitives and functions."""
 from __future__ import annotations
 
-from collections.abc import Callable
 import dataclasses
 import enum
 from typing import Any
 
 import jax
-from jax._src import api_util
 from jax._src import core as jax_core
 from jax._src import dtypes
-from jax._src import effects
-from jax._src import linear_util as lu
 from jax._src import pretty_printer as pp
 from jax._src import state
 from jax._src import tree_util
@@ -33,7 +29,6 @@ from jax._src import util
 from jax._src.state import indexing
 from jax._src.state import primitives as sp
 from jax._src.interpreters import mlir
-from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pl_core
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.state import discharge as state_discharge
@@ -157,41 +152,14 @@ def _roll_lowering_rule(
 mlir.register_lowering(roll_p, _roll_lowering_rule)
 
 
-run_scoped_p = jax_core.Primitive('run_scoped')
-run_scoped_p.multiple_results = True
-
-
-def run_scoped(f: Callable[..., Any], *types, **kw_types) -> Any:
-  flat_types, in_tree = tree_util.tree_flatten((types, kw_types))
-  flat_fun, out_tree_thunk = api_util.flatten_fun(lu.wrap_init(f), in_tree)
-  avals = map(lambda t: t.get_aval(), flat_types)
-  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, avals)
-  out = run_scoped_p.bind(*consts, jaxpr=jaxpr)
-  return tree_util.tree_unflatten(out_tree_thunk(), out)
-
-
-@run_scoped_p.def_effectful_abstract_eval
-def _run_scoped_abstract_eval(*args, jaxpr):
-  del args
-  # jaxpr will have effects for its inputs (Refs that are allocated) and for
-  # constvars (closed over Refs). The effects for the allocated Refs are local
-  # to the jaxpr and shouldn't propagate out.
-  nonlocal_effects = {
-      eff for eff in jaxpr.effects
-      if not (
-          isinstance(eff, effects.JaxprInputEffect)
-          and eff.input_index >= len(jaxpr.constvars)
-      )
-  }
-  return [v.aval for v in jaxpr.outvars], nonlocal_effects
-
-
 class DeviceIdType(enum.Enum):
   MESH = "mesh"
   LOGICAL = "logical"
 
 
-def check_sem_avals(sem_aval, sem_indexers_avals, name):
+def check_sem_avals(sem_aval, sem_indexers_avals, name, allowed_semaphore_types=None):
+  if allowed_semaphore_types is None:
+    allowed_semaphore_types = {tpu_core.semaphore, tpu_core.barrier_semaphore}
   if not isinstance(sem_aval, state.AbstractRef):
     raise ValueError(f"Cannot {name} on a non-semaphore Ref: {sem_aval}")
   sem_shape = sem_aval.shape
@@ -200,11 +168,14 @@ def check_sem_avals(sem_aval, sem_indexers_avals, name):
   if sem_shape:
     raise ValueError(f"Cannot {name} on a non-()-shaped semaphore: {sem_shape}")
   sem_dtype = sem_aval.dtype
-  if not (
-      jnp.issubdtype(sem_dtype, tpu_core.semaphore)
-      or jnp.issubdtype(sem_dtype, tpu_core.barrier_semaphore)
+  if not any(
+      jnp.issubdtype(sem_dtype, sem_type)
+      for sem_type in allowed_semaphore_types
   ):
-    raise ValueError(f"Must {name} a REGULAR or BARRIER semaphore: {sem_dtype}")
+    raise ValueError(
+        f"Must {name} semaphores of the following types:"
+        f" {allowed_semaphore_types}"
+    )
 
 
 semaphore_read_p = jax_core.Primitive("semaphore_read")
@@ -223,7 +194,14 @@ def _semaphore_read_abstract_eval(
     args_tree,
 ):
   sem_aval, sem_indexers_avals = tree_util.tree_unflatten(args_tree, avals)
-  check_sem_avals(sem_aval, sem_indexers_avals, "read")
+  check_sem_avals(
+      sem_aval,
+      sem_indexers_avals,
+      "read",
+      allowed_semaphore_types={
+          tpu_core.dma_semaphore, tpu_core.semaphore, tpu_core.barrier_semaphore
+      },
+  )
   return jax_core.ShapedArray((), jnp.dtype("int32"))
 
 
@@ -405,7 +383,7 @@ class AsyncCopyDescriptor:
 dma_start_p = jax_core.Primitive('dma_start')
 dma_start_p.multiple_results = True
 
-@dma_start_p.def_abstract_eval
+@dma_start_p.def_effectful_abstract_eval
 def _dma_start_abstract_eval(*args, tree, device_id_type):
   (
       src_ref_aval,
@@ -433,7 +411,8 @@ def _dma_start_abstract_eval(*args, tree, device_id_type):
       raise ValueError(
           f"Cannot signal on a non-()-shaped semaphore: {src_sem_shape}"
       )
-  return []
+  n_src_indexers = len(tree_util.tree_leaves(src_indexers_avals))
+  return [], {state.ReadEffect(0), state.WriteEffect(n_src_indexers + 1)}
 
 def _dma_start_pp_eqn(eqn: jax_core.JaxprEqn,
                       context: jax_core.JaxprPpContext,
@@ -488,14 +467,11 @@ def dma_start_discharge_rule(in_avals, out_avals,
       *_
   ) = tree_util.tree_unflatten(tree, in_avals)
   del out_avals, dst_sem, dst_sem_indexers
-  is_remote = src_sem is not None and device_id is not None
-  if is_remote:
-    if device_id_type == DeviceIdType.MESH:
-      raise NotImplementedError("Mesh device_id_type not supported.")
-  else:
+  is_remote = device_id is not None
+  if not is_remote:
+    # Local async copies only use one semaphore.
     assert src_sem is None
     assert src_sem_indexers is None
-    assert device_id is None
 
   num_src_index_vals = len(tree_util.tree_leaves(src_indexers_avals))
   num_dst_index_vals = len(tree_util.tree_leaves(dst_indexers_avals))
@@ -510,15 +486,32 @@ def dma_start_discharge_rule(in_avals, out_avals,
     # the DMA then the devices that do will hang.
     # TODO(justinfu): Verify that code only works in SPMD mode.
     axis_env = jax_core.thread_local_state.trace_state.axis_env
-    axis_names = tuple(frame.name for frame in axis_env)
-    nonempty_axis_names = tuple(name for name in axis_names if name is not None)
-    if len(nonempty_axis_names) > 1:
-      raise NotImplementedError("Sharding with more than one named axis not "
-                                "implemented in dma_start_p.")
-    shard_axis = nonempty_axis_names[0]
-    my_axis = jax.lax.axis_index(shard_axis)
-    # Update dst_ref from the perspective of the current device as the
-    # receiver.
+    nonempty_axes = [frame for frame in axis_env if frame.name is not None]
+    if device_id_type == DeviceIdType.LOGICAL:
+      if len(nonempty_axes) > 1:
+        raise NotImplementedError("Sharding with more than one named axis not "
+                                  "implemented in dma_start_p for LOGICAL "
+                                  "device_id_type.")
+      shard_axis = nonempty_axes[0].name
+      my_axis = jax.lax.axis_index(shard_axis)
+    elif device_id_type == DeviceIdType.MESH:
+      device_id_len = 1
+      if isinstance(device_id, jax.Array):
+        device_id_len = device_id.size
+      elif hasattr(device_id, '__len__'):
+        device_id_len = len(device_id)
+      if device_id_len != len(axis_env):
+        raise ValueError(
+            f"device_id ({device_id_len}) and mesh ({len(axis_env)}) "
+            "must have same length.")
+      if device_id_len > 1 or len(nonempty_axes) > 1:
+        raise NotImplementedError("Meshes with more than 1 named dimension not "
+                                  "implemented in dma_start_p")
+      shard_axis = nonempty_axes[0].name
+      my_axis = jax.lax.axis_index(shard_axis)
+    else:
+      raise ValueError(f"Unknown device_id_type: {device_id_type}")
+    # Compute the update that is being sent to the current device.
     who_copy_to_me = jax.lax.all_gather(device_id, shard_axis) == my_axis
     # TODO(justinfu): Add a checkify for verifying there is at most one source.
     # TODO(justinfu): Handle the case where no other device is copying to
@@ -527,6 +520,14 @@ def dma_start_discharge_rule(in_avals, out_avals,
     global_updates = jax.lax.all_gather(updates, shard_axis)
     updates = jax.lax.dynamic_index_in_dim(
         global_updates, index, axis=0, keepdims=False)
+
+    # Handle asymmetrical indexing when devices do not share the same
+    # dst_indexer.
+    global_dst_indexers = tree_util.tree_map(
+        lambda x: jax.lax.all_gather(x, shard_axis), dst_indexers)
+    dst_indexers = tree_util.tree_map(
+        lambda x: jax.lax.dynamic_index_in_dim(
+            x, index, axis=0, keepdims=False), global_dst_indexers)
 
   if dst_indexers:
     _, new_dst = state_discharge.index_swap_array(

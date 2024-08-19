@@ -24,7 +24,7 @@ from jax import random
 from jax._src.lib import xla_extension
 from jax._src import config
 from jax._src import test_util as jtu
-from jax._src.pallas.pallas_call import _trace_to_jaxpr
+from jax._src.pallas.pallas_call import _trace_kernel_to_jaxpr
 from jax.experimental import pallas as pl
 import jax.numpy as jnp
 import numpy as np
@@ -52,7 +52,7 @@ class PallasBaseTest(jtu.JaxTestCase):
       self.skipTest("Only works on non-Windows platforms")
 
     super().setUp()
-    _trace_to_jaxpr.cache_clear()
+    _trace_kernel_to_jaxpr.cache_clear()
 
   def pallas_call(self, *args, **kwargs):
     return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
@@ -131,7 +131,6 @@ class PallasCallVmapTest(PallasBaseTest):
     np.testing.assert_allclose(out, out_ref)
 
   def test_vmap_with_hoisted_consts(self):
-    # to_store will be hoisted as a constant. Choose distinct shapes from in/outs.
     to_store = np.arange(128, dtype=np.float32).reshape((1, 128))
     x = np.arange(4 * 16 * 128, dtype=np.float32).reshape((4, 16, 128))
 
@@ -146,9 +145,10 @@ class PallasCallVmapTest(PallasBaseTest):
     def kernel(src, dst):
       dst[0:1] = to_store
 
-    res = kernel(x)
-    for i in range(x.shape[0]):
-      self.assertAllClose(res[i, 0:1], to_store)
+    with self.assertRaisesRegex(
+        ValueError,
+        "The kernel function .* captures constants"):
+      kernel(x)
 
   def test_vmap_of_kernel_with_input_output_aliases(self):
     @functools.partial(

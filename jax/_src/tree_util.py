@@ -399,7 +399,7 @@ def tree_transpose(outer_treedef: PyTreeDef, inner_treedef: PyTreeDef | None,
 # sufficiently queryable that we can express _replace_nones. That may mean once
 # we have a flatten_one function.
 _RegistryEntry = collections.namedtuple("_RegistryEntry", ["to_iter", "from_iter"])
-_registry = {
+_registry: dict[type[Any], _RegistryEntry] = {
     tuple: _RegistryEntry(lambda xs: (xs, None), lambda _, xs: tuple(xs)),
     list: _RegistryEntry(lambda xs: (xs, None), lambda _, xs: list(xs)),
     dict: _RegistryEntry(lambda xs: unzip2(sorted(xs.items()))[::-1],
@@ -760,7 +760,7 @@ def keystr(keys: KeyPath):
     >>> jax.tree_util.keystr(keys)
     '01ab'
   """
-  return ''.join([str(k) for k in keys])
+  return ''.join(map(str, keys))
 
 
 class _RegistryWithKeypathsEntry(NamedTuple):
@@ -780,7 +780,7 @@ def _register_keypaths(
     )
 
 
-_registry_with_keypaths = {}
+_registry_with_keypaths: dict[type[Any], _RegistryWithKeypathsEntry] = {}
 
 _register_keypaths(
     tuple, lambda xs: tuple(SequenceKey(i) for i in range(len(xs)))
@@ -941,14 +941,16 @@ def register_dataclass(
       attributes represent the whole of the object state, and can be passed
       as keywords to the class constructor to create a copy of the object.
       All defined attributes should be listed among ``meta_fields`` or ``data_fields``.
-    meta_fields: auxiliary data field names. These fields *must* contain static,
-      hashable, immutable objects, as these objects are used to generate JIT cache
-      keys. In particular, ``meta_fields`` cannot contain :class:`jax.Array` or
-      :class:`numpy.ndarray` objects.
     data_fields: data field names. These fields *must* be JAX-compatible objects
       such as arrays (:class:`jax.Array` or :class:`numpy.ndarray`), scalars, or
-      pytrees whose leaves are arrays or scalars. Note that ``data_fields`` may be
-      ``None``, as this is recognized by JAX as an empty pytree.
+      pytrees whose leaves are arrays or scalars. Note that ``None`` is valid, as
+      this is recognized by JAX as an empty pytree.
+    meta_fields: auxiliary data field names. These fields will be considered static
+      within JAX transformations such as :func:`jax.jit`. The listed fields *must*
+      contain static, hashable, immutable objects, as these objects are used to
+      generate JIT cache keys: for example strings, Python scalars, or array shapes
+      and dtypes. In particular, ``meta_fields`` cannot contain :class:`jax.Array`
+      or :class:`numpy.ndarray` objects, as they are not hashable.
 
   Returns:
     The input class ``nodetype`` is returned unchanged after being added to JAX's

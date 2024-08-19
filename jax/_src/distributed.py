@@ -45,10 +45,12 @@ class State:
                  initialization_timeout: int = 300,
                  coordinator_bind_address: str | None = None):
     coordinator_address = (coordinator_address or
-                           os.environ.get('JAX_COORDINATOR_ADDRESS', None))
+                           os.environ.get('JAX_COORDINATOR_ADDRESS'))
     if isinstance(local_device_ids, int):
       local_device_ids = [local_device_ids]
 
+    if local_device_ids is None and (env_ids := os.environ.get('JAX_LOCAL_DEVICE_IDS')):
+      local_device_ids = list(map(int, env_ids.split(",")))
 
     (coordinator_address, num_processes, process_id, local_device_ids) = (
         clusters.ClusterEnv.auto_detect_unset_distributed_params(
@@ -230,11 +232,12 @@ def initialize(coordinator_address: str | None = None,
   global_state.initialize(coordinator_address, num_processes, process_id,
                           local_device_ids, cluster_detection_method,
                           initialization_timeout, coordinator_bind_address)
-  atexit.register(shutdown)
 
 
+@atexit.register
 def shutdown():
   """Shuts down the distributed system.
 
-  Does nothing if the distributed system is not running."""
+  Does nothing if the distributed system is not running.
+  """
   global_state.shutdown()

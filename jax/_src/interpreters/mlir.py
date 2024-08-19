@@ -41,6 +41,7 @@ from jax._src import effects as effects_lib
 from jax._src import linear_util as lu
 from jax._src import path
 from jax._src import pickle_util
+from jax._src import sharding
 from jax._src import sharding_impls
 from jax._src import source_info_util
 from jax._src import util
@@ -96,8 +97,7 @@ def _is_not_block_argument(x: IrValues) -> bool:
 
 
 def dense_int_elements(xs) -> ir.DenseIntElementsAttr:
-  return type_cast(ir.DenseIntElementsAttr,
-                   ir.DenseIntElementsAttr.get(np.asarray(xs, np.int64)))
+  return ir.DenseIntElementsAttr.get(np.asarray(xs, np.int64))
 
 dense_int_array = ir.DenseI64ArrayAttr.get
 
@@ -111,7 +111,7 @@ def dense_bool_elements(xs: Sequence[bool]) -> ir.DenseElementsAttr:
       a, type=ir.IntegerType.get_signless(1), shape=[len(xs)])
 
 def dense_bool_array(xs: Sequence[bool]) -> ir.DenseBoolArrayAttr:
-  return ir.DenseBoolArrayAttr.get(xs)  # type: ignore[arg-type]
+  return ir.DenseBoolArrayAttr.get(xs)
 
 def i32_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(32), i)
 def i64_attr(i): return ir.IntegerAttr.get(ir.IntegerType.get_signless(64), i)
@@ -277,12 +277,7 @@ def ir_constant(val: Any) -> IrValues:
   raise TypeError(f"No constant handler for type: {type(val)}")
 
 def _numpy_array_constant(x: np.ndarray | np.generic) -> IrValues:
-  element_type = dtype_to_ir_type(x.dtype)
-  shape = x.shape
-  if x.dtype == np.bool_:
-    x = np.packbits(x, bitorder='little')  # type: ignore
-  x = np.ascontiguousarray(x)
-  attr = ir.DenseElementsAttr.get(x, type=element_type, shape=shape)  # type: ignore
+  attr = _numpy_array_attribute(x)
   return hlo.constant(attr)
 
 
@@ -343,6 +338,87 @@ for ptype, dtype in dtypes.python_scalar_dtypes.items():
 def _token_constant_handler(val):
   return hlo.create_token()
 register_constant_handler(core.Token, _token_constant_handler)
+
+# Attributes
+
+AttributeHandler = Callable[[Any], ir.Attribute]
+_attribute_handlers: dict[type[Any], AttributeHandler] = {}
+
+def register_attribute_handler(type_: type[Any], handler_fun: AttributeHandler):
+  _attribute_handlers[type_] = handler_fun
+
+def get_attribute_handler(type_: type[Any]) -> AttributeHandler:
+  return _attribute_handlers[type_]
+
+def _numpy_scalar_attribute(val: Any) -> ir.Attribute:
+  mlir_type = dtype_to_ir_type(val.dtype)
+  if isinstance(mlir_type, ir.IntegerType):
+    return ir.IntegerAttr.get(mlir_type, val)
+  elif isinstance(mlir_type, ir.FloatType):
+    return ir.FloatAttr.get(mlir_type, val)
+  else:
+    raise TypeError(f"Unsupported scalar attribute type: {type(val)}")
+
+def _numpy_array_attribute(x: np.ndarray | np.generic) -> ir.Attribute:
+  element_type = dtype_to_ir_type(x.dtype)
+  shape = x.shape
+  if x.dtype == np.bool_:
+    x = np.packbits(x, bitorder='little')  # type: ignore
+  x = np.ascontiguousarray(x)
+  return ir.DenseElementsAttr.get(x, type=element_type, shape=shape)  # type: ignore
+
+def _numpy_array_attribute_handler(val: np.ndarray | np.generic) -> ir.Attribute:
+  if 0 in val.strides and val.size > 0:
+    raise ValueError(
+        "NumPy arrays with zero strides are not supported as MLIR attributes")
+  if val.dtype == dtypes.float0:
+    val = np.zeros(val.shape, dtype=np.bool_)
+  if dtypes.is_python_scalar(val) or np.isscalar(val):
+    return _numpy_scalar_attribute(val)
+  else:
+    return _numpy_array_attribute(val)
+
+register_attribute_handler(np.ndarray, _numpy_array_attribute_handler)
+
+for _scalar_type in [np.int8, np.int16, np.int32, np.int64,
+                     np.uint8, np.uint16, np.uint32, np.uint64,
+                     np.float16, np.float32, np.float64,
+                     np.complex64, np.complex128,
+                     np.bool_, np.longlong, dtypes.bfloat16]:
+  register_attribute_handler(_scalar_type, _numpy_array_attribute_handler)  # type: ignore
+
+def _python_scalar_attribute_handler(dtype, val):
+  return _numpy_scalar_attribute(np.array(val, dtype))
+
+for ptype, dtype in dtypes.python_scalar_dtypes.items():
+  register_attribute_handler(
+      ptype, partial(_python_scalar_attribute_handler, dtype))
+
+register_attribute_handler(str, ir.StringAttr.get)
+register_attribute_handler(bytes, ir.StringAttr.get)
+
+def _dict_attribute_handler(val: dict[str, Any]) -> ir.Attribute:
+  return ir.DictAttr.get({k: ir_attribute(v) for k, v in val.items()})
+
+register_attribute_handler(dict, _dict_attribute_handler)
+
+def _sequence_attribute_handler(val: Sequence[Any]) -> ir.Attribute:
+  return ir.ArrayAttr.get([ir_attribute(v) for v in val])
+
+register_attribute_handler(list, _sequence_attribute_handler)
+register_attribute_handler(tuple, _sequence_attribute_handler)
+
+def ir_attribute(val: Any) -> ir.Attribute:
+  """Convert a Python value to an MLIR attribute."""
+  for t in type(val).__mro__:
+    handler = _attribute_handlers.get(t)
+    if handler:
+      out = handler(val)
+      assert isinstance(out, ir.Attribute), (type(val), out)
+      return out
+  if hasattr(val, '__jax_array__'):
+    return ir_attribute(val.__jax_array__())
+  raise TypeError(f"No attribute handler defined for type: {type(val)}")
 
 # Source locations
 
@@ -506,7 +582,9 @@ def make_ir_context() -> ir.Context:
   # we don't do any heavy computation on MLIR modules from Python anyway, so we
   # just disable threading.
   context.enable_multithreading(False)
-
+  # TODO(bartchr): Once JAX is released with SDY, remove the if.
+  if dialects.sdy:
+    dialects.sdy.register_dialect(context)
   dialects.mhlo.register_mhlo_dialect(context)
   dialects.chlo.register_dialect(context)
   dialects.hlo.register_dialect(context)
@@ -602,6 +680,7 @@ class ModuleContext:
   host_callbacks: list[Any]
   # Keep state for the lowering of shape polymorphism
   shape_poly_state: ShapePolyLoweringState
+  all_default_mem_kind: bool
 
   # Cached primitive lowerings.
   cached_primitive_lowerings: dict[Any, func_dialect.FuncOp]
@@ -631,7 +710,8 @@ class ModuleContext:
       symbol_table: ir.SymbolTable | None = None,
       cached_primitive_lowerings: None | (dict[Any, func_dialect.FuncOp]) = None,
       traceback_caches: None | TracebackCaches = None,
-      shape_poly_state = None):
+      shape_poly_state = None,
+      all_default_mem_kind: bool = True):
 
     self.context = context or make_ir_context()
     self.module = module or ir.Module.create(loc=ir.Location.unknown(self.context))
@@ -649,6 +729,7 @@ class ModuleContext:
     self.host_callbacks = host_callbacks
     self.shape_poly_state = (
       shape_poly_state or ShapePolyLoweringState((), tuple(platforms)))
+    self.all_default_mem_kind = all_default_mem_kind
     self.lowering_parameters = lowering_parameters
 
   @property
@@ -708,6 +789,15 @@ class LoweringRuleContext:
 
   def replace(self, **kw): return dataclasses.replace(self, **kw)  # pytype: disable=wrong-arg-types  # dataclasses-replace-types
 
+  def is_forward_compat(self) -> bool:
+    """Returns true if the lowering parameters are in forward compatibility mode.
+    """
+    lowering_parameters = self.module_context.lowering_parameters
+    return (
+        lowering_parameters.for_export
+        and not lowering_parameters.export_ignore_forward_compatibility
+    )
+
 
 if not MYPY:
   class LoweringRule(Protocol):
@@ -745,12 +835,6 @@ def flatten_ir_values(xs: Iterable[IrValues]) -> list[ir.Value]:
     else:
       out.extend(x)
   return out
-
-
-_unflatten_done = object()
-
-def _unwrap_singleton_ir_values(x): return x[0] if len(x) == 1 else x
-
 
 def flatten_ir_types(xs: Iterable[IrTypes]) -> list[ir.Type]:
   """Concatenates/flattens a list of ir.Types or ir.Type sequences."""
@@ -871,18 +955,40 @@ class LoweringResult(NamedTuple):
 _platforms_with_donation = ["cpu", "cuda", "rocm", "tpu"]
 
 
+def add_manual_axes(axis_ctx: sharding_impls.SPMDAxisContext, sharding, ndim):
+  mesh = axis_ctx.mesh
+  if (isinstance(sharding, sharding_impls.NamedSharding) and
+      sharding.mesh.shape == mesh.shape):
+    return sharding_impls.NamedSharding._from_parsed_pspec(
+        sharding.mesh, sharding._parsed_pspec, memory_kind=sharding.memory_kind,
+        _manual_axes=axis_ctx.manual_axes)
+  else:
+    parsed_pspec = sharding_impls.parse_flatten_op_sharding(
+      sharding._to_xla_hlo_sharding(ndim), mesh)[0]
+    return sharding_impls.NamedSharding._from_parsed_pspec(
+      mesh, parsed_pspec, memory_kind=sharding.memory_kind,
+      _manual_axes=axis_ctx.manual_axes)
+
+
 def _to_physical_op_sharding(
+    ctx: ModuleContext,
     aval: core.AbstractValue, sharding: JSharding | None,
-) -> xc.OpSharding | None:
+) -> xc.OpSharding | sharding.SdyArraySharding | None:
   if sharding is None:
     return None
   assert isinstance(sharding, JSharding)
   if isinstance(aval, AbstractRef):
-    return _to_physical_op_sharding(aval.inner_aval, sharding)
+    return _to_physical_op_sharding(ctx, aval.inner_aval, sharding)
   assert isinstance(aval, (core.ShapedArray, core.DShapedArray))
   if dtypes.issubdtype(aval.dtype, dtypes.extended):
     sharding = sharding_impls.physical_sharding(aval, sharding)
     aval = core.physical_aval(aval)
+  axis_ctx = ctx.axis_context
+  if (isinstance(axis_ctx, sharding_impls.SPMDAxisContext) and
+      axis_ctx.manual_axes):
+    sharding = add_manual_axes(axis_ctx, sharding, aval.ndim)
+  if config.use_shardy_partitioner.value:
+    return sharding._to_sdy_sharding(aval.ndim)  # type: ignore
   return sharding._to_xla_hlo_sharding(aval.ndim).to_proto()  # type: ignore
 
 
@@ -1007,11 +1113,21 @@ def lower_jaxpr_to_module(
                       channel_iterator=channel_iter,
                       host_callbacks=host_callbacks,
                       lowering_parameters=lowering_parameters,
-                      shape_poly_state=ShapePolyLoweringState(dim_vars, platforms))
+                      shape_poly_state=ShapePolyLoweringState(dim_vars, platforms),
+                      all_default_mem_kind=all_default_mem_kind)
   with ctx.context, ir.Location.unknown(ctx.context):
     # Remove module name characters that XLA would alter. This ensures that
     # XLA computation preserves the module name.
     attrs = ctx.module.operation.attributes
+    if config.use_shardy_partitioner.value:
+      assert (isinstance(axis_context, sharding_impls.ShardingContext) and
+              axis_context.mesh_shape is not None)
+      ctx.module.body.append(
+          dialects.sdy.MeshOp(
+              "mesh",
+              dialects.sdy.MeshAttr.get(
+                  [dialects.sdy.MeshAxisAttr.get(name, size)
+                  for name, size in axis_context.mesh_shape])))
     module_name = _module_name_regex.sub("_", module_name)
     attrs["sym_name"] = ir.StringAttr.get(module_name)
     attrs["mhlo.num_replicas"] = i32_attr(num_replicas)
@@ -1053,6 +1169,7 @@ def lower_jaxpr_to_module(
   return LoweringResult(ctx.module, ctx.keepalives, ctx.host_callbacks,
                         ctx.shape_poly_state)
 
+
 def _set_up_aliases(input_output_aliases, avals_in, avals_out, donated_args,
                     arg_memory_kinds, result_memory_kinds):
   if input_output_aliases is None:
@@ -1061,7 +1178,7 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out, donated_args,
     input_output_aliases = list(input_output_aliases)
   # To match-up in-avals to out-avals we only care about the number of
   # bytes, so we strip off unrelated aval metadata (eg. the named shape)
-  strip_metadata = lambda a: a.strip_named_shape().strip_weak_type()
+  strip_metadata = lambda a: a.strip_weak_type()
   avals_in = map(strip_metadata, avals_in)
   avals_out = map(strip_metadata, avals_out)
 
@@ -1256,7 +1373,7 @@ def lower_jaxpr_to_fun(
   ir_arg_shardings = None
   if arg_shardings is not None:
     ir_arg_shardings = util.flatten(
-        [[_to_physical_op_sharding(a, s)] * len_ir_types(types)
+        [[_to_physical_op_sharding(ctx, a, s)] * len_ir_types(types)
          for a, s, types in zip(input_avals, arg_shardings, input_types)])
 
   ir_arg_memory_kinds = None
@@ -1278,7 +1395,7 @@ def lower_jaxpr_to_fun(
   ir_result_shardings = None
   if result_shardings is not None:
     ir_result_shardings = util.flatten(
-        [[_to_physical_op_sharding(a, s)] * len_ir_types(types)
+        [[_to_physical_op_sharding(ctx, a, s)] * len_ir_types(types)
          for a, s, types in zip(output_avals, result_shardings, output_types)])
 
   ir_result_memory_kinds = None
@@ -1330,7 +1447,10 @@ def lower_jaxpr_to_fun(
     if use_sharding_annotations and ir_arg_shardings is not None:
       for attrs, sharding in zip(arg_attrs, ir_arg_shardings):
         if sharding is not None:
-          attrs["mhlo.sharding"] = get_sharding_attr(sharding)
+          if config.use_shardy_partitioner.value:
+            attrs["sdy.sharding"] = get_sharding_attr(sharding)
+          else:
+            attrs["mhlo.sharding"] = get_sharding_attr(sharding)
 
     if ir_arg_memory_kinds is not None:
       for attrs, memory_kind in zip(arg_attrs, ir_arg_memory_kinds):
@@ -1394,7 +1514,10 @@ def lower_jaxpr_to_fun(
   if use_sharding_annotations and ir_result_shardings is not None:
     for attrs, sharding in zip(result_attrs, ir_result_shardings):
       if sharding is not None:
-        attrs['mhlo.sharding'] = get_sharding_attr(sharding)
+        if config.use_shardy_partitioner.value:
+          attrs["sdy.sharding"] = get_sharding_attr(sharding)
+        else:
+          attrs["mhlo.sharding"] = get_sharding_attr(sharding)
 
   if ir_result_memory_kinds is not None:
     for attrs, mem_kind in zip(result_attrs, ir_result_memory_kinds):
@@ -2216,9 +2339,13 @@ def _wrap_with_spmd_op(name: str,
                        ctx: LoweringRuleContext,
                        x: ir.Value,
                        aval_out: core.AbstractValue,
-                       sharding_proto: xc.OpSharding,
+                       sharding: xc.OpSharding | sharding.SdyArraySharding,
                        unspecified_dims: set[int] | None = None,
-                       has_side_effect: bool = False):
+                       has_side_effect: bool = False,
+                       allow_shardy_lowering: bool = False):
+  if config.use_shardy_partitioner.value and allow_shardy_lowering:
+    return dialects.sdy.ShardingConstraintOp(x, sharding.build()).result  # type: ignore
+
   # unspecified_dims indicate dimensions whose shardings are not specified and
   # XLA sharding propagation can change them.
   if unspecified_dims:
@@ -2239,26 +2366,36 @@ def _wrap_with_spmd_op(name: str,
                    api_version=1,
                    result_shapes=result_shapes,
                    has_side_effect=has_side_effect)
-  set_sharding(op, sharding_proto)
+  set_sharding(op, sharding)
   return op.result
 
 
-wrap_with_sharding_op = partial(_wrap_with_spmd_op, "Sharding")
+wrap_with_sharding_op = partial(_wrap_with_spmd_op, "Sharding",
+                                allow_shardy_lowering=True)
 wrap_with_full_to_shard_op = partial(_wrap_with_spmd_op, "SPMDFullToShardShape")
 wrap_with_shard_to_full_op = partial(_wrap_with_spmd_op, "SPMDShardToFullShape")
 
-def set_sharding(op, sharding_proto: xc.OpSharding):
-  op.attributes["mhlo.sharding"] = get_sharding_attr(sharding_proto)
 
-
-def get_sharding_attr(sharding_proto: xc.OpSharding):
-  # If there are very large numbers of devices, use the proto representation.
-  # The MHLO to HLO conversion supports both, and the proto representation is
-  # more compact.
-  if len(sharding_proto.tile_assignment_devices) > 100:
-    return ir.StringAttr.get(sharding_proto.SerializeToString())  # type: ignore[arg-type]
+def set_sharding(op, sharding: xc.OpSharding | sharding.SdyArraySharding):
+  if config.use_shardy_partitioner.value:
+    op.attributes["sdy.sharding"] = get_sharding_attr(sharding)
   else:
-    return ir.StringAttr.get(repr(xc.HloSharding.from_proto(sharding_proto)))
+    op.attributes["mhlo.sharding"] = get_sharding_attr(sharding)
+
+
+def get_sharding_attr(
+    sharding: xc.OpSharding | sharding.SdyArraySharding
+) -> ir.Attribute:
+  if config.use_shardy_partitioner.value:
+    return sharding.build()  # type: ignore
+  else:
+    # If there are very large numbers of devices, use the proto representation.
+    # The MHLO to HLO conversion supports both, and the proto representation is
+    # more compact.
+    if len(sharding.tile_assignment_devices) > 100:  # type: ignore
+      return ir.StringAttr.get(sharding.SerializeToString())  # type: ignore
+    else:
+      return ir.StringAttr.get(repr(xc.HloSharding.from_proto(sharding)))  # type: ignore[arg-type]
 
 
 def wrap_with_layout_op(ctx: LoweringRuleContext,
@@ -2744,7 +2881,7 @@ def custom_call(
   if backend_config is None:
     backend_config_attr = ir.StringAttr.get("")
   elif isinstance(backend_config, (str, bytes)):
-    backend_config_attr = ir.StringAttr.get(backend_config)  # type: ignore[arg-type]
+    backend_config_attr = ir.StringAttr.get(backend_config)
   elif isinstance(backend_config, dict):
     # TODO(necula): it seems that the CustomCallOp constructor requires that
     # backend_config_attr be a string attribute, even though in some cases we

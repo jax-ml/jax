@@ -34,7 +34,7 @@ This generalizes to any tuple of integers (a length `d` grid will correspond
 to `d` nested loops).
 The kernel is executed as many times
 as `prod(grid)`.
-The default grid value `None` stands for `()`, and results in one
+The default grid value `()` results in one
 kernel invocation.
 Each of these invocations is referred to as a "program".
 To access which program (i.e. which element of the grid) the kernel is currently
@@ -105,13 +105,15 @@ to get the actual element index on the corresponding array axis.
 
 ```{note}
 Not all block shapes are supported.
-  * On TPU, only blocks with rank at least 2 are supported.
-    Furthermore, if the last two dimensions of your input are larger than
-    8 and 128 respectively, the block shape in those dimensions must be a
-    multiple of the respective factor. If the input dimension is smaller,
-    the block should span the full dimension.
+  * On TPU, only blocks with rank at least 1 are supported.
+    Furthermore, the last two dimensions of your block shape must be equal to
+    the respective dimension of the overall array, or be divisible
+    by 8 and 128 respectively. For blocks of rank 1, the block dimension
+    must be equal to the array dimension, or be divisible by
+    `128 * (32 / bitwidth(dtype))`.
 
-  * On GPU, only blocks with a size that is power of 2 are supported.
+  * On GPU, the size of the blocks themselves is not restricted, but each
+    operation must operate on arrays whose size is a power of 2.
 ```
 
 If the block shape does not divide evenly the overall shape then the

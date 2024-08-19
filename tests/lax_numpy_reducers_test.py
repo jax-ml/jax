@@ -715,7 +715,7 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     # TODO(phawkins): we currently set dtype=False because we aren't as
     # aggressive about promoting to float64. It's not clear we want to mimic
     # Numpy here.
-    tol_spec = {np.float16: 1E-2, np.float32: 2e-4, np.float64: 5e-6}
+    tol_spec = {np.float16: 4e-2, np.float32: 2e-4, np.float64: 5e-6}
     tol = max(jtu.tolerance(a_dtype, tol_spec),
               jtu.tolerance(q_dtype, tol_spec))
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,

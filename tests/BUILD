@@ -217,30 +217,6 @@ py_test(
 )
 
 jax_test(
-    name = "xmap_test",
-    srcs = ["xmap_test.py"],
-    backend_tags = {
-        "gpu": [
-            "noasan",  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
-        ],
-        "tpu": [
-            "noasan",  # Times out.
-            "nomsan",  # Times out.
-            "notsan",  # Times out.
-        ],
-    },
-    shard_count = {
-        "cpu": 10,
-        "gpu": 4,
-        "tpu": 4,
-    },
-    tags = ["multiaccelerator"],
-    deps = [
-        "//jax:maps",
-    ],
-)
-
-jax_test(
     name = "memories_test",
     srcs = ["memories_test.py"],
     shard_count = {
@@ -443,9 +419,12 @@ jax_test(
     shard_count = {
         "cpu": 40,
         "gpu": 40,
-        "tpu": 40,
+        "tpu": 50,
     },
-    tags = ["noasan"],  # Test times out on all backends
+    tags = [
+        "noasan",  # Test times out on all backends
+        "test_cpu_thunks",
+    ],
 )
 
 jax_test(
@@ -456,6 +435,7 @@ jax_test(
         "gpu": 30,
         "tpu": 40,
     },
+    tags = ["test_cpu_thunks"],
 )
 
 jax_test(
@@ -466,6 +446,7 @@ jax_test(
         "gpu": 20,
         "tpu": 20,
     },
+    tags = ["test_cpu_thunks"],
 )
 
 jax_test(
@@ -486,16 +467,24 @@ jax_test(
         "gpu": 10,
         "tpu": 10,
     },
+    tags = ["test_cpu_thunks"],
 )
 
 jax_test(
     name = "lax_numpy_ufuncs_test",
     srcs = ["lax_numpy_ufuncs_test.py"],
+    shard_count = {
+        "cpu": 10,
+        "gpu": 10,
+        "tpu": 10,
+    },
+    tags = ["test_cpu_thunks"],
 )
 
 jax_test(
     name = "lax_numpy_vectorize_test",
     srcs = ["lax_numpy_vectorize_test.py"],
+    tags = ["test_cpu_thunks"],
 )
 
 jax_test(
@@ -560,6 +549,7 @@ jax_test(
         "gpu": 40,
         "tpu": 40,
     },
+    tags = ["test_cpu_thunks"],
     deps = [
         "//jax:internal_test_util",
         "//jax:lax_reference",
@@ -589,6 +579,7 @@ jax_test(
         "gpu": 40,
         "tpu": 20,
     },
+    tags = ["test_cpu_thunks"],
 )
 
 jax_test(
@@ -599,6 +590,7 @@ jax_test(
         "gpu": 40,
         "tpu": 40,
     },
+    tags = ["test_cpu_thunks"],
     deps = ["//jax:internal_test_util"] + py_deps("numpy") + py_deps("absl/testing"),
 )
 
@@ -610,6 +602,7 @@ jax_test(
         "gpu": 40,
         "tpu": 40,
     },
+    tags = ["test_cpu_thunks"],
     deps = ["//jax:internal_test_util"] + py_deps("numpy") + py_deps("absl/testing"),
 )
 
@@ -652,6 +645,7 @@ jax_test(
         "gpu": 40,
         "tpu": 40,
     },
+    tags = ["test_cpu_thunks"],
 )
 
 jax_test(
@@ -694,6 +688,14 @@ jax_test(
 jax_test(
     name = "nn_test",
     srcs = ["nn_test.py"],
+    backend_tags = {
+        "gpu": [
+            "noasan",  # Times out under asan.
+        ],
+        "tpu": [
+            "noasan",  # Times out under asan.
+        ],
+    },
     shard_count = {
         "cpu": 10,
         "tpu": 10,
@@ -785,10 +787,9 @@ jax_test(
         "gpu_h100",  # Pytorch H100 build times out in Google's CI.
     ],
     tags = [
-        # PyTorch leaks dlpack metadata https://github.com/pytorch/pytorch/issues/117058, and
-        # compilation times out on CPU.
-        "noasan",
         "not_build:arm",
+        # TODO(b/355237462): Re-enable once MSAN issue is addressed.
+        "nomsan",
     ],
     deps = py_deps("torch"),
 )
@@ -1195,6 +1196,7 @@ jax_test(
     shard_count = {
         "tpu": 5,
     },
+    tags = ["noasan"],  # Times out
     deps = [
         "//jax:experimental",
         "//jax:experimental_host_callback",
@@ -1210,6 +1212,7 @@ jax_test(
     shard_count = {
         "gpu": 5,
     },
+    tags = ["noasan"],  # Times out
     deps = [
         "//jax:experimental",
         "//jax:experimental_host_callback",

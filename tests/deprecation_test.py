@@ -26,7 +26,7 @@ class DeprecationTest(absltest.TestCase):
       warnings.simplefilter("error")
       self.assertEqual(m.x, 42)
 
-    with self.assertWarns(DeprecationWarning, msg="Please use x"):
+    with self.assertWarnsRegex(DeprecationWarning, "Please use x"):
       self.assertEqual(m.y, 101)
 
     with self.assertRaisesRegex(AttributeError, "Please do not use z"):

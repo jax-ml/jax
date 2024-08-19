@@ -15,6 +15,8 @@
 """Utilities for code generator."""
 
 import dataclasses
+import math
+from typing import Callable
 
 import jax
 from jaxlib.mlir import ir
@@ -97,10 +99,10 @@ class WGStridedFragLayout:
     memref_type = ir.MemRefType(memref_ty)
     bw = mgpu.bytewidth(memref_type.element_type)
     assert 8 % bw == 0 and 8 // bw != 0, bw
-    if np.prod(memref_type.shape) % WARPGROUP_SIZE != 0:
+    if math.prod(memref_type.shape) % WARPGROUP_SIZE != 0:
       raise ValueError(
           "Ref must have a number of elements that is a multiple of"
-          f" {WARPGROUP_SIZE}"
+          f" {WARPGROUP_SIZE} (got {math.prod(memref_type.shape)})"
       )
     max_vec_size = np.prod(memref_type.shape) // WARPGROUP_SIZE
     return cls(
@@ -165,6 +167,11 @@ class FragmentedArray:
 
       case _:
         raise NotImplementedError
+
+  def __repr__(self):
+    return (
+        f"FragmentedArray(layout={self.layout}, shape={self.shape})"
+    )
 
   @classmethod
   def load_strided(cls, ref: ir.Value):
@@ -310,30 +317,66 @@ class FragmentedArray:
   def exp(self, approx: bool = False):
     if not ir.FloatType.isinstance(self.mlir_dtype):
       raise NotImplementedError
-    def fast_exp(x):
+    if approx:
       f32 = ir.F32Type.get()
       if self.mlir_dtype != f32:
         raise NotImplementedError
       log2e = arith.constant(f32, ir.FloatAttr.get(f32, 1.4426950408889634))
-      if x.type == f32:
+      def fast_exp(x):
         scaled = arith.mulf(x, log2e)
-        return llvm.inline_asm(
-            f32, [scaled], "ex2.approx.f32 $0,$1;", "=f,f", asm_dialect=0
-        )
+        return llvm.inline_asm(f32, [scaled], "ex2.approx.f32 $0, $1;", "=f,f")
+      return self._pointwise(self._lift_fast_unary(fast_exp))
+    return self._pointwise(mlir_math.exp)
+
+  def sin(self, approx: bool = False):
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError
+    if approx and self.mlir_dtype != ir.F32Type.get():
+      raise NotImplementedError
+    return self._pointwise(
+        self._lift_fast_unary("sin.approx.f32") if approx else mlir_math.sin
+    )
+
+  def cos(self, approx: bool = False):
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError
+    if approx and self.mlir_dtype != ir.F32Type.get():
+      raise NotImplementedError
+    return self._pointwise(
+        self._lift_fast_unary("cos.approx.f32") if approx else mlir_math.cos
+    )
+
+  def rsqrt(self, approx: bool = False):
+    if not ir.FloatType.isinstance(self.mlir_dtype):
+      raise NotImplementedError
+    if approx and self.mlir_dtype != ir.F32Type.get():
+      raise NotImplementedError
+    return self._pointwise(
+        self._lift_fast_unary("rsqrt.approx.f32") if approx else mlir_math.rsqrt
+    )
+
+  @staticmethod
+  def _lift_fast_unary(
+      instr: str | Callable[[ir.Value], ir.Value],
+  ) -> Callable[[ir.Value], ir.Value]:
+    def fast_instr(x):
+      f32 = ir.F32Type.get()
+      if x.type == f32:
+        if isinstance(instr, str):
+          return llvm.inline_asm(f32, [x], instr + " $0, $1;", "=f,f")
+        else:
+          return instr(x)
       elif ir.VectorType.isinstance(x.type):
         index = ir.IndexType.get()
         result = llvm.mlir_undef(x.type)
         for i in range(2):
           v = vector.extractelement(x, position=c(i, index))
-          vr = fast_exp(v)
+          vr = fast_instr(v)
           result = vector.insertelement(vr, result, position=c(i, index))
         return result
       else:
         raise NotImplementedError(x.type)
-    return self._pointwise(fast_exp if approx else mlir_math.exp)
-
-  def rsqrt(self):
-    return self._pointwise(mlir_math.rsqrt)
+    return fast_instr
 
   def __and__(self, other):
     if not ir.IntegerType.isinstance(self.mlir_dtype):
@@ -534,10 +577,27 @@ class FragmentedArray:
     match self.layout:
       case WGMMAFragLayout():
         self._store_untiled_wgmma(ref)
+      case WGSplatFragLayout():
+        self._store_untiled_splat(ref)
       case WGStridedFragLayout():
         self._store_untiled_wg_strided(ref)
       case _:
         raise NotImplementedError(self.layout)
+
+  def _store_untiled_splat(self, ref: ir.Value):
+    vec_size = 8 // mgpu.bytewidth(self.mlir_dtype)
+    if np.prod(self.shape) < vec_size * WARPGROUP_SIZE:
+      vec_size = 1
+
+    if np.prod(self.shape) % WARPGROUP_SIZE * vec_size:
+      raise ValueError(self.shape, WARPGROUP_SIZE, vec_size)
+
+    fa = FragmentedArray.splat(
+        self.registers.flat[0],
+        self.shape,
+        layout=WGStridedFragLayout(shape=self.shape, vec_size=vec_size),
+    )
+    fa.store_untiled(ref)
 
   def _store_untiled_wg_strided(self, ref: ir.Value):
     ref_ty = ir.MemRefType(ref.type)

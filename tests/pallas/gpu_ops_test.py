@@ -26,7 +26,7 @@ from jax import random
 from jax._src import config
 from jax._src import test_util as jtu
 from jax._src.lax.control_flow.for_loop import for_loop
-from jax._src.pallas.pallas_call import _trace_to_jaxpr
+from jax._src.pallas.pallas_call import _trace_kernel_to_jaxpr
 from jax.experimental import pallas as pl
 from jax.experimental.pallas.ops.gpu import attention
 from jax.experimental.pallas.ops.gpu import layer_norm
@@ -114,14 +114,14 @@ def matmul_block_spec(x, y, *, bm, bn, bk, interpret, debug=False):
 
 
 @jtu.with_config(jax_traceback_filtering="off")
-class PallasTest(jtu.JaxTestCase):
+class PallasBaseTest(jtu.JaxTestCase):
   INTERPRET = False
 
   def setUp(self):
     if jtu.test_device_matches(["cpu"]) and not self.INTERPRET:
       self.skipTest("On CPU the test works only in interpret mode")
-    if jtu.test_device_matches(["gpu"]) and jax.config.x64_enabled:
-      self.skipTest("On GPU the test works only in 32-bit")
+    if jtu.test_device_matches(["cpu", "gpu"]) and jax.config.x64_enabled:
+      self.skipTest("On CPU and GPU the test works only in 32-bit")
     if (jtu.test_device_matches(["cuda"]) and
         not jtu.is_cuda_compute_capability_at_least("8.0")):
       self.skipTest("Only works on GPU with capability >= sm80")
@@ -129,34 +129,30 @@ class PallasTest(jtu.JaxTestCase):
       self.skipTest("Only works on non-Windows platforms")
 
     super().setUp()
-    _trace_to_jaxpr.cache_clear()
+    _trace_kernel_to_jaxpr.cache_clear()
 
   def pallas_call(self, *args, **kwargs):
     return pl.pallas_call(*args, **kwargs, interpret=self.INTERPRET)
 
 
-class FusedAttentionTest(PallasTest):
+class FusedAttentionTest(PallasBaseTest):
 
   def setUp(self):
     super().setUp()
-    if jtu.test_device_matches(["cpu", "tpu"]):
-      self.skipTest("Works only on GPU")
+    if jtu.test_device_matches(["tpu"]):
+      self.skipTest("Not intended for TPU")
 
-  @parameterized.named_parameters(
-      *[
-          (
-              (
-                  f"{batch_size=}_{seq_len=}_{num_heads=}_{head_dim=}_{causal=}"
-                  f"_{use_fwd=}_{use_segment_ids=}_{kwargs=}"
-              ),
-              batch_size,
-              seq_len,
-              num_heads,
-              head_dim,
-              causal,
-              use_fwd,
-              use_segment_ids,
-              kwargs,
+  @jtu.parameterized_filterable(
+      kwargs=[
+          dict(
+              batch_size=batch_size,
+              seq_len=seq_len,
+              num_heads=num_heads,
+              head_dim=head_dim,
+              causal=causal,
+              use_fwd=use_fwd,
+              use_segment_ids=use_segment_ids,
+              kwargs=kwargs,
           )
           for (
               batch_size,
@@ -183,6 +179,7 @@ class FusedAttentionTest(PallasTest):
   )
   def test_fused_attention_fwd(
       self,
+      *,
       batch_size,
       seq_len,
       num_heads,
@@ -215,7 +212,8 @@ class FusedAttentionTest(PallasTest):
       def impl(q, k, v):
         v, _ = jax.vjp(
             functools.partial(
-                attention.mha, causal=causal, segment_ids=segment_ids, **kwargs
+                attention.mha, causal=causal, segment_ids=segment_ids,
+                interpret=self.INTERPRET, **kwargs
             ),
             q,
             k,
@@ -225,25 +223,22 @@ class FusedAttentionTest(PallasTest):
 
     else:
       impl = functools.partial(
-          attention.mha, causal=causal, segment_ids=segment_ids, **kwargs
+          attention.mha, causal=causal, segment_ids=segment_ids,
+          interpret=self.INTERPRET, **kwargs
       )
     o = impl(q, k, v)
     o_ref = attention.mha_reference(q, k, v, segment_ids, causal=causal)
     np.testing.assert_allclose(o, o_ref, atol=0.05)
 
-  @parameterized.named_parameters(
-      *[
-          (
-              (
-                  f"{batch_size=}_{seq_len=}_{num_heads=}_{head_dim=}_{causal=}_"
-                  f"{use_segment_ids=}"
-              ),
-              batch_size,
-              seq_len,
-              num_heads,
-              head_dim,
-              causal,
-              use_segment_ids,
+  @jtu.parameterized_filterable(
+      kwargs=[
+          dict(
+              batch_size=batch_size,
+              seq_len=seq_len,
+              num_heads=num_heads,
+              head_dim=head_dim,
+              causal=causal,
+              use_segment_ids=use_segment_ids,
           )
           for (
               batch_size,
@@ -257,13 +252,13 @@ class FusedAttentionTest(PallasTest):
               (1, 384, 1, 32, False, False),
               (2, 384, 2, 32, False, True),
               (2, 384, 2, 32, False, False),
-              # TODO(b/283035396): (1, 384, 1, 32, True, True),
-              # TODO(b/283035396): (2, 384, 2, 32, True, True),
+              (1, 384, 1, 32, True, True),
+              (2, 384, 2, 32, True, True),
           ]
       ]
   )
   def test_fused_attention_bwd(
-      self, batch_size, seq_len, num_heads, head_dim, causal, use_segment_ids
+      self, *, batch_size, seq_len, num_heads, head_dim, causal, use_segment_ids
   ):
     k1, k2, k3 = random.split(random.key(0), 3)
     q = random.normal(
@@ -283,7 +278,8 @@ class FusedAttentionTest(PallasTest):
       segment_ids = None
 
     def f(q, k, v):
-      return attention.mha(q, k, v, segment_ids, causal=causal).sum()
+      return attention.mha(q, k, v, segment_ids, causal=causal,
+                           interpret=self.INTERPRET).sum()
 
     def f_ref(q, k, v):
       return attention.mha_reference(q, k, v, segment_ids, causal=causal).sum()
@@ -300,7 +296,7 @@ class FusedAttentionInterpreterTest(FusedAttentionTest):
   INTERPRET = True
 
 
-class FusedLayerNormTest(PallasTest):
+class FusedLayerNormTest(PallasBaseTest):
 
   def setUp(self):
     super().setUp()
@@ -348,7 +344,7 @@ class FusedLayerNormInterpreterTest(FusedLayerNormTest):
   INTERPRET = True
 
 
-class RmsNormTest(PallasTest):
+class RmsNormTest(PallasBaseTest):
 
   def setUp(self):
     super().setUp()
@@ -396,7 +392,7 @@ class RmsNormInterpreterTest(RmsNormTest):
   INTERPRET = True
 
 
-class SoftmaxTest(PallasTest):
+class SoftmaxTest(PallasBaseTest):
 
   def setUp(self):
     super().setUp()

@@ -273,7 +273,7 @@ from jax import random, pmap
 import jax.numpy as jnp
 
 # Create 8 random 5000 x 6000 matrices, one per GPU
-keys = random.split(random.PRNGKey(0), 8)
+keys = random.split(random.key(0), 8)
 mats = pmap(lambda key: random.normal(key, (5000, 6000)))(keys)
 
 # Run a local matmul on each device in parallel (no data transfer)

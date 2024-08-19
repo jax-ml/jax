@@ -14,7 +14,7 @@ kernelspec:
 
 +++ {"id": "TVT_MVvc02AA"}
 
-# Generalized Convolutions in JAX
+# Generalized convolutions in JAX
 
 <!--* freshness: { reviewed: '2024-04-08' } *-->
 
@@ -31,7 +31,7 @@ For basic convolution operations, the `jax.numpy` and `jax.scipy` operations are
 
 +++ {"id": "ewZEn2X12-Ng"}
 
-## Basic One-dimensional Convolution
+## Basic one-dimensional convolution
 
 Basic one-dimensional convolution is implemented by {func}`jax.numpy.convolve`, which provides a JAX interface for {func}`numpy.convolve`. Here is a simple example of 1D smoothing implemented via a convolution:
 
@@ -65,7 +65,7 @@ For more information, see the {func}`jax.numpy.convolve` documentation, or the d
 
 +++ {"id": "5ndvLDIH4rv6"}
 
-## Basic N-dimensional Convolution
+## Basic N-dimensional convolution
 
 For *N*-dimensional convolution, {func}`jax.scipy.signal.convolve` provides a similar interface to that of {func}`jax.numpy.convolve`, generalized to *N* dimensions.
 
@@ -105,7 +105,7 @@ Like in the one-dimensional case, we use `mode='same'` to specify how we would l
 
 +++ {"id": "bxuUjFVG-v1h"}
 
-## General Convolutions
+## General convolutions
 
 +++ {"id": "0pcn2LeS-03b"}
 

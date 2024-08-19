@@ -24,6 +24,7 @@ from jax._src import dispatch
 from jax._src.custom_partitioning import custom_partitioning
 from jax._src.interpreters import batching
 from jax._src.lib import cuda_versions
+from jax._src import xla_bridge
 from jax.interpreters import mlir
 from jax.interpreters import xla
 from jax.interpreters.mlir import hlo
@@ -308,13 +309,13 @@ def check_cudnn_version():
     raise RuntimeError("cuDNN is not detected.")
   return cuda_versions.cudnn_get_version()
 
-def check_compute_capability(cc):
-  if cuda_versions is None:
-    raise RuntimeError("cuDNN is not detected.")
-  for i in range(jax.device_count()):
-    compute_cap = cuda_versions.cuda_compute_capability(i)
-    if compute_cap not in cc:
-      raise RuntimeError("Require compute capability in " + str(cc))
+def check_compute_capability(capability):
+  if not 'cuda' in xla_bridge.get_backend().platform_version:
+    return False
+  d, *_ = jax.local_devices(backend="gpu")
+  target = tuple(int(x) for x in capability.split("."))
+  current = tuple(int(x) for x in d.compute_capability.split("."))
+  return current >= target
 
 def _dot_product_attention_fwd(
     query, key, value, bias, q_seqlen, kv_seqlen, scale, seed,
@@ -617,11 +618,12 @@ def _dot_product_attention_fwd_batcher(
     *_, S, _, _ = key.shape
   B = math.prod(Bs)
   has_bias, _ = variadic_args
+  original_shape = query.shape
   # reshape to 4D shape
   query = jnp.reshape(query, (B,) + query.shape[-3:])
   key = jnp.reshape(key, (B,) + key.shape[-3:])
   value = jnp.reshape(value, (B,) + key.shape[-3:])
-  if has_bias:
+  if has_bias and batch_dims[3] is not None:
     bias = jnp.reshape(bias, (B, N, T, S))
   if has_padding(mask_type):
     q_seqlen = jnp.reshape(q_seqlen, (B, ))
@@ -634,7 +636,7 @@ def _dot_product_attention_fwd_batcher(
 
   # reshape to original shape
   output = outputs[0]
-  output = jnp.reshape(output, query.shape)
+  output = jnp.reshape(output, original_shape)
   if is_training:
     activation = outputs[1]
     activation = jnp.reshape(activation, (*Bs, N, T))
@@ -659,11 +661,15 @@ def _dot_product_attention_bwd_batcher(
     *_, S, _, _ = key.shape
   B = math.prod(Bs)
   has_bias, has_dbias = variadic_args
+  original_query_shape = query.shape
+  original_key_shape = key.shape
+  original_value_shape = value.shape
+  original_bias_shape = bias.shape if has_bias else None
   # reshape to 4D shape
   query = jnp.reshape(query, (B,) + query.shape[-3:])
   key = jnp.reshape(key, (B,) + key.shape[-3:])
   value = jnp.reshape(value, (B,) + key.shape[-3:])
-  if has_bias:
+  if has_bias and batch_dims[3] is not None:
     bias = jnp.reshape(bias, (B, N, T, S))
   if has_padding(mask_type):
     q_seqlen = jnp.reshape(q_seqlen, (B, ))
@@ -680,15 +686,14 @@ def _dot_product_attention_bwd_batcher(
       mask_type=mask_type, layout=layout,
   )
 
-  grad_query, grad_key, grad_value = grads[:3]
   # reshape to original shape
-  grad_query = jnp.reshape(grad_query, query.shape)
-  grad_key = jnp.reshape(grad_key, key.shape)
-  grad_value = jnp.reshape(grad_value, value.shape)
+  grads[0] = jnp.reshape(grads[0], original_query_shape)
+  grads[1] = jnp.reshape(grads[1], original_key_shape)
+  grads[2] = jnp.reshape(grads[2], original_value_shape)
   if has_dbias:
-    grad_bias = grads[3]
-    grad_bias = jnp.reshape(grad_bias, bias.shape)
-    return grads + (grad_bias,), out_bdims + (query_bdim,)
+    assert has_bias
+    grads[3] = jnp.reshape(grads[3], original_bias_shape)
+    out_bdims += (batch_dims[3],)
   return grads, out_bdims
 
 # custom partitioning
@@ -986,8 +991,9 @@ def dot_product_attention(query: Array,
   """
   # check if cuDNN is installed
   cudnn_version = check_cudnn_version()
-  # only support Ampere and Hopper for now
-  check_compute_capability((80, 90))
+  # only support at least Ampere
+  if not check_compute_capability("8.0"):
+    raise RuntimeError("Require at least Ampere arch to run")
   layout = _normalize_layout(qkv_layout)
   if has_padding(mask_type) and (q_seqlen is None or kv_seqlen is None):
     raise ValueError("Require q_seqlen and kv_seqlen to generate padding mask")

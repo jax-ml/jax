@@ -15,6 +15,7 @@
 import functools
 import importlib
 import logging
+import os
 import pathlib
 import platform
 
@@ -47,6 +48,13 @@ def _get_library_path():
   local_path = (
       base_path / 'pjrt_c_api_gpu_plugin.so'
   )
+  if not local_path.exists():
+    runfiles_dir = os.getenv('RUNFILES_DIR', None)
+    if runfiles_dir:
+      local_path = pathlib.Path(
+          os.path.join(runfiles_dir, 'xla/xla/pjrt/c/pjrt_c_api_gpu_plugin.so')
+      )
+
   if local_path.exists():
     logger.debug(
         'Native library %s does not exist. This most likely indicates an issue'

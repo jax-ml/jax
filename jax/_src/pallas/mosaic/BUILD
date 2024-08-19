@@ -44,6 +44,16 @@ py_library(
 )
 
 py_library(
+    name = "error_handling",
+    srcs = ["error_handling.py"],
+    deps = [
+        "//jax:compiler",
+        "//jax:traceback_util",
+        "//jax/_src/lib",
+    ],
+)
+
+py_library(
     name = "primitives",
     srcs = ["primitives.py"],
     deps = [
@@ -71,10 +81,12 @@ py_library(
     srcs = ["lowering.py"],
     deps = [
         ":core",
+        ":error_handling",
         ":primitives",
         "//jax",
         "//jax:ad_util",
         "//jax:core",
+        "//jax:dtypes",
         "//jax:mesh",
         "//jax:mlir",
         "//jax:mosaic",

@@ -12,7 +12,7 @@ kernelspec:
   name: python3
 ---
 
-# Distributed data loading in a multi-host/multi-process environment
+# Distributed data loading in multi-host / multi-process environments
 
 <!--* freshness: { reviewed: '2024-05-16' } *-->
 

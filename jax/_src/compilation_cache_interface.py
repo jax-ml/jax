@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import abstractmethod
+from __future__ import annotations
+
+import abc
 
 from jax._src import path as pathlib
 from jax._src import util
@@ -21,10 +23,10 @@ from jax._src import util
 class CacheInterface(util.StrictABC):
   _path: pathlib.Path
 
-  @abstractmethod
+  @abc.abstractmethod
   def get(self, key: str):
     pass
 
-  @abstractmethod
+  @abc.abstractmethod
   def put(self, key: str, value: bytes):
     pass

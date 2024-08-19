@@ -201,13 +201,13 @@ def _tpu_custom_call_lowering(
     if axis_context.manual_axes != frozenset(axis_context.mesh.axis_names):
       raise NotImplementedError(
           "Mosaic kernels cannot be automatically partitioned. Please wrap the"
-          " call in a shard_map or xmap."
+          " call in a shard_map."
       )
   elif isinstance(axis_context, sharding_impls.ShardingContext):
     if axis_context.num_devices != 1:
       raise NotImplementedError(
           "Mosaic kernels cannot be automatically partitioned. Please wrap the"
-          " call in a shard_map or xmap."
+          " call in a shard_map."
       )
   elif config.has_communication:
     raise NotImplementedError(
@@ -323,7 +323,7 @@ def _lower_tpu_kernel(
         )
 
     pipeline = [
-        "func.func(tpu-canonicalize-mosaic{})",
+        f"func.func(tpu-canonicalize-mosaic{{hardware-generation={hardware_generation}}})",
     ]
     pipeline = PassManager.parse(f"builtin.module({','.join(pipeline)})")
     pipeline.run(module.operation)

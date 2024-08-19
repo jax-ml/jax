@@ -21,7 +21,7 @@ import logging
 import os
 import tempfile
 import time
-from typing import Any
+from typing import Any, Callable
 import warnings
 
 from jax._src import compilation_cache
@@ -33,6 +33,7 @@ from jax._src import profiler
 from jax._src import traceback_util
 from jax._src.interpreters import mlir
 from jax._src.lib import xla_client as xc
+from jax._src.lib import xla_extension_version
 from jax._src.lib.mlir import ir
 import numpy as np
 
@@ -91,21 +92,21 @@ def use_detailed_logging(module: ir.Module) -> bool:
   return _walk_operations(module.operation, bound) < 0
 
 
-def log_persistent_cache_hit(module_name: str) -> None:
+def log_persistent_cache_hit(module_name: str, cache_key: str) -> None:
   hit_log_priority = (logging.WARNING if config.log_compiles.value
                       else logging.DEBUG)
-  logger.log(hit_log_priority, "Persistent compilation cache hit for '%s'",
-             module_name)
+  logger.log(hit_log_priority, "Persistent compilation cache hit for '%s' with key %r",
+             module_name, cache_key)
 
 
-def log_persistent_cache_miss(module_name: str) -> None:
+def log_persistent_cache_miss(module_name: str, cache_key: str) -> None:
   miss_log_priority = (logging.WARNING
                         if config.explain_cache_misses.value
                         and compilation_cache.is_persistent_cache_enabled()
                         else logging.DEBUG)
   # all caps to match the tracing cache "TRACING CACHE MISS"
-  logger.log(miss_log_priority, "PERSISTENT COMPILATION CACHE MISS for '%s'",
-             module_name)
+  logger.log(miss_log_priority, "PERSISTENT COMPILATION CACHE MISS for '%s' with key %r",
+             module_name, cache_key)
 
 
 def get_compile_options(
@@ -113,6 +114,7 @@ def get_compile_options(
     num_partitions: int,
     device_assignment=None,
     use_spmd_partitioning: bool = True,
+    use_shardy_partitioner: bool = False,
     use_auto_spmd_partitioning: bool = False,
     auto_spmd_partitioning_mesh_shape: list[int] | None = None,
     auto_spmd_partitioning_mesh_ids: list[int] | None = None,
@@ -132,6 +134,10 @@ def get_compile_options(
       `num_partitions`.
     use_spmd_partitioning: boolean indicating whether to enable SPMD or MPMD
       partitioning in XLA.
+    use_shardy_partitioner: boolean indicating whether to use the Shardy
+      partitioner in XLA. Shardy is a new open sourced propagation framework for
+      MLIR. Currently Shardy is experimental in JAX. See
+      www.github.com/openxla/shardy.
     use_auto_spmd_partitioning: boolean indicating whether to automatically
       generate XLA shardings for SPMD partitioner.
     auto_spmd_partitioning_mesh_shape: device mesh shape used to create
@@ -141,8 +147,8 @@ def get_compile_options(
     env_options_overrides: dict of additional options parsed by the compiler
     fdo_profile: Optional profile for feedback-directed optimization passed to
       XLA.
-    detailed_logging: Is this an "interesting" computation about which XLA
-      would be wise to log compilation information?
+    detailed_logging: Is this an "interesting" computation about which XLA would
+      be wise to log compilation information?
     backend: the client, if available.
   """
   compile_options = xc.CompileOptions()
@@ -151,6 +157,8 @@ def get_compile_options(
   build_options = compile_options.executable_build_options
   build_options.use_spmd_partitioning = use_spmd_partitioning
   build_options.use_auto_spmd_partitioning = use_auto_spmd_partitioning
+  if xla_extension_version >= 280:
+    build_options.use_shardy_partitioner = use_shardy_partitioner
   if fdo_profile is not None:
     build_options.fdo_profile = fdo_profile
   if use_auto_spmd_partitioning:
@@ -227,6 +235,7 @@ def get_compile_options(
 
   return compile_options
 
+
 @profiler.annotate_function
 def backend_compile(
     backend: xc.Client,
@@ -244,15 +253,45 @@ def backend_compile(
   else:
     built_c = module
 
-  # we use a separate function call to ensure that XLA compilation appears
-  # separately in Python profiling results
-  if host_callbacks:
-    return backend.compile(built_c, compile_options=options,
-                           host_callbacks=host_callbacks)
-  # Some backends don't have `host_callbacks` option yet
-  # TODO(sharadmv): remove this fallback when all backends allow `compile`
-  # to take in `host_callbacks`
-  return backend.compile(built_c, compile_options=options)
+  try:
+    # we use a separate function call to ensure that XLA compilation appears
+    # separately in Python profiling results
+    if host_callbacks:
+      return backend.compile(
+          built_c, compile_options=options, host_callbacks=host_callbacks
+      )
+    # Some backends don't have `host_callbacks` option yet
+    # TODO(sharadmv): remove this fallback when all backends allow `compile`
+    # to take in `host_callbacks`
+    return backend.compile(built_c, compile_options=options)
+  except xc.XlaRuntimeError as e:
+    for error_handler in _XLA_RUNTIME_ERROR_HANDLERS:
+      handler_result = error_handler(e)
+      if handler_result is not None:
+        raise handler_result from e
+    raise e
+
+
+_XLA_RUNTIME_ERROR_HANDLERS = []
+
+
+def register_xla_runtime_error_handler(
+    handler_fn: Callable[[xc.XlaRuntimeError], Exception | None],
+):
+  """Registers a custom exception handler for XLA runtime errors.
+
+  Registering a custom handler allows re-raising a more informative exception
+  after encountering an XLARuntimeError.
+
+  Args:
+    handler_fn: A function which returns a new exception to replace the original
+      XLA runtime error, or None if the original error should be propagated.
+
+  Returns:
+    A new exception or None.
+  """
+  _XLA_RUNTIME_ERROR_HANDLERS.append(handler_fn)
+
 
 def compile_or_get_cached(
     backend: xc.Client,
@@ -268,23 +307,12 @@ def compile_or_get_cached(
   if dumped_to := mlir.dump_module_to_file(computation, "compile"):
     logging.info("Dumped the module to %s.", dumped_to)
 
-  # Persistent compilation cache only implemented on TPU and GPU and the backend
-  # that supports serialization of executables.
-  # TODO(skye): add warning when initializing cache on unsupported default platform
-  supported_platforms = ["tpu", "gpu", "cpu"]
-  use_compilation_cache = (
-      config.enable_compilation_cache.value
-      and getattr(backend, "supports_executable_serialization", True)
-      and backend.platform in supported_platforms
-  )
+  use_compilation_cache = compilation_cache.is_cache_used(backend)
 
   if not use_compilation_cache:
     return backend_compile(backend, computation, compile_options,
                            host_callbacks)
 
-  compilation_cache.set_once_cache_used(
-      lambda: monitoring.record_event(
-          "/jax/compilation_cache/tasks_using_cache"))
   monitoring.record_event('/jax/compilation_cache/compile_requests_use_cache')
 
   try:
@@ -347,7 +375,7 @@ def compile_or_get_cached(
 
   if retrieved_executable is not None:
     assert retrieved_compile_time is not None
-    log_persistent_cache_hit(module_name)
+    log_persistent_cache_hit(module_name, cache_key)
 
     monitoring.record_event('/jax/compilation_cache/cache_hits')
     monitoring.record_event_duration_secs(
@@ -366,7 +394,7 @@ def compile_or_get_cached(
       # them.
       and len(host_callbacks) == 0
   ):
-    log_persistent_cache_miss(module_name)
+    log_persistent_cache_miss(module_name, cache_key)
     return _compile_and_share_module(
         backend,
         computation,
@@ -382,7 +410,7 @@ def compile_or_get_cached(
       and is_multi_process
       and distributed.global_state.client is not None
   ):
-    log_persistent_cache_miss(module_name)
+    log_persistent_cache_miss(module_name, cache_key)
     return _compile_and_write_autotune_config(
         backend,
         computation,
@@ -394,7 +422,7 @@ def compile_or_get_cached(
         min_device_process_id
     )
   else:
-    log_persistent_cache_miss(module_name)
+    log_persistent_cache_miss(module_name, cache_key)
     return _compile_and_write_cache(
         backend,
         computation,
