@@ -33,10 +33,31 @@ if ! docker container inspect jax >/dev/null 2>&1 ; then
   JAXCI_DOCKER_ARGS="--gpus all"
   fi
 
+  container_path="/jax"
+  if [[ "$(uname -s)" =~ "MSYS_NT" ]]; then
+    JAXCI_GIT_DIR=$(cygpath -w $JAXCI_GIT_DIR)
+    container_path=$(cygpath -w /c/jax/)
+    JAXCI_OUTPUT_DIR=$(cygpath -w /c/jax/pkg)
+  fi
+
+  if [[ `uname -s | grep -P '^MSYS_NT'` ]]; then
+  # Docker on Windows doesn't support the `host` networking mode, and so
+  # port-forwarding is required for the container to detect it's running on GCE.
+  export IP_ADDR=$(powershell -command "(Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias 'vEthernet (nat)').IPAddress")
+  netsh interface portproxy add v4tov4 listenaddress=$IP_ADDR listenport=80 connectaddress=169.254.169.254 connectport=80
+  # A local firewall rule for the container is added in
+  # ci/official/utilities/setup_docker.sh.
+  else
+    # The volume mapping flag below shares the user's gcloud credentials, if any,
+    # with the container, in case the user has credentials stored there.
+    # This would allow Bazel to authenticate for RBE.
+    # Note: TF's CI does not have any credentials stored there.
+    JAXCI_DOCKER_ARGS="$JAXCI_DOCKER_ARGS -v $HOME/.config/gcloud:/root/.config/gcloud"
+  fi
+
   JAXCI_GIT_DIR=${JAXCI_GIT_DIR:-/tmpfs/src/github/jax}
-  docker run $JAXCI_DOCKER_ARGS --name jax -w "/jax" -itd --rm \
-      -v "$JAXCI_GIT_DIR:/jax" \
-      -v $HOME/.config/gcloud:/root/.config/gcloud \
+  docker run $JAXCI_DOCKER_ARGS --name jax -w $container_path -itd --rm \
+      -v "$JAXCI_GIT_DIR:$container_path" \
       -e JAXCI_OUTPUT_DIR=$JAXCI_OUTPUT_DIR \
       "$JAXCI_DOCKER_IMAGE" \
     bash
