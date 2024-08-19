@@ -255,6 +255,13 @@ def _build_installer_url(rocm_version, metadata):
     return url, package_name
 
 
+APT_RADEON_PIN_CONTENT = """
+Package: *
+Pin: release o=repo.radeon.com
+Pin-Priority: 600
+"""
+
+
 def setup_repos_ubuntu(rocm_version_str):
 
     rv = parse_version(rocm_version_str)
@@ -283,6 +290,11 @@ def setup_repos_ubuntu(rocm_version_str):
             ("deb [arch=amd64] " "https://repo.radeon.com/rocm/apt/%s %s main\n")
             % (rocm_version_str, codename)
         )
+
+    # on ubuntu 22 or greater, debian community rocm packages
+    # conflict with repo.radeon.com packages
+    with open("/etc/apt/preferences.d/rocm-pin-600", "w") as fd:
+        fd.write(APT_RADEON_PIN_CONTENT)
 
     # update indexes
     subprocess.check_call(["apt-get", "update"])
