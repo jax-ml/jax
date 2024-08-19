@@ -305,22 +305,22 @@ test:rbe --test_env=USER=anon
 
 # RBE configs for Linux x86
 # Set the remote worker pool
-common:rbe_linux_x86_64 --remote_instance_name=projects/tensorflow-testing/instances/default_instance
+common:rbe_linux_x86_64_base --remote_instance_name=projects/tensorflow-testing/instances/default_instance
 
-build:rbe_linux_x86_64 --config=rbe
-build:rbe_linux_x86_64 --action_env=PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/go/bin"
-build:rbe_linux_x86_64 --linkopt=-lrt
-build:rbe_linux_x86_64 --host_linkopt=-lrt
-build:rbe_linux_x86_64 --linkopt=-lm
-build:rbe_linux_x86_64 --host_linkopt=-lm
+build:rbe_linux_x86_64_base --config=rbe
+build:rbe_linux_x86_64_base --action_env=PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/local/go/bin"
+build:rbe_linux_x86_64_base --linkopt=-lrt
+build:rbe_linux_x86_64_base --host_linkopt=-lrt
+build:rbe_linux_x86_64_base --linkopt=-lm
+build:rbe_linux_x86_64_base --host_linkopt=-lm
 
 # Set the host, execution, and target platform
-build:rbe_linux_x86_64 --host_platform="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_platform//:platform"
-build:rbe_linux_x86_64 --extra_execution_platforms="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_platform//:platform"
-build:rbe_linux_x86_64 --platforms="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_platform//:platform"
+build:rbe_linux_x86_64_base --host_platform="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_platform//:platform"
+build:rbe_linux_x86_64_base --extra_execution_platforms="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_platform//:platform"
+build:rbe_linux_x86_64_base --platforms="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_platform//:platform"
 
 # Python config is the same across all containers because the binary is the same
-build:rbe_linux_x86_64 --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_python"
+build:rbe_linux_x86_64_base --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_python"
 
 build:rbe_linux_x86_64 --config=rbe_linux_x86_64_base
 build:rbe_linux_x86_64 --config=ci_linux_x86_64

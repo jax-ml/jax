@@ -32,9 +32,9 @@ for wheel in $WHEELS; do
     # platform tag as manylinux_2_17. manylinux2014 is an alias for
     # manylinux_2_17.
     if echo "$OUTPUT" | grep -q "manylinux_2_17"; then
-        printf "\nThe wheel is manylinux2014 compliant."
+        printf "\nThe wheel is manylinux2014 compliant.\n"
     else
-        echo "\nThe wheel is NOT manylinux2014 compliant."
+        echo "\nThe wheel is NOT manylinux2014 compliant.\n"
         exit 1
     fi
 done
