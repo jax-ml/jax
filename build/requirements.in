@@ -11,7 +11,7 @@ matplotlib; python_version>="3.11"
 #
 # build deps
 #
-numpy~=2.0.0
+numpy~=2.1.0
 
 #
 # runtime deps
