@@ -15,19 +15,26 @@
 # ==============================================================================
 #
 # Runs auditwheel to ensure manylinux compatibility.
-echo "Running auditwheel on the following wheel:"
-ls $JAXCI_OUTPUT_DIR/*.whl
 
-OUTPUT=$(python3 -m auditwheel show $JAXCI_OUTPUT_DIR/*.whl)
-# Remove the wheel name from the output to avoid false positives.
-wheel_name=$(basename $JAXCI_OUTPUT_DIR/*.whl)
-OUTPUT=${OUTPUT//${wheel_name}/} 
+# Get a list of all the wheels in the output directory. Only look for wheels
+# that need to be verified for manylinux compliance.
+WHEELS=$(find "$JAXCI_OUTPUT_DIR/" -type f \( -name "*jaxlib*" -o -name "*jax*cuda*pjrt*" -o -name "*jax*cuda*plugin*" \))
 
-# If a wheel is manylinux2014 compliant, `auditwheel show` will return the 
-# platform tag as manylinux_2_17. manylinux2014 is an alias for manylinux_2_17.
-if echo "$OUTPUT" | grep -q "manylinux_2_17"; then
-    printf "\nThe wheel is manylinux2014 compliant."
-else
-    echo "\nThe wheel is NOT manylinux2014 compliant."
-    exit 1
-fi
+for wheel in $WHEELS; do
+    echo "Running auditwheel on the following wheel:"
+    ls $wheel
+    OUTPUT=$(python3 -m auditwheel show $wheel)
+    # Remove the wheel name from the output to avoid false positives.
+    wheel_name=$(basename $wheel)
+    OUTPUT=${OUTPUT//${wheel_name}/}
+
+    # If a wheel is manylinux2014 compliant, `auditwheel show` will return the
+    # platform tag as manylinux_2_17. manylinux2014 is an alias for
+    # manylinux_2_17.
+    if echo "$OUTPUT" | grep -q "manylinux_2_17"; then
+        printf "\nThe wheel is manylinux2014 compliant."
+    else
+        echo "\nThe wheel is NOT manylinux2014 compliant."
+        exit 1
+    fi
+done
