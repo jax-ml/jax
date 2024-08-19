@@ -385,13 +385,6 @@ def trunc(x: ArrayLike) -> Array:
   return where(lax.lt(x, _lax_const(x, 0)), ufuncs.ceil(x), ufuncs.floor(x))
 
 
-_CONV_PREFERRED_ELEMENT_TYPE_DESCRIPTION = """
-preferred_element_type : dtype, optional
-    If specified, accumulate results and return a result of the given data type.
-    If not specified, the function instead follows the numpy convention of always
-    accumulating results and returning an inexact dtype.
-"""
-
 @partial(jit, static_argnames=['mode', 'op', 'precision', 'preferred_element_type'])
 def _conv(x: Array, y: Array, mode: str, op: str, precision: PrecisionLike,
           preferred_element_type: DTypeLike | None = None) -> Array:
@@ -5648,10 +5641,42 @@ def diag_indices_from(arr: ArrayLike) -> tuple[Array, ...]:
 
   return diag_indices(s[0], ndim=nd)
 
-@util.implements(np.diagonal, lax_description=_ARRAY_VIEW_DOC)
 @partial(jit, static_argnames=('offset', 'axis1', 'axis2'))
 def diagonal(a: ArrayLike, offset: int = 0, axis1: int = 0,
              axis2: int = 1) -> Array:
+  """Returns the specified diagonal of an array.
+
+  JAX implementation of :func:`numpy.diagonal`.
+
+  The JAX version always returns a copy of the input, although if this is used
+  within a JIT compilation, the compiler may avoid the copy.
+
+  Args:
+    a: Input array. Must be at least 2-dimensional.
+    offset: optional, default=0. Diagonal offset from the main diagonal.
+      Must be a static integer value. Can be positive or negative.
+    axis1: optional, default=0. The first axis along which to take the diagonal.
+    axis2: optional, default=1. The second axis along which to take the diagonal.
+
+   Returns:
+    A 1D array for 2D input, and in general a N-1 dimensional array
+    for N-dimensional input.
+
+  See also:
+    - :func:`jax.numpy.diag`
+    - :func:`jax.numpy.diagflat`
+
+  Examples:
+    >>> x = jnp.array([[1, 2, 3],
+    ...                [4, 5, 6],
+    ...                [7, 8, 9]])
+    >>> jnp.diagonal(x)
+    Array([1, 5, 9], dtype=int32)
+    >>> jnp.diagonal(x, offset=1)
+    Array([2, 6], dtype=int32)
+    >>> jnp.diagonal(x, offset=-1)
+    Array([4, 8], dtype=int32)
+  """
   util.check_arraylike("diagonal", a)
   a_shape = shape(a)
   if ndim(a) < 2:
@@ -5667,8 +5692,53 @@ def diagonal(a: ArrayLike, offset: int = 0, axis1: int = 0,
   return a[..., i, j] if offset >= 0 else a[..., j, i]
 
 
-@util.implements(np.diag, lax_description=_ARRAY_VIEW_DOC)
 def diag(v: ArrayLike, k: int = 0) -> Array:
+  """Returns the specified diagonal or constructs a diagonal array.
+
+  JAX implementation of :func:`numpy.diag`.
+
+  The JAX version always returns a copy of the input, although if this is used
+  within a JIT compilation, the compiler may avoid the copy.
+
+  Args:
+    v: Input array. Can be a 1-D array to create a diagonal matrix or a
+      2-D array to extract a diagonal.
+    k: optional, default=0. Diagonal offset. Positive values place the diagonal
+      above the main diagonal, negative values place it below the main diagonal.
+
+  Returns:
+    If `v` is a 2-D array, a 1-D array containing the diagonal elements.
+    If `v` is a 1-D array, a 2-D array with the input elements placed along the
+    specified diagonal.
+
+  See also:
+    - :func:`jax.numpy.diagflat`
+    - :func:`jax.numpy.diagonal`
+
+  Examples:
+    Creating a diagonal matrix from a 1-D array:
+
+    >>> jnp.diag(jnp.array([1, 2, 3]))
+    Array([[1, 0, 0],
+           [0, 2, 0],
+           [0, 0, 3]], dtype=int32)
+
+    Specifying a diagonal offset:
+
+    >>> jnp.diag(jnp.array([1, 2, 3]), k=1)
+    Array([[0, 1, 0, 0],
+           [0, 0, 2, 0],
+           [0, 0, 0, 3],
+           [0, 0, 0, 0]], dtype=int32)
+
+    Extracting a diagonal from a 2-D array:
+
+    >>> x = jnp.array([[1, 2, 3],
+    ...                [4, 5, 6],
+    ...                [7, 8, 9]])
+    >>> jnp.diag(x)
+    Array([1, 5, 9], dtype=int32)
+  """
   return _diag(v, operator.index(k))
 
 @partial(jit, static_argnames=('k',))
@@ -5685,14 +5755,46 @@ def _diag(v, k):
   else:
     raise ValueError("diag input must be 1d or 2d")
 
-_SCALAR_VALUE_DOC = """\
-This differs from np.diagflat for some scalar values of v,
-jax always returns a two-dimensional array, whereas numpy may
-return a scalar depending on the type of v.
-"""
-
-@util.implements(np.diagflat, lax_description=_SCALAR_VALUE_DOC)
 def diagflat(v: ArrayLike, k: int = 0) -> Array:
+  """Return a 2-D array with the flattened input array laid out on the diagonal.
+
+  JAX implementation of :func:`numpy.diagflat`.
+
+  This differs from `np.diagflat` for some scalar values of `v`. JAX always returns
+  a two-dimensional array, whereas NumPy may return a scalar depending on the type
+  of `v`.
+
+  Args:
+    v: Input array. Can be N-dimensional but is flattened to 1D.
+    k: optional, default=0. Diagonal offset. Positive values place the diagonal
+      above the main diagonal, negative values place it below the main diagonal.
+
+  Returns:
+    A 2D array with the input elements placed along the diagonal with the
+    specified offset (k). The remaining entries are filled with zeros.
+
+  See also:
+    - :func:`jax.numpy.diag`
+    - :func:`jax.numpy.diagonal`
+
+  Examples:
+    >>> jnp.diagflat(jnp.array([1, 2, 3]))
+    Array([[1, 0, 0],
+           [0, 2, 0],
+           [0, 0, 3]], dtype=int32)
+    >>> jnp.diagflat(jnp.array([1, 2, 3]), k=1)
+    Array([[0, 1, 0, 0],
+           [0, 0, 2, 0],
+           [0, 0, 0, 3],
+           [0, 0, 0, 0]], dtype=int32)
+    >>> a = jnp.array([[1, 2],
+    ...                [3, 4]])
+    >>> jnp.diagflat(a)
+    Array([[1, 0, 0, 0],
+           [0, 2, 0, 0],
+           [0, 0, 3, 0],
+           [0, 0, 0, 4]], dtype=int32)
+  """
   util.check_arraylike("diagflat", v)
   v_ravel = ravel(v)
   v_length = len(v_ravel)

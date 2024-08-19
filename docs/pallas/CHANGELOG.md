@@ -36,9 +36,9 @@ Remember to align the itemized text with the first line of an item within a list
   * The method `compute_index` of {class}`jax.experimental.pallas.GridSpec` has
     been removed because it is private. Similarly, the `get_grid_mapping` and
     `unzip_dynamic_bounds` have been removed from `BlockSpec` ({jax-issue}`#22593`).
-  * Fixed the interpreter mode to work with BlockSpec that involve padding
+  * Fixed the interpret mode to work with BlockSpec that involve padding
     ({jax-issue}`#22275`).
-    Padding in interpreter mode will be with NaN, to help debug out-of-bounds
+    Padding in interpret mode will be with NaN, to help debug out-of-bounds
     errors, but this behavior is not present when running in custom kernel mode,
     and should not be depended on.
   * Previously it was possible to import many APIs that are meant to be

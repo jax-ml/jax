@@ -25,6 +25,7 @@ import jax.numpy as jnp
 
 from jax._src import abstract_arrays
 from jax._src import api
+from jax._src import core
 from jax._src import linear_util
 from jax._src import prng
 from jax._src import test_util as jtu
@@ -99,6 +100,29 @@ class FfiTest(jtu.JaxTestCase):
     base_dir = os.path.join(jex.ffi.include_dir(), "xla", "ffi", "api")
     for header in ["c_api.h", "api.h", "ffi.h"]:
       self.assertTrue(os.path.exists(os.path.join(base_dir, header)))
+
+  def testLoweringLayouts(self):
+    # Regression test to ensure that the lowering rule properly captures
+    # layouts.
+    def lowering_rule(ctx, x):
+      aval, = ctx.avals_in
+      ndim = len(aval.shape)
+      layout = tuple(range(ndim))
+      return jex.ffi.ffi_lowering("test_ffi", operand_layouts=[layout],
+                                  result_layouts=[layout])(ctx, x)
+    prim = core.Primitive("test_ffi")
+    prim.def_impl(lambda x: x)
+    prim.def_abstract_eval(lambda x: x)
+    mlir.register_lowering(prim, lowering_rule)
+    x = jnp.linspace(0, 1, 5)
+    lowered = jax.jit(prim.bind).lower(x)
+    module = lowered.compiler_ir("stablehlo")
+    for func in module.body.operations:
+      for block in func.body.blocks:
+        for op in block.operations:
+          if op.OPERATION_NAME == "stablehlo.custom_call":
+            self.assertIn("operand_layouts", op.attributes)
+            self.assertIn("result_layouts", op.attributes)
 
   @parameterized.parameters([
       (True, mlir.ir.BoolAttr.get),

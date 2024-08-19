@@ -292,7 +292,7 @@ class FusedAttentionTest(PallasBaseTest):
     np.testing.assert_allclose(dv, dv_ref, atol=0.05)
 
 
-class FusedAttentionInterpreterTest(FusedAttentionTest):
+class FusedAttentionInterpretTest(FusedAttentionTest):
   INTERPRET = True
 
 
@@ -340,7 +340,7 @@ class FusedLayerNormTest(PallasBaseTest):
     np.testing.assert_allclose(db, db_ref, rtol=1e-2, atol=1e-2)
 
 
-class FusedLayerNormInterpreterTest(FusedLayerNormTest):
+class FusedLayerNormInterpretTest(FusedLayerNormTest):
   INTERPRET = True
 
 
@@ -388,7 +388,7 @@ class RmsNormTest(PallasBaseTest):
     np.testing.assert_allclose(db, db_ref, rtol=1e-2, atol=1e-2)
 
 
-class RmsNormInterpreterTest(RmsNormTest):
+class RmsNormInterpretTest(RmsNormTest):
   INTERPRET = True
 
 
@@ -422,7 +422,7 @@ class SoftmaxTest(PallasBaseTest):
     )
 
 
-class SoftmaxInterpreterTest(SoftmaxTest):
+class SoftmaxInterpretTest(SoftmaxTest):
   INTERPRET = True
 
 

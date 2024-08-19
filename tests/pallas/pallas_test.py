@@ -687,7 +687,7 @@ class PallasCallTest(PallasBaseTest):
     self.assertEqual(trace_count, 1)
 
 
-class PallasCallInterpreterTest(PallasCallTest):
+class PallasCallInterpretTest(PallasCallTest):
   INTERPRET = True
 
 
@@ -921,7 +921,7 @@ class ApiErrorTest(PallasBaseTest):
     self.assertEqual("", ns5.src_info)
 
 
-class ApiErrorInterpreterTest(ApiErrorTest):
+class ApiErrorInterpretTest(ApiErrorTest):
   INTERPRET = True
 
 
@@ -957,7 +957,7 @@ class PallasCallInputOutputAliasingTest(PallasBaseTest):
     self.assertEqual(mem_analysis.temp_size_in_bytes, 0)
 
 
-class PallasCallInputOutputAliasingInterpreterTest(PallasBaseTest):
+class PallasCallInputOutputAliasingInterpretTest(PallasBaseTest):
   INTERPRET = True
 
 
@@ -966,7 +966,7 @@ class PallasControlFlowTest(PallasBaseTest):
   def setUp(self):
     super().setUp()
     if self.INTERPRET:
-      self.skipTest("Control flow not supported in interpreter mode yet.")
+      self.skipTest("Control flow not supported in interpret mode yet.")
 
   def test_loop_with_float64_carry(self):
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
@@ -1690,7 +1690,7 @@ class PallasControlFlowTest(PallasBaseTest):
     np.testing.assert_equal(sizes[0, 4], jnp.asarray(key_count - real_keys))
 
 
-class PallasControlFlowInterpreterTest(PallasControlFlowTest):
+class PallasControlFlowInterpretTest(PallasControlFlowTest):
   INTERPRET = True
 
 AD_TEST_CASES = [
@@ -1713,7 +1713,7 @@ class PallasCallAutodifferentiationTest(PallasBaseTest):
   def setUp(self):
     super().setUp()
     if jtu.test_device_matches(["tpu"]):
-      # TODO: most tests fail on TPU in non-interpreter mode
+      # TODO: most tests fail on TPU in non-interpret mode
       self.skipTest("On TPU the test works only in interpret mode")
     # TODO: improve tolerance setting
     self.tol = 1e-5
@@ -1819,11 +1819,11 @@ class PallasCallAutodifferentiationTest(PallasBaseTest):
   #   jtu.check_grads(mm, (x, y), modes=["fwd"], order=1)
 
 
-class PallasCallAutodifferentiationInterpreterTest(PallasCallAutodifferentiationTest):
+class PallasCallAutodifferentiationInterpretTest(PallasCallAutodifferentiationTest):
   INTERPRET = True
 
 
-class PallasOutOfBoundsInterpreterTest(PallasBaseTest):
+class PallasOutOfBoundsInterpretTest(PallasBaseTest):
   INTERPRET = True
 
   def test_interpret_mode_out_of_bounds_access(self):
@@ -1901,7 +1901,7 @@ class PallasOutOfBoundsInterpreterTest(PallasBaseTest):
       np.testing.assert_allclose(out, expected, atol=atol)
 
 
-class PallasCheckifyInterpreterTest(PallasBaseTest):
+class PallasCheckifyInterpretTest(PallasBaseTest):
   # TODO(b/346651778): Support non-interpret mode checkify.
   INTERPRET = True
 

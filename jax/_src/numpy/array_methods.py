@@ -58,7 +58,7 @@ zip, unsafe_zip = safe_zip, zip
 # functions, which can themselves handle instances from any of these classes.
 
 
-def _all(self: ArrayLike, axis: reductions.Axis = None, out: None = None,
+def _all(self: Array, axis: reductions.Axis = None, out: None = None,
          keepdims: bool = False, *, where: ArrayLike | None = None) -> Array:
   """Test whether all array elements along a given axis evaluate to True.
 
@@ -107,7 +107,8 @@ def _argsort(self: Array, axis: int | None = -1, *, kind: None = None, order: No
   return lax_numpy.argsort(self, axis=axis, kind=kind, order=order,
                            stable=stable, descending=descending)
 
-def _astype(self: Array, dtype: DTypeLike, copy: bool = False, device: xc.Device | Sharding | None = None) -> Array:
+def _astype(self: Array, dtype: DTypeLike | None, copy: bool = False,
+            device: xc.Device | Sharding | None = None) -> Array:
   """Copy the array and cast to a specified dtype.
 
   This is implemented via :func:`jax.lax.convert_element_type`, which may
@@ -124,13 +125,12 @@ def _choose(self: Array, choices: Sequence[ArrayLike], out: None = None, mode: s
   """
   return lax_numpy.choose(self, choices=choices)
 
-def _clip(number: ArrayLike,
-          min: ArrayLike | None = None, max: ArrayLike | None = None) -> Array:
+def _clip(self: Array, min: ArrayLike | None = None, max: ArrayLike | None = None) -> Array:
   """Return an array whose values are limited to a specified range.
 
   Refer to :func:`jax.numpy.clip` for full documentation.
   """
-  return lax_numpy.clip(number, min=min, max=max)
+  return lax_numpy.clip(self, min=min, max=max)
 
 def _compress(self: Array, condition: ArrayLike,
               axis: int | None = None, *, out: None = None,
@@ -163,7 +163,7 @@ def _copy(self: Array) -> Array:
   """
   return lax_numpy.copy(self)
 
-def _cumprod(self: Array, /, axis: int | Sequence[int] | None = None,
+def _cumprod(self: Array, axis: int | Sequence[int] | None = None,
              dtype: DTypeLike | None = None, out: None = None) -> Array:
   """Return the cumulative product of the array.
 
@@ -171,7 +171,7 @@ def _cumprod(self: Array, /, axis: int | Sequence[int] | None = None,
   """
   return reductions.cumprod(self, axis=axis, dtype=dtype, out=out)
 
-def _cumsum(self: Array, /, axis: int | Sequence[int] | None = None,
+def _cumsum(self: Array, axis: int | Sequence[int] | None = None,
             dtype: DTypeLike | None = None, out: None = None) -> Array:
   """Return the cumulative sum of the array.
 
@@ -258,9 +258,8 @@ def _nbytes_property(self: Array) -> int:
   """Total bytes consumed by the elements of the array."""
   return np.size(self) * dtypes.dtype(self, canonicalize=True).itemsize
 
-def _nonzero(self: Array, *, size: int | None = None,
-             fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None
-    ) -> tuple[Array, ...]:
+def _nonzero(self: Array, *, fill_value: None | ArrayLike | tuple[ArrayLike, ...] = None,
+             size: int | None = None) -> tuple[Array, ...]:
   """Return indices of nonzero elements of an array.
 
   Refer to :func:`jax.numpy.nonzero` for the full documentation.

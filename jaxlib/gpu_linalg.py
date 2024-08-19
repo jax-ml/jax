@@ -20,7 +20,7 @@ import operator
 
 import jaxlib.mlir.ir as ir
 
-from .hlo_helpers import custom_call, mk_result_types_and_shapes
+from .hlo_helpers import custom_call
 from .gpu_common_utils import GpuLibNotLinkedError
 
 from jaxlib import xla_client
@@ -59,38 +59,6 @@ if _hip_linalg:
     )
 
 _prod = lambda xs: functools.reduce(operator.mul, xs, 1)
-
-
-def _lu_pivots_to_permutation_hlo(platform, pivots, *, permutation_size,
-                                  pivots_shape_vals):
-  """Kernel for the transformation of pivots to permutations on GPU."""
-  typ = ir.RankedTensorType(pivots.type)
-  i32_type = ir.IntegerType.get_signless(32)
-  assert typ.element_type == i32_type, typ
-  assert len(pivots_shape_vals) >= 1
-
-  pivots_layout = tuple(range(len(pivots_shape_vals) - 1, -1, -1))
-  permutations_layout = pivots_layout
-  permutations_dims = (*pivots_shape_vals[:-1], permutation_size)
-  result_types, result_shapes = mk_result_types_and_shapes(
-      [(permutations_dims, i32_type)])
-  return custom_call(
-      f"{platform}_lu_pivots_to_permutation",
-      api_version=4,
-      operands=[pivots],
-      operand_layouts=[pivots_layout],
-      result_types=result_types,
-      result_shapes=result_shapes,
-      result_layouts=[permutations_layout],
-      # TODO(b/358275922): remove backend_config 12 weeks after release of
-      # jaxlib v0.4.32.
-      backend_config=dict(
-          permutation_size=ir.IntegerAttr.get(i32_type, permutation_size),
-      ),
-  ).results
-
-cuda_lu_pivots_to_permutation = partial(_lu_pivots_to_permutation_hlo, "cu")
-hip_lu_pivots_to_permutation = partial(_lu_pivots_to_permutation_hlo, "hip")
 
 
 def _cholesky_update_hlo(platform, gpu_linalg, r_matrix, w_vector, dtype):
