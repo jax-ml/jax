@@ -88,7 +88,6 @@ def _jumble_flatten(jumble):
   elt_ty = jumble.aval.elt_ty.update(shape=tuple(new_shape))
   aval = jumble.aval.replace(elt_ty=elt_ty)
   return (lengths, jumble.data), aval
-
 def _jumble_unflatten(aval, x):
   lengths, data = x
   new_shape = [d.replace(lengths=lengths[d.lengths - 1])
@@ -252,10 +251,7 @@ def to_elt(trace: Trace, get_idx: GetIdx, x: Vmappable, spec: MapSpec) -> Elt:
     return (BatchTracer(trace, x, spec, source_info_util.current())
             if spec is not None else x)
   else:
-    # TODO(mvoz): This is a terrible place to fall into if you pass
-    # a non jumble type in, make it clearer what went wrong.
-    assert False, f'Unexpected type in ELT? {type(x)}'
-
+    assert False
 to_elt_handlers: dict[type, ToEltHandler] = {}
 
 def from_elt(trace: BatchTrace, axis_size: AxisSize, i: int,
