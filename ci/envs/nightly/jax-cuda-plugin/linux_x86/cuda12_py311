@@ -1,7 +1,7 @@
-# Kokoro jobs automatically inherits the environment variables from the 
-# parent directory's common config file.
-source ci/.kokoro/common
-source ci/.kokoro/nightly/jax-cuda-plugin/common
+# Inherit the environment variables from the parent directory's common config
+# file.
+source ci/envs/common
+source ci/envs/nightly/jax-cuda-plugin/common
 
 export JAXCI_HERMETIC_PYTHON_VERSION=3.11
 # Note Python version of the container does not matter because of hermetic
