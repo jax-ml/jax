@@ -1,5 +1,6 @@
 // Registers MLIR dialects used by JAX.
 // This module is called by mlir/__init__.py during initialization.
+#include <pybind11/pybind11.h>
 
 #include "mlir-c/Dialect/Arith.h"
 #include "mlir-c/Dialect/Func.h"
@@ -14,11 +15,13 @@
 #include "mlir-c/Transforms.h"
 #include "mlir/Bindings/Python/PybindAdaptors.h"
 
+namespace py = pybind11;
+
 #define REGISTER_DIALECT(name) \
     MlirDialectHandle name##_dialect = mlirGetDialectHandle__##name##__(); \
     mlirDialectHandleInsertDialect(name##_dialect, registry)
 
-PYBIND11_MODULE(register_jax_dialects, m) {
+PYBIND11_MODULE(register_jax_dialects, m, py::mod_gil_not_used()) {
   m.doc() = "Registers upstream MLIR dialects used by JAX.";
 
   m.def("register_dialects", [](MlirDialectRegistry registry) {
