@@ -61,7 +61,7 @@ fi
 # setting the Bazel configs.
 if [[ "$(uname -s)" == "Linux" && $(uname -m) == "x86_64" ]]; then
   if [[ "$JAXCI_BUILD_JAXLIB_ENABLE" == 1 ]]; then
-    export BAZEL_CONFIG_CPU=rbe_linux_x86_64_cpu
+    export BAZEL_CONFIG_CPU=rbe_linux_x86_64
   else
     export BAZEL_CONFIG_CUDA=rbe_linux_x86_64_cuda
   fi
