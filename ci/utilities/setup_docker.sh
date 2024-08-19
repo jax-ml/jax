@@ -61,5 +61,12 @@ if ! docker container inspect jax >/dev/null 2>&1 ; then
       -e JAXCI_OUTPUT_DIR=$JAXCI_OUTPUT_DIR \
       "$JAXCI_DOCKER_IMAGE" \
     bash
+
+  if [[ `uname -s | grep -P '^MSYS_NT'` ]]; then
+    # Allow requests from the container.
+    # Additional setup is contained in ci/official/envs/rbe.
+    CONTAINER_IP_ADDR=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' jax)
+    netsh advfirewall firewall add rule name="Allow Metadata Proxy" dir=in action=allow protocol=TCP localport=80 remoteip="$CONTAINER_IP_ADDR"
+  fi
 fi
 jaxrun() { docker exec jax "$@"; }
