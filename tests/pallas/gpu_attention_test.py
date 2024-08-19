@@ -148,7 +148,7 @@ class DecodeAttentionTest(PallasBaseTest):
     o_ref = decode_attention.gqa_reference(q, k, v)
     np.testing.assert_allclose(o, o_ref, atol=0.05)
 
-class DecodeAttentionInterpreterTest(DecodeAttentionTest):
+class DecodeAttentionInterpretTest(DecodeAttentionTest):
   INTERPRET = True
 
 

@@ -177,7 +177,7 @@ def _pallas_call_impl_interpret(
     cost_estimate: CostEstimate,
 ):
   del compiler_params, cost_estimate
-  # If we're in interpreter mode, we *scan* over the grid and eval the
+  # If we're in interpret mode, we *scan* over the grid and eval the
   # discharged jaxpr.
   dynamic_grid_args, args = split_list(  # type: ignore
       args, [grid_mapping.num_dynamic_grid_bounds]

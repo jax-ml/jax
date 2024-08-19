@@ -175,7 +175,7 @@ class OpsTest(PallasBaseTest):
     np.testing.assert_array_equal(out, inp.reshape(m * 2, n))
 
 
-class OpsInterpreterTest(OpsTest):
+class OpsInterpretTest(OpsTest):
   INTERPRET = True
 
 

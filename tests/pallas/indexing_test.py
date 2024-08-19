@@ -253,7 +253,7 @@ class IndexerOpsTest(PallasBaseTest):
   def test_multi_indexing_interpreter_only(self):
     if not self.INTERPRET:
       self.skipTest("Only supported in interpret mode")
-    # Interpreter only test! YMMV actually compiling this.
+    # Interpret only test! YMMV actually compiling this.
     def permute(left, right, left_out_ref, right_out_ref):
       left_out = jnp.zeros_like(left)
       left_out = left_out.at[:, 0].set(left[:, 0])
@@ -302,7 +302,7 @@ class IndexerOpsTest(PallasBaseTest):
   def test_ellipsis_indexing_iterpret_only(self):
     if not self.INTERPRET:
       self.skipTest("Only supported in interpret mode")
-    # Interpreter only test! YMMV actually compiling this.
+    # Interpret only test! YMMV actually compiling this.
     def permute_columns_in_row_kernel(left, right, new_left, new_right):
       shape = left.shape
       k = shape[-1]
@@ -616,7 +616,7 @@ class IndexerOpsTest(PallasBaseTest):
     self.assertAllClose(res[:, start : start + 1, :], x, atol=0., rtol=0.)
 
 
-class IndexerOpsInterpreterTest(IndexerOpsTest):
+class IndexerOpsInterpretTest(IndexerOpsTest):
   INTERPRET = True
 
 

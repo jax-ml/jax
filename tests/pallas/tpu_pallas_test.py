@@ -453,7 +453,7 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
     self.assertEqual(mem_analysis.alias_size_in_bytes, expected_num_bytes)
 
 
-class PallasCallScalarPrefetchInterpreterTest(PallasCallScalarPrefetchTest):
+class PallasCallScalarPrefetchInterpretTest(PallasCallScalarPrefetchTest):
   INTERPRET: bool = True
 
 
@@ -703,7 +703,7 @@ class PallasCallDynamicGridTest(PallasBaseTest):
     np.testing.assert_array_equal(dynamic_kernel(np.int32(4), x), x[8:16])
 
 
-class PallasCallDynamicGridInterpreterTest(PallasCallDynamicGridTest):
+class PallasCallDynamicGridInterpretTest(PallasCallDynamicGridTest):
   INTERPRET = True
 
 
@@ -1467,7 +1467,7 @@ class PallasCallDMATest(PallasBaseTest):
       del y
 
 
-class PallasCallDMAInterpreterTest(PallasCallDMATest):
+class PallasCallDMAInterpretTest(PallasCallDMATest):
   INTERPRET = True
 
   def test_interpret_local_dma(self):
@@ -1725,7 +1725,7 @@ class PallasCallUnblockedIndexingTest(PallasBaseTest):
     np.testing.assert_array_equal(y, x)
 
 
-class PallasCallUnblockedIndexingInterpreterTest(
+class PallasCallUnblockedIndexingInterpretTest(
     PallasCallUnblockedIndexingTest
 ):
   INTERPRET = True
@@ -2463,7 +2463,7 @@ class MiscellaneousTest(PallasBaseTest):
     )
 
 
-class MiscellaneousInterpreterTest(MiscellaneousTest):
+class MiscellaneousInterpretTest(MiscellaneousTest):
   INTERPRET: bool = True
 
 

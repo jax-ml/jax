@@ -249,7 +249,7 @@ class PallasBaseTest(jtu.JaxTestCase):
       self.skipTest("Only works in 32-bit")
     if not self.INTERPRET:
       if jtu.device_under_test() == "cpu":
-        self.skipTest("Only interpreter mode supported on CPU")
+        self.skipTest("Only interpret mode supported on CPU")
       if (jtu.test_device_matches(["cuda"]) and
           not jtu.is_cuda_compute_capability_at_least("8.0")):
         self.skipTest("Only works on GPUs with capability >= sm80")
@@ -664,7 +664,7 @@ class OpsTest(PallasBaseTest):
       self.assertAllClose(actual, expected)
 
 
-class OpsInterpreterTest(OpsTest):
+class OpsInterpretTest(OpsTest):
   INTERPRET = True
 
   def test_debug_print(self):
@@ -691,7 +691,7 @@ class OpsExtraTest(PallasBaseTest):
   def setUp(self):
     super().setUp()
     if jtu.test_device_matches(["tpu"]) and not self.INTERPRET:
-      # TODO: most tests fail on TPU in non-interpreter mode
+      # TODO: most tests fail on TPU in non-interpret mode
       self.skipTest("On TPU the test works only in interpret mode")
 
   ELEMENTWISE_OPS = [
@@ -841,7 +841,7 @@ class OpsExtraTest(PallasBaseTest):
   @parameterized.parameters("float16", "bfloat16")
   def test_true_divide_unsupported(self, dtype):
     if self.INTERPRET:
-      self.skipTest("No lowering in interpreter mode")
+      self.skipTest("No lowering in interpret mode")
 
     @functools.partial(
         self.pallas_call,
@@ -911,7 +911,7 @@ class OpsExtraTest(PallasBaseTest):
   @parameterized.parameters("float16", "bfloat16", "float32")
   def test_approx_tanh(self, dtype):
     if self.INTERPRET:
-      self.skipTest("approx_tanh is not supported in interpreter mode")
+      self.skipTest("approx_tanh is not supported in interpret mode")
     if (dtype == "bfloat16" and
         not jtu.is_cuda_compute_capability_at_least("9.0")):
       self.skipTest("tanh.approx.bf16 requires a GPU with capability >= sm90")
@@ -935,7 +935,7 @@ class OpsExtraTest(PallasBaseTest):
   def test_elementwise_inline_asm(self):
     if self.INTERPRET:
       self.skipTest(
-          "elementwise_inline_asm is not supported in interpreter mode"
+          "elementwise_inline_asm is not supported in interpret mode"
       )
 
     @functools.partial(
@@ -1163,7 +1163,7 @@ class OpsExtraTest(PallasBaseTest):
   def test_strided_load(self):
     if self.INTERPRET:
       # TODO(b/329733289): Remove this once the bug is fixed.
-      self.skipTest("Strided load not yet supported in interpreter mode")
+      self.skipTest("Strided load not yet supported in interpret mode")
 
     # Reproducer from https://github.com/google/jax/issues/20895.
     @functools.partial(
@@ -1199,7 +1199,7 @@ class OpsExtraTest(PallasBaseTest):
   )
   def test_invalid_broadcasted_load(self, x_shape, mask_shape):
     if self.INTERPRET:
-      self.skipTest("No broadcasting checks in pl.load in interpreter mode")
+      self.skipTest("No broadcasting checks in pl.load in interpret mode")
 
     @functools.partial(
         self.pallas_call, out_shape=jax.ShapeDtypeStruct((), jnp.float32)
@@ -1383,7 +1383,7 @@ class OpsExtraTest(PallasBaseTest):
   @parameterized.parameters(1, 2, 3, 4, 8)
   def test_atomic_counter(self, num_threads):
     if self.INTERPRET:
-      self.skipTest("While loop not supported in interpreter mode.")
+      self.skipTest("While loop not supported in interpret mode.")
 
     @functools.partial(
         self.pallas_call, out_shape=(
@@ -1501,7 +1501,7 @@ class OpsExtraTest(PallasBaseTest):
       np.testing.assert_allclose(y, y_ref, atol=1e-2, rtol=1e-2, err_msg=i)
 
 
-class OpsExtraInterpreterTest(OpsExtraTest):
+class OpsExtraInterpretTest(OpsExtraTest):
   INTERPRET = True
 
 
@@ -1558,7 +1558,7 @@ class PallasPrimitivesTest(PallasBaseTest):
     self.assertIn(expected, jaxpr.pretty_print(use_color=False))
 
 
-class PallasPrimitivesInterpreterTest(PallasPrimitivesTest):
+class PallasPrimitivesInterpretTest(PallasPrimitivesTest):
   INTERPRET = True
 
 
