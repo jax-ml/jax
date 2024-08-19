@@ -140,8 +140,12 @@ def ffi_lowering(
       kwargs["result_types"] = [mlir.aval_to_ir_type(aval) for aval in ctx.avals_out]
     if operand_layouts is None:
       kwargs["operand_layouts"] = _default_layouts(aval.shape for aval in ctx.avals_in)  # pytype: disable=attribute-error
+    else:
+      kwargs["operand_layouts"] = operand_layouts
     if result_layouts is None:
       kwargs["result_layouts"] = _default_layouts(aval.shape for aval in ctx.avals_out)
+    else:
+      kwargs["result_layouts"] = result_layouts
     if "result_shapes" not in kwargs and not all(
         core.is_constant_shape(aval.shape) for aval in ctx.avals_out):
       kwargs["result_shapes"] = [
