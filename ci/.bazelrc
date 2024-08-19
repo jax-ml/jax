@@ -4,6 +4,10 @@
 # Make Bazel print out all options from rc files.
 build --announce_rc
 
+# Required by OpenXLA
+# https://github.com/openxla/xla/issues/1323
+build --nocheck_visibility
+
 # By default, execute all actions locally.
 build --spawn_strategy=local
 
