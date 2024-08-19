@@ -17,7 +17,7 @@ source "ci/utilities/setup.sh"
 
 # Build the jax artifact
 if [[ "$JAXCI_BUILD_JAX_ENABLE" == 1 ]]; then
-  jaxrun python -m build
+  jaxrun python -m build --outdir $JAXCI_OUTPUT_DIR
 fi
 
 # Tempoary; "bazel build" commands will wrapped by the build CLI in the final
