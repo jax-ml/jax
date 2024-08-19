@@ -33,7 +33,7 @@ if ! docker container inspect jax >/dev/null 2>&1 ; then
   JAXCI_DOCKER_ARGS="--gpus all"
   fi
 
-  JAXCI_GIT_DIR=${JAXCI_GIT_DIR:-/tmpfs/src/jax}
+  JAXCI_GIT_DIR=${JAXCI_GIT_DIR:-/tmpfs/src/github/jax}
   docker run $JAXCI_DOCKER_ARGS --name jax -w "/jax" -itd --rm \
       -v "$JAXCI_GIT_DIR:/jax" \
       -v $HOME/.config/gcloud:/root/.config/gcloud \

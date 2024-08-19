@@ -1,0 +1,10 @@
+# Inherit the environment variables from the parent directory's common config
+# file.
+source ci/envs/common
+source ci/envs/nightly/jaxlib/common
+
+export JAXCI_HERMETIC_PYTHON_VERSION=3.11
+
+# Temporary; for local testing.
+export JAXCI_GIT_DIR="/tmpfs/src/github/jax"
+export JAXCI_OUTPUT_DIR="/tmpfs/src/github/jax/pkg"
