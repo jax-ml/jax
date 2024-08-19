@@ -35,9 +35,9 @@ if ! docker container inspect jax >/dev/null 2>&1 ; then
 
   container_path="/jax"
   if [[ "$(uname -s)" =~ "MSYS_NT" ]]; then
-    JAXCI_GIT_DIR=$(cygpath -w $JAXCI_GIT_DIR)
-    container_path=$(cygpath -w /c/jax/)
-    JAXCI_OUTPUT_DIR=$(cygpath -w /c/jax/pkg)
+    export JAXCI_GIT_DIR=$(cygpath -w $JAXCI_GIT_DIR)
+    export container_path=$(cygpath -w /c/jax/)
+    export JAXCI_OUTPUT_DIR=$(cygpath -w /c/jax/pkg)
   fi
 
   if [[ `uname -s | grep -P '^MSYS_NT'` ]]; then
