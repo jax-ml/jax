@@ -322,9 +322,10 @@ build:rbe_linux_x86_64 --platforms="@ubuntu20.04-clang_manylinux2014-cuda12.3-cu
 # Python config is the same across all containers because the binary is the same
 build:rbe_linux_x86_64 --repo_env=TF_PYTHON_CONFIG_REPO="@ubuntu20.04-clang_manylinux2014-cuda12.3-cudnn9.1_config_python"
 
+build:rbe_linux_x86_64 --config=rbe_linux_x86_64_base
 build:rbe_linux_x86_64 --config=ci_linux_x86_64
 
-build:rbe_linux_x86_64_cuda --config=rbe_linux_x86_64
+build:rbe_linux_x86_64_cuda --config=rbe_linux_x86_64_base
 build:rbe_linux_x86_64_cuda --config=ci_linux_x86_64_cuda
 build:rbe_linux_x86_64_cuda --repo_env=REMOTE_GPU_TESTING=1
 
