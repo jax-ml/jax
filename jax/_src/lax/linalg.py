@@ -31,6 +31,7 @@ from jax._src import dispatch
 from jax._src import dtypes
 from jax._src.core import (
     Primitive, ShapedArray, raise_to_shaped, is_constant_dim, is_constant_shape)
+from jax._src.extend import ffi
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
 from jax._src.interpreters import mlir
@@ -1190,16 +1191,13 @@ def _lu_pivots_to_permutation_batching_rule(batched_args, batch_dims, *,
   return lu_pivots_to_permutation_p.bind(
       x, permutation_size=permutation_size), 0
 
-def _lu_pivots_to_permutation_gpu_lowering(lowering, ctx, pivots, *,
+def _lu_pivots_to_permutation_gpu_lowering(platform, ctx, pivots, *,
                                            permutation_size):
-  # TODO(danfm): Remove once jaxlib 0.4.32 is the minimum version.
-  if jaxlib_version >= (0, 4, 32):
-    pivots_aval, = ctx.avals_in
-    pivots_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, pivots_aval.shape)
-    kwargs = dict(pivots_shape_vals=pivots_shape_vals)
-  else:
-    kwargs = {}
-  return lowering(pivots, permutation_size=permutation_size, **kwargs)
+  rule = ffi.ffi_lowering(f"{platform}_lu_pivots_to_permutation")
+  return rule(ctx, pivots,
+              # TODO(b/358275922): remove unused parameter 12 weeks after
+              # the release of jaxlib v0.4.32.
+              permutation_size=np.int32(permutation_size))
 
 
 lu_pivots_to_permutation_p = Primitive('lu_pivots_to_permutation')
@@ -1215,13 +1213,11 @@ mlir.register_lowering(
     mlir.lower_fun(_generic_lu_pivots_to_permutation, multiple_results=False))
 mlir.register_lowering(
     lu_pivots_to_permutation_p,
-    partial(_lu_pivots_to_permutation_gpu_lowering,
-            gpu_linalg.cuda_lu_pivots_to_permutation),
+    partial(_lu_pivots_to_permutation_gpu_lowering, "cu"),
     platform='cuda')
 mlir.register_lowering(
     lu_pivots_to_permutation_p,
-    partial(_lu_pivots_to_permutation_gpu_lowering,
-            gpu_linalg.hip_lu_pivots_to_permutation),
+    partial(_lu_pivots_to_permutation_gpu_lowering, "hip"),
     platform='rocm')
 
 # LU decomposition
