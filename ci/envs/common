@@ -11,9 +11,10 @@ export JAXCI_WHEEL_AUDIT_ENABLE=""
 export JAXCI_HERMETIC_PYTHON_VERSION="3.11"
 export JAXCI_RELEASE_TAG=""
 # When specifying dependencies on local wheels, Bazel will look for them in
-# the dist directory. This can be overridden by the setting
+# the ../dist directory. This can be overridden by the setting
 # `local_wheel_dist_folder`
 export JAXCI_OUTPUT_DIR="/jax/dist"
+export local_wheel_dist_folder=$JAXCI_OUTPUT_DIR
 export JAXCI_DOCKER_IMAGE=""
 export JAXCI_RUN_TESTS=""
 export JAXCI_DOCKER_ARGS=""
