@@ -25,47 +25,37 @@ if ! docker container inspect jax >/dev/null 2>&1 ; then
   docker pull "$JAXCI_DOCKER_IMAGE"
 
   JAXCI_DOCKER_ARGS=""
-  # Enable GPU on Docker if building or testing either the CUDA plugin or PJRT.
-  # Only Linux x86 CI machines have GPUs attached to them. 
-  if ( [[ $(uname -s) == "Linux" ]] && [[ $(uname -m) == "x86_64" ]] ) && \
+  # Enable GPU on Docker if building or testing either the CUDA plugin or PJRT
+  # on Linux x86 machines.
+  if ( [[ $(uname -a) == *Linux*x86* ]] ) && \
    ( [[ "$JAXCI_BUILD_PLUGIN_ENABLE" == 1 ]] || \
    [[ "$JAXCI_BUILD_PJRT_ENABLE" == 1 ]] ); then
-  JAXCI_DOCKER_ARGS="--gpus all"
+    JAXCI_DOCKER_ARGS="--gpus all"
   fi
 
-  container_path="/jax"
+  container_workdir_path="/jax"
+
   if [[ "$(uname -s)" =~ "MSYS_NT" ]]; then
+    # On Windows, the paths need to be converted to Windows-style paths.
     export JAXCI_GIT_DIR=$(cygpath -w $JAXCI_GIT_DIR)
-    export container_path=$(cygpath -w /c/jax/)
+    export container_workdir_path=$(cygpath -w /c/jax/)
     export JAXCI_OUTPUT_DIR=$(cygpath -w /c/jax/pkg)
+
+    # Docker on Windows doesn't support the `host` networking mode, and so
+    # port-forwarding is required for the container to detect it's running on GCE.
+    export IP_ADDR=$(powershell -command "(Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias 'vEthernet (nat)').IPAddress")
+    netsh interface portproxy add v4tov4 listenaddress=$IP_ADDR listenport=80 connectaddress=169.254.169.254 connectport=80
+    JAXCI_DOCKER_ARGS="-e GCE_METADATA_HOST=$IP_ADDR"
   fi
 
-  if [[ `uname -s | grep -P '^MSYS_NT'` ]]; then
-  # Docker on Windows doesn't support the `host` networking mode, and so
-  # port-forwarding is required for the container to detect it's running on GCE.
-  export IP_ADDR=$(powershell -command "(Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias 'vEthernet (nat)').IPAddress")
-  netsh interface portproxy add v4tov4 listenaddress=$IP_ADDR listenport=80 connectaddress=169.254.169.254 connectport=80
-  JAXCI_DOCKER_ARGS="-e GCE_METADATA_HOST=$IP_ADDR"
-  # A local firewall rule for the container is added in
-  # ci/official/utilities/setup_docker.sh.
-  else
-    # The volume mapping flag below shares the user's gcloud credentials, if any,
-    # with the container, in case the user has credentials stored there.
-    # This would allow Bazel to authenticate for RBE.
-    # Note: TF's CI does not have any credentials stored there.
-    JAXCI_DOCKER_ARGS="$JAXCI_DOCKER_ARGS -v $HOME/.config/gcloud:/root/.config/gcloud"
-  fi
-
-  JAXCI_GIT_DIR=${JAXCI_GIT_DIR:-/tmpfs/src/github/jax}
-  docker run $JAXCI_DOCKER_ARGS --name jax -w $container_path -itd --rm \
-      -v "$JAXCI_GIT_DIR:$container_path" \
+  docker run $JAXCI_DOCKER_ARGS --name jax -w $container_workdir_path -itd --rm \
+      -v "$JAXCI_GIT_DIR:$container_workdir_path" \
       -e JAXCI_OUTPUT_DIR=$JAXCI_OUTPUT_DIR \
       "$JAXCI_DOCKER_IMAGE" \
     bash
 
-  if [[ `uname -s | grep -P '^MSYS_NT'` ]]; then
+  if [[ "$(uname -s)" =~ "MSYS_NT" ]]; then
     # Allow requests from the container.
-    # Additional setup is contained in ci/official/envs/rbe.
     CONTAINER_IP_ADDR=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' jax)
     netsh advfirewall firewall add rule name="Allow Metadata Proxy" dir=in action=allow protocol=TCP localport=80 remoteip="$CONTAINER_IP_ADDR"
   fi
