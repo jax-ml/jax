@@ -42,6 +42,7 @@ if ! docker container inspect jax >/dev/null 2>&1 ; then
   docker run $JAXCI_DOCKER_ARGS --name jax -w $container_workdir_path -itd --rm \
       -v "$JAXCI_GIT_DIR:$container_workdir_path" \
       -e JAXCI_OUTPUT_DIR=$JAXCI_OUTPUT_DIR \
+      -e local_wheel_dist_folder=$JAXCI_OUTPUT_DIR \
       "$JAXCI_DOCKER_IMAGE" \
     bash
 
