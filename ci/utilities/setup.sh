@@ -83,7 +83,7 @@ else
 fi
 
 if [[ "$JAXCI_RUN_TESTS" == 1 ]]; then
-  jaxrun "$JAXCI_PYTHON" -m pip install $JAXCI_OUTPUT_DIR/*.whl
+  jaxrun bash -c "$JAXCI_PYTHON -m pip install $JAXCI_OUTPUT_DIR/*.whl"
   jaxrun "$JAXCI_PYTHON" -m pip install -U -e .
 fi
 
