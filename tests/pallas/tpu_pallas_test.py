@@ -413,7 +413,9 @@ class PallasCallScalarPrefetchTest(PallasBaseTest):
               ),
               grid=8,
           ),
-          compiler_params=dict(mosaic=dict(allow_input_fusion=[False, True])),
+          compiler_params=pltpu.TPUCompilerParams(
+              allow_input_fusion=[False, True]
+          ),
       )(s, x)
 
     first = x[0, ...].reshape((1, 8, 8, -1))[:, s[0, ...]].reshape(x.shape[1:])
@@ -1556,12 +1558,12 @@ class PallasCallTest(PallasBaseTest):
       self.pallas_call(
           kernel,
           out_shape=x,
-          compiler_params=dict(mosaic=dict(vmem_limit_bytes=256)),
+          compiler_params=pltpu.TPUCompilerParams(vmem_limit_bytes=256),
       )(x)
     self.pallas_call(
         kernel,
         out_shape=x,
-        compiler_params=dict(mosaic=dict(vmem_limit_bytes=int(2**18))),
+        compiler_params=pltpu.TPUCompilerParams(vmem_limit_bytes=int(2**18)),
     )(x)
 
   def test_allow_input_fusion(self):
@@ -1578,7 +1580,7 @@ class PallasCallTest(PallasBaseTest):
           in_specs=[pl.BlockSpec((1, 128, 128), lambda i: (i, 0, 0))],
           out_specs=pl.BlockSpec((1, 128, 128), lambda i: (i, 0, 0)),
           out_shape=x,
-          compiler_params=dict(mosaic=dict(allow_input_fusion=[True])),
+          compiler_params=pltpu.TPUCompilerParams(allow_input_fusion=[True]),
       )(z)
 
     x = jnp.arange(np.prod(shape), dtype=np.float32).reshape(shape)
@@ -1606,8 +1608,8 @@ class PallasCallTest(PallasBaseTest):
       self.pallas_call(
           kernel,
           out_shape=jax.ShapeDtypeStruct(shape, jnp.float32),
-          compiler_params=dict(
-              mosaic=dict(internal_scratch_in_bytes=requested_bytes)
+          compiler_params=pltpu.TPUCompilerParams(
+              internal_scratch_in_bytes=requested_bytes,
           ),
       )(x)
 

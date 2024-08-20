@@ -21,6 +21,7 @@ from jax._src.pallas.mosaic.core import PrefetchScalarGridSpec
 from jax._src.pallas.mosaic.core import semaphore
 from jax._src.pallas.mosaic.core import SemaphoreType
 from jax._src.pallas.mosaic.core import TPUMemorySpace
+from jax._src.pallas.mosaic.core import TPUCompilerParams
 from jax._src.pallas.mosaic.lowering import LoweringException
 from jax._src.pallas.mosaic.pipeline import ARBITRARY
 from jax._src.pallas.mosaic.pipeline import BufferedRef

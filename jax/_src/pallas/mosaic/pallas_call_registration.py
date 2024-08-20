@@ -80,16 +80,7 @@ def pallas_call_tpu_lowering_rule(
   if debug:
     print(f"\nThe kernel jaxpr for pallas_call {name_and_src_info}:")
     print(jaxpr)
-  if "mosaic_params" in compiler_params:
-    # TODO(slebedev): Remove this branch after July 12th 2024.
-    warnings.warn(
-        "Passing Mosaic parameters via compiler_params=dict(mosaic_params=...)"
-        " is deprecated. Use compiler_params=dict(mosaic=...) instead.",
-        DeprecationWarning,
-    )
-    assert "mosaic" not in compiler_params
-    mosaic_params = compiler_params["mosaic_params"]
-  elif "mosaic" in compiler_params:
+  if "mosaic" in compiler_params:
     mosaic_params = compiler_params["mosaic"]
   else:
     mosaic_params = {}

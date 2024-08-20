@@ -23,7 +23,7 @@ import enum
 import functools
 import itertools
 import threading
-from typing import Any, Hashable, Union
+from typing import Any, ClassVar, Hashable, Union
 import warnings
 
 import jax
@@ -59,6 +59,11 @@ StaticGrid = tuple[int, ...]
 GridMappingGrid = tuple[int | DynamicGridDim, ...]
 OriginStr = str  # The origin of a block spec, e.g. input[2]["field"]
 
+
+@dataclasses.dataclass(frozen=True)
+class CompilerParams:
+  """Base class for compiler parameters."""
+  PLATFORM: ClassVar[str] = "unspecified"
 
 @dataclasses.dataclass(frozen=True)
 class NameAndSrcInfo:

@@ -19,7 +19,7 @@ from collections.abc import Sequence
 import dataclasses
 import enum
 import functools
-from typing import Any, Hashable
+from typing import Any, ClassVar, Hashable
 
 import jax
 from jax._src import core as jax_core
@@ -44,6 +44,38 @@ no_block_spec = pallas_core.no_block_spec
 _convert_block_spec_to_block_mapping = pallas_core._convert_block_spec_to_block_mapping
 split_list = util.split_list
 
+@dataclasses.dataclass(frozen=True)
+class TPUCompilerParams(pallas_core.CompilerParams):
+  """Mosaic TPU compiler parameters.
+
+  Attributes:
+    dimension_semantics: A list of dimension semantics for each grid
+      dimension of the kernel. Either "parallel" for dimensions that can
+      execute in any order, or "arbitrary" for dimensions that must be
+      executed sequentially.
+    allow_input_fusion: A list of booleans indicating whether input fusion is
+      allowed for each argument.
+    vmem_limit_bytes: Overrides the default VMEM limit for a kernel. Note
+      that this must be used in conjunction with the
+      --xla_tpu_scoped_vmem_limit_kib=N flag with N*1kib > vmem_limit_bytes.
+    collective_id: Indicates which barrier semaphore to use for the kernel.
+      Note that using the same collective_id does not guarantee that
+      the same barrier semaphore will be allocated between kernels.
+    internal_scratch_in_bytes: The size of the internal scratch space used by
+      Mosaic.
+    flags: A dictionary of command line flags for the kernel.
+    serialization_format: The serialization format for the kernel body.
+    device_type: The device type to compile for.
+  """
+  PLATFORM: ClassVar[str] = "mosaic"
+  dimension_semantics: list[str] | None = None
+  allow_input_fusion: list[bool] | None = None
+  vmem_limit_bytes: int | None = None
+  collective_id: int | None = None
+  flags: dict[str, Any] | None = None
+  internal_scratch_in_bytes: int | None = None
+  serialization_format: int = 1
+  device_type: str | None = None
 
 class TPUMemorySpace(enum.Enum):
   ANY = "any"
