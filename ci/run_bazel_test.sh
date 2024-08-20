@@ -17,8 +17,8 @@ source "ci/utilities/setup.sh"
 
 jaxrun nvidia-smi
 
-jaxrun export TF_CPP_MIN_LOG_LEVEL=0
-jaxrun export NCCL_DEBUG=WARN
+jaxrun bash -c "export TF_CPP_MIN_LOG_LEVEL=0"
+jaxrun bash -c "export NCCL_DEBUG=WARN"
 
 jaxrun "$JAXCI_PYTHON" -c "import jax; print(jax.default_backend()); print(jax.devices()); print(len(jax.devices()))"
 
