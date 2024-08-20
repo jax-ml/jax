@@ -4,10 +4,6 @@ JAX: High performance array computing
 JAX is a Python library for accelerator-oriented array computation and program transformation,
 designed for high-performance numerical computing and large-scale machine learning.
 
-If you're looking to train neural networks, use Flax_ and start with its documentation.
-Some associated tools are Optax_ and Orbax_.
-For an end-to-end transformer library built on JAX, see MaxText_.
-
 .. grid:: 3
    :margin: 0
    :padding: 0
@@ -54,6 +50,69 @@ For an end-to-end transformer library built on JAX, see MaxText_.
       :link-type: ref
       :class-card: developer-docs
 
+If you're looking to train neural networks, use Flax_ and start with its tutorials.
+For an end-to-end transformer library built on JAX, see MaxText_.
+
+Ecosystem
+---------
+JAX itself is narrowly-scoped and focuses on efficient array operations & program
+transformations. Built around JAX is an evolving ecosystem of machine learning and
+numerical computing tools; the following is just a small sample of what is out there:
+
+.. grid:: 4
+    :class-container: ecosystem-grid
+
+    .. grid-item:: :material-outlined:`hub;2em` **Neural networks**
+
+       - Flax_
+       - NNX_
+       - Equinox_
+       - Keras_
+
+    .. grid-item:: :material-regular:`show_chart;2em` **Optimizers & solvers**
+
+       - Optax_
+       - Optimistix_
+       - Lineax_
+       - Diffrax_
+
+    .. grid-item:: :material-outlined:`storage;2em` **Data loading**
+
+       - Grain_
+       - `Tensorflow datasets`_
+       - `Hugging Face datasets`_
+
+    .. grid-item:: :material-regular:`construction;2em` **Miscellaneous tools**
+
+       - Orbax_
+       - Chex_
+
+    .. grid-item:: :material-regular:`lan;2em` **Probabilistic programming**
+
+       - Blackjax_
+       - Numpyro_
+       - PyMC_
+
+    .. grid-item:: :material-regular:`bar_chart;2em` **Probabilistic modeling**
+
+       - `Tensorflow probabilty`_
+       - Distrax_
+
+    .. grid-item:: :material-outlined:`animation;2em` **Physics & simulation**
+
+       - `JAX MD`_
+       - Brax_
+
+    .. grid-item:: :material-regular:`language;2em` **LLMs**
+
+       - MaxText_
+       - AXLearn_
+       - Levanter_
+       - EasyLM_
+
+
+Many more JAX-based libraries have been developed; the community-run `Awesome JAX`_ page
+maintains an up-to-date list.
 
 .. toctree::
    :hidden:
@@ -93,7 +152,28 @@ For an end-to-end transformer library built on JAX, see MaxText_.
    glossary
 
 
+.. _Awesome JAX: https://github.com/n2cholas/awesome-jax
+.. _AXLearn: https://github.com/apple/axlearn
+.. _Blackjax: https://blackjax-devs.github.io/blackjax/
+.. _Brax: https://github.com/google/brax/
+.. _Chex: https://chex.readthedocs.io/
+.. _Diffrax: https://docs.kidger.site/diffrax/
+.. _Distrax: https://github.com/google-deepmind/distrax
+.. _EasyLM: https://github.com/young-geng/EasyLM
+.. _Equinox: https://docs.kidger.site/equinox/
 .. _Flax: https://flax.readthedocs.io/
-.. _Orbax: https://orbax.readthedocs.io/
-.. _Optax: https://optax.readthedocs.io/
+.. _Grain: https://github.com/google/grain
+.. _Hugging Face datasets: https://huggingface.co/docs/datasets/
+.. _JAX MD: https://jax-md.readthedocs.io/
+.. _Keras: https://keras.io/
+.. _Levanter: https://github.com/stanford-crfm/levanter
+.. _Lineax: https://github.com/patrick-kidger/lineax
 .. _MaxText: https://github.com/google/maxtext/
+.. _NNX: https://flax.readthedocs.io/en/latest/nnx/
+.. _Numpyro: https://num.pyro.ai/en/latest/index.html
+.. _Optax: https://optax.readthedocs.io/
+.. _Optimistix: https://github.com/patrick-kidger/optimistix
+.. _Orbax: https://orbax.readthedocs.io/
+.. _PyMC: https://www.pymc.io/
+.. _Tensorflow datasets: https://www.tensorflow.org/datasets
+.. _Tensorflow probabilty: https://www.tensorflow.org/probability

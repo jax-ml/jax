@@ -20,6 +20,15 @@
   background-color: rgba(171, 0, 182, var(--block-bg-opacity));
 }
 
+.ecosystem-grid {
+  font-size: smaller;
+}
+
+.ecosystem-grid ul {
+  list-style-type: none;
+  padding-inline-start: 0.5em;
+}
+
 div.red-background pre {
   background-color: rgba(244, 204, 204, var(--block-bg-opacity));
 }
