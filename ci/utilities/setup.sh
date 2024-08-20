@@ -59,27 +59,29 @@ fi
 # Set Bazel configs. Temporary; in the final version of the CL, after the build
 # CLI has been reworked, these will be removed. The build CLI will handle
 # setting the Bazel configs.
-if [[ "$(uname -s)" == "Linux" && $(uname -m) == "x86_64" ]]; then
-  if [[ "$JAXCI_BUILD_JAXLIB_ENABLE" == 1 ]]; then
-    export BAZEL_CONFIG_CPU=rbe_linux_x86_64
+if [[ "$JAXCI_RUN_TESTS" != 1 ]]; then
+  if [[ "$(uname -s)" == "Linux" && $(uname -m) == "x86_64" ]]; then
+    if [[ "$JAXCI_BUILD_JAXLIB_ENABLE" == 1 ]]; then
+      export BAZEL_CONFIG_CPU=rbe_linux_x86_64
+    else
+      export BAZEL_CONFIG_CUDA=rbe_linux_x86_64_cuda
+    fi
+  elif [[ "$(uname -s)" == "Linux" && $(uname -m) == "aarch64" ]]; then
+    if [[ "$JAXCI_BUILD_JAXLIB_ENABLE" == 1 ]]; then
+      export BAZEL_CONFIG_CPU=ci_linux_aarch64_cpu
+    else
+      export BAZEL_CONFIG_CUDA=ci_linux_aarch64_cuda
+    fi
+  elif [[ "$(uname -s)" =~ "MSYS_NT" && $(uname -m) == "x86_64" ]]; then
+    export BAZEL_CONFIG_CPU=rbe_windows_x86_64
+  elif [[ "$(uname -s)" == "Darwin" && $(uname -m) == "x86_64" ]]; then
+    export BAZEL_CONFIG_CPU=ci_darwin_x86_64
+  elif [[ "$(uname -s)" == "Darwin" && $(uname -m) == "arm64" ]]; then
+    export BAZEL_CONFIG_CPU=ci_darwin_arm64
   else
-    export BAZEL_CONFIG_CUDA=rbe_linux_x86_64_cuda
+    echo "Unsupported platform: $(uname -s) $(uname -m)"
+    exit 1
   fi
-elif [[ "$(uname -s)" == "Linux" && $(uname -m) == "aarch64" ]]; then
-  if [[ "$JAXCI_BUILD_JAXLIB_ENABLE" == 1 ]]; then
-    export BAZEL_CONFIG_CPU=ci_linux_aarch64_cpu
-  else
-    export BAZEL_CONFIG_CUDA=ci_linux_aarch64_cuda
-  fi
-elif [[ "$(uname -s)" =~ "MSYS_NT" && $(uname -m) == "x86_64" ]]; then
-  export BAZEL_CONFIG_CPU=rbe_windows_x86_64
-elif [[ "$(uname -s)" == "Darwin" && $(uname -m) == "x86_64" ]]; then
-  export BAZEL_CONFIG_CPU=ci_darwin_x86_64
-elif [[ "$(uname -s)" == "Darwin" && $(uname -m) == "arm64" ]]; then
-  export BAZEL_CONFIG_CPU=ci_darwin_arm64
-else
-  echo "Unsupported platform: $(uname -s) $(uname -m)"
-  exit 1
 fi
 
 if [[ "$JAXCI_RUN_TESTS" == 1 ]]; then
