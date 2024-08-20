@@ -467,11 +467,15 @@ xla.canonicalize_dtype_handlers[PRNGKeyArray] = lambda x: x
 
 
 def key_array_shard_arg_handler(xs: Sequence[PRNGKeyArray], shardings, layouts):
+  if any(not pxla.is_default_layout(l, s, x.aval)
+         for l, s, x in zip(layouts, shardings, xs)):
+    raise NotImplementedError("Passing non-default layouts for PRNGKeyArray "
+                              "is not supported")
   arrs = [x._base_array for x in xs]
   phys_shardings = [physical_sharding(x.aval, sharding)
                     for x, sharding in zip(xs, shardings)]
-  # TODO(yashkatariya): `layouts` should be converted to physical layouts.
-  return pxla.shard_args(phys_shardings, layouts, arrs)
+  # TODO(yashkatariya): Figure out how to create physical layouts.
+  return pxla.shard_args(phys_shardings, [None] * len(phys_shardings), arrs)
 
 
 pxla.shard_arg_handlers[PRNGKeyArray] = key_array_shard_arg_handler
