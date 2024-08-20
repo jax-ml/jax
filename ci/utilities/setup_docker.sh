@@ -45,6 +45,7 @@ if ! docker container inspect jax >/dev/null 2>&1 ; then
   # port-forwarding is required for the container to detect it's running on GCE.
   export IP_ADDR=$(powershell -command "(Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias 'vEthernet (nat)').IPAddress")
   netsh interface portproxy add v4tov4 listenaddress=$IP_ADDR listenport=80 connectaddress=169.254.169.254 connectport=80
+  JAXCI_DOCKER_ARGS="-e GCE_METADATA_HOST=$IP_ADDR"
   # A local firewall rule for the container is added in
   # ci/official/utilities/setup_docker.sh.
   else
