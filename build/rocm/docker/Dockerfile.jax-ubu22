@@ -1,6 +1,4 @@
-################################################################################
-FROM ubuntu:20.04 AS rocm_base
-################################################################################
+FROM ubuntu:22.04
 
 RUN --mount=type=cache,target=/var/cache/apt \
     apt-get update && apt-get install -y python3 python-is-python3
@@ -28,24 +26,7 @@ ENV PATH="$ROCM_PATH/bin:${PATH}"
 ENV PATH="$OPENCL_ROOT/bin:${PATH}"
 ENV PATH="/root/bin:/root/.local/bin:$PATH"
 
-# install pyenv and python build dependencies
-RUN --mount=type=cache,target=/var/cache/apt \
-    apt-get update && apt-get install -y \
-        git \
-        libssl-dev \
-        libffi-dev \
-        libreadline-dev \
-        liblzma-dev
-
-# Install pyenv with different python versions
-ARG PYTHON_VERSION=3.10.14
-RUN git clone https://github.com/pyenv/pyenv.git /pyenv
-ENV PYENV_ROOT /pyenv
-ENV PATH $PYENV_ROOT/shims:$PYENV_ROOT/bin:$PATH
-RUN pyenv install $PYTHON_VERSION
 RUN --mount=type=cache,mode=0755,target=/root/.cache/pip \
-    eval "$(pyenv init -)" && \
-    pyenv local ${PYTHON_VERSION} && \
     pip3 install --upgrade --force-reinstall setuptools pip && \
     pip3 install \
         "numpy<2" \
@@ -68,21 +49,16 @@ RUN --mount=type=cache,mode=0755,target=/root/.cache/pip \
         flatbuffers \
         hypothesis
 
-################################################################################
-FROM rocm_base AS rt_build
-################################################################################
-
 ARG JAX_VERSION
 ARG JAX_COMMIT
 ARG XLA_COMMIT
 
 LABEL com.amdgpu.rocm_version="$ROCM_VERSION" \
-      com.amdgpu.python_version="$PYTHON_VERSION" \
+      com.amdgpu.python_version="3.10" \
       com.amdgpu.jax_version="$JAX_VERSION" \
       com.amdgpu.jax_commit="$JAX_COMMIT" \
       com.amdgpu.xla_commit="$XLA_COMMIT"
 
 RUN --mount=type=cache,mode=0755,target=/root/.cache/pip \
     --mount=type=bind,source=wheelhouse,target=/wheelhouse \
-    pip install --find-links /wheelhouse jax jaxlib jax_rocm60_plugin jax_rocm60_pjrt
-
+    pip3 install --find-links /wheelhouse jax jaxlib jax_rocm60_plugin jax_rocm60_pjrt
