@@ -247,11 +247,11 @@ class Mesh(contextlib.ContextDecorator):
 
   @property
   def size(self):
-    return math.prod(self.shape.values())
+    return math.prod(self.shape.values()) if self.devices.ndim else 0
 
   @property
   def empty(self):
-    return self.devices.ndim == 0
+    return self.size == 0
 
   @functools.cached_property
   def is_multi_process(self):
@@ -337,7 +337,10 @@ class AbstractMesh:
 
   def __init__(self, shape_tuple: tuple[tuple[str, int], ...]):
     self.shape_tuple = shape_tuple
-    self._axis_names, self._axis_sizes = list(zip(*self.shape_tuple))
+    if self.shape_tuple:
+      self._axis_names, self._axis_sizes = list(zip(*self.shape_tuple))
+    else:
+      self._axis_names, self._axis_sizes = (), ()
 
   def __hash__(self):
     return hash(self.shape_tuple)
@@ -358,7 +361,7 @@ class AbstractMesh:
 
   @functools.cached_property
   def size(self):
-    return math.prod(self._axis_sizes)
+    return math.prod(self._axis_sizes) if self._axis_sizes else 0
 
   @functools.cached_property
   def shape(self):
