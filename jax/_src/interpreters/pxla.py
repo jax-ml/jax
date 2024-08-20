@@ -146,6 +146,7 @@ shard_arg_handlers: dict[
 ] = {}
 
 
+@lru_cache(maxsize=2048)
 def is_default_layout(curr_layout, sharding, aval):
   if curr_layout is None or sharding is None:
     return True
@@ -2548,12 +2549,6 @@ def is_user_xla_layout_equal(ul: DeviceLocalLayout | AutoLayout,
   else:
     return ul == xl
 
-def _check_user_xla_layout(ul, xl, what: str):
-  if not is_user_xla_layout_equal(ul, xl):
-    raise AssertionError(
-        f"Unexpected XLA layout override: (XLA) {xl} != {ul} "
-        f"(User {what} layout)")
-
 
 def _get_layouts_from_executable(
     xla_executable, in_layouts, out_layouts, num_ordered_effects
@@ -2569,19 +2564,23 @@ def _get_layouts_from_executable(
     out_layouts_xla = out_layouts_xla[num_ordered_effects:]
 
   new_in_layouts = []
-  for x, i in safe_zip(in_layouts_xla, in_layouts):
+  for x, l in safe_zip(in_layouts_xla, in_layouts):
     x = DeviceLocalLayout.from_pjrt_layout(x)
-    if isinstance(i, DeviceLocalLayout):
-      _check_user_xla_layout(i, x, "input")
+    if isinstance(l, DeviceLocalLayout) and not is_user_xla_layout_equal(l, x):
+      raise AssertionError(
+          f"Unexpected XLA layout override: (XLA) {x} != {l} "
+          f"(User input layout)")
     # Always append the XLA layout because it has the full information
     # (tiling, etc) even if the user layout does not specify tiling.
     new_in_layouts.append(x)
 
   new_out_layouts = []
-  for x, o in safe_zip(out_layouts_xla, out_layouts):
+  for x, l in safe_zip(out_layouts_xla, out_layouts):
     x = DeviceLocalLayout.from_pjrt_layout(x)
-    if isinstance(o, DeviceLocalLayout):
-      _check_user_xla_layout(o, x, "output")
+    if isinstance(l, DeviceLocalLayout) and not is_user_xla_layout_equal(l, x):
+      raise AssertionError(
+          f"Unexpected XLA layout override: (XLA) {x} != {l} "
+          f"(User output layout)")
     # Always append the XLA layout because it has the full information
     # (tiling, etc) even if the user layout does not specify tiling.
     new_out_layouts.append(x)
