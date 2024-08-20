@@ -37,7 +37,9 @@ for cuda_module_name in [".cuda", "jax_cuda12_plugin"]:
 
 if _cuda_linalg:
   for _name, _value in _cuda_linalg.registrations().items():
-    api_version = 0 if _name == "cu_cholesky_update" else 1
+    api_version = (1
+                   if _name.endswith("lu_pivots_to_permutation")
+                   or _name.endswith("_ffi") else 0)
     xla_client.register_custom_call_target(
         _name, _value, platform="CUDA", api_version=api_version
     )
@@ -54,8 +56,11 @@ for rocm_module_name in [".rocm", "jax_rocm60_plugin"]:
 
 if _hip_linalg:
   for _name, _value in _hip_linalg.registrations().items():
+    api_version = (1
+                   if _name.endswith("lu_pivots_to_permutation")
+                   or _name.endswith("_ffi") else 0)
     xla_client.register_custom_call_target(
-        _name, _value, platform="ROCM", api_version=1
+        _name, _value, platform="ROCM", api_version=api_version
     )
 
 _prod = lambda xs: functools.reduce(operator.mul, xs, 1)

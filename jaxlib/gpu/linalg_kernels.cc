@@ -16,13 +16,9 @@ limitations under the License.
 #include "jaxlib/gpu/linalg_kernels.h"
 
 #include <cstddef>
-#include <cstdint>
-#include <functional>
 #include <string>
 #include <string_view>
-#include <utility>
 
-#include "absl/algorithm/container.h"
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
 #include "absl/strings/str_format.h"
@@ -60,32 +56,73 @@ void CholeskyUpdate(gpuStream_t stream, void** buffers, const char* opaque,
 }
 
 namespace {
-absl::StatusOr<std::pair<std::int64_t, std::int32_t>> GetDimensions(
-    ffi::Span<const std::int64_t> dims, const std::string& arg_name) {
-  if (dims.size() < 1) {
-    return absl::InvalidArgumentError(
-        absl::StrFormat("%s must have at least one dimension", arg_name));
+ffi::Error CholeskyUpdateFfiImpl(gpuStream_t stream, ffi::AnyBuffer matrix_in,
+                                 ffi::AnyBuffer vector_in,
+                                 ffi::Result<ffi::AnyBuffer> matrix_out,
+                                 ffi::Result<ffi::AnyBuffer> vector_out) {
+  FFI_ASSIGN_OR_RETURN((auto [batch, rows, cols]),
+                       SplitBatch2D(matrix_in.dimensions()));
+  if (rows != cols) {
+    return ffi::Error::InvalidArgument(
+        "The matrix input to Cholesky update must be square.");
   }
-  std::int64_t batch_size = 1;
-  if (dims.size() >= 2) {
-    batch_size =
-        absl::c_accumulate(dims.first(dims.size() - 1), 1, std::multiplies<>());
+  FFI_RETURN_IF_ERROR(CheckShape(vector_in.dimensions(), {batch, cols},
+                                 "vector", "cholesky_update"));
+  FFI_RETURN_IF_ERROR(CheckShape(matrix_out->dimensions(), {batch, rows, cols},
+                                 "matrix_out", "cholesky_update"));
+  FFI_RETURN_IF_ERROR(CheckShape(vector_out->dimensions(), {batch, cols},
+                                 "vector_out", "cholesky_update"));
+  FFI_ASSIGN_OR_RETURN(auto size, MaybeCastNoOverflow<int>(cols));
+  auto dtype = matrix_in.element_type();
+  if (dtype != ffi::F32 && dtype != ffi::F64) {
+    return ffi::Error::InvalidArgument(
+        "Invalid input type for Cholesky update; must be float32 or float64.");
   }
-  JAX_ASSIGN_OR_RETURN(auto size,
-                       MaybeCastNoOverflow<std::int32_t>(dims.back()));
-  return std::make_pair(batch_size, size);
+  if (vector_in.element_type() != dtype ||
+      matrix_out->element_type() != dtype ||
+      vector_out->element_type() != dtype) {
+    return ffi::Error::InvalidArgument(
+        "All input and output types for Cholesky update must match.");
+  }
+  bool is_single_precision = dtype == ffi::F32;
+  auto matrix = matrix_out->untyped_data();
+  if (matrix_in.untyped_data() != matrix) {
+    FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(
+        gpuMemcpyAsync(matrix, matrix_in.untyped_data(), matrix_in.size_bytes(),
+                       gpuMemcpyDeviceToDevice, stream)));
+  }
+  auto vector = vector_out->untyped_data();
+  if (vector_in.untyped_data() != vector) {
+    FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(
+        gpuMemcpyAsync(vector, vector_in.untyped_data(), vector_in.size_bytes(),
+                       gpuMemcpyDeviceToDevice, stream)));
+  }
+  for (auto n = 0; n < batch; ++n) {
+    LaunchCholeskyUpdateFfiKernel(stream, matrix, vector, size,
+                                  is_single_precision);
+    FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuGetLastError()));
+  }
+  return ffi::Error::Success();
 }
+}  // namespace
 
+XLA_FFI_DEFINE_HANDLER_SYMBOL(CholeskyUpdateFfi, CholeskyUpdateFfiImpl,
+                              ffi::Ffi::Bind()
+                                  .Ctx<ffi::PlatformStream<gpuStream_t>>()
+                                  .Arg<ffi::AnyBuffer>()
+                                  .Arg<ffi::AnyBuffer>()
+                                  .Ret<ffi::AnyBuffer>()
+                                  .Ret<ffi::AnyBuffer>());
+
+namespace {
 ffi::Error LuPivotsToPermutationImpl(
     gpuStream_t stream, ffi::Dictionary /* unused */,
     ffi::Buffer<ffi::DataType::S32> pivots,
     ffi::Result<ffi::Buffer<ffi::DataType::S32>> permutation) {
-  FFI_ASSIGN_OR_RETURN(auto pivots_dims,
-                       GetDimensions(pivots.dimensions(), "pivots"));
-  FFI_ASSIGN_OR_RETURN(auto permutation_dims,
-                       GetDimensions(permutation->dimensions(), "permutation"));
-  auto [batch_size, pivot_size] = pivots_dims;
-  auto [permutation_batch, permutation_size] = permutation_dims;
+  FFI_ASSIGN_OR_RETURN((auto [batch_size, pivot_size]),
+                       SplitBatch1D(pivots.dimensions()));
+  FFI_ASSIGN_OR_RETURN((auto [permutation_batch, permutation_size]),
+                       SplitBatch1D(permutation->dimensions()));
   if (permutation_batch != batch_size) {
     return ffi::Error(ffi::ErrorCode::kInvalidArgument,
                       "pivots and permutation must have the same batch size.");

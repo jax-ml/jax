@@ -41,6 +41,8 @@ NB_MODULE(_linalg, m) {
         EncapsulateFfiHandler(LuPivotsToPermutation);
     dict[JAX_GPU_PREFIX "_cholesky_update"] =
         EncapsulateFunction(CholeskyUpdate);
+    dict[JAX_GPU_PREFIX "_cholesky_update_ffi"] =
+        EncapsulateFunction(CholeskyUpdateFfi);
     return dict;
   });
   m.def("build_cholesky_update_descriptor", &BuildCholeskyUpdateDescriptor);

@@ -271,7 +271,6 @@ cc_library(
         ":hip_vendor",
         "//jaxlib:ffi_helpers",
         "//jaxlib:kernel_helpers",
-        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
@@ -288,7 +287,6 @@ rocm_library(
     deps = [
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
-        "@local_config_rocm//rocm:rocm_headers",
         "@xla//xla/ffi/api:ffi",
         "@xla//xla/service:custom_call_status",
     ],

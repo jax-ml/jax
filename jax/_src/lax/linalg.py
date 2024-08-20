@@ -505,20 +505,26 @@ def _cholesky_update_abstract_eval(r_matrix, w_vector):
             r_matrix.shape, w_vector.shape))
   return ShapedArray(r_matrix.shape, r_matrix.dtype)
 
-def _cholesky_update_cuda_lowering_rule(ctx, r_matrix, w_vector):
-  r_matrix_aval, _ = ctx.avals_in
-  try:
-    [platform] = ctx.module_context.platforms
-  except ValueError:
-    raise ValueError(
-        "Can only lower cholesky_update on a single platform."
-    ) from None
-  if platform != "cuda":
-    raise NotImplementedError(
-        "Can only lower fast cholesky_update on CUDA."
-    )
-  return gpu_linalg.cuda_cholesky_update(
-      r_matrix, w_vector, r_matrix_aval.dtype)
+def _cholesky_update_gpu_lowering_rule(target_name_prefix, ctx, r_matrix, w_vector):
+  # TODO(b/360781533): Remove guard after 3 week forward compatibility period.
+  if ctx.is_forward_compat() or jaxlib_version < (0, 4, 32):
+    r_matrix_aval, _ = ctx.avals_in
+    try:
+      [platform] = ctx.module_context.platforms
+    except ValueError:
+      raise ValueError(
+          "Can only lower cholesky_update on a single platform."
+      ) from None
+    if platform != "cuda":
+      raise NotImplementedError(
+          "Can only lower fast cholesky_update on CUDA."
+      )
+    return gpu_linalg.cuda_cholesky_update(
+        r_matrix, w_vector, r_matrix_aval.dtype)
+  rule = ffi.ffi_lowering(f"{target_name_prefix}_cholesky_update_ffi",
+                          operand_output_aliases={0: 0, 1: 1})
+  sub_ctx = ctx.replace(avals_out=ctx.avals_in)
+  return rule(sub_ctx, r_matrix, w_vector)[:1]
 
 
 def _cholesky_update_jax_fn(R, z):
@@ -557,8 +563,8 @@ cholesky_update_p.def_abstract_eval(_cholesky_update_abstract_eval)
 cholesky_update_p.def_impl(partial(dispatch.apply_primitive, cholesky_update_p))
 
 mlir.register_lowering(
-    cholesky_update_p, _cholesky_update_cuda_lowering_rule, platform='cuda')
-
+    cholesky_update_p, partial(_cholesky_update_gpu_lowering_rule, "cu"),
+    platform='cuda')
 mlir.register_lowering(
     cholesky_update_p,
     mlir.lower_fun(_cholesky_update_jax_fn, multiple_results=False))

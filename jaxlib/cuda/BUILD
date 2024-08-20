@@ -357,7 +357,6 @@ cc_library(
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
         "@xla//xla/service:custom_call_status",
-        "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
@@ -367,18 +366,13 @@ cc_library(
 
 cuda_library(
     name = "cuda_linalg_kernels_impl",
-    srcs = [
-        "//jaxlib/gpu:linalg_kernels.cu.cc",
-    ],
-    hdrs = [
-        "//jaxlib/gpu:linalg_kernels.h",
-    ],
+    srcs = ["//jaxlib/gpu:linalg_kernels.cu.cc"],
+    hdrs = ["//jaxlib/gpu:linalg_kernels.h"],
     deps = [
         ":cuda_gpu_kernel_helpers",
         ":cuda_vendor",
         "@xla//xla/ffi/api:ffi",
         "@xla//xla/service:custom_call_status",
-        "@local_config_cuda//cuda:cuda_headers",
     ],
 )
 

@@ -23,6 +23,7 @@ limitations under the License.
 #if defined(JAX_GPU_CUDA)
 
 #include "third_party/gpus/cuda/extras/CUPTI/include/cupti.h"  // IWYU pragma: export
+#include "third_party/gpus/cuda/include/cooperative_groups.h"  // IWYU pragma: export
 #include "third_party/gpus/cuda/include/cuComplex.h"  // IWYU pragma: export
 #include "third_party/gpus/cuda/include/cublas_v2.h"  // IWYU pragma: export
 #include "third_party/gpus/cuda/include/cuda.h"       // IWYU pragma: export
@@ -31,8 +32,8 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cufft.h"       // IWYU pragma: export
 #include "third_party/gpus/cuda/include/cusolverDn.h"  // IWYU pragma: export
 #include "third_party/gpus/cuda/include/cusolver_common.h"  // IWYU pragma: export
-#include "third_party/gpus/cuda/include/cusparse.h"    // IWYU pragma: export
-#include "third_party/gpus/cudnn/cudnn.h"              // IWYU pragma: export
+#include "third_party/gpus/cuda/include/cusparse.h"  // IWYU pragma: export
+#include "third_party/gpus/cudnn/cudnn.h"            // IWYU pragma: export
 
 #if CUDA_VERSION < 11080
 #error "JAX requires CUDA 11.8 or newer."
@@ -292,6 +293,10 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpuStreamWaitEvent cudaStreamWaitEvent
 #define gpuSuccess cudaSuccess
 
+#define gpuDeviceProp cudaDeviceProp
+#define gpuGetDeviceProperties cudaGetDeviceProperties
+#define gpuLaunchCooperativeKernel cudaLaunchCooperativeKernel
+
 namespace jax::JAX_GPU_NAMESPACE {
 namespace {
 constexpr uint32_t kNumThreadsPerWarp = 32;
@@ -300,6 +305,7 @@ constexpr uint32_t kNumThreadsPerWarp = 32;
 
 #elif defined(JAX_GPU_HIP)
 
+#include "rocm/include/hip/amd_detail/amd_hip_cooperative_groups.h"
 #include "rocm/include/hip/hip_runtime_api.h"
 #include "rocm/include/hipblas/hipblas.h"
 #include "rocm/include/hipsolver/hipsolver.h"
@@ -540,6 +546,10 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES \
   HIP_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES
 #define GPU_EVENT_DEFAULT hipEventDefault
+
+#define gpuDeviceProp hipDeviceProp_t
+#define gpuGetDeviceProperties hipGetDeviceProperties
+#define gpuLaunchCooperativeKernel hipLaunchCooperativeKernel
 
 namespace jax::JAX_GPU_NAMESPACE {
 namespace {

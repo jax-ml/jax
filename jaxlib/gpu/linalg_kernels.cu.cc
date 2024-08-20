@@ -15,17 +15,10 @@ limitations under the License.
 
 #include "jaxlib/gpu/linalg_kernels.h"
 
-#include <array>
+#include <algorithm>
 #include <cstdint>
-#include <iostream>
 
 #include "jaxlib/gpu/vendor.h"
-
-#ifdef JAX_GPU_HIP
-#include "rocm/include/hip/amd_detail/amd_hip_cooperative_groups.h"
-#else  // JAX_GPU_CUDA
-#include "third_party/gpus/cuda/include/cooperative_groups.h"
-#endif
 
 namespace cg = cooperative_groups;
 
@@ -47,7 +40,6 @@ __device__ void drotg(T* da, T* db, T* c, T* s) {
   T rh = rhypot(a, b);
   *c = a * rh;
   *s = -(b * rh);
-  return;
 }
 
 template <typename T>
@@ -85,15 +77,9 @@ void LaunchCholeskyUpdateKernelBody(gpuStream_t stream, void** buffers,
       reinterpret_cast<void*>(&uVector),
       reinterpret_cast<void*>(&nSize),
   };
-#ifdef JAX_GPU_HIP
-  hipLaunchCooperativeKernel((void*)CholeskyUpdateKernel<T>, grid_dim,
+  gpuLaunchCooperativeKernel((void*)CholeskyUpdateKernel<T>, grid_dim,
                              block_dim, arg_ptrs,
                              /*dynamic_shared_mem_bytes=*/0, stream);
-#else  // JAX_GPU_CUDA
-  cudaLaunchCooperativeKernel((void*)CholeskyUpdateKernel<T>, grid_dim,
-                              block_dim, arg_ptrs,
-                              /*dynamic_shared_mem_bytes=*/0, stream);
-#endif
 }
 
 void LaunchCholeskyUpdateKernel(gpuStream_t stream, void** buffers,
@@ -102,13 +88,8 @@ void LaunchCholeskyUpdateKernel(gpuStream_t stream, void** buffers,
   LinalgType type = descriptor.linalg_type;
 
   int dev = 0;
-#ifdef JAX_GPU_HIP
-  hipDeviceProp_t deviceProp;
-  hipGetDeviceProperties(&deviceProp, dev);
-#else  // JAX_GPU_CUDA
-  cudaDeviceProp deviceProp;
-  cudaGetDeviceProperties(&deviceProp, dev);
-#endif
+  gpuDeviceProp deviceProp;
+  gpuGetDeviceProperties(&deviceProp, dev);
 
   int block_dim = deviceProp.maxThreadsPerBlock;
   int grid_dim = deviceProp.multiProcessorCount;
@@ -122,6 +103,41 @@ void LaunchCholeskyUpdateKernel(gpuStream_t stream, void** buffers,
       LaunchCholeskyUpdateKernelBody<float>(stream, buffers, grid_dim,
                                             block_dim, nSize);
       break;
+  }
+}
+
+template <typename T>
+void LaunchCholeskyUpdateFfiKernelBody(gpuStream_t stream, void* matrix,
+                                       void* vector, int grid_dim,
+                                       int block_dim, int nSize) {
+  T* rMatrix = reinterpret_cast<T*>(matrix);
+  T* uVector = reinterpret_cast<T*>(vector);
+
+  void* arg_ptrs[3] = {
+      reinterpret_cast<void*>(&rMatrix),
+      reinterpret_cast<void*>(&uVector),
+      reinterpret_cast<void*>(&nSize),
+  };
+  gpuLaunchCooperativeKernel((void*)CholeskyUpdateKernel<T>, grid_dim,
+                             block_dim, arg_ptrs,
+                             /*dynamic_shared_mem_bytes=*/0, stream);
+}
+
+void LaunchCholeskyUpdateFfiKernel(gpuStream_t stream, void* matrix,
+                                   void* vector, int size,
+                                   bool is_single_precision) {
+  int dev = 0;
+  gpuDeviceProp deviceProp;
+  gpuGetDeviceProperties(&deviceProp, dev);
+  int block_dim = deviceProp.maxThreadsPerBlock;
+  int grid_dim = deviceProp.multiProcessorCount;
+
+  if (is_single_precision) {
+    LaunchCholeskyUpdateFfiKernelBody<float>(stream, matrix, vector, grid_dim,
+                                             block_dim, size);
+  } else {
+    LaunchCholeskyUpdateFfiKernelBody<double>(stream, matrix, vector, grid_dim,
+                                              block_dim, size);
   }
 }
 
