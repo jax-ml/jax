@@ -314,7 +314,7 @@ MlirContext getDefaultContext() {
 
 }  // namespace
 
-PYBIND11_MODULE(_tpu_ext, m) {
+PYBIND11_MODULE(_tpu_ext, m, py::mod_gil_not_used()) {
   mlirRegisterTPUPasses();  // Register all passes on load.
 
   py::class_<MlirTpuApplyVectorLayoutContext>(m, "ApplyVectorLayoutCtx",

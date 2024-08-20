@@ -22,7 +22,7 @@ limitations under the License.
 
 namespace py = pybind11;
 
-PYBIND11_MODULE(_triton_ext, m) {
+PYBIND11_MODULE(_triton_ext, m, py::mod_gil_not_used()) {
   //
   // Dialects.
   //
