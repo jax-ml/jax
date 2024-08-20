@@ -351,7 +351,7 @@ build:rbe_windows_x86_64 --extra_execution_platforms="@xla//tools/toolchains/win
 build:rbe_windows_x86_64 --platforms="@xla//tools/toolchains/win:x64_windows-clang-cl"
 
 build:rbe_windows_x86_64 --shell_executable=C:\\tools\\msys64\\usr\\bin\\bash.exe
-build:rbe_windows_x86_64 --remote_download_minimal --enable_runfiles
+build:rbe_windows_x86_64 --enable_runfiles
 build:rbe_windows_x86_64 --define=override_eigen_strong_inline=true
 
 # Don't build the python zip archive in the RBE build.
