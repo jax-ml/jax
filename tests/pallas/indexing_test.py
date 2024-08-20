@@ -299,6 +299,23 @@ class IndexerOpsTest(PallasBaseTest):
         interpret=True,
     )(x, y)
 
+  def test_multi_indexing_destination_ref(self):
+    if not self.INTERPRET:
+      self.skipTest("Only supported in interpret mode")
+    def kernel(x_ref, o_ref):
+      o_ref[...] = jnp.zeros_like(o_ref)
+      new_o_ref = o_ref.at[pl.ds(0, 8)].at[0].at[pl.ds(0, 4), pl.ds(0, 4)]
+      new_o_ref[...] = x_ref[...]
+
+    x = jax.random.normal(jax.random.key(0), shape=(4, 4))
+    result = pl.pallas_call(
+        kernel,
+        out_shape=jax.ShapeDtypeStruct((16, 16, 16), x.dtype),
+        interpret=True,
+    )(x)
+    expected = jnp.zeros((16, 16, 16)).at[0, 0:4, 0:4].set(x)
+    np.testing.assert_array_equal(result, expected)
+
   def test_ellipsis_indexing_iterpret_only(self):
     if not self.INTERPRET:
       self.skipTest("Only supported in interpret mode")

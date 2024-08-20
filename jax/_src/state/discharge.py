@@ -262,8 +262,11 @@ def index_array(x, indexers):
 def index_swap_array(x, indexers, val):
   result = x
   result_val = val
+  # Compute updated "val" (result).
+  _results = [x]
   for indexer in indexers:
     if _is_trivial_indexer(indexer):
+      _results.append(None)
       continue
     # If everything in the indexer is a slice or ()-shaped, we can also
     # use `lax.dynamic_slice` with 1-sized slices for ()-shaped indices.
@@ -271,15 +274,24 @@ def index_swap_array(x, indexers, val):
     if maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
       starts, sizes, squeeze_dims = maybe_slice
       result_old = lax_slicing.dynamic_slice(result, starts, sizes)
-      result_val = lax.expand_dims(result_val, squeeze_dims)
-      y = lax_slicing.dynamic_update_slice(result, result_val, starts)
       result = lax.squeeze(result_old, squeeze_dims)
-      result_val = y
     else:
       indexer = _convert_to_array_indexer(indexer)
-      result_old = _prepend_gather(result, indexer)
-      result_val = _prepend_scatter(result, indexer, result_val)
-      result = result_old
+      result = _prepend_gather(result, indexer)
+    _results.append(result)
+
+  # Compute updated "x" (result_val)
+  for i, indexer in reversed(list(enumerate(indexers))):
+    if _is_trivial_indexer(indexer):
+      continue
+    if maybe_slice := _maybe_convert_to_dynamic_slice(indexer):
+      starts, _, squeeze_dims = maybe_slice
+      result_val = lax.expand_dims(result_val, squeeze_dims)
+      result_val = lax_slicing.dynamic_update_slice(
+          _results[i], result_val, starts)
+    else:
+      indexer = _convert_to_array_indexer(indexer)
+      result_val = _prepend_scatter(_results[i], indexer, result_val)
   return result, result_val
 
 def _get_discharge(x, idx, tree):
