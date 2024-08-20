@@ -54,9 +54,8 @@ class PallasBaseTest(jtu.JaxTestCase):
   INTERPRET = False
 
   def setUp(self):
-    if not self.INTERPRET:
-      if not jtu.test_device_matches(["tpu"]):
-        self.skipTest("Only interpret mode supported on non-TPU")
+    if not jtu.test_device_matches(["tpu"]):
+      self.skipTest("Test only supported on TPU.")
 
     super().setUp()
 

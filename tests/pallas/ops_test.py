@@ -611,6 +611,8 @@ class OpsTest(PallasBaseTest):
       dtype=(jnp.int32, jnp.int16, jnp.int8),
   )
   def test_scalar_map(self, shape, dtype):
+    if pltpu is None:
+      self.skipTest("No TPU module available.")
     if dtype != jnp.int32 and len(shape) < 2:
       # TODO(b/299280718): Implement this.
       self.skipTest(
@@ -633,6 +635,8 @@ class OpsTest(PallasBaseTest):
 
   @jtu.skip_on_devices("gpu")  # TODO: not implemented
   def test_extract_scalar(self):
+    if pltpu is None:
+      self.skipTest("No TPU module available.")
     def kernel(x_ref, y_ref):
       y_ref[0, 0] = x_ref[:][0, 0]
     f = self.pallas_call(
@@ -645,6 +649,8 @@ class OpsTest(PallasBaseTest):
 
   @jtu.skip_on_devices("gpu")  # TODO: not implemented
   def test_concat_constant(self):
+    if pltpu is None:
+      self.skipTest("No TPU module available.")
     def kernel(out):
       result = []
       for i in range(16):

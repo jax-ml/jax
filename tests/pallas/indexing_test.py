@@ -531,6 +531,8 @@ class IndexerOpsTest(PallasBaseTest):
     )
 
   def test_load_with_dynamic_2nd_minor_index(self):
+    if pltpu is None:
+      self.skipTest("No TPU module available.")
     # We can take any dynamic index on the 2nd minor dimension as long as
     # the minormost dimsize is vreg lane count.
     m, n = 32, 128
@@ -557,6 +559,8 @@ class IndexerOpsTest(PallasBaseTest):
     self.assertAllClose(res, x[start : start + k, :], atol=0., rtol=0.)
 
   def test_store_with_dynamic_2nd_minor_index(self):
+    if pltpu is None:
+      self.skipTest("No TPU module available.")
     # We can take any dynamic index on the 2nd minor dimension as long as
     # the minormost dimsize is vreg lane count.
     m, n = 10, 128
@@ -583,6 +587,8 @@ class IndexerOpsTest(PallasBaseTest):
     self.assertAllClose(res[start : start + m, :], x, atol=0., rtol=0.)
 
   def test_load_one_row_with_dynamic_2nd_minor_index(self):
+    if pltpu is None:
+      self.skipTest("No TPU module available.")
     # This test triggers strided load. We can take any dynamic index on the
     # 2nd minor dimension as long as we load one row on the 2nd minor dim.
     b, m, n = 4, 16, 256
@@ -608,6 +614,8 @@ class IndexerOpsTest(PallasBaseTest):
     self.assertAllClose(res, x[:, start : start + 1, :], atol=0., rtol=0.)
 
   def test_store_one_row_with_dynamic_2nd_minor_index(self):
+    if pltpu is None:
+      self.skipTest("No TPU module available.")
     # This test triggers strided store. We can take any dynamic index on the
     # 2nd minor dimension as long as we store one row on the 2nd minor dim.
     b, m, n = 4, 16, 256
