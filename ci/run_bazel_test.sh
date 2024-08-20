@@ -15,16 +15,16 @@
 # ==============================================================================
 source "ci/utilities/setup.sh"
 
-nvidia-smi
+jaxrun nvidia-smi
 
-export TF_CPP_MIN_LOG_LEVEL=0
-export NCCL_DEBUG=WARN
+jaxrun export TF_CPP_MIN_LOG_LEVEL=0
+jaxrun export NCCL_DEBUG=WARN
 
-"$JAXCI_PYTHON" -c "import jax; print(jax.default_backend()); print(jax.devices()); print(len(jax.devices()))"
+jaxrun "$JAXCI_PYTHON" -c "import jax; print(jax.default_backend()); print(jax.devices()); print(len(jax.devices()))"
 
 # Runs non-multiaccelerator tests with one GPU apiece.
 # It appears --run_under needs an absolute path.
-bazel --bazelrc=ci/.bazelrc test --config="$BAZEL_CONFIG_CUDA" --config=non_multiaccelerator \
+jaxrun bazel --bazelrc=ci/.bazelrc test --config="$BAZEL_CONFIG_CUDA" --config=non_multiaccelerator \
   --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
   --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
   //tests:gpu_tests //tests:backend_independent_tests //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests

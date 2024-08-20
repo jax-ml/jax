@@ -83,8 +83,8 @@ else
 fi
 
 if [[ "$JAXCI_RUN_TESTS" == 1 ]]; then
-  "$JAXCI_PYTHON" -m pip install $JAXCI_OUTPUT_DIR/*.whl
-  "$JAXCI_PYTHON" -m pip install -U -e .
+  jaxrun "$JAXCI_PYTHON" -m pip install $JAXCI_OUTPUT_DIR/*.whl
+  jaxrun "$JAXCI_PYTHON" -m pip install -U -e .
 fi
 
 # TODO: cleanup steps
