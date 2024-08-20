@@ -16,7 +16,7 @@ permissions:
 jobs:
   cloud-tpu-test:
     # TODO: confirm final naming for optional label
-    if: contains(github.event.pull_request.labels.*.name, 'optional_ci_tpu')
+    # if: contains(github.event.pull_request.labels.*.name, 'optional_ci_tpu')
     name: "TPU v5e x 8 Presubmit"
     env:
       ENABLE_PJRT_COMPATIBILITY: 1
