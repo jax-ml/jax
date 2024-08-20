@@ -4,4 +4,5 @@ source ci/envs/common
 source ci/envs/nightly/jax-cuda-pjrt/common
 
 export JAXCI_DOCKER_IMAGE="tensorflow/build:2.18-python3.12"
+export JAXCI_DOCKER_ARGS="--gpus all"
 export JAXCI_GIT_DIR="/home/kbuilder/jax"

@@ -7,4 +7,5 @@ export JAXCI_HERMETIC_PYTHON_VERSION=3.11
 # Note Python version of the container does not matter because of hermetic
 # Python.
 export JAXCI_DOCKER_IMAGE="tensorflow/build:2.18-python3.10"
+export JAXCI_DOCKER_ARGS="--gpus all"
 export JAXCI_GIT_DIR="/home/kbuilder/jax"

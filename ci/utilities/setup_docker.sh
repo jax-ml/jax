@@ -24,15 +24,6 @@ if ! docker container inspect jax >/dev/null 2>&1 ; then
   docker pull "$JAXCI_DOCKER_IMAGE" || sleep 15
   docker pull "$JAXCI_DOCKER_IMAGE"
 
-  JAXCI_DOCKER_ARGS=""
-  # Enable GPU on Docker if building or testing either the CUDA plugin or PJRT
-  # on Linux x86 machines.
-  if ( [[ $(uname -a) == *Linux*x86* ]] ) && \
-   ( [[ "$JAXCI_BUILD_PLUGIN_ENABLE" == 1 ]] || \
-   [[ "$JAXCI_BUILD_PJRT_ENABLE" == 1 ]] ); then
-    JAXCI_DOCKER_ARGS="--gpus all"
-  fi
-
   container_workdir_path="/jax"
 
   if [[ "$(uname -s)" =~ "MSYS_NT" ]]; then
