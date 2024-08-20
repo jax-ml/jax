@@ -23,6 +23,7 @@ namespace jax {
 namespace JAX_GPU_NAMESPACE {
 
 XLA_FFI_DECLARE_HANDLER_SYMBOL(GetrfFfi);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(GeqrfFfi);
 
 }  // namespace JAX_GPU_NAMESPACE
 }  // namespace jax

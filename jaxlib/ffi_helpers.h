@@ -7,6 +7,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <utility>
@@ -140,6 +141,59 @@ inline absl::StatusOr<std::tuple<int64_t, int64_t, int64_t>> SplitBatch2D(
   auto trailingDims = dims.last(2);
   return std::make_tuple(GetBatchSize(dims.first(dims.size() - 2)),
                          trailingDims.front(), trailingDims.back());
+}
+
+inline ::xla::ffi::Error CheckShape(::xla::ffi::Span<const int64_t> dimensions,
+                                    int64_t expected_batch,
+                                    std::string_view name,
+                                    std::string_view op) {
+  auto batch = GetBatchSize(dimensions);
+  if (batch != expected_batch) {
+    return ::xla::ffi::Error::InvalidArgument(absl::StrFormat(
+        "Invalid total batch size for input %s to %s. Expected %d, got %d.",
+        name, op, expected_batch, batch));
+  }
+  return ::xla::ffi::Error::Success();
+}
+
+inline ::xla::ffi::Error CheckShape(::xla::ffi::Span<const int64_t> dimensions,
+                                    std::tuple<int64_t, int64_t> shape,
+                                    std::string_view name,
+                                    std::string_view op) {
+  FFI_ASSIGN_OR_RETURN((auto [batch, size]), SplitBatch1D(dimensions));
+  auto [expected_batch, expected_size] = shape;
+  if (batch != expected_batch) {
+    return ::xla::ffi::Error::InvalidArgument(absl::StrFormat(
+        "Invalid total batch size for input %s to %s. Expected %d, got %d.",
+        name, op, expected_batch, batch));
+  }
+  if (batch != expected_batch || size != expected_size) {
+    return ::xla::ffi::Error::InvalidArgument(
+        absl::StrFormat("Invalid trailing dimension for input %s "
+                        "to %s. Expected %d, got %d.",
+                        name, op, expected_size, size));
+  }
+  return ::xla::ffi::Error::Success();
+}
+
+inline ::xla::ffi::Error CheckShape(::xla::ffi::Span<const int64_t> dimensions,
+                                    std::tuple<int64_t, int64_t, int64_t> shape,
+                                    std::string_view name,
+                                    std::string_view op) {
+  FFI_ASSIGN_OR_RETURN((auto [batch, rows, cols]), SplitBatch2D(dimensions));
+  auto [expected_batch, expected_rows, expected_cols] = shape;
+  if (batch != expected_batch) {
+    return ::xla::ffi::Error::InvalidArgument(absl::StrFormat(
+        "Invalid total batch size for input %s to %s. Expected %d, got %d.",
+        name, op, expected_batch, batch));
+  }
+  if (rows != expected_rows || cols != expected_cols) {
+    return ::xla::ffi::Error::InvalidArgument(
+        absl::StrFormat("Invalid matrix dimensions for input %s to %s. "
+                        "Expected (%d, %d), got (%d, %d).",
+                        name, op, expected_rows, expected_cols, rows, cols));
+  }
+  return ::xla::ffi::Error::Success();
 }
 
 template <::xla::ffi::DataType dtype>
