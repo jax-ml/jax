@@ -1,7 +1,9 @@
 # Inherit the environment variables from the parent directory's common config
 # file.
 source ci/envs/common
-source ci/envs/nightly/jax-cuda-pjrt/common
 
+export JAXCI_RUN_TESTS=1
+export JAXCI_PYTHON=python3.12
 export JAXCI_DOCKER_IMAGE="tensorflow/build:2.18-python3.12"
-export JAXCI_GIT_DIR="/home/kbuilder/jax"
+export JAXCI_HERMETIC_PYTHON_VERSION=3.12
+export BAZEL_CONFIG_CUDA=rbe_linux_x86_64_cuda

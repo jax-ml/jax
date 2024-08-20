@@ -410,6 +410,24 @@ build:cross_compile_macos_x86 --platform_mappings=platform_mappings
 build:rbe_cross_compile_macos_x86 --config=cross_compile_macos_x86
 build:rbe_cross_compile_macos_x86 --config=rbe_cross_compile_base
 
+# #############################################################################
+# Test specific config options below. These are used when `bazel test` is run.
+# #############################################################################
+test --test_output=errors
+
+# Non-multiaccelerator tests with one GPU apiece.
+test:non_multiaccelerator --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform
+test:non_multiaccelerator --test_env=JAX_SKIP_SLOW_TESTS=1 
+test:non_multiaccelerator --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform
+test:non_multiaccelerator --test_env=JAX_TESTS_PER_ACCELERATOR=12 --test_env=JAX_ACCELERATOR_COUNT=4
+
+# The product of the `JAX_ACCELERATOR_COUNT`` and `JAX_TESTS_PER_ACCELERATOR`
+# should match the VM's CPU core count (set in `--local_test_jobs`).
+test:non_multiaccelerator --local_test_jobs=48 
+test:non_multiaccelerator --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow
+test:non_multiaccelerator --test_tag_filters=-multiaccelerator
+test:non_multiaccelerator --//jax:build_jaxlib=false
+
 #############################################################################
 # Some configs to make getting some forms of debug builds. In general, the
 # codebase is only regularly built with optimizations. Use 'debug_symbols' to
