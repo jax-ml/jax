@@ -28,8 +28,10 @@ jobs:
       image: index.docker.io/tensorflow/build@sha256:7fb38f0319bda36393cad7f40670aa22352b44421bb906f5cf34d543acd8e1d2 # ratchet:tensorflow/build:latest-python3.11
     steps:
       - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # ratchet:actions/checkout@v4
-      # Install JAX, this should correspond to the code or pytest may be out of sync
+      # Halt for connection if workflow dispatch is told to or if it is a retry with the label halt_on_retry
       - name: Wait For Connection
         uses: ./actions/ci_connection/
         with:
-          should-wait: ${{ inputs.halt-for-connection }}
+          halt-dispatch-input: ${{ inputs.halt-for-connection }}
+      - name: Echo
+        run: echo "Real job here..."

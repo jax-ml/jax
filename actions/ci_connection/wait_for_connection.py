@@ -72,15 +72,15 @@ if __name__ == "__main__":
   address = ("localhost", 12455)  # Address and port to listen on
   # Check if we should wait for the connection
   wait_for_connection = False
-  if os.environ.get("WAIT_ON_ERROR") == "1":
-    print("WAIT_ON_ERROR is set")
-    if os.getppid() != 1:
-      print("Previous command did not exit with success, waiting for connection")
-      wait_for_connection = True
-    else:
-      print("Previous command exited with success")
-  else:
-    print("WAIT_ON_ERROR is not set")
+  # if os.environ.get("WAIT_ON_ERROR") == "1":
+  #   print("WAIT_ON_ERROR is set")
+  #   if os.getppid() != 1:
+  #     print("Previous command did not exit with success, waiting for connection")
+  #     wait_for_connection = True
+  #   else:
+  #     print("Previous command exited with success")
+  # else:
+  #   print("WAIT_ON_ERROR is not set")
 
   if os.environ.get("INTERACTIVE_CI") == "1":
     print("INTERACTIVE_CI is set, waiting for connection")
@@ -95,8 +95,14 @@ if __name__ == "__main__":
   # Grab and print the data required to connect to this vm
   host = os.environ.get("HOSTNAME")
   repo = os.environ.get("REPOSITORY")
+  cluster = os.environ.get("CONNECTION_CLUSTER")
+  location = os.environ.get("CONNECTION_LOCATION")
+  ns = os.environ.get("CONNECTION_NS")
 
-  print(f"Connection parameters: '{host} {repo}'")
+  print("Googler connection only\nSee go/<insert final golink> for details")
+  print(
+    f"Connection string: ml_actions_connect  '{host}' '{ns}' '{location}' '{cluster}' '{repo}'"
+  )
 
   # Thread is running as a daemon so it will quit when the
   # main thread terminates.
