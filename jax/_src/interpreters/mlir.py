@@ -483,10 +483,9 @@ def _traceback_to_location(ctx: ModuleContext, tb: xc.Traceback) -> ir.Location:
   return loc
 
 def _source_info_to_location(
-    ctx: ModuleContext, primitive: core.Primitive, params: dict[str, Any],
+    ctx: ModuleContext, primitive: core.Primitive,
     source_info: source_info_util.SourceInfo) -> ir.Location:
-  eqn_str = (f'{source_info.name_stack}/'
-             f'{core.str_eqn_compact(primitive, params)}')
+  eqn_str = f'{source_info.name_stack}/{primitive.name}'
   if config.include_full_tracebacks_in_locations.value:
     if source_info.traceback is None:
       loc = ir.Location.unknown()
@@ -1745,7 +1744,7 @@ def jaxpr_subcomp(ctx: ModuleContext, jaxpr: core.Jaxpr,
     in_nodes = map(read, eqn.invars)
     source_info = eqn.source_info.replace(
         name_stack=name_stack + eqn.source_info.name_stack)
-    loc = _source_info_to_location(ctx, eqn.primitive, eqn.params, source_info)
+    loc = _source_info_to_location(ctx, eqn.primitive, source_info)
     with source_info_util.user_context(eqn.source_info.traceback), loc:
       override_rule = get_override_lowering_rule(eqn.primitive)
       platform_rules: dict[str, LoweringRule] = {}
