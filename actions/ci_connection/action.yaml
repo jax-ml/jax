@@ -39,4 +39,5 @@ runs:
       INTERACTIVE_CI: 1 
       PYTHONUNBUFFERED: 1
     run: |
-      python3 ./actions/ci_connection/wait_for_connection.py
+      echo "$GITHUB_ACTION_PATH"
+      python3 $GITHUB_ACTION_PATH/wait_for_connection.py
