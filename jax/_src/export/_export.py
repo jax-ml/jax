@@ -969,9 +969,7 @@ _CUSTOM_CALL_TARGETS_GUARANTEED_STABLE = {
     "cu_lu_pivots_to_permutation",
     # "cublas_getrf_batched", "cusolver_getrf",
     # "hipblas_getrf_batched", "hipsolver_getrf",
-    # TODO(b/357034884): This can be added once the mimimum version of jaxlib
-    # (v0.4.32) includes this new FFI call.
-    # "cusolver_getrf_ffi",
+    "cusolver_getrf_ffi",
     # lu on TPU
     "LuDecomposition",
     # ApproxTopK on TPU

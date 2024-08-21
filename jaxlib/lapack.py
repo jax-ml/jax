@@ -95,6 +95,12 @@ LAPACK_DTYPE_PREFIX = {
 }
 
 
+def prepare_lapack_call(fn_base, dtype):
+  """Initializes the LAPACK library and returns the LAPACK target name."""
+  _lapack.initialize()
+  return build_lapack_fn_target(fn_base, dtype)
+
+
 def build_lapack_fn_target(fn_base: str, dtype) -> str:
   """Builds the target name for a LAPACK function custom call."""
   try:
@@ -157,15 +163,13 @@ def trsm_hlo(dtype, alpha, a, b,
 
 # # ?getrf: LU decomposition
 
-def getrf_hlo(ctx, dtype, a: ir.Value, *,
-              a_shape_vals: tuple[DimensionSize, ...]):
-  _lapack.initialize()
+def getrf_hlo(dtype, a: ir.Value, *, a_shape_vals: tuple[DimensionSize, ...]):
   a_type = ir.RankedTensorType(a.type)
   assert len(a_shape_vals) >= 2
   batch_dims_vals = a_shape_vals[:-2]
   num_bd = len(a_shape_vals) - 2
   m, n = a_shape_vals[-2:]
-  fn_base = build_lapack_fn_target(fn_base="getrf", dtype=dtype)
+  fn = prepare_lapack_call(fn_base="getrf", dtype=dtype)
 
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
 
@@ -177,43 +181,24 @@ def getrf_hlo(ctx, dtype, a: ir.Value, *,
   ]
   result_types, result_shapes = mk_result_types_and_shapes(shape_type_pairs)
 
-  if ctx.is_forward_compat():
-    fn = fn_base
-    scalar_layout = []
-    batch_size_val = hlo_s32(1)
-    for b_v in batch_dims_vals:
-      batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
+  scalar_layout = []
+  batch_size_val = hlo_s32(1)
+  for b_v in batch_dims_vals:
+    batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
 
-    return custom_call(
-        fn,
-        result_types=result_types,
-        operands=[batch_size_val, ensure_hlo_s32(m), ensure_hlo_s32(n), a],
-        operand_layouts=[scalar_layout] * 3 + [layout],
-        result_layouts=[
-          layout,
-          tuple(range(num_bd, -1, -1)),
-          tuple(range(num_bd - 1, -1, -1)),
-        ],
-        operand_output_aliases={3: 0},
-        result_shapes=result_shapes,
-    ).results
-  else:
-    fn = fn_base + "_ffi"
-    return custom_call(
-        fn,
-        result_types=result_types,
-        operands=[a],
-        operand_layouts=[layout],
-        result_layouts=[
-          layout,
-          tuple(range(num_bd, -1, -1)),
-          tuple(range(num_bd - 1, -1, -1)),
-        ],
-        operand_output_aliases={0: 0},
-        result_shapes=result_shapes,
-        backend_config={},
-        api_version=4,
-    ).results
+  return custom_call(
+      fn,
+      result_types=result_types,
+      operands=[batch_size_val, ensure_hlo_s32(m), ensure_hlo_s32(n), a],
+      operand_layouts=[scalar_layout] * 3 + [layout],
+      result_layouts=[
+        layout,
+        tuple(range(num_bd, -1, -1)),
+        tuple(range(num_bd - 1, -1, -1)),
+      ],
+      operand_output_aliases={3: 0},
+      result_shapes=result_shapes,
+  ).results
 
 # # ?geqrf: QR decomposition
 
@@ -344,9 +329,8 @@ def orgqr_hlo(dtype, a: ir.Value, tau, *,
 
 def potrf_hlo(ctx, dtype, a: ir.Value, *, lower=False,
               a_shape_vals: tuple[DimensionSize, ...]):
-  _lapack.initialize()
   a_type = ir.RankedTensorType(a.type)
-  fn_base = build_lapack_fn_target(fn_base="potrf", dtype=dtype)
+  fn_base = prepare_lapack_call(fn_base="potrf", dtype=dtype)
   batch_dims_vals = a_shape_vals[:-2]
   num_bd = len(batch_dims_vals)
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
@@ -395,7 +379,6 @@ def potrf_hlo(ctx, dtype, a: ir.Value, *, lower=False,
 
 def gesdd_hlo(ctx, dtype, a: ir.Value, *, full_matrices=True, compute_uv=True,
               a_shape_vals: tuple[DimensionSize, ...]):
-  _lapack.initialize()
   a_type = ir.RankedTensorType(a.type)
   assert len(a_shape_vals) >= 2
   m, n = a_shape_vals[-2:]
@@ -403,7 +386,7 @@ def gesdd_hlo(ctx, dtype, a: ir.Value, *, full_matrices=True, compute_uv=True,
   assert type(n) is int
   batch_dims_vals = a_shape_vals[:-2]
   num_bd = len(batch_dims_vals)
-  fn_base = build_lapack_fn_target(fn_base="gesdd", dtype=dtype)
+  fn_base = prepare_lapack_call(fn_base="gesdd", dtype=dtype)
   i32_type = ir.IntegerType.get_signless(32)
   workspace: list[ShapeTypePair]
 

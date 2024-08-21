@@ -2768,6 +2768,32 @@ _POLY_SHAPE_TEST_HARNESSES = [
         ]
     ],
     [
+      PolyHarness(  # pylint: disable=g-complex-comprehension
+          "lu", f"shape={jtu.format_shape_dtype_string(shape, dtype)}_poly={poly}",
+          lax.linalg.lu,
+          arg_descriptors=[RandArg(shape, dtype)],
+          polymorphic_shapes=[poly],
+          # TODO(b/360788062): Remove once the forward compatibility window is
+          # closed.
+          override_jax_config_flags={
+              "jax_export_ignore_forward_compatibility": True})
+      for dtype in {np.float32, np.float64, np.complex64, np.complex128} & jtu.supported_dtypes()
+      for shape, poly in [
+          ((5, 4), "m, n"),
+          ((2, 0, 4), "b, ..."),
+          ((2, 4, 0), "b, ..."),
+          ((2, 3, 4, 4), "b1, b2, ..."),
+          ((2, 3, 4, 5), "b1, b2, ..."),
+          ((2, 3, 8, 4), "b1, b2, ..."),
+          ((2, 3, 4, 5), "b1, b2, m, n"),
+      ]
+      # TODO(danfm): Remove once jaxlib v0.4.32 is the minimum version.
+      # jaxlib versions before 0.4.32 require a static shape for the non-batch
+      # dimensions because these are used for computing the "permuation_size"
+      # which is passed to lu_pivots_to_permutation.
+      if jaxlib_version >= (0, 4, 32) or not poly.endswith("m, n")
+    ],
+    [
       # The random primitive tests, with threefry (both partitionable and
       # non-partitionable), and unsafe_rbg.
       [
@@ -3390,9 +3416,6 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
     custom_call_harnesses = {
         "householder_product:gpu",
         "vmap_geqrf:gpu",  # used for linalg.qr
-        "vmap_lu:gpu",
-        # custom_linear_solve works as long as lu works.
-        "vmap_custom_linear_solve:gpu",
         "vmap_qr:gpu", "qr:gpu",
         "vmap_svd:gpu",
     }
@@ -3461,6 +3484,12 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
     # TPU precision is a little lower since we swap the order of matmul operands.
     if "cholesky" in harness.group_name and jtu.test_device_matches(["tpu"]):
       harness.tol = 5e-5
+
+    # TODO(b/360788062): Clean up after the compatibility period.
+    if harness.group_name in [
+        "lu", "vmap_lu", "custom_linear_solve", "vmap_custom_linear_solve"
+        ] and jtu.test_device_matches(["gpu"]):
+      config_flags = {**config_flags, "jax_export_ignore_forward_compatibility": True}
 
     with jtu.global_config_context(**config_flags):
       harness.run_test(self)

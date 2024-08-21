@@ -27,6 +27,7 @@ from jax import lax
 
 from jax._src import ad_util
 from jax._src import api
+from jax._src import core
 from jax._src import dispatch
 from jax._src import dtypes
 from jax._src.core import (
@@ -199,7 +200,7 @@ def lu_pivots_to_permutation(pivots: ArrayLike, permutation_size: int) -> Array:
     An int32 array of shape (..., permutation_size).
   """
   permutation = lu_pivots_to_permutation_p.bind(
-      pivots, permutation_size=int(permutation_size))
+      pivots, permutation_size=permutation_size)
   return permutation
 
 
@@ -1164,7 +1165,7 @@ def _generic_lu_pivots_to_permutation(swaps, permutation_size):
 
   permutation = lax.broadcasted_iota(jnp.int32, batch_dims + (m,),
                                      len(batch_dims))
-  if m == 0:
+  if m == 0 or k == 0:
     return permutation
   upper = np.array(k, np.int32) if is_constant_dim(k) else k
   result, _ = lax.fori_loop(np.array(0, np.int32), upper, _lu_pivots_body_fn,
@@ -1200,10 +1201,12 @@ def _lu_pivots_to_permutation_batching_rule(batched_args, batch_dims, *,
 def _lu_pivots_to_permutation_gpu_lowering(platform, ctx, pivots, *,
                                            permutation_size):
   rule = ffi.ffi_lowering(f"{platform}_lu_pivots_to_permutation")
-  return rule(ctx, pivots,
-              # TODO(b/358275922): remove unused parameter 12 weeks after
-              # the release of jaxlib v0.4.32.
-              permutation_size=np.int32(permutation_size))
+  # TODO(b/358275922): remove unused once jaxlib v0.4.32 is the minimum version.
+  if ctx.is_forward_compat() or jaxlib_version < (0, 4, 32):
+    kwargs = dict(permutation_size=np.int32(permutation_size))
+  else:
+    kwargs = {}
+  return rule(ctx, pivots, **kwargs)
 
 
 lu_pivots_to_permutation_p = Primitive('lu_pivots_to_permutation')
@@ -1313,7 +1316,8 @@ def _lu_abstract_eval(operand):
     batch_dims = operand.shape[:-2]
     m = operand.shape[-2]
     n = operand.shape[-1]
-    pivot = operand.update(shape=batch_dims + (min(m, n),), dtype=jnp.int32)
+    pivot = operand.update(shape=batch_dims + (core.min_dim(m, n),),
+                           dtype=jnp.int32)
     perm = operand.update(shape=batch_dims + (m,), dtype=jnp.int32)
   else:
     pivot = operand
@@ -1375,39 +1379,51 @@ def _lu_batching_rule(batched_args, batch_dims):
   x = batching.moveaxis(x, bd, 0)
   return lu_p.bind(x), (0, 0, 0)
 
-def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand, *,
-                         platform: str):
+def _lu_cpu_gpu_lowering(getrf_impl, ctx, operand, *, platform: str,
+                         target_name_prefix: str):
   operand_aval, = ctx.avals_in
-  # It should be possible to support fully-dynamic shapes, but since
-  # the last two dimensions (m, n) are used in more involved ways, we only
-  # support dynamic dimensions for the batch size for now.
-  if not is_constant_shape(operand_aval.shape[-2:]):
-    raise NotImplementedError(
-      "Shape polymorphism for native lowering for lu on CPU and GPU is "
-      f"implemented only for the batch dimensions: {operand_aval.shape}")
-
-  # TODO(b/357034884): Remove once jaxlib 0.4.32 is the minimum version.
-  ctx_arg = (ctx,) if jaxlib_version >= (0, 4, 32) else ()
-
   out_aval, pivot_aval, perm_aval = ctx.avals_out
   batch_dims = operand_aval.shape[:-2]
+  info_aval = ShapedArray(batch_dims, np.dtype(np.int32))
   m = operand_aval.shape[-2]
-  if platform in ["cuda", "rocm"]:
-    # TODO(necula): remove the platform kwarg when we implement GPU support.
-    if not is_constant_shape(operand_aval.shape):
+
+  # TODO(b/357034884): Remove version gate once jaxlib 0.4.32 is the minimum
+  # version and the forward compat flag after the 3 week compatibility window.
+  if jaxlib_version < (0, 4, 32) or ctx.is_forward_compat():
+    if not is_constant_shape(operand_aval.shape[-2:]):
       raise NotImplementedError(
-          "Shape polymorphism for native serialization for lu on GPU is not "
-          f"implemented; b/261671778; {operand_aval.shape}")
-    lu, pivot, info = getrf_impl(*ctx_arg, operand_aval.dtype, operand)
+        "Shape polymorphism for native lowering for lu on CPU and GPU is "
+        f"implemented only for the batch dimensions: {operand_aval.shape}")
+    if platform in ["cuda", "rocm"]:
+      if not is_constant_shape(operand_aval.shape):
+        raise NotImplementedError(
+            "Shape polymorphism for native serialization for lu on GPU is not "
+            f"implemented; b/261671778; {operand_aval.shape}")
+      lu, pivot, info = getrf_impl(operand_aval.dtype, operand)
+    else:
+      op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
+      lu, pivot, info = getrf_impl(
+          operand_aval.dtype, operand, a_shape_vals=op_shape_vals)
   else:
-    op_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, operand_aval.shape)
-    # TODO(b/344892332): Remove the conditional after the compatibility period.
-    lu, pivot, info = getrf_impl(
-        *ctx_arg, operand_aval.dtype, operand, a_shape_vals=op_shape_vals)
+    if target_name_prefix == "cpu":
+      target_name = lapack.prepare_lapack_call("getrf_ffi", operand_aval.dtype)
+    else:
+      target_name = f"{target_name_prefix}solver_getrf_ffi"
+    # We manually construct the layouts because the input and output are
+    # expected to be in Fortran order.
+    nb = len(batch_dims)
+    layout = (nb, nb + 1) + tuple(range(nb - 1, -1, -1))
+    result_layouts = [layout, tuple(range(nb, -1, -1)),
+                      tuple(range(nb - 1, -1, -1))]
+    rule = ffi.ffi_lowering(target_name, operand_layouts=[layout],
+                            result_layouts=result_layouts,
+                            operand_output_aliases={0: 0})
+    sub_ctx = ctx.replace(avals_out=[out_aval, pivot_aval, info_aval])
+    lu, pivot, info = rule(sub_ctx, operand)
+
   # Subtract 1 from the pivot to get 0-based indices.
   pivot = hlo.subtract(pivot, mlir.full_like_aval(ctx, 1, pivot_aval))
-  ok = mlir.compare_hlo(
-      info, mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32))),
+  ok = mlir.compare_hlo(info, mlir.full_like_aval(ctx, 0, info_aval),
       "GE", "SIGNED")
   select_lu_aval = ShapedArray(batch_dims + (1, 1), np.dtype(np.bool_))
   lu = _broadcasting_select_hlo(
@@ -1452,16 +1468,16 @@ batching.primitive_batchers[lu_p] = _lu_batching_rule
 
 mlir.register_lowering(lu_p,
                         partial(_lu_cpu_gpu_lowering, lapack.getrf_hlo,
-                                platform='cpu'),
+                                platform='cpu', target_name_prefix="cpu"),
                         platform='cpu')
 
 mlir.register_lowering(
     lu_p, partial(_lu_cpu_gpu_lowering, gpu_solver.cuda_getrf,
-                  platform='cuda'),
+                  platform='cuda', target_name_prefix="cu"),
     platform='cuda')
 mlir.register_lowering(
     lu_p, partial(_lu_cpu_gpu_lowering, gpu_solver.rocm_getrf,
-                  platform='rocm'),
+                  platform='rocm', target_name_prefix="hip"),
     platform='rocm')
 
 mlir.register_lowering(lu_p, _lu_tpu_lowering_rule, platform='tpu')
