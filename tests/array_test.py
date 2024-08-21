@@ -1410,7 +1410,7 @@ class RngShardingTest(jtu.JaxTestCase):
       self.assertArraysEqual(y, y_ref1)
 
   def test_empty_mesh_creation(self):
-    mesh = jax.sharding.Mesh(devices=np.empty([]), axis_names=[])
+    mesh = jax.sharding.Mesh(devices=np.empty((), dtype=object), axis_names=[])
     self.assertTrue(mesh.empty)
     self.assertEqual(mesh.size, 0)
 
