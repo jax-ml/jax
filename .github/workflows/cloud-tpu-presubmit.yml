@@ -34,6 +34,7 @@ jobs:
       - name: Install JAX test requirements
         run: |
           pip install -U -r build/test-requirements.txt
+          sleep 3600
       # TODO: build jax should be done on a step prior or we should just bazel test
       - name: Wait For Connection
         uses: google-ml-infra/jax-fork/actions/ci_connection@61e7d8d6c273b102e4a6271c1e84bd0a4febc8cb
