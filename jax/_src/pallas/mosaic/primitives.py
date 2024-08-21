@@ -159,7 +159,10 @@ class DeviceIdType(enum.Enum):
 
 def check_sem_avals(sem_aval, sem_indexers_avals, name, allowed_semaphore_types=None):
   if allowed_semaphore_types is None:
-    allowed_semaphore_types = {tpu_core.semaphore, tpu_core.barrier_semaphore}
+      allowed_semaphore_types = {tpu_core.semaphore,
+                                 tpu_core.barrier_semaphore,
+                                 # For interpret mode.
+                                 pl_core.SEMAPHORE_INTERPRET_DTYPE}
   if not isinstance(sem_aval, state.AbstractRef):
     raise ValueError(f"Cannot {name} on a non-semaphore Ref: {sem_aval}")
   sem_shape = sem_aval.shape
@@ -174,9 +177,20 @@ def check_sem_avals(sem_aval, sem_indexers_avals, name, allowed_semaphore_types=
   ):
     raise ValueError(
         f"Must {name} semaphores of the following types:"
-        f" {allowed_semaphore_types}"
+        f" {allowed_semaphore_types}."
     )
 
+def _index_semaphore(ref_value, indexers, ref_aval):
+  """Helper function for indexing into a semaphore during state_discharge."""
+  if ref_value.shape == ref_aval.shape:
+    return state_discharge.index_array(ref_value, indexers)
+  elif len(ref_value.shape) == 0:
+    return ref_value
+  else:
+    raise ValueError(
+        f"Semaphore value shape {ref_value.shape} does not match aval shape"
+        f" {ref_aval.shape}"
+    )
 
 semaphore_read_p = jax_core.Primitive("semaphore_read")
 semaphore_read_p.multiple_results = False
@@ -199,10 +213,26 @@ def _semaphore_read_abstract_eval(
       sem_indexers_avals,
       "read",
       allowed_semaphore_types={
-          tpu_core.dma_semaphore, tpu_core.semaphore, tpu_core.barrier_semaphore
+          tpu_core.dma_semaphore,
+          tpu_core.semaphore,
+          tpu_core.barrier_semaphore,
+          pl_core.SEMAPHORE_INTERPRET_DTYPE,
       },
   )
   return jax_core.ShapedArray((), jnp.dtype("int32"))
+
+def _semaphore_read_discharge_rule(in_avals,
+                                   out_avals,
+                                   *flat_args,
+                                   args_tree):
+  del out_avals
+  [ref, indexers] = args_tree.unflatten(flat_args)
+  sem_value = _index_semaphore(ref, indexers, in_avals[0])
+  sem_value = sem_value.astype(jnp.int32)
+  return (None,) * len(in_avals), sem_value
+state_discharge.register_discharge_rule(semaphore_read_p)(
+    _semaphore_read_discharge_rule
+)
 
 
 semaphore_signal_p = jax_core.Primitive('semaphore_signal')
@@ -281,6 +311,29 @@ def _semaphore_signal_pp_eqn(eqn: jax_core.JaxprEqn,
   return out
 jax_core.pp_eqn_rules[semaphore_signal_p] = _semaphore_signal_pp_eqn
 
+
+def _semaphore_signal_discharge_rule(in_avals,
+                                     out_avals,
+                                     *flat_args,
+                                     args_tree,
+                                     device_id_type):
+  del out_avals, device_id_type
+  [ref, indexers, inc, device_id, core_index] = args_tree.unflatten(flat_args)
+  if device_id is not None:
+    raise NotImplementedError("Remote signal not implemented.")
+  if core_index is not None:
+    raise NotImplementedError("Multiple core support not implemented.")
+  sem_value = _index_semaphore(ref, indexers, in_avals[0])
+  inc = inc.astype(pl_core.SEMAPHORE_INTERPRET_DTYPE)
+  _, new_sem_value = state_discharge.index_swap_array(
+      ref, indexers, sem_value + inc
+  )
+  return (new_sem_value,) + (None,) * (len(in_avals) - 1), ()
+state_discharge.register_discharge_rule(semaphore_signal_p)(
+    _semaphore_signal_discharge_rule
+)
+
+
 semaphore_wait_p = jax_core.Primitive('semaphore_wait')
 semaphore_wait_p.multiple_results = True
 
@@ -318,6 +371,22 @@ def _semaphore_wait_pp_eqn(eqn: jax_core.JaxprEqn,
       pp.text(jax_core.pp_var(value, context)),
   ])
 jax_core.pp_eqn_rules[semaphore_wait_p] = _semaphore_wait_pp_eqn
+
+def _semaphore_wait_discharge_rule(in_avals,
+                                     out_avals,
+                                     *flat_args,
+                                     args_tree):
+  del out_avals
+  [ref, indexers, dec] = args_tree.unflatten(flat_args)
+  sem_value = _index_semaphore(ref, indexers, in_avals[0])
+  dec = dec.astype(pl_core.SEMAPHORE_INTERPRET_DTYPE)
+  _, new_sem_value = state_discharge.index_swap_array(
+      ref, indexers, sem_value -dec
+  )
+  return (new_sem_value,) + (None,) * (len(in_avals) - 1), ()
+state_discharge.register_discharge_rule(semaphore_wait_p)(
+    _semaphore_wait_discharge_rule
+)
 
 
 @dataclasses.dataclass
@@ -464,22 +533,26 @@ def dma_start_discharge_rule(in_avals, out_avals,
       src_indexers_avals,
       _,
       dst_indexers_avals,
-      *_
+      dst_sem_aval,
+      dst_sem_indexers_avals,
+      src_sem_aval,
+      src_sem_indexers_avals,
+      _,
   ) = tree_util.tree_unflatten(tree, in_avals)
-  del out_avals, dst_sem, dst_sem_indexers
+  del out_avals
   is_remote = device_id is not None
   if not is_remote:
     # Local async copies only use one semaphore.
     assert src_sem is None
     assert src_sem_indexers is None
 
+  num_src_sem_indexers = len(tree_util.tree_leaves(src_sem_indexers_avals))
+  num_dst_sem_indexers = len(tree_util.tree_leaves(dst_sem_indexers_avals))
   num_src_index_vals = len(tree_util.tree_leaves(src_indexers_avals))
   num_dst_index_vals = len(tree_util.tree_leaves(dst_indexers_avals))
 
-  if src_indexers:
-    updates = state_discharge.index_array(src_ref, src_indexers)
-  else:
-    updates = src_ref
+  updates = state_discharge.index_array(src_ref, src_indexers)
+  local_src = updates
 
   if is_remote:
     # Note that this code only works in SPMD mode. If not all devices execute
@@ -520,6 +593,9 @@ def dma_start_discharge_rule(in_avals, out_avals,
     global_updates = jax.lax.all_gather(updates, shard_axis)
     updates = jax.lax.dynamic_index_in_dim(
         global_updates, index, axis=0, keepdims=False)
+    global_dst_sem = jax.lax.all_gather(dst_sem, shard_axis)
+    dst_sem = jax.lax.dynamic_index_in_dim(
+        global_dst_sem, index, axis=0, keepdims=False)
 
     # Handle asymmetrical indexing when devices do not share the same
     # dst_indexer.
@@ -528,25 +604,45 @@ def dma_start_discharge_rule(in_avals, out_avals,
     dst_indexers = tree_util.tree_map(
         lambda x: jax.lax.dynamic_index_in_dim(
             x, index, axis=0, keepdims=False), global_dst_indexers)
+    global_dst_sem_indexers = tree_util.tree_map(
+        lambda x: jax.lax.all_gather(x, shard_axis), dst_sem_indexers)
+    dst_sem_indexers = tree_util.tree_map(
+        lambda x: jax.lax.dynamic_index_in_dim(
+            x, index, axis=0, keepdims=False), global_dst_sem_indexers)
 
-  if dst_indexers:
-    _, new_dst = state_discharge.index_swap_array(
-        dst_ref, dst_indexers, updates
+  _, new_dst = state_discharge.index_swap_array(
+      dst_ref, dst_indexers, updates
+  )
+
+  # Update semaphore values.
+  recv_size = jnp.array(updates.size, dtype=pl_core.SEMAPHORE_INTERPRET_DTYPE)
+  dst_sem_value = _index_semaphore(dst_sem, dst_sem_indexers, dst_sem_aval)
+  _, new_dst_sem = state_discharge.index_swap_array(
+      dst_sem, dst_sem_indexers, dst_sem_value + recv_size
+  )
+  if is_remote:
+    send_size = jnp.array(
+        local_src.size, dtype=pl_core.SEMAPHORE_INTERPRET_DTYPE)
+    src_sem_value = _index_semaphore(src_sem, src_sem_indexers, src_sem_aval)
+    _, new_src_sem = state_discharge.index_swap_array(
+        src_sem, src_sem_indexers, src_sem_value + send_size
     )
   else:
-    new_dst = updates
+    new_src_sem = None
 
-  # TODO(b/345505876): Implement semaphore counting.
-  new_avals = (None,)  # src_aval
-  new_avals += (None,) * num_src_index_vals
-  new_avals += (new_dst,)  # dst_aval
-  new_avals += (None,) * num_dst_index_vals
-  new_avals += (None,)  # dst_sem_aval
+  new_vals = (None,)  # src_val
+  new_vals += (None,) * num_src_index_vals
+  new_vals += (new_dst,)  # dst_val
+  new_vals += (None,) * num_dst_index_vals
+  new_vals += (new_dst_sem,)  # dst_sem
+  new_vals += (None,) * num_dst_sem_indexers
   if is_remote:
-    new_avals += (None, None)  # src_sem_aval, device_id
-  assert (len(new_avals) ==
-          len(in_avals)), f"{len(new_avals), new_avals} != {len(in_avals)}"
-  return new_avals, []
+    new_vals += (new_src_sem,) # src_sem
+    new_vals += (None,) * num_src_sem_indexers
+    new_vals += (None,)  # device_id
+  assert (len(new_vals) ==
+          len(in_avals)), f"{len(new_vals), new_vals} != {len(in_avals)}"
+  return new_vals, []
 
 state_discharge.register_discharge_rule(dma_start_p)(dma_start_discharge_rule)
 
@@ -578,9 +674,27 @@ jax_core.pp_eqn_rules[dma_wait_p] = _dma_wait_pp_eqn
 
 def dma_wait_discharge_rule(in_avals, out_avals,
                              *args, tree, device_id_type):
-  del out_avals, args, tree, device_id_type
-  # TODO(justinfu): Implement semaphore counting.
-  return (None,) * len(in_avals), []
+  del out_avals, device_id_type
+  (sem, sem_indexers, ref, ref_indexers) = tree_util.tree_unflatten(tree, args)
+  (
+      sem_aval,
+      sem_indexers_avals,
+      _,
+      ref_indexers_avals,
+  ) = tree_util.tree_unflatten(tree, in_avals)
+  num_sem_indexers = len(tree_util.tree_leaves(sem_indexers_avals))
+  num_indexers = len(tree_util.tree_leaves(ref_indexers_avals))
+  updates = state_discharge.index_array(ref, ref_indexers)
+  copy_size = jnp.array(updates.size, dtype=pl_core.SEMAPHORE_INTERPRET_DTYPE)
+  sem_value = _index_semaphore(sem, sem_indexers, sem_aval)
+  _, new_sem = state_discharge.index_swap_array(
+      sem, sem_indexers, sem_value - copy_size
+  )
+  new_vals = (new_sem,)  # sem
+  new_vals += (None,) * num_sem_indexers
+  new_vals += (None,)  # ref
+  new_vals += (None,) * num_indexers
+  return new_vals, []
 state_discharge.register_discharge_rule(dma_wait_p)(dma_wait_discharge_rule)
 
 def _get_ref_and_indexers(ref):

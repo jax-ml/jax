@@ -59,6 +59,12 @@ StaticGrid = tuple[int, ...]
 GridMappingGrid = tuple[int | DynamicGridDim, ...]
 OriginStr = str  # The origin of a block spec, e.g. input[2]["field"]
 
+# Datatype for semaphore values in interpret mode.
+# For now, we choose a relatively uncommon datatype (i16) so it is more easily
+# identifiable in kernels.
+# TODO(justinfu): Handle semaphores with a custom extended dtype.
+SEMAPHORE_INTERPRET_DTYPE = jnp.int16
+
 
 @dataclasses.dataclass(frozen=True)
 class CompilerParams:

@@ -99,7 +99,7 @@ class barrier_semaphore(semaphore_dtype): pass
 class AbstractSemaphoreTyRules:
   @staticmethod
   def pallas_interpret_element_aval(_) -> jax_core.ShapedArray:
-    return pallas_core.index_map_grid_aval
+    return jax_core.ShapedArray((), pallas_core.SEMAPHORE_INTERPRET_DTYPE)
 
 class AbstractSemaphoreTy(dtypes.ExtendedDType):
   name: str
@@ -142,7 +142,7 @@ class SemaphoreType(enum.Enum):
     else:
       dtype = SemaphoreTy()
     if pallas_core.is_interpret_mode():
-      dtype = jnp.int32
+      dtype = pallas_core.SEMAPHORE_INTERPRET_DTYPE
     return MemoryRef(shape, dtype, TPUMemorySpace.SEMAPHORE)
 
   def get_aval(self) -> AbstractMemoryRef:
