@@ -522,9 +522,9 @@ class FragmentedArray:
     warp_result = utils.warp_tree_reduce(result, op, 32)
     warp_id = arith.divui(gpu.thread_id(gpu.Dimension.x), c(32, index))
     memref.store(warp_result, scratch, [warp_id])
-    utils.commit_shared()
+    utils.warpgroup_barrier()
     zero_index = c(0, index)
-    with mgpu.single_thread():
+    with mgpu.single_thread(per_block=False):
       scratch_vec = vector.load(
           ir.VectorType.get((4,), self.mlir_dtype),
           scratch,
@@ -534,7 +534,7 @@ class FragmentedArray:
           self.mlir_dtype, vector.CombiningKind.ADD, scratch_vec
       )
       memref.store(scratch_sum, scratch, [zero_index])
-    utils.commit_shared()
+    utils.warpgroup_barrier()
     return memref.load(scratch, [zero_index])
 
   def reduce(self, op, axis):
