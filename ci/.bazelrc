@@ -415,10 +415,13 @@ build:rbe_cross_compile_macos_x86 --config=rbe_cross_compile_base
 # #############################################################################
 test --test_output=errors
 
+# Disable building jaxlib. Instead we depend on the local wheel. 
+test:local_gpu --//jax:build_jaxlib=false 
+test:local_gpu --test_env=JAX_SKIP_SLOW_TESTS=1 --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform
+
 # Non-multiaccelerator tests with one GPU apiece.
-test:non_multiaccelerator --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform
-test:non_multiaccelerator --test_env=JAX_SKIP_SLOW_TESTS=1 
-test:non_multiaccelerator --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform
+test:non_multiaccelerator --config=local_gpu
+# `JAX_ACCELERATOR_COUNT` needs to match the number of GPUs in the VM.
 test:non_multiaccelerator --test_env=JAX_TESTS_PER_ACCELERATOR=12 --test_env=JAX_ACCELERATOR_COUNT=4
 
 # The product of the `JAX_ACCELERATOR_COUNT`` and `JAX_TESTS_PER_ACCELERATOR`
@@ -426,7 +429,10 @@ test:non_multiaccelerator --test_env=JAX_TESTS_PER_ACCELERATOR=12 --test_env=JAX
 test:non_multiaccelerator --local_test_jobs=48 
 test:non_multiaccelerator --test_env=JAX_EXCLUDE_TEST_TARGETS=PmapTest.testSizeOverflow
 test:non_multiaccelerator --test_tag_filters=-multiaccelerator
-test:non_multiaccelerator --//jax:build_jaxlib=false
+
+# Runs multiaccelerator tests with all GPUs.
+test:multiaccelerator --config=local_gpu
+test:multiaccelerator --jobs=8 --test_tag_filters=multiaccelerator
 
 #############################################################################
 # Some configs to make getting some forms of debug builds. In general, the

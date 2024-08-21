@@ -26,19 +26,11 @@ jaxrun "$JAXCI_PYTHON" -c "import jax; print(jax.default_backend()); print(jax.d
 # It appears --run_under needs an absolute path.
 jaxrun bazel --bazelrc=ci/.bazelrc test --config="$BAZEL_CONFIG_CUDA" --config=non_multiaccelerator \
   --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
-  --run_under "$(pwd)/build/parallel_accelerator_execute.sh" \
+  --run_under "$container_workdir_path/build/parallel_accelerator_execute.sh" \
   //tests:gpu_tests //tests:backend_independent_tests //tests/pallas:gpu_tests //tests/pallas:backend_independent_tests
 
 # Runs multiaccelerator tests with all GPUs.
-# (Below if $1="python3.12" then ${1:6}="3.12")
-# bazel test \
-#   --repo_env=HERMETIC_PYTHON_VERSION="${1:6}" \
-#   --//jax:build_jaxlib=false \
-#   --config=nvcc_clang \
-#   //tests:gpu_tests \
-#   //tests/pallas:gpu_tests \
-#   --test_env=XLA_PYTHON_CLIENT_ALLOCATOR=platform \
-#   --test_output=errors \
-#   --jobs=8 \
-#   --test_env=JAX_SKIP_SLOW_TESTS=1 \
-#   --test_tag_filters=multiaccelerator
+jaxrun bazel --bazelrc=ci/.bazelrc test --config="$BAZEL_CONFIG_CUDA" --config=multiaccelerator \
+       --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
+       //tests:gpu_tests \
+       //tests/pallas:gpu_tests
