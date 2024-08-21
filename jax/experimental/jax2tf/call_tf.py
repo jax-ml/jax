@@ -255,7 +255,11 @@ def call_tf(
           lambda x: x if x is None else tf.convert_to_tensor(x),
           dres_darg,
       )
-      tf.nest.assert_same_structure(dres_darg, args_tf)
+
+      # callable_tf may mutate (the structure of) args_tf, thus we check against
+      # watched_args_tf which should be structurally the same as the original
+      # args_tf.
+      tf.nest.assert_same_structure(dres_darg, watched_args_tf)
       return dres_darg
 
     # Use call_tf to call the VJP function
