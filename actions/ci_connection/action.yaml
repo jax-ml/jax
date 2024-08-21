@@ -8,11 +8,11 @@ inputs:
   should-wait-retry-tag:
     description: "Tag that will flag action to wait on reruns if present"
     required: false
-    default: "halt_on_retry"
+    default: "CI Connection Halt - On Retry"
   should-wait-always-tag:
     description: "Tag that will flag action to wait on reruns if present"
     required: false
-    default: "halt_always"
+    default: "CI Connection Halt - Always"
   repository:
       description: 'Repository name with owner. For example, actions/checkout'
       default: ${{ github.repository }}

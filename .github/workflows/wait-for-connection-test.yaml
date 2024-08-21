@@ -16,10 +16,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  cpu-stress:
+  wait-test:
     strategy:
       matrix:
-        runner: ["arc-linux-x86-n2-64"]
+        runner: ["arc-linux-x86-n2-64","arc-linux-arm64-t2a-48"]
         instances: ["1"]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
