@@ -36,7 +36,9 @@ jobs:
           pip install -U -r build/test-requirements.txt
       # TODO: build jax should be done on a step prior or we should just bazel test
       - name: Wait For Connection
-        uses: google-ml-infra/jax-fork/actions/ci_connection@28deea80eeffa1e98ba84ebb29200b7b00c1b61f
+        uses: google-ml-infra/jax-fork/actions/ci_connection@61e7d8d6c273b102e4a6271c1e84bd0a4febc8cb
+        with:
+          halt-dispatch-input: "1"
       - name: Build JAX
         run: |
           pip uninstall -y jaxlib
