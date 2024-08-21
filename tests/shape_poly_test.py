@@ -3431,6 +3431,9 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
         # TODO(danfm): remove these checks when jaxlib 0.4.32 is released.
         "lu_pivots_to_permutation:gpu": (0, 4, 32),
         "lu_pivots_to_permutation_error:gpu": (0, 4, 32),
+        "lu:gpu": (0, 4, 32),
+        "vmap_lu:gpu": (0, 4, 32),
+        "vmap_custom_linear_solve:gpu": (0, 4, 32),
     }
     if version_gated.get(name_device_key, jaxlib_version) > jaxlib_version:
       raise unittest.SkipTest(f"shape polymorphism not supported by jaxlib version {jaxlib_version}")
