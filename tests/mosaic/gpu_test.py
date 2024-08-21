@@ -1192,6 +1192,26 @@ class FragmentedArrayTest(TestCase):
 
     np.testing.assert_array_equal(result, x)
 
+  @parameterized.named_parameters(
+      ("_bf16", jnp.bfloat16)
+  )
+  def test_fast_i8_convert(self, jax_dtype_to):
+    jax_dtype_to = jnp.dtype(jax_dtype_to)
+    jax_dtype_from = jnp.dtype(jnp.int8)
+    mlir_dtype_to = mlir.dtype_to_ir_type(jax_dtype_to)
+    def kernel(ctx, inp, out, smem):
+      del ctx, smem
+      arr = mgpu.FragmentedArray.load_strided(inp)
+      arr.astype(mlir_dtype_to).store_untiled(out)
+
+    x = jnp.arange(-128, 128, dtype=jax_dtype_from)
+    reference = x.astype(jax_dtype_to)
+
+    result = mosaic_gpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), x, reference, None,
+    )(x)
+    np.testing.assert_array_equal(result, reference)
+
 
 class ProfilerTest(TestCase):
 
