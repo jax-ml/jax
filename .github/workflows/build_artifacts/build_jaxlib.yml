@@ -1,0 +1,23 @@
+name: Build Jaxlib
+
+on:
+  # Trigger the workflow on a pull request targetting the main branch.
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: "Build Jaxlib"
+    env:
+      ENV_FILE: ci/envs/build_artifacts/jaxlib/linux_x86/py312
+    strategy:
+      matrix:
+        include:
+          - runner: "arc-linux-x86-n2-64"
+          - container:
+              image: "index.docker.io/tensorflow/build@sha256:7fb38f0319bda36393cad7f40670aa22352b44421bb906f5cf34d543acd8e1d2"
+    steps:
+    - uses: actions/checkout@v3
+    - name: Run build script
+      run: ./ci/build_artifacts.sh

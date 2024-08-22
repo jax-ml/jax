@@ -30,5 +30,4 @@ jaxrun bazel --bazelrc=ci/.bazelrc test --config=ci_linux_x86_64_cuda --config=n
 # Runs multiaccelerator tests with all GPUs.
 jaxrun bazel --bazelrc=ci/.bazelrc test --config=ci_linux_x86_64_cuda --config=multiaccelerator \
        --repo_env=HERMETIC_PYTHON_VERSION="$JAXCI_HERMETIC_PYTHON_VERSION" \
-       //tests:gpu_tests \
-       //tests/pallas:gpu_tests
+       //tests:gpu_tests //tests/pallas:gpu_tests
