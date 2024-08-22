@@ -34,7 +34,8 @@ def image_by_name(name):
 
 
 def dist_wheels(
-    rocm_version, python_versions, xla_path, rocm_build_job="", rocm_build_num=""
+    rocm_version, python_versions, xla_path, rocm_build_job="", rocm_build_num="",
+    compiler="gcc"
 ):
     if xla_path:
         xla_path = os.path.abspath(xla_path)
@@ -71,6 +72,8 @@ def dist_wheels(
         rocm_version,
         "--python-versions",
         pyver_string,
+        "--compiler",
+        compiler,
     ]
 
     if xla_path:
@@ -91,6 +94,9 @@ def dist_wheels(
         mounts.extend(["-v", "%s:%s" % (xla_path, container_xla_path)])
 
     cmd.extend(mounts)
+
+    if os.isatty(sys.stdout.fileno()):
+        cmd.append("-it")
 
     # NOTE(mrodden): bazel times out without --init, probably blocking on a zombie PID
     cmd.extend(
@@ -251,6 +257,12 @@ def parse_args():
         help="Path to XLA source to use during jaxlib build, instead of builtin XLA",
     )
 
+    p.add_argument(
+        "--compiler",
+        choices=["gcc", "clang"],
+        help="Compiler backend to use when compiling jax/jaxlib"
+    )
+
     subp = p.add_subparsers(dest="action", required=True)
 
     dwp = subp.add_parser("dist_wheels")
@@ -288,6 +300,7 @@ def main():
             args.xla_source_dir,
             args.rocm_build_job,
             args.rocm_build_num,
+            args.compiler,
         )
         dist_docker(
             args.rocm_version,
