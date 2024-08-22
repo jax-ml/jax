@@ -194,8 +194,7 @@ struct QrFactorization {
 
   static ::xla::ffi::Error Kernel(
       ::xla::ffi::Buffer<dtype> x, ::xla::ffi::ResultBuffer<dtype> x_out,
-      ::xla::ffi::ResultBuffer<dtype> tau,
-      ::xla::ffi::ResultBuffer<LapackIntDtype> info);
+      ::xla::ffi::ResultBuffer<dtype> tau);
 
   static int64_t GetWorkspaceSize(lapack_int x_rows, lapack_int x_cols);
 };
