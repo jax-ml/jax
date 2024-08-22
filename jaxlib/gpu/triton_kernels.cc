@@ -31,7 +31,6 @@
 #include "jaxlib/gpu/triton_utils.h"
 #include "jaxlib/gpu/vendor.h"
 #include "xla/service/custom_call_status.h"
-#include "tsl/platform/env.h"
 
 #ifdef JAX_GPU_CUDA
 #include "xla/stream_executor/cuda/cuda_asm_compiler.h"
@@ -137,14 +136,18 @@ absl::StatusOr<KernelCall*> GetKernelCall(absl::string_view opaque,
                                           gpuStream_t stream, void** buffers) {
   static absl::Mutex mutex;
   static auto& kernel_calls =
-      *new absl::flat_hash_map<std::string, std::unique_ptr<KernelCall>>
+      *new absl::flat_hash_map<std::string,
+                               absl::StatusOr<std::unique_ptr<KernelCall>>>
           ABSL_GUARDED_BY(mutex);
 
   {
     // Fast path uses reader lock (as hash map look-up is relatively slow).
     absl::ReaderMutexLock lock(&mutex);
     auto it = kernel_calls.find(opaque);
-    if (ABSL_PREDICT_TRUE(it != kernel_calls.end())) return it->second.get();
+    if (ABSL_PREDICT_TRUE(it != kernel_calls.end())) {
+      JAX_RETURN_IF_ERROR(it->second.status());
+      return it->second->get();
+    }
   }
 
   if (opaque.empty()) {
@@ -152,37 +155,41 @@ absl::StatusOr<KernelCall*> GetKernelCall(absl::string_view opaque,
   }
 
   absl::MutexLock lock(&mutex);
-  std::unique_ptr<KernelCall>& kernel_call = kernel_calls[opaque];
-  // We released the reader lock, so it may have been written by another thread.
-  if (kernel_call != nullptr) return kernel_call.get();
 
-  // The opaque data is a zlib compressed protobuf.
-  JAX_ASSIGN_OR_RETURN(std::string serialized, ZlibUncompress(opaque));
+  auto get_kernel_call = [&]() -> absl::StatusOr<std::unique_ptr<KernelCall>> {
+    // The opaque data is a zlib compressed protobuf.
+    JAX_ASSIGN_OR_RETURN(std::string serialized, ZlibUncompress(opaque));
 
-  jax_triton::TritonAnyKernelCall proto;
-  if (!proto.ParseFromString(serialized)) {
-    return absl::InvalidArgumentError("Failed to parse serialized data.");
-  }
-
-  if (proto.has_kernel_call()) {
-    JAX_ASSIGN_OR_RETURN(KernelCall kernel_call_,
-                         KernelCall::FromProto(proto.kernel_call()));
-    kernel_call = std::make_unique<KernelCall>(std::move(kernel_call_));
-  } else if (proto.has_autotuned_kernel_call()) {
-    JAX_ASSIGN_OR_RETURN(
-        AutotunedKernelCall autotuned_call,
-        AutotunedKernelCall::FromProto(proto.autotuned_kernel_call()));
-    {
-      JAX_ASSIGN_OR_RETURN(KernelCall kernel_call_,
-                           AutotunedKernelCall::Autotune(
-                               std::move(autotuned_call), stream, buffers));
-      kernel_call = std::make_unique<KernelCall>(std::move(kernel_call_));
+    jax_triton::TritonAnyKernelCall proto;
+    if (!proto.ParseFromString(serialized)) {
+      return absl::InvalidArgumentError("Failed to parse serialized data.");
     }
-  } else {
-    return absl::InvalidArgumentError("Unknown kernel call type.");
-  }
 
-  return kernel_call.get();
+    if (proto.has_kernel_call()) {
+      JAX_ASSIGN_OR_RETURN(KernelCall kernel_call_,
+                           KernelCall::FromProto(proto.kernel_call()));
+      return std::make_unique<KernelCall>(std::move(kernel_call_));
+    } else if (proto.has_autotuned_kernel_call()) {
+      JAX_ASSIGN_OR_RETURN(
+          AutotunedKernelCall autotuned_call,
+          AutotunedKernelCall::FromProto(proto.autotuned_kernel_call()));
+      {
+        JAX_ASSIGN_OR_RETURN(KernelCall kernel_call_,
+                             AutotunedKernelCall::Autotune(
+                                 std::move(autotuned_call), stream, buffers));
+        return std::make_unique<KernelCall>(std::move(kernel_call_));
+      }
+    } else {
+      return absl::InvalidArgumentError("Unknown kernel call type.");
+    }
+  };
+
+  // We released the reader lock, so it may have been written by another thread.
+  // Create a new entry if it already exists or create a new one.
+  auto it = kernel_calls.emplace(std::string(opaque), get_kernel_call()).first;
+
+  JAX_RETURN_IF_ERROR(it->second.status());
+  return it->second->get();
 }
 
 }  // namespace
