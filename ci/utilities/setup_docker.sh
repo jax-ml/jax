@@ -29,7 +29,13 @@ if ! docker container inspect jax >/dev/null 2>&1 ; then
     # port-forwarding is required for the container to detect it's running on GCE.
     export IP_ADDR=$(powershell -command "(Get-NetIPAddress -AddressFamily IPv4 -InterfaceAlias 'vEthernet (nat)').IPAddress")
     netsh interface portproxy add v4tov4 listenaddress=$IP_ADDR listenport=80 connectaddress=169.254.169.254 connectport=80
-    JAXCI_DOCKER_ARGS="-e GCE_METADATA_HOST=$IP_ADDR $JAXCI_DOCKER_ARGS"
+    JAXCI_DOCKER_ARGS="$JAXCI_DOCKER_ARGS -e GCE_METADATA_HOST=$IP_ADDR"
+  else
+    # The volume mapping flag below shares the user's gcloud credentials, if any,
+    # with the container, in case the user has credentials stored there.
+    # This would allow Bazel to authenticate for RBE.
+    # Note: JAX's CI does not have any credentials stored there.
+    JAXCI_DOCKER_ARGS="$JAXCI_DOCKER_ARGS -v $HOME/.config/gcloud:/root/.config/gcloud"
   fi
 
   docker run $JAXCI_DOCKER_ARGS --name jax -w $JAXCI_CONTAINER_WORK_DIR -itd --rm \
