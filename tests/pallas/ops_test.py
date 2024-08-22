@@ -1579,13 +1579,14 @@ class TpuOpsTest(PallasBaseTest):
   @parameterized.parameters([-3.2, -1.0, -0.4, 0., 0.72, 1.0, 2.4])
   def test_erf_inv(self, x):
     @jax.jit
-    @functools.partial(
-        pl.pallas_call,
-        # TODO(ayx): add float64 support for `erf_inv`
-        out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
-    )
-    def kernel(x_ref, o_ref):
-      o_ref[...] = lax.erf_inv(x_ref[...])
+    # @functools.partial(
+    #     pl.pallas_call,
+    #     # TODO(ayx): add float64 support for `erf_inv`
+    #     out_shape=jax.ShapeDtypeStruct((8, 128), jnp.float32),
+    # )
+    
+    def kernel(x_ref):
+      return lax.erf_inv(x_ref)
 
     x = jnp.full((8, 128), x)
     out = kernel(x)
