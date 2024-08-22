@@ -1091,6 +1091,13 @@ def _load_lowering_rule(ctx: LoweringRuleContext, *args_flat, args_tree, **_):
       raise ValueError("Can only load scalars from SMEM")
     return _maybe_cast_load_to_bool(
         aval_out, memref.LoadOp(ref, starts).result)
+  elif str(ref_type.memory_space) != "#tpu.memory_space<vmem>":
+    extra = ""
+    if str(ref_type.memory_space) == "#tpu.memory_space<any>":
+      extra = " ANY memory space can only be accessed using async_copy."
+    raise ValueError(
+        "Loads are only allowed on VMEM and SMEM references." + extra
+    )
   load_aval = jax_core.ShapedArray(sizes, dtype=ref_aval.dtype)
   if need_stride:
     load_val = tpu.StridedLoadOp(
@@ -1226,6 +1233,13 @@ def _masked_swap_lowering_rule(
     val = _maybe_cast_store_to_memref_type(val_aval, val)
     memref.StoreOp(val, ref, starts)
     return result
+  elif str(ref_type.memory_space) != "#tpu.memory_space<vmem>":
+    extra = ""
+    if str(ref_type.memory_space) == "#tpu.memory_space<any>":
+      extra = " ANY memory space can only be accessed using async_copy."
+    raise ValueError(
+        "Loads and stores are only allowed on VMEM and SMEM references." + extra
+    )
   mem_slice_shape = list(aval_out.shape)
   for i, a in enumerate(idx_aval.indices):
     if not isinstance(a, primitives.Slice):
