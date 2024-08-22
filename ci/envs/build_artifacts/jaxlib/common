@@ -1,0 +1,6 @@
+# Inherit the environment variables from the parent directory's common config
+# file.
+source ci/envs/common
+
+# Enable jaxlib build.
+export JAXCI_BUILD_JAXLIB_ENABLE="1"

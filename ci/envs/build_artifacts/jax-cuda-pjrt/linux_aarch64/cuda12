@@ -1,0 +1,9 @@
+# Inherit the environment variables from the parent directory's common config
+# file.
+source ci/envs/common
+source ci/envs/build_artifacts/jax-cuda-pjrt/common
+
+export JAXCI_DOCKER_IMAGE="us-central1-docker.pkg.dev/tensorflow-sigs/tensorflow/build-arm64:jax-latest-multi-python"
+
+# Temporary; for local testing.
+export JAXCI_GIT_DIR="/home/kbuilder/jax"

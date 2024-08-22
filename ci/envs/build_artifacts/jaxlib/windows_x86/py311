@@ -1,0 +1,12 @@
+# Inherit the environment variables from the parent directory's common config
+# file.
+source ci/envs/common
+source ci/envs/build_artifacts/jaxlib/common
+
+export JAXCI_HERMETIC_PYTHON_VERSION=3.11
+export JAXCI_DOCKER_IMAGE="gcr.io/tensorflow-testing/tf-win2019-rbe@sha256:1082ef4299a72e44a84388f192ecefc81ec9091c146f507bc36070c089c0edcc"
+
+# Temporary; for local testing.
+export JAXCI_GIT_DIR=$(cygpath -w "/tmpfs/src/github/jax")
+export JAXCI_OUTPUT_DIR=$(cygpath -w /c/jax/dist)
+export JAXCI_CONTAINER_WORK_DIR=$(cygpath -w /c/jax/)
