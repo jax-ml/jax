@@ -208,6 +208,7 @@ def pallas_call_tpu_lowering_rule(
       device_type=mosaic_params.get("device_type"),
       internal_scratch_in_bytes=mosaic_params.get("internal_scratch_in_bytes"),
       collective_id=mosaic_params.get("collective_id", None),
+      output_memory_spaces=None,  # TODO(apaszke,sharadmv): Implement this.
   )
   _maybe_cast_to_bool = lambda x, aval: x.astype(
       jax.numpy.bool_) if aval.dtype == jax.numpy.bool_ else x
