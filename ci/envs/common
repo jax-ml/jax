@@ -25,4 +25,4 @@ export JAXCI_DOCKER_ARGS=""
 export JAXCI_PYTHON=""
 
 # Temporary; for local testing.
-export JAXCI_GIT_DIR="/usr/local/google/home/srnitin/ci-rework/jax"
+export JAXCI_GIT_DIR=$(pwd)
