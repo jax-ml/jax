@@ -145,7 +145,13 @@ class TileTransform(MemRefTransform):
     tiling_rank = len(self.tiling)
     tiled_rank = untiled_rank + tiling_rank
     for t, d in zip(self.tiling[::-1], range(untiled_rank)[::-1]):
-      ref = utils.memref_unfold(ref, d, (None, t))
+      s = ir.MemRefType(ref.type).shape[d]
+      if s % t and s > t:
+        raise ValueError(
+            f"Dimension {d} must have size smaller or a multiple of its tiling"
+            f" {t}, but got {s}"
+        )
+      ref = utils.memref_unfold(ref, d, (None, min(t, s)))
     permutation = (
         *range(untiled_rank - tiling_rank),
         *range(untiled_rank - tiling_rank, tiled_rank, 2),
@@ -175,8 +181,10 @@ class TileTransform(MemRefTransform):
     for size, tile_size in zip(shape[-tiling_rank:], self.tiling):
       if size % tile_size:
         raise ValueError(
-            f"Expected GMEM slice shape {shape} suffix to be a multiple"
-            f" of tiling {self.tiling}"
+            f"Expected GMEM slice shape {shape} suffix to be a multiple of"
+            f" tiling {self.tiling}.\nIf you're using padded async copies, your"
+            " slice might need to extend out of bounds of the GMEM buffer (OOB"
+            " accesses will be skipped)."
         )
     return (
         *shape[:-tiling_rank],

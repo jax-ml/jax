@@ -1024,6 +1024,73 @@ class TMATest(TestCase):
     y = mosaic_gpu.as_gpu_kernel(kernel, (1, 1, 1), (128, 1, 1), x, x, x)(x)
     np.testing.assert_array_equal(y, x)
 
+  @parameterized.parameters(0, 1)
+  def test_tma_small_tile_load(self, small_dim):
+    if small_dim == 0:
+      shape = (4, 128)
+    elif small_dim == 1:
+      shape = (128, 8)
+    else:
+      raise ValueError("small_dim must be 0 or 1")
+    tiled_shape = ((shape[0] + 63) // 64, (shape[1] + 63) // 64, 64, 64)
+    padded_shape = (math.prod(tiled_shape[0::2]), math.prod(tiled_shape[1::2]))
+    def kernel(ctx, src, dst, smem):
+      tmp, barrier = smem
+      ctx.async_copy(
+          src_ref=src,
+          dst_ref=tmp,
+          swizzle=128,
+          gmem_transform=mosaic_gpu.TileTransform((64, 64)),
+          gmem_slice=(ds(0, padded_shape[0]), ds(0, padded_shape[1])),
+          barrier=barrier,
+      )
+      barrier.wait()
+      copy(tmp, dst, swizzle=128)
+    x = np.arange(np.prod(shape), dtype=jnp.float16).reshape(shape)
+    tiled = jax.ShapeDtypeStruct(tiled_shape, jnp.float16)
+    y_tiled = mosaic_gpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), x, tiled, (tiled, mgpu.TMABarrier()),
+    )(x)
+    y = y_tiled.swapaxes(1, 2).reshape(padded_shape)
+    # y should contain x and zero everywhere else.
+    np.testing.assert_array_equal(y[:shape[0], :shape[1]], x)
+    y_mut = np.asarray(y).copy()
+    y_mut[:shape[0], :shape[1]] = 0
+    np.testing.assert_array_equal(y_mut, np.zeros_like(y_mut))
+
+  @parameterized.parameters(0, 1)
+  def test_tma_small_tile_store(self, small_dim):
+    if small_dim == 0:
+      shape = (4, 128)
+    elif small_dim == 1:
+      shape = (128, 8)
+    else:
+      raise ValueError("small_dim must be 0 or 1")
+    tiled_shape = ((shape[0] + 63) // 64, (shape[1] + 63) // 64, 64, 64)
+    padded_shape = (math.prod(tiled_shape[0::2]), math.prod(tiled_shape[1::2]))
+    def kernel(ctx, dst, tmp):
+      vals = iota_tensor(
+          m=padded_shape[0], n=padded_shape[1], mlir_dtype=ir.F16Type.get()
+      )
+      vals.store_tiled(tmp, swizzle=128)
+      ctx.async_copy(
+          src_ref=tmp,
+          dst_ref=dst,
+          swizzle=128,
+          gmem_transform=mosaic_gpu.TileTransform((64, 64)),
+          gmem_slice=(ds(0, padded_shape[0]), ds(0, padded_shape[1])),
+      )
+      ctx.await_async_copy(0)
+    tiled = jax.ShapeDtypeStruct(tiled_shape, jnp.float16)
+    out = jax.ShapeDtypeStruct(shape, jnp.float16)
+    y = mosaic_gpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), out, tiled,
+    )()
+    iota = np.arange(np.prod(padded_shape), dtype=jnp.float16).reshape(
+        padded_shape
+    )
+    np.testing.assert_array_equal(y, iota[:shape[0], :shape[1]])
+
   def test_tma_invalid(self):
     def kernel(ctx, src, dst, tmp):
       copy(src, tmp)
