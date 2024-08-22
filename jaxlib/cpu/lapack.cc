@@ -37,14 +37,6 @@ svd::ComputationMode GetSvdComputationMode(bool job_opt_compute_uv,
   return svd::ComputationMode::kComputeFullUVt;
 }
 
-// Due to enforced kComputeEigenvectors, this assumes a larger workspace size.
-// Could be improved to more accurately estimate the expected size based on the
-// eig::ComputationMode value.
-template <lapack_int (&f)(int64_t, eig::ComputationMode)>
-inline constexpr auto BoundWithEigvecs = +[](lapack_int n) {
-  return f(n, eig::ComputationMode::kComputeEigenvectors);
-};
-
 void GetLapackKernelsFromScipy() {
   static bool initialized = false;  // Protected by GIL
   if (initialized) return;
@@ -348,14 +340,6 @@ NB_MODULE(_lapack, m) {
   m.def("lapack_zungqr_workspace_ffi",
         &OrthogonalQr<DataType::C128>::GetWorkspaceSize, nb::arg("m"),
         nb::arg("n"), nb::arg("k"));
-  m.def("syevd_work_size_ffi", BoundWithEigvecs<eig::GetWorkspaceSize>,
-        nb::arg("n"));
-  m.def("syevd_iwork_size_ffi", BoundWithEigvecs<eig::GetIntWorkspaceSize>,
-        nb::arg("n"));
-  m.def("heevd_work_size_ffi", BoundWithEigvecs<eig::GetComplexWorkspaceSize>,
-        nb::arg("n"));
-  m.def("heevd_rwork_size_ffi", BoundWithEigvecs<eig::GetRealWorkspaceSize>,
-        nb::arg("n"));
 }
 
 }  // namespace
