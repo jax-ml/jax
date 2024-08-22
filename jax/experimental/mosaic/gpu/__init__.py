@@ -18,6 +18,7 @@ import contextlib
 import ctypes
 import dataclasses
 import functools
+import hashlib
 import itertools
 import math
 import os
@@ -92,11 +93,19 @@ def _mosaic_gpu_abstract_eval(*_, module, out_types, gmem_scratch_bytes):
   return [jax._src.core.ShapedArray(t.shape, t.dtype) for t in out_types]
 
 # TODO(apaszke): Implement a proper system for managing kernel lifetimes
-kernel_idx = itertools.count()
+KNOWN_KERNELS = {}
 
 def _mosaic_gpu_lowering_rule(ctx, *args, module, out_types, gmem_scratch_bytes):
   del out_types  # Unused.
-  idx_bytes = next(kernel_idx).to_bytes(8, byteorder="little")
+  kernel_id = hashlib.sha256(module).digest()
+  # Note that this is technically only a half measure. Someone might load a
+  # compiled module with a hash collision from disk. But that's so unlikely with
+  # SHA256 that it shouldn't be a problem.
+  if (kernel_text := KNOWN_KERNELS.get(kernel_id, None)) is not None:
+    if kernel_text != module:
+      raise RuntimeError("Hash collision!")
+  else:
+    KNOWN_KERNELS[kernel_id] = module
   op = mlir.custom_call(
       "mosaic_gpu",
       result_types=[
@@ -109,7 +118,7 @@ def _mosaic_gpu_lowering_rule(ctx, *args, module, out_types, gmem_scratch_bytes)
       operand_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_in],
       result_layouts=[list(reversed(range(a.ndim))) for a in ctx.avals_out]
       + [[0]],
-      backend_config=idx_bytes + module,
+      backend_config=kernel_id + module,
   )
   return op.results[:-1]  # Skip the scratch space.
 

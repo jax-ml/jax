@@ -47,6 +47,7 @@ jax_test(
     srcs = ["gpu_test.py"],
     disable_backends = DISABLED_BACKENDS,
     disable_configs = DISABLED_CONFIGS,
+    enable_configs = ["gpu_h100_2gpu"],
     shard_count = 4,
     deps = [
         "//jax:mosaic_gpu",
