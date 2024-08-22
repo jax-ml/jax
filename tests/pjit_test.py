@@ -5128,6 +5128,24 @@ class UtilTest(jtu.JaxTestCase):
     mesh = jax.sharding.Mesh(jax.devices(), 'dp')
     self.assertTupleEqual(mesh.axis_names, ('dp',))
 
+  def test_sharded_in_place_assignment(self):
+    mesh = jtu.create_global_mesh((8,), ('data',))
+
+    idx = [0,  2,  5,  7,  8, 10, 13, 15]
+    n = 16
+    def _init():
+      w = jnp.zeros((n, n))
+      idx1 = jnp.array(idx)
+      w = w.at[idx1, jnp.arange(n//2)].set(1)
+      return w
+
+    w = jax.jit(_init, out_shardings=NamedSharding(mesh, P(None, 'data')))()
+
+    w_gt = np.zeros((n, n))
+    for j, i in enumerate(idx):
+      w_gt[i, j] = 1
+
+    self.assertArraysEqual(w, w_gt)
 
 @jtu.with_config(jax_use_shardy_partitioner=True)
 class SdyIntegrationTest(jtu.JaxTestCase):
