@@ -1,8 +1,0 @@
-# Inherit the environment variables from the parent directory's common config
-# file.
-source ci/envs/common
-source ci/envs/nightly/jaxlib/common
-
-export JAXCI_WHEEL_AUDIT_ENABLE="1"
-export JAXCI_HERMETIC_PYTHON_VERSION=3.12
-export JAXCI_DOCKER_IMAGE="tensorflow/build:2.18-python3.12"
