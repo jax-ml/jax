@@ -1347,6 +1347,7 @@ class VectorLayoutInferer {
     TPU_CHECK_OP(some_src_layout, "missing vector layout");
     auto layout = *some_src_layout;
     const unsigned bitwidth = src_ty.getElementTypeBitWidth();
+    const int packing = kNativeBitwidth / bitwidth;
     const std::array<int64_t, 2> native_tiling = nativeTiling(bitwidth);
     const std::array<int64_t, 2> src_tiled_ishape =
         layout.getImplicitTiledDims(src_shape, 1);
@@ -1383,25 +1384,33 @@ class VectorLayoutInferer {
       const std::array<int64_t, 2> res_tiled_ishape =
           VectorLayout::getImplicitTiledDims(implicit_dim, res_shape, 1);
       // Sublane (un)folding.
-      if (src_tiled_ishape[1] == res_tiled_ishape[1] &&
-          src_tiled_ishape[0] % vreg_slice[0] == 0 &&
-          res_tiled_ishape[0] % vreg_slice[0] == 0) {
-        // TODO(b/343808585): We shouldn't force second minor offset to 0 when
-        //                    unfolding, it's still a no-op, but we need to add
-        //                    support in apply-vector-layout.
-        const LayoutOffsets offsets = {0, layout.offsets()[1]};
-        setLayout(op,
-                  VectorLayout(layout.bitwidth(), offsets, layout.tiling(),
-                               layout.implicit_dim()),
-                  VectorLayout(layout.bitwidth(), offsets, layout.tiling(),
-                               implicit_dim));
-        return success();
+      if (src_tiled_ishape[1] == res_tiled_ishape[1]) {
+        if (src_tiled_ishape[0] % vreg_slice[0] == 0 &&
+            res_tiled_ishape[0] % vreg_slice[0] == 0) {
+          // TODO(b/343808585): We shouldn't force second minor offset to 0 when
+          //                    unfolding, it's still a no-op, but we need to
+          //                    add support in apply-vector-layout.
+          const LayoutOffsets offsets = {0, layout.offsets()[1]};
+          setLayout(op,
+                    VectorLayout(layout.bitwidth(), offsets, layout.tiling(),
+                                 layout.implicit_dim()),
+                    VectorLayout(layout.bitwidth(), offsets, layout.tiling(),
+                                 implicit_dim));
+          return success();
+        }
+        if (src_tiled_ishape[0] % packing == 0 &&
+            res_tiled_ishape[0] % packing == 0) {
+          auto new_layout =
+              VectorLayout(layout.bitwidth(), {0, 0},
+                           {packing, target_shape_[1]}, layout.implicit_dim());
+          setLayout(op, new_layout, new_layout);
+          return success();
+        }
       }
       // Lane (un)folding.
       if (src_tiled_ishape[1] != res_tiled_ishape[1] &&
           src_tiled_ishape[1] % layout.tiling()[1] == 0 &&
           res_tiled_ishape[1] % layout.tiling()[1] == 0) {
-        const int packing = kNativeBitwidth / bitwidth;
         const auto elements_per_vreg = native_tiling[0] * native_tiling[1];
         // When we shapecast from input shape
         // (..., m * target_shape_[1] * packing) to output shape
