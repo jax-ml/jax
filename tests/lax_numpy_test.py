@@ -983,6 +983,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
       with self.assertRaisesRegex(ValueError, msg):
         jnp.clip(x, max=jnp.array([-1+5j]))
 
+  def testClipDeprecatedArgs(self):
+    msg = "Passing arguments 'a', 'a_min' or 'a_max' to jax.numpy.clip is deprecated"
+    def assert_warns_or_errors(msg=msg):
+      if deprecations.is_accelerated("jax-numpy-clip-args"):
+        return self.assertRaisesRegex(ValueError, msg)
+      else:
+        return self.assertWarnsRegex(DeprecationWarning, msg)
+    with assert_warns_or_errors(msg):
+      jnp.clip(jnp.arange(4), a_min=2, a_max=3)
+
   def testHypotComplexInputError(self):
     rng = jtu.rand_default(self.rng())
     x = rng((5,), dtype=jnp.complex64)
@@ -3365,6 +3375,16 @@ class LaxBackedNumpyTests(jtu.JaxTestCase):
     args_maker = lambda: [rng(arg_shape, dtype)]
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker)
     self._CompileAndCheck(jnp_fun, args_maker)
+
+  def testReshapeDeprecatedArgs(self):
+    msg = "The newshape argument of jax.numpy.reshape is deprecated."
+    def assert_warns_or_errors(msg=msg):
+      if deprecations.is_accelerated("jax-numpy-reshape-newshape"):
+        return self.assertRaisesRegex(ValueError, msg)
+      else:
+        return self.assertWarnsRegex(DeprecationWarning, msg)
+    with assert_warns_or_errors(msg):
+      jnp.reshape(jnp.arange(4), newshape=(2, 2))
 
   @jtu.sample_product(
     [dict(arg_shape=arg_shape, out_shape=out_shape)

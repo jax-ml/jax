@@ -1388,6 +1388,8 @@ def reshape(
       JAX does not support ``order="A"``.
     copy: unused by JAX; JAX always returns a copy, though under JIT the compiler
       may optimize such copies away.
+    newshape: deprecated alias of the ``shape`` argument. Will result in a
+      :class:`DeprecationWarning` if used.
 
   Returns:
     reshaped copy of input array with the specified shape.
@@ -1452,11 +1454,10 @@ def reshape(
         "jnp.reshape received both `shape` and `newshape` arguments. Note that "
         "using `newshape` is deprecated, please only use `shape` instead."
       )
-    warnings.warn(
-      "The newshape argument of jax.numpy.reshape is deprecated and setting it "
-      "will soon raise an error. To avoid an error in the future, and to "
-      "suppress this warning, please use the shape argument instead.",
-      DeprecationWarning, stacklevel=2)
+    deprecations.warn(
+      "jax-numpy-reshape-newshape",
+      ("The newshape argument of jax.numpy.reshape is deprecated. "
+       "Please use the shape argument instead."), stacklevel=2)
     shape = newshape
     del newshape
   elif shape is None:
@@ -2502,10 +2503,10 @@ def clip(
   min = a_min if not isinstance(a_min, DeprecatedArg) else min
   max = a_max if not isinstance(a_max, DeprecatedArg) else max
   if any(not isinstance(t, DeprecatedArg) for t in (a, a_min, a_max)):
-    warnings.warn(
-      "Passing arguments 'a', 'a_min' or 'a_max' to jax.numpy.clip is "
-      "deprecated. Please use 'arr', 'min' or 'max' respectively instead.",
-      DeprecationWarning,
+    deprecations.warn(
+      "jax-numpy-clip-args",
+      ("Passing arguments 'a', 'a_min' or 'a_max' to jax.numpy.clip is "
+       "deprecated. Please use 'arr', 'min' or 'max' respectively instead."),
       stacklevel=2,
     )
 
@@ -3479,8 +3480,6 @@ available in the JAX FAQ at :ref:`faq-data-placement` (full FAQ at
 https://jax.readthedocs.io/en/latest/faq.html).
 """
 
-deprecations.register("jax-numpy-array-none")
-
 
 def array(object: Any, dtype: DTypeLike | None = None, copy: bool = True,
           order: str | None = "K", ndmin: int = 0,
@@ -3669,8 +3668,6 @@ def _convert_to_array_if_dtype_fails(x: ArrayLike) -> ArrayLike:
   else:
     return x
 
-
-deprecations.register("jax-numpy-astype-complex-to-real")
 
 def astype(x: ArrayLike, dtype: DTypeLike | None,
            /, *, copy: bool = False,
