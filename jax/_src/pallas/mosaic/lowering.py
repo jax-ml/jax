@@ -85,12 +85,6 @@ partial = functools.partial
 map, unsafe_map = safe_map, map  # pylint: disable=redefined-builtin
 zip, unsafe_zip = safe_zip, zip  # pylint: disable=redefined-builtin
 
-UNSIGNED_TO_SIGNED = {
-    np.dtype('uint8'): np.dtype('int8'),
-    np.dtype('uint16'): np.dtype('int16'),
-    np.dtype('uint32'): np.dtype('int32'),
-    np.dtype('uint64'): np.dtype('int64'),
-}
 
 @dataclasses.dataclass
 class MeshContext:
@@ -1543,6 +1537,12 @@ def _convert_helper(x, *, to_dtype):
     if jnp.issubdtype(to_dtype, jnp.floating) and to_dtype.itemsize < 4:
       x = x.astype(jnp.float32)
     return x.astype(to_dtype)
+  if jnp.issubdtype(from_dtype, jnp.unsignedinteger):
+    if from_dtype.itemsize < 4:
+      x = x.astype(jnp.uint32)
+    if jnp.issubdtype(to_dtype, jnp.floating) and to_dtype.itemsize < 4:
+      x = x.astype(jnp.float32)
+    return x.astype(to_dtype)
   if jnp.issubdtype(from_dtype, jnp.floating):
     if jnp.issubdtype(to_dtype, jnp.signedinteger):
       if from_dtype.itemsize < 4:
@@ -1567,10 +1567,6 @@ def _convert_element_type_lowering_rule(
   old_dtype = ctx.avals_in[0].dtype
   out_type = aval_to_ir_type(out_aval)
 
-  # TODO(justinfu): Remove after mosaic supports unsigned types.
-  # This conversion makes mosaic interpret all unsigned types as signed types.
-  if np.issubdtype(new_dtype, jnp.unsignedinteger):
-    new_dtype = UNSIGNED_TO_SIGNED[new_dtype]
   if old_dtype == new_dtype:
     return x
   if jnp.issubdtype(old_dtype, jnp.floating) and jnp.issubdtype(
@@ -1580,18 +1576,20 @@ def _convert_element_type_lowering_rule(
       return arith.ExtFOp(out_type, x).result
     elif old_dtype.itemsize > new_dtype.itemsize and old_dtype.itemsize == 4:
       return arith.TruncFOp(out_type, x).result
-  elif jnp.issubdtype(old_dtype, jnp.signedinteger) and jnp.issubdtype(
-      new_dtype, jnp.signedinteger
+  elif jnp.issubdtype(old_dtype, jnp.integer) and jnp.issubdtype(
+      new_dtype, jnp.integer
   ):
     if old_dtype.itemsize < new_dtype.itemsize and new_dtype.itemsize == 4:
       return arith.ExtSIOp(out_type, x).result
     elif old_dtype.itemsize > new_dtype.itemsize and old_dtype.itemsize == 4:
       return arith.TruncIOp(out_type, x).result
+    else:  # This case triggers when casting signed to unsigned or vice versa.
+      return x
   elif jnp.issubdtype(old_dtype, jnp.floating) and jnp.issubdtype(
       new_dtype, jnp.signedinteger
   ) and old_dtype.itemsize == new_dtype.itemsize == 4:
     return arith.FPToSIOp(out_type, x).result
-  elif jnp.issubdtype(old_dtype, jnp.signedinteger) and jnp.issubdtype(
+  elif jnp.issubdtype(old_dtype, jnp.integer) and jnp.issubdtype(
       new_dtype, jnp.floating
   ) and old_dtype.itemsize == new_dtype.itemsize == 4:
     return arith.SIToFPOp(out_type, x).result

@@ -21,6 +21,7 @@ from absl.testing import absltest
 from absl.testing import parameterized
 
 import jax
+from jax import lax
 import jax.numpy as jnp
 from jax._src import test_util as jtu
 from jax.experimental import pallas as pl
@@ -172,6 +173,18 @@ class OpsTest(PallasBaseTest):
         out_shape=jax.ShapeDtypeStruct((m * 2, n), jnp.bfloat16),
     )(x, y)
     np.testing.assert_array_equal(out, inp.reshape(m * 2, n))
+
+  def test_tpu_unsigned_int(self):
+    def body(x_ref, o_ref):
+      # Test cast from uint16 -> uint32
+      ux = lax.convert_element_type(x_ref[...], jnp.uint32)
+      res = ux + 1
+      # Test cast from uint32 -> float32
+      o_ref[...] = res.astype(jnp.float32)
+    out = jax.ShapeDtypeStruct((8, 128), jnp.float32)
+    x = jnp.arange(8 * 128, dtype=jnp.uint16).reshape((8, 128))
+    result = self.pallas_call(body, out_shape=out)(x)
+    np.testing.assert_array_equal(result, x.astype(jnp.float32) + 1.0)
 
 
 class OpsInterpretTest(OpsTest):
