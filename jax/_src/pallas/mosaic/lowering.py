@@ -1583,7 +1583,8 @@ def _convert_element_type_lowering_rule(
       return arith.ExtSIOp(out_type, x).result
     elif old_dtype.itemsize > new_dtype.itemsize and old_dtype.itemsize == 4:
       return arith.TruncIOp(out_type, x).result
-    else:  # This case triggers when casting signed to unsigned or vice versa.
+    elif jnp.iinfo(old_dtype).bits == jnp.iinfo(new_dtype).bits:
+      # This case triggers when casting signed to unsigned or vice versa.
       return x
   elif jnp.issubdtype(old_dtype, jnp.floating) and jnp.issubdtype(
       new_dtype, jnp.signedinteger
