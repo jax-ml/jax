@@ -1625,8 +1625,19 @@ def _geqrf_cpu_gpu_lowering(geqrf_impl, batched_geqrf_impl, ctx, a, *,
       a_out, taus, info_geqrf = geqrf_impl(a_aval.dtype, a)
     else:
       a_shape_vals = mlir.eval_dynamic_shape_as_ivals(ctx, a_aval.shape)
-      a_out, taus, info_geqrf = geqrf_impl(a_aval.dtype, a,
-                                           a_shape_vals=a_shape_vals)
+      # TODO(b/344892332): Remove the conditional after the compatibility period
+      ctx_args = (
+          (ctx,) if platform == "cpu" and jaxlib_version >= (0, 4, 32) else ()
+      )
+      a_out, taus, *maybe_info_geqrf = geqrf_impl(
+          *ctx_args, a_aval.dtype, a, a_shape_vals=a_shape_vals
+      )
+      if not ctx.is_forward_compat():
+        # Skip the info parameter verification for the FFI kernel.
+        return a_out, taus
+      # TODO(b/344892332): This parameter will no longer be needed after
+      #                    the forward compatibility period
+      info_geqrf = maybe_info_geqrf[0]
     zeros = mlir.full_like_aval(ctx, 0, ShapedArray(batch_dims, np.dtype(np.int32)))
     ok = mlir.compare_hlo(info_geqrf, zeros, "EQ", "SIGNED")
     select_ok_a_aval = ShapedArray(batch_dims + [1, 1], np.dtype(np.bool_))

@@ -202,9 +202,10 @@ def getrf_hlo(dtype, a: ir.Value, *, a_shape_vals: tuple[DimensionSize, ...]):
 
 # # ?geqrf: QR decomposition
 
-def geqrf_hlo(dtype, a: ir.Value, *,
-              a_shape_vals: tuple[DimensionSize, ...]):
-  _lapack.initialize()
+
+def geqrf_hlo(
+    ctx, dtype, a: ir.Value, *, a_shape_vals: tuple[DimensionSize, ...]
+):
   a_type = ir.RankedTensorType(a.type)
   assert len(a_shape_vals) >= 2
   m, n = a_shape_vals[-2:]
@@ -213,51 +214,69 @@ def geqrf_hlo(dtype, a: ir.Value, *,
 
   batch_dims_vals = a_shape_vals[:-2]
   num_bd = len(batch_dims_vals)
+  fn_base = prepare_lapack_call(fn_base="geqrf", dtype=dtype)
 
-  if dtype == np.float32:
-    fn = "lapack_sgeqrf"
-    lwork = _lapack.lapack_sgeqrf_workspace(m, n)
-  elif dtype == np.float64:
-    fn = "lapack_dgeqrf"
-    lwork = _lapack.lapack_dgeqrf_workspace(m, n)
-  elif dtype == np.complex64:
-    fn = "lapack_cgeqrf"
-    lwork = _lapack.lapack_cgeqrf_workspace(m, n)
-  elif dtype == np.complex128:
-    fn = "lapack_zgeqrf"
-    lwork = _lapack.lapack_zgeqrf_workspace(m, n)
-  else:
-    raise NotImplementedError(f"Unsupported dtype {dtype}")
-
-  scalar_layout = []
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
   i32_type = ir.IntegerType.get_signless(32)
 
-  batch_size_val = hlo_s32(1)
-  for b_v in batch_dims_vals:
-    batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
+  if ctx.is_forward_compat():
+    fn = fn_base
+    if dtype == np.float32:
+      lwork = _lapack.lapack_sgeqrf_workspace(m, n)
+    elif dtype == np.float64:
+      lwork = _lapack.lapack_dgeqrf_workspace(m, n)
+    elif dtype == np.complex64:
+      lwork = _lapack.lapack_cgeqrf_workspace(m, n)
+    elif dtype == np.complex128:
+      lwork = _lapack.lapack_zgeqrf_workspace(m, n)
+    else:
+      raise NotImplementedError(f"Unsupported dtype {dtype}")
+
+    scalar_layout = []
+    batch_size_val = hlo_s32(1)
+    for b_v in batch_dims_vals:
+      batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
+    shape_type_pairs: Sequence[ShapeTypePair] = [
+        (a_shape_vals, a_type.element_type),
+        (batch_dims_vals + (min(m, n),), a_type.element_type),
+        (batch_dims_vals, i32_type),
+        ([lwork], a_type.element_type),
+    ]
+    result_types, result_shapes = mk_result_types_and_shapes(shape_type_pairs)
+    return custom_call(
+        fn,
+        result_types=result_types,
+        operands=[batch_size_val, hlo_s32(m), hlo_s32(n), hlo_s32(lwork), a],
+        operand_layouts=[scalar_layout] * 4 + [layout],
+        result_layouts=[
+            layout,
+            tuple(range(num_bd, -1, -1)),
+            tuple(range(num_bd - 1, -1, -1)),
+            [0],
+        ],
+        operand_output_aliases={4: 0},
+        result_shapes=result_shapes,
+    ).results[:3]
+  fn = fn_base + "_ffi"
   shape_type_pairs: Sequence[ShapeTypePair] = [
       (a_shape_vals, a_type.element_type),
       (batch_dims_vals + (min(m, n),), a_type.element_type),
-      (batch_dims_vals, i32_type),
-      ([lwork], a_type.element_type),
   ]
   result_types, result_shapes = mk_result_types_and_shapes(shape_type_pairs)
-  out = custom_call(
+  return custom_call(
       fn,
       result_types=result_types,
-      operands=[batch_size_val, hlo_s32(m), hlo_s32(n), hlo_s32(lwork), a],
-      operand_layouts=[scalar_layout] * 4 + [layout],
+      operands=[a],
+      operand_layouts=[layout],
       result_layouts=[
-        layout,
-        tuple(range(num_bd, -1, -1)),
-        tuple(range(num_bd - 1, -1, -1)),
-        [0],
+          layout,
+          tuple(range(num_bd, -1, -1)),
       ],
-      operand_output_aliases={4: 0},
+      operand_output_aliases={0: 0},
       result_shapes=result_shapes,
+      backend_config={},
+      api_version=4,
   ).results
-  return out[:3]
 
 
 # # ?orgqr: product of elementary Householder reflectors:
