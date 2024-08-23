@@ -117,3 +117,16 @@ def warn(deprecation_id: str, message: str, stacklevel: int) -> None:
   else:
     warnings.warn(message, category=DeprecationWarning,
                   stacklevel=stacklevel + 1)
+
+
+# Register a number of deprecations: we do this here to ensure they're
+# always registered by the time `accelerate` and `is_acelerated` are called.
+register("jax-numpy-astype-complex-to-real")
+register("jax-numpy-array-none")
+register('jax-scipy-beta-args')
+register('tracer-hash')
+register('jax-numpy-reshape-newshape')
+register('jax-numpy-clip-args')
+register('jax-numpy-linalg-matrix_rank-tol')
+register('jax-numpy-linalg-pinv-rcond')
+register('jax-numpy-quantile-interpolation')

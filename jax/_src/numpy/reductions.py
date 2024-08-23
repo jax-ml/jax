@@ -28,6 +28,7 @@ import jax
 from jax import lax
 from jax._src import api
 from jax._src import core
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src.numpy import ufuncs
 from jax._src.numpy.util import (
@@ -1893,8 +1894,10 @@ def quantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None = No
            "out != None")
     raise ValueError(msg)
   if not isinstance(interpolation, DeprecatedArg):
-    warnings.warn("The interpolation= argument to 'quantile' is deprecated. "
-                  "Use 'method=' instead.", DeprecationWarning, stacklevel=2)
+    deprecations.warn(
+      "jax-numpy-quantile-interpolation",
+      ("The interpolation= argument to 'quantile' is deprecated. "
+       "Use 'method=' instead."), stacklevel=2)
     method = interpolation
   return _quantile(lax_internal.asarray(a), lax_internal.asarray(q), axis, method, keepdims, False)
 
@@ -1910,8 +1913,10 @@ def nanquantile(a: ArrayLike, q: ArrayLike, axis: int | tuple[int, ...] | None =
            "out != None")
     raise ValueError(msg)
   if not isinstance(interpolation, DeprecatedArg):
-    warnings.warn("The interpolation= argument to 'nanquantile' is deprecated. "
-                  "Use 'method=' instead.", DeprecationWarning, stacklevel=2)
+    deprecations.warn(
+      "jax-numpy-quantile-interpolation",
+      ("The interpolation= argument to 'nanquantile' is deprecated. "
+       "Use 'method=' instead."), stacklevel=2)
     method = interpolation
   return _quantile(lax_internal.asarray(a), lax_internal.asarray(q), axis, method, keepdims, True)
 
@@ -2047,8 +2052,10 @@ def percentile(a: ArrayLike, q: ArrayLike,
   check_arraylike("percentile", a, q)
   q, = promote_dtypes_inexact(q)
   if not isinstance(interpolation, DeprecatedArg):
-    warnings.warn("The interpolation= argument to 'percentile' is deprecated. "
-                  "Use 'method=' instead.", DeprecationWarning, stacklevel=2)
+    deprecations.warn(
+      "jax-numpy-quantile-interpolation",
+      ("The interpolation= argument to 'percentile' is deprecated. "
+       "Use 'method=' instead."), stacklevel=2)
     method = interpolation
   return quantile(a, q / 100, axis=axis, out=out, overwrite_input=overwrite_input,
                   method=method, keepdims=keepdims)
@@ -2063,8 +2070,10 @@ def nanpercentile(a: ArrayLike, q: ArrayLike,
   check_arraylike("nanpercentile", a, q)
   q = ufuncs.true_divide(q, 100.0)
   if not isinstance(interpolation, DeprecatedArg):
-    warnings.warn("The interpolation= argument to 'nanpercentile' is deprecated. "
-                  "Use 'method=' instead.", DeprecationWarning, stacklevel=2)
+    deprecations.warn(
+      "jax-numpy-quantile-interpolation",
+      ("The interpolation= argument to 'nanpercentile' is deprecated. "
+       "Use 'method=' instead."), stacklevel=2)
     method = interpolation
   return nanquantile(a, q, axis=axis, out=out, overwrite_input=overwrite_input,
                      method=method, keepdims=keepdims)

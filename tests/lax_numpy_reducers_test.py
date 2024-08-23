@@ -27,6 +27,7 @@ import jax
 from jax import numpy as jnp
 
 from jax._src import config
+from jax._src import deprecations
 from jax._src import dtypes
 from jax._src import test_util as jtu
 from jax._src.util import NumpyComplexWarning
@@ -721,6 +722,20 @@ class JaxNumpyReducerTests(jtu.JaxTestCase):
     self._CheckAgainstNumpy(np_fun, jnp_fun, args_maker, check_dtypes=False,
                             tol=tol)
     self._CompileAndCheck(jnp_fun, args_maker, rtol=tol)
+
+  @jtu.sample_product(
+      op=['quantile', 'nanquantile', 'percentile', 'nanpercentile']
+  )
+  def testQuantileDeprecatedArgs(self, op):
+    func = getattr(jnp, op)
+    msg = f"The interpolation= argument to '{op}' is deprecated. "
+    def assert_warns_or_errors(msg=msg):
+      if deprecations.is_accelerated("jax-numpy-quantile-interpolation"):
+        return self.assertRaisesRegex(ValueError, msg)
+      else:
+        return self.assertWarnsRegex(DeprecationWarning, msg)
+    with assert_warns_or_errors(msg):
+      func(jnp.arange(4), 0.5, interpolation='linear')
 
   @unittest.skipIf(not config.enable_x64.value, "test requires X64")
   @jtu.run_on_devices("cpu")  # test is for CPU float64 precision
