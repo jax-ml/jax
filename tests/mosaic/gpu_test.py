@@ -702,6 +702,62 @@ class WGMMATest(TestCase):
     rtol = 5e-4
     np.testing.assert_allclose(z, ref, rtol=rtol, atol=0)
 
+  @parameterized.product(
+      rhs_transpose=(False, True),
+      swizzle=(32, 64, 128),
+  )
+  def test_narrow_n(self, rhs_transpose, swizzle):
+    m, n, k_steps = 64, 8, 2
+
+    row_major = mgpu.WGMMALayout.ROW_MAJOR
+    col_major = mgpu.WGMMALayout.COL_MAJOR
+    rhs_order = col_major if rhs_transpose else row_major
+    bytewidth = 2
+    nk_tile = swizzle // bytewidth
+    k = nk_tile * k_steps
+
+    def kernel(ctx, rhs, out, smem):
+      rhs_smem, barrier = smem
+      gmem_slice = (ds(0, k), ds(0, nk_tile))
+      smem_slice = (slice(None), slice(None), slice(None), ds(0, n))
+      transform = (mosaic_gpu.TileTransform((nk_tile, nk_tile)),)
+      if rhs_transpose:
+        gmem_slice = gmem_slice[::-1]
+        smem_slice = (slice(None), slice(None), ds(0, n), slice(None))
+        transform += (mosaic_gpu.TransposeTransform((1, 0, 2, 3)),)
+      ctx.async_copy(
+          src_ref=rhs,
+          dst_ref=rhs_smem,
+          swizzle=swizzle,
+          gmem_slice=gmem_slice,
+          gmem_transform=transform,
+          barrier=barrier,
+      )
+      barrier.wait()
+      init_acc = mgpu.WGMMAAccumulator.zero(m=m, n=n)
+      lhs_regs = iota_tensor(m, k, ir.F16Type.get())
+      rhs_smem = memref_slice(rhs_smem, smem_slice)
+      acc = mgpu.wgmma(init_acc, lhs_regs, rhs_smem, b_order=rhs_order, swizzle=swizzle)
+      nvvm.wgmma_commit_group_sync_aligned()
+      nvvm.wgmma_wait_group_sync_aligned(0)
+      acc.value.store_untiled(out)
+
+    jax_dtype = jnp.float16
+    y_shape = (n, k) if rhs_transpose else (k, n)
+    y = self.prng.uniform(-1, 1, y_shape).astype(jax_dtype)
+    out_shape = jax.ShapeDtypeStruct((m, n), jnp.float32)
+    rhs_scratch_shape = jax.ShapeDtypeStruct(
+        (k_steps, 1, nk_tile, nk_tile), jax_dtype
+    )
+    z = mosaic_gpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), y, out_shape, (rhs_scratch_shape, mgpu.TMABarrier()),
+    )(y)
+    x = np.arange(m * k, dtype=jax_dtype).reshape(m, k)
+    ref = jax.lax.dot(
+        x, (y.T if rhs_transpose else y), preferred_element_type=jnp.float32
+    )
+    np.testing.assert_allclose(z, ref, rtol=5e-4, atol=0)
+
 
 class BarrierTest(TestCase):
 
