@@ -423,6 +423,37 @@ class WGMMATest(TestCase):
     )()
     np.testing.assert_array_equal(iota, expected)
 
+  @parameterized.product(
+      dtypes=(
+          (ir.F16Type.get, jnp.float16),
+          (partial(ir.IntegerType.get_signless, 8), jnp.int8),
+      ),
+      swizzle=(32, 64, 128),
+  )
+  def test_store_tiled_short_n(self, dtypes, swizzle):
+    mlir_dtype_cls, jax_dtype = dtypes
+    mlir_dtype = mlir_dtype_cls()
+    col_tiling = swizzle // bytewidth(mlir_dtype)
+    m = 128
+    n = 16 // bytewidth(mlir_dtype)
+    tiling = (64, col_tiling)
+    def kernel(ctx, out, smem):
+      iota_tensor(m, n, mlir_dtype).store_tiled(smem, swizzle=swizzle)
+      ctx.async_copy(
+          src_ref=smem,
+          dst_ref=out,
+          swizzle=swizzle,
+          gmem_slice=(ds(0, m), ds(0, col_tiling)),
+          gmem_transform=mosaic_gpu.TileTransform(tiling),
+      )
+      ctx.await_async_copy(0)
+    smem_shape = jax.ShapeDtypeStruct((m // tiling[0], 1, *tiling), jax_dtype)
+    expected = np.arange(m * n, dtype=jax_dtype).reshape(m, n)
+    iota = mosaic_gpu.as_gpu_kernel(
+        kernel, (1, 1, 1), (128, 1, 1), (), expected, smem_shape
+    )()
+    np.testing.assert_array_equal(iota, expected)
+
   @parameterized.named_parameters(
       ("bf16_i8",
       ir.BF16Type.get, jnp.bfloat16,

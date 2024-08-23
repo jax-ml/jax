@@ -686,6 +686,8 @@ class FragmentedArray:
     assert m % 64 == 0  # This is implied by the layout.
     cols_per_tile = swizzle // bw
     expected_shape = [m // 64, n // cols_per_tile, 64, cols_per_tile]
+    if n < cols_per_tile:  # We allow singular tiles shorter than swizzle.
+      expected_shape = [m // 64, 1, 64, cols_per_tile]
     if ir.MemRefType(ref.type).shape != expected_shape:
       raise ValueError(ref.type, (m, n))
     for get, _, idxs in self.transfer_tiled(self.shape, dtype, swizzle):
@@ -715,9 +717,12 @@ class FragmentedArray:
     # TODO(apaszke): We could use ldmatrix/stmatrix for 16-bit types.
     bw = mgpu.bytewidth(dtype)
     m, n = shape
-    cols_per_tile = swizzle // bw
-    if n % cols_per_tile != 0:
-      raise NotImplementedError
+    assert m % 64 == 0 and n % 8 == 0  # Implied by the layout.
+    cols_per_tile = swizzle_elems = swizzle // bw
+    if n < swizzle_elems:
+      cols_per_tile = n
+    else:
+      assert n % swizzle_elems == 0, (n, swizzle_elems)
     if swizzle not in {32, 64, 128}:
       raise NotImplementedError("Only swizzled stores supported")
 
@@ -752,6 +757,8 @@ class FragmentedArray:
         case _:
           raise AssertionError(swizzle)
       stagger_amount = swizzle // 64
+      if (cols_per_tile // 8) % (stagger_amount + 1):
+        raise NotImplementedError
     else:
       # We rely on canonicalization to clean up the selects.
       i1 = ir.IntegerType.get_signless(1)
