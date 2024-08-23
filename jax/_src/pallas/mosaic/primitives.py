@@ -593,9 +593,6 @@ def dma_start_discharge_rule(in_avals, out_avals,
     global_updates = jax.lax.all_gather(updates, shard_axis)
     updates = jax.lax.dynamic_index_in_dim(
         global_updates, index, axis=0, keepdims=False)
-    global_dst_sem = jax.lax.all_gather(dst_sem, shard_axis)
-    dst_sem = jax.lax.dynamic_index_in_dim(
-        global_dst_sem, index, axis=0, keepdims=False)
 
     # Handle asymmetrical indexing when devices do not share the same
     # dst_indexer.
@@ -604,17 +601,13 @@ def dma_start_discharge_rule(in_avals, out_avals,
     dst_indexers = tree_util.tree_map(
         lambda x: jax.lax.dynamic_index_in_dim(
             x, index, axis=0, keepdims=False), global_dst_indexers)
-    global_dst_sem_indexers = tree_util.tree_map(
-        lambda x: jax.lax.all_gather(x, shard_axis), dst_sem_indexers)
-    dst_sem_indexers = tree_util.tree_map(
-        lambda x: jax.lax.dynamic_index_in_dim(
-            x, index, axis=0, keepdims=False), global_dst_sem_indexers)
 
   _, new_dst = state_discharge.index_swap_array(
       dst_ref, dst_indexers, updates
   )
 
   # Update semaphore values.
+  # TODO(justinfu): Potentially handle asymmetric copy sizes.
   recv_size = jnp.array(updates.size, dtype=pl_core.SEMAPHORE_INTERPRET_DTYPE)
   dst_sem_value = _index_semaphore(dst_sem, dst_sem_indexers, dst_sem_aval)
   _, new_dst_sem = state_discharge.index_swap_array(
