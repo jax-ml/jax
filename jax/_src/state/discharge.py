@@ -241,8 +241,6 @@ def _prepend_scatter(x, indexer, val, *, add=False):
 
 
 def index_array(x, indexers):
-  if indexers is None:
-    indexers = []
   result = x
   for indexer in indexers:
     if _is_trivial_indexer(indexer):
@@ -262,8 +260,6 @@ def index_array(x, indexers):
   return result
 
 def index_swap_array(x, indexers, val):
-  if indexers is None:
-    indexers = []
   result = x
   result_val = val
   # Compute updated "val" (result).
