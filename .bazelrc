@@ -68,8 +68,8 @@ build:cuda --@xla//xla/python:jax_cuda_pip_rpaths=true
 # Default hermetic CUDA and CUDNN versions.
 build:cuda --repo_env=HERMETIC_CUDA_VERSION="12.3.2"
 build:cuda --repo_env=HERMETIC_CUDNN_VERSION="9.1.1"
-# This flag is needed to include hermetic CUDA libraries for bazel tests.
-test:cuda --@local_config_cuda//cuda:include_hermetic_cuda_libs=true
+# This flag is needed to include CUDA libraries for bazel tests.
+test:cuda --@local_config_cuda//cuda:include_cuda_libs=true
 
 # Requires MSVC and LLVM to be installed
 build:win_clang --extra_toolchains=@local_config_cc//:cc-toolchain-x64_windows-clang-cl
