@@ -712,8 +712,11 @@ class CollectiveBarrierRef:
         has_side_effects=True,
     )
 
-  def wait(self):
-    self.barrier.wait()
+  def wait(self, *args, **kwargs):
+    self.barrier.wait(*args, **kwargs)
+
+  def wait_parity(self, *args, **kwargs):
+    self.barrier.wait_parity(*args, **kwargs)
 
 
 class Partition:
