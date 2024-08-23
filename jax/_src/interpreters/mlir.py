@@ -1119,14 +1119,15 @@ def lower_jaxpr_to_module(
     # XLA computation preserves the module name.
     attrs = ctx.module.operation.attributes
     if config.use_shardy_partitioner.value:
-      assert (isinstance(axis_context, sharding_impls.ShardingContext) and
-              axis_context.mesh_shape is not None)
-      ctx.module.body.append(
-          dialects.sdy.MeshOp(
-              "mesh",
-              dialects.sdy.MeshAttr.get(
-                  [dialects.sdy.MeshAxisAttr.get(name, size)
-                  for name, size in axis_context.mesh_shape])))
+      if (isinstance(axis_context, sharding_impls.ShardingContext) and
+          axis_context.mesh_shape is not None):
+        sdy_mesh_attr = dialects.sdy.MeshAttr.get(
+                          [dialects.sdy.MeshAxisAttr.get(name, size)
+                          for name, size in axis_context.mesh_shape])
+      else:
+        sdy_mesh_attr = dialects.sdy.MeshAttr.get([])
+
+      ctx.module.body.append(dialects.sdy.MeshOp("mesh", sdy_mesh_attr))
     module_name = _module_name_regex.sub("_", module_name)
     attrs["sym_name"] = ir.StringAttr.get(module_name)
     attrs["mhlo.num_replicas"] = i32_attr(num_replicas)
@@ -1633,7 +1634,15 @@ def replicate_trailing_dims(ctx, val: ir.Value, aval) -> ir.Value:
   # For example: if the key.shape is (8, 2) and key_data(key).shape is (8, 2, 2),
   # then the sharding will be P(P.UNCONSTRAINED, P.UNCONSTRAINED, None).
   # The below custom call achieves the sharding like above example.
-  return wrap_with_sharding_op(
+  if config.use_shardy_partitioner.value:
+    physical_ndim = core.physical_aval(aval).ndim
+    s = sharding.SdyArraySharding(
+        mesh_name='mesh',
+        dimension_shardings=[sharding.SdyDimSharding(axes=[], is_closed=i >= aval.ndim)
+                             for i in range(physical_ndim)])
+    return wrap_with_sharding_op(ctx, val, aval, s)
+  else:
+    return wrap_with_sharding_op(
       ctx, val, aval, xc.HloSharding.replicate().to_proto(),
       unspecified_dims=set(range(aval.ndim)))
 
