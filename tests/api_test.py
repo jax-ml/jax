@@ -1463,6 +1463,20 @@ class JitTest(jtu.BufferDonationTestCase):
     self.assertAllClose(f(np.nan), np.nan)
     self.assertAllClose(jit(f)(np.nan), np.nan)
 
+  def test_no_tracing(self):
+    @jax.jit
+    def f(x):
+      return x
+
+    x = jnp.arange(3)
+    y = jnp.arange(4)
+
+    _ = f(x)  # no crash
+
+    with self.assertRaisesRegex(RuntimeError, 'no_tracing'):
+      with jax.no_tracing():
+        _ = f(y)  # crash!
+
 
 class APITest(jtu.JaxTestCase):
 

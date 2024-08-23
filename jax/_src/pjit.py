@@ -353,6 +353,9 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
 
   @api_boundary
   def cache_miss(*args, **kwargs):
+    if config.no_tracing.value:
+      raise RuntimeError(f"re-tracing function {jit_info.fun_sourceinfo} for "
+                         "`jit`, but 'no_tracing' is set")
     outs, out_flat, out_tree, args_flat, jaxpr, attrs_tracked = _python_pjit_helper(
         fun, jit_info, *args, **kwargs)
     executable = _read_most_recent_pjit_call_executable(jaxpr)
