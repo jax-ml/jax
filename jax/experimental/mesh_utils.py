@@ -776,7 +776,11 @@ def create_hybrid_device_mesh(
   if devices is None:
     devices = xb.devices()
   attr = 'process_index' if process_is_granule else 'slice_index'
-  assert hasattr(devices[0], attr)
+  if not hasattr(devices[0], attr):
+    raise ValueError(
+        f'Device {devices[0]} does not have attribute {attr}. See'
+        ' `process_is_granule` option.'
+    )
   granule_dict = collections.defaultdict(list)
   for dev in devices:
     granule_dict[getattr(dev, attr)].append(dev)
