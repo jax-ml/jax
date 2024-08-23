@@ -1501,6 +1501,11 @@ eager_pmap = bool_state(
     upgrade=True,
     help='Enable eager-mode pmap when jax_disable_jit is activated.')
 
+no_tracing = bool_state(
+    name='jax_no_tracing',
+    default=False,
+    help='Disallow tracing for JIT compilation.')
+
 disable_vmap_shmap_error = bool_state(
     name='jax_disable_vmap_shmap_error',
     default=False,
