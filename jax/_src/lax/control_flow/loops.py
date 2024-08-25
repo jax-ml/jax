@@ -296,6 +296,10 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     raise NotImplementedError(
         f'Effects not supported in `scan`: {disallowed_effects}')
 
+  unroll = core.concrete_or_error(
+      None, unroll,
+      "The `unroll` argument to `scan` expects a concrete `int` or `bool` "
+      "value.")
   if isinstance(unroll, bool):
     unroll = max(length, 1) if unroll else 1
   if unroll < 1:
