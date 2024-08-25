@@ -224,7 +224,11 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
                            if not hasattr(x, 'shape')))) from err
 
   if length is not None:
-    length = int(length)
+    try:
+      length = int(length)
+    except core.ConcretizationTypeError as err:
+      msg = 'The `length` argument to `scan` expects a concrete `int` value.'
+      raise core.ConcretizationTypeError(length, msg) from None  # type: ignore[arg-type]
     if not all(length == l for l in lengths):
       msg = ("scan got `length` argument of {} which disagrees with "
              "leading axis sizes {}.")

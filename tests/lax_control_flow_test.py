@@ -2950,6 +2950,14 @@ class LaxControlFlowTest(jtu.JaxTestCase):
     hlo_text = fn.lower(init).as_text('hlo')
     self.assertNotIn('4,1,2,2', hlo_text)
 
+  def test_scan_length_concrete_error(self):
+    f = jax.jit(lambda n, x: jax.lax.scan(lambda c, z: (c, z), x, (), n))
+
+    with self.assertRaisesRegex(
+        core.ConcretizationTypeError,
+        "The `length` argument to `scan` expects a concrete `int` value.*"):
+      f(3, 1.)
+
   def test_cond_vmap_forwarding_doesnt_promote(self):
     def f(x, y):
       x, y = jax.lax.cond(
