@@ -7228,8 +7228,8 @@ class CustomJVPTest(jtu.JaxTestCase):
       g.defjvp(g_jvp)
       return g(1.)
 
-    self.assertRaises(ad.CustomJVPException, lambda: api.jvp(f, (3.,), (1.,)))
-    self.assertRaises(ad.CustomJVPException, lambda: api.grad(f)(3.))
+    self.assertRaises(UnexpectedTracerError, lambda: api.jvp(f, (3.,), (1.,)))
+    self.assertRaises(UnexpectedTracerError, lambda: api.grad(f)(3.))
 
   def test_nondiff_arg(self):
     @partial(jax.custom_jvp, nondiff_argnums=(0,))
@@ -7304,7 +7304,7 @@ class CustomJVPTest(jtu.JaxTestCase):
       h = lambda y: x + y  # capture x
       return g(h, x)
 
-    with self.assertRaisesRegex(ad.CustomJVPException, "Detected differentiation"):
+    with self.assertRaises(ad.UnexpectedTracerError):
       api.jvp(f, (2.,), (1.,))
 
   def test_vmap_axes(self):

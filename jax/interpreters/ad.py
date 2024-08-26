@@ -18,8 +18,6 @@
 from __future__ import annotations
 
 from jax._src.interpreters.ad import (
-  CustomJVPException as CustomJVPException,
-  CustomVJPException as CustomVJPException,
   JVPTrace as JVPTrace,
   JVPTracer as JVPTracer,
   UndefinedPrimal as UndefinedPrimal,

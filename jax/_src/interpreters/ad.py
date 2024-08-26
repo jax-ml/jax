@@ -730,26 +730,3 @@ def _custom_lin_transpose(cts_out, *invals, num_res, bwd, out_avals,
   cts_in = map(replace_rule_output_symbolic_zeros, cts_in)
   return [None] * num_res + list(cts_in)
 primitive_transposes[custom_lin_p] = _custom_lin_transpose
-
-
-class CustomJVPException(Exception):
-  def __init__(self):
-    # TODO(mattjj): track source provenance on AD tracers, improve error
-    msg = ("Detected differentiation of a custom_jvp function with respect to "
-           "a closed-over value. That isn't supported because the custom JVP "
-           "rule only specifies how to differentiate the custom_jvp function "
-           "with respect to explicit input parameters. Try passing the "
-           "closed-over value into the custom_jvp function as an argument, and "
-           "adapting the custom_jvp rule.")
-    super().__init__(msg)
-
-class CustomVJPException(Exception):
-  def __init__(self):
-    # TODO(mattjj): track source provenance on AD tracers, improve error
-    msg = ("Detected differentiation of a custom_vjp function with respect to "
-           "a closed-over value. That isn't supported because the custom VJP "
-           "rule only specifies how to differentiate the custom_vjp function "
-           "with respect to explicit input parameters. Try passing the "
-           "closed-over value into the custom_vjp function as an argument, and "
-           "adapting the custom_vjp fwd and bwd rules.")
-    super().__init__(msg)
