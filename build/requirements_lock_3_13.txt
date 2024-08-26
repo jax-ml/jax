@@ -74,7 +74,7 @@ psutil==5.9.8
     # via portpicker
 pygments==2.17.2
     # via rich
-pyparsing==3.1.2
+pyparsing==3.1.4
     # via matplotlib
 pyproject-hooks==1.0.0
     # via build
