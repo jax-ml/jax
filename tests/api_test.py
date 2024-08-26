@@ -3566,8 +3566,7 @@ class APITest(jtu.JaxTestCase):
       return x + self._saved_tracer
     with self.assertRaisesRegex(
         UnexpectedTracerError,
-        re.compile("Encountered an unexpected tracer.*Can't lift",
-                   re.DOTALL)):
+        re.compile("unexpected tracer")):
       api.grad(func1)(2.)
 
   def test_escaped_tracers_not_among_input_tracers(self):
@@ -3967,7 +3966,7 @@ class APITest(jtu.JaxTestCase):
         x = g(x)
         return x
 
-      msg = r'Leaked trace MainTrace\(2,DynamicJaxprTrace\)'
+      msg = r'Leaked trace DynamicJaxprTrace'
       with self.assertRaisesRegex(Exception, f"{msg}"):
         f(3)
 
