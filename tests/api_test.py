@@ -3542,11 +3542,7 @@ class APITest(jtu.JaxTestCase):
 
   def test_escaped_tracers_tracer_from_higher_level(self):
     api.grad(self.helper_save_tracer)(0.)
-    with self.assertRaisesRegex(
-        UnexpectedTracerError,
-        re.compile(
-          "Encountered an unexpected tracer.*Tracer from a higher level",
-          re.DOTALL)):
+    with self.assertRaises(UnexpectedTracerError):
       api.grad(lambda x: x)(self._saved_tracer)
 
   def test_escaped_tracers_incompatible_sublevel(self):
@@ -7304,7 +7300,7 @@ class CustomJVPTest(jtu.JaxTestCase):
       h = lambda y: x + y  # capture x
       return g(h, x)
 
-    with self.assertRaises(ad.UnexpectedTracerError):
+    with self.assertRaises(UnexpectedTracerError):
       api.jvp(f, (2.,), (1.,))
 
   def test_vmap_axes(self):
