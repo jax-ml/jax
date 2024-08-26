@@ -38,11 +38,11 @@ import jax.numpy as jnp
 
 config.parse_flags_with_absl()
 
-def _is_required_cudnn_version_satisfied():
+def _is_required_cudnn_version_satisfied(min_cudnn_version):
   return (
       jtu.is_cuda_compute_capability_at_least("8.0") and
       cuda_versions is not None and
-      cuda_versions.cudnn_get_version() >= 8904
+      cuda_versions.cudnn_get_version() >= min_cudnn_version
   )
 
 def _check_cudnn_backend(fn, *args, **kwargs):
@@ -60,7 +60,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
       impl=['cudnn', 'xla'],
   )
   def testDotProductAttention(self, dtype, group_num, use_vmap, impl):
-    if impl == 'cudnn' and not _is_required_cudnn_version_satisfied():
+    if impl == 'cudnn' and not _is_required_cudnn_version_satisfied(8904):
       raise unittest.SkipTest("CUDA or cuDNN versions are not compatible.")
     if impl == 'cudnn' and dtype == jnp.float32:
       raise unittest.SkipTest("cuDNN only supports fp16 or bf16.")
@@ -102,13 +102,15 @@ class NNFunctionsTest(jtu.JaxTestCase):
 
   @parameterized.product(
       mask_mode=['bias', 'causal', 'padding', 'custom', ('causal', 'padding'),
-                 ('custom', 'padding'), ('bias', 'causal')],
+                 ('custom', 'padding'), ('bias', 'causal'),
+                 ('causal', 'sliding_window')],
   )
   def testDotProductAttentionMask(self, mask_mode):
-    if not _is_required_cudnn_version_satisfied():
-      raise unittest.SkipTest("CUDA or cuDNN versions are not compatible.")
     if isinstance(mask_mode, str):
       mask_mode = (mask_mode,)
+    min_cudnn_version = 90200 if 'sliding_window' in mask_mode else 8904
+    if not _is_required_cudnn_version_satisfied(min_cudnn_version):
+      raise unittest.SkipTest("CUDA or cuDNN versions are not compatible.")
 
     dtype = jnp.bfloat16
     B, S, T, N, H = 2, 128, 128, 4, 32
@@ -119,6 +121,7 @@ class NNFunctionsTest(jtu.JaxTestCase):
     grad = random.normal(keys[3], (B, T, N, H), dtype)
     bias, mask = None, None
     q_seqlen, kv_seqlen = None, None
+    window_size = None
 
     is_causal = 'causal' in mask_mode
     if 'padding' in mask_mode:
@@ -130,6 +133,8 @@ class NNFunctionsTest(jtu.JaxTestCase):
       mask = custom_mask[None, None, :, :]
     if 'bias' in mask_mode:
       bias = random.normal(keys[4], (1, N, T, S), dtype)
+    if 'sliding_window' in mask_mode:
+      window_size = (3, 2) if is_causal else (3, 0)
 
     sdpa = nn.dot_product_attention
     sdpa_ref = partial(sdpa, is_causal=is_causal, implementation=None)
@@ -141,9 +146,11 @@ class NNFunctionsTest(jtu.JaxTestCase):
     # Convert the kargs to positional args for the jax.vjp.
     fn_ref = lambda q, k, v, b, m, qs, kvs: sdpa_ref(
         q, k, v, b, m, query_seq_lengths=qs, key_value_seq_lengths=kvs,
+        local_window_size=window_size,
     )
     fn_ans = lambda q, k, v, b, m, qs, kvs: sdpa_ans(
         q, k, v, b, m, query_seq_lengths=qs, key_value_seq_lengths=kvs,
+        local_window_size=window_size,
     )
     out_ref, sdpa_vjp_ref = jax.vjp(fn_ref, *args, q_seqlen, kv_seqlen)
     out_ans, sdpa_vjp_ans = jax.vjp(fn_ans, *args, q_seqlen, kv_seqlen)
