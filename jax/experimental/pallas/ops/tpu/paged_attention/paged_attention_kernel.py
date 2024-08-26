@@ -640,7 +640,8 @@ def paged_attention(
           grid=grid,
           scratch_shapes=scratch_shapes,
       ),
-      compiler_params=dict(mosaic=dict(dimension_semantics=dimension_sematics)),
+      compiler_params=pltpu.TPUCompilerParams(
+          dimension_semantics=dimension_sematics),
       out_shape=[
           jax.ShapeDtypeStruct(q.shape, q_dtype_for_kernel_launch),
           jax.ShapeDtypeStruct((*q.shape[:-1], 1), jnp.float32),

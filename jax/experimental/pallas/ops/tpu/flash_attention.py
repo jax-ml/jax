@@ -745,15 +745,13 @@ def _flash_attention_impl(
       ),
       out_shape=out_shape,
       debug=debug,
-      compiler_params=dict(
-          mosaic=dict(
+      compiler_params=pltpu.TPUCompilerParams(
               dimension_semantics=(
                   "parallel",
                   "parallel",
                   "parallel",
                   "arbitrary",
               )
-          )
       ),
   )(q, k, v, ab, q_segment_ids, kv_segment_ids)
   if save_residuals:
@@ -1105,15 +1103,13 @@ def _flash_attention_bwd_dkv(
         ),
         out_shape=out_shapes,
         debug=debug,
-        compiler_params=dict(
-            mosaic=dict(
+        compiler_params=pltpu.TPUCompilerParams(
                 dimension_semantics=(
                     "parallel",
                     "parallel",
                     "parallel",
                     "arbitrary",
                 )
-            )
         ),
     )(q, k, v, ab, q_segment_ids, kv_segment_ids, l, m, do, di)
     assert dk.shape == k.shape
@@ -1450,15 +1446,13 @@ def _flash_attention_bwd_dq(
         ),
         out_shape=out_shapes,
         debug=debug,
-        compiler_params=dict(
-            mosaic=dict(
+        compiler_params=pltpu.TPUCompilerParams(
                 dimension_semantics=(
                     "parallel",
                     "parallel",
                     "parallel",
                     "arbitrary",
                 )
-            )
         ),
     )(q, k, v, ab, q_segment_ids, kv_segment_ids, l, m, do, di)
 

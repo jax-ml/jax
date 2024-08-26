@@ -68,8 +68,8 @@ class TPUCompilerParams(pallas_core.CompilerParams):
     device_type: The device type to compile for.
   """
   PLATFORM: ClassVar[str] = "mosaic"
-  dimension_semantics: list[str] | None = None
-  allow_input_fusion: list[bool] | None = None
+  dimension_semantics: Sequence[str] | None = None
+  allow_input_fusion: Sequence[bool] | None = None
   vmem_limit_bytes: int | None = None
   collective_id: int | None = None
   flags: dict[str, Any] | None = None
