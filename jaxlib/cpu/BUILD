@@ -23,7 +23,7 @@ licenses(["notice"])
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//:__subpackages__"],
+    default_visibility = ["//jax:internal"],
 )
 
 # LAPACK
@@ -36,13 +36,13 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         "//jaxlib:ffi_helpers",
-        "@xla//xla/ffi/api:c_api",
-        "@xla//xla/ffi/api:ffi",
-        "@xla//xla/service:custom_call_status",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:dynamic_annotations",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/types:span",
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/ffi/api:ffi",
+        "@xla//xla/service:custom_call_status",
     ],
 )
 
@@ -71,8 +71,8 @@ pybind_extension(
     deps = [
         ":lapack_kernels",
         "//jaxlib:kernel_nanobind_helpers",
-        "@xla//xla/ffi/api:ffi",
         "@nanobind",
+        "@xla//xla/ffi/api:ffi",
     ],
 )
 

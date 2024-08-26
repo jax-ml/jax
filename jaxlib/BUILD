@@ -14,19 +14,19 @@
 
 # JAX is Autograd and XLA
 
-load("//jaxlib:symlink_files.bzl", "symlink_files")
 load(
     "//jaxlib:jax.bzl",
     "py_library_providing_imports_info",
     "pybind_extension",
     "pytype_library",
 )
+load("//jaxlib:symlink_files.bzl", "symlink_files")
 
 licenses(["notice"])
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//:__subpackages__"],
+    default_visibility = ["//jax:internal"],
 )
 
 # This makes xla_extension module accessible from jax._src.lib.
@@ -129,13 +129,13 @@ cc_library(
     hdrs = ["ffi_helpers.h"],
     features = ["-use_header_modules"],
     deps = [
-        "@xla//xla/ffi/api:c_api",
-        "@xla//xla/ffi/api:ffi",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/ffi/api:ffi",
     ],
 )
 
@@ -149,10 +149,10 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         ":kernel_helpers",
-        "@xla//xla/ffi/api:c_api",
-        "@xla//xla/tsl/python/lib/core:numpy",
         "@com_google_absl//absl/base",
         "@nanobind",
+        "@xla//xla/ffi/api:c_api",
+        "@xla//xla/tsl/python/lib/core:numpy",
     ],
 )
 
@@ -201,10 +201,10 @@ pybind_extension(
     srcs = ["utils.cc"],
     module_name = "utils",
     deps = [
-        "@xla//third_party/python_runtime:headers",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:inlined_vector",
         "@nanobind",
+        "@xla//third_party/python_runtime:headers",
     ],
 )
 
@@ -238,6 +238,9 @@ pybind_extension(
     module_name = "rocm_plugin_extension",
     deps = [
         "//jaxlib:kernel_nanobind_helpers",
+        "@com_google_absl//absl/status",
+        "@local_config_rocm//rocm:rocm_headers",
+        "@nanobind",
         "@xla//third_party/python_runtime:headers",
         "@xla//xla:status",
         "@xla//xla:util",
@@ -248,9 +251,6 @@ pybind_extension(
         "@xla//xla/pjrt/c:pjrt_c_api_helpers",
         "@xla//xla/python:py_client_gpu",
         "@xla//xla/tsl/python/lib/core:numpy",
-        "@com_google_absl//absl/status",
-        "@local_config_rocm//rocm:rocm_headers",
-        "@nanobind",
     ],
 )
 

@@ -68,10 +68,10 @@ jax_test(
 
 jax_test(
     name = "flash_attention",
-    srcs = ["//third_party/py/jax/experimental/mosaic/gpu/examples:flash_attention.py"],
+    srcs = ["//jax/experimental/mosaic/gpu/examples:flash_attention.py"],
     disable_backends = DISABLED_BACKENDS,
     disable_configs = DISABLED_CONFIGS,
-    main = "//third_party/py/jax/experimental/mosaic/gpu/examples:flash_attention.py",
+    main = "//jax/experimental/mosaic/gpu/examples:flash_attention.py",
     tags = ["notap"],
     deps = [
         "//jax:mosaic_gpu",

@@ -23,7 +23,7 @@ load(
 package(
     default_applicable_licenses = [],
     default_visibility = [
-        "//:__subpackages__",
+        "//jax:internal",
     ],
 )
 

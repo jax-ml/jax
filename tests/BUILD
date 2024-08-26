@@ -1567,6 +1567,6 @@ filegroup(
         exclude = [],
     ) + ["BUILD"],
     visibility = [
-        "//:__subpackages__",
+        "//jax:internal",
     ],
 )
