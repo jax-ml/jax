@@ -2958,6 +2958,17 @@ class LaxControlFlowTest(jtu.JaxTestCase):
         "The `length` argument to `scan` expects a concrete `int` value.*"):
       f(3, 1.)
 
+  def test_scan_unroll_concrete_error(self):
+    f = jax.jit(lambda n, x: jax.lax.scan(
+        lambda c, z: (c, z), x, (), 10, unroll=n))
+
+    msg = ("The `unroll` argument to `scan` expects a concrete `int` or "
+           "`bool` value.*")
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f(3, 1.)
+    with self.assertRaisesRegex(core.ConcretizationTypeError, msg):
+      f(True, 1.)
+
   def test_cond_vmap_forwarding_doesnt_promote(self):
     def f(x, y):
       x, y = jax.lax.cond(
