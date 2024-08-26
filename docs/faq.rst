@@ -837,7 +837,7 @@ This is especially likely when running multiple JAX instances, running JAX in
 tandem with TensorFlow which performs its own pre-allocation, or when running
 JAX on a system where the GPU is being heavily utilized by other processes. When
 in doubt, try running the program again with reduced pre-allocation, either by
-reducing :code:`XLA_PYTHON_CLIENT_MEM_FRACTION` from the default of :code:`.75`,
+reducing :code:`XLA_CLIENT_MEM_FRACTION` from the default of :code:`.75`,
 or setting :code:`XLA_PYTHON_CLIENT_PREALLOCATE=false`. For more details, please
 see the page on `JAX GPU memory allocation`_.
 

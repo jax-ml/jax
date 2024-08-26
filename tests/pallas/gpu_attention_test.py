@@ -26,7 +26,7 @@ import jax.numpy as jnp
 import numpy as np
 
 
-os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = "0.5"
+os.environ["XLA_CLIENT_MEM_FRACTION"] = "0.5"
 
 # pylint: disable=no-value-for-parameter
 

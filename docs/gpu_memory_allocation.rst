@@ -14,7 +14,7 @@ override the default behavior:
   that uses most of the available GPU memory may OOM with preallocation
   disabled.
 
-``XLA_PYTHON_CLIENT_MEM_FRACTION=.XX``
+``XLA_CLIENT_MEM_FRACTION=.XX``
   If preallocation is enabled, this makes JAX preallocate XX% of
   the total GPU memory, instead of the default 75%. Lowering the
   amount preallocated can fix OOMs that occur when the JAX program starts.
@@ -31,7 +31,7 @@ Common causes of OOM failures
 -----------------------------
 
 **Running multiple JAX processes concurrently.**
-  Either use :code:`XLA_PYTHON_CLIENT_MEM_FRACTION` to give each process an
+  Either use :code:`XLA_CLIENT_MEM_FRACTION` to give each process an
   appropriate amount of memory, or set
   :code:`XLA_PYTHON_CLIENT_PREALLOCATE=false`.
 
@@ -44,7 +44,7 @@ Common causes of OOM failures
   TensorFlow from using the GPU with the command
   :code:`tf.config.experimental.set_visible_devices([], "GPU")`
 
-  Alternatively, use :code:`XLA_PYTHON_CLIENT_MEM_FRACTION` or
+  Alternatively, use :code:`XLA_CLIENT_MEM_FRACTION` or
   :code:`XLA_PYTHON_CLIENT_PREALLOCATE`. There are
   also similar options to configure TensorFlow's GPU memory allocation
   (`gpu_memory_fraction
@@ -58,5 +58,5 @@ Common causes of OOM failures
   for TF2).
 
 **Running JAX on the display GPU.**
-  Use :code:`XLA_PYTHON_CLIENT_MEM_FRACTION` or
+  Use :code:`XLA_CLIENT_MEM_FRACTION` or
   :code:`XLA_PYTHON_CLIENT_PREALLOCATE`.
