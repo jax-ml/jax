@@ -51,6 +51,10 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     various Bazel targets. This enables more reproducible builds for JAX and its
     supported CUDA versions.
 
+* Changes
+  * SparseCore profiling is added.
+    * JAX now supports profiling [SparseCore](https://cloud.google.com/tpu/docs/system-architecture-tpu-vm#sparsecore) on TPUv5p chips. These traces will be viewable in Tensorboard Profiler's [TraceViewer](https://www.tensorflow.org/guide/profiler#trace_viewer).
+
 ## jax 0.4.31 (July 29, 2024)
 
 * Deletion
