@@ -315,7 +315,7 @@ print("jacrev result, with shape", J.shape)
 print(J)
 ```
 
-These two functions compute the same values (up to machine numerics), but differ in their implementation: {func}`jax.jacfwd` uses forward-mode automatic differentiation, which is more efficient for "tall" Jacobian matrices, while {func}`jax.jacrev` uses reverse-mode, which is more efficient for "wide" Jacobian matrices. For matrices that are near-square, {func}`jax.jacfwd` probably has an edge over {func}`jax.jacrev`.
+These two functions compute the same values (up to machine numerics), but differ in their implementation: {func}`jax.jacfwd` uses forward-mode automatic differentiation, which is more efficient for "tall" Jacobian matrices (more outputs than inputs), while {func}`jax.jacrev` uses reverse-mode, which is more efficient for "wide" Jacobian matrices (more inputs than outputs). For matrices that are near-square, {func}`jax.jacfwd` probably has an edge over {func}`jax.jacrev`.
 
 You can also use {func}`jax.jacfwd` and {func}`jax.jacrev` with container types:
 
