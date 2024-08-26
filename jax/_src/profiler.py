@@ -129,7 +129,7 @@ def start_trace(log_dir: os.PathLike | str, create_perfetto_link: bool = False,
     _profile_state.create_perfetto_link = create_perfetto_link
     _profile_state.create_perfetto_trace = (
         create_perfetto_trace or create_perfetto_link)
-    _profile_state.log_dir = pathlib.Path(log_dir)
+    _profile_state.log_dir = str(log_dir)
 
 
 def _write_perfetto_trace_file(log_dir: os.PathLike | str):
