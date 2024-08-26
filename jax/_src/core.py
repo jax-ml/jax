@@ -424,6 +424,9 @@ class Primitive:
     return f'{self.name}'
 
   def bind(self, *args, **params):
+    for arg in args:
+      if isinstance(arg, Tracer) and arg._trace.is_valid():
+        raise UnexpectedTracerError(escaped_tracer_error(arg))
     with take_current_trace() as cur_trace:
       return self.bind_with_trace(cur_trace, args, params)
 
@@ -508,7 +511,10 @@ class Trace(Generic[TracerType]):
     raise NotImplementedError("must override")
 
   def invalidate(self):
-    pass
+    self._invalidated = True
+
+  def is_valid(self):
+    return hasattr(self, "_invalidated")
 
   def __repr__(self):
     return '{}'.format(self.__class__.__name__)
@@ -857,7 +863,11 @@ class EvalTrace(Trace):
       return call_impl_with_key_reuse_checks(primitive, primitive.impl, *tracers, **params)
     else:
       for t in tracers:
-        assert not isinstance(t, Tracer), t # TODO: rename
+        if isinstance(t, Tracer):
+          if t._trace.is_valid():
+            raise UnexpectedTracerError(f"Unexpected tracer: {t}")
+          else:
+            raise UnexpectedTracerError(escaped_tracer_error(t))
       with set_current_trace(eval_trace):
         return primitive.impl(*tracers, **params)
 
