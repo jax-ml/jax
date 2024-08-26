@@ -27,6 +27,7 @@ runs:
       echo "Halt always tag ${{ inputs.should-wait-always-tag}}"
       echo "Should halt input: ${{ inputs.halt-dispatch-input }}"
       echo "Reattempt count: ${{ github.run_attempt }}"
+      echo "PR number ${{ github.event.number }}"
   - name: Halt For Connection 
     shell: bash
     if: |

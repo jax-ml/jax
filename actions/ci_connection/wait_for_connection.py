@@ -98,10 +98,11 @@ if __name__ == "__main__":
   cluster = os.environ.get("CONNECTION_CLUSTER")
   location = os.environ.get("CONNECTION_LOCATION")
   ns = os.environ.get("CONNECTION_NS")
+  actions_path = os.environ.get("GITHUB_ACTION_PATH")
 
   print("Googler connection only\nSee go/<insert final golink> for details")
   print(
-    f"Connection string: ml_actions_connect  '{host}' '{ns}' '{location}' '{cluster}' '{repo}'"
+    f"Connection string: ml-actions-connect  --runner={host} --ns={ns} --loc={location} --cluster={cluster} --halt_directory={actions_path}"
   )
 
   # Thread is running as a daemon so it will quit when the

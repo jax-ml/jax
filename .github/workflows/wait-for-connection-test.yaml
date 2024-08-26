@@ -18,6 +18,7 @@ concurrency:
 jobs:
   wait-test:
     strategy:
+      fail-fast: false
       matrix:
         runner: ["arc-linux-x86-n2-64","arc-linux-arm64-t2a-48"]
         instances: ["1"]
