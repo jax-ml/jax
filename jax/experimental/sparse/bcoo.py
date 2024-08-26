@@ -738,12 +738,11 @@ def _bcoo_dot_general_impl(lhs_data, lhs_indices, rhs, *, dimension_numbers,
 @bcoo_dot_general_p.def_abstract_eval
 def _bcoo_dot_general_abstract_eval(lhs_data, lhs_indices, rhs, *, dimension_numbers,
                                     preferred_element_type, lhs_spinfo: SparseInfo):
-  out_aval = jax.eval_shape(
-    partial(lax.dot_general,
-            dimension_numbers=dimension_numbers,
-            preferred_element_type=preferred_element_type),
-    jax.ShapeDtypeStruct(lhs_spinfo.shape, lhs_data.dtype),
-    jax.ShapeDtypeStruct(rhs.shape, rhs.dtype))
+  out_aval = jax.jit(lax.dot_general, static_argnames=("dimension_numbers", "preferred_element_type")).eval_shape(
+          jax.ShapeDtypeStruct(lhs_spinfo.shape, lhs_data.dtype),
+          jax.ShapeDtypeStruct(rhs.shape, rhs.dtype),
+          dimension_numbers=dimension_numbers,
+          preferred_element_type=preferred_element_type)
 
   (lhs_contracting, _), (lhs_batch, _) = dimension_numbers
   n_batch, n_sparse, _, _ = _validate_bcoo(lhs_data, lhs_indices, lhs_spinfo.shape)
