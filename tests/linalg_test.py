@@ -111,7 +111,7 @@ class NumpyLinalgTest(jtu.JaxTestCase):
     self.assertAllClose(np.float32(0), jsp.linalg.det(x))
 
   @jtu.sample_product(
-    shape=[(1, 1), (3, 3), (2, 4, 4)],
+    shape=[(1, 1), (2, 2), (3, 3), (2, 2, 2), (2, 3, 3), (2, 4, 4), (5, 7, 7)],
     dtype=float_types,
   )
   @jtu.skip_on_flag("jax_skip_slow_tests", True)
