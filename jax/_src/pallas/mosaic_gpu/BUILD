@@ -24,7 +24,7 @@ load(
 package(
     default_applicable_licenses = [],
     default_visibility = [
-        "//:__subpackages__",
+        "//jax:internal",
     ],
 )
 
@@ -34,7 +34,6 @@ py_library(
     deps = [
         ":core",
         ":pallas_call_registration",
-        ":primitives",
     ],
 )
 
@@ -55,11 +54,12 @@ pytype_strict_library(
     srcs = ["lowering.py"],
     deps = [
         ":core",
-        ":primitives",
         "//jax",
         "//jax:core",
         "//jax:mlir",
         "//jax:mosaic_gpu",
+        "//jax:pallas",
+        "//jax:partial_eval",
         "//jax:util",
         "//jax/_src/lib",
         "//jax/_src/pallas",
@@ -72,17 +72,5 @@ pytype_strict_library(
     deps = [
         "//jax",
         "//jax/_src/pallas",
-    ],
-)
-
-pytype_strict_library(
-    name = "primitives",
-    srcs = ["primitives.py"],
-    deps = [
-        "//jax:api_util",
-        "//jax:core",
-        "//jax:effects",
-        "//jax:partial_eval",
-        "//jax:tree_util",
     ],
 )

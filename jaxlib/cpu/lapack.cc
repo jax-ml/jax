@@ -13,9 +13,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
-#include "jaxlib/cpu/lapack.h"
-
 #include <complex>
+#include <cstdint>
 
 #include "nanobind/nanobind.h"
 #include "jaxlib/cpu/lapack_kernels.h"
@@ -36,21 +35,6 @@ svd::ComputationMode GetSvdComputationMode(bool job_opt_compute_uv,
     return svd::ComputationMode::kComputeMinUVt;
   }
   return svd::ComputationMode::kComputeFullUVt;
-}
-
-template <DataType dtype>
-int64_t GesddGetWorkspaceSize(lapack_int m, lapack_int n,
-                              bool job_opt_compute_uv,
-                              bool job_opt_full_matrices) {
-  svd::ComputationMode mode =
-      GetSvdComputationMode(job_opt_compute_uv, job_opt_full_matrices);
-  return svd::SVDType<dtype>::GetWorkspaceSize(m, n, mode);
-};
-
-lapack_int GesddGetRealWorkspaceSize(lapack_int m, lapack_int n,
-                                     bool job_opt_compute_uv) {
-  svd::ComputationMode mode = GetSvdComputationMode(job_opt_compute_uv, true);
-  return svd::GetRealWorkspaceSize(m, n, mode);
 }
 
 void GetLapackKernelsFromScipy() {
@@ -129,11 +113,25 @@ void GetLapackKernelsFromScipy() {
   AssignKernelFn<RealSyevd<double>>(lapack_ptr("dsyevd"));
   AssignKernelFn<ComplexHeevd<std::complex<float>>>(lapack_ptr("cheevd"));
   AssignKernelFn<ComplexHeevd<std::complex<double>>>(lapack_ptr("zheevd"));
+  AssignKernelFn<EigenvalueDecompositionSymmetric<DataType::F32>>(
+      lapack_ptr("ssyevd"));
+  AssignKernelFn<EigenvalueDecompositionSymmetric<DataType::F64>>(
+      lapack_ptr("dsyevd"));
+  AssignKernelFn<EigenvalueDecompositionHermitian<DataType::C64>>(
+      lapack_ptr("cheevd"));
+  AssignKernelFn<EigenvalueDecompositionHermitian<DataType::C128>>(
+      lapack_ptr("zheevd"));
 
   AssignKernelFn<RealGeev<float>>(lapack_ptr("sgeev"));
   AssignKernelFn<RealGeev<double>>(lapack_ptr("dgeev"));
   AssignKernelFn<ComplexGeev<std::complex<float>>>(lapack_ptr("cgeev"));
   AssignKernelFn<ComplexGeev<std::complex<double>>>(lapack_ptr("zgeev"));
+  AssignKernelFn<EigenvalueDecomposition<DataType::F32>>(lapack_ptr("sgeev"));
+  AssignKernelFn<EigenvalueDecomposition<DataType::F64>>(lapack_ptr("dgeev"));
+  AssignKernelFn<EigenvalueDecompositionComplex<DataType::C64>>(
+      lapack_ptr("cgeev"));
+  AssignKernelFn<EigenvalueDecompositionComplex<DataType::C128>>(
+      lapack_ptr("zgeev"));
 
   AssignKernelFn<RealGees<float>>(lapack_ptr("sgees"));
   AssignKernelFn<RealGees<double>>(lapack_ptr("dgees"));
@@ -247,6 +245,14 @@ nb::dict Registrations() {
   dict["lapack_dgesdd_ffi"] = EncapsulateFunction(lapack_dgesdd_ffi);
   dict["lapack_cgesdd_ffi"] = EncapsulateFunction(lapack_cgesdd_ffi);
   dict["lapack_zgesdd_ffi"] = EncapsulateFunction(lapack_zgesdd_ffi);
+  dict["lapack_ssyevd_ffi"] = EncapsulateFunction(lapack_ssyevd_ffi);
+  dict["lapack_dsyevd_ffi"] = EncapsulateFunction(lapack_dsyevd_ffi);
+  dict["lapack_cheevd_ffi"] = EncapsulateFunction(lapack_cheevd_ffi);
+  dict["lapack_zheevd_ffi"] = EncapsulateFunction(lapack_zheevd_ffi);
+  dict["lapack_sgeev_ffi"] = EncapsulateFunction(lapack_sgeev_ffi);
+  dict["lapack_dgeev_ffi"] = EncapsulateFunction(lapack_dgeev_ffi);
+  dict["lapack_cgeev_ffi"] = EncapsulateFunction(lapack_cgeev_ffi);
+  dict["lapack_zgeev_ffi"] = EncapsulateFunction(lapack_zgeev_ffi);
 
   return dict;
 }
@@ -257,12 +263,16 @@ NB_MODULE(_lapack, m) {
   m.def("registrations", &Registrations);
   // Submodules
   auto svd = m.def_submodule("svd");
+  auto eig = m.def_submodule("eig");
   // Enums
   nb::enum_<svd::ComputationMode>(svd, "ComputationMode")
       // kComputeVtOverwriteXPartialU is not implemented
       .value("kComputeFullUVt", svd::ComputationMode::kComputeFullUVt)
       .value("kComputeMinUVt", svd::ComputationMode::kComputeMinUVt)
       .value("kNoComputeUVt", svd::ComputationMode::kNoComputeUVt);
+  nb::enum_<eig::ComputationMode>(eig, "ComputationMode")
+      .value("kComputeEigenvectors", eig::ComputationMode::kComputeEigenvectors)
+      .value("kNoEigenvectors", eig::ComputationMode::kNoEigenvectors);
 
   // Old-style LAPACK Workspace Size Queries
   m.def("lapack_sgeqrf_workspace", &Geqrf<float>::Workspace, nb::arg("m"),
@@ -318,18 +328,6 @@ NB_MODULE(_lapack, m) {
   m.def("lapack_zhetrd_workspace", &Sytrd<std::complex<double>>::Workspace,
         nb::arg("lda"), nb::arg("n"));
   // FFI Kernel LAPACK Workspace Size Queries
-  m.def("lapack_sgeqrf_workspace_ffi",
-        &QrFactorization<DataType::F32>::GetWorkspaceSize, nb::arg("m"),
-        nb::arg("n"));
-  m.def("lapack_dgeqrf_workspace_ffi",
-        &QrFactorization<DataType::F64>::GetWorkspaceSize, nb::arg("m"),
-        nb::arg("n"));
-  m.def("lapack_cgeqrf_workspace_ffi",
-        &QrFactorization<DataType::C64>::GetWorkspaceSize, nb::arg("m"),
-        nb::arg("n"));
-  m.def("lapack_zgeqrf_workspace_ffi",
-        &QrFactorization<DataType::C128>::GetWorkspaceSize, nb::arg("m"),
-        nb::arg("n"));
   m.def("lapack_sorgqr_workspace_ffi",
         &OrthogonalQr<DataType::F32>::GetWorkspaceSize, nb::arg("m"),
         nb::arg("n"), nb::arg("k"));
@@ -342,18 +340,6 @@ NB_MODULE(_lapack, m) {
   m.def("lapack_zungqr_workspace_ffi",
         &OrthogonalQr<DataType::C128>::GetWorkspaceSize, nb::arg("m"),
         nb::arg("n"), nb::arg("k"));
-  m.def("gesdd_iwork_size_ffi", &svd::GetIntWorkspaceSize, nb::arg("m"),
-        nb::arg("n"));
-  m.def("sgesdd_work_size_ffi", &svd::SVDType<DataType::F32>::GetWorkspaceSize,
-        nb::arg("m"), nb::arg("n"), nb::arg("mode"));
-  m.def("dgesdd_work_size_ffi", &svd::SVDType<DataType::F64>::GetWorkspaceSize,
-        nb::arg("m"), nb::arg("n"), nb::arg("mode"));
-  m.def("gesdd_rwork_size_ffi", &svd::GetRealWorkspaceSize, nb::arg("m"),
-        nb::arg("n"), nb::arg("mode"));
-  m.def("cgesdd_work_size_ffi", &svd::SVDType<DataType::C64>::GetWorkspaceSize,
-        nb::arg("m"), nb::arg("n"), nb::arg("mode"));
-  m.def("zgesdd_work_size_ffi", &svd::SVDType<DataType::C128>::GetWorkspaceSize,
-        nb::arg("m"), nb::arg("n"), nb::arg("mode"));
 }
 
 }  // namespace

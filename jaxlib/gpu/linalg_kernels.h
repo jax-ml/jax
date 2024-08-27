@@ -26,8 +26,6 @@ limitations under the License.
 namespace jax {
 namespace JAX_GPU_NAMESPACE {
 
-namespace ffi = xla::ffi;
-
 enum LinalgType {
   F32 = 0,
   F64 = 1,
@@ -38,11 +36,16 @@ struct CholeskyUpdateDescriptor {
   std::int64_t matrix_size;  // leading dim (N) for a square (NxN)matrix
 };
 
-void LaunchCholeskyUpdateKernel(gpuStream_t stream, void** buffers,
-                                CholeskyUpdateDescriptor descriptor);
+gpuError_t LaunchCholeskyUpdateKernel(gpuStream_t stream, void** buffers,
+                                      CholeskyUpdateDescriptor descriptor);
 
 void CholeskyUpdate(gpuStream_t stream, void** buffers, const char* opaque,
                     size_t opaque_len, XlaCustomCallStatus* status);
+
+gpuError_t LaunchCholeskyUpdateFfiKernel(gpuStream_t stream, void* matrix,
+                                         void* vector, int size,
+                                         bool is_single_precision);
+XLA_FFI_DECLARE_HANDLER_SYMBOL(CholeskyUpdateFfi);
 
 void LaunchLuPivotsToPermutationKernel(gpuStream_t stream,
                                        std::int64_t batch_size,
@@ -50,7 +53,6 @@ void LaunchLuPivotsToPermutationKernel(gpuStream_t stream,
                                        std::int32_t permutation_size,
                                        const std::int32_t* pivots,
                                        std::int32_t* permutation);
-
 XLA_FFI_DECLARE_HANDLER_SYMBOL(LuPivotsToPermutation);
 
 }  // namespace JAX_GPU_NAMESPACE

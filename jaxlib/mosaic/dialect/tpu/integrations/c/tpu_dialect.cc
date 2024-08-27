@@ -312,6 +312,11 @@ void mlirTpuVectorLayoutPrint(
   unwrap(layout)->print<llvm::raw_ostream>(stream);
 }
 
+bool mlirTpuVectorLayoutIsValid(MlirTpuVectorLayout layout,
+                          MlirTpuI64TargetTuple target_shape) {
+  return unwrap(layout)->isValid(unwrap(target_shape));
+}
+
 void mlirTpuVregDataBoundsDestroy(MlirTpuVregDataBounds data_bounds) {
   delete unwrap(data_bounds);
 }

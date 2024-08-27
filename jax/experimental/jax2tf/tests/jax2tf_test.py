@@ -33,7 +33,6 @@ from jax import numpy as jnp
 from jax import sharding
 from jax._src import config
 from jax._src import core
-from jax._src.maps import xmap
 from jax._src import source_info_util
 from jax._src import test_util as jtu
 from jax._src import xla_bridge as xb
@@ -1427,8 +1426,7 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
           "none",
           "jit",
           "pjit", "pjit_in_shardings_None", "pjit_in_shardings_P",
-          "pjit_in_shardings_Sharding",
-          "shard_map", "xmap", "pmap"]
+          "pjit_in_shardings_Sharding", "shard_map", "pmap"]
       for transform2 in (
           ["none", "pjit_in_shardings_None", "pjit_in_shardings_P",
            "pjit_in_shardings_Sharding"]
@@ -1483,8 +1481,6 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
           shard_map=(
               shard_map(func, mesh, in_specs=(P("a", None),),
                         out_specs=P("a", None))),
-          xmap=xmap(func, in_axes=({0: 'axis'},),
-                    out_axes={0: 'axis'}, axis_resources={'axis': 'a'}),
           pmap=jax.pmap(func, in_axes=0, out_axes=0),
       )[transform]
       return transformed_func
@@ -1492,11 +1488,8 @@ class Jax2TfTest(tf_test_util.JaxToTfTestCase):
     transformed1_func = apply_transform(
         (func_shard_map if transform1 == "shard_map" else func),
         transform1)
-    assert transform2 not in ["xmap", "shard_map"]
+    assert transform2 not in ["shard_map"]
     transformed2_func = apply_transform(transformed1_func, transform2)
-
-    if transform1 == "xmap" and transform2 in ["pjit", "none"]:
-      raise unittest.SkipTest("TODO: pjit(xmap) with unspecified shardings crashes")
 
     if transform1 == "pmap":
       x = x.reshape((1, -1))  # Since we use 1 device

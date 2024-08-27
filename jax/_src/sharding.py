@@ -145,6 +145,11 @@ class Sharding:
     raise NotImplementedError('Subclasses should implement this method.')
 
   @property
+  def num_devices(self) -> int:
+    """Number of devices that the sharding contains."""
+    raise NotImplementedError('Subclasses should implement this method.')
+
+  @property
   def memory_kind(self) -> str | None:
     """Returns the memory kind of the sharding."""
     raise NotImplementedError('Subclasses should implement this method.')

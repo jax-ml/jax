@@ -104,11 +104,12 @@ class EArray(basearray.Array):
 
 # TODO(mattjj): _set_array_base_attributes
 
-def _earray_shard_arg_handler(xs, shardings):
+def _earray_shard_arg_handler(xs, shardings, layouts):
   arrs = [x._data for x in xs]
   phys_shardings = [sharding_impls.physical_sharding(x.aval, sharding)
                     for x, sharding in zip(xs, shardings)]
-  return pxla.shard_args(phys_shardings, arrs)
+  # TODO(yashkatariya): `layouts` should be converted to physical layouts.
+  return pxla.shard_args(phys_shardings, layouts, arrs)
 pxla.shard_arg_handlers[EArray] = _earray_shard_arg_handler
 
 api_util._shaped_abstractify_handlers[EArray] = lambda self: self.aval

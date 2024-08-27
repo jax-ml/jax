@@ -288,7 +288,7 @@ class VectorLayout {
   }
 
   template <typename T>
-  void insertImplicit(SmallVector<T> &vec, T value) const {
+  void insertImplicit(SmallVectorImpl<T> &vec, T value) const {
     CHECK_GE(vec.size(), layout_rank());
     switch (implicit_dim_) {
       case ImplicitDim::kNone:
@@ -302,7 +302,7 @@ class VectorLayout {
   }
 
   template <typename T>
-  void eraseImplicit(SmallVector<T> &vec) const {
+  void eraseImplicit(SmallVectorImpl<T> &vec) const {
     CHECK_GE(vec.size(), 2);
     switch (implicit_dim_) {
       case ImplicitDim::kNone:
@@ -513,6 +513,8 @@ llvm::raw_ostream &operator<<(llvm::raw_ostream &os, const Layout &v);
 llvm::hash_code hash_value(const VectorLayout &layout);
 mlir::Diagnostic &operator<<(mlir::Diagnostic &diag, const Layout &v);
 std::ostream &operator<<(std::ostream &os, VectorLayout::ImplicitDim dim);
+mlir::Diagnostic &operator<<(mlir::Diagnostic &diag,
+                             VectorLayout::ImplicitDim dim);
 
 std::optional<Layout> parseLayout(mlir::AsmParser &parser);
 

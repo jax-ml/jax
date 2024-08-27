@@ -44,6 +44,7 @@ from jax._src.interpreters import mlir
 from jax._src.interpreters import xla
 from jax._src.interpreters import pxla
 from jax._src import lib
+from jax._src.mesh import AbstractMesh
 from jax._src.lib import xla_client as xc
 from jax._src.monitoring import record_event_duration_secs
 from jax._src.partition_spec import PartitionSpec
@@ -133,7 +134,7 @@ class RuntimeTokenSet(threading.local):
     # We only use replicated sharding for the first time when the token for the
     # order effect hasn't been created.
     s = jax.sharding.GSPMDSharding.get_replicated(devices)
-    sharded_tok = core.Token(pxla.shard_args([s], [tok])[0])
+    sharded_tok = core.Token(pxla.shard_args([s], [None], [tok])[0])
     self.current_tokens[eff] = sharded_tok
     return sharded_tok
 
@@ -204,7 +205,7 @@ def jaxpr_has_primitive(jaxpr: core.Jaxpr, prim_name: str) -> bool:
 # stablehlo is oblivious of physical devices.
 prim_requires_devices_during_lowering: set[core.Primitive] = set()
 
-def jaxpr_has_prim_requiring_devices(jaxpr: core.Jaxpr):
+def jaxpr_has_prim_requiring_devices(jaxpr: core.Jaxpr) -> bool:
   for eqn in jaxpr.eqns:
     if eqn.primitive in prim_requires_devices_during_lowering:
       return True
@@ -227,8 +228,11 @@ def get_intermediate_shardings(
 
   for eqn in jaxpr.eqns:
     if eqn.primitive is pjit.sharding_constraint_p:
+      s = eqn.params['sharding']
+      if isinstance(s, NamedSharding) and isinstance(s.mesh, AbstractMesh):
+        continue
       source_info = SourceInfo(eqn.source_info, eqn.primitive.name)
-      yield (eqn.params['sharding'], source_info)
+      yield (s, source_info)
     elif eqn.primitive is pjit.pjit_p:
       source_info = SourceInfo(eqn.source_info, eqn.primitive.name)
       yield from ((i, source_info) for i in eqn.params['in_shardings'])
@@ -414,7 +418,7 @@ def _device_put_sharding_impl(x, aval, device):
       return _different_device_order_reshard(x, s)
 
     if (s.is_fully_addressable and isinstance(x, array.ArrayImpl) and
-        x.is_fully_addressable and len(s.device_set) > 1 and
+        x.is_fully_addressable and s.num_devices > 1 and
         s._internal_device_list != x.sharding._internal_device_list and  # pytype: disable=attribute-error
         s.device_set == x.sharding.device_set):
       assert isinstance(s, Sharding)
@@ -511,7 +515,10 @@ def _batched_device_put_impl(
   if shard_arg_xs:
     # Batch shard_arg calls. Helps improve efficiency for backends that support
     # efficient batch transfer.
-    shard_arg_results = pxla.shard_args(shard_arg_shardings, shard_arg_xs)
+    # device_put handles `Layout` via a different path, so just pass `None` as
+    # the layout here.
+    shard_arg_results = pxla.shard_args(
+        shard_arg_shardings, [None] * len(shard_arg_xs), shard_arg_xs)
     for i, shard_arg_result in zip(shard_arg_indices, shard_arg_results):
       assert isinstance(ys[i], _DeferredShardArg)
       ys[i] = ys[i].result_handler(shard_arg_result)
@@ -548,6 +555,10 @@ def _device_put_batcher(batched_args, batch_dims, **params):
 batching.primitive_batchers[device_put_p] = _device_put_batcher
 
 def _tpu_gpu_device_put_lowering(ctx, *xs, devices, srcs):
+  # TODO(yashkatariya): Maybe we should add the custom calls anyways if it's
+  # being used inside jit? Atleast for now, this preserves the old behavior.
+  if ctx.module_context.all_default_mem_kind:
+    return xs
   def lower(x, device, src, aval, out_aval):
     if (isinstance(device, (Sharding, TransferToMemoryKind)) and
         device.memory_kind is not None):
@@ -558,6 +569,7 @@ def _tpu_gpu_device_put_lowering(ctx, *xs, devices, srcs):
       return x
     return x
   return list(map(lower, xs, devices, srcs, ctx.avals_in, ctx.avals_out))
+
 mlir.register_lowering(
   device_put_p, _tpu_gpu_device_put_lowering, platform='tpu')
 mlir.register_lowering(
@@ -565,12 +577,6 @@ mlir.register_lowering(
 
 
 def _common_device_put_lowering(ctx, *xs, devices, srcs):
-  for device in devices:
-    if (isinstance(device, (Sharding, TransferToMemoryKind)) and
-        device.memory_kind is not None):
-      raise NotImplementedError(
-          "Passing memory_kind to device_put via Shardings is not supported on"
-          f" platforms {ctx.module_context.platforms}")
   return xs
 mlir.register_lowering(device_put_p, _common_device_put_lowering)
 

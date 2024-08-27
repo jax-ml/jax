@@ -17,7 +17,7 @@ load("//jaxlib:jax.bzl", "pybind_extension")
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//:__subpackages__"],
+    default_visibility = ["//jax:mosaic_gpu_users"],
 )
 
 py_library(
@@ -105,6 +105,12 @@ cc_library(
     deps = [
         ":passes",
         "//jaxlib/cuda:cuda_vendor",
+        "@com_google_absl//absl/base:core_headers",
+        "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/synchronization",
         "@llvm-project//llvm:Support",
         "@llvm-project//mlir:ArithDialect",
         "@llvm-project//mlir:ArithToLLVM",
@@ -142,12 +148,6 @@ cc_library(
         "@llvm-project//mlir:VectorDialect",
         "@xla//xla/service:custom_call_status",
         "@xla//xla/service:custom_call_target_registry",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/synchronization",
     ],
     alwayslink = True,
 )
@@ -168,11 +168,11 @@ pybind_extension(
     deps = [
         "//jaxlib:kernel_nanobind_helpers",
         "//jaxlib/cuda:cuda_vendor",
-        "@xla//xla/service:custom_call_status",
-        "@xla//xla/tsl/cuda:cudart",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/synchronization",
         "@nanobind",
+        "@xla//xla/service:custom_call_status",
+        "@xla//xla/tsl/cuda:cudart",
     ],
 )
 
@@ -192,7 +192,7 @@ cc_binary(
         "notap",
     ],
     deps = [
-        "@xla//xla/tsl/cuda:cudart",
         "@local_config_cuda//cuda:cuda_headers",
+        "@xla//xla/tsl/cuda:cudart",
     ],
 )

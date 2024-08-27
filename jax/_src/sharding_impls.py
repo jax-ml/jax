@@ -53,22 +53,21 @@ class TransferToMemoryKind:
 
 @util.cache(max_size=128, trace_context_in_key=False)
 def _check_mesh_resource_axis(mesh, parsed_pspec, _manual_axes):
-  try:
-    for p in parsed_pspec:
-      if p is not None:
-        for r in p:
-          mesh.shape[r]
-          if r in _manual_axes:
-            raise ValueError(
-                f"Axis: {r} of {parsed_pspec.get_partition_spec()} "
-                f"is also found in manual_axes: {_manual_axes}.") from None
-  except KeyError as e:
-    raise ValueError(f"Resource axis: {e.args[0]} of {parsed_pspec.user_spec} is "
-                     "undefined.") from None
+  for p in parsed_pspec:
+    if p is not None:
+      for r in p:
+        if r not in mesh.shape:
+          raise ValueError(
+              f"Resource axis: {r} of {parsed_pspec.get_partition_spec()} "
+              f"is not found in mesh: {tuple(mesh.shape.keys())}.")
+        if r in _manual_axes:
+          raise ValueError(
+              f"Axis: {r} of {parsed_pspec.get_partition_spec()} "
+              f"is also found in manual_axes: {_manual_axes}.") from None
 
 
 def hashed_index(x) -> int:
-  # This works for both `pjit`/`xmap` indices and `pmap` indices (which might
+  # This works for both `pjit` indices and `pmap` indices (which might
   # have an integer instead of a slice).
   assert all(v.step is None for v in x if isinstance(v, slice))
   return hash(tuple((v.start, v.stop) if isinstance(v, slice) else v for v in x))
@@ -192,7 +191,7 @@ class NamedSharding(sharding.Sharding):
     >>> named_sharding = jax.sharding.NamedSharding(mesh, spec)
   """
 
-  mesh: mesh_lib.Mesh
+  mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh
   spec: PartitionSpec
   _memory_kind: str | None
   _parsed_pspec: ParsedPartitionSpec
@@ -200,7 +199,7 @@ class NamedSharding(sharding.Sharding):
 
   @use_cpp_method()
   def __init__(
-      self, mesh: mesh_lib.Mesh, spec: PartitionSpec, *,
+      self, mesh: mesh_lib.Mesh | mesh_lib.AbstractMesh, spec: PartitionSpec, *,
       memory_kind: str | None = None, _parsed_pspec=None,
       _manual_axes=frozenset()):
     self.mesh = mesh
@@ -259,21 +258,37 @@ class NamedSharding(sharding.Sharding):
                 _manual_axes=_manual_axes)
 
   @property
+  def num_devices(self) -> int:
+    return self.mesh.size
+
+  @property
   def device_set(self) -> set[Device]:
+    if isinstance(self.mesh, mesh_lib.AbstractMesh):
+      raise ValueError(
+          'device_set is not implemented for `jax.sharding.AbstractMesh`.')
     return self.mesh._flat_devices_set
 
   @property
   def _device_assignment(self) -> XLADeviceAssignment:
+    if isinstance(self.mesh, mesh_lib.AbstractMesh):
+      raise ValueError('_device_assignment is not implemented for'
+                       ' `jax.sharding.AbstractMesh`.')
     return self.mesh._flat_devices_tuple
 
   @property
   def is_fully_addressable(self) -> bool:
+    if isinstance(self.mesh, mesh_lib.AbstractMesh):
+      raise ValueError('is_fully_addressable is not implemented for '
+                       '`jax.sharding.AbstractMesh`.')
     # Speed up `is_fully_addressable` since there is a high chance that the
     # mesh across multiple NamedSharding objects will be the same.
     return not self.mesh.is_multi_process
 
   @property
   def addressable_devices(self) -> set[Device]:
+    if isinstance(self.mesh, mesh_lib.AbstractMesh):
+      raise ValueError('addressable_devices is not implemented for '
+                       '`jax.sharding.AbstractMesh`.')
     # Override addressable devices because there is a high chance that the mesh
     # across multiple NamedSharding objects will be the same.
     return self.mesh._local_devices_set
@@ -354,6 +369,10 @@ class SingleDeviceSharding(sharding.Sharding):
       return True
     return (self._device == other._device and
             self.memory_kind == other.memory_kind)
+
+  @property
+  def num_devices(self) -> int:
+    return len(self.device_set)
 
   @property
   def device_set(self) -> set[Device]:
@@ -489,6 +508,10 @@ class PmapSharding(sharding.Sharding):
     else:
       pmap_devices = np.array(devices)
     return cls(pmap_devices, sharding_spec)
+
+  @property
+  def num_devices(self) -> int:
+    return len(self.device_set)
 
   @functools.cached_property
   def device_set(self) -> set[Device]:
@@ -696,6 +719,10 @@ class PositionalSharding(sharding.Sharding):
 
   # Sharding interface
 
+  @property
+  def num_devices(self) -> int:
+    return len(self.device_set)
+
   @functools.cached_property
   def device_set(self) -> set[xc.Device]:
     return set(self._devices)
@@ -814,6 +841,10 @@ class GSPMDSharding(sharding.Sharding):
           f"Sharding {self} is only valid for values of rank at least "
           f"{len(num_ways_dim_sharded)}, but was applied to a value of rank "
           f"{len(aval_shape)}")
+
+  @property
+  def num_devices(self) -> int:
+    return len(self.device_set)
 
   @functools.cached_property
   def device_set(self) -> set[Device]:
@@ -1064,8 +1095,6 @@ def preprocess(mesh, spec, parsed_pspec, _manual_axes=frozenset()):
   _check_mesh_resource_axis(mesh, parsed_pspec, _manual_axes)
   return parsed_pspec
 
-# fallback for c++ .
-preprocess_with_manual = preprocess
 
 def prepare_axis_resources(axis_resources,
                            arg_name,
@@ -1123,8 +1152,8 @@ class SPMDAxisContext:
   """A hardware axis context for parallel computations that use the GSPMD partitioner.
 
   This includes the mesh that will later by used to execute this computation,
-  as well as a set of mesh axes that are currently (e.g. because the current lowering
-  is invoked inside an xmap) lowered in the MANUAL sharding mode.
+  as well as a set of mesh axes that are currently lowered in the MANUAL
+  sharding mode.
   """
   mesh: mesh_lib.Mesh
   manual_axes: frozenset[MeshAxisName] = frozenset()
@@ -1165,6 +1194,7 @@ class ShardingContext:
   """
   num_devices: int
   device_assignment: tuple[xc.Device, ...] | None = None
+  mesh_shape: tuple[tuple[str, int], ...] | None = None
 
   def __post_init__(self):
     if self.device_assignment is not None:
@@ -1395,12 +1425,12 @@ def get_process_index_and_count(
   if (tensor_sharding.is_fully_addressable or
       tensor_sharding.is_fully_replicated):
     return (0, 1)
-  num_devices = len(tensor_sharding.device_set)
   # Get device to indices map, we don't care about the concrete
   # global shape here, only to get the distribution of shards across the tensor
   # using (num_devices, num_devices, ...)  This is a universal shape that is
   # compatible with any mesh with num_devices.
-  device_map = tensor_sharding.devices_indices_map((num_devices,) * ndims)
+  device_map = tensor_sharding.devices_indices_map(
+      (tensor_sharding.num_devices,) * ndims)
 
   # Get the slices for 'dim' for all devices.
   global_slice = {k: v[dim] for k, v in device_map.items()}
@@ -1554,7 +1584,7 @@ def physical_hlo_sharding(aval, hlo_sharding: xc.HloSharding) -> xc.HloSharding:
 def is_single_device_sharding(sharding: sharding.Sharding) -> bool:
   # Special case PmapSharding here because PmapSharding maps away an axis
   # and needs to be handled separately.test_pjit_single_device_sharding_add
-  return len(sharding.device_set) == 1 and not isinstance(sharding, PmapSharding)
+  return sharding.num_devices == 1 and not isinstance(sharding, PmapSharding)
 
 def make_key_array_phys_sharding(aval, sharding):
   if is_single_device_sharding(sharding):
@@ -1625,6 +1655,7 @@ def logical_sharding(aval, phys_sharding) -> sharding.Sharding:
                         sharding_spec=logical_sharding_spec)
   elif isinstance(phys_sharding, NamedSharding):
     logical_gs = get_logical_gspmd_sharding(aval, phys_sharding)
+    assert isinstance(phys_sharding.mesh, mesh_lib.Mesh)
     return _gspmd_to_named_sharding_via_mesh(
         logical_gs, phys_sharding.mesh)
   else:

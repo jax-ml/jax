@@ -26,10 +26,12 @@ import numpy as np
 
 import jax
 import jax.numpy as jnp
-from jax.sharding import NamedSharding, PartitionSpec, Mesh
+from jax.sharding import NamedSharding, PartitionSpec
 from jax._src import ad_checkpoint
+from jax._src import array
 from jax._src import ad_util
 from jax._src import callback
+from jax._src import config
 from jax._src import core
 from jax._src import custom_derivatives
 from jax._src import debugging
@@ -45,6 +47,7 @@ from jax._src import source_info_util
 from jax._src import traceback_util
 from jax._src import util
 from jax._src.core import Tracer
+from jax._src.mesh import AbstractMesh, Mesh
 from jax._src.api import _shared_code_pmap, _prepare_pmap
 from jax._src.lax import (lax, parallel as lax_parallel, slicing,
                           windowed_reductions, convolution, fft, linalg,
@@ -78,8 +81,9 @@ AxisName = Hashable
 
 
 @traceback_util.api_boundary
-def shard_map(f: Callable, mesh: Mesh, in_specs: Specs, out_specs: Specs,
-              check_rep: bool = True, auto: frozenset[AxisName] = frozenset()):
+def shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
+              out_specs: Specs, check_rep: bool = True,
+              auto: frozenset[AxisName] = frozenset()):
   """Map a function over shards of data.
 
   Note:
@@ -133,14 +137,15 @@ def shard_map(f: Callable, mesh: Mesh, in_specs: Specs, out_specs: Specs,
   """
   return _shard_map(f, mesh, in_specs, out_specs, check_rep, auto)
 
-def _shard_map(f: Callable, mesh: Mesh, in_specs: Specs,
+def _shard_map(f: Callable, mesh: Mesh | AbstractMesh, in_specs: Specs,
                out_specs: Specs | Callable[[], Specs],
                check_rep: bool, auto: frozenset[AxisName]):
   if not callable(f):
     raise TypeError("shard_map requires a callable for its first argument, "
                     f"but got {f} of type {type(f)}.")
-  if not isinstance(mesh, Mesh):
-    raise TypeError("shard_map requires a `jax.sharding.Mesh` instance for its "
+  if not isinstance(mesh, (Mesh, AbstractMesh)):
+    raise TypeError("shard_map requires a `jax.sharding.Mesh` or a "
+                    "`jax.sharding.AbstractMesh` instance for its "
                     f"second argument, but got {mesh} of type {type(mesh)}.")
   if not auto.issubset(mesh.axis_names):
     raise ValueError(f"shard_map requires auto={auto} to be a subset of "
@@ -572,9 +577,7 @@ def _unshard_shaped_array(mesh: Mesh, names: AxisNames,
                           aval: core.AbstractValue,) -> core.AbstractValue:
   assert isinstance(aval, core.ShapedArray)
   return aval.update(tuple(sz * prod(mesh.shape[n] for n in names.get(i, ()))
-                            for i, sz in enumerate(aval.shape)),
-                      named_shape={k: v for k, v in aval.named_shape.items()
-                                  if k not in mesh.shape})
+                            for i, sz in enumerate(aval.shape)))
 core.unshard_aval_handlers[core.ShapedArray] = _unshard_shaped_array
 
 # Type-checking
@@ -675,6 +678,8 @@ def _make_scoped_manual_sharding(ctx, mesh, axes):
 
 def _xla_shard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
                aval_in, aval_out, x):
+  if prod([size for n, size in mesh.shape.items() if n not in auto]) == 1:
+    return x
   manual_proto = pxla.manual_proto(aval_in, frozenset(mesh.axis_names) - auto, mesh)
   axes = {name: i for i, ns in names.items() for name in ns}
   ns = _make_scoped_manual_sharding(ctx, mesh, axes)
@@ -685,10 +690,12 @@ def _xla_shard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
   unspecified = set(range(aval_in.ndim)) if auto else set()
   sx = mlir.wrap_with_sharding_op(ctx, x, aval_in, shard_proto,
                                   unspecified_dims=unspecified)
-  return [mlir.wrap_with_full_to_shard_op(ctx, sx, aval_out, manual_proto, unspecified)]
+  return mlir.wrap_with_full_to_shard_op(ctx, sx, aval_out, manual_proto, unspecified)
 
 def _xla_unshard(ctx: mlir.LoweringRuleContext, mesh, auto, names,
                  aval_in, aval_out, x):
+  if prod([size for n, size in mesh.shape.items() if n not in auto]) == 1:
+    return x
   axes = {name: i for i, ns in names.items() for name in ns}
   ns = _make_scoped_manual_sharding(ctx, mesh, axes)
   if dtypes.issubdtype(aval_out.dtype, dtypes.extended):
@@ -708,10 +715,28 @@ def _pspec_mhlo_attrs(names: AxisNames, aval: core.AbstractValue) -> str:
 
 # Eager evaluation
 
+def get_mesh_from_args(args_flat, mesh):
+  for a in args_flat:
+    if hasattr(a, 'sharding') and isinstance(a.sharding, NamedSharding):
+      if a.sharding.mesh.shape_tuple != mesh.shape_tuple:
+        raise ValueError(
+            f"Mesh shape of the input {a.sharding.mesh.shape_tuple} does not"
+            " match the mesh shape passed to shard_map "
+            f" {mesh.shape_tuple}")
+      mesh = a.sharding.mesh
+  if isinstance(mesh, AbstractMesh):
+    raise ValueError(
+        "Please pass `jax.Array`s with a `NamedSharding` as input to"
+        " `shard_map` when passing `AbstractMesh` to the mesh argument.")
+  assert isinstance(mesh, Mesh)
+  return mesh
+
 def _shard_map_impl(trace, prim, fun, args, *, mesh, in_names, out_names_thunk,
                     check_rep, rewrite, auto):
   if auto: raise NotImplementedError
   del prim, auto
+  if isinstance(mesh, AbstractMesh):
+    mesh = get_mesh_from_args(args, mesh)
   args = map(partial(_unmatch_spec, mesh), in_names, args)
   in_rep = map(partial(_in_names_to_rep, mesh), in_names)
   with core.new_base_main(ShardMapTrace, mesh=mesh, check=check_rep) as main:
@@ -1316,7 +1341,7 @@ def _shard_map_batch(
   spmd_axis_name = trace.spmd_axis_name
   if spmd_axis_name is not None:
     used = {n for names in in_names for ns in names.values() for n in ns}
-    if set(spmd_axis_name) & used:
+    if not config.disable_vmap_shmap_error.value and set(spmd_axis_name) & used:
       raise ValueError("vmap spmd_axis_name cannot appear in shard_map in_specs")
     new_in_names = [{**ns, d:spmd_axis_name} if d is not batching.not_mapped  # type: ignore
                     else ns for ns, d in zip(new_in_names, in_dims)]
@@ -1351,7 +1376,7 @@ def _batch_out_names(spmd_axis_name, dims, out_names):
                   for ax in names} for names, d in zip(out_names, dims)]
   if spmd_axis_name is not None:
     used = {n for names in out_names for ns in names.values() for n in ns}
-    if set(spmd_axis_name) & used:
+    if not config.disable_vmap_shmap_error.value and set(spmd_axis_name) & used:
       raise ValueError("vmap spmd_axis_name cannot appear in shard_map out_specs")
     out_names_ = [{**ns, d:spmd_axis_name} if d is not batching.not_mapped
                   else ns for ns, d in zip(out_names_, dims)]

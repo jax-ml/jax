@@ -556,6 +556,26 @@ def _assert_no_intersection(static_argnames, donate_argnames):
         f"{out} appear in both static_argnames and donate_argnames")
 
 
+def resolve_kwargs(fun: Callable, args, kwargs) -> tuple[Any, ...]:
+  """Resolve input arguments to positional following a function's signature.
+
+  This will raise a TypeError if any keyword-only arguments were passed by the
+  caller.
+  """
+  if isinstance(fun, partial):
+    # functools.partial should have an opaque signature.
+    fun = lambda *args, **kwargs: None
+  ba = inspect.signature(fun).bind(*args, **kwargs)
+  ba.apply_defaults()
+  if ba.kwargs:
+    passed_kwargs = [k for k in ba.kwargs if k in kwargs]
+    if passed_kwargs:
+      raise TypeError(
+          f"keyword arguments ({passed_kwargs}) could not be resolved to "
+          "positions")
+  return ba.args
+
+
 def _dtype(x):
   try:
     return dtypes.result_type(x)
@@ -570,15 +590,13 @@ def _shaped_abstractify_slow(x):
     pass
 
   weak_type = getattr(x, 'weak_type', False)
-  named_shape = getattr(x, 'named_shape', {})
   if hasattr(x, 'dtype'):
     dtype = dtypes.canonicalize_dtype(x.dtype, allow_extended_dtype=True)
   else:
     raise TypeError(
         f"Cannot interpret value of type {type(x)} as an abstract array; it "
         "does not have a dtype attribute")
-  return core.ShapedArray(np.shape(x), dtype, weak_type=weak_type,
-                          named_shape=named_shape)
+  return core.ShapedArray(np.shape(x), dtype, weak_type=weak_type)
 
 # TODO(mattjj,yashkatariya): replace xla.abstractify with this, same behavior
 def shaped_abstractify(x):

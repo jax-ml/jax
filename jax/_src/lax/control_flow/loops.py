@@ -47,7 +47,7 @@ from jax._src.lax import lax
 from jax._src.lax import slicing
 from jax._src.lax import windowed_reductions
 from jax._src.lax.control_flow.common import (
-    _abstractify, _avals_short, _check_tree_and_avals, _initial_style_jaxpr,
+    _abstractify, _avals_short, _initial_style_jaxpr,
     _initial_style_jaxpr_attrs, _make_closed_jaxpr_attrs, _prune_zeros,
     _typecheck_param)
 from jax._src.lib.mlir import ir
@@ -224,7 +224,11 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
                            if not hasattr(x, 'shape')))) from err
 
   if length is not None:
-    length = int(length)
+    try:
+      length = int(length)
+    except core.ConcretizationTypeError as err:
+      msg = 'The `length` argument to `scan` expects a concrete `int` value.'
+      raise core.ConcretizationTypeError(length, msg) from None  # type: ignore[arg-type]
     if not all(length == l for l in lengths):
       msg = ("scan got `length` argument of {} which disagrees with "
              "leading axis sizes {}.")
@@ -268,7 +272,8 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
     if len(out_tree_children) != 2:
       msg = "scan body output must be a pair, got {}."
       raise TypeError(msg.format(tree_unflatten(out_tree, jaxpr.out_avals)))
-    carry_avals_out = jaxpr.out_avals[:out_tree_children[0].num_leaves]
+    _, carry_avals_out, _ = split_list(
+        jaxpr.out_avals, [len(attrs_tracked), out_tree_children[0].num_leaves])
     return (init_flat, carry_avals, carry_avals_out, init_tree, in_flat, jaxpr,
             consts, out_tree, out_tree_children, attrs_tracked)
 
@@ -285,12 +290,16 @@ def scan(f: Callable[[Carry, X], tuple[Carry, Y]],
   in_flat, jaxpr, consts, out_tree, out_tree_children, attrs_tracked = rest
   num_carry = len(init_flat)
 
-  _check_scan_carry_type(f, init, out_tree_children[0], carry_avals_out)
+  _check_carry_type('scan body', f, init, out_tree_children[0], carry_avals_out)
   disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(jaxpr.effects)
   if disallowed_effects:
     raise NotImplementedError(
         f'Effects not supported in `scan`: {disallowed_effects}')
 
+  unroll = core.concrete_or_error(
+      None, unroll,
+      "The `unroll` argument to `scan` expects a concrete `int` or `bool` "
+      "value.")
   if isinstance(unroll, bool):
     unroll = max(length, 1) if unroll else 1
   if unroll < 1:
@@ -328,7 +337,7 @@ def _get_states(attrs_tracked):
     vals.extend(leaves)
   return vals
 
-def _check_scan_carry_type(body_fun, in_carry, out_carry_tree, out_avals):
+def _check_carry_type(name, body_fun, in_carry, out_carry_tree, out_avals):
   try:
     sig = inspect.signature(body_fun)
   except (ValueError, TypeError):
@@ -353,33 +362,39 @@ def _check_scan_carry_type(body_fun, in_carry, out_carry_tree, out_avals):
       differences = [f'the input tree structure is:\n{in_carry_tree}\n',
                      f'the output tree structure is:\n{out_carry_tree}\n']
     else:
-      differences = '\n'.join(
-          f'  * {component(path)} is a {thing1} but the corresponding component '
-          f'of the carry output is a {thing2}, so {explanation}\n'
-          for path, thing1, thing2, explanation
-          in equality_errors(in_carry, out_carry))
+      diffs = [f'{component(path)} is a {thing1} but the corresponding component '
+               f'of the carry output is a {thing2}, so {explanation}'
+               for path, thing1, thing2, explanation
+               in equality_errors(in_carry, out_carry)]
+      if len(diffs) == 1:
+        differences = f'{diffs[0]}.\n'.capitalize()
+      else:
+        differences = ('\n'.join(f'  * {d};\n' for d in diffs[:-1])
+                       + f'  * {diffs[-1]}.\n')
     raise TypeError(
-        "Scanned function carry input and carry output must have the same "
-        "pytree structure, but they differ:\n"
+        f"{name} function carry input and carry output must have the same "
+        "pytree structure, but they differ:\n\n"
         f"{differences}\n"
-        "Revise the scanned function so that its output is a pair where the "
-        "first element has the same pytree structure as the first argument."
-    )
+        "Revise the function so that the carry output has the same pytree "
+        "structure as the carry input.")
   if not all(_map(core.typematch, in_avals, out_avals)):
-    differences = '\n'.join(
-        f'  * {component(path)} has type {in_aval.str_short()}'
-        ' but the corresponding output carry component has type '
-        f'{out_aval.str_short()}{_aval_mismatch_extra(in_aval, out_aval)}\n'
-        for path, in_aval, out_aval in zip(paths, in_avals, out_avals)
-        if not core.typematch(in_aval, out_aval))
+    diffs = [f'{component(path)} has type {in_aval.str_short()}'
+             ' but the corresponding output carry component has type '
+             f'{out_aval.str_short()}{_aval_mismatch_extra(in_aval, out_aval)}'
+             for path, in_aval, out_aval in zip(paths, in_avals, out_avals)
+             if not core.typematch(in_aval, out_aval)]
+    if len(diffs) == 1:
+      differences = f'{diffs[0]}.\n'.capitalize()
+    else:
+      differences = ('\n'.join(f'  * {d};\n' for d in diffs[:-1])
+                     + f'  * {diffs[-1]}.\n')
     raise TypeError(
-        "Scanned function carry input and carry output must have equal types "
+        f"{name} function carry input and carry output must have equal types "
         "(e.g. shapes and dtypes of arrays), "
-        "but they differ:\n"
+        "but they differ:\n\n"
         f"{differences}\n"
-        "Revise the scanned function so that all output types (e.g. shapes "
-        "and dtypes) match the corresponding input types."
-    )
+        "Revise the function so that all output types (e.g. shapes "
+        "and dtypes) match the corresponding input types.")
 
 def _aval_mismatch_extra(a1: core.AbstractValue, a2: core.AbstractValue) -> str:
   assert not core.typematch(a1, a2)
@@ -681,7 +696,7 @@ def _maybe_put(x):
     aval = shaped_abstractify(x)
     s = jax.sharding.SingleDeviceSharding(jax.local_devices(backend='cpu')[0])
     result_handler = pxla.global_aval_to_result_handler(aval, s, False)
-    return result_handler(pxla.shard_args([s], [x]))
+    return result_handler(pxla.shard_args([s], [None], [x]))
   else:
     return x
 
@@ -1118,23 +1133,6 @@ def _scan_typecheck(bind_time, *in_atoms, reverse, length, num_consts,
       f'called with sequence whose items have type\n{_avals_short(x_avals_mapped)}')
   return [*init_avals, *y_avals], jaxpr.effects
 
-def _scan_pp_rule(eqn, context, settings):
-  printed_params = dict(eqn.params)
-  del printed_params['linear']
-  if eqn.params['num_consts'] + eqn.params['num_carry'] == len(eqn.invars):
-    del printed_params['length']
-  if printed_params['unroll'] == 1:
-    del printed_params['unroll']
-  if printed_params['num_carry'] == 0:
-    del printed_params['num_carry']
-  if printed_params['num_consts'] == 0:
-    del printed_params['num_consts']
-  if not printed_params['reverse']:
-    del printed_params['reverse']
-  if not printed_params['_split_transpose']:
-    del printed_params['_split_transpose']
-  return core._pp_eqn(eqn.replace(params=printed_params), context, settings)
-
 def _scan_state_discharge_rule(in_avals, out_avals, *args, jaxpr, num_consts,
                                num_carry, linear, unroll, reverse, length,
                                _split_transpose):
@@ -1233,8 +1231,6 @@ pe.partial_eval_jaxpr_custom_rules[scan_p] = _scan_partial_eval_custom
 pe.padding_rules[scan_p] = _scan_padding_rule
 pe.dce_rules[scan_p] = _scan_dce_rule
 state_discharge.register_discharge_rule(scan_p)(_scan_state_discharge_rule)
-# TODO(mattjj,frostig): un-comment this pp rule
-# core.pp_eqn_rules[scan_p] = _scan_pp_rule
 
 def _propagate_mem_kind_scan(*xm, reverse, length, num_consts, num_carry, jaxpr,
                              linear, unroll, _split_transpose):
@@ -1321,7 +1317,7 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
       raise TypeError(msg.format(cond_tree))
     pred_aval = cond_jaxpr.out_avals[0]
     if (not isinstance(pred_aval, ShapedArray)
-        or pred_aval.strip_weak_type().strip_named_shape() != ShapedArray((), np.bool_)):
+        or pred_aval.strip_weak_type() != ShapedArray((), np.bool_)):
       msg = "cond_fun must return a boolean scalar, but got output type(s) {}."
       raise TypeError(msg.format(cond_jaxpr.out_avals))
     return init_vals, init_avals, body_jaxpr, in_tree, cond_jaxpr, cond_consts, body_consts, body_tree
@@ -1333,16 +1329,15 @@ def while_loop(cond_fun: Callable[[T], BooleanNumeric],
   # necessary, a second time with modified init values.
   init_vals, init_avals, body_jaxpr, in_tree, *rest = _create_jaxpr(init_val)
   new_init_vals, changed = _promote_weak_typed_inputs(init_vals, init_avals, body_jaxpr.out_avals)
+  new_init_val, = tree_unflatten(in_tree, new_init_vals)
   if changed:
-    new_init_val, = tree_unflatten(in_tree, new_init_vals)
     init_vals, init_avals, body_jaxpr, in_tree, *rest = _create_jaxpr(new_init_val)
   cond_jaxpr, cond_consts, body_consts, body_tree = rest
 
   in_tree_children = in_tree.children()
   assert len(in_tree_children) == 1
-  _check_tree_and_avals("body_fun output and input",
-                        body_tree, body_jaxpr.out_avals,
-                        in_tree_children[0], init_avals)
+  _check_carry_type('while_loop body', body_fun, new_init_val, body_tree,
+                    body_jaxpr.out_avals)
   joined_effects = core.join_effects(cond_jaxpr.effects, body_jaxpr.effects)
   disallowed_effects = effects.control_flow_allowed_effects.filter_not_in(joined_effects)
   if disallowed_effects:

@@ -56,8 +56,8 @@ cuda_library(
     name = "foo_",
     srcs = ["foo.cu.cc"],
     deps = [
+        "@local_config_cuda//cuda:cuda_headers",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
-        "@local_config_cuda//cuda:cuda_headers",
     ],
 )

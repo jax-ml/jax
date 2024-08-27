@@ -1054,7 +1054,7 @@ def _update_jax_memories_thread_local(val):
 
 enable_memories = bool_state(
     'jax_enable_memories',
-    default=False,
+    default=True,
     upgrade=True,
     update_global_hook=_update_jax_memories_global,
     update_thread_local_hook=_update_jax_memories_thread_local,
@@ -1500,6 +1500,17 @@ eager_pmap = bool_state(
     default=True,
     upgrade=True,
     help='Enable eager-mode pmap when jax_disable_jit is activated.')
+
+no_tracing = bool_state(
+    name='jax_no_tracing',
+    default=False,
+    help='Disallow tracing for JIT compilation.')
+
+disable_vmap_shmap_error = bool_state(
+    name='jax_disable_vmap_shmap_error',
+    default=False,
+    upgrade=False,
+    help='Temporary workaround to disable an error check in vmap-of-shmap.')
 
 # TODO(mattjj): remove once we land mutable array plumbing, or face great shame
 custom_vjp_disable_shape_check = bool_state(

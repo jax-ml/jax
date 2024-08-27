@@ -23,7 +23,7 @@ licenses(["notice"])
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//:__subpackages__"],
+    default_visibility = ["//jax:internal"],
 )
 
 # LAPACK
@@ -36,11 +36,13 @@ cc_library(
     features = ["-use_header_modules"],
     deps = [
         "//jaxlib:ffi_helpers",
+        "@com_google_absl//absl/algorithm:container",
+        "@com_google_absl//absl/base:dynamic_annotations",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/types:span",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
         "@xla//xla/service:custom_call_status",
-        "@com_google_absl//absl/algorithm:container",
-        "@com_google_absl//absl/base:dynamic_annotations",
     ],
 )
 
@@ -54,7 +56,6 @@ cc_library(
 pybind_extension(
     name = "_lapack",
     srcs = ["lapack.cc"],
-    hdrs = ["lapack.h"],
     copts = [
         "-fexceptions",
         "-fno-strict-aliasing",
@@ -65,19 +66,19 @@ pybind_extension(
     pytype_srcs = [
         "_lapack/__init__.pyi",
         "_lapack/svd.pyi",
+        "_lapack/eig.pyi",
     ],
     deps = [
         ":lapack_kernels",
         "//jaxlib:kernel_nanobind_helpers",
-        "@xla//xla/ffi/api:ffi",
         "@nanobind",
+        "@xla//xla/ffi/api:ffi",
     ],
 )
 
 cc_library(
     name = "cpu_kernels",
     srcs = ["cpu_kernels.cc"],
-    hdrs = ["lapack.h"],
     visibility = ["//visibility:public"],
     deps = [
         ":lapack_kernels",

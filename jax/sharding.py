@@ -28,6 +28,7 @@ from jax._src.partition_spec import (
     PartitionSpec as PartitionSpec,
 )
 from jax._src.interpreters.pxla import Mesh as Mesh
+from jax._src.mesh import AbstractMesh
 
 _deprecations = {
     # Added Jun 4, 2024.

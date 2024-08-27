@@ -192,7 +192,7 @@ class ArrayImpl(basearray.Array):
     # Don't rearrange if skip_checks is enabled because this assumes that the
     # input buffers are already arranged properly. This usually happens when
     # Array's are created as output of a JAX transformation
-    # (like pjit, xmap, etc).
+    # (like pjit, etc).
     if not _skip_checks or config.enable_checks.value:
       self._check_and_rearrange()
 
@@ -339,18 +339,18 @@ class ArrayImpl(basearray.Array):
       except ValueError:
         arr_idx = None
       if arr_idx is not None:
-        a = self._arrays[arr_idx]
-        out = ArrayImpl(
-            a.aval, SingleDeviceSharding(_get_device(a)), [a], committed=False,
-            _skip_checks=True)
+        out = self._arrays[arr_idx]
+        sharding = SingleDeviceSharding(_get_device(out))
 
         if config.pmap_no_rank_reduction.value:
           # If cidx was the index of a single shard, then it corresponds to one
           # shard of the chunked dimension.
           dims = tuple(i for i, x in enumerate(cidx) if isinstance(x, int))
-          return lax.squeeze(out, dimensions=dims)
-        else:
-          return out
+          # Squeeze on committed arrays to avoid data movement to shard 0.
+          out = lax.squeeze(out, dimensions=dims)
+
+        return ArrayImpl(
+            out.aval, sharding, [out], committed=False, _skip_checks=True)
 
     return lax_numpy._rewriting_take(self, idx)
 
@@ -466,8 +466,7 @@ class ArrayImpl(basearray.Array):
 
   def __reduce__(self):
     fun, args, arr_state = self._value.__reduce__()
-    aval_state = {'weak_type': self.aval.weak_type,
-                  'named_shape': self.aval.named_shape}
+    aval_state = {'weak_type': self.aval.weak_type}
     return (_reconstruct_array, (fun, args, arr_state, aval_state))
 
   @use_cpp_method()
@@ -490,7 +489,7 @@ class ArrayImpl(basearray.Array):
     """Returns the total global on-device size of the array in bytes."""
     arr = self._arrays[0]
     per_shard_size = arr.on_device_size_in_bytes()
-    return per_shard_size * len(self.sharding.device_set)
+    return per_shard_size * self.sharding.num_devices
 
   def devices(self) -> set[Device]:
     self._check_if_deleted()
@@ -635,8 +634,7 @@ class ArrayImpl(basearray.Array):
         npy_value[ind] = self._arrays[i]._single_device_array_to_np_array()
       self._npy_value = npy_value
       self._npy_value.flags.writeable = False
-    # https://docs.python.org/3/library/typing.html#typing.cast
-    return cast(np.ndarray, self._npy_value)
+    return self._npy_value
 
 
 # TODO(b/273265390): ideally we would write this as a decorator on the ArrayImpl
@@ -885,11 +883,11 @@ def make_array_from_process_local_data(
 
   Args:
     sharding: sharding of the global tensor.
-    host_local_data: data on the host to be placed on local devices. Each
+    local_data: data on the host to be placed on local devices. Each
       dimension should either match global_shape, or match
       num_addressable_indices(dim).
     global_shape: the target shape of the global tensor. If None,
-      will infer from host_local_data and sharding.
+      will infer from local_data and sharding.
 
   Returns:
     Tensor that will have sharding=sharding and of shape global_shape.
@@ -1088,9 +1086,8 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
     # Look up all buffers that contain the correct slice of the logical array.
     candidates_list = candidates[hashed_index(idx)]
     if not candidates_list:
-      # This array isn't sharded correctly. Reshard it via host roundtrip.
-      # TODO(skye): more efficient reshard?
-      return pxla.shard_args([sharding], [x._value], canonicalize=False)[0]
+      return pxla.shard_args([sharding], [None], [x._value],
+                             canonicalize=False)[0]
     # Try to find a candidate buffer already on the correct device,
     # otherwise copy one of them.
     for buf in candidates_list:
@@ -1099,7 +1096,6 @@ def shard_sharded_device_array_slow_path(x, devices, indices, sharding):
         break
     else:
       bufs.append(buf)
-
   return pxla.batched_device_put(x.aval, sharding, bufs, devices)
 
 
@@ -1109,24 +1105,30 @@ def _sharding_indices_and_eq(src_sharding, shape, dst_sharding):
   dst_indices = dst_sharding.addressable_devices_indices_map(shape).values()
   return dst_indices, tuple(src_indices) == tuple(dst_indices)
 
+def _layout_eq(x, dst_layout, sharding):
+  if pxla.is_default_layout(dst_layout, sharding, x.aval):
+    return True
+  return x.layout.device_local_layout == dst_layout
 
-def _array_shard_arg(xs, shardings):
+
+def _array_shard_arg(xs, shardings, layouts):
   results = []
   batch_xs, batch_devs, batch_shardings, batch_indices = [], [], [], []
-  for i, (x, sharding) in enumerate(safe_zip(xs, shardings)):
-    x._check_if_deleted()
 
-    indices, same_indices = _sharding_indices_and_eq(
-        x.sharding, x.shape, sharding)
+  for i, (x, sharding, layout) in enumerate(safe_zip(xs, shardings, layouts)):
+    x._check_if_deleted()
+    indices, same_indices = _sharding_indices_and_eq(x.sharding, x.shape, sharding)
+    same_layout = _layout_eq(x, layout, sharding)
+
     if not x.is_fully_addressable:
-      if same_indices:
+      if same_indices and same_layout:
         results.append(x)
       else:
         raise NotImplementedError(
             "Cannot reshard an input that is not fully addressable")
     else:
       devices = sharding._addressable_device_assignment
-      if same_indices:
+      if same_indices and same_layout:
         # Add a placeholder result that will be filled in later.
         results.append(None)
         # Accumulate arguments to `batched_copy_array_to_devices_with_sharding`.
@@ -1135,6 +1137,8 @@ def _array_shard_arg(xs, shardings):
         batch_shardings.append(sharding)
         batch_indices.append(i)
       # Resharding starts here:
+      elif not same_layout:
+        results.append(api.device_put(x, Layout(layout, sharding)))
       elif dispatch.is_single_device_sharding(x.sharding):
         results.append(shard_device_array(x, devices, indices, sharding))
       else:
@@ -1147,8 +1151,6 @@ def _array_shard_arg(xs, shardings):
     assert results[i] is None
     results[i] = copy_out
   return results
-
-
 pxla.shard_arg_handlers[ArrayImpl] = _array_shard_arg
 
 
@@ -1180,8 +1182,8 @@ pxla.local_result_handlers[core.ConcreteArray] = _array_local_result_handler
 
 # Token handlers
 
-def _token_shard_arg(xs, shardings):
-  return _array_shard_arg([x._buf for x in xs], shardings)
+def _token_shard_arg(xs, shardings, layouts):
+  return _array_shard_arg([x._buf for x in xs], shardings, layouts)
 pxla.shard_arg_handlers[core.Token] = _token_shard_arg
 
 

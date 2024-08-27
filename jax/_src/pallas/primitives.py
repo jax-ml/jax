@@ -19,20 +19,23 @@ from __future__ import annotations
 import enum
 import functools
 import string
-from typing import Any
+from typing import Any, Callable
 
 import jax
 from jax import lax
 from jax import tree_util
 from jax._src import ad_util
+from jax._src import api_util
 from jax._src import core as jax_core
 from jax._src import dtypes
 from jax._src import effects
+from jax._src import linear_util as lu
 from jax._src import pretty_printer as pp
 from jax._src import state
 from jax._src import util
 from jax._src.interpreters import ad
 from jax._src.interpreters import batching
+from jax._src.interpreters import partial_eval as pe
 from jax._src.pallas import core as pallas_core
 from jax._src.state import discharge as state_discharge
 from jax._src.state import indexing
@@ -418,10 +421,17 @@ ad.primitive_jvps[load_p] = _load_jvp
 def uninitialized_value(shape, dtype):
   if jnp.issubdtype(dtype, jnp.floating):
     return jnp.full(shape, jnp.nan, dtype)
+  # Note: Currently semaphore is i16[], meaning this case needs to be
+  # handled before the general case for integers.
+  # TODO(justinfu): Handle semaphores with a custom extended dtype.
+  elif jnp.issubdtype(dtype, pallas_core.SEMAPHORE_INTERPRET_DTYPE):
+    return jnp.full(shape, 0, dtype)
   elif jnp.issubdtype(dtype, jnp.integer):
     return jnp.full(shape, jnp.iinfo(dtype).min, dtype)
   elif jnp.issubdtype(dtype, jnp.bool):
     return jnp.full(shape, False, dtype)
+  elif jnp.issubdtype(dtype, pallas_core.semaphore_dtype):
+    return jnp.full(shape, 0, dtype)
   raise NotImplementedError(dtype)
 
 def _pad_values_to_avoid_dynamic_slice_oob_shift(value,
@@ -797,3 +807,97 @@ def debug_print_lowering_rule(ctx, *args, **params):
       has_side_effect=True,
   )
   return result
+
+
+run_scoped_p = jax_core.Primitive("run_scoped")
+run_scoped_p.multiple_results = True
+
+
+def run_scoped(f: Callable[..., Any], *types, **kw_types) -> Any:
+  """Call the function with allocated references.
+
+  Args:
+    f: The function that generates the jaxpr.
+    *types: The types of the function's positional arguments.
+    **kw_types: The types of the function's keyword arguments.
+  """
+
+  flat_types, in_tree = tree_util.tree_flatten((types, kw_types))
+  flat_fun, out_tree_thunk = api_util.flatten_fun(lu.wrap_init(f), in_tree)
+  avals = [t.get_aval() for t in flat_types]
+  # Turn the function into a jaxpr. The body of run_scoped may have
+  # effects (IO) on constvars (i.e. variables inherited from the
+  # parent scope). Jax can't reason about effects to references that
+  # are not in the invars of an operation so we just put them all
+  # there.
+  jaxpr, _, consts, () = pe.trace_to_jaxpr_dynamic(flat_fun, avals)
+  out = run_scoped_p.bind(*consts, jaxpr=jaxpr)
+  return tree_util.tree_unflatten(out_tree_thunk(), out)
+
+
+@run_scoped_p.def_effectful_abstract_eval
+def _run_scoped_abstract_eval(*args, jaxpr):
+  del args
+  # jaxpr will have effects for its inputs (Refs that are allocated) and for
+  # constvars (closed over Refs). The effects for the allocated Refs are local
+  # to the jaxpr and shouldn't propagate out.
+  nonlocal_effects = {
+      eff
+      for eff in jaxpr.effects
+      if not (
+          isinstance(eff, effects.JaxprInputEffect)
+          and eff.input_index >= len(jaxpr.constvars)
+      )
+  }
+  return [v.aval for v in jaxpr.outvars], nonlocal_effects
+
+
+def _run_scoped_discharge_rule(in_avals,
+                               out_avals,
+                               *args_flat,
+                               jaxpr,
+                               **_):
+  del out_avals
+  num_consts = len(args_flat)
+  jaxpr_noconst = pe.convert_constvars_jaxpr(jaxpr)
+  num_return_values = len(jaxpr_noconst.outvars)
+  discharged_body, new_consts = state_discharge.discharge_state(
+      jaxpr_noconst, [])
+  if new_consts:
+    raise NotImplementedError(
+        "Cannot handle new consts created by state discharge.")
+  # Create inputs filled with uninitialized values to the body.
+  body_avals = [v.aval for v in discharged_body.invars[num_consts:]]
+  init_vals = [uninitialized_value(
+      aval.shape, aval.dtype) for aval in body_avals]
+  init_vals_with_consts = args_flat + tuple(init_vals)
+  out = jax_core.eval_jaxpr(discharged_body, [], *init_vals_with_consts)
+  # Order of outputs:
+  # (1) return values, (2) closed refs, (3) scoped refs.
+  return_values = out[:num_return_values]
+  ref_outputs = out[num_return_values:]
+  # We update all ref values with their updated values from the discharged
+  # body. For other values we leave them in place.
+  updates = [
+      ref_outputs.pop(0) if isinstance(aval, pallas_core.AbstractMemoryRef)
+      else None for aval in in_avals]
+  assert len(ref_outputs) == len(
+      body_avals), f'{len(body_avals)}, != {len(ref_outputs)}'
+  assert len(updates) == len(in_avals), f'{len(updates)} != {len(in_avals)}'
+  return updates, return_values
+
+
+state_discharge.register_discharge_rule(run_scoped_p)(
+    _run_scoped_discharge_rule)
+
+
+@functools.partial(mlir.register_lowering, run_scoped_p)
+def _run_scoped_lowering_rule(ctx, *args, jaxpr):
+  # This lowering rule gets triggered when run_scoped is not discharged.
+  # In this case there are no stateful effects to handle.
+  def _lower_fun(*lower_fun_args):
+    updates, out = _run_scoped_discharge_rule([], [], *lower_fun_args,
+                               jaxpr=jaxpr)
+    assert len(updates) == 0, 'Cannot lower run_scoped with effects.'
+    return out
+  return mlir.lower_fun(_lower_fun, multiple_results=True)(ctx, *args)

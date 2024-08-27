@@ -1,5 +1,5 @@
-Internal APIs
-=============
+Internal API reference
+======================
 
 core
 ----

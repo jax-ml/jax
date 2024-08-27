@@ -3287,26 +3287,6 @@ class LazyConstantTest(jtu.JaxTestCase):
         expected.astype(np.complex64), lax.log1p(np.complex64(1e-5)))
 
 
-class LaxNamedShapeTest(jtu.JaxTestCase):
-
-  def test_abstract_eval(self):
-    aval1 = core.ShapedArray((2, 3), np.float32, False, {'i': 10})
-    out, _ = lax.sin_p.abstract_eval(aval1)
-    self.assertEqual(out, aval1)
-
-    aval1 = core.ShapedArray((2, 3), np.float32, False, {'i': 10})
-    aval2 = core.ShapedArray((2, 3), np.float32, False, {'j': 5})
-    expected = core.ShapedArray((2, 3), np.float32, False, {'i': 10, 'j': 5})
-    out, _ = lax.add_p.abstract_eval(aval1, aval2)
-    self.assertEqual(out, expected)
-
-  def test_abstract_eval_collective(self):
-    with core.extend_axis_env('i', 10, None):
-      aval1 = core.ShapedArray((2, 3), np.float32, False, {'i': 10, 'j': 5})
-      expected = core.ShapedArray((2, 3), np.float32, False, {'j': 5})
-      (out,), _ = lax.psum_p.abstract_eval(aval1, axes=('i',), axis_index_groups=None)
-      self.assertEqual(out, expected)
-
 class FooTyRules:
   # handlers
 
@@ -3393,7 +3373,7 @@ class FooArray:
   size = property(lambda self: self.data.size // 2)
   ndim = property(lambda self: self.data.ndim - 1)
 
-def shard_foo_array_handler(xs, shardings):
+def shard_foo_array_handler(xs, shardings, layouts):
   results = []
   for x, sharding in safe_zip(xs, shardings):
     device, = sharding._addressable_device_assignment
@@ -3814,8 +3794,15 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     size_im = 11
     atol = None
 
-    mnp = jtu.numpy_with_mpmath(mpmath, extra_prec=1)
-    mnp2 = jtu.numpy_with_mpmath(mpmath, extra_prec_multiplier=1)
+    if name in {"arccos", "arcsin", "arcsinh", "arccosh"}:
+      # TODO(pearu): eliminate this if-block when a fix to mpmath#787
+      # becomes available
+      extra_prec_multiplier = 20
+    else:
+      extra_prec_multiplier = 1
+
+    mnp = jtu.numpy_with_mpmath(mpmath, extra_prec=1, extra_prec_multiplier=extra_prec_multiplier)
+    mnp2 = jtu.numpy_with_mpmath(mpmath, extra_prec_multiplier=extra_prec_multiplier)
 
     ref_op = getattr(mnp, name)
     ref2_op = getattr(mnp2, name)
@@ -3930,10 +3917,6 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     elif name == 'log10':
       regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'ninf.imag', 'pinf.imag', 'ninfj.imag', 'pinfj.imag', 'zero.imag')
 
-    elif name == 'log1p':
-        regions_with_inaccuracies_keep('q1.real', 'q2.real', 'q3.real', 'q4.real', 'neg.real', 'pos.real',
-                                       'negj.real', 'posj.real', 'ninf.real', 'ninfj.real', 'pinfj.real')
-
     elif name == 'exp':
       regions_with_inaccuracies_keep('pos.imag', 'pinf.imag', 'mpos.imag')
 
@@ -3943,19 +3926,10 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
       if dtype == np.complex128:
         regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'pos.imag', 'negj', 'posj', 'ninf', 'pinf', 'mpos.imag')
 
-    elif name == 'expm1':
-      regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'pinf', 'mq1', 'mq2', 'mq3', 'mq4', 'mneg', 'mpos')
-
     elif name == 'sinc':
       regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'mq1', 'mq2', 'mq3', 'mq4',
                                      'mneg.real', 'mpos.real', 'mnegj', 'mposj',
                                      'ninf.imag', 'pinf.imag', 'ninfj.real', 'pinfj.real')
-
-    elif name == 'tan':
-      # TODO(pearu): eliminate this if-block when openxla/xla#10525 lands
-      regions_with_inaccuracies_keep('q1.imag', 'q2.imag', 'q3.imag', 'q4.imag', 'negj.imag', 'posj.imag',
-                                     'ninfj.imag', 'pinfj.imag', 'mq1.imag', 'mq2.imag', 'mq3.imag', 'mq4.imag', 'mnegj.imag', 'mposj.imag',
-                                     'ninf.imag', 'pinf.imag', 'ninf.real', 'pinf.real', 'ninfj.real', 'pinfj.real')
 
     elif name == 'sinh':
       if is_cuda:
@@ -3974,31 +3948,7 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
       regions_with_inaccuracies_keep('ninf', 'pinf', 'ninfj', 'pinfj')
 
     elif name == 'arccos':
-      if dtype == np.complex64:
-        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mq2', 'mq3', 'mneg',
-                                       'mpos.imag', 'mnegj')
-      if dtype == np.complex128:
-        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mq2', 'mq3', 'mq4', 'mneg', 'mpos.imag', 'mnegj')
-
-    elif name == 'arccosh':
-      if dtype == np.complex64:
-        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj.real', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mq2', 'mq3', 'mneg', 'mpos.imag', 'mnegj')
-      if dtype == np.complex128:
-        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos.real', 'negj', 'posj.real', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mq2', 'mq3', 'mq4', 'mneg', 'mnegj')
-
-    elif name == 'arcsin':
-      if dtype == np.complex64:
-        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mq1', 'mq2', 'mq3', 'mq4', 'mneg', 'mpos', 'mnegj', 'mposj')
-      if dtype == np.complex128:
-        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg', 'pos', 'negj', 'posj', 'ninf', 'pinf', 'ninfj', 'pinfj',
-                                       'mq1', 'mq2', 'mq3', 'mq4', 'mneg.imag', 'mpos.imag', 'mnegj', 'mposj')
-
-    elif name == 'arcsinh':
-      if dtype == np.complex64:
-        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg.real', 'pos.real', 'negj', 'posj.real', 'ninf', 'pinf', 'ninfj', 'pinfj',
-                                       'mq1.real', 'mq2', 'mq3', 'mq4.real', 'mneg.real', 'mpos.real', 'mnegj')
-      if dtype == np.complex128:
-        regions_with_inaccuracies_keep('q1', 'q2', 'q3', 'q4', 'neg.real', 'pos.real', 'negj', 'posj.real', 'ninf', 'pinf', 'ninfj', 'pinfj', 'mq2', 'mq3', 'mneg.real', 'mnegj')
+      regions_with_inaccuracies_keep('q4.imag', 'ninf', 'pinf', 'ninfj', 'pinfj.real')
 
     elif name == 'arctan':
       if dtype == np.complex64:
@@ -4013,7 +3963,8 @@ class FunctionAccuracyTest(jtu.JaxTestCase):
     elif name in {'cos', 'sin'}:
       regions_with_inaccuracies_keep('ninf.imag', 'pinf.imag')
 
-    elif name in {'positive', 'negative', 'conjugate', 'sin', 'cos', 'sqrt', 'expm1', 'log1p'}:
+    elif name in {'positive', 'negative', 'conjugate', 'sin', 'cos', 'sqrt', 'expm1', 'log1p', 'tan',
+                  'arcsinh', 'arcsin', 'arccosh'}:
       regions_with_inaccuracies.clear()
     else:
       assert 0  # unreachable

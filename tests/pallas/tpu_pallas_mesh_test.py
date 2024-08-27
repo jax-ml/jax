@@ -53,7 +53,7 @@ class ShmallasTest(jtu.JaxTestCase):
         def kernel():
           def alloc(sem):
             pltpu.async_copy(x_ref, y_ref, sem).wait()
-          pltpu.run_scoped(alloc, pltpu.SemaphoreType.DMA)
+          pl.run_scoped(alloc, pltpu.SemaphoreType.DMA)
         shard_map.shard_map(kernel, mesh, in_specs=(), out_specs=None,
                             check_rep=False)()
       _, y = state_discharge.run_state(inner)((x, y))
@@ -84,7 +84,7 @@ class ShmallasTest(jtu.JaxTestCase):
             y = x_vmem_ref[...] + jax.lax.axis_index("x")
             y_vmem_ref[...] = y
             pltpu.async_copy(y_vmem_ref, y_ref.at[slc], sem).wait()
-          pltpu.run_scoped(
+          pl.run_scoped(
               alloc,
               pltpu.VMEM((slc_size, 128), x_ref.dtype),
               pltpu.VMEM((slc_size, 128), y_ref.dtype),

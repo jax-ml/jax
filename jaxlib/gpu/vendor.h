@@ -22,16 +22,20 @@ limitations under the License.
 
 #if defined(JAX_GPU_CUDA)
 
-#include "third_party/gpus/cuda/extras/CUPTI/include/cupti.h"  // IWYU pragma: export
-#include "third_party/gpus/cuda/include/cuComplex.h"  // IWYU pragma: export
-#include "third_party/gpus/cuda/include/cublas_v2.h"  // IWYU pragma: export
-#include "third_party/gpus/cuda/include/cuda.h"       // IWYU pragma: export
-#include "third_party/gpus/cuda/include/cuda_fp8.h"   // IWYU pragma: export
-#include "third_party/gpus/cuda/include/cuda_runtime_api.h"  // IWYU pragma: export
-#include "third_party/gpus/cuda/include/cufft.h"       // IWYU pragma: export
-#include "third_party/gpus/cuda/include/cusolverDn.h"  // IWYU pragma: export
-#include "third_party/gpus/cuda/include/cusparse.h"    // IWYU pragma: export
-#include "third_party/gpus/cudnn/cudnn.h"              // IWYU pragma: export
+// IWYU pragma: begin_exports
+#include "third_party/gpus/cuda/extras/CUPTI/include/cupti.h"
+#include "third_party/gpus/cuda/include/cooperative_groups.h"
+#include "third_party/gpus/cuda/include/cuComplex.h"
+#include "third_party/gpus/cuda/include/cublas_v2.h"
+#include "third_party/gpus/cuda/include/cuda.h"
+#include "third_party/gpus/cuda/include/cuda_fp8.h"
+#include "third_party/gpus/cuda/include/cuda_runtime_api.h"
+#include "third_party/gpus/cuda/include/cufft.h"
+#include "third_party/gpus/cuda/include/cusolverDn.h"
+#include "third_party/gpus/cuda/include/cusolver_common.h"
+#include "third_party/gpus/cuda/include/cusparse.h"
+#include "third_party/gpus/cudnn/cudnn.h"
+// IWYU pragma: end_exports
 
 #if CUDA_VERSION < 11080
 #error "JAX requires CUDA 11.8 or newer."
@@ -291,6 +295,10 @@ typedef cusparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define gpuStreamWaitEvent cudaStreamWaitEvent
 #define gpuSuccess cudaSuccess
 
+#define gpuDeviceProp cudaDeviceProp
+#define gpuGetDeviceProperties cudaGetDeviceProperties
+#define gpuLaunchCooperativeKernel cudaLaunchCooperativeKernel
+
 namespace jax::JAX_GPU_NAMESPACE {
 namespace {
 constexpr uint32_t kNumThreadsPerWarp = 32;
@@ -299,10 +307,13 @@ constexpr uint32_t kNumThreadsPerWarp = 32;
 
 #elif defined(JAX_GPU_HIP)
 
+// IWYU pragma: begin_exports
+#include "rocm/include/hip/hip_cooperative_groups.h"
 #include "rocm/include/hip/hip_runtime_api.h"
 #include "rocm/include/hipblas/hipblas.h"
 #include "rocm/include/hipsolver/hipsolver.h"
 #include "rocm/include/hipsparse/hipsparse.h"
+// IWYU pragma: end_exports
 
 #define JAX_GPU_NAMESPACE hip
 #define JAX_GPU_PREFIX "hip"
@@ -539,6 +550,10 @@ typedef hipsparseDnVecDescr_t gpusparseDnVecDescr_t;
 #define GPU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES \
   HIP_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES
 #define GPU_EVENT_DEFAULT hipEventDefault
+
+#define gpuDeviceProp hipDeviceProp_t
+#define gpuGetDeviceProperties hipGetDeviceProperties
+#define gpuLaunchCooperativeKernel hipLaunchCooperativeKernel
 
 namespace jax::JAX_GPU_NAMESPACE {
 namespace {

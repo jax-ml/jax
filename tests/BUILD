@@ -217,30 +217,6 @@ py_test(
 )
 
 jax_test(
-    name = "xmap_test",
-    srcs = ["xmap_test.py"],
-    backend_tags = {
-        "gpu": [
-            "noasan",  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
-        ],
-        "tpu": [
-            "noasan",  # Times out.
-            "nomsan",  # Times out.
-            "notsan",  # Times out.
-        ],
-    },
-    shard_count = {
-        "cpu": 10,
-        "gpu": 4,
-        "tpu": 4,
-    },
-    tags = ["multiaccelerator"],
-    deps = [
-        "//jax:maps",
-    ],
-)
-
-jax_test(
     name = "memories_test",
     srcs = ["memories_test.py"],
     shard_count = {
@@ -258,6 +234,11 @@ jax_test(
         "tpu": ["notsan"],  # Times out under tsan.
         "gpu": ["noasan"],  # Memory leaks in NCCL, see https://github.com/NVIDIA/nccl/pull/1143
     },
+    enable_configs = [
+        "gpu_2gpu_shardy",
+        "tpu_df_2x2_shardy",
+        "tpu_pf_2x2_shardy",
+    ],
     shard_count = {
         "cpu": 5,
         "gpu": 5,
@@ -497,6 +478,11 @@ jax_test(
 jax_test(
     name = "lax_numpy_ufuncs_test",
     srcs = ["lax_numpy_ufuncs_test.py"],
+    shard_count = {
+        "cpu": 10,
+        "gpu": 10,
+        "tpu": 10,
+    },
     tags = ["test_cpu_thunks"],
 )
 
@@ -707,6 +693,14 @@ jax_test(
 jax_test(
     name = "nn_test",
     srcs = ["nn_test.py"],
+    backend_tags = {
+        "gpu": [
+            "noasan",  # Times out under asan.
+        ],
+        "tpu": [
+            "noasan",  # Times out under asan.
+        ],
+    },
     shard_count = {
         "cpu": 10,
         "tpu": 10,
@@ -798,10 +792,9 @@ jax_test(
         "gpu_h100",  # Pytorch H100 build times out in Google's CI.
     ],
     tags = [
-        # PyTorch leaks dlpack metadata https://github.com/pytorch/pytorch/issues/117058, and
-        # compilation times out on CPU.
-        "noasan",
         "not_build:arm",
+        # TODO(b/355237462): Re-enable once MSAN issue is addressed.
+        "nomsan",
     ],
     deps = py_deps("torch"),
 )
@@ -1208,6 +1201,7 @@ jax_test(
     shard_count = {
         "tpu": 5,
     },
+    tags = ["noasan"],  # Times out
     deps = [
         "//jax:experimental",
         "//jax:experimental_host_callback",
@@ -1223,6 +1217,7 @@ jax_test(
     shard_count = {
         "gpu": 5,
     },
+    tags = ["noasan"],  # Times out
     deps = [
         "//jax:experimental",
         "//jax:experimental_host_callback",
@@ -1572,6 +1567,6 @@ filegroup(
         exclude = [],
     ) + ["BUILD"],
     visibility = [
-        "//:__subpackages__",
+        "//jax:internal",
     ],
 )

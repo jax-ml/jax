@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-package(default_applicable_licenses = ["//third_party/py/jax:license"])
+package(default_applicable_licenses = ["//jax:license"])
 
 licenses(["notice"])
 
@@ -21,13 +21,13 @@ cc_binary(
     srcs = ["main.cc"],
     tags = ["manual"],
     deps = [
-        "//third_party/absl/status:statusor",
+        "@com_google_absl//absl/status:statusor",
+        "@tsl//tsl/platform:logging",
+        "@tsl//tsl/platform:platform_port",
         "@xla//xla:literal",
         "@xla//xla:literal_util",
         "@xla//xla/pjrt:pjrt_client",
         "@xla//xla/pjrt/cpu:cpu_client",
         "@xla//xla/tools:hlo_module_loader",
-        "@tsl//tsl/platform:logging",
-        "@tsl//tsl/platform:platform_port",
     ],
 )

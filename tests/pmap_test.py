@@ -94,10 +94,6 @@ def args_slicer(args, bdims):
 ignore_jit_of_pmap_warning = partial(
   jtu.ignore_warning, message=".*jit-of-pmap.*")
 
-ignore_xmap_warning = partial(
-  jtu.ignore_warning, message=".*is an experimental.*")
-
-
 def create_input_array_for_pmap(input_shape, in_axes=0, input_data=None,
                                 devices=None, sharded_dim_size=None):
   if input_data is None:
@@ -1289,7 +1285,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     device_count = jax.device_count()
     f = self.pmap(lambda x: 3)
     x = jnp.arange(device_count)
-    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+    with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       ans = f(x)
     # self.assertEqual(count[0], 0)  # TODO(mattjj): fix this
     expected = np.repeat(3, device_count)
@@ -1310,7 +1306,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     shuffle(devices)
     f = self.pmap(lambda x: 3, devices=devices)
     x = jnp.arange(len(devices))
-    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+    with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       ans = f(x)
     # self.assertEqual(count[0], 0)  # TODO(mattjj): don't compile for constants
     expected = np.repeat(3, len(devices))
@@ -1346,7 +1342,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = self.pmap(self.pmap(lambda x: 3))
     shape = (2, jax.device_count() // 2, 3)
     x = jnp.arange(math.prod(shape)).reshape(shape)
-    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+    with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       ans = f(x)
     # self.assertEqual(count[0], 0)  # TODO(mattjj): don't compile for constants
     expected = 3 * np.ones(shape[:2])
@@ -1372,7 +1368,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     f = self.pmap(self.pmap(lambda x: 3), devices=devices)
     shape = (2, len(devices) // 2, 3)
     x = jnp.arange(math.prod(shape)).reshape(shape)
-    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+    with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       ans = f(x)
     # self.assertEqual(count[0], 0)  # TODO(mattjj): don't compile for constants
     expected = 3 * np.ones(shape[:2])
@@ -1950,18 +1946,6 @@ class PythonPmapTest(jtu.JaxTestCase):
     indices = np.array([[[2], [1]], [[0], [0]]])
     mapped_fn(indices)  # doesn't crash
 
-  @ignore_xmap_warning()
-  def testPdotBasic(self):
-    num_devices = jax.device_count()
-
-    def f(x, y):
-      return lax.pdot(x, y, 'i')
-
-    x = jnp.arange(num_devices * 3).reshape(num_devices, 3)
-    y = jnp.arange(num_devices * 5).reshape(num_devices, 5)
-    z = self.pmap(f, axis_name='i', out_axes=None)(x, y)
-    self.assertAllClose(z, jnp.dot(x.T, y))
-
   @parameterized.named_parameters(
       {"testcase_name": "_shape={}_axis={}_collective={}".format(
           jtu.format_shape_dtype_string(shape, dtype),
@@ -2055,7 +2039,7 @@ class PythonPmapTest(jtu.JaxTestCase):
     _, f_bwd  = jax.vjp(f, x)
     _ = f_bwd(x)
 
-    with jtu.count_jit_and_pmap_compiles() as count:  # noqa: F841
+    with jtu.count_jit_and_pmap_lowerings() as count:  # noqa: F841
       _, f_bwd2  = jax.vjp(f, x)
       _ = f_bwd(x)
       _ = f_bwd2(x)
@@ -3031,7 +3015,7 @@ class ShardArgsTest(jtu.JaxTestCase):
     x = np.arange(math.prod(shape)).reshape(shape)
     arg = make_arg(x)
     sharding = jax.sharding.PmapSharding(jax.devices()[:nshards], spec)
-    results = pxla.shard_args([sharding], [arg])
+    results = pxla.shard_args([sharding], [None], [arg])
     self.assertEqual(len(results), 1)
     if isinstance(results[0], array.ArrayImpl):
       bufs = results[0]._arrays

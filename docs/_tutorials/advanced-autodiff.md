@@ -315,7 +315,7 @@ print("jacrev result, with shape", J.shape)
 print(J)
 ```
 
-These two functions compute the same values (up to machine numerics), but differ in their implementation: {func}`jax.jacfwd` uses forward-mode automatic differentiation, which is more efficient for "tall" Jacobian matrices, while {func}`jax.jacrev` uses reverse-mode, which is more efficient for "wide" Jacobian matrices. For matrices that are near-square, {func}`jax.jacfwd` probably has an edge over {func}`jax.jacrev`.
+These two functions compute the same values (up to machine numerics), but differ in their implementation: {func}`jax.jacfwd` uses forward-mode automatic differentiation, which is more efficient for "tall" Jacobian matrices (more outputs than inputs), while {func}`jax.jacrev` uses reverse-mode, which is more efficient for "wide" Jacobian matrices (more inputs than outputs). For matrices that are near-square, {func}`jax.jacfwd` probably has an edge over {func}`jax.jacrev`.
 
 You can also use {func}`jax.jacfwd` and {func}`jax.jacrev` with container types:
 
@@ -590,7 +590,7 @@ def vmap_mjp(f, x, M):
     outs, = vmap(vjp_fun)(M)
     return outs
 
-key = random.PRNGKey(0)
+key = random.key(0)
 num_covecs = 128
 U = random.normal(key, (num_covecs,) + y.shape)
 
@@ -714,7 +714,7 @@ Here's a check:
 
 ```{code-cell}
 def check(seed):
-  key = random.PRNGKey(seed)
+  key = random.key(seed)
 
   # random coeffs for u and v
   key, subkey = random.split(key)
@@ -768,7 +768,7 @@ Here's a check of the VJP rules:
 
 ```{code-cell}
 def check(seed):
-  key = random.PRNGKey(seed)
+  key = random.key(seed)
 
   # random coeffs for u and v
   key, subkey = random.split(key)

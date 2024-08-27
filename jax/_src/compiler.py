@@ -21,7 +21,7 @@ import logging
 import os
 import tempfile
 import time
-from typing import Any
+from typing import Any, Callable
 import warnings
 
 from jax._src import compilation_cache
@@ -92,21 +92,21 @@ def use_detailed_logging(module: ir.Module) -> bool:
   return _walk_operations(module.operation, bound) < 0
 
 
-def log_persistent_cache_hit(module_name: str) -> None:
+def log_persistent_cache_hit(module_name: str, cache_key: str) -> None:
   hit_log_priority = (logging.WARNING if config.log_compiles.value
                       else logging.DEBUG)
-  logger.log(hit_log_priority, "Persistent compilation cache hit for '%s'",
-             module_name)
+  logger.log(hit_log_priority, "Persistent compilation cache hit for '%s' with key %r",
+             module_name, cache_key)
 
 
-def log_persistent_cache_miss(module_name: str) -> None:
+def log_persistent_cache_miss(module_name: str, cache_key: str) -> None:
   miss_log_priority = (logging.WARNING
                         if config.explain_cache_misses.value
                         and compilation_cache.is_persistent_cache_enabled()
                         else logging.DEBUG)
   # all caps to match the tracing cache "TRACING CACHE MISS"
-  logger.log(miss_log_priority, "PERSISTENT COMPILATION CACHE MISS for '%s'",
-             module_name)
+  logger.log(miss_log_priority, "PERSISTENT COMPILATION CACHE MISS for '%s' with key %r",
+             module_name, cache_key)
 
 
 def get_compile_options(
@@ -157,6 +157,8 @@ def get_compile_options(
   build_options = compile_options.executable_build_options
   build_options.use_spmd_partitioning = use_spmd_partitioning
   build_options.use_auto_spmd_partitioning = use_auto_spmd_partitioning
+  if xla_extension_version >= 280:
+    build_options.use_shardy_partitioner = use_shardy_partitioner
   if fdo_profile is not None:
     build_options.fdo_profile = fdo_profile
   if use_auto_spmd_partitioning:
@@ -199,11 +201,6 @@ def get_compile_options(
     debug_options.xla_backend_optimization_level = 0
     debug_options.xla_llvm_disable_expensive_passes = True
     debug_options.xla_test_all_input_layouts = False
-
-  # TODO(b/352486192): Set this on compile_options after the field is moved to
-  # the `ExecutableBuildOptions` proto.
-  if xla_extension_version >= 278:
-    debug_options.xla_use_shardy = use_shardy_partitioner
 
   # XLA-AutoFDO profile version: precedence order is:
   # 1. Whatever --jax_xla_profile_version is set to.
@@ -256,15 +253,45 @@ def backend_compile(
   else:
     built_c = module
 
-  # we use a separate function call to ensure that XLA compilation appears
-  # separately in Python profiling results
-  if host_callbacks:
-    return backend.compile(built_c, compile_options=options,
-                           host_callbacks=host_callbacks)
-  # Some backends don't have `host_callbacks` option yet
-  # TODO(sharadmv): remove this fallback when all backends allow `compile`
-  # to take in `host_callbacks`
-  return backend.compile(built_c, compile_options=options)
+  try:
+    # we use a separate function call to ensure that XLA compilation appears
+    # separately in Python profiling results
+    if host_callbacks:
+      return backend.compile(
+          built_c, compile_options=options, host_callbacks=host_callbacks
+      )
+    # Some backends don't have `host_callbacks` option yet
+    # TODO(sharadmv): remove this fallback when all backends allow `compile`
+    # to take in `host_callbacks`
+    return backend.compile(built_c, compile_options=options)
+  except xc.XlaRuntimeError as e:
+    for error_handler in _XLA_RUNTIME_ERROR_HANDLERS:
+      handler_result = error_handler(e)
+      if handler_result is not None:
+        raise handler_result from e
+    raise e
+
+
+_XLA_RUNTIME_ERROR_HANDLERS = []
+
+
+def register_xla_runtime_error_handler(
+    handler_fn: Callable[[xc.XlaRuntimeError], Exception | None],
+):
+  """Registers a custom exception handler for XLA runtime errors.
+
+  Registering a custom handler allows re-raising a more informative exception
+  after encountering an XLARuntimeError.
+
+  Args:
+    handler_fn: A function which returns a new exception to replace the original
+      XLA runtime error, or None if the original error should be propagated.
+
+  Returns:
+    A new exception or None.
+  """
+  _XLA_RUNTIME_ERROR_HANDLERS.append(handler_fn)
+
 
 def compile_or_get_cached(
     backend: xc.Client,
@@ -348,7 +375,7 @@ def compile_or_get_cached(
 
   if retrieved_executable is not None:
     assert retrieved_compile_time is not None
-    log_persistent_cache_hit(module_name)
+    log_persistent_cache_hit(module_name, cache_key)
 
     monitoring.record_event('/jax/compilation_cache/cache_hits')
     monitoring.record_event_duration_secs(
@@ -367,7 +394,7 @@ def compile_or_get_cached(
       # them.
       and len(host_callbacks) == 0
   ):
-    log_persistent_cache_miss(module_name)
+    log_persistent_cache_miss(module_name, cache_key)
     return _compile_and_share_module(
         backend,
         computation,
@@ -383,7 +410,7 @@ def compile_or_get_cached(
       and is_multi_process
       and distributed.global_state.client is not None
   ):
-    log_persistent_cache_miss(module_name)
+    log_persistent_cache_miss(module_name, cache_key)
     return _compile_and_write_autotune_config(
         backend,
         computation,
@@ -395,7 +422,7 @@ def compile_or_get_cached(
         min_device_process_id
     )
   else:
-    log_persistent_cache_miss(module_name)
+    log_persistent_cache_miss(module_name, cache_key)
     return _compile_and_write_cache(
         backend,
         computation,

@@ -41,7 +41,6 @@ from jax._src import test_util as jtu
 from jax._src import xla_bridge
 from jax._src.compilation_cache_interface import CacheInterface
 from jax._src.lib import xla_client
-from jax._src.maps import xmap
 from jax.experimental.pjit import pjit
 from jax.sharding import PartitionSpec as P
 import numpy as np
@@ -233,25 +232,6 @@ class CompilationCacheTest(CompilationCacheTestCase):
     self.assertEqual(count_cache_items(), 1)
     x = np.arange(math.prod(shape), dtype=np.float32).reshape(shape)
     f(x, x + 1)
-    self.assertEqual(count_cache_items(), 2)
-
-  @jtu.with_mesh([("x", 2)])
-  def test_xmap(self):
-    def f(x):
-      return x * 2
-
-    devices = np.array(jax.local_devices()[:2])
-    if devices.size < 2:
-      raise SkipTest("Test requires 2 devices")
-    x = np.arange(8, dtype=np.int64).reshape((2, 2, 2))
-    xmap(
-        f, in_axes=["a", ...], out_axes=["a", ...], axis_resources={"a": "x"}
-    )(x)
-    self.assertEqual(count_cache_items(), 1)
-    x = np.arange(8, dtype=np.float32).reshape((2, 2, 2))
-    xmap(
-        f, in_axes=["a", ...], out_axes=["a", ...], axis_resources={"a": "x"}
-    )(x)
     self.assertEqual(count_cache_items(), 2)
 
   def test_cache_write_warning(self):

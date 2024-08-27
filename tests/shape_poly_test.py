@@ -49,6 +49,7 @@ from jax._src.export import shape_poly_decision
 from jax._src.lax import lax as lax_internal
 from jax._src.lax import control_flow as lax_control_flow
 from jax._src.lib import xla_client
+from jax._src.lib import version as jaxlib_version
 import numpy as np
 
 config.parse_flags_with_absl()
@@ -566,6 +567,27 @@ class DimExprTest(jtu.JaxTestCase):
 
     self.sampled_assertion(core.min_dim(a, 5), core.min_dim, a, 5)
     self.sampled_assertion(core.min_dim(5, a), core.min_dim, 5, a)
+
+  def test_min_max_type_check(self):
+    a, = shape_poly.symbolic_shape("a")
+    for i, f in enumerate([lambda x: core.max_dim(x, a),
+                           lambda x: core.max_dim(a, x),
+                           lambda x: core.min_dim(x, a),
+                           lambda x: core.min_dim(a, x)]):
+      with self.subTest(f"jit_{i}"):
+        with self.assertRaisesRegex(core.ConcretizationTypeError, ""):
+          jax.jit(f)(1)
+
+    arr = jnp.array([1], dtype=np.int32)
+    for i, f in enumerate([lambda: core.max_dim(arr, a),
+                           lambda: core.max_dim(a, arr),
+                           lambda: core.min_dim(arr, a),
+                           lambda: core.min_dim(a, arr)]):
+      with self.subTest(f"array_{i}"):
+        with self.assertRaisesRegex(
+            TypeError,
+            "Only integer scalar arrays can be converted to a scalar index"):
+          f()
 
   def test_clamp_dim(self):
     a, b = shape_poly.symbolic_shape("a, b")
@@ -2711,6 +2733,67 @@ _POLY_SHAPE_TEST_HARNESSES = [
       ]
     ],
     [
+        PolyHarness(
+            "lu_pivots_to_permutation",
+            f"shape={jtu.format_shape_dtype_string(shape, np.int32)}_poly={poly}_{permutation_size=}",
+            lax.linalg.lu_pivots_to_permutation,
+            arg_descriptors=[RandArg(shape, np.int32), StaticArg(permutation_size)],
+            polymorphic_shapes=[poly],
+            symbolic_constraints=constraints,
+        )
+        for shape, poly, permutation_size, constraints in [
+            ((4,), None, 8, ()),
+            ((2, 3, 4), "b1, b2, ...", 8, ()),
+            ((4,), "b", 8, ["b <= 8"]),
+            ((2, 3, 4), "b1, b2, b3", 8, ["b3 <= 8"]),
+        ]
+    ],
+    [
+        # Tracing errors are only thrown when the trailing dimension of pivots
+        # is static. Otherwise, the error is thrown at runtime.
+        PolyHarness(
+            "lu_pivots_to_permutation_error",
+            f"shape={jtu.format_shape_dtype_string(shape, np.int32)}_poly={poly}_{permutation_size=}",
+            lax.linalg.lu_pivots_to_permutation,
+            arg_descriptors=[RandArg(shape, np.int32), StaticArg(permutation_size)],
+            polymorphic_shapes=[poly],
+            symbolic_constraints=constraints,
+            expect_error=(ValueError, "Output permutation size"),
+        )
+        for shape, poly, permutation_size, constraints in [
+            ((4,), None, 3, ()),
+            ((2, 3, 4), "b1, b2, ...", 3, ()),
+            ((4,), "b", 8, ["b >= 9"]),
+            ((2, 3, 4), "b1, b2, b3", 8, ["b3 >= 9"]),
+        ]
+    ],
+    [
+      PolyHarness(  # pylint: disable=g-complex-comprehension
+          "lu", f"shape={jtu.format_shape_dtype_string(shape, dtype)}_poly={poly}",
+          lax.linalg.lu,
+          arg_descriptors=[RandArg(shape, dtype)],
+          polymorphic_shapes=[poly],
+          # TODO(b/360788062): Remove once the forward compatibility window is
+          # closed.
+          override_jax_config_flags={
+              "jax_export_ignore_forward_compatibility": True})
+      for dtype in {np.float32, np.float64, np.complex64, np.complex128} & jtu.supported_dtypes()
+      for shape, poly in [
+          ((5, 4), "m, n"),
+          ((2, 0, 4), "b, ..."),
+          ((2, 4, 0), "b, ..."),
+          ((2, 3, 4, 4), "b1, b2, ..."),
+          ((2, 3, 4, 5), "b1, b2, ..."),
+          ((2, 3, 8, 4), "b1, b2, ..."),
+          ((2, 3, 4, 5), "b1, b2, m, n"),
+      ]
+      # TODO(danfm): Remove once jaxlib v0.4.32 is the minimum version.
+      # jaxlib versions before 0.4.32 require a static shape for the non-batch
+      # dimensions because these are used for computing the "permuation_size"
+      # which is passed to lu_pivots_to_permutation.
+      if jaxlib_version >= (0, 4, 32) or not poly.endswith("m, n")
+    ],
+    [
       # The random primitive tests, with threefry (both partitionable and
       # non-partitionable), and unsafe_rbg.
       [
@@ -3333,14 +3416,27 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
     custom_call_harnesses = {
         "householder_product:gpu",
         "vmap_geqrf:gpu",  # used for linalg.qr
-        "vmap_lu:gpu",
-        # custom_linear_solve works as long as lu works.
-        "vmap_custom_linear_solve:gpu",
         "vmap_qr:gpu", "qr:gpu",
         "vmap_svd:gpu",
     }
-    if f"{harness.group_name}:{jtu.device_under_test()}" in custom_call_harnesses:
+    name_device_key = f"{harness.group_name}:{jtu.device_under_test()}"
+    if name_device_key in custom_call_harnesses:
       raise unittest.SkipTest("native serialization with shape polymorphism not implemented for custom calls; b/261671778")
+
+    # This list keeps track of the minimum jaxlib version that supports shape
+    # polymorphism for some new primitives as we add them. This check is
+    # required so that we can still run the test suite with older versions of
+    # jaxlib.
+    version_gated = {
+        # TODO(danfm): remove these checks when jaxlib 0.4.32 is released.
+        "lu_pivots_to_permutation:gpu": (0, 4, 32),
+        "lu_pivots_to_permutation_error:gpu": (0, 4, 32),
+        "lu:gpu": (0, 4, 32),
+        "vmap_lu:gpu": (0, 4, 32),
+        "vmap_custom_linear_solve:gpu": (0, 4, 32),
+    }
+    if version_gated.get(name_device_key, jaxlib_version) > jaxlib_version:
+      raise unittest.SkipTest(f"shape polymorphism not supported by jaxlib version {jaxlib_version}")
 
     if harness.group_name == "schur" and not jtu.test_device_matches(["cpu"]):
       raise unittest.SkipTest("schur decomposition is only implemented on CPU.")
@@ -3391,6 +3487,12 @@ class ShapePolyHarnessesTest(jtu.JaxTestCase):
     # TPU precision is a little lower since we swap the order of matmul operands.
     if "cholesky" in harness.group_name and jtu.test_device_matches(["tpu"]):
       harness.tol = 5e-5
+
+    # TODO(b/360788062): Clean up after the compatibility period.
+    if harness.group_name in [
+        "lu", "vmap_lu", "custom_linear_solve", "vmap_custom_linear_solve"
+        ] and jtu.test_device_matches(["gpu"]):
+      config_flags = {**config_flags, "jax_export_ignore_forward_compatibility": True}
 
     with jtu.global_config_context(**config_flags):
       harness.run_test(self)

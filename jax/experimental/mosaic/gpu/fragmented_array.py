@@ -15,6 +15,7 @@
 """Utilities for code generator."""
 
 import dataclasses
+import math
 from typing import Callable
 
 import jax
@@ -98,10 +99,10 @@ class WGStridedFragLayout:
     memref_type = ir.MemRefType(memref_ty)
     bw = mgpu.bytewidth(memref_type.element_type)
     assert 8 % bw == 0 and 8 // bw != 0, bw
-    if np.prod(memref_type.shape) % WARPGROUP_SIZE != 0:
+    if math.prod(memref_type.shape) % WARPGROUP_SIZE != 0:
       raise ValueError(
           "Ref must have a number of elements that is a multiple of"
-          f" {WARPGROUP_SIZE}"
+          f" {WARPGROUP_SIZE} (got {math.prod(memref_type.shape)})"
       )
     max_vec_size = np.prod(memref_type.shape) // WARPGROUP_SIZE
     return cls(
@@ -421,9 +422,50 @@ class FragmentedArray:
 
   # TODO(apaszke): Support JAX dtypes here as well?
   def astype(self, new_dtype: ir.Type):
+    i8 = ir.IntegerType.get_signless(8)
+    i16 = ir.IntegerType.get_signless(16)
+    i32 = ir.IntegerType.get_signless(32)
+    bf16 = ir.BF16Type.get()
+
     cur_dtype = self.mlir_dtype
     if cur_dtype == new_dtype:
       return self
+    reg_type = self.registers.flat[0].type
+    is_vector_reg = ir.VectorType.isinstance(reg_type)
+    reg_shape = tuple(ir.VectorType(reg_type).shape) if is_vector_reg else ()
+    if cur_dtype == i8 and new_dtype == bf16 and reg_shape == (2,):
+      new_registers = np.empty_like(self.registers)
+      for idx, reg in np.ndenumerate(self.registers):
+        reg_16 = vector.bitcast(ir.VectorType.get((1,), i16), reg)
+        val_16 = llvm.extractelement(reg_16, c(0, i32))
+        # We first embed the s8 into a bf16 with the exponent equal to
+        # bias + mantissa bits. Then, we zero the msb that didn't fit into the
+        # mantissa, zero out all bits other than msb, and subtract the last
+        # two values from each other. This takes advantage of the fact that the
+        # lsb of the exponent (msb of the second byte) is zero, which allows us
+        # to losslesly pack the msb there. When 1, it doubles the value of s2,
+        # making the result negative.
+        new_val_32 = llvm.inline_asm(
+            i32,
+            [val_16],
+            """
+            {
+            .reg .b32 s<3>;
+            prmt.b32 s0, $1, 0x43, 0x4140;
+            and.b32 s1, s0, 0xff7fff7f;
+            and.b32 s2, s0, 0xff80ff80;
+            sub.bf16x2 $0, s1, s2;
+            }
+            """,
+            "=r,r",
+        )
+        new_vec = llvm.mlir_undef(ir.VectorType.get((1,), i32))
+        new_vec = llvm.insertelement(new_vec, new_val_32, c(0, i32))
+        new_registers[idx] = vector.bitcast(
+            ir.VectorType.get((2,), new_dtype), new_vec
+        )
+      return FragmentedArray(_registers=new_registers, _layout=self.layout)
+    # Generic path.
     from_float = ir.FloatType.isinstance(cur_dtype)
     to_float = ir.FloatType.isinstance(new_dtype)
     from_integer = ir.IntegerType.isinstance(cur_dtype)
@@ -480,9 +522,9 @@ class FragmentedArray:
     warp_result = utils.warp_tree_reduce(result, op, 32)
     warp_id = arith.divui(gpu.thread_id(gpu.Dimension.x), c(32, index))
     memref.store(warp_result, scratch, [warp_id])
-    utils.commit_shared()
+    utils.warpgroup_barrier()
     zero_index = c(0, index)
-    with mgpu.single_thread():
+    with mgpu.single_thread(per_block=False):
       scratch_vec = vector.load(
           ir.VectorType.get((4,), self.mlir_dtype),
           scratch,
@@ -492,7 +534,7 @@ class FragmentedArray:
           self.mlir_dtype, vector.CombiningKind.ADD, scratch_vec
       )
       memref.store(scratch_sum, scratch, [zero_index])
-    utils.commit_shared()
+    utils.warpgroup_barrier()
     return memref.load(scratch, [zero_index])
 
   def reduce(self, op, axis):
@@ -576,10 +618,27 @@ class FragmentedArray:
     match self.layout:
       case WGMMAFragLayout():
         self._store_untiled_wgmma(ref)
+      case WGSplatFragLayout():
+        self._store_untiled_splat(ref)
       case WGStridedFragLayout():
         self._store_untiled_wg_strided(ref)
       case _:
         raise NotImplementedError(self.layout)
+
+  def _store_untiled_splat(self, ref: ir.Value):
+    vec_size = 8 // mgpu.bytewidth(self.mlir_dtype)
+    if np.prod(self.shape) < vec_size * WARPGROUP_SIZE:
+      vec_size = 1
+
+    if np.prod(self.shape) % WARPGROUP_SIZE * vec_size:
+      raise ValueError(self.shape, WARPGROUP_SIZE, vec_size)
+
+    fa = FragmentedArray.splat(
+        self.registers.flat[0],
+        self.shape,
+        layout=WGStridedFragLayout(shape=self.shape, vec_size=vec_size),
+    )
+    fa.store_untiled(ref)
 
   def _store_untiled_wg_strided(self, ref: ir.Value):
     ref_ty = ir.MemRefType(ref.type)
@@ -627,6 +686,8 @@ class FragmentedArray:
     assert m % 64 == 0  # This is implied by the layout.
     cols_per_tile = swizzle // bw
     expected_shape = [m // 64, n // cols_per_tile, 64, cols_per_tile]
+    if n < cols_per_tile:  # We allow singular tiles shorter than swizzle.
+      expected_shape = [m // 64, 1, 64, cols_per_tile]
     if ir.MemRefType(ref.type).shape != expected_shape:
       raise ValueError(ref.type, (m, n))
     for get, _, idxs in self.transfer_tiled(self.shape, dtype, swizzle):
@@ -656,9 +717,12 @@ class FragmentedArray:
     # TODO(apaszke): We could use ldmatrix/stmatrix for 16-bit types.
     bw = mgpu.bytewidth(dtype)
     m, n = shape
-    cols_per_tile = swizzle // bw
-    if n % cols_per_tile != 0:
-      raise NotImplementedError
+    assert m % 64 == 0 and n % 8 == 0  # Implied by the layout.
+    cols_per_tile = swizzle_elems = swizzle // bw
+    if n < swizzle_elems:
+      cols_per_tile = n
+    else:
+      assert n % swizzle_elems == 0, (n, swizzle_elems)
     if swizzle not in {32, 64, 128}:
       raise NotImplementedError("Only swizzled stores supported")
 
@@ -693,6 +757,8 @@ class FragmentedArray:
         case _:
           raise AssertionError(swizzle)
       stagger_amount = swizzle // 64
+      if (cols_per_tile // 8) % (stagger_amount + 1):
+        raise NotImplementedError
     else:
       # We rely on canonicalization to clean up the selects.
       i1 = ir.IntegerType.get_signless(1)

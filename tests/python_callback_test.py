@@ -26,11 +26,8 @@ from jax import lax
 from jax._src import config
 from jax._src import core
 from jax._src import dispatch
-from jax._src import maps
 from jax._src import test_util as jtu
 from jax._src import util
-from jax._src.lib import xla_client
-from jax._src.maps import xmap
 from jax.experimental import io_callback
 from jax.experimental import pjit
 from jax.experimental.shard_map import shard_map
@@ -739,46 +736,6 @@ class PureCallbackTest(jtu.JaxTestCase):
     out = f(jnp.arange(float(jax.local_device_count())))
     np.testing.assert_allclose(out, np.sin(np.arange(jax.local_device_count())))
 
-  def test_can_pjit_pure_callback_under_hard_xmap(self):
-
-    if not hasattr(xla_client.OpSharding.Type, 'MANUAL'):
-      raise unittest.SkipTest('Manual partitioning needed for pure_callback')
-
-    spmd_lowering = maps.SPMD_LOWERING.value
-    spmd_manual_lowering = maps.SPMD_LOWERING_MANUAL.value
-    config.update('experimental_xmap_spmd_lowering', True)
-    config.update('experimental_xmap_spmd_lowering_manual', True)
-    try:
-      mesh = Mesh(np.array(jax.devices()), axis_names=('x',))
-
-      spec = jax.sharding.PartitionSpec('x')
-
-      def f(x):
-        axis_resources = {v: v for v in mesh.axis_names}
-        return xmap(
-            lambda x: jax.pure_callback(np.sin, x, x),
-            in_axes=(('x',),),
-            out_axes=('x',),
-            axis_resources=axis_resources,
-            axis_sizes=mesh.shape,
-        )(x)
-
-      def without_xmap_f(x):
-        return jax.pure_callback(np.sin, x, x)
-
-      with mesh:
-        inp = jnp.arange(float(jax.local_device_count()))
-        out = pjit.pjit(f, in_shardings=spec, out_shardings=spec)(inp)
-        np.testing.assert_allclose(
-            out, np.sin(np.arange(jax.local_device_count()))
-        )
-    finally:
-      config.update('experimental_xmap_spmd_lowering', spmd_lowering)
-      config.update(
-        'experimental_xmap_spmd_lowering_manual',
-        spmd_manual_lowering,
-      )
-
   def test_cant_take_grad_of_pure_callback(self):
 
     def sin(x):
@@ -933,34 +890,6 @@ class PureCallbackTest(jtu.JaxTestCase):
     # callback alive.
     np.testing.assert_allclose(out, np.full((num_devices, 4), 11, np.float32))
 
-  def test_callback_inside_xmap(self):
-
-    def _callback(x):
-      return (x + 1.).astype(x.dtype)
-
-    def f(x):
-      return jax.pure_callback(_callback, x, x)
-
-    f = maps.xmap(f, in_axes=['a'], out_axes=['a'],
-                  axis_resources={'a': 'dev'})
-    with jax.sharding.Mesh(np.array(jax.devices()), ['dev']):
-      out = f(np.arange(40.))
-    np.testing.assert_allclose(out, jnp.arange(1., 41.))
-
-  def test_vectorized_callback_inside_xmap(self):
-
-    def _callback(x):
-      return (x + 1.).astype(x.dtype)
-
-    def f(x):
-      return jax.pure_callback(_callback, x, x, vectorized=True)
-
-    f = maps.xmap(f, in_axes=['a'], out_axes=['a'],
-                  axis_resources={'a': 'dev'})
-    with jax.sharding.Mesh(np.array(jax.devices()), ['dev']):
-      out = f(np.arange(40.))
-    np.testing.assert_allclose(out, jnp.arange(1., 41.))
-
   def test_array_layout_is_preserved(self):
 
     def g(x):
@@ -1104,14 +1033,6 @@ class IOCallbackTest(jtu.JaxTestCase):
     with self.assertRaisesRegex(
         ValueError, "Ordered effects not supported in `pmap`"):
       jax.pmap(f)(jnp.arange(jax.local_device_count()))
-
-  def test_cannot_call_ordered_io_in_xmap(self):
-    def f(x):
-      return io_callback(
-          lambda x: x, jax.ShapeDtypeStruct((), jnp.int32), x, ordered=True)
-    with self.assertRaisesRegex(
-        ValueError, "Cannot `vmap` ordered IO callback"):
-      maps.xmap(f, in_axes=([0],), out_axes=[0])(jnp.arange(16))
 
   def test_cannot_call_ordered_io_in_vmap(self):
     def f(x):

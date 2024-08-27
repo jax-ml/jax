@@ -19,7 +19,7 @@ from collections.abc import Sequence
 import dataclasses
 import enum
 import functools
-from typing import Any, Hashable
+from typing import Any, ClassVar, Hashable
 
 import jax
 from jax._src import core as jax_core
@@ -44,6 +44,38 @@ no_block_spec = pallas_core.no_block_spec
 _convert_block_spec_to_block_mapping = pallas_core._convert_block_spec_to_block_mapping
 split_list = util.split_list
 
+@dataclasses.dataclass(frozen=True)
+class TPUCompilerParams(pallas_core.CompilerParams):
+  """Mosaic TPU compiler parameters.
+
+  Attributes:
+    dimension_semantics: A list of dimension semantics for each grid
+      dimension of the kernel. Either "parallel" for dimensions that can
+      execute in any order, or "arbitrary" for dimensions that must be
+      executed sequentially.
+    allow_input_fusion: A list of booleans indicating whether input fusion is
+      allowed for each argument.
+    vmem_limit_bytes: Overrides the default VMEM limit for a kernel. Note
+      that this must be used in conjunction with the
+      --xla_tpu_scoped_vmem_limit_kib=N flag with N*1kib > vmem_limit_bytes.
+    collective_id: Indicates which barrier semaphore to use for the kernel.
+      Note that using the same collective_id does not guarantee that
+      the same barrier semaphore will be allocated between kernels.
+    internal_scratch_in_bytes: The size of the internal scratch space used by
+      Mosaic.
+    flags: A dictionary of command line flags for the kernel.
+    serialization_format: The serialization format for the kernel body.
+    device_type: The device type to compile for.
+  """
+  PLATFORM: ClassVar[str] = "mosaic"
+  dimension_semantics: Sequence[str] | None = None
+  allow_input_fusion: Sequence[bool] | None = None
+  vmem_limit_bytes: int | None = None
+  collective_id: int | None = None
+  flags: dict[str, Any] | None = None
+  internal_scratch_in_bytes: int | None = None
+  serialization_format: int = 1
+  device_type: str | None = None
 
 class TPUMemorySpace(enum.Enum):
   ANY = "any"
@@ -67,7 +99,7 @@ class barrier_semaphore(semaphore_dtype): pass
 class AbstractSemaphoreTyRules:
   @staticmethod
   def pallas_interpret_element_aval(_) -> jax_core.ShapedArray:
-    return jax_core.ShapedArray((), jnp.dtype('int32'))
+    return jax_core.ShapedArray((), pallas_core.SEMAPHORE_INTERPRET_DTYPE)
 
 class AbstractSemaphoreTy(dtypes.ExtendedDType):
   name: str
@@ -109,6 +141,8 @@ class SemaphoreType(enum.Enum):
       dtype = BarrierSemaphoreTy()
     else:
       dtype = SemaphoreTy()
+    if pallas_core.is_interpret_mode():
+      dtype = pallas_core.SEMAPHORE_INTERPRET_DTYPE
     return MemoryRef(shape, dtype, TPUMemorySpace.SEMAPHORE)
 
   def get_aval(self) -> AbstractMemoryRef:
@@ -145,8 +179,8 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
   grid: TupleGrid
   grid_names: tuple[Hashable, ...] | None
   num_scalar_prefetch: int
-  in_specs: tuple[BlockSpec | NoBlockSpec, ...] | NoBlockSpec
-  out_specs: tuple[BlockSpec | NoBlockSpec, ...] | NoBlockSpec
+  in_specs: pallas_core.BlockSpecTree
+  out_specs: pallas_core.BlockSpecTree
   scratch_shapes: tuple[Any, ...]
 
   def __init__(
@@ -172,15 +206,6 @@ class PrefetchScalarGridSpec(pallas_core.GridSpec):
       return obj.get_aval()
     raise ValueError(f"No registered conversion for {type(obj)}. "
                      "Only VMEM and SemaphoreType are supported.")
-
-  def get_grid_mapping(  # type: ignore[override]
-      self, in_avals, in_tree, in_paths, out_avals, out_tree, out_paths
-  ) -> tuple[tuple[jax_core.AbstractValue, ...], GridMapping]:
-    return super().get_grid_mapping(in_avals, in_tree, in_paths,
-                                    out_avals, out_tree, out_paths,
-                                    grid_names=self.grid_names,
-                                    num_scalar_prefetch=self.num_scalar_prefetch,
-                                    scratch_shapes=self.scratch_shapes)
 
 
 @dataclasses.dataclass(frozen=True)

@@ -39,10 +39,12 @@ class PallasBaseTest(jtu.JaxTestCase):
   INTERPRET = False
 
   def setUp(self):
+    if not jtu.test_device_matches(["cpu", "gpu"]):
+      self.skipTest("Must only run on GPUs, or CPUs")
     if jtu.test_device_matches(["cpu"]) and not self.INTERPRET:
-      self.skipTest("On CPU the test works only in interpret mode")
-    if jtu.test_device_matches(["cpu", "gpu"]) and jax.config.x64_enabled:
-      self.skipTest("On CPU and GPU the test works only in 32-bit")
+      self.skipTest("On CPU, the test works only in interpret mode")
+    if jax.config.x64_enabled:
+      self.skipTest("The test works only in 32-bit")
     if (jtu.test_device_matches(["cuda"]) and
         not jtu.is_cuda_compute_capability_at_least("8.0")):
       self.skipTest("Only works on GPU with capability >= sm80")
@@ -146,7 +148,7 @@ class DecodeAttentionTest(PallasBaseTest):
     o_ref = decode_attention.gqa_reference(q, k, v)
     np.testing.assert_allclose(o, o_ref, atol=0.05)
 
-class DecodeAttentionInterpreterTest(DecodeAttentionTest):
+class DecodeAttentionInterpretTest(DecodeAttentionTest):
   INTERPRET = True
 
 

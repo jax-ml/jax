@@ -266,7 +266,6 @@ class MultiProcessGpuTest(jtu.JaxTestCase):
     os.environ.get("SLURM_JOB_NUM_NODES", None) != "2",
     "Slurm environment with at least two nodes needed!")
 @jtu.pytest_mark_if_available('SlurmMultiNodeGpuTest')
-@jtu.with_config(experimental_xmap_spmd_lowering=True)
 class SlurmMultiNodeGpuTest(jtu.JaxTestCase):
 
   def sorted_devices(self):

@@ -20,7 +20,7 @@ load("//jaxlib:jax.bzl", "py_deps")
 package(
     default_applicable_licenses = [],
     default_visibility = [
-        "//:__subpackages__",
+        "//jax:internal",
     ],
 )
 
@@ -39,6 +39,16 @@ py_library(
     deps = [
         "//jax",
         "//jax:mlir",
+        "//jax/_src/lib",
+    ],
+)
+
+py_library(
+    name = "error_handling",
+    srcs = ["error_handling.py"],
+    deps = [
+        "//jax:compiler",
+        "//jax:traceback_util",
         "//jax/_src/lib",
     ],
 )
@@ -71,10 +81,12 @@ py_library(
     srcs = ["lowering.py"],
     deps = [
         ":core",
+        ":error_handling",
         ":primitives",
         "//jax",
         "//jax:ad_util",
         "//jax:core",
+        "//jax:dtypes",
         "//jax:mesh",
         "//jax:mlir",
         "//jax:mosaic",

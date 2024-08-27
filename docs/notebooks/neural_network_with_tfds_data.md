@@ -34,7 +34,7 @@ limitations under the License.
 
 +++ {"id": "B_XlLLpcWjkA"}
 
-# Training a Simple Neural Network, with tensorflow/datasets Data Loading
+# Training a simple neural network, with tensorflow/datasets data loading
 
 <!--* freshness: { reviewed: '2024-05-03' } *-->
 
@@ -183,7 +183,7 @@ def update(params, x, y):
 
 +++ {"id": "umJJGZCC2oKl"}
 
-## Data Loading with `tensorflow/datasets`
+## Data loading with `tensorflow/datasets`
 
 JAX is laser-focused on program transformations and accelerator-backed NumPy, so we don't include data loading or munging in the JAX library. There are already a lot of great data loaders out there, so let's just use them instead of reinventing anything. We'll use the `tensorflow/datasets` data loader.
 
@@ -229,7 +229,7 @@ print('Test:', test_images.shape, test_labels.shape)
 
 +++ {"id": "xxPd6Qw3Z98v"}
 
-## Training Loop
+## Training loop
 
 ```{code-cell} ipython3
 :id: X2DnZo3iYj18

@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("//jaxlib:jax.bzl", "if_windows", "pytype_strict_library")
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_filegroup")
+load("//jaxlib:jax.bzl", "if_windows", "pytype_strict_library")
 
 licenses(["notice"])
 
 package(
     default_applicable_licenses = [],
-    default_visibility = ["//:__subpackages__"],
+    default_visibility = ["//jax:internal"],
 )
 
 pytype_strict_library(
@@ -56,8 +56,8 @@ genrule(
       out=$(RULEDIR)/$${base//_raw/}
       echo '# pytype: skip-file' > $${out} && \
           cat $${src} |
-          sed -e 's/^from \\.\\./from jaxlib.mlir\\./g' |
-          sed -e 's/^from \\./from jaxlib.mlir\\.dialects\\./g' >> $${out}
+          sed -e 's/^from \\.\\./from jaxlib\\.mlir\\./g' |
+          sed -e 's/^from \\./from jaxlib\\.mlir\\.dialects\\./g' >> $${out}
     done
     """,
 )

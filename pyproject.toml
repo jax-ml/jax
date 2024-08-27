@@ -6,41 +6,43 @@ build-backend = "setuptools.build_meta"
 show_error_codes = true
 disable_error_code = "attr-defined, name-defined, annotation-unchecked"
 no_implicit_optional = true
+warn_redundant_casts = true
 warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
 module = [
+    "IPython.*",
     "absl.*",
     "colorama.*",
+    "etils.*",
     "filelock.*",
-    "IPython.*",
-    "numpy.*",
-    "opt_einsum.*",
-    "scipy.*",
-    "libtpu.*",
-    "jaxlib.mlir.*",
-    "rich.*",
-    "optax.*",
     "flatbuffers.*",
     "flax.*",
+    "google.colab.*",
+    "hypothesis.*",
+    "jax.experimental.jax2tf.tests.back_compat_testdata",
+    "jax.experimental.jax2tf.tests.flax_models",
+    "jax_cuda12_plugin.*",
+    "jaxlib.*",
+    "jaxlib.mlir.*",
+    "jraph.*",
+    "libtpu.*",
+    "matplotlib.*",
+    "numpy.*",
+    "opt_einsum.*",
+    "optax.*",
+    "pygments.*",
+    "pytest.*",
+    "rich.*",
+    "scipy.*",
+    "setuptools.*",
+    "tensorboard_plugin_profile.convert.*",
     "tensorflow.*",
-    "tensorflowjs.*",
     "tensorflow.io.*",
+    "tensorflowjs.*",
     "tensorstore.*",
     "web_pdb.*",
-    "etils.*",
-    "google.colab.*",
-    "pygments.*",
-    "jraph.*",
-    "matplotlib.*",
-    "tensorboard_plugin_profile.convert.*",
-    "jaxlib.*",
-    "pytest.*",
     "zstandard.*",
-    "jax.experimental.jax2tf.tests.flax_models",
-    "jax.experimental.jax2tf.tests.back_compat_testdata",
-    "setuptools.*",
-    "jax_cuda12_plugin.*",
 ]
 ignore_missing_imports = true
 
@@ -54,11 +56,12 @@ filterwarnings = [
     "default:Error (reading|writing) persistent compilation cache entry for 'jit_equal'",
     "default:Error (reading|writing) persistent compilation cache entry for 'jit__lambda_'",
     "default:jax.extend.mlir.dialects.mhlo is deprecated.*:DeprecationWarning",
-    
+
     # TODO(jakevdp): remove when array_api_tests stabilize
     "default:.*not machine-readable.*:UserWarning",
     "default:Special cases found for .* but none were parsed.*:UserWarning",
-    "default:.*is not JSON-serializable. Using the repr instead.",
+    "default:.*is not JSON-serializable. Using the repr instead.*:UserWarning",
+    "default:The .* method is good for exploring strategies.*",
 
     # These are transitive warnings coming from TensorFlow dependencies.
     # TODO(slebedev): Remove once we bump the minimum TensorFlow version.

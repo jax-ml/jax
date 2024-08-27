@@ -18,7 +18,9 @@ limitations under the License.
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <array>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
@@ -366,11 +368,14 @@ class CompiledKernel {
   MosaicHostFunc* host_launch_;
 };
 
-std::pair<absl::flat_hash_map<uint64_t, CompiledKernel>*, absl::Mutex*>
+using KernelHash = std::array<uint64_t, 4>;
+using CacheKey = std::pair<KernelHash, uintptr_t>;
+
+std::pair<absl::flat_hash_map<CacheKey, CompiledKernel>*, absl::Mutex*>
 GetKernelCache() {
   static absl::Mutex mutex;
   static auto& context_cache =
-      *new absl::flat_hash_map<uint64_t, CompiledKernel>;
+      *new absl::flat_hash_map<CacheKey, CompiledKernel>;
   return std::make_pair(&context_cache, &mutex);
 }
 
@@ -378,7 +383,7 @@ GetKernelCache() {
 // a single HLO module. So it should be safe to not include the CUDA context
 // in the key.
 absl::StatusOr<std::tuple<void*, void*, MosaicHostFunc*>> CompileAndInit(
-    uint64_t kernel_id, const char* module) {
+    CacheKey key, const char* module) {
   auto cache_and_mutex = GetKernelCache();
   auto* cache = cache_and_mutex.first;
   auto* mutex = cache_and_mutex.second;
@@ -386,14 +391,14 @@ absl::StatusOr<std::tuple<void*, void*, MosaicHostFunc*>> CompileAndInit(
   {
     // Fast path uses reader lock (as hash map look-up is relatively slow).
     absl::ReaderMutexLock lock(mutex);
-    auto it = cache->find(kernel_id);
+    auto it = cache->find(key);
     if (ABSL_PREDICT_TRUE(it != cache->end()))
       return it->second.GetHostLaunch();
   }
 
   absl::MutexLock lock(mutex);
   // We released the reader lock, another thread might have initialized it.
-  if (cache->find(kernel_id) == cache->end()) {
+  if (cache->find(key) == cache->end()) {
     mlir::MLIRContext context(mlir::MLIRContext::Threading::DISABLED);
     InitContext(&context);
     mlir::ParserConfig parse_config(&context);
@@ -418,22 +423,29 @@ absl::StatusOr<std::tuple<void*, void*, MosaicHostFunc*>> CompileAndInit(
     void** kernel_ptr_ptr = &kernel_ptr;
     void*** init_args[2] = {&module_ptr_ptr, &kernel_ptr_ptr};
     reinterpret_cast<MosaicInitFunc*>(*init)(init_args);
-    CUmodule module = static_cast<CUmodule>(module_ptr);
-    CUdeviceptr scratch_addr;
-    cuModuleGetGlobal(&scratch_addr, nullptr, module, "global_scratch");
     cache->insert_or_assign(
-        kernel_id,
+        key,
         CompiledKernel(std::move(*maybe_engine), kernel_ptr,
-                       reinterpret_cast<void*>(scratch_addr),
+                       nullptr,  // TODO(apaszke): Clean this up.
                        reinterpret_cast<MosaicHostFunc*>(*main)));
   }
-  return cache->at(kernel_id).GetHostLaunch();
+  return cache->at(key).GetHostLaunch();
 }
 
 void MosaicGPUCustomCall(void* stream, void** buffers, char* opaque,
                          size_t opaque_len, XlaCustomCallStatus* status) {
-  uint64_t kernel_id = *reinterpret_cast<uint64_t*>(opaque);
-  auto ctx_and_kernel = CompileAndInit(kernel_id, opaque + sizeof(uint64_t));
+  if (reinterpret_cast<uintptr_t>(opaque) % alignof(KernelHash)) {
+    fprintf(stderr, "Misaligned opaque pointer\n");
+    abort();
+  }
+  auto hash = *reinterpret_cast<KernelHash*>(opaque);
+  CUcontext ctx;
+  if (cuCtxGetCurrent(&ctx) != CUDA_SUCCESS) {
+    fprintf(stderr, "Failed to get current CUDA context\n");
+    abort();
+  }
+  CacheKey key(hash, reinterpret_cast<uintptr_t>(ctx));
+  auto ctx_and_kernel = CompileAndInit(key, opaque + sizeof(KernelHash));
   if (!ctx_and_kernel.ok()) {
     XlaCustomCallStatusSetFailure(status,
                                   ctx_and_kernel.status().message().data(),

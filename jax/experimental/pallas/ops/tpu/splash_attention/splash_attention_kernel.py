@@ -725,7 +725,7 @@ def flash_attention_kernel(
     m_scratch_ref[...] = jnp.full_like(m_scratch_ref, mask_value)
     l_scratch_ref[...] = jnp.zeros_like(l_scratch_ref)
 
-  _, _, should_run, should_not_mask = _next_nonzero(
+  global_kv_index, _, should_run, should_not_mask = _next_nonzero(
       h,
       i,
       j,
@@ -760,7 +760,11 @@ def flash_attention_kernel(
         kv_segment_ids_ref,
         attn_logits_soft_cap=attn_logits_soft_cap,
         k_slice=slice_k,
-        k_offset=j * bkv + kv_compute_index * bkv_compute,
+        # When the iteration space is shrunk (for local attention for example),
+        # the kv_index program_id does not correspond to the actual coordinates
+        # of the KV data. Make sure to use the 'unshrunk' index (coming from the
+        # data_next array) when computing the mask.
+        k_offset=global_kv_index * bkv + kv_compute_index * bkv_compute,
         bq=bq,
         mask_function=mask_function,
     )
@@ -1067,11 +1071,6 @@ def _splash_attention_forward(
     out_shapes += [None]
     out_specs += [None]
 
-  mosaic_params = dict(
-      dimension_semantics=("parallel", "arbitrary", "arbitrary"),
-      flags={"XLA_TPU_FORCE_LP_LLO_SCHEDULER": True},
-  )
-
   kernel_name = get_kernel_name(
       dataclasses.asdict(block_sizes),
       is_mqa=is_mqa,
@@ -1108,7 +1107,9 @@ def _splash_attention_forward(
             out_specs=out_specs,
             grid=grid,
         ),
-        compiler_params=dict(mosaic=mosaic_params),
+        compiler_params=pltpu.TPUCompilerParams(
+          dimension_semantics=("parallel", "arbitrary", "arbitrary"),
+        ),
         out_shape=out_shapes,
         name=kernel_name,
         interpret=interpret,
@@ -1282,7 +1283,7 @@ def _flash_attention_dq_kernel(
   def init():
     dq_scratch_ref[...] = jnp.zeros_like(dq_scratch_ref)
 
-  _, _, should_run, should_not_mask = _next_nonzero(
+  global_kv_index, _, should_run, should_not_mask = _next_nonzero(
       h, i, j, data_next_ref, block_mask_ref, mask_next_ref
   )
   @pl.when(should_run)
@@ -1308,7 +1309,11 @@ def _flash_attention_dq_kernel(
         kv_segment_ids_ref,
         attn_logits_soft_cap=attn_logits_soft_cap,
         k_slice=pl.ds(0, bkv),
-        k_offset=j * bkv,
+        # When the iteration space is shrunk (for local attention for example),
+        # the kv_index program_id does not correspond to the actual coordinates
+        # of the KV data. Make sure to use the 'unshrunk' index (coming from the
+        # data_next array) when computing the mask.
+        k_offset=global_kv_index * bkv,
         bq=bq,
         mask_function=mask_function,
     )
@@ -1537,11 +1542,6 @@ def _splash_attention_bwd_dq(
   )
   num_scalar_prefetch = 3
 
-  mosaic_params = dict(
-      dimension_semantics=("arbitrary", "arbitrary", "arbitrary"),
-      flags={"XLA_TPU_FORCE_LP_LLO_SCHEDULER": True},
-  )
-
   kernel_name = get_kernel_name(
       dict(
           block_q_dq=bq,
@@ -1565,7 +1565,9 @@ def _splash_attention_bwd_dq(
             grid=grid,
         ),
         out_shape=out_shapes,
-        compiler_params=dict(mosaic=mosaic_params),
+        compiler_params=pltpu.TPUCompilerParams(
+          dimension_semantics=("arbitrary", "arbitrary", "arbitrary"),
+        ),
         name=kernel_name,
         interpret=interpret,
     )(
@@ -2080,16 +2082,6 @@ def _splash_attention_bwd_dkv(
   )
   num_scalar_prefetch = 3
 
-  # We set all dimensions to arbitrary because:
-  # 1) for kv_seq_len, the splash attention prefetch schedule assumes no
-  #    megacore
-  # 2) for heads, we are reducing over heads
-  # 3) for q_seq_len, we are reducing over it to compute dkv
-  mosaic_params = dict(
-      dimension_semantics=("arbitrary", "arbitrary", "arbitrary"),
-      flags={"XLA_TPU_FORCE_LP_LLO_SCHEDULER": True},
-  )
-
   kernel_name = get_kernel_name(
       dict(
           block_q_dkv=bq,
@@ -2114,7 +2106,14 @@ def _splash_attention_bwd_dkv(
             grid=grid,
         ),
         out_shape=out_shapes,
-        compiler_params=dict(mosaic=mosaic_params),
+        # We set all dimensions to arbitrary because:
+        # 1) for kv_seq_len, the splash attention prefetch schedule assumes no
+        #    megacore
+        # 2) for heads, we are reducing over heads
+        # 3) for q_seq_len, we are reducing over it to compute dkv
+        compiler_params=pltpu.TPUCompilerParams(
+          dimension_semantics=("arbitrary", "arbitrary", "arbitrary"),
+        ),
         name=kernel_name,
         interpret=interpret,
     )(
