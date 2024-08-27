@@ -1066,14 +1066,15 @@ def lower_jaxpr_to_module(
     if num_partitions > 1 and (
         result_shardings is None or all(s is None for s in result_shardings)):
       xla_donated_args = donated_args
+      donated_args = [False] * len(donated_args)
     if xla_donated_args is None:
-      input_output_aliases, donated_args = _set_up_aliases(
+      input_output_aliases, donated_args, xla_donated_args = _set_up_aliases(
           input_output_aliases, in_avals, out_avals, donated_args,
-          arg_memory_kinds, result_memory_kinds)
+          arg_memory_kinds, result_memory_kinds, in_layouts, out_layouts)
   unlowerable_effects = lowerable_effects.filter_not_in(jaxpr.effects)
   if unlowerable_effects:
     raise ValueError(f'Cannot lower jaxpr with effects: {jaxpr.effects}')
-  if xla_donated_args is None and any(donated_args):
+  if any(donated_args):
     unused_donations = [str(a) for a, d in zip(in_avals, donated_args) if d]
     msg = "See an explanation at https://jax.readthedocs.io/en/latest/faq.html#buffer-donation."
     if not platforms_with_donation:
@@ -1081,11 +1082,6 @@ def lower_jaxpr_to_module(
     if unused_donations:
       warnings.warn("Some donated buffers were not usable:"
                     f" {', '.join(unused_donations)}.\n{msg}")
-
-  if xla_donated_args is not None:
-    assert input_output_aliases is None
-  if input_output_aliases is not None:
-    assert xla_donated_args is None
 
   # Delete donated_args by default here, since it's not needed beyond this point
   del donated_args
@@ -1170,8 +1166,10 @@ def lower_jaxpr_to_module(
                         ctx.shape_poly_state)
 
 
-def _set_up_aliases(input_output_aliases, avals_in, avals_out, donated_args,
-                    arg_memory_kinds, result_memory_kinds):
+def _set_up_aliases(input_output_aliases, avals_in, avals_out,
+                    donated_args,
+                    arg_memory_kinds, result_memory_kinds,
+                    in_layouts, out_layouts):
   if input_output_aliases is None:
     input_output_aliases = [None] * len(avals_in)
   else:
@@ -1200,6 +1198,7 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out, donated_args,
     if donated and aliased is None:
       donations[(aval, am)].append(i)
 
+  xla_donated_args = None
   out_donated_args = list(donated_args)
   for i, (aval, rm) in enumerate(zip(avals_out, result_memory_kinds)):
     # Only donate if memory kinds match. Relax this when the compiler can
@@ -1207,10 +1206,24 @@ def _set_up_aliases(input_output_aliases, avals_in, avals_out, donated_args,
     key = (aval, rm)
     if donations.get(key, ()):
       input_id = donations[key].popleft()
-      input_output_aliases[input_id] = i
       out_donated_args[input_id] = False
+      if (in_layouts is None or
+          out_layouts is None or
+          in_layouts[input_id] == out_layouts[i] or
+          # We can alias if XLA performs layout assignment because XLA will
+          # respect the aliases when assigning layouts. Its only for two
+          # mismatched explicitly assigned layouts that XLA will certainly
+          # fail.
+          isinstance(in_layouts[input_id], (AutoLayout, type(None))) or
+          isinstance(out_layouts[i], (AutoLayout, type(None)))):
+        input_output_aliases[input_id] = i
+      else:
+        # Fallback to xla donation if layouts don't match.
+        if xla_donated_args is None:
+          xla_donated_args = [False] * len(avals_in)
+        xla_donated_args[input_id] = True
 
-  return input_output_aliases, out_donated_args
+  return input_output_aliases, out_donated_args, xla_donated_args
 
 Token = ir.Value
 token_type = hlo.TokenType.get
