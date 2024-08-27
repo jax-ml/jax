@@ -28,7 +28,6 @@ import jax
 import jax.numpy as jnp
 from jax.sharding import NamedSharding, PartitionSpec
 from jax._src import ad_checkpoint
-from jax._src import array
 from jax._src import ad_util
 from jax._src import callback
 from jax._src import config
@@ -719,10 +718,11 @@ def get_mesh_from_args(args_flat, mesh):
   for a in args_flat:
     if hasattr(a, 'sharding') and isinstance(a.sharding, NamedSharding):
       if a.sharding.mesh.shape_tuple != mesh.shape_tuple:
+        aval = shaped_abstractify(a)
         raise ValueError(
             f"Mesh shape of the input {a.sharding.mesh.shape_tuple} does not"
             " match the mesh shape passed to shard_map "
-            f" {mesh.shape_tuple}")
+            f" {mesh.shape_tuple} for shape {aval.str_short()}")
       mesh = a.sharding.mesh
   if isinstance(mesh, AbstractMesh):
     raise ValueError(

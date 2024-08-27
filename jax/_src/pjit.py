@@ -2520,8 +2520,8 @@ def _sharding_constraint_impl(x, sharding, layout, resource_env,
                               unconstrained_dims):
   if (isinstance(sharding, NamedSharding) and
       isinstance(sharding.mesh, AbstractMesh)):
+    aval = shaped_abstractify(x)
     if not hasattr(x, 'sharding'):
-      aval = shaped_abstractify(x)
       raise ValueError(
           'Target sharding contains a `jax.sharding.AbstractMesh` which'
           ' requires the input passed should be a `jax.Array`. Got'
@@ -2530,12 +2530,12 @@ def _sharding_constraint_impl(x, sharding, layout, resource_env,
       raise TypeError(
           'The sharding on the input must be a `NamedSharding` since the target'
           ' sharding has an `AbstractMesh` in it. Got sharding type'
-          f' {type(x.sharding)}')
+          f' {type(x.sharding)} for shape {aval.str_short()}')
     if x.sharding.mesh.shape_tuple != sharding.mesh.shape_tuple:
       raise ValueError(
           f'Mesh shape of the input {x.sharding.mesh.shape_tuple} does not'
           ' match the mesh shape of the target sharding'
-          f' {sharding.mesh.shape_tuple}')
+          f' {sharding.mesh.shape_tuple} for shape {aval.str_short()}')
     sharding = NamedSharding._from_parsed_pspec(
         x.sharding.mesh, sharding._parsed_pspec)
 
