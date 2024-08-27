@@ -104,7 +104,7 @@ def predict(params, image):
   for w, b in params[:-1]:
     outputs = jnp.dot(w, activations) + b
     activations = relu(outputs)
-  
+
   final_w, final_b = params[-1]
   logits = jnp.dot(final_w, activations) + final_b
   return logits - logsumexp(logits)
@@ -164,7 +164,7 @@ At this point, we have all the ingredients we need to define our neural network 
 def one_hot(x, k, dtype=jnp.float32):
   """Create a one-hot encoding of x of size k."""
   return jnp.array(x[:, None] == jnp.arange(k), dtype)
-  
+
 def accuracy(params, images, targets):
   target_class = jnp.argmax(targets, axis=1)
   predicted_class = jnp.argmax(batched_predict(params, images), axis=1)

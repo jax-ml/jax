@@ -32,7 +32,6 @@ Here we show how to add your own function transformations to the system, by writ
 ```{code-cell} ipython3
 :id: s27RDKvKXFL8
 
-import numpy as np
 import jax
 import jax.numpy as jnp
 from jax import jit, grad, vmap
@@ -146,7 +145,6 @@ Let's use `make_jaxpr` to trace a function into a Jaxpr.
 :id: BHkg_3P1pXJj
 
 # Importing Jax functions useful for tracing/interpreting.
-import numpy as np
 from functools import wraps
 
 from jax import core
@@ -185,7 +183,7 @@ To do this, we first create an environment to store the values for each of the v
 def eval_jaxpr(jaxpr, consts, *args):
   # Mapping from variable -> value
   env = {}
-  
+
   def read(var):
     # Literals are values baked into the Jaxpr
     if type(var) is core.Literal:
@@ -202,16 +200,16 @@ def eval_jaxpr(jaxpr, consts, *args):
   # Loop through equations and evaluate primitives using `bind`
   for eqn in jaxpr.eqns:
     # Read inputs to equation from environment
-    invals = safe_map(read, eqn.invars)  
+    invals = safe_map(read, eqn.invars)
     # `bind` is how a primitive is called
     outvals = eqn.primitive.bind(*invals, **eqn.params)
     # Primitives may return multiple outputs or not
-    if not eqn.primitive.multiple_results: 
+    if not eqn.primitive.multiple_results:
       outvals = [outvals]
     # Write the results of the primitive into the environment
-    safe_map(write, eqn.outvars, outvals) 
+    safe_map(write, eqn.outvars, outvals)
   # Read the final result of the Jaxpr from the environment
-  return safe_map(read, jaxpr.outvars) 
+  return safe_map(read, jaxpr.outvars)
 ```
 
 ```{code-cell} ipython3
@@ -279,7 +277,7 @@ Now we just need to define `inverse_jaxpr`, which will walk through the Jaxpr ba
 
 def inverse_jaxpr(jaxpr, consts, *args):
   env = {}
-  
+
   def read(var):
     if type(var) is core.Literal:
       return var.val
@@ -293,12 +291,12 @@ def inverse_jaxpr(jaxpr, consts, *args):
 
   # Looping backward
   for eqn in jaxpr.eqns[::-1]:
-    #  outvars are now invars 
+    #  outvars are now invars
     invals = safe_map(read, eqn.outvars)
     if eqn.primitive not in inverse_registry:
       raise NotImplementedError(
           f"{eqn.primitive} does not have registered inverse.")
-    # Assuming a unary function 
+    # Assuming a unary function
     outval = inverse_registry[eqn.primitive](*invals)
     safe_map(write, eqn.invars, [outval])
   return safe_map(read, jaxpr.invars)

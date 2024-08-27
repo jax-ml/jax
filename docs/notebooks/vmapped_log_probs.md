@@ -27,17 +27,10 @@ Inspired by a notebook by @davmre.
 ```{code-cell} ipython3
 :id: 8RZDkfbV3zdR
 
-import functools
-import itertools
-import re
-import sys
-import time
-
-from matplotlib.pyplot import *
+import matplotlib.pyplot as plt
 
 import jax
 
-from jax import lax
 import jax.numpy as jnp
 import jax.scipy as jsp
 from jax import random
@@ -192,7 +185,7 @@ batched_log_joint = jax.jit(jax.vmap(log_joint))
 def elbo(beta_loc, beta_log_scale, epsilon):
     beta_sample = beta_loc + jnp.exp(beta_log_scale) * epsilon
     return jnp.mean(batched_log_joint(beta_sample), 0) + jnp.sum(beta_log_scale - 0.5 * np.log(2*np.pi))
- 
+
 elbo = jax.jit(elbo)
 elbo_val_and_grad = jax.jit(jax.value_and_grad(elbo, argnums=(0, 1)))
 ```
@@ -240,19 +233,13 @@ Coverage isn't quite as good as we might like, but it's not bad, and nobody said
 :id: zt1NBLoVHtOG
 :outputId: fb159795-e6e7-497c-e501-9933ec761af4
 
-figure(figsize=(7, 7))
-plot(true_beta, beta_loc, '.', label='Approximated Posterior Means')
-plot(true_beta, beta_loc + 2*jnp.exp(beta_log_scale), 'r.', label='Approximated Posterior $2\sigma$ Error Bars')
-plot(true_beta, beta_loc - 2*jnp.exp(beta_log_scale), 'r.')
+plt.figure(figsize=(7, 7))
+plt.plot(true_beta, beta_loc, '.', label='Approximated Posterior Means')
+plt.plot(true_beta, beta_loc + 2*jnp.exp(beta_log_scale), 'r.', label=r'Approximated Posterior $2\sigma$ Error Bars')
+plt.plot(true_beta, beta_loc - 2*jnp.exp(beta_log_scale), 'r.')
 plot_scale = 3
-plot([-plot_scale, plot_scale], [-plot_scale, plot_scale], 'k')
-xlabel('True beta')
-ylabel('Estimated beta')
-legend(loc='best')
-```
-
-```{code-cell} ipython3
-:id: _bXdOlvUEJl0
-
-
+plt.plot([-plot_scale, plot_scale], [-plot_scale, plot_scale], 'k')
+plt.xlabel('True beta')
+plt.ylabel('Estimated beta')
+plt.legend(loc='best')
 ```

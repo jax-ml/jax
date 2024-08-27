@@ -210,7 +210,7 @@ The important argument is the 3-tuple of axis layout arguments:
 :outputId: d5a569b3-febc-4832-f725-1d5e8fd31b9b
 
 dn = lax.conv_dimension_numbers(img.shape,     # only ndim matters, not shape
-                                kernel.shape,  # only ndim matters, not shape 
+                                kernel.shape,  # only ndim matters, not shape
                                 ('NHWC', 'HWIO', 'NHWC'))  # the important bit
 print(dn)
 ```
@@ -363,8 +363,8 @@ You aren't limited to 2D convolutions, a simple 1D demo is below:
 :outputId: 67c46ace-6adc-4c47-c1c7-1f185be5fd4b
 
 # 1D kernel - WIO layout
-kernel = jnp.array([[[1, 0, -1], [-1,  0,  1]], 
-                    [[1, 1,  1], [-1, -1, -1]]], 
+kernel = jnp.array([[[1, 0, -1], [-1,  0,  1]],
+                    [[1, 1,  1], [-1, -1, -1]]],
                     dtype=jnp.float32).transpose([2,1,0])
 # 1D data - NWC layout
 data = np.zeros((1, 200, 2), dtype=jnp.float32)
@@ -406,8 +406,8 @@ import matplotlib as mpl
 # Random 3D kernel - HWDIO layout
 kernel = jnp.array([
   [[0, 0,  0], [0,  1,  0], [0,  0,   0]],
-  [[0, -1, 0], [-1, 0, -1], [0,  -1,  0]], 
-  [[0, 0,  0], [0,  1,  0], [0,  0,   0]]], 
+  [[0, -1, 0], [-1, 0, -1], [0,  -1,  0]],
+  [[0, 0,  0], [0,  1,  0], [0,  0,   0]]],
   dtype=jnp.float32)[:, :, :, jnp.newaxis, jnp.newaxis]
 
 # 3D data - NHWDC layout
@@ -430,7 +430,6 @@ out = lax.conv_general_dilated(data,    # lhs = image tensor
 print("out shape: ", out.shape)
 
 # Make some simple 3d density plots:
-from mpl_toolkits.mplot3d import Axes3D
 def make_alpha(cmap):
   my_cmap = cmap(jnp.arange(cmap.N))
   my_cmap[:,-1] = jnp.linspace(0, 1, cmap.N)**3

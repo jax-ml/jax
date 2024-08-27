@@ -908,7 +908,6 @@ display.HTML(table.to_html())
 :tags: [hide-input]
 
 # @title
-from jax import dtypes
 import jax
 import jax.numpy as jnp
 import pandas as pd
@@ -963,7 +962,6 @@ display.HTML(table.to_html())
 :tags: [hide-input]
 
 # @title
-from jax import dtypes
 import jax
 import jax.numpy as jnp
 import pandas as pd

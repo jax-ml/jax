@@ -238,7 +238,7 @@ class BufferedRef:
     Returns:
       Initialized BufferedRef
     """
-    block_shape = tuple([1 if x is None else x for x in spec.block_shape])
+    block_shape = tuple(1 if x is None else x for x in spec.block_shape)
     if buffer_type is BufferType.ACCUMULATOR:
       accum_ref = VMEM(block_shape, dtype)
     else:
@@ -310,7 +310,7 @@ class BufferedRef:
   @property
   def current_ref(self):
     buffer_slice = tuple(
-        [0 if x is None else slice(None) for x in self.block_shape])
+        0 if x is None else slice(None) for x in self.block_shape)
     if self.memory_space == VMEM:
       return self.vmem_ref.at[buffer_slice]
     else:
@@ -349,7 +349,7 @@ class BufferedRef:
 
   def compute_slice(self, grid_indices):
     """Compute DMA slice from grid indices."""
-    block_shape = tuple([1 if x is None else x for x in self.block_shape])
+    block_shape = tuple(1 if x is None else x for x in self.block_shape)
     indices = self.compute_index(*grid_indices)
     return jax.tree.map(_make_ds, indices, block_shape)
 
