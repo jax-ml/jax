@@ -34,7 +34,11 @@
 
 #ifdef JAX_GPU_CUDA
 #include "xla/stream_executor/cuda/cuda_asm_compiler.h"
-#endif
+#endif  // JAX_GPU_CUDA
+
+#ifdef JAX_GPU_HIP
+#include "tsl/platform/env.h"
+#endif  // JAX_GPU_HIP
 
 #define GPU_RETURN_IF_ERROR(expr) JAX_RETURN_IF_ERROR(JAX_AS_STATUS(expr))
 
@@ -44,7 +48,12 @@ namespace {
 constexpr float kBenchmarkTimeMillis = 10.;
 
 struct gpuModuleDeleter {
-  void operator()(gpuModule_t module) { gpuModuleUnload(module); }
+  void operator()(gpuModule_t module) {
+    absl::Status status = JAX_AS_STATUS(gpuModuleUnload(module));
+    if (!status.ok()) {
+      LOG(WARNING) << "Failed to unload GPU module: " << status;
+    }
+  }
 };
 
 using OwnedGPUmodule =
@@ -52,11 +61,11 @@ using OwnedGPUmodule =
 
 absl::StatusOr<gpuDevice_t> GetStreamDevice(gpuStream_t stream) {
   gpuDevice_t device;
-  gpuContext_t context;
 #ifdef JAX_GPU_HIP
   int device_id = gpuGetStreamDeviceId(stream);
   GPU_RETURN_IF_ERROR(gpuDeviceGet(&device, device_id));
 #else  // JAX_GPU_CUDA
+  gpuContext_t context;
   GPU_RETURN_IF_ERROR(gpuStreamGetCtx(stream, &context));
   GPU_RETURN_IF_ERROR(gpuCtxPushCurrent(context));
   absl::Cleanup ctx_restorer = [] { gpuCtxPopCurrent(nullptr); };
@@ -210,7 +219,12 @@ class ModuleImage {
     }
 
     GPU_RETURN_IF_ERROR(gpuCtxPushCurrent(context));
-    absl::Cleanup ctx_restorer = [] { gpuCtxPopCurrent(nullptr); };
+    absl::Cleanup ctx_restorer = [] {
+      absl::Status status = JAX_AS_STATUS(gpuCtxPopCurrent(nullptr));
+      if (!status.ok()) {
+        LOG(WARNING) << "Failed to pop GPU context: " << status;
+      }
+    };
 
     gpuModule_t module;
     GPU_RETURN_IF_ERROR(gpuModuleLoadData(&module, module_image_.data()));

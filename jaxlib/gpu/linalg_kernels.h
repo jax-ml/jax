@@ -36,15 +36,15 @@ struct CholeskyUpdateDescriptor {
   std::int64_t matrix_size;  // leading dim (N) for a square (NxN)matrix
 };
 
-void LaunchCholeskyUpdateKernel(gpuStream_t stream, void** buffers,
-                                CholeskyUpdateDescriptor descriptor);
+gpuError_t LaunchCholeskyUpdateKernel(gpuStream_t stream, void** buffers,
+                                      CholeskyUpdateDescriptor descriptor);
 
 void CholeskyUpdate(gpuStream_t stream, void** buffers, const char* opaque,
                     size_t opaque_len, XlaCustomCallStatus* status);
 
-void LaunchCholeskyUpdateFfiKernel(gpuStream_t stream, void* matrix,
-                                   void* vector, int size,
-                                   bool is_single_precision);
+gpuError_t LaunchCholeskyUpdateFfiKernel(gpuStream_t stream, void* matrix,
+                                         void* vector, int size,
+                                         bool is_single_precision);
 XLA_FFI_DECLARE_HANDLER_SYMBOL(CholeskyUpdateFfi);
 
 void LaunchLuPivotsToPermutationKernel(gpuStream_t stream,

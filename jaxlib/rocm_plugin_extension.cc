@@ -35,8 +35,8 @@ namespace nb = nanobind;
 namespace xla {
 namespace {
 absl::Status RegisterCustomCallTarget(const PJRT_Api* c_api, nb::str fn_name,
-                                nb::capsule fn, int api_version,
-                                XLA_FFI_Handler_Traits traits) {
+                                      nb::capsule fn, int api_version,
+                                      XLA_FFI_Handler_Traits traits) {
   if (c_api->extension_start == nullptr) {
     return Unimplemented("The plugin does not have extension.");
   }
@@ -139,11 +139,11 @@ NB_MODULE(rocm_plugin_extension, m) {
         void* data_ptr = reinterpret_cast<void*>(data_value);
         hipError_t result =
             hipPointerGetAttribute(static_cast<void*>(&device_ordinal),
-                                  HIP_POINTER_ATTRIBUTE_DEVICE_ORDINAL,
-                                  reinterpret_cast<hipDeviceptr_t>(data_ptr));
+                                   HIP_POINTER_ATTRIBUTE_DEVICE_ORDINAL,
+                                   reinterpret_cast<hipDeviceptr_t>(data_ptr));
         if (result != hipSuccess) {
-          LOG(FATAL) << "Not able to get the device_ordinal for ptr: " << data_ptr
-                    << ". Error: " << ToString(result);
+          LOG(FATAL) << "Not able to get the device_ordinal for ptr: "
+                     << data_ptr << ". Error: " << ToString(result);
         }
         return device_ordinal;
       },

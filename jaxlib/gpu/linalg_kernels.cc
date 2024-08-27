@@ -40,7 +40,8 @@ absl::Status CholeskyUpdateImpl(gpuStream_t stream, void** buffers,
   auto s = UnpackDescriptor<CholeskyUpdateDescriptor>(opaque, opaque_len);
   JAX_RETURN_IF_ERROR(s.status());
   const CholeskyUpdateDescriptor& d = **s;
-  LaunchCholeskyUpdateKernel(stream, buffers, d);
+  JAX_RETURN_IF_ERROR(
+      JAX_AS_STATUS(LaunchCholeskyUpdateKernel(stream, buffers, d)));
   JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuGetLastError()));
   return absl::OkStatus();
 }
@@ -98,8 +99,8 @@ ffi::Error CholeskyUpdateFfiImpl(gpuStream_t stream, ffi::AnyBuffer matrix_in,
                        gpuMemcpyDeviceToDevice, stream)));
   }
   for (auto n = 0; n < batch; ++n) {
-    LaunchCholeskyUpdateFfiKernel(stream, matrix, vector, size,
-                                  is_single_precision);
+    FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(LaunchCholeskyUpdateFfiKernel(
+        stream, matrix, vector, size, is_single_precision)));
     FFI_RETURN_IF_ERROR_STATUS(JAX_AS_STATUS(gpuGetLastError()));
   }
   return ffi::Error::Success();

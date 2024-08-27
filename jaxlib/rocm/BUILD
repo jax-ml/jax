@@ -14,6 +14,7 @@
 
 # AMD HIP kernels
 
+load("@rules_python//python:defs.bzl", "py_library")
 load(
     "//jaxlib:jax.bzl",
     "if_rocm_is_configured",
@@ -23,7 +24,10 @@ load(
 
 licenses(["notice"])
 
-package(default_visibility = ["//:__subpackages__"])
+package(
+    default_applicable_licenses = [],
+    default_visibility = ["//:__subpackages__"],
+)
 
 cc_library(
     name = "hip_vendor",
@@ -203,6 +207,7 @@ pybind_extension(
         ":hipsolver_kernels_ffi",
         "//jaxlib:kernel_nanobind_helpers",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@local_config_rocm//rocm:hipblas",
         "@local_config_rocm//rocm:hipsolver",
@@ -223,6 +228,7 @@ cc_library(
         "//jaxlib:kernel_helpers",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
         "@com_google_absl//absl/synchronization",
         "@local_config_rocm//rocm:hipsparse",
         "@local_config_rocm//rocm:rocm_headers",
@@ -243,6 +249,7 @@ pybind_extension(
         ":hip_gpu_kernel_helpers",
         ":hip_vendor",
         ":hipsparse_kernels",
+        "//jaxlib:absl_status_casters",
         "//jaxlib:kernel_nanobind_helpers",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/base",
@@ -277,6 +284,7 @@ cc_library(
         "@local_config_rocm//rocm:rocm_headers",
         "@xla//xla/ffi/api:c_api",
         "@xla//xla/ffi/api:ffi",
+        "@xla//xla/service:custom_call_status",
     ],
 )
 
@@ -376,14 +384,15 @@ cc_library(
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/cleanup",
         "@com_google_absl//absl/container:flat_hash_map",
+        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings:str_format",
         "@com_google_absl//absl/synchronization",
+        "@tsl//tsl/platform:env",
         "@xla//xla/service:custom_call_status",
-        "@xla//xla/stream_executor/gpu:asm_compiler",
         "@xla//xla/tsl/util:env_var",
     ],
 )

@@ -23,6 +23,7 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
+#include "absl/strings/str_cat.h"
 #include "absl/synchronization/mutex.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
 #include "jaxlib/gpu/vendor.h"
@@ -58,7 +59,7 @@ SparseConst ConstZero(gpuDataType type) {
   return c;
 }
 
-SparseConst ConstOne(gpuDataType type) {
+absl::StatusOr<SparseConst> ConstOne(gpuDataType type) {
   SparseConst c;
   std::memset(&c, 0, sizeof(c));
   switch (type) {
@@ -138,6 +139,9 @@ SparseConst ConstOne(gpuDataType type) {
     case GPU_C_64F:
       c.f64[0] = 1.0;
       break;
+    default:
+      return absl::InvalidArgumentError(
+          absl::StrCat("Unsupported data type: ", type));
   }
   return c;
 }
@@ -248,7 +252,7 @@ static absl::Status CsrMatvec_(gpuStream_t stream, void** buffers,
   // are sufficient for basic matvec operations.
   // Note that, contrary to cusparse docs, alpha and beta must be host pointers
   // or else the operation will segfault.
-  SparseConst alpha = ConstOne(d.y.type);
+  JAX_ASSIGN_OR_RETURN(SparseConst alpha, ConstOne(d.y.type));
   SparseConst beta = ConstZero(d.y.type);
 
   gpusparseSpMatDescr_t mat_a = 0;
@@ -305,7 +309,7 @@ static absl::Status CsrMatmat_(gpuStream_t stream, void** buffers,
   // are sufficient for basic matvec operations.
   // Note that, contrary to cusparse docs, alpha and beta must be host pointers
   // or else the operation will segfault.
-  SparseConst alpha = ConstOne(d.C.type);
+  JAX_ASSIGN_OR_RETURN(SparseConst alpha, ConstOne(d.C.type));
   SparseConst beta = ConstZero(d.C.type);
 
   gpusparseSpMatDescr_t mat_a = 0;
@@ -446,7 +450,7 @@ static absl::Status CooMatvec_(gpuStream_t stream, void** buffers,
   // are sufficient for basic matvec operations.
   // Note that, contrary to cusparse docs, alpha and beta must be host pointers
   // or else the operation will segfault.
-  SparseConst alpha = ConstOne(d.y.type);
+  JAX_ASSIGN_OR_RETURN(SparseConst alpha, ConstOne(d.y.type));
   SparseConst beta = ConstZero(d.y.type);
 
   gpusparseSpMatDescr_t mat_a = 0;
@@ -502,7 +506,7 @@ static absl::Status CooMatmat_(gpuStream_t stream, void** buffers,
   // are sufficient for basic matvec operations.
   // Note that, contrary to cusparse docs, alpha and beta must be host pointers
   // or else the operation will segfault.
-  SparseConst alpha = ConstOne(d.C.type);
+  JAX_ASSIGN_OR_RETURN(SparseConst alpha, ConstOne(d.C.type));
   SparseConst beta = ConstZero(d.C.type);
 
   gpusparseSpMatDescr_t mat_a = 0;
@@ -567,7 +571,7 @@ static absl::Status gtsv2(F computeGtsv2, gpuStream_t stream, void** buffers,
   T* du = static_cast<T*>(buffers[2]);
   T* B = static_cast<T*>(buffers[3]);
   T* X = static_cast<T*>(buffers[4]);
-  void* buffer = static_cast<void *>(buffers[5]);
+  void* buffer = static_cast<void*>(buffers[5]);
 
   // The solution X is written in place to B. We need to therefore copy the
   // contents of B into the output buffer X and pass that into the kernel as B.
@@ -581,8 +585,8 @@ static absl::Status gtsv2(F computeGtsv2, gpuStream_t stream, void** buffers,
         gpuMemcpyAsync(X, B, B_bytes, gpuMemcpyDeviceToDevice, stream)));
   }
   for (int i = 0; i < batch; ++i) {
-    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(computeGtsv2(
-        handle.get(), m, n, dl, d, du, X, ldb, buffer)));
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(
+        computeGtsv2(handle.get(), m, n, dl, d, du, X, ldb, buffer)));
     dl += m;
     d += m;
     du += m;

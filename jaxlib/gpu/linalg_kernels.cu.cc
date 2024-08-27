@@ -67,8 +67,9 @@ __global__ void CholeskyUpdateKernel(T* rMatrix, T* uVector, int nSize) {
 }  // namespace
 
 template <typename T>
-void LaunchCholeskyUpdateKernelBody(gpuStream_t stream, void** buffers,
-                                    int grid_dim, int block_dim, int nSize) {
+gpuError_t LaunchCholeskyUpdateKernelBody(gpuStream_t stream, void** buffers,
+                                          int grid_dim, int block_dim,
+                                          int nSize) {
   T* rMatrix = reinterpret_cast<T*>(buffers[2]);
   T* uVector = reinterpret_cast<T*>(buffers[3]);
 
@@ -77,39 +78,40 @@ void LaunchCholeskyUpdateKernelBody(gpuStream_t stream, void** buffers,
       reinterpret_cast<void*>(&uVector),
       reinterpret_cast<void*>(&nSize),
   };
-  gpuLaunchCooperativeKernel((void*)CholeskyUpdateKernel<T>, grid_dim,
-                             block_dim, arg_ptrs,
-                             /*dynamic_shared_mem_bytes=*/0, stream);
+  return gpuLaunchCooperativeKernel((void*)CholeskyUpdateKernel<T>, grid_dim,
+                                    block_dim, arg_ptrs,
+                                    /*dynamic_shared_mem_bytes=*/0, stream);
 }
 
-void LaunchCholeskyUpdateKernel(gpuStream_t stream, void** buffers,
-                                CholeskyUpdateDescriptor descriptor) {
+gpuError_t LaunchCholeskyUpdateKernel(gpuStream_t stream, void** buffers,
+                                      CholeskyUpdateDescriptor descriptor) {
   int nSize = descriptor.matrix_size;
   LinalgType type = descriptor.linalg_type;
 
   int dev = 0;
   gpuDeviceProp deviceProp;
-  gpuGetDeviceProperties(&deviceProp, dev);
+  gpuError_t err = gpuGetDeviceProperties(&deviceProp, dev);
+  if (err != gpuSuccess) {
+    return err;
+  }
 
   int block_dim = deviceProp.maxThreadsPerBlock;
   int grid_dim = deviceProp.multiProcessorCount;
 
   switch (type) {
     case LinalgType::F64:
-      LaunchCholeskyUpdateKernelBody<double>(stream, buffers, grid_dim,
-                                             block_dim, nSize);
-      break;
+      return LaunchCholeskyUpdateKernelBody<double>(stream, buffers, grid_dim,
+                                                    block_dim, nSize);
     case LinalgType::F32:
-      LaunchCholeskyUpdateKernelBody<float>(stream, buffers, grid_dim,
-                                            block_dim, nSize);
-      break;
+      return LaunchCholeskyUpdateKernelBody<float>(stream, buffers, grid_dim,
+                                                   block_dim, nSize);
   }
 }
 
 template <typename T>
-void LaunchCholeskyUpdateFfiKernelBody(gpuStream_t stream, void* matrix,
-                                       void* vector, int grid_dim,
-                                       int block_dim, int nSize) {
+gpuError_t LaunchCholeskyUpdateFfiKernelBody(gpuStream_t stream, void* matrix,
+                                             void* vector, int grid_dim,
+                                             int block_dim, int nSize) {
   T* rMatrix = reinterpret_cast<T*>(matrix);
   T* uVector = reinterpret_cast<T*>(vector);
 
@@ -118,26 +120,30 @@ void LaunchCholeskyUpdateFfiKernelBody(gpuStream_t stream, void* matrix,
       reinterpret_cast<void*>(&uVector),
       reinterpret_cast<void*>(&nSize),
   };
-  gpuLaunchCooperativeKernel((void*)CholeskyUpdateKernel<T>, grid_dim,
-                             block_dim, arg_ptrs,
-                             /*dynamic_shared_mem_bytes=*/0, stream);
+  return gpuLaunchCooperativeKernel((void*)CholeskyUpdateKernel<T>, grid_dim,
+                                    block_dim, arg_ptrs,
+                                    /*dynamic_shared_mem_bytes=*/0, stream);
 }
 
-void LaunchCholeskyUpdateFfiKernel(gpuStream_t stream, void* matrix,
-                                   void* vector, int size,
-                                   bool is_single_precision) {
+gpuError_t LaunchCholeskyUpdateFfiKernel(gpuStream_t stream, void* matrix,
+                                         void* vector, int size,
+                                         bool is_single_precision) {
   int dev = 0;
   gpuDeviceProp deviceProp;
-  gpuGetDeviceProperties(&deviceProp, dev);
+  gpuError_t err = gpuGetDeviceProperties(&deviceProp, dev);
+  if (err != gpuSuccess) {
+    return err;
+  }
+
   int block_dim = deviceProp.maxThreadsPerBlock;
   int grid_dim = deviceProp.multiProcessorCount;
 
   if (is_single_precision) {
-    LaunchCholeskyUpdateFfiKernelBody<float>(stream, matrix, vector, grid_dim,
-                                             block_dim, size);
+    return LaunchCholeskyUpdateFfiKernelBody<float>(stream, matrix, vector,
+                                                    grid_dim, block_dim, size);
   } else {
-    LaunchCholeskyUpdateFfiKernelBody<double>(stream, matrix, vector, grid_dim,
-                                              block_dim, size);
+    return LaunchCholeskyUpdateFfiKernelBody<double>(stream, matrix, vector,
+                                                     grid_dim, block_dim, size);
   }
 }
 

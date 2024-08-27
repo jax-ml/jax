@@ -23,8 +23,8 @@ limitations under the License.
 
 #include "absl/status/status.h"
 #include "absl/status/statusor.h"
-#include "jaxlib/gpu/solver_handle_pool.h"
 #include "jaxlib/gpu/gpu_kernel_helpers.h"
+#include "jaxlib/gpu/solver_handle_pool.h"
 #include "jaxlib/gpu/vendor.h"
 #include "jaxlib/kernel_helpers.h"
 #include "xla/service/custom_call_status.h"
@@ -421,9 +421,9 @@ static absl::Status Syevd_(gpuStream_t stream, void** buffers,
   int output_idx = 1;  // with static shapes buffers[1] is the first output
   if (d.batch == -1) {
     // the batch is passed as a second operand
-    gpuMemcpyAsync((void*)&batch,
-                   reinterpret_cast<const std::int64_t*>(buffers[1]),
-                   sizeof(batch), gpuMemcpyDeviceToHost, stream);
+    JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuMemcpyAsync(
+        (void*)&batch, reinterpret_cast<const std::int64_t*>(buffers[1]),
+        sizeof(batch), gpuMemcpyDeviceToHost, stream)));
     JAX_RETURN_IF_ERROR(JAX_AS_STATUS(gpuStreamSynchronize(stream)));
     output_idx = 2;
   }

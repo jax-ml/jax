@@ -61,6 +61,17 @@ inline absl::StatusOr<T*> AllocateWorkspace(ffi::ScratchAllocator& scratch,
     return impl<gpuDoubleComplex>(__VA_ARGS__); \
   }
 
+#define SOLVER_BLAS_DISPATCH_IMPL(impl, ...)        \
+  if (dataType == ffi::F32) {                       \
+    return impl<float>(__VA_ARGS__);                \
+  } else if (dataType == ffi::F64) {                \
+    return impl<double>(__VA_ARGS__);               \
+  } else if (dataType == ffi::C64) {                \
+    return impl<gpublasComplex>(__VA_ARGS__);       \
+  } else if (dataType == ffi::C128) {               \
+    return impl<gpublasDoubleComplex>(__VA_ARGS__); \
+  }
+
 // LU decomposition: getrf
 
 namespace {
@@ -189,8 +200,8 @@ ffi::Error GetrfDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
       ipiv->dimensions(), {batch, std::min(rows, cols)}, "ipiv", "getrf"));
   FFI_RETURN_IF_ERROR(CheckShape(info->dimensions(), batch, "info", "getrf"));
   if (batch > 1 && rows == cols && rows / batch <= 128) {
-    SOLVER_DISPATCH_IMPL(GetrfBatchedImpl, batch, cols, stream, scratch, a, out,
-                         ipiv, info);
+    SOLVER_BLAS_DISPATCH_IMPL(GetrfBatchedImpl, batch, cols, stream, scratch, a,
+                              out, ipiv, info);
   } else {
     SOLVER_DISPATCH_IMPL(GetrfImpl, batch, rows, cols, stream, scratch, a, out,
                          ipiv, info);
@@ -345,8 +356,8 @@ ffi::Error GeqrfDispatch(gpuStream_t stream, ffi::ScratchAllocator scratch,
   FFI_RETURN_IF_ERROR(CheckShape(
       tau->dimensions(), {batch, std::min(rows, cols)}, "tau", "geqrf"));
   if (batch > 1 && rows / batch <= 128 && cols / batch <= 128) {
-    SOLVER_DISPATCH_IMPL(GeqrfBatchedImpl, batch, rows, cols, stream, scratch,
-                         a, out, tau);
+    SOLVER_BLAS_DISPATCH_IMPL(GeqrfBatchedImpl, batch, rows, cols, stream,
+                              scratch, a, out, tau);
   } else {
     SOLVER_DISPATCH_IMPL(GeqrfImpl, batch, rows, cols, stream, scratch, a, out,
                          tau);
