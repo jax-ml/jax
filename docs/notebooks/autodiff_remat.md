@@ -370,8 +370,6 @@ Notice also that by providing a policy, we didn't need to edit the code defining
 Some policies can refer to values named with `jax.ad_checkpoint.checkpoint_name`:
 
 ```{code-cell}
-from jax.ad_checkpoint import checkpoint_name
-
 def predict(params, x):
   *Ws, Wlast = params
   for i, W in enumerate(Ws):

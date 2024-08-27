@@ -73,9 +73,6 @@ Here, define a {class}`~jax.sharding.NamedSharding`, which specifies an N-dimens
 :outputId: 0b397dba-3ddc-4aca-f002-2beab7e6b8a5
 
 # Pardon the boilerplate; constructing a sharding will become easier in future!
-from jax.sharding import Mesh
-from jax.sharding import PartitionSpec
-from jax.sharding import NamedSharding
 from jax.experimental import mesh_utils
 
 P = jax.sharding.PartitionSpec

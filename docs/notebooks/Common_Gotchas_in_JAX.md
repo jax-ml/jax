@@ -130,7 +130,6 @@ It is not recommended to use iterators in any JAX function you want to `jit` or 
 :outputId: 52d885fd-0239-4a08-f5ce-0c38cc008903
 
 import jax.numpy as jnp
-import jax.lax as lax
 from jax import make_jaxpr
 
 # lax.fori_loop
@@ -471,7 +470,6 @@ The random state is described by a special array element that we call a __key__:
 :id: yPHE7KTWgAWs
 :outputId: ae8af0ee-f19e-474e-81b6-45e894eb2fc3
 
-from jax import random
 key = random.key(0)
 key
 ```
@@ -504,8 +502,8 @@ Instead, we __split__ the PRNG to get usable __subkeys__ every time we need a ne
 print("old key", key)
 key, subkey = random.split(key)
 normal_pseudorandom = random.normal(subkey, shape=(1,))
-print("    \---SPLIT --> new key   ", key)
-print("             \--> new subkey", subkey, "--> normal", normal_pseudorandom)
+print(r"    \---SPLIT --> new key   ", key)
+print(r"             \--> new subkey", subkey, "--> normal", normal_pseudorandom)
 ```
 
 +++ {"id": "tqtFVE4MthO3"}
@@ -519,8 +517,8 @@ We propagate the __key__ and make new __subkeys__ whenever we need a new random 
 print("old key", key)
 key, subkey = random.split(key)
 normal_pseudorandom = random.normal(subkey, shape=(1,))
-print("    \---SPLIT --> new key   ", key)
-print("             \--> new subkey", subkey, "--> normal", normal_pseudorandom)
+print(r"    \---SPLIT --> new key   ", key)
+print(r"             \--> new subkey", subkey, "--> normal", normal_pseudorandom)
 ```
 
 +++ {"id": "0KLYUluz3lN3"}
@@ -805,7 +803,7 @@ def while_loop(cond_fun, body_fun, init_val):
 :outputId: 552fe42f-4d32-4e25-c8c2-b951160a3f4e
 
 init_val = 0
-cond_fun = lambda x: x<10
+cond_fun = lambda x: x < 10
 body_fun = lambda x: x+1
 lax.while_loop(cond_fun, body_fun, init_val)
 # --> array(10, dtype=int32)

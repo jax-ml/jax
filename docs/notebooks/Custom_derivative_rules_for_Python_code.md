@@ -145,7 +145,6 @@ Say we want to write a function called `log1pexp`, which computes $x \mapsto \lo
 :id: 6lWbTvs40ET-
 :outputId: 8caff99e-add1-4c70-ace3-212c0c5c6f4e
 
-import jax.numpy as jnp
 
 def log1pexp(x):
   return jnp.log(1. + jnp.exp(x))
@@ -524,7 +523,7 @@ def fixed_point_rev(f, res, x_star_bar):
                              (a, x_star, x_star_bar),
                              x_star_bar))
   return a_bar, jnp.zeros_like(x_star)
-  
+
 def rev_iter(f, packed, u):
   a, x_star, x_star_bar = packed
   _, vjp_x = vjp(lambda x: f(a, x), x_star)
@@ -965,7 +964,6 @@ print(grad(f)(3.))
 :id: s1Pn_qCIODcF
 :outputId: 423d34e0-35b8-4b57-e89d-f70f20e28ea9
 
-from jax import vjp
 
 y, f_vjp = vjp(f, 3.)
 print(y)
@@ -1015,7 +1013,7 @@ def debug_fwd(x):
   return x, x
 
 def debug_bwd(x, g):
-  import pdb; pdb.set_trace()
+  pdb.set_trace()
   return g
 
 debug.defvjp(debug_fwd, debug_bwd)

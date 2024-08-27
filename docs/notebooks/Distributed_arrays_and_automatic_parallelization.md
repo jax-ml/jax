@@ -26,9 +26,7 @@ This tutorial discusses parallelism via `jax.Array`, the unified array object mo
 ```{code-cell}
 :id: FNxScTfq3vGF
 
-import os
 
-import functools
 from typing import Optional
 
 import numpy as np

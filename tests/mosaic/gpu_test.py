@@ -308,7 +308,7 @@ class MemRefTest(TestCase):
     expanded_shape = get_packed_shape(strides, shape)
     total_size = np.prod(expanded_shape)
     np_inp = np.arange(total_size, dtype=jnp.float32).reshape(expanded_shape)
-    index = tuple([slice(0, s) for s in shape])
+    index = tuple(slice(0, s) for s in shape)
 
     # Reference implementation
     def np_fold(inp, dim, fold_rank):

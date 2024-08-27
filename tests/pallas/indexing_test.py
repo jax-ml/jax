@@ -500,11 +500,11 @@ class IndexerOpsTest(PallasBaseTest):
     def body(x_ref, y_ref1, y_ref2):
       if slice_type == "slice":
         slices = tuple(
-            [slice(i, rs, s) for i, rs, s in zip(indices, ref_shape, strides)]
+            slice(i, rs, s) for i, rs, s in zip(indices, ref_shape, strides)
         )
       else:
         slices = tuple(
-            [pl.ds(i, vs, s) for i, vs, s in zip(indices, vec_shape, strides)]
+            pl.ds(i, vs, s) for i, vs, s in zip(indices, vec_shape, strides)
         )
       if indexer_type == "state":
         y_ref1[...] = x_ref[slices]

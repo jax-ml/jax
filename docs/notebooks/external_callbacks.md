@@ -410,7 +410,6 @@ This lets us call into `scipy.special.jv` from transformed JAX code, including w
 ```{code-cell}
 :id: f4e46670f4e4
 
-from functools import partial
 j1 = partial(jv, 1)
 z = jnp.arange(5.0)
 ```

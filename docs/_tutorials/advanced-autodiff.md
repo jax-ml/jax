@@ -640,7 +640,7 @@ def our_jacrev(f):
         y, vjp_fun = vjp(f, x)
         # Use vmap to do a matrix-Jacobian product.
         # Here, the matrix is the Euclidean basis, so we get all
-        # entries in the Jacobian at once. 
+        # entries in the Jacobian at once.
         J, = vmap(vjp_fun, in_axes=0)(jnp.eye(len(y)))
         return J
     return jacfun
@@ -654,7 +654,7 @@ from jax import jacfwd as builtin_jacfwd
 def our_jacfwd(f):
     def jacfun(x):
         _jvp = lambda s: jvp(f, (x,), (s,))[1]
-        Jt =vmap(_jvp, in_axes=1)(jnp.eye(len(x)))
+        Jt = vmap(_jvp, in_axes=1)(jnp.eye(len(x)))
         return jnp.transpose(Jt)
     return jacfun
 

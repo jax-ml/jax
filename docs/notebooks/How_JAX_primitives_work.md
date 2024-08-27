@@ -22,12 +22,12 @@ kernelspec:
 *necula@google.com*, October 2019.
 
 JAX implements certain transformations of Python functions, e.g., `jit`, `grad`,
-`vmap`, or `pmap`. The Python functions to be transformed must be JAX-traceable, 
+`vmap`, or `pmap`. The Python functions to be transformed must be JAX-traceable,
 which means that as the Python function executes
 the only operations it applies to the data are either inspections of data
 attributes such as shape or type, or special operations called JAX primitives.
 In particular, a JAX-traceable function is sometimes invoked by JAX with
-abstract arguments. An example of a JAX abstract value is `ShapedArray(float32[2,2])`, 
+abstract arguments. An example of a JAX abstract value is `ShapedArray(float32[2,2])`,
 which captures the type and the shape of values, but not the concrete data values.
 JAX primitives know how to operate on both concrete data
 values and on the JAX abstract values.
@@ -37,7 +37,7 @@ The JAX-transformed functions must themselves be JAX-traceable functions,
 to ensure that these transformations
 can be composed, e.g., `jit(jacfwd(grad(f)))`.
 
-There are pre-defined JAX primitives corresponding to most XLA operations, 
+There are pre-defined JAX primitives corresponding to most XLA operations,
 e.g., add, matmul, sin, cos, indexing.
 JAX comes with an implementation of numpy functions in terms of JAX primitives, which means that Python programs
 using JAX’s implementation of numpy are JAX-traceable and therefore transformable.
@@ -49,8 +49,8 @@ one can define a new primitive that encapsulates the behavior of the function.
 **The goal of this document is to explain the interface that a JAX primitive must support in order to allow JAX to perform all its transformations.**
 
 Consider that we want to add to JAX support for a multiply-add function with three arguments, defined mathematically
-as "multiply_add(x, y, z) = x * y + z". 
-This function operates on 3 identically-shaped tensors of floating point 
+as "multiply_add(x, y, z) = x * y + z".
+This function operates on 3 identically-shaped tensors of floating point
 values and performs the operations pointwise.
 
 +++ {"id": "HIJYIHNTD1yI"}
@@ -58,7 +58,7 @@ values and performs the operations pointwise.
 ## Using existing primitives
 
 The easiest way to define new functions is to write them in terms of JAX primitives, or in terms of other
-functions that are themselves written using JAX primitives, e.g., those 
+functions that are themselves written using JAX primitives, e.g., those
 defined in the `jax.lax` module:
 
 ```{code-cell} ipython3
@@ -134,7 +134,7 @@ def trace(name):
             return str(v)
     def pp_values(args):
         return ", ".join([pp(arg) for arg in args])
-    
+
     @functools.wraps(func)
     def func_wrapper(*args):
       _trace_indent("call {}({})".format(name, pp_values(args)))
@@ -164,7 +164,7 @@ class expectNotImplementedError(object):
 
 +++ {"id": "Qf4eLrLCFYDl"}
 
-Instead of using `jax.lax` primitives directly, we can use other functions 
+Instead of using `jax.lax` primitives directly, we can use other functions
 that are already written in terms of those primitives, such as those in `jax.numpy`:
 
 ```{code-cell} ipython3
@@ -182,7 +182,7 @@ def multiply_add_numpy(x, y, z):
 def square_add_numpy(a, b):
     return multiply_add_numpy(a, a, b)
 
-print("\nNormal evaluation:")  
+print("\nNormal evaluation:")
 print("square_add_numpy = ", square_add_numpy(2., 10.))
 print("\nGradient evaluation:")
 print("grad(square_add_numpy) = ", api.grad(square_add_numpy)(2.0, 10.))
@@ -191,13 +191,13 @@ print("grad(square_add_numpy) = ", api.grad(square_add_numpy)(2.0, 10.))
 +++ {"id": "Sg-D8EdeFn4a"}
 
 Notice that in the process of computing `grad`, JAX invokes `square_add_numpy` and
-`multiply_add_numpy` with special arguments `ConcreteArray(...)` (described further 
-below in this colab). 
-It is important to remember that a JAX-traceable function must be able to 
+`multiply_add_numpy` with special arguments `ConcreteArray(...)` (described further
+below in this colab).
+It is important to remember that a JAX-traceable function must be able to
 operate not only on concrete arguments but also on special abstract arguments
 that JAX may use to abstract the function execution.
 
-The JAX traceability property is satisfied as long as the function is written 
+The JAX traceability property is satisfied as long as the function is written
 in terms of JAX primitives.
 
 +++ {"id": "WxrQO7-XGLcg"}
@@ -206,7 +206,7 @@ in terms of JAX primitives.
 
 The right way to add support for multiply-add is in terms of existing
 JAX primitives, as shown above. However, in order to demonstrate how JAX
-primitives work let us pretend that we want to add a new primitive to 
+primitives work let us pretend that we want to add a new primitive to
 JAX for the multiply-add functionality.
 
 ```{code-cell} ipython3
@@ -218,9 +218,9 @@ multiply_add_p = core.Primitive("multiply_add")  # Create the primitive
 @trace("multiply_add_prim")
 def multiply_add_prim(x, y, z):
   """The JAX-traceable way to use the JAX primitive.
-  
+
   Note that the traced arguments must be passed as positional arguments
-  to `bind`. 
+  to `bind`.
   """
   return multiply_add_p.bind(x, y, z)
 
@@ -257,7 +257,7 @@ def multiply_add_impl(x, y, z):
 
   This function does not need to be JAX traceable.
   Args:
-    x, y, z: the concrete arguments of the primitive. Will only be called with 
+    x, y, z: the concrete arguments of the primitive. Will only be called with
       concrete values.
   Returns:
     the concrete result of the primitive.
@@ -293,17 +293,17 @@ with expectNotImplementedError():
 +++ {"id": "rHS1bAGHH44E"}
 
 #### Abstract evaluation rules
-In order to JIT the function, and for other transformations as well, 
-JAX first evaluates it abstractly using only the 
+In order to JIT the function, and for other transformations as well,
+JAX first evaluates it abstractly using only the
 shape and type of the arguments. This abstract evaluation serves multiple
 purposes:
 
-  * Gets the sequence of JAX primitives that are used in the computation. This 
-  sequence will be compiled. 
-  * Computes the shape and type of all vectors and operations used in the computation. 
+  * Gets the sequence of JAX primitives that are used in the computation. This
+  sequence will be compiled.
+  * Computes the shape and type of all vectors and operations used in the computation.
 
 
-For example, the abstraction of a vector with 3 elements may be `ShapedArray(float32[3])`, or `ConcreteArray([1., 2., 3.])`. 
+For example, the abstraction of a vector with 3 elements may be `ShapedArray(float32[3])`, or `ConcreteArray([1., 2., 3.])`.
 In the latter case, JAX uses the actual concrete value wrapped as an abstract value.
 
 ```{code-cell} ipython3
@@ -316,7 +316,7 @@ def multiply_add_abstract_eval(xs, ys, zs):
   """Abstract evaluation of the primitive.
 
   This function does not need to be JAX traceable. It will be invoked with
-  abstractions of the actual arguments. 
+  abstractions of the actual arguments.
   Args:
     xs, ys, zs: abstractions of the arguments.
   Result:
@@ -349,7 +349,7 @@ with expectNotImplementedError():
 
 JAX compilation works by compiling each primitive into a graph of XLA operations.
 
-This is the biggest hurdle to adding new functionality to JAX, because the 
+This is the biggest hurdle to adding new functionality to JAX, because the
 set of XLA operations is limited, and JAX already has pre-defined primitives
 for most of them. However, XLA includes a `CustomCall` operation that can be used to encapsulate arbitrary functionality defined using C++.
 
@@ -378,7 +378,7 @@ mlir.register_lowering(multiply_add_p, multiply_add_lowering, platform='cpu')
 +++ {"id": "K98LX-VaJkFu"}
 
 Now we succeed to JIT. Notice below that JAX first evaluates the function
-abstractly, which triggers the `multiply_add_abstract_eval` function, and 
+abstractly, which triggers the `multiply_add_abstract_eval` function, and
 then compiles the set of primitives it has encountered, including `multiply_add`.
 At this point JAX invokes `multiply_add_xla_translation`.
 
@@ -393,7 +393,7 @@ assert api.jit(lambda x, y: square_add_prim(x, y))(2., 10.) == 14.
 
 Below is another use of `jit` where we compile only
 with respect to the first argument. Notice how the second argument to `square_add_prim` is concrete, which leads
-in the third argument to `multiply_add_abstract_eval` being 
+in the third argument to `multiply_add_abstract_eval` being
 `ConcreteArray`. We see that `multiply_add_abstract_eval` may be used with
 both `ShapedArray` and `ConcreteArray`.
 
@@ -401,7 +401,7 @@ both `ShapedArray` and `ConcreteArray`.
 :id: mPfTwIBoKOEK
 :outputId: b293b9b6-a2f9-48f5-f7eb-d4f99c3d905b
 
-assert api.jit(lambda x, y: square_add_prim(x, y), 
+assert api.jit(lambda x, y: square_add_prim(x, y),
                static_argnums=1)(2., 10.) == 14.
 ```
 
@@ -437,16 +437,16 @@ from jax.interpreters import ad
 def multiply_add_value_and_jvp(arg_values, arg_tangents):
   """Evaluates the primal output and the tangents (Jacobian-vector product).
 
-  Given values of the arguments and perturbation of the arguments (tangents), 
+  Given values of the arguments and perturbation of the arguments (tangents),
   compute the output of the primitive and the perturbation of the output.
 
-  This method must be JAX-traceable. JAX may invoke it with abstract values 
+  This method must be JAX-traceable. JAX may invoke it with abstract values
   for the arguments and tangents.
 
   Args:
     arg_values: a tuple of arguments
-    arg_tangents: a tuple with the tangents of the arguments. The tuple has 
-      the same length as the arg_values. Some of the tangents may also be the 
+    arg_tangents: a tuple with the tangents of the arguments. The tuple has
+      the same length as the arg_values. Some of the tangents may also be the
       special value ad.Zero to specify a zero tangent.
   Returns:
      a pair of the primal output and the tangent.
@@ -454,26 +454,26 @@ def multiply_add_value_and_jvp(arg_values, arg_tangents):
   x, y, z = arg_values
   xt, yt, zt = arg_tangents
   _trace("Primal evaluation:")
-  # Now we have a JAX-traceable computation of the output. 
-  # Normally, we can use the ma primitive itself to compute the primal output. 
+  # Now we have a JAX-traceable computation of the output.
+  # Normally, we can use the ma primitive itself to compute the primal output.
   primal_out = multiply_add_prim(x, y, z)
-  
+
   _trace("Tangent evaluation:")
-  # We must use a JAX-traceable way to compute the tangent. It turns out that 
+  # We must use a JAX-traceable way to compute the tangent. It turns out that
   # the output tangent can be computed as (xt * y + x * yt + zt),
   # which we can implement in a JAX-traceable way using the same "multiply_add_prim" primitive.
-  
-  # We do need to deal specially with Zero. Here we just turn it into a 
-  # proper tensor of 0s (of the same shape as 'x'). 
-  # An alternative would be to check for Zero and perform algebraic 
+
+  # We do need to deal specially with Zero. Here we just turn it into a
+  # proper tensor of 0s (of the same shape as 'x').
+  # An alternative would be to check for Zero and perform algebraic
   # simplification of the output tangent computation.
   def make_zero(tan):
-    return lax.zeros_like_array(x) if type(tan) is ad.Zero else tan  
-  
+    return lax.zeros_like_array(x) if type(tan) is ad.Zero else tan
+
   output_tangent = multiply_add_prim(make_zero(xt), y, multiply_add_prim(x, make_zero(yt), make_zero(zt)))
   return (primal_out, output_tangent)
 
-# Register the forward differentiation rule with JAX 
+# Register the forward differentiation rule with JAX
 ad.primitive_jvps[multiply_add_p] = multiply_add_value_and_jvp
 ```
 
@@ -487,7 +487,7 @@ assert api.jvp(square_add_prim, (2., 10.), (1., 1.)) == (14., 5.)
 
 +++ {"id": "69QsEcu-lP4u"}
 
-TO EXPLAIN: 
+TO EXPLAIN:
 
   * Why is JAX using ConcreteArray in square_add_prim? There is no abstract evaluation going on here.
   * Not sure how to explain that multiply_add_prim is invoked with ConcreteValue, yet
@@ -504,7 +504,7 @@ We can apply JIT to the forward differentiation function:
 :id: hg-hzVu-N-hv
 :outputId: 38d32067-e152-4046-ad80-7f95a31ba628
 
-assert api.jit(lambda arg_values, arg_tangents: 
+assert api.jit(lambda arg_values, arg_tangents:
                    api.jvp(square_add_prim, arg_values, arg_tangents))(
          (2., 10.), (1., 1.)) == (14., 5.)
 ```
@@ -512,7 +512,7 @@ assert api.jit(lambda arg_values, arg_tangents:
 +++ {"id": "jlZt1_v2mU88"}
 
 Notice that first we evaluate `multiply_add_value_and_jvp` abstractly, which in turn
-evaluates abstractly both the primal and the tangent evaluation (a total of 
+evaluates abstractly both the primal and the tangent evaluation (a total of
 3 invocations of the `ma` primitive). Then we compile the 3 occurrences
 of the primitive.
 
@@ -521,21 +521,21 @@ of the primitive.
 ### Reverse differentiation
 
 If we attempt now to use reverse differentiation we
-see that JAX starts by using the `multiply_add_value_and_jvp` to 
+see that JAX starts by using the `multiply_add_value_and_jvp` to
 compute the forward differentiation for abstract values, but then runs
-into a `NotImplementedError`. 
+into a `NotImplementedError`.
 
 When computing the reverse differentiation JAX first does abstract evaluation
-of the forward differentiation code `multiply_add_value_and_jvp` to obtain a 
-trace of primitives that compute the output tangent. 
+of the forward differentiation code `multiply_add_value_and_jvp` to obtain a
+trace of primitives that compute the output tangent.
 Observe that JAX performs this abstract evaluation with concrete values
-for the differentiation point, and abstract values for the tangents. 
+for the differentiation point, and abstract values for the tangents.
 Observe also that JAX uses the special abstract tangent value `Zero` for
-the tangent corresponding to the 3rd argument of `ma`. This reflects the 
+the tangent corresponding to the 3rd argument of `ma`. This reflects the
 fact that we do not differentiate w.r.t. the 2nd argument to `square_add_prim`,
 which flows to the 3rd argument to `multiply_add_prim`.
 
-Observe also that during the abstract evaluation of the tangent we pass the 
+Observe also that during the abstract evaluation of the tangent we pass the
 value 0.0 as the tangent for the 3rd argument. This is due to the use
 of the `make_zero` function in the definition of `multiply_add_value_and_jvp`.
 
@@ -560,7 +560,7 @@ to use the forward differentiation code to compute reverse differentiation.
 
 As explained above, when computing reverse differentiation JAX obtains
 a trace of primitives that compute the tangent using forward differentiation.
-Then, **JAX interprets this trace abstractly backwards** and for each 
+Then, **JAX interprets this trace abstractly backwards** and for each
 primitive it applies a **transposition** rule.
 
 To understand what is going on, consider for now a simpler example of the function "f(x, y) = x * y + y". Assume we need to differentiate at the point `(2., 4.)`. JAX will produce the following JVP tangent calculation of `ft` from the tangents of the input `xt` and `yt`:
@@ -571,7 +571,7 @@ To understand what is going on, consider for now a simpler example of the functi
    ft = c + yt
 ```
 
-By construction, the tangent calculation is always linear in the input tangents. 
+By construction, the tangent calculation is always linear in the input tangents.
 The only non-linear operator that may arise in the tangent calculation is multiplication,
 but then one of the operands is constant.
 
@@ -597,8 +597,8 @@ of the operation:
   xct += act * 4.
 ```
 
-One can verify that this computation produces `xct = 4.` and `yct = 3.`, which 
-are the partial derivatives of the function `f`. 
+One can verify that this computation produces `xct = 4.` and `yct = 3.`, which
+are the partial derivatives of the function `f`.
 
 JAX knows for each primitive that may appear in a JVP calculation how to transpose it. Conceptually, if the primitive `p(x, y, z)` is linear in the arguments `y` and `z` for a constant value of `x`, e.g., `p(x, y, z) = y*cy + z*cz`, then the transposition of the primitive is:
 ```
@@ -606,10 +606,10 @@ p_transpose(out_ct, x, _, _) = (None, out_ct*cy, out_ct*cz)
 ```
 
 Notice that `p_transpose` takes the cotangent of the output of the primitive and a value corresponding to each argument of the primitive. For the linear arguments, the transposition gets an undefined `_` value, and for the other
-arguments it gets the actual constants. The transposition returns a cotangent value for each argument of the primitive, with the value `None` returned 
+arguments it gets the actual constants. The transposition returns a cotangent value for each argument of the primitive, with the value `None` returned
 for the constant arguments.
 
-In particular, 
+In particular,
 ```
  add_transpose(out_ct, _, _) = (out_ct, out_ct)
  mult_transpose(out_ct, x, _) = (None, x * out_ct)
@@ -623,16 +623,16 @@ In particular,
 def multiply_add_transpose(ct, x, y, z):
   """Evaluates the transpose of a linear primitive.
 
-  This method is only used when computing the backward gradient following 
-  value_and_jvp, and is only needed for primitives that are used in the JVP 
-  calculation for some other primitive. We need transposition for multiply_add_prim, 
-  because we have used multiply_add_prim in the computation of the output_tangent in 
+  This method is only used when computing the backward gradient following
+  value_and_jvp, and is only needed for primitives that are used in the JVP
+  calculation for some other primitive. We need transposition for multiply_add_prim,
+  because we have used multiply_add_prim in the computation of the output_tangent in
   multiply_add_value_and_jvp.
 
-  In our case, multiply_add is not a linear primitive. However, it is used linearly 
+  In our case, multiply_add is not a linear primitive. However, it is used linearly
   w.r.t. tangents in multiply_add_value_and_jvp:
        output_tangent(xt, yt, zt) = multiply_add_prim(xt, y, multiply_add_prim(x, yt, zt))
-  
+
   Always one of the first two multiplicative arguments is a constant.
 
   Args:
@@ -674,12 +674,12 @@ assert api.grad(square_add_prim)(2., 10.) == 4.
 +++ {"id": "8M1xLCXW4fK7"}
 
 Notice the two calls to `multiply_add_transpose`. They correspond to the two
-uses of `multiply_add_prim` in the computation of the `output_tangent` in `multiply_add_value_and_jvp`. The first call to transpose corresponds to the 
+uses of `multiply_add_prim` in the computation of the `output_tangent` in `multiply_add_value_and_jvp`. The first call to transpose corresponds to the
 last use of `multiply_add_prim`: `multiply_add_prim(xt, y, ...)` where `y` is the constant 2.0.
 
 +++ {"id": "EIJs6FYmPg6c"}
 
-#### JIT of reverse differentiation 
+#### JIT of reverse differentiation
 
 Notice that the abstract evaluation of the `multiply_add_value_and_jvp` is using only
 abstract values, while in the absence of JIT we used `ConcreteArray`.
@@ -721,20 +721,20 @@ from jax.interpreters import batching
 @trace("multiply_add_batch")
 def multiply_add_batch(vector_arg_values, batch_axes):
   """Computes the batched version of the primitive.
-  
+
   This must be a JAX-traceable function.
-  
+
   Since the multiply_add primitive already operates pointwise on arbitrary
   dimension tensors, to batch it we can use the primitive itself. This works as
   long as both the inputs have the same dimensions and are batched along the
   same axes. The result is batched along the axis that the inputs are batched.
-  
+
   Args:
     vector_arg_values: a tuple of two arguments, each being a tensor of matching
       shape.
     batch_axes: the axes that are being batched. See vmap documentation.
   Returns:
-    a tuple of the result, and the result axis that was batched. 
+    a tuple of the result, and the result axis that was batched.
   """
   assert batch_axes[0] == batch_axes[1]
   assert batch_axes[0] == batch_axes[2]
