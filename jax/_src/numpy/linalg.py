@@ -662,6 +662,19 @@ def _det_3x3(a: Array) -> Array:
 
 
 @custom_jvp
+def _det(a):
+  sign, logdet = slogdet(a)
+  return sign * ufuncs.exp(logdet).astype(sign.dtype)
+
+
+@_det.defjvp
+def _det_jvp(primals, tangents):
+  x, = primals
+  g, = tangents
+  y, z = _cofactor_solve(x, g)
+  return y, jnp.trace(z, axis1=-1, axis2=-2)
+
+
 @jit
 def det(a: ArrayLike) -> Array:
   """
@@ -692,19 +705,10 @@ def det(a: ArrayLike) -> Array:
   elif len(a_shape) >= 2 and a_shape[-1] == 3 and a_shape[-2] == 3:
     return _det_3x3(a)
   elif len(a_shape) >= 2 and a_shape[-1] == a_shape[-2]:
-    sign, logdet = slogdet(a)
-    return sign * ufuncs.exp(logdet).astype(sign.dtype)
+    return _det(a)
   else:
     msg = "Argument to _det() must have shape [..., n, n], got {}"
     raise ValueError(msg.format(a_shape))
-
-
-@det.defjvp
-def _det_jvp(primals, tangents):
-  x, = primals
-  g, = tangents
-  y, z = _cofactor_solve(x, g)
-  return y, jnp.trace(z, axis1=-1, axis2=-2)
 
 
 def eig(a: ArrayLike) -> tuple[Array, Array]:
