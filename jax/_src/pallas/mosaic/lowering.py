@@ -2546,7 +2546,9 @@ def _bitcast_convert_type_lowering_rule(
     ctx: LoweringRuleContext, x, *, new_dtype):
   (in_aval, ) = ctx.avals_in
   (out_aval,) = ctx.avals_out
-  if in_aval.dtype.itemsize != new_dtype.itemsize:
+  old_bitwidth = pallas_utils.dtype_bitwidth(in_aval.dtype)
+  new_bitwidth = pallas_utils.dtype_bitwidth(new_dtype)
+  if old_bitwidth != new_bitwidth:
     raise NotImplementedError("Changing bitwidths not supported.")
   return tpu.BitcastOp(aval_to_ir_type(out_aval), x).result
 lowering_rules[lax.bitcast_convert_type_p] = _bitcast_convert_type_lowering_rule

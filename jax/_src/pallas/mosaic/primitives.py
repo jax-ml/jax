@@ -26,12 +26,13 @@ from jax._src import pretty_printer as pp
 from jax._src import state
 from jax._src import tree_util
 from jax._src import util
-from jax._src.state import indexing
-from jax._src.state import primitives as sp
 from jax._src.interpreters import mlir
 from jax._src.pallas import core as pl_core
+from jax._src.pallas import utils as pallas_utils
 from jax._src.pallas.mosaic import core as tpu_core
 from jax._src.state import discharge as state_discharge
+from jax._src.state import indexing
+from jax._src.state import primitives as sp
 from jax._src.typing import DTypeLike
 import jax.numpy as jnp
 
@@ -65,7 +66,9 @@ def bitcast(x, ty: DTypeLike):
   ty = dtypes.canonicalize_dtype(ty)
   if len(x.shape) < 2:
     raise ValueError("Not implemented: bitcast 1D")
-  if x.shape[-2] * x.dtype.itemsize % ty.itemsize:
+  src_bitwidth = pallas_utils.dtype_bitwidth(x.dtype)
+  dst_bitwidth = pallas_utils.dtype_bitwidth(ty)
+  if x.shape[-2] * src_bitwidth % dst_bitwidth:
     raise ValueError(
         "Not implemented: the 2nd minor dim can not be perfectly packed or"
         " unpacked"
@@ -76,19 +79,23 @@ def bitcast(x, ty: DTypeLike):
 @bitcast_p.def_abstract_eval
 def _bitcast_abstract_eval(x, *, ty):
   shape = list(x.shape)
-  shape[-2] = shape[-2] * x.dtype.itemsize // ty.itemsize
+  src_bitwidth = pallas_utils.dtype_bitwidth(x.dtype)
+  dst_bitwidth = pallas_utils.dtype_bitwidth(ty)
+  shape[-2] = shape[-2] * src_bitwidth // dst_bitwidth
   return jax_core.ShapedArray(shape, ty)
 
 
 def _bitcast_lowering_rule(ctx: mlir.LoweringRuleContext, x, *, ty):
   def _bitcast(x):
-    if x.dtype.itemsize < ty.itemsize:
+    src_bitwidth = pallas_utils.dtype_bitwidth(x.dtype)
+    dst_bitwidth = pallas_utils.dtype_bitwidth(ty)
+    if src_bitwidth < dst_bitwidth:
       *leading, m, n = x.shape
-      packing = ty.itemsize // x.dtype.itemsize
+      packing = dst_bitwidth // src_bitwidth
       x = x.reshape(*leading, m // packing, packing, n)
       x = jnp.swapaxes(x, -1, -2)
       return jax.lax.bitcast_convert_type(x, ty)
-    if x.dtype.itemsize > ty.itemsize:
+    if src_bitwidth > dst_bitwidth:
       y = jax.lax.bitcast_convert_type(x, ty)
       *leading, m, n, packing = y.shape
       return jnp.swapaxes(y, -1, -2).reshape(*leading, m * packing, n)
