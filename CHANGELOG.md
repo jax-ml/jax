@@ -22,6 +22,8 @@ When releasing, please add the new-release-boilerplate to docs/pallas/CHANGELOG.
     `jax.config.update('jax_cpu_enable_async_dispatch', False)`.
   * Added new {func}`jax.process_indices` function to replace the
     `jax.host_ids()` function that was deprecated in JAX v0.2.13.
+  * To align with the behavior of `numpy.fabs`, `jax.numpy.fabs` has been
+    modified to no longer support `complex dtypes`.
 
 * Breaking changes
   * The MHLO MLIR dialect (`jax.extend.mlir.mhlo`) has been removed. Use the
