@@ -32,7 +32,7 @@ For an introduction to JAX's automatic differentiation API, see [The Autodiff Co
 
 +++ {"id": "9Fg3NFNY-2RY"}
 
-## TL;DR
+## Summary
 
 +++ {"id": "ZgMNRtXyWIW8"}
 

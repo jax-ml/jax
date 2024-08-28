@@ -7,7 +7,8 @@ inside of JIT-ted functions.
 
 ## Debugging with `jax.debug.print` and other debugging callbacks
 
-**TL;DR** Use {func}`jax.debug.print` to print traced array values to stdout in `jit`- and `pmap`-decorated functions:
+**Summary:** Use {func}`jax.debug.print` to print traced array values to
+stdout in compiled (e.g. `jax.jit` or `jax.pmap`-decorated) functions:
 
 ```python
 import jax
@@ -236,7 +237,7 @@ Furthermore, when using `jax.debug.print` with `jax.pjit`, a global synchronizat
 
 ## Interactive inspection with `jax.debug.breakpoint()`
 
-**TL;DR** Use `jax.debug.breakpoint()` to pause the execution of your JAX program to inspect values:
+**Summary:** Use `jax.debug.breakpoint()` to pause the execution of your JAX program to inspect values:
 
 ```python
 @jax.jit

@@ -24,7 +24,7 @@ import jax.numpy as jnp
 
 +++ {"id": "qaIsQSh1XoKF"}
 
-### TL;DR
+### Summary
 
 Use the `jax.checkpoint` decorator (aliased as `jax.remat`) with `jax.grad` to control which intermediates are saved on the forward pass versus recomputed on the backward pass, trading off memory and FLOPs.
 

@@ -2,7 +2,7 @@
 
 <!--* freshness: { reviewed: '2024-04-11' } *-->
 
-Do you have exploding gradients? Are NaNs making you gnash your teeth? Just want to poke around the intermediate values in your computation? Check out the following JAX debugging tools! This page has TL;DR summaries and you can click the "Read more" links at the bottom to learn more.
+Do you have exploding gradients? Are NaNs making you gnash your teeth? Just want to poke around the intermediate values in your computation? Check out the following JAX debugging tools! This page has summaries and you can click the "Read more" links at the bottom to learn more.
 
 Table of contents:
 
@@ -12,7 +12,7 @@ Table of contents:
 
 ## [Interactive inspection with `jax.debug`](print_breakpoint)
 
-  **TL;DR** Use {func}`jax.debug.print` to print values to stdout in `jax.jit`-,`jax.pmap`-, and `pjit`-decorated functions,
+  **Summary:** Use {func}`jax.debug.print` to print values to stdout in `jax.jit`-,`jax.pmap`-, and `pjit`-decorated functions,
   and {func}`jax.debug.breakpoint` to pause execution of your compiled function to inspect values in the call stack:
 
   ```python
@@ -38,7 +38,7 @@ Click [here](print_breakpoint) to learn more!
 
 ## [Functional error checks with `jax.experimental.checkify`](checkify_guide)
 
-  **TL;DR** Checkify lets you add `jit`-able runtime error checking (e.g. out of bounds indexing) to your JAX code. Use the `checkify.checkify` transformation together with the assert-like `checkify.check` function to add runtime checks to JAX code:
+  **Summary:** Checkify lets you add `jit`-able runtime error checking (e.g. out of bounds indexing) to your JAX code. Use the `checkify.checkify` transformation together with the assert-like `checkify.check` function to add runtime checks to JAX code:
 
   ```python
   from jax.experimental import checkify
@@ -81,7 +81,7 @@ Click [here](checkify_guide) to learn more!
 
 ## [Throwing Python errors with JAX's debug flags](flags)
 
-**TL;DR** Enable the `jax_debug_nans` flag to automatically detect when NaNs are produced in `jax.jit`-compiled code (but not in `jax.pmap` or `jax.pjit`-compiled code) and enable the `jax_disable_jit` flag to disable JIT-compilation, enabling use of traditional Python debugging tools like `print` and `pdb`.
+**Summary:** Enable the `jax_debug_nans` flag to automatically detect when NaNs are produced in `jax.jit`-compiled code (but not in `jax.pmap` or `jax.pjit`-compiled code) and enable the `jax_disable_jit` flag to disable JIT-compilation, enabling use of traditional Python debugging tools like `print` and `pdb`.
 
 ```python
 import jax
