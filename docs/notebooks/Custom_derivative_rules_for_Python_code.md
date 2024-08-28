@@ -13,7 +13,7 @@ kernelspec:
 
 +++ {"id": "LqiaKasFjH82"}
 
-# Custom derivative rules for JAX-transformable Python functions
+# Custom derivative rules
 
 <!--* freshness: { reviewed: '2024-04-08' } *-->
 

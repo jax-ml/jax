@@ -21,7 +21,7 @@ This section introduces you to a set of built-in JAX debugging methods — {func
 
 Let's begin with {func}`jax.debug.print`.
 
-## JAX `debug.print` for high-level
+## `jax.debug.print` for simple inspection
 
 Here is a rule of thumb:
 
@@ -111,7 +111,7 @@ f(1, 2)
 To learn more about {func}`jax.debug.print` and its Sharp Bits, refer to {ref}`advanced-debugging`.
 
 
-## JAX `debug.breakpoint` for `pdb`-like debugging
+## `jax.debug.breakpoint` for `pdb`-like debugging
 
 **Summary:** Use {func}`jax.debug.breakpoint` to pause the execution of your JAX program to inspect values.
 
@@ -160,7 +160,7 @@ f(2., 1.) # ==> No breakpoint
 f(2., 0.) # ==> Pauses during execution
 ```
 
-## JAX `debug.callback` for more control during debugging
+## `jax.debug.callback` for more control during debugging
 
 Both {func}`jax.debug.print` and {func}`jax.debug.breakpoint` are implemented using
 the more flexible {func}`jax.debug.callback`, which gives greater control over the

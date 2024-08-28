@@ -12,7 +12,7 @@ kernelspec:
 ---
 
 (sharded-computation)=
-# Introduction to sharded computation
+# Introduction to parallel programming
 
 <!--* freshness: { reviewed: '2024-05-10' } *-->
 
