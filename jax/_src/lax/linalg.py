@@ -1359,8 +1359,8 @@ def _lu_jvp_rule(primals, tangents):
   l_dot = jnp.matmul(l, jnp.tril(lau, -1), precision=lax.Precision.HIGHEST)
   u_dot = jnp.matmul(jnp.triu(lau), u, precision=lax.Precision.HIGHEST)
   lu_dot = l_dot + u_dot
-  return (lu, pivots, permutation), (lu_dot, ad_util.Zero.from_value(pivots),
-                                     ad_util.Zero.from_value(permutation))
+  return (lu, pivots, permutation), (lu_dot, ad_util.Zero.from_primal_value(pivots),
+                                     ad_util.Zero.from_primal_value(permutation))
 
 
 def _lu_batching_rule(batched_args, batch_dims):

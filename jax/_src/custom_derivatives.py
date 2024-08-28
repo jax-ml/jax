@@ -78,7 +78,7 @@ def _sum_tangents(_, x, *xs):
   return reduce(ad.add_tangents, xs, x)
 
 def _zeros_like_pytree(x):
-  return tree_map(Zero.from_value, x)
+  return tree_map(Zero.from_primal_value, x)
 
 @partial(partial, tree_map)
 def _stop_gradient(x):

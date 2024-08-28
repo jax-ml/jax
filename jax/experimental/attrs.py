@@ -111,7 +111,7 @@ class JVPTag: pass
 def jvpfun2(primals, tangents):
   parent_trace = core.find_cur_trace()
   tag = JVPTag()
-  tangents = [Zero.from_value(t) if not isinstance(t, Zero)
+  tangents = [Zero.from_primal_value(t) if not isinstance(t, Zero)
               and dtype(t) == float0 else t for t in tangents]
   ctx = source_info_util.transform_name_stack('jvp')
   with ctx:
