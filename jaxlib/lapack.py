@@ -27,6 +27,7 @@ import jaxlib.mlir.dialects.stablehlo as hlo
 from jaxlib import xla_client
 
 from .cpu import _lapack
+from .cpu._lapack import eig
 from .hlo_helpers import (
     custom_call, hlo_u8, hlo_s32,
     ensure_hlo_s32, hlo_add, hlo_min,
@@ -523,10 +524,9 @@ def gesdd_hlo(ctx, dtype, a: ir.Value, *, full_matrices=True, compute_uv=True,
 
 # # syevd: Symmetric eigendecomposition
 
-def syevd_hlo(dtype, a: ir.Value,
+def syevd_hlo(ctx, dtype, a: ir.Value,
               a_shape_vals: tuple[DimensionSize, ...],
               lower=False):
-  _lapack.initialize()
   a_type = ir.RankedTensorType(a.type)
   assert len(a_shape_vals) >= 2
   m, n = a_shape_vals[-2:]
@@ -535,76 +535,110 @@ def syevd_hlo(dtype, a: ir.Value,
 
   batch_dims_vals = a_shape_vals[:-2]
   num_bd = len(a_shape_vals) - 2
+  mode = _enum_to_char_attr(eig.ComputationMode.kComputeEigenvectors)
 
   i32_type = ir.IntegerType.get_signless(32)
   workspace: list[ShapeTypePair]
-  if dtype == np.float32:
-    fn = "lapack_ssyevd"
+  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
+  # Hermitian is for complex square matrices, symmetric otherwise.
+  fn_base = "he" if dtype == np.complex64 or dtype == np.complex128 else "sy"
+  fn_base = prepare_lapack_call(fn_base=fn_base + "evd", dtype=dtype)
+  if ctx.is_forward_compat():
+    fn = fn_base
+    if dtype == np.float32:
+      eigvals_type = ir.F32Type.get()
+      workspace = [
+          ([_lapack.syevd_work_size(n)], a_type.element_type),
+          ([_lapack.syevd_iwork_size(n)], i32_type),
+      ]
+    elif dtype == np.float64:
+      eigvals_type = ir.F64Type.get()
+      workspace = [
+          ([_lapack.syevd_work_size(n)], a_type.element_type),
+          ([_lapack.syevd_iwork_size(n)], i32_type),
+      ]
+    elif dtype == np.complex64:
+      eigvals_type = ir.F32Type.get()
+      workspace = [
+          ([_lapack.heevd_work_size(n)], a_type.element_type),
+          ([_lapack.heevd_rwork_size(n)], eigvals_type),
+          ([_lapack.syevd_iwork_size(n)], i32_type),
+      ]
+    elif dtype == np.complex128:
+      eigvals_type = ir.F64Type.get()
+      workspace = [
+          ([_lapack.heevd_work_size(n)],  a_type.element_type),
+          ([_lapack.heevd_rwork_size(n)], eigvals_type),
+          ([_lapack.syevd_iwork_size(n)], i32_type),
+      ]
+    else:
+      raise NotImplementedError(f"Unsupported dtype {dtype}")
+
+    batch_size_val = hlo_s32(1)
+    for b_v in batch_dims_vals:
+      batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
+
+    scalar_layout = []
+    shape_layout = [0]
+    workspace_layouts = [shape_layout] * len(workspace)
+    layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
+
+    result_types, result_shapes = mk_result_types_and_shapes(
+        [(a_shape_vals, a_type.element_type),
+        (batch_dims_vals + (n,),  eigvals_type),
+        (batch_dims_vals, i32_type)] + workspace
+    )
+
+    return custom_call(
+        fn,
+        result_types=result_types,
+        operands=[hlo_s32(1 if lower else 0), batch_size_val, ensure_hlo_s32(n), a],
+        operand_layouts=[scalar_layout] * 3 + [layout],
+        result_layouts=[
+            layout,
+            tuple(range(num_bd, -1, -1)),
+            tuple(range(num_bd - 1, -1, -1)),
+        ] + workspace_layouts,
+        operand_output_aliases={3: 0},
+        result_shapes=result_shapes,
+    ).results[:3]
+  fn = fn_base + "_ffi"
+  if dtype == np.float32 or dtype == np.complex64:
     eigvals_type = ir.F32Type.get()
-    workspace = [
-        ([_lapack.syevd_work_size(n)], a_type.element_type),
-        ([_lapack.syevd_iwork_size(n)], i32_type),
-    ]
-  elif dtype == np.float64:
-    fn = "lapack_dsyevd"
+  elif dtype == np.float64 or dtype == np.complex128:
     eigvals_type = ir.F64Type.get()
-    workspace = [
-        ([_lapack.syevd_work_size(n)], a_type.element_type),
-        ([_lapack.syevd_iwork_size(n)], i32_type),
-    ]
-  elif dtype == np.complex64:
-    fn = "lapack_cheevd"
-    eigvals_type = ir.F32Type.get()
-    workspace = [
-        ([_lapack.heevd_work_size(n)], a_type.element_type),
-        ([_lapack.heevd_rwork_size(n)], eigvals_type),
-        ([_lapack.syevd_iwork_size(n)], i32_type),
-    ]
-  elif dtype == np.complex128:
-    fn = "lapack_zheevd"
-    eigvals_type = ir.F64Type.get()
-    workspace = [
-        ([_lapack.heevd_work_size(n)],  a_type.element_type),
-        ([_lapack.heevd_rwork_size(n)], eigvals_type),
-        ([_lapack.syevd_iwork_size(n)], i32_type),
-    ]
   else:
     raise NotImplementedError(f"Unsupported dtype {dtype}")
 
-  batch_size_val = hlo_s32(1)
-  for b_v in batch_dims_vals:
-    batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
+  result_types, result_shapes = mk_result_types_and_shapes([
+      (a_shape_vals, a_type.element_type),
+      (batch_dims_vals + (n,), eigvals_type),
+      (batch_dims_vals, i32_type),
+  ])
 
-  scalar_layout = []
-  shape_layout = [0]
-  workspace_layouts = [shape_layout] * len(workspace)
-  layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
-
-  result_types, result_shapes = mk_result_types_and_shapes(
-      [(a_shape_vals, a_type.element_type),
-       (batch_dims_vals + (n,),  eigvals_type),
-       (batch_dims_vals, i32_type)] + workspace
-  )
-
-  out = custom_call(
+  return custom_call(
       fn,
       result_types=result_types,
-      operands=[hlo_s32(1 if lower else 0), batch_size_val, ensure_hlo_s32(n), a],
-      operand_layouts=[scalar_layout] * 3 + [layout],
+      operands=[a],
+      operand_layouts=[layout],
       result_layouts=[
           layout,
           tuple(range(num_bd, -1, -1)),
           tuple(range(num_bd - 1, -1, -1)),
-      ] + workspace_layouts,
-      operand_output_aliases={3: 0},
+      ],
+      operand_output_aliases={0: 0},
       result_shapes=result_shapes,
+      backend_config={
+          "uplo": _matrix_uplo_attr(lower=lower),
+          "mode": mode,
+      },
+      api_version=4,
   ).results
-  return out[:3]
 
 
 # # geev: Nonsymmetric eigendecomposition (eig)
 
-def geev_hlo(dtype, input, *,
+def geev_hlo(ctx, dtype, input, *,
              input_shape_vals: tuple[DimensionSize, ...],  # input.shape as ir.Values
              jobvl=True, jobvr=True):
   # input_shape_vals are used for when input has dynamic shapes.
@@ -617,80 +651,128 @@ def geev_hlo(dtype, input, *,
 
   layout = (num_bd, num_bd + 1) + tuple(range(num_bd - 1, -1, -1))
 
-  jobvl_c = ord('V' if jobvl else 'N')
-  jobvr_c = ord('V' if jobvr else 'N')
+  compute_left = (
+      eig.ComputationMode.kComputeEigenvectors
+      if jobvl
+      else eig.ComputationMode.kNoEigenvectors
+  )
+
+  compute_right = (
+      eig.ComputationMode.kComputeEigenvectors
+      if jobvr
+      else eig.ComputationMode.kNoEigenvectors
+  )
+  fn_base = build_lapack_fn_target(fn_base="geev", dtype=dtype)
 
   i32_type = ir.IntegerType.get_signless(32)
   f32_type = ir.F32Type.get()
   f64_type = ir.F64Type.get()
   c64_type = ir.ComplexType.get(ir.F32Type.get())
   c128_type = ir.ComplexType.get(ir.F64Type.get())
+  if ctx.is_forward_compat():
+    fn = fn_base
+    workspaces: list[ShapeTypePair]
+    eigvals: list[ShapeTypePair]
+    if dtype == np.float32:
+      real = True
+      eigvecs_type = c64_type
+      workspaces = [([n, n], f32_type)] * 3
+      workspace_layouts = [[0, 1]] * 3
+      eigvals = [(batch_dims_vals + (n,), f32_type)] * 2
+      eigvals_layouts = [tuple(range(num_bd, -1, -1))] * 2
+    elif dtype == np.float64:
+      real = True
+      eigvecs_type = c128_type
+      workspaces = [([n, n], f64_type)] * 3
+      workspace_layouts = [[0, 1]] * 3
+      eigvals = [(batch_dims_vals + (n,), f64_type)] * 2
+      eigvals_layouts = [tuple(range(num_bd, -1, -1))] * 2
+    elif dtype == np.complex64:
+      real = False
+      eigvecs_type = c64_type
+      workspaces = [([n, n], c64_type), ([hlo_add(n, n)], f32_type)]
+      workspace_layouts = [[0, 1], [0]]
+      eigvals = [(batch_dims_vals + (n,), c64_type)]
+      eigvals_layouts = [tuple(range(num_bd, -1, -1))]
+    elif dtype == np.complex128:
+      real = False
+      eigvecs_type = c128_type
+      workspaces = [([n, n], c128_type), ([hlo_add(n, n)], f64_type)]
+      workspace_layouts = [[0, 1], [0]]
+      eigvals = [(batch_dims_vals + (n,), c128_type)]
+      eigvals_layouts = [tuple(range(num_bd, -1, -1))]
+    else:
+      raise NotImplementedError(f"Unsupported dtype {dtype}")
 
-  workspaces: list[ShapeTypePair]
-  eigvals: list[ShapeTypePair]
-  if dtype == np.float32:
-    fn = "lapack_sgeev"
-    real = True
-    eigvecs_type = c64_type
-    workspaces = [([n, n], f32_type)] * 3
-    workspace_layouts = [[0, 1]] * 3
-    eigvals = [(batch_dims_vals + (n,), f32_type)] * 2
-    eigvals_layouts = [tuple(range(num_bd, -1, -1))] * 2
-  elif dtype == np.float64:
-    fn = "lapack_dgeev"
-    real = True
-    eigvecs_type = c128_type
-    workspaces = [([n, n], f64_type)] * 3
-    workspace_layouts = [[0, 1]] * 3
-    eigvals = [(batch_dims_vals + (n,), f64_type)] * 2
-    eigvals_layouts = [tuple(range(num_bd, -1, -1))] * 2
-  elif dtype == np.complex64:
-    fn = "lapack_cgeev"
-    real = False
-    eigvecs_type = c64_type
-    workspaces = [([n, n], c64_type), ([hlo_add(n, n)], f32_type)]
-    workspace_layouts = [[0, 1], [0]]
-    eigvals = [(batch_dims_vals + (n,), c64_type)]
-    eigvals_layouts = [tuple(range(num_bd, -1, -1))]
-  elif dtype == np.complex128:
-    fn = "lapack_zgeev"
-    real = False
-    eigvecs_type = c128_type
-    workspaces = [([n, n], c128_type), ([hlo_add(n, n)], f64_type)]
-    workspace_layouts = [[0, 1], [0]]
-    eigvals = [(batch_dims_vals + (n,), c128_type)]
-    eigvals_layouts = [tuple(range(num_bd, -1, -1))]
-  else:
-    raise NotImplementedError(f"Unsupported dtype {dtype}")
+    scalar_layout = []
+    info_layout = tuple(range(num_bd - 1, -1, -1))
 
-  scalar_layout = []
+    batch_size_val = hlo_s32(1)
+    for b_v in batch_dims_vals:
+      batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
+
+    shape_type_pairs: Sequence[ShapeTypePair] = workspaces + eigvals + [
+        (input_shape_vals, eigvecs_type),
+        (input_shape_vals, eigvecs_type),
+        (batch_dims_vals, i32_type)]
+    result_types, result_shapes = mk_result_types_and_shapes(shape_type_pairs)
+    out = custom_call(
+        fn,
+        result_types=result_types,
+        operands=[batch_size_val, ensure_hlo_s32(n),
+        hlo_u8(compute_left.value),
+        hlo_u8(compute_right.value),
+        input],
+        operand_layouts=[scalar_layout] * 4 + [layout],
+        result_layouts=(workspace_layouts + eigvals_layouts + [layout] * 2 +
+                        [info_layout]),
+        result_shapes=result_shapes,
+    ).results
+    if real:
+      return (hlo.complex(out[3], out[4]), out[5], out[6], out[7])
+    else:
+      return out[2:6]
+  fn = fn_base + "_ffi"
+  real = dtype == np.float32 or dtype == np.float64
+  eigvecs_type = (
+      c64_type if dtype == np.float32 or dtype == np.complex64 else c128_type
+  )
+  input_type = ir.RankedTensorType(input.type)
+  eigvals = [(batch_dims_vals + (n,), input_type.element_type)]
+  eigvals_layouts = [tuple(range(num_bd, -1, -1))]
+  if real:
+    eigvals = eigvals * 2
+    eigvals_layouts = eigvals_layouts * 2
   info_layout = tuple(range(num_bd - 1, -1, -1))
-
-  batch_size_val = hlo_s32(1)
-  for b_v in batch_dims_vals:
-    batch_size_val = hlo.multiply(batch_size_val, ensure_hlo_s32(b_v))
-
-  shape_type_pairs: Sequence[ShapeTypePair] = workspaces + eigvals + [
+  shape_type_pairs: Sequence[ShapeTypePair] = [
+      *eigvals,
       (input_shape_vals, eigvecs_type),
       (input_shape_vals, eigvecs_type),
-      (batch_dims_vals, i32_type)]
+      (batch_dims_vals, i32_type),
+  ]
   result_types, result_shapes = mk_result_types_and_shapes(shape_type_pairs)
   out = custom_call(
       fn,
       result_types=result_types,
-      operands=[batch_size_val, ensure_hlo_s32(n),
-       hlo_u8(jobvl_c),
-       hlo_u8(jobvr_c),
-       input],
-      operand_layouts=[scalar_layout] * 4 + [layout],
-      result_layouts=(workspace_layouts + eigvals_layouts + [layout] * 2 +
-                      [info_layout]),
+      operands=[input],
+      operand_layouts=[layout],
+      result_layouts=(
+          *eigvals_layouts,
+          layout,
+          layout,
+          info_layout,
+      ),
       result_shapes=result_shapes,
+      backend_config={
+          "compute_left": _enum_to_char_attr(compute_left),
+          "compute_right": _enum_to_char_attr(compute_right),
+      },
+      api_version=4,
   ).results
   if real:
-    return (hlo.complex(out[3], out[4]), out[5], out[6], out[7])
+    return (hlo.complex(out[0], out[1]), out[2], out[3], out[4])
   else:
-    return out[2:6]
+    return out[:4]
 
 # # gees : Schur factorization
 
