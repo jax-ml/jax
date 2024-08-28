@@ -2924,7 +2924,7 @@ class MeshExecutableFastpathData(NamedTuple):
   in_device_local_layouts: Sequence[DeviceLocalLayout | None]
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, kw_only=True)
 class JitGlobalCppCacheKeys:
   donate_argnums: tuple[int, ...] | None = None
   donate_argnames: tuple[str, ...] | None = None
@@ -2938,6 +2938,7 @@ class JitGlobalCppCacheKeys:
   in_layouts_leaves: tuple[Any, ...] | None = None
   out_layouts_treedef: PyTreeDef | None = None
   out_layouts_leaves: tuple[Any, ...] | None = None
+  use_resource_env: bool = False
 
   @functools.cached_property
   def contains_explicit_attributes(self):

@@ -379,7 +379,8 @@ def _cpp_pjit(fun: Callable, jit_info: PjitInfo):
         in_layouts_treedef=jit_info.in_layouts_treedef,
         in_layouts_leaves=jit_info.in_layouts_leaves,
         out_layouts_treedef=jit_info.out_layouts_treedef,
-        out_layouts_leaves=jit_info.out_layouts_leaves)
+        out_layouts_leaves=jit_info.out_layouts_leaves,
+        use_resource_env=jit_info.use_resource_env)
     cpp_pjit_f = xc._xla.pjit(
         fun_name(fun), fun, cache_miss, jit_info.static_argnums,
         jit_info.static_argnames, cache_key, tree_util.dispatch_registry,  # type: ignore
@@ -1767,7 +1768,8 @@ def _pjit_call_impl(*args, jaxpr,
         in_shardings_treedef=None, in_shardings_leaves=in_shardings,
         out_shardings_treedef=None, out_shardings_leaves=out_shardings,
         in_layouts_treedef=None, in_layouts_leaves=in_layouts,
-        out_layouts_treedef=None, out_layouts_leaves=out_layouts)
+        out_layouts_treedef=None, out_layouts_leaves=out_layouts,
+        use_resource_env=resource_env is not None)
     return xc._xla.pjit(
         name, f, call_impl_cache_miss, [], [], cache_key,
         tree_util.dispatch_registry, pxla.cc_shard_arg,
